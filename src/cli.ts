@@ -1,6 +1,8 @@
 // src/cli.ts
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
+import { appendFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { findClaudeBinary, launchClaude } from './launch.js';
 import { resolveApiKey, detectConflicts, buildChildEnv } from './env.js';
 import { getModels } from './models.js';
@@ -94,6 +96,58 @@ function printDryRun(
   console.log('');
 }
 
+function detectShellProfile(): { display: string; path: string } {
+  const shell = process.env['SHELL'] ?? '';
+  if (shell.includes('zsh')) return { display: '~/.zshrc', path: `${homedir()}/.zshrc` };
+  if (shell.includes('bash')) {
+    const profile = process.platform === 'darwin' ? '.bash_profile' : '.bashrc';
+    return { display: `~/${profile}`, path: `${homedir()}/${profile}` };
+  }
+  return { display: '~/.profile', path: `${homedir()}/.profile` };
+}
+
+async function resolveOrCollectApiKey(): Promise<string | null> {
+  const existing = resolveApiKey();
+  if (existing) return existing;
+
+  // First-run onboarding — no error, just guide the user
+  p.note(
+    'Get your free key at: https://opencode.ai/settings/keys',
+    'OpenCode API key not found',
+  );
+
+  const key = await p.password({
+    message: 'Paste your OPENCODE_API_KEY:',
+    validate: (val) => val.trim() ? undefined : 'Key cannot be empty',
+  });
+
+  if (p.isCancel(key)) {
+    p.cancel('Cancelled.');
+    return null;
+  }
+
+  const trimmedKey = (key as string).trim();
+  const { display, path } = detectShellProfile();
+
+  const save = await p.confirm({
+    message: `Save to ${display} so you don't need to paste it again?`,
+    initialValue: true,
+  });
+
+  if (!p.isCancel(save) && save) {
+    try {
+      appendFileSync(path, `\nexport OPENCODE_API_KEY="${trimmedKey}"\n`);
+      p.log.success(`Saved to ${display} — open a new terminal to pick it up automatically`);
+    } catch {
+      p.log.warn(`Could not write to ${display} — key will be used for this session only`);
+    }
+  }
+
+  // Make available for the rest of this session
+  process.env['OPENCODE_API_KEY'] = trimmedKey;
+  return trimmedKey;
+}
+
 async function main(): Promise<void> {
   const { showHelp, showVersion, dryRun, setup, claudeArgs } = parseArgs(process.argv.slice(2));
 
@@ -109,18 +163,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Prerequisite: API key
-  const apiKey = resolveApiKey();
-  if (!apiKey) {
-    const shell = process.env['SHELL'] ?? '';
-    const profile = shell.includes('zsh') ? '~/.zshrc' : '~/.bashrc';
-    console.error(pc.red('\nError: OPENCODE_API_KEY is not set.\n'));
-    console.error('Get your key at: https://opencode.ai/settings/keys\n');
-    console.error('Then add it to your shell profile:');
-    console.error(`  echo 'export OPENCODE_API_KEY="your-key"' >> ${profile}`);
-    console.error(`  source ${profile}\n`);
-    process.exit(1);
-  }
+  // Prerequisite: API key — prompt interactively if not set
+  const apiKey = await resolveOrCollectApiKey();
+  if (!apiKey) process.exit(0);
 
   const prefs = loadPreferences();
   const conflicts = detectConflicts();
