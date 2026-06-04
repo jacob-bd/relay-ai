@@ -4,25 +4,27 @@ import * as p from '@clack/prompts';
 import { findClaudeBinary, launchClaude } from './launch.js';
 import { resolveApiKey, detectConflicts, buildChildEnv } from './env.js';
 import { getModels } from './models.js';
-import { loadPreferences, savePreferences, getCachedModels, setCachedModels } from './config.js';
-import { runWizard } from './prompts.js';
+import { loadPreferences, savePreferences, getCachedModels, setCachedModels, getSubscriptionTier, setSubscriptionTier } from './config.js';
+import { runWizard, askSubscriptionTier } from './prompts.js';
 import { BACKENDS, VERSION } from './constants.js';
-import type { ParsedArgs } from './types.js';
+import type { ParsedArgs, ModelInfo } from './types.js';
 
 function parseArgs(args: string[]): ParsedArgs {
   if (args.includes('--help') || args.includes('-h')) {
-    return { showHelp: true, showVersion: false, dryRun: false, claudeArgs: [] };
+    return { showHelp: true, showVersion: false, dryRun: false, setup: false, claudeArgs: [] };
   }
   if (args.includes('--version') || args.includes('-v')) {
-    return { showVersion: true, showHelp: false, dryRun: false, claudeArgs: [] };
+    return { showVersion: true, showHelp: false, dryRun: false, setup: false, claudeArgs: [] };
   }
   const dryRun = args.includes('--dry-run');
-  const filteredArgs = args.filter(a => a !== '--dry-run');
+  const setup = args.includes('--setup');
+  const filteredArgs = args.filter(a => a !== '--dry-run' && a !== '--setup');
   const sep = filteredArgs.indexOf('--');
   return {
     showHelp: false,
     showVersion: false,
     dryRun,
+    setup,
     claudeArgs: sep >= 0 ? filteredArgs.slice(sep + 1) : [],
   };
 }
@@ -33,12 +35,13 @@ ${pc.bold('opencode-starter')} v${VERSION}
 Launch Claude Code with OpenCode Zen or Go as the Anthropic API backend.
 
 ${pc.bold('Usage:')}
-  opencode-starter [--dry-run] [-- <claude-flags>]
+  opencode-starter [--dry-run] [--setup] [-- <claude-flags>]
   opencode-starter --help
   opencode-starter --version
 
 ${pc.bold('Flags:')}
   --dry-run    Run the wizard but show a preview instead of launching Claude Code
+  --setup      Re-configure your subscription tier
 
 ${pc.bold('Setup:')}
   Get your API key at https://opencode.ai/settings/keys
@@ -47,6 +50,7 @@ ${pc.bold('Setup:')}
 ${pc.bold('Examples:')}
   opencode-starter
   opencode-starter --dry-run
+  opencode-starter --setup
   opencode-starter -- --print "hello"
   opencode-starter -- --dangerously-skip-permissions
 `);
@@ -91,7 +95,7 @@ function printDryRun(
 }
 
 async function main(): Promise<void> {
-  const { showHelp, showVersion, dryRun, claudeArgs } = parseArgs(process.argv.slice(2));
+  const { showHelp, showVersion, dryRun, setup, claudeArgs } = parseArgs(process.argv.slice(2));
 
   if (showHelp) { printHelp(); return; }
   if (showVersion) { console.log(VERSION); return; }
@@ -120,23 +124,40 @@ async function main(): Promise<void> {
 
   const prefs = loadPreferences();
   const conflicts = detectConflicts();
-  const backendId = prefs.lastBackend ?? 'zen';
-  const backend = BACKENDS[backendId];
-  const cachedModels = getCachedModels(backendId) ?? undefined;
 
-  // Fetch models with spinner
+  // Subscription tier: ask once, save to prefs. Re-ask if --setup.
+  let tier = getSubscriptionTier();
+  if (!tier || setup) {
+    tier = await askSubscriptionTier();
+    if (!tier) process.exit(0);
+    setSubscriptionTier(tier);
+  }
+
+  // Determine which backends to pre-fetch based on tier
+  const needsZen = tier === 'free' || tier === 'zen' || tier === 'go' || tier === 'both';
+  const needsGo = tier === 'go' || tier === 'both';
+
   const spinner = p.spinner();
   spinner.start('Fetching available models...');
-  let models;
+
+  let zenModels: ModelInfo[] = [];
+  let goModels: ModelInfo[] = [];
+
   try {
-    const result = await getModels(backend, cachedModels);
-    models = result.models;
-    if (result.fromCache) {
-      spinner.stop(pc.yellow('Loaded models from cache (network unavailable)'));
-    } else {
-      spinner.stop(`Loaded ${models.length} models`);
-      setCachedModels(backendId, models);
+    if (needsZen) {
+      const cachedZen = getCachedModels('zen') ?? undefined;
+      const result = await getModels(BACKENDS.zen, cachedZen);
+      zenModels = result.models;
+      if (!result.fromCache) setCachedModels('zen', zenModels);
     }
+    if (needsGo) {
+      const cachedGo = getCachedModels('go') ?? undefined;
+      const result = await getModels(BACKENDS.go, cachedGo);
+      goModels = result.models;
+      if (!result.fromCache) setCachedModels('go', goModels);
+    }
+    const total = zenModels.length + goModels.length;
+    spinner.stop(`Loaded ${total} models`);
   } catch (err) {
     spinner.stop(pc.red('Failed to load models'));
     console.error(pc.red(String(err instanceof Error ? err.message : err)));
@@ -144,14 +165,12 @@ async function main(): Promise<void> {
   }
 
   // Run interactive wizard
-  const selection = await runWizard(prefs, models, conflicts);
+  const selection = await runWizard(prefs, { zen: zenModels, go: goModels }, conflicts, tier);
   if (!selection) process.exit(0);
 
   // Persist choices for next run
   savePreferences({ lastBackend: selection.backend.id, lastModel: selection.model.id });
 
-  // For non-Anthropic-native models, disable experimental beta headers
-  // that the translation layer may not support.
   const disableExperimentalBetas = !selection.model.isAnthropicNative;
 
   if (dryRun) {
@@ -166,7 +185,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Build isolated child environment and launch
   const childEnv = buildChildEnv(selection.backend, selection.model.id, apiKey);
   if (disableExperimentalBetas) {
     childEnv['CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS'] = '1';

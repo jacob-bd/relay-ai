@@ -20,31 +20,89 @@ function modelHint(model: ModelInfo): string {
   return parts.join(' · ');
 }
 
-export async function runWizard(
-  prefs: UserPreferences,
-  models: ModelInfo[],
-  conflicts: ConflictInfo[],
-): Promise<{ backend: BackendConfig; model: ModelInfo } | null> {
-  p.intro(pc.bold('  OpenCode Starter'));
-
-  // Step 1: Select backend
-  const backendId = await p.select<'zen' | 'go'>({
-    message: 'Which backend?',
+export async function askSubscriptionTier(): Promise<'free' | 'zen' | 'go' | 'both' | null> {
+  const tier = await p.select<'free' | 'zen' | 'go' | 'both'>({
+    message: 'What OpenCode subscription do you have?',
     options: [
-      { value: 'zen' as const, label: 'OpenCode Zen', hint: '66+ models, free tier available' },
-      { value: 'go' as const, label: 'OpenCode Go', hint: '17 models, subscription ($10/mo)' },
+      {
+        value: 'free' as const,
+        label: 'Free only',
+        hint: 'Zen free models only — no subscription needed',
+      },
+      {
+        value: 'zen' as const,
+        label: 'Zen subscription',
+        hint: 'All Zen models (paid + free)',
+      },
+      {
+        value: 'go' as const,
+        label: 'Go subscription',
+        hint: 'All Go models + Zen free models',
+      },
+      {
+        value: 'both' as const,
+        label: 'Both (Zen + Go)',
+        hint: 'All models on both backends',
+      },
     ],
-    initialValue: prefs.lastBackend ?? 'zen',
+    initialValue: 'free' as const,
   });
 
-  if (p.isCancel(backendId)) {
+  if (p.isCancel(tier)) {
     p.cancel('Cancelled.');
     return null;
   }
 
-  const backend = BACKENDS[backendId];
+  return tier;
+}
 
-  // Step 2: Build model selector options
+export async function runWizard(
+  prefs: UserPreferences,
+  modelsByBackend: { zen: ModelInfo[]; go: ModelInfo[] },
+  conflicts: ConflictInfo[],
+  tier: 'free' | 'zen' | 'go' | 'both',
+): Promise<{ backend: BackendConfig; model: ModelInfo } | null> {
+  p.intro(pc.bold('  OpenCode Starter'));
+
+  // Backend selection (only for 'go' and 'both' tiers)
+  let backend: BackendConfig;
+  if (tier === 'go' || tier === 'both') {
+    const backendId = await p.select<'zen' | 'go'>({
+      message: 'Which backend?',
+      options: [
+        { value: 'zen' as const, label: 'OpenCode Zen', hint: tier === 'go' ? 'Free models only' : '66+ models, free tier available' },
+        { value: 'go' as const, label: 'OpenCode Go', hint: '17 models, subscription ($10/mo)' },
+      ],
+      initialValue: prefs.lastBackend ?? 'zen',
+    });
+
+    if (p.isCancel(backendId)) {
+      p.cancel('Cancelled.');
+      return null;
+    }
+    backend = BACKENDS[backendId];
+  } else {
+    // zen or free — always Zen, no selector
+    backend = BACKENDS.zen;
+  }
+
+  // Determine which models to show based on tier + selected backend
+  let models: ModelInfo[];
+  if (tier === 'free') {
+    models = modelsByBackend.zen.filter(m => m.isFree);
+  } else if (tier === 'zen') {
+    models = modelsByBackend.zen;
+  } else if (tier === 'go') {
+    // Go backend: all Go models; Zen backend: free Zen models only
+    models = backend.id === 'go'
+      ? modelsByBackend.go
+      : modelsByBackend.zen.filter(m => m.isFree);
+  } else {
+    // both: all models for selected backend
+    models = backend.id === 'go' ? modelsByBackend.go : modelsByBackend.zen;
+  }
+
+  // Build model selector options
   const { free, byBrand } = groupModels(models);
 
   const options: Array<{ value: string; label: string; hint: string }> = [];
@@ -62,6 +120,11 @@ export async function runWizard(
     for (const m of byBrand.get(brand) ?? []) {
       options.push({ value: m.id, label: modelLabel(m), hint: modelHint(m) });
     }
+  }
+
+  if (options.length === 0) {
+    p.cancel('No models available for this backend and subscription tier.');
+    return null;
   }
 
   const defaultModel =
@@ -82,13 +145,13 @@ export async function runWizard(
 
   const selectedModel = models.find(m => m.id === String(modelId))!;
 
-  // Step 3: Show conflict warning if any
+  // Show conflict warning if any
   if (conflicts.length > 0) {
     const lines = conflicts.map(c => `  ${pc.dim(c.name)}=${pc.dim(c.value)}`).join('\n');
     p.note(lines, pc.yellow('Env vars that will be temporarily overridden:'));
   }
 
-  // Step 4: Confirm
+  // Confirm
   const confirmed = await p.confirm({
     message: `Launch Claude Code · ${pc.bold(String(modelId))} via ${pc.bold(backend.name)}?`,
     initialValue: true,

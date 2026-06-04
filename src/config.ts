@@ -37,3 +37,11 @@ export function setCachedModels(backendId: 'zen' | 'go', models: ModelInfo[]): v
     [backendId]: { models, fetchedAt: new Date().toISOString() },
   });
 }
+
+export function getSubscriptionTier(): 'free' | 'zen' | 'go' | 'both' | null {
+  return store.get('subscriptionTier') ?? null;
+}
+
+export function setSubscriptionTier(tier: 'free' | 'zen' | 'go' | 'both'): void {
+  store.set('subscriptionTier', tier);
+}

@@ -25,6 +25,7 @@ export interface ModelInfo {
 export interface UserPreferences {
   lastBackend?: 'zen' | 'go';
   lastModel?: string;
+  subscriptionTier?: 'free' | 'zen' | 'go' | 'both';
   modelListCache?: {
     zen?: { models: ModelInfo[]; fetchedAt: string };
     go?: { models: ModelInfo[]; fetchedAt: string };
@@ -35,6 +36,7 @@ export interface ParsedArgs {
   showHelp: boolean;
   showVersion: boolean;
   dryRun: boolean;
+  setup: boolean;
   claudeArgs: string[];
 }
 
