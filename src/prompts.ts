@@ -37,12 +37,12 @@ export async function askSubscriptionTier(): Promise<'free' | 'zen' | 'go' | 'bo
       {
         value: 'go' as const,
         label: 'Go subscription',
-        hint: 'All Go models + Zen free models',
+        hint: 'All Go models',
       },
       {
         value: 'both' as const,
         label: 'Both (Zen + Go)',
-        hint: 'All models on both backends',
+        hint: 'All Go models + all Zen models — choose backend each launch',
       },
     ],
     initialValue: 'free' as const,
@@ -64,13 +64,14 @@ export async function runWizard(
 ): Promise<{ backend: BackendConfig; model: ModelInfo } | null> {
   p.intro(pc.bold('  OpenCode Starter'));
 
-  // Backend selection (only for 'go' and 'both' tiers)
+  // Backend selection — only shown for 'both' tier (user has two distinct backends to choose from).
+  // All other tiers have an implicit backend: free/zen → Zen, go → Go.
   let backend: BackendConfig;
-  if (tier === 'go' || tier === 'both') {
+  if (tier === 'both') {
     const backendId = await p.select<'zen' | 'go'>({
       message: 'Which backend?',
       options: [
-        { value: 'zen' as const, label: 'OpenCode Zen', hint: tier === 'go' ? 'Free models only' : '66+ models, free tier available' },
+        { value: 'zen' as const, label: 'OpenCode Zen', hint: '66+ models, free tier available' },
         { value: 'go' as const, label: 'OpenCode Go', hint: '17 models, subscription ($10/mo)' },
       ],
       initialValue: prefs.lastBackend ?? 'zen',
@@ -81,24 +82,22 @@ export async function runWizard(
       return null;
     }
     backend = BACKENDS[backendId];
+  } else if (tier === 'go') {
+    backend = BACKENDS.go;
   } else {
-    // zen or free — always Zen, no selector
     backend = BACKENDS.zen;
   }
 
-  // Determine which models to show based on tier + selected backend
+  // Determine which models to show based on tier
   let models: ModelInfo[];
   if (tier === 'free') {
     models = modelsByBackend.zen.filter(m => m.isFree);
   } else if (tier === 'zen') {
     models = modelsByBackend.zen;
   } else if (tier === 'go') {
-    // Go backend: all Go models; Zen backend: free Zen models only
-    models = backend.id === 'go'
-      ? modelsByBackend.go
-      : modelsByBackend.zen.filter(m => m.isFree);
+    models = modelsByBackend.go;
   } else {
-    // both: all models for selected backend
+    // both: all models for the selected backend
     models = backend.id === 'go' ? modelsByBackend.go : modelsByBackend.zen;
   }
 

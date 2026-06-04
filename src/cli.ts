@@ -258,7 +258,7 @@ async function main(): Promise<void> {
   }
 
   // Determine which backends to pre-fetch based on tier
-  const needsZen = tier === 'free' || tier === 'zen' || tier === 'go' || tier === 'both';
+  const needsZen = tier === 'free' || tier === 'zen' || tier === 'both';
   const needsGo = tier === 'go' || tier === 'both';
 
   const spinner = p.spinner();
