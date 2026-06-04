@@ -3,6 +3,7 @@ import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { execSync } from 'node:child_process';
 import { findClaudeBinary, launchClaude } from './launch.js';
 import { resolveApiKey, detectConflicts, buildChildEnv } from './env.js';
 import { getModels } from './models.js';
@@ -106,35 +107,113 @@ function detectShellProfile(): { display: string; path: string } {
   return { display: '~/.profile', path: `${homedir()}/.profile` };
 }
 
+function readFromKeychain(): string | null {
+  try {
+    const result = execSync(
+      'security find-generic-password -s opencode-starter -a opencode-starter -w',
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    return result.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function saveToKeychain(key: string): boolean {
+  try {
+    // -U: update if already exists
+    execSync(
+      `security add-generic-password -s opencode-starter -a opencode-starter -w ${JSON.stringify(key)} -U`,
+      { stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function resolveOrCollectApiKey(): Promise<string | null> {
+  // Step 1: already in environment
   const existing = resolveApiKey();
   if (existing) return existing;
 
-  // First-run onboarding — no error, just guide the user
-  p.note(
-    'Get your free key at: https://opencode.ai/settings/keys',
-    'OpenCode API key not found',
-  );
+  const isMac = process.platform === 'darwin';
+
+  // Step 2: on macOS, offer to check Keychain before asking for a paste
+  if (isMac) {
+    const checkKeychain = await p.confirm({
+      message: 'OPENCODE_API_KEY not found. Check macOS Keychain for a stored key?',
+      initialValue: true,
+    });
+
+    if (p.isCancel(checkKeychain)) { p.cancel('Cancelled.'); return null; }
+
+    if (checkKeychain) {
+      const keychainKey = readFromKeychain();
+      if (keychainKey) {
+        p.log.success('Found key in macOS Keychain');
+        process.env['OPENCODE_API_KEY'] = keychainKey;
+        return keychainKey;
+      }
+      p.log.info('No key found in Keychain — let\'s set one up');
+    }
+  }
+
+  // Step 3: prompt for the key (masked — shows asterisks, not the actual key)
+  p.note('Get your free key at: https://opencode.ai/settings/keys', 'OpenCode API key');
 
   const key = await p.password({
     message: 'Paste your OPENCODE_API_KEY:',
     validate: (val) => val.trim() ? undefined : 'Key cannot be empty',
   });
 
-  if (p.isCancel(key)) {
-    p.cancel('Cancelled.');
-    return null;
-  }
+  if (p.isCancel(key)) { p.cancel('Cancelled.'); return null; }
 
   const trimmedKey = (key as string).trim();
   const { display, path } = detectShellProfile();
 
-  const save = await p.confirm({
-    message: `Save to ${display} so you don't need to paste it again?`,
-    initialValue: true,
+  // Step 4: where to save it
+  type SaveChoice = 'keychain' | 'profile' | 'session';
+
+  const saveOptions: Array<{ value: SaveChoice; label: string; hint: string }> = isMac
+    ? [
+        { value: 'keychain', label: 'macOS Keychain', hint: `Encrypted — also adds auto-load line to ${display}` },
+        { value: 'profile',  label: display,           hint: 'Plaintext in your shell profile' },
+        { value: 'session',  label: 'This session only', hint: "Not saved — you'll be asked again next time" },
+      ]
+    : [
+        { value: 'profile',  label: display,           hint: 'Saved to your shell profile' },
+        { value: 'session',  label: 'This session only', hint: "Not saved — you'll be asked again next time" },
+      ];
+
+  const saveChoice = await p.select<SaveChoice>({
+    message: 'Where should we save the key?',
+    options: saveOptions,
+    initialValue: isMac ? 'keychain' : 'profile',
   });
 
-  if (!p.isCancel(save) && save) {
+  if (p.isCancel(saveChoice)) { p.cancel('Cancelled.'); return null; }
+
+  if (saveChoice === 'keychain') {
+    if (saveToKeychain(trimmedKey)) {
+      // Also wire up auto-load from Keychain in the shell profile so future
+      // sessions find the key in $OPENCODE_API_KEY automatically (step 1).
+      try {
+        appendFileSync(
+          path,
+          `\n# opencode-starter: load API key from macOS Keychain\n` +
+          `export OPENCODE_API_KEY="$(security find-generic-password -s opencode-starter -a opencode-starter -w 2>/dev/null)"\n`,
+        );
+        p.log.success(`Key saved to Keychain + auto-load added to ${display}`);
+        p.log.info(`Open a new terminal (or run \`source ${display}\`) to activate`);
+      } catch {
+        p.log.success('Key saved to Keychain');
+        p.log.warn(`Could not write auto-load line to ${display} — run \`source ${display}\` manually`);
+      }
+    } else {
+      p.log.warn('Could not write to Keychain — key will be used for this session only');
+    }
+  } else if (saveChoice === 'profile') {
     try {
       appendFileSync(path, `\nexport OPENCODE_API_KEY="${trimmedKey}"\n`);
       p.log.success(`Saved to ${display} — open a new terminal to pick it up automatically`);
@@ -142,8 +221,8 @@ async function resolveOrCollectApiKey(): Promise<string | null> {
       p.log.warn(`Could not write to ${display} — key will be used for this session only`);
     }
   }
+  // 'session' — no persistence, just use for this run
 
-  // Make available for the rest of this session
   process.env['OPENCODE_API_KEY'] = trimmedKey;
   return trimmedKey;
 }
