@@ -1,4 +1,6 @@
 .claude/
+.github/
+CLAUDE.md
 docs/
 src/
 tests/
@@ -6,3 +8,6 @@ tsconfig.json
 tsup.config.ts
 *.tsbuildinfo
 *.js.map
+/npm
+/tsup
+/opencode-starter@*

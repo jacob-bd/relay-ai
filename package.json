@@ -1,6 +1,6 @@
 {
   "name": "opencode-starter",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Launch Claude Code with OpenCode Zen or Go as the Anthropic API backend",
   "author": "jacob-bd",
   "license": "MIT",
@@ -34,7 +34,6 @@
   },
   "dependencies": {
     "@clack/prompts": "^0.9.1",
-    "conf": "^13.1.0",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {

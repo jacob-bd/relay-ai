@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
 // src/cli.ts
-import pc2 from "picocolors";
-import * as p2 from "@clack/prompts";
-import { appendFileSync as appendFileSync2, readFileSync as readFileSync2, existsSync as existsSync2 } from "fs";
-import { homedir as homedir3, tmpdir } from "os";
-import { join as join3 } from "path";
+import pc3 from "picocolors";
+import * as p4 from "@clack/prompts";
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync3, existsSync as existsSync3, realpathSync } from "fs";
+import { homedir as homedir4, tmpdir } from "os";
+import { join as join4 } from "path";
+import { fileURLToPath } from "url";
 import { execSync as execSync2 } from "child_process";
 
 // src/launch.ts
@@ -39,10 +40,13 @@ function findClaudeBinary() {
   }
   return null;
 }
+function buildClaudeArgs(model, extraArgs) {
+  return ["--model", model, ...extraArgs];
+}
 function launchClaude(env, model, extraArgs) {
   return new Promise((resolve) => {
     const claudePath = findClaudeBinary();
-    const args = ["--model", model, ...extraArgs];
+    const args = buildClaudeArgs(model, extraArgs);
     const child = spawn(claudePath, args, {
       stdio: "inherit",
       env,
@@ -110,7 +114,7 @@ function classifyModelFormat(modelId, providerNpm) {
   if (lower.startsWith("gemini-")) return "unsupported";
   return "openai";
 }
-var VERSION = "0.2.1";
+var VERSION = "0.2.2";
 
 // src/env.ts
 function detectConflicts() {
@@ -737,25 +741,91 @@ function startProxy(upstreamBaseUrl, modelId, debug = false) {
   });
 }
 
+// src/server/index.ts
+import pc from "picocolors";
+import * as p2 from "@clack/prompts";
+
 // src/config.ts
-import Conf from "conf";
-var store = new Conf({
-  projectName: "opencode-starter",
-  defaults: {}
-});
+import { dirname } from "path";
+import { existsSync as existsSync2, mkdirSync, readFileSync as readFileSync2, renameSync, writeFileSync } from "fs";
+
+// src/paths.ts
+import { homedir as homedir3 } from "os";
+import { join as join3 } from "path";
+function userHome(env = process.env) {
+  return env.HOME ?? env.USERPROFILE ?? homedir3();
+}
+function getAppHome(env = process.env) {
+  if (env.OPENCODE_STARTER_HOME) return env.OPENCODE_STARTER_HOME;
+  return join3(userHome(env), ".opencode-starter");
+}
+function getConfigPath(env = process.env) {
+  return join3(getAppHome(env), "config.json");
+}
+function getLegacyConfPath(env = process.env, platform = process.platform) {
+  const home = userHome(env);
+  const appName = "opencode-starter-nodejs";
+  if (platform === "darwin") {
+    return join3(home, "Library", "Preferences", appName, "config.json");
+  }
+  if (platform === "win32") {
+    return join3(env.APPDATA ?? join3(home, "AppData", "Roaming"), appName, "Config", "config.json");
+  }
+  return join3(env.XDG_CONFIG_HOME ?? join3(home, ".config"), appName, "config.json");
+}
+
+// src/config.ts
+function readJsonFile(path) {
+  try {
+    const parsed = JSON.parse(readFileSync2(path, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+function ensureConfigMigrated() {
+  const configPath = getConfigPath();
+  if (existsSync2(configPath)) return;
+  const legacyPath = getLegacyConfPath();
+  if (!existsSync2(legacyPath)) return;
+  const legacy = readJsonFile(legacyPath);
+  if (!legacy) return;
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(legacy, null, 2)}
+`, "utf8");
+  try {
+    renameSync(legacyPath, `${legacyPath}.migrated`);
+  } catch {
+  }
+}
+function readConfig() {
+  ensureConfigMigrated();
+  return readJsonFile(getConfigPath()) ?? {};
+}
+function writeConfig(config) {
+  const configPath = getConfigPath();
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}
+`, "utf8");
+}
 function loadPreferences() {
+  const config = readConfig();
   return {
-    lastBackend: store.get("lastBackend"),
-    lastModel: store.get("lastModel"),
-    modelListCache: store.get("modelListCache")
+    lastBackend: config.lastBackend,
+    lastModel: config.lastModel,
+    subscriptionTier: config.subscriptionTier,
+    modelListCache: config.modelListCache,
+    server: config.server
   };
 }
 function savePreferences(prefs) {
-  if (prefs.lastBackend !== void 0) store.set("lastBackend", prefs.lastBackend);
-  if (prefs.lastModel !== void 0) store.set("lastModel", prefs.lastModel);
+  const config = readConfig();
+  if (prefs.lastBackend !== void 0) config.lastBackend = prefs.lastBackend;
+  if (prefs.lastModel !== void 0) config.lastModel = prefs.lastModel;
+  writeConfig(config);
 }
 function getCachedModels(backendId) {
-  const modelListCache = store.get("modelListCache");
+  const modelListCache = readConfig().modelListCache;
   const entry = modelListCache?.[backendId];
   if (!entry) return null;
   const age = Date.now() - new Date(entry.fetchedAt).getTime();
@@ -763,29 +833,417 @@ function getCachedModels(backendId) {
   return entry.models;
 }
 function setCachedModels(backendId, models) {
-  const existing = store.get("modelListCache") ?? {};
-  store.set("modelListCache", {
-    ...existing,
+  const config = readConfig();
+  config.modelListCache = {
+    ...config.modelListCache ?? {},
     [backendId]: { models, fetchedAt: (/* @__PURE__ */ new Date()).toISOString() }
-  });
+  };
+  writeConfig(config);
 }
 function getSubscriptionTier() {
-  return store.get("subscriptionTier") ?? null;
+  return readConfig().subscriptionTier ?? null;
 }
 function setSubscriptionTier(tier) {
-  store.set("subscriptionTier", tier);
+  const config = readConfig();
+  config.subscriptionTier = tier;
+  writeConfig(config);
+}
+function getSavedServerPassword() {
+  return readConfig().server?.savedPassword?.trim() || null;
+}
+function setSavedServerPassword(password3) {
+  const config = readConfig();
+  config.server = {
+    ...config.server ?? {},
+    savedPassword: password3
+  };
+  writeConfig(config);
+}
+
+// src/server/prompts.ts
+import * as p from "@clack/prompts";
+async function askListenMode() {
+  const mode = await p.select({
+    message: "Where should the server listen?",
+    options: [
+      { value: "local", label: "Local only", hint: "Only this computer can use it" },
+      { value: "network", label: "Network", hint: "Other computers on your network can use it" }
+    ],
+    initialValue: "local"
+  });
+  if (p.isCancel(mode)) {
+    p.cancel("Cancelled.");
+    return null;
+  }
+  return mode;
+}
+async function askServerPassword() {
+  p.note(
+    "Anyone on your network who knows this password can use this server through your OpenCode account.",
+    "Network mode warning"
+  );
+  const password3 = await p.password({
+    message: "Choose a server password for this run:",
+    validate: (value) => value.trim() ? void 0 : "Password cannot be empty"
+  });
+  if (p.isCancel(password3)) {
+    p.cancel("Cancelled.");
+    return null;
+  }
+  return String(password3).trim();
+}
+async function askUseSavedServerPassword() {
+  const choice = await p.select({
+    message: "Use saved server password?",
+    options: [
+      { value: "use-saved", label: "Use saved password" },
+      { value: "new-password", label: "Enter a new password" }
+    ],
+    initialValue: "use-saved"
+  });
+  if (p.isCancel(choice)) {
+    p.cancel("Cancelled.");
+    return null;
+  }
+  return choice;
+}
+async function askSaveServerPassword() {
+  const save = await p.confirm({
+    message: "Save this server password for future server runs?",
+    initialValue: false
+  });
+  if (p.isCancel(save)) {
+    p.cancel("Cancelled.");
+    return null;
+  }
+  return Boolean(save);
+}
+
+// src/server/models.ts
+var CREATED_AT_ISO = "2025-01-01T00:00:00Z";
+var CREATED_AT_UNIX = 1735689600;
+function createModelCatalog(models) {
+  const byId = new Map(models.map((model) => [model.id, model]));
+  return {
+    get: (id) => byId.get(id),
+    list: () => [...models]
+  };
+}
+function formatAnthropicModels(models) {
+  return {
+    data: models.map((model) => ({
+      id: model.id,
+      type: "model",
+      display_name: model.name,
+      created_at: CREATED_AT_ISO
+    })),
+    has_more: false,
+    first_id: models[0]?.id ?? null,
+    last_id: models.at(-1)?.id ?? null
+  };
+}
+function formatOpenAIModels(models) {
+  return {
+    object: "list",
+    data: models.map((model) => ({
+      id: model.id,
+      object: "model",
+      created: CREATED_AT_UNIX,
+      owned_by: model.sourceBackend
+    }))
+  };
+}
+
+// src/server/router.ts
+import { createServer as createServer2 } from "http";
+
+// src/server/auth.ts
+function isAuthorized(request, serverPassword) {
+  if (serverPassword === null) return true;
+  const bearerToken = extractBearerToken(request.headers.get("authorization"));
+  if (bearerToken === serverPassword) return true;
+  return request.headers.get("x-api-key") === serverPassword;
+}
+function extractBearerToken(value) {
+  if (!value) return null;
+  const match = /^Bearer\s+(.+)$/i.exec(value.trim());
+  return match?.[1] ?? null;
+}
+
+// src/server/router.ts
+async function startServer(options) {
+  const server = createServer2((req, res) => {
+    void routeRequest(req, res, options);
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(options.port, options.host, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Server did not bind to a TCP port");
+  }
+  return {
+    host: options.host,
+    port: address.port,
+    url: `http://${options.host}:${address.port}`,
+    server,
+    close: () => new Promise((resolve, reject) => {
+      server.close((err) => err ? reject(err) : resolve());
+    })
+  };
+}
+async function routeRequest(req, res, options) {
+  try {
+    const pathname = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`).pathname;
+    if (req.method === "GET" && pathname === "/health") {
+      sendJson2(res, 200, { ok: true });
+      return;
+    }
+    if (!isAuthorized(toRequest(req), options.serverPassword)) {
+      sendJson2(res, 401, { error: { message: "Unauthorized" } });
+      return;
+    }
+    if (req.method === "GET" && pathname === "/models") {
+      sendJson2(res, 200, { models: options.catalog.list() });
+      return;
+    }
+    if (req.method === "GET" && pathname === "/anthropic/v1/models") {
+      sendJson2(res, 200, formatAnthropicModels(options.catalog.list()));
+      return;
+    }
+    if (req.method === "GET" && pathname === "/openai/v1/models") {
+      sendJson2(res, 200, formatOpenAIModels(options.catalog.list()));
+      return;
+    }
+    if (req.method === "POST" && pathname === "/anthropic/v1/messages") {
+      await handleAnthropicMessages(req, res, options);
+      return;
+    }
+    if (req.method === "POST" && pathname === "/openai/v1/chat/completions") {
+      await handleOpenAIChatCompletions(req, res, options);
+      return;
+    }
+    sendJson2(res, 404, { error: { message: "Not found" } });
+  } catch (err) {
+    sendJson2(res, 500, { error: { message: err instanceof Error ? err.message : String(err) } });
+  }
+}
+async function handleAnthropicMessages(req, res, options) {
+  const body = await readJson(req);
+  if (!body) {
+    sendJson2(res, 400, { error: { message: "Invalid JSON body" } });
+    return;
+  }
+  const model = lookupModel(res, options.catalog, body.model);
+  if (!model) return;
+  if (model.modelFormat === "anthropic") {
+    await forwardJson(res, `${backendFor(options, model).baseUrl}/v1/messages`, body, options.apiKey);
+    return;
+  }
+  if (model.modelFormat === "openai") {
+    const upstreamJson = await postJson(`${backendFor(options, model).baseUrl}/v1/chat/completions`, translateRequest(body), options.apiKey);
+    sendJson2(res, upstreamJson.status, translateResponse(upstreamJson.body, body.model));
+    return;
+  }
+  sendJson2(res, 400, { error: { message: `Unsupported model format: ${model.modelFormat}` } });
+}
+async function handleOpenAIChatCompletions(req, res, options) {
+  const body = await readJson(req);
+  if (!body) {
+    sendJson2(res, 400, { error: { message: "Invalid JSON body" } });
+    return;
+  }
+  const model = lookupModel(res, options.catalog, body.model);
+  if (!model) return;
+  if (model.modelFormat === "openai") {
+    await forwardJson(res, `${backendFor(options, model).baseUrl}/v1/chat/completions`, body, options.apiKey);
+    return;
+  }
+  if (model.modelFormat === "anthropic") {
+    sendJson2(res, 400, { error: { message: "OpenAI to Anthropic reverse translation is not supported yet" } });
+    return;
+  }
+  sendJson2(res, 400, { error: { message: `Unsupported model format: ${model.modelFormat}` } });
+}
+function lookupModel(res, catalog, modelId) {
+  if (typeof modelId !== "string") {
+    sendJson2(res, 400, { error: { message: "Request body must include a model string" } });
+    return null;
+  }
+  const model = catalog.get(modelId);
+  if (!model) {
+    sendJson2(res, 400, { error: { message: `Unknown model: ${modelId}` } });
+    return null;
+  }
+  return model;
+}
+function backendFor(options, model) {
+  return options.backends[model.sourceBackend];
+}
+async function forwardJson(res, url, body, apiKey) {
+  const upstream = await postJson(url, body, apiKey);
+  sendJson2(res, upstream.status, upstream.body);
+}
+async function postJson(url, body, apiKey) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify(body)
+  });
+  const text = await response.text();
+  const parsed = text ? JSON.parse(text) : null;
+  return { status: response.status, body: parsed };
+}
+async function readJson(req) {
+  try {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    const raw = Buffer.concat(chunks).toString();
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return null;
+  }
+}
+function toRequest(req) {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(name, item);
+    } else if (value !== void 0) {
+      headers.set(name, value);
+    }
+  }
+  return new Request("http://localhost/", { headers });
+}
+function sendJson2(res, status, body) {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(body));
+}
+
+// src/server/index.ts
+function modelsForTier(tier, backendId, models) {
+  if (tier === "free") return backendId === "zen" ? models.filter((model) => model.isFree) : [];
+  if (tier === "go") return backendId === "zen" ? models.filter((model) => model.isFree) : models;
+  return models;
+}
+function waitForShutdown() {
+  return new Promise((resolve) => {
+    const cleanup = () => {
+      process.off("SIGINT", onSignal);
+      process.off("SIGTERM", onSignal);
+    };
+    const onSignal = () => {
+      cleanup();
+      resolve();
+    };
+    process.once("SIGINT", onSignal);
+    process.once("SIGTERM", onSignal);
+  });
+}
+async function getServerPasswordForMode(mode) {
+  if (mode === "local") return null;
+  const savedPassword = getSavedServerPassword();
+  let serverPassword = null;
+  if (savedPassword) {
+    const savedChoice = await askUseSavedServerPassword();
+    if (!savedChoice) return void 0;
+    serverPassword = savedChoice === "use-saved" ? savedPassword : await askServerPassword();
+  } else {
+    serverPassword = await askServerPassword();
+  }
+  if (!serverPassword) return void 0;
+  if (serverPassword !== savedPassword) {
+    const savePassword = await askSaveServerPassword();
+    if (savePassword === null) return void 0;
+    if (savePassword) setSavedServerPassword(serverPassword);
+  }
+  return serverPassword;
+}
+async function loadServerModels(tier) {
+  const needsZen = tier === "free" || tier === "zen" || tier === "go" || tier === "both";
+  const needsGo = tier === "go" || tier === "both";
+  const models = [];
+  if (needsZen) {
+    const result = await getModels(BACKENDS.zen, getCachedModels("zen") ?? void 0);
+    if (!result.fromCache) setCachedModels("zen", result.models);
+    models.push(...modelsForTier(tier, "zen", result.models));
+  }
+  if (needsGo) {
+    const result = await getModels(BACKENDS.go, getCachedModels("go") ?? void 0);
+    if (!result.fromCache) setCachedModels("go", result.models);
+    models.push(...modelsForTier(tier, "go", result.models));
+  }
+  return models;
+}
+async function runServerCommand() {
+  const apiKey = resolveApiKey();
+  if (!apiKey) {
+    p2.log.error("Missing OPENCODE_API_KEY. Run `opencode-starter claude` once to configure your key, or export OPENCODE_API_KEY.");
+    return 1;
+  }
+  const tier = getSubscriptionTier();
+  if (!tier) {
+    p2.log.error("Missing subscription tier. Run `opencode-starter claude --setup` first.");
+    return 1;
+  }
+  const mode = await askListenMode();
+  if (!mode) return 0;
+  const serverPassword = await getServerPasswordForMode(mode);
+  if (serverPassword === void 0) return 0;
+  const host = mode === "network" ? "0.0.0.0" : "127.0.0.1";
+  const spinner3 = p2.spinner();
+  spinner3.start("Fetching available models...");
+  let models;
+  try {
+    models = await loadServerModels(tier);
+    spinner3.stop(`Loaded ${models.length} models`);
+  } catch (err) {
+    spinner3.stop(pc.red("Failed to load models"));
+    console.error(pc.red(String(err instanceof Error ? err.message : err)));
+    return 1;
+  }
+  const server = await startServer({
+    host,
+    port: 17645,
+    apiKey,
+    serverPassword,
+    catalog: createModelCatalog(models),
+    backends: BACKENDS
+  });
+  console.log("");
+  console.log(pc.bold(pc.green("OpenCode Starter server running")));
+  console.log(`  Anthropic:  http://127.0.0.1:${server.port}/anthropic`);
+  console.log(`  OpenAI:     http://127.0.0.1:${server.port}/openai`);
+  if (mode === "network") {
+    console.log(`  Network:    http://<this-computer-ip>:${server.port}`);
+    console.log("  API key:    <server password>");
+  } else {
+    console.log("  API key:    any non-empty value");
+  }
+  console.log("");
+  console.log(pc.dim("Press Ctrl+C to stop."));
+  await waitForShutdown();
+  await server.close();
+  return 0;
 }
 
 // src/prompts.ts
-import * as p from "@clack/prompts";
-import pc from "picocolors";
+import * as p3 from "@clack/prompts";
+import pc2 from "picocolors";
 function modelLabel(model, showBackendBadge = false) {
   if (model.modelFormat === "unsupported") {
-    return pc.dim(`${model.name} (not yet supported)`);
+    return pc2.dim(`${model.name} (not yet supported)`);
   }
   if (model.isFree) {
     const tag = showBackendBadge ? "(free \xB7 Zen)" : "(free)";
-    return pc.green(`${model.name} ${tag}`);
+    return pc2.green(`${model.name} ${tag}`);
   }
   return model.name;
 }
@@ -798,7 +1256,7 @@ function modelHint(model) {
   return parts.join(" \xB7 ");
 }
 async function askSubscriptionTier() {
-  const tier = await p.select({
+  const tier = await p3.select({
     message: "What OpenCode subscription do you have?",
     options: [
       {
@@ -824,17 +1282,17 @@ async function askSubscriptionTier() {
     ],
     initialValue: "free"
   });
-  if (p.isCancel(tier)) {
-    p.cancel("Cancelled.");
+  if (p3.isCancel(tier)) {
+    p3.cancel("Cancelled.");
     return null;
   }
   return tier;
 }
 async function runWizard(prefs, modelsByBackend, conflicts, tier) {
-  p.intro(pc.bold("  OpenCode Starter"));
+  p3.intro(pc2.bold("  OpenCode Starter"));
   let selectorBackendId = null;
   if (tier === "both") {
-    const backendId = await p.select({
+    const backendId = await p3.select({
       message: "Which backend?",
       options: [
         { value: "zen", label: "OpenCode Zen", hint: "66+ models, free tier available" },
@@ -842,8 +1300,8 @@ async function runWizard(prefs, modelsByBackend, conflicts, tier) {
       ],
       initialValue: prefs.lastBackend ?? "zen"
     });
-    if (p.isCancel(backendId)) {
-      p.cancel("Cancelled.");
+    if (p3.isCancel(backendId)) {
+      p3.cancel("Cancelled.");
       return null;
     }
     selectorBackendId = backendId;
@@ -880,17 +1338,17 @@ async function runWizard(prefs, modelsByBackend, conflicts, tier) {
     }
   }
   if (options.length === 0) {
-    p.cancel("No models available for this backend and subscription tier.");
+    p3.cancel("No models available for this backend and subscription tier.");
     return null;
   }
   const defaultModel = prefs.lastModel && options.some((o) => o.value === prefs.lastModel) ? prefs.lastModel : options[0]?.value;
-  const modelId = await p.select({
+  const modelId = await p3.select({
     message: "Which model?",
     options,
     initialValue: defaultModel
   });
-  if (p.isCancel(modelId)) {
-    p.cancel("Cancelled.");
+  if (p3.isCancel(modelId)) {
+    p3.cancel("Cancelled.");
     return null;
   }
   if (unsupportedModels.length > 0) {
@@ -899,123 +1357,206 @@ async function runWizard(prefs, modelsByBackend, conflicts, tier) {
       return acc;
     }, {});
     const summary = Object.entries(brandCounts).map(([b, c]) => `${b} (${c})`).join(", ");
-    p.log.info(pc.dim(`Not yet supported: ${summary} \u2014 need API format translation`));
+    p3.log.info(pc2.dim(`Not yet supported: ${summary} \u2014 need API format translation`));
   }
   const selectedModel = selectableModels.find((m) => m.id === String(modelId));
   const backend = BACKENDS[selectedModel.sourceBackend];
   if (conflicts.length > 0) {
-    const lines = conflicts.map((c) => `  ${pc.dim(c.name)}=${pc.dim(c.value)}`).join("\n");
-    p.note(lines, pc.yellow("Env vars that will be temporarily overridden:"));
+    const lines = conflicts.map((c) => `  ${pc2.dim(c.name)}=${pc2.dim(c.value)}`).join("\n");
+    p3.note(lines, pc2.yellow("Env vars that will be temporarily overridden:"));
   }
-  const confirmed = await p.confirm({
-    message: `Launch Claude Code \xB7 ${pc.bold(String(modelId))} via ${pc.bold(backend.name)}?`,
+  const confirmed = await p3.confirm({
+    message: `Launch Claude Code \xB7 ${pc2.bold(String(modelId))} via ${pc2.bold(backend.name)}?`,
     initialValue: true
   });
-  if (p.isCancel(confirmed) || !confirmed) {
-    p.cancel("Cancelled.");
+  if (p3.isCancel(confirmed) || !confirmed) {
+    p3.cancel("Cancelled.");
     return null;
   }
-  p.outro(pc.green("Launching..."));
+  p3.outro(pc2.green("Launching..."));
   return { backend, model: selectedModel };
 }
 
 // src/cli.ts
-function parseArgs(args) {
-  if (args.includes("--help") || args.includes("-h")) {
-    return { showHelp: true, showVersion: false, dryRun: false, setup: false, trace: false, claudeArgs: [] };
-  }
-  if (args.includes("--version") || args.includes("-v")) {
-    return { showVersion: true, showHelp: false, dryRun: false, setup: false, trace: false, claudeArgs: [] };
-  }
-  const dryRun = args.includes("--dry-run");
-  const setup = args.includes("--setup");
-  const trace = args.includes("--trace");
-  const filteredArgs = args.filter((a) => a !== "--dry-run" && a !== "--setup" && a !== "--trace");
-  const sep = filteredArgs.indexOf("--");
+var STARTER_CLAUDE_FLAGS = /* @__PURE__ */ new Set(["--dry-run", "--setup", "--trace", "--help", "-h", "--version", "-v"]);
+function emptyParsed(command) {
   return {
+    command,
     showHelp: false,
     showVersion: false,
-    dryRun,
-    setup,
-    trace,
-    claudeArgs: sep >= 0 ? filteredArgs.slice(sep + 1) : []
+    dryRun: false,
+    setup: false,
+    trace: false,
+    claudeArgs: []
   };
 }
-function printHelp() {
-  console.log(`
-${pc2.bold("opencode-starter")} v${VERSION}
-Launch Claude Code with OpenCode Zen or Go as the Anthropic API backend.
+function parseArgs(args) {
+  if (args.length === 0) return { ...emptyParsed("root"), showHelp: true };
+  const [first, ...rest] = args;
+  if (first === "--help" || first === "-h") {
+    return { ...emptyParsed("root"), showHelp: true };
+  }
+  if (first === "--version" || first === "-v") {
+    return { ...emptyParsed("root"), showVersion: true };
+  }
+  if (first === "server") {
+    const parsed2 = emptyParsed("server");
+    for (const arg of rest) {
+      if (arg === "--help" || arg === "-h") parsed2.showHelp = true;
+      else if (arg === "--version" || arg === "-v") parsed2.showVersion = true;
+      else if (!parsed2.error) parsed2.error = `Unknown server option: ${arg}`;
+    }
+    return parsed2;
+  }
+  if (first !== "claude") {
+    return {
+      ...emptyParsed("root"),
+      error: first.startsWith("-") ? `Unknown root option: ${first}` : `Unknown command: ${first}`
+    };
+  }
+  const parsed = emptyParsed("claude");
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i];
+    if (arg === "--") {
+      parsed.claudeArgs.push(...rest.slice(i + 1));
+      break;
+    }
+    if (!STARTER_CLAUDE_FLAGS.has(arg)) {
+      parsed.claudeArgs.push(arg);
+      continue;
+    }
+    if (arg === "--dry-run") parsed.dryRun = true;
+    if (arg === "--setup") parsed.setup = true;
+    if (arg === "--trace") parsed.trace = true;
+    if (arg === "--help" || arg === "-h") parsed.showHelp = true;
+    if (arg === "--version" || arg === "-v") parsed.showVersion = true;
+  }
+  return parsed;
+}
+function rootHelpText() {
+  return `${pc3.bold("opencode-starter")} v${VERSION}
+Launch supported coding tools with OpenCode Zen or Go as the API backend.
 
-${pc2.bold("Usage:")}
-  opencode-starter [--dry-run] [--setup] [-- <claude-flags>]
+${pc3.bold("Usage:")}
+  opencode-starter claude [starter-options] [claude-flags]
+  opencode-starter server
   opencode-starter --help
   opencode-starter --version
 
-${pc2.bold("Flags:")}
+${pc3.bold("Commands:")}
+  claude      Launch Claude Code through OpenCode Starter
+  server      Run a foreground OpenCode Starter API gateway
+  codex       planned
+
+${pc3.bold("Migration:")}
+  Bare opencode-starter now prints this help instead of launching Claude Code.
+  Use opencode-starter claude to run the existing Claude Code wizard and launcher.
+
+${pc3.bold("Examples:")}
+  opencode-starter claude
+  opencode-starter claude -c
+  opencode-starter claude --resume abc-123
+  opencode-starter claude -- --print "hello"`;
+}
+function claudeHelpText() {
+  return `${pc3.bold("opencode-starter claude")} v${VERSION}
+Launch Claude Code with OpenCode Zen or Go as the Anthropic API backend.
+
+${pc3.bold("Usage:")}
+  opencode-starter claude [starter-options] [claude-flags]
+  opencode-starter claude --help
+  opencode-starter claude --version
+
+${pc3.bold("Starter options:")}
   --dry-run    Run the wizard but show a preview instead of launching Claude Code
   --setup      Re-configure your subscription tier
   --trace      Write Claude Code debug logs to /tmp/opencode-starter-debug.log and show errors on exit
+  --help       Show this command help
+  --version    Show version
 
-${pc2.bold("Setup:")}
+${pc3.bold("Setup:")}
   Get your API key at https://opencode.ai/settings/keys
   Then run: export OPENCODE_API_KEY="your-key"
 
-${pc2.bold("Examples:")}
-  opencode-starter
-  opencode-starter --dry-run
-  opencode-starter --setup
-  opencode-starter -- --print "hello"
-  opencode-starter -- --dangerously-skip-permissions
+${pc3.bold("Examples:")}
+  opencode-starter claude
+  opencode-starter claude -c
+  opencode-starter claude --resume abc-123
+  opencode-starter claude abc-123
+  opencode-starter claude --dry-run -c
+  opencode-starter claude --setup
+  opencode-starter claude --trace --resume abc-123
+  opencode-starter claude -- --print "hello"
+  opencode-starter claude -- --dangerously-skip-permissions`;
+}
+function serverHelpText() {
+  return `${pc3.bold("opencode-starter server")} v${VERSION}
+Run a foreground OpenCode Starter API gateway.
+
+${pc3.bold("Usage:")}
+  opencode-starter server
+  opencode-starter server --help
+  opencode-starter server --version
+
+${pc3.bold("Behavior:")}
+  Prompts for local-only or network listen mode.
+  Network mode asks for a server password.
+  Server password is saved only if the user chooses to save it.
+  Server host and port are not saved.`;
+}
+function printHelp(text) {
+  console.log(`
+${text}
 `);
 }
 function printDryRun(backendName, modelId, baseUrl, modelFormat, claudeArgs, conflicts, disableExperimentalBetas) {
   console.log("");
-  console.log(pc2.bold(pc2.cyan("  DRY RUN \u2014 would execute:")));
+  console.log(pc3.bold(pc3.cyan("  DRY RUN \u2014 would execute:")));
   console.log("");
   const claudeCmd = ["claude", "--model", modelId, ...claudeArgs].join(" ");
-  console.log(`  ${pc2.bold("Command:")}  ${claudeCmd}`);
-  console.log(`  ${pc2.bold("Backend:")}  ${backendName}`);
+  console.log(`  ${pc3.bold("Command:")}  ${claudeCmd}`);
+  console.log(`  ${pc3.bold("Backend:")}  ${backendName}`);
   if (modelFormat === "openai") {
-    console.log(`  ${pc2.bold("Proxy:")}    would start local translation proxy ${pc2.dim("(Anthropic \u2192 OpenAI)")}`);
-    console.log(`             ${pc2.dim(`\u2192 ${baseUrl}/v1/chat/completions`)}`);
+    console.log(`  ${pc3.bold("Proxy:")}    would start local translation proxy ${pc3.dim("(Anthropic \u2192 OpenAI)")}`);
+    console.log(`             ${pc3.dim(`\u2192 ${baseUrl}/v1/chat/completions`)}`);
   }
   console.log("");
-  console.log(`  ${pc2.bold("Env vars SET:")}`);
+  console.log(`  ${pc3.bold("Env vars SET:")}`);
   if (modelFormat === "openai") {
-    console.log(`    ANTHROPIC_BASE_URL=http://127.0.0.1:<port>  ${pc2.dim("(local proxy)")}`);
+    console.log(`    ANTHROPIC_BASE_URL=http://127.0.0.1:<port>  ${pc3.dim("(local proxy)")}`);
   } else {
     console.log(`    ANTHROPIC_BASE_URL=${baseUrl}`);
   }
   console.log(`    ANTHROPIC_API_KEY=<your OPENCODE_API_KEY>`);
   console.log(`    ANTHROPIC_MODEL=${modelId}`);
   if (disableExperimentalBetas) {
-    console.log(`    CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1  ${pc2.dim("(auto-set: model uses protocol translation)")}`);
+    console.log(`    CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1  ${pc3.dim("(auto-set: model uses protocol translation)")}`);
   }
   console.log("");
   if (conflicts.length > 0) {
-    console.log(`  ${pc2.bold("Env vars REMOVED:")}`);
+    console.log(`  ${pc3.bold("Env vars REMOVED:")}`);
     for (const c of conflicts) {
-      console.log(`    ${pc2.dim(c.name)}=${pc2.dim(c.value)}`);
+      console.log(`    ${pc3.dim(c.name)}=${pc3.dim(c.value)}`);
     }
     console.log("");
   }
-  console.log(pc2.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
+  console.log(pc3.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
   console.log("");
 }
 function detectShellProfile() {
   const shell = process.env["SHELL"] ?? "";
   if (process.platform === "darwin") {
-    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir3()}/.zshrc` };
-    if (shell.includes("bash")) return { display: "~/.bash_profile", path: `${homedir3()}/.bash_profile` };
-    return { display: "~/.profile", path: `${homedir3()}/.profile` };
+    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir4()}/.zshrc` };
+    if (shell.includes("bash")) return { display: "~/.bash_profile", path: `${homedir4()}/.bash_profile` };
+    return { display: "~/.profile", path: `${homedir4()}/.profile` };
   }
   if (process.platform === "linux") {
-    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir3()}/.zshrc` };
-    if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir3()}/.bashrc` };
-    return { display: "~/.profile", path: `${homedir3()}/.profile` };
+    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir4()}/.zshrc` };
+    if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir4()}/.bashrc` };
+    return { display: "~/.profile", path: `${homedir4()}/.profile` };
   }
-  if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir3()}/.bashrc` };
-  return { display: "~/.profile", path: `${homedir3()}/.profile` };
+  if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir4()}/.bashrc` };
+  return { display: "~/.profile", path: `${homedir4()}/.profile` };
 }
 async function readFromCredentialStore() {
   try {
@@ -1052,7 +1593,7 @@ async function resolveOrCollectApiKey(simulate = false) {
   const isWindows2 = process.platform === "win32";
   const isLinux = process.platform === "linux";
   if (simulate) {
-    p2.note(
+    p4.note(
       "Running in dry-run mode \u2014 no keys will be read from or written to your system.",
       "Simulating first-run onboarding"
     );
@@ -1061,18 +1602,18 @@ async function resolveOrCollectApiKey(simulate = false) {
     const storedKey = await readFromCredentialStore();
     if (storedKey) {
       const storeName = isMac ? "macOS Keychain" : isWindows2 ? "Windows Credential Manager" : "Secret Service";
-      p2.log.success(`Found key in ${storeName}`);
+      p4.log.success(`Found key in ${storeName}`);
       process.env["OPENCODE_API_KEY"] = storedKey;
       return storedKey;
     }
   }
-  p2.note("Get your free key at: https://opencode.ai/settings/keys", "OpenCode API key");
-  const key = await p2.password({
+  p4.note("Get your free key at: https://opencode.ai/settings/keys", "OpenCode API key");
+  const key = await p4.password({
     message: "Paste your OPENCODE_API_KEY:",
     validate: (val) => val.trim() ? void 0 : "Key cannot be empty"
   });
-  if (p2.isCancel(key)) {
-    p2.cancel("Cancelled.");
+  if (p4.isCancel(key)) {
+    p4.cancel("Cancelled.");
     return null;
   }
   const trimmedKey = key.trim();
@@ -1133,7 +1674,7 @@ async function resolveOrCollectApiKey(simulate = false) {
         hint: "Key stored securely in your desktop keyring; opencode-starter reads it automatically next time"
       });
     } else if (!simulate) {
-      p2.log.info("No keyring daemon detected \u2014 secure storage requires GNOME Keyring or KWallet running.");
+      p4.log.info("No keyring daemon detected \u2014 secure storage requires GNOME Keyring or KWallet running.");
     }
     opts.push(
       {
@@ -1149,121 +1690,108 @@ async function resolveOrCollectApiKey(simulate = false) {
     );
     return opts;
   })();
-  const saveChoice = await p2.select({
+  const saveChoice = await p4.select({
     message: "Where should we save the key?",
     options: saveOptions,
     initialValue: isMac ? "keychain" : isWindows2 ? "credential-manager" : secretServiceAvailable ? "secret-service" : "profile"
   });
-  if (p2.isCancel(saveChoice)) {
-    p2.cancel("Cancelled.");
+  if (p4.isCancel(saveChoice)) {
+    p4.cancel("Cancelled.");
     return null;
   }
   if (simulate) {
-    if (saveChoice === "keychain") {
-      p2.log.info("[dry-run] Would save key to macOS Keychain");
-    } else if (saveChoice === "keychain-autoload") {
-      p2.log.info(`[dry-run] Would save key to macOS Keychain and add auto-load to ${display}`);
-    } else if (saveChoice === "credential-manager") {
-      p2.log.info("[dry-run] Would save key to Windows Credential Manager");
-    } else if (saveChoice === "setx") {
-      p2.log.info("[dry-run] Would run: setx OPENCODE_API_KEY ***");
-    } else if (saveChoice === "secret-service") {
-      p2.log.info("[dry-run] Would save key to Secret Service (GNOME Keyring / KWallet)");
-    } else if (saveChoice === "profile") {
-      p2.log.info(`[dry-run] Would append OPENCODE_API_KEY export to ${display}`);
-    } else {
-      p2.log.info("[dry-run] Would use key for this session only");
-    }
+    const dryRunMessages = {
+      keychain: "Would save key to macOS Keychain",
+      "keychain-autoload": `Would save key to macOS Keychain and add auto-load to ${display}`,
+      "credential-manager": "Would save key to Windows Credential Manager",
+      setx: "Would run: setx OPENCODE_API_KEY ***",
+      "secret-service": "Would save key to Secret Service (GNOME Keyring / KWallet)",
+      profile: `Would append OPENCODE_API_KEY export to ${display}`,
+      session: "Would use key for this session only"
+    };
+    p4.log.info(`[dry-run] ${dryRunMessages[saveChoice]}`);
   } else if (saveChoice === "keychain") {
     if (await saveToCredentialStore(trimmedKey)) {
-      p2.log.success("Key saved to macOS Keychain \u2014 active now and automatically loaded next time.");
+      p4.log.success("Key saved to macOS Keychain \u2014 active now and automatically loaded next time.");
     } else {
-      p2.log.warn("Could not write to Keychain \u2014 key will be used for this session only");
+      p4.log.warn("Could not write to Keychain \u2014 key will be used for this session only");
     }
   } else if (saveChoice === "keychain-autoload") {
     if (await saveToCredentialStore(trimmedKey)) {
       try {
         const autoLoadLine = `export OPENCODE_API_KEY="$(security find-generic-password -s opencode-starter -a opencode-starter -w 2>/dev/null)"`;
-        const existing = existsSync2(path) ? readFileSync2(path, "utf8") : "";
+        const existing = existsSync3(path) ? readFileSync3(path, "utf8") : "";
         if (!existing.includes(autoLoadLine)) {
           appendFileSync2(path, `
 # opencode-starter: load API key from macOS Keychain
 ${autoLoadLine}
 `);
         }
-        p2.log.success(`Key saved to Keychain and auto-load added to ${display} \u2014 active now and in all future terminals.`);
+        p4.log.success(`Key saved to Keychain and auto-load added to ${display} \u2014 active now and in all future terminals.`);
       } catch {
-        p2.log.success("Key saved to Keychain \u2014 active now and automatically loaded next time.");
-        p2.log.warn(`Could not write auto-load line to ${display}`);
+        p4.log.success("Key saved to Keychain \u2014 active now and automatically loaded next time.");
+        p4.log.warn(`Could not write auto-load line to ${display}`);
       }
     } else {
-      p2.log.warn("Could not write to Keychain \u2014 key will be used for this session only");
+      p4.log.warn("Could not write to Keychain \u2014 key will be used for this session only");
     }
   } else if (saveChoice === "credential-manager") {
     if (await saveToCredentialStore(trimmedKey)) {
-      p2.log.success("Key saved to Windows Credential Manager \u2014 active now and automatically loaded next time.");
+      p4.log.success("Key saved to Windows Credential Manager \u2014 active now and automatically loaded next time.");
     } else {
-      p2.log.warn("Could not write to Credential Manager \u2014 key will be used for this session only");
+      p4.log.warn("Could not write to Credential Manager \u2014 key will be used for this session only");
     }
   } else if (saveChoice === "setx") {
     try {
       execSync2(`setx OPENCODE_API_KEY "${trimmedKey}"`, { stdio: ["pipe", "pipe", "pipe"] });
-      p2.log.success("Key saved as a user environment variable \u2014 active now and in all future terminals.");
+      p4.log.success("Key saved as a user environment variable \u2014 active now and in all future terminals.");
     } catch {
-      p2.log.warn("Could not run setx \u2014 key will be used for this session only");
+      p4.log.warn("Could not run setx \u2014 key will be used for this session only");
     }
   } else if (saveChoice === "secret-service") {
     if (await saveToCredentialStore(trimmedKey)) {
-      p2.log.success("Key saved to Secret Service \u2014 active now and automatically loaded next time.");
+      p4.log.success("Key saved to Secret Service \u2014 active now and automatically loaded next time.");
     } else {
-      p2.log.warn("Could not write to Secret Service \u2014 key will be used for this session only");
+      p4.log.warn("Could not write to Secret Service \u2014 key will be used for this session only");
     }
   } else if (saveChoice === "profile") {
     try {
-      if (!existsSync2(path)) appendFileSync2(path, "");
+      if (!existsSync3(path)) appendFileSync2(path, "");
       appendFileSync2(path, `
 export OPENCODE_API_KEY="${trimmedKey}"
 `);
-      p2.log.success(`Key saved to ${display} \u2014 active now and in all future terminals.`);
+      p4.log.success(`Key saved to ${display} \u2014 active now and in all future terminals.`);
     } catch {
-      p2.log.warn(`Could not write to ${display} \u2014 key will be used for this session only`);
+      p4.log.warn(`Could not write to ${display} \u2014 key will be used for this session only`);
     }
   }
   if (!simulate) process.env["OPENCODE_API_KEY"] = trimmedKey;
   return trimmedKey;
 }
-async function main() {
-  const { showHelp, showVersion, dryRun, setup, trace, claudeArgs } = parseArgs(process.argv.slice(2));
-  if (showHelp) {
-    printHelp();
-    return;
-  }
-  if (showVersion) {
-    console.log(VERSION);
-    return;
-  }
+async function runClaudeCommand(parsed) {
+  const { dryRun, setup, trace, claudeArgs } = parsed;
   const claudePath = findClaudeBinary();
   if (!claudePath) {
-    console.error(pc2.red("\nError: claude binary not found on PATH.\n"));
+    console.error(pc3.red("\nError: claude binary not found on PATH.\n"));
     console.error("Install Claude Code:");
     console.error("  npm install -g @anthropic-ai/claude-code\n");
-    process.exit(1);
+    return 1;
   }
   const apiKey = await resolveOrCollectApiKey(dryRun);
-  if (!apiKey && !dryRun) process.exit(0);
+  if (!apiKey && !dryRun) return 0;
   const effectiveKey = apiKey ?? "dry-run-placeholder";
   const prefs = dryRun ? {} : loadPreferences();
   const conflicts = detectConflicts();
   let tier = dryRun ? null : getSubscriptionTier();
   if (!tier || setup) {
     tier = await askSubscriptionTier();
-    if (!tier) process.exit(0);
+    if (!tier) return 0;
     if (!dryRun) setSubscriptionTier(tier);
   }
   const needsZen = tier === "free" || tier === "zen" || tier === "go" || tier === "both";
   const needsGo = tier === "go" || tier === "both";
-  const spinner2 = p2.spinner();
-  spinner2.start("Fetching available models...");
+  const spinner3 = p4.spinner();
+  spinner3.start("Fetching available models...");
   let zenModels = [];
   let goModels = [];
   try {
@@ -1280,14 +1808,14 @@ async function main() {
       if (!result.fromCache && !dryRun) setCachedModels("go", goModels);
     }
     const total = zenModels.length + goModels.length;
-    spinner2.stop(`Loaded ${total} models`);
+    spinner3.stop(`Loaded ${total} models`);
   } catch (err) {
-    spinner2.stop(pc2.red("Failed to load models"));
-    console.error(pc2.red(String(err instanceof Error ? err.message : err)));
-    process.exit(1);
+    spinner3.stop(pc3.red("Failed to load models"));
+    console.error(pc3.red(String(err instanceof Error ? err.message : err)));
+    return 1;
   }
   const selection = await runWizard(prefs, { zen: zenModels, go: goModels }, conflicts, tier);
-  if (!selection) process.exit(0);
+  if (!selection) return 0;
   if (!dryRun) savePreferences({ lastBackend: selection.backend.id, lastModel: selection.model.id });
   const disableExperimentalBetas = true;
   if (dryRun) {
@@ -1300,51 +1828,109 @@ async function main() {
       conflicts,
       disableExperimentalBetas
     );
-    return;
+    return 0;
   }
   let proxyHandle = null;
   if (selection.model.modelFormat === "openai") {
     try {
       proxyHandle = await startProxy(selection.backend.baseUrl, selection.model.id, trace);
-      p2.log.info(
-        `Translation proxy started on port ${proxyHandle.port} ` + pc2.dim(`(${selection.backend.baseUrl}/v1/chat/completions)`)
+      p4.log.info(
+        `Translation proxy started on port ${proxyHandle.port} ` + pc3.dim(`(${selection.backend.baseUrl}/v1/chat/completions)`)
       );
     } catch (err) {
-      p2.log.error(`Failed to start translation proxy: ${err instanceof Error ? err.message : String(err)}`);
-      process.exit(1);
+      p4.log.error(`Failed to start translation proxy: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
     }
   }
   const childEnv = buildChildEnv(selection.backend, selection.model.id, effectiveKey, proxyHandle?.port);
   childEnv["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] = "1";
-  const debugLogPath = join3(tmpdir(), "opencode-starter-debug.log");
+  const debugLogPath = join4(tmpdir(), "opencode-starter-debug.log");
   const traceArgs = trace ? ["--debug-file", debugLogPath] : [];
   if (trace) {
-    p2.log.info(`Debug log: ${debugLogPath}`);
+    p4.log.info(`Debug log: ${debugLogPath}`);
   }
   const exitCode = await launchClaude(childEnv, selection.model.id, [...traceArgs, ...claudeArgs]);
   if (proxyHandle) {
     proxyHandle.close();
   }
-  if (trace && existsSync2(debugLogPath)) {
-    const log3 = readFileSync2(debugLogPath, "utf8");
-    const errorLines = log3.split("\n").filter(
+  if (trace && existsSync3(debugLogPath)) {
+    const log4 = readFileSync3(debugLogPath, "utf8");
+    const errorLines = log4.split("\n").filter(
       (l) => l.includes("error") || l.includes("Error") || l.includes('"type":"error"') || l.includes("status")
     );
-    console.log("\n" + pc2.bold(pc2.cyan("\u2500\u2500 Debug trace \u2500\u2500")));
+    console.log("\n" + pc3.bold(pc3.cyan("\u2500\u2500 Debug trace \u2500\u2500")));
     if (errorLines.length > 0) {
-      errorLines.slice(0, 30).forEach((l) => console.log(pc2.dim(l)));
+      errorLines.slice(0, 30).forEach((l) => console.log(pc3.dim(l)));
     } else {
-      console.log(pc2.dim("(no errors found in debug log)"));
+      console.log(pc3.dim("(no errors found in debug log)"));
     }
-    console.log(pc2.dim(`Full log: ${debugLogPath}`));
+    console.log(pc3.dim(`Full log: ${debugLogPath}`));
   }
-  process.exit(exitCode);
+  return exitCode;
 }
-main().catch((err) => {
-  if (err === /* @__PURE__ */ Symbol.for("clack:cancel")) {
-    process.exit(0);
+async function main(args = process.argv.slice(2)) {
+  const parsed = parseArgs(args);
+  if (parsed.error) {
+    console.error(pc3.red(`
+Error: ${parsed.error}
+`));
+    printHelp(rootHelpText());
+    return 1;
   }
-  console.error(pc2.red("\nUnexpected error:"), err);
-  process.exit(1);
-});
+  if (parsed.command === "root") {
+    if (parsed.showVersion) {
+      console.log(VERSION);
+    } else {
+      printHelp(rootHelpText());
+    }
+    return 0;
+  }
+  if (parsed.command === "server") {
+    if (parsed.showVersion) {
+      console.log(VERSION);
+      return 0;
+    }
+    if (parsed.showHelp) {
+      printHelp(serverHelpText());
+      return 0;
+    }
+    return runServerCommand();
+  }
+  if (parsed.showVersion) {
+    console.log(VERSION);
+    return 0;
+  }
+  if (parsed.showHelp) {
+    printHelp(claudeHelpText());
+    return 0;
+  }
+  return runClaudeCommand(parsed);
+}
+function isCliEntryPoint() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+}
+if (isCliEntryPoint()) {
+  main().then((exitCode) => {
+    process.exit(exitCode);
+  }).catch((err) => {
+    if (err === /* @__PURE__ */ Symbol.for("clack:cancel")) {
+      process.exit(0);
+    }
+    console.error(pc3.red("\nUnexpected error:"), err);
+    process.exit(1);
+  });
+}
+export {
+  claudeHelpText,
+  main,
+  parseArgs,
+  rootHelpText,
+  runClaudeCommand,
+  serverHelpText
+};
 //# sourceMappingURL=cli.js.map

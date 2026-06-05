@@ -1,69 +1,165 @@
 // src/cli.ts
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
-import { appendFileSync, readFileSync, existsSync } from 'node:fs';
+import { appendFileSync, readFileSync, existsSync, realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import { findClaudeBinary, launchClaude } from './launch.js';
 import { resolveApiKey, detectConflicts, buildChildEnv } from './env.js';
 import { getModels } from './models.js';
 import { startProxy } from './proxy.js';
 import type { ProxyHandle } from './proxy.js';
+import { runServerCommand } from './server/index.js';
 import type { ModelFormat } from './types.js';
 import { loadPreferences, savePreferences, getCachedModels, setCachedModels, getSubscriptionTier, setSubscriptionTier } from './config.js';
 import { runWizard, askSubscriptionTier } from './prompts.js';
 import { BACKENDS, VERSION } from './constants.js';
 import type { ParsedArgs, ModelInfo } from './types.js';
 
-function parseArgs(args: string[]): ParsedArgs {
-  if (args.includes('--help') || args.includes('-h')) {
-    return { showHelp: true, showVersion: false, dryRun: false, setup: false, trace: false, claudeArgs: [] };
-  }
-  if (args.includes('--version') || args.includes('-v')) {
-    return { showVersion: true, showHelp: false, dryRun: false, setup: false, trace: false, claudeArgs: [] };
-  }
-  const dryRun = args.includes('--dry-run');
-  const setup = args.includes('--setup');
-  const trace = args.includes('--trace');
-  const filteredArgs = args.filter(a => a !== '--dry-run' && a !== '--setup' && a !== '--trace');
-  const sep = filteredArgs.indexOf('--');
+const STARTER_CLAUDE_FLAGS = new Set(['--dry-run', '--setup', '--trace', '--help', '-h', '--version', '-v']);
+
+function emptyParsed(command: ParsedArgs['command']): ParsedArgs {
   return {
+    command,
     showHelp: false,
     showVersion: false,
-    dryRun,
-    setup,
-    trace,
-    claudeArgs: sep >= 0 ? filteredArgs.slice(sep + 1) : [],
+    dryRun: false,
+    setup: false,
+    trace: false,
+    claudeArgs: [],
   };
 }
 
-function printHelp(): void {
-  console.log(`
-${pc.bold('opencode-starter')} v${VERSION}
-Launch Claude Code with OpenCode Zen or Go as the Anthropic API backend.
+export function parseArgs(args: string[]): ParsedArgs {
+  if (args.length === 0) return { ...emptyParsed('root'), showHelp: true };
+
+  const [first, ...rest] = args;
+
+  if (first === '--help' || first === '-h') {
+    return { ...emptyParsed('root'), showHelp: true };
+  }
+  if (first === '--version' || first === '-v') {
+    return { ...emptyParsed('root'), showVersion: true };
+  }
+
+  if (first === 'server') {
+    const parsed = emptyParsed('server');
+    for (const arg of rest) {
+      if (arg === '--help' || arg === '-h') parsed.showHelp = true;
+      else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
+      else if (!parsed.error) parsed.error = `Unknown server option: ${arg}`;
+    }
+    return parsed;
+  }
+
+  if (first !== 'claude') {
+    return {
+      ...emptyParsed('root'),
+      error: first.startsWith('-') ? `Unknown root option: ${first}` : `Unknown command: ${first}`,
+    };
+  }
+
+  const parsed = emptyParsed('claude');
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i]!;
+    if (arg === '--') {
+      parsed.claudeArgs.push(...rest.slice(i + 1));
+      break;
+    }
+
+    if (!STARTER_CLAUDE_FLAGS.has(arg)) {
+      parsed.claudeArgs.push(arg);
+      continue;
+    }
+
+    if (arg === '--dry-run') parsed.dryRun = true;
+    if (arg === '--setup') parsed.setup = true;
+    if (arg === '--trace') parsed.trace = true;
+    if (arg === '--help' || arg === '-h') parsed.showHelp = true;
+    if (arg === '--version' || arg === '-v') parsed.showVersion = true;
+  }
+
+  return parsed;
+}
+
+export function rootHelpText(): string {
+  return `${pc.bold('opencode-starter')} v${VERSION}
+Launch supported coding tools with OpenCode Zen or Go as the API backend.
 
 ${pc.bold('Usage:')}
-  opencode-starter [--dry-run] [--setup] [-- <claude-flags>]
+  opencode-starter claude [starter-options] [claude-flags]
+  opencode-starter server
   opencode-starter --help
   opencode-starter --version
 
-${pc.bold('Flags:')}
+${pc.bold('Commands:')}
+  claude      Launch Claude Code through OpenCode Starter
+  server      Run a foreground OpenCode Starter API gateway
+  codex       planned
+
+${pc.bold('Migration:')}
+  Bare opencode-starter now prints this help instead of launching Claude Code.
+  Use opencode-starter claude to run the existing Claude Code wizard and launcher.
+
+${pc.bold('Examples:')}
+  opencode-starter claude
+  opencode-starter claude -c
+  opencode-starter claude --resume abc-123
+  opencode-starter claude -- --print "hello"`;
+}
+
+export function claudeHelpText(): string {
+  return `${pc.bold('opencode-starter claude')} v${VERSION}
+Launch Claude Code with OpenCode Zen or Go as the Anthropic API backend.
+
+${pc.bold('Usage:')}
+  opencode-starter claude [starter-options] [claude-flags]
+  opencode-starter claude --help
+  opencode-starter claude --version
+
+${pc.bold('Starter options:')}
   --dry-run    Run the wizard but show a preview instead of launching Claude Code
   --setup      Re-configure your subscription tier
   --trace      Write Claude Code debug logs to /tmp/opencode-starter-debug.log and show errors on exit
+  --help       Show this command help
+  --version    Show version
 
 ${pc.bold('Setup:')}
   Get your API key at https://opencode.ai/settings/keys
   Then run: export OPENCODE_API_KEY="your-key"
 
 ${pc.bold('Examples:')}
-  opencode-starter
-  opencode-starter --dry-run
-  opencode-starter --setup
-  opencode-starter -- --print "hello"
-  opencode-starter -- --dangerously-skip-permissions
-`);
+  opencode-starter claude
+  opencode-starter claude -c
+  opencode-starter claude --resume abc-123
+  opencode-starter claude abc-123
+  opencode-starter claude --dry-run -c
+  opencode-starter claude --setup
+  opencode-starter claude --trace --resume abc-123
+  opencode-starter claude -- --print "hello"
+  opencode-starter claude -- --dangerously-skip-permissions`;
+}
+
+export function serverHelpText(): string {
+  return `${pc.bold('opencode-starter server')} v${VERSION}
+Run a foreground OpenCode Starter API gateway.
+
+${pc.bold('Usage:')}
+  opencode-starter server
+  opencode-starter server --help
+  opencode-starter server --version
+
+${pc.bold('Behavior:')}
+  Prompts for local-only or network listen mode.
+  Network mode asks for a server password.
+  Server password is saved only if the user chooses to save it.
+  Server host and port are not saved.`;
+}
+
+function printHelp(text: string): void {
+  console.log(`\n${text}\n`);
 }
 
 function printDryRun(
@@ -288,21 +384,16 @@ async function resolveOrCollectApiKey(simulate = false): Promise<string | null> 
   if (p.isCancel(saveChoice)) { p.cancel('Cancelled.'); return null; }
 
   if (simulate) {
-    if (saveChoice === 'keychain') {
-      p.log.info('[dry-run] Would save key to macOS Keychain');
-    } else if (saveChoice === 'keychain-autoload') {
-      p.log.info(`[dry-run] Would save key to macOS Keychain and add auto-load to ${display}`);
-    } else if (saveChoice === 'credential-manager') {
-      p.log.info('[dry-run] Would save key to Windows Credential Manager');
-    } else if (saveChoice === 'setx') {
-      p.log.info('[dry-run] Would run: setx OPENCODE_API_KEY ***');
-    } else if (saveChoice === 'secret-service') {
-      p.log.info('[dry-run] Would save key to Secret Service (GNOME Keyring / KWallet)');
-    } else if (saveChoice === 'profile') {
-      p.log.info(`[dry-run] Would append OPENCODE_API_KEY export to ${display}`);
-    } else {
-      p.log.info('[dry-run] Would use key for this session only');
-    }
+    const dryRunMessages: Record<SaveChoice, string> = {
+      keychain:            'Would save key to macOS Keychain',
+      'keychain-autoload': `Would save key to macOS Keychain and add auto-load to ${display}`,
+      'credential-manager': 'Would save key to Windows Credential Manager',
+      setx:                'Would run: setx OPENCODE_API_KEY ***',
+      'secret-service':    'Would save key to Secret Service (GNOME Keyring / KWallet)',
+      profile:             `Would append OPENCODE_API_KEY export to ${display}`,
+      session:             'Would use key for this session only',
+    };
+    p.log.info(`[dry-run] ${dryRunMessages[saveChoice]}`);
   } else if (saveChoice === 'keychain') {
     if (await saveToCredentialStore(trimmedKey)) {
       p.log.success('Key saved to macOS Keychain — active now and automatically loaded next time.');
@@ -358,11 +449,8 @@ async function resolveOrCollectApiKey(simulate = false): Promise<string | null> 
   return trimmedKey;
 }
 
-async function main(): Promise<void> {
-  const { showHelp, showVersion, dryRun, setup, trace, claudeArgs } = parseArgs(process.argv.slice(2));
-
-  if (showHelp) { printHelp(); return; }
-  if (showVersion) { console.log(VERSION); return; }
+export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
+  const { dryRun, setup, trace, claudeArgs } = parsed;
 
   // Prerequisite: claude binary
   const claudePath = findClaudeBinary();
@@ -370,13 +458,13 @@ async function main(): Promise<void> {
     console.error(pc.red('\nError: claude binary not found on PATH.\n'));
     console.error('Install Claude Code:');
     console.error('  npm install -g @anthropic-ai/claude-code\n');
-    process.exit(1);
+    return 1;
   }
 
   // In dry-run: simulate a fresh first-run by ignoring all saved state.
   // Nothing is read from env/Keychain/prefs, nothing is written back.
   const apiKey = await resolveOrCollectApiKey(dryRun);
-  if (!apiKey && !dryRun) process.exit(0);
+  if (!apiKey && !dryRun) return 0;
   const effectiveKey = apiKey ?? 'dry-run-placeholder';
 
   const prefs = dryRun ? {} as ReturnType<typeof loadPreferences> : loadPreferences();
@@ -386,7 +474,7 @@ async function main(): Promise<void> {
   let tier = dryRun ? null : getSubscriptionTier();
   if (!tier || setup) {
     tier = await askSubscriptionTier();
-    if (!tier) process.exit(0);
+    if (!tier) return 0;
     if (!dryRun) setSubscriptionTier(tier);  // don't persist in dry-run
   }
 
@@ -418,12 +506,12 @@ async function main(): Promise<void> {
   } catch (err) {
     spinner.stop(pc.red('Failed to load models'));
     console.error(pc.red(String(err instanceof Error ? err.message : err)));
-    process.exit(1);
+    return 1;
   }
 
   // Run interactive wizard
   const selection = await runWizard(prefs, { zen: zenModels, go: goModels }, conflicts, tier);
-  if (!selection) process.exit(0);
+  if (!selection) return 0;
 
   // Persist choices for next run (skipped in dry-run)
   if (!dryRun) savePreferences({ lastBackend: selection.backend.id, lastModel: selection.model.id });
@@ -442,7 +530,7 @@ async function main(): Promise<void> {
       conflicts,
       disableExperimentalBetas,
     );
-    return;
+    return 0;
   }
 
   // Start translation proxy for models that use OpenAI chat completions format
@@ -456,7 +544,7 @@ async function main(): Promise<void> {
       );
     } catch (err) {
       p.log.error(`Failed to start translation proxy: ${err instanceof Error ? err.message : String(err)}`);
-      process.exit(1);
+      return 1;
     }
   }
 
@@ -491,13 +579,68 @@ async function main(): Promise<void> {
     console.log(pc.dim(`Full log: ${debugLogPath}`));
   }
 
-  process.exit(exitCode);
+  return exitCode;
 }
 
-main().catch((err: unknown) => {
-  if (err === Symbol.for('clack:cancel')) {
-    process.exit(0);
+export async function main(args: string[] = process.argv.slice(2)): Promise<number> {
+  const parsed = parseArgs(args);
+
+  if (parsed.error) {
+    console.error(pc.red(`\nError: ${parsed.error}\n`));
+    printHelp(rootHelpText());
+    return 1;
   }
-  console.error(pc.red('\nUnexpected error:'), err);
-  process.exit(1);
-});
+
+  if (parsed.command === 'root') {
+    if (parsed.showVersion) {
+      console.log(VERSION);
+    } else {
+      printHelp(rootHelpText());
+    }
+    return 0;
+  }
+
+  if (parsed.command === 'server') {
+    if (parsed.showVersion) {
+      console.log(VERSION);
+      return 0;
+    }
+    if (parsed.showHelp) {
+      printHelp(serverHelpText());
+      return 0;
+    }
+    return runServerCommand();
+  }
+
+  if (parsed.showVersion) {
+    console.log(VERSION);
+    return 0;
+  }
+  if (parsed.showHelp) {
+    printHelp(claudeHelpText());
+    return 0;
+  }
+
+  return runClaudeCommand(parsed);
+}
+
+function isCliEntryPoint(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+}
+
+if (isCliEntryPoint()) {
+  main().then((exitCode) => {
+    process.exit(exitCode);
+  }).catch((err: unknown) => {
+    if (err === Symbol.for('clack:cancel')) {
+      process.exit(0);
+    }
+    console.error(pc.red('\nUnexpected error:'), err);
+    process.exit(1);
+  });
+}

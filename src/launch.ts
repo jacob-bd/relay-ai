@@ -37,6 +37,10 @@ export function findClaudeBinary(): string | null {
   return null;
 }
 
+export function buildClaudeArgs(model: string, extraArgs: string[]): string[] {
+  return ['--model', model, ...extraArgs];
+}
+
 export function launchClaude(
   env: NodeJS.ProcessEnv,
   model: string,
@@ -44,7 +48,7 @@ export function launchClaude(
 ): Promise<number> {
   return new Promise((resolve) => {
     const claudePath = findClaudeBinary()!;
-    const args = ['--model', model, ...extraArgs];
+    const args = buildClaudeArgs(model, extraArgs);
 
     const child = spawn(claudePath, args, {
       stdio: 'inherit',

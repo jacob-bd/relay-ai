@@ -18,10 +18,11 @@ opencode-starter is an interactive CLI wizard that configures and launches AI co
 
 ## Supported tools
 
-| Tool | Status |
-|------|--------|
-| Claude Code | ✅ Supported |
-| Codex | 🔜 Planned |
+| Tool | Command | Status |
+|------|---------|--------|
+| Claude Code | `opencode-starter claude` | ✅ Supported |
+| API server | `opencode-starter server` | ✅ Supported |
+| Codex | `opencode-starter codex` | 🔜 Planned |
 
 ## Prerequisites
 
@@ -53,10 +54,12 @@ The key is always active immediately in the current session regardless of which 
 ## Usage
 
 ```bash
-opencode-starter
+opencode-starter claude
 ```
 
 On first run, the wizard asks about your OpenCode subscription so it can show the right models. This is saved and skipped on subsequent runs.
+
+Bare `opencode-starter` now prints help and migration guidance. It no longer launches Claude Code. Use `opencode-starter claude` for the Claude Code wizard and launcher.
 
 ### Flags
 
@@ -64,15 +67,65 @@ On first run, the wizard asks about your OpenCode subscription so it can show th
 |------|-------------|
 | `--dry-run` | Run the full wizard but preview the launch command instead of executing |
 | `--setup` | Re-configure your subscription tier |
+| `--trace` | Write Claude Code debug logs to `/tmp/opencode-starter-debug.log` and show errors on exit |
 | `--help` | Show usage |
 | `--version` | Show version |
 
-Pass extra flags to the underlying tool after `--`:
+Starter flags go after the `claude` command:
 
 ```bash
-opencode-starter -- --print "hello"
-opencode-starter -- --dangerously-skip-permissions
-opencode-starter --dry-run -- --print "test"
+opencode-starter claude --dry-run
+opencode-starter claude --setup
+opencode-starter claude --trace
+```
+
+Claude Code flags and session IDs pass through unchanged:
+
+```bash
+opencode-starter claude -c
+opencode-starter claude --resume abc-123
+opencode-starter claude abc-123
+```
+
+Use `--` when you want every following token passed directly to Claude Code:
+
+```bash
+opencode-starter claude -- --print "hello"
+opencode-starter claude -- --dangerously-skip-permissions
+opencode-starter claude --dry-run -- --print "test"
+```
+
+## Server mode
+
+Run OpenCode Starter as a foreground API gateway:
+
+```bash
+opencode-starter server
+```
+
+The server asks whether to listen locally or on the network.
+
+Local mode binds to `127.0.0.1`:
+
+```bash
+export ANTHROPIC_BASE_URL="http://127.0.0.1:17645/anthropic"
+export ANTHROPIC_API_KEY="anything"
+```
+
+Network mode binds to `0.0.0.0` and asks for a server password:
+
+```bash
+export ANTHROPIC_BASE_URL="http://<server-ip>:17645/anthropic"
+export ANTHROPIC_API_KEY="<server-password>"
+```
+
+By default, the server password is kept in memory only. If you choose to save it, OpenCode Starter stores it in `~/.opencode-starter/config.json`.
+
+The server also exposes OpenAI-compatible endpoints for OpenAI-format models:
+
+```bash
+export OPENAI_BASE_URL="http://127.0.0.1:17645/openai/v1"
+export OPENAI_API_KEY="anything"
 ```
 
 ## How it works
@@ -88,7 +141,7 @@ On first run, opencode-starter asks what you have access to:
 | Go subscription | Zen + Go | All Go models + Zen free models |
 | Both | Zen + Go | All models on both backends |
 
-Run `opencode-starter --setup` at any time to change your tier.
+Run `opencode-starter claude --setup` at any time to change your tier.
 
 ### Environment isolation
 
@@ -129,7 +182,13 @@ If the native module fails to load on an unsupported platform, the credential st
 
 ### Preference persistence
 
-Your last backend and model selection are saved to `~/.config/opencode-starter/config.json` and pre-selected as defaults on the next run.
+Your last backend, model selection, subscription tier, model cache, and optional saved server password are saved to:
+
+```text
+~/.opencode-starter/config.json
+```
+
+The OpenCode API key is handled separately by the key storage option you choose during setup.
 
 ## Contributing
 
