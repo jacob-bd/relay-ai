@@ -31,24 +31,6 @@ opencode-starter is an interactive CLI wizard that configures and launches AI co
 
 ## Installation
 
-### From GitHub (recommended while in private beta)
-
-```bash
-npm install -g github:jacob-bd/opencode-starter
-```
-
-Or clone and link locally:
-
-```bash
-git clone https://github.com/jacob-bd/opencode-starter.git
-cd opencode-starter
-npm install
-npm run build
-npm link
-```
-
-### From npm (coming soon)
-
 ```bash
 npm install -g opencode-starter
 ```
