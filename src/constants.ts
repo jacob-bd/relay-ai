@@ -46,11 +46,25 @@ export const OPENCODE_CACHE_PATH = join(homedir(), '.cache', 'opencode', 'models
 export const MODELS_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 // Models confirmed broken on OpenCode — hidden until fixed upstream.
-// qwen3.6-plus-free: free promotion ended (401)
-// deepseek-v4-flash-free: tool translation bug — missing `name` field (400)
+// Tested 2026-06-05 against /v1/messages with Anthropic message format.
+// 401 = promotion ended. 400 = translation layer rejects Anthropic format.
 export const BLOCKED_MODELS = new Set([
-  'qwen3.6-plus-free',
-  'deepseek-v4-flash-free',
+  // Zen free
+  'qwen3.6-plus-free',       // 401 — free promotion ended
+  'deepseek-v4-flash-free',  // 400 — DeepSeek rejects Anthropic message format
+  'mimo-v2.5-free',          // 400 — rejects Anthropic message format
+  'nemotron-3-super-free',   // 400 — rejects Anthropic message format
+  'nemotron-3-ultra-free',   // 400 — rejects Anthropic message format
+  // Go
+  'kimi-k2.6',               // 400 — rejects Anthropic message format
+  'kimi-k2.5',               // 400 — rejects Anthropic message format
+  'deepseek-v4-pro',         // 400 — DeepSeek rejects Anthropic message format
+  'deepseek-v4-flash',       // 400 — DeepSeek rejects Anthropic message format
+  'mimo-v2-pro',             // 400 — rejects Anthropic message format
+  'mimo-v2-omni',            // 400 — rejects Anthropic message format
+  'mimo-v2.5-pro',           // 400 — rejects Anthropic message format
+  'mimo-v2.5',               // 400 — rejects Anthropic message format
+  'hy3-preview',             // 400 — rejects Anthropic message format
 ]);
 
 export const VERSION = '0.1.0';

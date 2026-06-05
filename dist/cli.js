@@ -97,8 +97,36 @@ var CONFLICTING_ENV_VARS = [
 var OPENCODE_CACHE_PATH = join2(homedir2(), ".cache", "opencode", "models.json");
 var MODELS_CACHE_TTL_MS = 60 * 60 * 1e3;
 var BLOCKED_MODELS = /* @__PURE__ */ new Set([
+  // Zen free
   "qwen3.6-plus-free",
-  "deepseek-v4-flash-free"
+  // 401 — free promotion ended
+  "deepseek-v4-flash-free",
+  // 400 — DeepSeek rejects Anthropic message format
+  "mimo-v2.5-free",
+  // 400 — rejects Anthropic message format
+  "nemotron-3-super-free",
+  // 400 — rejects Anthropic message format
+  "nemotron-3-ultra-free",
+  // 400 — rejects Anthropic message format
+  // Go
+  "kimi-k2.6",
+  // 400 — rejects Anthropic message format
+  "kimi-k2.5",
+  // 400 — rejects Anthropic message format
+  "deepseek-v4-pro",
+  // 400 — DeepSeek rejects Anthropic message format
+  "deepseek-v4-flash",
+  // 400 — DeepSeek rejects Anthropic message format
+  "mimo-v2-pro",
+  // 400 — rejects Anthropic message format
+  "mimo-v2-omni",
+  // 400 — rejects Anthropic message format
+  "mimo-v2.5-pro",
+  // 400 — rejects Anthropic message format
+  "mimo-v2.5",
+  // 400 — rejects Anthropic message format
+  "hy3-preview"
+  // 400 — rejects Anthropic message format
 ]);
 var VERSION = "0.1.0";
 
