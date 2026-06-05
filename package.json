@@ -2,6 +2,21 @@
   "name": "opencode-starter",
   "version": "0.1.0",
   "description": "Launch Claude Code with OpenCode Zen or Go as the Anthropic API backend",
+  "author": "jacob-bd",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jacob-bd/opencode-starter.git"
+  },
+  "homepage": "https://github.com/jacob-bd/opencode-starter#readme",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "opencode",
+    "ai",
+    "llm",
+    "cli"
+  ],
   "type": "module",
   "bin": {
     "opencode-starter": "./dist/cli.js"
