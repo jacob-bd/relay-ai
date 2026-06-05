@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jacob-bd/opencode-starter.git"
+    "url": "git+https://github.com/jacob-bd/opencode-starter.git"
   },
   "homepage": "https://github.com/jacob-bd/opencode-starter#readme",
   "keywords": [
@@ -19,7 +19,7 @@
   ],
   "type": "module",
   "bin": {
-    "opencode-starter": "./dist/cli.js"
+    "opencode-starter": "dist/cli.js"
   },
   "engines": {
     "node": ">=18"
