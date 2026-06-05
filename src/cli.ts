@@ -136,15 +136,24 @@ function saveToKeychain(key: string): boolean {
   }
 }
 
-async function resolveOrCollectApiKey(): Promise<string | null> {
-  // Step 1: already in environment
-  const existing = resolveApiKey();
-  if (existing) return existing;
+async function resolveOrCollectApiKey(simulate = false): Promise<string | null> {
+  // Step 1: already in environment (skipped in simulate/dry-run mode)
+  if (!simulate) {
+    const existing = resolveApiKey();
+    if (existing) return existing;
+  }
 
   const isMac = process.platform === 'darwin';
 
-  // Step 2: on macOS, offer to check Keychain before asking for a paste
-  if (isMac) {
+  if (simulate) {
+    p.note(
+      'Running in dry-run mode — no keys will be read from or written to your system.',
+      'Simulating first-run onboarding',
+    );
+  }
+
+  // Step 2: on macOS, offer to check Keychain before asking for a paste (skipped in simulate mode)
+  if (isMac && !simulate) {
     const checkKeychain = await p.confirm({
       message: 'OPENCODE_API_KEY not found. Check macOS Keychain for a stored key?',
       initialValue: true,
@@ -198,10 +207,17 @@ async function resolveOrCollectApiKey(): Promise<string | null> {
 
   if (p.isCancel(saveChoice)) { p.cancel('Cancelled.'); return null; }
 
-  if (saveChoice === 'keychain') {
+  if (simulate) {
+    // Dry-run: show what would happen but don't actually write anywhere
+    if (saveChoice === 'keychain') {
+      p.log.info(`[dry-run] Would save key to macOS Keychain and add auto-load to ${display}`);
+    } else if (saveChoice === 'profile') {
+      p.log.info(`[dry-run] Would append OPENCODE_API_KEY export to ${display}`);
+    } else {
+      p.log.info('[dry-run] Would use key for this session only');
+    }
+  } else if (saveChoice === 'keychain') {
     if (saveToKeychain(trimmedKey)) {
-      // Also wire up auto-load from Keychain in the shell profile so future
-      // sessions find the key in $OPENCODE_API_KEY automatically (step 1).
       try {
         appendFileSync(
           path,
@@ -225,9 +241,8 @@ async function resolveOrCollectApiKey(): Promise<string | null> {
       p.log.warn(`Could not write to ${display} — key will be used for this session only`);
     }
   }
-  // 'session' — no persistence, just use for this run
 
-  process.env['OPENCODE_API_KEY'] = trimmedKey;
+  if (!simulate) process.env['OPENCODE_API_KEY'] = trimmedKey;
   return trimmedKey;
 }
 
@@ -246,19 +261,21 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Prerequisite: API key — prompt interactively if not set
-  const apiKey = await resolveOrCollectApiKey();
-  if (!apiKey) process.exit(0);
+  // In dry-run: simulate a fresh first-run by ignoring all saved state.
+  // Nothing is read from env/Keychain/prefs, nothing is written back.
+  const apiKey = await resolveOrCollectApiKey(dryRun);
+  if (!apiKey && !dryRun) process.exit(0);
+  const effectiveKey = apiKey ?? 'dry-run-placeholder';
 
-  const prefs = loadPreferences();
+  const prefs = dryRun ? {} as ReturnType<typeof loadPreferences> : loadPreferences();
   const conflicts = detectConflicts();
 
-  // Subscription tier: ask once, save to prefs. Re-ask if --setup.
-  let tier = getSubscriptionTier();
+  // Subscription tier: ignored in dry-run so the user sees the question fresh
+  let tier = dryRun ? null : getSubscriptionTier();
   if (!tier || setup) {
     tier = await askSubscriptionTier();
     if (!tier) process.exit(0);
-    setSubscriptionTier(tier);
+    if (!dryRun) setSubscriptionTier(tier);  // don't persist in dry-run
   }
 
   // Determine which backends to pre-fetch based on tier
@@ -276,13 +293,13 @@ async function main(): Promise<void> {
       const cachedZen = getCachedModels('zen') ?? undefined;
       const result = await getModels(BACKENDS.zen, cachedZen);
       zenModels = result.models;
-      if (!result.fromCache) setCachedModels('zen', zenModels);
+      if (!result.fromCache && !dryRun) setCachedModels('zen', zenModels);
     }
     if (needsGo) {
       const cachedGo = getCachedModels('go') ?? undefined;
       const result = await getModels(BACKENDS.go, cachedGo);
       goModels = result.models;
-      if (!result.fromCache) setCachedModels('go', goModels);
+      if (!result.fromCache && !dryRun) setCachedModels('go', goModels);
     }
     const total = zenModels.length + goModels.length;
     spinner.stop(`Loaded ${total} models`);
@@ -296,8 +313,8 @@ async function main(): Promise<void> {
   const selection = await runWizard(prefs, { zen: zenModels, go: goModels }, conflicts, tier);
   if (!selection) process.exit(0);
 
-  // Persist choices for next run
-  savePreferences({ lastBackend: selection.backend.id, lastModel: selection.model.id });
+  // Persist choices for next run (skipped in dry-run)
+  if (!dryRun) savePreferences({ lastBackend: selection.backend.id, lastModel: selection.model.id });
 
   // Always disable experimental betas — OpenCode Zen/Go is a proxy and may not
   // support all Anthropic-specific beta headers even for Anthropic-native models.
@@ -315,7 +332,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const childEnv = buildChildEnv(selection.backend, selection.model.id, apiKey);
+  const childEnv = buildChildEnv(selection.backend, selection.model.id, effectiveKey);
   childEnv['CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS'] = '1';
 
   // --trace: write Claude Code debug logs so we can see the actual API error
