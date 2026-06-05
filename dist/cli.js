@@ -1527,7 +1527,7 @@ ${pc3.bold("Starter options:")}
   --version    Show version
 
 ${pc3.bold("Setup:")}
-  Get your API key at https://opencode.ai/settings/keys
+  Get your API key at https://opencode.ai/auth
   Then run: export OPENCODE_API_KEY="your-key"
 
 ${pc3.bold("Examples:")}
@@ -1633,7 +1633,7 @@ async function resolveOrCollectApiKey(simulate = false) {
       return storedKey;
     }
   }
-  p4.note("Get your free key at: https://opencode.ai/settings/keys", "OpenCode API key");
+  p4.note("Get your free key at: https://opencode.ai/auth", "OpenCode API key");
   const key = await p4.password({
     message: "Paste your OPENCODE_API_KEY:",
     validate: (val) => val.trim() ? void 0 : "Key cannot be empty"

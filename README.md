@@ -28,7 +28,7 @@ opencode-starter is an interactive CLI wizard that configures and launches AI co
 
 - Node.js 18+
 - One of the supported AI coding tools installed (e.g. [Claude Code](https://www.npmjs.com/package/@anthropic-ai/claude-code))
-- An [OpenCode API key](https://opencode.ai/settings/keys)
+- An [OpenCode API key](https://opencode.ai/auth)
 
 ## Installation
 
@@ -42,7 +42,7 @@ npm update -g opencode-starter
 
 ## Setup
 
-Get your API key at [opencode.ai/settings/keys](https://opencode.ai/settings/keys).
+Get your API key at [opencode.ai/auth](https://opencode.ai/auth).
 
 On first run, `opencode-starter` will prompt you for the key and ask where to save it. Options vary by OS:
 

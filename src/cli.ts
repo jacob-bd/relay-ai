@@ -127,7 +127,7 @@ ${pc.bold('Starter options:')}
   --version    Show version
 
 ${pc.bold('Setup:')}
-  Get your API key at https://opencode.ai/settings/keys
+  Get your API key at https://opencode.ai/auth
   Then run: export OPENCODE_API_KEY="your-key"
 
 ${pc.bold('Examples:')}
@@ -257,7 +257,7 @@ async function resolveOrCollectApiKey(simulate = false): Promise<string | null> 
   }
 
   // Step 3: prompt for the key (masked — shows asterisks, not the actual key)
-  p.note('Get your free key at: https://opencode.ai/settings/keys', 'OpenCode API key');
+  p.note('Get your free key at: https://opencode.ai/auth', 'OpenCode API key');
 
   const key = await p.password({
     message: 'Paste your OPENCODE_API_KEY:',
