@@ -4,6 +4,8 @@
 
 opencode-starter is an interactive CLI wizard that configures and launches AI coding tools — starting with Claude Code — using OpenCode Zen or Go as the API backend. Built to be extensible: future tools (Codex, Aider, and others) will be added over time.
 
+[![Watch the demo on YouTube](https://img.youtube.com/vi/kyeqlyF4WCQ/maxresdefault.jpg)](https://www.youtube.com/watch?v=kyeqlyF4WCQ)
+
 ## Features
 
 - **Backend selector** — choose OpenCode Zen (free tier + subscription) or OpenCode Go (subscription)
