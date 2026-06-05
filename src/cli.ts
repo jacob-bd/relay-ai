@@ -190,12 +190,24 @@ async function resolveOrCollectApiKey(simulate = false): Promise<string | null> 
 
   const saveOptions: Array<{ value: SaveChoice; label: string; hint: string }> = isMac
     ? [
-        { value: 'keychain', label: 'macOS Keychain', hint: `Encrypted — also adds auto-load line to ${display}` },
-        { value: 'profile',  label: display,           hint: 'Plaintext in your shell profile' },
-        { value: 'session',  label: 'This session only', hint: "Not saved — you'll be asked again next time" },
+        {
+          value: 'keychain',
+          label: `Keychain + ${display} auto-load`,
+          hint: 'Key stored encrypted in Keychain; shell reads it at startup via ~/.zshrc',
+        },
+        {
+          value: 'profile',
+          label: `${display} only (plaintext)`,
+          hint: 'Key written directly to your shell profile — simpler but less secure',
+        },
+        {
+          value: 'session',
+          label: 'This session only',
+          hint: "Not saved anywhere — you'll be asked again next time",
+        },
       ]
     : [
-        { value: 'profile',  label: display,           hint: 'Saved to your shell profile' },
+        { value: 'profile',  label: display,             hint: 'Saved to your shell profile' },
         { value: 'session',  label: 'This session only', hint: "Not saved — you'll be asked again next time" },
       ];
 

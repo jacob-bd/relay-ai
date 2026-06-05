@@ -56,6 +56,11 @@ describe('resolveApiKey', () => {
     expect(resolveApiKey()).toBeNull();
   });
 
+  it('returns null when OPENCODE_API_KEY is empty string (deleted Keychain entry)', () => {
+    process.env['OPENCODE_API_KEY'] = '';
+    expect(resolveApiKey()).toBeNull();
+  });
+
   it('returns the key value when set', () => {
     process.env['OPENCODE_API_KEY'] = 'sk-test-key-123';
     expect(resolveApiKey()).toBe('sk-test-key-123');
