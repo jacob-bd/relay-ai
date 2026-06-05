@@ -276,38 +276,67 @@ async function resolveOrCollectApiKey(simulate = false): Promise<string | null> 
   if (p.isCancel(saveChoice)) { p.cancel('Cancelled.'); return null; }
 
   if (simulate) {
-    // Dry-run: show what would happen but don't actually write anywhere
     if (saveChoice === 'keychain') {
+      p.log.info('[dry-run] Would save key to macOS Keychain');
+    } else if (saveChoice === 'keychain-autoload') {
       p.log.info(`[dry-run] Would save key to macOS Keychain and add auto-load to ${display}`);
+    } else if (saveChoice === 'credential-manager') {
+      p.log.info('[dry-run] Would save key to Windows Credential Manager');
+    } else if (saveChoice === 'setx') {
+      p.log.info('[dry-run] Would run: setx OPENCODE_API_KEY ***');
+    } else if (saveChoice === 'secret-service') {
+      p.log.info('[dry-run] Would save key to Secret Service (GNOME Keyring / KWallet)');
     } else if (saveChoice === 'profile') {
       p.log.info(`[dry-run] Would append OPENCODE_API_KEY export to ${display}`);
     } else {
       p.log.info('[dry-run] Would use key for this session only');
     }
   } else if (saveChoice === 'keychain') {
-    if (saveToKeychain(trimmedKey)) {
+    if (await saveToCredentialStore(trimmedKey)) {
+      p.log.success('Key saved to macOS Keychain — active now and automatically loaded next time.');
+    } else {
+      p.log.warn('Could not write to Keychain — key will be used for this session only');
+    }
+  } else if (saveChoice === 'keychain-autoload') {
+    if (await saveToCredentialStore(trimmedKey)) {
       try {
         const autoLoadLine = `export OPENCODE_API_KEY="$(security find-generic-password -s opencode-starter -a opencode-starter -w 2>/dev/null)"`;
-        const existing = readFileSync(path, 'utf8');
+        const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
         if (!existing.includes(autoLoadLine)) {
           appendFileSync(path, `\n# opencode-starter: load API key from macOS Keychain\n${autoLoadLine}\n`);
-          p.log.success(`Key saved to Keychain + auto-load added to ${display}`);
-          p.log.info(`Open a new terminal (or run \`source ${display}\`) to activate`);
-        } else {
-          p.log.success('Key saved to Keychain');
-          p.log.info(`Auto-load line already exists in ${display}`);
         }
+        p.log.success(`Key saved to Keychain and auto-load added to ${display} — active now and in all future terminals.`);
       } catch {
-        p.log.success('Key saved to Keychain');
-        p.log.warn(`Could not write auto-load line to ${display} — run \`source ${display}\` manually`);
+        p.log.success('Key saved to Keychain — active now and automatically loaded next time.');
+        p.log.warn(`Could not write auto-load line to ${display}`);
       }
     } else {
       p.log.warn('Could not write to Keychain — key will be used for this session only');
     }
+  } else if (saveChoice === 'credential-manager') {
+    if (await saveToCredentialStore(trimmedKey)) {
+      p.log.success('Key saved to Windows Credential Manager — active now and automatically loaded next time.');
+    } else {
+      p.log.warn('Could not write to Credential Manager — key will be used for this session only');
+    }
+  } else if (saveChoice === 'setx') {
+    try {
+      execSync(`setx OPENCODE_API_KEY "${trimmedKey}"`, { stdio: ['pipe', 'pipe', 'pipe'] });
+      p.log.success('Key saved as a user environment variable — active now and in all future terminals.');
+    } catch {
+      p.log.warn('Could not run setx — key will be used for this session only');
+    }
+  } else if (saveChoice === 'secret-service') {
+    if (await saveToCredentialStore(trimmedKey)) {
+      p.log.success('Key saved to Secret Service — active now and automatically loaded next time.');
+    } else {
+      p.log.warn('Could not write to Secret Service — key will be used for this session only');
+    }
   } else if (saveChoice === 'profile') {
     try {
+      if (!existsSync(path)) appendFileSync(path, '');
       appendFileSync(path, `\nexport OPENCODE_API_KEY="${trimmedKey}"\n`);
-      p.log.success(`Saved to ${display} — open a new terminal to pick it up automatically`);
+      p.log.success(`Key saved to ${display} — active now and in all future terminals.`);
     } catch {
       p.log.warn(`Could not write to ${display} — key will be used for this session only`);
     }

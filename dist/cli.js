@@ -6,6 +6,7 @@ import * as p2 from "@clack/prompts";
 import { appendFileSync, readFileSync as readFileSync2, existsSync as existsSync2 } from "fs";
 import { homedir as homedir3, tmpdir } from "os";
 import { join as join3 } from "path";
+import { execSync as execSync2 } from "child_process";
 
 // src/launch.ts
 import { execSync, spawn } from "child_process";
@@ -460,12 +461,44 @@ function printDryRun(backendName, modelId, baseUrl, claudeArgs, conflicts, disab
 }
 function detectShellProfile() {
   const shell = process.env["SHELL"] ?? "";
-  if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir3()}/.zshrc` };
-  if (shell.includes("bash")) {
-    const profile = process.platform === "darwin" ? ".bash_profile" : ".bashrc";
-    return { display: `~/${profile}`, path: `${homedir3()}/${profile}` };
+  if (process.platform === "darwin") {
+    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir3()}/.zshrc` };
+    if (shell.includes("bash")) return { display: "~/.bash_profile", path: `${homedir3()}/.bash_profile` };
+    return { display: "~/.profile", path: `${homedir3()}/.profile` };
   }
+  if (process.platform === "linux") {
+    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir3()}/.zshrc` };
+    if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir3()}/.bashrc` };
+    return { display: "~/.profile", path: `${homedir3()}/.profile` };
+  }
+  if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir3()}/.bashrc` };
   return { display: "~/.profile", path: `${homedir3()}/.profile` };
+}
+async function readFromCredentialStore() {
+  try {
+    const { Entry } = await import("@napi-rs/keyring");
+    return new Entry("opencode-starter", "opencode-starter").getPassword() ?? null;
+  } catch {
+    return null;
+  }
+}
+async function saveToCredentialStore(key) {
+  try {
+    const { Entry } = await import("@napi-rs/keyring");
+    new Entry("opencode-starter", "opencode-starter").setPassword(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function isSecretServiceAvailable() {
+  try {
+    const { Entry } = await import("@napi-rs/keyring");
+    new Entry("opencode-starter-probe", "probe").getPassword();
+    return true;
+  } catch {
+    return false;
+  }
 }
 async function resolveOrCollectApiKey(simulate = false) {
   if (!simulate) {
@@ -473,29 +506,21 @@ async function resolveOrCollectApiKey(simulate = false) {
     if (existing) return existing;
   }
   const isMac = process.platform === "darwin";
+  const isWindows = process.platform === "win32";
+  const isLinux = process.platform === "linux";
   if (simulate) {
     p2.note(
       "Running in dry-run mode \u2014 no keys will be read from or written to your system.",
       "Simulating first-run onboarding"
     );
   }
-  if (isMac && !simulate) {
-    const checkKeychain = await p2.confirm({
-      message: "OPENCODE_API_KEY not found. Check macOS Keychain for a stored key?",
-      initialValue: true
-    });
-    if (p2.isCancel(checkKeychain)) {
-      p2.cancel("Cancelled.");
-      return null;
-    }
-    if (checkKeychain) {
-      const keychainKey = readFromKeychain();
-      if (keychainKey) {
-        p2.log.success("Found key in macOS Keychain");
-        process.env["OPENCODE_API_KEY"] = keychainKey;
-        return keychainKey;
-      }
-      p2.log.info("No key found in Keychain \u2014 let's set one up");
+  if (!simulate) {
+    const storedKey = await readFromCredentialStore();
+    if (storedKey) {
+      const storeName = isMac ? "macOS Keychain" : isWindows ? "Windows Credential Manager" : "Secret Service";
+      p2.log.success(`Found key in ${storeName}`);
+      process.env["OPENCODE_API_KEY"] = storedKey;
+      return storedKey;
     }
   }
   p2.note("Get your free key at: https://opencode.ai/settings/keys", "OpenCode API key");
@@ -508,31 +533,83 @@ async function resolveOrCollectApiKey(simulate = false) {
     return null;
   }
   const trimmedKey = key.trim();
+  let secretServiceAvailable = false;
+  if (isLinux && !simulate) {
+    secretServiceAvailable = await isSecretServiceAvailable();
+  }
   const { display, path } = detectShellProfile();
-  const saveOptions = isMac ? [
-    {
-      value: "keychain",
-      label: `Keychain + ${display} auto-load`,
-      hint: "Key stored encrypted in Keychain; shell reads it at startup via ~/.zshrc"
-    },
-    {
-      value: "profile",
-      label: `${display} only (plaintext)`,
-      hint: "Key written directly to your shell profile \u2014 simpler but less secure"
-    },
-    {
-      value: "session",
-      label: "This session only",
-      hint: "Not saved anywhere \u2014 you'll be asked again next time"
+  const saveOptions = (() => {
+    if (isMac) {
+      return [
+        {
+          value: "keychain",
+          label: "Keychain only",
+          hint: "Key stored encrypted in Keychain; opencode-starter reads it automatically next time"
+        },
+        {
+          value: "keychain-autoload",
+          label: `Keychain + ${display} auto-load`,
+          hint: `Key in Keychain; ${display} also exports it so all terminal tools can see it`
+        },
+        {
+          value: "profile",
+          label: `${display} only (plaintext)`,
+          hint: "Key written directly to your shell profile \u2014 simpler but less secure"
+        },
+        {
+          value: "session",
+          label: "This session only",
+          hint: "Not saved anywhere \u2014 you'll be asked again next time"
+        }
+      ];
     }
-  ] : [
-    { value: "profile", label: display, hint: "Saved to your shell profile" },
-    { value: "session", label: "This session only", hint: "Not saved \u2014 you'll be asked again next time" }
-  ];
+    if (isWindows) {
+      return [
+        {
+          value: "credential-manager",
+          label: "Windows Credential Manager",
+          hint: "Key stored securely; opencode-starter reads it automatically next time"
+        },
+        {
+          value: "setx",
+          label: "Persistent environment variable (plaintext)",
+          hint: "Runs setx \u2014 key visible in System Properties \u2192 Environment Variables"
+        },
+        {
+          value: "session",
+          label: "This session only",
+          hint: "Not saved anywhere \u2014 you'll be asked again next time"
+        }
+      ];
+    }
+    const opts = [];
+    if (secretServiceAvailable) {
+      opts.push({
+        value: "secret-service",
+        label: "Secret Service (GNOME Keyring / KWallet)",
+        hint: "Key stored securely in your desktop keyring; opencode-starter reads it automatically next time"
+      });
+    } else if (!simulate) {
+      p2.log.info("No keyring daemon detected \u2014 secure storage requires GNOME Keyring or KWallet running.");
+    }
+    opts.push(
+      {
+        value: "profile",
+        label: `${display} (plaintext)`,
+        hint: "Key written directly to your shell profile"
+      },
+      {
+        value: "session",
+        label: "This session only",
+        hint: "Not saved anywhere \u2014 you'll be asked again next time"
+      }
+    );
+    return opts;
+  })();
   const saveChoice = await p2.select({
     message: "Where should we save the key?",
     options: saveOptions,
-    initialValue: isMac ? "keychain" : "profile"
+    initialValue: isMac ? "keychain" : isWindows ? "credential-manager" : secretServiceAvailable ? "secret-service" : "profile"
   });
   if (p2.isCancel(saveChoice)) {
     p2.cancel("Cancelled.");
@@ -540,41 +617,71 @@ async function resolveOrCollectApiKey(simulate = false) {
   }
   if (simulate) {
     if (saveChoice === "keychain") {
+      p2.log.info("[dry-run] Would save key to macOS Keychain");
+    } else if (saveChoice === "keychain-autoload") {
       p2.log.info(`[dry-run] Would save key to macOS Keychain and add auto-load to ${display}`);
+    } else if (saveChoice === "credential-manager") {
+      p2.log.info("[dry-run] Would save key to Windows Credential Manager");
+    } else if (saveChoice === "setx") {
+      p2.log.info("[dry-run] Would run: setx OPENCODE_API_KEY ***");
+    } else if (saveChoice === "secret-service") {
+      p2.log.info("[dry-run] Would save key to Secret Service (GNOME Keyring / KWallet)");
     } else if (saveChoice === "profile") {
       p2.log.info(`[dry-run] Would append OPENCODE_API_KEY export to ${display}`);
     } else {
       p2.log.info("[dry-run] Would use key for this session only");
     }
   } else if (saveChoice === "keychain") {
-    if (saveToKeychain(trimmedKey)) {
+    if (await saveToCredentialStore(trimmedKey)) {
+      p2.log.success("Key saved to macOS Keychain \u2014 active now and automatically loaded next time.");
+    } else {
+      p2.log.warn("Could not write to Keychain \u2014 key will be used for this session only");
+    }
+  } else if (saveChoice === "keychain-autoload") {
+    if (await saveToCredentialStore(trimmedKey)) {
       try {
         const autoLoadLine = `export OPENCODE_API_KEY="$(security find-generic-password -s opencode-starter -a opencode-starter -w 2>/dev/null)"`;
-        const existing = readFileSync2(path, "utf8");
+        const existing = existsSync2(path) ? readFileSync2(path, "utf8") : "";
         if (!existing.includes(autoLoadLine)) {
           appendFileSync(path, `
 # opencode-starter: load API key from macOS Keychain
 ${autoLoadLine}
 `);
-          p2.log.success(`Key saved to Keychain + auto-load added to ${display}`);
-          p2.log.info(`Open a new terminal (or run \`source ${display}\`) to activate`);
-        } else {
-          p2.log.success("Key saved to Keychain");
-          p2.log.info(`Auto-load line already exists in ${display}`);
         }
+        p2.log.success(`Key saved to Keychain and auto-load added to ${display} \u2014 active now and in all future terminals.`);
       } catch {
-        p2.log.success("Key saved to Keychain");
-        p2.log.warn(`Could not write auto-load line to ${display} \u2014 run \`source ${display}\` manually`);
+        p2.log.success("Key saved to Keychain \u2014 active now and automatically loaded next time.");
+        p2.log.warn(`Could not write auto-load line to ${display}`);
       }
     } else {
       p2.log.warn("Could not write to Keychain \u2014 key will be used for this session only");
     }
+  } else if (saveChoice === "credential-manager") {
+    if (await saveToCredentialStore(trimmedKey)) {
+      p2.log.success("Key saved to Windows Credential Manager \u2014 active now and automatically loaded next time.");
+    } else {
+      p2.log.warn("Could not write to Credential Manager \u2014 key will be used for this session only");
+    }
+  } else if (saveChoice === "setx") {
+    try {
+      execSync2(`setx OPENCODE_API_KEY "${trimmedKey}"`, { stdio: ["pipe", "pipe", "pipe"] });
+      p2.log.success("Key saved as a user environment variable \u2014 active now and in all future terminals.");
+    } catch {
+      p2.log.warn("Could not run setx \u2014 key will be used for this session only");
+    }
+  } else if (saveChoice === "secret-service") {
+    if (await saveToCredentialStore(trimmedKey)) {
+      p2.log.success("Key saved to Secret Service \u2014 active now and automatically loaded next time.");
+    } else {
+      p2.log.warn("Could not write to Secret Service \u2014 key will be used for this session only");
+    }
   } else if (saveChoice === "profile") {
     try {
+      if (!existsSync2(path)) appendFileSync(path, "");
       appendFileSync(path, `
 export OPENCODE_API_KEY="${trimmedKey}"
 `);
-      p2.log.success(`Saved to ${display} \u2014 open a new terminal to pick it up automatically`);
+      p2.log.success(`Key saved to ${display} \u2014 active now and in all future terminals.`);
     } catch {
       p2.log.warn(`Could not write to ${display} \u2014 key will be used for this session only`);
     }
