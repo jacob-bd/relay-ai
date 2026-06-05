@@ -1,0 +1,8 @@
+.claude/
+docs/
+src/
+tests/
+tsconfig.json
+tsup.config.ts
+*.tsbuildinfo
+*.js.map

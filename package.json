@@ -6,9 +6,6 @@
   "bin": {
     "opencode-starter": "./dist/cli.js"
   },
-  "files": [
-    "dist"
-  ],
   "engines": {
     "node": ">=18"
   },
