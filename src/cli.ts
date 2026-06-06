@@ -5,7 +5,7 @@ import { appendFileSync, readFileSync, existsSync, realpathSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { findClaudeBinary, launchClaude } from './launch.js';
 import { resolveApiKey, detectConflicts, buildChildEnv, readFromCredentialStore, saveToCredentialStore, isSecretServiceAvailable } from './env.js';
 import { getModels } from './models.js';
