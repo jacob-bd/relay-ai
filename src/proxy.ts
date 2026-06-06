@@ -95,11 +95,15 @@ export function translateRequest(body: any): any {
             } else if (part.type === 'thinking') {
               reasoningContent += (typeof part.thinking === 'string' ? part.thinking : JSON.stringify(part.thinking)) + '\n';
             } else if (part.type === 'tool_use') {
-              toolCalls.push({
-                id: part.id,
+              const [rawId, ...tsParts] = part.id.split('::ts::');
+              const thoughtSignature = tsParts.length > 0 ? tsParts.join('::ts::') : undefined;
+              const toolCall: any = {
+                id: rawId,
                 type: 'function',
                 function: { name: part.name, arguments: JSON.stringify(part.input) },
-              });
+              };
+              if (thoughtSignature) toolCall.thought_signature = thoughtSignature;
+              toolCalls.push(toolCall);
             }
           }
 
@@ -125,7 +129,7 @@ export function translateRequest(body: any): any {
             } else if (part.type === 'tool_result') {
               toolResults.push({
                 role: 'tool',
-                tool_call_id: part.tool_use_id,
+                tool_call_id: part.tool_use_id.split('::ts::')[0],
                 content: typeof part.content === 'string' ? part.content : JSON.stringify(part.content),
               });
             }
@@ -195,12 +199,15 @@ export function translateResponse(completion: any, model: string): any {
     content.push({ text: message.content, type: 'text' });
   }
   if (message?.tool_calls) {
-    content.push(...message.tool_calls.map((item: any) => ({
-      type: 'tool_use',
-      id: item.id,
-      name: item.function?.name,
-      input: parseToolArguments(item.function?.arguments),
-    })));
+    content.push(...message.tool_calls.map((item: any) => {
+      const id = item.thought_signature ? `${item.id}::ts::${item.thought_signature}` : item.id;
+      return {
+        type: 'tool_use',
+        id,
+        name: item.function?.name,
+        input: parseToolArguments(item.function?.arguments),
+      };
+    }));
   }
 
   const finishReason = completion.choices?.[0]?.finish_reason;
@@ -297,10 +304,14 @@ export function translateStream(upstreamBody: NodeJS.ReadableStream, model: stri
           currentToolCallId = toolCall.id;
           contentBlockIndex++;
 
+          const encodedId = toolCall.thought_signature
+            ? `${toolCall.id}::ts::${toolCall.thought_signature}`
+            : toolCall.id;
+
           emitMessageStart();
           emitSSE('content_block_start', {
             type: 'content_block_start', index: contentBlockIndex,
-            content_block: { type: 'tool_use', id: toolCall.id, name: toolCall.function?.name, input: {} },
+            content_block: { type: 'tool_use', id: encodedId, name: toolCall.function?.name, input: {} },
           });
         }
 

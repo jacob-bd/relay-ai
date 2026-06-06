@@ -79,6 +79,40 @@ describe('translateRequest', () => {
     }]);
   });
 
+  it('decodes thought_signature from encoded tool_use id into tool_call', () => {
+    const result = translateRequest({
+      model: 'gemini-2.5-flash',
+      messages: [{
+        role: 'assistant',
+        content: [{
+          type: 'tool_use',
+          id: 'call_gemini_1::ts::abc123sigXYZ',
+          name: 'search',
+          input: { query: 'test' },
+        }],
+      }],
+    });
+    const toolCall = result.messages[0].tool_calls[0];
+    expect(toolCall.id).toBe('call_gemini_1');
+    expect(toolCall.thought_signature).toBe('abc123sigXYZ');
+    expect(toolCall.function.name).toBe('search');
+  });
+
+  it('strips thought_signature from tool_call_id in tool_result messages', () => {
+    const result = translateRequest({
+      model: 'gemini-2.5-flash',
+      messages: [{
+        role: 'user',
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'call_gemini_1::ts::abc123sigXYZ',
+          content: 'search results',
+        }],
+      }],
+    });
+    expect(result.messages[0].tool_call_id).toBe('call_gemini_1');
+  });
+
   it('converts assistant thinking to reasoning_content', () => {
     const result = translateRequest({
       model: 'test',
@@ -202,6 +236,39 @@ describe('translateResponse', () => {
     expect(result.stop_reason).toBe('tool_use');
   });
 
+  it('encodes thought_signature into tool_use id when present', () => {
+    const result = translateResponse({
+      choices: [{
+        message: {
+          tool_calls: [{
+            id: 'call_gemini_1',
+            thought_signature: 'abc123sigXYZ',
+            function: { name: 'search', arguments: '{"query":"test"}' },
+          }],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    }, 'gemini-2.5-flash');
+    expect(result.content[0].id).toBe('call_gemini_1::ts::abc123sigXYZ');
+    expect(result.content[0].name).toBe('search');
+    expect(result.content[0].input).toEqual({ query: 'test' });
+  });
+
+  it('does not modify tool_use id when thought_signature is absent', () => {
+    const result = translateResponse({
+      choices: [{
+        message: {
+          tool_calls: [{
+            id: 'call_plain',
+            function: { name: 'list_files', arguments: '{}' },
+          }],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    }, 'test');
+    expect(result.content[0].id).toBe('call_plain');
+  });
+
   it('maps finish_reason stop to end_turn', () => {
     const result = translateResponse({
       choices: [{ message: { content: 'x' }, finish_reason: 'stop' }],
@@ -231,6 +298,60 @@ describe('translateResponse', () => {
       cache_read_input_tokens: 30,
       cache_creation_input_tokens: 0,
     });
+  });
+});
+
+describe('thought_signature round-trip', () => {
+  it('translateResponse encodes signature, translateRequest re-injects it and strips from tool_call_id', () => {
+    // Step 1: Gemini returns a tool_call with thought_signature
+    const openaiCompletion = {
+      choices: [{
+        message: {
+          tool_calls: [{
+            id: 'gemini_call_42',
+            thought_signature: 'sig_ABCDEF',
+            function: { name: 'get_weather', arguments: '{"city":"London"}' },
+          }],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    };
+
+    const anthropicResponse = translateResponse(openaiCompletion, 'gemini-2.5-flash');
+    const toolUseBlock = anthropicResponse.content[0];
+
+    // The id must encode the signature
+    expect(toolUseBlock.id).toBe('gemini_call_42::ts::sig_ABCDEF');
+
+    // Step 2: Claude Code echoes this back in the next request
+    const anthropicRequest = {
+      model: 'gemini-2.5-flash',
+      messages: [
+        {
+          role: 'assistant',
+          content: [toolUseBlock],
+        },
+        {
+          role: 'user',
+          content: [{
+            type: 'tool_result',
+            tool_use_id: toolUseBlock.id,
+            content: 'Sunny, 22°C',
+          }],
+        },
+      ],
+    };
+
+    const translated = translateRequest(anthropicRequest);
+
+    // Assistant tool_call must have raw id + thought_signature re-injected
+    const assistantMsg = translated.messages.find((m: any) => m.role === 'assistant');
+    expect(assistantMsg.tool_calls[0].id).toBe('gemini_call_42');
+    expect(assistantMsg.tool_calls[0].thought_signature).toBe('sig_ABCDEF');
+
+    // Tool result message must have bare tool_call_id (no ::ts:: suffix)
+    const toolMsg = translated.messages.find((m: any) => m.role === 'tool');
+    expect(toolMsg.tool_call_id).toBe('gemini_call_42');
   });
 });
 
