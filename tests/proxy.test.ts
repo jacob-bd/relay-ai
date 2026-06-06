@@ -139,12 +139,11 @@ describe('translateRequest', () => {
     expect(result.stop).toEqual(['\n\n']);
   });
 
-  it('injects prompt_cache_key from system hash', () => {
+  it('does not inject prompt_cache_key (non-standard field rejected by most providers)', () => {
     const result = translateRequest({
       model: 'test', messages: [], system: 'You are helpful.',
     });
-    expect(result.prompt_cache_key).toBeTruthy();
-    expect(result.prompt_cache_key).toMatch(/^cache-/);
+    expect(result.prompt_cache_key).toBeUndefined();
   });
 
   it('converts base64 image to data URL', () => {

@@ -168,9 +168,6 @@ export function translateRequest(body: any): any {
     }));
   }
 
-  const cacheKey = hashSystemPrompt(system);
-  if (cacheKey) data.prompt_cache_key = cacheKey;
-
   return data;
 }
 

@@ -279,17 +279,6 @@ async function getModels(backend, fallbackModels) {
 import { createServer } from "http";
 import { Readable } from "stream";
 import { appendFileSync } from "fs";
-function hashSystemPrompt(system) {
-  if (!system) return null;
-  const text3 = typeof system === "string" ? system : system.map((s) => s.text || "").join("\n");
-  if (!text3.trim()) return null;
-  let hash = 5381;
-  for (let i = 0; i < text3.length; i++) {
-    hash = (hash << 5) + hash + text3.charCodeAt(i);
-    hash = hash & hash;
-  }
-  return "cache-" + Math.abs(hash).toString(36);
-}
 function tokenCount(...values) {
   for (const value of values) {
     if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -413,8 +402,6 @@ function translateRequest(body) {
       }
     }));
   }
-  const cacheKey = hashSystemPrompt(system);
-  if (cacheKey) data.prompt_cache_key = cacheKey;
   return data;
 }
 function parseToolArguments(value) {
