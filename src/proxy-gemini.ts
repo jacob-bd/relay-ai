@@ -40,6 +40,28 @@ function buildToolNameMap(messages: any[]): Map<string, string> {
 
 // ── Request translation: Anthropic → Gemini native ───────────────────
 
+// Gemini's functionDeclarations.parameters accepts a restricted subset of JSON Schema.
+// These fields are valid JSON Schema but rejected by the Gemini API with a 400 error.
+const GEMINI_UNSUPPORTED_SCHEMA_KEYS = new Set([
+  '$schema', '$id', '$ref', '$defs', 'definitions',
+  'additionalProperties', 'propertyNames', 'unevaluatedProperties',
+  'allOf', 'anyOf', 'oneOf', 'not',
+  'if', 'then', 'else',
+  'examples', 'default', 'const',
+  'contentEncoding', 'contentMediaType',
+]);
+
+function sanitizeSchema(schema: any): any {
+  if (schema === null || typeof schema !== 'object') return schema;
+  if (Array.isArray(schema)) return schema.map(sanitizeSchema);
+  const out: any = {};
+  for (const [k, v] of Object.entries(schema)) {
+    if (GEMINI_UNSUPPORTED_SCHEMA_KEYS.has(k)) continue;
+    out[k] = sanitizeSchema(v);
+  }
+  return out;
+}
+
 export function translateToGemini(body: any): any {
   const { messages, system, tools, temperature, max_tokens, top_p } = body;
   const toolNameMap = buildToolNameMap(messages);
@@ -108,7 +130,7 @@ export function translateToGemini(body: any): any {
       functionDeclarations: tools.map((t: any) => ({
         name: t.name,
         description: t.description,
-        parameters: t.input_schema,
+        parameters: sanitizeSchema(t.input_schema),
       })),
     }];
   }

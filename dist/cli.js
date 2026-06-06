@@ -304,6 +304,38 @@ function buildToolNameMap(messages) {
   }
   return map;
 }
+var GEMINI_UNSUPPORTED_SCHEMA_KEYS = /* @__PURE__ */ new Set([
+  "$schema",
+  "$id",
+  "$ref",
+  "$defs",
+  "definitions",
+  "additionalProperties",
+  "propertyNames",
+  "unevaluatedProperties",
+  "allOf",
+  "anyOf",
+  "oneOf",
+  "not",
+  "if",
+  "then",
+  "else",
+  "examples",
+  "default",
+  "const",
+  "contentEncoding",
+  "contentMediaType"
+]);
+function sanitizeSchema(schema) {
+  if (schema === null || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) return schema.map(sanitizeSchema);
+  const out = {};
+  for (const [k, v] of Object.entries(schema)) {
+    if (GEMINI_UNSUPPORTED_SCHEMA_KEYS.has(k)) continue;
+    out[k] = sanitizeSchema(v);
+  }
+  return out;
+}
 function translateToGemini(body) {
   const { messages, system, tools, temperature, max_tokens, top_p } = body;
   const toolNameMap = buildToolNameMap(messages);
@@ -358,7 +390,7 @@ function translateToGemini(body) {
       functionDeclarations: tools.map((t) => ({
         name: t.name,
         description: t.description,
-        parameters: t.input_schema
+        parameters: sanitizeSchema(t.input_schema)
       }))
     }];
   }
