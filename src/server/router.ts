@@ -121,12 +121,20 @@ async function handleAnthropicMessages(
   if (!model) return;
 
   if (model.modelFormat === 'anthropic') {
-    await forwardJson(res, `${backendFor(options, model).baseUrl}/v1/messages`, body, options.apiKey);
+    const messagesUrl = model.baseUrl
+      ? `${model.baseUrl}/v1/messages`
+      : `${backendFor(options, model).baseUrl}/v1/messages`;
+    const apiKey = model.apiKey ?? options.apiKey;
+    await forwardJson(res, messagesUrl, body, apiKey);
     return;
   }
 
   if (model.modelFormat === 'openai') {
-    const upstreamJson = await postJson(`${backendFor(options, model).baseUrl}/v1/chat/completions`, translateRequest(body), options.apiKey);
+    const completionsUrl = model.completionsUrl
+      ? model.completionsUrl
+      : `${backendFor(options, model).baseUrl}/v1/chat/completions`;
+    const apiKey = model.apiKey ?? options.apiKey;
+    const upstreamJson = await postJson(completionsUrl, translateRequest(body), apiKey);
     sendJson(res, upstreamJson.status, translateResponse(upstreamJson.body, body.model));
     return;
   }
@@ -149,7 +157,11 @@ async function handleOpenAIChatCompletions(
   if (!model) return;
 
   if (model.modelFormat === 'openai') {
-    await forwardJson(res, `${backendFor(options, model).baseUrl}/v1/chat/completions`, body, options.apiKey);
+    const completionsUrl = model.completionsUrl
+      ? model.completionsUrl
+      : `${backendFor(options, model).baseUrl}/v1/chat/completions`;
+    const apiKey = model.apiKey ?? options.apiKey;
+    await forwardJson(res, completionsUrl, body, apiKey);
     return;
   }
 

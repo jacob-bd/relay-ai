@@ -14,6 +14,9 @@ export interface ServerModelInfo {
     cache_read?: number;
     cache_write?: number;
   };
+  baseUrl?: string;        // anthropic-format: direct Anthropic-protocol URL (without /v1)
+  completionsUrl?: string; // openai-format: full chat completions endpoint URL
+  apiKey?: string;         // model-specific API key; overrides server-level apiKey if set; never returned in API responses
 }
 
 export interface ModelCatalog {

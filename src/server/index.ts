@@ -10,8 +10,10 @@ import {
   setSavedServerPassword,
 } from '../config.js';
 import { getModels } from '../models.js';
+import { fetchLocalProviders } from '../providers.js';
 import { BACKENDS } from '../constants.js';
 import type { ModelInfo } from '../types.js';
+import type { ServerModelInfo } from './models.js';
 import {
   askListenMode,
   askSaveServerPassword,
@@ -82,10 +84,10 @@ async function getServerPasswordForMode(mode: 'local' | 'network'): Promise<stri
   return serverPassword;
 }
 
-async function loadServerModels(tier: SubscriptionTier): Promise<ModelInfo[]> {
+async function loadServerModels(tier: SubscriptionTier): Promise<ServerModelInfo[]> {
   const needsZen = tier === 'free' || tier === 'zen' || tier === 'go' || tier === 'both';
   const needsGo = tier === 'go' || tier === 'both';
-  const models: ModelInfo[] = [];
+  const models: ServerModelInfo[] = [];
 
   if (needsZen) {
     const result = await getModels(BACKENDS.zen, getCachedModels('zen') ?? undefined);
@@ -97,6 +99,32 @@ async function loadServerModels(tier: SubscriptionTier): Promise<ModelInfo[]> {
     const result = await getModels(BACKENDS.go, getCachedModels('go') ?? undefined);
     if (!result.fromCache) setCachedModels('go', result.models);
     models.push(...modelsForTier(tier, 'go', result.models));
+  }
+
+  try {
+    const localProviders = await fetchLocalProviders();
+    if (localProviders !== null) {
+      for (const provider of localProviders) {
+        for (const model of provider.models) {
+          models.push({
+            id: model.id,
+            name: model.name,
+            isFree: false,
+            brand: model.brand,
+            sourceBackend: 'zen', // fallback; won't be used when per-model routing fields are set
+            modelFormat: model.modelFormat,
+            cost: model.cost,
+            baseUrl: model.baseUrl,
+            completionsUrl: model.completionsUrl,
+            apiKey: provider.apiKey, // routing only — never logged or returned in API responses
+          });
+        }
+      }
+    } else {
+      p.log.warn('Local OpenCode not found — showing cloud models only');
+    }
+  } catch {
+    p.log.warn('Local OpenCode not found — showing cloud models only');
   }
 
   return models;
@@ -135,10 +163,11 @@ export async function runServerCommand(): Promise<number> {
   const spinner = p.spinner();
   spinner.start('Fetching available models...');
 
-  let models: ModelInfo[];
+  let models: ServerModelInfo[];
   try {
     models = await loadServerModels(tier);
-    spinner.stop(`Loaded ${models.length} models`);
+    const localCount = models.filter(m => m.apiKey !== undefined).length;
+    spinner.stop(`Loaded ${models.length} models (${localCount} from local providers)`);
   } catch (err) {
     spinner.stop(pc.red('Failed to load models'));
     console.error(pc.red(String(err instanceof Error ? err.message : err)));

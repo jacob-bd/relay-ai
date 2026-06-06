@@ -893,6 +893,170 @@ function setSavedServerPassword(password2) {
   writeConfig(config);
 }
 
+// src/providers.ts
+import { execSync as execSync2, spawn as spawn2 } from "child_process";
+import { existsSync as existsSync3 } from "fs";
+import { homedir as homedir4 } from "os";
+import { join as join4 } from "path";
+var isWindows2 = process.platform === "win32";
+var OPENCODE_FALLBACK_PATHS = isWindows2 ? [
+  join4(process.env["APPDATA"] ?? homedir4(), "npm", "opencode.cmd"),
+  join4(process.env["APPDATA"] ?? homedir4(), "npm", "opencode"),
+  join4(homedir4(), "AppData", "Roaming", "npm", "opencode.cmd")
+] : [
+  join4(homedir4(), ".opencode", "bin", "opencode"),
+  join4(homedir4(), ".local", "bin", "opencode"),
+  join4(homedir4(), ".npm", "bin", "opencode"),
+  "/usr/local/bin/opencode",
+  "/opt/homebrew/bin/opencode"
+];
+function findOpencodeBinary() {
+  try {
+    const result = execSync2(isWindows2 ? "where.exe opencode" : "which opencode", {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    const path = result.trim().split("\n")[0].trim();
+    if (path) return path;
+  } catch {
+  }
+  for (const path of OPENCODE_FALLBACK_PATHS) {
+    if (existsSync3(path)) return path;
+  }
+  return null;
+}
+function resolveEndpoint(npm, apiUrl) {
+  switch (npm) {
+    case "@ai-sdk/anthropic":
+      return {
+        format: "anthropic",
+        baseUrl: (apiUrl || "https://api.anthropic.com").replace(/\/v1\/?$/, "")
+      };
+    case "@ai-sdk/openai-compatible":
+      return {
+        format: "openai",
+        completionsUrl: apiUrl.replace(/\/$/, "") + "/chat/completions"
+      };
+    case "@ai-sdk/openai":
+      return {
+        format: "openai",
+        completionsUrl: "https://api.openai.com/v1/chat/completions"
+      };
+    case "@ai-sdk/google":
+      return {
+        format: "openai",
+        completionsUrl: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+      };
+    case "@ai-sdk/groq":
+      return {
+        format: "openai",
+        completionsUrl: "https://api.groq.com/openai/v1/chat/completions"
+      };
+    case "@ai-sdk/mistral":
+      return {
+        format: "openai",
+        completionsUrl: "https://api.mistral.ai/v1/chat/completions"
+      };
+    case "@ai-sdk/xai":
+      return {
+        format: "openai",
+        completionsUrl: "https://api.x.ai/v1/chat/completions"
+      };
+    default:
+      return null;
+  }
+}
+function normalizeProviders(raw) {
+  const result = [];
+  for (const provider of raw) {
+    if (!provider.key) continue;
+    if (provider.id === "opencode" || provider.id === "opencode-go") continue;
+    const models = [];
+    for (const model of Object.values(provider.models ?? {})) {
+      const endpoint = resolveEndpoint(model.api?.npm ?? "", model.api?.url ?? "");
+      if (endpoint === null) continue;
+      models.push({
+        id: model.id,
+        name: model.name ?? model.id,
+        family: model.family ?? "",
+        brand: deriveBrand(model.family ?? ""),
+        modelFormat: endpoint.format,
+        baseUrl: endpoint.baseUrl,
+        completionsUrl: endpoint.completionsUrl,
+        cost: model.cost
+      });
+    }
+    if (models.length === 0) continue;
+    result.push({
+      id: provider.id,
+      name: provider.name,
+      apiKey: provider.key,
+      models
+    });
+  }
+  return result;
+}
+async function fetchLocalProviders() {
+  const binary = findOpencodeBinary();
+  if (!binary) return null;
+  return new Promise((resolve) => {
+    let child = null;
+    let settled = false;
+    const TIMEOUT_MS = 1e4;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        child?.kill();
+      } catch {
+      }
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      finish(null);
+    }, TIMEOUT_MS);
+    try {
+      child = spawn2(binary, ["serve", "--port", "0"], {
+        stdio: ["pipe", "pipe", "pipe"]
+      });
+    } catch {
+      finish(null);
+      return;
+    }
+    const portRegex = /opencode server listening on http:\/\/127\.0\.0\.1:(\d+)/;
+    let portFound = false;
+    let stdoutBuf = "";
+    const onData = (chunk) => {
+      if (portFound) return;
+      stdoutBuf += chunk.toString();
+      const match = portRegex.exec(stdoutBuf);
+      if (!match) return;
+      portFound = true;
+      const port = match[1];
+      fetch(`http://127.0.0.1:${port}/config/providers`).then((res) => res.json()).then((data) => {
+        const raw = data.providers;
+        if (!Array.isArray(raw)) {
+          finish(null);
+          return;
+        }
+        const providers = normalizeProviders(raw);
+        finish(providers);
+      }).catch(() => {
+        finish(null);
+      });
+    };
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onData);
+    child.on("error", () => {
+      finish(null);
+    });
+    child.on("exit", () => {
+      if (!settled) finish(null);
+    });
+  });
+}
+
 // src/server/prompts.ts
 import * as p from "@clack/prompts";
 async function askListenMode() {
@@ -1074,11 +1238,15 @@ async function handleAnthropicMessages(req, res, options) {
   const model = lookupModel(res, options.catalog, body.model);
   if (!model) return;
   if (model.modelFormat === "anthropic") {
-    await forwardJson(res, `${backendFor(options, model).baseUrl}/v1/messages`, body, options.apiKey);
+    const messagesUrl = model.baseUrl ? `${model.baseUrl}/v1/messages` : `${backendFor(options, model).baseUrl}/v1/messages`;
+    const apiKey = model.apiKey ?? options.apiKey;
+    await forwardJson(res, messagesUrl, body, apiKey);
     return;
   }
   if (model.modelFormat === "openai") {
-    const upstreamJson = await postJson(`${backendFor(options, model).baseUrl}/v1/chat/completions`, translateRequest(body), options.apiKey);
+    const completionsUrl = model.completionsUrl ? model.completionsUrl : `${backendFor(options, model).baseUrl}/v1/chat/completions`;
+    const apiKey = model.apiKey ?? options.apiKey;
+    const upstreamJson = await postJson(completionsUrl, translateRequest(body), apiKey);
     sendJson2(res, upstreamJson.status, translateResponse(upstreamJson.body, body.model));
     return;
   }
@@ -1093,7 +1261,9 @@ async function handleOpenAIChatCompletions(req, res, options) {
   const model = lookupModel(res, options.catalog, body.model);
   if (!model) return;
   if (model.modelFormat === "openai") {
-    await forwardJson(res, `${backendFor(options, model).baseUrl}/v1/chat/completions`, body, options.apiKey);
+    const completionsUrl = model.completionsUrl ? model.completionsUrl : `${backendFor(options, model).baseUrl}/v1/chat/completions`;
+    const apiKey = model.apiKey ?? options.apiKey;
+    await forwardJson(res, completionsUrl, body, apiKey);
     return;
   }
   if (model.modelFormat === "anthropic") {
@@ -1225,6 +1395,33 @@ async function loadServerModels(tier) {
     if (!result.fromCache) setCachedModels("go", result.models);
     models.push(...modelsForTier(tier, "go", result.models));
   }
+  try {
+    const localProviders = await fetchLocalProviders();
+    if (localProviders !== null) {
+      for (const provider of localProviders) {
+        for (const model of provider.models) {
+          models.push({
+            id: model.id,
+            name: model.name,
+            isFree: false,
+            brand: model.brand,
+            sourceBackend: "zen",
+            // fallback; won't be used when per-model routing fields are set
+            modelFormat: model.modelFormat,
+            cost: model.cost,
+            baseUrl: model.baseUrl,
+            completionsUrl: model.completionsUrl,
+            apiKey: provider.apiKey
+            // routing only — never logged or returned in API responses
+          });
+        }
+      }
+    } else {
+      p2.log.warn("Local OpenCode not found \u2014 showing cloud models only");
+    }
+  } catch {
+    p2.log.warn("Local OpenCode not found \u2014 showing cloud models only");
+  }
   return models;
 }
 async function runServerCommand() {
@@ -1257,7 +1454,8 @@ async function runServerCommand() {
   let models;
   try {
     models = await loadServerModels(tier);
-    spinner3.stop(`Loaded ${models.length} models`);
+    const localCount = models.filter((m) => m.apiKey !== void 0).length;
+    spinner3.stop(`Loaded ${models.length} models (${localCount} from local providers)`);
   } catch (err) {
     spinner3.stop(pc.red("Failed to load models"));
     console.error(pc.red(String(err instanceof Error ? err.message : err)));
@@ -1494,170 +1692,6 @@ async function runWizard(prefs, modelsByBackend, conflicts, tier) {
   }
   p3.outro(pc2.green("Launching..."));
   return { backend, model: selectedModel };
-}
-
-// src/providers.ts
-import { execSync as execSync2, spawn as spawn2 } from "child_process";
-import { existsSync as existsSync3 } from "fs";
-import { homedir as homedir4 } from "os";
-import { join as join4 } from "path";
-var isWindows2 = process.platform === "win32";
-var OPENCODE_FALLBACK_PATHS = isWindows2 ? [
-  join4(process.env["APPDATA"] ?? homedir4(), "npm", "opencode.cmd"),
-  join4(process.env["APPDATA"] ?? homedir4(), "npm", "opencode"),
-  join4(homedir4(), "AppData", "Roaming", "npm", "opencode.cmd")
-] : [
-  join4(homedir4(), ".opencode", "bin", "opencode"),
-  join4(homedir4(), ".local", "bin", "opencode"),
-  join4(homedir4(), ".npm", "bin", "opencode"),
-  "/usr/local/bin/opencode",
-  "/opt/homebrew/bin/opencode"
-];
-function findOpencodeBinary() {
-  try {
-    const result = execSync2(isWindows2 ? "where.exe opencode" : "which opencode", {
-      encoding: "utf8",
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-    const path = result.trim().split("\n")[0].trim();
-    if (path) return path;
-  } catch {
-  }
-  for (const path of OPENCODE_FALLBACK_PATHS) {
-    if (existsSync3(path)) return path;
-  }
-  return null;
-}
-function resolveEndpoint(npm, apiUrl) {
-  switch (npm) {
-    case "@ai-sdk/anthropic":
-      return {
-        format: "anthropic",
-        baseUrl: (apiUrl || "https://api.anthropic.com").replace(/\/v1\/?$/, "")
-      };
-    case "@ai-sdk/openai-compatible":
-      return {
-        format: "openai",
-        completionsUrl: apiUrl.replace(/\/$/, "") + "/chat/completions"
-      };
-    case "@ai-sdk/openai":
-      return {
-        format: "openai",
-        completionsUrl: "https://api.openai.com/v1/chat/completions"
-      };
-    case "@ai-sdk/google":
-      return {
-        format: "openai",
-        completionsUrl: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-      };
-    case "@ai-sdk/groq":
-      return {
-        format: "openai",
-        completionsUrl: "https://api.groq.com/openai/v1/chat/completions"
-      };
-    case "@ai-sdk/mistral":
-      return {
-        format: "openai",
-        completionsUrl: "https://api.mistral.ai/v1/chat/completions"
-      };
-    case "@ai-sdk/xai":
-      return {
-        format: "openai",
-        completionsUrl: "https://api.x.ai/v1/chat/completions"
-      };
-    default:
-      return null;
-  }
-}
-function normalizeProviders(raw) {
-  const result = [];
-  for (const provider of raw) {
-    if (!provider.key) continue;
-    if (provider.id === "opencode" || provider.id === "opencode-go") continue;
-    const models = [];
-    for (const model of Object.values(provider.models ?? {})) {
-      const endpoint = resolveEndpoint(model.api?.npm ?? "", model.api?.url ?? "");
-      if (endpoint === null) continue;
-      models.push({
-        id: model.id,
-        name: model.name ?? model.id,
-        family: model.family ?? "",
-        brand: deriveBrand(model.family ?? ""),
-        modelFormat: endpoint.format,
-        baseUrl: endpoint.baseUrl,
-        completionsUrl: endpoint.completionsUrl,
-        cost: model.cost
-      });
-    }
-    if (models.length === 0) continue;
-    result.push({
-      id: provider.id,
-      name: provider.name,
-      apiKey: provider.key,
-      models
-    });
-  }
-  return result;
-}
-async function fetchLocalProviders() {
-  const binary = findOpencodeBinary();
-  if (!binary) return null;
-  return new Promise((resolve) => {
-    let child = null;
-    let settled = false;
-    const TIMEOUT_MS = 1e4;
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      try {
-        child?.kill();
-      } catch {
-      }
-      resolve(value);
-    };
-    const timer = setTimeout(() => {
-      finish(null);
-    }, TIMEOUT_MS);
-    try {
-      child = spawn2(binary, ["serve", "--port", "0"], {
-        stdio: ["pipe", "pipe", "pipe"]
-      });
-    } catch {
-      finish(null);
-      return;
-    }
-    const portRegex = /opencode server listening on http:\/\/127\.0\.0\.1:(\d+)/;
-    let portFound = false;
-    let stdoutBuf = "";
-    const onData = (chunk) => {
-      if (portFound) return;
-      stdoutBuf += chunk.toString();
-      const match = portRegex.exec(stdoutBuf);
-      if (!match) return;
-      portFound = true;
-      const port = match[1];
-      fetch(`http://127.0.0.1:${port}/config/providers`).then((res) => res.json()).then((data) => {
-        const raw = data.providers;
-        if (!Array.isArray(raw)) {
-          finish(null);
-          return;
-        }
-        const providers = normalizeProviders(raw);
-        finish(providers);
-      }).catch(() => {
-        finish(null);
-      });
-    };
-    child.stdout?.on("data", onData);
-    child.stderr?.on("data", onData);
-    child.on("error", () => {
-      finish(null);
-    });
-    child.on("exit", () => {
-      if (!settled) finish(null);
-    });
-  });
 }
 
 // src/cli.ts
