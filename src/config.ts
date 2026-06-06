@@ -50,17 +50,19 @@ export function loadPreferences(): UserPreferences {
     lastBackend: config.lastBackend,
     lastModel: config.lastModel,
     lastProvider: config.lastProvider,
+    recentModelsByProvider: config.recentModelsByProvider,
     subscriptionTier: config.subscriptionTier,
     modelListCache: config.modelListCache,
     server: config.server,
   };
 }
 
-export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBackend' | 'lastModel' | 'lastProvider'>>): void {
+export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBackend' | 'lastModel' | 'lastProvider' | 'recentModelsByProvider'>>): void {
   const config = readConfig();
   if (prefs.lastBackend !== undefined) config.lastBackend = prefs.lastBackend;
   if (prefs.lastModel !== undefined) config.lastModel = prefs.lastModel;
   if (prefs.lastProvider !== undefined) config.lastProvider = prefs.lastProvider;
+  if (prefs.recentModelsByProvider !== undefined) config.recentModelsByProvider = prefs.recentModelsByProvider;
   writeConfig(config);
 }
 

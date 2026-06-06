@@ -49,6 +49,7 @@ export interface UserPreferences {
   lastBackend?: 'zen' | 'go';
   lastModel?: string;
   lastProvider?: string;
+  recentModelsByProvider?: Record<string, string[]>;
   subscriptionTier?: 'free' | 'zen' | 'go' | 'both';
   server?: {
     savedPassword?: string;

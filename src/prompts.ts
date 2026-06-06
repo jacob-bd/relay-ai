@@ -61,9 +61,19 @@ export async function askSubscriptionTier(): Promise<'free' | 'zen' | 'go' | 'bo
   return tier;
 }
 
-export async function pickLocalModel(
+const BROWSE_ALL = '__browse_all__';
+const MAX_RECENT = 3;
+
+function modelToOption(model: LocalProviderModel, hint?: string) {
+  return {
+    value: model.id,
+    label: model.name !== model.id ? model.name : model.id,
+    hint: hint ?? (model.name !== model.id ? model.id : model.brand),
+  };
+}
+
+async function browseAllModels(
   provider: LocalProvider,
-  conflicts: ConflictInfo[],
   prefs: UserPreferences,
 ): Promise<LocalProviderModel | null> {
   let filteredModels: LocalProviderModel[];
@@ -104,11 +114,7 @@ export async function pickLocalModel(
     return brandCmp !== 0 ? brandCmp : a.id.localeCompare(b.id);
   });
 
-  const options = filteredModels.map(model => ({
-    value: model.id,
-    label: model.name !== model.id ? model.name : model.id,
-    hint: model.name !== model.id ? model.id : model.brand,
-  }));
+  const options = filteredModels.map(m => modelToOption(m));
 
   if (options.length === 0) {
     p.cancel('No models available for this provider.');
@@ -131,7 +137,51 @@ export async function pickLocalModel(
     return null;
   }
 
-  const selectedModel = filteredModels.find(m => m.id === String(modelId))!;
+  return filteredModels.find(m => m.id === String(modelId))!;
+}
+
+export async function pickLocalModel(
+  provider: LocalProvider,
+  conflicts: ConflictInfo[],
+  prefs: UserPreferences,
+): Promise<LocalProviderModel | null> {
+  // Show recently used models for this provider if we have any.
+  const recentIds = (prefs.recentModelsByProvider?.[provider.id] ?? []).slice(0, MAX_RECENT);
+  const recentModels = recentIds
+    .map(id => provider.models.find(m => m.id === id))
+    .filter((m): m is LocalProviderModel => m !== undefined);
+
+  let selectedModel: LocalProviderModel;
+
+  if (recentModels.length > 0) {
+    const options = [
+      ...recentModels.map(m => modelToOption(m, 'recent')),
+      { value: BROWSE_ALL, label: 'Browse all models →', hint: `${provider.models.length} available` },
+    ];
+
+    const picked = await p.select({
+      message: 'Which model?',
+      options,
+      initialValue: recentModels[0].id,
+    });
+
+    if (p.isCancel(picked)) {
+      p.cancel('Cancelled.');
+      return null;
+    }
+
+    if (String(picked) === BROWSE_ALL) {
+      const browsed = await browseAllModels(provider, prefs);
+      if (!browsed) return null;
+      selectedModel = browsed;
+    } else {
+      selectedModel = recentModels.find(m => m.id === String(picked))!;
+    }
+  } else {
+    const browsed = await browseAllModels(provider, prefs);
+    if (!browsed) return null;
+    selectedModel = browsed;
+  }
 
   if (conflicts.length > 0) {
     const lines = conflicts.map(c => `  ${pc.dim(c.name)}=${pc.dim(c.value)}`).join('\n');

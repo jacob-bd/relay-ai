@@ -503,7 +503,13 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     if (!selectedModel) return 0;
 
     if (!dryRun) {
-      savePreferences({ lastProvider: provider.id, lastModel: selectedModel.id });
+      const prevRecent = prefs.recentModelsByProvider?.[provider.id] ?? [];
+      const updatedRecent = [selectedModel.id, ...prevRecent.filter(id => id !== selectedModel.id)].slice(0, 3);
+      savePreferences({
+        lastProvider: provider.id,
+        lastModel: selectedModel.id,
+        recentModelsByProvider: { ...prefs.recentModelsByProvider, [provider.id]: updatedRecent },
+      });
     }
 
     if (dryRun) {

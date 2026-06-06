@@ -627,7 +627,7 @@ export function startProxy(completionsUrl: string, modelId: string, debug = fals
         delete openaiBody.stream_options;
       }
 
-      plog(`upstream request: stream=${openaiBody.stream ?? false}, tools=${hasTools}`);
+      plog(`request: tools=${hasTools ? openaiBody.tools.length : 0}, stream=${openaiBody.stream ?? false}, msgs=${openaiBody.messages?.length ?? 0}`);
 
       let upstreamRes: Response;
       try {
@@ -671,6 +671,12 @@ export function startProxy(completionsUrl: string, modelId: string, debug = fals
       // Non-streaming response (either client didn't want streaming, or we forced
       // non-streaming for tools to capture thought_signature reliably)
       const openaiData = await upstreamRes.json();
+      if (hasTools) {
+        const calls = openaiData.choices?.[0]?.message?.tool_calls ?? [];
+        plog(`response tool_calls(${calls.length}): ${calls.map((tc: any) =>
+          `${tc.function?.name}:sig=${tc.thought_signature ? 'YES(' + String(tc.thought_signature).slice(0, 8) + '...)' : 'MISSING'}`
+        ).join(', ')}`);
+      }
       const anthropicResponse = translateResponse(openaiData, originalModel);
       if (clientWantsStream) {
         sendAnthropicAsSSE(res, anthropicResponse);
