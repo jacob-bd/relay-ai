@@ -28,6 +28,14 @@ describe('resolveEndpoint', () => {
     });
   });
 
+  it('strips trailing slash before appending /chat/completions for @ai-sdk/openai-compatible', () => {
+    const result = resolveEndpoint('@ai-sdk/openai-compatible', 'https://api.deepseek.com/');
+    expect(result).toEqual({
+      format: 'openai',
+      completionsUrl: 'https://api.deepseek.com/chat/completions',
+    });
+  });
+
   it('returns openai format for @ai-sdk/openai', () => {
     const result = resolveEndpoint('@ai-sdk/openai', '');
     expect(result).toEqual({

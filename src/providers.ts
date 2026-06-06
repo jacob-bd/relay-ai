@@ -71,7 +71,7 @@ export function resolveEndpoint(
     case '@ai-sdk/openai-compatible':
       return {
         format: 'openai',
-        completionsUrl: apiUrl + '/chat/completions',
+        completionsUrl: apiUrl.replace(/\/$/, '') + '/chat/completions',
       };
     case '@ai-sdk/openai':
       return {
@@ -182,11 +182,12 @@ export async function fetchLocalProviders(): Promise<LocalProvider[] | null> {
 
     const portRegex = /opencode server listening on http:\/\/127\.0\.0\.1:(\d+)/;
     let portFound = false;
+    let stdoutBuf = '';
 
     const onData = (chunk: Buffer): void => {
       if (portFound) return;
-      const text = chunk.toString();
-      const match = portRegex.exec(text);
+      stdoutBuf += chunk.toString();
+      const match = portRegex.exec(stdoutBuf);
       if (!match) return;
       portFound = true;
       const port = match[1];
@@ -194,9 +195,9 @@ export async function fetchLocalProviders(): Promise<LocalProvider[] | null> {
       fetch(`http://127.0.0.1:${port}/config/providers`)
         .then((res) => res.json())
         .then((data: unknown) => {
-          const providers = normalizeProviders(
-            (data as { providers: RawProvider[] }).providers,
-          );
+          const raw = (data as { providers?: RawProvider[] }).providers;
+          if (!Array.isArray(raw)) { finish(null); return; }
+          const providers = normalizeProviders(raw);
           finish(providers);
         })
         .catch(() => {
