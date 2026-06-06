@@ -304,36 +304,32 @@ function buildToolNameMap(messages) {
   }
   return map;
 }
-var GEMINI_UNSUPPORTED_SCHEMA_KEYS = /* @__PURE__ */ new Set([
-  "$schema",
-  "$id",
-  "$ref",
-  "$defs",
-  "definitions",
-  "additionalProperties",
-  "propertyNames",
-  "unevaluatedProperties",
-  "allOf",
-  "anyOf",
-  "oneOf",
-  "not",
-  "if",
-  "then",
-  "else",
-  "examples",
-  "default",
-  "const",
-  "exclusiveMinimum",
-  "exclusiveMaximum",
-  "contentEncoding",
-  "contentMediaType"
+var GEMINI_SCHEMA_ALLOWED_KEYS = /* @__PURE__ */ new Set([
+  "type",
+  "description",
+  "title",
+  "properties",
+  "required",
+  "items",
+  "minItems",
+  "maxItems",
+  "enum",
+  "minimum",
+  "maximum",
+  "minLength",
+  "maxLength",
+  "pattern",
+  "format",
+  "nullable",
+  "minProperties",
+  "maxProperties"
 ]);
 function sanitizeSchema(schema) {
   if (schema === null || typeof schema !== "object") return schema;
   if (Array.isArray(schema)) return schema.map(sanitizeSchema);
   const out = {};
   for (const [k, v] of Object.entries(schema)) {
-    if (GEMINI_UNSUPPORTED_SCHEMA_KEYS.has(k)) continue;
+    if (!GEMINI_SCHEMA_ALLOWED_KEYS.has(k)) continue;
     out[k] = sanitizeSchema(v);
   }
   return out;

@@ -40,16 +40,20 @@ function buildToolNameMap(messages: any[]): Map<string, string> {
 
 // ── Request translation: Anthropic → Gemini native ───────────────────
 
-// Gemini's functionDeclarations.parameters accepts a restricted subset of JSON Schema.
-// These fields are valid JSON Schema but rejected by the Gemini API with a 400 error.
-const GEMINI_UNSUPPORTED_SCHEMA_KEYS = new Set([
-  '$schema', '$id', '$ref', '$defs', 'definitions',
-  'additionalProperties', 'propertyNames', 'unevaluatedProperties',
-  'allOf', 'anyOf', 'oneOf', 'not',
-  'if', 'then', 'else',
-  'examples', 'default', 'const',
-  'exclusiveMinimum', 'exclusiveMaximum',
-  'contentEncoding', 'contentMediaType',
+// Gemini's functionDeclarations.parameters accepts only a strict subset of JSON Schema.
+// Allow-list approach: pass through only known-supported fields, drop everything else.
+// This is more robust than a deny-list — unknown future keywords are dropped automatically.
+const GEMINI_SCHEMA_ALLOWED_KEYS = new Set([
+  'type', 'description', 'title',
+  'properties', 'required',
+  'items', 'minItems', 'maxItems',
+  'enum',
+  'minimum', 'maximum',
+  'minLength', 'maxLength',
+  'pattern',
+  'format',
+  'nullable',
+  'minProperties', 'maxProperties',
 ]);
 
 function sanitizeSchema(schema: any): any {
@@ -57,7 +61,7 @@ function sanitizeSchema(schema: any): any {
   if (Array.isArray(schema)) return schema.map(sanitizeSchema);
   const out: any = {};
   for (const [k, v] of Object.entries(schema)) {
-    if (GEMINI_UNSUPPORTED_SCHEMA_KEYS.has(k)) continue;
+    if (!GEMINI_SCHEMA_ALLOWED_KEYS.has(k)) continue;
     out[k] = sanitizeSchema(v);
   }
   return out;
