@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 import { appendFileSync } from 'node:fs';
+import { isGeminiUrl, geminiNativeUrl, translateToGemini, translateFromGemini, translateStreamGemini } from './proxy-gemini.js';
 
 // ── Cache / hash utilities ──────────────────────────────────────────
 
@@ -563,6 +564,16 @@ export interface ProxyHandle {
   close: () => void;
 }
 
+function contextWindowForModel(id: string): number {
+  const lower = id.toLowerCase();
+  if (lower.includes('gemini-2.5-pro') || lower.includes('gemini-1.5-pro')) return 2_000_000;
+  if (lower.includes('gemini')) return 1_000_000;
+  if (lower.includes('claude-3-5') || lower.includes('claude-3.5')) return 200_000;
+  if (lower.includes('claude')) return 200_000;
+  if (lower.includes('gpt-4')) return 128_000;
+  return 200_000;
+}
+
 export function startProxy(completionsUrl: string, modelId: string, debug = false): Promise<ProxyHandle> {
   const upstreamUrl = completionsUrl;
   const LOG = '/tmp/opencode-proxy-debug.log';
@@ -570,9 +581,14 @@ export function startProxy(completionsUrl: string, modelId: string, debug = fals
     ? (msg: string) => { try { appendFileSync(LOG, `${new Date().toISOString()} ${msg}\n`); } catch { /* ignore */ } }
     : (_msg: string) => {};
 
-  // Synthetic Anthropic-format models response so Claude Code can validate the model.
+  // Synthetic Anthropic-format models response so Claude Code can validate the model
+  // and display the correct context window in the status bar.
   const modelsResponse = JSON.stringify({
-    data: [{ id: modelId, type: 'model', display_name: modelId, created_at: '2025-01-01T00:00:00Z' }],
+    data: [{
+      id: modelId, type: 'model', display_name: modelId,
+      created_at: '2025-01-01T00:00:00Z',
+      context_window: contextWindowForModel(modelId),
+    }],
     has_more: false,
     first_id: modelId,
     last_id: modelId,
@@ -598,7 +614,7 @@ export function startProxy(completionsUrl: string, modelId: string, debug = fals
     // POST /v1/messages — the main translation path (Claude Code appends ?beta=true or similar)
     if (req.method === 'POST' && req.url?.startsWith('/v1/messages')) {
       const apiKey = extractApiKey(req);
-      plog(`POST /v1/messages - key=${apiKey ? `len:${apiKey.length}` : 'MISSING'}, headers=${Object.keys(req.headers).join(',')}`);
+      plog(`POST /v1/messages - key=${apiKey ? `len:${apiKey.length}` : 'MISSING'}`);
       if (!apiKey) {
         anthropicError(res, 401, 'Missing API key');
         return;
@@ -614,26 +630,68 @@ export function startProxy(completionsUrl: string, modelId: string, debug = fals
       }
 
       const originalModel = anthropicBody.model;
+      const clientWantsStream = Boolean(anthropicBody.stream);
+
+      // ── Gemini native path ──────────────────────────────────────────
+      // Use Gemini's generateContent API instead of the OpenAI-compatible endpoint.
+      // The OpenAI-compatible endpoint strips thought_signature from tool_call responses,
+      // making it impossible to echo back — breaking multi-turn tool use and thinking.
+      if (isGeminiUrl(upstreamUrl)) {
+        const nativeUrl = geminiNativeUrl(originalModel, clientWantsStream);
+        const geminiBody = translateToGemini(anthropicBody);
+        plog(`gemini-native: model=${originalModel}, stream=${clientWantsStream}, tools=${geminiBody.tools?.[0]?.functionDeclarations?.length ?? 0}, msgs=${geminiBody.contents?.length ?? 0}`);
+
+        let upstreamRes: Response;
+        try {
+          upstreamRes = await fetch(nativeUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': apiKey,
+            },
+            body: JSON.stringify(geminiBody),
+          });
+        } catch (err) {
+          plog(`gemini upstream error: ${err instanceof Error ? err.message : String(err)}`);
+          anthropicError(res, 502, `Upstream unreachable: ${err instanceof Error ? err.message : String(err)}`);
+          return;
+        }
+
+        plog(`gemini upstream ${upstreamRes.status}`);
+
+        if (!upstreamRes.ok) {
+          const errBody = await upstreamRes.text();
+          plog(`gemini error body: ${errBody.slice(0, 500)}`);
+          res.writeHead(upstreamRes.status, { 'Content-Type': upstreamRes.headers.get('content-type') || 'application/json' });
+          res.end(errBody);
+          return;
+        }
+
+        if (clientWantsStream && upstreamRes.body) {
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          });
+          const nodeStream = Readable.fromWeb(upstreamRes.body as any);
+          const translated = translateStreamGemini(nodeStream, originalModel);
+          translated.pipe(res);
+          return;
+        }
+
+        const geminiData = await upstreamRes.json();
+        const anthropicResponse = translateFromGemini(geminiData, originalModel);
+        if (clientWantsStream) {
+          sendAnthropicAsSSE(res, anthropicResponse);
+        } else {
+          sendJson(res, 200, anthropicResponse);
+        }
+        return;
+      }
+
+      // ── OpenAI-compatible path ──────────────────────────────────────
       const openaiBody = translateRequest(anthropicBody);
-
-      // When the request includes tools, force non-streaming upstream so that
-      // thought_signature is present in the response (Gemini's streaming endpoint
-      // omits thought_signature from tool_call deltas). If Claude Code wanted
-      // streaming, we fake-stream the translated response back after the fact.
-      const hasTools = Array.isArray(openaiBody.tools) && openaiBody.tools.length > 0;
-      const clientWantsStream = Boolean(openaiBody.stream);
-      if (hasTools && clientWantsStream) {
-        delete openaiBody.stream;
-        delete openaiBody.stream_options;
-      }
-
-      // Gemini's OpenAI-compatible endpoint strips thought_signature from responses
-      // but still requires it on echo-back. Disabling thinking avoids the requirement.
-      if (upstreamUrl.includes('generativelanguage.googleapis.com')) {
-        openaiBody.thinking = { thinking_budget: 0 };
-      }
-
-      plog(`request: tools=${hasTools ? openaiBody.tools.length : 0}, stream=${openaiBody.stream ?? false}, msgs=${openaiBody.messages?.length ?? 0}, thinking_disabled=${Boolean(openaiBody.thinking)}`);
+      plog(`openai: tools=${openaiBody.tools?.length ?? 0}, stream=${openaiBody.stream ?? false}, msgs=${openaiBody.messages?.length ?? 0}`);
 
       let upstreamRes: Response;
       try {
@@ -661,7 +719,6 @@ export function startProxy(completionsUrl: string, modelId: string, debug = fals
         return;
       }
 
-      // True streaming response (no tools — thought_signature not needed)
       if (openaiBody.stream && upstreamRes.body) {
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
@@ -674,21 +731,9 @@ export function startProxy(completionsUrl: string, modelId: string, debug = fals
         return;
       }
 
-      // Non-streaming response (either client didn't want streaming, or we forced
-      // non-streaming for tools to capture thought_signature reliably)
       const openaiData = await upstreamRes.json();
-      if (hasTools) {
-        const calls = openaiData.choices?.[0]?.message?.tool_calls ?? [];
-        plog(`response tool_calls(${calls.length}): ${calls.map((tc: any) =>
-          `${tc.function?.name}:sig=${tc.thought_signature ? 'YES(' + String(tc.thought_signature).slice(0, 8) + '...)' : 'MISSING'}`
-        ).join(', ')}`);
-      }
       const anthropicResponse = translateResponse(openaiData, originalModel);
-      if (clientWantsStream) {
-        sendAnthropicAsSSE(res, anthropicResponse);
-      } else {
-        sendJson(res, 200, anthropicResponse);
-      }
+      sendJson(res, 200, anthropicResponse);
       return;
     }
 

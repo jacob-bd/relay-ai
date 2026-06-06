@@ -277,8 +277,314 @@ async function getModels(backend, fallbackModels) {
 
 // src/proxy.ts
 import { createServer } from "http";
-import { Readable } from "stream";
+import { Readable as Readable2 } from "stream";
 import { appendFileSync } from "fs";
+
+// src/proxy-gemini.ts
+import { Readable } from "stream";
+function isGeminiUrl(url) {
+  return url.includes("generativelanguage.googleapis.com");
+}
+function geminiNativeUrl(model, stream) {
+  const base = "https://generativelanguage.googleapis.com/v1beta/models";
+  return stream ? `${base}/${encodeURIComponent(model)}:streamGenerateContent?alt=sse` : `${base}/${encodeURIComponent(model)}:generateContent`;
+}
+function buildToolNameMap(messages) {
+  const map = /* @__PURE__ */ new Map();
+  for (const msg of messages ?? []) {
+    if (msg.role === "assistant" && Array.isArray(msg.content)) {
+      for (const part of msg.content) {
+        if (part.type === "tool_use") {
+          const rawId = part.id.split("::ts::")[0];
+          map.set(part.id, part.name);
+          map.set(rawId, part.name);
+        }
+      }
+    }
+  }
+  return map;
+}
+function translateToGemini(body) {
+  const { messages, system, tools, temperature, max_tokens, top_p } = body;
+  const toolNameMap = buildToolNameMap(messages);
+  const contents = [];
+  for (const msg of messages ?? []) {
+    const parts = [];
+    const role = msg.role === "assistant" ? "model" : "user";
+    if (typeof msg.content === "string") {
+      parts.push({ text: msg.content });
+    } else {
+      for (const part of msg.content ?? []) {
+        if (part.type === "text") {
+          if (part.text?.trim()) parts.push({ text: part.text });
+        } else if (part.type === "thinking") {
+          const tp = { thought: true, text: part.thinking };
+          if (part.signature) tp.thought_signature = part.signature;
+          parts.push(tp);
+        } else if (part.type === "tool_use") {
+          const [rawId, ...tsParts] = part.id.split("::ts::");
+          const thoughtSignature = tsParts.length > 0 ? tsParts.join("::ts::") : void 0;
+          const fc = { name: part.name, args: part.input ?? {} };
+          if (thoughtSignature) fc.thought_signature = thoughtSignature;
+          parts.push({ functionCall: fc });
+          void rawId;
+        } else if (part.type === "tool_result") {
+          const name = toolNameMap.get(part.tool_use_id) ?? toolNameMap.get(part.tool_use_id.split("::ts::")[0]) ?? part.tool_use_id.split("::ts::")[0];
+          const responseContent = typeof part.content === "string" ? part.content : JSON.stringify(part.content);
+          parts.push({ functionResponse: { name, response: { content: responseContent } } });
+        } else if (part.type === "image") {
+          const src = part.source;
+          if (src?.type === "base64") {
+            parts.push({ inlineData: { mimeType: src.media_type, data: src.data } });
+          } else if (src?.type === "url") {
+            parts.push({ fileData: { fileUri: src.url } });
+          }
+        }
+      }
+    }
+    if (parts.length > 0) contents.push({ role, parts });
+  }
+  const generationConfig = { thinkingConfig: { includeThoughts: true } };
+  if (max_tokens !== void 0) generationConfig.maxOutputTokens = max_tokens;
+  if (temperature !== void 0) generationConfig.temperature = temperature;
+  if (top_p !== void 0) generationConfig.topP = top_p;
+  const data = { contents, generationConfig };
+  if (system) {
+    const sysParts = typeof system === "string" ? [{ text: system }] : system.map((s) => ({ text: s.text }));
+    data.systemInstruction = { parts: sysParts };
+  }
+  if (tools?.length > 0) {
+    data.tools = [{
+      functionDeclarations: tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        parameters: t.input_schema
+      }))
+    }];
+  }
+  return data;
+}
+function parseGeminiParts(parts, messageId) {
+  const content = [];
+  let toolIndex = 0;
+  let hasToolUse = false;
+  for (const part of parts) {
+    if (part.thought && part.text !== void 0) {
+      content.push({
+        type: "thinking",
+        thinking: part.text,
+        signature: part.thought_signature ?? ""
+      });
+    } else if (part.text !== void 0 && !part.thought) {
+      if (part.text.trim()) content.push({ type: "text", text: part.text });
+    } else if (part.functionCall) {
+      const fc = part.functionCall;
+      const id = fc.thought_signature ? `${messageId}_tc${toolIndex}::ts::${fc.thought_signature}` : `${messageId}_tc${toolIndex}`;
+      content.push({ type: "tool_use", id, name: fc.name, input: fc.args ?? {} });
+      hasToolUse = true;
+      toolIndex++;
+    }
+  }
+  return { content, hasToolUse };
+}
+function translateFromGemini(response, model) {
+  const messageId = "msg_" + Date.now();
+  const candidate = response.candidates?.[0];
+  const parts = candidate?.content?.parts ?? [];
+  const { content, hasToolUse } = parseGeminiParts(parts, messageId);
+  const finishReason = candidate?.finishReason;
+  let stop_reason = "end_turn";
+  if (finishReason === "MAX_TOKENS") stop_reason = "max_tokens";
+  else if (hasToolUse) stop_reason = "tool_use";
+  const usage = response.usageMetadata;
+  const cached = usage?.cachedContentTokenCount ?? 0;
+  return {
+    id: messageId,
+    type: "message",
+    role: "assistant",
+    content,
+    stop_reason,
+    stop_sequence: null,
+    model,
+    usage: {
+      input_tokens: Math.max(0, (usage?.promptTokenCount ?? 0) - cached),
+      output_tokens: usage?.candidatesTokenCount ?? 0,
+      cache_read_input_tokens: cached,
+      cache_creation_input_tokens: 0
+    }
+  };
+}
+function sseChunk(eventType, data) {
+  return `event: ${eventType}
+data: ${JSON.stringify(data)}
+
+`;
+}
+function translateStreamGemini(upstreamBody, model) {
+  const messageId = "msg_" + Date.now();
+  const output = new Readable({ read() {
+  } });
+  let contentBlockIndex = -1;
+  let hasTextBlock = false;
+  let hasThinkingBlock = false;
+  let toolCallCount = 0;
+  let lastUsage = null;
+  let stopReason = "end_turn";
+  let messageStarted = false;
+  let buffer = "";
+  function emit(eventType, data) {
+    output.push(sseChunk(eventType, data));
+  }
+  function startMessage() {
+    if (messageStarted) return;
+    emit("message_start", {
+      type: "message_start",
+      message: {
+        id: messageId,
+        type: "message",
+        role: "assistant",
+        content: [],
+        model,
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 0, output_tokens: 0 }
+      }
+    });
+    messageStarted = true;
+  }
+  function closeBlock() {
+    if (hasTextBlock || hasThinkingBlock) {
+      emit("content_block_stop", { type: "content_block_stop", index: contentBlockIndex });
+      hasTextBlock = false;
+      hasThinkingBlock = false;
+    }
+  }
+  function processParts(parts, usage, fr) {
+    for (const part of parts) {
+      if (part.thought && part.text !== void 0) {
+        if (hasTextBlock) {
+          closeBlock();
+          contentBlockIndex++;
+        }
+        if (!hasThinkingBlock) {
+          if (contentBlockIndex < 0) contentBlockIndex = 0;
+          else if (!hasTextBlock) contentBlockIndex++;
+          startMessage();
+          emit("content_block_start", {
+            type: "content_block_start",
+            index: contentBlockIndex,
+            content_block: { type: "thinking", thinking: "", signature: "" }
+          });
+          hasThinkingBlock = true;
+        }
+        emit("content_block_delta", {
+          type: "content_block_delta",
+          index: contentBlockIndex,
+          delta: { type: "thinking_delta", thinking: part.text }
+        });
+      } else if (part.text !== void 0 && !part.thought) {
+        if (hasThinkingBlock) {
+          closeBlock();
+          contentBlockIndex++;
+        }
+        if (!hasTextBlock) {
+          if (contentBlockIndex < 0) contentBlockIndex = 0;
+          else if (!hasThinkingBlock) contentBlockIndex++;
+          startMessage();
+          emit("content_block_start", {
+            type: "content_block_start",
+            index: contentBlockIndex,
+            content_block: { type: "text", text: "" }
+          });
+          hasTextBlock = true;
+        }
+        if (part.text) {
+          emit("content_block_delta", {
+            type: "content_block_delta",
+            index: contentBlockIndex,
+            delta: { type: "text_delta", text: part.text }
+          });
+        }
+      } else if (part.functionCall) {
+        closeBlock();
+        contentBlockIndex++;
+        const fc = part.functionCall;
+        const id = fc.thought_signature ? `${messageId}_tc${toolCallCount}::ts::${fc.thought_signature}` : `${messageId}_tc${toolCallCount}`;
+        toolCallCount++;
+        stopReason = "tool_use";
+        startMessage();
+        emit("content_block_start", {
+          type: "content_block_start",
+          index: contentBlockIndex,
+          content_block: { type: "tool_use", id, name: fc.name, input: {} }
+        });
+        emit("content_block_delta", {
+          type: "content_block_delta",
+          index: contentBlockIndex,
+          delta: { type: "input_json_delta", partial_json: JSON.stringify(fc.args ?? {}) }
+        });
+        emit("content_block_stop", { type: "content_block_stop", index: contentBlockIndex });
+      }
+    }
+    if (fr === "MAX_TOKENS") stopReason = "max_tokens";
+    if (usage) {
+      const cached = usage.cachedContentTokenCount ?? 0;
+      lastUsage = {
+        input_tokens: Math.max(0, (usage.promptTokenCount ?? 0) - cached),
+        output_tokens: usage.candidatesTokenCount ?? 0,
+        cache_read_input_tokens: cached,
+        cache_creation_input_tokens: 0
+      };
+    }
+  }
+  function finish() {
+    closeBlock();
+    emit("message_delta", {
+      type: "message_delta",
+      delta: { stop_reason: stopReason, stop_sequence: null },
+      usage: lastUsage ?? { input_tokens: 0, output_tokens: 0 }
+    });
+    emit("message_stop", { type: "message_stop" });
+    output.push(null);
+  }
+  const decoder = new TextDecoder();
+  upstreamBody.on("data", (chunk) => {
+    buffer += decoder.decode(chunk, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const raw = line.slice(6).trim();
+      if (!raw || raw === "[DONE]") continue;
+      try {
+        const parsed = JSON.parse(raw);
+        const candidate = parsed.candidates?.[0];
+        const parts = candidate?.content?.parts ?? [];
+        const fr = candidate?.finishReason ?? null;
+        processParts(parts, parsed.usageMetadata, fr);
+      } catch {
+      }
+    }
+  });
+  upstreamBody.on("end", () => {
+    if (buffer.trim()) {
+      const raw = buffer.startsWith("data: ") ? buffer.slice(6).trim() : buffer.trim();
+      if (raw && raw !== "[DONE]") {
+        try {
+          const parsed = JSON.parse(raw);
+          const candidate = parsed.candidates?.[0];
+          processParts(candidate?.content?.parts ?? [], parsed.usageMetadata, candidate?.finishReason ?? null);
+        } catch {
+        }
+      }
+    }
+    finish();
+  });
+  upstreamBody.on("error", () => finish());
+  return output;
+}
+
+// src/proxy.ts
 function tokenCount(...values) {
   for (const value of values) {
     if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -341,11 +647,15 @@ function translateRequest(body) {
         } else if (part.type === "thinking") {
           reasoningContent += (typeof part.thinking === "string" ? part.thinking : JSON.stringify(part.thinking)) + "\n";
         } else if (part.type === "tool_use") {
-          toolCalls.push({
-            id: part.id,
+          const [rawId, ...tsParts] = part.id.split("::ts::");
+          const thoughtSignature = tsParts.length > 0 ? tsParts.join("::ts::") : void 0;
+          const toolCall = {
+            id: rawId,
             type: "function",
             function: { name: part.name, arguments: JSON.stringify(part.input) }
-          });
+          };
+          if (thoughtSignature) toolCall.thought_signature = thoughtSignature;
+          toolCalls.push(toolCall);
         }
       }
       const trimmed = text3.trim();
@@ -368,7 +678,7 @@ function translateRequest(body) {
         } else if (part.type === "tool_result") {
           toolResults.push({
             role: "tool",
-            tool_call_id: part.tool_use_id,
+            tool_call_id: part.tool_use_id.split("::ts::")[0],
             content: typeof part.content === "string" ? part.content : JSON.stringify(part.content)
           });
         }
@@ -424,12 +734,15 @@ function translateResponse(completion, model) {
     content.push({ text: message.content, type: "text" });
   }
   if (message?.tool_calls) {
-    content.push(...message.tool_calls.map((item) => ({
-      type: "tool_use",
-      id: item.id,
-      name: item.function?.name,
-      input: parseToolArguments(item.function?.arguments)
-    })));
+    content.push(...message.tool_calls.map((item) => {
+      const id = item.thought_signature ? `${item.id}::ts::${item.thought_signature}` : item.id;
+      return {
+        type: "tool_use",
+        id,
+        name: item.function?.name,
+        input: parseToolArguments(item.function?.arguments)
+      };
+    }));
   }
   const finishReason = completion.choices?.[0]?.finish_reason;
   let stopReason = "end_turn";
@@ -454,7 +767,7 @@ function translateResponse(completion, model) {
   }
   return result;
 }
-function sseChunk(eventType, data) {
+function sseChunk2(eventType, data) {
   return `event: ${eventType}
 data: ${JSON.stringify(data)}
 
@@ -467,14 +780,16 @@ function translateStream(upstreamBody, model) {
   let hasStartedThinkingBlock = false;
   let isToolUse = false;
   let currentToolCallId = null;
+  let currentToolCallStreamIndex = -1;
   let lastUsage = null;
   let finishReason = null;
   let messageStarted = false;
   let buffer = "";
-  const output = new Readable({ read() {
+  const toolCallState = /* @__PURE__ */ new Map();
+  const output = new Readable2({ read() {
   } });
   function emitSSE(eventType, data) {
-    output.push(sseChunk(eventType, data));
+    output.push(sseChunk2(eventType, data));
   }
   function emitMessageStart() {
     if (messageStarted) return;
@@ -493,7 +808,21 @@ function translateStream(upstreamBody, model) {
     });
     messageStarted = true;
   }
+  function flushToolCallStart(streamIndex) {
+    const state = toolCallState.get(streamIndex);
+    if (!state || state.emitted) return;
+    const encodedId = state.thoughtSignature ? `${state.id}::ts::${state.thoughtSignature}` : state.id;
+    emitSSE("content_block_start", {
+      type: "content_block_start",
+      index: state.blockIndex,
+      content_block: { type: "tool_use", id: encodedId, name: state.name, input: {} }
+    });
+    state.emitted = true;
+  }
   function closeCurrentBlock() {
+    if (currentToolCallStreamIndex >= 0) {
+      flushToolCallStart(currentToolCallStreamIndex);
+    }
     if (isToolUse || hasStartedTextBlock || hasStartedThinkingBlock) {
       emitSSE("content_block_stop", { type: "content_block_stop", index: contentBlockIndex });
     }
@@ -512,21 +841,32 @@ function translateStream(upstreamBody, model) {
     }
     if (delta.tool_calls?.length > 0) {
       for (const toolCall of delta.tool_calls) {
+        const streamIndex = toolCall.index ?? 0;
         if (toolCall.id && toolCall.id !== currentToolCallId) {
           closeCurrentBlock();
           isToolUse = true;
           hasStartedTextBlock = false;
           hasStartedThinkingBlock = false;
           currentToolCallId = toolCall.id;
+          currentToolCallStreamIndex = streamIndex;
           contentBlockIndex++;
           emitMessageStart();
-          emitSSE("content_block_start", {
-            type: "content_block_start",
-            index: contentBlockIndex,
-            content_block: { type: "tool_use", id: toolCall.id, name: toolCall.function?.name, input: {} }
+          toolCallState.set(streamIndex, {
+            id: toolCall.id,
+            name: toolCall.function?.name,
+            thoughtSignature: toolCall.thought_signature,
+            blockIndex: contentBlockIndex,
+            emitted: false
           });
+        } else {
+          const existing = toolCallState.get(streamIndex);
+          if (existing) {
+            if (toolCall.thought_signature) existing.thoughtSignature = toolCall.thought_signature;
+            if (toolCall.function?.name && !existing.name) existing.name = toolCall.function.name;
+          }
         }
         if (toolCall.function?.arguments) {
+          flushToolCallStart(streamIndex);
           emitSSE("content_block_delta", {
             type: "content_block_delta",
             index: contentBlockIndex,
@@ -654,6 +994,81 @@ function anthropicError(res, status, message) {
     error: { type: "api_error", message }
   });
 }
+function sendAnthropicAsSSE(res, anthropicResponse) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive"
+  });
+  res.write(sseChunk2("message_start", {
+    type: "message_start",
+    message: {
+      id: anthropicResponse.id,
+      type: "message",
+      role: "assistant",
+      content: [],
+      model: anthropicResponse.model,
+      stop_reason: null,
+      stop_sequence: null,
+      usage: { input_tokens: 0, output_tokens: 0 }
+    }
+  }));
+  const blocks = anthropicResponse.content ?? [];
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    if (block.type === "text") {
+      res.write(sseChunk2("content_block_start", {
+        type: "content_block_start",
+        index: i,
+        content_block: { type: "text", text: "" }
+      }));
+      res.write(sseChunk2("content_block_delta", {
+        type: "content_block_delta",
+        index: i,
+        delta: { type: "text_delta", text: block.text }
+      }));
+    } else if (block.type === "thinking") {
+      res.write(sseChunk2("content_block_start", {
+        type: "content_block_start",
+        index: i,
+        content_block: { type: "thinking", thinking: "", signature: "" }
+      }));
+      res.write(sseChunk2("content_block_delta", {
+        type: "content_block_delta",
+        index: i,
+        delta: { type: "thinking_delta", thinking: block.thinking ?? "" }
+      }));
+    } else if (block.type === "tool_use") {
+      res.write(sseChunk2("content_block_start", {
+        type: "content_block_start",
+        index: i,
+        content_block: { type: "tool_use", id: block.id, name: block.name, input: {} }
+      }));
+      res.write(sseChunk2("content_block_delta", {
+        type: "content_block_delta",
+        index: i,
+        delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input ?? {}) }
+      }));
+    }
+    res.write(sseChunk2("content_block_stop", { type: "content_block_stop", index: i }));
+  }
+  res.write(sseChunk2("message_delta", {
+    type: "message_delta",
+    delta: { stop_reason: anthropicResponse.stop_reason, stop_sequence: null },
+    usage: anthropicResponse.usage ?? { input_tokens: 0, output_tokens: 0 }
+  }));
+  res.write(sseChunk2("message_stop", { type: "message_stop" }));
+  res.end();
+}
+function contextWindowForModel(id) {
+  const lower = id.toLowerCase();
+  if (lower.includes("gemini-2.5-pro") || lower.includes("gemini-1.5-pro")) return 2e6;
+  if (lower.includes("gemini")) return 1e6;
+  if (lower.includes("claude-3-5") || lower.includes("claude-3.5")) return 2e5;
+  if (lower.includes("claude")) return 2e5;
+  if (lower.includes("gpt-4")) return 128e3;
+  return 2e5;
+}
 function startProxy(completionsUrl, modelId, debug = false) {
   const upstreamUrl = completionsUrl;
   const LOG = "/tmp/opencode-proxy-debug.log";
@@ -666,7 +1081,13 @@ function startProxy(completionsUrl, modelId, debug = false) {
   } : (_msg) => {
   };
   const modelsResponse = JSON.stringify({
-    data: [{ id: modelId, type: "model", display_name: modelId, created_at: "2025-01-01T00:00:00Z" }],
+    data: [{
+      id: modelId,
+      type: "model",
+      display_name: modelId,
+      created_at: "2025-01-01T00:00:00Z",
+      context_window: contextWindowForModel(modelId)
+    }],
     has_more: false,
     first_id: modelId,
     last_id: modelId
@@ -685,7 +1106,7 @@ function startProxy(completionsUrl, modelId, debug = false) {
     }
     if (req.method === "POST" && req.url?.startsWith("/v1/messages")) {
       const apiKey = extractApiKey(req);
-      plog(`POST /v1/messages - key=${apiKey ? `len:${apiKey.length}` : "MISSING"}, headers=${Object.keys(req.headers).join(",")}`);
+      plog(`POST /v1/messages - key=${apiKey ? `len:${apiKey.length}` : "MISSING"}`);
       if (!apiKey) {
         anthropicError(res, 401, "Missing API key");
         return;
@@ -699,7 +1120,56 @@ function startProxy(completionsUrl, modelId, debug = false) {
         return;
       }
       const originalModel = anthropicBody.model;
+      const clientWantsStream = Boolean(anthropicBody.stream);
+      if (isGeminiUrl(upstreamUrl)) {
+        const nativeUrl = geminiNativeUrl(originalModel, clientWantsStream);
+        const geminiBody = translateToGemini(anthropicBody);
+        plog(`gemini-native: model=${originalModel}, stream=${clientWantsStream}, tools=${geminiBody.tools?.[0]?.functionDeclarations?.length ?? 0}, msgs=${geminiBody.contents?.length ?? 0}`);
+        let upstreamRes2;
+        try {
+          upstreamRes2 = await fetch(nativeUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-goog-api-key": apiKey
+            },
+            body: JSON.stringify(geminiBody)
+          });
+        } catch (err) {
+          plog(`gemini upstream error: ${err instanceof Error ? err.message : String(err)}`);
+          anthropicError(res, 502, `Upstream unreachable: ${err instanceof Error ? err.message : String(err)}`);
+          return;
+        }
+        plog(`gemini upstream ${upstreamRes2.status}`);
+        if (!upstreamRes2.ok) {
+          const errBody = await upstreamRes2.text();
+          plog(`gemini error body: ${errBody.slice(0, 500)}`);
+          res.writeHead(upstreamRes2.status, { "Content-Type": upstreamRes2.headers.get("content-type") || "application/json" });
+          res.end(errBody);
+          return;
+        }
+        if (clientWantsStream && upstreamRes2.body) {
+          res.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive"
+          });
+          const nodeStream = Readable2.fromWeb(upstreamRes2.body);
+          const translated = translateStreamGemini(nodeStream, originalModel);
+          translated.pipe(res);
+          return;
+        }
+        const geminiData = await upstreamRes2.json();
+        const anthropicResponse2 = translateFromGemini(geminiData, originalModel);
+        if (clientWantsStream) {
+          sendAnthropicAsSSE(res, anthropicResponse2);
+        } else {
+          sendJson(res, 200, anthropicResponse2);
+        }
+        return;
+      }
       const openaiBody = translateRequest(anthropicBody);
+      plog(`openai: tools=${openaiBody.tools?.length ?? 0}, stream=${openaiBody.stream ?? false}, msgs=${openaiBody.messages?.length ?? 0}`);
       let upstreamRes;
       try {
         upstreamRes = await fetch(upstreamUrl, {
@@ -729,7 +1199,7 @@ function startProxy(completionsUrl, modelId, debug = false) {
           "Cache-Control": "no-cache",
           "Connection": "keep-alive"
         });
-        const nodeStream = Readable.fromWeb(upstreamRes.body);
+        const nodeStream = Readable2.fromWeb(upstreamRes.body);
         const translated = translateStream(nodeStream, originalModel);
         translated.pipe(res);
         return;
@@ -832,6 +1302,7 @@ function loadPreferences() {
     lastBackend: config.lastBackend,
     lastModel: config.lastModel,
     lastProvider: config.lastProvider,
+    recentModelsByProvider: config.recentModelsByProvider,
     subscriptionTier: config.subscriptionTier,
     modelListCache: config.modelListCache,
     server: config.server
@@ -842,6 +1313,7 @@ function savePreferences(prefs) {
   if (prefs.lastBackend !== void 0) config.lastBackend = prefs.lastBackend;
   if (prefs.lastModel !== void 0) config.lastModel = prefs.lastModel;
   if (prefs.lastProvider !== void 0) config.lastProvider = prefs.lastProvider;
+  if (prefs.recentModelsByProvider !== void 0) config.recentModelsByProvider = prefs.recentModelsByProvider;
   writeConfig(config);
 }
 function getCachedModels(backendId) {
@@ -1156,7 +1628,7 @@ function extractBearerToken(value) {
 }
 
 // src/server/router.ts
-import { Readable as Readable2 } from "stream";
+import { Readable as Readable3 } from "stream";
 async function startServer(options) {
   const server = createServer2((req, res) => {
     void routeRequest(req, res, options);
@@ -1257,7 +1729,7 @@ async function handleAnthropicMessages(req, res, options) {
         "Cache-Control": "no-cache",
         "Connection": "keep-alive"
       });
-      const nodeStream = Readable2.fromWeb(upstreamRes.body);
+      const nodeStream = Readable3.fromWeb(upstreamRes.body);
       const translated = translateStream(nodeStream, body.model);
       translated.pipe(res);
       return;
@@ -1556,7 +2028,16 @@ async function askSubscriptionTier() {
   }
   return tier;
 }
-async function pickLocalModel(provider, conflicts, prefs) {
+var BROWSE_ALL = "__browse_all__";
+var MAX_RECENT = 3;
+function modelToOption(model, hint) {
+  return {
+    value: model.id,
+    label: model.name !== model.id ? model.name : model.id,
+    hint: hint ?? (model.name !== model.id ? model.id : model.brand)
+  };
+}
+async function browseAllModels(provider, prefs) {
   let filteredModels;
   if (provider.models.length > 10) {
     const filterInput = await p3.text({
@@ -1587,11 +2068,7 @@ async function pickLocalModel(provider, conflicts, prefs) {
     const brandCmp = a.brand.localeCompare(b.brand);
     return brandCmp !== 0 ? brandCmp : a.id.localeCompare(b.id);
   });
-  const options = filteredModels.map((model) => ({
-    value: model.id,
-    label: model.name !== model.id ? model.name : model.id,
-    hint: model.name !== model.id ? model.id : model.brand
-  }));
+  const options = filteredModels.map((m) => modelToOption(m));
   if (options.length === 0) {
     p3.cancel("No models available for this provider.");
     return null;
@@ -1606,7 +2083,38 @@ async function pickLocalModel(provider, conflicts, prefs) {
     p3.cancel("Cancelled.");
     return null;
   }
-  const selectedModel = filteredModels.find((m) => m.id === String(modelId));
+  return filteredModels.find((m) => m.id === String(modelId));
+}
+async function pickLocalModel(provider, conflicts, prefs) {
+  const recentIds = (prefs.recentModelsByProvider?.[provider.id] ?? []).slice(0, MAX_RECENT);
+  const recentModels = recentIds.map((id) => provider.models.find((m) => m.id === id)).filter((m) => m !== void 0);
+  let selectedModel;
+  if (recentModels.length > 0) {
+    const options = [
+      ...recentModels.map((m) => modelToOption(m, "recent")),
+      { value: BROWSE_ALL, label: "Browse all models \u2192", hint: `${provider.models.length} available` }
+    ];
+    const picked = await p3.select({
+      message: "Which model?",
+      options,
+      initialValue: recentModels[0].id
+    });
+    if (p3.isCancel(picked)) {
+      p3.cancel("Cancelled.");
+      return null;
+    }
+    if (String(picked) === BROWSE_ALL) {
+      const browsed = await browseAllModels(provider, prefs);
+      if (!browsed) return null;
+      selectedModel = browsed;
+    } else {
+      selectedModel = recentModels.find((m) => m.id === String(picked));
+    }
+  } else {
+    const browsed = await browseAllModels(provider, prefs);
+    if (!browsed) return null;
+    selectedModel = browsed;
+  }
   if (conflicts.length > 0) {
     const lines = conflicts.map((c) => `  ${pc2.dim(c.name)}=${pc2.dim(c.value)}`).join("\n");
     p3.note(lines, pc2.yellow("Env vars that will be temporarily overridden:"));
@@ -2137,7 +2645,13 @@ async function runClaudeCommand(parsed) {
     const selectedModel = await pickLocalModel(provider, conflicts, prefs);
     if (!selectedModel) return 0;
     if (!dryRun) {
-      savePreferences({ lastProvider: provider.id, lastModel: selectedModel.id });
+      const prevRecent = prefs.recentModelsByProvider?.[provider.id] ?? [];
+      const updatedRecent = [selectedModel.id, ...prevRecent.filter((id) => id !== selectedModel.id)].slice(0, 3);
+      savePreferences({
+        lastProvider: provider.id,
+        lastModel: selectedModel.id,
+        recentModelsByProvider: { ...prefs.recentModelsByProvider, [provider.id]: updatedRecent }
+      });
     }
     if (dryRun) {
       const formatDesc = selectedModel.modelFormat === "anthropic" ? "direct passthrough" : "via translation proxy";
