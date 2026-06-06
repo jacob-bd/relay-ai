@@ -250,10 +250,21 @@ export function translateStream(upstreamBody: NodeJS.ReadableStream, model: stri
   let hasStartedThinkingBlock = false;
   let isToolUse = false;
   let currentToolCallId: string | null = null;
+  let currentToolCallStreamIndex = -1;
   let lastUsage: any = null;
   let finishReason: string | null = null;
   let messageStarted = false;
   let buffer = '';
+
+  // Track per-tool-call state by streaming index to capture thought_signature
+  // even when it arrives in a separate chunk from the id.
+  const toolCallState: Map<number, {
+    id: string;
+    name?: string;
+    thoughtSignature?: string;
+    blockIndex: number;
+    emitted: boolean;
+  }> = new Map();
 
   const output = new Readable({ read() {} });
 
@@ -274,7 +285,23 @@ export function translateStream(upstreamBody: NodeJS.ReadableStream, model: stri
     messageStarted = true;
   }
 
+  function flushToolCallStart(streamIndex: number) {
+    const state = toolCallState.get(streamIndex);
+    if (!state || state.emitted) return;
+    const encodedId = state.thoughtSignature
+      ? `${state.id}::ts::${state.thoughtSignature}`
+      : state.id;
+    emitSSE('content_block_start', {
+      type: 'content_block_start', index: state.blockIndex,
+      content_block: { type: 'tool_use', id: encodedId, name: state.name, input: {} },
+    });
+    state.emitted = true;
+  }
+
   function closeCurrentBlock() {
+    if (currentToolCallStreamIndex >= 0) {
+      flushToolCallStart(currentToolCallStreamIndex);
+    }
     if (isToolUse || hasStartedTextBlock || hasStartedThinkingBlock) {
       emitSSE('content_block_stop', { type: 'content_block_stop', index: contentBlockIndex });
     }
@@ -293,29 +320,40 @@ export function translateStream(upstreamBody: NodeJS.ReadableStream, model: stri
       finishReason = parsed.choices[0].finish_reason;
     }
 
-    // Tool calls
+    // Tool calls — defer content_block_start until first argument arrives so
+    // thought_signature has a chance to appear (it may come in a later chunk).
     if (delta.tool_calls?.length > 0) {
       for (const toolCall of delta.tool_calls) {
+        const streamIndex = toolCall.index ?? 0;
+
         if (toolCall.id && toolCall.id !== currentToolCallId) {
           closeCurrentBlock();
           isToolUse = true;
           hasStartedTextBlock = false;
           hasStartedThinkingBlock = false;
           currentToolCallId = toolCall.id;
+          currentToolCallStreamIndex = streamIndex;
           contentBlockIndex++;
 
-          const encodedId = toolCall.thought_signature
-            ? `${toolCall.id}::ts::${toolCall.thought_signature}`
-            : toolCall.id;
-
           emitMessageStart();
-          emitSSE('content_block_start', {
-            type: 'content_block_start', index: contentBlockIndex,
-            content_block: { type: 'tool_use', id: encodedId, name: toolCall.function?.name, input: {} },
+
+          toolCallState.set(streamIndex, {
+            id: toolCall.id,
+            name: toolCall.function?.name,
+            thoughtSignature: toolCall.thought_signature,
+            blockIndex: contentBlockIndex,
+            emitted: false,
           });
+        } else {
+          const existing = toolCallState.get(streamIndex);
+          if (existing) {
+            if (toolCall.thought_signature) existing.thoughtSignature = toolCall.thought_signature;
+            if (toolCall.function?.name && !existing.name) existing.name = toolCall.function.name;
+          }
         }
 
         if (toolCall.function?.arguments) {
+          flushToolCallStart(streamIndex);
           emitSSE('content_block_delta', {
             type: 'content_block_delta', index: contentBlockIndex,
             delta: { type: 'input_json_delta', partial_json: toolCall.function.arguments },

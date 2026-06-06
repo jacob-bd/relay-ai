@@ -1,12 +1,35 @@
 // tests/proxy.test.ts
 import { describe, it, expect } from 'vitest';
+import { Readable } from 'node:stream';
 import {
   translateRequest,
   translateResponse,
+  translateStream,
   extractCachedTokens,
   extractUncachedInputTokens,
   extractOutputTokens,
 } from '../src/proxy.js';
+
+// Helper: run translateStream on a sequence of SSE chunks and collect all emitted SSE events
+async function runStream(chunks: object[]): Promise<object[]> {
+  const lines = chunks.map(c => `data: ${JSON.stringify(c)}\n\n`).join('') + 'data: [DONE]\n\n';
+  const upstream = Readable.from([Buffer.from(lines)]);
+  const out = translateStream(upstream, 'test-model');
+  const events: object[] = [];
+  return new Promise((resolve, reject) => {
+    let buf = '';
+    out.on('data', (chunk: Buffer) => { buf += chunk.toString(); });
+    out.on('end', () => {
+      for (const line of buf.split('\n')) {
+        if (line.startsWith('data: ')) {
+          try { events.push(JSON.parse(line.slice(6))); } catch { /* skip */ }
+        }
+      }
+      resolve(events);
+    });
+    out.on('error', reject);
+  });
+}
 
 describe('translateRequest', () => {
   it('converts system string to system message', () => {
@@ -352,6 +375,42 @@ describe('thought_signature round-trip', () => {
     // Tool result message must have bare tool_call_id (no ::ts:: suffix)
     const toolMsg = translated.messages.find((m: any) => m.role === 'tool');
     expect(toolMsg.tool_call_id).toBe('gemini_call_42');
+  });
+});
+
+describe('translateStream thought_signature', () => {
+  it('encodes thought_signature when it arrives in the same chunk as the id', async () => {
+    const events = await runStream([
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_1', thought_signature: 'sig_XYZ', type: 'function', function: { name: 'bash', arguments: '' } }] } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"cmd":"ls"}' } }] } }] },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ]);
+    const start = events.find((e: any) => e.type === 'content_block_start') as any;
+    expect(start?.content_block?.id).toBe('call_1::ts::sig_XYZ');
+  });
+
+  it('encodes thought_signature when it arrives in a later chunk (deferred start)', async () => {
+    const events = await runStream([
+      // id chunk has no thought_signature yet
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_2', type: 'function', function: { name: 'bash', arguments: '' } }] } }] },
+      // thought_signature arrives separately
+      { choices: [{ delta: { tool_calls: [{ index: 0, thought_signature: 'sig_late' }] } }] },
+      // then arguments start
+      { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"cmd":"pwd"}' } }] } }] },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ]);
+    const start = events.find((e: any) => e.type === 'content_block_start') as any;
+    expect(start?.content_block?.id).toBe('call_2::ts::sig_late');
+  });
+
+  it('uses bare id when no thought_signature arrives at all', async () => {
+    const events = await runStream([
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_plain', type: 'function', function: { name: 'bash', arguments: '' } }] } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{}' } }] } }] },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ]);
+    const start = events.find((e: any) => e.type === 'content_block_start') as any;
+    expect(start?.content_block?.id).toBe('call_plain');
   });
 });
 
