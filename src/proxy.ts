@@ -453,8 +453,8 @@ export interface ProxyHandle {
   close: () => void;
 }
 
-export function startProxy(upstreamBaseUrl: string, modelId: string, debug = false): Promise<ProxyHandle> {
-  const upstreamUrl = `${upstreamBaseUrl}/v1/chat/completions`;
+export function startProxy(completionsUrl: string, modelId: string, debug = false): Promise<ProxyHandle> {
+  const upstreamUrl = completionsUrl;
   const LOG = '/tmp/opencode-proxy-debug.log';
   const plog = debug
     ? (msg: string) => { try { appendFileSync(LOG, `${new Date().toISOString()} ${msg}\n`); } catch { /* ignore */ } }

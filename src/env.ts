@@ -1,6 +1,6 @@
 // src/env.ts
 import { CONFLICTING_ENV_VARS } from './constants.js';
-import type { BackendConfig, ConflictInfo } from './types.js';
+import type { ConflictInfo } from './types.js';
 
 export function detectConflicts(): ConflictInfo[] {
   return CONFLICTING_ENV_VARS
@@ -16,7 +16,7 @@ export function resolveApiKey(): string | null {
 }
 
 export function buildChildEnv(
-  backend: BackendConfig,
+  baseUrl: string,
   model: string,
   apiKey: string,
   proxyPort?: number,
@@ -27,7 +27,7 @@ export function buildChildEnv(
   }
   env['ANTHROPIC_BASE_URL'] = proxyPort
     ? `http://127.0.0.1:${proxyPort}`
-    : backend.baseUrl;
+    : baseUrl;
   env['ANTHROPIC_API_KEY'] = apiKey;
   env['ANTHROPIC_MODEL'] = model;
   return env;

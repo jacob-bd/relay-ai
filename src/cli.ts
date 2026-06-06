@@ -509,7 +509,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   let proxyHandle: ProxyHandle | null = null;
   if (selection.model.modelFormat === 'openai') {
     try {
-      proxyHandle = await startProxy(selection.backend.baseUrl, selection.model.id, trace);
+      proxyHandle = await startProxy(`${selection.backend.baseUrl}/v1/chat/completions`, selection.model.id, trace);
       p.log.info(
         `Translation proxy started on port ${proxyHandle.port} ` +
         pc.dim(`(${selection.backend.baseUrl}/v1/chat/completions)`),
@@ -520,7 +520,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     }
   }
 
-  const childEnv = buildChildEnv(selection.backend, selection.model.id, effectiveKey, proxyHandle?.port);
+  const childEnv = buildChildEnv(selection.backend.baseUrl, selection.model.id, effectiveKey, proxyHandle?.port);
   childEnv['CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS'] = '1';
 
   // --trace: write Claude Code debug logs so we can see the actual API error

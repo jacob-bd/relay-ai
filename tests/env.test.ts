@@ -81,46 +81,46 @@ describe('buildChildEnv', () => {
   });
 
   it('removes all conflicting vars from child env', () => {
-    const env = buildChildEnv(BACKENDS.zen, 'claude-sonnet-4-6', 'my-key');
+    const env = buildChildEnv(BACKENDS.zen.baseUrl, 'claude-sonnet-4-6', 'my-key');
     expect(env['CLAUDE_CODE_USE_VERTEX']).toBeUndefined();
     expect(env['ANTHROPIC_VERTEX_PROJECT_ID']).toBeUndefined();
     expect(env['ANTHROPIC_DEFAULT_OPUS_MODEL']).toBeUndefined();
   });
 
   it('sets ANTHROPIC_BASE_URL to backend URL', () => {
-    const env = buildChildEnv(BACKENDS.zen, 'claude-sonnet-4-6', 'my-key');
+    const env = buildChildEnv(BACKENDS.zen.baseUrl, 'claude-sonnet-4-6', 'my-key');
     expect(env['ANTHROPIC_BASE_URL']).toBe('https://opencode.ai/zen');
   });
 
   it('sets ANTHROPIC_API_KEY to the provided key', () => {
-    const env = buildChildEnv(BACKENDS.zen, 'claude-sonnet-4-6', 'my-key');
+    const env = buildChildEnv(BACKENDS.zen.baseUrl, 'claude-sonnet-4-6', 'my-key');
     expect(env['ANTHROPIC_API_KEY']).toBe('my-key');
   });
 
   it('sets ANTHROPIC_MODEL to the selected model', () => {
-    const env = buildChildEnv(BACKENDS.zen, 'claude-sonnet-4-6', 'my-key');
+    const env = buildChildEnv(BACKENDS.zen.baseUrl, 'claude-sonnet-4-6', 'my-key');
     expect(env['ANTHROPIC_MODEL']).toBe('claude-sonnet-4-6');
   });
 
   it('does NOT mutate process.env', () => {
-    buildChildEnv(BACKENDS.zen, 'claude-sonnet-4-6', 'my-key');
+    buildChildEnv(BACKENDS.zen.baseUrl, 'claude-sonnet-4-6', 'my-key');
     expect(process.env['CLAUDE_CODE_USE_VERTEX']).toBe('1');
     expect(process.env['ANTHROPIC_VERTEX_PROJECT_ID']).toBe('my-project');
   });
 
   it('preserves non-conflicting env vars like PATH and HOME', () => {
-    const env = buildChildEnv(BACKENDS.zen, 'claude-sonnet-4-6', 'my-key');
+    const env = buildChildEnv(BACKENDS.zen.baseUrl, 'claude-sonnet-4-6', 'my-key');
     expect(env['PATH']).toBe(process.env['PATH']);
     expect(env['HOME']).toBe(process.env['HOME']);
   });
 
   it('uses proxy URL when proxyPort is provided', () => {
-    const env = buildChildEnv(BACKENDS.zen, 'deepseek-v4-flash', 'my-key', 12345);
+    const env = buildChildEnv(BACKENDS.zen.baseUrl, 'deepseek-v4-flash', 'my-key', 12345);
     expect(env['ANTHROPIC_BASE_URL']).toBe('http://127.0.0.1:12345');
   });
 
   it('uses backend URL when proxyPort is not provided', () => {
-    const env = buildChildEnv(BACKENDS.go, 'minimax-m3', 'my-key');
+    const env = buildChildEnv(BACKENDS.go.baseUrl, 'minimax-m3', 'my-key');
     expect(env['ANTHROPIC_BASE_URL']).toBe('https://opencode.ai/zen/go');
   });
 });
