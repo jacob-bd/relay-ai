@@ -1,7 +1,7 @@
 // src/prompts.ts
 import * as p from '@clack/prompts';
 import pc from 'picocolors';
-import type { BackendConfig, ModelInfo, UserPreferences, ConflictInfo } from './types.js';
+import type { BackendConfig, ModelInfo, UserPreferences, ConflictInfo, LocalProvider, LocalProviderModel } from './types.js';
 import { BACKENDS } from './constants.js';
 import { groupModels } from './models.js';
 
@@ -61,14 +61,118 @@ export async function askSubscriptionTier(): Promise<'free' | 'zen' | 'go' | 'bo
   return tier;
 }
 
+export async function pickLocalModel(
+  provider: LocalProvider,
+  conflicts: ConflictInfo[],
+  prefs: UserPreferences,
+): Promise<LocalProviderModel | null> {
+  // Group models by brand and sort within each brand by id
+  const brandMap = new Map<string, LocalProviderModel[]>();
+  for (const model of provider.models) {
+    const group = brandMap.get(model.brand) ?? [];
+    group.push(model);
+    brandMap.set(model.brand, group);
+  }
+  for (const group of brandMap.values()) {
+    group.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  let filteredModels: LocalProviderModel[];
+
+  if (provider.models.length > 10) {
+    const filterInput = await p.text({
+      message: 'Filter models (leave blank for all):',
+    });
+
+    if (p.isCancel(filterInput)) {
+      p.cancel('Cancelled.');
+      return null;
+    }
+
+    const filterStr = (filterInput as string).trim().toLowerCase();
+    if (filterStr) {
+      const matched = provider.models.filter(
+        m =>
+          m.id.toLowerCase().includes(filterStr) ||
+          m.name.toLowerCase().includes(filterStr) ||
+          m.brand.toLowerCase().includes(filterStr),
+      );
+      if (matched.length === 0) {
+        p.log.warn('No models match that filter — showing all');
+        filteredModels = provider.models;
+      } else {
+        filteredModels = matched;
+      }
+    } else {
+      filteredModels = provider.models;
+    }
+  } else {
+    filteredModels = provider.models;
+  }
+
+  // Sort filtered list by brand then id
+  filteredModels = [...filteredModels].sort((a, b) => {
+    const brandCmp = a.brand.localeCompare(b.brand);
+    return brandCmp !== 0 ? brandCmp : a.id.localeCompare(b.id);
+  });
+
+  // Build select options
+  const options = filteredModels.map(model => ({
+    value: model.id,
+    label: model.name !== model.id ? model.name : model.id,
+    hint: model.name !== model.id ? model.id : model.brand,
+  }));
+
+  if (options.length === 0) {
+    p.cancel('No models available for this provider.');
+    return null;
+  }
+
+  const defaultModel =
+    prefs.lastModel && options.some(o => o.value === prefs.lastModel)
+      ? prefs.lastModel
+      : options[0]?.value;
+
+  const modelId = await p.select({
+    message: 'Which model?',
+    options,
+    initialValue: defaultModel,
+  });
+
+  if (p.isCancel(modelId)) {
+    p.cancel('Cancelled.');
+    return null;
+  }
+
+  const selectedModel = filteredModels.find(m => m.id === String(modelId))!;
+
+  // Show conflict warning if any
+  if (conflicts.length > 0) {
+    const lines = conflicts.map(c => `  ${pc.dim(c.name)}=${pc.dim(c.value)}`).join('\n');
+    p.note(lines, pc.yellow('Env vars that will be temporarily overridden:'));
+  }
+
+  // Confirm launch
+  const confirmed = await p.confirm({
+    message: `Launch Claude Code · ${pc.bold(selectedModel.id)} via ${pc.bold(provider.name)}?`,
+    initialValue: true,
+  });
+
+  if (p.isCancel(confirmed) || !confirmed) {
+    p.cancel('Cancelled.');
+    return null;
+  }
+
+  p.outro(pc.green('Launching...'));
+  return selectedModel;
+}
+
 export async function runWizard(
   prefs: UserPreferences,
   modelsByBackend: { zen: ModelInfo[]; go: ModelInfo[] },
   conflicts: ConflictInfo[],
   tier: 'free' | 'zen' | 'go' | 'both',
 ): Promise<{ backend: BackendConfig; model: ModelInfo } | null> {
-  p.intro(pc.bold('  OpenCode Starter'));
-
   // Backend selection — only shown for 'both' tier (user has two distinct backends to choose from).
   // free/zen → always Zen. go → mixed list (Zen free + Go paid), backend resolved per model.
   let selectorBackendId: 'zen' | 'go' | null = null;

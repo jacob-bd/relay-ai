@@ -14,7 +14,8 @@ import type { ProxyHandle } from './proxy.js';
 import { runServerCommand } from './server/index.js';
 import type { ModelFormat } from './types.js';
 import { loadPreferences, savePreferences, getCachedModels, setCachedModels, getSubscriptionTier, setSubscriptionTier } from './config.js';
-import { runWizard, askSubscriptionTier } from './prompts.js';
+import { runWizard, askSubscriptionTier, pickLocalModel } from './prompts.js';
+import { fetchLocalProviders } from './providers.js';
 import { BACKENDS, VERSION } from './constants.js';
 import type { ParsedArgs, ModelInfo } from './types.js';
 
@@ -433,14 +434,134 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     return 1;
   }
 
+  // Load prefs and conflicts early (before any prompts)
+  const prefs = dryRun ? {} as ReturnType<typeof loadPreferences> : loadPreferences();
+  const conflicts = detectConflicts();
+
+  // Show intro once at the top
+  p.intro(pc.bold('  OpenCode Starter'));
+
+  // Fetch local providers (opencode must be installed locally)
+  const localProviders = await fetchLocalProviders();
+
+  if (localProviders === null) {
+    // opencode not installed — tip shown, proceed to cloud flow
+    p.log.info(pc.dim('Tip: Install OpenCode locally to unlock additional providers'));
+  }
+
+  // Provider selector — shown when opencode is installed and has providers
+  let providerChoice: string = 'opencode';
+  if (localProviders !== null && localProviders.length > 0) {
+    const providerOptions: Array<{ value: string; label: string; hint: string }> = [
+      { value: 'opencode', label: 'OpenCode (Zen / Go)', hint: 'Cloud API — requires OpenCode subscription' },
+      ...localProviders.map(lp => ({
+        value: lp.id,
+        label: lp.name,
+        hint: `${lp.models.length} model${lp.models.length !== 1 ? 's' : ''} available`,
+      })),
+    ];
+
+    const initialProvider =
+      prefs.lastProvider && providerOptions.some(o => o.value === prefs.lastProvider)
+        ? prefs.lastProvider
+        : 'opencode';
+
+    const chosen = await p.select<string>({
+      message: 'Which provider?',
+      options: providerOptions,
+      initialValue: initialProvider,
+    });
+
+    if (p.isCancel(chosen)) {
+      p.cancel('Cancelled.');
+      return 0;
+    }
+
+    providerChoice = chosen as string;
+  }
+
+  // ── Local provider branch ──
+  if (providerChoice !== 'opencode') {
+    const provider = localProviders!.find(lp => lp.id === providerChoice)!;
+
+    const selectedModel = await pickLocalModel(provider, conflicts, prefs);
+    if (!selectedModel) return 0;
+
+    if (!dryRun) {
+      savePreferences({ lastProvider: provider.id, lastModel: selectedModel.id });
+    }
+
+    if (dryRun) {
+      const formatDesc = selectedModel.modelFormat === 'anthropic' ? 'direct passthrough' : 'via translation proxy';
+      const endpoint = selectedModel.baseUrl ?? selectedModel.completionsUrl ?? '(unknown)';
+      console.log('');
+      console.log(pc.bold(pc.cyan('  DRY RUN — would execute:')));
+      console.log('');
+      console.log(`  ${pc.bold('Provider:')}  ${provider.name}`);
+      console.log(`  ${pc.bold('Model:')}     ${selectedModel.id}`);
+      console.log(`  ${pc.bold('Format:')}    ${selectedModel.modelFormat} (${formatDesc})`);
+      console.log(`  ${pc.bold('Endpoint:')} ${endpoint}`);
+      console.log(`  ${pc.bold('Key:')}       ${provider.id} provider key`);
+      console.log('');
+      console.log(pc.dim('  (dry run complete — Claude Code was NOT launched)'));
+      console.log('');
+      return 0;
+    }
+
+    let proxyHandle: ProxyHandle | null = null;
+    let childEnv: NodeJS.ProcessEnv;
+
+    if (selectedModel.modelFormat === 'anthropic') {
+      childEnv = buildChildEnv(selectedModel.baseUrl!, selectedModel.id, provider.apiKey);
+    } else {
+      // openai format — start translation proxy
+      try {
+        proxyHandle = await startProxy(selectedModel.completionsUrl!, selectedModel.id, trace);
+        p.log.info(
+          `Translation proxy started on port ${proxyHandle.port} ` +
+          pc.dim(`(${selectedModel.completionsUrl})`),
+        );
+      } catch (err) {
+        p.log.error(`Failed to start translation proxy: ${err instanceof Error ? err.message : String(err)}`);
+        return 1;
+      }
+      childEnv = buildChildEnv(`http://127.0.0.1:${proxyHandle.port}`, selectedModel.id, provider.apiKey, proxyHandle.port);
+    }
+
+    childEnv['CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS'] = '1';
+
+    const debugLogPath = join(tmpdir(), 'opencode-starter-debug.log');
+    const traceArgs = trace ? ['--debug-file', debugLogPath] : [];
+    if (trace) {
+      p.log.info(`Debug log: ${debugLogPath}`);
+    }
+
+    const exitCode = await launchClaude(childEnv, selectedModel.id, [...traceArgs, ...claudeArgs]);
+    proxyHandle?.close();
+
+    if (trace && existsSync(debugLogPath)) {
+      const log = readFileSync(debugLogPath, 'utf8');
+      const errorLines = log.split('\n').filter(l =>
+        l.includes('error') || l.includes('Error') || l.includes('"type":"error"') || l.includes('status')
+      );
+      console.log('\n' + pc.bold(pc.cyan('── Debug trace ──')));
+      if (errorLines.length > 0) {
+        errorLines.slice(0, 30).forEach(l => console.log(pc.dim(l)));
+      } else {
+        console.log(pc.dim('(no errors found in debug log)'));
+      }
+      console.log(pc.dim(`Full log: ${debugLogPath}`));
+    }
+
+    return exitCode;
+  }
+
+  // ── OpenCode cloud branch ──
+
   // In dry-run: simulate a fresh first-run by ignoring all saved state.
-  // Nothing is read from env/Keychain/prefs, nothing is written back.
   const apiKey = await resolveOrCollectApiKey(dryRun);
   if (!apiKey && !dryRun) return 0;
   const effectiveKey = apiKey ?? 'dry-run-placeholder';
-
-  const prefs = dryRun ? {} as ReturnType<typeof loadPreferences> : loadPreferences();
-  const conflicts = detectConflicts();
 
   // Subscription tier: ignored in dry-run so the user sees the question fresh
   let tier = dryRun ? null : getSubscriptionTier();
@@ -486,7 +607,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   if (!selection) return 0;
 
   // Persist choices for next run (skipped in dry-run)
-  if (!dryRun) savePreferences({ lastBackend: selection.backend.id, lastModel: selection.model.id });
+  if (!dryRun) savePreferences({ lastBackend: selection.backend.id, lastModel: selection.model.id, lastProvider: 'opencode' });
 
   // Always disable experimental betas — OpenCode Zen/Go is a proxy and may not
   // support all Anthropic-specific beta headers even for Anthropic-native models.

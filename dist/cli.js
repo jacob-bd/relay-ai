@@ -3,11 +3,11 @@
 // src/cli.ts
 import pc3 from "picocolors";
 import * as p4 from "@clack/prompts";
-import { appendFileSync as appendFileSync2, readFileSync as readFileSync3, existsSync as existsSync3, realpathSync } from "fs";
-import { homedir as homedir4, tmpdir } from "os";
-import { join as join4 } from "path";
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync3, existsSync as existsSync4, realpathSync } from "fs";
+import { homedir as homedir5, tmpdir } from "os";
+import { join as join5 } from "path";
 import { fileURLToPath } from "url";
-import { execSync as execSync2 } from "child_process";
+import { execSync as execSync3 } from "child_process";
 
 // src/launch.ts
 import { execSync, spawn } from "child_process";
@@ -128,12 +128,12 @@ function resolveApiKey() {
   const key = process.env["OPENCODE_API_KEY"];
   return key?.trim() || null;
 }
-function buildChildEnv(backend, model, apiKey, proxyPort) {
+function buildChildEnv(baseUrl, model, apiKey, proxyPort) {
   const env = { ...process.env };
   for (const name of CONFLICTING_ENV_VARS) {
     delete env[name];
   }
-  env["ANTHROPIC_BASE_URL"] = proxyPort ? `http://127.0.0.1:${proxyPort}` : backend.baseUrl;
+  env["ANTHROPIC_BASE_URL"] = proxyPort ? `http://127.0.0.1:${proxyPort}` : baseUrl;
   env["ANTHROPIC_API_KEY"] = apiKey;
   env["ANTHROPIC_MODEL"] = model;
   return env;
@@ -281,11 +281,11 @@ import { Readable } from "stream";
 import { appendFileSync } from "fs";
 function hashSystemPrompt(system) {
   if (!system) return null;
-  const text2 = typeof system === "string" ? system : system.map((s) => s.text || "").join("\n");
-  if (!text2.trim()) return null;
+  const text3 = typeof system === "string" ? system : system.map((s) => s.text || "").join("\n");
+  if (!text3.trim()) return null;
   let hash = 5381;
-  for (let i = 0; i < text2.length; i++) {
-    hash = (hash << 5) + hash + text2.charCodeAt(i);
+  for (let i = 0; i < text3.length; i++) {
+    hash = (hash << 5) + hash + text3.charCodeAt(i);
     hash = hash & hash;
   }
   return "cache-" + Math.abs(hash).toString(36);
@@ -343,12 +343,12 @@ function translateRequest(body) {
     const result = [];
     if (msg.role === "assistant") {
       const assistantMsg = { role: "assistant", content: null };
-      let text2 = "";
+      let text3 = "";
       let reasoningContent = "";
       const toolCalls = [];
       for (const part of msg.content) {
         if (part.type === "text") {
-          text2 += (typeof part.text === "string" ? part.text : JSON.stringify(part.text)) + "\n";
+          text3 += (typeof part.text === "string" ? part.text : JSON.stringify(part.text)) + "\n";
         } else if (part.type === "thinking") {
           reasoningContent += (typeof part.thinking === "string" ? part.thinking : JSON.stringify(part.thinking)) + "\n";
         } else if (part.type === "tool_use") {
@@ -359,7 +359,7 @@ function translateRequest(body) {
           });
         }
       }
-      const trimmed = text2.trim();
+      const trimmed = text3.trim();
       const trimmedReasoning = reasoningContent.trim();
       if (trimmed) assistantMsg.content = trimmed;
       if (trimmedReasoning) assistantMsg.reasoning_content = trimmedReasoning;
@@ -667,8 +667,8 @@ function anthropicError(res, status, message) {
     error: { type: "api_error", message }
   });
 }
-function startProxy(upstreamBaseUrl, modelId, debug = false) {
-  const upstreamUrl = `${upstreamBaseUrl}/v1/chat/completions`;
+function startProxy(completionsUrl, modelId, debug = false) {
+  const upstreamUrl = completionsUrl;
   const LOG = "/tmp/opencode-proxy-debug.log";
   const plog = debug ? (msg) => {
     try {
@@ -844,6 +844,7 @@ function loadPreferences() {
   return {
     lastBackend: config.lastBackend,
     lastModel: config.lastModel,
+    lastProvider: config.lastProvider,
     subscriptionTier: config.subscriptionTier,
     modelListCache: config.modelListCache,
     server: config.server
@@ -853,6 +854,7 @@ function savePreferences(prefs) {
   const config = readConfig();
   if (prefs.lastBackend !== void 0) config.lastBackend = prefs.lastBackend;
   if (prefs.lastModel !== void 0) config.lastModel = prefs.lastModel;
+  if (prefs.lastProvider !== void 0) config.lastProvider = prefs.lastProvider;
   writeConfig(config);
 }
 function getCachedModels(backendId) {
@@ -1129,8 +1131,8 @@ async function postJson(url, body, apiKey) {
     },
     body: JSON.stringify(body)
   });
-  const text2 = await response.text();
-  const parsed = text2 ? JSON.parse(text2) : null;
+  const text3 = await response.text();
+  const parsed = text3 ? JSON.parse(text3) : null;
   return { status: response.status, body: parsed };
 }
 async function readJson(req) {
@@ -1231,8 +1233,8 @@ async function runServerCommand() {
     apiKey = await readFromCredentialStore();
     if (apiKey) {
       const isMac = process.platform === "darwin";
-      const isWindows2 = process.platform === "win32";
-      const storeName = isMac ? "macOS Keychain" : isWindows2 ? "Windows Credential Manager" : "Secret Service";
+      const isWindows3 = process.platform === "win32";
+      const storeName = isMac ? "macOS Keychain" : isWindows3 ? "Windows Credential Manager" : "Secret Service";
       p2.log.success(`Found key in ${storeName}`);
     }
   }
@@ -1340,8 +1342,82 @@ async function askSubscriptionTier() {
   }
   return tier;
 }
+async function pickLocalModel(provider, conflicts, prefs) {
+  const brandMap = /* @__PURE__ */ new Map();
+  for (const model of provider.models) {
+    const group = brandMap.get(model.brand) ?? [];
+    group.push(model);
+    brandMap.set(model.brand, group);
+  }
+  for (const group of brandMap.values()) {
+    group.sort((a, b) => a.id.localeCompare(b.id));
+  }
+  let filteredModels;
+  if (provider.models.length > 10) {
+    const filterInput = await p3.text({
+      message: "Filter models (leave blank for all):"
+    });
+    if (p3.isCancel(filterInput)) {
+      p3.cancel("Cancelled.");
+      return null;
+    }
+    const filterStr = filterInput.trim().toLowerCase();
+    if (filterStr) {
+      const matched = provider.models.filter(
+        (m) => m.id.toLowerCase().includes(filterStr) || m.name.toLowerCase().includes(filterStr) || m.brand.toLowerCase().includes(filterStr)
+      );
+      if (matched.length === 0) {
+        p3.log.warn("No models match that filter \u2014 showing all");
+        filteredModels = provider.models;
+      } else {
+        filteredModels = matched;
+      }
+    } else {
+      filteredModels = provider.models;
+    }
+  } else {
+    filteredModels = provider.models;
+  }
+  filteredModels = [...filteredModels].sort((a, b) => {
+    const brandCmp = a.brand.localeCompare(b.brand);
+    return brandCmp !== 0 ? brandCmp : a.id.localeCompare(b.id);
+  });
+  const options = filteredModels.map((model) => ({
+    value: model.id,
+    label: model.name !== model.id ? model.name : model.id,
+    hint: model.name !== model.id ? model.id : model.brand
+  }));
+  if (options.length === 0) {
+    p3.cancel("No models available for this provider.");
+    return null;
+  }
+  const defaultModel = prefs.lastModel && options.some((o) => o.value === prefs.lastModel) ? prefs.lastModel : options[0]?.value;
+  const modelId = await p3.select({
+    message: "Which model?",
+    options,
+    initialValue: defaultModel
+  });
+  if (p3.isCancel(modelId)) {
+    p3.cancel("Cancelled.");
+    return null;
+  }
+  const selectedModel = filteredModels.find((m) => m.id === String(modelId));
+  if (conflicts.length > 0) {
+    const lines = conflicts.map((c) => `  ${pc2.dim(c.name)}=${pc2.dim(c.value)}`).join("\n");
+    p3.note(lines, pc2.yellow("Env vars that will be temporarily overridden:"));
+  }
+  const confirmed = await p3.confirm({
+    message: `Launch Claude Code \xB7 ${pc2.bold(selectedModel.id)} via ${pc2.bold(provider.name)}?`,
+    initialValue: true
+  });
+  if (p3.isCancel(confirmed) || !confirmed) {
+    p3.cancel("Cancelled.");
+    return null;
+  }
+  p3.outro(pc2.green("Launching..."));
+  return selectedModel;
+}
 async function runWizard(prefs, modelsByBackend, conflicts, tier) {
-  p3.intro(pc2.bold("  OpenCode Starter"));
   let selectorBackendId = null;
   if (tier === "both") {
     const backendId = await p3.select({
@@ -1427,6 +1503,170 @@ async function runWizard(prefs, modelsByBackend, conflicts, tier) {
   }
   p3.outro(pc2.green("Launching..."));
   return { backend, model: selectedModel };
+}
+
+// src/providers.ts
+import { execSync as execSync2, spawn as spawn2 } from "child_process";
+import { existsSync as existsSync3 } from "fs";
+import { homedir as homedir4 } from "os";
+import { join as join4 } from "path";
+var isWindows2 = process.platform === "win32";
+var OPENCODE_FALLBACK_PATHS = isWindows2 ? [
+  join4(process.env["APPDATA"] ?? homedir4(), "npm", "opencode.cmd"),
+  join4(process.env["APPDATA"] ?? homedir4(), "npm", "opencode"),
+  join4(homedir4(), "AppData", "Roaming", "npm", "opencode.cmd")
+] : [
+  join4(homedir4(), ".opencode", "bin", "opencode"),
+  join4(homedir4(), ".local", "bin", "opencode"),
+  join4(homedir4(), ".npm", "bin", "opencode"),
+  "/usr/local/bin/opencode",
+  "/opt/homebrew/bin/opencode"
+];
+function findOpencodeBinary() {
+  try {
+    const result = execSync2(isWindows2 ? "where.exe opencode" : "which opencode", {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    const path = result.trim().split("\n")[0].trim();
+    if (path) return path;
+  } catch {
+  }
+  for (const path of OPENCODE_FALLBACK_PATHS) {
+    if (existsSync3(path)) return path;
+  }
+  return null;
+}
+function resolveEndpoint(npm, apiUrl) {
+  switch (npm) {
+    case "@ai-sdk/anthropic":
+      return {
+        format: "anthropic",
+        baseUrl: (apiUrl || "https://api.anthropic.com").replace(/\/v1\/?$/, "")
+      };
+    case "@ai-sdk/openai-compatible":
+      return {
+        format: "openai",
+        completionsUrl: apiUrl.replace(/\/$/, "") + "/chat/completions"
+      };
+    case "@ai-sdk/openai":
+      return {
+        format: "openai",
+        completionsUrl: "https://api.openai.com/v1/chat/completions"
+      };
+    case "@ai-sdk/google":
+      return {
+        format: "openai",
+        completionsUrl: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+      };
+    case "@ai-sdk/groq":
+      return {
+        format: "openai",
+        completionsUrl: "https://api.groq.com/openai/v1/chat/completions"
+      };
+    case "@ai-sdk/mistral":
+      return {
+        format: "openai",
+        completionsUrl: "https://api.mistral.ai/v1/chat/completions"
+      };
+    case "@ai-sdk/xai":
+      return {
+        format: "openai",
+        completionsUrl: "https://api.x.ai/v1/chat/completions"
+      };
+    default:
+      return null;
+  }
+}
+function normalizeProviders(raw) {
+  const result = [];
+  for (const provider of raw) {
+    if (!provider.key) continue;
+    if (provider.id === "opencode" || provider.id === "opencode-go") continue;
+    const models = [];
+    for (const model of Object.values(provider.models ?? {})) {
+      const endpoint = resolveEndpoint(model.api?.npm ?? "", model.api?.url ?? "");
+      if (endpoint === null) continue;
+      models.push({
+        id: model.id,
+        name: model.name ?? model.id,
+        family: model.family ?? "",
+        brand: deriveBrand(model.family ?? ""),
+        modelFormat: endpoint.format,
+        baseUrl: endpoint.baseUrl,
+        completionsUrl: endpoint.completionsUrl,
+        cost: model.cost
+      });
+    }
+    if (models.length === 0) continue;
+    result.push({
+      id: provider.id,
+      name: provider.name,
+      apiKey: provider.key,
+      models
+    });
+  }
+  return result;
+}
+async function fetchLocalProviders() {
+  const binary = findOpencodeBinary();
+  if (!binary) return null;
+  return new Promise((resolve) => {
+    let child = null;
+    let settled = false;
+    const TIMEOUT_MS = 1e4;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        child?.kill();
+      } catch {
+      }
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      finish(null);
+    }, TIMEOUT_MS);
+    try {
+      child = spawn2(binary, ["serve", "--port", "0"], {
+        stdio: ["pipe", "pipe", "pipe"]
+      });
+    } catch {
+      finish(null);
+      return;
+    }
+    const portRegex = /opencode server listening on http:\/\/127\.0\.0\.1:(\d+)/;
+    let portFound = false;
+    let stdoutBuf = "";
+    const onData = (chunk) => {
+      if (portFound) return;
+      stdoutBuf += chunk.toString();
+      const match = portRegex.exec(stdoutBuf);
+      if (!match) return;
+      portFound = true;
+      const port = match[1];
+      fetch(`http://127.0.0.1:${port}/config/providers`).then((res) => res.json()).then((data) => {
+        const raw = data.providers;
+        if (!Array.isArray(raw)) {
+          finish(null);
+          return;
+        }
+        const providers = normalizeProviders(raw);
+        finish(providers);
+      }).catch(() => {
+        finish(null);
+      });
+    };
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onData);
+    child.on("error", () => {
+      finish(null);
+    });
+    child.on("exit", () => {
+      if (!settled) finish(null);
+    });
+  });
 }
 
 // src/cli.ts
@@ -1556,9 +1796,9 @@ ${pc3.bold("Behavior:")}
   Server password is saved only if the user chooses to save it.
   Server host and port are not saved.`;
 }
-function printHelp(text2) {
+function printHelp(text3) {
   console.log(`
-${text2}
+${text3}
 `);
 }
 function printDryRun(backendName, modelId, baseUrl, modelFormat, claudeArgs, conflicts, disableExperimentalBetas) {
@@ -1598,17 +1838,17 @@ function printDryRun(backendName, modelId, baseUrl, modelFormat, claudeArgs, con
 function detectShellProfile() {
   const shell = process.env["SHELL"] ?? "";
   if (process.platform === "darwin") {
-    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir4()}/.zshrc` };
-    if (shell.includes("bash")) return { display: "~/.bash_profile", path: `${homedir4()}/.bash_profile` };
-    return { display: "~/.profile", path: `${homedir4()}/.profile` };
+    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir5()}/.zshrc` };
+    if (shell.includes("bash")) return { display: "~/.bash_profile", path: `${homedir5()}/.bash_profile` };
+    return { display: "~/.profile", path: `${homedir5()}/.profile` };
   }
   if (process.platform === "linux") {
-    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir4()}/.zshrc` };
-    if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir4()}/.bashrc` };
-    return { display: "~/.profile", path: `${homedir4()}/.profile` };
+    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir5()}/.zshrc` };
+    if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir5()}/.bashrc` };
+    return { display: "~/.profile", path: `${homedir5()}/.profile` };
   }
-  if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir4()}/.bashrc` };
-  return { display: "~/.profile", path: `${homedir4()}/.profile` };
+  if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir5()}/.bashrc` };
+  return { display: "~/.profile", path: `${homedir5()}/.profile` };
 }
 async function resolveOrCollectApiKey(simulate = false) {
   if (!simulate) {
@@ -1616,7 +1856,7 @@ async function resolveOrCollectApiKey(simulate = false) {
     if (existing) return existing;
   }
   const isMac = process.platform === "darwin";
-  const isWindows2 = process.platform === "win32";
+  const isWindows3 = process.platform === "win32";
   const isLinux = process.platform === "linux";
   if (simulate) {
     p4.note(
@@ -1627,7 +1867,7 @@ async function resolveOrCollectApiKey(simulate = false) {
   if (!simulate) {
     const storedKey = await readFromCredentialStore();
     if (storedKey) {
-      const storeName = isMac ? "macOS Keychain" : isWindows2 ? "Windows Credential Manager" : "Secret Service";
+      const storeName = isMac ? "macOS Keychain" : isWindows3 ? "Windows Credential Manager" : "Secret Service";
       p4.log.success(`Found key in ${storeName}`);
       process.env["OPENCODE_API_KEY"] = storedKey;
       return storedKey;
@@ -1673,7 +1913,7 @@ async function resolveOrCollectApiKey(simulate = false) {
         }
       ];
     }
-    if (isWindows2) {
+    if (isWindows3) {
       return [
         {
           value: "credential-manager",
@@ -1719,7 +1959,7 @@ async function resolveOrCollectApiKey(simulate = false) {
   const saveChoice = await p4.select({
     message: "Where should we save the key?",
     options: saveOptions,
-    initialValue: isMac ? "keychain" : isWindows2 ? "credential-manager" : secretServiceAvailable ? "secret-service" : "profile"
+    initialValue: isMac ? "keychain" : isWindows3 ? "credential-manager" : secretServiceAvailable ? "secret-service" : "profile"
   });
   if (p4.isCancel(saveChoice)) {
     p4.cancel("Cancelled.");
@@ -1746,7 +1986,7 @@ async function resolveOrCollectApiKey(simulate = false) {
     if (await saveToCredentialStore(trimmedKey)) {
       try {
         const autoLoadLine = `export OPENCODE_API_KEY="$(security find-generic-password -s opencode-starter -a opencode-starter -w 2>/dev/null)"`;
-        const existing = existsSync3(path) ? readFileSync3(path, "utf8") : "";
+        const existing = existsSync4(path) ? readFileSync3(path, "utf8") : "";
         if (!existing.includes(autoLoadLine)) {
           appendFileSync2(path, `
 # opencode-starter: load API key from macOS Keychain
@@ -1769,7 +2009,7 @@ ${autoLoadLine}
     }
   } else if (saveChoice === "setx") {
     try {
-      execSync2(`setx OPENCODE_API_KEY "${trimmedKey}"`, { stdio: ["pipe", "pipe", "pipe"] });
+      execSync3(`setx OPENCODE_API_KEY "${trimmedKey}"`, { stdio: ["pipe", "pipe", "pipe"] });
       p4.log.success("Key saved as a user environment variable \u2014 active now and in all future terminals.");
     } catch {
       p4.log.warn("Could not run setx \u2014 key will be used for this session only");
@@ -1782,7 +2022,7 @@ ${autoLoadLine}
     }
   } else if (saveChoice === "profile") {
     try {
-      if (!existsSync3(path)) appendFileSync2(path, "");
+      if (!existsSync4(path)) appendFileSync2(path, "");
       appendFileSync2(path, `
 export OPENCODE_API_KEY="${trimmedKey}"
 `);
@@ -1803,11 +2043,100 @@ async function runClaudeCommand(parsed) {
     console.error("  npm install -g @anthropic-ai/claude-code\n");
     return 1;
   }
+  const prefs = dryRun ? {} : loadPreferences();
+  const conflicts = detectConflicts();
+  p4.intro(pc3.bold("  OpenCode Starter"));
+  const localProviders = await fetchLocalProviders();
+  if (localProviders === null) {
+    p4.log.info(pc3.dim("Tip: Install OpenCode locally to unlock additional providers"));
+  }
+  let providerChoice = "opencode";
+  if (localProviders !== null && localProviders.length > 0) {
+    const providerOptions = [
+      { value: "opencode", label: "OpenCode (Zen / Go)", hint: "Cloud API \u2014 requires OpenCode subscription" },
+      ...localProviders.map((lp) => ({
+        value: lp.id,
+        label: lp.name,
+        hint: `${lp.models.length} model${lp.models.length !== 1 ? "s" : ""} available`
+      }))
+    ];
+    const initialProvider = prefs.lastProvider && providerOptions.some((o) => o.value === prefs.lastProvider) ? prefs.lastProvider : "opencode";
+    const chosen = await p4.select({
+      message: "Which provider?",
+      options: providerOptions,
+      initialValue: initialProvider
+    });
+    if (p4.isCancel(chosen)) {
+      p4.cancel("Cancelled.");
+      return 0;
+    }
+    providerChoice = chosen;
+  }
+  if (providerChoice !== "opencode") {
+    const provider = localProviders.find((lp) => lp.id === providerChoice);
+    const selectedModel = await pickLocalModel(provider, conflicts, prefs);
+    if (!selectedModel) return 0;
+    if (!dryRun) {
+      savePreferences({ lastProvider: provider.id, lastModel: selectedModel.id });
+    }
+    if (dryRun) {
+      const formatDesc = selectedModel.modelFormat === "anthropic" ? "direct passthrough" : "via translation proxy";
+      const endpoint = selectedModel.baseUrl ?? selectedModel.completionsUrl ?? "(unknown)";
+      console.log("");
+      console.log(pc3.bold(pc3.cyan("  DRY RUN \u2014 would execute:")));
+      console.log("");
+      console.log(`  ${pc3.bold("Provider:")}  ${provider.name}`);
+      console.log(`  ${pc3.bold("Model:")}     ${selectedModel.id}`);
+      console.log(`  ${pc3.bold("Format:")}    ${selectedModel.modelFormat} (${formatDesc})`);
+      console.log(`  ${pc3.bold("Endpoint:")} ${endpoint}`);
+      console.log(`  ${pc3.bold("Key:")}       ${provider.id} provider key`);
+      console.log("");
+      console.log(pc3.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
+      console.log("");
+      return 0;
+    }
+    let proxyHandle2 = null;
+    let childEnv2;
+    if (selectedModel.modelFormat === "anthropic") {
+      childEnv2 = buildChildEnv(selectedModel.baseUrl, selectedModel.id, provider.apiKey);
+    } else {
+      try {
+        proxyHandle2 = await startProxy(selectedModel.completionsUrl, selectedModel.id, trace);
+        p4.log.info(
+          `Translation proxy started on port ${proxyHandle2.port} ` + pc3.dim(`(${selectedModel.completionsUrl})`)
+        );
+      } catch (err) {
+        p4.log.error(`Failed to start translation proxy: ${err instanceof Error ? err.message : String(err)}`);
+        return 1;
+      }
+      childEnv2 = buildChildEnv(`http://127.0.0.1:${proxyHandle2.port}`, selectedModel.id, provider.apiKey, proxyHandle2.port);
+    }
+    childEnv2["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] = "1";
+    const debugLogPath2 = join5(tmpdir(), "opencode-starter-debug.log");
+    const traceArgs2 = trace ? ["--debug-file", debugLogPath2] : [];
+    if (trace) {
+      p4.log.info(`Debug log: ${debugLogPath2}`);
+    }
+    const exitCode2 = await launchClaude(childEnv2, selectedModel.id, [...traceArgs2, ...claudeArgs]);
+    proxyHandle2?.close();
+    if (trace && existsSync4(debugLogPath2)) {
+      const log4 = readFileSync3(debugLogPath2, "utf8");
+      const errorLines = log4.split("\n").filter(
+        (l) => l.includes("error") || l.includes("Error") || l.includes('"type":"error"') || l.includes("status")
+      );
+      console.log("\n" + pc3.bold(pc3.cyan("\u2500\u2500 Debug trace \u2500\u2500")));
+      if (errorLines.length > 0) {
+        errorLines.slice(0, 30).forEach((l) => console.log(pc3.dim(l)));
+      } else {
+        console.log(pc3.dim("(no errors found in debug log)"));
+      }
+      console.log(pc3.dim(`Full log: ${debugLogPath2}`));
+    }
+    return exitCode2;
+  }
   const apiKey = await resolveOrCollectApiKey(dryRun);
   if (!apiKey && !dryRun) return 0;
   const effectiveKey = apiKey ?? "dry-run-placeholder";
-  const prefs = dryRun ? {} : loadPreferences();
-  const conflicts = detectConflicts();
   let tier = dryRun ? null : getSubscriptionTier();
   if (!tier || setup) {
     tier = await askSubscriptionTier();
@@ -1842,7 +2171,7 @@ async function runClaudeCommand(parsed) {
   }
   const selection = await runWizard(prefs, { zen: zenModels, go: goModels }, conflicts, tier);
   if (!selection) return 0;
-  if (!dryRun) savePreferences({ lastBackend: selection.backend.id, lastModel: selection.model.id });
+  if (!dryRun) savePreferences({ lastBackend: selection.backend.id, lastModel: selection.model.id, lastProvider: "opencode" });
   const disableExperimentalBetas = true;
   if (dryRun) {
     printDryRun(
@@ -1859,7 +2188,7 @@ async function runClaudeCommand(parsed) {
   let proxyHandle = null;
   if (selection.model.modelFormat === "openai") {
     try {
-      proxyHandle = await startProxy(selection.backend.baseUrl, selection.model.id, trace);
+      proxyHandle = await startProxy(`${selection.backend.baseUrl}/v1/chat/completions`, selection.model.id, trace);
       p4.log.info(
         `Translation proxy started on port ${proxyHandle.port} ` + pc3.dim(`(${selection.backend.baseUrl}/v1/chat/completions)`)
       );
@@ -1868,9 +2197,9 @@ async function runClaudeCommand(parsed) {
       return 1;
     }
   }
-  const childEnv = buildChildEnv(selection.backend, selection.model.id, effectiveKey, proxyHandle?.port);
+  const childEnv = buildChildEnv(selection.backend.baseUrl, selection.model.id, effectiveKey, proxyHandle?.port);
   childEnv["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] = "1";
-  const debugLogPath = join4(tmpdir(), "opencode-starter-debug.log");
+  const debugLogPath = join5(tmpdir(), "opencode-starter-debug.log");
   const traceArgs = trace ? ["--debug-file", debugLogPath] : [];
   if (trace) {
     p4.log.info(`Debug log: ${debugLogPath}`);
@@ -1879,7 +2208,7 @@ async function runClaudeCommand(parsed) {
   if (proxyHandle) {
     proxyHandle.close();
   }
-  if (trace && existsSync3(debugLogPath)) {
+  if (trace && existsSync4(debugLogPath)) {
     const log4 = readFileSync3(debugLogPath, "utf8");
     const errorLines = log4.split("\n").filter(
       (l) => l.includes("error") || l.includes("Error") || l.includes('"type":"error"') || l.includes("status")
