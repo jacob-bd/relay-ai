@@ -5,10 +5,24 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 import { appendFileSync } from 'node:fs';
 import { isGeminiUrl, geminiNativeUrl, translateToGemini, translateFromGemini, translateStreamGemini, GEMINI_SKIP_THOUGHT_SIGNATURE } from './proxy-gemini.js';
+import {
+  isOpenAIChatCompletionsUrl,
+  modelPrefersResponsesApi,
+  openAIResponsesUrl,
+  translateFromResponses,
+  translateStreamResponses,
+  translateToResponses,
+} from './proxy-responses.js';
 import { formatAnthropicModelEntry } from './server/models.js';
 import { parseToolArguments, sseChunk, stripToolUseIdSuffix, splitToolUseId, encodeToolUseId, serializeToolResultContent, attachSseLineReader, extractSseDataPayload } from './proxy-shared.js';
 import type { AnthropicContentBlock, AnthropicMessage, AnthropicMessageRequest, AnthropicRequestContentPart, OpenAIChatCompletion, OpenAIStreamChunk, OpenAIStreamDelta } from './proxy-types.js';
 import { resolveUpstreamTools } from './tool-search.js';
+import { isMistralUpstream, normalizeMistralMessages, type MistralNormalizeResult } from './mistral-messages.js';
+
+export interface TranslateRequestOptions {
+  completionsUrl?: string;
+  mistralNormalize?: MistralNormalizeResult;
+}
 
 function tokenCount(...values: any[]): number {
   for (const value of values) {
@@ -61,11 +75,21 @@ function translateImageBlock(part: any): any {
   return null;
 }
 
-export function translateRequest(body: AnthropicMessageRequest): Record<string, unknown> {
+export function translateRequest(
+  body: AnthropicMessageRequest,
+  options: TranslateRequestOptions = {},
+): Record<string, unknown> {
   const { model, messages, system, temperature, max_tokens, top_p, stop_sequences, tools, stream } = body;
+  const inlineSystemParts: string[] = [];
 
   const openAIMessages = Array.isArray(messages)
     ? messages.flatMap((msg: any) => {
+        if (msg.role === 'system') {
+          const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content ?? '');
+          if (text.trim()) inlineSystemParts.push(text.trim());
+          return [];
+        }
+
         if (typeof msg.content === 'string') {
           return [{ role: msg.role, content: msg.content }];
         }
@@ -141,6 +165,15 @@ export function translateRequest(body: AnthropicMessageRequest): Record<string, 
     ? system.map((item: any) => ({ role: 'system', content: item.text }))
     : system ? [{ role: 'system', content: system }] : [];
 
+  if (inlineSystemParts.length > 0) {
+    const mergedInline = inlineSystemParts.join('\n\n');
+    if (systemMessages.length > 0) {
+      systemMessages[0].content = `${systemMessages[0].content}\n\n${mergedInline}`;
+    } else {
+      systemMessages.push({ role: 'system', content: mergedInline });
+    }
+  }
+
   const data: any = { model, messages: [...systemMessages, ...openAIMessages] };
   if (max_tokens !== undefined) data.max_tokens = max_tokens;
   if (temperature !== undefined) data.temperature = temperature;
@@ -159,6 +192,12 @@ export function translateRequest(body: AnthropicMessageRequest): Record<string, 
         parameters: item.input_schema,
       },
     }));
+  }
+
+  if (isMistralUpstream(options.completionsUrl, model)) {
+    const normalized = normalizeMistralMessages(data.messages);
+    data.messages = normalized.messages;
+    options.mistralNormalize = normalized;
   }
 
   return data;
@@ -655,8 +694,76 @@ export function startProxy(
         return;
       }
 
+      // ── OpenAI Responses API path (GPT-5.4+, Codex, o-series) ───────
+      if (isOpenAIChatCompletionsUrl(upstreamUrl) && modelPrefersResponsesApi(originalModel)) {
+        const responsesUrl = openAIResponsesUrl(upstreamUrl);
+        const responsesBody = translateToResponses(anthropicBody);
+        const responsesInput = responsesBody.input as unknown[] | undefined;
+        const responsesTools = responsesBody.tools as unknown[] | undefined;
+        const totalTools = anthropicBody.tools?.length ?? 0;
+        plog(
+          `openai-responses: model=${originalModel}, stream=${clientWantsStream}, ` +
+          `tools=${responsesTools?.length ?? 0}/${totalTools}, msgs=${responsesInput?.length ?? 0}`,
+        );
+
+        let upstreamRes: Response;
+        try {
+          upstreamRes = await fetch(responsesUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': clientWantsStream ? 'text/event-stream' : 'application/json',
+              'Authorization': `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify(responsesBody),
+          });
+        } catch (err) {
+          plog(`openai-responses upstream error: ${err instanceof Error ? err.message : String(err)}`);
+          anthropicError(res, 502, `Upstream unreachable: ${err instanceof Error ? err.message : String(err)}`);
+          return;
+        }
+
+        plog(`openai-responses upstream ${upstreamRes.status} from ${responsesUrl}`);
+
+        if (!upstreamRes.ok) {
+          const errBody = await upstreamRes.text();
+          plog(`openai-responses error body: ${errBody.slice(0, 500)}`);
+          res.writeHead(upstreamRes.status, { 'Content-Type': upstreamRes.headers.get('content-type') || 'application/json' });
+          res.end(errBody);
+          return;
+        }
+
+        if (clientWantsStream && upstreamRes.body) {
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          });
+          const nodeStream = Readable.fromWeb(upstreamRes.body as any);
+          translateStreamResponses(nodeStream, originalModel).pipe(res);
+          return;
+        }
+
+        const responsesData = await upstreamRes.json() as Record<string, unknown>;
+        const anthropicResponse = translateFromResponses(responsesData, originalModel);
+        if (clientWantsStream) {
+          sendAnthropicAsSSE(res, anthropicResponse);
+        } else {
+          sendJson(res, 200, anthropicResponse);
+        }
+        return;
+      }
+
       // ── OpenAI-compatible path ──────────────────────────────────────
-      const openaiBody = translateRequest(anthropicBody);
+      const translateOpts: TranslateRequestOptions = { completionsUrl: upstreamUrl };
+      const openaiBody = translateRequest(anthropicBody, translateOpts);
+      if (translateOpts.mistralNormalize) {
+        const n = translateOpts.mistralNormalize;
+        plog(
+          `mistral-normalize: hoisted ${n.hoistedSystemBlocks} system block(s), ` +
+          `inserted ${n.insertedAssistantFillers} assistant filler(s)`,
+        );
+      }
       const openaiTools = openaiBody.tools as unknown[] | undefined;
       const openaiMessages = openaiBody.messages as unknown[] | undefined;
       const totalTools = anthropicBody.tools?.length ?? 0;

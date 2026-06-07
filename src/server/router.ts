@@ -8,7 +8,15 @@ import {
   type ServerModelInfo,
 } from './models.js';
 import { Readable } from 'node:stream';
-import { translateRequest, translateResponse, translateStream } from '../proxy.js';
+import { translateRequest, translateResponse, translateStream, type TranslateRequestOptions } from '../proxy.js';
+import {
+  isOpenAIChatCompletionsUrl,
+  modelPrefersResponsesApi,
+  openAIResponsesUrl,
+  translateFromResponses,
+  translateStreamResponses,
+  translateToResponses,
+} from '../proxy-responses.js';
 
 export interface ServerBackend {
   baseUrl: string;
@@ -135,16 +143,22 @@ async function handleAnthropicMessages(
       ? model.completionsUrl
       : `${backendFor(options, model).baseUrl}/v1/chat/completions`;
     const apiKey = model.apiKey ?? options.apiKey;
-    const openaiBody = translateRequest(body);
+    const useResponses =
+      isOpenAIChatCompletionsUrl(completionsUrl) && modelPrefersResponsesApi(body.model);
+    const upstreamUrl = useResponses ? openAIResponsesUrl(completionsUrl) : completionsUrl;
+    const translateOpts: TranslateRequestOptions = { completionsUrl };
+    const upstreamBody = useResponses ? translateToResponses(body) : translateRequest(body, translateOpts);
+    const clientWantsStream = Boolean(body.stream);
 
-    const upstreamRes = await fetch(completionsUrl, {
+    const upstreamRes = await fetch(upstreamUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(clientWantsStream ? { Accept: 'text/event-stream' } : {}),
         'Authorization': `Bearer ${apiKey}`,
         'X-API-Key': apiKey,
       },
-      body: JSON.stringify(openaiBody),
+      body: JSON.stringify(upstreamBody),
     });
 
     if (!upstreamRes.ok) {
@@ -154,20 +168,28 @@ async function handleAnthropicMessages(
       return;
     }
 
-    if (openaiBody.stream && upstreamRes.body) {
+    if (clientWantsStream && upstreamRes.body) {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
       });
       const nodeStream = Readable.fromWeb(upstreamRes.body as any);
-      const translated = translateStream(nodeStream, body.model);
+      const translated = useResponses
+        ? translateStreamResponses(nodeStream, body.model)
+        : translateStream(nodeStream, body.model);
       translated.pipe(res);
       return;
     }
 
-    const openaiData = await upstreamRes.json();
-    sendJson(res, 200, translateResponse(openaiData, body.model));
+    const upstreamData = await upstreamRes.json();
+    sendJson(
+      res,
+      200,
+      useResponses
+        ? translateFromResponses(upstreamData as Record<string, unknown>, body.model)
+        : translateResponse(upstreamData, body.model),
+    );
     return;
   }
 

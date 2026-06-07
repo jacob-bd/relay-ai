@@ -161,17 +161,25 @@ When the tool exits — for any reason (normal exit, Ctrl+C, terminal close) —
 
 ### Model compatibility
 
-OpenCode exposes models through different API formats. opencode-starter handles all of them transparently:
+OpenCode exposes models through different API formats. opencode-starter handles them transparently when possible:
 
 | Model format | Examples | How it works | Label |
 |---|---|---|---|
-| Anthropic native | Claude, Qwen, MiniMax (Go) | Direct connection to OpenCode | *(none)* |
-| OpenAI compatible | DeepSeek, Kimi, MiMo, GLM, Nemotron, Grok | Local translation proxy (Anthropic↔OpenAI) | `via proxy` |
-| Not yet supported | GPT, Gemini | Needs format support not yet implemented | `not yet supported` |
+| Anthropic native | Claude, Qwen, MiniMax (Go) | Direct connection | *(none)* |
+| OpenAI chat completions | DeepSeek, Kimi, MiMo, GLM, Grok, GPT-4o (local OpenAI) | Local translation proxy → `/v1/chat/completions` | `via proxy` |
+| OpenAI Responses API | GPT-5.4+, GPT-5.5, Codex, o-series (local OpenAI only) | Same proxy, auto-routes to `/v1/responses` | `via proxy` |
+| Gemini native | Gemini (local Google provider) | Proxy uses Gemini native API, not OpenAI-compat | `via proxy` |
+| Not in cloud wizard | GPT, Gemini on OpenCode Zen/Go | Use local provider instead (OpenAI/Google in OpenCode config) | `not yet supported` |
 
-The translation proxy starts automatically on a random local port when you select an OpenAI-compatible model, and stops when Claude Code exits. No configuration needed.
+The translation proxy starts automatically on a random local port for proxy-routed models and stops when Claude Code exits.
 
-`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` is automatically set for all sessions to prevent beta header issues with the OpenCode proxy layer.
+### Provider notes
+
+**Mistral (free tier):** API rate limits are tight. Expect HTTP 429 during tool-heavy sessions; Claude Code will retry with backoff. This is Mistral-side throttling, not a proxy bug.
+
+**OpenAI (local provider):** Configure OpenAI in [OpenCode](https://opencode.ai) with your API key, then pick the OpenAI provider at launch. Newer GPT models use OpenAI's Responses API (`/v1/responses`), not chat completions — the proxy picks the endpoint from the model ID. If you see "model not available", check that (1) the model ID exists in your OpenAI account and (2) it isn't a Responses-only model being sent to the wrong endpoint (check `/tmp/opencode-proxy-debug.log` for `openai-responses:` vs `openai:` lines).
+
+`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` is set for direct (non-proxy) routes only. Local proxy sessions preserve tool-search betas.
 
 ### API key storage
 

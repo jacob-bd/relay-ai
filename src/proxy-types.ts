@@ -64,7 +64,7 @@ export interface AnthropicMessageRequest {
 }
 
 export interface AnthropicRequestMessage {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string | AnthropicRequestContentPart[];
 }
 

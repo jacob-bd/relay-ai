@@ -59,7 +59,7 @@ cli.ts
 - `isAnthropicNative`: true when `modelFormat === 'anthropic'`
 - `modelFormat`: classified from `provider.npm` in cache, or by ID-prefix heuristic:
   - `@ai-sdk/anthropic` or `claude-*` → `'anthropic'` (direct passthrough)
-  - `@ai-sdk/openai` or `gpt-*` → `'unsupported'` (needs Responses API)
+  - `@ai-sdk/openai` or `gpt-*` → `'unsupported'` in the **cloud OpenCode wizard** (OpenCode Zen/Go proxy layer; not direct OpenAI). Use the **local OpenAI provider** instead for GPT models.
   - `@ai-sdk/google` or `gemini-*` → `'unsupported'` (needs model-specific endpoints)
   - Everything else → `'openai'` (routed through local translation proxy)
 - `sourceBackend`: set from the backend that was queried — critical for `go` tier which shows Zen free models + Go paid models in one list, so the correct `ANTHROPIC_BASE_URL` can be set per selected model
@@ -67,6 +67,7 @@ cli.ts
 **Translation proxy** (`src/proxy.ts` + `src/proxy-gemini.ts`): A local HTTP proxy on `127.0.0.1:<random-port>` accepts Anthropic-format requests at `/v1/messages` and forwards them upstream. Two translation paths:
 
 - **OpenAI-compatible path** (Groq, Mistral, xAI, Ollama, Zen/Go): translates Anthropic → OpenAI chat completions format, translates response back. Handles streaming SSE, tool calls, thinking/reasoning blocks, images.
+- **OpenAI Responses API path** (`src/proxy-responses.ts`): when upstream is `api.openai.com` and `modelPrefersResponsesApi(modelId)` is true, routes to `/v1/responses` instead of `/v1/chat/completions`. Required for GPT-5.4+, GPT-5.5, Codex (`*-codex`), and o-series. Detected by prefix list + any `gpt-*-codex` ID. Logs `openai-responses:` in `--trace` mode.
 - **Gemini native path** (`src/proxy-gemini.ts`): detected by `isGeminiUrl()` when `upstreamUrl` contains `generativelanguage.googleapis.com`. Routes to `v1beta/models/{model}:generateContent` (non-streaming) or `:streamGenerateContent?alt=sse` (streaming). Sends `x-goog-api-key` header instead of `Authorization: Bearer`. Enables full thinking mode (`thinkingConfig: { includeThoughts: true }`) and correctly handles `thought_signature` on tool calls.
 
 The Gemini native path is required because the OpenAI-compatible Gemini endpoint strips `thought_signature` from tool call responses (to maintain OpenAI format compatibility) while still requiring it on echo-back — an unresolvable loop. The native API returns `thought_signature` correctly.
@@ -156,3 +157,7 @@ In all cases `process.env['OPENCODE_API_KEY']` is set immediately so the key is 
 - OAuth-authenticated providers (no stored key) are silently skipped.
 - Providers with custom auth mechanisms (e.g. Azure OpenAI with deployment URLs) are not supported.
 - The `::ts::` separator in tool_use ids encodes `thought_signature`; would break if a signature ever literally contained `::ts::`. Extremely unlikely.
+
+**Provider quirks (documented from testing):**
+- **Mistral free tier:** strict API rate limits (HTTP 429, code `1300`). Tool-heavy Claude Code sessions burn quota quickly (parallel title-generation requests, Skill injection, multi-turn tool loops). Message-order normalization (`src/mistral-messages.ts`) fixes code `3230` but does not help with throttling.
+- **OpenAI direct (`@ai-sdk/openai` local provider):** two upstream endpoints. Most models use `/v1/chat/completions`; newer models (GPT-5.4+, GPT-5.5, `*-codex`, o-series) require `/v1/responses` — auto-selected by `modelPrefersResponsesApi()` when upstream is `api.openai.com`. Sending Responses-only models to chat/completions returns 404 ("not a chat model" or "model not found"). Some Claude Code model IDs (e.g. `gpt-5.4-fast`) may not exist on the OpenAI API even when routed correctly — use IDs that appear in your OpenAI dashboard (e.g. `gpt-5.4` works). Cloud OpenCode Zen/Go GPT models remain hidden in the wizard (`unsupported`); use the local OpenAI provider for GPT access.

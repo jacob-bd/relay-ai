@@ -374,7 +374,7 @@ async function getModels(backend, fallbackModels) {
 
 // src/proxy.ts
 import { createServer } from "http";
-import { Readable as Readable2 } from "stream";
+import { Readable as Readable3 } from "stream";
 import { appendFileSync } from "fs";
 
 // src/proxy-gemini.ts
@@ -1177,6 +1177,370 @@ function translateStreamGemini(upstreamBody, model) {
   return output;
 }
 
+// src/proxy-responses.ts
+import { Readable as Readable2 } from "stream";
+var RESPONSES_ONLY_PREFIXES = [
+  "gpt-5.4",
+  "gpt-5.5",
+  "gpt-5-codex",
+  "gpt-5-pro",
+  "gpt-5.2-pro",
+  "o3",
+  "o4"
+];
+function isOpenAIChatCompletionsUrl(url) {
+  return url.includes("api.openai.com") && url.includes("/chat/completions");
+}
+function openAIResponsesUrl(completionsUrl) {
+  return completionsUrl.replace(/\/chat\/completions\/?$/, "/responses");
+}
+function modelPrefersResponsesApi(modelId) {
+  const lower = modelId.toLowerCase();
+  if (RESPONSES_ONLY_PREFIXES.some((prefix) => lower === prefix || lower.startsWith(`${prefix}-`))) {
+    return true;
+  }
+  if (lower.startsWith("gpt-") && lower.includes("-codex")) return true;
+  return false;
+}
+function translateImagePart(part) {
+  const src = part.source;
+  if (src.type === "url") {
+    return { type: "input_image", image_url: src.url };
+  }
+  if (src.type === "base64") {
+    return { type: "input_image", image_url: `data:${src.media_type};base64,${src.data}` };
+  }
+  return null;
+}
+function userContentParts(parts) {
+  const out = [];
+  let text3 = "";
+  for (const part of parts) {
+    if (part.type === "text") {
+      text3 += (typeof part.text === "string" ? part.text : JSON.stringify(part.text)) + "\n";
+    } else if (part.type === "image") {
+      const img = translateImagePart(part);
+      if (img) out.push(img);
+    }
+  }
+  const trimmed = text3.trim();
+  if (out.length === 0) return trimmed;
+  if (trimmed) out.unshift({ type: "input_text", text: trimmed });
+  return out;
+}
+function anthropicMessagesToResponsesInput(messages) {
+  const input = [];
+  for (const msg of messages ?? []) {
+    if (typeof msg.content === "string") {
+      if (msg.role === "user") {
+        input.push({ role: "user", content: msg.content });
+      } else {
+        input.push({ role: "assistant", content: msg.content });
+      }
+      continue;
+    }
+    if (msg.role === "assistant") {
+      let text3 = "";
+      const toolCalls = [];
+      for (const part of msg.content ?? []) {
+        if (part.type === "text") {
+          text3 += (typeof part.text === "string" ? part.text : JSON.stringify(part.text)) + "\n";
+        } else if (part.type === "tool_use") {
+          const { rawId } = splitToolUseId(part.id);
+          toolCalls.push({
+            type: "function_call",
+            call_id: rawId,
+            name: part.name,
+            arguments: JSON.stringify(part.input ?? {})
+          });
+        }
+      }
+      const trimmed = text3.trim();
+      if (trimmed) input.push({ role: "assistant", content: trimmed });
+      input.push(...toolCalls);
+      continue;
+    }
+    if (msg.role === "user") {
+      const toolResults = [];
+      const nonToolParts = [];
+      for (const part of msg.content ?? []) {
+        if (part.type === "tool_result") {
+          toolResults.push({
+            type: "function_call_output",
+            call_id: stripToolUseIdSuffix(part.tool_use_id),
+            output: serializeToolResultContent(part.content)
+          });
+        } else {
+          nonToolParts.push(part);
+        }
+      }
+      if (nonToolParts.length > 0) {
+        const content = userContentParts(nonToolParts);
+        if (typeof content === "string" ? content : content.length > 0) {
+          input.push({ role: "user", content });
+        }
+      }
+      input.push(...toolResults);
+    }
+  }
+  return input;
+}
+function buildInstructions(system) {
+  if (!system) return void 0;
+  if (typeof system === "string") return system;
+  const text3 = system.map((s) => s.text).filter(Boolean).join("\n\n");
+  return text3 || void 0;
+}
+function translateToResponses(body) {
+  const { model, messages, system, temperature, max_tokens, top_p, stop_sequences, tools, stream } = body;
+  const data = {
+    model,
+    input: anthropicMessagesToResponsesInput(messages)
+  };
+  const instructions = buildInstructions(system);
+  if (instructions) data.instructions = instructions;
+  if (max_tokens !== void 0) data.max_output_tokens = max_tokens;
+  if (temperature !== void 0) data.temperature = temperature;
+  if (top_p !== void 0) data.top_p = top_p;
+  if (stop_sequences?.length) data.stop = stop_sequences;
+  if (stream !== void 0) data.stream = stream;
+  const upstreamTools = resolveUpstreamTools(tools, messages);
+  if (upstreamTools.length > 0) {
+    data.tools = upstreamTools.map((tool) => ({
+      type: "function",
+      name: tool.name,
+      description: typeof tool.description === "string" ? tool.description : isToolSearchTool(tool) ? "Search deferred tools by name or regex pattern" : void 0,
+      parameters: tool.input_schema ?? { type: "object", properties: {} }
+    }));
+    data.tool_choice = "auto";
+  }
+  return data;
+}
+function extractOutputText(output) {
+  let text3 = "";
+  for (const item of output) {
+    if (!item || typeof item !== "object") continue;
+    const obj = item;
+    if (obj.type === "message" && Array.isArray(obj.content)) {
+      for (const part of obj.content) {
+        if (part && typeof part === "object" && part.type === "output_text") {
+          text3 += String(part.text ?? "");
+        }
+      }
+    }
+    if (obj.type === "output_text") {
+      text3 += String(obj.text ?? "");
+    }
+  }
+  return text3;
+}
+function extractFunctionCalls(output) {
+  const blocks = [];
+  for (const item of output) {
+    if (!item || typeof item !== "object") continue;
+    const obj = item;
+    if (obj.type !== "function_call") continue;
+    const callId = String(obj.call_id ?? obj.id ?? `call_${Date.now()}`);
+    blocks.push({
+      type: "tool_use",
+      id: callId,
+      name: String(obj.name ?? ""),
+      input: parseToolArguments(obj.arguments)
+    });
+  }
+  return blocks;
+}
+function translateFromResponses(response, model) {
+  const messageId = "msg_" + Date.now();
+  const output = Array.isArray(response.output) ? response.output : [];
+  const content = [];
+  const text3 = typeof response.output_text === "string" && response.output_text ? response.output_text : extractOutputText(output);
+  if (text3) content.push({ type: "text", text: text3 });
+  content.push(...extractFunctionCalls(output));
+  const hasToolUse = content.some((b) => b.type === "tool_use");
+  let stop_reason = "end_turn";
+  if (hasToolUse) stop_reason = "tool_use";
+  else if (response.status === "incomplete") stop_reason = "max_tokens";
+  const usage = response.usage;
+  return {
+    id: messageId,
+    type: "message",
+    role: "assistant",
+    content,
+    stop_reason,
+    stop_sequence: null,
+    model,
+    usage: {
+      input_tokens: Number(usage?.input_tokens ?? 0),
+      output_tokens: Number(usage?.output_tokens ?? 0),
+      cache_read_input_tokens: Number(
+        usage?.input_tokens_details?.cached_tokens ?? 0
+      ),
+      cache_creation_input_tokens: 0
+    }
+  };
+}
+function translateStreamResponses(upstreamBody, model) {
+  const messageId = "msg_" + Date.now();
+  let contentBlockIndex = -1;
+  let hasStartedTextBlock = false;
+  let messageStarted = false;
+  let finishReason = null;
+  let lastUsage = { input_tokens: 0, output_tokens: 0 };
+  const toolState = /* @__PURE__ */ new Map();
+  const output = new Readable2({ read() {
+  } });
+  function emitSSE(eventType, data) {
+    output.push(sseChunk(eventType, data));
+  }
+  function emitMessageStart() {
+    if (messageStarted) return;
+    emitSSE("message_start", {
+      type: "message_start",
+      message: {
+        id: messageId,
+        type: "message",
+        role: "assistant",
+        content: [],
+        model,
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 0, output_tokens: 0 }
+      }
+    });
+    messageStarted = true;
+  }
+  function flushToolCallStart(outputIndex) {
+    const state = toolState.get(outputIndex);
+    if (!state || state.emitted) return;
+    emitSSE("content_block_start", {
+      type: "content_block_start",
+      index: state.blockIndex,
+      content_block: { type: "tool_use", id: state.callId, name: state.name ?? "", input: {} }
+    });
+    state.emitted = true;
+  }
+  function closeCurrentBlock() {
+    if (hasStartedTextBlock) {
+      emitSSE("content_block_stop", { type: "content_block_stop", index: contentBlockIndex });
+      hasStartedTextBlock = false;
+    }
+  }
+  function processEvent(event) {
+    const type = String(event.type ?? "");
+    if (type === "response.completed") {
+      const response = event.response;
+      const usage = response?.usage;
+      if (usage) {
+        lastUsage = {
+          input_tokens: Number(usage.input_tokens ?? 0),
+          output_tokens: Number(usage.output_tokens ?? 0),
+          cache_read_input_tokens: Number(
+            usage.input_tokens_details?.cached_tokens ?? 0
+          ),
+          cache_creation_input_tokens: 0
+        };
+      }
+      const outputItems = Array.isArray(response?.output) ? response.output : [];
+      if (outputItems.some((item) => item && typeof item === "object" && item.type === "function_call")) {
+        finishReason = "tool_calls";
+      } else if (response?.status === "incomplete") {
+        finishReason = "length";
+      } else {
+        finishReason = "stop";
+      }
+      return;
+    }
+    if (type === "response.output_text.delta") {
+      const delta = String(event.delta ?? "");
+      if (!delta) return;
+      if (!hasStartedTextBlock) {
+        closeCurrentBlock();
+        contentBlockIndex++;
+        emitMessageStart();
+        emitSSE("content_block_start", {
+          type: "content_block_start",
+          index: contentBlockIndex,
+          content_block: { type: "text", text: "" }
+        });
+        hasStartedTextBlock = true;
+      }
+      emitSSE("content_block_delta", {
+        type: "content_block_delta",
+        index: contentBlockIndex,
+        delta: { type: "text_delta", text: delta }
+      });
+      return;
+    }
+    if (type === "response.output_item.added") {
+      const item = event.item;
+      if (item?.type !== "function_call") return;
+      const outputIndex = Number(event.output_index ?? 0);
+      closeCurrentBlock();
+      contentBlockIndex++;
+      emitMessageStart();
+      toolState.set(outputIndex, {
+        callId: String(item.call_id ?? item.id ?? `call_${Date.now()}`),
+        name: typeof item.name === "string" ? item.name : void 0,
+        blockIndex: contentBlockIndex,
+        emitted: false
+      });
+      return;
+    }
+    if (type === "response.function_call_arguments.delta") {
+      const outputIndex = Number(event.output_index ?? 0);
+      flushToolCallStart(outputIndex);
+      const delta = String(event.delta ?? "");
+      if (delta) {
+        emitSSE("content_block_delta", {
+          type: "content_block_delta",
+          index: contentBlockIndex,
+          delta: { type: "input_json_delta", partial_json: delta }
+        });
+      }
+      return;
+    }
+    if (type === "response.function_call_arguments.done") {
+      const outputIndex = Number(event.output_index ?? 0);
+      const state = toolState.get(outputIndex);
+      if (state && typeof event.name === "string") state.name = event.name;
+      flushToolCallStart(outputIndex);
+    }
+  }
+  function processLine(line) {
+    const data = extractSseDataPayload(line);
+    if (!data) return;
+    try {
+      processEvent(JSON.parse(data));
+    } catch {
+    }
+  }
+  function finish() {
+    closeCurrentBlock();
+    for (const [outputIndex] of toolState) flushToolCallStart(outputIndex);
+    for (const state of toolState.values()) {
+      if (state.emitted) {
+        emitSSE("content_block_stop", { type: "content_block_stop", index: state.blockIndex });
+      }
+    }
+    emitMessageStart();
+    let stopReason = "end_turn";
+    if (finishReason === "tool_calls") stopReason = "tool_use";
+    else if (finishReason === "length") stopReason = "max_tokens";
+    emitSSE("message_delta", {
+      type: "message_delta",
+      delta: { stop_reason: stopReason, stop_sequence: null },
+      usage: lastUsage
+    });
+    emitSSE("message_stop", { type: "message_stop" });
+    output.push(null);
+  }
+  attachSseLineReader(upstreamBody, (line) => {
+    if (line.trim()) processLine(line);
+  }, finish);
+  return output;
+}
+
 // src/server/models.ts
 var CREATED_AT_ISO = "2025-01-01T00:00:00Z";
 var CREATED_AT_UNIX = 1735689600;
@@ -1216,6 +1580,48 @@ function formatOpenAIModels(models) {
       owned_by: model.sourceBackend
     }))
   };
+}
+
+// src/mistral-messages.ts
+var MISTRAL_MODEL_PATTERN = /mistral|ministral|devstral|pixtral/i;
+function isMistralUpstream(completionsUrl, modelId) {
+  if (completionsUrl?.includes("api.mistral.ai")) return true;
+  if (modelId && MISTRAL_MODEL_PATTERN.test(modelId)) return true;
+  return false;
+}
+function systemContent(msg) {
+  if (typeof msg.content === "string") return msg.content;
+  if (msg.content === null || msg.content === void 0) return "";
+  return JSON.stringify(msg.content);
+}
+function normalizeMistralMessages(messages) {
+  const systemParts = [];
+  const body = [];
+  let hoistedSystemBlocks = 0;
+  for (const msg of messages) {
+    if (msg.role === "system") {
+      const text3 = systemContent(msg).trim();
+      if (text3) systemParts.push(text3);
+      hoistedSystemBlocks++;
+      continue;
+    }
+    body.push(msg);
+  }
+  const merged = [];
+  if (systemParts.length > 0) {
+    merged.push({ role: "system", content: systemParts.join("\n\n") });
+  }
+  let insertedAssistantFillers = 0;
+  for (let i = 0; i < body.length; i++) {
+    merged.push(body[i]);
+    const curr = body[i];
+    const next = body[i + 1];
+    if (curr.role === "tool" && next?.role === "user") {
+      merged.push({ role: "assistant", content: "" });
+      insertedAssistantFillers++;
+    }
+  }
+  return { messages: merged, hoistedSystemBlocks, insertedAssistantFillers };
 }
 
 // src/proxy.ts
@@ -1262,9 +1668,15 @@ function translateImageBlock(part) {
   }
   return null;
 }
-function translateRequest(body) {
+function translateRequest(body, options = {}) {
   const { model, messages, system, temperature, max_tokens, top_p, stop_sequences, tools, stream } = body;
+  const inlineSystemParts = [];
   const openAIMessages = Array.isArray(messages) ? messages.flatMap((msg) => {
+    if (msg.role === "system") {
+      const text3 = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content ?? "");
+      if (text3.trim()) inlineSystemParts.push(text3.trim());
+      return [];
+    }
     if (typeof msg.content === "string") {
       return [{ role: msg.role, content: msg.content }];
     }
@@ -1328,6 +1740,16 @@ function translateRequest(body) {
     return result;
   }) : [];
   const systemMessages = Array.isArray(system) ? system.map((item) => ({ role: "system", content: item.text })) : system ? [{ role: "system", content: system }] : [];
+  if (inlineSystemParts.length > 0) {
+    const mergedInline = inlineSystemParts.join("\n\n");
+    if (systemMessages.length > 0) {
+      systemMessages[0].content = `${systemMessages[0].content}
+
+${mergedInline}`;
+    } else {
+      systemMessages.push({ role: "system", content: mergedInline });
+    }
+  }
   const data = { model, messages: [...systemMessages, ...openAIMessages] };
   if (max_tokens !== void 0) data.max_tokens = max_tokens;
   if (temperature !== void 0) data.temperature = temperature;
@@ -1345,6 +1767,11 @@ function translateRequest(body) {
         parameters: item.input_schema
       }
     }));
+  }
+  if (isMistralUpstream(options.completionsUrl, model)) {
+    const normalized = normalizeMistralMessages(data.messages);
+    data.messages = normalized.messages;
+    options.mistralNormalize = normalized;
   }
   return data;
 }
@@ -1402,7 +1829,7 @@ function translateStream(upstreamBody, model) {
   let finishReason = null;
   let messageStarted = false;
   const toolCallState = /* @__PURE__ */ new Map();
-  const output = new Readable2({ read() {
+  const output = new Readable3({ read() {
   } });
   function emitSSE(eventType, data) {
     output.push(sseChunk(eventType, data));
@@ -1764,7 +2191,7 @@ function startProxy(completionsUrl, modelId, debug = false, contextWindow) {
             "Cache-Control": "no-cache",
             "Connection": "keep-alive"
           });
-          const nodeStream = Readable2.fromWeb(upstreamRes2.body);
+          const nodeStream = Readable3.fromWeb(upstreamRes2.body);
           const translated = translateStreamGemini(nodeStream, originalModel);
           translated.pipe(res);
           return;
@@ -1778,7 +2205,66 @@ function startProxy(completionsUrl, modelId, debug = false, contextWindow) {
         }
         return;
       }
-      const openaiBody = translateRequest(anthropicBody);
+      if (isOpenAIChatCompletionsUrl(upstreamUrl) && modelPrefersResponsesApi(originalModel)) {
+        const responsesUrl = openAIResponsesUrl(upstreamUrl);
+        const responsesBody = translateToResponses(anthropicBody);
+        const responsesInput = responsesBody.input;
+        const responsesTools = responsesBody.tools;
+        const totalTools2 = anthropicBody.tools?.length ?? 0;
+        plog(
+          `openai-responses: model=${originalModel}, stream=${clientWantsStream}, tools=${responsesTools?.length ?? 0}/${totalTools2}, msgs=${responsesInput?.length ?? 0}`
+        );
+        let upstreamRes2;
+        try {
+          upstreamRes2 = await fetch(responsesUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Accept": clientWantsStream ? "text/event-stream" : "application/json",
+              "Authorization": `Bearer ${apiKey}`
+            },
+            body: JSON.stringify(responsesBody)
+          });
+        } catch (err) {
+          plog(`openai-responses upstream error: ${err instanceof Error ? err.message : String(err)}`);
+          anthropicError(res, 502, `Upstream unreachable: ${err instanceof Error ? err.message : String(err)}`);
+          return;
+        }
+        plog(`openai-responses upstream ${upstreamRes2.status} from ${responsesUrl}`);
+        if (!upstreamRes2.ok) {
+          const errBody = await upstreamRes2.text();
+          plog(`openai-responses error body: ${errBody.slice(0, 500)}`);
+          res.writeHead(upstreamRes2.status, { "Content-Type": upstreamRes2.headers.get("content-type") || "application/json" });
+          res.end(errBody);
+          return;
+        }
+        if (clientWantsStream && upstreamRes2.body) {
+          res.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive"
+          });
+          const nodeStream = Readable3.fromWeb(upstreamRes2.body);
+          translateStreamResponses(nodeStream, originalModel).pipe(res);
+          return;
+        }
+        const responsesData = await upstreamRes2.json();
+        const anthropicResponse2 = translateFromResponses(responsesData, originalModel);
+        if (clientWantsStream) {
+          sendAnthropicAsSSE(res, anthropicResponse2);
+        } else {
+          sendJson(res, 200, anthropicResponse2);
+        }
+        return;
+      }
+      const translateOpts = { completionsUrl: upstreamUrl };
+      const openaiBody = translateRequest(anthropicBody, translateOpts);
+      if (translateOpts.mistralNormalize) {
+        const n = translateOpts.mistralNormalize;
+        plog(
+          `mistral-normalize: hoisted ${n.hoistedSystemBlocks} system block(s), inserted ${n.insertedAssistantFillers} assistant filler(s)`
+        );
+      }
       const openaiTools = openaiBody.tools;
       const openaiMessages = openaiBody.messages;
       const totalTools = anthropicBody.tools?.length ?? 0;
@@ -1812,7 +2298,7 @@ function startProxy(completionsUrl, modelId, debug = false, contextWindow) {
           "Cache-Control": "no-cache",
           "Connection": "keep-alive"
         });
-        const nodeStream = Readable2.fromWeb(upstreamRes.body);
+        const nodeStream = Readable3.fromWeb(upstreamRes.body);
         const translated = translateStream(nodeStream, originalModel);
         translated.pipe(res);
         return;
@@ -2212,7 +2698,7 @@ function extractBearerToken(value) {
 }
 
 // src/server/router.ts
-import { Readable as Readable3 } from "stream";
+import { Readable as Readable4 } from "stream";
 async function startServer(options) {
   const server = createServer2((req, res) => {
     void routeRequest(req, res, options);
@@ -2291,15 +2777,20 @@ async function handleAnthropicMessages(req, res, options) {
   if (model.modelFormat === "openai") {
     const completionsUrl = model.completionsUrl ? model.completionsUrl : `${backendFor(options, model).baseUrl}/v1/chat/completions`;
     const apiKey = model.apiKey ?? options.apiKey;
-    const openaiBody = translateRequest(body);
-    const upstreamRes = await fetch(completionsUrl, {
+    const useResponses = isOpenAIChatCompletionsUrl(completionsUrl) && modelPrefersResponsesApi(body.model);
+    const upstreamUrl = useResponses ? openAIResponsesUrl(completionsUrl) : completionsUrl;
+    const translateOpts = { completionsUrl };
+    const upstreamBody = useResponses ? translateToResponses(body) : translateRequest(body, translateOpts);
+    const clientWantsStream = Boolean(body.stream);
+    const upstreamRes = await fetch(upstreamUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...clientWantsStream ? { Accept: "text/event-stream" } : {},
         "Authorization": `Bearer ${apiKey}`,
         "X-API-Key": apiKey
       },
-      body: JSON.stringify(openaiBody)
+      body: JSON.stringify(upstreamBody)
     });
     if (!upstreamRes.ok) {
       const errText = await upstreamRes.text();
@@ -2307,19 +2798,23 @@ async function handleAnthropicMessages(req, res, options) {
       res.end(errText);
       return;
     }
-    if (openaiBody.stream && upstreamRes.body) {
+    if (clientWantsStream && upstreamRes.body) {
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         "Connection": "keep-alive"
       });
-      const nodeStream = Readable3.fromWeb(upstreamRes.body);
-      const translated = translateStream(nodeStream, body.model);
+      const nodeStream = Readable4.fromWeb(upstreamRes.body);
+      const translated = useResponses ? translateStreamResponses(nodeStream, body.model) : translateStream(nodeStream, body.model);
       translated.pipe(res);
       return;
     }
-    const openaiData = await upstreamRes.json();
-    sendJson2(res, 200, translateResponse(openaiData, body.model));
+    const upstreamData = await upstreamRes.json();
+    sendJson2(
+      res,
+      200,
+      useResponses ? translateFromResponses(upstreamData, body.model) : translateResponse(upstreamData, body.model)
+    );
     return;
   }
   sendJson2(res, 400, { error: { message: `Unsupported model format: ${model.modelFormat}` } });
