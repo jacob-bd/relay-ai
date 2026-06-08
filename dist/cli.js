@@ -235,10 +235,9 @@ function buildChildEnv(baseUrl, model, apiKey, proxyPort, contextWindow, enableG
   env["ANTHROPIC_BASE_URL"] = proxyPort ? `http://127.0.0.1:${proxyPort}` : baseUrl;
   env["ANTHROPIC_API_KEY"] = apiKey;
   env["ANTHROPIC_MODEL"] = model;
+  env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = String(resolveContextWindow(model, contextWindow));
   if (enableGatewayDiscovery) {
     env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1";
-  } else {
-    env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = String(resolveContextWindow(model, contextWindow));
   }
   applyClaudeCodeThirdPartyCompat(env);
   return env;
@@ -295,7 +294,6 @@ import { appendFileSync } from "fs";
 import { Readable } from "stream";
 
 // src/gemini-schema.ts
-var PLACEHOLDER_REASON = "Brief explanation of why you are calling this tool";
 var UNSUPPORTED_CONSTRAINTS = [
   "minLength",
   "maxLength",
@@ -325,260 +323,6 @@ var UNSUPPORTED_KEYWORDS = [
   "deprecated"
 ];
 var GEMINI_REMOVE_KEYWORDS = /* @__PURE__ */ new Set([...UNSUPPORTED_KEYWORDS, "nullable", "title"]);
-function isPlainObject(v) {
-  return v !== null && typeof v === "object" && !Array.isArray(v);
-}
-function appendDescription(existing, hint) {
-  if (existing) return `${existing} (${hint})`;
-  return hint;
-}
-function isPropertiesContainer(path) {
-  return path === "properties" || path.endsWith(".properties");
-}
-function walkObjectChildren(obj, path, visitor) {
-  const out = {};
-  for (const [k, v] of Object.entries(obj)) {
-    const childPath = path ? `${path}.${k}` : k;
-    if (k === "properties" && isPlainObject(v)) {
-      const props = {};
-      for (const [pk, pv] of Object.entries(v)) {
-        props[pk] = visitor(pv, `${childPath}.${pk}`);
-      }
-      out[k] = props;
-    } else {
-      out[k] = visitor(v, childPath);
-    }
-  }
-  return out;
-}
-function selectBest(items) {
-  let bestIdx = 0;
-  let bestScore = -1;
-  const types = [];
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    let t = typeof item.type === "string" ? item.type : "";
-    let score = 0;
-    if (t === "object" || isPlainObject(item.properties)) {
-      score = 3;
-      t = t || "object";
-    } else if (t === "array" || item.items !== void 0) {
-      score = 2;
-      t = t || "array";
-    } else if (t && t !== "null") {
-      score = 1;
-    } else {
-      t = t || "null";
-    }
-    if (t) types.push(t);
-    if (score > bestScore) {
-      bestScore = score;
-      bestIdx = i;
-    }
-  }
-  return { index: bestIdx, types };
-}
-function normalizeSchemaHints(obj) {
-  if (Array.isArray(obj)) return obj.map(normalizeSchemaHints);
-  if (!isPlainObject(obj)) return obj;
-  if (typeof obj.$ref === "string") {
-    const defName = obj.$ref.includes("/") ? obj.$ref.split("/").pop() : obj.$ref;
-    const hint = typeof obj.description === "string" && obj.description ? `${obj.description} (See: ${defName})` : `See: ${defName}`;
-    return { type: "object", description: hint };
-  }
-  const out = walkObjectChildren(obj, "", normalizeSchemaHints);
-  if ("const" in out && !("enum" in out)) out.enum = [out.const];
-  if (Array.isArray(out.enum)) {
-    const enumVals = out.enum.map((item) => String(item));
-    out.enum = enumVals;
-    out.type = "string";
-    if (enumVals.length > 1 && enumVals.length <= 10) {
-      out.description = appendDescription(
-        typeof out.description === "string" ? out.description : void 0,
-        `Allowed: ${enumVals.join(", ")}`
-      );
-    }
-  }
-  if (out.additionalProperties === false) {
-    out.description = appendDescription(
-      typeof out.description === "string" ? out.description : void 0,
-      "No extra properties allowed"
-    );
-  }
-  return out;
-}
-function moveConstraintsToDescription(obj, path = "") {
-  if (Array.isArray(obj)) return obj.map((item, i) => moveConstraintsToDescription(item, `${path}.${i}`));
-  if (!isPlainObject(obj)) return obj;
-  const out = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (UNSUPPORTED_CONSTRAINTS.includes(k) && (typeof v !== "object" || v === null)) {
-      if (!isPropertiesContainer(path)) {
-        out.description = appendDescription(
-          typeof out.description === "string" ? out.description : void 0,
-          `${k}: ${String(v)}`
-        );
-        continue;
-      }
-    }
-    const childPath = path ? `${path}.${k}` : k;
-    out[k] = moveConstraintsToDescription(v, childPath);
-  }
-  return out;
-}
-function flattenBranch(obj) {
-  let out = { ...obj };
-  for (const key of ["anyOf", "oneOf"]) {
-    const variants = out[key];
-    if (!Array.isArray(variants) || variants.length === 0) continue;
-    const items = variants.filter(isPlainObject);
-    const parentDesc = typeof out.description === "string" ? out.description : "";
-    const { index, types } = selectBest(items);
-    let selected = { ...flattenBranch(items[index]) };
-    if (parentDesc) {
-      const childDesc = typeof selected.description === "string" ? selected.description : "";
-      selected.description = childDesc ? childDesc === parentDesc ? childDesc : `${parentDesc} (${childDesc})` : parentDesc;
-    }
-    if (types.length > 1) {
-      selected.description = appendDescription(
-        typeof selected.description === "string" ? selected.description : void 0,
-        `Accepts: ${types.join(" | ")}`
-      );
-    }
-    delete out[key];
-    out = { ...out, ...selected };
-  }
-  return out;
-}
-function flattenSchemaStructure(obj, path = "", nullableByObject = /* @__PURE__ */ new Map()) {
-  if (Array.isArray(obj)) return obj.map((item, i) => flattenSchemaStructure(item, `${path}.${i}`, nullableByObject));
-  if (!isPlainObject(obj)) return obj;
-  let out = { ...obj };
-  if (Array.isArray(out.allOf)) {
-    for (const item of out.allOf) {
-      if (!isPlainObject(item)) continue;
-      const merged = flattenSchemaStructure(item, path, nullableByObject);
-      if (isPlainObject(merged.properties)) {
-        out.properties = { ...out.properties ?? {}, ...merged.properties };
-      }
-      if (Array.isArray(merged.required)) {
-        const current = Array.isArray(out.required) ? [...out.required] : [];
-        for (const r of merged.required) {
-          if (!current.includes(r)) current.push(r);
-        }
-        out.required = current;
-      }
-    }
-    delete out.allOf;
-  }
-  out = flattenBranch(out);
-  if (Array.isArray(out.type)) {
-    const types = out.type.map(String);
-    const hasNull = types.includes("null");
-    const nonNull = types.filter((t) => t !== "null");
-    out.type = nonNull[0] ?? "string";
-    if (nonNull.length > 1) {
-      out.description = appendDescription(
-        typeof out.description === "string" ? out.description : void 0,
-        `Accepts: ${nonNull.join(" | ")}`
-      );
-    }
-    if (hasNull) {
-      const parts = path.split(".");
-      if (parts.length >= 2 && parts[parts.length - 2] === "properties") {
-        const fieldName = parts[parts.length - 1];
-        const objectPath = parts.slice(0, -2).join(".");
-        const list = nullableByObject.get(objectPath) ?? [];
-        list.push(fieldName);
-        nullableByObject.set(objectPath, list);
-        out.description = appendDescription(
-          typeof out.description === "string" ? out.description : void 0,
-          "(nullable)"
-        );
-      }
-    }
-  }
-  for (const [k, v] of Object.entries(out)) {
-    if (["allOf", "anyOf", "oneOf", "type"].includes(k)) continue;
-    const childPath = path ? `${path}.${k}` : k;
-    out[k] = flattenSchemaStructure(v, childPath, nullableByObject);
-  }
-  return out;
-}
-function applyNullableRequiredRemovals(root, nullableByObject) {
-  for (const [objectPath, fields] of nullableByObject) {
-    const target = objectPath ? getAtPath(root, objectPath.split(".")) : root;
-    if (!isPlainObject(target) || !Array.isArray(target.required)) continue;
-    target.required = target.required.filter((r) => !fields.includes(r));
-    if (target.required.length === 0) delete target.required;
-  }
-}
-function getAtPath(root, parts) {
-  let cur = root;
-  for (const part of parts) {
-    if (!isPlainObject(cur)) return void 0;
-    cur = cur[part];
-  }
-  return isPlainObject(cur) ? cur : void 0;
-}
-function sanitizeSchema(obj, path = "") {
-  if (Array.isArray(obj)) return obj.map((item, i) => sanitizeSchema(item, `${path}.${i}`));
-  if (!isPlainObject(obj)) return obj;
-  const out = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (GEMINI_REMOVE_KEYWORDS.has(k) && !isPropertiesContainer(path)) continue;
-    if (k.startsWith("x-") && !isPropertiesContainer(path)) continue;
-    const childPath = path ? `${path}.${k}` : k;
-    out[k] = sanitizeSchema(v, childPath);
-  }
-  if (isPlainObject(out.properties)) {
-    const props = out.properties;
-    if ("reason" in props && Object.keys(props).length === 1) {
-      const reason = props.reason;
-      if (isPlainObject(reason) && reason.description === PLACEHOLDER_REASON) {
-        delete out.properties;
-        delete out.required;
-      }
-    }
-    if ("_" in props) {
-      const { _: _removed, ...rest } = props;
-      void _removed;
-      if (Object.keys(rest).length === 0) {
-        delete out.properties;
-        delete out.required;
-      } else {
-        out.properties = rest;
-        if (Array.isArray(out.required)) {
-          out.required = out.required.filter((r) => r !== "_");
-          if (out.required.length === 0) delete out.required;
-        }
-      }
-    }
-  }
-  if (Array.isArray(out.required) && isPlainObject(out.properties)) {
-    const props = out.properties;
-    const valid = out.required.filter((name) => name in props);
-    if (valid.length === 0) delete out.required;
-    else if (valid.length !== out.required.length) out.required = valid;
-  }
-  return out;
-}
-function ensureRootObject(schema) {
-  if (!schema.type && !schema.anyOf && !schema.oneOf && !schema.allOf && !schema.$ref) {
-    return { type: "object", properties: {}, ...schema };
-  }
-  return schema;
-}
-function cleanJsonSchemaForGemini(input) {
-  if (!isPlainObject(input)) return { type: "object", properties: {} };
-  const nullableByObject = /* @__PURE__ */ new Map();
-  let schema = structuredClone(input);
-  schema = moveConstraintsToDescription(normalizeSchemaHints(schema));
-  schema = flattenSchemaStructure(schema, "", nullableByObject);
-  applyNullableRequiredRemovals(schema, nullableByObject);
-  schema = sanitizeSchema(schema);
-  return ensureRootObject(schema);
-}
 
 // src/tool-search.ts
 var TOOL_SEARCH_TYPE_PREFIX = "tool_search_tool";
@@ -712,387 +456,177 @@ function attachSseLineReader(upstream, onLine, onDone) {
   upstream.on("error", () => onDone());
 }
 
-// src/gemini-parts.ts
-function partThoughtSignature(part) {
-  const sig = part.thoughtSignature ?? part.thought_signature;
-  if (typeof sig === "string" && sig.length > 0) return sig;
-  const nested = part.functionCall?.thoughtSignature ?? part.functionCall?.thought_signature;
-  if (typeof nested === "string" && nested.length > 0) return nested;
-  return void 0;
-}
-function parseGeminiPart(part, messageId, toolIndex) {
-  if (part.thought) return null;
-  if (part.text !== void 0 && !part.thought) {
-    if (!part.text.trim()) return null;
-    return { kind: "text", text: part.text };
-  }
-  if (part.functionCall) {
-    const fc = part.functionCall;
-    const signature = partThoughtSignature(part);
-    return {
-      kind: "tool_use",
-      id: encodeToolUseId(`${messageId}_tc${toolIndex}`, signature),
-      name: fc.name,
-      input: parseToolArguments(fc.args),
-      signature
-    };
-  }
-  return null;
-}
-function collectAnthropicBlocksFromGeminiParts(parts, messageId) {
-  const content = [];
-  let toolIndex = 0;
-  let hasToolUse = false;
-  for (const part of parts) {
-    const parsed = parseGeminiPart(part, messageId, toolIndex);
-    if (!parsed) continue;
-    if (parsed.kind === "thinking") {
-      content.push({ type: "thinking", thinking: parsed.text, signature: parsed.signature });
-    } else if (parsed.kind === "text") {
-      content.push({ type: "text", text: parsed.text });
-    } else {
-      content.push({
-        type: "tool_use",
-        id: parsed.id,
-        name: parsed.name,
-        input: parsed.input
-      });
-      hasToolUse = true;
-      toolIndex++;
-    }
-  }
-  return { content, hasToolUse };
-}
-function mapGeminiUsage(usageMetadata) {
-  const cached = usageMetadata?.cachedContentTokenCount ?? 0;
-  return {
-    input_tokens: Math.max(0, (usageMetadata?.promptTokenCount ?? 0) - cached),
-    output_tokens: usageMetadata?.candidatesTokenCount ?? 0,
-    cache_read_input_tokens: cached,
-    cache_creation_input_tokens: 0
-  };
-}
-
 // src/proxy-gemini.ts
 var GEMINI_SKIP_THOUGHT_SIGNATURE = "skip_thought_signature_validator";
-function isGeminiUrl(url) {
-  return url.includes("generativelanguage.googleapis.com");
-}
-function geminiNativeUrl(model, stream) {
-  const base = "https://generativelanguage.googleapis.com/v1beta/models";
-  return stream ? `${base}/${encodeURIComponent(model)}:streamGenerateContent?alt=sse` : `${base}/${encodeURIComponent(model)}:generateContent`;
-}
-function buildToolNameMap(messages) {
-  const map = /* @__PURE__ */ new Map();
-  for (const msg of messages ?? []) {
-    if (msg.role === "assistant" && Array.isArray(msg.content)) {
-      for (const part of msg.content) {
-        if (part.type === "tool_use") {
-          const rawId = stripToolUseIdSuffix(part.id);
-          map.set(part.id, part.name);
-          map.set(rawId, part.name);
-        }
-      }
-    }
-  }
-  return map;
-}
-var cleanedToolSchemaCache = /* @__PURE__ */ new Map();
-function geminiToolDeclaration(tool2) {
-  let parameters = cleanedToolSchemaCache.get(tool2.name);
-  if (!parameters) {
-    if (tool2.input_schema && Object.keys(tool2.input_schema).length > 0) {
-      parameters = cleanJsonSchemaForGemini(tool2.input_schema);
-    } else {
-      parameters = { type: "object", properties: {} };
-    }
-    cleanedToolSchemaCache.set(tool2.name, parameters);
-  }
-  const description = typeof tool2.description === "string" ? tool2.description : isToolSearchTool(tool2) ? "Search deferred tools by name or regex pattern" : void 0;
+
+// src/server/models.ts
+var CREATED_AT_ISO = "2025-01-01T00:00:00Z";
+var CREATED_AT_UNIX = 1735689600;
+function formatAnthropicModelEntry(id, displayName, contextWindow) {
+  const maxInput = resolveContextWindow(id, contextWindow);
   return {
-    name: tool2.name,
-    description,
-    parameters
+    id,
+    type: "model",
+    display_name: displayName,
+    created_at: CREATED_AT_ISO,
+    context_window: maxInput,
+    max_input_tokens: maxInput
   };
 }
-function anthropicPartToGemini(part, toolNameMap) {
-  if (part.type === "text") {
-    return part.text?.trim() ? { text: part.text } : null;
-  }
-  if (part.type === "thinking") {
-    const tp = { thought: true, text: part.thinking };
-    if (part.signature) tp.thought_signature = part.signature;
-    return tp;
-  }
-  if (part.type === "tool_use") {
-    let { thoughtSignature } = splitToolUseId(part.id);
-    if (!thoughtSignature) thoughtSignature = GEMINI_SKIP_THOUGHT_SIGNATURE;
-    return {
-      functionCall: { name: part.name, args: part.input ?? {} },
-      thoughtSignature
-    };
-  }
-  if (part.type === "tool_result") {
-    const rawToolId = stripToolUseIdSuffix(part.tool_use_id);
-    const name = toolNameMap.get(part.tool_use_id) ?? toolNameMap.get(rawToolId) ?? rawToolId;
-    return {
-      functionResponse: {
-        name,
-        response: { content: serializeToolResultContent(part.content) }
-      }
-    };
-  }
-  if (part.type === "tool_reference") {
-    return null;
-  }
-  if (part.type === "image") {
-    const src = part.source;
-    if (src.type === "base64") {
-      return { inlineData: { mimeType: src.media_type, data: src.data } };
-    }
-    if (src.type === "url") {
-      return { fileData: { fileUri: src.url } };
-    }
-  }
-  return null;
-}
-function translateToGemini(body) {
-  const { messages, system, tools, temperature, max_tokens, top_p } = body;
-  const toolNameMap = buildToolNameMap(messages ?? []);
-  const contents = [];
-  for (const msg of messages ?? []) {
-    const parts = [];
-    const role = msg.role === "assistant" ? "model" : "user";
-    if (typeof msg.content === "string") {
-      parts.push({ text: msg.content });
-    } else {
-      for (const part of msg.content ?? []) {
-        const geminiPart = anthropicPartToGemini(part, toolNameMap);
-        if (geminiPart) parts.push(geminiPart);
-      }
-    }
-    if (parts.length > 0) contents.push({ role, parts });
-  }
-  const generationConfig = { thinkingConfig: { includeThoughts: false } };
-  if (max_tokens !== void 0) generationConfig.maxOutputTokens = max_tokens;
-  if (temperature !== void 0) generationConfig.temperature = temperature;
-  if (top_p !== void 0) generationConfig.topP = top_p;
-  const data = { contents, generationConfig };
-  if (system) {
-    const sysParts = typeof system === "string" ? [{ text: system }] : system.map((s) => ({ text: s.text }));
-    data.systemInstruction = { parts: sysParts };
-  }
-  const upstreamTools = resolveUpstreamTools(tools, messages ?? []);
-  if (upstreamTools.length > 0) {
-    data.tools = [{ functionDeclarations: upstreamTools.map(geminiToolDeclaration) }];
-  }
-  return data;
-}
-function translateFromGemini(response, model) {
-  const messageId = "msg_" + Date.now();
-  const candidate = response.candidates?.[0];
-  const parts = candidate?.content?.parts ?? [];
-  const { content, hasToolUse } = collectAnthropicBlocksFromGeminiParts(parts, messageId);
-  const finishReason = candidate?.finishReason;
-  let stop_reason = "end_turn";
-  if (finishReason === "MAX_TOKENS") stop_reason = "max_tokens";
-  else if (hasToolUse) stop_reason = "tool_use";
+function createModelCatalog(models) {
+  const byId = new Map(models.map((model) => [model.id, model]));
   return {
-    id: messageId,
-    type: "message",
-    role: "assistant",
-    content,
-    stop_reason,
-    stop_sequence: null,
-    model,
-    usage: mapGeminiUsage(response.usageMetadata)
+    get: (id) => byId.get(id),
+    list: () => [...models]
   };
 }
-function translateStreamGemini(upstreamBody, model) {
-  const messageId = "msg_" + Date.now();
-  const output = new Readable({ read() {
-  } });
-  const streamState = {
-    messageId,
-    contentBlockIndex: -1,
-    hasTextBlock: false,
-    hasThinkingBlock: false,
-    messageStarted: false,
-    stopReason: "end_turn"
+function formatAnthropicModelList(entries) {
+  return {
+    data: entries.map((entry) => formatAnthropicModelEntry(entry.id, entry.name, entry.contextWindow)),
+    has_more: false,
+    first_id: entries[0]?.id ?? null,
+    last_id: entries.at(-1)?.id ?? null
   };
-  let lastUsage = null;
-  const pendingByName = /* @__PURE__ */ new Map();
-  let toolCallCount = 0;
-  let toolIndex = 0;
-  let thinkingSignature = "";
-  const emit = (eventType, data) => {
-    output.push(sseChunk(eventType, data));
+}
+function formatAnthropicModels(models) {
+  return formatAnthropicModelList(
+    models.map((model) => ({ id: model.id, name: model.name, contextWindow: model.contextWindow }))
+  );
+}
+function formatOpenAIModels(models) {
+  return {
+    object: "list",
+    data: models.map((model) => ({
+      id: model.id,
+      object: "model",
+      created: CREATED_AT_UNIX,
+      owned_by: model.sourceBackend
+    }))
   };
-  const startMessage = () => {
-    if (streamState.messageStarted) return;
-    emit("message_start", {
-      type: "message_start",
-      message: {
-        id: messageId,
-        type: "message",
-        role: "assistant",
-        content: [],
-        model,
-        stop_reason: null,
-        stop_sequence: null,
-        usage: { input_tokens: 0, output_tokens: 0 }
-      }
-    });
-    streamState.messageStarted = true;
-  };
-  const closeBlock = () => {
-    if (streamState.hasThinkingBlock) {
-      emit("content_block_delta", {
-        type: "content_block_delta",
-        index: streamState.contentBlockIndex,
-        delta: {
-          type: "signature_delta",
-          signature: thinkingSignature || GEMINI_SKIP_THOUGHT_SIGNATURE
-        }
-      });
-      emit("content_block_stop", { type: "content_block_stop", index: streamState.contentBlockIndex });
-      streamState.hasThinkingBlock = false;
-      thinkingSignature = "";
-    }
-    if (streamState.hasTextBlock) {
-      emit("content_block_stop", { type: "content_block_stop", index: streamState.contentBlockIndex });
-      streamState.hasTextBlock = false;
-    }
-  };
-  const flushPendingToolCall = (pending) => {
-    if (pending.emitted) return;
-    const encodedId = encodeToolUseId(pending.id, pending.thoughtSignature);
-    startMessage();
-    emit("content_block_start", {
-      type: "content_block_start",
-      index: pending.blockIndex,
-      content_block: { type: "tool_use", id: encodedId, name: pending.name, input: {} }
-    });
-    emit("content_block_delta", {
-      type: "content_block_delta",
-      index: pending.blockIndex,
-      delta: { type: "input_json_delta", partial_json: JSON.stringify(pending.args) }
-    });
-    emit("content_block_stop", { type: "content_block_stop", index: pending.blockIndex });
-    pending.emitted = true;
-  };
-  const emitParsedPart = (parsed) => {
-    if (!parsed) return;
-    if (parsed.kind === "thinking") {
-      if (streamState.hasTextBlock) {
-        closeBlock();
-        streamState.contentBlockIndex++;
-      }
-      if (!streamState.hasThinkingBlock) {
-        if (streamState.contentBlockIndex < 0) streamState.contentBlockIndex = 0;
-        else if (!streamState.hasTextBlock) streamState.contentBlockIndex++;
-        startMessage();
-        emit("content_block_start", {
-          type: "content_block_start",
-          index: streamState.contentBlockIndex,
-          content_block: { type: "thinking", thinking: "", signature: "" }
-        });
-        streamState.hasThinkingBlock = true;
-      }
-      emit("content_block_delta", {
-        type: "content_block_delta",
-        index: streamState.contentBlockIndex,
-        delta: { type: "thinking_delta", thinking: parsed.text }
-      });
-      if (parsed.signature) thinkingSignature = parsed.signature;
-      return;
-    }
-    if (parsed.kind === "text") {
-      if (streamState.hasThinkingBlock) {
-        closeBlock();
-        streamState.contentBlockIndex++;
-      }
-      if (!streamState.hasTextBlock) {
-        if (streamState.contentBlockIndex < 0) streamState.contentBlockIndex = 0;
-        else if (!streamState.hasThinkingBlock) streamState.contentBlockIndex++;
-        startMessage();
-        emit("content_block_start", {
-          type: "content_block_start",
-          index: streamState.contentBlockIndex,
-          content_block: { type: "text", text: "" }
-        });
-        streamState.hasTextBlock = true;
-      }
-      emit("content_block_delta", {
-        type: "content_block_delta",
-        index: streamState.contentBlockIndex,
-        delta: { type: "text_delta", text: parsed.text }
-      });
-      return;
-    }
-    closeBlock();
-    let pending = pendingByName.get(parsed.name);
-    if (!pending || pending.emitted) {
-      streamState.contentBlockIndex++;
-      pending = {
-        blockIndex: streamState.contentBlockIndex,
-        id: `${messageId}_tc${toolCallCount}`,
-        name: parsed.name,
-        args: parsed.input,
-        emitted: false
-      };
-      pendingByName.set(parsed.name, pending);
-      toolCallCount++;
-      streamState.stopReason = "tool_use";
-    } else {
-      pending.args = parsed.input;
-    }
-    if (parsed.signature) pending.thoughtSignature = parsed.signature;
-    if (pending.thoughtSignature) flushPendingToolCall(pending);
-  };
-  const processGeminiParts = (parts, usage, finishReason) => {
-    for (const part of parts) {
-      const parsed = parseGeminiPart(part, messageId, toolIndex);
-      if (parsed?.kind === "tool_use") toolIndex++;
-      emitParsedPart(parsed);
-    }
-    if (finishReason === "MAX_TOKENS") streamState.stopReason = "max_tokens";
-    if (usage) lastUsage = mapGeminiUsage(usage);
-  };
-  const finish = () => {
-    for (const pending of pendingByName.values()) flushPendingToolCall(pending);
-    closeBlock();
-    startMessage();
-    emit("message_delta", {
-      type: "message_delta",
-      delta: { stop_reason: streamState.stopReason, stop_sequence: null },
-      usage: lastUsage ?? { input_tokens: 0, output_tokens: 0 }
-    });
-    emit("message_stop", { type: "message_stop" });
-    output.push(null);
-  };
-  const processGeminiSsePayload = (raw) => {
-    if (!raw) return;
-    try {
-      const parsed = JSON.parse(raw);
-      const candidate = parsed.candidates?.[0];
-      processGeminiParts(
-        candidate?.content?.parts ?? [],
-        parsed.usageMetadata,
-        candidate?.finishReason ?? null
-      );
-    } catch {
-    }
-  };
-  attachSseLineReader(upstreamBody, (line) => {
-    const payload = extractSseDataPayload(line);
-    if (payload) processGeminiSsePayload(payload);
-  }, finish);
-  return output;
 }
 
-// src/proxy-responses.ts
+// src/upstream-forward.ts
 import { Readable as Readable2 } from "stream";
+function anthropicUpstreamHeaders(apiKey, stream = false) {
+  return {
+    "Content-Type": "application/json",
+    "anthropic-version": "2023-06-01",
+    Authorization: `Bearer ${apiKey}`,
+    "x-api-key": apiKey,
+    ...stream ? { Accept: "text/event-stream" } : {}
+  };
+}
+async function postJsonUpstream(url, body, apiKey) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: anthropicUpstreamHeaders(apiKey, false),
+    body: JSON.stringify(body)
+  });
+  const text3 = await response.text();
+  let parsed = null;
+  if (text3) {
+    try {
+      parsed = JSON.parse(text3);
+    } catch {
+      parsed = text3;
+    }
+  }
+  return { status: response.status, body: parsed };
+}
+var UpstreamUnreachableError = class extends Error {
+  constructor(cause) {
+    super(`Upstream unreachable: ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = "UpstreamUnreachableError";
+  }
+};
+async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWantsStream) {
+  let upstreamRes;
+  try {
+    upstreamRes = await fetch(messagesUrl, {
+      method: "POST",
+      headers: anthropicUpstreamHeaders(apiKey, clientWantsStream),
+      body: JSON.stringify(body)
+    });
+  } catch (err) {
+    throw new UpstreamUnreachableError(err);
+  }
+  if (!upstreamRes.ok) {
+    const errBody = await upstreamRes.text();
+    res.writeHead(upstreamRes.status, { "Content-Type": upstreamRes.headers.get("content-type") || "application/json" });
+    res.end(errBody);
+    return;
+  }
+  if (clientWantsStream && upstreamRes.body) {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive"
+    });
+    Readable2.fromWeb(upstreamRes.body).pipe(res);
+    return;
+  }
+  const json = await upstreamRes.json();
+  const payload = JSON.stringify(json);
+  res.writeHead(200, {
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(payload).toString()
+  });
+  res.end(payload);
+}
+
+// src/mistral-messages.ts
+var MISTRAL_MODEL_PATTERN = /mistral|ministral|devstral|pixtral/i;
+function isMistralUpstream(completionsUrl, modelId) {
+  if (completionsUrl?.includes("api.mistral.ai")) return true;
+  if (modelId && MISTRAL_MODEL_PATTERN.test(modelId)) return true;
+  return false;
+}
+function systemContent(msg) {
+  if (typeof msg.content === "string") return msg.content;
+  if (msg.content === null || msg.content === void 0) return "";
+  return JSON.stringify(msg.content);
+}
+function normalizeMistralMessages(messages) {
+  const systemParts = [];
+  const body = [];
+  let hoistedSystemBlocks = 0;
+  for (const msg of messages) {
+    if (msg.role === "system") {
+      const text3 = systemContent(msg).trim();
+      if (text3) systemParts.push(text3);
+      hoistedSystemBlocks++;
+      continue;
+    }
+    body.push(msg);
+  }
+  const merged = [];
+  if (systemParts.length > 0) {
+    merged.push({ role: "system", content: systemParts.join("\n\n") });
+  }
+  let insertedAssistantFillers = 0;
+  for (let i = 0; i < body.length; i++) {
+    merged.push(body[i]);
+    const curr = body[i];
+    const next = body[i + 1];
+    if (curr.role === "tool" && next?.role === "user") {
+      merged.push({ role: "assistant", content: "" });
+      insertedAssistantFillers++;
+    }
+  }
+  return { messages: merged, hoistedSystemBlocks, insertedAssistantFillers };
+}
+
+// src/provider-factory.ts
+import { createOpenAI } from "@ai-sdk/openai";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createGroq } from "@ai-sdk/groq";
+import { createMistral } from "@ai-sdk/mistral";
+import { createXai } from "@ai-sdk/xai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+
+// src/proxy-responses.ts
+import { Readable as Readable3 } from "stream";
 var RESPONSES_ONLY_PREFIXES = [
   "gpt-5.4",
   "gpt-5.5",
@@ -1303,7 +837,7 @@ function translateStreamResponses(upstreamBody, model) {
   let finishReason = null;
   let lastUsage = { input_tokens: 0, output_tokens: 0 };
   const toolState = /* @__PURE__ */ new Map();
-  const output = new Readable2({ read() {
+  const output = new Readable3({ read() {
   } });
   function emitSSE(eventType, data) {
     output.push(sseChunk(eventType, data));
@@ -1456,176 +990,9 @@ function translateStreamResponses(upstreamBody, model) {
   return output;
 }
 
-// src/server/models.ts
-var CREATED_AT_ISO = "2025-01-01T00:00:00Z";
-var CREATED_AT_UNIX = 1735689600;
-function formatAnthropicModelEntry(id, displayName, contextWindow) {
-  const maxInput = resolveContextWindow(id, contextWindow);
-  return {
-    id,
-    type: "model",
-    display_name: displayName,
-    created_at: CREATED_AT_ISO,
-    context_window: maxInput,
-    max_input_tokens: maxInput
-  };
-}
-function createModelCatalog(models) {
-  const byId = new Map(models.map((model) => [model.id, model]));
-  return {
-    get: (id) => byId.get(id),
-    list: () => [...models]
-  };
-}
-function formatAnthropicModelList(entries) {
-  return {
-    data: entries.map((entry) => formatAnthropicModelEntry(entry.id, entry.name, entry.contextWindow)),
-    has_more: false,
-    first_id: entries[0]?.id ?? null,
-    last_id: entries.at(-1)?.id ?? null
-  };
-}
-function formatAnthropicModels(models) {
-  return formatAnthropicModelList(
-    models.map((model) => ({ id: model.id, name: model.name, contextWindow: model.contextWindow }))
-  );
-}
-function formatOpenAIModels(models) {
-  return {
-    object: "list",
-    data: models.map((model) => ({
-      id: model.id,
-      object: "model",
-      created: CREATED_AT_UNIX,
-      owned_by: model.sourceBackend
-    }))
-  };
-}
-
-// src/upstream-forward.ts
-import { Readable as Readable3 } from "stream";
-function anthropicUpstreamHeaders(apiKey, stream = false) {
-  return {
-    "Content-Type": "application/json",
-    "anthropic-version": "2023-06-01",
-    Authorization: `Bearer ${apiKey}`,
-    "x-api-key": apiKey,
-    ...stream ? { Accept: "text/event-stream" } : {}
-  };
-}
-async function postJsonUpstream(url, body, apiKey) {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: anthropicUpstreamHeaders(apiKey, false),
-    body: JSON.stringify(body)
-  });
-  const text3 = await response.text();
-  let parsed = null;
-  if (text3) {
-    try {
-      parsed = JSON.parse(text3);
-    } catch {
-      parsed = text3;
-    }
-  }
-  return { status: response.status, body: parsed };
-}
-var UpstreamUnreachableError = class extends Error {
-  constructor(cause) {
-    super(`Upstream unreachable: ${cause instanceof Error ? cause.message : String(cause)}`);
-    this.name = "UpstreamUnreachableError";
-  }
-};
-async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWantsStream) {
-  let upstreamRes;
-  try {
-    upstreamRes = await fetch(messagesUrl, {
-      method: "POST",
-      headers: anthropicUpstreamHeaders(apiKey, clientWantsStream),
-      body: JSON.stringify(body)
-    });
-  } catch (err) {
-    throw new UpstreamUnreachableError(err);
-  }
-  if (!upstreamRes.ok) {
-    const errBody = await upstreamRes.text();
-    res.writeHead(upstreamRes.status, { "Content-Type": upstreamRes.headers.get("content-type") || "application/json" });
-    res.end(errBody);
-    return;
-  }
-  if (clientWantsStream && upstreamRes.body) {
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive"
-    });
-    Readable3.fromWeb(upstreamRes.body).pipe(res);
-    return;
-  }
-  const json = await upstreamRes.json();
-  const payload = JSON.stringify(json);
-  res.writeHead(200, {
-    "Content-Type": "application/json",
-    "Content-Length": Buffer.byteLength(payload).toString()
-  });
-  res.end(payload);
-}
-
-// src/mistral-messages.ts
-var MISTRAL_MODEL_PATTERN = /mistral|ministral|devstral|pixtral/i;
-function isMistralUpstream(completionsUrl, modelId) {
-  if (completionsUrl?.includes("api.mistral.ai")) return true;
-  if (modelId && MISTRAL_MODEL_PATTERN.test(modelId)) return true;
-  return false;
-}
-function systemContent(msg) {
-  if (typeof msg.content === "string") return msg.content;
-  if (msg.content === null || msg.content === void 0) return "";
-  return JSON.stringify(msg.content);
-}
-function normalizeMistralMessages(messages) {
-  const systemParts = [];
-  const body = [];
-  let hoistedSystemBlocks = 0;
-  for (const msg of messages) {
-    if (msg.role === "system") {
-      const text3 = systemContent(msg).trim();
-      if (text3) systemParts.push(text3);
-      hoistedSystemBlocks++;
-      continue;
-    }
-    body.push(msg);
-  }
-  const merged = [];
-  if (systemParts.length > 0) {
-    merged.push({ role: "system", content: systemParts.join("\n\n") });
-  }
-  let insertedAssistantFillers = 0;
-  for (let i = 0; i < body.length; i++) {
-    merged.push(body[i]);
-    const curr = body[i];
-    const next = body[i + 1];
-    if (curr.role === "tool" && next?.role === "user") {
-      merged.push({ role: "assistant", content: "" });
-      insertedAssistantFillers++;
-    }
-  }
-  return { messages: merged, hoistedSystemBlocks, insertedAssistantFillers };
-}
-
 // src/provider-factory.ts
-import { createOpenAI } from "@ai-sdk/openai";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createGroq } from "@ai-sdk/groq";
-import { createMistral } from "@ai-sdk/mistral";
-import { createXai } from "@ai-sdk/xai";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-function isSdkBackedNpm(npm) {
-  return SDK_NPM_PACKAGES.has(npm);
-}
 function isSdkMigratedNpm(npm) {
-  return !!npm && isSdkBackedNpm(npm);
+  return !!npm && SDK_NPM_PACKAGES.has(npm);
 }
 var SDK_NPM_PACKAGES = /* @__PURE__ */ new Set([
   "@ai-sdk/openai",
@@ -1716,13 +1083,6 @@ function annotateToolNames(messages) {
     }
   }
 }
-function toolResultText(content) {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content.map((c) => typeof c === "string" ? c : c.text ?? JSON.stringify(c)).join("\n");
-  }
-  return content == null ? "" : JSON.stringify(content);
-}
 function translateMessages(messages, npm) {
   const isGoogle = npm === "@ai-sdk/google";
   const out = [];
@@ -1745,7 +1105,7 @@ function translateMessages(messages, npm) {
             type: "tool-result",
             toolCallId: splitToolUseId(tr.tool_use_id ?? "").rawId,
             toolName: tr._name ?? "unknown",
-            output: { type: "text", value: toolResultText(tr.content) }
+            output: { type: "text", value: serializeToolResultContent(tr.content) }
           }))
         });
       }
@@ -1798,10 +1158,14 @@ function translateRequest(body, npm) {
   const baseSystem = systemToString(body.system);
   const inlineParts = inlineSystemText(messages);
   const system = [baseSystem, ...inlineParts].filter((s) => s && s.trim()).join("\n\n") || void 0;
+  const upstreamTools = resolveUpstreamTools(
+    body.tools,
+    messages
+  );
   return {
     system,
     messages: translateMessages(messages, npm),
-    tools: translateTools(body.tools),
+    tools: translateTools(upstreamTools.length ? upstreamTools : void 0),
     toolChoice: translateToolChoice(body.tool_choice),
     maxOutputTokens: body.max_tokens,
     temperature: body.temperature,
@@ -1873,9 +1237,11 @@ async function writeAnthropicStream(fullStream, modelId, write, log4) {
           delta: { type: "thinking_delta", thinking: part.text ?? "" }
         });
         break;
-      case "reasoning-end":
-        if (grabThoughtSignature(part)) pendingThinkingSig = grabThoughtSignature(part);
+      case "reasoning-end": {
+        const sig = grabThoughtSignature(part);
+        if (sig) pendingThinkingSig = sig;
         break;
+      }
       case "text-start":
         openBlock("text", { type: "text", text: "" });
         break;
@@ -2392,80 +1758,6 @@ function anthropicError(res, status, message) {
     error: { type: "api_error", message }
   });
 }
-function sendAnthropicAsSSE(res, anthropicResponse) {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    "Connection": "keep-alive"
-  });
-  res.write(sseChunk("message_start", {
-    type: "message_start",
-    message: {
-      id: anthropicResponse.id,
-      type: "message",
-      role: "assistant",
-      content: [],
-      model: anthropicResponse.model,
-      stop_reason: null,
-      stop_sequence: null,
-      usage: { input_tokens: 0, output_tokens: 0 }
-    }
-  }));
-  const blocks = anthropicResponse.content ?? [];
-  for (let i = 0; i < blocks.length; i++) {
-    const block = blocks[i];
-    if (block.type === "text") {
-      res.write(sseChunk("content_block_start", {
-        type: "content_block_start",
-        index: i,
-        content_block: { type: "text", text: "" }
-      }));
-      res.write(sseChunk("content_block_delta", {
-        type: "content_block_delta",
-        index: i,
-        delta: { type: "text_delta", text: block.text }
-      }));
-    } else if (block.type === "thinking") {
-      res.write(sseChunk("content_block_start", {
-        type: "content_block_start",
-        index: i,
-        content_block: { type: "thinking", thinking: "", signature: "" }
-      }));
-      res.write(sseChunk("content_block_delta", {
-        type: "content_block_delta",
-        index: i,
-        delta: { type: "thinking_delta", thinking: block.thinking ?? "" }
-      }));
-      res.write(sseChunk("content_block_delta", {
-        type: "content_block_delta",
-        index: i,
-        delta: {
-          type: "signature_delta",
-          signature: block.signature || GEMINI_SKIP_THOUGHT_SIGNATURE
-        }
-      }));
-    } else if (block.type === "tool_use") {
-      res.write(sseChunk("content_block_start", {
-        type: "content_block_start",
-        index: i,
-        content_block: { type: "tool_use", id: block.id, name: block.name, input: {} }
-      }));
-      res.write(sseChunk("content_block_delta", {
-        type: "content_block_delta",
-        index: i,
-        delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input ?? {}) }
-      }));
-    }
-    res.write(sseChunk("content_block_stop", { type: "content_block_stop", index: i }));
-  }
-  res.write(sseChunk("message_delta", {
-    type: "message_delta",
-    delta: { stop_reason: anthropicResponse.stop_reason, stop_sequence: null },
-    usage: anthropicResponse.usage ?? { input_tokens: 0, output_tokens: 0 }
-  }));
-  res.write(sseChunk("message_stop", { type: "message_stop" }));
-  res.end();
-}
 function aliasModelId(realId, providerLabel) {
   if (realId.startsWith("claude-")) return realId;
   const sanitized = providerLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -2565,8 +1857,8 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
             await streamAnthropicResponse(model, params, originalModel, (c) => res.write(c), plog);
             res.end();
           } else {
-            const anthropicResponse2 = await generateAnthropicResponse(model, params, originalModel);
-            sendJson(res, 200, anthropicResponse2);
+            const anthropicResponse = await generateAnthropicResponse(model, params, originalModel);
+            sendJson(res, 200, anthropicResponse);
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -2576,160 +1868,6 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
         }
         return;
       }
-      anthropicBody = { ...anthropicBody, model: route.realModelId };
-      if (isGeminiUrl(upstreamUrl)) {
-        const nativeUrl = geminiNativeUrl(route.realModelId, clientWantsStream);
-        const geminiBody = translateToGemini(anthropicBody);
-        const geminiTools = geminiBody.tools;
-        const geminiContents = geminiBody.contents;
-        const totalTools2 = anthropicBody.tools?.length ?? 0;
-        const upstreamCount = geminiTools?.[0]?.functionDeclarations?.length ?? 0;
-        plog(() => `gemini-native: model=${originalModel}, stream=${clientWantsStream}, tools=${upstreamCount}/${totalTools2}, msgs=${geminiContents?.length ?? 0}`);
-        let upstreamRes2;
-        try {
-          upstreamRes2 = await fetch(nativeUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-goog-api-key": apiKey
-            },
-            body: JSON.stringify(geminiBody)
-          });
-        } catch (err) {
-          plog(() => `gemini upstream error: ${err instanceof Error ? err.message : String(err)}`);
-          anthropicError(res, 502, `Upstream unreachable: ${err instanceof Error ? err.message : String(err)}`);
-          return;
-        }
-        plog(() => `gemini upstream ${upstreamRes2.status}`);
-        if (!upstreamRes2.ok) {
-          const errBody = await upstreamRes2.text();
-          plog(() => `gemini error body: ${errBody.slice(0, 500)}`);
-          res.writeHead(upstreamRes2.status, { "Content-Type": upstreamRes2.headers.get("content-type") || "application/json" });
-          res.end(errBody);
-          return;
-        }
-        if (clientWantsStream && upstreamRes2.body) {
-          res.writeHead(200, {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive"
-          });
-          const nodeStream = Readable4.fromWeb(upstreamRes2.body);
-          const translated = translateStreamGemini(nodeStream, originalModel);
-          translated.pipe(res);
-          return;
-        }
-        const geminiData = await upstreamRes2.json();
-        const anthropicResponse2 = translateFromGemini(geminiData, originalModel);
-        if (clientWantsStream) {
-          sendAnthropicAsSSE(res, anthropicResponse2);
-        } else {
-          sendJson(res, 200, anthropicResponse2);
-        }
-        return;
-      }
-      if (isOpenAIChatCompletionsUrl(upstreamUrl) && modelPrefersResponsesApi(route.realModelId)) {
-        const responsesUrl = openAIResponsesUrl(upstreamUrl);
-        const responsesBody = translateToResponses(anthropicBody);
-        const responsesInput = responsesBody.input;
-        const responsesTools = responsesBody.tools;
-        const totalTools2 = anthropicBody.tools?.length ?? 0;
-        plog(
-          () => `openai-responses: model=${originalModel}, stream=${clientWantsStream}, tools=${responsesTools?.length ?? 0}/${totalTools2}, msgs=${responsesInput?.length ?? 0}`
-        );
-        let upstreamRes2;
-        try {
-          upstreamRes2 = await fetch(responsesUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Accept": clientWantsStream ? "text/event-stream" : "application/json",
-              "Authorization": `Bearer ${apiKey}`
-            },
-            body: JSON.stringify(responsesBody)
-          });
-        } catch (err) {
-          plog(() => `openai-responses upstream error: ${err instanceof Error ? err.message : String(err)}`);
-          anthropicError(res, 502, `Upstream unreachable: ${err instanceof Error ? err.message : String(err)}`);
-          return;
-        }
-        plog(() => `openai-responses upstream ${upstreamRes2.status} from ${responsesUrl}`);
-        if (!upstreamRes2.ok) {
-          const errBody = await upstreamRes2.text();
-          plog(() => `openai-responses error body: ${errBody.slice(0, 500)}`);
-          res.writeHead(upstreamRes2.status, { "Content-Type": upstreamRes2.headers.get("content-type") || "application/json" });
-          res.end(errBody);
-          return;
-        }
-        if (clientWantsStream && upstreamRes2.body) {
-          res.writeHead(200, {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive"
-          });
-          const nodeStream = Readable4.fromWeb(upstreamRes2.body);
-          translateStreamResponses(nodeStream, originalModel).pipe(res);
-          return;
-        }
-        const responsesData = await upstreamRes2.json();
-        const anthropicResponse2 = translateFromResponses(responsesData, originalModel);
-        if (clientWantsStream) {
-          sendAnthropicAsSSE(res, anthropicResponse2);
-        } else {
-          sendJson(res, 200, anthropicResponse2);
-        }
-        return;
-      }
-      const translateOpts = { completionsUrl: upstreamUrl };
-      const openaiBody = translateRequest2(anthropicBody, translateOpts);
-      if (translateOpts.mistralNormalize) {
-        const n = translateOpts.mistralNormalize;
-        plog(
-          () => `mistral-normalize: hoisted ${n.hoistedSystemBlocks} system block(s), inserted ${n.insertedAssistantFillers} assistant filler(s)`
-        );
-      }
-      const openaiTools = openaiBody.tools;
-      const openaiMessages = openaiBody.messages;
-      const totalTools = anthropicBody.tools?.length ?? 0;
-      plog(() => `openai: tools=${openaiTools?.length ?? 0}/${totalTools}, stream=${openaiBody.stream ?? false}, msgs=${openaiMessages?.length ?? 0}`);
-      let upstreamRes;
-      try {
-        upstreamRes = await fetch(upstreamUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`
-          },
-          body: JSON.stringify(openaiBody)
-        });
-      } catch (err) {
-        plog(() => `upstream error: ${err instanceof Error ? err.message : String(err)}`);
-        anthropicError(res, 502, `Upstream unreachable: ${err instanceof Error ? err.message : String(err)}`);
-        return;
-      }
-      plog(() => `upstream ${upstreamRes.status} from ${upstreamUrl}`);
-      if (!upstreamRes.ok) {
-        const errBody = await upstreamRes.text();
-        plog(() => `upstream error body: ${errBody.slice(0, 500)}`);
-        res.writeHead(upstreamRes.status, { "Content-Type": upstreamRes.headers.get("content-type") || "application/json" });
-        res.end(errBody);
-        return;
-      }
-      if (openaiBody.stream && upstreamRes.body) {
-        res.writeHead(200, {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          "Connection": "keep-alive"
-        });
-        const nodeStream = Readable4.fromWeb(upstreamRes.body);
-        const translated = translateStream(nodeStream, originalModel);
-        translated.pipe(res);
-        return;
-      }
-      const openaiData = await upstreamRes.json();
-      const anthropicResponse = translateResponse(openaiData, originalModel);
-      sendJson(res, 200, anthropicResponse);
-      return;
     }
     anthropicError(res, 404, `Unknown endpoint: ${req.method} ${req.url}`);
   });
@@ -4318,7 +3456,7 @@ function printTraceLog(debugLogPath) {
   }
   console.log(pc3.dim(`Full log: ${debugLogPath}`));
 }
-function printDryRun(backendName, modelId, baseUrl, modelFormat, claudeArgs, conflicts, disableExperimentalBetas) {
+function printDryRun(backendName, modelId, baseUrl, modelFormat, claudeArgs, conflicts, disableExperimentalBetas, npm) {
   console.log("");
   console.log(pc3.bold(pc3.cyan("  DRY RUN \u2014 would execute:")));
   console.log("");
@@ -4326,8 +3464,13 @@ function printDryRun(backendName, modelId, baseUrl, modelFormat, claudeArgs, con
   console.log(`  ${pc3.bold("Command:")}  ${claudeCmd}`);
   console.log(`  ${pc3.bold("Backend:")}  ${backendName}`);
   if (modelFormat === "openai") {
-    console.log(`  ${pc3.bold("Proxy:")}    would start local translation proxy ${pc3.dim("(Anthropic \u2192 OpenAI)")}`);
-    console.log(`             ${pc3.dim(`\u2192 ${baseUrl}/v1/chat/completions`)}`);
+    if (isSdkMigratedNpm(npm)) {
+      console.log(`  ${pc3.bold("Proxy:")}    would start local SDK adapter proxy ${pc3.dim("(Vercel AI SDK)")}`);
+      if (npm) console.log(`             ${pc3.dim(`npm: ${npm}`)}`);
+    } else {
+      console.log(`  ${pc3.bold("Proxy:")}    would start local translation proxy ${pc3.dim("(Anthropic \u2192 OpenAI)")}`);
+      console.log(`             ${pc3.dim(`\u2192 ${baseUrl}/v1/chat/completions`)}`);
+    }
   }
   console.log("");
   console.log(`  ${pc3.bold("Env vars SET:")}`);
@@ -4695,9 +3838,10 @@ async function runClaudeCommand(parsed) {
       earlyZenModels = fetched.zenModels;
       earlyGoModels = fetched.goModels;
       zenGoSpinner.stop("");
-    } catch {
+    } catch (err) {
       zenGoSpinner.stop("");
-      p4.log.warn("Could not fetch OpenCode models \u2014 Zen/Go favorites will be skipped from /model catalog");
+      const detail = err instanceof Error ? err.message : String(err);
+      p4.log.warn(`Could not fetch OpenCode models (${detail}) \u2014 Zen/Go favorites will be skipped from /model catalog`);
     }
   }
   const providerSpinner = p4.spinner();
@@ -4779,15 +3923,16 @@ async function runClaudeCommand(parsed) {
       );
     }
     if (dryRun) {
-      const formatDesc = selectedModel.modelFormat === "anthropic" ? "direct passthrough" : "via translation proxy";
-      const endpoint = selectedModel.baseUrl ?? selectedModel.completionsUrl ?? "(unknown)";
+      const sdkRoute = isSdkMigratedNpm(selectedModel.npm);
+      const formatDesc = selectedModel.modelFormat === "anthropic" ? "direct passthrough" : sdkRoute ? "via SDK adapter proxy" : "via translation proxy";
+      const endpoint = sdkRoute ? selectedModel.npm ?? "SDK" : selectedModel.baseUrl ?? selectedModel.completionsUrl ?? "(unknown)";
       console.log("");
       console.log(pc3.bold(pc3.cyan("  DRY RUN \u2014 would execute:")));
       console.log("");
       console.log(`  ${pc3.bold("Provider:")}  ${provider.name}`);
       console.log(`  ${pc3.bold("Model:")}     ${selectedModel.id}`);
       console.log(`  ${pc3.bold("Format:")}    ${selectedModel.modelFormat} (${formatDesc})`);
-      console.log(`  ${pc3.bold("Endpoint:")} ${endpoint}`);
+      console.log(`  ${pc3.bold(sdkRoute ? "SDK npm:" : "Endpoint:")} ${endpoint}`);
       console.log(`  ${pc3.bold("Key:")}       ${provider.id} provider key`);
       console.log("");
       console.log(pc3.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
@@ -4852,15 +3997,19 @@ async function runClaudeCommand(parsed) {
   const needsGo = tier === "go" || tier === "both";
   const spinner3 = p4.spinner();
   spinner3.start("Fetching available models...");
-  let zenModels = [];
-  let goModels = [];
+  let zenModels = earlyZenModels;
+  let goModels = earlyGoModels;
+  const fetchZen = needsZen && zenModels.length === 0;
+  const fetchGo = needsGo && goModels.length === 0;
   try {
-    const backends = [];
-    if (needsZen) backends.push("zen");
-    if (needsGo) backends.push("go");
-    const fetched = await fetchZenGoModels(backends, !dryRun);
-    zenModels = fetched.zenModels;
-    goModels = fetched.goModels;
+    if (fetchZen || fetchGo) {
+      const backends = [];
+      if (fetchZen) backends.push("zen");
+      if (fetchGo) backends.push("go");
+      const fetched = await fetchZenGoModels(backends, !dryRun);
+      if (fetchZen) zenModels = fetched.zenModels;
+      if (fetchGo) goModels = fetched.goModels;
+    }
     spinner3.stop(`Loaded ${zenModels.length + goModels.length} models`);
   } catch (err) {
     spinner3.stop(pc3.red("Failed to load models"));
@@ -4895,7 +4044,8 @@ async function runClaudeCommand(parsed) {
       selection.model.modelFormat,
       claudeArgs,
       conflicts,
-      disableExperimentalBetas
+      disableExperimentalBetas,
+      selection.model.modelFormat === "openai" ? "@ai-sdk/openai-compatible" : void 0
     );
     return 0;
   }

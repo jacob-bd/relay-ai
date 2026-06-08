@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- Route providers through the Vercel AI SDK (`ai` + `@ai-sdk/*`) via a single Anthropic↔SDK adapter (`src/sdk-adapter.ts`, `src/provider-factory.ts`). The SDK owns wire format, endpoint selection, and provider quirks (Gemini `thought_signature`, xAI multi-agent `/responses`, Mistral ordering). All local providers and cloud Zen/Go (openai-format) route through it; Anthropic-format models stay direct passthrough.
+
+### Changed
+- Removed the now-dead Gemini-native / OpenAI-Responses / OpenAI-compatible branches from the launch proxy request handler (every provider route goes through the SDK adapter). The hand-rolled translation modules remain only for the `server` command pending its migration.
+
 ### Docs
 - Document that Claude Code persists launched models to `~/.claude/settings.json` and may cache gateway catalogs — bare `claude` can show opencode-starter aliases after a session.
 
