@@ -1,11 +1,13 @@
 // Route map + catalog assembly for the mid-session /model switch menu.
 import { BACKENDS, MAX_MODEL_CATALOG } from './constants.js';
+import { isSdkMigratedNpm } from './provider-factory.js';
 import { aliasModelId } from './proxy.js';
 import type { ProxyRoute } from './proxy.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel, ModelInfo } from './types.js';
 
 export function localModelToRoute(lp: LocalProvider, model: LocalProviderModel): ProxyRoute | null {
-  if (!model.completionsUrl && !model.baseUrl) return null;
+  if (model.modelFormat === 'anthropic' && !model.baseUrl) return null;
+  if (model.modelFormat === 'openai' && !isSdkMigratedNpm(model.npm) && !model.completionsUrl) return null;
   return {
     aliasId: aliasModelId(model.id, lp.name),
     realModelId: model.upstreamModelId,

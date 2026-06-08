@@ -40,66 +40,21 @@ describe('resolveEndpoint', () => {
     });
   });
 
-  it('returns openai format for @ai-sdk/openai', () => {
-    const result = resolveEndpoint('@ai-sdk/openai', '');
-    expect(result).toEqual({
-      format: 'openai',
-      completionsUrl: 'https://api.openai.com/v1/chat/completions',
-    });
+  it('returns openai format for known SDK packages without hardcoded URLs', () => {
+    expect(resolveEndpoint('@ai-sdk/openai', '')).toEqual({ format: 'openai' });
+    expect(resolveEndpoint('@ai-sdk/google', '')).toEqual({ format: 'openai' });
+    expect(resolveEndpoint('@ai-sdk/groq', '')).toEqual({ format: 'openai' });
+    expect(resolveEndpoint('@openrouter/ai-sdk-provider', 'https://openrouter.ai/api/v1')).toEqual({ format: 'openai' });
   });
 
-  it('returns openai format for @ai-sdk/google', () => {
-    const result = resolveEndpoint('@ai-sdk/google', '');
-    expect(result).toEqual({
-      format: 'openai',
-      completionsUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-    });
+  it('accepts future OpenCode provider packages without code changes', () => {
+    expect(resolveEndpoint('@ai-sdk/cerebras', '')).toEqual({ format: 'openai' });
+    expect(resolveEndpoint('@ai-sdk/unknown-new', 'https://example.com')).toEqual({ format: 'openai' });
+    expect(resolveEndpoint('gitlab-ai-provider', '')).toEqual({ format: 'openai' });
   });
 
-  it('returns openai format for @ai-sdk/groq', () => {
-    const result = resolveEndpoint('@ai-sdk/groq', '');
-    expect(result).toEqual({
-      format: 'openai',
-      completionsUrl: 'https://api.groq.com/openai/v1/chat/completions',
-    });
-  });
-
-  it('returns openai format for @ai-sdk/mistral', () => {
-    const result = resolveEndpoint('@ai-sdk/mistral', '');
-    expect(result).toEqual({
-      format: 'openai',
-      completionsUrl: 'https://api.mistral.ai/v1/chat/completions',
-    });
-  });
-
-  it('returns openai format for @ai-sdk/xai', () => {
-    const result = resolveEndpoint('@ai-sdk/xai', '');
-    expect(result).toEqual({
-      format: 'openai',
-      completionsUrl: 'https://api.x.ai/v1/chat/completions',
-    });
-  });
-
-  it('returns openai format for @openrouter/ai-sdk-provider', () => {
-    const result = resolveEndpoint('@openrouter/ai-sdk-provider', 'https://openrouter.ai/api/v1');
-    expect(result).toEqual({
-      format: 'openai',
-      completionsUrl: 'https://openrouter.ai/api/v1/chat/completions',
-    });
-  });
-
-  it('defaults OpenRouter URL when apiUrl is empty', () => {
-    const result = resolveEndpoint('@openrouter/ai-sdk-provider', '');
-    expect(result).toEqual({
-      format: 'openai',
-      completionsUrl: 'https://openrouter.ai/api/v1/chat/completions',
-    });
-  });
-
-  it('returns null for unknown npm packages', () => {
-    expect(resolveEndpoint('@ai-sdk/unknown-provider', '')).toBeNull();
+  it('returns null only when npm is missing', () => {
     expect(resolveEndpoint('', '')).toBeNull();
-    expect(resolveEndpoint('@some/other-package', 'https://example.com')).toBeNull();
   });
 });
 
@@ -156,7 +111,7 @@ describe('normalizeProviders', () => {
     expect(result).toHaveLength(0);
   });
 
-  it('skips models with unknown npm packages', () => {
+  it('includes models with any npm OpenCode assigns', () => {
     const result = normalizeProviders([
       {
         id: 'custom',
@@ -165,8 +120,12 @@ describe('normalizeProviders', () => {
         models: { m: unknownNpmModel },
       },
     ]);
-    // Provider has no supported models → excluded
-    expect(result).toHaveLength(0);
+    expect(result).toHaveLength(1);
+    expect(result[0].models[0]).toMatchObject({
+      id: 'mystery-model',
+      modelFormat: 'openai',
+      npm: '@unknown/sdk',
+    });
   });
 
   it('maps catalog id to OpenCode api.id for upstream calls', () => {
@@ -191,7 +150,7 @@ describe('normalizeProviders', () => {
     });
   });
 
-  it('keeps provider only when at least one model is supported', () => {
+  it('keeps all models OpenCode returns with a valid npm', () => {
     const result = normalizeProviders([
       {
         id: 'custom',
@@ -204,8 +163,8 @@ describe('normalizeProviders', () => {
       },
     ]);
     expect(result).toHaveLength(1);
-    expect(result[0].models).toHaveLength(1);
-    expect(result[0].models[0].id).toBe('gpt-4o');
+    expect(result[0].models).toHaveLength(2);
+    expect(result[0].models.map(m => m.id).sort()).toEqual(['gpt-4o', 'mystery-model']);
   });
 
   it('normalizes a valid anthropic-format provider correctly', () => {
@@ -243,7 +202,8 @@ describe('normalizeProviders', () => {
     expect(result).toHaveLength(1);
     const model = result[0].models[0];
     expect(model.modelFormat).toBe('openai');
-    expect(model.completionsUrl).toBe('https://api.openai.com/v1/chat/completions');
+    expect(model.completionsUrl).toBeUndefined();
+    expect(model.npm).toBe('@ai-sdk/openai');
     expect(model.brand).toBe('GPT');
   });
 
@@ -268,7 +228,8 @@ describe('normalizeProviders', () => {
     expect(result[0].id).toBe('openrouter');
     const model = result[0].models[0];
     expect(model.modelFormat).toBe('openai');
-    expect(model.completionsUrl).toBe('https://openrouter.ai/api/v1/chat/completions');
+    expect(model.completionsUrl).toBeUndefined();
+    expect(model.apiBaseUrl).toBe('https://openrouter.ai/api/v1');
     expect(model.contextWindow).toBe(200000);
   });
 

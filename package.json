@@ -33,16 +33,30 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "@ai-sdk/alibaba": "^1.0.26",
+    "@ai-sdk/amazon-bedrock": "^4.0.113",
+    "@ai-sdk/azure": "^3.0.70",
+    "@ai-sdk/cerebras": "^2.0.54",
+    "@ai-sdk/cohere": "^3.0.36",
+    "@ai-sdk/deepinfra": "^2.0.52",
+    "@ai-sdk/gateway": "^3.0.125",
     "@ai-sdk/google": "^3.0.80",
+    "@ai-sdk/google-vertex": "^4.0.142",
     "@ai-sdk/groq": "^3.0.39",
     "@ai-sdk/mistral": "^3.0.37",
     "@ai-sdk/openai": "^3.0.68",
     "@ai-sdk/openai-compatible": "^2.0.48",
+    "@ai-sdk/perplexity": "^3.0.33",
+    "@ai-sdk/togetherai": "^2.0.53",
+    "@ai-sdk/vercel": "^2.0.50",
     "@ai-sdk/xai": "^3.0.93",
     "@clack/prompts": "^0.9.1",
     "@openrouter/ai-sdk-provider": "^2.9.0",
     "ai": "^6.0.197",
-    "picocolors": "^1.1.1"
+    "gitlab-ai-provider": "^6.8.0",
+    "picocolors": "^1.1.1",
+    "venice-ai-sdk-provider": "^1.1.19",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

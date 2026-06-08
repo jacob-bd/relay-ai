@@ -60,51 +60,22 @@ export function resolveEndpoint(
   npm: string,
   apiUrl: string,
 ): { format: 'anthropic' | 'openai'; baseUrl?: string; completionsUrl?: string } | null {
-  switch (npm) {
-    case '@ai-sdk/anthropic':
-      return {
-        format: 'anthropic',
-        baseUrl: (apiUrl || 'https://api.anthropic.com').replace(/\/v1\/?$/, ''),
-      };
-    case '@ai-sdk/openai-compatible':
-      if (!apiUrl) return null;
-      return {
-        format: 'openai',
-        completionsUrl: apiUrl.replace(/\/$/, '') + '/chat/completions',
-      };
-    case '@ai-sdk/openai':
-      return {
-        format: 'openai',
-        completionsUrl: 'https://api.openai.com/v1/chat/completions',
-      };
-    case '@ai-sdk/google':
-      return {
-        format: 'openai',
-        completionsUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-      };
-    case '@ai-sdk/groq':
-      return {
-        format: 'openai',
-        completionsUrl: 'https://api.groq.com/openai/v1/chat/completions',
-      };
-    case '@ai-sdk/mistral':
-      return {
-        format: 'openai',
-        completionsUrl: 'https://api.mistral.ai/v1/chat/completions',
-      };
-    case '@ai-sdk/xai':
-      return {
-        format: 'openai',
-        completionsUrl: 'https://api.x.ai/v1/chat/completions',
-      };
-    case '@openrouter/ai-sdk-provider':
-      return {
-        format: 'openai',
-        completionsUrl: (apiUrl || 'https://openrouter.ai/api/v1').replace(/\/$/, '') + '/chat/completions',
-      };
-    default:
-      return null;
+  if (!npm) return null;
+  if (npm === '@ai-sdk/anthropic') {
+    return {
+      format: 'anthropic',
+      baseUrl: (apiUrl || 'https://api.anthropic.com').replace(/\/v1\/?$/, ''),
+    };
   }
+  if (npm === '@ai-sdk/openai-compatible') {
+    if (!apiUrl) return null;
+    return {
+      format: 'openai',
+      completionsUrl: apiUrl.replace(/\/$/, '') + '/chat/completions',
+    };
+  }
+  // Any other npm OpenCode assigns — SDK adapter owns endpoints.
+  return { format: 'openai' };
 }
 
 export function normalizeProviders(raw: RawProvider[]): LocalProvider[] {

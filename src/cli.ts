@@ -26,8 +26,6 @@ import { fetchProviderCatalog, fetchZenGoModels, providersForPicker } from './pr
 import { BACKENDS, VERSION } from './constants.js';
 import type { ParsedArgs, ModelInfo, FavoriteModel } from './types.js';
 import { addFavorite, removeFavorite } from './favorites.js';
-import { isSdkMigratedNpm } from './provider-factory.js';
-
 const STARTER_CLAUDE_FLAGS = new Set(['--dry-run', '--setup', '--trace', '--help', '-h', '--version', '-v']);
 
 function emptyParsed(command: ParsedArgs['command']): ParsedArgs {
@@ -300,13 +298,8 @@ function printDryRun(
   console.log(`  ${pc.bold('Command:')}  ${claudeCmd}`);
   console.log(`  ${pc.bold('Backend:')}  ${backendName}`);
   if (modelFormat === 'openai') {
-    if (isSdkMigratedNpm(npm)) {
-      console.log(`  ${pc.bold('Proxy:')}    would start local SDK adapter proxy ${pc.dim('(Vercel AI SDK)')}`);
-      if (npm) console.log(`             ${pc.dim(`npm: ${npm}`)}`);
-    } else {
-      console.log(`  ${pc.bold('Proxy:')}    would start local translation proxy ${pc.dim('(Anthropic → OpenAI)')}`);
-      console.log(`             ${pc.dim(`→ ${baseUrl}/v1/chat/completions`)}`);
-    }
+    console.log(`  ${pc.bold('Proxy:')}    would start local SDK adapter proxy ${pc.dim('(Vercel AI SDK)')}`);
+    if (npm) console.log(`             ${pc.dim(`npm: ${npm}`)}`);
   }
   console.log('');
 
@@ -837,20 +830,19 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     // ── Single-model path (no favorites) ──
 
     if (dryRun) {
-      const sdkRoute = isSdkMigratedNpm(selectedModel.npm);
       const formatDesc = selectedModel.modelFormat === 'anthropic'
         ? 'direct passthrough'
-        : sdkRoute ? 'via SDK adapter proxy' : 'via translation proxy';
-      const endpoint = sdkRoute
-        ? (selectedModel.npm ?? 'SDK')
-        : (selectedModel.baseUrl ?? selectedModel.completionsUrl ?? '(unknown)');
+        : 'via SDK adapter proxy';
+      const endpoint = selectedModel.modelFormat === 'anthropic'
+        ? (selectedModel.baseUrl ?? '(unknown)')
+        : (selectedModel.npm ?? 'SDK');
       console.log('');
       console.log(pc.bold(pc.cyan('  DRY RUN — would execute:')));
       console.log('');
       console.log(`  ${pc.bold('Provider:')}  ${provider.name}`);
       console.log(`  ${pc.bold('Model:')}     ${selectedModel.id}`);
       console.log(`  ${pc.bold('Format:')}    ${selectedModel.modelFormat} (${formatDesc})`);
-      console.log(`  ${pc.bold(sdkRoute ? 'SDK npm:' : 'Endpoint:')} ${endpoint}`);
+      console.log(`  ${pc.bold(selectedModel.modelFormat === 'anthropic' ? 'Endpoint:' : 'SDK npm:')} ${endpoint}`);
       console.log(`  ${pc.bold('Key:')}       ${provider.id} provider key`);
       console.log('');
       console.log(pc.dim('  (dry run complete — Claude Code was NOT launched)'));
@@ -872,7 +864,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     } else {
       try {
         proxyHandle = await startProxy(
-          selectedModel.completionsUrl!,
+          selectedModel.completionsUrl ?? '',
           selectedModel.id,
           trace,
           selectedModel.contextWindow,
@@ -883,11 +875,11 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
           },
         );
         p.log.info(
-          `Translation proxy started on port ${proxyHandle.port} ` +
-          pc.dim(`(${selectedModel.completionsUrl})`),
+          `SDK adapter proxy started on port ${proxyHandle.port}` +
+          (selectedModel.npm ? pc.dim(` (${selectedModel.npm})`) : ''),
         );
       } catch (err) {
-        p.log.error(`Failed to start translation proxy: ${err instanceof Error ? err.message : String(err)}`);
+        p.log.error(`Failed to start SDK adapter proxy: ${err instanceof Error ? err.message : String(err)}`);
         return 1;
       }
       childEnv = buildChildEnv(

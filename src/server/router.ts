@@ -145,7 +145,7 @@ async function handleAnthropicMessages(
       return;
     }
     const apiKey = model.apiKey ?? options.apiKey;
-    const languageModel = createLanguageModel({
+    const languageModel = await createLanguageModel({
       npm: model.npm!,
       modelId: model.upstreamModelId ?? model.id,
       apiKey,

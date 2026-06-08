@@ -193,10 +193,8 @@ export function startProxyCatalog(
       }
 
       // ── SDK-backed providers (Vercel AI SDK) ────────────────────────
-      // Migrated providers route through the SDK, which owns wire format,
-      // endpoint selection, and provider quirks (e.g. Gemini thought_signature,
-      // xAI multi-agent /responses). Non-migrated providers fall through to the
-      // hand-rolled paths below.
+      // OpenCode-assigned npm packages route through the SDK, which owns wire
+      // format, endpoint selection, and provider quirks.
       if (isSdkMigratedNpm(route.npm)) {
         const params = sdkTranslateRequest(anthropicBody, route.npm!);
         plog(() =>
@@ -204,7 +202,7 @@ export function startProxyCatalog(
           `tools=${anthropicBody.tools?.length ?? 0}, msgs=${params.messages.length}`,
         );
         try {
-          const model = createLanguageModel({
+          const model = await createLanguageModel({
             npm: route.npm!,
             modelId: route.realModelId,
             apiKey,

@@ -405,13 +405,6 @@ async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWant
 }
 
 // src/provider-factory.ts
-import { createOpenAI } from "@ai-sdk/openai";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createGroq } from "@ai-sdk/groq";
-import { createMistral } from "@ai-sdk/mistral";
-import { createXai } from "@ai-sdk/xai";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 var RESPONSES_ONLY_PREFIXES = [
   "gpt-5.4",
   "gpt-5.5",
@@ -421,6 +414,7 @@ var RESPONSES_ONLY_PREFIXES = [
   "o3",
   "o4"
 ];
+var factoryCache = /* @__PURE__ */ new Map();
 function modelPrefersResponsesApi(modelId) {
   const lower = modelId.toLowerCase();
   if (RESPONSES_ONLY_PREFIXES.some((prefix) => lower === prefix || lower.startsWith(`${prefix}-`))) {
@@ -431,45 +425,62 @@ function modelPrefersResponsesApi(modelId) {
   return false;
 }
 function isSdkMigratedNpm(npm) {
-  return !!npm && SDK_NPM_PACKAGES.has(npm);
+  return !!npm && npm !== "@ai-sdk/anthropic";
 }
-var SDK_NPM_PACKAGES = /* @__PURE__ */ new Set([
-  "@ai-sdk/openai",
-  "@ai-sdk/google",
-  "@ai-sdk/groq",
-  "@ai-sdk/mistral",
-  "@ai-sdk/xai",
-  "@ai-sdk/openai-compatible",
-  "@openrouter/ai-sdk-provider"
-]);
-function createLanguageModel(spec) {
-  const { npm, modelId, apiKey, baseURL } = spec;
-  switch (npm) {
-    case "@ai-sdk/openai": {
-      const openai = createOpenAI({ apiKey });
-      return modelPrefersResponsesApi(modelId) ? openai.responses(modelId) : openai.chat(modelId);
+function findCreateFactory(mod) {
+  for (const value of Object.values(mod)) {
+    if (typeof value === "function" && value.name.startsWith("create")) {
+      return value;
     }
-    case "@ai-sdk/xai": {
-      const xai = createXai({ apiKey });
-      return modelPrefersResponsesApi(modelId) ? xai.responses(modelId) : xai(modelId);
-    }
-    case "@ai-sdk/google":
-      return createGoogleGenerativeAI({ apiKey })(modelId);
-    case "@ai-sdk/groq":
-      return createGroq({ apiKey })(modelId);
-    case "@ai-sdk/mistral":
-      return createMistral({ apiKey })(modelId);
-    case "@ai-sdk/openai-compatible":
-      return createOpenAICompatible({
-        name: spec.providerId ?? "openai-compatible",
-        apiKey,
-        baseURL: baseURL ?? ""
-      })(modelId);
-    case "@openrouter/ai-sdk-provider":
-      return createOpenRouter({ apiKey, baseURL })(modelId);
-    default:
-      throw new Error(`No SDK provider for npm package: ${npm}`);
   }
+  throw new Error("No create* factory export found in provider package");
+}
+async function loadSdkProviderFactory(npm) {
+  let cached = factoryCache.get(npm);
+  if (!cached) {
+    cached = (async () => {
+      try {
+        const mod = await import(npm);
+        return findCreateFactory(mod);
+      } catch (err) {
+        const code = err && typeof err === "object" && "code" in err ? err.code : void 0;
+        if (code === "ERR_MODULE_NOT_FOUND") {
+          throw new Error(`SDK provider package not installed: ${npm}. Run: npm install ${npm}`);
+        }
+        throw err;
+      }
+    })();
+    factoryCache.set(npm, cached);
+  }
+  return cached;
+}
+async function createLanguageModel(spec) {
+  const { npm, modelId, apiKey, baseURL } = spec;
+  if (npm === "@ai-sdk/openai") {
+    const { createOpenAI } = await import("@ai-sdk/openai");
+    const openai = createOpenAI({ apiKey });
+    return modelPrefersResponsesApi(modelId) ? openai.responses(modelId) : openai.chat(modelId);
+  }
+  if (npm === "@ai-sdk/xai") {
+    const { createXai } = await import("@ai-sdk/xai");
+    const xai = createXai({ apiKey });
+    return modelPrefersResponsesApi(modelId) ? xai.responses(modelId) : xai(modelId);
+  }
+  if (npm === "@ai-sdk/openai-compatible") {
+    const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
+    return createOpenAICompatible({
+      name: spec.providerId ?? "openai-compatible",
+      apiKey,
+      baseURL: baseURL ?? ""
+    })(modelId);
+  }
+  if (npm === "@openrouter/ai-sdk-provider") {
+    const { createOpenRouter } = await import("@openrouter/ai-sdk-provider");
+    return createOpenRouter({ apiKey, baseURL })(modelId);
+  }
+  const create = await loadSdkProviderFactory(npm);
+  const provider = create(baseURL ? { apiKey, baseURL } : { apiKey });
+  return provider(modelId);
 }
 function thinkingProviderOptions(npm) {
   if (npm === "@ai-sdk/google") {
@@ -1007,7 +1018,7 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
           () => `sdk: npm=${route.npm} model=${route.realModelId}, stream=${clientWantsStream}, tools=${anthropicBody.tools?.length ?? 0}, msgs=${params.messages.length}`
         );
         try {
-          const model = createLanguageModel({
+          const model = await createLanguageModel({
             npm: route.npm,
             modelId: route.realModelId,
             apiKey,
@@ -1070,7 +1081,8 @@ function startProxy(completionsUrl, modelId, debug = false, contextWindow, sdk) 
 
 // src/catalog.ts
 function localModelToRoute(lp, model) {
-  if (!model.completionsUrl && !model.baseUrl) return null;
+  if (model.modelFormat === "anthropic" && !model.baseUrl) return null;
+  if (model.modelFormat === "openai" && !isSdkMigratedNpm(model.npm) && !model.completionsUrl) return null;
   return {
     aliasId: aliasModelId(model.id, lp.name),
     realModelId: model.upstreamModelId,
@@ -1387,51 +1399,21 @@ function findOpencodeBinary() {
   return null;
 }
 function resolveEndpoint(npm, apiUrl) {
-  switch (npm) {
-    case "@ai-sdk/anthropic":
-      return {
-        format: "anthropic",
-        baseUrl: (apiUrl || "https://api.anthropic.com").replace(/\/v1\/?$/, "")
-      };
-    case "@ai-sdk/openai-compatible":
-      if (!apiUrl) return null;
-      return {
-        format: "openai",
-        completionsUrl: apiUrl.replace(/\/$/, "") + "/chat/completions"
-      };
-    case "@ai-sdk/openai":
-      return {
-        format: "openai",
-        completionsUrl: "https://api.openai.com/v1/chat/completions"
-      };
-    case "@ai-sdk/google":
-      return {
-        format: "openai",
-        completionsUrl: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-      };
-    case "@ai-sdk/groq":
-      return {
-        format: "openai",
-        completionsUrl: "https://api.groq.com/openai/v1/chat/completions"
-      };
-    case "@ai-sdk/mistral":
-      return {
-        format: "openai",
-        completionsUrl: "https://api.mistral.ai/v1/chat/completions"
-      };
-    case "@ai-sdk/xai":
-      return {
-        format: "openai",
-        completionsUrl: "https://api.x.ai/v1/chat/completions"
-      };
-    case "@openrouter/ai-sdk-provider":
-      return {
-        format: "openai",
-        completionsUrl: (apiUrl || "https://openrouter.ai/api/v1").replace(/\/$/, "") + "/chat/completions"
-      };
-    default:
-      return null;
+  if (!npm) return null;
+  if (npm === "@ai-sdk/anthropic") {
+    return {
+      format: "anthropic",
+      baseUrl: (apiUrl || "https://api.anthropic.com").replace(/\/v1\/?$/, "")
+    };
   }
+  if (npm === "@ai-sdk/openai-compatible") {
+    if (!apiUrl) return null;
+    return {
+      format: "openai",
+      completionsUrl: apiUrl.replace(/\/$/, "") + "/chat/completions"
+    };
+  }
+  return { format: "openai" };
 }
 function normalizeProviders(raw) {
   const result = [];
@@ -1784,7 +1766,7 @@ async function handleAnthropicMessages(req, res, options) {
       return;
     }
     const apiKey = model.apiKey ?? options.apiKey;
-    const languageModel = createLanguageModel({
+    const languageModel = await createLanguageModel({
       npm: model.npm,
       modelId: model.upstreamModelId ?? model.id,
       apiKey,
@@ -2646,13 +2628,8 @@ function printDryRun(backendName, modelId, baseUrl, modelFormat, claudeArgs, con
   console.log(`  ${pc3.bold("Command:")}  ${claudeCmd}`);
   console.log(`  ${pc3.bold("Backend:")}  ${backendName}`);
   if (modelFormat === "openai") {
-    if (isSdkMigratedNpm(npm)) {
-      console.log(`  ${pc3.bold("Proxy:")}    would start local SDK adapter proxy ${pc3.dim("(Vercel AI SDK)")}`);
-      if (npm) console.log(`             ${pc3.dim(`npm: ${npm}`)}`);
-    } else {
-      console.log(`  ${pc3.bold("Proxy:")}    would start local translation proxy ${pc3.dim("(Anthropic \u2192 OpenAI)")}`);
-      console.log(`             ${pc3.dim(`\u2192 ${baseUrl}/v1/chat/completions`)}`);
-    }
+    console.log(`  ${pc3.bold("Proxy:")}    would start local SDK adapter proxy ${pc3.dim("(Vercel AI SDK)")}`);
+    if (npm) console.log(`             ${pc3.dim(`npm: ${npm}`)}`);
   }
   console.log("");
   console.log(`  ${pc3.bold("Env vars SET:")}`);
@@ -3105,16 +3082,15 @@ async function runClaudeCommand(parsed) {
       );
     }
     if (dryRun) {
-      const sdkRoute = isSdkMigratedNpm(selectedModel.npm);
-      const formatDesc = selectedModel.modelFormat === "anthropic" ? "direct passthrough" : sdkRoute ? "via SDK adapter proxy" : "via translation proxy";
-      const endpoint = sdkRoute ? selectedModel.npm ?? "SDK" : selectedModel.baseUrl ?? selectedModel.completionsUrl ?? "(unknown)";
+      const formatDesc = selectedModel.modelFormat === "anthropic" ? "direct passthrough" : "via SDK adapter proxy";
+      const endpoint = selectedModel.modelFormat === "anthropic" ? selectedModel.baseUrl ?? "(unknown)" : selectedModel.npm ?? "SDK";
       console.log("");
       console.log(pc3.bold(pc3.cyan("  DRY RUN \u2014 would execute:")));
       console.log("");
       console.log(`  ${pc3.bold("Provider:")}  ${provider.name}`);
       console.log(`  ${pc3.bold("Model:")}     ${selectedModel.id}`);
       console.log(`  ${pc3.bold("Format:")}    ${selectedModel.modelFormat} (${formatDesc})`);
-      console.log(`  ${pc3.bold(sdkRoute ? "SDK npm:" : "Endpoint:")} ${endpoint}`);
+      console.log(`  ${pc3.bold(selectedModel.modelFormat === "anthropic" ? "Endpoint:" : "SDK npm:")} ${endpoint}`);
       console.log(`  ${pc3.bold("Key:")}       ${provider.id} provider key`);
       console.log("");
       console.log(pc3.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
@@ -3134,7 +3110,7 @@ async function runClaudeCommand(parsed) {
     } else {
       try {
         proxyHandle2 = await startProxy(
-          selectedModel.completionsUrl,
+          selectedModel.completionsUrl ?? "",
           selectedModel.id,
           trace,
           selectedModel.contextWindow,
@@ -3145,10 +3121,10 @@ async function runClaudeCommand(parsed) {
           }
         );
         p4.log.info(
-          `Translation proxy started on port ${proxyHandle2.port} ` + pc3.dim(`(${selectedModel.completionsUrl})`)
+          `SDK adapter proxy started on port ${proxyHandle2.port}` + (selectedModel.npm ? pc3.dim(` (${selectedModel.npm})`) : "")
         );
       } catch (err) {
-        p4.log.error(`Failed to start translation proxy: ${err instanceof Error ? err.message : String(err)}`);
+        p4.log.error(`Failed to start SDK adapter proxy: ${err instanceof Error ? err.message : String(err)}`);
         return 1;
       }
       childEnv2 = buildChildEnv(

@@ -1,14 +1,6 @@
 // Maps an OpenCode provider's `npm` package (the field providers.ts already
-// reads) to a Vercel AI SDK LanguageModel instance. This replaces the per-
-// provider URL/endpoint hand-wiring in resolveEndpoint + the translation
-// proxies: the SDK owns wire format, endpoint selection, and provider quirks.
-import { createOpenAI } from '@ai-sdk/openai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createGroq } from '@ai-sdk/groq';
-import { createMistral } from '@ai-sdk/mistral';
-import { createXai } from '@ai-sdk/xai';
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+// reads) to a Vercel AI SDK LanguageModel instance. The SDK owns wire format,
+// endpoint selection, and provider quirks.
 import type { LanguageModel } from 'ai';
 
 /** Models that must use /v1/responses instead of /v1/chat/completions. */
@@ -21,6 +13,14 @@ const RESPONSES_ONLY_PREFIXES = [
   'o3',
   'o4',
 ];
+
+type SdkProviderFactory = (options: { apiKey: string; baseURL?: string; name?: string }) => {
+  (modelId: string): LanguageModel;
+  chat: (modelId: string) => LanguageModel;
+  responses: (modelId: string) => LanguageModel;
+};
+
+const factoryCache = new Map<string, Promise<SdkProviderFactory>>();
 
 /**
  * True when a model id must use the OpenAI/xAI Responses API instead of
@@ -51,47 +51,67 @@ export interface ProviderModelSpec {
 
 /** True when this provider routes through the SDK adapter (local providers + Zen/Go openai-format). */
 export function isSdkMigratedNpm(npm: string | undefined): boolean {
-  return !!npm && SDK_NPM_PACKAGES.has(npm);
+  return !!npm && npm !== '@ai-sdk/anthropic';
 }
 
-const SDK_NPM_PACKAGES = new Set([
-  '@ai-sdk/openai',
-  '@ai-sdk/google',
-  '@ai-sdk/groq',
-  '@ai-sdk/mistral',
-  '@ai-sdk/xai',
-  '@ai-sdk/openai-compatible',
-  '@openrouter/ai-sdk-provider',
-]);
-
-export function createLanguageModel(spec: ProviderModelSpec): LanguageModel {
-  const { npm, modelId, apiKey, baseURL } = spec;
-  switch (npm) {
-    case '@ai-sdk/openai': {
-      const openai = createOpenAI({ apiKey });
-      return modelPrefersResponsesApi(modelId) ? openai.responses(modelId) : openai.chat(modelId);
+function findCreateFactory(mod: Record<string, unknown>): SdkProviderFactory {
+  for (const value of Object.values(mod)) {
+    if (typeof value === 'function' && value.name.startsWith('create')) {
+      return value as SdkProviderFactory;
     }
-    case '@ai-sdk/xai': {
-      const xai = createXai({ apiKey });
-      return modelPrefersResponsesApi(modelId) ? xai.responses(modelId) : xai(modelId);
-    }
-    case '@ai-sdk/google':
-      return createGoogleGenerativeAI({ apiKey })(modelId);
-    case '@ai-sdk/groq':
-      return createGroq({ apiKey })(modelId);
-    case '@ai-sdk/mistral':
-      return createMistral({ apiKey })(modelId);
-    case '@ai-sdk/openai-compatible':
-      return createOpenAICompatible({
-        name: spec.providerId ?? 'openai-compatible',
-        apiKey,
-        baseURL: baseURL ?? '',
-      })(modelId);
-    case '@openrouter/ai-sdk-provider':
-      return createOpenRouter({ apiKey, baseURL })(modelId);
-    default:
-      throw new Error(`No SDK provider for npm package: ${npm}`);
   }
+  throw new Error('No create* factory export found in provider package');
+}
+
+async function loadSdkProviderFactory(npm: string): Promise<SdkProviderFactory> {
+  let cached = factoryCache.get(npm);
+  if (!cached) {
+    cached = (async () => {
+      try {
+        const mod = await import(npm);
+        return findCreateFactory(mod as Record<string, unknown>);
+      } catch (err) {
+        const code = err && typeof err === 'object' && 'code' in err ? err.code : undefined;
+        if (code === 'ERR_MODULE_NOT_FOUND') {
+          throw new Error(`SDK provider package not installed: ${npm}. Run: npm install ${npm}`);
+        }
+        throw err;
+      }
+    })();
+    factoryCache.set(npm, cached);
+  }
+  return cached;
+}
+
+export async function createLanguageModel(spec: ProviderModelSpec): Promise<LanguageModel> {
+  const { npm, modelId, apiKey, baseURL } = spec;
+
+  if (npm === '@ai-sdk/openai') {
+    const { createOpenAI } = await import('@ai-sdk/openai');
+    const openai = createOpenAI({ apiKey });
+    return modelPrefersResponsesApi(modelId) ? openai.responses(modelId) : openai.chat(modelId);
+  }
+  if (npm === '@ai-sdk/xai') {
+    const { createXai } = await import('@ai-sdk/xai');
+    const xai = createXai({ apiKey });
+    return modelPrefersResponsesApi(modelId) ? xai.responses(modelId) : xai(modelId);
+  }
+  if (npm === '@ai-sdk/openai-compatible') {
+    const { createOpenAICompatible } = await import('@ai-sdk/openai-compatible');
+    return createOpenAICompatible({
+      name: spec.providerId ?? 'openai-compatible',
+      apiKey,
+      baseURL: baseURL ?? '',
+    })(modelId);
+  }
+  if (npm === '@openrouter/ai-sdk-provider') {
+    const { createOpenRouter } = await import('@openrouter/ai-sdk-provider');
+    return createOpenRouter({ apiKey, baseURL })(modelId);
+  }
+
+  const create = await loadSdkProviderFactory(npm);
+  const provider = create(baseURL ? { apiKey, baseURL } : { apiKey });
+  return provider(modelId);
 }
 
 /** Per-provider providerOptions to request reasoning/thinking output. */

@@ -54,7 +54,7 @@ describe('localModelToRoute', () => {
     });
   });
 
-  it('returns null when routing fields are missing', () => {
+  it('returns null when routing fields are missing for non-SDK openai models', () => {
     const provider: LocalProvider = {
       id: 'p',
       name: 'P',
@@ -69,5 +69,29 @@ describe('localModelToRoute', () => {
       }],
     };
     expect(localModelToRoute(provider, provider.models[0]!)).toBeNull();
+  });
+
+  it('builds SDK routes without completionsUrl when npm is set', () => {
+    const provider: LocalProvider = {
+      id: 'cerebras',
+      name: 'Cerebras',
+      apiKey: 'sk-test',
+      models: [{
+        id: 'llama-3.3-70b',
+        name: 'Llama 3.3 70B',
+        family: 'llama',
+        brand: 'Other',
+        modelFormat: 'openai',
+        upstreamModelId: 'llama-3.3-70b',
+        npm: '@ai-sdk/cerebras',
+      }],
+    };
+    const route = localModelToRoute(provider, provider.models[0]!);
+    expect(route).toMatchObject({
+      aliasId: 'anthropic-cerebras__llama-3.3-70b',
+      realModelId: 'llama-3.3-70b',
+      npm: '@ai-sdk/cerebras',
+      upstreamUrl: '',
+    });
   });
 });
