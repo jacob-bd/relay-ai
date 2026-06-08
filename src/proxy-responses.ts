@@ -1,5 +1,6 @@
 // OpenAI Responses API translation (Anthropic ↔ /v1/responses).
 // GPT-5.4+, Codex, and o-series models are not available on /v1/chat/completions.
+// xAI multiagent models (grok-*-multi-agent) also require /v1/responses.
 
 import { Readable } from 'node:stream';
 import {
@@ -33,7 +34,7 @@ const RESPONSES_ONLY_PREFIXES = [
 ];
 
 export function isOpenAIChatCompletionsUrl(url: string): boolean {
-  return url.includes('api.openai.com') && url.includes('/chat/completions');
+  return (url.includes('api.openai.com') || url.includes('api.x.ai')) && url.includes('/chat/completions');
 }
 
 export function openAIResponsesUrl(completionsUrl: string): string {
@@ -47,6 +48,8 @@ export function modelPrefersResponsesApi(modelId: string): boolean {
   }
   // Versioned Codex IDs (e.g. gpt-5.3-codex) don't match the gpt-5-codex prefix.
   if (lower.startsWith('gpt-') && lower.includes('-codex')) return true;
+  // xAI multiagent models (e.g. grok-4.20-multi-agent, grok-4.2-multiagent).
+  if (lower.startsWith('grok-') && (lower.includes('multi-agent') || lower.includes('multiagent'))) return true;
   return false;
 }
 

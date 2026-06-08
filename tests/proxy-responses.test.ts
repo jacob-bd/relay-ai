@@ -33,6 +33,14 @@ describe('modelPrefersResponsesApi', () => {
     expect(modelPrefersResponsesApi('gpt-4o-mini')).toBe(false);
     expect(modelPrefersResponsesApi('gpt-5')).toBe(false);
   });
+
+  it('detects xAI multiagent models', () => {
+    expect(modelPrefersResponsesApi('grok-4.20-multi-agent')).toBe(true);
+    expect(modelPrefersResponsesApi('grok-4.2-multiagent')).toBe(true);
+    expect(modelPrefersResponsesApi('grok-4.20-multi-agent-beta')).toBe(true);
+    expect(modelPrefersResponsesApi('grok-4.3')).toBe(false);
+    expect(modelPrefersResponsesApi('grok-3')).toBe(false);
+  });
 });
 
 describe('openAIResponsesUrl', () => {
@@ -42,9 +50,10 @@ describe('openAIResponsesUrl', () => {
     );
   });
 
-  it('detects OpenAI chat completions URLs', () => {
+  it('detects OpenAI and xAI chat completions URLs', () => {
     expect(isOpenAIChatCompletionsUrl('https://api.openai.com/v1/chat/completions')).toBe(true);
-    expect(isOpenAIChatCompletionsUrl('https://api.x.ai/v1/chat/completions')).toBe(false);
+    expect(isOpenAIChatCompletionsUrl('https://api.x.ai/v1/chat/completions')).toBe(true);
+    expect(isOpenAIChatCompletionsUrl('https://api.groq.com/openai/v1/chat/completions')).toBe(false);
   });
 });
 

@@ -12,7 +12,7 @@ opencode-starter is an interactive CLI wizard that configures and launches AI co
 - **Subscription-aware** — tells the wizard what you have access to (free / Zen / Go / both), filters models accordingly
 - **Free models highlighted** — green `(free)` label makes it easy to spot zero-cost options
 - **Built-in translation proxy** — models using OpenAI format are automatically routed through a local translation proxy so Claude Code talks to them in Anthropic format; labeled `(via proxy)` in the list
-- **Clean environment isolation** — removes conflicting env vars (Vertex AI, Bedrock, AWS, Foundry) before launch; **never modifies `~/.claude/settings.json`**
+- **Clean environment isolation** — removes conflicting env vars (Vertex AI, Bedrock, AWS, Foundry) in the child process only; opencode-starter never writes `~/.claude/settings.json` (see caveat below)
 - **Secure key storage** — stores your API key in the OS credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service) or your shell profile — your choice
 - **Cross-platform** — macOS, Windows, and Linux (Ubuntu, Fedora, and other distros with GNOME Keyring or KWallet)
 - **Dry run mode** — preview exactly what would be run without launching anything
@@ -176,7 +176,9 @@ When launched, opencode-starter builds a clean child environment:
 2. Sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, and `ANTHROPIC_MODEL` for the session
 3. Passes `--model <selected>` to the tool as a belt-and-suspenders override
 
-When the tool exits — for any reason (normal exit, Ctrl+C, terminal close) — everything returns to your normal environment. **No cleanup step, no restore needed.**
+When the tool exits — for any reason (normal exit, Ctrl+C, terminal close) — your shell environment is unchanged. **No cleanup step, no restore needed.**
+
+**Caveat — Claude Code persists the model:** opencode-starter does not edit `~/.claude/settings.json`, but Claude Code itself saves the model you launched with (via `--model` and `ANTHROPIC_MODEL`). A later bare `claude` launch may still show that model — e.g. `anthropic-opencode-go__deepseek-v4-flash` from a prior opencode-starter session. To return to a first-party default, run `claude --model sonnet` (or your preferred Claude model), or remove the `"model"` key from `~/.claude/settings.json`. If you used the favorites switch menu, Claude Code may also cache the gateway catalog at `~/.claude/cache/gateway-models.json`; delete that file if `/model` shows stale entries from a dead local proxy.
 
 ### Model compatibility
 

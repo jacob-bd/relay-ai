@@ -235,9 +235,10 @@ function buildChildEnv(baseUrl, model, apiKey, proxyPort, contextWindow, enableG
   env["ANTHROPIC_BASE_URL"] = proxyPort ? `http://127.0.0.1:${proxyPort}` : baseUrl;
   env["ANTHROPIC_API_KEY"] = apiKey;
   env["ANTHROPIC_MODEL"] = model;
-  env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = String(resolveContextWindow(model, contextWindow));
   if (enableGatewayDiscovery) {
     env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1";
+  } else {
+    env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = String(resolveContextWindow(model, contextWindow));
   }
   applyClaudeCodeThirdPartyCompat(env);
   return env;
@@ -581,9 +582,9 @@ function cleanJsonSchemaForGemini(input) {
 
 // src/tool-search.ts
 var TOOL_SEARCH_TYPE_PREFIX = "tool_search_tool";
-function isToolSearchTool(tool) {
-  if (typeof tool.type === "string" && tool.type.startsWith(TOOL_SEARCH_TYPE_PREFIX)) return true;
-  const name = tool.name ?? "";
+function isToolSearchTool(tool2) {
+  if (typeof tool2.type === "string" && tool2.type.startsWith(TOOL_SEARCH_TYPE_PREFIX)) return true;
+  const name = tool2.name ?? "";
   return name.includes("tool_search") || name === "ToolSearch";
 }
 function extractReferencedToolNames(messages) {
@@ -622,16 +623,16 @@ function resolveUpstreamTools(tools, messages) {
   if (!tools?.length) return [];
   const referenced = extractReferencedToolNames(messages);
   const upstream = [];
-  for (const tool of tools) {
-    if (isToolSearchTool(tool)) {
-      upstream.push(tool);
+  for (const tool2 of tools) {
+    if (isToolSearchTool(tool2)) {
+      upstream.push(tool2);
       continue;
     }
-    if (tool.defer_loading === true) {
-      if (referenced.has(tool.name)) upstream.push(tool);
+    if (tool2.defer_loading === true) {
+      if (referenced.has(tool2.name)) upstream.push(tool2);
       continue;
     }
-    upstream.push(tool);
+    upstream.push(tool2);
   }
   return upstream;
 }
@@ -797,19 +798,19 @@ function buildToolNameMap(messages) {
   return map;
 }
 var cleanedToolSchemaCache = /* @__PURE__ */ new Map();
-function geminiToolDeclaration(tool) {
-  let parameters = cleanedToolSchemaCache.get(tool.name);
+function geminiToolDeclaration(tool2) {
+  let parameters = cleanedToolSchemaCache.get(tool2.name);
   if (!parameters) {
-    if (tool.input_schema && Object.keys(tool.input_schema).length > 0) {
-      parameters = cleanJsonSchemaForGemini(tool.input_schema);
+    if (tool2.input_schema && Object.keys(tool2.input_schema).length > 0) {
+      parameters = cleanJsonSchemaForGemini(tool2.input_schema);
     } else {
       parameters = { type: "object", properties: {} };
     }
-    cleanedToolSchemaCache.set(tool.name, parameters);
+    cleanedToolSchemaCache.set(tool2.name, parameters);
   }
-  const description = typeof tool.description === "string" ? tool.description : isToolSearchTool(tool) ? "Search deferred tools by name or regex pattern" : void 0;
+  const description = typeof tool2.description === "string" ? tool2.description : isToolSearchTool(tool2) ? "Search deferred tools by name or regex pattern" : void 0;
   return {
-    name: tool.name,
+    name: tool2.name,
     description,
     parameters
   };
@@ -1102,7 +1103,7 @@ var RESPONSES_ONLY_PREFIXES = [
   "o4"
 ];
 function isOpenAIChatCompletionsUrl(url) {
-  return url.includes("api.openai.com") && url.includes("/chat/completions");
+  return (url.includes("api.openai.com") || url.includes("api.x.ai")) && url.includes("/chat/completions");
 }
 function openAIResponsesUrl(completionsUrl) {
   return completionsUrl.replace(/\/chat\/completions\/?$/, "/responses");
@@ -1113,6 +1114,7 @@ function modelPrefersResponsesApi(modelId) {
     return true;
   }
   if (lower.startsWith("gpt-") && lower.includes("-codex")) return true;
+  if (lower.startsWith("grok-") && (lower.includes("multi-agent") || lower.includes("multiagent"))) return true;
   return false;
 }
 function translateImagePart(part) {
@@ -1219,11 +1221,11 @@ function translateToResponses(body) {
   if (stream !== void 0) data.stream = stream;
   const upstreamTools = resolveUpstreamTools(tools, messages);
   if (upstreamTools.length > 0) {
-    data.tools = upstreamTools.map((tool) => ({
+    data.tools = upstreamTools.map((tool2) => ({
       type: "function",
-      name: tool.name,
-      description: typeof tool.description === "string" ? tool.description : isToolSearchTool(tool) ? "Search deferred tools by name or regex pattern" : void 0,
-      parameters: tool.input_schema ?? { type: "object", properties: {} }
+      name: tool2.name,
+      description: typeof tool2.description === "string" ? tool2.description : isToolSearchTool(tool2) ? "Search deferred tools by name or regex pattern" : void 0,
+      parameters: tool2.input_schema ?? { type: "object", properties: {} }
     }));
     data.tool_choice = "auto";
   }
@@ -1611,6 +1613,366 @@ function normalizeMistralMessages(messages) {
   return { messages: merged, hoistedSystemBlocks, insertedAssistantFillers };
 }
 
+// src/provider-factory.ts
+import { createOpenAI } from "@ai-sdk/openai";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createGroq } from "@ai-sdk/groq";
+import { createMistral } from "@ai-sdk/mistral";
+import { createXai } from "@ai-sdk/xai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+function isSdkBackedNpm(npm) {
+  return SDK_NPM_PACKAGES.has(npm);
+}
+function isSdkMigratedNpm(npm) {
+  return !!npm && isSdkBackedNpm(npm);
+}
+var SDK_NPM_PACKAGES = /* @__PURE__ */ new Set([
+  "@ai-sdk/openai",
+  "@ai-sdk/google",
+  "@ai-sdk/groq",
+  "@ai-sdk/mistral",
+  "@ai-sdk/xai",
+  "@ai-sdk/openai-compatible",
+  "@openrouter/ai-sdk-provider"
+]);
+function createLanguageModel(spec) {
+  const { npm, modelId, apiKey, baseURL } = spec;
+  switch (npm) {
+    case "@ai-sdk/openai": {
+      const openai = createOpenAI({ apiKey });
+      return modelPrefersResponsesApi(modelId) ? openai.responses(modelId) : openai.chat(modelId);
+    }
+    case "@ai-sdk/xai": {
+      const xai = createXai({ apiKey });
+      return modelPrefersResponsesApi(modelId) ? xai.responses(modelId) : xai(modelId);
+    }
+    case "@ai-sdk/google":
+      return createGoogleGenerativeAI({ apiKey })(modelId);
+    case "@ai-sdk/groq":
+      return createGroq({ apiKey })(modelId);
+    case "@ai-sdk/mistral":
+      return createMistral({ apiKey })(modelId);
+    case "@ai-sdk/openai-compatible":
+      return createOpenAICompatible({
+        name: spec.providerId ?? "openai-compatible",
+        apiKey,
+        baseURL: baseURL ?? ""
+      })(modelId);
+    case "@openrouter/ai-sdk-provider":
+      return createOpenRouter({ apiKey, baseURL })(modelId);
+    default:
+      throw new Error(`No SDK provider for npm package: ${npm}`);
+  }
+}
+function thinkingProviderOptions(npm) {
+  if (npm === "@ai-sdk/google") {
+    return { google: { thinkingConfig: { includeThoughts: true } } };
+  }
+  return void 0;
+}
+
+// src/sdk-adapter.ts
+import { streamText, generateText, tool, jsonSchema } from "ai";
+function systemToString(system) {
+  if (!system) return void 0;
+  if (typeof system === "string") return system;
+  return system.map((b) => typeof b === "string" ? b : b.text ?? "").join("\n");
+}
+function inlineSystemText(messages) {
+  const parts = [];
+  for (const msg of messages) {
+    if (msg.role !== "system") continue;
+    const text3 = typeof msg.content === "string" ? msg.content : msg.content.map((b) => b.text ?? "").join("\n");
+    if (text3.trim()) parts.push(text3.trim());
+  }
+  return parts;
+}
+function imagePart(block) {
+  const src = block.source;
+  if (!src) return null;
+  if (src.type === "base64" && src.data) {
+    return { type: "image", image: Buffer.from(src.data, "base64"), mediaType: src.media_type };
+  }
+  if (src.type === "url" && src.url) {
+    return { type: "image", image: new URL(src.url) };
+  }
+  return null;
+}
+function annotateToolNames(messages) {
+  const nameById = /* @__PURE__ */ new Map();
+  for (const msg of messages) {
+    if (!Array.isArray(msg.content)) continue;
+    for (const b of msg.content) {
+      if (b.type === "tool_use" && b.id && b.name) nameById.set(splitToolUseId(b.id).rawId, b.name);
+    }
+  }
+  for (const msg of messages) {
+    if (!Array.isArray(msg.content)) continue;
+    for (const b of msg.content) {
+      if (b.type === "tool_result" && b.tool_use_id) {
+        b._name = nameById.get(splitToolUseId(b.tool_use_id).rawId);
+      }
+    }
+  }
+}
+function toolResultText(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map((c) => typeof c === "string" ? c : c.text ?? JSON.stringify(c)).join("\n");
+  }
+  return content == null ? "" : JSON.stringify(content);
+}
+function translateMessages(messages, npm) {
+  const isGoogle = npm === "@ai-sdk/google";
+  const out = [];
+  for (const msg of messages) {
+    const blocks = typeof msg.content === "string" ? [{ type: "text", text: msg.content }] : msg.content ?? [];
+    if (msg.role === "user") {
+      const toolResults = blocks.filter((b) => b.type === "tool_result");
+      const parts = [];
+      for (const b of blocks) {
+        if (b.type === "text") parts.push({ type: "text", text: b.text ?? "" });
+        else if (b.type === "image") {
+          const p5 = imagePart(b);
+          if (p5) parts.push(p5);
+        }
+      }
+      if (toolResults.length) {
+        out.push({
+          role: "tool",
+          content: toolResults.map((tr) => ({
+            type: "tool-result",
+            toolCallId: splitToolUseId(tr.tool_use_id ?? "").rawId,
+            toolName: tr._name ?? "unknown",
+            output: { type: "text", value: toolResultText(tr.content) }
+          }))
+        });
+      }
+      if (parts.length) out.push({ role: "user", content: parts });
+    } else if (msg.role === "assistant") {
+      const parts = [];
+      for (const b of blocks) {
+        if (b.type === "text") {
+          parts.push({ type: "text", text: b.text ?? "" });
+        } else if (b.type === "thinking") {
+          const part = { type: "reasoning", text: b.thinking ?? "" };
+          if (b.signature && isGoogle) part.providerOptions = { google: { thoughtSignature: b.signature } };
+          parts.push(part);
+        } else if (b.type === "tool_use" && b.id) {
+          const { rawId, thoughtSignature } = splitToolUseId(b.id);
+          const part = {
+            type: "tool-call",
+            toolCallId: rawId,
+            toolName: b.name,
+            input: b.input ?? {}
+          };
+          if (thoughtSignature && isGoogle) part.providerOptions = { google: { thoughtSignature } };
+          parts.push(part);
+        }
+      }
+      if (parts.length) out.push({ role: "assistant", content: parts });
+    }
+  }
+  return out;
+}
+function translateTools(anthropicTools) {
+  if (!anthropicTools?.length) return void 0;
+  const tools = {};
+  for (const t of anthropicTools) {
+    if (!t.name || !t.input_schema) continue;
+    tools[t.name] = tool({ description: t.description ?? "", inputSchema: jsonSchema(t.input_schema) });
+  }
+  return Object.keys(tools).length ? tools : void 0;
+}
+function translateToolChoice(tc) {
+  if (!tc) return void 0;
+  if (tc.type === "auto") return "auto";
+  if (tc.type === "any") return "required";
+  if (tc.type === "tool" && tc.name) return { type: "tool", toolName: tc.name };
+  return void 0;
+}
+function translateRequest(body, npm) {
+  const messages = body.messages ?? [];
+  annotateToolNames(messages);
+  const baseSystem = systemToString(body.system);
+  const inlineParts = inlineSystemText(messages);
+  const system = [baseSystem, ...inlineParts].filter((s) => s && s.trim()).join("\n\n") || void 0;
+  return {
+    system,
+    messages: translateMessages(messages, npm),
+    tools: translateTools(body.tools),
+    toolChoice: translateToolChoice(body.tool_choice),
+    maxOutputTokens: body.max_tokens,
+    temperature: body.temperature,
+    providerOptions: thinkingProviderOptions(npm)
+  };
+}
+function grabThoughtSignature(part) {
+  return part.providerMetadata?.google?.thoughtSignature ?? part.providerMetadata?.google?.thought_signature;
+}
+async function writeAnthropicStream(fullStream, modelId, write, log4) {
+  const messageId = "msg_" + Date.now();
+  let blockIndex = -1;
+  let started = false;
+  let openType = null;
+  let pendingThinkingSig;
+  const idToBlock = /* @__PURE__ */ new Map();
+  let finishReason = "end_turn";
+  let usage = { input_tokens: 0, output_tokens: 0 };
+  const emit = (event, data) => write(sseChunk(event, data));
+  const ensureStart = () => {
+    if (started) return;
+    emit("message_start", {
+      type: "message_start",
+      message: {
+        id: messageId,
+        type: "message",
+        role: "assistant",
+        content: [],
+        model: modelId,
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 0, output_tokens: 0 }
+      }
+    });
+    started = true;
+  };
+  const closeOpen = () => {
+    if (openType === "thinking") {
+      emit("content_block_delta", {
+        type: "content_block_delta",
+        index: blockIndex,
+        delta: { type: "signature_delta", signature: pendingThinkingSig ?? "" }
+      });
+      pendingThinkingSig = void 0;
+    }
+    if (openType) emit("content_block_stop", { type: "content_block_stop", index: blockIndex });
+    openType = null;
+  };
+  const openBlock = (type, contentBlock) => {
+    ensureStart();
+    closeOpen();
+    blockIndex++;
+    openType = type;
+    emit("content_block_start", { type: "content_block_start", index: blockIndex, content_block: contentBlock });
+  };
+  for await (const part of fullStream) {
+    switch (part.type) {
+      case "start":
+        ensureStart();
+        break;
+      case "reasoning-start":
+        openBlock("thinking", { type: "thinking", thinking: "", signature: "" });
+        break;
+      case "reasoning-delta":
+        if (openType !== "thinking") openBlock("thinking", { type: "thinking", thinking: "", signature: "" });
+        emit("content_block_delta", {
+          type: "content_block_delta",
+          index: blockIndex,
+          delta: { type: "thinking_delta", thinking: part.text ?? "" }
+        });
+        break;
+      case "reasoning-end":
+        if (grabThoughtSignature(part)) pendingThinkingSig = grabThoughtSignature(part);
+        break;
+      case "text-start":
+        openBlock("text", { type: "text", text: "" });
+        break;
+      case "text-delta":
+        if (openType !== "text") openBlock("text", { type: "text", text: "" });
+        emit("content_block_delta", {
+          type: "content_block_delta",
+          index: blockIndex,
+          delta: { type: "text_delta", text: part.text ?? "" }
+        });
+        break;
+      case "text-end":
+        break;
+      case "tool-input-start": {
+        const sig = grabThoughtSignature(part);
+        openBlock("tool", {
+          type: "tool_use",
+          id: encodeToolUseId(part.id ?? "", sig),
+          name: part.toolName,
+          input: {}
+        });
+        idToBlock.set(part.id ?? "", blockIndex);
+        break;
+      }
+      case "tool-input-delta":
+        emit("content_block_delta", {
+          type: "content_block_delta",
+          index: idToBlock.get(part.id ?? "") ?? blockIndex,
+          delta: { type: "input_json_delta", partial_json: part.delta ?? part.text ?? "" }
+        });
+        break;
+      case "tool-input-end":
+        break;
+      case "tool-call": {
+        finishReason = "tool_use";
+        if (!idToBlock.has(part.toolCallId ?? "") && openType !== "tool") {
+          const sig = grabThoughtSignature(part);
+          openBlock("tool", {
+            type: "tool_use",
+            id: encodeToolUseId(part.toolCallId ?? "", sig),
+            name: part.toolName,
+            input: {}
+          });
+          emit("content_block_delta", {
+            type: "content_block_delta",
+            index: blockIndex,
+            delta: { type: "input_json_delta", partial_json: JSON.stringify(part.input ?? {}) }
+          });
+        }
+        break;
+      }
+      case "finish":
+        if (part.totalUsage) {
+          usage = {
+            input_tokens: part.totalUsage.inputTokens ?? 0,
+            output_tokens: part.totalUsage.outputTokens ?? 0
+          };
+        }
+        if (part.finishReason === "tool-calls") finishReason = "tool_use";
+        else if (part.finishReason === "length") finishReason = "max_tokens";
+        else if (part.finishReason === "stop" && finishReason !== "tool_use") finishReason = "end_turn";
+        break;
+      case "error": {
+        const e = part.error;
+        log4?.(() => `sdk stream error: ${JSON.stringify(e?.data ?? part.error)}`);
+        closeOpen();
+        ensureStart();
+        emit("message_delta", { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage });
+        emit("message_stop", { type: "message_stop" });
+        return;
+      }
+      default:
+        break;
+    }
+  }
+  closeOpen();
+  ensureStart();
+  emit("message_delta", { type: "message_delta", delta: { stop_reason: finishReason, stop_sequence: null }, usage });
+  emit("message_stop", { type: "message_stop" });
+}
+async function streamAnthropicResponse(model, params, modelId, write, log4) {
+  const result = streamText({ model, ...params });
+  await writeAnthropicStream(result.fullStream, modelId, write, log4);
+}
+async function generateAnthropicResponse(model, params, modelId) {
+  const r = await generateText({ model, ...params });
+  return {
+    id: "msg_" + Date.now(),
+    type: "message",
+    role: "assistant",
+    model: modelId,
+    content: [{ type: "text", text: r.text }],
+    stop_reason: r.finishReason === "tool-calls" ? "tool_use" : "end_turn",
+    usage: { input_tokens: r.usage?.inputTokens ?? 0, output_tokens: r.usage?.outputTokens ?? 0 }
+  };
+}
+
 // src/proxy.ts
 function makeProxyLog(debug, logPath = "/tmp/opencode-proxy-debug.log") {
   if (!debug) return () => {
@@ -1667,7 +2029,7 @@ function translateImageBlock(part) {
   }
   return null;
 }
-function translateRequest(body, options = {}) {
+function translateRequest2(body, options = {}) {
   const { model, messages, system, temperature, max_tokens, top_p, stop_sequences, tools, stream } = body;
   const inlineSystemParts = [];
   const openAIMessages = Array.isArray(messages) ? messages.flatMap((msg) => {
@@ -2181,6 +2543,39 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
         }
         return;
       }
+      if (isSdkMigratedNpm(route.npm)) {
+        const params = translateRequest(anthropicBody, route.npm);
+        plog(
+          () => `sdk: npm=${route.npm} model=${route.realModelId}, stream=${clientWantsStream}, tools=${anthropicBody.tools?.length ?? 0}, msgs=${params.messages.length}`
+        );
+        try {
+          const model = createLanguageModel({
+            npm: route.npm,
+            modelId: route.realModelId,
+            apiKey,
+            baseURL: route.baseURL,
+            providerId: route.aliasId
+          });
+          if (clientWantsStream) {
+            res.writeHead(200, {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              "Connection": "keep-alive"
+            });
+            await streamAnthropicResponse(model, params, originalModel, (c) => res.write(c), plog);
+            res.end();
+          } else {
+            const anthropicResponse2 = await generateAnthropicResponse(model, params, originalModel);
+            sendJson(res, 200, anthropicResponse2);
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          plog(() => `sdk error: ${message}`);
+          if (!res.headersSent) anthropicError(res, 502, message);
+          else res.end();
+        }
+        return;
+      }
       anthropicBody = { ...anthropicBody, model: route.realModelId };
       if (isGeminiUrl(upstreamUrl)) {
         const nativeUrl = geminiNativeUrl(route.realModelId, clientWantsStream);
@@ -2286,7 +2681,7 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
         return;
       }
       const translateOpts = { completionsUrl: upstreamUrl };
-      const openaiBody = translateRequest(anthropicBody, translateOpts);
+      const openaiBody = translateRequest2(anthropicBody, translateOpts);
       if (translateOpts.mistralNormalize) {
         const n = translateOpts.mistralNormalize;
         plog(
@@ -2354,7 +2749,7 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
     });
   });
 }
-function startProxy(completionsUrl, modelId, debug = false, contextWindow) {
+function startProxy(completionsUrl, modelId, debug = false, contextWindow, sdk) {
   return startProxyCatalog([{
     aliasId: modelId,
     realModelId: modelId,
@@ -2363,7 +2758,9 @@ function startProxy(completionsUrl, modelId, debug = false, contextWindow) {
     apiKey: "",
     // '' → use inbound bearer from Claude Code (single-model compat)
     modelFormat: "openai",
-    contextWindow
+    contextWindow,
+    npm: sdk?.npm,
+    baseURL: sdk?.baseURL
   }], modelId, debug);
 }
 
@@ -2377,20 +2774,27 @@ function localModelToRoute(lp, model) {
     upstreamUrl: (model.modelFormat === "anthropic" ? model.baseUrl : model.completionsUrl) ?? "",
     apiKey: lp.apiKey,
     modelFormat: model.modelFormat,
-    contextWindow: model.contextWindow
+    contextWindow: model.contextWindow,
+    npm: model.npm,
+    baseURL: model.apiBaseUrl
   };
 }
 function zenGoModelToRoute(model, apiKey) {
   if (model.modelFormat === "unsupported") return null;
   const backend = BACKENDS[model.sourceBackend];
+  const isAnthropic = model.modelFormat === "anthropic";
   return {
     aliasId: aliasModelId(model.id, backend.name),
     realModelId: model.id,
     displayName: `${model.name} (${backend.name})`,
-    upstreamUrl: model.modelFormat === "anthropic" ? backend.baseUrl : `${backend.baseUrl}/v1/chat/completions`,
+    upstreamUrl: isAnthropic ? backend.baseUrl : `${backend.baseUrl}/v1/chat/completions`,
     apiKey,
     modelFormat: model.modelFormat,
-    contextWindow: model.contextWindow
+    contextWindow: model.contextWindow,
+    // openai-format Zen/Go models route through the SDK (openai-compatible);
+    // anthropic models stay direct passthrough (no npm).
+    npm: isAnthropic ? void 0 : "@ai-sdk/openai-compatible",
+    baseURL: isAnthropic ? void 0 : `${backend.baseUrl}/v1`
   };
 }
 function makeRouteResolver(localProviders, zenModels, goModels, zenGoApiKey) {
@@ -2742,6 +3146,8 @@ function normalizeProviders(raw) {
         modelFormat: endpoint.format,
         baseUrl: endpoint.baseUrl,
         completionsUrl: endpoint.completionsUrl,
+        npm: model.api?.npm,
+        apiBaseUrl: model.api?.url,
         cost: model.cost,
         contextWindow: resolveContextWindow(model.id, model.limit?.context)
       });
@@ -3050,7 +3456,7 @@ async function handleAnthropicMessages(req, res, options) {
     const useResponses = isOpenAIChatCompletionsUrl(completionsUrl) && modelPrefersResponsesApi(body.model);
     const upstreamUrl = useResponses ? openAIResponsesUrl(completionsUrl) : completionsUrl;
     const translateOpts = { completionsUrl };
-    const upstreamBody = useResponses ? translateToResponses(body) : translateRequest(body, translateOpts);
+    const upstreamBody = useResponses ? translateToResponses(body) : translateRequest2(body, translateOpts);
     const clientWantsStream = Boolean(body.stream);
     const upstreamRes = await fetch(upstreamUrl, {
       method: "POST",
@@ -3751,33 +4157,37 @@ function parseArgs(args) {
 }
 function rootHelpText() {
   return `${pc3.bold("opencode-starter")} v${VERSION}
-Launch supported coding tools with OpenCode Zen or Go as the API backend.
+Launch AI coding tools with OpenCode Zen, Go, or local providers (Groq, Mistral,
+OpenAI, Gemini, Ollama, and more).
 
 ${pc3.bold("Usage:")}
   opencode-starter claude [starter-options] [claude-flags]
+  opencode-starter models
   opencode-starter server
   opencode-starter --help
   opencode-starter --version
 
 ${pc3.bold("Commands:")}
-  claude      Launch Claude Code through OpenCode Starter
-  models      Manage your favorite models for mid-session switching
-  server      Run a foreground OpenCode Starter API gateway
+  claude      Launch Claude Code \u2014 cloud Zen/Go or local OpenCode providers
+  models      Manage favorite models for mid-session /model switching (max ${MAX_MODEL_CATALOG})
+  server      Run a foreground API gateway (Zen, Go, and local providers)
   codex       planned
 
 ${pc3.bold("Migration:")}
-  Bare opencode-starter now prints this help instead of launching Claude Code.
-  Use opencode-starter claude to run the existing Claude Code wizard and launcher.
+  Bare opencode-starter prints this help instead of launching Claude Code.
+  Use opencode-starter claude for the wizard and launcher.
 
 ${pc3.bold("Examples:")}
   opencode-starter claude
+  opencode-starter models
+  opencode-starter server
   opencode-starter claude -c
   opencode-starter claude --resume abc-123
   opencode-starter claude -- --print "hello"`;
 }
 function claudeHelpText() {
   return `${pc3.bold("opencode-starter claude")} v${VERSION}
-Launch Claude Code with OpenCode Zen or Go as the Anthropic API backend.
+Launch Claude Code with OpenCode Zen, Go, or local providers as the API backend.
 
 ${pc3.bold("Usage:")}
   opencode-starter claude [starter-options] [claude-flags]
@@ -3787,13 +4197,24 @@ ${pc3.bold("Usage:")}
 ${pc3.bold("Starter options:")}
   --dry-run    Run the wizard but show a preview instead of launching Claude Code
   --setup      Re-configure your subscription tier
-  --trace      Write Claude Code debug logs to /tmp/opencode-starter-debug.log and show errors on exit
+  --trace      Write debug logs to /tmp and show errors on exit
   --help       Show this command help
   --version    Show version
 
-${pc3.bold("Setup:")}
-  Get your API key at https://opencode.ai/auth
-  Then run: export OPENCODE_API_KEY="your-key"
+${pc3.bold("Providers:")}
+  Cloud (Zen/Go)  Requires OPENCODE_API_KEY \u2014 get one at https://opencode.ai/auth
+  Local           Requires OpenCode CLI with providers configured (Groq, Mistral,
+                  OpenAI, Gemini, Ollama, etc.). Shown in the wizard when available.
+
+${pc3.bold("Model switching:")}
+  Run opencode-starter models to save favorites (max ${MAX_MODEL_CATALOG}).
+  When favorites exist, launch starts a multi-route proxy and Claude Code /model
+  lists your starting model plus favorites for live switching.
+  With no favorites, launch uses a single model as before.
+
+${pc3.bold("Note:")}
+  Claude Code may save the launched model to ~/.claude/settings.json.
+  Bare claude later can still show that model \u2014 reset with claude --model sonnet.
 
 ${pc3.bold("Examples:")}
   opencode-starter claude
@@ -3808,7 +4229,7 @@ ${pc3.bold("Examples:")}
 }
 function serverHelpText() {
   return `${pc3.bold("opencode-starter server")} v${VERSION}
-Run a foreground OpenCode Starter API gateway.
+Run a foreground API gateway for Zen, Go, and local OpenCode providers.
 
 ${pc3.bold("Usage:")}
   opencode-starter server
@@ -3816,14 +4237,20 @@ ${pc3.bold("Usage:")}
   opencode-starter server --version
 
 ${pc3.bold("Behavior:")}
-  Prompts for local-only or network listen mode.
-  Network mode asks for a server password.
+  Loads Zen/Go models plus configured local providers into one catalog.
+  Prompts for local-only (127.0.0.1) or network (0.0.0.0) listen mode.
+  Binds to port 17645. Network mode asks for a server password.
   Server password is saved only if the user chooses to save it.
-  Server host and port are not saved.`;
+  Server host and port are not saved.
+
+${pc3.bold("Endpoints:")}
+  Anthropic-compatible:  ANTHROPIC_BASE_URL=http://127.0.0.1:17645/anthropic
+  OpenAI-compatible:     OPENAI_BASE_URL=http://127.0.0.1:17645/openai/v1
+  API key: use anything locally; use the server password in network mode.`;
 }
 function modelsHelpText() {
   return `${pc3.bold("opencode-starter models")} v${VERSION}
-Manage your favorite models for mid-session switching.
+Manage favorite models for mid-session switching in Claude Code.
 
 ${pc3.bold("Usage:")}
   opencode-starter models
@@ -3831,15 +4258,19 @@ ${pc3.bold("Usage:")}
   opencode-starter models --version
 
 ${pc3.bold("Behavior:")}
-  Opens an interactive manager to add or remove favorite models.
-  Favorites are saved to ~/.opencode-starter/config.json.
-  Capped at ${MAX_MODEL_CATALOG} favorites.
+  Opens an interactive manager to add or remove favorites.
+  Pick from Zen, Go, or any configured local OpenCode provider.
+  Favorites are saved to ~/.opencode-starter/config.json (max ${MAX_MODEL_CATALOG}).
 
 ${pc3.bold("How it works:")}
-  When you have favorites set, running "opencode-starter claude" automatically
-  starts a multi-model proxy. Claude Code's /model command shows your favorites,
-  letting you switch models live without restarting.
-  With no favorites, launch behaves exactly as today (single model).`;
+  When favorites exist, opencode-starter claude starts a multi-route catalog proxy.
+  Claude Code /model lists your starting model plus favorites \u2014 switch live
+  without restarting. Mix cloud and local favorites in one session.
+  With no favorites, launch uses a single model as before.
+
+${pc3.bold("Examples:")}
+  opencode-starter models
+  opencode-starter claude    # switch menu active when favorites are set`;
 }
 function printHelp(text3) {
   console.log(`
@@ -4379,7 +4810,8 @@ async function runClaudeCommand(parsed) {
           selectedModel.completionsUrl,
           selectedModel.id,
           trace,
-          selectedModel.contextWindow
+          selectedModel.contextWindow,
+          { npm: selectedModel.npm, baseURL: selectedModel.apiBaseUrl }
         );
         p4.log.info(
           `Translation proxy started on port ${proxyHandle2.port} ` + pc3.dim(`(${selectedModel.completionsUrl})`)
@@ -4474,7 +4906,8 @@ async function runClaudeCommand(parsed) {
         `${selection.backend.baseUrl}/v1/chat/completions`,
         selection.model.id,
         trace,
-        selection.model.contextWindow
+        selection.model.contextWindow,
+        { npm: "@ai-sdk/openai-compatible", baseURL: `${selection.backend.baseUrl}/v1` }
       );
       p4.log.info(
         `Translation proxy started on port ${proxyHandle.port} ` + pc3.dim(`(${selection.backend.baseUrl}/v1/chat/completions)`)

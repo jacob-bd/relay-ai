@@ -19,6 +19,12 @@ import { parseToolArguments, sseChunk, stripToolUseIdSuffix, splitToolUseId, enc
 import type { AnthropicContentBlock, AnthropicMessage, AnthropicMessageRequest, AnthropicRequestContentPart, OpenAIChatCompletion, OpenAIStreamChunk, OpenAIStreamDelta } from './proxy-types.js';
 import { resolveUpstreamTools } from './tool-search.js';
 import { isMistralUpstream, normalizeMistralMessages, type MistralNormalizeResult } from './mistral-messages.js';
+import { createLanguageModel, isSdkMigratedNpm } from './provider-factory.js';
+import {
+  translateRequest as sdkTranslateRequest,
+  streamAnthropicResponse,
+  generateAnthropicResponse,
+} from './sdk-adapter.js';
 
 export interface TranslateRequestOptions {
   completionsUrl?: string;
@@ -599,6 +605,8 @@ export interface ProxyRoute {
   apiKey: string;
   modelFormat: 'anthropic' | 'openai';
   contextWindow?: number;
+  npm?: string;      // OpenCode api.npm — when SDK-migrated, routes via the adapter
+  baseURL?: string;  // base URL for openai-compatible / openrouter SDK providers
 }
 
 /**
@@ -706,6 +714,46 @@ export function startProxyCatalog(
           const message = err instanceof UpstreamUnreachableError ? err.message : String(err);
           plog(() => `anthropic-passthrough error: ${message}`);
           anthropicError(res, 502, message);
+        }
+        return;
+      }
+
+      // ── SDK-backed providers (Vercel AI SDK) ────────────────────────
+      // Migrated providers route through the SDK, which owns wire format,
+      // endpoint selection, and provider quirks (e.g. Gemini thought_signature,
+      // xAI multi-agent /responses). Non-migrated providers fall through to the
+      // hand-rolled paths below.
+      if (isSdkMigratedNpm(route.npm)) {
+        const params = sdkTranslateRequest(anthropicBody, route.npm!);
+        plog(() =>
+          `sdk: npm=${route.npm} model=${route.realModelId}, stream=${clientWantsStream}, ` +
+          `tools=${anthropicBody.tools?.length ?? 0}, msgs=${params.messages.length}`,
+        );
+        try {
+          const model = createLanguageModel({
+            npm: route.npm!,
+            modelId: route.realModelId,
+            apiKey,
+            baseURL: route.baseURL,
+            providerId: route.aliasId,
+          });
+          if (clientWantsStream) {
+            res.writeHead(200, {
+              'Content-Type': 'text/event-stream',
+              'Cache-Control': 'no-cache',
+              'Connection': 'keep-alive',
+            });
+            await streamAnthropicResponse(model, params, originalModel, (c) => res.write(c), plog);
+            res.end();
+          } else {
+            const anthropicResponse = await generateAnthropicResponse(model, params, originalModel);
+            sendJson(res, 200, anthropicResponse);
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          plog(() => `sdk error: ${message}`);
+          if (!res.headersSent) anthropicError(res, 502, message);
+          else res.end();
         }
         return;
       }
@@ -920,6 +968,7 @@ export function startProxy(
   modelId: string,
   debug = false,
   contextWindow?: number,
+  sdk?: { npm?: string; baseURL?: string },
 ): Promise<ProxyHandle> {
   return startProxyCatalog([{
     aliasId: modelId,
@@ -929,5 +978,7 @@ export function startProxy(
     apiKey: '',     // '' → use inbound bearer from Claude Code (single-model compat)
     modelFormat: 'openai',
     contextWindow,
+    npm: sdk?.npm,
+    baseURL: sdk?.baseURL,
   }], modelId, debug);
 }

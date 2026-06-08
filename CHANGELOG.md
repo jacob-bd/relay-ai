@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Docs
+- Document that Claude Code persists launched models to `~/.claude/settings.json` and may cache gateway catalogs — bare `claude` can show opencode-starter aliases after a session.
+
 ### Added
 - `opencode-starter models` — interactive favorites manager (add/remove, max 10) for mid-session model switching.
 - Multi-route catalog proxy (`startProxyCatalog`) — when favorites exist, launch starts a proxy with your starting model plus favorites; Claude Code `/model` shows them via `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`.

@@ -1,0 +1,209 @@
+import { describe, it, expect } from 'vitest';
+import {
+  annotateToolNames,
+  translateMessages,
+  translateTools,
+  translateToolChoice,
+  translateRequest,
+  writeAnthropicStream,
+} from '../src/sdk-adapter.js';
+
+describe('translateToolChoice', () => {
+  it('maps Anthropic tool_choice to SDK', () => {
+    expect(translateToolChoice({ type: 'auto' })).toBe('auto');
+    expect(translateToolChoice({ type: 'any' })).toBe('required');
+    expect(translateToolChoice({ type: 'tool', name: 'Read' })).toEqual({ type: 'tool', toolName: 'Read' });
+    expect(translateToolChoice(undefined)).toBeUndefined();
+  });
+});
+
+describe('translateTools', () => {
+  it('builds client-side tools (no execute) keyed by name', () => {
+    const tools = translateTools([
+      { name: 'Read', description: 'read a file', input_schema: { type: 'object', properties: { path: { type: 'string' } } } },
+    ]);
+    expect(tools && Object.keys(tools)).toEqual(['Read']);
+    expect(tools!.Read.execute).toBeUndefined();
+  });
+  it('returns undefined for empty/missing tools', () => {
+    expect(translateTools(undefined)).toBeUndefined();
+    expect(translateTools([])).toBeUndefined();
+  });
+});
+
+describe('annotateToolNames', () => {
+  it('resolves tool_result names from prior tool_use ids', () => {
+    const messages = [
+      { role: 'assistant' as const, content: [{ type: 'tool_use', id: 'call_1', name: 'Read', input: {} }] },
+      { role: 'user' as const, content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'hi' }] },
+    ];
+    annotateToolNames(messages);
+    expect((messages[1].content as any[])[0]._name).toBe('Read');
+  });
+  it('resolves names even when the id carries an encoded thought signature', () => {
+    const messages = [
+      { role: 'assistant' as const, content: [{ type: 'tool_use', id: 'call_1::ts::SIG', name: 'Read', input: {} }] },
+      { role: 'user' as const, content: [{ type: 'tool_result', tool_use_id: 'call_1::ts::SIG', content: 'hi' }] },
+    ];
+    annotateToolNames(messages);
+    expect((messages[1].content as any[])[0]._name).toBe('Read');
+  });
+});
+
+describe('translateMessages', () => {
+  it('maps user text and assistant text', () => {
+    const out = translateMessages([
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: [{ type: 'text', text: 'hi there' }] },
+    ], '@ai-sdk/xai');
+    expect(out).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'hi there' }] },
+    ]);
+  });
+
+  it('maps tool_use → tool-call and tool_result → tool message', () => {
+    const messages = [
+      { role: 'assistant' as const, content: [{ type: 'tool_use', id: 'call_1', name: 'Read', input: { path: 'a' } }] },
+      { role: 'user' as const, content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'file body' }] },
+    ];
+    annotateToolNames(messages);
+    const out = translateMessages(messages, '@ai-sdk/xai') as any[];
+    expect(out[0]).toEqual({ role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'call_1', toolName: 'Read', input: { path: 'a' } }] });
+    expect(out[1]).toEqual({ role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call_1', toolName: 'Read', output: { type: 'text', value: 'file body' } }] });
+  });
+
+  it('decodes thought_signature into providerOptions for Google only', () => {
+    const msg = [{ role: 'assistant' as const, content: [
+      { type: 'thinking', thinking: 'hmm', signature: 'SIG' },
+      { type: 'tool_use', id: 'call_1::ts::TSIG', name: 'Read', input: {} },
+    ] }];
+    const google = translateMessages(msg, '@ai-sdk/google') as any[];
+    expect(google[0].content[0].providerOptions).toEqual({ google: { thoughtSignature: 'SIG' } });
+    expect(google[0].content[1].providerOptions).toEqual({ google: { thoughtSignature: 'TSIG' } });
+    // xAI: no providerOptions, and the raw id is stripped of the suffix
+    const xai = translateMessages(msg, '@ai-sdk/xai') as any[];
+    expect(xai[0].content[0].providerOptions).toBeUndefined();
+    expect(xai[0].content[1]).toEqual({ type: 'tool-call', toolCallId: 'call_1', toolName: 'Read', input: {} });
+  });
+
+  it('maps base64 image blocks to SDK image parts', () => {
+    const out = translateMessages([
+      { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aGk=' } }] },
+    ], '@ai-sdk/google') as any[];
+    expect(out[0].content[0].type).toBe('image');
+    expect(out[0].content[0].mediaType).toBe('image/png');
+    expect(Buffer.isBuffer(out[0].content[0].image)).toBe(true);
+  });
+});
+
+describe('translateRequest', () => {
+  it('assembles SDK params and adds Google thinking options', () => {
+    const params = translateRequest({
+      model: 'gemini-3-flash-preview',
+      system: 'be brief',
+      messages: [{ role: 'user', content: 'hi' }],
+      max_tokens: 256,
+      temperature: 0.5,
+    }, '@ai-sdk/google');
+    expect(params.system).toBe('be brief');
+    expect(params.maxOutputTokens).toBe(256);
+    expect(params.temperature).toBe(0.5);
+    expect(params.providerOptions).toEqual({ google: { thinkingConfig: { includeThoughts: true } } });
+  });
+  it('flattens array system prompts', () => {
+    const params = translateRequest({
+      model: 'grok-4.3', system: [{ text: 'a' }, { text: 'b' }], messages: [],
+    }, '@ai-sdk/xai');
+    expect(params.system).toBe('a\nb');
+  });
+
+  it('folds inline role:system messages into the system prompt (skills list)', () => {
+    const params = translateRequest({
+      model: 'grok-4.3',
+      system: 'base prompt',
+      messages: [
+        { role: 'user', content: 'hi' },
+        // Claude Code injects the skills list / system-reminders as a system message
+        { role: 'system', content: '<system-reminder>available skills: nlm-skill</system-reminder>' } as any,
+      ],
+    }, '@ai-sdk/xai');
+    expect(params.system).toContain('base prompt');
+    expect(params.system).toContain('nlm-skill');
+    // the system message must NOT survive as a regular message
+    expect(params.messages).toHaveLength(1);
+    expect((params.messages[0] as any).role).toBe('user');
+  });
+
+  it('still produces system text when there is no top-level system, only inline', () => {
+    const params = translateRequest({
+      model: 'grok-4.3',
+      messages: [{ role: 'system', content: 'only inline context' } as any],
+    }, '@ai-sdk/xai');
+    expect(params.system).toBe('only inline context');
+  });
+});
+
+// ── streaming translation ────────────────────────────────────────────────────
+async function collect(parts: any[], model = 'm'): Promise<{ events: Array<{ event: string; data: any }>; raw: string }> {
+  let raw = '';
+  async function* gen() { for (const p of parts) yield p; }
+  await writeAnthropicStream(gen() as any, model, (c) => { raw += c; });
+  const events = raw.split('\n\n').filter(Boolean).map(block => {
+    const [evLine, dataLine] = block.split('\n');
+    return { event: evLine.replace('event: ', ''), data: JSON.parse(dataLine.replace('data: ', '')) };
+  });
+  return { events, raw };
+}
+
+describe('writeAnthropicStream', () => {
+  it('emits a well-formed text turn', async () => {
+    const { events } = await collect([
+      { type: 'start' },
+      { type: 'text-start', id: 't1' },
+      { type: 'text-delta', id: 't1', text: 'Hello' },
+      { type: 'text-delta', id: 't1', text: ' world' },
+      { type: 'text-end', id: 't1' },
+      { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 5, outputTokens: 2 } },
+    ]);
+    const types = events.map(e => e.event);
+    expect(types).toEqual([
+      'message_start', 'content_block_start', 'content_block_delta', 'content_block_delta',
+      'content_block_stop', 'message_delta', 'message_stop',
+    ]);
+    const delta = events.find(e => e.event === 'message_delta')!;
+    expect(delta.data.delta.stop_reason).toBe('end_turn');
+    expect(delta.data.usage).toEqual({ input_tokens: 5, output_tokens: 2 });
+  });
+
+  it('encodes thought_signature into the tool_use id and reports tool_use stop', async () => {
+    const { events } = await collect([
+      { type: 'start' },
+      { type: 'tool-input-start', id: 'call_9', toolName: 'Read', providerMetadata: { google: { thoughtSignature: 'SIG9' } } },
+      { type: 'tool-input-delta', id: 'call_9', delta: '{"path":"x"}' },
+      { type: 'tool-input-end', id: 'call_9' },
+      { type: 'tool-call', toolCallId: 'call_9', toolName: 'Read', input: { path: 'x' } },
+      { type: 'finish', finishReason: 'tool-calls' },
+    ]);
+    const start = events.find(e => e.event === 'content_block_start')!;
+    expect(start.data.content_block.type).toBe('tool_use');
+    expect(start.data.content_block.id).toBe('call_9::ts::SIG9');
+    expect(events.find(e => e.event === 'message_delta')!.data.delta.stop_reason).toBe('tool_use');
+  });
+
+  it('emits thinking block with a signature_delta close', async () => {
+    const { events } = await collect([
+      { type: 'start' },
+      { type: 'reasoning-start', id: 'r1' },
+      { type: 'reasoning-delta', id: 'r1', text: 'thinking...' },
+      { type: 'reasoning-end', id: 'r1', providerMetadata: { google: { thoughtSignature: 'RSIG' } } },
+      { type: 'text-start', id: 't1' },
+      { type: 'text-delta', id: 't1', text: 'done' },
+      { type: 'finish', finishReason: 'stop' },
+    ]);
+    const thinkStart = events.find(e => e.event === 'content_block_start')!;
+    expect(thinkStart.data.content_block.type).toBe('thinking');
+    const sigDelta = events.find(e => e.event === 'content_block_delta' && e.data.delta.type === 'signature_delta')!;
+    expect(sigDelta.data.delta.signature).toBe('RSIG');
+  });
+});

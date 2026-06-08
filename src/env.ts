@@ -44,10 +44,16 @@ export function buildChildEnv(
     : baseUrl;
   env['ANTHROPIC_API_KEY'] = apiKey;
   env['ANTHROPIC_MODEL'] = model;
-  // Claude Code defaults to 200K for non-api.anthropic.com base URLs; override when we know better.
-  env['CLAUDE_CODE_MAX_CONTEXT_TOKENS'] = String(resolveContextWindow(model, contextWindow));
   if (enableGatewayDiscovery) {
+    // Switch-menu mode: Claude Code reads each model's context window from the
+    // proxy's /v1/models gateway discovery, so it updates on live /model switch.
+    // A fixed CLAUDE_CODE_MAX_CONTEXT_TOKENS would override that and pin the
+    // status bar to the launch model's window.
     env['CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY'] = '1';
+  } else {
+    // Single-model mode: Claude Code defaults to 200K for non-api.anthropic.com
+    // base URLs; override when we know the real window.
+    env['CLAUDE_CODE_MAX_CONTEXT_TOKENS'] = String(resolveContextWindow(model, contextWindow));
   }
   applyClaudeCodeThirdPartyCompat(env);
   return env;

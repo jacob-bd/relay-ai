@@ -144,6 +144,15 @@ describe('buildChildEnv', () => {
     expect(buildChildEnv(BACKENDS.zen.baseUrl, 'custom-model', 'k', undefined, 1_048_576)['CLAUDE_CODE_MAX_CONTEXT_TOKENS']).toBe('1048576');
   });
 
+  it('does NOT pin CLAUDE_CODE_MAX_CONTEXT_TOKENS in gateway-discovery (switch-menu) mode', () => {
+    // In switch-menu mode Claude Code reads each model's window from /v1/models,
+    // so a fixed value would break live /model switching between models with
+    // different context windows.
+    const env = buildChildEnv(BACKENDS.zen.baseUrl, 'big-pickle', 'k', 1234, 200_000, true);
+    expect(env['CLAUDE_CODE_MAX_CONTEXT_TOKENS']).toBeUndefined();
+    expect(env['CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY']).toBe('1');
+  });
+
   it('does NOT mutate process.env', () => {
     buildChildEnv(BACKENDS.zen.baseUrl, 'claude-sonnet-4-6', 'my-key');
     expect(process.env['CLAUDE_CODE_USE_VERTEX']).toBe('1');

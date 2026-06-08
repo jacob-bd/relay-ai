@@ -90,7 +90,7 @@ The Gemini native path is required because the OpenAI-compatible Gemini endpoint
 - `go`: Go backend, but also fetches Zen for free models — combined list, backend inferred from `sourceBackend` of selected model
 - `both`: shows backend selector
 
-**Env isolation:** `buildChildEnv()` copies `process.env`, deletes all 17 vars in `CONFLICTING_ENV_VARS`, then sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`. Also always sets `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` (OpenCode proxy doesn't support all Anthropic beta headers). The parent process env is never mutated.
+**Env isolation:** `buildChildEnv()` copies `process.env`, deletes all 17 vars in `CONFLICTING_ENV_VARS`, then sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`. `launchClaude()` also passes `--model`. Isolation applies to the child process only — the parent shell is not mutated (except `OPENCODE_API_KEY` during key setup). Claude Code may persist the model to `~/.claude/settings.json` independently; that is outside opencode-starter's control.
 
 **Preferences** (at `~/.opencode-starter/config.json`, migrated from legacy `conf` path on first read): `lastBackend`, `lastModel`, `lastProvider`, `recentModelsByProvider`, `favoriteModels`, `subscriptionTier`, and a 1-hour model list cache. Override path with `OPENCODE_STARTER_HOME`. All writes are skipped when `dryRun === true`.
 
@@ -147,7 +147,7 @@ In all cases `process.env['OPENCODE_API_KEY']` is set immediately so the key is 
 
 ## Key constraints
 
-- `settings.json` is never touched. All Claude Code configuration is env-var-only, passed to the child process. This avoids the backup/restore problem that `ollama launch claude` has.
+- `settings.json` is never touched by opencode-starter. Launch config is env-var-only, passed to the child process (plus `--model`). This avoids the backup/restore problem that `ollama launch claude` has. **Caveat:** Claude Code itself persists the launched model to `~/.claude/settings.json`, so bare `claude` later may still show an opencode-starter alias (e.g. `anthropic-opencode-go__deepseek-v4-flash`). Gateway discovery caches at `~/.claude/cache/gateway-models.json`. Reset with `claude --model sonnet` or by editing/removing those files.
 - `--dry-run` ignores all saved state (env key, Keychain, tier, preferences) and skips all writes. Used to simulate a fresh first-run experience.
 - When adding a new backend, update `BACKENDS` in `constants.ts`, the `BackendConfig` id union in `types.ts`, and the subscription tier logic in `prompts.ts` and `cli.ts`.
 - `buildChildEnv(baseUrl: string, model, apiKey, proxyPort?)` — takes a plain string URL, not a `BackendConfig`. When `proxyPort` is set, `ANTHROPIC_BASE_URL` is always `http://127.0.0.1:{proxyPort}` regardless of `baseUrl`.

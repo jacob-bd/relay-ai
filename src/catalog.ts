@@ -14,22 +14,27 @@ export function localModelToRoute(lp: LocalProvider, model: LocalProviderModel):
     apiKey: lp.apiKey,
     modelFormat: model.modelFormat,
     contextWindow: model.contextWindow,
+    npm: model.npm,
+    baseURL: model.apiBaseUrl,
   };
 }
 
 export function zenGoModelToRoute(model: ModelInfo, apiKey: string): ProxyRoute | null {
   if (model.modelFormat === 'unsupported') return null;
   const backend = BACKENDS[model.sourceBackend];
+  const isAnthropic = model.modelFormat === 'anthropic';
   return {
     aliasId: aliasModelId(model.id, backend.name),
     realModelId: model.id,
     displayName: `${model.name} (${backend.name})`,
-    upstreamUrl: model.modelFormat === 'anthropic'
-      ? backend.baseUrl
-      : `${backend.baseUrl}/v1/chat/completions`,
+    upstreamUrl: isAnthropic ? backend.baseUrl : `${backend.baseUrl}/v1/chat/completions`,
     apiKey,
     modelFormat: model.modelFormat as 'anthropic' | 'openai',
     contextWindow: model.contextWindow,
+    // openai-format Zen/Go models route through the SDK (openai-compatible);
+    // anthropic models stay direct passthrough (no npm).
+    npm: isAnthropic ? undefined : '@ai-sdk/openai-compatible',
+    baseURL: isAnthropic ? undefined : `${backend.baseUrl}/v1`,
   };
 }
 

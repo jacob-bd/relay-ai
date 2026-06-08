@@ -105,26 +105,30 @@ export function parseArgs(args: string[]): ParsedArgs {
 
 export function rootHelpText(): string {
   return `${pc.bold('opencode-starter')} v${VERSION}
-Launch supported coding tools with OpenCode Zen or Go as the API backend.
+Launch AI coding tools with OpenCode Zen, Go, or local providers (Groq, Mistral,
+OpenAI, Gemini, Ollama, and more).
 
 ${pc.bold('Usage:')}
   opencode-starter claude [starter-options] [claude-flags]
+  opencode-starter models
   opencode-starter server
   opencode-starter --help
   opencode-starter --version
 
 ${pc.bold('Commands:')}
-  claude      Launch Claude Code through OpenCode Starter
-  models      Manage your favorite models for mid-session switching
-  server      Run a foreground OpenCode Starter API gateway
+  claude      Launch Claude Code — cloud Zen/Go or local OpenCode providers
+  models      Manage favorite models for mid-session /model switching (max ${MAX_MODEL_CATALOG})
+  server      Run a foreground API gateway (Zen, Go, and local providers)
   codex       planned
 
 ${pc.bold('Migration:')}
-  Bare opencode-starter now prints this help instead of launching Claude Code.
-  Use opencode-starter claude to run the existing Claude Code wizard and launcher.
+  Bare opencode-starter prints this help instead of launching Claude Code.
+  Use opencode-starter claude for the wizard and launcher.
 
 ${pc.bold('Examples:')}
   opencode-starter claude
+  opencode-starter models
+  opencode-starter server
   opencode-starter claude -c
   opencode-starter claude --resume abc-123
   opencode-starter claude -- --print "hello"`;
@@ -132,7 +136,7 @@ ${pc.bold('Examples:')}
 
 export function claudeHelpText(): string {
   return `${pc.bold('opencode-starter claude')} v${VERSION}
-Launch Claude Code with OpenCode Zen or Go as the Anthropic API backend.
+Launch Claude Code with OpenCode Zen, Go, or local providers as the API backend.
 
 ${pc.bold('Usage:')}
   opencode-starter claude [starter-options] [claude-flags]
@@ -142,13 +146,24 @@ ${pc.bold('Usage:')}
 ${pc.bold('Starter options:')}
   --dry-run    Run the wizard but show a preview instead of launching Claude Code
   --setup      Re-configure your subscription tier
-  --trace      Write Claude Code debug logs to /tmp/opencode-starter-debug.log and show errors on exit
+  --trace      Write debug logs to /tmp and show errors on exit
   --help       Show this command help
   --version    Show version
 
-${pc.bold('Setup:')}
-  Get your API key at https://opencode.ai/auth
-  Then run: export OPENCODE_API_KEY="your-key"
+${pc.bold('Providers:')}
+  Cloud (Zen/Go)  Requires OPENCODE_API_KEY — get one at https://opencode.ai/auth
+  Local           Requires OpenCode CLI with providers configured (Groq, Mistral,
+                  OpenAI, Gemini, Ollama, etc.). Shown in the wizard when available.
+
+${pc.bold('Model switching:')}
+  Run opencode-starter models to save favorites (max ${MAX_MODEL_CATALOG}).
+  When favorites exist, launch starts a multi-route proxy and Claude Code /model
+  lists your starting model plus favorites for live switching.
+  With no favorites, launch uses a single model as before.
+
+${pc.bold('Note:')}
+  Claude Code may save the launched model to ~/.claude/settings.json.
+  Bare claude later can still show that model — reset with claude --model sonnet.
 
 ${pc.bold('Examples:')}
   opencode-starter claude
@@ -164,7 +179,7 @@ ${pc.bold('Examples:')}
 
 export function serverHelpText(): string {
   return `${pc.bold('opencode-starter server')} v${VERSION}
-Run a foreground OpenCode Starter API gateway.
+Run a foreground API gateway for Zen, Go, and local OpenCode providers.
 
 ${pc.bold('Usage:')}
   opencode-starter server
@@ -172,15 +187,21 @@ ${pc.bold('Usage:')}
   opencode-starter server --version
 
 ${pc.bold('Behavior:')}
-  Prompts for local-only or network listen mode.
-  Network mode asks for a server password.
+  Loads Zen/Go models plus configured local providers into one catalog.
+  Prompts for local-only (127.0.0.1) or network (0.0.0.0) listen mode.
+  Binds to port 17645. Network mode asks for a server password.
   Server password is saved only if the user chooses to save it.
-  Server host and port are not saved.`;
+  Server host and port are not saved.
+
+${pc.bold('Endpoints:')}
+  Anthropic-compatible:  ANTHROPIC_BASE_URL=http://127.0.0.1:17645/anthropic
+  OpenAI-compatible:     OPENAI_BASE_URL=http://127.0.0.1:17645/openai/v1
+  API key: use anything locally; use the server password in network mode.`;
 }
 
 export function modelsHelpText(): string {
   return `${pc.bold('opencode-starter models')} v${VERSION}
-Manage your favorite models for mid-session switching.
+Manage favorite models for mid-session switching in Claude Code.
 
 ${pc.bold('Usage:')}
   opencode-starter models
@@ -188,15 +209,19 @@ ${pc.bold('Usage:')}
   opencode-starter models --version
 
 ${pc.bold('Behavior:')}
-  Opens an interactive manager to add or remove favorite models.
-  Favorites are saved to ~/.opencode-starter/config.json.
-  Capped at ${MAX_MODEL_CATALOG} favorites.
+  Opens an interactive manager to add or remove favorites.
+  Pick from Zen, Go, or any configured local OpenCode provider.
+  Favorites are saved to ~/.opencode-starter/config.json (max ${MAX_MODEL_CATALOG}).
 
 ${pc.bold('How it works:')}
-  When you have favorites set, running "opencode-starter claude" automatically
-  starts a multi-model proxy. Claude Code's /model command shows your favorites,
-  letting you switch models live without restarting.
-  With no favorites, launch behaves exactly as today (single model).`;
+  When favorites exist, opencode-starter claude starts a multi-route catalog proxy.
+  Claude Code /model lists your starting model plus favorites — switch live
+  without restarting. Mix cloud and local favorites in one session.
+  With no favorites, launch uses a single model as before.
+
+${pc.bold('Examples:')}
+  opencode-starter models
+  opencode-starter claude    # switch menu active when favorites are set`;
 }
 
 function printHelp(text: string): void {
@@ -838,6 +863,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
           selectedModel.id,
           trace,
           selectedModel.contextWindow,
+          { npm: selectedModel.npm, baseURL: selectedModel.apiBaseUrl },
         );
         p.log.info(
           `Translation proxy started on port ${proxyHandle.port} ` +
@@ -963,6 +989,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
         selection.model.id,
         trace,
         selection.model.contextWindow,
+        { npm: '@ai-sdk/openai-compatible', baseURL: `${selection.backend.baseUrl}/v1` },
       );
       p.log.info(
         `Translation proxy started on port ${proxyHandle.port} ` +

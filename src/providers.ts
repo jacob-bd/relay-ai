@@ -131,6 +131,8 @@ export function normalizeProviders(raw: RawProvider[]): LocalProvider[] {
         modelFormat: endpoint.format,
         baseUrl: endpoint.baseUrl,
         completionsUrl: endpoint.completionsUrl,
+        npm: model.api?.npm,
+        apiBaseUrl: model.api?.url,
         cost: model.cost,
         contextWindow: resolveContextWindow(model.id, model.limit?.context),
       });
