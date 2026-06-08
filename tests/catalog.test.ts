@@ -31,6 +31,29 @@ describe('buildCatalogRoutes', () => {
 });
 
 describe('localModelToRoute', () => {
+  it('uses upstreamModelId for SDK calls while keeping catalog id as alias', () => {
+    const provider: LocalProvider = {
+      id: 'openai',
+      name: 'OpenAI',
+      apiKey: 'sk-test',
+      models: [{
+        id: 'gpt-5.5-fast',
+        name: 'GPT-5.5 Fast',
+        family: 'gpt',
+        brand: 'GPT',
+        modelFormat: 'openai',
+        upstreamModelId: 'gpt-5.5',
+        completionsUrl: 'https://api.openai.com/v1/chat/completions',
+        npm: '@ai-sdk/openai',
+      }],
+    };
+    const route = localModelToRoute(provider, provider.models[0]!);
+    expect(route).toMatchObject({
+      aliasId: 'anthropic-openai__gpt-5.5-fast',
+      realModelId: 'gpt-5.5',
+    });
+  });
+
   it('returns null when routing fields are missing', () => {
     const provider: LocalProvider = {
       id: 'p',
@@ -42,6 +65,7 @@ describe('localModelToRoute', () => {
         family: '',
         brand: 'Other',
         modelFormat: 'openai',
+        upstreamModelId: 'm',
       }],
     };
     expect(localModelToRoute(provider, provider.models[0]!)).toBeNull();

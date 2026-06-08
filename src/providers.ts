@@ -44,7 +44,7 @@ interface RawModel {
   id: string;
   name?: string;
   family?: string;
-  api?: { npm?: string; url?: string };
+  api?: { id?: string; npm?: string; url?: string };
   cost?: { input: number; output: number };
   limit?: { context?: number; output?: number };
 }
@@ -129,6 +129,7 @@ export function normalizeProviders(raw: RawProvider[]): LocalProvider[] {
         family: model.family ?? '',
         brand: deriveBrand(model.family ?? ''),
         modelFormat: endpoint.format,
+        upstreamModelId: model.api?.id ?? model.id,
         baseUrl: endpoint.baseUrl,
         completionsUrl: endpoint.completionsUrl,
         npm: model.api?.npm,

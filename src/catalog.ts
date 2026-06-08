@@ -8,7 +8,7 @@ export function localModelToRoute(lp: LocalProvider, model: LocalProviderModel):
   if (!model.completionsUrl && !model.baseUrl) return null;
   return {
     aliasId: aliasModelId(model.id, lp.name),
-    realModelId: model.id,
+    realModelId: model.upstreamModelId,
     displayName: `${model.name || model.id} (${lp.name})`,
     upstreamUrl: (model.modelFormat === 'anthropic' ? model.baseUrl : model.completionsUrl) ?? '',
     apiKey: lp.apiKey,

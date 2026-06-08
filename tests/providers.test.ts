@@ -169,6 +169,28 @@ describe('normalizeProviders', () => {
     expect(result).toHaveLength(0);
   });
 
+  it('maps catalog id to OpenCode api.id for upstream calls', () => {
+    const result = normalizeProviders([
+      {
+        id: 'openai',
+        name: 'OpenAI',
+        key: 'sk-test',
+        models: {
+          m: {
+            id: 'gpt-5.5-fast',
+            name: 'GPT-5.5 Fast',
+            family: 'gpt',
+            api: { id: 'gpt-5.5', npm: '@ai-sdk/openai', url: '' },
+          },
+        },
+      },
+    ]);
+    expect(result[0].models[0]).toMatchObject({
+      id: 'gpt-5.5-fast',
+      upstreamModelId: 'gpt-5.5',
+    });
+  });
+
   it('keeps provider only when at least one model is supported', () => {
     const result = normalizeProviders([
       {

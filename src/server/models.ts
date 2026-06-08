@@ -11,6 +11,8 @@ export interface ServerModelInfo {
   brand: string;
   sourceBackend: ServerBackendId;
   modelFormat: ServerModelFormat;
+  /** Wire id sent to the upstream API; may differ from catalog id. */
+  upstreamModelId?: string;
   cost?: {
     input: number;
     output: number;

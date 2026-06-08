@@ -126,7 +126,7 @@ In all cases `process.env['OPENCODE_API_KEY']` is set immediately so the key is 
 
 **Provider catalog helpers** (`src/provider-catalog.ts`): `fetchProviderCatalog`, `fetchZenGoModels`, `providersForPicker`, `localProvidersToServerModels`, `zenGoModelsToServerModels` — shared between CLI and server.
 
-**Tests** cover pure functions: `env.ts`, `models.ts`, `sdk-adapter.ts`, `provider-factory.ts`, `proxy.ts` (`aliasModelId`), `providers.ts`, `catalog.ts`, `favorites.ts`, `prompts.ts`, `upstream-forward.ts`, `config.ts`, `tool-search.ts`, `cli.ts` (help text), server modules. Real-provider end-to-end validation lives in `spike/` (gitignored). Interactive launch flow verified manually.
+**Tests** cover pure functions: `env.ts`, `models.ts`, `sdk-adapter.ts`, `provider-factory.ts`, `proxy.ts` (`aliasModelId`), `providers.ts`, `catalog.ts`, `favorites.ts`, `prompts.ts`, `upstream-forward.ts`, `config.ts`, `tool-search.ts`, `cli.ts` (help text), server modules. Interactive launch flow and real-provider behavior verified manually.
 
 ## Key constraints
 

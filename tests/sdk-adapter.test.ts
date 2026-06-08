@@ -72,10 +72,31 @@ describe('translateMessages', () => {
     const google = translateMessages(msg, '@ai-sdk/google') as any[];
     expect(google[0].content[0].providerOptions).toEqual({ google: { thoughtSignature: 'SIG' } });
     expect(google[0].content[1].providerOptions).toEqual({ google: { thoughtSignature: 'TSIG' } });
-    // xAI: no providerOptions, and the raw id is stripped of the suffix
+    // xAI: thinking dropped; tool id suffix stripped
     const xai = translateMessages(msg, '@ai-sdk/xai') as any[];
-    expect(xai[0].content[0].providerOptions).toBeUndefined();
-    expect(xai[0].content[1]).toEqual({ type: 'tool-call', toolCallId: 'call_1', toolName: 'Read', input: {} });
+    expect(xai[0].content).toHaveLength(1);
+    expect(xai[0].content[0]).toEqual({ type: 'tool-call', toolCallId: 'call_1', toolName: 'Read', input: {} });
+  });
+
+  it('round-trips OpenAI reasoningEncryptedContent via thinking.signature', () => {
+    const msg = [{ role: 'assistant' as const, content: [
+      { type: 'thinking', thinking: 'chain...', signature: 'enc_blob_abc' },
+    ] }];
+    const openai = translateMessages(msg, '@ai-sdk/openai') as any[];
+    expect(openai[0].content[0]).toEqual({
+      type: 'reasoning',
+      text: 'chain...',
+      providerOptions: { openai: { reasoningEncryptedContent: 'enc_blob_abc' } },
+    });
+  });
+
+  it('drops empty OpenAI thinking blocks without encrypted content', () => {
+    const msg = [{ role: 'assistant' as const, content: [
+      { type: 'thinking', thinking: '', signature: '' },
+      { type: 'text', text: 'hello' },
+    ] }];
+    const openai = translateMessages(msg, '@ai-sdk/openai') as any[];
+    expect(openai[0].content).toEqual([{ type: 'text', text: 'hello' }]);
   });
 
   it('maps base64 image blocks to SDK image parts', () => {
@@ -101,6 +122,16 @@ describe('translateRequest', () => {
     expect(params.maxOutputTokens).toBe(256);
     expect(params.temperature).toBe(0.5);
     expect(params.providerOptions).toEqual({ google: { thinkingConfig: { includeThoughts: true } } });
+  });
+
+  it('requests OpenAI encrypted reasoning for Responses API round-trip', () => {
+    const params = translateRequest({
+      model: 'gpt-5.5',
+      messages: [{ role: 'user', content: 'hi' }],
+    }, '@ai-sdk/openai');
+    expect(params.providerOptions).toEqual({
+      openai: { store: false, include: ['reasoning.encrypted_content'] },
+    });
   });
   it('flattens array system prompts', () => {
     const params = translateRequest({
@@ -194,7 +225,7 @@ describe('writeAnthropicStream', () => {
     expect(events.find(e => e.event === 'message_delta')!.data.delta.stop_reason).toBe('tool_use');
   });
 
-  it('emits thinking block with a signature_delta close', async () => {
+  it('emits thinking block with a signature_delta close (Google SDK)', async () => {
     const { events } = await collect([
       { type: 'start' },
       { type: 'reasoning-start', id: 'r1' },
@@ -208,5 +239,19 @@ describe('writeAnthropicStream', () => {
     expect(thinkStart.data.content_block.type).toBe('thinking');
     const sigDelta = events.find(e => e.event === 'content_block_delta' && e.data.delta.type === 'signature_delta')!;
     expect(sigDelta.data.delta.signature).toBe('RSIG');
+  });
+
+  it('emits thinking block with OpenAI reasoningEncryptedContent in signature_delta', async () => {
+    const { events } = await collect([
+      { type: 'start' },
+      { type: 'reasoning-start', id: 'r1' },
+      { type: 'reasoning-delta', id: 'r1', text: 'thinking...' },
+      { type: 'reasoning-end', id: 'r1', providerMetadata: { openai: { reasoningEncryptedContent: 'enc_xyz' } } },
+      { type: 'text-start', id: 't1' },
+      { type: 'text-delta', id: 't1', text: 'done' },
+      { type: 'finish', finishReason: 'stop' },
+    ]);
+    const sigDelta = events.find(e => e.event === 'content_block_delta' && e.data.delta.type === 'signature_delta')!;
+    expect(sigDelta.data.delta.signature).toBe('enc_xyz');
   });
 });

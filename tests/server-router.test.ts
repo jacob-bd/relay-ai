@@ -183,8 +183,8 @@ describe('server router', () => {
   // OpenAI-format Anthropic translation now routes through the Vercel AI SDK adapter
   // (createLanguageModel + streamAnthropicResponse/generateAnthropicResponse), which
   // requires an SDK `npm` on the model. Translation correctness is covered by
-  // sdk-adapter.test.ts and the spike's real-provider validation. Here we only assert
-  // the router's guard: an OpenAI-format model with no SDK provider is rejected.
+  // sdk-adapter.test.ts (and was validated against live providers). Here we only
+  // assert the router's guard: an OpenAI-format model with no SDK provider is rejected.
   it('rejects Anthropic messages for OpenAI-format models without an SDK provider', async () => {
     const server = await startTestServer();
 

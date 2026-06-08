@@ -99,5 +99,15 @@ export function thinkingProviderOptions(npm: string): Record<string, Record<stri
   if (npm === '@ai-sdk/google') {
     return { google: { thinkingConfig: { includeThoughts: true } } };
   }
+  // Responses API: request encrypted reasoning blobs for multi-turn round-trip
+  // (proxy owns conversation state — store:false + echo via thinking.signature).
+  if (npm === '@ai-sdk/openai') {
+    return {
+      openai: {
+        store: false,
+        include: ['reasoning.encrypted_content'],
+      },
+    };
+  }
   return undefined;
 }

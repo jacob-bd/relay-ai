@@ -34,6 +34,8 @@ export interface LocalProviderModel {
   family: string;
   brand: string;
   modelFormat: 'anthropic' | 'openai';
+  /** Wire id sent to the upstream API (OpenCode api.id); may differ from catalog id, e.g. gpt-5.5-fast → gpt-5.5. */
+  upstreamModelId: string;
   baseUrl?: string;        // set for anthropic-format models
   completionsUrl?: string; // set for openai-format models
   npm?: string;            // OpenCode api.npm package, e.g. @ai-sdk/xai (SDK routing)

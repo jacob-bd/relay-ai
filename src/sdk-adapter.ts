@@ -11,6 +11,15 @@ import { thinkingProviderOptions } from './provider-factory.js';
 import { resolveUpstreamTools } from './tool-search.js';
 import type { AnthropicRequestMessage, AnthropicToolDefinition } from './proxy-types.js';
 
+let sdkWarningsSilenced = false;
+
+/** Keep Vercel AI SDK warnings off stderr — they bleed into Claude Code's TUI. */
+export function silenceSdkWarnings(): void {
+  if (sdkWarningsSilenced) return;
+  sdkWarningsSilenced = true;
+  (globalThis as { AI_SDK_LOG_WARNINGS?: false }).AI_SDK_LOG_WARNINGS = false;
+}
+
 // ── Anthropic request shapes (only the fields we read) ───────────────────────
 interface AnthropicBlock {
   type: string;
@@ -57,8 +66,7 @@ function systemToString(system: AnthropicRequest['system']): string | undefined 
 }
 
 // Claude Code injects context (skills list, system-reminders) as role:'system'
-// messages inside the messages array. Collect their text so it can be folded
-// into the system prompt — matching the hand-rolled proxy's behavior.
+// messages inside the messages array — fold into the system prompt so they aren't dropped.
 function inlineSystemText(messages: AnthropicMsg[]): string[] {
   const parts: string[] = [];
   for (const msg of messages) {
@@ -103,6 +111,24 @@ export function annotateToolNames(messages: AnthropicMsg[]): void {
   }
 }
 
+function thinkingToSdkPart(
+  block: AnthropicBlock,
+  npm: string,
+): Record<string, unknown> | null {
+  if (npm !== '@ai-sdk/google' && npm !== '@ai-sdk/openai') return null;
+
+  const text = block.thinking ?? '';
+  if (npm === '@ai-sdk/openai' && !block.signature && !text.trim()) return null;
+
+  const part: Record<string, unknown> = { type: 'reasoning', text };
+  if (block.signature) {
+    part.providerOptions = npm === '@ai-sdk/google'
+      ? { google: { thoughtSignature: block.signature } }
+      : { openai: { reasoningEncryptedContent: block.signature } };
+  }
+  return part;
+}
+
 // ── messages: Anthropic → SDK ModelMessage[] ─────────────────────────────────
 export function translateMessages(messages: AnthropicMsg[], npm: string): ModelMessage[] {
   const isGoogle = npm === '@ai-sdk/google';
@@ -138,9 +164,8 @@ export function translateMessages(messages: AnthropicMsg[], npm: string): ModelM
         if (b.type === 'text') {
           parts.push({ type: 'text', text: b.text ?? '' });
         } else if (b.type === 'thinking') {
-          const part: Record<string, unknown> = { type: 'reasoning', text: b.thinking ?? '' };
-          if (b.signature && isGoogle) part.providerOptions = { google: { thoughtSignature: b.signature } };
-          parts.push(part);
+          const part = thinkingToSdkPart(b, npm);
+          if (part) parts.push(part);
         } else if (b.type === 'tool_use' && b.id) {
           const { rawId, thoughtSignature } = splitToolUseId(b.id);
           const part: Record<string, unknown> = {
@@ -213,12 +238,20 @@ type FullStreamPart = {
   input?: unknown;
   finishReason?: string;
   totalUsage?: { inputTokens?: number; outputTokens?: number };
-  providerMetadata?: { google?: { thoughtSignature?: string; thought_signature?: string } };
+  providerMetadata?: {
+    google?: { thoughtSignature?: string; thought_signature?: string };
+    openai?: { reasoningEncryptedContent?: string | null };
+  };
   error?: unknown;
 };
 
-function grabThoughtSignature(part: FullStreamPart): string | undefined {
-  return part.providerMetadata?.google?.thoughtSignature ?? part.providerMetadata?.google?.thought_signature;
+/** Opaque provider blob for round-trip in Anthropic thinking.signature / tool_use id. */
+function grabRoundTripSignature(part: FullStreamPart): string | undefined {
+  const md = part.providerMetadata;
+  return md?.google?.thoughtSignature
+    ?? md?.google?.thought_signature
+    ?? md?.openai?.reasoningEncryptedContent
+    ?? undefined;
 }
 
 type LogFn = (msg: () => string) => void;
@@ -282,7 +315,7 @@ export async function writeAnthropicStream(
         });
         break;
       case 'reasoning-end': {
-        const sig = grabThoughtSignature(part);
+        const sig = grabRoundTripSignature(part);
         if (sig) pendingThinkingSig = sig;
         break;
       }
@@ -300,7 +333,7 @@ export async function writeAnthropicStream(
       case 'text-end': break;
 
       case 'tool-input-start': {
-        const sig = grabThoughtSignature(part);
+        const sig = grabRoundTripSignature(part);
         openBlock('tool', {
           type: 'tool_use', id: encodeToolUseId(part.id ?? '', sig), name: part.toolName, input: {},
         });
@@ -319,7 +352,7 @@ export async function writeAnthropicStream(
         finishReason = 'tool_use';
         // Non-streamed tool call (no input-start/delta arrived): emit a full block.
         if (!idToBlock.has(part.toolCallId ?? '') && openType !== 'tool') {
-          const sig = grabThoughtSignature(part);
+          const sig = grabRoundTripSignature(part);
           openBlock('tool', {
             type: 'tool_use', id: encodeToolUseId(part.toolCallId ?? '', sig), name: part.toolName, input: {},
           });

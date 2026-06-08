@@ -876,7 +876,11 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
           selectedModel.id,
           trace,
           selectedModel.contextWindow,
-          { npm: selectedModel.npm, baseURL: selectedModel.apiBaseUrl },
+          {
+            npm: selectedModel.npm,
+            baseURL: selectedModel.apiBaseUrl,
+            upstreamModelId: selectedModel.upstreamModelId,
+          },
         );
         p.log.info(
           `Translation proxy started on port ${proxyHandle.port} ` +

@@ -475,6 +475,14 @@ function thinkingProviderOptions(npm) {
   if (npm === "@ai-sdk/google") {
     return { google: { thinkingConfig: { includeThoughts: true } } };
   }
+  if (npm === "@ai-sdk/openai") {
+    return {
+      openai: {
+        store: false,
+        include: ["reasoning.encrypted_content"]
+      }
+    };
+  }
   return void 0;
 }
 
@@ -562,6 +570,12 @@ function resolveUpstreamTools(tools, messages) {
 }
 
 // src/sdk-adapter.ts
+var sdkWarningsSilenced = false;
+function silenceSdkWarnings() {
+  if (sdkWarningsSilenced) return;
+  sdkWarningsSilenced = true;
+  globalThis.AI_SDK_LOG_WARNINGS = false;
+}
 function systemToString(system) {
   if (!system) return void 0;
   if (typeof system === "string") return system;
@@ -604,6 +618,16 @@ function annotateToolNames(messages) {
     }
   }
 }
+function thinkingToSdkPart(block, npm) {
+  if (npm !== "@ai-sdk/google" && npm !== "@ai-sdk/openai") return null;
+  const text3 = block.thinking ?? "";
+  if (npm === "@ai-sdk/openai" && !block.signature && !text3.trim()) return null;
+  const part = { type: "reasoning", text: text3 };
+  if (block.signature) {
+    part.providerOptions = npm === "@ai-sdk/google" ? { google: { thoughtSignature: block.signature } } : { openai: { reasoningEncryptedContent: block.signature } };
+  }
+  return part;
+}
 function translateMessages(messages, npm) {
   const isGoogle = npm === "@ai-sdk/google";
   const out = [];
@@ -637,9 +661,8 @@ function translateMessages(messages, npm) {
         if (b.type === "text") {
           parts.push({ type: "text", text: b.text ?? "" });
         } else if (b.type === "thinking") {
-          const part = { type: "reasoning", text: b.thinking ?? "" };
-          if (b.signature && isGoogle) part.providerOptions = { google: { thoughtSignature: b.signature } };
-          parts.push(part);
+          const part = thinkingToSdkPart(b, npm);
+          if (part) parts.push(part);
         } else if (b.type === "tool_use" && b.id) {
           const { rawId, thoughtSignature } = splitToolUseId(b.id);
           const part = {
@@ -693,8 +716,9 @@ function translateRequest(body, npm) {
     providerOptions: thinkingProviderOptions(npm)
   };
 }
-function grabThoughtSignature(part) {
-  return part.providerMetadata?.google?.thoughtSignature ?? part.providerMetadata?.google?.thought_signature;
+function grabRoundTripSignature(part) {
+  const md = part.providerMetadata;
+  return md?.google?.thoughtSignature ?? md?.google?.thought_signature ?? md?.openai?.reasoningEncryptedContent ?? void 0;
 }
 async function writeAnthropicStream(fullStream, modelId, write, log4) {
   const messageId = "msg_" + Date.now();
@@ -759,7 +783,7 @@ async function writeAnthropicStream(fullStream, modelId, write, log4) {
         });
         break;
       case "reasoning-end": {
-        const sig = grabThoughtSignature(part);
+        const sig = grabRoundTripSignature(part);
         if (sig) pendingThinkingSig = sig;
         break;
       }
@@ -777,7 +801,7 @@ async function writeAnthropicStream(fullStream, modelId, write, log4) {
       case "text-end":
         break;
       case "tool-input-start": {
-        const sig = grabThoughtSignature(part);
+        const sig = grabRoundTripSignature(part);
         openBlock("tool", {
           type: "tool_use",
           id: encodeToolUseId(part.id ?? "", sig),
@@ -799,7 +823,7 @@ async function writeAnthropicStream(fullStream, modelId, write, log4) {
       case "tool-call": {
         finishReason = "tool_use";
         if (!idToBlock.has(part.toolCallId ?? "") && openType !== "tool") {
-          const sig = grabThoughtSignature(part);
+          const sig = grabRoundTripSignature(part);
           openBlock("tool", {
             type: "tool_use",
             id: encodeToolUseId(part.toolCallId ?? "", sig),
@@ -905,6 +929,7 @@ function aliasModelId(realId, providerLabel) {
   return `anthropic-${sanitized}__${realId}`;
 }
 function startProxyCatalog(routes, defaultAliasId, debug = false) {
+  silenceSdkWarnings();
   if (routes.length === 0) {
     return Promise.reject(new Error("Proxy catalog requires at least one route"));
   }
@@ -1031,7 +1056,7 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
 function startProxy(completionsUrl, modelId, debug = false, contextWindow, sdk) {
   return startProxyCatalog([{
     aliasId: modelId,
-    realModelId: modelId,
+    realModelId: sdk?.upstreamModelId ?? modelId,
     displayName: modelId,
     upstreamUrl: completionsUrl,
     apiKey: "",
@@ -1048,7 +1073,7 @@ function localModelToRoute(lp, model) {
   if (!model.completionsUrl && !model.baseUrl) return null;
   return {
     aliasId: aliasModelId(model.id, lp.name),
-    realModelId: model.id,
+    realModelId: model.upstreamModelId,
     displayName: `${model.name || model.id} (${lp.name})`,
     upstreamUrl: (model.modelFormat === "anthropic" ? model.baseUrl : model.completionsUrl) ?? "",
     apiKey: lp.apiKey,
@@ -1423,6 +1448,7 @@ function normalizeProviders(raw) {
         family: model.family ?? "",
         brand: deriveBrand(model.family ?? ""),
         modelFormat: endpoint.format,
+        upstreamModelId: model.api?.id ?? model.id,
         baseUrl: endpoint.baseUrl,
         completionsUrl: endpoint.completionsUrl,
         npm: model.api?.npm,
@@ -1543,6 +1569,7 @@ function zenGoAsLocalProvider(backendId, models) {
       family: m.brand,
       brand: m.brand,
       modelFormat: m.modelFormat,
+      upstreamModelId: m.id,
       contextWindow: m.contextWindow,
       cost: m.cost
     }))
@@ -1566,6 +1593,7 @@ function localProvidersToServerModels(localProviders) {
         brand: model.brand,
         sourceBackend: "zen",
         modelFormat: model.modelFormat,
+        upstreamModelId: model.upstreamModelId,
         cost: model.cost,
         baseUrl: model.baseUrl,
         completionsUrl: model.completionsUrl,
@@ -1675,6 +1703,7 @@ function extractBearerToken(value) {
 
 // src/server/router.ts
 async function startServer(options) {
+  silenceSdkWarnings();
   const server = createServer2((req, res) => {
     void routeRequest(req, res, options);
   });
@@ -1757,7 +1786,7 @@ async function handleAnthropicMessages(req, res, options) {
     const apiKey = model.apiKey ?? options.apiKey;
     const languageModel = createLanguageModel({
       npm: model.npm,
-      modelId: model.id,
+      modelId: model.upstreamModelId ?? model.id,
       apiKey,
       baseURL: model.apiBaseUrl,
       providerId: model.sourceBackend
@@ -3109,7 +3138,11 @@ async function runClaudeCommand(parsed) {
           selectedModel.id,
           trace,
           selectedModel.contextWindow,
-          { npm: selectedModel.npm, baseURL: selectedModel.apiBaseUrl }
+          {
+            npm: selectedModel.npm,
+            baseURL: selectedModel.apiBaseUrl,
+            upstreamModelId: selectedModel.upstreamModelId
+          }
         );
         p4.log.info(
           `Translation proxy started on port ${proxyHandle2.port} ` + pc3.dim(`(${selectedModel.completionsUrl})`)

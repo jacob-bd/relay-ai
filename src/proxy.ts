@@ -10,6 +10,7 @@ import {
   translateRequest as sdkTranslateRequest,
   streamAnthropicResponse,
   generateAnthropicResponse,
+  silenceSdkWarnings,
 } from './sdk-adapter.js';
 
 type ProxyLog = (message: string | (() => string)) => void;
@@ -97,6 +98,8 @@ export function startProxyCatalog(
   defaultAliasId: string,
   debug = false,
 ): Promise<ProxyHandle> {
+  silenceSdkWarnings();
+
   if (routes.length === 0) {
     return Promise.reject(new Error('Proxy catalog requires at least one route'));
   }
@@ -257,11 +260,11 @@ export function startProxy(
   modelId: string,
   debug = false,
   contextWindow?: number,
-  sdk?: { npm?: string; baseURL?: string },
+  sdk?: { npm?: string; baseURL?: string; upstreamModelId?: string },
 ): Promise<ProxyHandle> {
   return startProxyCatalog([{
     aliasId: modelId,
-    realModelId: modelId,
+    realModelId: sdk?.upstreamModelId ?? modelId,
     displayName: modelId,
     upstreamUrl: completionsUrl,
     apiKey: '',     // '' → use inbound bearer from Claude Code (single-model compat)

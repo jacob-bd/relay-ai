@@ -13,6 +13,7 @@ import {
   translateRequest as sdkTranslateRequest,
   streamAnthropicResponse,
   generateAnthropicResponse,
+  silenceSdkWarnings,
   type AnthropicRequest,
 } from '../sdk-adapter.js';
 
@@ -40,6 +41,8 @@ export interface ServerHandle {
 type JsonBody = Record<string, any>;
 
 export async function startServer(options: ServerOptions): Promise<ServerHandle> {
+  silenceSdkWarnings();
+
   const server = createServer((req, res) => {
     void routeRequest(req, res, options);
   });
@@ -144,7 +147,7 @@ async function handleAnthropicMessages(
     const apiKey = model.apiKey ?? options.apiKey;
     const languageModel = createLanguageModel({
       npm: model.npm!,
-      modelId: model.id,
+      modelId: model.upstreamModelId ?? model.id,
       apiKey,
       baseURL: model.apiBaseUrl,
       providerId: model.sourceBackend,
