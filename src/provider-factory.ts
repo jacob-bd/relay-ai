@@ -79,6 +79,7 @@ async function loadSdkProviderFactory(npm: string): Promise<SdkProviderFactory> 
       }
     })();
     factoryCache.set(npm, cached);
+    cached.catch(() => factoryCache.delete(npm));
   }
   return cached;
 }

@@ -106,7 +106,7 @@ export function localProvidersToServerModels(localProviders: LocalProvider[]): S
 // openai-format models route through the SDK via @ai-sdk/openai-compatible with the
 // backend's /v1 base URL — matching the CLI catalog's zenGoModelToRoute.
 export function zenGoModelsToServerModels(models: ModelInfo[]): ServerModelInfo[] {
-  return models.map(model => {
+  return models.filter(m => m.modelFormat !== 'unsupported').map(model => {
     const base: ServerModelInfo = {
       id: model.id,
       name: model.name,

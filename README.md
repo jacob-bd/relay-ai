@@ -240,6 +240,20 @@ The OpenCode API key is stored separately, based on what you chose during setup.
 
 Private beta right now. Issues and PRs welcome on GitHub.
 
+## Disclaimer
+
+This project and its creator have **no affiliation** with OpenCode, Anthropic, Claude, Google, or any other vendor named or integrated here. Trademarks belong to their respective owners.
+
+opencode-starter was built for **education and research**, and mostly for fun. It routes inference through services you configure yourself (OpenCode Zen/Go, OpenCode-configured providers, and gateways you run locally). Use at your own risk.
+
+## Vibe Coding Alert
+
+Full transparency: this project was vibe coded with AI coding assistants. If you're an experienced developer, you might look at parts of this codebase and wince. That's okay.
+
+The goal was to scratch an itch: launch Claude Code and Claude Desktop (Cowork + Code) against OpenCode backends without fighting env vars, proxies, and model discovery. The code works. It's not corporate polish.
+
+If something makes you cringe, open an issue or PR. Human expertise is irreplaceable. For the tone and spirit of this section, see [notebooklm-mcp-cli](https://github.com/jacob-bd/notebooklm-mcp-cli) on the same GitHub org.
+
 ## License
 
 MIT

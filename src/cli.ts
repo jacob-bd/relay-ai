@@ -957,7 +957,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   if (!dryRun) savePreferences({ lastBackend: selection.backend.id, lastModel: selection.model.id, lastProvider: 'opencode' });
 
   // ── Cloud switch-menu path ── when Zen/Go favorites exist, build a catalog proxy
-  if (switchMenuActive && hasZenGoFavorites && !dryRun) {
+  if (switchMenuActive && !dryRun) {
     const resolveRoute = makeRouteResolver(localProviders, earlyZenModels, earlyGoModels, effectiveKey);
     const startingRoute = zenGoModelToRoute(selection.model, effectiveKey);
     if (!startingRoute) {

@@ -416,7 +416,15 @@ export async function generateAnthropicResponse(
   const r = await generateText({ model, ...params } as Parameters<typeof generateText>[0]);
   return {
     id: 'msg_' + Date.now(), type: 'message', role: 'assistant', model: modelId,
-    content: [{ type: 'text', text: r.text }],
+    content: [
+      ...(r.text ? [{ type: 'text', text: r.text }] : []),
+      ...r.toolCalls.map(tc => ({
+        type: 'tool_use',
+        id: tc.toolCallId,
+        name: tc.toolName,
+        input: tc.input as Record<string, unknown>,
+      })),
+    ],
     stop_reason: r.finishReason === 'tool-calls' ? 'tool_use' : 'end_turn',
     usage: { input_tokens: r.usage?.inputTokens ?? 0, output_tokens: r.usage?.outputTokens ?? 0 },
   };

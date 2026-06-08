@@ -229,6 +229,10 @@ export function startProxyCatalog(
         }
         return;
       }
+
+      // Non-anthropic route without a registered SDK npm — misconfigured route.
+      anthropicError(res, 500, `No SDK provider configured for model ${originalModel} (npm=${route.npm ?? 'none'})`);
+      return;
     }
 
     // Everything else → 404
