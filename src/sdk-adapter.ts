@@ -1,18 +1,15 @@
-// Anthropic /v1/messages  ↔  Vercel AI SDK translation.
-// Claude Code speaks the Anthropic Messages API; the SDK speaks its own
-// normalized format and owns each provider's wire protocol. This module is the
-// only translation layer we maintain — the SDK handles everything below it.
-//
-// Each /v1/messages call is ONE model turn: Claude Code owns the tool-execution
-// loop, so tools are client-side (no execute) and we relay tool_use / tool_result.
+// Anthropic /v1/messages ↔ Vercel AI SDK. One turn per request; Claude Code owns the tool loop.
 import { streamText, generateText, tool, jsonSchema } from 'ai';
 import type { LanguageModel, ModelMessage } from 'ai';
 import {
   sseChunk,
   encodeToolUseId,
   splitToolUseId,
+  serializeToolResultContent,
 } from './proxy-shared.js';
 import { thinkingProviderOptions } from './provider-factory.js';
+import { resolveUpstreamTools } from './tool-search.js';
+import type { AnthropicRequestMessage, AnthropicToolDefinition } from './proxy-types.js';
 
 // ── Anthropic request shapes (only the fields we read) ───────────────────────
 interface AnthropicBlock {
@@ -106,14 +103,6 @@ export function annotateToolNames(messages: AnthropicMsg[]): void {
   }
 }
 
-function toolResultText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content.map(c => (typeof c === 'string' ? c : (c as { text?: string }).text ?? JSON.stringify(c))).join('\n');
-  }
-  return content == null ? '' : JSON.stringify(content);
-}
-
 // ── messages: Anthropic → SDK ModelMessage[] ─────────────────────────────────
 export function translateMessages(messages: AnthropicMsg[], npm: string): ModelMessage[] {
   const isGoogle = npm === '@ai-sdk/google';
@@ -138,7 +127,7 @@ export function translateMessages(messages: AnthropicMsg[], npm: string): ModelM
             type: 'tool-result',
             toolCallId: splitToolUseId(tr.tool_use_id ?? '').rawId,
             toolName: tr._name ?? 'unknown',
-            output: { type: 'text', value: toolResultText(tr.content) },
+            output: { type: 'text', value: serializeToolResultContent(tr.content) },
           })),
         } as unknown as ModelMessage);
       }
@@ -172,7 +161,6 @@ export function translateTools(anthropicTools?: AnthropicTool[]): Record<string,
   const tools: Record<string, ReturnType<typeof tool>> = {};
   for (const t of anthropicTools) {
     if (!t.name || !t.input_schema) continue;
-    // client-side tool: no execute → SDK stops at tool-call and we relay it
     tools[t.name] = tool({ description: t.description ?? '', inputSchema: jsonSchema(t.input_schema) });
   }
   return Object.keys(tools).length ? tools : undefined;
@@ -196,10 +184,16 @@ export function translateRequest(body: AnthropicRequest, npm: string): SdkCallPa
   const inlineParts = inlineSystemText(messages);
   const system = [baseSystem, ...inlineParts].filter(s => s && s.trim()).join('\n\n') || undefined;
 
+  // resolveUpstreamTools uses the shared proxy types; the adapter keeps its own
+  // minimal request shapes, so cast at this boundary.
+  const upstreamTools = resolveUpstreamTools(
+    body.tools as unknown as AnthropicToolDefinition[] | undefined,
+    messages as unknown as AnthropicRequestMessage[],
+  ) as unknown as AnthropicTool[];
   return {
     system,
     messages: translateMessages(messages, npm),
-    tools: translateTools(body.tools),
+    tools: translateTools(upstreamTools.length ? upstreamTools : undefined),
     toolChoice: translateToolChoice(body.tool_choice),
     maxOutputTokens: body.max_tokens,
     temperature: body.temperature,
@@ -287,9 +281,11 @@ export async function writeAnthropicStream(
           delta: { type: 'thinking_delta', thinking: part.text ?? '' },
         });
         break;
-      case 'reasoning-end':
-        if (grabThoughtSignature(part)) pendingThinkingSig = grabThoughtSignature(part);
+      case 'reasoning-end': {
+        const sig = grabThoughtSignature(part);
+        if (sig) pendingThinkingSig = sig;
         break;
+      }
 
       case 'text-start':
         openBlock('text', { type: 'text', text: '' });

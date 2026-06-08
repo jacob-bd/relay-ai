@@ -171,6 +171,7 @@ In all cases `process.env['OPENCODE_API_KEY']` is set immediately so the key is 
 - OAuth-authenticated providers (no stored key) are silently skipped.
 - Providers with custom auth mechanisms (e.g. Azure OpenAI with deployment URLs) are not supported.
 - The `::ts::` separator in tool_use ids encodes `thought_signature`; would break if a signature ever literally contained `::ts::`. Extremely unlikely.
+- In switch-menu (gateway-discovery) mode the displayed context window reflects the **launch** model and does NOT update on live `/model` switch. Claude Code's gateway model discovery only carries `id` + `display_name` (no `context_window`) and fetches `/v1/models` once at startup, so `CLAUDE_CODE_MAX_CONTEXT_TOKENS` (fixed at launch) is the only lever. Single-model launches show the correct window.
 
 **Provider quirks (documented from testing):**
 - **Mistral free tier:** strict API rate limits (HTTP 429, code `1300`). Tool-heavy Claude Code sessions burn quota quickly (parallel title-generation requests, Skill injection, multi-turn tool loops). Message-order normalization (`src/mistral-messages.ts`) fixes code `3230` but does not help with throttling.

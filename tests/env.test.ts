@@ -144,12 +144,12 @@ describe('buildChildEnv', () => {
     expect(buildChildEnv(BACKENDS.zen.baseUrl, 'custom-model', 'k', undefined, 1_048_576)['CLAUDE_CODE_MAX_CONTEXT_TOKENS']).toBe('1048576');
   });
 
-  it('does NOT pin CLAUDE_CODE_MAX_CONTEXT_TOKENS in gateway-discovery (switch-menu) mode', () => {
-    // In switch-menu mode Claude Code reads each model's window from /v1/models,
-    // so a fixed value would break live /model switching between models with
-    // different context windows.
+  it('sets the launch model window AND gateway discovery in switch-menu mode', () => {
+    // Claude Code's gateway model discovery only carries id + display_name (no
+    // context_window), so this env var is the only context-window lever and it
+    // reflects the launch model. It cannot update on live /model switch.
     const env = buildChildEnv(BACKENDS.zen.baseUrl, 'big-pickle', 'k', 1234, 200_000, true);
-    expect(env['CLAUDE_CODE_MAX_CONTEXT_TOKENS']).toBeUndefined();
+    expect(env['CLAUDE_CODE_MAX_CONTEXT_TOKENS']).toBe('200000');
     expect(env['CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY']).toBe('1');
   });
 
