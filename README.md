@@ -11,13 +11,13 @@ opencode-starter is an interactive CLI wizard that configures and launches AI co
 - **Backend selector** — choose OpenCode Zen (free tier + subscription) or OpenCode Go (subscription)
 - **Subscription-aware** — tells the wizard what you have access to (free / Zen / Go / both), filters models accordingly
 - **Free models highlighted** — green `(free)` label makes it easy to spot zero-cost options
-- **Built-in translation proxy** — models using OpenAI format are automatically routed through a local translation proxy so Claude Code talks to them in Anthropic format; labeled `(via proxy)` in the list
+- **Built-in SDK adapter proxy** — non-Anthropic local providers route through the Vercel AI SDK (same packages OpenCode uses) so Claude Code talks to them in Anthropic format; labeled `(via proxy)` in the list
 - **Clean environment isolation** — removes conflicting env vars (Vertex AI, Bedrock, AWS, Foundry) in the child process only; opencode-starter never writes `~/.claude/settings.json` (see caveat below)
 - **Secure key storage** — stores your API key in the OS credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service) or your shell profile — your choice
 - **Cross-platform** — macOS, Windows, and Linux (Ubuntu, Fedora, and other distros with GNOME Keyring or KWallet)
 - **Dry run mode** — preview exactly what would be run without launching anything
 - **Preference memory** — remembers your last backend, provider, and model, pre-selects them next time
-- **Local providers** — use models from your [OpenCode](https://opencode.ai) config (BYOK) alongside Zen/Go cloud backends
+- **Local providers** — use any model from your [OpenCode](https://opencode.ai) config (BYOK) alongside Zen/Go cloud backends; new providers added in OpenCode appear automatically (Cerebras, Perplexity, Bedrock, etc.)
 - **Favorite models** — save up to 10 favorites and switch between them mid-session via Claude Code's `/model` command
 - **Smart model pickers** — recent models per provider, search for large lists (>25), or paginated browse (15 per page)
 
@@ -35,7 +35,7 @@ opencode-starter is an interactive CLI wizard that configures and launches AI co
 - Node.js 18+
 - One of the supported AI coding tools installed (e.g. [Claude Code](https://www.npmjs.com/package/@anthropic-ai/claude-code))
 - An [OpenCode API key](https://opencode.ai/auth) for Zen/Go cloud backends
-- [OpenCode CLI](https://opencode.ai) installed and configured for local providers (optional — only needed if you want Groq, Mistral, OpenAI, Gemini, Ollama, etc.)
+- [OpenCode CLI](https://opencode.ai) installed and configured for local providers (optional — only needed for BYOK providers: Groq, Mistral, OpenAI, Gemini, Ollama, Cerebras, Perplexity, etc.)
 
 ## Installation
 
@@ -187,18 +187,19 @@ OpenCode exposes models through different API formats. opencode-starter handles 
 | Model format | Examples | How it works | Label |
 |---|---|---|---|
 | Anthropic native | Claude, Qwen, MiniMax (Go) | Direct connection | *(none)* |
-| OpenAI chat completions | DeepSeek, Kimi, MiMo, GLM, Grok, GPT-4o (local OpenAI) | Local translation proxy → `/v1/chat/completions` | `via proxy` |
-| OpenAI Responses API | GPT-5.4+, GPT-5.5, Codex, o-series (local OpenAI only) | Same proxy, auto-routes to `/v1/responses` | `via proxy` |
-| Gemini native | Gemini (local Google provider) | Proxy uses Gemini native API, not OpenAI-compat | `via proxy` |
+| OpenAI chat completions | DeepSeek, Kimi, MiMo, GLM, Grok, GPT-4o (local OpenAI) | Local SDK adapter proxy (Vercel AI SDK) | `via proxy` |
+| OpenAI Responses API | GPT-5.4+, GPT-5.5, Codex, o-series (local OpenAI only) | Same proxy; SDK auto-selects Responses API | `via proxy` |
+| Gemini native | Gemini (local Google provider) | SDK adapter uses Gemini native API | `via proxy` |
+| Other SDK providers | Cerebras, Perplexity, Bedrock, Vertex, Together AI, etc. | Whatever `api.npm` OpenCode assigns — dynamic SDK import | `via proxy` |
 | Not in cloud wizard | GPT, Gemini on OpenCode Zen/Go | Use local provider instead (OpenAI/Google in OpenCode config) | `not yet supported` |
 
-The translation proxy starts automatically on a random local port for proxy-routed models and stops when Claude Code exits. Each `opencode-starter claude` session gets its own port — multiple terminals are safe. (`opencode-starter server` uses a fixed port `17645`; only one server instance per machine.)
+The SDK adapter proxy starts automatically on a random local port for proxy-routed models and stops when Claude Code exits. Each `opencode-starter claude` session gets its own port — multiple terminals are safe. (`opencode-starter server` uses a fixed port `17645`; only one server instance per machine.)
 
 ### Provider notes
 
 **Mistral (free tier):** API rate limits are tight. Expect HTTP 429 during tool-heavy sessions; Claude Code will retry with backoff. This is Mistral-side throttling, not a proxy bug.
 
-**OpenAI (local provider):** Configure OpenAI in [OpenCode](https://opencode.ai) with your API key, then pick the OpenAI provider at launch. Newer GPT models use OpenAI's Responses API (`/v1/responses`), not chat completions — the proxy picks the endpoint from the model ID. If you see "model not available", check that (1) the model ID exists in your OpenAI account and (2) it isn't a Responses-only model being sent to the wrong endpoint (check `/tmp/opencode-proxy-debug.log` for `openai-responses:` vs `openai:` lines).
+**OpenAI (local provider):** Configure OpenAI in [OpenCode](https://opencode.ai) with your API key, then pick the OpenAI provider at launch. Newer GPT models use OpenAI's Responses API — the SDK selects `responses` vs `chat` from the model ID. OpenCode catalog IDs may differ from API IDs (e.g. `gpt-5.5-fast` maps to upstream `gpt-5.5`). If you see "model not available", check `/tmp/opencode-proxy-debug.log` for the `route=` and `sdk:` lines.
 
 `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` is set for direct (non-proxy) routes only. Local proxy sessions preserve tool-search betas.
 

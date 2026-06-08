@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+- Bundled OpenCode SDK provider packages (Cerebras, Perplexity, Bedrock, Vertex, Azure, Together AI, DeepInfra, Alibaba, GitLab, Venice, and others) so any provider configured in OpenCode resolves at runtime without extra installs.
+
+### Changed
+- Local provider discovery trusts OpenCode's `api.npm` — removed the static SDK allowlist; any configured provider appears in the picker and routes through the Vercel AI SDK adapter (except `@ai-sdk/anthropic` passthrough and `@ai-sdk/openai-compatible` without a base URL).
+- `createLanguageModel` is async and dynamically imports the `create*` factory from whatever npm package OpenCode assigns.
+
+### Fixed
+- Local OpenAI providers: use OpenCode's `api.id` as the upstream model ID so catalog aliases (e.g. `gpt-5.5-fast` → `gpt-5.5`) don't hit `model_not_found` on the OpenAI API.
+- GPT-5.5 multi-turn reasoning: round-trip encrypted reasoning content via the Responses API without leaking SDK warnings into the Claude Code TUI.
+
 ## [0.3.0] - 2026-06-07
 
 ### Added
