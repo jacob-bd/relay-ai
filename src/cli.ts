@@ -26,6 +26,7 @@ import { fetchProviderCatalog, fetchZenGoModels, providersForPicker } from './pr
 import { BACKENDS, VERSION } from './constants.js';
 import type { ParsedArgs, ModelInfo, FavoriteModel } from './types.js';
 import { addFavorite, removeFavorite } from './favorites.js';
+import { isSdkMigratedNpm } from './provider-factory.js';
 
 const STARTER_CLAUDE_FLAGS = new Set(['--dry-run', '--setup', '--trace', '--help', '-h', '--version', '-v']);
 
@@ -289,6 +290,7 @@ function printDryRun(
   claudeArgs: string[],
   conflicts: Array<{ name: string; value: string }>,
   disableExperimentalBetas: boolean,
+  npm?: string,
 ): void {
   console.log('');
   console.log(pc.bold(pc.cyan('  DRY RUN — would execute:')));
@@ -298,8 +300,13 @@ function printDryRun(
   console.log(`  ${pc.bold('Command:')}  ${claudeCmd}`);
   console.log(`  ${pc.bold('Backend:')}  ${backendName}`);
   if (modelFormat === 'openai') {
-    console.log(`  ${pc.bold('Proxy:')}    would start local translation proxy ${pc.dim('(Anthropic → OpenAI)')}`);
-    console.log(`             ${pc.dim(`→ ${baseUrl}/v1/chat/completions`)}`);
+    if (isSdkMigratedNpm(npm)) {
+      console.log(`  ${pc.bold('Proxy:')}    would start local SDK adapter proxy ${pc.dim('(Vercel AI SDK)')}`);
+      if (npm) console.log(`             ${pc.dim(`npm: ${npm}`)}`);
+    } else {
+      console.log(`  ${pc.bold('Proxy:')}    would start local translation proxy ${pc.dim('(Anthropic → OpenAI)')}`);
+      console.log(`             ${pc.dim(`→ ${baseUrl}/v1/chat/completions`)}`);
+    }
   }
   console.log('');
 
@@ -723,9 +730,10 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       earlyZenModels = fetched.zenModels;
       earlyGoModels = fetched.goModels;
       zenGoSpinner.stop('');
-    } catch {
+    } catch (err) {
       zenGoSpinner.stop('');
-      p.log.warn('Could not fetch OpenCode models — Zen/Go favorites will be skipped from /model catalog');
+      const detail = err instanceof Error ? err.message : String(err);
+      p.log.warn(`Could not fetch OpenCode models (${detail}) — Zen/Go favorites will be skipped from /model catalog`);
     }
   }
 
@@ -829,15 +837,20 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     // ── Single-model path (no favorites) ──
 
     if (dryRun) {
-      const formatDesc = selectedModel.modelFormat === 'anthropic' ? 'direct passthrough' : 'via translation proxy';
-      const endpoint = selectedModel.baseUrl ?? selectedModel.completionsUrl ?? '(unknown)';
+      const sdkRoute = isSdkMigratedNpm(selectedModel.npm);
+      const formatDesc = selectedModel.modelFormat === 'anthropic'
+        ? 'direct passthrough'
+        : sdkRoute ? 'via SDK adapter proxy' : 'via translation proxy';
+      const endpoint = sdkRoute
+        ? (selectedModel.npm ?? 'SDK')
+        : (selectedModel.baseUrl ?? selectedModel.completionsUrl ?? '(unknown)');
       console.log('');
       console.log(pc.bold(pc.cyan('  DRY RUN — would execute:')));
       console.log('');
       console.log(`  ${pc.bold('Provider:')}  ${provider.name}`);
       console.log(`  ${pc.bold('Model:')}     ${selectedModel.id}`);
       console.log(`  ${pc.bold('Format:')}    ${selectedModel.modelFormat} (${formatDesc})`);
-      console.log(`  ${pc.bold('Endpoint:')} ${endpoint}`);
+      console.log(`  ${pc.bold(sdkRoute ? 'SDK npm:' : 'Endpoint:')} ${endpoint}`);
       console.log(`  ${pc.bold('Key:')}       ${provider.id} provider key`);
       console.log('');
       console.log(pc.dim('  (dry run complete — Claude Code was NOT launched)'));
@@ -919,16 +932,20 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   const spinner = p.spinner();
   spinner.start('Fetching available models...');
 
-  let zenModels: ModelInfo[] = [];
-  let goModels: ModelInfo[] = [];
+  let zenModels: ModelInfo[] = earlyZenModels;
+  let goModels: ModelInfo[] = earlyGoModels;
+  const fetchZen = needsZen && zenModels.length === 0;
+  const fetchGo = needsGo && goModels.length === 0;
 
   try {
-    const backends: Array<'zen' | 'go'> = [];
-    if (needsZen) backends.push('zen');
-    if (needsGo) backends.push('go');
-    const fetched = await fetchZenGoModels(backends, !dryRun);
-    zenModels = fetched.zenModels;
-    goModels = fetched.goModels;
+    if (fetchZen || fetchGo) {
+      const backends: Array<'zen' | 'go'> = [];
+      if (fetchZen) backends.push('zen');
+      if (fetchGo) backends.push('go');
+      const fetched = await fetchZenGoModels(backends, !dryRun);
+      if (fetchZen) zenModels = fetched.zenModels;
+      if (fetchGo) goModels = fetched.goModels;
+    }
     spinner.stop(`Loaded ${zenModels.length + goModels.length} models`);
   } catch (err) {
     spinner.stop(pc.red('Failed to load models'));
@@ -976,6 +993,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       claudeArgs,
       conflicts,
       disableExperimentalBetas,
+      selection.model.modelFormat === 'openai' ? '@ai-sdk/openai-compatible' : undefined,
     );
     return 0;
   }

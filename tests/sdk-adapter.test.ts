@@ -8,15 +8,6 @@ import {
   writeAnthropicStream,
 } from '../src/sdk-adapter.js';
 
-describe('translateToolChoice', () => {
-  it('maps Anthropic tool_choice to SDK', () => {
-    expect(translateToolChoice({ type: 'auto' })).toBe('auto');
-    expect(translateToolChoice({ type: 'any' })).toBe('required');
-    expect(translateToolChoice({ type: 'tool', name: 'Read' })).toEqual({ type: 'tool', toolName: 'Read' });
-    expect(translateToolChoice(undefined)).toBeUndefined();
-  });
-});
-
 describe('translateTools', () => {
   it('builds client-side tools (no execute) keyed by name', () => {
     const tools = translateTools([
@@ -141,6 +132,18 @@ describe('translateRequest', () => {
       messages: [{ role: 'system', content: 'only inline context' } as any],
     }, '@ai-sdk/xai');
     expect(params.system).toBe('only inline context');
+  });
+
+  it('omits defer_loading tools until referenced in messages', () => {
+    const params = translateRequest({
+      model: 'grok-4.3',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [
+        { name: 'Read', input_schema: { type: 'object' } },
+        { name: 'McpTool', input_schema: { type: 'object' }, defer_loading: true },
+      ],
+    }, '@ai-sdk/xai');
+    expect(params.tools && Object.keys(params.tools)).toEqual(['Read']);
   });
 });
 

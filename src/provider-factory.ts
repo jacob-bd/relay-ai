@@ -23,18 +23,9 @@ export interface ProviderModelSpec {
   providerId?: string;
 }
 
-/** True when this npm package is served by the SDK (not direct Anthropic passthrough). */
-export function isSdkBackedNpm(npm: string): boolean {
-  return SDK_NPM_PACKAGES.has(npm);
-}
-
-/**
- * True when this provider's npm package should route through the SDK adapter.
- * All SDK-backed local providers are migrated. Cloud Zen/Go routes carry no
- * `npm`, so they remain on the hand-rolled path until migrated separately.
- */
+/** True when this provider routes through the SDK adapter (local providers + Zen/Go openai-format). */
 export function isSdkMigratedNpm(npm: string | undefined): boolean {
-  return !!npm && isSdkBackedNpm(npm);
+  return !!npm && SDK_NPM_PACKAGES.has(npm);
 }
 
 const SDK_NPM_PACKAGES = new Set([
