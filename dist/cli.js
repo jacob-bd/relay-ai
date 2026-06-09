@@ -101,6 +101,10 @@ var CONFLICTING_ENV_VARS = [
 var OPENCODE_CACHE_PATH = join2(homedir2(), ".cache", "opencode", "models.json");
 var MODELS_CACHE_TTL_MS = 60 * 60 * 1e3;
 var MAX_MODEL_CATALOG = 20;
+var BLACKLISTED_LOCAL_MODEL_IDS = /* @__PURE__ */ new Set([
+  "z-ai/glm4.7"
+  // NVIDIA NIM: requires separate access approval
+]);
 var STALE_FREE_MODELS = /* @__PURE__ */ new Set([
   "qwen3.6-plus-free",
   // 401 — free promotion ended
@@ -517,6 +521,7 @@ async function loadSdkProviderFactory(npm) {
       }
     })();
     factoryCache.set(npm, cached);
+    cached.catch(() => factoryCache.delete(npm));
   }
   return cached;
 }
@@ -955,7 +960,15 @@ async function generateAnthropicResponse(model, params, modelId) {
     type: "message",
     role: "assistant",
     model: modelId,
-    content: [{ type: "text", text: r.text }],
+    content: [
+      ...r.text ? [{ type: "text", text: r.text }] : [],
+      ...r.toolCalls.map((tc) => ({
+        type: "tool_use",
+        id: tc.toolCallId,
+        name: tc.toolName,
+        input: tc.input
+      }))
+    ],
     stop_reason: r.finishReason === "tool-calls" ? "tool_use" : "end_turn",
     usage: { input_tokens: r.usage?.inputTokens ?? 0, output_tokens: r.usage?.outputTokens ?? 0 }
   };
@@ -1111,6 +1124,8 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
         }
         return;
       }
+      anthropicError(res, 500, `No SDK provider configured for model ${originalModel} (npm=${route.npm ?? "none"})`);
+      return;
     }
     anthropicError(res, 404, `Unknown endpoint: ${req.method} ${req.url}`);
   });
@@ -1522,6 +1537,7 @@ function normalizeProviders(raw) {
     if (provider.id === "opencode" || provider.id === "opencode-go") continue;
     const models = [];
     for (const model of Object.values(provider.models ?? {})) {
+      if (BLACKLISTED_LOCAL_MODEL_IDS.has(model.id)) continue;
       const endpoint = resolveEndpoint(model.api?.npm ?? "", model.api?.url ?? "");
       if (endpoint === null) continue;
       models.push({
@@ -1691,7 +1707,7 @@ function localProvidersToServerModels(localProviders) {
   return models;
 }
 function zenGoModelsToServerModels(models) {
-  return models.map((model) => {
+  return models.filter((m) => m.modelFormat !== "unsupported").map((model) => {
     const base = {
       id: model.id,
       name: model.name,
@@ -3527,7 +3543,7 @@ async function runClaudeCommand(parsed) {
   const selection = await runWizard(prefs, { zen: zenModels, go: goModels }, conflicts, tier);
   if (!selection) return 0;
   if (!dryRun) savePreferences({ lastBackend: selection.backend.id, lastModel: selection.model.id, lastProvider: "opencode" });
-  if (switchMenuActive && hasZenGoFavorites && !dryRun) {
+  if (switchMenuActive && !dryRun) {
     const resolveRoute = makeRouteResolver(localProviders, earlyZenModels, earlyGoModels, effectiveKey);
     const startingRoute = zenGoModelToRoute(selection.model, effectiveKey);
     if (!startingRoute) {
