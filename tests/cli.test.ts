@@ -152,10 +152,10 @@ describe('parseArgs', () => {
 });
 
 describe('help text', () => {
-  it('root help documents v1.0.0 commands and local providers', () => {
+  it('root help documents v0.1.0 commands and local providers', () => {
     const help = rootHelpText();
 
-    expect(help).toContain('v1.0.0');
+    expect(help).toContain('v0.1.0');
     expect(help).toContain('relay-ai claude');
     expect(help).toContain('relay-ai models');
     expect(help).toContain('relay-ai server');
@@ -168,7 +168,7 @@ describe('help text', () => {
   it('claude help includes starter options, providers, and switch menu', () => {
     const help = claudeHelpText();
 
-    expect(help).toContain('v1.0.0');
+    expect(help).toContain('v0.1.0');
     expect(help).toContain('relay-ai claude --resume abc-123');
     expect(help).toContain('relay-ai claude -c');
     expect(help).toContain('--dry-run');
@@ -185,7 +185,7 @@ describe('help text', () => {
     expect(help).toContain('wizard');
     expect(help).toMatch(/Claude[\s\S]*Cowork/);
 
-    expect(help).toContain('v1.0.0');
+    expect(help).toContain('v0.1.0');
     expect(help).toContain('relay-ai server');
     expect(help).toContain('relay-ai server --vertex');
     expect(help).toContain('local OpenCode providers');
@@ -201,7 +201,7 @@ describe('help text', () => {
   it('models help explains favorites, local providers, and /model behavior', () => {
     const help = modelsHelpText();
 
-    expect(help).toContain('v1.0.0');
+    expect(help).toContain('v0.1.0');
     expect(help).toContain('relay-ai models');
     expect(help).toContain('favorites');
     expect(help).toContain('local OpenCode provider');

@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-06-09
+## [0.1.0] - 2026-06-09
 
 ### Changed
 - **Rebrand:** `opencode-starter` → **`relay-ai`**. CLI command, config dir (`~/.relay-ai/`), and env override (`RELAY_AI_HOME`) updated throughout.

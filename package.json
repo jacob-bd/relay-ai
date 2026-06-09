@@ -1,6 +1,6 @@
 {
   "name": "relay-ai",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Relay any model into any coding agent — launch Claude Code, Codex, and more with multi-provider gateways",
   "author": "jacob-bd",
   "license": "MIT",
