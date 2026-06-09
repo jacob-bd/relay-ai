@@ -3,9 +3,9 @@
 // src/cli.ts
 import pc4 from "picocolors";
 import * as p5 from "@clack/prompts";
-import { appendFileSync as appendFileSync2, readFileSync as readFileSync3, existsSync as existsSync4, realpathSync } from "fs";
-import { homedir as homedir5, tmpdir } from "os";
-import { join as join5 } from "path";
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync4, existsSync as existsSync5, realpathSync } from "fs";
+import { homedir as homedir6, tmpdir } from "os";
+import { join as join7 } from "path";
 import { fileURLToPath } from "url";
 import { spawnSync } from "child_process";
 
@@ -101,6 +101,7 @@ var CONFLICTING_ENV_VARS = [
 var OPENCODE_CACHE_PATH = join2(homedir2(), ".cache", "opencode", "models.json");
 var MODELS_CACHE_TTL_MS = 60 * 60 * 1e3;
 var MAX_MODEL_CATALOG = 20;
+var VERTEX_ANTHROPIC_NPM = "@ai-sdk/google-vertex/anthropic";
 var BLACKLISTED_LOCAL_MODEL_IDS = /* @__PURE__ */ new Set([
   "z-ai/glm4.7"
   // NVIDIA NIM: requires separate access approval
@@ -123,7 +124,7 @@ function classifyModelFormat(modelId, providerNpm) {
   if (lower.startsWith("gemini-")) return "unsupported";
   return "openai";
 }
-var VERSION = "0.3.0";
+var VERSION = "1.0.0";
 
 // src/context-window.ts
 import { readFileSync } from "fs";
@@ -132,7 +133,8 @@ var CACHE_PROVIDER_PRIORITY = /* @__PURE__ */ new Set(["opencode", "opencode-go"
 var HEURISTIC_RULES = [
   [/gemini-2\.5-pro|gemini-1\.5-pro|gemini-3-pro/i, 2e6],
   [/gemini/i, 1e6],
-  [/claude-opus-4-[678]|claude-sonnet-4-[678]|claude-haiku-4-[567]/i, 1e6],
+  [/claude-opus-4-[678]|claude-sonnet-4-[678]/i, 1e6],
+  [/claude-haiku-4-[567]/i, 2e5],
   [/claude.*\[1m\]/i, 1e6],
   [/claude-opus-4-[56]|claude-sonnet-4-[45]|claude-3/i, 2e5],
   [/claude/i, 2e5],
@@ -261,10 +263,16 @@ function classifyKeyringError(err) {
   }
   return `keyring error: ${msg}`;
 }
+var KEYRING_SERVICE = "relay-ai";
+var KEYRING_ACCOUNT = "relay-ai";
+var LEGACY_KEYRING_SERVICE = "opencode-starter";
+var LEGACY_KEYRING_ACCOUNT = "opencode-starter";
 async function readFromCredentialStore(diag) {
   try {
     const { Entry } = await import("@napi-rs/keyring");
-    return new Entry("opencode-starter", "opencode-starter").getPassword() ?? null;
+    const current = new Entry(KEYRING_SERVICE, KEYRING_ACCOUNT).getPassword();
+    if (current) return current;
+    return new Entry(LEGACY_KEYRING_SERVICE, LEGACY_KEYRING_ACCOUNT).getPassword() ?? null;
   } catch (err) {
     diag?.(classifyKeyringError(err));
     return null;
@@ -273,7 +281,7 @@ async function readFromCredentialStore(diag) {
 async function saveToCredentialStore(key, diag) {
   try {
     const { Entry } = await import("@napi-rs/keyring");
-    new Entry("opencode-starter", "opencode-starter").setPassword(key);
+    new Entry(KEYRING_SERVICE, KEYRING_ACCOUNT).setPassword(key);
     return true;
   } catch (err) {
     diag?.(classifyKeyringError(err));
@@ -283,7 +291,7 @@ async function saveToCredentialStore(key, diag) {
 async function isSecretServiceAvailable() {
   try {
     const { Entry } = await import("@napi-rs/keyring");
-    new Entry("opencode-starter-probe", "probe").getPassword();
+    new Entry(`${KEYRING_SERVICE}-probe`, "probe").getPassword();
     return true;
   } catch {
     return false;
@@ -369,7 +377,8 @@ function createGatewayModelCatalog(models, opts) {
   };
 }
 function upstreamModelId(model) {
-  return model.upstreamModelId ?? model.id;
+  const id = model.upstreamModelId ?? model.id;
+  return id.replace(/\[1m\]$/i, "");
 }
 function formatOpenAIModels(models) {
   return {
@@ -462,10 +471,22 @@ async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWant
       "Cache-Control": "no-cache",
       "Connection": "keep-alive"
     });
-    Readable.fromWeb(upstreamRes.body).pipe(res);
+    Readable.fromWeb(upstreamRes.body).on("error", () => res.destroy()).pipe(res);
     return;
   }
-  const json = await upstreamRes.json();
+  if (!upstreamRes.body) {
+    res.writeHead(502, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "Upstream returned empty response body" } }));
+    return;
+  }
+  let json;
+  try {
+    json = await upstreamRes.json();
+  } catch {
+    res.writeHead(502, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "Upstream response was not valid JSON" } }));
+    return;
+  }
   const payload = JSON.stringify(json);
   res.writeHead(200, {
     "Content-Type": "application/json",
@@ -527,6 +548,17 @@ async function loadSdkProviderFactory(npm) {
 }
 async function createLanguageModel(spec) {
   const { npm, modelId, apiKey, baseURL } = spec;
+  if (npm === VERTEX_ANTHROPIC_NPM) {
+    if (!spec.vertex?.project) {
+      throw new Error("Vertex project is required for @ai-sdk/google-vertex/anthropic");
+    }
+    const { createVertexAnthropic } = await import("@ai-sdk/google-vertex/anthropic");
+    const vertex = createVertexAnthropic({
+      project: spec.vertex.project,
+      location: spec.vertex.location
+    });
+    return vertex(modelId);
+  }
   if (npm === "@ai-sdk/openai") {
     const { createOpenAI } = await import("@ai-sdk/openai");
     const openai = createOpenAI({ apiKey });
@@ -580,7 +612,7 @@ data: ${JSON.stringify(data)}
 `;
 }
 function splitToolUseId(id) {
-  const sep = id.indexOf(TOOL_USE_SIG_SEP);
+  const sep = id.lastIndexOf(TOOL_USE_SIG_SEP);
   if (sep === -1) return { rawId: id };
   return {
     rawId: id.slice(0, sep),
@@ -990,7 +1022,16 @@ function makeProxyLog(debug, logPath = "/tmp/opencode-proxy-debug.log") {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on("data", (c) => chunks.push(c));
+    let totalSize = 0;
+    req.on("data", (c) => {
+      totalSize += c.length;
+      if (totalSize > 50 * 1024 * 1024) {
+        reject(new Error("Request body too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
     req.on("end", () => resolve(Buffer.concat(chunks).toString()));
     req.on("error", reject);
   });
@@ -1220,25 +1261,38 @@ import { networkInterfaces } from "os";
 import * as p3 from "@clack/prompts";
 
 // src/config.ts
-import { dirname } from "path";
-import { existsSync as existsSync2, mkdirSync, readFileSync as readFileSync2, renameSync, writeFileSync } from "fs";
+import { dirname, join as join4 } from "path";
+import { copyFileSync, existsSync as existsSync2, mkdirSync, readFileSync as readFileSync2, renameSync, writeFileSync } from "fs";
 
 // src/paths.ts
 import { homedir as homedir3 } from "os";
 import { join as join3 } from "path";
+var APP_DIR_NAME = "relay-ai";
+var LEGACY_APP_DIR_NAME = "opencode-starter";
 function userHome(env = process.env) {
   return env.HOME ?? env.USERPROFILE ?? homedir3();
 }
+function resolveAppHomeOverride(env = process.env) {
+  const override = env.RELAY_AI_HOME ?? env.OPENCODE_STARTER_HOME;
+  return override?.trim() || void 0;
+}
 function getAppHome(env = process.env) {
-  if (env.OPENCODE_STARTER_HOME) return env.OPENCODE_STARTER_HOME;
-  return join3(userHome(env), ".opencode-starter");
+  const override = resolveAppHomeOverride(env);
+  if (override) return override;
+  return join3(userHome(env), `.${APP_DIR_NAME}`);
+}
+function getLegacyAppHome(env = process.env) {
+  return join3(userHome(env), `.${LEGACY_APP_DIR_NAME}`);
 }
 function getConfigPath(env = process.env) {
   return join3(getAppHome(env), "config.json");
 }
+function getVertexModelsPath(env = process.env) {
+  return join3(getAppHome(env), "vertex-models.json");
+}
 function getLegacyConfPath(env = process.env, platform = process.platform) {
   const home = userHome(env);
-  const appName = "opencode-starter-nodejs";
+  const appName = `${LEGACY_APP_DIR_NAME}-nodejs`;
   if (platform === "darwin") {
     return join3(home, "Library", "Preferences", appName, "config.json");
   }
@@ -1257,7 +1311,21 @@ function readJsonFile(path) {
     return null;
   }
 }
+function ensureAppHomeMigrated() {
+  const configPath = getConfigPath();
+  if (existsSync2(configPath)) return;
+  const legacyConfig = join4(getLegacyAppHome(), "config.json");
+  if (!existsSync2(legacyConfig)) return;
+  mkdirSync(getAppHome(), { recursive: true });
+  copyFileSync(legacyConfig, configPath);
+  const legacyVertex = join4(getLegacyAppHome(), "vertex-models.json");
+  const vertexPath = join4(getAppHome(), "vertex-models.json");
+  if (existsSync2(legacyVertex) && !existsSync2(vertexPath)) {
+    copyFileSync(legacyVertex, vertexPath);
+  }
+}
 function ensureConfigMigrated() {
+  ensureAppHomeMigrated();
   const configPath = getConfigPath();
   if (existsSync2(configPath)) return;
   const legacyPath = getLegacyConfPath();
@@ -1485,16 +1553,16 @@ async function getModels(backend, fallbackModels) {
 import { execSync as execSync2, spawn as spawn2 } from "child_process";
 import { existsSync as existsSync3 } from "fs";
 import { homedir as homedir4 } from "os";
-import { join as join4 } from "path";
+import { join as join5 } from "path";
 var isWindows2 = process.platform === "win32";
 var OPENCODE_FALLBACK_PATHS = isWindows2 ? [
-  join4(process.env["APPDATA"] ?? homedir4(), "npm", "opencode.cmd"),
-  join4(process.env["APPDATA"] ?? homedir4(), "npm", "opencode"),
-  join4(homedir4(), "AppData", "Roaming", "npm", "opencode.cmd")
+  join5(process.env["APPDATA"] ?? homedir4(), "npm", "opencode.cmd"),
+  join5(process.env["APPDATA"] ?? homedir4(), "npm", "opencode"),
+  join5(homedir4(), "AppData", "Roaming", "npm", "opencode.cmd")
 ] : [
-  join4(homedir4(), ".opencode", "bin", "opencode"),
-  join4(homedir4(), ".local", "bin", "opencode"),
-  join4(homedir4(), ".npm", "bin", "opencode"),
+  join5(homedir4(), ".opencode", "bin", "opencode"),
+  join5(homedir4(), ".local", "bin", "opencode"),
+  join5(homedir4(), ".npm", "bin", "opencode"),
   "/usr/local/bin/opencode",
   "/opt/homebrew/bin/opencode"
 ];
@@ -1901,6 +1969,10 @@ async function handleAnthropicMessages(req, res, options) {
   const model = lookupModel(res, options.catalog, body.model);
   if (!model) return;
   if (model.modelFormat === "anthropic") {
+    if (model.baseUrl && !/^https?:\/\//i.test(model.baseUrl)) {
+      sendJson2(res, 400, { error: { message: `Invalid provider baseUrl: must be http:// or https://` } });
+      return;
+    }
     const messagesUrl = model.baseUrl ? `${model.baseUrl}/v1/messages` : `${backendFor(options, model).baseUrl}/v1/messages`;
     const apiKey = model.apiKey ?? options.apiKey;
     await forwardJson(res, messagesUrl, { ...body, model: upstreamModelId(model) }, apiKey);
@@ -1917,7 +1989,8 @@ async function handleAnthropicMessages(req, res, options) {
       modelId: upstreamModelId(model),
       apiKey,
       baseURL: model.apiBaseUrl,
-      providerId: model.sourceBackend
+      providerId: model.sourceBackend,
+      vertex: options.vertex
     });
     const params = translateRequest(body, model.npm);
     const clientWantsStream = Boolean(body.stream);
@@ -1954,6 +2027,10 @@ async function handleOpenAIChatCompletions(req, res, options) {
   const model = lookupModel(res, options.catalog, body.model);
   if (!model) return;
   if (model.modelFormat === "openai") {
+    if (model.completionsUrl && !/^https?:\/\//i.test(model.completionsUrl)) {
+      sendJson2(res, 400, { error: { message: `Invalid provider completionsUrl: must be http:// or https://` } });
+      return;
+    }
     const completionsUrl = model.completionsUrl ? model.completionsUrl : `${backendFor(options, model).baseUrl}/v1/chat/completions`;
     const apiKey = model.apiKey ?? options.apiKey;
     await forwardJson(res, completionsUrl, body, apiKey);
@@ -1978,6 +2055,9 @@ function lookupModel(res, catalog, modelId) {
   return model;
 }
 function backendFor(options, model) {
+  if (model.sourceBackend === "vertex") {
+    throw new Error(`Vertex models route through the SDK adapter, not cloud backends: ${model.id}`);
+  }
   return options.backends[model.sourceBackend];
 }
 async function forwardJson(res, url, body, apiKey) {
@@ -2119,6 +2199,128 @@ async function selectServerProviders(available, initial) {
   return selected;
 }
 
+// src/server/vertex-config.ts
+import { existsSync as existsSync4, readFileSync as readFileSync3 } from "fs";
+import { homedir as homedir5 } from "os";
+import { join as join6 } from "path";
+var DEFAULT_VERTEX_MODELS = [
+  { id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6" },
+  { id: "claude-opus-4-6", display_name: "Claude Opus 4.6" },
+  { id: "claude-haiku-4-5", display_name: "Claude Haiku 4.5" }
+];
+var VERTEX_MODEL_SHORT_ALIASES = {
+  sonnet: "claude-sonnet-4-6",
+  haiku: "claude-haiku-4-5",
+  opus: "claude-opus-4-6"
+};
+var VERTEX_ONE_M_MODEL_IDS = /* @__PURE__ */ new Set([
+  "claude-sonnet-4-6",
+  "claude-opus-4-6"
+]);
+function resolveVertexProject(env = process.env) {
+  const project = env["ANTHROPIC_VERTEX_PROJECT_ID"] ?? env["GOOGLE_CLOUD_PROJECT"] ?? env["GOOGLE_VERTEX_PROJECT"];
+  return project?.trim() || void 0;
+}
+function resolveVertexLocation(env = process.env) {
+  const location = env["GOOGLE_CLOUD_LOCATION"] ?? env["CLOUD_ML_REGION"] ?? env["GOOGLE_VERTEX_LOCATION"] ?? "global";
+  return location.trim() || "global";
+}
+function defaultAdcCredentialsPath(home = homedir5()) {
+  return join6(home, ".config", "gcloud", "application_default_credentials.json");
+}
+function hasApplicationDefaultCredentials(home = homedir5(), adcPath = defaultAdcCredentialsPath(home)) {
+  return existsSync4(adcPath);
+}
+function loadVertexModelEntries(env = process.env) {
+  const configPath = getVertexModelsPath(env);
+  if (!existsSync4(configPath)) return DEFAULT_VERTEX_MODELS;
+  try {
+    const parsed = JSON.parse(readFileSync3(configPath, "utf8"));
+    if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_VERTEX_MODELS;
+    const models = parsed.filter(
+      (entry) => !!entry && typeof entry === "object" && typeof entry.id === "string" && entry.id.length > 0 && typeof entry.display_name === "string" && entry.display_name.length > 0
+    ).map((entry) => ({
+      id: entry.id,
+      display_name: entry.display_name,
+      ...typeof entry.upstream_id === "string" && entry.upstream_id.length > 0 ? { upstream_id: entry.upstream_id } : {}
+    }));
+    return models.length > 0 ? models : DEFAULT_VERTEX_MODELS;
+  } catch {
+    return DEFAULT_VERTEX_MODELS;
+  }
+}
+function buildVertexRuntimeConfig(env = process.env) {
+  const project = resolveVertexProject(env);
+  if (!project) return null;
+  return {
+    project,
+    location: resolveVertexLocation(env),
+    models: loadVertexModelEntries(env)
+  };
+}
+function vertexModelsToServerModels(config) {
+  return config.models.map((model) => ({
+    id: model.id,
+    name: model.display_name,
+    isFree: false,
+    brand: "Anthropic",
+    sourceBackend: "vertex",
+    modelFormat: "openai",
+    upstreamModelId: model.upstream_id ?? model.id,
+    npm: VERTEX_ANTHROPIC_NPM,
+    providerLabel: "Vertex AI",
+    providerId: "vertex",
+    contextWindow: resolveContextWindow(model.id)
+  }));
+}
+function vertexClientModelLookupCandidates(modelId) {
+  const candidates = [modelId];
+  const without1m = modelId.replace(/\[1m\]$/i, "");
+  if (without1m !== modelId) candidates.push(without1m);
+  const withoutDate = without1m.replace(/-(\d{8})$/, "");
+  if (withoutDate !== without1m) candidates.push(withoutDate);
+  if (withoutDate !== without1m) {
+    const datedWith1m = `${withoutDate}[1m]`;
+    if (!candidates.includes(datedWith1m)) candidates.push(datedWith1m);
+  }
+  return [...new Set(candidates)];
+}
+function registerVertexCatalogAlias(byId, alias, model) {
+  if (!byId.has(alias)) byId.set(alias, model);
+}
+function createVertexModelCatalog(models) {
+  const catalog = createGatewayModelCatalog(models);
+  const byId = /* @__PURE__ */ new Map();
+  for (const model of models) {
+    byId.set(model.id, model);
+    for (const [alias, targetId] of Object.entries(VERTEX_MODEL_SHORT_ALIASES)) {
+      if (model.id === targetId) {
+        registerVertexCatalogAlias(byId, alias, model);
+        if (VERTEX_ONE_M_MODEL_IDS.has(targetId)) {
+          registerVertexCatalogAlias(byId, `${alias}[1m]`, model);
+        }
+      }
+    }
+    if (VERTEX_ONE_M_MODEL_IDS.has(model.id)) {
+      registerVertexCatalogAlias(byId, `${model.id}[1m]`, model);
+    }
+  }
+  return {
+    get: (id) => {
+      const requested1m = /\[1m\]$/i.test(id);
+      for (const candidate of vertexClientModelLookupCandidates(id)) {
+        const match = byId.get(candidate) ?? catalog.get(candidate);
+        if (match) {
+          if (requested1m && !VERTEX_ONE_M_MODEL_IDS.has(match.id)) return void 0;
+          return match;
+        }
+      }
+      return void 0;
+    },
+    list: () => catalog.list()
+  };
+}
+
 // src/server/index.ts
 function getLocalIp() {
   const ifaces = networkInterfaces();
@@ -2234,7 +2436,7 @@ async function configureExposedProviders(tier) {
   return picked;
 }
 async function runServerWizard(tier) {
-  p3.intro(pc2.bold("  OpenCode Starter \u2014 Server"));
+  p3.intro(pc2.bold("  Relay AI \u2014 Server"));
   const startMode = await askServerStartMode();
   if (!startMode) return void 0;
   if (startMode === "quick") {
@@ -2253,11 +2455,61 @@ async function runServerWizard(tier) {
   if (favoritesOnly === null) return void 0;
   setServerFavoritesOnly(favoritesOnly);
   if (favoritesOnly) {
-    p3.log.info("Manage favorites with `opencode-starter models`.");
+    p3.log.info("Manage favorites with `relay-ai models`.");
   }
   return { exposedProviders, maskGatewayIds, favoritesOnly };
 }
-async function runServerCommand() {
+async function runVertexServerCommand() {
+  p3.intro(pc2.bold("  Relay AI \u2014 Vertex Gateway"));
+  const vertexConfig = buildVertexRuntimeConfig();
+  if (!vertexConfig) {
+    p3.log.error("Set ANTHROPIC_VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT to your GCP project.");
+    return 1;
+  }
+  if (!hasApplicationDefaultCredentials()) {
+    p3.log.error("Google Application Default Credentials not found.");
+    p3.log.info("Run: gcloud auth application-default login");
+    return 1;
+  }
+  const mode = await askListenMode();
+  if (!mode) return 0;
+  const serverPassword = await getServerPasswordForMode(mode);
+  if (serverPassword === void 0) return 0;
+  const host = mode === "network" ? "0.0.0.0" : "127.0.0.1";
+  const models = vertexModelsToServerModels(vertexConfig);
+  const server = await startServer({
+    host,
+    port: 17645,
+    apiKey: "vertex-local",
+    serverPassword,
+    catalog: createVertexModelCatalog(models),
+    backends: BACKENDS,
+    vertex: {
+      project: vertexConfig.project,
+      location: vertexConfig.location
+    }
+  });
+  console.log("");
+  console.log(pc2.bold(pc2.green("Vertex gateway running")));
+  console.log(`  Anthropic:  http://127.0.0.1:${server.port}/anthropic`);
+  console.log(`  Models:     ${models.map((model) => model.id).join(", ")}`);
+  if (mode === "network") {
+    console.log(`  Network:    http://${getLocalIp()}:${server.port}`);
+    console.log(`  API key:    ${serverPassword}`);
+  } else {
+    console.log("  API key:    any non-empty value");
+  }
+  console.log(pc2.dim("  Auth:       gcloud Application Default Credentials"));
+  console.log("");
+  console.log(pc2.dim("Press Ctrl+C to stop."));
+  await waitForShutdown();
+  await server.close();
+  return 0;
+}
+async function runServerCommand(options = {}) {
+  if (options.vertex) {
+    return runVertexServerCommand();
+  }
   let apiKey = resolveApiKey();
   if (!apiKey) {
     apiKey = await readFromCredentialStore((reason) => {
@@ -2272,12 +2524,12 @@ async function runServerCommand() {
   }
   apiKey = sanitizeCredential(apiKey) ?? "";
   if (!apiKey) {
-    p3.log.error("Missing OPENCODE_API_KEY. Run `opencode-starter claude` once to configure your key, or export OPENCODE_API_KEY.");
+    p3.log.error("Missing OPENCODE_API_KEY. Run `relay-ai claude` once to configure your key, or export OPENCODE_API_KEY.");
     return 1;
   }
   const tier = getSubscriptionTier();
   if (!tier) {
-    p3.log.error("Missing subscription tier. Run `opencode-starter claude --setup` first.");
+    p3.log.error("Missing subscription tier. Run `relay-ai claude --setup` first.");
     return 1;
   }
   const runConfig = await runServerWizard(tier);
@@ -2299,13 +2551,13 @@ async function runServerCommand() {
       const favorites = loadPreferences().favoriteModels ?? [];
       if (favorites.length === 0) {
         spinner3.stop(pc2.red("No favorite models configured"));
-        p3.log.error("Run `opencode-starter models` to add favorites, or turn off favorites-only in the server wizard.");
+        p3.log.error("Run `relay-ai models` to add favorites, or turn off favorites-only in the server wizard.");
         return 1;
       }
       models = filterServerModelsByFavorites(models, favorites);
       if (models.length === 0) {
         spinner3.stop(pc2.red("No favorite models matched the current provider filter"));
-        p3.log.error("Adjust favorites with `opencode-starter models` or change exposed providers in the server wizard.");
+        p3.log.error("Adjust favorites with `relay-ai models` or change exposed providers in the server wizard.");
         return 1;
       }
     }
@@ -2337,7 +2589,7 @@ async function runServerCommand() {
     gateway
   });
   console.log("");
-  console.log(pc2.bold(pc2.green("OpenCode Starter server running")));
+  console.log(pc2.bold(pc2.green("Relay AI server running")));
   console.log(`  Anthropic:  http://127.0.0.1:${server.port}/anthropic`);
   console.log(`  OpenAI:     http://127.0.0.1:${server.port}/openai`);
   if (mode === "network") {
@@ -2764,6 +3016,7 @@ function emptyParsed(command) {
     dryRun: false,
     setup: false,
     trace: false,
+    vertex: false,
     claudeArgs: []
   };
 }
@@ -2781,6 +3034,7 @@ function parseArgs(args) {
     for (const arg of rest) {
       if (arg === "--help" || arg === "-h") parsed2.showHelp = true;
       else if (arg === "--version" || arg === "-v") parsed2.showVersion = true;
+      else if (arg === "--vertex") parsed2.vertex = true;
       else if (!parsed2.error) parsed2.error = `Unknown server option: ${arg}`;
     }
     return parsed2;
@@ -2820,16 +3074,16 @@ function parseArgs(args) {
   return parsed;
 }
 function rootHelpText() {
-  return `${pc4.bold("opencode-starter")} v${VERSION}
+  return `${pc4.bold("relay-ai")} v${VERSION}
 Launch AI coding tools with OpenCode Zen, Go, or local providers (Groq, Mistral,
 OpenAI, Gemini, Ollama, and more).
 
 ${pc4.bold("Usage:")}
-  opencode-starter claude [starter-options] [claude-flags]
-  opencode-starter models
-  opencode-starter server
-  opencode-starter --help
-  opencode-starter --version
+  relay-ai claude [starter-options] [claude-flags]
+  relay-ai models
+  relay-ai server
+  relay-ai --help
+  relay-ai --version
 
 ${pc4.bold("Commands:")}
   claude      Launch Claude Code \u2014 cloud Zen/Go or local OpenCode providers
@@ -2838,25 +3092,25 @@ ${pc4.bold("Commands:")}
   codex       planned
 
 ${pc4.bold("Migration:")}
-  Bare opencode-starter prints this help instead of launching Claude Code.
-  Use opencode-starter claude for the wizard and launcher.
+  Bare relay-ai prints this help instead of launching Claude Code.
+  Use relay-ai claude for the wizard and launcher.
 
 ${pc4.bold("Examples:")}
-  opencode-starter claude
-  opencode-starter models
-  opencode-starter server
-  opencode-starter claude -c
-  opencode-starter claude --resume abc-123
-  opencode-starter claude -- --print "hello"`;
+  relay-ai claude
+  relay-ai models
+  relay-ai server
+  relay-ai claude -c
+  relay-ai claude --resume abc-123
+  relay-ai claude -- --print "hello"`;
 }
 function claudeHelpText() {
-  return `${pc4.bold("opencode-starter claude")} v${VERSION}
+  return `${pc4.bold("relay-ai claude")} v${VERSION}
 Launch Claude Code with OpenCode Zen, Go, or local providers as the API backend.
 
 ${pc4.bold("Usage:")}
-  opencode-starter claude [starter-options] [claude-flags]
-  opencode-starter claude --help
-  opencode-starter claude --version
+  relay-ai claude [starter-options] [claude-flags]
+  relay-ai claude --help
+  relay-ai claude --version
 
 ${pc4.bold("Starter options:")}
   --dry-run    Run the wizard but show a preview instead of launching Claude Code
@@ -2871,7 +3125,7 @@ ${pc4.bold("Providers:")}
                   OpenAI, Gemini, Ollama, etc.). Shown in the wizard when available.
 
 ${pc4.bold("Model switching:")}
-  Run opencode-starter models to save favorites (max ${MAX_MODEL_CATALOG}).
+  Run relay-ai models to save favorites (max ${MAX_MODEL_CATALOG}).
   When favorites exist, launch starts a multi-route proxy and Claude Code /model
   lists your starting model plus favorites for live switching.
   With no favorites, launch uses a single model as before.
@@ -2881,31 +3135,37 @@ ${pc4.bold("Note:")}
   Bare claude later can still show that model \u2014 reset with claude --model sonnet.
 
 ${pc4.bold("Examples:")}
-  opencode-starter claude
-  opencode-starter claude -c
-  opencode-starter claude --resume abc-123
-  opencode-starter claude abc-123
-  opencode-starter claude --dry-run -c
-  opencode-starter claude --setup
-  opencode-starter claude --trace --resume abc-123
-  opencode-starter claude -- --print "hello"
-  opencode-starter claude -- --dangerously-skip-permissions`;
+  relay-ai claude
+  relay-ai claude -c
+  relay-ai claude --resume abc-123
+  relay-ai claude abc-123
+  relay-ai claude --dry-run -c
+  relay-ai claude --setup
+  relay-ai claude --trace --resume abc-123
+  relay-ai claude -- --print "hello"
+  relay-ai claude -- --dangerously-skip-permissions`;
 }
 function serverHelpText() {
-  return `${pc4.bold("opencode-starter server")} v${VERSION}
-Run a foreground API gateway for Zen, Go, and local OpenCode providers.
+  return `${pc4.bold("relay-ai server")} v${VERSION}
+Run a foreground API gateway for Zen, Go, local OpenCode providers, or Vertex AI.
 
 ${pc4.bold("Usage:")}
-  opencode-starter server
-  opencode-starter server --help
-  opencode-starter server --version
+  relay-ai server
+  relay-ai server --vertex
+  relay-ai server --help
+  relay-ai server --version
 
 ${pc4.bold("Behavior:")}
-  Interactive wizard: choose exposed providers, discovery id masking (for Claude
-  Desktop / Cowork), optional favorites-only catalog, then listen mode.
-  Saved server settings are reused via "Start with saved settings".
-  Loads Zen/Go models plus configured local providers into one catalog.
+  Default: interactive wizard for exposed providers, discovery id masking (for
+  Claude Desktop / Cowork), optional favorites-only catalog, then listen mode.
+  --vertex: Anthropic-compatible gateway to Claude on Google Vertex AI using
+  local gcloud Application Default Credentials (no OpenCode API key).
   Binds to port 17645. Network mode asks for a server password.
+
+${pc4.bold("Vertex env:")}
+  ANTHROPIC_VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT \u2014 your GCP project
+  GOOGLE_CLOUD_LOCATION or CLOUD_ML_REGION \u2014 region (default: global)
+  Optional catalog: ~/.relay-ai/vertex-models.json (see vertex-models.example.json)
 
 ${pc4.bold("Endpoints:")}
   Anthropic-compatible:  ANTHROPIC_BASE_URL=http://127.0.0.1:17645/anthropic
@@ -2913,28 +3173,28 @@ ${pc4.bold("Endpoints:")}
   API key: use anything locally; use the server password in network mode.`;
 }
 function modelsHelpText() {
-  return `${pc4.bold("opencode-starter models")} v${VERSION}
+  return `${pc4.bold("relay-ai models")} v${VERSION}
 Manage favorite models for mid-session switching in Claude Code.
 
 ${pc4.bold("Usage:")}
-  opencode-starter models
-  opencode-starter models --help
-  opencode-starter models --version
+  relay-ai models
+  relay-ai models --help
+  relay-ai models --version
 
 ${pc4.bold("Behavior:")}
   Opens an interactive manager to add or remove favorites.
   Pick from Zen, Go, or any configured local OpenCode provider.
-  Favorites are saved to ~/.opencode-starter/config.json (max ${MAX_MODEL_CATALOG}).
+  Favorites are saved to ~/.relay-ai/config.json (max ${MAX_MODEL_CATALOG}).
 
 ${pc4.bold("How it works:")}
-  When favorites exist, opencode-starter claude starts a multi-route catalog proxy.
+  When favorites exist, relay-ai claude starts a multi-route catalog proxy.
   Claude Code /model lists your starting model plus favorites \u2014 switch live
   without restarting. Mix cloud and local favorites in one session.
   With no favorites, launch uses a single model as before.
 
 ${pc4.bold("Examples:")}
-  opencode-starter models
-  opencode-starter claude    # switch menu active when favorites are set`;
+  relay-ai models
+  relay-ai claude    # switch menu active when favorites are set`;
 }
 function printHelp(text3) {
   console.log(`
@@ -2960,7 +3220,7 @@ async function launchClaudeViaCatalog(catalogRoutes, startingRoute, contextWindo
     contextWindow,
     true
   );
-  const debugLogPath = join5(tmpdir(), "opencode-starter-debug.log");
+  const debugLogPath = join7(tmpdir(), "relay-ai-debug.log");
   const traceArgs = trace ? ["--debug-file", debugLogPath] : [];
   if (trace) p5.log.info(`Debug log: ${debugLogPath}`);
   const exitCode = await launchClaude(childEnv, startingRoute.aliasId, [...traceArgs, ...claudeArgs]);
@@ -2969,8 +3229,8 @@ async function launchClaudeViaCatalog(catalogRoutes, startingRoute, contextWindo
   return exitCode;
 }
 function printTraceLog(debugLogPath) {
-  if (!existsSync4(debugLogPath)) return;
-  const log5 = readFileSync3(debugLogPath, "utf8");
+  if (!existsSync5(debugLogPath)) return;
+  const log5 = readFileSync4(debugLogPath, "utf8");
   const errorLines = log5.split("\n").filter(
     (l) => l.includes("error") || l.includes("Error") || l.includes('"type":"error"') || l.includes("status")
   );
@@ -3023,17 +3283,17 @@ function printDryRun(backendName, modelId, baseUrl, modelFormat, claudeArgs, con
 function detectShellProfile() {
   const shell = process.env["SHELL"] ?? "";
   if (process.platform === "darwin") {
-    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir5()}/.zshrc` };
-    if (shell.includes("bash")) return { display: "~/.bash_profile", path: `${homedir5()}/.bash_profile` };
-    return { display: "~/.profile", path: `${homedir5()}/.profile` };
+    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir6()}/.zshrc` };
+    if (shell.includes("bash")) return { display: "~/.bash_profile", path: `${homedir6()}/.bash_profile` };
+    return { display: "~/.profile", path: `${homedir6()}/.profile` };
   }
   if (process.platform === "linux") {
-    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir5()}/.zshrc` };
-    if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir5()}/.bashrc` };
-    return { display: "~/.profile", path: `${homedir5()}/.profile` };
+    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir6()}/.zshrc` };
+    if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir6()}/.bashrc` };
+    return { display: "~/.profile", path: `${homedir6()}/.profile` };
   }
-  if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir5()}/.bashrc` };
-  return { display: "~/.profile", path: `${homedir5()}/.profile` };
+  if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir6()}/.bashrc` };
+  return { display: "~/.profile", path: `${homedir6()}/.profile` };
 }
 async function resolveOrCollectApiKey(simulate = false, trace = false) {
   if (!simulate) {
@@ -3055,7 +3315,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
       if (trace) {
         try {
           appendFileSync2(
-            join5(tmpdir(), "opencode-starter-debug.log"),
+            join7(tmpdir(), "relay-ai-debug.log"),
             `${(/* @__PURE__ */ new Date()).toISOString()} keyring: ${reason}
 `
           );
@@ -3092,7 +3352,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
         {
           value: "keychain",
           label: "Keychain only",
-          hint: "Key stored encrypted in Keychain; opencode-starter reads it automatically next time"
+          hint: "Key stored encrypted in Keychain; relay-ai reads it automatically next time"
         },
         {
           value: "keychain-autoload",
@@ -3116,7 +3376,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
         {
           value: "credential-manager",
           label: "Windows Credential Manager",
-          hint: "Key stored securely; opencode-starter reads it automatically next time"
+          hint: "Key stored securely; relay-ai reads it automatically next time"
         },
         {
           value: "setx",
@@ -3135,7 +3395,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
       opts.push({
         value: "secret-service",
         label: "Secret Service (GNOME Keyring / KWallet)",
-        hint: "Key stored securely in your desktop keyring; opencode-starter reads it automatically next time"
+        hint: "Key stored securely in your desktop keyring; relay-ai reads it automatically next time"
       });
     } else if (!simulate) {
       p5.log.info("No keyring daemon detected \u2014 secure storage requires GNOME Keyring or KWallet running.");
@@ -3183,11 +3443,11 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
   } else if (saveChoice === "keychain-autoload") {
     if (await saveToCredentialStore(trimmedKey)) {
       try {
-        const autoLoadLine = `export OPENCODE_API_KEY="$(security find-generic-password -s opencode-starter -a opencode-starter -w 2>/dev/null)"`;
-        const existing = existsSync4(path) ? readFileSync3(path, "utf8") : "";
+        const autoLoadLine = `export OPENCODE_API_KEY="$(security find-generic-password -s relay-ai -a relay-ai -w 2>/dev/null)"`;
+        const existing = existsSync5(path) ? readFileSync4(path, "utf8") : "";
         if (!existing.includes(autoLoadLine)) {
           appendFileSync2(path, `
-# opencode-starter: load API key from macOS Keychain
+# relay-ai: load API key from macOS Keychain
 ${autoLoadLine}
 `);
         }
@@ -3221,7 +3481,7 @@ ${autoLoadLine}
     }
   } else if (saveChoice === "profile") {
     try {
-      if (!existsSync4(path)) appendFileSync2(path, "");
+      if (!existsSync5(path)) appendFileSync2(path, "");
       const escapedKey = trimmedKey.replace(/'/g, "'\\''");
       appendFileSync2(path, `
 export OPENCODE_API_KEY='${escapedKey}'
@@ -3235,7 +3495,7 @@ export OPENCODE_API_KEY='${escapedKey}'
   return trimmedKey;
 }
 async function runModelsCommand() {
-  p5.intro(pc4.bold("  OpenCode Starter \u2014 Favorite Models"));
+  p5.intro(pc4.bold("  Relay AI \u2014 Favorite Models"));
   const spinner3 = p5.spinner();
   spinner3.start("Loading providers...");
   const catalog = await fetchProviderCatalog();
@@ -3341,7 +3601,7 @@ async function runClaudeCommand(parsed) {
   const favorites = dryRun ? [] : prefs.favoriteModels ?? [];
   const switchMenuActive = favorites.length > 0;
   const hasZenGoFavorites = favorites.some((f) => f.providerId === "zen" || f.providerId === "go");
-  p5.intro(pc4.bold("  OpenCode Starter"));
+  p5.intro(pc4.bold("  Relay AI"));
   let earlyEffectiveKey = null;
   let earlyZenModels = [];
   let earlyGoModels = [];
@@ -3414,7 +3674,7 @@ async function runClaudeCommand(parsed) {
         earlyGoModels,
         earlyEffectiveKey
       );
-      const startingRoute = localModelToRoute(provider, selectedModel) ?? resolveRoute(provider.id, selectedModel.id);
+      const startingRoute = localModelToRoute(provider, selectedModel);
       if (!startingRoute) {
         p5.log.error("Could not resolve a proxy route for the selected model.");
         return 1;
@@ -3500,7 +3760,7 @@ async function runClaudeCommand(parsed) {
     if (selectedModel.modelFormat === "anthropic") {
       childEnv2["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] = "1";
     }
-    const debugLogPath2 = join5(tmpdir(), "opencode-starter-debug.log");
+    const debugLogPath2 = join7(tmpdir(), "relay-ai-debug.log");
     const traceArgs2 = trace ? ["--debug-file", debugLogPath2] : [];
     if (trace) p5.log.info(`Debug log: ${debugLogPath2}`);
     const exitCode2 = await launchClaude(childEnv2, selectedModel.id, [...traceArgs2, ...claudeArgs]);
@@ -3509,12 +3769,12 @@ async function runClaudeCommand(parsed) {
     return exitCode2;
   }
   const apiKey = earlyEffectiveKey ?? await resolveOrCollectApiKey(dryRun, trace);
-  if (!apiKey && !dryRun) return 0;
+  if (!apiKey && !dryRun) return 1;
   const effectiveKey = apiKey ?? "dry-run-placeholder";
   let tier = dryRun ? null : getSubscriptionTier();
   if (!tier || setup) {
     tier = await askSubscriptionTier();
-    if (!tier) return 0;
+    if (!tier) return 1;
     if (!dryRun) setSubscriptionTier(tier);
   }
   const needsZen = tier === "free" || tier === "zen" || tier === "go" || tier === "both";
@@ -3601,7 +3861,7 @@ async function runClaudeCommand(parsed) {
   if (disableExperimentalBetas) {
     childEnv["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] = "1";
   }
-  const debugLogPath = join5(tmpdir(), "opencode-starter-debug.log");
+  const debugLogPath = join7(tmpdir(), "relay-ai-debug.log");
   const traceArgs = trace ? ["--debug-file", debugLogPath] : [];
   if (trace) {
     p5.log.info(`Debug log: ${debugLogPath}`);
@@ -3639,7 +3899,7 @@ Error: ${parsed.error}
       printHelp(serverHelpText());
       return 0;
     }
-    return runServerCommand();
+    return runServerCommand({ vertex: parsed.vertex });
   }
   if (parsed.command === "models") {
     if (parsed.showVersion) {

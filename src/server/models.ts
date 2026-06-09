@@ -9,13 +9,14 @@ export interface GatewayModelOptions {
 
 export type ServerModelFormat = 'anthropic' | 'openai' | 'unsupported';
 export type ServerBackendId = 'zen' | 'go';
+export type ServerModelSource = ServerBackendId | 'vertex';
 
 export interface ServerModelInfo {
   id: string;
   name: string;
   isFree: boolean;
   brand: string;
-  sourceBackend: ServerBackendId;
+  sourceBackend: ServerModelSource;
   modelFormat: ServerModelFormat;
   /** Wire id sent to the upstream API; may differ from catalog id. */
   upstreamModelId?: string;
@@ -142,7 +143,9 @@ export function createGatewayModelCatalog(models: ServerModelInfo[], opts?: Gate
 
 /** Model id to send upstream (OpenCode / provider API), not the gateway alias. */
 export function upstreamModelId(model: ServerModelInfo): string {
-  return model.upstreamModelId ?? model.id;
+  const id = model.upstreamModelId ?? model.id;
+  // Claude Code uses a [1m] suffix for 1M context with third-party APIs; Vertex ids omit it.
+  return id.replace(/\[1m\]$/i, '');
 }
 
 export function formatOpenAIModels(models: ServerModelInfo[]) {

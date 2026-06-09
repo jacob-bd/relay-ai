@@ -27,7 +27,8 @@ export type OpencodeCacheFile = Record<string, { models?: Record<string, Opencod
 const HEURISTIC_RULES: Array<[RegExp, number]> = [
   [/gemini-2\.5-pro|gemini-1\.5-pro|gemini-3-pro/i, 2_000_000],
   [/gemini/i, 1_000_000],
-  [/claude-opus-4-[678]|claude-sonnet-4-[678]|claude-haiku-4-[567]/i, 1_000_000],
+  [/claude-opus-4-[678]|claude-sonnet-4-[678]/i, 1_000_000],
+  [/claude-haiku-4-[567]/i, 200_000],
   [/claude.*\[1m\]/i, 1_000_000],
   [/claude-opus-4-[56]|claude-sonnet-4-[45]|claude-3/i, 200_000],
   [/claude/i, 200_000],

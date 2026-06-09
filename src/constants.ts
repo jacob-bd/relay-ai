@@ -48,6 +48,9 @@ export const MODELS_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 /** Max models in favorites list and mid-session /model switch catalog. */
 export const MAX_MODEL_CATALOG = 20;
 
+/** Vercel AI SDK package for Anthropic Claude models on Google Vertex AI (ADC auth). */
+export const VERTEX_ANTHROPIC_NPM = '@ai-sdk/google-vertex/anthropic';
+
 // Local provider model ids that return 410 / are gated behind separate approval.
 // Listed in catalog but reject inference — filter to avoid bad probe results.
 export const BLACKLISTED_LOCAL_MODEL_IDS = new Set([
@@ -81,4 +84,4 @@ export function classifyModelFormat(
   return 'openai';
 }
 
-export const VERSION = '0.3.0';
+export const VERSION = '1.0.0';

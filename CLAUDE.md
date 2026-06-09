@@ -15,21 +15,21 @@ npx vitest run tests/env.test.ts
 npx vitest run tests/models.test.ts
 
 # Test the CLI locally (already npm-linked)
-opencode-starter --help
-opencode-starter models          # manage favorite models for mid-session switching
-opencode-starter claude --dry-run   # simulate full first-run without writing anything
-opencode-starter claude --setup    # re-ask subscription tier
-opencode-starter claude --trace    # write Claude Code debug log to /tmp and print errors on exit
+relay-ai --help
+relay-ai models          # manage favorite models for mid-session switching
+relay-ai claude --dry-run   # simulate full first-run without writing anything
+relay-ai claude --setup    # re-ask subscription tier
+relay-ai claude --trace    # write Claude Code debug log to /tmp and print errors on exit
 
 # Rebuild after code changes before testing manually
-npm run build && opencode-starter --version
+npm run build && relay-ai --version
 ```
 
 ## Architecture
 
 **Entry point:** `src/cli.ts` orchestrates the full flow. Every other module is a focused unit with no side effects at import time.
 
-**Data flow (`opencode-starter claude`):**
+**Data flow (`relay-ai claude`):**
 ```
 cli.ts
   → findClaudeBinary()         [launch.ts — locate claude binary]
@@ -58,7 +58,7 @@ cli.ts
   → launchClaudeViaCatalog()   [cli.ts — shared launch + trace cleanup]
 ```
 
-**`opencode-starter models`:** Interactive favorites manager (`src/favorites.ts`). Reads/writes `favoriteModels` in config. Saves once on Done. Stale favorites (unavailable models) are silently skipped when building the catalog.
+**`relay-ai models`:** Interactive favorites manager (`src/favorites.ts`). Reads/writes `favoriteModels` in config. Saves once on Done. Stale favorites (unavailable models) are silently skipped when building the catalog.
 
 **Catalog routing** (`src/catalog.ts`): `localModelToRoute`, `zenGoModelToRoute`, `makeRouteResolver`, `buildCatalogRoutes`. Routes built only for starting model + favorites — not the full model list. Alias IDs via `aliasModelId()` in proxy so Claude Code sees unique model names in `/model`.
 
@@ -87,9 +87,9 @@ cli.ts
 - `go`: Go backend, but also fetches Zen for free models — combined list, backend inferred from `sourceBackend` of selected model
 - `both`: shows backend selector
 
-**Env isolation:** `buildChildEnv()` copies `process.env`, deletes all 17 vars in `CONFLICTING_ENV_VARS`, then sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`. `launchClaude()` also passes `--model`. Isolation applies to the child process only — the parent shell is not mutated (except `OPENCODE_API_KEY` during key setup). Claude Code may persist the model to `~/.claude/settings.json` independently; that is outside opencode-starter's control.
+**Env isolation:** `buildChildEnv()` copies `process.env`, deletes all 17 vars in `CONFLICTING_ENV_VARS`, then sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`. `launchClaude()` also passes `--model`. Isolation applies to the child process only — the parent shell is not mutated (except `OPENCODE_API_KEY` during key setup). Claude Code may persist the model to `~/.claude/settings.json` independently; that is outside relay-ai's control.
 
-**Preferences** (at `~/.opencode-starter/config.json`, migrated from legacy `conf` path on first read): `lastBackend`, `lastModel`, `lastProvider`, `recentModelsByProvider`, `favoriteModels`, `subscriptionTier`, and a 1-hour model list cache. Override path with `OPENCODE_STARTER_HOME`. All writes are skipped when `dryRun === true`.
+**Preferences** (at `~/.relay-ai/config.json`, migrated from legacy `conf` path on first read): `lastBackend`, `lastModel`, `lastProvider`, `recentModelsByProvider`, `favoriteModels`, `subscriptionTier`, and a 1-hour model list cache. Override path with `RELAY_AI_HOME`. All writes are skipped when `dryRun === true`.
 
 **API key storage** uses `@napi-rs/keyring` (installed as `optionalDependencies`) for cross-platform credential store access. The module is loaded via dynamic `import()` so a missing native binary degrades gracefully. `tsup.config.ts` marks `@napi-rs/keyring` and all `@ai-sdk/*` provider packages as `external` so they resolve from `node_modules` at runtime (keeps `dist/cli.js` small).
 
@@ -97,7 +97,7 @@ On startup, `resolveOrCollectApiKey()` silently calls `readFromCredentialStore()
 
 Save options per platform:
 - **macOS** (4 options): Keychain only | Keychain + `~/.zshrc` auto-load | shell profile (plaintext) | session only
-  - The `~/.zshrc` auto-load line uses the `security` CLI directly (so the shell can source it): `export OPENCODE_API_KEY="$(security find-generic-password -s opencode-starter -a opencode-starter -w 2>/dev/null)"`
+  - The `~/.zshrc` auto-load line uses the `security` CLI directly (so the shell can source it): `export OPENCODE_API_KEY="$(security find-generic-password -s relay-ai -a relay-ai -w 2>/dev/null)"`
 - **Windows** (3 options): Windows Credential Manager | `setx` user env var (plaintext) | session only
   - `setx` is called with `stdio: ['pipe','pipe','pipe']` to suppress its "SUCCESS" stdout
 - **Linux desktop** (3 options): Secret Service (GNOME Keyring / KWallet) | shell profile (plaintext) | session only
@@ -106,7 +106,7 @@ Save options per platform:
 
 In all cases `process.env['OPENCODE_API_KEY']` is set immediately so the key is active for the current session regardless of save choice.
 
-**Local provider discovery** (`src/providers.ts`): `fetchLocalProviders()` spawns `opencode serve --port 0`, waits for the listening URL in stdout/stderr (10s timeout, spinner shown in CLI), fetches `GET /config/providers`, then kills the process. `normalizeProviders()` (called internally) skips OAuth providers (empty key), skips `opencode`/`opencode-go` (cloud backends handled separately), and classifies each model via `resolveEndpoint(npm, apiUrl)`: `@ai-sdk/anthropic` → passthrough; `@ai-sdk/openai-compatible` without `api.url` → skip; any other non-empty `api.npm` → SDK adapter (`format: 'openai'`). OpenCode is the source of truth for which providers/models appear — opencode-starter does not maintain a per-package allowlist. Each model captures `api.npm`, `api.url` (`apiBaseUrl`), and `api.id` (`upstreamModelId` for SDK/upstream calls; catalog `id` stays for Claude Code's picker). Cost display in Claude Code is inaccurate for non-Anthropic models (Claude Code applies its own pricing table); documented limitation.
+**Local provider discovery** (`src/providers.ts`): `fetchLocalProviders()` spawns `opencode serve --port 0`, waits for the listening URL in stdout/stderr (10s timeout, spinner shown in CLI), fetches `GET /config/providers`, then kills the process. `normalizeProviders()` (called internally) skips OAuth providers (empty key), skips `opencode`/`opencode-go` (cloud backends handled separately), and classifies each model via `resolveEndpoint(npm, apiUrl)`: `@ai-sdk/anthropic` → passthrough; `@ai-sdk/openai-compatible` without `api.url` → skip; any other non-empty `api.npm` → SDK adapter (`format: 'openai'`). OpenCode is the source of truth for which providers/models appear — relay-ai does not maintain a per-package allowlist. Each model captures `api.npm`, `api.url` (`apiBaseUrl`), and `api.id` (`upstreamModelId` for SDK/upstream calls; catalog `id` stays for Claude Code's picker). Cost display in Claude Code is inaccurate for non-Anthropic models (Claude Code applies its own pricing table); documented limitation.
 
 **Local provider routing:** Two paths depending on `model.modelFormat`:
 - `'anthropic'`: `buildChildEnv(model.baseUrl, model.id, provider.apiKey)` — no proxy, Claude Code talks directly to the provider's Anthropic-compatible endpoint. The `baseUrl` must NOT include `/v1` (the Anthropic SDK appends it).
@@ -130,7 +130,7 @@ In all cases `process.env['OPENCODE_API_KEY']` is set immediately so the key is 
 
 ## Key constraints
 
-- `settings.json` is never touched by opencode-starter. Launch config is env-var-only, passed to the child process (plus `--model`). This avoids the backup/restore problem that `ollama launch claude` has. **Caveat:** Claude Code itself persists the launched model to `~/.claude/settings.json`, so bare `claude` later may still show an opencode-starter alias (e.g. `anthropic-opencode-go__deepseek-v4-flash`). Gateway discovery caches at `~/.claude/cache/gateway-models.json`. Reset with `claude --model sonnet` or by editing/removing those files.
+- `settings.json` is never touched by relay-ai. Launch config is env-var-only, passed to the child process (plus `--model`). This avoids the backup/restore problem that `ollama launch claude` has. **Caveat:** Claude Code itself persists the launched model to `~/.claude/settings.json`, so bare `claude` later may still show an relay-ai alias (e.g. `anthropic-opencode-go__deepseek-v4-flash`). Gateway discovery caches at `~/.claude/cache/gateway-models.json`. Reset with `claude --model sonnet` or by editing/removing those files.
 - `--dry-run` ignores all saved state (env key, Keychain, tier, preferences) and skips all writes. Used to simulate a fresh first-run experience.
 - When adding a new backend, update `BACKENDS` in `constants.ts`, the `BackendConfig` id union in `types.ts`, and the subscription tier logic in `prompts.ts` and `cli.ts`.
 - `buildChildEnv(baseUrl: string, model, apiKey, proxyPort?)` — takes a plain string URL, not a `BackendConfig`. When `proxyPort` is set, `ANTHROPIC_BASE_URL` is always `http://127.0.0.1:{proxyPort}` regardless of `baseUrl`.
@@ -140,7 +140,7 @@ In all cases `process.env['OPENCODE_API_KEY']` is set immediately so the key is 
 
 ## Release status (v0.3.0 — unreleased, prepping)
 
-Last published/tagged version is **v0.2.5**. Everything since — local providers, Gemini/OpenAI-Responses/Mistral support via the SDK adapter, the `opencode-starter models` favorites manager, `startProxyCatalog` switch menu, model search/browse UX — ships together as **0.3.0** (not yet tagged or on npm). `package.json` is at `0.3.0`; CHANGELOG `[0.3.0]` holds the consolidated net-of-0.2.5 notes.
+Last published/tagged version is **v0.2.5**. Everything since — local providers, Gemini/OpenAI-Responses/Mistral support via the SDK adapter, the `relay-ai models` favorites manager, `startProxyCatalog` switch menu, model search/browse UX — ships together as **0.3.0** (not yet tagged or on npm). `package.json` is at `0.3.0`; CHANGELOG `[0.3.0]` holds the consolidated net-of-0.2.5 notes.
 
 **Pre-release checklist:**
 - Broader manual testing of local providers (Groq, Mistral, xAI, Anthropic-direct, Ollama).

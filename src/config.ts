@@ -1,8 +1,8 @@
 import type { UserPreferences, ModelInfo, FavoriteModel } from './types.js';
 import { MODELS_CACHE_TTL_MS } from './constants.js';
-import { dirname } from 'node:path';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { getConfigPath, getLegacyConfPath } from './paths.js';
+import { dirname, join } from 'node:path';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { getAppHome, getConfigPath, getLegacyAppHome, getLegacyConfPath } from './paths.js';
 
 function readJsonFile(path: string): UserPreferences | null {
   try {
@@ -13,7 +13,26 @@ function readJsonFile(path: string): UserPreferences | null {
   }
 }
 
+function ensureAppHomeMigrated(): void {
+  const configPath = getConfigPath();
+  if (existsSync(configPath)) return;
+
+  const legacyConfig = join(getLegacyAppHome(), 'config.json');
+  if (!existsSync(legacyConfig)) return;
+
+  mkdirSync(getAppHome(), { recursive: true });
+  copyFileSync(legacyConfig, configPath);
+
+  const legacyVertex = join(getLegacyAppHome(), 'vertex-models.json');
+  const vertexPath = join(getAppHome(), 'vertex-models.json');
+  if (existsSync(legacyVertex) && !existsSync(vertexPath)) {
+    copyFileSync(legacyVertex, vertexPath);
+  }
+}
+
 function ensureConfigMigrated(): void {
+  ensureAppHomeMigrated();
+
   const configPath = getConfigPath();
   if (existsSync(configPath)) return;
 

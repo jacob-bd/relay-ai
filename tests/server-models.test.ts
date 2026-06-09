@@ -6,6 +6,7 @@ import {
   formatGatewayAnthropicModels,
   formatOpenAIModels,
   gatewayAliasId,
+  upstreamModelId,
   type ServerModelInfo,
 } from '../src/server/models.js';
 
@@ -106,5 +107,13 @@ describe('server model catalog', () => {
         },
       ],
     });
+  });
+
+  it('strips [1m] suffix for upstream Vertex model ids', () => {
+    expect(upstreamModelId({
+      ...models[0]!,
+      id: 'claude-sonnet-4-6[1m]',
+      upstreamModelId: 'claude-sonnet-4-6[1m]',
+    })).toBe('claude-sonnet-4-6');
   });
 });

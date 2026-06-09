@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { isSdkMigratedNpm, modelPrefersResponsesApi } from '../src/provider-factory.js';
+import { VERTEX_ANTHROPIC_NPM } from '../src/constants.js';
 
 describe('isSdkMigratedNpm', () => {
   it('returns true for any OpenCode-assigned npm except anthropic', () => {
@@ -8,6 +9,7 @@ describe('isSdkMigratedNpm', () => {
     expect(isSdkMigratedNpm('@ai-sdk/perplexity')).toBe(true);
     expect(isSdkMigratedNpm('@openrouter/ai-sdk-provider')).toBe(true);
     expect(isSdkMigratedNpm('gitlab-ai-provider')).toBe(true);
+    expect(isSdkMigratedNpm(VERTEX_ANTHROPIC_NPM)).toBe(true);
   });
 
   it('returns false for anthropic passthrough and missing npm', () => {

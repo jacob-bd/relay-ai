@@ -2,6 +2,7 @@
 // reads) to a Vercel AI SDK LanguageModel instance. The SDK owns wire format,
 // endpoint selection, and provider quirks.
 import type { LanguageModel } from 'ai';
+import { VERTEX_ANTHROPIC_NPM } from './constants.js';
 
 /** Models that must use /v1/responses instead of /v1/chat/completions. */
 const RESPONSES_ONLY_PREFIXES = [
@@ -38,6 +39,11 @@ export function modelPrefersResponsesApi(modelId: string): boolean {
   return false;
 }
 
+export interface VertexProviderConfig {
+  project: string;
+  location: string;
+}
+
 export interface ProviderModelSpec {
   /** OpenCode `api.npm` package, e.g. `@ai-sdk/xai`. */
   npm: string;
@@ -47,6 +53,8 @@ export interface ProviderModelSpec {
   baseURL?: string;
   /** Provider id for naming openai-compatible instances (diagnostics only). */
   providerId?: string;
+  /** Google Vertex AI — uses Application Default Credentials, not apiKey. */
+  vertex?: VertexProviderConfig;
 }
 
 /** True when this provider routes through the SDK adapter (local providers + Zen/Go openai-format). */
@@ -86,6 +94,18 @@ async function loadSdkProviderFactory(npm: string): Promise<SdkProviderFactory> 
 
 export async function createLanguageModel(spec: ProviderModelSpec): Promise<LanguageModel> {
   const { npm, modelId, apiKey, baseURL } = spec;
+
+  if (npm === VERTEX_ANTHROPIC_NPM) {
+    if (!spec.vertex?.project) {
+      throw new Error('Vertex project is required for @ai-sdk/google-vertex/anthropic');
+    }
+    const { createVertexAnthropic } = await import('@ai-sdk/google-vertex/anthropic');
+    const vertex = createVertexAnthropic({
+      project: spec.vertex.project,
+      location: spec.vertex.location,
+    });
+    return vertex(modelId);
+  }
 
   if (npm === '@ai-sdk/openai') {
     const { createOpenAI } = await import('@ai-sdk/openai');

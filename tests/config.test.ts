@@ -13,39 +13,46 @@ import {
   setSavedServerPassword,
   setSubscriptionTier,
 } from '../src/config.js';
-import { getAppHome, getConfigPath, getLegacyConfPath } from '../src/paths.js';
+import { getAppHome, getConfigPath, getLegacyAppHome, getLegacyConfPath } from '../src/paths.js';
 import type { ModelInfo } from '../src/types.js';
 
 let tempHome: string;
 let previousHome: string | undefined;
 
 beforeEach(() => {
-  tempHome = mkdtempSync(join(tmpdir(), 'opencode-starter-test-'));
+  tempHome = mkdtempSync(join(tmpdir(), 'relay-ai-test-'));
   previousHome = process.env['HOME'];
   process.env['HOME'] = tempHome;
-  process.env['OPENCODE_STARTER_HOME'] = join(tempHome, 'app-home');
+  process.env['RELAY_AI_HOME'] = join(tempHome, 'app-home');
 });
 
 afterEach(() => {
   rmSync(tempHome, { recursive: true, force: true });
   if (previousHome === undefined) delete process.env['HOME'];
   else process.env['HOME'] = previousHome;
-  delete process.env['OPENCODE_STARTER_HOME'];
+  delete process.env['RELAY_AI_HOME'];
 });
 
 describe('app paths', () => {
-  it('uses OPENCODE_STARTER_HOME when set', () => {
-    process.env['OPENCODE_STARTER_HOME'] = join(tempHome, 'custom-home');
+  it('uses RELAY_AI_HOME when set', () => {
+    process.env['RELAY_AI_HOME'] = join(tempHome, 'custom-home');
 
     expect(getAppHome()).toBe(join(tempHome, 'custom-home'));
   });
 
-  it('defaults to a .opencode-starter folder under the user home', () => {
-    expect(getAppHome({ HOME: tempHome })).toBe(join(tempHome, '.opencode-starter'));
+  it('still accepts legacy OPENCODE_STARTER_HOME override', () => {
+    delete process.env['RELAY_AI_HOME'];
+    process.env['OPENCODE_STARTER_HOME'] = join(tempHome, 'legacy-override');
+
+    expect(getAppHome()).toBe(join(tempHome, 'legacy-override'));
+  });
+
+  it('defaults to a .relay-ai folder under the user home', () => {
+    expect(getAppHome({ HOME: tempHome })).toBe(join(tempHome, '.relay-ai'));
   });
 
   it('stores config.json inside the app home', () => {
-    process.env['OPENCODE_STARTER_HOME'] = join(tempHome, 'app');
+    process.env['RELAY_AI_HOME'] = join(tempHome, 'app');
 
     expect(getConfigPath()).toBe(join(tempHome, 'app', 'config.json'));
   });
@@ -104,16 +111,16 @@ describe('dotfolder config', () => {
   });
 
   it('creates the app home lazily', () => {
-    expect(existsSync(process.env['OPENCODE_STARTER_HOME']!)).toBe(false);
+    expect(existsSync(process.env['RELAY_AI_HOME']!)).toBe(false);
 
     setSubscriptionTier('free');
 
-    expect(existsSync(process.env['OPENCODE_STARTER_HOME']!)).toBe(true);
+    expect(existsSync(process.env['RELAY_AI_HOME']!)).toBe(true);
   });
 
   it('migrates config from the previous conf path once', () => {
     const legacyPath = getLegacyConfPath();
-    rmSync(process.env['OPENCODE_STARTER_HOME']!, { recursive: true, force: true });
+    rmSync(process.env['RELAY_AI_HOME']!, { recursive: true, force: true });
     mkdirSync(dirname(legacyPath), { recursive: true });
     writeFileSync(legacyPath, JSON.stringify({ subscriptionTier: 'zen' }), 'utf8');
 
@@ -122,5 +129,20 @@ describe('dotfolder config', () => {
       subscriptionTier: 'zen',
     });
     expect(existsSync(`${legacyPath}.migrated`)).toBe(true);
+  });
+
+  it('migrates config from ~/.opencode-starter on first read', () => {
+    delete process.env['RELAY_AI_HOME'];
+    delete process.env['OPENCODE_STARTER_HOME'];
+    const legacyAppHome = getLegacyAppHome({ HOME: tempHome });
+    mkdirSync(legacyAppHome, { recursive: true });
+    writeFileSync(join(legacyAppHome, 'config.json'), JSON.stringify({ subscriptionTier: 'go' }), 'utf8');
+
+    expect(getSubscriptionTier()).toBe('go');
+    const migratedPath = getConfigPath({ HOME: tempHome });
+    expect(existsSync(migratedPath)).toBe(true);
+    expect(JSON.parse(readFileSync(migratedPath, 'utf8'))).toMatchObject({
+      subscriptionTier: 'go',
+    });
   });
 });

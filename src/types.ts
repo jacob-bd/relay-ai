@@ -65,11 +65,11 @@ export interface UserPreferences {
   subscriptionTier?: 'free' | 'zen' | 'go' | 'both';
   server?: {
     savedPassword?: string;
-    /** Provider ids exposed by `opencode-starter server` (zen, go, or local OpenCode provider ids). */
+    /** Provider ids exposed by `relay-ai server` (zen, go, or local OpenCode provider ids). */
     exposedProviders?: string[];
     /** Reverse gateway ids for Claude Desktop / Cowork model discovery. */
     maskGatewayIds?: boolean;
-    /** Expose only models saved via `opencode-starter models`. */
+    /** Expose only models saved via `relay-ai models`. */
     favoritesOnly?: boolean;
   };
   modelListCache?: {
@@ -85,6 +85,7 @@ export interface ParsedArgs {
   dryRun: boolean;
   setup: boolean;
   trace: boolean;
+  vertex: boolean;
   claudeArgs: string[];
   error?: string;
 }

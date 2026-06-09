@@ -23,6 +23,11 @@ export interface ServerBackend {
   baseUrl: string;
 }
 
+export interface VertexServerConfig {
+  project: string;
+  location: string;
+}
+
 export interface ServerOptions {
   host: string;
   port: number;
@@ -31,6 +36,7 @@ export interface ServerOptions {
   catalog: ModelCatalog;
   backends: Record<ServerBackendId, ServerBackend>;
   gateway?: GatewayModelOptions;
+  vertex?: VertexServerConfig;
 }
 
 export interface ServerHandle {
@@ -134,6 +140,10 @@ async function handleAnthropicMessages(
   if (!model) return;
 
   if (model.modelFormat === 'anthropic') {
+    if (model.baseUrl && !/^https?:\/\//i.test(model.baseUrl)) {
+      sendJson(res, 400, { error: { message: `Invalid provider baseUrl: must be http:// or https://` } });
+      return;
+    }
     const messagesUrl = model.baseUrl
       ? `${model.baseUrl}/v1/messages`
       : `${backendFor(options, model).baseUrl}/v1/messages`;
@@ -154,6 +164,7 @@ async function handleAnthropicMessages(
       apiKey,
       baseURL: model.apiBaseUrl,
       providerId: model.sourceBackend,
+      vertex: options.vertex,
     });
     const params = sdkTranslateRequest(body as unknown as AnthropicRequest, model.npm!);
     const clientWantsStream = Boolean(body.stream);
@@ -199,6 +210,10 @@ async function handleOpenAIChatCompletions(
   if (!model) return;
 
   if (model.modelFormat === 'openai') {
+    if (model.completionsUrl && !/^https?:\/\//i.test(model.completionsUrl)) {
+      sendJson(res, 400, { error: { message: `Invalid provider completionsUrl: must be http:// or https://` } });
+      return;
+    }
     const completionsUrl = model.completionsUrl
       ? model.completionsUrl
       : `${backendFor(options, model).baseUrl}/v1/chat/completions`;
@@ -231,6 +246,9 @@ function lookupModel(res: ServerResponse, catalog: ModelCatalog, modelId: unknow
 }
 
 function backendFor(options: ServerOptions, model: ServerModelInfo): ServerBackend {
+  if (model.sourceBackend === 'vertex') {
+    throw new Error(`Vertex models route through the SDK adapter, not cloud backends: ${model.id}`);
+  }
   return options.backends[model.sourceBackend];
 }
 

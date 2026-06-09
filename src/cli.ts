@@ -36,6 +36,7 @@ function emptyParsed(command: ParsedArgs['command']): ParsedArgs {
     dryRun: false,
     setup: false,
     trace: false,
+    vertex: false,
     claudeArgs: [],
   };
 }
@@ -57,6 +58,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     for (const arg of rest) {
       if (arg === '--help' || arg === '-h') parsed.showHelp = true;
       else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
+      else if (arg === '--vertex') parsed.vertex = true;
       else if (!parsed.error) parsed.error = `Unknown server option: ${arg}`;
     }
     return parsed;
@@ -103,16 +105,16 @@ export function parseArgs(args: string[]): ParsedArgs {
 }
 
 export function rootHelpText(): string {
-  return `${pc.bold('opencode-starter')} v${VERSION}
+  return `${pc.bold('relay-ai')} v${VERSION}
 Launch AI coding tools with OpenCode Zen, Go, or local providers (Groq, Mistral,
 OpenAI, Gemini, Ollama, and more).
 
 ${pc.bold('Usage:')}
-  opencode-starter claude [starter-options] [claude-flags]
-  opencode-starter models
-  opencode-starter server
-  opencode-starter --help
-  opencode-starter --version
+  relay-ai claude [starter-options] [claude-flags]
+  relay-ai models
+  relay-ai server
+  relay-ai --help
+  relay-ai --version
 
 ${pc.bold('Commands:')}
   claude      Launch Claude Code — cloud Zen/Go or local OpenCode providers
@@ -121,26 +123,26 @@ ${pc.bold('Commands:')}
   codex       planned
 
 ${pc.bold('Migration:')}
-  Bare opencode-starter prints this help instead of launching Claude Code.
-  Use opencode-starter claude for the wizard and launcher.
+  Bare relay-ai prints this help instead of launching Claude Code.
+  Use relay-ai claude for the wizard and launcher.
 
 ${pc.bold('Examples:')}
-  opencode-starter claude
-  opencode-starter models
-  opencode-starter server
-  opencode-starter claude -c
-  opencode-starter claude --resume abc-123
-  opencode-starter claude -- --print "hello"`;
+  relay-ai claude
+  relay-ai models
+  relay-ai server
+  relay-ai claude -c
+  relay-ai claude --resume abc-123
+  relay-ai claude -- --print "hello"`;
 }
 
 export function claudeHelpText(): string {
-  return `${pc.bold('opencode-starter claude')} v${VERSION}
+  return `${pc.bold('relay-ai claude')} v${VERSION}
 Launch Claude Code with OpenCode Zen, Go, or local providers as the API backend.
 
 ${pc.bold('Usage:')}
-  opencode-starter claude [starter-options] [claude-flags]
-  opencode-starter claude --help
-  opencode-starter claude --version
+  relay-ai claude [starter-options] [claude-flags]
+  relay-ai claude --help
+  relay-ai claude --version
 
 ${pc.bold('Starter options:')}
   --dry-run    Run the wizard but show a preview instead of launching Claude Code
@@ -155,7 +157,7 @@ ${pc.bold('Providers:')}
                   OpenAI, Gemini, Ollama, etc.). Shown in the wizard when available.
 
 ${pc.bold('Model switching:')}
-  Run opencode-starter models to save favorites (max ${MAX_MODEL_CATALOG}).
+  Run relay-ai models to save favorites (max ${MAX_MODEL_CATALOG}).
   When favorites exist, launch starts a multi-route proxy and Claude Code /model
   lists your starting model plus favorites for live switching.
   With no favorites, launch uses a single model as before.
@@ -165,32 +167,38 @@ ${pc.bold('Note:')}
   Bare claude later can still show that model — reset with claude --model sonnet.
 
 ${pc.bold('Examples:')}
-  opencode-starter claude
-  opencode-starter claude -c
-  opencode-starter claude --resume abc-123
-  opencode-starter claude abc-123
-  opencode-starter claude --dry-run -c
-  opencode-starter claude --setup
-  opencode-starter claude --trace --resume abc-123
-  opencode-starter claude -- --print "hello"
-  opencode-starter claude -- --dangerously-skip-permissions`;
+  relay-ai claude
+  relay-ai claude -c
+  relay-ai claude --resume abc-123
+  relay-ai claude abc-123
+  relay-ai claude --dry-run -c
+  relay-ai claude --setup
+  relay-ai claude --trace --resume abc-123
+  relay-ai claude -- --print "hello"
+  relay-ai claude -- --dangerously-skip-permissions`;
 }
 
 export function serverHelpText(): string {
-  return `${pc.bold('opencode-starter server')} v${VERSION}
-Run a foreground API gateway for Zen, Go, and local OpenCode providers.
+  return `${pc.bold('relay-ai server')} v${VERSION}
+Run a foreground API gateway for Zen, Go, local OpenCode providers, or Vertex AI.
 
 ${pc.bold('Usage:')}
-  opencode-starter server
-  opencode-starter server --help
-  opencode-starter server --version
+  relay-ai server
+  relay-ai server --vertex
+  relay-ai server --help
+  relay-ai server --version
 
 ${pc.bold('Behavior:')}
-  Interactive wizard: choose exposed providers, discovery id masking (for Claude
-  Desktop / Cowork), optional favorites-only catalog, then listen mode.
-  Saved server settings are reused via "Start with saved settings".
-  Loads Zen/Go models plus configured local providers into one catalog.
+  Default: interactive wizard for exposed providers, discovery id masking (for
+  Claude Desktop / Cowork), optional favorites-only catalog, then listen mode.
+  --vertex: Anthropic-compatible gateway to Claude on Google Vertex AI using
+  local gcloud Application Default Credentials (no OpenCode API key).
   Binds to port 17645. Network mode asks for a server password.
+
+${pc.bold('Vertex env:')}
+  ANTHROPIC_VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT — your GCP project
+  GOOGLE_CLOUD_LOCATION or CLOUD_ML_REGION — region (default: global)
+  Optional catalog: ~/.relay-ai/vertex-models.json (see vertex-models.example.json)
 
 ${pc.bold('Endpoints:')}
   Anthropic-compatible:  ANTHROPIC_BASE_URL=http://127.0.0.1:17645/anthropic
@@ -199,28 +207,28 @@ ${pc.bold('Endpoints:')}
 }
 
 export function modelsHelpText(): string {
-  return `${pc.bold('opencode-starter models')} v${VERSION}
+  return `${pc.bold('relay-ai models')} v${VERSION}
 Manage favorite models for mid-session switching in Claude Code.
 
 ${pc.bold('Usage:')}
-  opencode-starter models
-  opencode-starter models --help
-  opencode-starter models --version
+  relay-ai models
+  relay-ai models --help
+  relay-ai models --version
 
 ${pc.bold('Behavior:')}
   Opens an interactive manager to add or remove favorites.
   Pick from Zen, Go, or any configured local OpenCode provider.
-  Favorites are saved to ~/.opencode-starter/config.json (max ${MAX_MODEL_CATALOG}).
+  Favorites are saved to ~/.relay-ai/config.json (max ${MAX_MODEL_CATALOG}).
 
 ${pc.bold('How it works:')}
-  When favorites exist, opencode-starter claude starts a multi-route catalog proxy.
+  When favorites exist, relay-ai claude starts a multi-route catalog proxy.
   Claude Code /model lists your starting model plus favorites — switch live
   without restarting. Mix cloud and local favorites in one session.
   With no favorites, launch uses a single model as before.
 
 ${pc.bold('Examples:')}
-  opencode-starter models
-  opencode-starter claude    # switch menu active when favorites are set`;
+  relay-ai models
+  relay-ai claude    # switch menu active when favorites are set`;
 }
 
 function printHelp(text: string): void {
@@ -255,7 +263,7 @@ async function launchClaudeViaCatalog(
     true,
   );
 
-  const debugLogPath = join(tmpdir(), 'opencode-starter-debug.log');
+  const debugLogPath = join(tmpdir(), 'relay-ai-debug.log');
   const traceArgs = trace ? ['--debug-file', debugLogPath] : [];
   if (trace) p.log.info(`Debug log: ${debugLogPath}`);
 
@@ -375,7 +383,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false): Promise<
       if (trace) {
         try {
           appendFileSync(
-            join(tmpdir(), 'opencode-starter-debug.log'),
+            join(tmpdir(), 'relay-ai-debug.log'),
             `${new Date().toISOString()} keyring: ${reason}\n`,
           );
         } catch { /* ignore */ }
@@ -417,7 +425,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false): Promise<
         {
           value: 'keychain' as SaveChoice,
           label: 'Keychain only',
-          hint: 'Key stored encrypted in Keychain; opencode-starter reads it automatically next time',
+          hint: 'Key stored encrypted in Keychain; relay-ai reads it automatically next time',
         },
         {
           value: 'keychain-autoload' as SaveChoice,
@@ -441,7 +449,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false): Promise<
         {
           value: 'credential-manager' as SaveChoice,
           label: 'Windows Credential Manager',
-          hint: 'Key stored securely; opencode-starter reads it automatically next time',
+          hint: 'Key stored securely; relay-ai reads it automatically next time',
         },
         {
           value: 'setx' as SaveChoice,
@@ -461,7 +469,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false): Promise<
       opts.push({
         value: 'secret-service' as SaveChoice,
         label: 'Secret Service (GNOME Keyring / KWallet)',
-        hint: 'Key stored securely in your desktop keyring; opencode-starter reads it automatically next time',
+        hint: 'Key stored securely in your desktop keyring; relay-ai reads it automatically next time',
       });
     } else if (!simulate) {
       p.log.info('No keyring daemon detected — secure storage requires GNOME Keyring or KWallet running.');
@@ -509,10 +517,10 @@ async function resolveOrCollectApiKey(simulate = false, trace = false): Promise<
   } else if (saveChoice === 'keychain-autoload') {
     if (await saveToCredentialStore(trimmedKey)) {
       try {
-        const autoLoadLine = `export OPENCODE_API_KEY="$(security find-generic-password -s opencode-starter -a opencode-starter -w 2>/dev/null)"`;
+        const autoLoadLine = `export OPENCODE_API_KEY="$(security find-generic-password -s relay-ai -a relay-ai -w 2>/dev/null)"`;
         const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
         if (!existing.includes(autoLoadLine)) {
-          appendFileSync(path, `\n# opencode-starter: load API key from macOS Keychain\n${autoLoadLine}\n`);
+          appendFileSync(path, `\n# relay-ai: load API key from macOS Keychain\n${autoLoadLine}\n`);
         }
         p.log.success(`Key saved to Keychain and auto-load added to ${display} — active now and in all future terminals.`);
       } catch {
@@ -558,7 +566,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false): Promise<
 }
 
 export async function runModelsCommand(): Promise<number> {
-  p.intro(pc.bold('  OpenCode Starter — Favorite Models'));
+  p.intro(pc.bold('  Relay AI — Favorite Models'));
 
   const spinner = p.spinner();
   spinner.start('Loading providers...');
@@ -700,7 +708,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   const switchMenuActive = favorites.length > 0;
   const hasZenGoFavorites = favorites.some(f => f.providerId === 'zen' || f.providerId === 'go');
 
-  p.intro(pc.bold('  OpenCode Starter'));
+  p.intro(pc.bold('  Relay AI'));
 
   // When the switch menu needs Zen/Go catalog routes, resolve the API key and
   // fetch model info now (before the provider branch) so both branches can use them.
@@ -795,7 +803,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
         earlyGoModels,
         earlyEffectiveKey,
       );
-      const startingRoute = localModelToRoute(provider, selectedModel) ?? resolveRoute(provider.id, selectedModel.id);
+      const startingRoute = localModelToRoute(provider, selectedModel);
       if (!startingRoute) {
         p.log.error('Could not resolve a proxy route for the selected model.');
         return 1;
@@ -895,7 +903,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       childEnv['CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS'] = '1';
     }
 
-    const debugLogPath = join(tmpdir(), 'opencode-starter-debug.log');
+    const debugLogPath = join(tmpdir(), 'relay-ai-debug.log');
     const traceArgs = trace ? ['--debug-file', debugLogPath] : [];
     if (trace) p.log.info(`Debug log: ${debugLogPath}`);
 
@@ -910,14 +918,14 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   // When earlyEffectiveKey was already resolved (because of Zen/Go favorites), reuse it;
   // otherwise run the normal key resolution now.
   const apiKey = earlyEffectiveKey ?? await resolveOrCollectApiKey(dryRun, trace);
-  if (!apiKey && !dryRun) return 0;
+  if (!apiKey && !dryRun) return 1;
   const effectiveKey = apiKey ?? 'dry-run-placeholder';
 
   // Subscription tier: ignored in dry-run so the user sees the question fresh
   let tier = dryRun ? null : getSubscriptionTier();
   if (!tier || setup) {
     tier = await askSubscriptionTier();
-    if (!tier) return 0;
+    if (!tier) return 1;
     if (!dryRun) setSubscriptionTier(tier);  // don't persist in dry-run
   }
 
@@ -1027,7 +1035,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   }
 
   // --trace: write Claude Code debug logs so we can see the actual API error
-  const debugLogPath = join(tmpdir(), 'opencode-starter-debug.log');
+  const debugLogPath = join(tmpdir(), 'relay-ai-debug.log');
   const traceArgs = trace ? ['--debug-file', debugLogPath] : [];
   if (trace) {
     p.log.info(`Debug log: ${debugLogPath}`);
@@ -1072,7 +1080,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
       printHelp(serverHelpText());
       return 0;
     }
-    return runServerCommand();
+    return runServerCommand({ vertex: parsed.vertex });
   }
 
   if (parsed.command === 'models') {

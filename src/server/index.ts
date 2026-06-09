@@ -37,6 +37,12 @@ import {
   summarizeServerProviders,
 } from './catalog-filter.js';
 import { selectServerProviders, type ServerProviderOption } from './provider-select.js';
+import {
+  buildVertexRuntimeConfig,
+  createVertexModelCatalog,
+  hasApplicationDefaultCredentials,
+  vertexModelsToServerModels,
+} from './vertex-config.js';
 
 type SubscriptionTier = 'free' | 'zen' | 'go' | 'both';
 
@@ -44,6 +50,10 @@ export interface ServerRunConfig {
   exposedProviders: string[] | null;
   maskGatewayIds: boolean;
   favoritesOnly: boolean;
+}
+
+export interface ServerCommandOptions {
+  vertex?: boolean;
 }
 
 function getLocalIp(): string {
@@ -182,7 +192,7 @@ async function configureExposedProviders(tier: SubscriptionTier): Promise<string
 }
 
 async function runServerWizard(tier: SubscriptionTier): Promise<ServerRunConfig | undefined> {
-  p.intro(pc.bold('  OpenCode Starter — Server'));
+  p.intro(pc.bold('  Relay AI — Server'));
 
   const startMode = await askServerStartMode();
   if (!startMode) return undefined;
@@ -206,13 +216,73 @@ async function runServerWizard(tier: SubscriptionTier): Promise<ServerRunConfig 
   if (favoritesOnly === null) return undefined;
   setServerFavoritesOnly(favoritesOnly);
   if (favoritesOnly) {
-    p.log.info('Manage favorites with `opencode-starter models`.');
+    p.log.info('Manage favorites with `relay-ai models`.');
   }
 
   return { exposedProviders, maskGatewayIds, favoritesOnly };
 }
 
-export async function runServerCommand(): Promise<number> {
+async function runVertexServerCommand(): Promise<number> {
+  p.intro(pc.bold('  Relay AI — Vertex Gateway'));
+
+  const vertexConfig = buildVertexRuntimeConfig();
+  if (!vertexConfig) {
+    p.log.error('Set ANTHROPIC_VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT to your GCP project.');
+    return 1;
+  }
+
+  if (!hasApplicationDefaultCredentials()) {
+    p.log.error('Google Application Default Credentials not found.');
+    p.log.info('Run: gcloud auth application-default login');
+    return 1;
+  }
+
+  const mode = await askListenMode();
+  if (!mode) return 0;
+
+  const serverPassword = await getServerPasswordForMode(mode);
+  if (serverPassword === undefined) return 0;
+
+  const host = mode === 'network' ? '0.0.0.0' : '127.0.0.1';
+  const models = vertexModelsToServerModels(vertexConfig);
+
+  const server = await startServer({
+    host,
+    port: 17645,
+    apiKey: 'vertex-local',
+    serverPassword,
+    catalog: createVertexModelCatalog(models),
+    backends: BACKENDS,
+    vertex: {
+      project: vertexConfig.project,
+      location: vertexConfig.location,
+    },
+  });
+
+  console.log('');
+  console.log(pc.bold(pc.green('Vertex gateway running')));
+  console.log(`  Anthropic:  http://127.0.0.1:${server.port}/anthropic`);
+  console.log(`  Models:     ${models.map(model => model.id).join(', ')}`);
+  if (mode === 'network') {
+    console.log(`  Network:    http://${getLocalIp()}:${server.port}`);
+    console.log(`  API key:    ${serverPassword}`);
+  } else {
+    console.log('  API key:    any non-empty value');
+  }
+  console.log(pc.dim('  Auth:       gcloud Application Default Credentials'));
+  console.log('');
+  console.log(pc.dim('Press Ctrl+C to stop.'));
+
+  await waitForShutdown();
+  await server.close();
+  return 0;
+}
+
+export async function runServerCommand(options: ServerCommandOptions = {}): Promise<number> {
+  if (options.vertex) {
+    return runVertexServerCommand();
+  }
+
   let apiKey = resolveApiKey();
   if (!apiKey) {
     apiKey = await readFromCredentialStore((reason) => {
@@ -228,13 +298,13 @@ export async function runServerCommand(): Promise<number> {
 
   apiKey = sanitizeCredential(apiKey) ?? '';
   if (!apiKey) {
-    p.log.error('Missing OPENCODE_API_KEY. Run `opencode-starter claude` once to configure your key, or export OPENCODE_API_KEY.');
+    p.log.error('Missing OPENCODE_API_KEY. Run `relay-ai claude` once to configure your key, or export OPENCODE_API_KEY.');
     return 1;
   }
 
   const tier = getSubscriptionTier();
   if (!tier) {
-    p.log.error('Missing subscription tier. Run `opencode-starter claude --setup` first.');
+    p.log.error('Missing subscription tier. Run `relay-ai claude --setup` first.');
     return 1;
   }
 
@@ -261,13 +331,13 @@ export async function runServerCommand(): Promise<number> {
       const favorites = loadPreferences().favoriteModels ?? [];
       if (favorites.length === 0) {
         spinner.stop(pc.red('No favorite models configured'));
-        p.log.error('Run `opencode-starter models` to add favorites, or turn off favorites-only in the server wizard.');
+        p.log.error('Run `relay-ai models` to add favorites, or turn off favorites-only in the server wizard.');
         return 1;
       }
       models = filterServerModelsByFavorites(models, favorites);
       if (models.length === 0) {
         spinner.stop(pc.red('No favorite models matched the current provider filter'));
-        p.log.error('Adjust favorites with `opencode-starter models` or change exposed providers in the server wizard.');
+        p.log.error('Adjust favorites with `relay-ai models` or change exposed providers in the server wizard.');
         return 1;
       }
     }
@@ -304,7 +374,7 @@ export async function runServerCommand(): Promise<number> {
   });
 
   console.log('');
-  console.log(pc.bold(pc.green('OpenCode Starter server running')));
+  console.log(pc.bold(pc.green('Relay AI server running')));
   console.log(`  Anthropic:  http://127.0.0.1:${server.port}/anthropic`);
   console.log(`  OpenAI:     http://127.0.0.1:${server.port}/openai`);
   if (mode === 'network') {

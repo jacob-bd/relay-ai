@@ -15,6 +15,7 @@ describe('parseArgs', () => {
       dryRun: false,
       setup: false,
       trace: false,
+      vertex: false,
       claudeArgs: [],
     });
   });
@@ -85,7 +86,16 @@ describe('parseArgs', () => {
     expect(parseArgs(['server'])).toMatchObject({
       command: 'server',
       showHelp: false,
+      vertex: false,
       claudeArgs: [],
+    });
+  });
+
+  it('parses server --vertex', () => {
+    expect(parseArgs(['server', '--vertex'])).toMatchObject({
+      command: 'server',
+      vertex: true,
+      showHelp: false,
     });
   });
 
@@ -142,13 +152,13 @@ describe('parseArgs', () => {
 });
 
 describe('help text', () => {
-  it('root help documents v0.3.0 commands and local providers', () => {
+  it('root help documents v1.0.0 commands and local providers', () => {
     const help = rootHelpText();
 
-    expect(help).toContain('v0.3.0');
-    expect(help).toContain('opencode-starter claude');
-    expect(help).toContain('opencode-starter models');
-    expect(help).toContain('opencode-starter server');
+    expect(help).toContain('v1.0.0');
+    expect(help).toContain('relay-ai claude');
+    expect(help).toContain('relay-ai models');
+    expect(help).toContain('relay-ai server');
     expect(help).toContain('local providers');
     expect(help).toContain('Commands:');
     expect(help).toContain('codex');
@@ -158,15 +168,15 @@ describe('help text', () => {
   it('claude help includes starter options, providers, and switch menu', () => {
     const help = claudeHelpText();
 
-    expect(help).toContain('v0.3.0');
-    expect(help).toContain('opencode-starter claude --resume abc-123');
-    expect(help).toContain('opencode-starter claude -c');
+    expect(help).toContain('v1.0.0');
+    expect(help).toContain('relay-ai claude --resume abc-123');
+    expect(help).toContain('relay-ai claude -c');
     expect(help).toContain('--dry-run');
     expect(help).toContain('--setup');
     expect(help).toContain('--trace');
     expect(help).toContain('Local');
     expect(help).toContain('Model switching');
-    expect(help).toContain('opencode-starter models');
+    expect(help).toContain('relay-ai models');
     expect(help).toContain('settings.json');
   });
 
@@ -175,26 +185,29 @@ describe('help text', () => {
     expect(help).toContain('wizard');
     expect(help).toMatch(/Claude[\s\S]*Cowork/);
 
-    expect(help).toContain('v0.3.0');
-    expect(help).toContain('opencode-starter server');
-    expect(help).toContain('local providers');
+    expect(help).toContain('v1.0.0');
+    expect(help).toContain('relay-ai server');
+    expect(help).toContain('relay-ai server --vertex');
+    expect(help).toContain('local OpenCode providers');
+    expect(help).toContain('Vertex AI');
     expect(help).toContain('17645');
     expect(help).toContain('ANTHROPIC_BASE_URL');
     expect(help).toContain('OPENAI_BASE_URL');
     expect(help).toContain('network');
     expect(help).toContain('server password');
+    expect(help).toContain('vertex-models.example.json');
   });
 
   it('models help explains favorites, local providers, and /model behavior', () => {
     const help = modelsHelpText();
 
-    expect(help).toContain('v0.3.0');
-    expect(help).toContain('opencode-starter models');
+    expect(help).toContain('v1.0.0');
+    expect(help).toContain('relay-ai models');
     expect(help).toContain('favorites');
     expect(help).toContain('local OpenCode provider');
     expect(help).toContain('/model');
     expect(help).toContain('20');
-    expect(help).toContain('~/.opencode-starter/config.json');
+    expect(help).toContain('~/.relay-ai/config.json');
   });
 });
 
@@ -203,7 +216,7 @@ describe('main routing', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
     await expect(main([])).resolves.toBe(0);
-    expect(log.mock.calls.flat().join('\n')).toContain('opencode-starter claude');
+    expect(log.mock.calls.flat().join('\n')).toContain('relay-ai claude');
   });
 
   it('prints root help and returns 1 for unknown root subcommands', async () => {
@@ -212,13 +225,13 @@ describe('main routing', () => {
 
     await expect(main(['codex'])).resolves.toBe(1);
     expect(error.mock.calls.flat().join('\n')).toContain('Unknown command: codex');
-    expect(log.mock.calls.flat().join('\n')).toContain('opencode-starter claude');
+    expect(log.mock.calls.flat().join('\n')).toContain('relay-ai claude');
   });
 
   it('prints server help and returns 0', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
     await expect(main(['server', '--help'])).resolves.toBe(0);
-    expect(log.mock.calls.flat().join('\n')).toContain('opencode-starter server');
+    expect(log.mock.calls.flat().join('\n')).toContain('relay-ai server');
   });
 });

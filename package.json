@@ -1,25 +1,28 @@
 {
-  "name": "opencode-starter",
-  "version": "0.3.0",
-  "description": "Launch Claude Code with OpenCode Zen, Go, or local providers — with mid-session model switching via favorites",
+  "name": "relay-ai",
+  "version": "1.0.0",
+  "description": "Relay any model into any coding agent — launch Claude Code, Codex, and more with multi-provider gateways",
   "author": "jacob-bd",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jacob-bd/opencode-starter.git"
+    "url": "git+https://github.com/jacob-bd/relay-ai.git"
   },
-  "homepage": "https://github.com/jacob-bd/opencode-starter#readme",
+  "homepage": "https://github.com/jacob-bd/relay-ai#readme",
   "keywords": [
     "claude",
     "claude-code",
-    "opencode",
+    "codex",
     "ai",
     "llm",
-    "cli"
+    "cli",
+    "gateway",
+    "relay",
+    "vertex"
   ],
   "type": "module",
   "bin": {
-    "opencode-starter": "dist/cli.js"
+    "relay-ai": "dist/cli.js"
   },
   "engines": {
     "node": ">=18"

@@ -35,7 +35,7 @@ export function extractSseDataPayload(line: string): string | null {
 }
 
 export function splitToolUseId(id: string): { rawId: string; thoughtSignature?: string } {
-  const sep = id.indexOf(TOOL_USE_SIG_SEP);
+  const sep = id.lastIndexOf(TOOL_USE_SIG_SEP);
   if (sep === -1) return { rawId: id };
   return {
     rawId: id.slice(0, sep),

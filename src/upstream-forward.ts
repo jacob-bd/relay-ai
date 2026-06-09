@@ -74,11 +74,26 @@ export async function relayAnthropicMessages(
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
     });
-    Readable.fromWeb(upstreamRes.body as Parameters<typeof Readable.fromWeb>[0]).pipe(res);
+    Readable.fromWeb(upstreamRes.body as Parameters<typeof Readable.fromWeb>[0])
+      .on('error', () => res.destroy())
+      .pipe(res);
     return;
   }
 
-  const json = await upstreamRes.json();
+  if (!upstreamRes.body) {
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'Upstream returned empty response body' } }));
+    return;
+  }
+
+  let json: unknown;
+  try {
+    json = await upstreamRes.json();
+  } catch {
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'Upstream response was not valid JSON' } }));
+    return;
+  }
   const payload = JSON.stringify(json);
   res.writeHead(200, {
     'Content-Type': 'application/json',

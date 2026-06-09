@@ -1,14 +1,14 @@
-# opencode-starter
+# relay-ai
 
-> A launcher toolkit for AI coding tools, powered by [OpenCode](https://opencode.ai) backends.
+> Relay any model into any coding agent — launch tools, switch providers, and run local API gateways.
 
-[![npm version](https://img.shields.io/npm/v/opencode-starter)](https://www.npmjs.com/package/opencode-starter)
-[![License](https://img.shields.io/npm/l/opencode-starter)](https://github.com/jacob-bd/opencode-starter/blob/main/LICENSE)
+[![npm version](https://img.shields.io/npm/v/relay-ai)](https://www.npmjs.com/package/relay-ai)
+[![License](https://img.shields.io/npm/l/relay-ai)](https://github.com/jacob-bd/relay-ai/blob/main/LICENSE)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=flat-square&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/jacobbd)
 
-**opencode-starter** is an interactive CLI wizard that sets up and launches AI coding tools. Today that means Claude Code. Tomorrow we'll add more.
+**relay-ai** is an interactive CLI wizard that sets up and launches AI coding tools. Today that means Claude Code. Tomorrow we'll add more.
 
-You pick your backend: OpenCode Zen, OpenCode Go, or **OpenCode-configured providers** (the BYOK providers you've already set up in OpenCode: Groq, Mistral, OpenAI, Gemini, Ollama, and others). opencode-starter reads that list from OpenCode at launch. It doesn't ship its own model catalog.
+You pick your backend: OpenCode Zen, OpenCode Go, or **OpenCode-configured providers** (the BYOK providers you've already set up in OpenCode: Groq, Mistral, OpenAI, Gemini, Ollama, and others). relay-ai reads that list from OpenCode at launch. It doesn't ship its own model catalog.
 
 [![Watch the demo on YouTube](https://img.youtube.com/vi/kyeqlyF4WCQ/maxresdefault.jpg)](https://www.youtube.com/watch?v=kyeqlyF4WCQ)
 
@@ -31,10 +31,10 @@ You pick your backend: OpenCode Zen, OpenCode Go, or **OpenCode-configured provi
 
 | Tool | Command | Status |
 |------|---------|--------|
-| Claude Code | `opencode-starter claude` | ✅ Supported |
-| Favorite models | `opencode-starter models` | ✅ Supported |
-| API server | `opencode-starter server` | ✅ Supported |
-| Codex | `opencode-starter codex` | 🔜 Planned |
+| Claude Code | `relay-ai claude` | ✅ Supported |
+| Favorite models | `relay-ai models` | ✅ Supported |
+| API server | `relay-ai server` | ✅ Supported |
+| Codex | `relay-ai codex` | 🔜 Planned |
 
 ## Prerequisites
 
@@ -49,17 +49,17 @@ You pick your backend: OpenCode Zen, OpenCode Go, or **OpenCode-configured provi
 
 ```bash
 # Install globally
-npm install -g opencode-starter
+npm install -g relay-ai
 
 # Upgrade to the latest version
-npm update -g opencode-starter
+npm update -g relay-ai
 ```
 
 ## Setup
 
 Grab your API key at [opencode.ai/auth](https://opencode.ai/auth).
 
-On first run, opencode-starter asks for the key and where to save it. Options vary by OS:
+On first run, relay-ai asks for the key and where to save it. Options vary by OS:
 
 | Platform | Secure storage | Plaintext fallback |
 |----------|---------------|-------------------|
@@ -73,22 +73,22 @@ The key is active in your current session right away, no matter which option you
 ## Usage
 
 ```bash
-opencode-starter claude
+relay-ai claude
 ```
 
 First run: the wizard asks about your OpenCode subscription so it can show the right models. We save that and skip it next time. If you've configured providers in OpenCode, you'll also pick between cloud Zen/Go and an OpenCode-configured provider.
 
-Bare `opencode-starter` prints help and migration guidance now. It doesn't launch Claude Code anymore. Use `opencode-starter claude` for the wizard.
+Bare `relay-ai` prints help and migration guidance now. It doesn't launch Claude Code anymore. Use `relay-ai claude` for the wizard.
 
 ### Favorite models and mid-session switching
 
 Save the models you bounce between:
 
 ```bash
-opencode-starter models
+relay-ai models
 ```
 
-Add up to 20 favorites from Zen, Go, or any OpenCode-configured provider. When you have favorites, `opencode-starter claude` starts a multi-route proxy automatically. Claude Code's `/model` command lists your starting model plus favorites. Switch live, no restart.
+Add up to 20 favorites from Zen, Go, or any OpenCode-configured provider. When you have favorites, `relay-ai claude` starts a multi-route proxy automatically. Claude Code's `/model` command lists your starting model plus favorites. Switch live, no restart.
 
 No favorites? Launch works like before: single model, no switch menu. `--dry-run` ignores saved favorites so you can preview a single-model launch.
 
@@ -98,42 +98,42 @@ No favorites? Launch works like before: single model, no switch menu. `--dry-run
 |------|-------------|
 | `--dry-run` | Run the full wizard but preview the launch command instead of executing |
 | `--setup` | Re-configure your subscription tier |
-| `--trace` | Write Claude Code debug logs to `/tmp/opencode-starter-debug.log` and show errors on exit |
+| `--trace` | Write Claude Code debug logs to `/tmp/relay-ai-debug.log` and show errors on exit |
 | `--help` | Show usage |
 | `--version` | Show version |
 
 Starter flags go after the `claude` command:
 
 ```bash
-opencode-starter claude --dry-run
-opencode-starter claude --setup
-opencode-starter claude --trace
+relay-ai claude --dry-run
+relay-ai claude --setup
+relay-ai claude --trace
 ```
 
 Claude Code flags and session IDs pass through unchanged:
 
 ```bash
-opencode-starter claude -c
-opencode-starter claude --resume abc-123
-opencode-starter claude abc-123
+relay-ai claude -c
+relay-ai claude --resume abc-123
+relay-ai claude abc-123
 ```
 
 Use `--` when you want every following token passed directly to Claude Code:
 
 ```bash
-opencode-starter claude -- --print "hello"
-opencode-starter claude -- --dangerously-skip-permissions
-opencode-starter claude --dry-run -- --print "test"
+relay-ai claude -- --print "hello"
+relay-ai claude -- --dangerously-skip-permissions
+relay-ai claude --dry-run -- --print "test"
 ```
 
 ## Server mode
 
 > **Claude Desktop (Cowork + Code):** Gateway setup for Desktop's Cowork and Code tabs (not Chat). See [docs/CLAUDE_DESKTOP_SETUP.md](docs/CLAUDE_DESKTOP_SETUP.md).
 
-Run opencode-starter as a foreground API gateway:
+Run relay-ai as a foreground API gateway:
 
 ```bash
-opencode-starter server
+relay-ai server
 ```
 
 The wizard asks where to listen: this machine only, or your network.
@@ -152,7 +152,7 @@ export ANTHROPIC_BASE_URL="http://<server-ip>:17645/anthropic"
 export ANTHROPIC_API_KEY="<server-password>"
 ```
 
-By default the server password stays in memory only. If you choose to save it, opencode-starter stores it in `~/.opencode-starter/config.json`.
+By default the server password stays in memory only. If you choose to save it, relay-ai stores it in `~/.relay-ai/config.json`.
 
 The server loads Zen/Go models plus whatever OpenCode-configured providers you've set up (same discovery as `claude`). The spinner tells you how many models came from OpenCode import.
 
@@ -167,7 +167,7 @@ export OPENAI_API_KEY="anything"
 
 ### Subscription tiers
 
-First run, opencode-starter asks what you have access to:
+First run, relay-ai asks what you have access to:
 
 | Tier | Backends available | Models shown |
 |------|--------------------|--------------|
@@ -176,11 +176,11 @@ First run, opencode-starter asks what you have access to:
 | Go subscription | Zen + Go | All Go models + Zen free models |
 | Both | Zen + Go | All models on both backends |
 
-Run `opencode-starter claude --setup` anytime to change your tier.
+Run `relay-ai claude --setup` anytime to change your tier.
 
 ### Environment isolation
 
-When you launch, opencode-starter builds a clean child environment:
+When you launch, relay-ai builds a clean child environment:
 
 1. Removes 17 conflicting env vars from the child process (Vertex AI, Bedrock, AWS, Foundry, stale Anthropic config)
 2. Sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, and `ANTHROPIC_MODEL` for the session
@@ -188,11 +188,11 @@ When you launch, opencode-starter builds a clean child environment:
 
 When Claude Code exits (normal exit, Ctrl+C, terminal close), your shell is unchanged. No cleanup step. No restore needed.
 
-**Caveat: Claude Code persists the model.** opencode-starter doesn't edit `~/.claude/settings.json`, but Claude Code saves the model you launched with (via `--model` and `ANTHROPIC_MODEL`). A later bare `claude` launch may still show that model, e.g. `anthropic-opencode-go__deepseek-v4-flash` from a prior opencode-starter session. To get back to a first-party default, run `claude --model sonnet` (or your preferred Claude model), or remove the `"model"` key from `~/.claude/settings.json`. If you used the favorites switch menu, Claude Code may also cache the gateway catalog at `~/.claude/cache/gateway-models.json`. Delete that file if `/model` shows stale entries from a dead proxy.
+**Caveat: Claude Code persists the model.** relay-ai doesn't edit `~/.claude/settings.json`, but Claude Code saves the model you launched with (via `--model` and `ANTHROPIC_MODEL`). A later bare `claude` launch may still show that model, e.g. `anthropic-opencode-go__deepseek-v4-flash` from a prior relay-ai session. To get back to a first-party default, run `claude --model sonnet` (or your preferred Claude model), or remove the `"model"` key from `~/.claude/settings.json`. If you used the favorites switch menu, Claude Code may also cache the gateway catalog at `~/.claude/cache/gateway-models.json`. Delete that file if `/model` shows stale entries from a dead proxy.
 
 ### Model compatibility
 
-OpenCode exposes models through different API formats. opencode-starter handles them when it can:
+OpenCode exposes models through different API formats. relay-ai handles them when it can:
 
 | Model format | Examples | How it works | Label |
 |---|---|---|---|
@@ -203,7 +203,7 @@ OpenCode exposes models through different API formats. opencode-starter handles 
 | Other SDK providers | Cerebras, Perplexity, Bedrock, Vertex, Together AI, etc. | Whatever `api.npm` OpenCode assigns | `via proxy` |
 | Not in cloud wizard | GPT, Gemini on OpenCode Zen/Go | Use an OpenCode-configured provider instead (OpenAI/Google in OpenCode config) | `not yet supported` |
 
-The SDK adapter proxy starts on a random local port for proxy-routed models and stops when Claude Code exits. Each `opencode-starter claude` session gets its own port, so multiple terminals are fine. (`opencode-starter server` uses fixed port `17645`. One server instance per machine.)
+The SDK adapter proxy starts on a random local port for proxy-routed models and stops when Claude Code exits. Each `relay-ai claude` session gets its own port, so multiple terminals are fine. (`relay-ai server` uses fixed port `17645`. One server instance per machine.)
 
 ### Provider notes
 
@@ -215,7 +215,7 @@ The SDK adapter proxy starts on a random local port for proxy-routed models and 
 
 ### API key storage
 
-opencode-starter uses [`@napi-rs/keyring`](https://www.npmjs.com/package/@napi-rs/keyring) for the OS credential store. On later runs it checks silently. Key found? Wizard skips the prompt.
+relay-ai uses [`@napi-rs/keyring`](https://www.npmjs.com/package/@napi-rs/keyring) for the OS credential store. On later runs it checks silently. Key found? Wizard skips the prompt.
 
 | Platform | Credential store | Notes |
 |----------|-----------------|-------|
@@ -231,7 +231,7 @@ If the native module fails to load, credential store options are skipped and you
 We save your last backend, provider, model, recent models per provider, favorite models, subscription tier, model cache, and optional server password to:
 
 ```text
-~/.opencode-starter/config.json
+~/.relay-ai/config.json
 ```
 
 The OpenCode API key is stored separately, based on what you chose during setup.
@@ -244,7 +244,7 @@ Private beta right now. Issues and PRs welcome on GitHub.
 
 This project and its creator have **no affiliation** with OpenCode, Anthropic, Claude, Google, or any other vendor named or integrated here. Trademarks belong to their respective owners.
 
-opencode-starter was built for **education and research**, and mostly for fun. It routes inference through services you configure yourself (OpenCode Zen/Go, OpenCode-configured providers, and gateways you run locally). Use at your own risk.
+relay-ai was built for **education and research**, and mostly for fun. It routes inference through services you configure yourself (OpenCode Zen/Go, OpenCode-configured providers, and gateways you run locally). Use at your own risk.
 
 ## Vibe Coding Alert
 

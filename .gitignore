@@ -9,3 +9,4 @@ npm-debug.log*
 coverage/
 *.tsbuildinfo
 spike/
+vertex-models.json

@@ -1,6 +1,6 @@
 # Claude Desktop setup
 
-Point **Claude Desktop** at an **OpenCode Starter** gateway on your machine. You get OpenCode Zen, Go, and your OpenCode-configured providers (Groq, Mistral, OpenAI, Gemini, Ollama, etc.) in Desktop's model picker, with a catalog size you control.
+Point **Claude Desktop** at an **Relay AI** gateway on your machine. You get OpenCode Zen, Go, and your OpenCode-configured providers (Groq, Mistral, OpenAI, Gemini, Ollama, etc.) in Desktop's model picker, with a catalog size you control.
 
 **What's available:** With third-party inference, Desktop gives you **Cowork** and **Code** only. The regular **Chat** tab (claude.ai-style chat inside the app) is not available in this mode.
 
@@ -12,7 +12,7 @@ For Anthropic's upstream docs, see [Installation and setup](https://claude.com/d
 
 - [What you get](#what-you-get)
 - [Prerequisites](#prerequisites)
-- [Step 1: Start the OpenCode Starter server](#step-1-start-the-opencode-starter-server)
+- [Step 1: Start the Relay AI server](#step-1-start-the-relay-ai-server)
 - [Step 2: Enable Developer Mode](#step-2-enable-developer-mode)
 - [Step 3: Configure third-party inference](#step-3-configure-third-party-inference)
 - [Step 4: Use Claude Desktop](#step-4-use-claude-desktop)
@@ -27,7 +27,7 @@ For Anthropic's upstream docs, see [Installation and setup](https://claude.com/d
 
 | Piece | Role |
 | --- | --- |
-| `opencode-starter server` | Local gateway on port **17645**. Anthropic Messages API + model discovery |
+| `relay-ai server` | Local gateway on port **17645**. Anthropic Messages API + model discovery |
 | Claude Desktop gateway config | Desktop sends inference to your machine instead of only claude.ai |
 | Server wizard filters | Exposed providers, optional favorites-only catalog, discovery id masking |
 | **Cowork** tab | Agentic sessions (files, research, multi-step tasks) against your gateway models |
@@ -41,24 +41,24 @@ Billing runs through your OpenCode / OpenCode-configured provider keys. Keep the
 
 ## Prerequisites
 
-1. **OpenCode Starter** installed (`npm install -g opencode-starter`).
+1. **Relay AI** installed (`npm install -g relay-ai`).
 2. **OpenCode API key** configured at least once:
    ```bash
-   opencode-starter claude --setup   # subscription tier, if not set
-   opencode-starter claude           # stores key in Keychain / credential store
+   relay-ai claude --setup   # subscription tier, if not set
+   relay-ai claude           # stores key in Keychain / credential store
    ```
 3. **Latest Claude Desktop** from [claude.com/download](https://claude.com/download). Older builds may not show the third-party inference UI.
 4. *(Optional)* **OpenCode CLI** with providers configured. Whatever you've set up in OpenCode (Groq, Mistral, OpenAI, Gemini, Ollama, etc.) appears in the server catalog automatically.
-5. *(Optional)* **Favorites** via `opencode-starter models` to cap the catalog at up to 20 models.
+5. *(Optional)* **Favorites** via `relay-ai models` to cap the catalog at up to 20 models.
 
 ---
 
-## Step 1: Start the OpenCode Starter server
+## Step 1: Start the Relay AI server
 
 In a terminal, start the gateway and **leave it running**:
 
 ```bash
-opencode-starter server
+relay-ai server
 ```
 
 First-time wizard recommendations:
@@ -74,7 +74,7 @@ First-time wizard recommendations:
 When the server is up:
 
 ```text
-OpenCode Starter server running
+Relay AI server running
   Anthropic:  http://127.0.0.1:17645/anthropic
   OpenAI:     http://127.0.0.1:17645/openai
   API key:    any non-empty value
@@ -123,7 +123,7 @@ Anthropic's docs say to configure this from the login screen before signing in. 
 | --- | --- |
 | **Inference provider** | **Gateway** (Anthropic-compatible) |
 | **Gateway base URL** | `http://127.0.0.1:17645/anthropic` |
-| **Gateway API key** | Any non-empty string (e.g. `opencode-starter`) |
+| **Gateway API key** | Any non-empty string (e.g. `relay-ai`) |
 | **Gateway auth scheme** | `bearer` |
 
 **Do not append `/v1` to the base URL.** Claude Desktop adds API paths itself (`/v1/models`, `/v1/messages`). A URL like `.../anthropic/v1` breaks discovery and inference.
@@ -147,7 +147,7 @@ The `Claude-3p` folder name is Anthropic's on-disk layout for third-party infere
 
 After **Apply locally**, open Claude Desktop like you normally would.
 
-1. Make sure `opencode-starter server` is still running in a terminal
+1. Make sure `relay-ai server` is still running in a terminal
 2. Open the **Cowork** or **Code** tab (Chat won't be there)
 3. Open the model picker. You should see models from your gateway
 4. Pick a model and start a session
@@ -160,7 +160,7 @@ Some Anthropic docs describe a sign-in screen option for enterprise deployments 
 
 ## Gateway values cheat sheet
 
-| Setting | Local OpenCode Starter server |
+| Setting | Local Relay AI server |
 | --- | --- |
 | Provider | Gateway (Anthropic-compatible) |
 | Base URL | `http://127.0.0.1:17645/anthropic` |
@@ -180,7 +180,7 @@ Some Anthropic docs describe a sign-in screen option for enterprise deployments 
 
 ## Restore Claude Desktop to Anthropic's servers
 
-To stop routing through OpenCode Starter and go back to Anthropic's default inference:
+To stop routing through Relay AI and go back to Anthropic's default inference:
 
 ### Option A: Remove the gateway configuration
 
@@ -198,7 +198,7 @@ To stop routing through OpenCode Starter and go back to Anthropic's default infe
    ```
 
 3. Relaunch Claude Desktop. Inference goes back to Anthropic's servers.
-4. Stop the OpenCode Starter server (`Ctrl+C`) if you don't need it anymore.
+4. Stop the Relay AI server (`Ctrl+C`) if you don't need it anymore.
 
 ### Option B: Change it in the app
 
@@ -240,7 +240,7 @@ If IT pushed a managed profile (Jamf, Intune, Group Policy), local edits in `con
 
 | Check | Action |
 | --- | --- |
-| Server not running | Start `opencode-starter server` and keep the terminal open |
+| Server not running | Start `relay-ai server` and keep the terminal open |
 | Wrong base URL | `http://127.0.0.1:17645/anthropic`, no `/v1` suffix |
 | Empty API key | Any non-empty string for local mode |
 | Network mode | Base URL uses the server's LAN IP; API key matches the server password |
@@ -255,8 +255,8 @@ curl -s -H "Authorization: Bearer test" http://127.0.0.1:17645/anthropic/v1/mode
 
 - **Discovery id masking:** Answer **Yes** in the server wizard. Claude Desktop hides models whose gateway ids contain competitor vendor strings
 - **Provider filter:** Re-run the wizard and add the providers you need
-- **Favorites-only:** Add models with `opencode-starter models`, or turn favorites-only off
-- **Subscription tier:** Run `opencode-starter claude --setup`
+- **Favorites-only:** Add models with `relay-ai models`, or turn favorites-only off
+- **Subscription tier:** Run `relay-ai claude --setup`
 
 ### Models show up in `curl` but not in Desktop
 
@@ -264,12 +264,12 @@ Enable **Mask gateway model ids for discovery**, restart the server, relaunch Cl
 
 ### `Missing OPENCODE_API_KEY` when starting the server
 
-Run `opencode-starter claude` once to store your key, or export `OPENCODE_API_KEY` before `opencode-starter server`.
+Run `relay-ai claude` once to store your key, or export `OPENCODE_API_KEY` before `relay-ai server`.
 
 ### `Missing subscription tier`
 
 ```bash
-opencode-starter claude --setup
+relay-ai claude --setup
 ```
 
 ### Authentication errors from the gateway (401)
@@ -292,4 +292,4 @@ opencode-starter claude --setup
 | Configuration reference | [claude.com/docs/cowork/3p/configuration](https://claude.com/docs/cowork/3p/configuration) |
 | User identity and local data | [claude.com/docs/cowork/3p/data-storage](https://claude.com/docs/cowork/3p/data-storage) |
 | Claude Desktop download | [claude.com/download](https://claude.com/download) |
-| OpenCode Starter server mode | [README — Server mode](../README.md#server-mode) |
+| Relay AI server mode | [README — Server mode](../README.md#server-mode) |

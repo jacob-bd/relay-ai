@@ -75,10 +75,17 @@ export function classifyKeyringError(err: unknown): string {
   return `keyring error: ${msg}`;
 }
 
+const KEYRING_SERVICE = 'relay-ai';
+const KEYRING_ACCOUNT = 'relay-ai';
+const LEGACY_KEYRING_SERVICE = 'opencode-starter';
+const LEGACY_KEYRING_ACCOUNT = 'opencode-starter';
+
 export async function readFromCredentialStore(diag?: (msg: string) => void): Promise<string | null> {
   try {
     const { Entry } = await import('@napi-rs/keyring');
-    return new Entry('opencode-starter', 'opencode-starter').getPassword() ?? null;
+    const current = new Entry(KEYRING_SERVICE, KEYRING_ACCOUNT).getPassword();
+    if (current) return current;
+    return new Entry(LEGACY_KEYRING_SERVICE, LEGACY_KEYRING_ACCOUNT).getPassword() ?? null;
   } catch (err) {
     diag?.(classifyKeyringError(err));
     return null;
@@ -88,7 +95,7 @@ export async function readFromCredentialStore(diag?: (msg: string) => void): Pro
 export async function saveToCredentialStore(key: string, diag?: (msg: string) => void): Promise<boolean> {
   try {
     const { Entry } = await import('@napi-rs/keyring');
-    new Entry('opencode-starter', 'opencode-starter').setPassword(key);
+    new Entry(KEYRING_SERVICE, KEYRING_ACCOUNT).setPassword(key);
     return true;
   } catch (err) {
     diag?.(classifyKeyringError(err));
@@ -99,7 +106,7 @@ export async function saveToCredentialStore(key: string, diag?: (msg: string) =>
 export async function isSecretServiceAvailable(): Promise<boolean> {
   try {
     const { Entry } = await import('@napi-rs/keyring');
-    new Entry('opencode-starter-probe', 'probe').getPassword();
+    new Entry(`${KEYRING_SERVICE}-probe`, 'probe').getPassword();
     return true;
   } catch {
     return false;
