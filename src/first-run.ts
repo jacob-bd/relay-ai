@@ -6,7 +6,6 @@ import {
   migrateGlobalOpencodeCredential,
   readGlobalOpencodeCredential,
 } from './env.js';
-import { setSubscriptionTier } from './config.js';
 import { findOpencodeBinary } from './opencode-serve.js';
 import { zenRegistryStub } from './registry/builtins.js';
 import { importFromOpencode } from './registry/import-opencode.js';
@@ -26,7 +25,7 @@ export async function needsFirstRunSetup(): Promise<boolean> {
 function ensureZenRegistryStub(): void {
   const registry = loadRegistry();
   if (registry.providers.some(pr => pr.id === 'zen')) return;
-  registry.providers.push(zenRegistryStub());
+  registry.providers.push(zenRegistryStub('free'));
   saveRegistry(registry);
 }
 
@@ -71,7 +70,6 @@ export async function runFirstRunWizard(trace = false): Promise<FirstRunResult> 
     if (!apiKey) return 'cancel';
     await migrateGlobalOpencodeCredential();
     ensureZenRegistryStub();
-    setSubscriptionTier('free');
     p.log.success('OpenCode Zen ready — picking a model next.');
     return 'continue';
   }

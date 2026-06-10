@@ -1,10 +1,8 @@
 import { BACKENDS } from './constants.js';
-import { getCachedModels, setCachedModels } from './config.js';
 import { readGlobalOpencodeCredential } from './env.js';
 import { getModels } from './models.js';
 import { loadRegistry } from './registry/io.js';
 import { loadRegistryProviders } from './registry/load.js';
-import { fetchLocalProviders } from './opencode-serve.js';
 import type { LocalProvider, ModelInfo } from './types.js';
 import type { ServerModelInfo } from './server/models.js';
 
@@ -16,12 +14,10 @@ export interface ProviderCatalog {
 
 export async function fetchZenGoModels(
   backends: Array<'zen' | 'go'>,
-  persistCache = false,
 ): Promise<{ zenModels: ModelInfo[]; goModels: ModelInfo[] }> {
   const results = await Promise.all(
     backends.map(async id => {
-      const result = await getModels(BACKENDS[id], getCachedModels(id) ?? undefined);
-      if (!result.fromCache && persistCache) setCachedModels(id, result.models);
+      const result = await getModels(BACKENDS[id]);
       return { id, models: result.models };
     }),
   );
@@ -35,20 +31,15 @@ export async function fetchZenGoModels(
   return { zenModels, goModels };
 }
 
-/** Registry-first local provider resolution; optional legacy OpenCode serve fallback. */
+/** Registry-first local provider resolution. */
 export async function resolveLocalProviders(): Promise<LocalProvider[]> {
-  const fromRegistry = await loadRegistryProviders();
-  if (fromRegistry.length > 0) return fromRegistry;
-  if (process.env['RELAY_AI_LEGACY_SERVE'] === '0') return [];
-  const fromOpencode = await fetchLocalProviders();
-  return fromOpencode ?? [];
+  return loadRegistryProviders();
 }
 
-export async function fetchProviderCatalog(opts?: { persistCache?: boolean }): Promise<ProviderCatalog> {
-  const persistCache = opts?.persistCache ?? false;
+export async function fetchProviderCatalog(): Promise<ProviderCatalog> {
   const [localProviders, zenGo] = await Promise.all([
     resolveLocalProviders(),
-    fetchZenGoModels(['zen', 'go'], persistCache),
+    fetchZenGoModels(['zen', 'go']),
   ]);
 
   return {

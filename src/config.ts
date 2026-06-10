@@ -1,5 +1,4 @@
-import type { UserPreferences, ModelInfo, FavoriteModel } from './types.js';
-import { MODELS_CACHE_TTL_MS } from './constants.js';
+import type { UserPreferences, FavoriteModel } from './types.js';
 import { dirname, join } from 'node:path';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { getAppHome, getConfigPath, getLegacyAppHome, getLegacyConfPath } from './paths.js';
@@ -84,34 +83,6 @@ export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBacken
   if (prefs.lastProvider !== undefined) config.lastProvider = prefs.lastProvider;
   if (prefs.recentModelsByProvider !== undefined) config.recentModelsByProvider = prefs.recentModelsByProvider;
   if (prefs.favoriteModels !== undefined) config.favoriteModels = prefs.favoriteModels;
-  writeConfig(config);
-}
-
-export function getCachedModels(backendId: 'zen' | 'go'): ModelInfo[] | null {
-  const modelListCache = readConfig().modelListCache;
-  const entry = modelListCache?.[backendId];
-  if (!entry) return null;
-  const age = Date.now() - new Date(entry.fetchedAt).getTime();
-  if (age > MODELS_CACHE_TTL_MS) return null;
-  return entry.models;
-}
-
-export function setCachedModels(backendId: 'zen' | 'go', models: ModelInfo[]): void {
-  const config = readConfig();
-  config.modelListCache = {
-    ...(config.modelListCache ?? {}),
-    [backendId]: { models, fetchedAt: new Date().toISOString() },
-  };
-  writeConfig(config);
-}
-
-export function getSubscriptionTier(): 'free' | 'zen' | 'go' | 'both' | null {
-  return readConfig().subscriptionTier ?? null;
-}
-
-export function setSubscriptionTier(tier: 'free' | 'zen' | 'go' | 'both'): void {
-  const config = readConfig();
-  config.subscriptionTier = tier;
   writeConfig(config);
 }
 

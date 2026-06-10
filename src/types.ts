@@ -62,7 +62,6 @@ export interface UserPreferences {
   lastProvider?: string;
   recentModelsByProvider?: Record<string, string[]>;
   favoriteModels?: FavoriteModel[];
-  subscriptionTier?: 'free' | 'zen' | 'go' | 'both';
   server?: {
     savedPassword?: string;
     /** Provider ids exposed by `relay-ai server` (zen, go, or local OpenCode provider ids). */
@@ -71,10 +70,6 @@ export interface UserPreferences {
     maskGatewayIds?: boolean;
     /** Expose only models saved via `relay-ai models`. */
     favoritesOnly?: boolean;
-  };
-  modelListCache?: {
-    zen?: { models: ModelInfo[]; fetchedAt: string };
-    go?: { models: ModelInfo[]; fetchedAt: string };
   };
 }
 

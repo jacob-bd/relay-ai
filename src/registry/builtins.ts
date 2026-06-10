@@ -1,8 +1,8 @@
 // src/registry/builtins.ts — Zen/Go registry stub entries (models fetched live)
 
-import type { RegistryProvider } from './types.js';
+import type { RegistryProvider, RegistrySubscriptionFilter } from './types.js';
 
-export function zenRegistryStub(): RegistryProvider {
+export function zenRegistryStub(subscriptionFilter?: RegistrySubscriptionFilter): RegistryProvider {
   return {
     id: 'zen',
     templateId: 'zen',
@@ -10,6 +10,7 @@ export function zenRegistryStub(): RegistryProvider {
     enabled: true,
     authRef: 'keyring:global:opencode',
     api: {},
+    ...(subscriptionFilter ? { subscriptionFilter } : {}),
     addedAt: new Date().toISOString(),
   };
 }

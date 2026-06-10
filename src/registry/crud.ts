@@ -3,7 +3,7 @@
 import { GLOBAL_OPENCODE_KEYRING_ACCOUNT, parseAuthRef, deleteProviderCredential } from '../env.js';
 import { goRegistryStub, zenRegistryStub } from './builtins.js';
 import { loadRegistry, saveRegistry } from './io.js';
-import type { RegistryProvider } from './types.js';
+import type { RegistryProvider, RegistrySubscriptionFilter } from './types.js';
 
 export interface RemoveProviderResult {
   removed: boolean;
@@ -49,12 +49,14 @@ export async function removeProviderFromRegistry(
   };
 }
 
-export function addZenRegistryStub(): { added: boolean; reason?: string } {
+export function addZenRegistryStub(opts?: {
+  subscriptionFilter?: RegistrySubscriptionFilter;
+}): { added: boolean; reason?: string } {
   const registry = loadRegistry();
   if (registry.providers.some(p => p.id === 'zen')) {
     return { added: false, reason: 'OpenCode Zen is already configured.' };
   }
-  registry.providers.push(zenRegistryStub());
+  registry.providers.push(zenRegistryStub(opts?.subscriptionFilter));
   saveRegistry(registry);
   return { added: true };
 }
@@ -67,6 +69,17 @@ export function addGoRegistryStub(): { added: boolean; reason?: string } {
   registry.providers.push(goRegistryStub());
   saveRegistry(registry);
   return { added: true };
+}
+
+export function setRegistrySubscriptionFilter(
+  providerId: 'zen' | 'go',
+  filter: RegistrySubscriptionFilter,
+): void {
+  const registry = loadRegistry();
+  const provider = registry.providers.find(p => p.id === providerId);
+  if (!provider) return;
+  provider.subscriptionFilter = filter;
+  saveRegistry(registry);
 }
 
 export function toggleProviderEnabled(id: string): { toggled: boolean; enabled?: boolean; error?: string } {

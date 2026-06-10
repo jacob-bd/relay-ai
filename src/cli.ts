@@ -509,7 +509,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       const backends: Array<'zen' | 'go'> = [];
       if (favorites.some(f => f.providerId === 'zen')) backends.push('zen');
       if (favorites.some(f => f.providerId === 'go')) backends.push('go');
-      const fetched = await fetchZenGoModels(backends, false);
+      const fetched = await fetchZenGoModels(backends);
       earlyZenModels = fetched.zenModels;
       earlyGoModels = fetched.goModels;
       zenGoSpinner.stop('');
@@ -524,7 +524,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   catalogSpinner.start('Loading your providers...');
   let catalog: Awaited<ReturnType<typeof fetchProviderCatalog>>;
   try {
-    catalog = await fetchProviderCatalog({ persistCache: !dryRun });
+    catalog = await fetchProviderCatalog();
   } catch (err) {
     catalogSpinner.stop('');
     console.error(pc.red(String(err instanceof Error ? err.message : err)));

@@ -4,17 +4,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   clearSavedServerPassword,
-  getCachedModels,
   getSavedServerPassword,
-  getSubscriptionTier,
   loadPreferences,
   savePreferences,
-  setCachedModels,
   setSavedServerPassword,
-  setSubscriptionTier,
 } from '../src/config.js';
 import { getAppHome, getConfigPath, getLegacyAppHome, getLegacyConfPath } from '../src/paths.js';
-import type { ModelInfo } from '../src/types.js';
 
 let tempHome: string;
 let previousHome: string | undefined;
@@ -72,30 +67,12 @@ describe('dotfolder config', () => {
     });
   });
 
-  it('stores and reads subscription tier', () => {
-    setSubscriptionTier('both');
+  it('migrates legacy lastProvider opencode to zen on read', () => {
+    const configPath = getConfigPath();
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(configPath, JSON.stringify({ lastProvider: 'opencode' }), 'utf8');
 
-    expect(getSubscriptionTier()).toBe('both');
-  });
-
-  it('stores cached models and ignores expired entries', () => {
-    const models: ModelInfo[] = [{
-      id: 'claude-sonnet-4-6',
-      name: 'Claude Sonnet 4.6',
-      isFree: false,
-      brand: 'Claude',
-      sourceBackend: 'zen',
-      modelFormat: 'anthropic',
-    }];
-
-    setCachedModels('zen', models);
-    expect(getCachedModels('zen')).toEqual(models);
-
-    const config = JSON.parse(readFileSync(getConfigPath(), 'utf8'));
-    config.modelListCache.zen.fetchedAt = '2020-01-01T00:00:00.000Z';
-    writeFileSync(getConfigPath(), JSON.stringify(config), 'utf8');
-
-    expect(getCachedModels('zen')).toBeNull();
+    expect(loadPreferences().lastProvider).toBe('zen');
   });
 
   it('returns null when no server password is saved', () => {
@@ -113,7 +90,7 @@ describe('dotfolder config', () => {
   it('creates the app home lazily', () => {
     expect(existsSync(process.env['RELAY_AI_HOME']!)).toBe(false);
 
-    setSubscriptionTier('free');
+    savePreferences({ lastProvider: 'zen' });
 
     expect(existsSync(process.env['RELAY_AI_HOME']!)).toBe(true);
   });
@@ -122,11 +99,11 @@ describe('dotfolder config', () => {
     const legacyPath = getLegacyConfPath();
     rmSync(process.env['RELAY_AI_HOME']!, { recursive: true, force: true });
     mkdirSync(dirname(legacyPath), { recursive: true });
-    writeFileSync(legacyPath, JSON.stringify({ subscriptionTier: 'zen' }), 'utf8');
+    writeFileSync(legacyPath, JSON.stringify({ lastProvider: 'nvidia' }), 'utf8');
 
-    expect(getSubscriptionTier()).toBe('zen');
+    expect(loadPreferences().lastProvider).toBe('nvidia');
     expect(JSON.parse(readFileSync(getConfigPath(), 'utf8'))).toMatchObject({
-      subscriptionTier: 'zen',
+      lastProvider: 'nvidia',
     });
     expect(existsSync(`${legacyPath}.migrated`)).toBe(true);
   });
@@ -136,13 +113,13 @@ describe('dotfolder config', () => {
     delete process.env['OPENCODE_STARTER_HOME'];
     const legacyAppHome = getLegacyAppHome({ HOME: tempHome });
     mkdirSync(legacyAppHome, { recursive: true });
-    writeFileSync(join(legacyAppHome, 'config.json'), JSON.stringify({ subscriptionTier: 'go' }), 'utf8');
+    writeFileSync(join(legacyAppHome, 'config.json'), JSON.stringify({ lastModel: 'claude' }), 'utf8');
 
-    expect(getSubscriptionTier()).toBe('go');
+    expect(loadPreferences().lastModel).toBe('claude');
     const migratedPath = getConfigPath({ HOME: tempHome });
     expect(existsSync(migratedPath)).toBe(true);
     expect(JSON.parse(readFileSync(migratedPath, 'utf8'))).toMatchObject({
-      subscriptionTier: 'go',
+      lastModel: 'claude',
     });
   });
 });

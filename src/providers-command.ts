@@ -26,7 +26,6 @@ import { loadRegistry } from './registry/io.js';
 import { refreshAllProviderModels, refreshProviderModels } from './registry/refresh-models.js';
 import { resolveRefreshCredential } from './registry/refresh-credentials.js';
 import { resolveOrCollectApiKey } from './key-setup.js';
-import { setSubscriptionTier } from './config.js';
 
 export type ProvidersSubcommand = 'hub' | 'add' | 'import' | 'list' | 'remove' | 'refresh-models' | 'help';
 
@@ -248,12 +247,11 @@ async function addBuiltinZen(): Promise<number> {
     if (!collected) return 0;
     await migrateGlobalOpencodeCredential();
   }
-  const result = addZenRegistryStub();
+  const result = addZenRegistryStub({ subscriptionFilter: 'free' });
   if (!result.added) {
     p.log.warn(result.reason ?? 'Could not add OpenCode Zen.');
     return 0;
   }
-  setSubscriptionTier('free');
   p.log.success('OpenCode Zen added to your providers.');
   return 0;
 }
@@ -362,7 +360,6 @@ async function addBuiltinGo(): Promise<number> {
     p.log.warn(result.reason ?? 'Could not add OpenCode Go.');
     return 0;
   }
-  setSubscriptionTier('go');
   p.log.success('OpenCode Go added to your providers.');
   return 0;
 }

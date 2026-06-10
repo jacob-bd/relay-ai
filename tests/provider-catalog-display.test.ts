@@ -101,6 +101,6 @@ describe('resolveZenGoAvailability', () => {
     ]);
 
     expect(await resolveZenGoAvailability()).toEqual({ zen: true, go: false });
-    expect(models.getModels).toHaveBeenCalledWith(BACKENDS.zen, undefined);
+    expect(models.getModels).toHaveBeenCalledWith(BACKENDS.zen);
   });
 });

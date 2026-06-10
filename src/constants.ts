@@ -43,8 +43,6 @@ export type ConflictingEnvVar = (typeof CONFLICTING_ENV_VARS)[number];
 
 export const OPENCODE_CACHE_PATH = join(homedir(), '.cache', 'opencode', 'models.json');
 
-export const MODELS_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
-
 /** Max models in favorites list and mid-session /model switch catalog. */
 export const MAX_MODEL_CATALOG = 20;
 
