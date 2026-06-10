@@ -143,6 +143,16 @@ export async function runProvidersImport(): Promise<number> {
     + `${result.keysSaved} key${result.keysSaved === 1 ? '' : 's'} saved to Keychain.`,
   );
 
+  if (result.keysSkipped.length > 0) {
+    for (const k of result.keysSkipped) {
+      const label =
+        k.reason === 'placeholder-key' ? 'placeholder key not saved'
+        : k.reason === 'untested-manual' ? 'key not saved (non-API auth)'
+        : 'API key not saved (failed verification)';
+      p.log.warn(`${k.name} (${k.id}): ${label}${k.detail ? ` — ${k.detail}` : ''}`);
+    }
+  }
+
   if (result.skipped.length > 0) {
     for (const s of result.skipped) {
       const reason =

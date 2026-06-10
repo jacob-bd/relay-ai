@@ -1304,6 +1304,737 @@ function saveRegistry(registry, path = getProvidersPath()) {
   renameSync2(tmp, path);
 }
 
+// src/registry/fetch-template-models.ts
+var TEST_TIMEOUT_MS = 1e4;
+function modelFormatForNpm(npm) {
+  return npm === "@ai-sdk/anthropic" ? "anthropic" : "openai";
+}
+function modelsUrl(baseUrl) {
+  const trimmed = baseUrl.replace(/\/$/, "");
+  if (trimmed.endsWith("/v1")) return `${trimmed}/models`;
+  return `${trimmed}/v1/models`;
+}
+function parseModelList(body, npm) {
+  const rows = body.data ?? body.models ?? [];
+  const format = modelFormatForNpm(npm);
+  const models = [];
+  for (const row of rows) {
+    const id = row.id?.trim();
+    if (!id) continue;
+    const family = id.split(/[-/:]/)[0] ?? id;
+    models.push({
+      id,
+      name: row.name?.trim() || id,
+      upstreamModelId: id,
+      family,
+      brand: deriveBrand(family),
+      contextWindow: resolveContextWindow(id),
+      modelFormat: format,
+      npm
+    });
+  }
+  return models;
+}
+async function fetchTemplateModels(template, apiKey, baseUrlOverride) {
+  const trimmedOverride = baseUrlOverride?.trim();
+  const baseUrl = (trimmedOverride || template.defaultBaseUrl)?.replace(/\/$/, "");
+  if (!baseUrl) {
+    return {
+      models: [],
+      baseUrl: "",
+      error: "This provider needs a base URL.",
+      hint: "Use relay-ai providers import from OpenCode for advanced setups."
+    };
+  }
+  const url = modelsUrl(baseUrl);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json"
+      },
+      redirect: "manual",
+      signal: controller.signal
+    });
+    if (response.status >= 300 && response.status < 400) {
+      return {
+        models: [],
+        baseUrl,
+        error: "Provider redirected the connection test.",
+        hint: "Check the base URL \u2014 redirects are blocked for security."
+      };
+    }
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      const detail = body.slice(0, 200).trim();
+      if (response.status === 401 || response.status === 403) {
+        return {
+          models: [],
+          baseUrl,
+          error: "API key was rejected.",
+          hint: template.signupUrl ? `Get or verify your key at ${template.signupUrl}` : "Double-check the key you pasted."
+        };
+      }
+      return {
+        models: [],
+        baseUrl,
+        error: `Provider returned HTTP ${response.status}.`,
+        hint: detail || "Check your API key and try again."
+      };
+    }
+    const json = await response.json();
+    const models = parseModelList(json, template.npm);
+    if (models.length === 0) {
+      return {
+        models: [],
+        baseUrl,
+        error: "Connected but no models were returned.",
+        hint: "The API key may be valid but model listing is unavailable for this provider."
+      };
+    }
+    return { models, baseUrl };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const timedOut = message.includes("abort") || message.includes("Abort");
+    return {
+      models: [],
+      baseUrl,
+      error: timedOut ? "Connection timed out after 10 seconds." : "Could not reach the provider.",
+      hint: timedOut ? "Check your network or try again." : "Verify the provider is online and your API key is correct."
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// src/registry/url-security.ts
+import { lookup } from "dns/promises";
+var BLOCKED_HOSTNAMES = /* @__PURE__ */ new Set([
+  "169.254.169.254",
+  "metadata.google.internal",
+  "169.254.170.2",
+  "fd00:ec2::254",
+  "localhost"
+]);
+function ipv4ToInt(octets) {
+  return (octets[0] << 24 | octets[1] << 16 | octets[2] << 8 | octets[3]) >>> 0;
+}
+function parseIpv4(ip) {
+  const parts = ip.split(".");
+  if (parts.length !== 4) return null;
+  const octets = parts.map((p9) => Number(p9));
+  if (octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+  return octets;
+}
+function isBlockedIpv4(ip, allowInsecureLocal) {
+  const octets = parseIpv4(ip);
+  if (!octets) return true;
+  const n = ipv4ToInt(octets);
+  if (allowInsecureLocal && octets[0] === 127) return false;
+  if (octets[0] === 127) return true;
+  if (octets[0] === 10) return true;
+  if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) return true;
+  if (octets[0] === 192 && octets[1] === 168) return true;
+  if (octets[0] === 169 && octets[1] === 254) return true;
+  if (octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127) return true;
+  return false;
+}
+function expandIpv6(ip) {
+  const lower = ip.toLowerCase();
+  if (lower.includes("::ffff:")) {
+    const mapped = lower.split("::ffff:")[1];
+    if (mapped && parseIpv4(mapped)) return mapped;
+  }
+  return lower;
+}
+function isBlockedIpv6(ip, allowInsecureLocal) {
+  const lower = ip.toLowerCase();
+  const mapped = expandIpv6(lower);
+  if (mapped && mapped !== lower) {
+    return isBlockedIpv4(mapped, allowInsecureLocal);
+  }
+  if (allowInsecureLocal && (lower === "::1" || lower === "0:0:0:0:0:0:0:1")) return false;
+  if (lower === "::1" || lower === "0:0:0:0:0:0:0:1") return true;
+  if (lower.startsWith("fe80:")) return true;
+  if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
+  return false;
+}
+function isBlockedIp(ip, allowInsecureLocal) {
+  if (ip.includes(":")) return isBlockedIpv6(ip, allowInsecureLocal);
+  return isBlockedIpv4(ip, allowInsecureLocal);
+}
+async function resolveHostAddresses(hostname) {
+  if (parseIpv4(hostname)) return [hostname];
+  try {
+    const records = await lookup(hostname, { all: true, verbatim: true });
+    return records.map((r) => r.address);
+  } catch {
+    return [];
+  }
+}
+async function validateCustomEndpointUrl(rawUrl, opts = {}) {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) {
+    return { ok: false, error: "Base URL is required.", hint: "Example: https://api.example.com/v1" };
+  }
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return { ok: false, error: "Invalid URL.", hint: "Include https:// and the full base path." };
+  }
+  const allowLocal = opts.allowInsecureLocal === true;
+  const hostname = parsed.hostname.toLowerCase();
+  if (BLOCKED_HOSTNAMES.has(hostname)) {
+    return {
+      ok: false,
+      error: "This URL points to a blocked internal/metadata host.",
+      hint: "Use a public API endpoint for your provider."
+    };
+  }
+  if (parsed.protocol === "http:") {
+    if (!allowLocal) {
+      return {
+        ok: false,
+        error: "Only HTTPS URLs are allowed.",
+        hint: "For local servers (Ollama, LM Studio), enable \u201CAllow local HTTP\u201D."
+      };
+    }
+    if (hostname !== "127.0.0.1" && hostname !== "localhost" && hostname !== "::1") {
+      return {
+        ok: false,
+        error: "HTTP is only allowed for localhost.",
+        hint: "Use https:// for remote servers, or http://127.0.0.1 for local ones."
+      };
+    }
+  } else if (parsed.protocol !== "https:") {
+    return { ok: false, error: "URL must use https:// (or http://localhost when local is allowed)." };
+  }
+  const addresses = await resolveHostAddresses(hostname);
+  if (addresses.length === 0) {
+    return {
+      ok: false,
+      error: `Could not resolve hostname: ${hostname}`,
+      hint: "Check the URL spelling and your network connection."
+    };
+  }
+  for (const addr of addresses) {
+    if (isBlockedIp(addr, allowLocal)) {
+      return {
+        ok: false,
+        error: "URL resolves to a private or restricted network address.",
+        hint: "Custom providers must use publicly reachable API endpoints (unless localhost with local HTTP enabled)."
+      };
+    }
+  }
+  const normalizedUrl = `${parsed.protocol}//${parsed.host}${parsed.pathname}`.replace(/\/$/, "");
+  return { ok: true, normalizedUrl };
+}
+
+// src/registry/custom-endpoint.ts
+function npmForKind(kind) {
+  return kind === "anthropic" ? "@ai-sdk/anthropic" : "@ai-sdk/openai-compatible";
+}
+function modelFormatForKind(kind) {
+  return kind === "anthropic" ? "anthropic" : "openai";
+}
+async function fetchAnthropicModels(baseUrl, apiKey) {
+  const root = baseUrl.replace(/\/v1\/?$/, "").replace(/\/$/, "");
+  const modelsUrl2 = `${root}/v1/models`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1e4);
+  try {
+    const response = await fetch(modelsUrl2, {
+      method: "GET",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        Accept: "application/json"
+      },
+      redirect: "manual",
+      signal: controller.signal
+    });
+    if (response.ok) {
+      const json = await response.json();
+      const models = [];
+      for (const row of json.data ?? []) {
+        const id = row.id?.trim();
+        if (!id) continue;
+        models.push({
+          id,
+          name: row.name?.trim() || id,
+          upstreamModelId: id,
+          family: id.split("-")[0] ?? id,
+          brand: deriveBrand(id),
+          contextWindow: resolveContextWindow(id),
+          modelFormat: "anthropic",
+          npm: "@ai-sdk/anthropic",
+          apiUrl: root
+        });
+      }
+      if (models.length > 0) return { models, baseUrl: root };
+    }
+    if (response.status === 401 || response.status === 403) {
+      return { models: [], baseUrl: root, error: "API key was rejected.", hint: "Check your Anthropic-compatible API key." };
+    }
+    return {
+      models: [],
+      baseUrl: root,
+      error: `Could not list models (HTTP ${response.status}).`,
+      hint: "Verify the base URL supports Anthropic-compatible /v1/models or try the OpenAI-compatible option instead."
+    };
+  } catch {
+    return {
+      models: [],
+      baseUrl: root,
+      error: "Could not reach the Anthropic-compatible server.",
+      hint: "Check the base URL and that the server is running."
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function uniqueProviderId(displayName, registry) {
+  let base = customProviderId(displayName);
+  if (!base.startsWith("custom-")) base = `custom-${slugifyProviderId(displayName)}`;
+  if (!isValidProviderId(base)) base = "custom-provider";
+  if (!registry.providers.some((p9) => p9.id === base)) return base;
+  for (let i = 2; i < 100; i++) {
+    const candidate = `${base}-${i}`;
+    if (isValidProviderId(candidate) && !registry.providers.some((p9) => p9.id === candidate)) {
+      return candidate;
+    }
+  }
+  return `${base}-${Date.now()}`;
+}
+async function addCustomEndpointProvider(input) {
+  const urlCheck = await validateCustomEndpointUrl(input.baseUrl, {
+    allowInsecureLocal: input.allowInsecureLocal
+  });
+  if (!urlCheck.ok || !urlCheck.normalizedUrl) {
+    return { added: false, error: urlCheck.error, hint: urlCheck.hint };
+  }
+  const registry = loadRegistry();
+  const providerId = uniqueProviderId(input.displayName.trim(), registry);
+  const npm = npmForKind(input.kind);
+  const apiKey = input.apiKey.trim() || "local";
+  let fetched;
+  if (input.kind === "anthropic") {
+    fetched = await fetchAnthropicModels(urlCheck.normalizedUrl, apiKey);
+  } else {
+    fetched = await fetchTemplateModels(
+      {
+        id: providerId,
+        name: input.displayName,
+        authType: apiKey === "local" ? "none" : "api",
+        npm,
+        defaultBaseUrl: urlCheck.normalizedUrl,
+        modelSource: "api-list",
+        supported: true
+      },
+      apiKey,
+      urlCheck.normalizedUrl
+    );
+  }
+  if (fetched.error || fetched.models.length === 0) {
+    return { added: false, error: fetched.error ?? "No models returned.", hint: fetched.hint };
+  }
+  if (apiKey !== "local") {
+    const saved = await saveProviderCredential(`keyring:provider:${providerId}`, apiKey);
+    if (!saved) {
+      return { added: false, error: "Could not save API key to Keychain.", hint: "Grant Keychain access and try again." };
+    }
+  }
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const entry = {
+    id: providerId,
+    templateId: input.kind === "anthropic" ? "custom-anthropic" : "custom-openai",
+    name: input.displayName.trim(),
+    enabled: true,
+    authRef: apiKey === "local" ? `keyring:provider:${providerId}` : `keyring:provider:${providerId}`,
+    api: { npm, url: fetched.baseUrl },
+    addedAt: now,
+    refreshedAt: now,
+    modelsCache: {
+      fetchedAt: now,
+      models: fetched.models.map((m) => ({
+        ...m,
+        modelFormat: modelFormatForKind(input.kind),
+        npm,
+        apiUrl: fetched.baseUrl
+      }))
+    }
+  };
+  if (apiKey === "local") {
+    await saveProviderCredential(entry.authRef, "local");
+  }
+  registry.providers.push(entry);
+  saveRegistry(registry);
+  return { added: true, provider: entry, modelCount: fetched.models.length };
+}
+
+// src/registry/refresh-credentials.ts
+var PLACEHOLDER_KEYS = /* @__PURE__ */ new Set([
+  "anything",
+  "local",
+  "ollama",
+  "none",
+  "n/a",
+  "na",
+  "placeholder",
+  "test",
+  "no-key"
+]);
+var ENV_FALLBACK_BY_PROVIDER = {
+  anthropic: ["ANTHROPIC_API_KEY"],
+  openai: ["OPENAI_API_KEY"]
+};
+function isPlaceholderProviderKey(key) {
+  if (!key?.trim()) return true;
+  return PLACEHOLDER_KEYS.has(key.trim().toLowerCase());
+}
+function isLikelyPlaceholderKey(key) {
+  if (isPlaceholderProviderKey(key)) return true;
+  const trimmed = key?.trim() ?? "";
+  if (trimmed.length <= 2) return true;
+  return false;
+}
+function cachedModelCount(provider) {
+  return provider.modelsCache?.models.length ?? 0;
+}
+function skipWithCachedModels(provider, reason) {
+  const count = cachedModelCount(provider);
+  return {
+    id: provider.id,
+    name: provider.name,
+    ok: true,
+    skipped: true,
+    modelCount: count > 0 ? count : void 0,
+    reason
+  };
+}
+async function resolveRefreshCredential(provider, resolveKey) {
+  let key = await resolveKey(provider);
+  if (!isLikelyPlaceholderKey(key)) return key;
+  for (const envVar of ENV_FALLBACK_BY_PROVIDER[provider.id] ?? []) {
+    const fromEnv = process.env[envVar]?.trim();
+    if (fromEnv && !isLikelyPlaceholderKey(fromEnv)) return fromEnv;
+  }
+  return key;
+}
+
+// src/provider-templates.ts
+var PROVIDER_TEMPLATES = [
+  {
+    id: "groq",
+    name: "Groq",
+    authType: "api",
+    npm: "@ai-sdk/groq",
+    defaultBaseUrl: "https://api.groq.com/openai/v1",
+    signupUrl: "https://console.groq.com/keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "mistral",
+    name: "Mistral",
+    authType: "api",
+    npm: "@ai-sdk/mistral",
+    defaultBaseUrl: "https://api.mistral.ai/v1",
+    signupUrl: "https://console.mistral.ai/api-keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "togetherai",
+    name: "Together AI",
+    authType: "api",
+    npm: "@ai-sdk/togetherai",
+    defaultBaseUrl: "https://api.together.xyz/v1",
+    signupUrl: "https://api.together.xyz/settings/api-keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "cerebras",
+    name: "Cerebras",
+    authType: "api",
+    npm: "@ai-sdk/cerebras",
+    defaultBaseUrl: "https://api.cerebras.ai/v1",
+    signupUrl: "https://cloud.cerebras.ai",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "deepinfra",
+    name: "DeepInfra",
+    authType: "api",
+    npm: "@ai-sdk/deepinfra",
+    defaultBaseUrl: "https://api.deepinfra.com/v1/openai",
+    signupUrl: "https://deepinfra.com/dash/api_keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "xai",
+    name: "xAI",
+    authType: "api",
+    npm: "@ai-sdk/xai",
+    defaultBaseUrl: "https://api.x.ai/v1",
+    signupUrl: "https://console.x.ai",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "perplexity",
+    name: "Perplexity",
+    authType: "api",
+    npm: "@ai-sdk/perplexity",
+    defaultBaseUrl: "https://api.perplexity.ai",
+    signupUrl: "https://www.perplexity.ai/settings/api",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "cohere",
+    name: "Cohere",
+    authType: "api",
+    npm: "@ai-sdk/cohere",
+    defaultBaseUrl: "https://api.cohere.com/compatibility/v1",
+    signupUrl: "https://dashboard.cohere.com/api-keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "openai",
+    name: "OpenAI",
+    authType: "api",
+    npm: "@ai-sdk/openai",
+    defaultBaseUrl: "https://api.openai.com/v1",
+    signupUrl: "https://platform.openai.com/api-keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "google",
+    name: "Google Gemini",
+    authType: "api",
+    npm: "@ai-sdk/google",
+    defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    signupUrl: "https://aistudio.google.com/apikey",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "alibaba",
+    name: "Alibaba DashScope",
+    authType: "api",
+    npm: "@ai-sdk/alibaba",
+    defaultBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    signupUrl: "https://dashscope.console.aliyun.com/apiKey",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    authType: "api",
+    npm: "@openrouter/ai-sdk-provider",
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    signupUrl: "https://openrouter.ai/keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "venice",
+    name: "Venice AI",
+    authType: "api",
+    npm: "venice-ai-sdk-provider",
+    defaultBaseUrl: "https://api.venice.ai/api/v1",
+    signupUrl: "https://venice.ai/settings/api",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    authType: "api",
+    npm: "@ai-sdk/anthropic",
+    defaultBaseUrl: "https://api.anthropic.com",
+    signupUrl: "https://console.anthropic.com/settings/keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "bedrock",
+    name: "Amazon Bedrock",
+    authType: "api",
+    npm: "@ai-sdk/amazon-bedrock",
+    modelSource: "manual-only",
+    supported: false,
+    unsupportedReason: "Requires AWS credentials \u2014 use relay-ai providers import from OpenCode for now."
+  },
+  {
+    id: "azure",
+    name: "Azure OpenAI",
+    authType: "api",
+    npm: "@ai-sdk/azure",
+    modelSource: "manual-only",
+    supported: false,
+    unsupportedReason: "Requires Azure deployment URLs \u2014 use relay-ai providers import from OpenCode for now."
+  },
+  {
+    id: "vertex",
+    name: "Google Vertex AI",
+    authType: "none",
+    npm: "@ai-sdk/google-vertex",
+    modelSource: "manual-only",
+    supported: false,
+    unsupportedReason: "Uses gcloud Application Default Credentials \u2014 use relay-ai server --vertex instead."
+  }
+];
+function listSupportedTemplates() {
+  return PROVIDER_TEMPLATES.filter((t) => t.supported && t.authType === "api");
+}
+function listAddableTemplates(configuredIds = []) {
+  const configured = new Set(configuredIds);
+  return listSupportedTemplates().filter((t) => !configured.has(t.id));
+}
+function getTemplateById(id) {
+  return PROVIDER_TEMPLATES.find((t) => t.id === id);
+}
+function filterTemplates(templates, query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return templates;
+  return templates.filter(
+    (t) => t.id.toLowerCase().includes(q) || t.name.toLowerCase().includes(q) || t.npm.toLowerCase().includes(q)
+  );
+}
+
+// src/registry/resolve-template.ts
+var TEMPLATE_ID_ALIASES = {
+  "google-vertex": "vertex"
+};
+var NPM_DEFAULT_BASE_URL = {
+  "@ai-sdk/anthropic": "https://api.anthropic.com"
+};
+function resolveProviderTemplate(provider) {
+  const candidates = [
+    TEMPLATE_ID_ALIASES[provider.templateId],
+    provider.templateId,
+    TEMPLATE_ID_ALIASES[provider.id],
+    provider.id
+  ].filter(Boolean);
+  for (const id of candidates) {
+    const template = getTemplateById(id);
+    if (template) return template;
+  }
+  return void 0;
+}
+function effectiveProviderBaseUrl(provider, template) {
+  const fromRegistry = provider.api.url?.trim();
+  if (fromRegistry) return fromRegistry;
+  if (template?.defaultBaseUrl?.trim()) return template.defaultBaseUrl.trim();
+  const npm = provider.api.npm?.trim();
+  if (npm && NPM_DEFAULT_BASE_URL[npm]) return NPM_DEFAULT_BASE_URL[npm];
+  return void 0;
+}
+function syntheticTemplate(provider, baseUrl) {
+  const npm = provider.api.npm ?? "@ai-sdk/openai-compatible";
+  return {
+    id: provider.id,
+    name: provider.name,
+    authType: "api",
+    npm,
+    defaultBaseUrl: baseUrl,
+    modelSource: "api-list",
+    supported: true
+  };
+}
+
+// src/registry/model-source.ts
+var MANUAL_ONLY_TEMPLATE_IDS = /* @__PURE__ */ new Set(["vertex", "bedrock", "azure"]);
+var MANUAL_ONLY_PROVIDER_IDS = /* @__PURE__ */ new Set(["google-vertex", "vertex", "bedrock", "azure"]);
+var MANUAL_ONLY_NPMS = /* @__PURE__ */ new Set([
+  "@ai-sdk/google-vertex",
+  "@ai-sdk/amazon-bedrock",
+  "@ai-sdk/azure"
+]);
+function resolveModelSource(provider) {
+  if (provider.id === "zen" || provider.id === "go" || provider.templateId === "zen" || provider.templateId === "go") {
+    return "zen-go-api";
+  }
+  if (MANUAL_ONLY_PROVIDER_IDS.has(provider.id) || MANUAL_ONLY_PROVIDER_IDS.has(provider.templateId) || MANUAL_ONLY_TEMPLATE_IDS.has(provider.templateId) || provider.api.npm && MANUAL_ONLY_NPMS.has(provider.api.npm)) {
+    return "manual-only";
+  }
+  const template = resolveProviderTemplate(provider) ?? getTemplateById(provider.templateId);
+  if (template) return template.modelSource;
+  if (provider.templateId === "custom-openai" || provider.templateId === "custom-anthropic") {
+    return "api-list";
+  }
+  return "api-list";
+}
+
+// src/registry/validate-import-key.ts
+async function validateImportKey(lp, entry) {
+  const key = lp.apiKey?.trim() ?? "";
+  if (!key) {
+    return { shouldSaveKey: false, reason: "invalid-key", detail: "No API key in OpenCode config." };
+  }
+  if (isLikelyPlaceholderKey(key)) {
+    return {
+      shouldSaveKey: false,
+      reason: "placeholder-key",
+      detail: 'OpenCode has a placeholder key (e.g. "anything") \u2014 not saved to Keychain.'
+    };
+  }
+  const source = resolveModelSource(entry);
+  if (source === "manual-only") {
+    return {
+      shouldSaveKey: false,
+      reason: "untested-manual",
+      detail: "Provider uses gcloud/AWS/Azure auth \u2014 API key not stored by relay-ai."
+    };
+  }
+  if (source === "zen-go-api") {
+    return { shouldSaveKey: true };
+  }
+  const npm = entry.api.npm ?? lp.models[0]?.npm ?? "@ai-sdk/openai-compatible";
+  const catalogTemplate = resolveProviderTemplate(entry);
+  const baseUrl = effectiveProviderBaseUrl(entry, catalogTemplate);
+  if (!baseUrl) {
+    return {
+      shouldSaveKey: false,
+      reason: "invalid-key",
+      detail: "No API base URL \u2014 cannot verify key."
+    };
+  }
+  if (npm === "@ai-sdk/anthropic") {
+    const result2 = await fetchAnthropicModels(baseUrl, key);
+    if (result2.error) {
+      return {
+        shouldSaveKey: false,
+        reason: "invalid-key",
+        detail: result2.error
+      };
+    }
+    return { shouldSaveKey: true };
+  }
+  const template = catalogTemplate ?? syntheticTemplate(entry, baseUrl);
+  const result = await fetchTemplateModels(template, key, baseUrl);
+  if (result.error) {
+    return {
+      shouldSaveKey: false,
+      reason: "invalid-key",
+      detail: result.error
+    };
+  }
+  return { shouldSaveKey: true };
+}
+
 // src/registry/import-opencode.ts
 async function saveProviderKey(provider) {
   if (!provider.apiKey?.trim()) return false;
@@ -1322,6 +2053,7 @@ async function importFromOpencode(options = {}) {
     return {
       imported: [],
       skipped: [],
+      keysSkipped: [],
       keysSaved: 0,
       error: "OpenCode CLI not found or failed to start. Install from https://opencode.ai"
     };
@@ -1329,6 +2061,7 @@ async function importFromOpencode(options = {}) {
   const registry = loadRegistry();
   const imported = [];
   const skipped = [];
+  const keysSkipped = [];
   let keysSaved = 0;
   for (const lp of fetched) {
     if (!lp.models.length) {
@@ -1369,11 +2102,22 @@ async function importFromOpencode(options = {}) {
       registry.providers.push(entry);
     }
     imported.push(entry);
-    if (await saveProviderKey(lp)) keysSaved += 1;
+    const keyCheck = await validateImportKey(lp, entry);
+    if (keyCheck.shouldSaveKey) {
+      if (await saveProviderKey(lp)) keysSaved += 1;
+    } else if (keyCheck.reason) {
+      keysSkipped.push({
+        id: lp.id,
+        name: lp.name,
+        reason: keyCheck.reason,
+        detail: keyCheck.detail
+      });
+      await deleteProviderCredential(entry.authRef);
+    }
   }
   registry.importedAt = (/* @__PURE__ */ new Date()).toISOString();
   saveRegistry(registry);
-  return { imported, skipped, keysSaved };
+  return { imported, skipped, keysSkipped, keysSaved };
 }
 
 // src/first-run.ts
@@ -3777,300 +4521,6 @@ function removeFavorite(list, fav) {
 import pc6 from "picocolors";
 import * as p7 from "@clack/prompts";
 
-// src/provider-templates.ts
-var PROVIDER_TEMPLATES = [
-  {
-    id: "groq",
-    name: "Groq",
-    authType: "api",
-    npm: "@ai-sdk/groq",
-    defaultBaseUrl: "https://api.groq.com/openai/v1",
-    signupUrl: "https://console.groq.com/keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "mistral",
-    name: "Mistral",
-    authType: "api",
-    npm: "@ai-sdk/mistral",
-    defaultBaseUrl: "https://api.mistral.ai/v1",
-    signupUrl: "https://console.mistral.ai/api-keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "togetherai",
-    name: "Together AI",
-    authType: "api",
-    npm: "@ai-sdk/togetherai",
-    defaultBaseUrl: "https://api.together.xyz/v1",
-    signupUrl: "https://api.together.xyz/settings/api-keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "cerebras",
-    name: "Cerebras",
-    authType: "api",
-    npm: "@ai-sdk/cerebras",
-    defaultBaseUrl: "https://api.cerebras.ai/v1",
-    signupUrl: "https://cloud.cerebras.ai",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "deepinfra",
-    name: "DeepInfra",
-    authType: "api",
-    npm: "@ai-sdk/deepinfra",
-    defaultBaseUrl: "https://api.deepinfra.com/v1/openai",
-    signupUrl: "https://deepinfra.com/dash/api_keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "xai",
-    name: "xAI",
-    authType: "api",
-    npm: "@ai-sdk/xai",
-    defaultBaseUrl: "https://api.x.ai/v1",
-    signupUrl: "https://console.x.ai",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "perplexity",
-    name: "Perplexity",
-    authType: "api",
-    npm: "@ai-sdk/perplexity",
-    defaultBaseUrl: "https://api.perplexity.ai",
-    signupUrl: "https://www.perplexity.ai/settings/api",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "cohere",
-    name: "Cohere",
-    authType: "api",
-    npm: "@ai-sdk/cohere",
-    defaultBaseUrl: "https://api.cohere.com/compatibility/v1",
-    signupUrl: "https://dashboard.cohere.com/api-keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "openai",
-    name: "OpenAI",
-    authType: "api",
-    npm: "@ai-sdk/openai",
-    defaultBaseUrl: "https://api.openai.com/v1",
-    signupUrl: "https://platform.openai.com/api-keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "google",
-    name: "Google Gemini",
-    authType: "api",
-    npm: "@ai-sdk/google",
-    defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    signupUrl: "https://aistudio.google.com/apikey",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "alibaba",
-    name: "Alibaba DashScope",
-    authType: "api",
-    npm: "@ai-sdk/alibaba",
-    defaultBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    signupUrl: "https://dashscope.console.aliyun.com/apiKey",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "openrouter",
-    name: "OpenRouter",
-    authType: "api",
-    npm: "@openrouter/ai-sdk-provider",
-    defaultBaseUrl: "https://openrouter.ai/api/v1",
-    signupUrl: "https://openrouter.ai/keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "venice",
-    name: "Venice AI",
-    authType: "api",
-    npm: "venice-ai-sdk-provider",
-    defaultBaseUrl: "https://api.venice.ai/api/v1",
-    signupUrl: "https://venice.ai/settings/api",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "anthropic",
-    name: "Anthropic",
-    authType: "api",
-    npm: "@ai-sdk/anthropic",
-    defaultBaseUrl: "https://api.anthropic.com",
-    signupUrl: "https://console.anthropic.com/settings/keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "bedrock",
-    name: "Amazon Bedrock",
-    authType: "api",
-    npm: "@ai-sdk/amazon-bedrock",
-    modelSource: "manual-only",
-    supported: false,
-    unsupportedReason: "Requires AWS credentials \u2014 use relay-ai providers import from OpenCode for now."
-  },
-  {
-    id: "azure",
-    name: "Azure OpenAI",
-    authType: "api",
-    npm: "@ai-sdk/azure",
-    modelSource: "manual-only",
-    supported: false,
-    unsupportedReason: "Requires Azure deployment URLs \u2014 use relay-ai providers import from OpenCode for now."
-  },
-  {
-    id: "vertex",
-    name: "Google Vertex AI",
-    authType: "none",
-    npm: "@ai-sdk/google-vertex",
-    modelSource: "manual-only",
-    supported: false,
-    unsupportedReason: "Uses gcloud Application Default Credentials \u2014 use relay-ai server --vertex instead."
-  }
-];
-function listSupportedTemplates() {
-  return PROVIDER_TEMPLATES.filter((t) => t.supported && t.authType === "api");
-}
-function listAddableTemplates(configuredIds = []) {
-  const configured = new Set(configuredIds);
-  return listSupportedTemplates().filter((t) => !configured.has(t.id));
-}
-function getTemplateById(id) {
-  return PROVIDER_TEMPLATES.find((t) => t.id === id);
-}
-function filterTemplates(templates, query) {
-  const q = query.trim().toLowerCase();
-  if (!q) return templates;
-  return templates.filter(
-    (t) => t.id.toLowerCase().includes(q) || t.name.toLowerCase().includes(q) || t.npm.toLowerCase().includes(q)
-  );
-}
-
-// src/registry/fetch-template-models.ts
-var TEST_TIMEOUT_MS = 1e4;
-function modelFormatForNpm(npm) {
-  return npm === "@ai-sdk/anthropic" ? "anthropic" : "openai";
-}
-function modelsUrl(baseUrl) {
-  const trimmed = baseUrl.replace(/\/$/, "");
-  if (trimmed.endsWith("/v1")) return `${trimmed}/models`;
-  return `${trimmed}/v1/models`;
-}
-function parseModelList(body, npm) {
-  const rows = body.data ?? body.models ?? [];
-  const format = modelFormatForNpm(npm);
-  const models = [];
-  for (const row of rows) {
-    const id = row.id?.trim();
-    if (!id) continue;
-    const family = id.split(/[-/:]/)[0] ?? id;
-    models.push({
-      id,
-      name: row.name?.trim() || id,
-      upstreamModelId: id,
-      family,
-      brand: deriveBrand(family),
-      contextWindow: resolveContextWindow(id),
-      modelFormat: format,
-      npm
-    });
-  }
-  return models;
-}
-async function fetchTemplateModels(template, apiKey, baseUrlOverride) {
-  const trimmedOverride = baseUrlOverride?.trim();
-  const baseUrl = (trimmedOverride || template.defaultBaseUrl)?.replace(/\/$/, "");
-  if (!baseUrl) {
-    return {
-      models: [],
-      baseUrl: "",
-      error: "This provider needs a base URL.",
-      hint: "Use relay-ai providers import from OpenCode for advanced setups."
-    };
-  }
-  const url = modelsUrl(baseUrl);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        Accept: "application/json"
-      },
-      redirect: "manual",
-      signal: controller.signal
-    });
-    if (response.status >= 300 && response.status < 400) {
-      return {
-        models: [],
-        baseUrl,
-        error: "Provider redirected the connection test.",
-        hint: "Check the base URL \u2014 redirects are blocked for security."
-      };
-    }
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      const detail = body.slice(0, 200).trim();
-      if (response.status === 401 || response.status === 403) {
-        return {
-          models: [],
-          baseUrl,
-          error: "API key was rejected.",
-          hint: template.signupUrl ? `Get or verify your key at ${template.signupUrl}` : "Double-check the key you pasted."
-        };
-      }
-      return {
-        models: [],
-        baseUrl,
-        error: `Provider returned HTTP ${response.status}.`,
-        hint: detail || "Check your API key and try again."
-      };
-    }
-    const json = await response.json();
-    const models = parseModelList(json, template.npm);
-    if (models.length === 0) {
-      return {
-        models: [],
-        baseUrl,
-        error: "Connected but no models were returned.",
-        hint: "The API key may be valid but model listing is unavailable for this provider."
-      };
-    }
-    return { models, baseUrl };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const timedOut = message.includes("abort") || message.includes("Abort");
-    return {
-      models: [],
-      baseUrl,
-      error: timedOut ? "Connection timed out after 10 seconds." : "Could not reach the provider.",
-      hint: timedOut ? "Check your network or try again." : "Verify the provider is online and your API key is correct."
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 // src/registry/pricing.ts
 import {
   chmodSync as chmodSync3,
@@ -4391,272 +4841,6 @@ async function addProviderFromTemplate(template, apiKey, opts) {
   return { added: true, provider: entry, modelCount: fetched.models.length };
 }
 
-// src/registry/url-security.ts
-import { lookup } from "dns/promises";
-var BLOCKED_HOSTNAMES = /* @__PURE__ */ new Set([
-  "169.254.169.254",
-  "metadata.google.internal",
-  "169.254.170.2",
-  "fd00:ec2::254",
-  "localhost"
-]);
-function ipv4ToInt(octets) {
-  return (octets[0] << 24 | octets[1] << 16 | octets[2] << 8 | octets[3]) >>> 0;
-}
-function parseIpv4(ip) {
-  const parts = ip.split(".");
-  if (parts.length !== 4) return null;
-  const octets = parts.map((p9) => Number(p9));
-  if (octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
-  return octets;
-}
-function isBlockedIpv4(ip, allowInsecureLocal) {
-  const octets = parseIpv4(ip);
-  if (!octets) return true;
-  const n = ipv4ToInt(octets);
-  if (allowInsecureLocal && octets[0] === 127) return false;
-  if (octets[0] === 127) return true;
-  if (octets[0] === 10) return true;
-  if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) return true;
-  if (octets[0] === 192 && octets[1] === 168) return true;
-  if (octets[0] === 169 && octets[1] === 254) return true;
-  if (octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127) return true;
-  return false;
-}
-function expandIpv6(ip) {
-  const lower = ip.toLowerCase();
-  if (lower.includes("::ffff:")) {
-    const mapped = lower.split("::ffff:")[1];
-    if (mapped && parseIpv4(mapped)) return mapped;
-  }
-  return lower;
-}
-function isBlockedIpv6(ip, allowInsecureLocal) {
-  const lower = ip.toLowerCase();
-  const mapped = expandIpv6(lower);
-  if (mapped && mapped !== lower) {
-    return isBlockedIpv4(mapped, allowInsecureLocal);
-  }
-  if (allowInsecureLocal && (lower === "::1" || lower === "0:0:0:0:0:0:0:1")) return false;
-  if (lower === "::1" || lower === "0:0:0:0:0:0:0:1") return true;
-  if (lower.startsWith("fe80:")) return true;
-  if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
-  return false;
-}
-function isBlockedIp(ip, allowInsecureLocal) {
-  if (ip.includes(":")) return isBlockedIpv6(ip, allowInsecureLocal);
-  return isBlockedIpv4(ip, allowInsecureLocal);
-}
-async function resolveHostAddresses(hostname) {
-  if (parseIpv4(hostname)) return [hostname];
-  try {
-    const records = await lookup(hostname, { all: true, verbatim: true });
-    return records.map((r) => r.address);
-  } catch {
-    return [];
-  }
-}
-async function validateCustomEndpointUrl(rawUrl, opts = {}) {
-  const trimmed = rawUrl.trim();
-  if (!trimmed) {
-    return { ok: false, error: "Base URL is required.", hint: "Example: https://api.example.com/v1" };
-  }
-  let parsed;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    return { ok: false, error: "Invalid URL.", hint: "Include https:// and the full base path." };
-  }
-  const allowLocal = opts.allowInsecureLocal === true;
-  const hostname = parsed.hostname.toLowerCase();
-  if (BLOCKED_HOSTNAMES.has(hostname)) {
-    return {
-      ok: false,
-      error: "This URL points to a blocked internal/metadata host.",
-      hint: "Use a public API endpoint for your provider."
-    };
-  }
-  if (parsed.protocol === "http:") {
-    if (!allowLocal) {
-      return {
-        ok: false,
-        error: "Only HTTPS URLs are allowed.",
-        hint: "For local servers (Ollama, LM Studio), enable \u201CAllow local HTTP\u201D."
-      };
-    }
-    if (hostname !== "127.0.0.1" && hostname !== "localhost" && hostname !== "::1") {
-      return {
-        ok: false,
-        error: "HTTP is only allowed for localhost.",
-        hint: "Use https:// for remote servers, or http://127.0.0.1 for local ones."
-      };
-    }
-  } else if (parsed.protocol !== "https:") {
-    return { ok: false, error: "URL must use https:// (or http://localhost when local is allowed)." };
-  }
-  const addresses = await resolveHostAddresses(hostname);
-  if (addresses.length === 0) {
-    return {
-      ok: false,
-      error: `Could not resolve hostname: ${hostname}`,
-      hint: "Check the URL spelling and your network connection."
-    };
-  }
-  for (const addr of addresses) {
-    if (isBlockedIp(addr, allowLocal)) {
-      return {
-        ok: false,
-        error: "URL resolves to a private or restricted network address.",
-        hint: "Custom providers must use publicly reachable API endpoints (unless localhost with local HTTP enabled)."
-      };
-    }
-  }
-  const normalizedUrl = `${parsed.protocol}//${parsed.host}${parsed.pathname}`.replace(/\/$/, "");
-  return { ok: true, normalizedUrl };
-}
-
-// src/registry/custom-endpoint.ts
-function npmForKind(kind) {
-  return kind === "anthropic" ? "@ai-sdk/anthropic" : "@ai-sdk/openai-compatible";
-}
-function modelFormatForKind(kind) {
-  return kind === "anthropic" ? "anthropic" : "openai";
-}
-async function fetchAnthropicModels(baseUrl, apiKey) {
-  const root = baseUrl.replace(/\/v1\/?$/, "").replace(/\/$/, "");
-  const modelsUrl2 = `${root}/v1/models`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1e4);
-  try {
-    const response = await fetch(modelsUrl2, {
-      method: "GET",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        Accept: "application/json"
-      },
-      redirect: "manual",
-      signal: controller.signal
-    });
-    if (response.ok) {
-      const json = await response.json();
-      const models = [];
-      for (const row of json.data ?? []) {
-        const id = row.id?.trim();
-        if (!id) continue;
-        models.push({
-          id,
-          name: row.name?.trim() || id,
-          upstreamModelId: id,
-          family: id.split("-")[0] ?? id,
-          brand: deriveBrand(id),
-          contextWindow: resolveContextWindow(id),
-          modelFormat: "anthropic",
-          npm: "@ai-sdk/anthropic",
-          apiUrl: root
-        });
-      }
-      if (models.length > 0) return { models, baseUrl: root };
-    }
-    if (response.status === 401 || response.status === 403) {
-      return { models: [], baseUrl: root, error: "API key was rejected.", hint: "Check your Anthropic-compatible API key." };
-    }
-    return {
-      models: [],
-      baseUrl: root,
-      error: `Could not list models (HTTP ${response.status}).`,
-      hint: "Verify the base URL supports Anthropic-compatible /v1/models or try the OpenAI-compatible option instead."
-    };
-  } catch {
-    return {
-      models: [],
-      baseUrl: root,
-      error: "Could not reach the Anthropic-compatible server.",
-      hint: "Check the base URL and that the server is running."
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-function uniqueProviderId(displayName, registry) {
-  let base = customProviderId(displayName);
-  if (!base.startsWith("custom-")) base = `custom-${slugifyProviderId(displayName)}`;
-  if (!isValidProviderId(base)) base = "custom-provider";
-  if (!registry.providers.some((p9) => p9.id === base)) return base;
-  for (let i = 2; i < 100; i++) {
-    const candidate = `${base}-${i}`;
-    if (isValidProviderId(candidate) && !registry.providers.some((p9) => p9.id === candidate)) {
-      return candidate;
-    }
-  }
-  return `${base}-${Date.now()}`;
-}
-async function addCustomEndpointProvider(input) {
-  const urlCheck = await validateCustomEndpointUrl(input.baseUrl, {
-    allowInsecureLocal: input.allowInsecureLocal
-  });
-  if (!urlCheck.ok || !urlCheck.normalizedUrl) {
-    return { added: false, error: urlCheck.error, hint: urlCheck.hint };
-  }
-  const registry = loadRegistry();
-  const providerId = uniqueProviderId(input.displayName.trim(), registry);
-  const npm = npmForKind(input.kind);
-  const apiKey = input.apiKey.trim() || "local";
-  let fetched;
-  if (input.kind === "anthropic") {
-    fetched = await fetchAnthropicModels(urlCheck.normalizedUrl, apiKey);
-  } else {
-    fetched = await fetchTemplateModels(
-      {
-        id: providerId,
-        name: input.displayName,
-        authType: apiKey === "local" ? "none" : "api",
-        npm,
-        defaultBaseUrl: urlCheck.normalizedUrl,
-        modelSource: "api-list",
-        supported: true
-      },
-      apiKey,
-      urlCheck.normalizedUrl
-    );
-  }
-  if (fetched.error || fetched.models.length === 0) {
-    return { added: false, error: fetched.error ?? "No models returned.", hint: fetched.hint };
-  }
-  if (apiKey !== "local") {
-    const saved = await saveProviderCredential(`keyring:provider:${providerId}`, apiKey);
-    if (!saved) {
-      return { added: false, error: "Could not save API key to Keychain.", hint: "Grant Keychain access and try again." };
-    }
-  }
-  const now = (/* @__PURE__ */ new Date()).toISOString();
-  const entry = {
-    id: providerId,
-    templateId: input.kind === "anthropic" ? "custom-anthropic" : "custom-openai",
-    name: input.displayName.trim(),
-    enabled: true,
-    authRef: apiKey === "local" ? `keyring:provider:${providerId}` : `keyring:provider:${providerId}`,
-    api: { npm, url: fetched.baseUrl },
-    addedAt: now,
-    refreshedAt: now,
-    modelsCache: {
-      fetchedAt: now,
-      models: fetched.models.map((m) => ({
-        ...m,
-        modelFormat: modelFormatForKind(input.kind),
-        npm,
-        apiUrl: fetched.baseUrl
-      }))
-    }
-  };
-  if (apiKey === "local") {
-    await saveProviderCredential(entry.authRef, "local");
-  }
-  registry.providers.push(entry);
-  saveRegistry(registry);
-  return { added: true, provider: entry, modelCount: fetched.models.length };
-}
-
 // src/registry/crud.ts
 function credentialStillReferenced(authRef, remaining) {
   return remaining.some((p9) => p9.authRef === authRef);
@@ -4710,114 +4894,6 @@ function toggleProviderEnabled(id) {
   provider.enabled = !provider.enabled;
   saveRegistry(registry);
   return { toggled: true, enabled: provider.enabled };
-}
-
-// src/registry/resolve-template.ts
-var TEMPLATE_ID_ALIASES = {
-  "google-vertex": "vertex"
-};
-var NPM_DEFAULT_BASE_URL = {
-  "@ai-sdk/anthropic": "https://api.anthropic.com"
-};
-function resolveProviderTemplate(provider) {
-  const candidates = [
-    TEMPLATE_ID_ALIASES[provider.templateId],
-    provider.templateId,
-    TEMPLATE_ID_ALIASES[provider.id],
-    provider.id
-  ].filter(Boolean);
-  for (const id of candidates) {
-    const template = getTemplateById(id);
-    if (template) return template;
-  }
-  return void 0;
-}
-function effectiveProviderBaseUrl(provider, template) {
-  const fromRegistry = provider.api.url?.trim();
-  if (fromRegistry) return fromRegistry;
-  if (template?.defaultBaseUrl?.trim()) return template.defaultBaseUrl.trim();
-  const npm = provider.api.npm?.trim();
-  if (npm && NPM_DEFAULT_BASE_URL[npm]) return NPM_DEFAULT_BASE_URL[npm];
-  return void 0;
-}
-function syntheticTemplate(provider, baseUrl) {
-  const npm = provider.api.npm ?? "@ai-sdk/openai-compatible";
-  return {
-    id: provider.id,
-    name: provider.name,
-    authType: "api",
-    npm,
-    defaultBaseUrl: baseUrl,
-    modelSource: "api-list",
-    supported: true
-  };
-}
-
-// src/registry/model-source.ts
-var MANUAL_ONLY_TEMPLATE_IDS = /* @__PURE__ */ new Set(["vertex", "bedrock", "azure"]);
-var MANUAL_ONLY_PROVIDER_IDS = /* @__PURE__ */ new Set(["google-vertex", "vertex", "bedrock", "azure"]);
-var MANUAL_ONLY_NPMS = /* @__PURE__ */ new Set([
-  "@ai-sdk/google-vertex",
-  "@ai-sdk/amazon-bedrock",
-  "@ai-sdk/azure"
-]);
-function resolveModelSource(provider) {
-  if (provider.id === "zen" || provider.id === "go" || provider.templateId === "zen" || provider.templateId === "go") {
-    return "zen-go-api";
-  }
-  if (MANUAL_ONLY_PROVIDER_IDS.has(provider.id) || MANUAL_ONLY_PROVIDER_IDS.has(provider.templateId) || MANUAL_ONLY_TEMPLATE_IDS.has(provider.templateId) || provider.api.npm && MANUAL_ONLY_NPMS.has(provider.api.npm)) {
-    return "manual-only";
-  }
-  const template = resolveProviderTemplate(provider) ?? getTemplateById(provider.templateId);
-  if (template) return template.modelSource;
-  if (provider.templateId === "custom-openai" || provider.templateId === "custom-anthropic") {
-    return "api-list";
-  }
-  return "api-list";
-}
-
-// src/registry/refresh-credentials.ts
-var PLACEHOLDER_KEYS = /* @__PURE__ */ new Set([
-  "anything",
-  "local",
-  "ollama",
-  "none",
-  "n/a",
-  "na",
-  "placeholder",
-  "test",
-  "no-key"
-]);
-var ENV_FALLBACK_BY_PROVIDER = {
-  anthropic: ["ANTHROPIC_API_KEY"],
-  openai: ["OPENAI_API_KEY"]
-};
-function isPlaceholderProviderKey(key) {
-  if (!key?.trim()) return true;
-  return PLACEHOLDER_KEYS.has(key.trim().toLowerCase());
-}
-function cachedModelCount(provider) {
-  return provider.modelsCache?.models.length ?? 0;
-}
-function skipWithCachedModels(provider, reason) {
-  const count = cachedModelCount(provider);
-  return {
-    id: provider.id,
-    name: provider.name,
-    ok: true,
-    skipped: true,
-    modelCount: count > 0 ? count : void 0,
-    reason
-  };
-}
-async function resolveRefreshCredential(provider, resolveKey) {
-  let key = await resolveKey(provider);
-  if (!isPlaceholderProviderKey(key)) return key;
-  for (const envVar of ENV_FALLBACK_BY_PROVIDER[provider.id] ?? []) {
-    const fromEnv = process.env[envVar]?.trim();
-    if (fromEnv && !isPlaceholderProviderKey(fromEnv)) return fromEnv;
-  }
-  return key;
 }
 
 // src/registry/refresh-models.ts
@@ -4908,7 +4984,7 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
     if (source === "zen-go-api") {
       models = await refreshZenGoProvider(provider);
     } else {
-      if (isPlaceholderProviderKey(apiKey)) {
+      if (isLikelyPlaceholderKey(apiKey)) {
         if (cachedModelCount(provider) > 0) {
           return skipWithCachedModels(
             provider,
@@ -5073,6 +5149,12 @@ Imported: ${ctx.incomingKeyHint}`,
   p7.log.success(
     `Imported ${result.imported.length} provider${result.imported.length === 1 ? "" : "s"}, ${result.imported.reduce((n, pr) => n + (pr.modelsCache?.models.length ?? 0), 0)} models, ${result.keysSaved} key${result.keysSaved === 1 ? "" : "s"} saved to Keychain.`
   );
+  if (result.keysSkipped.length > 0) {
+    for (const k of result.keysSkipped) {
+      const label = k.reason === "placeholder-key" ? "placeholder key not saved" : k.reason === "untested-manual" ? "key not saved (non-API auth)" : "API key not saved (failed verification)";
+      p7.log.warn(`${k.name} (${k.id}): ${label}${k.detail ? ` \u2014 ${k.detail}` : ""}`);
+    }
+  }
   if (result.skipped.length > 0) {
     for (const s of result.skipped) {
       const reason = s.reason === "user-skipped" ? "skipped by you" : s.reason === "conflict-kept" ? "kept your existing config" : s.reason;

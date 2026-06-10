@@ -18,12 +18,7 @@ import {
   loadPricingCache,
   pricingPlatformForProvider,
 } from './pricing.js';
-import {
-  cachedModelCount,
-  isPlaceholderProviderKey,
-  resolveRefreshCredential,
-  skipWithCachedModels,
-} from './refresh-credentials.js';
+import { cachedModelCount, isLikelyPlaceholderKey, resolveRefreshCredential, skipWithCachedModels } from './refresh-credentials.js';
 import type { CachedModel, ProviderRegistry, RegistryProvider } from './types.js';
 
 export interface RefreshProviderResult {
@@ -166,7 +161,7 @@ export async function refreshProviderModels(
     if (source === 'zen-go-api') {
       models = await refreshZenGoProvider(provider);
     } else {
-      if (isPlaceholderProviderKey(apiKey)) {
+  if (isLikelyPlaceholderKey(apiKey)) {
         if (cachedModelCount(provider) > 0) {
           return skipWithCachedModels(
             provider,

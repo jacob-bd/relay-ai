@@ -64,6 +64,24 @@ Zen and Go are **cloud builtins**: they appear when you have an OpenCode API key
 
 ---
 
+## OpenCode import saved placeholder API keys
+
+If you ran `relay-ai providers import` before v0.1.x and see refresh failures for Anthropic (`anything`) or Vertex (`a`), those came from **OpenCode's config**, not Claude Desktop.
+
+**Current behavior:** import validates keys before Keychain save:
+
+- Placeholders like `anything`, `a`, `ollama` → **not saved** (models still imported)
+- Real keys → probed against the provider API before save
+- Vertex / Bedrock / Azure → key not saved (gcloud/AWS auth)
+
+**To clean up an old placeholder in Keychain:** re-run import (choose **Use imported** for each provider) or remove the provider and import again:
+
+```bash
+relay-ai providers import
+```
+
+---
+
 ## `--trace` for proxy / API errors
 
 If a model fails mid-session (not the login prompt above):

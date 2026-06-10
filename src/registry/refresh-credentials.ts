@@ -25,6 +25,13 @@ export function isPlaceholderProviderKey(key: string | null | undefined): boolea
   return PLACEHOLDER_KEYS.has(key.trim().toLowerCase());
 }
 
+export function isLikelyPlaceholderKey(key: string | null | undefined): boolean {
+  if (isPlaceholderProviderKey(key)) return true;
+  const trimmed = key?.trim() ?? '';
+  if (trimmed.length <= 2) return true;
+  return false;
+}
+
 export function cachedModelCount(provider: RegistryProvider): number {
   return provider.modelsCache?.models.length ?? 0;
 }
@@ -49,11 +56,11 @@ export async function resolveRefreshCredential(
   resolveKey: (provider: RegistryProvider) => Promise<string | null>,
 ): Promise<string | null> {
   let key = await resolveKey(provider);
-  if (!isPlaceholderProviderKey(key)) return key;
+  if (!isLikelyPlaceholderKey(key)) return key;
 
   for (const envVar of ENV_FALLBACK_BY_PROVIDER[provider.id] ?? []) {
     const fromEnv = process.env[envVar]?.trim();
-    if (fromEnv && !isPlaceholderProviderKey(fromEnv)) return fromEnv;
+    if (fromEnv && !isLikelyPlaceholderKey(fromEnv)) return fromEnv;
   }
   return key;
 }

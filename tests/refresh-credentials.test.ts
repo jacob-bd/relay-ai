@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { isPlaceholderProviderKey } from '../src/registry/refresh-credentials.js';
+import { isLikelyPlaceholderKey, isPlaceholderProviderKey } from '../src/registry/refresh-credentials.js';
+import { validateImportKey } from '../src/registry/validate-import-key.js';
 
 describe('isPlaceholderProviderKey', () => {
   it('detects OpenCode placeholder keys', () => {
@@ -16,5 +17,10 @@ describe('isPlaceholderProviderKey', () => {
   it('treats empty as placeholder', () => {
     expect(isPlaceholderProviderKey('')).toBe(true);
     expect(isPlaceholderProviderKey(null)).toBe(true);
+  });
+
+  it('treats very short keys as likely placeholders', () => {
+    expect(isLikelyPlaceholderKey('a')).toBe(true);
+    expect(isLikelyPlaceholderKey('ok')).toBe(true);
   });
 });

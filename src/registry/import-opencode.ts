@@ -1,14 +1,25 @@
 // src/registry/import-opencode.ts — one-shot import from OpenCode serve API
 
-import { resolveProviderCredential, saveProviderCredential } from '../env.js';
+import { deleteProviderCredential, resolveProviderCredential, saveProviderCredential } from '../env.js';
 import { fetchLocalProviders } from '../providers.js';
 import type { LocalProvider } from '../types.js';
 import { localProviderToRegistry } from './convert.js';
 import { loadRegistry, saveRegistry } from './io.js';
 import type { RegistryProvider } from './types.js';
 import { isValidProviderId } from './validate.js';
+import {
+  type ImportKeySkipReason,
+  validateImportKey,
+} from './validate-import-key.js';
 
 export type ImportSkipReason = 'invalid-id' | 'no-models' | 'convert-failed' | 'user-skipped' | 'conflict-kept';
+
+export interface ImportKeySkipped {
+  id: string;
+  name: string;
+  reason: ImportKeySkipReason;
+  detail?: string;
+}
 
 export interface ImportConflictContext {
   existing: RegistryProvider;
@@ -23,6 +34,7 @@ export type ImportConflictChoice = 'keep' | 'import' | 'skip';
 export interface ImportOpencodeResult {
   imported: RegistryProvider[];
   skipped: Array<{ id: string; name: string; reason: ImportSkipReason }>;
+  keysSkipped: ImportKeySkipped[];
   keysSaved: number;
   error?: string;
 }
@@ -50,6 +62,7 @@ export async function importFromOpencode(options: ImportOpencodeOptions = {}): P
     return {
       imported: [],
       skipped: [],
+      keysSkipped: [],
       keysSaved: 0,
       error: 'OpenCode CLI not found or failed to start. Install from https://opencode.ai',
     };
@@ -58,6 +71,7 @@ export async function importFromOpencode(options: ImportOpencodeOptions = {}): P
   const registry = loadRegistry();
   const imported: RegistryProvider[] = [];
   const skipped: ImportOpencodeResult['skipped'] = [];
+  const keysSkipped: ImportKeySkipped[] = [];
   let keysSaved = 0;
 
   for (const lp of fetched) {
@@ -104,11 +118,23 @@ export async function importFromOpencode(options: ImportOpencodeOptions = {}): P
     }
     imported.push(entry);
 
-    if (await saveProviderKey(lp)) keysSaved += 1;
+    const keyCheck = await validateImportKey(lp, entry);
+    if (keyCheck.shouldSaveKey) {
+      if (await saveProviderKey(lp)) keysSaved += 1;
+    } else if (keyCheck.reason) {
+      keysSkipped.push({
+        id: lp.id,
+        name: lp.name,
+        reason: keyCheck.reason,
+        detail: keyCheck.detail,
+      });
+      // Drop stale Keychain entries so a prior placeholder import cannot keep working.
+      await deleteProviderCredential(entry.authRef);
+    }
   }
 
   registry.importedAt = new Date().toISOString();
   saveRegistry(registry);
 
-  return { imported, skipped, keysSaved };
+  return { imported, skipped, keysSkipped, keysSaved };
 }
