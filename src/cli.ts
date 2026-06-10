@@ -539,18 +539,15 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     return 0;
   }
 
-  const migrateLastProvider = (id?: string) => (id === 'opencode' ? 'zen' : id);
-
   const providerOptions = allProviders.map(lp => ({
     value: lp.id,
     label: lp.name,
     hint: `${lp.models.length} model${lp.models.length !== 1 ? 's' : ''} available`,
   }));
 
-  const migratedLast = migrateLastProvider(prefs.lastProvider);
   const initialProvider =
-    migratedLast && providerOptions.some(o => o.value === migratedLast)
-      ? migratedLast
+    prefs.lastProvider && providerOptions.some(o => o.value === prefs.lastProvider)
+      ? prefs.lastProvider
       : providerOptions[0]!.value;
 
   const chosen = await p.select<string>({

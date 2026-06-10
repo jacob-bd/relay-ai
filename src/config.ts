@@ -65,14 +65,14 @@ function writeConfig(config: UserPreferences): void {
 
 export function loadPreferences(): UserPreferences {
   const config = readConfig();
+  const lastProvider =
+    config.lastProvider === 'opencode' ? 'zen' : config.lastProvider;
   return {
     lastBackend: config.lastBackend,
     lastModel: config.lastModel,
-    lastProvider: config.lastProvider,
+    lastProvider,
     recentModelsByProvider: config.recentModelsByProvider,
     favoriteModels: config.favoriteModels,
-    subscriptionTier: config.subscriptionTier,
-    modelListCache: config.modelListCache,
     server: config.server,
   };
 }

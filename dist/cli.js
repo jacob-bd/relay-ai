@@ -771,14 +771,13 @@ function writeConfig(config) {
 }
 function loadPreferences() {
   const config = readConfig();
+  const lastProvider = config.lastProvider === "opencode" ? "zen" : config.lastProvider;
   return {
     lastBackend: config.lastBackend,
     lastModel: config.lastModel,
-    lastProvider: config.lastProvider,
+    lastProvider,
     recentModelsByProvider: config.recentModelsByProvider,
     favoriteModels: config.favoriteModels,
-    subscriptionTier: config.subscriptionTier,
-    modelListCache: config.modelListCache,
     server: config.server
   };
 }
@@ -6019,14 +6018,12 @@ async function runClaudeCommand(parsed) {
     p8.log.info(pc7.dim("Run relay-ai providers add or import to get started."));
     return 0;
   }
-  const migrateLastProvider = (id) => id === "opencode" ? "zen" : id;
   const providerOptions = allProviders.map((lp) => ({
     value: lp.id,
     label: lp.name,
     hint: `${lp.models.length} model${lp.models.length !== 1 ? "s" : ""} available`
   }));
-  const migratedLast = migrateLastProvider(prefs.lastProvider);
-  const initialProvider = migratedLast && providerOptions.some((o) => o.value === migratedLast) ? migratedLast : providerOptions[0].value;
+  const initialProvider = prefs.lastProvider && providerOptions.some((o) => o.value === prefs.lastProvider) ? prefs.lastProvider : providerOptions[0].value;
   const chosen = await p8.select({
     message: "Which provider?",
     options: providerOptions,
