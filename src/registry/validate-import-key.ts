@@ -25,20 +25,20 @@ export async function validateImportKey(
     return { shouldSaveKey: false, reason: 'invalid-key', detail: 'No API key in OpenCode config.' };
   }
 
-  if (isLikelyPlaceholderKey(key)) {
-    return {
-      shouldSaveKey: false,
-      reason: 'placeholder-key',
-      detail: 'OpenCode has a placeholder key (e.g. "anything") — not saved to Keychain.',
-    };
-  }
-
   const source = resolveModelSource(entry);
   if (source === 'manual-only') {
     return {
       shouldSaveKey: false,
       reason: 'untested-manual',
       detail: 'Provider uses gcloud/AWS/Azure auth — API key not stored by relay-ai.',
+    };
+  }
+
+  if (isLikelyPlaceholderKey(key)) {
+    return {
+      shouldSaveKey: false,
+      reason: 'placeholder-key',
+      detail: 'OpenCode has a placeholder key (e.g. "anything") — not saved to Keychain.',
     };
   }
 

@@ -74,7 +74,8 @@ describe('validateImportKey', () => {
       baseRegistry({ id: 'google-vertex', templateId: 'google-vertex', api: { npm: '@ai-sdk/google-vertex' } }),
     );
     expect(result.shouldSaveKey).toBe(false);
-    expect(result.reason).toBe('placeholder-key');
+    expect(result.reason).toBe('untested-manual');
+    expect(fetchAnthropicModels).not.toHaveBeenCalled();
   });
 
   it('probes anthropic when key looks real', async () => {

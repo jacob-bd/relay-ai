@@ -121,7 +121,7 @@ export async function importFromOpencode(options: ImportOpencodeOptions = {}): P
     const keyCheck = await validateImportKey(lp, entry);
     if (keyCheck.shouldSaveKey) {
       if (await saveProviderKey(lp)) keysSaved += 1;
-    } else if (keyCheck.reason) {
+    } else if (keyCheck.reason && keyCheck.reason !== 'untested-manual') {
       keysSkipped.push({
         id: lp.id,
         name: lp.name,
@@ -129,6 +129,9 @@ export async function importFromOpencode(options: ImportOpencodeOptions = {}): P
         detail: keyCheck.detail,
       });
       // Drop stale Keychain entries so a prior placeholder import cannot keep working.
+      await deleteProviderCredential(entry.authRef);
+    } else if (keyCheck.reason === 'untested-manual') {
+      // Vertex/Bedrock/Azure never use Keychain keys — remove any stale placeholder from old imports.
       await deleteProviderCredential(entry.authRef);
     }
   }

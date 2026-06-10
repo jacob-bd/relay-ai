@@ -1984,19 +1984,19 @@ async function validateImportKey(lp, entry) {
   if (!key) {
     return { shouldSaveKey: false, reason: "invalid-key", detail: "No API key in OpenCode config." };
   }
-  if (isLikelyPlaceholderKey(key)) {
-    return {
-      shouldSaveKey: false,
-      reason: "placeholder-key",
-      detail: 'OpenCode has a placeholder key (e.g. "anything") \u2014 not saved to Keychain.'
-    };
-  }
   const source = resolveModelSource(entry);
   if (source === "manual-only") {
     return {
       shouldSaveKey: false,
       reason: "untested-manual",
       detail: "Provider uses gcloud/AWS/Azure auth \u2014 API key not stored by relay-ai."
+    };
+  }
+  if (isLikelyPlaceholderKey(key)) {
+    return {
+      shouldSaveKey: false,
+      reason: "placeholder-key",
+      detail: 'OpenCode has a placeholder key (e.g. "anything") \u2014 not saved to Keychain.'
     };
   }
   if (source === "zen-go-api") {
@@ -2105,13 +2105,15 @@ async function importFromOpencode(options = {}) {
     const keyCheck = await validateImportKey(lp, entry);
     if (keyCheck.shouldSaveKey) {
       if (await saveProviderKey(lp)) keysSaved += 1;
-    } else if (keyCheck.reason) {
+    } else if (keyCheck.reason && keyCheck.reason !== "untested-manual") {
       keysSkipped.push({
         id: lp.id,
         name: lp.name,
         reason: keyCheck.reason,
         detail: keyCheck.detail
       });
+      await deleteProviderCredential(entry.authRef);
+    } else if (keyCheck.reason === "untested-manual") {
       await deleteProviderCredential(entry.authRef);
     }
   }
