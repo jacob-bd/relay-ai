@@ -7,7 +7,7 @@ import {
   readGlobalOpencodeCredential,
 } from './env.js';
 import { setSubscriptionTier } from './config.js';
-import { findOpencodeBinary } from './providers.js';
+import { findOpencodeBinary } from './opencode-serve.js';
 import { zenRegistryStub } from './registry/builtins.js';
 import { importFromOpencode } from './registry/import-opencode.js';
 import { loadRegistry, saveRegistry } from './registry/io.js';

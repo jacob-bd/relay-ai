@@ -4,7 +4,7 @@ import { readGlobalOpencodeCredential } from './env.js';
 import { getModels } from './models.js';
 import { loadRegistry } from './registry/io.js';
 import { loadRegistryProviders } from './registry/load.js';
-import { fetchLocalProviders } from './providers.js';
+import { fetchLocalProviders } from './opencode-serve.js';
 import type { LocalProvider, ModelInfo } from './types.js';
 import type { ServerModelInfo } from './server/models.js';
 

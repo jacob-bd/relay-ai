@@ -861,7 +861,7 @@ function setServerFavoritesOnly(favoritesOnly) {
   writeConfig(config);
 }
 
-// src/providers.ts
+// src/opencode-serve.ts
 import { execSync as execSync2, spawn as spawn2 } from "child_process";
 import { existsSync as existsSync5 } from "fs";
 import { homedir as homedir5 } from "os";
@@ -962,33 +962,6 @@ async function getModels(backend, fallbackModels) {
 }
 
 // src/providers.ts
-var isWindows2 = process.platform === "win32";
-var OPENCODE_FALLBACK_PATHS = isWindows2 ? [
-  join6(process.env["APPDATA"] ?? homedir5(), "npm", "opencode.cmd"),
-  join6(process.env["APPDATA"] ?? homedir5(), "npm", "opencode"),
-  join6(homedir5(), "AppData", "Roaming", "npm", "opencode.cmd")
-] : [
-  join6(homedir5(), ".opencode", "bin", "opencode"),
-  join6(homedir5(), ".local", "bin", "opencode"),
-  join6(homedir5(), ".npm", "bin", "opencode"),
-  "/usr/local/bin/opencode",
-  "/opt/homebrew/bin/opencode"
-];
-function findOpencodeBinary() {
-  try {
-    const result = execSync2(isWindows2 ? "where.exe opencode" : "which opencode", {
-      encoding: "utf8",
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-    const path = result.trim().split("\n")[0].trim();
-    if (path) return path;
-  } catch {
-  }
-  for (const path of OPENCODE_FALLBACK_PATHS) {
-    if (existsSync5(path)) return path;
-  }
-  return null;
-}
 function resolveEndpoint(npm, apiUrl) {
   if (!npm) return null;
   if (npm === "@ai-sdk/anthropic") {
@@ -1040,6 +1013,35 @@ function normalizeProviders(raw) {
     });
   }
   return result;
+}
+
+// src/opencode-serve.ts
+var isWindows2 = process.platform === "win32";
+var OPENCODE_FALLBACK_PATHS = isWindows2 ? [
+  join6(process.env["APPDATA"] ?? homedir5(), "npm", "opencode.cmd"),
+  join6(process.env["APPDATA"] ?? homedir5(), "npm", "opencode"),
+  join6(homedir5(), "AppData", "Roaming", "npm", "opencode.cmd")
+] : [
+  join6(homedir5(), ".opencode", "bin", "opencode"),
+  join6(homedir5(), ".local", "bin", "opencode"),
+  join6(homedir5(), ".npm", "bin", "opencode"),
+  "/usr/local/bin/opencode",
+  "/opt/homebrew/bin/opencode"
+];
+function findOpencodeBinary() {
+  try {
+    const result = execSync2(isWindows2 ? "where.exe opencode" : "which opencode", {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    const path = result.trim().split("\n")[0].trim();
+    if (path) return path;
+  } catch {
+  }
+  for (const path of OPENCODE_FALLBACK_PATHS) {
+    if (existsSync5(path)) return path;
+  }
+  return null;
 }
 async function fetchLocalProviders() {
   const binary = findOpencodeBinary();

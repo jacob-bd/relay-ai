@@ -17,7 +17,7 @@ import {
 } from '../config.js';
 import { BACKENDS } from '../constants.js';
 import { fetchProviderCatalog, fetchZenGoModels, localProvidersToServerModels, zenGoModelsToServerModels } from '../provider-catalog.js';
-import { fetchLocalProviders } from '../providers.js';
+import { fetchLocalProviders } from '../opencode-serve.js';
 import type { ModelInfo } from '../types.js';
 import type { ServerModelInfo } from './models.js';
 import {

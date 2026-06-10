@@ -7,7 +7,7 @@ import {
   resolveProvidersForDisplay,
   resolveZenGoAvailability,
 } from './provider-catalog.js';
-import { findOpencodeBinary } from './providers.js';
+import { findOpencodeBinary } from './opencode-serve.js';
 import {
   filterTemplates,
   listAddableTemplates,

@@ -49,7 +49,7 @@ vi.mock('../src/models.js', () => ({
 }));
 
 // Avoid spawning a real `opencode serve` subprocess during the unit test.
-vi.mock('../src/providers.js', () => ({
+vi.mock('../src/opencode-serve.js', () => ({
   fetchLocalProviders: vi.fn(async () => null),
 }));
 

@@ -1,7 +1,7 @@
 // src/registry/import-opencode.ts — one-shot import from OpenCode serve API
 
 import { deleteProviderCredential, resolveProviderCredential, saveProviderCredential } from '../env.js';
-import { fetchLocalProviders } from '../providers.js';
+import { fetchLocalProviders } from '../opencode-serve.js';
 import type { LocalProvider } from '../types.js';
 import { localProviderToRegistry } from './convert.js';
 import { loadRegistry, saveRegistry } from './io.js';
