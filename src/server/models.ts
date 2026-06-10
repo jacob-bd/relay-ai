@@ -9,7 +9,7 @@ export interface GatewayModelOptions {
 
 export type ServerModelFormat = 'anthropic' | 'openai' | 'unsupported';
 export type ServerBackendId = 'zen' | 'go';
-export type ServerModelSource = ServerBackendId | 'vertex';
+export type ServerModelSource = ServerBackendId | 'vertex' | (string & {});
 
 export interface ServerModelInfo {
   id: string;
@@ -96,9 +96,14 @@ export function gatewayProviderLabel(model: ServerModelInfo): string {
   return model.providerLabel ?? (model.sourceBackend === 'go' ? 'OpenCode Go' : 'OpenCode Zen');
 }
 
+/** Stable slug for gateway alias ids — provider id when set, else zen/go backend id. */
+export function gatewayProviderId(model: ServerModelInfo): string {
+  return model.providerId ?? model.sourceBackend;
+}
+
 /** Gateway-discovery-safe id — Claude clients only surface claude-* and anthropic-* ids. */
 export function gatewayAliasId(model: ServerModelInfo): string {
-  return aliasModelId(model.id, gatewayProviderLabel(model));
+  return aliasModelId(model.id, gatewayProviderId(model));
 }
 
 export function exposedGatewayAliasId(model: ServerModelInfo, opts?: GatewayModelOptions): string {

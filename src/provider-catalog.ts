@@ -1,6 +1,7 @@
 import { BACKENDS } from './constants.js';
 import { getCachedModels, setCachedModels } from './config.js';
 import { getModels } from './models.js';
+import { loadRegistryProviders } from './registry/load.js';
 import { fetchLocalProviders } from './providers.js';
 import type { LocalProvider, ModelInfo } from './types.js';
 import type { ServerModelInfo } from './server/models.js';
@@ -32,10 +33,17 @@ export async function fetchZenGoModels(
   return { zenModels, goModels };
 }
 
+async function resolveLocalProviders(): Promise<LocalProvider[]> {
+  const fromRegistry = await loadRegistryProviders();
+  if (fromRegistry.length > 0) return fromRegistry;
+  const fromOpencode = await fetchLocalProviders();
+  return fromOpencode ?? [];
+}
+
 export async function fetchProviderCatalog(opts?: { persistCache?: boolean }): Promise<ProviderCatalog> {
   const persistCache = opts?.persistCache ?? false;
   const [localProviders, zenGo] = await Promise.all([
-    fetchLocalProviders().then(providers => providers ?? []),
+    resolveLocalProviders(),
     fetchZenGoModels(['zen', 'go'], persistCache),
   ]);
 
@@ -86,7 +94,7 @@ export function localProvidersToServerModels(localProviders: LocalProvider[]): S
         brand: model.brand,
         providerLabel: provider.name,
         providerId: provider.id,
-        sourceBackend: 'zen',
+        sourceBackend: provider.id,
         modelFormat: model.modelFormat,
         upstreamModelId: model.upstreamModelId,
         cost: model.cost,

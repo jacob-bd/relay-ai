@@ -9,7 +9,7 @@ export function localModelToRoute(lp: LocalProvider, model: LocalProviderModel):
   if (model.modelFormat === 'anthropic' && !model.baseUrl) return null;
   if (model.modelFormat === 'openai' && !isSdkMigratedNpm(model.npm) && !model.completionsUrl) return null;
   return {
-    aliasId: aliasModelId(model.id, lp.name),
+    aliasId: aliasModelId(model.id, lp.id),
     realModelId: model.upstreamModelId,
     displayName: `${model.name || model.id} (${lp.name})`,
     upstreamUrl: (model.modelFormat === 'anthropic' ? model.baseUrl : model.completionsUrl) ?? '',
@@ -26,7 +26,7 @@ export function zenGoModelToRoute(model: ModelInfo, apiKey: string): ProxyRoute 
   const backend = BACKENDS[model.sourceBackend];
   const isAnthropic = model.modelFormat === 'anthropic';
   return {
-    aliasId: aliasModelId(model.id, backend.name),
+    aliasId: aliasModelId(model.id, model.sourceBackend),
     realModelId: model.id,
     displayName: `${model.name} (${backend.name})`,
     upstreamUrl: isAnthropic ? backend.baseUrl : `${backend.baseUrl}/v1/chat/completions`,

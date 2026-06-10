@@ -25,6 +25,7 @@ const models: ServerModelInfo[] = [
     isFree: true,
     brand: 'DeepSeek',
     providerLabel: 'OpenCode Go',
+    providerId: 'go',
     sourceBackend: 'go',
     modelFormat: 'openai',
   },
@@ -71,22 +72,22 @@ describe('server model catalog', () => {
 
   it('aliases non-claude ids for gateway discovery', () => {
     expect(gatewayAliasId(models[0]!)).toBe('claude-sonnet-test');
-    expect(gatewayAliasId(models[1]!)).toBe('anthropic-opencode-go__deepseek-test');
+    expect(gatewayAliasId(models[1]!)).toBe('anthropic-go__deepseek-test');
     expect(formatGatewayAnthropicModels(models)).toEqual({
       data: [
         expect.objectContaining({ id: 'claude-sonnet-test', display_name: 'Claude Sonnet Test' }),
-        expect.objectContaining({ id: 'anthropic-opencode-go__deepseek-test', display_name: 'DeepSeek Test' }),
+        expect.objectContaining({ id: 'anthropic-go__deepseek-test', display_name: 'DeepSeek Test' }),
       ],
       has_more: false,
       first_id: 'claude-sonnet-test',
-      last_id: 'anthropic-opencode-go__deepseek-test',
+      last_id: 'anthropic-go__deepseek-test',
     });
   });
 
   it('resolves gateway aliases back to catalog entries', () => {
     const catalog = createGatewayModelCatalog(models);
     expect(catalog.get('deepseek-test')).toMatchObject({ id: 'deepseek-test' });
-    expect(catalog.get('anthropic-opencode-go__deepseek-test')).toMatchObject({ id: 'deepseek-test' });
+    expect(catalog.get('anthropic-go__deepseek-test')).toMatchObject({ id: 'deepseek-test' });
   });
 
   it('formats OpenAI model list responses', () => {

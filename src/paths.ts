@@ -37,6 +37,14 @@ export function getConfigPath(env: HomeEnv = process.env): string {
   return join(getAppHome(env), 'config.json');
 }
 
+export function getProvidersPath(env: HomeEnv = process.env): string {
+  return join(getAppHome(env), 'providers.json');
+}
+
+export function getLogsPath(env: HomeEnv = process.env): string {
+  return join(getAppHome(env), 'logs');
+}
+
 export function getVertexModelsPath(env: HomeEnv = process.env): string {
   return join(getAppHome(env), 'vertex-models.json');
 }

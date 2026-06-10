@@ -2,7 +2,7 @@
 
 export type ModelFormat = 'anthropic' | 'openai' | 'unsupported';
 
-export type StarterCommand = 'root' | 'claude' | 'server' | 'models';
+export type StarterCommand = 'root' | 'claude' | 'server' | 'models' | 'providers';
 
 export interface BackendConfig {
   id: 'zen' | 'go';

@@ -76,15 +76,94 @@ export function classifyKeyringError(err: unknown): string {
 }
 
 const KEYRING_SERVICE = 'relay-ai';
+/** @deprecated Use GLOBAL_OPENCODE_KEYRING_ACCOUNT — kept for migration reads */
 const KEYRING_ACCOUNT = 'relay-ai';
 const LEGACY_KEYRING_SERVICE = 'opencode-starter';
 const LEGACY_KEYRING_ACCOUNT = 'opencode-starter';
 
-export async function readFromCredentialStore(diag?: (msg: string) => void): Promise<string | null> {
+export const GLOBAL_OPENCODE_KEYRING_ACCOUNT = 'global:opencode';
+
+export function providerKeyringAccount(providerId: string): string {
+  return `provider:${providerId}`;
+}
+
+export type ParsedAuthRef =
+  | { kind: 'keyring'; account: string }
+  | { kind: 'env'; varName: string };
+
+/** Parse registry authRef strings like `keyring:provider:groq` or `env:OPENCODE_API_KEY`. */
+export function parseAuthRef(authRef: string): ParsedAuthRef | null {
+  if (authRef.startsWith('keyring:')) {
+    const account = authRef.slice('keyring:'.length);
+    return account ? { kind: 'keyring', account } : null;
+  }
+  if (authRef.startsWith('env:')) {
+    const varName = authRef.slice('env:'.length);
+    return varName ? { kind: 'env', varName } : null;
+  }
+  return null;
+}
+
+/** Env var name for relay-ai namespaced per-provider keys. */
+export function relayAiKeyEnvVar(providerId: string): string {
+  return `RELAY_AI_KEY_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
+}
+
+function readEnvCredential(varName: string): string | null {
+  const raw = process.env[varName];
+  if (!raw?.trim()) return null;
+  return raw.trim().split(/\r?\n/)[0]?.trim() || null;
+}
+
+async function readKeyringAccount(account: string, diag?: (msg: string) => void): Promise<string | null> {
   try {
     const { Entry } = await import('@napi-rs/keyring');
-    const current = new Entry(KEYRING_SERVICE, KEYRING_ACCOUNT).getPassword();
-    if (current) return current;
+    return new Entry(KEYRING_SERVICE, account).getPassword() ?? null;
+  } catch (err) {
+    diag?.(classifyKeyringError(err));
+    return null;
+  }
+}
+
+async function writeKeyringAccount(
+  account: string,
+  key: string,
+  diag?: (msg: string) => void,
+): Promise<boolean> {
+  try {
+    const { Entry } = await import('@napi-rs/keyring');
+    new Entry(KEYRING_SERVICE, account).setPassword(key);
+    return true;
+  } catch (err) {
+    diag?.(classifyKeyringError(err));
+    return false;
+  }
+}
+
+async function deleteKeyringAccount(account: string, diag?: (msg: string) => void): Promise<boolean> {
+  try {
+    const { Entry } = await import('@napi-rs/keyring');
+    new Entry(KEYRING_SERVICE, account).deletePassword();
+    return true;
+  } catch (err) {
+    diag?.(classifyKeyringError(err));
+    return false;
+  }
+}
+
+/** Read Zen/Go API key: env → global:opencode → legacy relay-ai → opencode-starter. */
+export async function readGlobalOpencodeCredential(diag?: (msg: string) => void): Promise<string | null> {
+  const fromEnv = resolveApiKey();
+  if (fromEnv) return fromEnv;
+
+  const global = await readKeyringAccount(GLOBAL_OPENCODE_KEYRING_ACCOUNT, diag);
+  if (global) return global;
+
+  const current = await readKeyringAccount(KEYRING_ACCOUNT, diag);
+  if (current) return current;
+
+  try {
+    const { Entry } = await import('@napi-rs/keyring');
     return new Entry(LEGACY_KEYRING_SERVICE, LEGACY_KEYRING_ACCOUNT).getPassword() ?? null;
   } catch (err) {
     diag?.(classifyKeyringError(err));
@@ -92,15 +171,94 @@ export async function readFromCredentialStore(diag?: (msg: string) => void): Pro
   }
 }
 
-export async function saveToCredentialStore(key: string, diag?: (msg: string) => void): Promise<boolean> {
-  try {
-    const { Entry } = await import('@napi-rs/keyring');
-    new Entry(KEYRING_SERVICE, KEYRING_ACCOUNT).setPassword(key);
-    return true;
-  } catch (err) {
-    diag?.(classifyKeyringError(err));
+/**
+ * Migrate legacy keychain entries to `global:opencode`.
+ * Protocol: read → write → verify → delete old (only after verify succeeds).
+ */
+export async function migrateGlobalOpencodeCredential(diag?: (msg: string) => void): Promise<boolean> {
+  const existing = await readKeyringAccount(GLOBAL_OPENCODE_KEYRING_ACCOUNT, diag);
+  if (existing) return true;
+
+  const legacy =
+    (await readKeyringAccount(KEYRING_ACCOUNT, diag)) ??
+    (await (async () => {
+      try {
+        const { Entry } = await import('@napi-rs/keyring');
+        return new Entry(LEGACY_KEYRING_SERVICE, LEGACY_KEYRING_ACCOUNT).getPassword() ?? null;
+      } catch (err) {
+        diag?.(classifyKeyringError(err));
+        return null;
+      }
+    })());
+
+  if (!legacy) return false;
+
+  const wrote = await writeKeyringAccount(GLOBAL_OPENCODE_KEYRING_ACCOUNT, legacy, diag);
+  if (!wrote) return false;
+
+  const verified = await readKeyringAccount(GLOBAL_OPENCODE_KEYRING_ACCOUNT, diag);
+  if (verified !== legacy) {
+    diag?.('credential migration verification failed — keeping legacy keychain entries');
     return false;
   }
+
+  if (await readKeyringAccount(KEYRING_ACCOUNT, diag)) {
+    await deleteKeyringAccount(KEYRING_ACCOUNT, diag);
+  }
+  try {
+    const { Entry } = await import('@napi-rs/keyring');
+    if (new Entry(LEGACY_KEYRING_SERVICE, LEGACY_KEYRING_ACCOUNT).getPassword()) {
+      new Entry(LEGACY_KEYRING_SERVICE, LEGACY_KEYRING_ACCOUNT).deletePassword();
+    }
+  } catch {
+    // best-effort legacy cleanup
+  }
+  return true;
+}
+
+/** Resolve a provider secret from authRef (env → keyring). */
+export async function resolveProviderCredential(
+  providerId: string,
+  authRef: string,
+  diag?: (msg: string) => void,
+): Promise<string | null> {
+  const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
+  if (namespaced) return namespaced;
+
+  const parsed = parseAuthRef(authRef);
+  if (!parsed) return null;
+
+  if (parsed.kind === 'env') {
+    return readEnvCredential(parsed.varName);
+  }
+
+  if (parsed.account === GLOBAL_OPENCODE_KEYRING_ACCOUNT) {
+    return readGlobalOpencodeCredential(diag);
+  }
+
+  return readKeyringAccount(parsed.account, diag);
+}
+
+export async function saveProviderCredential(
+  authRef: string,
+  key: string,
+  diag?: (msg: string) => void,
+): Promise<boolean> {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== 'keyring') return false;
+  return writeKeyringAccount(parsed.account, key, diag);
+}
+
+export async function readFromCredentialStore(diag?: (msg: string) => void): Promise<string | null> {
+  return readGlobalOpencodeCredential(diag);
+}
+
+export async function saveToCredentialStore(key: string, diag?: (msg: string) => void): Promise<boolean> {
+  const wrote = await writeKeyringAccount(GLOBAL_OPENCODE_KEYRING_ACCOUNT, key, diag);
+  if (wrote) {
+    await deleteKeyringAccount(KEYRING_ACCOUNT, diag);
+  }
+  return wrote;
 }
 
 export async function isSecretServiceAvailable(): Promise<boolean> {

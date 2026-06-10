@@ -42,9 +42,9 @@ describe('gateway id masking', () => {
     const catalog = createGatewayModelCatalog(models, { maskGatewayIds: true });
     const listed = formatGatewayAnthropicModels(models, { maskGatewayIds: true });
 
-    const maskedDeepseek = 'anthropic-nez-edocnepo__eerf-hsalf-4v-keespeed';
+    const maskedDeepseek = 'anthropic-nez__eerf-hsalf-4v-keespeed';
     expect(listed.data.map(entry => entry.id)).toEqual([
-      'anthropic-nez-edocnepo__elkcip-gib',
+      'anthropic-nez__elkcip-gib',
       maskedDeepseek,
     ]);
     expect(listed.data[1]!.display_name).toBe('DeepSeek V4 Flash Free (OpenCode Zen)');

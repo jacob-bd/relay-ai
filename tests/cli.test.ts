@@ -149,6 +149,28 @@ describe('parseArgs', () => {
       error: 'Unknown models option: --filter',
     });
   });
+
+  it('parses providers command', () => {
+    expect(parseArgs(['providers'])).toMatchObject({
+      command: 'providers',
+      showHelp: false,
+      claudeArgs: [],
+    });
+  });
+
+  it('parses providers import subcommand', () => {
+    expect(parseArgs(['providers', 'import'])).toMatchObject({
+      command: 'providers',
+      claudeArgs: ['import'],
+    });
+  });
+
+  it('parses providers help', () => {
+    expect(parseArgs(['providers', '--help'])).toMatchObject({
+      command: 'providers',
+      showHelp: true,
+    });
+  });
 });
 
 describe('help text', () => {
@@ -158,6 +180,7 @@ describe('help text', () => {
     expect(help).toContain('v0.1.0');
     expect(help).toContain('relay-ai claude');
     expect(help).toContain('relay-ai models');
+    expect(help).toContain('relay-ai providers');
     expect(help).toContain('relay-ai server');
     expect(help).toContain('local providers');
     expect(help).toContain('Commands:');

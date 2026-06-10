@@ -249,7 +249,9 @@ function backendFor(options: ServerOptions, model: ServerModelInfo): ServerBacke
   if (model.sourceBackend === 'vertex') {
     throw new Error(`Vertex models route through the SDK adapter, not cloud backends: ${model.id}`);
   }
-  return options.backends[model.sourceBackend];
+  if (model.sourceBackend === 'zen') return options.backends.zen;
+  if (model.sourceBackend === 'go') return options.backends.go;
+  throw new Error(`Provider ${model.sourceBackend} is not a cloud backend — model must set baseUrl/completionsUrl`);
 }
 
 async function forwardJson(res: ServerResponse, url: string, body: JsonBody, apiKey: string): Promise<void> {

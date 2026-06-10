@@ -124,7 +124,7 @@ describe('server router', () => {
     expect(await anthropic.json()).toMatchObject({
       data: expect.arrayContaining([
         expect.objectContaining({ id: 'claude-native' }),
-        expect.objectContaining({ id: 'anthropic-opencode-go__openai-format' }),
+        expect.objectContaining({ id: 'anthropic-go__openai-format' }),
       ]),
     });
 

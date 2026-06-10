@@ -2,7 +2,7 @@
 // Adapted from cucoleadan/opencode-cowork-proxy (MIT)
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, openSync, writeSync, closeSync } from 'node:fs';
 import { formatAnthropicModelEntry, formatAnthropicModelList } from './server/models.js';
 import { relayAnthropicMessages, UpstreamUnreachableError } from './upstream-forward.js';
 import { createLanguageModel, isSdkMigratedNpm } from './provider-factory.js';
@@ -15,13 +15,26 @@ import {
 
 type ProxyLog = (message: string | (() => string)) => void;
 
+function appendSecureLog(logPath: string, line: string): void {
+  try {
+    const fd = openSync(logPath, 'a', 0o600);
+    try {
+      writeSync(fd, `${new Date().toISOString()} ${line}\n`);
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    try {
+      appendFileSync(logPath, `${new Date().toISOString()} ${line}\n`);
+    } catch { /* ignore */ }
+  }
+}
+
 function makeProxyLog(debug: boolean, logPath = '/tmp/relay-ai-proxy-debug.log'): ProxyLog {
   if (!debug) return () => {};
   return (message) => {
-    try {
-      const line = typeof message === 'function' ? message() : message;
-      appendFileSync(logPath, `${new Date().toISOString()} ${line}\n`);
-    } catch { /* ignore */ }
+    const line = typeof message === 'function' ? message() : message;
+    appendSecureLog(logPath, line);
   };
 }
 
@@ -93,11 +106,12 @@ export interface ProxyRoute {
 /**
  * Produce a gateway-discovery-safe alias for a model id.
  * Claude Code's gateway discovery only shows ids starting with 'claude' or 'anthropic'.
- * claude-* ids are returned unchanged; everything else gets an 'anthropic-{provider}__' prefix.
+ * claude-* ids are returned unchanged; everything else gets an 'anthropic-{providerId}__' prefix.
+ * Uses stable provider id (slug), not display name — renaming a provider does not break aliases.
  */
-export function aliasModelId(realId: string, providerLabel: string): string {
+export function aliasModelId(realId: string, providerId: string): string {
   if (realId.startsWith('claude-')) return realId;
-  const sanitized = providerLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const sanitized = providerId.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   return `anthropic-${sanitized}__${realId}`;
 }
 

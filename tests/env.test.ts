@@ -1,6 +1,16 @@
 // tests/env.test.ts
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
-import { detectConflicts, resolveApiKey, buildChildEnv, classifyKeyringError } from '../src/env.js';
+import {
+  detectConflicts,
+  resolveApiKey,
+  buildChildEnv,
+  classifyKeyringError,
+  parseAuthRef,
+  providerKeyringAccount,
+  relayAiKeyEnvVar,
+  resolveProviderCredential,
+  GLOBAL_OPENCODE_KEYRING_ACCOUNT,
+} from '../src/env.js';
 import { BACKENDS, CONFLICTING_ENV_VARS } from '../src/constants.js';
 
 // Snapshot of all conflicting vars before any test so we can restore them
@@ -70,6 +80,34 @@ describe('detectConflicts', () => {
     const conflicts = detectConflicts();
     expect(conflicts.some(c => c.name === 'CLAUDE_CODE_USE_VERTEX' && c.value === '1')).toBe(true);
     expect(conflicts.some(c => c.name === 'ANTHROPIC_API_KEY' && c.value === 'old-key')).toBe(true);
+  });
+});
+
+describe('provider credentials', () => {
+  it('parses authRef strings', () => {
+    expect(parseAuthRef('keyring:provider:groq')).toEqual({ kind: 'keyring', account: 'provider:groq' });
+    expect(parseAuthRef('keyring:global:opencode')).toEqual({ kind: 'keyring', account: GLOBAL_OPENCODE_KEYRING_ACCOUNT });
+    expect(parseAuthRef('env:OPENCODE_API_KEY')).toEqual({ kind: 'env', varName: 'OPENCODE_API_KEY' });
+    expect(parseAuthRef('bad')).toBeNull();
+  });
+
+  it('builds provider keyring account names', () => {
+    expect(providerKeyringAccount('groq')).toBe('provider:groq');
+    expect(providerKeyringAccount('custom-together')).toBe('provider:custom-together');
+  });
+
+  it('resolves RELAY_AI_KEY_* env before authRef', async () => {
+    process.env[relayAiKeyEnvVar('groq')] = 'env-groq-key';
+    const key = await resolveProviderCredential('groq', 'keyring:provider:groq');
+    expect(key).toBe('env-groq-key');
+    delete process.env[relayAiKeyEnvVar('groq')];
+  });
+
+  it('resolves env authRef', async () => {
+    process.env['OPENAI_API_KEY'] = 'sk-openai';
+    const key = await resolveProviderCredential('openai', 'env:OPENAI_API_KEY');
+    expect(key).toBe('sk-openai');
+    delete process.env['OPENAI_API_KEY'];
   });
 });
 

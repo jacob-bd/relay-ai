@@ -7,11 +7,11 @@ describe('aliasModelId', () => {
     expect(aliasModelId('claude-sonnet-4', 'Anthropic')).toBe('claude-sonnet-4');
   });
 
-  it('prefixes non-claude ids with anthropic-{provider}__', () => {
-    expect(aliasModelId('grok-4.3', 'xAI')).toBe('anthropic-xai__grok-4.3');
+  it('prefixes non-claude ids with anthropic-{providerId}__', () => {
+    expect(aliasModelId('grok-4.3', 'xai')).toBe('anthropic-xai__grok-4.3');
   });
 
-  it('sanitizes provider labels (spaces and punctuation → single dash)', () => {
-    expect(aliasModelId('deepseek-v4', 'OpenCode Go')).toBe('anthropic-opencode-go__deepseek-v4');
+  it('uses stable provider id slug in alias', () => {
+    expect(aliasModelId('deepseek-v4', 'go')).toBe('anthropic-go__deepseek-v4');
   });
 });

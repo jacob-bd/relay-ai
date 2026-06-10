@@ -1,5 +1,6 @@
 node_modules/
 docs/superpowers/
+docs/plans/
 *.js.map
 .env
 .env.*

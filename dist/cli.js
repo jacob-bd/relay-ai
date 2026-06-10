@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 // src/cli.ts
-import pc4 from "picocolors";
-import * as p5 from "@clack/prompts";
-import { appendFileSync as appendFileSync2, readFileSync as readFileSync4, existsSync as existsSync5, realpathSync } from "fs";
+import pc5 from "picocolors";
+import * as p6 from "@clack/prompts";
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync5, existsSync as existsSync6, realpathSync } from "fs";
 import { homedir as homedir6, tmpdir } from "os";
 import { join as join7 } from "path";
 import { fileURLToPath } from "url";
@@ -267,26 +267,97 @@ var KEYRING_SERVICE = "relay-ai";
 var KEYRING_ACCOUNT = "relay-ai";
 var LEGACY_KEYRING_SERVICE = "opencode-starter";
 var LEGACY_KEYRING_ACCOUNT = "opencode-starter";
-async function readFromCredentialStore(diag) {
+var GLOBAL_OPENCODE_KEYRING_ACCOUNT = "global:opencode";
+function parseAuthRef(authRef) {
+  if (authRef.startsWith("keyring:")) {
+    const account = authRef.slice("keyring:".length);
+    return account ? { kind: "keyring", account } : null;
+  }
+  if (authRef.startsWith("env:")) {
+    const varName = authRef.slice("env:".length);
+    return varName ? { kind: "env", varName } : null;
+  }
+  return null;
+}
+function relayAiKeyEnvVar(providerId) {
+  return `RELAY_AI_KEY_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
+}
+function readEnvCredential(varName) {
+  const raw = process.env[varName];
+  if (!raw?.trim()) return null;
+  return raw.trim().split(/\r?\n/)[0]?.trim() || null;
+}
+async function readKeyringAccount(account, diag) {
   try {
     const { Entry } = await import("@napi-rs/keyring");
-    const current = new Entry(KEYRING_SERVICE, KEYRING_ACCOUNT).getPassword();
-    if (current) return current;
+    return new Entry(KEYRING_SERVICE, account).getPassword() ?? null;
+  } catch (err) {
+    diag?.(classifyKeyringError(err));
+    return null;
+  }
+}
+async function writeKeyringAccount(account, key, diag) {
+  try {
+    const { Entry } = await import("@napi-rs/keyring");
+    new Entry(KEYRING_SERVICE, account).setPassword(key);
+    return true;
+  } catch (err) {
+    diag?.(classifyKeyringError(err));
+    return false;
+  }
+}
+async function deleteKeyringAccount(account, diag) {
+  try {
+    const { Entry } = await import("@napi-rs/keyring");
+    new Entry(KEYRING_SERVICE, account).deletePassword();
+    return true;
+  } catch (err) {
+    diag?.(classifyKeyringError(err));
+    return false;
+  }
+}
+async function readGlobalOpencodeCredential(diag) {
+  const fromEnv = resolveApiKey();
+  if (fromEnv) return fromEnv;
+  const global = await readKeyringAccount(GLOBAL_OPENCODE_KEYRING_ACCOUNT, diag);
+  if (global) return global;
+  const current = await readKeyringAccount(KEYRING_ACCOUNT, diag);
+  if (current) return current;
+  try {
+    const { Entry } = await import("@napi-rs/keyring");
     return new Entry(LEGACY_KEYRING_SERVICE, LEGACY_KEYRING_ACCOUNT).getPassword() ?? null;
   } catch (err) {
     diag?.(classifyKeyringError(err));
     return null;
   }
 }
-async function saveToCredentialStore(key, diag) {
-  try {
-    const { Entry } = await import("@napi-rs/keyring");
-    new Entry(KEYRING_SERVICE, KEYRING_ACCOUNT).setPassword(key);
-    return true;
-  } catch (err) {
-    diag?.(classifyKeyringError(err));
-    return false;
+async function resolveProviderCredential(providerId, authRef, diag) {
+  const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
+  if (namespaced) return namespaced;
+  const parsed = parseAuthRef(authRef);
+  if (!parsed) return null;
+  if (parsed.kind === "env") {
+    return readEnvCredential(parsed.varName);
   }
+  if (parsed.account === GLOBAL_OPENCODE_KEYRING_ACCOUNT) {
+    return readGlobalOpencodeCredential(diag);
+  }
+  return readKeyringAccount(parsed.account, diag);
+}
+async function saveProviderCredential(authRef, key, diag) {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== "keyring") return false;
+  return writeKeyringAccount(parsed.account, key, diag);
+}
+async function readFromCredentialStore(diag) {
+  return readGlobalOpencodeCredential(diag);
+}
+async function saveToCredentialStore(key, diag) {
+  const wrote = await writeKeyringAccount(GLOBAL_OPENCODE_KEYRING_ACCOUNT, key, diag);
+  if (wrote) {
+    await deleteKeyringAccount(KEYRING_ACCOUNT, diag);
+  }
+  return wrote;
 }
 async function isSecretServiceAvailable() {
   try {
@@ -300,7 +371,7 @@ async function isSecretServiceAvailable() {
 
 // src/proxy.ts
 import { createServer } from "http";
-import { appendFileSync } from "fs";
+import { appendFileSync, openSync, writeSync, closeSync } from "fs";
 
 // src/server/vendor-mask.ts
 function reverseSegment(value) {
@@ -340,8 +411,11 @@ function formatAnthropicModelList(entries) {
 function gatewayProviderLabel(model) {
   return model.providerLabel ?? (model.sourceBackend === "go" ? "OpenCode Go" : "OpenCode Zen");
 }
+function gatewayProviderId(model) {
+  return model.providerId ?? model.sourceBackend;
+}
 function gatewayAliasId(model) {
-  return aliasModelId(model.id, gatewayProviderLabel(model));
+  return aliasModelId(model.id, gatewayProviderId(model));
 }
 function exposedGatewayAliasId(model, opts) {
   const alias = gatewayAliasId(model);
@@ -753,8 +827,8 @@ function translateMessages(messages, npm) {
       for (const b of blocks) {
         if (b.type === "text") parts.push({ type: "text", text: b.text ?? "" });
         else if (b.type === "image") {
-          const p6 = imagePart(b);
-          if (p6) parts.push(p6);
+          const p7 = imagePart(b);
+          if (p7) parts.push(p7);
         }
       }
       if (toolResults.length) {
@@ -834,7 +908,7 @@ function grabRoundTripSignature(part) {
   const md = part.providerMetadata;
   return md?.google?.thoughtSignature ?? md?.google?.thought_signature ?? md?.openai?.reasoningEncryptedContent ?? void 0;
 }
-async function writeAnthropicStream(fullStream, modelId, write, log5) {
+async function writeAnthropicStream(fullStream, modelId, write, log6) {
   const messageId = "msg_" + Date.now();
   let blockIndex = -1;
   let started = false;
@@ -965,7 +1039,7 @@ async function writeAnthropicStream(fullStream, modelId, write, log5) {
         break;
       case "error": {
         const e = part.error;
-        log5?.(() => `sdk stream error: ${JSON.stringify(e?.data ?? part.error)}`);
+        log6?.(() => `sdk stream error: ${JSON.stringify(e?.data ?? part.error)}`);
         closeOpen();
         ensureStart();
         emit("message_delta", { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage });
@@ -981,9 +1055,9 @@ async function writeAnthropicStream(fullStream, modelId, write, log5) {
   emit("message_delta", { type: "message_delta", delta: { stop_reason: finishReason, stop_sequence: null }, usage });
   emit("message_stop", { type: "message_stop" });
 }
-async function streamAnthropicResponse(model, params, modelId, write, log5) {
+async function streamAnthropicResponse(model, params, modelId, write, log6) {
   const result = streamText({ model, ...params });
-  await writeAnthropicStream(result.fullStream, modelId, write, log5);
+  await writeAnthropicStream(result.fullStream, modelId, write, log6);
 }
 async function generateAnthropicResponse(model, params, modelId) {
   const r = await generateText({ model, ...params });
@@ -1007,16 +1081,29 @@ async function generateAnthropicResponse(model, params, modelId) {
 }
 
 // src/proxy.ts
-function makeProxyLog(debug, logPath = "/tmp/relay-ai-proxy-debug.log") {
-  if (!debug) return () => {
-  };
-  return (message) => {
+function appendSecureLog(logPath, line) {
+  try {
+    const fd = openSync(logPath, "a", 384);
     try {
-      const line = typeof message === "function" ? message() : message;
+      writeSync(fd, `${(/* @__PURE__ */ new Date()).toISOString()} ${line}
+`);
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    try {
       appendFileSync(logPath, `${(/* @__PURE__ */ new Date()).toISOString()} ${line}
 `);
     } catch {
     }
+  }
+}
+function makeProxyLog(debug, logPath = "/tmp/relay-ai-proxy-debug.log") {
+  if (!debug) return () => {
+  };
+  return (message) => {
+    const line = typeof message === "function" ? message() : message;
+    appendSecureLog(logPath, line);
   };
 }
 function readBody(req) {
@@ -1054,9 +1141,9 @@ function anthropicError(res, status, message) {
     error: { type: "api_error", message }
   });
 }
-function aliasModelId(realId, providerLabel) {
+function aliasModelId(realId, providerId) {
   if (realId.startsWith("claude-")) return realId;
-  const sanitized = providerLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const sanitized = providerId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   return `anthropic-${sanitized}__${realId}`;
 }
 function startProxyCatalog(routes, defaultAliasId, debug = false) {
@@ -1206,7 +1293,7 @@ function localModelToRoute(lp, model) {
   if (model.modelFormat === "anthropic" && !model.baseUrl) return null;
   if (model.modelFormat === "openai" && !isSdkMigratedNpm(model.npm) && !model.completionsUrl) return null;
   return {
-    aliasId: aliasModelId(model.id, lp.name),
+    aliasId: aliasModelId(model.id, lp.id),
     realModelId: model.upstreamModelId,
     displayName: `${model.name || model.id} (${lp.name})`,
     upstreamUrl: (model.modelFormat === "anthropic" ? model.baseUrl : model.completionsUrl) ?? "",
@@ -1222,7 +1309,7 @@ function zenGoModelToRoute(model, apiKey) {
   const backend = BACKENDS[model.sourceBackend];
   const isAnthropic = model.modelFormat === "anthropic";
   return {
-    aliasId: aliasModelId(model.id, backend.name),
+    aliasId: aliasModelId(model.id, model.sourceBackend),
     realModelId: model.id,
     displayName: `${model.name} (${backend.name})`,
     upstreamUrl: isAnthropic ? backend.baseUrl : `${backend.baseUrl}/v1/chat/completions`,
@@ -1286,6 +1373,9 @@ function getLegacyAppHome(env = process.env) {
 }
 function getConfigPath(env = process.env) {
   return join3(getAppHome(env), "config.json");
+}
+function getProvidersPath(env = process.env) {
+  return join3(getAppHome(env), "providers.json");
 }
 function getVertexModelsPath(env = process.env) {
   return join3(getAppHome(env), "vertex-models.json");
@@ -1694,6 +1784,193 @@ async function fetchLocalProviders() {
   });
 }
 
+// src/registry/validate.ts
+var PROVIDER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+function isValidProviderId(id) {
+  return PROVIDER_ID_PATTERN.test(id);
+}
+
+// src/registry/materialize.ts
+function cachedModelToLocal(cached, provider) {
+  const npm = cached.npm ?? provider.api.npm ?? "";
+  const apiUrl = cached.apiUrl ?? provider.api.url ?? "";
+  const endpoint = resolveEndpoint(npm, apiUrl);
+  if (endpoint === null) return null;
+  return {
+    id: cached.id,
+    name: cached.name,
+    family: cached.family ?? "",
+    brand: cached.brand ?? deriveBrand(cached.family ?? ""),
+    modelFormat: cached.modelFormat ?? endpoint.format,
+    upstreamModelId: cached.upstreamModelId,
+    baseUrl: endpoint.baseUrl,
+    completionsUrl: endpoint.completionsUrl,
+    npm: npm || void 0,
+    apiBaseUrl: apiUrl || void 0,
+    cost: cached.cost,
+    contextWindow: cached.contextWindow ?? resolveContextWindow(cached.id)
+  };
+}
+function materializeOne(provider, resolveCredential) {
+  if (!provider.enabled) return null;
+  if (!isValidProviderId(provider.id)) return null;
+  const models = [];
+  for (const cached of provider.modelsCache?.models ?? []) {
+    const model = cachedModelToLocal(cached, provider);
+    if (model) models.push(model);
+  }
+  if (models.length === 0) return null;
+  const apiKey = resolveCredential(provider) ?? "";
+  if (!apiKey) return null;
+  return {
+    id: provider.id,
+    name: provider.name,
+    apiKey,
+    models
+  };
+}
+function materializeRegistry(registry, resolveCredential) {
+  const result = [];
+  for (const provider of registry.providers) {
+    const local = materializeOne(provider, resolveCredential);
+    if (local) result.push(local);
+  }
+  return result;
+}
+
+// src/registry/io.ts
+import {
+  chmodSync,
+  copyFileSync as copyFileSync2,
+  existsSync as existsSync4,
+  mkdirSync as mkdirSync2,
+  openSync as openSync2,
+  readFileSync as readFileSync3,
+  renameSync as renameSync2,
+  writeSync as writeSync2,
+  closeSync as closeSync2
+} from "fs";
+import { dirname as dirname2 } from "path";
+
+// src/registry/types.ts
+var REGISTRY_SCHEMA_VERSION = 1;
+
+// src/registry/io.ts
+var DIR_MODE = 448;
+var FILE_MODE = 384;
+function ensureSecureAppHome() {
+  const home = getAppHome();
+  mkdirSync2(home, { recursive: true, mode: DIR_MODE });
+  try {
+    chmodSync(home, DIR_MODE);
+  } catch {
+  }
+}
+function writeSecureFile(path, content) {
+  ensureSecureAppHome();
+  mkdirSync2(dirname2(path), { recursive: true, mode: DIR_MODE });
+  const fd = openSync2(path, "w", FILE_MODE);
+  try {
+    writeSync2(fd, content);
+  } finally {
+    closeSync2(fd);
+  }
+  try {
+    chmodSync(path, FILE_MODE);
+  } catch {
+  }
+}
+function parseProvider(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const p7 = raw;
+  if (typeof p7.id !== "string" || !isValidProviderId(p7.id)) return null;
+  if (typeof p7.templateId !== "string" || !p7.templateId) return null;
+  if (typeof p7.name !== "string" || !p7.name) return null;
+  if (typeof p7.enabled !== "boolean") return null;
+  if (typeof p7.authRef !== "string" || !p7.authRef) return null;
+  if (typeof p7.addedAt !== "string" || !p7.addedAt) return null;
+  const api = p7.api;
+  if (!api || typeof api !== "object") return null;
+  const provider = {
+    id: p7.id,
+    templateId: p7.templateId,
+    name: p7.name,
+    enabled: p7.enabled,
+    authRef: p7.authRef,
+    api,
+    addedAt: p7.addedAt
+  };
+  if (p7.subscriptionFilter === "free" || p7.subscriptionFilter === "zen" || p7.subscriptionFilter === "go") {
+    provider.subscriptionFilter = p7.subscriptionFilter;
+  }
+  if (typeof p7.refreshedAt === "string") provider.refreshedAt = p7.refreshedAt;
+  if (p7.modelsCache && typeof p7.modelsCache === "object") {
+    const cache = p7.modelsCache;
+    if (typeof cache.fetchedAt === "string" && Array.isArray(cache.models)) {
+      provider.modelsCache = {
+        fetchedAt: cache.fetchedAt,
+        models: cache.models.filter((m) => m && typeof m === "object")
+      };
+    }
+  }
+  return provider;
+}
+function parseRegistry(raw) {
+  const empty = { schemaVersion: REGISTRY_SCHEMA_VERSION, providers: [] };
+  if (!raw || typeof raw !== "object") return empty;
+  const data = raw;
+  const providers = [];
+  if (Array.isArray(data.providers)) {
+    for (const entry of data.providers) {
+      const parsed = parseProvider(entry);
+      if (parsed) providers.push(parsed);
+    }
+  }
+  const registry = {
+    schemaVersion: typeof data.schemaVersion === "number" ? data.schemaVersion : REGISTRY_SCHEMA_VERSION,
+    providers
+  };
+  if (typeof data.importedAt === "string") registry.importedAt = data.importedAt;
+  if (typeof data.pricingCacheAt === "string") registry.pricingCacheAt = data.pricingCacheAt;
+  return registry;
+}
+function loadRegistry(path = getProvidersPath()) {
+  if (!existsSync4(path)) {
+    return { schemaVersion: REGISTRY_SCHEMA_VERSION, providers: [] };
+  }
+  try {
+    const raw = JSON.parse(readFileSync3(path, "utf8"));
+    return parseRegistry(raw);
+  } catch {
+    return { schemaVersion: REGISTRY_SCHEMA_VERSION, providers: [] };
+  }
+}
+function saveRegistry(registry, path = getProvidersPath()) {
+  const payload = `${JSON.stringify(registry, null, 2)}
+`;
+  const backup = `${path}.bak`;
+  if (existsSync4(path)) {
+    try {
+      copyFileSync2(path, backup);
+    } catch {
+    }
+  }
+  const tmp = `${path}.tmp`;
+  writeSecureFile(tmp, payload);
+  renameSync2(tmp, path);
+}
+
+// src/registry/load.ts
+async function loadRegistryProviders(diag) {
+  const registry = loadRegistry();
+  const keys = /* @__PURE__ */ new Map();
+  for (const provider of registry.providers) {
+    const key = await resolveProviderCredential(provider.id, provider.authRef, diag);
+    if (key) keys.set(provider.id, key);
+  }
+  return materializeRegistry(registry, (provider) => keys.get(provider.id) ?? null);
+}
+
 // src/provider-catalog.ts
 async function fetchZenGoModels(backends, persistCache = false) {
   const results = await Promise.all(
@@ -1711,10 +1988,16 @@ async function fetchZenGoModels(backends, persistCache = false) {
   }
   return { zenModels, goModels };
 }
+async function resolveLocalProviders() {
+  const fromRegistry = await loadRegistryProviders();
+  if (fromRegistry.length > 0) return fromRegistry;
+  const fromOpencode = await fetchLocalProviders();
+  return fromOpencode ?? [];
+}
 async function fetchProviderCatalog(opts) {
   const persistCache = opts?.persistCache ?? false;
   const [localProviders, zenGo] = await Promise.all([
-    fetchLocalProviders().then((providers) => providers ?? []),
+    resolveLocalProviders(),
     fetchZenGoModels(["zen", "go"], persistCache)
   ]);
   return {
@@ -1759,7 +2042,7 @@ function localProvidersToServerModels(localProviders) {
         brand: model.brand,
         providerLabel: provider.name,
         providerId: provider.id,
-        sourceBackend: "zen",
+        sourceBackend: provider.id,
         modelFormat: model.modelFormat,
         upstreamModelId: model.upstreamModelId,
         cost: model.cost,
@@ -2058,7 +2341,9 @@ function backendFor(options, model) {
   if (model.sourceBackend === "vertex") {
     throw new Error(`Vertex models route through the SDK adapter, not cloud backends: ${model.id}`);
   }
-  return options.backends[model.sourceBackend];
+  if (model.sourceBackend === "zen") return options.backends.zen;
+  if (model.sourceBackend === "go") return options.backends.go;
+  throw new Error(`Provider ${model.sourceBackend} is not a cloud backend \u2014 model must set baseUrl/completionsUrl`);
 }
 async function forwardJson(res, url, body, apiKey) {
   const upstream = await postJsonUpstream(url, body, apiKey);
@@ -2200,7 +2485,7 @@ async function selectServerProviders(available, initial) {
 }
 
 // src/server/vertex-config.ts
-import { existsSync as existsSync4, readFileSync as readFileSync3 } from "fs";
+import { existsSync as existsSync5, readFileSync as readFileSync4 } from "fs";
 import { homedir as homedir5 } from "os";
 import { join as join6 } from "path";
 var DEFAULT_VERTEX_MODELS = [
@@ -2229,13 +2514,13 @@ function defaultAdcCredentialsPath(home = homedir5()) {
   return join6(home, ".config", "gcloud", "application_default_credentials.json");
 }
 function hasApplicationDefaultCredentials(home = homedir5(), adcPath = defaultAdcCredentialsPath(home)) {
-  return existsSync4(adcPath);
+  return existsSync5(adcPath);
 }
 function loadVertexModelEntries(env = process.env) {
   const configPath = getVertexModelsPath(env);
-  if (!existsSync4(configPath)) return DEFAULT_VERTEX_MODELS;
+  if (!existsSync5(configPath)) return DEFAULT_VERTEX_MODELS;
   try {
-    const parsed = JSON.parse(readFileSync3(configPath, "utf8"));
+    const parsed = JSON.parse(readFileSync4(configPath, "utf8"));
     if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_VERTEX_MODELS;
     const models = parsed.filter(
       (entry) => !!entry && typeof entry === "object" && typeof entry.id === "string" && entry.id.length > 0 && typeof entry.display_name === "string" && entry.display_name.length > 0
@@ -2424,10 +2709,10 @@ function providerOptionsForTier(tier, catalog) {
 }
 async function configureExposedProviders(tier) {
   p3.log.info("Add providers to expose. Listed providers are removed when selected \u2014 like favorites.");
-  const spinner3 = p3.spinner();
-  spinner3.start("Loading providers...");
+  const spinner4 = p3.spinner();
+  spinner4.start("Loading providers...");
   const catalog = await fetchProviderCatalog();
-  spinner3.stop("");
+  spinner4.stop("");
   const available = providerOptionsForTier(tier, catalog);
   const picked = await selectServerProviders(available, getServerExposedProviders() ?? void 0);
   if (!picked) return void 0;
@@ -2539,8 +2824,8 @@ async function runServerCommand(options = {}) {
   const serverPassword = await getServerPasswordForMode(mode);
   if (serverPassword === void 0) return 0;
   const host = mode === "network" ? "0.0.0.0" : "127.0.0.1";
-  const spinner3 = p3.spinner();
-  spinner3.start("Fetching available models...");
+  const spinner4 = p3.spinner();
+  spinner4.start("Fetching available models...");
   let models;
   try {
     models = await loadServerModels(tier);
@@ -2550,19 +2835,19 @@ async function runServerCommand(options = {}) {
     if (runConfig.favoritesOnly) {
       const favorites = loadPreferences().favoriteModels ?? [];
       if (favorites.length === 0) {
-        spinner3.stop(pc2.red("No favorite models configured"));
+        spinner4.stop(pc2.red("No favorite models configured"));
         p3.log.error("Run `relay-ai models` to add favorites, or turn off favorites-only in the server wizard.");
         return 1;
       }
       models = filterServerModelsByFavorites(models, favorites);
       if (models.length === 0) {
-        spinner3.stop(pc2.red("No favorite models matched the current provider filter"));
+        spinner4.stop(pc2.red("No favorite models matched the current provider filter"));
         p3.log.error("Adjust favorites with `relay-ai models` or change exposed providers in the server wizard.");
         return 1;
       }
     }
     if (models.length === 0) {
-      spinner3.stop(pc2.red("No models to expose"));
+      spinner4.stop(pc2.red("No models to expose"));
       p3.log.error("Add providers in the server wizard \u2014 Configure & start \u2192 manage exposed providers.");
       return 1;
     }
@@ -2571,10 +2856,10 @@ async function runServerCommand(options = {}) {
     const filterNote = runConfig.exposedProviders ? ` \u2014 ${runConfig.exposedProviders.length} provider${runConfig.exposedProviders.length !== 1 ? "s" : ""}` : "";
     const favoritesNote = runConfig.favoritesOnly ? " \u2014 favorites only" : "";
     const maskNote = runConfig.maskGatewayIds ? " \u2014 discovery ids masked" : "";
-    spinner3.stop(`Loaded ${models.length} models (${localCount} from local providers)${filterNote}${favoritesNote}${maskNote}`);
+    spinner4.stop(`Loaded ${models.length} models (${localCount} from local providers)${filterNote}${favoritesNote}${maskNote}`);
     if (summary) p3.log.info(summary);
   } catch (err) {
-    spinner3.stop(pc2.red("Failed to load models"));
+    spinner4.stop(pc2.red("Failed to load models"));
     console.error(pc2.red(String(err instanceof Error ? err.message : err)));
     return 1;
   }
@@ -3006,6 +3291,197 @@ function removeFavorite(list, fav) {
   return list.filter((f) => !(f.providerId === fav.providerId && f.modelId === fav.modelId));
 }
 
+// src/providers-command.ts
+import pc4 from "picocolors";
+import * as p5 from "@clack/prompts";
+
+// src/registry/convert.ts
+function modelToCached(model) {
+  return {
+    id: model.id,
+    name: model.name,
+    upstreamModelId: model.upstreamModelId,
+    family: model.family,
+    brand: model.brand,
+    contextWindow: model.contextWindow,
+    cost: model.cost,
+    modelFormat: model.modelFormat,
+    npm: model.npm,
+    apiUrl: model.apiBaseUrl
+  };
+}
+function localProviderToRegistry(provider, templateId) {
+  if (!isValidProviderId(provider.id)) return null;
+  if (provider.models.length === 0) return null;
+  const first = provider.models[0];
+  return {
+    id: provider.id,
+    templateId: templateId ?? provider.id,
+    name: provider.name,
+    enabled: true,
+    authRef: `keyring:provider:${provider.id}`,
+    api: {
+      npm: first.npm,
+      url: first.apiBaseUrl ?? first.baseUrl
+    },
+    addedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    refreshedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    modelsCache: {
+      fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      models: provider.models.map(modelToCached)
+    }
+  };
+}
+
+// src/registry/import-opencode.ts
+async function saveProviderKey(provider) {
+  if (!provider.apiKey?.trim()) return false;
+  return saveProviderCredential(`keyring:provider:${provider.id}`, provider.apiKey);
+}
+async function importFromOpencode() {
+  const fetched = await fetchLocalProviders();
+  if (fetched === null) {
+    return {
+      imported: [],
+      skipped: [],
+      keysSaved: 0,
+      error: "OpenCode CLI not found or failed to start. Install from https://opencode.ai"
+    };
+  }
+  const registry = loadRegistry();
+  const imported = [];
+  const skipped = [];
+  let keysSaved = 0;
+  for (const lp of fetched) {
+    if (!lp.models.length) {
+      skipped.push({ id: lp.id, name: lp.name, reason: "no-models" });
+      continue;
+    }
+    const entry = localProviderToRegistry(lp);
+    if (!entry) {
+      skipped.push({
+        id: lp.id,
+        name: lp.name,
+        reason: isValidProviderId(lp.id) ? "convert-failed" : "invalid-id"
+      });
+      continue;
+    }
+    const existingIdx = registry.providers.findIndex((p7) => p7.id === entry.id);
+    if (existingIdx >= 0) {
+      registry.providers[existingIdx] = { ...entry, addedAt: registry.providers[existingIdx].addedAt };
+    } else {
+      registry.providers.push(entry);
+    }
+    imported.push(entry);
+    if (await saveProviderKey(lp)) keysSaved += 1;
+  }
+  registry.importedAt = (/* @__PURE__ */ new Date()).toISOString();
+  saveRegistry(registry);
+  return { imported, skipped, keysSaved };
+}
+
+// src/providers-command.ts
+function parseProvidersArgs(args) {
+  if (args.length === 0) return { subcommand: "hub", showHelp: false };
+  const [first, ...rest] = args;
+  if (first === "--help" || first === "-h") return { subcommand: "help", showHelp: true };
+  if (first === "import") {
+    if (rest.length > 0) return { subcommand: "import", showHelp: false, error: `Unknown import option: ${rest[0]}` };
+    return { subcommand: "import", showHelp: false };
+  }
+  if (first === "list") {
+    if (rest.length > 0) return { subcommand: "list", showHelp: false, error: `Unknown list option: ${rest[0]}` };
+    return { subcommand: "list", showHelp: false };
+  }
+  return { subcommand: "hub", showHelp: false, error: `Unknown providers subcommand: ${first}` };
+}
+function providersHelpText() {
+  return `${pc4.bold("relay-ai providers")} \u2014 manage your AI providers
+
+${pc4.bold("Usage:")}
+  relay-ai providers
+  relay-ai providers import
+  relay-ai providers list
+
+${pc4.bold("Subcommands:")}
+  (none)      Provider hub wizard
+  import      Bring settings from OpenCode (one-time)
+  list        Show configured providers`;
+}
+function maskKeySuffix(keyRef) {
+  return keyRef.startsWith("keyring:") ? "keychain" : keyRef;
+}
+async function runProvidersImport() {
+  const spinner4 = p5.spinner();
+  spinner4.start("Importing from OpenCode...");
+  const result = await importFromOpencode();
+  spinner4.stop("");
+  if (result.error) {
+    p5.log.error(result.error);
+    return 1;
+  }
+  if (result.imported.length === 0 && result.skipped.length === 0) {
+    p5.log.warn("No configured providers found in OpenCode.");
+    p5.log.info("Add providers in OpenCode first, or use relay-ai providers add (coming soon).");
+    return 0;
+  }
+  p5.log.success(
+    `Imported ${result.imported.length} provider${result.imported.length === 1 ? "" : "s"}, ${result.imported.reduce((n, pr) => n + (pr.modelsCache?.models.length ?? 0), 0)} models, ${result.keysSaved} key${result.keysSaved === 1 ? "" : "s"} saved to Keychain.`
+  );
+  if (result.skipped.length > 0) {
+    for (const s of result.skipped) {
+      p5.log.warn(`Skipped ${s.name} (${s.id}): ${s.reason}`);
+    }
+  }
+  return 0;
+}
+function runProvidersList() {
+  const registry = loadRegistry();
+  if (registry.providers.length === 0) {
+    p5.log.info("No providers configured. Run relay-ai providers import or add a provider.");
+    return 0;
+  }
+  console.log("");
+  for (const provider of registry.providers) {
+    const modelCount = provider.modelsCache?.models.length ?? 0;
+    const status = provider.enabled ? pc4.green("\u25CF") : pc4.dim("\u25CB");
+    console.log(
+      `  ${status} ${pc4.bold(provider.name)} ${pc4.dim(`(${provider.id})`)} \u2014 ${modelCount} model${modelCount === 1 ? "" : "s"}, auth: ${maskKeySuffix(provider.authRef)}`
+    );
+  }
+  console.log("");
+  return 0;
+}
+async function runProvidersCommand(args) {
+  const parsed = parseProvidersArgs(args);
+  if (parsed.error) {
+    p5.log.error(parsed.error);
+    return 1;
+  }
+  if (parsed.showHelp) {
+    console.log(providersHelpText());
+    return 0;
+  }
+  if (parsed.subcommand === "import") return runProvidersImport();
+  if (parsed.subcommand === "list") return runProvidersList();
+  p5.intro(pc4.bold("  Your AI providers"));
+  const choice = await p5.select({
+    message: "What would you like to do?",
+    options: [
+      { value: "list", label: "List configured providers" },
+      { value: "import", label: "Bring settings from OpenCode" },
+      { value: "done", label: "Done" }
+    ]
+  });
+  if (p5.isCancel(choice)) {
+    p5.cancel("Cancelled.");
+    return 0;
+  }
+  if (choice === "list") return runProvidersList();
+  if (choice === "import") return runProvidersImport();
+  return 0;
+}
+
 // src/cli.ts
 var STARTER_CLAUDE_FLAGS = /* @__PURE__ */ new Set(["--dry-run", "--setup", "--trace", "--help", "-h", "--version", "-v"]);
 function emptyParsed(command) {
@@ -3048,6 +3524,15 @@ function parseArgs(args) {
     }
     return parsed2;
   }
+  if (first === "providers") {
+    const parsed2 = emptyParsed("providers");
+    parsed2.claudeArgs = rest;
+    for (const arg of rest) {
+      if (arg === "--help" || arg === "-h") parsed2.showHelp = true;
+      else if (arg === "--version" || arg === "-v") parsed2.showVersion = true;
+    }
+    return parsed2;
+  }
   if (first !== "claude") {
     return {
       ...emptyParsed("root"),
@@ -3074,28 +3559,30 @@ function parseArgs(args) {
   return parsed;
 }
 function rootHelpText() {
-  return `${pc4.bold("relay-ai")} v${VERSION}
+  return `${pc5.bold("relay-ai")} v${VERSION}
 Launch AI coding tools with OpenCode Zen, Go, or local providers (Groq, Mistral,
 OpenAI, Gemini, Ollama, and more).
 
-${pc4.bold("Usage:")}
+${pc5.bold("Usage:")}
   relay-ai claude [options] [claude-flags]
   relay-ai models
+  relay-ai providers
   relay-ai server
   relay-ai --help
   relay-ai --version
 
-${pc4.bold("Commands:")}
+${pc5.bold("Commands:")}
   claude      Launch Claude Code \u2014 cloud Zen/Go or local OpenCode providers
   models      Manage favorite models for mid-session /model switching (max ${MAX_MODEL_CATALOG})
+  providers   Add, import, and manage your AI providers
   server      Run a foreground API gateway (Zen, Go, and local providers)
   codex       planned
 
-${pc4.bold("Migration:")}
+${pc5.bold("Migration:")}
   Bare relay-ai prints this help instead of launching Claude Code.
   Use relay-ai claude for the wizard and launcher.
 
-${pc4.bold("Examples:")}
+${pc5.bold("Examples:")}
   relay-ai claude
   relay-ai models
   relay-ai server
@@ -3104,37 +3591,37 @@ ${pc4.bold("Examples:")}
   relay-ai claude -- --print "hello"`;
 }
 function claudeHelpText() {
-  return `${pc4.bold("relay-ai claude")} v${VERSION}
+  return `${pc5.bold("relay-ai claude")} v${VERSION}
 Launch Claude Code with OpenCode Zen, Go, or local providers as the API backend.
 
-${pc4.bold("Usage:")}
+${pc5.bold("Usage:")}
   relay-ai claude [options] [claude-flags]
   relay-ai claude --help
   relay-ai claude --version
 
-${pc4.bold("Options:")}
+${pc5.bold("Options:")}
   --dry-run    Run the wizard but show a preview instead of launching Claude Code
   --setup      Re-configure your subscription tier
   --trace      Write debug logs to /tmp and show errors on exit
   --help       Show this command help
   --version    Show version
 
-${pc4.bold("Providers:")}
+${pc5.bold("Providers:")}
   Cloud (Zen/Go)  Requires OPENCODE_API_KEY \u2014 get one at https://opencode.ai/auth
   Local           Requires OpenCode CLI with providers configured (Groq, Mistral,
                   OpenAI, Gemini, Ollama, etc.). Shown in the wizard when available.
 
-${pc4.bold("Model switching:")}
+${pc5.bold("Model switching:")}
   Run relay-ai models to save favorites (max ${MAX_MODEL_CATALOG}).
   When favorites exist, launch starts a multi-route proxy and Claude Code /model
   lists your starting model plus favorites for live switching.
   With no favorites, launch uses a single model as before.
 
-${pc4.bold("Note:")}
+${pc5.bold("Note:")}
   Claude Code may save the launched model to ~/.claude/settings.json.
   Bare claude later can still show that model \u2014 reset with claude --model sonnet.
 
-${pc4.bold("Examples:")}
+${pc5.bold("Examples:")}
   relay-ai claude
   relay-ai claude -c
   relay-ai claude --resume abc-123
@@ -3146,53 +3633,53 @@ ${pc4.bold("Examples:")}
   relay-ai claude -- --dangerously-skip-permissions`;
 }
 function serverHelpText() {
-  return `${pc4.bold("relay-ai server")} v${VERSION}
+  return `${pc5.bold("relay-ai server")} v${VERSION}
 Run a foreground API gateway for Zen, Go, local OpenCode providers, or Vertex AI.
 
-${pc4.bold("Usage:")}
+${pc5.bold("Usage:")}
   relay-ai server
   relay-ai server --vertex
   relay-ai server --help
   relay-ai server --version
 
-${pc4.bold("Behavior:")}
+${pc5.bold("Behavior:")}
   Default: interactive wizard for exposed providers, discovery id masking (for
   Claude Desktop / Cowork), optional favorites-only catalog, then listen mode.
   --vertex: Anthropic-compatible gateway to Claude on Google Vertex AI using
   local gcloud Application Default Credentials (no OpenCode API key).
   Binds to port 17645. Network mode asks for a server password.
 
-${pc4.bold("Vertex env:")}
+${pc5.bold("Vertex env:")}
   ANTHROPIC_VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT \u2014 your GCP project
   GOOGLE_CLOUD_LOCATION or CLOUD_ML_REGION \u2014 region (default: global)
   Optional catalog: ~/.relay-ai/vertex-models.json (see vertex-models.example.json)
 
-${pc4.bold("Endpoints:")}
+${pc5.bold("Endpoints:")}
   Anthropic-compatible:  ANTHROPIC_BASE_URL=http://127.0.0.1:17645/anthropic
   OpenAI-compatible:     OPENAI_BASE_URL=http://127.0.0.1:17645/openai/v1
   API key: use anything locally; use the server password in network mode.`;
 }
 function modelsHelpText() {
-  return `${pc4.bold("relay-ai models")} v${VERSION}
+  return `${pc5.bold("relay-ai models")} v${VERSION}
 Manage favorite models for mid-session switching in Claude Code.
 
-${pc4.bold("Usage:")}
+${pc5.bold("Usage:")}
   relay-ai models
   relay-ai models --help
   relay-ai models --version
 
-${pc4.bold("Behavior:")}
+${pc5.bold("Behavior:")}
   Opens an interactive manager to add or remove favorites.
   Pick from Zen, Go, or any configured local OpenCode provider.
   Favorites are saved to ~/.relay-ai/config.json (max ${MAX_MODEL_CATALOG}).
 
-${pc4.bold("How it works:")}
+${pc5.bold("How it works:")}
   When favorites exist, relay-ai claude starts a multi-route catalog proxy.
   Claude Code /model lists your starting model plus favorites \u2014 switch live
   without restarting. Mix cloud and local favorites in one session.
   With no favorites, launch uses a single model as before.
 
-${pc4.bold("Examples:")}
+${pc5.bold("Examples:")}
   relay-ai models
   relay-ai claude    # switch menu active when favorites are set`;
 }
@@ -3205,11 +3692,11 @@ async function launchClaudeViaCatalog(catalogRoutes, startingRoute, contextWindo
   let proxyHandle;
   try {
     proxyHandle = await startProxyCatalog(catalogRoutes, startingRoute.aliasId, trace);
-    p5.log.info(
-      `Switch menu active \u2014 proxy on port ${proxyHandle.port} ` + pc4.dim(`(${catalogRoutes.length} model${catalogRoutes.length !== 1 ? "s" : ""} in /model)`)
+    p6.log.info(
+      `Switch menu active \u2014 proxy on port ${proxyHandle.port} ` + pc5.dim(`(${catalogRoutes.length} model${catalogRoutes.length !== 1 ? "s" : ""} in /model)`)
     );
   } catch (err) {
-    p5.log.error(`Failed to start proxy: ${err instanceof Error ? err.message : String(err)}`);
+    p6.log.error(`Failed to start proxy: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
   }
   const childEnv = buildChildEnv(
@@ -3222,62 +3709,62 @@ async function launchClaudeViaCatalog(catalogRoutes, startingRoute, contextWindo
   );
   const debugLogPath = join7(tmpdir(), "relay-ai-debug.log");
   const traceArgs = trace ? ["--debug-file", debugLogPath] : [];
-  if (trace) p5.log.info(`Debug log: ${debugLogPath}`);
+  if (trace) p6.log.info(`Debug log: ${debugLogPath}`);
   const exitCode = await launchClaude(childEnv, startingRoute.aliasId, [...traceArgs, ...claudeArgs]);
   proxyHandle.close();
   if (trace) printTraceLog(debugLogPath);
   return exitCode;
 }
 function printTraceLog(debugLogPath) {
-  if (!existsSync5(debugLogPath)) return;
-  const log5 = readFileSync4(debugLogPath, "utf8");
-  const errorLines = log5.split("\n").filter(
+  if (!existsSync6(debugLogPath)) return;
+  const log6 = readFileSync5(debugLogPath, "utf8");
+  const errorLines = log6.split("\n").filter(
     (l) => l.includes("error") || l.includes("Error") || l.includes('"type":"error"') || l.includes("status")
   );
-  console.log("\n" + pc4.bold(pc4.cyan("\u2500\u2500 Debug trace \u2500\u2500")));
+  console.log("\n" + pc5.bold(pc5.cyan("\u2500\u2500 Debug trace \u2500\u2500")));
   if (errorLines.length > 0) {
-    errorLines.slice(0, 30).forEach((l) => console.log(pc4.dim(l)));
+    errorLines.slice(0, 30).forEach((l) => console.log(pc5.dim(l)));
   } else {
-    console.log(pc4.dim("(no errors found in debug log)"));
+    console.log(pc5.dim("(no errors found in debug log)"));
   }
-  console.log(pc4.dim(`Full log: ${debugLogPath}`));
+  console.log(pc5.dim(`Full log: ${debugLogPath}`));
 }
 function printDryRun(backendName, modelId, baseUrl, modelFormat, claudeArgs, conflicts, disableExperimentalBetas, npm) {
   console.log("");
-  console.log(pc4.bold(pc4.cyan("  DRY RUN \u2014 would execute:")));
+  console.log(pc5.bold(pc5.cyan("  DRY RUN \u2014 would execute:")));
   console.log("");
   const claudeCmd = ["claude", "--model", modelId, ...claudeArgs].join(" ");
-  console.log(`  ${pc4.bold("Command:")}  ${claudeCmd}`);
-  console.log(`  ${pc4.bold("Backend:")}  ${backendName}`);
+  console.log(`  ${pc5.bold("Command:")}  ${claudeCmd}`);
+  console.log(`  ${pc5.bold("Backend:")}  ${backendName}`);
   if (modelFormat === "openai") {
-    console.log(`  ${pc4.bold("Proxy:")}    would start local SDK adapter proxy ${pc4.dim("(Vercel AI SDK)")}`);
-    if (npm) console.log(`             ${pc4.dim(`npm: ${npm}`)}`);
+    console.log(`  ${pc5.bold("Proxy:")}    would start local SDK adapter proxy ${pc5.dim("(Vercel AI SDK)")}`);
+    if (npm) console.log(`             ${pc5.dim(`npm: ${npm}`)}`);
   }
   console.log("");
-  console.log(`  ${pc4.bold("Env vars SET:")}`);
+  console.log(`  ${pc5.bold("Env vars SET:")}`);
   if (modelFormat === "openai") {
-    console.log(`    ANTHROPIC_BASE_URL=http://127.0.0.1:<port>  ${pc4.dim("(local proxy)")}`);
+    console.log(`    ANTHROPIC_BASE_URL=http://127.0.0.1:<port>  ${pc5.dim("(local proxy)")}`);
   } else {
     console.log(`    ANTHROPIC_BASE_URL=${baseUrl}`);
   }
   console.log(`    ANTHROPIC_API_KEY=<your OPENCODE_API_KEY>`);
   console.log(`    ANTHROPIC_MODEL=${modelId}`);
   if (disableExperimentalBetas) {
-    console.log(`    CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1  ${pc4.dim("(direct upstream \u2014 strips beta headers)")}`);
+    console.log(`    CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1  ${pc5.dim("(direct upstream \u2014 strips beta headers)")}`);
   } else {
-    console.log(`    ${pc4.dim("(experimental betas enabled \u2014 tool search via local proxy)")}`);
+    console.log(`    ${pc5.dim("(experimental betas enabled \u2014 tool search via local proxy)")}`);
   }
-  console.log(`    ENABLE_TOOL_SEARCH=true  ${pc4.dim("(defer MCP tools like native Claude Code)")}`);
-  console.log(`    CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT=0  ${pc4.dim("(keep full system prompt on proxy routes)")}`);
+  console.log(`    ENABLE_TOOL_SEARCH=true  ${pc5.dim("(defer MCP tools like native Claude Code)")}`);
+  console.log(`    CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT=0  ${pc5.dim("(keep full system prompt on proxy routes)")}`);
   console.log("");
   if (conflicts.length > 0) {
-    console.log(`  ${pc4.bold("Env vars REMOVED:")}`);
+    console.log(`  ${pc5.bold("Env vars REMOVED:")}`);
     for (const c of conflicts) {
-      console.log(`    ${pc4.dim(c.name)}=${pc4.dim(c.value)}`);
+      console.log(`    ${pc5.dim(c.name)}=${pc5.dim(c.value)}`);
     }
     console.log("");
   }
-  console.log(pc4.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
+  console.log(pc5.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
   console.log("");
 }
 function detectShellProfile() {
@@ -3304,14 +3791,14 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
   const isWindows3 = process.platform === "win32";
   const isLinux = process.platform === "linux";
   if (simulate) {
-    p5.note(
+    p6.note(
       "Running in dry-run mode \u2014 no keys will be read from or written to your system.",
       "Simulating first-run onboarding"
     );
   }
   if (!simulate) {
     const keyDiag = (reason) => {
-      p5.log.warn(`Credential store unavailable \u2014 ${reason}`);
+      p6.log.warn(`Credential store unavailable \u2014 ${reason}`);
       if (trace) {
         try {
           appendFileSync2(
@@ -3326,18 +3813,18 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
     const storedKey = await readFromCredentialStore(keyDiag);
     if (storedKey) {
       const storeName = isMac ? "macOS Keychain" : isWindows3 ? "Windows Credential Manager" : "Secret Service";
-      p5.log.success(`Found key in ${storeName}`);
+      p6.log.success(`Found key in ${storeName}`);
       process.env["OPENCODE_API_KEY"] = storedKey;
       return storedKey;
     }
   }
-  p5.note("Get your free key at: https://opencode.ai/auth", "OpenCode API key");
-  const key = await p5.password({
+  p6.note("Get your free key at: https://opencode.ai/auth", "OpenCode API key");
+  const key = await p6.password({
     message: "Paste your OPENCODE_API_KEY:",
     validate: (val) => val.trim() ? void 0 : "Key cannot be empty"
   });
-  if (p5.isCancel(key)) {
-    p5.cancel("Cancelled.");
+  if (p6.isCancel(key)) {
+    p6.cancel("Cancelled.");
     return null;
   }
   const trimmedKey = key.trim();
@@ -3398,7 +3885,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
         hint: "Key stored securely in your desktop keyring; relay-ai reads it automatically next time"
       });
     } else if (!simulate) {
-      p5.log.info("No keyring daemon detected \u2014 secure storage requires GNOME Keyring or KWallet running.");
+      p6.log.info("No keyring daemon detected \u2014 secure storage requires GNOME Keyring or KWallet running.");
     }
     opts.push(
       {
@@ -3414,13 +3901,13 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
     );
     return opts;
   })();
-  const saveChoice = await p5.select({
+  const saveChoice = await p6.select({
     message: "Where should we save the key?",
     options: saveOptions,
     initialValue: isMac ? "keychain" : isWindows3 ? "credential-manager" : secretServiceAvailable ? "secret-service" : "profile"
   });
-  if (p5.isCancel(saveChoice)) {
-    p5.cancel("Cancelled.");
+  if (p6.isCancel(saveChoice)) {
+    p6.cancel("Cancelled.");
     return null;
   }
   if (simulate) {
@@ -3433,78 +3920,78 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
       profile: `Would append OPENCODE_API_KEY export to ${display}`,
       session: "Would use key for this session only"
     };
-    p5.log.info(`[dry-run] ${dryRunMessages[saveChoice]}`);
+    p6.log.info(`[dry-run] ${dryRunMessages[saveChoice]}`);
   } else if (saveChoice === "keychain") {
     if (await saveToCredentialStore(trimmedKey)) {
-      p5.log.success("Key saved to macOS Keychain \u2014 active now and automatically loaded next time.");
+      p6.log.success("Key saved to macOS Keychain \u2014 active now and automatically loaded next time.");
     } else {
-      p5.log.warn("Could not write to Keychain \u2014 key will be used for this session only");
+      p6.log.warn("Could not write to Keychain \u2014 key will be used for this session only");
     }
   } else if (saveChoice === "keychain-autoload") {
     if (await saveToCredentialStore(trimmedKey)) {
       try {
         const autoLoadLine = `export OPENCODE_API_KEY="$(security find-generic-password -s relay-ai -a relay-ai -w 2>/dev/null)"`;
-        const existing = existsSync5(path) ? readFileSync4(path, "utf8") : "";
+        const existing = existsSync6(path) ? readFileSync5(path, "utf8") : "";
         if (!existing.includes(autoLoadLine)) {
           appendFileSync2(path, `
 # relay-ai: load API key from macOS Keychain
 ${autoLoadLine}
 `);
         }
-        p5.log.success(`Key saved to Keychain and auto-load added to ${display} \u2014 active now and in all future terminals.`);
+        p6.log.success(`Key saved to Keychain and auto-load added to ${display} \u2014 active now and in all future terminals.`);
       } catch {
-        p5.log.success("Key saved to Keychain \u2014 active now and automatically loaded next time.");
-        p5.log.warn(`Could not write auto-load line to ${display}`);
+        p6.log.success("Key saved to Keychain \u2014 active now and automatically loaded next time.");
+        p6.log.warn(`Could not write auto-load line to ${display}`);
       }
     } else {
-      p5.log.warn("Could not write to Keychain \u2014 key will be used for this session only");
+      p6.log.warn("Could not write to Keychain \u2014 key will be used for this session only");
     }
   } else if (saveChoice === "credential-manager") {
     if (await saveToCredentialStore(trimmedKey)) {
-      p5.log.success("Key saved to Windows Credential Manager \u2014 active now and automatically loaded next time.");
+      p6.log.success("Key saved to Windows Credential Manager \u2014 active now and automatically loaded next time.");
     } else {
-      p5.log.warn("Could not write to Credential Manager \u2014 key will be used for this session only");
+      p6.log.warn("Could not write to Credential Manager \u2014 key will be used for this session only");
     }
   } else if (saveChoice === "setx") {
     try {
       const result = spawnSync("setx", ["OPENCODE_API_KEY", trimmedKey], { stdio: ["pipe", "pipe", "pipe"] });
       if (result.status !== 0) throw new Error("setx exited with non-zero status");
-      p5.log.success("Key saved as a user environment variable \u2014 active now and in all future terminals.");
+      p6.log.success("Key saved as a user environment variable \u2014 active now and in all future terminals.");
     } catch {
-      p5.log.warn("Could not run setx \u2014 key will be used for this session only");
+      p6.log.warn("Could not run setx \u2014 key will be used for this session only");
     }
   } else if (saveChoice === "secret-service") {
     if (await saveToCredentialStore(trimmedKey)) {
-      p5.log.success("Key saved to Secret Service \u2014 active now and automatically loaded next time.");
+      p6.log.success("Key saved to Secret Service \u2014 active now and automatically loaded next time.");
     } else {
-      p5.log.warn("Could not write to Secret Service \u2014 key will be used for this session only");
+      p6.log.warn("Could not write to Secret Service \u2014 key will be used for this session only");
     }
   } else if (saveChoice === "profile") {
     try {
-      if (!existsSync5(path)) appendFileSync2(path, "");
+      if (!existsSync6(path)) appendFileSync2(path, "");
       const escapedKey = trimmedKey.replace(/'/g, "'\\''");
       appendFileSync2(path, `
 export OPENCODE_API_KEY='${escapedKey}'
 `);
-      p5.log.success(`Key saved to ${display} \u2014 active now and in all future terminals.`);
+      p6.log.success(`Key saved to ${display} \u2014 active now and in all future terminals.`);
     } catch {
-      p5.log.warn(`Could not write to ${display} \u2014 key will be used for this session only`);
+      p6.log.warn(`Could not write to ${display} \u2014 key will be used for this session only`);
     }
   }
   if (!simulate) process.env["OPENCODE_API_KEY"] = trimmedKey;
   return trimmedKey;
 }
 async function runModelsCommand() {
-  p5.intro(pc4.bold("  Relay AI \u2014 Favorite Models"));
-  const spinner3 = p5.spinner();
-  spinner3.start("Loading providers...");
+  p6.intro(pc5.bold("  Relay AI \u2014 Favorite Models"));
+  const spinner4 = p6.spinner();
+  spinner4.start("Loading providers...");
   const catalog = await fetchProviderCatalog();
-  spinner3.stop("");
+  spinner4.stop("");
   const allProviders = providersForPicker(catalog);
   if (allProviders.length === 0) {
-    p5.log.warn("No providers found.");
-    p5.log.info("OpenCode Zen/Go is always available. Local providers appear when OpenCode is running.");
-    p5.outro("Done.");
+    p6.log.warn("No providers found.");
+    p6.log.info("OpenCode Zen/Go is always available. Local providers appear when OpenCode is running.");
+    p6.outro("Done.");
     return 0;
   }
   const modelLookup = /* @__PURE__ */ new Map();
@@ -3521,26 +4008,26 @@ async function runModelsCommand() {
     for (let i = 0; i < favorites.length; i++) {
       const fav = favorites[i];
       const entry = modelLookup.get(`${fav.providerId}:${fav.modelId}`);
-      const label = entry ? `\u2605 ${entry.modelName} (${entry.providerName})` : pc4.dim(`\u2605 ${fav.modelId} \u2014 provider gone`);
+      const label = entry ? `\u2605 ${entry.modelName} (${entry.providerName})` : pc5.dim(`\u2605 ${fav.modelId} \u2014 provider gone`);
       options.push({ value: `fav-${i}`, label, hint: "select to remove" });
     }
     const atCap = favorites.length >= MAX_MODEL_CATALOG;
     options.push({
       value: "__add__",
-      label: atCap ? pc4.dim(`+ Add a model \u2192 (limit of ${MAX_MODEL_CATALOG} reached)`) : "+ Add a model \u2192",
+      label: atCap ? pc5.dim(`+ Add a model \u2192 (limit of ${MAX_MODEL_CATALOG} reached)`) : "+ Add a model \u2192",
       hint: atCap ? "Remove a favorite first to make room" : `${allProviders.length} provider${allProviders.length !== 1 ? "s" : ""} available`
     });
     options.push({ value: "__done__", label: "Done", hint: "" });
     const header = favorites.length === 0 ? `Favorites (0/${MAX_MODEL_CATALOG})` : `Favorites (${favorites.length}/${MAX_MODEL_CATALOG}) \u2014 select to remove`;
-    const choice = await p5.select({
+    const choice = await p6.select({
       message: header,
       options,
       initialValue: "__done__"
     });
-    if (p5.isCancel(choice) || choice === "__done__") break;
+    if (p6.isCancel(choice) || choice === "__done__") break;
     if (choice === "__add__") {
       if (atCap) {
-        p5.log.warn(`Limit of ${MAX_MODEL_CATALOG} favorites reached \u2014 remove one first.`);
+        p6.log.warn(`Limit of ${MAX_MODEL_CATALOG} favorites reached \u2014 remove one first.`);
         continue;
       }
       const providerOptions = allProviders.map((ap) => ({
@@ -3548,11 +4035,11 @@ async function runModelsCommand() {
         label: ap.name,
         hint: `${ap.models.length} model${ap.models.length !== 1 ? "s" : ""}`
       }));
-      const pickedProviderId = await p5.select({
+      const pickedProviderId = await p6.select({
         message: "Which provider?",
         options: providerOptions
       });
-      if (p5.isCancel(pickedProviderId)) continue;
+      if (p6.isCancel(pickedProviderId)) continue;
       const provider = allProviders.find((ap) => ap.id === pickedProviderId);
       const browsed = await browseAllModels(provider, prefs);
       if (!browsed) continue;
@@ -3560,15 +4047,15 @@ async function runModelsCommand() {
       const result = addFavorite(favorites, fav);
       if (!result.ok) {
         if (result.reason === "duplicate") {
-          p5.log.warn(`${browsed.name || browsed.id} is already in your favorites.`);
+          p6.log.warn(`${browsed.name || browsed.id} is already in your favorites.`);
         } else {
-          p5.log.warn(`Limit of ${MAX_MODEL_CATALOG} favorites reached \u2014 remove one first.`);
+          p6.log.warn(`Limit of ${MAX_MODEL_CATALOG} favorites reached \u2014 remove one first.`);
         }
         continue;
       }
       favorites = result.list;
       favoritesDirty = true;
-      p5.log.success(`Added ${browsed.name || browsed.id} (${provider.name}) to favorites.`);
+      p6.log.success(`Added ${browsed.name || browsed.id} (${provider.name}) to favorites.`);
     } else if (choice.startsWith("fav-")) {
       const idx = parseInt(choice.slice(4), 10);
       const fav = favorites[idx];
@@ -3576,14 +4063,14 @@ async function runModelsCommand() {
       const label = entry ? `${entry.modelName} (${entry.providerName})` : fav.modelId;
       favorites = removeFavorite(favorites, fav);
       favoritesDirty = true;
-      p5.log.success(`Removed ${label} from favorites.`);
+      p6.log.success(`Removed ${label} from favorites.`);
     }
   }
   if (favoritesDirty) {
     savePreferences({ favoriteModels: favorites });
   }
-  p5.outro(
-    favorites.length === 0 ? "No favorites saved \u2014 launch will use single-model mode." : pc4.green(`${favorites.length} favorite${favorites.length !== 1 ? "s" : ""} saved \u2014 /model menu will show these on next launch.`)
+  p6.outro(
+    favorites.length === 0 ? "No favorites saved \u2014 launch will use single-model mode." : pc5.green(`${favorites.length} favorite${favorites.length !== 1 ? "s" : ""} saved \u2014 /model menu will show these on next launch.`)
   );
   return 0;
 }
@@ -3591,7 +4078,7 @@ async function runClaudeCommand(parsed) {
   const { dryRun, setup, trace, claudeArgs } = parsed;
   const claudePath = findClaudeBinary();
   if (!claudePath) {
-    console.error(pc4.red("\nError: claude binary not found on PATH.\n"));
+    console.error(pc5.red("\nError: claude binary not found on PATH.\n"));
     console.error("Install Claude Code:");
     console.error("  npm install -g @anthropic-ai/claude-code\n");
     return 1;
@@ -3601,7 +4088,7 @@ async function runClaudeCommand(parsed) {
   const favorites = dryRun ? [] : prefs.favoriteModels ?? [];
   const switchMenuActive = favorites.length > 0;
   const hasZenGoFavorites = favorites.some((f) => f.providerId === "zen" || f.providerId === "go");
-  p5.intro(pc4.bold("  Relay AI"));
+  p6.intro(pc5.bold("  Relay AI"));
   let earlyEffectiveKey = null;
   let earlyZenModels = [];
   let earlyGoModels = [];
@@ -3609,7 +4096,7 @@ async function runClaudeCommand(parsed) {
     const apiKey2 = await resolveOrCollectApiKey(false, trace);
     if (!apiKey2) return 0;
     earlyEffectiveKey = apiKey2;
-    const zenGoSpinner = p5.spinner();
+    const zenGoSpinner = p6.spinner();
     zenGoSpinner.start("Fetching OpenCode models for switch menu...");
     try {
       const backends = [];
@@ -3622,15 +4109,15 @@ async function runClaudeCommand(parsed) {
     } catch (err) {
       zenGoSpinner.stop("");
       const detail = err instanceof Error ? err.message : String(err);
-      p5.log.warn(`Could not fetch OpenCode models (${detail}) \u2014 Zen/Go favorites will be skipped from /model catalog`);
+      p6.log.warn(`Could not fetch OpenCode models (${detail}) \u2014 Zen/Go favorites will be skipped from /model catalog`);
     }
   }
-  const providerSpinner = p5.spinner();
+  const providerSpinner = p6.spinner();
   providerSpinner.start("Checking for local providers...");
   const localProviders = await fetchLocalProviders();
   providerSpinner.stop("");
   if (localProviders === null) {
-    p5.log.info(pc4.dim("Tip: Install OpenCode locally to unlock additional providers"));
+    p6.log.info(pc5.dim("Tip: Install OpenCode locally to unlock additional providers"));
   }
   let providerChoice = "opencode";
   if (localProviders !== null && localProviders.length > 0) {
@@ -3643,13 +4130,13 @@ async function runClaudeCommand(parsed) {
       }))
     ];
     const initialProvider = prefs.lastProvider && providerOptions.some((o) => o.value === prefs.lastProvider) ? prefs.lastProvider : "opencode";
-    const chosen = await p5.select({
+    const chosen = await p6.select({
       message: "Which provider?",
       options: providerOptions,
       initialValue: initialProvider
     });
-    if (p5.isCancel(chosen)) {
-      p5.cancel("Cancelled.");
+    if (p6.isCancel(chosen)) {
+      p6.cancel("Cancelled.");
       return 0;
     }
     providerChoice = chosen;
@@ -3676,22 +4163,22 @@ async function runClaudeCommand(parsed) {
       );
       const startingRoute = localModelToRoute(provider, selectedModel);
       if (!startingRoute) {
-        p5.log.error("Could not resolve a proxy route for the selected model.");
+        p6.log.error("Could not resolve a proxy route for the selected model.");
         return 1;
       }
       const catalogRoutes = buildCatalogRoutes(startingRoute, favorites, resolveRoute);
       if (dryRun) {
         const endpoint = selectedModel.baseUrl ?? selectedModel.completionsUrl ?? "(unknown)";
         console.log("");
-        console.log(pc4.bold(pc4.cyan("  DRY RUN \u2014 would execute (switch-menu mode):")));
+        console.log(pc5.bold(pc5.cyan("  DRY RUN \u2014 would execute (switch-menu mode):")));
         console.log("");
-        console.log(`  ${pc4.bold("Provider:")}      ${provider.name}`);
-        console.log(`  ${pc4.bold("Starting model:")} ${selectedModel.id}`);
-        console.log(`  ${pc4.bold("Endpoint:")}      ${endpoint}`);
-        console.log(`  ${pc4.bold("/model catalog:")} ${catalogRoutes.length} model(s)`);
-        catalogRoutes.forEach((r) => console.log(`    ${pc4.dim(r.displayName)}`));
+        console.log(`  ${pc5.bold("Provider:")}      ${provider.name}`);
+        console.log(`  ${pc5.bold("Starting model:")} ${selectedModel.id}`);
+        console.log(`  ${pc5.bold("Endpoint:")}      ${endpoint}`);
+        console.log(`  ${pc5.bold("/model catalog:")} ${catalogRoutes.length} model(s)`);
+        catalogRoutes.forEach((r) => console.log(`    ${pc5.dim(r.displayName)}`));
         console.log("");
-        console.log(pc4.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
+        console.log(pc5.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
         console.log("");
         return 0;
       }
@@ -3707,15 +4194,15 @@ async function runClaudeCommand(parsed) {
       const formatDesc = selectedModel.modelFormat === "anthropic" ? "direct passthrough" : "via SDK adapter proxy";
       const endpoint = selectedModel.modelFormat === "anthropic" ? selectedModel.baseUrl ?? "(unknown)" : selectedModel.npm ?? "SDK";
       console.log("");
-      console.log(pc4.bold(pc4.cyan("  DRY RUN \u2014 would execute:")));
+      console.log(pc5.bold(pc5.cyan("  DRY RUN \u2014 would execute:")));
       console.log("");
-      console.log(`  ${pc4.bold("Provider:")}  ${provider.name}`);
-      console.log(`  ${pc4.bold("Model:")}     ${selectedModel.id}`);
-      console.log(`  ${pc4.bold("Format:")}    ${selectedModel.modelFormat} (${formatDesc})`);
-      console.log(`  ${pc4.bold(selectedModel.modelFormat === "anthropic" ? "Endpoint:" : "SDK npm:")} ${endpoint}`);
-      console.log(`  ${pc4.bold("Key:")}       ${provider.id} provider key`);
+      console.log(`  ${pc5.bold("Provider:")}  ${provider.name}`);
+      console.log(`  ${pc5.bold("Model:")}     ${selectedModel.id}`);
+      console.log(`  ${pc5.bold("Format:")}    ${selectedModel.modelFormat} (${formatDesc})`);
+      console.log(`  ${pc5.bold(selectedModel.modelFormat === "anthropic" ? "Endpoint:" : "SDK npm:")} ${endpoint}`);
+      console.log(`  ${pc5.bold("Key:")}       ${provider.id} provider key`);
       console.log("");
-      console.log(pc4.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
+      console.log(pc5.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
       console.log("");
       return 0;
     }
@@ -3742,11 +4229,11 @@ async function runClaudeCommand(parsed) {
             upstreamModelId: selectedModel.upstreamModelId
           }
         );
-        p5.log.info(
-          `SDK adapter proxy started on port ${proxyHandle2.port}` + (selectedModel.npm ? pc4.dim(` (${selectedModel.npm})`) : "")
+        p6.log.info(
+          `SDK adapter proxy started on port ${proxyHandle2.port}` + (selectedModel.npm ? pc5.dim(` (${selectedModel.npm})`) : "")
         );
       } catch (err) {
-        p5.log.error(`Failed to start SDK adapter proxy: ${err instanceof Error ? err.message : String(err)}`);
+        p6.log.error(`Failed to start SDK adapter proxy: ${err instanceof Error ? err.message : String(err)}`);
         return 1;
       }
       childEnv2 = buildChildEnv(
@@ -3762,7 +4249,7 @@ async function runClaudeCommand(parsed) {
     }
     const debugLogPath2 = join7(tmpdir(), "relay-ai-debug.log");
     const traceArgs2 = trace ? ["--debug-file", debugLogPath2] : [];
-    if (trace) p5.log.info(`Debug log: ${debugLogPath2}`);
+    if (trace) p6.log.info(`Debug log: ${debugLogPath2}`);
     const exitCode2 = await launchClaude(childEnv2, selectedModel.id, [...traceArgs2, ...claudeArgs]);
     proxyHandle2?.close();
     if (trace) printTraceLog(debugLogPath2);
@@ -3779,8 +4266,8 @@ async function runClaudeCommand(parsed) {
   }
   const needsZen = tier === "free" || tier === "zen" || tier === "go" || tier === "both";
   const needsGo = tier === "go" || tier === "both";
-  const spinner3 = p5.spinner();
-  spinner3.start("Fetching available models...");
+  const spinner4 = p6.spinner();
+  spinner4.start("Fetching available models...");
   let zenModels = earlyZenModels;
   let goModels = earlyGoModels;
   const fetchZen = needsZen && zenModels.length === 0;
@@ -3794,10 +4281,10 @@ async function runClaudeCommand(parsed) {
       if (fetchZen) zenModels = fetched.zenModels;
       if (fetchGo) goModels = fetched.goModels;
     }
-    spinner3.stop(`Loaded ${zenModels.length + goModels.length} models`);
+    spinner4.stop(`Loaded ${zenModels.length + goModels.length} models`);
   } catch (err) {
-    spinner3.stop(pc4.red("Failed to load models"));
-    console.error(pc4.red(String(err instanceof Error ? err.message : err)));
+    spinner4.stop(pc5.red("Failed to load models"));
+    console.error(pc5.red(String(err instanceof Error ? err.message : err)));
     return 1;
   }
   const selection = await runWizard(prefs, { zen: zenModels, go: goModels }, conflicts, tier);
@@ -3807,7 +4294,7 @@ async function runClaudeCommand(parsed) {
     const resolveRoute = makeRouteResolver(localProviders, earlyZenModels, earlyGoModels, effectiveKey);
     const startingRoute = zenGoModelToRoute(selection.model, effectiveKey);
     if (!startingRoute) {
-      p5.log.error("Could not resolve a proxy route for the selected model.");
+      p6.log.error("Could not resolve a proxy route for the selected model.");
       return 1;
     }
     const catalogRoutes = buildCatalogRoutes(startingRoute, favorites, resolveRoute);
@@ -3843,11 +4330,11 @@ async function runClaudeCommand(parsed) {
         selection.model.contextWindow,
         { npm: "@ai-sdk/openai-compatible", baseURL: `${selection.backend.baseUrl}/v1` }
       );
-      p5.log.info(
-        `Translation proxy started on port ${proxyHandle.port} ` + pc4.dim(`(${selection.backend.baseUrl}/v1/chat/completions)`)
+      p6.log.info(
+        `Translation proxy started on port ${proxyHandle.port} ` + pc5.dim(`(${selection.backend.baseUrl}/v1/chat/completions)`)
       );
     } catch (err) {
-      p5.log.error(`Failed to start translation proxy: ${err instanceof Error ? err.message : String(err)}`);
+      p6.log.error(`Failed to start translation proxy: ${err instanceof Error ? err.message : String(err)}`);
       return 1;
     }
   }
@@ -3864,7 +4351,7 @@ async function runClaudeCommand(parsed) {
   const debugLogPath = join7(tmpdir(), "relay-ai-debug.log");
   const traceArgs = trace ? ["--debug-file", debugLogPath] : [];
   if (trace) {
-    p5.log.info(`Debug log: ${debugLogPath}`);
+    p6.log.info(`Debug log: ${debugLogPath}`);
   }
   const exitCode = await launchClaude(childEnv, selection.model.id, [...traceArgs, ...claudeArgs]);
   if (proxyHandle) {
@@ -3876,7 +4363,7 @@ async function runClaudeCommand(parsed) {
 async function main(args = process.argv.slice(2)) {
   const parsed = parseArgs(args);
   if (parsed.error) {
-    console.error(pc4.red(`
+    console.error(pc5.red(`
 Error: ${parsed.error}
 `));
     printHelp(rootHelpText());
@@ -3912,6 +4399,17 @@ Error: ${parsed.error}
     }
     return runModelsCommand();
   }
+  if (parsed.command === "providers") {
+    if (parsed.showVersion) {
+      console.log(VERSION);
+      return 0;
+    }
+    if (parsed.showHelp) {
+      printHelp(providersHelpText());
+      return 0;
+    }
+    return runProvidersCommand(parsed.claudeArgs);
+  }
   if (parsed.showVersion) {
     console.log(VERSION);
     return 0;
@@ -3937,7 +4435,7 @@ if (isCliEntryPoint()) {
     if (err === /* @__PURE__ */ Symbol.for("clack:cancel")) {
       process.exit(0);
     }
-    console.error(pc4.red("\nUnexpected error:"), err);
+    console.error(pc5.red("\nUnexpected error:"), err);
     process.exit(1);
   });
 }

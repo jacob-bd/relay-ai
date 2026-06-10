@@ -26,6 +26,7 @@ import { fetchProviderCatalog, fetchZenGoModels, providersForPicker } from './pr
 import { BACKENDS, VERSION } from './constants.js';
 import type { ParsedArgs, ModelInfo, FavoriteModel } from './types.js';
 import { addFavorite, removeFavorite } from './favorites.js';
+import { runProvidersCommand, providersHelpText } from './providers-command.js';
 const STARTER_CLAUDE_FLAGS = new Set(['--dry-run', '--setup', '--trace', '--help', '-h', '--version', '-v']);
 
 function emptyParsed(command: ParsedArgs['command']): ParsedArgs {
@@ -74,6 +75,16 @@ export function parseArgs(args: string[]): ParsedArgs {
     return parsed;
   }
 
+  if (first === 'providers') {
+    const parsed = emptyParsed('providers');
+    parsed.claudeArgs = rest;
+    for (const arg of rest) {
+      if (arg === '--help' || arg === '-h') parsed.showHelp = true;
+      else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
+    }
+    return parsed;
+  }
+
   if (first !== 'claude') {
     return {
       ...emptyParsed('root'),
@@ -112,6 +123,7 @@ OpenAI, Gemini, Ollama, and more).
 ${pc.bold('Usage:')}
   relay-ai claude [options] [claude-flags]
   relay-ai models
+  relay-ai providers
   relay-ai server
   relay-ai --help
   relay-ai --version
@@ -119,6 +131,7 @@ ${pc.bold('Usage:')}
 ${pc.bold('Commands:')}
   claude      Launch Claude Code — cloud Zen/Go or local OpenCode providers
   models      Manage favorite models for mid-session /model switching (max ${MAX_MODEL_CATALOG})
+  providers   Add, import, and manage your AI providers
   server      Run a foreground API gateway (Zen, Go, and local providers)
   codex       planned
 
@@ -1093,6 +1106,18 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
     return runModelsCommand();
+  }
+
+  if (parsed.command === 'providers') {
+    if (parsed.showVersion) {
+      console.log(VERSION);
+      return 0;
+    }
+    if (parsed.showHelp) {
+      printHelp(providersHelpText());
+      return 0;
+    }
+    return runProvidersCommand(parsed.claudeArgs);
   }
 
   if (parsed.showVersion) {
