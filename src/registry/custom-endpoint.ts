@@ -35,7 +35,7 @@ function modelFormatForKind(kind: CustomEndpointKind): 'anthropic' | 'openai' {
   return kind === 'anthropic' ? 'anthropic' : 'openai';
 }
 
-async function testAnthropicEndpoint(baseUrl: string, apiKey: string): Promise<{ models: CachedModel[]; baseUrl: string; error?: string; hint?: string }> {
+export async function fetchAnthropicModels(baseUrl: string, apiKey: string): Promise<{ models: CachedModel[]; baseUrl: string; error?: string; hint?: string }> {
   const root = baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '');
   const modelsUrl = `${root}/v1/models`;
   const controller = new AbortController();
@@ -126,7 +126,7 @@ export async function addCustomEndpointProvider(input: AddCustomEndpointInput): 
 
   let fetched: { models: CachedModel[]; baseUrl: string; error?: string; hint?: string };
   if (input.kind === 'anthropic') {
-    fetched = await testAnthropicEndpoint(urlCheck.normalizedUrl, apiKey);
+    fetched = await fetchAnthropicModels(urlCheck.normalizedUrl, apiKey);
   } else {
     fetched = await fetchTemplateModels(
       {

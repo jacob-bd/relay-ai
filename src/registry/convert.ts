@@ -25,6 +25,7 @@ export function localProviderToRegistry(provider: LocalProvider, templateId?: st
   if (provider.models.length === 0) return null;
 
   const first = provider.models[0]!;
+  const apiUrl = (first.apiBaseUrl ?? first.baseUrl)?.trim();
   return {
     id: provider.id,
     templateId: templateId ?? provider.id,
@@ -33,7 +34,7 @@ export function localProviderToRegistry(provider: LocalProvider, templateId?: st
     authRef: `keyring:provider:${provider.id}`,
     api: {
       npm: first.npm,
-      url: first.apiBaseUrl ?? first.baseUrl,
+      ...(apiUrl ? { url: apiUrl } : {}),
     },
     addedAt: new Date().toISOString(),
     refreshedAt: new Date().toISOString(),

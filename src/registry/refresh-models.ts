@@ -2,10 +2,15 @@
 
 import { BACKENDS } from '../constants.js';
 import { getModels } from '../models.js';
-import { getTemplateById } from '../provider-templates.js';
+import { fetchAnthropicModels } from './custom-endpoint.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
 import { loadRegistry, saveRegistry } from './io.js';
 import { resolveModelSource } from './model-source.js';
+import {
+  effectiveProviderBaseUrl,
+  resolveProviderTemplate,
+  syntheticTemplate,
+} from './resolve-template.js';
 import {
   buildPricingIndex,
   enrichModelsWithPricing,
@@ -69,21 +74,26 @@ async function refreshApiListProvider(
   apiKey: string,
 ): Promise<{ models: CachedModel[]; baseUrl?: string; error?: string }> {
   const npm = provider.api.npm ?? '@ai-sdk/openai-compatible';
-  const template = getTemplateById(provider.templateId) ?? {
-    id: provider.id,
-    name: provider.name,
-    authType: 'api' as const,
-    npm,
-    defaultBaseUrl: provider.api.url,
-    modelSource: 'api-list' as const,
-    supported: true,
-  };
+  const catalogTemplate = resolveProviderTemplate(provider);
+  const baseUrl = effectiveProviderBaseUrl(provider, catalogTemplate);
+  const template = catalogTemplate ?? syntheticTemplate(provider, baseUrl);
 
-  if (!provider.api.url && !template.defaultBaseUrl) {
+  if (!baseUrl) {
     return { models: [], error: 'Provider has no API base URL configured.' };
   }
 
-  const fetched = await fetchTemplateModels(template, apiKey, provider.api.url ?? template.defaultBaseUrl);
+  if (npm === '@ai-sdk/anthropic') {
+    const fetched = await fetchAnthropicModels(baseUrl, apiKey);
+    if (fetched.error || fetched.models.length === 0) {
+      return { models: [], error: fetched.error ?? 'No models returned.', baseUrl: fetched.baseUrl };
+    }
+    return {
+      models: fetched.models.map(m => ({ ...m, apiUrl: fetched.baseUrl })),
+      baseUrl: fetched.baseUrl,
+    };
+  }
+
+  const fetched = await fetchTemplateModels(template, apiKey, baseUrl);
   if (fetched.error || fetched.models.length === 0) {
     return { models: [], error: fetched.error ?? 'No models returned.' };
   }
@@ -130,12 +140,16 @@ export async function refreshProviderModels(
 
   const source = resolveModelSource(provider);
   if (source === 'manual-only') {
+    const hint =
+      provider.templateId === 'google-vertex' || provider.id === 'google-vertex' || provider.api.npm === '@ai-sdk/google-vertex'
+        ? 'Vertex uses gcloud credentials — re-import from OpenCode or use relay-ai server --vertex.'
+        : 'Manual-only provider — model list is not refreshed automatically.';
     return {
       id: provider.id,
       name: provider.name,
       ok: true,
       skipped: true,
-      reason: 'Manual-only provider — model list is not refreshed automatically.',
+      reason: hint,
     };
   }
 

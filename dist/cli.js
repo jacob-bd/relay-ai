@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 
 // src/cli.ts
-import pc6 from "picocolors";
+import pc7 from "picocolors";
 import * as p8 from "@clack/prompts";
-import { readFileSync as readFileSync6, existsSync as existsSync7, realpathSync } from "fs";
-import { tmpdir as tmpdir2 } from "os";
-import { join as join8 } from "path";
+import { realpathSync } from "fs";
 import { fileURLToPath } from "url";
 
 // src/launch.ts
@@ -407,24 +405,162 @@ async function isSecretServiceAvailable() {
 
 // src/key-setup.ts
 import * as p from "@clack/prompts";
-import { appendFileSync, readFileSync as readFileSync2, existsSync as existsSync2 } from "fs";
-import { homedir as homedir3, tmpdir } from "os";
-import { join as join3 } from "path";
+import { appendFileSync, readFileSync as readFileSync3, existsSync as existsSync3 } from "fs";
+import { homedir as homedir4 } from "os";
 import { spawnSync } from "child_process";
+
+// src/trace-log.ts
+import {
+  chmodSync,
+  existsSync as existsSync2,
+  mkdirSync,
+  readFileSync as readFileSync2,
+  unlinkSync,
+  writeFileSync
+} from "fs";
+import { join as join4 } from "path";
+import pc from "picocolors";
+
+// src/paths.ts
+import { homedir as homedir3 } from "os";
+import { join as join3 } from "path";
+var APP_DIR_NAME = "relay-ai";
+var LEGACY_APP_DIR_NAME = "opencode-starter";
+function userHome(env = process.env) {
+  return env.HOME ?? env.USERPROFILE ?? homedir3();
+}
+function resolveAppHomeOverride(env = process.env) {
+  const override = env.RELAY_AI_HOME ?? env.OPENCODE_STARTER_HOME;
+  return override?.trim() || void 0;
+}
+function getAppHome(env = process.env) {
+  const override = resolveAppHomeOverride(env);
+  if (override) return override;
+  return join3(userHome(env), `.${APP_DIR_NAME}`);
+}
+function getLegacyAppHome(env = process.env) {
+  return join3(userHome(env), `.${LEGACY_APP_DIR_NAME}`);
+}
+function getConfigPath(env = process.env) {
+  return join3(getAppHome(env), "config.json");
+}
+function getProvidersPath(env = process.env) {
+  return join3(getAppHome(env), "providers.json");
+}
+function getLogsPath(env = process.env) {
+  return join3(getAppHome(env), "logs");
+}
+function getVertexModelsPath(env = process.env) {
+  return join3(getAppHome(env), "vertex-models.json");
+}
+function getLegacyConfPath(env = process.env, platform = process.platform) {
+  const home = userHome(env);
+  const appName = `${LEGACY_APP_DIR_NAME}-nodejs`;
+  if (platform === "darwin") {
+    return join3(home, "Library", "Preferences", appName, "config.json");
+  }
+  if (platform === "win32") {
+    return join3(env.APPDATA ?? join3(home, "AppData", "Roaming"), appName, "Config", "config.json");
+  }
+  return join3(env.XDG_CONFIG_HOME ?? join3(home, ".config"), appName, "config.json");
+}
+
+// src/trace-log.ts
+var DIR_MODE = 448;
+var FILE_MODE = 384;
+var CLAUDE_DEBUG_LOG = "claude-debug.log";
+var PROXY_DEBUG_LOG = "proxy-debug.log";
+function ensureLogsDir() {
+  const dir = getLogsPath();
+  mkdirSync(dir, { recursive: true, mode: DIR_MODE });
+  try {
+    chmodSync(dir, DIR_MODE);
+  } catch {
+  }
+  return dir;
+}
+function getClaudeDebugLogPath() {
+  return join4(ensureLogsDir(), CLAUDE_DEBUG_LOG);
+}
+function prepareClaudeTraceLog() {
+  const path = getClaudeDebugLogPath();
+  resetTraceLog(path);
+  return path;
+}
+function getProxyDebugLogPath() {
+  return join4(ensureLogsDir(), PROXY_DEBUG_LOG);
+}
+function resetTraceLog(path) {
+  ensureLogsDir();
+  if (existsSync2(path)) {
+    try {
+      unlinkSync(path);
+    } catch {
+    }
+  }
+}
+var REDACTION_PATTERNS = [
+  // Bearer / Authorization headers
+  (line) => line.replace(/Bearer\s+[A-Za-z0-9._\-+/=]+/gi, "Bearer [REDACTED]"),
+  (line) => line.replace(/("authorization"\s*:\s*")[^"]+/gi, "$1[REDACTED]"),
+  (line) => line.replace(/(x-api-key"\s*:\s*")[^"]+/gi, "$1[REDACTED]"),
+  // Common API key prefixes
+  (line) => line.replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "sk-[REDACTED]"),
+  (line) => line.replace(/\bsk-ant-[A-Za-z0-9_-]{8,}\b/g, "sk-ant-[REDACTED]"),
+  (line) => line.replace(/\bAIza[A-Za-z0-9_-]{20,}\b/g, "AIza[REDACTED]"),
+  (line) => line.replace(/\bgsk_[A-Za-z0-9]{20,}\b/g, "gsk_[REDACTED]")
+];
+function redactTraceLine(line) {
+  let out = line;
+  for (const apply of REDACTION_PATTERNS) {
+    out = apply(out);
+  }
+  return out;
+}
+function redactTraceLog(content) {
+  return content.split("\n").map(redactTraceLine).join("\n");
+}
+function writeSecureLogLine(path, line) {
+  ensureLogsDir();
+  const redacted = redactTraceLine(line);
+  try {
+    writeFileSync(path, `${redacted}
+`, { flag: "a", mode: FILE_MODE });
+    chmodSync(path, FILE_MODE);
+  } catch {
+  }
+}
+function printTraceLog(debugLogPath) {
+  if (!existsSync2(debugLogPath)) return;
+  const raw = readFileSync2(debugLogPath, "utf8");
+  const log8 = redactTraceLog(raw);
+  const errorLines = log8.split("\n").filter(
+    (l) => l.includes("error") || l.includes("Error") || l.includes('"type":"error"') || l.includes("status")
+  );
+  console.log("\n" + pc.bold(pc.cyan("\u2500\u2500 Debug trace \u2500\u2500")));
+  if (errorLines.length > 0) {
+    errorLines.slice(0, 30).forEach((l) => console.log(pc.dim(l)));
+  } else {
+    console.log(pc.dim("(no errors found in debug log)"));
+  }
+  console.log(pc.dim(`Full log: ${debugLogPath}`));
+}
+
+// src/key-setup.ts
 function detectShellProfile() {
   const shell = process.env["SHELL"] ?? "";
   if (process.platform === "darwin") {
-    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir3()}/.zshrc` };
-    if (shell.includes("bash")) return { display: "~/.bash_profile", path: `${homedir3()}/.bash_profile` };
-    return { display: "~/.profile", path: `${homedir3()}/.profile` };
+    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir4()}/.zshrc` };
+    if (shell.includes("bash")) return { display: "~/.bash_profile", path: `${homedir4()}/.bash_profile` };
+    return { display: "~/.profile", path: `${homedir4()}/.profile` };
   }
   if (process.platform === "linux") {
-    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir3()}/.zshrc` };
-    if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir3()}/.bashrc` };
-    return { display: "~/.profile", path: `${homedir3()}/.profile` };
+    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir4()}/.zshrc` };
+    if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir4()}/.bashrc` };
+    return { display: "~/.profile", path: `${homedir4()}/.profile` };
   }
-  if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir3()}/.bashrc` };
-  return { display: "~/.profile", path: `${homedir3()}/.profile` };
+  if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir4()}/.bashrc` };
+  return { display: "~/.profile", path: `${homedir4()}/.profile` };
 }
 async function resolveOrCollectApiKey(simulate = false, trace = false) {
   if (!simulate) {
@@ -444,14 +580,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
     const keyDiag = (reason) => {
       p.log.warn(`Credential store unavailable \u2014 ${reason}`);
       if (trace) {
-        try {
-          appendFileSync(
-            join3(tmpdir(), "relay-ai-debug.log"),
-            `${(/* @__PURE__ */ new Date()).toISOString()} keyring: ${reason}
-`
-          );
-        } catch {
-        }
+        writeSecureLogLine(getClaudeDebugLogPath(), `keyring: ${reason}`);
       }
     };
     const storedKey = await readFromCredentialStore(keyDiag);
@@ -535,7 +664,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
     if (await saveToCredentialStore(trimmedKey)) {
       try {
         const autoLoadLine = `export OPENCODE_API_KEY="$(security find-generic-password -s relay-ai -a ${GLOBAL_OPENCODE_KEYRING_ACCOUNT} -w 2>/dev/null)"`;
-        const existing = existsSync2(path) ? readFileSync2(path, "utf8") : "";
+        const existing = existsSync3(path) ? readFileSync3(path, "utf8") : "";
         if (!existing.includes(autoLoadLine)) {
           appendFileSync(path, `
 # relay-ai: load API key from macOS Keychain
@@ -572,7 +701,7 @@ ${autoLoadLine}
     }
   } else if (saveChoice === "profile") {
     try {
-      if (!existsSync2(path)) appendFileSync(path, "");
+      if (!existsSync3(path)) appendFileSync(path, "");
       const escapedKey = trimmedKey.replace(/'/g, "'\\''");
       appendFileSync(path, `
 export OPENCODE_API_KEY='${escapedKey}'
@@ -587,58 +716,15 @@ export OPENCODE_API_KEY='${escapedKey}'
 }
 
 // src/first-run.ts
-import pc from "picocolors";
+import pc2 from "picocolors";
 import * as p2 from "@clack/prompts";
 
 // src/config.ts
 import { dirname, join as join5 } from "path";
-import { copyFileSync, existsSync as existsSync3, mkdirSync, readFileSync as readFileSync3, renameSync, writeFileSync } from "fs";
-
-// src/paths.ts
-import { homedir as homedir4 } from "os";
-import { join as join4 } from "path";
-var APP_DIR_NAME = "relay-ai";
-var LEGACY_APP_DIR_NAME = "opencode-starter";
-function userHome(env = process.env) {
-  return env.HOME ?? env.USERPROFILE ?? homedir4();
-}
-function resolveAppHomeOverride(env = process.env) {
-  const override = env.RELAY_AI_HOME ?? env.OPENCODE_STARTER_HOME;
-  return override?.trim() || void 0;
-}
-function getAppHome(env = process.env) {
-  const override = resolveAppHomeOverride(env);
-  if (override) return override;
-  return join4(userHome(env), `.${APP_DIR_NAME}`);
-}
-function getLegacyAppHome(env = process.env) {
-  return join4(userHome(env), `.${LEGACY_APP_DIR_NAME}`);
-}
-function getConfigPath(env = process.env) {
-  return join4(getAppHome(env), "config.json");
-}
-function getProvidersPath(env = process.env) {
-  return join4(getAppHome(env), "providers.json");
-}
-function getVertexModelsPath(env = process.env) {
-  return join4(getAppHome(env), "vertex-models.json");
-}
-function getLegacyConfPath(env = process.env, platform = process.platform) {
-  const home = userHome(env);
-  const appName = `${LEGACY_APP_DIR_NAME}-nodejs`;
-  if (platform === "darwin") {
-    return join4(home, "Library", "Preferences", appName, "config.json");
-  }
-  if (platform === "win32") {
-    return join4(env.APPDATA ?? join4(home, "AppData", "Roaming"), appName, "Config", "config.json");
-  }
-  return join4(env.XDG_CONFIG_HOME ?? join4(home, ".config"), appName, "config.json");
-}
-
-// src/config.ts
+import { copyFileSync, existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync4, renameSync, writeFileSync as writeFileSync2 } from "fs";
 function readJsonFile(path) {
   try {
-    const parsed = JSON.parse(readFileSync3(path, "utf8"));
+    const parsed = JSON.parse(readFileSync4(path, "utf8"));
     return parsed && typeof parsed === "object" ? parsed : null;
   } catch {
     return null;
@@ -646,27 +732,27 @@ function readJsonFile(path) {
 }
 function ensureAppHomeMigrated() {
   const configPath = getConfigPath();
-  if (existsSync3(configPath)) return;
+  if (existsSync4(configPath)) return;
   const legacyConfig = join5(getLegacyAppHome(), "config.json");
-  if (!existsSync3(legacyConfig)) return;
-  mkdirSync(getAppHome(), { recursive: true });
+  if (!existsSync4(legacyConfig)) return;
+  mkdirSync2(getAppHome(), { recursive: true });
   copyFileSync(legacyConfig, configPath);
   const legacyVertex = join5(getLegacyAppHome(), "vertex-models.json");
   const vertexPath = join5(getAppHome(), "vertex-models.json");
-  if (existsSync3(legacyVertex) && !existsSync3(vertexPath)) {
+  if (existsSync4(legacyVertex) && !existsSync4(vertexPath)) {
     copyFileSync(legacyVertex, vertexPath);
   }
 }
 function ensureConfigMigrated() {
   ensureAppHomeMigrated();
   const configPath = getConfigPath();
-  if (existsSync3(configPath)) return;
+  if (existsSync4(configPath)) return;
   const legacyPath = getLegacyConfPath();
-  if (!existsSync3(legacyPath)) return;
+  if (!existsSync4(legacyPath)) return;
   const legacy = readJsonFile(legacyPath);
   if (!legacy) return;
-  mkdirSync(dirname(configPath), { recursive: true });
-  writeFileSync(configPath, `${JSON.stringify(legacy, null, 2)}
+  mkdirSync2(dirname(configPath), { recursive: true });
+  writeFileSync2(configPath, `${JSON.stringify(legacy, null, 2)}
 `, "utf8");
   try {
     renameSync(legacyPath, `${legacyPath}.migrated`);
@@ -679,8 +765,8 @@ function readConfig() {
 }
 function writeConfig(config) {
   const configPath = getConfigPath();
-  mkdirSync(dirname(configPath), { recursive: true });
-  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}
+  mkdirSync2(dirname(configPath), { recursive: true });
+  writeFileSync2(configPath, `${JSON.stringify(config, null, 2)}
 `, "utf8");
 }
 function loadPreferences() {
@@ -777,7 +863,7 @@ function setServerFavoritesOnly(favoritesOnly) {
 
 // src/providers.ts
 import { execSync as execSync2, spawn as spawn2 } from "child_process";
-import { existsSync as existsSync4 } from "fs";
+import { existsSync as existsSync5 } from "fs";
 import { homedir as homedir5 } from "os";
 import { join as join6 } from "path";
 
@@ -899,7 +985,7 @@ function findOpencodeBinary() {
   } catch {
   }
   for (const path of OPENCODE_FALLBACK_PATHS) {
-    if (existsSync4(path)) return path;
+    if (existsSync5(path)) return path;
   }
   return null;
 }
@@ -1076,6 +1162,7 @@ function localProviderToRegistry(provider, templateId) {
   if (!isValidProviderId(provider.id)) return null;
   if (provider.models.length === 0) return null;
   const first = provider.models[0];
+  const apiUrl = (first.apiBaseUrl ?? first.baseUrl)?.trim();
   return {
     id: provider.id,
     templateId: templateId ?? provider.id,
@@ -1084,7 +1171,7 @@ function localProviderToRegistry(provider, templateId) {
     authRef: `keyring:provider:${provider.id}`,
     api: {
       npm: first.npm,
-      url: first.apiBaseUrl ?? first.baseUrl
+      ...apiUrl ? { url: apiUrl } : {}
     },
     addedAt: (/* @__PURE__ */ new Date()).toISOString(),
     refreshedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -1097,12 +1184,12 @@ function localProviderToRegistry(provider, templateId) {
 
 // src/registry/io.ts
 import {
-  chmodSync,
+  chmodSync as chmodSync2,
   copyFileSync as copyFileSync2,
-  existsSync as existsSync5,
-  mkdirSync as mkdirSync2,
+  existsSync as existsSync6,
+  mkdirSync as mkdirSync3,
   openSync,
-  readFileSync as readFileSync4,
+  readFileSync as readFileSync5,
   renameSync as renameSync2,
   writeSync,
   closeSync
@@ -1113,27 +1200,27 @@ import { dirname as dirname2 } from "path";
 var REGISTRY_SCHEMA_VERSION = 1;
 
 // src/registry/io.ts
-var DIR_MODE = 448;
-var FILE_MODE = 384;
+var DIR_MODE2 = 448;
+var FILE_MODE2 = 384;
 function ensureSecureAppHome() {
   const home = getAppHome();
-  mkdirSync2(home, { recursive: true, mode: DIR_MODE });
+  mkdirSync3(home, { recursive: true, mode: DIR_MODE2 });
   try {
-    chmodSync(home, DIR_MODE);
+    chmodSync2(home, DIR_MODE2);
   } catch {
   }
 }
 function writeSecureFile(path, content) {
   ensureSecureAppHome();
-  mkdirSync2(dirname2(path), { recursive: true, mode: DIR_MODE });
-  const fd = openSync(path, "w", FILE_MODE);
+  mkdirSync3(dirname2(path), { recursive: true, mode: DIR_MODE2 });
+  const fd = openSync(path, "w", FILE_MODE2);
   try {
     writeSync(fd, content);
   } finally {
     closeSync(fd);
   }
   try {
-    chmodSync(path, FILE_MODE);
+    chmodSync2(path, FILE_MODE2);
   } catch {
   }
 }
@@ -1192,11 +1279,11 @@ function parseRegistry(raw) {
   return registry;
 }
 function loadRegistry(path = getProvidersPath()) {
-  if (!existsSync5(path)) {
+  if (!existsSync6(path)) {
     return { schemaVersion: REGISTRY_SCHEMA_VERSION, providers: [] };
   }
   try {
-    const raw = JSON.parse(readFileSync4(path, "utf8"));
+    const raw = JSON.parse(readFileSync5(path, "utf8"));
     return parseRegistry(raw);
   } catch {
     return { schemaVersion: REGISTRY_SCHEMA_VERSION, providers: [] };
@@ -1206,7 +1293,7 @@ function saveRegistry(registry, path = getProvidersPath()) {
   const payload = `${JSON.stringify(registry, null, 2)}
 `;
   const backup = `${path}.bak`;
-  if (existsSync5(path)) {
+  if (existsSync6(path)) {
     try {
       copyFileSync2(path, backup);
     } catch {
@@ -1303,7 +1390,7 @@ function ensureZenRegistryStub() {
   saveRegistry(registry);
 }
 async function runFirstRunWizard(trace = false) {
-  p2.note("Let's get you set up.", pc.bold("Welcome to relay-ai!"));
+  p2.note("Let's get you set up.", pc2.bold("Welcome to relay-ai!"));
   const hasOpencode = findOpencodeBinary() !== null;
   const options = [
     {
@@ -2092,28 +2179,31 @@ async function generateAnthropicResponse(model, params, modelId) {
 
 // src/proxy.ts
 function appendSecureLog(logPath, line) {
+  const redacted = redactTraceLine(line);
   try {
     const fd = openSync2(logPath, "a", 384);
     try {
-      writeSync2(fd, `${(/* @__PURE__ */ new Date()).toISOString()} ${line}
+      writeSync2(fd, `${(/* @__PURE__ */ new Date()).toISOString()} ${redacted}
 `);
     } finally {
       closeSync2(fd);
     }
   } catch {
     try {
-      appendFileSync2(logPath, `${(/* @__PURE__ */ new Date()).toISOString()} ${line}
+      appendFileSync2(logPath, `${(/* @__PURE__ */ new Date()).toISOString()} ${redacted}
 `);
     } catch {
     }
   }
 }
-function makeProxyLog(debug, logPath = "/tmp/relay-ai-proxy-debug.log") {
+function makeProxyLog(debug, logPath) {
   if (!debug) return () => {
   };
+  const path = logPath ?? getProxyDebugLogPath();
+  resetTraceLog(path);
   return (message) => {
     const line = typeof message === "function" ? message() : message;
-    appendSecureLog(logPath, line);
+    appendSecureLog(path, line);
   };
 }
 function readBody(req) {
@@ -2359,7 +2449,7 @@ function buildCatalogRoutes(startingRoute, favorites, resolveRoute, max = MAX_MO
 }
 
 // src/server/index.ts
-import pc3 from "picocolors";
+import pc4 from "picocolors";
 import { networkInterfaces } from "os";
 import * as p5 from "@clack/prompts";
 
@@ -2918,7 +3008,7 @@ function summarizeServerProviders(models) {
 }
 
 // src/server/provider-select.ts
-import pc2 from "picocolors";
+import pc3 from "picocolors";
 import * as p4 from "@clack/prompts";
 function isSelected(list, id) {
   return list.includes(id);
@@ -2939,14 +3029,14 @@ async function selectServerProviders(available, initial) {
     for (let i = 0; i < selected.length; i++) {
       const id = selected[i];
       const provider = lookup2.get(id);
-      const label = provider ? `\u2605 ${provider.name}` : pc2.dim(`\u2605 ${id} \u2014 provider gone`);
+      const label = provider ? `\u2605 ${provider.name}` : pc3.dim(`\u2605 ${id} \u2014 provider gone`);
       const hint = provider ? `${provider.modelCount} model${provider.modelCount !== 1 ? "s" : ""}` : "select to remove";
       options.push({ value: `prov-${i}`, label, hint: "select to remove" });
     }
     const unselected = available.filter((provider) => !isSelected(selected, provider.id));
     options.push({
       value: "__add__",
-      label: unselected.length === 0 ? pc2.dim("+ Add a provider \u2192 (all providers selected)") : "+ Add a provider \u2192",
+      label: unselected.length === 0 ? pc3.dim("+ Add a provider \u2192 (all providers selected)") : "+ Add a provider \u2192",
       hint: unselected.length === 0 ? "" : `${unselected.length} more available`
     });
     options.push({ value: "__all__", label: "Expose all providers", hint: `${available.length} total` });
@@ -3004,7 +3094,7 @@ async function selectServerProviders(available, initial) {
 }
 
 // src/server/vertex-config.ts
-import { existsSync as existsSync6, readFileSync as readFileSync5 } from "fs";
+import { existsSync as existsSync7, readFileSync as readFileSync6 } from "fs";
 import { homedir as homedir6 } from "os";
 import { join as join7 } from "path";
 var DEFAULT_VERTEX_MODELS = [
@@ -3033,13 +3123,13 @@ function defaultAdcCredentialsPath(home = homedir6()) {
   return join7(home, ".config", "gcloud", "application_default_credentials.json");
 }
 function hasApplicationDefaultCredentials(home = homedir6(), adcPath = defaultAdcCredentialsPath(home)) {
-  return existsSync6(adcPath);
+  return existsSync7(adcPath);
 }
 function loadVertexModelEntries(env = process.env) {
   const configPath = getVertexModelsPath(env);
-  if (!existsSync6(configPath)) return DEFAULT_VERTEX_MODELS;
+  if (!existsSync7(configPath)) return DEFAULT_VERTEX_MODELS;
   try {
-    const parsed = JSON.parse(readFileSync5(configPath, "utf8"));
+    const parsed = JSON.parse(readFileSync6(configPath, "utf8"));
     if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_VERTEX_MODELS;
     const models = parsed.filter(
       (entry) => !!entry && typeof entry === "object" && typeof entry.id === "string" && entry.id.length > 0 && typeof entry.display_name === "string" && entry.display_name.length > 0
@@ -3240,7 +3330,7 @@ async function configureExposedProviders(tier) {
   return picked;
 }
 async function runServerWizard(tier) {
-  p5.intro(pc3.bold("  Relay AI \u2014 Server"));
+  p5.intro(pc4.bold("  Relay AI \u2014 Server"));
   const startMode = await askServerStartMode();
   if (!startMode) return void 0;
   if (startMode === "quick") {
@@ -3264,7 +3354,7 @@ async function runServerWizard(tier) {
   return { exposedProviders, maskGatewayIds, favoritesOnly };
 }
 async function runVertexServerCommand() {
-  p5.intro(pc3.bold("  Relay AI \u2014 Vertex Gateway"));
+  p5.intro(pc4.bold("  Relay AI \u2014 Vertex Gateway"));
   const vertexConfig = buildVertexRuntimeConfig();
   if (!vertexConfig) {
     p5.log.error("Set ANTHROPIC_VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT to your GCP project.");
@@ -3294,7 +3384,7 @@ async function runVertexServerCommand() {
     }
   });
   console.log("");
-  console.log(pc3.bold(pc3.green("Vertex gateway running")));
+  console.log(pc4.bold(pc4.green("Vertex gateway running")));
   console.log(`  Anthropic:  http://127.0.0.1:${server.port}/anthropic`);
   console.log(`  Models:     ${models.map((model) => model.id).join(", ")}`);
   if (mode === "network") {
@@ -3303,9 +3393,9 @@ async function runVertexServerCommand() {
   } else {
     console.log("  API key:    any non-empty value");
   }
-  console.log(pc3.dim("  Auth:       gcloud Application Default Credentials"));
+  console.log(pc4.dim("  Auth:       gcloud Application Default Credentials"));
   console.log("");
-  console.log(pc3.dim("Press Ctrl+C to stop."));
+  console.log(pc4.dim("Press Ctrl+C to stop."));
   await waitForShutdown();
   await server.close();
   return 0;
@@ -3354,19 +3444,19 @@ async function runServerCommand(options = {}) {
     if (runConfig.favoritesOnly) {
       const favorites = loadPreferences().favoriteModels ?? [];
       if (favorites.length === 0) {
-        spinner5.stop(pc3.red("No favorite models configured"));
+        spinner5.stop(pc4.red("No favorite models configured"));
         p5.log.error("Run `relay-ai models` to add favorites, or turn off favorites-only in the server wizard.");
         return 1;
       }
       models = filterServerModelsByFavorites(models, favorites);
       if (models.length === 0) {
-        spinner5.stop(pc3.red("No favorite models matched the current provider filter"));
+        spinner5.stop(pc4.red("No favorite models matched the current provider filter"));
         p5.log.error("Adjust favorites with `relay-ai models` or change exposed providers in the server wizard.");
         return 1;
       }
     }
     if (models.length === 0) {
-      spinner5.stop(pc3.red("No models to expose"));
+      spinner5.stop(pc4.red("No models to expose"));
       p5.log.error("Add providers in the server wizard \u2014 Configure & start \u2192 manage exposed providers.");
       return 1;
     }
@@ -3378,8 +3468,8 @@ async function runServerCommand(options = {}) {
     spinner5.stop(`Loaded ${models.length} models (${localCount} from local providers)${filterNote}${favoritesNote}${maskNote}`);
     if (summary) p5.log.info(summary);
   } catch (err) {
-    spinner5.stop(pc3.red("Failed to load models"));
-    console.error(pc3.red(String(err instanceof Error ? err.message : err)));
+    spinner5.stop(pc4.red("Failed to load models"));
+    console.error(pc4.red(String(err instanceof Error ? err.message : err)));
     return 1;
   }
   const gateway = runConfig.maskGatewayIds ? { maskGatewayIds: true } : void 0;
@@ -3393,7 +3483,7 @@ async function runServerCommand(options = {}) {
     gateway
   });
   console.log("");
-  console.log(pc3.bold(pc3.green("Relay AI server running")));
+  console.log(pc4.bold(pc4.green("Relay AI server running")));
   console.log(`  Anthropic:  http://127.0.0.1:${server.port}/anthropic`);
   console.log(`  OpenAI:     http://127.0.0.1:${server.port}/openai`);
   if (mode === "network") {
@@ -3403,16 +3493,16 @@ async function runServerCommand(options = {}) {
     console.log("  API key:    any non-empty value");
   }
   if (runConfig.exposedProviders) {
-    console.log(pc3.dim(`  Providers:  ${runConfig.exposedProviders.join(", ")}`));
+    console.log(pc4.dim(`  Providers:  ${runConfig.exposedProviders.join(", ")}`));
   }
   if (runConfig.favoritesOnly) {
-    console.log(pc3.dim("  Catalog:    favorite models only"));
+    console.log(pc4.dim("  Catalog:    favorite models only"));
   }
   if (runConfig.maskGatewayIds) {
-    console.log(pc3.dim("  Discovery:  gateway ids masked for Claude Desktop / Cowork"));
+    console.log(pc4.dim("  Discovery:  gateway ids masked for Claude Desktop / Cowork"));
   }
   console.log("");
-  console.log(pc3.dim("Press Ctrl+C to stop."));
+  console.log(pc4.dim("Press Ctrl+C to stop."));
   await waitForShutdown();
   await server.close();
   return 0;
@@ -3420,7 +3510,7 @@ async function runServerCommand(options = {}) {
 
 // src/prompts.ts
 import * as p6 from "@clack/prompts";
-import pc4 from "picocolors";
+import pc5 from "picocolors";
 var BROWSE_ALL = "__browse_all__";
 var MAX_RECENT = 3;
 var MODEL_SEARCH_THRESHOLD = 25;
@@ -3609,8 +3699,8 @@ async function selectModelWithSearch(models, toOption, message, initialModelId, 
 }
 function noteEnvConflicts(conflicts) {
   if (conflicts.length === 0) return;
-  const lines = conflicts.map((c) => `  ${pc4.dim(c.name)}=${pc4.dim(c.value)}`).join("\n");
-  p6.note(lines, pc4.yellow("Env vars that will be temporarily overridden:"));
+  const lines = conflicts.map((c) => `  ${pc5.dim(c.name)}=${pc5.dim(c.value)}`).join("\n");
+  p6.note(lines, pc5.yellow("Env vars that will be temporarily overridden:"));
 }
 function modelToOption(model, hint) {
   return {
@@ -3659,14 +3749,14 @@ async function pickLocalModel(provider, conflicts, prefs) {
   }
   noteEnvConflicts(conflicts);
   const confirmed = await p6.confirm({
-    message: `Launch Claude Code \xB7 ${pc4.bold(selectedModel.id)} via ${pc4.bold(provider.name)}?`,
+    message: `Launch Claude Code \xB7 ${pc5.bold(selectedModel.id)} via ${pc5.bold(provider.name)}?`,
     initialValue: true
   });
   if (p6.isCancel(confirmed) || !confirmed) {
     p6.cancel("Cancelled.");
     return null;
   }
-  p6.outro(pc4.green("Launching..."));
+  p6.outro(pc5.green("Launching..."));
   return selectedModel;
 }
 
@@ -3684,7 +3774,7 @@ function removeFavorite(list, fav) {
 }
 
 // src/providers-command.ts
-import pc5 from "picocolors";
+import pc6 from "picocolors";
 import * as p7 from "@clack/prompts";
 
 // src/provider-templates.ts
@@ -3864,6 +3954,9 @@ function listAddableTemplates(configuredIds = []) {
   const configured = new Set(configuredIds);
   return listSupportedTemplates().filter((t) => !configured.has(t.id));
 }
+function getTemplateById(id) {
+  return PROVIDER_TEMPLATES.find((t) => t.id === id);
+}
 function filterTemplates(templates, query) {
   const q = query.trim().toLowerCase();
   if (!q) return templates;
@@ -3904,7 +3997,8 @@ function parseModelList(body, npm) {
   return models;
 }
 async function fetchTemplateModels(template, apiKey, baseUrlOverride) {
-  const baseUrl = (baseUrlOverride ?? template.defaultBaseUrl)?.replace(/\/$/, "");
+  const trimmedOverride = baseUrlOverride?.trim();
+  const baseUrl = (trimmedOverride || template.defaultBaseUrl)?.replace(/\/$/, "");
   if (!baseUrl) {
     return {
       models: [],
@@ -3977,6 +4071,242 @@ async function fetchTemplateModels(template, apiKey, baseUrlOverride) {
   }
 }
 
+// src/registry/pricing.ts
+import {
+  chmodSync as chmodSync3,
+  existsSync as existsSync8,
+  mkdirSync as mkdirSync4,
+  readFileSync as readFileSync7,
+  writeFileSync as writeFileSync3
+} from "fs";
+import { dirname as dirname3, join as join8 } from "path";
+
+// src/data/pricing-cache.json
+var pricing_cache_default = {
+  schema_version: "1.2.0",
+  generated_at: "2026-06-09T00:00:00.000Z",
+  models: [
+    {
+      provider: "groq",
+      model_id: "llama-3.3-70b-versatile",
+      aliases: { groq: "llama-3.3-70b-versatile" },
+      pricing: [
+        {
+          platform: "groq",
+          tier: "standard",
+          modality: "text",
+          input_per_1m_tokens: 0.59,
+          output_per_1m_tokens: 0.79
+        }
+      ]
+    },
+    {
+      provider: "anthropic",
+      model_id: "claude-sonnet-4-20250514",
+      aliases: { anthropic: "claude-sonnet-4-20250514" },
+      pricing: [
+        {
+          platform: "anthropic",
+          tier: "standard",
+          modality: "text",
+          input_per_1m_tokens: 3,
+          output_per_1m_tokens: 15
+        }
+      ]
+    },
+    {
+      provider: "moonshot",
+      model_id: "moonshotai/kimi-k2.6",
+      aliases: {
+        openrouter: "moonshotai/kimi-k2.6",
+        nvidia: "moonshotai/kimi-k2.6"
+      },
+      pricing: [
+        {
+          platform: "openrouter",
+          tier: "standard",
+          modality: "text",
+          input_per_1m_tokens: 0.6,
+          output_per_1m_tokens: 2.4
+        }
+      ]
+    }
+  ]
+};
+
+// src/registry/pricing.ts
+var PRICING_API_URL = "https://ai-model-pricing.com/api/v1/pricing.json";
+var FETCH_TIMEOUT_MS = 15e3;
+var FILE_MODE3 = 384;
+var TEMPLATE_TO_PRICING_PLATFORM = {
+  groq: "groq",
+  mistral: "mistral",
+  togetherai: "together",
+  cerebras: "cerebras",
+  deepinfra: "deepinfra",
+  xai: "xai",
+  perplexity: "perplexity",
+  cohere: "cohere",
+  openai: "openai",
+  google: "google_ai_studio",
+  alibaba: "alibaba",
+  openrouter: "openrouter",
+  anthropic: "anthropic",
+  nvidia: "nvidia",
+  venice: "openrouter"
+};
+function loadBundledPricingCache() {
+  return pricing_cache_default;
+}
+function readPricingFile(path) {
+  if (!existsSync8(path)) return null;
+  try {
+    return JSON.parse(readFileSync7(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function writePricingCache(path, data) {
+  mkdirSafe(dirname3(path));
+  writeFileSync3(path, `${JSON.stringify(data, null, 2)}
+`, { mode: FILE_MODE3 });
+  try {
+    chmodSync3(path, FILE_MODE3);
+  } catch {
+  }
+}
+function mkdirSafe(dir) {
+  try {
+    mkdirSync4(dir, { recursive: true, mode: 448 });
+  } catch {
+  }
+}
+function getUserPricingCachePath() {
+  return join8(getAppHome(), "pricing-cache.json");
+}
+function loadPricingCache() {
+  return readPricingFile(getUserPricingCachePath()) ?? loadBundledPricingCache();
+}
+async function fetchPricingCache() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(PRICING_API_URL, {
+      signal: controller.signal,
+      headers: { Accept: "application/json" }
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (!Array.isArray(data.models)) return null;
+    writePricingCache(getUserPricingCachePath(), data);
+    return data;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function pickPricingRow(rows, platform) {
+  const textRows = rows.filter((r) => !r.modality || r.modality === "text");
+  const pool = textRows.length > 0 ? textRows : rows;
+  if (platform) {
+    const platformStandard = pool.find((r) => r.platform === platform && r.tier === "standard");
+    if (platformStandard) return platformStandard;
+    const platformAny = pool.find((r) => r.platform === platform);
+    if (platformAny) return platformAny;
+  }
+  const standard = pool.find((r) => r.tier === "standard");
+  if (standard) return standard;
+  return pool[0] ?? null;
+}
+function rowToCost(row) {
+  if (row.input_per_1m_tokens === void 0 && row.output_per_1m_tokens === void 0) return void 0;
+  return {
+    input: row.input_per_1m_tokens ?? 0,
+    output: row.output_per_1m_tokens ?? 0
+  };
+}
+function normalizeModelIdCandidates(id) {
+  const trimmed = id.trim();
+  const lower = trimmed.toLowerCase();
+  const candidates = /* @__PURE__ */ new Set([trimmed, lower]);
+  for (const prefix of ["openrouter/", "moonshotai/", "anthropic/", "openai/"]) {
+    if (lower.startsWith(prefix)) {
+      candidates.add(lower.slice(prefix.length));
+      candidates.add(trimmed.slice(prefix.length));
+    }
+  }
+  const slash = lower.indexOf("/");
+  if (slash > 0) {
+    candidates.add(lower.slice(slash + 1));
+  }
+  return [...candidates];
+}
+function buildPricingIndex(cache) {
+  const byId = /* @__PURE__ */ new Map();
+  for (const entry of cache.models ?? []) {
+    if (!entry.model_id) continue;
+    for (const candidate of normalizeModelIdCandidates(entry.model_id)) {
+      byId.set(candidate, entry);
+    }
+    if (entry.aliases) {
+      for (const alias of Object.values(entry.aliases)) {
+        for (const candidate of normalizeModelIdCandidates(alias)) {
+          byId.set(candidate, entry);
+        }
+      }
+    }
+  }
+  return { byId };
+}
+function lookupModelCost(index, modelId, platform) {
+  for (const candidate of normalizeModelIdCandidates(modelId)) {
+    const entry = index.byId.get(candidate);
+    if (!entry?.pricing?.length) continue;
+    const row = pickPricingRow(entry.pricing, platform);
+    const cost = row ? rowToCost(row) : void 0;
+    if (cost) return cost;
+  }
+  return void 0;
+}
+function enrichModelsWithPricing(models, index, platform) {
+  return models.map((model) => {
+    const cost = lookupModelCost(index, model.id, platform) ?? lookupModelCost(index, model.upstreamModelId, platform);
+    if (!cost) return model;
+    return { ...model, cost };
+  });
+}
+function applyPricingToRegistryProviders(registry, cache) {
+  const index = buildPricingIndex(cache);
+  let changed = false;
+  for (const provider of registry.providers) {
+    if (!provider.modelsCache?.models.length) continue;
+    const platform = TEMPLATE_TO_PRICING_PLATFORM[provider.templateId] ?? TEMPLATE_TO_PRICING_PLATFORM[provider.id];
+    const enriched = enrichModelsWithPricing(provider.modelsCache.models, index, platform);
+    if (JSON.stringify(enriched) !== JSON.stringify(provider.modelsCache.models)) {
+      provider.modelsCache = { ...provider.modelsCache, models: enriched };
+      changed = true;
+    }
+  }
+  if (changed) {
+    registry.pricingCacheAt = cache.generated_at ?? (/* @__PURE__ */ new Date()).toISOString();
+  }
+  return changed;
+}
+function enrichPricingAsync(onComplete) {
+  void (async () => {
+    const fetched = await fetchPricingCache();
+    const cache = fetched ?? loadPricingCache();
+    const registry = loadRegistry();
+    const changed = applyPricingToRegistryProviders(registry, cache);
+    if (changed) saveRegistry(registry);
+    onComplete?.(changed);
+  })();
+}
+function pricingPlatformForProvider(templateId, providerId) {
+  return TEMPLATE_TO_PRICING_PLATFORM[templateId] ?? TEMPLATE_TO_PRICING_PLATFORM[providerId];
+}
+
 // src/registry/add-template.ts
 async function probeTemplatePackage(template) {
   if (!template.supported) return template.unsupportedReason ?? "Provider is not supported yet.";
@@ -4026,6 +4356,13 @@ async function addProviderFromTemplate(template, apiKey, opts) {
     };
   }
   const now = (/* @__PURE__ */ new Date()).toISOString();
+  const pricingCache = loadPricingCache();
+  const platform = pricingPlatformForProvider(template.id, template.id);
+  const pricedModels = enrichModelsWithPricing(
+    fetched.models.map((m) => ({ ...m, apiUrl: fetched.baseUrl })),
+    buildPricingIndex(pricingCache),
+    platform
+  );
   const entry = {
     id: template.id,
     templateId: template.id,
@@ -4040,10 +4377,7 @@ async function addProviderFromTemplate(template, apiKey, opts) {
     refreshedAt: now,
     modelsCache: {
       fetchedAt: now,
-      models: fetched.models.map((m) => ({
-        ...m,
-        apiUrl: fetched.baseUrl
-      }))
+      models: pricedModels
     }
   };
   if (existing) {
@@ -4053,6 +4387,7 @@ async function addProviderFromTemplate(template, apiKey, opts) {
     registry.providers.push(entry);
   }
   saveRegistry(registry);
+  enrichPricingAsync();
   return { added: true, provider: entry, modelCount: fetched.models.length };
 }
 
@@ -4187,7 +4522,7 @@ function npmForKind(kind) {
 function modelFormatForKind(kind) {
   return kind === "anthropic" ? "anthropic" : "openai";
 }
-async function testAnthropicEndpoint(baseUrl, apiKey) {
+async function fetchAnthropicModels(baseUrl, apiKey) {
   const root = baseUrl.replace(/\/v1\/?$/, "").replace(/\/$/, "");
   const modelsUrl2 = `${root}/v1/models`;
   const controller = new AbortController();
@@ -4269,7 +4604,7 @@ async function addCustomEndpointProvider(input) {
   const apiKey = input.apiKey.trim() || "local";
   let fetched;
   if (input.kind === "anthropic") {
-    fetched = await testAnthropicEndpoint(urlCheck.normalizedUrl, apiKey);
+    fetched = await fetchAnthropicModels(urlCheck.normalizedUrl, apiKey);
   } else {
     fetched = await fetchTemplateModels(
       {
@@ -4377,6 +4712,207 @@ function toggleProviderEnabled(id) {
   return { toggled: true, enabled: provider.enabled };
 }
 
+// src/registry/resolve-template.ts
+var TEMPLATE_ID_ALIASES = {
+  "google-vertex": "vertex"
+};
+var NPM_DEFAULT_BASE_URL = {
+  "@ai-sdk/anthropic": "https://api.anthropic.com"
+};
+function resolveProviderTemplate(provider) {
+  const candidates = [
+    TEMPLATE_ID_ALIASES[provider.templateId],
+    provider.templateId,
+    TEMPLATE_ID_ALIASES[provider.id],
+    provider.id
+  ].filter(Boolean);
+  for (const id of candidates) {
+    const template = getTemplateById(id);
+    if (template) return template;
+  }
+  return void 0;
+}
+function effectiveProviderBaseUrl(provider, template) {
+  const fromRegistry = provider.api.url?.trim();
+  if (fromRegistry) return fromRegistry;
+  if (template?.defaultBaseUrl?.trim()) return template.defaultBaseUrl.trim();
+  const npm = provider.api.npm?.trim();
+  if (npm && NPM_DEFAULT_BASE_URL[npm]) return NPM_DEFAULT_BASE_URL[npm];
+  return void 0;
+}
+function syntheticTemplate(provider, baseUrl) {
+  const npm = provider.api.npm ?? "@ai-sdk/openai-compatible";
+  return {
+    id: provider.id,
+    name: provider.name,
+    authType: "api",
+    npm,
+    defaultBaseUrl: baseUrl,
+    modelSource: "api-list",
+    supported: true
+  };
+}
+
+// src/registry/model-source.ts
+var MANUAL_ONLY_TEMPLATE_IDS = /* @__PURE__ */ new Set(["vertex", "bedrock", "azure"]);
+var MANUAL_ONLY_PROVIDER_IDS = /* @__PURE__ */ new Set(["google-vertex", "vertex", "bedrock", "azure"]);
+var MANUAL_ONLY_NPMS = /* @__PURE__ */ new Set([
+  "@ai-sdk/google-vertex",
+  "@ai-sdk/amazon-bedrock",
+  "@ai-sdk/azure"
+]);
+function resolveModelSource(provider) {
+  if (provider.id === "zen" || provider.id === "go" || provider.templateId === "zen" || provider.templateId === "go") {
+    return "zen-go-api";
+  }
+  if (MANUAL_ONLY_PROVIDER_IDS.has(provider.id) || MANUAL_ONLY_PROVIDER_IDS.has(provider.templateId) || MANUAL_ONLY_TEMPLATE_IDS.has(provider.templateId) || provider.api.npm && MANUAL_ONLY_NPMS.has(provider.api.npm)) {
+    return "manual-only";
+  }
+  const template = resolveProviderTemplate(provider) ?? getTemplateById(provider.templateId);
+  if (template) return template.modelSource;
+  if (provider.templateId === "custom-openai" || provider.templateId === "custom-anthropic") {
+    return "api-list";
+  }
+  return "api-list";
+}
+
+// src/registry/refresh-models.ts
+function modelInfoToCached(m, npm, apiUrl) {
+  return {
+    id: m.id,
+    name: m.name,
+    upstreamModelId: m.id,
+    family: m.brand,
+    brand: m.brand,
+    contextWindow: m.contextWindow,
+    cost: m.cost,
+    modelFormat: m.modelFormat === "anthropic" ? "anthropic" : "openai",
+    sourceBackend: m.sourceBackend,
+    npm,
+    apiUrl
+  };
+}
+async function refreshZenGoProvider(provider) {
+  const backendId = provider.id === "go" || provider.templateId === "go" ? "go" : "zen";
+  const result = await getModels(BACKENDS[backendId]);
+  return result.models.filter((m) => m.modelFormat !== "unsupported").map((m) => modelInfoToCached(m, "@ai-sdk/openai-compatible", `${BACKENDS[backendId].baseUrl}/v1`));
+}
+async function refreshApiListProvider(provider, apiKey) {
+  const npm = provider.api.npm ?? "@ai-sdk/openai-compatible";
+  const catalogTemplate = resolveProviderTemplate(provider);
+  const baseUrl = effectiveProviderBaseUrl(provider, catalogTemplate);
+  const template = catalogTemplate ?? syntheticTemplate(provider, baseUrl);
+  if (!baseUrl) {
+    return { models: [], error: "Provider has no API base URL configured." };
+  }
+  if (npm === "@ai-sdk/anthropic") {
+    const fetched2 = await fetchAnthropicModels(baseUrl, apiKey);
+    if (fetched2.error || fetched2.models.length === 0) {
+      return { models: [], error: fetched2.error ?? "No models returned.", baseUrl: fetched2.baseUrl };
+    }
+    return {
+      models: fetched2.models.map((m) => ({ ...m, apiUrl: fetched2.baseUrl })),
+      baseUrl: fetched2.baseUrl
+    };
+  }
+  const fetched = await fetchTemplateModels(template, apiKey, baseUrl);
+  if (fetched.error || fetched.models.length === 0) {
+    return { models: [], error: fetched.error ?? "No models returned." };
+  }
+  return {
+    models: fetched.models.map((m) => ({
+      ...m,
+      apiUrl: fetched.baseUrl
+    })),
+    baseUrl: fetched.baseUrl
+  };
+}
+function updateProviderCache(registry, providerId, models, baseUrl) {
+  const idx = registry.providers.findIndex((p9) => p9.id === providerId);
+  if (idx < 0) return;
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const existing = registry.providers[idx];
+  registry.providers[idx] = {
+    ...existing,
+    refreshedAt: now,
+    api: baseUrl ? { ...existing.api, url: baseUrl } : existing.api,
+    modelsCache: {
+      fetchedAt: now,
+      models
+    }
+  };
+}
+async function refreshProviderModels(providerId, apiKey, registry = loadRegistry()) {
+  const provider = registry.providers.find((p9) => p9.id === providerId);
+  if (!provider) {
+    return { id: providerId, name: providerId, ok: false, reason: "Provider not found." };
+  }
+  const source = resolveModelSource(provider);
+  if (source === "manual-only") {
+    const hint = provider.templateId === "google-vertex" || provider.id === "google-vertex" || provider.api.npm === "@ai-sdk/google-vertex" ? "Vertex uses gcloud credentials \u2014 re-import from OpenCode or use relay-ai server --vertex." : "Manual-only provider \u2014 model list is not refreshed automatically.";
+    return {
+      id: provider.id,
+      name: provider.name,
+      ok: true,
+      skipped: true,
+      reason: hint
+    };
+  }
+  try {
+    let models = [];
+    let baseUrl;
+    if (source === "zen-go-api") {
+      models = await refreshZenGoProvider(provider);
+    } else {
+      if (!apiKey) {
+        return {
+          id: provider.id,
+          name: provider.name,
+          ok: false,
+          reason: "API key not available \u2014 cannot refresh models."
+        };
+      }
+      const fetched = await refreshApiListProvider(provider, apiKey);
+      if (fetched.error) {
+        return { id: provider.id, name: provider.name, ok: false, reason: fetched.error };
+      }
+      models = fetched.models;
+      baseUrl = fetched.baseUrl;
+    }
+    const pricingCache = loadPricingCache();
+    const platform = pricingPlatformForProvider(provider.templateId, provider.id);
+    const enriched = enrichModelsWithPricing(models, buildPricingIndex(pricingCache), platform);
+    updateProviderCache(registry, providerId, enriched, baseUrl);
+    saveRegistry(registry);
+    enrichPricingAsync();
+    return {
+      id: provider.id,
+      name: provider.name,
+      ok: true,
+      modelCount: enriched.length
+    };
+  } catch (err) {
+    return {
+      id: provider.id,
+      name: provider.name,
+      ok: false,
+      reason: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+async function refreshAllProviderModels(resolveKey) {
+  const refreshed = [];
+  const ids = loadRegistry().providers.filter((p9) => p9.enabled).map((p9) => p9.id);
+  for (const id of ids) {
+    const registry = loadRegistry();
+    const provider = registry.providers.find((p9) => p9.id === id);
+    if (!provider) continue;
+    const key = await resolveKey(provider);
+    refreshed.push(await refreshProviderModels(id, key, registry));
+  }
+  return { refreshed };
+}
+
 // src/providers-command.ts
 function parseProvidersArgs(args) {
   if (args.length === 0) return { subcommand: "hub", showHelp: false };
@@ -4399,26 +4935,33 @@ function parseProvidersArgs(args) {
     if (rest.length > 1) return { subcommand: "remove", showHelp: false, error: `Unknown remove option: ${rest[1]}` };
     return { subcommand: "remove", showHelp: false, removeId: rest[0] };
   }
+  if (first === "refresh-models") {
+    if (rest.length === 0) return { subcommand: "refresh-models", showHelp: false };
+    if (rest.length > 1) return { subcommand: "refresh-models", showHelp: false, error: `Unknown refresh-models option: ${rest[1]}` };
+    return { subcommand: "refresh-models", showHelp: false, removeId: rest[0] };
+  }
   return { subcommand: "hub", showHelp: false, error: `Unknown providers subcommand: ${first}` };
 }
 function providersHelpText() {
-  return `${pc5.bold("relay-ai providers")} \u2014 manage your AI providers
+  return `${pc6.bold("relay-ai providers")} \u2014 manage your AI providers
 
-${pc5.bold("Usage:")}
+${pc6.bold("Usage:")}
   relay-ai providers
   relay-ai providers add
   relay-ai providers import
   relay-ai providers list
   relay-ai providers remove <id>
+  relay-ai providers refresh-models [id]
 
-${pc5.bold("Subcommands:")}
-  (none)      Provider hub wizard ${pc5.dim("[Phase 1.1]")}
-  add         Add a provider (Groq, Mistral, Together AI, \u2026) ${pc5.dim("[Phase 1.1]")}
-  import      Bring settings from OpenCode (one-time) ${pc5.dim("[Phase 1.0]")}
-  list        Show configured providers ${pc5.dim("[Phase 1.0]")}
-  remove      Remove a provider by id ${pc5.dim("[Phase 1.1]")}
+${pc6.bold("Subcommands:")}
+  (none)      Provider hub wizard ${pc6.dim("[Phase 1.1]")}
+  add         Add a provider (Groq, Mistral, Together AI, \u2026) ${pc6.dim("[Phase 1.1]")}
+  import      Bring settings from OpenCode (one-time) ${pc6.dim("[Phase 1.0]")}
+  list        Show configured providers ${pc6.dim("[Phase 1.0]")}
+  remove      Remove a provider by id ${pc6.dim("[Phase 1.1]")}
+  refresh-models  Update cached model lists ${pc6.dim("[Phase 1.2]")}
 
-${pc5.dim("Coming soon: refresh-models, auth (OAuth), custom endpoints under Advanced")}`;
+${pc6.dim("Coming soon: auth (OAuth)")}`;
 }
 function maskAuthRef(authRef) {
   if (authRef.startsWith("keyring:global:opencode")) return "keychain (shared Zen/Go key)";
@@ -4474,6 +5017,52 @@ Imported: ${ctx.incomingKeyHint}`,
   }
   return 0;
 }
+async function runProvidersRefreshModels(providerId) {
+  const resolveKey = async (provider) => resolveProviderCredential(provider.id, provider.authRef);
+  if (providerId) {
+    const registry = loadRegistry();
+    const provider = registry.providers.find((p9) => p9.id === providerId);
+    if (!provider) {
+      p7.log.error(`Provider not found: ${providerId}`);
+      return 1;
+    }
+    const spinner6 = p7.spinner();
+    spinner6.start(`Refreshing ${provider.name}...`);
+    const key = await resolveKey(provider);
+    const result = await refreshProviderModels(providerId, key);
+    spinner6.stop("");
+    if (result.skipped) {
+      p7.log.warn(`${result.name}: ${result.reason}`);
+      return 0;
+    }
+    if (!result.ok) {
+      p7.log.error(`${result.name}: ${result.reason ?? "Refresh failed."}`);
+      return 1;
+    }
+    p7.log.success(`${result.name}: ${result.modelCount} model${result.modelCount === 1 ? "" : "s"} updated.`);
+    return 0;
+  }
+  const spinner5 = p7.spinner();
+  spinner5.start("Refreshing model lists...");
+  const { refreshed } = await refreshAllProviderModels(resolveKey);
+  spinner5.stop("");
+  const ok = refreshed.filter((r) => r.ok && !r.skipped);
+  const skipped = refreshed.filter((r) => r.skipped);
+  const failed = refreshed.filter((r) => !r.ok);
+  if (ok.length > 0) {
+    p7.log.success(`Updated ${ok.length} provider${ok.length === 1 ? "" : "s"}.`);
+    for (const r of ok) {
+      p7.log.info(`  ${r.name}: ${r.modelCount} model${r.modelCount === 1 ? "" : "s"}`);
+    }
+  }
+  for (const r of skipped) {
+    p7.log.warn(`Skipped ${r.name}: ${r.reason}`);
+  }
+  for (const r of failed) {
+    p7.log.error(`${r.name}: ${r.reason ?? "Refresh failed."}`);
+  }
+  return failed.length > 0 ? 1 : 0;
+}
 async function runProvidersList() {
   const entries = await resolveProvidersForDisplay();
   if (entries.length === 0) {
@@ -4482,10 +5071,10 @@ async function runProvidersList() {
   }
   console.log("");
   for (const entry of entries) {
-    const status = entry.enabled ? pc5.green("\u25CF") : pc5.dim("\u25CB");
-    const cloudNote = entry.cloudBuiltin ? pc5.dim(" \xB7 cloud builtin") : "";
+    const status = entry.enabled ? pc6.green("\u25CF") : pc6.dim("\u25CB");
+    const cloudNote = entry.cloudBuiltin ? pc6.dim(" \xB7 cloud builtin") : "";
     console.log(
-      `  ${status} ${pc5.bold(entry.name)} ${pc5.dim(`(${entry.id})`)} \u2014 ${entry.modelCount} model${entry.modelCount === 1 ? "" : "s"}, auth: ${entry.authLabel}${cloudNote}`
+      `  ${status} ${pc6.bold(entry.name)} ${pc6.dim(`(${entry.id})`)} \u2014 ${entry.modelCount} model${entry.modelCount === 1 ? "" : "s"}, auth: ${entry.authLabel}${cloudNote}`
     );
   }
   console.log("");
@@ -4756,6 +5345,11 @@ async function runProviderDetail(id) {
     message: "What would you like to do?",
     options: [
       {
+        value: "refresh",
+        label: "Refresh model list",
+        hint: "Fetch latest models from the provider API"
+      },
+      {
         value: "toggle",
         label: provider.enabled ? "Disable provider" : "Enable provider",
         hint: provider.enabled ? "Hide from relay-ai claude picker" : "Show in relay-ai claude picker"
@@ -4765,6 +5359,10 @@ async function runProviderDetail(id) {
     ]
   });
   if (p7.isCancel(action) || action === "back") return "back";
+  if (action === "refresh") {
+    await runProvidersRefreshModels(id);
+    return "back";
+  }
   if (action === "toggle") {
     const result = toggleProviderEnabled(id);
     if (result.toggled) {
@@ -4835,7 +5433,8 @@ async function runProvidersCommand(args) {
   if (parsed.subcommand === "list") return runProvidersList();
   if (parsed.subcommand === "add") return runProvidersAdd();
   if (parsed.subcommand === "remove" && parsed.removeId) return runProvidersRemove(parsed.removeId);
-  p7.intro(pc5.bold("  Your AI providers"));
+  if (parsed.subcommand === "refresh-models") return runProvidersRefreshModels(parsed.removeId);
+  p7.intro(pc6.bold("  Your AI providers"));
   return runProvidersHub();
 }
 
@@ -4916,11 +5515,11 @@ function parseArgs(args) {
   return parsed;
 }
 function rootHelpText() {
-  return `${pc6.bold("relay-ai")} v${VERSION}
+  return `${pc7.bold("relay-ai")} v${VERSION}
 Launch AI coding tools with OpenCode Zen, Go, or local providers (Groq, Mistral,
 OpenAI, Gemini, Ollama, and more).
 
-${pc6.bold("Usage:")}
+${pc7.bold("Usage:")}
   relay-ai claude [options] [claude-flags]
   relay-ai models
   relay-ai providers
@@ -4928,18 +5527,18 @@ ${pc6.bold("Usage:")}
   relay-ai --help
   relay-ai --version
 
-${pc6.bold("Commands:")}
+${pc7.bold("Commands:")}
   claude      Launch Claude Code \u2014 cloud Zen/Go or local OpenCode providers
   models      Manage favorite models for mid-session /model switching (max ${MAX_MODEL_CATALOG})
   providers   Add, import, and manage your AI providers
   server      Run a foreground API gateway (Zen, Go, and local providers)
   codex       planned
 
-${pc6.bold("Migration:")}
+${pc7.bold("Migration:")}
   Bare relay-ai prints this help instead of launching Claude Code.
   Use relay-ai claude for the wizard and launcher.
 
-${pc6.bold("Examples:")}
+${pc7.bold("Examples:")}
   relay-ai claude
   relay-ai models
   relay-ai server
@@ -4948,37 +5547,37 @@ ${pc6.bold("Examples:")}
   relay-ai claude -- --print "hello"`;
 }
 function claudeHelpText() {
-  return `${pc6.bold("relay-ai claude")} v${VERSION}
+  return `${pc7.bold("relay-ai claude")} v${VERSION}
 Launch Claude Code with OpenCode Zen, Go, or local providers as the API backend.
 
-${pc6.bold("Usage:")}
+${pc7.bold("Usage:")}
   relay-ai claude [options] [claude-flags]
   relay-ai claude --help
   relay-ai claude --version
 
-${pc6.bold("Options:")}
+${pc7.bold("Options:")}
   --dry-run    Run the wizard but show a preview instead of launching Claude Code
   --setup      Re-configure your subscription tier
-  --trace      Write debug logs to /tmp and show errors on exit
+  --trace      Write debug logs to ~/.relay-ai/logs/ and show errors on exit
   --help       Show this command help
   --version    Show version
 
-${pc6.bold("Providers:")}
+${pc7.bold("Providers:")}
   Cloud (Zen/Go)  Requires OPENCODE_API_KEY \u2014 get one at https://opencode.ai/auth
   Local           Requires OpenCode CLI with providers configured (Groq, Mistral,
                   OpenAI, Gemini, Ollama, etc.). Shown in the wizard when available.
 
-${pc6.bold("Model switching:")}
+${pc7.bold("Model switching:")}
   Run relay-ai models to save favorites (max ${MAX_MODEL_CATALOG}).
   When favorites exist, launch starts a multi-route proxy and Claude Code /model
   lists your starting model plus favorites for live switching.
   With no favorites, launch uses a single model as before.
 
-${pc6.bold("Note:")}
+${pc7.bold("Note:")}
   Claude Code may save the launched model to ~/.claude/settings.json.
   Bare claude later can still show that model \u2014 reset with claude --model sonnet.
 
-${pc6.bold("Examples:")}
+${pc7.bold("Examples:")}
   relay-ai claude
   relay-ai claude -c
   relay-ai claude --resume abc-123
@@ -4990,53 +5589,53 @@ ${pc6.bold("Examples:")}
   relay-ai claude -- --dangerously-skip-permissions`;
 }
 function serverHelpText() {
-  return `${pc6.bold("relay-ai server")} v${VERSION}
+  return `${pc7.bold("relay-ai server")} v${VERSION}
 Run a foreground API gateway for Zen, Go, local OpenCode providers, or Vertex AI.
 
-${pc6.bold("Usage:")}
+${pc7.bold("Usage:")}
   relay-ai server
   relay-ai server --vertex
   relay-ai server --help
   relay-ai server --version
 
-${pc6.bold("Behavior:")}
+${pc7.bold("Behavior:")}
   Default: interactive wizard for exposed providers, discovery id masking (for
   Claude Desktop / Cowork), optional favorites-only catalog, then listen mode.
   --vertex: Anthropic-compatible gateway to Claude on Google Vertex AI using
   local gcloud Application Default Credentials (no OpenCode API key).
   Binds to port 17645. Network mode asks for a server password.
 
-${pc6.bold("Vertex env:")}
+${pc7.bold("Vertex env:")}
   ANTHROPIC_VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT \u2014 your GCP project
   GOOGLE_CLOUD_LOCATION or CLOUD_ML_REGION \u2014 region (default: global)
   Optional catalog: ~/.relay-ai/vertex-models.json (see vertex-models.example.json)
 
-${pc6.bold("Endpoints:")}
+${pc7.bold("Endpoints:")}
   Anthropic-compatible:  ANTHROPIC_BASE_URL=http://127.0.0.1:17645/anthropic
   OpenAI-compatible:     OPENAI_BASE_URL=http://127.0.0.1:17645/openai/v1
   API key: use anything locally; use the server password in network mode.`;
 }
 function modelsHelpText() {
-  return `${pc6.bold("relay-ai models")} v${VERSION}
+  return `${pc7.bold("relay-ai models")} v${VERSION}
 Manage favorite models for mid-session switching in Claude Code.
 
-${pc6.bold("Usage:")}
+${pc7.bold("Usage:")}
   relay-ai models
   relay-ai models --help
   relay-ai models --version
 
-${pc6.bold("Behavior:")}
+${pc7.bold("Behavior:")}
   Opens an interactive manager to add or remove favorites.
   Pick from Zen, Go, or any configured local OpenCode provider.
   Favorites are saved to ~/.relay-ai/config.json (max ${MAX_MODEL_CATALOG}).
 
-${pc6.bold("How it works:")}
+${pc7.bold("How it works:")}
   When favorites exist, relay-ai claude starts a multi-route catalog proxy.
   Claude Code /model lists your starting model plus favorites \u2014 switch live
   without restarting. Mix cloud and local favorites in one session.
   With no favorites, launch uses a single model as before.
 
-${pc6.bold("Examples:")}
+${pc7.bold("Examples:")}
   relay-ai models
   relay-ai claude    # switch menu active when favorites are set`;
 }
@@ -5050,7 +5649,7 @@ async function launchClaudeViaCatalog(catalogRoutes, startingRoute, contextWindo
   try {
     proxyHandle = await startProxyCatalog(catalogRoutes, startingRoute.aliasId, trace);
     p8.log.info(
-      `Switch menu active \u2014 proxy on port ${proxyHandle.port} ` + pc6.dim(`(${catalogRoutes.length} model${catalogRoutes.length !== 1 ? "s" : ""} in /model)`)
+      `Switch menu active \u2014 proxy on port ${proxyHandle.port} ` + pc7.dim(`(${catalogRoutes.length} model${catalogRoutes.length !== 1 ? "s" : ""} in /model)`)
     );
   } catch (err) {
     p8.log.error(`Failed to start proxy: ${err instanceof Error ? err.message : String(err)}`);
@@ -5064,7 +5663,7 @@ async function launchClaudeViaCatalog(catalogRoutes, startingRoute, contextWindo
     contextWindow,
     true
   );
-  const debugLogPath = join8(tmpdir2(), "relay-ai-debug.log");
+  const debugLogPath = prepareClaudeTraceLog();
   const traceArgs = trace ? ["--debug-file", debugLogPath] : [];
   if (trace) p8.log.info(`Debug log: ${debugLogPath}`);
   const exitCode = await launchClaude(childEnv, startingRoute.aliasId, [...traceArgs, ...claudeArgs]);
@@ -5072,60 +5671,46 @@ async function launchClaudeViaCatalog(catalogRoutes, startingRoute, contextWindo
   if (trace) printTraceLog(debugLogPath);
   return exitCode;
 }
-function printTraceLog(debugLogPath) {
-  if (!existsSync7(debugLogPath)) return;
-  const log8 = readFileSync6(debugLogPath, "utf8");
-  const errorLines = log8.split("\n").filter(
-    (l) => l.includes("error") || l.includes("Error") || l.includes('"type":"error"') || l.includes("status")
-  );
-  console.log("\n" + pc6.bold(pc6.cyan("\u2500\u2500 Debug trace \u2500\u2500")));
-  if (errorLines.length > 0) {
-    errorLines.slice(0, 30).forEach((l) => console.log(pc6.dim(l)));
-  } else {
-    console.log(pc6.dim("(no errors found in debug log)"));
-  }
-  console.log(pc6.dim(`Full log: ${debugLogPath}`));
-}
 function printDryRun(backendName, modelId, baseUrl, modelFormat, claudeArgs, conflicts, disableExperimentalBetas, npm) {
   console.log("");
-  console.log(pc6.bold(pc6.cyan("  DRY RUN \u2014 would execute:")));
+  console.log(pc7.bold(pc7.cyan("  DRY RUN \u2014 would execute:")));
   console.log("");
   const claudeCmd = ["claude", "--model", modelId, ...claudeArgs].join(" ");
-  console.log(`  ${pc6.bold("Command:")}  ${claudeCmd}`);
-  console.log(`  ${pc6.bold("Backend:")}  ${backendName}`);
+  console.log(`  ${pc7.bold("Command:")}  ${claudeCmd}`);
+  console.log(`  ${pc7.bold("Backend:")}  ${backendName}`);
   if (modelFormat === "openai") {
-    console.log(`  ${pc6.bold("Proxy:")}    would start local SDK adapter proxy ${pc6.dim("(Vercel AI SDK)")}`);
-    if (npm) console.log(`             ${pc6.dim(`npm: ${npm}`)}`);
+    console.log(`  ${pc7.bold("Proxy:")}    would start local SDK adapter proxy ${pc7.dim("(Vercel AI SDK)")}`);
+    if (npm) console.log(`             ${pc7.dim(`npm: ${npm}`)}`);
   }
   console.log("");
-  console.log(`  ${pc6.bold("Env vars SET:")}`);
+  console.log(`  ${pc7.bold("Env vars SET:")}`);
   if (modelFormat === "openai") {
-    console.log(`    ANTHROPIC_BASE_URL=http://127.0.0.1:<port>  ${pc6.dim("(local proxy)")}`);
+    console.log(`    ANTHROPIC_BASE_URL=http://127.0.0.1:<port>  ${pc7.dim("(local proxy)")}`);
   } else {
     console.log(`    ANTHROPIC_BASE_URL=${baseUrl}`);
   }
   console.log(`    ANTHROPIC_API_KEY=<your OPENCODE_API_KEY>`);
   console.log(`    ANTHROPIC_MODEL=${modelId}`);
   if (disableExperimentalBetas) {
-    console.log(`    CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1  ${pc6.dim("(direct upstream \u2014 strips beta headers)")}`);
+    console.log(`    CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1  ${pc7.dim("(direct upstream \u2014 strips beta headers)")}`);
   } else {
-    console.log(`    ${pc6.dim("(experimental betas enabled \u2014 tool search via local proxy)")}`);
+    console.log(`    ${pc7.dim("(experimental betas enabled \u2014 tool search via local proxy)")}`);
   }
-  console.log(`    ENABLE_TOOL_SEARCH=true  ${pc6.dim("(defer MCP tools like native Claude Code)")}`);
-  console.log(`    CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT=0  ${pc6.dim("(keep full system prompt on proxy routes)")}`);
+  console.log(`    ENABLE_TOOL_SEARCH=true  ${pc7.dim("(defer MCP tools like native Claude Code)")}`);
+  console.log(`    CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT=0  ${pc7.dim("(keep full system prompt on proxy routes)")}`);
   console.log("");
   if (conflicts.length > 0) {
-    console.log(`  ${pc6.bold("Env vars REMOVED:")}`);
+    console.log(`  ${pc7.bold("Env vars REMOVED:")}`);
     for (const c of conflicts) {
-      console.log(`    ${pc6.dim(c.name)}=${pc6.dim(c.value)}`);
+      console.log(`    ${pc7.dim(c.name)}=${pc7.dim(c.value)}`);
     }
     console.log("");
   }
-  console.log(pc6.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
+  console.log(pc7.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
   console.log("");
 }
 async function runModelsCommand() {
-  p8.intro(pc6.bold("  Relay AI \u2014 Favorite Models"));
+  p8.intro(pc7.bold("  Relay AI \u2014 Favorite Models"));
   const spinner5 = p8.spinner();
   spinner5.start("Loading providers...");
   const catalog = await fetchProviderCatalog();
@@ -5151,13 +5736,13 @@ async function runModelsCommand() {
     for (let i = 0; i < favorites.length; i++) {
       const fav = favorites[i];
       const entry = modelLookup.get(`${fav.providerId}:${fav.modelId}`);
-      const label = entry ? `\u2605 ${entry.modelName} (${entry.providerName})` : pc6.dim(`\u2605 ${fav.modelId} \u2014 provider gone`);
+      const label = entry ? `\u2605 ${entry.modelName} (${entry.providerName})` : pc7.dim(`\u2605 ${fav.modelId} \u2014 provider gone`);
       options.push({ value: `fav-${i}`, label, hint: "select to remove" });
     }
     const atCap = favorites.length >= MAX_MODEL_CATALOG;
     options.push({
       value: "__add__",
-      label: atCap ? pc6.dim(`+ Add a model \u2192 (limit of ${MAX_MODEL_CATALOG} reached)`) : "+ Add a model \u2192",
+      label: atCap ? pc7.dim(`+ Add a model \u2192 (limit of ${MAX_MODEL_CATALOG} reached)`) : "+ Add a model \u2192",
       hint: atCap ? "Remove a favorite first to make room" : `${allProviders.length} provider${allProviders.length !== 1 ? "s" : ""} available`
     });
     options.push({ value: "__done__", label: "Done", hint: "" });
@@ -5213,7 +5798,7 @@ async function runModelsCommand() {
     savePreferences({ favoriteModels: favorites });
   }
   p8.outro(
-    favorites.length === 0 ? "No favorites saved \u2014 launch will use single-model mode." : pc6.green(`${favorites.length} favorite${favorites.length !== 1 ? "s" : ""} saved \u2014 /model menu will show these on next launch.`)
+    favorites.length === 0 ? "No favorites saved \u2014 launch will use single-model mode." : pc7.green(`${favorites.length} favorite${favorites.length !== 1 ? "s" : ""} saved \u2014 /model menu will show these on next launch.`)
   );
   return 0;
 }
@@ -5221,7 +5806,7 @@ async function runClaudeCommand(parsed) {
   const { dryRun, setup, trace, claudeArgs } = parsed;
   const claudePath = findClaudeBinary();
   if (!claudePath) {
-    console.error(pc6.red("\nError: claude binary not found on PATH.\n"));
+    console.error(pc7.red("\nError: claude binary not found on PATH.\n"));
     console.error("Install Claude Code:");
     console.error("  npm install -g @anthropic-ai/claude-code\n");
     return 1;
@@ -5231,7 +5816,7 @@ async function runClaudeCommand(parsed) {
   const favorites = dryRun ? [] : prefs.favoriteModels ?? [];
   const switchMenuActive = favorites.length > 0;
   const hasZenGoFavorites = favorites.some((f) => f.providerId === "zen" || f.providerId === "go");
-  p8.intro(pc6.bold("  Relay AI"));
+  p8.intro(pc7.bold("  Relay AI"));
   if (setup && !dryRun) {
     p8.log.info("Provider setup now lives in relay-ai providers \u2014 opening that next is recommended.");
   }
@@ -5269,14 +5854,14 @@ async function runClaudeCommand(parsed) {
     catalog = await fetchProviderCatalog({ persistCache: !dryRun });
   } catch (err) {
     catalogSpinner.stop("");
-    console.error(pc6.red(String(err instanceof Error ? err.message : err)));
+    console.error(pc7.red(String(err instanceof Error ? err.message : err)));
     return 1;
   }
   catalogSpinner.stop("");
   const allProviders = providersForPicker(catalog);
   if (allProviders.length === 0) {
     p8.log.warn("No providers available.");
-    p8.log.info(pc6.dim("Run relay-ai providers add or import to get started."));
+    p8.log.info(pc7.dim("Run relay-ai providers add or import to get started."));
     return 0;
   }
   const migrateLastProvider = (id) => id === "opencode" ? "zen" : id;
@@ -5340,15 +5925,15 @@ async function runClaudeCommand(parsed) {
     if (dryRun) {
       const endpoint = isZenGo ? BACKENDS[providerChoice].baseUrl : selectedModel.baseUrl ?? selectedModel.completionsUrl ?? "(unknown)";
       console.log("");
-      console.log(pc6.bold(pc6.cyan("  DRY RUN \u2014 would execute (switch-menu mode):")));
+      console.log(pc7.bold(pc7.cyan("  DRY RUN \u2014 would execute (switch-menu mode):")));
       console.log("");
-      console.log(`  ${pc6.bold("Provider:")}      ${activeProvider.name}`);
-      console.log(`  ${pc6.bold("Starting model:")} ${selectedModel.id}`);
-      console.log(`  ${pc6.bold("Endpoint:")}      ${endpoint}`);
-      console.log(`  ${pc6.bold("/model catalog:")} ${catalogRoutes.length} model(s)`);
-      catalogRoutes.forEach((r) => console.log(`    ${pc6.dim(r.displayName)}`));
+      console.log(`  ${pc7.bold("Provider:")}      ${activeProvider.name}`);
+      console.log(`  ${pc7.bold("Starting model:")} ${selectedModel.id}`);
+      console.log(`  ${pc7.bold("Endpoint:")}      ${endpoint}`);
+      console.log(`  ${pc7.bold("/model catalog:")} ${catalogRoutes.length} model(s)`);
+      catalogRoutes.forEach((r) => console.log(`    ${pc7.dim(r.displayName)}`));
       console.log("");
-      console.log(pc6.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
+      console.log(pc7.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
       console.log("");
       return 0;
     }
@@ -5378,15 +5963,15 @@ async function runClaudeCommand(parsed) {
     const formatDesc = selectedModel.modelFormat === "anthropic" ? "direct passthrough" : "via SDK adapter proxy";
     const endpoint = selectedModel.modelFormat === "anthropic" ? selectedModel.baseUrl ?? "(unknown)" : selectedModel.npm ?? "SDK";
     console.log("");
-    console.log(pc6.bold(pc6.cyan("  DRY RUN \u2014 would execute:")));
+    console.log(pc7.bold(pc7.cyan("  DRY RUN \u2014 would execute:")));
     console.log("");
-    console.log(`  ${pc6.bold("Provider:")}  ${activeProvider.name}`);
-    console.log(`  ${pc6.bold("Model:")}     ${selectedModel.id}`);
-    console.log(`  ${pc6.bold("Format:")}    ${selectedModel.modelFormat} (${formatDesc})`);
-    console.log(`  ${pc6.bold(selectedModel.modelFormat === "anthropic" ? "Endpoint:" : "SDK npm:")} ${endpoint}`);
-    console.log(`  ${pc6.bold("Key:")}       ${activeProvider.name} provider key`);
+    console.log(`  ${pc7.bold("Provider:")}  ${activeProvider.name}`);
+    console.log(`  ${pc7.bold("Model:")}     ${selectedModel.id}`);
+    console.log(`  ${pc7.bold("Format:")}    ${selectedModel.modelFormat} (${formatDesc})`);
+    console.log(`  ${pc7.bold(selectedModel.modelFormat === "anthropic" ? "Endpoint:" : "SDK npm:")} ${endpoint}`);
+    console.log(`  ${pc7.bold("Key:")}       ${activeProvider.name} provider key`);
     console.log("");
-    console.log(pc6.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
+    console.log(pc7.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
     console.log("");
     return 0;
   }
@@ -5419,7 +6004,7 @@ async function runClaudeCommand(parsed) {
     if (disableExperimentalBetas) {
       childEnv2["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] = "1";
     }
-    const debugLogPath2 = join8(tmpdir2(), "relay-ai-debug.log");
+    const debugLogPath2 = prepareClaudeTraceLog();
     const traceArgs2 = trace ? ["--debug-file", debugLogPath2] : [];
     if (trace) p8.log.info(`Debug log: ${debugLogPath2}`);
     const exitCode2 = await launchClaude(childEnv2, zenGoModelInfo.id, [...traceArgs2, ...claudeArgs]);
@@ -5451,7 +6036,7 @@ async function runClaudeCommand(parsed) {
         }
       );
       p8.log.info(
-        `SDK adapter proxy started on port ${proxyHandle.port}` + (selectedModel.npm ? pc6.dim(` (${selectedModel.npm})`) : "")
+        `SDK adapter proxy started on port ${proxyHandle.port}` + (selectedModel.npm ? pc7.dim(` (${selectedModel.npm})`) : "")
       );
     } catch (err) {
       p8.log.error(`Failed to start SDK adapter proxy: ${err instanceof Error ? err.message : String(err)}`);
@@ -5468,7 +6053,7 @@ async function runClaudeCommand(parsed) {
   if (selectedModel.modelFormat === "anthropic") {
     childEnv["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"] = "1";
   }
-  const debugLogPath = join8(tmpdir2(), "relay-ai-debug.log");
+  const debugLogPath = prepareClaudeTraceLog();
   const traceArgs = trace ? ["--debug-file", debugLogPath] : [];
   if (trace) p8.log.info(`Debug log: ${debugLogPath}`);
   const exitCode = await launchClaude(childEnv, selectedModel.id, [...traceArgs, ...claudeArgs]);
@@ -5479,7 +6064,7 @@ async function runClaudeCommand(parsed) {
 async function main(args = process.argv.slice(2)) {
   const parsed = parseArgs(args);
   if (parsed.error) {
-    console.error(pc6.red(`
+    console.error(pc7.red(`
 Error: ${parsed.error}
 `));
     printHelp(rootHelpText());
@@ -5551,7 +6136,7 @@ if (isCliEntryPoint()) {
     if (err === /* @__PURE__ */ Symbol.for("clack:cancel")) {
       process.exit(0);
     }
-    console.error(pc6.red("\nUnexpected error:"), err);
+    console.error(pc7.red("\nUnexpected error:"), err);
     process.exit(1);
   });
 }

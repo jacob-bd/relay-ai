@@ -59,7 +59,8 @@ export async function fetchTemplateModels(
   apiKey: string,
   baseUrlOverride?: string,
 ): Promise<FetchTemplateModelsResult> {
-  const baseUrl = (baseUrlOverride ?? template.defaultBaseUrl)?.replace(/\/$/, '');
+  const trimmedOverride = baseUrlOverride?.trim();
+  const baseUrl = (trimmedOverride || template.defaultBaseUrl)?.replace(/\/$/, '');
   if (!baseUrl) {
     return {
       models: [],
