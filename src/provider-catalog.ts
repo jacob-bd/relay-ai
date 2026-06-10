@@ -33,7 +33,8 @@ export async function fetchZenGoModels(
   return { zenModels, goModels };
 }
 
-async function resolveLocalProviders(): Promise<LocalProvider[]> {
+/** Registry-first local provider resolution; falls back to ephemeral OpenCode serve. */
+export async function resolveLocalProviders(): Promise<LocalProvider[]> {
   const fromRegistry = await loadRegistryProviders();
   if (fromRegistry.length > 0) return fromRegistry;
   const fromOpencode = await fetchLocalProviders();
