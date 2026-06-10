@@ -11,6 +11,7 @@ For Anthropic's upstream docs, see [Installation and setup](https://claude.com/d
 ## Contents
 
 - [What you get](#what-you-get)
+- [Known limitations](#known-limitations)
 - [Prerequisites](#prerequisites)
 - [Step 1: Start the Relay AI server](#step-1-start-the-relay-ai-server)
 - [Step 2: Enable Developer Mode](#step-2-enable-developer-mode)
@@ -18,6 +19,7 @@ For Anthropic's upstream docs, see [Installation and setup](https://claude.com/d
 - [Step 4: Use Claude Desktop](#step-4-use-claude-desktop)
 - [Gateway values cheat sheet](#gateway-values-cheat-sheet)
 - [Restore Claude Desktop to Anthropic's servers](#restore-claude-desktop-to-anthropics-servers)
+- [Disable Developer Mode](#disable-developer-mode)
 - [Troubleshooting](#troubleshooting)
 - [Official references](#official-references)
 
@@ -37,6 +39,38 @@ For Anthropic's upstream docs, see [Installation and setup](https://claude.com/d
 **Not included:** Chat (the standard claude.ai chat UI in Desktop). If you need that, sign in to Claude Desktop normally without a custom gateway, or use claude.ai in the browser.
 
 Billing runs through your OpenCode / OpenCode-configured provider keys. Keep the server terminal open while you use Desktop.
+
+---
+
+## Known limitations
+
+These are Anthropic product constraints, not relay-ai bugs. Gateway users should plan around them.
+
+| Feature | With Relay AI gateway (3P) | With Anthropic 1P (normal sign-in) |
+| --- | --- | --- |
+| **Chat tab** | Not available | Available |
+| **Cowork / Code** | Available | Available (with subscription) |
+| **Claude in Chrome** (browser extension) | **Not available** | Requires **Pro, Max, Team, or Enterprise** |
+
+### Claude in Chrome does not work with the gateway
+
+**Claude in Chrome** is Anthropic's Chrome extension for browser automation (navigate sites, fill forms, integrate with Claude Code). It is **not compatible** with third-party inference — including a Relay AI gateway on `127.0.0.1`.
+
+Anthropic's [Claude Code + Chrome docs](https://code.claude.com/docs/en/chrome) state:
+
+- Chrome integration requires **a direct Anthropic plan (Pro, Max, Team, or Enterprise)**.
+- It is **not available** through third-party providers (Bedrock, Vertex, Foundry, or a custom gateway).
+- If you use Claude exclusively through a gateway, you need a **separate claude.ai paid account** to use Claude in Chrome — and that extension routes through **Anthropic's servers**, not your gateway.
+
+**API-only billing does not help.** Console/API keys are separate from claude.ai subscriptions. Claude in Chrome is not unlocked by API credits alone.
+
+**What gateway users can do instead:**
+
+- Use **Cowork and Code** inside Claude Desktop against the Relay AI server (this guide).
+- Use **Claude Code in the terminal** with `relay-ai claude` and your chosen backend.
+- For browser automation, use other tools (e.g. dedicated browser MCP, Playwright) — not Claude in Chrome tied to this gateway.
+
+To use Claude in Chrome, [restore 1P mode](#restore-claude-desktop-to-anthropics-servers) and sign in with a paid claude.ai plan.
 
 ---
 
@@ -192,33 +226,107 @@ Some Anthropic docs describe a sign-in screen option for enterprise deployments 
 
 ## Restore Claude Desktop to Anthropic's servers
 
-To stop routing through Relay AI and go back to Anthropic's default inference:
+To stop routing through Relay AI and return to normal Claude Desktop (Anthropic sign-in, Chat tab, claude.ai inference):
 
-### Option A: Remove the gateway configuration
+### Verified revert (macOS, Claude Desktop 1.11847.5)
 
-1. **Fully quit** Claude Desktop (not just close the window)
-2. Delete the local config library:
+Tested end-to-end. Three on-disk changes plus a relaunch:
 
-   **macOS:**
-   ```bash
-   rm -rf ~/Library/Application\ Support/Claude-3p/configLibrary/
-   ```
+| What | Why |
+| --- | --- |
+| Remove `Claude-3p/configLibrary/` | Drops the gateway config (`inferenceProvider: gateway`) that keeps Desktop in 3P mode |
+| Set `"allowDevTools": false` | Hides the **Developer** menu — current Claude Desktop has **Enable** Developer Mode in the UI but no **Disable** toggle |
+| Set `"deploymentMode": "1p"` | Pins first-party mode in the standard `Claude/` data folder |
 
-   **Windows (PowerShell):**
-   ```powershell
-   Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Claude-3p\configLibrary"
-   ```
+**Before you start:** fully quit Claude Desktop (`Cmd+Q` on macOS — not just close the window). Back up the folders below if you want an undo path.
 
-3. Relaunch Claude Desktop. Inference goes back to Anthropic's servers.
-4. Stop the Relay AI server (`Ctrl+C`) if you don't need it anymore.
+#### Step 1 — Remove the gateway config
 
-### Option B: Change it in the app
+**macOS:**
 
-Open **Developer** → **Configure third-party inference**, clear or replace the gateway settings, and **Apply locally**. Point Connection back at Anthropic's API or remove the gateway block entirely, depending on what the UI offers.
+```bash
+rm -rf ~/Library/Application\ Support/Claude-3p/configLibrary/
+```
+
+**Windows (PowerShell):**
+
+```powershell
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Claude-3p\configLibrary"
+```
+
+This deletes the applied third-party inference profile (e.g. `inferenceGatewayBaseUrl: http://127.0.0.1:17645/anthropic`). It does **not** delete Cowork session history under `Claude-3p/` or `~/Claude/`.
+
+#### Step 2 — Disable Developer Mode (manual)
+
+Claude Desktop v1.11847.5 stores Developer Mode in `developer_settings.json` under the **standard** (1P) data folder — not `Claude-3p/`:
+
+**macOS:** `~/Library/Application Support/Claude/developer_settings.json`
+
+**Windows:** `%APPDATA%\Claude\developer_settings.json`
+
+Set:
+
+```json
+{
+  "allowDevTools": false
+}
+```
+
+If the file does not exist, create it with that content.
+
+#### Step 3 — Pin first-party deployment mode
+
+Add `"deploymentMode": "1p"` to the standard config file:
+
+**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+Example (merge with any existing keys — do not delete your `preferences` block):
+
+```json
+{
+  "preferences": { },
+  "deploymentMode": "1p"
+}
+```
+
+#### Step 4 — Relaunch
+
+```bash
+open -a Claude
+```
+
+Optional one-shot override if Desktop still picks up stale 3P state:
+
+```bash
+/Applications/Claude.app/Contents/MacOS/Claude --boot-1p-once
+```
+
+Stop the Relay AI server (`Ctrl+C` in its terminal) if you no longer need the gateway.
+
+#### How to confirm it worked
+
+- Normal **Chat** tab and Anthropic sign-in flow are back
+- No **Cowork 3P \| Gateway** label in the bottom-left corner
+- **Developer** menu is gone from the menu bar
+- Logs write to `~/Library/Logs/Claude/main.log` (not `Claude-3p/main.log`) and show `claude.ai account active and logged in`
+
+---
+
+### Option A — In-app (if Developer menu is still available)
+
+Open **Developer** → **Configure third-party inference**, clear or replace the gateway settings, and apply changes. Point **Connection** back at Anthropic's API or remove the gateway block entirely, depending on what the UI offers.
+
+You may still need [Step 2 — Disable Developer Mode](#step-2--disable-developer-mode-manual) afterward — clearing the gateway does not hide the **Developer** menu on its own.
+
+### Option B — Log out → Anthropic sign-in
+
+In 3P mode, **Log out** (bottom-left) can surface the sign-in screen with an option to use Anthropic directly instead of Cowork on 3P. This path is easy to miss; the verified revert above is more reliable.
 
 ### Full reset (deletes local Desktop history)
 
-Only if you want to wipe everything under Anthropic's third-party inference data folder:
+Only if the steps above are not enough and you want to wipe everything under Anthropic's third-party inference data folder:
 
 | Platform | Delete |
 | --- | --- |
@@ -227,13 +335,26 @@ Only if you want to wipe everything under Anthropic's third-party inference data
 
 **Warning:** Conversation history in that folder is not recoverable after deletion.
 
-### Developer Mode
-
-No need to "disable" Developer Mode. Once gateway config is gone, Desktop uses Anthropic's servers again. The Developer menu may stay visible. That alone doesn't route traffic to your gateway.
-
 ### Managed / enterprise profiles
 
-If IT pushed a managed profile (Jamf, Intune, Group Policy), local edits in `configLibrary/` may be ignored. Talk to IT to remove or update the profile.
+If IT pushed a managed profile (Jamf, Intune, Group Policy), local edits in `configLibrary/` may be ignored or restored on launch. Talk to IT to remove or update the profile.
+
+---
+
+## Disable Developer Mode
+
+Third-party inference setup requires **Help** → **Troubleshooting** → **Enable Developer Mode**, which reveals the **Developer** menu.
+
+**There is no "Disable Developer Mode" menu item** in Claude Desktop v1.11847.5 (verified in the app bundle). To turn it off after reverting to Anthropic:
+
+1. Fully quit Claude Desktop
+2. Edit `developer_settings.json` in the **standard** `Claude/` folder (see paths above)
+3. Set `"allowDevTools": false`
+4. Relaunch
+
+Once gateway config is removed, the **Developer** menu does not route traffic to your Relay AI server — but it stays visible until `allowDevTools` is set to `false`.
+
+To re-enable later (e.g. for another gateway experiment): set `"allowDevTools": true` and relaunch, or use **Help** → **Troubleshooting** → **Enable Developer Mode** again.
 
 ---
 
