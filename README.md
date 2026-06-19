@@ -11,6 +11,14 @@
 [![License](https://img.shields.io/npm/l/@jacobbd/relay-ai)](LICENSE)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=flat-square&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/jacobbd)
 
+<p align="center">
+  <a href="https://youtu.be/IvsUPHLhX0o">
+    <img src="https://img.youtube.com/vi/IvsUPHLhX0o/maxresdefault.jpg" alt="relay-ai demo — installation, configuration, Claude Code, Claude Cowork & Claude Code Desktop (Part 1)" width="100%">
+  </a>
+</p>
+
+> **Demo (Part 1):** Installation · Configuration · Claude Code · Claude Cowork · Claude Code Desktop — [watch on YouTube](https://youtu.be/IvsUPHLhX0o) *(premieres June 19 at 10:45 AM ET)*
+
 **relay-ai** is an interactive CLI that launches AI coding tools and runs local API gateways on your machine. Currently, it supports **Claude Code**, **Claude Desktop (Cowork + Code)**, the **OpenAI Codex CLI**, and the **Codex desktop app (macOS + Windows)**.
 
 Pick your backend:
