@@ -17,7 +17,7 @@
   </a>
 </p>
 
-> **Demo (Part 1):** Installation · Configuration · Claude Code · Claude Cowork · Claude Code Desktop — [watch on YouTube](https://youtu.be/IvsUPHLhX0o) *(premieres June 19 at 10:45 AM ET)*
+> **Demo (Part 1):** Installation · Configuration · Claude Code · Claude Cowork · Claude Code Desktop — [watch on YouTube](https://youtu.be/IvsUPHLhX0o)
 
 **relay-ai** is an interactive CLI that launches AI coding tools and runs local API gateways on your machine. Currently, it supports **Claude Code**, **Claude Desktop (Cowork + Code)**, the **OpenAI Codex CLI**, and the **Codex desktop app (macOS + Windows)**.
 
