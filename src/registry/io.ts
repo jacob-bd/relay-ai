@@ -15,7 +15,7 @@ import { dirname } from 'node:path';
 import { getAppHome, getProvidersPath } from '../paths.js';
 import type { ProviderRegistry, RegistryProvider } from './types.js';
 import { REGISTRY_SCHEMA_VERSION } from './types.js';
-import { migrateLegacyCloudProviders } from './migrate.js';
+import { migrateLegacyCloudProviders, migrateOAuthOpenAiProvider } from './migrate.js';
 import { isValidProviderId } from './validate.js';
 
 const DIR_MODE = 0o700;
@@ -118,7 +118,9 @@ export function loadRegistry(path = getProvidersPath()): ProviderRegistry {
   try {
     const raw = JSON.parse(readFileSync(path, 'utf8'));
     const registry = parseRegistry(raw);
-    if (migrateLegacyCloudProviders(registry)) {
+    let migrated = migrateLegacyCloudProviders(registry);
+    if (migrateOAuthOpenAiProvider(registry)) migrated = true;
+    if (migrated) {
       try {
         saveRegistry(registry, path);
       } catch {

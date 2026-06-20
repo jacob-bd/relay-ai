@@ -35,7 +35,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.2.7",
+  version: "0.2.8",
   publishConfig: {
     access: "public"
   },
@@ -97,6 +97,7 @@ var package_default = {
     ai: "^6.0.197",
     "gitlab-ai-provider": "^6.8.0",
     "ipaddr.js": "^2.4.0",
+    open: "^11.0.0",
     picocolors: "^1.1.1",
     "smol-toml": "^1.3.1",
     "venice-ai-sdk-provider": "^2.0.2",
@@ -1417,7 +1418,7 @@ function accessTokenIsExpiring(token, skewMs = OAUTH_REFRESH_SKEW_MS) {
     return false;
   }
 }
-var NATIVE_OAUTH_PROVIDER_IDS = ["xai", "openai", "github-copilot"];
+var NATIVE_OAUTH_PROVIDER_IDS = ["xai", "openai", "openai-oauth", "github-copilot"];
 function supportsNativeOAuth(providerId) {
   return NATIVE_OAUTH_PROVIDER_IDS.includes(providerId);
 }
@@ -1637,8 +1638,7 @@ async function runXaiDeviceCodeFlow(onDeviceCode, opts) {
 // src/oauth/refresh.ts
 function oauthCredentialShouldRefresh(cred, providerId) {
   if (oauthCredentialNeedsRefresh(cred)) return true;
-  if (providerId === "xai" && accessTokenIsExpiring(cred.access)) return true;
-  if (providerId === "github-copilot" && accessTokenIsExpiring(cred.access)) return true;
+  if (NATIVE_OAUTH_PROVIDER_IDS.includes(providerId) && accessTokenIsExpiring(cred.access)) return true;
   return false;
 }
 async function refreshStoredOAuthCredential(providerId, cred) {
@@ -1646,7 +1646,7 @@ async function refreshStoredOAuthCredential(providerId, cred) {
     throw new Error(`${providerId}: OAuth refresh token missing \u2014 run relay-ai providers auth ${providerId}`);
   }
   let tokens;
-  if (providerId === "openai") {
+  if (providerId === "openai" || providerId === "openai-oauth") {
     tokens = await refreshOpenAiAccessToken(cred.refresh);
   } else if (providerId === "xai") {
     tokens = await refreshXaiAccessToken(cred.refresh);
@@ -2542,6 +2542,21 @@ function migrateLegacyCloudProviders(registry) {
   }
   return changed;
 }
+function migrateOAuthOpenAiProvider(registry) {
+  if (registry.providers.some((p19) => p19.id === "openai-oauth")) return false;
+  const idx = registry.providers.findIndex(
+    (p19) => p19.id === "openai" && p19.authType === "oauth"
+  );
+  if (idx < 0) return false;
+  const existing = registry.providers[idx];
+  registry.providers[idx] = {
+    ...existing,
+    id: "openai-oauth",
+    templateId: existing.templateId || "openai",
+    name: existing.name === "OpenAI" ? "OpenAI (ChatGPT)" : existing.name
+  };
+  return true;
+}
 
 // src/registry/validate.ts
 var PROVIDER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
@@ -2649,7 +2664,9 @@ function loadRegistry(path = getProvidersPath()) {
   try {
     const raw = JSON.parse(readFileSync3(path, "utf8"));
     const registry = parseRegistry(raw);
-    if (migrateLegacyCloudProviders(registry)) {
+    let migrated = migrateLegacyCloudProviders(registry);
+    if (migrateOAuthOpenAiProvider(registry)) migrated = true;
+    if (migrated) {
       try {
         saveRegistry(registry, path);
       } catch {
@@ -3390,6 +3407,9 @@ async function resolveRefreshCredential(provider, resolveKey) {
 function oauthAuthRef(providerId) {
   return `keyring:oauth:provider:${providerId}`;
 }
+function toOAuthRegistryId(providerId) {
+  return providerId === "openai" ? "openai-oauth" : providerId;
+}
 function normalizeImportProviderIdentity(provider) {
   if (provider.id === "opencode") {
     return { ...provider, id: "zen", name: "OpenCode Zen" };
@@ -3419,8 +3439,10 @@ function buildImportProviderList(raw, authEntries) {
       { includeOAuthPlaceholders: true }
     );
     if (oauthProviders.length === 0) continue;
-    oauthByProviderId.set(provider.id, authEntry);
-    merged.push({ ...oauthProviders[0], apiKey: "" });
+    const registryId = toOAuthRegistryId(provider.id);
+    oauthByProviderId.set(registryId, authEntry);
+    merged.push({ ...oauthProviders[0], id: registryId, apiKey: "" });
+    covered.add(registryId);
     covered.add(provider.id);
   }
   return { providers: merged, oauth: { oauthByProviderId } };
@@ -5232,13 +5254,15 @@ function translateRequest(body, npm, options) {
     messages
   );
   const effort = anthropicEffortFromRequest(body) ?? options?.defaultEffort;
-  const providerOptions = deepMergeProviderOptions(
-    deepMergeProviderOptions(
-      thinkingProviderOptions(npm),
-      effortProviderOptions(npm, effort, body.model, options?.reasoningMetadata)
-    ),
-    options?.openAiOAuth && systemText ? { openai: { instructions: systemText } } : void 0
+  let providerOptions = deepMergeProviderOptions(
+    thinkingProviderOptions(npm),
+    effortProviderOptions(npm, effort, body.model, options?.reasoningMetadata)
   );
+  if (options?.openAiOAuth && systemText) {
+    providerOptions = deepMergeProviderOptions(providerOptions, {
+      openai: { instructions: systemText }
+    });
+  }
   return {
     system: options?.openAiOAuth ? void 0 : systemText,
     messages: translateMessages(messages, npm),
@@ -5598,7 +5622,8 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          plog(() => `sdk error: ${message}`);
+          const body = err && typeof err === "object" && "responseBody" in err ? err.responseBody : void 0;
+          plog(() => `sdk error: ${message}${body ? ` \u2014 body: ${body}` : ""}`);
           if (!res.headersSent) {
             anthropicError(res, 502, message);
           } else {
@@ -7556,6 +7581,82 @@ function toggleProviderEnabled(id) {
   return { toggled: true, enabled: provider.enabled };
 }
 
+// src/data/openai-oauth-models.ts
+var CHATGPT_CODEX_UNSUPPORTED_MODELS = /* @__PURE__ */ new Set([
+  "gpt-5.4",
+  // confirmed: rejected by chatgpt.com/backend-api/codex
+  "gpt-5.4-turbo",
+  // confirmed: rejected by chatgpt.com/backend-api/codex
+  "gpt-5.5-fast"
+  // confirmed: rejected by chatgpt.com/backend-api/codex
+]);
+var OPENAI_OAUTH_MODEL_SEEDS = [
+  // GPT-5.5 family (Pro)
+  { id: "gpt-5.5", name: "GPT-5.5", reasoning: true },
+  // gpt-5.5-fast excluded — chatgpt.com/backend-api/codex rejects it for ChatGPT accounts.
+  // GPT-5.4 family excluded — chatgpt.com/backend-api/codex rejects them for ChatGPT accounts.
+  // Use a direct OpenAI API key to access gpt-5.4 / gpt-5.4-turbo.
+  // GPT-5 base (Pro / Plus)
+  { id: "gpt-5", name: "GPT-5", reasoning: true },
+  // GPT-4.1 family (Plus+)
+  { id: "gpt-4.1", name: "GPT-4.1" },
+  { id: "gpt-4.1-mini", name: "GPT-4.1 Mini" },
+  { id: "gpt-4.1-nano", name: "GPT-4.1 Nano" },
+  // GPT-4o family (Plus+)
+  { id: "gpt-4o", name: "GPT-4o" },
+  { id: "gpt-4o-mini", name: "GPT-4o Mini" },
+  // o-series reasoning (Plus+)
+  { id: "o4-mini", name: "o4 Mini", reasoning: true },
+  { id: "o3", name: "o3", reasoning: true },
+  { id: "o3-mini", name: "o3 Mini", reasoning: true },
+  { id: "o1", name: "o1", reasoning: true },
+  { id: "o1-mini", name: "o1 Mini", reasoning: true }
+];
+function buildOpenAiOAuthModels() {
+  return OPENAI_OAUTH_MODEL_SEEDS.map((seed) => {
+    const prefix = seed.id.split("-")[0] ?? seed.id;
+    return {
+      id: seed.id,
+      name: seed.name,
+      upstreamModelId: seed.id,
+      family: prefix,
+      brand: deriveBrand(prefix),
+      contextWindow: resolveContextWindow(seed.id),
+      modelFormat: "openai",
+      npm: "@ai-sdk/openai",
+      reasoning: seed.reasoning
+    };
+  });
+}
+
+// src/data/xai-oauth-models.ts
+var XAI_OAUTH_MODEL_SEEDS = [
+  // Grok 4 family
+  { id: "grok-4", name: "Grok 4", reasoning: true },
+  { id: "grok-4-fast", name: "Grok 4 Fast", reasoning: true },
+  // Grok 3 family
+  { id: "grok-3", name: "Grok 3", reasoning: true },
+  { id: "grok-3-fast", name: "Grok 3 Fast" },
+  { id: "grok-3-mini", name: "Grok 3 Mini", reasoning: true },
+  { id: "grok-3-mini-fast", name: "Grok 3 Mini Fast", reasoning: true }
+];
+function buildXaiOAuthModels() {
+  return XAI_OAUTH_MODEL_SEEDS.map((seed) => {
+    const prefix = seed.id.split("-")[0] ?? seed.id;
+    return {
+      id: seed.id,
+      name: seed.name,
+      upstreamModelId: seed.id,
+      family: prefix,
+      brand: deriveBrand(prefix),
+      contextWindow: resolveContextWindow(seed.id),
+      modelFormat: "openai",
+      npm: "@ai-sdk/xai",
+      reasoning: seed.reasoning
+    };
+  });
+}
+
 // src/registry/refresh-models.ts
 function modelInfoToCached(m, npm, apiUrl) {
   return {
@@ -7581,6 +7682,94 @@ async function refreshZenGoProvider(provider) {
     const apiUrl = isAnthropic ? BACKENDS[backendId].baseUrl : `${BACKENDS[backendId].baseUrl}/v1`;
     return modelInfoToCached(m, npm, apiUrl);
   });
+}
+async function refreshOAuthProvider(provider, accessToken) {
+  const tpl = provider.templateId ?? provider.id;
+  if (tpl === "openai") return refreshOpenAiOAuthModels(accessToken);
+  if (tpl === "xai") return refreshXaiOAuthModels(accessToken);
+  throw new Error(`refreshOAuthProvider: unsupported template "${tpl}"`);
+}
+function parseOpenAiModelEntries(body) {
+  if (!body || typeof body !== "object") return [];
+  const b = body;
+  if (Array.isArray(b.models)) {
+    return b.models.map((m) => ({ id: m.slug ?? "", name: m.title ?? m.name ?? m.slug ?? "" })).filter((m) => m.id.length > 0);
+  }
+  if (Array.isArray(b.data)) {
+    return b.data.map((m) => ({ id: m.id ?? "", name: m.name ?? m.id ?? "" })).filter((m) => m.id.length > 0);
+  }
+  return [];
+}
+function buildDynamicOAuthModel(id, name, seedById) {
+  if (seedById.has(id)) return seedById.get(id);
+  const prefix = id.split("-")[0] ?? id;
+  return {
+    id,
+    name,
+    upstreamModelId: id,
+    family: prefix,
+    brand: deriveBrand(prefix),
+    contextWindow: resolveContextWindow(id),
+    modelFormat: "openai",
+    npm: "@ai-sdk/openai",
+    reasoning: modelPrefersResponsesApi(id)
+  };
+}
+async function fetchJsonWithAuth(url, accessToken, timeoutMs) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const response = await fetch(url, {
+      headers: { Accept: "application/json", Authorization: `Bearer ${accessToken}` },
+      signal: controller.signal
+    }).finally(() => clearTimeout(timer));
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+async function refreshOpenAiOAuthModels(accessToken) {
+  const TIMEOUT_MS = 1e4;
+  const seedById = new Map(buildOpenAiOAuthModels().map((m) => [m.id, m]));
+  const toModels = (entries) => entries.map(({ id, name }) => buildDynamicOAuthModel(id, name, seedById));
+  const codexBody = await fetchJsonWithAuth(
+    "https://chatgpt.com/backend-api/codex/models",
+    accessToken,
+    TIMEOUT_MS
+  );
+  const codexEntries = parseOpenAiModelEntries(codexBody);
+  if (codexEntries.length > 0) {
+    return { models: toModels(codexEntries), source: "live" };
+  }
+  const chatGptBody = await fetchJsonWithAuth(
+    "https://chatgpt.com/backend-api/models",
+    accessToken,
+    TIMEOUT_MS
+  );
+  const chatGptEntries = parseOpenAiModelEntries(chatGptBody).filter(({ id }) => !CHATGPT_CODEX_UNSUPPORTED_MODELS.has(id));
+  if (chatGptEntries.length > 0) {
+    return { models: toModels(chatGptEntries), source: "live" };
+  }
+  return { models: [...seedById.values()], source: "seed" };
+}
+async function refreshXaiOAuthModels(accessToken) {
+  const seed = buildXaiOAuthModels();
+  const seedById = new Map(seed.map((m) => [m.id, m]));
+  const body = await fetchJsonWithAuth("https://api.x.ai/v1/models", accessToken, 8e3);
+  if (body) {
+    const ids = (body.data ?? []).map((m) => m.id).filter((id) => !!id);
+    if (ids.length > 0) {
+      const live = ids.map((id) => {
+        const cached = seedById.get(id);
+        if (cached) return cached;
+        const prefix = id.split("-")[0] ?? id;
+        return { id, name: id, upstreamModelId: id, family: prefix, brand: deriveBrand(prefix), contextWindow: resolveContextWindow(id), modelFormat: "openai", npm: "@ai-sdk/xai", reasoning: modelPrefersResponsesApi(id) };
+      });
+      return { models: live, source: "live" };
+    }
+  }
+  return { models: seed, source: "seed" };
 }
 async function refreshApiListProvider(provider, apiKey) {
   const npm = provider.api.npm ?? "@ai-sdk/openai-compatible";
@@ -7661,6 +7850,25 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
     let baseUrl;
     if (source === "zen-go-api") {
       models = await refreshZenGoProvider(provider);
+    } else if (provider.authType === "oauth" && (["openai", "xai"].includes(provider.templateId ?? provider.id) || provider.id === "openai-oauth")) {
+      if (!apiKey) {
+        return {
+          id: provider.id,
+          name: provider.name,
+          ok: false,
+          reason: "OAuth token not available \u2014 try signing in again with relay-ai providers auth."
+        };
+      }
+      const oauthResult = await refreshOAuthProvider(provider, apiKey);
+      models = oauthResult.models;
+      if (models.length === 0) {
+        return {
+          id: provider.id,
+          name: provider.name,
+          ok: false,
+          reason: "No models available for this OAuth provider \u2014 try signing in again."
+        };
+      }
     } else {
       const template = resolveProviderTemplate(provider);
       const keyOptional = template?.apiKeyOptional === true;
@@ -7771,6 +7979,7 @@ async function refreshAllProviderModels(resolveKey) {
 // src/registry/provider-auth.ts
 import pc9 from "picocolors";
 import * as p9 from "@clack/prompts";
+import open from "open";
 
 // src/registry/auth-broker.ts
 import { spawn as spawn3 } from "child_process";
@@ -7798,11 +8007,17 @@ async function runOpencodeAuthBroker(providerId, options = {}) {
 }
 
 // src/registry/provider-auth.ts
+var OPENAI_DISPLAY = "OpenAI ChatGPT Plus/Pro";
 var PROVIDER_DISPLAY = {
   xai: "xAI Grok (SuperGrok)",
-  openai: "OpenAI ChatGPT Plus/Pro",
+  openai: OPENAI_DISPLAY,
+  "openai-oauth": OPENAI_DISPLAY,
   "github-copilot": "GitHub Copilot (Individual / Business)"
 };
+function openBrowser(url) {
+  open(url).catch(() => {
+  });
+}
 async function runNativeDeviceCode(providerId) {
   const label = PROVIDER_DISPLAY[providerId];
   printOAuthStepsPanel(`${label} \u2014 Sign in`, label);
@@ -7814,6 +8029,7 @@ async function runNativeDeviceCode(providerId) {
         spinner9.stop("");
         p9.log.info(`Visit: ${pc9.cyan(url)}`);
         p9.log.info(`Enter code: ${pc9.bold(userCode)}`);
+        openBrowser(url);
         spinner9.start("Waiting for authorization...");
       });
       spinner9.stop(pc9.green("Signed in to xAI"));
@@ -7824,6 +8040,7 @@ async function runNativeDeviceCode(providerId) {
         spinner9.stop("");
         p9.log.info(`Visit: ${pc9.cyan(url)}`);
         p9.log.info(`Enter code: ${pc9.bold(userCode)}`);
+        openBrowser(url);
         spinner9.start("Waiting for authorization...");
       });
       spinner9.stop(pc9.green("Signed in to GitHub Copilot"));
@@ -7833,6 +8050,7 @@ async function runNativeDeviceCode(providerId) {
       spinner9.stop("");
       p9.log.info(`Visit: ${pc9.cyan(url)}`);
       p9.log.info(`Enter code: ${pc9.bold(userCode)}`);
+      openBrowser(url);
       spinner9.start("Waiting for authorization...");
     });
     spinner9.stop(pc9.green("Signed in to OpenAI ChatGPT"));
@@ -7843,28 +8061,32 @@ async function runNativeDeviceCode(providerId) {
   }
 }
 async function upsertOAuthProvider(providerId, cred) {
+  const registryId = toOAuthRegistryId(providerId);
+  const templateId = providerId.replace(/-oauth$/, "") || providerId;
   const registry = loadRegistry();
-  const authRef = oauthAuthRef(providerId);
-  let entry = registry.providers.find((pr) => pr.id === providerId);
+  const authRef = oauthAuthRef(registryId);
+  let entry = registry.providers.find((pr) => pr.id === registryId);
   if (!entry) {
     const raw = await fetchRawOpencodeProviders();
     if (raw) {
       const { providers } = buildImportProviderList(raw, { [providerId]: cred });
-      const lp = providers.find((pr) => pr.id === providerId);
+      const lp = providers.find((pr) => pr.id === registryId || pr.id === providerId);
       if (lp) {
-        entry = localProviderToRegistry(lp, { authType: "oauth", authRef }) ?? void 0;
+        const converted = localProviderToRegistry(lp, { authType: "oauth", authRef });
+        if (converted) entry = { ...converted, id: registryId, templateId };
       }
     }
   }
   if (!entry) {
-    const template = getTemplateById(providerId);
+    const template = getTemplateById(templateId);
     if (!template) {
       throw new Error(`Provider "${providerId}" is not in your registry and has no template`);
     }
+    const displayName = registryId === "openai-oauth" ? "OpenAI (ChatGPT)" : template.name;
     entry = {
-      id: providerId,
-      templateId: template.id,
-      name: template.name,
+      id: registryId,
+      templateId,
+      name: displayName,
       enabled: true,
       authRef,
       authType: "oauth",
@@ -7872,24 +8094,25 @@ async function upsertOAuthProvider(providerId, cred) {
       addedAt: (/* @__PURE__ */ new Date()).toISOString()
     };
   } else {
-    entry = { ...entry, authType: "oauth", authRef };
+    entry = { ...entry, authType: "oauth", authRef, templateId };
   }
-  const idx = registry.providers.findIndex((pr) => pr.id === providerId);
+  const idx = registry.providers.findIndex((pr) => pr.id === registryId);
   if (idx >= 0) registry.providers[idx] = entry;
   else registry.providers.push(entry);
   saveRegistry(registry);
   return entry;
 }
 async function authenticateProvider(providerId, options = {}) {
+  const registryId = toOAuthRegistryId(providerId);
   if (!supportsNativeOAuth(providerId)) {
     if (findOpencodeBinary()) {
       const cred2 = await runOpencodeAuthBroker(providerId, { method: options.brokerMethod });
-      const saved2 = await saveProviderCredential(oauthAuthRef(providerId), oauthCredentialToKeychainJson(cred2));
+      const saved2 = await saveProviderCredential(oauthAuthRef(registryId), oauthCredentialToKeychainJson(cred2));
       if (!saved2) {
         p9.log.warn("Could not save OAuth tokens to Keychain \u2014 session may not persist.");
       }
       const registryProvider2 = await upsertOAuthProvider(providerId, cred2);
-      return { providerId, credential: cred2, registryProvider: registryProvider2 };
+      return { providerId: registryId, credential: cred2, registryProvider: registryProvider2 };
     }
     throw new Error(
       `Native OAuth is only built in for xai and openai. Install OpenCode for other OAuth providers.`
@@ -7913,7 +8136,7 @@ async function authenticateProvider(providerId, options = {}) {
     }
   }
   const cred = method === "broker" ? await runOpencodeAuthBroker(providerId, { method: options.brokerMethod }) : await runNativeDeviceCode(providerId);
-  const saved = await saveProviderCredential(oauthAuthRef(providerId), oauthCredentialToKeychainJson(cred));
+  const saved = await saveProviderCredential(oauthAuthRef(registryId), oauthCredentialToKeychainJson(cred));
   if (!saved) {
     p9.log.warn("Could not save OAuth tokens to Keychain \u2014 session may not persist.");
   }
@@ -7921,12 +8144,12 @@ async function authenticateProvider(providerId, options = {}) {
   const refreshSpinner = p9.spinner();
   refreshSpinner.start("Refreshing model list...");
   try {
-    await refreshProviderModels(providerId, cred.access);
+    await refreshProviderModels(registryId, cred.access);
     refreshSpinner.stop("Models refreshed");
   } catch {
     refreshSpinner.stop("Could not refresh models \u2014 run relay-ai providers refresh-models later");
   }
-  return { providerId, credential: cred, registryProvider };
+  return { providerId: registryId, credential: cred, registryProvider };
 }
 function providerAuthHelpText() {
   return `${pc9.bold("relay-ai providers auth")} \u2014 sign in with OAuth
@@ -9420,7 +9643,7 @@ function resolveCodexRoute(provider, model, apiKey) {
     reasoning: model.reasoning,
     interleavedReasoningField: model.interleavedReasoningField
   };
-  if (provider.id === "openai" && provider.authType !== "oauth" && model.modelFormat === "openai") {
+  if (model.npm === "@ai-sdk/openai" && provider.authType !== "oauth" && model.modelFormat === "openai") {
     return { tier: "direct", ...base };
   }
   return { tier: "proxy", ...base };

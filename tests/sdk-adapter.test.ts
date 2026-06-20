@@ -135,7 +135,7 @@ describe('translateRequest', () => {
     });
   });
 
-  it('supplies required instructions and omits max tokens for OpenAI OAuth', () => {
+  it('sends instructions via providerOptions and omits system/max_tokens for OpenAI OAuth', () => {
     const params = translateRequest({
       model: 'gpt-5.5',
       messages: [{ role: 'user', content: 'hello' }],
@@ -143,9 +143,7 @@ describe('translateRequest', () => {
     }, '@ai-sdk/openai', { openAiOAuth: true });
 
     expect(params.system).toBeUndefined();
-    expect(params.providerOptions?.openai).toMatchObject({
-      instructions: 'You are a coding assistant.',
-    });
+    expect(params.providerOptions?.openai?.instructions).toBe('You are a coding assistant.');
     expect(params.maxOutputTokens).toBeUndefined();
   });
 

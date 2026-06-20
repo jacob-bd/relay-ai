@@ -3,7 +3,7 @@
 import { refreshOpenAiAccessToken } from './openai.js';
 import { refreshGithubCopilotToken } from './github.js';
 import type { StoredOAuthCredential } from './types.js';
-import { accessTokenIsExpiring, oauthCredentialNeedsRefresh, tokensToStoredCredential } from './types.js';
+import { accessTokenIsExpiring, NATIVE_OAUTH_PROVIDER_IDS, oauthCredentialNeedsRefresh, tokensToStoredCredential } from './types.js';
 import { refreshXaiAccessToken } from './xai.js';
 
 export function oauthCredentialShouldRefresh(
@@ -11,9 +11,8 @@ export function oauthCredentialShouldRefresh(
   providerId: string,
 ): boolean {
   if (oauthCredentialNeedsRefresh(cred)) return true;
-  if (providerId === 'xai' && accessTokenIsExpiring(cred.access)) return true;
-  // Copilot session tokens are short-lived (~30 min); always check expiry
-  if (providerId === 'github-copilot' && accessTokenIsExpiring(cred.access)) return true;
+  // All native OAuth providers use short-lived access tokens — check expiry proactively
+  if ((NATIVE_OAUTH_PROVIDER_IDS as readonly string[]).includes(providerId) && accessTokenIsExpiring(cred.access)) return true;
   return false;
 }
 
@@ -26,7 +25,7 @@ export async function refreshStoredOAuthCredential(
   }
 
   let tokens;
-  if (providerId === 'openai') {
+  if (providerId === 'openai' || providerId === 'openai-oauth') {
     tokens = await refreshOpenAiAccessToken(cred.refresh);
   } else if (providerId === 'xai') {
     tokens = await refreshXaiAccessToken(cred.refresh);

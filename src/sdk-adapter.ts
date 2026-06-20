@@ -239,15 +239,19 @@ export function translateRequest(
     messages as unknown as AnthropicRequestMessage[],
   ) as unknown as AnthropicTool[];
   const effort = anthropicEffortFromRequest(body) ?? options?.defaultEffort;
-  const providerOptions = deepMergeProviderOptions(
-    deepMergeProviderOptions(
-      thinkingProviderOptions(npm),
-      effortProviderOptions(npm, effort, body.model, options?.reasoningMetadata),
-    ),
-    options?.openAiOAuth && systemText
-      ? { openai: { instructions: systemText } }
-      : undefined,
+  let providerOptions = deepMergeProviderOptions(
+    thinkingProviderOptions(npm),
+    effortProviderOptions(npm, effort, body.model, options?.reasoningMetadata),
   );
+
+  // ChatGPT Codex OAuth backend requires `instructions` in providerOptions and
+  // rejects the standard `system` field. It also manages its own output limit.
+  if (options?.openAiOAuth && systemText) {
+    providerOptions = deepMergeProviderOptions(providerOptions, {
+      openai: { instructions: systemText },
+    });
+  }
+
   return {
     system: options?.openAiOAuth ? undefined : systemText,
     messages: translateMessages(messages, npm),

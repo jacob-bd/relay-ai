@@ -17,6 +17,11 @@ export function oauthAuthRef(providerId: string): string {
   return `keyring:oauth:provider:${providerId}`;
 }
 
+/** Maps a canonical OAuth provider ID to its registry slot (openai → openai-oauth; others unchanged). */
+export function toOAuthRegistryId(providerId: string): string {
+  return providerId === 'openai' ? 'openai-oauth' : providerId;
+}
+
 function normalizeImportProviderIdentity(provider: LocalProvider): LocalProvider {
   if (provider.id === 'opencode') {
     return { ...provider, id: 'zen', name: 'OpenCode Zen' };
@@ -56,8 +61,10 @@ export function buildImportProviderList(
     );
     if (oauthProviders.length === 0) continue;
 
-    oauthByProviderId.set(provider.id, authEntry);
-    merged.push({ ...oauthProviders[0]!, apiKey: '' });
+    const registryId = toOAuthRegistryId(provider.id);
+    oauthByProviderId.set(registryId, authEntry);
+    merged.push({ ...oauthProviders[0]!, id: registryId, apiKey: '' });
+    covered.add(registryId);
     covered.add(provider.id);
   }
 

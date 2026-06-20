@@ -16,5 +16,6 @@ export default defineConfig({
     '@openrouter/ai-sdk-provider',
     'gitlab-ai-provider',
     'venice-ai-sdk-provider',
+    'open',
   ],
 });

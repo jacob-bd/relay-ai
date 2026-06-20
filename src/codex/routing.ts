@@ -81,7 +81,7 @@ export function resolveCodexRoute(
     interleavedReasoningField: model.interleavedReasoningField,
   };
 
-  if (provider.id === 'openai' && provider.authType !== 'oauth' && model.modelFormat === 'openai') {
+  if (model.npm === '@ai-sdk/openai' && provider.authType !== 'oauth' && model.modelFormat === 'openai') {
     return { tier: 'direct', ...base };
   }
 

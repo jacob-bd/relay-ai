@@ -257,7 +257,10 @@ export function startProxyCatalog(
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          plog(() => `sdk error: ${message}`);
+          const body = err && typeof err === 'object' && 'responseBody' in err
+            ? (err as { responseBody?: string }).responseBody
+            : undefined;
+          plog(() => `sdk error: ${message}${body ? ` — body: ${body}` : ''}`);
           if (!res.headersSent) {
             anthropicError(res, 502, message);
           } else {

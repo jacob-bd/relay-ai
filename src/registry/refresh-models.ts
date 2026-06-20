@@ -22,6 +22,11 @@ import {
 import { cachedModelCount, isLikelyPlaceholderKey, resolveRefreshCredential, skipWithCachedModels } from './refresh-credentials.js';
 import { readGlobalOpencodeCredential } from '../env.js';
 import type { CachedModel, ProviderRegistry, RegistryProvider } from './types.js';
+import { buildOpenAiOAuthModels, CHATGPT_CODEX_UNSUPPORTED_MODELS } from '../data/openai-oauth-models.js';
+import { buildXaiOAuthModels } from '../data/xai-oauth-models.js';
+import { modelPrefersResponsesApi } from '../provider-factory.js';
+import { deriveBrand } from '../models.js';
+import { resolveContextWindow } from '../context-window.js';
 
 export interface RefreshProviderResult {
   id: string;
@@ -77,6 +82,159 @@ async function refreshZenGoProvider(provider: RegistryProvider): Promise<CachedM
       return modelInfoToCached(m, npm, apiUrl);
     });
 }
+
+/**
+ * OAuth model refresh:
+ * - OpenAI OAuth: Fetch from chatgpt.com/backend-api/models using the OAuth access token.
+ *   Falls back to static seed on network failure or unexpected response format.
+ *   Note: api.openai.com/v1/models rejects OAuth tokens — never call that endpoint here.
+ * - xAI OAuth: SuperGrok JWT differs from xai-... API keys. Try the live api.x.ai/v1/models
+ *   endpoint first; fall back to static seed on 401/403.
+ */
+async function refreshOAuthProvider(
+  provider: RegistryProvider,
+  accessToken: string,
+): Promise<{ models: CachedModel[]; baseUrl?: string; source: 'live' | 'seed' }> {
+  const tpl = provider.templateId ?? provider.id;
+  if (tpl === 'openai') return refreshOpenAiOAuthModels(accessToken);
+  if (tpl === 'xai') return refreshXaiOAuthModels(accessToken);
+  throw new Error(`refreshOAuthProvider: unsupported template "${tpl}"`);
+}
+
+/** Parse model entries from OpenAI-standard or ChatGPT-internal response shapes. */
+function parseOpenAiModelEntries(
+  body: unknown,
+): Array<{ id: string; name: string }> {
+  if (!body || typeof body !== 'object') return [];
+  const b = body as Record<string, unknown>;
+
+  // ChatGPT backend format: { models: [{ slug, title }] }
+  if (Array.isArray(b.models)) {
+    return (b.models as Array<{ slug?: string; title?: string; name?: string }>)
+      .map(m => ({ id: m.slug ?? '', name: m.title ?? m.name ?? m.slug ?? '' }))
+      .filter(m => m.id.length > 0);
+  }
+  // Standard OpenAI format: { data: [{ id, name }] }
+  if (Array.isArray(b.data)) {
+    return (b.data as Array<{ id?: string; name?: string }>)
+      .map(m => ({ id: m.id ?? '', name: m.name ?? m.id ?? '' }))
+      .filter(m => m.id.length > 0);
+  }
+  return [];
+}
+
+/** Build a CachedModel for a dynamically discovered OpenAI OAuth model. */
+function buildDynamicOAuthModel(id: string, name: string, seedById: Map<string, CachedModel>): CachedModel {
+  if (seedById.has(id)) return seedById.get(id)!;
+  const prefix = id.split('-')[0] ?? id;
+  return {
+    id,
+    name,
+    upstreamModelId: id,
+    family: prefix,
+    brand: deriveBrand(prefix),
+    contextWindow: resolveContextWindow(id),
+    modelFormat: 'openai' as const,
+    npm: '@ai-sdk/openai',
+    reasoning: modelPrefersResponsesApi(id),
+  };
+}
+
+/** Fetch and parse JSON from a URL with auth and timeout, returning null on any failure. */
+async function fetchJsonWithAuth(
+  url: string,
+  accessToken: string,
+  timeoutMs: number,
+): Promise<unknown | null> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${accessToken}` },
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timer));
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch OpenAI OAuth (ChatGPT) models using a 3-tier strategy:
+ *
+ * 1. chatgpt.com/backend-api/codex/models — Codex-specific endpoint.
+ *    If it exists, it returns ONLY models the Codex API actually supports,
+ *    so no filtering is needed. Self-updating as OpenAI changes Codex availability.
+ *
+ * 2. chatgpt.com/backend-api/models — all ChatGPT models, filtered by the
+ *    confirmed-bad set. Used when the Codex endpoint doesn't exist or returns nothing.
+ *
+ * 3. Static seed — emergency fallback with no network dependency.
+ */
+async function refreshOpenAiOAuthModels(
+  accessToken: string,
+): Promise<{ models: CachedModel[]; source: 'live' | 'seed' }> {
+  const TIMEOUT_MS = 10_000;
+  const seedById = new Map(buildOpenAiOAuthModels().map(m => [m.id, m]));
+  const toModels = (entries: Array<{ id: string; name: string }>) =>
+    entries.map(({ id, name }) => buildDynamicOAuthModel(id, name, seedById));
+
+  // Tier 1: Codex-specific model listing — source of truth for Codex availability.
+  const codexBody = await fetchJsonWithAuth(
+    'https://chatgpt.com/backend-api/codex/models',
+    accessToken,
+    TIMEOUT_MS,
+  );
+  const codexEntries = parseOpenAiModelEntries(codexBody);
+  if (codexEntries.length > 0) {
+    return { models: toModels(codexEntries), source: 'live' };
+  }
+
+  // Tier 2: General ChatGPT model list, filtered by known Codex restrictions.
+  const chatGptBody = await fetchJsonWithAuth(
+    'https://chatgpt.com/backend-api/models',
+    accessToken,
+    TIMEOUT_MS,
+  );
+  const chatGptEntries = parseOpenAiModelEntries(chatGptBody)
+    .filter(({ id }) => !CHATGPT_CODEX_UNSUPPORTED_MODELS.has(id));
+  if (chatGptEntries.length > 0) {
+    return { models: toModels(chatGptEntries), source: 'live' };
+  }
+
+  // Tier 3: Static seed — reuse already-built map instead of calling the builder again.
+  return { models: [...seedById.values()], source: 'seed' };
+}
+
+/**
+ * Try fetching xAI models from api.x.ai/v1/models using the OAuth JWT.
+ * Falls back to static seed if rejected (SuperGrok JWT ≠ xai-... API key format).
+ */
+async function refreshXaiOAuthModels(
+  accessToken: string,
+): Promise<{ models: CachedModel[]; source: 'live' | 'seed' }> {
+  const seed = buildXaiOAuthModels();
+  const seedById = new Map(seed.map(m => [m.id, m]));
+
+  const body = await fetchJsonWithAuth('https://api.x.ai/v1/models', accessToken, 8_000);
+  if (body) {
+    const ids = ((body as { data?: Array<{ id?: string }> }).data ?? [])
+      .map(m => m.id)
+      .filter((id): id is string => !!id);
+    if (ids.length > 0) {
+      const live = ids.map(id => {
+        const cached = seedById.get(id);
+        if (cached) return cached;
+        const prefix = id.split('-')[0] ?? id;
+        return { id, name: id, upstreamModelId: id, family: prefix, brand: deriveBrand(prefix), contextWindow: resolveContextWindow(id), modelFormat: 'openai' as const, npm: '@ai-sdk/xai', reasoning: modelPrefersResponsesApi(id) } satisfies CachedModel;
+      });
+      return { models: live, source: 'live' };
+    }
+  }
+  return { models: seed, source: 'seed' };
+}
+
 
 async function refreshApiListProvider(
   provider: RegistryProvider,
@@ -183,6 +341,28 @@ export async function refreshProviderModels(
 
     if (source === 'zen-go-api') {
       models = await refreshZenGoProvider(provider);
+    } else if (provider.authType === 'oauth' && (['openai', 'xai'].includes(provider.templateId ?? provider.id) || provider.id === 'openai-oauth')) {
+      // OAuth tokens are not valid API keys for the developer endpoints.
+      // OpenAI: ChatGPT JWT rejected by api.openai.com; no /v1/models on ChatGPT backend.
+      // xAI: SuperGrok JWT rejected by api.x.ai; falls back to static seed.
+      if (!apiKey) {
+        return {
+          id: provider.id,
+          name: provider.name,
+          ok: false,
+          reason: 'OAuth token not available — try signing in again with relay-ai providers auth.',
+        };
+      }
+      const oauthResult = await refreshOAuthProvider(provider, apiKey);
+      models = oauthResult.models;
+      if (models.length === 0) {
+        return {
+          id: provider.id,
+          name: provider.name,
+          ok: false,
+          reason: 'No models available for this OAuth provider — try signing in again.',
+        };
+      }
     } else {
       const template = resolveProviderTemplate(provider);
       const keyOptional = template?.apiKeyOptional === true;

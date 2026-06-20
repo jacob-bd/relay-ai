@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.8] - 2026-06-20
+
+### Added
+- **OpenAI OAuth provider (`openai-oauth`)** — ChatGPT Plus/Pro OAuth now gets its own registry slot and coexists with an API-key OpenAI provider; both can be active simultaneously without overwriting each other.
+- **Browser auto-open during OAuth sign-in** — the device-code URL opens automatically in the default browser on all platforms (macOS, Windows, Linux desktop) so you don't have to copy-paste the link.
+- **3-tier model refresh for OpenAI OAuth** — on `providers refresh-models`, relay-ai first queries the ChatGPT Codex-specific endpoint for models guaranteed to work, falls back to the filtered general ChatGPT list, and uses a static seed only when both network tiers are unreachable.
+- **Static xAI OAuth seed** — `buildXaiOAuthModels()` provides a fallback Grok model list (Grok 3 and 4 families) when the live `api.x.ai/v1/models` endpoint rejects the SuperGrok JWT.
+- **Registry migration** — existing `{id: 'openai', authType: 'oauth'}` entries are automatically renamed to `openai-oauth` on next load, preserving credentials and the original keyring slot.
+- **Richer SDK error logging in proxy** — SDK errors now include the full response body alongside the message, making Codex inference failures easier to diagnose.
+
+### Fixed
+- **OpenAI OAuth "Instructions are required" error** — the ChatGPT Codex backend requires the system prompt in `openai.instructions` inside `providerOptions`, not the standard `system` field; this caused every Claude Code tool-use step to fail when using an OpenAI OAuth provider.
+- **OpenAI OAuth token expiry** — `oauthCredentialShouldRefresh` now applies the pre-emptive 2-minute JWT expiry buffer to `openai` and `openai-oauth` providers, matching the existing behaviour for xAI and GitHub Copilot. Previously, OpenAI OAuth access tokens (1-hour TTL) were only checked against the hard `expires` wall-clock, not the JWT claim.
+- **Broken provider state after `relay-ai providers auth openai-oauth`** — if a user passed the registry ID instead of the canonical `openai` to the auth command, `upsertOAuthProvider` would store `templateId: 'openai-oauth'` and all subsequent model refreshes would throw "unsupported template". Fixed by stripping the `-oauth` suffix when deriving `templateId`; the `else` branch also now updates `templateId` on existing entries, healing any already-broken providers on next auth.
+- **xAI live model metadata gaps** — newly-discovered Grok models not yet in the static seed were built without `contextWindow`, `reasoning`, and using the raw ID prefix for `brand` instead of `deriveBrand`. This showed as 0 context window in Claude Code's status bar and incorrect brand metadata.
+- **Speculative OpenAI model IDs removed from seed** — `gpt-5-pro`, `gpt-5-mini`, `gpt-5-codex`, `gpt-5.2`, `gpt-5.2-pro`, and `gpt-5.2-codex` were in the static seed but are not confirmed available on the ChatGPT Codex backend. They would surface in the model picker when the network was unreachable (Tier 3 path) and then fail at inference time.
+- **Codex direct-tier routing** — `resolveCodexRoute` now keys on `model.npm === '@ai-sdk/openai'` instead of `provider.id === 'openai'`, correctly routing standard OpenAI models to the direct tier regardless of which provider ID variant is in use.
+
+---
+
 ## [0.2.7] - 2026-06-19 (Official Launch Release)
 
 ### Added
