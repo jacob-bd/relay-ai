@@ -130,6 +130,7 @@ export function codexProviderEnvKey(providerId: string): string {
   const known: Record<string, string> = {
     openai: 'OPENAI_API_KEY',
     xai: 'XAI_API_KEY',
+    'xai-oauth': 'XAI_API_KEY',
     anthropic: 'ANTHROPIC_API_KEY',
     google: 'GEMINI_API_KEY',
   };

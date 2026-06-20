@@ -75,16 +75,16 @@ describe('dotfolder config', () => {
     expect(loadPreferences().lastProvider).toBe('zen');
   });
 
-  it('returns null when no server password is saved', () => {
-    expect(getSavedServerPassword()).toBeNull();
+  it('returns null when no server password is saved', async () => {
+    expect(await getSavedServerPassword()).toBeNull();
   });
 
-  it('saves and clears a server password', () => {
-    setSavedServerPassword('my-lan-password');
-    expect(getSavedServerPassword()).toBe('my-lan-password');
+  it('saves and clears a server password', async () => {
+    await setSavedServerPassword('my-lan-password');
+    expect(await getSavedServerPassword()).toBe('my-lan-password');
 
-    clearSavedServerPassword();
-    expect(getSavedServerPassword()).toBeNull();
+    await clearSavedServerPassword();
+    expect(await getSavedServerPassword()).toBeNull();
   });
 
   it('creates the app home lazily', () => {

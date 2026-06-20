@@ -74,8 +74,8 @@ describe('buildImportProviderList', () => {
     const { providers, oauth } = buildImportProviderList(raw, {
       xai: { type: 'oauth', access: 'tok', refresh: 'ref', expires: 1 },
     });
-    expect(providers.map(p => p.id).sort()).toEqual(['groq', 'xai']);
-    expect(oauth.oauthByProviderId.has('xai')).toBe(true);
+    expect(providers.map(p => p.id).sort()).toEqual(['groq', 'xai-oauth']);
+    expect(oauth.oauthByProviderId.has('xai-oauth')).toBe(true);
   });
 
   it('maps OpenCode cloud provider ids to relay-ai zen and go ids', () => {

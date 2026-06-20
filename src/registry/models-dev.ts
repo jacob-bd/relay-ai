@@ -64,6 +64,7 @@ export const REGISTRY_TO_MODELS_DEV: Record<string, string> = {
   cerebras: 'cerebras',
   deepinfra: 'deepinfra',
   xai: 'xai',
+  'xai-oauth': 'xai',
   perplexity: 'perplexity',
   cohere: 'cohere',
   alibaba: 'alibaba',

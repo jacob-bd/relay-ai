@@ -155,9 +155,9 @@ function openCodexAppAt(path: string): void {
   }
   if (process.platform === 'win32') {
     if (path.startsWith('shell:AppsFolder\\')) {
-      runPowerShell(`Start-Process ${JSON.stringify(path)}`);
+      runPowerShell(`Start-Process '${path.replace(/'/g, "''")}'`);
     } else {
-      runPowerShell(`Start-Process -FilePath ${JSON.stringify(path)}`);
+      runPowerShell(`Start-Process -FilePath '${path.replace(/'/g, "''")}'`);
     }
   }
 }

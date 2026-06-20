@@ -37,6 +37,22 @@ export function findClaudeBinary(): string | null {
   return null;
 }
 
+export function getInstalledClaudeVersion(): string {
+  try {
+    const claudePath = findClaudeBinary();
+    if (!claudePath) return '2.1.183';
+    const result = execSync(`${isWindows ? `"${claudePath}"` : claudePath} --version`, {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const match = result.match(/(\d+\.\d+\.\d+)/);
+    if (match) return match[1];
+  } catch {
+    // fallback
+  }
+  return '2.1.183'; // default fallback version known to work
+}
+
 export function buildClaudeArgs(model: string, extraArgs: string[]): string[] {
   return ['--model', model, ...extraArgs];
 }

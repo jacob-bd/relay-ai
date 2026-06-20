@@ -40,6 +40,7 @@ export interface ProviderAuthResult {
 const OPENAI_DISPLAY = 'OpenAI ChatGPT Plus/Pro';
 const PROVIDER_DISPLAY: Record<NativeOAuthProviderId, string> = {
   xai: 'xAI Grok (SuperGrok)',
+  'xai-oauth': 'xAI Grok (SuperGrok)',
   openai: OPENAI_DISPLAY,
   'openai-oauth': OPENAI_DISPLAY,
   'github-copilot': 'GitHub Copilot (Individual / Business)',
@@ -57,7 +58,7 @@ async function runNativeDeviceCode(providerId: NativeOAuthProviderId): Promise<O
   spinner.start('Waiting for authorization...');
 
   try {
-    if (providerId === 'xai') {
+    if (providerId === 'xai' || providerId === 'xai-oauth') {
       const tokens = await runXaiDeviceCodeFlow(({ url, userCode }) => {
         spinner.stop('');
         p.log.info(`Visit: ${pc.cyan(url)}`);
@@ -121,7 +122,9 @@ async function upsertOAuthProvider(providerId: string, cred: OpencodeOAuthCreden
     if (!template) {
       throw new Error(`Provider "${providerId}" is not in your registry and has no template`);
     }
-    const displayName = registryId === 'openai-oauth' ? 'OpenAI (ChatGPT)' : template.name;
+    const displayName = registryId === 'openai-oauth' ? 'OpenAI (ChatGPT)' 
+      : registryId === 'xai-oauth' ? 'xAI (SuperGrok)' 
+      : template.name;
     entry = {
       id: registryId,
       templateId,

@@ -49,3 +49,22 @@ export function migrateOAuthOpenAiProvider(registry: ProviderRegistry): boolean 
   };
   return true;
 }
+
+// Rename {id:'xai', authType:'oauth'} → {id:'xai-oauth'}
+export function migrateOAuthXaiProvider(registry: ProviderRegistry): boolean {
+  if (registry.providers.some(p => p.id === 'xai-oauth')) return false;
+
+  const idx = registry.providers.findIndex(
+    p => p.id === 'xai' && p.authType === 'oauth',
+  );
+  if (idx < 0) return false;
+
+  const existing = registry.providers[idx]!;
+  registry.providers[idx] = {
+    ...existing,
+    id: 'xai-oauth',
+    templateId: existing.templateId || 'xai',
+    name: existing.name === 'xAI' ? 'xAI Grok (SuperGrok)' : existing.name,
+  };
+  return true;
+}

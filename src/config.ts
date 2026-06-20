@@ -19,7 +19,7 @@ function ensureAppHomeMigrated(): void {
   const legacyConfig = join(getLegacyAppHome(), 'config.json');
   if (!existsSync(legacyConfig)) return;
 
-  mkdirSync(getAppHome(), { recursive: true });
+  mkdirSync(getAppHome(), { recursive: true, mode: 0o700 });
   copyFileSync(legacyConfig, configPath);
 
   const legacyVertex = join(getLegacyAppHome(), 'vertex-models.json');
@@ -41,8 +41,8 @@ function ensureConfigMigrated(): void {
   const legacy = readJsonFile(legacyPath);
   if (!legacy) return;
 
-  mkdirSync(dirname(configPath), { recursive: true });
-  writeFileSync(configPath, `${JSON.stringify(legacy, null, 2)}\n`, 'utf8');
+  mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
+  writeFileSync(configPath, `${JSON.stringify(legacy, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
 
   try {
     renameSync(legacyPath, `${legacyPath}.migrated`);
@@ -58,8 +58,8 @@ function readConfig(): UserPreferences {
 
 function writeConfig(config: UserPreferences): void {
   const configPath = getConfigPath();
-  mkdirSync(dirname(configPath), { recursive: true });
-  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
 }
 
 export function loadPreferences(): UserPreferences {
@@ -108,11 +108,57 @@ export function recordLaunchSelection(
   });
 }
 
-export function getSavedServerPassword(): string | null {
-  return readConfig().server?.savedPassword?.trim() || null;
+const SERVER_PASSWORD_SERVICE = 'relay-ai-server-password';
+const SERVER_PASSWORD_ACCOUNT = 'server-password';
+
+async function getServerPasswordKeyring(): Promise<any | null> {
+  try {
+    const { Entry } = await import('@napi-rs/keyring');
+    return new Entry(SERVER_PASSWORD_SERVICE, SERVER_PASSWORD_ACCOUNT);
+  } catch {
+    return null;
+  }
 }
 
-export function setSavedServerPassword(password: string): void {
+export async function getSavedServerPassword(): Promise<string | null> {
+  const config = readConfig();
+  if (config.server?.savedPassword) {
+    const pwd = config.server.savedPassword;
+    const keyring = await getServerPasswordKeyring();
+    if (keyring) {
+      try {
+        await keyring.setPassword(pwd);
+        delete config.server.savedPassword;
+        if (Object.keys(config.server).length === 0) delete config.server;
+        writeConfig(config);
+      } catch {
+        // Fallback: keep in config.json if keyring fails
+      }
+    }
+    return pwd;
+  }
+
+  const keyring = await getServerPasswordKeyring();
+  if (keyring) {
+    try {
+      return await keyring.getPassword();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+export async function setSavedServerPassword(password: string): Promise<void> {
+  const keyring = await getServerPasswordKeyring();
+  if (keyring) {
+    try {
+      await keyring.setPassword(password);
+      return;
+    } catch {
+      // Fallback
+    }
+  }
   const config = readConfig();
   config.server = {
     ...(config.server ?? {}),
@@ -121,7 +167,15 @@ export function setSavedServerPassword(password: string): void {
   writeConfig(config);
 }
 
-export function clearSavedServerPassword(): void {
+export async function clearSavedServerPassword(): Promise<void> {
+  const keyring = await getServerPasswordKeyring();
+  if (keyring) {
+    try {
+      await keyring.deletePassword();
+    } catch {
+      // Ignore
+    }
+  }
   const config = readConfig();
   if (!config.server) return;
   delete config.server.savedPassword;

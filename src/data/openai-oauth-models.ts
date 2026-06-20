@@ -30,8 +30,6 @@ interface OAuthModelSeed {
 // These models may be valid via OpenAI developer API keys (api.openai.com) — they are
 // only excluded from the OAuth path. Update this set when OpenAI changes availability.
 export const CHATGPT_CODEX_UNSUPPORTED_MODELS = new Set<string>([
-  'gpt-5.4',        // confirmed: rejected by chatgpt.com/backend-api/codex
-  'gpt-5.4-turbo',  // confirmed: rejected by chatgpt.com/backend-api/codex
   'gpt-5.5-fast',   // confirmed: rejected by chatgpt.com/backend-api/codex
 ]);
 
@@ -40,18 +38,11 @@ export const CHATGPT_CODEX_UNSUPPORTED_MODELS = new Set<string>([
 const OPENAI_OAUTH_MODEL_SEEDS: OAuthModelSeed[] = [
   // GPT-5.5 family (Pro)
   { id: 'gpt-5.5',              name: 'GPT-5.5',           reasoning: true },
-  // gpt-5.5-fast excluded — chatgpt.com/backend-api/codex rejects it for ChatGPT accounts.
-  // GPT-5.4 family excluded — chatgpt.com/backend-api/codex rejects them for ChatGPT accounts.
-  // Use a direct OpenAI API key to access gpt-5.4 / gpt-5.4-turbo.
+  // GPT-5.4 family
+  { id: 'gpt-5.4',              name: 'GPT-5.4' },
+  { id: 'gpt-5.4-mini',         name: 'GPT-5.4 Mini' },
   // GPT-5 base (Pro / Plus)
   { id: 'gpt-5',                name: 'GPT-5',             reasoning: true },
-  // GPT-4.1 family (Plus+)
-  { id: 'gpt-4.1',              name: 'GPT-4.1' },
-  { id: 'gpt-4.1-mini',         name: 'GPT-4.1 Mini' },
-  { id: 'gpt-4.1-nano',         name: 'GPT-4.1 Nano' },
-  // GPT-4o family (Plus+)
-  { id: 'gpt-4o',               name: 'GPT-4o' },
-  { id: 'gpt-4o-mini',          name: 'GPT-4o Mini' },
   // o-series reasoning (Plus+)
   { id: 'o4-mini',              name: 'o4 Mini',           reasoning: true },
   { id: 'o3',                   name: 'o3',                reasoning: true },

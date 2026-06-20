@@ -56,7 +56,7 @@ describe('registry/refresh-models', () => {
       const result = await refreshProviderModels('openai-oauth', 'mock_token', mockRegistry);
 
       expect(global.fetch).toHaveBeenCalledTimes(1);
-      expect(global.fetch).toHaveBeenCalledWith('https://chatgpt.com/backend-api/codex/models', expect.anything());
+      expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('https://chatgpt.com/backend-api/codex/models?client_version='), expect.anything());
       
       expect(result.ok).toBe(true);
       expect(result.modelCount).toBe(1);
@@ -93,7 +93,7 @@ describe('registry/refresh-models', () => {
         json: async () => ({
           models: [
             { slug: 'gpt-4', title: 'GPT-4' },
-            { slug: 'gpt-5.4', title: 'GPT-5.4' } // unsupported
+            { slug: 'gpt-5.5-fast', title: 'GPT-5.5-fast' } // unsupported
           ]
         }),
       } as Response);

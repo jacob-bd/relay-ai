@@ -27,7 +27,7 @@ export async function refreshStoredOAuthCredential(
   let tokens;
   if (providerId === 'openai' || providerId === 'openai-oauth') {
     tokens = await refreshOpenAiAccessToken(cred.refresh);
-  } else if (providerId === 'xai') {
+  } else if (providerId === 'xai' || providerId === 'xai-oauth') {
     tokens = await refreshXaiAccessToken(cred.refresh);
   } else if (providerId === 'github-copilot') {
     // cred.refresh is the long-lived ghu_ token; re-exchange for a new Copilot session token

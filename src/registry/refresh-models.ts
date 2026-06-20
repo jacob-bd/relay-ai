@@ -27,6 +27,7 @@ import { buildXaiOAuthModels } from '../data/xai-oauth-models.js';
 import { modelPrefersResponsesApi } from '../provider-factory.js';
 import { deriveBrand } from '../models.js';
 import { resolveContextWindow } from '../context-window.js';
+import { getInstalledClaudeVersion } from '../launch.js';
 
 export interface RefreshProviderResult {
   id: string;
@@ -104,27 +105,27 @@ async function refreshOAuthProvider(
 /** Parse model entries from OpenAI-standard or ChatGPT-internal response shapes. */
 function parseOpenAiModelEntries(
   body: unknown,
-): Array<{ id: string; name: string }> {
+): Array<{ id: string; name: string; context_window?: number }> {
   if (!body || typeof body !== 'object') return [];
   const b = body as Record<string, unknown>;
 
   // ChatGPT backend format: { models: [{ slug, title }] }
   if (Array.isArray(b.models)) {
-    return (b.models as Array<{ slug?: string; title?: string; name?: string }>)
-      .map(m => ({ id: m.slug ?? '', name: m.title ?? m.name ?? m.slug ?? '' }))
+    return (b.models as Array<{ slug?: string; title?: string; name?: string; context_window?: number }>)
+      .map(m => ({ id: m.slug ?? '', name: m.title ?? m.name ?? m.slug ?? '', context_window: m.context_window }))
       .filter(m => m.id.length > 0);
   }
   // Standard OpenAI format: { data: [{ id, name }] }
   if (Array.isArray(b.data)) {
-    return (b.data as Array<{ id?: string; name?: string }>)
-      .map(m => ({ id: m.id ?? '', name: m.name ?? m.id ?? '' }))
+    return (b.data as Array<{ id?: string; name?: string; context_window?: number }>)
+      .map(m => ({ id: m.id ?? '', name: m.name ?? m.id ?? '', context_window: m.context_window }))
       .filter(m => m.id.length > 0);
   }
   return [];
 }
 
 /** Build a CachedModel for a dynamically discovered OpenAI OAuth model. */
-function buildDynamicOAuthModel(id: string, name: string, seedById: Map<string, CachedModel>): CachedModel {
+function buildDynamicOAuthModel(id: string, name: string, contextWindow: number | undefined, seedById: Map<string, CachedModel>): CachedModel {
   if (seedById.has(id)) return seedById.get(id)!;
   const prefix = id.split('-')[0] ?? id;
   return {
@@ -133,7 +134,7 @@ function buildDynamicOAuthModel(id: string, name: string, seedById: Map<string, 
     upstreamModelId: id,
     family: prefix,
     brand: deriveBrand(prefix),
-    contextWindow: resolveContextWindow(id),
+    contextWindow: contextWindow ?? resolveContextWindow(id),
     modelFormat: 'openai' as const,
     npm: '@ai-sdk/openai',
     reasoning: modelPrefersResponsesApi(id),
@@ -150,7 +151,11 @@ async function fetchJsonWithAuth(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const response = await fetch(url, {
-      headers: { Accept: 'application/json', Authorization: `Bearer ${accessToken}` },
+      headers: { 
+        Accept: 'application/json', 
+        Authorization: `Bearer ${accessToken}`,
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      },
       signal: controller.signal,
     }).finally(() => clearTimeout(timer));
     if (!response.ok) return null;
@@ -177,12 +182,14 @@ async function refreshOpenAiOAuthModels(
 ): Promise<{ models: CachedModel[]; source: 'live' | 'seed' }> {
   const TIMEOUT_MS = 10_000;
   const seedById = new Map(buildOpenAiOAuthModels().map(m => [m.id, m]));
-  const toModels = (entries: Array<{ id: string; name: string }>) =>
-    entries.map(({ id, name }) => buildDynamicOAuthModel(id, name, seedById));
+  const toModels = (entries: Array<{ id: string; name: string; context_window?: number }>) =>
+    entries.map(({ id, name, context_window }) => buildDynamicOAuthModel(id, name, context_window, seedById));
+
+  const claudeVersion = getInstalledClaudeVersion();
 
   // Tier 1: Codex-specific model listing — source of truth for Codex availability.
   const codexBody = await fetchJsonWithAuth(
-    'https://chatgpt.com/backend-api/codex/models',
+    `https://chatgpt.com/backend-api/codex/models?client_version=${claudeVersion}`,
     accessToken,
     TIMEOUT_MS,
   );
@@ -341,7 +348,7 @@ export async function refreshProviderModels(
 
     if (source === 'zen-go-api') {
       models = await refreshZenGoProvider(provider);
-    } else if (provider.authType === 'oauth' && (['openai', 'xai'].includes(provider.templateId ?? provider.id) || provider.id === 'openai-oauth')) {
+    } else if (provider.authType === 'oauth' && (['openai', 'xai', 'xai-oauth'].includes(provider.templateId ?? provider.id) || provider.id === 'openai-oauth' || provider.id === 'xai-oauth')) {
       // OAuth tokens are not valid API keys for the developer endpoints.
       // OpenAI: ChatGPT JWT rejected by api.openai.com; no /v1/models on ChatGPT backend.
       // xAI: SuperGrok JWT rejected by api.x.ai; falls back to static seed.

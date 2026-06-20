@@ -18,8 +18,10 @@ export function oauthAuthRef(providerId: string): string {
 }
 
 /** Maps a canonical OAuth provider ID to its registry slot (openai → openai-oauth; others unchanged). */
-export function toOAuthRegistryId(providerId: string): string {
-  return providerId === 'openai' ? 'openai-oauth' : providerId;
+export function toOAuthRegistryId(id: string): string {
+  if (id === 'openai') return 'openai-oauth';
+  if (id === 'xai') return 'xai-oauth';
+  return id;
 }
 
 function normalizeImportProviderIdentity(provider: LocalProvider): LocalProvider {

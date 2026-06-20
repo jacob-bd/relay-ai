@@ -163,16 +163,24 @@ function waitForShutdown(): Promise<void> {
   });
 }
 
-async function getServerPasswordForMode(mode: 'local' | 'network'): Promise<string | null | undefined> {
-  if (mode === 'local') return null;
+async function getServerPasswordForMode(
+  mode: 'local' | 'network',
+): Promise<{ password: string | null; wasSaved: boolean } | undefined> {
+  if (mode === 'local') return { password: null, wasSaved: false };
 
-  const savedPassword = getSavedServerPassword();
+  const savedPassword = await getSavedServerPassword();
   let serverPassword: string | null = null;
+  let wasSaved = false;
 
   if (savedPassword) {
     const savedChoice = await askUseSavedServerPassword();
     if (!savedChoice) return undefined;
-    serverPassword = savedChoice === 'use-saved' ? savedPassword : await askServerPassword();
+    if (savedChoice === 'use-saved') {
+      serverPassword = savedPassword;
+      wasSaved = true;
+    } else {
+      serverPassword = await askServerPassword();
+    }
   } else {
     serverPassword = await askServerPassword();
   }
@@ -182,10 +190,13 @@ async function getServerPasswordForMode(mode: 'local' | 'network'): Promise<stri
   if (serverPassword !== savedPassword) {
     const savePassword = await askSaveServerPassword();
     if (savePassword === null) return undefined;
-    if (savePassword) setSavedServerPassword(serverPassword);
+    if (savePassword) {
+      await setSavedServerPassword(serverPassword);
+      wasSaved = true;
+    }
   }
 
-  return serverPassword;
+  return { password: serverPassword, wasSaved };
 }
 
 async function configureExposedProviders(): Promise<string[] | null | undefined> {
@@ -255,8 +266,9 @@ async function runVertexServerCommand(): Promise<number> {
   const mode = await askListenMode();
   if (!mode) return 0;
 
-  const serverPassword = await getServerPasswordForMode(mode);
-  if (serverPassword === undefined) return 0;
+  const pwResult = await getServerPasswordForMode(mode);
+  if (pwResult === undefined) return 0;
+  const { password: serverPassword, wasSaved: passwordWasSaved } = pwResult;
 
   const host = mode === 'network' ? '0.0.0.0' : '127.0.0.1';
   const models = vertexModelsToServerModels(vertexConfig);
@@ -280,7 +292,11 @@ async function runVertexServerCommand(): Promise<number> {
   console.log(`  Models:     ${models.map(model => model.id).join(', ')}`);
   if (mode === 'network') {
     console.log(`  Network:    http://${getLocalIp()}:${server.port}`);
-    console.log(`  API key:    ${serverPassword}`);
+    if (passwordWasSaved) {
+      console.log('  API key:    saved, rotate with `relay-ai server --setup`');
+    } else {
+      console.log(`  API key:    ${serverPassword}`);
+    }
   } else {
     console.log('  API key:    any non-empty value');
   }
@@ -333,8 +349,9 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
   const mode = await askListenMode();
   if (!mode) return 0;
 
-  const serverPassword = await getServerPasswordForMode(mode);
-  if (serverPassword === undefined) return 0;
+  const pwResult = await getServerPasswordForMode(mode);
+  if (pwResult === undefined) return 0;
+  const { password: serverPassword, wasSaved: passwordWasSaved } = pwResult;
 
   const host = mode === 'network' ? '0.0.0.0' : '127.0.0.1';
   const spinner = p.spinner();
@@ -404,7 +421,11 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
   console.log(`  OpenAI:     http://127.0.0.1:${server.port}/openai`);
   if (mode === 'network') {
     console.log(`  Network:    http://${getLocalIp()}:${server.port}`);
-    console.log(`  API key:    ${serverPassword}`);
+    if (passwordWasSaved) {
+      console.log('  API key:    saved, rotate with `relay-ai server --setup`');
+    } else {
+      console.log(`  API key:    ${serverPassword}`);
+    }
   } else {
     console.log('  API key:    any non-empty value');
   }

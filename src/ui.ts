@@ -80,6 +80,7 @@ function providerTagColor(providerId: string): (text: string) => string {
     case 'openai':
       return pc.white;
     case 'xai':
+    case 'xai-oauth':
       return pc.white;
     case 'groq':
       return pc.red;

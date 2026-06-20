@@ -145,6 +145,25 @@ export async function startCodexProxy(
         log(`-> ${req.method} ${url} content-type=${req.headers['content-type'] ?? '(none)'} content-encoding=${req.headers['content-encoding'] ?? '(none)'} content-length=${req.headers['content-length'] ?? '(none)'}`);
       }
 
+      if (!requireAuth && req.method === 'POST') {
+        const origin = req.headers.origin;
+        const referer = req.headers.referer;
+        const isValidLoopback = (uStr?: string | string[]) => {
+          if (!uStr) return true;
+          try {
+            const parsed = new URL(Array.isArray(uStr) ? uStr[0]! : uStr);
+            const h = parsed.hostname;
+            return h === '127.0.0.1' || h === 'localhost' || h === '::1';
+          } catch {
+            return false;
+          }
+        };
+        if (!isValidLoopback(origin) || !isValidLoopback(referer)) {
+          sendJson(res, 403, { error: { message: 'Forbidden origin', type: 'invalid_request_error' } });
+          return;
+        }
+      }
+
       if (req.method === 'GET' && url === '/health') {
         sendJson(res, 200, { ok: true });
         return;

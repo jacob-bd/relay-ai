@@ -9,6 +9,7 @@ import { claudeCodeClientModelId, routeLookupIds, stripOneMContextSuffix } from 
 import { getProxyDebugLogPath, redactTraceLine, resetTraceLog } from './trace-log.js';
 import { relayAnthropicMessages, UpstreamUnreachableError } from './upstream-forward.js';
 import { createLanguageModel, isSdkMigratedNpm } from './provider-factory.js';
+import { randomUUID } from 'node:crypto';
 import {
   translateRequest as sdkTranslateRequest,
   streamAnthropicResponse,
@@ -55,6 +56,7 @@ function anthropicError(res: ServerResponse, status: number, message: string) {
 
 export interface ProxyHandle {
   port: number;
+  token: string;
   close: () => void;
 }
 
@@ -63,7 +65,7 @@ export interface ProxyHandle {
  * aliasId: the id advertised in /v1/models (must start with 'claude-' or 'anthropic-')
  * realModelId: the actual model id sent to the upstream provider
  * upstreamUrl: full chat-completions URL (openai) or base URL without /v1 (anthropic)
- * apiKey: per-route key; '' signals "use the inbound bearer" (single-model compat)
+ * apiKey: per-route key; must be non-empty — proxy returns 401 for routes with empty key
  */
 export interface ProxyRoute {
   aliasId: string;
@@ -110,6 +112,7 @@ export function startProxyCatalog(
   defaultAliasId: string,
   debug = false,
 ): Promise<ProxyHandle> {
+  const proxyToken = randomUUID();
   silenceSdkWarnings();
 
   if (routes.length === 0) {
@@ -169,6 +172,10 @@ export function startProxyCatalog(
     // POST /v1/messages — the main translation path (Claude Code appends ?beta=true or similar)
     if (req.method === 'POST' && req.url?.startsWith('/v1/messages')) {
       const inboundKey = extractApiKey(req);
+      if (inboundKey !== proxyToken) {
+        anthropicError(res, 401, 'Invalid proxy token');
+        return;
+      }
 
       let anthropicBody: any;
       try {
@@ -184,7 +191,7 @@ export function startProxyCatalog(
 
       // Per-request route resolution: look up the alias, fall back to default
       const route = lookupRoute(byAlias, originalModel) ?? defaultRoute;
-      const apiKey = route.apiKey || inboundKey || '';
+      const apiKey = route.apiKey;
       const upstreamUrl = route.upstreamUrl;
 
       plog(() =>
@@ -291,6 +298,7 @@ export function startProxyCatalog(
       plog(() => `started on port ${addr.port}, catalog=${routes.length} model(s), default=${defaultRoute.aliasId}`);
       resolve({
         port: addr.port,
+        token: proxyToken,
         close: () => {
           process.off('unhandledRejection', onRejection);
           process.off('uncaughtException', onException);
@@ -318,6 +326,7 @@ export function startProxy(
     reasoning?: boolean;
     interleavedReasoningField?: string;
   },
+  apiKey?: string,
 ): Promise<ProxyHandle> {
   const bareModelId = stripOneMContextSuffix(modelId);
   const clientModelId = claudeCodeClientModelId(modelId, contextWindow);
@@ -326,7 +335,7 @@ export function startProxy(
     realModelId: sdk?.upstreamModelId ?? bareModelId,
     displayName: bareModelId,
     upstreamUrl: completionsUrl,
-    apiKey: '',     // '' → use inbound bearer from Claude Code (single-model compat)
+    apiKey: apiKey ?? '',
     modelFormat: 'openai',
     contextWindow,
     npm: sdk?.npm,

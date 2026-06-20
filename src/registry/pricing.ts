@@ -57,6 +57,7 @@ export const TEMPLATE_TO_PRICING_PLATFORM: Record<string, string> = {
   cerebras: 'cerebras',
   deepinfra: 'deepinfra',
   xai: 'xai',
+  'xai-oauth': 'xai',
   perplexity: 'perplexity',
   cohere: 'cohere',
   openai: 'openai',

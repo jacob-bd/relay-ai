@@ -72,7 +72,7 @@ var package_default = {
     "test:watch": "vitest",
     typecheck: "tsc --noEmit",
     "refresh:models-dev": "node scripts/refresh-models-dev-cache.mjs",
-    prepublishOnly: "npm run build"
+    prepublishOnly: `node -e "if (require('./package.json').version !== require('./package-lock.json').version) { console.error('Error: package.json and package-lock.json versions are out of sync! Run npm install to sync.'); process.exit(1); }" && npm run build`
   },
   dependencies: {
     "@ai-sdk/alibaba": "^1.0.26",
@@ -99,18 +99,22 @@ var package_default = {
     "ipaddr.js": "^2.4.0",
     open: "^11.0.0",
     picocolors: "^1.1.1",
-    "smol-toml": "^1.3.1",
+    "smol-toml": "^1.6.1",
     "venice-ai-sdk-provider": "^2.0.2",
     zod: "^3.25.76"
   },
   devDependencies: {
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^2.1.9",
     tsup: "^8.0.0",
     typescript: "^5.5.0",
     vitest: "^2.0.0"
   },
   optionalDependencies: {
     "@napi-rs/keyring": "^1.3.0"
+  },
+  overrides: {
+    ws: "^8.21.0"
   }
 };
 
@@ -973,6 +977,7 @@ function providerTagColor(providerId) {
     case "openai":
       return pc.white;
     case "xai":
+    case "xai-oauth":
       return pc.white;
     case "groq":
       return pc.red;
@@ -1133,6 +1138,20 @@ function findClaudeBinary() {
     if (existsSync(path)) return path;
   }
   return null;
+}
+function getInstalledClaudeVersion() {
+  try {
+    const claudePath = findClaudeBinary();
+    if (!claudePath) return "2.1.183";
+    const result = execSync(`${isWindows ? `"${claudePath}"` : claudePath} --version`, {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    const match = result.match(/(\d+\.\d+\.\d+)/);
+    if (match) return match[1];
+  } catch {
+  }
+  return "2.1.183";
 }
 function buildClaudeArgs(model, extraArgs) {
   return ["--model", model, ...extraArgs];
@@ -1418,7 +1437,7 @@ function accessTokenIsExpiring(token, skewMs = OAUTH_REFRESH_SKEW_MS) {
     return false;
   }
 }
-var NATIVE_OAUTH_PROVIDER_IDS = ["xai", "openai", "openai-oauth", "github-copilot"];
+var NATIVE_OAUTH_PROVIDER_IDS = ["xai", "xai-oauth", "openai", "openai-oauth", "github-copilot"];
 function supportsNativeOAuth(providerId) {
   return NATIVE_OAUTH_PROVIDER_IDS.includes(providerId);
 }
@@ -1648,7 +1667,7 @@ async function refreshStoredOAuthCredential(providerId, cred) {
   let tokens;
   if (providerId === "openai" || providerId === "openai-oauth") {
     tokens = await refreshOpenAiAccessToken(cred.refresh);
-  } else if (providerId === "xai") {
+  } else if (providerId === "xai" || providerId === "xai-oauth") {
     tokens = await refreshXaiAccessToken(cred.refresh);
   } else if (providerId === "github-copilot") {
     tokens = await refreshGithubCopilotToken(cred.refresh);
@@ -2557,6 +2576,21 @@ function migrateOAuthOpenAiProvider(registry) {
   };
   return true;
 }
+function migrateOAuthXaiProvider(registry) {
+  if (registry.providers.some((p19) => p19.id === "xai-oauth")) return false;
+  const idx = registry.providers.findIndex(
+    (p19) => p19.id === "xai" && p19.authType === "oauth"
+  );
+  if (idx < 0) return false;
+  const existing = registry.providers[idx];
+  registry.providers[idx] = {
+    ...existing,
+    id: "xai-oauth",
+    templateId: existing.templateId || "xai",
+    name: existing.name === "xAI" ? "xAI Grok (SuperGrok)" : existing.name
+  };
+  return true;
+}
 
 // src/registry/validate.ts
 var PROVIDER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
@@ -2666,6 +2700,7 @@ function loadRegistry(path = getProvidersPath()) {
     const registry = parseRegistry(raw);
     let migrated = migrateLegacyCloudProviders(registry);
     if (migrateOAuthOpenAiProvider(registry)) migrated = true;
+    if (migrateOAuthXaiProvider(registry)) migrated = true;
     if (migrated) {
       try {
         saveRegistry(registry, path);
@@ -2703,6 +2738,7 @@ var TEMPLATE_TO_PRICING_PLATFORM = {
   cerebras: "cerebras",
   deepinfra: "deepinfra",
   xai: "xai",
+  "xai-oauth": "xai",
   perplexity: "perplexity",
   cohere: "cohere",
   openai: "openai",
@@ -2882,6 +2918,7 @@ var REGISTRY_TO_MODELS_DEV = {
   cerebras: "cerebras",
   deepinfra: "deepinfra",
   xai: "xai",
+  "xai-oauth": "xai",
   perplexity: "perplexity",
   cohere: "cohere",
   alibaba: "alibaba",
@@ -3407,8 +3444,10 @@ async function resolveRefreshCredential(provider, resolveKey) {
 function oauthAuthRef(providerId) {
   return `keyring:oauth:provider:${providerId}`;
 }
-function toOAuthRegistryId(providerId) {
-  return providerId === "openai" ? "openai-oauth" : providerId;
+function toOAuthRegistryId(id) {
+  if (id === "openai") return "openai-oauth";
+  if (id === "xai") return "xai-oauth";
+  return id;
 }
 function normalizeImportProviderIdentity(provider) {
   if (provider.id === "opencode") {
@@ -4998,6 +5037,9 @@ async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWant
   res.end(text5);
 }
 
+// src/proxy.ts
+import { randomUUID } from "crypto";
+
 // src/sdk-adapter.ts
 import { streamText, generateText, tool, jsonSchema } from "ai";
 
@@ -5502,6 +5544,7 @@ function lookupRoute(byAlias, id) {
   return void 0;
 }
 function startProxyCatalog(routes, defaultAliasId, debug = false) {
+  const proxyToken = randomUUID();
   silenceSdkWarnings();
   if (routes.length === 0) {
     return Promise.reject(new Error("Proxy catalog requires at least one route"));
@@ -5549,6 +5592,10 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
     }
     if (req.method === "POST" && req.url?.startsWith("/v1/messages")) {
       const inboundKey = extractApiKey(req);
+      if (inboundKey !== proxyToken) {
+        anthropicError(res, 401, "Invalid proxy token");
+        return;
+      }
       let anthropicBody;
       try {
         const raw = await readBody(req);
@@ -5560,7 +5607,7 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
       const originalModel = anthropicBody.model;
       const clientWantsStream = Boolean(anthropicBody.stream);
       const route = lookupRoute(byAlias, originalModel) ?? defaultRoute;
-      const apiKey = route.apiKey || inboundKey || "";
+      const apiKey = route.apiKey;
       const upstreamUrl = route.upstreamUrl;
       plog(
         () => `POST /v1/messages - alias=${originalModel} route=${route.realModelId} format=${route.modelFormat} key=${apiKey ? `len:${apiKey.length}` : "MISSING"}`
@@ -5652,6 +5699,7 @@ data: ${JSON.stringify({ type: "error", error: { type: "api_error", message } })
       plog(() => `started on port ${addr.port}, catalog=${routes.length} model(s), default=${defaultRoute.aliasId}`);
       resolve({
         port: addr.port,
+        token: proxyToken,
         close: () => {
           process.off("unhandledRejection", onRejection);
           process.off("uncaughtException", onException);
@@ -5661,7 +5709,7 @@ data: ${JSON.stringify({ type: "error", error: { type: "api_error", message } })
     });
   });
 }
-function startProxy(completionsUrl, modelId, debug = false, contextWindow, sdk) {
+function startProxy(completionsUrl, modelId, debug = false, contextWindow, sdk, apiKey) {
   const bareModelId = stripOneMContextSuffix(modelId);
   const clientModelId = claudeCodeClientModelId(modelId, contextWindow);
   return startProxyCatalog([{
@@ -5669,8 +5717,7 @@ function startProxy(completionsUrl, modelId, debug = false, contextWindow, sdk) 
     realModelId: sdk?.upstreamModelId ?? bareModelId,
     displayName: bareModelId,
     upstreamUrl: completionsUrl,
-    apiKey: "",
-    // '' → use inbound bearer from Claude Code (single-model compat)
+    apiKey: apiKey ?? "",
     modelFormat: "openai",
     contextWindow,
     npm: sdk?.npm,
@@ -5772,7 +5819,7 @@ function ensureAppHomeMigrated() {
   if (existsSync9(configPath)) return;
   const legacyConfig = join9(getLegacyAppHome(), "config.json");
   if (!existsSync9(legacyConfig)) return;
-  mkdirSync5(getAppHome(), { recursive: true });
+  mkdirSync5(getAppHome(), { recursive: true, mode: 448 });
   copyFileSync2(legacyConfig, configPath);
   const legacyVertex = join9(getLegacyAppHome(), "vertex-models.json");
   const vertexPath = join9(getAppHome(), "vertex-models.json");
@@ -5788,9 +5835,9 @@ function ensureConfigMigrated() {
   if (!existsSync9(legacyPath)) return;
   const legacy = readJsonFile(legacyPath);
   if (!legacy) return;
-  mkdirSync5(dirname4(configPath), { recursive: true });
+  mkdirSync5(dirname4(configPath), { recursive: true, mode: 448 });
   writeFileSync4(configPath, `${JSON.stringify(legacy, null, 2)}
-`, "utf8");
+`, { encoding: "utf8", mode: 384 });
   try {
     renameSync2(legacyPath, `${legacyPath}.migrated`);
   } catch {
@@ -5802,9 +5849,9 @@ function readConfig() {
 }
 function writeConfig(config) {
   const configPath = getConfigPath();
-  mkdirSync5(dirname4(configPath), { recursive: true });
+  mkdirSync5(dirname4(configPath), { recursive: true, mode: 448 });
   writeFileSync4(configPath, `${JSON.stringify(config, null, 2)}
-`, "utf8");
+`, { encoding: "utf8", mode: 384 });
 }
 function loadPreferences() {
   const config = readConfig();
@@ -5840,10 +5887,51 @@ function recordLaunchSelection(agent, providerId, modelId, prefs) {
     recentModelsByProvider: { ...prefs.recentModelsByProvider, [providerId]: updatedRecent }
   });
 }
-function getSavedServerPassword() {
-  return readConfig().server?.savedPassword?.trim() || null;
+var SERVER_PASSWORD_SERVICE = "relay-ai-server-password";
+var SERVER_PASSWORD_ACCOUNT = "server-password";
+async function getServerPasswordKeyring() {
+  try {
+    const { Entry } = await import("@napi-rs/keyring");
+    return new Entry(SERVER_PASSWORD_SERVICE, SERVER_PASSWORD_ACCOUNT);
+  } catch {
+    return null;
+  }
 }
-function setSavedServerPassword(password3) {
+async function getSavedServerPassword() {
+  const config = readConfig();
+  if (config.server?.savedPassword) {
+    const pwd = config.server.savedPassword;
+    const keyring2 = await getServerPasswordKeyring();
+    if (keyring2) {
+      try {
+        await keyring2.setPassword(pwd);
+        delete config.server.savedPassword;
+        if (Object.keys(config.server).length === 0) delete config.server;
+        writeConfig(config);
+      } catch {
+      }
+    }
+    return pwd;
+  }
+  const keyring = await getServerPasswordKeyring();
+  if (keyring) {
+    try {
+      return await keyring.getPassword();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+async function setSavedServerPassword(password3) {
+  const keyring = await getServerPasswordKeyring();
+  if (keyring) {
+    try {
+      await keyring.setPassword(password3);
+      return;
+    } catch {
+    }
+  }
   const config = readConfig();
   config.server = {
     ...config.server ?? {},
@@ -6806,13 +6894,19 @@ function waitForShutdown() {
   });
 }
 async function getServerPasswordForMode(mode) {
-  if (mode === "local") return null;
-  const savedPassword = getSavedServerPassword();
+  if (mode === "local") return { password: null, wasSaved: false };
+  const savedPassword = await getSavedServerPassword();
   let serverPassword = null;
+  let wasSaved = false;
   if (savedPassword) {
     const savedChoice = await askUseSavedServerPassword();
     if (!savedChoice) return void 0;
-    serverPassword = savedChoice === "use-saved" ? savedPassword : await askServerPassword();
+    if (savedChoice === "use-saved") {
+      serverPassword = savedPassword;
+      wasSaved = true;
+    } else {
+      serverPassword = await askServerPassword();
+    }
   } else {
     serverPassword = await askServerPassword();
   }
@@ -6820,9 +6914,12 @@ async function getServerPasswordForMode(mode) {
   if (serverPassword !== savedPassword) {
     const savePassword = await askSaveServerPassword();
     if (savePassword === null) return void 0;
-    if (savePassword) setSavedServerPassword(serverPassword);
+    if (savePassword) {
+      await setSavedServerPassword(serverPassword);
+      wasSaved = true;
+    }
   }
-  return serverPassword;
+  return { password: serverPassword, wasSaved };
 }
 async function configureExposedProviders() {
   p6.log.info("Add providers to expose. Listed providers are removed when selected \u2014 like favorites.");
@@ -6878,8 +6975,9 @@ async function runVertexServerCommand() {
   }
   const mode = await askListenMode();
   if (!mode) return 0;
-  const serverPassword = await getServerPasswordForMode(mode);
-  if (serverPassword === void 0) return 0;
+  const pwResult = await getServerPasswordForMode(mode);
+  if (pwResult === void 0) return 0;
+  const { password: serverPassword, wasSaved: passwordWasSaved } = pwResult;
   const host = mode === "network" ? "0.0.0.0" : "127.0.0.1";
   const models = vertexModelsToServerModels(vertexConfig);
   const server = await startServer({
@@ -6900,7 +6998,11 @@ async function runVertexServerCommand() {
   console.log(`  Models:     ${models.map((model) => model.id).join(", ")}`);
   if (mode === "network") {
     console.log(`  Network:    http://${getLocalIp()}:${server.port}`);
-    console.log(`  API key:    ${serverPassword}`);
+    if (passwordWasSaved) {
+      console.log("  API key:    saved, rotate with `relay-ai server --setup`");
+    } else {
+      console.log(`  API key:    ${serverPassword}`);
+    }
   } else {
     console.log("  API key:    any non-empty value");
   }
@@ -6943,8 +7045,9 @@ async function runServerCommand(options = {}) {
   if (!runConfig) return 0;
   const mode = await askListenMode();
   if (!mode) return 0;
-  const serverPassword = await getServerPasswordForMode(mode);
-  if (serverPassword === void 0) return 0;
+  const pwResult = await getServerPasswordForMode(mode);
+  if (pwResult === void 0) return 0;
+  const { password: serverPassword, wasSaved: passwordWasSaved } = pwResult;
   const host = mode === "network" ? "0.0.0.0" : "127.0.0.1";
   const spinner9 = p6.spinner();
   spinner9.start("Fetching available models...");
@@ -7007,7 +7110,11 @@ async function runServerCommand(options = {}) {
   console.log(`  OpenAI:     http://127.0.0.1:${server.port}/openai`);
   if (mode === "network") {
     console.log(`  Network:    http://${getLocalIp()}:${server.port}`);
-    console.log(`  API key:    ${serverPassword}`);
+    if (passwordWasSaved) {
+      console.log("  API key:    saved, rotate with `relay-ai server --setup`");
+    } else {
+      console.log(`  API key:    ${serverPassword}`);
+    }
   } else {
     console.log("  API key:    any non-empty value");
   }
@@ -7588,28 +7695,17 @@ function toggleProviderEnabled(id) {
 
 // src/data/openai-oauth-models.ts
 var CHATGPT_CODEX_UNSUPPORTED_MODELS = /* @__PURE__ */ new Set([
-  "gpt-5.4",
-  // confirmed: rejected by chatgpt.com/backend-api/codex
-  "gpt-5.4-turbo",
-  // confirmed: rejected by chatgpt.com/backend-api/codex
   "gpt-5.5-fast"
   // confirmed: rejected by chatgpt.com/backend-api/codex
 ]);
 var OPENAI_OAUTH_MODEL_SEEDS = [
   // GPT-5.5 family (Pro)
   { id: "gpt-5.5", name: "GPT-5.5", reasoning: true },
-  // gpt-5.5-fast excluded — chatgpt.com/backend-api/codex rejects it for ChatGPT accounts.
-  // GPT-5.4 family excluded — chatgpt.com/backend-api/codex rejects them for ChatGPT accounts.
-  // Use a direct OpenAI API key to access gpt-5.4 / gpt-5.4-turbo.
+  // GPT-5.4 family
+  { id: "gpt-5.4", name: "GPT-5.4" },
+  { id: "gpt-5.4-mini", name: "GPT-5.4 Mini" },
   // GPT-5 base (Pro / Plus)
   { id: "gpt-5", name: "GPT-5", reasoning: true },
-  // GPT-4.1 family (Plus+)
-  { id: "gpt-4.1", name: "GPT-4.1" },
-  { id: "gpt-4.1-mini", name: "GPT-4.1 Mini" },
-  { id: "gpt-4.1-nano", name: "GPT-4.1 Nano" },
-  // GPT-4o family (Plus+)
-  { id: "gpt-4o", name: "GPT-4o" },
-  { id: "gpt-4o-mini", name: "GPT-4o Mini" },
   // o-series reasoning (Plus+)
   { id: "o4-mini", name: "o4 Mini", reasoning: true },
   { id: "o3", name: "o3", reasoning: true },
@@ -7698,14 +7794,14 @@ function parseOpenAiModelEntries(body) {
   if (!body || typeof body !== "object") return [];
   const b = body;
   if (Array.isArray(b.models)) {
-    return b.models.map((m) => ({ id: m.slug ?? "", name: m.title ?? m.name ?? m.slug ?? "" })).filter((m) => m.id.length > 0);
+    return b.models.map((m) => ({ id: m.slug ?? "", name: m.title ?? m.name ?? m.slug ?? "", context_window: m.context_window })).filter((m) => m.id.length > 0);
   }
   if (Array.isArray(b.data)) {
-    return b.data.map((m) => ({ id: m.id ?? "", name: m.name ?? m.id ?? "" })).filter((m) => m.id.length > 0);
+    return b.data.map((m) => ({ id: m.id ?? "", name: m.name ?? m.id ?? "", context_window: m.context_window })).filter((m) => m.id.length > 0);
   }
   return [];
 }
-function buildDynamicOAuthModel(id, name, seedById) {
+function buildDynamicOAuthModel(id, name, contextWindow, seedById) {
   if (seedById.has(id)) return seedById.get(id);
   const prefix = id.split("-")[0] ?? id;
   return {
@@ -7714,7 +7810,7 @@ function buildDynamicOAuthModel(id, name, seedById) {
     upstreamModelId: id,
     family: prefix,
     brand: deriveBrand(prefix),
-    contextWindow: resolveContextWindow(id),
+    contextWindow: contextWindow ?? resolveContextWindow(id),
     modelFormat: "openai",
     npm: "@ai-sdk/openai",
     reasoning: modelPrefersResponsesApi(id)
@@ -7725,7 +7821,11 @@ async function fetchJsonWithAuth(url, accessToken, timeoutMs) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const response = await fetch(url, {
-      headers: { Accept: "application/json", Authorization: `Bearer ${accessToken}` },
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      },
       signal: controller.signal
     }).finally(() => clearTimeout(timer));
     if (!response.ok) return null;
@@ -7737,9 +7837,10 @@ async function fetchJsonWithAuth(url, accessToken, timeoutMs) {
 async function refreshOpenAiOAuthModels(accessToken) {
   const TIMEOUT_MS = 1e4;
   const seedById = new Map(buildOpenAiOAuthModels().map((m) => [m.id, m]));
-  const toModels = (entries) => entries.map(({ id, name }) => buildDynamicOAuthModel(id, name, seedById));
+  const toModels = (entries) => entries.map(({ id, name, context_window }) => buildDynamicOAuthModel(id, name, context_window, seedById));
+  const claudeVersion = getInstalledClaudeVersion();
   const codexBody = await fetchJsonWithAuth(
-    "https://chatgpt.com/backend-api/codex/models",
+    `https://chatgpt.com/backend-api/codex/models?client_version=${claudeVersion}`,
     accessToken,
     TIMEOUT_MS
   );
@@ -7855,7 +7956,7 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
     let baseUrl;
     if (source === "zen-go-api") {
       models = await refreshZenGoProvider(provider);
-    } else if (provider.authType === "oauth" && (["openai", "xai"].includes(provider.templateId ?? provider.id) || provider.id === "openai-oauth")) {
+    } else if (provider.authType === "oauth" && (["openai", "xai", "xai-oauth"].includes(provider.templateId ?? provider.id) || provider.id === "openai-oauth" || provider.id === "xai-oauth")) {
       if (!apiKey) {
         return {
           id: provider.id,
@@ -8015,6 +8116,7 @@ async function runOpencodeAuthBroker(providerId, options = {}) {
 var OPENAI_DISPLAY = "OpenAI ChatGPT Plus/Pro";
 var PROVIDER_DISPLAY = {
   xai: "xAI Grok (SuperGrok)",
+  "xai-oauth": "xAI Grok (SuperGrok)",
   openai: OPENAI_DISPLAY,
   "openai-oauth": OPENAI_DISPLAY,
   "github-copilot": "GitHub Copilot (Individual / Business)"
@@ -8029,7 +8131,7 @@ async function runNativeDeviceCode(providerId) {
   const spinner9 = p9.spinner();
   spinner9.start("Waiting for authorization...");
   try {
-    if (providerId === "xai") {
+    if (providerId === "xai" || providerId === "xai-oauth") {
       const tokens2 = await runXaiDeviceCodeFlow(({ url, userCode }) => {
         spinner9.stop("");
         p9.log.info(`Visit: ${pc9.cyan(url)}`);
@@ -8087,7 +8189,7 @@ async function upsertOAuthProvider(providerId, cred) {
     if (!template) {
       throw new Error(`Provider "${providerId}" is not in your registry and has no template`);
     }
-    const displayName = registryId === "openai-oauth" ? "OpenAI (ChatGPT)" : template.name;
+    const displayName = registryId === "openai-oauth" ? "OpenAI (ChatGPT)" : registryId === "xai-oauth" ? "xAI (SuperGrok)" : template.name;
     entry = {
       id: registryId,
       templateId,
@@ -9454,6 +9556,24 @@ async function startCodexProxy(routes, options = {}) {
       if (debug) {
         log17(`-> ${req.method} ${url} content-type=${req.headers["content-type"] ?? "(none)"} content-encoding=${req.headers["content-encoding"] ?? "(none)"} content-length=${req.headers["content-length"] ?? "(none)"}`);
       }
+      if (!requireAuth && req.method === "POST") {
+        const origin = req.headers.origin;
+        const referer = req.headers.referer;
+        const isValidLoopback = (uStr) => {
+          if (!uStr) return true;
+          try {
+            const parsed = new URL(Array.isArray(uStr) ? uStr[0] : uStr);
+            const h = parsed.hostname;
+            return h === "127.0.0.1" || h === "localhost" || h === "::1";
+          } catch {
+            return false;
+          }
+        };
+        if (!isValidLoopback(origin) || !isValidLoopback(referer)) {
+          sendJson(res, 403, { error: { message: "Forbidden origin", type: "invalid_request_error" } });
+          return;
+        }
+      }
       if (req.method === "GET" && url === "/health") {
         sendJson(res, 200, { ok: true });
         return;
@@ -9683,6 +9803,7 @@ function codexProviderEnvKey(providerId) {
   const known = {
     openai: "OPENAI_API_KEY",
     xai: "XAI_API_KEY",
+    "xai-oauth": "XAI_API_KEY",
     anthropic: "ANTHROPIC_API_KEY",
     google: "GEMINI_API_KEY"
   };
@@ -11356,9 +11477,9 @@ function openCodexAppAt(path) {
   }
   if (process.platform === "win32") {
     if (path.startsWith("shell:AppsFolder\\")) {
-      runPowerShell(`Start-Process ${JSON.stringify(path)}`);
+      runPowerShell(`Start-Process '${path.replace(/'/g, "''")}'`);
     } else {
-      runPowerShell(`Start-Process -FilePath ${JSON.stringify(path)}`);
+      runPowerShell(`Start-Process -FilePath '${path.replace(/'/g, "''")}'`);
     }
   }
 }
@@ -11886,7 +12007,7 @@ import * as p17 from "@clack/prompts";
 import { existsSync as existsSync16, readFileSync as readFileSync13, writeFileSync as writeFileSync7, mkdirSync as mkdirSync9 } from "fs";
 import { homedir as homedir11 } from "os";
 import { join as join17, dirname as dirname7 } from "path";
-import { randomUUID } from "crypto";
+import { randomUUID as randomUUID2 } from "crypto";
 function getClaudeDesktopHome() {
   if (process.platform === "win32") {
     return join17(process.env.APPDATA || join17(homedir11(), "AppData", "Roaming"), "Claude-3p");
@@ -11924,7 +12045,7 @@ function buildRelayAiConfig(proxyPort) {
   };
 }
 function writeRelayAiConfig(proxyPort) {
-  const uuid = randomUUID();
+  const uuid = randomUUID2();
   const configPath = join17(getConfigLibraryPath(), `${uuid}.json`);
   const config = buildRelayAiConfig(proxyPort);
   mkdirSync9(dirname7(configPath), { recursive: true });
@@ -12189,9 +12310,9 @@ function openClaudeAppAt(path) {
   }
   if (process.platform === "win32") {
     if (path.startsWith("shell:AppsFolder\\")) {
-      runPowerShell2(`Start-Process ${JSON.stringify(path)}`);
+      runPowerShell2(`Start-Process '${path.replace(/'/g, "''")}'`);
     } else {
-      runPowerShell2(`Start-Process -FilePath ${JSON.stringify(path)}`);
+      runPowerShell2(`Start-Process -FilePath '${path.replace(/'/g, "''")}'`);
     }
   }
 }
@@ -13313,7 +13434,7 @@ async function launchClaudeViaCatalog(catalogRoutes, startingRoute, contextWindo
   const childEnv = buildChildEnv(
     `http://127.0.0.1:${proxyHandle.port}`,
     startingRoute.aliasId,
-    "catalog-proxy",
+    proxyHandle.token,
     proxyHandle.port,
     contextWindow,
     true
@@ -13657,7 +13778,8 @@ Error: ${launchPlan.error}
           supportedParameters: selectedModel.supportedParameters,
           reasoning: selectedModel.reasoning,
           interleavedReasoningField: selectedModel.interleavedReasoningField
-        }
+        },
+        launchApiKey
       );
       if (!isAgentStdoutMode()) {
         p18.log.info(
@@ -13671,7 +13793,7 @@ Error: ${launchPlan.error}
     childEnv = buildChildEnv(
       `http://127.0.0.1:${proxyHandle.port}`,
       selectedModel.id,
-      launchApiKey,
+      proxyHandle.token,
       proxyHandle.port,
       selectedModel.contextWindow
     );

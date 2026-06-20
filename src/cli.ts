@@ -424,7 +424,7 @@ async function launchClaudeViaCatalog(
   const childEnv = buildChildEnv(
     `http://127.0.0.1:${proxyHandle.port}`,
     startingRoute.aliasId,
-    'catalog-proxy',
+    proxyHandle.token,
     proxyHandle.port,
     contextWindow,
     true,
@@ -893,6 +893,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
           reasoning: selectedModel.reasoning,
           interleavedReasoningField: selectedModel.interleavedReasoningField,
         },
+        launchApiKey,
       );
       if (!isAgentStdoutMode()) {
         p.log.info(
@@ -907,7 +908,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     childEnv = buildChildEnv(
       `http://127.0.0.1:${proxyHandle.port}`,
       selectedModel.id,
-      launchApiKey,
+      proxyHandle.token,
       proxyHandle.port,
       selectedModel.contextWindow,
     );
