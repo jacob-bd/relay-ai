@@ -39,15 +39,21 @@ function sortModelsByBrand<T extends ModelSearchable>(models: T[]): T[] {
   });
 }
 
+/** Normalize a string for fuzzy matching: lowercase and collapse punctuation to spaces. */
+function normalizeForSearch(s: string): string {
+  return s.toLowerCase().replace(/[\s\-._/]+/g, ' ').trim();
+}
+
 export function filterModelsBySearch<T extends ModelSearchable>(models: T[], query: string): T[] {
-  const q = query.trim().toLowerCase();
+  const q = query.trim();
   if (!q) return [];
-  return models.filter(
-    m =>
-      m.id.toLowerCase().includes(q) ||
-      m.name.toLowerCase().includes(q) ||
-      m.brand.toLowerCase().includes(q),
-  );
+  // Split query on whitespace AND punctuation so "QWEN 3.7" → ["qwen","3","7"]
+  const tokens = normalizeForSearch(q).split(' ').filter(Boolean);
+  return models.filter(m => {
+    const fields = [normalizeForSearch(m.id), normalizeForSearch(m.name), normalizeForSearch(m.brand)];
+    // Every token must appear in at least one field (AND logic)
+    return tokens.every(token => fields.some(f => f.includes(token)));
+  });
 }
 
 /** Slice a model list for paginated browse UI. */

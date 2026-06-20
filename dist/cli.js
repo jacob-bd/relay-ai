@@ -7046,12 +7046,17 @@ function sortModelsByBrand(models) {
     return brandCmp !== 0 ? brandCmp : a.id.localeCompare(b.id);
   });
 }
+function normalizeForSearch(s) {
+  return s.toLowerCase().replace(/[\s\-._/]+/g, " ").trim();
+}
 function filterModelsBySearch(models, query) {
-  const q = query.trim().toLowerCase();
+  const q = query.trim();
   if (!q) return [];
-  return models.filter(
-    (m) => m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q) || m.brand.toLowerCase().includes(q)
-  );
+  const tokens = normalizeForSearch(q).split(" ").filter(Boolean);
+  return models.filter((m) => {
+    const fields = [normalizeForSearch(m.id), normalizeForSearch(m.name), normalizeForSearch(m.brand)];
+    return tokens.every((token) => fields.some((f) => f.includes(token)));
+  });
 }
 function sliceModelPage(items, page, pageSize = MODEL_PAGE_SIZE) {
   const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
