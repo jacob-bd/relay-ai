@@ -15,7 +15,6 @@
 
 ### Fixed
 - **Back-button navigation in launcher model selectors** — added `← Go back` options and handled cancellations to loop back to the provider selection menu (with the chosen provider pre-selected) in `relay-ai claude`, `relay-ai codex`, `relay-ai codex-app`, and the favorites addition wizard.
-- **Mixed duplicate and new model addition logging** — corrected the success message in the favorites manager when adding a mixed set of new and duplicate models so the success log correctly prints the name of the added model rather than the first selected model.
 - **OpenAI OAuth model retrieval** — restored live model discovery for ChatGPT accounts by explicitly sending the installed `claude` version (`?client_version=`) and a standard `User-Agent`, which the Codex backend now strictly requires.
 - **OpenAI OAuth "Instructions are required" error** — the ChatGPT Codex backend requires the system prompt in `openai.instructions` inside `providerOptions`, not the standard `system` field; this caused every Claude Code tool-use step to fail when using an OpenAI OAuth provider.
 - **OpenAI OAuth token expiry** — `oauthCredentialShouldRefresh` now applies the pre-emptive 2-minute JWT expiry buffer to `openai` and `openai-oauth` providers, matching the existing behaviour for xAI and GitHub Copilot. Previously, OpenAI OAuth access tokens (1-hour TTL) were only checked against the hard `expires` wall-clock, not the JWT claim.
