@@ -14,6 +14,7 @@
 - **Multi-model selection in favorites manager** — allow users to select and add multiple favorite models from a single provider in one step using `p.multiselect` with a dimmed visual cue `(Space to select, Enter to confirm)`.
 - **Back-button navigation in launcher model selectors** — added `← Go back` options and handled cancellations to loop back to the provider selection menu (with the chosen provider pre-selected) in `relay-ai claude`, `relay-ai codex`, `relay-ai codex-app`, and the favorites addition wizard.
 - **Alphabetical sorting of providers and models** — sorted the launcher and wizard selection lists alphabetically using natural collation for cleaner readability and easier scanning.
+- **Server model catalog printout** — `relay-ai server` and `relay-ai server --vertex` now print a structured, grouped, and copy-pasteable catalog of model names along with their exact ID strings to copy-paste for `anthropic` and `openai` formats, respecting gateway masking.
 
 ### Fixed
 - **OpenAI OAuth model retrieval** — restored live model discovery for ChatGPT accounts by explicitly sending the installed `claude` version (`?client_version=`) and a standard `User-Agent`, which the Codex backend now strictly requires.
@@ -27,6 +28,7 @@
 - **Server password storage** — replaced plaintext file storage for LAN network passwords with system keyring storage (`@napi-rs/keyring`), hardened dotfolder permissions, and suppressed console output in `relay-ai server` mode. (Thanks to @wnstfy)
 - **Dependency vulnerabilities** — replaced the deprecated `smol-toml` package, enforced a `ws` version override to resolve upstream security advisories, and aligned the root package-lock.json version. (Thanks to @wnstfy)
 - **PowerShell launch corruption** — fixed command-line argument escaping logic in `relay-ai codex-app` and `claude-app` on Windows to use single-quoted string literals, preventing `\` path corruption. (Thanks to @sewersydah)
+- **Codex-App favorites proxy routing collision** — resolved model ID mapping collisions by routing favorites through provider-prefixed slugs (e.g. `xai__grok-build-0.1`), filtered out unsupported OAuth favorites, and added troubleshooting logs.
 
 ---
 
