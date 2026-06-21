@@ -11523,7 +11523,28 @@ function translateGeminiRequest(body) {
     const turnParts = turn.parts || [];
     for (const p21 of turnParts) {
       if (p21.text !== void 0) {
-        parts.push({ type: "text", text: p21.text });
+        if (p21.text.includes("<thinking>") && p21.text.includes("</thinking>")) {
+          const regex = /<thinking>([\s\S]*?)<\/thinking>/g;
+          let lastIndex = 0;
+          let match;
+          while ((match = regex.exec(p21.text)) !== null) {
+            if (match.index > lastIndex) {
+              const textBefore = p21.text.substring(lastIndex, match.index).trim();
+              if (textBefore) parts.push({ type: "text", text: textBefore });
+            }
+            const thinkingText = match[1].trim();
+            if (thinkingText) {
+              parts.push({ type: "reasoning", text: thinkingText });
+            }
+            lastIndex = regex.lastIndex;
+          }
+          if (lastIndex < p21.text.length) {
+            const textAfter = p21.text.substring(lastIndex).trim();
+            if (textAfter) parts.push({ type: "text", text: textAfter });
+          }
+        } else {
+          parts.push({ type: "text", text: p21.text });
+        }
       } else if (p21.inlineData) {
         parts.push({
           type: "image",
@@ -11740,15 +11761,49 @@ ${JSON.stringify(params, null, 2)}`);
             ...params
           });
           const toolCallBuffers = /* @__PURE__ */ new Map();
+          let isThinking = false;
           for await (const part of fullStream) {
             const p21 = part;
             plog(`Stream chunk type: ${p21.type}`);
-            if (p21.type === "text-delta") {
+            if (isThinking && (p21.type === "tool-input-start" || p21.type === "tool-call" || p21.type === "finish")) {
+              isThinking = false;
+              const chunk = {
+                candidates: [{ content: { role: "model", parts: [{ text: `
+</thinking>
+
+` }] } }]
+              };
+              res.write(`data: ${JSON.stringify(chunk)}
+
+`);
+            }
+            if (p21.type === "reasoning") {
+              let text5 = p21.textDelta ?? p21.text ?? "";
+              if (!isThinking) {
+                isThinking = true;
+                text5 = `<thinking>
+` + text5;
+              }
+              const chunk = {
+                candidates: [{ content: { role: "model", parts: [{ text: text5 }] } }]
+              };
+              res.write(`data: ${JSON.stringify(chunk)}
+
+`);
+            } else if (p21.type === "text-delta") {
+              let text5 = p21.textDelta ?? p21.text ?? "";
+              if (isThinking) {
+                isThinking = false;
+                text5 = `
+</thinking>
+
+` + text5;
+              }
               const chunk = {
                 candidates: [{
                   content: {
                     role: "model",
-                    parts: [{ text: p21.textDelta ?? p21.text ?? "" }]
+                    parts: [{ text: text5 }]
                   }
                 }]
               };
@@ -11806,6 +11861,13 @@ ${JSON.stringify(params, null, 2)}`);
           });
           plog("generateText finished.");
           const parts = [];
+          if (result.reasoning) {
+            parts.push({ text: `<thinking>
+${result.reasoning}
+</thinking>
+
+` });
+          }
           if (result.text) {
             parts.push({ text: result.text });
           }

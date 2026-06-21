@@ -80,7 +80,28 @@ export function translateGeminiRequest(body: any): any {
     const turnParts = turn.parts || [];
     for (const p of turnParts) {
       if (p.text !== undefined) {
-        parts.push({ type: 'text', text: p.text });
+        if (p.text.includes('<thinking>') && p.text.includes('</thinking>')) {
+          const regex = /<thinking>([\s\S]*?)<\/thinking>/g;
+          let lastIndex = 0;
+          let match;
+          while ((match = regex.exec(p.text)) !== null) {
+            if (match.index > lastIndex) {
+              const textBefore = p.text.substring(lastIndex, match.index).trim();
+              if (textBefore) parts.push({ type: 'text', text: textBefore });
+            }
+            const thinkingText = match[1].trim();
+            if (thinkingText) {
+              parts.push({ type: 'reasoning', text: thinkingText });
+            }
+            lastIndex = regex.lastIndex;
+          }
+          if (lastIndex < p.text.length) {
+            const textAfter = p.text.substring(lastIndex).trim();
+            if (textAfter) parts.push({ type: 'text', text: textAfter });
+          }
+        } else {
+          parts.push({ type: 'text', text: p.text });
+        }
       } else if (p.inlineData) {
         parts.push({
           type: 'image',
@@ -329,16 +350,42 @@ export async function startGeminiProxy(
           });
 
           const toolCallBuffers = new Map<string, { name: string; json: string }>();
+          let isThinking = false;
 
           for await (const part of fullStream) {
             const p = part as any;
             plog(`Stream chunk type: ${p.type}`);
-            if (p.type === 'text-delta') {
+            
+            // Auto-close thinking tag if moving to tool calls or finish
+            if (isThinking && (p.type === 'tool-input-start' || p.type === 'tool-call' || p.type === 'finish')) {
+              isThinking = false;
+              const chunk = {
+                candidates: [{ content: { role: 'model', parts: [{ text: `\n</thinking>\n\n` }] } }]
+              };
+              res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+            }
+
+            if (p.type === 'reasoning') {
+              let text = p.textDelta ?? p.text ?? '';
+              if (!isThinking) {
+                isThinking = true;
+                text = `<thinking>\n` + text;
+              }
+              const chunk = {
+                candidates: [{ content: { role: 'model', parts: [{ text }] } }]
+              };
+              res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+            } else if (p.type === 'text-delta') {
+              let text = p.textDelta ?? p.text ?? '';
+              if (isThinking) {
+                isThinking = false;
+                text = `\n</thinking>\n\n` + text;
+              }
               const chunk = {
                 candidates: [{
                   content: {
                     role: 'model',
-                    parts: [{ text: p.textDelta ?? p.text ?? '' }]
+                    parts: [{ text }]
                   }
                 }]
               };
@@ -393,6 +440,9 @@ export async function startGeminiProxy(
           plog('generateText finished.');
 
           const parts: any[] = [];
+          if (result.reasoning) {
+            parts.push({ text: `<thinking>\n${result.reasoning}\n</thinking>\n\n` });
+          }
           if (result.text) {
             parts.push({ text: result.text });
           }
