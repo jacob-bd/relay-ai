@@ -5599,7 +5599,8 @@ async function writeAnthropicStream(fullStream, modelId, write, log19) {
   emit("message_stop", { type: "message_stop" });
 }
 async function streamAnthropicResponse(model, params, modelId, write, log19) {
-  const result = streamText({ model, ...params });
+  const result = streamText({ model, ...params, onError: () => {
+  } });
   Promise.resolve(result.text).catch(() => {
   });
   Promise.resolve(result.toolCalls).catch(() => {
@@ -9313,6 +9314,53 @@ import { createServer as createServer3 } from "http";
 
 // src/codex-responses-adapter.ts
 import { streamText as streamText3, generateText as generateText3, tool as tool3, jsonSchema as jsonSchema3 } from "ai";
+
+// src/codex/upstream-error.ts
+function formatUpstreamError(err) {
+  if (!err || typeof err !== "object") return "Upstream model request failed.";
+  const rec = err;
+  if (rec.data?.error?.message) {
+    const short = sanitizeMessage(rec.data.error.message);
+    return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
+  }
+  if (rec.responseBody) {
+    try {
+      const parsed = JSON.parse(rec.responseBody);
+      if (parsed.error?.message) {
+        const short = sanitizeMessage(parsed.error.message);
+        return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
+      }
+    } catch {
+    }
+  }
+  const last = rec.lastError;
+  if (last?.message) {
+    const code = last.statusCode;
+    const short = sanitizeMessage(last.message);
+    return code ? `${short} (HTTP ${code})` : short;
+  }
+  const fromList = rec.errors?.[rec.errors.length - 1];
+  if (fromList?.message) {
+    const short = sanitizeMessage(fromList.message);
+    return fromList.statusCode ? `${short} (HTTP ${fromList.statusCode})` : short;
+  }
+  if (rec.message) {
+    const short = sanitizeMessage(rec.message);
+    if (short && !short.includes("file://") && !short.includes("APICallError") && short.length < 240) {
+      return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
+    }
+  }
+  return "Upstream model request failed.";
+}
+function sanitizeMessage(message) {
+  const line = message.split("\n")[0]?.trim() ?? message;
+  if (line.startsWith("RetryError") || line.includes("AI_RetryError")) {
+    return "Upstream model request failed after retries.";
+  }
+  return line;
+}
+
+// src/codex-responses-adapter.ts
 function messageText(content) {
   if (typeof content === "string") return content;
   return (content ?? []).map((p21) => p21.type === "output_text" || p21.type === "input_text" || p21.type === "text" ? p21.text ?? "" : "").join("");
@@ -9625,20 +9673,29 @@ async function writeResponsesStream(fullStream, modelId, write) {
       case "finish":
         if (part.totalUsage) usage = usageFromPart(part);
         break;
-      case "error":
-        emit("response.completed", {
-          type: "response.completed",
-          response: {
-            id: responseId,
-            object: "response",
-            model: modelId,
-            created_at: createdAt,
-            status: "failed",
-            output: [],
-            error: { message: String(part.error ?? "Upstream error"), type: "api_error" }
-          }
-        });
+      case "error": {
+        const msg = formatUpstreamError(part.error);
+        const is429 = msg.includes("429") || part.error && typeof part.error === "object" && (part.error.statusCode === 429 || part.error.lastError?.statusCode === 429);
+        process.stderr.write(`[relay-ai] ${modelId}: ${msg}
+`);
+        if (is429) {
+          writeResponsesRateLimitStream(modelId, msg, write);
+        } else {
+          emit("response.completed", {
+            type: "response.completed",
+            response: {
+              id: responseId,
+              object: "response",
+              model: modelId,
+              created_at: createdAt,
+              status: "failed",
+              output: [],
+              error: { message: msg, type: "api_error" }
+            }
+          });
+        }
         return;
+      }
       default:
         break;
     }
@@ -9717,7 +9774,8 @@ async function writeResponsesStream(fullStream, modelId, write) {
   });
 }
 async function streamResponsesResponse(model, params, modelId, write) {
-  const result = streamText3({ model, ...params });
+  const result = streamText3({ model, ...params, onError: () => {
+  } });
   Promise.resolve(result.text).catch(() => {
   });
   Promise.resolve(result.toolCalls).catch(() => {
@@ -9727,6 +9785,8 @@ async function streamResponsesResponse(model, params, modelId, write) {
   Promise.resolve(result.finishReason).catch(() => {
   });
   Promise.resolve(result.usage).catch(() => {
+  });
+  Promise.resolve(result.response).catch(() => {
   });
   await writeResponsesStream(result.fullStream, modelId, write);
 }
@@ -9791,50 +9851,72 @@ function writeResponsesErrorStream(modelId, message, write, statusCode = 401) {
     response: responsesErrorBody(modelId, message, statusCode)
   }));
 }
-
-// src/codex/upstream-error.ts
-function formatUpstreamError(err) {
-  if (!err || typeof err !== "object") return "Upstream model request failed.";
-  const rec = err;
-  if (rec.data?.error?.message) {
-    const short = sanitizeMessage(rec.data.error.message);
-    return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
-  }
-  if (rec.responseBody) {
-    try {
-      const parsed = JSON.parse(rec.responseBody);
-      if (parsed.error?.message) {
-        const short = sanitizeMessage(parsed.error.message);
-        return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
-      }
-    } catch {
+function writeResponsesRateLimitStream(modelId, message, write) {
+  const responseId = newResponseId();
+  const itemId = newItemId("msg");
+  const createdAt = Math.floor(Date.now() / 1e3);
+  const content = [{ type: "output_text", text: message }];
+  write(sseChunk("response.output_item.added", {
+    type: "response.output_item.added",
+    output_index: 0,
+    item: { id: itemId, type: "message", role: "assistant", status: "in_progress", content: [] }
+  }));
+  write(sseChunk("response.content_part.added", {
+    type: "response.content_part.added",
+    item_id: itemId,
+    output_index: 0,
+    content_index: 0,
+    part: { type: "output_text", text: "" }
+  }));
+  write(sseChunk("response.output_text.delta", {
+    type: "response.output_text.delta",
+    item_id: itemId,
+    output_index: 0,
+    content_index: 0,
+    delta: message
+  }));
+  write(sseChunk("response.output_text.done", {
+    type: "response.output_text.done",
+    item_id: itemId,
+    output_index: 0,
+    content_index: 0,
+    text: message
+  }));
+  write(sseChunk("response.content_part.done", {
+    type: "response.content_part.done",
+    item_id: itemId,
+    output_index: 0,
+    content_index: 0,
+    part: { type: "output_text", text: message }
+  }));
+  write(sseChunk("response.output_item.done", {
+    type: "response.output_item.done",
+    output_index: 0,
+    item: { id: itemId, type: "message", role: "assistant", status: "completed", content }
+  }));
+  write(sseChunk("response.completed", {
+    type: "response.completed",
+    response: {
+      id: responseId,
+      object: "response",
+      model: modelId,
+      created_at: createdAt,
+      status: "completed",
+      output: [{ id: itemId, type: "message", role: "assistant", status: "completed", content }]
     }
-  }
-  const last = rec.lastError;
-  if (last?.message) {
-    const code = last.statusCode;
-    const short = sanitizeMessage(last.message);
-    return code ? `${short} (HTTP ${code})` : short;
-  }
-  const fromList = rec.errors?.[rec.errors.length - 1];
-  if (fromList?.message) {
-    const short = sanitizeMessage(fromList.message);
-    return fromList.statusCode ? `${short} (HTTP ${fromList.statusCode})` : short;
-  }
-  if (rec.message) {
-    const short = sanitizeMessage(rec.message);
-    if (short && !short.includes("file://") && !short.includes("APICallError") && short.length < 240) {
-      return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
-    }
-  }
-  return "Upstream model request failed.";
+  }));
 }
-function sanitizeMessage(message) {
-  const line = message.split("\n")[0]?.trim() ?? message;
-  if (line.startsWith("RetryError") || line.includes("AI_RetryError")) {
-    return "Upstream model request failed after retries.";
-  }
-  return line;
+function responsesRateLimitBody(modelId, message) {
+  const itemId = newItemId("msg");
+  const content = [{ type: "output_text", text: message }];
+  return {
+    id: newResponseId(),
+    object: "response",
+    model: modelId,
+    created_at: Math.floor(Date.now() / 1e3),
+    status: "completed",
+    output: [{ id: itemId, type: "message", role: "assistant", status: "completed", content }]
+  };
 }
 
 // src/codex-proxy.ts
@@ -9903,11 +9985,6 @@ function upstreamHttpStatus(err, msg) {
   if (msg.includes("HTTP 400")) return 400;
   return 500;
 }
-function logUpstreamError(err, modelId) {
-  const msg = formatUpstreamError(err);
-  const prefix = modelId ? `[relay-ai codex-proxy] ${modelId}: ` : "[relay-ai codex-proxy] ";
-  console.error(`${prefix}${msg}`);
-}
 function resolveModel(routes, models, requestedModel) {
   const route = findCodexProxyRoute(routes, requestedModel);
   if (!route) return void 0;
@@ -9937,8 +10014,7 @@ async function startCodexProxy(routes, options = {}) {
     const log19 = debug ? makeTraceLogger(getCodexProxyDebugLogPath()) : () => {
     };
     const onRejection = (reason) => {
-      logUpstreamError(reason);
-      if (debug) log19(formatUpstreamError(reason));
+      if (debug) log19(`unhandled-rejection: ${formatUpstreamError(reason)}`);
     };
     process.on("unhandledRejection", onRejection);
     const server = createServer3(async (req, res) => {
@@ -10096,8 +10172,13 @@ async function startCodexProxy(routes, options = {}) {
               await streamResponsesResponse(languageModel, params, modelId, write);
             } catch (err) {
               const msg = formatUpstreamError(err);
-              logUpstreamError(err, route.modelId);
-              writeResponsesErrorStream(modelId, msg, write, upstreamHttpStatus(err, msg));
+              const status = upstreamHttpStatus(err, msg);
+              if (debug) log19(`sdk error: ${route.modelId}: ${msg}`);
+              if (status === 429) {
+                writeResponsesRateLimitStream(modelId, msg, write);
+              } else {
+                writeResponsesErrorStream(modelId, msg, write, status);
+              }
             }
             res.end();
           } else {
@@ -10106,9 +10187,13 @@ async function startCodexProxy(routes, options = {}) {
               sendJson(res, 200, response);
             } catch (err) {
               const msg = formatUpstreamError(err);
-              logUpstreamError(err, route.modelId);
               const status = upstreamHttpStatus(err, msg);
-              sendJson(res, status, { error: { message: msg, type: status === 429 ? "rate_limit_error" : "api_error" } });
+              if (debug) log19(`sdk error: ${route.modelId}: ${msg}`);
+              if (status === 429) {
+                sendJson(res, 200, responsesRateLimitBody(modelId, msg));
+              } else {
+                sendJson(res, status, { error: { message: msg, type: "api_error" } });
+              }
             }
           }
         } catch (err) {

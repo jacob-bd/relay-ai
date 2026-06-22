@@ -11,6 +11,8 @@ npm version patch          # bumps package.json, commits, and tags (use minor/ma
 npm run build              # compile — VERSION is derived from package.json automatically
 npm publish                # publish to npm
 git push --follow-tags     # push commit + tag to GitHub
+gh release create v$(node -p "require('./package.json').version") --title "v$(node -p "require('./package.json').version")" --notes "$(node -e "const fs=require('fs');const cl=fs.readFileSync('CHANGELOG.md','utf8');const m=cl.match(/## \[[\d.]+\].*?\n([\s\S]*?)(?=\n## \[|$)/);console.log(m?m[1].trim():'')")"
+# creates a GitHub Release from the latest CHANGELOG.md section
 ```
 
 `package.json` is the single source of truth for the version. Never edit `src/constants.ts` manually for version bumps.

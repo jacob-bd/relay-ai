@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.3.3] - 2026-06-22
+## [0.3.2] - 2026-06-22
 
 ### Fixed
 
@@ -9,10 +9,6 @@
 - **Codex App: rate limit errors print a clean one-liner in the terminal** — instead of flooding the terminal with full RetryError stack traces (one per retry attempt, per request), the proxy now prints a single `[relay-ai] <model>: <message>` line per failed request.
 
 - **Codex proxy: removed SDK default `console.error` on stream failures** — the Vercel AI SDK's `streamText` calls `console.error(error)` by default whenever the stream encounters an error. This was the root cause of the full stack trace dumps. The proxy now passes `onError: () => {}` to suppress this. The error is still handled through the stream pipeline and surfaced to the user.
-
-## [0.3.2] - 2026-06-22
-
-### Fixed
 
 - **Codex App: context overflow no longer crashes long sessions** — relay-ai now writes `model_context_window` and `model_auto_compact_token_limit` (70% of the model's actual limit) into `~/.codex/config.toml` at session start. Codex uses these values to trigger auto-compaction before the conversation reaches the model's hard limit, preventing the compaction-fails-at-limit crash that previously broke sessions and made them unrecoverable. Applies to single-provider, favorites, and Vertex AI sessions alike.
 
