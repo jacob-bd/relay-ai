@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.4] - 2026-06-23
+
+### Fixed
+
+- **Go models no longer mislabeled as Anthropic format** — OpenCode Go models (e.g. `minimax-m3`, `qwen3.7-plus`, `minimax-m2.7`, `qwen3.7-max`, `qwen3.6-plus`) were incorrectly classified as `modelFormat: 'anthropic'` due to stale `@ai-sdk/anthropic` npm entries written by the OpenCode cache. The Go backend is an OpenAI-compatible gateway only; relay-ai now clamps any `anthropic` format classification to `openai` for all Go models regardless of cache data. Reported by Philip2050 ([#10](https://github.com/jacob-bd/relay-ai/issues/10)).
+
 ## [0.3.3] - 2026-06-22
 
 ### Fixed

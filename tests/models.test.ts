@@ -148,6 +148,28 @@ describe('mergeModels', () => {
     expect(result[0]!.id).toBe('big-pickle');
   });
 
+  it('clamps anthropic format to openai for Go backend models', () => {
+    const cache = new Map<string, ModelInfo>([
+      ['minimax-m3', {
+        id: 'minimax-m3', name: 'MiniMax M3', isFree: false, brand: 'MiniMax',
+        sourceBackend: 'go' as const, modelFormat: 'anthropic' as const,
+      }],
+    ]);
+    const result = mergeModels(['minimax-m3'], cache, 'go');
+    expect(result[0]).toMatchObject({ id: 'minimax-m3', modelFormat: 'openai', sourceBackend: 'go' });
+  });
+
+  it('preserves anthropic format for Zen backend claude models', () => {
+    const cache = new Map<string, ModelInfo>([
+      ['claude-sonnet-4-6', {
+        id: 'claude-sonnet-4-6', name: 'Claude Sonnet', isFree: false, brand: 'Claude',
+        sourceBackend: 'zen' as const, modelFormat: 'anthropic' as const,
+      }],
+    ]);
+    const result = mergeModels(['claude-sonnet-4-6'], cache, 'zen');
+    expect(result[0]).toMatchObject({ modelFormat: 'anthropic', sourceBackend: 'zen' });
+  });
+
   it('skips cache entries for models not in API list', () => {
     const cache = new Map<string, ModelInfo>([
       ['model-in-cache', {

@@ -35,7 +35,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.3.3",
+  version: "0.3.4",
   publishConfig: {
     access: "public"
   },
@@ -3137,7 +3137,8 @@ function readModelsFromCache(backendId) {
   for (const entry of Object.values(providerData.models)) {
     if (!entry.id || entry.status === "deprecated") continue;
     const isFree = entry.cost !== void 0 && entry.cost.input === 0 && entry.cost.output === 0;
-    const modelFormat = classifyModelFormat(entry.id, entry.provider?.npm);
+    const rawFormat = classifyModelFormat(entry.id, entry.provider?.npm);
+    const modelFormat = backendId === "go" && rawFormat === "anthropic" ? "openai" : rawFormat;
     result.set(entry.id, {
       id: entry.id,
       name: entry.name ?? entry.id,
@@ -3169,7 +3170,10 @@ async function fetchModelsFromApi(backend) {
 function mergeModels(apiIds, cache, backendId) {
   return apiIds.filter((id) => !shouldHideModel({ providerId: backendId, modelId: id, agent: "claude" })).map((id) => {
     const cached = cache?.get(id);
-    if (cached) return { ...cached, sourceBackend: backendId };
+    if (cached) {
+      const modelFormat2 = backendId === "go" && cached.modelFormat === "anthropic" ? "openai" : cached.modelFormat;
+      return { ...cached, sourceBackend: backendId, modelFormat: modelFormat2 };
+    }
     const modelFormat = classifyModelFormat(id, void 0);
     return {
       id,
