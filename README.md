@@ -78,7 +78,7 @@ Bare `relay-ai` prints help and migration guidance. Use `relay-ai claude` for th
 | Claude Desktop (Cowork + Code) | `relay-ai claude-app` | ✅ Supported macOS + Windows ([guide](docs/CLAUDE_DESKTOP_SETUP.md)) |
 | Codex CLI | `relay-ai codex` | ✅ Supported ([guide](docs/CODEX.md)) |
 | Codex desktop app | `relay-ai codex-app` | ✅ Supported macOS + Windows ([guide](docs/CODEX.md)) |
-| Google Gemini CLI | `relay-ai gemini` | ✅ Supported |
+| Google Gemini CLI | `relay-ai gemini` | ⚠️ Experimental, model switching is done via .model prompt |
 
 ## Prerequisites
 
