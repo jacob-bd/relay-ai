@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.3.4] - 2026-06-26
+## [0.3.5] - 2026-06-26
 
 ### Fixed
 
@@ -9,6 +9,10 @@
 - **Windows: Claude Desktop and Codex App now launch correctly from MSIX installs** — `Start-Process 'shell:AppsFolder\...'` failed silently due to PowerShell backslash double-escaping via `JSON.stringify`. The launcher now uses `cmd /c start` with an argument array, which bypasses PowerShell string parsing entirely and correctly opens MSIX-packaged apps. ([#11](https://github.com/jacob-bd/relay-ai/issues/11)).
 
 - **Windows: OpenCode CLI now discovered correctly when `where.exe` returns multiple results** — `where.exe opencode` returns both a bare script and a `.cmd` wrapper. relay-ai was taking the first result (the bare script), which Node's `spawn()` cannot execute directly. relay-ai now prefers the `.cmd` entry. The same fix applies to the `claude`, `codex`, and `gemini` binary lookups. The OpenCode `serve` subprocess also now uses `cmd.exe /c` on Windows to avoid Node 22's DEP0190 deprecation warning. ([#11](https://github.com/jacob-bd/relay-ai/issues/11)).
+
+## [0.3.4] - 2026-06-23
+
+### Fixed
 
 - **Go models no longer mislabeled as Anthropic format** — OpenCode Go models (e.g. `minimax-m3`, `qwen3.7-plus`, `minimax-m2.7`, `qwen3.7-max`, `qwen3.6-plus`) were incorrectly classified as `modelFormat: 'anthropic'` due to stale `@ai-sdk/anthropic` npm entries written by the OpenCode cache. The Go backend is an OpenAI-compatible gateway only; relay-ai now clamps any `anthropic` format classification to `openai` for all Go models regardless of cache data. Reported by Philip2050 ([#10](https://github.com/jacob-bd/relay-ai/issues/10)).
 
