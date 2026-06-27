@@ -34,6 +34,22 @@ describe('resolveReasoningCapabilities', () => {
     expect(caps.levels).toEqual([]);
     expect(caps.defaultLevel).toBe('');
   });
+
+  it('exposes GLM-5.2 high/xhigh controls for OpenCode Go style routes', () => {
+    const caps = resolveReasoningCapabilities({
+      providerId: 'go',
+      npm: '@ai-sdk/openai-compatible',
+      modelId: 'glm-5.2',
+      reasoning: true,
+      interleavedReasoningField: 'reasoning_content',
+    });
+
+    expect(caps.mode).toBe('controllable');
+    expect(caps.source).toBe('provider-rule');
+    expect(caps.confidence).toBe('documented');
+    expect(caps.levels).toEqual(['high', 'xhigh']);
+    expect(caps.defaultLevel).toBe('high');
+  });
 });
 
 describe('effortProviderOptions', () => {

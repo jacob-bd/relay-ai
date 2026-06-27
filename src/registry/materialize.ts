@@ -20,6 +20,22 @@ function cachedModelToLocal(
   cached: CachedModel,
   provider: RegistryProvider,
 ): LocalProviderModel | null {
+  // Cloud Code models route through the cloud-code proxy — no SDK endpoint needed.
+  if (cached.modelFormat === 'cloud-code') {
+    const { id } = normalizeGoogleModelId(cached.id, '');
+    return {
+      id,
+      name: cached.name,
+      family: cached.family ?? '',
+      brand: cached.brand ?? deriveBrand(cached.family ?? ''),
+      modelFormat: 'cloud-code',
+      upstreamModelId: cached.upstreamModelId ?? cached.id,
+      contextWindow: cached.contextWindow ?? resolveContextWindow(id),
+      reasoning: cached.reasoning,
+      interleavedReasoningField: cached.interleavedReasoningField,
+    };
+  }
+
   const npm = cached.npm ?? provider.api.npm ?? '';
   const apiUrl = cached.apiUrl ?? provider.api.url ?? '';
   const endpoint = resolveEndpoint(npm, apiUrl);

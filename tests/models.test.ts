@@ -122,6 +122,27 @@ describe('mergeModels', () => {
     });
   });
 
+  it('preserves reasoning metadata from cache entries', () => {
+    const cache = new Map<string, ModelInfo>([
+      ['glm-5.2', {
+        id: 'glm-5.2',
+        name: 'GLM-5.2',
+        isFree: false,
+        brand: 'GLM',
+        sourceBackend: 'go' as const,
+        modelFormat: 'openai' as const,
+        reasoning: true,
+        interleavedReasoningField: 'reasoning_content',
+      }],
+    ]);
+    const result = mergeModels(['glm-5.2'], cache, 'go');
+    expect(result[0]).toMatchObject({
+      id: 'glm-5.2',
+      reasoning: true,
+      interleavedReasoningField: 'reasoning_content',
+    });
+  });
+
   it('marks non-Anthropic models correctly from cache', () => {
     const cache = new Map<string, ModelInfo>([
       ['deepseek-v4-flash-free', {

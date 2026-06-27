@@ -67,6 +67,25 @@ describe('dotfolder config', () => {
     });
   });
 
+  it('saves Antigravity CLI favorites separately from global favorites', () => {
+    savePreferences({
+      favoriteModels: [{ providerId: 'global', modelId: 'claude' }],
+      antigravityCliFavoriteModels: [{ providerId: 'xai-oauth', modelId: 'grok-4.3' }],
+      antigravityCliFavoritesHintShown: true,
+    });
+
+    expect(loadPreferences()).toMatchObject({
+      favoriteModels: [{ providerId: 'global', modelId: 'claude' }],
+      antigravityCliFavoriteModels: [{ providerId: 'xai-oauth', modelId: 'grok-4.3' }],
+      antigravityCliFavoritesHintShown: true,
+    });
+    expect(JSON.parse(readFileSync(getConfigPath(), 'utf8'))).toMatchObject({
+      favoriteModels: [{ providerId: 'global', modelId: 'claude' }],
+      antigravityCliFavoriteModels: [{ providerId: 'xai-oauth', modelId: 'grok-4.3' }],
+      antigravityCliFavoritesHintShown: true,
+    });
+  });
+
   it('migrates legacy lastProvider opencode to zen on read', () => {
     const configPath = getConfigPath();
     mkdirSync(dirname(configPath), { recursive: true });

@@ -74,13 +74,17 @@ export function loadPreferences(): UserPreferences {
     lastCodexModel: config.lastCodexModel,
     lastGeminiProvider: config.lastGeminiProvider,
     lastGeminiModel: config.lastGeminiModel,
+    lastAntigravityProvider: config.lastAntigravityProvider,
+    lastAntigravityModel: config.lastAntigravityModel,
     recentModelsByProvider: config.recentModelsByProvider,
     favoriteModels: config.favoriteModels,
+    antigravityCliFavoriteModels: config.antigravityCliFavoriteModels,
+    antigravityCliFavoritesHintShown: config.antigravityCliFavoritesHintShown,
     server: config.server,
   };
 }
 
-export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBackend' | 'lastModel' | 'lastProvider' | 'lastCodexProvider' | 'lastCodexModel' | 'lastGeminiProvider' | 'lastGeminiModel' | 'recentModelsByProvider' | 'favoriteModels'>>): void {
+export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBackend' | 'lastModel' | 'lastProvider' | 'lastCodexProvider' | 'lastCodexModel' | 'lastGeminiProvider' | 'lastGeminiModel' | 'lastAntigravityProvider' | 'lastAntigravityModel' | 'recentModelsByProvider' | 'favoriteModels' | 'antigravityCliFavoriteModels' | 'antigravityCliFavoritesHintShown'>>): void {
   const config = readConfig();
   if (prefs.lastBackend !== undefined) config.lastBackend = prefs.lastBackend;
   if (prefs.lastModel !== undefined) config.lastModel = prefs.lastModel;
@@ -89,8 +93,12 @@ export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBacken
   if (prefs.lastCodexModel !== undefined) config.lastCodexModel = prefs.lastCodexModel;
   if (prefs.lastGeminiProvider !== undefined) config.lastGeminiProvider = prefs.lastGeminiProvider;
   if (prefs.lastGeminiModel !== undefined) config.lastGeminiModel = prefs.lastGeminiModel;
+  if (prefs.lastAntigravityProvider !== undefined) config.lastAntigravityProvider = prefs.lastAntigravityProvider;
+  if (prefs.lastAntigravityModel !== undefined) config.lastAntigravityModel = prefs.lastAntigravityModel;
   if (prefs.recentModelsByProvider !== undefined) config.recentModelsByProvider = prefs.recentModelsByProvider;
   if (prefs.favoriteModels !== undefined) config.favoriteModels = prefs.favoriteModels;
+  if (prefs.antigravityCliFavoriteModels !== undefined) config.antigravityCliFavoriteModels = prefs.antigravityCliFavoriteModels;
+  if (prefs.antigravityCliFavoritesHintShown !== undefined) config.antigravityCliFavoritesHintShown = prefs.antigravityCliFavoritesHintShown;
   writeConfig(config);
 }
 

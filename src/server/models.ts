@@ -7,7 +7,7 @@ export interface GatewayModelOptions {
   maskGatewayIds?: boolean;
 }
 
-export type ServerModelFormat = 'anthropic' | 'openai' | 'unsupported';
+export type ServerModelFormat = 'anthropic' | 'openai' | 'cloud-code' | 'unsupported';
 export type ServerBackendId = 'zen' | 'go';
 export type ServerModelSource = ServerBackendId | 'vertex' | (string & {});
 

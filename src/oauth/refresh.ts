@@ -5,6 +5,8 @@ import { refreshGithubCopilotToken } from './github.js';
 import type { StoredOAuthCredential } from './types.js';
 import { accessTokenIsExpiring, NATIVE_OAUTH_PROVIDER_IDS, oauthCredentialNeedsRefresh, tokensToStoredCredential } from './types.js';
 import { refreshXaiAccessToken } from './xai.js';
+import { refreshClaudeCodeToken } from './claude-code.js';
+import { refreshAntigravityToken } from './antigravity-oauth.js';
 
 export function oauthCredentialShouldRefresh(
   cred: StoredOAuthCredential,
@@ -32,9 +34,13 @@ export async function refreshStoredOAuthCredential(
   } else if (providerId === 'github-copilot') {
     // cred.refresh is the long-lived ghu_ token; re-exchange for a new Copilot session token
     tokens = await refreshGithubCopilotToken(cred.refresh);
+  } else if (providerId === 'claude-code') {
+    tokens = await refreshClaudeCodeToken(cred.refresh);
+  } else if (providerId === 'antigravity') {
+    tokens = await refreshAntigravityToken(cred.refresh);
   } else {
     throw new Error(`OAuth refresh not implemented for provider "${providerId}"`);
   }
 
-  return tokensToStoredCredential(tokens, cred.refresh, cred.accountId);
+  return tokensToStoredCredential(tokens, cred.refresh, cred.accountId, cred.providerData);
 }

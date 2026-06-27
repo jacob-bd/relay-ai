@@ -76,6 +76,65 @@ describe('filterGlobalFavoriteIndex', () => {
   it('returns empty for blank query', () => {
     expect(filterGlobalFavoriteIndex(index, '')).toEqual([]);
   });
+
+  it('normalizes punctuation and ranks exact model names before provider aliases', () => {
+    const glmProviders: LocalProvider[] = [
+      {
+        id: 'openrouter',
+        name: 'OpenRouter',
+        apiKey: 'k',
+        models: [{
+          id: 'z-ai/glm-5.2',
+          name: 'z.ai: GLM 5.2',
+          family: 'glm',
+          brand: 'Z.ai',
+          modelFormat: 'openai',
+          upstreamModelId: 'z-ai/glm-5.2',
+        }],
+      },
+      {
+        id: 'go',
+        name: 'OpenCode Go',
+        apiKey: 'k',
+        models: [{
+          id: 'glm-5.2',
+          name: 'GLM-5.2',
+          family: 'glm',
+          brand: 'Z.ai',
+          modelFormat: 'openai',
+          upstreamModelId: 'glm-5.2',
+        }],
+      },
+      {
+        id: 'zen',
+        name: 'OpenCode Zen',
+        apiKey: 'k',
+        models: [{
+          id: 'glm-5',
+          name: 'GLM-5',
+          family: 'glm',
+          brand: 'Z.ai',
+          modelFormat: 'openai',
+          upstreamModelId: 'glm-5',
+        }],
+      },
+    ];
+
+    const result = filterGlobalFavoriteIndex(buildGlobalFavoriteIndex(glmProviders), 'glm 5.2');
+    expect(result.map(globalFavoritePickKey)).toEqual([
+      'go::glm-5.2',
+      'openrouter::z-ai/glm-5.2',
+    ]);
+  });
+
+  it('matches compact punctuation-free queries against separated model ids', () => {
+    const result = filterGlobalFavoriteIndex(index, 'deepseek v4');
+    expect(result.map(globalFavoritePickKey)).toEqual([
+      'deepseek::deepseek-v4-flash',
+      'zen::deepseek-v4-flash-free',
+      'openrouter::deepseek/deepseek-v4-flash',
+    ]);
+  });
 });
 
 describe('globalFavoriteSelectOption', () => {

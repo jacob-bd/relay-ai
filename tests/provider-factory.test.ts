@@ -92,6 +92,13 @@ describe('getReasoningCapabilities', () => {
     expect(caps.defaultLevel).toBe('high');
   });
 
+  it('returns documented GLM-5.2 reasoning levels for OpenAI-compatible routes', () => {
+    const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'glm-5.2');
+    expect(caps.levels).toEqual(['high', 'xhigh']);
+    expect(caps.defaultLevel).toBe('high');
+    expect(caps.wireFormat).toEqual({ kind: 'openai-reasoning-effort' });
+  });
+
   it('maps DeepSeek effort to openaiCompatible reasoningEffort + thinking enabled', () => {
     const merged = deepMergeProviderOptions(
       effortProviderOptions('@ai-sdk/openai-compatible', 'max', 'deepseek-v4-flash'),
@@ -103,6 +110,13 @@ describe('getReasoningCapabilities', () => {
   it('maps Claude low effort to DeepSeek high', () => {
     const opts = effortProviderOptions('@ai-sdk/openai-compatible', 'low', 'deepseek-v4-pro');
     expect(opts?.openaiCompatible).toMatchObject({ reasoningEffort: 'high' });
+  });
+
+  it('maps GLM-5.2 effort to OpenAI-compatible reasoningEffort', () => {
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'xhigh', 'glm-5.2')).toEqual({
+      openaiCompatible: { reasoningEffort: 'xhigh' },
+    });
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'low', 'glm-5.2')).toBeUndefined();
   });
 });
 

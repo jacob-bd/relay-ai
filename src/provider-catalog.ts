@@ -72,6 +72,8 @@ export function zenGoAsLocalProvider(backendId: 'zen' | 'go', models: ModelInfo[
         contextWindow: m.contextWindow,
         cost: m.cost,
         isFree: m.isFree,
+        reasoning: m.reasoning,
+        interleavedReasoningField: m.interleavedReasoningField,
         ...(m.modelFormat === 'openai' ? {
           npm: '@ai-sdk/openai-compatible',
           apiBaseUrl: `${BACKENDS[backendId].baseUrl}/v1`,
@@ -267,6 +269,8 @@ export function zenGoModelsToServerModels(models: ModelInfo[]): ServerModelInfo[
       modelFormat: model.modelFormat as 'anthropic' | 'openai',
       cost: model.cost,
       contextWindow: model.contextWindow,
+      reasoning: model.reasoning,
+      interleavedReasoningField: model.interleavedReasoningField,
     };
     if (model.modelFormat === 'openai') {
       base.npm = '@ai-sdk/openai-compatible';

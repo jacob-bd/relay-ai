@@ -1,6 +1,6 @@
 {
   "name": "@jacobbd/relay-ai",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "publishConfig": {
     "access": "public"
   },
@@ -27,11 +27,15 @@
   "bin": {
     "relay-ai": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && mkdir -p dist/ui/public && cp -r src/ui/public/. dist/ui/public/",
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",

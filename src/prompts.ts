@@ -13,6 +13,7 @@ import {
   relayOutro,
   formatModelLabel,
 } from './ui.js';
+import { scoreModelSearch } from './model-search.js';
 
 const BROWSE_ALL = '__browse_all__';
 const MAX_RECENT = 3;
@@ -42,21 +43,24 @@ function sortModelsByBrand<T extends ModelSearchable>(models: T[]): T[] {
   });
 }
 
-/** Normalize a string for fuzzy matching: lowercase and collapse punctuation to spaces. */
-function normalizeForSearch(s: string): string {
-  return s.toLowerCase().replace(/[\s\-._/]+/g, ' ').trim();
-}
-
 export function filterModelsBySearch<T extends ModelSearchable>(models: T[], query: string): T[] {
-  const q = query.trim();
-  if (!q) return [];
-  // Split query on whitespace AND punctuation so "QWEN 3.7" → ["qwen","3","7"]
-  const tokens = normalizeForSearch(q).split(' ').filter(Boolean);
-  return models.filter(m => {
-    const fields = [normalizeForSearch(m.id), normalizeForSearch(m.name), normalizeForSearch(m.brand)];
-    // Every token must appear in at least one field (AND logic)
-    return tokens.every(token => fields.some(f => f.includes(token)));
-  });
+  if (!query.trim()) return [];
+  return models
+    .map((model, index) => ({
+      model,
+      index,
+      score: scoreModelSearch(query, [
+        { value: model.name, weight: 800 },
+        { value: model.id, weight: 700 },
+        { value: model.brand, weight: 350 },
+      ]),
+    }))
+    .filter(result => result.score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.index - b.index;
+    })
+    .map(result => result.model);
 }
 
 /** Slice a model list for paginated browse UI. */

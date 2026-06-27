@@ -20,6 +20,8 @@ export interface OpencodeCacheModel {
   provider?: { npm?: string };
   cost?: { input: number; output: number };
   limit?: { context?: number; output?: number };
+  reasoning?: boolean;
+  interleaved?: { field?: string };
 }
 
 export type OpencodeCacheFile = Record<string, { models?: Record<string, OpencodeCacheModel> }>;

@@ -115,7 +115,7 @@ ${pc.bold('Subcommands:')}
   (none)      Provider hub wizard ${pc.dim('[Phase 1.1]')}
   add         Add a provider (Groq, Mistral, Together AI, …) ${pc.dim('[Phase 1.1]')}
   import      Import providers from OpenCode CLI (one-time) ${pc.dim('[Phase 1.0]')}
-  auth        Sign in with OAuth (xAI, OpenAI ChatGPT) ${pc.dim('[Phase 2]')}
+  auth        Sign in with OAuth (GitHub Copilot, xAI, OpenAI, Claude Code, Antigravity)
   list        Show configured providers ${pc.dim('[Phase 1.0]')}
   remove      Remove a provider by id ${pc.dim('[Phase 1.1]')}
   refresh-models  Update cached model lists ${pc.dim('[Phase 1.2]')}`;
@@ -452,9 +452,11 @@ async function runTemplateAddFlow(): Promise<number> {
     if (p.isCancel(urlInput)) return 0;
     baseUrlOverride = String(urlInput).trim();
     
-    // Security check for overridden URLs
-    const isLocal = baseUrlOverride.includes('127.0.0.1') || baseUrlOverride.includes('localhost');
-    const valid = await validateCustomEndpointUrl(baseUrlOverride, { allowInsecureLocal: isLocal });
+    const usesHttp = /^http:\/\//i.test(baseUrlOverride);
+    if (usesHttp) {
+      p.log.warn('HTTP is not encrypted. Use it only for trusted local or LAN servers, like Ollama on your own network.');
+    }
+    const valid = await validateCustomEndpointUrl(baseUrlOverride, { allowInsecureLocal: usesHttp });
     if (!valid.ok) {
       p.log.error(valid.error ?? 'Invalid URL');
       if (valid.hint) p.log.info(valid.hint);
@@ -527,11 +529,17 @@ async function runCustomEndpointAddFlow(): Promise<number> {
   });
   if (p.isCancel(baseUrl)) return 0;
 
-  const allowLocal = await p.confirm({
-    message: 'Allow local HTTP (Ollama / LM Studio on localhost)?',
-    initialValue: String(baseUrl).includes('127.0.0.1') || String(baseUrl).includes('localhost'),
-  });
-  if (p.isCancel(allowLocal)) return 0;
+  const usesHttp = /^http:\/\//i.test(String(baseUrl).trim());
+  let allowInsecureHttp = false;
+  if (usesHttp) {
+    p.log.warn('HTTP is not encrypted. Only use it for a trusted local or LAN server, like Ollama on your own network.');
+    const allowLocal = await p.confirm({
+      message: 'Allow insecure HTTP for this local/LAN server?',
+      initialValue: true,
+    });
+    if (p.isCancel(allowLocal)) return 0;
+    allowInsecureHttp = allowLocal === true;
+  }
 
   const apiKey = await p.password({
     message: 'API key (leave empty for local servers without auth):',
@@ -545,7 +553,7 @@ async function runCustomEndpointAddFlow(): Promise<number> {
     baseUrl: String(baseUrl).trim(),
     apiKey: String(apiKey ?? '').trim(),
     kind: kindChoice as 'openai' | 'anthropic',
-    allowInsecureLocal: allowLocal === true,
+    allowInsecureLocal: allowInsecureHttp,
   });
   spinner.stop('');
 
@@ -741,7 +749,7 @@ export async function runProvidersHub(): Promise<number> {
       });
     }
 
-    options.push({ value: 'auth-menu', label: '→ Sign in with OAuth (xAI / OpenAI)', hint: 'Device code or OpenCode broker' });
+    options.push({ value: 'auth-menu', label: '→ Sign in with OAuth', hint: 'GitHub Copilot · xAI · OpenAI · Claude Code · Antigravity' });
     if (entries.length > 0) {
       options.push({ value: 'refresh-all', label: '↺ Refresh all models', hint: 'Update model lists for all providers' });
     }
@@ -773,8 +781,11 @@ export async function runProvidersHub(): Promise<number> {
       const providerId = await p.select({
         message: 'Which provider?',
         options: [
-          { value: 'xai', label: 'xAI Grok (SuperGrok)' },
-          { value: 'openai', label: 'OpenAI ChatGPT Plus/Pro' },
+          { value: 'github-copilot', label: 'GitHub Copilot', hint: 'device code' },
+          { value: 'xai', label: 'xAI Grok (SuperGrok)', hint: 'device code' },
+          { value: 'openai', label: 'OpenAI ChatGPT Plus/Pro', hint: 'device code' },
+          { value: 'claude-code', label: 'Claude Code (Anthropic subscription)', hint: '⚠️  account risk' },
+          { value: 'antigravity', label: 'Antigravity (Google Cloud Code Assist)', hint: '⚠️  account risk' },
         ],
       });
       if (!p.isCancel(providerId)) await runProvidersAuth(providerId as string);

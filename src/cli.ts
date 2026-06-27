@@ -34,9 +34,11 @@ import { resolveFirstAvailableFavorite } from './favorites-resolver.js';
 import { runProvidersCommand, providersHelpText } from './providers-command.js';
 import { runCodexCommand, codexHelpText } from './codex.js';
 import { runGeminiCommand, geminiHelpText } from './gemini.js';
+import { runAgyCommand, runAntigravityIdeCommand } from './antigravity.js';
 import { runCodexAppCommand } from './codex-app.js';
 import { runClaudeAppCommand } from './claude-app.js';
 import { prepareClaudeTraceLog, printTraceLog } from './trace-log.js';
+import { ANTIGRAVITY_BASE_URLS } from './oauth/antigravity-oauth.js';
 import { refreshModelsDevCacheAsync } from './registry/models-dev.js';
 import { setAgentStdoutMode, isAgentStdoutMode } from './agent-io.js';
 import {
@@ -140,6 +142,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     for (const arg of rest) {
       if (arg === '--help' || arg === '-h') parsed.showHelp = true;
       else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
+      else if (arg === '--agy') parsed.favoritesAgy = true;
       else if (!parsed.error) parsed.error = `Unknown models option: ${arg}`;
     }
     return parsed;
@@ -153,6 +156,16 @@ export function parseArgs(args: string[]): ParsedArgs {
       else if (arg === '--help' || arg === '-h') parsed.showHelp = true;
       else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
       else parsed.claudeArgs.push(arg);
+    }
+    return parsed;
+  }
+
+  if (first === 'ui') {
+    const parsed = emptyParsed('ui');
+    for (const arg of rest) {
+      if (arg === '--help' || arg === '-h') parsed.showHelp = true;
+      else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
+      else if (!parsed.error) parsed.error = `Unknown ui option: ${arg}`;
     }
     return parsed;
   }
@@ -236,6 +249,68 @@ export function parseArgs(args: string[]): ParsedArgs {
     return parsed;
   }
 
+  if (first === 'agy') {
+    const parsed = emptyParsed('agy');
+    for (let i = 0; i < rest.length; i += 1) {
+      const arg = rest[i]!;
+      if (arg === '--') {
+        parsed.claudeArgs.push(...rest.slice(i + 1));
+        break;
+      }
+      if (arg === '--trace') {
+        parsed.trace = true;
+        continue;
+      }
+      if (arg === '--help' || arg === '-h') {
+        parsed.showHelp = true;
+        continue;
+      }
+      if (arg === '--version' || arg === '-v') {
+        parsed.showVersion = true;
+        continue;
+      }
+      const consumed = tryConsumeRelayLaunchFlag(arg, rest, i, parsed);
+      if (consumed !== null) {
+        if ('error' in consumed) return parsed;
+        i = consumed.next;
+        continue;
+      }
+      parsed.claudeArgs.push(arg);
+    }
+    return parsed;
+  }
+
+  if (first === 'antigravity-ide') {
+    const parsed = emptyParsed('antigravity-ide');
+    for (let i = 0; i < rest.length; i += 1) {
+      const arg = rest[i]!;
+      if (arg === '--') {
+        parsed.claudeArgs.push(...rest.slice(i + 1));
+        break;
+      }
+      if (arg === '--trace') {
+        parsed.trace = true;
+        continue;
+      }
+      if (arg === '--help' || arg === '-h') {
+        parsed.showHelp = true;
+        continue;
+      }
+      if (arg === '--version' || arg === '-v') {
+        parsed.showVersion = true;
+        continue;
+      }
+      const consumed = tryConsumeRelayLaunchFlag(arg, rest, i, parsed);
+      if (consumed !== null) {
+        if ('error' in consumed) return parsed;
+        i = consumed.next;
+        continue;
+      }
+      parsed.claudeArgs.push(arg);
+    }
+    return parsed;
+  }
+
   if (first !== 'claude') {
     return {
       ...emptyParsed('root'),
@@ -284,7 +359,10 @@ ${pc.bold('Usage:')}
   relay-ai codex [options] [codex-flags]
   relay-ai codex-app [options]
   relay-ai gemini [options] [gemini-flags]
+  relay-ai agy [options] [agy-flags]
+  relay-ai antigravity-ide [options]
   relay-ai server [options]
+  relay-ai ui
   relay-ai models
   relay-ai favorites
   relay-ai providers
@@ -309,6 +387,8 @@ ${pc.bold('Commands:')}
   server      Run a foreground API gateway (OpenCode Zen / Go and local providers)
   codex       Launch OpenAI Codex CLI with registry providers
   gemini      Launch Google Gemini CLI with registry providers
+  agy         Launch Antigravity CLI with registry providers
+  antigravity-ide  Launch Antigravity IDE with registry providers (macOS)
   codex-app   Launch Codex desktop app with registry providers (macOS + Windows)
   claude-app  Launch Claude Desktop app with registry providers (macOS + Windows)
 
@@ -322,6 +402,8 @@ ${pc.bold('Examples:')}
   relay-ai providers
   relay-ai codex
   relay-ai gemini
+  relay-ai agy
+  relay-ai antigravity-ide
   relay-ai codex-app
   relay-ai claude-app
   relay-ai server
@@ -406,29 +488,91 @@ ${pc.bold('Endpoints:')}
 }
 
 export function modelsHelpText(): string {
-  return `${pc.bold('relay-ai models')} v${VERSION}
-Manage favorite models for mid-session switching in Claude Code.
+  return `${pc.bold('relay-ai favorites')} v${VERSION}
+Manage favorite models for mid-session switching.
 
 ${pc.bold('Usage:')}
+  relay-ai favorites
+  relay-ai favorites --agy
   relay-ai models
-  relay-ai models --help
-  relay-ai models --version
+  relay-ai favorites --help
+  relay-ai favorites --version
 
 ${pc.bold('Behavior:')}
   Opens an interactive manager to add or remove favorites.
   Search all providers at once (paginated results) or browse one provider at a time.
   Pick from Zen, Go, or any provider in your registry.
-  Favorites are saved to ~/.relay-ai/config.json (max ${MAX_MODEL_CATALOG}).
+  Global favorites are saved to ~/.relay-ai/config.json (max ${MAX_MODEL_CATALOG}).
+  --agy manages Antigravity CLI favorites only (max 6).
 
 ${pc.bold('How it works:')}
-  When favorites exist, relay-ai claude starts a multi-route catalog proxy.
-  Claude Code /model lists your starting model plus favorites — switch live
-  without restarting. Mix cloud and local favorites in one session.
-  With no favorites, launch uses a single model as before.
+  Claude/Codex/Gemini/server use the global favorites list.
+  Favorites appear in supported /model switch menus.
+  relay-ai agy uses only Antigravity CLI favorites so its limited native
+  switch slots stay predictable: one selected launch model plus up to 6
+  Antigravity CLI favorites.
 
 ${pc.bold('Examples:')}
-  relay-ai models
+  relay-ai favorites
+  relay-ai favorites --agy
   relay-ai claude    # switch menu active when favorites are set`;
+}
+
+
+export function antigravityCliHelpText(): string {
+  return `${pc.bold('relay-ai agy')} v${VERSION}
+Launch Antigravity CLI with Relay AI provider registry.
+
+${pc.bold('Usage:')}
+  relay-ai agy [options] [agy-flags]
+  relay-ai agy --help
+  relay-ai agy --version
+
+${pc.bold('Relay options:')}
+  --provider <id>    Use a specific provider (skip picker)
+  --model <id>       Use a specific model (skip picker)
+  --trace            Write debug log to /tmp/relay-ai-debug.log
+  -h, --help         Show this help
+  -v, --version      Show version
+
+${pc.bold('How it works:')}
+  Starts a local Cloud Code gateway, points agy at it via CLOUD_CODE_URL,
+  and injects Relay AI models into Antigravity's native model picker.
+  All Cloud Code traffic routes through Relay — no Google Cloud Code upstream.
+
+${pc.bold('Examples:')}
+  relay-ai agy
+  relay-ai agy --provider zen --model deepseek-v4-flash-free
+  relay-ai agy -p "fix this bug"`;
+}
+
+export function antigravityIdeHelpText(): string {
+  return `${pc.bold('relay-ai antigravity-ide')} v${VERSION}
+Launch Antigravity IDE with Relay AI provider registry.
+
+${pc.bold('Usage:')}
+  relay-ai antigravity-ide [options]
+  relay-ai antigravity-ide --help
+  relay-ai antigravity-ide --version
+
+${pc.bold('Relay options:')}
+  --provider <id>    Use a specific provider (skip picker)
+  --model <id>       Use a specific model (skip picker)
+  --trace            Write debug log to /tmp/relay-ai-debug.log
+  -h, --help         Show this help
+  -v, --version      Show version
+
+${pc.bold('How it works:')}
+  Creates an isolated Relay-managed IDE profile, starts a local Cloud Code
+  gateway, and injects Relay AI models into Antigravity's native picker.
+  The normal IDE profile is never modified.
+
+${pc.bold('Platform:')}
+  macOS (Apple Silicon) — other platforms coming after testing.
+
+${pc.bold('Examples:')}
+  relay-ai antigravity-ide
+  relay-ai antigravity-ide --provider zen --model deepseek-v4-flash-free`;
 }
 
 function printHelp(text: string): void {
@@ -529,8 +673,18 @@ function printDryRun(
   console.log('');
 }
 
-export async function runModelsCommand(): Promise<number> {
-  relayIntro('Favorite Models');
+const AGY_CLI_FAVORITES_CAP = 6;
+
+interface FavoritesCommandOptions {
+  scope?: 'global' | 'agy';
+}
+
+export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Promise<number> {
+  const scope = opts.scope ?? 'global';
+  const maxFavorites = scope === 'agy' ? AGY_CLI_FAVORITES_CAP : MAX_MODEL_CATALOG;
+  const scopeName = scope === 'agy' ? 'Antigravity CLI Favorites' : 'Favorite Models';
+  const configKey = scope === 'agy' ? 'antigravityCliFavoriteModels' : 'favoriteModels';
+  relayIntro(scopeName);
 
   const spinner = p.spinner();
   spinner.start('Loading providers...');
@@ -556,7 +710,9 @@ export async function runModelsCommand(): Promise<number> {
   }
 
   const prefs = loadPreferences();
-  let favorites = prefs.favoriteModels ?? [];
+  let favorites = scope === 'agy'
+    ? prefs.antigravityCliFavoriteModels ?? []
+    : prefs.favoriteModels ?? [];
   let favoritesDirty = false;
 
   // eslint-disable-next-line no-constant-condition
@@ -574,10 +730,10 @@ export async function runModelsCommand(): Promise<number> {
       options.push({ value: `fav-${i}`, label, hint: 'select to remove' });
     }
 
-    const atCap = favorites.length >= MAX_MODEL_CATALOG;
+    const atCap = favorites.length >= maxFavorites;
     options.push({
       value: '__add__',
-      label: atCap ? pc.dim(`+ Add a model → (limit of ${MAX_MODEL_CATALOG} reached)`) : pc.cyan('+ Add a model →'),
+      label: atCap ? pc.dim(`+ Add a model → (limit of ${maxFavorites} reached)`) : pc.cyan('+ Add a model →'),
       hint: atCap
         ? 'Remove a favorite first to make room'
         : `${allProviders.length} provider${allProviders.length !== 1 ? 's' : ''} available`,
@@ -585,8 +741,8 @@ export async function runModelsCommand(): Promise<number> {
     options.push({ value: '__done__', label: 'Done', hint: '' });
 
     const header = favorites.length === 0
-      ? `Favorites (0/${MAX_MODEL_CATALOG})`
-      : `Favorites (${favorites.length}/${MAX_MODEL_CATALOG}) — select to remove`;
+      ? `${scopeName} (0/${maxFavorites})`
+      : `${scopeName} (${favorites.length}/${maxFavorites}) — select to remove`;
 
     const choice = await p.select<string>({
       message: header,
@@ -598,7 +754,7 @@ export async function runModelsCommand(): Promise<number> {
 
     if (choice === '__add__') {
       if (atCap) {
-        p.log.warn(`Limit of ${MAX_MODEL_CATALOG} favorites reached — remove one first.`);
+        p.log.warn(`Limit of ${maxFavorites} favorites reached — remove one first.`);
         continue;
       }
 
@@ -683,7 +839,7 @@ export async function runModelsCommand(): Promise<number> {
 
       for (const model of browsedMultiple) {
         const fav: FavoriteModel = { providerId: provider!.id, modelId: model.id };
-        const result = addFavorite(favorites, fav);
+        const result = addFavorite(favorites, fav, maxFavorites);
         if (!result.ok) {
           if (result.reason === 'duplicate') {
             duplicateCount++;
@@ -710,13 +866,15 @@ export async function runModelsCommand(): Promise<number> {
         p.log.warn(`${duplicateCount} selected model(s) were already in your favorites.`);
       }
       if (limitReached) {
-        p.log.warn(`Limit of ${MAX_MODEL_CATALOG} favorites reached — some selected models could not be added.`);
+        p.log.warn(`Limit of ${maxFavorites} favorites reached — some selected models could not be added.`);
       }
     } else if ((choice as string).startsWith('fav-')) {
       const idx = parseInt((choice as string).slice(4), 10);
       const fav = favorites[idx]!;
       const entry = modelLookup.get(`${fav.providerId}:${fav.modelId}`);
       const label = entry ? `${entry.modelName} (${entry.providerName})` : fav.modelId;
+      const confirmed = await p.confirm({ message: `Remove ${label} from favorites?` });
+      if (p.isCancel(confirmed) || !confirmed) continue;
       favorites = removeFavorite(favorites, fav);
       favoritesDirty = true;
       p.log.success(`Removed ${label} from favorites.`);
@@ -724,13 +882,14 @@ export async function runModelsCommand(): Promise<number> {
   }
 
   if (favoritesDirty) {
-    savePreferences({ favoriteModels: favorites });
+    savePreferences({ [configKey]: favorites });
   }
 
+  const favLabel = scope === 'agy' ? 'Antigravity CLI ' : '';
   relayOutro(
     favorites.length === 0
-      ? 'No favorites saved'
-      : `${favorites.length} favorite${favorites.length !== 1 ? 's' : ''} saved`,
+      ? `No ${favLabel}favorites saved`
+      : `${favorites.length} ${favLabel}favorite${favorites.length !== 1 ? 's' : ''} saved`,
     favorites.length === 0
       ? pc.dim('Launch uses single-model mode')
       : pc.cyan('/model menu ready on next launch'),
@@ -857,14 +1016,31 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       const providerChoice = chosen as string;
 
       if (providerChoice === '__favorites__') {
-        const favoriteStart = resolveFirstAvailableFavorite(favorites, allProviders);
-        if (!favoriteStart) {
+        const available: Array<{ provider: LocalProvider; model: LocalProviderModel }> = [];
+        for (const fav of favorites) {
+          const prov = allProviders.find(lp => lp.id === fav.providerId);
+          const mod = prov?.models.find(m => m.id === fav.modelId);
+          if (prov && mod) available.push({ provider: prov, model: mod });
+        }
+        if (available.length === 0) {
           p.log.warn('No saved favorites are currently available.');
           return 0;
         }
-        activeProvider = favoriteStart.provider;
-        selectedModel = favoriteStart.model;
-        p.log.step(`Loaded Favorites Catalog. Starting model: ${selectedModel.name || selectedModel.id} (${activeProvider.name})`);
+        const favOptions = available.map((f, i) => ({
+          value: String(i),
+          label: `${f.model.name || f.model.id} — ${f.provider.name}`,
+          hint: f.model.id,
+        }));
+        const pickedIdx = await p.select<string>({
+          message: 'Starting model?',
+          options: favOptions,
+          initialValue: '0',
+        });
+        if (p.isCancel(pickedIdx)) { p.cancel('Cancelled.'); return 0; }
+        const sel = available[Number(pickedIdx)]!;
+        activeProvider = sel.provider;
+        selectedModel = sel.model;
+        if (!dryRun) recordLaunchSelection('claude', activeProvider.id, selectedModel.id, prefs);
         break;
       } else {
         activeProvider = allProviders.find(lp => lp.id === providerChoice)!;
@@ -963,7 +1139,67 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   let proxyHandle: ProxyHandle | null = null;
   let childEnv: NodeJS.ProcessEnv;
 
-  if (selectedModel.modelFormat === 'anthropic') {
+  const isAntigravityOAuth = activeProvider.id === 'antigravity' && activeProvider.authType === 'oauth';
+  const isOAuthAnthropic = selectedModel.modelFormat === 'anthropic' && activeProvider.authType === 'oauth' && !isAntigravityOAuth;
+
+  if (isAntigravityOAuth) {
+    // Antigravity OAuth — proxy translates Anthropic → Cloud Code Assist format.
+    try {
+      proxyHandle = await startProxy(
+        ANTIGRAVITY_BASE_URLS[0],
+        selectedModel.id,
+        trace,
+        selectedModel.contextWindow,
+        {
+          providerId: activeProvider.id,
+          authType: 'oauth',
+          providerData: activeProvider.providerData,
+          modelFormat: 'cloud-code',
+        },
+        launchApiKey,
+      );
+      if (!isAgentStdoutMode()) p.log.info(`Cloud Code proxy started on port ${proxyHandle.port}`);
+    } catch (err) {
+      p.log.error(`Failed to start Cloud Code proxy: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+    childEnv = buildChildEnv(
+      `http://127.0.0.1:${proxyHandle.port}`,
+      selectedModel.id,
+      proxyHandle.token,
+      proxyHandle.port,
+      selectedModel.contextWindow,
+    );
+  } else if (isOAuthAnthropic) {
+    // Claude Code OAuth — proxy injects identity metadata and Bearer-only auth.
+    try {
+      proxyHandle = await startProxy(
+        selectedModel.baseUrl ?? 'https://api.anthropic.com',
+        selectedModel.id,
+        trace,
+        selectedModel.contextWindow,
+        {
+          providerId: activeProvider.id,
+          authType: 'oauth',
+          oauthAccountId: activeProvider.oauthAccountId,
+          providerData: activeProvider.providerData,
+          modelFormat: 'anthropic',
+        },
+        launchApiKey,
+      );
+      if (!isAgentStdoutMode()) p.log.info(`OAuth proxy started on port ${proxyHandle.port}`);
+    } catch (err) {
+      p.log.error(`Failed to start OAuth proxy: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+    childEnv = buildChildEnv(
+      `http://127.0.0.1:${proxyHandle.port}`,
+      selectedModel.id,
+      proxyHandle.token,
+      proxyHandle.port,
+      selectedModel.contextWindow,
+    );
+  } else if (selectedModel.modelFormat === 'anthropic') {
     childEnv = buildChildEnv(
       selectedModel.baseUrl!,
       selectedModel.id,
@@ -1010,7 +1246,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     );
   }
 
-  if (selectedModel.modelFormat === 'anthropic') {
+  if (selectedModel.modelFormat === 'anthropic' && !isOAuthAnthropic) {
     childEnv['CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS'] = '1';
   }
 
@@ -1069,6 +1305,19 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
     return runServerCommand({ vertex: parsed.vertex });
   }
 
+  if (parsed.command === 'ui') {
+    if (parsed.showVersion) {
+      console.log(VERSION);
+      return 0;
+    }
+    if (parsed.showHelp) {
+      console.log('Usage: relay-ai ui\n\nOpen the settings UI in your browser.');
+      return 0;
+    }
+    const { runUiCommand } = await import('./ui-command.js');
+    return runUiCommand();
+  }
+
   if (parsed.command === 'models') {
     if (parsed.showVersion) {
       console.log(VERSION);
@@ -1078,7 +1327,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
       printHelp(modelsHelpText());
       return 0;
     }
-    return runModelsCommand();
+    return runModelsCommand({ scope: parsed.favoritesAgy ? 'agy' : 'global' });
   }
 
   if (parsed.command === 'providers') {
@@ -1138,6 +1387,36 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
     return runGeminiCommand(parsed.claudeArgs, parsed.trace, {
+      launchProvider: parsed.launchProvider,
+      launchModel: parsed.launchModel,
+    });
+  }
+
+  if (parsed.command === 'agy') {
+    if (parsed.showVersion) {
+      console.log(VERSION);
+      return 0;
+    }
+    if (parsed.showHelp) {
+      console.log(antigravityCliHelpText());
+      return 0;
+    }
+    return runAgyCommand(parsed.claudeArgs, parsed.trace, {
+      launchProvider: parsed.launchProvider,
+      launchModel: parsed.launchModel,
+    });
+  }
+
+  if (parsed.command === 'antigravity-ide') {
+    if (parsed.showVersion) {
+      console.log(VERSION);
+      return 0;
+    }
+    if (parsed.showHelp) {
+      console.log(antigravityIdeHelpText());
+      return 0;
+    }
+    return runAntigravityIdeCommand(parsed.claudeArgs, parsed.trace, {
       launchProvider: parsed.launchProvider,
       launchModel: parsed.launchModel,
     });

@@ -20,7 +20,7 @@ import {
 } from './codex/routing.js';
 import { applyAppConfigPatch, previewAppConfigToml } from './codex/app-config.js';
 import { PREVIEW_PROXY_PORT, type CodexAppConfigSpec } from './codex/app-profile.js';
-import type { LocalProvider } from './types.js';
+import type { LocalProvider, LocalProviderModel } from './types.js';
 import {
   backupConfigToml,
   checkAppSessionLock,
@@ -212,6 +212,7 @@ async function runCodexAppVertexLaunch(configOnly: boolean, trace = false): Prom
         apiKey: '',
         providerId: 'vertex',
         vertex: vertexConfig,
+        contextWindow: m.contextWindow,
       })),
       { requireAuth: false, debug: trace },
     );
@@ -379,14 +380,30 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
       
       if (pickedProvider === '__favorites__') {
         const favoriteProviders = compatible.map(providerForCodexPicker);
-        const favoriteStart = resolveFirstAvailableFavorite(favorites, favoriteProviders);
-        if (!favoriteStart) {
+        const available: Array<{ provider: LocalProvider; model: LocalProviderModel }> = [];
+        for (const fav of favorites) {
+          const prov = favoriteProviders.find(lp => lp.id === fav.providerId);
+          const mod = prov?.models.find(m => m.id === fav.modelId);
+          if (prov && mod) available.push({ provider: prov, model: mod });
+        }
+        if (available.length === 0) {
           p.log.warn('No saved Codex App favorites are currently available.');
           return 0;
         }
-        activeProvider = favoriteStart.provider;
-        selectedModel = favoriteStart.model;
-        p.log.step(`Loaded Favorites Catalog. Starting model: ${selectedModel.name || selectedModel.id} (${activeProvider.name})`);
+        const favOptions = available.map((f, i) => ({
+          value: String(i),
+          label: `${f.model.name || f.model.id} — ${f.provider.name}`,
+          hint: f.model.id,
+        }));
+        const pickedIdx = await p.select<string>({
+          message: 'Starting model?',
+          options: favOptions,
+          initialValue: '0',
+        });
+        if (p.isCancel(pickedIdx)) { p.cancel('Cancelled.'); return 0; }
+        const sel = available[Number(pickedIdx)]!;
+        activeProvider = sel.provider;
+        selectedModel = sel.model;
         break;
       } else {
         activeProvider = providerForCodexPicker(pickedProvider as LocalProvider);

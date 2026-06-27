@@ -1,14 +1,22 @@
 import { Readable } from 'node:stream';
 import type { ServerResponse } from 'node:http';
 import { sanitizeCredential } from './server/auth.js';
+import { CLAUDE_CODE_USER_AGENT } from './oauth/claude-identity.js';
 
-export function anthropicUpstreamHeaders(apiKey: string, stream = false, inboundBeta?: string): Record<string, string> {
+export function anthropicUpstreamHeaders(
+  apiKey: string,
+  stream = false,
+  inboundBeta?: string,
+  authType?: 'api' | 'oauth',
+): Record<string, string> {
   const key = sanitizeCredential(apiKey) ?? apiKey.trim();
+  const isOAuth = authType === 'oauth';
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'anthropic-version': '2023-06-01',
     Authorization: `Bearer ${key}`,
-    'x-api-key': key,
+    ...(isOAuth ? {} : { 'x-api-key': key }),
+    ...(isOAuth ? { 'User-Agent': CLAUDE_CODE_USER_AGENT } : {}),
     ...(stream ? { Accept: 'text/event-stream' } : {}),
   };
   if (inboundBeta) {
@@ -55,12 +63,13 @@ export async function relayAnthropicMessages(
   apiKey: string,
   clientWantsStream: boolean,
   inboundBeta?: string,
+  authType?: 'api' | 'oauth',
 ): Promise<void> {
   let upstreamRes: Response;
   try {
     upstreamRes = await fetch(messagesUrl, {
       method: 'POST',
-      headers: anthropicUpstreamHeaders(apiKey, clientWantsStream, inboundBeta),
+      headers: anthropicUpstreamHeaders(apiKey, clientWantsStream, inboundBeta, authType),
       body: JSON.stringify(body),
     });
   } catch (err) {

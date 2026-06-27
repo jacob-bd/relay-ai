@@ -215,4 +215,84 @@ describe('registry/refresh-models', () => {
       expect(result.modelCount).toBeGreaterThan(0); // grok-3/grok-4 from seed
     });
   });
+
+  describe('refreshProviderModels (Antigravity OAuth)', () => {
+    it('uses the live Cloud Code model catalog object and does not invent static ids', async () => {
+      const mockRegistry: ProviderRegistry = {
+        version: 1,
+        providers: [{
+          id: 'antigravity',
+          templateId: 'antigravity',
+          name: 'Antigravity',
+          enabled: true,
+          authRef: 'keyring',
+          authType: 'oauth',
+          api: {},
+        }],
+      };
+      vi.mocked(io.loadRegistry).mockReturnValue(mockRegistry);
+      vi.mocked(global.fetch).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          models: {
+            'gemini-3.5-flash-low': {
+              displayName: 'Gemini 3.5 Flash (Medium)',
+              maxTokens: 1048576,
+              supportsThinking: true,
+            },
+            'gemini-3-flash': {
+              displayName: 'Gemini 3 Flash',
+              maxTokens: 1048576,
+              supportsThinking: true,
+            },
+          },
+        }),
+      } as Response);
+
+      const result = await refreshProviderModels('antigravity', 'mock_token', mockRegistry);
+
+      expect(result.ok).toBe(true);
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels',
+        expect.objectContaining({ method: 'POST' }),
+      );
+      const savedRegistry = vi.mocked(io.saveRegistry).mock.calls[0]?.[0] as ProviderRegistry;
+      const models = savedRegistry.providers[0]?.modelsCache?.models ?? [];
+      expect(models.map(m => m.id)).toEqual(['gemini-3.5-flash-low', 'gemini-3-flash']);
+      expect(models.map(m => m.id)).not.toContain('gemini-3.5-flash-high');
+      expect(models[0]).toMatchObject({
+        id: 'gemini-3.5-flash-low',
+        name: 'Gemini 3.5 Flash (Medium)',
+        contextWindow: 1048576,
+        modelFormat: 'cloud-code',
+        reasoning: true,
+      });
+    });
+
+    it('fails refresh instead of falling back to static Antigravity model names', async () => {
+      const mockRegistry: ProviderRegistry = {
+        version: 1,
+        providers: [{
+          id: 'antigravity',
+          templateId: 'antigravity',
+          name: 'Antigravity',
+          enabled: true,
+          authRef: 'keyring',
+          authType: 'oauth',
+          api: {},
+        }],
+      };
+      vi.mocked(io.loadRegistry).mockReturnValue(mockRegistry);
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 404,
+      } as Response);
+
+      const result = await refreshProviderModels('antigravity', 'mock_token', mockRegistry);
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toContain('Antigravity live model refresh failed');
+      expect(io.saveRegistry).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -219,6 +219,8 @@ const XAI_EFFORT_LEVELS = ['none', 'low', 'medium', 'high'] as const;
 const OPENROUTER_EFFORT_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
 /** DeepSeek V4 wire values (low/medium map to high; xhigh maps to max). */
 const DEEPSEEK_EFFORT_LEVELS = ['high', 'max', 'off'] as const;
+/** GLM-5.2 published efforts (OpenRouter metadata): high and xhigh, default high. */
+const GLM_52_EFFORT_LEVELS = ['high', 'xhigh'] as const;
 
 const EMPTY_REASONING: ReasoningCapabilities = {
   levels: [],
@@ -314,6 +316,16 @@ function isKimiReasoningModel(modelId: string): boolean {
   return lower.startsWith('kimi-');
 }
 
+function isGlm52ReasoningModel(modelId: string): boolean {
+  const lower = modelId.toLowerCase();
+  return lower === 'glm-5.2'
+    || lower === 'z-ai/glm-5.2'
+    || lower === 'zai/glm-5.2'
+    || lower === 'zai-org/glm-5.2'
+    || lower === 'zai-org/glm5.2'
+    || lower === 'glm5.2';
+}
+
 function hasSupportedParameter(metadata: ReasoningMetadata | undefined, param: string): boolean {
   return (metadata?.supportedParameters ?? []).some(p => p === param);
 }
@@ -383,13 +395,12 @@ function deepSeekEffortProviderOptions(
   if (mapped === 'off') {
     return {
       deepseek: spread,
-      'openai-compatible': spread,
+      openaiCompatible: spread,
     };
   }
   return {
-    openaiCompatible: { reasoningEffort: mapped },
+    openaiCompatible: { reasoningEffort: mapped, ...spread },
     deepseek: spread,
-    'openai-compatible': spread,
   };
 }
 
@@ -417,6 +428,18 @@ function mapCodexEffortToOpenAI(effort: string): string | undefined {
   if (effort === 'xhigh') return 'high';
   const allowed = ['low', 'medium', 'high'];
   return allowed.includes(effort) ? effort : undefined;
+}
+
+function mapCodexEffortToGlm52(effort: string): 'high' | 'xhigh' | undefined {
+  switch (effort) {
+    case 'high':
+      return 'high';
+    case 'xhigh':
+    case 'max':
+      return 'xhigh';
+    default:
+      return undefined;
+  }
 }
 
 function mapCodexEffortToXai(effort: string): string | undefined {
@@ -579,6 +602,18 @@ export function getReasoningCapabilities(
     };
   }
 
+  if (isGlm52ReasoningModel(modelId)) {
+    return {
+      levels: [...GLM_52_EFFORT_LEVELS],
+      defaultLevel: 'high',
+      supportsSummaries: false,
+      mode: 'controllable',
+      source: 'provider-rule',
+      confidence: 'documented',
+      wireFormat: { kind: 'openai-reasoning-effort' },
+    };
+  }
+
   if (hasSupportedParameter(metadata, 'reasoning_effort')) {
     return {
       levels: ['low', 'medium', 'high', 'xhigh'],
@@ -699,10 +734,14 @@ export function effortProviderOptions(
       const reasoningEffort = mapCodexEffortToOpenAI(effort);
       return reasoningEffort ? { openai: { reasoningEffort } } : undefined;
     }
+    if (isGlm52ReasoningModel(modelId)) {
+      const reasoningEffort = mapCodexEffortToGlm52(effort);
+      return reasoningEffort ? { openaiCompatible: { reasoningEffort } } : undefined;
+    }
     if (hasSupportedParameter(metadata, 'reasoning_effort')) {
       const reasoningEffort = mapCodexEffortToOpenAI(effort);
       return reasoningEffort
-        ? { openai: { reasoningEffort }, openaiCompatible: { reasoningEffort }, 'openai-compatible': { reasoningEffort } }
+        ? { openai: { reasoningEffort }, openaiCompatible: { reasoningEffort } }
         : undefined;
     }
     if (hasSupportedParameter(metadata, 'reasoning')) {

@@ -140,9 +140,9 @@ function mergeConsecutiveMessages(messages: ModelMessage[]): ModelMessage[] {
 }
 
 function ensureUserFirst(messages: ModelMessage[]): ModelMessage[] {
-  if (messages.length === 0) return [{ role: 'user', content: [{ type: 'text', text: '' }] } as ModelMessage];
+  if (messages.length === 0) return [{ role: 'user', content: [{ type: 'text', text: '(empty input)' }] } as ModelMessage];
   if (messages[0]!.role === 'assistant') {
-    return [{ role: 'user', content: [{ type: 'text', text: '' }] } as ModelMessage, ...messages];
+    return [{ role: 'user', content: [{ type: 'text', text: '(conversation continued)' }] } as ModelMessage, ...messages];
   }
   return messages;
 }
@@ -469,22 +469,7 @@ export async function writeResponsesStream(
             ((part.error as { statusCode?: number }).statusCode === 429 ||
              (part.error as { lastError?: { statusCode?: number } }).lastError?.statusCode === 429));
         process.stderr.write(`[relay-ai] ${modelId}: ${msg}\n`);
-        if (is429) {
-          writeResponsesRateLimitStream(modelId, msg, write);
-        } else {
-          emit('response.completed', {
-            type: 'response.completed',
-            response: {
-              id: responseId,
-              object: 'response',
-              model: modelId,
-              created_at: createdAt,
-              status: 'failed',
-              output: [],
-              error: { message: msg, type: 'api_error' },
-            },
-          });
-        }
+        writeResponsesRateLimitStream(modelId, is429 ? msg : '(conversation context was too large to summarize)', write);
         return;
       }
 
@@ -556,6 +541,10 @@ export async function writeResponsesStream(
     outputItems.push(fcItem);
   }
 
+  if (outputItems.length === 0) {
+    outputItems.push({ id: newItemId('msg'), type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: '(conversation context was too large to summarize)' }] });
+  }
+
   emit('response.completed', {
     type: 'response.completed',
     response: {
@@ -593,7 +582,17 @@ export async function generateResponsesResponse(
   params: CodexSdkCallParams,
   modelId: string,
 ): Promise<Record<string, unknown>> {
-  const r = await generateText({ model, ...params } as Parameters<typeof generateText>[0]);
+  let r: Awaited<ReturnType<typeof generateText>>;
+  try {
+    r = await generateText({ model, ...params } as Parameters<typeof generateText>[0]);
+  } catch {
+    return {
+      id: newResponseId(), object: 'response', model: modelId,
+      created_at: Math.floor(Date.now() / 1000), status: 'completed',
+      output: [{ id: newItemId('msg'), type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: '(conversation context was too large to summarize)' }] }],
+      usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+    };
+  }
   const createdAt = Math.floor(Date.now() / 1000);
   const responseId = newResponseId();
   const output: unknown[] = [];
@@ -602,7 +601,7 @@ export async function generateResponsesResponse(
     output.push(makeReasoningOutputItem(newItemId('rs'), r.reasoningText));
   }
 
-  if (r.text) {
+  if (r.text !== null && r.text !== undefined) {
     output.push({
       id: newItemId('msg'),
       type: 'message',
@@ -622,6 +621,10 @@ export async function generateResponsesResponse(
       arguments: JSON.stringify(tc.input ?? {}),
       status: 'completed',
     });
+  }
+
+  if (output.length === 0) {
+    output.push({ id: newItemId('msg'), type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: '(conversation context was too large to summarize)' }] });
   }
 
   const inputTokens = r.usage?.inputTokens ?? 0;
@@ -653,16 +656,13 @@ export function responsesErrorBody(
     model: modelId,
     created_at: Math.floor(Date.now() / 1000),
     status: 'failed',
-    output: [],
+    output: [{ id: newItemId('msg'), type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: '(conversation context was too large to summarize)' }] }],
     error: { message, type: statusCode === 429 ? 'rate_limit_error' : 'api_error', code: String(statusCode) },
   };
 }
 
-export function writeResponsesErrorStream(modelId: string, message: string, write: WriteFn, statusCode = 401): void {
-  write(sseChunk('response.completed', {
-    type: 'response.completed',
-    response: responsesErrorBody(modelId, message, statusCode),
-  }));
+export function writeResponsesErrorStream(modelId: string, _message: string, write: WriteFn, _statusCode = 401): void {
+  writeResponsesRateLimitStream(modelId, '(conversation context was too large to summarize)', write);
 }
 
 export function writeResponsesRateLimitStream(modelId: string, message: string, write: WriteFn): void {

@@ -34,6 +34,16 @@ export function silenceSdkWarnings(): void {
 }
 
 const TOOL_USE_SIG_SEP = '__ts__';
+const MAX_INLINE_TOOL_SIGNATURE_BYTES = 256;
+const MAX_STORED_TOOL_SIGNATURES = 1000;
+const toolSignatureRegistry = new Map<string, string>();
+
+function rememberToolSignature(rawId: string, thoughtSignature: string): void {
+  toolSignatureRegistry.set(rawId, thoughtSignature);
+  if (toolSignatureRegistry.size <= MAX_STORED_TOOL_SIGNATURES) return;
+  const oldest = toolSignatureRegistry.keys().next().value as string | undefined;
+  if (oldest) toolSignatureRegistry.delete(oldest);
+}
 
 export function parseToolArguments(value: unknown): Record<string, unknown> {
   if (value === null || value === undefined) return {};
@@ -85,11 +95,15 @@ export function splitToolUseId(id: string): { rawId: string; thoughtSignature?: 
     };
   }
 
-  return { rawId: id };
+  return { rawId: id, thoughtSignature: toolSignatureRegistry.get(id) };
 }
 
 export function encodeToolUseId(rawId: string, thoughtSignature?: string): string {
   if (!thoughtSignature) return rawId;
+  rememberToolSignature(rawId, thoughtSignature);
+  if (Buffer.byteLength(thoughtSignature, 'utf8') > MAX_INLINE_TOOL_SIGNATURE_BYTES) {
+    return rawId;
+  }
   const encoded = Buffer.from(thoughtSignature, 'utf8').toString('base64url');
   return `${rawId}${TOOL_USE_SIG_SEP}${encoded}`;
 }

@@ -4,7 +4,7 @@ import { lookup } from 'node:dns/promises';
 import ipaddr from 'ipaddr.js';
 
 export interface UrlSecurityOptions {
-  /** Allow http://127.0.0.1 and http://localhost (Ollama, LM Studio). */
+  /** Allow http:// endpoints for user-approved local/LAN servers (Ollama, LM Studio, vLLM). */
   allowInsecureLocal?: boolean;
 }
 
@@ -27,7 +27,7 @@ function isBlockedIp(ipStr: string, allowInsecureLocal: boolean): boolean {
     const ip = ipaddr.process(ipStr);
     const range = ip.range();
 
-    if (allowInsecureLocal && range === 'loopback') {
+    if (allowInsecureLocal && (range === 'loopback' || range === 'private')) {
       return false;
     }
 
@@ -82,10 +82,10 @@ export async function validateCustomEndpointUrl(
     return {
       ok: false,
       error: 'Only HTTPS URLs are allowed.',
-      hint: 'For local servers (Ollama, LM Studio), enable “Allow local HTTP”.',
+      hint: 'For local or LAN servers (Ollama, LM Studio, vLLM), allow insecure HTTP when prompted.',
     };
   } else if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return { ok: false, error: 'URL must use https:// (or http://localhost when local is allowed).' };
+    return { ok: false, error: 'URL must use https:// or user-approved http:// for local/LAN servers.' };
   }
   
   // URL parses IPv6 hosts with brackets (e.g., "[::1]"). Strip them for DNS/IP checks.
@@ -109,33 +109,27 @@ export async function validateCustomEndpointUrl(
     };
   }
 
-  let allLocal = true;
   for (const addr of addresses) {
-    let parsedIp;
     try {
-      parsedIp = ipaddr.process(addr);
+      ipaddr.process(addr);
     } catch {
-      allLocal = false;
       continue;
-    }
-    if (parsedIp.range() !== 'loopback') {
-      allLocal = false;
     }
 
     if (isBlockedIp(addr, allowLocal)) {
       return {
         ok: false,
         error: 'URL resolves to a private or restricted network address.',
-        hint: 'Custom providers must use publicly reachable API endpoints (unless localhost with local HTTP enabled).',
+        hint: 'Use a public HTTPS endpoint, or explicitly allow insecure HTTP for a trusted local/LAN server.',
       };
     }
   }
 
-  if (parsed.protocol === 'http:' && !allLocal) {
+  if (parsed.protocol === 'http:' && !allowLocal) {
     return {
       ok: false,
-      error: 'HTTP is only allowed for local loopback addresses.',
-      hint: 'Use https:// for remote servers.',
+      error: 'HTTP requires explicit approval.',
+      hint: 'Use https://, or allow insecure HTTP for a trusted local/LAN server.',
     };
   }
 

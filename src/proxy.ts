@@ -8,6 +8,9 @@ import { formatAnthropicModelEntry, formatAnthropicModelList } from './server/mo
 import { claudeCodeClientModelId, routeLookupIds, stripOneMContextSuffix } from './context-model-id.js';
 import { getProxyDebugLogPath, redactTraceLine, resetTraceLog } from './trace-log.js';
 import { relayAnthropicMessages, UpstreamUnreachableError } from './upstream-forward.js';
+import { selectBetaFlags, injectClaudeIdentity } from './oauth/claude-identity.js';
+import { anthropicToCloudCode } from './antigravity/anthropic-to-cloudcode.js';
+import { streamCloudCodeToAnthropic, collectCloudCodeToAnthropic } from './antigravity/cloudcode-to-anthropic.js';
 import { createLanguageModel, isSdkMigratedNpm } from './provider-factory.js';
 import { randomUUID } from 'node:crypto';
 import {
@@ -73,13 +76,14 @@ export interface ProxyRoute {
   displayName: string;
   upstreamUrl: string;
   apiKey: string;
-  modelFormat: 'anthropic' | 'openai';
+  modelFormat: 'anthropic' | 'openai' | 'cloud-code';
   contextWindow?: number;
   npm?: string;      // OpenCode api.npm — when SDK-migrated, routes via the adapter
   baseURL?: string;  // base URL for openai-compatible / openrouter SDK providers
   providerId?: string;
   authType?: 'api' | 'oauth' | 'none';
   oauthAccountId?: string;
+  providerData?: Record<string, unknown>;
   supportedParameters?: string[];
   reasoning?: boolean;
   interleavedReasoningField?: string;
@@ -211,9 +215,24 @@ export function startProxyCatalog(
         const inboundBeta = Array.isArray(betaHeaderRaw) ? betaHeaderRaw.join(',') : betaHeaderRaw;
         const forwardBody = { ...anthropicBody, model: route.realModelId };
         const targetUrl = `${upstreamUrl}/v1/messages`;
-        plog(() => `anthropic-passthrough: model=${route.realModelId}, stream=${clientWantsStream}`);
+        const isOAuth = route.authType === 'oauth';
+
+        let effectiveBeta = inboundBeta;
+        if (isOAuth) {
+          // Identity injection and beta selection for Claude Code OAuth.
+          const seed = route.providerId ?? route.realModelId;
+          injectClaudeIdentity(forwardBody, route.providerData, seed);
+          effectiveBeta = selectBetaFlags(forwardBody, route.realModelId, inboundBeta);
+          plog(() => `anthropic-oauth: model=${route.realModelId}, beta=${effectiveBeta}`);
+        } else {
+          plog(() => `anthropic-passthrough: model=${route.realModelId}, stream=${clientWantsStream}`);
+        }
+
         try {
-          await relayAnthropicMessages(res, targetUrl, forwardBody, apiKey, clientWantsStream, inboundBeta);
+          await relayAnthropicMessages(
+            res, targetUrl, forwardBody, apiKey, clientWantsStream, effectiveBeta,
+            isOAuth ? 'oauth' : 'api',
+          );
         } catch (err) {
           const message = err instanceof UpstreamUnreachableError ? err.message : String(err);
           plog(() => `anthropic-passthrough error: ${message}`);
@@ -278,6 +297,57 @@ export function startProxyCatalog(
         return;
       }
 
+      // ── Cloud Code Assist (Antigravity OAuth) ───────────────────────
+      if (route.modelFormat === 'cloud-code') {
+        const projectId = (route.providerData?.projectId as string | undefined) ?? '';
+        if (!projectId) {
+          anthropicError(res, 500, 'Antigravity provider missing projectId — re-authenticate with relay-ai providers auth antigravity');
+          return;
+        }
+        const envelope = anthropicToCloudCode(anthropicBody, route.realModelId, projectId);
+        const cloudContents = (envelope.request.contents as Array<{ role?: string; parts?: unknown[] }> | undefined) ?? [];
+        const cloudToolResults = cloudContents.reduce((count, msg) => (
+          count + ((msg.parts ?? []) as Array<Record<string, unknown>>).filter(p => p.functionResponse).length
+        ), 0);
+        const cloudToolCalls = cloudContents.reduce((count, msg) => (
+          count + ((msg.parts ?? []) as Array<Record<string, unknown>>).filter(p => p.functionCall).length
+        ), 0);
+        const cloudTools = (envelope.request.tools as unknown[] | undefined)?.length ?? 0;
+        const cloudMaxOutput = (envelope.request.generationConfig as Record<string, unknown> | undefined)?.maxOutputTokens;
+        const baseUrl = upstreamUrl.replace(/\/+$/, '');
+        const cloudCodeUrl = `${baseUrl}/v1internal:streamGenerateContent?alt=sse`;
+        plog(() => `cloud-code: model=${route.realModelId}, project=${projectId.slice(0, 8)}… msgs=${cloudContents.length} toolCalls=${cloudToolCalls} toolResults=${cloudToolResults} tools=${cloudTools} maxOutput=${cloudMaxOutput ?? 'unset'} stream=${clientWantsStream}`);
+        try {
+          const upstream = await fetch(cloudCodeUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${apiKey}`,
+              'User-Agent': 'vscode/1.X.X (Antigravity/4.2.0)',
+            },
+            body: JSON.stringify(envelope),
+          });
+          if (!upstream.ok) {
+            const errBody = await upstream.text();
+            plog(() => `cloud-code error ${upstream.status}: ${errBody}`);
+            anthropicError(res, upstream.status >= 500 ? 502 : upstream.status, errBody);
+            return;
+          }
+          if (clientWantsStream) {
+            await streamCloudCodeToAnthropic(res, upstream, route.realModelId, plog);
+          } else {
+            const response = await collectCloudCodeToAnthropic(upstream, route.realModelId, plog);
+            sendJson(res, 200, response);
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          plog(() => `cloud-code fetch error: ${message}`);
+          if (!res.headersSent) anthropicError(res, 502, message);
+          else res.end();
+        }
+        return;
+      }
+
       // Non-anthropic route without a registered SDK npm — misconfigured route.
       anthropicError(res, 500, `No SDK provider configured for model ${originalModel} (npm=${route.npm ?? 'none'})`);
       return;
@@ -322,6 +392,8 @@ export function startProxy(
     providerId?: string;
     authType?: 'api' | 'oauth' | 'none';
     oauthAccountId?: string;
+    providerData?: Record<string, unknown>;
+    modelFormat?: 'anthropic' | 'openai' | 'cloud-code';
     supportedParameters?: string[];
     reasoning?: boolean;
     interleavedReasoningField?: string;
@@ -336,13 +408,14 @@ export function startProxy(
     displayName: bareModelId,
     upstreamUrl: completionsUrl,
     apiKey: apiKey ?? '',
-    modelFormat: 'openai',
+    modelFormat: sdk?.modelFormat ?? 'openai',
     contextWindow,
     npm: sdk?.npm,
     baseURL: sdk?.baseURL,
     providerId: sdk?.providerId,
     authType: sdk?.authType,
     oauthAccountId: sdk?.oauthAccountId,
+    providerData: sdk?.providerData,
     supportedParameters: sdk?.supportedParameters,
     reasoning: sdk?.reasoning,
     interleavedReasoningField: sdk?.interleavedReasoningField,

@@ -15,6 +15,7 @@ export function tokensToStoredCredential(
   tokens: OAuthTokenResponse,
   existingRefresh?: string,
   accountId?: string,
+  providerData?: Record<string, unknown>,
 ): StoredOAuthCredential {
   return {
     type: 'oauth',
@@ -22,6 +23,7 @@ export function tokensToStoredCredential(
     refresh: tokens.refresh_token ?? existingRefresh ?? '',
     expires: Date.now() + (tokens.expires_in ?? 3600) * 1000,
     ...(accountId ? { accountId } : {}),
+    ...(providerData ? { providerData } : {}),
   };
 }
 
@@ -63,9 +65,17 @@ export function accessTokenIsExpiring(token: string | undefined, skewMs = OAUTH_
   }
 }
 
-export const NATIVE_OAUTH_PROVIDER_IDS = ['xai', 'xai-oauth', 'openai', 'openai-oauth', 'github-copilot'] as const;
+export const NATIVE_OAUTH_PROVIDER_IDS = ['xai', 'xai-oauth', 'openai', 'openai-oauth', 'github-copilot', 'claude-code', 'antigravity'] as const;
 export type NativeOAuthProviderId = typeof NATIVE_OAUTH_PROVIDER_IDS[number];
 
 export function supportsNativeOAuth(providerId: string): providerId is NativeOAuthProviderId {
   return (NATIVE_OAUTH_PROVIDER_IDS as readonly string[]).includes(providerId);
+}
+
+/** Providers that use Authorization Code + PKCE (browser redirect), not device code polling. */
+export const BROWSER_REDIRECT_OAUTH_IDS = ['claude-code', 'antigravity'] as const;
+export type BrowserRedirectOAuthId = typeof BROWSER_REDIRECT_OAUTH_IDS[number];
+
+export function isBrowserRedirectOAuth(id: string): id is BrowserRedirectOAuthId {
+  return (BROWSER_REDIRECT_OAUTH_IDS as readonly string[]).includes(id);
 }

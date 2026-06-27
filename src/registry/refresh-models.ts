@@ -24,6 +24,7 @@ import { readGlobalOpencodeCredential } from '../env.js';
 import type { CachedModel, ProviderRegistry, RegistryProvider } from './types.js';
 import { buildOpenAiOAuthModels, CHATGPT_CODEX_UNSUPPORTED_MODELS } from '../data/openai-oauth-models.js';
 import { buildXaiOAuthModels } from '../data/xai-oauth-models.js';
+import { ANTIGRAVITY_BASE_URLS } from '../oauth/antigravity-oauth.js';
 import { modelPrefersResponsesApi } from '../provider-factory.js';
 import { deriveBrand } from '../models.js';
 import { resolveContextWindow } from '../context-window.js';
@@ -84,6 +85,85 @@ async function refreshZenGoProvider(provider: RegistryProvider): Promise<CachedM
     });
 }
 
+// Known static seed for claude-code OAuth — seeded from template staticModels.
+// No API call: api.anthropic.com/v1/models rejects OAuth tokens.
+function refreshClaudeCodeOAuthModels(provider: RegistryProvider): { models: CachedModel[]; source: 'seed' } {
+  const template = resolveProviderTemplate(provider);
+  const statics = template?.staticModels ?? [];
+  const models: CachedModel[] = statics.map(sm => ({
+    id: sm.id,
+    name: sm.name,
+    upstreamModelId: sm.id,
+    family: 'claude',
+    brand: 'Anthropic',
+    contextWindow: resolveContextWindow(sm.id),
+    modelFormat: 'anthropic' as const,
+    npm: '@ai-sdk/anthropic',
+    apiUrl: 'https://api.anthropic.com',
+  }));
+  return { models, source: 'seed' };
+}
+
+async function refreshAntigravityOAuthModels(
+  accessToken: string,
+): Promise<{ models: CachedModel[]; source: 'live' }> {
+  // Try each base URL in order — first success wins.
+  for (const base of ANTIGRAVITY_BASE_URLS) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10_000);
+      const res = await fetch(`${base}/v1internal:fetchAvailableModels`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+          'User-Agent': 'vscode/1.X.X (Antigravity/4.2.0)',
+          'Content-Type': 'application/json',
+        },
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timer));
+
+      if (!res.ok) continue;
+      const body = await res.json() as Record<string, unknown>;
+
+      // Response shape: { models: { [id]: { displayName, maxTokens, supportsThinking, ... } } }
+      const raw: Array<Record<string, unknown> & { id: string }> = body.models && typeof body.models === 'object' && !Array.isArray(body.models)
+        ? Object.entries(body.models as Record<string, Record<string, unknown>>).map(([id, model]) => ({ id, ...model }))
+        : Array.isArray(body.models)
+          ? (body.models as Array<Record<string, unknown>>).filter((m): m is Record<string, unknown> & { id: string } => typeof m.id === 'string' && m.id.length > 0)
+          : [];
+      if (raw.length === 0) continue;
+
+      const models: CachedModel[] = raw
+        .filter(m => typeof m.id === 'string' && m.id.length > 0)
+        .map(m => {
+          const id = m.id as string;
+          const name = (m.displayName ?? m.name ?? id) as string;
+          const isGemini = id.startsWith('gemini');
+          const isClaude = id.startsWith('claude');
+          const isOpenAi = id.startsWith('gpt') || id.startsWith('o');
+          const maxTokens = typeof m.maxTokens === 'number' ? m.maxTokens : undefined;
+          return {
+            id,
+            name,
+            upstreamModelId: id,
+            family: isGemini ? 'gemini' : id.split('-')[0] ?? id,
+            brand: isGemini ? 'Google' : isClaude ? 'Anthropic' : isOpenAi ? 'OpenAI' : 'Other',
+            contextWindow: maxTokens ?? resolveContextWindow(id),
+            modelFormat: 'cloud-code' as const,
+            reasoning: m.supportsThinking === true || id.includes('thinking') || id.includes('pro'),
+          };
+        });
+
+      if (models.length > 0) return { models, source: 'live' };
+    } catch {
+      // try next base URL
+    }
+  }
+
+  throw new Error('Antigravity live model refresh failed — Cloud Code returned no usable models');
+}
+
 /**
  * OAuth model refresh:
  * - OpenAI OAuth: Fetch from chatgpt.com/backend-api/models using the OAuth access token.
@@ -91,6 +171,9 @@ async function refreshZenGoProvider(provider: RegistryProvider): Promise<CachedM
  *   Note: api.openai.com/v1/models rejects OAuth tokens — never call that endpoint here.
  * - xAI OAuth: SuperGrok JWT differs from xai-... API keys. Try the live api.x.ai/v1/models
  *   endpoint first; fall back to static seed on 401/403.
+ * - claude-code OAuth: Seed from template staticModels — api.anthropic.com rejects OAuth tokens.
+ * - antigravity OAuth: Live fetch from Cloud Code fetchAvailableModels. No static fallback,
+ *   because Antigravity slot IDs change and stale ids can 404 during inference.
  */
 async function refreshOAuthProvider(
   provider: RegistryProvider,
@@ -99,6 +182,8 @@ async function refreshOAuthProvider(
   const tpl = provider.templateId ?? provider.id;
   if (tpl === 'openai') return refreshOpenAiOAuthModels(accessToken);
   if (tpl === 'xai') return refreshXaiOAuthModels(accessToken);
+  if (tpl === 'claude-code') return refreshClaudeCodeOAuthModels(provider);
+  if (tpl === 'antigravity') return refreshAntigravityOAuthModels(accessToken);
   throw new Error(`refreshOAuthProvider: unsupported template "${tpl}"`);
 }
 
@@ -348,7 +433,7 @@ export async function refreshProviderModels(
 
     if (source === 'zen-go-api') {
       models = await refreshZenGoProvider(provider);
-    } else if (provider.authType === 'oauth' && (['openai', 'xai', 'xai-oauth'].includes(provider.templateId ?? provider.id) || provider.id === 'openai-oauth' || provider.id === 'xai-oauth')) {
+    } else if (provider.authType === 'oauth' && (['openai', 'xai', 'xai-oauth', 'claude-code', 'antigravity'].includes(provider.templateId ?? provider.id) || provider.id === 'openai-oauth' || provider.id === 'xai-oauth')) {
       // OAuth tokens are not valid API keys for the developer endpoints.
       // OpenAI: ChatGPT JWT rejected by api.openai.com; no /v1/models on ChatGPT backend.
       // xAI: SuperGrok JWT rejected by api.x.ai; falls back to static seed.

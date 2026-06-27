@@ -67,6 +67,26 @@ export function buildChildEnv(
   return env;
 }
 
+/** Child env for Antigravity — only CLOUD_CODE_URL, no Anthropic proxy vars. */
+export function buildAntigravityChildEnv(gatewayUrl: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const name of CONFLICTING_ENV_VARS) {
+    delete env[name];
+  }
+  env['CLOUD_CODE_URL'] = gatewayUrl;
+
+  // Inject dummy API keys to bypass agy's slow keychain lookup (~500ms).
+  // This prevents the race condition where loadCodeAssist fails and falls back
+  // to the hardcoded, unsupported FLASH_LITE model.
+  // The local Cloud Code Gateway ignores these keys, so any dummy value works.
+  env['ANTIGRAVITY_API_KEY'] = 'relay-dummy-key';
+  env['GEMINI_API_KEY'] = 'relay-dummy-key';
+  env['GOOGLE_API_KEY'] = 'relay-dummy-key';
+  env['GOOGLE_GEMINI_API_KEY'] = 'relay-dummy-key';
+
+  return env;
+}
+
 /** Classify a keyring error into a human-readable reason (never throws). */
 export function classifyKeyringError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
@@ -267,6 +287,16 @@ export async function resolveProviderOAuthAccountId(
   if (!parsed || parsed.kind !== 'keyring' || !oauthProviderIdFromAccount(parsed.account)) return undefined;
   const raw = await readKeyringAccount(parsed.account, diag);
   return parseStoredOAuthCredential(raw)?.accountId;
+}
+
+export async function resolveProviderOAuthProviderData(
+  authRef: string,
+  diag?: (msg: string) => void,
+): Promise<Record<string, unknown> | undefined> {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== 'keyring' || !oauthProviderIdFromAccount(parsed.account)) return undefined;
+  const raw = await readKeyringAccount(parsed.account, diag);
+  return parseStoredOAuthCredential(raw)?.providerData;
 }
 
 function decodeProviderSecret(raw: string | null): string | null {

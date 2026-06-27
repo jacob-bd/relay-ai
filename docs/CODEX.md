@@ -226,7 +226,7 @@ For CLI favorites, the launched Codex child gets `OPENAI_API_KEY=proxy-local`, n
 
 ### Reasoning effort
 
-The reasoning-effort slider in the Codex picker is shown only for models with a resolver-backed controllable reasoning profile. OpenRouter uses provider metadata (`supported_parameters`) when available; generic `@ai-sdk/openai-compatible` providers stay hidden unless relay-ai has a verified provider rule.
+The reasoning-effort slider in the Codex picker is shown only for models with a resolver-backed controllable reasoning profile. OpenRouter uses provider metadata (`supported_parameters`) when available. Generic `@ai-sdk/openai-compatible` providers stay hidden unless relay-ai has a verified provider rule, for example OpenCode Go `glm-5.2`.
 
 ### Proxy warm-up
 
@@ -268,9 +268,10 @@ Codex exposes a **reasoning effort** picker when relay-ai's model catalog includ
 | `@ai-sdk/mistral` | mistral-large, magistral-* | **high, off only** | `reasoningEffort: high \| none` |
 | `@ai-sdk/xai` | grok-* | none, low, medium, high | `reasoningEffort` |
 | `@openrouter/ai-sdk-provider` | z-ai/glm-5.2, provider models with `reasoning` in `supported_parameters` | none, minimal, low, medium, high, xhigh | `providerOptions.openrouter.reasoning.effort` |
+| `@ai-sdk/openai-compatible` | glm-5.2 on OpenCode Go / compatible Z.ai routes | high, xhigh | `reasoningEffort` |
 | `@ai-sdk/openai-compatible` | unknown backends | *(picker hidden)* | no effort sent |
 
-**Partial support:** Mistral only supports on/off — relay-ai shows `high` and `off`, not low/medium. Gemini 2.5 uses token budgets under the hood; the picker labels are low/medium/high for UX consistency.
+**Partial support:** Mistral only supports on/off — relay-ai shows `high` and `off`, not low/medium. GLM-5.2 currently exposes only `high` and `xhigh` because that is what the published provider metadata advertises. Gemini 2.5 uses token budgets under the hood; the picker labels are low/medium/high for UX consistency.
 
 **Local providers:** Same heuristics apply. Unrecognized models (e.g. Ollama `llama3:8b`) get an empty picker — best-effort, no v1 guarantee.
 
@@ -301,8 +302,8 @@ Codex exposes a **reasoning effort** picker when relay-ai's model catalog includ
 | Stuck on relay-ai settings | `relay-ai codex-app --restore` |
 | `--restore` blocked | Ctrl+C the other relay-ai codex-app terminal first |
 | Wrong config after test | `--restore`; backups in `~/.relay-ai/codex/backups/` |
-| "prompt too long" / session crashes after many turns | The conversation history grew past the model’s context limit. Start a fresh conversation in Codex. relay-ai now sets `model_auto_compact_token_limit` in config.toml to prevent this going forward — see [Context management](#context-management-and-session-architecture). |
-| Trying to continue a large GPT-5.5 session on a different model | Codex sends the full conversation history inline; 1 M-token models reject 2 M-token payloads. relay-ai trims the oldest messages automatically, but some early context will be lost. Starting fresh is the cleanest option. |
+| "prompt too long" / session crashes after many turns | The conversation history grew past the model's context limit. relay-ai configures early auto-compaction and has a proxy fallback, but very large pre-existing sessions can still exceed a relay model's practical compaction budget. Start a fresh conversation, or compact/recover once with a native Codex/GPT model if quota is available. |
+| Trying to continue a large GPT-5.5 session on a different model | Codex sends the full conversation history inline; 1 M-token relay models may reject very large payloads. relay-ai clips oversized text/tool-output blobs and trims as a last resort, but recovery is best-effort and can lose context. Starting fresh is the cleanest option. |
 | Model shows as "Custom" in the Codex UI | Expected — Codex labels all external catalog models as "Custom". The correct model is in use. |
 
 ### Shared
@@ -326,9 +327,9 @@ This means:
 - A session that ran for hundreds of turns with GPT-5.5 (which OpenAI manages server-side on their infrastructure) cannot be resumed transparently on a different model via relay-ai — the full local history is sent inline, and 1 M-token models will reject a 2 M-token payload.
 - relay-ai has no way to make Codex adopt a different history-referencing approach. This is a fixed architectural property of the Codex App.
 
-### How relay-ai protects against context overflow
+### How relay-ai reduces context overflow risk
 
-relay-ai uses two complementary layers:
+relay-ai uses three layers. These reduce failures for new relay-model sessions, but they do not make every oversized historical session recoverable.
 
 **1. Early auto-compaction via config.toml**
 
@@ -339,11 +340,21 @@ model_context_window = 1000000          # the model's actual limit
 model_auto_compact_token_limit = 700000  # 70% of the limit
 ```
 
-Codex reads `model_auto_compact_token_limit` and triggers its built-in compaction before the conversation reaches that threshold. Compaction at 70% leaves 30% of headroom for the compaction request itself (which includes the full conversation). Without these fields, Codex either never compacts (for unknown models) or compacts too late, causing the compaction request itself to exceed the model limit.
+Codex reads `model_auto_compact_token_limit` and triggers its built-in compaction before the conversation reaches that threshold. Compaction at 70% leaves headroom for the compaction request itself, which includes the full conversation. Without these fields, Codex can compact too late or not compact unknown catalog models at all.
 
-**2. Proxy-level truncation as a last resort**
+**2. WebSocket support for Codex remote compaction**
 
-If a conversation that already exceeds the safety threshold arrives at the proxy (e.g. after switching from a GPT-5.5 session to a 1 M-limit model mid-way through), relay-ai drops the oldest messages before forwarding — enough to bring the estimated token count below 85% of the model's context window. The session continues in a degraded but functional state rather than crashing.
+Codex remote compaction v2 prefers WebSocket transport for `/v1/responses`. relay-ai's Codex App proxy accepts that WebSocket path and streams response events back to Codex, so compaction no longer has to fail through WebSocket retries before falling back to HTTP.
+
+**3. Proxy-level clipping and truncation as a last resort**
+
+If a conversation that already exceeds the safety threshold arrives at the proxy (for example, after switching a very long native GPT-5.5 session to a 1 M-token relay model), relay-ai clips oversized text/tool-output blobs and then trims old messages before forwarding. This is a degraded recovery path. It can discard context, and it can still fail if the provider's tokenizer counts the remaining payload above the hard model limit.
+
+### Current compaction limitation
+
+Codex native GPT models use Codex/OpenAI's own subscription path and can sometimes recover very large sessions that relay models cannot. relay-ai's Codex App integration currently redirects the built-in OpenAI provider to a local proxy for the active relay session; it does not yet support a hybrid mode where native GPT models stay direct while relay models go through relay-ai in the same app session.
+
+That means users who have no GPT quota left rely on relay-model compaction. relay-ai now supports the transport and applies best-effort payload reduction, but there is no guaranteed recovery for a session that already exceeds the selected relay model's practical compaction budget. For those sessions, start a fresh thread and paste or summarize the needed context manually.
 
 ### "Custom" label in the Codex App model picker
 

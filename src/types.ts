@@ -2,7 +2,7 @@
 
 export type ModelFormat = 'anthropic' | 'openai' | 'unsupported';
 
-export type StarterCommand = 'root' | 'claude' | 'claude-app' | 'codex' | 'codex-app' | 'server' | 'models' | 'providers' | 'gemini';
+export type StarterCommand = 'root' | 'claude' | 'claude-app' | 'codex' | 'codex-app' | 'server' | 'models' | 'providers' | 'gemini' | 'agy' | 'antigravity-ide' | 'ui';
 
 export interface BackendConfig {
   id: 'zen' | 'go';
@@ -26,6 +26,10 @@ export interface ModelInfo {
   modelFormat: ModelFormat;
   cost?: ModelCost;
   contextWindow?: number;
+  /** Broad model metadata: model can produce reasoning/thinking output. */
+  reasoning?: boolean;
+  /** Streaming/interleaved reasoning field name from metadata, e.g. reasoning_content. */
+  interleavedReasoningField?: string;
 }
 
 export interface LocalProviderModel {
@@ -33,7 +37,7 @@ export interface LocalProviderModel {
   name: string;
   family: string;
   brand: string;
-  modelFormat: 'anthropic' | 'openai';
+  modelFormat: 'anthropic' | 'openai' | 'cloud-code';
   /** Wire id sent to the upstream API (OpenCode api.id); may differ from catalog id, e.g. gpt-5.5-fast → gpt-5.5. */
   upstreamModelId: string;
   baseUrl?: string;        // set for anthropic-format models
@@ -59,6 +63,7 @@ export interface LocalProvider {
   apiKey: string;
   authType?: 'api' | 'oauth' | 'none';
   oauthAccountId?: string;
+  providerData?: Record<string, unknown>;
   models: LocalProviderModel[];
 }
 
@@ -75,8 +80,12 @@ export interface UserPreferences {
   lastCodexModel?: string;
   lastGeminiProvider?: string;
   lastGeminiModel?: string;
+  lastAntigravityProvider?: string;
+  lastAntigravityModel?: string;
   recentModelsByProvider?: Record<string, string[]>;
   favoriteModels?: FavoriteModel[];
+  antigravityCliFavoriteModels?: FavoriteModel[];
+  antigravityCliFavoritesHintShown?: boolean;
   server?: {
     savedPassword?: string;
     /** Provider ids exposed by `relay-ai server` (zen, go, or local OpenCode provider ids). */
@@ -107,6 +116,8 @@ export interface ParsedArgs {
   aiInstall?: boolean;
   /** Reinstall skill even when version already matches */
   aiInstallForce?: boolean;
+  /** Manage the AGY-specific favorites list instead of global favorites. */
+  favoritesAgy?: boolean;
   error?: string;
 }
 

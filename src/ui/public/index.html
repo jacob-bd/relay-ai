@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>relay-ai settings</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231a1b2e'/><text x='50%25' y='22' font-family='system-ui' font-size='18' font-weight='700' fill='%236366f1' text-anchor='middle'>R</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="layout">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-logo">
+          <span class="brand-logo-mark">R</span>
+        </div>
+        <div class="brand-meta">
+          <div class="brand-name">relay<span class="brand-accent">-ai</span></div>
+          <div class="brand-byline">by jacob-bd</div>
+        </div>
+      </div>
+
+      <div class="sidebar-version">v0.4.0</div>
+
+      <nav class="sidebar-nav" aria-label="Sections">
+        <a href="#providers" class="nav-item active" data-section="providers">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </span>
+          Providers &amp; Keys
+        </a>
+        <a href="#favorites" class="nav-item" data-section="favorites">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </span>
+          Favorites
+        </a>
+        <a href="#antigravity" class="nav-item" data-section="antigravity">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/></svg>
+          </span>
+          Antigravity
+          <span class="nav-badge" id="nav-agy-badge">0/6</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button class="btn-theme-full" id="theme-toggle" title="Toggle theme">
+          <span class="theme-icon"></span>
+          <span class="theme-label">Toggle theme</span>
+        </button>
+        <div class="sidebar-footer-text">Model settings persist to<br><code>~/.relay-ai/config.json</code></div>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="content" id="content">
+
+      <!-- Providers section -->
+      <section id="providers" class="section">
+        <div class="section-hero">
+          <div class="section-eyebrow">Configuration</div>
+          <h1 class="section-heading">Providers <span class="heading-accent">&amp; Keys</span></h1>
+          <p class="section-sub">Manage API keys for your configured AI providers. Keys are stored securely in your OS keychain.</p>
+          <div class="provider-stats" id="provider-stats"></div>
+        </div>
+        <div class="search-row">
+          <div class="search-field">
+            <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input type="search" id="provider-search" class="search-input" placeholder="Search all providers…" aria-label="Search providers">
+          </div>
+          <button class="btn btn-ghost btn-refresh-all" id="refresh-all-btn" title="Refresh model lists for all providers">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Refresh All
+          </button>
+        </div>
+        <div id="refresh-all-status" class="refresh-all-status" hidden></div>
+        <div id="providers-list" class="provider-grid" role="list"></div>
+
+        <div id="available-providers-section" hidden>
+          <div class="available-heading">
+            <span class="available-heading-label">Available to add</span>
+            <span class="available-heading-hint">Enter an API key to configure</span>
+          </div>
+          <div id="available-providers-list" class="provider-grid provider-grid-available" role="list"></div>
+        </div>
+      </section>
+
+      <!-- Favorites section -->
+      <section id="favorites" class="section">
+        <div class="section-hero">
+          <div class="section-eyebrow">Model Routing</div>
+          <h1 class="section-heading">General <span class="heading-accent">Favorites</span></h1>
+          <p class="section-sub">Models shown in the switch menu for Claude, Codex, and Gemini. Drag to reorder, Alt+↑↓ to move with keyboard.</p>
+        </div>
+        <div class="search-row">
+          <div class="search-field">
+            <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input type="search" id="model-search" class="search-input" placeholder="Search models to add…" aria-label="Search models">
+          </div>
+        </div>
+        <div id="model-results" class="model-results" hidden></div>
+        <div id="favorites-list" class="fav-list" role="list" aria-label="General favorites" data-list="general"></div>
+      </section>
+
+      <!-- Antigravity section -->
+      <section id="antigravity" class="section">
+        <div class="section-hero">
+          <div class="section-eyebrow">Antigravity CLI</div>
+          <h1 class="section-heading">Antigravity <span class="heading-accent">Favorites</span></h1>
+          <p class="section-sub">Models available in the Antigravity switch menu. Limited to <strong>6 slots</strong> — slot 7 is always the model you pick at launch.</p>
+        </div>
+        <div class="agy-slot-bar">
+          <div class="agy-slot-label">Slots used</div>
+          <div class="agy-slot-pips" id="agy-pips"></div>
+          <div class="agy-slot-count" id="agy-counter">0<span class="agy-slot-max">/6</span></div>
+        </div>
+        <div class="search-row">
+          <div class="search-field">
+            <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input type="search" id="agy-search" class="search-input" placeholder="Search models to add…" aria-label="Search Antigravity models">
+          </div>
+        </div>
+        <div id="agy-results" class="model-results" hidden></div>
+        <div id="agy-list" class="fav-list" role="list" aria-label="Antigravity favorites" data-list="agy"></div>
+      </section>
+
+    </main>
+  </div>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

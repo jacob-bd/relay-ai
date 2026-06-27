@@ -8,6 +8,8 @@ export interface ResolvedFavorite {
   providerName: string;
   model: LocalProviderModel | ServerModelInfo;
   apiKey: string;
+  authType?: 'api' | 'oauth' | 'none';
+  oauthAccountId?: string;
   /** Zen/Go only — which backend this favorite came from. */
   sourceBackend?: 'zen' | 'go';
 }
@@ -76,6 +78,8 @@ export function resolveFavorite(
       providerName: found.provider.name,
       model: found.model,
       apiKey: found.provider.apiKey,
+      authType: found.provider.authType,
+      oauthAccountId: found.provider.oauthAccountId,
     };
   }
 

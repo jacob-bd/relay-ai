@@ -55,6 +55,8 @@ export function readModelsFromCache(
       modelFormat,
       cost: entry.cost,
       contextWindow: resolveContextWindow(entry.id, entry.limit?.context),
+      reasoning: entry.reasoning,
+      interleavedReasoningField: entry.interleaved?.field,
     });
   }
   return result;

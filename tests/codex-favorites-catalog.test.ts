@@ -109,6 +109,37 @@ describe('buildFavoritesCodexCatalog', () => {
     expect(defaultReasoningEffortForFavorite(starting)).toBe('high');
   });
 
+  it('exposes GLM-5.2 reasoning levels for Go favorites', () => {
+    const glm: LocalProviderModel = {
+      id: 'glm-5.2',
+      name: 'GLM-5.2',
+      family: 'glm',
+      brand: 'GLM',
+      modelFormat: 'openai',
+      upstreamModelId: 'glm-5.2',
+      contextWindow: 1_000_000,
+      npm: '@ai-sdk/openai-compatible',
+      apiBaseUrl: 'https://opencode.ai/zen/go/v1',
+      reasoning: true,
+      interleavedReasoningField: 'reasoning_content',
+    };
+    const starting: ResolvedFavorite = {
+      providerId: 'go',
+      providerName: 'OpenCode Go',
+      model: glm,
+      apiKey: 'k',
+    };
+    const file = buildFavoritesCodexCatalog(starting, []);
+
+    expect(file.models[0]?.slug).toBe('go__glm-5.2');
+    expect(file.models[0]?.supported_reasoning_levels).toEqual([
+      { effort: 'high', description: 'Deep reasoning' },
+      { effort: 'xhigh', description: 'Maximum reasoning' },
+    ]);
+    expect(file.models[0]?.default_reasoning_level).toBe('high');
+    expect(defaultReasoningEffortForFavorite(starting)).toBe('high');
+  });
+
   it('builds stable cross-provider CLI slugs', () => {
     expect(codexCliFavoritesSlug('zen', 'mimo-v2.5-free')).toBe('zen__mimo-v2.5-free');
     expect(codexCliFavoritesSlug('go', 'qwen3.7-plus')).toBe('go__qwen3.7-plus');

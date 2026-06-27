@@ -240,6 +240,43 @@ export function printGatewayMaskPanel(): void {
   ]);
 }
 
+export async function confirmSubscriptionOAuthRisk(
+  providerId: 'claude-code' | 'antigravity',
+): Promise<boolean> {
+  const isGoogle = providerId === 'antigravity';
+  const providerLabel = isGoogle ? 'Antigravity / Google' : 'Claude Code';
+  const service = isGoogle
+    ? 'Google account (Gmail, Drive, YouTube, Workspace, and all tied services)'
+    : 'Anthropic account (Claude Pro / Max subscription)';
+  const enforcementNote = isGoogle
+    ? 'Community reports: Google has issued account bans for this usage.'
+    : 'Anthropic actively enforces this — validating request shape and has taken legal action against other projects.';
+
+  printPanel(pc.red(`⚠  Account Risk — ${providerLabel} OAuth`), [
+    `${pc.white('This extracts OAuth tokens from your')} ${pc.bold(service)}.`,
+    '',
+    `${pc.white('Routing subscription tokens through relay-ai to power other tools')}`,
+    `${pc.white('may violate the provider\'s Terms of Service.')}`,
+    '',
+    `${pc.yellow(enforcementNote)}`,
+    '',
+    `${pc.white('Possible consequences:')}`,
+    `  ${pc.dim('•')} ${pc.white('Token revocation')}`,
+    `  ${pc.dim('•')} ${pc.white('Account suspension or permanent ban')}`,
+    ...(isGoogle ? [`  ${pc.dim('•')} ${pc.red(pc.bold('Loss of ALL services tied to this Google account'))}`] : []),
+    '',
+    ...(isGoogle ? [`${pc.red(pc.bold('Do not use your primary Google account.'))} ${pc.white('Use a throwaway account.')}`] : []),
+    `${pc.dim(`relay-ai is not affiliated with ${isGoogle ? 'Google' : 'Anthropic'} and cannot protect you.`)}`,
+  ]);
+
+  const answer = await p.text({
+    message: 'Type "yes" to accept the risk and proceed, or Ctrl+C to cancel:',
+    validate: (v) => v === 'yes' ? undefined : 'Type exactly "yes" to confirm',
+  });
+
+  return !p.isCancel(answer) && answer === 'yes';
+}
+
 export function printNetworkWarningPanel(): void {
   printPanel(pc.yellow('Network mode'), [
     `${pc.yellow(pc.bold('Anyone on your network'))}${pc.white(' who knows the password can use this server through your account.')}`,

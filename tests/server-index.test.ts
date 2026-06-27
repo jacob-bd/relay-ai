@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModelInfo } from '../src/types.js';
+import type { ServerModelInfo } from '../src/server/models.js';
 
 const state = vi.hoisted(() => ({
   apiKey: 'real-key',
@@ -133,5 +134,44 @@ describe('runServerCommand', () => {
       serverPassword: 'saved-password',
     });
     expect(state.savedPassword).toBe('saved-password');
+  });
+});
+
+describe('formatModelCatalogLines', () => {
+  it('formats models as compact one-line rows and hides exact duplicate rows', async () => {
+    const { formatModelCatalogLines } = await import('../src/server/index.js');
+    const catalogModels: ServerModelInfo[] = [
+      {
+        id: 'deepseek-v4-flash',
+        name: 'DeepSeek V4 Flash',
+        isFree: false,
+        brand: 'DeepSeek',
+        sourceBackend: 'go',
+        modelFormat: 'openai',
+      },
+      {
+        id: 'deepseek-v4-flash',
+        name: 'DeepSeek V4 Flash',
+        isFree: false,
+        brand: 'DeepSeek',
+        sourceBackend: 'go',
+        modelFormat: 'openai',
+      },
+      {
+        id: 'glm-5.2',
+        name: 'GLM-5.2',
+        isFree: false,
+        brand: 'GLM',
+        sourceBackend: 'go',
+        modelFormat: 'openai',
+      },
+    ];
+
+    const lines = formatModelCatalogLines(catalogModels);
+
+    expect(lines).toContain('  OpenCode Go (2, 1 duplicate hidden)');
+    expect(lines.some(line => line.includes('#') && line.includes('Model') && line.includes('Anthropic ID') && line.includes('OpenAI ID'))).toBe(true);
+    expect(lines.some(line => line.includes('DeepSeek V4 Flash') && line.includes('anthropic-go__deepseek-v4-flash') && line.includes('deepseek-v4-flash'))).toBe(true);
+    expect(lines.filter(line => line.includes('DeepSeek V4 Flash'))).toHaveLength(1);
   });
 });

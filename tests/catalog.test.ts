@@ -93,6 +93,31 @@ describe('localModelToRoute', () => {
     });
   });
 
+  it('preserves OAuth provider data for catalog routes', () => {
+    const provider: LocalProvider = {
+      id: 'antigravity',
+      name: 'Antigravity',
+      apiKey: 'oauth-token',
+      authType: 'oauth',
+      providerData: { projectId: 'project-123', tier: 'free-tier' },
+      models: [{
+        id: 'gemini-3.5-flash-high',
+        name: 'Gemini 3.5 Flash High',
+        family: 'gemini',
+        brand: 'Google',
+        modelFormat: 'cloud-code',
+        upstreamModelId: 'gemini-3.5-flash-high',
+      }],
+    };
+    const route = localModelToRoute(provider, provider.models[0]!);
+    expect(route).toMatchObject({
+      aliasId: 'anthropic-antigravity__gemini-3.5-flash-high[1m]',
+      modelFormat: 'cloud-code',
+      upstreamUrl: 'https://daily-cloudcode-pa.googleapis.com',
+      providerData: { projectId: 'project-123', tier: 'free-tier' },
+    });
+  });
+
   it('returns null when routing fields are missing for non-SDK openai models', () => {
     const provider: LocalProvider = {
       id: 'p',

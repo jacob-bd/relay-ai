@@ -12,7 +12,7 @@ export interface CachedModel {
   brand?: string;
   contextWindow?: number;
   cost?: { input: number; output: number };
-  modelFormat: 'anthropic' | 'openai';
+  modelFormat: 'anthropic' | 'openai' | 'cloud-code';
   /** Per-model override — wins over provider-level api.npm */
   npm?: string;
   /** Per-model override — wins over provider-level api.url */

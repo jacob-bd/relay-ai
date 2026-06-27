@@ -11,6 +11,7 @@ export interface OpencodeOAuthCredential {
   expires: number;
   accountId?: string;
   enterpriseUrl?: string;
+  providerData?: Record<string, unknown>;
 }
 
 export interface OpencodeWellKnownCredential {

@@ -68,9 +68,10 @@ export function isGeminiNonInteractive(args: string[]): boolean {
   return false;
 }
 
-export function wantsCleanAgentStdout(agent: 'claude' | 'codex' | 'gemini', childArgs: string[]): boolean {
+export function wantsCleanAgentStdout(agent: 'claude' | 'codex' | 'gemini' | 'antigravity', childArgs: string[]): boolean {
   if (agent === 'claude') return isClaudeMachineReadableOutput(childArgs);
   if (agent === 'codex') return isCodexMachineReadableOutput(childArgs);
+  if (agent === 'antigravity') return false; // agy print mode writes to stdout but we don't intercept it
   const outFmt = readFlagValue(childArgs, '-o') || readFlagValue(childArgs, '--output-format');
   return outFmt === 'json' || outFmt === 'stream-json';
 }
@@ -110,16 +111,16 @@ export function isCodexNonInteractive(args: string[]): boolean {
 
 export function resolveLaunchTarget(
   explicit: LaunchTarget,
-  prefs: Pick<UserPreferences, 'lastProvider' | 'lastModel' | 'lastCodexProvider' | 'lastCodexModel' | 'lastGeminiProvider' | 'lastGeminiModel'>,
-  agent: 'claude' | 'codex' | 'gemini',
+  prefs: Pick<UserPreferences, 'lastProvider' | 'lastModel' | 'lastCodexProvider' | 'lastCodexModel' | 'lastGeminiProvider' | 'lastGeminiModel' | 'lastAntigravityProvider' | 'lastAntigravityModel'>,
+  agent: 'claude' | 'codex' | 'gemini' | 'antigravity',
 ): LaunchTarget | null {
   const slug = explicit.modelId ? parseModelSlug(explicit.modelId) : null;
   const providerId = explicit.providerId
     ?? slug?.providerId
-    ?? (agent === 'claude' ? prefs.lastProvider : agent === 'codex' ? prefs.lastCodexProvider : prefs.lastGeminiProvider);
+    ?? (agent === 'claude' ? prefs.lastProvider : agent === 'codex' ? prefs.lastCodexProvider : agent === 'antigravity' ? prefs.lastAntigravityProvider : prefs.lastGeminiProvider);
   const modelId = slug?.modelId
     ?? explicit.modelId
-    ?? (agent === 'claude' ? prefs.lastModel : agent === 'codex' ? prefs.lastCodexModel : prefs.lastGeminiModel);
+    ?? (agent === 'claude' ? prefs.lastModel : agent === 'codex' ? prefs.lastCodexModel : agent === 'antigravity' ? prefs.lastAntigravityModel : prefs.lastGeminiModel);
   if (!providerId || !modelId) return null;
   return { providerId, modelId };
 }
@@ -148,7 +149,7 @@ export function hasCompleteExplicitLaunch(explicit: LaunchTarget): boolean {
 export function planLaunchWizard(opts: {
   explicit: LaunchTarget;
   childArgs: string[];
-  agent: 'claude' | 'codex' | 'gemini';
+  agent: 'claude' | 'codex' | 'gemini' | 'antigravity';
   prefs: UserPreferences;
 }): LaunchWizardPlan {
   const { explicit, childArgs, agent, prefs } = opts;
@@ -157,6 +158,8 @@ export function planLaunchWizard(opts: {
     ? isClaudePrintMode(childArgs)
     : agent === 'codex'
     ? isCodexNonInteractive(childArgs)
+    : agent === 'antigravity'
+    ? isAntigravityNonInteractive(childArgs)
     : isGeminiNonInteractive(childArgs);
 
   if (explicitComplete) {
@@ -194,8 +197,18 @@ export function planLaunchWizard(opts: {
   return { skip: false, target: null };
 }
 
-function nonInteractiveLaunchError(agent: 'claude' | 'codex' | 'gemini'): string {
+function nonInteractiveLaunchError(agent: 'claude' | 'codex' | 'gemini' | 'antigravity'): string {
   if (agent === 'claude') return 'Print mode requires --provider and --model, or saved preferences from a prior launch.';
   if (agent === 'codex') return 'Non-interactive Codex launch requires --provider and --model, or saved preferences from a prior launch.';
+  if (agent === 'antigravity') return 'Non-interactive Antigravity launch requires --provider and --model, or saved preferences from a prior launch.';
   return 'Non-interactive Gemini launch requires --provider and --model, or saved preferences from a prior launch.';
+}
+
+/** agy -p or --prompt (non-interactive print mode). */
+export function isAntigravityNonInteractive(args: string[]): boolean {
+  for (const arg of args) {
+    if (arg === '--') return false;
+    if (arg === '-p' || arg === '--prompt' || arg === '--print') return true;
+  }
+  return false;
 }

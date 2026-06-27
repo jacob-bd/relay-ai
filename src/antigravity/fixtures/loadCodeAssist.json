@@ -1,0 +1,44 @@
+{
+  "currentTier": {
+    "id": "free-tier",
+    "name": "Antigravity",
+    "description": "Gemini-powered code suggestions and chat in multiple IDEs",
+    "privacyNotice": {
+      "showNotice": false,
+      "noticeText": ""
+    },
+    "upgradeSubscriptionUri": "https://codeassist.google.com/upgrade",
+    "upgradeSubscriptionText": "Upgrade to get higher rate limits",
+    "upgradeSubscriptionType": "GDP_HELIUM"
+  },
+  "allowedTiers": [
+    {
+      "id": "free-tier",
+      "name": "Antigravity",
+      "description": "Gemini-powered code suggestions and chat in multiple IDEs",
+      "isDefault": true
+    },
+    {
+      "id": "standard-tier",
+      "name": "Antigravity",
+      "description": "Unlimited coding assistant",
+      "userDefinedCloudaicompanionProject": true,
+      "usesGcpTos": true
+    }
+  ],
+  "cloudaicompanionProject": "relay-ai-local-project",
+  "gcpManaged": false,
+  "upgradeSubscriptionUri": "https://codeassist.google.com/upgrade",
+  "paidTier": {
+    "id": "g1-pro-tier",
+    "name": "Google AI Pro",
+    "description": "Google AI Pro",
+    "upgradeSubscriptionUri": "https://antigravity.google/g1-upgrade",
+    "availableCredits": [
+      {
+        "creditType": "GOOGLE_ONE_AI",
+        "minimumCreditAmountForUsage": "50"
+      }
+    ]
+  }
+}

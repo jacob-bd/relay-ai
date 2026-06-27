@@ -78,10 +78,36 @@ function getLocalIps(): Array<{ name: string; address: string }> {
   return result;
 }
 
-function printModelCatalog(models: ServerModelInfo[], gateway?: GatewayModelOptions): void {
-  if (models.length === 0) return;
+interface ModelCatalogRow {
+  name: string;
+  anthropicId: string;
+  openaiId: string;
+}
 
-  // Group by provider label, sorted alphabetically
+function compactRows(models: ServerModelInfo[], gateway?: GatewayModelOptions): ModelCatalogRow[] {
+  const seen = new Set<string>();
+  const rows: ModelCatalogRow[] = [];
+  for (const model of [...models].sort((a, b) => a.name.localeCompare(b.name))) {
+    const row = {
+      name: model.name,
+      anthropicId: exposedGatewayAliasId(model, gateway),
+      openaiId: model.id,
+    };
+    const key = `${row.name}\u0000${row.anthropicId}\u0000${row.openaiId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push(row);
+  }
+  return rows;
+}
+
+function cappedWidth(values: string[], label: string, cap: number): number {
+  return Math.max(label.length, ...values.map(value => Math.min(value.length, cap)));
+}
+
+export function formatModelCatalogLines(models: ServerModelInfo[], gateway?: GatewayModelOptions): string[] {
+  if (models.length === 0) return [];
+
   const groups = new Map<string, ServerModelInfo[]>();
   for (const model of models) {
     const label = gatewayProviderLabel(model);
@@ -92,21 +118,41 @@ function printModelCatalog(models: ServerModelInfo[], gateway?: GatewayModelOpti
     }
     list.push(model);
   }
-  const sortedGroups = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
 
-  console.log(pc.bold('Model catalog:'));
-  console.log('');
+  const lines: string[] = ['Model catalog:', ''];
+  const sortedGroups = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   for (const [label, groupModels] of sortedGroups) {
-    console.log(`  ${pc.bold(label)}`);
-    // Sort models within each group alphabetically by name
-    const sorted = [...groupModels].sort((a, b) => a.name.localeCompare(b.name));
-    for (const model of sorted) {
-      const anthropicId = exposedGatewayAliasId(model, gateway);
-      console.log(`    ${model.name}`);
-      console.log(`      ${pc.dim('anthropic:')} ${pc.cyan(anthropicId)}`);
-      console.log(`      ${pc.dim('openai:   ')} ${pc.cyan(model.id)}`);
+    const rows = compactRows(groupModels, gateway);
+    const hiddenDuplicates = groupModels.length - rows.length;
+    const duplicateNote = hiddenDuplicates > 0 ? `, ${hiddenDuplicates} duplicate${hiddenDuplicates !== 1 ? 's' : ''} hidden` : '';
+    const nameWidth = cappedWidth(rows.map(row => row.name), 'Model', 28);
+    const anthropicWidth = cappedWidth(rows.map(row => row.anthropicId), 'Anthropic ID', 46);
+    const indexWidth = Math.max(String(rows.length).length, 1);
+
+    lines.push(`  ${label} (${rows.length}${duplicateNote})`);
+    lines.push(`  ${'#'.padStart(indexWidth)}  ${'Model'.padEnd(nameWidth)}  ${'Anthropic ID'.padEnd(anthropicWidth)}  OpenAI ID`);
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]!;
+      lines.push(`  ${String(i + 1).padStart(indexWidth)}  ${row.name.padEnd(nameWidth)}  ${row.anthropicId.padEnd(anthropicWidth)}  ${row.openaiId}`);
     }
-    console.log('');
+    lines.push('');
+  }
+  return lines;
+}
+
+function printModelCatalog(models: ServerModelInfo[], gateway?: GatewayModelOptions): void {
+  if (models.length === 0) return;
+
+  for (const line of formatModelCatalogLines(models, gateway)) {
+    if (line === 'Model catalog:') {
+      console.log(pc.bold(line));
+    } else if (/^  [^#\d\s].+\(\d+/.test(line)) {
+      console.log(pc.bold(line));
+    } else if (/^  \s*#\s+Model\s+Anthropic ID\s+OpenAI ID/.test(line)) {
+      console.log(pc.dim(line));
+    } else {
+      console.log(line);
+    }
   }
 }
 

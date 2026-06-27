@@ -7,7 +7,7 @@ import {
   shouldHideByModelsDevCapabilities,
 } from './registry/models-dev.js';
 
-export type CompatibilityAgent = 'claude' | 'codex' | 'codex-app' | 'server' | 'gemini';
+export type CompatibilityAgent = 'claude' | 'codex' | 'codex-app' | 'server' | 'gemini' | 'antigravity';
 
 export interface CompatibilityContext {
   providerId: string;

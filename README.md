@@ -19,7 +19,7 @@
 
 > **Demo (Part 1):** Installation · Configuration · Claude Code · Claude Cowork · Claude Code Desktop — [watch on YouTube](https://youtu.be/IvsUPHLhX0o)
 
-**relay-ai** is an interactive CLI that launches AI coding tools and runs local API gateways on your machine. Currently, it supports **Claude Code**, **Claude Desktop (Cowork + Code)**, the **OpenAI Codex CLI**, the **Codex desktop app (macOS + Windows)**, and the **Google Gemini CLI**.
+**relay-ai** is an interactive CLI that launches AI coding tools and runs local API gateways on your machine. Currently, it supports **Claude Code**, **Claude Desktop (Cowork + Code)**, the **OpenAI Codex CLI**, the **Codex desktop app (macOS + Windows)**, **Google Gemini CLI**, and experimental **Antigravity CLI / IDE** support.
 
 Pick your backend:
 
@@ -42,9 +42,10 @@ Pick your backend:
 | `relay-ai codex` | Launch OpenAI Codex CLI with registry providers ([guide](docs/CODEX.md)) |
 | `relay-ai codex-app` | Launch Codex desktop app with registry providers ([guide](docs/CODEX.md)) |
 | `relay-ai gemini` | Launch Google Gemini CLI with registry providers |
+| `relay-ai agy` | Launch Antigravity CLI with Relay models ([warning + guide](docs/ANTIGRAVITY.md)) |
+| `relay-ai antigravity-ide` | Launch Antigravity IDE with Relay models, macOS ([warning + guide](docs/ANTIGRAVITY.md)) |
+| `relay-ai providers auth <id>` | Authenticate an OAuth provider (GitHub Copilot, xAI, OpenAI, Claude Code, Antigravity) |
 | `relay-ai --ai` | Full agent reference for scripts and alef-agent ([guide](docs/AI-AGENTS.md)) |
-
-Bare `relay-ai` prints help and migration guidance. Use `relay-ai claude` for the wizard.
 
 ## Features
 
@@ -59,6 +60,7 @@ Bare `relay-ai` prints help and migration guidance. Use `relay-ai claude` for th
 - **API server:** Run a local gateway on port **17645** for Claude Code, Claude Desktop, or any Anthropic-compatible client
 - **Server wizard:** Filter exposed providers, mask discovery ids for Claude Desktop, optional favorites-only catalog, local vs network listen mode
 - **Vertex gateway:** Anthropic-compatible Claude on Google Vertex AI using gcloud Application Default Credentials
+- **Antigravity CLI / IDE support:** Experimental local Cloud Code gateway for Antigravity's native model picker. Read the account warning before using it
 - **Clean environment isolation:** We strip 17 conflicting env vars (Vertex AI, Bedrock, AWS, Foundry, stale Anthropic config) from the child process only. We never touch `~/.claude/settings.json` (see caveat below)
 - **Secure key storage:** Per-provider keys and the OpenCode API key go in the OS credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service) or your shell profile
 - **Cross-platform:** macOS, Windows, Linux (Ubuntu, Fedora, distros with GNOME Keyring or KWallet)
@@ -78,7 +80,14 @@ Bare `relay-ai` prints help and migration guidance. Use `relay-ai claude` for th
 | Claude Desktop (Cowork + Code) | `relay-ai claude-app` | ✅ Supported macOS + Windows ([guide](docs/CLAUDE_DESKTOP_SETUP.md)) |
 | Codex CLI | `relay-ai codex` | ✅ Supported ([guide](docs/CODEX.md)) |
 | Codex desktop app | `relay-ai codex-app` | ✅ Supported macOS + Windows ([guide](docs/CODEX.md)) |
-| Google Gemini CLI | `relay-ai gemini` | ✅ Supported |
+| Google Gemini CLI | `relay-ai gemini` | ⚠️ Experimental, model switching is done via .model prompt |
+| Antigravity CLI | `relay-ai agy` | ⚠️ Experimental, use a throwaway Google account ([guide](docs/ANTIGRAVITY.md)) |
+| Antigravity IDE | `relay-ai antigravity-ide` | ⚠️ Experimental macOS support, use a throwaway Google account ([guide](docs/ANTIGRAVITY.md)) |
+| GitHub Copilot OAuth | `relay-ai providers auth github-copilot` | ✅ Device code flow ([guide](docs/SUBSCRIPTION-OAUTH.md)) |
+| xAI SuperGrok OAuth | `relay-ai providers auth xai-oauth` | ✅ Device code flow ([guide](docs/SUBSCRIPTION-OAUTH.md)) |
+| OpenAI ChatGPT OAuth | `relay-ai providers auth openai-oauth` | ✅ Device code flow ([guide](docs/SUBSCRIPTION-OAUTH.md)) |
+| Claude Code OAuth | `relay-ai providers auth claude-code` | ⛔ Almost certainly violates Anthropic ToS — bans documented ([⚠️ read guide first](docs/SUBSCRIPTION-OAUTH.md)) |
+| Antigravity OAuth | `relay-ai providers auth antigravity` | ⛔ Google bans documented — use throwaway account only ([⚠️ read guide first](docs/SUBSCRIPTION-OAUTH.md)) |
 
 ## Prerequisites
 
@@ -87,6 +96,8 @@ Bare `relay-ai` prints help and migration guidance. Use `relay-ai claude` for th
 - At least one provider configured via `relay-ai providers add` or `import` — **or** an [OpenCode API key](https://opencode.ai/auth) for Zen/Go cloud backends
 - [OpenCode CLI](https://opencode.ai) only if you want **one-time import** from an existing OpenCode setup (optional)
 - For **Vertex gateway:** [Google Cloud SDK](https://cloud.google.com/sdk) with `gcloud auth application-default login`, a GCP project with Vertex AI enabled, and Claude partner models enabled in that project
+- For **Antigravity CLI / IDE:** a Google account is still needed for Antigravity authentication. Do **not** use your main Google account. Use a throwaway or secondary account you can afford to lose.
+- For **Claude Code OAuth** or **Antigravity OAuth** subscription providers: read **[docs/SUBSCRIPTION-OAUTH.md](docs/SUBSCRIPTION-OAUTH.md)** in full before using. Account bans are a documented risk. relay-ai takes no responsibility.
 
 **A note on providers:** relay-ai keeps your provider list in `~/.relay-ai/providers.json`. You can add providers directly (API key + template), import from OpenCode once, or use Zen/Go cloud backends. OpenCode is not required after setup.
 
@@ -316,6 +327,52 @@ export ANTHROPIC_API_KEY="anything"
 unset CLAUDE_CODE_USE_VERTEX ANTHROPIC_VERTEX_PROJECT_ID CLOUD_ML_REGION
 ```
 
+## Antigravity CLI and IDE support
+
+Relay AI can launch the Antigravity CLI and Antigravity IDE through a local Cloud Code gateway. This lets Antigravity's native model picker show Relay models from your configured providers.
+
+```bash
+relay-ai agy
+relay-ai antigravity-ide
+```
+
+> ⚠️ **Do not use your main Google account with Antigravity support.**
+>
+> Antigravity still requires Google authentication before it will run. Relay AI routes Cloud Code generation through your local gateway, but the Antigravity CLI and IDE are still Google software and may contact Google for auth, telemetry, updates, or account checks.
+>
+> This kind of use is probably not what Google intended, may violate Google's terms of service, and could lead to account restrictions or bans. Use a throwaway Google account, a secondary account, or another account you can afford to lose. A free Google account should be enough for authentication. Seriously, don't risk your real Gmail, Workspace, YouTube, Drive, or business account for this.
+
+Read the full setup and risk notes in **[docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md)** before launching either Antigravity surface.
+
+## OAuth Providers
+
+relay-ai supports OAuth-based subscription providers — sign in with your existing account rather than managing API keys. See **[docs/SUBSCRIPTION-OAUTH.md](docs/SUBSCRIPTION-OAUTH.md)** for setup and risk information.
+
+### Standard OAuth (lower risk)
+
+Device code flows for existing subscriptions:
+
+```bash
+relay-ai providers auth github-copilot   # GitHub Copilot
+relay-ai providers auth openai-oauth     # ChatGPT Plus / Pro
+relay-ai providers auth xai-oauth        # xAI SuperGrok
+```
+
+### ⛔ Subscription Token Extraction (serious account risk)
+
+> **These providers extract OAuth tokens from your paid subscriptions and use them to power other tools. This almost certainly violates the Terms of Service of Anthropic and Google. Account bans are a known, documented consequence. relay-ai and its authors take no responsibility for suspended accounts, lost subscriptions, or any other outcome. You proceed entirely at your own risk.**
+
+```bash
+relay-ai providers auth claude-code    # Anthropic Claude Pro / Max
+relay-ai providers auth antigravity    # Google Cloud Code Assist
+```
+
+**Claude Code OAuth:** Anthropic actively enforces against this usage. Bans and subscription suspensions have been reported. Anthropic took legal action against OpenCode in March 2026 for doing this exact thing.
+
+**Antigravity OAuth:** Google has issued account bans for similar usage. A Google ban is not limited to Cloud Code — it affects Gmail, Drive, YouTube, Workspace, and every service on the account. **⛔ Use a throwaway Google account only. Never your primary Google account.**
+
+Full details, risk disclosure, and technical documentation: **[docs/SUBSCRIPTION-OAUTH.md](docs/SUBSCRIPTION-OAUTH.md)**
+
 ### Codex CLI (`relay-ai codex`)
 
 Launch [OpenAI Codex CLI](https://developers.openai.com/codex/cli) with registry providers. Requires `npm install -g @openai/codex`.
@@ -484,9 +541,19 @@ Private beta right now. Issues and PRs welcome on GitHub.
 
 ## Disclaimer
 
-This project and its creator have **no affiliation** with OpenCode, Anthropic, Claude, Google, or any other vendor named or integrated here. Trademarks belong to their respective owners.
+This project and its creator have **no affiliation** with OpenCode, Anthropic, Claude, Google, GitHub, OpenAI, xAI, or any other vendor named or integrated here. Trademarks belong to their respective owners.
 
 relay-ai was built for **education and research**, and mostly for fun. It routes inference through services you configure yourself (OpenCode Zen/Go, OpenCode-configured providers, Vertex AI, and gateways you run locally). Use at your own risk.
+
+**Regarding subscription OAuth providers (Claude Code, Antigravity):** These features extract OAuth tokens from paid subscriptions in ways the service providers did not intend. Using them almost certainly violates the Terms of Service of Anthropic and Google. relay-ai and its authors take **no responsibility whatsoever** for:
+
+- Account suspensions, bans, or terminations by Anthropic, Google, or any other provider
+- Loss of paid subscriptions (Claude Pro / Max, Google One AI, etc.)
+- Loss of access to services tied to a banned account (Gmail, Drive, YouTube, Workspace, etc.)
+- Legal action by service providers
+- Any other consequence of using these features
+
+By using the `claude-code` or `antigravity` OAuth providers, you accept sole responsibility for all consequences.
 
 ## Vibe Coding Alert
 

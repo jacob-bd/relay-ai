@@ -7,6 +7,7 @@ import {
   pickModelFromPagedList,
 } from './prompts.js';
 import { fmtModel, fmtProviderBracket, formatModelLabel } from './ui.js';
+import { scoreModelSearch } from './model-search.js';
 
 export interface GlobalFavoritePick {
   providerId: string;
@@ -40,22 +41,32 @@ export function buildGlobalFavoriteIndex(providers: LocalProvider[]): GlobalFavo
   });
 }
 
+function favoriteSearchScore(entry: GlobalFavoritePick, query: string): number {
+  const m = entry.model;
+  return scoreModelSearch(query, [
+    { value: m.name, weight: 800 },
+    { value: m.id, weight: 700 },
+    { value: m.upstreamModelId, weight: 650 },
+    { value: m.brand, weight: 350 },
+    { value: m.family, weight: 300 },
+    { value: entry.providerName, weight: 240 },
+    { value: entry.providerId, weight: 220 },
+  ]);
+}
+
 export function filterGlobalFavoriteIndex(
   entries: GlobalFavoritePick[],
   query: string,
 ): GlobalFavoritePick[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return [];
-  return entries.filter(entry => {
-    const m = entry.model;
-    return (
-      m.id.toLowerCase().includes(q)
-      || m.name.toLowerCase().includes(q)
-      || m.brand.toLowerCase().includes(q)
-      || entry.providerName.toLowerCase().includes(q)
-      || entry.providerId.toLowerCase().includes(q)
-    );
-  });
+  if (!query.trim()) return [];
+  return entries
+    .map((entry, index) => ({ entry, index, score: favoriteSearchScore(entry, query) }))
+    .filter(result => result.score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.index - b.index;
+    })
+    .map(result => result.entry);
 }
 
 export function globalFavoriteSelectOption(

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0] - 2026-06-27
+
+### Fixed
+
+- **Codex App: relay proxy now supports WebSocket `/v1/responses`** — Codex remote compaction v2 prefers WebSocket transport before falling back to HTTP. The Codex App proxy now accepts WebSocket upgrades, reads the request frame, streams response events back over the socket, and avoids the previous retry/fallback delay.
+- **Codex App: context trimming no longer over-trims by 3x** — the proxy's internal character limit now matches the caller's token-to-character estimate, preventing oversized sessions from being reduced to a single message before compaction.
+- **Codex App: empty translated input no longer creates invalid Anthropic requests** — empty input now becomes a non-empty placeholder message instead of `messages.0` with empty content.
+
+### Known limitations
+
+- **Very large pre-existing Codex App sessions may still fail relay-model compaction** — sessions that already grew under native GPT-5.5 can exceed a 1 M-token relay model's practical compaction budget when switched to Claude or another relay model. relay-ai now clips oversized text/tool-output blobs and trims as a last resort, but this is best-effort recovery, not a guarantee. The reliable recovery path is to continue or compact once with a native Codex/GPT model when quota is available, or start a fresh relay-model session.
+
 ## [0.3.4] - 2026-06-23
 
 ### Fixed

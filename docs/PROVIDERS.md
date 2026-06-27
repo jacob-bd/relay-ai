@@ -98,6 +98,53 @@ If you use the wrong provider template for your key, you will receive a `401 Inv
 
 ---
 
+## OAuth Subscription Providers
+
+These providers authenticate via OAuth rather than API keys. See **[docs/SUBSCRIPTION-OAUTH.md](SUBSCRIPTION-OAUTH.md)** for full setup instructions and risk information.
+
+### OpenAI (ChatGPT subscription)
+
+- **Provider ID**: `openai-oauth`
+- **Auth**: Device code flow — device code at `auth.openai.com/codex/device`
+- **Subscription**: ChatGPT Plus or Pro
+- **Setup**: `relay-ai providers auth openai-oauth`
+
+### xAI (SuperGrok subscription)
+
+- **Provider ID**: `xai-oauth`
+- **Auth**: Device code flow — device code at `x.ai/device`
+- **Subscription**: xAI SuperGrok
+- **Setup**: `relay-ai providers auth xai-oauth`
+
+### GitHub Copilot
+
+- **Provider ID**: `github-copilot`
+- **Auth**: Device code flow at `github.com/login/device`
+- **Subscription**: GitHub Copilot Individual or Business
+- **Setup**: `relay-ai providers auth github-copilot`
+
+### ⛔ Claude Code (Anthropic subscription token extraction)
+
+> **Account risk.** Using your Claude subscription token outside of Claude Code almost certainly violates Anthropic's Terms of Service. Anthropic actively enforces this. Account bans and subscription suspension have been reported. relay-ai takes no responsibility for consequences. Do not use your primary Anthropic account.
+
+- **Provider ID**: `claude-code`
+- **Auth**: Authorization Code + PKCE — browser opens to `claude.ai`
+- **Subscription**: Claude Pro or Max
+- **Setup**: `relay-ai providers auth claude-code`
+- **Full details**: **[docs/SUBSCRIPTION-OAUTH.md](SUBSCRIPTION-OAUTH.md)**
+
+### ⛔ Antigravity (Google Cloud Code Assist token extraction)
+
+> **Serious account risk.** Routing Google Cloud Code Assist tokens through a third-party proxy almost certainly violates Google's Terms of Service. Google account bans have been reported across community projects. A Google account ban means losing Gmail, Drive, YouTube, Workspace, and every service tied to the account. **Do not use your primary Google account. Use a throwaway account only.** relay-ai takes no responsibility for consequences.
+
+- **Provider ID**: `antigravity`
+- **Auth**: Authorization Code + PKCE — browser opens to `accounts.google.com`
+- **Subscription**: Any Google account with Cloud Code Assist access
+- **Setup**: `relay-ai providers auth antigravity`
+- **Full details**: **[docs/SUBSCRIPTION-OAUTH.md](SUBSCRIPTION-OAUTH.md)**
+
+---
+
 ## Unsupported / Advanced Providers
 
 - **Amazon Bedrock**: Currently requires AWS credentials rather than a simple API key. Use OpenCode's setup and then run `relay-ai providers import`.
