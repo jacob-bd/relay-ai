@@ -11,18 +11,11 @@
 [![License](https://img.shields.io/npm/l/@jacobbd/relay-ai)](LICENSE)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=flat-square&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/jacobbd)
 
-<p align="center">
-  <a href="https://youtu.be/IvsUPHLhX0o">
-    <img src="https://img.youtube.com/vi/IvsUPHLhX0o/maxresdefault.jpg" alt="relay-ai demo — installation, configuration, Claude Code, Claude Cowork & Claude Code Desktop (Part 1)" width="49%">
-  </a>
-  <a href="https://youtu.be/42oiOB8IAu4">
-    <img src="https://img.youtube.com/vi/42oiOB8IAu4/maxresdefault.jpg" alt="relay-ai demo — OpenAI Codex CLI & Codex Desktop App (Part 2)" width="49%">
-  </a>
-</p>
+📺 **Watch the Demos**
 
-> 🎥 **Watch the Demos:**
-> - **Demo (Part 1):** Installation · Configuration · Claude Code · Claude Cowork & Claude Code Desktop — [watch on YouTube](https://youtu.be/IvsUPHLhX0o)
-> - **Demo (Part 2):** OpenAI Codex CLI & Codex Desktop App — [watch on YouTube](https://youtu.be/42oiOB8IAu4)
+| **Claude Code / Cowork / Desktop** | **Codex CLI & Desktop App** | **Gemini CLI** |
+|:---:|:---:|:---:|
+| [![Claude Demo](https://img.youtube.com/vi/IvsUPHLhX0o/mqdefault.jpg)](https://youtu.be/IvsUPHLhX0o) | [![Codex Demo](https://img.youtube.com/vi/42oiOB8IAu4/mqdefault.jpg)](https://youtu.be/42oiOB8IAu4) | [![Gemini Demo](https://img.youtube.com/vi/g7JKvqOHJl4/mqdefault.jpg)](https://www.youtube.com/watch?v=g7JKvqOHJl4) |
 
 **relay-ai** is an interactive CLI that launches AI coding tools and runs local API gateways on your machine. Currently, it supports **Claude Code**, **Claude Desktop (Cowork + Code)**, the **OpenAI Codex CLI**, the **Codex desktop app (macOS + Windows)**, and the **Google Gemini CLI**.
 
