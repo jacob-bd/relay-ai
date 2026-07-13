@@ -9,7 +9,7 @@ export type FullStreamPart = {
   toolCallId?: string;
   input?: unknown;
   finishReason?: string;
-  totalUsage?: { inputTokens?: number; outputTokens?: number };
+  totalUsage?: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number };
   providerMetadata?: {
     google?: { thoughtSignature?: string; thought_signature?: string };
     openai?: { reasoningEncryptedContent?: string | null };

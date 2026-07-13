@@ -5154,6 +5154,7 @@ async function collectCloudCodeToAnthropic(upstreamRes, model, log8) {
 import { randomUUID as randomUUID5 } from "crypto";
 
 // src/sdk-adapter.ts
+import { createHash as createHash2 } from "crypto";
 import { streamText, generateText, tool as tool2, jsonSchema as jsonSchema2 } from "ai";
 
 // src/tool-search.ts
@@ -5308,6 +5309,11 @@ function anthropicEffortFromRequest(body) {
   if (typeof effort === "string" && effort.trim()) return effort.trim();
   return void 0;
 }
+function openAiPromptCacheKey(system, tools) {
+  const toolSig = (tools ?? []).map((t) => `${t.name}${t.description ?? ""}${JSON.stringify(t.input_schema ?? {})}`).join("");
+  const material = `${system ?? ""}\0${toolSig}`;
+  return "relay-" + createHash2("sha256").update(material).digest("hex").slice(0, 32);
+}
 function systemToString(system) {
   if (!system) return void 0;
   if (typeof system === "string") return system;
@@ -5461,6 +5467,11 @@ function translateRequest2(body, npm, options) {
       openai: { instructions: systemText }
     });
   }
+  if (npm === "@ai-sdk/openai" && !options?.openAiOAuth) {
+    providerOptions = deepMergeProviderOptions(providerOptions, {
+      openai: { promptCacheKey: openAiPromptCacheKey(baseSystem, upstreamTools) }
+    });
+  }
   return {
     system: options?.openAiOAuth ? void 0 : systemText,
     messages: translateMessages(messages, npm),
@@ -5471,6 +5482,23 @@ function translateRequest2(body, npm, options) {
     providerOptions
   };
 }
+function toAnthropicUsage(u) {
+  const total = u?.inputTokens ?? 0;
+  const cached = u?.cachedInputTokens ?? 0;
+  return {
+    input_tokens: Math.max(0, total - cached),
+    output_tokens: u?.outputTokens ?? 0,
+    cache_read_input_tokens: cached
+  };
+}
+function streamAbortError(signal) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error(
+    typeof signal?.reason === "string" ? signal.reason : "SDK stream aborted"
+  );
+  error.name = "AbortError";
+  return error;
+}
 async function writeAnthropicStream(fullStream, modelId, write, log8, observer) {
   const messageId = "msg_" + Date.now();
   let blockIndex = -1;
@@ -5479,7 +5507,7 @@ async function writeAnthropicStream(fullStream, modelId, write, log8, observer) 
   let pendingThinkingSig;
   const idToBlock = /* @__PURE__ */ new Map();
   let finishReason = "end_turn";
-  let usage = { input_tokens: 0, output_tokens: 0 };
+  let usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 };
   const emit = (event, data) => write(sseChunk(event, data));
   const ensureStart = () => {
     if (started) return;
@@ -5524,12 +5552,19 @@ async function writeAnthropicStream(fullStream, modelId, write, log8, observer) 
   };
   for await (const part of fullStream) {
     observer?.onPart?.(part.type);
+    if (observer?.abortSignal?.aborted) throw streamAbortError(observer.abortSignal);
     switch (part.type) {
       // The SDK emits start before it knows whether the provider accepted the
       // request. Wait for content/finish so a pre-content HTTP failure can still
       // propagate through the proxy with its real non-2xx status.
       case "start":
         break;
+      // An abort is terminal but is not an error part in the AI SDK stream. If
+      // treated like an unknown part, the loop ends and Relay synthesizes a
+      // message_start/message_delta/message_stop after the client disconnected.
+      // Throw so the HTTP layer follows its cancellation path and emits nothing.
+      case "abort":
+        throw streamAbortError(observer?.abortSignal);
       case "reasoning-start":
         openBlock("thinking", { type: "thinking", thinking: "", signature: "" });
         break;
@@ -5599,10 +5634,7 @@ async function writeAnthropicStream(fullStream, modelId, write, log8, observer) 
       }
       case "finish":
         if (part.totalUsage) {
-          usage = {
-            input_tokens: part.totalUsage.inputTokens ?? 0,
-            output_tokens: part.totalUsage.outputTokens ?? 0
-          };
+          usage = toAnthropicUsage(part.totalUsage);
         }
         if (part.finishReason === "tool-calls") finishReason = "tool_use";
         else if (part.finishReason === "length") finishReason = "max_tokens";
@@ -5620,6 +5652,7 @@ async function writeAnthropicStream(fullStream, modelId, write, log8, observer) 
         break;
     }
   }
+  if (observer?.abortSignal?.aborted) throw streamAbortError(observer.abortSignal);
   closeOpen();
   ensureStart();
   emit("message_delta", { type: "message_delta", delta: { stop_reason: finishReason, stop_sequence: null }, usage });
@@ -5660,11 +5693,15 @@ async function generateAnthropicResponse(model, params, modelId, options) {
     });
     Promise.resolve(r.toolResults).catch(() => {
     });
-    const observeParts = options.onPart ? (async () => {
+    const observeParts = (async () => {
       for await (const part of r.fullStream) {
         options.onPart?.(part.type);
+        if (options.abortSignal?.aborted || part.type === "abort") {
+          throw streamAbortError(options.abortSignal);
+        }
       }
-    })() : Promise.resolve();
+      if (options.abortSignal?.aborted) throw streamAbortError(options.abortSignal);
+    })();
     [text4, toolCalls, finishReason, usage] = await Promise.all([
       r.text,
       r.toolCalls,
@@ -5695,7 +5732,7 @@ async function generateAnthropicResponse(model, params, modelId, options) {
       }))
     ],
     stop_reason: finishReason === "tool-calls" ? "tool_use" : "end_turn",
-    usage: { input_tokens: usage?.inputTokens ?? 0, output_tokens: usage?.outputTokens ?? 0 }
+    usage: toAnthropicUsage(usage)
   };
 }
 
@@ -11835,4 +11872,4 @@ export {
   quitClaudeAppGracefully,
   launchOrRestartClaudeApp
 };
-//# sourceMappingURL=chunk-WPDPFELI.js.map
+//# sourceMappingURL=chunk-QDRB5526.js.map
