@@ -25,6 +25,7 @@ import {
   buildVertexRuntimeConfig,
   cachedModelToLocal,
   catalogEntryFromModel,
+  checkForUpdates,
   claudeAppSupported,
   claudeCodeClientModelId,
   codexAppInstallHint,
@@ -57,6 +58,7 @@ import {
   fmtUrl,
   formatCodexModelLabel,
   formatRegistryAuthLabel,
+  formatUpdateNotification,
   formatUpstreamError,
   getAppHome,
   getAppPathOverride,
@@ -162,7 +164,7 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-VSXPAZX4.js";
+} from "./chunk-HCLFYDEA.js";
 import {
   filterTemplates,
   init_provider_templates,
@@ -12295,6 +12297,14 @@ Error: ${launchPlan.error}
 }
 async function main(args = process.argv.slice(2)) {
   const parsed = parseArgs(args);
+  if (process.stdout.isTTY) {
+    const update = await checkForUpdates();
+    if (update.updateAvailable && update.latestVersion) {
+      console.log(`
+${formatUpdateNotification(update.currentVersion, update.latestVersion)}
+`);
+    }
+  }
   if (parsed.error) {
     console.error(pc12.red(`
 Error: ${parsed.error}
@@ -12349,7 +12359,7 @@ Error: ${parsed.error}
       console.log("Usage: relay-ai ui [--trace]\n\nOpen the settings UI in your browser.");
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-S7SOSUHQ.js");
+    const { runUiCommand } = await import("./ui-command-RVVEBQ25.js");
     return runUiCommand({ trace: parsed.trace });
   }
   if (parsed.command === "models") {

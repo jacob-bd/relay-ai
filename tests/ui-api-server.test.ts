@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ServerModelInfo } from '../src/server/models.js';
 import type { FavoriteModel } from '../src/types.js';
 import { createMockRequest, createMockResponse } from './helpers/ui-api-test-utils.js';
+import { VERSION } from '../src/constants.js';
 
 const testModel: ServerModelInfo = {
   id: 'test-model',
@@ -129,6 +130,20 @@ describe('UI API Server endpoints', () => {
     expect(code).toBe(200);
     expect(body.running).toBe(false);
     expect(body.saved).toMatchObject({ favoritesOnly: false, freeModelsOnly: false, maskGatewayIds: true, listenMode: 'local', hasSavedPassword: false });
+  });
+
+  it('returns cached update status for the UI', async () => {
+    const relayHome = process.env['RELAY_AI_HOME']!;
+    mkdirSync(relayHome, { recursive: true });
+    writeFileSync(join(relayHome, 'update-check.json'), JSON.stringify({
+      latestVersion: '9.0.0',
+      checkedAt: Date.now(),
+    }));
+
+    const { code, body } = await call('GET', '/api/update-status');
+
+    expect(code).toBe(200);
+    expect(body).toEqual({ currentVersion: VERSION, latestVersion: '9.0.0', updateAvailable: true });
   });
 
   it('rejects starting when no providers are configured', async () => {

@@ -33,6 +33,7 @@ import { writeSecureLogLine } from '../trace-log.js';
 import { providerOptionsFromCatalog } from '../server/index.js';
 import { getServerStatus, startGatewayServer, stopGatewayServer, type ServerStartRequest } from './server-control.js';
 import { freeStatusLabel } from '../free-models.js';
+import { checkForUpdates } from '../update-check.js';
 
 const MODELS_TIMEOUT_MS = 30_000;
 
@@ -122,6 +123,8 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
 
   if (url === '/api/config' && req.method === 'GET') {
     handleGetConfig(res);
+  } else if (url === '/api/update-status' && req.method === 'GET') {
+    handleGetUpdateStatus(res);
   } else if (url === '/api/config' && req.method === 'POST') {
     handlePostConfig(req, res);
   } else if (url === '/api/models' && req.method === 'GET') {
@@ -165,6 +168,10 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
   } else {
     sendJson(res, 404, { error: 'Not found' });
   }
+}
+
+async function handleGetUpdateStatus(res: ServerResponse): Promise<void> {
+  sendJson(res, 200, await checkForUpdates());
 }
 
 function handleGetConfig(res: ServerResponse): void {

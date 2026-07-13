@@ -44,7 +44,24 @@
         </div>
       </div>
 
-      <div class="sidebar-version">v{{VERSION}}</div>
+      <div class="sidebar-version-area" id="sidebar-version-area">
+        <div class="sidebar-version">v{{VERSION}}</div>
+        <button
+          class="update-indicator"
+          id="update-indicator"
+          type="button"
+          aria-expanded="false"
+          aria-controls="update-popover"
+          hidden
+        >🔔 Update available</button>
+        <div class="update-popover" id="update-popover" role="dialog" aria-label="Relay AI update" hidden>
+          <div class="update-popover-title">Update available</div>
+          <div class="update-version-row"><span>Installed</span><strong id="update-current-version"></strong></div>
+          <div class="update-version-row"><span>Available</span><strong id="update-latest-version"></strong></div>
+          <code class="update-command" id="update-command">npm install -g @jacobbd/relay-ai@latest</code>
+          <button class="btn btn-primary btn-sm update-copy-btn" id="update-copy-btn" type="button">Copy update command</button>
+        </div>
+      </div>
 
       <nav class="sidebar-nav" aria-label="Sections">
         <a href="#providers" class="nav-item active" data-section="providers">

@@ -23,6 +23,7 @@ import { loadPreferences, savePreferences, recordLaunchSelection } from './confi
 import { pickLocalModel, browseAllModels } from './prompts.js';
 import { fetchProviderCatalog, providersForPicker, resolveLocalProviderApiKey } from './provider-catalog.js';
 import { BACKENDS, VERSION } from './constants.js';
+import { checkForUpdates, formatUpdateNotification } from './update-check.js';
 import type { ParsedArgs, ModelInfo, FavoriteModel, LocalProvider, LocalProviderModel } from './types.js';
 import { addFavorite, removeFavorite, isFavorite } from './favorites.js';
 import {
@@ -1428,6 +1429,13 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
 
 export async function main(args: string[] = process.argv.slice(2)): Promise<number> {
   const parsed = parseArgs(args);
+
+  if (process.stdout.isTTY) {
+    const update = await checkForUpdates();
+    if (update.updateAvailable && update.latestVersion) {
+      console.log(`\n${formatUpdateNotification(update.currentVersion, update.latestVersion)}\n`);
+    }
+  }
 
   if (parsed.error) {
     console.error(pc.red(`\nError: ${parsed.error}\n`));

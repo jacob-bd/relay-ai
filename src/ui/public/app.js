@@ -2,6 +2,7 @@
 
 const AGY_MAX = 6;
 const GENERAL_MAX = 20;
+const UPDATE_COMMAND = 'npm install -g @jacobbd/relay-ai@latest';
 
 const state = {
   providers: [],
@@ -218,6 +219,54 @@ async function loadConfig() {
   const data = await api('GET', '/api/config');
   state.generalFavorites = data.favoriteModels ?? [];
   state.agyFavorites = data.antigravityCliFavoriteModels ?? [];
+}
+
+async function initUpdateIndicator() {
+  const indicator = document.getElementById('update-indicator');
+  const popover = document.getElementById('update-popover');
+  if (!indicator || !popover) return;
+
+  try {
+    const status = await api('GET', '/api/update-status');
+    if (!status.updateAvailable || !status.latestVersion) return;
+
+    document.getElementById('update-current-version').textContent = status.currentVersion;
+    document.getElementById('update-latest-version').textContent = status.latestVersion;
+    indicator.title = `Version ${status.latestVersion} is available. Click for update instructions.`;
+    indicator.hidden = false;
+  } catch {
+    return;
+  }
+
+  indicator.addEventListener('click', () => {
+    const open = popover.hidden;
+    popover.hidden = !open;
+    indicator.setAttribute('aria-expanded', String(open));
+  });
+
+  document.getElementById('update-copy-btn')?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(UPDATE_COMMAND);
+      showToast('Update command copied');
+    } catch {
+      showToast('Could not copy the update command');
+    }
+  });
+
+  document.addEventListener('click', event => {
+    if (!popover.hidden && !document.getElementById('sidebar-version-area')?.contains(event.target)) {
+      popover.hidden = true;
+      indicator.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !popover.hidden) {
+      popover.hidden = true;
+      indicator.setAttribute('aria-expanded', 'false');
+      indicator.focus();
+    }
+  });
 }
 
 async function loadTemplates() {
@@ -1432,6 +1481,7 @@ async function initModels() {
 async function init() {
   initTheme();
   initNav();
+  void initUpdateIndicator();
 
   document.getElementById('theme-toggle')?.addEventListener('click', toggleTheme);
 

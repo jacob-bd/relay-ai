@@ -8079,6 +8079,128 @@ async function runServerCommand(options = {}) {
   return 0;
 }
 
+// src/update-check.ts
+import {
+  chmodSync as chmodSync5,
+  mkdirSync as mkdirSync6,
+  readFileSync as readFileSync10,
+  renameSync as renameSync3,
+  unlinkSync as unlinkSync2,
+  writeFileSync as writeFileSync5
+} from "fs";
+import { join as join10 } from "path";
+var UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1e3;
+var UPDATE_CHECK_TIMEOUT_MS = 2e3;
+var UPDATE_COMMAND = "npm install -g @jacobbd/relay-ai@latest";
+var REGISTRY_URL = "https://registry.npmjs.org/@jacobbd%2Frelay-ai/latest";
+var SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+function parseVersion(version) {
+  const match = SEMVER_PATTERN.exec(version);
+  if (!match) return null;
+  return {
+    core: [Number(match[1]), Number(match[2]), Number(match[3])],
+    prerelease: match[4]?.split(".") ?? []
+  };
+}
+function comparePrerelease(current, latest) {
+  if (current.length === 0 || latest.length === 0) {
+    if (current.length === latest.length) return 0;
+    return current.length === 0 ? -1 : 1;
+  }
+  const length = Math.max(current.length, latest.length);
+  for (let i = 0; i < length; i++) {
+    const currentPart = current[i];
+    const latestPart = latest[i];
+    if (currentPart === void 0) return 1;
+    if (latestPart === void 0) return -1;
+    if (currentPart === latestPart) continue;
+    const currentNumber = /^\d+$/.test(currentPart) ? Number(currentPart) : null;
+    const latestNumber = /^\d+$/.test(latestPart) ? Number(latestPart) : null;
+    if (currentNumber !== null && latestNumber !== null) return latestNumber > currentNumber ? 1 : -1;
+    if (currentNumber !== null) return 1;
+    if (latestNumber !== null) return -1;
+    return latestPart > currentPart ? 1 : -1;
+  }
+  return 0;
+}
+function isNewerVersion(currentVersion, latestVersion) {
+  const current = parseVersion(currentVersion);
+  const latest = parseVersion(latestVersion);
+  if (!current || !latest) return false;
+  for (let i = 0; i < current.core.length; i++) {
+    if (current.core[i] === latest.core[i]) continue;
+    return latest.core[i] > current.core[i];
+  }
+  return comparePrerelease(current.prerelease, latest.prerelease) > 0;
+}
+function cachePath() {
+  return join10(getAppHome(), "update-check.json");
+}
+function readFreshCache(now) {
+  try {
+    const parsed = JSON.parse(readFileSync10(cachePath(), "utf8"));
+    if (typeof parsed.latestVersion !== "string" || !parseVersion(parsed.latestVersion)) return null;
+    if (typeof parsed.checkedAt !== "number" || !Number.isFinite(parsed.checkedAt)) return null;
+    const age = now - parsed.checkedAt;
+    if (age < 0 || age >= UPDATE_CHECK_TTL_MS) return null;
+    return { latestVersion: parsed.latestVersion, checkedAt: parsed.checkedAt };
+  } catch {
+    return null;
+  }
+}
+function writeCache(cache) {
+  const directory = getAppHome();
+  const path = cachePath();
+  const temporaryPath = `${path}.${process.pid}.tmp`;
+  try {
+    mkdirSync6(directory, { recursive: true, mode: 448 });
+    writeFileSync5(temporaryPath, `${JSON.stringify(cache)}
+`, { mode: 384 });
+    renameSync3(temporaryPath, path);
+    try {
+      chmodSync5(path, 384);
+    } catch {
+    }
+  } catch {
+    try {
+      unlinkSync2(temporaryPath);
+    } catch {
+    }
+  }
+}
+function statusFor(latestVersion) {
+  return {
+    currentVersion: VERSION,
+    latestVersion,
+    updateAvailable: latestVersion !== null && isNewerVersion(VERSION, latestVersion)
+  };
+}
+async function checkForUpdates(options = {}) {
+  const now = options.now ?? Date.now();
+  const cached = readFreshCache(now);
+  if (cached) return statusFor(cached.latestVersion);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? UPDATE_CHECK_TIMEOUT_MS);
+  try {
+    const response = await (options.fetchImpl ?? fetch)(REGISTRY_URL, {
+      headers: { Accept: "application/json", "User-Agent": `relay-ai/${VERSION}` },
+      signal: controller.signal
+    });
+    if (!response.ok) return statusFor(null);
+    const body = await response.json();
+    if (typeof body.version !== "string" || !parseVersion(body.version)) return statusFor(null);
+    writeCache({ latestVersion: body.version, checkedAt: now });
+    return statusFor(body.version);
+  } catch {
+    return statusFor(null);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function formatUpdateNotification(currentVersion, latestVersion) {
+  return `\u{1F514} Update available: ${currentVersion} \u2192 ${latestVersion}. Run ${UPDATE_COMMAND} to update.`;
+}
+
 // src/favorite-provider-display.ts
 var OAUTH_FAVORITE_NAMES = {
   "claude-code": "Claude Code OAuth (Anthropic subscription)",
@@ -8099,16 +8221,16 @@ function favoriteProviderDisplayName(provider) {
 import { execSync as execSync2, spawn as spawn2 } from "child_process";
 import { existsSync as existsSync10 } from "fs";
 import { homedir as homedir7 } from "os";
-import { join as join10 } from "path";
+import { join as join11 } from "path";
 var isWindows2 = process.platform === "win32";
 var OPENCODE_FALLBACK_PATHS = isWindows2 ? [
-  join10(process.env["APPDATA"] ?? homedir7(), "npm", "opencode.cmd"),
-  join10(process.env["APPDATA"] ?? homedir7(), "npm", "opencode"),
-  join10(homedir7(), "AppData", "Roaming", "npm", "opencode.cmd")
+  join11(process.env["APPDATA"] ?? homedir7(), "npm", "opencode.cmd"),
+  join11(process.env["APPDATA"] ?? homedir7(), "npm", "opencode"),
+  join11(homedir7(), "AppData", "Roaming", "npm", "opencode.cmd")
 ] : [
-  join10(homedir7(), ".opencode", "bin", "opencode"),
-  join10(homedir7(), ".local", "bin", "opencode"),
-  join10(homedir7(), ".npm", "bin", "opencode"),
+  join11(homedir7(), ".opencode", "bin", "opencode"),
+  join11(homedir7(), ".local", "bin", "opencode"),
+  join11(homedir7(), ".npm", "bin", "opencode"),
   "/usr/local/bin/opencode",
   "/opt/homebrew/bin/opencode"
 ];
@@ -9789,7 +9911,7 @@ ${pc6.bold("Device code (works on SSH/VPS):")}
 import { execSync as execSync3, spawn as spawn4 } from "child_process";
 import { existsSync as existsSync11, readdirSync, statSync as statSync3 } from "fs";
 import { homedir as homedir8 } from "os";
-import { join as join11 } from "path";
+import { join as join12 } from "path";
 import * as p6 from "@clack/prompts";
 var CODEX_BUNDLE_ID = "com.openai.codex";
 var DARWIN_APP_NAMES = ["ChatGPT", "Codex"];
@@ -9808,33 +9930,33 @@ function runPowerShell(script) {
 function darwinAppCandidates() {
   return DARWIN_APP_NAMES.flatMap((name) => [
     `/Applications/${name}.app`,
-    join11(homedir8(), "Applications", `${name}.app`)
+    join12(homedir8(), "Applications", `${name}.app`)
   ]);
 }
 function winLocalAppData() {
-  return process.env.LOCALAPPDATA ?? join11(homedir8(), "AppData", "Local");
+  return process.env.LOCALAPPDATA ?? join12(homedir8(), "AppData", "Local");
 }
 function winCodexExeCandidates() {
   const local = winLocalAppData();
   const bases = WIN_APP_NAMES.flatMap((name) => [
-    join11(local, "Programs", name),
-    join11(local, "Programs", `OpenAI ${name}`),
-    join11(local, name),
-    join11(local, `OpenAI ${name}`),
-    join11(local, "OpenAI", name)
+    join12(local, "Programs", name),
+    join12(local, "Programs", `OpenAI ${name}`),
+    join12(local, name),
+    join12(local, `OpenAI ${name}`),
+    join12(local, "OpenAI", name)
   ]);
-  bases.push(join11(local, "openai-codex-electron"), join11(local, "openai-chatgpt-electron"));
+  bases.push(join12(local, "openai-codex-electron"), join12(local, "openai-chatgpt-electron"));
   const out = [];
   for (const base of bases) {
     for (const name of WIN_APP_NAMES) {
-      out.push(join11(base, `${name}.exe`));
+      out.push(join12(base, `${name}.exe`));
     }
     try {
       if (existsSync11(base)) {
         for (const dir of readdirSync(base)) {
           if (dir.startsWith("app-")) {
             for (const name of WIN_APP_NAMES) {
-              out.push(join11(base, dir, `${name}.exe`));
+              out.push(join12(base, dir, `${name}.exe`));
             }
           }
         }
@@ -10011,7 +10133,7 @@ function codexAppInstallHint() {
 import { execSync as execSync4, spawn as spawn5 } from "child_process";
 import { existsSync as existsSync12, readdirSync as readdirSync2, statSync as statSync4 } from "fs";
 import { homedir as homedir9 } from "os";
-import { join as join12 } from "path";
+import { join as join13 } from "path";
 import * as p7 from "@clack/prompts";
 var CLAUDE_BUNDLE_ID = "com.anthropic.claudefordesktop";
 function claudeAppSupported() {
@@ -10028,26 +10150,26 @@ function runPowerShell2(script) {
 function darwinAppCandidates2() {
   return [
     "/Applications/Claude.app",
-    join12(homedir9(), "Applications", "Claude.app")
+    join13(homedir9(), "Applications", "Claude.app")
   ];
 }
 function winLocalAppData2() {
-  return process.env.LOCALAPPDATA ?? join12(homedir9(), "AppData", "Local");
+  return process.env.LOCALAPPDATA ?? join13(homedir9(), "AppData", "Local");
 }
 function winClaudeExeCandidates() {
   const local = winLocalAppData2();
   const bases = [
-    join12(local, "Programs", "Claude"),
-    join12(local, "Claude")
+    join13(local, "Programs", "Claude"),
+    join13(local, "Claude")
   ];
   const out = [];
   for (const base of bases) {
-    out.push(join12(base, "Claude.exe"));
+    out.push(join13(base, "Claude.exe"));
     try {
       if (existsSync12(base)) {
         for (const name of readdirSync2(base)) {
           if (name.startsWith("app-")) {
-            out.push(join12(base, name, "Claude.exe"));
+            out.push(join13(base, name, "Claude.exe"));
           }
         }
       }
@@ -10385,6 +10507,8 @@ export {
   loadServerModels,
   resolveServerUpstreamApiKey,
   runServerCommand,
+  checkForUpdates,
+  formatUpdateNotification,
   favoriteProviderDisplayName,
   addProviderFromTemplate,
   removeProviderFromRegistry,
@@ -10408,4 +10532,4 @@ export {
   quitClaudeAppGracefully,
   launchOrRestartClaudeApp
 };
-//# sourceMappingURL=chunk-VSXPAZX4.js.map
+//# sourceMappingURL=chunk-HCLFYDEA.js.map

@@ -7,6 +7,7 @@ import {
   addProviderFromTemplate,
   buildAntigravityAuthUrl,
   buildDedupedModelRows,
+  checkForUpdates,
   completeAntigravityExchange,
   createGatewayModelCatalog,
   favoriteProviderDisplayName,
@@ -64,7 +65,7 @@ import {
   summarizeServerProviders,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-VSXPAZX4.js";
+} from "./chunk-HCLFYDEA.js";
 import {
   __toCommonJS,
   init_provider_templates,
@@ -568,6 +569,8 @@ function handleUiApiRequest(req, res, opts = {}) {
   traceUi(opts, `${req.method ?? "GET"} ${url}`);
   if (url === "/api/config" && req.method === "GET") {
     handleGetConfig(res);
+  } else if (url === "/api/update-status" && req.method === "GET") {
+    handleGetUpdateStatus(res);
   } else if (url === "/api/config" && req.method === "POST") {
     handlePostConfig(req, res);
   } else if (url === "/api/models" && req.method === "GET") {
@@ -611,6 +614,9 @@ function handleUiApiRequest(req, res, opts = {}) {
   } else {
     sendJson(res, 404, { error: "Not found" });
   }
+}
+async function handleGetUpdateStatus(res) {
+  sendJson(res, 200, await checkForUpdates());
 }
 function handleGetConfig(res) {
   const prefs = loadPreferences();
@@ -1447,4 +1453,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-S7SOSUHQ.js.map
+//# sourceMappingURL=ui-command-RVVEBQ25.js.map
