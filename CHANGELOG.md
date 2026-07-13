@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.4] - 2026-07-13
+
+### Added
+
+- **Automatic update notifications in the CLI and web UI** — interactive CLI commands now perform a silent, cached check for newer npm releases and show the exact update command when one is available. The web UI displays the same information below its version badge with a copyable update command. Network failures never block startup or normal commands.
+- **Embedded gateway lifecycle messages in `relay-ai ui`** — starting or stopping the Server Gateway from the browser now prints a concise terminal message showing whether it started in local or network mode and how many models are exposed.
+
 ## [0.4.3] - 2026-07-11
 
 ### Fixed
