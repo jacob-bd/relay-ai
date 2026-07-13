@@ -1,5 +1,8 @@
 import { createServer, type Server } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createGatewayModelCatalog, type ServerModelInfo } from '../src/server/models.js';
 import { startServer, type ServerHandle } from '../src/server/router.js';
 import { createLanguageModel } from '../src/provider-factory.js';
@@ -143,6 +146,49 @@ afterEach(async () => {
 });
 
 describe('server router', () => {
+  it('logs inference routing metadata without request content', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'relay-ai-server-audit-'));
+    const inferenceLogPath = join(dir, 'requests.jsonl');
+    const auditCatalog = createGatewayModelCatalog([
+      model('claude-native', 'anthropic', 'zen'),
+      {
+        id: 'llama-test',
+        name: 'Llama Test',
+        isFree: false,
+        brand: 'Meta',
+        providerId: 'groq',
+        sourceBackend: 'groq',
+        modelFormat: 'openai',
+        npm: '@ai-sdk/groq',
+        apiKey: 'groq-key',
+      },
+    ]);
+
+    try {
+      const server = await startTestServer({ catalog: auditCatalog, inferenceLogPath });
+      for (const request of [
+        { model: 'claude-native', output_config: { effort: 'high' }, messages: [{ role: 'user', content: 'private prompt' }] },
+        { model: 'anthropic-groq__llama-test', output_config: { effort: 'medium' }, messages: [{ role: 'user', content: 'another private prompt' }] },
+      ]) {
+        const response = await fetch(`${server.url}/anthropic/v1/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(request),
+        });
+        expect(response.status).toBe(200);
+      }
+
+      const entries = readFileSync(inferenceLogPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      expect(entries).toEqual([
+        expect.objectContaining({ modelId: 'claude-native', effort: 'high', provider: 'zen', route: 'passthrough' }),
+        expect.objectContaining({ modelId: 'anthropic-groq__llama-test', effort: 'medium', provider: 'groq', route: 'translated' }),
+      ]);
+      expect(readFileSync(inferenceLogPath, 'utf8')).not.toContain('private prompt');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('serves health and model list endpoints', async () => {
     const server = await startTestServer();
 

@@ -30,6 +30,7 @@ const state = {
     starting: false,
     form: {
       seeded: false,
+      mode: 'gateway',           // 'gateway' | 'http-proxy'
       expose: 'favorites',        // 'favorites' | 'specific'
       exposedProviders: [],
       freeModelsOnly: false,
@@ -1998,9 +1999,9 @@ document.addEventListener('click', (e) => {
   }
 });
 
-// ─── Server Gateway ────────────────────────────────────────────────────────
-// Runs `relay-ai server` in-process from the browser: same wizard, same
-// URLs/model-catalog output, no terminal needed.
+// ─── Server ────────────────────────────────────────────────────────────────
+// Runs either `relay-ai server` or `relay-ai server --http-proxy` in-process
+// from the browser: same lifecycle and output, no second terminal needed.
 
 async function refreshServerStatus() {
   try {
@@ -2143,6 +2144,33 @@ function renderServerNetworkOptions() {
 
 function renderServerSetup(s) {
   const f = s.form;
+  const modePicker = `
+    <div class="server-field">
+      <div class="server-field-label">Mode</div>
+      ${toggleGroupHtml([
+        { label: 'API gateway', active: f.mode === 'gateway', onClick: "setServerMode('gateway')" },
+        { label: 'HTTP proxy', active: f.mode === 'http-proxy', onClick: "setServerMode('http-proxy')" },
+      ])}
+    </div>
+  `;
+
+  if (f.mode === 'http-proxy') {
+    return `
+      <div class="server-setup">
+        ${modePicker}
+        <div class="server-proxy-note">
+          <strong>Transparent Claude Code proxy</strong>
+          <p>Keeps Claude Code's normal Anthropic login and forwards first-party models unchanged. Compatible global favorites are available by typing their <code>relay:&lt;provider&gt;:&lt;model&gt;</code> name in <code>/model</code>.</p>
+          <p>The proxy listens only on this machine. After it starts, use the environment variables shown below and leave <code>ANTHROPIC_BASE_URL</code> unset.</p>
+        </div>
+        ${s.error ? `<div class="key-feedback error server-start-error">${escapeHtml(s.error)}</div>` : ''}
+        <button class="btn btn-primary server-start-btn" ${s.starting ? 'disabled' : ''} onclick="submitServerStart()">
+          ${s.starting ? 'Starting…' : 'Start HTTP Proxy'}
+        </button>
+      </div>
+    `;
+  }
+
   const specific = f.expose === 'specific';
   const providersOk = f.expose === 'favorites' || (specific && f.exposedProviders.length > 0);
   const passwordOk = f.listenMode !== 'network' || f.passwordMode === 'saved' || f.password.trim().length > 0;
@@ -2154,6 +2182,7 @@ function renderServerSetup(s) {
 
   return `
     <div class="server-setup">
+      ${modePicker}
       <div class="server-field">
         <div class="server-field-label">Expose</div>
         ${toggleGroupHtml([
@@ -2194,6 +2223,8 @@ function renderServerSetup(s) {
 }
 
 function renderServerRunning(status) {
+  if (status.mode === 'http-proxy') return renderHttpProxyRunning(status);
+
   let idx = 0;
   const nextId = () => `server-url-${idx++}`;
 
@@ -2213,6 +2244,7 @@ function renderServerRunning(status) {
     urlCards.push(urlCard(`Anthropic (${n.name})`, n.anthropicUrl));
     urlCards.push(urlCard(`OpenAI (${n.name})`, n.openaiUrl));
   }
+  if (status.requestLogPath) urlCards.push(urlCard('Request log', status.requestLogPath));
 
   const apiKeyCard = status.listenMode === 'network'
     ? `
@@ -2270,6 +2302,69 @@ function renderServerRunning(status) {
   `;
 }
 
+function renderHttpProxyRunning(status) {
+  function envCard(label, value, id) {
+    return `
+      <div class="url-card server-proxy-env-card">
+        <div class="url-card-label">${escapeHtml(label)}</div>
+        <span class="url-card-value" id="${id}">${escapeHtml(value || '')}</span>
+        <button class="btn btn-ghost btn-sm" onclick="copyServerValue('${id}')">Copy</button>
+      </div>
+    `;
+  }
+
+  const modelRows = (status.proxyModels ?? []).map(m => `
+    <tr>
+      <td>${escapeHtml(m.displayName)}</td>
+      <td><code>${escapeHtml(m.id)}</code></td>
+    </tr>
+  `).join('');
+
+  const skipped = [];
+  if (status.unavailableFavorites) {
+    skipped.push(`${status.unavailableFavorites} unavailable favorite${status.unavailableFavorites === 1 ? '' : 's'}`);
+  }
+  if (status.unsupportedFavorites) {
+    skipped.push(`${status.unsupportedFavorites} unsupported favorite${status.unsupportedFavorites === 1 ? '' : 's'}`);
+  }
+
+  return `
+    <div class="server-running">
+      <div class="server-status-row">
+        <span class="server-status-badge"><span class="server-status-dot"></span>HTTP proxy running</span>
+        <button class="btn btn-ghost server-stop-btn" onclick="stopServerGateway()">Stop Proxy</button>
+      </div>
+      <div class="server-config-summary">
+        Local only · Transparent Anthropic passthrough · ${(status.proxyModels ?? []).length} relay model${(status.proxyModels ?? []).length === 1 ? '' : 's'}
+      </div>
+      <div class="server-proxy-note server-proxy-running-note">
+        <strong>Configure the shell that will launch Claude Code</strong>
+        <p>Set the three environment values below. Leave <code>ANTHROPIC_BASE_URL</code> unset so Claude Code uses its normal Anthropic authentication.</p>
+        <p>Each inference appends routing metadata—but never prompts, credentials, or response bodies—to the request log.</p>
+      </div>
+      <div class="url-card-grid">
+        ${envCard('HTTPS_PROXY', status.proxyUrl, 'server-https-proxy')}
+        ${envCard('HTTP_PROXY', status.proxyUrl, 'server-http-proxy')}
+        ${envCard('NODE_EXTRA_CA_CERTS', status.caCertPath, 'server-proxy-ca-cert')}
+        ${envCard('REQUEST LOG', status.requestLogPath, 'server-proxy-request-log')}
+      </div>
+      ${skipped.length ? `<div class="server-proxy-warning">Skipped ${escapeHtml(skipped.join(' and '))}. Update them in Favorites, then restart the proxy.</div>` : ''}
+      <div class="server-model-table-wrap">
+        <table class="server-model-table">
+          <thead><tr><th>Favorite model</th><th>Claude Code <code>/model</code> name</th></tr></thead>
+          <tbody>${modelRows || '<tr><td colspan="2" class="fav-empty">No compatible favorites configured. Anthropic passthrough still works.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function setServerMode(mode) {
+  state.server.form.mode = mode;
+  state.server.error = null;
+  renderServerPanel();
+}
+
 function setServerExpose(mode) {
   state.server.form.expose = mode;
   state.server.error = null;
@@ -2325,16 +2420,19 @@ async function submitServerStart() {
   state.server.error = null;
   renderServerPanel();
 
-  const body = {
-    favoritesOnly: f.expose === 'favorites',
-    freeModelsOnly: f.freeModelsOnly,
-    exposedProviders: f.expose === 'specific' ? f.exposedProviders : null,
-    maskGatewayIds: f.maskGatewayIds,
-    listenMode: f.listenMode,
-    passwordMode: f.passwordMode,
-    password: f.password,
-    savePassword: f.savePassword,
-  };
+  const body = f.mode === 'http-proxy'
+    ? { mode: 'http-proxy' }
+    : {
+        mode: 'gateway',
+        favoritesOnly: f.expose === 'favorites',
+        freeModelsOnly: f.freeModelsOnly,
+        exposedProviders: f.expose === 'specific' ? f.exposedProviders : null,
+        maskGatewayIds: f.maskGatewayIds,
+        listenMode: f.listenMode,
+        passwordMode: f.passwordMode,
+        password: f.password,
+        savePassword: f.savePassword,
+      };
 
   let result;
   try {
@@ -2347,7 +2445,7 @@ async function submitServerStart() {
   if (result.ok) {
     state.server.status = result.status;
     state.server.form.password = '';
-    showToast('Server started');
+    showToast(f.mode === 'http-proxy' ? 'HTTP proxy started' : 'Server started');
   } else {
     state.server.error = result.error || 'Failed to start server';
   }
@@ -2385,6 +2483,7 @@ function toggleServerApiKeyVisibility() {
   el.textContent = masked ? '••••••••••••' : (el.dataset.value ?? '');
 }
 
+window.setServerMode = setServerMode;
 window.setServerExpose = setServerExpose;
 window.toggleServerProvider = toggleServerProvider;
 window.setServerProviderSearch = setServerProviderSearch;

@@ -9,6 +9,10 @@ import { buildGeminiChildEnv, prepareGeminiChildEnv } from '../src/gemini/launch
 import { setAppPathOverride } from '../src/config.js';
 
 describe('buildClaudeArgs', () => {
+  it('omits --model in native-auth HTTP proxy mode', () => {
+    expect(buildClaudeArgs(undefined, ['-c'])).toEqual(['-c']);
+  });
+
   it('builds model args when no extra args are provided', () => {
     expect(buildClaudeArgs('claude-sonnet-4-6', [])).toEqual(['--model', 'claude-sonnet-4-6']);
   });

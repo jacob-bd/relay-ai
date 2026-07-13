@@ -21,6 +21,7 @@ import {
   gatewayProviderLabel,
   getAppHome,
   getAppPathOverride,
+  getInferenceRequestLogPath,
   getLocalIps,
   getSavedServerPassword,
   getServerExposedProviders,
@@ -60,11 +61,12 @@ import {
   setServerFreeModelsOnly,
   setServerListenMode,
   setServerMaskGatewayIds,
+  startConfiguredHttpProxy,
   startServer,
   summarizeServerProviders,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-VSXPAZX4.js";
+} from "./chunk-WPDPFELI.js";
 import {
   __toCommonJS,
   init_provider_templates,
@@ -384,10 +386,24 @@ async function buildSavedConfig() {
 async function getServerStatus() {
   const saved = await buildSavedConfig();
   if (!running) return { running: false, saved };
+  if (running.mode === "http-proxy") {
+    return {
+      running: true,
+      saved,
+      mode: "http-proxy",
+      proxyUrl: `http://127.0.0.1:${running.handle.port}`,
+      caCertPath: running.handle.caCertPath,
+      proxyModels: running.models,
+      unavailableFavorites: running.unavailableFavorites,
+      unsupportedFavorites: running.unsupportedFavorites,
+      requestLogPath: running.handle.inferenceLogPath
+    };
+  }
   const { handle, config, serverPassword, providerSummary, modelRows } = running;
   const payload = {
     running: true,
     saved,
+    mode: "gateway",
     listenMode: config.listenMode,
     anthropicUrl: `http://127.0.0.1:${handle.port}/anthropic`,
     openaiUrl: `http://127.0.0.1:${handle.port}/openai/v1`,
@@ -396,7 +412,8 @@ async function getServerStatus() {
     freeModelsOnly: config.freeModelsOnly,
     maskGatewayIds: config.maskGatewayIds,
     providerSummary,
-    models: modelRows
+    models: modelRows,
+    requestLogPath: handle.inferenceLogPath
   };
   if (config.listenMode === "network") {
     payload.networkUrls = getLocalIps().map(({ name, address }) => ({
@@ -419,6 +436,7 @@ function startGatewayServer(req) {
   return startInFlight;
 }
 async function doStartGatewayServer(req) {
+  if (req.mode === "http-proxy") return doStartHttpProxyServer();
   if (req.listenMode !== "local" && req.listenMode !== "network") {
     return { ok: false, error: "Invalid listen mode." };
   }
@@ -475,6 +493,7 @@ async function doStartGatewayServer(req) {
   setServerListenMode(req.listenMode);
   const host = req.listenMode === "network" ? "0.0.0.0" : "127.0.0.1";
   const gateway = req.maskGatewayIds ? { maskGatewayIds: true } : void 0;
+  const inferenceLogPath = getInferenceRequestLogPath();
   let handle;
   try {
     handle = await startServer({
@@ -484,7 +503,8 @@ async function doStartGatewayServer(req) {
       serverPassword,
       catalog: createGatewayModelCatalog(models, gateway),
       backends: BACKENDS,
-      gateway
+      gateway,
+      inferenceLogPath
     });
   } catch (err) {
     const code = err?.code;
@@ -492,6 +512,7 @@ async function doStartGatewayServer(req) {
     return { ok: false, error: message };
   }
   running = {
+    mode: "gateway",
     handle,
     serverPassword,
     config: {
@@ -503,6 +524,30 @@ async function doStartGatewayServer(req) {
     },
     providerSummary: summarizeServerProviders(models),
     modelRows: buildModelRows(models, gateway)
+  };
+  return { ok: true, status: await getServerStatus() };
+}
+function proxyModelRows(loaded) {
+  return loaded.routes.map((route) => ({
+    id: route.aliasId,
+    displayName: route.displayName
+  }));
+}
+async function doStartHttpProxyServer() {
+  let started;
+  try {
+    started = await startConfiguredHttpProxy(17645);
+  } catch (err) {
+    const code = err?.code;
+    const message = code === "EADDRINUSE" ? "Port 17645 is already in use \u2014 stop the other relay-ai server instance first." : `Failed to start HTTP proxy: ${err instanceof Error ? err.message : String(err)}`;
+    return { ok: false, error: message };
+  }
+  running = {
+    mode: "http-proxy",
+    handle: started.handle,
+    models: proxyModelRows(started.loaded),
+    unavailableFavorites: started.loaded.unavailable.length,
+    unsupportedFavorites: started.loaded.unsupported.length
   };
   return { ok: true, status: await getServerStatus() };
 }
@@ -1157,6 +1202,15 @@ async function handleGetServerProviders(res) {
 async function handleStartServer(req, res) {
   try {
     const body = JSON.parse(await readBody(req));
+    if (body.mode === "http-proxy") {
+      const result2 = await startGatewayServer({ mode: "http-proxy" });
+      sendJson(res, 200, result2);
+      return;
+    }
+    if (body.mode !== void 0 && body.mode !== "gateway") {
+      sendJson(res, 400, { error: 'mode must be "gateway" or "http-proxy"' });
+      return;
+    }
     if (typeof body.favoritesOnly !== "boolean") {
       sendJson(res, 400, { error: "favoritesOnly must be a boolean" });
       return;
@@ -1170,6 +1224,7 @@ async function handleStartServer(req, res) {
       return;
     }
     const request = {
+      mode: "gateway",
       favoritesOnly: body.favoritesOnly,
       freeModelsOnly: Boolean(body.freeModelsOnly),
       exposedProviders: Array.isArray(body.exposedProviders) ? body.exposedProviders : null,
@@ -1416,4 +1471,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-GEO7ACPW.js.map
+//# sourceMappingURL=ui-command-2LKGDSJT.js.map

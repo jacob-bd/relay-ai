@@ -67,6 +67,51 @@ export function buildChildEnv(
   return env;
 }
 
+/**
+ * Child env for transparent HTTP-proxy mode. Keep normal Anthropic credentials
+ * intact, remove only endpoint modes that would bypass api.anthropic.com, and
+ * trust the per-user Relay AI CA for this child process.
+ */
+export function buildHttpProxyChildEnv(proxyPort: number, caCertPath: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const name of CONFLICTING_ENV_VARS) {
+    if (name === 'ANTHROPIC_API_KEY' || name === 'ANTHROPIC_AUTH_TOKEN' || name === 'ANTHROPIC_MODEL') continue;
+    delete env[name];
+  }
+  const proxyUrl = `http://127.0.0.1:${proxyPort}`;
+  env['HTTPS_PROXY'] = proxyUrl;
+  env['HTTP_PROXY'] = proxyUrl;
+  env['https_proxy'] = proxyUrl;
+  env['http_proxy'] = proxyUrl;
+  env['NODE_EXTRA_CA_CERTS'] = caCertPath;
+  const noProxy = env['NO_PROXY'] ?? env['no_proxy'];
+  if (noProxy !== undefined) {
+    const filtered = noProxy
+      .split(',')
+      .map(value => value.trim())
+      .filter(Boolean)
+      .filter(value => {
+        const entry = value.toLowerCase().replace(/^https?:\/\//, '');
+        const host = entry.replace(/:\d+$/, '');
+        if (host === '*') return false;
+        const suffix = host.startsWith('*.') ? host.slice(1) : host;
+        const bypassesAnthropic = suffix.startsWith('.')
+          ? 'api.anthropic.com'.endsWith(suffix)
+          : 'api.anthropic.com' === suffix || 'api.anthropic.com'.endsWith(`.${suffix}`);
+        return !bypassesAnthropic;
+      })
+      .join(',');
+    if (filtered) {
+      env['NO_PROXY'] = filtered;
+      env['no_proxy'] = filtered;
+    } else {
+      delete env['NO_PROXY'];
+      delete env['no_proxy'];
+    }
+  }
+  return env;
+}
+
 /** Child env for Antigravity — only CLOUD_CODE_URL, no Anthropic proxy vars. */
 export function buildAntigravityChildEnv(gatewayUrl: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };

@@ -44,13 +44,13 @@ export function getInstalledClaudeVersion(): string {
   return '2.1.183'; // default fallback version known to work
 }
 
-export function buildClaudeArgs(model: string, extraArgs: string[]): string[] {
-  return ['--model', model, ...extraArgs];
+export function buildClaudeArgs(model: string | undefined, extraArgs: string[]): string[] {
+  return model ? ['--model', model, ...extraArgs] : [...extraArgs];
 }
 
 export function launchClaude(
   env: NodeJS.ProcessEnv,
-  model: string,
+  model: string | undefined,
   extraArgs: string[],
 ): Promise<number> {
   return new Promise((resolve) => {

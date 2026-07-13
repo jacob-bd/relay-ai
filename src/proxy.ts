@@ -6,7 +6,14 @@ import { appendFileSync, openSync, writeSync, closeSync } from 'node:fs';
 import { readBody, extractApiKey, sendJson } from './http-utils.js';
 import { formatAnthropicModelEntry, formatAnthropicModelList } from './server/models.js';
 import { claudeCodeClientModelId, routeLookupIds, stripOneMContextSuffix } from './context-model-id.js';
-import { getProxyDebugLogPath, redactTraceLine, resetTraceLog } from './trace-log.js';
+import {
+  getProxyDebugLogPath,
+  INFERENCE_PROGRESS_INTERVAL_MS,
+  redactTraceLine,
+  resetTraceLog,
+  writeInferenceResponseLifecycleLog,
+  writeInferenceResponseErrorLog,
+} from './trace-log.js';
 import { fetchWithOAuthRetry, relayAnthropicMessages, UpstreamUnreachableError } from './upstream-forward.js';
 import {
   CLAUDE_CODE_CLI_VERSION,
@@ -24,9 +31,110 @@ import {
   generateAnthropicResponse,
   silenceSdkWarnings,
 } from './sdk-adapter.js';
-import { anthropicErrorType, upstreamHttpStatus } from './codex/upstream-error.js';
+import {
+  anthropicErrorType,
+  formatUpstreamError,
+  sdkUpstreamErrorDetails,
+  upstreamHttpStatus,
+} from './codex/upstream-error.js';
+import { anthropicMessagesEndpoint, estimateAnthropicInputTokens } from './anthropic-endpoints.js';
 
 type ProxyLog = (message: string | (() => string)) => void;
+
+function createTranslationLifecycle(
+  logPath: string | undefined,
+  requestId: string | undefined,
+  modelId: string,
+  provider: string,
+) {
+  if (!logPath || !requestId) return undefined;
+
+  const startedAt = Date.now();
+  let firstPartAt: number | undefined;
+  let lastPartAt: number | undefined;
+  let lastPartType: string | undefined;
+  let lastOutputAt: number | undefined;
+  let sdkParts = 0;
+  let translatedBytes = 0;
+  let translatedChunks = 0;
+  let stopped = false;
+  let dispatched = false;
+
+  const write = (
+    event: Parameters<typeof writeInferenceResponseLifecycleLog>[1]['event'],
+    extra: Partial<Parameters<typeof writeInferenceResponseLifecycleLog>[1]> = {},
+  ) => writeInferenceResponseLifecycleLog(logPath, {
+    event,
+    requestId,
+    modelId,
+    provider,
+    route: 'translated',
+    ...extra,
+  });
+  const snapshot = (now: number) => ({
+    phase: !dispatched
+      ? 'preparing_translation' as const
+      : sdkParts === 0
+        ? 'waiting_for_sdk' as const
+        : 'translating' as const,
+    durationMs: now - startedAt,
+    sdkParts,
+    ...(lastPartAt !== undefined ? { sdkIdleMs: now - lastPartAt } : {}),
+    translatedBytes,
+    translatedChunks,
+    ...(lastOutputAt !== undefined ? { outputIdleMs: now - lastOutputAt } : {}),
+    ...(lastPartType ? { lastPartType } : {}),
+  });
+  const timer = setInterval(() => {
+    if (!stopped) write('translation_progress', snapshot(Date.now()));
+  }, INFERENCE_PROGRESS_INTERVAL_MS);
+  timer.unref();
+
+  return {
+    dispatched() {
+      if (stopped || dispatched) return;
+      dispatched = true;
+      write('translation_dispatched', snapshot(Date.now()));
+    },
+    onPart(partType: string) {
+      const now = Date.now();
+      sdkParts += 1;
+      lastPartAt = now;
+      lastPartType = partType;
+      if (firstPartAt === undefined) {
+        firstPartAt = now;
+        write('translation_started', {
+          durationMs: now - startedAt,
+          sdkParts,
+          lastPartType,
+        });
+      }
+    },
+    onOutput(chunk: string) {
+      translatedBytes += Buffer.byteLength(chunk);
+      translatedChunks += 1;
+      lastOutputAt = Date.now();
+    },
+    complete() {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(timer);
+      write('translation_completed', snapshot(Date.now()));
+    },
+    cancel() {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(timer);
+      write('translation_cancelled', snapshot(Date.now()));
+    },
+    fail(errorType: string) {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(timer);
+      write('translation_failed', { ...snapshot(Date.now()), errorType });
+    },
+  };
+}
 
 function appendSecureLog(logPath: string, line: string): void {
   const redacted = redactTraceLine(line);
@@ -130,6 +238,7 @@ export function startProxyCatalog(
   routes: ProxyRoute[],
   defaultAliasId: string,
   debug = false,
+  inferenceLogPath?: string,
 ): Promise<ProxyHandle> {
   const proxyToken = randomUUID();
   silenceSdkWarnings();
@@ -188,13 +297,24 @@ export function startProxyCatalog(
       return;
     }
 
-    // POST /v1/messages — the main translation path (Claude Code appends ?beta=true or similar)
-    if (req.method === 'POST' && req.url?.startsWith('/v1/messages')) {
+    const messagesEndpoint = anthropicMessagesEndpoint(req.url);
+
+    // Anthropic message creation and token counting are distinct endpoints.
+    if (req.method === 'POST' && messagesEndpoint) {
       const inboundKey = extractApiKey(req);
       if (inboundKey !== proxyToken) {
         anthropicError(res, 401, 'Invalid proxy token');
         return;
       }
+
+      const clientAbort = new AbortController();
+      const abortForClientDisconnect = () => {
+        if (!clientAbort.signal.aborted) clientAbort.abort(new Error('Client disconnected'));
+      };
+      req.once('aborted', abortForClientDisconnect);
+      res.once('close', () => {
+        if (!res.writableFinished) abortForClientDisconnect();
+      });
 
       let anthropicBody: any;
       try {
@@ -207,6 +327,8 @@ export function startProxyCatalog(
 
       const originalModel = anthropicBody.model;
       const clientWantsStream = Boolean(anthropicBody.stream);
+      const relayRequestIdRaw = req.headers['x-relay-request-id'];
+      const relayRequestId = Array.isArray(relayRequestIdRaw) ? relayRequestIdRaw[0] : relayRequestIdRaw;
 
       // Per-request route resolution: look up the alias, fall back to default
       const route = lookupRoute(byAlias, originalModel) ?? defaultRoute;
@@ -218,6 +340,45 @@ export function startProxyCatalog(
       );
 
       const usesSdkAdapter = isSdkMigratedNpm(route.npm);
+
+      if (messagesEndpoint === 'count_tokens') {
+        if (route.modelFormat !== 'anthropic') {
+          const inputTokens = estimateAnthropicInputTokens(anthropicBody);
+          plog(() => `token-count: local estimate model=${originalModel} input_tokens=${inputTokens}`);
+          res.setHeader('x-relay-token-count-source', 'local-estimate');
+          sendJson(res, 200, { input_tokens: inputTokens });
+          return;
+        }
+
+        if (!apiKey) {
+          anthropicError(res, 401, 'Missing API key');
+          return;
+        }
+
+        const betaHeaderRaw = req.headers['anthropic-beta'];
+        const inboundBeta = Array.isArray(betaHeaderRaw) ? betaHeaderRaw.join(',') : betaHeaderRaw;
+        const forwardBody = { ...anthropicBody, model: route.realModelId };
+        const targetUrl = `${upstreamUrl}/v1/messages/count_tokens`;
+        const isOAuth = route.authType === 'oauth';
+        try {
+          await relayAnthropicMessages(res, targetUrl, forwardBody, apiKey, false, {
+            inboundBeta,
+            authType: isOAuth ? 'oauth' : 'api',
+            log: message => plog(message),
+            extraHeaders: route.headers,
+            refreshToken: route.refreshToken,
+            onTokenRefreshed: refreshed => { route.apiKey = refreshed; },
+            signal: clientAbort.signal,
+          });
+        } catch (err) {
+          if (clientAbort.signal.aborted) return;
+          const message = err instanceof UpstreamUnreachableError ? err.message : String(err);
+          plog(() => `anthropic token-count error: ${message}`);
+          anthropicError(res, 502, message);
+        }
+        return;
+      }
+
       if (!apiKey && !usesSdkAdapter) {
         anthropicError(res, 401, 'Missing API key');
         return;
@@ -249,16 +410,27 @@ export function startProxyCatalog(
         }
 
         try {
-          await relayAnthropicMessages(
-            res, targetUrl, forwardBody, apiKey, clientWantsStream, effectiveBeta,
-            isOAuth ? 'oauth' : 'api',
-            message => plog(message),
+          await relayAnthropicMessages(res, targetUrl, forwardBody, apiKey, clientWantsStream, {
+            inboundBeta: effectiveBeta,
+            authType: isOAuth ? 'oauth' : 'api',
+            log: message => plog(message),
             claudeCodeSessionId,
-            route.headers,
-            route.refreshToken,
-            refreshed => { route.apiKey = refreshed; },
-          );
+            extraHeaders: route.headers,
+            refreshToken: route.refreshToken,
+            onTokenRefreshed: refreshed => { route.apiKey = refreshed; },
+            signal: clientAbort.signal,
+            onUpstreamError: inferenceLogPath
+              ? (statusCode, errorContent) => writeInferenceResponseErrorLog(inferenceLogPath, {
+                  modelId: originalModel,
+                  provider: route.providerId ?? route.aliasId.split(':')[1] ?? 'unknown',
+                  route: 'passthrough',
+                  statusCode,
+                  errorContent,
+                })
+              : undefined,
+          });
         } catch (err) {
+          if (clientAbort.signal.aborted) return;
           const message = err instanceof UpstreamUnreachableError ? err.message : String(err);
           plog(() => `anthropic-passthrough error: ${message}`);
           anthropicError(res, 502, message);
@@ -271,23 +443,29 @@ export function startProxyCatalog(
       // format, endpoint selection, and provider quirks.
       if (usesSdkAdapter) {
         const openAiOAuth = route.npm === '@ai-sdk/openai' && route.authType === 'oauth';
-        const params = sdkTranslateRequest(anthropicBody, route.npm!, {
-          openAiOAuth,
-          maxTools: maxToolsForNpm(route.npm),
-          reasoningMetadata: {
-            providerId: route.providerId,
-            apiBaseUrl: route.baseURL,
-            supportedParameters: route.supportedParameters,
-            reasoning: route.reasoning,
-            interleavedReasoningField: route.interleavedReasoningField,
-            upstreamModelId: route.realModelId,
-          },
-        });
-        plog(() =>
-          `sdk: npm=${route.npm} model=${route.realModelId}, stream=${clientWantsStream}, ` +
-          `tools=${anthropicBody.tools?.length ?? 0}, msgs=${params.messages.length}`,
+        const translationLifecycle = createTranslationLifecycle(
+          inferenceLogPath,
+          relayRequestId,
+          originalModel,
+          route.providerId ?? route.aliasId.split(':')[1] ?? 'unknown',
         );
         try {
+          const params = sdkTranslateRequest(anthropicBody, route.npm!, {
+            openAiOAuth,
+            maxTools: maxToolsForNpm(route.npm),
+            reasoningMetadata: {
+              providerId: route.providerId,
+              apiBaseUrl: route.baseURL,
+              supportedParameters: route.supportedParameters,
+              reasoning: route.reasoning,
+              interleavedReasoningField: route.interleavedReasoningField,
+              upstreamModelId: route.realModelId,
+            },
+          });
+          plog(() =>
+            `sdk: npm=${route.npm} model=${route.realModelId}, stream=${clientWantsStream}, ` +
+            `tools=${anthropicBody.tools?.length ?? 0}, msgs=${params.messages.length}`,
+          );
           const model = await createLanguageModel({
             npm: route.npm!,
             modelId: route.realModelId,
@@ -302,34 +480,78 @@ export function startProxyCatalog(
             preferWebSockets: route.preferWebSockets,
             onDebug: (msg: string) => plog(() => msg),
           });
+          translationLifecycle?.dispatched();
           if (clientWantsStream) {
-            res.writeHead(200, {
-              'Content-Type': 'text/event-stream',
-              'Cache-Control': 'no-cache',
-              'Connection': 'keep-alive',
-            });
-            await streamAnthropicResponse(model, params, originalModel, (c) => res.write(c), plog);
+            const writeStreamChunk = (chunk: string) => {
+              translationLifecycle?.onOutput(chunk);
+              if (!res.headersSent) {
+                res.writeHead(200, {
+                  'Content-Type': 'text/event-stream',
+                  'Cache-Control': 'no-cache',
+                  'Connection': 'keep-alive',
+                });
+              }
+              res.write(chunk);
+            };
+            await streamAnthropicResponse(
+              model,
+              params,
+              originalModel,
+              writeStreamChunk,
+              plog,
+              {
+                onPart: partType => translationLifecycle?.onPart(partType),
+                initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
+                abortSignal: clientAbort.signal,
+              },
+            );
+            translationLifecycle?.complete();
+            if (!res.headersSent) writeStreamChunk('');
             res.end();
           } else {
             // ChatGPT's Codex backend (OpenAI OAuth) rejects non-streaming requests
             // outright ("Stream must be set to true"), so always stream internally
             // for it and collect the result, regardless of what the client asked for.
             const anthropicResponse = await generateAnthropicResponse(
-              model, params, originalModel, { forceStream: openAiOAuth },
+              model,
+              params,
+              originalModel,
+              {
+                forceStream: openAiOAuth,
+                abortSignal: clientAbort.signal,
+                onPart: partType => translationLifecycle?.onPart(partType),
+              },
             );
+            translationLifecycle?.onOutput(JSON.stringify(anthropicResponse));
+            translationLifecycle?.complete();
             sendJson(res, 200, anthropicResponse);
           }
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          const body = err && typeof err === 'object' && 'responseBody' in err
-            ? (err as { responseBody?: string }).responseBody
-            : undefined;
-          plog(() => `sdk error: ${message}${body ? ` — body: ${body}` : ''}`);
+          if (clientAbort.signal.aborted) {
+            translationLifecycle?.cancel();
+            return;
+          }
+          translationLifecycle?.fail(err instanceof Error ? err.name : 'UpstreamError');
+          const message = formatUpstreamError(err);
+          const details = sdkUpstreamErrorDetails(err);
+          const upstreamStatus = details?.statusCode ?? upstreamHttpStatus(err, message);
+          plog(() => `sdk error: ${message}${details?.errorContent ? ` — body: ${details.errorContent}` : ''}`);
+          if (inferenceLogPath && upstreamStatus >= 400) {
+            writeInferenceResponseErrorLog(inferenceLogPath, {
+              ...(relayRequestId ? { requestId: relayRequestId } : {}),
+              modelId: originalModel,
+              provider: route.providerId ?? route.aliasId.split(':')[1] ?? 'unknown',
+              route: 'translated',
+              statusCode: upstreamStatus,
+              errorContent: details?.errorContent ?? message,
+              isRetryable: details?.isRetryable,
+              attemptCount: details?.attemptCount,
+            });
+          }
           if (!res.headersSent) {
-            const status = upstreamHttpStatus(err, message);
-            anthropicError(res, status === 500 ? 502 : status, message);
+            anthropicError(res, upstreamStatus === 500 ? 502 : upstreamStatus, message);
           } else {
-            const errorType = anthropicErrorType(upstreamHttpStatus(err, message));
+            const errorType = anthropicErrorType(upstreamStatus);
             res.write(`event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: errorType, message } })}\n\n`);
             res.end();
           }
@@ -366,6 +588,7 @@ export function startProxyCatalog(
               'User-Agent': 'vscode/1.X.X (Antigravity/4.2.0)',
             },
             body: JSON.stringify(envelope),
+            signal: clientAbort.signal,
           });
 
         try {
@@ -386,6 +609,7 @@ export function startProxyCatalog(
             sendJson(res, 200, response);
           }
         } catch (err) {
+          if (clientAbort.signal.aborted) return;
           const message = err instanceof Error ? err.message : String(err);
           plog(() => `cloud-code fetch error: ${message}`);
           if (!res.headersSent) anthropicError(res, 502, message);

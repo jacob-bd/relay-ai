@@ -31,7 +31,13 @@ import {
 } from '../oauth/antigravity-oauth.js';
 import { writeSecureLogLine } from '../trace-log.js';
 import { providerOptionsFromCatalog } from '../server/index.js';
-import { getServerStatus, startGatewayServer, stopGatewayServer, type ServerStartRequest } from './server-control.js';
+import {
+  getServerStatus,
+  startGatewayServer,
+  stopGatewayServer,
+  type GatewayServerStartRequest,
+  type ServerStartRequest,
+} from './server-control.js';
 import { freeStatusLabel } from '../free-models.js';
 
 const MODELS_TIMEOUT_MS = 30_000;
@@ -769,7 +775,17 @@ async function handleGetServerProviders(res: ServerResponse): Promise<void> {
 
 async function handleStartServer(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
-    const body = JSON.parse(await readBody(req)) as Partial<ServerStartRequest>;
+    const body = JSON.parse(await readBody(req)) as Omit<Partial<GatewayServerStartRequest>, 'mode'> & {
+      mode?: unknown;
+    };
+    if (body.mode === 'http-proxy') {
+      const result = await startGatewayServer({ mode: 'http-proxy' });
+      sendJson(res, 200, result);
+      return;
+    }
+    if (body.mode !== undefined && body.mode !== 'gateway') {
+      sendJson(res, 400, { error: 'mode must be "gateway" or "http-proxy"' }); return;
+    }
     if (typeof body.favoritesOnly !== 'boolean') {
       sendJson(res, 400, { error: 'favoritesOnly must be a boolean' }); return;
     }
@@ -780,6 +796,7 @@ async function handleStartServer(req: IncomingMessage, res: ServerResponse): Pro
       sendJson(res, 400, { error: 'listenMode must be "local" or "network"' }); return;
     }
     const request: ServerStartRequest = {
+      mode: 'gateway',
       favoritesOnly: body.favoritesOnly,
       freeModelsOnly: Boolean(body.freeModelsOnly),
       exposedProviders: Array.isArray(body.exposedProviders) ? body.exposedProviders : null,

@@ -56,38 +56,53 @@ export async function fetchWithOAuthRetry<TResponse extends { status: number }>(
 }
 
 /** Relay an Anthropic /v1/messages response (JSON or SSE) to the client. */
+export interface RelayAnthropicOptions {
+  inboundBeta?: string;
+  authType?: 'api' | 'oauth';
+  log?: (message: string) => void;
+  claudeCodeSessionId?: string;
+  extraHeaders?: Record<string, string>;
+  refreshToken?: () => Promise<string | null>;
+  onTokenRefreshed?: (token: string) => void;
+  onUpstreamError?: (statusCode: number, body: string) => void;
+  signal?: AbortSignal;
+}
+
 export async function relayAnthropicMessages(
   res: ServerResponse,
   messagesUrl: string,
   body: Record<string, unknown>,
   apiKey: string,
   clientWantsStream: boolean,
-  inboundBeta?: string,
-  authType?: 'api' | 'oauth',
-  log?: (message: string) => void,
-  claudeCodeSessionId?: string,
-  extraHeaders?: Record<string, string>,
-  refreshToken?: () => Promise<string | null>,
-  onTokenRefreshed?: (token: string) => void,
+  options: RelayAnthropicOptions = {},
 ): Promise<void> {
   const doFetch = (key: string) => fetch(messagesUrl, {
     method: 'POST',
-    headers: anthropicUpstreamHeaders(key, clientWantsStream, inboundBeta, authType, claudeCodeSessionId, extraHeaders),
+    headers: anthropicUpstreamHeaders(
+      key,
+      clientWantsStream,
+      options.inboundBeta,
+      options.authType,
+      options.claudeCodeSessionId,
+      options.extraHeaders,
+    ),
     body: JSON.stringify(body),
+    signal: options.signal,
   });
 
   let upstreamRes: Response;
   try {
-    const retryResult = await fetchWithOAuthRetry(apiKey, doFetch, refreshToken);
+    const retryResult = await fetchWithOAuthRetry(apiKey, doFetch, options.refreshToken);
     upstreamRes = retryResult.response;
-    if (retryResult.refreshed) onTokenRefreshed?.(retryResult.apiKey);
+    if (retryResult.refreshed) options.onTokenRefreshed?.(retryResult.apiKey);
   } catch (err) {
     throw new UpstreamUnreachableError(err);
   }
 
   if (!upstreamRes.ok) {
     const errBody = await upstreamRes.text();
-    log?.(`anthropic upstream ${upstreamRes.status}: ${errBody}`);
+    options.log?.(`anthropic upstream ${upstreamRes.status}: ${errBody}`);
+    options.onUpstreamError?.(upstreamRes.status, errBody);
     res.writeHead(upstreamRes.status, { 'Content-Type': upstreamRes.headers.get('content-type') || 'application/json' });
     res.end(errBody);
     return;

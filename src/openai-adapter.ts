@@ -190,6 +190,10 @@ export async function streamOpenAiResponse(
       case 'finish':
         send({}, p.finishReason || 'stop');
         break;
+      case 'error':
+        throw p.error instanceof Error || (p.error && typeof p.error === 'object')
+          ? p.error
+          : new Error(typeof p.error === 'string' ? p.error : 'Upstream stream failed');
     }
   }
 

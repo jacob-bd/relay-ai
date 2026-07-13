@@ -19,6 +19,7 @@ import {
 } from '../openai-adapter.js';
 import { sendJson, readBody } from '../http-utils.js';
 import { relayAnthropicMessages } from '../upstream-forward.js';
+import { estimateAnthropicInputTokens } from '../anthropic-endpoints.js';
 import { resolveProviderCredential } from '../env.js';
 import { oauthAuthRef } from '../registry/import-build.js';
 import {
@@ -26,10 +27,22 @@ import {
   injectClaudeIdentity,
   selectBetaFlags,
 } from '../oauth/claude-identity.js';
-import { writeSecureLogLine, resetTraceLog } from '../trace-log.js';
+import {
+  getLatestMessagePreview,
+  writeInferenceRequestLog,
+  writeInferenceResponseErrorLog,
+  writeSecureLogLine,
+  resetTraceLog,
+  type InferenceRequestLogEntry,
+} from '../trace-log.js';
 import type { LanguageModel } from 'ai';
 import { createLanguageModel, isSdkMigratedNpm, maxToolsForNpm } from '../provider-factory.js';
-import { formatUpstreamError, upstreamHttpStatus } from '../codex/upstream-error.js';
+import {
+  anthropicErrorType,
+  formatUpstreamError,
+  sdkUpstreamErrorDetails,
+  upstreamHttpStatus,
+} from '../codex/upstream-error.js';
 import {
   translateRequest as sdkTranslateRequest,
   streamAnthropicResponse,
@@ -59,6 +72,8 @@ export interface ServerOptions {
   vertex?: VertexServerConfig;
   /** When set, append structured debug lines to this file path. */
   debugLogPath?: string;
+  /** When set, append privacy-minimal inference routing records as JSONL. */
+  inferenceLogPath?: string;
 }
 
 export interface ServerHandle {
@@ -66,6 +81,7 @@ export interface ServerHandle {
   port: number;
   url: string;
   server: Server;
+  inferenceLogPath?: string;
   close: () => Promise<void>;
 }
 
@@ -77,6 +93,48 @@ function makeServerLog(debugLogPath: string | undefined): PLog {
   if (!debugLogPath) return () => {};
   resetTraceLog(debugLogPath);
   return (msg) => writeSecureLogLine(debugLogPath, typeof msg === 'function' ? msg() : msg);
+}
+
+function auditInference(options: ServerOptions, entry: InferenceRequestLogEntry): void {
+  if (options.inferenceLogPath) writeInferenceRequestLog(options.inferenceLogPath, entry);
+}
+
+function inferenceProvider(model: ServerModelInfo): string {
+  return model.providerId ?? String(model.sourceBackend);
+}
+
+function auditSdkError(
+  options: ServerOptions,
+  requestedModelId: string,
+  model: ServerModelInfo,
+  err: unknown,
+  message: string,
+): number {
+  const details = sdkUpstreamErrorDetails(err);
+  const statusCode = details?.statusCode ?? upstreamHttpStatus(err, message);
+  if (options.inferenceLogPath && statusCode >= 400) {
+    writeInferenceResponseErrorLog(options.inferenceLogPath, {
+      modelId: requestedModelId,
+      provider: inferenceProvider(model),
+      route: 'translated',
+      statusCode,
+      errorContent: details?.errorContent ?? message,
+      isRetryable: details?.isRetryable,
+      attemptCount: details?.attemptCount,
+    });
+  }
+  return statusCode;
+}
+
+function openAiEffort(body: JsonBody): string | undefined {
+  if (typeof body.reasoning_effort === 'string' && body.reasoning_effort.trim()) {
+    return body.reasoning_effort.trim();
+  }
+  const reasoning = body.reasoning;
+  if (reasoning && typeof reasoning === 'object' && typeof reasoning.effort === 'string' && reasoning.effort.trim()) {
+    return reasoning.effort.trim();
+  }
+  return undefined;
 }
 
 export async function startServer(options: ServerOptions): Promise<ServerHandle> {
@@ -106,6 +164,7 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
     port: address.port,
     url: `http://${options.host}:${address.port}`,
     server,
+    inferenceLogPath: options.inferenceLogPath,
     close: () => new Promise<void>((resolve, reject) => {
       server.close(err => (err ? reject(err) : resolve()));
     }),
@@ -194,6 +253,14 @@ async function handleAnthropicMessages(
     const forwardBody: Record<string, unknown> = { ...body, model: upstreamModelId(model) };
     const isOAuth = model.authType === 'oauth';
 
+    auditInference(options, {
+      modelId: body.model,
+      effort: anthropicEffortFromRequest(body as AnthropicRequest) ?? model.defaultEffort,
+      provider: inferenceProvider(model),
+      route: 'passthrough',
+      requestPreview: getLatestMessagePreview(body.messages, body.system),
+    });
+
     let effectiveBeta = inboundBeta;
     let claudeCodeSessionId: string | undefined;
     if (isOAuth) {
@@ -209,15 +276,24 @@ async function handleAnthropicMessages(
       : undefined;
 
     plog(() => `anthropic-passthrough → ${messagesUrl} oauth=${isOAuth} stream=${clientWantsStream}`);
-    await relayAnthropicMessages(
-      res, messagesUrl, forwardBody, apiKey, clientWantsStream, effectiveBeta,
-      isOAuth ? 'oauth' : 'api',
-      message => plog(message),
+    await relayAnthropicMessages(res, messagesUrl, forwardBody, apiKey, clientWantsStream, {
+      inboundBeta: effectiveBeta,
+      authType: isOAuth ? 'oauth' : 'api',
+      log: message => plog(message),
       claudeCodeSessionId,
-      model.headers,
+      extraHeaders: model.headers,
       refreshToken,
-      refreshed => { model.apiKey = refreshed; },
-    );
+      onTokenRefreshed: refreshed => { model.apiKey = refreshed; },
+      onUpstreamError: options.inferenceLogPath
+        ? (statusCode, errorContent) => writeInferenceResponseErrorLog(options.inferenceLogPath!, {
+            modelId: body.model,
+            provider: inferenceProvider(model),
+            route: 'passthrough',
+            statusCode,
+            errorContent,
+          })
+        : undefined,
+    });
     return;
   }
 
@@ -227,6 +303,13 @@ async function handleAnthropicMessages(
       return;
     }
     const apiKey = model.apiKey ?? options.apiKey;
+    auditInference(options, {
+      modelId: body.model,
+      effort: anthropicEffortFromRequest(body as AnthropicRequest) ?? model.defaultEffort,
+      provider: inferenceProvider(model),
+      route: 'translated',
+      requestPreview: getLatestMessagePreview(body.messages, body.system),
+    });
     const languageModel = await getOrInitLanguageModel(modelCache, model, model.npm!, model.apiBaseUrl, apiKey, options.vertex);
     const npmMaxTools = maxToolsForNpm(model.npm);
     const toolCount = Array.isArray((body as Record<string, unknown>).tools) ? ((body as Record<string, unknown>).tools as unknown[]).length : 0;
@@ -256,12 +339,20 @@ async function handleAnthropicMessages(
 
     try {
       if (clientWantsStream) {
-        res.writeHead(200, {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
+        const writeStreamChunk = (chunk: string) => {
+          if (!res.headersSent) {
+            res.writeHead(200, {
+              'Content-Type': 'text/event-stream',
+              'Cache-Control': 'no-cache',
+              'Connection': 'keep-alive',
+            });
+          }
+          res.write(chunk);
+        };
+        await streamAnthropicResponse(languageModel, params, responseModelId, writeStreamChunk, undefined, {
+          initialInputTokens: estimateAnthropicInputTokens(body),
         });
-        await streamAnthropicResponse(languageModel, params, responseModelId, chunk => res.write(chunk));
+        if (!res.headersSent) writeStreamChunk('');
         res.end();
       } else {
         const anthropicResponse = await generateAnthropicResponse(languageModel, params, responseModelId);
@@ -269,11 +360,15 @@ async function handleAnthropicMessages(
       }
     } catch (err) {
       const message = formatUpstreamError(err);
+      const status = auditSdkError(options, body.model, model, err, message);
       plog(`sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message}`);
       if (!res.headersSent) {
-        const status = upstreamHttpStatus(err, message);
         sendJson(res, status === 500 ? 502 : status, { error: { message } });
-      } else res.end();
+      } else {
+        const errorType = anthropicErrorType(status);
+        res.write(`event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: errorType, message } })}\n\n`);
+        res.end();
+      }
     }
     return;
   }
@@ -306,7 +401,24 @@ async function handleOpenAIChatCompletions(
       ? model.completionsUrl
       : `${backendFor(options, model).baseUrl}/v1/chat/completions`;
     const apiKey = model.apiKey ?? options.apiKey;
-    await relayAnthropicMessages(res, completionsUrl, body, apiKey, Boolean(body.stream));
+    auditInference(options, {
+      modelId: body.model,
+      effort: openAiEffort(body),
+      provider: inferenceProvider(model),
+      route: 'passthrough',
+      requestPreview: getLatestMessagePreview(body.messages, body.system),
+    });
+    await relayAnthropicMessages(res, completionsUrl, body, apiKey, Boolean(body.stream), {
+      onUpstreamError: options.inferenceLogPath
+        ? (statusCode, errorContent) => writeInferenceResponseErrorLog(options.inferenceLogPath!, {
+            modelId: body.model,
+            provider: inferenceProvider(model),
+            route: 'passthrough',
+            statusCode,
+            errorContent,
+          })
+        : undefined,
+    });
     return;
   }
 
@@ -318,6 +430,13 @@ async function handleOpenAIChatCompletions(
   }
 
   const apiKey = model.apiKey ?? options.apiKey;
+  auditInference(options, {
+    modelId: body.model,
+    effort: openAiEffort(body),
+    provider: inferenceProvider(model),
+    route: 'translated',
+    requestPreview: getLatestMessagePreview(body.messages, body.system),
+  });
   const baseURL = model.modelFormat === 'anthropic' ? model.baseUrl : model.apiBaseUrl;
   const languageModel = await getOrInitLanguageModel(modelCache, model, npm, baseURL, apiKey, options.vertex);
   const params = translateOpenAiRequest(body as unknown as OpenAiRequest);
@@ -328,12 +447,18 @@ async function handleOpenAIChatCompletions(
 
   try {
     if (clientWantsStream) {
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-      });
-      await streamOpenAiResponse(languageModel, params, responseModelId, chunk => res.write(chunk));
+      const writeStreamChunk = (chunk: string) => {
+        if (!res.headersSent) {
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          });
+        }
+        res.write(chunk);
+      };
+      await streamOpenAiResponse(languageModel, params, responseModelId, writeStreamChunk);
+      if (!res.headersSent) writeStreamChunk('');
       res.end();
     } else {
       const response = await generateOpenAiResponse(languageModel, params, responseModelId);
@@ -341,11 +466,14 @@ async function handleOpenAIChatCompletions(
     }
   } catch (err) {
     const message = formatUpstreamError(err);
+    const status = auditSdkError(options, body.model, model, err, message);
     plog(`sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message}`);
     if (!res.headersSent) {
-      const status = upstreamHttpStatus(err, message);
       sendJson(res, status === 500 ? 502 : status, { error: { message } });
-    } else res.end();
+    } else {
+      res.write(`data: ${JSON.stringify({ error: { message, type: 'upstream_error', code: status } })}\n\n`);
+      res.end();
+    }
   }
 }
 

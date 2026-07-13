@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { formatUpstreamError, upstreamHttpStatus, anthropicErrorType } from '../src/codex/upstream-error.js';
+import { APICallError, RetryError } from 'ai';
+import {
+  formatUpstreamError,
+  sdkUpstreamErrorDetails,
+  upstreamHttpStatus,
+  anthropicErrorType,
+} from '../src/codex/upstream-error.js';
 
 describe('formatUpstreamError', () => {
   it('uses lastError message and status without stack', () => {
@@ -33,6 +39,39 @@ describe('formatUpstreamError', () => {
   });
 });
 
+describe('sdkUpstreamErrorDetails', () => {
+  it('unwraps the final APICallError from AI SDK retries', () => {
+    const first = new APICallError({
+      message: 'temporarily unavailable',
+      url: 'https://provider.example/v1/chat/completions',
+      requestBodyValues: {},
+      statusCode: 503,
+      responseBody: '{"error":{"message":"temporarily unavailable"}}',
+      isRetryable: true,
+    });
+    const last = new APICallError({
+      message: 'rate limited',
+      url: 'https://provider.example/v1/chat/completions',
+      requestBodyValues: {},
+      statusCode: 429,
+      responseBody: '{"error":{"message":"rate limited"}}',
+      isRetryable: true,
+    });
+    const retry = new RetryError({
+      message: 'Failed after retries',
+      reason: 'maxRetriesExceeded',
+      errors: [first, last],
+    });
+
+    expect(sdkUpstreamErrorDetails(retry)).toEqual({
+      statusCode: 429,
+      errorContent: '{"error":{"message":"rate limited"}}',
+      isRetryable: true,
+      attemptCount: 2,
+    });
+  });
+});
+
 describe('upstreamHttpStatus', () => {
   it('reads a known status code off the error object', () => {
     expect(upstreamHttpStatus({ statusCode: 401 }, '')).toBe(401);
@@ -44,8 +83,10 @@ describe('upstreamHttpStatus', () => {
     expect(upstreamHttpStatus(undefined, 'Provider returned HTTP 400.')).toBe(400);
   });
 
-  it('defaults to 500 for unrecognized errors', () => {
-    expect(upstreamHttpStatus({ statusCode: 418 }, 'teapot')).toBe(500);
+  it('preserves uncommon upstream HTTP errors and defaults non-HTTP failures to 500', () => {
+    expect(upstreamHttpStatus({ statusCode: 418 }, 'teapot')).toBe(418);
+    expect(upstreamHttpStatus({ statusCode: 503 }, 'unavailable')).toBe(503);
+    expect(upstreamHttpStatus({ statusCode: 529 }, 'overloaded')).toBe(529);
     expect(upstreamHttpStatus(null, 'boom')).toBe(500);
   });
 });

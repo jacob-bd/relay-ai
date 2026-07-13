@@ -21,6 +21,8 @@ export const CODEX_PROXY_DEBUG_LOG = 'codex-proxy-debug.log';
 export const GEMINI_PROXY_DEBUG_LOG = 'gemini-proxy-debug.log';
 export const PROVIDER_DEBUG_LOG = 'provider-debug.log';
 export const UI_DEBUG_LOG = 'ui-debug.log';
+export const INFERENCE_REQUEST_LOG = 'inference-requests.jsonl';
+export const INFERENCE_PROGRESS_INTERVAL_MS = 30_000;
 
 export function ensureLogsDir(): string {
   const dir = getLogsPath();
@@ -61,6 +63,257 @@ export function getProviderDebugLogPath(): string {
 
 export function getUiDebugLogPath(): string {
   return join(ensureLogsDir(), UI_DEBUG_LOG);
+}
+
+export function getInferenceRequestLogPath(): string {
+  return join(ensureLogsDir(), INFERENCE_REQUEST_LOG);
+}
+
+const REQUEST_PREVIEW_ENV = 'RELAY_AI_LOG_REQUEST_PREVIEW';
+const REQUEST_PREVIEW_MAX = 240;
+const RESPONSE_ERROR_MAX = 2_000;
+
+function compactLogValue(value: string, max = 500): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function compactLogValueWithMarker(value: string, max: number): string {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  if (compact.length <= max) return compact;
+  const marker = ' [truncated]';
+  return compact.slice(0, max - marker.length) + marker;
+}
+
+function systemPreview(system: unknown): string | undefined {
+  if (typeof system === 'string') return compactLogValue(system, REQUEST_PREVIEW_MAX) || undefined;
+  if (!Array.isArray(system)) return undefined;
+  const text = system
+    .map(block => typeof block === 'string'
+      ? block
+      : block && typeof block === 'object' && typeof (block as Record<string, unknown>).text === 'string'
+        ? (block as Record<string, unknown>).text as string
+        : '')
+    .filter(Boolean)
+    .join(' ');
+  return compactLogValue(text, REQUEST_PREVIEW_MAX) || undefined;
+}
+
+function inlineSystemPreview(messages: unknown): string | undefined {
+  if (!Array.isArray(messages)) return undefined;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (!message || typeof message !== 'object') continue;
+    const record = message as Record<string, unknown>;
+    if (record.role !== 'system') continue;
+    const preview = systemPreview(record.content);
+    if (preview) return preview;
+  }
+  return undefined;
+}
+
+export function getLatestMessagePreview(messages: unknown, system?: unknown): string | undefined {
+  let blockSummary: string | undefined;
+  if (Array.isArray(messages) && messages.length > 0) {
+    const message = messages[messages.length - 1];
+    if (message && typeof message === 'object') {
+      const record = message as Record<string, unknown>;
+      const role = typeof record.role === 'string' ? record.role : 'message';
+      const content = record.content;
+      let summary: string | undefined;
+
+      if (typeof content === 'string') {
+        summary = content;
+      } else if (Array.isArray(content)) {
+        const text = content
+          .filter((block): block is Record<string, unknown> => Boolean(block && typeof block === 'object'))
+          .filter(block => block.type === 'text' && typeof block.text === 'string')
+          .map(block => block.text as string)
+          .join(' ');
+        if (text.trim()) {
+          summary = text;
+        } else {
+          const blockTypes = [...new Set(content
+            .filter((block): block is Record<string, unknown> => Boolean(block && typeof block === 'object'))
+            .map(block => typeof block.type === 'string' ? block.type : 'unknown'))];
+          if (blockTypes.length > 0) blockSummary = `${role}: [${blockTypes.join(', ')}]`;
+        }
+      }
+
+      const compact = summary ? compactLogValue(summary, REQUEST_PREVIEW_MAX) : '';
+      if (compact) return `${role}: ${compact}`;
+    }
+  }
+
+  const systemText = systemPreview(system) ?? inlineSystemPreview(messages);
+  if (!systemText) return blockSummary;
+  const preview = blockSummary
+    ? `${blockSummary} | system: ${systemText}`
+    : `system: ${systemText}`;
+  return compactLogValue(preview, REQUEST_PREVIEW_MAX + 20);
+}
+
+export interface InferenceRequestLogEntry {
+  requestId?: string;
+  modelId: string;
+  provider: string;
+  effort?: string;
+  route: 'passthrough' | 'translated';
+  stream?: boolean;
+  requestPreview?: string;
+}
+
+export interface InferenceResponseErrorLogEntry {
+  requestId?: string;
+  modelId: string;
+  provider: string;
+  route: 'passthrough' | 'translated';
+  statusCode: number;
+  errorContent?: string;
+  isRetryable?: boolean;
+  attemptCount?: number;
+}
+
+export type InferenceResponseLifecycleEvent =
+  | 'translation_dispatched'
+  | 'translation_started'
+  | 'translation_progress'
+  | 'translation_completed'
+  | 'translation_cancelled'
+  | 'translation_failed'
+  | 'response_started'
+  | 'response_progress'
+  | 'response_completed'
+  | 'response_failed'
+  | 'response_client_disconnected'
+  | 'response_usage';
+
+export type InferenceResponsePhase =
+  | 'preparing_translation'
+  | 'waiting_for_sdk'
+  | 'translating'
+  | 'waiting_for_headers'
+  | 'waiting_for_first_byte'
+  | 'streaming'
+  | 'delivering';
+
+export interface InferenceResponseLifecycleLogEntry {
+  event: InferenceResponseLifecycleEvent;
+  requestId: string;
+  modelId: string;
+  provider: string;
+  route: 'passthrough' | 'translated';
+  statusCode?: number;
+  phase?: InferenceResponsePhase;
+  durationMs?: number;
+  timeToFirstByteMs?: number;
+  idleMs?: number;
+  bytes?: number;
+  chunks?: number;
+  sdkParts?: number;
+  sdkIdleMs?: number;
+  translatedBytes?: number;
+  translatedChunks?: number;
+  outputIdleMs?: number;
+  usageStage?: 'message_start';
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  lastPartType?: string;
+  errorType?: string;
+}
+
+/** Append privacy-minimal routing metadata, plus an explicitly enabled request preview. */
+export function writeInferenceRequestLog(
+  path: string,
+  entry: InferenceRequestLogEntry,
+): void {
+  const includePreview = process.env[REQUEST_PREVIEW_ENV] === '1' && entry.requestPreview;
+  writeSecureLogLine(path, JSON.stringify({
+    timestamp: new Date().toISOString(),
+    ...(entry.requestId ? { requestId: compactLogValue(entry.requestId, 100) } : {}),
+    modelId: compactLogValue(entry.modelId),
+    ...(entry.effort ? { effort: compactLogValue(entry.effort, 100) } : {}),
+    provider: compactLogValue(entry.provider, 200),
+    route: entry.route,
+    ...(entry.stream !== undefined ? { stream: entry.stream } : {}),
+    ...(includePreview ? { requestPreview: compactLogValue(entry.requestPreview!, REQUEST_PREVIEW_MAX + 20) } : {}),
+  }));
+}
+
+function nonNegativeInteger(value: number | undefined): number | undefined {
+  return value !== undefined && Number.isFinite(value)
+    ? Math.max(0, Math.round(value))
+    : undefined;
+}
+
+/** Append privacy-minimal response timing and delivery metadata. */
+export function writeInferenceResponseLifecycleLog(
+  path: string,
+  entry: InferenceResponseLifecycleLogEntry,
+): void {
+  const statusCode = nonNegativeInteger(entry.statusCode);
+  const durationMs = nonNegativeInteger(entry.durationMs);
+  const timeToFirstByteMs = nonNegativeInteger(entry.timeToFirstByteMs);
+  const idleMs = nonNegativeInteger(entry.idleMs);
+  const bytes = nonNegativeInteger(entry.bytes);
+  const chunks = nonNegativeInteger(entry.chunks);
+  const sdkParts = nonNegativeInteger(entry.sdkParts);
+  const sdkIdleMs = nonNegativeInteger(entry.sdkIdleMs);
+  const translatedBytes = nonNegativeInteger(entry.translatedBytes);
+  const translatedChunks = nonNegativeInteger(entry.translatedChunks);
+  const outputIdleMs = nonNegativeInteger(entry.outputIdleMs);
+  const inputTokens = nonNegativeInteger(entry.inputTokens);
+  const outputTokens = nonNegativeInteger(entry.outputTokens);
+  const cacheCreationInputTokens = nonNegativeInteger(entry.cacheCreationInputTokens);
+  const cacheReadInputTokens = nonNegativeInteger(entry.cacheReadInputTokens);
+  writeSecureLogLine(path, JSON.stringify({
+    timestamp: new Date().toISOString(),
+    event: entry.event,
+    requestId: compactLogValue(entry.requestId, 100),
+    modelId: compactLogValue(entry.modelId),
+    provider: compactLogValue(entry.provider, 200),
+    route: entry.route,
+    ...(statusCode !== undefined ? { statusCode } : {}),
+    ...(entry.phase ? { phase: entry.phase } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(timeToFirstByteMs !== undefined ? { timeToFirstByteMs } : {}),
+    ...(idleMs !== undefined ? { idleMs } : {}),
+    ...(bytes !== undefined ? { bytes } : {}),
+    ...(chunks !== undefined ? { chunks } : {}),
+    ...(sdkParts !== undefined ? { sdkParts } : {}),
+    ...(sdkIdleMs !== undefined ? { sdkIdleMs } : {}),
+    ...(translatedBytes !== undefined ? { translatedBytes } : {}),
+    ...(translatedChunks !== undefined ? { translatedChunks } : {}),
+    ...(outputIdleMs !== undefined ? { outputIdleMs } : {}),
+    ...(entry.usageStage ? { usageStage: entry.usageStage } : {}),
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
+    ...(entry.lastPartType ? { lastPartType: compactLogValue(entry.lastPartType, 100) } : {}),
+    ...(entry.errorType ? { errorType: compactLogValue(entry.errorType, 200) } : {}),
+  }));
+}
+
+/** Append an upstream HTTP failure; response content follows the request-preview opt-in. */
+export function writeInferenceResponseErrorLog(
+  path: string,
+  entry: InferenceResponseErrorLogEntry,
+): void {
+  const includeContent = process.env[REQUEST_PREVIEW_ENV] === '1' && entry.errorContent;
+  writeSecureLogLine(path, JSON.stringify({
+    timestamp: new Date().toISOString(),
+    event: 'upstream_error',
+    ...(entry.requestId ? { requestId: compactLogValue(entry.requestId, 100) } : {}),
+    modelId: compactLogValue(entry.modelId),
+    provider: compactLogValue(entry.provider, 200),
+    route: entry.route,
+    statusCode: entry.statusCode,
+    ...(entry.isRetryable !== undefined ? { isRetryable: entry.isRetryable } : {}),
+    ...(entry.attemptCount !== undefined ? { attemptCount: entry.attemptCount } : {}),
+    ...(includeContent ? { errorContent: compactLogValueWithMarker(entry.errorContent!, RESPONSE_ERROR_MAX) } : {}),
+  }));
 }
 
 export function prepareProviderTraceLog(): string {

@@ -77,6 +77,7 @@ var package_default = {
     ai: "^6.0.197",
     "gitlab-ai-provider": "^6.8.0",
     "ipaddr.js": "^2.4.0",
+    "node-forge": "^1.4.0",
     open: "^11.0.0",
     picocolors: "^1.1.1",
     "smol-toml": "^1.6.1",
@@ -86,6 +87,7 @@ var package_default = {
   },
   devDependencies: {
     "@types/node": "^22.0.0",
+    "@types/node-forge": "^1.3.14",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^2.1.9",
     tsup: "^8.0.0",
@@ -196,7 +198,7 @@ function positiveSecondsToMs(value, defaultMs) {
   return Number.isFinite(seconds) && seconds > 0 ? seconds * 1e3 : defaultMs;
 }
 async function sleepMs(ms) {
-  await new Promise((resolve) => setTimeout(resolve, ms));
+  await new Promise((resolve2) => setTimeout(resolve2, ms));
 }
 
 // src/oauth/refresh-http.ts
@@ -356,10 +358,10 @@ function applyResponsesLiteShape(payload) {
     store: false
   };
 }
-function createResponsesWebSocketFetch(wsUrl, log7) {
+function createResponsesWebSocketFetch(wsUrl, log8) {
   const debug = (msg) => {
     try {
-      log7?.(`ws: ${msg}`);
+      log8?.(`ws: ${msg}`);
     } catch {
     }
   };
@@ -839,7 +841,7 @@ function toCamelCase(str) {
   return str.replace(/[-_]([a-z])/g, (_, g) => g.toUpperCase());
 }
 function hasSupportedParameter(metadata, param) {
-  return (metadata?.supportedParameters ?? []).some((p8) => p8 === param);
+  return (metadata?.supportedParameters ?? []).some((p9) => p9 === param);
 }
 function isOpenRouterRoute(npm, metadata) {
   return npm === "@openrouter/ai-sdk-provider" || metadata?.providerId === "openrouter" || metadata?.apiBaseUrl?.includes("openrouter.ai") === true;
@@ -1909,10 +1911,10 @@ function getInstalledClaudeVersion() {
   return "2.1.183";
 }
 function buildClaudeArgs(model, extraArgs) {
-  return ["--model", model, ...extraArgs];
+  return model ? ["--model", model, ...extraArgs] : [...extraArgs];
 }
 function launchClaude(env, model, extraArgs) {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     const claudePath = findClaudeBinary();
     const args = buildClaudeArgs(model, extraArgs);
     const debugFileIdx = extraArgs.indexOf("--debug-file");
@@ -1951,11 +1953,11 @@ function launchClaude(env, model, extraArgs) {
     process.once("SIGTERM", () => forward("SIGTERM"));
     child.on("exit", (code) => {
       restore();
-      resolve(code ?? 0);
+      resolve2(code ?? 0);
     });
     child.on("error", (err) => {
       restore();
-      resolve(1);
+      resolve2(1);
     });
   });
 }
@@ -2100,7 +2102,7 @@ var SUCCESS_HTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Auth
 <p style="color:#666">You can close this tab and return to the terminal.</p>
 </div></body></html>`;
 function startCallbackServer() {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     let codeResolve;
     let codeReject;
     const server = http.createServer((req, res) => {
@@ -2120,7 +2122,7 @@ function startCallbackServer() {
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address();
       const port = addr.port;
-      resolve({
+      resolve2({
         port,
         redirectUri: `http://127.0.0.1:${port}/callback`,
         waitForCallback(timeoutMs = 3e5) {
@@ -2316,9 +2318,9 @@ async function onboardUser(accessToken, tierId, maxAttempts = 10) {
     });
     const result = await res.json();
     if (result.done === true) {
-      const p8 = result.response ? result.response.cloudaicompanionProject : void 0;
-      if (typeof p8 === "string") finalProjectId = p8.trim();
-      else if (p8 && typeof p8 === "object") finalProjectId = String(p8.id ?? "") || finalProjectId;
+      const p9 = result.response ? result.response.cloudaicompanionProject : void 0;
+      if (typeof p9 === "string") finalProjectId = p9.trim();
+      else if (p9 && typeof p9 === "object") finalProjectId = String(p9.id ?? "") || finalProjectId;
       break;
     }
     if (i < maxAttempts - 1) await new Promise((r) => setTimeout(r, 5e3));
@@ -2910,6 +2912,38 @@ function buildChildEnv(baseUrl, model, apiKey, proxyPort, contextWindow, enableG
   applyClaudeCodeThirdPartyCompat(env);
   return env;
 }
+function buildHttpProxyChildEnv(proxyPort, caCertPath) {
+  const env = { ...process.env };
+  for (const name of CONFLICTING_ENV_VARS) {
+    if (name === "ANTHROPIC_API_KEY" || name === "ANTHROPIC_AUTH_TOKEN" || name === "ANTHROPIC_MODEL") continue;
+    delete env[name];
+  }
+  const proxyUrl = `http://127.0.0.1:${proxyPort}`;
+  env["HTTPS_PROXY"] = proxyUrl;
+  env["HTTP_PROXY"] = proxyUrl;
+  env["https_proxy"] = proxyUrl;
+  env["http_proxy"] = proxyUrl;
+  env["NODE_EXTRA_CA_CERTS"] = caCertPath;
+  const noProxy = env["NO_PROXY"] ?? env["no_proxy"];
+  if (noProxy !== void 0) {
+    const filtered = noProxy.split(",").map((value) => value.trim()).filter(Boolean).filter((value) => {
+      const entry = value.toLowerCase().replace(/^https?:\/\//, "");
+      const host = entry.replace(/:\d+$/, "");
+      if (host === "*") return false;
+      const suffix = host.startsWith("*.") ? host.slice(1) : host;
+      const bypassesAnthropic = suffix.startsWith(".") ? "api.anthropic.com".endsWith(suffix) : "api.anthropic.com" === suffix || "api.anthropic.com".endsWith(`.${suffix}`);
+      return !bypassesAnthropic;
+    }).join(",");
+    if (filtered) {
+      env["NO_PROXY"] = filtered;
+      env["no_proxy"] = filtered;
+    } else {
+      delete env["NO_PROXY"];
+      delete env["no_proxy"];
+    }
+  }
+  return env;
+}
 function buildAntigravityChildEnv(gatewayUrl) {
   const env = { ...process.env };
   for (const name of CONFLICTING_ENV_VARS) {
@@ -3290,9 +3324,9 @@ function migrateLegacyCloudProviders(registry) {
   return changed;
 }
 function migrateOAuthOpenAiProvider(registry) {
-  if (registry.providers.some((p8) => p8.id === "openai-oauth")) return false;
+  if (registry.providers.some((p9) => p9.id === "openai-oauth")) return false;
   const idx = registry.providers.findIndex(
-    (p8) => p8.id === "openai" && p8.authType === "oauth"
+    (p9) => p9.id === "openai" && p9.authType === "oauth"
   );
   if (idx < 0) return false;
   const existing = registry.providers[idx];
@@ -3305,9 +3339,9 @@ function migrateOAuthOpenAiProvider(registry) {
   return true;
 }
 function migrateOAuthXaiProvider(registry) {
-  if (registry.providers.some((p8) => p8.id === "xai-oauth")) return false;
+  if (registry.providers.some((p9) => p9.id === "xai-oauth")) return false;
   const idx = registry.providers.findIndex(
-    (p8) => p8.id === "xai" && p8.authType === "oauth"
+    (p9) => p9.id === "xai" && p9.authType === "oauth"
   );
   if (idx < 0) return false;
   const existing = registry.providers[idx];
@@ -3364,33 +3398,33 @@ function writeSecureFile(path, content) {
 }
 function parseProvider(raw) {
   if (!raw || typeof raw !== "object") return null;
-  const p8 = raw;
-  if (typeof p8.id !== "string" || !isValidProviderId(p8.id)) return null;
-  if (typeof p8.templateId !== "string" || !p8.templateId) return null;
-  if (typeof p8.name !== "string" || !p8.name) return null;
-  if (typeof p8.enabled !== "boolean") return null;
-  if (typeof p8.authRef !== "string" || !p8.authRef) return null;
-  if (typeof p8.addedAt !== "string" || !p8.addedAt) return null;
-  const api = p8.api;
+  const p9 = raw;
+  if (typeof p9.id !== "string" || !isValidProviderId(p9.id)) return null;
+  if (typeof p9.templateId !== "string" || !p9.templateId) return null;
+  if (typeof p9.name !== "string" || !p9.name) return null;
+  if (typeof p9.enabled !== "boolean") return null;
+  if (typeof p9.authRef !== "string" || !p9.authRef) return null;
+  if (typeof p9.addedAt !== "string" || !p9.addedAt) return null;
+  const api = p9.api;
   if (!api || typeof api !== "object") return null;
   const provider = {
-    id: p8.id,
-    templateId: p8.templateId,
-    name: p8.name,
-    enabled: p8.enabled,
-    authRef: p8.authRef,
+    id: p9.id,
+    templateId: p9.templateId,
+    name: p9.name,
+    enabled: p9.enabled,
+    authRef: p9.authRef,
     api,
-    addedAt: p8.addedAt
+    addedAt: p9.addedAt
   };
-  if (p8.subscriptionFilter === "free" || p8.subscriptionFilter === "zen" || p8.subscriptionFilter === "go") {
-    provider.subscriptionFilter = p8.subscriptionFilter;
+  if (p9.subscriptionFilter === "free" || p9.subscriptionFilter === "zen" || p9.subscriptionFilter === "go") {
+    provider.subscriptionFilter = p9.subscriptionFilter;
   }
-  if (p8.authType === "api" || p8.authType === "oauth" || p8.authType === "none") {
-    provider.authType = p8.authType;
+  if (p9.authType === "api" || p9.authType === "oauth" || p9.authType === "none") {
+    provider.authType = p9.authType;
   }
-  if (typeof p8.refreshedAt === "string") provider.refreshedAt = p8.refreshedAt;
-  if (p8.modelsCache && typeof p8.modelsCache === "object") {
-    const cache = p8.modelsCache;
+  if (typeof p9.refreshedAt === "string") provider.refreshedAt = p9.refreshedAt;
+  if (p9.modelsCache && typeof p9.modelsCache === "object") {
+    const cache = p9.modelsCache;
     if (typeof cache.fetchedAt === "string" && Array.isArray(cache.models)) {
       provider.modelsCache = {
         fetchedAt: cache.fetchedAt,
@@ -3833,6 +3867,8 @@ var CODEX_PROXY_DEBUG_LOG = "codex-proxy-debug.log";
 var GEMINI_PROXY_DEBUG_LOG = "gemini-proxy-debug.log";
 var PROVIDER_DEBUG_LOG = "provider-debug.log";
 var UI_DEBUG_LOG = "ui-debug.log";
+var INFERENCE_REQUEST_LOG = "inference-requests.jsonl";
+var INFERENCE_PROGRESS_INTERVAL_MS = 3e4;
 function ensureLogsDir() {
   const dir = getLogsPath();
   mkdirSync5(dir, { recursive: true, mode: DIR_MODE2 });
@@ -3864,6 +3900,143 @@ function getProviderDebugLogPath() {
 }
 function getUiDebugLogPath() {
   return join8(ensureLogsDir(), UI_DEBUG_LOG);
+}
+function getInferenceRequestLogPath() {
+  return join8(ensureLogsDir(), INFERENCE_REQUEST_LOG);
+}
+var REQUEST_PREVIEW_ENV = "RELAY_AI_LOG_REQUEST_PREVIEW";
+var REQUEST_PREVIEW_MAX = 240;
+var RESPONSE_ERROR_MAX = 2e3;
+function compactLogValue(value, max = 500) {
+  return value.replace(/\s+/g, " ").trim().slice(0, max);
+}
+function compactLogValueWithMarker(value, max) {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= max) return compact;
+  const marker = " [truncated]";
+  return compact.slice(0, max - marker.length) + marker;
+}
+function systemPreview(system) {
+  if (typeof system === "string") return compactLogValue(system, REQUEST_PREVIEW_MAX) || void 0;
+  if (!Array.isArray(system)) return void 0;
+  const text4 = system.map((block) => typeof block === "string" ? block : block && typeof block === "object" && typeof block.text === "string" ? block.text : "").filter(Boolean).join(" ");
+  return compactLogValue(text4, REQUEST_PREVIEW_MAX) || void 0;
+}
+function inlineSystemPreview(messages) {
+  if (!Array.isArray(messages)) return void 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (!message || typeof message !== "object") continue;
+    const record = message;
+    if (record.role !== "system") continue;
+    const preview = systemPreview(record.content);
+    if (preview) return preview;
+  }
+  return void 0;
+}
+function getLatestMessagePreview(messages, system) {
+  let blockSummary;
+  if (Array.isArray(messages) && messages.length > 0) {
+    const message = messages[messages.length - 1];
+    if (message && typeof message === "object") {
+      const record = message;
+      const role = typeof record.role === "string" ? record.role : "message";
+      const content = record.content;
+      let summary;
+      if (typeof content === "string") {
+        summary = content;
+      } else if (Array.isArray(content)) {
+        const text4 = content.filter((block) => Boolean(block && typeof block === "object")).filter((block) => block.type === "text" && typeof block.text === "string").map((block) => block.text).join(" ");
+        if (text4.trim()) {
+          summary = text4;
+        } else {
+          const blockTypes = [...new Set(content.filter((block) => Boolean(block && typeof block === "object")).map((block) => typeof block.type === "string" ? block.type : "unknown"))];
+          if (blockTypes.length > 0) blockSummary = `${role}: [${blockTypes.join(", ")}]`;
+        }
+      }
+      const compact = summary ? compactLogValue(summary, REQUEST_PREVIEW_MAX) : "";
+      if (compact) return `${role}: ${compact}`;
+    }
+  }
+  const systemText = systemPreview(system) ?? inlineSystemPreview(messages);
+  if (!systemText) return blockSummary;
+  const preview = blockSummary ? `${blockSummary} | system: ${systemText}` : `system: ${systemText}`;
+  return compactLogValue(preview, REQUEST_PREVIEW_MAX + 20);
+}
+function writeInferenceRequestLog(path, entry) {
+  const includePreview = process.env[REQUEST_PREVIEW_ENV] === "1" && entry.requestPreview;
+  writeSecureLogLine(path, JSON.stringify({
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    ...entry.requestId ? { requestId: compactLogValue(entry.requestId, 100) } : {},
+    modelId: compactLogValue(entry.modelId),
+    ...entry.effort ? { effort: compactLogValue(entry.effort, 100) } : {},
+    provider: compactLogValue(entry.provider, 200),
+    route: entry.route,
+    ...entry.stream !== void 0 ? { stream: entry.stream } : {},
+    ...includePreview ? { requestPreview: compactLogValue(entry.requestPreview, REQUEST_PREVIEW_MAX + 20) } : {}
+  }));
+}
+function nonNegativeInteger(value) {
+  return value !== void 0 && Number.isFinite(value) ? Math.max(0, Math.round(value)) : void 0;
+}
+function writeInferenceResponseLifecycleLog(path, entry) {
+  const statusCode = nonNegativeInteger(entry.statusCode);
+  const durationMs = nonNegativeInteger(entry.durationMs);
+  const timeToFirstByteMs = nonNegativeInteger(entry.timeToFirstByteMs);
+  const idleMs = nonNegativeInteger(entry.idleMs);
+  const bytes = nonNegativeInteger(entry.bytes);
+  const chunks = nonNegativeInteger(entry.chunks);
+  const sdkParts = nonNegativeInteger(entry.sdkParts);
+  const sdkIdleMs = nonNegativeInteger(entry.sdkIdleMs);
+  const translatedBytes = nonNegativeInteger(entry.translatedBytes);
+  const translatedChunks = nonNegativeInteger(entry.translatedChunks);
+  const outputIdleMs = nonNegativeInteger(entry.outputIdleMs);
+  const inputTokens = nonNegativeInteger(entry.inputTokens);
+  const outputTokens = nonNegativeInteger(entry.outputTokens);
+  const cacheCreationInputTokens = nonNegativeInteger(entry.cacheCreationInputTokens);
+  const cacheReadInputTokens = nonNegativeInteger(entry.cacheReadInputTokens);
+  writeSecureLogLine(path, JSON.stringify({
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    event: entry.event,
+    requestId: compactLogValue(entry.requestId, 100),
+    modelId: compactLogValue(entry.modelId),
+    provider: compactLogValue(entry.provider, 200),
+    route: entry.route,
+    ...statusCode !== void 0 ? { statusCode } : {},
+    ...entry.phase ? { phase: entry.phase } : {},
+    ...durationMs !== void 0 ? { durationMs } : {},
+    ...timeToFirstByteMs !== void 0 ? { timeToFirstByteMs } : {},
+    ...idleMs !== void 0 ? { idleMs } : {},
+    ...bytes !== void 0 ? { bytes } : {},
+    ...chunks !== void 0 ? { chunks } : {},
+    ...sdkParts !== void 0 ? { sdkParts } : {},
+    ...sdkIdleMs !== void 0 ? { sdkIdleMs } : {},
+    ...translatedBytes !== void 0 ? { translatedBytes } : {},
+    ...translatedChunks !== void 0 ? { translatedChunks } : {},
+    ...outputIdleMs !== void 0 ? { outputIdleMs } : {},
+    ...entry.usageStage ? { usageStage: entry.usageStage } : {},
+    ...inputTokens !== void 0 ? { inputTokens } : {},
+    ...outputTokens !== void 0 ? { outputTokens } : {},
+    ...cacheCreationInputTokens !== void 0 ? { cacheCreationInputTokens } : {},
+    ...cacheReadInputTokens !== void 0 ? { cacheReadInputTokens } : {},
+    ...entry.lastPartType ? { lastPartType: compactLogValue(entry.lastPartType, 100) } : {},
+    ...entry.errorType ? { errorType: compactLogValue(entry.errorType, 200) } : {}
+  }));
+}
+function writeInferenceResponseErrorLog(path, entry) {
+  const includeContent = process.env[REQUEST_PREVIEW_ENV] === "1" && entry.errorContent;
+  writeSecureLogLine(path, JSON.stringify({
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    event: "upstream_error",
+    ...entry.requestId ? { requestId: compactLogValue(entry.requestId, 100) } : {},
+    modelId: compactLogValue(entry.modelId),
+    provider: compactLogValue(entry.provider, 200),
+    route: entry.route,
+    statusCode: entry.statusCode,
+    ...entry.isRetryable !== void 0 ? { isRetryable: entry.isRetryable } : {},
+    ...entry.attemptCount !== void 0 ? { attemptCount: entry.attemptCount } : {},
+    ...includeContent ? { errorContent: compactLogValueWithMarker(entry.errorContent, RESPONSE_ERROR_MAX) } : {}
+  }));
 }
 function makeTraceLogger(logPath) {
   resetTraceLog(logPath);
@@ -3912,8 +4085,8 @@ function writeSecureLogLine(path, line) {
 function printTraceLog(debugLogPath) {
   if (!existsSync8(debugLogPath)) return;
   const raw = readFileSync8(debugLogPath, "utf8");
-  const log7 = redactTraceLog(raw);
-  const errorLines = log7.split("\n").filter(
+  const log8 = redactTraceLog(raw);
+  const errorLines = log8.split("\n").filter(
     (l) => l.includes("error") || l.includes("Error") || l.includes('"type":"error"') || l.includes("status") || l.includes("resolveModel failed") || l.includes("resolveModel fallback")
   );
   console.log("\n" + pc2.bold(pc2.cyan("\u2500\u2500 Debug trace \u2500\u2500")));
@@ -3952,7 +4125,7 @@ function decodeRequestBody(raw, encoding) {
   }
 }
 function readBody(req) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     const chunks = [];
     let totalSize = 0;
     req.on("data", (c) => {
@@ -3966,7 +4139,7 @@ function readBody(req) {
     });
     req.on("end", () => {
       try {
-        resolve(decodeRequestBody(Buffer.concat(chunks), req.headers["content-encoding"]));
+        resolve2(decodeRequestBody(Buffer.concat(chunks), req.headers["content-encoding"]));
       } catch (err) {
         reject(err);
       }
@@ -4108,11 +4281,11 @@ function sanitizeCredential(value) {
   const firstLine = value.trim().split(/\r?\n/)[0]?.trim();
   return firstLine || null;
 }
-function isAuthorized(request, serverPassword) {
+function isAuthorized(request3, serverPassword) {
   if (serverPassword === null) return true;
-  const bearerToken = extractBearerToken(request.headers.get("authorization"));
+  const bearerToken = extractBearerToken(request3.headers.get("authorization"));
   if (bearerToken === serverPassword) return true;
-  return sanitizeCredential(request.headers.get("x-api-key")) === serverPassword;
+  return sanitizeCredential(request3.headers.get("x-api-key")) === serverPassword;
 }
 function extractBearerToken(value) {
   if (!value) return null;
@@ -4146,8 +4319,8 @@ var UpstreamUnreachableError = class extends Error {
     this.name = "UpstreamUnreachableError";
   }
 };
-async function fetchWithOAuthRetry(apiKey, request, refreshToken) {
-  let response = await request(apiKey);
+async function fetchWithOAuthRetry(apiKey, request3, refreshToken) {
+  let response = await request3(apiKey);
   if (response.status !== 401 || !refreshToken) {
     return { response, apiKey, refreshed: false };
   }
@@ -4155,26 +4328,35 @@ async function fetchWithOAuthRetry(apiKey, request, refreshToken) {
   if (!refreshed || refreshed === apiKey) {
     return { response, apiKey, refreshed: false };
   }
-  response = await request(refreshed);
+  response = await request3(refreshed);
   return { response, apiKey: refreshed, refreshed: true };
 }
-async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWantsStream, inboundBeta, authType, log7, claudeCodeSessionId, extraHeaders, refreshToken, onTokenRefreshed) {
+async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWantsStream, options = {}) {
   const doFetch = (key) => fetch(messagesUrl, {
     method: "POST",
-    headers: anthropicUpstreamHeaders(key, clientWantsStream, inboundBeta, authType, claudeCodeSessionId, extraHeaders),
-    body: JSON.stringify(body)
+    headers: anthropicUpstreamHeaders(
+      key,
+      clientWantsStream,
+      options.inboundBeta,
+      options.authType,
+      options.claudeCodeSessionId,
+      options.extraHeaders
+    ),
+    body: JSON.stringify(body),
+    signal: options.signal
   });
   let upstreamRes;
   try {
-    const retryResult = await fetchWithOAuthRetry(apiKey, doFetch, refreshToken);
+    const retryResult = await fetchWithOAuthRetry(apiKey, doFetch, options.refreshToken);
     upstreamRes = retryResult.response;
-    if (retryResult.refreshed) onTokenRefreshed?.(retryResult.apiKey);
+    if (retryResult.refreshed) options.onTokenRefreshed?.(retryResult.apiKey);
   } catch (err) {
     throw new UpstreamUnreachableError(err);
   }
   if (!upstreamRes.ok) {
     const errBody = await upstreamRes.text();
-    log7?.(`anthropic upstream ${upstreamRes.status}: ${errBody}`);
+    options.log?.(`anthropic upstream ${upstreamRes.status}: ${errBody}`);
+    options.onUpstreamError?.(upstreamRes.status, errBody);
     res.writeHead(upstreamRes.status, { "Content-Type": upstreamRes.headers.get("content-type") || "application/json" });
     res.end(errBody);
     return;
@@ -4390,15 +4572,15 @@ function translateRequest(ccReq, options = {}) {
   const sdkMessages = [];
   const nameToIdList = /* @__PURE__ */ new Map();
   const fallbackAssistantReasoning = [...options.fallbackAssistantReasoning ?? []];
-  const request = ccReq.request || {};
-  if (request.systemInstruction?.parts) {
-    for (const part of request.systemInstruction.parts) {
+  const request3 = ccReq.request || {};
+  if (request3.systemInstruction?.parts) {
+    for (const part of request3.systemInstruction.parts) {
       if (part.text) {
         systemInstructions.push(part.text);
       }
     }
   }
-  const contents = request.contents || [];
+  const contents = request3.contents || [];
   for (const msg of contents) {
     const role = msg.role;
     if (role === "system") {
@@ -4410,9 +4592,9 @@ function translateRequest(ccReq, options = {}) {
       continue;
     }
     const sdkRole = role === "model" ? "assistant" : "user";
-    const hasFunctionCall = msg.parts.some((p8) => p8.functionCall);
-    const hasAssistantReasoning = role === "model" && msg.parts.some((p8) => p8.thought || p8.text?.includes("<thinking>"));
-    const hasComplexParts = msg.parts.some((p8) => p8.thought || p8.inlineData || p8.functionCall || p8.functionResponse);
+    const hasFunctionCall = msg.parts.some((p9) => p9.functionCall);
+    const hasAssistantReasoning = role === "model" && msg.parts.some((p9) => p9.thought || p9.text?.includes("<thinking>"));
+    const hasComplexParts = msg.parts.some((p9) => p9.thought || p9.inlineData || p9.functionCall || p9.functionResponse);
     const singleText = msg.parts.length === 1 ? msg.parts[0]?.text : void 0;
     if (!hasComplexParts && singleText !== void 0 && !singleText.includes("<thinking>")) {
       sdkMessages.push({
@@ -4481,9 +4663,9 @@ function translateRequest(ccReq, options = {}) {
     }
   }
   const system = systemInstructions.length > 0 ? systemInstructions.join("\n\n") : void 0;
-  const tools = translateTools(request.tools, options);
+  const tools = translateTools(request3.tools, options);
   let toolChoice;
-  const mode = request.toolConfig?.functionCallingConfig?.mode;
+  const mode = request3.toolConfig?.functionCallingConfig?.mode;
   if (mode === "ANY") {
     toolChoice = "required";
   } else if (mode === "AUTO" || tools) {
@@ -4655,15 +4837,15 @@ function anthropicToCloudCode(body, realModelId, projectId) {
   generationConfig.thinkingConfig = DISABLE_CLOUD_CODE_THINKING;
   const ccTools = translateTools2(body.tools);
   const systemInstruction = extractSystem(body.system);
-  const request = {
+  const request3 = {
     contents,
     generationConfig,
     safetySettings: DEFAULT_SAFETY_SETTINGS
   };
-  if (systemInstruction) request.systemInstruction = systemInstruction;
+  if (systemInstruction) request3.systemInstruction = systemInstruction;
   if (ccTools) {
-    request.tools = ccTools;
-    request.toolConfig = { functionCallingConfig: { mode: "VALIDATED" } };
+    request3.tools = ccTools;
+    request3.toolConfig = { functionCallingConfig: { mode: "VALIDATED" } };
   }
   return {
     project: projectId,
@@ -4672,7 +4854,7 @@ function anthropicToCloudCode(body, realModelId, projectId) {
     userAgent: ANTIGRAVITY_USER_AGENT2,
     requestType: "agent",
     enabledCreditTypes: ["GOOGLE_ONE_AI"],
-    request
+    request: request3
   };
 }
 
@@ -4765,7 +4947,7 @@ function closeBlock(res, state) {
   state.blockIdx++;
   state.textBlockOpen = false;
 }
-async function streamCloudCodeToAnthropic(res, upstreamRes, model, log7) {
+async function streamCloudCodeToAnthropic(res, upstreamRes, model, log8) {
   const state = {
     messageId: `msg_${randomUUID4().replace(/-/g, "").slice(0, 24)}`,
     model,
@@ -4848,7 +5030,7 @@ async function streamCloudCodeToAnthropic(res, upstreamRes, model, log7) {
         }
         if (finishReason) {
           finalStopReason = mapStopReason(finishReason);
-          log7?.(() => {
+          log8?.(() => {
             const toolNames = state.toolCalls.map((tc) => tc.name).filter(Boolean).join(",");
             return `cloud-code stream finish=${finishReason} mapped=${finalStopReason} ${summarizeParts(parts)} emittedTextChars=${state.emittedTextChars} suppressedThoughtChars=${state.suppressedThoughtChars} queuedToolCalls=${state.toolCalls.length} queuedToolNames=${toolNames || "-"} outputTokens=${state.usage.output}`;
           });
@@ -4905,7 +5087,7 @@ async function streamCloudCodeToAnthropic(res, upstreamRes, model, log7) {
   writeEvent(res, "message_stop", { type: "message_stop" });
   res.end();
 }
-async function collectCloudCodeToAnthropic(upstreamRes, model, log7) {
+async function collectCloudCodeToAnthropic(upstreamRes, model, log8) {
   const text4 = await upstreamRes.text();
   const messageId = `msg_${randomUUID4().replace(/-/g, "").slice(0, 24)}`;
   const content = [];
@@ -4949,7 +5131,7 @@ async function collectCloudCodeToAnthropic(upstreamRes, model, log7) {
     const fr = getFinishReason(candidate);
     if (fr) {
       stopReason = content.some((b) => b.type === "tool_use") ? "tool_use" : mapStopReason(fr);
-      log7?.(() => {
+      log8?.(() => {
         const toolNames = content.filter((b) => b.type === "tool_use").map((b) => String(b.name ?? "")).filter(Boolean).join(",");
         return `cloud-code collect finish=${fr} mapped=${stopReason} ${summarizeParts(getParts(candidate))} suppressedThoughtChars=${suppressedThoughtChars} contentBlocks=${content.length} toolNames=${toolNames || "-"} outputTokens=${outputTokens}`;
       });
@@ -5032,6 +5214,25 @@ function resolveUpstreamTools(tools, messages) {
 }
 
 // src/codex/upstream-error.ts
+import { APICallError, RetryError } from "ai";
+function sdkUpstreamErrorDetails(err) {
+  const retry = RetryError.isInstance(err) ? err : void 0;
+  const inner = retry?.lastError ?? err;
+  if (!APICallError.isInstance(inner)) return void 0;
+  let errorContent = inner.responseBody;
+  if (!errorContent && inner.data !== void 0) {
+    try {
+      errorContent = JSON.stringify(inner.data);
+    } catch {
+    }
+  }
+  return {
+    statusCode: inner.statusCode,
+    errorContent: errorContent || inner.message,
+    isRetryable: inner.isRetryable,
+    attemptCount: retry?.errors.length ?? 1
+  };
+}
 function formatUpstreamError(err) {
   if (!err || typeof err !== "object") return "Upstream model request failed.";
   const rec = err;
@@ -5071,7 +5272,7 @@ function formatUpstreamError(err) {
 function upstreamHttpStatus(err, message) {
   if (err && typeof err === "object" && "statusCode" in err) {
     const code = err.statusCode;
-    if (code === 400 || code === 401 || code === 403 || code === 404 || code === 429) return code;
+    if (typeof code === "number" && code >= 400 && code <= 599) return code;
   }
   if (message.includes("HTTP 429") || message.includes("429")) return 429;
   if (message.includes("HTTP 400")) return 400;
@@ -5173,8 +5374,8 @@ function translateMessages(messages, npm) {
       for (const b of blocks) {
         if (b.type === "text") parts.push({ type: "text", text: b.text ?? "" });
         else if (b.type === "image") {
-          const p8 = imagePart(b);
-          if (p8) parts.push(p8);
+          const p9 = imagePart(b);
+          if (p9) parts.push(p9);
         }
       }
       if (toolResults.length) {
@@ -5270,7 +5471,7 @@ function translateRequest2(body, npm, options) {
     providerOptions
   };
 }
-async function writeAnthropicStream(fullStream, modelId, write, log7) {
+async function writeAnthropicStream(fullStream, modelId, write, log8, observer) {
   const messageId = "msg_" + Date.now();
   let blockIndex = -1;
   let started = false;
@@ -5292,7 +5493,12 @@ async function writeAnthropicStream(fullStream, modelId, write, log7) {
         model: modelId,
         stop_reason: null,
         stop_sequence: null,
-        usage: { input_tokens: 0, output_tokens: 0 }
+        usage: {
+          input_tokens: observer?.initialInputTokens ?? 0,
+          output_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0
+        }
       }
     });
     started = true;
@@ -5317,9 +5523,12 @@ async function writeAnthropicStream(fullStream, modelId, write, log7) {
     emit("content_block_start", { type: "content_block_start", index: blockIndex, content_block: contentBlock });
   };
   for await (const part of fullStream) {
+    observer?.onPart?.(part.type);
     switch (part.type) {
+      // The SDK emits start before it knows whether the provider accepted the
+      // request. Wait for content/finish so a pre-content HTTP failure can still
+      // propagate through the proxy with its real non-2xx status.
       case "start":
-        ensureStart();
         break;
       case "reasoning-start":
         openBlock("thinking", { type: "thinking", thinking: "", signature: "" });
@@ -5403,10 +5612,9 @@ async function writeAnthropicStream(fullStream, modelId, write, log7) {
         const e = part.error;
         const errMsg = e?.message || (typeof part.error === "string" ? part.error : JSON.stringify(e?.data ?? part.error));
         const errorType = anthropicErrorType(upstreamHttpStatus(part.error, errMsg));
-        log7?.(() => `sdk stream error (${errorType}): ${errMsg}`);
+        log8?.(() => `sdk stream error (${errorType}): ${errMsg}`);
         closeOpen();
-        emit("error", { type: "error", error: { type: errorType, message: errMsg } });
-        return;
+        throw part.error instanceof Error || part.error && typeof part.error === "object" ? part.error : new Error(errMsg);
       }
       default:
         break;
@@ -5417,9 +5625,14 @@ async function writeAnthropicStream(fullStream, modelId, write, log7) {
   emit("message_delta", { type: "message_delta", delta: { stop_reason: finishReason, stop_sequence: null }, usage });
   emit("message_stop", { type: "message_stop" });
 }
-async function streamAnthropicResponse(model, params, modelId, write, log7) {
-  const result = streamText({ model, ...params, onError: () => {
-  } });
+async function streamAnthropicResponse(model, params, modelId, write, log8, observer) {
+  const result = streamText({
+    model,
+    ...params,
+    abortSignal: observer?.abortSignal,
+    onError: () => {
+    }
+  });
   Promise.resolve(result.text).catch(() => {
   });
   Promise.resolve(result.toolCalls).catch(() => {
@@ -5430,7 +5643,7 @@ async function streamAnthropicResponse(model, params, modelId, write, log7) {
   });
   Promise.resolve(result.usage).catch(() => {
   });
-  await writeAnthropicStream(result.fullStream, modelId, write, log7);
+  await writeAnthropicStream(result.fullStream, modelId, write, log8, observer);
 }
 async function generateAnthropicResponse(model, params, modelId, options) {
   let text4;
@@ -5438,13 +5651,33 @@ async function generateAnthropicResponse(model, params, modelId, options) {
   let finishReason;
   let usage;
   if (options?.forceStream) {
-    const r = streamText({ model, ...params, onError: () => {
-    } });
+    const r = streamText({
+      model,
+      ...params,
+      abortSignal: options.abortSignal,
+      onError: () => {
+      }
+    });
     Promise.resolve(r.toolResults).catch(() => {
     });
-    [text4, toolCalls, finishReason, usage] = await Promise.all([r.text, r.toolCalls, r.finishReason, r.usage]);
+    const observeParts = options.onPart ? (async () => {
+      for await (const part of r.fullStream) {
+        options.onPart?.(part.type);
+      }
+    })() : Promise.resolve();
+    [text4, toolCalls, finishReason, usage] = await Promise.all([
+      r.text,
+      r.toolCalls,
+      r.finishReason,
+      r.usage,
+      observeParts
+    ]);
   } else {
-    const r = await generateText({ model, ...params });
+    const r = await generateText({
+      model,
+      ...params,
+      abortSignal: options?.abortSignal
+    });
     ({ text: text4, toolCalls, finishReason, usage } = r);
   }
   return {
@@ -5466,7 +5699,120 @@ async function generateAnthropicResponse(model, params, modelId, options) {
   };
 }
 
+// src/anthropic-endpoints.ts
+var MESSAGE_PATH = "/v1/messages";
+var COUNT_TOKENS_PATH = "/v1/messages/count_tokens";
+function anthropicMessagesEndpoint(url) {
+  if (!url) return null;
+  let pathname;
+  try {
+    pathname = new URL(url, "http://relay.local").pathname;
+  } catch {
+    return null;
+  }
+  if (pathname === MESSAGE_PATH) return "messages";
+  if (pathname === COUNT_TOKENS_PATH) return "count_tokens";
+  return null;
+}
+var NON_CONTEXT_FIELDS = /* @__PURE__ */ new Set([
+  "model",
+  "stream",
+  "max_tokens",
+  "temperature",
+  "top_p",
+  "top_k",
+  "stop_sequences",
+  "metadata"
+]);
+function estimateAnthropicInputTokens(body) {
+  const contextBody = Object.fromEntries(
+    Object.entries(body).filter(([key]) => !NON_CONTEXT_FIELDS.has(key))
+  );
+  const serialized = JSON.stringify(contextBody);
+  if (!serialized || serialized === "{}") return 0;
+  return Math.max(1, Math.ceil(Buffer.byteLength(serialized, "utf8") / 4));
+}
+
 // src/proxy.ts
+function createTranslationLifecycle(logPath, requestId, modelId, provider) {
+  if (!logPath || !requestId) return void 0;
+  const startedAt = Date.now();
+  let firstPartAt;
+  let lastPartAt;
+  let lastPartType;
+  let lastOutputAt;
+  let sdkParts = 0;
+  let translatedBytes = 0;
+  let translatedChunks = 0;
+  let stopped = false;
+  let dispatched = false;
+  const write = (event, extra = {}) => writeInferenceResponseLifecycleLog(logPath, {
+    event,
+    requestId,
+    modelId,
+    provider,
+    route: "translated",
+    ...extra
+  });
+  const snapshot = (now) => ({
+    phase: !dispatched ? "preparing_translation" : sdkParts === 0 ? "waiting_for_sdk" : "translating",
+    durationMs: now - startedAt,
+    sdkParts,
+    ...lastPartAt !== void 0 ? { sdkIdleMs: now - lastPartAt } : {},
+    translatedBytes,
+    translatedChunks,
+    ...lastOutputAt !== void 0 ? { outputIdleMs: now - lastOutputAt } : {},
+    ...lastPartType ? { lastPartType } : {}
+  });
+  const timer = setInterval(() => {
+    if (!stopped) write("translation_progress", snapshot(Date.now()));
+  }, INFERENCE_PROGRESS_INTERVAL_MS);
+  timer.unref();
+  return {
+    dispatched() {
+      if (stopped || dispatched) return;
+      dispatched = true;
+      write("translation_dispatched", snapshot(Date.now()));
+    },
+    onPart(partType) {
+      const now = Date.now();
+      sdkParts += 1;
+      lastPartAt = now;
+      lastPartType = partType;
+      if (firstPartAt === void 0) {
+        firstPartAt = now;
+        write("translation_started", {
+          durationMs: now - startedAt,
+          sdkParts,
+          lastPartType
+        });
+      }
+    },
+    onOutput(chunk) {
+      translatedBytes += Buffer.byteLength(chunk);
+      translatedChunks += 1;
+      lastOutputAt = Date.now();
+    },
+    complete() {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(timer);
+      write("translation_completed", snapshot(Date.now()));
+    },
+    cancel() {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(timer);
+      write("translation_cancelled", snapshot(Date.now()));
+    },
+    fail(errorType) {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(timer);
+      write("translation_failed", { ...snapshot(Date.now()), errorType });
+    }
+  };
+}
 function appendSecureLog(logPath, line) {
   const redacted = redactTraceLine(line);
   try {
@@ -5513,7 +5859,7 @@ function lookupRoute(byAlias, id) {
   }
   return void 0;
 }
-function startProxyCatalog(routes, defaultAliasId, debug = false) {
+function startProxyCatalog(routes, defaultAliasId, debug = false, inferenceLogPath) {
   const proxyToken = randomUUID5();
   silenceSdkWarnings();
   if (routes.length === 0) {
@@ -5560,12 +5906,21 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
       }
       return;
     }
-    if (req.method === "POST" && req.url?.startsWith("/v1/messages")) {
+    const messagesEndpoint = anthropicMessagesEndpoint(req.url);
+    if (req.method === "POST" && messagesEndpoint) {
       const inboundKey = extractApiKey(req);
       if (inboundKey !== proxyToken) {
         anthropicError(res, 401, "Invalid proxy token");
         return;
       }
+      const clientAbort = new AbortController();
+      const abortForClientDisconnect = () => {
+        if (!clientAbort.signal.aborted) clientAbort.abort(new Error("Client disconnected"));
+      };
+      req.once("aborted", abortForClientDisconnect);
+      res.once("close", () => {
+        if (!res.writableFinished) abortForClientDisconnect();
+      });
       let anthropicBody;
       try {
         const raw = await readBody(req);
@@ -5576,6 +5931,8 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
       }
       const originalModel = anthropicBody.model;
       const clientWantsStream = Boolean(anthropicBody.stream);
+      const relayRequestIdRaw = req.headers["x-relay-request-id"];
+      const relayRequestId = Array.isArray(relayRequestIdRaw) ? relayRequestIdRaw[0] : relayRequestIdRaw;
       const route = lookupRoute(byAlias, originalModel) ?? defaultRoute;
       const apiKey = route.apiKey;
       const upstreamUrl = route.upstreamUrl;
@@ -5583,6 +5940,43 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
         () => `POST /v1/messages - alias=${originalModel} route=${route.realModelId} format=${route.modelFormat} key=${apiKey ? `len:${apiKey.length}` : "MISSING"}`
       );
       const usesSdkAdapter = isSdkMigratedNpm(route.npm);
+      if (messagesEndpoint === "count_tokens") {
+        if (route.modelFormat !== "anthropic") {
+          const inputTokens = estimateAnthropicInputTokens(anthropicBody);
+          plog(() => `token-count: local estimate model=${originalModel} input_tokens=${inputTokens}`);
+          res.setHeader("x-relay-token-count-source", "local-estimate");
+          sendJson(res, 200, { input_tokens: inputTokens });
+          return;
+        }
+        if (!apiKey) {
+          anthropicError(res, 401, "Missing API key");
+          return;
+        }
+        const betaHeaderRaw = req.headers["anthropic-beta"];
+        const inboundBeta = Array.isArray(betaHeaderRaw) ? betaHeaderRaw.join(",") : betaHeaderRaw;
+        const forwardBody = { ...anthropicBody, model: route.realModelId };
+        const targetUrl = `${upstreamUrl}/v1/messages/count_tokens`;
+        const isOAuth = route.authType === "oauth";
+        try {
+          await relayAnthropicMessages(res, targetUrl, forwardBody, apiKey, false, {
+            inboundBeta,
+            authType: isOAuth ? "oauth" : "api",
+            log: (message) => plog(message),
+            extraHeaders: route.headers,
+            refreshToken: route.refreshToken,
+            onTokenRefreshed: (refreshed) => {
+              route.apiKey = refreshed;
+            },
+            signal: clientAbort.signal
+          });
+        } catch (err) {
+          if (clientAbort.signal.aborted) return;
+          const message = err instanceof UpstreamUnreachableError ? err.message : String(err);
+          plog(() => `anthropic token-count error: ${message}`);
+          anthropicError(res, 502, message);
+        }
+        return;
+      }
       if (!apiKey && !usesSdkAdapter) {
         anthropicError(res, 401, "Missing API key");
         return;
@@ -5607,23 +6001,27 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
           plog(() => `anthropic-passthrough: model=${route.realModelId}, stream=${clientWantsStream}`);
         }
         try {
-          await relayAnthropicMessages(
-            res,
-            targetUrl,
-            forwardBody,
-            apiKey,
-            clientWantsStream,
-            effectiveBeta,
-            isOAuth ? "oauth" : "api",
-            (message) => plog(message),
+          await relayAnthropicMessages(res, targetUrl, forwardBody, apiKey, clientWantsStream, {
+            inboundBeta: effectiveBeta,
+            authType: isOAuth ? "oauth" : "api",
+            log: (message) => plog(message),
             claudeCodeSessionId,
-            route.headers,
-            route.refreshToken,
-            (refreshed) => {
+            extraHeaders: route.headers,
+            refreshToken: route.refreshToken,
+            onTokenRefreshed: (refreshed) => {
               route.apiKey = refreshed;
-            }
-          );
+            },
+            signal: clientAbort.signal,
+            onUpstreamError: inferenceLogPath ? (statusCode, errorContent) => writeInferenceResponseErrorLog(inferenceLogPath, {
+              modelId: originalModel,
+              provider: route.providerId ?? route.aliasId.split(":")[1] ?? "unknown",
+              route: "passthrough",
+              statusCode,
+              errorContent
+            }) : void 0
+          });
         } catch (err) {
+          if (clientAbort.signal.aborted) return;
           const message = err instanceof UpstreamUnreachableError ? err.message : String(err);
           plog(() => `anthropic-passthrough error: ${message}`);
           anthropicError(res, 502, message);
@@ -5632,22 +6030,28 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
       }
       if (usesSdkAdapter) {
         const openAiOAuth = route.npm === "@ai-sdk/openai" && route.authType === "oauth";
-        const params = translateRequest2(anthropicBody, route.npm, {
-          openAiOAuth,
-          maxTools: maxToolsForNpm(route.npm),
-          reasoningMetadata: {
-            providerId: route.providerId,
-            apiBaseUrl: route.baseURL,
-            supportedParameters: route.supportedParameters,
-            reasoning: route.reasoning,
-            interleavedReasoningField: route.interleavedReasoningField,
-            upstreamModelId: route.realModelId
-          }
-        });
-        plog(
-          () => `sdk: npm=${route.npm} model=${route.realModelId}, stream=${clientWantsStream}, tools=${anthropicBody.tools?.length ?? 0}, msgs=${params.messages.length}`
+        const translationLifecycle = createTranslationLifecycle(
+          inferenceLogPath,
+          relayRequestId,
+          originalModel,
+          route.providerId ?? route.aliasId.split(":")[1] ?? "unknown"
         );
         try {
+          const params = translateRequest2(anthropicBody, route.npm, {
+            openAiOAuth,
+            maxTools: maxToolsForNpm(route.npm),
+            reasoningMetadata: {
+              providerId: route.providerId,
+              apiBaseUrl: route.baseURL,
+              supportedParameters: route.supportedParameters,
+              reasoning: route.reasoning,
+              interleavedReasoningField: route.interleavedReasoningField,
+              upstreamModelId: route.realModelId
+            }
+          });
+          plog(
+            () => `sdk: npm=${route.npm} model=${route.realModelId}, stream=${clientWantsStream}, tools=${anthropicBody.tools?.length ?? 0}, msgs=${params.messages.length}`
+          );
           const model = await createLanguageModel({
             npm: route.npm,
             modelId: route.realModelId,
@@ -5662,32 +6066,75 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
             preferWebSockets: route.preferWebSockets,
             onDebug: (msg) => plog(() => msg)
           });
+          translationLifecycle?.dispatched();
           if (clientWantsStream) {
-            res.writeHead(200, {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              "Connection": "keep-alive"
-            });
-            await streamAnthropicResponse(model, params, originalModel, (c) => res.write(c), plog);
+            const writeStreamChunk = (chunk) => {
+              translationLifecycle?.onOutput(chunk);
+              if (!res.headersSent) {
+                res.writeHead(200, {
+                  "Content-Type": "text/event-stream",
+                  "Cache-Control": "no-cache",
+                  "Connection": "keep-alive"
+                });
+              }
+              res.write(chunk);
+            };
+            await streamAnthropicResponse(
+              model,
+              params,
+              originalModel,
+              writeStreamChunk,
+              plog,
+              {
+                onPart: (partType) => translationLifecycle?.onPart(partType),
+                initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
+                abortSignal: clientAbort.signal
+              }
+            );
+            translationLifecycle?.complete();
+            if (!res.headersSent) writeStreamChunk("");
             res.end();
           } else {
             const anthropicResponse = await generateAnthropicResponse(
               model,
               params,
               originalModel,
-              { forceStream: openAiOAuth }
+              {
+                forceStream: openAiOAuth,
+                abortSignal: clientAbort.signal,
+                onPart: (partType) => translationLifecycle?.onPart(partType)
+              }
             );
+            translationLifecycle?.onOutput(JSON.stringify(anthropicResponse));
+            translationLifecycle?.complete();
             sendJson(res, 200, anthropicResponse);
           }
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          const body = err && typeof err === "object" && "responseBody" in err ? err.responseBody : void 0;
-          plog(() => `sdk error: ${message}${body ? ` \u2014 body: ${body}` : ""}`);
+          if (clientAbort.signal.aborted) {
+            translationLifecycle?.cancel();
+            return;
+          }
+          translationLifecycle?.fail(err instanceof Error ? err.name : "UpstreamError");
+          const message = formatUpstreamError(err);
+          const details = sdkUpstreamErrorDetails(err);
+          const upstreamStatus = details?.statusCode ?? upstreamHttpStatus(err, message);
+          plog(() => `sdk error: ${message}${details?.errorContent ? ` \u2014 body: ${details.errorContent}` : ""}`);
+          if (inferenceLogPath && upstreamStatus >= 400) {
+            writeInferenceResponseErrorLog(inferenceLogPath, {
+              ...relayRequestId ? { requestId: relayRequestId } : {},
+              modelId: originalModel,
+              provider: route.providerId ?? route.aliasId.split(":")[1] ?? "unknown",
+              route: "translated",
+              statusCode: upstreamStatus,
+              errorContent: details?.errorContent ?? message,
+              isRetryable: details?.isRetryable,
+              attemptCount: details?.attemptCount
+            });
+          }
           if (!res.headersSent) {
-            const status = upstreamHttpStatus(err, message);
-            anthropicError(res, status === 500 ? 502 : status, message);
+            anthropicError(res, upstreamStatus === 500 ? 502 : upstreamStatus, message);
           } else {
-            const errorType = anthropicErrorType(upstreamHttpStatus(err, message));
+            const errorType = anthropicErrorType(upstreamStatus);
             res.write(`event: error
 data: ${JSON.stringify({ type: "error", error: { type: errorType, message } })}
 
@@ -5705,8 +6152,8 @@ data: ${JSON.stringify({ type: "error", error: { type: errorType, message } })}
         }
         const envelope = anthropicToCloudCode(anthropicBody, route.realModelId, projectId);
         const cloudContents = envelope.request.contents ?? [];
-        const cloudToolResults = cloudContents.reduce((count, msg) => count + (msg.parts ?? []).filter((p8) => p8.functionResponse).length, 0);
-        const cloudToolCalls = cloudContents.reduce((count, msg) => count + (msg.parts ?? []).filter((p8) => p8.functionCall).length, 0);
+        const cloudToolResults = cloudContents.reduce((count, msg) => count + (msg.parts ?? []).filter((p9) => p9.functionResponse).length, 0);
+        const cloudToolCalls = cloudContents.reduce((count, msg) => count + (msg.parts ?? []).filter((p9) => p9.functionCall).length, 0);
         const cloudTools = envelope.request.tools?.length ?? 0;
         const cloudMaxOutput = envelope.request.generationConfig?.maxOutputTokens;
         const baseUrl = upstreamUrl.replace(/\/+$/, "");
@@ -5719,7 +6166,8 @@ data: ${JSON.stringify({ type: "error", error: { type: errorType, message } })}
             Authorization: `Bearer ${token}`,
             "User-Agent": "vscode/1.X.X (Antigravity/4.2.0)"
           },
-          body: JSON.stringify(envelope)
+          body: JSON.stringify(envelope),
+          signal: clientAbort.signal
         });
         try {
           const retryResult = await fetchWithOAuthRetry(apiKey, fetchCloudCode, route.refreshToken);
@@ -5738,6 +6186,7 @@ data: ${JSON.stringify({ type: "error", error: { type: errorType, message } })}
             sendJson(res, 200, response);
           }
         } catch (err) {
+          if (clientAbort.signal.aborted) return;
           const message = err instanceof Error ? err.message : String(err);
           plog(() => `cloud-code fetch error: ${message}`);
           if (!res.headersSent) anthropicError(res, 502, message);
@@ -5750,7 +6199,7 @@ data: ${JSON.stringify({ type: "error", error: { type: errorType, message } })}
     }
     anthropicError(res, 404, `Unknown endpoint: ${req.method} ${req.url}`);
   });
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     server.on("error", reject);
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address();
@@ -5759,7 +6208,7 @@ data: ${JSON.stringify({ type: "error", error: { type: errorType, message } })}
         return;
       }
       plog(() => `started on port ${addr.port}, catalog=${routes.length} model(s), default=${defaultRoute.aliasId}`);
-      resolve({
+      resolve2({
         port: addr.port,
         token: proxyToken,
         close: () => {
@@ -5794,6 +6243,54 @@ function startProxy(completionsUrl, modelId, debug = false, contextWindow, sdk, 
     useResponsesLite: sdk?.useResponsesLite,
     preferWebSockets: sdk?.preferWebSockets
   }], clientModelId, debug);
+}
+
+// src/catalog.ts
+function localModelToRoute(lp, model) {
+  if (model.modelFormat === "anthropic" && !model.baseUrl) return null;
+  if (model.modelFormat === "openai" && !isSdkMigratedNpm(model.npm) && !model.completionsUrl) return null;
+  const upstreamUrl = model.modelFormat === "cloud-code" ? model.baseUrl ?? ANTIGRAVITY_BASE_URLS[0] : model.modelFormat === "anthropic" ? model.baseUrl : model.completionsUrl;
+  return {
+    aliasId: claudeCodeClientModelId(aliasModelId(model.id, lp.id), model.contextWindow),
+    realModelId: model.upstreamModelId,
+    displayName: `${model.name || model.id} (${lp.name})`,
+    upstreamUrl: upstreamUrl ?? "",
+    apiKey: lp.apiKey,
+    modelFormat: model.modelFormat,
+    contextWindow: model.contextWindow,
+    npm: model.npm,
+    baseURL: model.apiBaseUrl,
+    providerId: lp.id,
+    authType: lp.authType,
+    oauthAccountId: lp.oauthAccountId,
+    providerData: lp.providerData,
+    headers: lp.headers,
+    supportedParameters: model.supportedParameters,
+    reasoning: model.reasoning,
+    interleavedReasoningField: model.interleavedReasoningField,
+    useResponsesLite: model.useResponsesLite,
+    preferWebSockets: model.preferWebSockets
+  };
+}
+function makeRouteResolver(localProviders) {
+  return (providerId, modelId) => {
+    const provider = localProviders?.find((lp) => lp.id === providerId);
+    const model = provider?.models.find((m) => m.id === modelId);
+    return provider && model ? localModelToRoute(provider, model) ?? void 0 : void 0;
+  };
+}
+function buildCatalogRoutes(startingRoute, favorites, resolveRoute, max = MAX_MODEL_CATALOG) {
+  const droppedFavorites = [];
+  const tail = favorites.map((fav) => {
+    const route = resolveRoute(fav.providerId, fav.modelId);
+    if (!route) droppedFavorites.push(fav);
+    return route;
+  }).filter((route) => route !== void 0);
+  const routes = [
+    startingRoute,
+    ...tail.filter((route) => route.aliasId !== startingRoute.aliasId)
+  ].slice(0, max);
+  return { routes, droppedFavorites };
 }
 
 // src/data/model-incompatible.json
@@ -6737,8 +7234,8 @@ async function fetchProviderCatalog(opts) {
   return loadRegistryProviders(void 0, opts);
 }
 function providersForPicker(providers) {
-  for (const p8 of providers) {
-    p8.models.sort((a, b) => {
+  for (const p9 of providers) {
+    p9.models.sort((a, b) => {
       const nameA = a.name || a.id;
       const nameB = b.name || b.id;
       return nameA.localeCompare(nameB, void 0, { sensitivity: "base", numeric: true });
@@ -6754,7 +7251,7 @@ async function resolveLocalProviderApiKey(provider) {
   if (template?.apiKeyOptional || template?.anonymousFreeModels) {
     return "anonymous";
   }
-  const reg = loadRegistry().providers.find((p8) => p8.id === provider.id);
+  const reg = loadRegistry().providers.find((p9) => p9.id === provider.id);
   const authRef = reg?.authRef ?? (provider.id === "zen" || provider.id === "go" ? "keyring:global:opencode" : oauthAuthRef(provider.id));
   return resolveProviderCredential(provider.id, authRef);
 }
@@ -6867,119 +7364,929 @@ function providersForTarget(providers, target) {
   return providers.map((provider) => providerForTarget(provider, target)).filter((provider) => provider.models.length > 0);
 }
 
+// src/http-proxy/index.ts
+import pc3 from "picocolors";
+import * as p2 from "@clack/prompts";
+
+// src/http-proxy/routes.ts
+var HTTP_PROXY_MODEL_PREFIX = "relay:";
+function httpProxyModelId(providerId, modelId) {
+  return `${HTTP_PROXY_MODEL_PREFIX}${providerId}:${modelId}`;
+}
+function buildHttpProxyRoutes(providers, favorites, max = MAX_MODEL_CATALOG) {
+  const routes = [];
+  const unavailable = [];
+  const unsupported = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const favorite of favorites) {
+    if (routes.length >= max) break;
+    const provider = providers.find((item) => item.id === favorite.providerId);
+    const model = provider?.models.find((item) => item.id === favorite.modelId);
+    if (!provider || !model) {
+      unavailable.push(favorite);
+      continue;
+    }
+    if (model.modelFormat !== "openai" || !isSdkMigratedNpm(model.npm)) {
+      unsupported.push(favorite);
+      continue;
+    }
+    const route = localModelToRoute(provider, model);
+    if (!route || !route.apiKey.trim()) {
+      unavailable.push(favorite);
+      continue;
+    }
+    const aliasId = claudeCodeClientModelId(
+      httpProxyModelId(provider.id, model.id),
+      model.contextWindow
+    );
+    if (seen.has(aliasId)) continue;
+    seen.add(aliasId);
+    routes.push({
+      ...route,
+      aliasId,
+      displayName: `${model.name || model.id} (${provider.name})`
+    });
+  }
+  return { routes, unavailable, unsupported };
+}
+
+// src/http-proxy/server.ts
+import * as http2 from "http";
+import * as https from "https";
+import * as net from "net";
+import { randomUUID as randomUUID6 } from "crypto";
+import { URL as URL2 } from "url";
+import { createBrotliDecompress, createGunzip, createInflate } from "zlib";
+
+// src/http-proxy/ca.ts
+import { randomBytes as randomBytes2 } from "crypto";
+import { chmodSync as chmodSync5, existsSync as existsSync9, mkdirSync as mkdirSync6, readFileSync as readFileSync9, writeFileSync as writeFileSync5 } from "fs";
+import { dirname as dirname5, join as join9, resolve } from "path";
+import forge from "node-forge";
+var CERT_DIR = "http-proxy";
+var CA_CERT_FILE = "relay-ai-ca.pem";
+var CA_KEY_FILE = "relay-ai-ca-key.pem";
+var SERVER_CERT_FILE = "api.anthropic.com.pem";
+var SERVER_KEY_FILE = "api.anthropic.com-key.pem";
+var CERT_VERSION_FILE = "version";
+var CERT_VERSION = "1\n";
+function serialNumber() {
+  const bytes = randomBytes2(16);
+  bytes[0] &= 127;
+  return bytes.toString("hex");
+}
+function certPaths() {
+  const dir = join9(getAppHome(), CERT_DIR);
+  return {
+    dir,
+    caCert: join9(dir, CA_CERT_FILE),
+    caKey: join9(dir, CA_KEY_FILE),
+    serverCert: join9(dir, SERVER_CERT_FILE),
+    serverKey: join9(dir, SERVER_KEY_FILE),
+    version: join9(dir, CERT_VERSION_FILE)
+  };
+}
+function writePrivate(path, value) {
+  writeFileSync5(path, value, { encoding: "utf8", mode: 384 });
+  chmodSync5(path, 384);
+}
+function writePublic(path, value) {
+  writeFileSync5(path, value, { encoding: "utf8", mode: 420 });
+  chmodSync5(path, 420);
+}
+function generateCertificates(paths) {
+  mkdirSync6(paths.dir, { recursive: true, mode: 448 });
+  chmodSync5(paths.dir, 448);
+  const caKeys = forge.pki.rsa.generateKeyPair(2048);
+  const caCert = forge.pki.createCertificate();
+  caCert.publicKey = caKeys.publicKey;
+  caCert.serialNumber = serialNumber();
+  caCert.validity.notBefore = new Date(Date.now() - 24 * 60 * 60 * 1e3);
+  caCert.validity.notAfter = new Date(Date.now() + 10 * 365 * 24 * 60 * 60 * 1e3);
+  const caAttrs = [{ name: "commonName", value: "Relay AI local HTTP proxy CA" }];
+  caCert.setSubject(caAttrs);
+  caCert.setIssuer(caAttrs);
+  caCert.setExtensions([
+    { name: "basicConstraints", cA: true, critical: true },
+    { name: "keyUsage", keyCertSign: true, cRLSign: true, digitalSignature: true, critical: true },
+    { name: "subjectKeyIdentifier" }
+  ]);
+  caCert.sign(caKeys.privateKey, forge.md.sha256.create());
+  const serverKeys = forge.pki.rsa.generateKeyPair(2048);
+  const serverCert = forge.pki.createCertificate();
+  serverCert.publicKey = serverKeys.publicKey;
+  serverCert.serialNumber = serialNumber();
+  serverCert.validity.notBefore = new Date(Date.now() - 24 * 60 * 60 * 1e3);
+  serverCert.validity.notAfter = new Date(Date.now() + 825 * 24 * 60 * 60 * 1e3);
+  serverCert.setSubject([{ name: "commonName", value: "api.anthropic.com" }]);
+  serverCert.setIssuer(caCert.subject.attributes);
+  serverCert.setExtensions([
+    { name: "basicConstraints", cA: false, critical: true },
+    { name: "keyUsage", digitalSignature: true, keyEncipherment: true, critical: true },
+    { name: "extKeyUsage", serverAuth: true },
+    { name: "subjectAltName", altNames: [{ type: 2, value: "api.anthropic.com" }] },
+    { name: "subjectKeyIdentifier" }
+  ]);
+  serverCert.sign(caKeys.privateKey, forge.md.sha256.create());
+  writePrivate(paths.caKey, forge.pki.privateKeyToPem(caKeys.privateKey));
+  writePublic(paths.caCert, forge.pki.certificateToPem(caCert));
+  writePrivate(paths.serverKey, forge.pki.privateKeyToPem(serverKeys.privateKey));
+  writePublic(paths.serverCert, forge.pki.certificateToPem(serverCert));
+  writePublic(paths.version, CERT_VERSION);
+}
+function storedCertificatesAreCurrent(paths) {
+  try {
+    const ca = forge.pki.certificateFromPem(readFileSync9(paths.caCert, "utf8"));
+    const server = forge.pki.certificateFromPem(readFileSync9(paths.serverCert, "utf8"));
+    const now = Date.now();
+    const renewalBuffer = 7 * 24 * 60 * 60 * 1e3;
+    return ca.validity.notBefore.getTime() <= now && ca.validity.notAfter.getTime() > now + renewalBuffer && server.validity.notBefore.getTime() <= now && server.validity.notAfter.getTime() > now + renewalBuffer && ca.verify(ca) && ca.verify(server);
+  } catch {
+    return false;
+  }
+}
+function ensureHttpProxyCertificates() {
+  const paths = certPaths();
+  const required = [paths.caCert, paths.caKey, paths.serverCert, paths.serverKey, paths.version];
+  const current = required.every(existsSync9) && readFileSync9(paths.version, "utf8") === CERT_VERSION && storedCertificatesAreCurrent(paths);
+  if (!current) generateCertificates(paths);
+  return {
+    caCertPath: paths.caCert,
+    caCert: readFileSync9(paths.caCert, "utf8"),
+    serverCert: readFileSync9(paths.serverCert, "utf8"),
+    serverKey: readFileSync9(paths.serverKey, "utf8")
+  };
+}
+function ensureHttpProxyCaBundle(relayCaCertPath, additionalCaCertPath) {
+  if (!additionalCaCertPath?.trim()) return relayCaCertPath;
+  try {
+    if (resolve(additionalCaCertPath) === resolve(relayCaCertPath)) return relayCaCertPath;
+    const relayCa = readFileSync9(relayCaCertPath, "utf8").trimEnd();
+    const additionalCa = readFileSync9(additionalCaCertPath, "utf8").trim();
+    if (!additionalCa) return relayCaCertPath;
+    const combinedPath = join9(dirname5(relayCaCertPath), "combined-ca.pem");
+    writePublic(combinedPath, `${relayCa}
+${additionalCa}
+`);
+    return combinedPath;
+  } catch {
+    return relayCaCertPath;
+  }
+}
+
+// src/http-proxy/server.ts
+var ANTHROPIC_HOST = "api.anthropic.com";
+var MAX_BODY_BYTES = 50 * 1024 * 1024;
+var MAX_ERROR_BODY_BYTES = 64 * 1024;
+var MAX_MESSAGE_START_SSE_BYTES = 64 * 1024;
+function numericUsage(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : void 0;
+}
+function messageStartUsageFromSseBlock(block) {
+  const lines = block.split("\n");
+  const event = lines.find((line) => line.startsWith("event:"))?.slice("event:".length).trim();
+  if (event && event !== "message_start") return void 0;
+  const data = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice("data:".length).trimStart()).join("\n");
+  if (!data) return void 0;
+  try {
+    const parsed = JSON.parse(data);
+    if (parsed.type !== "message_start") return void 0;
+    const message = parsed.message;
+    const usage = message?.usage;
+    if (!usage) return void 0;
+    return {
+      usageStage: "message_start",
+      inputTokens: numericUsage(usage.input_tokens),
+      outputTokens: numericUsage(usage.output_tokens),
+      cacheCreationInputTokens: numericUsage(usage.cache_creation_input_tokens),
+      cacheReadInputTokens: numericUsage(usage.cache_read_input_tokens)
+    };
+  } catch {
+    return void 0;
+  }
+}
+function createMessageStartUsageCapture(onUsage, onDone) {
+  let buffered = "";
+  let capturedBytes = 0;
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    onDone?.();
+  };
+  return (chunk) => {
+    if (done) return;
+    const available = MAX_MESSAGE_START_SSE_BYTES - capturedBytes;
+    const captured = chunk.length > available ? chunk.subarray(0, available) : chunk;
+    capturedBytes += captured.length;
+    buffered = (buffered + captured.toString("utf8")).replace(/\r\n/g, "\n");
+    let boundary;
+    while ((boundary = buffered.indexOf("\n\n")) >= 0) {
+      const block = buffered.slice(0, boundary);
+      buffered = buffered.slice(boundary + 2);
+      const usage = messageStartUsageFromSseBlock(block);
+      if (usage) {
+        finish();
+        onUsage(usage);
+        return;
+      }
+    }
+    if (capturedBytes >= MAX_MESSAGE_START_SSE_BYTES) finish();
+  };
+}
+function observeMessageStartUsage(upstream, contentEncoding, onUsage) {
+  const encoding = (Array.isArray(contentEncoding) ? contentEncoding[0] : contentEncoding)?.trim().toLowerCase();
+  if (!encoding || encoding === "identity") {
+    let capture2;
+    capture2 = createMessageStartUsageCapture(onUsage, () => upstream.off("data", capture2));
+    upstream.on("data", capture2);
+    return;
+  }
+  const decoder = encoding === "gzip" ? createGunzip() : encoding === "br" ? createBrotliDecompress() : encoding === "deflate" ? createInflate() : void 0;
+  if (!decoder) return;
+  const onCompressedData = (chunk) => {
+    if (!decoder.destroyed) decoder.write(chunk);
+  };
+  const onCompressedEnd = () => {
+    if (!decoder.destroyed) decoder.end();
+  };
+  const cleanup = () => {
+    upstream.off("data", onCompressedData);
+    upstream.off("end", onCompressedEnd);
+    decoder.destroy();
+  };
+  const capture = createMessageStartUsageCapture(onUsage, cleanup);
+  decoder.on("data", capture);
+  decoder.once("error", cleanup);
+  upstream.on("data", onCompressedData);
+  upstream.once("end", onCompressedEnd);
+}
+function authorityParts(authority) {
+  try {
+    const parsed = new URL2(`http://${authority}`);
+    return { host: parsed.hostname, port: Number(parsed.port || 443) };
+  } catch {
+    return null;
+  }
+}
+function shouldInterceptConnect(authority) {
+  const target = authorityParts(authority);
+  return Boolean(target && target.port === 443 && target.host.replace(/\.$/, "").toLowerCase() === ANTHROPIC_HOST);
+}
+function readRawBody(req) {
+  return new Promise((resolve2, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        reject(new Error("Request body too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve2(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+function copyResponse(upstream, res, onErrorResponse, onMessageStartUsage) {
+  const statusCode = upstream.statusCode ?? 502;
+  const contentType = upstream.headers["content-type"];
+  if (statusCode < 400 && onMessageStartUsage && typeof contentType === "string" && contentType.includes("text/event-stream")) {
+    observeMessageStartUsage(upstream, upstream.headers["content-encoding"], onMessageStartUsage);
+  }
+  const errorChunks = [];
+  let capturedBytes = 0;
+  let truncated = false;
+  let errorLogged = false;
+  const logErrorResponse = (suffix = "") => {
+    if (errorLogged || statusCode < 400 || !onErrorResponse) return;
+    errorLogged = true;
+    const body = Buffer.concat(errorChunks).toString("utf8");
+    onErrorResponse(statusCode, `${body}${truncated ? " [truncated]" : ""}${suffix}`);
+  };
+  if (statusCode >= 400 && onErrorResponse) {
+    upstream.on("data", (chunk) => {
+      if (capturedBytes >= MAX_ERROR_BODY_BYTES) {
+        truncated = true;
+        return;
+      }
+      const available = MAX_ERROR_BODY_BYTES - capturedBytes;
+      const captured = chunk.length > available ? chunk.subarray(0, available) : chunk;
+      errorChunks.push(Buffer.from(captured));
+      capturedBytes += captured.length;
+      if (captured.length < chunk.length) truncated = true;
+    });
+    upstream.once("end", () => logErrorResponse());
+  }
+  res.writeHead(statusCode, upstream.statusMessage, upstream.rawHeaders);
+  upstream.once("error", (err) => {
+    logErrorResponse(` [stream error: ${err.message}]`);
+    res.destroy();
+  });
+  upstream.pipe(res);
+}
+function requestHeadersWithoutProxyHeaders(req) {
+  const headers = [];
+  for (let i = 0; i < req.rawHeaders.length; i += 2) {
+    const name = req.rawHeaders[i];
+    if (/^proxy-(authorization|connection)$/i.test(name)) continue;
+    headers.push(name, req.rawHeaders[i + 1] ?? "");
+  }
+  return headers;
+}
+function forwardRawAnthropicRequest(req, res, rawBody, origin, rejectUnauthorized, onErrorResponse, onMessageStartUsage) {
+  return new Promise((resolve2) => {
+    let settled = false;
+    let clientDisconnected = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve2();
+    };
+    const upstream = https.request({
+      protocol: "https:",
+      hostname: origin.hostname,
+      port: origin.port || 443,
+      method: req.method,
+      path: req.url,
+      headers: requestHeadersWithoutProxyHeaders(req),
+      servername: net.isIP(origin.hostname) ? void 0 : origin.hostname,
+      rejectUnauthorized
+    }, (upstreamRes) => {
+      copyResponse(upstreamRes, res, onErrorResponse, onMessageStartUsage);
+      upstreamRes.once("end", done);
+      upstreamRes.once("error", done);
+    });
+    res.once("close", () => {
+      if (res.writableFinished) return;
+      clientDisconnected = true;
+      upstream.destroy(new Error("Client disconnected"));
+      done();
+    });
+    upstream.once("error", (err) => {
+      if (clientDisconnected) {
+        done();
+        return;
+      }
+      if (!res.headersSent) res.writeHead(502, { "Content-Type": "text/plain" });
+      res.end(`Anthropic upstream unreachable: ${err.message}`);
+      done();
+    });
+    upstream.end(rawBody);
+  });
+}
+function forwardToAdapter(req, res, rawBody, adapter, lifecycle) {
+  return new Promise((resolve2) => {
+    const startedAt = Date.now();
+    let lastActivityAt = startedAt;
+    let headersReceived = false;
+    let firstByteAt;
+    let statusCode;
+    let bytes = 0;
+    let chunks = 0;
+    let adapterEnded = false;
+    let failed = false;
+    let clientDisconnected = false;
+    let adapterResponse;
+    let upstream;
+    const writeLifecycle = (event, extra = {}) => {
+      if (!lifecycle) return;
+      writeInferenceResponseLifecycleLog(lifecycle.logPath, {
+        event,
+        requestId: lifecycle.requestId,
+        modelId: lifecycle.modelId,
+        provider: lifecycle.provider,
+        route: "translated",
+        ...extra
+      });
+    };
+    const responsePhase = () => {
+      if (!headersReceived) return "waiting_for_headers";
+      if (firstByteAt === void 0) return "waiting_for_first_byte";
+      return adapterEnded ? "delivering" : "streaming";
+    };
+    const progressTimer = lifecycle ? setInterval(() => {
+      const now = Date.now();
+      writeLifecycle("response_progress", {
+        statusCode,
+        phase: responsePhase(),
+        durationMs: now - startedAt,
+        ...firstByteAt !== void 0 ? { timeToFirstByteMs: firstByteAt - startedAt } : {},
+        idleMs: now - lastActivityAt,
+        bytes,
+        chunks
+      });
+    }, lifecycle.progressIntervalMs) : void 0;
+    progressTimer?.unref();
+    const stopProgress = () => {
+      if (progressTimer) clearInterval(progressTimer);
+    };
+    res.once("finish", () => {
+      stopProgress();
+      if (failed || clientDisconnected) return;
+      const now = Date.now();
+      writeLifecycle("response_completed", {
+        statusCode,
+        durationMs: now - startedAt,
+        ...firstByteAt !== void 0 ? { timeToFirstByteMs: firstByteAt - startedAt } : {},
+        bytes,
+        chunks
+      });
+    });
+    res.once("close", () => {
+      stopProgress();
+      if (res.writableFinished || failed) return;
+      clientDisconnected = true;
+      const now = Date.now();
+      writeLifecycle("response_client_disconnected", {
+        statusCode,
+        phase: responsePhase(),
+        durationMs: now - startedAt,
+        ...firstByteAt !== void 0 ? { timeToFirstByteMs: firstByteAt - startedAt } : {},
+        idleMs: now - lastActivityAt,
+        bytes,
+        chunks
+      });
+      adapterResponse?.destroy(new Error("Client disconnected"));
+      upstream?.destroy(new Error("Client disconnected"));
+      resolve2();
+    });
+    const failAdapterRequest = (err) => {
+      if (clientDisconnected) {
+        resolve2();
+        return;
+      }
+      if (headersReceived || failed) return;
+      failed = true;
+      stopProgress();
+      const now = Date.now();
+      writeLifecycle("response_failed", {
+        statusCode: 502,
+        phase: responsePhase(),
+        durationMs: now - startedAt,
+        idleMs: now - lastActivityAt,
+        bytes,
+        chunks,
+        errorType: err.name
+      });
+      if (!res.headersSent) res.writeHead(502, { "Content-Type": "text/plain" });
+      res.end(`Relay adapter unreachable: ${err.message}`);
+      resolve2();
+    };
+    upstream = http2.request({
+      hostname: "127.0.0.1",
+      port: adapter.port,
+      method: "POST",
+      path: req.url,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": String(rawBody.length),
+        "x-api-key": adapter.token,
+        ...lifecycle ? { "x-relay-request-id": lifecycle.requestId } : {}
+      }
+    }, (upstreamRes) => {
+      adapterResponse = upstreamRes;
+      headersReceived = true;
+      statusCode = upstreamRes.statusCode ?? 502;
+      lastActivityAt = Date.now();
+      upstreamRes.on("data", (chunk) => {
+        const now = Date.now();
+        if (firstByteAt === void 0) {
+          firstByteAt = now;
+          writeLifecycle("response_started", {
+            statusCode,
+            durationMs: now - startedAt,
+            timeToFirstByteMs: now - startedAt
+          });
+        }
+        lastActivityAt = now;
+        bytes += chunk.length;
+        chunks += 1;
+      });
+      copyResponse(upstreamRes, res, void 0, lifecycle ? (usage) => writeLifecycle("response_usage", usage) : void 0);
+      const failAdapterResponse = (err) => {
+        if (clientDisconnected) {
+          resolve2();
+          return;
+        }
+        if (adapterEnded || failed) return;
+        failed = true;
+        stopProgress();
+        const now = Date.now();
+        writeLifecycle("response_failed", {
+          statusCode,
+          phase: responsePhase(),
+          durationMs: now - startedAt,
+          ...firstByteAt !== void 0 ? { timeToFirstByteMs: firstByteAt - startedAt } : {},
+          idleMs: now - lastActivityAt,
+          bytes,
+          chunks,
+          errorType: err.name
+        });
+        if (!res.writableEnded) res.destroy(err);
+        resolve2();
+      };
+      upstreamRes.once("end", () => {
+        adapterEnded = true;
+        lastActivityAt = Date.now();
+        resolve2();
+      });
+      upstreamRes.once("error", failAdapterResponse);
+      upstreamRes.once("aborted", () => failAdapterResponse(new Error("Relay adapter response aborted")));
+      upstreamRes.once("close", () => {
+        if (!upstreamRes.complete) failAdapterResponse(new Error("Relay adapter response closed before completion"));
+      });
+    });
+    upstream.once("error", failAdapterRequest);
+    upstream.once("close", () => {
+      if (!headersReceived && !failed) {
+        failAdapterRequest(new Error("Relay adapter connection closed before a response"));
+      }
+    });
+    upstream.end(rawBody);
+  });
+}
+function forwardPlainHttp(req, res) {
+  let target;
+  try {
+    target = new URL2(req.url ?? "");
+  } catch {
+    res.writeHead(400, { "Content-Type": "text/plain" });
+    res.end("HTTP proxy requests must use an absolute URL");
+    return;
+  }
+  const transport = target.protocol === "https:" ? https : http2;
+  const upstream = transport.request({
+    protocol: target.protocol,
+    hostname: target.hostname,
+    port: target.port || void 0,
+    method: req.method,
+    path: `${target.pathname}${target.search}`,
+    headers: requestHeadersWithoutProxyHeaders(req)
+  }, (upstreamRes) => copyResponse(upstreamRes, res));
+  upstream.on("error", (err) => {
+    if (!res.headersSent) res.writeHead(502, { "Content-Type": "text/plain" });
+    res.end(`Proxy upstream unreachable: ${err.message}`);
+  });
+  req.pipe(upstream);
+}
+async function startHttpProxy(options) {
+  const certificates = ensureHttpProxyCertificates();
+  const routesById = /* @__PURE__ */ new Map();
+  for (const route of options.routes) {
+    for (const id of routeLookupIds(route.aliasId)) routesById.set(id, route);
+  }
+  const anthropicOrigin = new URL2(options.anthropicOrigin ?? "https://api.anthropic.com");
+  let adapter = options.adapterHandle ?? null;
+  if (options.routes.length > 0) {
+    adapter ??= await startProxyCatalog(
+      options.routes,
+      options.routes[0].aliasId,
+      options.debug,
+      options.inferenceLogPath
+    );
+  }
+  const mitmServer = https.createServer({
+    key: certificates.serverKey,
+    cert: certificates.serverCert,
+    minVersion: "TLSv1.2"
+  }, async (req, res) => {
+    let rawBody;
+    try {
+      rawBody = await readRawBody(req);
+    } catch (err) {
+      res.writeHead(413, { "Content-Type": "text/plain" });
+      res.end(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    const messagesEndpoint = anthropicMessagesEndpoint(req.url);
+    if (req.method === "POST" && messagesEndpoint) {
+      const requestId = randomUUID6();
+      let parsed = null;
+      let route;
+      try {
+        parsed = JSON.parse(rawBody.toString("utf8"));
+        if (typeof parsed.model === "string") route = routesById.get(parsed.model);
+      } catch {
+      }
+      if (messagesEndpoint === "messages" && options.inferenceLogPath) {
+        const provider = route ? route.providerId ?? route.aliasId.split(":")[1] ?? "unknown" : "anthropic";
+        writeInferenceRequestLog(options.inferenceLogPath, {
+          requestId,
+          modelId: typeof parsed?.model === "string" ? parsed.model : "unknown",
+          effort: parsed ? anthropicEffortFromRequest(parsed) : void 0,
+          provider,
+          route: route ? "translated" : "passthrough",
+          stream: Boolean(parsed?.stream),
+          requestPreview: getLatestMessagePreview(parsed?.messages, parsed?.system)
+        });
+      }
+      if (route && adapter) {
+        await forwardToAdapter(req, res, rawBody, adapter, messagesEndpoint === "messages" && options.inferenceLogPath ? {
+          logPath: options.inferenceLogPath,
+          requestId,
+          modelId: typeof parsed?.model === "string" ? parsed.model : "unknown",
+          provider: route.providerId ?? route.aliasId.split(":")[1] ?? "unknown",
+          progressIntervalMs: options.responseProgressIntervalMs ?? INFERENCE_PROGRESS_INTERVAL_MS
+        } : void 0);
+        return;
+      }
+      await forwardRawAnthropicRequest(
+        req,
+        res,
+        rawBody,
+        anthropicOrigin,
+        options.anthropicRejectUnauthorized ?? true,
+        messagesEndpoint === "messages" && options.inferenceLogPath ? (statusCode, errorContent) => writeInferenceResponseErrorLog(options.inferenceLogPath, {
+          requestId,
+          modelId: typeof parsed?.model === "string" ? parsed.model : "unknown",
+          provider: "anthropic",
+          route: "passthrough",
+          statusCode,
+          errorContent
+        }) : void 0,
+        messagesEndpoint === "messages" && options.inferenceLogPath ? (usage) => writeInferenceResponseLifecycleLog(options.inferenceLogPath, {
+          event: "response_usage",
+          requestId,
+          modelId: typeof parsed?.model === "string" ? parsed.model : "unknown",
+          provider: "anthropic",
+          route: "passthrough",
+          ...usage
+        }) : void 0
+      );
+      return;
+    }
+    await forwardRawAnthropicRequest(
+      req,
+      res,
+      rawBody,
+      anthropicOrigin,
+      options.anthropicRejectUnauthorized ?? true
+    );
+  });
+  const sockets = /* @__PURE__ */ new Set();
+  const proxyServer = http2.createServer(forwardPlainHttp);
+  proxyServer.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
+  proxyServer.on("connect", (req, clientSocket, head) => {
+    if (shouldInterceptConnect(req.url ?? "")) {
+      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      if (head.length > 0) clientSocket.unshift(head);
+      mitmServer.emit("connection", clientSocket);
+      return;
+    }
+    const target = authorityParts(req.url ?? "");
+    if (!target) {
+      clientSocket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+      return;
+    }
+    const upstream = net.connect(target.port, target.host);
+    sockets.add(upstream);
+    upstream.once("close", () => sockets.delete(upstream));
+    upstream.once("connect", () => {
+      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      if (head.length > 0) upstream.write(head);
+      clientSocket.pipe(upstream);
+      upstream.pipe(clientSocket);
+    });
+    upstream.once("error", () => {
+      if (!clientSocket.destroyed) clientSocket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+    });
+  });
+  try {
+    await new Promise((resolve2, reject) => {
+      proxyServer.once("error", reject);
+      proxyServer.listen(options.port ?? 0, options.host ?? "127.0.0.1", () => {
+        proxyServer.off("error", reject);
+        resolve2();
+      });
+    });
+  } catch (err) {
+    adapter?.close();
+    throw err;
+  }
+  const address = proxyServer.address();
+  if (!address || typeof address === "string") {
+    adapter?.close();
+    throw new Error("HTTP proxy did not bind to a TCP port");
+  }
+  return {
+    host: options.host ?? "127.0.0.1",
+    port: address.port,
+    caCertPath: certificates.caCertPath,
+    modelIds: options.routes.map((route) => route.aliasId),
+    inferenceLogPath: options.inferenceLogPath,
+    close: async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve2) => proxyServer.close(() => resolve2()));
+      mitmServer.close();
+      adapter?.close();
+    }
+  };
+}
+
+// src/http-proxy/index.ts
+async function loadHttpProxyRoutes() {
+  const favorites = loadPreferences().favoriteModels ?? [];
+  if (favorites.length === 0) {
+    return { routes: [], unavailable: [], unsupported: [], favoriteCount: 0 };
+  }
+  const rawCatalog = providersForTarget(await fetchProviderCatalog({ agent: "claude" }), "claude");
+  const catalog = await Promise.all(rawCatalog.map(async (provider) => ({
+    ...provider,
+    apiKey: await resolveLocalProviderApiKey(provider) ?? ""
+  })));
+  return { ...buildHttpProxyRoutes(catalog, favorites), favoriteCount: favorites.length };
+}
+function formatHttpProxyModelLines(routes) {
+  if (routes.length === 0) return ["  (no compatible favorite models)"];
+  return routes.map((route) => `  ${route.aliasId}  ${pc3.dim(route.displayName)}`);
+}
+function printHttpProxyModels(routes) {
+  console.log(pc3.bold("HTTP proxy model names:"));
+  for (const line of formatHttpProxyModelLines(routes)) console.log(line);
+}
+function reportSkippedHttpProxyFavorites(loaded) {
+  if (loaded.unavailable.length > 0) {
+    p2.log.warn(`${loaded.unavailable.length} favorite${loaded.unavailable.length === 1 ? "" : "s"} unavailable or missing credentials.`);
+  }
+  if (loaded.unsupported.length > 0) {
+    p2.log.warn(
+      `${loaded.unsupported.length} favorite${loaded.unsupported.length === 1 ? "" : "s"} skipped \u2014 HTTP proxy mode supports non-Anthropic AI SDK routes only.`
+    );
+  }
+}
+async function startConfiguredHttpProxy(port, debug = false) {
+  const loaded = await loadHttpProxyRoutes();
+  const inferenceLogPath = getInferenceRequestLogPath();
+  const handle = await startHttpProxy({
+    host: "127.0.0.1",
+    port,
+    routes: loaded.routes,
+    debug,
+    inferenceLogPath
+  });
+  handle.caCertPath = ensureHttpProxyCaBundle(
+    handle.caCertPath,
+    process.env["NODE_EXTRA_CA_CERTS"]
+  );
+  return { handle, loaded };
+}
+function waitForShutdown() {
+  return new Promise((resolve2) => {
+    const done = () => {
+      process.off("SIGINT", done);
+      process.off("SIGTERM", done);
+      resolve2();
+    };
+    process.once("SIGINT", done);
+    process.once("SIGTERM", done);
+  });
+}
+async function runHttpProxyServerCommand(debug = false) {
+  let started;
+  try {
+    started = await startConfiguredHttpProxy(17645, debug);
+  } catch (err) {
+    p2.log.error(`Failed to start HTTP proxy: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+  const { handle, loaded } = started;
+  console.log("");
+  console.log(pc3.bold(pc3.green("Relay AI HTTP proxy running")));
+  console.log(`  HTTPS_PROXY=http://127.0.0.1:${handle.port}`);
+  console.log(`  HTTP_PROXY=http://127.0.0.1:${handle.port}`);
+  console.log(`  NODE_EXTRA_CA_CERTS=${handle.caCertPath}`);
+  console.log(`  Request log: ${handle.inferenceLogPath}`);
+  console.log("");
+  printHttpProxyModels(loaded.routes);
+  reportSkippedHttpProxyFavorites(loaded);
+  console.log("");
+  console.log(pc3.dim("Anthropic requests keep Claude Code auth and pass through unchanged."));
+  console.log(pc3.dim("Use `/model relay:<provider-id>:<model-id>` for a listed favorite."));
+  console.log(pc3.dim("Press Ctrl+C to stop."));
+  await waitForShutdown();
+  await handle.close();
+  return 0;
+}
+
 // src/server/index.ts
-import pc5 from "picocolors";
+import pc6 from "picocolors";
 import { networkInterfaces } from "os";
-import * as p4 from "@clack/prompts";
+import * as p5 from "@clack/prompts";
 
 // src/server/prompts.ts
-import * as p2 from "@clack/prompts";
-import pc3 from "picocolors";
+import * as p3 from "@clack/prompts";
+import pc4 from "picocolors";
 async function askServerStartMode() {
-  const mode = await p2.select({
+  const mode = await p3.select({
     message: "How do you want to start the server?",
     options: [
-      { value: "configure", label: pc3.cyan("Configure & start"), hint: "Providers, discovery masking, listen mode" },
-      { value: "quick", label: pc3.cyan("Start with saved settings"), hint: "Use last server configuration" }
+      { value: "configure", label: pc4.cyan("Configure & start"), hint: "Providers, discovery masking, listen mode" },
+      { value: "quick", label: pc4.cyan("Start with saved settings"), hint: "Use last server configuration" }
     ],
     initialValue: "configure"
   });
-  if (p2.isCancel(mode)) {
-    p2.cancel("Cancelled.");
+  if (p3.isCancel(mode)) {
+    p3.cancel("Cancelled.");
     return null;
   }
   return mode;
 }
 async function askMaskGatewayIds(initialValue) {
-  const mask = await p2.confirm({
+  const mask = await p3.confirm({
     message: "Mask gateway model ids for discovery? (Needed for Claude Desktop / Cowork)",
     initialValue
   });
-  if (p2.isCancel(mask)) {
-    p2.cancel("Cancelled.");
+  if (p3.isCancel(mask)) {
+    p3.cancel("Cancelled.");
     return null;
   }
   return Boolean(mask);
 }
 async function askFavoritesOnly(initialValue) {
   printFavoritesOnlyPanel();
-  const favoritesOnly = await p2.confirm({
+  const favoritesOnly = await p3.confirm({
     message: "Expose only favorite models?",
     initialValue
   });
-  if (p2.isCancel(favoritesOnly)) {
-    p2.cancel("Cancelled.");
+  if (p3.isCancel(favoritesOnly)) {
+    p3.cancel("Cancelled.");
     return null;
   }
   return Boolean(favoritesOnly);
 }
 async function askFreeModelsOnly(initialValue) {
-  const freeOnly = await p2.confirm({
+  const freeOnly = await p3.confirm({
     message: "Limit exposed models to free/free-access models?",
     initialValue
   });
-  if (p2.isCancel(freeOnly)) {
-    p2.cancel("Cancelled.");
+  if (p3.isCancel(freeOnly)) {
+    p3.cancel("Cancelled.");
     return null;
   }
   return Boolean(freeOnly);
 }
 async function askListenMode() {
-  const mode = await p2.select({
+  const mode = await p3.select({
     message: "Where should the server listen?",
     options: [
-      { value: "local", label: pc3.cyan("Local only"), hint: "Only this computer can use it" },
-      { value: "network", label: pc3.cyan("Network"), hint: "Other computers on your network can use it" }
+      { value: "local", label: pc4.cyan("Local only"), hint: "Only this computer can use it" },
+      { value: "network", label: pc4.cyan("Network"), hint: "Other computers on your network can use it" }
     ],
     initialValue: "local"
   });
-  if (p2.isCancel(mode)) {
-    p2.cancel("Cancelled.");
+  if (p3.isCancel(mode)) {
+    p3.cancel("Cancelled.");
     return null;
   }
   return mode;
 }
 async function askServerPassword() {
   printNetworkWarningPanel();
-  const password = await p2.text({
+  const password = await p3.text({
     message: "Choose a server password for this run:",
     validate: (value) => value.trim() ? void 0 : "Password cannot be empty"
   });
-  if (p2.isCancel(password)) {
-    p2.cancel("Cancelled.");
+  if (p3.isCancel(password)) {
+    p3.cancel("Cancelled.");
     return null;
   }
   return String(password).trim();
 }
 async function askUseSavedServerPassword() {
-  const choice = await p2.select({
+  const choice = await p3.select({
     message: "Use saved server password?",
     options: [
-      { value: "use-saved", label: pc3.cyan("Use saved password") },
-      { value: "new-password", label: pc3.cyan("Enter a new password") }
+      { value: "use-saved", label: pc4.cyan("Use saved password") },
+      { value: "new-password", label: pc4.cyan("Enter a new password") }
     ],
     initialValue: "use-saved"
   });
-  if (p2.isCancel(choice)) {
-    p2.cancel("Cancelled.");
+  if (p3.isCancel(choice)) {
+    p3.cancel("Cancelled.");
     return null;
   }
   return choice;
 }
 async function askSaveServerPassword() {
-  const save = await p2.confirm({
+  const save = await p3.confirm({
     message: "Save this server password for future server runs?",
     initialValue: false
   });
-  if (p2.isCancel(save)) {
-    p2.cancel("Cancelled.");
+  if (p3.isCancel(save)) {
+    p3.cancel("Cancelled.");
     return null;
   }
   return Boolean(save);
 }
 
 // src/server/router.ts
-import { createServer as createServer2 } from "http";
+import { createServer as createServer4 } from "http";
 
 // src/openai-adapter.ts
 import { tool as tool3, jsonSchema as jsonSchema3, streamText as streamText2, generateText as generateText2 } from "ai";
@@ -7099,22 +8406,24 @@ async function streamOpenAiResponse(model, params, responseModelId, onChunk) {
 
 `);
   for await (const part of fullStream) {
-    const p8 = part;
-    switch (p8.type) {
+    const p9 = part;
+    switch (p9.type) {
       case "text-delta":
-        send({ role: "assistant", content: p8.textDelta ?? p8.text ?? "" });
+        send({ role: "assistant", content: p9.textDelta ?? p9.text ?? "" });
         break;
       case "tool-input-start":
       case "tool-call-streaming-start":
-        send({ role: "assistant", tool_calls: [{ index: 0, id: p8.id ?? p8.toolCallId, type: "function", function: { name: p8.toolName, arguments: "" } }] });
+        send({ role: "assistant", tool_calls: [{ index: 0, id: p9.id ?? p9.toolCallId, type: "function", function: { name: p9.toolName, arguments: "" } }] });
         break;
       case "tool-input-delta":
       case "tool-call-delta":
-        send({ tool_calls: [{ index: 0, function: { arguments: p8.delta ?? p8.text ?? p8.argsTextDelta ?? "" } }] });
+        send({ tool_calls: [{ index: 0, function: { arguments: p9.delta ?? p9.text ?? p9.argsTextDelta ?? "" } }] });
         break;
       case "finish":
-        send({}, p8.finishReason || "stop");
+        send({}, p9.finishReason || "stop");
         break;
+      case "error":
+        throw p9.error instanceof Error || p9.error && typeof p9.error === "object" ? p9.error : new Error(typeof p9.error === "string" ? p9.error : "Upstream stream failed");
     }
   }
   onChunk("data: [DONE]\n\n");
@@ -7127,18 +8436,50 @@ function makeServerLog(debugLogPath) {
   resetTraceLog(debugLogPath);
   return (msg) => writeSecureLogLine(debugLogPath, typeof msg === "function" ? msg() : msg);
 }
+function auditInference(options, entry) {
+  if (options.inferenceLogPath) writeInferenceRequestLog(options.inferenceLogPath, entry);
+}
+function inferenceProvider(model) {
+  return model.providerId ?? String(model.sourceBackend);
+}
+function auditSdkError(options, requestedModelId, model, err, message) {
+  const details = sdkUpstreamErrorDetails(err);
+  const statusCode = details?.statusCode ?? upstreamHttpStatus(err, message);
+  if (options.inferenceLogPath && statusCode >= 400) {
+    writeInferenceResponseErrorLog(options.inferenceLogPath, {
+      modelId: requestedModelId,
+      provider: inferenceProvider(model),
+      route: "translated",
+      statusCode,
+      errorContent: details?.errorContent ?? message,
+      isRetryable: details?.isRetryable,
+      attemptCount: details?.attemptCount
+    });
+  }
+  return statusCode;
+}
+function openAiEffort(body) {
+  if (typeof body.reasoning_effort === "string" && body.reasoning_effort.trim()) {
+    return body.reasoning_effort.trim();
+  }
+  const reasoning = body.reasoning;
+  if (reasoning && typeof reasoning === "object" && typeof reasoning.effort === "string" && reasoning.effort.trim()) {
+    return reasoning.effort.trim();
+  }
+  return void 0;
+}
 async function startServer(options) {
   silenceSdkWarnings();
   const languageModelCache = /* @__PURE__ */ new Map();
   const plog = makeServerLog(options.debugLogPath);
-  const server = createServer2((req, res) => {
+  const server = createServer4((req, res) => {
     void routeRequest(req, res, options, languageModelCache, plog);
   });
-  await new Promise((resolve, reject) => {
+  await new Promise((resolve2, reject) => {
     server.once("error", reject);
     server.listen(options.port, options.host, () => {
       server.off("error", reject);
-      resolve();
+      resolve2();
     });
   });
   const address = server.address();
@@ -7150,8 +8491,9 @@ async function startServer(options) {
     port: address.port,
     url: `http://${options.host}:${address.port}`,
     server,
-    close: () => new Promise((resolve, reject) => {
-      server.close((err) => err ? reject(err) : resolve());
+    inferenceLogPath: options.inferenceLogPath,
+    close: () => new Promise((resolve2, reject) => {
+      server.close((err) => err ? reject(err) : resolve2());
     })
   };
 }
@@ -7216,6 +8558,13 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
     const clientWantsStream = Boolean(body.stream);
     const forwardBody = { ...body, model: upstreamModelId(model) };
     const isOAuth = model.authType === "oauth";
+    auditInference(options, {
+      modelId: body.model,
+      effort: anthropicEffortFromRequest(body) ?? model.defaultEffort,
+      provider: inferenceProvider(model),
+      route: "passthrough",
+      requestPreview: getLatestMessagePreview(body.messages, body.system)
+    });
     let effectiveBeta = inboundBeta;
     let claudeCodeSessionId;
     if (isOAuth) {
@@ -7227,22 +8576,24 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
     }
     const refreshToken = isOAuth && model.providerId ? () => resolveProviderCredential(model.providerId, oauthAuthRef(model.providerId)) : void 0;
     plog(() => `anthropic-passthrough \u2192 ${messagesUrl} oauth=${isOAuth} stream=${clientWantsStream}`);
-    await relayAnthropicMessages(
-      res,
-      messagesUrl,
-      forwardBody,
-      apiKey,
-      clientWantsStream,
-      effectiveBeta,
-      isOAuth ? "oauth" : "api",
-      (message) => plog(message),
+    await relayAnthropicMessages(res, messagesUrl, forwardBody, apiKey, clientWantsStream, {
+      inboundBeta: effectiveBeta,
+      authType: isOAuth ? "oauth" : "api",
+      log: (message) => plog(message),
       claudeCodeSessionId,
-      model.headers,
+      extraHeaders: model.headers,
       refreshToken,
-      (refreshed) => {
+      onTokenRefreshed: (refreshed) => {
         model.apiKey = refreshed;
-      }
-    );
+      },
+      onUpstreamError: options.inferenceLogPath ? (statusCode, errorContent) => writeInferenceResponseErrorLog(options.inferenceLogPath, {
+        modelId: body.model,
+        provider: inferenceProvider(model),
+        route: "passthrough",
+        statusCode,
+        errorContent
+      }) : void 0
+    });
     return;
   }
   if (model.modelFormat === "openai") {
@@ -7251,6 +8602,13 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
       return;
     }
     const apiKey = model.apiKey ?? options.apiKey;
+    auditInference(options, {
+      modelId: body.model,
+      effort: anthropicEffortFromRequest(body) ?? model.defaultEffort,
+      provider: inferenceProvider(model),
+      route: "translated",
+      requestPreview: getLatestMessagePreview(body.messages, body.system)
+    });
     const languageModel = await getOrInitLanguageModel(modelCache, model, model.npm, model.apiBaseUrl, apiKey, options.vertex);
     const npmMaxTools = maxToolsForNpm(model.npm);
     const toolCount = Array.isArray(body.tools) ? body.tools.length : 0;
@@ -7275,12 +8633,20 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
     plog(() => `sdk npm=${model.npm} upstream=${upstreamModelId(model)} responseModel=${responseModelId} stream=${clientWantsStream}`);
     try {
       if (clientWantsStream) {
-        res.writeHead(200, {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          "Connection": "keep-alive"
+        const writeStreamChunk = (chunk) => {
+          if (!res.headersSent) {
+            res.writeHead(200, {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              "Connection": "keep-alive"
+            });
+          }
+          res.write(chunk);
+        };
+        await streamAnthropicResponse(languageModel, params, responseModelId, writeStreamChunk, void 0, {
+          initialInputTokens: estimateAnthropicInputTokens(body)
         });
-        await streamAnthropicResponse(languageModel, params, responseModelId, (chunk) => res.write(chunk));
+        if (!res.headersSent) writeStreamChunk("");
         res.end();
       } else {
         const anthropicResponse = await generateAnthropicResponse(languageModel, params, responseModelId);
@@ -7288,11 +8654,18 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
       }
     } catch (err) {
       const message = formatUpstreamError(err);
+      const status = auditSdkError(options, body.model, model, err, message);
       plog(`sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message}`);
       if (!res.headersSent) {
-        const status = upstreamHttpStatus(err, message);
         sendJson(res, status === 500 ? 502 : status, { error: { message } });
-      } else res.end();
+      } else {
+        const errorType = anthropicErrorType(status);
+        res.write(`event: error
+data: ${JSON.stringify({ type: "error", error: { type: errorType, message } })}
+
+`);
+        res.end();
+      }
     }
     return;
   }
@@ -7313,7 +8686,22 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
     }
     const completionsUrl = model.completionsUrl ? model.completionsUrl : `${backendFor(options, model).baseUrl}/v1/chat/completions`;
     const apiKey2 = model.apiKey ?? options.apiKey;
-    await relayAnthropicMessages(res, completionsUrl, body, apiKey2, Boolean(body.stream));
+    auditInference(options, {
+      modelId: body.model,
+      effort: openAiEffort(body),
+      provider: inferenceProvider(model),
+      route: "passthrough",
+      requestPreview: getLatestMessagePreview(body.messages, body.system)
+    });
+    await relayAnthropicMessages(res, completionsUrl, body, apiKey2, Boolean(body.stream), {
+      onUpstreamError: options.inferenceLogPath ? (statusCode, errorContent) => writeInferenceResponseErrorLog(options.inferenceLogPath, {
+        modelId: body.model,
+        provider: inferenceProvider(model),
+        route: "passthrough",
+        statusCode,
+        errorContent
+      }) : void 0
+    });
     return;
   }
   const npm = model.npm || (model.modelFormat === "anthropic" ? "@ai-sdk/anthropic" : void 0);
@@ -7322,6 +8710,13 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
     return;
   }
   const apiKey = model.apiKey ?? options.apiKey;
+  auditInference(options, {
+    modelId: body.model,
+    effort: openAiEffort(body),
+    provider: inferenceProvider(model),
+    route: "translated",
+    requestPreview: getLatestMessagePreview(body.messages, body.system)
+  });
   const baseURL = model.modelFormat === "anthropic" ? model.baseUrl : model.apiBaseUrl;
   const languageModel = await getOrInitLanguageModel(modelCache, model, npm, baseURL, apiKey, options.vertex);
   const params = translateOpenAiRequest(body);
@@ -7330,12 +8725,18 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
   plog(() => `sdk-openai npm=${npm} upstream=${upstreamModelId(model)} responseModel=${responseModelId} stream=${clientWantsStream}`);
   try {
     if (clientWantsStream) {
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive"
-      });
-      await streamOpenAiResponse(languageModel, params, responseModelId, (chunk) => res.write(chunk));
+      const writeStreamChunk = (chunk) => {
+        if (!res.headersSent) {
+          res.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive"
+          });
+        }
+        res.write(chunk);
+      };
+      await streamOpenAiResponse(languageModel, params, responseModelId, writeStreamChunk);
+      if (!res.headersSent) writeStreamChunk("");
       res.end();
     } else {
       const response = await generateOpenAiResponse(languageModel, params, responseModelId);
@@ -7343,11 +8744,16 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
     }
   } catch (err) {
     const message = formatUpstreamError(err);
+    const status = auditSdkError(options, body.model, model, err, message);
     plog(`sdk error npm=${model.npm} upstream=${upstreamModelId(model)}: ${message}`);
     if (!res.headersSent) {
-      const status = upstreamHttpStatus(err, message);
       sendJson(res, status === 500 ? 502 : status, { error: { message } });
-    } else res.end();
+    } else {
+      res.write(`data: ${JSON.stringify({ error: { message, type: "upstream_error", code: status } })}
+
+`);
+      res.end();
+    }
   }
 }
 function lookupModel(res, catalog, modelId) {
@@ -7447,8 +8853,8 @@ function summarizeServerProviders(models) {
 }
 
 // src/server/provider-select.ts
-import pc4 from "picocolors";
-import * as p3 from "@clack/prompts";
+import pc5 from "picocolors";
+import * as p4 from "@clack/prompts";
 function isSelected(list, id) {
   return list.includes(id);
 }
@@ -7458,7 +8864,7 @@ function resolveInitialServerProviders(initial, available) {
 }
 async function selectServerProviders(available, initial) {
   if (available.length === 0) {
-    p3.log.warn("No providers available to expose.");
+    p4.log.warn("No providers available to expose.");
     return null;
   }
   let selected = resolveInitialServerProviders(initial, available);
@@ -7468,14 +8874,14 @@ async function selectServerProviders(available, initial) {
     for (let i = 0; i < selected.length; i++) {
       const id = selected[i];
       const provider = lookup2.get(id);
-      const label = provider ? `\u2605 ${provider.name}` : pc4.dim(`\u2605 ${id} \u2014 provider gone`);
+      const label = provider ? `\u2605 ${provider.name}` : pc5.dim(`\u2605 ${id} \u2014 provider gone`);
       const hint = provider ? `${provider.modelCount} model${provider.modelCount !== 1 ? "s" : ""}` : "select to remove";
       options.push({ value: `prov-${i}`, label, hint: "select to remove" });
     }
     const unselected = available.filter((provider) => !isSelected(selected, provider.id));
     options.push({
       value: "__add__",
-      label: unselected.length === 0 ? pc4.dim("+ Add a provider \u2192 (all providers selected)") : "+ Add a provider \u2192",
+      label: unselected.length === 0 ? pc5.dim("+ Add a provider \u2192 (all providers selected)") : "+ Add a provider \u2192",
       hint: unselected.length === 0 ? "" : `${unselected.length} more available`
     });
     options.push({ value: "__all__", label: "Expose all providers", hint: `${available.length} total` });
@@ -7484,31 +8890,31 @@ async function selectServerProviders(available, initial) {
     }
     options.push({ value: "__done__", label: "Done", hint: "" });
     const header = selected.length === 0 ? `Exposed providers (0/${available.length}) \u2014 add providers to expose` : `Exposed providers (${selected.length}/${available.length}) \u2014 select to stop exposing`;
-    const choice = await p3.select({
+    const choice = await p4.select({
       message: header,
       options,
       initialValue: "__done__"
     });
-    if (p3.isCancel(choice) || choice === "__done__") {
+    if (p4.isCancel(choice) || choice === "__done__") {
       if (selected.length === 0) {
-        p3.log.warn("Select at least one provider to expose.");
+        p4.log.warn("Select at least one provider to expose.");
         continue;
       }
       break;
     }
     if (choice === "__all__") {
       selected = available.map((provider) => provider.id);
-      p3.log.success(`Exposing all ${available.length} providers.`);
+      p4.log.success(`Exposing all ${available.length} providers.`);
       continue;
     }
     if (choice === "__clear__") {
       selected = [];
-      p3.log.success("Cleared provider list \u2014 add the ones you want to expose.");
+      p4.log.success("Cleared provider list \u2014 add the ones you want to expose.");
       continue;
     }
     if (choice === "__add__") {
       if (unselected.length === 0) continue;
-      const picked = await p3.select({
+      const picked = await p4.select({
         message: "Which provider?",
         options: unselected.map((provider) => ({
           value: provider.id,
@@ -7516,7 +8922,7 @@ async function selectServerProviders(available, initial) {
           hint: `${provider.modelCount} model${provider.modelCount !== 1 ? "s" : ""}`
         }))
       });
-      if (p3.isCancel(picked)) continue;
+      if (p4.isCancel(picked)) continue;
       selected = [...selected, picked];
       continue;
     }
@@ -7526,16 +8932,16 @@ async function selectServerProviders(available, initial) {
       if (!id) continue;
       const provider = lookup2.get(id);
       selected = selected.filter((_, i) => i !== idx);
-      p3.log.success(`Removed ${provider?.name ?? id}.`);
+      p4.log.success(`Removed ${provider?.name ?? id}.`);
     }
   }
   return selected;
 }
 
 // src/server/vertex-config.ts
-import { existsSync as existsSync9, readFileSync as readFileSync9 } from "fs";
+import { existsSync as existsSync10, readFileSync as readFileSync10 } from "fs";
 import { homedir as homedir6 } from "os";
-import { join as join9 } from "path";
+import { join as join10 } from "path";
 var DEFAULT_VERTEX_MODELS = [
   { id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6" },
   { id: "claude-opus-4-6", display_name: "Claude Opus 4.6" },
@@ -7559,18 +8965,18 @@ function resolveVertexLocation(env = process.env) {
   return location.trim() || "global";
 }
 function defaultAdcCredentialsPath(home = homedir6()) {
-  return join9(home, ".config", "gcloud", "application_default_credentials.json");
+  return join10(home, ".config", "gcloud", "application_default_credentials.json");
 }
 function hasApplicationDefaultCredentials(home = homedir6(), adcPath = defaultAdcCredentialsPath(home), env = process.env) {
   const explicitPath = env["GOOGLE_APPLICATION_CREDENTIALS"]?.trim();
-  if (explicitPath && existsSync9(explicitPath)) return true;
-  return existsSync9(adcPath);
+  if (explicitPath && existsSync10(explicitPath)) return true;
+  return existsSync10(adcPath);
 }
 function loadVertexModelEntries(env = process.env) {
   const configPath = getVertexModelsPath(env);
-  if (!existsSync9(configPath)) return DEFAULT_VERTEX_MODELS;
+  if (!existsSync10(configPath)) return DEFAULT_VERTEX_MODELS;
   try {
-    const parsed = JSON.parse(readFileSync9(configPath, "utf8"));
+    const parsed = JSON.parse(readFileSync10(configPath, "utf8"));
     if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_VERTEX_MODELS;
     const models = parsed.filter(
       (entry) => !!entry && typeof entry === "object" && typeof entry.id === "string" && entry.id.length > 0 && typeof entry.display_name === "string" && entry.display_name.length > 0
@@ -7711,11 +9117,11 @@ function printModelCatalog(models, gateway) {
   if (models.length === 0) return;
   for (const line of formatModelCatalogLines(models, gateway)) {
     if (line === "Model catalog:") {
-      console.log(pc5.bold(line));
+      console.log(pc6.bold(line));
     } else if (/^  [^#\d\s].+\(\d+/.test(line)) {
-      console.log(pc5.bold(line));
+      console.log(pc6.bold(line));
     } else if (/^  \s*#\s+Model\s+Anthropic ID\s+OpenAI ID/.test(line)) {
-      console.log(pc5.dim(line));
+      console.log(pc6.dim(line));
     } else {
       console.log(line);
     }
@@ -7753,15 +9159,15 @@ function enrichServerModelReasoning(model) {
   if (!caps.defaultLevel) return model;
   return { ...model, defaultEffort: caps.defaultLevel };
 }
-function waitForShutdown() {
-  return new Promise((resolve) => {
+function waitForShutdown2() {
+  return new Promise((resolve2) => {
     const cleanup = () => {
       process.off("SIGINT", onSignal);
       process.off("SIGTERM", onSignal);
     };
     const onSignal = () => {
       cleanup();
-      resolve();
+      resolve2();
     };
     process.once("SIGINT", onSignal);
     process.once("SIGTERM", onSignal);
@@ -7801,8 +9207,8 @@ async function getServerPasswordForQuickMode(mode, passwordOverride) {
   if (trimmedOverride) return { password: trimmedOverride, wasSaved: false };
   const savedPassword = await getSavedServerPassword();
   if (savedPassword) return { password: savedPassword, wasSaved: true };
-  p4.log.error("Network server quick-start needs a saved server password or `--password <value>`.");
-  p4.log.info("Run `relay-ai server` and choose Configure & start to save one, or pass a one-run password.");
+  p5.log.error("Network server quick-start needs a saved server password or `--password <value>`.");
+  p5.log.info("Run `relay-ai server` and choose Configure & start to save one, or pass a one-run password.");
   return void 0;
 }
 function savedServerRunConfig() {
@@ -7838,8 +9244,8 @@ function shouldUseQuickServerMode(options) {
   return Boolean(options.quick || hasServerRunOverrides(options) || !process.stdin.isTTY);
 }
 async function configureExposedProviders() {
-  p4.log.info("Add providers to expose. Listed providers are removed when selected \u2014 like favorites.");
-  const spinner3 = p4.spinner();
+  p5.log.info("Add providers to expose. Listed providers are removed when selected \u2014 like favorites.");
+  const spinner3 = p5.spinner();
   spinner3.start("Loading providers...");
   const catalog = await fetchProviderCatalog({ agent: "server" });
   spinner3.stop("");
@@ -7847,7 +9253,7 @@ async function configureExposedProviders() {
   const picked = await selectServerProviders(available, getServerExposedProviders() ?? void 0);
   if (!picked) return void 0;
   setServerExposedProviders(picked);
-  p4.log.success(`Saved ${picked.length} provider${picked.length !== 1 ? "s" : ""} for future server runs.`);
+  p5.log.success(`Saved ${picked.length} provider${picked.length !== 1 ? "s" : ""} for future server runs.`);
   return picked;
 }
 async function runServerWizard() {
@@ -7861,7 +9267,7 @@ async function runServerWizard() {
   if (favoritesOnly === null) return void 0;
   setServerFavoritesOnly(favoritesOnly);
   if (favoritesOnly) {
-    p4.log.info("Manage favorites with `relay-ai models`.");
+    p5.log.info("Manage favorites with `relay-ai models`.");
   }
   const freeModelsOnly = await askFreeModelsOnly(getServerFreeModelsOnly());
   if (freeModelsOnly === null) return void 0;
@@ -7886,12 +9292,12 @@ async function runVertexServerCommand() {
   relayIntro("Vertex Gateway");
   const vertexConfig = buildVertexRuntimeConfig();
   if (!vertexConfig) {
-    p4.log.error("Set ANTHROPIC_VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT to your GCP project.");
+    p5.log.error("Set ANTHROPIC_VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT to your GCP project.");
     return 1;
   }
   if (!hasApplicationDefaultCredentials()) {
-    p4.log.error("Google Application Default Credentials not found.");
-    p4.log.info("Run: gcloud auth application-default login");
+    p5.log.error("Google Application Default Credentials not found.");
+    p5.log.info("Run: gcloud auth application-default login");
     return 1;
   }
   const mode = await askListenMode();
@@ -7901,6 +9307,7 @@ async function runVertexServerCommand() {
   const { password: serverPassword, wasSaved: passwordWasSaved } = pwResult;
   const host = mode === "network" ? "0.0.0.0" : "127.0.0.1";
   const models = vertexModelsToServerModels(vertexConfig);
+  const inferenceLogPath = getInferenceRequestLogPath();
   const server = await startServer({
     host,
     port: 17645,
@@ -7908,15 +9315,17 @@ async function runVertexServerCommand() {
     serverPassword,
     catalog: createVertexModelCatalog(models),
     backends: BACKENDS,
+    inferenceLogPath,
     vertex: {
       project: vertexConfig.project,
       location: vertexConfig.location
     }
   });
   console.log("");
-  console.log(pc5.bold(pc5.green("Vertex gateway running")));
+  console.log(pc6.bold(pc6.green("Vertex gateway running")));
   console.log(`  Anthropic:  http://127.0.0.1:${server.port}/anthropic`);
   console.log(`  Models:     ${models.map((model) => model.id).join(", ")}`);
+  console.log(`  Request log: ${inferenceLogPath}`);
   if (mode === "network") {
     for (const { name, address } of getLocalIps()) {
       console.log(`  Network (${name}):  http://${address}:${server.port}/anthropic`);
@@ -7929,11 +9338,11 @@ async function runVertexServerCommand() {
   } else {
     console.log("  API key:    any non-empty value");
   }
-  console.log(pc5.dim("  Auth:       gcloud Application Default Credentials"));
+  console.log(pc6.dim("  Auth:       gcloud Application Default Credentials"));
   console.log("");
   printModelCatalog(models);
-  console.log(pc5.dim("Press Ctrl+C to stop."));
-  await waitForShutdown();
+  console.log(pc6.dim("Press Ctrl+C to stop."));
+  await waitForShutdown2();
   await server.close();
   return 0;
 }
@@ -7941,13 +9350,13 @@ async function resolveServerUpstreamApiKey() {
   let apiKey = sanitizeCredential(resolveApiKey());
   if (apiKey) return apiKey;
   apiKey = sanitizeCredential(await readFromCredentialStore((reason) => {
-    p4.log.warn(`Credential store unavailable \u2014 ${reason}`);
+    p5.log.warn(`Credential store unavailable \u2014 ${reason}`);
   }));
   if (apiKey) {
     const isMac = process.platform === "darwin";
     const isWindows3 = process.platform === "win32";
     const storeName = isMac ? "macOS Keychain" : isWindows3 ? "Windows Credential Manager" : "Secret Service";
-    p4.log.success(`Found key in ${storeName}`);
+    p5.log.success(`Found key in ${storeName}`);
     return apiKey;
   }
   const catalog = await fetchProviderCatalog({ agent: "server" });
@@ -7957,12 +9366,20 @@ async function resolveServerUpstreamApiKey() {
   return null;
 }
 async function runServerCommand(options = {}) {
+  if (options.httpProxy) {
+    const hasGatewayOptions = options.vertex || options.quick || options.listenMode !== void 0 || options.providersMode !== void 0 || options.freeOnly !== void 0 || options.maskGatewayIds !== void 0 || options.password !== void 0;
+    if (hasGatewayOptions) {
+      p5.log.error("--http-proxy is a local-only server mode and cannot be combined with gateway server options.");
+      return 1;
+    }
+    return runHttpProxyServerCommand();
+  }
   if (options.vertex) {
     return runVertexServerCommand();
   }
   const apiKey = await resolveServerUpstreamApiKey();
   if (!apiKey) {
-    p4.log.error("No providers configured. Run `relay-ai providers add` or import, or set OPENCODE_API_KEY for Zen/Go.");
+    p5.log.error("No providers configured. Run `relay-ai providers add` or import, or set OPENCODE_API_KEY for Zen/Go.");
     return 1;
   }
   const quickMode = shouldUseQuickServerMode(options);
@@ -7977,7 +9394,7 @@ async function runServerCommand(options = {}) {
   const { password: serverPassword, wasSaved: passwordWasSaved } = pwResult;
   const mode = runConfig.listenMode;
   const host = mode === "network" ? "0.0.0.0" : "127.0.0.1";
-  const spinner3 = p4.spinner();
+  const spinner3 = p5.spinner();
   spinner3.start("Fetching available models...");
   let models;
   try {
@@ -7988,34 +9405,34 @@ async function runServerCommand(options = {}) {
     if (runConfig.favoritesOnly) {
       const favorites = loadPreferences().favoriteModels ?? [];
       if (favorites.length === 0) {
-        spinner3.stop(pc5.red("No favorite models configured"));
-        p4.log.error("Run `relay-ai models` to add favorites, or turn off favorites-only in the server wizard.");
+        spinner3.stop(pc6.red("No favorite models configured"));
+        p5.log.error("Run `relay-ai models` to add favorites, or turn off favorites-only in the server wizard.");
         return 1;
       }
       models = filterServerModelsByFavorites(models, favorites).slice(0, MAX_MODEL_CATALOG);
       if (models.length === 0) {
-        spinner3.stop(pc5.red("No favorite models matched the current provider filter"));
-        p4.log.error("Adjust favorites with `relay-ai models` or change exposed providers in the server wizard.");
+        spinner3.stop(pc6.red("No favorite models matched the current provider filter"));
+        p5.log.error("Adjust favorites with `relay-ai models` or change exposed providers in the server wizard.");
         return 1;
       }
     }
     if (runConfig.freeModelsOnly) {
       models = filterServerModelsByFreeStatus(models);
       if (models.length === 0) {
-        spinner3.stop(pc5.red("No free models matched the current server filters"));
-        p4.log.error("Turn off free-models-only mode or add a provider with free models.");
+        spinner3.stop(pc6.red("No free models matched the current server filters"));
+        p5.log.error("Turn off free-models-only mode or add a provider with free models.");
         return 1;
       }
     }
     if (runConfig.favoritesOnly) {
-      p4.log.info(
+      p5.log.info(
         `Favorites-only mode active \u2014 GET /anthropic/v1/models returns ${models.length} favorites.`
       );
-      p4.log.info("Desktop/Cowork picker will only show these. Edit with `relay-ai models`.");
+      p5.log.info("Desktop/Cowork picker will only show these. Edit with `relay-ai models`.");
     }
     if (models.length === 0) {
-      spinner3.stop(pc5.red("No models to expose"));
-      p4.log.error("Add providers with `relay-ai providers add` or configure exposed providers in the server wizard.");
+      spinner3.stop(pc6.red("No models to expose"));
+      p5.log.error("Add providers with `relay-ai providers add` or configure exposed providers in the server wizard.");
       return 1;
     }
     const localCount = models.filter((m) => m.apiKey !== void 0).length;
@@ -8025,13 +9442,14 @@ async function runServerCommand(options = {}) {
     const freeNote = runConfig.freeModelsOnly ? " \u2014 free models only" : "";
     const maskNote = runConfig.maskGatewayIds ? " \u2014 discovery ids masked" : "";
     spinner3.stop(`Loaded ${models.length} models (${localCount} from registry providers)${filterNote}${favoritesNote}${freeNote}${maskNote}`);
-    if (summary) p4.log.info(summary);
+    if (summary) p5.log.info(summary);
   } catch (err) {
-    spinner3.stop(pc5.red("Failed to load models"));
-    console.error(pc5.red(String(err instanceof Error ? err.message : err)));
+    spinner3.stop(pc6.red("Failed to load models"));
+    console.error(pc6.red(String(err instanceof Error ? err.message : err)));
     return 1;
   }
   const gateway = runConfig.maskGatewayIds ? { maskGatewayIds: true } : void 0;
+  const inferenceLogPath = getInferenceRequestLogPath();
   const server = await startServer({
     host,
     port: 17645,
@@ -8039,12 +9457,14 @@ async function runServerCommand(options = {}) {
     serverPassword,
     catalog: createGatewayModelCatalog(models, gateway),
     backends: BACKENDS,
-    gateway
+    gateway,
+    inferenceLogPath
   });
   console.log("");
-  console.log(pc5.bold(pc5.green("Relay AI server running")));
+  console.log(pc6.bold(pc6.green("Relay AI server running")));
   console.log(`  Anthropic:  http://127.0.0.1:${server.port}/anthropic`);
   console.log(`  OpenAI:     http://127.0.0.1:${server.port}/openai/v1`);
+  console.log(`  Request log: ${inferenceLogPath}`);
   if (mode === "network") {
     for (const { name, address } of getLocalIps()) {
       console.log(`  Network (${name}):`);
@@ -8060,21 +9480,21 @@ async function runServerCommand(options = {}) {
     console.log("  API key:    any non-empty value");
   }
   if (runConfig.exposedProviders) {
-    console.log(pc5.dim(`  Providers:  ${runConfig.exposedProviders.join(", ")}`));
+    console.log(pc6.dim(`  Providers:  ${runConfig.exposedProviders.join(", ")}`));
   }
   if (runConfig.favoritesOnly) {
-    console.log(pc5.dim("  Catalog:    favorite models only"));
+    console.log(pc6.dim("  Catalog:    favorite models only"));
   }
   if (runConfig.freeModelsOnly) {
-    console.log(pc5.dim("  Pricing:    free/free-access models only"));
+    console.log(pc6.dim("  Pricing:    free/free-access models only"));
   }
   if (runConfig.maskGatewayIds) {
-    console.log(pc5.dim("  Discovery:  gateway ids masked for Claude Desktop / Cowork"));
+    console.log(pc6.dim("  Discovery:  gateway ids masked for Claude Desktop / Cowork"));
   }
   console.log("");
   printModelCatalog(models, gateway);
-  console.log(pc5.dim("Press Ctrl+C to stop."));
-  await waitForShutdown();
+  console.log(pc6.dim("Press Ctrl+C to stop."));
+  await waitForShutdown2();
   await server.close();
   return 0;
 }
@@ -8097,18 +9517,18 @@ function favoriteProviderDisplayName(provider) {
 
 // src/opencode-serve.ts
 import { execSync as execSync2, spawn as spawn2 } from "child_process";
-import { existsSync as existsSync10 } from "fs";
+import { existsSync as existsSync11 } from "fs";
 import { homedir as homedir7 } from "os";
-import { join as join10 } from "path";
+import { join as join11 } from "path";
 var isWindows2 = process.platform === "win32";
 var OPENCODE_FALLBACK_PATHS = isWindows2 ? [
-  join10(process.env["APPDATA"] ?? homedir7(), "npm", "opencode.cmd"),
-  join10(process.env["APPDATA"] ?? homedir7(), "npm", "opencode"),
-  join10(homedir7(), "AppData", "Roaming", "npm", "opencode.cmd")
+  join11(process.env["APPDATA"] ?? homedir7(), "npm", "opencode.cmd"),
+  join11(process.env["APPDATA"] ?? homedir7(), "npm", "opencode"),
+  join11(homedir7(), "AppData", "Roaming", "npm", "opencode.cmd")
 ] : [
-  join10(homedir7(), ".opencode", "bin", "opencode"),
-  join10(homedir7(), ".local", "bin", "opencode"),
-  join10(homedir7(), ".npm", "bin", "opencode"),
+  join11(homedir7(), ".opencode", "bin", "opencode"),
+  join11(homedir7(), ".local", "bin", "opencode"),
+  join11(homedir7(), ".npm", "bin", "opencode"),
   "/usr/local/bin/opencode",
   "/opt/homebrew/bin/opencode"
 ];
@@ -8124,14 +9544,14 @@ function findOpencodeBinary() {
   } catch {
   }
   for (const path of OPENCODE_FALLBACK_PATHS) {
-    if (existsSync10(path)) return path;
+    if (existsSync11(path)) return path;
   }
   return null;
 }
 async function fetchRawOpencodeProviders() {
   const binary = findOpencodeBinary();
   if (!binary) return null;
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     let child = null;
     let settled = false;
     const TIMEOUT_MS = 1e4;
@@ -8143,7 +9563,7 @@ async function fetchRawOpencodeProviders() {
         child?.kill();
       } catch {
       }
-      resolve(value);
+      resolve2(value);
     };
     const timer = setTimeout(() => {
       finish(null);
@@ -8600,10 +10020,10 @@ function uniqueProviderId(displayName, registry) {
   let base = customProviderId(displayName);
   if (!base.startsWith("custom-")) base = `custom-${slugifyProviderId(displayName)}`;
   if (!isValidProviderId(base)) base = "custom-provider";
-  if (!registry.providers.some((p8) => p8.id === base)) return base;
+  if (!registry.providers.some((p9) => p9.id === base)) return base;
   for (let i = 2; i < 100; i++) {
     const candidate = `${base}-${i}`;
-    if (isValidProviderId(candidate) && !registry.providers.some((p8) => p8.id === candidate)) {
+    if (isValidProviderId(candidate) && !registry.providers.some((p9) => p9.id === candidate)) {
       return candidate;
     }
   }
@@ -8709,7 +10129,7 @@ async function addProviderFromTemplate(template, apiKey, opts) {
     return { added: false, error: "API key cannot be empty." };
   }
   const registry = loadRegistry();
-  const existing = registry.providers.find((p8) => p8.id === template.id);
+  const existing = registry.providers.find((p9) => p9.id === template.id);
   if (existing && !opts?.replaceExisting) {
     return {
       added: false,
@@ -8769,7 +10189,7 @@ async function addProviderFromTemplate(template, apiKey, opts) {
     }
   };
   if (existing) {
-    const idx = registry.providers.findIndex((p8) => p8.id === template.id);
+    const idx = registry.providers.findIndex((p9) => p9.id === template.id);
     registry.providers[idx] = entry;
   } else {
     registry.providers.push(entry);
@@ -8781,11 +10201,11 @@ async function addProviderFromTemplate(template, apiKey, opts) {
 
 // src/registry/crud.ts
 function credentialStillReferenced(authRef, remaining) {
-  return remaining.some((p8) => p8.authRef === authRef);
+  return remaining.some((p9) => p9.authRef === authRef);
 }
 async function removeProviderFromRegistry(id, opts) {
   const registry = loadRegistry();
-  const index = registry.providers.findIndex((p8) => p8.id === id);
+  const index = registry.providers.findIndex((p9) => p9.id === id);
   if (index < 0) {
     return { removed: false, id, credentialDeleted: false, error: `Provider not found: ${id}` };
   }
@@ -8809,7 +10229,7 @@ async function removeProviderFromRegistry(id, opts) {
 }
 function addZenRegistryStub(opts) {
   const registry = loadRegistry();
-  if (registry.providers.some((p8) => p8.id === "zen")) {
+  if (registry.providers.some((p9) => p9.id === "zen")) {
     return { added: false, reason: "OpenCode Zen is already configured." };
   }
   registry.providers.push(zenRegistryStub(opts?.subscriptionFilter));
@@ -8818,7 +10238,7 @@ function addZenRegistryStub(opts) {
 }
 function addGoRegistryStub() {
   const registry = loadRegistry();
-  if (registry.providers.some((p8) => p8.id === "go")) {
+  if (registry.providers.some((p9) => p9.id === "go")) {
     return { added: false, reason: "OpenCode Go is already configured." };
   }
   registry.providers.push(goRegistryStub());
@@ -8827,7 +10247,7 @@ function addGoRegistryStub() {
 }
 function toggleProviderEnabled(id) {
   const registry = loadRegistry();
-  const provider = registry.providers.find((p8) => p8.id === id);
+  const provider = registry.providers.find((p9) => p9.id === id);
   if (!provider) return { toggled: false, error: `Provider not found: ${id}` };
   provider.enabled = !provider.enabled;
   saveRegistry(registry);
@@ -9240,7 +10660,7 @@ async function refreshApiListProvider(provider, apiKey) {
   };
 }
 function updateProviderCache(registry, providerId, models, baseUrl) {
-  const idx = registry.providers.findIndex((p8) => p8.id === providerId);
+  const idx = registry.providers.findIndex((p9) => p9.id === providerId);
   if (idx < 0) return;
   const now = (/* @__PURE__ */ new Date()).toISOString();
   const existing = registry.providers[idx];
@@ -9263,7 +10683,7 @@ function compatibleCachedModels(provider, models) {
   }));
 }
 async function refreshProviderModels(providerId, apiKey, registry = loadRegistry()) {
-  const provider = registry.providers.find((p8) => p8.id === providerId);
+  const provider = registry.providers.find((p9) => p9.id === providerId);
   if (!provider) {
     return { id: providerId, name: providerId, ok: false, reason: "Provider not found." };
   }
@@ -9393,7 +10813,7 @@ async function refreshAllProviderModels(resolveKey) {
   const opencodeKey = await readGlobalOpencodeCredential();
   if (opencodeKey) {
     let changed = false;
-    if (!registry.providers.some((p8) => p8.id === "zen")) {
+    if (!registry.providers.some((p9) => p9.id === "zen")) {
       registry.providers.push({
         id: "zen",
         templateId: "zen",
@@ -9407,7 +10827,7 @@ async function refreshAllProviderModels(resolveKey) {
       });
       changed = true;
     }
-    if (!registry.providers.some((p8) => p8.id === "go")) {
+    if (!registry.providers.some((p9) => p9.id === "go")) {
       registry.providers.push({
         id: "go",
         templateId: "go",
@@ -9425,7 +10845,7 @@ async function refreshAllProviderModels(resolveKey) {
       saveRegistry(registry);
     }
   }
-  const enabledProviders = registry.providers.filter((p8) => p8.enabled);
+  const enabledProviders = registry.providers.filter((p9) => p9.enabled);
   for (const provider of enabledProviders) {
     const key = await resolveRefreshCredential(provider, resolveKey);
     refreshed.push(await refreshProviderModels(provider.id, key, registry));
@@ -9434,8 +10854,8 @@ async function refreshAllProviderModels(resolveKey) {
 }
 
 // src/registry/provider-auth.ts
-import pc6 from "picocolors";
-import * as p5 from "@clack/prompts";
+import pc7 from "picocolors";
+import * as p6 from "@clack/prompts";
 import open3 from "open";
 init_provider_templates();
 
@@ -9448,10 +10868,10 @@ async function runOpencodeAuthBroker(providerId, options = {}) {
   }
   const args = ["auth", "login", "--provider", providerId];
   if (options.method) args.push("-m", options.method);
-  const exitCode = await new Promise((resolve, reject) => {
+  const exitCode = await new Promise((resolve2, reject) => {
     const child = spawn3(binary, args, { stdio: "inherit" });
     child.on("error", reject);
-    child.on("exit", (code) => resolve(code ?? 1));
+    child.on("exit", (code) => resolve2(code ?? 1));
   });
   if (exitCode !== 0) {
     throw new Error(`OpenCode auth login failed (exit ${exitCode})`);
@@ -9529,39 +10949,39 @@ function openBrowser(url) {
 async function runNativeDeviceCode(providerId) {
   const label = PROVIDER_DISPLAY[providerId];
   printOAuthStepsPanel(`${label} \u2014 Sign in`, label);
-  const spinner3 = p5.spinner();
+  const spinner3 = p6.spinner();
   spinner3.start("Waiting for authorization...");
   try {
     if (providerId === "xai" || providerId === "xai-oauth") {
       const tokens2 = await runXaiDeviceCodeFlow(({ url, userCode }) => {
         spinner3.stop("");
-        p5.log.info(`Visit: ${pc6.cyan(url)}`);
-        p5.log.info(`Enter code: ${pc6.bold(userCode)}`);
+        p6.log.info(`Visit: ${pc7.cyan(url)}`);
+        p6.log.info(`Enter code: ${pc7.bold(userCode)}`);
         openBrowser(url);
         spinner3.start("Waiting for authorization...");
       });
-      spinner3.stop(pc6.green("Signed in to xAI"));
+      spinner3.stop(pc7.green("Signed in to xAI"));
       return tokensToStoredCredential(tokens2);
     }
     if (providerId === "github-copilot") {
       const tokens2 = await runGithubDeviceCodeFlow(({ url, userCode }) => {
         spinner3.stop("");
-        p5.log.info(`Visit: ${pc6.cyan(url)}`);
-        p5.log.info(`Enter code: ${pc6.bold(userCode)}`);
+        p6.log.info(`Visit: ${pc7.cyan(url)}`);
+        p6.log.info(`Enter code: ${pc7.bold(userCode)}`);
         openBrowser(url);
         spinner3.start("Waiting for authorization...");
       });
-      spinner3.stop(pc6.green("Signed in to GitHub Copilot"));
+      spinner3.stop(pc7.green("Signed in to GitHub Copilot"));
       return tokensToStoredCredential(tokens2);
     }
     const { tokens, accountId } = await runOpenAiDeviceCodeFlow(({ url, userCode }) => {
       spinner3.stop("");
-      p5.log.info(`Visit: ${pc6.cyan(url)}`);
-      p5.log.info(`Enter code: ${pc6.bold(userCode)}`);
+      p6.log.info(`Visit: ${pc7.cyan(url)}`);
+      p6.log.info(`Enter code: ${pc7.bold(userCode)}`);
       openBrowser(url);
       spinner3.start("Waiting for authorization...");
     });
-    spinner3.stop(pc6.green("Signed in to OpenAI ChatGPT"));
+    spinner3.stop(pc7.green("Signed in to OpenAI ChatGPT"));
     return tokensToStoredCredential(tokens, void 0, accountId);
   } catch (err) {
     spinner3.stop("");
@@ -9575,23 +10995,23 @@ async function runNativeBrowserOAuth(providerId) {
   const confirmed = await confirmSubscriptionOAuthRisk(providerId);
   if (!confirmed) throw new Error("Cancelled");
   if (providerId === "claude-code") {
-    const spinner4 = p5.spinner();
+    const spinner4 = p6.spinner();
     spinner4.start("Opening browser for Anthropic sign-in\u2026");
     try {
       const { tokens, bootstrap } = await runClaudeCodeOAuthFlow((url) => {
         spinner4.stop("");
-        p5.log.info(`Opening: ${pc6.cyan(url)}`);
+        p6.log.info(`Opening: ${pc7.cyan(url)}`);
       }, async () => {
-        const code = await p5.text({
+        const code = await p6.text({
           message: "Paste the authorization code or callback URL from Anthropic",
           placeholder: "code from browser",
           validate: (value) => value.trim() ? void 0 : "Authorization code is required"
         });
-        if (p5.isCancel(code)) throw new Error("Cancelled");
+        if (p6.isCancel(code)) throw new Error("Cancelled");
         spinner4.start("Exchanging authorization code\u2026");
         return code;
       });
-      spinner4.stop(pc6.green("Signed in to Claude Code"));
+      spinner4.stop(pc7.green("Signed in to Claude Code"));
       const providerData = { cliUserID: generateCliUserID() };
       if (bootstrap.accountId) providerData.accountUUID = bootstrap.accountId;
       if (bootstrap.organizationId) providerData.organizationUUID = bootstrap.organizationId;
@@ -9603,15 +11023,15 @@ async function runNativeBrowserOAuth(providerId) {
       throw err;
     }
   }
-  const spinner3 = p5.spinner();
+  const spinner3 = p6.spinner();
   spinner3.start("Opening browser for Google sign-in\u2026");
   try {
     const { tokens, userInfo, projectId, tierId } = await runAntigravityOAuthFlow((url) => {
       spinner3.stop("");
-      p5.log.info(`Opening: ${pc6.cyan(url)}`);
+      p6.log.info(`Opening: ${pc7.cyan(url)}`);
       spinner3.start("Waiting for authorization\u2026");
     });
-    spinner3.stop(pc6.green("Signed in to Antigravity"));
+    spinner3.stop(pc7.green("Signed in to Antigravity"));
     const providerData = {};
     if (projectId) providerData.projectId = projectId;
     if (tierId) providerData.tier = tierId;
@@ -9711,7 +11131,7 @@ async function authenticateProvider(providerId, options = {}) {
         }
       );
       if (!saved2) {
-        p5.log.warn(`Could not save OAuth tokens to Keychain \u2014 ${brokerDiagMsg || "session may not persist."}`);
+        p6.log.warn(`Could not save OAuth tokens to Keychain \u2014 ${brokerDiagMsg || "session may not persist."}`);
       }
       const registryProvider2 = await upsertOAuthProvider(providerId, cred2);
       return { providerId: registryId, credential: cred2, registryProvider: registryProvider2 };
@@ -9730,14 +11150,14 @@ async function authenticateProvider(providerId, options = {}) {
   if (!method) {
     const hasOpencode = findOpencodeBinary() !== null;
     if (hasOpencode) {
-      const choice = await p5.select({
+      const choice = await p6.select({
         message: "How would you like to sign in?",
         options: [
           { value: "native", label: "Device code (recommended)", hint: "Works on SSH/VPS \u2014 open URL on any device" },
           { value: "broker", label: "Via OpenCode", hint: "Uses opencode auth login" }
         ]
       });
-      if (p5.isCancel(choice)) throw new Error("Cancelled");
+      if (p6.isCancel(choice)) throw new Error("Cancelled");
       method = choice;
     } else {
       method = "native";
@@ -9753,10 +11173,10 @@ async function authenticateProvider(providerId, options = {}) {
     }
   );
   if (!saved) {
-    p5.log.warn(`Could not save OAuth tokens to Keychain \u2014 ${nativeDiagMsg || "session may not persist."}`);
+    p6.log.warn(`Could not save OAuth tokens to Keychain \u2014 ${nativeDiagMsg || "session may not persist."}`);
   }
   const registryProvider = await upsertOAuthProvider(providerId, cred);
-  const refreshSpinner = p5.spinner();
+  const refreshSpinner = p6.spinner();
   refreshSpinner.start("Refreshing model list...");
   try {
     await refreshProviderModels(registryId, cred.access);
@@ -9767,19 +11187,19 @@ async function authenticateProvider(providerId, options = {}) {
   return { providerId: registryId, credential: cred, registryProvider };
 }
 function providerAuthHelpText() {
-  return `${pc6.bold("relay-ai providers auth")} \u2014 sign in with OAuth
+  return `${pc7.bold("relay-ai providers auth")} \u2014 sign in with OAuth
 
-${pc6.bold("Usage:")}
+${pc7.bold("Usage:")}
   relay-ai providers auth <id>
   relay-ai providers auth xai --native
   relay-ai providers auth openai --broker
   relay-ai providers auth github-copilot
 
-${pc6.bold("Options:")}
+${pc7.bold("Options:")}
   --native    Use built-in OAuth flow
   --broker    Delegate to OpenCode auth login
 
-${pc6.bold("Device code (works on SSH/VPS):")}
+${pc7.bold("Device code (works on SSH/VPS):")}
   xai              SuperGrok / X Premium (device code at x.ai/device)
   openai           ChatGPT Plus/Pro (device code at auth.openai.com/codex/device)
   github-copilot   GitHub Copilot Individual/Business (device code at github.com/login/device)`;
@@ -9787,10 +11207,10 @@ ${pc6.bold("Device code (works on SSH/VPS):")}
 
 // src/codex/app-launch.ts
 import { execSync as execSync3, spawn as spawn4 } from "child_process";
-import { existsSync as existsSync11, readdirSync, statSync as statSync3 } from "fs";
+import { existsSync as existsSync12, readdirSync, statSync as statSync3 } from "fs";
 import { homedir as homedir8 } from "os";
-import { join as join11 } from "path";
-import * as p6 from "@clack/prompts";
+import { join as join12 } from "path";
+import * as p7 from "@clack/prompts";
 var CODEX_BUNDLE_ID = "com.openai.codex";
 var DARWIN_APP_NAMES = ["ChatGPT", "Codex"];
 var WIN_APP_NAMES = ["ChatGPT", "Codex"];
@@ -9808,33 +11228,33 @@ function runPowerShell(script) {
 function darwinAppCandidates() {
   return DARWIN_APP_NAMES.flatMap((name) => [
     `/Applications/${name}.app`,
-    join11(homedir8(), "Applications", `${name}.app`)
+    join12(homedir8(), "Applications", `${name}.app`)
   ]);
 }
 function winLocalAppData() {
-  return process.env.LOCALAPPDATA ?? join11(homedir8(), "AppData", "Local");
+  return process.env.LOCALAPPDATA ?? join12(homedir8(), "AppData", "Local");
 }
 function winCodexExeCandidates() {
   const local = winLocalAppData();
   const bases = WIN_APP_NAMES.flatMap((name) => [
-    join11(local, "Programs", name),
-    join11(local, "Programs", `OpenAI ${name}`),
-    join11(local, name),
-    join11(local, `OpenAI ${name}`),
-    join11(local, "OpenAI", name)
+    join12(local, "Programs", name),
+    join12(local, "Programs", `OpenAI ${name}`),
+    join12(local, name),
+    join12(local, `OpenAI ${name}`),
+    join12(local, "OpenAI", name)
   ]);
-  bases.push(join11(local, "openai-codex-electron"), join11(local, "openai-chatgpt-electron"));
+  bases.push(join12(local, "openai-codex-electron"), join12(local, "openai-chatgpt-electron"));
   const out = [];
   for (const base of bases) {
     for (const name of WIN_APP_NAMES) {
-      out.push(join11(base, `${name}.exe`));
+      out.push(join12(base, `${name}.exe`));
     }
     try {
-      if (existsSync11(base)) {
+      if (existsSync12(base)) {
         for (const dir of readdirSync(base)) {
           if (dir.startsWith("app-")) {
             for (const name of WIN_APP_NAMES) {
-              out.push(join11(base, dir, `${name}.exe`));
+              out.push(join12(base, dir, `${name}.exe`));
             }
           }
         }
@@ -9848,7 +11268,7 @@ function mdfindCodexApp() {
   try {
     const out = run(`mdfind "kMDItemCFBundleIdentifier == '${CODEX_BUNDLE_ID}'"`);
     const first = out.split("\n").map((l) => l.trim()).find(Boolean);
-    return first && existsSync11(first) ? first : null;
+    return first && existsSync12(first) ? first : null;
   } catch {
     return null;
   }
@@ -9856,14 +11276,14 @@ function mdfindCodexApp() {
 function findCodexApp() {
   if (process.platform === "darwin") {
     for (const path of darwinAppCandidates()) {
-      if (existsSync11(path)) return path;
+      if (existsSync12(path)) return path;
     }
     return mdfindCodexApp();
   }
   if (process.platform === "win32") {
     for (const path of winCodexExeCandidates()) {
       try {
-        if (existsSync11(path) && statSync3(path).isFile()) return path;
+        if (existsSync12(path) && statSync3(path).isFile()) return path;
       } catch {
       }
     }
@@ -9916,7 +11336,7 @@ function isCodexAppRunning() {
   return false;
 }
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
 async function waitForQuit(timeoutMs) {
   const deadline = Date.now() + timeoutMs;
@@ -9989,9 +11409,9 @@ async function launchOrRestartCodexApp(prompt = "Restart ChatGPT Desktop to appl
     openCodexAppAt(appPath);
     return;
   }
-  const restart = await p6.confirm({ message: prompt, initialValue: true });
-  if (p6.isCancel(restart) || !restart) {
-    p6.log.info("Quit and reopen ChatGPT Desktop when you are ready for the new model to take effect.");
+  const restart = await p7.confirm({ message: prompt, initialValue: true });
+  if (p7.isCancel(restart) || !restart) {
+    p7.log.info("Quit and reopen ChatGPT Desktop when you are ready for the new model to take effect.");
     return;
   }
   if (process.platform === "darwin") darwinQuit();
@@ -10009,10 +11429,10 @@ function codexAppInstallHint() {
 
 // src/claude-desktop/app-launch.ts
 import { execSync as execSync4, spawn as spawn5 } from "child_process";
-import { existsSync as existsSync12, readdirSync as readdirSync2, statSync as statSync4 } from "fs";
+import { existsSync as existsSync13, readdirSync as readdirSync2, statSync as statSync4 } from "fs";
 import { homedir as homedir9 } from "os";
-import { join as join12 } from "path";
-import * as p7 from "@clack/prompts";
+import { join as join13 } from "path";
+import * as p8 from "@clack/prompts";
 var CLAUDE_BUNDLE_ID = "com.anthropic.claudefordesktop";
 function claudeAppSupported() {
   if (process.platform !== "darwin" && process.platform !== "win32") {
@@ -10028,26 +11448,26 @@ function runPowerShell2(script) {
 function darwinAppCandidates2() {
   return [
     "/Applications/Claude.app",
-    join12(homedir9(), "Applications", "Claude.app")
+    join13(homedir9(), "Applications", "Claude.app")
   ];
 }
 function winLocalAppData2() {
-  return process.env.LOCALAPPDATA ?? join12(homedir9(), "AppData", "Local");
+  return process.env.LOCALAPPDATA ?? join13(homedir9(), "AppData", "Local");
 }
 function winClaudeExeCandidates() {
   const local = winLocalAppData2();
   const bases = [
-    join12(local, "Programs", "Claude"),
-    join12(local, "Claude")
+    join13(local, "Programs", "Claude"),
+    join13(local, "Claude")
   ];
   const out = [];
   for (const base of bases) {
-    out.push(join12(base, "Claude.exe"));
+    out.push(join13(base, "Claude.exe"));
     try {
-      if (existsSync12(base)) {
+      if (existsSync13(base)) {
         for (const name of readdirSync2(base)) {
           if (name.startsWith("app-")) {
-            out.push(join12(base, name, "Claude.exe"));
+            out.push(join13(base, name, "Claude.exe"));
           }
         }
       }
@@ -10060,7 +11480,7 @@ function mdfindClaudeApp() {
   try {
     const out = run2(`mdfind "kMDItemCFBundleIdentifier == '${CLAUDE_BUNDLE_ID}'"`);
     const first = out.split("\n").map((l) => l.trim()).find(Boolean);
-    return first && existsSync12(first) ? first : null;
+    return first && existsSync13(first) ? first : null;
   } catch {
     return null;
   }
@@ -10068,14 +11488,14 @@ function mdfindClaudeApp() {
 function findClaudeApp() {
   if (process.platform === "darwin") {
     for (const path of darwinAppCandidates2()) {
-      if (existsSync12(path)) return path;
+      if (existsSync13(path)) return path;
     }
     return mdfindClaudeApp();
   }
   if (process.platform === "win32") {
     for (const path of winClaudeExeCandidates()) {
       try {
-        if (existsSync12(path) && statSync4(path).isFile()) return path;
+        if (existsSync13(path) && statSync4(path).isFile()) return path;
       } catch {
       }
     }
@@ -10122,7 +11542,7 @@ function isClaudeAppRunning() {
   return false;
 }
 function sleep2(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
 async function waitForQuit2(timeoutMs) {
   const deadline = Date.now() + timeoutMs;
@@ -10192,9 +11612,9 @@ async function launchOrRestartClaudeApp(prompt = "Restart Claude Desktop to appl
     openClaudeAppAt(appPath);
     return;
   }
-  const restart = await p7.confirm({ message: prompt, initialValue: true });
-  if (p7.isCancel(restart) || !restart) {
-    p7.log.info("Quit and reopen Claude Desktop when you are ready for the new model to take effect.");
+  const restart = await p8.confirm({ message: prompt, initialValue: true });
+  if (p8.isCancel(restart) || !restart) {
+    p8.log.info("Quit and reopen Claude Desktop when you are ready for the new model to take effect.");
     return;
   }
   if (process.platform === "darwin") darwinQuit2();
@@ -10218,7 +11638,6 @@ export {
   buildClaudeCodeBillingSystemLine,
   selectBetaFlags,
   injectClaudeIdentity,
-  isSdkMigratedNpm,
   maxToolsForNpm,
   createLanguageModel,
   getReasoningCapabilities,
@@ -10301,6 +11720,7 @@ export {
   detectConflicts,
   resolveApiKey,
   buildChildEnv,
+  buildHttpProxyChildEnv,
   buildAntigravityChildEnv,
   GLOBAL_OPENCODE_KEYRING_ACCOUNT,
   readGlobalOpencodeCredential,
@@ -10334,6 +11754,7 @@ export {
   getCodexProxyDebugLogPath,
   getGeminiProxyDebugLogPath,
   getUiDebugLogPath,
+  getInferenceRequestLogPath,
   makeTraceLogger,
   writeSecureLogLine,
   printTraceLog,
@@ -10365,6 +11786,8 @@ export {
   aliasModelId,
   startProxyCatalog,
   startProxy,
+  makeRouteResolver,
+  buildCatalogRoutes,
   cachedModelToLocal,
   fetchProviderCatalog,
   providersForPicker,
@@ -10380,6 +11803,10 @@ export {
   summarizeServerProviders,
   hasApplicationDefaultCredentials,
   buildVertexRuntimeConfig,
+  loadHttpProxyRoutes,
+  printHttpProxyModels,
+  reportSkippedHttpProxyFavorites,
+  startConfiguredHttpProxy,
   getLocalIps,
   providerOptionsFromCatalog,
   loadServerModels,
@@ -10408,4 +11835,4 @@ export {
   quitClaudeAppGracefully,
   launchOrRestartClaudeApp
 };
-//# sourceMappingURL=chunk-VSXPAZX4.js.map
+//# sourceMappingURL=chunk-WPDPFELI.js.map

@@ -1379,7 +1379,7 @@ input { font-family: inherit; }
 
 .btn-undo:hover { opacity: 0.75; }
 
-/* ─── Server Gateway ─────────────────────────────────────────────────────── */
+/* ─── Server Gateway & HTTP Proxy ───────────────────────────────────────── */
 
 .nav-badge-status {
   color: var(--success);
@@ -1513,6 +1513,37 @@ input { font-family: inherit; }
 
 .server-start-error { margin-bottom: 10px; }
 
+.server-proxy-note {
+  padding: 15px 16px;
+  margin-bottom: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.server-proxy-note strong {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text-1);
+}
+
+.server-proxy-note p { margin: 4px 0; }
+.server-proxy-note code { color: var(--accent); }
+.server-proxy-running-note { margin-bottom: 14px; }
+
+.server-proxy-warning {
+  padding: 10px 12px;
+  margin: -10px 0 16px;
+  border: 1px solid oklch(78% 0.15 75 / 0.3);
+  border-radius: var(--radius-sm);
+  background: oklch(78% 0.15 75 / 0.08);
+  color: var(--text-2);
+  font-size: 13px;
+}
+
 .server-status-row {
   display: flex;
   align-items: center;
@@ -1590,6 +1621,8 @@ input { font-family: inherit; }
 }
 
 .url-card-value.masked { letter-spacing: 0.15em; }
+
+.server-proxy-env-card .url-card-label { width: 170px; }
 
 .server-model-table-wrap {
   border: 1px solid var(--border);

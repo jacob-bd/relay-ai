@@ -1,5 +1,7 @@
 // Short user-facing messages from SDK/upstream failures — no stack traces in Codex TUI.
 
+import { APICallError, RetryError } from 'ai';
+
 interface ApiCallLike {
   message?: string;
   statusCode?: number;
@@ -7,6 +9,36 @@ interface ApiCallLike {
   data?: { error?: { message?: string; type?: string } };
   lastError?: { message?: string; statusCode?: number };
   errors?: Array<{ message?: string; statusCode?: number }>;
+}
+
+export interface SdkUpstreamErrorDetails {
+  statusCode?: number;
+  errorContent: string;
+  isRetryable: boolean;
+  attemptCount: number;
+}
+
+/** Extract the real HTTP failure from an AI SDK retry wrapper without relying on instanceof. */
+export function sdkUpstreamErrorDetails(err: unknown): SdkUpstreamErrorDetails | undefined {
+  const retry = RetryError.isInstance(err) ? err : undefined;
+  const inner = retry?.lastError ?? err;
+  if (!APICallError.isInstance(inner)) return undefined;
+
+  let errorContent = inner.responseBody;
+  if (!errorContent && inner.data !== undefined) {
+    try {
+      errorContent = JSON.stringify(inner.data);
+    } catch {
+      // Fall through to the SDK's safe message.
+    }
+  }
+
+  return {
+    statusCode: inner.statusCode,
+    errorContent: errorContent || inner.message,
+    isRetryable: inner.isRetryable,
+    attemptCount: retry?.errors.length ?? 1,
+  };
 }
 
 export function formatUpstreamError(err: unknown): string {
@@ -56,7 +88,7 @@ export function formatUpstreamError(err: unknown): string {
 export function upstreamHttpStatus(err: unknown, message: string): number {
   if (err && typeof err === 'object' && 'statusCode' in err) {
     const code = (err as { statusCode?: number }).statusCode;
-    if (code === 400 || code === 401 || code === 403 || code === 404 || code === 429) return code;
+    if (typeof code === 'number' && code >= 400 && code <= 599) return code;
   }
   if (message.includes('HTTP 429') || message.includes('429')) return 429;
   if (message.includes('HTTP 400')) return 400;

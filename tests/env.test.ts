@@ -4,6 +4,7 @@ import {
   detectConflicts,
   resolveApiKey,
   buildChildEnv,
+  buildHttpProxyChildEnv,
   classifyKeyringError,
   parseAuthRef,
   providerKeyringAccount,
@@ -223,5 +224,38 @@ describe('buildChildEnv', () => {
   it('uses backend URL when proxyPort is not provided', () => {
     const env = buildChildEnv(BACKENDS.go.baseUrl, 'minimax-m3', 'my-key');
     expect(env['ANTHROPIC_BASE_URL']).toBe('https://opencode.ai/zen/go');
+  });
+});
+
+describe('buildHttpProxyChildEnv', () => {
+  it('sets proxy trust without replacing normal Anthropic credentials or model', () => {
+    process.env['ANTHROPIC_API_KEY'] = 'normal-api-key';
+    process.env['ANTHROPIC_AUTH_TOKEN'] = 'normal-auth-token';
+    process.env['ANTHROPIC_MODEL'] = 'sonnet';
+    process.env['ANTHROPIC_BASE_URL'] = 'https://old-gateway.example';
+    process.env['CLAUDE_CODE_USE_VERTEX'] = '1';
+    process.env['NO_PROXY'] = 'localhost,api.anthropic.com,.internal.example';
+    try {
+      const env = buildHttpProxyChildEnv(18181, '/tmp/relay-ca.pem');
+      expect(env['HTTPS_PROXY']).toBe('http://127.0.0.1:18181');
+      expect(env['HTTP_PROXY']).toBe('http://127.0.0.1:18181');
+      expect(env['https_proxy']).toBe('http://127.0.0.1:18181');
+      expect(env['http_proxy']).toBe('http://127.0.0.1:18181');
+      expect(env['NODE_EXTRA_CA_CERTS']).toBe('/tmp/relay-ca.pem');
+      expect(env['ANTHROPIC_BASE_URL']).toBeUndefined();
+      expect(env['CLAUDE_CODE_USE_VERTEX']).toBeUndefined();
+      expect(env['ANTHROPIC_API_KEY']).toBe('normal-api-key');
+      expect(env['ANTHROPIC_AUTH_TOKEN']).toBe('normal-auth-token');
+      expect(env['ANTHROPIC_MODEL']).toBe('sonnet');
+      expect(env['NO_PROXY']).toBe('localhost,.internal.example');
+      expect(env['no_proxy']).toBe('localhost,.internal.example');
+    } finally {
+      delete process.env['ANTHROPIC_API_KEY'];
+      delete process.env['ANTHROPIC_AUTH_TOKEN'];
+      delete process.env['ANTHROPIC_MODEL'];
+      delete process.env['ANTHROPIC_BASE_URL'];
+      delete process.env['CLAUDE_CODE_USE_VERTEX'];
+      delete process.env['NO_PROXY'];
+    }
   });
 });

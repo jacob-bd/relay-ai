@@ -311,23 +311,38 @@ describe('generateAnthropicResponse', () => {
   it('forceStream collects a real stream into one response instead of calling generateText', async () => {
     vi.resetModules();
     const generateText = vi.fn();
+    async function* fullStream() {
+      yield { type: 'start' };
+      yield { type: 'finish' };
+    }
+    const streamText = vi.fn(() => ({
+      text: Promise.resolve('hello'),
+      toolCalls: Promise.resolve([]),
+      toolResults: Promise.resolve([]),
+      finishReason: Promise.resolve('stop'),
+      usage: Promise.resolve({ inputTokens: 3, outputTokens: 4 }),
+      fullStream: fullStream(),
+    }));
     vi.doMock('ai', () => ({
       generateText,
-      streamText: vi.fn(() => ({
-        text: Promise.resolve('hello'),
-        toolCalls: Promise.resolve([]),
-        toolResults: Promise.resolve([]),
-        finishReason: Promise.resolve('stop'),
-        usage: Promise.resolve({ inputTokens: 3, outputTokens: 4 }),
-      })),
+      streamText,
       tool: vi.fn((spec: unknown) => spec),
       jsonSchema: vi.fn((schema: unknown) => schema),
     }));
 
     const { generateAnthropicResponse } = await import('../src/sdk-adapter.js');
-    const body = await generateAnthropicResponse({} as never, { messages: [] }, 'gpt-5.6-sol', { forceStream: true });
+    const abort = new AbortController();
+    const onPart = vi.fn();
+    const body = await generateAnthropicResponse(
+      {} as never,
+      { messages: [] },
+      'gpt-5.6-sol',
+      { forceStream: true, abortSignal: abort.signal, onPart },
+    );
 
     expect(generateText).not.toHaveBeenCalled();
+    expect(streamText).toHaveBeenCalledWith(expect.objectContaining({ abortSignal: abort.signal }));
+    expect(onPart.mock.calls).toEqual([['start'], ['finish']]);
     expect((body.content as any[])[0]).toEqual({ type: 'text', text: 'hello' });
     expect(body.usage).toEqual({ input_tokens: 3, output_tokens: 4 });
 
@@ -337,10 +352,14 @@ describe('generateAnthropicResponse', () => {
 });
 
 // ── streaming translation ────────────────────────────────────────────────────
-async function collect(parts: any[], model = 'm'): Promise<{ events: Array<{ event: string; data: any }>; raw: string }> {
+async function collect(
+  parts: any[],
+  model = 'm',
+  observer?: Parameters<typeof writeAnthropicStream>[4],
+): Promise<{ events: Array<{ event: string; data: any }>; raw: string }> {
   let raw = '';
   async function* gen() { for (const p of parts) yield p; }
-  await writeAnthropicStream(gen() as any, model, (c) => { raw += c; });
+  await writeAnthropicStream(gen() as any, model, (c) => { raw += c; }, undefined, observer);
   const events = raw.split('\n\n').filter(Boolean).map(block => {
     const [evLine, dataLine] = block.split('\n');
     return { event: evLine.replace('event: ', ''), data: JSON.parse(dataLine.replace('data: ', '')) };
@@ -357,33 +376,59 @@ describe('writeAnthropicStream', () => {
       { type: 'text-delta', id: 't1', text: ' world' },
       { type: 'text-end', id: 't1' },
       { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 5, outputTokens: 2 } },
-    ]);
+    ], 'm', { initialInputTokens: 37 });
     const types = events.map(e => e.event);
     expect(types).toEqual([
       'message_start', 'content_block_start', 'content_block_delta', 'content_block_delta',
       'content_block_stop', 'message_delta', 'message_stop',
     ]);
+    const start = events.find(e => e.event === 'message_start')!;
+    expect(start.data.message.usage).toEqual({
+      input_tokens: 37,
+      output_tokens: 0,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    });
     const delta = events.find(e => e.event === 'message_delta')!;
     expect(delta.data.delta.stop_reason).toBe('end_turn');
     expect(delta.data.usage).toEqual({ input_tokens: 5, output_tokens: 2 });
   });
 
-  it('maps a mid-stream 401 to a non-retryable authentication_error instead of a generic api_error', async () => {
-    const { events } = await collect([
-      { type: 'start' },
-      { type: 'error', error: { statusCode: 401, message: 'Unauthorized' } },
-    ]);
-    const errorEvent = events.find(e => e.event === 'error')!;
-    expect(errorEvent.data.error).toEqual({ type: 'authentication_error', message: 'Unauthorized' });
+  it('propagates an AI SDK stream failure so the HTTP layer can preserve its status', async () => {
+    const upstreamError = { statusCode: 401, message: 'Unauthorized' };
+    async function* parts() {
+      yield { type: 'error', error: upstreamError };
+    }
+
+    await expect(writeAnthropicStream(parts() as any, 'm', () => {})).rejects.toBe(upstreamError);
   });
 
-  it('falls back to a generic api_error for an unrecognized upstream failure', async () => {
-    const { events } = await collect([
-      { type: 'start' },
-      { type: 'error', error: { message: 'Something went wrong' } },
-    ]);
-    const errorEvent = events.find(e => e.event === 'error')!;
-    expect(errorEvent.data.error).toEqual({ type: 'api_error', message: 'Something went wrong' });
+  it('reports every SDK stream part to the lifecycle observer', async () => {
+    const observed: string[] = [];
+    async function* parts() {
+      yield { type: 'start' };
+      yield { type: 'text-start', id: 't1' };
+      yield { type: 'text-delta', id: 't1', text: 'hi' };
+      yield { type: 'finish', finishReason: 'stop' };
+    }
+
+    await writeAnthropicStream(
+      parts() as any,
+      'm',
+      () => {},
+      undefined,
+      { onPart: type => observed.push(type) },
+    );
+
+    expect(observed).toEqual(['start', 'text-start', 'text-delta', 'finish']);
+  });
+
+  it('wraps a string stream failure for the HTTP layer', async () => {
+    async function* parts() {
+      yield { type: 'error', error: 'Something went wrong' };
+    }
+
+    await expect(writeAnthropicStream(parts() as any, 'm', () => {})).rejects.toThrow('Something went wrong');
   });
 
   it('encodes thought_signature into the tool_use id and reports tool_use stop', async () => {
