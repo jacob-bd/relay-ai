@@ -148,6 +148,10 @@ export interface ParsedArgs {
   serverMaskGatewayIds?: boolean;
   /** One-run network password for `relay-ai server`. */
   serverPassword?: string;
+  /** Run Claude/server through the selective api.anthropic.com HTTP proxy. */
+  httpProxy?: boolean;
+  /** Print saved HTTP-proxy model names without opening the favorites manager. */
+  favoritesList?: boolean;
   error?: string;
 }
 

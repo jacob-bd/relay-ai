@@ -23,6 +23,8 @@ const state = vi.hoisted(() => ({
   models: [] as ServerModelInfo[],
   failNextStartWithPortConflict: false,
   close: vi.fn<() => Promise<void>>(async () => undefined),
+  proxyClose: vi.fn<() => Promise<void>>(async () => undefined),
+  failNextProxyStartWithPortConflict: false,
   savedPassword: null as string | null,
   exposedProviders: null as string[] | null,
   maskGatewayIds: true,
@@ -30,6 +32,41 @@ const state = vi.hoisted(() => ({
   freeModelsOnly: false,
   savedListenMode: 'local' as 'local' | 'network',
   favorites: [] as FavoriteModel[],
+}));
+
+vi.mock('../src/http-proxy/index.js', () => ({
+  startConfiguredHttpProxy: vi.fn(async () => {
+    if (state.failNextProxyStartWithPortConflict) {
+      state.failNextProxyStartWithPortConflict = false;
+      const err: NodeJS.ErrnoException = new Error('address in use');
+      err.code = 'EADDRINUSE';
+      throw err;
+    }
+    return {
+      handle: {
+        host: '127.0.0.1',
+        port: 17645,
+        caCertPath: '/tmp/relay-ai/http-proxy/relay-ai-ca.pem',
+        inferenceLogPath: '/tmp/relay-ai/logs/inference-requests.jsonl',
+        modelIds: ['relay:openai:gpt-test[1m]'],
+        close: state.proxyClose,
+      },
+      loaded: {
+        favoriteCount: 2,
+        routes: [{
+          aliasId: 'relay:openai:gpt-test[1m]',
+          realModelId: 'gpt-test',
+          displayName: 'GPT Test (OpenAI)',
+          upstreamUrl: '',
+          apiKey: 'provider-key',
+          modelFormat: 'openai',
+          npm: '@ai-sdk/openai',
+        }],
+        unavailable: [{ providerId: 'missing', modelId: 'gone' }],
+        unsupported: [],
+      },
+    };
+  }),
 }));
 
 vi.mock('../src/server/index.js', async () => {
@@ -77,6 +114,7 @@ vi.mock('../src/server/router.js', () => ({
       port: 17645,
       url: `http://${options.host}:17645`,
       server: {} as any,
+      inferenceLogPath: options.inferenceLogPath,
       close: state.close,
     };
   }),
@@ -107,7 +145,9 @@ describe('UI API Server endpoints', () => {
     state.apiKey = 'test-key';
     state.models = [testModel];
     state.failNextStartWithPortConflict = false;
+    state.failNextProxyStartWithPortConflict = false;
     state.close.mockClear();
+    state.proxyClose.mockClear();
     state.savedPassword = null;
     state.exposedProviders = null;
     state.maskGatewayIds = true;
@@ -177,6 +217,7 @@ describe('UI API Server endpoints', () => {
   it('starts in local mode and reports URLs + models, then blocks a second start', async () => {
     const onServerLifecycle = vi.fn();
     const startResult = await call('POST', '/api/server/start', {
+      mode: 'gateway',
       favoritesOnly: false,
       freeModelsOnly: false,
       exposedProviders: null,
@@ -188,6 +229,7 @@ describe('UI API Server endpoints', () => {
     expect(startResult.body.status.anthropicUrl).toBe('http://127.0.0.1:17645/anthropic');
     expect(startResult.body.status.openaiUrl).toBe('http://127.0.0.1:17645/openai/v1');
     expect(startResult.body.status.apiKey).toBe('any non-empty value');
+    expect(startResult.body.status.requestLogPath).toMatch(/inference-requests\.jsonl$/);
     expect(startResult.body.status.models).toEqual([
       { providerLabel: 'OpenCode Zen', name: 'Test Model', anthropicId: 'anthropic-zen__test-model', openaiId: 'test-model' },
     ]);
@@ -206,6 +248,35 @@ describe('UI API Server endpoints', () => {
     expect(secondStart.body.ok).toBe(false);
     expect(secondStart.body.error).toMatch(/already running/);
     expect(onServerLifecycle).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts HTTP proxy mode and reports env values plus relay model names', async () => {
+    const started = await call('POST', '/api/server/start', { mode: 'http-proxy' });
+
+    expect(started.body.ok).toBe(true);
+    expect(started.body.status).toMatchObject({
+      running: true,
+      mode: 'http-proxy',
+      proxyUrl: 'http://127.0.0.1:17645',
+      caCertPath: '/tmp/relay-ai/http-proxy/relay-ai-ca.pem',
+      requestLogPath: '/tmp/relay-ai/logs/inference-requests.jsonl',
+      unavailableFavorites: 1,
+      unsupportedFavorites: 0,
+      proxyModels: [{ id: 'relay:openai:gpt-test[1m]', displayName: 'GPT Test (OpenAI)' }],
+    });
+    expect(started.body.status.anthropicUrl).toBeUndefined();
+    expect(started.body.status.apiKey).toBeUndefined();
+
+    const stopped = await call('POST', '/api/server/stop');
+    expect(stopped.body.ok).toBe(true);
+    expect(state.proxyClose).toHaveBeenCalledOnce();
+  });
+
+  it('surfaces an HTTP proxy port conflict clearly', async () => {
+    state.failNextProxyStartWithPortConflict = true;
+    const { body } = await call('POST', '/api/server/start', { mode: 'http-proxy' });
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/Port 17645 is already in use/);
   });
 
   it('starts with free-models-only filter and reports only free/free-access models', async () => {

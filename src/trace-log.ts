@@ -22,6 +22,7 @@ export const CODEX_BODY_DUMP_LOG = 'codex-body-dump.jsonl';
 export const GEMINI_PROXY_DEBUG_LOG = 'gemini-proxy-debug.log';
 export const PROVIDER_DEBUG_LOG = 'provider-debug.log';
 export const UI_DEBUG_LOG = 'ui-debug.log';
+export const INFERENCE_REQUEST_LOG = 'inference-requests.jsonl';
 
 export function ensureLogsDir(): string {
   const dir = getLogsPath();
@@ -91,6 +92,32 @@ export function getProviderDebugLogPath(): string {
 
 export function getUiDebugLogPath(): string {
   return join(ensureLogsDir(), UI_DEBUG_LOG);
+}
+
+export function getInferenceRequestLogPath(): string {
+  return join(ensureLogsDir(), INFERENCE_REQUEST_LOG);
+}
+
+export interface InferenceRequestLogEntry {
+  modelId: string;
+  provider: string;
+  effort?: string;
+  route: 'passthrough' | 'translated';
+}
+
+/** Append privacy-minimal routing metadata. Prompts, headers, and response bodies are never logged. */
+export function writeInferenceRequestLog(
+  path: string,
+  entry: InferenceRequestLogEntry,
+): void {
+  const compact = (value: string, max = 500) => value.replace(/[\r\n]/g, ' ').slice(0, max);
+  writeSecureLogLine(path, JSON.stringify({
+    timestamp: new Date().toISOString(),
+    modelId: compact(entry.modelId),
+    ...(entry.effort ? { effort: compact(entry.effort, 100) } : {}),
+    provider: compact(entry.provider, 200),
+    route: entry.route,
+  }));
 }
 
 export function prepareProviderTraceLog(): string {

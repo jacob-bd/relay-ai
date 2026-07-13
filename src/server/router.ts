@@ -26,7 +26,12 @@ import {
   injectClaudeIdentity,
   selectBetaFlags,
 } from '../oauth/claude-identity.js';
-import { writeSecureLogLine, resetTraceLog } from '../trace-log.js';
+import {
+  writeInferenceRequestLog,
+  writeSecureLogLine,
+  resetTraceLog,
+  type InferenceRequestLogEntry,
+} from '../trace-log.js';
 import type { LanguageModel } from 'ai';
 import { createLanguageModel, isSdkMigratedNpm, maxToolsForNpm } from '../provider-factory.js';
 import { formatUpstreamError, upstreamHttpStatus } from '../codex/upstream-error.js';
@@ -59,6 +64,8 @@ export interface ServerOptions {
   vertex?: VertexServerConfig;
   /** When set, append structured debug lines to this file path. */
   debugLogPath?: string;
+  /** When set, append privacy-minimal inference routing records as JSONL. */
+  inferenceLogPath?: string;
 }
 
 export interface ServerHandle {
@@ -66,6 +73,7 @@ export interface ServerHandle {
   port: number;
   url: string;
   server: Server;
+  inferenceLogPath?: string;
   close: () => Promise<void>;
 }
 
@@ -77,6 +85,25 @@ function makeServerLog(debugLogPath: string | undefined): PLog {
   if (!debugLogPath) return () => {};
   resetTraceLog(debugLogPath);
   return (msg) => writeSecureLogLine(debugLogPath, typeof msg === 'function' ? msg() : msg);
+}
+
+function auditInference(options: ServerOptions, entry: InferenceRequestLogEntry): void {
+  if (options.inferenceLogPath) writeInferenceRequestLog(options.inferenceLogPath, entry);
+}
+
+function inferenceProvider(model: ServerModelInfo): string {
+  return model.providerId ?? String(model.sourceBackend);
+}
+
+function openAiEffort(body: JsonBody): string | undefined {
+  if (typeof body.reasoning_effort === 'string' && body.reasoning_effort.trim()) {
+    return body.reasoning_effort.trim();
+  }
+  const reasoning = body.reasoning;
+  if (reasoning && typeof reasoning === 'object' && typeof reasoning.effort === 'string' && reasoning.effort.trim()) {
+    return reasoning.effort.trim();
+  }
+  return undefined;
 }
 
 export async function startServer(options: ServerOptions): Promise<ServerHandle> {
@@ -106,6 +133,7 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
     port: address.port,
     url: `http://${options.host}:${address.port}`,
     server,
+    inferenceLogPath: options.inferenceLogPath,
     close: () => new Promise<void>((resolve, reject) => {
       server.close(err => (err ? reject(err) : resolve()));
     }),
@@ -194,6 +222,13 @@ async function handleAnthropicMessages(
     const forwardBody: Record<string, unknown> = { ...body, model: upstreamModelId(model) };
     const isOAuth = model.authType === 'oauth';
 
+    auditInference(options, {
+      modelId: body.model,
+      effort: anthropicEffortFromRequest(body as AnthropicRequest) ?? model.defaultEffort,
+      provider: inferenceProvider(model),
+      route: 'passthrough',
+    });
+
     let effectiveBeta = inboundBeta;
     let claudeCodeSessionId: string | undefined;
     if (isOAuth) {
@@ -227,6 +262,12 @@ async function handleAnthropicMessages(
       return;
     }
     const apiKey = model.apiKey ?? options.apiKey;
+    auditInference(options, {
+      modelId: body.model,
+      effort: anthropicEffortFromRequest(body as AnthropicRequest) ?? model.defaultEffort,
+      provider: inferenceProvider(model),
+      route: 'translated',
+    });
     const languageModel = await getOrInitLanguageModel(modelCache, model, model.npm!, model.apiBaseUrl, apiKey, options.vertex);
     const npmMaxTools = maxToolsForNpm(model.npm);
     const toolCount = Array.isArray((body as Record<string, unknown>).tools) ? ((body as Record<string, unknown>).tools as unknown[]).length : 0;
@@ -306,6 +347,12 @@ async function handleOpenAIChatCompletions(
       ? model.completionsUrl
       : `${backendFor(options, model).baseUrl}/v1/chat/completions`;
     const apiKey = model.apiKey ?? options.apiKey;
+    auditInference(options, {
+      modelId: body.model,
+      effort: openAiEffort(body),
+      provider: inferenceProvider(model),
+      route: 'passthrough',
+    });
     await relayAnthropicMessages(res, completionsUrl, body, apiKey, Boolean(body.stream));
     return;
   }
@@ -318,6 +365,12 @@ async function handleOpenAIChatCompletions(
   }
 
   const apiKey = model.apiKey ?? options.apiKey;
+  auditInference(options, {
+    modelId: body.model,
+    effort: openAiEffort(body),
+    provider: inferenceProvider(model),
+    route: 'translated',
+  });
   const baseURL = model.modelFormat === 'anthropic' ? model.baseUrl : model.apiBaseUrl;
   const languageModel = await getOrInitLanguageModel(modelCache, model, npm, baseURL, apiKey, options.vertex);
   const params = translateOpenAiRequest(body as unknown as OpenAiRequest);

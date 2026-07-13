@@ -51,6 +51,18 @@ describe('parseArgs', () => {
     });
   });
 
+  it('parses Claude and server HTTP proxy mode', () => {
+    expect(parseArgs(['claude', '--http-proxy', '-c'])).toMatchObject({
+      command: 'claude',
+      httpProxy: true,
+      claudeArgs: ['-c'],
+    });
+    expect(parseArgs(['server', '--http-proxy'])).toMatchObject({
+      command: 'server',
+      httpProxy: true,
+    });
+  });
+
   it('passes claude -c through unchanged', () => {
     expect(parseArgs(['claude', '-c']).claudeArgs).toEqual(['-c']);
   });
@@ -232,6 +244,13 @@ describe('parseArgs', () => {
       command: 'models',
       showHelp: false,
       claudeArgs: [],
+    });
+  });
+
+  it('parses non-interactive HTTP proxy model listing', () => {
+    expect(parseArgs(['models', '--list'])).toMatchObject({
+      command: 'models',
+      favoritesList: true,
     });
   });
 
