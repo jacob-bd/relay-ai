@@ -3,7 +3,7 @@ import { defineConfig } from 'tsup';
 export default defineConfig({
   entry: ['src/cli.ts'],
   format: ['esm'],
-  target: 'node18',
+  target: 'node22',
   clean: true,
   minify: false,
   sourcemap: true,
@@ -16,7 +16,6 @@ export default defineConfig({
     /^@ai-sdk\//,
     '@openrouter/ai-sdk-provider',
     'gitlab-ai-provider',
-    'venice-ai-sdk-provider',
     'open',
   ],
 });

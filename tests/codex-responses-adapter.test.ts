@@ -13,7 +13,7 @@ describe('translateResponsesRequest', () => {
       input: 'hello',
       instructions: 'be helpful',
     }, '@ai-sdk/anthropic');
-    expect(params.system).toBe('be helpful');
+    expect(params.instructions).toBe('be helpful');
     expect(params.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hello' }] }]);
   });
 
@@ -26,7 +26,7 @@ describe('translateResponsesRequest', () => {
       ],
       instructions: 'extra',
     }, '@ai-sdk/anthropic');
-    expect(params.system).toBe('dev rules\nextra');
+    expect(params.instructions).toBe('dev rules\nextra');
     expect(params.messages).toHaveLength(1);
     expect(params.messages[0]!.role).toBe('user');
   });
@@ -321,7 +321,7 @@ describe('writeResponsesStream', () => {
       expect(summaries[0]?.loopDetected).toBe('text');
       expect(yielded).toBeLessThan(20);
       expect(chunks.join('')).toContain('generation stopped after detecting a repetition loop');
-      // Breaking out of fullStream does NOT cancel the SDK's upstream request (it
+      // Breaking out of stream does NOT cancel the SDK's upstream request (it
       // keeps consuming internally to settle its promises) — the caller must abort.
       expect(forceStops).toHaveLength(1);
     } finally {

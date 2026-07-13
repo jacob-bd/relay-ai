@@ -2,7 +2,7 @@
 import {
   getTemplateById,
   init_provider_templates
-} from "./chunk-DO5FAMNC.js";
+} from "./chunk-W3UJVEXD.js";
 
 // src/constants.ts
 import { homedir } from "os";
@@ -43,7 +43,7 @@ var package_default = {
     "README.md"
   ],
   engines: {
-    node: ">=18"
+    node: ">=22"
   },
   scripts: {
     build: "tsup && mkdir -p dist/ui/public && cp -r src/ui/public/. dist/ui/public/",
@@ -55,33 +55,34 @@ var package_default = {
     prepublishOnly: `node -e "if (require('./package.json').version !== require('./package-lock.json').version) { console.error('Error: package.json and package-lock.json versions are out of sync! Run npm install to sync.'); process.exit(1); }" && npm run build`
   },
   dependencies: {
-    "@ai-sdk/alibaba": "^1.0.26",
-    "@ai-sdk/amazon-bedrock": "^4.0.113",
-    "@ai-sdk/azure": "^3.0.70",
-    "@ai-sdk/cerebras": "^2.0.54",
-    "@ai-sdk/cohere": "^3.0.36",
-    "@ai-sdk/deepinfra": "^2.0.52",
-    "@ai-sdk/gateway": "^3.0.125",
-    "@ai-sdk/google": "^3.0.80",
-    "@ai-sdk/google-vertex": "^4.0.142",
-    "@ai-sdk/groq": "^3.0.39",
-    "@ai-sdk/mistral": "^3.0.37",
-    "@ai-sdk/openai": "^3.0.68",
-    "@ai-sdk/openai-compatible": "^2.0.48",
-    "@ai-sdk/perplexity": "^3.0.33",
-    "@ai-sdk/togetherai": "^2.0.53",
-    "@ai-sdk/vercel": "^2.0.50",
-    "@ai-sdk/xai": "^3.0.93",
+    "@ai-sdk/alibaba": "^2.0.9",
+    "@ai-sdk/amazon-bedrock": "^5.0.17",
+    "@ai-sdk/anthropic": "^4.0.12",
+    "@ai-sdk/azure": "^4.0.11",
+    "@ai-sdk/cerebras": "^3.0.7",
+    "@ai-sdk/cohere": "^4.0.7",
+    "@ai-sdk/deepinfra": "^3.0.7",
+    "@ai-sdk/gateway": "^4.0.16",
+    "@ai-sdk/google": "^4.0.12",
+    "@ai-sdk/google-vertex": "^5.0.16",
+    "@ai-sdk/groq": "^4.0.8",
+    "@ai-sdk/mistral": "^4.0.8",
+    "@ai-sdk/openai": "^4.0.11",
+    "@ai-sdk/openai-compatible": "^3.0.7",
+    "@ai-sdk/perplexity": "^4.0.8",
+    "@ai-sdk/provider-utils": "^5.0.7",
+    "@ai-sdk/togetherai": "^3.0.8",
+    "@ai-sdk/vercel": "^3.0.7",
+    "@ai-sdk/xai": "^4.0.10",
     "@clack/prompts": "^0.9.1",
-    "@openrouter/ai-sdk-provider": "^2.9.0",
-    ai: "^6.0.197",
-    "gitlab-ai-provider": "^6.8.0",
+    "@openrouter/ai-sdk-provider": "^3.0.0",
+    ai: "^7.0.22",
+    "gitlab-ai-provider": "^6.11.0",
     "ipaddr.js": "^2.4.0",
     "node-forge": "^1.4.0",
     open: "^11.0.0",
     picocolors: "^1.1.1",
     "smol-toml": "^1.6.1",
-    "venice-ai-sdk-provider": "^2.0.2",
     ws: "^8.21.0",
     zod: "^3.25.76"
   },
@@ -686,11 +687,11 @@ async function createLanguageModel(spec) {
   if (npm === "@ai-sdk/xai") {
     const { createXai } = await import("@ai-sdk/xai");
     const xai = createXai({ apiKey });
-    return modelPrefersResponsesApi(modelId) ? xai.responses(modelId) : xai(modelId);
+    return modelPrefersResponsesApi(modelId) ? xai.responses(modelId) : xai.chat(modelId);
   }
   if (npm === "@ai-sdk/google") {
-    const { createGoogleGenerativeAI } = await import("@ai-sdk/google");
-    const google = createGoogleGenerativeAI({ apiKey });
+    const { createGoogle } = await import("@ai-sdk/google");
+    const google = createGoogle({ apiKey });
     return google(modelId);
   }
   if (npm === "@ai-sdk/anthropic") {
@@ -4622,9 +4623,9 @@ function translateRequest(ccReq, options = {}) {
         }
       } else if (part.inlineData) {
         contentParts.push({
-          type: "image",
-          image: part.inlineData.data,
-          mimeType: part.inlineData.mimeType
+          type: "file",
+          data: { type: "data", data: Buffer.from(part.inlineData.data, "base64") },
+          mediaType: part.inlineData.mimeType
         });
       } else if (part.functionCall) {
         const id = "call_" + randomUUID2().replace(/-/g, "");
@@ -4672,7 +4673,7 @@ function translateRequest(ccReq, options = {}) {
     toolChoice = "auto";
   }
   return {
-    system,
+    instructions: system,
     messages: sdkMessages,
     tools,
     toolChoice
@@ -5332,10 +5333,18 @@ function imagePart(block) {
   const src = block.source;
   if (!src) return null;
   if (src.type === "base64" && src.data) {
-    return { type: "image", image: Buffer.from(src.data, "base64"), mediaType: src.media_type };
+    return {
+      type: "file",
+      data: { type: "data", data: Buffer.from(src.data, "base64") },
+      mediaType: src.media_type ?? "image"
+    };
   }
   if (src.type === "url" && src.url) {
-    return { type: "image", image: new URL(src.url) };
+    return {
+      type: "file",
+      data: { type: "url", url: new URL(src.url) },
+      mediaType: src.media_type ?? "image"
+    };
   }
   return null;
 }
@@ -5473,7 +5482,7 @@ function translateRequest2(body, npm, options) {
     });
   }
   return {
-    system: options?.openAiOAuth ? void 0 : systemText,
+    instructions: options?.openAiOAuth ? void 0 : systemText,
     messages: translateMessages(messages, npm),
     tools: translateTools3(upstreamTools.length ? upstreamTools : void 0),
     toolChoice: translateToolChoice(body.tool_choice),
@@ -5484,13 +5493,15 @@ function translateRequest2(body, npm, options) {
 }
 function toAnthropicUsage(u) {
   const total = u?.inputTokens ?? 0;
-  const cached = u?.cachedInputTokens ?? 0;
+  const cached = u?.inputTokenDetails?.cacheReadTokens ?? u?.cachedInputTokens ?? 0;
   return {
     input_tokens: Math.max(0, total - cached),
     output_tokens: u?.outputTokens ?? 0,
     cache_read_input_tokens: cached
   };
 }
+var SDK_STREAM_IDLE_TIMEOUT_MS = 12e4;
+var SDK_TOTAL_TIMEOUT_MS = 10 * 6e4;
 function streamAbortError(signal) {
   if (signal?.reason instanceof Error) return signal.reason;
   const error = new Error(
@@ -5499,7 +5510,7 @@ function streamAbortError(signal) {
   error.name = "AbortError";
   return error;
 }
-async function writeAnthropicStream(fullStream, modelId, write, log8, observer) {
+async function writeAnthropicStream(stream, modelId, write, log8, observer) {
   const messageId = "msg_" + Date.now();
   let blockIndex = -1;
   let started = false;
@@ -5550,7 +5561,7 @@ async function writeAnthropicStream(fullStream, modelId, write, log8, observer) 
     openType = type;
     emit("content_block_start", { type: "content_block_start", index: blockIndex, content_block: contentBlock });
   };
-  for await (const part of fullStream) {
+  for await (const part of stream) {
     observer?.onPart?.(part.type);
     if (observer?.abortSignal?.aborted) throw streamAbortError(observer.abortSignal);
     switch (part.type) {
@@ -5659,10 +5670,18 @@ async function writeAnthropicStream(fullStream, modelId, write, log8, observer) 
   emit("message_stop", { type: "message_stop" });
 }
 async function streamAnthropicResponse(model, params, modelId, write, log8, observer) {
+  const idleTimeoutMs = observer?.idleTimeoutMs ?? SDK_STREAM_IDLE_TIMEOUT_MS;
+  const idleAbort = new AbortController();
+  const abortSignal = observer?.abortSignal ? AbortSignal.any([observer.abortSignal, idleAbort.signal]) : idleAbort.signal;
+  let idleTimer = setTimeout(
+    () => idleAbort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1e3)}s`)),
+    idleTimeoutMs
+  );
   const result = streamText({
     model,
     ...params,
-    abortSignal: observer?.abortSignal,
+    abortSignal,
+    timeout: { totalMs: SDK_TOTAL_TIMEOUT_MS, chunkMs: idleTimeoutMs },
     onError: () => {
     }
   });
@@ -5676,7 +5695,21 @@ async function streamAnthropicResponse(model, params, modelId, write, log8, obse
   });
   Promise.resolve(result.usage).catch(() => {
   });
-  await writeAnthropicStream(result.fullStream, modelId, write, log8, observer);
+  const watchedStream = (async function* () {
+    try {
+      for await (const part of result.stream) {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(
+          () => idleAbort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1e3)}s`)),
+          idleTimeoutMs
+        );
+        yield part;
+      }
+    } finally {
+      clearTimeout(idleTimer);
+    }
+  })();
+  await writeAnthropicStream(watchedStream, modelId, write, log8, { ...observer, abortSignal });
 }
 async function generateAnthropicResponse(model, params, modelId, options) {
   let text4;
@@ -5688,13 +5721,17 @@ async function generateAnthropicResponse(model, params, modelId, options) {
       model,
       ...params,
       abortSignal: options.abortSignal,
+      timeout: {
+        totalMs: SDK_TOTAL_TIMEOUT_MS,
+        chunkMs: options.idleTimeoutMs ?? SDK_STREAM_IDLE_TIMEOUT_MS
+      },
       onError: () => {
       }
     });
     Promise.resolve(r.toolResults).catch(() => {
     });
     const observeParts = (async () => {
-      for await (const part of r.fullStream) {
+      for await (const part of r.stream) {
         options.onPart?.(part.type);
         if (options.abortSignal?.aborted || part.type === "abort") {
           throw streamAbortError(options.abortSignal);
@@ -5713,7 +5750,8 @@ async function generateAnthropicResponse(model, params, modelId, options) {
     const r = await generateText({
       model,
       ...params,
-      abortSignal: options?.abortSignal
+      abortSignal: options?.abortSignal,
+      timeout: { totalMs: SDK_TOTAL_TIMEOUT_MS }
     });
     ({ text: text4, toolCalls, finishReason, usage } = r);
   }
@@ -8400,7 +8438,7 @@ function translateOpenAiRequest(body) {
     }
   }
   return {
-    system,
+    instructions: system,
     messages,
     tools,
     toolChoice: sdkToolChoice,
@@ -8415,7 +8453,7 @@ async function generateOpenAiResponse(model, params, responseModelId) {
     message.tool_calls = result.toolCalls.map((tc) => ({
       id: tc.toolCallId,
       type: "function",
-      function: { name: tc.toolName, arguments: JSON.stringify(tc.args) }
+      function: { name: tc.toolName, arguments: JSON.stringify(tc.input ?? {}) }
     }));
   }
   return {
@@ -8425,14 +8463,14 @@ async function generateOpenAiResponse(model, params, responseModelId) {
     model: responseModelId,
     choices: [{ index: 0, message, finish_reason: result.finishReason || "stop" }],
     usage: {
-      prompt_tokens: result.usage?.promptTokens ?? 0,
-      completion_tokens: result.usage?.completionTokens ?? 0,
+      prompt_tokens: result.usage?.inputTokens ?? 0,
+      completion_tokens: result.usage?.outputTokens ?? 0,
       total_tokens: result.usage?.totalTokens ?? 0
     }
   };
 }
 async function streamOpenAiResponse(model, params, responseModelId, onChunk) {
-  const { fullStream } = streamText2({ model, ...params });
+  const { stream } = streamText2({ model, ...params });
   const baseData = {
     id: `chatcmpl-${Date.now()}`,
     object: "chat.completion.chunk",
@@ -8442,18 +8480,16 @@ async function streamOpenAiResponse(model, params, responseModelId, onChunk) {
   const send = (delta, finish_reason = null) => onChunk(`data: ${JSON.stringify({ ...baseData, choices: [{ index: 0, delta, finish_reason }] })}
 
 `);
-  for await (const part of fullStream) {
+  for await (const part of stream) {
     const p9 = part;
     switch (p9.type) {
       case "text-delta":
         send({ role: "assistant", content: p9.textDelta ?? p9.text ?? "" });
         break;
       case "tool-input-start":
-      case "tool-call-streaming-start":
         send({ role: "assistant", tool_calls: [{ index: 0, id: p9.id ?? p9.toolCallId, type: "function", function: { name: p9.toolName, arguments: "" } }] });
         break;
       case "tool-input-delta":
-      case "tool-call-delta":
         send({ tool_calls: [{ index: 0, function: { arguments: p9.delta ?? p9.text ?? p9.argsTextDelta ?? "" } }] });
         break;
       case "finish":
@@ -11872,4 +11908,4 @@ export {
   quitClaudeAppGracefully,
   launchOrRestartClaudeApp
 };
-//# sourceMappingURL=chunk-QDRB5526.js.map
+//# sourceMappingURL=chunk-HRYBZ2QT.js.map

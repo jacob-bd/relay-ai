@@ -68,7 +68,7 @@ describe('antigravity request-adapter', () => {
     };
 
     const sdkReq = translateRequest(ccReq);
-    expect(sdkReq.system).toBe('You are a helpful coding assistant.');
+    expect(sdkReq.instructions).toBe('You are a helpful coding assistant.');
     expect(sdkReq.messages).toHaveLength(1);
     expect(sdkReq.messages[0]).toEqual({ role: 'user', content: 'Hi' });
   });
@@ -115,7 +115,7 @@ describe('antigravity request-adapter', () => {
     };
 
     const sdkReq = translateRequest(ccReq);
-    expect(sdkReq.system).toBe('First instruction.\n\nSecond instruction.');
+    expect(sdkReq.instructions).toBe('First instruction.\n\nSecond instruction.');
     expect(sdkReq.messages).toHaveLength(1);
     expect(sdkReq.messages[0]).toEqual({ role: 'user', content: 'Hi' });
   });
@@ -149,11 +149,12 @@ describe('antigravity request-adapter', () => {
     const parts = msg.content as any[];
     expect(parts).toHaveLength(2);
     expect(parts[0]).toEqual({ type: 'text', text: 'Analyze this image:' });
-    expect(parts[1]).toEqual({
-      type: 'image',
-      image: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-      mimeType: 'image/png'
+    expect(parts[1]).toMatchObject({
+      type: 'file',
+      data: { type: 'data' },
+      mediaType: 'image/png',
     });
+    expect(Buffer.isBuffer(parts[1].data.data)).toBe(true);
   });
 
   it('translates function declarations into SDK tools', () => {

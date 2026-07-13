@@ -254,7 +254,8 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     defaultBaseUrl: 'https://api.venice.ai/api/v1',
     signupUrl: 'https://venice.ai/settings/api',
     modelSource: 'api-list',
-    supported: true,
+    supported: false,
+    unsupportedReason: 'The Venice provider currently supports AI SDK 6 only.',
   },
   {
     id: 'anthropic',

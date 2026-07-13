@@ -12,11 +12,11 @@ vi.mock('ai', () => ({
 describe('streamOpenAiResponse', () => {
   it('propagates an SDK error instead of completing a failed stream', async () => {
     const upstreamError = { statusCode: 429, message: 'rate limited' };
-    async function* fullStream() {
+    async function* stream() {
       yield { type: 'text-delta', text: 'partial' };
       yield { type: 'error', error: upstreamError };
     }
-    vi.mocked(streamText).mockReturnValue({ fullStream: fullStream() } as never);
+    vi.mocked(streamText).mockReturnValue({ stream: stream() } as never);
     let output = '';
 
     await expect(streamOpenAiResponse(

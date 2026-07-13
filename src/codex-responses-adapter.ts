@@ -91,7 +91,7 @@ export interface ResponsesRequest {
 }
 
 export interface CodexSdkCallParams {
-  system?: string;
+  instructions?: string;
   messages: ModelMessage[];
   tools?: ToolSet;
   maxOutputTokens?: number;
@@ -185,10 +185,10 @@ export function translateResponsesInput(
   input: string | ResponsesInputItem[],
   instructions: string | undefined,
   npm: string,
-): { system?: string; messages: ModelMessage[] } {
+): { instructions?: string; messages: ModelMessage[] } {
   if (typeof input === 'string') {
     return {
-      system: instructions?.trim() || undefined,
+      instructions: instructions?.trim() || undefined,
       messages: [{ role: 'user', content: [{ type: 'text', text: input }] } as ModelMessage],
     };
   }
@@ -240,7 +240,7 @@ export function translateResponsesInput(
   }
 
   return {
-    system,
+    instructions: system,
     messages: ensureUserFirst(mergeConsecutiveMessages(messages)),
   };
 }
@@ -284,7 +284,7 @@ export function translateResponsesRequest(
   metadata?: ReasoningMetadata,
   options: TranslateToolOptions = {},
 ): CodexSdkCallParams {
-  const { system, messages } = translateResponsesInput(body.input, body.instructions, npm);
+  const { instructions, messages } = translateResponsesInput(body.input, body.instructions, npm);
   const effort = body.reasoning?.effort;
   const providerOptions = deepMergeProviderOptions(
     thinkingProviderOptions(npm),
@@ -292,7 +292,7 @@ export function translateResponsesRequest(
   );
   const tools = translateResponsesTools(body.tools, options);
   return {
-    system,
+    instructions,
     messages,
     tools,
     maxOutputTokens: body.max_output_tokens,
@@ -384,13 +384,13 @@ function trackRepetition(current: string, prev: RepeatTracker): RepeatTracker {
 
 export interface WriteResponsesStreamOptions {
   /** Called when the stream is force-stopped (repetition loop) BEFORE breaking out of
-   *  fullStream. Breaking alone does not cancel the SDK's upstream request — the SDK
+   *  stream. Breaking alone does not cancel the SDK's upstream request — the SDK
    *  keeps consuming internally to settle its own promises — so the caller must abort. */
   onForceStop?: (reason: string) => void;
 }
 
 export async function writeResponsesStream(
-  fullStream: AsyncIterable<FullStreamPart>,
+  stream: AsyncIterable<FullStreamPart>,
   modelId: string,
   write: WriteFn,
   onDone?: (summary: ResponsesStreamSummary) => void,
@@ -505,7 +505,7 @@ export async function writeResponsesStream(
     });
   };
 
-  for await (const part of fullStream) {
+  for await (const part of stream) {
     switch (part.type) {
       case 'reasoning-start':
         reasoningText = '';
@@ -834,7 +834,7 @@ export async function writeResponsesStream(
 /**
  * Observed live: OpenCode Zen silently dropped an upstream connection before sending a
  * single byte — no HTTP error, no stream error, no TCP reset our fetch could see. With
- * no timeout anywhere in this path, the `for await` over fullStream waited forever and
+ * no timeout anywhere in this path, the `for await` over the SDK stream waited forever and
  * every safety mechanism (progress logging, repetition detector) was invisible because
  * they only run when a part arrives. This watchdog is armed immediately (unlike the
  * SDK's `timeout.chunkMs`, which only arms after the first chunk) and reset on every
@@ -873,7 +873,7 @@ export async function streamResponsesResponse(
 
   const watchedStream = (async function* () {
     try {
-      for await (const part of result.fullStream as AsyncIterable<FullStreamPart>) {
+      for await (const part of result.stream as AsyncIterable<FullStreamPart>) {
         clearTimeout(idleTimer);
         idleTimer = setTimeout(
           () => abort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1000)}s`)),

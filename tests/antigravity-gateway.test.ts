@@ -7,7 +7,7 @@ import type { AntigravityRoute } from '../src/antigravity/types.js';
 vi.mock('ai', () => {
   return {
     streamText: vi.fn().mockImplementation(() => ({
-      fullStream: (async function* () {
+      stream: (async function* () {
         yield { type: 'text-delta', textDelta: 'Mocked ' };
         yield { type: 'text-delta', textDelta: 'response' };
         yield { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 10, outputTokens: 20 } };
@@ -365,7 +365,7 @@ describe('cloud-code-gateway', () => {
     expect(text).toContain('response');
   });
 
-  it('handles relay model streaming requests via fullStream', async () => {
+  it('handles relay model streaming requests via stream', async () => {
     const handle = await start();
     const res = await postJson(handle, '/v1internal:streamGenerateContent?alt=sse', {
       model: 'relay-ai__zen__deepseek-v4-flash-free',
@@ -528,8 +528,8 @@ describe('cloud-code-gateway', () => {
     });
 
     const streamCall = vi.mocked(streamText).mock.calls.at(-1)![0] as any;
-    expect(streamCall.system).toContain('x-anthropic-billing-header: cc_version=2.1.195.0; cc_entrypoint=cli;');
-    expect(streamCall.system).toContain('You are helpful.');
+    expect(streamCall.instructions).toContain('x-anthropic-billing-header: cc_version=2.1.195.0; cc_entrypoint=cli;');
+    expect(streamCall.instructions).toContain('You are helpful.');
     expect(streamCall.providerOptions?.anthropic?.metadata?.userId).toContain(`"device_id":"${cliUserID}"`);
     expect(streamCall.providerOptions?.anthropic?.metadata?.userId).toContain(`"account_uuid":"${accountUUID}"`);
     expect(streamCall.providerOptions?.anthropic?.anthropicBeta).toContain('oauth-2025-04-20');
@@ -645,7 +645,7 @@ describe('cloud-code-gateway', () => {
 
   it('forwards current AI SDK text-delta fields', async () => {
     vi.mocked(streamText).mockImplementationOnce(() => ({
-      fullStream: (async function* () {
+      stream: (async function* () {
         yield { type: 'text-start', id: 'text-1' };
         yield { type: 'text-delta', id: 'text-1', text: 'actual output' };
         yield { type: 'finish', finishReason: 'stop', totalUsage: {} };
@@ -663,7 +663,7 @@ describe('cloud-code-gateway', () => {
 
   it('separates streaming reasoning from visible response text', async () => {
     vi.mocked(streamText).mockImplementationOnce(() => ({
-      fullStream: (async function* () {
+      stream: (async function* () {
         yield { type: 'reasoning-start', id: 'reasoning-1' };
         yield { type: 'reasoning-delta', id: 'reasoning-1', text: 'hidden plan' };
         yield { type: 'reasoning-end', id: 'reasoning-1' };
@@ -688,7 +688,7 @@ describe('cloud-code-gateway', () => {
 
   it('buffers current AI SDK incremental tool input by id', async () => {
     vi.mocked(streamText).mockImplementationOnce(() => ({
-      fullStream: (async function* () {
+      stream: (async function* () {
         yield { type: 'tool-input-start', id: 'call-1', toolName: 'readFile' };
         yield { type: 'tool-input-delta', id: 'call-1', delta: '{"path":"a.ts"}' };
         yield { type: 'tool-call', toolCallId: 'call-1', toolName: 'readFile', input: {} };
@@ -709,7 +709,7 @@ describe('cloud-code-gateway', () => {
 
   it('returns provider stream errors instead of an empty successful response', async () => {
     vi.mocked(streamText).mockImplementationOnce(() => ({
-      fullStream: (async function* () {
+      stream: (async function* () {
         yield { type: 'error', error: new Error('provider rejected request') };
       })(),
     }) as any);
@@ -734,7 +734,7 @@ describe('cloud-code-gateway', () => {
 
   it('sanitizes provider stream errors before sending them to the IDE', async () => {
     vi.mocked(streamText).mockImplementationOnce(() => ({
-      fullStream: (async function* () {
+      stream: (async function* () {
         yield {
           type: 'error',
           error: {
@@ -763,7 +763,7 @@ describe('cloud-code-gateway', () => {
     let secondRequestArgs: any;
     vi.mocked(streamText)
       .mockImplementationOnce(() => ({
-        fullStream: (async function* () {
+        stream: (async function* () {
           yield { type: 'reasoning-start', id: 'reasoning-1' };
           yield { type: 'reasoning-delta', id: 'reasoning-1', text: 'hidden DeepSeek plan' };
           yield { type: 'reasoning-end', id: 'reasoning-1' };
@@ -774,7 +774,7 @@ describe('cloud-code-gateway', () => {
       .mockImplementationOnce((args: any) => {
         secondRequestArgs = args;
         return {
-          fullStream: (async function* () {
+          stream: (async function* () {
             yield { type: 'text-delta', id: 'text-1', text: 'done' };
             yield { type: 'finish', finishReason: 'stop', totalUsage: {} };
           })(),

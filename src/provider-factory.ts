@@ -179,14 +179,14 @@ export async function createLanguageModel(spec: ProviderModelSpec): Promise<Lang
   if (npm === '@ai-sdk/xai') {
     const { createXai } = await import('@ai-sdk/xai');
     const xai = createXai({ apiKey });
-    return modelPrefersResponsesApi(modelId) ? xai.responses(modelId) : xai(modelId);
+    return modelPrefersResponsesApi(modelId) ? xai.responses(modelId) : xai.chat(modelId);
   }
   // @ai-sdk/google owns its native v1beta endpoint. Registry templates store the
   // OpenAI-compatible URL only for GET /v1/models discovery — passing it here
   // produces .../v1beta/openai/models/...:streamGenerateContent → 404.
   if (npm === '@ai-sdk/google') {
-    const { createGoogleGenerativeAI } = await import('@ai-sdk/google');
-    const google = createGoogleGenerativeAI({ apiKey });
+    const { createGoogle } = await import('@ai-sdk/google');
+    const google = createGoogle({ apiKey });
     return google(modelId);
   }
   // Registry stores root URL (no /v1) for GET /v1/models discovery — passing it here

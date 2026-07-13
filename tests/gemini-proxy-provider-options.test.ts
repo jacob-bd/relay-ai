@@ -6,7 +6,7 @@ import type { ProxyHandle, ProxyRoute } from '../src/proxy.js';
 
 vi.mock('ai', () => ({
   streamText: vi.fn().mockImplementation(() => ({
-    fullStream: (async function* () {
+    stream: (async function* () {
       yield { type: 'text-delta', textDelta: 'ok' };
       yield { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 1, outputTokens: 1 } };
     })(),
@@ -78,8 +78,8 @@ describe('startGeminiProxy provider options', () => {
       providerId: 'claude-code',
     }));
     const streamCall = vi.mocked(streamText).mock.calls.at(-1)![0] as any;
-    expect(streamCall.system).toContain('x-anthropic-billing-header:');
-    expect(streamCall.system).toContain('You are helpful.');
+    expect(streamCall.instructions).toContain('x-anthropic-billing-header:');
+    expect(streamCall.instructions).toContain('You are helpful.');
     expect(streamCall.providerOptions?.anthropic?.metadata?.userId).toContain(`"device_id":"${cliUserID}"`);
     expect(streamCall.providerOptions?.anthropic?.metadata?.userId).toContain(`"account_uuid":"${accountUUID}"`);
     expect(streamCall.providerOptions?.anthropic?.anthropicBeta).toContain('oauth-2025-04-20');
@@ -126,7 +126,7 @@ describe('startGeminiProxy provider options', () => {
 
   it('streams concise upstream errors instead of SDK dumps', async () => {
     vi.mocked(streamText).mockImplementationOnce(() => ({
-      fullStream: (async function* () {
+      stream: (async function* () {
         const err = new Error('Third-party apps now draw from your extra usage, not your plan limits. Add more at claude.ai/settings/usage and keep going.') as Error & {
           statusCode?: number;
           responseBody?: string;

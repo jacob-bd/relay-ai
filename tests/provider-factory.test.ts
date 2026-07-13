@@ -225,12 +225,27 @@ describe('createLanguageModel', () => {
     vi.doUnmock('@ai-sdk/openai');
   });
 
+  it('keeps xAI chat models on chat while selecting Responses for multi-agent models', async () => {
+    const responses = vi.fn((modelId: string) => ({ modelId, provider: 'xai-responses' }));
+    const chat = vi.fn((modelId: string) => ({ modelId, provider: 'xai-chat' }));
+    const createXai = vi.fn(() => ({ responses, chat }));
+    vi.doMock('@ai-sdk/xai', () => ({ createXai }));
+
+    const { createLanguageModel: create } = await import('../src/provider-factory.js');
+    await create({ npm: '@ai-sdk/xai', modelId: 'grok-4.3', apiKey: 'test-key' });
+    await create({ npm: '@ai-sdk/xai', modelId: 'grok-4.20-multi-agent', apiKey: 'test-key' });
+
+    expect(chat).toHaveBeenCalledWith('grok-4.3');
+    expect(responses).toHaveBeenCalledWith('grok-4.20-multi-agent');
+    vi.doUnmock('@ai-sdk/xai');
+  });
+
   it('ignores baseURL for @ai-sdk/google (discovery URL is OpenAI-compatible only)', async () => {
-    const createGoogleGenerativeAI = vi.fn(() => {
+    const createGoogle = vi.fn(() => {
       const provider = vi.fn((modelId: string) => ({ modelId, provider: 'google' }));
       return provider;
     });
-    vi.doMock('@ai-sdk/google', () => ({ createGoogleGenerativeAI }));
+    vi.doMock('@ai-sdk/google', () => ({ createGoogle }));
 
     const { createLanguageModel: create } = await import('../src/provider-factory.js');
     await create({
@@ -240,7 +255,7 @@ describe('createLanguageModel', () => {
       baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
     });
 
-    expect(createGoogleGenerativeAI).toHaveBeenCalledWith({ apiKey: 'test-key' });
+    expect(createGoogle).toHaveBeenCalledWith({ apiKey: 'test-key' });
     vi.doUnmock('@ai-sdk/google');
   });
 

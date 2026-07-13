@@ -47,7 +47,7 @@ export interface CloudCodeGenerateRequest {
 }
 
 export interface SdkRequest {
-  system?: string;
+  instructions?: string;
   messages: ModelMessage[];
   tools?: Record<string, ReturnType<typeof tool>>;
   toolChoice?: 'auto' | 'required';
@@ -213,9 +213,9 @@ export function translateRequest(
         }
       } else if (part.inlineData) {
         contentParts.push({
-          type: 'image',
-          image: part.inlineData.data,
-          mimeType: part.inlineData.mimeType,
+          type: 'file',
+          data: { type: 'data', data: Buffer.from(part.inlineData.data, 'base64') },
+          mediaType: part.inlineData.mimeType,
         });
       } else if (part.functionCall) {
         const id = 'call_' + randomUUID().replace(/-/g, '');
@@ -270,7 +270,7 @@ export function translateRequest(
   }
 
   return {
-    system,
+    instructions: system,
     messages: sdkMessages,
     tools,
     toolChoice,

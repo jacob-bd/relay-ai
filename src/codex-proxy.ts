@@ -27,7 +27,7 @@ import { formatUpstreamError, upstreamHttpStatus } from './codex/upstream-error.
 import { getCodexProxyDebugLogPath, makeTraceLogger } from './trace-log.js';
 
 export function estimateCodexRequestChars(params: CodexSdkCallParams): number {
-  let chars = (params.system ?? '').length;
+  let chars = (params.instructions ?? '').length;
   for (const msg of params.messages) {
     if (Array.isArray(msg.content)) {
       for (const part of msg.content) {

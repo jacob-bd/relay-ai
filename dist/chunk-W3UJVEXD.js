@@ -285,7 +285,8 @@ var init_provider_templates = __esm({
         defaultBaseUrl: "https://api.venice.ai/api/v1",
         signupUrl: "https://venice.ai/settings/api",
         modelSource: "api-list",
-        supported: true
+        supported: false,
+        unsupportedReason: "The Venice provider currently supports AI SDK 6 only."
       },
       {
         id: "anthropic",
@@ -424,4 +425,4 @@ export {
   provider_templates_exports,
   init_provider_templates
 };
-//# sourceMappingURL=chunk-DO5FAMNC.js.map
+//# sourceMappingURL=chunk-W3UJVEXD.js.map

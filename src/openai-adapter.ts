@@ -115,7 +115,7 @@ export function translateOpenAiRequest(body: OpenAiRequest): SdkCallParams {
   }
 
   return {
-    system,
+    instructions: system,
     messages,
     tools,
     toolChoice: sdkToolChoice,
@@ -138,7 +138,7 @@ export async function generateOpenAiResponse(
     message.tool_calls = result.toolCalls.map((tc: any) => ({
       id: tc.toolCallId,
       type: 'function',
-      function: { name: tc.toolName, arguments: JSON.stringify(tc.args) },
+      function: { name: tc.toolName, arguments: JSON.stringify(tc.input ?? {}) },
     }));
   }
 
@@ -149,8 +149,8 @@ export async function generateOpenAiResponse(
     model: responseModelId,
     choices: [{ index: 0, message, finish_reason: result.finishReason || 'stop' }],
     usage: {
-      prompt_tokens: result.usage?.promptTokens ?? 0,
-      completion_tokens: result.usage?.completionTokens ?? 0,
+      prompt_tokens: result.usage?.inputTokens ?? 0,
+      completion_tokens: result.usage?.outputTokens ?? 0,
       total_tokens: result.usage?.totalTokens ?? 0,
     },
   };
@@ -162,7 +162,7 @@ export async function streamOpenAiResponse(
   responseModelId: string,
   onChunk: (chunk: string) => void,
 ): Promise<void> {
-  const { fullStream } = streamText({ model, ...(params as any) });
+  const { stream } = streamText({ model, ...(params as any) });
   const baseData = {
     id: `chatcmpl-${Date.now()}`,
     object: 'chat.completion.chunk',
@@ -173,18 +173,16 @@ export async function streamOpenAiResponse(
   const send = (delta: Record<string, any>, finish_reason: string | null = null) =>
     onChunk(`data: ${JSON.stringify({ ...baseData, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
 
-  for await (const part of fullStream) {
+  for await (const part of stream) {
     const p = part as any;
     switch (p.type) {
       case 'text-delta':
         send({ role: 'assistant', content: p.textDelta ?? p.text ?? '' });
         break;
       case 'tool-input-start':
-      case 'tool-call-streaming-start':
         send({ role: 'assistant', tool_calls: [{ index: 0, id: p.id ?? p.toolCallId, type: 'function', function: { name: p.toolName, arguments: '' } }] });
         break;
       case 'tool-input-delta':
-      case 'tool-call-delta':
         send({ tool_calls: [{ index: 0, function: { arguments: p.delta ?? p.text ?? p.argsTextDelta ?? '' } }] });
         break;
       case 'finish':

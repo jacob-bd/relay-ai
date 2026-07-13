@@ -7,6 +7,7 @@ import {
   translateToolChoice,
   translateRequest,
   writeAnthropicStream,
+  streamAnthropicResponse,
 } from '../src/sdk-adapter.js';
 
 describe('translateTools', () => {
@@ -101,13 +102,14 @@ describe('translateMessages', () => {
     expect(openai[0].content).toEqual([{ type: 'text', text: 'hello' }]);
   });
 
-  it('maps base64 image blocks to SDK image parts', () => {
+  it('maps base64 image blocks to AI SDK 7 file parts', () => {
     const out = translateMessages([
       { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aGk=' } }] },
     ], '@ai-sdk/google') as any[];
-    expect(out[0].content[0].type).toBe('image');
+    expect(out[0].content[0].type).toBe('file');
     expect(out[0].content[0].mediaType).toBe('image/png');
-    expect(Buffer.isBuffer(out[0].content[0].image)).toBe(true);
+    expect(out[0].content[0].data.type).toBe('data');
+    expect(Buffer.isBuffer(out[0].content[0].data.data)).toBe(true);
   });
 });
 
@@ -120,7 +122,7 @@ describe('translateRequest', () => {
       max_tokens: 256,
       temperature: 0.5,
     }, '@ai-sdk/google');
-    expect(params.system).toBe('be brief');
+    expect(params.instructions).toBe('be brief');
     expect(params.maxOutputTokens).toBe(256);
     expect(params.temperature).toBe(0.5);
     expect(params.providerOptions).toEqual({ google: { thinkingConfig: { includeThoughts: true } } });
@@ -143,7 +145,7 @@ describe('translateRequest', () => {
       max_tokens: 32000,
     }, '@ai-sdk/openai', { openAiOAuth: true });
 
-    expect(params.system).toBeUndefined();
+    expect(params.instructions).toBeUndefined();
     expect(params.providerOptions?.openai?.instructions).toBe('You are a coding assistant.');
     expect(params.maxOutputTokens).toBeUndefined();
   });
@@ -238,7 +240,7 @@ describe('translateRequest', () => {
     const params = translateRequest({
       model: 'grok-4.3', system: [{ text: 'a' }, { text: 'b' }], messages: [],
     }, '@ai-sdk/xai');
-    expect(params.system).toBe('a\nb');
+    expect(params.instructions).toBe('a\nb');
   });
 
   it('folds inline role:system messages into the system prompt (skills list)', () => {
@@ -251,8 +253,8 @@ describe('translateRequest', () => {
         { role: 'system', content: '<system-reminder>available skills: nlm-skill</system-reminder>' } as any,
       ],
     }, '@ai-sdk/xai');
-    expect(params.system).toContain('base prompt');
-    expect(params.system).toContain('nlm-skill');
+    expect(params.instructions).toContain('base prompt');
+    expect(params.instructions).toContain('nlm-skill');
     // the system message must NOT survive as a regular message
     expect(params.messages).toHaveLength(1);
     expect((params.messages[0] as any).role).toBe('user');
@@ -263,7 +265,7 @@ describe('translateRequest', () => {
       model: 'grok-4.3',
       messages: [{ role: 'system', content: 'only inline context' } as any],
     }, '@ai-sdk/xai');
-    expect(params.system).toBe('only inline context');
+    expect(params.instructions).toBe('only inline context');
   });
 
   it('omits defer_loading tools until referenced in messages', () => {
@@ -311,7 +313,7 @@ describe('generateAnthropicResponse', () => {
   it('forceStream collects a real stream into one response instead of calling generateText', async () => {
     vi.resetModules();
     const generateText = vi.fn();
-    async function* fullStream() {
+    async function* stream() {
       yield { type: 'start' };
       yield { type: 'finish' };
     }
@@ -321,7 +323,7 @@ describe('generateAnthropicResponse', () => {
       toolResults: Promise.resolve([]),
       finishReason: Promise.resolve('stop'),
       usage: Promise.resolve({ inputTokens: 3, outputTokens: 4 }),
-      fullStream: fullStream(),
+      stream: stream(),
     }));
     vi.doMock('ai', () => ({
       generateText,
@@ -354,7 +356,7 @@ describe('generateAnthropicResponse', () => {
     vi.resetModules();
     const abort = new AbortController();
     const reason = new Error('Client disconnected');
-    async function* fullStream() {
+    async function* stream() {
       yield { type: 'start' };
       abort.abort(reason);
       yield { type: 'abort' };
@@ -365,7 +367,7 @@ describe('generateAnthropicResponse', () => {
       toolResults: Promise.resolve([]),
       finishReason: Promise.resolve('stop'),
       usage: Promise.resolve({ inputTokens: 0, outputTokens: 0 }),
-      fullStream: fullStream(),
+      stream: stream(),
     }));
     vi.doMock('ai', () => ({
       generateText: vi.fn(),
@@ -385,6 +387,36 @@ describe('generateAnthropicResponse', () => {
     vi.doUnmock('ai');
     vi.resetModules();
   });
+});
+
+describe('streamAnthropicResponse idle timeout', () => {
+  it('aborts an upstream that never produces its first stream event', async () => {
+    const hangingModel = {
+      specificationVersion: 'v3' as const,
+      provider: 'test',
+      modelId: 'test-model',
+      supportedUrls: {},
+      async doStream(options: { abortSignal?: AbortSignal }) {
+        return new Promise((_resolve, reject) => {
+          options.abortSignal?.addEventListener('abort', () => {
+            reject(options.abortSignal?.reason ?? new DOMException('Aborted', 'AbortError'));
+          });
+        });
+      },
+      async doGenerate(): Promise<never> {
+        throw new Error('not used');
+      },
+    };
+
+    await expect(streamAnthropicResponse(
+      hangingModel as never,
+      { messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] as never },
+      'test-model',
+      () => {},
+      undefined,
+      { idleTimeoutMs: 50 },
+    )).rejects.toThrow('no data received from provider');
+  }, 10_000);
 });
 
 // ── streaming translation ────────────────────────────────────────────────────
@@ -430,7 +462,7 @@ describe('writeAnthropicStream', () => {
     expect(delta.data.usage).toEqual({ input_tokens: 5, output_tokens: 2, cache_read_input_tokens: 0 });
   });
 
-  it('reports cache hits: cachedInputTokens → cache_read_input_tokens, subtracted from input_tokens', async () => {
+  it('reports cache hits: inputTokenDetails.cacheReadTokens → cache_read_input_tokens', async () => {
     // OpenAI reports cached tokens WITHIN the prompt total (inputTokens=100 incl.
     // 80 cache hits). Anthropic's input_tokens must be the uncached remainder (20)
     // with the 80 surfaced as cache_read_input_tokens.
@@ -439,7 +471,11 @@ describe('writeAnthropicStream', () => {
       { type: 'text-start', id: 't1' },
       { type: 'text-delta', id: 't1', text: 'hi' },
       { type: 'text-end', id: 't1' },
-      { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 100, outputTokens: 7, cachedInputTokens: 80 } },
+      {
+        type: 'finish',
+        finishReason: 'stop',
+        totalUsage: { inputTokens: 100, outputTokens: 7, inputTokenDetails: { cacheReadTokens: 80 } },
+      },
     ]);
     expect(events.find(e => e.event === 'message_delta')!.data.usage).toEqual({
       input_tokens: 20, output_tokens: 7, cache_read_input_tokens: 80,

@@ -97,7 +97,7 @@ Pick your backend:
 
 ## Prerequisites
 
-- Node.js 18+
+- Node.js 22+ (Node.js 24 LTS or newer recommended)
 - A supported AI coding tool installed (e.g. [Claude Code](https://www.npmjs.com/package/@anthropic-ai/claude-code), [OpenAI Codex](https://www.npmjs.com/package/@openai/codex), or [Google Gemini CLI](https://www.npmjs.com/package/@google/gemini-cli))
 - At least one provider configured via `relay-ai providers add` or `import` — **or** an [OpenCode API key](https://opencode.ai/auth) for Zen/Go cloud backends
 - [OpenCode CLI](https://opencode.ai) only if you want **one-time import** from an existing OpenCode setup (optional)

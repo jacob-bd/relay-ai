@@ -168,14 +168,14 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-QDRB5526.js";
+} from "./chunk-HRYBZ2QT.js";
 import {
   filterTemplates,
   init_provider_templates,
   listAddableTemplates,
   listSupportedTemplates,
   listVisibleOAuthTemplates
-} from "./chunk-DO5FAMNC.js";
+} from "./chunk-W3UJVEXD.js";
 
 // src/cli.ts
 import pc12 from "picocolors";
@@ -1837,7 +1837,7 @@ function claudeCodeProviderOptions(input, sdkParams) {
   const seed = input.oauthAccountId ?? input.apiKey;
   const { userId } = injectClaudeIdentity({}, input.providerData, seed);
   const betaBody = {
-    ...sdkParams.system ? { system: [{ type: "text", text: sdkParams.system }] } : {},
+    ...sdkParams.instructions ? { system: [{ type: "text", text: sdkParams.instructions }] } : {},
     ...sdkParams.tools ? { tools: Object.keys(sdkParams.tools).map((name) => ({ name })) } : {}
   };
   return {
@@ -1849,7 +1849,7 @@ function claudeCodeProviderOptions(input, sdkParams) {
 }
 function applyClaudeCodeOAuthIdentity(input, sdkParams) {
   if (!isClaudeCodeOAuthRoute(input)) return sdkParams;
-  sdkParams.system = prependClaudeCodeBillingLine(sdkParams.system);
+  sdkParams.instructions = prependClaudeCodeBillingLine(sdkParams.instructions);
   sdkParams.providerOptions = mergeProviderOptions(
     sdkParams.providerOptions,
     claudeCodeProviderOptions(input, sdkParams)
@@ -1924,7 +1924,7 @@ function makeReasoningOutputItem(id, text4) {
 function translateResponsesInput(input, instructions, npm) {
   if (typeof input === "string") {
     return {
-      system: instructions?.trim() || void 0,
+      instructions: instructions?.trim() || void 0,
       messages: [{ role: "user", content: [{ type: "text", text: input }] }]
     };
   }
@@ -1973,7 +1973,7 @@ function translateResponsesInput(input, instructions, npm) {
     }
   }
   return {
-    system,
+    instructions: system,
     messages: ensureUserFirst(mergeConsecutiveMessages(messages))
   };
 }
@@ -2003,7 +2003,7 @@ function translateResponsesTools(tools, options = {}) {
   return Object.keys(out).length ? out : void 0;
 }
 function translateResponsesRequest(body, npm, metadata, options = {}) {
-  const { system, messages } = translateResponsesInput(body.input, body.instructions, npm);
+  const { instructions, messages } = translateResponsesInput(body.input, body.instructions, npm);
   const effort = body.reasoning?.effort;
   const providerOptions = deepMergeProviderOptions(
     thinkingProviderOptions(npm),
@@ -2011,7 +2011,7 @@ function translateResponsesRequest(body, npm, metadata, options = {}) {
   );
   const tools = translateResponsesTools(body.tools, options);
   return {
-    system,
+    instructions,
     messages,
     tools,
     maxOutputTokens: body.max_output_tokens,
@@ -2041,7 +2041,7 @@ function trackRepetition(current, prev) {
   const stale = tail.length === REPEAT_TAIL_CHARS && tail === prev.tail && grew;
   return { tail, len: current.length, streak: stale ? prev.streak + 1 : 0 };
 }
-async function writeResponsesStream(fullStream, modelId, write, onDone, onProgress, options) {
+async function writeResponsesStream(stream, modelId, write, onDone, onProgress, options) {
   const emit = (type, data) => write(sseChunk(type, data));
   const responseId = newResponseId();
   const createdAt = Math.floor(Date.now() / 1e3);
@@ -2138,7 +2138,7 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
       delta
     });
   };
-  for await (const part of fullStream) {
+  for await (const part of stream) {
     switch (part.type) {
       case "reasoning-start":
         reasoningText = "";
@@ -2456,7 +2456,7 @@ async function streamResponsesResponse(model, params, modelId, write, onDone, on
   });
   const watchedStream = (async function* () {
     try {
-      for await (const part of result.fullStream) {
+      for await (const part of result.stream) {
         clearTimeout(idleTimer);
         idleTimer = setTimeout(
           () => abort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1e3)}s`)),
@@ -2617,7 +2617,7 @@ function responsesRateLimitBody(modelId, message) {
 
 // src/codex-proxy.ts
 function estimateCodexRequestChars(params) {
-  let chars = (params.system ?? "").length;
+  let chars = (params.instructions ?? "").length;
   for (const msg of params.messages) {
     if (Array.isArray(msg.content)) {
       for (const part of msg.content) {
@@ -5080,8 +5080,8 @@ function translateGeminiRequest(body, options = {}) {
         }
       } else if (p15.inlineData) {
         parts.push({
-          type: "image",
-          image: Buffer.from(p15.inlineData.data, "base64"),
+          type: "file",
+          data: { type: "data", data: Buffer.from(p15.inlineData.data, "base64") },
           mediaType: p15.inlineData.mimeType
         });
       } else if (p15.functionCall) {
@@ -5154,7 +5154,7 @@ function translateGeminiRequest(body, options = {}) {
     responseFormat = { type: "json" };
   }
   return {
-    system,
+    instructions: system,
     messages: mergedMessages,
     tools: tools && Object.keys(tools).length > 0 ? tools : void 0,
     toolChoice,
@@ -5304,13 +5304,13 @@ ${JSON.stringify(params, null, 2)}`);
             "Connection": "keep-alive"
           });
           plog("Starting streamText...");
-          const { fullStream } = streamText2({
+          const { stream } = streamText2({
             model: languageModel,
             ...params
           });
           const toolCallBuffers = /* @__PURE__ */ new Map();
           let isThinking = false;
-          for await (const part of fullStream) {
+          for await (const part of stream) {
             const p15 = part;
             plog(`Stream chunk type: ${p15.type}`);
             if (isThinking && (p15.type === "tool-input-start" || p15.type === "tool-call" || p15.type === "finish")) {
@@ -8098,9 +8098,9 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
     providerData: route.providerData
   });
   const responseId = `relay-${Date.now()}`;
-  const { fullStream } = streamText3({
+  const { stream } = streamText3({
     model: langModel,
-    system: sdkParams.system,
+    instructions: sdkParams.instructions,
     messages: sdkParams.messages,
     tools: sdkParams.tools,
     toolChoice: sdkParams.toolChoice,
@@ -8118,7 +8118,7 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
   const toolCallBuffers = /* @__PURE__ */ new Map();
   let responseReasoning = "";
   let sawToolCall = false;
-  for await (const part of fullStream) {
+  for await (const part of stream) {
     const p15 = part;
     if (p15.type === "reasoning-delta" || p15.type === "reasoning") {
       const reasoning = reasoningDeltaText(p15);
@@ -8227,7 +8227,7 @@ async function handleUnaryRequest(res, route, providerOptions, parsed, _log, opt
   const responseId = `relay-${Date.now()}`;
   const result = await generateText3({
     model: langModel,
-    system: sdkParams.system,
+    instructions: sdkParams.instructions,
     messages: sdkParams.messages,
     tools: sdkParams.tools,
     toolChoice: sdkParams.toolChoice,
@@ -12400,7 +12400,7 @@ Error: ${parsed.error}
       console.log("Usage: relay-ai ui [--trace]\n\nOpen the settings UI in your browser.");
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-O4SIOVSQ.js");
+    const { runUiCommand } = await import("./ui-command-NSQW5LOA.js");
     return runUiCommand({ trace: parsed.trace });
   }
   if (parsed.command === "models") {

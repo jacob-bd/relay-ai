@@ -609,7 +609,7 @@ function respondJson(res: http.ServerResponse, status: number, data: unknown): v
 
 /**
  * Handle a streaming GenerateContent request.
- * Uses fullStream to support text deltas, tool call events, and finish.
+ * Uses the full event stream to support text deltas, tool call events, and finish.
  */
 async function handleStreamingRequest(
   res: http.ServerResponse,
@@ -639,9 +639,9 @@ async function handleStreamingRequest(
   });
   const responseId = `relay-${Date.now()}`;
 
-  const { fullStream } = streamText({
+  const { stream } = streamText({
     model: langModel,
-    system: sdkParams.system,
+    instructions: sdkParams.instructions,
     messages: sdkParams.messages,
     tools: sdkParams.tools,
     toolChoice: sdkParams.toolChoice,
@@ -662,7 +662,7 @@ async function handleStreamingRequest(
   const toolCallBuffers = new Map<string, { name: string; json: string }>();
   let responseReasoning = '';
   let sawToolCall = false;
-  for await (const part of fullStream) {
+  for await (const part of stream) {
     const p = part as any;
 
     if (p.type === 'reasoning-delta' || p.type === 'reasoning') {
@@ -775,7 +775,7 @@ async function handleUnaryRequest(
 
   const result = await generateText({
     model: langModel,
-    system: sdkParams.system,
+    instructions: sdkParams.instructions,
     messages: sdkParams.messages,
     tools: sdkParams.tools,
     toolChoice: sdkParams.toolChoice,

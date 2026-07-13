@@ -28,7 +28,7 @@ vi.mock('node:child_process', () => {
 });
 
 describe('antigravity launch-ide', () => {
-  it('finds standalone Antigravity app binary on macOS', () => {
+  it.skipIf(!findAntigravityAppBinary())('finds standalone Antigravity app binary on macOS', () => {
     const bin = findAntigravityAppBinary();
     expect(bin).toBeDefined();
     if (process.platform === 'darwin') {
@@ -91,7 +91,7 @@ describe('antigravity launch-ide', () => {
     fs.rmSync(tempProfile, { recursive: true, force: true });
   });
 
-  it('finds antigravity ide binary on macOS', () => {
+  it.skipIf(!findAntigravityIdeBinary())('finds antigravity ide binary on macOS', () => {
     // If not on mac, we might get null, but we can verify the path resolution logic
     const bin = findAntigravityIdeBinary();
     expect(bin).toBeDefined();

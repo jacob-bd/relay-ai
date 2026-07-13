@@ -21,7 +21,7 @@ describe('translateGeminiRequest', () => {
     };
 
     const params = translateGeminiRequest(body);
-    expect(params.system).toBeUndefined();
+    expect(params.instructions).toBeUndefined();
     expect(params.temperature).toBe(0.7);
     expect(params.maxOutputTokens).toBe(256);
     expect(params.messages).toEqual([
@@ -42,7 +42,7 @@ describe('translateGeminiRequest', () => {
     };
 
     const params = translateGeminiRequest(body);
-    expect(params.system).toBe('You are a helpful assistant');
+    expect(params.instructions).toBe('You are a helpful assistant');
     expect(params.messages).toEqual([
       { role: 'user', content: [{ type: 'text', text: 'Hi' }] },
     ]);
