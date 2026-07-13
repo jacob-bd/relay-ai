@@ -286,6 +286,8 @@ type LogFn = (msg: () => string) => void;
 export interface AnthropicStreamObserver {
   /** Called for every AI SDK fullStream part before Relay translates it. */
   onPart?: (partType: string) => void;
+  /** Local estimate used until the provider reports actual usage at stream completion. */
+  initialInputTokens?: number;
   abortSignal?: AbortSignal;
 }
 
@@ -313,7 +315,12 @@ export async function writeAnthropicStream(
       message: {
         id: messageId, type: 'message', role: 'assistant', content: [],
         model: modelId, stop_reason: null, stop_sequence: null,
-        usage: { input_tokens: 0, output_tokens: 0 },
+        usage: {
+          input_tokens: observer?.initialInputTokens ?? 0,
+          output_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
       },
     });
     started = true;

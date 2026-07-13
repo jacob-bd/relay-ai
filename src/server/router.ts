@@ -19,6 +19,7 @@ import {
 } from '../openai-adapter.js';
 import { sendJson, readBody } from '../http-utils.js';
 import { relayAnthropicMessages } from '../upstream-forward.js';
+import { estimateAnthropicInputTokens } from '../anthropic-endpoints.js';
 import { resolveProviderCredential } from '../env.js';
 import { oauthAuthRef } from '../registry/import-build.js';
 import {
@@ -348,7 +349,9 @@ async function handleAnthropicMessages(
           }
           res.write(chunk);
         };
-        await streamAnthropicResponse(languageModel, params, responseModelId, writeStreamChunk);
+        await streamAnthropicResponse(languageModel, params, responseModelId, writeStreamChunk, undefined, {
+          initialInputTokens: estimateAnthropicInputTokens(body),
+        });
         if (!res.headersSent) writeStreamChunk('');
         res.end();
       } else {

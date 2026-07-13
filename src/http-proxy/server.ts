@@ -4,6 +4,7 @@ import * as net from 'node:net';
 import type { Socket } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { URL } from 'node:url';
+import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib';
 import type { ProxyHandle, ProxyRoute } from '../proxy.js';
 import { startProxyCatalog } from '../proxy.js';
 import { ensureHttpProxyCertificates } from './ca.js';
@@ -22,6 +23,125 @@ import {
 const ANTHROPIC_HOST = 'api.anthropic.com';
 const MAX_BODY_BYTES = 50 * 1024 * 1024;
 const MAX_ERROR_BODY_BYTES = 64 * 1024;
+const MAX_MESSAGE_START_SSE_BYTES = 64 * 1024;
+
+type MessageStartUsage = {
+  usageStage: 'message_start';
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+};
+
+function numericUsage(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function messageStartUsageFromSseBlock(block: string): MessageStartUsage | undefined {
+  const lines = block.split('\n');
+  const event = lines.find(line => line.startsWith('event:'))?.slice('event:'.length).trim();
+  if (event && event !== 'message_start') return undefined;
+  const data = lines
+    .filter(line => line.startsWith('data:'))
+    .map(line => line.slice('data:'.length).trimStart())
+    .join('\n');
+  if (!data) return undefined;
+
+  try {
+    const parsed = JSON.parse(data) as Record<string, unknown>;
+    if (parsed.type !== 'message_start') return undefined;
+    const message = parsed.message as Record<string, unknown> | undefined;
+    const usage = message?.usage as Record<string, unknown> | undefined;
+    if (!usage) return undefined;
+    return {
+      usageStage: 'message_start',
+      inputTokens: numericUsage(usage.input_tokens),
+      outputTokens: numericUsage(usage.output_tokens),
+      cacheCreationInputTokens: numericUsage(usage.cache_creation_input_tokens),
+      cacheReadInputTokens: numericUsage(usage.cache_read_input_tokens),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function createMessageStartUsageCapture(
+  onUsage: (usage: MessageStartUsage) => void,
+  onDone?: () => void,
+): (chunk: Buffer) => void {
+  let buffered = '';
+  let capturedBytes = 0;
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    onDone?.();
+  };
+
+  return chunk => {
+    if (done) return;
+    const available = MAX_MESSAGE_START_SSE_BYTES - capturedBytes;
+    const captured = chunk.length > available ? chunk.subarray(0, available) : chunk;
+    capturedBytes += captured.length;
+    buffered = (buffered + captured.toString('utf8')).replace(/\r\n/g, '\n');
+
+    let boundary: number;
+    while ((boundary = buffered.indexOf('\n\n')) >= 0) {
+      const block = buffered.slice(0, boundary);
+      buffered = buffered.slice(boundary + 2);
+      const usage = messageStartUsageFromSseBlock(block);
+      if (usage) {
+        finish();
+        onUsage(usage);
+        return;
+      }
+    }
+
+    if (capturedBytes >= MAX_MESSAGE_START_SSE_BYTES) finish();
+  };
+}
+
+function observeMessageStartUsage(
+  upstream: http.IncomingMessage,
+  contentEncoding: string | string[] | undefined,
+  onUsage: (usage: MessageStartUsage) => void,
+): void {
+  const encoding = (Array.isArray(contentEncoding) ? contentEncoding[0] : contentEncoding)
+    ?.trim()
+    .toLowerCase();
+  if (!encoding || encoding === 'identity') {
+    let capture!: (chunk: Buffer) => void;
+    capture = createMessageStartUsageCapture(onUsage, () => upstream.off('data', capture));
+    upstream.on('data', capture);
+    return;
+  }
+
+  const decoder = encoding === 'gzip'
+    ? createGunzip()
+    : encoding === 'br'
+      ? createBrotliDecompress()
+      : encoding === 'deflate'
+        ? createInflate()
+        : undefined;
+  if (!decoder) return;
+
+  const onCompressedData = (chunk: Buffer) => {
+    if (!decoder.destroyed) decoder.write(chunk);
+  };
+  const onCompressedEnd = () => {
+    if (!decoder.destroyed) decoder.end();
+  };
+  const cleanup = () => {
+    upstream.off('data', onCompressedData);
+    upstream.off('end', onCompressedEnd);
+    decoder.destroy();
+  };
+  const capture = createMessageStartUsageCapture(onUsage, cleanup);
+  decoder.on('data', capture);
+  decoder.once('error', cleanup);
+  upstream.on('data', onCompressedData);
+  upstream.once('end', onCompressedEnd);
+}
 
 export interface HttpProxyOptions {
   host?: string;
@@ -85,8 +205,13 @@ function copyResponse(
   upstream: http.IncomingMessage,
   res: http.ServerResponse,
   onErrorResponse?: (statusCode: number, body: string) => void,
+  onMessageStartUsage?: (usage: MessageStartUsage) => void,
 ): void {
   const statusCode = upstream.statusCode ?? 502;
+  const contentType = upstream.headers['content-type'];
+  if (statusCode < 400 && onMessageStartUsage && typeof contentType === 'string' && contentType.includes('text/event-stream')) {
+    observeMessageStartUsage(upstream, upstream.headers['content-encoding'], onMessageStartUsage);
+  }
   const errorChunks: Buffer[] = [];
   let capturedBytes = 0;
   let truncated = false;
@@ -136,6 +261,7 @@ function forwardRawAnthropicRequest(
   origin: URL,
   rejectUnauthorized: boolean,
   onErrorResponse?: (statusCode: number, body: string) => void,
+  onMessageStartUsage?: (usage: MessageStartUsage) => void,
 ): Promise<void> {
   return new Promise(resolve => {
     let settled = false;
@@ -155,7 +281,7 @@ function forwardRawAnthropicRequest(
       servername: net.isIP(origin.hostname) ? undefined : origin.hostname,
       rejectUnauthorized,
     }, upstreamRes => {
-      copyResponse(upstreamRes, res, onErrorResponse);
+      copyResponse(upstreamRes, res, onErrorResponse, onMessageStartUsage);
       upstreamRes.once('end', done);
       upstreamRes.once('error', done);
     });
@@ -327,7 +453,9 @@ function forwardToAdapter(
         bytes += chunk.length;
         chunks += 1;
       });
-      copyResponse(upstreamRes, res);
+      copyResponse(upstreamRes, res, undefined, lifecycle
+        ? usage => writeLifecycle('response_usage', usage)
+        : undefined);
       const failAdapterResponse = (err: Error) => {
         if (clientDisconnected) {
           resolve();
@@ -481,6 +609,16 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
               route: 'passthrough',
               statusCode,
               errorContent,
+            })
+          : undefined,
+        messagesEndpoint === 'messages' && options.inferenceLogPath
+          ? usage => writeInferenceResponseLifecycleLog(options.inferenceLogPath!, {
+              event: 'response_usage',
+              requestId,
+              modelId: typeof parsed?.model === 'string' ? parsed.model : 'unknown',
+              provider: 'anthropic',
+              route: 'passthrough',
+              ...usage,
             })
           : undefined,
       );

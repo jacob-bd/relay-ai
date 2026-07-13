@@ -501,6 +501,7 @@ export function startProxyCatalog(
               plog,
               {
                 onPart: partType => translationLifecycle?.onPart(partType),
+                initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
                 abortSignal: clientAbort.signal,
               },
             );

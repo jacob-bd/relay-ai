@@ -184,7 +184,8 @@ export type InferenceResponseLifecycleEvent =
   | 'response_progress'
   | 'response_completed'
   | 'response_failed'
-  | 'response_client_disconnected';
+  | 'response_client_disconnected'
+  | 'response_usage';
 
 export type InferenceResponsePhase =
   | 'preparing_translation'
@@ -213,6 +214,11 @@ export interface InferenceResponseLifecycleLogEntry {
   translatedBytes?: number;
   translatedChunks?: number;
   outputIdleMs?: number;
+  usageStage?: 'message_start';
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
   lastPartType?: string;
   errorType?: string;
 }
@@ -257,6 +263,10 @@ export function writeInferenceResponseLifecycleLog(
   const translatedBytes = nonNegativeInteger(entry.translatedBytes);
   const translatedChunks = nonNegativeInteger(entry.translatedChunks);
   const outputIdleMs = nonNegativeInteger(entry.outputIdleMs);
+  const inputTokens = nonNegativeInteger(entry.inputTokens);
+  const outputTokens = nonNegativeInteger(entry.outputTokens);
+  const cacheCreationInputTokens = nonNegativeInteger(entry.cacheCreationInputTokens);
+  const cacheReadInputTokens = nonNegativeInteger(entry.cacheReadInputTokens);
   writeSecureLogLine(path, JSON.stringify({
     timestamp: new Date().toISOString(),
     event: entry.event,
@@ -276,6 +286,11 @@ export function writeInferenceResponseLifecycleLog(
     ...(translatedBytes !== undefined ? { translatedBytes } : {}),
     ...(translatedChunks !== undefined ? { translatedChunks } : {}),
     ...(outputIdleMs !== undefined ? { outputIdleMs } : {}),
+    ...(entry.usageStage ? { usageStage: entry.usageStage } : {}),
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
     ...(entry.lastPartType ? { lastPartType: compactLogValue(entry.lastPartType, 100) } : {}),
     ...(entry.errorType ? { errorType: compactLogValue(entry.errorType, 200) } : {}),
   }));

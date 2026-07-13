@@ -492,15 +492,34 @@ describe('SDK translated error logging', () => {
     const handle = await startProxyCatalog([route], route.aliasId, false, inferenceLogPath);
 
     try {
-      const res = await postToProxy(handle.port, handle.token, {
+      const requestBody = {
         model: route.aliasId,
         max_tokens: 100,
         messages: [{ role: 'user', content: 'hi' }],
         stream: true,
-      }, 'req-success-1');
+      };
+      const countResponse = await postToProxy(
+        handle.port,
+        handle.token,
+        requestBody,
+        undefined,
+        '/v1/messages/count_tokens',
+      );
+      const expectedInputTokens = JSON.parse(countResponse.body).input_tokens;
+      const res = await postToProxy(handle.port, handle.token, requestBody, 'req-success-1');
 
       expect(res.status).toBe(200);
       expect(res.body).toContain('event: message_stop');
+      const messageStartBlock = res.body
+        .split('\n\n')
+        .find(block => block.startsWith('event: message_start'))!;
+      const messageStart = JSON.parse(messageStartBlock.split('\n')[1]!.replace('data: ', ''));
+      expect(messageStart.message.usage).toEqual({
+        input_tokens: expectedInputTokens,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      });
       const entries = readFileSync(inferenceLogPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
       expect(entries).toContainEqual(expect.objectContaining({
         event: 'translation_dispatched',

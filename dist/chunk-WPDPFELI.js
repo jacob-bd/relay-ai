@@ -3991,6 +3991,10 @@ function writeInferenceResponseLifecycleLog(path, entry) {
   const translatedBytes = nonNegativeInteger(entry.translatedBytes);
   const translatedChunks = nonNegativeInteger(entry.translatedChunks);
   const outputIdleMs = nonNegativeInteger(entry.outputIdleMs);
+  const inputTokens = nonNegativeInteger(entry.inputTokens);
+  const outputTokens = nonNegativeInteger(entry.outputTokens);
+  const cacheCreationInputTokens = nonNegativeInteger(entry.cacheCreationInputTokens);
+  const cacheReadInputTokens = nonNegativeInteger(entry.cacheReadInputTokens);
   writeSecureLogLine(path, JSON.stringify({
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
     event: entry.event,
@@ -4010,6 +4014,11 @@ function writeInferenceResponseLifecycleLog(path, entry) {
     ...translatedBytes !== void 0 ? { translatedBytes } : {},
     ...translatedChunks !== void 0 ? { translatedChunks } : {},
     ...outputIdleMs !== void 0 ? { outputIdleMs } : {},
+    ...entry.usageStage ? { usageStage: entry.usageStage } : {},
+    ...inputTokens !== void 0 ? { inputTokens } : {},
+    ...outputTokens !== void 0 ? { outputTokens } : {},
+    ...cacheCreationInputTokens !== void 0 ? { cacheCreationInputTokens } : {},
+    ...cacheReadInputTokens !== void 0 ? { cacheReadInputTokens } : {},
     ...entry.lastPartType ? { lastPartType: compactLogValue(entry.lastPartType, 100) } : {},
     ...entry.errorType ? { errorType: compactLogValue(entry.errorType, 200) } : {}
   }));
@@ -5484,7 +5493,12 @@ async function writeAnthropicStream(fullStream, modelId, write, log8, observer) 
         model: modelId,
         stop_reason: null,
         stop_sequence: null,
-        usage: { input_tokens: 0, output_tokens: 0 }
+        usage: {
+          input_tokens: observer?.initialInputTokens ?? 0,
+          output_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0
+        }
       }
     });
     started = true;
@@ -6073,6 +6087,7 @@ function startProxyCatalog(routes, defaultAliasId, debug = false, inferenceLogPa
               plog,
               {
                 onPart: (partType) => translationLifecycle?.onPart(partType),
+                initialInputTokens: estimateAnthropicInputTokens(anthropicBody),
                 abortSignal: clientAbort.signal
               }
             );
@@ -7401,6 +7416,7 @@ import * as https from "https";
 import * as net from "net";
 import { randomUUID as randomUUID6 } from "crypto";
 import { URL as URL2 } from "url";
+import { createBrotliDecompress, createGunzip, createInflate } from "zlib";
 
 // src/http-proxy/ca.ts
 import { randomBytes as randomBytes2 } from "crypto";
@@ -7522,6 +7538,89 @@ ${additionalCa}
 var ANTHROPIC_HOST = "api.anthropic.com";
 var MAX_BODY_BYTES = 50 * 1024 * 1024;
 var MAX_ERROR_BODY_BYTES = 64 * 1024;
+var MAX_MESSAGE_START_SSE_BYTES = 64 * 1024;
+function numericUsage(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : void 0;
+}
+function messageStartUsageFromSseBlock(block) {
+  const lines = block.split("\n");
+  const event = lines.find((line) => line.startsWith("event:"))?.slice("event:".length).trim();
+  if (event && event !== "message_start") return void 0;
+  const data = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice("data:".length).trimStart()).join("\n");
+  if (!data) return void 0;
+  try {
+    const parsed = JSON.parse(data);
+    if (parsed.type !== "message_start") return void 0;
+    const message = parsed.message;
+    const usage = message?.usage;
+    if (!usage) return void 0;
+    return {
+      usageStage: "message_start",
+      inputTokens: numericUsage(usage.input_tokens),
+      outputTokens: numericUsage(usage.output_tokens),
+      cacheCreationInputTokens: numericUsage(usage.cache_creation_input_tokens),
+      cacheReadInputTokens: numericUsage(usage.cache_read_input_tokens)
+    };
+  } catch {
+    return void 0;
+  }
+}
+function createMessageStartUsageCapture(onUsage, onDone) {
+  let buffered = "";
+  let capturedBytes = 0;
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    onDone?.();
+  };
+  return (chunk) => {
+    if (done) return;
+    const available = MAX_MESSAGE_START_SSE_BYTES - capturedBytes;
+    const captured = chunk.length > available ? chunk.subarray(0, available) : chunk;
+    capturedBytes += captured.length;
+    buffered = (buffered + captured.toString("utf8")).replace(/\r\n/g, "\n");
+    let boundary;
+    while ((boundary = buffered.indexOf("\n\n")) >= 0) {
+      const block = buffered.slice(0, boundary);
+      buffered = buffered.slice(boundary + 2);
+      const usage = messageStartUsageFromSseBlock(block);
+      if (usage) {
+        finish();
+        onUsage(usage);
+        return;
+      }
+    }
+    if (capturedBytes >= MAX_MESSAGE_START_SSE_BYTES) finish();
+  };
+}
+function observeMessageStartUsage(upstream, contentEncoding, onUsage) {
+  const encoding = (Array.isArray(contentEncoding) ? contentEncoding[0] : contentEncoding)?.trim().toLowerCase();
+  if (!encoding || encoding === "identity") {
+    let capture2;
+    capture2 = createMessageStartUsageCapture(onUsage, () => upstream.off("data", capture2));
+    upstream.on("data", capture2);
+    return;
+  }
+  const decoder = encoding === "gzip" ? createGunzip() : encoding === "br" ? createBrotliDecompress() : encoding === "deflate" ? createInflate() : void 0;
+  if (!decoder) return;
+  const onCompressedData = (chunk) => {
+    if (!decoder.destroyed) decoder.write(chunk);
+  };
+  const onCompressedEnd = () => {
+    if (!decoder.destroyed) decoder.end();
+  };
+  const cleanup = () => {
+    upstream.off("data", onCompressedData);
+    upstream.off("end", onCompressedEnd);
+    decoder.destroy();
+  };
+  const capture = createMessageStartUsageCapture(onUsage, cleanup);
+  decoder.on("data", capture);
+  decoder.once("error", cleanup);
+  upstream.on("data", onCompressedData);
+  upstream.once("end", onCompressedEnd);
+}
 function authorityParts(authority) {
   try {
     const parsed = new URL2(`http://${authority}`);
@@ -7551,8 +7650,12 @@ function readRawBody(req) {
     req.on("error", reject);
   });
 }
-function copyResponse(upstream, res, onErrorResponse) {
+function copyResponse(upstream, res, onErrorResponse, onMessageStartUsage) {
   const statusCode = upstream.statusCode ?? 502;
+  const contentType = upstream.headers["content-type"];
+  if (statusCode < 400 && onMessageStartUsage && typeof contentType === "string" && contentType.includes("text/event-stream")) {
+    observeMessageStartUsage(upstream, upstream.headers["content-encoding"], onMessageStartUsage);
+  }
   const errorChunks = [];
   let capturedBytes = 0;
   let truncated = false;
@@ -7593,7 +7696,7 @@ function requestHeadersWithoutProxyHeaders(req) {
   }
   return headers;
 }
-function forwardRawAnthropicRequest(req, res, rawBody, origin, rejectUnauthorized, onErrorResponse) {
+function forwardRawAnthropicRequest(req, res, rawBody, origin, rejectUnauthorized, onErrorResponse, onMessageStartUsage) {
   return new Promise((resolve2) => {
     let settled = false;
     let clientDisconnected = false;
@@ -7612,7 +7715,7 @@ function forwardRawAnthropicRequest(req, res, rawBody, origin, rejectUnauthorize
       servername: net.isIP(origin.hostname) ? void 0 : origin.hostname,
       rejectUnauthorized
     }, (upstreamRes) => {
-      copyResponse(upstreamRes, res, onErrorResponse);
+      copyResponse(upstreamRes, res, onErrorResponse, onMessageStartUsage);
       upstreamRes.once("end", done);
       upstreamRes.once("error", done);
     });
@@ -7762,7 +7865,7 @@ function forwardToAdapter(req, res, rawBody, adapter, lifecycle) {
         bytes += chunk.length;
         chunks += 1;
       });
-      copyResponse(upstreamRes, res);
+      copyResponse(upstreamRes, res, void 0, lifecycle ? (usage) => writeLifecycle("response_usage", usage) : void 0);
       const failAdapterResponse = (err) => {
         if (clientDisconnected) {
           resolve2();
@@ -7903,6 +8006,14 @@ async function startHttpProxy(options) {
           route: "passthrough",
           statusCode,
           errorContent
+        }) : void 0,
+        messagesEndpoint === "messages" && options.inferenceLogPath ? (usage) => writeInferenceResponseLifecycleLog(options.inferenceLogPath, {
+          event: "response_usage",
+          requestId,
+          modelId: typeof parsed?.model === "string" ? parsed.model : "unknown",
+          provider: "anthropic",
+          route: "passthrough",
+          ...usage
         }) : void 0
       );
       return;
@@ -8532,7 +8643,9 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
           }
           res.write(chunk);
         };
-        await streamAnthropicResponse(languageModel, params, responseModelId, writeStreamChunk);
+        await streamAnthropicResponse(languageModel, params, responseModelId, writeStreamChunk, void 0, {
+          initialInputTokens: estimateAnthropicInputTokens(body)
+        });
         if (!res.headersSent) writeStreamChunk("");
         res.end();
       } else {
@@ -11722,4 +11835,4 @@ export {
   quitClaudeAppGracefully,
   launchOrRestartClaudeApp
 };
-//# sourceMappingURL=chunk-6XYYMFTK.js.map
+//# sourceMappingURL=chunk-WPDPFELI.js.map

@@ -7,6 +7,7 @@ import * as http from 'node:http';
 import * as net from 'node:net';
 import * as tls from 'node:tls';
 import { once } from 'node:events';
+import { gzipSync } from 'node:zlib';
 import { ensureHttpProxyCaBundle, ensureHttpProxyCertificates } from '../src/http-proxy/ca.js';
 import { shouldInterceptConnect, startHttpProxy } from '../src/http-proxy/server.js';
 
@@ -89,8 +90,20 @@ describe('selective HTTP proxy', () => {
       receivedBody = Buffer.concat(chunks);
       receivedAuth = req.headers.authorization;
       receivedPath = req.url;
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end('{"ok":true}');
+      const sse = [
+        'event: message_start',
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":321,"output_tokens":1,"cache_creation_input_tokens":12,"cache_read_input_tokens":210}}}',
+        '',
+        'event: content_block_delta',
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"private response text"}}',
+        '',
+        '',
+      ].join('\n');
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Content-Encoding': 'gzip',
+      });
+      res.end(gzipSync(sse));
     });
     const originPort = await listen(origin);
     const proxy = await startHttpProxy({
@@ -101,7 +114,7 @@ describe('selective HTTP proxy', () => {
     });
 
     try {
-      const body = Buffer.from('{\n  "model" : "claude-sonnet-4-6",\n  "output_config":{"effort":"high"},\n  "messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","data":"private-image-data"}},{"type":"text","text":"identify this Sonnet request"}]}]\n}\n');
+      const body = Buffer.from('{\n  "model" : "claude-sonnet-4-6",\n  "output_config":{"effort":"high"},\n  "messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","data":"private-image-data"}},{"type":"text","text":"identify this Sonnet request"}]}],\n  "stream":true\n}\n');
       const secure = await connectMitm(proxy.port, certificates.caCert);
       let response = '';
       secure.on('data', chunk => { response += chunk.toString(); });
@@ -122,14 +135,28 @@ describe('selective HTTP proxy', () => {
       expect(receivedAuth).toBe('Bearer subscription-oauth-token');
       expect(receivedBody.equals(body)).toBe(true);
       const inferenceLog = readFileSync(inferenceLogPath, 'utf8');
-      expect(JSON.parse(inferenceLog.trim())).toMatchObject({
+      const entries = inferenceLog.trim().split('\n').map(line => JSON.parse(line));
+      expect(entries[0]).toMatchObject({
         modelId: 'claude-sonnet-4-6',
         effort: 'high',
         provider: 'anthropic',
         route: 'passthrough',
         requestPreview: 'user: identify this Sonnet request',
       });
+      expect(entries[1]).toMatchObject({
+        event: 'response_usage',
+        requestId: entries[0].requestId,
+        modelId: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        route: 'passthrough',
+        usageStage: 'message_start',
+        inputTokens: 321,
+        outputTokens: 1,
+        cacheCreationInputTokens: 12,
+        cacheReadInputTokens: 210,
+      });
       expect(inferenceLog).not.toContain('private-image-data');
+      expect(inferenceLog).not.toContain('private response text');
     } finally {
       if (previousRequestPreview === undefined) delete process.env['RELAY_AI_LOG_REQUEST_PREVIEW'];
       else process.env['RELAY_AI_LOG_REQUEST_PREVIEW'] = previousRequestPreview;
@@ -306,8 +333,16 @@ describe('selective HTTP proxy', () => {
       adapterApiKey = req.headers['x-api-key'] as string | undefined;
       adapterBody = Buffer.concat(chunks).toString();
       await new Promise(resolve => setTimeout(resolve, 35));
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Connection': 'close' });
-      res.end('{"type":"message","content":[]}');
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Connection': 'close' });
+      res.end([
+        'event: message_start',
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":0,"output_tokens":0}}}',
+        '',
+        'event: message_stop',
+        'data: {"type":"message_stop"}',
+        '',
+        '',
+      ].join('\n'));
     });
     const adapterPort = await listen(adapterServer);
     const proxy = await startHttpProxy({
@@ -383,6 +418,16 @@ describe('selective HTTP proxy', () => {
         event: 'response_started',
         requestId: requestEntry.requestId,
         statusCode: 200,
+      }));
+      expect(relayEntries).toContainEqual(expect.objectContaining({
+        event: 'response_usage',
+        requestId: requestEntry.requestId,
+        modelId: 'relay:groq:llama-3.3-70b',
+        provider: 'groq',
+        route: 'translated',
+        usageStage: 'message_start',
+        inputTokens: 0,
+        outputTokens: 0,
       }));
       expect(relayEntries).toContainEqual(expect.objectContaining({
         event: 'response_completed',

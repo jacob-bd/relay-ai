@@ -66,7 +66,7 @@ import {
   summarizeServerProviders,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-6XYYMFTK.js";
+} from "./chunk-WPDPFELI.js";
 import {
   __toCommonJS,
   init_provider_templates,
@@ -1471,4 +1471,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-ZNCUXWGW.js.map
+//# sourceMappingURL=ui-command-2LKGDSJT.js.map

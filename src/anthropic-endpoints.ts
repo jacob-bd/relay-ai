@@ -34,7 +34,7 @@ const NON_CONTEXT_FIELDS = new Set([
  * immediate, local, free, and side-effect free. Claude Code labels /context counts
  * as estimates already.
  */
-export function estimateAnthropicInputTokens(body: Record<string, unknown>): number {
+export function estimateAnthropicInputTokens(body: object): number {
   const contextBody = Object.fromEntries(
     Object.entries(body).filter(([key]) => !NON_CONTEXT_FIELDS.has(key)),
   );

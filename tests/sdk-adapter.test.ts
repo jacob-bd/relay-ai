@@ -352,10 +352,14 @@ describe('generateAnthropicResponse', () => {
 });
 
 // ── streaming translation ────────────────────────────────────────────────────
-async function collect(parts: any[], model = 'm'): Promise<{ events: Array<{ event: string; data: any }>; raw: string }> {
+async function collect(
+  parts: any[],
+  model = 'm',
+  observer?: Parameters<typeof writeAnthropicStream>[4],
+): Promise<{ events: Array<{ event: string; data: any }>; raw: string }> {
   let raw = '';
   async function* gen() { for (const p of parts) yield p; }
-  await writeAnthropicStream(gen() as any, model, (c) => { raw += c; });
+  await writeAnthropicStream(gen() as any, model, (c) => { raw += c; }, undefined, observer);
   const events = raw.split('\n\n').filter(Boolean).map(block => {
     const [evLine, dataLine] = block.split('\n');
     return { event: evLine.replace('event: ', ''), data: JSON.parse(dataLine.replace('data: ', '')) };
@@ -372,12 +376,19 @@ describe('writeAnthropicStream', () => {
       { type: 'text-delta', id: 't1', text: ' world' },
       { type: 'text-end', id: 't1' },
       { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 5, outputTokens: 2 } },
-    ]);
+    ], 'm', { initialInputTokens: 37 });
     const types = events.map(e => e.event);
     expect(types).toEqual([
       'message_start', 'content_block_start', 'content_block_delta', 'content_block_delta',
       'content_block_stop', 'message_delta', 'message_stop',
     ]);
+    const start = events.find(e => e.event === 'message_start')!;
+    expect(start.data.message.usage).toEqual({
+      input_tokens: 37,
+      output_tokens: 0,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    });
     const delta = events.find(e => e.event === 'message_delta')!;
     expect(delta.data.delta.stop_reason).toBe('end_turn');
     expect(delta.data.usage).toEqual({ input_tokens: 5, output_tokens: 2 });
