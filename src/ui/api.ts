@@ -36,9 +36,14 @@ import { freeStatusLabel } from '../free-models.js';
 
 const MODELS_TIMEOUT_MS = 30_000;
 
+export type UiServerLifecycleEvent =
+  | { type: 'started'; listenMode: 'local' | 'network'; modelCount: number }
+  | { type: 'stopped' };
+
 export interface UiApiOptions {
   trace?: boolean;
   traceLogPath?: string;
+  onServerLifecycle?: (event: UiServerLifecycleEvent) => void;
 }
 
 // ── OAuth device-code session store ──────────────────────────────────────────
@@ -100,6 +105,14 @@ function traceUi(opts: UiApiOptions | undefined, message: string): void {
   writeSecureLogLine(opts.traceLogPath, `${new Date().toISOString()} ${message}`);
 }
 
+function notifyServerLifecycle(opts: UiApiOptions, event: UiServerLifecycleEvent): void {
+  try {
+    opts.onServerLifecycle?.(event);
+  } catch {
+    // Terminal output must not affect the gateway lifecycle or API response.
+  }
+}
+
 export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, opts: UiApiOptions = {}): void {
   sendCors(req, res);
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
@@ -146,9 +159,9 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
   } else if (url === '/api/server/providers' && req.method === 'GET') {
     handleGetServerProviders(res);
   } else if (url === '/api/server/start' && req.method === 'POST') {
-    handleStartServer(req, res);
+    handleStartServer(req, res, opts);
   } else if (url === '/api/server/stop' && req.method === 'POST') {
-    handleStopServer(res);
+    handleStopServer(res, opts);
   } else {
     sendJson(res, 404, { error: 'Not found' });
   }
@@ -767,7 +780,7 @@ async function handleGetServerProviders(res: ServerResponse): Promise<void> {
   }
 }
 
-async function handleStartServer(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleStartServer(req: IncomingMessage, res: ServerResponse, opts: UiApiOptions): Promise<void> {
   try {
     const body = JSON.parse(await readBody(req)) as Partial<ServerStartRequest>;
     if (typeof body.favoritesOnly !== 'boolean') {
@@ -790,15 +803,24 @@ async function handleStartServer(req: IncomingMessage, res: ServerResponse): Pro
       savePassword: Boolean(body.savePassword),
     };
     const result = await startGatewayServer(request);
+    if (result.ok) {
+      notifyServerLifecycle(opts, {
+        type: 'started',
+        listenMode: request.listenMode,
+        modelCount: result.status.models?.length ?? 0,
+      });
+    }
     sendJson(res, 200, result);
   } catch (err) {
     sendJson(res, 500, { ok: false, error: String(err) });
   }
 }
 
-async function handleStopServer(res: ServerResponse): Promise<void> {
+async function handleStopServer(res: ServerResponse, opts: UiApiOptions): Promise<void> {
   try {
-    sendJson(res, 200, await stopGatewayServer());
+    const result = await stopGatewayServer();
+    if (result.stopped) notifyServerLifecycle(opts, { type: 'stopped' });
+    sendJson(res, 200, result);
   } catch (err) {
     sendJson(res, 500, { error: String(err) });
   }

@@ -81,11 +81,16 @@ vi.mock('../src/server/router.js', () => ({
   }),
 }));
 
-async function call(method: string, url: string, body?: unknown) {
+async function call(
+  method: string,
+  url: string,
+  body?: unknown,
+  opts: { onServerLifecycle?: (event: unknown) => void } = {},
+) {
   const { handleUiApiRequest } = await import('../src/ui/api.js');
   const req = createMockRequest(method, url, body !== undefined ? JSON.stringify(body) : undefined);
   const mockRes = createMockResponse();
-  handleUiApiRequest(req, mockRes.res);
+  handleUiApiRequest(req, mockRes.res, opts);
   await new Promise(resolve => setTimeout(resolve, 50));
   return { code: mockRes.result.code, body: JSON.parse(mockRes.result.data) };
 }
@@ -140,6 +145,7 @@ describe('UI API Server endpoints', () => {
   });
 
   it('surfaces a clear error when the gateway port is already taken', async () => {
+    const onServerLifecycle = vi.fn();
     state.failNextStartWithPortConflict = true;
     const { body } = await call('POST', '/api/server/start', {
       favoritesOnly: false,
@@ -147,19 +153,21 @@ describe('UI API Server endpoints', () => {
       exposedProviders: null,
       maskGatewayIds: true,
       listenMode: 'local',
-    });
+    }, { onServerLifecycle });
     expect(body.ok).toBe(false);
     expect(body.error).toMatch(/Port 17645 is already in use/);
+    expect(onServerLifecycle).not.toHaveBeenCalled();
   });
 
   it('starts in local mode and reports URLs + models, then blocks a second start', async () => {
+    const onServerLifecycle = vi.fn();
     const startResult = await call('POST', '/api/server/start', {
       favoritesOnly: false,
       freeModelsOnly: false,
       exposedProviders: null,
       maskGatewayIds: false,
       listenMode: 'local',
-    });
+    }, { onServerLifecycle });
     expect(startResult.body.ok).toBe(true);
     expect(startResult.body.status.running).toBe(true);
     expect(startResult.body.status.anthropicUrl).toBe('http://127.0.0.1:17645/anthropic');
@@ -168,6 +176,7 @@ describe('UI API Server endpoints', () => {
     expect(startResult.body.status.models).toEqual([
       { providerLabel: 'OpenCode Zen', name: 'Test Model', anthropicId: 'anthropic-zen__test-model', openaiId: 'test-model' },
     ]);
+    expect(onServerLifecycle).toHaveBeenCalledWith({ type: 'started', listenMode: 'local', modelCount: 1 });
 
     const statusResult = await call('GET', '/api/server/status');
     expect(statusResult.body.running).toBe(true);
@@ -181,6 +190,7 @@ describe('UI API Server endpoints', () => {
     });
     expect(secondStart.body.ok).toBe(false);
     expect(secondStart.body.error).toMatch(/already running/);
+    expect(onServerLifecycle).toHaveBeenCalledTimes(1);
   });
 
   it('starts with free-models-only filter and reports only free/free-access models', async () => {
@@ -231,6 +241,7 @@ describe('UI API Server endpoints', () => {
     expect(missingPassword.body.ok).toBe(false);
     expect(missingPassword.body.error).toMatch(/password is required/);
 
+    const onServerLifecycle = vi.fn();
     const started = await call('POST', '/api/server/start', {
       favoritesOnly: false,
       freeModelsOnly: false,
@@ -240,13 +251,14 @@ describe('UI API Server endpoints', () => {
       passwordMode: 'new',
       password: 'hunter2',
       savePassword: true,
-    });
+    }, { onServerLifecycle });
     expect(started.body.ok).toBe(true);
     expect(state.savedListenMode).toBe('network');
     expect(started.body.status.apiKey).toBe('hunter2');
     expect(started.body.status.networkUrls).toEqual([
       { name: 'en0', anthropicUrl: 'http://192.168.1.50:17645/anthropic', openaiUrl: 'http://192.168.1.50:17645/openai/v1' },
     ]);
+    expect(onServerLifecycle).toHaveBeenCalledWith({ type: 'started', listenMode: 'network', modelCount: 1 });
 
     const status = await call('GET', '/api/server/status');
     expect(status.body.saved.hasSavedPassword).toBe(true);
@@ -272,9 +284,16 @@ describe('UI API Server endpoints', () => {
       maskGatewayIds: true,
       listenMode: 'local',
     });
-    const stopResult = await call('POST', '/api/server/stop');
+    const onServerLifecycle = vi.fn();
+    const stopResult = await call('POST', '/api/server/stop', undefined, { onServerLifecycle });
     expect(stopResult.body.ok).toBe(true);
+    expect(stopResult.body.stopped).toBe(true);
     expect(state.close).toHaveBeenCalledOnce();
+    expect(onServerLifecycle).toHaveBeenCalledWith({ type: 'stopped' });
+
+    const duplicateStop = await call('POST', '/api/server/stop', undefined, { onServerLifecycle });
+    expect(duplicateStop.body).toEqual({ ok: true, stopped: false });
+    expect(onServerLifecycle).toHaveBeenCalledTimes(1);
 
     const status = await call('GET', '/api/server/status');
     expect(status.body.running).toBe(false);

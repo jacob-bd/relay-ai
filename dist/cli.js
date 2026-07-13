@@ -12349,7 +12349,7 @@ Error: ${parsed.error}
       console.log("Usage: relay-ai ui [--trace]\n\nOpen the settings UI in your browser.");
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-GEO7ACPW.js");
+    const { runUiCommand } = await import("./ui-command-S7SOSUHQ.js");
     return runUiCommand({ trace: parsed.trace });
   }
   if (parsed.command === "models") {

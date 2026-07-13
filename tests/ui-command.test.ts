@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { isUiApiRoute, resolveUiShutdownDecision } from '../src/ui-command.js';
+import {
+  formatUiServerLifecycleMessage,
+  isUiApiRoute,
+  resolveUiShutdownDecision,
+} from '../src/ui-command.js';
 
 describe('ui command routing', () => {
   it('routes API and OAuth callback requests to the API handler', () => {
@@ -34,5 +38,19 @@ describe('ui command routing', () => {
 
     expect(decision).toBe('close');
     expect(prompted).toBe(false);
+  });
+});
+
+describe('UI Server Gateway lifecycle messages', () => {
+  it('formats local and network start messages with exposed model counts', () => {
+    expect(formatUiServerLifecycleMessage({ type: 'started', listenMode: 'local', modelCount: 1 }))
+      .toBe('◆ Server Gateway started · Local mode · 1 model exposed');
+    expect(formatUiServerLifecycleMessage({ type: 'started', listenMode: 'network', modelCount: 17 }))
+      .toBe('◆ Server Gateway started · Network mode · 17 models exposed');
+  });
+
+  it('formats the stop message', () => {
+    expect(formatUiServerLifecycleMessage({ type: 'stopped' }))
+      .toBe('◇ Server Gateway stopped');
   });
 });

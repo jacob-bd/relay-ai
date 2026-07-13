@@ -6,7 +6,7 @@ import { dirname } from 'node:path';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { getAppHome } from './paths.js';
-import { handleUiApiRequest } from './ui/api.js';
+import { handleUiApiRequest, type UiServerLifecycleEvent } from './ui/api.js';
 import { getUiDebugLogPath, makeTraceLogger } from './trace-log.js';
 import { VERSION } from './constants.js';
 
@@ -62,6 +62,13 @@ export function isUiApiRoute(url: string): boolean {
   return url.startsWith('/api/') || url.startsWith('/oauth/callback');
 }
 
+export function formatUiServerLifecycleMessage(event: UiServerLifecycleEvent): string {
+  if (event.type === 'stopped') return '◇ Server Gateway stopped';
+  const mode = event.listenMode === 'network' ? 'Network' : 'Local';
+  const modelLabel = event.modelCount === 1 ? 'model' : 'models';
+  return `◆ Server Gateway started · ${mode} mode · ${event.modelCount} ${modelLabel} exposed`;
+}
+
 export async function resolveUiShutdownDecision(
   signal: NodeJS.Signals,
   promptClose: () => Promise<boolean | symbol> = () => p.confirm({
@@ -97,7 +104,13 @@ export async function runUiCommand(opts: { trace?: boolean } = {}): Promise<numb
     res.setHeader('X-Content-Type-Options', 'nosniff');
 
     if (isUiApiRoute(url)) {
-      handleUiApiRequest(req, res, { trace: opts.trace, traceLogPath });
+      handleUiApiRequest(req, res, {
+        trace: opts.trace,
+        traceLogPath,
+        onServerLifecycle: event => {
+          console.log(`\n  ${formatUiServerLifecycleMessage(event)}\n`);
+        },
+      });
       return;
     }
 

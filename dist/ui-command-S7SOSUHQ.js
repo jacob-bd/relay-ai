@@ -510,8 +510,9 @@ async function stopGatewayServer() {
   if (running) {
     await running.handle.close();
     running = null;
+    return { ok: true, stopped: true };
   }
-  return { ok: true };
+  return { ok: true, stopped: false };
 }
 
 // src/ui/api.ts
@@ -549,6 +550,12 @@ function sendCors(req, res) {
 function traceUi(opts, message) {
   if (!opts?.trace || !opts.traceLogPath) return;
   writeSecureLogLine(opts.traceLogPath, `${(/* @__PURE__ */ new Date()).toISOString()} ${message}`);
+}
+function notifyServerLifecycle(opts, event) {
+  try {
+    opts.onServerLifecycle?.(event);
+  } catch {
+  }
 }
 function handleUiApiRequest(req, res, opts = {}) {
   sendCors(req, res);
@@ -598,9 +605,9 @@ function handleUiApiRequest(req, res, opts = {}) {
   } else if (url === "/api/server/providers" && req.method === "GET") {
     handleGetServerProviders(res);
   } else if (url === "/api/server/start" && req.method === "POST") {
-    handleStartServer(req, res);
+    handleStartServer(req, res, opts);
   } else if (url === "/api/server/stop" && req.method === "POST") {
-    handleStopServer(res);
+    handleStopServer(res, opts);
   } else {
     sendJson(res, 404, { error: "Not found" });
   }
@@ -1154,7 +1161,7 @@ async function handleGetServerProviders(res) {
     sendCatalogFetchError(res, err, "Provider fetch");
   }
 }
-async function handleStartServer(req, res) {
+async function handleStartServer(req, res, opts) {
   try {
     const body = JSON.parse(await readBody(req));
     if (typeof body.favoritesOnly !== "boolean") {
@@ -1180,14 +1187,23 @@ async function handleStartServer(req, res) {
       savePassword: Boolean(body.savePassword)
     };
     const result = await startGatewayServer(request);
+    if (result.ok) {
+      notifyServerLifecycle(opts, {
+        type: "started",
+        listenMode: request.listenMode,
+        modelCount: result.status.models?.length ?? 0
+      });
+    }
     sendJson(res, 200, result);
   } catch (err) {
     sendJson(res, 500, { ok: false, error: String(err) });
   }
 }
-async function handleStopServer(res) {
+async function handleStopServer(res, opts) {
   try {
-    sendJson(res, 200, await stopGatewayServer());
+    const result = await stopGatewayServer();
+    if (result.stopped) notifyServerLifecycle(opts, { type: "stopped" });
+    sendJson(res, 200, result);
   } catch (err) {
     sendJson(res, 500, { error: String(err) });
   }
@@ -1314,6 +1330,12 @@ function checkExistingServer() {
 function isUiApiRoute(url) {
   return url.startsWith("/api/") || url.startsWith("/oauth/callback");
 }
+function formatUiServerLifecycleMessage(event) {
+  if (event.type === "stopped") return "\u25C7 Server Gateway stopped";
+  const mode = event.listenMode === "network" ? "Network" : "Local";
+  const modelLabel = event.modelCount === 1 ? "model" : "models";
+  return `\u25C6 Server Gateway started \xB7 ${mode} mode \xB7 ${event.modelCount} ${modelLabel} exposed`;
+}
 async function resolveUiShutdownDecision(signal, promptClose = () => p.confirm({
   message: "Relay-AI UI is still running. Close it?",
   initialValue: true
@@ -1342,7 +1364,15 @@ async function runUiCommand(opts = {}) {
     const url2 = req.url ?? "/";
     res.setHeader("X-Content-Type-Options", "nosniff");
     if (isUiApiRoute(url2)) {
-      handleUiApiRequest(req, res, { trace: opts.trace, traceLogPath });
+      handleUiApiRequest(req, res, {
+        trace: opts.trace,
+        traceLogPath,
+        onServerLifecycle: (event) => {
+          console.log(`
+  ${formatUiServerLifecycleMessage(event)}
+`);
+        }
+      });
       return;
     }
     const key = url2 === "/" ? "/index.html" : url2.split("?")[0];
@@ -1412,8 +1442,9 @@ async function runUiCommand(opts = {}) {
   return 0;
 }
 export {
+  formatUiServerLifecycleMessage,
   isUiApiRoute,
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-GEO7ACPW.js.map
+//# sourceMappingURL=ui-command-S7SOSUHQ.js.map

@@ -296,10 +296,11 @@ async function doStartGatewayServer(
   return { ok: true, status: await getServerStatus() };
 }
 
-export async function stopGatewayServer(): Promise<{ ok: true }> {
+export async function stopGatewayServer(): Promise<{ ok: true; stopped: boolean }> {
   if (running) {
     await running.handle.close();
     running = null;
+    return { ok: true, stopped: true };
   }
-  return { ok: true };
+  return { ok: true, stopped: false };
 }
