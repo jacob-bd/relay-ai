@@ -553,6 +553,47 @@ function responseErrorCode(event) {
   const responseError = response?.error && typeof response.error === "object" ? response.error : void 0;
   return typeof responseError?.code === "string" ? responseError.code : void 0;
 }
+function boundedDiagnosticIdentifier(value) {
+  if (typeof value !== "string") return void 0;
+  const normalized = value.trim();
+  return normalized && /^[a-zA-Z0-9_.:/-]+$/.test(normalized) ? normalized.slice(0, 128) : void 0;
+}
+function diagnosticTextFingerprint(field, value) {
+  if (typeof value !== "string" || value.length === 0) return {};
+  return {
+    [`${field}Bytes`]: Buffer.byteLength(value),
+    [`${field}Hash`]: createHash("sha256").update(value).digest("hex").slice(0, 16)
+  };
+}
+function responseFailureDetails(event) {
+  if (!event || typeof event !== "object") return {};
+  const record = event;
+  const response = record.response && typeof record.response === "object" ? record.response : void 0;
+  const error = record.error && typeof record.error === "object" ? record.error : response?.error && typeof response.error === "object" ? response.error : void 0;
+  const incomplete = response?.incomplete_details && typeof response.incomplete_details === "object" ? response.incomplete_details : void 0;
+  const message = typeof error?.message === "string" ? error.message : typeof record.message === "string" ? record.message : void 0;
+  return {
+    errorType: boundedDiagnosticIdentifier(error?.type ?? record.type),
+    errorCode: boundedDiagnosticIdentifier(error?.code ?? record.code),
+    responseStatus: boundedDiagnosticIdentifier(response?.status),
+    incompleteReason: boundedDiagnosticIdentifier(incomplete?.reason),
+    ...diagnosticTextFingerprint("errorMessage", message)
+  };
+}
+function emitResponseErrorDiagnostic(entry, ctx, details) {
+  ctx.emitDiagnostic?.({
+    event: "ws_response_error",
+    connectionId: entry.debugId,
+    generation: entry.generation,
+    continued: ctx.continued,
+    retried: ctx.retried,
+    frameCount: ctx.frameCount,
+    emittedModelData: ctx.emittedModelData,
+    responseIdReceived: Boolean(ctx.responseId),
+    inFlightMs: entry.inFlightStartedAt === void 0 ? void 0 : Math.max(0, entry.options.now() - entry.inFlightStartedAt),
+    ...details
+  });
+}
 function responseIdFromEvent(event) {
   if (!event || typeof event !== "object") return void 0;
   const response = event.response;
@@ -699,9 +740,13 @@ function deleteEntry(entry, closeSocket = true) {
     }
   }
 }
-function failContext(entry, ctx, message) {
+function failContext(entry, ctx, message, diagnosticDetails) {
   if (ctx.closed || entry.current !== ctx) return;
   entry.debug(`fail: ${message}`);
+  emitResponseErrorDiagnostic(entry, ctx, {
+    ...diagnosticDetails,
+    ...diagnosticTextFingerprint("errorMessage", message)
+  });
   flushPending(ctx);
   encodeSse(ctx, { type: "error", error: { message } });
   deleteEntry(entry);
@@ -810,7 +855,16 @@ function handleSocketMessage(entry, data) {
   }
   if (isModelDataEvent(type)) ctx.emittedModelData = true;
   const previousMissing = responseErrorCode(event) === "previous_response_not_found";
-  if (previousMissing && ctx.continued && !ctx.retried && !ctx.emittedModelData) {
+  const willRetry = previousMissing && ctx.continued && !ctx.retried && !ctx.emittedModelData;
+  if (FAILURE_EVENT_TYPES.has(type ?? "")) {
+    emitResponseErrorDiagnostic(entry, ctx, {
+      source: "response_event",
+      upstreamEventType: type,
+      willRetry,
+      ...responseFailureDetails(event)
+    });
+  }
+  if (willRetry) {
     ctx.retried = true;
     entry.debug("previous response unavailable; retrying once with full context");
     deleteEntry(entry);
@@ -878,11 +932,22 @@ function createConnection(WebSocket, wsUrl, headers, persistent, key, options, d
   });
   socket.on("unexpected-response", (_request, response) => {
     debug(`unexpected-response status=${response.statusCode}`);
+    const ctx = entry.current;
+    if (ctx && !ctx.closed) {
+      emitResponseErrorDiagnostic(entry, ctx, {
+        source: "unexpected_response",
+        httpStatusCode: response.statusCode
+      });
+    }
   });
   socket.on("message", (data) => handleSocketMessage(entry, data));
   socket.on("error", (error) => {
     const ctx = entry.current;
-    if (ctx) failContext(entry, ctx, error.message);
+    if (ctx) failContext(entry, ctx, error.message, {
+      source: "socket_error",
+      socketErrorName: boundedDiagnosticIdentifier(error.name),
+      socketErrorCode: boundedDiagnosticIdentifier(error.code)
+    });
     else deleteEntry(entry);
   });
   socket.on("close", (code, reason) => {
@@ -890,8 +955,13 @@ function createConnection(WebSocket, wsUrl, headers, persistent, key, options, d
     const ctx = entry.current;
     debug(`connection=${entry.debugId} closed code=${code} in_flight=${Boolean(ctx && !ctx.closed)}`);
     if (ctx && !ctx.closed) {
-      const suffix = reason?.length ? `: ${reason.toString("utf8")}` : "";
-      failContext(entry, ctx, `WebSocket closed (${code})${suffix}`);
+      const reasonText = reason?.length ? reason.toString("utf8") : "";
+      const suffix = reasonText ? `: ${reasonText}` : "";
+      failContext(entry, ctx, `WebSocket closed (${code})${suffix}`, {
+        source: "socket_close",
+        closeCode: code,
+        ...diagnosticTextFingerprint("closeReason", reasonText)
+      });
     } else {
       deleteEntry(entry, false);
     }
@@ -13029,4 +13099,4 @@ export {
   quitClaudeAppGracefully,
   launchOrRestartClaudeApp
 };
-//# sourceMappingURL=chunk-C7NNNSAI.js.map
+//# sourceMappingURL=chunk-JJHCW7J7.js.map

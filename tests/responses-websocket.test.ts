@@ -202,14 +202,79 @@ describe('createResponsesWebSocketFetch', () => {
     }));
   });
 
-  it('surfaces a socket error as an SSE error event', async () => {
-    const wsFetch = createResponsesWebSocketFetch(WS_URL);
-    const res = await wsFetch('https://x', { method: 'POST', headers: {}, body: '{}' });
+  it('surfaces a socket error as SSE and logs privacy-safe diagnostics', async () => {
+    const diagnostics: ResponsesWebSocketDiagnosticEvent[] = [];
+    const wsFetch = createResponsesWebSocketFetch(WS_URL, undefined, {
+      onDiagnostic: event => diagnostics.push(event),
+    });
+    const res = await withResponsesWebSocketDiagnosticContext(
+      { requestId: 'req-socket-error' },
+      () => wsFetch('https://x', { method: 'POST', headers: {}, body: '{}' }),
+    );
     const socket = lastSocket();
-    socket.emit('error', new Error('boom'));
+    const error = Object.assign(new Error('secret socket failure'), { code: 'ECONNRESET' });
+    socket.emit('error', error);
     const body = await readAll(res);
     expect(body).toContain('"type":"error"');
-    expect(body).toContain('boom');
+    expect(body).toContain('secret socket failure');
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      event: 'ws_response_error',
+      requestId: 'req-socket-error',
+      connectionId: 1,
+      generation: 'isolated',
+      source: 'socket_error',
+      socketErrorName: 'Error',
+      socketErrorCode: 'ECONNRESET',
+      emittedModelData: false,
+      errorMessageBytes: 21,
+      errorMessageHash: expect.stringMatching(/^[a-f0-9]{16}$/),
+    }));
+    expect(JSON.stringify(diagnostics)).not.toContain('secret socket failure');
+  });
+
+  it('logs sanitized upstream response failure details after partial output', async () => {
+    const diagnostics: ResponsesWebSocketDiagnosticEvent[] = [];
+    const wsFetch = createResponsesWebSocketFetch(WS_URL, undefined, {
+      onDiagnostic: event => diagnostics.push(event),
+    });
+    const res = await withResponsesWebSocketDiagnosticContext(
+      { requestId: 'req-response-failed' },
+      () => wsFetch('https://x', { method: 'POST', headers: {}, body: '{}' }),
+    );
+    const socket = lastSocket();
+    socket.emit('message', Buffer.from(JSON.stringify({
+      type: 'response.output_text.delta',
+      delta: 'partial',
+    })));
+    socket.emit('message', Buffer.from(JSON.stringify({
+      type: 'response.failed',
+      response: {
+        id: 'resp_failed',
+        status: 'failed',
+        error: {
+          type: 'server_error',
+          code: 'internal_error',
+          message: 'sensitive backend explanation',
+        },
+      },
+    })));
+    await readAll(res);
+
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      event: 'ws_response_error',
+      requestId: 'req-response-failed',
+      connectionId: 1,
+      source: 'response_event',
+      upstreamEventType: 'response.failed',
+      errorType: 'server_error',
+      errorCode: 'internal_error',
+      responseStatus: 'failed',
+      emittedModelData: true,
+      willRetry: false,
+      errorMessageBytes: 29,
+      errorMessageHash: expect.stringMatching(/^[a-f0-9]{16}$/),
+    }));
+    expect(JSON.stringify(diagnostics)).not.toContain('sensitive backend explanation');
   });
 
   it('closes the socket when the request is aborted', async () => {
