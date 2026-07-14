@@ -2361,6 +2361,10 @@ var FALLBACK_PATHS = isWindows ? [
   "/opt/homebrew/bin/claude"
 ];
 function findClaudeBinary() {
+  const environmentOverride = process.env["RELAY_AI_CLAUDE_PATH"];
+  if (environmentOverride?.trim()) {
+    return existsSync3(environmentOverride) ? environmentOverride : null;
+  }
   const override = getAppPathOverride("claude");
   if (override) return existsSync3(override) ? override : null;
   return findBinaryOnPath("claude", FALLBACK_PATHS);
@@ -12454,4 +12458,4 @@ export {
   quitClaudeAppGracefully,
   launchOrRestartClaudeApp
 };
-//# sourceMappingURL=chunk-KRG5CPVV.js.map
+//# sourceMappingURL=chunk-3QCBYBDJ.js.map

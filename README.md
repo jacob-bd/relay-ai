@@ -541,6 +541,17 @@ When you launch, relay-ai builds a clean child environment:
 
 `--http-proxy` is intentionally different: it leaves normal Anthropic credentials and model selection in place, removes any `ANTHROPIC_BASE_URL`, and sets only the local HTTP proxy and CA trust variables.
 
+Set `RELAY_AI_CLAUDE_PATH` to make `relay-ai claude` launch an exact Claude Code executable instead of using a saved app-path override or searching `PATH`. This is useful with launchers that supply their bundled Claude executable to a process wrapper:
+
+```bash
+#!/usr/bin/env bash
+claude_path=$1
+shift
+
+exec env RELAY_AI_CLAUDE_PATH="$claude_path" \
+  relay-ai claude --http-proxy -- "$@"
+```
+
 When Claude Code exits (normal exit, Ctrl+C, terminal close), your shell is unchanged. No cleanup step. No restore needed.
 
 **Caveat: Claude Code persists the model.** relay-ai doesn't edit `~/.claude/settings.json`, but Claude Code saves the model you launched with (via `--model` and `ANTHROPIC_MODEL`). A later bare `claude` launch may still show that model, e.g. `anthropic-opencode-go__deepseek-v4-flash` from a prior relay-ai session. To get back to a first-party default, run `claude --model sonnet` (or your preferred Claude model), or remove the `"model"` key from `~/.claude/settings.json`. If you used the favorites switch menu, Claude Code may also cache the gateway catalog at `~/.claude/cache/gateway-models.json`. Delete that file if `/model` shows stale entries from a dead proxy.

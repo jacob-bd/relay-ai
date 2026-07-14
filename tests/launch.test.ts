@@ -90,17 +90,42 @@ describe('findBinaryOnPath', () => {
 describe('findClaudeBinary app path override', () => {
   let tempHome: string;
   let previousRelayHome: string | undefined;
+  let previousClaudePath: string | undefined;
 
   beforeEach(() => {
     tempHome = mkdtempSync(join(tmpdir(), 'relay-ai-launch-test-'));
     previousRelayHome = process.env['RELAY_AI_HOME'];
+    previousClaudePath = process.env['RELAY_AI_CLAUDE_PATH'];
     process.env['RELAY_AI_HOME'] = join(tempHome, 'relay-home');
+    delete process.env['RELAY_AI_CLAUDE_PATH'];
   });
 
   afterEach(() => {
     rmSync(tempHome, { recursive: true, force: true });
     if (previousRelayHome === undefined) delete process.env['RELAY_AI_HOME'];
     else process.env['RELAY_AI_HOME'] = previousRelayHome;
+    if (previousClaudePath === undefined) delete process.env['RELAY_AI_CLAUDE_PATH'];
+    else process.env['RELAY_AI_CLAUDE_PATH'] = previousClaudePath;
+  });
+
+  it('prefers RELAY_AI_CLAUDE_PATH over a saved app path override', () => {
+    const savedClaude = join(tempHome, 'saved-claude');
+    const environmentClaude = join(tempHome, 'environment-claude');
+    writeFileSync(savedClaude, '#!/bin/sh\n');
+    writeFileSync(environmentClaude, '#!/bin/sh\n');
+    setAppPathOverride('claude', savedClaude);
+    process.env['RELAY_AI_CLAUDE_PATH'] = environmentClaude;
+
+    expect(findClaudeBinary()).toBe(environmentClaude);
+  });
+
+  it('does not fall back when RELAY_AI_CLAUDE_PATH points to a missing binary', () => {
+    const savedClaude = join(tempHome, 'saved-claude');
+    writeFileSync(savedClaude, '#!/bin/sh\n');
+    setAppPathOverride('claude', savedClaude);
+    process.env['RELAY_AI_CLAUDE_PATH'] = join(tempHome, 'missing-claude');
+
+    expect(findClaudeBinary()).toBeNull();
   });
 
   it('prefers a saved app path override over auto-detection', () => {
