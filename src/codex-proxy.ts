@@ -20,11 +20,34 @@ import {
   writeResponsesErrorStream,
   writeResponsesRateLimitStream,
   responsesRateLimitBody,
+  appendCompactionInstruction,
+  streamCompactionResponse,
+  generateCompactionResponse,
   type CodexSdkCallParams,
 } from './codex-responses-adapter.js';
 import { silenceSdkWarnings } from './sdk-adapter.js';
 import { formatUpstreamError, upstreamHttpStatus } from './codex/upstream-error.js';
-import { getCodexProxyDebugLogPath, makeTraceLogger } from './trace-log.js';
+import { getCodexProxyDebugLogPath, makeTraceLogger, resetCodexBodyDumpLog, appendCodexBodyDump } from './trace-log.js';
+
+/**
+ * Pull the full `response` object out of a single SSE event chunk if it's the
+ * terminal `response.completed` event. Each write()/sendWsEvent() call in the
+ * streaming path carries exactly one complete "event: X\ndata: {...}\n\n" chunk
+ * (see codex-responses-adapter.ts's `emit`/`sseChunk`), so no cross-call buffering
+ * is needed here.
+ */
+function captureCompletedResponse(sseText: string): unknown | undefined {
+  if (!sseText.includes('response.completed')) return undefined;
+  const dataLine = sseText.split('\n').find(l => l.startsWith('data:'));
+  if (!dataLine) return undefined;
+  try {
+    const obj = JSON.parse(dataLine.slice(5).trim()) as { type?: string; response?: unknown };
+    if (obj && obj.type === 'response.completed') return obj.response;
+  } catch {
+    // ignore — not our event to parse
+  }
+  return undefined;
+}
 
 export function estimateCodexRequestChars(params: CodexSdkCallParams): number {
   let chars = (params.system ?? '').length;
@@ -138,6 +161,20 @@ export function isLikelyCodexCompactionRequest(body: Record<string, unknown>): b
     return inputItemText(item.content).trimStart().startsWith(COMPACTION_PROMPT_MARKER);
   }
   return false;
+}
+
+/**
+ * True only for remote compaction v2 (a `compaction_trigger` control item) — NOT the
+ * v1 prompt-based path (which already works via a normal message reply) and NOT the
+ * durable `compaction`/`context_compaction` history items that appear on every
+ * post-compaction turn. v2 needs a synthesized single `compaction` output item
+ * (see codex-responses-adapter's compaction path); the v1 path must stay untouched.
+ */
+export function isCodexV2CompactionRequest(body: Record<string, unknown>): boolean {
+  if (!Array.isArray(body.input)) return false;
+  return (body.input as Array<Record<string, unknown> | null>).some(
+    item => item && typeof item === 'object' && item.type === 'compaction_trigger',
+  );
 }
 
 /**
@@ -280,6 +317,7 @@ export async function startCodexProxy(
     const log = debug
       ? makeTraceLogger(getCodexProxyDebugLogPath())
       : () => {};
+    if (debug) resetCodexBodyDumpLog();
     const onRejection = (reason: unknown) => {
       if (debug) log(`unhandled-rejection: ${formatUpstreamError(reason)}`);
     };
@@ -399,6 +437,15 @@ export async function startCodexProxy(
           const tools = Array.isArray(body.tools) ? body.tools : [];
           const toolNames = tools.map((t: unknown) => (t && typeof t === 'object' && 'name' in t ? (t as { name: unknown }).name : '?')).join(',');
           log(`request: model=${String(body.model ?? '')} previous_response_id=${prevId ?? '(none)'} input_items=${inputItems} body_bytes=${rawBody.length} tools=[${toolNames || 'none'}]`);
+          appendCodexBodyDump({
+            ts: new Date().toISOString(),
+            transport: 'http',
+            direction: 'request',
+            model: String(body.model ?? ''),
+            previous_response_id: prevId,
+            tools: body.tools,
+            input: body.input,
+          });
           const mcpTools = tools.filter((t: unknown) => t && typeof t === 'object' && 'name' in t && String((t as { name: unknown }).name).startsWith('mcp__'));
           for (const t of mcpTools) {
             const mt = t as { name: unknown; type?: unknown; description?: unknown; parameters?: unknown; tools?: unknown[] };
@@ -452,6 +499,13 @@ export async function startCodexProxy(
               log(`context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages`);
             }
           }
+          // remote compaction v2: the trigger carries no prompt, so ask the model for a
+          // summary and return it as the single `compaction` item Codex requires.
+          const v2Compaction = isCodexV2CompactionRequest(body);
+          if (v2Compaction) {
+            params = appendCompactionInstruction(params);
+            if (debug) log(`compaction v2: synthesizing single compaction item for model=${route.modelId}`);
+          }
           if (debug) {
             const effort = (body as { reasoning?: { effort?: string } }).reasoning?.effort;
             log(`model=${route.modelId} effort=${effort ?? '(none)'} providerOptions=${JSON.stringify(params.providerOptions)}`);
@@ -463,8 +517,25 @@ export async function startCodexProxy(
               'Cache-Control': 'no-cache',
               Connection: 'keep-alive',
             });
-            const write = (chunk: string) => res.write(chunk);
+            const write = (chunk: string) => {
+              res.write(chunk);
+              if (debug) {
+                const completed = captureCompletedResponse(chunk);
+                if (completed) {
+                  appendCodexBodyDump({
+                    ts: new Date().toISOString(),
+                    transport: 'http',
+                    direction: 'response',
+                    model: route.modelId,
+                    response: completed,
+                  });
+                }
+              }
+            };
             try {
+              if (v2Compaction) {
+                await streamCompactionResponse(languageModel, params, modelId, write);
+              } else
               await streamResponsesResponse(languageModel, params, modelId, write, summary => {
                 if (debug) {
                   const failure = `${summary.aborted ? ' aborted=yes' : ''}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ''}`;
@@ -488,7 +559,18 @@ export async function startCodexProxy(
             res.end();
           } else {
             try {
-              const response = await generateResponsesResponse(languageModel, params, modelId);
+              const response = v2Compaction
+                ? await generateCompactionResponse(languageModel, params, modelId)
+                : await generateResponsesResponse(languageModel, params, modelId);
+              if (debug) {
+                appendCodexBodyDump({
+                  ts: new Date().toISOString(),
+                  transport: 'http',
+                  direction: 'response',
+                  model: route.modelId,
+                  response,
+                });
+              }
               sendJson(res, 200, response);
             } catch (err) {
               const msg = formatUpstreamError(err);
@@ -622,6 +704,9 @@ export async function startCodexProxy(
 
       let frameBuf = Buffer.alloc(0);
       let handled = false;
+      // Set once the request body is parsed, below — sendWsEvent is defined before
+      // that point but needs the model id for its own debug dump.
+      let currentRequestModel = '';
 
       const closeSocket = () => {
         if (!socket.destroyed) { socket.write(wsCloseFrame()); socket.end(); }
@@ -629,6 +714,18 @@ export async function startCodexProxy(
 
       const sendWsEvent = (sseChunk: string) => {
         if (socket.destroyed) return;
+        if (debug) {
+          const completed = captureCompletedResponse(sseChunk);
+          if (completed) {
+            appendCodexBodyDump({
+              ts: new Date().toISOString(),
+              transport: 'ws',
+              direction: 'response',
+              model: currentRequestModel,
+              response: completed,
+            });
+          }
+        }
         // SSE: "event: TYPE\ndata: {JSON}\n\n" → WS text frame: "{JSON}"
         for (const line of sseChunk.split('\n')) {
           if (line.startsWith('data: ')) {
@@ -659,9 +756,19 @@ export async function startCodexProxy(
             const tools = Array.isArray(body.tools) ? body.tools : [];
             const toolNames = tools.map((t: unknown) => (t && typeof t === 'object' && 'name' in t ? (t as { name: unknown }).name : '?')).join(',');
             log(`WS request: model=${String(body.model ?? '')} previous_response_id=${prevId ?? '(none)'} input_items=${inputItems} body_bytes=${frame.text.length} tools=[${toolNames || 'none'}]`);
+            appendCodexBodyDump({
+              ts: new Date().toISOString(),
+              transport: 'ws',
+              direction: 'request',
+              model: String(body.model ?? ''),
+              previous_response_id: prevId,
+              tools: body.tools,
+              input: body.input,
+            });
           }
 
           const modelId = String(body.model ?? '');
+          currentRequestModel = modelId;
           let resolved = resolveModel(routes, models, modelId);
           if (!resolved) {
             const fb = routes[0];
@@ -700,10 +807,18 @@ export async function startCodexProxy(
                 log(`WS context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages tools=${params.tools ? Object.keys(params.tools).length : 0}`);
               }
             }
+            const v2Compaction = isCodexV2CompactionRequest(body);
+            if (v2Compaction) {
+              params = appendCompactionInstruction(params);
+              if (debug) log(`WS compaction v2: synthesizing single compaction item for model=${route.modelId}`);
+            }
             if (debug) {
               const effort = (body as { reasoning?: { effort?: string } }).reasoning?.effort;
               log(`WS model=${route.modelId} effort=${effort ?? '(none)'} providerOptions=${JSON.stringify(params.providerOptions)}`);
             }
+            if (v2Compaction) {
+              await streamCompactionResponse(languageModel, params, modelId, sendWsEvent);
+            } else
             await streamResponsesResponse(languageModel, params, modelId, sendWsEvent, summary => {
               if (debug) {
                 const failure = `${summary.aborted ? ' aborted=yes' : ''}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ''}`;

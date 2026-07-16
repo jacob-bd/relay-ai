@@ -18,6 +18,7 @@ const FILE_MODE = 0o600;
 export const CLAUDE_DEBUG_LOG = 'claude-debug.log';
 export const PROXY_DEBUG_LOG = 'proxy-debug.log';
 export const CODEX_PROXY_DEBUG_LOG = 'codex-proxy-debug.log';
+export const CODEX_BODY_DUMP_LOG = 'codex-body-dump.jsonl';
 export const GEMINI_PROXY_DEBUG_LOG = 'gemini-proxy-debug.log';
 export const PROVIDER_DEBUG_LOG = 'provider-debug.log';
 export const UI_DEBUG_LOG = 'ui-debug.log';
@@ -49,6 +50,35 @@ export function getProxyDebugLogPath(): string {
 
 export function getCodexProxyDebugLogPath(): string {
   return join(ensureLogsDir(), CODEX_PROXY_DEBUG_LOG);
+}
+
+/**
+ * Untruncated JSONL dump of full Codex /v1/responses request/response bodies —
+ * tools array and every input item, unlike the 500-char-clipped single-line
+ * entries in codex-proxy-debug.log. Only written when --trace is on. Exists to
+ * diagnose Codex tool-shape mismatches (MCP namespace tools, tool_search,
+ * additional_tools, apply_patch) without reproducing against a live app twice.
+ */
+export function getCodexBodyDumpLogPath(): string {
+  return join(ensureLogsDir(), CODEX_BODY_DUMP_LOG);
+}
+
+/** Remove prior session's body dump so --trace shows only the latest run. */
+export function resetCodexBodyDumpLog(): void {
+  resetTraceLog(getCodexBodyDumpLogPath());
+}
+
+/** Append one JSON object as a line to the codex body dump log, with secret redaction. */
+export function appendCodexBodyDump(entry: Record<string, unknown>): void {
+  ensureLogsDir();
+  const path = getCodexBodyDumpLogPath();
+  const redacted = redactTraceLine(JSON.stringify(entry));
+  try {
+    writeFileSync(path, `${redacted}\n`, { flag: 'a', mode: FILE_MODE });
+    chmodSync(path, FILE_MODE);
+  } catch {
+    // best-effort
+  }
 }
 
 export function getGeminiProxyDebugLogPath(): string {

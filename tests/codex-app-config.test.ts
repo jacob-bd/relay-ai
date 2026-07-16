@@ -9,7 +9,7 @@ import {
   restoreConfigFromState,
   previewAppConfigToml,
 } from '../src/codex/app-config.js';
-import { CODEX_APP_PROVIDER_ID } from '../src/codex/app-profile.js';
+import { CODEX_APP_PROVIDER_ID, CODEX_APP_AUTO_COMPACT_RATIO } from '../src/codex/app-profile.js';
 import type { CodexAppConfigSpec } from '../src/codex/app-profile.js';
 
 describe('app-config', () => {
@@ -59,7 +59,7 @@ describe('app-config', () => {
     expect(text).toContain('model_reasoning_effort = "high"');
   });
 
-  it('uses an early auto-compact threshold for relay models', () => {
+  it('sets the auto-compact threshold from the context window and ratio', () => {
     const configPath = join(home, '.codex', 'config.toml');
     mkdirSync(join(home, '.codex'), { recursive: true });
     const spec = proxySpec(join(home, '.relay-ai', 'codex', 'app-models-anthropic.json'));
@@ -69,7 +69,7 @@ describe('app-config', () => {
 
     const text = readFileSync(configPath, 'utf8');
     expect(text).toContain('model_context_window = 200000');
-    expect(text).toContain('model_auto_compact_token_limit = 110000');
+    expect(text).toContain(`model_auto_compact_token_limit = ${Math.floor(200_000 * CODEX_APP_AUTO_COMPACT_RATIO)}`);
   });
 
   it('restore state round-trips model_reasoning_effort', () => {

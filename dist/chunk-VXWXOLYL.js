@@ -1235,7 +1235,7 @@ function thinkingProviderOptions(npm) {
 // src/codex/app-profile.ts
 var CODEX_APP_PROVIDER_ID = "relay-ai-launch-codex-app";
 var PREVIEW_PROXY_PORT = 54321;
-var CODEX_APP_AUTO_COMPACT_RATIO = 0.55;
+var CODEX_APP_AUTO_COMPACT_RATIO = 0.9;
 function codexAppModelSlug(rawModelId) {
   return rawModelId.startsWith("models/") ? rawModelId.slice("models/".length) : rawModelId;
 }
@@ -3830,6 +3830,7 @@ var FILE_MODE4 = 384;
 var CLAUDE_DEBUG_LOG = "claude-debug.log";
 var PROXY_DEBUG_LOG = "proxy-debug.log";
 var CODEX_PROXY_DEBUG_LOG = "codex-proxy-debug.log";
+var CODEX_BODY_DUMP_LOG = "codex-body-dump.jsonl";
 var GEMINI_PROXY_DEBUG_LOG = "gemini-proxy-debug.log";
 var PROVIDER_DEBUG_LOG = "provider-debug.log";
 var UI_DEBUG_LOG = "ui-debug.log";
@@ -3855,6 +3856,23 @@ function getProxyDebugLogPath() {
 }
 function getCodexProxyDebugLogPath() {
   return join8(ensureLogsDir(), CODEX_PROXY_DEBUG_LOG);
+}
+function getCodexBodyDumpLogPath() {
+  return join8(ensureLogsDir(), CODEX_BODY_DUMP_LOG);
+}
+function resetCodexBodyDumpLog() {
+  resetTraceLog(getCodexBodyDumpLogPath());
+}
+function appendCodexBodyDump(entry) {
+  ensureLogsDir();
+  const path = getCodexBodyDumpLogPath();
+  const redacted = redactTraceLine(JSON.stringify(entry));
+  try {
+    writeFileSync4(path, `${redacted}
+`, { flag: "a", mode: FILE_MODE4 });
+    chmodSync4(path, FILE_MODE4);
+  } catch {
+  }
 }
 function getGeminiProxyDebugLogPath() {
   return join8(ensureLogsDir(), GEMINI_PROXY_DEBUG_LOG);
@@ -10454,6 +10472,8 @@ export {
   prepareClaudeTraceLog,
   getProxyDebugLogPath,
   getCodexProxyDebugLogPath,
+  resetCodexBodyDumpLog,
+  appendCodexBodyDump,
   getGeminiProxyDebugLogPath,
   getUiDebugLogPath,
   makeTraceLogger,
@@ -10532,4 +10552,4 @@ export {
   quitClaudeAppGracefully,
   launchOrRestartClaudeApp
 };
-//# sourceMappingURL=chunk-XCB2K4GI.js.map
+//# sourceMappingURL=chunk-VXWXOLYL.js.map

@@ -3,10 +3,12 @@ import { parse } from 'smol-toml';
 import {
   estimateCodexRequestChars,
   isLikelyCodexCompactionRequest,
+  isCodexV2CompactionRequest,
   protectCodexCompactionParams,
   startCodexProxy,
 } from '../src/codex-proxy.js';
 import type { CodexSdkCallParams } from '../src/codex-responses-adapter.js';
+import { CODEX_APP_AUTO_COMPACT_RATIO } from '../src/codex/app-profile.js';
 
 describe('startCodexProxy', () => {
   let handle: Awaited<ReturnType<typeof startCodexProxy>> | null = null;
@@ -200,7 +202,7 @@ describe('Codex compaction protection', () => {
 
     const protectedParams = protectCodexCompactionParams(body, params, 100_000);
 
-    expect(estimateCodexRequestChars(protectedParams)).toBeLessThanOrEqual(Math.floor(100_000 * 0.55) * 3);
+    expect(estimateCodexRequestChars(protectedParams)).toBeLessThanOrEqual(Math.floor(100_000 * CODEX_APP_AUTO_COMPACT_RATIO) * 3);
     expect(protectedParams.messages.length).toBeGreaterThanOrEqual(3);
     for (const message of protectedParams.messages) {
       const content = message.content;
@@ -373,6 +375,19 @@ describe('Codex compaction protection', () => {
       ],
     };
     expect(isLikelyCodexCompactionRequest(body)).toBe(false);
+  });
+
+  it('isCodexV2CompactionRequest fires only for a compaction_trigger control, not v1 or durable items', () => {
+    const v2 = { input: [{ type: 'message', role: 'user', content: 'x' }, { type: 'compaction_trigger' }] };
+    expect(isCodexV2CompactionRequest(v2)).toBe(true);
+
+    // v1 prompt-based path must NOT be treated as v2 (it returns a normal message).
+    const v1 = { input: [{ type: 'message', role: 'user', content: 'You are performing a CONTEXT CHECKPOINT COMPACTION. Summarize.' }] };
+    expect(isCodexV2CompactionRequest(v1)).toBe(false);
+
+    // A durable compaction summary replayed in history must NOT re-trigger synthesis.
+    const replay = { input: [{ type: 'compaction', encrypted_content: 'abc' }, { type: 'message', role: 'user', content: 'continue' }] };
+    expect(isCodexV2CompactionRequest(replay)).toBe(false);
   });
 });
 

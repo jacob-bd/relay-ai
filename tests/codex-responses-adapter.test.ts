@@ -4,6 +4,10 @@ import {
   translateResponsesRequest,
   translateResponsesTools,
   responsesErrorBody,
+  buildCompactionResponseBody,
+  appendCompactionInstruction,
+  decodeCompactionContent,
+  COMPACTION_SUMMARY_INSTRUCTION,
 } from '../src/codex-responses-adapter.js';
 
 describe('translateResponsesRequest', () => {
@@ -204,6 +208,243 @@ describe('translateResponsesRequest', () => {
       'mcp__context7__query_docs',
       'Bash',
     ]);
+  });
+});
+
+describe('Codex MCP namespace tool round-trip (relay-ai/relay-ai#21)', () => {
+  const NAMESPACE_TOOLS = [
+    {
+      type: 'namespace' as const,
+      name: 'mcp__context7',
+      description: 'docs server',
+      tools: [
+        { type: 'function' as const, name: 'resolve_library_id', description: 'resolve', parameters: { type: 'object', properties: {} } },
+      ],
+    },
+  ];
+
+  it('splits a flattened namespace tool call back into {namespace, name} for Codex', async () => {
+    const { writeResponsesStream, translateResponsesRequest } = await import('../src/codex-responses-adapter.js');
+    const params = translateResponsesRequest({ model: 'm', input: 'hi', tools: NAMESPACE_TOOLS }, '@ai-sdk/anthropic');
+
+    const chunks: string[] = [];
+    const write = (c: string) => chunks.push(c);
+    async function* stream() {
+      yield { type: 'tool-input-start', id: 'fc_1', toolName: 'mcp__context7__resolve_library_id' };
+      yield { type: 'tool-input-delta', delta: '{"libraryName":"react"}' };
+      yield { type: 'finish', totalUsage: { inputTokens: 1, outputTokens: 2 } };
+    }
+
+    await writeResponsesStream(stream(), 'test-model', write, undefined, undefined, { toolContext: params.toolContext });
+    const events = parseSseEvents(chunks.join(''));
+    const completed = events.find(e => e.event === 'response.completed')!.data.response;
+    expect(completed.output).toEqual([
+      expect.objectContaining({
+        type: 'function_call',
+        namespace: 'mcp__context7',
+        name: 'resolve_library_id',
+        arguments: JSON.stringify({ libraryName: 'react' }),
+      }),
+    ]);
+  });
+
+  it('re-joins a replayed {namespace, name} function_call from Codex history into the flat SDK toolName', () => {
+    const toolContext = undefined; // built internally by translateResponsesRequest below
+    const params = translateResponsesRequest({
+      model: 'm',
+      input: [
+        { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'resolve_library_id', namespace: 'mcp__context7', arguments: '{}' },
+        { type: 'function_call_output', call_id: 'call_1', output: 'ok' },
+      ],
+      tools: NAMESPACE_TOOLS,
+    }, '@ai-sdk/anthropic');
+    void toolContext;
+
+    const assistant = params.messages.find(m => m.role === 'assistant') as { content: Array<{ toolName?: string }> };
+    expect(assistant.content[0]).toMatchObject({ type: 'tool-call', toolName: 'mcp__context7__resolve_library_id' });
+    const toolResult = params.messages.find(m => m.role === 'tool') as { content: Array<{ toolName?: string }> };
+    expect(toolResult.content[0]).toMatchObject({ type: 'tool-result', toolName: 'mcp__context7__resolve_library_id' });
+  });
+
+  it('generateResponsesResponse also splits namespace tool calls back into {namespace, name}', async () => {
+    vi.resetModules();
+    vi.doMock('ai', () => ({
+      generateText: vi.fn(async () => ({
+        text: '',
+        reasoningText: '',
+        toolCalls: [{ toolCallId: 'call_1', toolName: 'mcp__context7__resolve_library_id', input: { libraryName: 'react' } }],
+        usage: { inputTokens: 1, outputTokens: 2 },
+      })),
+      streamText: vi.fn(),
+      tool: vi.fn((spec: unknown) => spec),
+      jsonSchema: vi.fn((schema: unknown) => schema),
+    }));
+    const { generateResponsesResponse, translateResponsesRequest } = await import('../src/codex-responses-adapter.js');
+    const params = translateResponsesRequest({ model: 'm', input: 'hi', tools: NAMESPACE_TOOLS }, '@ai-sdk/anthropic');
+    const body = await generateResponsesResponse({} as never, params, 'm');
+    const call = (body.output as any[]).find(item => item.type === 'function_call');
+    expect(call).toMatchObject({ namespace: 'mcp__context7', name: 'resolve_library_id' });
+
+    vi.doUnmock('ai');
+    vi.resetModules();
+  });
+});
+
+describe('Codex additional_tools input lifting (relay-ai/relay-ai#21)', () => {
+  it('lifts an additional_tools input item into the top-level tool set', () => {
+    const params = translateResponsesRequest({
+      model: 'm',
+      input: [
+        { type: 'additional_tools', role: 'developer', tools: [
+          { type: 'function', name: 'turn_local_tool', description: 'x', parameters: { type: 'object', properties: {} } },
+        ] } as never,
+        { role: 'user', content: 'hi' },
+      ],
+    }, '@ai-sdk/anthropic');
+    expect(Object.keys(params.tools ?? {})).toContain('turn_local_tool');
+  });
+});
+
+describe('Codex custom tool (apply_patch) round-trip (relay-ai/relay-ai#21)', () => {
+  const CUSTOM_TOOLS = [{ type: 'custom' as const, name: 'apply_patch', description: 'apply a patch' }];
+
+  it('exposes a custom tool as a callable SDK tool', () => {
+    const params = translateResponsesRequest({ model: 'm', input: 'hi', tools: CUSTOM_TOOLS }, '@ai-sdk/anthropic');
+    expect(Object.keys(params.tools ?? {})).toContain('apply_patch');
+  });
+
+  it('emits a custom_tool_call (not function_call) when the model calls apply_patch, unwrapping the raw patch text', async () => {
+    const { writeResponsesStream, translateResponsesRequest } = await import('../src/codex-responses-adapter.js');
+    const params = translateResponsesRequest({ model: 'm', input: 'hi', tools: CUSTOM_TOOLS }, '@ai-sdk/anthropic');
+
+    const chunks: string[] = [];
+    const write = (c: string) => chunks.push(c);
+    async function* stream() {
+      yield { type: 'tool-input-start', id: 'fc_1', toolName: 'apply_patch' };
+      yield { type: 'tool-input-delta', delta: '{"input":"*** Begin Patch\\n*** End Patch"}' };
+      yield { type: 'finish', totalUsage: { inputTokens: 1, outputTokens: 2 } };
+    }
+
+    await writeResponsesStream(stream(), 'test-model', write, undefined, undefined, { toolContext: params.toolContext });
+    const events = parseSseEvents(chunks.join(''));
+    const completed = events.find(e => e.event === 'response.completed')!.data.response;
+    expect(completed.output).toEqual([
+      expect.objectContaining({ type: 'custom_tool_call', name: 'apply_patch', input: '*** Begin Patch\n*** End Patch' }),
+    ]);
+  });
+
+  it('re-joins a replayed custom_tool_call from Codex history into an SDK tool-call', () => {
+    const params = translateResponsesRequest({
+      model: 'm',
+      input: [
+        { type: 'custom_tool_call', id: 'fc_1', call_id: 'call_1', name: 'apply_patch', input: '*** Begin Patch\n*** End Patch' } as never,
+        { type: 'custom_tool_call_output', call_id: 'call_1', output: 'applied' } as never,
+      ],
+      tools: CUSTOM_TOOLS,
+    }, '@ai-sdk/anthropic');
+    const assistant = params.messages.find(m => m.role === 'assistant') as { content: Array<{ toolName?: string }> };
+    expect(assistant.content[0]).toMatchObject({ type: 'tool-call', toolName: 'apply_patch' });
+    const toolResult = params.messages.find(m => m.role === 'tool') as { content: Array<{ toolName?: string }> };
+    expect(toolResult.content[0]).toMatchObject({ type: 'tool-result', toolName: 'apply_patch' });
+  });
+});
+
+describe('Codex native tool_search round-trip (relay-ai/relay-ai#21, defensive/unverified live)', () => {
+  it('converts a native tool_search managed tool into a callable SDK function tool', () => {
+    const params = translateResponsesRequest({ model: 'm', input: 'hi', tools: [{ type: 'tool_search' } as never] }, '@ai-sdk/anthropic');
+    expect(Object.keys(params.tools ?? {})).toContain('tool_search');
+  });
+
+  it('emits a tool_search_call (not function_call) when the model calls tool_search', async () => {
+    const { writeResponsesStream, translateResponsesRequest } = await import('../src/codex-responses-adapter.js');
+    const params = translateResponsesRequest({ model: 'm', input: 'hi', tools: [{ type: 'tool_search' } as never] }, '@ai-sdk/anthropic');
+
+    const chunks: string[] = [];
+    const write = (c: string) => chunks.push(c);
+    async function* stream() {
+      yield { type: 'tool-input-start', id: 'fc_1', toolName: 'tool_search' };
+      yield { type: 'tool-input-delta', delta: '{"query":"browser","limit":"5"}' };
+      yield { type: 'finish', totalUsage: { inputTokens: 1, outputTokens: 2 } };
+    }
+
+    await writeResponsesStream(stream(), 'test-model', write, undefined, undefined, { toolContext: params.toolContext });
+    const events = parseSseEvents(chunks.join(''));
+    const completed = events.find(e => e.event === 'response.completed')!.data.response;
+    expect(completed.output).toEqual([
+      expect.objectContaining({ type: 'tool_search_call', execution: 'client', arguments: { query: 'browser', limit: 5 } }),
+    ]);
+  });
+
+  it('ingests deferred namespaced tools surfaced by a tool_search_output history item so they become callable', () => {
+    const params = translateResponsesRequest({
+      model: 'm',
+      input: [
+        {
+          type: 'tool_search_output',
+          call_id: 'call_1',
+          tools: [
+            {
+              type: 'namespace', name: 'mcp__storefront_builder',
+              tools: [{ type: 'function', name: 'list_sessions', description: 'x', parameters: { type: 'object', properties: {} } }],
+            },
+          ],
+        } as never,
+      ],
+    }, '@ai-sdk/anthropic');
+    expect(Object.keys(params.tools ?? {})).toContain('mcp__storefront_builder__list_sessions');
+  });
+});
+
+describe('Codex remote compaction v2 synthesis (relay-ai/relay-ai#21 follow-up)', () => {
+  it('builds a response with exactly one output item of type "compaction" carrying the summary', async () => {
+    const { buildCompactionResponseBody, decodeCompactionContent } = await import('../src/codex-responses-adapter.js');
+    const body = buildCompactionResponseBody('the running summary', 'deepseek-v4-pro');
+    expect(body.status).toBe('completed');
+    const output = body.output as Array<Record<string, unknown>>;
+    expect(output).toHaveLength(1);
+    expect(output[0]!.type).toBe('compaction');
+    expect(typeof output[0]!.encrypted_content).toBe('string');
+    expect(decodeCompactionContent(output[0]!.encrypted_content as string)).toBe('the running summary');
+    // Must NOT contain reasoning/message items — that is exactly what Codex rejects.
+    expect(output.some(it => it.type === 'reasoning' || it.type === 'message')).toBe(false);
+  });
+
+  it('emits an SSE stream whose only output item is a compaction item + response.completed', async () => {
+    const { writeCompactionSse } = await import('../src/codex-responses-adapter.js');
+    const chunks: string[] = [];
+    writeCompactionSse('summary text', 'm', c => chunks.push(c));
+    const events = parseSseEvents(chunks.join(''));
+    const completed = events.find(e => e.event === 'response.completed')!.data.response;
+    expect(completed.output).toHaveLength(1);
+    expect(completed.output[0].type).toBe('compaction');
+    const doneItems = events
+      .filter(e => e.event === 'response.output_item.done')
+      .map(e => e.data.item);
+    expect(doneItems).toHaveLength(1);
+    expect(doneItems[0].type).toBe('compaction');
+    expect(chunks.join('')).not.toContain('"type":"message"');
+    expect(chunks.join('')).not.toContain('"type":"reasoning"');
+  });
+
+  it('decodes a replayed compaction input item back into a readable summary message for the model', () => {
+    const encrypted = (buildCompactionResponseBody('earlier work: fixed the parser', 'm').output as Array<Record<string, unknown>>)[0]!.encrypted_content as string;
+    const params = translateResponsesInput([
+      { type: 'compaction', encrypted_content: encrypted } as never,
+      { role: 'user', content: 'continue' },
+    ], undefined, '@ai-sdk/anthropic');
+    const joined = JSON.stringify(params.messages);
+    expect(joined).toContain('earlier work: fixed the parser');
+  });
+
+  it('appendCompactionInstruction adds a trailing user message instructing the model to summarize', () => {
+    const out = appendCompactionInstruction({ messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] as never });
+    const last = out.messages[out.messages.length - 1] as { role: string; content: Array<{ text?: string }> };
+    expect(last.role).toBe('user');
+    expect(last.content[0]!.text).toBe(COMPACTION_SUMMARY_INSTRUCTION);
+  });
+
+  it('tolerates an undecodable encrypted_content without throwing (foreign/real-backend item)', () => {
+    expect(decodeCompactionContent('not-our-base64-json')).toBeNull();
   });
 });
 

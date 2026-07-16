@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.5] - 2026-07-15
+
+### Fixed
+
+- **MCP tools and the built-in browser now work in Codex / ChatGPT desktop app with non-native models** (#21) — Codex wraps MCP server tools (and the built-in browser, which is itself exposed as an MCP tool) in a proprietary `{type:"namespace"}` envelope. relay-ai already flattened these into callable function tools for the model, but sent the model's tool call back to Codex as a flat name instead of splitting it back into the `{namespace, name}` shape Codex's own dispatcher requires, so every call was rejected with `unsupported call: ...`. Also added translation for `tool_search` (deferred/lazy-loaded tools), `additional_tools` turn-local tool definitions, and `type:"custom"` tools (e.g. `apply_patch`). Credit to [bharat2808/codex-ollama-proxy](https://github.com/bharat2808/codex-ollama-proxy) — a community proxy for Codex + Ollama that solved this same class of problem first and whose approach to flattening/splitting namespace tools informed this fix.
+- **`Fatal error: remote compaction v2 expected exactly one compaction output item` no longer crashes Codex / ChatGPT app sessions** — Codex's "remote compaction v2" requires the response to contain exactly one output item of type `compaction`; relay-ai was replying with a normal reasoning+message turn, which Codex rejected outright. relay-ai now asks the model for a plain-text summary and returns it wrapped as the single `compaction` item Codex expects, decoding it back into readable context on later turns.
+- **Compaction no longer fires prematurely in the ChatGPT desktop app** — a single large tool result (e.g. a browser snapshot) could push a session past relay-ai's auto-compact threshold within a couple of turns. Raised `model_auto_compact_token_limit` from 55% to 90% of the model's context window.
+
+### Added
+
+- **Untruncated Codex request/response trace dump** — `relay-ai codex`/`codex-app --trace` now writes full, unclipped `/v1/responses` request and response bodies (tools array, every input item) to `~/.relay-ai/logs/codex-body-dump.jsonl`, for diagnosing Codex tool-shape and compaction issues without reproducing twice.
+
+### Documentation
+
+- Updated the MCP known-limitation notes in `README.md`/`docs/CODEX.md` to reflect the fix above, corrected stale auto-compaction figures, and documented a new known limitation: `image_gen` (image generation) calls an OpenAI-only image backend relay-ai doesn't implement, and most registry models can't generate images regardless — no workaround planned.
+
 ## [0.4.4] - 2026-07-13
 
 ### Added

@@ -14,6 +14,7 @@ import {
   addProviderFromTemplate,
   addZenRegistryStub,
   aliasModelId,
+  appendCodexBodyDump,
   authenticateProvider,
   buildAntigravityChildEnv,
   buildAppCatalogFile,
@@ -129,6 +130,7 @@ import {
   relayIntro,
   relayOutro,
   removeProviderFromRegistry,
+  resetCodexBodyDumpLog,
   resolveApiKey,
   resolveContextWindow,
   resolveLocalProviderApiKey,
@@ -164,7 +166,7 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-XCB2K4GI.js";
+} from "./chunk-VXWXOLYL.js";
 import {
   filterTemplates,
   init_provider_templates,
@@ -1903,6 +1905,52 @@ function applyClaudeCodeOAuthIdentity(input, sdkParams) {
 
 // src/codex-responses-adapter.ts
 import { streamText, generateText, tool, jsonSchema } from "ai";
+function createCodexToolContext() {
+  return { namespaceByFlatName: /* @__PURE__ */ new Map(), customToolNames: /* @__PURE__ */ new Set() };
+}
+var TOOL_SEARCH_NAME = "tool_search";
+function flatNamespaceName(namespace, name) {
+  return `${namespace}__${name}`;
+}
+function ingestToolDefs(tools, ctx) {
+  for (const t of tools ?? []) {
+    if (!t || typeof t !== "object") continue;
+    if (t.type === "namespace") {
+      for (const sub of t.tools ?? []) {
+        if (sub?.name) {
+          ctx.namespaceByFlatName.set(flatNamespaceName(t.name, sub.name), {
+            namespace: t.name,
+            name: sub.name,
+            parameters: sub.parameters
+          });
+        }
+      }
+    } else if (t.type === "custom" && t.name) {
+      ctx.customToolNames.add(t.name);
+    }
+  }
+}
+function flattenNamespaceTools(ns) {
+  return (ns.tools ?? []).filter((sub) => sub?.type === "function" && !!sub.name).map((sub) => ({ ...sub, name: flatNamespaceName(ns.name, sub.name) }));
+}
+function liftAdditionalToolsInput(input, tools) {
+  let lifted = [];
+  const keptInput = [];
+  let changed = false;
+  for (const item of input) {
+    if (item && item.type === "additional_tools") {
+      changed = true;
+      if (Array.isArray(item.tools)) lifted = lifted.concat(item.tools);
+      if (item.content !== void 0) {
+        keptInput.push({ role: item.role ?? "developer", content: item.content });
+      }
+      continue;
+    }
+    keptInput.push(item);
+  }
+  if (!changed) return { input, tools };
+  return { input: keptInput, tools: lifted.length ? [...tools, ...lifted] : tools };
+}
 function messageText(content) {
   if (typeof content === "string") return content;
   return (content ?? []).map((p15) => p15.type === "output_text" || p15.type === "input_text" || p15.type === "text" ? p15.text ?? "" : "").join("");
@@ -1928,10 +1976,38 @@ function annotateToolNamesFromCalls(items) {
   for (const item of items) {
     if (item.type === "function_call") {
       const { rawId } = splitToolUseId(item.call_id);
+      nameByCallId.set(rawId, item.namespace ? flatNamespaceName(item.namespace, item.name) : item.name);
+    } else if (item.type === "tool_search_call") {
+      const { rawId } = splitToolUseId(item.call_id);
+      nameByCallId.set(rawId, TOOL_SEARCH_NAME);
+    } else if (item.type === "custom_tool_call") {
+      const { rawId } = splitToolUseId(item.call_id);
       nameByCallId.set(rawId, item.name);
     }
   }
   return nameByCallId;
+}
+function customToolInputFromArgs(name, args) {
+  if (typeof args === "string") {
+    const trimmed = args.trim();
+    if (name === "apply_patch" && trimmed.startsWith("*** Begin Patch")) return args;
+    try {
+      return customToolInputFromArgs(name, JSON.parse(trimmed));
+    } catch {
+      return args;
+    }
+  }
+  if (args && typeof args === "object") {
+    const obj = args;
+    if (Array.isArray(obj.command) && obj.command[0] === "apply_patch" && typeof obj.command[1] === "string") {
+      return obj.command[1];
+    }
+    if (typeof obj.input === "string") return obj.input;
+    for (const v of Object.values(obj)) {
+      if (typeof v === "string") return v;
+    }
+  }
+  return serializeToolResultContent(args);
 }
 function mergeConsecutiveMessages(messages) {
   if (messages.length <= 1) return messages;
@@ -1965,16 +2041,18 @@ function makeReasoningOutputItem(id, text4) {
     summary: text4.trim() ? [{ type: "summary_text", text: text4 }] : []
   };
 }
-function translateResponsesInput(input, instructions, npm) {
+function translateResponsesInput(input, instructions, npm, toolContext = createCodexToolContext()) {
   if (typeof input === "string") {
     return {
       system: instructions?.trim() || void 0,
-      messages: [{ role: "user", content: [{ type: "text", text: input }] }]
+      messages: [{ role: "user", content: [{ type: "text", text: input }] }],
+      deferredTools: []
     };
   }
   const { system, remaining } = extractDeveloperAndInstructions(input, instructions);
   const toolNames = annotateToolNamesFromCalls(remaining);
   const messages = [];
+  const deferredTools = [];
   let pendingReasoning = "";
   for (const item of remaining) {
     if (item.type === "reasoning") {
@@ -1991,7 +2069,7 @@ function translateResponsesInput(input, instructions, npm) {
       const toolPart = {
         type: "tool-call",
         toolCallId: rawId,
-        toolName: item.name,
+        toolName: item.namespace ? flatNamespaceName(item.namespace, item.name) : item.name,
         input: parseToolArguments(item.arguments)
       };
       if (thoughtSignature && npm === "@ai-sdk/google") {
@@ -2010,6 +2088,62 @@ function translateResponsesInput(input, instructions, npm) {
           output: { type: "text", value: serializeToolResultContent(item.output) }
         }]
       });
+    } else if (item.type === "tool_search_call") {
+      const { rawId } = splitToolUseId(item.call_id);
+      messages.push({
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: rawId,
+          toolName: TOOL_SEARCH_NAME,
+          input: parseToolArguments(item.arguments)
+        }]
+      });
+    } else if (item.type === "tool_search_output") {
+      const { rawId } = splitToolUseId(item.call_id);
+      const surfacedTools = item.tools ?? [];
+      ingestToolDefs(surfacedTools, toolContext);
+      for (const t of surfacedTools) {
+        if (t.type === "namespace") deferredTools.push(...flattenNamespaceTools(t));
+        else if (t.type === "function") deferredTools.push(t);
+      }
+      messages.push({
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: rawId,
+          toolName: TOOL_SEARCH_NAME,
+          output: { type: "text", value: serializeToolResultContent(surfacedTools) }
+        }]
+      });
+    } else if (item.type === "custom_tool_call") {
+      const { rawId } = splitToolUseId(item.call_id);
+      messages.push({
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: rawId,
+          toolName: item.name,
+          input: { input: typeof item.input === "string" ? item.input : serializeToolResultContent(item.input) }
+        }]
+      });
+    } else if (item.type === "custom_tool_call_output") {
+      const { rawId } = splitToolUseId(item.call_id);
+      messages.push({
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: rawId,
+          toolName: toolNames.get(rawId) ?? "unknown",
+          output: { type: "text", value: serializeToolResultContent(item.output) }
+        }]
+      });
+    } else if (item.type === "compaction" || item.type === "context_compaction") {
+      const summary = decodeCompactionContent(item.encrypted_content) ?? "";
+      if (summary.trim()) {
+        messages.push({ role: "user", content: [{ type: "text", text: `[Summary of earlier conversation]
+${summary}` }] });
+      }
     } else if ("role" in item) {
       const role = item.role === "assistant" ? "assistant" : "user";
       const text4 = messageText(item.content);
@@ -2018,46 +2152,83 @@ function translateResponsesInput(input, instructions, npm) {
   }
   return {
     system,
-    messages: ensureUserFirst(mergeConsecutiveMessages(messages))
+    messages: ensureUserFirst(mergeConsecutiveMessages(messages)),
+    deferredTools
   };
 }
+var TOOL_SEARCH_DESCRIPTION = "Search the available deferred Codex tools, plugin tools, MCP namespaces, and connectors by query. Use this when a needed tool is not already present in the current tool list. Returns matching tool definitions for a follow-up call.";
+var TOOL_SEARCH_PARAMETERS = {
+  type: "object",
+  properties: {
+    query: { type: "string", description: "Search query describing the tool or capability needed." },
+    limit: { type: "number", description: "Maximum number of matching tools to return. Defaults to 8." }
+  },
+  required: ["query"],
+  additionalProperties: false
+};
+var CUSTOM_TOOL_INPUT_SCHEMA = {
+  type: "object",
+  properties: { input: { type: "string", description: "Freeform input for this custom tool (e.g. a patch body)." } },
+  required: ["input"],
+  additionalProperties: false
+};
 function translateResponsesTools(tools, options = {}) {
   if (!tools?.length) return void 0;
   const out = {};
   let toolCount = 0;
-  const addTool = (name, definition) => {
+  const addTool = (name, description, parameters) => {
     if (options.maxTools !== void 0 && toolCount >= options.maxTools) return;
     out[name] = tool({
-      description: definition.description ?? "",
-      inputSchema: jsonSchema(definition.parameters ?? { type: "object", properties: {} })
+      description: description ?? "",
+      inputSchema: jsonSchema(parameters ?? { type: "object", properties: {} })
     });
     toolCount++;
   };
   for (const t of tools) {
+    if (!t || typeof t !== "object") continue;
     if (t.type === "namespace") {
       for (const nested of t.tools ?? []) {
         if (nested.type !== "function" || !nested.name) continue;
-        addTool(`${t.name}__${nested.name}`, nested);
+        addTool(flatNamespaceName(t.name, nested.name), nested.description, nested.parameters);
       }
       continue;
     }
+    if (t.type === "custom") {
+      if (!t.name) continue;
+      addTool(t.name, t.description, CUSTOM_TOOL_INPUT_SCHEMA);
+      continue;
+    }
+    if (t.type === "tool_search") {
+      addTool(TOOL_SEARCH_NAME, TOOL_SEARCH_DESCRIPTION, TOOL_SEARCH_PARAMETERS);
+      continue;
+    }
     if (t.type !== "function" || !t.name) continue;
-    addTool(t.name, t);
+    addTool(t.name, t.description, t.parameters);
   }
   return Object.keys(out).length ? out : void 0;
 }
 function translateResponsesRequest(body, npm, metadata, options = {}) {
-  const { system, messages } = translateResponsesInput(body.input, body.instructions, npm);
+  const toolContext = createCodexToolContext();
+  let effectiveTools = body.tools ?? [];
+  let effectiveInput = body.input;
+  if (Array.isArray(effectiveInput)) {
+    const lifted = liftAdditionalToolsInput(effectiveInput, effectiveTools);
+    effectiveInput = lifted.input;
+    effectiveTools = lifted.tools;
+  }
+  ingestToolDefs(effectiveTools, toolContext);
+  const { system, messages, deferredTools } = translateResponsesInput(effectiveInput, body.instructions, npm, toolContext);
   const effort = body.reasoning?.effort;
   const providerOptions = deepMergeProviderOptions(
     thinkingProviderOptions(npm),
     effortProviderOptions(npm, effort, metadata?.upstreamModelId ?? body.model, metadata)
   );
-  const tools = translateResponsesTools(body.tools, options);
+  const tools = translateResponsesTools([...effectiveTools, ...deferredTools], options);
   return {
     system,
     messages,
     tools,
+    toolContext,
     maxOutputTokens: body.max_output_tokens,
     temperature: body.temperature,
     providerOptions
@@ -2073,6 +2244,29 @@ function usageFromPart(part) {
   const input = part.totalUsage?.inputTokens ?? 0;
   const output = part.totalUsage?.outputTokens ?? 0;
   return { input_tokens: input, output_tokens: output, total_tokens: input + output };
+}
+function resolveOutputKind(flatName, ctx) {
+  if (!ctx) return { kind: "plain" };
+  if (flatName === TOOL_SEARCH_NAME) return { kind: "tool_search" };
+  if (ctx.customToolNames.has(flatName)) return { kind: "custom" };
+  const ns = ctx.namespaceByFlatName.get(flatName);
+  if (ns) return { kind: "namespace", namespace: ns.namespace, name: ns.name };
+  return { kind: "plain" };
+}
+function buildFinalToolItem(kind, flatName, callId, itemId, argsStr) {
+  switch (kind.kind) {
+    case "namespace":
+      return { type: "function_call", id: itemId, call_id: callId, namespace: kind.namespace, name: kind.name, arguments: argsStr, status: "completed" };
+    case "tool_search": {
+      const args = parseToolArguments(argsStr);
+      if (typeof args.limit === "string" && /^-?\d+$/.test(args.limit)) args.limit = Number(args.limit);
+      return { type: "tool_search_call", id: itemId, call_id: callId, execution: "client", arguments: args, status: "completed" };
+    }
+    case "custom":
+      return { type: "custom_tool_call", id: itemId, call_id: callId, name: flatName, input: customToolInputFromArgs(flatName, parseToolArguments(argsStr)), status: "completed" };
+    default:
+      return { type: "function_call", id: itemId, call_id: callId, name: flatName, arguments: argsStr, status: "completed" };
+  }
 }
 var PROGRESS_INTERVAL_MS = 3e3;
 var REPEAT_TAIL_CHARS = 200;
@@ -2436,14 +2630,7 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
       output_index: tool3.outputIndex,
       arguments: tool3.args
     });
-    const fcItem = {
-      type: "function_call",
-      id: tool3.itemId,
-      call_id: tool3.callId,
-      name: tool3.name,
-      arguments: tool3.args,
-      status: "completed"
-    };
+    const fcItem = buildFinalToolItem(resolveOutputKind(tool3.name, options?.toolContext), tool3.name, tool3.callId, tool3.itemId, tool3.args);
     emit("response.output_item.done", {
       type: "response.output_item.done",
       output_index: tool3.outputIndex,
@@ -2484,7 +2671,8 @@ async function streamResponsesResponse(model, params, modelId, write, onDone, on
     () => abort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1e3)}s`)),
     idleTimeoutMs
   );
-  const result = streamText({ model, ...params, abortSignal: abort.signal, onError: () => {
+  const { toolContext, ...sdkParams } = params;
+  const result = streamText({ model, ...sdkParams, abortSignal: abort.signal, onError: () => {
   } });
   Promise.resolve(result.text).catch(() => {
   });
@@ -2513,11 +2701,13 @@ async function streamResponsesResponse(model, params, modelId, write, onDone, on
     }
   })();
   await writeResponsesStream(watchedStream, modelId, write, onDone, onProgress, {
-    onForceStop: (reason) => abort.abort(new Error(reason))
+    onForceStop: (reason) => abort.abort(new Error(reason)),
+    toolContext
   });
 }
 async function generateResponsesResponse(model, params, modelId) {
-  const r = await generateText({ model, ...params });
+  const { toolContext, ...sdkParams } = params;
+  const r = await generateText({ model, ...sdkParams });
   const createdAt = Math.floor(Date.now() / 1e3);
   const responseId = newResponseId();
   const output = [];
@@ -2535,14 +2725,8 @@ async function generateResponsesResponse(model, params, modelId) {
   }
   for (const tc of r.toolCalls) {
     const encodedId = encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc), false);
-    output.push({
-      type: "function_call",
-      id: tc.toolCallId,
-      call_id: encodedId,
-      name: tc.toolName,
-      arguments: JSON.stringify(tc.input ?? {}),
-      status: "completed"
-    });
+    const argsStr = JSON.stringify(tc.input ?? {});
+    output.push(buildFinalToolItem(resolveOutputKind(tc.toolName, toolContext), tc.toolName, encodedId, tc.toolCallId, argsStr));
   }
   if (output.length === 0) {
     output.push({ id: newItemId("msg"), type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "(conversation context was too large to summarize)" }] });
@@ -2562,6 +2746,70 @@ async function generateResponsesResponse(model, params, modelId) {
       total_tokens: inputTokens + outputTokens
     }
   };
+}
+var COMPACTION_SUMMARY_INSTRUCTION = "You are performing a CONTEXT CHECKPOINT COMPACTION. Summarize the conversation so far into a concise but complete summary that preserves the user's goals, key decisions and facts, the current state of the work, and any pending or in-progress tasks. Output only the summary text.";
+function encodeCompactionContent(summary) {
+  return Buffer.from(JSON.stringify({ v: 1, summary }), "utf8").toString("base64");
+}
+function decodeCompactionContent(encrypted) {
+  if (!encrypted) return null;
+  try {
+    const obj = JSON.parse(Buffer.from(encrypted, "base64").toString("utf8"));
+    return typeof obj?.summary === "string" ? obj.summary : null;
+  } catch {
+    return null;
+  }
+}
+function makeCompactionItem(summary) {
+  return { type: "compaction", id: newItemId("cmp"), encrypted_content: encodeCompactionContent(summary) };
+}
+function appendCompactionInstruction(params) {
+  return {
+    ...params,
+    tools: void 0,
+    messages: [
+      ...params.messages,
+      { role: "user", content: [{ type: "text", text: COMPACTION_SUMMARY_INSTRUCTION }] }
+    ]
+  };
+}
+function buildCompactionResponseBody(summary, modelId) {
+  return {
+    id: newResponseId(),
+    object: "response",
+    model: modelId,
+    created_at: Math.floor(Date.now() / 1e3),
+    status: "completed",
+    output: [makeCompactionItem(summary)]
+  };
+}
+function writeCompactionSse(summary, modelId, write) {
+  const emit = (type, data) => write(sseChunk(type, data));
+  const responseId = newResponseId();
+  const createdAt = Math.floor(Date.now() / 1e3);
+  const item = makeCompactionItem(summary);
+  emit("response.created", {
+    type: "response.created",
+    response: { id: responseId, object: "response", model: modelId, created_at: createdAt, status: "in_progress", output: [] }
+  });
+  emit("response.output_item.added", { type: "response.output_item.added", output_index: 0, item });
+  emit("response.output_item.done", { type: "response.output_item.done", output_index: 0, item });
+  emit("response.completed", {
+    type: "response.completed",
+    response: { id: responseId, object: "response", model: modelId, created_at: createdAt, status: "completed", output: [item] }
+  });
+}
+async function generateCompactionResponse(model, params, modelId) {
+  const { toolContext: _toolContext, ...sdkParams } = params;
+  void _toolContext;
+  const r = await generateText({ model, ...sdkParams });
+  return buildCompactionResponseBody((r.text ?? "").trim() || "(no summary produced)", modelId);
+}
+async function streamCompactionResponse(model, params, modelId, write) {
+  const { toolContext: _toolContext, ...sdkParams } = params;
+  void _toolContext;
+  const r = await generateText({ model, ...sdkParams });
+  writeCompactionSse((r.text ?? "").trim() || "(no summary produced)", modelId, write);
 }
 function responsesErrorBody(modelId, message, statusCode = 401) {
   return {
@@ -2660,6 +2908,17 @@ function responsesRateLimitBody(modelId, message) {
 }
 
 // src/codex-proxy.ts
+function captureCompletedResponse(sseText) {
+  if (!sseText.includes("response.completed")) return void 0;
+  const dataLine = sseText.split("\n").find((l) => l.startsWith("data:"));
+  if (!dataLine) return void 0;
+  try {
+    const obj = JSON.parse(dataLine.slice(5).trim());
+    if (obj && obj.type === "response.completed") return obj.response;
+  } catch {
+  }
+  return void 0;
+}
 function estimateCodexRequestChars(params) {
   let chars = (params.system ?? "").length;
   for (const msg of params.messages) {
@@ -2750,6 +3009,12 @@ function isLikelyCodexCompactionRequest(body) {
   }
   return false;
 }
+function isCodexV2CompactionRequest(body) {
+  if (!Array.isArray(body.input)) return false;
+  return body.input.some(
+    (item) => item && typeof item === "object" && item.type === "compaction_trigger"
+  );
+}
 var COMPACTION_MAX_OUTPUT_TOKENS = 4e3;
 function protectCodexCompactionParams(body, params, contextWindow) {
   if (!isLikelyCodexCompactionRequest(body)) {
@@ -2823,6 +3088,7 @@ async function startCodexProxy(routes, options = {}) {
   return new Promise((resolve, reject2) => {
     const log14 = debug ? makeTraceLogger(getCodexProxyDebugLogPath()) : () => {
     };
+    if (debug) resetCodexBodyDumpLog();
     const onRejection = (reason) => {
       if (debug) log14(`unhandled-rejection: ${formatUpstreamError(reason)}`);
     };
@@ -2930,6 +3196,15 @@ async function startCodexProxy(routes, options = {}) {
           const tools = Array.isArray(body.tools) ? body.tools : [];
           const toolNames = tools.map((t) => t && typeof t === "object" && "name" in t ? t.name : "?").join(",");
           log14(`request: model=${String(body.model ?? "")} previous_response_id=${prevId ?? "(none)"} input_items=${inputItems} body_bytes=${rawBody.length} tools=[${toolNames || "none"}]`);
+          appendCodexBodyDump({
+            ts: (/* @__PURE__ */ new Date()).toISOString(),
+            transport: "http",
+            direction: "request",
+            model: String(body.model ?? ""),
+            previous_response_id: prevId,
+            tools: body.tools,
+            input: body.input
+          });
           const mcpTools = tools.filter((t) => t && typeof t === "object" && "name" in t && String(t.name).startsWith("mcp__"));
           for (const t of mcpTools) {
             const mt = t;
@@ -2980,6 +3255,11 @@ async function startCodexProxy(routes, options = {}) {
               log14(`context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages`);
             }
           }
+          const v2Compaction = isCodexV2CompactionRequest(body);
+          if (v2Compaction) {
+            params = appendCompactionInstruction(params);
+            if (debug) log14(`compaction v2: synthesizing single compaction item for model=${route.modelId}`);
+          }
           if (debug) {
             const effort = body.reasoning?.effort;
             log14(`model=${route.modelId} effort=${effort ?? "(none)"} providerOptions=${JSON.stringify(params.providerOptions)}`);
@@ -2990,18 +3270,35 @@ async function startCodexProxy(routes, options = {}) {
               "Cache-Control": "no-cache",
               Connection: "keep-alive"
             });
-            const write = (chunk) => res.write(chunk);
+            const write = (chunk) => {
+              res.write(chunk);
+              if (debug) {
+                const completed = captureCompletedResponse(chunk);
+                if (completed) {
+                  appendCodexBodyDump({
+                    ts: (/* @__PURE__ */ new Date()).toISOString(),
+                    transport: "http",
+                    direction: "response",
+                    model: route.modelId,
+                    response: completed
+                  });
+                }
+              }
+            };
             try {
-              await streamResponsesResponse(languageModel, params, modelId, write, (summary) => {
-                if (debug) {
-                  const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
-                  log14(`response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
-                }
-              }, (progress) => {
-                if (debug) {
-                  log14(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
-                }
-              });
+              if (v2Compaction) {
+                await streamCompactionResponse(languageModel, params, modelId, write);
+              } else
+                await streamResponsesResponse(languageModel, params, modelId, write, (summary) => {
+                  if (debug) {
+                    const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
+                    log14(`response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
+                  }
+                }, (progress) => {
+                  if (debug) {
+                    log14(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
+                  }
+                });
             } catch (err) {
               const msg = formatUpstreamError(err);
               const status = upstreamHttpStatus(err, msg);
@@ -3015,7 +3312,16 @@ async function startCodexProxy(routes, options = {}) {
             res.end();
           } else {
             try {
-              const response = await generateResponsesResponse(languageModel, params, modelId);
+              const response = v2Compaction ? await generateCompactionResponse(languageModel, params, modelId) : await generateResponsesResponse(languageModel, params, modelId);
+              if (debug) {
+                appendCodexBodyDump({
+                  ts: (/* @__PURE__ */ new Date()).toISOString(),
+                  transport: "http",
+                  direction: "response",
+                  model: route.modelId,
+                  response
+                });
+              }
               sendJson(res, 200, response);
             } catch (err) {
               const msg = formatUpstreamError(err);
@@ -3122,6 +3428,7 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
       );
       let frameBuf = Buffer.alloc(0);
       let handled = false;
+      let currentRequestModel = "";
       const closeSocket = () => {
         if (!socket.destroyed) {
           socket.write(wsCloseFrame());
@@ -3130,6 +3437,18 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
       };
       const sendWsEvent = (sseChunk2) => {
         if (socket.destroyed) return;
+        if (debug) {
+          const completed = captureCompletedResponse(sseChunk2);
+          if (completed) {
+            appendCodexBodyDump({
+              ts: (/* @__PURE__ */ new Date()).toISOString(),
+              transport: "ws",
+              direction: "response",
+              model: currentRequestModel,
+              response: completed
+            });
+          }
+        }
         for (const line of sseChunk2.split("\n")) {
           if (line.startsWith("data: ")) {
             socket.write(wsEncodeTextFrame(line.slice(6)));
@@ -3162,8 +3481,18 @@ data: ${JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_reques
             const tools = Array.isArray(body.tools) ? body.tools : [];
             const toolNames = tools.map((t) => t && typeof t === "object" && "name" in t ? t.name : "?").join(",");
             log14(`WS request: model=${String(body.model ?? "")} previous_response_id=${prevId ?? "(none)"} input_items=${inputItems} body_bytes=${frame.text.length} tools=[${toolNames || "none"}]`);
+            appendCodexBodyDump({
+              ts: (/* @__PURE__ */ new Date()).toISOString(),
+              transport: "ws",
+              direction: "request",
+              model: String(body.model ?? ""),
+              previous_response_id: prevId,
+              tools: body.tools,
+              input: body.input
+            });
           }
           const modelId = String(body.model ?? "");
+          currentRequestModel = modelId;
           let resolved = resolveModel(routes, models, modelId);
           if (!resolved) {
             const fb = routes[0];
@@ -3206,20 +3535,28 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
                 log14(`WS context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages tools=${params.tools ? Object.keys(params.tools).length : 0}`);
               }
             }
+            const v2Compaction = isCodexV2CompactionRequest(body);
+            if (v2Compaction) {
+              params = appendCompactionInstruction(params);
+              if (debug) log14(`WS compaction v2: synthesizing single compaction item for model=${route.modelId}`);
+            }
             if (debug) {
               const effort = body.reasoning?.effort;
               log14(`WS model=${route.modelId} effort=${effort ?? "(none)"} providerOptions=${JSON.stringify(params.providerOptions)}`);
             }
-            await streamResponsesResponse(languageModel, params, modelId, sendWsEvent, (summary) => {
-              if (debug) {
-                const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
-                log14(`WS response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
-              }
-            }, (progress) => {
-              if (debug) {
-                log14(`WS response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
-              }
-            });
+            if (v2Compaction) {
+              await streamCompactionResponse(languageModel, params, modelId, sendWsEvent);
+            } else
+              await streamResponsesResponse(languageModel, params, modelId, sendWsEvent, (summary) => {
+                if (debug) {
+                  const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
+                  log14(`WS response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
+                }
+              }, (progress) => {
+                if (debug) {
+                  log14(`WS response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
+                }
+              });
           } catch (err) {
             const msg = formatUpstreamError(err);
             const status = upstreamHttpStatus(err, msg);
@@ -12359,7 +12696,7 @@ Error: ${parsed.error}
       console.log("Usage: relay-ai ui [--trace]\n\nOpen the settings UI in your browser.");
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-JG3BFVSL.js");
+    const { runUiCommand } = await import("./ui-command-45LT72BR.js");
     return runUiCommand({ trace: parsed.trace });
   }
   if (parsed.command === "models") {

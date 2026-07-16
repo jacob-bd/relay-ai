@@ -11,7 +11,17 @@ export const CODEX_APP_PROVIDER_ID = 'relay-ai-launch-codex-app';
  */
 export const CODEX_APP_DISPLAY_MODEL = 'gpt-5.5';
 export const PREVIEW_PROXY_PORT = 54321;
-export const CODEX_APP_AUTO_COMPACT_RATIO = 0.55;
+/**
+ * Fraction of the context window at which Codex is told to auto-compact
+ * (`model_auto_compact_token_limit`). Kept high on purpose: a single large tool
+ * result (e.g. a chrome-devtools browser snapshot can be ~1 MB / ~300K tokens)
+ * must not trip auto-compaction after only a couple of turns. The reference
+ * codex-ollama-proxy uses a flat 900K on a 1M window (~0.9) for the same reason;
+ * we keep it a ratio so it scales to each model's real window. An earlier 0.55
+ * fired compaction almost immediately once MCP tool defs + a browser snapshot
+ * were in context (relay-ai/relay-ai#21 follow-up).
+ */
+export const CODEX_APP_AUTO_COMPACT_RATIO = 0.9;
 
 export function codexAppModelSlug(rawModelId: string): string {
   return rawModelId.startsWith('models/') ? rawModelId.slice('models/'.length) : rawModelId;

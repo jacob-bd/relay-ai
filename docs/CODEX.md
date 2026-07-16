@@ -311,6 +311,9 @@ Codex exposes a **reasoning effort** picker when relay-ai's model catalog includ
 |---------|-----|
 | Anthropic key rejected on `providers add` | Update relay-ai (Bearer vs `x-api-key` fix) |
 | Model says relay-ai forced sandbox | Wrong — check Codex sandbox flags, not `RELAY_AI_CODEX_KEY` |
+| MCP tools (Context7, chrome-devtools, the built-in browser) fail with `unsupported call: ...` | Update relay-ai — fixed by translating Codex's proprietary namespace-wrapped tool format on both request and response. |
+| Image generation (`image_gen`) fails, e.g. `404 Not Found` on `/v1/images/generations` | **Known limitation, no workaround.** `image_gen` calls an OpenAI image backend relay-ai doesn't implement, and most registry models can't generate images regardless. Works normally with Codex's native OpenAI/ChatGPT models. |
+| `Fatal error: remote compaction v2 expected exactly one compaction output item` | Update relay-ai — fixed by synthesizing the single `compaction` output item Codex's v2 compaction parser requires (previously the proxy replied with a normal message, which Codex rejected outright). |
 
 ---
 
@@ -328,20 +331,24 @@ This means:
 
 ### How relay-ai protects against context overflow
 
-relay-ai uses two complementary layers:
+relay-ai uses three complementary layers (App only for the first; all three apply to the proxy itself, which both the CLI and the app share):
 
-**1. Early auto-compaction via config.toml**
+**1. Early auto-compaction via config.toml (App only)**
 
 At session start, relay-ai writes two fields into `~/.codex/config.toml`:
 
 ```toml
 model_context_window = 1000000          # the model's actual limit
-model_auto_compact_token_limit = 700000  # 70% of the limit
+model_auto_compact_token_limit = 900000  # 90% of the limit
 ```
 
-Codex reads `model_auto_compact_token_limit` and triggers its built-in compaction before the conversation reaches that threshold. Compaction at 70% leaves 30% of headroom for the compaction request itself (which includes the full conversation). Without these fields, Codex either never compacts (for unknown models) or compacts too late, causing the compaction request itself to exceed the model limit.
+Codex reads `model_auto_compact_token_limit` and triggers its built-in compaction before the conversation reaches that threshold. The ratio is intentionally high (90%, not a tighter figure) — a single large tool result (e.g. a browser snapshot can be ~1 MB / ~300K tokens) must not trip auto-compaction after only a couple of turns. Without these fields, Codex either never compacts (for unknown models) or compacts too late, causing the compaction request itself to exceed the model limit. The CLI (`relay-ai codex`) does not write these fields — it launches a temporary sidecar profile rather than patching your `config.toml` — so auto-compact timing there follows the `codex` binary's own defaults or your existing config.
 
-**2. Proxy-level truncation as a last resort**
+**2. Remote compaction v2 support**
+
+When Codex does trigger compaction, it sends a `{"type":"compaction_trigger"}` request and requires the response to contain **exactly one** output item of type `compaction`, or it fails with `Fatal error: remote compaction v2 expected exactly one compaction output item, got N from M`. relay-ai detects this trigger, asks the model for a plain-text summary, and returns it wrapped as the single `compaction` item Codex expects — then decodes that item back into readable context on later turns, so compaction succeeds instead of crashing the session. This applies to both `relay-ai codex` and `relay-ai codex-app`/`relay-ai chatgpt`.
+
+**3. Proxy-level truncation as a last resort**
 
 If a conversation that already exceeds the safety threshold arrives at the proxy (e.g. after switching from a GPT-5.5 session to a 1 M-limit model mid-way through), relay-ai drops the oldest messages before forwarding — enough to bring the estimated token count below 85% of the model's context window. The session continues in a degraded but functional state rather than crashing.
 
