@@ -15,7 +15,13 @@
 
     <!-- Sidebar -->
     <aside class="sidebar">
-      <div class="sidebar-brand">
+      <a
+        class="sidebar-brand"
+        href="https://github.com/jacob-bd/relay-ai"
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Open the relay-ai GitHub repository"
+      >
         <div class="brand-logo">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="100%" height="100%">
             <defs>
@@ -42,7 +48,7 @@
           <div class="brand-name">relay<span class="brand-accent">-ai</span></div>
           <div class="brand-byline">by jacob-bd</div>
         </div>
-      </div>
+      </a>
 
       <div class="sidebar-version-area" id="sidebar-version-area">
         <div class="sidebar-version">v{{VERSION}}</div>
@@ -235,6 +241,8 @@
         </div>
         <div id="server-panel"></div>
       </section>
+
+      <section id="provider-model-browser" class="section provider-model-browser" aria-live="polite"></section>
 
     </main>
   </div>

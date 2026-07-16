@@ -1,3 +1,9 @@
+import {
+  formatModelPrice,
+  getProviderModelPage,
+  PROVIDER_MODEL_PAGE_SIZE,
+} from './provider-model-browser.js';
+
 // ─── State ───────────────────────────────────────────────────────────────────
 
 const AGY_MAX = 6;
@@ -13,6 +19,9 @@ const state = {
   modelsLoaded: false,
   modelsError: null,
   providerFilter: '',
+  activeProviderId: null,
+  providerModelFilter: '',
+  providerModelPage: 1,
   modelFilter: '',
   modelFreeOnly: false,
   agyFilter: '',
@@ -436,7 +445,7 @@ function buildProviderCard(provider) {
   header.className = 'provider-card-header';
   header.setAttribute('role', 'button');
   header.setAttribute('tabindex', '0');
-  header.setAttribute('aria-expanded', 'false');
+  header.setAttribute('aria-label', `View models from ${displayName}`);
 
   const logoHtml = logo?.type === 'svg'
     ? logo.content
@@ -454,7 +463,9 @@ function buildProviderCard(provider) {
       <span class="status-chip ${provider.hasKey ? 'has-key' : provider.freeAccess ? 'free-access' : 'no-key'}">
         ${provider.hasKey ? 'Key stored' : provider.freeAccess ? 'Free models' : 'Not configured'}
       </span>
-      <svg class="provider-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      <button class="provider-config-toggle" type="button" aria-label="Manage ${escapeHtml(displayName)} provider" aria-expanded="false" title="Manage provider">
+        <svg class="provider-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
     </div>
   `;
 
@@ -469,16 +480,149 @@ function buildProviderCard(provider) {
 
   function toggle() {
     const isOpen = card.classList.toggle('open');
-    header.setAttribute('aria-expanded', String(isOpen));
+    configToggle.setAttribute('aria-expanded', String(isOpen));
     body.setAttribute('aria-hidden', String(!isOpen));
   }
 
-  header.addEventListener('click', toggle);
-  header.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  const configToggle = header.querySelector('.provider-config-toggle');
+  configToggle.addEventListener('click', event => { event.stopPropagation(); toggle(); });
+  header.addEventListener('click', () => openProviderModelBrowser(provider.id));
+  header.addEventListener('keydown', e => {
+    if (e.target === header && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      openProviderModelBrowser(provider.id);
+    }
+  });
 
   card.appendChild(header);
   card.appendChild(body);
   return card;
+}
+
+function providerIdFromHash() {
+  const prefix = '#provider/';
+  if (!window.location.hash.startsWith(prefix)) return null;
+  try {
+    return decodeURIComponent(window.location.hash.slice(prefix.length));
+  } catch {
+    return null;
+  }
+}
+
+function openProviderModelBrowser(providerId) {
+  if (state.activeProviderId !== providerId) {
+    state.providerModelFilter = '';
+    state.providerModelPage = 1;
+  }
+  window.location.hash = `provider/${encodeURIComponent(providerId)}`;
+}
+
+function syncProviderModelBrowserFromHash() {
+  const providerId = providerIdFromHash();
+  const content = document.getElementById('content');
+  state.activeProviderId = providerId;
+  content.classList.toggle('provider-browser-open', Boolean(providerId));
+  if (!providerId) return;
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.classList.toggle('active', item.dataset.section === 'providers');
+  });
+  content.scrollTop = 0;
+  renderProviderModelBrowser();
+}
+
+function renderProviderModelBrowser() {
+  const container = document.getElementById('provider-model-browser');
+  if (!state.activeProviderId) return;
+
+  const provider = state.providers.find(item => item.id === state.activeProviderId);
+  if (!provider) {
+    container.innerHTML = state.modelsLoaded
+      ? '<div class="provider-browser-empty">Provider not found. <a href="#providers">Return to providers</a></div>'
+      : '<div class="provider-browser-empty">Loading models…</div>';
+    return;
+  }
+
+  const result = getProviderModelPage(provider.models ?? [], state.providerModelFilter, state.providerModelPage);
+  state.providerModelPage = result.page;
+  const first = result.total === 0 ? 0 : (result.page - 1) * PROVIDER_MODEL_PAGE_SIZE + 1;
+  const last = Math.min(result.page * PROVIDER_MODEL_PAGE_SIZE, result.total);
+  const [c1, c2] = providerPalette(provider.id);
+  const displayName = getProviderName(provider.id);
+
+  container.innerHTML = `
+    <a class="provider-browser-back" href="#providers">← Providers &amp; Keys</a>
+    <div class="provider-browser-hero">
+      <div class="provider-icon" style="background:linear-gradient(135deg,${c1},${c2})">${providerInitial(displayName)}</div>
+      <div>
+        <div class="section-eyebrow">Provider catalog</div>
+        <h1 class="section-heading">${escapeHtml(displayName)} <span class="heading-accent">models</span></h1>
+        <p class="section-sub">${provider.models?.length ?? 0} models available · prices shown per 1M tokens</p>
+      </div>
+    </div>
+    <div class="provider-browser-tools">
+      <div class="search-field">
+        <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input class="search-input" id="provider-model-search" type="search" value="${escapeHtml(state.providerModelFilter)}" placeholder="Search ${escapeHtml(displayName)} models…" aria-label="Search ${escapeHtml(displayName)} models">
+      </div>
+      <button class="btn btn-ghost" id="provider-model-refresh" type="button">Refresh</button>
+    </div>
+    <div class="provider-model-table-wrap">
+      <table class="provider-model-table">
+        <thead><tr><th>Model</th><th>Context</th><th>Price in / out</th></tr></thead>
+        <tbody>
+          ${result.items.map(model => `
+            <tr>
+              <td><strong>${escapeHtml(model.name || model.id)}</strong><code>${escapeHtml(model.id)}</code></td>
+              <td>${fmtCtx(model.contextWindow) || '—'}</td>
+              <td>${formatModelPrice(model.cost)}</td>
+            </tr>
+          `).join('') || '<tr><td colspan="3" class="provider-model-empty">No models match your search.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+    <div class="provider-model-pagination">
+      <span>${first}–${last} of ${result.total}</span>
+      <div>
+        <button class="btn btn-ghost" id="provider-model-prev" type="button" ${result.page <= 1 ? 'disabled' : ''}>Previous</button>
+        <span>Page ${result.page} of ${result.totalPages}</span>
+        <button class="btn btn-primary" id="provider-model-next" type="button" ${result.page >= result.totalPages ? 'disabled' : ''}>Next</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('provider-model-search').addEventListener('input', event => {
+    state.providerModelFilter = event.target.value;
+    state.providerModelPage = 1;
+    renderProviderModelBrowser();
+    const search = document.getElementById('provider-model-search');
+    search?.focus();
+    search?.setSelectionRange(search.value.length, search.value.length);
+  });
+  document.getElementById('provider-model-prev').addEventListener('click', () => {
+    state.providerModelPage -= 1;
+    renderProviderModelBrowser();
+  });
+  document.getElementById('provider-model-next').addEventListener('click', () => {
+    state.providerModelPage += 1;
+    renderProviderModelBrowser();
+  });
+  document.getElementById('provider-model-refresh').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = 'Refreshing…';
+    const refreshed = await refreshProvider(provider.id);
+    if (!refreshed.ok) {
+      showToast(refreshed.error ?? 'Refresh failed');
+      button.disabled = false;
+      button.textContent = 'Refresh';
+      return;
+    }
+    await initModels();
+    renderProviders();
+    renderProviderStats();
+    renderProviderModelBrowser();
+    showToast(`${refreshed.count} models refreshed`);
+  });
 }
 
 function buildTemplateCard(template) {
@@ -1404,6 +1548,7 @@ function initNav() {
   setActive('providers');
 
   content.addEventListener('scroll', () => {
+    if (content.classList.contains('provider-browser-open')) return;
     const contentTop = content.getBoundingClientRect().top;
     const threshold = content.clientHeight * 0.4;
     let activeId = 'providers';
@@ -1508,7 +1653,11 @@ async function init() {
     renderAgyList();
     if (state.modelFilter) buildModelResults(state.modelFilter, 'general');
     if (state.agyFilter)   buildModelResults(state.agyFilter, 'agy');
+    syncProviderModelBrowserFromHash();
   });
+
+  window.addEventListener('hashchange', syncProviderModelBrowserFromHash);
+  syncProviderModelBrowserFromHash();
 
   document.getElementById('provider-search').addEventListener('input', e => {
     state.providerFilter = e.target.value;
