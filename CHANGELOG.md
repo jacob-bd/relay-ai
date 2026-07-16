@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.6] - 2026-07-16
+
+### Added
+
+- **Browse provider models in the web UI** — clicking a provider card on the Providers & Keys page in `relay-ai ui` now opens a dedicated model browser for that provider, with case-insensitive search across model IDs and names, pagination (25 models per page), and input/output pricing per million tokens when the provider publishes it. The sidebar brand also now links to the relay-ai GitHub repository.
+
 ## [0.4.5] - 2026-07-15
 
 ### Fixed

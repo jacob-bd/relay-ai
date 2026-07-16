@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.4.5",
+  version: "0.4.6",
   publishConfig: {
     access: "public"
   },
@@ -10552,4 +10552,4 @@ export {
   quitClaudeAppGracefully,
   launchOrRestartClaudeApp
 };
-//# sourceMappingURL=chunk-UTPRIJFE.js.map
+//# sourceMappingURL=chunk-YM6G7BHE.js.map
