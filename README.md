@@ -570,7 +570,9 @@ The deprecated `OPENCODE_STARTER_HOME` env var still works as a fallback for `RE
 
 ## Contributing
 
-Private beta right now. Issues and PRs welcome on GitHub.
+Private beta right now. Issues and focused PRs are welcome on GitHub.
+
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) before starting. Submit one feature or fix per PR, and discuss large or security-sensitive changes with a maintainer first.
 
 ## Support
 
