@@ -9,7 +9,7 @@ import { buildGeminiChildEnv, prepareGeminiChildEnv } from '../src/gemini/launch
 import { setAppPathOverride } from '../src/config.js';
 
 describe('buildClaudeArgs', () => {
-  it('omits --model in native-auth HTTP proxy mode', () => {
+  it('leaves the native Claude model unchanged when transparent mode has no Relay start model', () => {
     expect(buildClaudeArgs(undefined, ['-c'])).toEqual(['-c']);
   });
 

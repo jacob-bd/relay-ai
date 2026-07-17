@@ -31,15 +31,10 @@ import {
 } from '../oauth/antigravity-oauth.js';
 import { writeSecureLogLine } from '../trace-log.js';
 import { providerOptionsFromCatalog } from '../server/index.js';
-import {
-  getServerStatus,
-  startGatewayServer,
-  stopGatewayServer,
-  type GatewayServerStartRequest,
-  type ServerStartRequest,
-} from './server-control.js';
+import { getServerStatus, startGatewayServer, stopGatewayServer, type ServerStartRequest } from './server-control.js';
 import { freeStatusLabel } from '../free-models.js';
 import { checkForUpdates } from '../update-check.js';
+import { supportsClaudeTransparentMode } from '../http-proxy/routes.js';
 
 const MODELS_TIMEOUT_MS = 30_000;
 
@@ -226,6 +221,7 @@ async function handleGetModels(res: ServerResponse): Promise<void> {
         freeLabel: freeStatusLabel(m.freeStatus),
         contextWindow: m.contextWindow,
         cost: m.cost,
+        claudeTransparentCompatible: supportsClaudeTransparentMode(m),
       })),
     }));
 
@@ -675,6 +671,7 @@ async function handleLaunchApp(req: IncomingMessage, res: ServerResponse, opts: 
   try {
     const body = JSON.parse(await readBody(req));
     const { appId, favorites, cwd } = body;
+    const httpProxy = body.httpProxy === true;
     let { providerId, modelId } = body as { providerId?: string; modelId?: string };
     if (!appId) {
       sendJson(res, 400, { error: 'Missing appId' });
@@ -682,6 +679,14 @@ async function handleLaunchApp(req: IncomingMessage, res: ServerResponse, opts: 
     }
     if (!getSupportedApp(appId)) {
       sendJson(res, 400, { error: `Unknown app: ${appId}` });
+      return;
+    }
+    if (body.httpProxy !== undefined && typeof body.httpProxy !== 'boolean') {
+      sendJson(res, 400, { error: 'httpProxy must be true or false.' });
+      return;
+    }
+    if (httpProxy && appId !== 'claude') {
+      sendJson(res, 400, { error: 'Anthropic + Relay mode is available only for Claude Code CLI.' });
       return;
     }
 
@@ -695,11 +700,29 @@ async function handleLaunchApp(req: IncomingMessage, res: ServerResponse, opts: 
       sendJson(res, 400, { error: 'Both providerId and modelId are required to launch a specific Relay model.' });
       return;
     }
+    if (httpProxy && providerId && modelId) {
+      let catalog;
+      try {
+        catalog = await fetchModelsWithTimeout();
+      } catch (err) {
+        sendCatalogFetchError(res, err, 'Model validation');
+        return;
+      }
+      const selectedModel = catalog
+        .find(provider => provider.id === providerId)
+        ?.models.find(model => model.id === modelId);
+      if (!selectedModel || !supportsClaudeTransparentMode(selectedModel)) {
+        sendJson(res, 400, {
+          error: 'The selected model cannot be combined with your Anthropic login.',
+        });
+        return;
+      }
+    }
 
     // Resolve the first favorite so the terminal can skip its interactive picker.
     // Without this the launch command has no --provider/--model and the terminal
     // shows the full provider wizard even though the user already chose "Favorites".
-    if (favorites && !providerId && !modelId) {
+    if (favorites && !httpProxy && !providerId && !modelId) {
       const prefs = loadPreferences();
       const favList = AGY_APP_IDS.has(appId)
         ? (prefs.antigravityCliFavoriteModels ?? [])
@@ -729,10 +752,11 @@ async function handleLaunchApp(req: IncomingMessage, res: ServerResponse, opts: 
       modelId,
       cwd: launchFolder,
       trace: opts.trace,
+      httpProxy,
     });
     traceUi(
       opts,
-      `launch app=${appId} provider=${providerId ?? ''} model=${modelId ?? ''} favorites=${Boolean(favorites)} resolved-from-favorites=${Boolean(favorites && providerId)} cwd=${launchFolder ?? ''} command=${launchCmd}`,
+      `launch app=${appId} provider=${providerId ?? ''} model=${modelId ?? ''} favorites=${Boolean(favorites)} http-proxy=${httpProxy} resolved-from-favorites=${Boolean(favorites && providerId)} cwd=${launchFolder ?? ''} command=${launchCmd}`,
     );
 
     // Execute command asynchronously to open the terminal window detached
@@ -795,17 +819,7 @@ async function handleGetServerProviders(res: ServerResponse): Promise<void> {
 
 async function handleStartServer(req: IncomingMessage, res: ServerResponse, opts: UiApiOptions): Promise<void> {
   try {
-    const body = JSON.parse(await readBody(req)) as Omit<Partial<GatewayServerStartRequest>, 'mode'> & {
-      mode?: unknown;
-    };
-    if (body.mode === 'http-proxy') {
-      const result = await startGatewayServer({ mode: 'http-proxy' });
-      sendJson(res, 200, result);
-      return;
-    }
-    if (body.mode !== undefined && body.mode !== 'gateway') {
-      sendJson(res, 400, { error: 'mode must be "gateway" or "http-proxy"' }); return;
-    }
+    const body = JSON.parse(await readBody(req)) as Partial<ServerStartRequest>;
     if (typeof body.favoritesOnly !== 'boolean') {
       sendJson(res, 400, { error: 'favoritesOnly must be a boolean' }); return;
     }
@@ -816,7 +830,6 @@ async function handleStartServer(req: IncomingMessage, res: ServerResponse, opts
       sendJson(res, 400, { error: 'listenMode must be "local" or "network"' }); return;
     }
     const request: ServerStartRequest = {
-      mode: 'gateway',
       favoritesOnly: body.favoritesOnly,
       freeModelsOnly: Boolean(body.freeModelsOnly),
       exposedProviders: Array.isArray(body.exposedProviders) ? body.exposedProviders : null,

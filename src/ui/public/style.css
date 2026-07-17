@@ -774,6 +774,95 @@ input { font-family: inherit; }
   gap: 4px;
 }
 
+.claude-proxy-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.claude-proxy-option input {
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  accent-color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.claude-proxy-option.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.claude-proxy-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  flex-wrap: wrap;
+}
+
+.claude-proxy-unavailable {
+  flex-basis: 100%;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.claude-proxy-tooltip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border: 1px solid var(--border-bright);
+  border-radius: 999px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: help;
+  outline: none;
+}
+
+.claude-proxy-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 90;
+  right: -4px;
+  bottom: calc(100% + 9px);
+  width: min(310px, 72vw);
+  padding: 9px 11px;
+  border: 1px solid var(--border-bright);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  box-shadow: 0 12px 28px oklch(0% 0 0 / 0.26);
+  color: var(--text-1);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+  text-align: left;
+  transform: translateY(4px);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity var(--dur-sm) var(--ease), transform var(--dur-sm) var(--ease);
+}
+
+.claude-proxy-tooltip:hover::after,
+.claude-proxy-tooltip:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
 .launch-model-input-wrap {
   position: relative;
 }
@@ -1574,7 +1663,7 @@ input { font-family: inherit; }
 
 .btn-undo:hover { opacity: 0.75; }
 
-/* ─── Server Gateway & HTTP Proxy ───────────────────────────────────────── */
+/* ─── Server Gateway ─────────────────────────────────────────────────────── */
 
 .nav-badge-status {
   color: var(--success);
@@ -1708,37 +1797,6 @@ input { font-family: inherit; }
 
 .server-start-error { margin-bottom: 10px; }
 
-.server-proxy-note {
-  padding: 15px 16px;
-  margin-bottom: 18px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text-2);
-  font-size: 14px;
-  line-height: 1.55;
-}
-
-.server-proxy-note strong {
-  display: block;
-  margin-bottom: 5px;
-  color: var(--text-1);
-}
-
-.server-proxy-note p { margin: 4px 0; }
-.server-proxy-note code { color: var(--accent); }
-.server-proxy-running-note { margin-bottom: 14px; }
-
-.server-proxy-warning {
-  padding: 10px 12px;
-  margin: -10px 0 16px;
-  border: 1px solid oklch(78% 0.15 75 / 0.3);
-  border-radius: var(--radius-sm);
-  background: oklch(78% 0.15 75 / 0.08);
-  color: var(--text-2);
-  font-size: 13px;
-}
-
 .server-status-row {
   display: flex;
   align-items: center;
@@ -1816,8 +1874,6 @@ input { font-family: inherit; }
 }
 
 .url-card-value.masked { letter-spacing: 0.15em; }
-
-.server-proxy-env-card .url-card-label { width: 170px; }
 
 .server-model-table-wrap {
   border: 1px solid var(--border);

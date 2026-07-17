@@ -27,6 +27,7 @@ export interface RelayLaunchOptions {
   favorites?: boolean;
   cwd?: string;
   trace?: boolean;
+  httpProxy?: boolean;
 }
 
 interface SupportedAppDefinition {
@@ -322,6 +323,12 @@ export function getRelayLaunchCommand(appId: string, options: RelayLaunchOptions
   const args = [app.relayCommand];
   if (options.trace) {
     args.push('--trace');
+  }
+  if (options.httpProxy) {
+    if (app.id !== 'claude') {
+      throw new Error('Transparent proxy mode is available only for Claude Code CLI.');
+    }
+    args.push('--http-proxy');
   }
   if (options.providerId && options.modelId) {
     args.push('--provider', options.providerId, '--model', options.modelId);

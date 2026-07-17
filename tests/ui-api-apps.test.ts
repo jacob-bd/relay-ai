@@ -3,12 +3,17 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { handleUiApiRequest } from '../src/ui/api.js';
+import { savePreferences } from '../src/config.js';
 import { createMockRequest, createMockResponse } from './helpers/ui-api-test-utils.js';
 
 // Mock child_process exec
 const mockExec = vi.fn();
+const mockFetchProviderCatalog = vi.hoisted(() => vi.fn());
 vi.mock('node:child_process', () => ({
   exec: (cmd: string, cb: any) => mockExec(cmd, cb),
+}));
+vi.mock('../src/provider-catalog.js', () => ({
+  fetchProviderCatalog: mockFetchProviderCatalog,
 }));
 
 // Mock native-launcher to isolate endpoint testing
@@ -34,9 +39,10 @@ vi.mock('../src/native-launcher.js', () => ({
     }
     return undefined;
   },
-  getRelayLaunchCommand: (appId: string, options: { providerId?: string; modelId?: string; cwd?: string; trace?: boolean }) => {
+  getRelayLaunchCommand: (appId: string, options: { providerId?: string; modelId?: string; cwd?: string; trace?: boolean; httpProxy?: boolean }) => {
     const args = [appId];
     if (options.trace) args.push('--trace');
+    if (options.httpProxy) args.push('--http-proxy');
     if (options.providerId && options.modelId) {
       args.push('--provider', options.providerId, '--model', options.modelId);
     }
@@ -50,6 +56,8 @@ describe('UI API Apps endpoints', () => {
   let previousRelayHome: string | undefined;
 
   beforeEach(() => {
+    mockExec.mockClear();
+    mockFetchProviderCatalog.mockReset();
     tempHome = mkdtempSync(join(tmpdir(), 'relay-ai-ui-api-test-'));
     previousRelayHome = process.env['RELAY_AI_HOME'];
     process.env['RELAY_AI_HOME'] = join(tempHome, 'relay-home');
@@ -119,5 +127,92 @@ describe('UI API Apps endpoints', () => {
     expect(mockRes.result.code).toBe(200);
     const response = JSON.parse(mockRes.result.data);
     expect(response.command).toContain('relay-ai claude --trace');
+  });
+
+  it('passes the Claude Code proxy checkbox through without requiring a selected model', async () => {
+    const req = createMockRequest('POST', '/api/apps/launch', JSON.stringify({
+      appId: 'claude',
+      httpProxy: true,
+    }));
+    const mockRes = createMockResponse();
+
+    handleUiApiRequest(req, mockRes.res);
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(mockRes.result.code).toBe(200);
+    const response = JSON.parse(mockRes.result.data);
+    expect(response.command).toContain('relay-ai claude --http-proxy');
+  });
+
+  it('keeps Favorites as a catalog in proxy mode instead of forcing the first favorite', async () => {
+    savePreferences({ favoriteModels: [{ providerId: 'moonshot', modelId: 'kimi-k3' }] });
+    const req = createMockRequest('POST', '/api/apps/launch', JSON.stringify({
+      appId: 'claude',
+      favorites: true,
+      httpProxy: true,
+    }));
+    const mockRes = createMockResponse();
+
+    handleUiApiRequest(req, mockRes.res);
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(mockRes.result.code).toBe(200);
+    const response = JSON.parse(mockRes.result.data);
+    expect(response.command).toContain('relay-ai claude --http-proxy');
+    expect(response.command).not.toContain('--provider');
+    expect(response.command).not.toContain('--model');
+  });
+
+  it('accepts a compatible selected model in Claude proxy mode', async () => {
+    mockFetchProviderCatalog.mockResolvedValue([{
+      id: 'moonshot',
+      name: 'Moonshot',
+      models: [{
+        id: 'kimi-k3',
+        name: 'Kimi K3',
+        modelFormat: 'openai',
+        npm: '@ai-sdk/openai-compatible',
+      }],
+    }]);
+    const req = createMockRequest('POST', '/api/apps/launch', JSON.stringify({
+      appId: 'claude',
+      providerId: 'moonshot',
+      modelId: 'kimi-k3',
+      httpProxy: true,
+    }));
+    const mockRes = createMockResponse();
+
+    handleUiApiRequest(req, mockRes.res);
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(mockRes.result.code).toBe(200);
+    expect(mockExec).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an incompatible selected model in Claude proxy mode', async () => {
+    mockFetchProviderCatalog.mockResolvedValue([{
+      id: 'anthropic',
+      name: 'Anthropic',
+      models: [{
+        id: 'claude-haiku',
+        name: 'Claude Haiku',
+        modelFormat: 'anthropic',
+        npm: '@ai-sdk/anthropic',
+      }],
+    }]);
+    const req = createMockRequest('POST', '/api/apps/launch', JSON.stringify({
+      appId: 'claude',
+      providerId: 'anthropic',
+      modelId: 'claude-haiku',
+      httpProxy: true,
+    }));
+    const mockRes = createMockResponse();
+
+    handleUiApiRequest(req, mockRes.res);
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(mockRes.result.code).toBe(400);
+    expect(JSON.parse(mockRes.result.data).error).toMatch(/cannot be combined/i);
+    expect(mockExec).not.toHaveBeenCalled();
   });
 });

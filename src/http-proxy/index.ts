@@ -1,110 +1,80 @@
-import pc from 'picocolors';
-import * as p from '@clack/prompts';
-import { loadPreferences } from '../config.js';
-import { fetchProviderCatalog, resolveLocalProviderApiKey } from '../provider-catalog.js';
-import { providersForTarget } from '../target-compatibility.js';
-import type { ProxyRoute } from '../proxy.js';
-import { buildHttpProxyRoutes, type HttpProxyRouteResult } from './routes.js';
+import { claudeCodeClientModelId } from '../context-model-id.js';
+import { resolveLocalProviderApiKey } from '../provider-catalog.js';
+import type { FavoriteModel, LocalProvider } from '../types.js';
+import { createHttpProxyCaBundle } from './ca.js';
+import {
+  buildHttpProxyRoutes,
+  httpProxyModelId,
+  type HttpProxyRouteResult,
+} from './routes.js';
 import { startHttpProxy, type HttpProxyHandle } from './server.js';
-import { ensureHttpProxyCaBundle } from './ca.js';
-import { getInferenceRequestLogPath } from '../trace-log.js';
 
-export interface LoadedHttpProxyRoutes extends HttpProxyRouteResult {
-  favoriteCount: number;
-}
+type CredentialResolver = (provider: LocalProvider) => Promise<string | null>;
 
-export async function loadHttpProxyRoutes(): Promise<LoadedHttpProxyRoutes> {
-  const favorites = loadPreferences().favoriteModels ?? [];
-  if (favorites.length === 0) {
-    return { routes: [], unavailable: [], unsupported: [], favoriteCount: 0 };
+/** Resolve credentials only for providers explicitly allowlisted for this launch. */
+export async function resolveHttpProxyRoutes(
+  providers: LocalProvider[],
+  favorites: FavoriteModel[],
+  selected?: FavoriteModel,
+  resolveCredential: CredentialResolver = resolveLocalProviderApiKey,
+): Promise<HttpProxyRouteResult> {
+  const requestedProviderIds = new Set<string>();
+  if (selected) requestedProviderIds.add(selected.providerId);
+  for (const favorite of favorites) requestedProviderIds.add(favorite.providerId);
+
+  const allowedProviders: LocalProvider[] = [];
+  for (const providerId of requestedProviderIds) {
+    const provider = providers.find(candidate => candidate.id === providerId);
+    if (!provider) continue;
+    allowedProviders.push({
+      ...provider,
+      apiKey: (await resolveCredential(provider)) ?? '',
+    });
   }
-  const rawCatalog = providersForTarget(await fetchProviderCatalog({ agent: 'claude' }), 'claude');
-  const catalog = await Promise.all(rawCatalog.map(async provider => ({
-    ...provider,
-    apiKey: (await resolveLocalProviderApiKey(provider)) ?? '',
-  })));
-  return { ...buildHttpProxyRoutes(catalog, favorites), favoriteCount: favorites.length };
+  return buildHttpProxyRoutes(allowedProviders, favorites, selected);
 }
 
-export function formatHttpProxyModelLines(routes: ProxyRoute[]): string[] {
-  if (routes.length === 0) return ['  (no compatible favorite models)'];
-  return routes.map(route => `  ${route.aliasId}  ${pc.dim(route.displayName)}`);
+export interface ConfiguredHttpProxy {
+  handle: HttpProxyHandle;
+  loaded: HttpProxyRouteResult;
+  startingModel?: string;
 }
 
-export function printHttpProxyModels(routes: ProxyRoute[]): void {
-  console.log(pc.bold('HTTP proxy model names:'));
-  for (const line of formatHttpProxyModelLines(routes)) console.log(line);
-}
-
-export function reportSkippedHttpProxyFavorites(loaded: LoadedHttpProxyRoutes): void {
-  if (loaded.unavailable.length > 0) {
-    p.log.warn(`${loaded.unavailable.length} favorite${loaded.unavailable.length === 1 ? '' : 's'} unavailable or missing credentials.`);
-  }
-  if (loaded.unsupported.length > 0) {
-    p.log.warn(
-      `${loaded.unsupported.length} favorite${loaded.unsupported.length === 1 ? '' : 's'} skipped — `
-      + 'HTTP proxy mode supports non-Anthropic AI SDK routes only.',
-    );
-  }
-}
-
-export async function startConfiguredHttpProxy(
-  port: number,
-  debug = false,
-): Promise<{ handle: HttpProxyHandle; loaded: LoadedHttpProxyRoutes }> {
-  const loaded = await loadHttpProxyRoutes();
-  const inferenceLogPath = getInferenceRequestLogPath();
-  const handle = await startHttpProxy({
-    host: '127.0.0.1',
-    port,
-    routes: loaded.routes,
-    debug,
-    inferenceLogPath,
-  });
-  handle.caCertPath = ensureHttpProxyCaBundle(
-    handle.caCertPath,
-    process.env['NODE_EXTRA_CA_CERTS'],
+export async function startConfiguredHttpProxy(options: {
+  providers: LocalProvider[];
+  favorites: FavoriteModel[];
+  selected?: FavoriteModel;
+  debug?: boolean;
+  additionalCaCertPath?: string;
+}): Promise<ConfiguredHttpProxy> {
+  const loaded = await resolveHttpProxyRoutes(
+    options.providers,
+    options.favorites,
+    options.selected,
   );
-  return { handle, loaded };
-}
-
-function waitForShutdown(): Promise<void> {
-  return new Promise(resolve => {
-    const done = () => {
-      process.off('SIGINT', done);
-      process.off('SIGTERM', done);
-      resolve();
-    };
-    process.once('SIGINT', done);
-    process.once('SIGTERM', done);
-  });
-}
-
-export async function runHttpProxyServerCommand(debug = false): Promise<number> {
-  let started: Awaited<ReturnType<typeof startConfiguredHttpProxy>>;
+  const handle = await startHttpProxy({ routes: loaded.routes, debug: options.debug });
   try {
-    started = await startConfiguredHttpProxy(17645, debug);
-  } catch (err) {
-    p.log.error(`Failed to start HTTP proxy: ${err instanceof Error ? err.message : String(err)}`);
-    return 1;
+    handle.caCertPath = createHttpProxyCaBundle(
+      handle.caCertPath,
+      options.additionalCaCertPath,
+    );
+  } catch (error) {
+    await handle.close();
+    throw error;
   }
 
-  const { handle, loaded } = started;
-  console.log('');
-  console.log(pc.bold(pc.green('Relay AI HTTP proxy running')));
-  console.log(`  HTTPS_PROXY=http://127.0.0.1:${handle.port}`);
-  console.log(`  HTTP_PROXY=http://127.0.0.1:${handle.port}`);
-  console.log(`  NODE_EXTRA_CA_CERTS=${handle.caCertPath}`);
-  console.log(`  Request log: ${handle.inferenceLogPath}`);
-  console.log('');
-  printHttpProxyModels(loaded.routes);
-  reportSkippedHttpProxyFavorites(loaded);
-  console.log('');
-  console.log(pc.dim('Anthropic requests keep Claude Code auth and pass through unchanged.'));
-  console.log(pc.dim('Use `/model relay:<provider-id>:<model-id>` for a listed favorite.'));
-  console.log(pc.dim('Press Ctrl+C to stop.'));
-
-  await waitForShutdown();
-  await handle.close();
-  return 0;
+  let startingModel: string | undefined;
+  if (options.selected) {
+    const selectedModel = options.providers
+      .find(provider => provider.id === options.selected!.providerId)
+      ?.models.find(model => model.id === options.selected!.modelId);
+    const expectedId = selectedModel
+      ? claudeCodeClientModelId(
+          httpProxyModelId(options.selected.providerId, options.selected.modelId),
+          selectedModel.contextWindow,
+        )
+      : undefined;
+    startingModel = loaded.routes.find(route => route.aliasId === expectedId)?.aliasId;
+  }
+  return { handle, loaded, startingModel };
 }

@@ -97,16 +97,27 @@ export function launchClaude(
       child.kill(signal);
     };
 
-    process.once('SIGINT', () => forward('SIGINT'));
-    process.once('SIGTERM', () => forward('SIGTERM'));
+    const onSigint = () => forward('SIGINT');
+    const onSigterm = () => forward('SIGTERM');
+    const onSighup = () => forward('SIGHUP');
+    const cleanup = () => {
+      restore();
+      process.off('SIGINT', onSigint);
+      process.off('SIGTERM', onSigterm);
+      process.off('SIGHUP', onSighup);
+    };
+
+    process.once('SIGINT', onSigint);
+    process.once('SIGTERM', onSigterm);
+    process.once('SIGHUP', onSighup);
 
     child.on('exit', (code) => {
-      restore();
+      cleanup();
       resolve(code ?? 0);
     });
 
     child.on('error', (err) => {
-      restore();
+      cleanup();
       resolve(1);
     });
   });

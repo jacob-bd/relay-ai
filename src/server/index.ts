@@ -59,8 +59,6 @@ import {
   hasApplicationDefaultCredentials,
   vertexModelsToServerModels,
 } from './vertex-config.js';
-import { runHttpProxyServerCommand } from '../http-proxy/index.js';
-import { getInferenceRequestLogPath } from '../trace-log.js';
 
 export interface ServerRunConfig {
   exposedProviders: string[] | null;
@@ -72,7 +70,6 @@ export interface ServerRunConfig {
 
 export interface ServerCommandOptions {
   vertex?: boolean;
-  httpProxy?: boolean;
   quick?: boolean;
   listenMode?: 'local' | 'network';
   providersMode?: 'all' | 'favorites' | 'specific';
@@ -379,7 +376,6 @@ async function runVertexServerCommand(): Promise<number> {
 
   const host = mode === 'network' ? '0.0.0.0' : '127.0.0.1';
   const models = vertexModelsToServerModels(vertexConfig);
-  const inferenceLogPath = getInferenceRequestLogPath();
 
   const server = await startServer({
     host,
@@ -388,7 +384,6 @@ async function runVertexServerCommand(): Promise<number> {
     serverPassword,
     catalog: createVertexModelCatalog(models),
     backends: BACKENDS,
-    inferenceLogPath,
     vertex: {
       project: vertexConfig.project,
       location: vertexConfig.location,
@@ -399,7 +394,6 @@ async function runVertexServerCommand(): Promise<number> {
   console.log(pc.bold(pc.green('Vertex gateway running')));
   console.log(`  Anthropic:  http://127.0.0.1:${server.port}/anthropic`);
   console.log(`  Models:     ${models.map(model => model.id).join(', ')}`);
-  console.log(`  Request log: ${inferenceLogPath}`);
   if (mode === 'network') {
     for (const { name, address } of getLocalIps()) {
       console.log(`  Network (${name}):  http://${address}:${server.port}/anthropic`);
@@ -446,20 +440,6 @@ export async function resolveServerUpstreamApiKey(): Promise<string | null> {
 }
 
 export async function runServerCommand(options: ServerCommandOptions = {}): Promise<number> {
-  if (options.httpProxy) {
-    const hasGatewayOptions = options.vertex
-      || options.quick
-      || options.listenMode !== undefined
-      || options.providersMode !== undefined
-      || options.freeOnly !== undefined
-      || options.maskGatewayIds !== undefined
-      || options.password !== undefined;
-    if (hasGatewayOptions) {
-      p.log.error('--http-proxy is a local-only server mode and cannot be combined with gateway server options.');
-      return 1;
-    }
-    return runHttpProxyServerCommand();
-  }
   if (options.vertex) {
     return runVertexServerCommand();
   }
@@ -548,7 +528,6 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
   }
 
   const gateway = runConfig.maskGatewayIds ? { maskGatewayIds: true as const } : undefined;
-  const inferenceLogPath = getInferenceRequestLogPath();
   const server = await startServer({
     host,
     port: 17645,
@@ -557,14 +536,12 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
     catalog: createGatewayModelCatalog(models, gateway),
     backends: BACKENDS,
     gateway,
-    inferenceLogPath,
   });
 
   console.log('');
   console.log(pc.bold(pc.green('Relay AI server running')));
   console.log(`  Anthropic:  http://127.0.0.1:${server.port}/anthropic`);
   console.log(`  OpenAI:     http://127.0.0.1:${server.port}/openai/v1`);
-  console.log(`  Request log: ${inferenceLogPath}`);
   if (mode === 'network') {
     for (const { name, address } of getLocalIps()) {
       console.log(`  Network (${name}):`);

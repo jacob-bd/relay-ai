@@ -1,9 +1,9 @@
-import { MAX_MODEL_CATALOG } from '../constants.js';
 import { localModelToRoute } from '../catalog.js';
-import { isSdkMigratedNpm } from '../provider-factory.js';
+import { MAX_MODEL_CATALOG } from '../constants.js';
 import { claudeCodeClientModelId } from '../context-model-id.js';
+import { isSdkMigratedNpm } from '../provider-factory.js';
 import type { ProxyRoute } from '../proxy.js';
-import type { FavoriteModel, LocalProvider } from '../types.js';
+import type { FavoriteModel, LocalProvider, LocalProviderModel } from '../types.js';
 
 export const HTTP_PROXY_MODEL_PREFIX = 'relay:';
 
@@ -17,43 +17,54 @@ export interface HttpProxyRouteResult {
   unsupported: FavoriteModel[];
 }
 
-/** Build a positive allowlist: only favorite AI-SDK routes can leave Anthropic's path. */
+export function supportsClaudeTransparentMode(model: LocalProviderModel): boolean {
+  return model.modelFormat === 'openai' && isSdkMigratedNpm(model.npm);
+}
+
+/**
+ * Build the positive allowlist for a transparent Claude Code session.
+ * Only the one-time launch selection and saved favorites can reach Relay providers.
+ */
 export function buildHttpProxyRoutes(
   providers: LocalProvider[],
   favorites: FavoriteModel[],
+  selected?: FavoriteModel,
   max = MAX_MODEL_CATALOG,
 ): HttpProxyRouteResult {
   const routes: ProxyRoute[] = [];
   const unavailable: FavoriteModel[] = [];
   const unsupported: FavoriteModel[] = [];
   const seen = new Set<string>();
+  const requested = selected ? [selected, ...favorites] : favorites;
 
-  for (const favorite of favorites) {
+  for (const item of requested) {
+    const requestKey = `${item.providerId}\0${item.modelId}`;
+    if (seen.has(requestKey)) continue;
+    seen.add(requestKey);
     if (routes.length >= max) break;
-    const provider = providers.find(item => item.id === favorite.providerId);
-    const model = provider?.models.find(item => item.id === favorite.modelId);
+
+    const provider = providers.find(candidate => candidate.id === item.providerId);
+    const model = provider?.models.find(candidate => candidate.id === item.modelId);
     if (!provider || !model) {
-      unavailable.push(favorite);
+      unavailable.push(item);
       continue;
     }
-    if (model.modelFormat !== 'openai' || !isSdkMigratedNpm(model.npm)) {
-      unsupported.push(favorite);
+    if (!supportsClaudeTransparentMode(model)) {
+      unsupported.push(item);
       continue;
     }
+
     const route = localModelToRoute(provider, model);
     if (!route || !route.apiKey.trim()) {
-      unavailable.push(favorite);
+      unavailable.push(item);
       continue;
     }
-    const aliasId = claudeCodeClientModelId(
-      httpProxyModelId(provider.id, model.id),
-      model.contextWindow,
-    );
-    if (seen.has(aliasId)) continue;
-    seen.add(aliasId);
     routes.push({
       ...route,
-      aliasId,
+      aliasId: claudeCodeClientModelId(
+        httpProxyModelId(provider.id, model.id),
+        model.contextWindow,
+      ),
       displayName: `${model.name || model.id} (${provider.name})`,
     });
   }

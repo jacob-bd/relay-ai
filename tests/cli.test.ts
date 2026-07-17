@@ -51,18 +51,6 @@ describe('parseArgs', () => {
     });
   });
 
-  it('parses Claude and server HTTP proxy mode', () => {
-    expect(parseArgs(['claude', '--http-proxy', '-c'])).toMatchObject({
-      command: 'claude',
-      httpProxy: true,
-      claudeArgs: ['-c'],
-    });
-    expect(parseArgs(['server', '--http-proxy'])).toMatchObject({
-      command: 'server',
-      httpProxy: true,
-    });
-  });
-
   it('passes claude -c through unchanged', () => {
     expect(parseArgs(['claude', '-c']).claudeArgs).toEqual(['-c']);
   });
@@ -139,6 +127,35 @@ describe('parseArgs', () => {
       launchProvider: 'zen',
       launchModel: 'deepseek-v4-flash-free',
       claudeArgs: ['exec', 'fix'],
+    });
+  });
+
+  it('accepts transparent proxy mode with or without an explicit Claude model', () => {
+    expect(parseArgs(['claude', '--http-proxy'])).toMatchObject({
+      command: 'claude',
+      httpProxy: true,
+      claudeArgs: [],
+    });
+    expect(parseArgs([
+      'claude',
+      '--http-proxy',
+      '--provider',
+      'moonshot',
+      '--model',
+      'kimi-k3',
+    ])).toMatchObject({
+      command: 'claude',
+      httpProxy: true,
+      launchProvider: 'moonshot',
+      launchModel: 'kimi-k3',
+      claudeArgs: [],
+    });
+  });
+
+  it('rejects transparent proxy mode for Claude Desktop', () => {
+    expect(parseArgs(['claude-app', '--http-proxy'])).toMatchObject({
+      command: 'claude-app',
+      error: '--http-proxy is available only for relay-ai claude',
     });
   });
 
@@ -247,13 +264,6 @@ describe('parseArgs', () => {
     });
   });
 
-  it('parses non-interactive HTTP proxy model listing', () => {
-    expect(parseArgs(['models', '--list'])).toMatchObject({
-      command: 'models',
-      favoritesList: true,
-    });
-  });
-
   it('parses favorites --agy command', () => {
     expect(parseArgs(['favorites', '--agy'])).toMatchObject({
       command: 'models',
@@ -352,6 +362,8 @@ describe('help text', () => {
     expect(help).toContain('--trace');
     expect(help).toContain('--provider');
     expect(help).toContain('--model');
+    expect(help).toContain('--http-proxy');
+    expect(help).toContain('normal Anthropic login');
     expect(help).toContain('Registry');
     expect(help).toContain('Model switching');
     expect(help).toContain('relay-ai models');

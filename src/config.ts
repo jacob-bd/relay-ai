@@ -76,6 +76,7 @@ export function loadPreferences(): UserPreferences {
     lastGeminiModel: config.lastGeminiModel,
     lastAntigravityProvider: config.lastAntigravityProvider,
     lastAntigravityModel: config.lastAntigravityModel,
+    lastClaudeTransparentMode: config.lastClaudeTransparentMode,
     recentModelsByProvider: config.recentModelsByProvider,
     favoriteModels: config.favoriteModels,
     antigravityCliFavoriteModels: config.antigravityCliFavoriteModels,
@@ -86,7 +87,7 @@ export function loadPreferences(): UserPreferences {
   };
 }
 
-export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBackend' | 'lastModel' | 'lastProvider' | 'lastCodexProvider' | 'lastCodexModel' | 'lastGeminiProvider' | 'lastGeminiModel' | 'lastAntigravityProvider' | 'lastAntigravityModel' | 'recentModelsByProvider' | 'favoriteModels' | 'antigravityCliFavoriteModels' | 'antigravityCliFavoritesHintShown' | 'appPathOverrides' | 'recentLaunchFolders'>>): void {
+export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBackend' | 'lastModel' | 'lastProvider' | 'lastCodexProvider' | 'lastCodexModel' | 'lastGeminiProvider' | 'lastGeminiModel' | 'lastAntigravityProvider' | 'lastAntigravityModel' | 'lastClaudeTransparentMode' | 'recentModelsByProvider' | 'favoriteModels' | 'antigravityCliFavoriteModels' | 'antigravityCliFavoritesHintShown' | 'appPathOverrides' | 'recentLaunchFolders'>>): void {
   const config = readConfig();
   if (prefs.lastBackend !== undefined) config.lastBackend = prefs.lastBackend;
   if (prefs.lastModel !== undefined) config.lastModel = prefs.lastModel;
@@ -97,6 +98,7 @@ export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBacken
   if (prefs.lastGeminiModel !== undefined) config.lastGeminiModel = prefs.lastGeminiModel;
   if (prefs.lastAntigravityProvider !== undefined) config.lastAntigravityProvider = prefs.lastAntigravityProvider;
   if (prefs.lastAntigravityModel !== undefined) config.lastAntigravityModel = prefs.lastAntigravityModel;
+  if (prefs.lastClaudeTransparentMode !== undefined) config.lastClaudeTransparentMode = prefs.lastClaudeTransparentMode;
   if (prefs.recentModelsByProvider !== undefined) config.recentModelsByProvider = prefs.recentModelsByProvider;
   if (prefs.favoriteModels !== undefined) config.favoriteModels = prefs.favoriteModels;
   if (prefs.antigravityCliFavoriteModels !== undefined) config.antigravityCliFavoriteModels = prefs.antigravityCliFavoriteModels;

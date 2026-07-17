@@ -35,18 +35,10 @@ import {
   summarizeServerProviders,
 } from '../server/catalog-filter.js';
 import { getLocalIps, loadServerModels, resolveServerUpstreamApiKey } from '../server/index.js';
-import {
-  startConfiguredHttpProxy,
-  type LoadedHttpProxyRoutes,
-} from '../http-proxy/index.js';
-import type { HttpProxyHandle } from '../http-proxy/server.js';
-import { getInferenceRequestLogPath } from '../trace-log.js';
 
 export type ServerListenMode = 'local' | 'network';
-export type UiServerMode = 'gateway' | 'http-proxy';
 
-export interface GatewayServerStartRequest {
-  mode?: 'gateway';
+export interface ServerStartRequest {
   favoritesOnly: boolean;
   freeModelsOnly: boolean;
   exposedProviders: string[] | null;
@@ -58,16 +50,9 @@ export interface GatewayServerStartRequest {
   savePassword?: boolean;
 }
 
-export interface HttpProxyServerStartRequest {
-  mode: 'http-proxy';
-}
+type RunningConfig = Omit<ServerStartRequest, 'passwordMode' | 'password' | 'savePassword'>;
 
-export type ServerStartRequest = GatewayServerStartRequest | HttpProxyServerStartRequest;
-
-type RunningConfig = Omit<GatewayServerStartRequest, 'mode' | 'passwordMode' | 'password' | 'savePassword'>;
-
-interface GatewayRunningState {
-  mode: 'gateway';
+interface RunningState {
   handle: ServerHandle;
   config: RunningConfig;
   serverPassword: string | null;
@@ -75,16 +60,6 @@ interface GatewayRunningState {
   providerSummary: string;
   modelRows: ServerModelRow[];
 }
-
-interface HttpProxyRunningState {
-  mode: 'http-proxy';
-  handle: HttpProxyHandle;
-  models: HttpProxyModelRow[];
-  unavailableFavorites: number;
-  unsupportedFavorites: number;
-}
-
-type RunningState = GatewayRunningState | HttpProxyRunningState;
 
 export interface ServerModelRow {
   providerLabel: string;
@@ -108,15 +83,9 @@ export interface ServerNetworkUrl {
   openaiUrl: string;
 }
 
-export interface HttpProxyModelRow {
-  id: string;
-  displayName: string;
-}
-
 export interface ServerStatusPayload {
   running: boolean;
   saved: ServerSavedConfig;
-  mode?: UiServerMode;
   listenMode?: ServerListenMode;
   anthropicUrl?: string;
   openaiUrl?: string;
@@ -128,12 +97,6 @@ export interface ServerStatusPayload {
   maskGatewayIds?: boolean;
   providerSummary?: string;
   models?: ServerModelRow[];
-  proxyUrl?: string;
-  caCertPath?: string;
-  proxyModels?: HttpProxyModelRow[];
-  unavailableFavorites?: number;
-  unsupportedFavorites?: number;
-  requestLogPath?: string;
 }
 
 let running: RunningState | null = null;
@@ -184,26 +147,11 @@ export async function getServerStatus(): Promise<ServerStatusPayload> {
   const saved = await buildSavedConfig();
   if (!running) return { running: false, saved };
 
-  if (running.mode === 'http-proxy') {
-    return {
-      running: true,
-      saved,
-      mode: 'http-proxy',
-      proxyUrl: `http://127.0.0.1:${running.handle.port}`,
-      caCertPath: running.handle.caCertPath,
-      proxyModels: running.models,
-      unavailableFavorites: running.unavailableFavorites,
-      unsupportedFavorites: running.unsupportedFavorites,
-      requestLogPath: running.handle.inferenceLogPath,
-    };
-  }
-
   const { handle, config, serverPassword, providerSummary, modelRows } = running;
 
   const payload: ServerStatusPayload = {
     running: true,
     saved,
-    mode: 'gateway',
     listenMode: config.listenMode,
     anthropicUrl: `http://127.0.0.1:${handle.port}/anthropic`,
     openaiUrl: `http://127.0.0.1:${handle.port}/openai/v1`,
@@ -213,7 +161,6 @@ export async function getServerStatus(): Promise<ServerStatusPayload> {
     maskGatewayIds: config.maskGatewayIds,
     providerSummary,
     models: modelRows,
-    requestLogPath: handle.inferenceLogPath,
   };
 
   if (config.listenMode === 'network') {
@@ -245,8 +192,6 @@ export function startGatewayServer(
 async function doStartGatewayServer(
   req: ServerStartRequest,
 ): Promise<{ ok: true; status: ServerStatusPayload } | { ok: false; error: string }> {
-  if (req.mode === 'http-proxy') return doStartHttpProxyServer();
-
   if (req.listenMode !== 'local' && req.listenMode !== 'network') {
     return { ok: false, error: 'Invalid listen mode.' };
   }
@@ -314,7 +259,6 @@ async function doStartGatewayServer(
 
   const host = req.listenMode === 'network' ? '0.0.0.0' : '127.0.0.1';
   const gateway = req.maskGatewayIds ? { maskGatewayIds: true as const } : undefined;
-  const inferenceLogPath = getInferenceRequestLogPath();
 
   let handle: ServerHandle;
   try {
@@ -326,7 +270,6 @@ async function doStartGatewayServer(
       catalog: createGatewayModelCatalog(models, gateway),
       backends: BACKENDS,
       gateway,
-      inferenceLogPath,
     });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
@@ -337,7 +280,6 @@ async function doStartGatewayServer(
   }
 
   running = {
-    mode: 'gateway',
     handle,
     serverPassword,
     config: {
@@ -351,37 +293,6 @@ async function doStartGatewayServer(
     modelRows: buildModelRows(models, gateway),
   };
 
-  return { ok: true, status: await getServerStatus() };
-}
-
-function proxyModelRows(loaded: LoadedHttpProxyRoutes): HttpProxyModelRow[] {
-  return loaded.routes.map(route => ({
-    id: route.aliasId,
-    displayName: route.displayName,
-  }));
-}
-
-async function doStartHttpProxyServer(): Promise<
-  { ok: true; status: ServerStatusPayload } | { ok: false; error: string }
-> {
-  let started: Awaited<ReturnType<typeof startConfiguredHttpProxy>>;
-  try {
-    started = await startConfiguredHttpProxy(17645);
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException)?.code;
-    const message = code === 'EADDRINUSE'
-      ? 'Port 17645 is already in use — stop the other relay-ai server instance first.'
-      : `Failed to start HTTP proxy: ${err instanceof Error ? err.message : String(err)}`;
-    return { ok: false, error: message };
-  }
-
-  running = {
-    mode: 'http-proxy',
-    handle: started.handle,
-    models: proxyModelRows(started.loaded),
-    unavailableFavorites: started.loaded.unavailable.length,
-    unsupportedFavorites: started.loaded.unsupported.length,
-  };
   return { ok: true, status: await getServerStatus() };
 }
 

@@ -6,7 +6,7 @@ import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findClaudeBinary, launchClaude } from './launch.js';
-import { resolveApiKey, detectConflicts, buildChildEnv, buildHttpProxyChildEnv, readGlobalOpencodeCredential } from './env.js';
+import { resolveApiKey, detectConflicts, buildChildEnv, readGlobalOpencodeCredential } from './env.js';
 import { claudeCodeClientModelId } from './context-model-id.js';
 import { resolveOrCollectApiKey } from './key-setup.js';
 import { needsFirstRunSetup, runFirstRunWizard } from './first-run.js';
@@ -20,7 +20,7 @@ import {
 import { runServerCommand } from './server/index.js';
 import type { ModelFormat } from './types.js';
 import { loadPreferences, savePreferences, recordLaunchSelection } from './config.js';
-import { pickLocalModel, browseAllModels } from './prompts.js';
+import { claudeTransparentModeOptions, pickLocalModel, browseAllModels } from './prompts.js';
 import { fetchProviderCatalog, providersForPicker, resolveLocalProviderApiKey } from './provider-catalog.js';
 import { BACKENDS, VERSION } from './constants.js';
 import { checkForUpdates, formatUpdateNotification } from './update-check.js';
@@ -51,12 +51,8 @@ import {
   wantsCleanAgentStdout,
 } from './launch-target.js';
 import { generateAiDoc, installAiDoc, printAiInstallResult } from './ai-doc.js';
-import {
-  loadHttpProxyRoutes,
-  printHttpProxyModels,
-  reportSkippedHttpProxyFavorites,
-  startConfiguredHttpProxy,
-} from './http-proxy/index.js';
+import { launchClaudeWithHttpProxy } from './http-proxy/launch.js';
+import { supportsClaudeTransparentMode } from './http-proxy/routes.js';
 const STARTER_CLAUDE_FLAGS = new Set(['--dry-run', '--setup', '--trace', '--http-proxy', '--help', '-h', '--version', '-v']);
 const RELAY_LAUNCH_FLAGS = new Set(['--provider', '--model']);
 
@@ -183,7 +179,6 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (arg === '--help' || arg === '-h') parsed.showHelp = true;
       else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
       else if (arg === '--vertex') parsed.vertex = true;
-      else if (arg === '--http-proxy') parsed.httpProxy = true;
       else if (arg === '--quick' || arg === '--saved') parsed.serverQuick = true;
       else if (arg === '--free-only') parsed.serverFreeOnly = true;
       else if (arg === '--no-free-only') parsed.serverFreeOnly = false;
@@ -223,7 +218,6 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (arg === '--help' || arg === '-h') parsed.showHelp = true;
       else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
       else if (arg === '--agy') parsed.favoritesAgy = true;
-      else if (arg === '--list') parsed.favoritesList = true;
       else if (!parsed.error) parsed.error = `Unknown models option: ${arg}`;
     }
     return parsed;
@@ -276,6 +270,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       const arg = rest[i]!;
       if (arg === '--help' || arg === '-h') { parsed.showHelp = true; continue; }
       if (arg === '--version' || arg === '-v') { parsed.showVersion = true; continue; }
+      if (arg === '--http-proxy') {
+        parsed.error = '--http-proxy is available only for relay-ai claude';
+        return parsed;
+      }
       const consumed = tryConsumeRelayLaunchFlag(arg, rest, i, parsed);
       if (consumed !== null) {
         if ('error' in consumed) return parsed;
@@ -529,11 +527,11 @@ ${pc.bold('Usage:')}
 
 ${pc.bold('Options:')}
   --dry-run    Run the wizard but show a preview instead of launching Claude Code
-  --http-proxy Preserve Claude Code's normal Anthropic auth; route favorite relay: models
   --setup      Hint: use relay-ai providers to add or manage providers
   --trace      Write debug logs to ~/.relay-ai/logs/ and show errors on exit
   --provider   Boot provider id (skip wizard when paired with --model or in print mode)
   --model      Boot model id (skip wizard when paired with --provider or in print mode)
+  --http-proxy Keep your normal Anthropic login and add selected/favorite Relay models
   --help       Show this command help
   --version    Show version
 
@@ -548,11 +546,10 @@ ${pc.bold('Model switching:')}
   lists your starting model plus favorites for live switching.
   With no favorites, launch uses a single model as before.
 
-${pc.bold('HTTP proxy mode:')}
-  relay-ai claude --http-proxy leaves ANTHROPIC_BASE_URL unset and launches
-  Claude Code with its normal Anthropic login. Favorite non-Anthropic AI SDK
-  models are available by typing /model relay:<provider-id>:<model-id>.
-  Run relay-ai models --list to print the exact names.
+${pc.bold('Anthropic + Relay mode:')}
+  --http-proxy keeps your normal Anthropic login and models available, then adds
+  only the selected model and compatible favorites. The terminal prints the exact
+  /model commands for switching; Relay models are not added to Claude's built-in picker.
 
 ${pc.bold('Note:')}
   Claude Code may save the launched model to ~/.claude/settings.json.
@@ -566,8 +563,8 @@ ${pc.bold('Examples:')}
   relay-ai claude --dry-run -c
   relay-ai claude --setup
   relay-ai claude --trace --resume abc-123
-  relay-ai claude --http-proxy
   relay-ai claude --provider groq --model llama-3.3-70b-versatile
+  relay-ai claude --http-proxy --provider moonshot --model kimi-k3
   relay-ai claude --provider groq --model llama-3.3-70b-versatile -p "review this file"
   relay-ai claude -- --print "hello"
   relay-ai claude -- --dangerously-skip-permissions`;
@@ -581,7 +578,6 @@ ${pc.bold('Usage:')}
   relay-ai server
   relay-ai server --quick
   relay-ai server --listen network --password <password>
-  relay-ai server --http-proxy
   relay-ai server --vertex
   relay-ai server --help
   relay-ai server --version
@@ -595,7 +591,6 @@ ${pc.bold('Options:')}
   --mask-gateway-ids           Mask provider names in Anthropic model ids
   --no-mask-gateway-ids        Keep provider names in Anthropic model ids
   --password <value>           One-run network-mode server password
-  --http-proxy                 Selective api.anthropic.com HTTP proxy (local only)
   --vertex                     Use Claude on Google Vertex AI
 
 ${pc.bold('Behavior:')}
@@ -608,16 +603,12 @@ ${pc.bold('Behavior:')}
   local gcloud Application Default Credentials (no OpenCode API key).
   Binds to port 17645. Network mode asks for a server password.
 
-${pc.bold('HTTP proxy env:')}
-  Start relay-ai server --http-proxy, then export the HTTPS_PROXY, HTTP_PROXY,
-  and NODE_EXTRA_CA_CERTS values it prints. Do not set ANTHROPIC_BASE_URL.
-
 ${pc.bold('Vertex env:')}
   ANTHROPIC_VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT — your GCP project
   GOOGLE_CLOUD_LOCATION or CLOUD_ML_REGION — region (default: global)
   Optional catalog: ~/.relay-ai/vertex-models.json (see assets/vertex-models.example.json)
 
-${pc.bold('Gateway endpoints (without --http-proxy):')}
+${pc.bold('Endpoints:')}
   Anthropic-compatible:  ANTHROPIC_BASE_URL=http://127.0.0.1:17645/anthropic
   OpenAI-compatible:     OPENAI_BASE_URL=http://127.0.0.1:17645/openai/v1
   API key: use anything locally; use the server password in network mode.`;
@@ -629,7 +620,6 @@ Manage favorite models for mid-session switching.
 
 ${pc.bold('Usage:')}
   relay-ai favorites
-  relay-ai models --list
   relay-ai favorites --agy
   relay-ai models
   relay-ai favorites --help
@@ -641,8 +631,6 @@ ${pc.bold('Behavior:')}
   Pick from Zen, Go, or any provider in your registry.
   Global favorites are saved to ~/.relay-ai/config.json (max ${MAX_MODEL_CATALOG}).
   --agy manages Antigravity CLI favorites only (max 6).
-  --list prints the exact relay:<provider-id>:<model-id> names available in
-  HTTP proxy mode, without opening the interactive manager.
 
 ${pc.bold('How it works:')}
   Claude/Codex/Gemini/server use the global favorites list.
@@ -849,26 +837,10 @@ const AGY_CLI_FAVORITES_CAP = 6;
 
 interface FavoritesCommandOptions {
   scope?: 'global' | 'agy';
-  list?: boolean;
 }
 
 export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Promise<number> {
   const scope = opts.scope ?? 'global';
-  if (opts.list) {
-    if (scope === 'agy') {
-      p.log.error('--list shows global favorites used by HTTP proxy mode; remove --agy.');
-      return 1;
-    }
-    try {
-      const loaded = await loadHttpProxyRoutes();
-      printHttpProxyModels(loaded.routes);
-      reportSkippedHttpProxyFavorites(loaded);
-      return 0;
-    } catch (err) {
-      p.log.error(`Could not load HTTP proxy models: ${err instanceof Error ? err.message : String(err)}`);
-      return 1;
-    }
-  }
   const maxFavorites = scope === 'agy' ? AGY_CLI_FAVORITES_CAP : MAX_MODEL_CATALOG;
   const scopeName = scope === 'agy' ? 'Antigravity CLI Favorites' : 'Favorite Models';
   const configKey = scope === 'agy' ? 'antigravityCliFavoriteModels' : 'favoriteModels';
@@ -1104,73 +1076,8 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
   return 0;
 }
 
-async function runClaudeHttpProxyCommand(
-  parsed: ParsedArgs,
-  claudeArgs: string[],
-  agentStdout: boolean,
-): Promise<number> {
-  if (parsed.launchProvider || parsed.launchModel) {
-    p.log.error('--provider/--model select Relay gateway routes and cannot be combined with --http-proxy.');
-    p.log.info('Use `-- --model relay:<provider-id>:<model-id>` to start on a listed HTTP-proxy favorite.');
-    return 1;
-  }
-
-  if (!agentStdout) relayIntro('Claude Code — HTTP Proxy');
-
-  if (parsed.dryRun) {
-    try {
-      const loaded = await loadHttpProxyRoutes();
-      console.log('');
-      console.log(pc.bold(pc.cyan('  DRY RUN — HTTP proxy mode')));
-      console.log('  ANTHROPIC_BASE_URL is not set by Relay AI.');
-      console.log('  HTTPS_PROXY/HTTP_PROXY=http://127.0.0.1:<random-port>');
-      console.log('  NODE_EXTRA_CA_CERTS=~/.relay-ai/http-proxy/relay-ai-ca.pem');
-      console.log('');
-      printHttpProxyModels(loaded.routes);
-      reportSkippedHttpProxyFavorites(loaded);
-      console.log('');
-      return 0;
-    } catch (err) {
-      p.log.error(`Could not load HTTP proxy models: ${err instanceof Error ? err.message : String(err)}`);
-      return 1;
-    }
-  }
-
-  let started: Awaited<ReturnType<typeof startConfiguredHttpProxy>>;
-  try {
-    started = await startConfiguredHttpProxy(0, parsed.trace);
-  } catch (err) {
-    p.log.error(`Failed to start HTTP proxy: ${err instanceof Error ? err.message : String(err)}`);
-    return 1;
-  }
-
-  const { handle, loaded } = started;
-  if (!agentStdout) {
-    p.log.info(`HTTP proxy started on port ${handle.port}; Claude Code's Anthropic auth remains active.`);
-    p.log.info(`Inference request log: ${handle.inferenceLogPath}`);
-    printHttpProxyModels(loaded.routes);
-    reportSkippedHttpProxyFavorites(loaded);
-    if (loaded.routes.length > 0) {
-      p.log.info('Switch with `/model relay:<provider-id>:<model-id>`.');
-    }
-  }
-
-  const childEnv = buildHttpProxyChildEnv(handle.port, handle.caCertPath);
-  const debugLogPath = prepareClaudeTraceLog();
-  const traceArgs = parsed.trace ? ['--debug-file', debugLogPath] : [];
-  if (parsed.trace && !agentStdout) p.log.info(`Debug log: ${debugLogPath}`);
-
-  try {
-    const exitCode = await launchClaude(childEnv, undefined, [...traceArgs, ...claudeArgs]);
-    if (parsed.trace) printTraceLog(debugLogPath);
-    return exitCode;
-  } finally {
-    await handle.close();
-  }
-}
-
 export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
-  const { dryRun, setup, trace, launchProvider, launchModel } = parsed;
+  const { dryRun, setup, trace, httpProxy, launchProvider, launchModel } = parsed;
   const claudeArgs = normalizeClaudeAgentArgs(parsed.claudeArgs);
   const agentStdout = wantsCleanAgentStdout('claude', claudeArgs);
   setAgentStdoutMode(agentStdout);
@@ -1184,20 +1091,19 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     return 1;
   }
 
-  if (parsed.httpProxy) {
-    return runClaudeHttpProxyCommand(parsed, claudeArgs, agentStdout);
-  }
-
   const prefs = dryRun ? {} as ReturnType<typeof loadPreferences> : loadPreferences();
   const conflicts = detectConflicts();
 
   const favorites = dryRun ? [] : (prefs.favoriteModels ?? []);
-  const launchPlan = planLaunchWizard({
-    explicit: { providerId: launchProvider, modelId: launchModel },
-    childArgs: claudeArgs,
-    agent: 'claude',
-    prefs,
-  });
+  const httpProxyOnly = Boolean(httpProxy && !launchProvider && !launchModel);
+  const launchPlan = httpProxyOnly
+    ? { skip: true, target: null }
+    : planLaunchWizard({
+        explicit: { providerId: launchProvider, modelId: launchModel },
+        childArgs: claudeArgs,
+        agent: 'claude',
+        prefs,
+      });
   if (launchPlan.error) {
     console.error(pc.red(`\nError: ${launchPlan.error}\n`));
     return 1;
@@ -1210,7 +1116,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     p.log.info('Provider setup now lives in relay-ai providers — opening that next is recommended.');
   }
 
-  if (!dryRun && await needsFirstRunSetup()) {
+  if (!httpProxyOnly && !dryRun && await needsFirstRunSetup()) {
     const firstRun = await runFirstRunWizard(trace);
     if (firstRun === 'cancel') return 0;
   }
@@ -1237,11 +1143,69 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   }
 
   const allProviders = providersForTarget(providersForPicker(catalog), 'claude');
-  if (allProviders.length === 0) {
+  if (allProviders.length === 0 && !httpProxyOnly) {
     p.log.warn('No providers available.');
     p.log.info(pc.dim('Run relay-ai providers add or import to get started.'));
     return 0;
   }
+
+  const runTransparentProxy = async (selected?: FavoriteModel): Promise<number> => {
+    if (dryRun) {
+      console.log('');
+      console.log(pc.bold(pc.cyan('  DRY RUN — would keep Anthropic and add Relay models:')));
+      console.log('');
+      console.log(`  ${pc.bold('Anthropic:')} normal Claude Code login and models`);
+      console.log(`  ${pc.bold('Selected:')}  ${selected ? `${selected.providerId} / ${selected.modelId}` : '(none)'}`);
+      console.log(`  ${pc.bold('Favorites:')} ${favorites.length} saved`);
+      console.log('');
+      console.log(pc.dim('  (dry run complete — Claude Code was NOT launched)'));
+      console.log('');
+      return 0;
+    }
+
+    const debugLogPath = prepareClaudeTraceLog();
+    const traceArgs = trace ? ['--debug-file', debugLogPath] : [];
+    if (trace && !agentStdout) p.log.info(`Debug log: ${debugLogPath}`);
+    try {
+      const result = await launchClaudeWithHttpProxy({
+        providers: catalog,
+        favorites,
+        selected,
+        baseEnv: process.env,
+        claudeArgs: [...traceArgs, ...claudeArgs],
+        debug: trace,
+        onProxyReady: proxy => {
+          if (agentStdout) return;
+          const count = proxy.handle.modelIds.length;
+          p.log.info(
+            count === 0
+              ? 'Secure Anthropic passthrough ready; no compatible Relay models were added.'
+              : `Secure Anthropic passthrough ready with ${count} Relay model${count === 1 ? '' : 's'}.`,
+          );
+          for (const modelId of proxy.handle.modelIds) p.log.message(pc.dim(`  /model ${modelId}`));
+        },
+      });
+      if (!agentStdout && result.proxy.loaded.unavailable.length > 0) {
+        p.log.warn(
+          `${result.proxy.loaded.unavailable.length} favorite${result.proxy.loaded.unavailable.length === 1 ? '' : 's'} unavailable or missing credentials.`,
+        );
+      }
+      if (!agentStdout && result.proxy.loaded.unsupported.length > 0) {
+        p.log.warn(
+          `${result.proxy.loaded.unsupported.length} incompatible favorite${result.proxy.loaded.unsupported.length === 1 ? '' : 's'} skipped.`,
+        );
+      }
+      if (trace) printTraceLog(debugLogPath);
+      return result.exitCode;
+    } catch (error) {
+      p.log.error(
+        `Could not start secure Anthropic + Relay mode: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return 1;
+    }
+  };
+
+  if (httpProxyOnly) return runTransparentProxy();
 
   const providerOptions = allProviders.map(lp => providerSelectOption(lp));
 
@@ -1332,6 +1296,28 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
         break;
       }
     }
+  }
+
+  let useHttpProxy = Boolean(httpProxy);
+  if (!httpProxy && !launchPlan.skip && supportsClaudeTransparentMode(selectedModel)) {
+    const transparentChoice = await p.select<boolean>({
+      message: 'Keep your normal Claude models available too?',
+      options: claudeTransparentModeOptions(selectedModel.name || selectedModel.id),
+      initialValue: prefs.lastClaudeTransparentMode ?? true,
+    });
+    if (p.isCancel(transparentChoice)) {
+      p.cancel('Cancelled.');
+      return 0;
+    }
+    useHttpProxy = transparentChoice as boolean;
+    if (!dryRun) savePreferences({ lastClaudeTransparentMode: useHttpProxy });
+  }
+
+  if (useHttpProxy) {
+    return runTransparentProxy({
+      providerId: activeProvider.id,
+      modelId: selectedModel.id,
+    });
   }
 
   const localProviders = catalog.length > 0 ? catalog : null;
@@ -1585,7 +1571,6 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
     }
     return runServerCommand({
       vertex: parsed.vertex,
-      httpProxy: parsed.httpProxy,
       quick: parsed.serverQuick,
       listenMode: parsed.serverListenMode,
       providersMode: parsed.serverProvidersMode,
@@ -1618,10 +1603,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
       printHelp(modelsHelpText());
       return 0;
     }
-    return runModelsCommand({
-      scope: parsed.favoritesAgy ? 'agy' : 'global',
-      list: parsed.favoritesList,
-    });
+    return runModelsCommand({ scope: parsed.favoritesAgy ? 'agy' : 'global' });
   }
 
   if (parsed.command === 'providers') {

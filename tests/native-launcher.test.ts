@@ -23,6 +23,13 @@ function linuxLaunchScriptContents(cmd: string): string | null {
 }
 
 function assertLaunchCommandContains(cmd: string, ...substrings: string[]): void {
+  if (process.platform === 'darwin') {
+    const scriptPath = macCommandScriptPath(cmd);
+    expect(scriptPath).toBeTruthy();
+    const script = readFileSync(scriptPath!, 'utf8');
+    for (const s of substrings) expect(script).toContain(s);
+    return;
+  }
   if (process.platform === 'linux') {
     const script = linuxLaunchScriptContents(cmd);
     expect(script).toBeTruthy();
@@ -109,6 +116,25 @@ describe('native-launcher', () => {
     } else {
       assertLaunchCommandContains(cmd, 'codex', '--trace');
     }
+  });
+
+  it('adds transparent proxy mode only to Claude Code launches', () => {
+    const cmd = getRelayLaunchCommand('claude', {
+      httpProxy: true,
+      providerId: 'moonshot',
+      modelId: 'kimi-k3',
+    });
+    assertLaunchCommandContains(
+      cmd,
+      'claude',
+      '--http-proxy',
+      '--provider',
+      'moonshot',
+      '--model',
+      'kimi-k3',
+    );
+    expect(() => getRelayLaunchCommand('claude-app', { httpProxy: true }))
+      .toThrow(/only.*Claude Code/i);
   });
 
   it('rejects ambiguous Relay model launches', () => {
