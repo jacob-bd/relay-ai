@@ -273,6 +273,8 @@ FAVORITES / MID-SESSION SWITCHING:
   When favorites exist, interactive claude/codex/gemini launches expose /model switching.
   Boot flags (--provider + --model) or print/exec/-p mode use SINGLE-MODEL launch
   (favorites catalog is skipped — better for agent one-shots).
+  Exception: Claude --http-proxy combines the selected compatible model with
+  compatible saved favorites while keeping native Anthropic models available.
 
 ================================================================================
 COMMANDS
@@ -291,6 +293,7 @@ CLAUDE CODE
   Relay options:
     --provider <id>    Boot provider (skip wizard with --model)
     --model <id>       Boot model id or provider__model slug
+    --http-proxy      Keep native Anthropic auth/models and add selected/favorite Relay models
     --dry-run          Preview launch, do not start Claude
     --trace            Debug logs in ~/.relay-ai/logs/
     --setup            Hint to use relay-ai providers
@@ -304,6 +307,7 @@ CLAUDE CODE
   Examples:
     relay-ai claude
     relay-ai claude --provider anthropic --model claude-sonnet-4-6 -p "review file.ts"
+    relay-ai claude --http-proxy --provider moonshot --model kimi-k3 -p "review file.ts"
     relay-ai claude --dry-run --provider groq --model llama-3.3-70b-versatile
 
 GOOGLE GEMINI CLI

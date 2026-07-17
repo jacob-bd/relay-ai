@@ -18,6 +18,7 @@ describe('ai-doc', () => {
     expect(doc).toContain('-p');
     expect(doc).toContain('providers.json');
     expect(doc).toContain('relay-ai codex');
+    expect(doc).toContain('Exception: Claude --http-proxy');
     expect(doc).toContain('CURRENT LOCAL STATE');
     expect(doc).toContain(`version: "${VERSION}"`);
   });

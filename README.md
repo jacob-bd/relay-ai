@@ -54,7 +54,7 @@ Pick your backend:
 ## Features
 
 - **Visual launcher UI:** `relay-ai ui` opens a browser dashboard — launch any supported tool with a point-and-click model picker. Pick provider and model in the UI; the terminal opens straight to the running session with no second selection step. Manage providers and favorites without leaving the browser.
-- **Server tab in the UI:** Run either the registry gateway or transparent Claude Code HTTP proxy from a browser form instead of a terminal wizard. Gateway mode shows live URLs, API key, and catalog; HTTP proxy mode shows the required proxy/CA environment values and usable `relay:` favorite names. Both have one-click Stop.
+- **Server tab in the UI:** Run the same API gateway as `relay-ai server` — favorites-only or specific providers, discovery id masking for Claude Desktop / Cowork, local or network listen mode — from a browser form instead of a terminal wizard. Shows live URLs, the API key, and the full model catalog once started, with a one-click Stop.
 - **Native provider registry:** `relay-ai providers` stores config in `~/.relay-ai/providers.json` and secrets in the OS keychain — no OpenCode binary required at launch. See **[docs/PROVIDERS.md](docs/PROVIDERS.md)** for a full list of providers and known issues.
 - **Provider templates:** Add Groq, Mistral, Together, OpenRouter, and 15+ SDK-backed providers, plus custom OpenAI/Anthropic-compatible endpoints
 - **OpenCode import:** One-time migration from OpenCode (`providers import`); validates API keys and skips placeholders like `anything`
@@ -186,12 +186,13 @@ relay-ai ui
 Opens a browser-based dashboard on a random local port. From the UI you can:
 
 - **Launch any supported tool** — app cards for Claude Code CLI, Codex CLI, Gemini CLI, Antigravity CLI, Antigravity App, Antigravity IDE, Claude Code Desktop, and the ChatGPT Desktop app (Codex mode). Select a provider and model in the card, then click **Launch** — a native terminal opens with the selection pre-wired. No second picker in the terminal.
+- **Keep Claude Code's Anthropic login** — on the Claude Code CLI card, check **Keep my Anthropic login and add Relay models** to keep your normal Claude models while adding the selected Relay model and compatible favorites. This option is not shown for Claude Desktop.
 - **Manage General Favorites** — the sidebar shows your saved favorite models with a slot indicator (Slots used X/20). Favorites launch through all supported agents.
 - **Manage Antigravity Favorites** — separate favorites panel for Antigravity sessions.
 - **Manage providers** — add providers from templates, delete providers, and refresh model lists inline, all without leaving the browser.
-- **Run the Server tab** — choose the registry API gateway or transparent HTTP proxy. The gateway form exposes its provider filters, discovery masking, listen mode, URLs, API key, and model catalog. HTTP proxy mode shows the `HTTPS_PROXY`, `HTTP_PROXY`, and `NODE_EXTRA_CA_CERTS` values plus the usable `relay:` model names. Both run in the UI process and stop when you close the dashboard.
+- **Run the Server tab** — configure and start the same gateway as `relay-ai server` (favorites-only or specific providers, discovery id masking, local/network listen mode) and see the resulting URLs, API key, and model catalog right in the browser. Runs in the same process as the UI, so it stops when you close the dashboard. See [Registry gateway (`relay-ai server`)](#registry-gateway-relay-ai-server) below for what each option does.
 
-Press `Ctrl+C` in the terminal where `relay-ai ui` is running to shut down the dashboard server (this also stops whichever Server-tab mode is running).
+Press `Ctrl+C` in the terminal where `relay-ai ui` is running to shut down the dashboard server (this also stops the gateway if you started it from the Server tab).
 
 ### Launch Claude Code
 
@@ -200,6 +201,18 @@ relay-ai claude
 ```
 
 First run: pick a provider from your registry (or complete the inline setup wizard). If you've added OpenCode Zen/Go, those appear alongside registry providers like Groq, Nvidia, or DeepSeek.
+
+After you choose a compatible Relay model, the wizard asks whether you want to keep your normal Claude models available too. Choose **Yes** to use the Relay model alongside your existing Anthropic login, or **No** for the existing Relay-only launch.
+
+To skip that question, use `--http-proxy`. A selected model does not need to be a favorite:
+
+```bash
+relay-ai claude --http-proxy --provider moonshot --model kimi-k3
+```
+
+Using `--http-proxy` without a provider/model keeps native Claude as the starting model and adds any compatible saved favorites. Relay models cannot be inserted into Claude Code's built-in model picker, so the terminal prints the exact `/model relay:<provider>:<model>` commands you can use to switch. The temporary local connection is password-protected, uses a per-session certificate, and closes automatically when Claude Code exits. Existing non-local network or corporate proxy settings are rejected with a clear error because proxy chaining is not supported yet.
+
+> **Compatibility:** This mixed Anthropic + Relay mode currently supports Claude Code connected directly to Anthropic. It does not preserve Google Vertex AI configuration. Vertex users should continue using their normal Claude Code launch or Relay-only mode.
 
 #### Favorite models and mid-session switching
 
@@ -213,20 +226,16 @@ Add up to 20 favorites from Zen, Go, or any OpenCode-configured provider. When y
 
 No favorites? Launch works like before: single model, no switch menu. `--dry-run` ignores saved favorites so you can preview a single-model launch.
 
-To print the exact model names available in HTTP proxy mode without opening the manager:
-
-```bash
-relay-ai models --list
-```
+That built-in favorites catalog applies to **Relay-only mode** (choose **No** when asked whether to keep your normal Claude models). In mixed Anthropic + Relay mode, compatible favorites are available through the printed `/model relay:<provider>:<model>` commands instead; Claude Code cannot add them to its built-in picker.
 
 #### `relay-ai claude` options
 
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | Run the full wizard but preview the launch command instead of executing |
-| `--http-proxy` | Keep Claude Code's normal Anthropic login and route `relay:` favorites selectively |
 | `--setup` | Reminder to use `relay-ai providers` for provider setup |
 | `--trace` | Write debug logs to `~/.relay-ai/logs/` and show errors on exit |
+| `--http-proxy` | Keep the normal Anthropic login/models and add the selected model plus compatible favorites |
 | `--help` | Show command help |
 | `--version` | Show version |
 
@@ -234,7 +243,7 @@ relay-ai models --list
 relay-ai claude --dry-run
 relay-ai claude --setup
 relay-ai claude --trace
-relay-ai claude --http-proxy
+relay-ai claude --http-proxy --provider moonshot --model kimi-k3
 ```
 
 Claude Code flags and session IDs pass through unchanged:
@@ -274,49 +283,9 @@ Run relay-ai as a foreground API gateway on port **17645**:
 | Mode | Command | Auth | Models |
 |------|---------|------|--------|
 | **Registry gateway** | `relay-ai server` | Per-provider keys in registry (+ OpenCode key for Zen/Go if exposed) | Providers you configured |
-| **HTTP proxy** | `relay-ai server --http-proxy` | Claude Code's own Anthropic login + provider keys for favorites | Anthropic models plus favorite `relay:` models |
 | **Vertex gateway** | `relay-ai server --vertex` | gcloud Application Default Credentials | Claude on Vertex AI |
 
-All server modes append one privacy-minimal JSON record per inference request to `~/.relay-ai/logs/inference-requests.jsonl` (or the equivalent under `RELAY_AI_HOME`). Each record contains the timestamp, requested model id, known effort, provider, and whether the request was passed through or translated. Prompts, headers, credentials, and response bodies are never logged. The terminal and UI Server tab both show the exact path; watch it live with:
-
-```bash
-tail -f ~/.relay-ai/logs/inference-requests.jsonl
-```
-
 > **Claude Desktop (Cowork + Code):** For the automated macOS/Windows setup, use `relay-ai claude-app`. For manual or network setups, see [docs/CLAUDE_DESKTOP_SETUP.md](docs/CLAUDE_DESKTOP_SETUP.md).
-
-### Transparent HTTP proxy (`relay-ai server --http-proxy`)
-
-This mode preserves Claude Code's normal Anthropic authentication. It does **not** set `ANTHROPIC_BASE_URL` and does not perform a separate Anthropic OAuth flow.
-
-The session launcher is the easiest form:
-
-```bash
-relay-ai claude --http-proxy
-```
-
-For a standalone proxy, start the server and export the three values it prints:
-
-```bash
-relay-ai server --http-proxy
-
-export HTTPS_PROXY="http://127.0.0.1:17645"
-export HTTP_PROXY="http://127.0.0.1:17645"
-export NODE_EXTRA_CA_CERTS="$HOME/.relay-ai/http-proxy/relay-ai-ca.pem"
-unset ANTHROPIC_BASE_URL
-claude
-```
-
-HTTP proxy model names use a positive namespace and come from compatible global favorites:
-
-```text
-relay:<provider-id>:<model-id>
-relay:groq:llama-3.3-70b-versatile
-```
-
-Run `relay-ai models --list` or read the list printed when the proxy starts, then type `/model relay:<provider-id>:<model-id>` in Claude Code. These names cannot be injected into Claude Code's built-in OAuth model picker, but `/model` accepts the exact freeform name.
-
-The proxy decrypts only TLS connections to `api.anthropic.com`; every other HTTPS host is blind-tunneled. On `/v1/messages`, an exact configured `relay:` model goes through the existing AI SDK adapter with that provider's credential. Every other model and every other Anthropic path goes to Anthropic with the original request body bytes and authorization header. Anthropic credentials are never persisted, reused, or forwarded to a model provider. The generated CA and private key live under `~/.relay-ai/http-proxy/`; the private files are mode `0600`. Session mode also preserves an existing `NODE_EXTRA_CA_CERTS` bundle by combining it with Relay's CA.
 
 ### Registry gateway (`relay-ai server`)
 
@@ -332,7 +301,7 @@ The wizard asks:
 | **Expose only favorite models?** | Optional cap at your favorites (manage with `relay-ai models`) |
 | **Listen mode** | **Local only** (`127.0.0.1`) or **Network** (`0.0.0.0` + server password) |
 
-The same options are available without a terminal in the [Server tab of `relay-ai ui`](#visual-launcher-relay-ai-ui), which also supports the transparent HTTP proxy mode and shows the relevant connection details and model names live.
+The same options are available without a terminal in the [Server tab of `relay-ai ui`](#visual-launcher-relay-ai-ui), which also shows the resulting URLs, API key, and model catalog live.
 
 After you configure the server once, start it without prompts:
 
@@ -537,9 +506,9 @@ When you launch, relay-ai builds a clean child environment:
 2. Sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, and `ANTHROPIC_MODEL` for the session
 3. Passes `--model <selected>` to Claude Code as a backup override
 
-`--http-proxy` is intentionally different: it leaves normal Anthropic credentials and model selection in place, removes any `ANTHROPIC_BASE_URL`, and sets only the local HTTP proxy and CA trust variables.
-
 When Claude Code exits (normal exit, Ctrl+C, terminal close), your shell is unchanged. No cleanup step. No restore needed.
+
+In `--http-proxy` mode, relay-ai does not replace your Anthropic credential. It removes stale third-party endpoint/cloud overrides from the child process, sets a password-protected loopback proxy plus a temporary CA bundle, and forwards native Anthropic requests—including their original auth and body—unchanged. Only the selected Relay model and compatible favorites are allowed to use registry provider credentials.
 
 **Caveat: Claude Code persists the model.** relay-ai doesn't edit `~/.claude/settings.json`, but Claude Code saves the model you launched with (via `--model` and `ANTHROPIC_MODEL`). A later bare `claude` launch may still show that model, e.g. `anthropic-opencode-go__deepseek-v4-flash` from a prior relay-ai session. To get back to a first-party default, run `claude --model sonnet` (or your preferred Claude model), or remove the `"model"` key from `~/.claude/settings.json`. If you used the favorites switch menu, Claude Code may also cache the gateway catalog at `~/.claude/cache/gateway-models.json`. Delete that file if `/model` shows stale entries from a dead proxy.
 
