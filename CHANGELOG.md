@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.7] - 2026-07-16
+
+### Added
+
+- **Use Relay models alongside your normal Claude models in Claude Code** — the new transparent proxy mode keeps Claude Code signed in to Anthropic while adding a selected Relay model and compatible favorites to the same session. Enable it from the CLI wizard, pass `--http-proxy`, or select **Keep my Anthropic login and add Relay models** on the Claude Code card in `relay-ai ui`. Relay models are available through the `/model relay:<provider>:<model>` commands printed at launch because Claude Code cannot add them to its built-in model picker. Based on the transparent proxy contribution by Brandon Wallace ([@bman654](https://github.com/bman654)) in [#22](https://github.com/jacob-bd/relay-ai/pull/22), integrated and hardened in [#23](https://github.com/jacob-bd/relay-ai/pull/23).
+
+### Security
+
+- **Transparent proxy sessions are isolated and locked down** — every launch uses a password-protected loopback proxy and a unique temporary certificate authority that is removed when the session ends. Native Anthropic requests preserve their original authentication and body, while registry credentials are available only to the selected Relay model and compatible favorites. Non-local inherited proxy settings and unsupported proxy protocols are rejected instead of being silently chained.
+
+### Documentation
+
+- Added setup, switching, security, compatibility, and troubleshooting guidance for transparent proxy mode to `README.md` and `docs/AI-AGENTS.md`.
+- Added focused contribution guidelines and a pull request template in [#24](https://github.com/jacob-bd/relay-ai/pull/24), including expectations for large, security-sensitive, and generated-file changes.
+
+### Known limitations
+
+- Transparent proxy mode is for **Claude Code**, not Claude Desktop, and currently preserves only a direct Anthropic login. Google Vertex AI configuration is not preserved, corporate proxy chaining is not supported, and the launch/proxy/cleanup flow has not yet been verified on Windows.
+
 ## [0.4.6] - 2026-07-16
 
 ### Added

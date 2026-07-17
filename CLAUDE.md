@@ -187,9 +187,9 @@ In all cases `process.env['OPENCODE_API_KEY']` is set immediately so the key is 
 - `EADDRINUSE` on port `17645` (e.g. a terminal `relay-ai server` already running) surfaces as a specific inline error rather than a generic failure.
 - Frontend (`src/ui/public/app.js`, `state.server`): polls `GET /api/server/status` every 5s (cheap enough to run continuously; also drives the sidebar "Live" badge). Setup-state and running-state are two fully-templated views swapped into a single `#server-panel` container, matching the file's existing full-innerHTML-replace convention (see `renderApps()`).
 
-## Release status (v0.2.7)
+## Release status (v0.4.7)
 
-Current version is **v0.2.7** — official launch release with the native provider registry, complete Claude/Codex app help, unified OpenCode Zen / Go setup, duplicate-provider migration, stable post-import refreshes, agent boot flags (`--provider` / `--model`), `relay-ai --ai`, favorites catalogs, reasoning capability metadata, and Codex App history preservation via built-in `openai` provider + local Responses proxy (`--trace` fully wired).
+Current version is **v0.4.7** — adds transparent Claude Code routing so users can keep their direct Anthropic login and switch to selected Relay models in the same session. The mode is available through the CLI wizard, `--http-proxy`, and the Claude Code card in `relay-ai ui`; it does not preserve Vertex AI configuration and its Windows launch/proxy/cleanup flow remains unverified.
 
 **Known limitations (by design):**
 - Cost display in Claude Code is always inaccurate for non-Anthropic models.
