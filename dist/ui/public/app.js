@@ -34,6 +34,7 @@ const state = {
   appModelFilters: {},
   appModelOpen: null,
   appSelections: {},
+  appHttpProxy: {},
   server: {
     status: null,
     error: null,
@@ -302,6 +303,7 @@ async function loadModels() {
       freeStatus: m.freeStatus,
       freeLabel: m.freeLabel,
       cost: m.cost,
+      claudeTransparentCompatible: Boolean(m.claudeTransparentCompatible),
     });
     if (typeof p.modelCount === 'number') p._rawCount = p.modelCount;
   }
@@ -1798,6 +1800,16 @@ function appModelInputValue(appId) {
   return getAppSelection(appId).label;
 }
 
+function claudeHttpProxyAvailable(appId) {
+  if (appId !== 'claude') return false;
+  const selection = getAppSelection(appId);
+  if (selection.mode !== 'model') return true;
+  const model = state.allModels.find(
+    candidate => candidate.providerId === selection.providerId && candidate.id === selection.modelId,
+  );
+  return Boolean(model?.claudeTransparentCompatible);
+}
+
 function matchedAppModels(appId) {
   const localFilter = state.appModelFilters[appId] ?? '';
   const q = (localFilter || state.appModelFilter).trim().toLowerCase();
@@ -1898,6 +1910,7 @@ function renderApps() {
     const modelInputValue = appModelInputValue(app.id);
     const modelResults = state.appModelOpen === app.id ? buildAppModelResults(app.id) : '';
     const launchFolder = state.appLaunchFolders[app.id] ?? '';
+    const httpProxyAvailable = claudeHttpProxyAvailable(app.id);
     const recentFolders = state.recentLaunchFolders
       .map(folder => `<button class="launch-folder-chip" type="button" onclick="selectLaunchFolder('${app.id}', '${encodeURIComponent(folder)}')">${escapeHtml(folder)}</button>`)
       .join('');
@@ -1931,6 +1944,16 @@ function renderApps() {
                 ` : ''}
               </div>
             </div>
+            ${app.id === 'claude' ? `
+            <label class="claude-proxy-option${httpProxyAvailable ? '' : ' is-disabled'}">
+              <input type="checkbox" ${state.appHttpProxy[app.id] && httpProxyAvailable ? 'checked' : ''} ${httpProxyAvailable ? '' : 'disabled'} onchange="setClaudeHttpProxy('${app.id}', this.checked)">
+              <span class="claude-proxy-label">
+                Keep my Anthropic login and add Relay models
+                <span class="claude-proxy-tooltip" tabindex="0" role="img" aria-label="Launches Claude Code through a temporary local connection. Your normal Anthropic login and models continue to work, while compatible Relay AI favorites become available for model switching. The connection closes automatically when Claude Code exits." data-tooltip="Launches Claude Code through a temporary local connection. Your normal Anthropic login and models continue to work, while compatible Relay AI favorites become available for model switching. The connection closes automatically when Claude Code exits.">?</span>
+                ${httpProxyAvailable ? '' : '<span class="claude-proxy-unavailable">This selected model cannot be combined with your Anthropic login.</span>'}
+              </span>
+            </label>
+            ` : ''}
             ${app.type !== 'app' ? `
             <div class="launch-folder-control">
               <label style="font-size: 12px; font-weight: 500; color: var(--color-muted);">Launch folder 📁</label>
@@ -2012,6 +2035,9 @@ async function launchApp(appId) {
   } else if (selection.mode === 'model') {
     body.providerId = selection.providerId;
     body.modelId = selection.modelId;
+  }
+  if (appId === 'claude' && state.appHttpProxy[appId] && claudeHttpProxyAvailable(appId)) {
+    body.httpProxy = true;
   }
 
   const folder = (state.appLaunchFolders[appId] ?? '').trim();
@@ -2117,6 +2143,9 @@ function selectLaunchModel(appId, encodedProviderId, encodedModelId) {
   const favorite = isGeneralFavorite(providerId, modelId);
   const label = `${favorite ? '★ ' : ''}${model?.name || modelId}`;
   state.appSelections[appId] = { mode: 'model', providerId, modelId, label };
+  if (appId === 'claude' && !model?.claudeTransparentCompatible) {
+    state.appHttpProxy[appId] = false;
+  }
   state.appModelOpen = null;
   state.appModelFilters[appId] = '';
   renderApps();
@@ -2124,6 +2153,10 @@ function selectLaunchModel(appId, encodedProviderId, encodedModelId) {
 
 function setLaunchFolder(appId, value) {
   state.appLaunchFolders[appId] = value;
+}
+
+function setClaudeHttpProxy(appId, checked) {
+  state.appHttpProxy[appId] = claudeHttpProxyAvailable(appId) && Boolean(checked);
 }
 
 function selectLaunchFolder(appId, encodedFolder) {
@@ -2182,6 +2215,7 @@ window.selectLaunchDefault = selectLaunchDefault;
 window.selectLaunchFavorites = selectLaunchFavorites;
 window.selectLaunchModel = selectLaunchModel;
 window.setLaunchFolder = setLaunchFolder;
+window.setClaudeHttpProxy = setClaudeHttpProxy;
 window.selectLaunchFolder = selectLaunchFolder;
 window.browseLaunchFolder = browseLaunchFolder;
 window.saveAppPath = saveAppPath;

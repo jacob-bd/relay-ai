@@ -77,6 +77,7 @@ var package_default = {
     ai: "^6.0.197",
     "gitlab-ai-provider": "^6.8.0",
     "ipaddr.js": "^2.4.0",
+    "node-forge": "^1.4.0",
     open: "^11.0.0",
     picocolors: "^1.1.1",
     "smol-toml": "^1.6.1",
@@ -86,6 +87,7 @@ var package_default = {
   },
   devDependencies: {
     "@types/node": "^22.0.0",
+    "@types/node-forge": "^1.3.14",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^2.1.9",
     tsup: "^8.0.0",
@@ -1677,6 +1679,7 @@ function loadPreferences() {
     lastGeminiModel: config.lastGeminiModel,
     lastAntigravityProvider: config.lastAntigravityProvider,
     lastAntigravityModel: config.lastAntigravityModel,
+    lastClaudeTransparentMode: config.lastClaudeTransparentMode,
     recentModelsByProvider: config.recentModelsByProvider,
     favoriteModels: config.favoriteModels,
     antigravityCliFavoriteModels: config.antigravityCliFavoriteModels,
@@ -1697,6 +1700,7 @@ function savePreferences(prefs) {
   if (prefs.lastGeminiModel !== void 0) config.lastGeminiModel = prefs.lastGeminiModel;
   if (prefs.lastAntigravityProvider !== void 0) config.lastAntigravityProvider = prefs.lastAntigravityProvider;
   if (prefs.lastAntigravityModel !== void 0) config.lastAntigravityModel = prefs.lastAntigravityModel;
+  if (prefs.lastClaudeTransparentMode !== void 0) config.lastClaudeTransparentMode = prefs.lastClaudeTransparentMode;
   if (prefs.recentModelsByProvider !== void 0) config.recentModelsByProvider = prefs.recentModelsByProvider;
   if (prefs.favoriteModels !== void 0) config.favoriteModels = prefs.favoriteModels;
   if (prefs.antigravityCliFavoriteModels !== void 0) config.antigravityCliFavoriteModels = prefs.antigravityCliFavoriteModels;
@@ -1909,7 +1913,7 @@ function getInstalledClaudeVersion() {
   return "2.1.183";
 }
 function buildClaudeArgs(model, extraArgs) {
-  return ["--model", model, ...extraArgs];
+  return model ? ["--model", model, ...extraArgs] : [...extraArgs];
 }
 function launchClaude(env, model, extraArgs) {
   return new Promise((resolve) => {
@@ -1947,14 +1951,24 @@ function launchClaude(env, model, extraArgs) {
     const forward = (signal) => {
       child.kill(signal);
     };
-    process.once("SIGINT", () => forward("SIGINT"));
-    process.once("SIGTERM", () => forward("SIGTERM"));
-    child.on("exit", (code) => {
+    const onSigint = () => forward("SIGINT");
+    const onSigterm = () => forward("SIGTERM");
+    const onSighup = () => forward("SIGHUP");
+    const cleanup = () => {
       restore();
+      process.off("SIGINT", onSigint);
+      process.off("SIGTERM", onSigterm);
+      process.off("SIGHUP", onSighup);
+    };
+    process.once("SIGINT", onSigint);
+    process.once("SIGTERM", onSigterm);
+    process.once("SIGHUP", onSighup);
+    child.on("exit", (code) => {
+      cleanup();
       resolve(code ?? 0);
     });
     child.on("error", (err) => {
-      restore();
+      cleanup();
       resolve(1);
     });
   });
@@ -5814,6 +5828,54 @@ function startProxy(completionsUrl, modelId, debug = false, contextWindow, sdk, 
   }], clientModelId, debug);
 }
 
+// src/catalog.ts
+function localModelToRoute(lp, model) {
+  if (model.modelFormat === "anthropic" && !model.baseUrl) return null;
+  if (model.modelFormat === "openai" && !isSdkMigratedNpm(model.npm) && !model.completionsUrl) return null;
+  const upstreamUrl = model.modelFormat === "cloud-code" ? model.baseUrl ?? ANTIGRAVITY_BASE_URLS[0] : model.modelFormat === "anthropic" ? model.baseUrl : model.completionsUrl;
+  return {
+    aliasId: claudeCodeClientModelId(aliasModelId(model.id, lp.id), model.contextWindow),
+    realModelId: model.upstreamModelId,
+    displayName: `${model.name || model.id} (${lp.name})`,
+    upstreamUrl: upstreamUrl ?? "",
+    apiKey: lp.apiKey,
+    modelFormat: model.modelFormat,
+    contextWindow: model.contextWindow,
+    npm: model.npm,
+    baseURL: model.apiBaseUrl,
+    providerId: lp.id,
+    authType: lp.authType,
+    oauthAccountId: lp.oauthAccountId,
+    providerData: lp.providerData,
+    headers: lp.headers,
+    supportedParameters: model.supportedParameters,
+    reasoning: model.reasoning,
+    interleavedReasoningField: model.interleavedReasoningField,
+    useResponsesLite: model.useResponsesLite,
+    preferWebSockets: model.preferWebSockets
+  };
+}
+function makeRouteResolver(localProviders) {
+  return (providerId, modelId) => {
+    const provider = localProviders?.find((lp) => lp.id === providerId);
+    const model = provider?.models.find((m) => m.id === modelId);
+    return provider && model ? localModelToRoute(provider, model) ?? void 0 : void 0;
+  };
+}
+function buildCatalogRoutes(startingRoute, favorites, resolveRoute, max = MAX_MODEL_CATALOG) {
+  const droppedFavorites = [];
+  const tail = favorites.map((fav) => {
+    const route = resolveRoute(fav.providerId, fav.modelId);
+    if (!route) droppedFavorites.push(fav);
+    return route;
+  }).filter((route) => route !== void 0);
+  const routes = [
+    startingRoute,
+    ...tail.filter((route) => route.aliasId !== startingRoute.aliasId)
+  ].slice(0, max);
+  return { routes, droppedFavorites };
+}
+
 // src/data/model-incompatible.json
 var model_incompatible_default = {
   schema_version: "1",
@@ -8235,6 +8297,52 @@ function favoriteProviderDisplayName(provider) {
   return provider.name;
 }
 
+// src/http-proxy/routes.ts
+var HTTP_PROXY_MODEL_PREFIX = "relay:";
+function httpProxyModelId(providerId, modelId) {
+  return `${HTTP_PROXY_MODEL_PREFIX}${providerId}:${modelId}`;
+}
+function supportsClaudeTransparentMode(model) {
+  return model.modelFormat === "openai" && isSdkMigratedNpm(model.npm);
+}
+function buildHttpProxyRoutes(providers, favorites, selected, max = MAX_MODEL_CATALOG) {
+  const routes = [];
+  const unavailable = [];
+  const unsupported = [];
+  const seen = /* @__PURE__ */ new Set();
+  const requested = selected ? [selected, ...favorites] : favorites;
+  for (const item of requested) {
+    const requestKey = `${item.providerId}\0${item.modelId}`;
+    if (seen.has(requestKey)) continue;
+    seen.add(requestKey);
+    if (routes.length >= max) break;
+    const provider = providers.find((candidate) => candidate.id === item.providerId);
+    const model = provider?.models.find((candidate) => candidate.id === item.modelId);
+    if (!provider || !model) {
+      unavailable.push(item);
+      continue;
+    }
+    if (!supportsClaudeTransparentMode(model)) {
+      unsupported.push(item);
+      continue;
+    }
+    const route = localModelToRoute(provider, model);
+    if (!route || !route.apiKey.trim()) {
+      unavailable.push(item);
+      continue;
+    }
+    routes.push({
+      ...route,
+      aliasId: claudeCodeClientModelId(
+        httpProxyModelId(provider.id, model.id),
+        model.contextWindow
+      ),
+      displayName: `${model.name || model.id} (${provider.name})`
+    });
+  }
+  return { routes, unavailable, unsupported };
+}
+
 // src/opencode-serve.ts
 import { execSync as execSync2, spawn as spawn2 } from "child_process";
 import { existsSync as existsSync10 } from "fs";
@@ -10349,6 +10457,7 @@ async function launchOrRestartClaudeApp(prompt = "Restart Claude Desktop to appl
 
 export {
   BACKENDS,
+  CONFLICTING_ENV_VARS,
   MAX_MODEL_CATALOG,
   VERTEX_ANTHROPIC_NPM,
   VERSION,
@@ -10358,7 +10467,6 @@ export {
   buildClaudeCodeBillingSystemLine,
   selectBetaFlags,
   injectClaudeIdentity,
-  isSdkMigratedNpm,
   maxToolsForNpm,
   createLanguageModel,
   getReasoningCapabilities,
@@ -10507,6 +10615,8 @@ export {
   aliasModelId,
   startProxyCatalog,
   startProxy,
+  makeRouteResolver,
+  buildCatalogRoutes,
   cachedModelToLocal,
   fetchProviderCatalog,
   providersForPicker,
@@ -10550,6 +10660,9 @@ export {
   findClaudeApp,
   isClaudeAppRunning,
   quitClaudeAppGracefully,
-  launchOrRestartClaudeApp
+  launchOrRestartClaudeApp,
+  httpProxyModelId,
+  supportsClaudeTransparentMode,
+  buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-YM6G7BHE.js.map
+//# sourceMappingURL=chunk-OMCB2VBZ.js.map
