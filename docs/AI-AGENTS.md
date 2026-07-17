@@ -37,6 +37,7 @@ relay-ai consumes these flags **before** spawning Claude or Codex. They are **no
 | `--provider <id>` | Registry provider id (`groq`, `google`, `zen`, `go`, …) |
 | `--model <id>` | Model id from that provider's cache |
 | `--model <provider>__<model-id>` | Slug form — provider embedded in model string |
+| `--http-proxy` | Claude only: keep native Anthropic auth/models and add the selected Relay model plus compatible favorites |
 
 ### When the wizard is skipped
 
@@ -57,11 +58,16 @@ relay-ai consumes these flags **before** spawning Claude or Codex. They are **no
 
 In CI / headless loops, **always pass `--provider` and `--model`** — do not rely on saved prefs alone.
 
+Exception: `relay-ai claude --http-proxy` can intentionally omit both flags when the goal is to start on native Claude and expose compatible saved favorites. If the environment already uses a non-local `HTTP_PROXY`, `HTTPS_PROXY`, or `ALL_PROXY`, this mode exits instead of replacing it; proxy chaining is not supported yet.
+
 ### Examples
 
 ```bash
 # Claude — explicit boot
 relay-ai claude --provider groq --model llama-3.3-70b-versatile -p "Summarize README.md"
+
+# Claude — use Kimi alongside the normal Anthropic models
+relay-ai claude --http-proxy --provider moonshot --model kimi-k3 -p "Review this diff"
 
 # Claude — slug
 relay-ai claude --model zen__deepseek-v4-flash-free -p "Review this diff"
@@ -208,7 +214,7 @@ for model in gemini-2.5-flash gemini-2.5-pro; do
 done
 ```
 
-Boot flags use **single-model launch** (favorites catalog is skipped) — better for one-shot agent jobs. Use `relay-ai models` + interactive launch for mid-session `/model` switching.
+By default, boot flags use **single-model Relay-only launch** (favorites catalog is skipped) — better for one-shot agent jobs. Claude's `--http-proxy` flag is the exception: it adds the selected compatible model and compatible saved favorites to the mixed Anthropic + Relay session.
 
 ---
 

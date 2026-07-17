@@ -186,6 +186,7 @@ relay-ai ui
 Opens a browser-based dashboard on a random local port. From the UI you can:
 
 - **Launch any supported tool** — app cards for Claude Code CLI, Codex CLI, Gemini CLI, Antigravity CLI, Antigravity App, Antigravity IDE, Claude Code Desktop, and the ChatGPT Desktop app (Codex mode). Select a provider and model in the card, then click **Launch** — a native terminal opens with the selection pre-wired. No second picker in the terminal.
+- **Keep Claude Code's Anthropic login** — on the Claude Code CLI card, check **Keep my Anthropic login and add Relay models** to keep your normal Claude models while adding the selected Relay model and compatible favorites. This option is not shown for Claude Desktop.
 - **Manage General Favorites** — the sidebar shows your saved favorite models with a slot indicator (Slots used X/20). Favorites launch through all supported agents.
 - **Manage Antigravity Favorites** — separate favorites panel for Antigravity sessions.
 - **Manage providers** — add providers from templates, delete providers, and refresh model lists inline, all without leaving the browser.
@@ -201,6 +202,18 @@ relay-ai claude
 
 First run: pick a provider from your registry (or complete the inline setup wizard). If you've added OpenCode Zen/Go, those appear alongside registry providers like Groq, Nvidia, or DeepSeek.
 
+After you choose a compatible Relay model, the wizard asks whether you want to keep your normal Claude models available too. Choose **Yes** to use the Relay model alongside your existing Anthropic login, or **No** for the existing Relay-only launch.
+
+To skip that question, use `--http-proxy`. A selected model does not need to be a favorite:
+
+```bash
+relay-ai claude --http-proxy --provider moonshot --model kimi-k3
+```
+
+Using `--http-proxy` without a provider/model keeps native Claude as the starting model and adds any compatible saved favorites. Relay models cannot be inserted into Claude Code's built-in model picker, so the terminal prints the exact `/model relay:<provider>:<model>` commands you can use to switch. The temporary local connection is password-protected, uses a per-session certificate, and closes automatically when Claude Code exits. Existing non-local network or corporate proxy settings are rejected with a clear error because proxy chaining is not supported yet.
+
+> **Compatibility:** This mixed Anthropic + Relay mode currently supports Claude Code connected directly to Anthropic. It does not preserve Google Vertex AI configuration. Vertex users should continue using their normal Claude Code launch or Relay-only mode.
+
 #### Favorite models and mid-session switching
 
 Save the models you bounce between:
@@ -213,6 +226,8 @@ Add up to 20 favorites from Zen, Go, or any OpenCode-configured provider. When y
 
 No favorites? Launch works like before: single model, no switch menu. `--dry-run` ignores saved favorites so you can preview a single-model launch.
 
+That built-in favorites catalog applies to **Relay-only mode** (choose **No** when asked whether to keep your normal Claude models). In mixed Anthropic + Relay mode, compatible favorites are available through the printed `/model relay:<provider>:<model>` commands instead; Claude Code cannot add them to its built-in picker.
+
 #### `relay-ai claude` options
 
 | Flag | Description |
@@ -220,6 +235,7 @@ No favorites? Launch works like before: single model, no switch menu. `--dry-run
 | `--dry-run` | Run the full wizard but preview the launch command instead of executing |
 | `--setup` | Reminder to use `relay-ai providers` for provider setup |
 | `--trace` | Write debug logs to `~/.relay-ai/logs/` and show errors on exit |
+| `--http-proxy` | Keep the normal Anthropic login/models and add the selected model plus compatible favorites |
 | `--help` | Show command help |
 | `--version` | Show version |
 
@@ -227,6 +243,7 @@ No favorites? Launch works like before: single model, no switch menu. `--dry-run
 relay-ai claude --dry-run
 relay-ai claude --setup
 relay-ai claude --trace
+relay-ai claude --http-proxy --provider moonshot --model kimi-k3
 ```
 
 Claude Code flags and session IDs pass through unchanged:
@@ -490,6 +507,8 @@ When you launch, relay-ai builds a clean child environment:
 3. Passes `--model <selected>` to Claude Code as a backup override
 
 When Claude Code exits (normal exit, Ctrl+C, terminal close), your shell is unchanged. No cleanup step. No restore needed.
+
+In `--http-proxy` mode, relay-ai does not replace your Anthropic credential. It removes stale third-party endpoint/cloud overrides from the child process, sets a password-protected loopback proxy plus a temporary CA bundle, and forwards native Anthropic requests—including their original auth and body—unchanged. Only the selected Relay model and compatible favorites are allowed to use registry provider credentials.
 
 **Caveat: Claude Code persists the model.** relay-ai doesn't edit `~/.claude/settings.json`, but Claude Code saves the model you launched with (via `--model` and `ANTHROPIC_MODEL`). A later bare `claude` launch may still show that model, e.g. `anthropic-opencode-go__deepseek-v4-flash` from a prior relay-ai session. To get back to a first-party default, run `claude --model sonnet` (or your preferred Claude model), or remove the `"model"` key from `~/.claude/settings.json`. If you used the favorites switch menu, Claude Code may also cache the gateway catalog at `~/.claude/cache/gateway-models.json`. Delete that file if `/model` shows stale entries from a dead proxy.
 

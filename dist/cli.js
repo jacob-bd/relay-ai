@@ -4,6 +4,7 @@ import {
   BACKENDS,
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
+  CONFLICTING_ENV_VARS,
   GLOBAL_OPENCODE_KEYRING_ACCOUNT,
   MAX_MODEL_CATALOG,
   PREVIEW_PROXY_PORT,
@@ -19,9 +20,11 @@ import {
   buildAntigravityChildEnv,
   buildAppCatalogFile,
   buildCatalogFile,
+  buildCatalogRoutes,
   buildChildEnv,
   buildClaudeCodeBillingSystemLine,
   buildCodexAppRootConfig,
+  buildHttpProxyRoutes,
   buildImportProviderList,
   buildVertexRuntimeConfig,
   cachedModelToLocal,
@@ -72,13 +75,13 @@ import {
   getReasoningCapabilities,
   grabRoundTripSignature,
   hasApplicationDefaultCredentials,
+  httpProxyModelId,
   injectClaudeIdentity,
   isClaudeAppRunning,
   isCodexAppRunning,
   isFreeStatus,
   isLikelyPlaceholderKey,
   isOAuthImportProvider,
-  isSdkMigratedNpm,
   isSecretServiceAvailable,
   isValidProviderId,
   launchClaude,
@@ -92,6 +95,7 @@ import {
   logActiveModel,
   logConnected,
   logProxy,
+  makeRouteResolver,
   makeTraceLogger,
   maxToolsForNpm,
   migrateGlobalOpencodeCredential,
@@ -157,6 +161,7 @@ import {
   startProxy,
   startProxyCatalog,
   startServer,
+  supportsClaudeTransparentMode,
   supportsNativeOAuth,
   syntheticTemplate,
   thinkingProviderOptions,
@@ -166,7 +171,7 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-YM6G7BHE.js";
+} from "./chunk-OMCB2VBZ.js";
 import {
   filterTemplates,
   init_provider_templates,
@@ -651,54 +656,6 @@ async function runFirstRunWizard(trace = false) {
   return "continue";
 }
 
-// src/catalog.ts
-function localModelToRoute(lp, model) {
-  if (model.modelFormat === "anthropic" && !model.baseUrl) return null;
-  if (model.modelFormat === "openai" && !isSdkMigratedNpm(model.npm) && !model.completionsUrl) return null;
-  const upstreamUrl = model.modelFormat === "cloud-code" ? model.baseUrl ?? ANTIGRAVITY_BASE_URLS[0] : model.modelFormat === "anthropic" ? model.baseUrl : model.completionsUrl;
-  return {
-    aliasId: claudeCodeClientModelId(aliasModelId(model.id, lp.id), model.contextWindow),
-    realModelId: model.upstreamModelId,
-    displayName: `${model.name || model.id} (${lp.name})`,
-    upstreamUrl: upstreamUrl ?? "",
-    apiKey: lp.apiKey,
-    modelFormat: model.modelFormat,
-    contextWindow: model.contextWindow,
-    npm: model.npm,
-    baseURL: model.apiBaseUrl,
-    providerId: lp.id,
-    authType: lp.authType,
-    oauthAccountId: lp.oauthAccountId,
-    providerData: lp.providerData,
-    headers: lp.headers,
-    supportedParameters: model.supportedParameters,
-    reasoning: model.reasoning,
-    interleavedReasoningField: model.interleavedReasoningField,
-    useResponsesLite: model.useResponsesLite,
-    preferWebSockets: model.preferWebSockets
-  };
-}
-function makeRouteResolver(localProviders) {
-  return (providerId, modelId) => {
-    const provider = localProviders?.find((lp) => lp.id === providerId);
-    const model = provider?.models.find((m) => m.id === modelId);
-    return provider && model ? localModelToRoute(provider, model) ?? void 0 : void 0;
-  };
-}
-function buildCatalogRoutes(startingRoute, favorites, resolveRoute, max = MAX_MODEL_CATALOG) {
-  const droppedFavorites = [];
-  const tail = favorites.map((fav) => {
-    const route = resolveRoute(fav.providerId, fav.modelId);
-    if (!route) droppedFavorites.push(fav);
-    return route;
-  }).filter((route) => route !== void 0);
-  const routes = [
-    startingRoute,
-    ...tail.filter((route) => route.aliasId !== startingRoute.aliasId)
-  ].slice(0, max);
-  return { routes, droppedFavorites };
-}
-
 // src/prompts.ts
 import * as p3 from "@clack/prompts";
 import pc2 from "picocolors";
@@ -736,6 +693,12 @@ function scoreModelSearch(query, fields) {
 }
 
 // src/prompts.ts
+function claudeTransparentModeOptions(modelLabel) {
+  return [
+    { value: true, label: `Yes \u2014 Use ${modelLabel} alongside Anthropic models` },
+    { value: false, label: `No \u2014 Use only ${modelLabel} through Relay AI` }
+  ];
+}
 var BROWSE_ALL = "__browse_all__";
 var MAX_RECENT = 3;
 var MODEL_SEARCH_THRESHOLD = 25;
@@ -3085,7 +3048,7 @@ async function startCodexProxy(routes, options = {}) {
       headers: route.headers
     }));
   }
-  return new Promise((resolve, reject2) => {
+  return new Promise((resolve2, reject2) => {
     const log14 = debug ? makeTraceLogger(getCodexProxyDebugLogPath()) : () => {
     };
     if (debug) resetCodexBodyDumpLog();
@@ -3583,7 +3546,7 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
         reject2(new Error("Failed to bind codex proxy"));
         return;
       }
-      resolve({
+      resolve2({
         port: addr.port,
         close: () => {
           process.off("unhandledRejection", onRejection);
@@ -3967,7 +3930,7 @@ function buildCodexChildEnv(route, proxyPort) {
   return env;
 }
 function launchCodex(modelId, env, extraArgs) {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     const codexPath = findCodexBinary();
     const args = ["--profile", profileName(), "-m", modelId, ...ensureCodexSandboxArgs(extraArgs)];
     const child = spawn(codexPath, args, {
@@ -3980,7 +3943,7 @@ function launchCodex(modelId, env, extraArgs) {
     };
     process.once("SIGINT", () => forward("SIGINT"));
     process.once("SIGTERM", () => forward("SIGTERM"));
-    child.on("exit", (code) => resolve(code ?? 0));
+    child.on("exit", (code) => resolve2(code ?? 0));
   });
 }
 
@@ -5234,7 +5197,7 @@ function prepareGeminiChildEnv(proxyPort, proxyToken) {
   };
 }
 function launchGemini(geminiPath, modelId, env, extraArgs) {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     const args = ["-m", modelId, ...extraArgs];
     const child = spawn2(geminiPath, args, {
       stdio: "inherit",
@@ -5248,7 +5211,7 @@ function launchGemini(geminiPath, modelId, env, extraArgs) {
     const done = (code) => {
       process.off("SIGINT", onSigInt);
       process.off("SIGTERM", onSigTerm);
-      resolve(code);
+      resolve2(code);
     };
     child.on("error", () => done(1));
     child.on("exit", (code) => done(code ?? 0));
@@ -5859,7 +5822,7 @@ ${JSON.stringify(response, null, 2)}`);
     process.off("unhandledRejection", onRejection);
     process.off("uncaughtException", onException);
   };
-  return new Promise((resolve, reject2) => {
+  return new Promise((resolve2, reject2) => {
     server.on("error", (err) => {
       cleanup();
       reject2(err);
@@ -5871,7 +5834,7 @@ ${JSON.stringify(response, null, 2)}`);
         reject2(new Error("Failed to bind gemini proxy"));
         return;
       }
-      resolve({
+      resolve2({
         port: addr.port,
         token: proxyToken,
         close: () => {
@@ -8237,13 +8200,13 @@ async function startCloudCodeGateway(routes, opts = {}) {
       respondJson(res, 400, { error: { code: 400, message: `Failed to read request: ${err instanceof Error ? err.message : String(err)}` } });
     });
   });
-  return new Promise((resolve, reject2) => {
+  return new Promise((resolve2, reject2) => {
     server.on("error", reject2);
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address();
       if (addr && typeof addr === "object") {
         const port = addr.port;
-        resolve({
+        resolve2({
           port,
           url: `http://127.0.0.1:${port}`,
           close: () => new Promise((res, rej) => {
@@ -8741,11 +8704,11 @@ function readAntigravityCliVersion(binaryPath = findAntigravityCliBinary() ?? vo
   }
 }
 function launchAntigravityCli(env, extraArgs) {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     const binaryPath = findAntigravityCliBinary();
     if (!binaryPath) {
       console.error('Antigravity CLI binary "agy" not found.');
-      resolve(127);
+      resolve2(127);
       return;
     }
     const child = spawn3(binaryPath, extraArgs, {
@@ -8766,12 +8729,12 @@ function launchAntigravityCli(env, extraArgs) {
     process.once("SIGTERM", handleSIGTERM);
     child.on("exit", (code) => {
       cleanup();
-      resolve(code ?? 1);
+      resolve2(code ?? 1);
     });
     child.on("error", (err) => {
       cleanup();
       console.error(`Failed to launch Antigravity CLI: ${err.message}`);
-      resolve(1);
+      resolve2(1);
     });
   });
 }
@@ -8815,7 +8778,7 @@ function prepareIdeProfile(profileDir, gatewayUrl) {
 
 // src/antigravity/launch-ide.ts
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
 function runPowerShell(script) {
   return execSync3(`powershell.exe -NoProfile -Command ${JSON.stringify(script)}`, {
@@ -8962,12 +8925,12 @@ function findAntigravityIdeBinary() {
   return null;
 }
 function launchAntigravityApp(env, profileDir, gatewayUrl, extraArgs) {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     let settled = false;
     const settle = (code) => {
       if (settled) return;
       settled = true;
-      resolve(code);
+      resolve2(code);
     };
     const binaryPath = findAntigravityAppBinary();
     if (!binaryPath) {
@@ -8998,12 +8961,12 @@ function launchAntigravityApp(env, profileDir, gatewayUrl, extraArgs) {
   });
 }
 function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs) {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     const binaryPath = findAntigravityIdeBinary();
     if (!binaryPath) {
       console.error('Antigravity IDE app bundle not found at "/Applications/Antigravity IDE.app".');
       console.error("Please make sure Antigravity IDE is installed on your Mac.");
-      resolve(127);
+      resolve2(127);
       return;
     }
     prepareIdeProfile(profileDir, gatewayUrl);
@@ -9018,11 +8981,11 @@ function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs) {
       env
     });
     child.on("exit", (code) => {
-      resolve(code ?? 1);
+      resolve2(code ?? 1);
     });
     child.on("error", (err) => {
       console.error(`Failed to launch Antigravity IDE: ${err.message}`);
-      resolve(1);
+      resolve2(1);
     });
   });
 }
@@ -9215,7 +9178,7 @@ async function resolveAndBuildRoutes(provider, model, allProviders, prefs, opts)
   return { routes: result.routes, apiKey: result.apiKey };
 }
 function waitForShutdown() {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     const cleanup = () => {
       process.removeListener("SIGINT", onSigint);
       process.removeListener("SIGTERM", onSigterm);
@@ -9223,15 +9186,15 @@ function waitForShutdown() {
     };
     const onSigint = () => {
       cleanup();
-      resolve("sigint");
+      resolve2("sigint");
     };
     const onSigterm = () => {
       cleanup();
-      resolve("sigterm");
+      resolve2("sigterm");
     };
     const onSighup = () => {
       cleanup();
-      resolve("sighup");
+      resolve2("sighup");
     };
     process.once("SIGINT", onSigint);
     process.once("SIGTERM", onSigterm);
@@ -9849,7 +9812,7 @@ function checkAppSessionLock(isTty, env = process.env) {
   return { ok: true };
 }
 function waitForShutdown2() {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     const cleanup = () => {
       process.removeListener("SIGINT", onSigint);
       process.removeListener("SIGTERM", onSigterm);
@@ -9857,15 +9820,15 @@ function waitForShutdown2() {
     };
     const onSigint = () => {
       cleanup();
-      resolve("sigint");
+      resolve2("sigint");
     };
     const onSigterm = () => {
       cleanup();
-      resolve("sigterm");
+      resolve2("sigterm");
     };
     const onSighup = () => {
       cleanup();
-      resolve("sighup");
+      resolve2("sighup");
     };
     process.once("SIGINT", onSigint);
     process.once("SIGTERM", onSigterm);
@@ -10567,18 +10530,18 @@ function recoverSession() {
   }
 }
 function waitForShutdown3() {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     const cleanup = () => {
       process.removeListener("SIGINT", onSigint);
       process.removeListener("SIGTERM", onSigterm);
     };
     const onSigint = () => {
       cleanup();
-      resolve("sigint");
+      resolve2("sigint");
     };
     const onSigterm = () => {
       cleanup();
-      resolve("sigterm");
+      resolve2("sigterm");
     };
     process.once("SIGINT", onSigint);
     process.once("SIGTERM", onSigterm);
@@ -11131,6 +11094,8 @@ FAVORITES / MID-SESSION SWITCHING:
   When favorites exist, interactive claude/codex/gemini launches expose /model switching.
   Boot flags (--provider + --model) or print/exec/-p mode use SINGLE-MODEL launch
   (favorites catalog is skipped \u2014 better for agent one-shots).
+  Exception: Claude --http-proxy combines the selected compatible model with
+  compatible saved favorites while keeping native Anthropic models available.
 
 ================================================================================
 COMMANDS
@@ -11149,6 +11114,7 @@ CLAUDE CODE
   Relay options:
     --provider <id>    Boot provider (skip wizard with --model)
     --model <id>       Boot model id or provider__model slug
+    --http-proxy      Keep native Anthropic auth/models and add selected/favorite Relay models
     --dry-run          Preview launch, do not start Claude
     --trace            Debug logs in ~/.relay-ai/logs/
     --setup            Hint to use relay-ai providers
@@ -11162,6 +11128,7 @@ CLAUDE CODE
   Examples:
     relay-ai claude
     relay-ai claude --provider anthropic --model claude-sonnet-4-6 -p "review file.ts"
+    relay-ai claude --http-proxy --provider moonshot --model kimi-k3 -p "review file.ts"
     relay-ai claude --dry-run --provider groq --model llama-3.3-70b-versatile
 
 GOOGLE GEMINI CLI
@@ -11446,8 +11413,720 @@ function printAiInstallResult(result) {
   return result.failed.length > 0 ? 1 : 0;
 }
 
+// src/http-proxy/env.ts
+var PROXY_ENV_NAMES = [
+  "HTTPS_PROXY",
+  "https_proxy",
+  "HTTP_PROXY",
+  "http_proxy",
+  "ALL_PROXY",
+  "all_proxy"
+];
+var ANTHROPIC_PROXY_HOST = "api.anthropic.com";
+function unsupportedInheritedProxyError(proxy) {
+  return new Error(
+    `An existing ${proxy.name} network proxy was detected. Chaining Relay AI through an existing network proxy is not yet supported.`
+  );
+}
+function noProxyEntryBypassesAnthropic(rawEntry) {
+  let entry = rawEntry.trim().toLowerCase();
+  if (!entry) return false;
+  if (entry === "*") return true;
+  if (entry.includes("://")) {
+    try {
+      entry = new URL(entry).hostname;
+    } catch {
+      return false;
+    }
+  } else if (entry.startsWith("[")) {
+    entry = entry.slice(1, entry.indexOf("]") === -1 ? void 0 : entry.indexOf("]"));
+  } else {
+    entry = entry.replace(/:\d+$/, "");
+  }
+  if (entry.startsWith("*")) return ANTHROPIC_PROXY_HOST.endsWith(entry.slice(1));
+  if (entry.startsWith(".")) return ANTHROPIC_PROXY_HOST.endsWith(entry);
+  return entry === ANTHROPIC_PROXY_HOST || ANTHROPIC_PROXY_HOST.endsWith(`.${entry}`);
+}
+function sanitizeNoProxy(value) {
+  if (value === void 0) return void 0;
+  const safeEntries = value.split(",").map((entry) => entry.trim()).filter((entry) => entry && !noProxyEntryBypassesAnthropic(entry));
+  return safeEntries.length > 0 ? safeEntries.join(",") : void 0;
+}
+function isLoopbackHost(hostname) {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  return normalized === "localhost" || normalized === "::1" || /^127(?:\.\d{1,3}){3}$/.test(normalized);
+}
+function findUnsupportedInheritedProxy(env) {
+  for (const name of PROXY_ENV_NAMES) {
+    const value = env[name]?.trim();
+    if (!value) continue;
+    try {
+      const parsed = new URL(value);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:" || !isLoopbackHost(parsed.hostname)) {
+        return { name, value };
+      }
+    } catch {
+      return { name, value };
+    }
+  }
+  return void 0;
+}
+function buildHttpProxyChildEnv(baseEnv, proxyUrl, caCertPath) {
+  const unsupported = findUnsupportedInheritedProxy(baseEnv);
+  if (unsupported) {
+    throw unsupportedInheritedProxyError(unsupported);
+  }
+  const env = { ...baseEnv };
+  env["HTTPS_PROXY"] = proxyUrl;
+  env["HTTP_PROXY"] = proxyUrl;
+  env["https_proxy"] = proxyUrl;
+  env["http_proxy"] = proxyUrl;
+  delete env["ALL_PROXY"];
+  delete env["all_proxy"];
+  const noProxy = sanitizeNoProxy(env["NO_PROXY"]);
+  const lowerNoProxy = sanitizeNoProxy(env["no_proxy"]);
+  if (noProxy) env["NO_PROXY"] = noProxy;
+  else delete env["NO_PROXY"];
+  if (lowerNoProxy) env["no_proxy"] = lowerNoProxy;
+  else delete env["no_proxy"];
+  env["NODE_EXTRA_CA_CERTS"] = caCertPath;
+  for (const name of CONFLICTING_ENV_VARS) {
+    if (name === "ANTHROPIC_API_KEY" || name === "ANTHROPIC_AUTH_TOKEN") continue;
+    delete env[name];
+  }
+  return env;
+}
+
+// src/http-proxy/ca.ts
+import { randomBytes, randomUUID as randomUUID3 } from "crypto";
+import {
+  chmodSync,
+  existsSync as existsSync12,
+  mkdirSync as mkdirSync7,
+  readFileSync as readFileSync8,
+  readdirSync as readdirSync3,
+  rmSync as rmSync6,
+  statSync as statSync2,
+  writeFileSync as writeFileSync7
+} from "fs";
+import { dirname as dirname4, join as join13, resolve } from "path";
+import forge from "node-forge";
+var SESSION_ROOT = "http-proxy-sessions";
+var OWNER_FILE = "owner.pid";
+function serialNumber() {
+  const bytes = randomBytes(16);
+  bytes[0] &= 127;
+  return bytes.toString("hex");
+}
+function processIsRunning(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+function cleanupStaleHttpProxySessions(appHome = getAppHome()) {
+  const root = join13(appHome, SESSION_ROOT);
+  if (!existsSync12(root)) return;
+  for (const name of readdirSync3(root)) {
+    const sessionDir = join13(root, name);
+    try {
+      if (!statSync2(sessionDir).isDirectory()) continue;
+      const pid = Number(readFileSync8(join13(sessionDir, OWNER_FILE), "utf8").trim());
+      if (!processIsRunning(pid)) rmSync6(sessionDir, { recursive: true, force: true });
+    } catch {
+      rmSync6(sessionDir, { recursive: true, force: true });
+    }
+  }
+}
+function createHttpProxyCertificates(appHome = getAppHome()) {
+  cleanupStaleHttpProxySessions(appHome);
+  const root = join13(appHome, SESSION_ROOT);
+  mkdirSync7(root, { recursive: true, mode: 448 });
+  chmodSync(root, 448);
+  const sessionDir = join13(root, randomUUID3());
+  mkdirSync7(sessionDir, { mode: 448 });
+  chmodSync(sessionDir, 448);
+  writeFileSync7(join13(sessionDir, OWNER_FILE), `${process.pid}
+`, { mode: 384 });
+  try {
+    const caKeys = forge.pki.rsa.generateKeyPair(2048);
+    const ca = forge.pki.createCertificate();
+    ca.publicKey = caKeys.publicKey;
+    ca.serialNumber = serialNumber();
+    ca.validity.notBefore = new Date(Date.now() - 6e4);
+    ca.validity.notAfter = new Date(Date.now() + 48 * 60 * 60 * 1e3);
+    const issuer = [{ name: "commonName", value: `Relay AI session ${process.pid}` }];
+    ca.setSubject(issuer);
+    ca.setIssuer(issuer);
+    ca.setExtensions([
+      { name: "basicConstraints", cA: true, critical: true },
+      { name: "keyUsage", keyCertSign: true, cRLSign: true, digitalSignature: true, critical: true },
+      { name: "subjectKeyIdentifier" }
+    ]);
+    ca.sign(caKeys.privateKey, forge.md.sha256.create());
+    const serverKeys = forge.pki.rsa.generateKeyPair(2048);
+    const server = forge.pki.createCertificate();
+    server.publicKey = serverKeys.publicKey;
+    server.serialNumber = serialNumber();
+    server.validity.notBefore = new Date(Date.now() - 6e4);
+    server.validity.notAfter = new Date(Date.now() + 48 * 60 * 60 * 1e3);
+    server.setSubject([{ name: "commonName", value: "api.anthropic.com" }]);
+    server.setIssuer(ca.subject.attributes);
+    server.setExtensions([
+      { name: "basicConstraints", cA: false, critical: true },
+      { name: "keyUsage", digitalSignature: true, keyEncipherment: true, critical: true },
+      { name: "extKeyUsage", serverAuth: true },
+      { name: "subjectAltName", altNames: [{ type: 2, value: "api.anthropic.com" }] },
+      { name: "subjectKeyIdentifier" }
+    ]);
+    server.sign(caKeys.privateKey, forge.md.sha256.create());
+    const caCert = forge.pki.certificateToPem(ca);
+    const caCertPath = join13(sessionDir, "relay-ai-ca.pem");
+    writeFileSync7(caCertPath, caCert, { encoding: "utf8", mode: 384 });
+    chmodSync(caCertPath, 384);
+    let cleaned = false;
+    const cleanupOnExit = () => {
+      if (cleaned) return;
+      cleaned = true;
+      rmSync6(sessionDir, { recursive: true, force: true });
+    };
+    const cleanupOnSighup = () => {
+      cleanupOnExit();
+      process.off("SIGHUP", cleanupOnSighup);
+      try {
+        process.kill(process.pid, "SIGHUP");
+      } catch {
+        process.exit(129);
+      }
+    };
+    const cleanup = () => {
+      process.off("exit", cleanupOnExit);
+      process.off("SIGHUP", cleanupOnSighup);
+      cleanupOnExit();
+    };
+    process.once("exit", cleanupOnExit);
+    process.once("SIGHUP", cleanupOnSighup);
+    return {
+      sessionDir,
+      caCertPath,
+      caCert,
+      serverCert: forge.pki.certificateToPem(server),
+      serverKey: forge.pki.privateKeyToPem(serverKeys.privateKey),
+      cleanup
+    };
+  } catch (error) {
+    rmSync6(sessionDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+function createHttpProxyCaBundle(relayCaCertPath, additionalCaCertPath) {
+  if (!additionalCaCertPath?.trim()) return relayCaCertPath;
+  if (resolve(additionalCaCertPath) === resolve(relayCaCertPath)) {
+    return relayCaCertPath;
+  }
+  const relayCa = readFileSync8(relayCaCertPath, "utf8").trimEnd();
+  const additionalCa = readFileSync8(additionalCaCertPath, "utf8").trim();
+  if (!additionalCa) return relayCaCertPath;
+  const combinedPath = join13(dirname4(relayCaCertPath), "combined-ca.pem");
+  writeFileSync7(
+    combinedPath,
+    `${relayCa}
+${additionalCa}
+`,
+    { encoding: "utf8", mode: 384 }
+  );
+  chmodSync(combinedPath, 384);
+  return combinedPath;
+}
+
+// src/http-proxy/server.ts
+import * as http2 from "http";
+import * as https from "https";
+import * as net from "net";
+import { randomBytes as randomBytes2, timingSafeEqual } from "crypto";
+import { URL as URL2 } from "url";
+
+// src/anthropic-endpoints.ts
+var MESSAGE_PATH = "/v1/messages";
+var COUNT_TOKENS_PATH = "/v1/messages/count_tokens";
+function anthropicMessagesEndpoint(url) {
+  if (!url) return null;
+  try {
+    const pathname = new URL(url, "http://relay.local").pathname;
+    if (pathname === MESSAGE_PATH) return "messages";
+    if (pathname === COUNT_TOKENS_PATH) return "count_tokens";
+  } catch {
+  }
+  return null;
+}
+var NON_CONTEXT_FIELDS = /* @__PURE__ */ new Set([
+  "model",
+  "stream",
+  "max_tokens",
+  "temperature",
+  "top_p",
+  "top_k",
+  "stop_sequences",
+  "metadata"
+]);
+function estimateAnthropicInputTokens(body) {
+  const contextBody = Object.fromEntries(
+    Object.entries(body).filter(([key]) => !NON_CONTEXT_FIELDS.has(key))
+  );
+  const serialized = JSON.stringify(contextBody);
+  if (!serialized || serialized === "{}") return 0;
+  return Math.max(1, Math.ceil(Buffer.byteLength(serialized, "utf8") / 4));
+}
+
+// src/http-proxy/server.ts
+var ANTHROPIC_HOST = "api.anthropic.com";
+var MAX_BODY_BYTES = 50 * 1024 * 1024;
+var PROXY_USERNAME = "relay-ai";
+function authorityParts(authority) {
+  const match = authority.match(/^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/);
+  if (!match) return null;
+  const host = match[1].replace(/^\[|\]$/g, "");
+  const port = Number(match[2] ?? 443);
+  if (!host || !Number.isInteger(port) || port < 1 || port > 65535) return null;
+  return { host, port };
+}
+function shouldInterceptConnect(authority) {
+  const target = authorityParts(authority);
+  return Boolean(
+    target && target.port === 443 && target.host.replace(/\.$/, "").toLowerCase() === ANTHROPIC_HOST
+  );
+}
+function secureEqual(left, right) {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+function isAuthorized(req, expected) {
+  const header = req.headers["proxy-authorization"];
+  const value = Array.isArray(header) ? header[0] : header;
+  return typeof value === "string" && secureEqual(value, expected);
+}
+function rejectProxyRequest(res) {
+  res.writeHead(407, {
+    "Content-Type": "text/plain",
+    "Proxy-Authenticate": 'Basic realm="Relay AI"',
+    Connection: "close"
+  });
+  res.end("Proxy authentication required");
+}
+function rejectProxyConnect(socket) {
+  socket.end([
+    "HTTP/1.1 407 Proxy Authentication Required",
+    'Proxy-Authenticate: Basic realm="Relay AI"',
+    "Connection: close",
+    "Content-Length: 0",
+    "",
+    ""
+  ].join("\r\n"));
+}
+function readRawBody(req) {
+  return new Promise((resolve2, reject2) => {
+    const chunks = [];
+    let size = 0;
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      reject2(error);
+    };
+    req.on("data", (chunk) => {
+      if (settled) return;
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        fail(new Error("Request body too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(Buffer.from(chunk));
+    });
+    req.once("end", () => {
+      if (settled) return;
+      settled = true;
+      resolve2(Buffer.concat(chunks));
+    });
+    req.once("aborted", () => fail(new Error("Client disconnected")));
+    req.once("error", fail);
+  });
+}
+function requestHeadersWithoutProxyHeaders(req) {
+  const headers = [];
+  for (let index = 0; index < req.rawHeaders.length; index += 2) {
+    const name = req.rawHeaders[index];
+    if (/^proxy-(authorization|connection)$/i.test(name)) continue;
+    headers.push(name, req.rawHeaders[index + 1] ?? "");
+  }
+  return headers;
+}
+function copyResponse(upstream, res) {
+  res.writeHead(upstream.statusCode ?? 502, upstream.statusMessage, upstream.rawHeaders);
+  upstream.once("error", (error) => res.destroy(error));
+  upstream.pipe(res);
+}
+function forwardRawRequest(req, res, rawBody, origin, rejectUnauthorized) {
+  return new Promise((resolve2) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve2();
+    };
+    const transport = origin.protocol === "https:" ? https : http2;
+    const upstream = transport.request({
+      protocol: origin.protocol,
+      hostname: origin.hostname,
+      port: origin.port || void 0,
+      method: req.method,
+      path: req.url,
+      headers: requestHeadersWithoutProxyHeaders(req),
+      ...origin.protocol === "https:" ? { rejectUnauthorized } : {}
+    }, (upstreamRes) => {
+      copyResponse(upstreamRes, res);
+      upstreamRes.once("end", done);
+      upstreamRes.once("error", done);
+    });
+    res.once("close", () => {
+      if (!res.writableFinished) upstream.destroy(new Error("Client disconnected"));
+      done();
+    });
+    upstream.once("error", (error) => {
+      if (!res.headersSent) res.writeHead(502, { "Content-Type": "text/plain" });
+      if (!res.writableEnded) res.end(`Anthropic upstream unreachable: ${error.message}`);
+      done();
+    });
+    upstream.end(rawBody);
+  });
+}
+function forwardToAdapter(req, res, rawBody, adapter) {
+  return new Promise((resolve2) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve2();
+    };
+    const sessionId = req.headers["x-claude-code-session-id"];
+    const upstream = http2.request({
+      hostname: "127.0.0.1",
+      port: adapter.port,
+      method: "POST",
+      path: req.url,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": String(rawBody.length),
+        "x-api-key": adapter.token,
+        ...typeof sessionId === "string" ? { "x-claude-code-session-id": sessionId } : {}
+      }
+    }, (upstreamRes) => {
+      copyResponse(upstreamRes, res);
+      upstreamRes.once("end", done);
+      upstreamRes.once("error", done);
+    });
+    res.once("close", () => {
+      if (!res.writableFinished) upstream.destroy(new Error("Client disconnected"));
+      done();
+    });
+    upstream.once("error", (error) => {
+      if (!res.headersSent) res.writeHead(502, { "Content-Type": "text/plain" });
+      if (!res.writableEnded) res.end(`Relay adapter unreachable: ${error.message}`);
+      done();
+    });
+    upstream.end(rawBody);
+  });
+}
+function forwardPlainHttp(req, res) {
+  let target;
+  try {
+    target = new URL2(req.url ?? "");
+  } catch {
+    res.writeHead(400, { "Content-Type": "text/plain" });
+    res.end("HTTP proxy requests must use an absolute HTTP or HTTPS URL");
+    return;
+  }
+  if (target.protocol !== "http:" && target.protocol !== "https:") {
+    res.writeHead(400, { "Content-Type": "text/plain" });
+    res.end("HTTP proxy requests must use an HTTP or HTTPS URL");
+    return;
+  }
+  const transport = target.protocol === "https:" ? https : http2;
+  const upstream = transport.request({
+    protocol: target.protocol,
+    hostname: target.hostname,
+    port: target.port || void 0,
+    method: req.method,
+    path: `${target.pathname}${target.search}`,
+    headers: requestHeadersWithoutProxyHeaders(req)
+  }, (upstreamRes) => copyResponse(upstreamRes, res));
+  res.once("close", () => {
+    if (!res.writableFinished) upstream.destroy(new Error("Client disconnected"));
+  });
+  upstream.once("error", (error) => {
+    if (!res.headersSent) res.writeHead(502, { "Content-Type": "text/plain" });
+    if (!res.writableEnded) res.end(`Proxy upstream unreachable: ${error.message}`);
+  });
+  req.pipe(upstream);
+}
+async function startHttpProxy(options) {
+  const host = "127.0.0.1";
+  const certificates = createHttpProxyCertificates();
+  const routesById = /* @__PURE__ */ new Map();
+  for (const route of options.routes) {
+    for (const id of routeLookupIds(route.aliasId)) routesById.set(id, route);
+  }
+  const anthropicOrigin = new URL2(options.anthropicOrigin ?? "https://api.anthropic.com");
+  if (anthropicOrigin.protocol !== "http:" && anthropicOrigin.protocol !== "https:") {
+    certificates.cleanup();
+    throw new Error("Anthropic origin must use HTTP or HTTPS");
+  }
+  let adapter = options.adapterHandle ?? null;
+  try {
+    if (options.routes.length > 0 && !adapter) {
+      adapter = await startProxyCatalog(
+        options.routes,
+        options.routes[0].aliasId,
+        options.debug
+      );
+    }
+  } catch (error) {
+    certificates.cleanup();
+    throw error;
+  }
+  const mitmServer = https.createServer({
+    key: certificates.serverKey,
+    cert: certificates.serverCert,
+    minVersion: "TLSv1.2"
+  }, async (req, res) => {
+    let rawBody;
+    try {
+      rawBody = await readRawBody(req);
+    } catch (error) {
+      if (!res.headersSent && !res.writableEnded) {
+        res.writeHead(413, { "Content-Type": "text/plain" });
+        res.end(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+    const endpoint = anthropicMessagesEndpoint(req.url);
+    if (req.method === "POST" && endpoint) {
+      let parsed = null;
+      let route;
+      try {
+        parsed = JSON.parse(rawBody.toString("utf8"));
+        if (typeof parsed.model === "string") route = routesById.get(parsed.model);
+      } catch {
+      }
+      if (route && adapter && parsed) {
+        if (endpoint === "count_tokens") {
+          res.writeHead(200, {
+            "Content-Type": "application/json",
+            "x-relay-token-count-source": "local-estimate"
+          });
+          res.end(JSON.stringify({ input_tokens: estimateAnthropicInputTokens(parsed) }));
+          return;
+        }
+        const adapterBody = parsed.model === route.aliasId ? rawBody : Buffer.from(JSON.stringify({ ...parsed, model: route.aliasId }));
+        await forwardToAdapter(req, res, adapterBody, adapter);
+        return;
+      }
+    }
+    await forwardRawRequest(
+      req,
+      res,
+      rawBody,
+      anthropicOrigin,
+      options.anthropicRejectUnauthorized ?? true
+    );
+  });
+  mitmServer.on("tlsClientError", () => {
+  });
+  const password3 = randomBytes2(32).toString("base64url");
+  const expectedAuthorization = `Basic ${Buffer.from(`${PROXY_USERNAME}:${password3}`).toString("base64")}`;
+  const sockets = /* @__PURE__ */ new Set();
+  const proxyServer = http2.createServer((req, res) => {
+    if (!isAuthorized(req, expectedAuthorization)) {
+      rejectProxyRequest(res);
+      return;
+    }
+    forwardPlainHttp(req, res);
+  });
+  proxyServer.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
+  proxyServer.on("connect", (req, clientSocket, head) => {
+    clientSocket.on("error", () => clientSocket.destroy());
+    if (!isAuthorized(req, expectedAuthorization)) {
+      rejectProxyConnect(clientSocket);
+      return;
+    }
+    if (shouldInterceptConnect(req.url ?? "")) {
+      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      if (head.length > 0) clientSocket.unshift(head);
+      mitmServer.emit("connection", clientSocket);
+      return;
+    }
+    const target = authorityParts(req.url ?? "");
+    if (!target) {
+      clientSocket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+      return;
+    }
+    const upstream = net.connect(target.port, target.host);
+    let established = false;
+    sockets.add(upstream);
+    clientSocket.once("close", () => {
+      if (!upstream.destroyed) upstream.destroy();
+    });
+    upstream.once("close", () => {
+      sockets.delete(upstream);
+      if (established && !clientSocket.destroyed) clientSocket.destroy();
+    });
+    upstream.once("connect", () => {
+      established = true;
+      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      if (head.length > 0) upstream.write(head);
+      clientSocket.pipe(upstream);
+      upstream.pipe(clientSocket);
+    });
+    upstream.once("error", () => {
+      if (clientSocket.destroyed) return;
+      if (established) clientSocket.destroy();
+      else clientSocket.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
+    });
+  });
+  try {
+    await new Promise((resolve2, reject2) => {
+      proxyServer.once("error", reject2);
+      proxyServer.listen(0, host, () => {
+        proxyServer.off("error", reject2);
+        resolve2();
+      });
+    });
+  } catch (error) {
+    adapter?.close();
+    certificates.cleanup();
+    throw error;
+  }
+  const address = proxyServer.address();
+  if (!address || typeof address === "string") {
+    adapter?.close();
+    certificates.cleanup();
+    throw new Error("HTTP proxy did not bind to a TCP port");
+  }
+  let closed = false;
+  return {
+    host,
+    port: address.port,
+    proxyUrl: `http://${PROXY_USERNAME}:${encodeURIComponent(password3)}@${host}:${address.port}`,
+    caCertPath: certificates.caCertPath,
+    modelIds: options.routes.map((route) => route.aliasId),
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve2) => proxyServer.close(() => resolve2()));
+      try {
+        mitmServer.close();
+      } catch {
+      }
+      adapter?.close();
+      certificates.cleanup();
+    }
+  };
+}
+
+// src/http-proxy/index.ts
+async function resolveHttpProxyRoutes(providers, favorites, selected, resolveCredential = resolveLocalProviderApiKey) {
+  const requestedProviderIds = /* @__PURE__ */ new Set();
+  if (selected) requestedProviderIds.add(selected.providerId);
+  for (const favorite of favorites) requestedProviderIds.add(favorite.providerId);
+  const allowedProviders = [];
+  for (const providerId of requestedProviderIds) {
+    const provider = providers.find((candidate) => candidate.id === providerId);
+    if (!provider) continue;
+    allowedProviders.push({
+      ...provider,
+      apiKey: await resolveCredential(provider) ?? ""
+    });
+  }
+  return buildHttpProxyRoutes(allowedProviders, favorites, selected);
+}
+async function startConfiguredHttpProxy(options) {
+  const loaded = await resolveHttpProxyRoutes(
+    options.providers,
+    options.favorites,
+    options.selected
+  );
+  const handle = await startHttpProxy({ routes: loaded.routes, debug: options.debug });
+  try {
+    handle.caCertPath = createHttpProxyCaBundle(
+      handle.caCertPath,
+      options.additionalCaCertPath
+    );
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+  let startingModel;
+  if (options.selected) {
+    const selectedModel = options.providers.find((provider) => provider.id === options.selected.providerId)?.models.find((model) => model.id === options.selected.modelId);
+    const expectedId = selectedModel ? claudeCodeClientModelId(
+      httpProxyModelId(options.selected.providerId, options.selected.modelId),
+      selectedModel.contextWindow
+    ) : void 0;
+    startingModel = loaded.routes.find((route) => route.aliasId === expectedId)?.aliasId;
+  }
+  return { handle, loaded, startingModel };
+}
+
+// src/http-proxy/launch.ts
+var defaultDependencies = {
+  start: startConfiguredHttpProxy,
+  launch: launchClaude
+};
+async function launchClaudeWithHttpProxy(options, dependencies = defaultDependencies) {
+  const inheritedProxy = findUnsupportedInheritedProxy(options.baseEnv);
+  if (inheritedProxy) {
+    throw unsupportedInheritedProxyError(inheritedProxy);
+  }
+  const proxy = await dependencies.start({
+    providers: options.providers,
+    favorites: options.favorites,
+    selected: options.selected,
+    debug: options.debug,
+    additionalCaCertPath: options.baseEnv["NODE_EXTRA_CA_CERTS"]
+  });
+  try {
+    if (options.selected && !proxy.startingModel) {
+      throw new Error(
+        "The selected Relay model is unavailable, unsupported, or missing its provider credential."
+      );
+    }
+    options.onProxyReady?.(proxy);
+    const childEnv = buildHttpProxyChildEnv(
+      options.baseEnv,
+      proxy.handle.proxyUrl,
+      proxy.handle.caCertPath
+    );
+    const exitCode = await dependencies.launch(
+      childEnv,
+      proxy.startingModel,
+      options.claudeArgs
+    );
+    return { exitCode, proxy };
+  } finally {
+    await proxy.handle.close();
+  }
+}
+
 // src/cli.ts
-var STARTER_CLAUDE_FLAGS = /* @__PURE__ */ new Set(["--dry-run", "--setup", "--trace", "--help", "-h", "--version", "-v"]);
+var STARTER_CLAUDE_FLAGS = /* @__PURE__ */ new Set(["--dry-run", "--setup", "--trace", "--http-proxy", "--help", "-h", "--version", "-v"]);
 var RELAY_LAUNCH_FLAGS = /* @__PURE__ */ new Set(["--provider", "--model"]);
 function parseRelayLaunchFlag(arg, rest, index, parsed) {
   if (arg === "--provider" || arg === "--model") {
@@ -11644,6 +12323,10 @@ function parseArgs(args) {
         parsed2.showVersion = true;
         continue;
       }
+      if (arg === "--http-proxy") {
+        parsed2.error = "--http-proxy is available only for relay-ai claude";
+        return parsed2;
+      }
       const consumed = tryConsumeRelayLaunchFlag(arg, rest, i, parsed2);
       if (consumed !== null) {
         if ("error" in consumed) return parsed2;
@@ -11796,6 +12479,7 @@ function parseArgs(args) {
     if (arg === "--dry-run") parsed.dryRun = true;
     if (arg === "--setup") parsed.setup = true;
     if (arg === "--trace") parsed.trace = true;
+    if (arg === "--http-proxy") parsed.httpProxy = true;
     if (arg === "--help" || arg === "-h") parsed.showHelp = true;
     if (arg === "--version" || arg === "-v") parsed.showVersion = true;
   }
@@ -11888,6 +12572,7 @@ ${pc12.bold("Options:")}
   --trace      Write debug logs to ~/.relay-ai/logs/ and show errors on exit
   --provider   Boot provider id (skip wizard when paired with --model or in print mode)
   --model      Boot model id (skip wizard when paired with --provider or in print mode)
+  --http-proxy Keep your normal Anthropic login and add selected/favorite Relay models
   --help       Show this command help
   --version    Show version
 
@@ -11902,6 +12587,11 @@ ${pc12.bold("Model switching:")}
   lists your starting model plus favorites for live switching.
   With no favorites, launch uses a single model as before.
 
+${pc12.bold("Anthropic + Relay mode:")}
+  --http-proxy keeps your normal Anthropic login and models available, then adds
+  only the selected model and compatible favorites. The terminal prints the exact
+  /model commands for switching; Relay models are not added to Claude's built-in picker.
+
 ${pc12.bold("Note:")}
   Claude Code may save the launched model to ~/.claude/settings.json.
   Bare claude later can still show that model \u2014 reset with claude --model sonnet.
@@ -11915,6 +12605,7 @@ ${pc12.bold("Examples:")}
   relay-ai claude --setup
   relay-ai claude --trace --resume abc-123
   relay-ai claude --provider groq --model llama-3.3-70b-versatile
+  relay-ai claude --http-proxy --provider moonshot --model kimi-k3
   relay-ai claude --provider groq --model llama-3.3-70b-versatile -p "review this file"
   relay-ai claude -- --print "hello"
   relay-ai claude -- --dangerously-skip-permissions`;
@@ -12306,7 +12997,7 @@ async function runModelsCommand(opts = {}) {
   return 0;
 }
 async function runClaudeCommand(parsed) {
-  const { dryRun, setup, trace, launchProvider, launchModel } = parsed;
+  const { dryRun, setup, trace, httpProxy, launchProvider, launchModel } = parsed;
   const claudeArgs = normalizeClaudeAgentArgs(parsed.claudeArgs);
   const agentStdout = wantsCleanAgentStdout("claude", claudeArgs);
   setAgentStdoutMode(agentStdout);
@@ -12320,7 +13011,8 @@ async function runClaudeCommand(parsed) {
   const prefs = dryRun ? {} : loadPreferences();
   const conflicts = detectConflicts();
   const favorites = dryRun ? [] : prefs.favoriteModels ?? [];
-  const launchPlan = planLaunchWizard({
+  const httpProxyOnly = Boolean(httpProxy && !launchProvider && !launchModel);
+  const launchPlan = httpProxyOnly ? { skip: true, target: null } : planLaunchWizard({
     explicit: { providerId: launchProvider, modelId: launchModel },
     childArgs: claudeArgs,
     agent: "claude",
@@ -12337,7 +13029,7 @@ Error: ${launchPlan.error}
   if (setup && !dryRun && !agentStdout) {
     p14.log.info("Provider setup now lives in relay-ai providers \u2014 opening that next is recommended.");
   }
-  if (!dryRun && await needsFirstRunSetup()) {
+  if (!httpProxyOnly && !dryRun && await needsFirstRunSetup()) {
     const firstRun = await runFirstRunWizard(trace);
     if (firstRun === "cancel") return 0;
   }
@@ -12362,11 +13054,64 @@ Error: ${launchPlan.error}
     catalogSpinner.stop("");
   }
   const allProviders = providersForTarget(providersForPicker(catalog), "claude");
-  if (allProviders.length === 0) {
+  if (allProviders.length === 0 && !httpProxyOnly) {
     p14.log.warn("No providers available.");
     p14.log.info(pc12.dim("Run relay-ai providers add or import to get started."));
     return 0;
   }
+  const runTransparentProxy = async (selected) => {
+    if (dryRun) {
+      console.log("");
+      console.log(pc12.bold(pc12.cyan("  DRY RUN \u2014 would keep Anthropic and add Relay models:")));
+      console.log("");
+      console.log(`  ${pc12.bold("Anthropic:")} normal Claude Code login and models`);
+      console.log(`  ${pc12.bold("Selected:")}  ${selected ? `${selected.providerId} / ${selected.modelId}` : "(none)"}`);
+      console.log(`  ${pc12.bold("Favorites:")} ${favorites.length} saved`);
+      console.log("");
+      console.log(pc12.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
+      console.log("");
+      return 0;
+    }
+    const debugLogPath2 = prepareClaudeTraceLog();
+    const traceArgs2 = trace ? ["--debug-file", debugLogPath2] : [];
+    if (trace && !agentStdout) p14.log.info(`Debug log: ${debugLogPath2}`);
+    try {
+      const result = await launchClaudeWithHttpProxy({
+        providers: catalog,
+        favorites,
+        selected,
+        baseEnv: process.env,
+        claudeArgs: [...traceArgs2, ...claudeArgs],
+        debug: trace,
+        onProxyReady: (proxy) => {
+          if (agentStdout) return;
+          const count = proxy.handle.modelIds.length;
+          p14.log.info(
+            count === 0 ? "Secure Anthropic passthrough ready; no compatible Relay models were added." : `Secure Anthropic passthrough ready with ${count} Relay model${count === 1 ? "" : "s"}.`
+          );
+          for (const modelId of proxy.handle.modelIds) p14.log.message(pc12.dim(`  /model ${modelId}`));
+        }
+      });
+      if (!agentStdout && result.proxy.loaded.unavailable.length > 0) {
+        p14.log.warn(
+          `${result.proxy.loaded.unavailable.length} favorite${result.proxy.loaded.unavailable.length === 1 ? "" : "s"} unavailable or missing credentials.`
+        );
+      }
+      if (!agentStdout && result.proxy.loaded.unsupported.length > 0) {
+        p14.log.warn(
+          `${result.proxy.loaded.unsupported.length} incompatible favorite${result.proxy.loaded.unsupported.length === 1 ? "" : "s"} skipped.`
+        );
+      }
+      if (trace) printTraceLog(debugLogPath2);
+      return result.exitCode;
+    } catch (error) {
+      p14.log.error(
+        `Could not start secure Anthropic + Relay mode: ${error instanceof Error ? error.message : String(error)}`
+      );
+      return 1;
+    }
+  };
+  if (httpProxyOnly) return runTransparentProxy();
   const providerOptions = allProviders.map((lp) => providerSelectOption(lp));
   if (switchMenuActive) {
     providerOptions.unshift({
@@ -12448,6 +13193,26 @@ Error: ${launchPlan.error}
         break;
       }
     }
+  }
+  let useHttpProxy = Boolean(httpProxy);
+  if (!httpProxy && !launchPlan.skip && supportsClaudeTransparentMode(selectedModel)) {
+    const transparentChoice = await p14.select({
+      message: "Keep your normal Claude models available too?",
+      options: claudeTransparentModeOptions(selectedModel.name || selectedModel.id),
+      initialValue: prefs.lastClaudeTransparentMode ?? true
+    });
+    if (p14.isCancel(transparentChoice)) {
+      p14.cancel("Cancelled.");
+      return 0;
+    }
+    useHttpProxy = transparentChoice;
+    if (!dryRun) savePreferences({ lastClaudeTransparentMode: useHttpProxy });
+  }
+  if (useHttpProxy) {
+    return runTransparentProxy({
+      providerId: activeProvider.id,
+      modelId: selectedModel.id
+    });
   }
   const localProviders = catalog.length > 0 ? catalog : null;
   if (switchMenuActive) {
@@ -12696,7 +13461,7 @@ Error: ${parsed.error}
       console.log("Usage: relay-ai ui [--trace]\n\nOpen the settings UI in your browser.");
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-2HNQX7U3.js");
+    const { runUiCommand } = await import("./ui-command-52XOBPTW.js");
     return runUiCommand({ trace: parsed.trace });
   }
   if (parsed.command === "models") {

@@ -1,11 +1,21 @@
 // tests/prompts.test.ts
 import { describe, it, expect } from 'vitest';
 import {
+  claudeTransparentModeOptions,
   filterModelsBySearch,
   sliceModelPage,
   MODEL_SEARCH_THRESHOLD,
   MODEL_PAGE_SIZE,
 } from '../src/prompts.js';
+
+describe('Claude transparent mode prompt', () => {
+  it('explains the practical effect in plain English', () => {
+    expect(claudeTransparentModeOptions('Kimi K3')).toEqual([
+      { value: true, label: 'Yes — Use Kimi K3 alongside Anthropic models' },
+      { value: false, label: 'No — Use only Kimi K3 through Relay AI' },
+    ]);
+  });
+});
 
 describe('filterModelsBySearch', () => {
   const models = [

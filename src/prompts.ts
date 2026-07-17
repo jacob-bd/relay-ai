@@ -15,6 +15,16 @@ import {
 } from './ui.js';
 import { scoreModelSearch } from './model-search.js';
 
+export function claudeTransparentModeOptions(modelLabel: string): Array<{
+  value: boolean;
+  label: string;
+}> {
+  return [
+    { value: true, label: `Yes — Use ${modelLabel} alongside Anthropic models` },
+    { value: false, label: `No — Use only ${modelLabel} through Relay AI` },
+  ];
+}
+
 const BROWSE_ALL = '__browse_all__';
 const MAX_RECENT = 3;
 /** Providers with more models than this offer search or paginated browse. */

@@ -63,9 +63,10 @@ import {
   setServerMaskGatewayIds,
   startServer,
   summarizeServerProviders,
+  supportsClaudeTransparentMode,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-YM6G7BHE.js";
+} from "./chunk-OMCB2VBZ.js";
 import {
   __toCommonJS,
   init_provider_templates,
@@ -312,6 +313,12 @@ function getRelayLaunchCommand(appId, options = {}) {
   const args = [app.relayCommand];
   if (options.trace) {
     args.push("--trace");
+  }
+  if (options.httpProxy) {
+    if (app.id !== "claude") {
+      throw new Error("Transparent proxy mode is available only for Claude Code CLI.");
+    }
+    args.push("--http-proxy");
   }
   if (options.providerId && options.modelId) {
     args.push("--provider", options.providerId, "--model", options.modelId);
@@ -661,7 +668,8 @@ async function handleGetModels(res) {
         freeStatus: m.freeStatus,
         freeLabel: freeStatusLabel(m.freeStatus),
         contextWindow: m.contextWindow,
-        cost: m.cost
+        cost: m.cost,
+        claudeTransparentCompatible: supportsClaudeTransparentMode(m)
       }))
     }));
     const materializedIds = new Set(catalog.map((p2) => p2.id));
@@ -1069,6 +1077,7 @@ async function handleLaunchApp(req, res, opts) {
   try {
     const body = JSON.parse(await readBody(req));
     const { appId, favorites, cwd } = body;
+    const httpProxy = body.httpProxy === true;
     let { providerId, modelId } = body;
     if (!appId) {
       sendJson(res, 400, { error: "Missing appId" });
@@ -1076,6 +1085,14 @@ async function handleLaunchApp(req, res, opts) {
     }
     if (!getSupportedApp(appId)) {
       sendJson(res, 400, { error: `Unknown app: ${appId}` });
+      return;
+    }
+    if (body.httpProxy !== void 0 && typeof body.httpProxy !== "boolean") {
+      sendJson(res, 400, { error: "httpProxy must be true or false." });
+      return;
+    }
+    if (httpProxy && appId !== "claude") {
+      sendJson(res, 400, { error: "Anthropic + Relay mode is available only for Claude Code CLI." });
       return;
     }
     const { installed, path } = detectApp(appId);
@@ -1087,7 +1104,23 @@ async function handleLaunchApp(req, res, opts) {
       sendJson(res, 400, { error: "Both providerId and modelId are required to launch a specific Relay model." });
       return;
     }
-    if (favorites && !providerId && !modelId) {
+    if (httpProxy && providerId && modelId) {
+      let catalog;
+      try {
+        catalog = await fetchModelsWithTimeout();
+      } catch (err) {
+        sendCatalogFetchError(res, err, "Model validation");
+        return;
+      }
+      const selectedModel = catalog.find((provider) => provider.id === providerId)?.models.find((model) => model.id === modelId);
+      if (!selectedModel || !supportsClaudeTransparentMode(selectedModel)) {
+        sendJson(res, 400, {
+          error: "The selected model cannot be combined with your Anthropic login."
+        });
+        return;
+      }
+    }
+    if (favorites && !httpProxy && !providerId && !modelId) {
       const prefs = loadPreferences();
       const favList = AGY_APP_IDS.has(appId) ? prefs.antigravityCliFavoriteModels ?? [] : prefs.favoriteModels ?? [];
       if (favList.length > 0) {
@@ -1112,11 +1145,12 @@ async function handleLaunchApp(req, res, opts) {
       providerId,
       modelId,
       cwd: launchFolder,
-      trace: opts.trace
+      trace: opts.trace,
+      httpProxy
     });
     traceUi(
       opts,
-      `launch app=${appId} provider=${providerId ?? ""} model=${modelId ?? ""} favorites=${Boolean(favorites)} resolved-from-favorites=${Boolean(favorites && providerId)} cwd=${launchFolder ?? ""} command=${launchCmd}`
+      `launch app=${appId} provider=${providerId ?? ""} model=${modelId ?? ""} favorites=${Boolean(favorites)} http-proxy=${httpProxy} resolved-from-favorites=${Boolean(favorites && providerId)} cwd=${launchFolder ?? ""} command=${launchCmd}`
     );
     exec(launchCmd, (err) => {
       if (err) {
@@ -1453,4 +1487,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-2HNQX7U3.js.map
+//# sourceMappingURL=ui-command-52XOBPTW.js.map

@@ -74,6 +74,12 @@ describe('dotfolder config', () => {
     });
   });
 
+  it('remembers the last Claude transparent-mode answer', () => {
+    savePreferences({ lastClaudeTransparentMode: true });
+    expect(loadPreferences().lastClaudeTransparentMode).toBe(true);
+    expect(JSON.parse(readFileSync(getConfigPath(), 'utf8')).lastClaudeTransparentMode).toBe(true);
+  });
+
   it('saves Antigravity CLI favorites separately from global favorites', () => {
     savePreferences({
       favoriteModels: [{ providerId: 'global', modelId: 'claude' }],

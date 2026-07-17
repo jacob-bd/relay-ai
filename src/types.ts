@@ -92,6 +92,8 @@ export interface UserPreferences {
   lastGeminiModel?: string;
   lastAntigravityProvider?: string;
   lastAntigravityModel?: string;
+  /** Last interactive answer for keeping native Anthropic models in Claude Code. */
+  lastClaudeTransparentMode?: boolean;
   recentModelsByProvider?: Record<string, string[]>;
   favoriteModels?: FavoriteModel[];
   antigravityCliFavoriteModels?: FavoriteModel[];
@@ -120,6 +122,8 @@ export interface ParsedArgs {
   dryRun: boolean;
   setup: boolean;
   trace: boolean;
+  /** Keep Claude Code's native Anthropic login while adding allowlisted Relay models. */
+  httpProxy?: boolean;
   vertex: boolean;
   claudeArgs: string[];
   /** relay-ai boot provider (claude/codex); not passed to child CLI */
