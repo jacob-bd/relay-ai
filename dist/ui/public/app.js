@@ -2332,10 +2332,14 @@ function renderServerProviderPicker() {
     const label = p ? p.name : id;
     return `<span class="server-provider-chip">${escapeHtml(label)}<button type="button" onclick="toggleServerProvider('${id}')" aria-label="Remove ${escapeHtml(label)}">&times;</button></span>`;
   }).join('');
+  const allFreeNote = s.form.freeModelsOnly && s.form.exposedProviders.length === 0
+    ? '<div class="server-field-hint">No providers selected — exposing free models from every available provider.</div>'
+    : '';
 
   return `
     <div class="server-providers-picker">
       ${chips ? `<div class="server-provider-chips">${chips}</div>` : ''}
+      ${allFreeNote}
       <div class="search-field">
         <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         <input type="search" class="search-input" placeholder="Search providers to expose…" value="${escapeHtml(s.form.providerSearch)}" oninput="setServerProviderSearch(this.value)">
@@ -2377,13 +2381,27 @@ function renderServerNetworkOptions() {
 function renderServerSetup(s) {
   const f = s.form;
   const specific = f.expose === 'specific';
-  const providersOk = f.expose === 'favorites' || (specific && f.exposedProviders.length > 0);
+  const hasProviders = f.exposedProviders.length > 0;
+  // Free-only with no providers selected = expose free models from every provider
+  // (backend: exposedProviders null + freeModelsOnly). Otherwise require a selection.
+  const providersOk = f.expose === 'favorites'
+    || (specific && hasProviders)
+    || (specific && f.freeModelsOnly);
   const passwordOk = f.listenMode !== 'network' || f.passwordMode === 'saved' || f.password.trim().length > 0;
   const canStart = providersOk && passwordOk && !s.starting;
 
   let hint = '';
-  if (!providersOk) hint = 'Select at least one provider to expose.';
-  else if (!passwordOk) hint = 'Enter a server password for network mode.';
+  if (!providersOk) {
+    hint = f.freeModelsOnly
+      ? 'Select at least one provider, or leave none selected to expose free models from all providers.'
+      : 'Select at least one provider to expose.';
+  } else if (!passwordOk) {
+    hint = 'Enter a server password for network mode.';
+  }
+
+  const freeModelsHint = specific
+    ? 'With providers selected, only their free models are exposed. With none selected, free models from every available provider are exposed.'
+    : 'Includes verified $0 models and free developer access.';
 
   return `
     <div class="server-setup">
@@ -2405,6 +2423,7 @@ function renderServerSetup(s) {
           <input type="checkbox" ${f.freeModelsOnly ? 'checked' : ''} onchange="setServerFreeModelsOnly(this.checked)">
           <span>Free models only <span class="server-field-hint">(includes verified $0 models and free developer access)</span></span>
         </label>
+        <div class="server-field-hint">${escapeHtml(freeModelsHint)}</div>
       </div>
 
       <div class="server-field">
@@ -2475,8 +2494,8 @@ function renderServerRunning(status) {
     <tr>
       <td>${escapeHtml(m.providerLabel)}</td>
       <td>${escapeHtml(m.name)}</td>
-      <td><code>${escapeHtml(m.anthropicId)}</code></td>
-      <td><code>${escapeHtml(m.openaiId)}</code></td>
+      <td>${serverIdCell(m.anthropicId)}</td>
+      <td>${serverIdCell(m.openaiId)}</td>
     </tr>
   `).join('');
 
@@ -2531,6 +2550,8 @@ function setServerMask(checked) {
 
 function setServerFreeModelsOnly(checked) {
   state.server.form.freeModelsOnly = checked;
+  state.server.error = null;
+  renderServerPanel();
 }
 
 function setServerListenMode(mode) {
@@ -2561,7 +2582,10 @@ async function submitServerStart() {
   const body = {
     favoritesOnly: f.expose === 'favorites',
     freeModelsOnly: f.freeModelsOnly,
-    exposedProviders: f.expose === 'specific' ? f.exposedProviders : null,
+    // Empty specific selection + free-only → null (all providers, free filter applied server-side).
+    exposedProviders: f.expose === 'specific' && f.exposedProviders.length > 0
+      ? f.exposedProviders
+      : null,
     maskGatewayIds: f.maskGatewayIds,
     listenMode: f.listenMode,
     passwordMode: f.passwordMode,
@@ -2599,16 +2623,30 @@ async function stopServerGateway() {
   }
 }
 
-async function copyServerValue(id) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  const text = el.dataset.value ?? el.textContent;
+function serverIdCell(id) {
+  const value = String(id ?? '');
+  if (!value) return '<span class="server-id-empty">—</span>';
+  return `
+    <div class="server-id-cell">
+      <code title="${escapeHtml(value)}">${escapeHtml(value)}</code>
+      <button type="button" class="btn btn-ghost btn-sm server-id-copy" onclick='copyPlainText(${JSON.stringify(value)})'>Copy</button>
+    </div>
+  `;
+}
+
+async function copyPlainText(text) {
   try {
     await navigator.clipboard.writeText(text);
     showToast('Copied to clipboard');
   } catch {
     showToast('Could not copy — copy manually');
   }
+}
+
+async function copyServerValue(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  await copyPlainText(el.dataset.value ?? el.textContent);
 }
 
 function toggleServerApiKeyVisibility() {
@@ -2630,4 +2668,5 @@ window.setServerSavePassword = setServerSavePassword;
 window.submitServerStart = submitServerStart;
 window.stopServerGateway = stopServerGateway;
 window.copyServerValue = copyServerValue;
+window.copyPlainText = copyPlainText;
 window.toggleServerApiKeyVisibility = toggleServerApiKeyVisibility;

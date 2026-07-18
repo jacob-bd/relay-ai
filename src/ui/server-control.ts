@@ -253,7 +253,10 @@ async function doStartGatewayServer(
   // panel stay in sync, matching the CLI wizard's own save-as-you-go behavior.
   setServerFavoritesOnly(req.favoritesOnly);
   setServerFreeModelsOnly(req.freeModelsOnly);
-  if (req.exposedProviders) setServerExposedProviders(req.exposedProviders);
+  if (!req.favoritesOnly) {
+    // null / empty = all providers (used with free-models-only to expose every free model).
+    setServerExposedProviders(req.exposedProviders ?? []);
+  }
   setServerMaskGatewayIds(req.maskGatewayIds);
   setServerListenMode(req.listenMode);
 

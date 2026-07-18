@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.8] - 2026-07-18
+
+### Fixed
+
+- **Server: long model IDs no longer overflow the running-status model table in `relay-ai ui`** — each Anthropic / OpenAI ID cell now has its own Copy button (truncating with ellipsis and a hover tooltip for the full value), matching the existing URL-card copy affordance. The Server section column width was also widened so the four-column table is no longer cramped.
+- **Server: "Free models only" now works without selecting any provider** — when Specific providers mode is selected but no provider is checked, the form previously blocked Start. It now allows Start when Free models only is enabled, in which case the gateway exposes all free/free-access models from every available provider. Dynamic hint text explains both branches (providers selected → only their free models; none selected → all free models across providers).
+
+### Documentation
+
+- Added a **Cursor** subsection to `docs/API_SERVER.md` covering how to point Cursor's "Override OpenAI Base URL" at the gateway using a Cloudflare quick tunnel. Cursor forbids private-network URLs (`127.0.0.1`, `localhost`, LAN IPs) for BYOK, so the guide walks through installing `cloudflared`, opening a `https://*.trycloudflare.com` tunnel to port 17645, configuring the Base URL with the required `/openai/v1` suffix, and troubleshooting the common Cursor-side failures (Agent-mode body shape, HTTP/1.1 toggle, model-name collisions with built-ins). Documents the known Cursor limitation that Override is global — built-in Cursor models and Relay custom models can't be used at the same time without toggling the OpenAI API Key / Override off and on.
+
 ## [0.4.7] - 2026-07-16
 
 ### Added

@@ -401,6 +401,10 @@ input { font-family: inherit; }
   max-width: 680px;
 }
 
+#server.section {
+  max-width: 920px;
+}
+
 .section + .section {
   padding-top: 64px;
   margin-top: 12px;
@@ -1883,6 +1887,7 @@ input { font-family: inherit; }
 
 .server-model-table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 14px;
 }
@@ -1899,16 +1904,45 @@ input { font-family: inherit; }
   border-bottom: 1px solid var(--border);
 }
 
+.server-model-table th:nth-child(1) { width: 18%; }
+.server-model-table th:nth-child(2) { width: 22%; }
+.server-model-table th:nth-child(3),
+.server-model-table th:nth-child(4) { width: 30%; }
+
 .server-model-table td {
   padding: 9px 14px;
   border-bottom: 1px solid var(--border);
   color: var(--text-1);
+  vertical-align: middle;
+  overflow: hidden;
 }
 
 .server-model-table tr:last-child td { border-bottom: none; }
 
-.server-model-table code {
+.server-id-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.server-id-cell code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
   font-size: 12px;
   color: var(--text-2);
+}
+
+.server-id-copy {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.server-id-empty {
+  color: var(--text-3);
 }

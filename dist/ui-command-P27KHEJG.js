@@ -66,7 +66,7 @@ import {
   supportsClaudeTransparentMode,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-XQCHSU6L.js";
+} from "./chunk-I3SSHXSP.js";
 import {
   __toCommonJS,
   init_provider_templates,
@@ -478,7 +478,9 @@ async function doStartGatewayServer(req) {
   }
   setServerFavoritesOnly(req.favoritesOnly);
   setServerFreeModelsOnly(req.freeModelsOnly);
-  if (req.exposedProviders) setServerExposedProviders(req.exposedProviders);
+  if (!req.favoritesOnly) {
+    setServerExposedProviders(req.exposedProviders ?? []);
+  }
   setServerMaskGatewayIds(req.maskGatewayIds);
   setServerListenMode(req.listenMode);
   const host = req.listenMode === "network" ? "0.0.0.0" : "127.0.0.1";
@@ -1487,4 +1489,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-W2W6P6VJ.js.map
+//# sourceMappingURL=ui-command-P27KHEJG.js.map
