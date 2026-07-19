@@ -3615,6 +3615,9 @@ var TEMPLATE_TO_PRICING_PLATFORM = {
   nvidia: "nvidia",
   venice: "openrouter"
 };
+var PRICING_OPT_OUT_TEMPLATE_IDS = /* @__PURE__ */ new Set([
+  "qwen-cloud-token-plan"
+]);
 function loadBundledPricingCache() {
   return pricing_cache_default;
 }
@@ -3737,13 +3740,27 @@ function enrichModelsWithPricing(models, index, platform) {
     return { ...model, cost, isFree: isFreeStatus(freeStatus), freeStatus };
   });
 }
+function enrichModelsForProviderPricing(models, index, templateId, providerId) {
+  if (PRICING_OPT_OUT_TEMPLATE_IDS.has(templateId) || PRICING_OPT_OUT_TEMPLATE_IDS.has(providerId)) {
+    return models.map(({ cost: _cost, isFree: _isFree, freeStatus: _freeStatus, ...model }) => model);
+  }
+  return enrichModelsWithPricing(
+    models,
+    index,
+    pricingPlatformForProvider(templateId, providerId)
+  );
+}
 function applyPricingToRegistryProviders(registry, cache) {
   const index = buildPricingIndex(cache);
   let changed = false;
   for (const provider of registry.providers) {
     if (!provider.modelsCache?.models.length) continue;
-    const platform = TEMPLATE_TO_PRICING_PLATFORM[provider.templateId] ?? TEMPLATE_TO_PRICING_PLATFORM[provider.id];
-    const enriched = enrichModelsWithPricing(provider.modelsCache.models, index, platform);
+    const enriched = enrichModelsForProviderPricing(
+      provider.modelsCache.models,
+      index,
+      provider.templateId,
+      provider.id
+    );
     if (JSON.stringify(enriched) !== JSON.stringify(provider.modelsCache.models)) {
       provider.modelsCache = { ...provider.modelsCache, models: enriched };
       changed = true;
@@ -9200,11 +9217,11 @@ async function addProviderFromTemplate(template, apiKey, opts) {
   }
   const now = (/* @__PURE__ */ new Date()).toISOString();
   const pricingCache = loadPricingCache();
-  const platform = pricingPlatformForProvider(template.id, template.id);
-  const pricedModels = enrichModelsWithPricing(
+  const pricedModels = enrichModelsForProviderPricing(
     usableModels.map((m) => ({ ...m, apiUrl: fetched.baseUrl })),
     buildPricingIndex(pricingCache),
-    platform
+    template.id,
+    template.id
   );
   const entry = {
     id: template.id,
@@ -9850,10 +9867,14 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
       baseUrl = fetched.baseUrl;
     }
     const pricingCache = loadPricingCache();
-    const platform = pricingPlatformForProvider(provider.templateId, provider.id);
     const enriched = compatibleCachedModels(
       provider,
-      enrichModelsWithPricing(models, buildPricingIndex(pricingCache), platform)
+      enrichModelsForProviderPricing(
+        models,
+        buildPricingIndex(pricingCache),
+        provider.templateId,
+        provider.id
+      )
     );
     if (provider.id === "antigravity" && enriched.length === 0) {
       return {
@@ -10914,4 +10935,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-FN2I3RQ7.js.map
+//# sourceMappingURL=chunk-3J3UKTKB.js.map
