@@ -127,6 +127,16 @@ describe('models.dev capability rules', () => {
     const tokenPlanImage = findModelsDevModel('qwen-cloud-token-plan', 'wan2.7-image-pro', cache);
     expect(tokenPlanImage).not.toBeNull();
     expect(shouldHideByModelsDevCapabilities(tokenPlanImage!)).toBe(true);
+    expect(shouldHideModel({
+      providerId: 'qwen-cloud-token-plan',
+      modelId: 'wan2.7-image-pro',
+      agent: 'server',
+    })).toBe(true);
+    expect(shouldHideModel({
+      providerId: 'qwen-cloud-payg',
+      modelId: 'qwen-vl-ocr',
+      agent: 'server',
+    })).toBe(true);
   });
 });
 

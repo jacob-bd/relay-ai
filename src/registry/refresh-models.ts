@@ -15,10 +15,9 @@ import {
 } from './resolve-template.js';
 import {
   buildPricingIndex,
-  enrichModelsWithPricing,
+  enrichModelsForProviderPricing,
   enrichPricingAsync,
   loadPricingCache,
-  pricingPlatformForProvider,
 } from './pricing.js';
 import { cachedModelCount, isLikelyPlaceholderKey, resolveRefreshCredential, skipWithCachedModels } from './refresh-credentials.js';
 import {
@@ -663,10 +662,14 @@ export async function refreshProviderModels(
     }
 
     const pricingCache = loadPricingCache();
-    const platform = pricingPlatformForProvider(provider.templateId, provider.id);
     const enriched = compatibleCachedModels(
       provider,
-      enrichModelsWithPricing(models, buildPricingIndex(pricingCache), platform),
+      enrichModelsForProviderPricing(
+        models,
+        buildPricingIndex(pricingCache),
+        provider.templateId,
+        provider.id,
+      ),
     );
     if (provider.id === 'antigravity' && enriched.length === 0) {
       return {

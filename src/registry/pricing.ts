@@ -71,6 +71,10 @@ export const TEMPLATE_TO_PRICING_PLATFORM: Record<string, string> = {
   venice: 'openrouter',
 };
 
+const PRICING_OPT_OUT_TEMPLATE_IDS = new Set([
+  'qwen-cloud-token-plan',
+]);
+
 export function loadBundledPricingCache(): PricingCacheFile {
   return bundledPricing as unknown as PricingCacheFile;
 }
@@ -221,6 +225,27 @@ export function enrichModelsWithPricing(
   });
 }
 
+/**
+ * Apply cached pricing for a specific registry provider. Token Plan credits are
+ * not PAYG prices, so remove any cached pricing metadata rather than allowing
+ * the generic fallback to select an unrelated standard row.
+ */
+export function enrichModelsForProviderPricing(
+  models: CachedModel[],
+  index: PricingIndex,
+  templateId: string,
+  providerId: string,
+): CachedModel[] {
+  if (PRICING_OPT_OUT_TEMPLATE_IDS.has(templateId) || PRICING_OPT_OUT_TEMPLATE_IDS.has(providerId)) {
+    return models.map(({ cost: _cost, isFree: _isFree, freeStatus: _freeStatus, ...model }) => model);
+  }
+  return enrichModelsWithPricing(
+    models,
+    index,
+    pricingPlatformForProvider(templateId, providerId),
+  );
+}
+
 export function applyPricingToRegistryProviders(
   registry: import('./types.js').ProviderRegistry,
   cache: PricingCacheFile,
@@ -229,8 +254,12 @@ export function applyPricingToRegistryProviders(
   let changed = false;
   for (const provider of registry.providers) {
     if (!provider.modelsCache?.models.length) continue;
-    const platform = TEMPLATE_TO_PRICING_PLATFORM[provider.templateId] ?? TEMPLATE_TO_PRICING_PLATFORM[provider.id];
-    const enriched = enrichModelsWithPricing(provider.modelsCache.models, index, platform);
+    const enriched = enrichModelsForProviderPricing(
+      provider.modelsCache.models,
+      index,
+      provider.templateId,
+      provider.id,
+    );
     if (JSON.stringify(enriched) !== JSON.stringify(provider.modelsCache.models)) {
       provider.modelsCache = { ...provider.modelsCache, models: enriched };
       changed = true;

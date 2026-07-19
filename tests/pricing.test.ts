@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildPricingIndex,
+  applyPricingToRegistryProviders,
   enrichModelsWithPricing,
+  enrichModelsForProviderPricing,
   loadBundledPricingCache,
   lookupModelCost,
   normalizeModelIdCandidates,
@@ -82,5 +84,85 @@ describe('pricing enrich', () => {
   it('uses Alibaba pricing for Qwen Cloud PAYG but not Token Plan credits', () => {
     expect(pricingPlatformForProvider('qwen-cloud-payg', 'qwen-cloud-payg')).toBe('alibaba');
     expect(pricingPlatformForProvider('qwen-cloud-token-plan', 'qwen-cloud-token-plan')).toBeUndefined();
+  });
+
+  it('applies Alibaba pricing to Qwen Cloud PAYG but never to Token Plan credits', () => {
+    const cache = {
+      models: [{
+        model_id: 'qwen-coder',
+        pricing: [{
+          platform: 'alibaba',
+          tier: 'standard',
+          modality: 'text',
+          input_per_1m_tokens: 1.25,
+          output_per_1m_tokens: 2.5,
+        }],
+      }],
+    };
+    const model: CachedModel = {
+      id: 'qwen-coder',
+      name: 'Qwen Coder',
+      upstreamModelId: 'qwen-coder',
+      modelFormat: 'openai',
+    };
+    const registry = {
+      schemaVersion: 1,
+      providers: [
+        {
+          id: 'qwen-cloud-payg',
+          templateId: 'qwen-cloud-payg',
+          name: 'Qwen Cloud (Pay-As-You-Go)',
+          enabled: true,
+          authRef: 'keyring:provider:qwen-cloud-payg',
+          api: { npm: '@ai-sdk/alibaba' },
+          addedAt: '2026-07-19T00:00:00.000Z',
+          modelsCache: { fetchedAt: '2026-07-19T00:00:00.000Z', models: [{ ...model }] },
+        },
+        {
+          id: 'qwen-cloud-token-plan',
+          templateId: 'qwen-cloud-token-plan',
+          name: 'Qwen Cloud (Token Plan)',
+          enabled: true,
+          authRef: 'keyring:provider:qwen-cloud-token-plan',
+          api: { npm: '@ai-sdk/alibaba' },
+          addedAt: '2026-07-19T00:00:00.000Z',
+          modelsCache: { fetchedAt: '2026-07-19T00:00:00.000Z', models: [{ ...model }] },
+        },
+      ],
+    };
+
+    applyPricingToRegistryProviders(registry, cache);
+
+    expect(registry.providers[0]?.modelsCache?.models[0]).toMatchObject({
+      cost: { input: 1.25, output: 2.5 },
+      isFree: false,
+      freeStatus: 'paid',
+    });
+    expect(registry.providers[1]?.modelsCache?.models[0]).not.toHaveProperty('cost');
+    expect(registry.providers[1]?.modelsCache?.models[0]).not.toHaveProperty('isFree');
+    expect(registry.providers[1]?.modelsCache?.models[0]).not.toHaveProperty('freeStatus');
+  });
+
+  it('keeps generic pricing fallback for other unmapped providers', () => {
+    const index = buildPricingIndex({
+      models: [{
+        model_id: 'custom-model',
+        pricing: [{
+          tier: 'standard',
+          modality: 'text',
+          input_per_1m_tokens: 0.5,
+          output_per_1m_tokens: 1,
+        }],
+      }],
+    });
+
+    const enriched = enrichModelsForProviderPricing([{
+      id: 'custom-model',
+      name: 'Custom Model',
+      upstreamModelId: 'custom-model',
+      modelFormat: 'openai',
+    }], index, 'custom-provider', 'custom-provider');
+
+    expect(enriched[0]?.cost).toEqual({ input: 0.5, output: 1 });
   });
 });

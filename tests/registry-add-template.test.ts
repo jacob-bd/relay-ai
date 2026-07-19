@@ -16,6 +16,7 @@ vi.mock('../src/registry/io.js', () => ({ loadRegistry: vi.fn(), saveRegistry: v
 vi.mock('../src/registry/pricing.js', () => ({
   loadPricingCache: vi.fn(),
   enrichModelsWithPricing: vi.fn(),
+  enrichModelsForProviderPricing: vi.fn((models) => models),
   enrichPricingAsync: vi.fn(),
   pricingPlatformForProvider: vi.fn(),
   buildPricingIndex: vi.fn(),
@@ -134,6 +135,18 @@ describe('registry/add-template', () => {
     expect(env.saveProviderCredential).toHaveBeenCalledWith('keyring:provider:alibaba', 'test-key');
     expect(env.saveProviderCredential).toHaveBeenCalledWith('keyring:provider:qwen-cloud-token-plan', 'test-key');
     expect(env.saveProviderCredential).toHaveBeenCalledWith('keyring:provider:qwen-cloud-payg', 'test-key');
+  });
+
+  it('does not apply cached PAYG pricing when adding Qwen Cloud Token Plan', async () => {
+    await addProviderFromTemplate(getTemplateById('qwen-cloud-token-plan')!, 'test-key');
+
+    expect(pricing.enrichModelsWithPricing).not.toHaveBeenCalled();
+    expect(pricing.enrichModelsForProviderPricing).toHaveBeenCalledWith(
+      expect.any(Array),
+      undefined,
+      'qwen-cloud-token-plan',
+      'qwen-cloud-token-plan',
+    );
   });
 
   it('replaces existing provider if replaceExisting is true', async () => {

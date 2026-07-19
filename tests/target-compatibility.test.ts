@@ -62,6 +62,20 @@ describe('target compatibility matrix', () => {
     }
   });
 
+  it('keeps both Qwen Cloud variants visible across every Relay target including server', () => {
+    const qwenProviders: LocalProvider[] = [
+      { id: 'qwen-cloud-token-plan', name: 'Qwen Cloud (Token Plan)', apiKey: 'test-key', authType: 'api', models: [{ ...openAiModel, npm: '@ai-sdk/alibaba' }] },
+      { id: 'qwen-cloud-payg', name: 'Qwen Cloud (Pay-As-You-Go)', apiKey: 'test-key', authType: 'api', models: [{ ...openAiModel, npm: '@ai-sdk/alibaba' }] },
+    ];
+
+    for (const target of ['claude', 'codex', 'codex-app', 'claude-app', 'gemini', 'server', 'antigravity'] as const) {
+      expect(providersForTarget(qwenProviders, target).map(provider => provider.id), target).toEqual([
+        'qwen-cloud-token-plan',
+        'qwen-cloud-payg',
+      ]);
+    }
+  });
+
   it('allows Antigravity OAuth Cloud Code for all targets except server', () => {
     for (const target of ['claude', 'codex', 'codex-app', 'claude-app', 'gemini', 'antigravity'] as const) {
       expect(isTargetCompatibleModel({

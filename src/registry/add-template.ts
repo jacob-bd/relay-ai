@@ -8,10 +8,9 @@ import { fetchTemplateModels } from './fetch-template-models.js';
 import { loadRegistry, saveRegistry } from './io.js';
 import {
   buildPricingIndex,
-  enrichModelsWithPricing,
+  enrichModelsForProviderPricing,
   enrichPricingAsync,
   loadPricingCache,
-  pricingPlatformForProvider,
 } from './pricing.js';
 import type { RegistryProvider } from './types.js';
 
@@ -106,11 +105,11 @@ export async function addProviderFromTemplate(
 
   const now = new Date().toISOString();
   const pricingCache = loadPricingCache();
-  const platform = pricingPlatformForProvider(template.id, template.id);
-  const pricedModels = enrichModelsWithPricing(
+  const pricedModels = enrichModelsForProviderPricing(
     usableModels.map(m => ({ ...m, apiUrl: fetched.baseUrl })),
     buildPricingIndex(pricingCache),
-    platform,
+    template.id,
+    template.id,
   );
   const entry: RegistryProvider = {
     id: template.id,

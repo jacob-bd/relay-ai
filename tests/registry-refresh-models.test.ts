@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { refreshProviderModels } from '../src/registry/refresh-models.js';
 import * as io from '../src/registry/io.js';
 import * as env from '../src/env.js';
+import * as pricing from '../src/registry/pricing.js';
 import type { ProviderRegistry, RegistryProvider } from '../src/registry/types.js';
 
 vi.mock('../src/registry/io.js', () => ({
@@ -12,6 +13,7 @@ vi.mock('../src/registry/io.js', () => ({
 vi.mock('../src/registry/pricing.js', () => ({
   loadPricingCache: vi.fn(),
   enrichModelsWithPricing: vi.fn((models) => models),
+  enrichModelsForProviderPricing: vi.fn((models) => models),
   enrichPricingAsync: vi.fn(),
   pricingPlatformForProvider: vi.fn(),
   buildPricingIndex: vi.fn(),
@@ -29,6 +31,41 @@ describe('registry/refresh-models', () => {
   afterEach(() => {
     global.fetch = originalFetch;
     vi.restoreAllMocks();
+  });
+
+  it('does not apply cached PAYG pricing when refreshing Qwen Cloud Token Plan', async () => {
+    const registry: ProviderRegistry = {
+      schemaVersion: 1,
+      providers: [{
+        id: 'qwen-cloud-token-plan',
+        templateId: 'qwen-cloud-token-plan',
+        name: 'Qwen Cloud (Token Plan)',
+        enabled: true,
+        authRef: 'keyring:provider:qwen-cloud-token-plan',
+        authType: 'api',
+        api: {
+          npm: '@ai-sdk/alibaba',
+          url: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+        },
+        addedAt: '2026-07-19T00:00:00.000Z',
+      }],
+    };
+    vi.mocked(global.fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ data: [{ id: 'qwen-coder', name: 'Qwen Coder' }] }),
+    } as Response);
+
+    const result = await refreshProviderModels('qwen-cloud-token-plan', 'test-key', registry);
+
+    expect(result.ok).toBe(true);
+    expect(pricing.enrichModelsWithPricing).not.toHaveBeenCalled();
+    expect(pricing.enrichModelsForProviderPricing).toHaveBeenCalledWith(
+      expect.any(Array),
+      undefined,
+      'qwen-cloud-token-plan',
+      'qwen-cloud-token-plan',
+    );
   });
 
   describe('refreshProviderModels (OpenAI OAuth 3-tier fetch)', () => {
