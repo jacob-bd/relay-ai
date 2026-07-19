@@ -224,11 +224,31 @@ var init_provider_templates = __esm({
       },
       {
         id: "alibaba",
-        name: "Alibaba DashScope",
+        name: "Alibaba DashScope (China)",
         authType: "api",
         npm: "@ai-sdk/alibaba",
         defaultBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
         signupUrl: "https://dashscope.console.aliyun.com/apiKey",
+        modelSource: "api-list",
+        supported: true
+      },
+      {
+        id: "qwen-cloud-token-plan",
+        name: "Qwen Cloud (Token Plan)",
+        authType: "api",
+        npm: "@ai-sdk/alibaba",
+        defaultBaseUrl: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+        signupUrl: "https://home.qwencloud.com/api-keys",
+        modelSource: "api-list",
+        supported: true
+      },
+      {
+        id: "qwen-cloud-payg",
+        name: "Qwen Cloud (Pay-As-You-Go)",
+        authType: "api",
+        npm: "@ai-sdk/alibaba",
+        defaultBaseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        signupUrl: "https://home.qwencloud.com/api-keys",
         modelSource: "api-list",
         supported: true
       },
@@ -424,4 +444,4 @@ export {
   provider_templates_exports,
   init_provider_templates
 };
-//# sourceMappingURL=chunk-DO5FAMNC.js.map
+//# sourceMappingURL=chunk-MVBA7ABV.js.map

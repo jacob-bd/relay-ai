@@ -171,14 +171,14 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-XTBJCRT3.js";
+} from "./chunk-FN2I3RQ7.js";
 import {
   filterTemplates,
   init_provider_templates,
   listAddableTemplates,
   listSupportedTemplates,
   listVisibleOAuthTemplates
-} from "./chunk-DO5FAMNC.js";
+} from "./chunk-MVBA7ABV.js";
 
 // src/cli.ts
 import pc12 from "picocolors";
@@ -13461,7 +13461,7 @@ Error: ${parsed.error}
       console.log("Usage: relay-ai ui [--trace]\n\nOpen the settings UI in your browser.");
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-GATWK5JC.js");
+    const { runUiCommand } = await import("./ui-command-PQWVLG2L.js");
     return runUiCommand({ trace: parsed.trace });
   }
   if (parsed.command === "models") {

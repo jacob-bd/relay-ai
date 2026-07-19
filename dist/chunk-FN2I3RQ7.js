@@ -2,7 +2,7 @@
 import {
   getTemplateById,
   init_provider_templates
-} from "./chunk-DO5FAMNC.js";
+} from "./chunk-MVBA7ABV.js";
 
 // src/constants.ts
 import { homedir } from "os";
@@ -3413,6 +3413,14 @@ function migrateOAuthXaiProvider(registry) {
   };
   return true;
 }
+function migrateAlibabaDashScopeChinaLabel(registry) {
+  const provider = registry.providers.find(
+    (p8) => p8.id === "alibaba" && p8.templateId === "alibaba" && p8.name === "Alibaba DashScope" && p8.api.url === "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  );
+  if (!provider) return false;
+  provider.name = "Alibaba DashScope (China)";
+  return true;
+}
 
 // src/registry/validate.ts
 var PROVIDER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
@@ -3523,6 +3531,7 @@ function loadRegistry(path = getProvidersPath()) {
     let migrated = migrateLegacyCloudProviders(registry);
     if (migrateOAuthOpenAiProvider(registry)) migrated = true;
     if (migrateOAuthXaiProvider(registry)) migrated = true;
+    if (migrateAlibabaDashScopeChinaLabel(registry)) migrated = true;
     if (migrated) {
       try {
         saveRegistry(registry, path);
@@ -3600,6 +3609,7 @@ var TEMPLATE_TO_PRICING_PLATFORM = {
   openai: "openai",
   google: "google_ai_studio",
   alibaba: "alibaba",
+  "qwen-cloud-payg": "alibaba",
   openrouter: "openrouter",
   anthropic: "anthropic",
   nvidia: "nvidia",
@@ -3779,6 +3789,8 @@ var REGISTRY_TO_MODELS_DEV = {
   perplexity: "perplexity",
   cohere: "cohere",
   alibaba: "alibaba",
+  "qwen-cloud-token-plan": "alibaba-token-plan",
+  "qwen-cloud-payg": "alibaba",
   openrouter: "openrouter",
   anthropic: "anthropic",
   nvidia: "nvidia",
@@ -10902,4 +10914,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-XTBJCRT3.js.map
+//# sourceMappingURL=chunk-FN2I3RQ7.js.map
