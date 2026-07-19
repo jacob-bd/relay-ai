@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0] - 2026-07-19
+
+### Added
+
+- **Official Qwen Cloud provider support** — the provider catalog now includes separate **Qwen Cloud (Token Plan)** and **Qwen Cloud (Pay-As-You-Go)** entries with their official international endpoints, API-key authentication, independent credentials, live model discovery, and support across Relay targets including `relay-ai server`. Token Plan is intended for interactive coding and agent-tool workloads.
+- **Official Qwen branding in `relay-ai ui`** — both Qwen Cloud entries use Qwen's standalone purple vector mark throughout the provider UI.
+
+### Changed
+
+- **Alibaba and Qwen billing regions are now unambiguous** — the existing `alibaba` provider remains compatible and is labeled **Alibaba DashScope (China)**, while Qwen Cloud Token Plan and PAYG remain separate because their keys and endpoints are not interchangeable. The built-in China label is migrated only when the saved provider still matches the original built-in configuration, preserving custom endpoints and credentials.
+- **Token Plan no longer shows misleading PAYG prices** — Alibaba usage pricing is applied only to Qwen Cloud PAYG. Token Plan remains subscription/credit-based, while coding-agent pickers continue filtering image-only and non-tool-capable models.
+
+### Documentation
+
+- Updated the provider guide with the three Alibaba/Qwen choices, credential compatibility, endpoint differences, and guidance on which provider users should select.
+
 ## [0.4.9] - 2026-07-19
 
 ### Added
