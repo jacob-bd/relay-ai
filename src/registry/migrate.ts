@@ -68,3 +68,17 @@ export function migrateOAuthXaiProvider(registry: ProviderRegistry): boolean {
   };
   return true;
 }
+
+/** Clarify the stock China DashScope entry without altering custom configurations. */
+export function migrateAlibabaDashScopeChinaLabel(registry: ProviderRegistry): boolean {
+  const provider = registry.providers.find(p =>
+    p.id === 'alibaba' &&
+    p.templateId === 'alibaba' &&
+    p.name === 'Alibaba DashScope' &&
+    p.api.url === 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  );
+  if (!provider) return false;
+
+  provider.name = 'Alibaba DashScope (China)';
+  return true;
+}

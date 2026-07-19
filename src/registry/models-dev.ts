@@ -68,6 +68,8 @@ export const REGISTRY_TO_MODELS_DEV: Record<string, string> = {
   perplexity: 'perplexity',
   cohere: 'cohere',
   alibaba: 'alibaba',
+  'qwen-cloud-token-plan': 'alibaba-token-plan',
+  'qwen-cloud-payg': 'alibaba',
   openrouter: 'openrouter',
   anthropic: 'anthropic',
   nvidia: 'nvidia',

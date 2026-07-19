@@ -15,7 +15,12 @@ import { dirname } from 'node:path';
 import { getAppHome, getProvidersPath } from '../paths.js';
 import type { ProviderRegistry, RegistryProvider } from './types.js';
 import { REGISTRY_SCHEMA_VERSION } from './types.js';
-import { migrateLegacyCloudProviders, migrateOAuthOpenAiProvider, migrateOAuthXaiProvider } from './migrate.js';
+import {
+  migrateAlibabaDashScopeChinaLabel,
+  migrateLegacyCloudProviders,
+  migrateOAuthOpenAiProvider,
+  migrateOAuthXaiProvider,
+} from './migrate.js';
 import { isValidProviderId } from './validate.js';
 
 const DIR_MODE = 0o700;
@@ -121,6 +126,7 @@ export function loadRegistry(path = getProvidersPath()): ProviderRegistry {
     let migrated = migrateLegacyCloudProviders(registry);
     if (migrateOAuthOpenAiProvider(registry)) migrated = true;
     if (migrateOAuthXaiProvider(registry)) migrated = true;
+    if (migrateAlibabaDashScopeChinaLabel(registry)) migrated = true;
     if (migrated) {
       try {
         saveRegistry(registry, path);

@@ -48,9 +48,30 @@ When you run `relay-ai providers add`, you can select from the following templat
 - **Description**: Chinese provider hosting the GLM model family.
 - **Base URL**: `https://open.bigmodel.cn/api/paas/v4`
 
-### Alibaba DashScope
-- **Description**: Alibaba's model-as-a-service platform for Qwen and other models.
+### Qwen Cloud and Alibaba DashScope
+
+Relay offers three separate API-key provider entries for Qwen/DashScope. They use distinct
+accounts, endpoints, billing, and API keys: a key from one entry is not interchangeable with
+another. These are API keys, not OAuth sign-ins.
+
+#### 1. Alibaba DashScope (China)
 - **Base URL**: `https://dashscope.aliyuncs.com/compatible-mode/v1`
+- **Description**: The existing mainland China DashScope platform for Qwen and other Alibaba models.
+
+#### 2. Qwen Cloud (Pay-As-You-Go)
+- **Base URL**: `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`
+- **API keys**: Create a Qwen Cloud API key at `https://home.qwencloud.com/api-keys`.
+- **Billing**: Standard pay-as-you-go pricing. Relay can show Alibaba pricing metadata for this variant.
+
+#### 3. Qwen Cloud (Token Plan)
+- **Base URL**: `https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1`
+- **API keys**: Create a Qwen Cloud API key at `https://home.qwencloud.com/api-keys`.
+- **Billing**: Uses Token Plan credits, not pay-as-you-go rates. Relay intentionally does not show
+  Alibaba PAYG prices for this option because they would be misleading.
+
+Relay restricts these entries to models suitable for interactive coding and agent tool use, so
+image/audio-only and no-tool catalog rows are not offered. Token Plan also remains available through
+Relay's API Server because it is commonly used as a coding/agent bridge.
 
 ### xAI
 - **Description**: API for Grok models.

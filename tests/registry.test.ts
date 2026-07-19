@@ -160,6 +160,50 @@ describe('registry io', () => {
       api: {},
     });
   });
+
+  it('renames and persists only the exact legacy Alibaba China label', () => {
+    const path = join(home, 'providers.json');
+    const legacy = {
+      id: 'alibaba',
+      templateId: 'alibaba',
+      name: 'Alibaba DashScope',
+      enabled: true,
+      authRef: 'keyring:provider:alibaba',
+      api: { npm: '@ai-sdk/alibaba', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+      addedAt: '2026-07-19T00:00:00.000Z',
+    };
+    mkdirSync(home, { recursive: true });
+    writeFileSync(path, JSON.stringify({ schemaVersion: 1, providers: [legacy] }));
+
+    const loaded = loadRegistry(path);
+
+    expect(loaded.providers[0]?.name).toBe('Alibaba DashScope (China)');
+    expect(JSON.parse(readFileSync(path, 'utf8')).providers[0]?.name).toBe('Alibaba DashScope (China)');
+  });
+
+  it.each([
+    { name: 'Alibaba DashScope', url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1' },
+    { name: 'My DashScope', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  ])('does not rename a non-legacy Alibaba entry (%o)', ({ name, url }) => {
+    const path = join(home, 'providers.json');
+    mkdirSync(home, { recursive: true });
+    writeFileSync(path, JSON.stringify({
+      schemaVersion: 1,
+      providers: [{
+        id: 'alibaba',
+        templateId: 'alibaba',
+        name,
+        enabled: true,
+        authRef: 'keyring:provider:alibaba',
+        api: { npm: '@ai-sdk/alibaba', url },
+        addedAt: '2026-07-19T00:00:00.000Z',
+      }],
+    }));
+
+    const loaded = loadRegistry(path);
+
+    expect(loaded.providers[0]?.name).toBe(name);
+  });
 });
 
 describe('materializeRegistry', () => {

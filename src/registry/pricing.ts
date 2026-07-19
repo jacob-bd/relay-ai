@@ -64,6 +64,7 @@ export const TEMPLATE_TO_PRICING_PLATFORM: Record<string, string> = {
   openai: 'openai',
   google: 'google_ai_studio',
   alibaba: 'alibaba',
+  'qwen-cloud-payg': 'alibaba',
   openrouter: 'openrouter',
   anthropic: 'anthropic',
   nvidia: 'nvidia',

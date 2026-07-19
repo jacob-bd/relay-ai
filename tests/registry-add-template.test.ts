@@ -5,6 +5,7 @@ import * as providerFactory from '../src/provider-factory.js';
 import * as fetchTemplate from '../src/registry/fetch-template-models.js';
 import * as io from '../src/registry/io.js';
 import * as pricing from '../src/registry/pricing.js';
+import { getTemplateById } from '../src/provider-templates.js';
 import type { ProviderTemplate } from '../src/provider-templates.js';
 import type { ProviderRegistry } from '../src/registry/types.js';
 
@@ -114,6 +115,25 @@ describe('registry/add-template', () => {
 
     expect(env.saveProviderCredential).toHaveBeenCalledWith('keyring:provider:test-template', 'key_123');
     expect(io.saveRegistry).toHaveBeenCalled();
+  });
+
+  it('adds the three separate DashScope variants with independent credential refs', async () => {
+    const registry: ProviderRegistry = { schemaVersion: 1, providers: [] };
+    vi.mocked(io.loadRegistry).mockReturnValue(registry);
+
+    for (const id of ['alibaba', 'qwen-cloud-token-plan', 'qwen-cloud-payg']) {
+      const result = await addProviderFromTemplate(getTemplateById(id)!, 'test-key');
+      expect(result.added).toBe(true);
+    }
+
+    expect(registry.providers.map(provider => provider.id)).toEqual([
+      'alibaba',
+      'qwen-cloud-token-plan',
+      'qwen-cloud-payg',
+    ]);
+    expect(env.saveProviderCredential).toHaveBeenCalledWith('keyring:provider:alibaba', 'test-key');
+    expect(env.saveProviderCredential).toHaveBeenCalledWith('keyring:provider:qwen-cloud-token-plan', 'test-key');
+    expect(env.saveProviderCredential).toHaveBeenCalledWith('keyring:provider:qwen-cloud-payg', 'test-key');
   });
 
   it('replaces existing provider if replaceExisting is true', async () => {

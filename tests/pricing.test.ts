@@ -6,6 +6,7 @@ import {
   lookupModelCost,
   normalizeModelIdCandidates,
   pickPricingRow,
+  pricingPlatformForProvider,
 } from '../src/registry/pricing.js';
 import type { CachedModel } from '../src/registry/types.js';
 
@@ -76,5 +77,10 @@ describe('pricing enrich', () => {
       isFree: true,
       freeStatus: 'verified_free',
     });
+  });
+
+  it('uses Alibaba pricing for Qwen Cloud PAYG but not Token Plan credits', () => {
+    expect(pricingPlatformForProvider('qwen-cloud-payg', 'qwen-cloud-payg')).toBe('alibaba');
+    expect(pricingPlatformForProvider('qwen-cloud-token-plan', 'qwen-cloud-token-plan')).toBeUndefined();
   });
 });

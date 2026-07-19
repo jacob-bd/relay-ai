@@ -58,6 +58,27 @@ describe('fetchTemplateModels', () => {
     );
   });
 
+  it.each([
+    ['qwen-cloud-token-plan', 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/models'],
+    ['qwen-cloud-payg', 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models'],
+  ])('fetches %s models with Bearer auth at its exact endpoint', async (templateId, url) => {
+    const template = PROVIDER_TEMPLATES.find(t => t.id === templateId)!;
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ data: [{ id: 'qwen-coder', name: 'Qwen Coder' }] }),
+    } as Response);
+
+    await fetchTemplateModels(template, 'test-key');
+
+    expect(fetch).toHaveBeenCalledWith(
+      url,
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer test-key' }),
+      }),
+    );
+  });
+
   it('merges extra headers for custom endpoints needing plan/auth-tracking headers', async () => {
     const groq = PROVIDER_TEMPLATES.find(t => t.id === 'groq')!;
     vi.mocked(fetch).mockResolvedValue({

@@ -10,6 +10,7 @@ import {
   findModelsDevModel,
   loadBundledModelsDevCache,
   readModelsDevCacheMeta,
+  resolveModelsDevSlug,
   shouldHideByModelsDevCapabilities,
   stripModelsDevCacheMeta,
 } from '../src/registry/models-dev.js';
@@ -117,6 +118,15 @@ describe('models.dev capability rules', () => {
     const entry = findModelsDevModel('google', 'gemini-2.5-pro', cache);
     expect(entry).not.toBeNull();
     expect(shouldHideByModelsDevCapabilities(entry!)).toBe(false);
+  });
+
+  it('maps Qwen Cloud variants to their models.dev catalogs and hides incompatible rows', () => {
+    expect(resolveModelsDevSlug('qwen-cloud-token-plan')).toBe('alibaba-token-plan');
+    expect(resolveModelsDevSlug('qwen-cloud-payg')).toBe('alibaba');
+
+    const tokenPlanImage = findModelsDevModel('qwen-cloud-token-plan', 'wan2.7-image-pro', cache);
+    expect(tokenPlanImage).not.toBeNull();
+    expect(shouldHideByModelsDevCapabilities(tokenPlanImage!)).toBe(true);
   });
 });
 

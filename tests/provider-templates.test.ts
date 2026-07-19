@@ -46,6 +46,44 @@ describe('provider templates', () => {
     });
   });
 
+  it('defines separate Qwen Cloud Token Plan and PAYG templates', () => {
+    expect(getTemplateById('qwen-cloud-token-plan')).toMatchObject({
+      id: 'qwen-cloud-token-plan',
+      name: 'Qwen Cloud (Token Plan)',
+      authType: 'api',
+      npm: '@ai-sdk/alibaba',
+      defaultBaseUrl: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+      signupUrl: 'https://home.qwencloud.com/api-keys',
+      modelSource: 'api-list',
+    });
+    expect(getTemplateById('qwen-cloud-payg')).toMatchObject({
+      id: 'qwen-cloud-payg',
+      name: 'Qwen Cloud (Pay-As-You-Go)',
+      authType: 'api',
+      npm: '@ai-sdk/alibaba',
+      defaultBaseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+      signupUrl: 'https://home.qwencloud.com/api-keys',
+      modelSource: 'api-list',
+    });
+    expect(getTemplateById('alibaba')).toMatchObject({
+      name: 'Alibaba DashScope (China)',
+      defaultBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    });
+  });
+
+  it('keeps all three DashScope variants separately addable', () => {
+    const ids = listAddableTemplates([]).map(t => t.id);
+    expect(ids).toEqual(expect.arrayContaining([
+      'alibaba',
+      'qwen-cloud-token-plan',
+      'qwen-cloud-payg',
+    ]));
+    expect(listAddableTemplates(['alibaba']).map(t => t.id)).toEqual(expect.arrayContaining([
+      'qwen-cloud-token-plan',
+      'qwen-cloud-payg',
+    ]));
+  });
+
   it('omits hidden templates from OAuth discovery surfaces', () => {
     const hiddenIds = PROVIDER_TEMPLATES.filter(t => t.hidden).map(t => t.id);
     const visibleIds = listVisibleOAuthTemplates().map(t => t.id);
