@@ -21,7 +21,11 @@ import {
   pricingPlatformForProvider,
 } from './pricing.js';
 import { cachedModelCount, isLikelyPlaceholderKey, resolveRefreshCredential, skipWithCachedModels } from './refresh-credentials.js';
-import { readGlobalOpencodeCredential } from '../env.js';
+import {
+  enrichGithubCopilotOAuthProviderData,
+  readGlobalOpencodeCredential,
+  resolveProviderOAuthProviderData,
+} from '../env.js';
 import type { CachedModel, ProviderRegistry, RegistryProvider } from './types.js';
 import { buildOpenAiOAuthModels, CHATGPT_CODEX_UNSUPPORTED_MODELS } from '../data/openai-oauth-models.js';
 import { buildXaiOAuthModels } from '../data/xai-oauth-models.js';
@@ -32,6 +36,11 @@ import { resolveContextWindow } from '../context-window.js';
 import { getInstalledClaudeVersion } from '../launch.js';
 import { shouldHideModel } from '../model-compatibility.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
+import {
+  copilotPlanTier,
+  normalizeCopilotModels,
+  type CopilotPlanTier,
+} from './copilot-models.js';
 
 export interface RefreshProviderResult {
   id: string;
@@ -171,6 +180,61 @@ async function refreshAntigravityOAuthModels(
   throw new Error('Antigravity live model refresh failed — Cloud Code returned no usable models');
 }
 
+interface OAuthModelRefresh {
+  models: CachedModel[];
+  baseUrl?: string;
+  source: 'live' | 'seed';
+  failureReason?: string;
+  /** A conservative fallback is safer than an older, potentially paid-only cache. */
+  replaceCacheOnFallback?: boolean;
+}
+
+function buildCopilotFreeFallback(): CachedModel[] {
+  return normalizeCopilotModels([
+    {
+      id: 'gpt-4.1',
+      supported_endpoints: ['/chat/completions'],
+      billing: { multiplier: 0 },
+    },
+    {
+      id: 'gpt-4o',
+      supported_endpoints: ['/chat/completions'],
+      billing: { multiplier: 0 },
+    },
+  ], 'free');
+}
+
+async function refreshGithubCopilotOAuthModels(
+  accessToken: string,
+  tier: CopilotPlanTier,
+): Promise<OAuthModelRefresh> {
+  const result = await fetchJsonWithAuth(
+    'https://api.githubcopilot.com/models',
+    accessToken,
+    10_000,
+    { 'Editor-Version': 'vscode/1.85.1' },
+  );
+  const body = result.body;
+  const rows = Array.isArray(body)
+    ? body
+    : body && typeof body === 'object'
+      ? (Array.isArray((body as Record<string, unknown>)['data'])
+          ? (body as Record<string, unknown>)['data'] as unknown[]
+          : Array.isArray((body as Record<string, unknown>)['models'])
+            ? (body as Record<string, unknown>)['models'] as unknown[]
+            : [])
+      : [];
+  const models = normalizeCopilotModels(rows, tier);
+  if (models.length > 0) return { models, source: 'live' };
+
+  return {
+    models: buildCopilotFreeFallback(),
+    source: 'seed',
+    failureReason: result.error ?? 'GitHub Copilot returned no usable chat models',
+    replaceCacheOnFallback: tier !== 'paid',
+  };
+}
+
 /**
  * OAuth model refresh:
  * - OpenAI OAuth: Fetch from chatgpt.com/backend-api/models using the OAuth access token.
@@ -186,10 +250,17 @@ async function refreshAntigravityOAuthModels(
 async function refreshOAuthProvider(
   provider: RegistryProvider,
   accessToken: string,
-): Promise<{ models: CachedModel[]; baseUrl?: string; source: 'live' | 'seed'; failureReason?: string }> {
+): Promise<OAuthModelRefresh> {
   const tpl = provider.templateId ?? provider.id;
   if (tpl === 'openai' || tpl === 'openai-oauth') return refreshOpenAiOAuthModels(accessToken);
   if (tpl === 'xai' || tpl === 'xai-oauth') return refreshXaiOAuthModels(accessToken);
+  if (tpl === 'github-copilot') {
+    let providerData = await resolveProviderOAuthProviderData(provider.authRef);
+    if (copilotPlanTier(providerData) === 'unknown') {
+      providerData = await enrichGithubCopilotOAuthProviderData(provider.authRef) ?? providerData;
+    }
+    return refreshGithubCopilotOAuthModels(accessToken, copilotPlanTier(providerData));
+  }
   if (tpl === 'claude-code') return refreshClaudeCodeOAuthModels(accessToken);
   if (tpl === 'antigravity') return refreshAntigravityOAuthModels(accessToken);
   throw new Error(`refreshOAuthProvider: unsupported template "${tpl}"`);
@@ -280,6 +351,7 @@ async function fetchJsonWithAuth(
   url: string,
   accessToken: string,
   timeoutMs: number,
+  extraHeaders: Record<string, string> = {},
 ): Promise<{ body: unknown | null; error?: string }> {
   try {
     const controller = new AbortController();
@@ -288,7 +360,8 @@ async function fetchJsonWithAuth(
       headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${accessToken}`,
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        ...extraHeaders,
       },
       signal: controller.signal,
     }).finally(() => clearTimeout(timer));
@@ -508,7 +581,7 @@ export async function refreshProviderModels(
 
     if (source === 'zen-go-api') {
       models = await refreshZenGoProvider(provider);
-    } else if (provider.authType === 'oauth' && (['openai', 'xai', 'xai-oauth', 'claude-code', 'antigravity'].includes(provider.templateId ?? provider.id) || provider.id === 'openai-oauth' || provider.id === 'xai-oauth')) {
+    } else if (provider.authType === 'oauth' && (['openai', 'xai', 'xai-oauth', 'github-copilot', 'claude-code', 'antigravity'].includes(provider.templateId ?? provider.id) || provider.id === 'openai-oauth' || provider.id === 'xai-oauth')) {
       // OAuth tokens are not valid API keys for the developer endpoints.
       // OpenAI: ChatGPT JWT rejected by api.openai.com; no /v1/models on ChatGPT backend.
       // xAI: SuperGrok JWT rejected by api.x.ai; falls back to static seed.
@@ -522,7 +595,7 @@ export async function refreshProviderModels(
       }
       const oauthResult = await refreshOAuthProvider(provider, apiKey);
       const failureDetail = oauthResult.failureReason ? ` (${oauthResult.failureReason})` : '';
-      if (oauthResult.source === 'seed' && cachedModelCount(provider) > 0) {
+      if (oauthResult.source === 'seed' && cachedModelCount(provider) > 0 && !oauthResult.replaceCacheOnFallback) {
         // Live discovery failed — keep the existing cache (which may already include
         // models newer than the built-in fallback list) instead of overwriting it.
         return skipWithCachedModels(

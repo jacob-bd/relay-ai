@@ -171,7 +171,7 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-I3SSHXSP.js";
+} from "./chunk-XTBJCRT3.js";
 import {
   filterTemplates,
   init_provider_templates,
@@ -4564,7 +4564,7 @@ ${pc7.bold("Passing flags to Codex:")}
   See docs/CODEX.md for sandbox, network, and troubleshooting.
 
 ${pc7.bold("OAuth:")}
-  For ChatGPT Plus/Pro, run relay-ai providers auth openai first.
+  For ChatGPT Plus/Pro, run relay-ai providers auth openai-oauth first.
 
 ${pc7.bold("Examples:")}
   relay-ai codex
@@ -4840,7 +4840,7 @@ Error: ${launchPlan.error}
   if (compatible.length === 0) {
     if (!configOnly) {
       p8.log.warn("No Codex-compatible providers in your registry.");
-      p8.log.info("Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai.");
+      p8.log.info("Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai-oauth.");
     }
     return 0;
   }
@@ -6083,7 +6083,7 @@ Error: ${launchPlan.error}
   const compatible = providersForTarget(providersForPicker(catalog), "gemini");
   if (compatible.length === 0) {
     p10.log.warn("No Gemini-compatible providers in your registry.");
-    p10.log.info("Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai.");
+    p10.log.info("Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai-oauth.");
     return 0;
   }
   let activeProvider = compatible.find((lp) => lp.id === prefs.lastGeminiProvider) ?? compatible[0];
@@ -13461,7 +13461,7 @@ Error: ${parsed.error}
       console.log("Usage: relay-ai ui [--trace]\n\nOpen the settings UI in your browser.");
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-P27KHEJG.js");
+    const { runUiCommand } = await import("./ui-command-GATWK5JC.js");
     return runUiCommand({ trace: parsed.trace });
   }
   if (parsed.command === "models") {

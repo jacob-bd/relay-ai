@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { refreshProviderModels } from '../src/registry/refresh-models.js';
 import * as io from '../src/registry/io.js';
-import type { ProviderRegistry } from '../src/registry/types.js';
+import * as env from '../src/env.js';
+import type { ProviderRegistry, RegistryProvider } from '../src/registry/types.js';
 
 vi.mock('../src/registry/io.js', () => ({
   loadRegistry: vi.fn(),
@@ -22,6 +23,7 @@ describe('registry/refresh-models', () => {
   beforeEach(() => {
     global.fetch = vi.fn();
     vi.clearAllMocks();
+    vi.spyOn(env, 'enrichGithubCopilotOAuthProviderData').mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -354,6 +356,119 @@ describe('registry/refresh-models', () => {
       const result = await refreshProviderModels('xai-oauth', 'mock_token', mockRegistry);
       expect(result.ok).toBe(true);
       expect(result.modelCount).toBeGreaterThan(0); // grok-3/grok-4 from seed
+    });
+  });
+
+  describe('refreshProviderModels (GitHub Copilot OAuth)', () => {
+    function copilotRegistry(models?: RegistryProvider['modelsCache']): ProviderRegistry {
+      return {
+        schemaVersion: 1,
+        providers: [{
+          id: 'github-copilot',
+          templateId: 'github-copilot',
+          name: 'GitHub Copilot',
+          enabled: true,
+          authRef: 'keyring:oauth:provider:github-copilot',
+          authType: 'oauth',
+          api: {
+            npm: '@ai-sdk/openai-compatible',
+            url: 'https://api.githubcopilot.com',
+            headers: { 'Editor-Version': 'vscode/1.85.1' },
+          },
+          ...(models ? { modelsCache: models } : {}),
+          addedAt: '2026-07-19T00:00:00.000Z',
+        }],
+      };
+    }
+
+    it('uses the safe Free allowlist when Copilot plan metadata is missing', async () => {
+      const registry = copilotRegistry();
+      vi.spyOn(env, 'resolveProviderOAuthProviderData').mockResolvedValue(undefined);
+      vi.mocked(global.fetch).mockResolvedValueOnce(new Response(JSON.stringify({
+        data: [
+          { id: 'gpt-4.1', supported_endpoints: ['/chat/completions'] },
+          { id: 'gemini-premium', supported_endpoints: ['/chat/completions'] },
+          { id: 'gpt-4.1-free-auto', supported_endpoints: ['/chat/completions'] },
+        ],
+      }), { status: 200 }));
+
+      const result = await refreshProviderModels('github-copilot', 'copilot-session-token', registry);
+
+      expect(result).toMatchObject({ ok: true, modelCount: 1 });
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://api.githubcopilot.com/models',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer copilot-session-token',
+            'Editor-Version': 'vscode/1.85.1',
+          }),
+        }),
+      );
+      const saved = vi.mocked(io.saveRegistry).mock.calls[0]?.[0] as ProviderRegistry;
+      expect(saved.providers[0]?.modelsCache?.models.map(model => model.id)).toEqual(['gpt-4.1']);
+    });
+
+    it('keeps the full callable catalog for a confirmed paid plan', async () => {
+      const registry = copilotRegistry();
+      vi.spyOn(env, 'resolveProviderOAuthProviderData').mockResolvedValue({
+        copilot: { is_free_plan: false, lookup_status: 'known' },
+      });
+      vi.mocked(global.fetch).mockResolvedValueOnce(new Response(JSON.stringify({
+        data: [
+          { id: 'gpt-4.1', supported_endpoints: ['/chat/completions'], billing: { multiplier: 0 } },
+          { id: 'claude-sonnet-4', supported_endpoints: ['/chat/completions'] },
+          { id: 'premium-auto', supported_endpoints: ['/chat/completions'] },
+        ],
+      }), { status: 200 }));
+
+      await refreshProviderModels('github-copilot', 'copilot-session-token', registry);
+
+      const saved = vi.mocked(io.saveRegistry).mock.calls[0]?.[0] as ProviderRegistry;
+      expect(saved.providers[0]?.modelsCache?.models.map(model => model.id)).toEqual([
+        'gpt-4.1',
+        'claude-sonnet-4',
+      ]);
+    });
+
+    it('lazily enriches older credentials before applying the plan policy', async () => {
+      const registry = copilotRegistry();
+      vi.spyOn(env, 'resolveProviderOAuthProviderData').mockResolvedValue(undefined);
+      vi.mocked(env.enrichGithubCopilotOAuthProviderData).mockResolvedValue({
+        copilot: { lookup_status: 'known', is_free_plan: false },
+      });
+      vi.mocked(global.fetch).mockResolvedValueOnce(new Response(JSON.stringify({
+        data: [
+          { id: 'gpt-4.1', supported_endpoints: ['/chat/completions'] },
+          { id: 'claude-sonnet-4', supported_endpoints: ['/chat/completions'] },
+        ],
+      }), { status: 200 }));
+
+      const result = await refreshProviderModels('github-copilot', 'copilot-session-token', registry);
+
+      expect(env.enrichGithubCopilotOAuthProviderData)
+        .toHaveBeenCalledWith('keyring:oauth:provider:github-copilot');
+      expect(result).toMatchObject({ ok: true, modelCount: 2 });
+    });
+
+    it('replaces an unsafe old cache with Free seeds when the plan is unknown and discovery fails', async () => {
+      const registry = copilotRegistry({
+        fetchedAt: '2026-07-18T00:00:00.000Z',
+        models: [{
+          id: 'gemini-premium',
+          name: 'Gemini Premium',
+          upstreamModelId: 'gemini-premium',
+          modelFormat: 'openai',
+          npm: '@ai-sdk/openai-compatible',
+        }],
+      });
+      vi.spyOn(env, 'resolveProviderOAuthProviderData').mockResolvedValue(undefined);
+      vi.mocked(global.fetch).mockResolvedValueOnce(new Response('unavailable', { status: 503 }));
+
+      const result = await refreshProviderModels('github-copilot', 'copilot-session-token', registry);
+
+      expect(result).toMatchObject({ ok: true, modelCount: 2 });
+      const saved = vi.mocked(io.saveRegistry).mock.calls[0]?.[0] as ProviderRegistry;
+      expect(saved.providers[0]?.modelsCache?.models.map(model => model.id)).toEqual(['gpt-4.1', 'gpt-4o']);
     });
   });
 

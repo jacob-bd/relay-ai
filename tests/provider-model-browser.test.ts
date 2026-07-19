@@ -7,6 +7,11 @@ async function loadBrowserHelpers() {
   return import(/* @vite-ignore */ moduleUrl.href);
 }
 
+async function loadProviderLogoHelpers() {
+  const moduleUrl = new URL('../src/ui/public/provider-logo.js', import.meta.url);
+  return import(/* @vite-ignore */ moduleUrl.href);
+}
+
 describe('provider model browser', () => {
   const models = Array.from({ length: 55 }, (_, index) => ({
     id: `model-${index + 1}`,
@@ -37,6 +42,16 @@ describe('provider model browser', () => {
 
     expect(formatModelPrice({ input: 0.59, output: 15 })).toBe('$0.59 / $15.00');
     expect(formatModelPrice(undefined)).toBe('—');
+  });
+
+  it('uses the same brand logo markup for OAuth provider aliases', async () => {
+    const { providerLogoHtml } = await loadProviderLogoHelpers();
+
+    expect(providerLogoHtml('xai-oauth', 'xAI (SuperGrok)')).toContain('<svg');
+    expect(providerLogoHtml('xai-oauth', 'xAI (SuperGrok)')).toBe(
+      providerLogoHtml('xai', 'xAI'),
+    );
+    expect(providerLogoHtml('unknown-provider', 'Unknown Provider')).toBe('U');
   });
 
   it('links the sidebar brand to the main repository', () => {

@@ -51,6 +51,9 @@ function decodeAuthEntry(value: unknown): OpencodeAuthEntry | null {
       expires: record['expires'],
       accountId: typeof record['accountId'] === 'string' ? record['accountId'] : undefined,
       enterpriseUrl: typeof record['enterpriseUrl'] === 'string' ? record['enterpriseUrl'] : undefined,
+      providerData: record['providerData'] && typeof record['providerData'] === 'object' && !Array.isArray(record['providerData'])
+        ? record['providerData'] as Record<string, unknown>
+        : undefined,
     };
   }
   if (record['type'] === 'wellknown'

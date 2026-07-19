@@ -7,6 +7,7 @@ import {
   parseStoredOAuthCredential,
 } from './oauth/types.js';
 import { refreshStoredOAuthCredential, oauthCredentialShouldRefresh } from './oauth/refresh.js';
+import { fetchCopilotAccount } from './oauth/github.js';
 import type { ConflictInfo } from './types.js';
 
 export function detectConflicts(): ConflictInfo[] {
@@ -327,6 +328,33 @@ export async function resolveProviderOAuthProviderData(
   if (!parsed || parsed.kind !== 'keyring' || !oauthProviderIdFromAccount(parsed.account)) return undefined;
   const raw = await readKeyringAccount(parsed.account, diag);
   return parseStoredOAuthCredential(raw)?.providerData;
+}
+
+/** Backfill Copilot plan metadata for credentials saved before plan detection existed. */
+export async function enrichGithubCopilotOAuthProviderData(
+  authRef: string,
+  diag?: (msg: string) => void,
+): Promise<Record<string, unknown> | undefined> {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== 'keyring' || oauthProviderIdFromAccount(parsed.account) !== 'github-copilot') {
+    return undefined;
+  }
+  const raw = await readKeyringAccount(parsed.account, diag);
+  const credential = parseStoredOAuthCredential(raw);
+  if (!credential?.refresh) return credential?.providerData;
+  try {
+    const summary = await fetchCopilotAccount(credential.refresh);
+    const providerData = { ...credential.providerData, copilot: summary };
+    await writeKeyringAccount(
+      parsed.account,
+      oauthCredentialToKeychainJson({ ...credential, providerData }),
+      diag,
+    );
+    return providerData;
+  } catch (err) {
+    diag?.(`GitHub Copilot plan lookup unavailable — ${err instanceof Error ? err.message : String(err)}`);
+    return credential.providerData;
+  }
 }
 
 function decodeProviderSecret(raw: string | null): string | null {

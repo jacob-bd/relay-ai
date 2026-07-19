@@ -115,7 +115,7 @@ export async function runGeminiCommand(
   const compatible = providersForTarget(providersForPicker(catalog), 'gemini');
   if (compatible.length === 0) {
     p.log.warn('No Gemini-compatible providers in your registry.');
-    p.log.info('Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai.');
+    p.log.info('Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai-oauth.');
     return 0;
   }
 

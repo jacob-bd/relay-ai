@@ -112,7 +112,7 @@ ${pc.bold('Passing flags to Codex:')}
   See docs/CODEX.md for sandbox, network, and troubleshooting.
 
 ${pc.bold('OAuth:')}
-  For ChatGPT Plus/Pro, run relay-ai providers auth openai first.
+  For ChatGPT Plus/Pro, run relay-ai providers auth openai-oauth first.
 
 ${pc.bold('Examples:')}
   relay-ai codex
@@ -426,7 +426,7 @@ export async function runCodexCommand(
   if (compatible.length === 0) {
     if (!configOnly) {
       p.log.warn('No Codex-compatible providers in your registry.');
-      p.log.info('Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai.');
+      p.log.info('Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai-oauth.');
     }
     return 0;
   }

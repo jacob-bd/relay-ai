@@ -28,12 +28,22 @@ describe('readOpencodeAuthFile', () => {
     mkdirSync(join(dataHome, 'opencode'), { recursive: true });
     const path = join(dataHome, 'opencode', 'auth.json');
     writeFileSync(path, JSON.stringify({
-      xai: { type: 'oauth', access: 'acc', refresh: 'ref', expires: 123 },
+      xai: {
+        type: 'oauth',
+        access: 'acc',
+        refresh: 'ref',
+        expires: 123,
+        providerData: { copilot: { lookup_status: 'known', is_free_plan: true } },
+      },
     }), 'utf8');
     chmodSync(path, 0o600);
 
     const result = readOpencodeAuthFile({ XDG_DATA_HOME: dataHome });
-    expect(result?.entries['xai']).toMatchObject({ type: 'oauth', access: 'acc' });
+    expect(result?.entries['xai']).toMatchObject({
+      type: 'oauth',
+      access: 'acc',
+      providerData: { copilot: { lookup_status: 'known', is_free_plan: true } },
+    });
     expect(isOpencodeOAuth(result?.entries['xai'])).toBe(true);
     rmSync(home, { recursive: true, force: true });
   });

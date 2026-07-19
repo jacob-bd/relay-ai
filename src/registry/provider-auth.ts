@@ -51,7 +51,7 @@ const PROVIDER_DISPLAY: Record<NativeOAuthProviderId, string> = {
   'xai-oauth': 'xAI Grok (SuperGrok)',
   openai: OPENAI_DISPLAY,
   'openai-oauth': OPENAI_DISPLAY,
-  'github-copilot': 'GitHub Copilot (Individual / Business)',
+  'github-copilot': 'GitHub Copilot',
   'claude-code': 'Claude Code (Anthropic subscription)',
   antigravity: 'Antigravity (Google Cloud Code Assist)',
 };
@@ -345,7 +345,7 @@ export function providerAuthHelpText(): string {
 
 ${pc.bold('Usage:')}
   relay-ai providers auth <id>
-  relay-ai providers auth xai --native
+  relay-ai providers auth xai-oauth --native
   relay-ai providers auth openai --broker
   relay-ai providers auth github-copilot
 
@@ -354,7 +354,7 @@ ${pc.bold('Options:')}
   --broker    Delegate to OpenCode auth login
 
 ${pc.bold('Device code (works on SSH/VPS):')}
-  xai              SuperGrok / X Premium (device code at x.ai/device)
-  openai           ChatGPT Plus/Pro (device code at auth.openai.com/codex/device)
-  github-copilot   GitHub Copilot Individual/Business (device code at github.com/login/device)`;
+  xai-oauth        SuperGrok / X Premium (device code at x.ai/device)
+  openai-oauth     ChatGPT Plus/Pro (device code at auth.openai.com/codex/device)
+  github-copilot   GitHub Copilot Free or paid (device code at github.com/login/device)`;
 }

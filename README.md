@@ -189,7 +189,7 @@ Opens a browser-based dashboard on a random local port. From the UI you can:
 - **Keep Claude Code's Anthropic login** — on the Claude Code CLI card, check **Keep my Anthropic login and add Relay models** to keep your normal Claude models while adding the selected Relay model and compatible favorites. This option is not shown for Claude Desktop.
 - **Manage General Favorites** — the sidebar shows your saved favorite models with a slot indicator (Slots used X/20). Favorites launch through all supported agents.
 - **Manage Antigravity Favorites** — separate favorites panel for Antigravity sessions.
-- **Manage providers** — add providers from templates, delete providers, and refresh model lists inline, all without leaving the browser.
+- **Manage providers** — add providers from templates, delete providers, and refresh model lists inline, all without leaving the browser. For GitHub Copilot, ChatGPT, and xAI OAuth, the UI displays a one-time device code with **Copy code** and **Open sign-in page** buttons so you can complete sign-in without using the terminal. Connected Copilot cards also identify the account as Free, Paid, or Plan unverified so the visible model catalog is easier to understand.
 - **Run the Server tab** — configure and start the same gateway as `relay-ai server` (favorites-only or specific providers, discovery id masking, local/network listen mode) and see the resulting URLs, API key, and model catalog right in the browser. Runs in the same process as the UI, so it stops when you close the dashboard. See [Registry gateway (`relay-ai server`)](#registry-gateway-relay-ai-server) below for what each option does.
 
 Press `Ctrl+C` in the terminal where `relay-ai ui` is running to shut down the dashboard server (this also stops the gateway if you started it from the Server tab).
@@ -408,6 +408,8 @@ Read the full setup and risk notes in **[docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.m
 ## OAuth Providers
 
 relay-ai supports OAuth providers that use device-code sign-in, so you can connect an existing subscription without pasting an API key. See **[docs/SUBSCRIPTION-OAUTH.md](docs/SUBSCRIPTION-OAUTH.md)** for setup details.
+
+In `relay-ai ui`, select one of the OAuth providers and click **Get sign-in code**. Relay AI shows the code with a Copy button; click **Open sign-in page**, paste the code in the provider's page, and return to the UI while it finishes connecting.
 
 Device code flows for existing subscriptions:
 

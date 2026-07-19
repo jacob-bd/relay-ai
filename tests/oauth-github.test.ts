@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
 import {
+  classifyCopilotAccount,
   requestGithubDeviceCode,
   exchangeForCopilotToken,
   refreshGithubCopilotToken,
@@ -58,6 +59,60 @@ describe('GitHub Copilot OAuth', () => {
   });
 
   describe('exchangeForCopilotToken', () => {
+    it('stores a normalized paid Copilot plan summary with the session token', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ token: 'tidv2_paid' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            login: 'alice',
+            access_type_sku: 'copilot_individual_pro',
+            copilot_plan: 'individual_pro',
+          }),
+        });
+
+      const res = await exchangeForCopilotToken('ghu_paid');
+
+      expect(res.providerData).toEqual({
+        copilot: {
+          login: 'alice',
+          access_type_sku: 'copilot_individual_pro',
+          copilot_plan: 'individual_pro',
+          is_free_plan: false,
+          lookup_status: 'known',
+        },
+      });
+      expect(mockFetch).toHaveBeenNthCalledWith(2, 'https://api.github.com/copilot_internal/user', expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer ghu_paid',
+          'Editor-Version': 'vscode/1.85.1',
+        }),
+      }));
+    });
+
+    it('keeps the session token but marks the plan unknown when account lookup fails', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ token: 'tidv2_unknown' }),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 503,
+          text: async () => 'temporarily unavailable',
+        });
+
+      const res = await exchangeForCopilotToken('ghu_unknown');
+
+      expect(res.access_token).toBe('tidv2_unknown');
+      expect(res.providerData).toEqual({
+        copilot: { lookup_status: 'unknown' },
+      });
+    });
+
     it('returns short-lived token on success', async () => {
       const expiresAt = new Date(Date.now() + 1800 * 1000).toISOString();
       mockFetch.mockResolvedValueOnce({
@@ -82,6 +137,37 @@ describe('GitHub Copilot OAuth', () => {
       });
 
       await expect(exchangeForCopilotToken('ghu_123')).rejects.toThrow(/missing token field/);
+    });
+  });
+
+  describe('classifyCopilotAccount', () => {
+    it.each([
+      'free_limited_copilot',
+      'free_educational_quota',
+      'no_auth_limited_copilot',
+    ])('classifies %s as a Free plan', (accessTypeSku) => {
+      expect(classifyCopilotAccount({ access_type_sku: accessTypeSku })).toMatchObject({
+        is_free_plan: true,
+        lookup_status: 'known',
+      });
+    });
+
+    it('classifies copilot_plan=free as Free even without a Free SKU', () => {
+      expect(classifyCopilotAccount({ copilot_plan: 'free' }).is_free_plan).toBe(true);
+    });
+
+    it('classifies a paid plan as paid', () => {
+      expect(classifyCopilotAccount({
+        access_type_sku: 'copilot_individual_pro',
+        copilot_plan: 'individual_pro',
+      }).is_free_plan).toBe(false);
+    });
+
+    it('keeps the plan unverified when GitHub omits both plan fields', () => {
+      expect(classifyCopilotAccount({ login: 'alice' })).toEqual({
+        login: 'alice',
+        lookup_status: 'unknown',
+      });
     });
   });
 
@@ -126,6 +212,14 @@ describe('GitHub Copilot OAuth', () => {
         ok: true,
         json: async () => ({ token: 'tidv2_456' }),
       });
+      // 4. Account plan lookup inside the Copilot exchange
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          access_type_sku: 'free_limited_copilot',
+          copilot_plan: 'individual',
+        }),
+      });
 
       const sleep = vi.fn().mockResolvedValue(undefined);
       let time = 0;
@@ -136,6 +230,12 @@ describe('GitHub Copilot OAuth', () => {
       const res = await resPromise;
       expect(res.access_token).toBe('tidv2_456');
       expect(res.refresh_token).toBe('ghu_123');
+      expect(res.providerData).toEqual({
+        copilot: expect.objectContaining({
+          is_free_plan: true,
+          lookup_status: 'known',
+        }),
+      });
       expect(sleep).toHaveBeenCalledTimes(1); // slept once for auth_pending
     });
 
@@ -168,6 +268,48 @@ describe('GitHub Copilot OAuth', () => {
 });
 
 describe('OAuth Refresh Logic (GitHub)', () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  it('refreshes Copilot plan metadata while preserving unrelated provider data', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ token: 'tidv2_new' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          login: 'alice',
+          access_type_sku: 'free_limited_copilot',
+          copilot_plan: 'individual',
+        }),
+      });
+
+    const refreshed = await refreshStoredOAuthCredential('github-copilot', {
+      type: 'oauth',
+      access: 'tidv2_old',
+      refresh: 'ghu_123',
+      expires: 0,
+      providerData: {
+        retained: 'yes',
+        copilot: { lookup_status: 'unknown' },
+      },
+    });
+
+    expect(refreshed.providerData).toEqual({
+      retained: 'yes',
+      copilot: {
+        login: 'alice',
+        access_type_sku: 'free_limited_copilot',
+        copilot_plan: 'individual',
+        is_free_plan: true,
+        lookup_status: 'known',
+      },
+    });
+  });
+
   it('oauthCredentialShouldRefresh returns true if expiring for github-copilot', () => {
     const cred: any = {
       access: 'tidv2',

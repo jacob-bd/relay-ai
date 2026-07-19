@@ -5,6 +5,7 @@ import type { CompatibilityAgent } from '../model-compatibility.js';
 import type { LocalProvider } from '../types.js';
 import { materializeRegistry } from './materialize.js';
 import { loadRegistry } from './io.js';
+import { copilotPlanTier, filterCachedCopilotModels } from './copilot-models.js';
 
 /** Load enabled providers from ~/.relay-ai/providers.json with resolved credentials. */
 export async function loadRegistryProviders(
@@ -33,7 +34,23 @@ export async function loadRegistryProviders(
       }
     }
   }));
-  return materializeRegistry(registry, provider => keys.get(provider.id) ?? null, opts)
+  const runtimeRegistry = {
+    ...registry,
+    providers: registry.providers.map(provider => {
+      if (provider.id !== 'github-copilot' || !provider.modelsCache) return provider;
+      return {
+        ...provider,
+        modelsCache: {
+          ...provider.modelsCache,
+          models: filterCachedCopilotModels(
+            provider.modelsCache.models,
+            copilotPlanTier(oauthProviderData.get(provider.id)),
+          ),
+        },
+      };
+    }),
+  };
+  return materializeRegistry(runtimeRegistry, provider => keys.get(provider.id) ?? null, opts)
     .map(provider => ({
       ...provider,
       oauthAccountId: oauthAccountIds.get(provider.id),

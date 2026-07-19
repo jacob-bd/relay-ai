@@ -238,7 +238,9 @@ With 20 favorites spanning many providers, the first request after launch may be
 
 | Provider | CLI route | App route | Notes |
 |----------|-----------|-----------|-------|
-| **OpenAI** | Tier 1 direct | Local proxy | `relay-ai providers auth openai` for ChatGPT OAuth |
+| **OpenAI API key** | Tier 1 direct | Local proxy | Add with `relay-ai providers add` |
+| **ChatGPT OAuth** | Tier 2 proxy | Local proxy | `relay-ai providers auth openai-oauth` |
+| **GitHub Copilot** | Tier 2 proxy | Local proxy | `relay-ai providers auth github-copilot`; plan-aware model catalog |
 | **Anthropic, xAI, Gemini, Nvidia, DeepSeek, …** | Tier 2 proxy | Local proxy | SDK translation path |
 | **OpenCode Zen / Go** | Tier 2 proxy | Local proxy | Requires an OpenCode API key |
 
@@ -248,7 +250,7 @@ Add providers with `relay-ai providers add` or import from OpenCode.
 
 ## OAuth
 
-Tokens (e.g. xAI, OpenAI OAuth) refresh at **launch only**. Long sessions may return 401 when a token expires. Restart `relay-ai codex` or `relay-ai codex-app`.
+Subscription tokens, including GitHub Copilot, xAI, and ChatGPT OAuth, refresh at **launch only**. Long sessions may return 401 when a token expires. Restart `relay-ai codex` or `relay-ai codex-app`.
 
 ---
 

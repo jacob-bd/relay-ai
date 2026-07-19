@@ -75,6 +75,22 @@ When you run `relay-ai providers add`, you can select from the following templat
 
 ---
 
+## Subscription Providers (OAuth)
+
+Relay AI can connect supported subscriptions with a one-time device code instead of an API key:
+
+- **GitHub Copilot**: `relay-ai providers auth github-copilot`
+- **OpenAI ChatGPT**: `relay-ai providers auth openai-oauth`
+- **xAI SuperGrok**: `relay-ai providers auth xai-oauth`
+
+You can also connect them from **Providers & Keys** in `relay-ai ui`. Relay AI displays the device code, provides a **Copy code** button, and opens the provider's sign-in page only after you select **Open sign-in page**.
+
+GitHub Copilot catalogs are plan-aware. Paid accounts receive the callable chat models returned for that account. Free accounts receive only the verified Free-compatible models. If the plan cannot be verified, Relay AI uses the same conservative Free policy so it does not expose models that may consume paid requests. Use **Refresh Models** after changing plans.
+
+See [Subscription OAuth](SUBSCRIPTION-OAUTH.md) for complete setup and troubleshooting instructions.
+
+---
+
 ## The Moonshot / Kimi Confusion
 
 Moonshot AI has split their product into three separate platforms. They all share the "Kimi" name, but they use different billing systems, different base URLs, and their API keys **are not interchangeable**.

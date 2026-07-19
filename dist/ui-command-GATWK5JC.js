@@ -9,6 +9,7 @@ import {
   buildDedupedModelRows,
   checkForUpdates,
   completeAntigravityExchange,
+  copilotPlanTier,
   createGatewayModelCatalog,
   favoriteProviderDisplayName,
   fetchProviderCatalog,
@@ -66,7 +67,7 @@ import {
   supportsClaudeTransparentMode,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-I3SSHXSP.js";
+} from "./chunk-XTBJCRT3.js";
 import {
   __toCommonJS,
   init_provider_templates,
@@ -648,7 +649,7 @@ async function handlePostConfig(req, res) {
 }
 async function handleGetModels(res) {
   try {
-    const catalog = await fetchModelsWithTimeout();
+    const catalog = (await fetchModelsWithTimeout()).filter((provider) => provider.authType !== "oauth" || DEVICE_CODE_PROVIDER_IDS.has(provider.id));
     const registry = loadRegistry();
     const rawCountById = new Map(registry.providers.map((p2) => [p2.id, p2.modelsCache?.models.length ?? 0]));
     const providers = catalog.map((p2) => ({
@@ -662,7 +663,10 @@ async function handleGetModels(res) {
         return getTemplateById(t)?.anonymousFreeModels === true;
       })(),
       authType: p2.authType ?? "api",
-      modelCount: rawCountById.get(p2.id) ?? p2.models.length,
+      // Copilot's runtime catalog is policy-filtered by account plan. Never replace
+      // that safe count with the larger raw cache count.
+      modelCount: p2.id === "github-copilot" ? p2.models.length : rawCountById.get(p2.id) ?? p2.models.length,
+      ...p2.id === "github-copilot" ? { subscription: copilotSubscription(p2.providerData) } : {},
       models: p2.models.map((m) => ({
         id: m.id,
         name: m.name,
@@ -676,7 +680,7 @@ async function handleGetModels(res) {
     }));
     const materializedIds = new Set(catalog.map((p2) => p2.id));
     for (const rp of registry.providers) {
-      if (rp.authType !== "oauth" || !rp.enabled || materializedIds.has(rp.id)) continue;
+      if (rp.authType !== "oauth" || !DEVICE_CODE_PROVIDER_IDS.has(rp.id) || !rp.enabled || materializedIds.has(rp.id)) continue;
       const credential = await resolveProviderCredential(rp.id, rp.authRef).catch(() => null);
       if (!credential) continue;
       providers.push({
@@ -687,6 +691,7 @@ async function handleGetModels(res) {
         freeAccess: false,
         authType: "oauth",
         modelCount: 0,
+        ...rp.id === "github-copilot" ? { subscription: copilotSubscription(void 0) } : {},
         models: []
       });
     }
@@ -694,6 +699,12 @@ async function handleGetModels(res) {
   } catch (err) {
     sendCatalogFetchError(res, err, "Model fetch");
   }
+}
+function copilotSubscription(providerData) {
+  const tier = copilotPlanTier(providerData);
+  if (tier === "free") return { tier, label: "Copilot Free" };
+  if (tier === "paid") return { tier, label: "Copilot Paid" };
+  return { tier, label: "Plan unverified" };
 }
 async function handlePostKeys(req, res) {
   try {
@@ -891,7 +902,7 @@ async function handleDeleteProvider(req, res) {
 }
 var DEVICE_CODE_PROVIDER_IDS = /* @__PURE__ */ new Set(["xai-oauth", "openai-oauth", "github-copilot"]);
 var PKCE_PROVIDER_IDS = /* @__PURE__ */ new Set(["claude-code", "antigravity"]);
-var NATIVE_OAUTH_PROVIDER_IDS = /* @__PURE__ */ new Set([...DEVICE_CODE_PROVIDER_IDS, ...PKCE_PROVIDER_IDS]);
+var NATIVE_OAUTH_PROVIDER_IDS = DEVICE_CODE_PROVIDER_IDS;
 async function refreshOAuthProviderModels(providerId) {
   const registry = loadRegistry();
   const entry = registry.providers.find((p2) => p2.id === providerId);
@@ -904,7 +915,7 @@ async function handleOAuthStart(req, res) {
     const body = JSON.parse(await readBody(req));
     const { providerId } = body;
     if (!providerId || !NATIVE_OAUTH_PROVIDER_IDS.has(providerId)) {
-      sendJson(res, 400, { error: `providerId must be one of: ${[...NATIVE_OAUTH_PROVIDER_IDS].join(", ")}` });
+      sendJson(res, 400, { error: "Unsupported OAuth provider." });
       return;
     }
     const sessionId = randomUUID();
@@ -1489,4 +1500,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-P27KHEJG.js.map
+//# sourceMappingURL=ui-command-GATWK5JC.js.map

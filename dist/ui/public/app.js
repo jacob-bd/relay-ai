@@ -3,6 +3,8 @@ import {
   getProviderModelPage,
   PROVIDER_MODEL_PAGE_SIZE,
 } from './provider-model-browser.js';
+import { copyDeviceCode, oauthConnectionLabel } from './oauth-device.js';
+import { providerInitial, providerLogoHtml } from './provider-logo.js';
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -55,53 +57,6 @@ const state = {
     },
   },
 };
-
-// ─── Provider logos via Simple Icons CDN ─────────────────────────────────────
-// https://simpleicons.org — monochrome SVG brand marks, white on dark bg.
-// Format: https://cdn.simpleicons.org/{slug}/ffffff
-
-// Inline SVGs for providers whose official domains block hotlinking.
-// White fill, renders on gradient background.
-const PROVIDER_INLINE_SVGS = {
-  openai: `<svg viewBox="0 0 24 24" fill="white" xmlns="http://www.w3.org/2000/svg" style="width:20px;height:20px"><path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.896zm16.597 3.855l-5.843-3.368L15.115 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.403-.667zm2.01-3.023l-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135l-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08-4.778 2.758a.795.795 0 0 0-.393.681zm1.097-2.365l2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z"/></svg>`,
-  kilo: `<svg viewBox="0 0 24 24" fill="white" fill-rule="evenodd" xmlns="http://www.w3.org/2000/svg" style="width:22px;height:22px"><title>Kilo Code</title><path d="M0 0v24h24V0H0zm22.222 22.222H1.778V1.778h20.444v20.444zm-7.555-4.964h2.222v1.778h-2.794L12.89 17.83v-2.794h1.778v2.222zm4 0h-1.778v-2.222h-2.222v-1.778h2.793l1.207 1.207v2.793zm-7.556-2.591H9.333v-1.778h1.778v1.778zm-5.778-1.778h1.778v4h4v1.778H6.54L5.333 17.46V12.89zm13.334-3.556v1.778h-5.778V9.333h1.987V7.111h-1.987V5.333h2.558l1.206 1.207v2.793h2.014zm-11.556-2h2.222l1.778 1.778v2H9.333v-2H7.111v2H5.333V5.333h1.778v2zm4 0H9.333v-2h1.778v2z"/></svg>`,
-  xai: `<svg viewBox="0 0 24 24" fill="white" xmlns="http://www.w3.org/2000/svg" style="width:20px;height:20px"><path d="M6.469 8.776L16.512 23h-4.464L2.005 8.776H6.47zm-.004 7.9l2.233 3.164L6.467 23H2l4.465-6.324zM22 2.582V23h-3.659V7.764L22 2.582zM22 1l-9.952 14.095-2.233-3.163L17.533 1H22z"/></svg>`,
-  'xai-oauth': `<svg viewBox="0 0 24 24" fill="white" xmlns="http://www.w3.org/2000/svg" style="width:20px;height:20px"><path d="M6.469 8.776L16.512 23h-4.464L2.005 8.776H6.47zm-.004 7.9l2.233 3.164L6.467 23H2l4.465-6.324zM22 2.582V23h-3.659V7.764L22 2.582zM22 1l-9.952 14.095-2.233-3.163L17.533 1H22z"/></svg>`,
-};
-
-// Verified working logo URLs. Slugs tested against cdn.simpleicons.org — 404s removed.
-// Missing: openai, groq, cohere, togetherai, fireworks, cerebras → inline SVG or gradient letter fallback.
-const PROVIDER_LOGO_URLS = {
-  // OpenCode — official favicon (proper square icon)
-  zen:            'https://opencode.ai/favicon.ico',
-  go:             'https://opencode.ai/favicon.ico',
-  // Verified Simple Icons slugs (200 responses confirmed)
-  anthropic:    'https://cdn.simpleicons.org/anthropic/ffffff',
-  google:       'https://cdn.simpleicons.org/google/ffffff',
-  nvidia:       'https://cdn.simpleicons.org/nvidia/ffffff',
-  deepseek:     'https://cdn.simpleicons.org/deepseek/ffffff',
-  mistral:      'https://cdn.simpleicons.org/mistralai/ffffff',
-  ollama:       'https://cdn.simpleicons.org/ollama/ffffff',
-  openrouter:   'https://cdn.simpleicons.org/openrouter/ffffff',
-  perplexity:   'https://cdn.simpleicons.org/perplexity/ffffff',
-  huggingface:  'https://cdn.simpleicons.org/huggingface/ffffff',
-  cloudflare:   'https://cdn.simpleicons.org/cloudflare/ffffff',
-  azure:        'https://cdn.simpleicons.org/microsoftazure/ffffff',
-  vertex:       'https://cdn.simpleicons.org/googlecloud/ffffff',
-  bedrock:      'https://cdn.simpleicons.org/amazonaws/ffffff',
-  // xai / xai-oauth → inline SVG in PROVIDER_INLINE_SVGS
-  // openai, groq, cohere, togetherai, fireworks, cerebras → no verified slug, use gradient letter
-};
-
-function getProviderLogoContent(providerId) {
-  const base = providerId.replace(/-oauth$/, '').replace(/-api$/, '');
-  // Inline SVG takes priority (for providers that block hotlinking)
-  const svg = PROVIDER_INLINE_SVGS[providerId] ?? PROVIDER_INLINE_SVGS[base];
-  if (svg) return { type: 'svg', content: svg };
-  const url = PROVIDER_LOGO_URLS[providerId] ?? PROVIDER_LOGO_URLS[base];
-  if (url) return { type: 'img', content: url };
-  return null;
-}
 
 // ─── Neon model colors (unique per model ID) ──────────────────────────────────
 
@@ -211,10 +166,6 @@ function providerPalette(id) {
   let hash = 0;
   for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
   return PALETTES[Math.abs(hash) % PALETTES.length];
-}
-
-function providerInitial(name) {
-  return (name || '?').replace(/[^a-zA-Z0-9]/g, '').charAt(0).toUpperCase() || '?';
 }
 
 // ─── API ─────────────────────────────────────────────────────────────────────
@@ -437,8 +388,7 @@ function renderProviders() {
 function buildProviderCard(provider) {
   const [c1, c2] = providerPalette(provider.id);
   const displayName = getProviderName(provider.id);
-  const initial = providerInitial(displayName);
-  const logo = getProviderLogoContent(provider.id);
+  const connectionLabel = oauthConnectionLabel(provider);
   const card = document.createElement('div');
   card.className = 'provider-card';
   card.dataset.id = provider.id;
@@ -449,21 +399,15 @@ function buildProviderCard(provider) {
   header.setAttribute('tabindex', '0');
   header.setAttribute('aria-label', `View models from ${displayName}`);
 
-  const logoHtml = logo?.type === 'svg'
-    ? logo.content
-    : logo?.type === 'img'
-      ? `<img src="${logo.content}" class="provider-logo-img" alt="${escapeHtml(displayName)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><span class="provider-logo-fallback" style="display:none">${initial}</span>`
-      : initial;
-
   header.innerHTML = `
-    <div class="provider-icon" style="background:linear-gradient(135deg,${c1},${c2})">${logoHtml}</div>
+    <div class="provider-icon" style="background:linear-gradient(135deg,${c1},${c2})">${providerLogoHtml(provider.id, displayName)}</div>
     <div class="provider-info">
       <div class="provider-name">${escapeHtml(displayName)}</div>
       <div class="provider-models-count">${provider.modelCount ?? provider.models?.length ?? 0} models</div>
     </div>
     <div class="provider-status">
       <span class="status-chip ${provider.hasKey ? 'has-key' : provider.freeAccess ? 'free-access' : 'no-key'}">
-        ${provider.hasKey ? 'Key stored' : provider.freeAccess ? 'Free models' : 'Not configured'}
+        ${escapeHtml(connectionLabel)}
       </span>
       <button class="provider-config-toggle" type="button" aria-label="Manage ${escapeHtml(displayName)} provider" aria-expanded="false" title="Manage provider">
         <svg class="provider-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -554,7 +498,7 @@ function renderProviderModelBrowser() {
   container.innerHTML = `
     <a class="provider-browser-back" href="#providers">← Providers &amp; Keys</a>
     <div class="provider-browser-hero">
-      <div class="provider-icon" style="background:linear-gradient(135deg,${c1},${c2})">${providerInitial(displayName)}</div>
+      <div class="provider-icon" style="background:linear-gradient(135deg,${c1},${c2})">${providerLogoHtml(provider.id, displayName)}</div>
       <div>
         <div class="section-eyebrow">Provider catalog</div>
         <h1 class="section-heading">${escapeHtml(displayName)} <span class="heading-accent">models</span></h1>
@@ -629,13 +573,6 @@ function renderProviderModelBrowser() {
 
 function buildTemplateCard(template) {
   const [c1, c2] = providerPalette(template.id);
-  const initial = providerInitial(template.name);
-  const logo = getProviderLogoContent(template.id);
-  const logoHtml = logo?.type === 'svg'
-    ? logo.content
-    : logo?.type === 'img'
-      ? `<img src="${logo.content}" class="provider-logo-img" alt="${template.name}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><span class="provider-logo-fallback" style="display:none">${initial}</span>`
-      : initial;
   const card = document.createElement('div');
   card.className = 'provider-card';
   card.dataset.id = template.id;
@@ -651,7 +588,7 @@ function buildTemplateCard(template) {
     : '';
 
   header.innerHTML = `
-    <div class="provider-icon" style="background:linear-gradient(135deg,${c1},${c2})">${logoHtml}</div>
+    <div class="provider-icon" style="background:linear-gradient(135deg,${c1},${c2})">${providerLogoHtml(template.id, template.name)}</div>
     <div class="provider-info">
       <div class="provider-name">${template.name}</div>
       <div class="provider-models-count">Not configured ${signupLink}</div>
@@ -797,88 +734,180 @@ function buildCustomEndpointBodyContent(template, card) {
   return content;
 }
 
+function setOAuthFeedback(feedback, message, tone = '') {
+  feedback.replaceChildren();
+  feedback.className = `key-feedback${tone ? ` ${tone}` : ''}`;
+  feedback.textContent = message;
+}
+
+function createDeviceAuthorizationPanel(url, userCode) {
+  const panel = document.createElement('section');
+  panel.className = 'oauth-device-panel';
+  panel.setAttribute('aria-label', 'Device authorization');
+
+  const eyebrow = document.createElement('div');
+  eyebrow.className = 'oauth-device-eyebrow';
+  eyebrow.textContent = 'One-time device code';
+
+  const codeRow = document.createElement('div');
+  codeRow.className = 'oauth-device-code-row';
+
+  const code = document.createElement('code');
+  code.className = 'oauth-device-code';
+  code.textContent = userCode;
+  code.setAttribute('aria-label', `Device code ${userCode}`);
+
+  const copyButton = document.createElement('button');
+  copyButton.type = 'button';
+  copyButton.className = 'btn btn-ghost oauth-device-copy';
+  copyButton.textContent = 'Copy code';
+  copyButton.addEventListener('click', async () => {
+    try {
+      await copyDeviceCode(userCode);
+      copyButton.textContent = 'Copied ✓';
+      setTimeout(() => { copyButton.textContent = 'Copy code'; }, 1800);
+    } catch {
+      copyButton.textContent = 'Copy failed';
+      setTimeout(() => { copyButton.textContent = 'Copy code'; }, 1800);
+    }
+  });
+
+  codeRow.append(code, copyButton);
+
+  const instructions = document.createElement('ol');
+  instructions.className = 'oauth-device-steps';
+  for (const step of [
+    'Copy the code above.',
+    'Open the secure sign-in page.',
+    'Paste the code there and approve access.',
+  ]) {
+    const item = document.createElement('li');
+    item.textContent = step;
+    instructions.appendChild(item);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'oauth-device-actions';
+
+  const openButton = document.createElement('button');
+  openButton.type = 'button';
+  openButton.className = 'btn btn-primary';
+  openButton.textContent = 'Open sign-in page ↗';
+
+  const waiting = document.createElement('div');
+  waiting.className = 'oauth-device-waiting';
+  waiting.setAttribute('role', 'status');
+  waiting.textContent = 'Waiting for you to finish sign-in…';
+
+  openButton.addEventListener('click', () => {
+    window.open(url, '_blank', 'noopener,noreferrer');
+    waiting.textContent = 'Sign-in page opened. Paste the code, then return here…';
+  });
+
+  actions.append(openButton, waiting);
+  panel.append(eyebrow, codeRow, instructions, actions);
+  return panel;
+}
+
+async function beginDeviceOAuthFlow({ providerId, signInButton, refreshButton, feedback, onDone }) {
+  signInButton.disabled = true;
+  if (refreshButton) refreshButton.disabled = true;
+  setOAuthFeedback(feedback, 'Preparing a secure one-time code…', 'muted');
+
+  let startResult;
+  try {
+    startResult = await api('POST', '/api/providers/oauth/start', { providerId });
+  } catch {
+    setOAuthFeedback(feedback, 'Could not start sign-in. Check the connection and try again.', 'error');
+    signInButton.disabled = false;
+    if (refreshButton) refreshButton.disabled = false;
+    return;
+  }
+  if (startResult.error) {
+    setOAuthFeedback(feedback, startResult.error, 'error');
+    signInButton.disabled = false;
+    if (refreshButton) refreshButton.disabled = false;
+    return;
+  }
+
+  const { sessionId, url, userCode } = startResult;
+  if (!sessionId || !url || !userCode) {
+    setOAuthFeedback(feedback, 'The provider did not return a usable device code. Please try again.', 'error');
+    signInButton.disabled = false;
+    if (refreshButton) refreshButton.disabled = false;
+    return;
+  }
+
+  feedback.replaceChildren(createDeviceAuthorizationPanel(url, userCode));
+  feedback.className = 'key-feedback oauth-device-host';
+
+  let pollInFlight = false;
+  const pollInterval = setInterval(async () => {
+    if (pollInFlight) return;
+    pollInFlight = true;
+    try {
+      const statusResult = await api('GET', `/api/providers/oauth/status?sessionId=${encodeURIComponent(sessionId)}`);
+      if (statusResult.status === 'done') {
+        clearInterval(pollInterval);
+        setOAuthFeedback(feedback, '✓ Signed in successfully', 'success');
+        try {
+          await onDone();
+        } catch {
+          setOAuthFeedback(feedback, 'Signed in, but the provider list could not reload. Refresh the page to continue.', 'error');
+        }
+      } else if (statusResult.status === 'error' || statusResult.error) {
+        clearInterval(pollInterval);
+        const message = statusResult.status === 'error'
+          ? (statusResult.error ?? 'Authorization failed')
+          : 'Session expired — please try again';
+        setOAuthFeedback(feedback, message, 'error');
+        signInButton.disabled = false;
+        if (refreshButton) refreshButton.disabled = false;
+      }
+    } catch {
+      clearInterval(pollInterval);
+      setOAuthFeedback(feedback, 'Lost contact with the sign-in session. Please try again.', 'error');
+      signInButton.disabled = false;
+      if (refreshButton) refreshButton.disabled = false;
+    } finally {
+      pollInFlight = false;
+    }
+  }, 2000);
+}
+
 function buildOAuthTemplateBodyContent(template) {
   const content = document.createElement('div');
   content.className = 'provider-body-content';
 
   const note = document.createElement('div');
-  note.style.cssText = 'font-size:13px;color:var(--text-secondary,#aaa);margin-bottom:10px';
-  note.textContent = 'Sign in via device code — no API key required.';
+  note.className = 'oauth-device-note';
+  note.textContent = 'Sign in with a one-time device code — no API key required.';
 
   const actionRow = document.createElement('div');
   actionRow.className = 'key-row';
 
   const signInBtn = document.createElement('button');
   signInBtn.className = 'btn btn-primary';
-  signInBtn.textContent = 'Sign in';
+  signInBtn.textContent = 'Get sign-in code';
 
   const feedback = document.createElement('div');
   feedback.className = 'key-feedback';
 
   actionRow.appendChild(signInBtn);
-  content.appendChild(note);
-  content.appendChild(actionRow);
-  content.appendChild(feedback);
+  content.append(note, actionRow, feedback);
 
-  let pollInterval = null;
-  function stopPolling() { if (pollInterval) { clearInterval(pollInterval); pollInterval = null; } }
-
-  signInBtn.addEventListener('click', async () => {
-    stopPolling();
-    signInBtn.disabled = true;
-    feedback.textContent = 'Starting authorization…';
-    feedback.className = 'key-feedback muted';
-
-    const startResult = await api('POST', '/api/providers/oauth/start', { providerId: template.id });
-    if (startResult.error) {
-      feedback.textContent = startResult.error;
-      feedback.className = 'key-feedback error';
-      signInBtn.disabled = false;
-      return;
-    }
-
-    const { sessionId } = startResult;
-    if (startResult.pkce) {
-      // PKCE / browser-redirect flow — open auth URL, poll for completion.
-      const { authUrl } = startResult;
-      window.open(authUrl, '_blank');
-      feedback.innerHTML = `Browser opened for authorization.<br>
-        <span style="opacity:0.6;font-size:12px">Complete sign-in in the browser window, then return here…</span>`;
-      feedback.className = 'key-feedback muted';
-    } else {
-      // Device code flow — show URL and code.
-      const { url, userCode } = startResult;
-      window.open(url, '_blank');
-      feedback.innerHTML = `Go to <a href="${url}" target="_blank" style="color:inherit">${url}</a><br>
-        Enter code: <strong style="letter-spacing:0.1em;font-size:15px">${userCode}</strong><br>
-        <span style="opacity:0.6;font-size:12px">Waiting for authorization…</span>`;
-      feedback.className = 'key-feedback muted';
-    }
-
-    pollInterval = setInterval(async () => {
-      const statusResult = await api('GET', `/api/providers/oauth/status?sessionId=${encodeURIComponent(sessionId)}`);
-      if (statusResult.status === 'done') {
-        stopPolling();
-        feedback.textContent = '✓ Signed in — provider added';
-        feedback.className = 'key-feedback success';
-        showToast(`${template.name} added`);
-        state.modelsLoaded = false;
-        await loadTemplates();
-        await initModels();
-        renderProviders();
-      } else if (statusResult.status === 'error') {
-        stopPolling();
-        feedback.textContent = statusResult.error ?? 'Authorization failed';
-        feedback.className = 'key-feedback error';
-        signInBtn.disabled = false;
-      } else if (statusResult.error) {
-        stopPolling();
-        feedback.textContent = 'Session expired — please try again';
-        feedback.className = 'key-feedback error';
-        signInBtn.disabled = false;
-      }
-    }, 3000);
-  });
+  signInBtn.addEventListener('click', () => beginDeviceOAuthFlow({
+    providerId: template.id,
+    signInButton: signInBtn,
+    feedback,
+    onDone: async () => {
+      showToast(`${template.name} added`);
+      state.modelsLoaded = false;
+      await loadTemplates();
+      await initModels();
+      renderProviders();
+    },
+  }));
 
   return content;
 }
@@ -1110,10 +1139,10 @@ function buildOAuthProviderBodyContent(provider) {
   content.className = 'provider-body-content';
 
   const status = document.createElement('div');
-  status.style.cssText = 'font-size:13px;color:var(--text-secondary,#aaa);margin-bottom:10px';
+  status.className = 'oauth-device-note';
   status.textContent = provider.hasKey
-    ? 'Signed in via OAuth.'
-    : 'Not signed in. Click below to start the device authorization flow.';
+    ? `Signed in via OAuth${provider.subscription?.label ? ` · ${provider.subscription.label}` : ''}.`
+    : 'Not signed in. Generate a one-time code to connect this provider.';
 
   const actionRow = document.createElement('div');
   actionRow.className = 'key-row';
@@ -1122,7 +1151,7 @@ function buildOAuthProviderBodyContent(provider) {
 
   const signInBtn = document.createElement('button');
   signInBtn.className = 'btn btn-primary';
-  signInBtn.textContent = provider.hasKey ? 'Re-authenticate' : 'Sign in';
+  signInBtn.textContent = provider.hasKey ? 'Re-authenticate' : 'Get sign-in code';
 
   const refreshBtn = document.createElement('button');
   refreshBtn.className = 'btn btn-ghost';
@@ -1138,11 +1167,6 @@ function buildOAuthProviderBodyContent(provider) {
   content.appendChild(actionRow);
   content.appendChild(feedback);
   content.appendChild(buildDeleteProviderRow(provider));
-
-  let pollInterval = null;
-  function stopPolling() {
-    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
-  }
 
   refreshBtn.addEventListener('click', async () => {
     refreshBtn.disabled = true;
@@ -1162,61 +1186,19 @@ function buildOAuthProviderBodyContent(provider) {
     setTimeout(() => { feedback.textContent = ''; feedback.className = 'key-feedback'; }, 4000);
   });
 
-  signInBtn.addEventListener('click', async () => {
-    stopPolling();
-    signInBtn.disabled = true;
-    refreshBtn.disabled = true;
-    feedback.textContent = 'Starting authorization…';
-    feedback.className = 'key-feedback muted';
-
-    const startResult = await api('POST', '/api/providers/oauth/start', { providerId: provider.id });
-    if (startResult.error) {
-      feedback.textContent = startResult.error;
-      feedback.className = 'key-feedback error';
-      signInBtn.disabled = false;
-      refreshBtn.disabled = false;
-      return;
-    }
-
-    const { sessionId, url, userCode } = startResult;
-    window.open(url, '_blank');
-    feedback.innerHTML = `Go to <a href="${url}" target="_blank" style="color:inherit">${url}</a><br>
-      Enter code: <strong style="letter-spacing:0.1em;font-size:15px">${userCode}</strong><br>
-      <span style="opacity:0.6;font-size:12px">Waiting for authorization…</span>`;
-    feedback.className = 'key-feedback muted';
-
-    pollInterval = setInterval(async () => {
-      const statusResult = await api('GET', `/api/providers/oauth/status?sessionId=${encodeURIComponent(sessionId)}`);
-      if (statusResult.status === 'done') {
-        stopPolling();
-        feedback.textContent = '✓ Signed in successfully';
-        feedback.className = 'key-feedback success';
-        provider.hasKey = true;
-        status.textContent = 'Signed in via OAuth.';
-        signInBtn.textContent = 'Re-authenticate';
-        signInBtn.disabled = false;
-        refreshBtn.style.display = '';
-        refreshBtn.disabled = false;
-        const chip = document.querySelector(`[data-id="${CSS.escape(provider.id)}"] .status-chip`);
-        if (chip) { chip.className = 'status-chip has-key'; chip.textContent = 'Key stored'; }
-        showToast(`Signed in to ${provider.name ?? provider.id}`);
-        state.modelsLoaded = false;
-        initModels().then(() => { renderProviders(); renderFavList(); });
-      } else if (statusResult.status === 'error') {
-        stopPolling();
-        feedback.textContent = statusResult.error ?? 'Authorization failed';
-        feedback.className = 'key-feedback error';
-        signInBtn.disabled = false;
-        refreshBtn.disabled = false;
-      } else if (statusResult.error) {
-        stopPolling();
-        feedback.textContent = 'Session expired — please try again';
-        feedback.className = 'key-feedback error';
-        signInBtn.disabled = false;
-        refreshBtn.disabled = false;
-      }
-    }, 3000);
-  });
+  signInBtn.addEventListener('click', () => beginDeviceOAuthFlow({
+    providerId: provider.id,
+    signInButton: signInBtn,
+    refreshButton: refreshBtn,
+    feedback,
+    onDone: async () => {
+      showToast(`Signed in to ${provider.name ?? provider.id}`);
+      state.modelsLoaded = false;
+      await initModels();
+      renderProviders();
+      renderFavList();
+    },
+  }));
 
   return content;
 }

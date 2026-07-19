@@ -71,8 +71,8 @@ describe('parseProvidersArgs', () => {
   it('keeps hidden provider ids out of auth help', () => {
     const help = providerAuthHelpText();
     expect(help).toContain('github-copilot');
-    expect(help).toContain('openai');
-    expect(help).toContain('xai');
+    expect(help).toContain('openai-oauth');
+    expect(help).toContain('xai-oauth');
     for (const template of PROVIDER_TEMPLATES.filter(t => t.hidden)) {
       expect(help).not.toContain(template.id);
       expect(help).not.toContain(template.name);

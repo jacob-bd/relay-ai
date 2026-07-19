@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.9] - 2026-07-19
+
+### Added
+
+- **Clearer device-code sign-in in `relay-ai ui`** — GitHub Copilot, ChatGPT, and xAI sign-in now shows the one-time code in a dedicated panel with a Copy button, an explicit **Open sign-in page** button, paste instructions, and live completion status. The browser is opened only after the user clicks the button.
+
+### Fixed
+
+- **GitHub Copilot Free and paid plans now receive the correct model catalog** ([#25](https://github.com/jacob-bd/relay-ai/issues/25)) — sign-in records a non-secret Copilot plan summary, model refresh removes router, embedding, disabled, and non-chat entries, and Free accounts are restricted to the verified Free-compatible allowlist. If plan detection fails, relay-ai uses the same conservative Free policy instead of exposing models that may consume paid requests; stale cached catalogs are guarded at launch as well.
+- **Provider logos are now consistent in the web UI** — provider model catalogs reuse the same brand-logo renderer as provider cards, including OAuth aliases such as xAI SuperGrok, instead of falling back to a different letter icon.
+- **OAuth menus now show only supported subscription sign-ins** — the browser and interactive provider picker expose GitHub Copilot, ChatGPT, and xAI device-code flows without surfacing unsupported OAuth entries.
+
+### Documentation
+
+- Added `docs/SUBSCRIPTION-OAUTH.md` with web UI and terminal sign-in steps, Copilot Free and paid model behavior, safe fallback behavior when plan detection is unavailable, plan-change refresh guidance, and troubleshooting.
+- Updated the README, provider guide, and Codex guide with the supported subscription providers, current OAuth command IDs, and the improved device-code flow.
+
 ## [0.4.8] - 2026-07-18
 
 ### Fixed

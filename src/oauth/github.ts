@@ -12,11 +12,25 @@ const CLIENT_ID = 'Iv1.b507a08c87ecfe98';
 const DEVICE_CODE_URL = 'https://github.com/login/device/code';
 const TOKEN_URL = 'https://github.com/login/oauth/access_token';
 const COPILOT_TOKEN_URL = 'https://api.github.com/copilot_internal/v2/token';
+const COPILOT_USER_URL = 'https://api.github.com/copilot_internal/user';
 const SCOPE = 'copilot';
 
 const DEVICE_CODE_DEFAULT_INTERVAL_MS = 5_000;
 const DEVICE_CODE_DEFAULT_EXPIRES_MS = 15 * 60 * 1000; // 15 minutes
 const OAUTH_POLLING_SAFETY_MARGIN_MS = 1_000;
+const FREE_COPILOT_SKUS = new Set([
+  'free_limited_copilot',
+  'free_educational_quota',
+  'no_auth_limited_copilot',
+]);
+
+export interface CopilotAccountSummary {
+  login?: string;
+  access_type_sku?: string;
+  copilot_plan?: string;
+  is_free_plan?: boolean;
+  lookup_status: 'known' | 'unknown';
+}
 
 export interface GithubDeviceCodeResponse {
   device_code: string;
@@ -32,6 +46,52 @@ function commonHeaders(): Record<string, string> {
     'Content-Type': 'application/x-www-form-urlencoded',
     'User-Agent': `relay-ai/${VERSION}`,
   };
+}
+
+export function classifyCopilotAccount(user: Record<string, unknown>): CopilotAccountSummary {
+  const login = typeof user['login'] === 'string' && user['login'].trim() ? user['login'].trim() : undefined;
+  const sku = typeof user['access_type_sku'] === 'string' && user['access_type_sku'].trim()
+    ? user['access_type_sku'].trim()
+    : undefined;
+  const plan = typeof user['copilot_plan'] === 'string' && user['copilot_plan'].trim()
+    ? user['copilot_plan'].trim()
+    : undefined;
+  if (!sku && !plan) {
+    return {
+      ...(login ? { login } : {}),
+      lookup_status: 'unknown',
+    };
+  }
+  const isFree = FREE_COPILOT_SKUS.has(sku?.toLowerCase() ?? '') || plan?.toLowerCase() === 'free';
+  return {
+    ...(login ? { login } : {}),
+    ...(sku ? { access_type_sku: sku } : {}),
+    ...(plan ? { copilot_plan: plan } : {}),
+    is_free_plan: isFree,
+    lookup_status: 'known',
+  };
+}
+
+export async function fetchCopilotAccount(ghuToken: string): Promise<CopilotAccountSummary> {
+  const response = await fetch(COPILOT_USER_URL, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${ghuToken}`,
+      Accept: 'application/json',
+      'User-Agent': `relay-ai/${VERSION}`,
+      'Editor-Version': 'vscode/1.85.1',
+      'X-GitHub-Api-Version': '2025-04-01',
+    },
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`GitHub Copilot account lookup failed (${response.status})${detail ? `: ${detail}` : ''}`);
+  }
+  const json = await response.json() as unknown;
+  if (!json || typeof json !== 'object' || Array.isArray(json)) {
+    throw new Error('GitHub Copilot account lookup returned invalid JSON');
+  }
+  return classifyCopilotAccount(json as Record<string, unknown>);
 }
 
 export async function requestGithubDeviceCode(): Promise<GithubDeviceCodeResponse> {
@@ -75,7 +135,17 @@ export async function exchangeForCopilotToken(ghuToken: string): Promise<OAuthTo
     const expiresMs = new Date(json.expires_at).getTime() - Date.now();
     if (expiresMs > 0) expiresIn = Math.floor(expiresMs / 1000);
   }
-  return { access_token: json.token, expires_in: expiresIn };
+  let account: CopilotAccountSummary = { lookup_status: 'unknown' };
+  try {
+    account = await fetchCopilotAccount(ghuToken);
+  } catch {
+    // A plan lookup outage must not invalidate an otherwise usable session token.
+  }
+  return {
+    access_token: json.token,
+    expires_in: expiresIn,
+    providerData: { copilot: account },
+  };
 }
 
 /**
@@ -124,6 +194,7 @@ export async function pollGithubDeviceCodeToken(
         access_token: copilot.access_token,
         refresh_token: ghuToken, // store ghu_ as refresh for re-exchange later
         expires_in: copilot.expires_in,
+        providerData: copilot.providerData,
       };
     }
 

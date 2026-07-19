@@ -26,6 +26,23 @@ describe('oauth types', () => {
     expect(cred.expires).toBeGreaterThan(Date.now());
   });
 
+  it('merges token provider metadata over existing metadata', () => {
+    const cred = tokensToStoredCredential({
+      access_token: 'a',
+      refresh_token: 'r',
+      expires_in: 3600,
+      providerData: { copilot: { is_free_plan: true, lookup_status: 'known' } },
+    }, undefined, undefined, {
+      retained: 'yes',
+      copilot: { lookup_status: 'unknown' },
+    });
+
+    expect(cred.providerData).toEqual({
+      retained: 'yes',
+      copilot: { is_free_plan: true, lookup_status: 'known' },
+    });
+  });
+
   it('reads JWT exp for proactive refresh hint', () => {
     const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
     const payload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) - 10 })).toString('base64url');

@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.4.8",
+  version: "0.4.9",
   publishConfig: {
     access: "public"
   },
@@ -2409,7 +2409,8 @@ function decodeAuthEntry(value) {
       refresh: record["refresh"],
       expires: record["expires"],
       accountId: typeof record["accountId"] === "string" ? record["accountId"] : void 0,
-      enterpriseUrl: typeof record["enterpriseUrl"] === "string" ? record["enterpriseUrl"] : void 0
+      enterpriseUrl: typeof record["enterpriseUrl"] === "string" ? record["enterpriseUrl"] : void 0,
+      providerData: record["providerData"] && typeof record["providerData"] === "object" && !Array.isArray(record["providerData"]) ? record["providerData"] : void 0
     };
   }
   if (record["type"] === "wellknown" && typeof record["key"] === "string" && typeof record["token"] === "string") {
@@ -2460,13 +2461,14 @@ function oauthCredentialToKeychainJson(cred) {
 
 // src/oauth/types.ts
 function tokensToStoredCredential(tokens, existingRefresh, accountId, providerData) {
+  const mergedProviderData = providerData || tokens.providerData ? { ...providerData, ...tokens.providerData } : void 0;
   return {
     type: "oauth",
     access: tokens.access_token,
     refresh: tokens.refresh_token ?? existingRefresh ?? "",
     expires: Date.now() + (tokens.expires_in ?? 3600) * 1e3,
     ...accountId ? { accountId } : {},
-    ...providerData ? { providerData } : {}
+    ...mergedProviderData ? { providerData: mergedProviderData } : {}
   };
 }
 function parseStoredOAuthCredential(raw) {
@@ -2512,16 +2514,62 @@ var CLIENT_ID2 = "Iv1.b507a08c87ecfe98";
 var DEVICE_CODE_URL = "https://github.com/login/device/code";
 var TOKEN_URL2 = "https://github.com/login/oauth/access_token";
 var COPILOT_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token";
+var COPILOT_USER_URL = "https://api.github.com/copilot_internal/user";
 var SCOPE = "copilot";
 var DEVICE_CODE_DEFAULT_INTERVAL_MS = 5e3;
 var DEVICE_CODE_DEFAULT_EXPIRES_MS2 = 15 * 60 * 1e3;
 var OAUTH_POLLING_SAFETY_MARGIN_MS2 = 1e3;
+var FREE_COPILOT_SKUS = /* @__PURE__ */ new Set([
+  "free_limited_copilot",
+  "free_educational_quota",
+  "no_auth_limited_copilot"
+]);
 function commonHeaders() {
   return {
     Accept: "application/json",
     "Content-Type": "application/x-www-form-urlencoded",
     "User-Agent": `relay-ai/${VERSION}`
   };
+}
+function classifyCopilotAccount(user) {
+  const login = typeof user["login"] === "string" && user["login"].trim() ? user["login"].trim() : void 0;
+  const sku = typeof user["access_type_sku"] === "string" && user["access_type_sku"].trim() ? user["access_type_sku"].trim() : void 0;
+  const plan = typeof user["copilot_plan"] === "string" && user["copilot_plan"].trim() ? user["copilot_plan"].trim() : void 0;
+  if (!sku && !plan) {
+    return {
+      ...login ? { login } : {},
+      lookup_status: "unknown"
+    };
+  }
+  const isFree = FREE_COPILOT_SKUS.has(sku?.toLowerCase() ?? "") || plan?.toLowerCase() === "free";
+  return {
+    ...login ? { login } : {},
+    ...sku ? { access_type_sku: sku } : {},
+    ...plan ? { copilot_plan: plan } : {},
+    is_free_plan: isFree,
+    lookup_status: "known"
+  };
+}
+async function fetchCopilotAccount(ghuToken) {
+  const response = await fetch(COPILOT_USER_URL, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${ghuToken}`,
+      Accept: "application/json",
+      "User-Agent": `relay-ai/${VERSION}`,
+      "Editor-Version": "vscode/1.85.1",
+      "X-GitHub-Api-Version": "2025-04-01"
+    }
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`GitHub Copilot account lookup failed (${response.status})${detail ? `: ${detail}` : ""}`);
+  }
+  const json = await response.json();
+  if (!json || typeof json !== "object" || Array.isArray(json)) {
+    throw new Error("GitHub Copilot account lookup returned invalid JSON");
+  }
+  return classifyCopilotAccount(json);
 }
 async function requestGithubDeviceCode() {
   const response = await fetch(DEVICE_CODE_URL, {
@@ -2561,7 +2609,16 @@ async function exchangeForCopilotToken(ghuToken) {
     const expiresMs = new Date(json.expires_at).getTime() - Date.now();
     if (expiresMs > 0) expiresIn = Math.floor(expiresMs / 1e3);
   }
-  return { access_token: json.token, expires_in: expiresIn };
+  let account = { lookup_status: "unknown" };
+  try {
+    account = await fetchCopilotAccount(ghuToken);
+  } catch {
+  }
+  return {
+    access_token: json.token,
+    expires_in: expiresIn,
+    providerData: { copilot: account }
+  };
 }
 async function refreshGithubCopilotToken(ghuToken) {
   const copilot = await exchangeForCopilotToken(ghuToken);
@@ -2598,7 +2655,8 @@ async function pollGithubDeviceCodeToken(device, opts) {
         access_token: copilot.access_token,
         refresh_token: ghuToken,
         // store ghu_ as refresh for re-exchange later
-        expires_in: copilot.expires_in
+        expires_in: copilot.expires_in,
+        providerData: copilot.providerData
       };
     }
     if (error === "authorization_pending") {
@@ -3104,6 +3162,28 @@ async function resolveProviderOAuthProviderData(authRef, diag) {
   if (!parsed || parsed.kind !== "keyring" || !oauthProviderIdFromAccount(parsed.account)) return void 0;
   const raw = await readKeyringAccount(parsed.account, diag);
   return parseStoredOAuthCredential(raw)?.providerData;
+}
+async function enrichGithubCopilotOAuthProviderData(authRef, diag) {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== "keyring" || oauthProviderIdFromAccount(parsed.account) !== "github-copilot") {
+    return void 0;
+  }
+  const raw = await readKeyringAccount(parsed.account, diag);
+  const credential = parseStoredOAuthCredential(raw);
+  if (!credential?.refresh) return credential?.providerData;
+  try {
+    const summary = await fetchCopilotAccount(credential.refresh);
+    const providerData = { ...credential.providerData, copilot: summary };
+    await writeKeyringAccount(
+      parsed.account,
+      oauthCredentialToKeychainJson({ ...credential, providerData }),
+      diag
+    );
+    return providerData;
+  } catch (err) {
+    diag?.(`GitHub Copilot plan lookup unavailable \u2014 ${err instanceof Error ? err.message : String(err)}`);
+    return credential.providerData;
+  }
 }
 function decodeProviderSecret(raw) {
   if (!raw) return null;
@@ -6781,6 +6861,106 @@ function materializeRegistry(registry, resolveCredential, opts) {
   return result;
 }
 
+// src/registry/copilot-models.ts
+var FREE_MODEL_IDS = /* @__PURE__ */ new Set([
+  "gpt-4.1",
+  "gpt-4o",
+  "gpt-4o-mini",
+  "raptor-mini",
+  "goldeneye"
+]);
+var FREE_CHAT_BLOCKLIST = /* @__PURE__ */ new Set(["gpt-5-mini"]);
+function copilotPlanTier(providerData) {
+  const copilot = providerData?.["copilot"];
+  if (!copilot || typeof copilot !== "object" || Array.isArray(copilot)) return "unknown";
+  const summary = copilot;
+  if (summary["lookup_status"] === "unknown") return "unknown";
+  if (summary["is_free_plan"] === true) return "free";
+  if (summary["is_free_plan"] === false) return "paid";
+  return "unknown";
+}
+function normalizeCopilotModels(rows, tier) {
+  const models = [];
+  for (const value of rows) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const row = value;
+    const id = typeof row["id"] === "string" ? row["id"].trim() : "";
+    if (!id || !copilotModelAllowed(row, tier)) continue;
+    const lowerId = id.toLowerCase();
+    const isFree = tier !== "paid" || copilotModelIsIncluded(row);
+    const family = lowerId.split(/[-/:]/)[0] ?? lowerId;
+    const contextWindow = numericValue(row["context_length"]) ?? numericValue(row["contextWindow"]) ?? numericValue(row["context_window"]) ?? resolveContextWindow(id);
+    models.push({
+      id,
+      name: `${id} [Copilot]`,
+      upstreamModelId: id,
+      family,
+      brand: deriveBrand(family),
+      contextWindow,
+      isFree,
+      freeStatus: isFree ? "verified_free" : "unknown",
+      modelFormat: "openai",
+      npm: "@ai-sdk/openai-compatible",
+      apiUrl: "https://api.githubcopilot.com"
+    });
+  }
+  return models;
+}
+function filterCachedCopilotModels(models, tier) {
+  return models.flatMap((model) => {
+    const id = model.id.toLowerCase();
+    if (!copilotIdIsCallable(id)) return [];
+    if (tier !== "paid" && (!FREE_MODEL_IDS.has(id) || FREE_CHAT_BLOCKLIST.has(id))) return [];
+    if (tier === "paid") return [model];
+    return [{ ...model, isFree: true, freeStatus: "verified_free" }];
+  });
+}
+function copilotModelAllowed(row, tier) {
+  const id = String(row["id"] ?? "").toLowerCase();
+  if (!copilotIdIsCallable(id)) return false;
+  if (row["model_picker_enabled"] === false) return false;
+  const policy = row["policy"];
+  if (policy && typeof policy === "object" && !Array.isArray(policy)) {
+    if (String(policy["state"] ?? "").toLowerCase() === "disabled") return false;
+  }
+  const capabilities = row["capabilities"];
+  if (capabilities && typeof capabilities === "object" && !Array.isArray(capabilities)) {
+    const family = String(capabilities["family"] ?? "").toLowerCase();
+    if (family.includes("embedding")) return false;
+  }
+  const endpoints = row["supported_endpoints"];
+  if (Array.isArray(endpoints) && endpoints.length > 0) {
+    const supportsChat = endpoints.some((endpoint) => {
+      const normalized = String(endpoint).toLowerCase().replace(/\/$/, "");
+      return normalized.endsWith("/chat/completions") || normalized === "chat/completions";
+    });
+    if (!supportsChat) return false;
+  }
+  if (tier !== "paid" && (!FREE_MODEL_IDS.has(id) || FREE_CHAT_BLOCKLIST.has(id))) return false;
+  return true;
+}
+function copilotIdIsCallable(id) {
+  return id !== "auto" && !id.endsWith("-auto") && !id.includes("embedding");
+}
+function copilotModelIsIncluded(row) {
+  const id = String(row["id"] ?? "").toLowerCase();
+  if (FREE_CHAT_BLOCKLIST.has(id) || !copilotIdIsCallable(id)) return false;
+  const billing = row["billing"];
+  if (billing && typeof billing === "object" && !Array.isArray(billing)) {
+    const multiplier = numericValue(billing["multiplier"]);
+    if (multiplier !== void 0) return multiplier === 0;
+  }
+  return FREE_MODEL_IDS.has(id);
+}
+function numericValue(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return void 0;
+}
+
 // src/registry/load.ts
 async function loadRegistryProviders(diag, opts) {
   const registry = loadRegistry();
@@ -6804,7 +6984,23 @@ async function loadRegistryProviders(diag, opts) {
       }
     }
   }));
-  return materializeRegistry(registry, (provider) => keys.get(provider.id) ?? null, opts).map((provider) => ({
+  const runtimeRegistry = {
+    ...registry,
+    providers: registry.providers.map((provider) => {
+      if (provider.id !== "github-copilot" || !provider.modelsCache) return provider;
+      return {
+        ...provider,
+        modelsCache: {
+          ...provider.modelsCache,
+          models: filterCachedCopilotModels(
+            provider.modelsCache.models,
+            copilotPlanTier(oauthProviderData.get(provider.id))
+          )
+        }
+      };
+    })
+  };
+  return materializeRegistry(runtimeRegistry, (provider) => keys.get(provider.id) ?? null, opts).map((provider) => ({
     ...provider,
     oauthAccountId: oauthAccountIds.get(provider.id),
     providerData: oauthProviderData.get(provider.id)
@@ -9308,10 +9504,49 @@ async function refreshAntigravityOAuthModels(accessToken) {
   }
   throw new Error("Antigravity live model refresh failed \u2014 Cloud Code returned no usable models");
 }
+function buildCopilotFreeFallback() {
+  return normalizeCopilotModels([
+    {
+      id: "gpt-4.1",
+      supported_endpoints: ["/chat/completions"],
+      billing: { multiplier: 0 }
+    },
+    {
+      id: "gpt-4o",
+      supported_endpoints: ["/chat/completions"],
+      billing: { multiplier: 0 }
+    }
+  ], "free");
+}
+async function refreshGithubCopilotOAuthModels(accessToken, tier) {
+  const result = await fetchJsonWithAuth(
+    "https://api.githubcopilot.com/models",
+    accessToken,
+    1e4,
+    { "Editor-Version": "vscode/1.85.1" }
+  );
+  const body = result.body;
+  const rows = Array.isArray(body) ? body : body && typeof body === "object" ? Array.isArray(body["data"]) ? body["data"] : Array.isArray(body["models"]) ? body["models"] : [] : [];
+  const models = normalizeCopilotModels(rows, tier);
+  if (models.length > 0) return { models, source: "live" };
+  return {
+    models: buildCopilotFreeFallback(),
+    source: "seed",
+    failureReason: result.error ?? "GitHub Copilot returned no usable chat models",
+    replaceCacheOnFallback: tier !== "paid"
+  };
+}
 async function refreshOAuthProvider(provider, accessToken) {
   const tpl = provider.templateId ?? provider.id;
   if (tpl === "openai" || tpl === "openai-oauth") return refreshOpenAiOAuthModels(accessToken);
   if (tpl === "xai" || tpl === "xai-oauth") return refreshXaiOAuthModels(accessToken);
+  if (tpl === "github-copilot") {
+    let providerData = await resolveProviderOAuthProviderData(provider.authRef);
+    if (copilotPlanTier(providerData) === "unknown") {
+      providerData = await enrichGithubCopilotOAuthProviderData(provider.authRef) ?? providerData;
+    }
+    return refreshGithubCopilotOAuthModels(accessToken, copilotPlanTier(providerData));
+  }
   if (tpl === "claude-code") return refreshClaudeCodeOAuthModels(accessToken);
   if (tpl === "antigravity") return refreshAntigravityOAuthModels(accessToken);
   throw new Error(`refreshOAuthProvider: unsupported template "${tpl}"`);
@@ -9369,7 +9604,7 @@ function buildDynamicOAuthModel(entry, seedById) {
     preferWebSockets: entry.preferWebSockets
   };
 }
-async function fetchJsonWithAuth(url, accessToken, timeoutMs) {
+async function fetchJsonWithAuth(url, accessToken, timeoutMs, extraHeaders = {}) {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -9377,7 +9612,8 @@ async function fetchJsonWithAuth(url, accessToken, timeoutMs) {
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${accessToken}`,
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        ...extraHeaders
       },
       signal: controller.signal
     }).finally(() => clearTimeout(timer));
@@ -9533,7 +9769,7 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
     let oauthFallbackReason;
     if (source === "zen-go-api") {
       models = await refreshZenGoProvider(provider);
-    } else if (provider.authType === "oauth" && (["openai", "xai", "xai-oauth", "claude-code", "antigravity"].includes(provider.templateId ?? provider.id) || provider.id === "openai-oauth" || provider.id === "xai-oauth")) {
+    } else if (provider.authType === "oauth" && (["openai", "xai", "xai-oauth", "github-copilot", "claude-code", "antigravity"].includes(provider.templateId ?? provider.id) || provider.id === "openai-oauth" || provider.id === "xai-oauth")) {
       if (!apiKey) {
         return {
           id: provider.id,
@@ -9544,7 +9780,7 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
       }
       const oauthResult = await refreshOAuthProvider(provider, apiKey);
       const failureDetail = oauthResult.failureReason ? ` (${oauthResult.failureReason})` : "";
-      if (oauthResult.source === "seed" && cachedModelCount(provider) > 0) {
+      if (oauthResult.source === "seed" && cachedModelCount(provider) > 0 && !oauthResult.replaceCacheOnFallback) {
         return skipWithCachedModels(
           provider,
           `Live model discovery failed${failureDetail} \u2014 kept your existing cached model list instead of overwriting it with relay-ai's built-in fallback list. Try refreshing again later.`
@@ -9766,7 +10002,7 @@ var PROVIDER_DISPLAY = {
   "xai-oauth": "xAI Grok (SuperGrok)",
   openai: OPENAI_DISPLAY,
   "openai-oauth": OPENAI_DISPLAY,
-  "github-copilot": "GitHub Copilot (Individual / Business)",
+  "github-copilot": "GitHub Copilot",
   "claude-code": "Claude Code (Anthropic subscription)",
   antigravity: "Antigravity (Google Cloud Code Assist)"
 };
@@ -10019,7 +10255,7 @@ function providerAuthHelpText() {
 
 ${pc6.bold("Usage:")}
   relay-ai providers auth <id>
-  relay-ai providers auth xai --native
+  relay-ai providers auth xai-oauth --native
   relay-ai providers auth openai --broker
   relay-ai providers auth github-copilot
 
@@ -10028,9 +10264,9 @@ ${pc6.bold("Options:")}
   --broker    Delegate to OpenCode auth login
 
 ${pc6.bold("Device code (works on SSH/VPS):")}
-  xai              SuperGrok / X Premium (device code at x.ai/device)
-  openai           ChatGPT Plus/Pro (device code at auth.openai.com/codex/device)
-  github-copilot   GitHub Copilot Individual/Business (device code at github.com/login/device)`;
+  xai-oauth        SuperGrok / X Premium (device code at x.ai/device)
+  openai-oauth     ChatGPT Plus/Pro (device code at auth.openai.com/codex/device)
+  github-copilot   GitHub Copilot Free or paid (device code at github.com/login/device)`;
 }
 
 // src/codex/app-launch.ts
@@ -10618,6 +10854,7 @@ export {
   makeRouteResolver,
   buildCatalogRoutes,
   cachedModelToLocal,
+  copilotPlanTier,
   fetchProviderCatalog,
   providersForPicker,
   resolveLocalProviderApiKey,
@@ -10665,4 +10902,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-I3SSHXSP.js.map
+//# sourceMappingURL=chunk-XTBJCRT3.js.map

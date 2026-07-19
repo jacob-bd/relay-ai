@@ -9,6 +9,8 @@ export interface OAuthTokenResponse {
   refresh_token?: string;
   expires_in?: number;
   id_token?: string;
+  /** Non-secret provider metadata discovered during token exchange. */
+  providerData?: Record<string, unknown>;
 }
 
 export function tokensToStoredCredential(
@@ -17,13 +19,16 @@ export function tokensToStoredCredential(
   accountId?: string,
   providerData?: Record<string, unknown>,
 ): StoredOAuthCredential {
+  const mergedProviderData = providerData || tokens.providerData
+    ? { ...providerData, ...tokens.providerData }
+    : undefined;
   return {
     type: 'oauth',
     access: tokens.access_token,
     refresh: tokens.refresh_token ?? existingRefresh ?? '',
     expires: Date.now() + (tokens.expires_in ?? 3600) * 1000,
     ...(accountId ? { accountId } : {}),
-    ...(providerData ? { providerData } : {}),
+    ...(mergedProviderData ? { providerData: mergedProviderData } : {}),
   };
 }
 

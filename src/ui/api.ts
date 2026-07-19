@@ -35,6 +35,7 @@ import { getServerStatus, startGatewayServer, stopGatewayServer, type ServerStar
 import { freeStatusLabel } from '../free-models.js';
 import { checkForUpdates } from '../update-check.js';
 import { supportsClaudeTransparentMode } from '../http-proxy/routes.js';
+import { copilotPlanTier } from '../registry/copilot-models.js';
 
 const MODELS_TIMEOUT_MS = 30_000;
 
@@ -198,7 +199,8 @@ async function handlePostConfig(req: IncomingMessage, res: ServerResponse): Prom
 
 async function handleGetModels(res: ServerResponse): Promise<void> {
   try {
-    const catalog = await fetchModelsWithTimeout();
+    const catalog = (await fetchModelsWithTimeout())
+      .filter(provider => provider.authType !== 'oauth' || DEVICE_CODE_PROVIDER_IDS.has(provider.id));
     const registry = loadRegistry();
     const rawCountById = new Map(registry.providers.map(p => [p.id, p.modelsCache?.models.length ?? 0]));
     const providers = catalog.map(p => ({
@@ -212,7 +214,10 @@ async function handleGetModels(res: ServerResponse): Promise<void> {
         return getTemplateById(t)?.anonymousFreeModels === true;
       })(),
       authType: p.authType ?? 'api',
-      modelCount: rawCountById.get(p.id) ?? p.models.length,
+      // Copilot's runtime catalog is policy-filtered by account plan. Never replace
+      // that safe count with the larger raw cache count.
+      modelCount: p.id === 'github-copilot' ? p.models.length : (rawCountById.get(p.id) ?? p.models.length),
+      ...(p.id === 'github-copilot' ? { subscription: copilotSubscription(p.providerData) } : {}),
       models: p.models.map(m => ({
         id: m.id,
         name: m.name,
@@ -229,7 +234,10 @@ async function handleGetModels(res: ServerResponse): Promise<void> {
     // Surface them anyway so their card appears and the user can click Refresh Models.
     const materializedIds = new Set(catalog.map(p => p.id));
     for (const rp of registry.providers) {
-      if (rp.authType !== 'oauth' || !rp.enabled || materializedIds.has(rp.id)) continue;
+      if (rp.authType !== 'oauth'
+        || !DEVICE_CODE_PROVIDER_IDS.has(rp.id)
+        || !rp.enabled
+        || materializedIds.has(rp.id)) continue;
       const credential = await resolveProviderCredential(rp.id, rp.authRef).catch(() => null);
       if (!credential) continue;
       providers.push({
@@ -240,6 +248,7 @@ async function handleGetModels(res: ServerResponse): Promise<void> {
         freeAccess: false,
         authType: 'oauth',
         modelCount: 0,
+        ...(rp.id === 'github-copilot' ? { subscription: copilotSubscription(undefined) } : {}),
         models: [],
       });
     }
@@ -248,6 +257,13 @@ async function handleGetModels(res: ServerResponse): Promise<void> {
   } catch (err) {
     sendCatalogFetchError(res, err, 'Model fetch');
   }
+}
+
+function copilotSubscription(providerData?: Record<string, unknown>): { tier: 'free' | 'paid' | 'unknown'; label: string } {
+  const tier = copilotPlanTier(providerData);
+  if (tier === 'free') return { tier, label: 'Copilot Free' };
+  if (tier === 'paid') return { tier, label: 'Copilot Paid' };
+  return { tier, label: 'Plan unverified' };
 }
 
 async function handlePostKeys(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -454,7 +470,7 @@ async function handleDeleteProvider(req: IncomingMessage, res: ServerResponse): 
 
 const DEVICE_CODE_PROVIDER_IDS = new Set(['xai-oauth', 'openai-oauth', 'github-copilot']);
 const PKCE_PROVIDER_IDS = new Set(['claude-code', 'antigravity']);
-const NATIVE_OAUTH_PROVIDER_IDS = new Set([...DEVICE_CODE_PROVIDER_IDS, ...PKCE_PROVIDER_IDS]);
+const NATIVE_OAUTH_PROVIDER_IDS = DEVICE_CODE_PROVIDER_IDS;
 
 async function refreshOAuthProviderModels(providerId: string): Promise<void> {
   const registry = loadRegistry();
@@ -469,7 +485,7 @@ async function handleOAuthStart(req: IncomingMessage, res: ServerResponse): Prom
     const body = JSON.parse(await readBody(req)) as { providerId?: string };
     const { providerId } = body;
     if (!providerId || !NATIVE_OAUTH_PROVIDER_IDS.has(providerId)) {
-      sendJson(res, 400, { error: `providerId must be one of: ${[...NATIVE_OAUTH_PROVIDER_IDS].join(', ')}` }); return;
+      sendJson(res, 400, { error: 'Unsupported OAuth provider.' }); return;
     }
 
     const sessionId = randomUUID();
