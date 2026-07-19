@@ -54,6 +54,25 @@ describe('provider model browser', () => {
     expect(providerLogoHtml('unknown-provider', 'Unknown Provider')).toBe('U');
   });
 
+  it('uses the official Qwen mark for both Qwen Cloud billing providers', async () => {
+    const { providerLogoHtml } = await loadProviderLogoHelpers();
+
+    const tokenPlanLogo = providerLogoHtml(
+      'qwen-cloud-token-plan',
+      'Qwen Cloud (Token Plan)',
+    );
+    const paygLogo = providerLogoHtml(
+      'qwen-cloud-payg',
+      'Qwen Cloud (Pay-As-You-Go)',
+    );
+
+    expect(tokenPlanLogo).toBe(paygLogo);
+    expect(tokenPlanLogo).toContain('<svg');
+    expect(tokenPlanLogo).toContain('viewBox="0 0 141.38 140"');
+    expect(tokenPlanLogo).toContain('fill="#6D44E8"');
+    expect(tokenPlanLogo).toContain('m140.93 85-16.35-28.33');
+  });
+
   it('links the sidebar brand to the main repository', () => {
     const htmlPath = fileURLToPath(new URL('../src/ui/public/index.html', import.meta.url));
     const html = readFileSync(htmlPath, 'utf8');
