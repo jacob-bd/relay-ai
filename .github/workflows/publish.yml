@@ -35,4 +35,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           NOTES=$(node -e "const fs=require('fs');const cl=fs.readFileSync('CHANGELOG.md','utf8');const m=cl.match(/## \[[\d.]+\][^\n]*\n([\s\S]*?)(?=\n## \[|$)/);console.log(m?m[1].trim():'')")
-          gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes "$NOTES"
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release edit "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes "$NOTES"
+          else
+            gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes "$NOTES"
+          fi
