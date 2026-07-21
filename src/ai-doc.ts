@@ -347,7 +347,7 @@ OPENAI CODEX CLI
 PROVIDERS REGISTRY
   relay-ai providers              interactive hub
   relay-ai providers add          add Groq, Mistral, OpenAI, custom URL, …
-  relay-ai providers import       one-time import from OpenCode config
+  relay-ai providers import       optional one-time import from OpenCode CLI
   relay-ai providers list         show provider ids and model counts
   relay-ai providers remove <id>
   relay-ai providers refresh-models [id]

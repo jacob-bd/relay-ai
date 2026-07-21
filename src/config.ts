@@ -198,6 +198,17 @@ export async function getSavedServerPassword(): Promise<string | null> {
   return null;
 }
 
+/** Network gateway password from env (Docker / Compose / quick-start). Never log this. */
+export function getEnvServerPassword(): string | null {
+  const value = process.env['RELAY_AI_SERVER_PASSWORD']?.trim();
+  return value || null;
+}
+
+/** Prefer RELAY_AI_SERVER_PASSWORD, then a saved password. */
+export async function resolveConfiguredServerPassword(): Promise<string | null> {
+  return getEnvServerPassword() ?? (await getSavedServerPassword());
+}
+
 export async function setSavedServerPassword(password: string): Promise<void> {
   const keyring = await getServerPasswordKeyring();
   if (keyring) {

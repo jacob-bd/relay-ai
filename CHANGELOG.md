@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.6.1] - 2026-07-20
+
+### Fixed
+
+- **UI: OpenCode Zen / Go can be added with an API key** — the Providers tab no longer falls through to a bogus “needs a base URL / import from OpenCode” error. Zen/Go use the same shared cloud-add path as the CLI (save key → seed Zen + Go → refresh catalogs).
+- **UI: provider and model header counts update after add / delete / OAuth / refresh** — `initModels()` always re-renders the Providers stats strip so counts stay in sync.
+- **UI: `RELAY_AI_SERVER_PASSWORD` prefills the Server password field** — Docker/Compose env password appears in the form (masked, with Reveal), and Start uses it without retyping.
+- **UI: Server provider checklist refreshes after add / delete** — no full page reload needed to see new providers under Specific providers.
+
+### Changed
+
+- **Providers are Relay-native; OpenCode CLI is optional import only** — OAuth no longer offers “Via OpenCode” / auth broker; unsupported OAuth providers point at `providers add` or optional `providers import`. First-run “Set up your own AI provider” no longer silently imports from OpenCode. Bedrock/Azure/Vertex messaging no longer treats OpenCode as the required setup path.
+
+### Documentation
+
+- README and `docs/PROVIDERS.md` clarify Zen/Go as normal API providers and OpenCode CLI import as optional.
+- `docs/DOCKER.md` notes that `RELAY_AI_SERVER_PASSWORD` prefills the Server form (masked + Reveal).
+
 ## [0.6.0] - 2026-07-20
 
 ### Added

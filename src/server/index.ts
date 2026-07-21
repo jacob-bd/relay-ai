@@ -16,6 +16,7 @@ export {
   hostFromHeader,
 };
 import {
+  getEnvServerPassword,
   getSavedServerPassword,
   getServerExposedProviders,
   getServerFavoritesOnly,
@@ -272,7 +273,7 @@ async function getServerPasswordForQuickMode(
   const trimmedOverride = passwordOverride?.trim();
   if (trimmedOverride) return { password: trimmedOverride, wasSaved: false };
 
-  const fromEnv = process.env['RELAY_AI_SERVER_PASSWORD']?.trim();
+  const fromEnv = getEnvServerPassword();
   if (fromEnv) return { password: fromEnv, wasSaved: false };
 
   const savedPassword = await getSavedServerPassword();

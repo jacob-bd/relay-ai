@@ -21,8 +21,7 @@ import { addCustomEndpointProvider } from './registry/custom-endpoint.js';
 import { validateCustomEndpointUrl } from './registry/url-security.js';
 import { importFromOpencode, type ImportConflictChoice, type ImportConflictContext } from './registry/import-opencode.js';
 import {
-  addGoRegistryStub,
-  addZenRegistryStub,
+  addOpencodeCloudFromApiKey,
   removeProviderFromRegistry,
   toggleProviderEnabled,
 } from './registry/crud.js';
@@ -87,7 +86,7 @@ export function parseProvidersArgs(args: string[]): {
       }
     }
     if (positional.length !== 1) {
-      return { subcommand: 'auth', showHelp: false, error: 'Usage: relay-ai providers auth <id> [--native|--broker]' };
+      return { subcommand: 'auth', showHelp: false, error: 'Usage: relay-ai providers auth <id>' };
     }
     return { subcommand: 'auth', showHelp: false, removeId: positional[0], authMethod };
   }
@@ -114,12 +113,12 @@ ${pc.bold('Usage:')}
   relay-ai providers list
   relay-ai providers remove <id>
   relay-ai providers refresh-models [id]
-  relay-ai providers auth <id> [--native|--broker]
+  relay-ai providers auth <id>
 
 ${pc.bold('Subcommands:')}
   (none)      Provider hub wizard ${pc.dim('[Phase 1.1]')}
   add         Add a provider (Groq, Mistral, Together AI, …) ${pc.dim('[Phase 1.1]')}
-  import      Import providers from OpenCode CLI (one-time) ${pc.dim('[Phase 1.0]')}
+  import      Optional one-time import from OpenCode CLI ${pc.dim('[Phase 1.0]')}
   auth        Sign in with OAuth (GitHub Copilot, xAI, OpenAI)
   list        Show configured providers ${pc.dim('[Phase 1.0]')}
   remove      Remove a provider by id ${pc.dim('[Phase 1.1]')}
@@ -421,28 +420,18 @@ async function runTemplateAddFlow(): Promise<number> {
 
     const spinner = p.spinner();
     spinner.start(`Adding ${template.name}...`);
-
-    const zenStub = addZenRegistryStub();
-    const goStub = addGoRegistryStub();
-    if (!zenStub.added && !goStub.added) {
-      spinner.stop('');
-      p.log.warn('OpenCode Zen / Go is already configured.');
-      return 0;
-    }
-
-    const registry = loadRegistry();
-    const refreshResults = [
-      await refreshProviderModels('zen', apiKey, registry),
-      await refreshProviderModels('go', apiKey, registry),
-    ];
+    const result = await addOpencodeCloudFromApiKey(apiKey);
     spinner.stop('');
 
-    const modelCount = refreshResults.reduce((total, result) => total + (result.modelCount ?? 0), 0);
-    const failed = refreshResults.filter(result => !result.ok);
-    if (failed.length === 0) {
-      p.log.success(`Added ${template.name} — ${fmtCount(modelCount, 'model')} updated.`);
+    if (!result.added) {
+      p.log.warn(result.error ?? 'OpenCode Zen / Go is already configured.');
+      if (result.hint) p.log.info(result.hint);
+      return 0;
+    }
+    if (result.hint) {
+      p.log.warn(`Added ${template.name}. ${result.hint}`);
     } else {
-      p.log.warn(`Added ${template.name}, but ${failed.length} catalog refresh${failed.length === 1 ? '' : 'es'} failed.`);
+      p.log.success(`Added ${template.name} — ${fmtCount(result.modelCount ?? 0, 'model')} updated.`);
     }
     return 0;
   }

@@ -158,7 +158,9 @@ export async function fetchTemplateModels(
       models: [],
       baseUrl: '',
       error: 'This provider needs a base URL.',
-      hint: 'Use relay-ai providers import from OpenCode for advanced setups.',
+      hint: template.urlPrompt
+        ? 'Enter the API base URL when adding this provider.'
+        : 'This template is missing a default base URL — report a bug.',
     };
   }
 

@@ -44,16 +44,14 @@ export async function runFirstRunWizard(trace = false): Promise<FirstRunResult> 
     {
       value: 'providers',
       label: pc.cyan('Set up your own AI provider'),
-      hint: hasOpencode
-        ? 'Import providers you configured in OpenCode'
-        : 'Import from OpenCode or add providers via relay-ai providers',
+      hint: 'Add Groq, Mistral, OpenAI, … with relay-ai providers',
     },
   ];
   if (hasOpencode) {
     options.push({
       value: 'import',
-      label: pc.cyan('Bring settings from OpenCode'),
-      hint: 'One-time import of your OpenCode provider config',
+      label: pc.cyan('Import from OpenCode CLI'),
+      hint: 'Optional one-time import of providers you already configured',
     });
   }
 
@@ -75,28 +73,22 @@ export async function runFirstRunWizard(trace = false): Promise<FirstRunResult> 
     return 'continue';
   }
 
-  if (choice === 'import' || choice === 'providers') {
-    if (!hasOpencode && choice === 'import') {
-      p.log.error('OpenCode CLI not found. Install from https://opencode.ai');
-      return runFirstRunWizard(trace);
+  if (choice === 'providers') {
+    p.log.info(`Add providers with ${pc.cyan('relay-ai providers add')}, then run ${pc.cyan('relay-ai claude')} again.`);
+    if (hasOpencode) {
+      p.log.info(`Optional: ${pc.cyan('relay-ai providers import')} to pull an existing OpenCode CLI config.`);
     }
+    return 'cancel';
+  }
 
+  if (choice === 'import') {
     if (!hasOpencode) {
-      p.log.info('Run relay-ai providers to add providers, then relay-ai claude again.');
-      p.log.info('Quick start with Zen is the fastest path if you have an OpenCode API key.');
-      const retry = await p.select({
-        message: 'What next?',
-        options: [
-          { value: 'zen', label: 'Quick start with OpenCode Zen', hint: '' },
-          { value: 'cancel', label: 'Cancel', hint: '' },
-        ],
-      });
-      if (p.isCancel(retry) || retry === 'cancel') return 'cancel';
+      p.log.error('OpenCode CLI not found. Install from https://opencode.ai — or use Quick start / providers add instead.');
       return runFirstRunWizard(trace);
     }
 
     const spinner = p.spinner();
-    spinner.start('Importing from OpenCode...');
+    spinner.start('Importing from OpenCode CLI...');
     const result = await importFromOpencode();
     spinner.stop('');
 
@@ -105,7 +97,7 @@ export async function runFirstRunWizard(trace = false): Promise<FirstRunResult> 
       return runFirstRunWizard(trace);
     }
     if (result.imported.length === 0) {
-      p.log.warn('No providers imported. Configure providers in OpenCode first, or use Quick start with Zen.');
+      p.log.warn('No providers imported. Add providers with relay-ai providers add, or Quick start with Zen.');
       return runFirstRunWizard(trace);
     }
 

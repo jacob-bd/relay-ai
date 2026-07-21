@@ -2,7 +2,7 @@
 import {
   getTemplateById,
   init_provider_templates
-} from "./chunk-MVBA7ABV.js";
+} from "./chunk-EJONCU3B.js";
 
 // src/constants.ts
 import { homedir } from "os";
@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.6.0",
+  version: "0.6.1",
   publishConfig: {
     access: "public"
   },
@@ -1784,6 +1784,10 @@ async function getSavedServerPassword() {
   }
   return null;
 }
+function getEnvServerPassword() {
+  const value = process.env["RELAY_AI_SERVER_PASSWORD"]?.trim();
+  return value || null;
+}
 async function setSavedServerPassword(password) {
   const keyring = await getServerPasswordKeyring();
   if (keyring) {
@@ -1867,15 +1871,15 @@ import { join as join4 } from "path";
 import { execFileSync } from "child_process";
 import { existsSync as existsSync2 } from "fs";
 function findBinaryOnPath(name, fallbackPaths, options = {}) {
-  const isWindows3 = options.isWindows ?? process.platform === "win32";
+  const isWindows2 = options.isWindows ?? process.platform === "win32";
   const exists = options.exists ?? existsSync2;
   const runWhich = options.runWhich ?? ((binary, win) => execFileSync(win ? "where.exe" : "which", [binary], {
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"]
   }));
   try {
-    const lines = runWhich(name, isWindows3).trim().split("\n").map((line) => line.trim()).filter(Boolean);
-    const path = (isWindows3 ? lines.find((line) => line.toLowerCase().endsWith(".cmd")) : null) ?? lines[0];
+    const lines = runWhich(name, isWindows2).trim().split("\n").map((line) => line.trim()).filter(Boolean);
+    const path = (isWindows2 ? lines.find((line) => line.toLowerCase().endsWith(".cmd")) : null) ?? lines[0];
     if (path && (!options.verifyWhichResult || exists(path))) return path;
   } catch {
   }
@@ -7377,7 +7381,7 @@ async function fetchTemplateModels(template, apiKey, baseUrlOverride, extraHeade
       models: [],
       baseUrl: "",
       error: "This provider needs a base URL.",
-      hint: "Use relay-ai providers import from OpenCode for advanced setups."
+      hint: template.urlPrompt ? "Enter the API base URL when adding this provider." : "This template is missing a default base URL \u2014 report a bug."
     };
   }
   if (template.modelSource === "static-seed") {
@@ -8233,7 +8237,7 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
   }
   const source = resolveModelSource(provider);
   if (source === "manual-only") {
-    const hint = provider.templateId === "google-vertex" || provider.id === "google-vertex" || provider.api.npm === "@ai-sdk/google-vertex" ? "Vertex uses gcloud credentials \u2014 re-import from OpenCode or configure env auth." : "Manual-only provider \u2014 model list is not refreshed automatically.";
+    const hint = provider.templateId === "google-vertex" || provider.id === "google-vertex" || provider.api.npm === "@ai-sdk/google-vertex" ? "Vertex uses gcloud credentials \u2014 use relay-ai server --vertex, or refresh after configuring ADC." : "Manual-only provider \u2014 model list is not refreshed automatically.";
     return {
       id: provider.id,
       name: provider.name,
@@ -8463,6 +8467,44 @@ async function ensureOpencodeCloudProviders(hasOpencodeKey) {
     if (result.ok && !result.skipped) refreshed.push(id);
   }
   return { seeded, refreshed };
+}
+async function addOpencodeCloudFromApiKey(apiKey) {
+  const trimmed = apiKey.trim();
+  if (!trimmed) {
+    return { added: false, error: "API key cannot be empty." };
+  }
+  const saved = await saveToCredentialStore(trimmed);
+  if (!saved) {
+    return {
+      added: false,
+      error: "Could not save API key.",
+      hint: "Ensure RELAY_AI_HOME is writable (Docker uses secrets.json when no OS keyring)."
+    };
+  }
+  process.env["OPENCODE_API_KEY"] = trimmed;
+  const zenStub = addZenRegistryStub();
+  const goStub = addGoRegistryStub();
+  if (!zenStub.added && !goStub.added) {
+    return {
+      added: false,
+      error: "OpenCode Zen / Go is already configured.",
+      hint: "Remove zen or go first, or use Refresh on the provider cards."
+    };
+  }
+  const registry = loadRegistry();
+  const refreshResults = [
+    await refreshProviderModels("zen", trimmed, registry),
+    await refreshProviderModels("go", trimmed, registry)
+  ];
+  const modelCount = refreshResults.reduce((total, result) => total + (result.modelCount ?? 0), 0);
+  const failed = refreshResults.filter((result) => !result.ok);
+  return {
+    added: true,
+    modelCount,
+    ...failed.length > 0 ? {
+      hint: `Providers added, but ${failed.length} catalog refresh${failed.length === 1 ? "" : "es"} failed \u2014 try Refresh on the provider card.`
+    } : {}
+  };
 }
 function toggleProviderEnabled(id) {
   const registry = loadRegistry();
@@ -9484,7 +9526,7 @@ async function getServerPasswordForQuickMode(mode, passwordOverride) {
   if (mode === "local") return { password: null, wasSaved: false };
   const trimmedOverride = passwordOverride?.trim();
   if (trimmedOverride) return { password: trimmedOverride, wasSaved: false };
-  const fromEnv = process.env["RELAY_AI_SERVER_PASSWORD"]?.trim();
+  const fromEnv = getEnvServerPassword();
   if (fromEnv) return { password: fromEnv, wasSaved: false };
   const savedPassword = await getSavedServerPassword();
   if (savedPassword) return { password: savedPassword, wasSaved: true };
@@ -9637,8 +9679,8 @@ async function resolveServerUpstreamApiKey() {
   }));
   if (apiKey) {
     const isMac = process.platform === "darwin";
-    const isWindows3 = process.platform === "win32";
-    const storeName = isMac ? "macOS Keychain" : isWindows3 ? "Windows Credential Manager" : "Secret Service";
+    const isWindows2 = process.platform === "win32";
+    const storeName = isMac ? "macOS Keychain" : isWindows2 ? "Windows Credential Manager" : "Secret Service";
     p4.log.success(`Found key in ${storeName}`);
     return apiKey;
   }
@@ -9961,97 +10003,6 @@ function buildHttpProxyRoutes(providers, favorites, selected, max = MAX_MODEL_CA
   return { routes, unavailable, unsupported };
 }
 
-// src/opencode-serve.ts
-import { execSync as execSync2, spawn as spawn2 } from "child_process";
-import { existsSync as existsSync11 } from "fs";
-import { homedir as homedir7 } from "os";
-import { join as join11 } from "path";
-var isWindows2 = process.platform === "win32";
-var OPENCODE_FALLBACK_PATHS = isWindows2 ? [
-  join11(process.env["APPDATA"] ?? homedir7(), "npm", "opencode.cmd"),
-  join11(process.env["APPDATA"] ?? homedir7(), "npm", "opencode"),
-  join11(homedir7(), "AppData", "Roaming", "npm", "opencode.cmd")
-] : [
-  join11(homedir7(), ".opencode", "bin", "opencode"),
-  join11(homedir7(), ".local", "bin", "opencode"),
-  join11(homedir7(), ".npm", "bin", "opencode"),
-  "/usr/local/bin/opencode",
-  "/opt/homebrew/bin/opencode"
-];
-function findOpencodeBinary() {
-  try {
-    const result = execSync2(isWindows2 ? "where.exe opencode" : "which opencode", {
-      encoding: "utf8",
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-    const lines = result.trim().split("\n").map((l) => l.trim()).filter(Boolean);
-    const path = (isWindows2 ? lines.find((l) => l.toLowerCase().endsWith(".cmd")) : null) ?? lines[0];
-    if (path) return path;
-  } catch {
-  }
-  for (const path of OPENCODE_FALLBACK_PATHS) {
-    if (existsSync11(path)) return path;
-  }
-  return null;
-}
-async function fetchRawOpencodeProviders() {
-  const binary = findOpencodeBinary();
-  if (!binary) return null;
-  return new Promise((resolve) => {
-    let child = null;
-    let settled = false;
-    const TIMEOUT_MS = 1e4;
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      try {
-        child?.kill();
-      } catch {
-      }
-      resolve(value);
-    };
-    const timer = setTimeout(() => {
-      finish(null);
-    }, TIMEOUT_MS);
-    try {
-      child = isWindows2 ? spawn2("cmd.exe", ["/c", binary, "serve", "--port", "0"], { stdio: ["pipe", "pipe", "pipe"] }) : spawn2(binary, ["serve", "--port", "0"], { stdio: ["pipe", "pipe", "pipe"] });
-    } catch {
-      finish(null);
-      return;
-    }
-    const portRegex = /opencode server listening on http:\/\/127\.0\.0\.1:(\d+)/;
-    let portFound = false;
-    let stdoutBuf = "";
-    const onData = (chunk) => {
-      if (portFound) return;
-      stdoutBuf += chunk.toString();
-      const match = portRegex.exec(stdoutBuf);
-      if (!match) return;
-      portFound = true;
-      const port = match[1];
-      fetch(`http://127.0.0.1:${port}/config/providers`).then((res) => res.json()).then((data) => {
-        const raw = data.providers;
-        if (!Array.isArray(raw)) {
-          finish(null);
-          return;
-        }
-        finish(raw);
-      }).catch(() => {
-        finish(null);
-      });
-    };
-    child.stdout?.on("data", onData);
-    child.stderr?.on("data", onData);
-    child.on("error", () => {
-      finish(null);
-    });
-    child.on("exit", () => {
-      if (!settled) finish(null);
-    });
-  });
-}
-
 // src/registry/add-template.ts
 async function probeTemplatePackage(template) {
   if (!template.supported) return template.unsupportedReason ?? "Provider is not supported yet.";
@@ -10075,13 +10026,16 @@ function filterAnonymousFreeModels(models, template) {
   })));
 }
 async function addProviderFromTemplate(template, apiKey, opts) {
-  const packageError = await probeTemplatePackage(template);
-  if (packageError) {
-    return { added: false, error: packageError };
-  }
   const trimmedKey = apiKey.trim();
   if (!trimmedKey && !template.apiKeyOptional) {
     return { added: false, error: "API key cannot be empty." };
+  }
+  if (template.modelSource === "zen-go-api") {
+    return addOpencodeCloudFromApiKey(trimmedKey);
+  }
+  const packageError = await probeTemplatePackage(template);
+  if (packageError) {
+    return { added: false, error: packageError };
   }
   const registry = loadRegistry();
   const existing = registry.providers.find((p8) => p8.id === template.id);
@@ -10159,80 +10113,6 @@ import pc6 from "picocolors";
 import * as p5 from "@clack/prompts";
 import open3 from "open";
 init_provider_templates();
-
-// src/registry/auth-broker.ts
-import { spawn as spawn3 } from "child_process";
-async function runOpencodeAuthBroker(providerId, options = {}) {
-  const binary = findOpencodeBinary();
-  if (!binary) {
-    throw new Error("OpenCode CLI not found. Install from https://opencode.ai or use native device-code auth.");
-  }
-  const args = ["auth", "login", "--provider", providerId];
-  if (options.method) args.push("-m", options.method);
-  const exitCode = await new Promise((resolve, reject) => {
-    const child = spawn3(binary, args, { stdio: "inherit" });
-    child.on("error", reject);
-    child.on("exit", (code) => resolve(code ?? 1));
-  });
-  if (exitCode !== 0) {
-    throw new Error(`OpenCode auth login failed (exit ${exitCode})`);
-  }
-  const authFile = readOpencodeAuthFile();
-  const entry = authFile?.entries[providerId];
-  if (!isOpencodeOAuth(entry)) {
-    throw new Error(`No OAuth token found for "${providerId}" after OpenCode login`);
-  }
-  return entry;
-}
-
-// src/registry/convert.ts
-function modelToCached(model) {
-  return {
-    id: model.id,
-    name: model.name,
-    upstreamModelId: model.upstreamModelId,
-    family: model.family,
-    brand: model.brand,
-    contextWindow: model.contextWindow,
-    cost: model.cost,
-    isFree: model.isFree,
-    freeStatus: model.freeStatus,
-    modelFormat: model.modelFormat,
-    npm: model.npm,
-    apiUrl: model.apiBaseUrl,
-    supportedParameters: model.supportedParameters,
-    reasoning: model.reasoning,
-    interleavedReasoningField: model.interleavedReasoningField,
-    useResponsesLite: model.useResponsesLite,
-    preferWebSockets: model.preferWebSockets
-  };
-}
-function localProviderToRegistry(provider, opts) {
-  if (!isValidProviderId(provider.id)) return null;
-  if (provider.models.length === 0) return null;
-  const first = provider.models[0];
-  const apiUrl = (first.apiBaseUrl ?? first.baseUrl)?.trim();
-  const authType = opts?.authType ?? "api";
-  return {
-    id: provider.id,
-    templateId: opts?.templateId ?? provider.id,
-    name: provider.name,
-    enabled: true,
-    authRef: opts?.authRef ?? `keyring:provider:${provider.id}`,
-    authType,
-    api: {
-      npm: first.npm,
-      ...apiUrl ? { url: apiUrl } : {}
-    },
-    addedAt: (/* @__PURE__ */ new Date()).toISOString(),
-    modelsCache: {
-      fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      models: provider.models.map(modelToCached)
-    }
-  };
-}
-
-// src/registry/provider-auth.ts
 var OPENAI_DISPLAY = "OpenAI ChatGPT Plus/Pro";
 var PROVIDER_DISPLAY = {
   xai: "xAI Grok (SuperGrok)",
@@ -10366,30 +10246,8 @@ async function upsertOAuthProvider(providerId, cred) {
   const templateId = providerId.replace(/-oauth$/, "") || providerId;
   const registry = loadRegistry();
   const authRef = oauthAuthRef(registryId);
-  const template = getTemplateById(templateId);
+  const template = getTemplateById(templateId) ?? getTemplateById(registryId);
   let entry = registry.providers.find((pr) => pr.id === registryId);
-  if (!entry) {
-    const raw = await fetchRawOpencodeProviders();
-    if (raw) {
-      const { providers } = buildImportProviderList(raw, { [providerId]: cred });
-      const lp = providers.find((pr) => pr.id === registryId || pr.id === providerId);
-      if (lp) {
-        const converted = localProviderToRegistry(lp, { authType: "oauth", authRef });
-        if (converted) {
-          entry = {
-            ...converted,
-            id: registryId,
-            templateId,
-            name: oauthDisplayName(registryId, converted.name),
-            api: {
-              ...converted.api,
-              ...template?.headers ? { headers: { ...template.headers, ...converted.api.headers } } : {}
-            }
-          };
-        }
-      }
-    }
-  }
   if (!entry) {
     if (!template) {
       throw new Error(`Provider "${providerId}" is not in your registry and has no template`);
@@ -10397,7 +10255,7 @@ async function upsertOAuthProvider(providerId, cred) {
     const displayName = oauthDisplayName(registryId, template.name);
     entry = {
       id: registryId,
-      templateId,
+      templateId: template.id,
       name: displayName,
       enabled: true,
       authRef,
@@ -10410,7 +10268,7 @@ async function upsertOAuthProvider(providerId, cred) {
       addedAt: (/* @__PURE__ */ new Date()).toISOString()
     };
   } else {
-    entry = { ...entry, authType: "oauth", authRef, templateId };
+    entry = { ...entry, authType: "oauth", authRef, templateId: entry.templateId ?? templateId };
   }
   const idx = registry.providers.findIndex((pr) => pr.id === registryId);
   if (idx >= 0) registry.providers[idx] = entry;
@@ -10421,50 +10279,16 @@ async function upsertOAuthProvider(providerId, cred) {
 async function authenticateProvider(providerId, options = {}) {
   const registryId = toOAuthRegistryId(providerId);
   if (!supportsNativeOAuth(providerId)) {
-    if (findOpencodeBinary()) {
-      const cred2 = await runOpencodeAuthBroker(providerId, { method: options.brokerMethod });
-      let brokerDiagMsg = "";
-      const saved2 = await saveProviderCredential(
-        oauthAuthRef(registryId),
-        oauthCredentialToKeychainJson(cred2),
-        (msg) => {
-          brokerDiagMsg = msg;
-        }
-      );
-      if (!saved2) {
-        p5.log.warn(`Could not save OAuth tokens \u2014 ${brokerDiagMsg || "session may not persist."}`);
-      }
-      const registryProvider2 = await upsertOAuthProvider(providerId, cred2);
-      return { providerId: registryId, credential: cred2, registryProvider: registryProvider2 };
-    }
     throw new Error(
-      `Native OAuth is only built in for xai and openai. Install OpenCode for other OAuth providers.`
+      `OAuth for "${providerId}" is not built into relay-ai. Add an API-key provider with relay-ai providers add, or run relay-ai providers import if you already configured it in the OpenCode CLI.`
     );
   }
-  let method = options.method;
-  if (isBrowserRedirectOAuth(providerId)) {
-    if (method === "broker") {
-      throw new Error(`Via OpenCode is not supported for "${providerId}". Use the built-in OAuth flow.`);
-    }
-    method = "native";
+  if (options.method === "broker") {
+    throw new Error(
+      "OpenCode auth broker is no longer used for providers. Use the built-in OAuth flow, or relay-ai providers import for OpenCode CLI configs."
+    );
   }
-  if (!method) {
-    const hasOpencode = findOpencodeBinary() !== null;
-    if (hasOpencode) {
-      const choice = await p5.select({
-        message: "How would you like to sign in?",
-        options: [
-          { value: "native", label: "Device code (recommended)", hint: "Works on SSH/VPS \u2014 open URL on any device" },
-          { value: "broker", label: "Via OpenCode", hint: "Uses opencode auth login" }
-        ]
-      });
-      if (p5.isCancel(choice)) throw new Error("Cancelled");
-      method = choice;
-    } else {
-      method = "native";
-    }
-  }
-  const cred = method === "broker" ? await runOpencodeAuthBroker(providerId, { method: options.brokerMethod }) : isBrowserRedirectOAuth(providerId) ? await runNativeBrowserOAuth(providerId) : await runNativeDeviceCode(providerId);
+  const cred = isBrowserRedirectOAuth(providerId) ? await runNativeBrowserOAuth(providerId) : await runNativeDeviceCode(providerId);
   let nativeDiagMsg = "";
   const saved = await saveProviderCredential(
     oauthAuthRef(registryId),
@@ -10492,25 +10316,23 @@ function providerAuthHelpText() {
 
 ${pc6.bold("Usage:")}
   relay-ai providers auth <id>
-  relay-ai providers auth xai-oauth --native
-  relay-ai providers auth openai --broker
+  relay-ai providers auth xai-oauth
+  relay-ai providers auth openai-oauth
   relay-ai providers auth github-copilot
-
-${pc6.bold("Options:")}
-  --native    Use built-in OAuth flow
-  --broker    Delegate to OpenCode auth login
 
 ${pc6.bold("Device code (works on SSH/VPS):")}
   xai-oauth        SuperGrok / X Premium (device code at x.ai/device)
   openai-oauth     ChatGPT Plus/Pro (device code at auth.openai.com/codex/device)
-  github-copilot   GitHub Copilot Free or paid (device code at github.com/login/device)`;
+  github-copilot   GitHub Copilot Free or paid (device code at github.com/login/device)
+
+${pc6.dim("OpenCode CLI configs: use")} relay-ai providers import${pc6.dim(" (optional one-time migration).")}`;
 }
 
 // src/codex/app-launch.ts
-import { execSync as execSync3, spawn as spawn4 } from "child_process";
-import { existsSync as existsSync12, readdirSync, statSync as statSync3 } from "fs";
-import { homedir as homedir8 } from "os";
-import { join as join12 } from "path";
+import { execSync as execSync2, spawn as spawn2 } from "child_process";
+import { existsSync as existsSync11, readdirSync, statSync as statSync3 } from "fs";
+import { homedir as homedir7 } from "os";
+import { join as join11 } from "path";
 import * as p6 from "@clack/prompts";
 var CODEX_BUNDLE_ID = "com.openai.codex";
 var DARWIN_APP_NAMES = ["ChatGPT", "Codex"];
@@ -10521,7 +10343,7 @@ function codexAppSupported() {
   }
 }
 function run(cmd, encoding = "utf8") {
-  return execSync3(cmd, { encoding, stdio: ["pipe", "pipe", "pipe"] }).trim();
+  return execSync2(cmd, { encoding, stdio: ["pipe", "pipe", "pipe"] }).trim();
 }
 function runPowerShell(script) {
   return run(`powershell.exe -NoProfile -Command ${JSON.stringify(script)}`);
@@ -10529,33 +10351,33 @@ function runPowerShell(script) {
 function darwinAppCandidates() {
   return DARWIN_APP_NAMES.flatMap((name) => [
     `/Applications/${name}.app`,
-    join12(homedir8(), "Applications", `${name}.app`)
+    join11(homedir7(), "Applications", `${name}.app`)
   ]);
 }
 function winLocalAppData() {
-  return process.env.LOCALAPPDATA ?? join12(homedir8(), "AppData", "Local");
+  return process.env.LOCALAPPDATA ?? join11(homedir7(), "AppData", "Local");
 }
 function winCodexExeCandidates() {
   const local = winLocalAppData();
   const bases = WIN_APP_NAMES.flatMap((name) => [
-    join12(local, "Programs", name),
-    join12(local, "Programs", `OpenAI ${name}`),
-    join12(local, name),
-    join12(local, `OpenAI ${name}`),
-    join12(local, "OpenAI", name)
+    join11(local, "Programs", name),
+    join11(local, "Programs", `OpenAI ${name}`),
+    join11(local, name),
+    join11(local, `OpenAI ${name}`),
+    join11(local, "OpenAI", name)
   ]);
-  bases.push(join12(local, "openai-codex-electron"), join12(local, "openai-chatgpt-electron"));
+  bases.push(join11(local, "openai-codex-electron"), join11(local, "openai-chatgpt-electron"));
   const out = [];
   for (const base of bases) {
     for (const name of WIN_APP_NAMES) {
-      out.push(join12(base, `${name}.exe`));
+      out.push(join11(base, `${name}.exe`));
     }
     try {
-      if (existsSync12(base)) {
+      if (existsSync11(base)) {
         for (const dir of readdirSync(base)) {
           if (dir.startsWith("app-")) {
             for (const name of WIN_APP_NAMES) {
-              out.push(join12(base, dir, `${name}.exe`));
+              out.push(join11(base, dir, `${name}.exe`));
             }
           }
         }
@@ -10569,7 +10391,7 @@ function mdfindCodexApp() {
   try {
     const out = run(`mdfind "kMDItemCFBundleIdentifier == '${CODEX_BUNDLE_ID}'"`);
     const first = out.split("\n").map((l) => l.trim()).find(Boolean);
-    return first && existsSync12(first) ? first : null;
+    return first && existsSync11(first) ? first : null;
   } catch {
     return null;
   }
@@ -10577,14 +10399,14 @@ function mdfindCodexApp() {
 function findCodexApp() {
   if (process.platform === "darwin") {
     for (const path of darwinAppCandidates()) {
-      if (existsSync12(path)) return path;
+      if (existsSync11(path)) return path;
     }
     return mdfindCodexApp();
   }
   if (process.platform === "win32") {
     for (const path of winCodexExeCandidates()) {
       try {
-        if (existsSync12(path) && statSync3(path).isFile()) return path;
+        if (existsSync11(path) && statSync3(path).isFile()) return path;
       } catch {
       }
     }
@@ -10654,15 +10476,15 @@ async function waitForQuit(timeoutMs) {
 function openCodexAppAt(path) {
   if (process.platform === "darwin") {
     if (path.endsWith(".app")) {
-      execSync3(`open ${JSON.stringify(path)}`, { stdio: "inherit" });
+      execSync2(`open ${JSON.stringify(path)}`, { stdio: "inherit" });
     } else {
-      execSync3(`open -b ${CODEX_BUNDLE_ID}`, { stdio: "inherit" });
+      execSync2(`open -b ${CODEX_BUNDLE_ID}`, { stdio: "inherit" });
     }
     return;
   }
   if (process.platform === "win32") {
     if (path.startsWith("shell:AppsFolder\\")) {
-      spawn4("cmd.exe", ["/c", "start", "", path], { stdio: "ignore", detached: true }).unref();
+      spawn2("cmd.exe", ["/c", "start", "", path], { stdio: "ignore", detached: true }).unref();
     } else {
       runPowerShell(`Start-Process -FilePath '${path.replace(/'/g, "''")}'`);
     }
@@ -10679,9 +10501,9 @@ function openCodexApp() {
 }
 function darwinQuit() {
   try {
-    execSync3(`osascript -e 'tell application "Codex" to quit'`, { stdio: "pipe" });
+    execSync2(`osascript -e 'tell application "Codex" to quit'`, { stdio: "pipe" });
   } catch {
-    execSync3(`osascript -e 'tell application id "${CODEX_BUNDLE_ID}" to quit'`, { stdio: "pipe" });
+    execSync2(`osascript -e 'tell application id "${CODEX_BUNDLE_ID}" to quit'`, { stdio: "pipe" });
   }
 }
 function winQuitGraceful() {
@@ -10729,10 +10551,10 @@ function codexAppInstallHint() {
 }
 
 // src/claude-desktop/app-launch.ts
-import { execSync as execSync4, spawn as spawn5 } from "child_process";
-import { existsSync as existsSync13, readdirSync as readdirSync2, statSync as statSync4 } from "fs";
-import { homedir as homedir9 } from "os";
-import { join as join13 } from "path";
+import { execSync as execSync3, spawn as spawn3 } from "child_process";
+import { existsSync as existsSync12, readdirSync as readdirSync2, statSync as statSync4 } from "fs";
+import { homedir as homedir8 } from "os";
+import { join as join12 } from "path";
 import * as p7 from "@clack/prompts";
 var CLAUDE_BUNDLE_ID = "com.anthropic.claudefordesktop";
 function claudeAppSupported() {
@@ -10741,7 +10563,7 @@ function claudeAppSupported() {
   }
 }
 function run2(cmd, encoding = "utf8") {
-  return execSync4(cmd, { encoding, stdio: ["pipe", "pipe", "pipe"] }).trim();
+  return execSync3(cmd, { encoding, stdio: ["pipe", "pipe", "pipe"] }).trim();
 }
 function runPowerShell2(script) {
   return run2(`powershell.exe -NoProfile -Command ${JSON.stringify(script)}`);
@@ -10749,26 +10571,26 @@ function runPowerShell2(script) {
 function darwinAppCandidates2() {
   return [
     "/Applications/Claude.app",
-    join13(homedir9(), "Applications", "Claude.app")
+    join12(homedir8(), "Applications", "Claude.app")
   ];
 }
 function winLocalAppData2() {
-  return process.env.LOCALAPPDATA ?? join13(homedir9(), "AppData", "Local");
+  return process.env.LOCALAPPDATA ?? join12(homedir8(), "AppData", "Local");
 }
 function winClaudeExeCandidates() {
   const local = winLocalAppData2();
   const bases = [
-    join13(local, "Programs", "Claude"),
-    join13(local, "Claude")
+    join12(local, "Programs", "Claude"),
+    join12(local, "Claude")
   ];
   const out = [];
   for (const base of bases) {
-    out.push(join13(base, "Claude.exe"));
+    out.push(join12(base, "Claude.exe"));
     try {
-      if (existsSync13(base)) {
+      if (existsSync12(base)) {
         for (const name of readdirSync2(base)) {
           if (name.startsWith("app-")) {
-            out.push(join13(base, name, "Claude.exe"));
+            out.push(join12(base, name, "Claude.exe"));
           }
         }
       }
@@ -10781,7 +10603,7 @@ function mdfindClaudeApp() {
   try {
     const out = run2(`mdfind "kMDItemCFBundleIdentifier == '${CLAUDE_BUNDLE_ID}'"`);
     const first = out.split("\n").map((l) => l.trim()).find(Boolean);
-    return first && existsSync13(first) ? first : null;
+    return first && existsSync12(first) ? first : null;
   } catch {
     return null;
   }
@@ -10789,14 +10611,14 @@ function mdfindClaudeApp() {
 function findClaudeApp() {
   if (process.platform === "darwin") {
     for (const path of darwinAppCandidates2()) {
-      if (existsSync13(path)) return path;
+      if (existsSync12(path)) return path;
     }
     return mdfindClaudeApp();
   }
   if (process.platform === "win32") {
     for (const path of winClaudeExeCandidates()) {
       try {
-        if (existsSync13(path) && statSync4(path).isFile()) return path;
+        if (existsSync12(path) && statSync4(path).isFile()) return path;
       } catch {
       }
     }
@@ -10860,15 +10682,15 @@ async function waitForQuit2(timeoutMs) {
 function openClaudeAppAt(path) {
   if (process.platform === "darwin") {
     if (path.endsWith(".app")) {
-      execSync4(`open ${JSON.stringify(path)}`, { stdio: "inherit" });
+      execSync3(`open ${JSON.stringify(path)}`, { stdio: "inherit" });
     } else {
-      execSync4(`open -b ${CLAUDE_BUNDLE_ID}`, { stdio: "inherit" });
+      execSync3(`open -b ${CLAUDE_BUNDLE_ID}`, { stdio: "inherit" });
     }
     return;
   }
   if (process.platform === "win32") {
     if (path.startsWith("shell:AppsFolder\\")) {
-      spawn5("cmd.exe", ["/c", "start", "", path], { stdio: "ignore", detached: true }).unref();
+      spawn3("cmd.exe", ["/c", "start", "", path], { stdio: "ignore", detached: true }).unref();
     } else {
       runPowerShell2(`Start-Process -FilePath '${path.replace(/'/g, "''")}'`);
     }
@@ -10885,9 +10707,9 @@ function openClaudeApp() {
 }
 function darwinQuit2() {
   try {
-    execSync4(`osascript -e 'tell application "Claude" to quit'`, { stdio: "pipe" });
+    execSync3(`osascript -e 'tell application "Claude" to quit'`, { stdio: "pipe" });
   } catch {
-    execSync4(`osascript -e 'tell application id "${CLAUDE_BUNDLE_ID}" to quit'`, { stdio: "pipe" });
+    execSync3(`osascript -e 'tell application id "${CLAUDE_BUNDLE_ID}" to quit'`, { stdio: "pipe" });
   }
 }
 function winQuitGraceful2() {
@@ -10991,6 +10813,7 @@ export {
   recordLaunchFolder,
   recordLaunchSelection,
   getSavedServerPassword,
+  getEnvServerPassword,
   setSavedServerPassword,
   getServerExposedProviders,
   setServerExposedProviders,
@@ -11039,10 +10862,7 @@ export {
   freeStatusLabel,
   refreshModelsDevCacheAsync,
   shouldHideModel,
-  findOpencodeBinary,
-  fetchRawOpencodeProviders,
   zenRegistryStub,
-  localProviderToRegistry,
   isLikelyPlaceholderKey,
   resolveRefreshCredential,
   oauthAuthRef,
@@ -11106,9 +10926,8 @@ export {
   refreshProviderModels,
   refreshAllProviderModels,
   removeProviderFromRegistry,
-  addZenRegistryStub,
-  addGoRegistryStub,
   ensureOpencodeCloudProviders,
+  addOpencodeCloudFromApiKey,
   toggleProviderEnabled,
   startServer,
   filterServerModelsByProviders,
@@ -11143,4 +10962,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-SV2Y6OCD.js.map
+//# sourceMappingURL=chunk-P4S42QJK.js.map

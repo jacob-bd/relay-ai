@@ -5,6 +5,7 @@
 
 import { BACKENDS, MAX_MODEL_CATALOG } from '../constants.js';
 import {
+  getEnvServerPassword,
   getSavedServerPassword,
   getServerExposedProviders,
   getServerFavoritesOnly,
@@ -76,6 +77,13 @@ export interface ServerSavedConfig {
   maskGatewayIds: boolean;
   listenMode: ServerListenMode;
   hasSavedPassword: boolean;
+  /** True when RELAY_AI_SERVER_PASSWORD is set. */
+  hasEnvPassword: boolean;
+  /**
+   * Prefills the Server form from RELAY_AI_SERVER_PASSWORD (Docker / Compose).
+   * Not used for keychain-saved passwords. Shown masked with a reveal toggle in the UI.
+   */
+  prefillPassword?: string;
 }
 
 export interface ServerNetworkUrl {
@@ -134,6 +142,7 @@ function buildModelRows(models: ServerModelInfo[], gateway?: GatewayModelOptions
 }
 
 async function buildSavedConfig(): Promise<ServerSavedConfig> {
+  const envPassword = getEnvServerPassword();
   return {
     favoritesOnly: getServerFavoritesOnly(),
     freeModelsOnly: getServerFreeModelsOnly(),
@@ -141,6 +150,8 @@ async function buildSavedConfig(): Promise<ServerSavedConfig> {
     maskGatewayIds: getServerMaskGatewayIds(),
     listenMode: getServerListenMode(),
     hasSavedPassword: await hasSavedPasswordCached(),
+    hasEnvPassword: Boolean(envPassword),
+    ...(envPassword ? { prefillPassword: envPassword } : {}),
   };
 }
 
@@ -210,16 +221,27 @@ async function doStartGatewayServer(
   let serverPassword: string | null = null;
   if (req.listenMode === 'network') {
     if (req.passwordMode === 'saved') {
-      const saved = await getSavedServerPassword();
-      if (!saved) return { ok: false, error: 'No saved password found — enter a new password.' };
-      serverPassword = saved;
+      const configured = (await getSavedServerPassword()) ?? getEnvServerPassword();
+      if (!configured) {
+        return {
+          ok: false,
+          error: 'No configured password found — set RELAY_AI_SERVER_PASSWORD, or enter a new password.',
+        };
+      }
+      serverPassword = configured;
     } else {
       const trimmed = (req.password ?? '').trim();
-      if (!trimmed) return { ok: false, error: 'A server password is required for network mode.' };
-      serverPassword = trimmed;
-      if (req.savePassword) {
-        await setSavedServerPassword(trimmed);
-        hasSavedPasswordCache = { value: true, expiresAt: Date.now() + SAVED_PASSWORD_CACHE_TTL_MS };
+      // Empty field: prefer env (Docker Compose), then keychain-saved.
+      if (!trimmed) {
+        const configured = getEnvServerPassword() ?? (await getSavedServerPassword());
+        if (!configured) return { ok: false, error: 'A server password is required for network mode.' };
+        serverPassword = configured;
+      } else {
+        serverPassword = trimmed;
+        if (req.savePassword) {
+          await setSavedServerPassword(trimmed);
+          hasSavedPasswordCache = { value: true, expiresAt: Date.now() + SAVED_PASSWORD_CACHE_TTL_MS };
+        }
       }
     }
   }

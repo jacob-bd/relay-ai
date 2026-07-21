@@ -1876,6 +1876,22 @@ input { font-family: inherit; }
   gap: 10px;
 }
 
+.server-password-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.server-password-row .key-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.server-password-reveal {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .server-provider-chips {
   display: flex;
   flex-wrap: wrap;

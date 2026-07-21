@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -396,5 +396,49 @@ describe('ensureOpencodeCloudProviders', () => {
     expect(result.seeded).toBe(false);
     expect(result.refreshed).toEqual([]);
     expect(loadRegistry().providers).toHaveLength(0);
+  });
+});
+
+describe('addOpencodeCloudFromApiKey', () => {
+  let home: string;
+  const prevHome = process.env.RELAY_AI_HOME;
+  const prevKey = process.env.OPENCODE_API_KEY;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'relay-ai-add-opencode-'));
+    process.env.RELAY_AI_HOME = home;
+    delete process.env.OPENCODE_API_KEY;
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.RELAY_AI_HOME;
+    else process.env.RELAY_AI_HOME = prevHome;
+    if (prevKey === undefined) delete process.env.OPENCODE_API_KEY;
+    else process.env.OPENCODE_API_KEY = prevKey;
+    rmSync(home, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  it('adds zen+go from an API key without requiring a base URL', async () => {
+    vi.spyOn(await import('../src/env.js'), 'saveToCredentialStore').mockResolvedValue(true);
+    vi.spyOn(await import('../src/registry/refresh-models.js'), 'refreshProviderModels')
+      .mockResolvedValue({ id: 'zen', name: 'OpenCode Zen', ok: true, modelCount: 3 });
+
+    const { addOpencodeCloudFromApiKey, loadRegistry } = await import('../src/registry/index.js');
+    const { addProviderFromTemplate } = await import('../src/registry/add-template.js');
+    const { getTemplateById } = await import('../src/provider-templates.js');
+
+    const direct = await addOpencodeCloudFromApiKey('sk-opencode-test');
+    expect(direct.added).toBe(true);
+    expect(direct.modelCount).toBe(6); // zen + go mocked to 3 each
+    expect(direct.error).toBeUndefined();
+    expect(loadRegistry().providers.map(p => p.id).sort()).toEqual(['go', 'zen']);
+    expect(process.env.OPENCODE_API_KEY).toBe('sk-opencode-test');
+
+    // UI path: template add must not fall through to "needs a base URL"
+    const template = getTemplateById('opencode-cloud')!;
+    const viaTemplate = await addProviderFromTemplate(template, 'sk-other');
+    expect(viaTemplate.added).toBe(false);
+    expect(viaTemplate.error).toMatch(/already configured/i);
   });
 });

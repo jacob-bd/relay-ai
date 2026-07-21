@@ -111,9 +111,13 @@ describe('UI API Server endpoints', () => {
   let tempHome: string;
   let previousRelayHome: string | undefined;
 
+  let previousServerPassword: string | undefined;
+
   beforeEach(() => {
     tempHome = mkdtempSync(join(tmpdir(), 'relay-ai-ui-api-server-test-'));
     previousRelayHome = process.env['RELAY_AI_HOME'];
+    previousServerPassword = process.env['RELAY_AI_SERVER_PASSWORD'];
+    delete process.env['RELAY_AI_SERVER_PASSWORD'];
     process.env['RELAY_AI_HOME'] = join(tempHome, 'relay-home');
     state.apiKey = 'test-key';
     state.models = [testModel];
@@ -134,6 +138,8 @@ describe('UI API Server endpoints', () => {
     rmSync(tempHome, { recursive: true, force: true });
     if (previousRelayHome === undefined) delete process.env['RELAY_AI_HOME'];
     else process.env['RELAY_AI_HOME'] = previousRelayHome;
+    if (previousServerPassword === undefined) delete process.env['RELAY_AI_SERVER_PASSWORD'];
+    else process.env['RELAY_AI_SERVER_PASSWORD'] = previousServerPassword;
   });
 
   // First UI import can be slow under parallel vitest load (default 5s is tight).
@@ -141,7 +147,7 @@ describe('UI API Server endpoints', () => {
     const { code, body } = await call('GET', '/api/server/status');
     expect(code).toBe(200);
     expect(body.running).toBe(false);
-    expect(body.saved).toMatchObject({ favoritesOnly: false, freeModelsOnly: false, maskGatewayIds: true, listenMode: 'local', hasSavedPassword: false });
+    expect(body.saved).toMatchObject({ favoritesOnly: false, freeModelsOnly: false, maskGatewayIds: true, listenMode: 'local', hasSavedPassword: false, hasEnvPassword: false });
   }, 15_000);
 
   it('returns cached update status for the UI', async () => {
@@ -289,6 +295,26 @@ describe('UI API Server endpoints', () => {
 
     const status = await call('GET', '/api/server/status');
     expect(status.body.saved.hasSavedPassword).toBe(true);
+  });
+
+  it('exposes RELAY_AI_SERVER_PASSWORD for UI prefill and accepts it on network start', async () => {
+    process.env['RELAY_AI_SERVER_PASSWORD'] = 'compose-secret';
+
+    const status = await call('GET', '/api/server/status');
+    expect(status.body.saved.hasEnvPassword).toBe(true);
+    expect(status.body.saved.prefillPassword).toBe('compose-secret');
+
+    const started = await call('POST', '/api/server/start', {
+      favoritesOnly: false,
+      freeModelsOnly: false,
+      exposedProviders: null,
+      maskGatewayIds: false,
+      listenMode: 'network',
+      passwordMode: 'new',
+      password: '',
+    });
+    expect(started.body.ok).toBe(true);
+    expect(started.body.status.apiKey).toBe('compose-secret');
   });
 
   it('returns no favorites configured error in favorites-only mode with no favorites saved', async () => {

@@ -561,7 +561,7 @@ export async function refreshProviderModels(
   if (source === 'manual-only') {
     const hint =
       provider.templateId === 'google-vertex' || provider.id === 'google-vertex' || provider.api.npm === '@ai-sdk/google-vertex'
-        ? 'Vertex uses gcloud credentials — re-import from OpenCode or configure env auth.'
+        ? 'Vertex uses gcloud credentials — use relay-ai server --vertex, or refresh after configuring ADC.'
         : 'Manual-only provider — model list is not refreshed automatically.';
     return {
       id: provider.id,

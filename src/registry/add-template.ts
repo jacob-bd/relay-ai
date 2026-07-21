@@ -4,6 +4,7 @@ import { saveProviderCredential } from '../env.js';
 import { isSdkMigratedNpm } from '../provider-factory.js';
 import type { ProviderTemplate } from '../provider-templates.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
+import { addOpencodeCloudFromApiKey } from './crud.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
 import { loadRegistry, saveRegistry } from './io.js';
 import {
@@ -54,14 +55,19 @@ export async function addProviderFromTemplate(
   apiKey: string,
   opts?: { replaceExisting?: boolean; baseUrl?: string },
 ): Promise<AddTemplateResult> {
-  const packageError = await probeTemplatePackage(template);
-  if (packageError) {
-    return { added: false, error: packageError };
-  }
-
   const trimmedKey = apiKey.trim();
   if (!trimmedKey && !template.apiKeyOptional) {
     return { added: false, error: 'API key cannot be empty.' };
+  }
+
+  // OpenCode Zen/Go use fixed backends + a global key — never ask for a base URL.
+  if (template.modelSource === 'zen-go-api') {
+    return addOpencodeCloudFromApiKey(trimmedKey);
+  }
+
+  const packageError = await probeTemplatePackage(template);
+  if (packageError) {
+    return { added: false, error: packageError };
   }
 
   const registry = loadRegistry();

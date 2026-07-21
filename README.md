@@ -109,7 +109,7 @@ Pick your backend:
 - For **Vertex gateway:** [Google Cloud SDK](https://cloud.google.com/sdk) with `gcloud auth application-default login`, a GCP project with Vertex AI enabled, and Claude partner models enabled in that project
 - For **Antigravity CLI / IDE:** a Google account is still needed for Antigravity authentication. Do **not** use your main Google account. Use a throwaway or secondary account you can afford to lose.
 
-**A note on providers:** relay-ai keeps your provider list in `~/.relay-ai/providers.json`. You can add providers directly (API key + template), import from OpenCode once, or use Zen/Go cloud backends. OpenCode is not required after setup.
+**A note on providers:** relay-ai keeps your provider list in `~/.relay-ai/providers.json`. Add providers with API keys or device-code OAuth (`relay-ai providers add` / the UI). OpenCode Zen / Go are normal cloud providers (API key from [opencode.ai/auth](https://opencode.ai/auth)). Optional: `relay-ai providers import` once if you already use the OpenCode CLI — OpenCode is never required to run Relay.
 
 ## Installation
 

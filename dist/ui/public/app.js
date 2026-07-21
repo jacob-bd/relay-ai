@@ -53,6 +53,7 @@ const state = {
       listenMode: 'local',        // 'local' | 'network'
       passwordMode: 'new',        // 'saved' | 'new'
       password: '',
+      passwordVisible: false,
       savePassword: false,
     },
   },
@@ -1059,6 +1060,8 @@ function buildProviderBodyContent(provider) {
       const countEl = document.querySelector(`[data-id="${CSS.escape(provider.id)}"] .provider-models-count`);
       if (countEl) countEl.textContent = `${result.count} models`;
       provider.modelCount = result.count;
+      state.modelsLoaded = false;
+      await initModels();
     } else {
       feedback.textContent = result.error ?? 'Refresh failed';
       feedback.className = 'key-feedback error';
@@ -1179,6 +1182,8 @@ function buildOAuthProviderBodyContent(provider) {
       feedback.className = 'key-feedback success';
       const countEl = document.querySelector(`[data-id="${CSS.escape(provider.id)}"] .provider-models-count`);
       if (countEl) countEl.textContent = `${result.count} models`;
+      state.modelsLoaded = false;
+      await initModels();
     } else {
       feedback.textContent = result.error ?? 'Refresh failed';
       feedback.className = 'key-feedback error';
@@ -1612,6 +1617,18 @@ async function initModels() {
     state.modelsError = String(err);
     state.modelsLoaded = true;
   }
+  // Keep the Providers header counts in sync after add / delete / OAuth / refresh.
+  renderProviderStats();
+  // Server tab caches its provider checklist — invalidate so new providers appear without a full reload.
+  invalidateServerProviderCache();
+}
+
+function invalidateServerProviderCache() {
+  state.server.form.providersLoaded = false;
+  if (state.server.status?.running) return;
+  if (state.server.form.expose !== 'specific') return;
+  if (!document.getElementById('server-panel')) return;
+  void loadServerProviders().then(() => renderServerPanel());
 }
 
 async function init() {
@@ -2264,7 +2281,14 @@ function seedServerFormFromSaved(saved) {
   f.maskGatewayIds = saved.maskGatewayIds;
   // Published Docker ports only reach 0.0.0.0 inside the container.
   f.listenMode = isServerAdminUi() || saved.listenMode === 'network' ? 'network' : 'local';
-  f.passwordMode = saved.hasSavedPassword ? 'saved' : 'new';
+  // Env password (Docker): prefill the field so Start works and clients can copy it.
+  // Keychain-saved password: keep "Use saved" (value never sent to the browser).
+  if (saved.prefillPassword && !f.password) {
+    f.password = saved.prefillPassword;
+    f.passwordMode = 'new';
+  } else {
+    f.passwordMode = saved.hasSavedPassword ? 'saved' : 'new';
+  }
   if (f.expose === 'specific') loadServerProviders().then(renderServerPanel);
 }
 
@@ -2304,6 +2328,10 @@ function renderServerPanel() {
   if (!s.status) {
     panel.innerHTML = '<div class="skeleton skeleton-card"></div>';
     return;
+  }
+  // Lazy-load (or re-load after invalidate) when the specific-provider checklist is visible.
+  if (!s.status.running && s.form.expose === 'specific' && !s.form.providersLoaded) {
+    void loadServerProviders().then(() => renderServerPanel());
   }
   panel.innerHTML = s.status.running ? renderServerRunning(s.status) : renderServerSetup(s);
 }
@@ -2364,16 +2392,22 @@ function renderServerNetworkOptions() {
   const s = state.server;
   const f = s.form;
   const hasSaved = Boolean(s.status?.saved?.hasSavedPassword);
+  const hasEnv = Boolean(s.status?.saved?.hasEnvPassword);
   const showPasswordInput = f.passwordMode === 'new' || !hasSaved;
+  const inputType = f.passwordVisible ? 'text' : 'password';
 
   return `
     <div class="server-network-options">
-      ${hasSaved ? toggleGroupHtml([
+      ${hasSaved && !hasEnv ? toggleGroupHtml([
         { label: 'Use saved password', active: f.passwordMode === 'saved', onClick: "setServerPasswordMode('saved')" },
         { label: 'Enter new password', active: f.passwordMode === 'new', onClick: "setServerPasswordMode('new')" },
       ]) : ''}
+      ${hasEnv && f.passwordMode === 'new' ? '<div class="server-field-hint">Prefilled from RELAY_AI_SERVER_PASSWORD</div>' : ''}
       ${showPasswordInput ? `
-        <input type="password" class="key-input" placeholder="Server password" value="${escapeHtml(f.password)}" oninput="setServerPassword(this.value)">
+        <div class="server-password-row">
+          <input type="${inputType}" class="key-input" id="server-password-input" placeholder="Server password" value="${escapeHtml(f.password)}" oninput="setServerPassword(this.value)" autocomplete="off">
+          <button type="button" class="btn btn-ghost server-password-reveal" onclick="toggleServerPasswordVisible()" aria-pressed="${f.passwordVisible ? 'true' : 'false'}">${f.passwordVisible ? 'Hide' : 'Reveal'}</button>
+        </div>
         <label class="server-toggle-row">
           <input type="checkbox" ${f.savePassword ? 'checked' : ''} onchange="setServerSavePassword(this.checked)">
           <span>Save this password for next time</span>
@@ -2581,6 +2615,12 @@ function setServerPassword(value) {
   state.server.form.password = value;
 }
 
+function toggleServerPasswordVisible() {
+  state.server.form.passwordVisible = !state.server.form.passwordVisible;
+  renderServerPanel();
+  document.getElementById('server-password-input')?.focus();
+}
+
 function setServerSavePassword(checked) {
   state.server.form.savePassword = checked;
 }
@@ -2676,6 +2716,7 @@ window.setServerFreeModelsOnly = setServerFreeModelsOnly;
 window.setServerListenMode = setServerListenMode;
 window.setServerPasswordMode = setServerPasswordMode;
 window.setServerPassword = setServerPassword;
+window.toggleServerPasswordVisible = toggleServerPasswordVisible;
 window.setServerSavePassword = setServerSavePassword;
 window.submitServerStart = submitServerStart;
 window.stopServerGateway = stopServerGateway;

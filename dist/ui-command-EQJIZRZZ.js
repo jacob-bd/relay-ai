@@ -25,6 +25,7 @@ import {
   gatewayProviderLabel,
   getAppHome,
   getAppPathOverride,
+  getEnvServerPassword,
   getSavedServerPassword,
   getServerExposedProviders,
   getServerFavoritesOnly,
@@ -71,14 +72,14 @@ import {
   supportsClaudeTransparentMode,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-SV2Y6OCD.js";
+} from "./chunk-P4S42QJK.js";
 import {
   __toCommonJS,
   init_provider_templates,
   listAddableTemplates,
   listVisibleOAuthTemplates,
   provider_templates_exports
-} from "./chunk-MVBA7ABV.js";
+} from "./chunk-EJONCU3B.js";
 
 // src/ui-command.ts
 import { createServer } from "http";
@@ -385,13 +386,16 @@ function buildModelRows(models, gateway) {
   return rows.sort((a, b) => a.providerLabel.localeCompare(b.providerLabel) || a.name.localeCompare(b.name));
 }
 async function buildSavedConfig() {
+  const envPassword = getEnvServerPassword();
   return {
     favoritesOnly: getServerFavoritesOnly(),
     freeModelsOnly: getServerFreeModelsOnly(),
     exposedProviders: getServerExposedProviders(),
     maskGatewayIds: getServerMaskGatewayIds(),
     listenMode: getServerListenMode(),
-    hasSavedPassword: await hasSavedPasswordCached()
+    hasSavedPassword: await hasSavedPasswordCached(),
+    hasEnvPassword: Boolean(envPassword),
+    ...envPassword ? { prefillPassword: envPassword } : {}
   };
 }
 async function getServerStatus(opts) {
@@ -445,16 +449,26 @@ async function doStartGatewayServer(req, opts) {
   let serverPassword = null;
   if (req.listenMode === "network") {
     if (req.passwordMode === "saved") {
-      const saved = await getSavedServerPassword();
-      if (!saved) return { ok: false, error: "No saved password found \u2014 enter a new password." };
-      serverPassword = saved;
+      const configured = await getSavedServerPassword() ?? getEnvServerPassword();
+      if (!configured) {
+        return {
+          ok: false,
+          error: "No configured password found \u2014 set RELAY_AI_SERVER_PASSWORD, or enter a new password."
+        };
+      }
+      serverPassword = configured;
     } else {
       const trimmed = (req.password ?? "").trim();
-      if (!trimmed) return { ok: false, error: "A server password is required for network mode." };
-      serverPassword = trimmed;
-      if (req.savePassword) {
-        await setSavedServerPassword(trimmed);
-        hasSavedPasswordCache = { value: true, expiresAt: Date.now() + SAVED_PASSWORD_CACHE_TTL_MS };
+      if (!trimmed) {
+        const configured = getEnvServerPassword() ?? await getSavedServerPassword();
+        if (!configured) return { ok: false, error: "A server password is required for network mode." };
+        serverPassword = configured;
+      } else {
+        serverPassword = trimmed;
+        if (req.savePassword) {
+          await setSavedServerPassword(trimmed);
+          hasSavedPasswordCache = { value: true, expiresAt: Date.now() + SAVED_PASSWORD_CACHE_TTL_MS };
+        }
       }
     }
   }
@@ -807,7 +821,7 @@ async function handleAddProvider(req, res) {
       sendJson(res, 400, { error: "templateId required" });
       return;
     }
-    const { listSupportedTemplates } = await import("./provider-templates-6XYKAZB5.js");
+    const { listSupportedTemplates } = await import("./provider-templates-BPGB5V2L.js");
     const template = listSupportedTemplates().find((t) => t.id === templateId);
     if (!template) {
       sendJson(res, 404, { error: `Template '${templateId}' not found` });
@@ -1564,4 +1578,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-DJZIIIWC.js.map
+//# sourceMappingURL=ui-command-EQJIZRZZ.js.map

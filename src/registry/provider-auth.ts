@@ -1,4 +1,4 @@
-// provider-auth.ts — relay-ai providers auth (native device-code + OpenCode broker)
+// provider-auth.ts — relay-ai providers auth (native device-code / browser OAuth)
 
 import { printOAuthStepsPanel, confirmSubscriptionOAuthRisk } from '../ui.js';
 import pc from 'picocolors';
@@ -20,11 +20,7 @@ import {
 } from '../oauth/claude-code.js';
 import { runAntigravityOAuthFlow } from '../oauth/antigravity-oauth.js';
 import { getTemplateById } from '../provider-templates.js';
-import { fetchRawOpencodeProviders } from '../opencode-serve.js';
-import { findOpencodeBinary } from '../opencode-serve.js';
-import { runOpencodeAuthBroker } from './auth-broker.js';
-import { localProviderToRegistry } from './convert.js';
-import { buildImportProviderList, oauthAuthRef, toOAuthRegistryId } from './import-build.js';
+import { oauthAuthRef, toOAuthRegistryId } from './import-build.js';
 import { loadRegistry, saveRegistry } from './io.js';
 import { oauthCredentialToKeychainJson, type OpencodeOAuthCredential } from './opencode-auth.js';
 import { refreshProviderModels } from './refresh-models.js';
@@ -32,10 +28,12 @@ import type { RegistryProvider } from './types.js';
 
 export type { OpencodeOAuthCredential } from './opencode-auth.js';
 
+/** @deprecated Broker method is ignored — providers auth is native-only. */
 export type ProviderAuthMethod = 'native' | 'broker';
 
 export interface ProviderAuthOptions {
   method?: ProviderAuthMethod;
+  /** @deprecated Ignored — use `relay-ai providers import` for OpenCode CLI configs. */
   brokerMethod?: string;
 }
 
@@ -204,31 +202,8 @@ async function upsertOAuthProvider(providerId: string, cred: OpencodeOAuthCreden
 
   const registry = loadRegistry();
   const authRef = oauthAuthRef(registryId);
-  const template = getTemplateById(templateId);
+  const template = getTemplateById(templateId) ?? getTemplateById(registryId);
   let entry: RegistryProvider | undefined = registry.providers.find(pr => pr.id === registryId);
-
-  if (!entry) {
-    const raw = await fetchRawOpencodeProviders();
-    if (raw) {
-      const { providers } = buildImportProviderList(raw, { [providerId]: cred });
-      const lp = providers.find(pr => pr.id === registryId || pr.id === providerId);
-      if (lp) {
-        const converted = localProviderToRegistry(lp, { authType: 'oauth', authRef });
-        if (converted) {
-          entry = {
-            ...converted,
-            id: registryId,
-            templateId,
-            name: oauthDisplayName(registryId, converted.name),
-            api: {
-              ...converted.api,
-              ...(template?.headers ? { headers: { ...template.headers, ...converted.api.headers } } : {}),
-            },
-          };
-        }
-      }
-    }
-  }
 
   if (!entry) {
     if (!template) {
@@ -237,7 +212,7 @@ async function upsertOAuthProvider(providerId: string, cred: OpencodeOAuthCreden
     const displayName = oauthDisplayName(registryId, template.name);
     entry = {
       id: registryId,
-      templateId,
+      templateId: template.id,
       name: displayName,
       enabled: true,
       authRef,
@@ -250,7 +225,7 @@ async function upsertOAuthProvider(providerId: string, cred: OpencodeOAuthCreden
       addedAt: new Date().toISOString(),
     };
   } else {
-    entry = { ...entry, authType: 'oauth', authRef, templateId };
+    entry = { ...entry, authType: 'oauth', authRef, templateId: entry.templateId ?? templateId };
   }
 
   const idx = registry.providers.findIndex(pr => pr.id === registryId);
@@ -267,54 +242,23 @@ export async function authenticateProvider(
   const registryId = toOAuthRegistryId(providerId);
 
   if (!supportsNativeOAuth(providerId)) {
-    if (findOpencodeBinary()) {
-      const cred = await runOpencodeAuthBroker(providerId, { method: options.brokerMethod });
-      let brokerDiagMsg = '';
-      const saved = await saveProviderCredential(
-        oauthAuthRef(registryId),
-        oauthCredentialToKeychainJson(cred),
-        (msg) => { brokerDiagMsg = msg; },
-      );
-      if (!saved) {
-        p.log.warn(`Could not save OAuth tokens — ${brokerDiagMsg || 'session may not persist.'}`);
-      }
-      const registryProvider = await upsertOAuthProvider(providerId, cred);
-      return { providerId: registryId, credential: cred, registryProvider };
-    }
     throw new Error(
-      `Native OAuth is only built in for xai and openai. Install OpenCode for other OAuth providers.`,
+      `OAuth for "${providerId}" is not built into relay-ai. `
+      + 'Add an API-key provider with relay-ai providers add, or run relay-ai providers import '
+      + 'if you already configured it in the OpenCode CLI.',
     );
   }
 
-  let method = options.method;
-  if (isBrowserRedirectOAuth(providerId)) {
-    if (method === 'broker') {
-      throw new Error(`Via OpenCode is not supported for "${providerId}". Use the built-in OAuth flow.`);
-    }
-    method = 'native';
-  }
-  if (!method) {
-    const hasOpencode = findOpencodeBinary() !== null;
-    if (hasOpencode) {
-      const choice = await p.select({
-        message: 'How would you like to sign in?',
-        options: [
-          { value: 'native', label: 'Device code (recommended)', hint: 'Works on SSH/VPS — open URL on any device' },
-          { value: 'broker', label: 'Via OpenCode', hint: 'Uses opencode auth login' },
-        ],
-      });
-      if (p.isCancel(choice)) throw new Error('Cancelled');
-      method = choice as ProviderAuthMethod;
-    } else {
-      method = 'native';
-    }
+  if (options.method === 'broker') {
+    throw new Error(
+      'OpenCode auth broker is no longer used for providers. '
+      + 'Use the built-in OAuth flow, or relay-ai providers import for OpenCode CLI configs.',
+    );
   }
 
-  const cred = method === 'broker'
-    ? await runOpencodeAuthBroker(providerId, { method: options.brokerMethod })
-    : isBrowserRedirectOAuth(providerId)
-      ? await runNativeBrowserOAuth(providerId)
-      : await runNativeDeviceCode(providerId);
+  const cred = isBrowserRedirectOAuth(providerId)
+    ? await runNativeBrowserOAuth(providerId)
+    : await runNativeDeviceCode(providerId);
 
   let nativeDiagMsg = '';
   const saved = await saveProviderCredential(
@@ -345,16 +289,14 @@ export function providerAuthHelpText(): string {
 
 ${pc.bold('Usage:')}
   relay-ai providers auth <id>
-  relay-ai providers auth xai-oauth --native
-  relay-ai providers auth openai --broker
+  relay-ai providers auth xai-oauth
+  relay-ai providers auth openai-oauth
   relay-ai providers auth github-copilot
-
-${pc.bold('Options:')}
-  --native    Use built-in OAuth flow
-  --broker    Delegate to OpenCode auth login
 
 ${pc.bold('Device code (works on SSH/VPS):')}
   xai-oauth        SuperGrok / X Premium (device code at x.ai/device)
   openai-oauth     ChatGPT Plus/Pro (device code at auth.openai.com/codex/device)
-  github-copilot   GitHub Copilot Free or paid (device code at github.com/login/device)`;
+  github-copilot   GitHub Copilot Free or paid (device code at github.com/login/device)
+
+${pc.dim('OpenCode CLI configs: use')} relay-ai providers import${pc.dim(' (optional one-time migration).')}`;
 }

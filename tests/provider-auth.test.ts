@@ -1,26 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 vi.mock('../src/opencode-serve.js', () => ({
-  findOpencodeBinary: vi.fn(() => '/usr/local/bin/opencode'),
-  fetchRawOpencodeProviders: vi.fn(async () => [{
-    id: 'gitlab',
-    name: 'GitLab',
-    models: {
-      claude: {
-        id: 'claude-sonnet-4-6',
-        name: 'Claude Sonnet 4.6',
-        api: { npm: 'gitlab-ai-provider', url: 'https://gitlab.example.com/v1' },
-      },
-    },
-  }]),
+  findOpencodeBinary: vi.fn(() => null),
+  fetchRawOpencodeProviders: vi.fn(async () => null),
 }));
 vi.mock('../src/registry/auth-broker.js', () => ({
-  runOpencodeAuthBroker: vi.fn(async () => ({
-    type: 'oauth',
-    access: 'access-token',
-    refresh: 'refresh-token',
-    expires: Date.now() + 3600_000,
-  })),
+  runOpencodeAuthBroker: vi.fn(async () => {
+    throw new Error('broker should not be called');
+  }),
 }));
 vi.mock('../src/ui.js', () => ({
   printOAuthStepsPanel: vi.fn(),
@@ -74,14 +61,18 @@ describe('authenticateProvider', () => {
     vi.mocked(prompts.select).mockClear();
   });
 
-  it('warns and continues when token persistence fails (graceful degradation)', async () => {
-    const result = await authenticateProvider('gitlab');
-    expect(saveProviderCredential).toHaveBeenCalled();
-    expect(saveRegistry).toHaveBeenCalled();
-    expect(result.providerId).toBe('gitlab');
+  it('rejects unsupported OAuth without calling the OpenCode broker', async () => {
+    await expect(authenticateProvider('gitlab')).rejects.toThrow(/not built into relay-ai/i);
+    expect(runOpencodeAuthBroker).not.toHaveBeenCalled();
+    expect(prompts.select).not.toHaveBeenCalled();
   });
 
-  it('launches Antigravity OAuth directly without the OpenCode submenu', async () => {
+  it('rejects --broker and points users at native auth or providers import', async () => {
+    await expect(authenticateProvider('xai-oauth', { method: 'broker' })).rejects.toThrow(/no longer used/i);
+    expect(runOpencodeAuthBroker).not.toHaveBeenCalled();
+  });
+
+  it('launches Antigravity OAuth directly without an OpenCode submenu', async () => {
     const result = await authenticateProvider('antigravity');
 
     expect(prompts.select).not.toHaveBeenCalled();
@@ -90,7 +81,7 @@ describe('authenticateProvider', () => {
     expect(result.providerId).toBe('antigravity');
   });
 
-  it('launches Claude Code OAuth directly without the OpenCode submenu', async () => {
+  it('launches Claude Code OAuth directly without an OpenCode submenu', async () => {
     const result = await authenticateProvider('claude-code');
 
     expect(prompts.select).not.toHaveBeenCalled();

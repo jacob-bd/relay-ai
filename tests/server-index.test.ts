@@ -40,25 +40,29 @@ vi.mock('../src/env.js', () => ({
   resolveApiKey: () => state.apiKey,
 }));
 
-vi.mock('../src/config.js', () => ({
-  getSavedServerPassword: () => state.savedPassword,
-  getServerExposedProviders: () => null,
-  getServerMaskGatewayIds: () => true,
-  getServerFavoritesOnly: () => false,
-  getServerFreeModelsOnly: () => false,
-  getServerListenMode: () => state.savedListenMode,
-  loadPreferences: () => ({ favoriteModels: [] }),
-  setSavedServerPassword: (password: string) => {
-    state.savedPassword = password;
-  },
-  setServerExposedProviders: vi.fn(),
-  setServerMaskGatewayIds: vi.fn(),
-  setServerFavoritesOnly: vi.fn(),
-  setServerFreeModelsOnly: vi.fn(),
-  setServerListenMode: vi.fn((mode: 'local' | 'network') => {
-    state.savedListenMode = mode;
-  }),
-}));
+vi.mock('../src/config.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/config.js')>('../src/config.js');
+  return {
+    ...actual,
+    getSavedServerPassword: () => state.savedPassword,
+    getServerExposedProviders: () => null,
+    getServerMaskGatewayIds: () => true,
+    getServerFavoritesOnly: () => false,
+    getServerFreeModelsOnly: () => false,
+    getServerListenMode: () => state.savedListenMode,
+    loadPreferences: () => ({ favoriteModels: [] }),
+    setSavedServerPassword: (password: string) => {
+      state.savedPassword = password;
+    },
+    setServerExposedProviders: vi.fn(),
+    setServerMaskGatewayIds: vi.fn(),
+    setServerFavoritesOnly: vi.fn(),
+    setServerFreeModelsOnly: vi.fn(),
+    setServerListenMode: vi.fn((mode: 'local' | 'network') => {
+      state.savedListenMode = mode;
+    }),
+  };
+});
 
 vi.mock('../src/models.js', () => ({
   getModels: vi.fn(async () => ({ models, fromCache: false })),

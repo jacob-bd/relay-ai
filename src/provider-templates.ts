@@ -293,7 +293,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     npm: '@ai-sdk/amazon-bedrock',
     modelSource: 'manual-only',
     supported: false,
-    unsupportedReason: 'Requires AWS credentials — use relay-ai providers import from OpenCode for now.',
+    unsupportedReason: 'Not supported yet (requires AWS credentials). Optional: relay-ai providers import if already set up in OpenCode CLI.',
   },
   {
     id: 'azure',
@@ -302,7 +302,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     npm: '@ai-sdk/azure',
     modelSource: 'manual-only',
     supported: false,
-    unsupportedReason: 'Requires Azure deployment URLs — use relay-ai providers import from OpenCode for now.',
+    unsupportedReason: 'Not supported yet (requires Azure deployment URLs). Optional: relay-ai providers import if already set up in OpenCode CLI.',
   },
   {
     id: 'vertex',
@@ -311,7 +311,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     npm: '@ai-sdk/google-vertex',
     modelSource: 'manual-only',
     supported: false,
-    unsupportedReason: 'Uses gcloud Application Default Credentials — not supported via API key import.',
+    unsupportedReason: 'Uses gcloud Application Default Credentials — use relay-ai server --vertex, not an API key.',
   },
   {
     id: 'opencode-cloud',

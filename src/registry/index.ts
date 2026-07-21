@@ -18,6 +18,7 @@ export { importFromOpencode, type ImportOpencodeResult } from './import-opencode
 export { loadRegistryProviders, loadRegistryProvidersSync } from './load.js';
 export {
   addGoRegistryStub,
+  addOpencodeCloudFromApiKey,
   addZenRegistryStub,
   ensureOpencodeCloudProviders,
   removeProviderFromRegistry,

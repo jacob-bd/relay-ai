@@ -137,6 +137,6 @@ If you use the wrong provider template for your key, you will receive a `401 Inv
 
 ## Unsupported / Advanced Providers
 
-- **Amazon Bedrock**: Currently requires AWS credentials rather than a simple API key. Use OpenCode's setup and then run `relay-ai providers import`.
-- **Azure OpenAI**: Requires specific deployment URLs per model. Use OpenCode's setup and run `relay-ai providers import`.
-- **Google Vertex AI**: Handled dynamically using `gcloud` Application Default Credentials via `relay-ai server --vertex`. No API key configuration is required in the registry.
+- **Amazon Bedrock**: Not supported as a first-class API-key provider yet (needs AWS credentials). If you already configured Bedrock in OpenCode CLI, you can optionally run `relay-ai providers import`.
+- **Azure OpenAI**: Not supported as a first-class provider yet (needs per-model deployment URLs). Optional: `relay-ai providers import` if already set up in OpenCode CLI.
+- **Google Vertex AI**: Use `relay-ai server --vertex` with gcloud Application Default Credentials. No API key in the registry.

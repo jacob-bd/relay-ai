@@ -189,16 +189,16 @@ In all cases `process.env['OPENCODE_API_KEY']` is set immediately so the key is 
 - `EADDRINUSE` on port `17645` (e.g. a terminal `relay-ai server` already running) surfaces as a specific inline error rather than a generic failure.
 - Frontend (`src/ui/public/app.js`, `state.server`): polls `GET /api/server/status` every 5s (cheap enough to run continuously; also drives the sidebar "Live" badge). Setup-state and running-state are two fully-templated views swapped into a single `#server-panel` container, matching the file's existing full-innerHTML-replace convention (see `renderApps()`).
 
-## Release status (v0.6.0)
+## Release status (v0.6.1)
 
-Current version is **v0.6.0** — Docker **Server + Admin UI** (`docker compose up`), file-backed secrets for headless/OAuth, advertised LAN host + published gateway ports, and server UX fixes (`RELAY_AI_SERVER_PASSWORD`, `--trace`, Ctrl+C confirm). See `docs/DOCKER.md` for the deployment playbook (including AI-assistant checklist). Qwen Cloud provider support from **v0.5.0** remains. Transparent Claude Code routing from **v0.4.7** remains.
+Current version is **v0.6.1** — maintenance: UI Zen/Go add + provider count refresh; providers are Relay-native (OpenCode CLI = optional `providers import` only). Docker Server + Admin UI from **v0.6.0** remains — see `docs/DOCKER.md`.
 
 
 **Known limitations (by design):**
 - Cost display in Claude Code is always inaccurate for non-Anthropic models.
 - OAuth-authenticated providers (no stored key) are silently skipped.
 - `@ai-sdk/github-copilot` won't work — OpenCode loads it from internal `@opencode-ai/core`, not a public npm factory we can ship.
-- Bedrock/Azure/Vertex may need env-based auth beyond a simple `apiKey` forwarded from OpenCode.
+- Bedrock/Azure are not first-class API-key providers yet (optional `providers import` if already configured in OpenCode CLI). Vertex uses `relay-ai server --vertex` + gcloud ADC.
 - Providers with custom auth mechanisms (e.g. Azure OpenAI with deployment URLs) are not fully supported.
 - The `::ts::` separator in tool_use ids encodes `thought_signature`; would break if a signature ever literally contained `::ts::`. Extremely unlikely.
 - In switch-menu (gateway-discovery) mode the displayed context window reflects the **launch** model and does NOT update on live `/model` switch. Claude Code's gateway model discovery only carries `id` + `display_name` (no `context_window`) and fetches `/v1/models` once at startup, so `CLAUDE_CODE_MAX_CONTEXT_TOKENS` (fixed at launch) is the only lever. Single-model launches show the correct window.

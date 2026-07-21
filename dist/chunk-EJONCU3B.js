@@ -324,7 +324,7 @@ var init_provider_templates = __esm({
         npm: "@ai-sdk/amazon-bedrock",
         modelSource: "manual-only",
         supported: false,
-        unsupportedReason: "Requires AWS credentials \u2014 use relay-ai providers import from OpenCode for now."
+        unsupportedReason: "Not supported yet (requires AWS credentials). Optional: relay-ai providers import if already set up in OpenCode CLI."
       },
       {
         id: "azure",
@@ -333,7 +333,7 @@ var init_provider_templates = __esm({
         npm: "@ai-sdk/azure",
         modelSource: "manual-only",
         supported: false,
-        unsupportedReason: "Requires Azure deployment URLs \u2014 use relay-ai providers import from OpenCode for now."
+        unsupportedReason: "Not supported yet (requires Azure deployment URLs). Optional: relay-ai providers import if already set up in OpenCode CLI."
       },
       {
         id: "vertex",
@@ -342,7 +342,7 @@ var init_provider_templates = __esm({
         npm: "@ai-sdk/google-vertex",
         modelSource: "manual-only",
         supported: false,
-        unsupportedReason: "Uses gcloud Application Default Credentials \u2014 not supported via API key import."
+        unsupportedReason: "Uses gcloud Application Default Credentials \u2014 use relay-ai server --vertex, not an API key."
       },
       {
         id: "opencode-cloud",
@@ -444,4 +444,4 @@ export {
   provider_templates_exports,
   init_provider_templates
 };
-//# sourceMappingURL=chunk-MVBA7ABV.js.map
+//# sourceMappingURL=chunk-EJONCU3B.js.map
