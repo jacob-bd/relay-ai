@@ -180,7 +180,7 @@ export async function addCustomEndpointProvider(input: AddCustomEndpointInput): 
   if (apiKey !== 'local') {
     const saved = await saveProviderCredential(`keyring:provider:${providerId}`, apiKey);
     if (!saved) {
-      return { added: false, error: 'Could not save API key to Keychain.', hint: 'Grant Keychain access and try again.' };
+      return { added: false, error: 'Could not save API key to credential store.', hint: 'Grant Keychain access, or ensure RELAY_AI_HOME is writable (file fallback).' };
     }
   }
 

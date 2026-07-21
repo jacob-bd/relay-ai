@@ -118,7 +118,7 @@ relay-ai claude-app --restore
 
 ## Manual Setup (Network/Advanced)
 
-If you are running the gateway on a different machine (like a remote cloud desktop, a local container, or a home server) or want to keep a permanent background gateway, you can configure it manually.
+If you are running the gateway on a different machine (like a remote cloud desktop, a local container, or a home server) or want to keep a permanent background gateway, you can configure it manually. For Docker Compose and env-based secrets (no OS keychain), see [DOCKER.md](./DOCKER.md).
 
 ## Step 1: Start the Relay AI server
 

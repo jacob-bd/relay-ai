@@ -176,6 +176,18 @@ describe('parseArgs', () => {
     });
   });
 
+  it('parses server --trace', () => {
+    expect(parseArgs(['server', '--trace'])).toMatchObject({
+      command: 'server',
+      trace: true,
+    });
+    expect(parseArgs(['server', '--quick', '--trace'])).toMatchObject({
+      command: 'server',
+      serverQuick: true,
+      trace: true,
+    });
+  });
+
   it('parses server quick-start aliases', () => {
     expect(parseArgs(['server', '--quick'])).toMatchObject({
       command: 'server',
@@ -303,6 +315,13 @@ describe('parseArgs', () => {
     });
   });
 
+  it('consumes ui --server', () => {
+    expect(parseArgs(['ui', '--server'])).toMatchObject({
+      command: 'ui',
+      uiServerMode: true,
+    });
+  });
+
   it('parses providers import subcommand', () => {
     expect(parseArgs(['providers', 'import'])).toMatchObject({
       command: 'providers',
@@ -379,9 +398,11 @@ describe('help text', () => {
     expect(help).toContain('relay-ai server');
     expect(help).toContain('relay-ai server --quick');
     expect(help).toContain('relay-ai server --vertex');
-    for (const option of ['--quick', '--saved', '--listen', '--providers', '--free-only', '--no-free-only', '--mask-gateway-ids', '--no-mask-gateway-ids', '--password']) {
+    for (const option of ['--quick', '--saved', '--listen', '--providers', '--free-only', '--no-free-only', '--mask-gateway-ids', '--no-mask-gateway-ids', '--password', '--trace']) {
       expect(help).toContain(option);
     }
+    expect(help).toContain('RELAY_AI_SERVER_PASSWORD');
+    expect(help).toContain('docs/DOCKER.md');
     expect(help).toContain('registry providers');
     expect(help).toContain('Vertex AI');
     expect(help).toContain('17645');

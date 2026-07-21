@@ -94,6 +94,17 @@ After exit, relay-ai prints errors from `~/.relay-ai/logs/claude-debug.log` (sec
 
 ---
 
+## Docker / Server + Admin UI
+
+Container deploy, ports, LAN advertise IPs, `secrets.json`, and Compose troubleshooting live in **[DOCKER.md](./DOCKER.md)**. Quick checks:
+
+```bash
+docker compose ps
+docker compose logs -f ui
+```
+
+---
+
 ## Still stuck?
 
 1. `relay-ai providers list` — confirm the provider is there and enabled.

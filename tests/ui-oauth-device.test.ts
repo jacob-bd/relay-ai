@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { copyDeviceCode, oauthConnectionLabel } from '../src/ui/public/oauth-device.js';
+import { copyDeviceCode, copyTextToClipboard, oauthConnectionLabel } from '../src/ui/public/oauth-device.js';
 
 describe('UI OAuth device helpers', () => {
   it('uses Connected for OAuth instead of describing the credential as an API key', () => {
@@ -20,10 +20,57 @@ describe('UI OAuth device helpers', () => {
 
   it('copies only the displayed one-time code', async () => {
     const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(globalThis, 'isSecureContext', { value: true, configurable: true });
 
     await copyDeviceCode('ABCD-1234', { writeText });
 
     expect(writeText).toHaveBeenCalledWith('ABCD-1234');
+  });
+
+  it('falls back to execCommand when Clipboard API throws (LAN http)', async () => {
+    const writeText = vi.fn(async () => { throw new Error('NotAllowedError'); });
+    const execCommand = vi.fn(() => true);
+    const input = {
+      value: '',
+      style: {},
+      setAttribute: vi.fn(),
+      select: vi.fn(),
+      setSelectionRange: vi.fn(),
+      remove: vi.fn(),
+    };
+    Object.defineProperty(globalThis, 'isSecureContext', { value: true, configurable: true });
+
+    await copyTextToClipboard('sk-test', { writeText }, {
+      body: { appendChild: vi.fn() },
+      createElement: () => input,
+      execCommand,
+    });
+
+    expect(writeText).toHaveBeenCalled();
+    expect(execCommand).toHaveBeenCalledWith('copy');
+    expect(input.value).toBe('sk-test');
+  });
+
+  it('uses execCommand on insecure contexts without Clipboard API', async () => {
+    const execCommand = vi.fn(() => true);
+    const input = {
+      value: '',
+      style: {},
+      setAttribute: vi.fn(),
+      select: vi.fn(),
+      setSelectionRange: vi.fn(),
+      remove: vi.fn(),
+    };
+    Object.defineProperty(globalThis, 'isSecureContext', { value: false, configurable: true });
+
+    await copyTextToClipboard('model-id', undefined, {
+      body: { appendChild: vi.fn() },
+      createElement: () => input,
+      execCommand,
+    });
+
+    expect(execCommand).toHaveBeenCalledWith('copy');
+    expect(input.value).toBe('model-id');
   });
 
   it('opens the sign-in page only from the explicit open-button handler', () => {

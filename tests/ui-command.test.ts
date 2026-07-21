@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   formatUiServerLifecycleMessage,
   isUiApiRoute,
+  resolveUiMode,
+  resolveUiRuntimeConfig,
   resolveUiShutdownDecision,
 } from '../src/ui-command.js';
 
@@ -38,6 +40,39 @@ describe('ui command routing', () => {
 
     expect(decision).toBe('close');
     expect(prompted).toBe(false);
+  });
+
+  it('skips Ctrl+C confirm in server admin mode', async () => {
+    let prompted = false;
+    const decision = await resolveUiShutdownDecision(
+      'SIGINT',
+      async () => {
+        prompted = true;
+        return false;
+      },
+      { confirmOnSigint: false },
+    );
+    expect(decision).toBe('close');
+    expect(prompted).toBe(false);
+  });
+});
+
+describe('UI server admin mode', () => {
+  it('resolves server mode from opts or RELAY_AI_UI_MODE', () => {
+    expect(resolveUiMode({ serverMode: true })).toBe('server');
+    expect(resolveUiMode({}, { RELAY_AI_UI_MODE: 'server' })).toBe('server');
+    expect(resolveUiMode({}, {})).toBe('full');
+  });
+
+  it('binds 0.0.0.0:8787 without browser open in server mode', () => {
+    const runtime = resolveUiRuntimeConfig({ serverMode: true }, {});
+    expect(runtime).toMatchObject({
+      mode: 'server',
+      host: '0.0.0.0',
+      port: 8787,
+      openBrowser: false,
+      confirmShutdownOnSigint: false,
+    });
   });
 });
 

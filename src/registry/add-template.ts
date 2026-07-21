@@ -98,8 +98,8 @@ export async function addProviderFromTemplate(
   if (!saved) {
     return {
       added: false,
-      error: 'Could not save API key to Keychain.',
-      hint: 'Grant Keychain access or try again.',
+      error: 'Could not save API key to credential store.',
+      hint: 'Grant Keychain access, or ensure RELAY_AI_HOME is writable (file fallback).',
     };
   }
 

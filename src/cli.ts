@@ -207,6 +207,7 @@ export function parseArgs(args: string[]): ParsedArgs {
         parsed.serverPassword = consumed.value;
         i = consumed.next;
       }
+      else if (arg === '--trace') parsed.trace = true;
       else if (!parsed.error) parsed.error = `Unknown server option: ${arg}`;
     }
     return parsed;
@@ -239,6 +240,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     const parsed = emptyParsed('ui');
     for (const arg of rest) {
       if (arg === '--trace') parsed.trace = true;
+      else if (arg === '--server') parsed.uiServerMode = true;
       else if (arg === '--help' || arg === '-h') parsed.showHelp = true;
       else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
       else if (!parsed.error) parsed.error = `Unknown ui option: ${arg}`;
@@ -592,16 +594,24 @@ ${pc.bold('Options:')}
   --no-mask-gateway-ids        Keep provider names in Anthropic model ids
   --password <value>           One-run network-mode server password
   --vertex                     Use Claude on Google Vertex AI
+  --trace                      Write debug logs to ~/.relay-ai/logs/ and show errors on exit
 
 ${pc.bold('Behavior:')}
   Default: interactive wizard for exposed providers, discovery id masking (for
   Claude Desktop / Cowork), optional favorites-only catalog, then listen mode.
   Quick mode skips prompts and uses saved settings. Any one-run option also
   starts without prompts. Non-interactive stdin uses quick mode automatically.
-  Network quick mode requires a saved password or --password.
+  Network quick mode needs --password, RELAY_AI_SERVER_PASSWORD, or a saved password.
   --vertex: Anthropic-compatible gateway to Claude on Google Vertex AI using
   local gcloud Application Default Credentials (no OpenCode API key).
   Binds to port 17645. Network mode asks for a server password.
+
+${pc.bold('Container / env:')}
+  RELAY_AI_HOME               Config + providers directory (default: ~/.relay-ai)
+  RELAY_AI_SERVER_PASSWORD    Network-mode gateway password (same as --password)
+  OPENCODE_API_KEY            Zen/Go upstream key when those providers are exposed
+  RELAY_AI_KEY_<PROVIDER>     Per-provider key override (e.g. RELAY_AI_KEY_GROQ)
+  See docs/DOCKER.md for Docker Compose.
 
 ${pc.bold('Vertex env:')}
   ANTHROPIC_VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT — your GCP project
@@ -1578,6 +1588,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
       freeOnly: parsed.serverFreeOnly,
       maskGatewayIds: parsed.serverMaskGatewayIds,
       password: parsed.serverPassword,
+      trace: parsed.trace,
     });
   }
 
@@ -1587,11 +1598,18 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
     if (parsed.showHelp) {
-      console.log('Usage: relay-ai ui [--trace]\n\nOpen the settings UI in your browser.');
+      console.log(`Usage: relay-ai ui [--trace] [--server]
+
+Open the settings UI in your browser.
+
+Options:
+  --server   Admin UI for Docker / always-on gateway (hides Apps & Launch and Antigravity;
+             binds 0.0.0.0, port RELAY_AI_UI_PORT or 8787, no browser open)
+  --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
     const { runUiCommand } = await import('./ui-command.js');
-    return runUiCommand({ trace: parsed.trace });
+    return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
 
   if (parsed.command === 'models') {

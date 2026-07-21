@@ -11,6 +11,7 @@ import {
   completeAntigravityExchange,
   copilotPlanTier,
   createGatewayModelCatalog,
+  ensureOpencodeCloudProviders,
   favoriteProviderDisplayName,
   fetchProviderCatalog,
   filterServerModelsByFavorites,
@@ -19,11 +20,11 @@ import {
   findBinaryOnPath,
   findClaudeApp,
   findCodexApp,
+  formatGatewayUrls,
   freeStatusLabel,
   gatewayProviderLabel,
   getAppHome,
   getAppPathOverride,
-  getLocalIps,
   getSavedServerPassword,
   getServerExposedProviders,
   getServerFavoritesOnly,
@@ -32,6 +33,7 @@ import {
   getServerMaskGatewayIds,
   getUiDebugLogPath,
   guiCallbackRedirectUri,
+  hostFromHeader,
   loadPreferences,
   loadRegistry,
   loadServerModels,
@@ -49,6 +51,8 @@ import {
   requestGithubDeviceCode,
   requestOpenAiDeviceCode,
   requestXaiDeviceCode,
+  resolveAdvertiseAddresses,
+  resolveAdvertiseGatewayPort,
   resolveProviderCredential,
   resolveServerUpstreamApiKey,
   saveNativeOAuthCredential,
@@ -67,7 +71,7 @@ import {
   supportsClaudeTransparentMode,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-44KQK6Y5.js";
+} from "./chunk-SV2Y6OCD.js";
 import {
   __toCommonJS,
   init_provider_templates,
@@ -390,16 +394,18 @@ async function buildSavedConfig() {
     hasSavedPassword: await hasSavedPasswordCached()
   };
 }
-async function getServerStatus() {
+async function getServerStatus(opts) {
   const saved = await buildSavedConfig();
   if (!running) return { running: false, saved };
   const { handle, config, serverPassword, providerSummary, modelRows } = running;
+  const publicPort = resolveAdvertiseGatewayPort(handle.port);
+  const loopback = formatGatewayUrls("127.0.0.1", publicPort);
   const payload = {
     running: true,
     saved,
     listenMode: config.listenMode,
-    anthropicUrl: `http://127.0.0.1:${handle.port}/anthropic`,
-    openaiUrl: `http://127.0.0.1:${handle.port}/openai/v1`,
+    anthropicUrl: loopback.anthropicUrl,
+    openaiUrl: loopback.openaiUrl,
     exposedProviders: config.exposedProviders,
     favoritesOnly: config.favoritesOnly,
     freeModelsOnly: config.freeModelsOnly,
@@ -408,26 +414,27 @@ async function getServerStatus() {
     models: modelRows
   };
   if (config.listenMode === "network") {
-    payload.networkUrls = getLocalIps().map(({ name, address }) => ({
-      name,
-      anthropicUrl: `http://${address}:${handle.port}/anthropic`,
-      openaiUrl: `http://${address}:${handle.port}/openai/v1`
-    }));
+    payload.networkUrls = resolveAdvertiseAddresses({ requestHost: opts?.requestHost }).map(
+      ({ name, address }) => {
+        const urls = formatGatewayUrls(address, publicPort);
+        return { name, anthropicUrl: urls.anthropicUrl, openaiUrl: urls.openaiUrl };
+      }
+    );
     payload.apiKey = serverPassword ?? void 0;
   } else {
     payload.apiKey = "any non-empty value";
   }
   return payload;
 }
-function startGatewayServer(req) {
+function startGatewayServer(req, opts) {
   if (running) return Promise.resolve({ ok: false, error: "Server is already running. Stop it first." });
   if (startInFlight) return startInFlight;
-  startInFlight = doStartGatewayServer(req).finally(() => {
+  startInFlight = doStartGatewayServer(req, opts).finally(() => {
     startInFlight = null;
   });
   return startInFlight;
 }
-async function doStartGatewayServer(req) {
+async function doStartGatewayServer(req, opts) {
   if (req.listenMode !== "local" && req.listenMode !== "network") {
     return { ok: false, error: "Invalid listen mode." };
   }
@@ -515,7 +522,7 @@ async function doStartGatewayServer(req) {
     providerSummary: summarizeServerProviders(models),
     modelRows: buildModelRows(models, gateway)
   };
-  return { ok: true, status: await getServerStatus() };
+  return { ok: true, status: await getServerStatus({ requestHost: opts?.requestHost }) };
 }
 async function stopGatewayServer() {
   if (running) {
@@ -605,16 +612,18 @@ function handleUiApiRequest(req, res, opts = {}) {
     handleOAuthStatus(req, res);
   } else if (url.startsWith("/oauth/callback") && req.method === "GET") {
     handleOAuthCallback(req, res);
-  } else if (url === "/api/apps" && req.method === "GET") {
-    handleGetApps(res);
-  } else if (url === "/api/apps/path" && req.method === "POST") {
-    handleSetAppPath(req, res);
-  } else if (url === "/api/apps/launch" && req.method === "POST") {
-    handleLaunchApp(req, res, opts);
-  } else if (url === "/api/apps/browse-folder" && req.method === "POST") {
-    handleBrowseFolder(res);
+  } else if (url.startsWith("/api/apps")) {
+    if (opts.uiMode === "server") {
+      sendJson(res, 403, { error: "App launch is unavailable in server admin UI mode." });
+      return;
+    }
+    if (url === "/api/apps" && req.method === "GET") handleGetApps(res);
+    else if (url === "/api/apps/path" && req.method === "POST") handleSetAppPath(req, res);
+    else if (url === "/api/apps/launch" && req.method === "POST") handleLaunchApp(req, res, opts);
+    else if (url === "/api/apps/browse-folder" && req.method === "POST") handleBrowseFolder(res);
+    else sendJson(res, 404, { error: "Not found" });
   } else if (url === "/api/server/status" && req.method === "GET") {
-    handleGetServerStatus(res);
+    handleGetServerStatus(req, res);
   } else if (url === "/api/server/providers" && req.method === "GET") {
     handleGetServerProviders(res);
   } else if (url === "/api/server/start" && req.method === "POST") {
@@ -723,7 +732,7 @@ async function handlePostKeys(req, res) {
     if (saved) {
       sendJson(res, 200, { ok: true });
     } else {
-      sendJson(res, 500, { error: "Keychain unavailable \u2014 key not saved" });
+      sendJson(res, 500, { error: "Credential store unavailable \u2014 key not saved" });
     }
   } catch (err) {
     sendJson(res, 400, { error: String(err) });
@@ -1199,9 +1208,9 @@ async function handleSetAppPath(req, res) {
     sendJson(res, 500, { error: String(err) });
   }
 }
-async function handleGetServerStatus(res) {
+async function handleGetServerStatus(req, res) {
   try {
-    sendJson(res, 200, await getServerStatus());
+    sendJson(res, 200, await getServerStatus({ requestHost: hostFromHeader(req.headers.host) }));
   } catch (err) {
     sendJson(res, 500, { error: String(err) });
   }
@@ -1229,17 +1238,20 @@ async function handleStartServer(req, res, opts) {
       sendJson(res, 400, { error: 'listenMode must be "local" or "network"' });
       return;
     }
+    const listenMode = opts.uiMode === "server" ? "network" : body.listenMode;
     const request = {
       favoritesOnly: body.favoritesOnly,
       freeModelsOnly: Boolean(body.freeModelsOnly),
       exposedProviders: Array.isArray(body.exposedProviders) ? body.exposedProviders : null,
       maskGatewayIds: body.maskGatewayIds,
-      listenMode: body.listenMode,
+      listenMode,
       passwordMode: body.passwordMode === "saved" ? "saved" : "new",
       password: typeof body.password === "string" ? body.password : void 0,
       savePassword: Boolean(body.savePassword)
     };
-    const result = await startGatewayServer(request);
+    const result = await startGatewayServer(request, {
+      requestHost: hostFromHeader(req.headers.host)
+    });
     if (result.ok) {
       notifyServerLifecycle(opts, {
         type: "started",
@@ -1337,6 +1349,7 @@ async function handleBrowseFolder(res) {
 var __dirname = dirname(fileURLToPath(import.meta.url));
 var PUBLIC_DIR = join2(__dirname, "ui", "public");
 var LOCK_FILE = join2(getAppHome(), "ui.lock");
+var DEFAULT_SERVER_UI_PORT = 8787;
 var MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
@@ -1349,14 +1362,47 @@ function ext(path) {
   const i = path.lastIndexOf(".");
   return i >= 0 ? path.slice(i) : "";
 }
-function buildStaticCache() {
+function resolveUiMode(opts = {}, env = process.env) {
+  if (opts.serverMode) return "server";
+  return env.RELAY_AI_UI_MODE === "server" ? "server" : "full";
+}
+function resolveServerUiPort(opts, env) {
+  if (opts.port != null) return opts.port;
+  const envPort = Number(env.RELAY_AI_UI_PORT);
+  return Number.isFinite(envPort) && envPort > 0 ? envPort : DEFAULT_SERVER_UI_PORT;
+}
+function resolveUiRuntimeConfig(opts = {}, env = process.env) {
+  const mode = resolveUiMode(opts, env);
+  if (mode === "server") {
+    return {
+      mode,
+      host: "0.0.0.0",
+      port: resolveServerUiPort(opts, env),
+      openBrowser: false,
+      confirmShutdownOnSigint: false
+    };
+  }
+  return {
+    mode,
+    host: "127.0.0.1",
+    port: opts.port ?? 0,
+    openBrowser: true,
+    confirmShutdownOnSigint: true
+  };
+}
+function buildStaticCache(mode) {
   const cache = /* @__PURE__ */ new Map();
   try {
     for (const name of readdirSync(PUBLIC_DIR)) {
       const mime = MIME[ext(name)];
       if (!mime) continue;
       const raw = readFileSync(join2(PUBLIC_DIR, name));
-      const content = name === "index.html" ? Buffer.from(raw.toString("utf8").replace("{{VERSION}}", VERSION)) : raw;
+      let content = raw;
+      if (name === "index.html") {
+        content = Buffer.from(
+          raw.toString("utf8").replaceAll("{{VERSION}}", VERSION).replaceAll("{{UI_MODE}}", mode)
+        );
+      }
       cache.set(`/${name}`, { content, mime });
     }
   } catch {
@@ -1392,13 +1438,16 @@ function formatUiServerLifecycleMessage(event) {
 async function resolveUiShutdownDecision(signal, promptClose = () => p.confirm({
   message: "Relay-AI UI is still running. Close it?",
   initialValue: true
-})) {
-  if (signal !== "SIGINT") return "close";
+}), opts) {
+  const confirmOnSigint = opts?.confirmOnSigint !== false;
+  if (signal !== "SIGINT" || !confirmOnSigint) return "close";
   const shouldClose = await promptClose();
   if (p.isCancel(shouldClose)) return "close";
   return shouldClose ? "close" : "keep";
 }
 async function runUiCommand(opts = {}) {
+  const runtime = resolveUiRuntimeConfig(opts);
+  await ensureOpencodeCloudProviders();
   const existing = checkExistingServer();
   if (existing) {
     console.log(`
@@ -1409,10 +1458,10 @@ async function runUiCommand(opts = {}) {
   if (opts.trace) {
     process.env.RELAY_AI_TRACE = "1";
   }
-  const staticCache = buildStaticCache();
+  const staticCache = buildStaticCache(runtime.mode);
   const traceLogPath = opts.trace ? getUiDebugLogPath() : void 0;
   const trace = traceLogPath ? makeTraceLogger(traceLogPath) : void 0;
-  trace?.("ui server starting");
+  trace?.(`ui server starting mode=${runtime.mode}`);
   const server = createServer((req, res) => {
     const url2 = req.url ?? "/";
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -1420,6 +1469,7 @@ async function runUiCommand(opts = {}) {
       handleUiApiRequest(req, res, {
         trace: opts.trace,
         traceLogPath,
+        uiMode: runtime.mode,
         onServerLifecycle: (event) => {
           console.log(`
   ${formatUiServerLifecycleMessage(event)}
@@ -1440,7 +1490,7 @@ async function runUiCommand(opts = {}) {
     res.end("Not found");
   });
   await new Promise((resolve, reject) => {
-    server.listen(0, "127.0.0.1", () => resolve());
+    server.listen(runtime.port, runtime.host, () => resolve());
     server.once("error", reject);
   });
   const addr = server.address();
@@ -1449,9 +1499,10 @@ async function runUiCommand(opts = {}) {
     return 1;
   }
   const port = addr.port;
-  const url = `http://127.0.0.1:${port}`;
+  const displayHost = runtime.host === "0.0.0.0" ? "127.0.0.1" : runtime.host;
+  const url = `http://${displayHost}:${port}`;
   mkdirSync(getAppHome(), { recursive: true });
-  writeFileSync2(LOCK_FILE, JSON.stringify({ pid: process.pid, port }));
+  writeFileSync2(LOCK_FILE, JSON.stringify({ pid: process.pid, port, mode: runtime.mode }));
   const cleanup = () => {
     removeLock();
     server.close();
@@ -1461,7 +1512,11 @@ async function runUiCommand(opts = {}) {
   const handleSignal = async (signal) => {
     if (handlingSignal) return;
     handlingSignal = true;
-    const decision = await resolveUiShutdownDecision(signal);
+    const decision = await resolveUiShutdownDecision(
+      signal,
+      void 0,
+      { confirmOnSigint: runtime.confirmShutdownOnSigint }
+    );
     if (decision === "keep") {
       handlingSignal = false;
       return;
@@ -1474,21 +1529,28 @@ async function runUiCommand(opts = {}) {
   process.on("SIGTERM", () => {
     void handleSignal("SIGTERM");
   });
+  const modeLabel = runtime.mode === "server" ? " (server admin)" : "";
   console.log(`
-  ${pc.bold("relay-ai UI")}  ${pc.cyan(url)}
+  ${pc.bold("relay-ai UI")}${modeLabel}  ${pc.cyan(url)}
   ${pc.dim("Press Ctrl+C to stop")}
 `);
+  if (runtime.mode === "server") {
+    console.log(`  ${pc.dim("Gateway API (when started from Server tab): http://127.0.0.1:17645")}
+`);
+  }
   if (traceLogPath) {
     console.log(`  ${pc.dim(`Trace log: ${traceLogPath}`)}
 `);
     trace?.(`ui server listening ${url}`);
   }
-  try {
-    const { default: open } = await import("open");
-    await open(url);
-    trace?.(`browser open ${url}`);
-  } catch {
-    trace?.(`browser open failed ${url}`);
+  if (runtime.openBrowser) {
+    try {
+      const { default: open } = await import("open");
+      await open(url);
+      trace?.(`browser open ${url}`);
+    } catch {
+      trace?.(`browser open failed ${url}`);
+    }
   }
   await new Promise(() => {
   });
@@ -1497,7 +1559,9 @@ async function runUiCommand(opts = {}) {
 export {
   formatUiServerLifecycleMessage,
   isUiApiRoute,
+  resolveUiMode,
+  resolveUiRuntimeConfig,
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-M7KMKIQC.js.map
+//# sourceMappingURL=ui-command-DJZIIIWC.js.map

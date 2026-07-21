@@ -90,6 +90,10 @@ vi.mock('../src/registry/io.js', () => ({
   loadRegistry: vi.fn(() => ({ schemaVersion: 1, providers: [] })),
 }));
 
+vi.mock('../src/registry/crud.js', () => ({
+  ensureOpencodeCloudProviders: vi.fn(async () => ({ seeded: false, refreshed: [] })),
+}));
+
 vi.mock('../src/server/prompts.js', () => ({
   askServerStartMode: state.askServerStartMode,
   askFavoritesOnly: state.askFavoritesOnly,
@@ -166,7 +170,7 @@ describe('runServerCommand', () => {
     const { runServerCommand } = await import('../src/server/index.js');
     const result = runServerCommand();
     await vi.waitFor(() => expect(state.startServerOptions).not.toBeNull());
-    process.emit('SIGINT');
+    process.emit('SIGTERM');
 
     await expect(result).resolves.toBe(0);
     expect(state.startServerOptions).toMatchObject({
@@ -203,7 +207,7 @@ describe('runServerCommand', () => {
     const { runServerCommand } = await import('../src/server/index.js');
     const result = runServerCommand();
     await vi.waitFor(() => expect(state.startServerOptions).not.toBeNull());
-    process.emit('SIGINT');
+    process.emit('SIGTERM');
 
     await expect(result).resolves.toBe(0);
     expect(state.startServerOptions).toMatchObject({
@@ -219,7 +223,7 @@ describe('runServerCommand', () => {
     const { runServerCommand } = await import('../src/server/index.js');
     const result = runServerCommand({ quick: true } as any);
     await vi.waitFor(() => expect(state.startServerOptions).not.toBeNull());
-    process.emit('SIGINT');
+    process.emit('SIGTERM');
 
     await expect(result).resolves.toBe(0);
     expect(state.askServerStartMode).not.toHaveBeenCalled();
@@ -234,7 +238,7 @@ describe('runServerCommand', () => {
     const { runServerCommand } = await import('../src/server/index.js');
     const result = runServerCommand({ quick: true, listenMode: 'network', password: 'one-run-secret' } as any);
     await vi.waitFor(() => expect(state.startServerOptions).not.toBeNull());
-    process.emit('SIGINT');
+    process.emit('SIGTERM');
 
     await expect(result).resolves.toBe(0);
     expect(state.askServerStartMode).not.toHaveBeenCalled();
@@ -245,6 +249,27 @@ describe('runServerCommand', () => {
       host: '0.0.0.0',
       serverPassword: 'one-run-secret',
     });
+  });
+
+  it('quick network launch can use RELAY_AI_SERVER_PASSWORD without password prompts', async () => {
+    const previous = process.env.RELAY_AI_SERVER_PASSWORD;
+    process.env.RELAY_AI_SERVER_PASSWORD = 'env-secret';
+    try {
+      const { runServerCommand } = await import('../src/server/index.js');
+      const result = runServerCommand({ quick: true, listenMode: 'network' } as any);
+      await vi.waitFor(() => expect(state.startServerOptions).not.toBeNull());
+      process.emit('SIGTERM');
+
+      await expect(result).resolves.toBe(0);
+      expect(state.askServerPassword).not.toHaveBeenCalled();
+      expect(state.startServerOptions).toMatchObject({
+        host: '0.0.0.0',
+        serverPassword: 'env-secret',
+      });
+    } finally {
+      if (previous === undefined) delete process.env.RELAY_AI_SERVER_PASSWORD;
+      else process.env.RELAY_AI_SERVER_PASSWORD = previous;
+    }
   });
 
   it('quick network launch fails clearly when no saved or one-run password is available', async () => {
@@ -299,5 +324,30 @@ describe('formatModelCatalogLines', () => {
     expect(lines.some(line => line.includes('#') && line.includes('Model') && line.includes('Anthropic ID') && line.includes('OpenAI ID'))).toBe(true);
     expect(lines.some(line => line.includes('DeepSeek V4 Flash') && line.includes('anthropic-go__deepseek-v4-flash') && line.includes('deepseek-v4-flash'))).toBe(true);
     expect(lines.filter(line => line.includes('DeepSeek V4 Flash'))).toHaveLength(1);
+  });
+});
+
+describe('resolveServerShutdownDecision', () => {
+  it('keeps the server running when Ctrl+C prompt is declined', async () => {
+    const { resolveServerShutdownDecision } = await import('../src/server/index.js');
+    const decision = await resolveServerShutdownDecision('SIGINT', async () => false);
+    expect(decision).toBe('keep');
+  });
+
+  it('closes the server when Ctrl+C prompt is accepted', async () => {
+    const { resolveServerShutdownDecision } = await import('../src/server/index.js');
+    const decision = await resolveServerShutdownDecision('SIGINT', async () => true);
+    expect(decision).toBe('close');
+  });
+
+  it('closes the server on SIGTERM without prompting', async () => {
+    let prompted = false;
+    const { resolveServerShutdownDecision } = await import('../src/server/index.js');
+    const decision = await resolveServerShutdownDecision('SIGTERM', async () => {
+      prompted = true;
+      return false;
+    });
+    expect(decision).toBe('close');
+    expect(prompted).toBe(false);
   });
 });

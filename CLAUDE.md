@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. Note that the codebase supports Claude Code, OpenAI Codex, and Google Gemini CLI.
 
+**Docker / always-on gateway:** If a user asks to run Relay AI in a container, follow **[docs/DOCKER.md](docs/DOCKER.md)** (AI checklist + questions). That deploys Server + Admin UI only — not desktop app launch.
+
 ## Release workflow
 
 Publishing is automated by GitHub Actions (`.github/workflows/publish.yml`): **pushing a `v*` tag** runs typecheck + tests + build, then `npm publish` (auth via the `RELAYAI` repo secret — an npm Automation token) and creates a GitHub Release from the matching `CHANGELOG.md` section. **Do NOT run `npm publish` locally** — that double-publishes and fails.
@@ -187,9 +189,10 @@ In all cases `process.env['OPENCODE_API_KEY']` is set immediately so the key is 
 - `EADDRINUSE` on port `17645` (e.g. a terminal `relay-ai server` already running) surfaces as a specific inline error rather than a generic failure.
 - Frontend (`src/ui/public/app.js`, `state.server`): polls `GET /api/server/status` every 5s (cheap enough to run continuously; also drives the sidebar "Live" badge). Setup-state and running-state are two fully-templated views swapped into a single `#server-panel` container, matching the file's existing full-innerHTML-replace convention (see `renderApps()`).
 
-## Release status (v0.4.8)
+## Release status (v0.6.0)
 
-Current version is **v0.4.8** — maintenance release: Server UI copy buttons for Anthropic/OpenAI model IDs, free-models-only with no provider selected exposes free models from every provider, and `docs/API_SERVER.md` documents pointing Cursor at the gateway via a Cloudflare quick tunnel (Cursor blocks private-network Base URLs). Transparent Claude Code routing from **v0.4.7** remains: keep a direct Anthropic login and add Relay models in the same session via the CLI wizard, `--http-proxy`, or the Claude Code card in `relay-ai ui`. That mode does not preserve Vertex AI configuration, and its Windows launch/proxy/cleanup flow remains unverified.
+Current version is **v0.6.0** — Docker **Server + Admin UI** (`docker compose up`), file-backed secrets for headless/OAuth, advertised LAN host + published gateway ports, and server UX fixes (`RELAY_AI_SERVER_PASSWORD`, `--trace`, Ctrl+C confirm). See `docs/DOCKER.md` for the deployment playbook (including AI-assistant checklist). Qwen Cloud provider support from **v0.5.0** remains. Transparent Claude Code routing from **v0.4.7** remains.
+
 
 **Known limitations (by design):**
 - Cost display in Claude Code is always inaccurate for non-Anthropic models.

@@ -152,6 +152,7 @@ export interface ParsedArgs {
   serverMaskGatewayIds?: boolean;
   /** One-run network password for `relay-ai server`. */
   serverPassword?: string;
+  uiServerMode?: boolean;
   error?: string;
 }
 

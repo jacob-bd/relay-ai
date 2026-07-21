@@ -31,7 +31,7 @@ Relay AI server running
   Network (en7):
     Anthropic:  http://192.168.68.6:17645/anthropic
     OpenAI:     http://192.168.68.6:17645/openai/v1
-  API key:    saved, rotate with `relay-ai server --setup`
+  API key:    saved, rotate with `relay-ai server` → Configure & start
   Catalog:    favorite models only
 
 Model catalog:
@@ -226,4 +226,29 @@ If Cursor errors with an empty body or format complaints, switch **Settings → 
 - **Agent mode fails but Ask mode works** — Cursor is sending a Responses-API body (`input` instead of `messages`) to `/chat/completions`. Use Ask mode; this is a Cursor-side bug, not a gateway issue.
 - **Tunnel errors about `region2` / QUIC** — usually harmless; as long as one tunnel connection registers (`Registered tunnel connection connIndex=0 … status`), the URL works.
 - **URL changes after restarting `cloudflared`** — quick tunnels aren't stable. Update the Base URL in Cursor, or set up a named tunnel if you need a fixed hostname.
+
+---
+
+## 3. Docker / containers
+
+**Primary product:** Server + Admin UI — not full desktop Relay AI.
+
+```bash
+cp .env.docker.example .env   # set RELAY_AI_SERVER_PASSWORD (required)
+docker compose up --build
+# Admin UI:  http://127.0.0.1:8787
+# Gateway:   http://127.0.0.1:17645/...  after Start Server in the UI
+```
+
+| Piece | Detail |
+|-------|--------|
+| UI | Port **8787** (`RELAY_AI_UI_HOST_PORT`); hides Apps & Launch / Antigravity |
+| Gateway | Port **17645** inside container; host publish via `RELAY_AI_GATEWAY_HOST_PORT` |
+| Auth | `RELAY_AI_SERVER_PASSWORD` as `Bearer` / `x-api-key` |
+| Secrets | Volume `RELAY_AI_HOME=/data` — `secrets.json` when keyring unavailable |
+| Headless | `docker compose --profile headless up server` |
+
+**AI assistants:** follow the “For AI assistants” section in **[DOCKER.md](./DOCKER.md)** (questions to ask the user, exact checklist, what not to do).
+
+Full guide: **[DOCKER.md](./DOCKER.md)**.
 

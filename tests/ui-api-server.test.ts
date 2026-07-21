@@ -38,7 +38,18 @@ vi.mock('../src/server/index.js', async () => {
     ...actual,
     loadServerModels: vi.fn(async () => state.models),
     resolveServerUpstreamApiKey: vi.fn(async () => state.apiKey),
+  };
+});
+
+vi.mock('../src/server/advertise-addrs.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/server/advertise-addrs.js')>(
+    '../src/server/advertise-addrs.js',
+  );
+  return {
+    ...actual,
     getLocalIps: vi.fn(() => [{ name: 'en0', address: '192.168.1.50' }]),
+    resolveAdvertiseAddresses: vi.fn(() => [{ name: 'en0', address: '192.168.1.50' }]),
+    resolveAdvertiseGatewayPort: vi.fn((listenPort: number) => listenPort),
   };
 });
 
@@ -125,12 +136,13 @@ describe('UI API Server endpoints', () => {
     else process.env['RELAY_AI_HOME'] = previousRelayHome;
   });
 
+  // First UI import can be slow under parallel vitest load (default 5s is tight).
   it('reports not running before anything is started', async () => {
     const { code, body } = await call('GET', '/api/server/status');
     expect(code).toBe(200);
     expect(body.running).toBe(false);
     expect(body.saved).toMatchObject({ favoritesOnly: false, freeModelsOnly: false, maskGatewayIds: true, listenMode: 'local', hasSavedPassword: false });
-  });
+  }, 15_000);
 
   it('returns cached update status for the UI', async () => {
     const relayHome = process.env['RELAY_AI_HOME']!;

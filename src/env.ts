@@ -8,6 +8,11 @@ import {
 } from './oauth/types.js';
 import { refreshStoredOAuthCredential, oauthCredentialShouldRefresh } from './oauth/refresh.js';
 import { fetchCopilotAccount } from './oauth/github.js';
+import {
+  deleteFileAccount,
+  readFileAccount,
+  writeFileAccount,
+} from './secrets-file.js';
 import type { ConflictInfo } from './types.js';
 
 export function detectConflicts(): ConflictInfo[] {
@@ -162,7 +167,7 @@ function readEnvCredential(varName: string): string | null {
   return raw.trim().split(/\r?\n/)[0]?.trim() || null;
 }
 
-async function readKeyringAccount(account: string, diag?: (msg: string) => void): Promise<string | null> {
+async function readOsKeyringAccount(account: string, diag?: (msg: string) => void): Promise<string | null> {
   try {
     const { Entry } = await import('@napi-rs/keyring');
     const value = new Entry(KEYRING_SERVICE, account).getPassword() ?? null;
@@ -179,7 +184,7 @@ async function readKeyringAccount(account: string, diag?: (msg: string) => void)
   }
 }
 
-async function writeKeyringAccount(
+async function writeOsKeyringAccount(
   account: string,
   key: string,
   diag?: (msg: string) => void,
@@ -203,7 +208,7 @@ async function writeKeyringAccount(
   }
 }
 
-async function deleteKeyringAccount(account: string, diag?: (msg: string) => void): Promise<boolean> {
+async function deleteOsKeyringAccount(account: string, diag?: (msg: string) => void): Promise<boolean> {
   try {
     const { Entry } = await import('@napi-rs/keyring');
     const value = new Entry(KEYRING_SERVICE, account).getPassword();
@@ -219,6 +224,36 @@ async function deleteKeyringAccount(account: string, diag?: (msg: string) => voi
     diag?.(classifyKeyringError(err));
     return false;
   }
+}
+
+/** OS keyring first, then ~/.relay-ai/secrets.json (Docker / headless). */
+async function readKeyringAccount(account: string, diag?: (msg: string) => void): Promise<string | null> {
+  const fromOs = await readOsKeyringAccount(account, diag);
+  if (fromOs) return fromOs;
+  return readFileAccount(account);
+}
+
+/** Prefer OS keyring; fall back to secrets.json when keyring is unavailable. */
+async function writeKeyringAccount(
+  account: string,
+  key: string,
+  diag?: (msg: string) => void,
+): Promise<boolean> {
+  if (await writeOsKeyringAccount(account, key, diag)) {
+    deleteFileAccount(account);
+    return true;
+  }
+  if (writeFileAccount(account, key)) {
+    diag?.('OS keyring unavailable — saved to secrets.json under RELAY_AI_HOME');
+    return true;
+  }
+  return false;
+}
+
+async function deleteKeyringAccount(account: string, diag?: (msg: string) => void): Promise<boolean> {
+  const osOk = await deleteOsKeyringAccount(account, diag);
+  const fileOk = deleteFileAccount(account);
+  return osOk || fileOk;
 }
 
 /** Read Zen/Go API key: env → global:opencode → legacy relay-ai → opencode-starter. */

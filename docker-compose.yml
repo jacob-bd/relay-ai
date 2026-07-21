@@ -1,0 +1,77 @@
+# Relay AI Server + Admin UI — see docs/DOCKER.md
+#
+#   cp .env.docker.example .env
+#   # edit .env with OPENCODE_API_KEY / RELAY_AI_SERVER_PASSWORD / RELAY_AI_KEY_*
+#   docker compose up --build
+#
+# Ports:
+#   8787  — Admin UI (browser)
+#   17645 — Gateway API (after you Start Server in the UI)
+#
+# Headless API only (no UI):
+#   docker compose --profile headless up --build
+
+services:
+  ui:
+    build: .
+    image: relay-ai:local
+    ports:
+      - "${RELAY_AI_UI_HOST_PORT:-8787}:8787"
+      - "${RELAY_AI_GATEWAY_HOST_PORT:-17645}:17645"
+    environment:
+      RELAY_AI_HOME: /data
+      RELAY_AI_UI_MODE: server
+      RELAY_AI_UI_PORT: "8787"
+      # Same value as the left side of the gateway port publish — shown in URL cards.
+      RELAY_AI_GATEWAY_HOST_PORT: ${RELAY_AI_GATEWAY_HOST_PORT:-17645}
+      OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
+      RELAY_AI_SERVER_PASSWORD: ${RELAY_AI_SERVER_PASSWORD:-}
+      RELAY_AI_ADVERTISE_HOST: ${RELAY_AI_ADVERTISE_HOST:-}
+    volumes:
+      - relay-ai-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8787/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # Optional slim gateway without the browser UI
+  server:
+    profiles: ["headless"]
+    build: .
+    image: relay-ai:local
+    command: ["server", "--quick", "--listen", "network"]
+    ports:
+      - "${RELAY_AI_GATEWAY_HOST_PORT:-17645}:17645"
+    environment:
+      RELAY_AI_HOME: /data
+      RELAY_AI_GATEWAY_HOST_PORT: ${RELAY_AI_GATEWAY_HOST_PORT:-17645}
+      OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
+      RELAY_AI_SERVER_PASSWORD: ${RELAY_AI_SERVER_PASSWORD:-}
+      RELAY_AI_ADVERTISE_HOST: ${RELAY_AI_ADVERTISE_HOST:-}
+    volumes:
+      - relay-ai-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:17645/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  relay-ai-data:

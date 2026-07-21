@@ -316,6 +316,25 @@ The full Alef section is also embedded at the bottom of `relay-ai --ai` output.
 
 ---
 
+## Docker gateway (always-on Server + Admin UI)
+
+When the user wants a **containerized API gateway** (home lab / NAS / always-on), or says “put Relay AI in Docker,” do **not** try to launch Claude Desktop / Codex / Antigravity from the container. Deploy **Server + Admin UI** instead.
+
+**Authoritative playbook:** **[DOCKER.md](DOCKER.md)** — read the “For AI assistants” section before acting.
+
+**Ask the user (if unknown):** where Docker runs (same machine vs NAS/VPS); whether they have `OPENCODE_API_KEY`; gateway password (`RELAY_AI_SERVER_PASSWORD` — you may generate one); optional `RELAY_AI_KEY_*`; free host ports (defaults **8787** / **17645**); LAN IP for `RELAY_AI_ADVERTISE_HOST` if other devices will open the UI.
+
+```bash
+cp .env.docker.example .env
+# Set RELAY_AI_SERVER_PASSWORD; optional OPENCODE_API_KEY / RELAY_AI_ADVERTISE_HOST
+docker compose up --build -d
+# UI http://127.0.0.1:8787 — user must Start Server in the UI before clients connect
+```
+
+Host CLI (`relay-ai claude`, etc.) still runs on the user’s machine against local providers **or** this gateway’s Base URL + password.
+
+---
+
 ## Troubleshooting (agents)
 
 | Symptom | Fix |

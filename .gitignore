@@ -4,6 +4,7 @@ docs/plans/
 *.tgz
 .env
 .env.*
+!.env.docker.example
 .DS_Store
 *.log
 npm-debug.log*

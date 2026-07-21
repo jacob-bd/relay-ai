@@ -183,7 +183,7 @@ export async function saveNativeOAuthCredential(
     oauthCredentialToKeychainJson(cred),
     (msg) => { diagMsg = msg; },
   );
-  if (!saved) throw new Error(`Could not save OAuth tokens to Keychain${diagMsg ? ` — ${diagMsg}` : ' — grant access and try again'}`);
+  if (!saved) throw new Error(`Could not save OAuth tokens to credential store${diagMsg ? ` — ${diagMsg}` : ' — grant Keychain access or check RELAY_AI_HOME is writable'}`);
   await upsertOAuthProvider(providerId, cred);
 }
 
@@ -276,7 +276,7 @@ export async function authenticateProvider(
         (msg) => { brokerDiagMsg = msg; },
       );
       if (!saved) {
-        p.log.warn(`Could not save OAuth tokens to Keychain — ${brokerDiagMsg || 'session may not persist.'}`);
+        p.log.warn(`Could not save OAuth tokens — ${brokerDiagMsg || 'session may not persist.'}`);
       }
       const registryProvider = await upsertOAuthProvider(providerId, cred);
       return { providerId: registryId, credential: cred, registryProvider };
@@ -323,7 +323,7 @@ export async function authenticateProvider(
     (msg) => { nativeDiagMsg = msg; },
   );
   if (!saved) {
-    p.log.warn(`Could not save OAuth tokens to Keychain — ${nativeDiagMsg || 'session may not persist.'}`);
+    p.log.warn(`Could not save OAuth tokens — ${nativeDiagMsg || 'session may not persist.'}`);
   }
 
   const registryProvider = await upsertOAuthProvider(providerId, cred);

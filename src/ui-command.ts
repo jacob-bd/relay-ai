@@ -9,10 +9,30 @@ import { getAppHome } from './paths.js';
 import { handleUiApiRequest, type UiServerLifecycleEvent } from './ui/api.js';
 import { getUiDebugLogPath, makeTraceLogger } from './trace-log.js';
 import { VERSION } from './constants.js';
+import { ensureOpencodeCloudProviders } from './registry/crud.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, 'ui', 'public');
 const LOCK_FILE = join(getAppHome(), 'ui.lock');
+const DEFAULT_SERVER_UI_PORT = 8787;
+
+export type UiMode = 'full' | 'server';
+
+export interface UiCommandOptions {
+  trace?: boolean;
+  /** Admin UI without app launch — for Docker / always-on gateway boxes. */
+  serverMode?: boolean;
+  /** Override listen port (server mode defaults to 8787). */
+  port?: number;
+}
+
+export interface UiRuntimeConfig {
+  mode: UiMode;
+  host: string;
+  port: number;
+  openBrowser: boolean;
+  confirmShutdownOnSigint: boolean;
+}
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -28,14 +48,56 @@ function ext(path: string): string {
   return i >= 0 ? path.slice(i) : '';
 }
 
-function buildStaticCache(): Map<string, { content: Buffer; mime: string }> {
+/** Resolve UI mode from opts + env (`RELAY_AI_UI_MODE=server`). */
+export function resolveUiMode(opts: UiCommandOptions = {}, env: NodeJS.ProcessEnv = process.env): UiMode {
+  if (opts.serverMode) return 'server';
+  return env.RELAY_AI_UI_MODE === 'server' ? 'server' : 'full';
+}
+
+function resolveServerUiPort(opts: UiCommandOptions, env: NodeJS.ProcessEnv): number {
+  if (opts.port != null) return opts.port;
+  const envPort = Number(env.RELAY_AI_UI_PORT);
+  return Number.isFinite(envPort) && envPort > 0 ? envPort : DEFAULT_SERVER_UI_PORT;
+}
+
+export function resolveUiRuntimeConfig(
+  opts: UiCommandOptions = {},
+  env: NodeJS.ProcessEnv = process.env,
+): UiRuntimeConfig {
+  const mode = resolveUiMode(opts, env);
+  if (mode === 'server') {
+    return {
+      mode,
+      host: '0.0.0.0',
+      port: resolveServerUiPort(opts, env),
+      openBrowser: false,
+      confirmShutdownOnSigint: false,
+    };
+  }
+  return {
+    mode,
+    host: '127.0.0.1',
+    port: opts.port ?? 0,
+    openBrowser: true,
+    confirmShutdownOnSigint: true,
+  };
+}
+
+function buildStaticCache(mode: UiMode): Map<string, { content: Buffer; mime: string }> {
   const cache = new Map<string, { content: Buffer; mime: string }>();
   try {
     for (const name of readdirSync(PUBLIC_DIR)) {
       const mime = MIME[ext(name)];
       if (!mime) continue;
       const raw = readFileSync(join(PUBLIC_DIR, name));
-      const content = name === 'index.html' ? Buffer.from(raw.toString('utf8').replace('{{VERSION}}', VERSION)) : raw;
+      let content = raw;
+      if (name === 'index.html') {
+        content = Buffer.from(
+          raw.toString('utf8')
+            .replaceAll('{{VERSION}}', VERSION)
+            .replaceAll('{{UI_MODE}}', mode),
+        );
+      }
       cache.set(`/${name}`, { content, mime });
     }
   } catch {}
@@ -75,14 +137,21 @@ export async function resolveUiShutdownDecision(
     message: 'Relay-AI UI is still running. Close it?',
     initialValue: true,
   }),
+  opts?: { confirmOnSigint?: boolean },
 ): Promise<'close' | 'keep'> {
-  if (signal !== 'SIGINT') return 'close';
+  const confirmOnSigint = opts?.confirmOnSigint !== false;
+  if (signal !== 'SIGINT' || !confirmOnSigint) return 'close';
   const shouldClose = await promptClose();
   if (p.isCancel(shouldClose)) return 'close';
   return shouldClose ? 'close' : 'keep';
 }
 
-export async function runUiCommand(opts: { trace?: boolean } = {}): Promise<number> {
+export async function runUiCommand(opts: UiCommandOptions = {}): Promise<number> {
+  const runtime = resolveUiRuntimeConfig(opts);
+
+  // Docker / empty RELAY_AI_HOME: seed Zen/Go once at UI boot (not on every catalog load).
+  await ensureOpencodeCloudProviders();
+
   const existing = checkExistingServer();
   if (existing) {
     console.log(`\n  ${pc.bold('relay-ai UI')} already running at ${pc.cyan(existing)}\n`);
@@ -93,10 +162,10 @@ export async function runUiCommand(opts: { trace?: boolean } = {}): Promise<numb
     process.env.RELAY_AI_TRACE = '1';
   }
 
-  const staticCache = buildStaticCache();
+  const staticCache = buildStaticCache(runtime.mode);
   const traceLogPath = opts.trace ? getUiDebugLogPath() : undefined;
   const trace = traceLogPath ? makeTraceLogger(traceLogPath) : undefined;
-  trace?.('ui server starting');
+  trace?.(`ui server starting mode=${runtime.mode}`);
 
   const server = createServer((req, res) => {
     const url = req.url ?? '/';
@@ -107,6 +176,7 @@ export async function runUiCommand(opts: { trace?: boolean } = {}): Promise<numb
       handleUiApiRequest(req, res, {
         trace: opts.trace,
         traceLogPath,
+        uiMode: runtime.mode,
         onServerLifecycle: event => {
           console.log(`\n  ${formatUiServerLifecycleMessage(event)}\n`);
         },
@@ -128,7 +198,7 @@ export async function runUiCommand(opts: { trace?: boolean } = {}): Promise<numb
   });
 
   await new Promise<void>((resolve, reject) => {
-    server.listen(0, '127.0.0.1', () => resolve());
+    server.listen(runtime.port, runtime.host, () => resolve());
     server.once('error', reject);
   });
 
@@ -139,10 +209,11 @@ export async function runUiCommand(opts: { trace?: boolean } = {}): Promise<numb
   }
 
   const port = addr.port;
-  const url = `http://127.0.0.1:${port}`;
+  const displayHost = runtime.host === '0.0.0.0' ? '127.0.0.1' : runtime.host;
+  const url = `http://${displayHost}:${port}`;
 
   mkdirSync(getAppHome(), { recursive: true });
-  writeFileSync(LOCK_FILE, JSON.stringify({ pid: process.pid, port }));
+  writeFileSync(LOCK_FILE, JSON.stringify({ pid: process.pid, port, mode: runtime.mode }));
 
   const cleanup = () => {
     removeLock();
@@ -153,7 +224,11 @@ export async function runUiCommand(opts: { trace?: boolean } = {}): Promise<numb
   const handleSignal = async (signal: NodeJS.Signals) => {
     if (handlingSignal) return;
     handlingSignal = true;
-    const decision = await resolveUiShutdownDecision(signal);
+    const decision = await resolveUiShutdownDecision(
+      signal,
+      undefined,
+      { confirmOnSigint: runtime.confirmShutdownOnSigint },
+    );
     if (decision === 'keep') {
       handlingSignal = false;
       return;
@@ -163,19 +238,24 @@ export async function runUiCommand(opts: { trace?: boolean } = {}): Promise<numb
   process.on('SIGINT', () => { void handleSignal('SIGINT'); });
   process.on('SIGTERM', () => { void handleSignal('SIGTERM'); });
 
-  console.log(`\n  ${pc.bold('relay-ai UI')}  ${pc.cyan(url)}\n  ${pc.dim('Press Ctrl+C to stop')}\n`);
+  const modeLabel = runtime.mode === 'server' ? ' (server admin)' : '';
+  console.log(`\n  ${pc.bold('relay-ai UI')}${modeLabel}  ${pc.cyan(url)}\n  ${pc.dim('Press Ctrl+C to stop')}\n`);
+  if (runtime.mode === 'server') {
+    console.log(`  ${pc.dim('Gateway API (when started from Server tab): http://127.0.0.1:17645')}\n`);
+  }
   if (traceLogPath) {
     console.log(`  ${pc.dim(`Trace log: ${traceLogPath}`)}\n`);
     trace?.(`ui server listening ${url}`);
   }
 
-  try {
-    const { default: open } = await import('open');
-    await open(url);
-    trace?.(`browser open ${url}`);
-  } catch {
-    trace?.(`browser open failed ${url}`);
-    // Browser couldn't open — URL already printed above
+  if (runtime.openBrowser) {
+    try {
+      const { default: open } = await import('open');
+      await open(url);
+      trace?.(`browser open ${url}`);
+    } catch {
+      trace?.(`browser open failed ${url}`);
+    }
   }
 
   await new Promise<void>(() => {}); // keep alive until signal

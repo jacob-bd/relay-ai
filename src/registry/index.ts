@@ -19,6 +19,7 @@ export { loadRegistryProviders, loadRegistryProvidersSync } from './load.js';
 export {
   addGoRegistryStub,
   addZenRegistryStub,
+  ensureOpencodeCloudProviders,
   removeProviderFromRegistry,
   toggleProviderEnabled,
 } from './crud.js';

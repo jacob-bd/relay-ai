@@ -33,7 +33,7 @@ relay-ai providers auth openai-oauth
 relay-ai providers auth xai-oauth
 ```
 
-Follow the device-code instructions printed in the terminal. Credentials are stored in the operating system's secure credential store.
+Follow the device-code instructions printed in the terminal. Credentials are stored in the operating system's secure credential store when available, or in `RELAY_AI_HOME/secrets.json` (e.g. Docker) when the OS store is unavailable.
 
 ## GitHub Copilot plans and models
 

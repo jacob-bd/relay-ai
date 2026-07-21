@@ -1,9 +1,20 @@
 import pc from 'picocolors';
-import { networkInterfaces } from 'node:os';
 import * as p from '@clack/prompts';
 import { relayIntro } from '../ui.js';
 import { resolveApiKey, readFromCredentialStore } from '../env.js';
 import { sanitizeCredential } from './auth.js';
+import {
+  getLocalIps,
+  hostFromHeader,
+  resolveAdvertiseAddresses,
+  resolveAdvertiseGatewayPort,
+} from './advertise-addrs.js';
+export {
+  getLocalIps,
+  resolveAdvertiseAddresses,
+  resolveAdvertiseGatewayPort,
+  hostFromHeader,
+};
 import {
   getSavedServerPassword,
   getServerExposedProviders,
@@ -26,6 +37,7 @@ import {
 } from '../provider-catalog.js';
 import { providersForTarget } from '../target-compatibility.js';
 import { loadRegistry } from '../registry/io.js';
+import { ensureOpencodeCloudProviders } from '../registry/crud.js';
 import type { ModelInfo } from '../types.js';
 import type { ServerModelInfo, GatewayModelOptions } from './models.js';
 import {
@@ -59,6 +71,7 @@ import {
   hasApplicationDefaultCredentials,
   vertexModelsToServerModels,
 } from './vertex-config.js';
+import { getServerDebugLogPath, printTraceLog } from '../trace-log.js';
 
 export interface ServerRunConfig {
   exposedProviders: string[] | null;
@@ -77,19 +90,7 @@ export interface ServerCommandOptions {
   freeOnly?: boolean;
   maskGatewayIds?: boolean;
   password?: string;
-}
-
-export function getLocalIps(): Array<{ name: string; address: string }> {
-  const ifaces = networkInterfaces();
-  const result: Array<{ name: string; address: string }> = [];
-  for (const [name, iface] of Object.entries(ifaces)) {
-    for (const addr of iface ?? []) {
-      if (addr.family === 'IPv4' && !addr.internal) {
-        result.push({ name, address: addr.address });
-      }
-    }
-  }
-  return result;
+  trace?: boolean;
 }
 
 function cappedWidth(values: string[], label: string, cap: number): number {
@@ -184,20 +185,46 @@ export function enrichServerModelReasoning(model: ServerModelInfo): ServerModelI
   return { ...model, defaultEffort: caps.defaultLevel };
 }
 
-function waitForShutdown(): Promise<void> {
+function waitForShutdownSignal(): Promise<'SIGINT' | 'SIGTERM'> {
   return new Promise(resolve => {
     const cleanup = () => {
-      process.off('SIGINT', onSignal);
-      process.off('SIGTERM', onSignal);
+      process.off('SIGINT', onSigint);
+      process.off('SIGTERM', onSigterm);
     };
-    const onSignal = () => {
+    const onSigint = () => {
       cleanup();
-      resolve();
+      resolve('SIGINT');
+    };
+    const onSigterm = () => {
+      cleanup();
+      resolve('SIGTERM');
     };
 
-    process.once('SIGINT', onSignal);
-    process.once('SIGTERM', onSignal);
+    process.once('SIGINT', onSigint);
+    process.once('SIGTERM', onSigterm);
   });
+}
+
+/** Exported for tests — mirrors UI Ctrl+C confirm behavior. */
+export async function resolveServerShutdownDecision(
+  signal: NodeJS.Signals,
+  promptClose: () => Promise<boolean | symbol> = () => p.confirm({
+    message: 'Relay AI server is still running. Close it?',
+    initialValue: true,
+  }),
+): Promise<'close' | 'keep'> {
+  if (signal !== 'SIGINT') return 'close';
+  const shouldClose = await promptClose();
+  if (p.isCancel(shouldClose)) return 'close';
+  return shouldClose ? 'close' : 'keep';
+}
+
+async function waitForShutdown(): Promise<void> {
+  while (true) {
+    const signal = await waitForShutdownSignal();
+    const decision = await resolveServerShutdownDecision(signal);
+    if (decision === 'close') return;
+  }
 }
 
 async function getServerPasswordForMode(
@@ -245,11 +272,14 @@ async function getServerPasswordForQuickMode(
   const trimmedOverride = passwordOverride?.trim();
   if (trimmedOverride) return { password: trimmedOverride, wasSaved: false };
 
+  const fromEnv = process.env['RELAY_AI_SERVER_PASSWORD']?.trim();
+  if (fromEnv) return { password: fromEnv, wasSaved: false };
+
   const savedPassword = await getSavedServerPassword();
   if (savedPassword) return { password: savedPassword, wasSaved: true };
 
-  p.log.error('Network server quick-start needs a saved server password or `--password <value>`.');
-  p.log.info('Run `relay-ai server` and choose Configure & start to save one, or pass a one-run password.');
+  p.log.error('Network server quick-start needs a password via `--password`, `RELAY_AI_SERVER_PASSWORD`, or a saved server password.');
+  p.log.info('Run `relay-ai server` and choose Configure & start to save one, or pass a one-run password / env var.');
   return undefined;
 }
 
@@ -352,7 +382,7 @@ async function runServerWizard(): Promise<{ runConfig: ServerRunConfig; promptFo
   };
 }
 
-async function runVertexServerCommand(): Promise<number> {
+async function runVertexServerCommand(options: ServerCommandOptions = {}): Promise<number> {
   relayIntro('Vertex Gateway');
 
   const vertexConfig = buildVertexRuntimeConfig();
@@ -376,6 +406,8 @@ async function runVertexServerCommand(): Promise<number> {
 
   const host = mode === 'network' ? '0.0.0.0' : '127.0.0.1';
   const models = vertexModelsToServerModels(vertexConfig);
+  const debugLogPath = options.trace ? getServerDebugLogPath() : undefined;
+  if (debugLogPath) p.log.info(`Debug log: ${debugLogPath}`);
 
   const server = await startServer({
     host,
@@ -388,6 +420,7 @@ async function runVertexServerCommand(): Promise<number> {
       project: vertexConfig.project,
       location: vertexConfig.location,
     },
+    debugLogPath,
   });
 
   console.log('');
@@ -395,11 +428,12 @@ async function runVertexServerCommand(): Promise<number> {
   console.log(`  Anthropic:  http://127.0.0.1:${server.port}/anthropic`);
   console.log(`  Models:     ${models.map(model => model.id).join(', ')}`);
   if (mode === 'network') {
-    for (const { name, address } of getLocalIps()) {
-      console.log(`  Network (${name}):  http://${address}:${server.port}/anthropic`);
+    const publicPort = resolveAdvertiseGatewayPort(server.port);
+    for (const { name, address } of resolveAdvertiseAddresses()) {
+      console.log(`  Network (${name}):  http://${address}:${publicPort}/anthropic`);
     }
     if (passwordWasSaved) {
-      console.log('  API key:    saved, rotate with `relay-ai server --setup`');
+      console.log('  API key:    saved, rotate with `relay-ai server` → Configure & start');
     } else {
       console.log(`  API key:    ${serverPassword}`);
     }
@@ -413,6 +447,7 @@ async function runVertexServerCommand(): Promise<number> {
 
   await waitForShutdown();
   await server.close();
+  if (debugLogPath) printTraceLog(debugLogPath);
   return 0;
 }
 
@@ -441,8 +476,11 @@ export async function resolveServerUpstreamApiKey(): Promise<string | null> {
 
 export async function runServerCommand(options: ServerCommandOptions = {}): Promise<number> {
   if (options.vertex) {
-    return runVertexServerCommand();
+    return runVertexServerCommand(options);
   }
+
+  // Docker / empty RELAY_AI_HOME: seed Zen/Go before credential + catalog checks.
+  await ensureOpencodeCloudProviders();
 
   const apiKey = await resolveServerUpstreamApiKey();
   if (!apiKey) {
@@ -528,6 +566,8 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
   }
 
   const gateway = runConfig.maskGatewayIds ? { maskGatewayIds: true as const } : undefined;
+  const debugLogPath = options.trace ? getServerDebugLogPath() : undefined;
+  if (debugLogPath) p.log.info(`Debug log: ${debugLogPath}`);
   const server = await startServer({
     host,
     port: 17645,
@@ -536,20 +576,22 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
     catalog: createGatewayModelCatalog(models, gateway),
     backends: BACKENDS,
     gateway,
+    debugLogPath,
   });
 
   console.log('');
   console.log(pc.bold(pc.green('Relay AI server running')));
-  console.log(`  Anthropic:  http://127.0.0.1:${server.port}/anthropic`);
-  console.log(`  OpenAI:     http://127.0.0.1:${server.port}/openai/v1`);
+  const publicPort = resolveAdvertiseGatewayPort(server.port);
+  console.log(`  Anthropic:  http://127.0.0.1:${publicPort}/anthropic`);
+  console.log(`  OpenAI:     http://127.0.0.1:${publicPort}/openai/v1`);
   if (mode === 'network') {
-    for (const { name, address } of getLocalIps()) {
+    for (const { name, address } of resolveAdvertiseAddresses()) {
       console.log(`  Network (${name}):`);
-      console.log(`    Anthropic:  http://${address}:${server.port}/anthropic`);
-      console.log(`    OpenAI:     http://${address}:${server.port}/openai/v1`);
+      console.log(`    Anthropic:  http://${address}:${publicPort}/anthropic`);
+      console.log(`    OpenAI:     http://${address}:${publicPort}/openai/v1`);
     }
     if (passwordWasSaved) {
-      console.log('  API key:    saved, rotate with `relay-ai server --setup`');
+      console.log('  API key:    saved, rotate with `relay-ai server` → Configure & start');
     } else {
       console.log(`  API key:    ${serverPassword}`);
     }
@@ -574,5 +616,6 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
 
   await waitForShutdown();
   await server.close();
+  if (debugLogPath) printTraceLog(debugLogPath);
   return 0;
 }

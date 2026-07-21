@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.6.0] - 2026-07-20
+
+### Added
+
+- **Docker Server + Admin UI** — official `Dockerfile` + `docker-compose.yml` run an always-on admin UI (`relay-ai ui --server`) and in-process API gateway. Default ports **8787** (UI) and **17645** (gateway). App launch stays on the host; the container UI hides Apps & Launch and Antigravity.
+- **File-backed credentials for headless / Docker** — when the OS keyring is unavailable, API keys and device-code OAuth tokens persist to `RELAY_AI_HOME/secrets.json` (mode `0600`) on the Compose volume.
+- **Zen/Go auto-seed** — with `OPENCODE_API_KEY` set and an empty providers volume, Relay seeds OpenCode Zen + Go and refreshes empty model caches at UI/server bootstrap.
+- **Advertised LAN host + published ports** — network URL cards prefer `RELAY_AI_ADVERTISE_HOST(S)`, then the browser Host header, and use `RELAY_AI_GATEWAY_HOST_PORT` so remapped host ports appear correctly (not container-only `172.x` / internal `17645`).
+- **`RELAY_AI_SERVER_PASSWORD`** — env password for network quick-start / Compose (alongside `--password` and saved password).
+- **`relay-ai server --trace`** and **Ctrl+C confirm** before stopping the foreground server (aligned with UI behavior).
+- **Clipboard fallback on plain HTTP** — Copy buttons work when the admin UI is opened via LAN `http://…` (Clipboard API blocked outside secure contexts).
+
+### Fixed
+
+- **Server tab inputs no longer steal focus every 5s** — status polling skips full panel re-render while a field inside the Server panel is focused.
+- **Bogus `relay-ai server --setup` messaging** — banners and docs point to Configure & start / env password instead of a non-existent flag.
+
+### Documentation
+
+- New **[docs/DOCKER.md](docs/DOCKER.md)** playbook for humans and AI assistants (questions to ask, exact Compose steps, ports, secrets, LAN advertise, troubleshooting).
+- README and API server docs updated for container deployment.
+
 ## [0.5.0] - 2026-07-19
 
 ### Added

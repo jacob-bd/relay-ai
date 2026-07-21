@@ -34,7 +34,8 @@ import {
   filterServerModelsByProviders,
   summarizeServerProviders,
 } from '../server/catalog-filter.js';
-import { getLocalIps, loadServerModels, resolveServerUpstreamApiKey } from '../server/index.js';
+import { resolveAdvertiseAddresses, resolveAdvertiseGatewayPort, formatGatewayUrls } from '../server/advertise-addrs.js';
+import { loadServerModels, resolveServerUpstreamApiKey } from '../server/index.js';
 
 export type ServerListenMode = 'local' | 'network';
 
@@ -143,18 +144,20 @@ async function buildSavedConfig(): Promise<ServerSavedConfig> {
   };
 }
 
-export async function getServerStatus(): Promise<ServerStatusPayload> {
+export async function getServerStatus(opts?: { requestHost?: string }): Promise<ServerStatusPayload> {
   const saved = await buildSavedConfig();
   if (!running) return { running: false, saved };
 
   const { handle, config, serverPassword, providerSummary, modelRows } = running;
+  const publicPort = resolveAdvertiseGatewayPort(handle.port);
+  const loopback = formatGatewayUrls('127.0.0.1', publicPort);
 
   const payload: ServerStatusPayload = {
     running: true,
     saved,
     listenMode: config.listenMode,
-    anthropicUrl: `http://127.0.0.1:${handle.port}/anthropic`,
-    openaiUrl: `http://127.0.0.1:${handle.port}/openai/v1`,
+    anthropicUrl: loopback.anthropicUrl,
+    openaiUrl: loopback.openaiUrl,
     exposedProviders: config.exposedProviders,
     favoritesOnly: config.favoritesOnly,
     freeModelsOnly: config.freeModelsOnly,
@@ -164,11 +167,12 @@ export async function getServerStatus(): Promise<ServerStatusPayload> {
   };
 
   if (config.listenMode === 'network') {
-    payload.networkUrls = getLocalIps().map(({ name, address }: { name: string; address: string }) => ({
-      name,
-      anthropicUrl: `http://${address}:${handle.port}/anthropic`,
-      openaiUrl: `http://${address}:${handle.port}/openai/v1`,
-    }));
+    payload.networkUrls = resolveAdvertiseAddresses({ requestHost: opts?.requestHost }).map(
+      ({ name, address }) => {
+        const urls = formatGatewayUrls(address, publicPort);
+        return { name, anthropicUrl: urls.anthropicUrl, openaiUrl: urls.openaiUrl };
+      },
+    );
     payload.apiKey = serverPassword ?? undefined;
   } else {
     payload.apiKey = 'any non-empty value';
@@ -179,18 +183,20 @@ export async function getServerStatus(): Promise<ServerStatusPayload> {
 
 export function startGatewayServer(
   req: ServerStartRequest,
+  opts?: { requestHost?: string },
 ): Promise<{ ok: true; status: ServerStatusPayload } | { ok: false; error: string }> {
   if (running) return Promise.resolve({ ok: false, error: 'Server is already running. Stop it first.' });
   // Two near-simultaneous start requests would otherwise both pass the `running`
   // check above and race through the async setup below — serialize on the
   // in-flight promise instead of just the (only-set-at-the-end) `running` flag.
   if (startInFlight) return startInFlight;
-  startInFlight = doStartGatewayServer(req).finally(() => { startInFlight = null; });
+  startInFlight = doStartGatewayServer(req, opts).finally(() => { startInFlight = null; });
   return startInFlight;
 }
 
 async function doStartGatewayServer(
   req: ServerStartRequest,
+  opts?: { requestHost?: string },
 ): Promise<{ ok: true; status: ServerStatusPayload } | { ok: false; error: string }> {
   if (req.listenMode !== 'local' && req.listenMode !== 'network') {
     return { ok: false, error: 'Invalid listen mode.' };
@@ -296,7 +302,7 @@ async function doStartGatewayServer(
     modelRows: buildModelRows(models, gateway),
   };
 
-  return { ok: true, status: await getServerStatus() };
+  return { ok: true, status: await getServerStatus({ requestHost: opts?.requestHost }) };
 }
 
 export async function stopGatewayServer(): Promise<{ ok: true; stopped: boolean }> {

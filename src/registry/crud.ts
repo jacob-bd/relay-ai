@@ -1,8 +1,15 @@
 // src/registry/crud.ts — add/remove providers in the native registry
 
-import { GLOBAL_OPENCODE_KEYRING_ACCOUNT, parseAuthRef, deleteProviderCredential } from '../env.js';
+import {
+  GLOBAL_OPENCODE_KEYRING_ACCOUNT,
+  parseAuthRef,
+  deleteProviderCredential,
+  readGlobalOpencodeCredential,
+  resolveProviderCredential,
+} from '../env.js';
 import { goRegistryStub, zenRegistryStub } from './builtins.js';
 import { loadRegistry, saveRegistry } from './io.js';
+import { refreshProviderModels } from './refresh-models.js';
 import type { RegistryProvider, RegistrySubscriptionFilter } from './types.js';
 
 export interface RemoveProviderResult {
@@ -69,6 +76,35 @@ export function addGoRegistryStub(): { added: boolean; reason?: string } {
   registry.providers.push(goRegistryStub());
   saveRegistry(registry);
   return { added: true };
+}
+
+/**
+ * Seed Zen/Go when an OpenCode cloud key exists but the registry is empty
+ * (Docker / fresh RELAY_AI_HOME). Also fills empty modelsCache entries.
+ */
+export async function ensureOpencodeCloudProviders(
+  hasOpencodeKey?: () => Promise<boolean>,
+): Promise<{ seeded: boolean; refreshed: string[] }> {
+  const hasKey = hasOpencodeKey
+    ? await hasOpencodeKey()
+    : Boolean(await readGlobalOpencodeCredential());
+  if (!hasKey) return { seeded: false, refreshed: [] };
+
+  const zenAdded = addZenRegistryStub({ subscriptionFilter: 'free' }).added;
+  const goAdded = addGoRegistryStub().added;
+  const seeded = zenAdded || goAdded;
+
+  const refreshed: string[] = [];
+  for (const id of ['zen', 'go'] as const) {
+    const registry = loadRegistry();
+    const provider = registry.providers.find(p => p.id === id);
+    if (!provider || (provider.modelsCache?.models.length ?? 0) > 0) continue;
+    const key = await resolveProviderCredential(provider.id, provider.authRef);
+    const result = await refreshProviderModels(provider.id, key, registry);
+    if (result.ok && !result.skipped) refreshed.push(id);
+  }
+
+  return { seeded, refreshed };
 }
 
 export function setRegistrySubscriptionFilter(

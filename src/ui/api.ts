@@ -32,6 +32,7 @@ import {
 import { writeSecureLogLine } from '../trace-log.js';
 import { providerOptionsFromCatalog } from '../server/index.js';
 import { getServerStatus, startGatewayServer, stopGatewayServer, type ServerStartRequest } from './server-control.js';
+import { hostFromHeader } from '../server/advertise-addrs.js';
 import { freeStatusLabel } from '../free-models.js';
 import { checkForUpdates } from '../update-check.js';
 import { supportsClaudeTransparentMode } from '../http-proxy/routes.js';
@@ -46,6 +47,8 @@ export type UiServerLifecycleEvent =
 export interface UiApiOptions {
   trace?: boolean;
   traceLogPath?: string;
+  /** When `server`, app launch APIs are disabled (Docker admin UI). */
+  uiMode?: 'full' | 'server';
   onServerLifecycle?: (event: UiServerLifecycleEvent) => void;
 }
 
@@ -151,16 +154,18 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
     handleOAuthStatus(req, res);
   } else if (url.startsWith('/oauth/callback') && req.method === 'GET') {
     handleOAuthCallback(req, res);
-  } else if (url === '/api/apps' && req.method === 'GET') {
-    handleGetApps(res);
-  } else if (url === '/api/apps/path' && req.method === 'POST') {
-    handleSetAppPath(req, res);
-  } else if (url === '/api/apps/launch' && req.method === 'POST') {
-    handleLaunchApp(req, res, opts);
-  } else if (url === '/api/apps/browse-folder' && req.method === 'POST') {
-    handleBrowseFolder(res);
+  } else if (url.startsWith('/api/apps')) {
+    if (opts.uiMode === 'server') {
+      sendJson(res, 403, { error: 'App launch is unavailable in server admin UI mode.' });
+      return;
+    }
+    if (url === '/api/apps' && req.method === 'GET') handleGetApps(res);
+    else if (url === '/api/apps/path' && req.method === 'POST') handleSetAppPath(req, res);
+    else if (url === '/api/apps/launch' && req.method === 'POST') handleLaunchApp(req, res, opts);
+    else if (url === '/api/apps/browse-folder' && req.method === 'POST') handleBrowseFolder(res);
+    else sendJson(res, 404, { error: 'Not found' });
   } else if (url === '/api/server/status' && req.method === 'GET') {
-    handleGetServerStatus(res);
+    handleGetServerStatus(req, res);
   } else if (url === '/api/server/providers' && req.method === 'GET') {
     handleGetServerProviders(res);
   } else if (url === '/api/server/start' && req.method === 'POST') {
@@ -281,7 +286,7 @@ async function handlePostKeys(req: IncomingMessage, res: ServerResponse): Promis
     if (saved) {
       sendJson(res, 200, { ok: true });
     } else {
-      sendJson(res, 500, { error: 'Keychain unavailable — key not saved' });
+      sendJson(res, 500, { error: 'Credential store unavailable — key not saved' });
     }
   } catch (err) {
     sendJson(res, 400, { error: String(err) });
@@ -816,9 +821,9 @@ async function handleSetAppPath(req: IncomingMessage, res: ServerResponse): Prom
   }
 }
 
-async function handleGetServerStatus(res: ServerResponse): Promise<void> {
+async function handleGetServerStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
-    sendJson(res, 200, await getServerStatus());
+    sendJson(res, 200, await getServerStatus({ requestHost: hostFromHeader(req.headers.host) }));
   } catch (err) {
     sendJson(res, 500, { error: String(err) });
   }
@@ -845,17 +850,21 @@ async function handleStartServer(req: IncomingMessage, res: ServerResponse, opts
     if (body.listenMode !== 'local' && body.listenMode !== 'network') {
       sendJson(res, 400, { error: 'listenMode must be "local" or "network"' }); return;
     }
+    // Server admin UI / Docker: published ports only reach 0.0.0.0.
+    const listenMode = opts.uiMode === 'server' ? 'network' : body.listenMode;
     const request: ServerStartRequest = {
       favoritesOnly: body.favoritesOnly,
       freeModelsOnly: Boolean(body.freeModelsOnly),
       exposedProviders: Array.isArray(body.exposedProviders) ? body.exposedProviders : null,
       maskGatewayIds: body.maskGatewayIds,
-      listenMode: body.listenMode,
+      listenMode,
       passwordMode: body.passwordMode === 'saved' ? 'saved' : 'new',
       password: typeof body.password === 'string' ? body.password : undefined,
       savePassword: Boolean(body.savePassword),
     };
-    const result = await startGatewayServer(request);
+    const result = await startGatewayServer(request, {
+      requestHost: hostFromHeader(req.headers.host),
+    });
     if (result.ok) {
       notifyServerLifecycle(opts, {
         type: 'started',

@@ -366,3 +366,35 @@ describe('materializeRegistry', () => {
     expect(locals[0]?.models[0]?.completionsUrl).toBe('https://override.example/v1/chat/completions');
   });
 });
+
+describe('ensureOpencodeCloudProviders', () => {
+  let home: string;
+  const prevHome = process.env.RELAY_AI_HOME;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'relay-ai-ensure-opencode-'));
+    process.env.RELAY_AI_HOME = home;
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.RELAY_AI_HOME;
+    else process.env.RELAY_AI_HOME = prevHome;
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('seeds zen and go when an OpenCode key is available and registry is empty', async () => {
+    const { ensureOpencodeCloudProviders, loadRegistry } = await import('../src/registry/index.js');
+    const result = await ensureOpencodeCloudProviders(async () => true);
+    expect(result.seeded).toBe(true);
+    const ids = loadRegistry().providers.map(p => p.id).sort();
+    expect(ids).toEqual(['go', 'zen']);
+  });
+
+  it('does nothing when no OpenCode key is available', async () => {
+    const { ensureOpencodeCloudProviders, loadRegistry } = await import('../src/registry/index.js');
+    const result = await ensureOpencodeCloudProviders(async () => false);
+    expect(result.seeded).toBe(false);
+    expect(result.refreshed).toEqual([]);
+    expect(loadRegistry().providers).toHaveLength(0);
+  });
+});

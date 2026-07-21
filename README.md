@@ -23,6 +23,8 @@
 
 **relay-ai** is an interactive CLI — and now a **visual launcher** — that connects AI coding tools to any provider and runs local API gateways on your machine. It supports **Claude Code**, **Claude Desktop (Cowork + Code)**, the **OpenAI Codex CLI**, the **ChatGPT desktop app in Codex mode (macOS + Windows)**, **Google Gemini CLI**, and experimental **Antigravity CLI / IDE** support.
 
+> **Deploy with Docker / AI assistants:** To run an always-on **Server + Admin UI** from this repo (`docker compose up`), read **[docs/DOCKER.md](docs/DOCKER.md)** first — it includes questions to ask the user and an exact checklist. The container is **not** full desktop Relay AI (no Claude/Codex/Antigravity app launch inside Docker).
+
 Pick your backend:
 
 - **Your providers** — configure once with `relay-ai providers` (Groq, Mistral, Nvidia, DeepSeek, custom OpenAI/Anthropic endpoints, and more)
@@ -36,6 +38,7 @@ Pick your backend:
 |---------|-------------|
 | `relay-ai` | Print help (does not launch Claude Code) |
 | `relay-ai ui` | **Open the visual launcher** — manage providers and launch any tool from a browser UI |
+| `relay-ai ui --server` | **Server + Admin UI** (Docker-friendly) — providers / favorites / gateway only; binds `0.0.0.0` |
 | `relay-ai claude` | Pick a provider → launch Claude Code |
 | `relay-ai providers` | Add, import, list, remove, and refresh your AI providers |
 | `relay-ai models` | Manage favorite models for mid-session `/model` switching |
@@ -54,6 +57,7 @@ Pick your backend:
 ## Features
 
 - **Visual launcher UI:** `relay-ai ui` opens a browser dashboard — launch any supported tool with a point-and-click model picker. Pick provider and model in the UI; the terminal opens straight to the running session with no second selection step. Manage providers and favorites without leaving the browser.
+- **Docker Server + Admin UI:** `docker compose up` (see **[docs/DOCKER.md](docs/DOCKER.md)**) runs an always-on admin UI + gateway for LAN/home-lab use — providers, favorites, and Start Server without a desktop keychain. Host CLI still launches Claude / Codex / Antigravity.
 - **Server tab in the UI:** Run the same API gateway as `relay-ai server` — favorites-only or specific providers, discovery id masking for Claude Desktop / Cowork, local or network listen mode — from a browser form instead of a terminal wizard. Shows live URLs, the API key, and the full model catalog once started, with a one-click Stop.
 - **Native provider registry:** `relay-ai providers` stores config in `~/.relay-ai/providers.json` and secrets in the OS keychain — no OpenCode binary required at launch. See **[docs/PROVIDERS.md](docs/PROVIDERS.md)** for a full list of providers and known issues.
 - **Provider templates:** Add Groq, Mistral, Together, OpenRouter, and 15+ SDK-backed providers, plus custom OpenAI/Anthropic-compatible endpoints
@@ -79,6 +83,7 @@ Pick your backend:
 | Tool | Command | Status |
 |------|---------|--------|
 | **Visual launcher UI** | `relay-ai ui` | ✅ Supported — browser dashboard for all tools |
+| **Docker Server + Admin UI** | `docker compose up` | ✅ Supported — always-on gateway ([guide](docs/DOCKER.md)) |
 | Provider registry | `relay-ai providers` | ✅ Supported ([guide](docs/PROVIDERS.md)) |
 | Claude Code | `relay-ai claude` | ✅ Supported |
 | Favorite models | `relay-ai models` | ✅ Supported |
@@ -284,8 +289,19 @@ Run relay-ai as a foreground API gateway on port **17645**:
 |------|---------|------|--------|
 | **Registry gateway** | `relay-ai server` | Per-provider keys in registry (+ OpenCode key for Zen/Go if exposed) | Providers you configured |
 | **Vertex gateway** | `relay-ai server --vertex` | gcloud Application Default Credentials | Claude on Vertex AI |
+| **Docker Server + Admin UI** | `docker compose up --build` | `RELAY_AI_SERVER_PASSWORD` + UI / env keys | Same registry gateway, managed in the browser |
 
 > **Claude Desktop (Cowork + Code):** For the automated macOS/Windows setup, use `relay-ai claude-app`. For manual or network setups, see [docs/CLAUDE_DESKTOP_SETUP.md](docs/CLAUDE_DESKTOP_SETUP.md).
+>
+> **Docker (recommended for always-on home lab / NAS):** clone this repo → `cp .env.docker.example .env` → set `RELAY_AI_SERVER_PASSWORD` → `docker compose up --build` → open **http://127.0.0.1:8787**. Full playbook for humans and AI assistants: **[docs/DOCKER.md](docs/DOCKER.md)**.
+
+### Docker one-liner
+
+```bash
+cp .env.docker.example .env   # set RELAY_AI_SERVER_PASSWORD (and optional OPENCODE_API_KEY)
+docker compose up --build
+# Admin UI → http://127.0.0.1:8787  ·  Gateway (after Start Server) → :17645
+```
 
 ### Registry gateway (`relay-ai server`)
 
@@ -320,8 +336,11 @@ Any one-run server option also skips the wizard:
 | `--free-only` / `--no-free-only` | Enable or disable the free/free-access model filter for this run |
 | `--mask-gateway-ids` / `--no-mask-gateway-ids` | Enable or disable discovery id masking for this run |
 | `--password <value>` | One-run password for network mode when you do not want to use a saved password |
+| `--trace` | Write debug logs to `~/.relay-ai/logs/server-debug.log` and print errors on exit |
 
-Non-interactive shells (scripts, services, CI, pipes) use quick mode automatically. If quick mode resolves to network mode, relay-ai uses `--password` first, then a saved server password; without either it exits with a clear error instead of prompting.
+Non-interactive shells (scripts, services, CI, pipes) use quick mode automatically. If quick mode resolves to network mode, relay-ai uses `--password` first, then `RELAY_AI_SERVER_PASSWORD`, then a saved server password; without any of those it exits with a clear error instead of prompting.
+
+**Docker:** run Server + Admin UI in a container (env vars, no OS keychain). See **[docs/DOCKER.md](docs/DOCKER.md)** and `docker compose up --build` → http://127.0.0.1:8787.
 
 **Local mode** — point any Anthropic-compatible client at your machine:
 
@@ -577,6 +596,8 @@ The OpenCode API key (for Zen/Go) and per-provider keys are stored separately, b
 ## Troubleshooting
 
 See **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** for common issues — especially **“Not logged in”** after accidentally choosing **No** on Claude Code’s custom API key prompt.
+
+Docker / container gateway issues: **[docs/DOCKER.md](docs/DOCKER.md)** (ports, LAN advertise, secrets, Compose logs).
 
 ## Upgrading from opencode-starter
 

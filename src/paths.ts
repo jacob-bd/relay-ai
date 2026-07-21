@@ -41,6 +41,10 @@ export function getProvidersPath(env: HomeEnv = process.env): string {
   return join(getAppHome(env), 'providers.json');
 }
 
+export function getSecretsPath(env: HomeEnv = process.env): string {
+  return join(getAppHome(env), 'secrets.json');
+}
+
 export function getLogsPath(env: HomeEnv = process.env): string {
   return join(getAppHome(env), 'logs');
 }

@@ -3,7 +3,7 @@ import {
   getProviderModelPage,
   PROVIDER_MODEL_PAGE_SIZE,
 } from './provider-model-browser.js';
-import { copyDeviceCode, oauthConnectionLabel } from './oauth-device.js';
+import { copyDeviceCode, copyTextToClipboard, oauthConnectionLabel } from './oauth-device.js';
 import { providerInitial, providerLogoHtml } from './provider-logo.js';
 
 // ─── State ───────────────────────────────────────────────────────────────────
@@ -207,7 +207,7 @@ async function initUpdateIndicator() {
 
   document.getElementById('update-copy-btn')?.addEventListener('click', async () => {
     try {
-      await navigator.clipboard.writeText(UPDATE_COMMAND);
+      await copyTextToClipboard(UPDATE_COMMAND);
       showToast('Update command copied');
     } catch {
       showToast('Could not copy the update command');
@@ -1519,8 +1519,15 @@ function updateAgyCounter() {
 
 // ─── Sidebar nav highlight ────────────────────────────────────────────────────
 
+function isServerAdminUi() {
+  return document.documentElement.dataset.uiMode === 'server';
+}
+
 function initNav() {
-  const sectionIds = ['providers', 'favorites', 'antigravity', 'apps', 'server'];
+  // Host-only sections stay in the DOM but are CSS-hidden in server admin mode.
+  const sectionIds = isServerAdminUi()
+    ? ['providers', 'favorites', 'server']
+    : ['providers', 'favorites', 'antigravity', 'apps', 'server'];
   const navItems = document.querySelectorAll('.nav-item');
   const content = document.getElementById('content');
 
@@ -1616,11 +1623,13 @@ async function init() {
 
   await loadConfig();
   renderFavList();
-  renderAgyList();
-  updateAgyCounter();
   updateGeneralCounter();
-  await loadApps();
-  renderApps();
+  if (!isServerAdminUi()) {
+    renderAgyList();
+    updateAgyCounter();
+    await loadApps();
+    renderApps();
+  }
   renderProviders(); // shows skeletons
 
   initServerPolling();
@@ -1631,12 +1640,12 @@ async function init() {
   initModels().then(() => {
     renderProviders();
     renderProviderStats();
-    renderApps();
+    if (!isServerAdminUi()) renderApps();
     // Re-render favorites now that we have full provider names
     renderFavList();
-    renderAgyList();
+    if (!isServerAdminUi()) renderAgyList();
     if (state.modelFilter) buildModelResults(state.modelFilter, 'general');
-    if (state.agyFilter)   buildModelResults(state.agyFilter, 'agy');
+    if (!isServerAdminUi() && state.agyFilter) buildModelResults(state.agyFilter, 'agy');
     syncProviderModelBrowserFromHash();
   });
 
@@ -2220,13 +2229,26 @@ document.addEventListener('click', (e) => {
 async function refreshServerStatus() {
   try {
     const data = await api('GET', '/api/server/status');
+    const wasRunning = Boolean(state.server.status?.running);
     state.server.status = data;
     if (!data.running) seedServerFormFromSaved(data.saved);
+    const runningChanged = wasRunning !== Boolean(data.running);
+    // Full innerHTML replace steals focus from password / search fields — skip while typing.
+    if (runningChanged || !isEditingInside(document.getElementById('server-panel'))) {
+      renderServerPanel();
+    }
   } catch {
     // Transient poll failure — keep showing the last known state.
   }
-  renderServerPanel();
   updateServerNavBadge();
+}
+
+function isEditingInside(root) {
+  if (!root) return false;
+  const el = document.activeElement;
+  if (!el || !root.contains(el)) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
 }
 
 function seedServerFormFromSaved(saved) {
@@ -2240,7 +2262,8 @@ function seedServerFormFromSaved(saved) {
   f.freeModelsOnly = Boolean(saved.freeModelsOnly);
   f.exposedProviders = saved.exposedProviders ? [...saved.exposedProviders] : [];
   f.maskGatewayIds = saved.maskGatewayIds;
-  f.listenMode = saved.listenMode === 'network' ? 'network' : 'local';
+  // Published Docker ports only reach 0.0.0.0 inside the container.
+  f.listenMode = isServerAdminUi() || saved.listenMode === 'network' ? 'network' : 'local';
   f.passwordMode = saved.hasSavedPassword ? 'saved' : 'new';
   if (f.expose === 'specific') loadServerProviders().then(renderServerPanel);
 }
@@ -2360,6 +2383,17 @@ function renderServerNetworkOptions() {
   `;
 }
 
+function renderServerListenField(f) {
+  if (isServerAdminUi()) {
+    return `<div class="server-field-hint">Network (required in container — use the published host port from the URL cards)</div>${renderServerNetworkOptions()}`;
+  }
+  const toggle = toggleGroupHtml([
+    { label: 'Local only', active: f.listenMode === 'local', onClick: "setServerListenMode('local')" },
+    { label: 'Network', active: f.listenMode === 'network', onClick: "setServerListenMode('network')" },
+  ]);
+  return f.listenMode === 'network' ? `${toggle}${renderServerNetworkOptions()}` : toggle;
+}
+
 function renderServerSetup(s) {
   const f = s.form;
   const specific = f.expose === 'specific';
@@ -2410,11 +2444,7 @@ function renderServerSetup(s) {
 
       <div class="server-field">
         <div class="server-field-label">Listen</div>
-        ${toggleGroupHtml([
-          { label: 'Local only', active: f.listenMode === 'local', onClick: "setServerListenMode('local')" },
-          { label: 'Network', active: f.listenMode === 'network', onClick: "setServerListenMode('network')" },
-        ])}
-        ${f.listenMode === 'network' ? renderServerNetworkOptions() : ''}
+        ${renderServerListenField(f)}
       </div>
 
       ${s.error ? `<div class="key-feedback error server-start-error">${escapeHtml(s.error)}</div>` : ''}
@@ -2618,7 +2648,7 @@ function serverIdCell(id) {
 
 async function copyPlainText(text) {
   try {
-    await navigator.clipboard.writeText(text);
+    await copyTextToClipboard(text);
     showToast('Copied to clipboard');
   } catch {
     showToast('Could not copy — copy manually');
