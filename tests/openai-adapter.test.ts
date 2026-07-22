@@ -1,0 +1,81 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+// Regression: the Vercel AI SDK's finishReason values use hyphens ('tool-calls',
+// 'content-filter') and include non-OpenAI values ('error', 'other', 'unknown').
+// A strict OpenAI client (Cursor) validating finish_reason against the real enum
+// ('stop' | 'length' | 'tool_calls' | 'content_filter') can reject the response
+// otherwise — reproduced live as Cursor's "Empty provider response" on every
+// tool-calling turn against a model routed through the SDK adapter.
+
+afterEach(() => {
+  vi.doUnmock('ai');
+  vi.resetModules();
+});
+
+describe('generateOpenAiResponse finish_reason mapping', () => {
+  it('maps the SDK\'s hyphenated tool-calls to the OpenAI wire value tool_calls', async () => {
+    vi.doMock('ai', () => ({
+      generateText: vi.fn(async () => ({
+        text: '',
+        toolCalls: [{ toolCallId: 'call_1', toolName: 'list_dir', args: { path: '.' } }],
+        finishReason: 'tool-calls',
+        usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+      })),
+      streamText: vi.fn(),
+    }));
+
+    const { generateOpenAiResponse } = await import('../src/openai-adapter.js');
+    const response = await generateOpenAiResponse({} as never, { messages: [] } as never, 'qwen3.8-max-preview');
+    expect(response.choices[0]?.finish_reason).toBe('tool_calls');
+  });
+
+  it('maps content-filter to content_filter and passes stop/length through unchanged', async () => {
+    for (const [sdkValue, openAiValue] of [['content-filter', 'content_filter'], ['stop', 'stop'], ['length', 'length']] as const) {
+      vi.doMock('ai', () => ({
+        generateText: vi.fn(async () => ({ text: 'hi', finishReason: sdkValue, usage: {} })),
+        streamText: vi.fn(),
+      }));
+      const { generateOpenAiResponse } = await import('../src/openai-adapter.js');
+      const response = await generateOpenAiResponse({} as never, { messages: [] } as never, 'model');
+      expect(response.choices[0]?.finish_reason).toBe(openAiValue);
+      vi.doUnmock('ai');
+      vi.resetModules();
+    }
+  });
+
+  it('falls back to stop for SDK values with no OpenAI equivalent (error, other, unknown)', async () => {
+    for (const sdkValue of ['error', 'other', 'unknown', undefined]) {
+      vi.doMock('ai', () => ({
+        generateText: vi.fn(async () => ({ text: 'hi', finishReason: sdkValue, usage: {} })),
+        streamText: vi.fn(),
+      }));
+      const { generateOpenAiResponse } = await import('../src/openai-adapter.js');
+      const response = await generateOpenAiResponse({} as never, { messages: [] } as never, 'model');
+      expect(response.choices[0]?.finish_reason).toBe('stop');
+      vi.doUnmock('ai');
+      vi.resetModules();
+    }
+  });
+});
+
+describe('streamOpenAiResponse finish_reason mapping', () => {
+  it('emits tool_calls (not tool-calls) in the final SSE chunk', async () => {
+    vi.doMock('ai', () => ({
+      generateText: vi.fn(),
+      streamText: vi.fn(() => ({
+        fullStream: (async function* () {
+          yield { type: 'text-delta', textDelta: 'hi' };
+          yield { type: 'finish', finishReason: 'tool-calls' };
+        })(),
+      })),
+    }));
+
+    const { streamOpenAiResponse } = await import('../src/openai-adapter.js');
+    const chunks: string[] = [];
+    await streamOpenAiResponse({} as never, { messages: [] } as never, 'model', chunk => chunks.push(chunk));
+
+    const finishChunk = chunks.find(c => c.includes('"finish_reason"') && !c.includes('"finish_reason":null'));
+    expect(finishChunk).toContain('"finish_reason":"tool_calls"');
+    expect(finishChunk).not.toContain('tool-calls');
+  });
+});

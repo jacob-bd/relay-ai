@@ -8797,6 +8797,20 @@ function translateOpenAiRequest(body) {
     maxOutputTokens: body.max_completion_tokens ?? body.max_tokens
   };
 }
+function toOpenAiFinishReason(reason) {
+  switch (reason) {
+    case "tool-calls":
+      return "tool_calls";
+    case "content-filter":
+      return "content_filter";
+    case "length":
+      return "length";
+    case "stop":
+      return "stop";
+    default:
+      return "stop";
+  }
+}
 async function generateOpenAiResponse(model, params, responseModelId) {
   const result = await generateText2({ model, ...params });
   const message = { role: "assistant", content: result.text || null };
@@ -8812,7 +8826,7 @@ async function generateOpenAiResponse(model, params, responseModelId) {
     object: "chat.completion",
     created: Math.floor(Date.now() / 1e3),
     model: responseModelId,
-    choices: [{ index: 0, message, finish_reason: result.finishReason || "stop" }],
+    choices: [{ index: 0, message, finish_reason: toOpenAiFinishReason(result.finishReason) }],
     usage: {
       prompt_tokens: result.usage?.promptTokens ?? 0,
       completion_tokens: result.usage?.completionTokens ?? 0,
@@ -8846,7 +8860,7 @@ async function streamOpenAiResponse(model, params, responseModelId, onChunk) {
         send({ tool_calls: [{ index: 0, function: { arguments: p8.delta ?? p8.text ?? p8.argsTextDelta ?? "" } }] });
         break;
       case "finish":
-        send({}, p8.finishReason || "stop");
+        send({}, toOpenAiFinishReason(p8.finishReason));
         break;
     }
   }
@@ -10979,4 +10993,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-UZJL2MGG.js.map
+//# sourceMappingURL=chunk-3OZUIRE4.js.map

@@ -126,6 +126,24 @@ export function translateOpenAiRequest(body: OpenAiRequest): SdkCallParams {
 
 // ── Translation: SDK Response → OpenAI JSON / SSE ───────────────────────────
 
+/**
+ * The Vercel AI SDK's finishReason values (LanguageModelV2FinishReason) use hyphens
+ * ('tool-calls', 'content-filter') and include 'error' / 'other' / 'unknown', none of
+ * which are valid OpenAI wire values. A strict OpenAI client (e.g. Cursor) that
+ * validates finish_reason against the real enum ('stop' | 'length' | 'tool_calls' |
+ * 'content_filter' | 'function_call') can reject or mishandle the response otherwise —
+ * this reproduced as Cursor's "Empty provider response" on every tool-calling turn.
+ */
+function toOpenAiFinishReason(reason: string | undefined | null): string {
+  switch (reason) {
+    case 'tool-calls': return 'tool_calls';
+    case 'content-filter': return 'content_filter';
+    case 'length': return 'length';
+    case 'stop': return 'stop';
+    default: return 'stop'; // 'error' | 'other' | 'unknown' | undefined — no OpenAI equivalent
+  }
+}
+
 export async function generateOpenAiResponse(
   model: LanguageModel,
   params: SdkCallParams,
@@ -147,7 +165,7 @@ export async function generateOpenAiResponse(
     object: 'chat.completion',
     created: Math.floor(Date.now() / 1000),
     model: responseModelId,
-    choices: [{ index: 0, message, finish_reason: result.finishReason || 'stop' }],
+    choices: [{ index: 0, message, finish_reason: toOpenAiFinishReason(result.finishReason) }],
     usage: {
       prompt_tokens: result.usage?.promptTokens ?? 0,
       completion_tokens: result.usage?.completionTokens ?? 0,
@@ -188,7 +206,7 @@ export async function streamOpenAiResponse(
         send({ tool_calls: [{ index: 0, function: { arguments: p.delta ?? p.text ?? p.argsTextDelta ?? '' } }] });
         break;
       case 'finish':
-        send({}, p.finishReason || 'stop');
+        send({}, toOpenAiFinishReason(p.finishReason));
         break;
     }
   }
