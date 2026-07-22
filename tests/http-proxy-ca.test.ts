@@ -1,12 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import forge from 'node-forge';
-import { createHttpProxyCertificates } from '../src/http-proxy/ca.js';
+import {
+  cleanupStaleHttpProxySessions,
+  createHttpProxyCertificates,
+} from '../src/http-proxy/ca.js';
 
 const testHomes: string[] = [];
 const execFileAsync = promisify(execFile);
@@ -34,6 +46,42 @@ afterEach(() => {
 });
 
 describe('transparent HTTP proxy certificates', () => {
+  it('preserves a fresh session while its owner marker is empty or malformed', () => {
+    for (const ownerContents of ['', 'not-a-pid']) {
+      const home = mkdtempSync(join(tmpdir(), 'relay-ai-proxy-ca-'));
+      testHomes.push(home);
+      const sessionDir = join(home, 'http-proxy-sessions', 'mid-creation');
+      mkdirSync(sessionDir, { recursive: true });
+      writeFileSync(join(sessionDir, 'owner.pid'), ownerContents);
+
+      cleanupStaleHttpProxySessions(home);
+
+      expect(existsSync(sessionDir)).toBe(true);
+    }
+  });
+
+  it('removes an old abandoned session with no valid owner marker', () => {
+    for (const ownerContents of [undefined, '', 'not-a-pid']) {
+      const home = mkdtempSync(join(tmpdir(), 'relay-ai-proxy-ca-'));
+      testHomes.push(home);
+      const sessionDir = join(home, 'http-proxy-sessions', 'abandoned');
+      mkdirSync(sessionDir, { recursive: true });
+      const staleTime = new Date(Date.now() - 31_000);
+      if (ownerContents === undefined) {
+        utimesSync(sessionDir, staleTime, staleTime);
+      } else {
+        const ownerPath = join(sessionDir, 'owner.pid');
+        writeFileSync(ownerPath, ownerContents);
+        utimesSync(ownerPath, staleTime, staleTime);
+        utimesSync(sessionDir, staleTime, staleTime);
+      }
+
+      cleanupStaleHttpProxySessions(home);
+
+      expect(existsSync(sessionDir)).toBe(false);
+    }
+  });
+
   it('creates a unique per-session CA and removes it on cleanup', () => {
     const home = mkdtempSync(join(tmpdir(), 'relay-ai-proxy-ca-'));
     testHomes.push(home);
