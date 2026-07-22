@@ -35,7 +35,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsup && mkdir -p dist/ui/public && cp -r src/ui/public/. dist/ui/public/",
+    "build": "tsup && node scripts/copy-ui-assets.mjs",
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
