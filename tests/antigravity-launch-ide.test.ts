@@ -58,7 +58,10 @@ describe('antigravity launch-ide', () => {
     fs.rmSync(tempProfile, { recursive: true, force: true });
   });
 
-  it('detects a running managed standalone Antigravity app process by profile directory', () => {
+  // The next four tests inject a macOS `ps`-format process list. On Windows the
+  // detection path uses WMI (Get-CimInstance) and ignores the injected list, so
+  // the fake can't drive it — skip there rather than assert Unix behavior.
+  it.skipIf(process.platform === 'win32')('detects a running managed standalone Antigravity app process by profile directory', () => {
     const tempProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-ai-antigravity-test-'));
     expect(isAntigravityAppRunning(tempProfile, () => {
       return `123 /Applications/Antigravity.app/Contents/MacOS/Antigravity --user-data-dir=${tempProfile}`;
@@ -70,7 +73,7 @@ describe('antigravity launch-ide', () => {
     fs.rmSync(tempProfile, { recursive: true, force: true });
   });
 
-  it('waits until the managed standalone Antigravity app exits', async () => {
+  it.skipIf(process.platform === 'win32')('waits until the managed standalone Antigravity app exits', async () => {
     const tempProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-ai-antigravity-test-'));
     let processListCalls = 0;
 
@@ -143,7 +146,7 @@ describe('antigravity launch-ide', () => {
     fs.rmSync(tempProfile, { recursive: true, force: true });
   });
 
-  it('detects a running managed Antigravity IDE process by profile directory', () => {
+  it.skipIf(process.platform === 'win32')('detects a running managed Antigravity IDE process by profile directory', () => {
     const tempProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-ai-ide-test-'));
     expect(isAntigravityIdeRunning(tempProfile, () => {
       return `123 /Applications/Antigravity IDE.app/Contents/MacOS/Electron --user-data-dir=${tempProfile}`;
@@ -155,7 +158,7 @@ describe('antigravity launch-ide', () => {
     fs.rmSync(tempProfile, { recursive: true, force: true });
   });
 
-  it('waits until the managed Antigravity process exits', async () => {
+  it.skipIf(process.platform === 'win32')('waits until the managed Antigravity process exits', async () => {
     const tempProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-ai-ide-test-'));
     let processListCalls = 0;
 

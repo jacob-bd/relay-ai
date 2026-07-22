@@ -42,8 +42,11 @@ describe('transparent HTTP proxy certificates', () => {
 
     expect(first.sessionDir).not.toBe(second.sessionDir);
     expect(existsSync(first.caCertPath)).toBe(true);
-    expect(statSync(first.sessionDir).mode & 0o777).toBe(0o700);
-    expect(statSync(first.caCertPath).mode & 0o777).toBe(0o600);
+    // POSIX mode bits only apply off Windows (NTFS uses ACLs; Node reports 0o666).
+    if (process.platform !== 'win32') {
+      expect(statSync(first.sessionDir).mode & 0o777).toBe(0o700);
+      expect(statSync(first.caCertPath).mode & 0o777).toBe(0o600);
+    }
 
     const ca = forge.pki.certificateFromPem(readFileSync(first.caCertPath, 'utf8'));
     const server = forge.pki.certificateFromPem(first.serverCert);
