@@ -34,6 +34,8 @@ function winLocalAppData(): string {
 function winClaudeExeCandidates(): string[] {
   const local = winLocalAppData();
   const bases = [
+    // Squirrel install folder used by the Anthropic Claude desktop installer.
+    join(local, 'AnthropicClaude'),
     join(local, 'Programs', 'Claude'),
     join(local, 'Claude'),
   ];
