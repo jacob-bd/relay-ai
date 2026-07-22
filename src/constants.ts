@@ -59,6 +59,7 @@ export type ConflictingEnvVar = (typeof CONFLICTING_ENV_VARS)[number];
 // (e.g. CLAUDE_CODE_CHILD_SESSION disables transcript saving) even though
 // it's meant to be a fresh top-level launch. Strip before spawning.
 export const PARENT_SESSION_ENV_VARS = [
+  'CLAUDECODE',
   'CLAUDE_CODE_CHILD_SESSION',
   'CLAUDE_CODE_SESSION_ID',
   'CLAUDE_CODE_HOST_SESSION_ID',

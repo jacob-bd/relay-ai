@@ -225,6 +225,18 @@ describe('buildChildEnv', () => {
     }
   });
 
+  it('strips the Claude Code nested-session guard from child env', () => {
+    const original = process.env['CLAUDECODE'];
+    process.env['CLAUDECODE'] = '1';
+    try {
+      const env = buildChildEnv(BACKENDS.zen.baseUrl, 'claude-sonnet-4-6', 'my-key');
+      expect(env['CLAUDECODE']).toBeUndefined();
+    } finally {
+      if (original === undefined) delete process.env['CLAUDECODE'];
+      else process.env['CLAUDECODE'] = original;
+    }
+  });
+
   it('preserves non-conflicting env vars like PATH and HOME', () => {
     const env = buildChildEnv(BACKENDS.zen.baseUrl, 'claude-sonnet-4-6', 'my-key');
     expect(env['PATH']).toBe(process.env['PATH']);
