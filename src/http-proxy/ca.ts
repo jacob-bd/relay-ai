@@ -67,6 +67,14 @@ export function cleanupStaleHttpProxySessions(appHome = getAppHome()): void {
         continue;
       }
       const pid = Number(readFileSync(ownerPath, 'utf8').trim());
+      if (!Number.isSafeInteger(pid) || pid <= 0) {
+        const ownerStat = statSync(ownerPath);
+        const newestMtimeMs = Math.max(stat.mtimeMs, ownerStat.mtimeMs);
+        if (now - newestMtimeMs > MID_CREATION_GRACE_MS) {
+          rmSync(sessionDir, { recursive: true, force: true });
+        }
+        continue;
+      }
       if (!processIsRunning(pid)) rmSync(sessionDir, { recursive: true, force: true });
     } catch {
       // A racing process may remove the dir between statSync and rmSync; a
