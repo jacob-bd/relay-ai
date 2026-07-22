@@ -46,6 +46,7 @@ import { refreshModelsDevCacheAsync } from './registry/models-dev.js';
 import { setAgentStdoutMode, isAgentStdoutMode } from './agent-io.js';
 import {
   findProviderAndModel,
+  launchAllowsNonTty,
   normalizeClaudeAgentArgs,
   planLaunchWizard,
   wantsCleanAgentStdout,
@@ -1119,6 +1120,19 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     return 1;
   }
   const switchMenuActive = favorites.length > 0 && !launchPlan.skip;
+
+  // Without a resolved target (boot flags / print-mode prefs) or the http-proxy
+  // bypass, the launch would open the interactive wizard. Bail early with a
+  // friendly message when there is no TTY, instead of crashing inside clack with
+  // an opaque ERR_TTY_INIT_FAILED. Mirrors the guard in codex.ts.
+  if (!launchAllowsNonTty(launchPlan, httpProxyOnly) && !process.stdin.isTTY) {
+    console.error(
+      pc.red(
+        'relay-ai claude requires an interactive terminal (or use --provider and --model for non-interactive launch).',
+      ),
+    );
+    return 1;
+  }
 
   if (!agentStdout) relayIntro('Claude Code');
 

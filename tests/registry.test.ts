@@ -80,8 +80,12 @@ describe('registry io', () => {
     saveRegistry(emptyRegistry());
     const path = join(home, 'providers.json');
     expect(existsSync(path)).toBe(true);
-    const mode = statSync(path).mode & 0o777;
-    expect(mode).toBe(0o600);
+    // POSIX permission bits only apply off Windows; NTFS uses ACLs and Node
+    // reports 0o666 regardless of the 0o600 the writer requests.
+    if (process.platform !== 'win32') {
+      const mode = statSync(path).mode & 0o777;
+      expect(mode).toBe(0o600);
+    }
   });
 
   it('skips invalid provider entries on load', () => {

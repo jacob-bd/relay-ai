@@ -276,6 +276,43 @@ describe('server router', () => {
     });
   });
 
+  it('rewrites a client-supplied scoped OpenAI id back to the real upstream model id on direct passthrough', async () => {
+    // Regression: when two providers collide on a bare OpenAI id, GET /openai/v1/models
+    // exposes each as `${providerId}/${id}`. A client sending that scoped id back on
+    // /openai/v1/chat/completions must have it rewritten to the real upstream id before
+    // forwarding — otherwise the upstream API (which has never heard of the scoped alias)
+    // rejects the request.
+    const upstream = await startUpstream({
+      id: 'chatcmpl-test',
+      choices: [{ message: { content: 'moonshot ok' }, finish_reason: 'stop' }],
+    });
+    handles.push(upstream);
+    const collidingModel: ServerModelInfo = {
+      id: 'kimi-k3',
+      name: 'Kimi K3',
+      isFree: false,
+      brand: 'Moonshot',
+      providerId: 'moonshot-global',
+      providerLabel: 'Moonshot Global',
+      sourceBackend: 'moonshot-global',
+      modelFormat: 'openai',
+      completionsUrl: `${upstream.baseUrl}/v1/chat/completions`,
+      apiKey: 'moonshot-key',
+    };
+    const goCollision: ServerModelInfo = { ...collidingModel, providerId: 'go', providerLabel: 'OpenCode Go', sourceBackend: 'go' };
+    const server = await startTestServer({ catalog: createGatewayModelCatalog([collidingModel, goCollision]) });
+
+    const response = await fetch(`${server.url}/openai/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'moonshot-global/kimi-k3', messages: [{ role: 'user', content: 'hi' }] }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ id: 'chatcmpl-test' });
+    expect(upstream.requests[0]?.body).toMatchObject({ model: 'kimi-k3' });
+  });
+
   it('caches SDK language models per provider-qualified route, not just raw model id', async () => {
     const duplicateCatalog = createGatewayModelCatalog([
       {

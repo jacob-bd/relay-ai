@@ -294,6 +294,31 @@ async function handleOpenAIChatCompletions(
     return;
   }
 
+  plog(() => `openai-chat-completions raw body: ${JSON.stringify(body).slice(0, 6000)}`);
+  // The raw-body dump above truncates at 6000 chars, and a large system prompt (e.g. Cursor's)
+  // can consume that whole budget before the messages array is ever reached — hiding exactly the
+  // structure needed to diagnose upstream "content field is a required field"-style rejections.
+  // This summary is size-independent: it reports shape (role, content presence/type, tool call
+  // count) for every message regardless of body size.
+  plog(() => {
+    const messages = Array.isArray((body as Record<string, unknown>).messages) ? (body as Record<string, unknown>).messages as unknown[] : [];
+    const summary = messages.map((m, i) => {
+      const msg = m as Record<string, unknown>;
+      const contentType = msg.content === null ? 'null' : Array.isArray(msg.content) ? 'array' : typeof msg.content;
+      let partShapes = '';
+      if (Array.isArray(msg.content)) {
+        partShapes = ' parts=[' + msg.content.map((p: unknown) => {
+          const part = p as Record<string, unknown>;
+          const keys = Object.keys(part).join(',');
+          const textLen = typeof part.text === 'string' ? part.text.length : undefined;
+          return `{type=${part.type} keys=${keys}${textLen !== undefined ? ` textLen=${textLen}` : ''}}`;
+        }).join(',') + ']';
+      }
+      return `#${i} role=${msg.role} hasContent=${'content' in msg} contentType=${contentType} toolCalls=${Array.isArray(msg.tool_calls) ? msg.tool_calls.length : 0}${partShapes}`;
+    });
+    return `openai-chat-completions message shapes: [${summary.join(' | ')}]`;
+  });
+
   const model = lookupModel(res, options.catalog, body.model);
   if (!model) return;
 
@@ -306,7 +331,11 @@ async function handleOpenAIChatCompletions(
       ? model.completionsUrl
       : `${backendFor(options, model).baseUrl}/v1/chat/completions`;
     const apiKey = model.apiKey ?? options.apiKey;
-    await relayAnthropicMessages(res, completionsUrl, body, apiKey, Boolean(body.stream));
+    // body.model is whatever the client sent (bare, scoped, or an alias) — rewrite to the
+    // real upstream id before forwarding, or a scoped/alias id leaks to the upstream API.
+    const forwardBody = { ...body, model: upstreamModelId(model) };
+    plog(() => `openai-direct-passthrough → ${completionsUrl} model=${forwardBody.model} stream=${Boolean(body.stream)}`);
+    await relayAnthropicMessages(res, completionsUrl, forwardBody, apiKey, Boolean(body.stream), undefined, undefined, message => plog(message));
     return;
   }
 
@@ -333,7 +362,7 @@ async function handleOpenAIChatCompletions(
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
       });
-      await streamOpenAiResponse(languageModel, params, responseModelId, chunk => res.write(chunk));
+      await streamOpenAiResponse(languageModel, params, responseModelId, chunk => res.write(chunk), plog);
       res.end();
     } else {
       const response = await generateOpenAiResponse(languageModel, params, responseModelId);

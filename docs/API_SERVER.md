@@ -226,6 +226,7 @@ If Cursor errors with an empty body or format complaints, switch **Settings → 
 - **Agent mode fails but Ask mode works** — Cursor is sending a Responses-API body (`input` instead of `messages`) to `/chat/completions`. Use Ask mode; this is a Cursor-side bug, not a gateway issue.
 - **Tunnel errors about `region2` / QUIC** — usually harmless; as long as one tunnel connection registers (`Registered tunnel connection connIndex=0 … status`), the URL works.
 - **URL changes after restarting `cloudflared`** — quick tunnels aren't stable. Update the Base URL in Cursor, or set up a named tunnel if you need a fixed hostname.
+- **`Empty provider response` / `Bad Request`** — fixed in v0.6.2. If you still see this on an older version, upgrade: the OpenAI-format gateway path had several gaps not present on the Anthropic-format path (`relay-ai claude`/`codex`/`antigravity`) — dropped reasoning content, dropped consolidated tool calls, unmapped `finish_reason` values, silently-swallowed stream errors, and array-shaped assistant message content losing its text on multi-turn conversations. Use `relay-ai server --trace` (or the Admin UI's debug log) to see the exact upstream error if a similar issue recurs with a different provider.
 
 ---
 

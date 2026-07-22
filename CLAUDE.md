@@ -189,9 +189,9 @@ In all cases `process.env['OPENCODE_API_KEY']` is set immediately so the key is 
 - `EADDRINUSE` on port `17645` (e.g. a terminal `relay-ai server` already running) surfaces as a specific inline error rather than a generic failure.
 - Frontend (`src/ui/public/app.js`, `state.server`): polls `GET /api/server/status` every 5s (cheap enough to run continuously; also drives the sidebar "Live" badge). Setup-state and running-state are two fully-templated views swapped into a single `#server-panel` container, matching the file's existing full-innerHTML-replace convention (see `renderApps()`).
 
-## Release status (v0.6.1)
+## Release status (v0.6.2)
 
-Current version is **v0.6.1** — maintenance: UI Zen/Go add + provider count refresh; providers are Relay-native (OpenCode CLI = optional `providers import` only). Docker Server + Admin UI from **v0.6.0** remains — see `docs/DOCKER.md`.
+Current version is **v0.6.2** — maintenance: `relay-ai server`/`relay-ai ui`'s OpenAI-format gateway path (`openai-adapter.ts`) gets six fixes found via a live Cursor debugging session — model id collisions across providers, scoped-id forwarding on direct passthrough, `finish_reason` wire-value mapping, dropped reasoning content, dropped consolidated tool calls, silently-swallowed stream errors, and array-shaped assistant message content losing its text. The Anthropic-format path (`relay-ai claude`/`codex`/`antigravity`, `sdk-adapter.ts`) was already correct on all of these — this release brings the OpenAI-format path to parity. Docker Server + Admin UI from **v0.6.0** remains — see `docs/DOCKER.md`.
 
 
 **Known limitations (by design):**

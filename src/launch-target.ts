@@ -197,6 +197,18 @@ export function planLaunchWizard(opts: {
   return { skip: false, target: null };
 }
 
+/**
+ * Whether a launch may proceed without an interactive terminal. True when a
+ * target was already resolved from boot flags or print-mode preferences (so the
+ * wizard is skipped), or when the caller bypasses the wizard entirely (e.g.
+ * Claude `--http-proxy` with no explicit model). When this is false and there is
+ * no TTY, callers should exit with a friendly error instead of crashing inside
+ * the interactive prompt.
+ */
+export function launchAllowsNonTty(plan: LaunchWizardPlan, bypassWizard = false): boolean {
+  return bypassWizard || !!(plan.skip && plan.target);
+}
+
 function nonInteractiveLaunchError(agent: 'claude' | 'codex' | 'gemini' | 'antigravity'): string {
   if (agent === 'claude') return 'Print mode requires --provider and --model, or saved preferences from a prior launch.';
   if (agent === 'codex') return 'Non-interactive Codex launch requires --provider and --model, or saved preferences from a prior launch.';

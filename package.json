@@ -1,6 +1,6 @@
 {
   "name": "@jacobbd/relay-ai",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "publishConfig": {
     "access": "public"
   },
@@ -35,7 +35,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsup && node -e \"require('fs').cpSync('src/ui/public','dist/ui/public',{recursive:true})\"",
+    "build": "tsup && node scripts/copy-ui-assets.mjs",
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",

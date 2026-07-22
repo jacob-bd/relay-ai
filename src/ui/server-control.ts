@@ -22,10 +22,12 @@ import {
 } from '../config.js';
 import type { FavoriteModel } from '../types.js';
 import { startServer, type ServerHandle } from '../server/router.js';
+import { getServerDebugLogPath } from '../trace-log.js';
 import {
   buildDedupedModelRows,
   createGatewayModelCatalog,
   gatewayProviderLabel,
+  openAiIdCollisions,
   type GatewayModelOptions,
   type ServerModelInfo,
 } from '../server/models.js';
@@ -134,9 +136,12 @@ function buildModelRows(models: ServerModelInfo[], gateway?: GatewayModelOptions
     else groups.set(label, [model]);
   }
 
+  // Collisions must be computed across the full exposed catalog, not per provider group,
+  // or a cross-provider OpenAI id clash never gets scoped.
+  const collisions = openAiIdCollisions(models);
   const rows: ServerModelRow[] = [];
   for (const [providerLabel, groupModels] of groups) {
-    for (const row of buildDedupedModelRows(groupModels, gateway)) rows.push({ providerLabel, ...row });
+    for (const row of buildDedupedModelRows(groupModels, gateway, collisions)) rows.push({ providerLabel, ...row });
   }
   return rows.sort((a, b) => a.providerLabel.localeCompare(b.providerLabel) || a.name.localeCompare(b.name));
 }
@@ -301,6 +306,7 @@ async function doStartGatewayServer(
       catalog: createGatewayModelCatalog(models, gateway),
       backends: BACKENDS,
       gateway,
+      debugLogPath: getServerDebugLogPath(),
     });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
