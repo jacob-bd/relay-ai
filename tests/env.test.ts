@@ -11,7 +11,7 @@ import {
   resolveProviderCredential,
   GLOBAL_OPENCODE_KEYRING_ACCOUNT,
 } from '../src/env.js';
-import { BACKENDS, CONFLICTING_ENV_VARS } from '../src/constants.js';
+import { BACKENDS, CONFLICTING_ENV_VARS, PARENT_SESSION_ENV_VARS } from '../src/constants.js';
 
 // Snapshot of all conflicting vars before any test so we can restore them
 const originalConflictingValues: Record<string, string | undefined> = {};
@@ -201,6 +201,28 @@ describe('buildChildEnv', () => {
     buildChildEnv(BACKENDS.zen.baseUrl, 'claude-sonnet-4-6', 'my-key');
     expect(process.env['CLAUDE_CODE_USE_VERTEX']).toBe('1');
     expect(process.env['ANTHROPIC_VERTEX_PROJECT_ID']).toBe('my-project');
+  });
+
+  // Regression: launching relay-ai from inside an existing Claude Code session
+  // (its own terminal, a Code tab, an agent's shell) leaked the outer session's
+  // identity vars into the spawned child via process.env inheritance. The new
+  // process then misidentified itself as a nested child of the outer session —
+  // CLAUDE_CODE_CHILD_SESSION specifically disables transcript saving — even
+  // though it's meant to be a fresh top-level launch.
+  it('strips parent Claude Code session identity vars from child env', () => {
+    for (const name of PARENT_SESSION_ENV_VARS) {
+      process.env[name] = 'inherited-from-parent';
+    }
+    try {
+      const env = buildChildEnv(BACKENDS.zen.baseUrl, 'claude-sonnet-4-6', 'my-key');
+      for (const name of PARENT_SESSION_ENV_VARS) {
+        expect(env[name]).toBeUndefined();
+      }
+    } finally {
+      for (const name of PARENT_SESSION_ENV_VARS) {
+        delete process.env[name];
+      }
+    }
   });
 
   it('preserves non-conflicting env vars like PATH and HOME', () => {

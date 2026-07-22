@@ -1,5 +1,5 @@
 // src/env.ts
-import { CONFLICTING_ENV_VARS } from './constants.js';
+import { CONFLICTING_ENV_VARS, PARENT_SESSION_ENV_VARS } from './constants.js';
 import { claudeCodeClientModelId, stripOneMContextSuffix } from './context-model-id.js';
 import { resolveContextWindow } from './context-window.js';
 import { oauthCredentialToKeychainJson } from './registry/opencode-auth.js';
@@ -51,6 +51,9 @@ export function buildChildEnv(
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const name of CONFLICTING_ENV_VARS) {
+    delete env[name];
+  }
+  for (const name of PARENT_SESSION_ENV_VARS) {
     delete env[name];
   }
   env['ANTHROPIC_BASE_URL'] = proxyPort

@@ -52,6 +52,20 @@ export const CONFLICTING_ENV_VARS = [
 
 export type ConflictingEnvVar = (typeof CONFLICTING_ENV_VARS)[number];
 
+// When relay-ai launches Claude Code from inside an existing Claude Code
+// session (its own terminal, a Code tab, an agent's shell), these identity
+// vars leak into the spawned child via process.env inheritance. The new
+// process then misidentifies itself as a nested child of the outer session
+// (e.g. CLAUDE_CODE_CHILD_SESSION disables transcript saving) even though
+// it's meant to be a fresh top-level launch. Strip before spawning.
+export const PARENT_SESSION_ENV_VARS = [
+  'CLAUDE_CODE_CHILD_SESSION',
+  'CLAUDE_CODE_SESSION_ID',
+  'CLAUDE_CODE_HOST_SESSION_ID',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'CLAUDE_PID',
+] as const;
+
 // Optional enrichment from OpenCode CLI (~/.cache/opencode/models.json) — not a runtime dependency.
 export const OPENCODE_CACHE_PATH = join(homedir(), '.cache', 'opencode', 'models.json');
 
