@@ -6,6 +6,7 @@ import {
   isClaudePrintMode,
   isCodexMachineReadableOutput,
   isCodexNonInteractive,
+  launchAllowsNonTty,
   normalizeClaudeAgentArgs,
   parseModelSlug,
   planLaunchWizard,
@@ -112,5 +113,24 @@ describe('launch-target', () => {
   it('adds --verbose for claude stream-json print mode', () => {
     expect(normalizeClaudeAgentArgs(['-p', 'hi', '--output-format', 'stream-json'])).toContain('--verbose');
     expect(normalizeClaudeAgentArgs(['-p', 'hi', '--output-format', 'json'])).not.toContain('--verbose');
+  });
+
+  describe('launchAllowsNonTty', () => {
+    it('allows a launch when boot flags resolved a target', () => {
+      expect(launchAllowsNonTty({ skip: true, target: { providerId: 'go', modelId: 'kimi-k3' } })).toBe(true);
+    });
+
+    it('disallows a launch that would open the interactive wizard', () => {
+      expect(launchAllowsNonTty({ skip: false, target: null })).toBe(false);
+    });
+
+    it('disallows when skip is set but no target was resolved', () => {
+      expect(launchAllowsNonTty({ skip: true, target: null })).toBe(false);
+    });
+
+    it('allows when the caller bypasses the wizard (e.g. http-proxy)', () => {
+      expect(launchAllowsNonTty({ skip: true, target: null }, true)).toBe(true);
+      expect(launchAllowsNonTty({ skip: false, target: null }, true)).toBe(true);
+    });
   });
 });
