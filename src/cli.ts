@@ -37,8 +37,8 @@ import { runProvidersCommand, providersHelpText } from './providers-command.js';
 import { runCodexCommand, codexHelpText } from './codex.js';
 import { runGeminiCommand, geminiHelpText } from './gemini.js';
 import { runAgyCommand, runAntigravityAppCommand, runAntigravityIdeCommand } from './antigravity.js';
-import { runCodexAppCommand } from './codex-app.js';
-import { runClaudeAppCommand } from './claude-app.js';
+import { runCodexAppCommand, codexAppHelpText } from './codex-app.js';
+import { runClaudeAppCommand, claudeAppHelpText } from './claude-app.js';
 import { prepareClaudeTraceLog, printTraceLog } from './trace-log.js';
 import { ANTIGRAVITY_BASE_URLS } from './oauth/antigravity-oauth.js';
 import { providersForTarget } from './target-compatibility.js';
@@ -1644,12 +1644,20 @@ Options:
       console.log(VERSION);
       return 0;
     }
+    if (parsed.showHelp) {
+      console.log(codexAppHelpText());
+      return 0;
+    }
     return runCodexAppCommand(parsed.claudeArgs, { vertex: parsed.vertex, launchProvider: parsed.launchProvider, launchModel: parsed.launchModel });
   }
 
   if (parsed.command === 'claude-app') {
     if (parsed.showVersion) {
       console.log(VERSION);
+      return 0;
+    }
+    if (parsed.showHelp) {
+      console.log(claudeAppHelpText());
       return 0;
     }
     return runClaudeAppCommand(parsed.claudeArgs, { launchProvider: parsed.launchProvider, launchModel: parsed.launchModel });

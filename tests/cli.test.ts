@@ -469,6 +469,29 @@ describe('main routing', () => {
     await expect(main(['server', '--help'])).resolves.toBe(0);
     expect(log.mock.calls.flat().join('\n')).toContain('relay-ai server');
   });
+
+  // Regression: parseArgs sets showHelp for '--help' but does not include it in
+  // claudeArgs, so a dispatch branch that forgets to check parsed.showHelp
+  // silently drops the flag and falls through to the real command — for
+  // claude-app/codex-app that means hitting the "requires an interactive
+  // terminal" error instead of printing help.
+  it('prints claude-app help and returns 0', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(main(['claude-app', '--help'])).resolves.toBe(0);
+    expect(log.mock.calls.flat().join('\n')).toContain('relay-ai claude-app');
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('prints codex-app help and returns 0', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(main(['codex-app', '--help'])).resolves.toBe(0);
+    expect(log.mock.calls.flat().join('\n')).toContain('relay-ai codex-app');
+    expect(error).not.toHaveBeenCalled();
+  });
 });
 
 describe('parseArgs — antigravity commands', () => {
