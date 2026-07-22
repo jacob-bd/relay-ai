@@ -9046,7 +9046,8 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
     }
     const completionsUrl = model.completionsUrl ? model.completionsUrl : `${backendFor(options, model).baseUrl}/v1/chat/completions`;
     const apiKey2 = model.apiKey ?? options.apiKey;
-    await relayAnthropicMessages(res, completionsUrl, body, apiKey2, Boolean(body.stream));
+    const forwardBody = { ...body, model: upstreamModelId(model) };
+    await relayAnthropicMessages(res, completionsUrl, forwardBody, apiKey2, Boolean(body.stream));
     return;
   }
   const npm = model.npm || (model.modelFormat === "anthropic" ? "@ai-sdk/anthropic" : void 0);
@@ -10978,4 +10979,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-MVRN5BZJ.js.map
+//# sourceMappingURL=chunk-UZJL2MGG.js.map

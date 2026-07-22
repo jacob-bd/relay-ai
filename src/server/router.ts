@@ -306,7 +306,10 @@ async function handleOpenAIChatCompletions(
       ? model.completionsUrl
       : `${backendFor(options, model).baseUrl}/v1/chat/completions`;
     const apiKey = model.apiKey ?? options.apiKey;
-    await relayAnthropicMessages(res, completionsUrl, body, apiKey, Boolean(body.stream));
+    // body.model is whatever the client sent (bare, scoped, or an alias) — rewrite to the
+    // real upstream id before forwarding, or a scoped/alias id leaks to the upstream API.
+    const forwardBody = { ...body, model: upstreamModelId(model) };
+    await relayAnthropicMessages(res, completionsUrl, forwardBody, apiKey, Boolean(body.stream));
     return;
   }
 
