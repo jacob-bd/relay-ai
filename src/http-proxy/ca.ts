@@ -15,6 +15,11 @@ import { getAppHome } from '../paths.js';
 
 const SESSION_ROOT = 'http-proxy-sessions';
 const OWNER_FILE = 'owner.pid';
+// A session dir is created a moment before its owner.pid is written. Never reap
+// a dir that lacks owner.pid until it is older than this window, so one
+// process's cleanup cannot delete another process's session mid-creation (which
+// otherwise races the CA write and fails with ENOENT).
+const MID_CREATION_GRACE_MS = 30_000;
 
 export interface HttpProxyCertificates {
   sessionDir: string;
@@ -45,14 +50,35 @@ function processIsRunning(pid: number): boolean {
 export function cleanupStaleHttpProxySessions(appHome = getAppHome()): void {
   const root = join(appHome, SESSION_ROOT);
   if (!existsSync(root)) return;
+  const now = Date.now();
   for (const name of readdirSync(root)) {
     const sessionDir = join(root, name);
     try {
-      if (!statSync(sessionDir).isDirectory()) continue;
-      const pid = Number(readFileSync(join(sessionDir, OWNER_FILE), 'utf8').trim());
+      const stat = statSync(sessionDir);
+      if (!stat.isDirectory()) continue;
+      const ownerPath = join(sessionDir, OWNER_FILE);
+      if (!existsSync(ownerPath)) {
+        // Either a dir another process is still creating, or a genuinely
+        // abandoned one. Only reap it once it is too old to still be in the
+        // create window — otherwise we would race and delete a live session.
+        if (now - stat.mtimeMs > MID_CREATION_GRACE_MS) {
+          rmSync(sessionDir, { recursive: true, force: true });
+        }
+        continue;
+      }
+      const pid = Number(readFileSync(ownerPath, 'utf8').trim());
+      if (!Number.isSafeInteger(pid) || pid <= 0) {
+        const ownerStat = statSync(ownerPath);
+        const newestMtimeMs = Math.max(stat.mtimeMs, ownerStat.mtimeMs);
+        if (now - newestMtimeMs > MID_CREATION_GRACE_MS) {
+          rmSync(sessionDir, { recursive: true, force: true });
+        }
+        continue;
+      }
       if (!processIsRunning(pid)) rmSync(sessionDir, { recursive: true, force: true });
     } catch {
-      rmSync(sessionDir, { recursive: true, force: true });
+      // A racing process may remove the dir between statSync and rmSync; a
+      // transient read error is retried on the next launch. Best-effort only.
     }
   }
 }
