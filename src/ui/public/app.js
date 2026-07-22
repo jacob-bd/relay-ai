@@ -41,6 +41,7 @@ const state = {
     status: null,
     error: null,
     starting: false,
+    modelSearch: '',
     form: {
       seeded: false,
       expose: 'favorites',        // 'favorites' | 'specific'
@@ -2536,15 +2537,6 @@ function renderServerRunning(status) {
   configBits.push(status.maskGatewayIds ? 'Discovery ids masked' : 'Discovery ids raw');
   configBits.push(status.listenMode === 'network' ? 'Network' : 'Local only');
 
-  const modelRows = (status.models ?? []).map(m => `
-    <tr>
-      <td>${escapeHtml(m.providerLabel)}</td>
-      <td>${escapeHtml(m.name)}</td>
-      <td>${serverIdCell(m.anthropicId)}</td>
-      <td>${serverIdCell(m.openaiId)}</td>
-    </tr>
-  `).join('');
-
   return `
     <div class="server-running">
       <div class="server-status-row">
@@ -2558,14 +2550,61 @@ function renderServerRunning(status) {
         ${urlCards.join('')}
         ${apiKeyCard}
       </div>
+      <div class="server-models-header">
+        <div class="search-field">
+          <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input type="search" class="search-input" placeholder="Search exposed models…" value="${escapeHtml(state.server.modelSearch)}" oninput="setServerModelSearch(this.value)">
+        </div>
+        <span class="server-models-count" id="server-models-count">${serverModelsCountText()}</span>
+      </div>
       <div class="server-model-table-wrap">
         <table class="server-model-table">
           <thead><tr><th>Provider</th><th>Model</th><th>Anthropic ID</th><th>OpenAI ID</th></tr></thead>
-          <tbody>${modelRows || '<tr><td colspan="4" class="fav-empty">No models exposed.</td></tr>'}</tbody>
+          <tbody id="server-model-tbody">${buildServerModelRows()}</tbody>
         </table>
       </div>
     </div>
   `;
+}
+
+function filteredServerModels() {
+  const models = state.server.status?.models ?? [];
+  const q = state.server.modelSearch.trim().toLowerCase();
+  if (!q) return models;
+  return models.filter(m =>
+    m.providerLabel.toLowerCase().includes(q)
+    || m.name.toLowerCase().includes(q)
+    || m.anthropicId.toLowerCase().includes(q)
+    || m.openaiId.toLowerCase().includes(q)
+  );
+}
+
+function buildServerModelRows() {
+  const rows = filteredServerModels().map(m => `
+    <tr>
+      <td>${escapeHtml(m.providerLabel)}</td>
+      <td>${escapeHtml(m.name)}</td>
+      <td>${serverIdCell(m.anthropicId)}</td>
+      <td>${serverIdCell(m.openaiId)}</td>
+    </tr>
+  `).join('');
+  const total = state.server.status?.models?.length ?? 0;
+  if (rows) return rows;
+  return `<tr><td colspan="4" class="fav-empty">${total === 0 ? 'No models exposed.' : 'No models match your search.'}</td></tr>`;
+}
+
+function serverModelsCountText() {
+  const total = state.server.status?.models?.length ?? 0;
+  const shown = filteredServerModels().length;
+  return shown === total ? `${total} model${total !== 1 ? 's' : ''}` : `Showing ${shown} of ${total} models`;
+}
+
+function setServerModelSearch(value) {
+  state.server.modelSearch = value;
+  const tbody = document.getElementById('server-model-tbody');
+  if (tbody) tbody.innerHTML = buildServerModelRows();
+  const count = document.getElementById('server-models-count');
+  if (count) count.textContent = serverModelsCountText();
 }
 
 function setServerExpose(mode) {
@@ -2711,6 +2750,7 @@ function toggleServerApiKeyVisibility() {
 window.setServerExpose = setServerExpose;
 window.toggleServerProvider = toggleServerProvider;
 window.setServerProviderSearch = setServerProviderSearch;
+window.setServerModelSearch = setServerModelSearch;
 window.setServerMask = setServerMask;
 window.setServerFreeModelsOnly = setServerFreeModelsOnly;
 window.setServerListenMode = setServerListenMode;

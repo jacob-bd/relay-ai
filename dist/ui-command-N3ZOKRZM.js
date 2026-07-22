@@ -40,6 +40,7 @@ import {
   loadServerModels,
   makeTraceLogger,
   openAiDeviceCodeUrl,
+  openAiIdCollisions,
   pollGithubDeviceCodeToken,
   pollOpenAiDeviceCodeToken,
   pollXaiDeviceCodeToken,
@@ -72,7 +73,7 @@ import {
   supportsClaudeTransparentMode,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-P4S42QJK.js";
+} from "./chunk-MVRN5BZJ.js";
 import {
   __toCommonJS,
   init_provider_templates,
@@ -379,9 +380,10 @@ function buildModelRows(models, gateway) {
     if (list) list.push(model);
     else groups.set(label, [model]);
   }
+  const collisions = openAiIdCollisions(models);
   const rows = [];
   for (const [providerLabel, groupModels] of groups) {
-    for (const row of buildDedupedModelRows(groupModels, gateway)) rows.push({ providerLabel, ...row });
+    for (const row of buildDedupedModelRows(groupModels, gateway, collisions)) rows.push({ providerLabel, ...row });
   }
   return rows.sort((a, b) => a.providerLabel.localeCompare(b.providerLabel) || a.name.localeCompare(b.name));
 }
@@ -1578,4 +1580,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-EQJIZRZZ.js.map
+//# sourceMappingURL=ui-command-N3ZOKRZM.js.map

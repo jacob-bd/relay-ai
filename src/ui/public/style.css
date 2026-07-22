@@ -2026,6 +2026,21 @@ input { font-family: inherit; }
 
 .url-card-value.masked { letter-spacing: 0.15em; }
 
+.server-models-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.server-models-header .search-field { flex: 1; }
+
+.server-models-count {
+  font-size: 14px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
 .server-model-table-wrap {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);

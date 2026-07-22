@@ -4271,6 +4271,16 @@ function gatewayProviderId(model) {
 function gatewayAliasId(model) {
   return aliasModelId(model.id, gatewayProviderId(model));
 }
+function openAiIdCollisions(models) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const model of models) counts.set(model.id, (counts.get(model.id) ?? 0) + 1);
+  const collisions = /* @__PURE__ */ new Set();
+  for (const [id, count] of counts) if (count > 1) collisions.add(id);
+  return collisions;
+}
+function openAiExposedId(model, collisions) {
+  return collisions.has(model.id) ? `${gatewayProviderId(model)}/${model.id}` : model.id;
+}
 function exposedGatewayAliasId(model, opts) {
   const alias = gatewayAliasId(model);
   return opts?.maskGatewayIds ? maskGatewayModelId(alias) : alias;
@@ -4290,8 +4300,11 @@ function formatGatewayAnthropicModels(models, opts) {
 }
 function createGatewayModelCatalog(models, opts) {
   const byId = /* @__PURE__ */ new Map();
+  const collisions = openAiIdCollisions(models);
   for (const model of models) {
-    byId.set(model.id, model);
+    if (!byId.has(model.id)) byId.set(model.id, model);
+    const scopedId = openAiExposedId(model, collisions);
+    if (scopedId !== model.id) byId.set(scopedId, model);
     const alias = exposedGatewayAliasId(model, opts);
     if (alias !== model.id) byId.set(alias, model);
     if (opts?.maskGatewayIds) {
@@ -4308,14 +4321,14 @@ function upstreamModelId(model) {
   const id = model.upstreamModelId ?? model.id;
   return id.replace(/\[1m\]$/i, "");
 }
-function buildDedupedModelRows(models, opts) {
+function buildDedupedModelRows(models, opts, collisions = openAiIdCollisions(models)) {
   const seen = /* @__PURE__ */ new Set();
   const rows = [];
   for (const model of [...models].sort((a, b) => a.name.localeCompare(b.name))) {
     const row = {
       name: model.name,
       anthropicId: exposedGatewayAliasId(model, opts),
-      openaiId: model.id
+      openaiId: openAiExposedId(model, collisions)
     };
     const key = `${row.name}\0${row.anthropicId}\0${row.openaiId}`;
     if (seen.has(key)) continue;
@@ -4328,10 +4341,11 @@ function supportsDirectOpenAIChatCompletions(model) {
   return model.modelFormat === "openai" && (!!model.completionsUrl || model.sourceBackend === "zen" || model.sourceBackend === "go");
 }
 function formatOpenAIModels(models) {
+  const collisions = openAiIdCollisions(models);
   return {
     object: "list",
     data: models.map((model) => ({
-      id: model.id,
+      id: openAiExposedId(model, collisions),
       object: "model",
       created: CREATED_AT_UNIX,
       owned_by: model.sourceBackend
@@ -9395,10 +9409,11 @@ function formatModelCatalogLines(models, gateway) {
     }
     list.push(model);
   }
+  const collisions = openAiIdCollisions(models);
   const lines = ["Model catalog:", ""];
   const sortedGroups = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   for (const [label, groupModels] of sortedGroups) {
-    const rows = buildDedupedModelRows(groupModels, gateway);
+    const rows = buildDedupedModelRows(groupModels, gateway, collisions);
     const hiddenDuplicates = groupModels.length - rows.length;
     const duplicateNote = hiddenDuplicates > 0 ? `, ${hiddenDuplicates} duplicate${hiddenDuplicates !== 1 ? "s" : ""} hidden` : "";
     const nameWidth = cappedWidth(rows.map((row) => row.name), "Model", 28);
@@ -10892,6 +10907,7 @@ export {
   extractApiKey,
   sendJson,
   gatewayProviderLabel,
+  openAiIdCollisions,
   createGatewayModelCatalog,
   buildDedupedModelRows,
   grabRoundTripSignature,
@@ -10962,4 +10978,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-P4S42QJK.js.map
+//# sourceMappingURL=chunk-MVRN5BZJ.js.map

@@ -80,7 +80,13 @@ export function formatAnthropicModelEntry(
 }
 
 export function createModelCatalog(models: ServerModelInfo[]): ModelCatalog {
-  const byId = new Map(models.map(model => [model.id, model]));
+  const byId = new Map<string, ServerModelInfo>();
+  const collisions = openAiIdCollisions(models);
+  for (const model of models) {
+    if (!byId.has(model.id)) byId.set(model.id, model); // bare id: first-wins on collision
+    const scopedId = openAiExposedId(model, collisions);
+    if (scopedId !== model.id) byId.set(scopedId, model);
+  }
 
   return {
     get: (id: string) => byId.get(id),
@@ -123,6 +129,26 @@ export function gatewayAliasId(model: ServerModelInfo): string {
   return aliasModelId(model.id, gatewayProviderId(model));
 }
 
+/** Bare model ids that more than one exposed model shares (cross-provider collisions). */
+export function openAiIdCollisions(models: ServerModelInfo[]): Set<string> {
+  const counts = new Map<string, number>();
+  for (const model of models) counts.set(model.id, (counts.get(model.id) ?? 0) + 1);
+  const collisions = new Set<string>();
+  for (const [id, count] of counts) if (count > 1) collisions.add(id);
+  return collisions;
+}
+
+/**
+ * OpenAI-format model id: bare id when unique across all exposed models, else
+ * `{providerId}/{id}` so `GET /openai/v1/models` never emits duplicate ids and
+ * every provider's model remains individually addressable. Exact-string lookup
+ * means ids that already contain a `/` (e.g. an OpenRouter-style id) are still
+ * unambiguous once scoped — no parsing is required to resolve them back.
+ */
+export function openAiExposedId(model: ServerModelInfo, collisions: Set<string>): string {
+  return collisions.has(model.id) ? `${gatewayProviderId(model)}/${model.id}` : model.id;
+}
+
 export function exposedGatewayAliasId(model: ServerModelInfo, opts?: GatewayModelOptions): string {
   const alias = gatewayAliasId(model);
   return opts?.maskGatewayIds ? maskGatewayModelId(alias) : alias;
@@ -147,8 +173,11 @@ export function formatGatewayAnthropicModels(models: ServerModelInfo[], opts?: G
 /** Catalog with alias → model lookup for gateway clients (Claude Desktop, Claude Code). */
 export function createGatewayModelCatalog(models: ServerModelInfo[], opts?: GatewayModelOptions): ModelCatalog {
   const byId = new Map<string, ServerModelInfo>();
+  const collisions = openAiIdCollisions(models);
   for (const model of models) {
-    byId.set(model.id, model);
+    if (!byId.has(model.id)) byId.set(model.id, model); // bare id: first-wins on collision
+    const scopedId = openAiExposedId(model, collisions);
+    if (scopedId !== model.id) byId.set(scopedId, model);
     const alias = exposedGatewayAliasId(model, opts);
     if (alias !== model.id) byId.set(alias, model);
     if (opts?.maskGatewayIds) {
@@ -176,15 +205,24 @@ export interface ModelCatalogRow {
   openaiId: string;
 }
 
-/** Dedupe by (name, anthropicId, openaiId) — same model can appear twice in a provider's raw list. */
-export function buildDedupedModelRows(models: ServerModelInfo[], opts?: GatewayModelOptions): ModelCatalogRow[] {
+/**
+ * Dedupe by (name, anthropicId, openaiId) — same model can appear twice in a provider's raw list.
+ * Pass `collisions` when `models` is a subset (e.g. one provider's group) of a larger exposed
+ * catalog — collisions must be computed across the *full* catalog, not just this subset, or a
+ * cross-provider id clash (the whole reason to scope it) will never be detected.
+ */
+export function buildDedupedModelRows(
+  models: ServerModelInfo[],
+  opts?: GatewayModelOptions,
+  collisions: Set<string> = openAiIdCollisions(models),
+): ModelCatalogRow[] {
   const seen = new Set<string>();
   const rows: ModelCatalogRow[] = [];
   for (const model of [...models].sort((a, b) => a.name.localeCompare(b.name))) {
     const row: ModelCatalogRow = {
       name: model.name,
       anthropicId: exposedGatewayAliasId(model, opts),
-      openaiId: model.id,
+      openaiId: openAiExposedId(model, collisions),
     };
     const key = `${row.name}\u0000${row.anthropicId}\u0000${row.openaiId}`;
     if (seen.has(key)) continue;
@@ -204,10 +242,11 @@ export function supportsDirectOpenAIChatCompletions(model: ServerModelInfo): boo
 }
 
 export function formatOpenAIModels(models: ServerModelInfo[]) {
+  const collisions = openAiIdCollisions(models);
   return {
     object: 'list',
     data: models.map(model => ({
-      id: model.id,
+      id: openAiExposedId(model, collisions),
       object: 'model',
       created: CREATED_AT_UNIX,
       owned_by: model.sourceBackend,

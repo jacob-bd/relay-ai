@@ -45,6 +45,7 @@ import {
   upstreamModelId,
   gatewayProviderLabel,
   buildDedupedModelRows,
+  openAiIdCollisions,
 } from './models.js';
 import { getReasoningCapabilities } from '../provider-factory.js';
 import {
@@ -112,10 +113,13 @@ export function formatModelCatalogLines(models: ServerModelInfo[], gateway?: Gat
     list.push(model);
   }
 
+  // Collisions must be computed across the full exposed catalog, not per provider group,
+  // or a cross-provider OpenAI id clash never gets scoped.
+  const collisions = openAiIdCollisions(models);
   const lines: string[] = ['Model catalog:', ''];
   const sortedGroups = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   for (const [label, groupModels] of sortedGroups) {
-    const rows = buildDedupedModelRows(groupModels, gateway);
+    const rows = buildDedupedModelRows(groupModels, gateway, collisions);
     const hiddenDuplicates = groupModels.length - rows.length;
     const duplicateNote = hiddenDuplicates > 0 ? `, ${hiddenDuplicates} duplicate${hiddenDuplicates !== 1 ? 's' : ''} hidden` : '';
     const nameWidth = cappedWidth(rows.map(row => row.name), 'Model', 28);
