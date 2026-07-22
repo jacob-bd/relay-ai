@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.2] - 2026-07-22
+
+### Fixed
+
+- **Server: colliding OpenAI model ids across providers are disambiguated** — when multiple exposed providers offer the same OpenAI-format model id (e.g. `grok-4.5` from xai/groq/openrouter, `kimi-k2.7-code` from moonshot-global/zen/go), `GET /openai/v1/models` emitted duplicate ids and the catalog could only ever route to the last-registered provider, silently shadowing the rest. Unique ids stay bare; colliding ones are scoped as `provider/model`. Also fixes the same collision-blindness in the Admin UI status table / CLI printout (both grouped models per provider before computing collisions, hiding cross-provider clashes), and adds a live search box to the Admin UI's exposed-models table.
+- **Server: scoped model ids are rewritten before direct upstream forwarding** — the direct-passthrough branch (Zen/Go and any provider with its own `completionsUrl`, e.g. Moonshot) forwarded the client-supplied model field unchanged, so a collision-scoped alias (from the fix above) was sent verbatim to providers that only know the bare id, breaking every affected model on that path. Fixed to rewrite to the real upstream id first.
+- **Server: OpenAI-format `finish_reason` now matches the real wire enum** — `/openai/v1/chat/completions` passed the Vercel AI SDK's internal `finishReason` straight through (hyphenated values like `tool-calls`/`content-filter`, plus non-OpenAI values `error`/`other`/`unknown`). A strict client validating this field (Cursor) could reject the response outright.
+- **Server: reasoning-heavy turns no longer produce an empty OpenAI-format response** — the OpenAI-format path had no handling for the SDK's reasoning stream part/result field, unlike the Anthropic-format path. A model that spends its whole turn reasoning with little/no visible text (e.g. against Cursor's very long system prompt) produced zero forwarded content. Reasoning is now forwarded via `reasoning_content`.
+- **Server: consolidated tool calls are no longer dropped on the OpenAI-format streaming path** — some providers (e.g. Alibaba/qwen) deliver a tool call as a single part instead of streamed input deltas. Without a matching case, zero `tool_calls` chunks were emitted for that turn — reasoning went out, then the stream ended with nothing usable, surfacing as Cursor's "Empty provider response" on every tool-calling turn against an affected model.
+- **Server: OpenAI-format stream errors are surfaced instead of silently dropped** — the streaming handler had no case for the SDK's `error` stream part; an upstream failure mid-stream produced a bare, unexplained end-of-stream instead of any indication something went wrong. Errors are now logged and surfaced as visible content.
+- **Server: assistant history messages with array-shaped content no longer lose their text** — some clients (Cursor) send assistant turns with `content` as an array of parts, not a plain string. The OpenAI-format request translator only read string content, silently discarding array-shaped text and leaving a message with empty content and no tool calls — which strict upstreams (Alibaba/qwen) reject outright as invalid. This was the root cause behind persistent "Empty provider response" / "Bad Request" failures in Cursor on any multi-turn conversation.
+
 ## [0.6.1] - 2026-07-20
 
 ### Fixed

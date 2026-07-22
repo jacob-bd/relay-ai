@@ -2,6 +2,7 @@ import { tool, jsonSchema, streamText, generateText } from 'ai';
 import type { LanguageModel, ModelMessage } from 'ai';
 import { parseToolArguments } from './proxy-shared.js';
 import type { SdkCallParams } from './sdk-adapter.js';
+import { formatUpstreamError } from './codex/upstream-error.js';
 
 // ── OpenAI request shapes ───────────────────────────────────────────────────
 
@@ -57,8 +58,17 @@ export function translateOpenAiRequest(body: OpenAiRequest): SdkCallParams {
 
       case 'assistant': {
         const parts: any[] = [];
-        if (typeof msg.content === 'string' && msg.content) {
-          parts.push({ type: 'text', text: msg.content });
+        // Some clients (e.g. Cursor) send assistant history turns with content as an array of
+        // parts, same as user messages — not just a plain string. Extracting text only from the
+        // string case silently dropped that text, leaving a message with empty content and no
+        // tool_calls, which strict upstreams (Alibaba/qwen) reject as "content field is required".
+        const assistantText = typeof msg.content === 'string'
+          ? msg.content
+          : Array.isArray(msg.content)
+            ? msg.content.filter((p: any) => p?.type === 'text' && typeof p.text === 'string').map((p: any) => p.text).join('')
+            : '';
+        if (assistantText) {
+          parts.push({ type: 'text', text: assistantText });
         }
         for (const tc of msg.tool_calls ?? []) {
           parts.push({
@@ -160,10 +170,11 @@ export async function generateOpenAiResponse(
   }
 
   if (result.toolCalls?.length) {
+    // Vercel AI SDK v5 puts tool-call arguments on `.input`; `.args` was the v4 field name.
     message.tool_calls = result.toolCalls.map((tc: any) => ({
       id: tc.toolCallId,
       type: 'function',
-      function: { name: tc.toolName, arguments: JSON.stringify(tc.args) },
+      function: { name: tc.toolName, arguments: JSON.stringify(tc.input ?? tc.args ?? {}) },
     }));
   }
 
@@ -186,6 +197,7 @@ export async function streamOpenAiResponse(
   params: SdkCallParams,
   responseModelId: string,
   onChunk: (chunk: string) => void,
+  log?: (msg: () => string) => void,
 ): Promise<void> {
   const { fullStream } = streamText({ model, ...(params as any) });
   const baseData = {
@@ -198,8 +210,17 @@ export async function streamOpenAiResponse(
   const send = (delta: Record<string, any>, finish_reason: string | null = null) =>
     onChunk(`data: ${JSON.stringify({ ...baseData, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
 
+  // toolCallId → index for tool_calls emitted via the streamed input-start/delta path, so a
+  // trailing consolidated 'tool-call' part for the same id isn't re-emitted (some providers send
+  // both), and so parallel tool calls each get a distinct OpenAI-wire `index`.
+  const streamedToolIndex = new Map<string, number>();
+  let nextToolIndex = 0;
+  const seenPartTypes = new Set<string>();
+  let toolCallChunksEmitted = 0;
+
   for await (const part of fullStream) {
     const p = part as any;
+    seenPartTypes.add(p.type);
     switch (p.type) {
       case 'text-delta':
         send({ role: 'assistant', content: p.textDelta ?? p.text ?? '' });
@@ -210,16 +231,64 @@ export async function streamOpenAiResponse(
         send({ role: 'assistant', reasoning_content: p.text ?? p.delta ?? '' });
         break;
       case 'tool-input-start':
-      case 'tool-call-streaming-start':
-        send({ role: 'assistant', tool_calls: [{ index: 0, id: p.id ?? p.toolCallId, type: 'function', function: { name: p.toolName, arguments: '' } }] });
+      case 'tool-call-streaming-start': {
+        const id = p.id ?? p.toolCallId ?? '';
+        const index = nextToolIndex++;
+        streamedToolIndex.set(id, index);
+        send({ role: 'assistant', tool_calls: [{ index, id, type: 'function', function: { name: p.toolName, arguments: '' } }] });
+        toolCallChunksEmitted++;
         break;
+      }
       case 'tool-input-delta':
-      case 'tool-call-delta':
-        send({ tool_calls: [{ index: 0, function: { arguments: p.delta ?? p.text ?? p.argsTextDelta ?? '' } }] });
+      case 'tool-call-delta': {
+        const id = p.id ?? p.toolCallId ?? '';
+        const index = streamedToolIndex.get(id) ?? 0;
+        send({ tool_calls: [{ index, function: { arguments: p.delta ?? p.text ?? p.argsTextDelta ?? '' } }] });
         break;
+      }
+      case 'tool-call': {
+        // Some providers (e.g. @ai-sdk/alibaba serving qwen) deliver the tool call as a single
+        // consolidated part instead of streamed input-start/delta — the same shape generateText's
+        // non-streaming result.toolCalls[] uses. Without this case, that tool call was silently
+        // dropped: zero tool_calls chunks emitted, reasoning-only output, and Cursor reported
+        // "Empty provider response" on every tool-calling turn.
+        const id = p.toolCallId ?? '';
+        if (streamedToolIndex.has(id)) break; // already emitted via input-start/delta
+        const index = nextToolIndex++;
+        send({
+          role: 'assistant',
+          tool_calls: [{ index, id, type: 'function', function: { name: p.toolName, arguments: JSON.stringify(p.input ?? {}) } }],
+        });
+        toolCallChunksEmitted++;
+        break;
+      }
       case 'finish':
+        log?.(() => `openai stream parts=[${[...seenPartTypes].join(',')}] toolCallChunks=${toolCallChunksEmitted} finishReason=${p.finishReason}`);
         send({}, toOpenAiFinishReason(p.finishReason));
         break;
+
+      case 'error': {
+        // Unlike sdk-adapter.ts's writeAnthropicStream (which has an SSE 'error' event to use),
+        // OpenAI's chat.completion.chunk format has no mid-stream error shape — and headers are
+        // already sent by the time a stream can fail. Surface the failure as visible content
+        // (same fallback philosophy as reasoning_content above) so the client sees something
+        // instead of a bare, unexplained [DONE] — the exact "Empty provider response" pattern
+        // this reproduced as when the upstream SDK stream ended with an 'error' part instead of
+        // 'finish' and this case didn't exist to catch it.
+        const errMsg = typeof p.error === 'string' ? p.error : formatUpstreamError(p.error);
+        log?.(() => `openai stream error parts=[${[...seenPartTypes].join(',')}]: ${errMsg}`);
+        log?.(() => {
+          try {
+            return `openai stream error raw: ${JSON.stringify(p.error, Object.getOwnPropertyNames(p.error ?? {})).slice(0, 3000)}`;
+          } catch {
+            return `openai stream error raw: (unserializable) ${String(p.error)}`;
+          }
+        });
+        send({ role: 'assistant', content: `\n\n[relay-ai upstream error: ${errMsg}]` });
+        send({}, 'stop');
+        onChunk('data: [DONE]\n\n');
+        return;
+      }
     }
   }
 
