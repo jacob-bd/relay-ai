@@ -79,3 +79,48 @@ describe('streamOpenAiResponse finish_reason mapping', () => {
     expect(finishChunk).not.toContain('tool-calls');
   });
 });
+
+// Regression: a reasoning-heavy turn (e.g. a very long system prompt like Cursor's, which can
+// leave a reasoning model no budget for a visible answer) produced zero forwarded content on
+// the OpenAI-format path, because openai-adapter.ts's switch had no case for the SDK's
+// 'reasoning-delta' stream part (or generateText's `reasoning`/`reasoningText` result field) —
+// unlike the Anthropic-format path (sdk-adapter.ts), which already mapped it to a thinking
+// block. This reproduced live as Cursor's "Empty provider response" while the exact same model
+// worked fine through relay-ai claude/codex/antigravity (all Anthropic-format).
+describe('reasoning content surfaced instead of dropped', () => {
+  it('generateOpenAiResponse includes reasoning_content when the model produced no visible text', async () => {
+    vi.doMock('ai', () => ({
+      generateText: vi.fn(async () => ({
+        text: '',
+        reasoningText: 'thinking through the huge system prompt...',
+        finishReason: 'stop',
+        usage: {},
+      })),
+      streamText: vi.fn(),
+    }));
+
+    const { generateOpenAiResponse } = await import('../src/openai-adapter.js');
+    const response = await generateOpenAiResponse({} as never, { messages: [] } as never, 'qwen3.8-max-preview');
+    expect(response.choices[0]?.message.reasoning_content).toBe('thinking through the huge system prompt...');
+  });
+
+  it('streamOpenAiResponse forwards reasoning-delta parts as reasoning_content chunks', async () => {
+    vi.doMock('ai', () => ({
+      generateText: vi.fn(),
+      streamText: vi.fn(() => ({
+        fullStream: (async function* () {
+          yield { type: 'reasoning-delta', text: 'reasoning about the task' };
+          yield { type: 'finish', finishReason: 'stop' };
+        })(),
+      })),
+    }));
+
+    const { streamOpenAiResponse } = await import('../src/openai-adapter.js');
+    const chunks: string[] = [];
+    await streamOpenAiResponse({} as never, { messages: [] } as never, 'model', chunk => chunks.push(chunk));
+
+    const reasoningChunk = chunks.find(c => c.includes('reasoning_content'));
+    expect(reasoningChunk).toBeDefined();
+    expect(reasoningChunk).toContain('"reasoning_content":"reasoning about the task"');
+  });
+});

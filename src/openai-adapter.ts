@@ -151,6 +151,13 @@ export async function generateOpenAiResponse(
 ) {
   const result: any = await generateText({ model, ...(params as any) });
   const message: Record<string, any> = { role: 'assistant', content: result.text || null };
+  // Reasoning models can spend their entire turn on reasoning with little/no final text
+  // (e.g. a very long system prompt leaves no budget for a visible answer). Surface it via
+  // the widely-adopted reasoning_content field so the client sees something rather than an
+  // effectively empty message — this reproduced live as Cursor's "Empty provider response".
+  if (result.reasoningText || result.reasoning) {
+    message.reasoning_content = result.reasoningText ?? result.reasoning;
+  }
 
   if (result.toolCalls?.length) {
     message.tool_calls = result.toolCalls.map((tc: any) => ({
@@ -196,6 +203,11 @@ export async function streamOpenAiResponse(
     switch (p.type) {
       case 'text-delta':
         send({ role: 'assistant', content: p.textDelta ?? p.text ?? '' });
+        break;
+      case 'reasoning-delta':
+        // See generateOpenAiResponse: forward reasoning so a reasoning-heavy turn with
+        // little/no final text still produces visible content instead of appearing empty.
+        send({ role: 'assistant', reasoning_content: p.text ?? p.delta ?? '' });
         break;
       case 'tool-input-start':
       case 'tool-call-streaming-start':

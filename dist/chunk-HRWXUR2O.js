@@ -8814,6 +8814,9 @@ function toOpenAiFinishReason(reason) {
 async function generateOpenAiResponse(model, params, responseModelId) {
   const result = await generateText2({ model, ...params });
   const message = { role: "assistant", content: result.text || null };
+  if (result.reasoningText || result.reasoning) {
+    message.reasoning_content = result.reasoningText ?? result.reasoning;
+  }
   if (result.toolCalls?.length) {
     message.tool_calls = result.toolCalls.map((tc) => ({
       id: tc.toolCallId,
@@ -8850,6 +8853,9 @@ async function streamOpenAiResponse(model, params, responseModelId, onChunk) {
     switch (p8.type) {
       case "text-delta":
         send({ role: "assistant", content: p8.textDelta ?? p8.text ?? "" });
+        break;
+      case "reasoning-delta":
+        send({ role: "assistant", reasoning_content: p8.text ?? p8.delta ?? "" });
         break;
       case "tool-input-start":
       case "tool-call-streaming-start":
@@ -9051,6 +9057,7 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
     sendJson(res, 400, { error: { message: "Invalid JSON body" } });
     return;
   }
+  plog(() => `openai-chat-completions raw body: ${JSON.stringify(body).slice(0, 6e3)}`);
   const model = lookupModel(res, options.catalog, body.model);
   if (!model) return;
   if (supportsDirectOpenAIChatCompletions(model)) {
@@ -9061,7 +9068,8 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
     const completionsUrl = model.completionsUrl ? model.completionsUrl : `${backendFor(options, model).baseUrl}/v1/chat/completions`;
     const apiKey2 = model.apiKey ?? options.apiKey;
     const forwardBody = { ...body, model: upstreamModelId(model) };
-    await relayAnthropicMessages(res, completionsUrl, forwardBody, apiKey2, Boolean(body.stream));
+    plog(() => `openai-direct-passthrough \u2192 ${completionsUrl} model=${forwardBody.model} stream=${Boolean(body.stream)}`);
+    await relayAnthropicMessages(res, completionsUrl, forwardBody, apiKey2, Boolean(body.stream), void 0, void 0, (message) => plog(message));
     return;
   }
   const npm = model.npm || (model.modelFormat === "anthropic" ? "@ai-sdk/anthropic" : void 0);
@@ -10907,6 +10915,7 @@ export {
   appendCodexBodyDump,
   getGeminiProxyDebugLogPath,
   getUiDebugLogPath,
+  getServerDebugLogPath,
   makeTraceLogger,
   writeSecureLogLine,
   printTraceLog,
@@ -10993,4 +11002,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-3OZUIRE4.js.map
+//# sourceMappingURL=chunk-HRWXUR2O.js.map

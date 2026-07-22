@@ -22,6 +22,7 @@ import {
 } from '../config.js';
 import type { FavoriteModel } from '../types.js';
 import { startServer, type ServerHandle } from '../server/router.js';
+import { getServerDebugLogPath } from '../trace-log.js';
 import {
   buildDedupedModelRows,
   createGatewayModelCatalog,
@@ -305,6 +306,7 @@ async function doStartGatewayServer(
       catalog: createGatewayModelCatalog(models, gateway),
       backends: BACKENDS,
       gateway,
+      debugLogPath: getServerDebugLogPath(),
     });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;

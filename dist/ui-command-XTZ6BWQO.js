@@ -27,6 +27,7 @@ import {
   getAppPathOverride,
   getEnvServerPassword,
   getSavedServerPassword,
+  getServerDebugLogPath,
   getServerExposedProviders,
   getServerFavoritesOnly,
   getServerFreeModelsOnly,
@@ -73,7 +74,7 @@ import {
   supportsClaudeTransparentMode,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-3OZUIRE4.js";
+} from "./chunk-HRWXUR2O.js";
 import {
   __toCommonJS,
   init_provider_templates,
@@ -518,7 +519,8 @@ async function doStartGatewayServer(req, opts) {
       serverPassword,
       catalog: createGatewayModelCatalog(models, gateway),
       backends: BACKENDS,
-      gateway
+      gateway,
+      debugLogPath: getServerDebugLogPath()
     });
   } catch (err) {
     const code = err?.code;
@@ -1580,4 +1582,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-BBB63GQC.js.map
+//# sourceMappingURL=ui-command-XTZ6BWQO.js.map

@@ -294,6 +294,8 @@ async function handleOpenAIChatCompletions(
     return;
   }
 
+  plog(() => `openai-chat-completions raw body: ${JSON.stringify(body).slice(0, 6000)}`);
+
   const model = lookupModel(res, options.catalog, body.model);
   if (!model) return;
 
@@ -309,7 +311,8 @@ async function handleOpenAIChatCompletions(
     // body.model is whatever the client sent (bare, scoped, or an alias) — rewrite to the
     // real upstream id before forwarding, or a scoped/alias id leaks to the upstream API.
     const forwardBody = { ...body, model: upstreamModelId(model) };
-    await relayAnthropicMessages(res, completionsUrl, forwardBody, apiKey, Boolean(body.stream));
+    plog(() => `openai-direct-passthrough → ${completionsUrl} model=${forwardBody.model} stream=${Boolean(body.stream)}`);
+    await relayAnthropicMessages(res, completionsUrl, forwardBody, apiKey, Boolean(body.stream), undefined, undefined, message => plog(message));
     return;
   }
 
