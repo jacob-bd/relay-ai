@@ -86,6 +86,7 @@ export function modelToServerModelInfo(
     id: model.id,
     name: model.name,
     isFree: model.isFree ?? false,
+    freeStatus: model.freeStatus,
     brand: model.brand ?? '',
     providerLabel: provider.name,
     providerId: provider.id,
@@ -104,7 +105,10 @@ export function modelToServerModelInfo(
     supportedParameters: model.supportedParameters,
     reasoning: model.reasoning,
     interleavedReasoningField: model.interleavedReasoningField,
+    useResponsesLite: model.useResponsesLite,
+    preferWebSockets: model.preferWebSockets,
     headers: provider.headers,
+    providerData: provider.providerData,
     ...overrides,
   };
 }

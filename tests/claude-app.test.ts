@@ -84,6 +84,8 @@ const helperModel: LocalProviderModel = {
   supportedParameters: ['reasoning_effort'],
   reasoning: true,
   interleavedReasoningField: 'reasoning_content',
+  useResponsesLite: true,
+  preferWebSockets: true,
 };
 
 const helperProvider: LocalProvider = {
@@ -93,6 +95,7 @@ const helperProvider: LocalProvider = {
   authType: 'oauth',
   oauthAccountId: 'account-123',
   headers: { 'x-provider-plan': 'plus' },
+  providerData: { accountUuid: 'account-uuid-123' },
   models: [helperModel],
 };
 
@@ -130,9 +133,12 @@ describe('modelToServerModelInfo', () => {
       authType: helperProvider.authType,
       oauthAccountId: helperProvider.oauthAccountId,
       headers: helperProvider.headers,
+      providerData: helperProvider.providerData,
       supportedParameters: helperModel.supportedParameters,
       reasoning: true,
       interleavedReasoningField: 'reasoning_content',
+      useResponsesLite: true,
+      preferWebSockets: true,
     });
   });
 
