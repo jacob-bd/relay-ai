@@ -5,6 +5,11 @@ import {
   type ResolvedFavorite,
   type ResolveContext,
 } from '../favorites-resolver.js';
+import {
+  partitionAndStartCloudCodeBackend,
+  type CloudCodeBackend,
+} from '../cloud-code-backend.js';
+import type { ServerModelInfo } from '../server/models.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from '../types.js';
 
 export type ClaudeAppCatalogResolution =
@@ -70,4 +75,109 @@ export async function resolveClaudeAppCatalog(
     droppedFavorites,
     capacitySkippedFavorites,
   };
+}
+
+export function modelToServerModelInfo(
+  model: LocalProviderModel,
+  provider: LocalProvider,
+  overrides: Partial<ServerModelInfo> = {},
+): ServerModelInfo {
+  return {
+    id: model.id,
+    name: model.name,
+    isFree: model.isFree ?? false,
+    brand: model.brand ?? '',
+    providerLabel: provider.name,
+    providerId: provider.id,
+    sourceBackend: provider.id,
+    modelFormat: model.modelFormat,
+    upstreamModelId: model.upstreamModelId,
+    cost: model.cost,
+    baseUrl: model.baseUrl,
+    completionsUrl: model.completionsUrl,
+    npm: model.npm,
+    apiBaseUrl: model.apiBaseUrl,
+    apiKey: provider.apiKey,
+    authType: provider.authType,
+    oauthAccountId: provider.oauthAccountId,
+    contextWindow: model.contextWindow,
+    supportedParameters: model.supportedParameters,
+    reasoning: model.reasoning,
+    interleavedReasoningField: model.interleavedReasoningField,
+    headers: provider.headers,
+    ...overrides,
+  };
+}
+
+function entryKey(entry: ResolvedFavorite): string {
+  return `${entry.providerId}::${entry.model.id}`;
+}
+
+export async function buildClaudeAppServerCatalog(
+  entries: ResolvedFavorite[],
+  providersById: Map<string, LocalProvider>,
+  trace?: boolean,
+): Promise<{ serverModels: ServerModelInfo[]; backend: CloudCodeBackend | null }> {
+  const convertedByKey = new Map<string, ServerModelInfo>();
+  const cloudCodeEntries = entries.filter(entry => entry.model.modelFormat === 'cloud-code');
+  const regularEntries = entries.filter(entry => entry.model.modelFormat !== 'cloud-code');
+
+  for (const entry of regularEntries) {
+    const provider = providersById.get(entry.providerId);
+    if (!provider) {
+      throw new Error(`Internal error: provider ${entry.providerId} is missing from the Claude App catalog.`);
+    }
+    const resolvedProvider = { ...provider, apiKey: entry.apiKey };
+    convertedByKey.set(
+      entryKey(entry),
+      modelToServerModelInfo(entry.model as LocalProviderModel, resolvedProvider),
+    );
+  }
+
+  const { backendItems, backend } = await partitionAndStartCloudCodeBackend(
+    cloudCodeEntries.map(entry => ({
+      providerId: entry.providerId,
+      model: entry.model as LocalProviderModel,
+      apiKey: entry.apiKey,
+      providerData: entry.providerData,
+      entry,
+    })),
+    (proxyRoute, cloudCodeBackend, original) => {
+      const provider = providersById.get(original.providerId);
+      if (!provider) {
+        throw new Error(`Internal error: provider ${original.providerId} is missing from the Claude App catalog.`);
+      }
+      const converted = modelToServerModelInfo(original.model, {
+        ...provider,
+        apiKey: original.apiKey,
+      }, {
+        modelFormat: 'anthropic',
+        upstreamModelId: proxyRoute.aliasId,
+        baseUrl: `http://127.0.0.1:${cloudCodeBackend.port}`,
+        completionsUrl: undefined,
+        npm: undefined,
+        apiBaseUrl: undefined,
+        apiKey: cloudCodeBackend.token,
+        authType: undefined,
+        oauthAccountId: undefined,
+        headers: undefined,
+      });
+      return { key: entryKey(original.entry), converted };
+    },
+    trace,
+  );
+
+  for (const item of backendItems) {
+    convertedByKey.set(item.key, item.converted);
+  }
+
+  const serverModels = entries.map(entry => {
+    const converted = convertedByKey.get(entryKey(entry));
+    if (!converted) {
+      throw new Error(`Internal error: model ${entry.providerId}/${entry.model.id} was not converted for Claude App.`);
+    }
+    return converted;
+  });
+
+  return { serverModels, backend };
 }

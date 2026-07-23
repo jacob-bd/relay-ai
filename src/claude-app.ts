@@ -16,6 +16,7 @@ import { BACKENDS } from './constants.js';
 import { loadServerModels } from './server/index.js';
 import { filterServerModelsByFavorites } from './server/catalog-filter.js';
 import { writeRelayAiConfig, getClaudeDesktopHome } from './claude-desktop/app-config.js';
+import { modelToServerModelInfo } from './claude-desktop/model-catalog.js';
 import { getProxyDebugLogPath } from './trace-log.js';
 import { readSessionLock, recoverSession, hasStaleSession, writeSessionLock, setupExitCleanup, cleanupSession, backupMetaJson, isConcurrentLiveSession, waitForShutdown } from './claude-desktop/app-session.js';
 import { launchOrRestartClaudeApp, claudeAppSupported, isClaudeAppRunning, quitClaudeAppGracefully } from './claude-desktop/app-launch.js';
@@ -26,6 +27,8 @@ import {
   type CloudCodeBackend,
 } from './cloud-code-backend.js';
 import type { ProxyRoute } from './proxy.js';
+
+export { modelToServerModelInfo } from './claude-desktop/model-catalog.js';
 
 export function claudeAppHelpText(): string {
   return `${pc.bold('relay-ai claude-app')} — launch Claude Desktop app in 3P mode with your registry providers
@@ -59,38 +62,6 @@ ${pc.bold('Cleanup:')}
 
 function providerForClaudePicker(provider: LocalProvider): LocalProvider {
   return { ...provider, models: routableModelsForProvider(provider, 'claude-app') };
-}
-
-export function modelToServerModelInfo(
-  model: LocalProviderModel,
-  provider: LocalProvider,
-  overrides: Partial<ServerModelInfo> = {},
-): ServerModelInfo {
-  return {
-    id: model.id,
-    name: model.name,
-    isFree: model.isFree ?? false,
-    brand: model.brand ?? '',
-    providerLabel: provider.name,
-    providerId: provider.id,
-    sourceBackend: provider.id,
-    modelFormat: model.modelFormat,
-    upstreamModelId: model.upstreamModelId,
-    cost: model.cost,
-    baseUrl: model.baseUrl,
-    completionsUrl: model.completionsUrl,
-    npm: model.npm,
-    apiBaseUrl: model.apiBaseUrl,
-    apiKey: provider.apiKey,
-    authType: provider.authType,
-    oauthAccountId: provider.oauthAccountId,
-    contextWindow: model.contextWindow,
-    supportedParameters: model.supportedParameters,
-    reasoning: model.reasoning,
-    interleavedReasoningField: model.interleavedReasoningField,
-    headers: provider.headers,
-    ...overrides,
-  };
 }
 
 export async function runClaudeAppCommand(args: string[], boot?: { launchProvider?: string; launchModel?: string }): Promise<number> {
