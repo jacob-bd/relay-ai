@@ -100,9 +100,9 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
   }
 
   if (args.includes('--restore')) {
-    recoverSession();
-    console.log('Restored Claude Desktop relay-ai config.');
-    return 0;
+    const result = recoverSession();
+    console.log(result.message);
+    return result.liveSession ? 1 : 0;
   }
 
   const trace = args.includes('--trace');

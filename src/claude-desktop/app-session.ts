@@ -77,8 +77,30 @@ export function isConcurrentLiveSession(): boolean {
   return isProcessAlive(lock.pid);
 }
 
-export function recoverSession(): void {
+// True when the on-disk lock belongs to a different, still-running relay-ai
+// process. cleanupSession/recoverSession must not touch shared state
+// (_meta.json, the lock file) in that case — a second claude-app launch may
+// have taken over the lock, and restoring/deleting it here would corrupt
+// that live session instead of our own.
+function lockHeldByAnotherLiveProcess(lock: ClaudeSessionLock | null): boolean {
+  return lock !== null && lock.pid !== process.pid && isProcessAlive(lock.pid);
+}
+
+export type RecoverSessionResult = {
+  recovered: boolean;
+  liveSession?: boolean;
+  message: string;
+};
+
+export function recoverSession(): RecoverSessionResult {
   const lock = readSessionLock();
+  if (lockHeldByAnotherLiveProcess(lock)) {
+    return {
+      recovered: false,
+      liveSession: true,
+      message: `Another relay-ai claude-app session is running (pid ${lock!.pid}). Ctrl+C it first, then run --restore.`,
+    };
+  }
   if (lock) {
     restoreMetaJson();
     removeRelayAiConfig(lock.uuid);
@@ -87,6 +109,7 @@ export function recoverSession(): void {
     // Just in case there is no lock but the backup exists
     restoreMetaJson();
   }
+  return { recovered: true, message: 'Restored Claude Desktop relay-ai config.' };
 }
 
 export function waitForShutdown(): Promise<'sigint' | 'sigterm'> {
@@ -109,9 +132,12 @@ export function waitForShutdown(): Promise<'sigint' | 'sigterm'> {
 }
 
 export function cleanupSession(uuid: string): void {
-  restoreMetaJson();
+  const lock = readSessionLock();
+  if (!lockHeldByAnotherLiveProcess(lock)) {
+    restoreMetaJson();
+    try { rmSync(getSessionLockPath(), { force: true }); } catch { /* ignore */ }
+  }
   removeRelayAiConfig(uuid);
-  try { rmSync(getSessionLockPath(), { force: true }); } catch { /* ignore */ }
 }
 
 export function setupExitCleanup(uuid: string): void {
