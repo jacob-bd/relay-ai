@@ -22,5 +22,6 @@ vertex-models.json
 .claude/
 .gemini/
 .planning/
+.worktrees/
 docs/superpowers/
 ANTIGRAVITY-DEBUG-SESSION.md
