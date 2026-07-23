@@ -22,7 +22,7 @@ vi.mock('@clack/prompts', () => ({
 }));
 vi.mock('../src/claude-desktop/app-session.js', () => ({
   readSessionLock: vi.fn(),
-  recoverSession: vi.fn(),
+  recoverSession: vi.fn(() => ({ recovered: true, message: 'Restored Claude Desktop relay-ai config.' })),
   hasStaleSession: vi.fn(() => false),
   writeSessionLock: vi.fn(),
   setupExitCleanup: vi.fn(),
@@ -184,6 +184,19 @@ describe('runClaudeAppCommand', () => {
     expect(code).toBe(0);
     expect(recoverSession).toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Restored'));
+  });
+
+  it('exits 1 and leaves config alone when --restore finds another live session', async () => {
+    vi.mocked(recoverSession).mockReturnValueOnce({
+      recovered: false,
+      liveSession: true,
+      message: 'Another relay-ai claude-app session is running (pid 4242). Ctrl+C it first, then run --restore.',
+    });
+
+    const code = await runClaudeAppCommand(['--restore']);
+
+    expect(code).toBe(1);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Another relay-ai claude-app session is running'));
   });
 
   it('preserves OAuth and model metadata for direct single-model launches', async () => {
