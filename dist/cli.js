@@ -165,7 +165,7 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-CFGSADA2.js";
+} from "./chunk-WHEMJ7C3.js";
 import {
   filterTemplates,
   init_provider_templates,
@@ -10795,11 +10795,11 @@ function removeRelayAiConfig(uuid) {
 }
 function hasStaleSession() {
   const state = inspectSessionLock();
+  if (state.status === "unreadable") return true;
   return state.status === "valid" && !isProcessAlive3(state.lock.pid);
 }
 function isConcurrentLiveSession() {
   const state = inspectSessionLock();
-  if (state.status === "unreadable") return true;
   return state.status === "valid" && isProcessAlive3(state.lock.pid);
 }
 function lockHeldByAnotherLiveProcess(lock) {
@@ -10808,11 +10808,12 @@ function lockHeldByAnotherLiveProcess(lock) {
 function recoverSession() {
   const state = inspectSessionLock();
   if (state.status === "unreadable") {
-    return {
-      recovered: false,
-      blocked: true,
-      message: "The relay-ai claude-app session lock is unreadable. Refusing to restore shared config while another session may be running."
-    };
+    restoreMetaJson();
+    try {
+      rmSync5(getSessionLockPath2(), { force: true });
+    } catch {
+    }
+    return { recovered: true, message: "Cleared a corrupt claude-app session lock and restored shared config." };
   }
   const lock = state.status === "valid" ? state.lock : null;
   if (lockHeldByAnotherLiveProcess(lock)) {
@@ -10856,7 +10857,7 @@ function waitForShutdown3() {
 function cleanupSession(uuid) {
   const state = inspectSessionLock();
   const lock = state.status === "valid" ? state.lock : null;
-  const sharedStateIsOwnedElsewhere = state.status === "unreadable" || lockHeldByAnotherLiveProcess(lock);
+  const sharedStateIsOwnedElsewhere = lockHeldByAnotherLiveProcess(lock);
   if (!sharedStateIsOwnedElsewhere) {
     restoreMetaJson();
     try {
@@ -13762,7 +13763,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-BR477E6W.js");
+    const { runUiCommand } = await import("./ui-command-AMF7XGFD.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

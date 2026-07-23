@@ -204,7 +204,8 @@ export function createGatewayModelCatalog(models: ServerModelInfo[], opts?: Gate
     if (scopedId !== model.id) byId.set(scopedId, model);
     const alias = exposedGatewayAliasId(model, opts);
     if (alias !== model.id) byId.set(alias, model);
-    if (usesSingleOneMEntry(model, opts)) {
+    const singleOneM = usesSingleOneMEntry(model, opts);
+    if (singleOneM) {
       const bareModel = { ...model, id: stripOneMContextSuffix(model.id) };
       const rawBareAlias = gatewayAliasId(bareModel);
       const exposedBareAlias = opts?.maskGatewayIds
@@ -221,7 +222,7 @@ export function createGatewayModelCatalog(models: ServerModelInfo[], opts?: Gate
       }
     }
     if (opts?.maskGatewayIds) {
-      const rawAlias = gatewayAliasId(usesSingleOneMEntry(model, opts)
+      const rawAlias = gatewayAliasId(singleOneM
         ? { ...model, id: stripOneMContextSuffix(model.id) }
         : model);
       if (rawAlias !== alias) byId.set(rawAlias, model);

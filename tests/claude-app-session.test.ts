@@ -6,6 +6,8 @@ import {
   backupMetaJson,
   cleanupSession,
   getSessionLockPath,
+  hasStaleSession,
+  isConcurrentLiveSession,
   readSessionLock,
   recoverSession,
   writeSessionLock,
@@ -108,21 +110,36 @@ describe('claude-app session ownership', () => {
     expect(JSON.parse(readFileSync(getMetaJsonPath(), 'utf8'))).toEqual(otherLiveState);
   });
 
-  it('--restore refuses to mutate shared state when the lock is unreadable', () => {
+  it('treats a corrupt lock as reclaimable, not a live session', () => {
+    writeFileSync(getSessionLockPath(), '{"pid":');
+
+    expect(isConcurrentLiveSession()).toBe(false);
+    expect(hasStaleSession()).toBe(true);
+  });
+
+  it('treats a lock with the wrong shape as reclaimable, not a live session', () => {
+    // Valid JSON, but missing the required fields (e.g. an old-format lock).
+    writeFileSync(getSessionLockPath(), JSON.stringify({ pid: process.pid }));
+
+    expect(isConcurrentLiveSession()).toBe(false);
+    expect(hasStaleSession()).toBe(true);
+  });
+
+  it('--restore self-heals a corrupt lock instead of refusing', () => {
+    const originalState = { appliedId: '', entries: [] };
     const currentState = {
       appliedId: 'other-uuid',
       entries: [{ id: 'other-uuid', name: 'Relay AI Gateway' }],
     };
     writeFileSync(getMetaJsonPath(), JSON.stringify(currentState));
-    writeFileSync(`${getMetaJsonPath()}.bak`, JSON.stringify({ appliedId: '', entries: [] }));
+    writeFileSync(`${getMetaJsonPath()}.bak`, JSON.stringify(originalState));
     writeFileSync(getSessionLockPath(), '{"pid":');
 
     const result = recoverSession();
 
-    expect(result).toMatchObject({ recovered: false, blocked: true });
-    expect(result.message).toContain('unreadable');
-    expect(JSON.parse(readFileSync(getMetaJsonPath(), 'utf8'))).toEqual(currentState);
-    expect(readFileSync(getSessionLockPath(), 'utf8')).toBe('{"pid":');
+    expect(result).toMatchObject({ recovered: true });
+    expect(JSON.parse(readFileSync(getMetaJsonPath(), 'utf8'))).toEqual(originalState);
+    expect(existsSync(getSessionLockPath())).toBe(false);
   });
 
   it('--restore refuses to clobber another live session', () => {

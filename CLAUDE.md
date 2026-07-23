@@ -191,7 +191,7 @@ In all cases `process.env['OPENCODE_API_KEY']` is set immediately so the key is 
 
 ## Release status (v0.6.3)
 
-Current version is **v0.6.3** — maintenance: `relay-ai claude-app` now exposes the selected model followed by available saved favorites through one ordered, credential-aware catalog (max 20), with one context-accurate picker entry per model, while preserving Cloud Code routing and OAuth identity metadata. The release also hardens non-TTY Claude launches, Windows build/app detection and tests, concurrent transparent-proxy and Claude Desktop session cleanup, app help dispatch, parent Claude session isolation, and Docker build asset copying.
+Current version is **v0.6.3** — maintenance: `relay-ai claude-app` now exposes the selected model followed by available saved favorites through one ordered, credential-aware catalog (max 20), with one context-accurate picker entry per model, while preserving Cloud Code routing and OAuth identity metadata. The release also hardens non-TTY Claude launches, Windows build/app detection and tests, concurrent transparent-proxy and Claude Desktop session cleanup (including self-healing from a corrupt session lock instead of getting permanently stuck), app help dispatch, parent Claude session isolation, and Docker build asset copying.
 
 
 **Known limitations (by design):**

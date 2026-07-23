@@ -4330,7 +4330,8 @@ function createGatewayModelCatalog(models, opts) {
     if (scopedId !== model.id) byId.set(scopedId, model);
     const alias = exposedGatewayAliasId(model, opts);
     if (alias !== model.id) byId.set(alias, model);
-    if (usesSingleOneMEntry(model, opts)) {
+    const singleOneM = usesSingleOneMEntry(model, opts);
+    if (singleOneM) {
       const bareModel = { ...model, id: stripOneMContextSuffix(model.id) };
       const rawBareAlias = gatewayAliasId(bareModel);
       const exposedBareAlias = opts?.maskGatewayIds ? maskGatewayModelId(rawBareAlias) : rawBareAlias;
@@ -4345,7 +4346,7 @@ function createGatewayModelCatalog(models, opts) {
       }
     }
     if (opts?.maskGatewayIds) {
-      const rawAlias = gatewayAliasId(usesSingleOneMEntry(model, opts) ? { ...model, id: stripOneMContextSuffix(model.id) } : model);
+      const rawAlias = gatewayAliasId(singleOneM ? { ...model, id: stripOneMContextSuffix(model.id) } : model);
       if (rawAlias !== alias) byId.set(rawAlias, model);
     }
   }
@@ -11102,4 +11103,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-CFGSADA2.js.map
+//# sourceMappingURL=chunk-WHEMJ7C3.js.map

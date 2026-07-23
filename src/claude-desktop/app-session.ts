@@ -95,14 +95,18 @@ export function removeRelayAiConfig(uuid: string): void {
   }
 }
 
+// An unreadable lock can never belong to a live session: writeSessionLock
+// writes atomically (temp file + rename), so the real lock path is either a
+// complete, valid write or leftover corruption/garbage with no confirmable
+// owner. Treat it like a stale (dead-pid) lock — reclaimable, not live.
 export function hasStaleSession(): boolean {
   const state = inspectSessionLock();
+  if (state.status === 'unreadable') return true;
   return state.status === 'valid' && !isProcessAlive(state.lock.pid);
 }
 
 export function isConcurrentLiveSession(): boolean {
   const state = inspectSessionLock();
-  if (state.status === 'unreadable') return true;
   return state.status === 'valid' && isProcessAlive(state.lock.pid);
 }
 
@@ -125,11 +129,11 @@ export type RecoverSessionResult = {
 export function recoverSession(): RecoverSessionResult {
   const state = inspectSessionLock();
   if (state.status === 'unreadable') {
-    return {
-      recovered: false,
-      blocked: true,
-      message: 'The relay-ai claude-app session lock is unreadable. Refusing to restore shared config while another session may be running.',
-    };
+    // No pid to check liveness against, but the atomic write guarantees this
+    // isn't a live session's lock (see hasStaleSession) — safe to self-heal.
+    restoreMetaJson();
+    try { rmSync(getSessionLockPath(), { force: true }); } catch { /* ignore */ }
+    return { recovered: true, message: 'Cleared a corrupt claude-app session lock and restored shared config.' };
   }
   const lock = state.status === 'valid' ? state.lock : null;
   if (lockHeldByAnotherLiveProcess(lock)) {
@@ -173,7 +177,7 @@ export function waitForShutdown(): Promise<'sigint' | 'sigterm'> {
 export function cleanupSession(uuid: string): void {
   const state = inspectSessionLock();
   const lock = state.status === 'valid' ? state.lock : null;
-  const sharedStateIsOwnedElsewhere = state.status === 'unreadable' || lockHeldByAnotherLiveProcess(lock);
+  const sharedStateIsOwnedElsewhere = lockHeldByAnotherLiveProcess(lock);
   if (!sharedStateIsOwnedElsewhere) {
     restoreMetaJson();
     try { rmSync(getSessionLockPath(), { force: true }); } catch { /* ignore */ }
