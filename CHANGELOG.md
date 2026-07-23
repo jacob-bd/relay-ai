@@ -15,6 +15,10 @@
 
 - **`loadRegistry()` gains a `{ persist }` option** — in-memory legacy migrations still always run, but persisting them to `providers.json` can now be skipped by read-only callers (the embedded Core API uses this). Default behavior is unchanged.
 
+### Docs
+
+- **New guide: [`docs/CORE.md`](docs/CORE.md)** — a full reference for embedding `@jacobbd/relay-ai/core` in any Node app: prerequisites, quick start, the complete API and `RelayModelDescriptor` field reference, route-id grammar, the full `RelayCoreErrorCode` table with retryable defaults, runtime guarantees, and troubleshooting. Linked from the README's command table and Embedded usage section.
+
 
 ## [0.6.3] - 2026-07-23
 
