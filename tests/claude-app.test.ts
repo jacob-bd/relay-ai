@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import type { ServerModelInfo } from '../src/server/models.js';
+import { formatGatewayAnthropicModels, type ServerModelInfo } from '../src/server/models.js';
 import type { LocalProvider, LocalProviderModel, UserPreferences } from '../src/types.js';
 
 const state = vi.hoisted(() => ({
@@ -275,6 +275,38 @@ describe('runClaudeAppCommand', () => {
       'selected/selected-model',
       'favorite/favorite-model',
     ]);
+  });
+
+  it('uses single-entry 1M discovery only for the Claude App gateway', async () => {
+    const selectedModel = {
+      ...appModel('selected-long-model'),
+      name: 'Selected Long Model',
+      contextWindow: 1_000_000,
+    };
+    const selected = appProvider('selected', [selectedModel]);
+    state.providers = [selected];
+
+    const code = await runClaudeAppCommand([], {
+      launchProvider: selected.id,
+      launchModel: selectedModel.id,
+    });
+
+    expect(code).toBe(0);
+    expect(state.startServerOptions.gateway).toEqual({
+      maskGatewayIds: true,
+      longContextDisplay: 'single-1m',
+    });
+    const listed = formatGatewayAnthropicModels(
+      state.startServerOptions.catalog.list(),
+      state.startServerOptions.gateway,
+    );
+    expect(listed.data).toHaveLength(1);
+    expect(listed.data[0]).toMatchObject({
+      display_name: 'Selected Long Model (selected) 1M',
+      supports_1m: false,
+      max_input_tokens: 1_000_000,
+    });
+    expect(listed.data[0]?.id).toMatch(/\[1m\]$/);
   });
 
   it('does not duplicate the selected model when it is saved as a favorite', async () => {

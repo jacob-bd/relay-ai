@@ -9,7 +9,7 @@ import {
   routableModelsForProvider,
 } from './codex/routing.js';
 import { startServer, type ServerHandle } from './server/router.js';
-import { createGatewayModelCatalog } from './server/models.js';
+import { createGatewayModelCatalog, type GatewayModelOptions } from './server/models.js';
 import { BACKENDS } from './constants.js';
 import { writeRelayAiConfig } from './claude-desktop/app-config.js';
 import {
@@ -24,6 +24,11 @@ import type { CloudCodeBackend } from './cloud-code-backend.js';
 import { resolveFirstAvailableFavorite } from './favorites-resolver.js';
 
 export { modelToServerModelInfo } from './claude-desktop/model-catalog.js';
+
+const CLAUDE_APP_GATEWAY_OPTIONS: GatewayModelOptions = {
+  maskGatewayIds: true,
+  longContextDisplay: 'single-1m',
+};
 
 export function claudeAppHelpText(): string {
   return `${pc.bold('relay-ai claude-app')} — launch Claude Desktop app in 3P mode with your registry providers
@@ -211,9 +216,9 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
       port: 0, // random port
       apiKey: 'dummy',
       serverPassword: null,
-      catalog: createGatewayModelCatalog(serverModels, { maskGatewayIds: true }),
+      catalog: createGatewayModelCatalog(serverModels, CLAUDE_APP_GATEWAY_OPTIONS),
       backends: BACKENDS,
-      gateway: { maskGatewayIds: true },
+      gateway: CLAUDE_APP_GATEWAY_OPTIONS,
       debugLogPath,
     });
 

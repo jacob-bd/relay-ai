@@ -1,11 +1,13 @@
 // src/server/models.ts
 import { resolveContextWindow } from '../context-window.js';
+import { stripOneMContextSuffix } from '../context-model-id.js';
 import { aliasModelId } from '../proxy.js';
 import { maskGatewayModelId } from './vendor-mask.js';
 import type { FreeStatus } from '../free-models.js';
 
 export interface GatewayModelOptions {
   maskGatewayIds?: boolean;
+  longContextDisplay?: 'variants' | 'single-1m';
 }
 
 export type ServerModelFormat = 'anthropic' | 'openai' | 'cloud-code' | 'unsupported';
@@ -67,6 +69,7 @@ export function formatAnthropicModelEntry(
   id: string,
   displayName: string,
   contextWindow?: number,
+  options?: { supportsOneM?: boolean },
 ) {
   const maxInput = resolveContextWindow(id, contextWindow);
   return {
@@ -76,6 +79,7 @@ export function formatAnthropicModelEntry(
     created_at: CREATED_AT_ISO,
     context_window: maxInput,
     max_input_tokens: maxInput,
+    ...(options?.supportsOneM !== undefined ? { supports_1m: options.supportsOneM } : {}),
   };
 }
 
@@ -98,11 +102,17 @@ export interface ModelDisplayEntry {
   id: string;
   name: string;
   contextWindow?: number;
+  supportsOneM?: boolean;
 }
 
 export function formatAnthropicModelList(entries: ModelDisplayEntry[]) {
   return {
-    data: entries.map(entry => formatAnthropicModelEntry(entry.id, entry.name, entry.contextWindow)),
+    data: entries.map(entry => formatAnthropicModelEntry(
+      entry.id,
+      entry.name,
+      entry.contextWindow,
+      { supportsOneM: entry.supportsOneM },
+    )),
     has_more: false,
     first_id: entries[0]?.id ?? null,
     last_id: entries.at(-1)?.id ?? null,
@@ -150,14 +160,22 @@ export function openAiExposedId(model: ServerModelInfo, collisions: Set<string>)
 }
 
 export function exposedGatewayAliasId(model: ServerModelInfo, opts?: GatewayModelOptions): string {
-  const alias = gatewayAliasId(model);
-  return opts?.maskGatewayIds ? maskGatewayModelId(alias) : alias;
+  const singleOneM = usesSingleOneMEntry(model, opts);
+  const alias = gatewayAliasId(singleOneM
+    ? { ...model, id: stripOneMContextSuffix(model.id) }
+    : model);
+  const exposed = opts?.maskGatewayIds ? maskGatewayModelId(alias) : alias;
+  return singleOneM ? `${stripOneMContextSuffix(exposed)}[1m]` : exposed;
 }
 
 /** Readable picker label — discovery ids may be masked; names stay real. */
 export function gatewayDisplayName(model: ServerModelInfo, opts?: GatewayModelOptions): string {
-  if (!opts?.maskGatewayIds) return model.name;
-  return `${model.name} (${gatewayProviderLabel(model)})`;
+  const name = opts?.maskGatewayIds
+    ? `${model.name} (${gatewayProviderLabel(model)})`
+    : model.name;
+  return usesSingleOneMEntry(model, opts) && !/\b1m$/i.test(name)
+    ? `${name} 1M`
+    : name;
 }
 
 export function formatGatewayAnthropicModels(models: ServerModelInfo[], opts?: GatewayModelOptions) {
@@ -166,8 +184,14 @@ export function formatGatewayAnthropicModels(models: ServerModelInfo[], opts?: G
       id: exposedGatewayAliasId(model, opts),
       name: gatewayDisplayName(model, opts),
       contextWindow: model.contextWindow,
+      supportsOneM: usesSingleOneMEntry(model, opts) ? false : undefined,
     })),
   );
+}
+
+function usesSingleOneMEntry(model: ServerModelInfo, opts?: GatewayModelOptions): boolean {
+  return opts?.longContextDisplay === 'single-1m'
+    && resolveContextWindow(stripOneMContextSuffix(model.id), model.contextWindow) >= 1_000_000;
 }
 
 /** Catalog with alias → model lookup for gateway clients (Claude Desktop, Claude Code). */
@@ -180,8 +204,26 @@ export function createGatewayModelCatalog(models: ServerModelInfo[], opts?: Gate
     if (scopedId !== model.id) byId.set(scopedId, model);
     const alias = exposedGatewayAliasId(model, opts);
     if (alias !== model.id) byId.set(alias, model);
+    if (usesSingleOneMEntry(model, opts)) {
+      const bareModel = { ...model, id: stripOneMContextSuffix(model.id) };
+      const rawBareAlias = gatewayAliasId(bareModel);
+      const exposedBareAlias = opts?.maskGatewayIds
+        ? maskGatewayModelId(rawBareAlias)
+        : rawBareAlias;
+      for (const compatibleId of [
+        stripOneMContextSuffix(model.id),
+        rawBareAlias,
+        `${rawBareAlias}[1m]`,
+        exposedBareAlias,
+        `${exposedBareAlias}[1m]`,
+      ]) {
+        byId.set(compatibleId, model);
+      }
+    }
     if (opts?.maskGatewayIds) {
-      const rawAlias = gatewayAliasId(model);
+      const rawAlias = gatewayAliasId(usesSingleOneMEntry(model, opts)
+        ? { ...model, id: stripOneMContextSuffix(model.id) }
+        : model);
       if (rawAlias !== alias) byId.set(rawAlias, model);
     }
   }

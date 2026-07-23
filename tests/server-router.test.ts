@@ -313,6 +313,62 @@ describe('server router', () => {
     expect(upstream.requests[0]?.body).toMatchObject({ model: 'kimi-k3' });
   });
 
+  it('routes a Claude App single-entry 1M discovery id to the bare upstream model', async () => {
+    const upstream = await startUpstream({
+      id: 'msg-upstream',
+      type: 'message',
+      role: 'assistant',
+      model: 'provider-long-model',
+      content: [{ type: 'text', text: 'long context ok' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 1, output_tokens: 1 },
+    });
+    handles.push(upstream);
+    const longModel: ServerModelInfo = {
+      id: 'provider-long-model',
+      name: 'Provider Long Model',
+      isFree: false,
+      brand: 'Provider',
+      providerId: 'provider',
+      providerLabel: 'Provider',
+      sourceBackend: 'provider',
+      modelFormat: 'anthropic',
+      upstreamModelId: 'provider-long-model',
+      baseUrl: upstream.baseUrl,
+      apiKey: 'provider-key',
+      contextWindow: 1_000_000,
+    };
+    const gateway = {
+      maskGatewayIds: true,
+      longContextDisplay: 'single-1m' as const,
+    };
+    const server = await startTestServer({
+      catalog: createGatewayModelCatalog([longModel], gateway),
+      gateway,
+    });
+
+    const discoveryResponse = await fetch(`${server.url}/anthropic/v1/models`);
+    const discovery = await discoveryResponse.json() as {
+      data: Array<{ id: string; supports_1m?: boolean }>;
+    };
+    const discovered = discovery.data[0]!;
+    expect(discovered.id).toMatch(/\[1m\]$/);
+    expect(discovered.supports_1m).toBe(false);
+
+    const response = await fetch(`${server.url}/anthropic/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: discovered.id,
+        max_tokens: 16,
+        messages: [{ role: 'user', content: 'hello' }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(upstream.requests[0]?.body).toMatchObject({ model: 'provider-long-model' });
+  });
+
   it('caches SDK language models per provider-qualified route, not just raw model id', async () => {
     const duplicateCatalog = createGatewayModelCatalog([
       {

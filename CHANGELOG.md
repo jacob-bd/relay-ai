@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.6.3] - 2026-07-23
+
+Thank you [@onexoluxion](https://github.com/onexoluxion) for contributing PRs [#29](https://github.com/jacob-bd/relay-ai/pull/29), [#30](https://github.com/jacob-bd/relay-ai/pull/30), [#31](https://github.com/jacob-bd/relay-ai/pull/31), [#32](https://github.com/jacob-bd/relay-ai/pull/32), [#33](https://github.com/jacob-bd/relay-ai/pull/33), [#35](https://github.com/jacob-bd/relay-ai/pull/35), [#36](https://github.com/jacob-bd/relay-ai/pull/36), and [#37](https://github.com/jacob-bd/relay-ai/pull/37). Your Windows testing and detailed bug reports made this maintenance release possible.
+
+### Changed
+
+- **Claude Desktop launches now expose the selected model plus saved favorites** — `relay-ai claude-app` puts the selected model first, appends available favorites in saved order, removes duplicates, and caps the catalog at 20 models total. Stale or unauthorized favorites are skipped with a warning, anonymous providers remain supported, and mixed regular/Cloud Code catalogs preserve routing order and OAuth provider identity. Claude Desktop still controls which discovered model it initially activates.
+- **Claude Desktop Favorites launches use the same catalog path everywhere** — interactive Favorites selection and Admin UI Favorites launches now choose an available favorite as the starting model while exposing the remaining compatible favorites through the same ordered catalog.
+
+### Fixed
+
+- **Headless `relay-ai claude` launches fail clearly instead of crashing** ([#29](https://github.com/jacob-bd/relay-ai/pull/29)) — when no provider/model is resolved and an interactive wizard would be required, non-TTY environments now receive an actionable error explaining how to pass `--provider` and `--model`.
+- **Windows builds use a cross-platform UI asset copy step** ([#30](https://github.com/jacob-bd/relay-ai/pull/30)) — `npm run build` no longer depends on POSIX-only `mkdir -p` and `cp` commands. Docker builds also copy the required `scripts/` directory before running the build.
+- **Claude Desktop is detected in the Windows `AnthropicClaude` install directory** ([#31](https://github.com/jacob-bd/relay-ai/pull/31)) — Squirrel installations under `%LOCALAPPDATA%\AnthropicClaude` can now be launched normally.
+- **Concurrent transparent-proxy launches no longer delete a session that is still being created** ([#33](https://github.com/jacob-bd/relay-ai/pull/33)) — cleanup gives incomplete session directories a grace period and no longer deletes them after transient read errors.
+- **Claude Desktop and Codex/ChatGPT app help works without a TTY** ([#35](https://github.com/jacob-bd/relay-ai/pull/35)) — `relay-ai claude-app --help` and `relay-ai codex-app --help` print help instead of falling through to the interactive-terminal guard.
+- **Fresh Claude launches no longer inherit parent-session identity** ([#36](https://github.com/jacob-bd/relay-ai/pull/36)) — Relay strips Claude Code's parent/child session markers before spawning a new session, preventing it from being misidentified as nested and preserving normal top-level behavior such as transcript saving.
+- **Claude Desktop cleanup no longer clobbers another live Relay session** ([#37](https://github.com/jacob-bd/relay-ai/pull/37)) — cleanup and `--restore` now respect session ownership. Racing launches preserve the original `_meta.json` backup, lock writes are atomic, unreadable locks fail safely, and config files remain in place while the active metadata still references them.
+- **Claude Desktop no longer duplicates every 1M-context Relay model** — `relay-ai claude-app` now exposes one context-accurate picker entry per model: sub-1M models remain normal entries, while models with at least one million tokens appear once with a `1M` label and retain their exact context limit.
+
+### Maintenance
+
+- Windows-specific test assertions now normalize paths and platform behavior so the same suite passes on Windows and POSIX systems ([#32](https://github.com/jacob-bd/relay-ai/pull/32)).
+
 ## [0.6.2] - 2026-07-22
 
 ### Fixed

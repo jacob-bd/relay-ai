@@ -47,7 +47,6 @@ import {
   fetchAnthropicModels,
   fetchProviderCatalog,
   fetchTemplateModels,
-  filterServerModelsByFavorites,
   findBinaryOnPath,
   findClaudeBinary,
   fmtCommand,
@@ -87,7 +86,6 @@ import {
   listCredentialSkippedProviders,
   loadPreferences,
   loadRegistry,
-  loadServerModels,
   logActiveModel,
   logConnected,
   logProxy,
@@ -167,7 +165,7 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-I3I5LKZI.js";
+} from "./chunk-CFGSADA2.js";
 import {
   filterTemplates,
   init_provider_templates,
@@ -4305,6 +4303,14 @@ async function buildFavoritesList(starting, favorites, ctx, max = 20, options = 
   }
   return { resolved: out, droppedFavorites, capacitySkippedFavorites };
 }
+function resolveFirstAvailableFavorite(favorites, providers) {
+  for (const fav of favorites) {
+    const provider = providers.find((lp) => lp.id === fav.providerId);
+    const model = provider?.models.find((m) => m.id === fav.modelId);
+    if (provider && model) return { provider, model };
+  }
+  return void 0;
+}
 
 // src/codex/favorites-launch.ts
 var identityProvider = (provider) => provider;
@@ -4626,6 +4632,9 @@ function planLaunchWizard(opts) {
     return { skip: true, target };
   }
   return { skip: false, target: null };
+}
+function launchAllowsNonTty(plan, bypassWizard = false) {
+  return bypassWizard || !!(plan.skip && plan.target);
 }
 function nonInteractiveLaunchError(agent) {
   if (agent === "claude") return "Print mode requires --provider and --model, or saved preferences from a prior launch.";
@@ -10569,26 +10578,187 @@ function writeRelayAiConfig(proxyPort) {
   return uuid;
 }
 
+// src/claude-desktop/model-catalog.ts
+async function resolveClaudeAppCatalog(selectedProvider, selectedModel, compatibleProviders, favorites, max = MAX_MODEL_CATALOG) {
+  const providersById = new Map(
+    compatibleProviders.map((provider) => [provider.id, provider])
+  );
+  const context = {
+    agent: "codex-app",
+    localProviders: compatibleProviders,
+    findLocalModel: (providerId, modelId) => {
+      const provider = providersById.get(providerId);
+      const model = provider?.models.find((candidate) => candidate.id === modelId);
+      return provider && model ? { provider, model } : void 0;
+    }
+  };
+  const starting = await resolveFavorite(
+    { providerId: selectedProvider.id, modelId: selectedModel.id },
+    context
+  );
+  if (!starting) {
+    return {
+      ok: false,
+      error: `Model ${selectedModel.id} is no longer available on ${selectedProvider.name}.`
+    };
+  }
+  if (!starting.apiKey.trim()) {
+    return {
+      ok: false,
+      error: `No credential for ${selectedProvider.name}. Run relay-ai providers auth ${selectedProvider.id}.`
+    };
+  }
+  const {
+    resolved,
+    droppedFavorites,
+    capacitySkippedFavorites
+  } = await buildFavoritesList(starting, favorites, context, max, {
+    dropEmptyApiKey: true,
+    trackCapacitySkipped: true
+  });
+  return {
+    ok: true,
+    entries: resolved,
+    providersById,
+    droppedFavorites,
+    capacitySkippedFavorites
+  };
+}
+function modelToServerModelInfo(model, provider, overrides = {}) {
+  return {
+    id: model.id,
+    name: model.name,
+    isFree: model.isFree ?? false,
+    freeStatus: model.freeStatus,
+    brand: model.brand ?? "",
+    providerLabel: provider.name,
+    providerId: provider.id,
+    sourceBackend: provider.id,
+    modelFormat: model.modelFormat,
+    upstreamModelId: model.upstreamModelId,
+    cost: model.cost,
+    baseUrl: model.baseUrl,
+    completionsUrl: model.completionsUrl,
+    npm: model.npm,
+    apiBaseUrl: model.apiBaseUrl,
+    apiKey: provider.apiKey,
+    authType: provider.authType,
+    oauthAccountId: provider.oauthAccountId,
+    contextWindow: model.contextWindow,
+    supportedParameters: model.supportedParameters,
+    reasoning: model.reasoning,
+    interleavedReasoningField: model.interleavedReasoningField,
+    useResponsesLite: model.useResponsesLite,
+    preferWebSockets: model.preferWebSockets,
+    headers: provider.headers,
+    providerData: provider.providerData,
+    ...overrides
+  };
+}
+function entryKey(entry) {
+  return `${entry.providerId}::${entry.model.id}`;
+}
+async function buildClaudeAppServerCatalog(entries, providersById, trace) {
+  const convertedByKey = /* @__PURE__ */ new Map();
+  const cloudCodeEntries = entries.filter((entry) => entry.model.modelFormat === "cloud-code");
+  const regularEntries = entries.filter((entry) => entry.model.modelFormat !== "cloud-code");
+  for (const entry of regularEntries) {
+    const provider = providersById.get(entry.providerId);
+    if (!provider) {
+      throw new Error(`Internal error: provider ${entry.providerId} is missing from the Claude App catalog.`);
+    }
+    const resolvedProvider = { ...provider, apiKey: entry.apiKey };
+    convertedByKey.set(
+      entryKey(entry),
+      modelToServerModelInfo(entry.model, resolvedProvider)
+    );
+  }
+  const { backendItems, backend } = await partitionAndStartCloudCodeBackend(
+    cloudCodeEntries.map((entry) => ({
+      providerId: entry.providerId,
+      model: entry.model,
+      apiKey: entry.apiKey,
+      providerData: entry.providerData,
+      entry
+    })),
+    (proxyRoute, cloudCodeBackend, original) => {
+      const provider = providersById.get(original.providerId);
+      if (!provider) {
+        throw new Error(`Internal error: provider ${original.providerId} is missing from the Claude App catalog.`);
+      }
+      const converted = modelToServerModelInfo(original.model, {
+        ...provider,
+        apiKey: original.apiKey
+      }, {
+        modelFormat: "anthropic",
+        upstreamModelId: proxyRoute.aliasId,
+        baseUrl: `http://127.0.0.1:${cloudCodeBackend.port}`,
+        completionsUrl: void 0,
+        npm: void 0,
+        apiBaseUrl: void 0,
+        apiKey: cloudCodeBackend.token,
+        authType: void 0,
+        oauthAccountId: void 0,
+        headers: void 0
+      });
+      return { key: entryKey(original.entry), converted };
+    },
+    trace
+  );
+  for (const item of backendItems) {
+    convertedByKey.set(item.key, item.converted);
+  }
+  const serverModels = entries.map((entry) => {
+    const converted = convertedByKey.get(entryKey(entry));
+    if (!converted) {
+      throw new Error(`Internal error: model ${entry.providerId}/${entry.model.id} was not converted for Claude App.`);
+    }
+    return converted;
+  });
+  return { serverModels, backend };
+}
+
 // src/claude-desktop/app-session.ts
-import { existsSync as existsSync11, readFileSync as readFileSync6, rmSync as rmSync5, writeFileSync as writeFileSync5, copyFileSync as copyFileSync3, unlinkSync as unlinkSync2 } from "fs";
-import { join as join12 } from "path";
+import {
+  copyFileSync as copyFileSync3,
+  existsSync as existsSync11,
+  mkdirSync as mkdirSync6,
+  readFileSync as readFileSync6,
+  renameSync as renameSync2,
+  rmSync as rmSync5,
+  unlinkSync as unlinkSync2,
+  writeFileSync as writeFileSync5
+} from "fs";
+import { dirname as dirname4, join as join12 } from "path";
 function getSessionLockPath2() {
   return join12(getClaudeDesktopHome(), ".relay-ai.lock");
 }
-function readSessionLock2() {
+function inspectSessionLock() {
   const path2 = getSessionLockPath2();
-  if (!existsSync11(path2)) return null;
+  if (!existsSync11(path2)) return { status: "missing" };
   try {
     const parsed = JSON.parse(readFileSync6(path2, "utf8"));
-    if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string") return parsed;
+    if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string" && typeof parsed.uuid === "string" && typeof parsed.proxyPort === "number") {
+      return { status: "valid", lock: parsed };
+    }
   } catch {
   }
-  return null;
+  return { status: "unreadable" };
 }
 function writeSessionLock2(lock) {
   const path2 = getSessionLockPath2();
-  writeFileSync5(path2, `${JSON.stringify(lock, null, 2)}
+  const tempPath = `${path2}.tmp.${process.pid}`;
+  mkdirSync6(dirname4(path2), { recursive: true });
+  try {
+    writeFileSync5(tempPath, `${JSON.stringify(lock, null, 2)}
 `, "utf8");
+    renameSync2(tempPath, path2);
+  } finally {
+    try {
+      rmSync5(tempPath, { force: true });
+    } catch {
+    }
+  }
 }
 function isProcessAlive3(pid) {
   if (pid <= 0) return false;
@@ -10602,7 +10772,7 @@ function isProcessAlive3(pid) {
 function backupMetaJson() {
   const metaPath = getMetaJsonPath();
   const backupPath = `${metaPath}.bak`;
-  if (existsSync11(metaPath)) {
+  if (existsSync11(metaPath) && !existsSync11(backupPath)) {
     copyFileSync3(metaPath, backupPath);
   }
 }
@@ -10624,20 +10794,35 @@ function removeRelayAiConfig(uuid) {
   }
 }
 function hasStaleSession() {
-  const lock = readSessionLock2();
-  if (!lock) return false;
-  if (!isProcessAlive3(lock.pid)) {
-    return true;
-  }
-  return false;
+  const state = inspectSessionLock();
+  return state.status === "valid" && !isProcessAlive3(state.lock.pid);
 }
 function isConcurrentLiveSession() {
-  const lock = readSessionLock2();
-  if (!lock) return false;
-  return isProcessAlive3(lock.pid);
+  const state = inspectSessionLock();
+  if (state.status === "unreadable") return true;
+  return state.status === "valid" && isProcessAlive3(state.lock.pid);
+}
+function lockHeldByAnotherLiveProcess(lock) {
+  return lock !== null && lock.pid !== process.pid && isProcessAlive3(lock.pid);
 }
 function recoverSession() {
-  const lock = readSessionLock2();
+  const state = inspectSessionLock();
+  if (state.status === "unreadable") {
+    return {
+      recovered: false,
+      blocked: true,
+      message: "The relay-ai claude-app session lock is unreadable. Refusing to restore shared config while another session may be running."
+    };
+  }
+  const lock = state.status === "valid" ? state.lock : null;
+  if (lockHeldByAnotherLiveProcess(lock)) {
+    return {
+      recovered: false,
+      blocked: true,
+      liveSession: true,
+      message: `Another relay-ai claude-app session is running (pid ${lock.pid}). Ctrl+C it first, then run --restore.`
+    };
+  }
   if (lock) {
     restoreMetaJson();
     removeRelayAiConfig(lock.uuid);
@@ -10648,6 +10833,7 @@ function recoverSession() {
   } else {
     restoreMetaJson();
   }
+  return { recovered: true, message: "Restored Claude Desktop relay-ai config." };
 }
 function waitForShutdown3() {
   return new Promise((resolve2) => {
@@ -10668,11 +10854,20 @@ function waitForShutdown3() {
   });
 }
 function cleanupSession(uuid) {
-  restoreMetaJson();
-  removeRelayAiConfig(uuid);
-  try {
-    rmSync5(getSessionLockPath2(), { force: true });
-  } catch {
+  const state = inspectSessionLock();
+  const lock = state.status === "valid" ? state.lock : null;
+  const sharedStateIsOwnedElsewhere = state.status === "unreadable" || lockHeldByAnotherLiveProcess(lock);
+  if (!sharedStateIsOwnedElsewhere) {
+    restoreMetaJson();
+    try {
+      rmSync5(getSessionLockPath2(), { force: true });
+    } catch {
+    }
+  }
+  const meta = readMetaJson();
+  const configIsReferenced = meta === null ? existsSync11(getMetaJsonPath()) : meta.appliedId === uuid || meta.entries.some((entry) => entry.id === uuid);
+  if (!sharedStateIsOwnedElsewhere || !configIsReferenced) {
+    removeRelayAiConfig(uuid);
   }
 }
 function setupExitCleanup(uuid) {
@@ -10680,6 +10875,10 @@ function setupExitCleanup(uuid) {
 }
 
 // src/claude-app.ts
+var CLAUDE_APP_GATEWAY_OPTIONS = {
+  maskGatewayIds: true,
+  longContextDisplay: "single-1m"
+};
 function claudeAppHelpText() {
   return `${pc11.bold("relay-ai claude-app")} \u2014 launch Claude Desktop app in 3P mode with your registry providers
 
@@ -10697,9 +10896,10 @@ ${pc11.bold("Options:")}
   --version    Show version
 
 ${pc11.bold("Description:")}
-  Picks a provider and model from ~/.relay-ai/providers.json, patches Claude Desktop config
-  (with backup + restore on Ctrl+C), starts a local Responses proxy, and opens
-  the Claude Desktop app. Keep this terminal open while using Claude.
+  Picks a provider and model from ~/.relay-ai/providers.json, combines the selected model
+  with your available saved favorites, patches Claude Desktop config (with backup + restore
+  on Ctrl+C), starts a local Responses proxy, and opens the Claude Desktop app.
+  Keep this terminal open while using Claude.
 
 ${pc11.bold("Platforms:")}
   macOS and Windows. Linux is not supported.
@@ -10712,42 +10912,15 @@ ${pc11.bold("Cleanup:")}
 function providerForClaudePicker(provider) {
   return { ...provider, models: routableModelsForProvider(provider, "claude-app") };
 }
-function modelToServerModelInfo(model, provider, overrides = {}) {
-  return {
-    id: model.id,
-    name: model.name,
-    isFree: model.isFree ?? false,
-    brand: model.brand ?? "",
-    providerLabel: provider.name,
-    providerId: provider.id,
-    sourceBackend: provider.id,
-    modelFormat: model.modelFormat,
-    upstreamModelId: model.upstreamModelId,
-    cost: model.cost,
-    baseUrl: model.baseUrl,
-    completionsUrl: model.completionsUrl,
-    npm: model.npm,
-    apiBaseUrl: model.apiBaseUrl,
-    apiKey: provider.apiKey,
-    authType: provider.authType,
-    oauthAccountId: provider.oauthAccountId,
-    contextWindow: model.contextWindow,
-    supportedParameters: model.supportedParameters,
-    reasoning: model.reasoning,
-    interleavedReasoningField: model.interleavedReasoningField,
-    headers: provider.headers,
-    ...overrides
-  };
-}
 async function runClaudeAppCommand(args, boot) {
   if (args.includes("--help") || args.includes("-h")) {
     console.log(claudeAppHelpText());
     return 0;
   }
   if (args.includes("--restore")) {
-    recoverSession();
-    console.log("Restored Claude Desktop relay-ai config.");
-    return 0;
+    const result = recoverSession();
+    console.log(result.message);
+    return result.blocked || result.liveSession ? 1 : 0;
   }
   const trace = args.includes("--trace");
   const debugLogPath = trace ? getProxyDebugLogPath() : void 0;
@@ -10812,87 +10985,54 @@ async function runClaudeAppCommand(args, boot) {
     if (!pickedProvider) return 0;
     if (pickedProvider === "__favorites__") {
       useFavorites = true;
+      const firstFavorite = resolveFirstAvailableFavorite(favorites, compatible);
+      if (!firstFavorite) {
+        p13.log.warn("No saved Claude App favorites are currently available.");
+        return 0;
+      }
+      activeProvider = firstFavorite.provider;
+      selectedModel = firstFavorite.model;
     } else {
       activeProvider = providerForClaudePicker(pickedProvider);
       const pickedModel = await pickCodexModel(activeProvider, prefs);
-      if (!pickedModel) return 0;
+      if (!pickedModel || pickedModel === "back") return 0;
       selectedModel = pickedModel;
     }
   }
-  if (activeProvider) {
-    const apiKey = await resolveLocalProviderApiKey(activeProvider);
-    if (!apiKey) {
-      p13.log.error(`No credential for ${activeProvider.name}. Run relay-ai providers auth ${activeProvider.id}.`);
-      return 1;
-    }
-    activeProvider.apiKey = apiKey;
+  if (!activeProvider || !selectedModel) {
+    p13.log.error("No Claude App launch model was selected.");
+    return 1;
   }
-  let serverModels = [];
+  const catalogResolution = await resolveClaudeAppCatalog(
+    activeProvider,
+    selectedModel,
+    compatible,
+    favorites
+  );
+  if (!catalogResolution.ok) {
+    p13.log.error(catalogResolution.error);
+    return 1;
+  }
+  if (catalogResolution.droppedFavorites.length > 0) {
+    const skipped = catalogResolution.droppedFavorites.map((favorite) => `${favorite.providerId}/${favorite.modelId}`).join(", ");
+    p13.log.warn(`Skipped unavailable or unauthorized favorite(s): ${skipped}`);
+  }
+  if (catalogResolution.capacitySkippedFavorites.length > 0) {
+    const skipped = catalogResolution.capacitySkippedFavorites.map((favorite) => `${favorite.providerId}/${favorite.modelId}`).join(", ");
+    p13.log.warn(`Skipped favorite(s) beyond the 20-model catalog limit: ${skipped}`);
+  }
   let cloudCodeBackend = null;
-  let cloudCodeFavBackend = null;
-  if (useFavorites) {
-    const antigravityProvider = catalog.find((lp) => lp.id === "antigravity");
-    const cloudCodeFavoriteModels = favorites.map((fav) => {
-      if (fav.providerId !== "antigravity") return null;
-      const model = antigravityProvider?.models.find((m) => m.id === fav.modelId);
-      return model?.modelFormat === "cloud-code" ? model : null;
-    }).filter((m) => m !== null);
-    const regularFavorites = favorites.filter(
-      (fav) => !cloudCodeFavoriteModels.some((m) => m.id === fav.modelId && fav.providerId === "antigravity")
-    );
-    let cloudCodeServerModels = [];
-    if (cloudCodeFavoriteModels.length > 0 && antigravityProvider?.apiKey) {
-      const cloudRoutes = cloudCodeFavoriteModels.map(
-        (model) => buildCloudCodeProxyRoute(
-          model,
-          antigravityProvider.apiKey,
-          antigravityProvider.providerData ?? {}
-        )
-      );
-      const startingAlias = cloudRoutes[0].aliasId;
-      cloudCodeFavBackend = await startCloudCodeCatalogBackend(cloudRoutes, startingAlias, trace);
-      const favBackend = cloudCodeFavBackend;
-      cloudCodeServerModels = cloudCodeFavoriteModels.map((model) => modelToServerModelInfo(model, antigravityProvider, {
-        isFree: false,
-        providerId: "antigravity",
-        sourceBackend: "antigravity",
-        modelFormat: "anthropic",
-        cost: void 0,
-        baseUrl: `http://127.0.0.1:${favBackend.port}`,
-        completionsUrl: void 0,
-        npm: void 0,
-        apiBaseUrl: void 0,
-        apiKey: favBackend.token,
-        authType: void 0,
-        oauthAccountId: void 0,
-        headers: void 0
-      }));
-    }
-    const allModels = await loadServerModels();
-    const regularServerModels = filterServerModelsByFavorites(allModels, regularFavorites);
-    serverModels = [...cloudCodeServerModels, ...regularServerModels];
-  } else if (selectedModel.modelFormat === "cloud-code") {
-    const providerData = activeProvider.providerData ?? {};
-    const cloudRoute = buildCloudCodeProxyRoute(selectedModel, activeProvider.apiKey, providerData);
-    cloudCodeBackend = await startCloudCodeCatalogBackend([cloudRoute], cloudRoute.aliasId, trace);
-    serverModels = [modelToServerModelInfo(selectedModel, activeProvider, {
-      modelFormat: "anthropic",
-      baseUrl: `http://127.0.0.1:${cloudCodeBackend.port}`,
-      completionsUrl: void 0,
-      npm: void 0,
-      apiBaseUrl: void 0,
-      apiKey: cloudCodeBackend.token,
-      authType: void 0,
-      oauthAccountId: void 0,
-      headers: void 0
-    })];
-  } else {
-    serverModels = [modelToServerModelInfo(selectedModel, activeProvider)];
-  }
   let proxyHandle = null;
   let sessionActive = false;
   let uuid = "";
   try {
+    const builtCatalog = await buildClaudeAppServerCatalog(
+      catalogResolution.entries,
+      catalogResolution.providersById,
+      trace
+    );
+    const serverModels = builtCatalog.serverModels;
+    cloudCodeBackend = builtCatalog.backend;
     backupMetaJson();
     proxyHandle = await startServer({
       host: "127.0.0.1",
@@ -10900,9 +11040,9 @@ async function runClaudeAppCommand(args, boot) {
       // random port
       apiKey: "dummy",
       serverPassword: null,
-      catalog: createGatewayModelCatalog(serverModels, { maskGatewayIds: true }),
+      catalog: createGatewayModelCatalog(serverModels, CLAUDE_APP_GATEWAY_OPTIONS),
       backends: BACKENDS,
-      gateway: { maskGatewayIds: true },
+      gateway: CLAUDE_APP_GATEWAY_OPTIONS,
       debugLogPath
     });
     uuid = writeRelayAiConfig(proxyHandle.port);
@@ -10932,11 +11072,10 @@ ${pc11.green("\u2714")} Proxy started on port ${proxyHandle.port}`);
     }
     console.log(`
 ${pc11.bold("Claude Desktop 3P Mode Active")}`);
-    if (useFavorites) {
-      console.log(`${pc11.dim("Catalog:")}  Favorite models only`);
-    } else {
-      console.log(`${pc11.dim("Model:")}    ${selectedModel.id}`);
-      console.log(`${pc11.dim("Provider:")} ${activeProvider.name}`);
+    console.log(`${pc11.dim("Model:")}    ${selectedModel.id}`);
+    console.log(`${pc11.dim("Provider:")} ${activeProvider.name}`);
+    if (serverModels.length > 1) {
+      console.log(`${pc11.dim("Catalog:")}  ${serverModels.length} models (selected + favorites)`);
     }
     console.log(`${pc11.cyan("Press Ctrl+C to stop and restore config.")}`);
     await waitForShutdown3();
@@ -10944,7 +11083,6 @@ ${pc11.bold("Claude Desktop 3P Mode Active")}`);
     cleanupSession(uuid);
     sessionActive = false;
     if (cloudCodeBackend) cloudCodeBackend.handle.close();
-    if (cloudCodeFavBackend) cloudCodeFavBackend.handle.close();
     if (isClaudeAppRunning()) {
       const shouldClose = await p13.confirm({ message: "Claude Desktop is still running. Close it?" });
       if (shouldClose && !p13.isCancel(shouldClose)) {
@@ -10958,13 +11096,13 @@ ${pc11.bold("Claude Desktop 3P Mode Active")}`);
       cleanupSession(uuid);
     }
     if (cloudCodeBackend) cloudCodeBackend.handle.close();
-    if (cloudCodeFavBackend) cloudCodeFavBackend.handle.close();
+    p13.log.error(String(err instanceof Error ? err.message : err));
     return 1;
   }
 }
 
 // src/ai-doc.ts
-import { existsSync as existsSync12, mkdirSync as mkdirSync6, readFileSync as readFileSync7, writeFileSync as writeFileSync6 } from "fs";
+import { existsSync as existsSync12, mkdirSync as mkdirSync7, readFileSync as readFileSync7, writeFileSync as writeFileSync6 } from "fs";
 import { homedir as homedir10 } from "os";
 import { join as join13 } from "path";
 var SKILL_DIR_NAME = "relay-ai-cli";
@@ -11496,7 +11634,7 @@ function installAiDoc(opts = {}) {
         result.skipped.push(skillPath);
         continue;
       }
-      mkdirSync6(skillDir, { recursive: true });
+      mkdirSync7(skillDir, { recursive: true });
       writeFileSync6(skillPath, doc, "utf-8");
       if (previous) {
         result.updated.push({ path: skillPath, fromVersion: previous });
@@ -11622,17 +11760,18 @@ import { randomBytes, randomUUID as randomUUID3 } from "crypto";
 import {
   chmodSync,
   existsSync as existsSync13,
-  mkdirSync as mkdirSync7,
+  mkdirSync as mkdirSync8,
   readFileSync as readFileSync8,
   readdirSync as readdirSync3,
   rmSync as rmSync6,
   statSync as statSync2,
   writeFileSync as writeFileSync7
 } from "fs";
-import { dirname as dirname4, join as join14, resolve } from "path";
+import { dirname as dirname5, join as join14, resolve } from "path";
 import forge from "node-forge";
 var SESSION_ROOT = "http-proxy-sessions";
 var OWNER_FILE = "owner.pid";
+var MID_CREATION_GRACE_MS = 3e4;
 function serialNumber() {
   const bytes = randomBytes(16);
   bytes[0] &= 127;
@@ -11650,24 +11789,40 @@ function processIsRunning(pid) {
 function cleanupStaleHttpProxySessions(appHome = getAppHome()) {
   const root = join14(appHome, SESSION_ROOT);
   if (!existsSync13(root)) return;
+  const now = Date.now();
   for (const name of readdirSync3(root)) {
     const sessionDir = join14(root, name);
     try {
-      if (!statSync2(sessionDir).isDirectory()) continue;
-      const pid = Number(readFileSync8(join14(sessionDir, OWNER_FILE), "utf8").trim());
+      const stat = statSync2(sessionDir);
+      if (!stat.isDirectory()) continue;
+      const ownerPath = join14(sessionDir, OWNER_FILE);
+      if (!existsSync13(ownerPath)) {
+        if (now - stat.mtimeMs > MID_CREATION_GRACE_MS) {
+          rmSync6(sessionDir, { recursive: true, force: true });
+        }
+        continue;
+      }
+      const pid = Number(readFileSync8(ownerPath, "utf8").trim());
+      if (!Number.isSafeInteger(pid) || pid <= 0) {
+        const ownerStat = statSync2(ownerPath);
+        const newestMtimeMs = Math.max(stat.mtimeMs, ownerStat.mtimeMs);
+        if (now - newestMtimeMs > MID_CREATION_GRACE_MS) {
+          rmSync6(sessionDir, { recursive: true, force: true });
+        }
+        continue;
+      }
       if (!processIsRunning(pid)) rmSync6(sessionDir, { recursive: true, force: true });
     } catch {
-      rmSync6(sessionDir, { recursive: true, force: true });
     }
   }
 }
 function createHttpProxyCertificates(appHome = getAppHome()) {
   cleanupStaleHttpProxySessions(appHome);
   const root = join14(appHome, SESSION_ROOT);
-  mkdirSync7(root, { recursive: true, mode: 448 });
+  mkdirSync8(root, { recursive: true, mode: 448 });
   chmodSync(root, 448);
   const sessionDir = join14(root, randomUUID3());
-  mkdirSync7(sessionDir, { mode: 448 });
+  mkdirSync8(sessionDir, { mode: 448 });
   chmodSync(sessionDir, 448);
   writeFileSync7(join14(sessionDir, OWNER_FILE), `${process.pid}
 `, { mode: 384 });
@@ -11750,7 +11905,7 @@ function createHttpProxyCaBundle(relayCaCertPath, additionalCaCertPath) {
   const relayCa = readFileSync8(relayCaCertPath, "utf8").trimEnd();
   const additionalCa = readFileSync8(additionalCaCertPath, "utf8").trim();
   if (!additionalCa) return relayCaCertPath;
-  const combinedPath = join14(dirname4(relayCaCertPath), "combined-ca.pem");
+  const combinedPath = join14(dirname5(relayCaCertPath), "combined-ca.pem");
   writeFileSync7(
     combinedPath,
     `${relayCa}
@@ -13155,6 +13310,14 @@ Error: ${launchPlan.error}
     return 1;
   }
   const switchMenuActive = favorites.length > 0 && !launchPlan.skip;
+  if (!launchAllowsNonTty(launchPlan, httpProxyOnly) && !process.stdin.isTTY) {
+    console.error(
+      pc12.red(
+        "relay-ai claude requires an interactive terminal (or use --provider and --model for non-interactive launch)."
+      )
+    );
+    return 1;
+  }
   if (!agentStdout) relayIntro("Claude Code");
   if (setup && !dryRun && !agentStdout) {
     p14.log.info("Provider setup now lives in relay-ai providers \u2014 opening that next is recommended.");
@@ -13599,7 +13762,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-GNCQS7F7.js");
+    const { runUiCommand } = await import("./ui-command-BR477E6W.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {
@@ -13632,11 +13795,19 @@ Options:
       console.log(VERSION);
       return 0;
     }
+    if (parsed.showHelp) {
+      console.log(codexAppHelpText());
+      return 0;
+    }
     return runCodexAppCommand(parsed.claudeArgs, { vertex: parsed.vertex, launchProvider: parsed.launchProvider, launchModel: parsed.launchModel });
   }
   if (parsed.command === "claude-app") {
     if (parsed.showVersion) {
       console.log(VERSION);
+      return 0;
+    }
+    if (parsed.showHelp) {
+      console.log(claudeAppHelpText());
       return 0;
     }
     return runClaudeAppCommand(parsed.claudeArgs, { launchProvider: parsed.launchProvider, launchModel: parsed.launchModel });

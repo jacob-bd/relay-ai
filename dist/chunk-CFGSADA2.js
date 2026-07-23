@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.6.2",
+  version: "0.6.3",
   publishConfig: {
     access: "public"
   },
@@ -46,7 +46,7 @@ var package_default = {
     node: ">=18"
   },
   scripts: {
-    build: "tsup && mkdir -p dist/ui/public && cp -r src/ui/public/. dist/ui/public/",
+    build: "tsup && node scripts/copy-ui-assets.mjs",
     dev: "tsup --watch",
     test: "vitest run",
     "test:watch": "vitest",
@@ -138,6 +138,14 @@ var CONFLICTING_ENV_VARS = [
   "ANTHROPIC_DEFAULT_OPUS_MODEL",
   "ANTHROPIC_DEFAULT_SONNET_MODEL",
   "ANTHROPIC_DEFAULT_HAIKU_MODEL"
+];
+var PARENT_SESSION_ENV_VARS = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_HOST_SESSION_ID",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_PID"
 ];
 var OPENCODE_CACHE_PATH = join(homedir(), ".cache", "opencode", "models.json");
 var MAX_MODEL_CATALOG = 20;
@@ -3045,6 +3053,9 @@ function buildChildEnv(baseUrl, model, apiKey, proxyPort, contextWindow, enableG
   for (const name of CONFLICTING_ENV_VARS) {
     delete env[name];
   }
+  for (const name of PARENT_SESSION_ENV_VARS) {
+    delete env[name];
+  }
   env["ANTHROPIC_BASE_URL"] = proxyPort ? `http://127.0.0.1:${proxyPort}` : baseUrl;
   env["ANTHROPIC_API_KEY"] = apiKey;
   const bareModel = stripOneMContextSuffix(model);
@@ -4243,7 +4254,7 @@ function maskGatewayModelId(aliasId) {
 // src/server/models.ts
 var CREATED_AT_ISO = "2025-01-01T00:00:00Z";
 var CREATED_AT_UNIX = 1735689600;
-function formatAnthropicModelEntry(id, displayName, contextWindow) {
+function formatAnthropicModelEntry(id, displayName, contextWindow, options) {
   const maxInput = resolveContextWindow(id, contextWindow);
   return {
     id,
@@ -4251,12 +4262,18 @@ function formatAnthropicModelEntry(id, displayName, contextWindow) {
     display_name: displayName,
     created_at: CREATED_AT_ISO,
     context_window: maxInput,
-    max_input_tokens: maxInput
+    max_input_tokens: maxInput,
+    ...options?.supportsOneM !== void 0 ? { supports_1m: options.supportsOneM } : {}
   };
 }
 function formatAnthropicModelList(entries) {
   return {
-    data: entries.map((entry) => formatAnthropicModelEntry(entry.id, entry.name, entry.contextWindow)),
+    data: entries.map((entry) => formatAnthropicModelEntry(
+      entry.id,
+      entry.name,
+      entry.contextWindow,
+      { supportsOneM: entry.supportsOneM }
+    )),
     has_more: false,
     first_id: entries[0]?.id ?? null,
     last_id: entries.at(-1)?.id ?? null
@@ -4282,21 +4299,27 @@ function openAiExposedId(model, collisions) {
   return collisions.has(model.id) ? `${gatewayProviderId(model)}/${model.id}` : model.id;
 }
 function exposedGatewayAliasId(model, opts) {
-  const alias = gatewayAliasId(model);
-  return opts?.maskGatewayIds ? maskGatewayModelId(alias) : alias;
+  const singleOneM = usesSingleOneMEntry(model, opts);
+  const alias = gatewayAliasId(singleOneM ? { ...model, id: stripOneMContextSuffix(model.id) } : model);
+  const exposed = opts?.maskGatewayIds ? maskGatewayModelId(alias) : alias;
+  return singleOneM ? `${stripOneMContextSuffix(exposed)}[1m]` : exposed;
 }
 function gatewayDisplayName(model, opts) {
-  if (!opts?.maskGatewayIds) return model.name;
-  return `${model.name} (${gatewayProviderLabel(model)})`;
+  const name = opts?.maskGatewayIds ? `${model.name} (${gatewayProviderLabel(model)})` : model.name;
+  return usesSingleOneMEntry(model, opts) && !/\b1m$/i.test(name) ? `${name} 1M` : name;
 }
 function formatGatewayAnthropicModels(models, opts) {
   return formatAnthropicModelList(
     models.map((model) => ({
       id: exposedGatewayAliasId(model, opts),
       name: gatewayDisplayName(model, opts),
-      contextWindow: model.contextWindow
+      contextWindow: model.contextWindow,
+      supportsOneM: usesSingleOneMEntry(model, opts) ? false : void 0
     }))
   );
+}
+function usesSingleOneMEntry(model, opts) {
+  return opts?.longContextDisplay === "single-1m" && resolveContextWindow(stripOneMContextSuffix(model.id), model.contextWindow) >= 1e6;
 }
 function createGatewayModelCatalog(models, opts) {
   const byId = /* @__PURE__ */ new Map();
@@ -4307,8 +4330,22 @@ function createGatewayModelCatalog(models, opts) {
     if (scopedId !== model.id) byId.set(scopedId, model);
     const alias = exposedGatewayAliasId(model, opts);
     if (alias !== model.id) byId.set(alias, model);
+    if (usesSingleOneMEntry(model, opts)) {
+      const bareModel = { ...model, id: stripOneMContextSuffix(model.id) };
+      const rawBareAlias = gatewayAliasId(bareModel);
+      const exposedBareAlias = opts?.maskGatewayIds ? maskGatewayModelId(rawBareAlias) : rawBareAlias;
+      for (const compatibleId of [
+        stripOneMContextSuffix(model.id),
+        rawBareAlias,
+        `${rawBareAlias}[1m]`,
+        exposedBareAlias,
+        `${exposedBareAlias}[1m]`
+      ]) {
+        byId.set(compatibleId, model);
+      }
+    }
     if (opts?.maskGatewayIds) {
-      const rawAlias = gatewayAliasId(model);
+      const rawAlias = gatewayAliasId(usesSingleOneMEntry(model, opts) ? { ...model, id: stripOneMContextSuffix(model.id) } : model);
       if (rawAlias !== alias) byId.set(rawAlias, model);
     }
   }
@@ -10679,6 +10716,8 @@ function winLocalAppData2() {
 function winClaudeExeCandidates() {
   const local = winLocalAppData2();
   const bases = [
+    // Squirrel install folder used by the Anthropic Claude desktop installer.
+    join12(local, "AnthropicClaude"),
     join12(local, "Programs", "Claude"),
     join12(local, "Claude")
   ];
@@ -11063,4 +11102,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-I3I5LKZI.js.map
+//# sourceMappingURL=chunk-CFGSADA2.js.map

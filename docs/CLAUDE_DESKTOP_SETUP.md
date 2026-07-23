@@ -105,9 +105,11 @@ relay-ai claude-app
 
 1. Run the command above.
 2. Select a provider and a model.
-3. The command will **automatically enable Developer Mode**, configure the gateway to point to itself, and launch Claude Desktop for you.
-4. **Keep the terminal running!** It acts as the live proxy for Claude Desktop.
-5. When you are done, press `Ctrl+C` in the terminal to stop the proxy and seamlessly restore your original Claude Desktop configuration.
+3. Relay AI exposes the selected model first, followed by your available saved favorites (up to 20 models total, with duplicates and unavailable entries skipped).
+4. The command will **automatically enable Developer Mode**, configure the gateway to point to itself, and launch Claude Desktop for you.
+5. In Claude Desktop, confirm the model you want in the model picker. Relay AI orders the selected model first, but Claude Desktop controls which discovered model it activates initially.
+6. **Keep the terminal running!** It acts as the live proxy for Claude Desktop.
+7. When you are done, press `Ctrl+C` in the terminal to stop the proxy and seamlessly restore your original Claude Desktop configuration.
 
 If the terminal crashes or you need to recover your previous state manually, run:
 ```bash

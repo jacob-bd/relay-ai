@@ -114,6 +114,82 @@ describe('server model catalog', () => {
     expect(catalog.get('anthropic-go__deepseek-test')).toMatchObject({ id: 'deepseek-test' });
   });
 
+  it('exposes one context-accurate entry per model in Claude App mode', () => {
+    const contextModels: ServerModelInfo[] = [
+      { ...models[1]!, id: 'ctx-200k', name: 'Context 200K', contextWindow: 200_000 },
+      { ...models[1]!, id: 'ctx-256k', name: 'Context 256K', contextWindow: 256_000 },
+      { ...models[1]!, id: 'ctx-under-1m', name: 'Context Under 1M', contextWindow: 999_999 },
+      { ...models[1]!, id: 'ctx-1m', name: 'Context Exact 1M', contextWindow: 1_000_000 },
+      { ...models[1]!, id: 'ctx-1048576', name: 'Context 1048576', contextWindow: 1_048_576 },
+    ];
+    const options = { longContextDisplay: 'single-1m' as const };
+
+    const listed = formatGatewayAnthropicModels(contextModels, options);
+
+    expect(listed.data.map(entry => ({
+      id: entry.id,
+      name: entry.display_name,
+      context: entry.max_input_tokens,
+      supportsOneM: entry.supports_1m,
+    }))).toEqual([
+      { id: 'anthropic-go__ctx-200k', name: 'Context 200K', context: 200_000, supportsOneM: undefined },
+      { id: 'anthropic-go__ctx-256k', name: 'Context 256K', context: 256_000, supportsOneM: undefined },
+      { id: 'anthropic-go__ctx-under-1m', name: 'Context Under 1M', context: 999_999, supportsOneM: undefined },
+      { id: 'anthropic-go__ctx-1m[1m]', name: 'Context Exact 1M', context: 1_000_000, supportsOneM: false },
+      { id: 'anthropic-go__ctx-1048576[1m]', name: 'Context 1048576 1M', context: 1_048_576, supportsOneM: false },
+    ]);
+  });
+
+  it('routes both canonical and compatibility aliases for a single 1M entry', () => {
+    const oneMillion = {
+      ...models[1]!,
+      id: 'ctx-1m',
+      name: 'Context Exact 1M',
+      contextWindow: 1_000_000,
+    };
+    const options = { longContextDisplay: 'single-1m' as const };
+    const catalog = createGatewayModelCatalog([oneMillion], options);
+
+    expect(catalog.get('anthropic-go__ctx-1m[1m]')?.id).toBe('ctx-1m');
+    expect(catalog.get('anthropic-go__ctx-1m')?.id).toBe('ctx-1m');
+    expect(catalog.get('ctx-1m')?.id).toBe('ctx-1m');
+  });
+
+  it('does not double-suffix an already canonical 1M model id', () => {
+    const alreadyCanonical = {
+      ...models[1]!,
+      id: 'ctx-1m[1m]',
+      name: 'Context Exact 1M',
+      contextWindow: 1_000_000,
+    };
+
+    const listed = formatGatewayAnthropicModels(
+      [alreadyCanonical],
+      { longContextDisplay: 'single-1m' },
+    );
+
+    expect(listed.data[0]?.id).toBe('anthropic-go__ctx-1m[1m]');
+    expect(listed.data[0]?.id).not.toContain('[1m][1m]');
+  });
+
+  it('keeps default server discovery behavior unchanged for 1M models', () => {
+    const oneMillion = {
+      ...models[1]!,
+      id: 'ctx-1m',
+      name: 'Context Exact 1M',
+      contextWindow: 1_000_000,
+    };
+
+    const listed = formatGatewayAnthropicModels([oneMillion]);
+
+    expect(listed.data[0]).toMatchObject({
+      id: 'anthropic-go__ctx-1m',
+      display_name: 'Context Exact 1M',
+      max_input_tokens: 1_000_000,
+    });
+    expect(listed.data[0]).not.toHaveProperty('supports_1m');
+  });
+
   it('formats OpenAI model list responses', () => {
     expect(formatOpenAIModels(models)).toEqual({
       object: 'list',
