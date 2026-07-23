@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  backupMetaJson,
   cleanupSession,
   getSessionLockPath,
   readSessionLock,
@@ -71,6 +72,57 @@ describe('claude-app session ownership', () => {
     expect(existsSync(join(getConfigLibraryPath(), 'other-uuid.json'))).toBe(true);
     // Our own orphaned config is still safe to remove.
     expect(existsSync(join(getConfigLibraryPath(), 'our-uuid.json'))).toBe(false);
+  });
+
+  it('preserves the original backup when a second launch races the first', () => {
+    const originalState = { appliedId: '', entries: [] };
+    const firstSessionState = {
+      appliedId: 'our-uuid',
+      entries: [{ id: 'our-uuid', name: 'Relay AI Gateway' }],
+    };
+    writeFileSync(`${getMetaJsonPath()}.bak`, JSON.stringify(originalState));
+    writeFileSync(getMetaJsonPath(), JSON.stringify(firstSessionState));
+
+    backupMetaJson();
+
+    expect(JSON.parse(readFileSync(`${getMetaJsonPath()}.bak`, 'utf8'))).toEqual(originalState);
+  });
+
+  it('keeps a config that another live session still references', () => {
+    writeFileSync(`${getMetaJsonPath()}.bak`, JSON.stringify({ appliedId: '', entries: [] }));
+    writeFileSync(join(getConfigLibraryPath(), 'our-uuid.json'), '{}');
+    writeFileSync(join(getConfigLibraryPath(), 'other-uuid.json'), '{}');
+    const otherLiveState = {
+      appliedId: 'other-uuid',
+      entries: [
+        { id: 'our-uuid', name: 'Relay AI Gateway' },
+        { id: 'other-uuid', name: 'Relay AI Gateway' },
+      ],
+    };
+    writeFileSync(getMetaJsonPath(), JSON.stringify(otherLiveState));
+    writeSessionLock({ pid: process.ppid, startedAt: new Date().toISOString(), uuid: 'other-uuid', proxyPort: 22222 });
+
+    cleanupSession('our-uuid');
+
+    expect(existsSync(join(getConfigLibraryPath(), 'our-uuid.json'))).toBe(true);
+    expect(JSON.parse(readFileSync(getMetaJsonPath(), 'utf8'))).toEqual(otherLiveState);
+  });
+
+  it('--restore refuses to mutate shared state when the lock is unreadable', () => {
+    const currentState = {
+      appliedId: 'other-uuid',
+      entries: [{ id: 'other-uuid', name: 'Relay AI Gateway' }],
+    };
+    writeFileSync(getMetaJsonPath(), JSON.stringify(currentState));
+    writeFileSync(`${getMetaJsonPath()}.bak`, JSON.stringify({ appliedId: '', entries: [] }));
+    writeFileSync(getSessionLockPath(), '{"pid":');
+
+    const result = recoverSession();
+
+    expect(result).toMatchObject({ recovered: false, blocked: true });
+    expect(result.message).toContain('unreadable');
+    expect(JSON.parse(readFileSync(getMetaJsonPath(), 'utf8'))).toEqual(currentState);
+    expect(readFileSync(getSessionLockPath(), 'utf8')).toBe('{"pid":');
   });
 
   it('--restore refuses to clobber another live session', () => {

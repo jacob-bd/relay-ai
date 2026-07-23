@@ -199,6 +199,19 @@ describe('runClaudeAppCommand', () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Another relay-ai claude-app session is running'));
   });
 
+  it('exits 1 when --restore cannot safely read the session lock', async () => {
+    vi.mocked(recoverSession).mockReturnValueOnce({
+      recovered: false,
+      blocked: true,
+      message: 'The relay-ai claude-app session lock is unreadable.',
+    });
+
+    const code = await runClaudeAppCommand(['--restore']);
+
+    expect(code).toBe(1);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('session lock is unreadable'));
+  });
+
   it('preserves OAuth and model metadata for direct single-model launches', async () => {
     state.providers = [{
       id: 'openai-oauth',

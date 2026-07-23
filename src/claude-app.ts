@@ -69,7 +69,7 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
   if (args.includes('--restore')) {
     const result = recoverSession();
     console.log(result.message);
-    return result.liveSession ? 1 : 0;
+    return result.blocked || result.liveSession ? 1 : 0;
   }
 
   const trace = args.includes('--trace');
