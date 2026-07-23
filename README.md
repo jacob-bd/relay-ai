@@ -53,6 +53,7 @@ Pick your backend:
 | `relay-ai antigravity-ide` | Launch Antigravity IDE with Relay models, macOS ([warning + guide](docs/ANTIGRAVITY.md)) |
 | `relay-ai providers auth <id>` | Authenticate an OAuth provider (GitHub Copilot, xAI, OpenAI) |
 | `relay-ai --ai` | Full agent reference for scripts and alef-agent ([guide](docs/AI-AGENTS.md)) |
+| `@jacobbd/relay-ai/core` | Embed Relay AI in a Node app in-process — no CLI/UI/server ([guide](docs/CORE.md)) |
 
 ## Features
 
@@ -428,6 +429,8 @@ const result = await streamText({ model, prompt: 'Hello!' });
 **Schema compatibility:** Core supports registry schema v1. A registry written by a newer Relay version fails fast with `UNSUPPORTED_REGISTRY_VERSION` — upgrade relay-ai rather than downgrading the file.
 
 **Capability detection:** `capabilities.tools` and `capabilities.vision` are always `'unknown'` today — the cached model catalog carries no tools/vision metadata, and Core deliberately never guesses from a model's name. Don't filter on `=== true` for these two fields; use `capabilities.reasoning` (`'none' | 'fixed' | 'adjustable' | 'unknown'`), which is derived from real provider metadata.
+
+**Full guide:** prerequisites, the complete API and error-code reference, and troubleshooting — see **[docs/CORE.md](docs/CORE.md)**.
 
 ## Antigravity CLI, app, and IDE support
 
