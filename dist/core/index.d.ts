@@ -20,7 +20,13 @@ interface RelayModelDescriptor {
         cacheWrite?: number;
     };
     capabilities: {
+        /**
+         * Always 'unknown' today — `CachedModel` carries no tools/vision metadata to
+         * report from, and this API deliberately never guesses from the model name.
+         * Will report a real boolean once that metadata exists upstream.
+         */
         tools: boolean | 'unknown';
+        /** See `tools` — same permanent-placeholder caveat. */
         vision: boolean | 'unknown';
         reasoning: 'none' | 'fixed' | 'adjustable' | 'unknown';
         reasoningLevels?: string[];
