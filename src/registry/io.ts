@@ -116,7 +116,7 @@ function parseRegistry(raw: unknown): ProviderRegistry {
   return registry;
 }
 
-export function loadRegistry(path = getProvidersPath()): ProviderRegistry {
+export function loadRegistry(path = getProvidersPath(), { persist = true }: { persist?: boolean } = {}): ProviderRegistry {
   if (!existsSync(path)) {
     return { schemaVersion: REGISTRY_SCHEMA_VERSION, providers: [] };
   }
@@ -127,7 +127,9 @@ export function loadRegistry(path = getProvidersPath()): ProviderRegistry {
     if (migrateOAuthOpenAiProvider(registry)) migrated = true;
     if (migrateOAuthXaiProvider(registry)) migrated = true;
     if (migrateAlibabaDashScopeChinaLabel(registry)) migrated = true;
-    if (migrated) {
+    // In-memory migrations always run (consumers like the embedded Core API
+    // depend on them); persistence is gated so read-only callers never write.
+    if (migrated && persist) {
       try {
         saveRegistry(registry, path);
       } catch {

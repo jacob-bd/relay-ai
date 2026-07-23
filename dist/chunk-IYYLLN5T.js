@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.6.3",
+  version: "0.7.0",
   publishConfig: {
     access: "public"
   },
@@ -46,7 +46,7 @@ var package_default = {
     node: ">=18"
   },
   scripts: {
-    build: "tsup && node scripts/copy-ui-assets.mjs",
+    build: "tsup && tsup --config tsup.core.config.ts && node scripts/copy-ui-assets.mjs",
     dev: "tsup --watch",
     test: "vitest run",
     "test:watch": "vitest",
@@ -100,6 +100,14 @@ var package_default = {
   },
   overrides: {
     ws: "^8.21.0"
+  },
+  exports: {
+    "./core": {
+      types: "./dist/core/index.d.ts",
+      import: "./dist/core/index.js",
+      default: "./dist/core/index.js"
+    },
+    "./package.json": "./package.json"
   }
 };
 
@@ -3627,7 +3635,7 @@ function parseRegistry(raw) {
   if (typeof data.pricingCacheAt === "string") registry.pricingCacheAt = data.pricingCacheAt;
   return registry;
 }
-function loadRegistry(path = getProvidersPath()) {
+function loadRegistry(path = getProvidersPath(), { persist = true } = {}) {
   if (!existsSync6(path)) {
     return { schemaVersion: REGISTRY_SCHEMA_VERSION, providers: [] };
   }
@@ -3638,7 +3646,7 @@ function loadRegistry(path = getProvidersPath()) {
     if (migrateOAuthOpenAiProvider(registry)) migrated = true;
     if (migrateOAuthXaiProvider(registry)) migrated = true;
     if (migrateAlibabaDashScopeChinaLabel(registry)) migrated = true;
-    if (migrated) {
+    if (migrated && persist) {
       try {
         saveRegistry(registry, path);
       } catch {
@@ -11103,4 +11111,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-WHEMJ7C3.js.map
+//# sourceMappingURL=chunk-IYYLLN5T.js.map

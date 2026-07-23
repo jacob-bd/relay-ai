@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.7.0] - 2026-07-23
+
+### Added
+
+- **Embedded `@jacobbd/relay-ai/core` package for in-process consumers** ([#38](https://github.com/jacob-bd/relay-ai/issues/38)) — a new side-effect-free subpath export lets a Node.js app use Relay AI as a library, without launching the CLI, UI, or server:
+  - `listRelayModels()` returns a credential-free catalog of every enabled provider's cached models, with favorites, context windows, camelCase pricing, and reasoning capabilities (`none` / `fixed` / `adjustable`, with levels and defaults) derived from the existing `getReasoningCapabilities()` machinery.
+  - `createRelayModel(routeId)` resolves the provider credential — transparently refreshing expiring OpenAI/xAI OAuth tokens through the existing refresh path — and returns a ready Vercel AI SDK `LanguageModel`. State is re-read on every call, so re-authentication or provider changes take effect without restarting the consumer.
+  - Models are addressed by unconditionally-scoped **route ids** (`` `${providerId}::${modelId}` ``), safe to persist long-term even when multiple providers expose the same bare model id.
+  - Errors are thrown as `RelayCoreError` with machine-readable codes (`INVALID_ROUTE_ID`, `ROUTE_NOT_FOUND`, `PROVIDER_DISABLED`, `CREDENTIAL_UNAVAILABLE`, `OAUTH_REFRESH_FAILED`, `UNSUPPORTED_MODEL`, `UNSUPPORTED_REGISTRY_VERSION`, `PROVIDER_LOAD_FAILED`) and never contain credential material.
+  - Ownership boundary: Relay keeps sole ownership of provider registration, credentials, the OS keyring, and OAuth login/refresh; the consumer never receives or stores credential material.
+
+### Changed
+
+- **`loadRegistry()` gains a `{ persist }` option** — in-memory legacy migrations still always run, but persisting them to `providers.json` can now be skipped by read-only callers (the embedded Core API uses this). Default behavior is unchanged.
+
+
 ## [0.6.3] - 2026-07-23
 
 Thank you [@onexoluxion](https://github.com/onexoluxion) for contributing PRs [#29](https://github.com/jacob-bd/relay-ai/pull/29), [#30](https://github.com/jacob-bd/relay-ai/pull/30), [#31](https://github.com/jacob-bd/relay-ai/pull/31), [#32](https://github.com/jacob-bd/relay-ai/pull/32), [#33](https://github.com/jacob-bd/relay-ai/pull/33), [#35](https://github.com/jacob-bd/relay-ai/pull/35), [#36](https://github.com/jacob-bd/relay-ai/pull/36), and [#37](https://github.com/jacob-bd/relay-ai/pull/37). Your Windows testing and detailed bug reports made this maintenance release possible.

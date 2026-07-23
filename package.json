@@ -1,6 +1,6 @@
 {
   "name": "@jacobbd/relay-ai",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "publishConfig": {
     "access": "public"
   },
@@ -35,7 +35,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsup && node scripts/copy-ui-assets.mjs",
+    "build": "tsup && tsup --config tsup.core.config.ts && node scripts/copy-ui-assets.mjs",
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -89,5 +89,13 @@
   },
   "overrides": {
     "ws": "^8.21.0"
+  },
+  "exports": {
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js",
+      "default": "./dist/core/index.js"
+    },
+    "./package.json": "./package.json"
   }
 }

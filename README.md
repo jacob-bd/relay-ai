@@ -406,6 +406,27 @@ export ANTHROPIC_API_KEY="anything"
 unset CLAUDE_CODE_USE_VERTEX ANTHROPIC_VERTEX_PROJECT_ID CLOUD_ML_REGION
 ```
 
+## Embedded usage (`@jacobbd/relay-ai/core`)
+
+Node.js applications can embed Relay AI in-process — no CLI, UI, or server — to list the configured model catalog and obtain ready [Vercel AI SDK](https://sdk.vercel.ai) `LanguageModel` instances:
+
+```ts
+import { listRelayModels, createRelayModel, isRelayCoreError } from '@jacobbd/relay-ai/core';
+import { streamText } from 'ai';
+
+const models = listRelayModels();          // credential-free catalog
+const model = await createRelayModel(models[0].routeId);
+const result = await streamText({ model, prompt: 'Hello!' });
+```
+
+**Route ids** are unconditionally scoped: `` `${providerId}::${modelId}` `` (split on the first `::`; model ids may contain `/` and `:`, e.g. `openrouter::vendor/model:free`). Because they are never bare, a route id persisted by your app stays valid even when a second provider later exposes the same model id.
+
+**Ownership boundary:** Relay AI keeps sole ownership of provider registration, credentials, the OS keyring, and OAuth login/refresh. `createRelayModel()` resolves credentials (refreshing expiring OAuth tokens) at call time and returns only the SDK model — your app never receives or stores credential material. Re-authentication always happens through Relay (`relay-ai ui`), never through the consumer.
+
+**No server required:** the Core API reads the same registry and config as the CLI (`~/.relay-ai`, overridable with `RELAY_AI_HOME`) and never starts a server, opens a browser, or writes to disk. `createRelayModel()` re-reads state on every call, so provider changes take effect without restarting your app. Errors are thrown as `RelayCoreError` with a machine-readable `code` (see `isRelayCoreError`) and never contain credential material.
+
+**Schema compatibility:** Core supports registry schema v1. A registry written by a newer Relay version fails fast with `UNSUPPORTED_REGISTRY_VERSION` — upgrade relay-ai rather than downgrading the file.
+
 ## Antigravity CLI, app, and IDE support
 
 Relay AI can launch the Antigravity CLI, standalone Antigravity app, and Antigravity IDE through a local Cloud Code gateway. This lets Antigravity's native model picker show Relay models from your configured providers.
