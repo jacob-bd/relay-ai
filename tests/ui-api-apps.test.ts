@@ -27,15 +27,28 @@ vi.mock('../src/native-launcher.js', () => ({
       path: '/bin/claude',
       relayCommand: 'claude',
       launchCommand: 'mock-launch',
-    }
+    },
+    {
+      id: 'claude-app',
+      name: 'Claude Desktop App',
+      type: 'desktop',
+      installed: true,
+      path: '/Applications/Claude.app',
+      relayCommand: 'claude-app',
+      launchCommand: 'mock-launch',
+    },
   ],
   detectApp: (id: string) => {
     if (id === 'claude') return { installed: true, path: '/bin/claude' };
+    if (id === 'claude-app') return { installed: true, path: '/Applications/Claude.app' };
     return { installed: false, path: null };
   },
   getSupportedApp: (id: string) => {
     if (id === 'claude') {
       return { id: 'claude', name: 'Claude Code CLI', type: 'cli', detectId: 'claude', relayCommand: 'claude' };
+    }
+    if (id === 'claude-app') {
+      return { id: 'claude-app', name: 'Claude Desktop App', type: 'desktop', detectId: 'claude-app', relayCommand: 'claude-app' };
     }
     return undefined;
   },
@@ -82,7 +95,7 @@ describe('UI API Apps endpoints', () => {
     console.log('GET /api/apps raw response:', mockRes.result.data);
 
     const response = JSON.parse(mockRes.result.data);
-    expect(response.apps).toHaveLength(1);
+    expect(response.apps).toHaveLength(2);
     expect(response.apps[0].id).toBe('claude');
   });
 
@@ -127,6 +140,31 @@ describe('UI API Apps endpoints', () => {
     expect(mockRes.result.code).toBe(200);
     const response = JSON.parse(mockRes.result.data);
     expect(response.command).toContain('relay-ai claude --trace');
+  });
+
+  it('launches Claude App Favorites from the first saved favorite', async () => {
+    savePreferences({
+      favoriteModels: [
+        { providerId: 'moonshot', modelId: 'kimi-k3' },
+        { providerId: 'openrouter', modelId: 'qwen/qwen3' },
+      ],
+    });
+    const req = createMockRequest('POST', '/api/apps/launch', JSON.stringify({
+      appId: 'claude-app',
+      favorites: true,
+    }));
+    const mockRes = createMockResponse();
+
+    handleUiApiRequest(req, mockRes.res);
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(mockRes.result.code).toBe(200);
+    const response = JSON.parse(mockRes.result.data);
+    expect(response.command).toContain('relay-ai claude-app');
+    expect(response.command).toContain('--provider moonshot');
+    expect(response.command).toContain('--model kimi-k3');
+    expect(response.command).not.toContain('openrouter');
+    expect(mockExec).toHaveBeenCalledOnce();
   });
 
   it('passes the Claude Code proxy checkbox through without requiring a selected model', async () => {
