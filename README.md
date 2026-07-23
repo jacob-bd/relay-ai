@@ -427,6 +427,8 @@ const result = await streamText({ model, prompt: 'Hello!' });
 
 **Schema compatibility:** Core supports registry schema v1. A registry written by a newer Relay version fails fast with `UNSUPPORTED_REGISTRY_VERSION` — upgrade relay-ai rather than downgrading the file.
 
+**Capability detection:** `capabilities.tools` and `capabilities.vision` are always `'unknown'` today — the cached model catalog carries no tools/vision metadata, and Core deliberately never guesses from a model's name. Don't filter on `=== true` for these two fields; use `capabilities.reasoning` (`'none' | 'fixed' | 'adjustable' | 'unknown'`), which is derived from real provider metadata.
+
 ## Antigravity CLI, app, and IDE support
 
 Relay AI can launch the Antigravity CLI, standalone Antigravity app, and Antigravity IDE through a local Cloud Code gateway. This lets Antigravity's native model picker show Relay models from your configured providers.

@@ -12,9 +12,7 @@ const SEPARATOR = '::';
  */
 export function toRelayRouteId(providerId: string, modelId: string): RelayRouteId {
   if (!isValidProviderId(providerId)) {
-    throw new RelayCoreError('INVALID_ROUTE_ID', `Invalid provider id for route id: ${JSON.stringify(providerId)}`, {
-      providerId: isValidProviderId(providerId) ? providerId : undefined,
-    });
+    throw new RelayCoreError('INVALID_ROUTE_ID', `Invalid provider id for route id: ${JSON.stringify(providerId)}`, {});
   }
   if (!modelId) {
     throw new RelayCoreError('INVALID_ROUTE_ID', 'Model id must be non-empty for a route id', { providerId });
