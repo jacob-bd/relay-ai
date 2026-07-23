@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { findBinaryOnPath } from '../src/binary-lookup.js';
-import { buildClaudeArgs, findClaudeBinary } from '../src/launch.js';
+import { buildClaudeArgs, findClaudeBinary, quoteForWindowsShell } from '../src/launch.js';
 import { buildGeminiChildEnv, prepareGeminiChildEnv } from '../src/gemini/launch.js';
 import { setAppPathOverride } from '../src/config.js';
 
@@ -37,6 +37,34 @@ describe('buildClaudeArgs', () => {
       '--print',
       'hello',
     ]);
+  });
+});
+
+describe('quoteForWindowsShell', () => {
+  // Regression: Node's child_process.spawn does not escape args when
+  // { shell: true } is used — required on Windows to spawn claude.cmd.
+  // cmd.exe re-tokenizes on whitespace, silently truncating a multi-word
+  // -p prompt to its first word before it ever reaches Claude Code.
+  it('leaves plain single-token args unquoted', () => {
+    expect(quoteForWindowsShell('--model')).toBe('--model');
+    expect(quoteForWindowsShell('claude-sonnet-4-6')).toBe('claude-sonnet-4-6');
+  });
+
+  it('quotes args containing spaces', () => {
+    expect(quoteForWindowsShell('hello world')).toBe('"hello world"');
+  });
+
+  it('quotes and escapes embedded double quotes', () => {
+    expect(quoteForWindowsShell('say "hi" now')).toBe('"say ""hi"" now"');
+  });
+
+  it('quotes args containing cmd.exe metacharacters even without spaces', () => {
+    expect(quoteForWindowsShell('a&b')).toBe('"a&b"');
+    expect(quoteForWindowsShell('a|b')).toBe('"a|b"');
+  });
+
+  it('represents an empty string as an explicit empty quoted arg', () => {
+    expect(quoteForWindowsShell('')).toBe('""');
   });
 });
 

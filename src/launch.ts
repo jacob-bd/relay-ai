@@ -48,6 +48,22 @@ export function buildClaudeArgs(model: string | undefined, extraArgs: string[]):
   return model ? ['--model', model, ...extraArgs] : [...extraArgs];
 }
 
+/**
+ * Node's child_process.spawn does NOT escape arguments when { shell: true } is
+ * used (documented Node behavior) — cmd.exe re-tokenizes the command line on
+ * whitespace, so any multi-word argument (e.g. a -p prompt) silently gets cut
+ * down to its first word. .cmd/.bat launchers (claude.cmd on Windows) require
+ * shell: true to spawn at all, so args must be pre-quoted for cmd.exe here.
+ * Quotes only when needed; doubles embedded double-quotes (cmd.exe's escaping
+ * rule), matching the common case — not a full CommandLineToArgvW-equivalent
+ * parser for every edge case (e.g. trailing backslashes before a quote).
+ */
+export function quoteForWindowsShell(arg: string): string {
+  if (arg === '') return '""';
+  if (!/[\s"^&|<>()]/.test(arg)) return arg;
+  return `"${arg.replace(/"/g, '""')}"`;
+}
+
 export function launchClaude(
   env: NodeJS.ProcessEnv,
   model: string | undefined,
@@ -55,7 +71,8 @@ export function launchClaude(
 ): Promise<number> {
   return new Promise((resolve) => {
     const claudePath = findClaudeBinary()!;
-    const args = buildClaudeArgs(model, extraArgs);
+    const rawArgs = buildClaudeArgs(model, extraArgs);
+    const args = isWindows ? rawArgs.map(quoteForWindowsShell) : rawArgs;
 
     const debugFileIdx = extraArgs.indexOf('--debug-file');
     const debugLogPath = debugFileIdx !== -1 && extraArgs[debugFileIdx + 1] ? extraArgs[debugFileIdx + 1] : undefined;
