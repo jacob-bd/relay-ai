@@ -1,6 +1,19 @@
 # Changelog
 
-## [0.7.0] - 2026-07-23
+## [0.7.1] - 2026-07-24
+
+### Added
+
+- **Linux support for `relay-ai claude-app`** ([#39](https://github.com/jacob-bd/relay-ai/issues/39)) — the Claude Desktop 3P launcher now works on Linux in addition to macOS and Windows. The 3P inference config is written to `$XDG_CONFIG_HOME/Claude-3p` (Electron's `userData` + `-3p`), and app discovery, launch, running-detection, and graceful/force quit are implemented with process-name-exact matching (`pgrep -x claude-desktop`) so they can never collide with the `relay-ai claude-app` process itself. The Electron main process (the one without a `--type=` flag) is signalled for a clean whole-app shutdown.
+- **Linux launch support for `relay-ai antigravity` and `relay-ai antigravity-ide`** — binary discovery, launch, running-detection, and quit now work on Linux. Antigravity ships as a single VS Code-fork Electron binary (`/usr/share/antigravity/antigravity`) shared by both commands; they are kept isolated by distinct relay-managed `--user-data-dir` profile directories, and all process matching / kills are scoped to those profile dirs so the user's own Antigravity is never touched. (The local gateway and model injection already worked on Linux.)
+
+### Changed
+
+- Cross-platform quit paths in the Claude Desktop and Antigravity launchers are now explicit per-platform branches instead of a macOS/`else` split, removing a latent footgun where the Windows PowerShell quit path could run on Linux.
+
+### Fixed
+
+- **Antigravity app/IDE launch no longer corrupts the terminal on Ctrl+C.** The GUI launchers now spawn the app detached (its own process group) with `stdio: 'ignore'`, matching the Claude Desktop launcher. Previously the app inherited relay's process group, so a Ctrl+C meant to stop the gateway also killed Antigravity mid-render, and its `stdio: 'inherit'` shutdown logs interleaved with relay's "Close Antigravity?" prompt — leaving the TTY in a raw state (stray `^[[D` arrow-key echoes). Most visible on Linux, where Antigravity is far more verbose. The `agy` CLI launcher keeps `stdio: 'inherit'` as it needs the terminal.
 
 ### Added
 

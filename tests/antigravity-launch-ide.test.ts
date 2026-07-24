@@ -50,7 +50,8 @@ describe('antigravity launch-ide', () => {
       expect.any(String),
       [`--user-data-dir=${tempProfile}`],
       expect.objectContaining({
-        stdio: 'inherit',
+        stdio: 'ignore',
+        detached: true,
         env: expect.objectContaining({ CLOUD_CODE_URL: 'http://127.0.0.1:12345' }),
       })
     );
@@ -116,7 +117,8 @@ describe('antigravity launch-ide', () => {
         expect.stringContaining(path.join('.relay-ai', 'antigravity', 'extensions')),
       ]),
       expect.objectContaining({
-        stdio: 'inherit',
+        stdio: 'ignore',
+        detached: true,
         env: expect.objectContaining({ CLOUD_CODE_URL: 'http://127.0.0.1:12345' }),
       })
     );

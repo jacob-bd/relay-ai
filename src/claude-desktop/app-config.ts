@@ -7,6 +7,11 @@ export function getClaudeDesktopHome(): string {
   if (process.platform === 'win32') {
     return join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Claude-3p');
   }
+  if (process.platform === 'linux') {
+    // Electron's userData on Linux is $XDG_CONFIG_HOME (or ~/.config) + productName.
+    // Claude Desktop's Third-Party (3P) inference config lives at that path + "-3p".
+    return join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'Claude-3p');
+  }
   return join(homedir(), 'Library', 'Application Support', 'Claude-3p');
 }
 

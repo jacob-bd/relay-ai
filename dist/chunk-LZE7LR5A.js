@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.7.0",
+  version: "0.7.1",
   publishConfig: {
     access: "public"
   },
@@ -10697,14 +10697,14 @@ function codexAppInstallHint() {
 
 // src/claude-desktop/app-launch.ts
 import { execSync as execSync3, spawn as spawn3 } from "child_process";
-import { existsSync as existsSync12, readdirSync as readdirSync2, statSync as statSync4 } from "fs";
+import { existsSync as existsSync12, readdirSync as readdirSync2, readFileSync as readFileSync12, statSync as statSync4 } from "fs";
 import { homedir as homedir8 } from "os";
 import { join as join12 } from "path";
 import * as p7 from "@clack/prompts";
 var CLAUDE_BUNDLE_ID = "com.anthropic.claudefordesktop";
 function claudeAppSupported() {
-  if (process.platform !== "darwin" && process.platform !== "win32") {
-    throw new Error("Claude Desktop launch is supported on macOS and Windows only.");
+  if (process.platform !== "darwin" && process.platform !== "win32" && process.platform !== "linux") {
+    throw new Error("Claude Desktop launch is supported on macOS, Windows, and Linux only.");
   }
 }
 function run2(cmd, encoding = "utf8") {
@@ -10746,6 +10746,58 @@ function winClaudeExeCandidates() {
   }
   return out;
 }
+function linuxClaudeCandidates() {
+  return [
+    // Wrapper launcher installed by the .deb/.rpm — sets up the Electron sandbox.
+    "/usr/bin/claude-desktop",
+    "/usr/lib/claude-desktop/claude-desktop",
+    "/opt/Claude/claude-desktop",
+    join12(homedir8(), ".local", "bin", "claude-desktop")
+  ];
+}
+function linuxWhichClaude() {
+  try {
+    const out = run2("command -v claude-desktop");
+    return out && existsSync12(out) ? out : null;
+  } catch {
+    return null;
+  }
+}
+function linuxMatchingPids() {
+  try {
+    const out = run2("pgrep -x claude-desktop");
+    return out.split(/\s+/).map((s) => Number.parseInt(s, 10)).filter((n) => Number.isFinite(n) && n > 0);
+  } catch {
+    return [];
+  }
+}
+function linuxMainPid() {
+  const pids = linuxMatchingPids();
+  for (const pid of pids) {
+    try {
+      const cmdline = readFileSync12(`/proc/${pid}/cmdline`, "utf8");
+      if (!cmdline.includes("--type=")) return pid;
+    } catch {
+    }
+  }
+  return pids[0] ?? null;
+}
+function linuxQuit() {
+  const pid = linuxMainPid();
+  if (pid === null) return;
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+  }
+}
+function linuxForceQuit() {
+  for (const pid of linuxMatchingPids()) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+    }
+  }
+}
 function mdfindClaudeApp() {
   try {
     const out = run2(`mdfind "kMDItemCFBundleIdentifier == '${CLAUDE_BUNDLE_ID}'"`);
@@ -10776,6 +10828,15 @@ function findClaudeApp() {
       if (appId) return `shell:AppsFolder\\${appId}`;
     } catch {
     }
+  }
+  if (process.platform === "linux") {
+    for (const path of linuxClaudeCandidates()) {
+      try {
+        if (existsSync12(path)) return path;
+      } catch {
+      }
+    }
+    return linuxWhichClaude();
   }
   return null;
 }
@@ -10809,6 +10870,7 @@ function winHasWindow2() {
 function isClaudeAppRunning() {
   if (process.platform === "darwin") return darwinIsRunning2();
   if (process.platform === "win32") return winMatchingPids2().length > 0 || winHasWindow2();
+  if (process.platform === "linux") return linuxMatchingPids().length > 0;
   return false;
 }
 function sleep2(ms) {
@@ -10819,12 +10881,16 @@ async function waitForQuit2(timeoutMs) {
   while (Date.now() < deadline) {
     if (process.platform === "win32") {
       if (winMatchingPids2().length === 0) return true;
+    } else if (process.platform === "linux") {
+      if (linuxMatchingPids().length === 0) return true;
     } else if (!darwinIsRunning2()) {
       return true;
     }
     await sleep2(200);
   }
-  return process.platform === "win32" ? winMatchingPids2().length === 0 : !darwinIsRunning2();
+  if (process.platform === "win32") return winMatchingPids2().length === 0;
+  if (process.platform === "linux") return linuxMatchingPids().length === 0;
+  return !darwinIsRunning2();
 }
 function openClaudeAppAt(path) {
   if (process.platform === "darwin") {
@@ -10841,6 +10907,10 @@ function openClaudeAppAt(path) {
     } else {
       runPowerShell2(`Start-Process -FilePath '${path.replace(/'/g, "''")}'`);
     }
+    return;
+  }
+  if (process.platform === "linux") {
+    spawn3(path, [], { stdio: "ignore", detached: true }).unref();
   }
 }
 function openClaudeApp() {
@@ -10867,6 +10937,7 @@ function winQuitGraceful2() {
 function quitClaudeAppGracefully() {
   if (process.platform === "darwin") darwinQuit2();
   else if (process.platform === "win32") winQuitGraceful2();
+  else if (process.platform === "linux") linuxQuit();
 }
 function winForceQuit2() {
   const pids = winMatchingPids2();
@@ -10888,9 +10959,11 @@ async function launchOrRestartClaudeApp(prompt = "Restart Claude Desktop to appl
     return;
   }
   if (process.platform === "darwin") darwinQuit2();
-  else winQuitGraceful2();
+  else if (process.platform === "win32") winQuitGraceful2();
+  else if (process.platform === "linux") linuxQuit();
   if (!await waitForQuit2(5e3)) {
     if (process.platform === "win32") winForceQuit2();
+    else if (process.platform === "linux") linuxForceQuit();
     await waitForQuit2(5e3);
   }
   if (appPath) openClaudeAppAt(appPath);
@@ -11111,4 +11184,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-IYYLLN5T.js.map
+//# sourceMappingURL=chunk-LZE7LR5A.js.map

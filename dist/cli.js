@@ -165,7 +165,7 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-IYYLLN5T.js";
+} from "./chunk-LZE7LR5A.js";
 import {
   filterTemplates,
   init_provider_templates,
@@ -8906,8 +8906,34 @@ function prepareIdeProfile(profileDir, gatewayUrl) {
 }
 
 // src/antigravity/launch-ide.ts
+var LINUX_APP_PROFILE_DIR = join7(homedir7(), ".relay-ai", "antigravity", "app-profile");
+var LINUX_IDE_PROFILE_DIR = join7(homedir7(), ".relay-ai", "antigravity", "profile");
 function sleep(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));
+}
+function linuxAntigravityBinary() {
+  const candidates = [
+    "/usr/share/antigravity/antigravity",
+    "/opt/antigravity/antigravity",
+    join7(homedir7(), ".local", "share", "antigravity", "antigravity")
+  ];
+  for (const candidate of candidates) {
+    if (existsSync7(candidate)) return candidate;
+  }
+  return null;
+}
+function linuxKillByProfile(profileDir, signal) {
+  const output = defaultProcessList();
+  for (const line of output.split("\n")) {
+    if (!line.includes(`--user-data-dir=${profileDir}`)) continue;
+    const pid = Number.parseInt(line.trim().split(/\s+/)[0] ?? "", 10);
+    if (Number.isFinite(pid) && pid > 0) {
+      try {
+        process.kill(pid, signal);
+      } catch {
+      }
+    }
+  }
 }
 function runPowerShell(script) {
   return execSync4(`powershell.exe -NoProfile -Command ${JSON.stringify(script)}`, {
@@ -8944,9 +8970,10 @@ function winForceQuitProcess(exeName, profileDir) {
   }
 }
 function defaultProcessList() {
-  if (process.platform !== "darwin") return "";
+  const psArgs = process.platform === "linux" ? ["-eo", "pid=,args="] : ["-axo", "pid=,command="];
+  if (process.platform !== "darwin" && process.platform !== "linux") return "";
   try {
-    return execFileSync3("ps", ["-axo", "pid=,command="], {
+    return execFileSync3("ps", psArgs, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       maxBuffer: 1024 * 1024 * 4
@@ -8958,11 +8985,17 @@ function defaultProcessList() {
 function isAntigravityIdeRunning(profileDir, processList = defaultProcessList) {
   if (process.platform === "win32") return winIsProcessRunningForProfile("Antigravity IDE.exe", profileDir);
   const output = processList();
+  if (process.platform === "linux") {
+    return output.split("\n").some((line) => line.includes(`--user-data-dir=${profileDir}`));
+  }
   return output.split("\n").some((line) => line.includes("Antigravity IDE.app") && line.includes(`--user-data-dir=${profileDir}`));
 }
 function isAntigravityAppRunning(profileDir, processList = defaultProcessList) {
   if (process.platform === "win32") return winIsProcessRunningForProfile("Antigravity.exe", profileDir);
   const output = processList();
+  if (process.platform === "linux") {
+    return output.split("\n").some((line) => line.includes(`--user-data-dir=${profileDir}`));
+  }
   return output.split("\n").some((line) => line.includes("Antigravity.app") && line.includes(`--user-data-dir=${profileDir}`));
 }
 async function waitForAntigravityIdeQuit(profileDir, options = {}) {
@@ -8987,13 +9020,19 @@ async function waitForAntigravityAppQuit(profileDir, options = {}) {
 }
 function forceQuitAntigravityIde(profileDir) {
   if (process.platform === "win32") winForceQuitProcess("Antigravity IDE.exe", profileDir);
+  else if (process.platform === "linux") linuxKillByProfile(profileDir, "SIGKILL");
 }
 function forceQuitAntigravityApp(profileDir) {
   if (process.platform === "win32") winForceQuitProcess("Antigravity.exe", profileDir);
+  else if (process.platform === "linux") linuxKillByProfile(profileDir, "SIGKILL");
 }
 function quitAntigravityIdeGracefully() {
   if (process.platform === "win32") {
     winQuitProcess("Antigravity IDE.exe");
+    return;
+  }
+  if (process.platform === "linux") {
+    linuxKillByProfile(LINUX_IDE_PROFILE_DIR, "SIGTERM");
     return;
   }
   if (process.platform !== "darwin") return;
@@ -9010,6 +9049,10 @@ function quitAntigravityIdeGracefully() {
 function quitAntigravityAppGracefully() {
   if (process.platform === "win32") {
     winQuitProcess("Antigravity.exe");
+    return;
+  }
+  if (process.platform === "linux") {
+    linuxKillByProfile(LINUX_APP_PROFILE_DIR, "SIGTERM");
     return;
   }
   if (process.platform !== "darwin") return;
@@ -9031,6 +9074,7 @@ function findAntigravityAppBinary() {
     const winPath = join7(localAppData, "Programs", "Antigravity", "Antigravity.exe");
     return existsSync7(winPath) ? winPath : null;
   }
+  if (process.platform === "linux") return linuxAntigravityBinary();
   if (process.platform !== "darwin") return null;
   const defaultPath = "/Applications/Antigravity.app/Contents/MacOS/Antigravity";
   if (existsSync7(defaultPath)) return defaultPath;
@@ -9046,6 +9090,7 @@ function findAntigravityIdeBinary() {
     const winPath = join7(localAppData, "Programs", "Antigravity IDE", "Antigravity IDE.exe");
     return existsSync7(winPath) ? winPath : null;
   }
+  if (process.platform === "linux") return linuxAntigravityBinary();
   if (process.platform !== "darwin") return null;
   const defaultPath = "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide";
   if (existsSync7(defaultPath)) return defaultPath;
@@ -9063,8 +9108,8 @@ function launchAntigravityApp(env, profileDir, gatewayUrl, extraArgs) {
     };
     const binaryPath = findAntigravityAppBinary();
     if (!binaryPath) {
-      console.error('Antigravity app bundle not found at "/Applications/Antigravity.app".');
-      console.error("Please make sure Antigravity is installed on your Mac.");
+      console.error("Antigravity app not found.");
+      console.error("Please make sure Antigravity is installed.");
       settle(127);
       return;
     }
@@ -9074,7 +9119,12 @@ function launchAntigravityApp(env, profileDir, gatewayUrl, extraArgs) {
       ...extraArgs
     ];
     const child = spawn5(binaryPath, args, {
-      stdio: "inherit",
+      // GUI app: don't inherit the terminal's stdio (its Electron logs would
+      // corrupt relay's interactive prompts) and detach into its own process
+      // group so a Ctrl+C meant for the relay gateway doesn't also kill the app
+      // mid-render. Mirrors the Claude Desktop launcher.
+      stdio: "ignore",
+      detached: true,
       env
     });
     child.on("spawn", () => {
@@ -9093,8 +9143,8 @@ function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs) {
   return new Promise((resolve2) => {
     const binaryPath = findAntigravityIdeBinary();
     if (!binaryPath) {
-      console.error('Antigravity IDE app bundle not found at "/Applications/Antigravity IDE.app".');
-      console.error("Please make sure Antigravity IDE is installed on your Mac.");
+      console.error("Antigravity IDE not found.");
+      console.error("Please make sure Antigravity IDE is installed.");
       resolve2(127);
       return;
     }
@@ -9106,7 +9156,12 @@ function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs) {
       ...extraArgs
     ];
     const child = spawn5(binaryPath, args, {
-      stdio: "inherit",
+      // GUI app: don't inherit the terminal's stdio (its Electron logs would
+      // corrupt relay's interactive prompts) and detach into its own process
+      // group so a Ctrl+C meant for the relay gateway doesn't also kill the app
+      // mid-render. Mirrors the Claude Desktop launcher.
+      stdio: "ignore",
+      detached: true,
       env
     });
     child.on("exit", (code) => {
@@ -10530,6 +10585,9 @@ function getClaudeDesktopHome() {
   if (process.platform === "win32") {
     return join11(process.env.LOCALAPPDATA || join11(homedir9(), "AppData", "Local"), "Claude-3p");
   }
+  if (process.platform === "linux") {
+    return join11(process.env.XDG_CONFIG_HOME || join11(homedir9(), ".config"), "Claude-3p");
+  }
   return join11(homedir9(), "Library", "Application Support", "Claude-3p");
 }
 function getConfigLibraryPath() {
@@ -10903,7 +10961,7 @@ ${pc11.bold("Description:")}
   Keep this terminal open while using Claude.
 
 ${pc11.bold("Platforms:")}
-  macOS and Windows. Linux is not supported.
+  macOS, Windows, and Linux.
 
 ${pc11.bold("Cleanup:")}
   Ctrl+C stops the proxy and restores your previous Claude config.
@@ -13763,7 +13821,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-3CWMSARO.js");
+    const { runUiCommand } = await import("./ui-command-WJF7EO24.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

@@ -9,8 +9,52 @@ type ProcessListOptions = {
   processList?: () => string;
 };
 
+// Fixed profile dirs the orchestrator (antigravity.ts) launches under, mirrored
+// here so the graceful-quit helpers (which take no profileDir arg) can scope the
+// Linux kill to exactly the relay-managed instance and never the user's own.
+const LINUX_APP_PROFILE_DIR = join(homedir(), '.relay-ai', 'antigravity', 'app-profile');
+const LINUX_IDE_PROFILE_DIR = join(homedir(), '.relay-ai', 'antigravity', 'profile');
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * On Linux, Antigravity ships as a single VS Code-fork Electron binary. The app
+ * and IDE commands both launch it; they are disambiguated only by --user-data-dir.
+ * We launch this binary directly (matching the .desktop Exec=) rather than the
+ * /usr/bin/antigravity CLI wrapper, which would open a different process.
+ */
+function linuxAntigravityBinary(): string | null {
+  const candidates = [
+    '/usr/share/antigravity/antigravity',
+    '/opt/antigravity/antigravity',
+    join(homedir(), '.local', 'share', 'antigravity', 'antigravity'),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Signal every process whose command line carries our managed --user-data-dir.
+ * Scoping by profile dir (not binary name) is what keeps this from touching the
+ * user's own Antigravity — the relay app/IDE profile dirs are distinct constants.
+ */
+function linuxKillByProfile(profileDir: string, signal: NodeJS.Signals): void {
+  const output = defaultProcessList();
+  for (const line of output.split('\n')) {
+    if (!line.includes(`--user-data-dir=${profileDir}`)) continue;
+    const pid = Number.parseInt(line.trim().split(/\s+/)[0] ?? '', 10);
+    if (Number.isFinite(pid) && pid > 0) {
+      try {
+        process.kill(pid, signal);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
 }
 
 function runPowerShell(script: string): string {
@@ -56,9 +100,12 @@ function winForceQuitProcess(exeName: string, profileDir: string): void {
 }
 
 function defaultProcessList(): string {
-  if (process.platform !== 'darwin') return '';
+  const psArgs = process.platform === 'linux'
+    ? ['-eo', 'pid=,args=']   // Linux ps: -e (all), args= (full command line, no header)
+    : ['-axo', 'pid=,command='];
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return '';
   try {
-    return execFileSync('ps', ['-axo', 'pid=,command='], {
+    return execFileSync('ps', psArgs, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       maxBuffer: 1024 * 1024 * 4,
@@ -71,6 +118,10 @@ function defaultProcessList(): string {
 export function isAntigravityIdeRunning(profileDir: string, processList = defaultProcessList): boolean {
   if (process.platform === 'win32') return winIsProcessRunningForProfile('Antigravity IDE.exe', profileDir);
   const output = processList();
+  if (process.platform === 'linux') {
+    // Single shared binary on Linux — the profile dir is the only discriminator.
+    return output.split('\n').some(line => line.includes(`--user-data-dir=${profileDir}`));
+  }
   return output
     .split('\n')
     .some(line => line.includes('Antigravity IDE.app') && line.includes(`--user-data-dir=${profileDir}`));
@@ -79,6 +130,10 @@ export function isAntigravityIdeRunning(profileDir: string, processList = defaul
 export function isAntigravityAppRunning(profileDir: string, processList = defaultProcessList): boolean {
   if (process.platform === 'win32') return winIsProcessRunningForProfile('Antigravity.exe', profileDir);
   const output = processList();
+  if (process.platform === 'linux') {
+    // Single shared binary on Linux — the profile dir is the only discriminator.
+    return output.split('\n').some(line => line.includes(`--user-data-dir=${profileDir}`));
+  }
   return output
     .split('\n')
     .some(line => line.includes('Antigravity.app') && line.includes(`--user-data-dir=${profileDir}`));
@@ -112,18 +167,21 @@ export async function waitForAntigravityAppQuit(
   return !isAntigravityAppRunning(profileDir, processList);
 }
 
-/** Windows-only: force-kill a still-running managed Antigravity IDE process. No-op elsewhere. */
+/** Force-kill a still-running managed Antigravity IDE process (Windows + Linux). No-op on macOS. */
 export function forceQuitAntigravityIde(profileDir: string): void {
   if (process.platform === 'win32') winForceQuitProcess('Antigravity IDE.exe', profileDir);
+  else if (process.platform === 'linux') linuxKillByProfile(profileDir, 'SIGKILL');
 }
 
-/** Windows-only: force-kill a still-running managed standalone Antigravity process. No-op elsewhere. */
+/** Force-kill a still-running managed standalone Antigravity process (Windows + Linux). No-op on macOS. */
 export function forceQuitAntigravityApp(profileDir: string): void {
   if (process.platform === 'win32') winForceQuitProcess('Antigravity.exe', profileDir);
+  else if (process.platform === 'linux') linuxKillByProfile(profileDir, 'SIGKILL');
 }
 
 export function quitAntigravityIdeGracefully(): void {
   if (process.platform === 'win32') { winQuitProcess('Antigravity IDE.exe'); return; }
+  if (process.platform === 'linux') { linuxKillByProfile(LINUX_IDE_PROFILE_DIR, 'SIGTERM'); return; }
   if (process.platform !== 'darwin') return;
   try {
     execFileSync('osascript', ['-e', 'tell application "Antigravity IDE" to quit'], {
@@ -138,6 +196,7 @@ export function quitAntigravityIdeGracefully(): void {
 
 export function quitAntigravityAppGracefully(): void {
   if (process.platform === 'win32') { winQuitProcess('Antigravity.exe'); return; }
+  if (process.platform === 'linux') { linuxKillByProfile(LINUX_APP_PROFILE_DIR, 'SIGTERM'); return; }
   if (process.platform !== 'darwin') return;
   try {
     execFileSync('osascript', ['-e', 'tell application "Antigravity" to quit'], {
@@ -151,7 +210,7 @@ export function quitAntigravityAppGracefully(): void {
 }
 
 /**
- * Locate the standalone Antigravity app binary path (macOS + Windows).
+ * Locate the standalone Antigravity app binary path (macOS + Windows + Linux).
  * Returns null if not installed or the platform is unsupported.
  */
 export function findAntigravityAppBinary(): string | null {
@@ -163,6 +222,8 @@ export function findAntigravityAppBinary(): string | null {
     const winPath = join(localAppData, 'Programs', 'Antigravity', 'Antigravity.exe');
     return existsSync(winPath) ? winPath : null;
   }
+
+  if (process.platform === 'linux') return linuxAntigravityBinary();
 
   if (process.platform !== 'darwin') return null;
 
@@ -176,10 +237,11 @@ export function findAntigravityAppBinary(): string | null {
 }
 
 /**
- * Locate the Antigravity IDE binary path.
+ * Locate the Antigravity IDE binary path (macOS + Windows + Linux).
  *
- * Currently support macOS (/Applications/Antigravity IDE.app) with fallbacks.
- * Returns null if not on macOS or if the app is not installed.
+ * On Linux, Antigravity is a single VS Code-fork binary shared by the app and IDE
+ * commands (distinguished only by --user-data-dir), so this resolves the same path.
+ * Returns null if the app is not installed or the platform is unsupported.
  */
 export function findAntigravityIdeBinary(): string | null {
   const override = getAppPathOverride('antigravity-ide');
@@ -190,6 +252,8 @@ export function findAntigravityIdeBinary(): string | null {
     const winPath = join(localAppData, 'Programs', 'Antigravity IDE', 'Antigravity IDE.exe');
     return existsSync(winPath) ? winPath : null;
   }
+
+  if (process.platform === 'linux') return linuxAntigravityBinary();
 
   if (process.platform !== 'darwin') return null;
 
@@ -217,8 +281,8 @@ export function launchAntigravityApp(
     };
     const binaryPath = findAntigravityAppBinary();
     if (!binaryPath) {
-      console.error('Antigravity app bundle not found at "/Applications/Antigravity.app".');
-      console.error('Please make sure Antigravity is installed on your Mac.');
+      console.error('Antigravity app not found.');
+      console.error('Please make sure Antigravity is installed.');
       settle(127);
       return;
     }
@@ -231,7 +295,12 @@ export function launchAntigravityApp(
     ];
 
     const child = spawn(binaryPath, args, {
-      stdio: 'inherit',
+      // GUI app: don't inherit the terminal's stdio (its Electron logs would
+      // corrupt relay's interactive prompts) and detach into its own process
+      // group so a Ctrl+C meant for the relay gateway doesn't also kill the app
+      // mid-render. Mirrors the Claude Desktop launcher.
+      stdio: 'ignore',
+      detached: true,
       env,
     });
 
@@ -270,8 +339,8 @@ export function launchAntigravityIde(
   return new Promise((resolve) => {
     const binaryPath = findAntigravityIdeBinary();
     if (!binaryPath) {
-      console.error('Antigravity IDE app bundle not found at "/Applications/Antigravity IDE.app".');
-      console.error('Please make sure Antigravity IDE is installed on your Mac.');
+      console.error('Antigravity IDE not found.');
+      console.error('Please make sure Antigravity IDE is installed.');
       resolve(127);
       return;
     }
@@ -289,7 +358,12 @@ export function launchAntigravityIde(
     ];
 
     const child = spawn(binaryPath, args, {
-      stdio: 'inherit',
+      // GUI app: don't inherit the terminal's stdio (its Electron logs would
+      // corrupt relay's interactive prompts) and detach into its own process
+      // group so a Ctrl+C meant for the relay gateway doesn't also kill the app
+      // mid-render. Mirrors the Claude Desktop launcher.
+      stdio: 'ignore',
+      detached: true,
       env,
     });
 

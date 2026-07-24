@@ -53,7 +53,7 @@ ${pc.bold('Description:')}
   Keep this terminal open while using Claude.
 
 ${pc.bold('Platforms:')}
-  macOS and Windows. Linux is not supported.
+  macOS, Windows, and Linux.
 
 ${pc.bold('Cleanup:')}
   Ctrl+C stops the proxy and restores your previous Claude config.

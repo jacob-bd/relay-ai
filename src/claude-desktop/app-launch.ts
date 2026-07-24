@@ -1,5 +1,5 @@
 import { execSync, spawn } from 'node:child_process';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import * as p from '@clack/prompts';
@@ -7,8 +7,12 @@ import * as p from '@clack/prompts';
 const CLAUDE_BUNDLE_ID = 'com.anthropic.claudefordesktop';
 
 export function claudeAppSupported(): void {
-  if (process.platform !== 'darwin' && process.platform !== 'win32') {
-    throw new Error('Claude Desktop launch is supported on macOS and Windows only.');
+  if (
+    process.platform !== 'darwin'
+    && process.platform !== 'win32'
+    && process.platform !== 'linux'
+  ) {
+    throw new Error('Claude Desktop launch is supported on macOS, Windows, and Linux only.');
   }
 }
 
@@ -55,6 +59,82 @@ function winClaudeExeCandidates(): string[] {
   return out;
 }
 
+function linuxClaudeCandidates(): string[] {
+  return [
+    // Wrapper launcher installed by the .deb/.rpm — sets up the Electron sandbox.
+    '/usr/bin/claude-desktop',
+    '/usr/lib/claude-desktop/claude-desktop',
+    '/opt/Claude/claude-desktop',
+    join(homedir(), '.local', 'bin', 'claude-desktop'),
+  ];
+}
+
+function linuxWhichClaude(): string | null {
+  try {
+    const out = run('command -v claude-desktop');
+    return out && existsSync(out) ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * PIDs of every claude-desktop process (main + Electron helpers).
+ * `pgrep -x` matches the exact process name only — never a substring — so it
+ * can't collide with `relay-ai claude-app` or unrelated processes.
+ */
+function linuxMatchingPids(): number[] {
+  try {
+    const out = run('pgrep -x claude-desktop');
+    return out
+      .split(/\s+/)
+      .map(s => Number.parseInt(s, 10))
+      .filter(n => Number.isFinite(n) && n > 0);
+  } catch {
+    // pgrep exits non-zero (→ throws) when there are no matches.
+    return [];
+  }
+}
+
+/**
+ * The Electron main process is the only claude-desktop process launched
+ * without a `--type=` flag (helpers are `--type=renderer|gpu-process|zygote|…`).
+ * Signalling it triggers a graceful whole-app shutdown.
+ */
+function linuxMainPid(): number | null {
+  const pids = linuxMatchingPids();
+  for (const pid of pids) {
+    try {
+      // /proc/<pid>/cmdline is NUL-separated; helpers carry a --type= arg.
+      const cmdline = readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+      if (!cmdline.includes('--type=')) return pid;
+    } catch {
+      /* process may have exited between listing and read */
+    }
+  }
+  return pids[0] ?? null;
+}
+
+function linuxQuit(): void {
+  const pid = linuxMainPid();
+  if (pid === null) return;
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    /* already gone */
+  }
+}
+
+function linuxForceQuit(): void {
+  for (const pid of linuxMatchingPids()) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
 function mdfindClaudeApp(): string | null {
   try {
     const out = run(`mdfind "kMDItemCFBundleIdentifier == '${CLAUDE_BUNDLE_ID}'"`);
@@ -84,6 +164,14 @@ export function findClaudeApp(): string | null {
       );
       if (appId) return `shell:AppsFolder\\${appId}`;
     } catch { /* ignore */ }
+  }
+  if (process.platform === 'linux') {
+    for (const path of linuxClaudeCandidates()) {
+      try {
+        if (existsSync(path)) return path;
+      } catch { /* ignore */ }
+    }
+    return linuxWhichClaude();
   }
   return null;
 }
@@ -121,6 +209,7 @@ function winHasWindow(): boolean {
 export function isClaudeAppRunning(): boolean {
   if (process.platform === 'darwin') return darwinIsRunning();
   if (process.platform === 'win32') return winMatchingPids().length > 0 || winHasWindow();
+  if (process.platform === 'linux') return linuxMatchingPids().length > 0;
   return false;
 }
 
@@ -137,12 +226,16 @@ async function waitForQuit(timeoutMs: number): Promise<boolean> {
     // old process (and its old config) still running.
     if (process.platform === 'win32') {
       if (winMatchingPids().length === 0) return true;
+    } else if (process.platform === 'linux') {
+      if (linuxMatchingPids().length === 0) return true;
     } else if (!darwinIsRunning()) {
       return true;
     }
     await sleep(200);
   }
-  return process.platform === 'win32' ? winMatchingPids().length === 0 : !darwinIsRunning();
+  if (process.platform === 'win32') return winMatchingPids().length === 0;
+  if (process.platform === 'linux') return linuxMatchingPids().length === 0;
+  return !darwinIsRunning();
 }
 
 function openClaudeAppAt(path: string): void {
@@ -161,6 +254,12 @@ function openClaudeAppAt(path: string): void {
     } else {
       runPowerShell(`Start-Process -FilePath '${path.replace(/'/g, "''")}'`);
     }
+    return;
+  }
+  if (process.platform === 'linux') {
+    // No userData override — the app must resolve its default ~/.config/Claude so
+    // the 3P config at ~/.config/Claude-3p (getPath('userData') + "-3p") is picked up.
+    spawn(path, [], { stdio: 'ignore', detached: true }).unref();
   }
 }
 
@@ -191,6 +290,7 @@ function winQuitGraceful(): void {
 export function quitClaudeAppGracefully(): void {
   if (process.platform === 'darwin') darwinQuit();
   else if (process.platform === 'win32') winQuitGraceful();
+  else if (process.platform === 'linux') linuxQuit();
 }
 
 function winForceQuit(): void {
@@ -218,10 +318,12 @@ export async function launchOrRestartClaudeApp(
   }
 
   if (process.platform === 'darwin') darwinQuit();
-  else winQuitGraceful();
+  else if (process.platform === 'win32') winQuitGraceful();
+  else if (process.platform === 'linux') linuxQuit();
 
   if (!(await waitForQuit(5000))) {
     if (process.platform === 'win32') winForceQuit();
+    else if (process.platform === 'linux') linuxForceQuit();
     await waitForQuit(5000);
   }
 
