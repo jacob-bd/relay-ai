@@ -443,7 +443,16 @@ async function runTemplateAddFlow(): Promise<number> {
   }
 
   let baseUrlOverride: string | undefined;
-  if (template.urlPrompt) {
+  if (template.accountIdPrompt) {
+    const accountInput = await p.text({
+      message: template.accountIdPrompt,
+      placeholder: 'e.g. 4ff191dac2d0bd7538cb1c9126594de3',
+      validate: v => v.trim() ? undefined : 'Account ID is required',
+    });
+    if (p.isCancel(accountInput)) return 0;
+    const accountId = String(accountInput).trim();
+    baseUrlOverride = template.defaultBaseUrl?.replace('{ACCOUNT_ID}', accountId);
+  } else if (template.urlPrompt) {
     const urlInput = await p.text({
       message: template.urlPrompt,
       initialValue: template.defaultBaseUrl,

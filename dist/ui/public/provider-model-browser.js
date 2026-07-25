@@ -22,7 +22,10 @@ export function getProviderModelPage(models, query, requestedPage) {
   };
 }
 
-export function formatModelPrice(cost) {
+export function formatModelPrice(cost, isFree = false, label = 'FREE') {
+  if (isFree || (cost && cost.input === 0 && cost.output === 0)) {
+    return `<span class="free-badge">${label}</span>`;
+  }
   if (!cost || !Number.isFinite(cost.input) || !Number.isFinite(cost.output)) return '—';
   const format = value => `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
   return `${format(cost.input)} / ${format(cost.output)}`;

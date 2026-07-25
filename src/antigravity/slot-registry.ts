@@ -189,7 +189,17 @@ const AGY_NATIVE_SLOT_REGISTRY: AgySlotDefinition[] = [
   },
 ];
 
-const KNOWN_COMPATIBLE_AGY_VERSIONS = new Set(['1.0.10']);
+const KNOWN_COMPATIBLE_AGY_VERSIONS = new Set([
+  '1.0.10',
+  '1.1.0',
+  '1.1.1',
+  '1.1.2',
+  '1.1.3',
+  '1.1.4',
+  '1.1.5',
+  '1.1.6',
+  '1.1.7',
+]);
 const KNOWN_INCOMPATIBLE_AGY_VERSIONS = new Set(['1.0.9']);
 
 function withFixtureModel(definition: AgySlotDefinition, model: string): AgySlotDefinition {
@@ -299,7 +309,14 @@ export function evaluateAgySwitchCompatibility(opts: {
   }
 
   if (opts.version && !KNOWN_COMPATIBLE_AGY_VERSIONS.has(opts.version)) {
-    warnings.push(`Unvalidated AGY version ${opts.version}; fixture shape matches, so multi-model switching remains enabled.`);
+    return {
+      mode: 'single-model',
+      validatedSwitchSlotCount: validation.switchSlots.length,
+      warnings: [
+        ...warnings,
+        `Unvalidated AGY version ${opts.version}; falling back to single-model mode for maximum stability.`,
+      ],
+    };
   } else if (!opts.version && !opts.versionReadError) {
     warnings.push('AGY version is unknown; fixture shape matches, so multi-model switching remains enabled.');
   }

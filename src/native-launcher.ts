@@ -244,12 +244,12 @@ export function getTerminalLaunchCommand(
 ): string {
   const fullCmd = [binPath, ...args]
     .map(arg => {
-      // Whitelist: alphanumeric, dash, underscore, dot, slash (for paths).
+      // Whitelist: alphanumeric, dash, underscore, dot, slash, colon, at-sign.
       // Anything else is rejected outright rather than escaped — the values
       // here (relay-ai binary path, provider/model ids) are always simple
       // identifiers, and there is no single escaping scheme that is safe for
       // all three downstream shells (macOS sh, Linux sh, Windows cmd.exe).
-      if (!/^[a-zA-Z0-9\-_./:]+$/.test(arg)) {
+      if (!/^[a-zA-Z0-9\-_./:@]+$/.test(arg)) {
         throw new Error(`Unsafe launch argument: ${JSON.stringify(arg)}`);
       }
       return arg;

@@ -73,6 +73,14 @@ Relay restricts these entries to models suitable for interactive coding and agen
 image/audio-only and no-tool catalog rows are not offered. Token Plan also remains available through
 Relay's API Server because it is commonly used as a coding/agent bridge.
 
+### Cloudflare Workers AI
+- **Description**: Cloudflare's hosted inference platform for open-weight models (Llama, Gemma, GLM, Kimi, and others).
+- **Base URL**: `https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/v1`
+- **Setup**: You need both a Cloudflare **Account ID** (from the Cloudflare dashboard) and an API token, not just an API key — the CLI prompts for the Account ID separately and substitutes it into the base URL.
+- **Gotchas / Known Issues**:
+  - Standard models get 10,000 free Neurons/day; this is a real rate limit and tool-heavy coding sessions (large system prompts, many MCP tools) can hit `HTTP 429 Too Many Requests` quickly, especially on the free tier.
+  - Many Cloudflare models have small context windows (24K–131K). Relay hides models below 128K from Claude Code, Codex, and Gemini (136K for Antigravity, which enforces a stricter internal minimum) since agent system prompts and tool definitions alone can consume 25K+ tokens.
+
 ### xAI
 - **Description**: API for Grok models.
 - **Base URL**: `https://api.x.ai/v1`

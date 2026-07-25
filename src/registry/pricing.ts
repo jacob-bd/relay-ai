@@ -220,7 +220,12 @@ export function enrichModelsWithPricing(
       lookupModelCost(index, model.id, platform) ??
       lookupModelCost(index, model.upstreamModelId, platform);
     if (!cost) return model;
-    const freeStatus = classifyFreeStatus({ model: { ...model, cost } });
+    const freeStatus = classifyFreeStatus({
+      model: { ...model, cost },
+      // Keep provider-granted free access (e.g. Cloudflare's daily allowance) when
+      // real pricing resolves later.
+      freeAccess: model.freeStatus === 'free_provider',
+    });
     return { ...model, cost, isFree: isFreeStatus(freeStatus), freeStatus };
   });
 }

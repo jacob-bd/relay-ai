@@ -13,6 +13,12 @@ const TEST_TIMEOUT_MS = 10_000;
 interface OpenAiModelListResponse {
   data?: ProviderModelListRow[];
   models?: ProviderModelListRow[];
+  result?: ProviderModelListRow[];
+}
+
+interface ProviderModelListRowProperty {
+  property_id?: string;
+  value?: string;
 }
 
 interface ProviderModelListRow {
@@ -24,6 +30,7 @@ interface ProviderModelListRow {
   context_window?: number;
   isFree?: boolean;
   pricing?: Record<string, string | number | undefined>;
+  properties?: ProviderModelListRowProperty[];
   use_responses_lite?: boolean;
   prefer_websockets?: boolean;
 }
@@ -33,8 +40,11 @@ function modelFormatForNpm(npm: string): 'anthropic' | 'openai' {
 }
 
 function modelsUrl(baseUrl: string, template: ProviderTemplate): string {
-  const trimmed = baseUrl.replace(/\/$/, '');
+  let trimmed = baseUrl.replace(/\/$/, '');
   if (template.modelsPath) {
+    if (trimmed.endsWith('/v1') && (template.modelsPath.startsWith('/models') || template.modelsPath.startsWith('/ai/models'))) {
+      trimmed = trimmed.slice(0, -3);
+    }
     const path = template.modelsPath.startsWith('/') ? template.modelsPath : `/${template.modelsPath}`;
     return `${trimmed}${path}`;
   }
@@ -97,21 +107,73 @@ function parseNativePricing(pricing: ProviderModelListRow['pricing']): CachedMod
   return cost;
 }
 
+function parseCloudflarePricing(priceValue: unknown): CachedModel['cost'] | undefined {
+  if (!Array.isArray(priceValue)) return undefined;
+  let input: number | undefined;
+  let output: number | undefined;
+  for (const item of priceValue) {
+    if (typeof item !== 'object' || !item) continue;
+    const row = item as Record<string, unknown>;
+    const unit = String(row.unit || '').toLowerCase();
+    const price = Number(row.price);
+    if (!Number.isFinite(price)) continue;
+    if (unit.includes('input')) input = price;
+    else if (unit.includes('output')) output = price;
+  }
+  if (input === undefined && output === undefined) return undefined;
+  return { input: input ?? 0, output: output ?? 0 };
+}
+
+/** Legacy Cloudflare models that reject function-calling schemas. */
+const LEGACY_NON_TOOL_MODELS = new Set([
+  '@cf/google/gemma-2b-it-lora',
+  '@cf/google/gemma-7b-it-lora',
+  '@cf/meta-llama/llama-2-7b-chat-hf-lora',
+  '@cf/mistral/mistral-7b-instruct-v0.2-lora',
+]);
+
 function parseModelList(body: OpenAiModelListResponse, npm: string): CachedModel[] {
-  const rows = body.data ?? body.models ?? [];
+  const rows = body.data ?? body.models ?? body.result ?? [];
   const format = modelFormatForNpm(npm);
   const models: CachedModel[] = [];
 
   for (const row of rows) {
-    const rawId = row.id?.trim();
+    const rawId = (row.name?.startsWith('@cf/') || row.name?.startsWith('@hf/') ? row.name : row.id)?.trim();
     if (!rawId) continue;
+
+    let contextWindowFromProps: number | undefined;
+    let isFreeFromProps: boolean | undefined;
+    let costFromProps: CachedModel['cost'] | undefined;
+    if (Array.isArray(row.properties)) {
+      if (LEGACY_NON_TOOL_MODELS.has(rawId)) continue;
+
+      const cwProp = row.properties.find(p => p.property_id === 'context_window');
+      if (cwProp?.value) contextWindowFromProps = toNumber(cwProp.value as string | number);
+      const priceProp = row.properties.find(p => p.property_id === 'price');
+      const isRestrictedPaidPlan = rawId.includes('/glm-') || rawId.includes('/kimi-');
+      if (isRestrictedPaidPlan) {
+        costFromProps = parseCloudflarePricing(priceProp?.value);
+        isFreeFromProps = false;
+      } else {
+        // Cloudflare provides 10,000 free Neurons per day for all standard models
+        isFreeFromProps = true;
+        if (priceProp?.value) {
+          costFromProps = parseCloudflarePricing(priceProp.value);
+        }
+      }
+    }
+
     const { id, upstreamModelId } = normalizeGoogleModelId(rawId, npm);
-    const family = id.split(/[-/:]/)[0] ?? id;
-    const cost = parseNativePricing(row.pricing);
+    const family = id.replace(/^@[a-z0-9_-]+\//i, '').split(/[-/:]/)[0] ?? id;
+    const cost = costFromProps ?? parseNativePricing(row.pricing);
     const freeStatus = classifyFreeStatus({
       model: { cost, isFree: row.isFree },
+      // Cloudflare standard models carry a list price but are covered by the free
+      // daily Neuron allowance, so free access is a provider rule, not a price.
+      freeAccess: isFreeFromProps === true,
     });
     const contextWindow =
+      contextWindowFromProps ??
       row.context_length ??
       row.contextWindow ??
       row.context_window ??

@@ -12,6 +12,7 @@ import {
   RELAY_CASCADE_ANCHOR_ID,
   RELAY_CASCADE_FALLBACK_ID,
   RELAY_CASCADE_PLAN_ANCHOR_ID,
+  ANTIGRAVITY_MIN_CONTEXT_WINDOW,
   type AntigravityRoute,
   type CatalogFixture,
 } from '../src/antigravity/catalog.js';
@@ -118,7 +119,7 @@ describe('antigravity catalog', () => {
     expect(entry.modelVersion).toBe('relay-ai__zen__deepseek-v4-flash-free');
     expect(entry.modelVersionId).toBe('relay-ai__zen__deepseek-v4-flash-free');
     expect(entry.maxTokens).toBe(128000);
-    expect(entry.maxOutputTokens).toBe(65536);
+    expect(entry.maxOutputTokens).toBe(8192);
     expect(entry.quotaInfo).toEqual({ remainingFraction: 1, resetTime: '2026-06-23T02:00:57Z' });
   });
 
@@ -132,8 +133,8 @@ describe('antigravity catalog', () => {
       experiments: Record<string, { stringValue: string }>;
     }).experiments;
     const config = JSON.parse(experiments.CASCADE_USE_EXPERIMENT_CHECKPOINTER!.stringValue);
-    expect(config.max_token_limit).toBe('62464');
-    expect(config.token_threshold).toBe('46848');
+    expect(config.max_token_limit).toBe('119808');
+    expect(config.token_threshold).toBe('50000');
     expect(config.enabled).toBe(true);
   });
 
@@ -149,6 +150,18 @@ describe('antigravity catalog', () => {
       modelExperiments.experiments.CASCADE_USE_EXPERIMENT_CHECKPOINTER!.stringValue,
     );
     expect(config.max_token_limit).toBe('128000');
+  });
+
+  it('reserves the input room agy demands for mid-sized context windows', () => {
+    // agy only starts when contextWindow - maxOutputTokens >= 128000.
+    for (const contextWindow of [ANTIGRAVITY_MIN_CONTEXT_WINDOW, 160000, 256000]) {
+      const entry = buildRelayCatalogEntry(
+        { ...routes[0]!, contextWindow },
+        fixture.models['gemini-3.5-flash-low']!,
+      );
+      expect(entry.maxTokens! - entry.maxOutputTokens!, String(contextWindow))
+        .toBeGreaterThanOrEqual(128000);
+    }
   });
 
   it('injects relay models into the catalog', () => {
@@ -540,7 +553,7 @@ describe('antigravity route resolution', () => {
 
     expect(result).toMatchObject([
       {
-        catalogId: 'relay-ai__xai-oauth__grok-4.3',
+        catalogId: 'relay-ai__xai-oauth__grok-4_3',
         providerId: 'xai-oauth',
         displayName: 'Grok 4.3 (Relay - xAI SuperGrok)',
         apiKey: 'oauth-token',
@@ -548,7 +561,7 @@ describe('antigravity route resolution', () => {
         oauthAccountId: 'acct-123',
       },
       {
-        catalogId: 'relay-ai__xai__grok-4.3',
+        catalogId: 'relay-ai__xai__grok-4_3',
         providerId: 'xai',
         displayName: 'Grok 4.3 (Relay - xAI API)',
         apiKey: 'api-key',

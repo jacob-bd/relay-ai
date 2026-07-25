@@ -85,12 +85,33 @@ function withCascadeCheckpointer(
   return entry;
 }
 
+/**
+ * agy refuses to construct an executor unless a model leaves this much room for input:
+ * `context window - max output tokens >= ANTIGRAVITY_REQUIRED_INPUT_TOKENS`.
+ */
+export const ANTIGRAVITY_REQUIRED_INPUT_TOKENS = 128000;
+
+/** Smallest output budget worth launching with; also sets the usable context floor. */
+const ANTIGRAVITY_MIN_OUTPUT_TOKENS = 8192;
+
+/** Context window a model needs before agy will start with it. */
+export const ANTIGRAVITY_MIN_CONTEXT_WINDOW =
+  ANTIGRAVITY_REQUIRED_INPUT_TOKENS + ANTIGRAVITY_MIN_OUTPUT_TOKENS;
+
 function applyRouteContextBounds(
   entry: CatalogModelEntry,
   route: AntigravityRoute,
 ): CatalogModelEntry {
   const maxTokenLimit = route.contextWindow ?? 128000;
-  const maxOutputTokens = Math.min(entry.maxOutputTokens ?? 65536, maxTokenLimit);
+  // Reserve the input room agy demands and give what is left to output, so models between
+  // the floor and ~193K launch instead of tripping agy's executor precondition.
+  const maxOutputTokens = Math.min(
+    entry.maxOutputTokens ?? 65536,
+    Math.max(
+      ANTIGRAVITY_MIN_OUTPUT_TOKENS,
+      maxTokenLimit - ANTIGRAVITY_REQUIRED_INPUT_TOKENS,
+    ),
+  );
   const checkpointTokenLimit = Math.min(
     128000,
     Math.max(1, maxTokenLimit - maxOutputTokens),
@@ -279,7 +300,8 @@ export function buildAntigravityRoutes(
 
     const favModel = fav.model;
     const modelId = favModel.id;
-    const catalogId = `relay-ai__${fav.providerId}__${modelId}`;
+    const safeModelSlug = modelId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const catalogId = `relay-ai__${fav.providerId}__${safeModelSlug}`;
 
     if (seen.has(catalogId)) continue;
     seen.add(catalogId);

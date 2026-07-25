@@ -73,6 +73,13 @@ export const OPENCODE_CACHE_PATH = join(homedir(), '.cache', 'opencode', 'models
 /** Max models in favorites list and mid-session /model switch catalog. */
 export const MAX_MODEL_CATALOG = 20;
 
+/**
+ * Smallest context window worth offering: agent system prompts plus tool definitions
+ * consume ~25K before the first user message, so smaller models fail immediately.
+ * Antigravity enforces its own, higher floor (see `ANTIGRAVITY_MIN_CONTEXT_WINDOW`).
+ */
+export const MIN_CONTEXT_WINDOW = 128000;
+
 /** Vercel AI SDK package for Anthropic Claude models on Google Vertex AI (ADC auth). */
 export const VERTEX_ANTHROPIC_NPM = '@ai-sdk/google-vertex/anthropic';
 

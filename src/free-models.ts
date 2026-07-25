@@ -33,7 +33,14 @@ export function classifyFreeStatus(opts: {
   model: { cost?: ModelCost; isFree?: boolean; freeStatus?: FreeStatus };
   providerId?: string;
   templateId?: string;
+  /**
+   * The provider gives free access to this model despite a published list price
+   * (e.g. Cloudflare's 10,000 free Neurons/day on standard models). Only set this
+   * from a provider rule — a plain `isFree` flag must never outrank real pricing.
+   */
+  freeAccess?: boolean;
 }): FreeStatus {
+  if (opts.freeAccess === true) return 'free_provider';
   if (isFreeProviderAccess(opts.providerId, opts.templateId)) return 'free_provider';
   if (isZeroCost(opts.model.cost)) return 'verified_free';
   if (isPaidCost(opts.model.cost)) return 'paid';

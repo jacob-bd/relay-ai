@@ -2,7 +2,7 @@
 import {
   getTemplateById,
   init_provider_templates
-} from "./chunk-EJONCU3B.js";
+} from "./chunk-HXGZ4CTV.js";
 
 // src/constants.ts
 import { homedir } from "os";
@@ -157,6 +157,7 @@ var PARENT_SESSION_ENV_VARS = [
 ];
 var OPENCODE_CACHE_PATH = join(homedir(), ".cache", "opencode", "models.json");
 var MAX_MODEL_CATALOG = 20;
+var MIN_CONTEXT_WINDOW = 128e3;
 var VERTEX_ANTHROPIC_NPM = "@ai-sdk/google-vertex/anthropic";
 function classifyModelFormat(modelId, providerNpm) {
   if (providerNpm === "@ai-sdk/anthropic") return "anthropic";
@@ -1472,12 +1473,35 @@ function providerSelectOption(provider) {
 }
 function modelSelectOption(model, hint) {
   const label = formatCodexModelLabel(model);
-  const defaultHint = hint ?? (model.name !== model.id ? model.id : model.brand || model.family || "");
+  let defaultHint = hint;
+  if (!defaultHint) {
+    const isCloudflare = model.id.startsWith("@cf/") || model.id.startsWith("@hf/");
+    if (model.isFree) {
+      defaultHint = pc.green(isCloudflare ? "Free (10k/day)" : "Free");
+    } else if (model.cost && (model.cost.input > 0 || model.cost.output > 0)) {
+      const inputStr = `$${model.cost.input}`;
+      const outputStr = `$${model.cost.output}`;
+      defaultHint = pc.dim(isCloudflare ? `Paid plan req (${inputStr}/${outputStr} 1M)` : `${inputStr}/${outputStr} 1M`);
+    } else {
+      defaultHint = model.name !== model.id ? model.id : model.brand || model.family || "";
+    }
+  } else if (hint === "recent") {
+    const isCloudflare = model.id.startsWith("@cf/") || model.id.startsWith("@hf/");
+    const freeLabel = isCloudflare ? "Free (10k/day)" : "Free";
+    const freeSuffix = model.isFree ? " \xB7 " + pc.green(freeLabel) : "";
+    defaultHint = fmtRecentHint() + freeSuffix;
+  }
+  const ctxSuffix = fmtContextWindow(model.contextWindow);
   return {
     value: model.id,
     label: fmtModel(label),
-    hint: hint === "recent" ? fmtRecentHint() : defaultHint
+    hint: defaultHint && ctxSuffix ? `${defaultHint} \xB7 ${ctxSuffix}` : defaultHint || ctxSuffix
   };
+}
+function fmtContextWindow(contextWindow) {
+  if (!contextWindow) return "";
+  const k = contextWindow >= 1e3 ? `${Math.round(contextWindow / 1e3)}k` : String(contextWindow);
+  return pc.dim(`${k} ctx`);
 }
 function navOption(value, label, hint = "") {
   return { value, label: pc.cyan(label), hint };
@@ -3689,6 +3713,7 @@ function isFreeProviderAccess(providerId, templateId) {
   return FREE_PROVIDER_IDS.has((providerId ?? "").toLowerCase()) || FREE_PROVIDER_IDS.has((templateId ?? "").toLowerCase());
 }
 function classifyFreeStatus(opts) {
+  if (opts.freeAccess === true) return "free_provider";
   if (isFreeProviderAccess(opts.providerId, opts.templateId)) return "free_provider";
   if (isZeroCost(opts.model.cost)) return "verified_free";
   if (isPaidCost(opts.model.cost)) return "paid";
@@ -3850,7 +3875,12 @@ function enrichModelsWithPricing(models, index, platform) {
   return models.map((model) => {
     const cost = lookupModelCost(index, model.id, platform) ?? lookupModelCost(index, model.upstreamModelId, platform);
     if (!cost) return model;
-    const freeStatus = classifyFreeStatus({ model: { ...model, cost } });
+    const freeStatus = classifyFreeStatus({
+      model: { ...model, cost },
+      // Keep provider-granted free access (e.g. Cloudflare's daily allowance) when
+      // real pricing resolves later.
+      freeAccess: model.freeStatus === "free_provider"
+    });
     return { ...model, cost, isFree: isFreeStatus(freeStatus), freeStatus };
   });
 }
@@ -7288,15 +7318,706 @@ function localProvidersToServerModels(localProviders) {
   );
 }
 
+// src/antigravity/slot-registry.ts
+var AGY_SLOT_VALIDATION_SOURCE = "AGY CLI 1.0.10 / Antigravity IDE 2.1.1 fixture capture 2026-06-23";
+var AGY_NATIVE_SLOT_REGISTRY = [
+  {
+    slotId: "gemini-3.5-flash-low",
+    model: "MODEL_PLACEHOLDER_M20",
+    role: "agent-switch",
+    status: "validated",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE
+  },
+  {
+    slotId: "gemini-3.5-flash-extra-low",
+    model: "MODEL_PLACEHOLDER_M187",
+    role: "agent-switch",
+    status: "validated",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE
+  },
+  {
+    slotId: "gemini-3.1-pro-low",
+    model: "MODEL_PLACEHOLDER_M36",
+    role: "agent-switch",
+    status: "validated",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE
+  },
+  {
+    slotId: "gemini-pro-agent",
+    model: "MODEL_PLACEHOLDER_M16",
+    role: "agent-switch",
+    status: "validated",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE
+  },
+  {
+    slotId: "claude-sonnet-4-6",
+    model: "MODEL_PLACEHOLDER_M35",
+    role: "agent-switch",
+    status: "validated",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE
+  },
+  {
+    slotId: "claude-opus-4-6-thinking",
+    model: "MODEL_PLACEHOLDER_M26",
+    role: "agent-switch",
+    status: "validated",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE
+  },
+  {
+    slotId: "gpt-oss-120b-medium",
+    model: "MODEL_OPENAI_GPT_OSS_120B_MEDIUM",
+    role: "agent-switch",
+    status: "validated",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE
+  },
+  {
+    slotId: "gemini-3-flash-agent",
+    model: "MODEL_PLACEHOLDER_M132",
+    role: "cascade-plan",
+    status: "reserved",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE,
+    notes: "Visible in agentModelSorts, but reserved for cascade plan construction."
+  },
+  {
+    slotId: "gemini-2.5-flash",
+    model: "MODEL_GOOGLE_GEMINI_2_5_FLASH",
+    role: "cascade-intent",
+    status: "reserved",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE
+  },
+  {
+    slotId: "gemini-2.5-flash-lite",
+    model: "MODEL_GOOGLE_GEMINI_2_5_FLASH_LITE",
+    role: "cascade-fallback",
+    status: "reserved",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE
+  },
+  {
+    slotId: "gemini-3.1-pro-high",
+    model: "MODEL_PLACEHOLDER_M37",
+    role: "agent-switch",
+    status: "candidate",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE,
+    notes: "Model-shaped fixture entry; requires live switching proof before promotion."
+  },
+  {
+    slotId: "gemini-2.5-pro",
+    model: "MODEL_GOOGLE_GEMINI_2_5_PRO",
+    role: "agent-switch",
+    status: "candidate",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE,
+    notes: "Model-shaped fixture entry; requires live switching proof before promotion."
+  },
+  {
+    slotId: "gemini-2.5-flash-thinking",
+    model: "MODEL_GOOGLE_GEMINI_2_5_FLASH_THINKING",
+    role: "agent-switch",
+    status: "candidate",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE,
+    notes: "Model-shaped fixture entry; requires live switching proof before promotion."
+  },
+  {
+    slotId: "gemini-3-flash",
+    model: "MODEL_PLACEHOLDER_M18",
+    role: "command",
+    status: "candidate",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE,
+    notes: "Command model in the fixture; not switch-safe without live proof."
+  },
+  {
+    slotId: "gemini-3.1-flash-lite",
+    model: "MODEL_PLACEHOLDER_M50",
+    role: "cascade-checkpoint",
+    status: "candidate",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE,
+    notes: "Checkpoint/search/commit slot; route as helper until live proof exists."
+  },
+  {
+    slotId: "gemini-3.1-flash-image",
+    model: "MODEL_PLACEHOLDER_M21",
+    role: "image",
+    status: "candidate",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE,
+    notes: "Image generation slot; not switch-safe without live proof."
+  },
+  {
+    slotId: "tab_jump_flash_lite_preview",
+    model: "MODEL_PLACEHOLDER_M28",
+    role: "tab",
+    status: "unsafe",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE
+  },
+  {
+    slotId: "tab_flash_lite_preview",
+    model: "MODEL_PLACEHOLDER_M19",
+    role: "tab",
+    status: "unsafe",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE
+  },
+  {
+    slotId: "chat_20706",
+    model: "MODEL_CHAT_20706",
+    role: "chat",
+    status: "unsafe",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE
+  },
+  {
+    slotId: "chat_23310",
+    model: "MODEL_CHAT_23310",
+    role: "chat",
+    status: "unsafe",
+    validatedWith: AGY_SLOT_VALIDATION_SOURCE
+  }
+];
+var KNOWN_COMPATIBLE_AGY_VERSIONS = /* @__PURE__ */ new Set([
+  "1.0.10",
+  "1.1.0",
+  "1.1.1",
+  "1.1.2",
+  "1.1.3",
+  "1.1.4",
+  "1.1.5",
+  "1.1.6",
+  "1.1.7"
+]);
+var KNOWN_INCOMPATIBLE_AGY_VERSIONS = /* @__PURE__ */ new Set(["1.0.9"]);
+function withFixtureModel(definition, model) {
+  return model === definition.model ? definition : { ...definition, model };
+}
+function assertNoDuplicateSwitchEnums(fixture, definitions) {
+  const seen = /* @__PURE__ */ new Map();
+  for (const definition of definitions) {
+    if (definition.status !== "validated") continue;
+    const actualModel = fixture.models[definition.slotId]?.model;
+    if (!actualModel) continue;
+    const previousSlotId = seen.get(actualModel);
+    if (previousSlotId) {
+      throw new Error(
+        `Duplicate AGY switch slot enum ${actualModel}: ${previousSlotId} and ${definition.slotId}`
+      );
+    }
+    seen.set(actualModel, definition.slotId);
+  }
+}
+function validateAgySlotRegistry(fixture) {
+  assertNoDuplicateSwitchEnums(fixture, AGY_NATIVE_SLOT_REGISTRY);
+  const switchSlots = [];
+  const reservedSlots = [];
+  const candidateSlots = [];
+  const warnings = [];
+  for (const definition of AGY_NATIVE_SLOT_REGISTRY) {
+    const entry = fixture.models[definition.slotId];
+    if (!entry) {
+      if (definition.status === "validated" || definition.status === "reserved") {
+        warnings.push(`AGY slot ${definition.slotId} missing from fixture`);
+      }
+      continue;
+    }
+    if (entry.model !== definition.model) {
+      warnings.push(
+        `AGY slot ${definition.slotId} expected ${definition.model} but fixture has ${entry.model}`
+      );
+      continue;
+    }
+    if (definition.status === "validated") {
+      switchSlots.push(withFixtureModel(definition, entry.model));
+    } else if (definition.status === "reserved") {
+      reservedSlots.push(withFixtureModel(definition, entry.model));
+    } else if (definition.status === "candidate") {
+      candidateSlots.push(withFixtureModel(definition, entry.model));
+    }
+  }
+  return { switchSlots, reservedSlots, candidateSlots, warnings };
+}
+function getValidatedAgySwitchSlots(fixture) {
+  return validateAgySlotRegistry(fixture).switchSlots;
+}
+function evaluateAgySwitchCompatibility(opts) {
+  const validation = validateAgySlotRegistry(opts.fixture);
+  const shapeMatches = validation.warnings.length === 0 && validation.switchSlots.length > 0;
+  const warnings = [];
+  if (opts.versionReadError) {
+    warnings.push(`Could not read agy --version (${opts.versionReadError}); validating AGY fixture shape instead.`);
+  }
+  if (opts.version && KNOWN_INCOMPATIBLE_AGY_VERSIONS.has(opts.version)) {
+    return {
+      mode: "single-model",
+      validatedSwitchSlotCount: validation.switchSlots.length,
+      warnings: [
+        ...warnings,
+        `Known-incompatible AGY version ${opts.version}; falling back to single-model mode.`
+      ]
+    };
+  }
+  if (!shapeMatches) {
+    return {
+      mode: "single-model",
+      validatedSwitchSlotCount: validation.switchSlots.length,
+      warnings: [
+        ...warnings,
+        ...validation.warnings,
+        "AGY fixture shape does not match the validated slot registry; falling back to single-model mode."
+      ]
+    };
+  }
+  if (opts.version && !KNOWN_COMPATIBLE_AGY_VERSIONS.has(opts.version)) {
+    return {
+      mode: "single-model",
+      validatedSwitchSlotCount: validation.switchSlots.length,
+      warnings: [
+        ...warnings,
+        `Unvalidated AGY version ${opts.version}; falling back to single-model mode for maximum stability.`
+      ]
+    };
+  } else if (!opts.version && !opts.versionReadError) {
+    warnings.push("AGY version is unknown; fixture shape matches, so multi-model switching remains enabled.");
+  }
+  return {
+    mode: "multi-model",
+    validatedSwitchSlotCount: validation.switchSlots.length,
+    warnings
+  };
+}
+
+// src/antigravity/catalog.ts
+var RELAY_CASCADE_PLAN_MODEL = "MODEL_PLACEHOLDER_M132";
+var RELAY_AGENT_PLACEHOLDER = "MODEL_PLACEHOLDER_M20";
+var RELAY_CASCADE_CHECKPOINT_MODEL = "MODEL_PLACEHOLDER_M50";
+var RELAY_CASCADE_INTENT_MODEL = "MODEL_GOOGLE_GEMINI_2_5_FLASH";
+var RELAY_CASCADE_ANCHOR_ID = "gemini-3.5-flash-low";
+var RELAY_CASCADE_PLAN_ANCHOR_ID = "gemini-3-flash-agent";
+var RELAY_CASCADE_FALLBACK_ID = "gemini-2.5-flash-lite";
+var RELAY_CASCADE_INTENT_MODEL_ID = "gemini-2.5-flash";
+function withCascadeCheckpointer(entry, maxTokenLimit = 128e3) {
+  const tokenThreshold = Math.min(5e4, Math.floor(maxTokenLimit * 0.75));
+  const existingModelExperiments = entry.modelExperiments;
+  entry.modelExperiments = {
+    ...existingModelExperiments,
+    experiments: {
+      ...existingModelExperiments?.experiments ?? {},
+      CASCADE_USE_EXPERIMENT_CHECKPOINTER: {
+        stringValue: JSON.stringify({
+          strategy: "CHECKPOINT_STRATEGY_SAME_MODEL",
+          max_token_limit: String(maxTokenLimit),
+          token_threshold: String(tokenThreshold),
+          max_overhead_ratio: "0.15",
+          moving_window_size: "1",
+          enabled: true,
+          max_output_tokens: "16384",
+          checkpoint_model: RELAY_CASCADE_CHECKPOINT_MODEL,
+          use_last_planner_model: true,
+          is_sync: true,
+          max_user_requests: 10,
+          include_last_user_message: true,
+          include_conversation_log: false,
+          include_running_task_snapshots: true,
+          include_subagent_snapshots: true,
+          include_artifact_snapshots: true,
+          retry_config: {
+            max_retries: 0,
+            initial_sleep_duration_ms: 1e3,
+            exponential_multiplier: 2,
+            include_error_feedback: false
+          }
+        })
+      }
+    }
+  };
+  return entry;
+}
+var ANTIGRAVITY_REQUIRED_INPUT_TOKENS = 128e3;
+var ANTIGRAVITY_MIN_OUTPUT_TOKENS = 8192;
+var ANTIGRAVITY_MIN_CONTEXT_WINDOW = ANTIGRAVITY_REQUIRED_INPUT_TOKENS + ANTIGRAVITY_MIN_OUTPUT_TOKENS;
+function applyRouteContextBounds(entry, route) {
+  const maxTokenLimit = route.contextWindow ?? 128e3;
+  const maxOutputTokens = Math.min(
+    entry.maxOutputTokens ?? 65536,
+    Math.max(
+      ANTIGRAVITY_MIN_OUTPUT_TOKENS,
+      maxTokenLimit - ANTIGRAVITY_REQUIRED_INPUT_TOKENS
+    )
+  );
+  const checkpointTokenLimit = Math.min(
+    128e3,
+    Math.max(1, maxTokenLimit - maxOutputTokens)
+  );
+  entry.maxTokens = maxTokenLimit;
+  entry.maxOutputTokens = maxOutputTokens;
+  return withCascadeCheckpointer(entry, checkpointTokenLimit);
+}
+var RELAY_CASCADE_FALLBACK_ENTRY = withCascadeCheckpointer({
+  displayName: "Gemini 3.1 Flash Lite",
+  model: "MODEL_GOOGLE_GEMINI_2_5_FLASH_LITE",
+  apiProvider: "API_PROVIDER_GOOGLE_GEMINI",
+  modelProvider: "MODEL_PROVIDER_GOOGLE",
+  tokenizerType: "LLAMA_WITH_SPECIAL",
+  maxTokens: 1048576,
+  maxOutputTokens: 65535,
+  quotaInfo: { remainingFraction: 1 }
+});
+var RELAY_CASCADE_INTENT_MODEL_ENTRY = withCascadeCheckpointer({
+  ...RELAY_CASCADE_FALLBACK_ENTRY,
+  model: RELAY_CASCADE_INTENT_MODEL
+});
+function planRelayCatalogSlots(catalog, routes, templateKey) {
+  const validation = validateAgySlotRegistry(catalog);
+  const switchSlots = getValidatedAgySwitchSlots(catalog);
+  const templateSlot = switchSlots.find((slot) => slot.slotId === templateKey);
+  const orderedSlots = templateSlot ? [templateSlot, ...switchSlots.filter((slot) => slot.slotId !== templateKey)] : switchSlots;
+  if (routes.length > 0 && orderedSlots.length === 0) {
+    throw new Error("No validated AGY switch slots are available for the selected launch route");
+  }
+  const switchableRoutes = routes.slice(0, orderedSlots.length);
+  const skippedRoutes = routes.slice(orderedSlots.length);
+  const slots = switchableRoutes.map((route, index) => ({
+    slotId: orderedSlots[index].slotId,
+    route
+  }));
+  return {
+    slots,
+    switchableRoutes,
+    skippedRoutes,
+    validation
+  };
+}
+function resolveRelayCatalogSlots(catalog, routes, templateKey) {
+  return planRelayCatalogSlots(catalog, routes, templateKey).slots;
+}
+function buildRelayCatalogEntry(route, template) {
+  const entry = structuredClone(template);
+  entry.displayName = route.displayName;
+  entry.model = template.model ?? RELAY_AGENT_PLACEHOLDER;
+  entry.requestedModelId = route.catalogId;
+  entry.modelVersion = route.catalogId;
+  entry.modelVersionId = route.catalogId;
+  entry.quotaInfo = { remainingFraction: 1, resetTime: "2026-06-23T02:00:57Z" };
+  return applyRouteContextBounds(entry, route);
+}
+function buildRelayCatalogSlotEntry(route, template) {
+  const entry = structuredClone(template);
+  entry.displayName = route.displayName;
+  entry.quotaInfo = { remainingFraction: 1, resetTime: "2026-06-23T02:00:57Z" };
+  delete entry.requestedModelId;
+  delete entry.modelVersion;
+  delete entry.modelVersionId;
+  delete entry.isInternal;
+  return applyRouteContextBounds(entry, route);
+}
+function injectRelayModels(fixture, routes, templateKey) {
+  const result = structuredClone(fixture);
+  const template = fixture.models[templateKey];
+  if (!template) {
+    throw new Error(`Template model "${templateKey}" not found in catalog fixture`);
+  }
+  const seen = /* @__PURE__ */ new Set();
+  for (const route of routes) {
+    if (seen.has(route.catalogId)) {
+      throw new Error(`Catalog ID collision: ${route.catalogId}`);
+    }
+    if (fixture.models[route.catalogId]) {
+      throw new Error(`Catalog ID collision with native model: ${route.catalogId}`);
+    }
+    seen.add(route.catalogId);
+  }
+  if (routes.length > 0) {
+    result.models[RELAY_CASCADE_ANCHOR_ID] ??= structuredClone(template);
+    result.models[RELAY_CASCADE_FALLBACK_ID] ??= structuredClone(RELAY_CASCADE_FALLBACK_ENTRY);
+    result.models[RELAY_CASCADE_INTENT_MODEL_ID] ??= structuredClone(RELAY_CASCADE_INTENT_MODEL_ENTRY);
+    if (!result.models[RELAY_CASCADE_PLAN_ANCHOR_ID]) {
+      const planAnchor = withCascadeCheckpointer(structuredClone(template));
+      planAnchor.model = RELAY_CASCADE_PLAN_MODEL;
+      result.models[RELAY_CASCADE_PLAN_ANCHOR_ID] = planAnchor;
+    }
+    const slotPlan = planRelayCatalogSlots(result, routes, templateKey);
+    const slots = slotPlan.slots;
+    for (const { slotId, route } of slots) {
+      const slotTemplate = result.models[slotId] ?? template;
+      if (result.models[slotId]) {
+        result.models[slotId] = buildRelayCatalogSlotEntry(route, slotTemplate);
+      }
+      result.models[route.catalogId] = buildRelayCatalogEntry(route, slotTemplate);
+    }
+    result.defaultAgentModelId = slots[0]?.slotId ?? RELAY_CASCADE_ANCHOR_ID;
+    result.agentModelSorts = [
+      {
+        displayName: "Recommended",
+        groups: [{
+          modelIds: slots.map((slot) => slot.slotId)
+        }]
+      }
+    ];
+    return result;
+  }
+  if (!result.agentModelSorts?.[0]?.groups?.[0]) {
+    result.agentModelSorts = [
+      {
+        displayName: "Recommended",
+        groups: [{ modelIds: [] }]
+      }
+    ];
+  }
+  return result;
+}
+function buildAntigravityRoutes(resolvedFavorites, maxRoutes = MAX_MODEL_CATALOG) {
+  const routes = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const fav of resolvedFavorites) {
+    if (routes.length >= maxRoutes) break;
+    const favModel = fav.model;
+    const modelId = favModel.id;
+    const safeModelSlug = modelId.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const catalogId = `relay-ai__${fav.providerId}__${safeModelSlug}`;
+    if (seen.has(catalogId)) continue;
+    seen.add(catalogId);
+    const npm = favModel.npm || "@ai-sdk/openai-compatible";
+    const upstreamModelId2 = favModel.upstreamModelId || modelId;
+    const baseURL = favModel.apiBaseUrl || favModel.completionsUrl || void 0;
+    const contextWindow = favModel.contextWindow;
+    const modelFormat = favModel.modelFormat;
+    routes.push({
+      catalogId,
+      providerId: fav.providerId,
+      providerName: fav.providerName,
+      modelId,
+      upstreamModelId: upstreamModelId2,
+      displayName: `${favModel.name} (Relay)`,
+      ...modelFormat ? { modelFormat } : {},
+      npm,
+      apiKey: fav.apiKey,
+      ...fav.authType ? { authType: fav.authType } : {},
+      ...fav.oauthAccountId ? { oauthAccountId: fav.oauthAccountId } : {},
+      ...fav.providerData ? { providerData: fav.providerData } : {},
+      baseURL,
+      contextWindow
+    });
+  }
+  return applyUniqueAntigravityRouteLabels(routes);
+}
+function routeBaseModelName(route) {
+  const relayMatch = route.displayName.match(/^(.*) \(Relay(?: - .*)?\)$/);
+  return relayMatch?.[1] ?? route.displayName;
+}
+function authKindLabel(route) {
+  if (route.authType === "oauth") return "OAuth";
+  if (route.authType === "api") return "API key";
+  if (route.authType === "none") return "local";
+  return "provider";
+}
+function duplicateCounts(values) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return counts;
+}
+function assertUniqueRouteDisplayNames(routes) {
+  const counts = duplicateCounts(routes.map((route) => route.displayName));
+  const duplicate = [...counts.entries()].find(([, count]) => count > 1);
+  if (duplicate) {
+    throw new Error(`Duplicate AGY model label after disambiguation: ${duplicate[0]}`);
+  }
+}
+function applyUniqueAntigravityRouteLabels(routes) {
+  const baseNames = routes.map(routeBaseModelName);
+  const baseNameCounts = duplicateCounts(baseNames);
+  const upstreamCounts = duplicateCounts(routes.map((route) => route.upstreamModelId));
+  const providerNameCounts = duplicateCounts(routes.map((route) => route.providerName));
+  const labeled = routes.map((route, index) => {
+    const baseName = baseNames[index];
+    const needsSuffix = (baseNameCounts.get(baseName) ?? 0) > 1 || (upstreamCounts.get(route.upstreamModelId) ?? 0) > 1;
+    if (!needsSuffix) {
+      return { ...route, displayName: `${baseName} (Relay)` };
+    }
+    const providerName = route.providerName || route.providerId;
+    const providerSuffix = (providerNameCounts.get(providerName) ?? 0) > 1 ? `${providerName} ${authKindLabel(route)}` : providerName;
+    return {
+      ...route,
+      displayName: `${baseName} (Relay - ${providerSuffix})`
+    };
+  });
+  const firstPassCounts = duplicateCounts(labeled.map((route) => route.displayName));
+  const withProviderIds = labeled.map((route) => {
+    if ((firstPassCounts.get(route.displayName) ?? 0) <= 1) return route;
+    return {
+      ...route,
+      displayName: route.displayName.replace(/\)$/, ` - ${route.providerId})`)
+    };
+  });
+  assertUniqueRouteDisplayNames(withProviderIds);
+  return withProviderIds;
+}
+function routeLabels(routes) {
+  assertUniqueRouteDisplayNames(routes);
+  const labels = /* @__PURE__ */ new Map();
+  for (const route of routes) {
+    labels.set(route.catalogId, route.displayName);
+  }
+  return labels;
+}
+function buildClientModelConfigData(routes, catalog, templateKey = RELAY_CASCADE_ANCHOR_ID, precomputedSlots) {
+  const catalogRoutes = routes.slice(0, MAX_MODEL_CATALOG);
+  const slots = precomputedSlots ?? (catalog ? resolveRelayCatalogSlots(catalog, catalogRoutes, templateKey) : catalogRoutes.map((route) => ({ slotId: route.catalogId, route })));
+  const labels = routeLabels(catalogRoutes);
+  const clientModelConfigs = slots.map(({ slotId, route }) => {
+    const entry = catalog?.models[slotId] ?? catalog?.models[route.catalogId] ?? catalog?.models[RELAY_CASCADE_ANCHOR_ID];
+    const label = labels.get(route.catalogId) ?? route.displayName;
+    return {
+      label,
+      modelOrAlias: {
+        alias: slotId,
+        choice: { case: "alias", value: slotId }
+      },
+      disabled: false,
+      supportedMimeTypes: entry?.supportedMimeTypes ?? {},
+      quotaInfo: entry?.quotaInfo ?? { remainingFraction: 1 },
+      tagTitle: entry?.tagTitle,
+      tagDescription: entry?.tagDescription,
+      supportsThoughtCirculation: entry?.supportsThoughtCirculation ?? false
+    };
+  });
+  return {
+    clientModelConfigs,
+    clientModelSorts: [
+      {
+        name: "Recommended",
+        groups: [
+          {
+            groupName: "",
+            modelLabels: clientModelConfigs.map((config) => config.label)
+          }
+        ]
+      }
+    ],
+    defaultOverrideModelConfig: clientModelConfigs[0] ?? {}
+  };
+}
+function buildListModelConfigsResponse(routes, catalog, templateKey = RELAY_CASCADE_ANCHOR_ID) {
+  const catalogRoutes = routes.slice(0, MAX_MODEL_CATALOG);
+  const slots = catalog ? resolveRelayCatalogSlots(catalog, catalogRoutes, templateKey) : catalogRoutes.map((route) => ({ slotId: route.catalogId, route }));
+  const config = slots.map(({ slotId }) => ({
+    requestedModelId: slotId,
+    planModel: RELAY_CASCADE_PLAN_MODEL,
+    requestedModel: catalog?.models[slotId]?.model ?? RELAY_AGENT_PLACEHOLDER
+  }));
+  return {
+    ...buildClientModelConfigData(routes, catalog, templateKey, slots),
+    allowedModelConfigs: config,
+    defaultAgentModelConfig: config[0] ?? {}
+  };
+}
+var CURRENT_EXPERIMENT_IDS = [
+  105979552,
+  105979574,
+  106015351,
+  105979579,
+  105867471,
+  105979530,
+  105995634,
+  106121401,
+  106100625,
+  104638466,
+  101868197,
+  104817729,
+  105695344,
+  106064591,
+  104913215,
+  106324349,
+  106309078,
+  105821930,
+  104922093,
+  103012598,
+  106143956,
+  105856899,
+  106312323,
+  106064030,
+  105746183,
+  105757908,
+  104892493,
+  105822886,
+  105785683,
+  105721273,
+  105897325,
+  105658071,
+  106240758,
+  105943702,
+  106106760,
+  106283618,
+  105620019,
+  106038160,
+  106309520,
+  106281951,
+  106264532,
+  106222835,
+  106094629,
+  105887313,
+  105849474,
+  106032303,
+  106228452,
+  106113900,
+  106121607,
+  105979531,
+  105979553,
+  106015328,
+  105867469,
+  105979517,
+  106121399,
+  106100654,
+  104638459,
+  101551624,
+  104673683,
+  105695346,
+  106064590,
+  104913210,
+  105821928,
+  104922082,
+  103012592,
+  106064028,
+  105746181,
+  104892490,
+  105822881,
+  105721268,
+  105895316,
+  105658068,
+  106240748,
+  105943694,
+  106283614,
+  105620012,
+  106038153,
+  105887311,
+  106032301,
+  106113877,
+  106121604
+];
+function buildListExperimentsResponse() {
+  return {
+    experimentIds: [...CURRENT_EXPERIMENT_IDS]
+  };
+}
+
 // src/target-compatibility.ts
 function blacklistAgentForTarget(target) {
   if (target === "claude-app") return "codex-app";
   return target;
 }
+function contextFloorForTarget(target) {
+  if (target === "antigravity") return ANTIGRAVITY_MIN_CONTEXT_WINDOW;
+  if (target === "server") return 0;
+  return MIN_CONTEXT_WINDOW;
+}
+function meetsContextFloor(target, contextWindow) {
+  return contextWindow === void 0 || contextWindow >= contextFloorForTarget(target);
+}
 function isTargetCompatibleModel(ctx) {
   const blacklistAgent = blacklistAgentForTarget(ctx.target);
   if (shouldHideModel({ providerId: ctx.providerId, modelId: ctx.model.id, agent: blacklistAgent })) {
     return { compatible: false, reason: "model is hidden by compatibility filters" };
+  }
+  if (!meetsContextFloor(ctx.target, ctx.model.contextWindow)) {
+    const floor = contextFloorForTarget(ctx.target);
+    return {
+      compatible: false,
+      reason: `${ctx.target} needs a ${Math.round(floor / 1e3)}K+ context window; this model has ${Math.round(ctx.model.contextWindow / 1e3)}K`
+    };
   }
   if (ctx.model.modelFormat === "cloud-code") {
     if (ctx.target === "server") {
@@ -7362,8 +8083,11 @@ function modelFormatForNpm(npm) {
   return npm === "@ai-sdk/anthropic" ? "anthropic" : "openai";
 }
 function modelsUrl(baseUrl, template) {
-  const trimmed = baseUrl.replace(/\/$/, "");
+  let trimmed = baseUrl.replace(/\/$/, "");
   if (template.modelsPath) {
+    if (trimmed.endsWith("/v1") && (template.modelsPath.startsWith("/models") || template.modelsPath.startsWith("/ai/models"))) {
+      trimmed = trimmed.slice(0, -3);
+    }
     const path = template.modelsPath.startsWith("/") ? template.modelsPath : `/${template.modelsPath}`;
     return `${trimmed}${path}`;
   }
@@ -7400,20 +8124,64 @@ function parseNativePricing(pricing) {
   if (cacheWrite !== void 0) cost.cache_write = cacheWrite;
   return cost;
 }
+function parseCloudflarePricing(priceValue) {
+  if (!Array.isArray(priceValue)) return void 0;
+  let input;
+  let output;
+  for (const item of priceValue) {
+    if (typeof item !== "object" || !item) continue;
+    const row = item;
+    const unit = String(row.unit || "").toLowerCase();
+    const price = Number(row.price);
+    if (!Number.isFinite(price)) continue;
+    if (unit.includes("input")) input = price;
+    else if (unit.includes("output")) output = price;
+  }
+  if (input === void 0 && output === void 0) return void 0;
+  return { input: input ?? 0, output: output ?? 0 };
+}
+var LEGACY_NON_TOOL_MODELS = /* @__PURE__ */ new Set([
+  "@cf/google/gemma-2b-it-lora",
+  "@cf/google/gemma-7b-it-lora",
+  "@cf/meta-llama/llama-2-7b-chat-hf-lora",
+  "@cf/mistral/mistral-7b-instruct-v0.2-lora"
+]);
 function parseModelList(body, npm) {
-  const rows = body.data ?? body.models ?? [];
+  const rows = body.data ?? body.models ?? body.result ?? [];
   const format = modelFormatForNpm(npm);
   const models = [];
   for (const row of rows) {
-    const rawId = row.id?.trim();
+    const rawId = (row.name?.startsWith("@cf/") || row.name?.startsWith("@hf/") ? row.name : row.id)?.trim();
     if (!rawId) continue;
+    let contextWindowFromProps;
+    let isFreeFromProps;
+    let costFromProps;
+    if (Array.isArray(row.properties)) {
+      if (LEGACY_NON_TOOL_MODELS.has(rawId)) continue;
+      const cwProp = row.properties.find((p8) => p8.property_id === "context_window");
+      if (cwProp?.value) contextWindowFromProps = toNumber(cwProp.value);
+      const priceProp = row.properties.find((p8) => p8.property_id === "price");
+      const isRestrictedPaidPlan = rawId.includes("/glm-") || rawId.includes("/kimi-");
+      if (isRestrictedPaidPlan) {
+        costFromProps = parseCloudflarePricing(priceProp?.value);
+        isFreeFromProps = false;
+      } else {
+        isFreeFromProps = true;
+        if (priceProp?.value) {
+          costFromProps = parseCloudflarePricing(priceProp.value);
+        }
+      }
+    }
     const { id, upstreamModelId: upstreamModelId2 } = normalizeGoogleModelId(rawId, npm);
-    const family = id.split(/[-/:]/)[0] ?? id;
-    const cost = parseNativePricing(row.pricing);
+    const family = id.replace(/^@[a-z0-9_-]+\//i, "").split(/[-/:]/)[0] ?? id;
+    const cost = costFromProps ?? parseNativePricing(row.pricing);
     const freeStatus = classifyFreeStatus({
-      model: { cost, isFree: row.isFree }
+      model: { cost, isFree: row.isFree },
+      // Cloudflare standard models carry a list price but are covered by the free
+      // daily Neuron allowance, so free access is a provider rule, not a price.
+      freeAccess: isFreeFromProps === true
     });
-    const contextWindow = row.context_length ?? row.contextWindow ?? row.context_window ?? resolveContextWindow(id);
+    const contextWindow = contextWindowFromProps ?? row.context_length ?? row.contextWindow ?? row.context_window ?? resolveContextWindow(id);
     models.push({
       id,
       name: normalizeGoogleDisplayName(row.name, id),
@@ -11143,6 +11911,13 @@ export {
   resolveLocalProviderApiKey,
   formatRegistryAuthLabel,
   resolveProvidersForDisplay,
+  evaluateAgySwitchCompatibility,
+  resolveRelayCatalogSlots,
+  injectRelayModels,
+  buildAntigravityRoutes,
+  buildListModelConfigsResponse,
+  buildListExperimentsResponse,
+  meetsContextFloor,
   routableModelsForTarget,
   providersForTarget,
   refreshProviderModels,
@@ -11184,4 +11959,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-LZE7LR5A.js.map
+//# sourceMappingURL=chunk-6CBNKM55.js.map

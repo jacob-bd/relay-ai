@@ -549,6 +549,13 @@ input { font-family: inherit; }
   color: oklch(73% 0.13 232);
 }
 
+.free-badge.paid-cost {
+  border-color: var(--border-bright);
+  background: var(--surface-hover);
+  color: var(--text-2);
+  font-weight: 500;
+}
+
 .btn-refresh-all.loading svg {
   animation: spin 1s linear infinite;
 }

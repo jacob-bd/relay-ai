@@ -17,6 +17,7 @@ import {
   appendCodexBodyDump,
   authenticateProvider,
   buildAntigravityChildEnv,
+  buildAntigravityRoutes,
   buildAppCatalogFile,
   buildCatalogFile,
   buildCatalogRoutes,
@@ -25,6 +26,8 @@ import {
   buildCodexAppRootConfig,
   buildHttpProxyRoutes,
   buildImportProviderList,
+  buildListExperimentsResponse,
+  buildListModelConfigsResponse,
   buildVertexRuntimeConfig,
   cachedModelToLocal,
   catalogEntryFromModel,
@@ -42,6 +45,7 @@ import {
   effectiveProviderBaseUrl,
   effortProviderOptions,
   encodeToolUseId,
+  evaluateAgySwitchCompatibility,
   extractApiKey,
   favoriteProviderDisplayName,
   fetchAnthropicModels,
@@ -73,6 +77,7 @@ import {
   hasApplicationDefaultCredentials,
   httpProxyModelId,
   injectClaudeIdentity,
+  injectRelayModels,
   isClaudeAppRunning,
   isCodexAppRunning,
   isFreeStatus,
@@ -92,6 +97,7 @@ import {
   makeRouteResolver,
   makeTraceLogger,
   maxToolsForNpm,
+  meetsContextFloor,
   migrateGlobalOpencodeCredential,
   migrateLegacyCloudProviders,
   modelSelectOption,
@@ -137,6 +143,7 @@ import {
   resolveProviderTemplate,
   resolveProvidersForDisplay,
   resolveRefreshCredential,
+  resolveRelayCatalogSlots,
   routableModelsForTarget,
   routeLookupIds,
   runServerCommand,
@@ -165,14 +172,14 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-LZE7LR5A.js";
+} from "./chunk-6CBNKM55.js";
 import {
   filterTemplates,
   init_provider_templates,
   listAddableTemplates,
   listSupportedTemplates,
   listVisibleOAuthTemplates
-} from "./chunk-EJONCU3B.js";
+} from "./chunk-HXGZ4CTV.js";
 
 // src/cli.ts
 import pc12 from "picocolors";
@@ -1538,7 +1545,16 @@ async function runTemplateAddFlow() {
     ]);
   }
   let baseUrlOverride;
-  if (template.urlPrompt) {
+  if (template.accountIdPrompt) {
+    const accountInput = await p5.text({
+      message: template.accountIdPrompt,
+      placeholder: "e.g. 4ff191dac2d0bd7538cb1c9126594de3",
+      validate: (v) => v.trim() ? void 0 : "Account ID is required"
+    });
+    if (p5.isCancel(accountInput)) return 0;
+    const accountId = String(accountInput).trim();
+    baseUrlOverride = template.defaultBaseUrl?.replace("{ACCOUNT_ID}", accountId);
+  } else if (template.urlPrompt) {
     const urlInput = await p5.text({
       message: template.urlPrompt,
       initialValue: template.defaultBaseUrl,
@@ -6468,655 +6484,6 @@ function formatCloudCodeChunk(opts) {
   };
 }
 
-// src/antigravity/slot-registry.ts
-var AGY_SLOT_VALIDATION_SOURCE = "AGY CLI 1.0.10 / Antigravity IDE 2.1.1 fixture capture 2026-06-23";
-var AGY_NATIVE_SLOT_REGISTRY = [
-  {
-    slotId: "gemini-3.5-flash-low",
-    model: "MODEL_PLACEHOLDER_M20",
-    role: "agent-switch",
-    status: "validated",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE
-  },
-  {
-    slotId: "gemini-3.5-flash-extra-low",
-    model: "MODEL_PLACEHOLDER_M187",
-    role: "agent-switch",
-    status: "validated",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE
-  },
-  {
-    slotId: "gemini-3.1-pro-low",
-    model: "MODEL_PLACEHOLDER_M36",
-    role: "agent-switch",
-    status: "validated",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE
-  },
-  {
-    slotId: "gemini-pro-agent",
-    model: "MODEL_PLACEHOLDER_M16",
-    role: "agent-switch",
-    status: "validated",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE
-  },
-  {
-    slotId: "claude-sonnet-4-6",
-    model: "MODEL_PLACEHOLDER_M35",
-    role: "agent-switch",
-    status: "validated",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE
-  },
-  {
-    slotId: "claude-opus-4-6-thinking",
-    model: "MODEL_PLACEHOLDER_M26",
-    role: "agent-switch",
-    status: "validated",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE
-  },
-  {
-    slotId: "gpt-oss-120b-medium",
-    model: "MODEL_OPENAI_GPT_OSS_120B_MEDIUM",
-    role: "agent-switch",
-    status: "validated",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE
-  },
-  {
-    slotId: "gemini-3-flash-agent",
-    model: "MODEL_PLACEHOLDER_M132",
-    role: "cascade-plan",
-    status: "reserved",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE,
-    notes: "Visible in agentModelSorts, but reserved for cascade plan construction."
-  },
-  {
-    slotId: "gemini-2.5-flash",
-    model: "MODEL_GOOGLE_GEMINI_2_5_FLASH",
-    role: "cascade-intent",
-    status: "reserved",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE
-  },
-  {
-    slotId: "gemini-2.5-flash-lite",
-    model: "MODEL_GOOGLE_GEMINI_2_5_FLASH_LITE",
-    role: "cascade-fallback",
-    status: "reserved",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE
-  },
-  {
-    slotId: "gemini-3.1-pro-high",
-    model: "MODEL_PLACEHOLDER_M37",
-    role: "agent-switch",
-    status: "candidate",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE,
-    notes: "Model-shaped fixture entry; requires live switching proof before promotion."
-  },
-  {
-    slotId: "gemini-2.5-pro",
-    model: "MODEL_GOOGLE_GEMINI_2_5_PRO",
-    role: "agent-switch",
-    status: "candidate",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE,
-    notes: "Model-shaped fixture entry; requires live switching proof before promotion."
-  },
-  {
-    slotId: "gemini-2.5-flash-thinking",
-    model: "MODEL_GOOGLE_GEMINI_2_5_FLASH_THINKING",
-    role: "agent-switch",
-    status: "candidate",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE,
-    notes: "Model-shaped fixture entry; requires live switching proof before promotion."
-  },
-  {
-    slotId: "gemini-3-flash",
-    model: "MODEL_PLACEHOLDER_M18",
-    role: "command",
-    status: "candidate",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE,
-    notes: "Command model in the fixture; not switch-safe without live proof."
-  },
-  {
-    slotId: "gemini-3.1-flash-lite",
-    model: "MODEL_PLACEHOLDER_M50",
-    role: "cascade-checkpoint",
-    status: "candidate",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE,
-    notes: "Checkpoint/search/commit slot; route as helper until live proof exists."
-  },
-  {
-    slotId: "gemini-3.1-flash-image",
-    model: "MODEL_PLACEHOLDER_M21",
-    role: "image",
-    status: "candidate",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE,
-    notes: "Image generation slot; not switch-safe without live proof."
-  },
-  {
-    slotId: "tab_jump_flash_lite_preview",
-    model: "MODEL_PLACEHOLDER_M28",
-    role: "tab",
-    status: "unsafe",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE
-  },
-  {
-    slotId: "tab_flash_lite_preview",
-    model: "MODEL_PLACEHOLDER_M19",
-    role: "tab",
-    status: "unsafe",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE
-  },
-  {
-    slotId: "chat_20706",
-    model: "MODEL_CHAT_20706",
-    role: "chat",
-    status: "unsafe",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE
-  },
-  {
-    slotId: "chat_23310",
-    model: "MODEL_CHAT_23310",
-    role: "chat",
-    status: "unsafe",
-    validatedWith: AGY_SLOT_VALIDATION_SOURCE
-  }
-];
-var KNOWN_COMPATIBLE_AGY_VERSIONS = /* @__PURE__ */ new Set(["1.0.10"]);
-var KNOWN_INCOMPATIBLE_AGY_VERSIONS = /* @__PURE__ */ new Set(["1.0.9"]);
-function withFixtureModel(definition, model) {
-  return model === definition.model ? definition : { ...definition, model };
-}
-function assertNoDuplicateSwitchEnums(fixture, definitions) {
-  const seen = /* @__PURE__ */ new Map();
-  for (const definition of definitions) {
-    if (definition.status !== "validated") continue;
-    const actualModel = fixture.models[definition.slotId]?.model;
-    if (!actualModel) continue;
-    const previousSlotId = seen.get(actualModel);
-    if (previousSlotId) {
-      throw new Error(
-        `Duplicate AGY switch slot enum ${actualModel}: ${previousSlotId} and ${definition.slotId}`
-      );
-    }
-    seen.set(actualModel, definition.slotId);
-  }
-}
-function validateAgySlotRegistry(fixture) {
-  assertNoDuplicateSwitchEnums(fixture, AGY_NATIVE_SLOT_REGISTRY);
-  const switchSlots = [];
-  const reservedSlots = [];
-  const candidateSlots = [];
-  const warnings = [];
-  for (const definition of AGY_NATIVE_SLOT_REGISTRY) {
-    const entry = fixture.models[definition.slotId];
-    if (!entry) {
-      if (definition.status === "validated" || definition.status === "reserved") {
-        warnings.push(`AGY slot ${definition.slotId} missing from fixture`);
-      }
-      continue;
-    }
-    if (entry.model !== definition.model) {
-      warnings.push(
-        `AGY slot ${definition.slotId} expected ${definition.model} but fixture has ${entry.model}`
-      );
-      continue;
-    }
-    if (definition.status === "validated") {
-      switchSlots.push(withFixtureModel(definition, entry.model));
-    } else if (definition.status === "reserved") {
-      reservedSlots.push(withFixtureModel(definition, entry.model));
-    } else if (definition.status === "candidate") {
-      candidateSlots.push(withFixtureModel(definition, entry.model));
-    }
-  }
-  return { switchSlots, reservedSlots, candidateSlots, warnings };
-}
-function getValidatedAgySwitchSlots(fixture) {
-  return validateAgySlotRegistry(fixture).switchSlots;
-}
-function evaluateAgySwitchCompatibility(opts) {
-  const validation = validateAgySlotRegistry(opts.fixture);
-  const shapeMatches = validation.warnings.length === 0 && validation.switchSlots.length > 0;
-  const warnings = [];
-  if (opts.versionReadError) {
-    warnings.push(`Could not read agy --version (${opts.versionReadError}); validating AGY fixture shape instead.`);
-  }
-  if (opts.version && KNOWN_INCOMPATIBLE_AGY_VERSIONS.has(opts.version)) {
-    return {
-      mode: "single-model",
-      validatedSwitchSlotCount: validation.switchSlots.length,
-      warnings: [
-        ...warnings,
-        `Known-incompatible AGY version ${opts.version}; falling back to single-model mode.`
-      ]
-    };
-  }
-  if (!shapeMatches) {
-    return {
-      mode: "single-model",
-      validatedSwitchSlotCount: validation.switchSlots.length,
-      warnings: [
-        ...warnings,
-        ...validation.warnings,
-        "AGY fixture shape does not match the validated slot registry; falling back to single-model mode."
-      ]
-    };
-  }
-  if (opts.version && !KNOWN_COMPATIBLE_AGY_VERSIONS.has(opts.version)) {
-    warnings.push(`Unvalidated AGY version ${opts.version}; fixture shape matches, so multi-model switching remains enabled.`);
-  } else if (!opts.version && !opts.versionReadError) {
-    warnings.push("AGY version is unknown; fixture shape matches, so multi-model switching remains enabled.");
-  }
-  return {
-    mode: "multi-model",
-    validatedSwitchSlotCount: validation.switchSlots.length,
-    warnings
-  };
-}
-
-// src/antigravity/catalog.ts
-var RELAY_CASCADE_PLAN_MODEL = "MODEL_PLACEHOLDER_M132";
-var RELAY_AGENT_PLACEHOLDER = "MODEL_PLACEHOLDER_M20";
-var RELAY_CASCADE_CHECKPOINT_MODEL = "MODEL_PLACEHOLDER_M50";
-var RELAY_CASCADE_INTENT_MODEL = "MODEL_GOOGLE_GEMINI_2_5_FLASH";
-var RELAY_CASCADE_ANCHOR_ID = "gemini-3.5-flash-low";
-var RELAY_CASCADE_PLAN_ANCHOR_ID = "gemini-3-flash-agent";
-var RELAY_CASCADE_FALLBACK_ID = "gemini-2.5-flash-lite";
-var RELAY_CASCADE_INTENT_MODEL_ID = "gemini-2.5-flash";
-function withCascadeCheckpointer(entry, maxTokenLimit = 128e3) {
-  const tokenThreshold = Math.min(5e4, Math.floor(maxTokenLimit * 0.75));
-  const existingModelExperiments = entry.modelExperiments;
-  entry.modelExperiments = {
-    ...existingModelExperiments,
-    experiments: {
-      ...existingModelExperiments?.experiments ?? {},
-      CASCADE_USE_EXPERIMENT_CHECKPOINTER: {
-        stringValue: JSON.stringify({
-          strategy: "CHECKPOINT_STRATEGY_SAME_MODEL",
-          max_token_limit: String(maxTokenLimit),
-          token_threshold: String(tokenThreshold),
-          max_overhead_ratio: "0.15",
-          moving_window_size: "1",
-          enabled: true,
-          max_output_tokens: "16384",
-          checkpoint_model: RELAY_CASCADE_CHECKPOINT_MODEL,
-          use_last_planner_model: true,
-          is_sync: true,
-          max_user_requests: 10,
-          include_last_user_message: true,
-          include_conversation_log: false,
-          include_running_task_snapshots: true,
-          include_subagent_snapshots: true,
-          include_artifact_snapshots: true,
-          retry_config: {
-            max_retries: 0,
-            initial_sleep_duration_ms: 1e3,
-            exponential_multiplier: 2,
-            include_error_feedback: false
-          }
-        })
-      }
-    }
-  };
-  return entry;
-}
-function applyRouteContextBounds(entry, route) {
-  const maxTokenLimit = route.contextWindow ?? 128e3;
-  const maxOutputTokens = Math.min(entry.maxOutputTokens ?? 65536, maxTokenLimit);
-  const checkpointTokenLimit = Math.min(
-    128e3,
-    Math.max(1, maxTokenLimit - maxOutputTokens)
-  );
-  entry.maxTokens = maxTokenLimit;
-  entry.maxOutputTokens = maxOutputTokens;
-  return withCascadeCheckpointer(entry, checkpointTokenLimit);
-}
-var RELAY_CASCADE_FALLBACK_ENTRY = withCascadeCheckpointer({
-  displayName: "Gemini 3.1 Flash Lite",
-  model: "MODEL_GOOGLE_GEMINI_2_5_FLASH_LITE",
-  apiProvider: "API_PROVIDER_GOOGLE_GEMINI",
-  modelProvider: "MODEL_PROVIDER_GOOGLE",
-  tokenizerType: "LLAMA_WITH_SPECIAL",
-  maxTokens: 1048576,
-  maxOutputTokens: 65535,
-  quotaInfo: { remainingFraction: 1 }
-});
-var RELAY_CASCADE_INTENT_MODEL_ENTRY = withCascadeCheckpointer({
-  ...RELAY_CASCADE_FALLBACK_ENTRY,
-  model: RELAY_CASCADE_INTENT_MODEL
-});
-function planRelayCatalogSlots(catalog, routes, templateKey) {
-  const validation = validateAgySlotRegistry(catalog);
-  const switchSlots = getValidatedAgySwitchSlots(catalog);
-  const templateSlot = switchSlots.find((slot) => slot.slotId === templateKey);
-  const orderedSlots = templateSlot ? [templateSlot, ...switchSlots.filter((slot) => slot.slotId !== templateKey)] : switchSlots;
-  if (routes.length > 0 && orderedSlots.length === 0) {
-    throw new Error("No validated AGY switch slots are available for the selected launch route");
-  }
-  const switchableRoutes = routes.slice(0, orderedSlots.length);
-  const skippedRoutes = routes.slice(orderedSlots.length);
-  const slots = switchableRoutes.map((route, index) => ({
-    slotId: orderedSlots[index].slotId,
-    route
-  }));
-  return {
-    slots,
-    switchableRoutes,
-    skippedRoutes,
-    validation
-  };
-}
-function resolveRelayCatalogSlots(catalog, routes, templateKey) {
-  return planRelayCatalogSlots(catalog, routes, templateKey).slots;
-}
-function buildRelayCatalogEntry(route, template) {
-  const entry = structuredClone(template);
-  entry.displayName = route.displayName;
-  entry.model = template.model ?? RELAY_AGENT_PLACEHOLDER;
-  entry.requestedModelId = route.catalogId;
-  entry.modelVersion = route.catalogId;
-  entry.modelVersionId = route.catalogId;
-  entry.quotaInfo = { remainingFraction: 1, resetTime: "2026-06-23T02:00:57Z" };
-  return applyRouteContextBounds(entry, route);
-}
-function buildRelayCatalogSlotEntry(route, template) {
-  const entry = structuredClone(template);
-  entry.displayName = route.displayName;
-  entry.quotaInfo = { remainingFraction: 1, resetTime: "2026-06-23T02:00:57Z" };
-  delete entry.requestedModelId;
-  delete entry.modelVersion;
-  delete entry.modelVersionId;
-  delete entry.isInternal;
-  return applyRouteContextBounds(entry, route);
-}
-function injectRelayModels(fixture, routes, templateKey) {
-  const result = structuredClone(fixture);
-  const template = fixture.models[templateKey];
-  if (!template) {
-    throw new Error(`Template model "${templateKey}" not found in catalog fixture`);
-  }
-  const seen = /* @__PURE__ */ new Set();
-  for (const route of routes) {
-    if (seen.has(route.catalogId)) {
-      throw new Error(`Catalog ID collision: ${route.catalogId}`);
-    }
-    if (fixture.models[route.catalogId]) {
-      throw new Error(`Catalog ID collision with native model: ${route.catalogId}`);
-    }
-    seen.add(route.catalogId);
-  }
-  if (routes.length > 0) {
-    result.models[RELAY_CASCADE_ANCHOR_ID] ??= structuredClone(template);
-    result.models[RELAY_CASCADE_FALLBACK_ID] ??= structuredClone(RELAY_CASCADE_FALLBACK_ENTRY);
-    result.models[RELAY_CASCADE_INTENT_MODEL_ID] ??= structuredClone(RELAY_CASCADE_INTENT_MODEL_ENTRY);
-    if (!result.models[RELAY_CASCADE_PLAN_ANCHOR_ID]) {
-      const planAnchor = withCascadeCheckpointer(structuredClone(template));
-      planAnchor.model = RELAY_CASCADE_PLAN_MODEL;
-      result.models[RELAY_CASCADE_PLAN_ANCHOR_ID] = planAnchor;
-    }
-    const slotPlan = planRelayCatalogSlots(result, routes, templateKey);
-    const slots = slotPlan.slots;
-    for (const { slotId, route } of slots) {
-      const slotTemplate = result.models[slotId] ?? template;
-      if (result.models[slotId]) {
-        result.models[slotId] = buildRelayCatalogSlotEntry(route, slotTemplate);
-      }
-      result.models[route.catalogId] = buildRelayCatalogEntry(route, slotTemplate);
-    }
-    result.defaultAgentModelId = slots[0]?.slotId ?? RELAY_CASCADE_ANCHOR_ID;
-    result.agentModelSorts = [
-      {
-        displayName: "Recommended",
-        groups: [{
-          modelIds: slots.map((slot) => slot.slotId)
-        }]
-      }
-    ];
-    return result;
-  }
-  if (!result.agentModelSorts?.[0]?.groups?.[0]) {
-    result.agentModelSorts = [
-      {
-        displayName: "Recommended",
-        groups: [{ modelIds: [] }]
-      }
-    ];
-  }
-  return result;
-}
-function buildAntigravityRoutes(resolvedFavorites, maxRoutes = MAX_MODEL_CATALOG) {
-  const routes = [];
-  const seen = /* @__PURE__ */ new Set();
-  for (const fav of resolvedFavorites) {
-    if (routes.length >= maxRoutes) break;
-    const favModel = fav.model;
-    const modelId = favModel.id;
-    const catalogId = `relay-ai__${fav.providerId}__${modelId}`;
-    if (seen.has(catalogId)) continue;
-    seen.add(catalogId);
-    const npm = favModel.npm || "@ai-sdk/openai-compatible";
-    const upstreamModelId = favModel.upstreamModelId || modelId;
-    const baseURL = favModel.apiBaseUrl || favModel.completionsUrl || void 0;
-    const contextWindow = favModel.contextWindow;
-    const modelFormat = favModel.modelFormat;
-    routes.push({
-      catalogId,
-      providerId: fav.providerId,
-      providerName: fav.providerName,
-      modelId,
-      upstreamModelId,
-      displayName: `${favModel.name} (Relay)`,
-      ...modelFormat ? { modelFormat } : {},
-      npm,
-      apiKey: fav.apiKey,
-      ...fav.authType ? { authType: fav.authType } : {},
-      ...fav.oauthAccountId ? { oauthAccountId: fav.oauthAccountId } : {},
-      ...fav.providerData ? { providerData: fav.providerData } : {},
-      baseURL,
-      contextWindow
-    });
-  }
-  return applyUniqueAntigravityRouteLabels(routes);
-}
-function routeBaseModelName(route) {
-  const relayMatch = route.displayName.match(/^(.*) \(Relay(?: - .*)?\)$/);
-  return relayMatch?.[1] ?? route.displayName;
-}
-function authKindLabel(route) {
-  if (route.authType === "oauth") return "OAuth";
-  if (route.authType === "api") return "API key";
-  if (route.authType === "none") return "local";
-  return "provider";
-}
-function duplicateCounts(values) {
-  const counts = /* @__PURE__ */ new Map();
-  for (const value of values) {
-    counts.set(value, (counts.get(value) ?? 0) + 1);
-  }
-  return counts;
-}
-function assertUniqueRouteDisplayNames(routes) {
-  const counts = duplicateCounts(routes.map((route) => route.displayName));
-  const duplicate = [...counts.entries()].find(([, count]) => count > 1);
-  if (duplicate) {
-    throw new Error(`Duplicate AGY model label after disambiguation: ${duplicate[0]}`);
-  }
-}
-function applyUniqueAntigravityRouteLabels(routes) {
-  const baseNames = routes.map(routeBaseModelName);
-  const baseNameCounts = duplicateCounts(baseNames);
-  const upstreamCounts = duplicateCounts(routes.map((route) => route.upstreamModelId));
-  const providerNameCounts = duplicateCounts(routes.map((route) => route.providerName));
-  const labeled = routes.map((route, index) => {
-    const baseName = baseNames[index];
-    const needsSuffix = (baseNameCounts.get(baseName) ?? 0) > 1 || (upstreamCounts.get(route.upstreamModelId) ?? 0) > 1;
-    if (!needsSuffix) {
-      return { ...route, displayName: `${baseName} (Relay)` };
-    }
-    const providerName = route.providerName || route.providerId;
-    const providerSuffix = (providerNameCounts.get(providerName) ?? 0) > 1 ? `${providerName} ${authKindLabel(route)}` : providerName;
-    return {
-      ...route,
-      displayName: `${baseName} (Relay - ${providerSuffix})`
-    };
-  });
-  const firstPassCounts = duplicateCounts(labeled.map((route) => route.displayName));
-  const withProviderIds = labeled.map((route) => {
-    if ((firstPassCounts.get(route.displayName) ?? 0) <= 1) return route;
-    return {
-      ...route,
-      displayName: route.displayName.replace(/\)$/, ` - ${route.providerId})`)
-    };
-  });
-  assertUniqueRouteDisplayNames(withProviderIds);
-  return withProviderIds;
-}
-function routeLabels(routes) {
-  assertUniqueRouteDisplayNames(routes);
-  const labels = /* @__PURE__ */ new Map();
-  for (const route of routes) {
-    labels.set(route.catalogId, route.displayName);
-  }
-  return labels;
-}
-function buildClientModelConfigData(routes, catalog, templateKey = RELAY_CASCADE_ANCHOR_ID, precomputedSlots) {
-  const catalogRoutes = routes.slice(0, MAX_MODEL_CATALOG);
-  const slots = precomputedSlots ?? (catalog ? resolveRelayCatalogSlots(catalog, catalogRoutes, templateKey) : catalogRoutes.map((route) => ({ slotId: route.catalogId, route })));
-  const labels = routeLabels(catalogRoutes);
-  const clientModelConfigs = slots.map(({ slotId, route }) => {
-    const entry = catalog?.models[slotId] ?? catalog?.models[route.catalogId] ?? catalog?.models[RELAY_CASCADE_ANCHOR_ID];
-    const label = labels.get(route.catalogId) ?? route.displayName;
-    return {
-      label,
-      modelOrAlias: {
-        alias: slotId,
-        choice: { case: "alias", value: slotId }
-      },
-      disabled: false,
-      supportedMimeTypes: entry?.supportedMimeTypes ?? {},
-      quotaInfo: entry?.quotaInfo ?? { remainingFraction: 1 },
-      tagTitle: entry?.tagTitle,
-      tagDescription: entry?.tagDescription,
-      supportsThoughtCirculation: entry?.supportsThoughtCirculation ?? false
-    };
-  });
-  return {
-    clientModelConfigs,
-    clientModelSorts: [
-      {
-        name: "Recommended",
-        groups: [
-          {
-            groupName: "",
-            modelLabels: clientModelConfigs.map((config) => config.label)
-          }
-        ]
-      }
-    ],
-    defaultOverrideModelConfig: clientModelConfigs[0] ?? {}
-  };
-}
-function buildListModelConfigsResponse(routes, catalog, templateKey = RELAY_CASCADE_ANCHOR_ID) {
-  const catalogRoutes = routes.slice(0, MAX_MODEL_CATALOG);
-  const slots = catalog ? resolveRelayCatalogSlots(catalog, catalogRoutes, templateKey) : catalogRoutes.map((route) => ({ slotId: route.catalogId, route }));
-  const config = slots.map(({ slotId }) => ({
-    requestedModelId: slotId,
-    planModel: RELAY_CASCADE_PLAN_MODEL,
-    requestedModel: catalog?.models[slotId]?.model ?? RELAY_AGENT_PLACEHOLDER
-  }));
-  return {
-    ...buildClientModelConfigData(routes, catalog, templateKey, slots),
-    allowedModelConfigs: config,
-    defaultAgentModelConfig: config[0] ?? {}
-  };
-}
-var CURRENT_EXPERIMENT_IDS = [
-  105979552,
-  105979574,
-  106015351,
-  105979579,
-  105867471,
-  105979530,
-  105995634,
-  106121401,
-  106100625,
-  104638466,
-  101868197,
-  104817729,
-  105695344,
-  106064591,
-  104913215,
-  106324349,
-  106309078,
-  105821930,
-  104922093,
-  103012598,
-  106143956,
-  105856899,
-  106312323,
-  106064030,
-  105746183,
-  105757908,
-  104892493,
-  105822886,
-  105785683,
-  105721273,
-  105897325,
-  105658071,
-  106240758,
-  105943702,
-  106106760,
-  106283618,
-  105620019,
-  106038160,
-  106309520,
-  106281951,
-  106264532,
-  106222835,
-  106094629,
-  105887313,
-  105849474,
-  106032303,
-  106228452,
-  106113900,
-  106121607,
-  105979531,
-  105979553,
-  106015328,
-  105867469,
-  105979517,
-  106121399,
-  106100654,
-  104638459,
-  101551624,
-  104673683,
-  105695346,
-  106064590,
-  104913210,
-  105821928,
-  104922082,
-  103012592,
-  106064028,
-  105746181,
-  104892490,
-  105822881,
-  105721268,
-  105895316,
-  105658068,
-  106240748,
-  105943694,
-  106283614,
-  105620012,
-  106038153,
-  105887311,
-  106032301,
-  106113877,
-  106121604
-];
-function buildListExperimentsResponse() {
-  return {
-    experimentIds: [...CURRENT_EXPERIMENT_IDS]
-  };
-}
-
 // src/antigravity/fixtures/loadCodeAssist.json
 var loadCodeAssist_default = {
   currentTier: {
@@ -8551,6 +7918,22 @@ function respondJson(res, status, data) {
   });
   res.end(body);
 }
+function parsePseudoToolCall(text4, knownToolNames) {
+  const trimmed = text4.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  try {
+    const obj = JSON.parse(trimmed);
+    if (obj && typeof obj === "object") {
+      const name = obj.name || obj.type === "function" && typeof obj.function === "object" && obj.function?.name || obj.function_name;
+      if (typeof name === "string" && knownToolNames.has(name)) {
+        const args = obj.parameters || obj.arguments || obj.args || typeof obj.function === "object" && obj.function?.parameters || {};
+        return { name, args: typeof args === "object" && args ? args : {} };
+      }
+    }
+  } catch {
+  }
+  return null;
+}
 async function handleStreamingRequest(res, route, providerOptions, parsed, log14, options = {}) {
   const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
     ...options.requestOptions,
@@ -8589,8 +7972,39 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
   };
   const thinkFilter = createThinkFilter();
   const toolCallBuffers = /* @__PURE__ */ new Map();
+  const knownToolNames = new Set(Object.keys(sdkParams.tools ?? {}));
   let responseReasoning = "";
   let sawToolCall = false;
+  let textBuffer = "";
+  let bufferingJsonText = false;
+  const flushBufferedText = () => {
+    if (!textBuffer) return;
+    startSse();
+    const chunk = formatCloudCodeChunk({
+      text: textBuffer,
+      modelVersion: route.catalogId,
+      responseId
+    });
+    res.write(`data: ${JSON.stringify(chunk)}
+
+`);
+    textBuffer = "";
+    bufferingJsonText = false;
+  };
+  const emitPseudoToolCall = (pseudoTool) => {
+    sawToolCall = true;
+    startSse();
+    const chunk = formatCloudCodeChunk({
+      functionCall: { name: pseudoTool.name, args: normalizeFunctionCallArgs(pseudoTool.args) },
+      modelVersion: route.catalogId,
+      responseId
+    });
+    res.write(`data: ${JSON.stringify(chunk)}
+
+`);
+    textBuffer = "";
+    bufferingJsonText = false;
+  };
   for await (const part of fullStream) {
     const p15 = part;
     if (p15.type === "reasoning-delta" || p15.type === "reasoning") {
@@ -8607,15 +8021,27 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
       }
       if (text4) {
         log14(`[gateway] text-delta: ${JSON.stringify(text4.slice(0, 500))}`);
-        startSse();
-        const chunk = formatCloudCodeChunk({
-          text: text4,
-          modelVersion: route.catalogId,
-          responseId
-        });
-        res.write(`data: ${JSON.stringify(chunk)}
+        if (!bufferingJsonText && (textBuffer + text4).trimStart().startsWith("{")) {
+          bufferingJsonText = true;
+        }
+        if (bufferingJsonText) {
+          textBuffer += text4;
+          const pseudoTool = textBuffer.trimEnd().endsWith("}") ? parsePseudoToolCall(textBuffer, knownToolNames) : null;
+          if (pseudoTool) {
+            log14(`[gateway] parsed pseudo tool-call from text: ${pseudoTool.name}`);
+            emitPseudoToolCall(pseudoTool);
+          }
+        } else {
+          startSse();
+          const chunk = formatCloudCodeChunk({
+            text: text4,
+            modelVersion: route.catalogId,
+            responseId
+          });
+          res.write(`data: ${JSON.stringify(chunk)}
 
 `);
+        }
       }
     } else if (p15.type === "tool-input-start") {
       const id = p15.id ?? p15.toolCallId;
@@ -8647,6 +8073,15 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
 `);
     } else if (p15.type === "finish") {
       log14(`[gateway] finish: ${p15.finishReason ?? "unknown"}`);
+      if (textBuffer) {
+        const pseudoTool = parsePseudoToolCall(textBuffer, knownToolNames);
+        if (pseudoTool) {
+          log14(`[gateway] parsed pseudo tool-call on finish: ${pseudoTool.name}`);
+          emitPseudoToolCall(pseudoTool);
+        } else {
+          flushBufferedText();
+        }
+      }
       startSse();
       const reason = mapFinishReason2(p15.finishReason ?? "");
       const chunk = formatCloudCodeChunk({
@@ -8664,6 +8099,7 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
     } else if (p15.type === "error") {
       const message = formatUpstreamError(p15.error);
       log14(`[gateway] stream provider error: ${message}`);
+      flushBufferedText();
       emitStreamError(res, route, responseId, message, startSse);
       break;
     } else if (p15.type === "reasoning-start" || p15.type === "reasoning-end") {
@@ -8773,10 +8209,17 @@ async function resolveAntigravityLaunchRoutes(opts) {
     maxRoutes,
     { dropEmptyApiKey: true, trackCapacitySkipped: true }
   );
+  const tooSmall = resolved.slice(1).filter(
+    (entry) => !meetsContextFloor("antigravity", entry.model.contextWindow)
+  );
+  const launchable = resolved.filter((entry) => !tooSmall.includes(entry));
   return {
-    routes: buildAntigravityRoutes(resolved, maxRoutes),
+    routes: buildAntigravityRoutes(launchable, maxRoutes),
     apiKey,
-    droppedFavorites,
+    droppedFavorites: [
+      ...droppedFavorites,
+      ...tooSmall.map((entry) => ({ providerId: entry.providerId, modelId: entry.model.id }))
+    ],
     capacitySkippedFavorites
   };
 }
@@ -13821,7 +13264,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-WJF7EO24.js");
+    const { runUiCommand } = await import("./ui-command-S3TQKB3D.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

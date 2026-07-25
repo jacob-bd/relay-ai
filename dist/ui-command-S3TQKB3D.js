@@ -46,6 +46,7 @@ import {
   pollOpenAiDeviceCodeToken,
   pollXaiDeviceCodeToken,
   providerOptionsFromCatalog,
+  providersForTarget,
   readBody,
   recordLaunchFolder,
   refreshAllProviderModels,
@@ -74,14 +75,14 @@ import {
   supportsClaudeTransparentMode,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-LZE7LR5A.js";
+} from "./chunk-6CBNKM55.js";
 import {
   __toCommonJS,
   init_provider_templates,
   listAddableTemplates,
   listVisibleOAuthTemplates,
   provider_templates_exports
-} from "./chunk-EJONCU3B.js";
+} from "./chunk-HXGZ4CTV.js";
 
 // src/ui-command.ts
 import { createServer } from "http";
@@ -265,7 +266,7 @@ function detectApp(id) {
 }
 function getTerminalLaunchCommand(binPath, args, opts = {}) {
   const fullCmd = [binPath, ...args].map((arg) => {
-    if (!/^[a-zA-Z0-9\-_./:]+$/.test(arg)) {
+    if (!/^[a-zA-Z0-9\-_./:@]+$/.test(arg)) {
       throw new Error(`Unsafe launch argument: ${JSON.stringify(arg)}`);
     }
     return arg;
@@ -608,8 +609,9 @@ function handleUiApiRequest(req, res, opts = {}) {
     handleGetUpdateStatus(res);
   } else if (url === "/api/config" && req.method === "POST") {
     handlePostConfig(req, res);
-  } else if (url === "/api/models" && req.method === "GET") {
-    handleGetModels(res);
+  } else if (url.startsWith("/api/models") && req.method === "GET") {
+    const appId = new URL(url, "http://localhost").searchParams.get("appId") ?? "";
+    handleGetModels(res, APP_ID_TO_LAUNCH_TARGET[appId]);
   } else if (url === "/api/keys" && req.method === "POST") {
     handlePostKeys(req, res);
   } else if (url === "/api/providers/refresh" && req.method === "POST") {
@@ -674,9 +676,10 @@ async function handlePostConfig(req, res) {
     sendJson(res, 400, { error: String(err) });
   }
 }
-async function handleGetModels(res) {
+async function handleGetModels(res, target) {
   try {
-    const catalog = (await fetchModelsWithTimeout()).filter((provider) => provider.authType !== "oauth" || DEVICE_CODE_PROVIDER_IDS.has(provider.id));
+    let catalog = (await fetchModelsWithTimeout()).filter((provider) => provider.authType !== "oauth" || DEVICE_CODE_PROVIDER_IDS.has(provider.id));
+    if (target) catalog = providersForTarget(catalog, target);
     const registry = loadRegistry();
     const rawCountById = new Map(registry.providers.map((p2) => [p2.id, p2.modelsCache?.models.length ?? 0]));
     const providers = catalog.map((p2) => ({
@@ -770,6 +773,7 @@ function handleGetTemplates(res) {
     authType: t.authType,
     anonymousFreeModels: t.anonymousFreeModels ?? false,
     urlPrompt: t.urlPrompt ?? null,
+    accountIdPrompt: t.accountIdPrompt ?? null,
     defaultBaseUrl: t.defaultBaseUrl ?? null,
     apiKeyOptional: t.apiKeyOptional ?? false,
     custom: false
@@ -820,12 +824,12 @@ async function handleAddCustomProvider(req, res) {
 async function handleAddProvider(req, res) {
   try {
     const body = JSON.parse(await readBody(req));
-    const { templateId, key, baseUrl } = body;
+    const { templateId, key, baseUrl, accountId } = body;
     if (!templateId || typeof templateId !== "string") {
       sendJson(res, 400, { error: "templateId required" });
       return;
     }
-    const { listSupportedTemplates } = await import("./provider-templates-BPGB5V2L.js");
+    const { listSupportedTemplates } = await import("./provider-templates-4H3C4DRL.js");
     const template = listSupportedTemplates().find((t) => t.id === templateId);
     if (!template) {
       sendJson(res, 404, { error: `Template '${templateId}' not found` });
@@ -838,7 +842,14 @@ async function handleAddProvider(req, res) {
     }
     const keyText = template.apiKeyOptional && !rawKey && !template.anonymousFreeModels ? template.id : rawKey;
     let baseUrlOverride;
-    if (template.urlPrompt) {
+    if (template.accountIdPrompt) {
+      const rawAccountId = typeof accountId === "string" ? accountId.trim() : "";
+      if (!rawAccountId) {
+        sendJson(res, 400, { error: "accountId required" });
+        return;
+      }
+      baseUrlOverride = template.defaultBaseUrl?.replace("{ACCOUNT_ID}", rawAccountId);
+    } else if (template.urlPrompt) {
       baseUrlOverride = typeof baseUrl === "string" ? baseUrl.trim() : "";
       if (!baseUrlOverride) {
         sendJson(res, 400, { error: "baseUrl required" });
@@ -1113,6 +1124,16 @@ function handleGetApps(res) {
   }
 }
 var AGY_APP_IDS = /* @__PURE__ */ new Set(["antigravity", "agy", "antigravity-ide"]);
+var APP_ID_TO_LAUNCH_TARGET = {
+  claude: "claude",
+  "claude-app": "claude-app",
+  codex: "codex",
+  "codex-app": "codex-app",
+  gemini: "gemini",
+  agy: "antigravity",
+  antigravity: "antigravity",
+  "antigravity-ide": "antigravity"
+};
 async function handleLaunchApp(req, res, opts) {
   try {
     const body = JSON.parse(await readBody(req));
@@ -1582,4 +1603,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-WJF7EO24.js.map
+//# sourceMappingURL=ui-command-S3TQKB3D.js.map

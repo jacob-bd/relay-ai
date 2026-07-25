@@ -132,13 +132,13 @@ describe('antigravity slot registry', () => {
     ]);
   });
 
-  it('continues with a warning for unknown versions when fixture shape matches', () => {
+  it('falls back to single-model mode for unknown versions even when the fixture matches', () => {
     const compatibility = evaluateAgySwitchCompatibility({
       version: '1.0.99',
       fixture: cloneFixture(),
     });
 
-    expect(compatibility.mode).toBe('multi-model');
+    expect(compatibility.mode).toBe('single-model');
     expect(compatibility.warnings).toEqual([
       expect.stringMatching(/unvalidated AGY version 1.0.99/i),
     ]);

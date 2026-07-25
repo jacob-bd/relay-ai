@@ -14,6 +14,8 @@ relay-ai shows models from live provider APIs by default. Models are hidden only
 
    **On launch:** relay-ai refreshes from `https://models.dev/api.json` in the background (non-blocking). The next compatibility check uses the updated file.
 
+3. **Minimum context window** — `src/target-compatibility.ts::isTargetCompatibleModel()` hides models whose reported `contextWindow` is below the launch target's floor: 128K for Claude Code, Codex, the Codex/Claude desktop apps, and Gemini CLI (their system prompt + tool definitions alone can consume 25K+ tokens); 136K for Antigravity, which additionally enforces its own internal minimum (`config.MaxTokenLimit` needs 128K of input headroom on top of output tokens — see `src/antigravity/catalog.ts::ANTIGRAVITY_MIN_CONTEXT_WINDOW`). The `server`/`ui` API gateway target has no floor. **Models with no reported context window are never hidden** by this check — missing registry metadata isn't the same as a small model.
+
 ## Google Gemini (raw API)
 
 Google's `GET /v1/models` returns **many non-chat models** (Imagen, Veo, embeddings, TTS, robotics, etc.). **models.dev only catalogs a subset**, so relay-ai also maintains explicit `provider: google` entries in `model-incompatible.json` for models verified on the live API list.

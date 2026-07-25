@@ -308,6 +308,18 @@ var init_provider_templates = __esm({
         supported: true
       },
       {
+        id: "cloudflare",
+        name: "Cloudflare Workers AI",
+        authType: "api",
+        npm: "@ai-sdk/openai-compatible",
+        defaultBaseUrl: "https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/v1",
+        modelsPath: "/models/search?task=Text%20Generation",
+        signupUrl: "https://dash.cloudflare.com",
+        accountIdPrompt: "Cloudflare Account ID:",
+        modelSource: "api-list",
+        supported: true
+      },
+      {
         id: "anthropic",
         name: "Anthropic",
         authType: "api",
@@ -444,4 +456,4 @@ export {
   provider_templates_exports,
   init_provider_templates
 };
-//# sourceMappingURL=chunk-EJONCU3B.js.map
+//# sourceMappingURL=chunk-HXGZ4CTV.js.map

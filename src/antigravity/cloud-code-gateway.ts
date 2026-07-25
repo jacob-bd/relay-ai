@@ -608,6 +608,30 @@ function respondJson(res: http.ServerResponse, status: number, data: unknown): v
 }
 
 /**
+ * Some models emit a tool call as plain JSON text instead of a real tool-call part.
+ * `knownToolNames` is required to tell that apart from a model legitimately answering
+ * with JSON — without it, a reply like `{"name":"Alice"}` would be run as a tool.
+ */
+export function parsePseudoToolCall(
+  text: string,
+  knownToolNames: ReadonlySet<string>,
+): { name: string; args: Record<string, unknown> } | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
+  try {
+    const obj = JSON.parse(trimmed);
+    if (obj && typeof obj === 'object') {
+      const name = obj.name || (obj.type === 'function' && typeof obj.function === 'object' && obj.function?.name) || obj.function_name;
+      if (typeof name === 'string' && knownToolNames.has(name)) {
+        const args = obj.parameters || obj.arguments || obj.args || (typeof obj.function === 'object' && obj.function?.parameters) || {};
+        return { name, args: typeof args === 'object' && args ? args : {} };
+      }
+    }
+  } catch {}
+  return null;
+}
+
+/**
  * Handle a streaming GenerateContent request.
  * Uses fullStream to support text deltas, tool call events, and finish.
  */
@@ -660,8 +684,38 @@ async function handleStreamingRequest(
   const thinkFilter = createThinkFilter();
 
   const toolCallBuffers = new Map<string, { name: string; json: string }>();
+  const knownToolNames = new Set(Object.keys(sdkParams.tools ?? {}));
   let responseReasoning = '';
   let sawToolCall = false;
+  let textBuffer = '';
+  let bufferingJsonText = false;
+
+  const flushBufferedText = () => {
+    if (!textBuffer) return;
+    startSse();
+    const chunk = formatCloudCodeChunk({
+      text: textBuffer,
+      modelVersion: route.catalogId,
+      responseId,
+    });
+    res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+    textBuffer = '';
+    bufferingJsonText = false;
+  };
+
+  const emitPseudoToolCall = (pseudoTool: { name: string; args: Record<string, unknown> }) => {
+    sawToolCall = true;
+    startSse();
+    const chunk = formatCloudCodeChunk({
+      functionCall: { name: pseudoTool.name, args: normalizeFunctionCallArgs(pseudoTool.args) },
+      modelVersion: route.catalogId,
+      responseId,
+    });
+    res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+    textBuffer = '';
+    bufferingJsonText = false;
+  };
+
   for await (const part of fullStream) {
     const p = part as any;
 
@@ -680,13 +734,29 @@ async function handleStreamingRequest(
       }
       if (text) {
         log(`[gateway] text-delta: ${JSON.stringify(text.slice(0, 500))}`);
-        startSse();
-        const chunk = formatCloudCodeChunk({
-          text,
-          modelVersion: route.catalogId,
-          responseId,
-        });
-        res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        if (!bufferingJsonText && (textBuffer + text).trimStart().startsWith('{')) {
+          bufferingJsonText = true;
+        }
+        if (bufferingJsonText) {
+          textBuffer += text;
+          // Only attempt a parse once the buffer could close an object — otherwise every
+          // delta re-parses the whole growing buffer.
+          const pseudoTool = textBuffer.trimEnd().endsWith('}')
+            ? parsePseudoToolCall(textBuffer, knownToolNames)
+            : null;
+          if (pseudoTool) {
+            log(`[gateway] parsed pseudo tool-call from text: ${pseudoTool.name}`);
+            emitPseudoToolCall(pseudoTool);
+          }
+        } else {
+          startSse();
+          const chunk = formatCloudCodeChunk({
+            text,
+            modelVersion: route.catalogId,
+            responseId,
+          });
+          res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        }
       }
     } else if (p.type === 'tool-input-start') {
       const id = p.id ?? p.toolCallId;
@@ -712,6 +782,15 @@ async function handleStreamingRequest(
       res.write(`data: ${JSON.stringify(chunk)}\n\n`);
     } else if (p.type === 'finish') {
       log(`[gateway] finish: ${p.finishReason ?? 'unknown'}`);
+      if (textBuffer) {
+        const pseudoTool = parsePseudoToolCall(textBuffer, knownToolNames);
+        if (pseudoTool) {
+          log(`[gateway] parsed pseudo tool-call on finish: ${pseudoTool.name}`);
+          emitPseudoToolCall(pseudoTool);
+        } else {
+          flushBufferedText();
+        }
+      }
       startSse();
       const reason = mapFinishReason(p.finishReason ?? '');
       const chunk = formatCloudCodeChunk({
@@ -727,6 +806,8 @@ async function handleStreamingRequest(
     } else if (p.type === 'error') {
       const message = formatUpstreamError(p.error);
       log(`[gateway] stream provider error: ${message}`);
+      // Buffered JSON-shaped text is real output — don't lose it to the error.
+      flushBufferedText();
       emitStreamError(res, route, responseId, message, startSse);
       break;
     } else if (p.type === 'reasoning-start' || p.type === 'reasoning-end') {

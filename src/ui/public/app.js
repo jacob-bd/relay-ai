@@ -16,6 +16,7 @@ const state = {
   providers: [],
   templates: [],   // unconfigured available templates
   allModels: [],
+  appModelsByTarget: {}, // launch target → flattened, compatibility-filtered model list
   generalFavorites: [],
   agyFavorites: [],
   modelsLoaded: false,
@@ -237,14 +238,9 @@ async function loadTemplates() {
   state.templates = data.templates ?? [];
 }
 
-async function loadModels() {
-  const data = await api('GET', '/api/models');
-  if (data.error) throw new Error(data.error);
-  state.providers = data.providers ?? [];
+function flattenModelProviders(providers) {
   const flat = [];
-
-  for (const p of state.providers) {
-    state.providerNameMap[p.id] = p.name;
+  for (const p of providers) {
     const favoriteProviderName = p.favoriteName ?? p.name;
     for (const m of p.models ?? []) flat.push({
       id: m.id,
@@ -258,6 +254,32 @@ async function loadModels() {
       cost: m.cost,
       claudeTransparentCompatible: Boolean(m.claudeTransparentCompatible),
     });
+  }
+  return flat;
+}
+
+// Mirrors src/ui/api.ts's APP_ID_TO_LAUNCH_TARGET — which models are compatible with
+// which app depends on the launch target, not just the raw catalog.
+const APP_ID_NEEDS_TARGET_FILTER = new Set([
+  'claude', 'claude-app', 'codex', 'codex-app', 'gemini', 'agy', 'antigravity', 'antigravity-ide',
+]);
+
+async function loadAppModels(appId) {
+  if (state.appModelsByTarget[appId]) return state.appModelsByTarget[appId];
+  if (!APP_ID_NEEDS_TARGET_FILTER.has(appId)) return state.allModels;
+  const data = await api('GET', `/api/models?appId=${encodeURIComponent(appId)}`);
+  if (data.error) return state.allModels;
+  const flat = flattenModelProviders(data.providers ?? []);
+  state.appModelsByTarget[appId] = flat;
+  return flat;
+}
+
+async function loadModels() {
+  const data = await api('GET', '/api/models');
+  if (data.error) throw new Error(data.error);
+  state.providers = data.providers ?? [];
+  for (const p of state.providers) {
+    state.providerNameMap[p.id] = p.name;
     if (typeof p.modelCount === 'number') p._rawCount = p.modelCount;
   }
 
@@ -277,7 +299,7 @@ async function loadModels() {
       }
     }
   }
-  state.allModels = flat;
+  state.allModels = flattenModelProviders(state.providers);
 }
 
 async function saveFavorites(payload) { return api('POST', '/api/config', payload); }
@@ -334,7 +356,10 @@ function isFreeModel(model) {
 }
 
 function freeBadgeLabel(model) {
-  if (model?.freeStatus === 'free_provider') return 'Free dev access';
+  if (model?.freeStatus === 'free_provider') {
+    const isCloudflare = model?.providerId === 'cloudflare' || model?.id?.startsWith('@cf/') || model?.id?.startsWith('@hf/');
+    return isCloudflare ? '10k/day Free' : 'Free dev access';
+  }
   return model?.freeLabel || 'Free';
 }
 
@@ -522,7 +547,7 @@ function renderProviderModelBrowser() {
             <tr>
               <td><strong>${escapeHtml(model.name || model.id)}</strong><code>${escapeHtml(model.id)}</code></td>
               <td>${fmtCtx(model.contextWindow) || '—'}</td>
-              <td>${formatModelPrice(model.cost)}</td>
+              <td>${formatModelPrice(model.cost, isFreeModel(model), freeBadgeLabel(model))}</td>
             </tr>
           `).join('') || '<tr><td colspan="3" class="provider-model-empty">No models match your search.</td></tr>'}
         </tbody>
@@ -923,7 +948,22 @@ function buildTemplateBodyContent(template, card) {
   content.className = 'provider-body-content';
 
   let urlInput = null;
-  if (template.urlPrompt) {
+  let accountIdInput = null;
+
+  if (template.accountIdPrompt) {
+    const accountLabel = document.createElement('label');
+    accountLabel.textContent = template.accountIdPrompt;
+    accountLabel.style.cssText = 'font-size:12px;color:var(--text-muted,#aaa);display:block;margin-bottom:4px';
+    content.appendChild(accountLabel);
+
+    accountIdInput = document.createElement('input');
+    accountIdInput.type = 'text';
+    accountIdInput.className = 'key-input';
+    accountIdInput.placeholder = 'e.g. 4ff191dac2d0bd7538cb1c9126594de3';
+    accountIdInput.autocomplete = 'off';
+    accountIdInput.style.marginBottom = '8px';
+    content.appendChild(accountIdInput);
+  } else if (template.urlPrompt) {
     const urlLabel = document.createElement('label');
     urlLabel.textContent = template.urlPrompt;
     urlLabel.style.cssText = 'font-size:12px;color:var(--text-muted,#aaa);display:block;margin-bottom:4px';
@@ -971,13 +1011,15 @@ function buildTemplateBodyContent(template, card) {
   addBtn.addEventListener('click', async () => {
     const key = input.value.trim();
     const baseUrl = urlInput ? urlInput.value.trim() : undefined;
+    const accountId = accountIdInput ? accountIdInput.value.trim() : undefined;
     if (!key && !template.anonymousFreeModels && !template.apiKeyOptional) { feedback.textContent = 'Enter an API key first.'; feedback.className = 'key-feedback error'; return; }
+    if (accountIdInput && !accountId) { feedback.textContent = 'Enter an Account ID.'; feedback.className = 'key-feedback error'; return; }
     if (urlInput && !baseUrl) { feedback.textContent = 'Enter a base URL.'; feedback.className = 'key-feedback error'; return; }
     addBtn.disabled = true;
     feedback.textContent = key ? 'Validating key and fetching models…' : 'Fetching models…';
     feedback.className = 'key-feedback muted';
 
-    const result = await api('POST', '/api/providers/add', { templateId: template.id, key, baseUrl });
+    const result = await api('POST', '/api/providers/add', { templateId: template.id, key, baseUrl, accountId });
 
     addBtn.disabled = false;
     if (result.ok) {
@@ -1822,7 +1864,8 @@ function claudeHttpProxyAvailable(appId) {
 function matchedAppModels(appId) {
   const localFilter = state.appModelFilters[appId] ?? '';
   const q = (localFilter || state.appModelFilter).trim().toLowerCase();
-  const matched = state.allModels.filter(m => {
+  const source = state.appModelsByTarget[appId] ?? state.allModels;
+  const matched = source.filter(m => {
     const providerName = getProviderName(m.providerId);
     if (state.appFreeOnly && !isFreeModel(m)) return false;
     if (!q) return true;
@@ -1858,14 +1901,20 @@ function buildAppModelResults(appId) {
         .map(m => {
           const fav = isGeneralFavorite(m.providerId, m.id);
           const label = `${fav ? '★ ' : ''}${m.name || m.id}`;
-          const badge = isFreeModel(m) ? `<span class="free-badge ${m.freeStatus === 'free_provider' ? 'dev-access' : ''}">${escapeHtml(freeBadgeLabel(m))}</span>` : '';
+          const badge = isFreeModel(m)
+            ? `<span class="free-badge ${m.freeStatus === 'free_provider' ? 'dev-access' : ''}">${escapeHtml(freeBadgeLabel(m))}</span>`
+            : (m.cost && (m.cost.input > 0 || m.cost.output > 0)
+              ? `<span class="free-badge paid-cost">$${m.cost.input}/$${m.cost.output} 1M</span>`
+              : '');
+          const ctx = fmtCtx(m.contextWindow);
+          const idText = ctx ? `${m.id} · ${ctx} ctx` : m.id;
           const encodedProvider = encodeURIComponent(m.providerId);
           const encodedModel = encodeURIComponent(m.id);
           return `
             <button class="launch-model-row" type="button" onclick="selectLaunchModel('${appId}', '${encodedProvider}', '${encodedModel}')">
               <span class="launch-model-name">${escapeHtml(label)}</span>
               ${badge}
-              <span class="launch-model-id">${escapeHtml(m.id)}</span>
+              <span class="launch-model-id">${escapeHtml(idText)}</span>
             </button>
           `;
         })
@@ -2122,6 +2171,13 @@ function openLaunchModelPicker(appId) {
   if (!updateLaunchModelMenu(appId, true)) {
     renderApps();
     setTimeout(() => document.getElementById(`launch-model-input-${appId}`)?.focus(), 0);
+  }
+  // Shows the unfiltered list immediately, then swaps in the target-filtered one (hides
+  // models incompatible with this app, e.g. too-small context windows) once it loads.
+  if (!state.appModelsByTarget[appId] && APP_ID_NEEDS_TARGET_FILTER.has(appId)) {
+    loadAppModels(appId).then(() => {
+      if (state.appModelOpen === appId) updateLaunchModelMenu(appId, false);
+    });
   }
 }
 

@@ -106,4 +106,55 @@ describe('target compatibility matrix', () => {
     }
     expect(routableModelsForTarget(providers[2]!, 'antigravity').length).toBeGreaterThan(0);
   });
+
+  it('keeps models below the shared context floor out of every launcher', () => {
+    // Cloudflare @cf/meta/llama-3.3-70b-instruct-fp8-fast: agy refuses to start on 24K.
+    const smallModel: LocalProviderModel = { ...openAiModel, contextWindow: 24000 };
+
+    const agy = isTargetCompatibleModel({
+      target: 'antigravity',
+      providerId: 'cloudflare-workers-ai',
+      model: smallModel,
+    });
+    expect(agy.compatible).toBe(false);
+    expect(agy.reason).toContain('136K+');
+
+    for (const target of ['claude', 'codex', 'codex-app', 'claude-app', 'gemini'] as const) {
+      expect(isTargetCompatibleModel({
+        target,
+        providerId: 'cloudflare-workers-ai',
+        model: smallModel,
+      }).compatible, target).toBe(false);
+    }
+
+    // The server target is a plain API gateway — small models stay available there.
+    expect(isTargetCompatibleModel({
+      target: 'server',
+      providerId: 'cloudflare-workers-ai',
+      model: smallModel,
+    }).compatible).toBe(true);
+  });
+
+  it('keeps 128K models for the other targets while agy holds its higher floor', () => {
+    const model: LocalProviderModel = { ...openAiModel, contextWindow: 128000 };
+    for (const target of ['claude', 'codex', 'codex-app', 'claude-app', 'gemini', 'server'] as const) {
+      expect(isTargetCompatibleModel({ target, providerId: 'openai', model }).compatible, target)
+        .toBe(true);
+    }
+    expect(isTargetCompatibleModel({
+      target: 'antigravity',
+      providerId: 'openai',
+      model,
+    }).compatible).toBe(false);
+  });
+
+  it('allows Antigravity models at the floor and with unknown context windows', () => {
+    for (const contextWindow of [136192, 200000, undefined]) {
+      expect(isTargetCompatibleModel({
+        target: 'antigravity',
+        providerId: 'openai',
+        model: { ...openAiModel, contextWindow },
+      }).compatible, String(contextWindow)).toBe(true);
+    }
+  });
 });

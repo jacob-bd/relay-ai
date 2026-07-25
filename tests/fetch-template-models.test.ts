@@ -184,4 +184,44 @@ describe('fetchTemplateModels', () => {
       cost: { input: 0, output: 0 },
     });
   });
+
+  it('parses Cloudflare Workers AI result array and properties correctly', async () => {
+    const cloudflare = PROVIDER_TEMPLATES.find(t => t.id === 'cloudflare')!;
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        result: [
+          {
+            id: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+            name: 'llama-3.3-70b-instruct-fp8-fast',
+            properties: [
+              { property_id: 'context_window', value: '131072' },
+              { property_id: 'function_calling', value: 'true' },
+            ],
+          },
+        ],
+        success: true,
+      }),
+    } as Response);
+
+    const baseUrlOverride = 'https://api.cloudflare.com/client/v4/accounts/test-account-id/ai/v1';
+    const result = await fetchTemplateModels(cloudflare, 'cf-token-123', baseUrlOverride);
+
+    expect(result.error).toBeUndefined();
+    expect(result.models[0]).toMatchObject({
+      id: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+      name: 'llama-3.3-70b-instruct-fp8-fast',
+      contextWindow: 131072,
+      isFree: true,
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      'https://api.cloudflare.com/client/v4/accounts/test-account-id/ai/models/search?task=Text%20Generation',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer cf-token-123',
+        }),
+      }),
+    );
+  });
 });

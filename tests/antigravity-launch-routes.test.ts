@@ -34,7 +34,7 @@ const providers: LocalProvider[] = [
         upstreamModelId: 'llama-3.3-70b-versatile',
         npm: '@ai-sdk/openai-compatible',
         apiBaseUrl: 'https://api.groq.com/openai/v1',
-        contextWindow: 32768,
+        contextWindow: 200000,
       },
     ],
   },
@@ -130,8 +130,8 @@ describe('antigravity launch routes', () => {
     expect(result).not.toBeNull();
     expect(result!.apiKey).toBe('zen-key');
     expect(result!.routes.map(route => route.catalogId)).toEqual([
-      'relay-ai__zen__mimo-v2.5-free',
-      'relay-ai__groq__llama-3.3-70b',
+      'relay-ai__zen__mimo-v2_5-free',
+      'relay-ai__groq__llama-3_3-70b',
     ]);
     expect(result!.routes[1]).toMatchObject({
       upstreamModelId: 'llama-3.3-70b-versatile',
@@ -143,6 +143,40 @@ describe('antigravity launch routes', () => {
       { providerId: 'missing-key', modelId: 'available-but-no-key' },
     ]);
     expect(result!.capacitySkippedFavorites).toEqual([]);
+  });
+
+  it('drops favorites below the Antigravity context floor', async () => {
+    const smallProvider: LocalProvider = {
+      id: 'cloudflare-workers-ai',
+      name: 'Cloudflare Workers AI',
+      apiKey: 'cf-key',
+      models: [{
+        id: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+        name: 'Llama 3.3 70B FP8 Fast',
+        family: 'llama',
+        brand: 'Meta',
+        modelFormat: 'openai' as const,
+        upstreamModelId: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+        npm: '@ai-sdk/openai-compatible',
+        contextWindow: 24000,
+      }],
+    };
+
+    const result = await resolveAntigravityLaunchRoutes({
+      provider: providers[0]!,
+      model: providers[0]!.models[0]!,
+      allProviders: [...providers, smallProvider],
+      favorites: [{
+        providerId: 'cloudflare-workers-ai',
+        modelId: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+      }],
+    });
+
+    expect(result!.routes.map(route => route.providerId)).toEqual(['zen']);
+    expect(result!.droppedFavorites).toEqual([{
+      providerId: 'cloudflare-workers-ai',
+      modelId: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+    }]);
   });
 
   it('caps launch routes at the Antigravity catalog limit', async () => {
@@ -200,8 +234,8 @@ describe('antigravity launch routes', () => {
     });
 
     expect(result!.routes.map(route => route.catalogId)).toEqual([
-      'relay-ai__zen__mimo-v2.5-free',
-      'relay-ai__groq__llama-3.3-70b',
+      'relay-ai__zen__mimo-v2_5-free',
+      'relay-ai__groq__llama-3_3-70b',
     ]);
     expect(result!.capacitySkippedFavorites).toEqual([
       { providerId: 'xai-oauth', modelId: 'grok-4.3' },
@@ -224,7 +258,7 @@ describe('antigravity launch routes', () => {
     });
 
     expect(result!.routes.map(route => route.catalogId)).toEqual([
-      'relay-ai__zen__mimo-v2.5-free',
+      'relay-ai__zen__mimo-v2_5-free',
     ]);
     expect(result!.droppedFavorites).toContainEqual(invalidFavorite);
     expect(result!.capacitySkippedFavorites).not.toContainEqual(invalidFavorite);
@@ -245,14 +279,14 @@ describe('antigravity launch routes', () => {
     expect(result).not.toBeNull();
     expect(result!.routes).toMatchObject([
       {
-        catalogId: 'relay-ai__xai-oauth__grok-4.3',
+        catalogId: 'relay-ai__xai-oauth__grok-4_3',
         displayName: 'Grok 4.3 (Relay - xAI SuperGrok)',
         apiKey: 'oauth-token',
         authType: 'oauth',
         oauthAccountId: 'acct-123',
       },
       {
-        catalogId: 'relay-ai__xai__grok-4.3',
+        catalogId: 'relay-ai__xai__grok-4_3',
         displayName: 'Grok 4.3 (Relay - xAI API)',
         apiKey: 'api-key',
         authType: 'api',
@@ -270,7 +304,7 @@ describe('antigravity launch routes', () => {
 
     expect(result).not.toBeNull();
     expect(result!.routes[0]).toMatchObject({
-      catalogId: 'relay-ai__antigravity__gemini-3.5-flash-extra-low',
+      catalogId: 'relay-ai__antigravity__gemini-3_5-flash-extra-low',
       providerId: 'antigravity',
       modelFormat: 'cloud-code',
       upstreamModelId: 'gemini-3.5-flash-extra-low',

@@ -13,6 +13,7 @@ export interface ProviderTemplate {
   signupUrl?: string;
   urlPlaceholder?: string;
   urlPrompt?: string;
+  accountIdPrompt?: string;
   apiKeyOptional?: boolean;
   anonymousFreeModels?: boolean;
   /** Static headers this provider requires on every request (model listing and runtime). */
@@ -273,6 +274,18 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     npm: 'venice-ai-sdk-provider',
     defaultBaseUrl: 'https://api.venice.ai/api/v1',
     signupUrl: 'https://venice.ai/settings/api',
+    modelSource: 'api-list',
+    supported: true,
+  },
+  {
+    id: 'cloudflare',
+    name: 'Cloudflare Workers AI',
+    authType: 'api',
+    npm: '@ai-sdk/openai-compatible',
+    defaultBaseUrl: 'https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/v1',
+    modelsPath: '/models/search?task=Text%20Generation',
+    signupUrl: 'https://dash.cloudflare.com',
+    accountIdPrompt: 'Cloudflare Account ID:',
     modelSource: 'api-list',
     supported: true,
   },

@@ -8,6 +8,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { loadPreferences, recordLaunchFolder, savePreferences, setAppPathOverride } from '../config.js';
 import { fetchProviderCatalog } from '../provider-catalog.js';
+import { providersForTarget, type RelayLaunchTarget } from '../target-compatibility.js';
 import { favoriteProviderDisplayName } from '../favorite-provider-display.js';
 import { saveProviderCredential, resolveProviderCredential } from '../env.js';
 import { readBody, sendJson } from '../http-utils.js';
@@ -132,8 +133,9 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
     handleGetUpdateStatus(res);
   } else if (url === '/api/config' && req.method === 'POST') {
     handlePostConfig(req, res);
-  } else if (url === '/api/models' && req.method === 'GET') {
-    handleGetModels(res);
+  } else if (url.startsWith('/api/models') && req.method === 'GET') {
+    const appId = new URL(url, 'http://localhost').searchParams.get('appId') ?? '';
+    handleGetModels(res, APP_ID_TO_LAUNCH_TARGET[appId]);
   } else if (url === '/api/keys' && req.method === 'POST') {
     handlePostKeys(req, res);
   } else if (url === '/api/providers/refresh' && req.method === 'POST') {
@@ -202,10 +204,13 @@ async function handlePostConfig(req: IncomingMessage, res: ServerResponse): Prom
   }
 }
 
-async function handleGetModels(res: ServerResponse): Promise<void> {
+async function handleGetModels(res: ServerResponse, target?: RelayLaunchTarget): Promise<void> {
   try {
-    const catalog = (await fetchModelsWithTimeout())
+    let catalog = (await fetchModelsWithTimeout())
       .filter(provider => provider.authType !== 'oauth' || DEVICE_CODE_PROVIDER_IDS.has(provider.id));
+    // Per-app launch pickers pass their target so unsupported/too-small models (context
+    // floor, format compatibility) are filtered the same way the CLI wizards filter them.
+    if (target) catalog = providersForTarget(catalog, target);
     const registry = loadRegistry();
     const rawCountById = new Map(registry.providers.map(p => [p.id, p.modelsCache?.models.length ?? 0]));
     const providers = catalog.map(p => ({
@@ -309,6 +314,7 @@ function handleGetTemplates(res: ServerResponse): void {
     authType: t.authType,
     anonymousFreeModels: t.anonymousFreeModels ?? false,
     urlPrompt: t.urlPrompt ?? null,
+    accountIdPrompt: t.accountIdPrompt ?? null,
     defaultBaseUrl: t.defaultBaseUrl ?? null,
     apiKeyOptional: t.apiKeyOptional ?? false,
     custom: false,
@@ -363,7 +369,7 @@ async function handleAddCustomProvider(req: IncomingMessage, res: ServerResponse
 async function handleAddProvider(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
     const body = JSON.parse(await readBody(req));
-    const { templateId, key, baseUrl } = body;
+    const { templateId, key, baseUrl, accountId } = body;
     if (!templateId || typeof templateId !== 'string') {
       sendJson(res, 400, { error: 'templateId required' }); return;
     }
@@ -379,7 +385,13 @@ async function handleAddProvider(req: IncomingMessage, res: ServerResponse): Pro
     const keyText = template.apiKeyOptional && !rawKey && !template.anonymousFreeModels ? template.id : rawKey;
 
     let baseUrlOverride: string | undefined;
-    if (template.urlPrompt) {
+    if (template.accountIdPrompt) {
+      const rawAccountId = typeof accountId === 'string' ? accountId.trim() : '';
+      if (!rawAccountId) {
+        sendJson(res, 400, { error: 'accountId required' }); return;
+      }
+      baseUrlOverride = template.defaultBaseUrl?.replace('{ACCOUNT_ID}', rawAccountId);
+    } else if (template.urlPrompt) {
       baseUrlOverride = typeof baseUrl === 'string' ? baseUrl.trim() : '';
       if (!baseUrlOverride) {
         sendJson(res, 400, { error: 'baseUrl required' }); return;
@@ -687,6 +699,18 @@ function handleGetApps(res: ServerResponse): void {
 }
 
 const AGY_APP_IDS = new Set(['antigravity', 'agy', 'antigravity-ide']);
+
+/** Maps a `relay-ai ui` app card id to the launch target `target-compatibility.ts` understands. */
+const APP_ID_TO_LAUNCH_TARGET: Record<string, RelayLaunchTarget> = {
+  claude: 'claude',
+  'claude-app': 'claude-app',
+  codex: 'codex',
+  'codex-app': 'codex-app',
+  gemini: 'gemini',
+  agy: 'antigravity',
+  antigravity: 'antigravity',
+  'antigravity-ide': 'antigravity',
+};
 
 async function handleLaunchApp(req: IncomingMessage, res: ServerResponse, opts: UiApiOptions): Promise<void> {
   try {

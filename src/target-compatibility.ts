@@ -1,4 +1,6 @@
 import { shouldHideModel, type CompatibilityAgent } from './model-compatibility.js';
+import { MIN_CONTEXT_WINDOW } from './constants.js';
+import { ANTIGRAVITY_MIN_CONTEXT_WINDOW } from './antigravity/catalog.js';
 import type { LocalProvider, LocalProviderModel } from './types.js';
 
 export type RelayLaunchTarget =
@@ -27,10 +29,30 @@ function blacklistAgentForTarget(target: RelayLaunchTarget): CompatibilityAgent 
   return target;
 }
 
+/** Smallest context window a target can drive. The server target is a plain API gateway — callers own their prompt size, so no floor. */
+export function contextFloorForTarget(target: RelayLaunchTarget): number {
+  if (target === 'antigravity') return ANTIGRAVITY_MIN_CONTEXT_WINDOW;
+  if (target === 'server') return 0;
+  return MIN_CONTEXT_WINDOW;
+}
+
+/** Unknown context windows pass — registry metadata is often missing, not necessarily small. */
+export function meetsContextFloor(target: RelayLaunchTarget, contextWindow?: number): boolean {
+  return contextWindow === undefined || contextWindow >= contextFloorForTarget(target);
+}
+
 export function isTargetCompatibleModel(ctx: TargetCompatibilityContext): TargetCompatibilityResult {
   const blacklistAgent = blacklistAgentForTarget(ctx.target);
   if (shouldHideModel({ providerId: ctx.providerId, modelId: ctx.model.id, agent: blacklistAgent })) {
     return { compatible: false, reason: 'model is hidden by compatibility filters' };
+  }
+
+  if (!meetsContextFloor(ctx.target, ctx.model.contextWindow)) {
+    const floor = contextFloorForTarget(ctx.target);
+    return {
+      compatible: false,
+      reason: `${ctx.target} needs a ${Math.round(floor / 1000)}K+ context window; this model has ${Math.round(ctx.model.contextWindow! / 1000)}K`,
+    };
   }
 
   if (ctx.model.modelFormat === 'cloud-code') {

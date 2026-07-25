@@ -3,6 +3,7 @@ import { resolveLocalProviderApiKey } from '../provider-catalog.js';
 import { buildFavoritesList, type ResolveContext } from '../favorites-resolver.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from '../types.js';
 import { buildAntigravityRoutes } from './catalog.js';
+import { meetsContextFloor } from '../target-compatibility.js';
 import type { AntigravityRoute } from './types.js';
 
 export interface ResolveAntigravityLaunchRoutesOptions {
@@ -53,10 +54,20 @@ export async function resolveAntigravityLaunchRoutes(
     { dropEmptyApiKey: true, trackCapacitySkipped: true },
   );
 
+  // Favorites below agy's context floor make it refuse to start once switched to. The
+  // launch model (always first) comes from the picker, which already enforces the floor.
+  const tooSmall = resolved.slice(1).filter(
+    entry => !meetsContextFloor('antigravity', (entry.model as LocalProviderModel).contextWindow),
+  );
+  const launchable = resolved.filter(entry => !tooSmall.includes(entry));
+
   return {
-    routes: buildAntigravityRoutes(resolved, maxRoutes),
+    routes: buildAntigravityRoutes(launchable, maxRoutes),
     apiKey,
-    droppedFavorites,
+    droppedFavorites: [
+      ...droppedFavorites,
+      ...tooSmall.map(entry => ({ providerId: entry.providerId, modelId: entry.model.id })),
+    ],
     capacitySkippedFavorites,
   };
 }

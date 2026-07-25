@@ -129,13 +129,43 @@ export function providerSelectOption(provider: Pick<LocalProvider, 'id' | 'name'
 
 export function modelSelectOption(model: LocalProviderModel, hint?: string) {
   const label = formatCodexModelLabel(model);
-  const defaultHint = hint
-    ?? (model.name !== model.id ? model.id : model.brand || model.family || '');
+  let defaultHint = hint;
+
+  if (!defaultHint) {
+    const isCloudflare = model.id.startsWith('@cf/') || model.id.startsWith('@hf/');
+    if (model.isFree) {
+      defaultHint = pc.green(isCloudflare ? 'Free (10k/day)' : 'Free');
+    } else if (model.cost && (model.cost.input > 0 || model.cost.output > 0)) {
+      const inputStr = `$${model.cost.input}`;
+      const outputStr = `$${model.cost.output}`;
+      defaultHint = pc.dim(isCloudflare ? `Paid plan req (${inputStr}/${outputStr} 1M)` : `${inputStr}/${outputStr} 1M`);
+    } else {
+      defaultHint = model.name !== model.id ? model.id : model.brand || model.family || '';
+    }
+  } else if (hint === 'recent') {
+    const isCloudflare = model.id.startsWith('@cf/') || model.id.startsWith('@hf/');
+    const freeLabel = isCloudflare ? 'Free (10k/day)' : 'Free';
+    const freeSuffix = model.isFree ? ' · ' + pc.green(freeLabel) : '';
+    defaultHint = fmtRecentHint() + freeSuffix;
+  }
+
+  const ctxSuffix = fmtContextWindow(model.contextWindow);
   return {
     value: model.id,
     label: fmtModel(label),
-    hint: hint === 'recent' ? fmtRecentHint() : defaultHint,
+    hint: defaultHint && ctxSuffix
+      ? `${defaultHint} · ${ctxSuffix}`
+      : defaultHint || ctxSuffix,
   };
+}
+
+/** Compact context window tag for pickers, e.g. `128k ctx`. Empty when unknown. */
+export function fmtContextWindow(contextWindow?: number): string {
+  if (!contextWindow) return '';
+  const k = contextWindow >= 1000
+    ? `${Math.round(contextWindow / 1000)}k`
+    : String(contextWindow);
+  return pc.dim(`${k} ctx`);
 }
 
 export function navOption(value: string, label: string, hint = '') {

@@ -1,7 +1,11 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { generateText, streamText } from 'ai';
 import { createLanguageModel } from '../src/provider-factory.js';
-import { startCloudCodeGateway, type CloudCodeGatewayHandle } from '../src/antigravity/cloud-code-gateway.js';
+import {
+  startCloudCodeGateway,
+  parsePseudoToolCall,
+  type CloudCodeGatewayHandle,
+} from '../src/antigravity/cloud-code-gateway.js';
 import type { AntigravityRoute } from '../src/antigravity/types.js';
 
 vi.mock('ai', () => {
@@ -661,6 +665,44 @@ describe('cloud-code-gateway', () => {
     expect(await res.text()).toContain('actual output');
   });
 
+  it('flushes buffered JSON-shaped text when the provider errors mid-stream', async () => {
+    vi.mocked(streamText).mockImplementationOnce(() => ({
+      fullStream: (async function* () {
+        yield { type: 'text-delta', id: 'text-1', text: '{"answer": "partial' };
+        yield { type: 'error', error: new Error('upstream disconnected') };
+      })(),
+    }) as any);
+    const handle = await start();
+
+    const res = await postJson(handle, '/v1internal:streamGenerateContent?alt=sse', {
+      model: 'relay-ai__zen__deepseek-v4-flash-free',
+      request: { contents: [{ role: 'user', parts: [{ text: 'test' }] }] },
+    });
+    const text = await res.text();
+
+    expect(text).toContain('partial');
+    expect(text).toContain('upstream disconnected');
+  });
+
+  it('keeps a JSON answer as text when no matching tool was offered', async () => {
+    vi.mocked(streamText).mockImplementationOnce(() => ({
+      fullStream: (async function* () {
+        yield { type: 'text-delta', id: 'text-1', text: '{"name": "Alice", "age": 30}' };
+        yield { type: 'finish', finishReason: 'stop', totalUsage: {} };
+      })(),
+    }) as any);
+    const handle = await start();
+
+    const res = await postJson(handle, '/v1internal:streamGenerateContent?alt=sse', {
+      model: 'relay-ai__zen__deepseek-v4-flash-free',
+      request: { contents: [{ role: 'user', parts: [{ text: 'test' }] }] },
+    });
+    const text = await res.text();
+
+    expect(text).toContain('Alice');
+    expect(text).not.toContain('functionCall');
+  });
+
   it('separates streaming reasoning from visible response text', async () => {
     vi.mocked(streamText).mockImplementationOnce(() => ({
       fullStream: (async function* () {
@@ -897,6 +939,21 @@ describe('cloud-code-gateway', () => {
       body: Buffer.from([0, 0, 0, 0, 10]),
     });
     expect(res.status).toBe(415);
+  });
+
+  // --- Pseudo tool calls in text ---
+
+  it('only treats JSON text as a tool call when the tool was offered', () => {
+    const declared = new Set(['call_mcp_tool']);
+    const asToolCall = JSON.stringify({ name: 'call_mcp_tool', arguments: { ServerName: 'x' } });
+    expect(parsePseudoToolCall(asToolCall, declared)).toEqual({
+      name: 'call_mcp_tool',
+      args: { ServerName: 'x' },
+    });
+
+    // A model answering with plain JSON must stay text, not become a tool named "Alice".
+    expect(parsePseudoToolCall(JSON.stringify({ name: 'Alice', age: 30 }), declared)).toBeNull();
+    expect(parsePseudoToolCall(asToolCall, new Set())).toBeNull();
   });
 
   // --- Health & Close ---
