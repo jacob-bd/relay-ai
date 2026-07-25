@@ -60,6 +60,8 @@ import {
   fmtProvider,
   fmtProviderBracket,
   fmtUrl,
+  formatAnthropicModelEntry,
+  formatAnthropicModelList,
   formatCodexModelLabel,
   formatRegistryAuthLabel,
   formatUpdateNotification,
@@ -172,7 +174,7 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-6CBNKM55.js";
+} from "./chunk-NHSWWQ3H.js";
 import {
   filterTemplates,
   init_provider_templates,
@@ -215,12 +217,12 @@ function findOpencodeBinary() {
       stdio: ["pipe", "pipe", "pipe"]
     });
     const lines = result.trim().split("\n").map((l) => l.trim()).filter(Boolean);
-    const path2 = (isWindows ? lines.find((l) => l.toLowerCase().endsWith(".cmd")) : null) ?? lines[0];
-    if (path2) return path2;
+    const path3 = (isWindows ? lines.find((l) => l.toLowerCase().endsWith(".cmd")) : null) ?? lines[0];
+    if (path3) return path3;
   } catch {
   }
-  for (const path2 of OPENCODE_FALLBACK_PATHS) {
-    if (existsSync(path2)) return path2;
+  for (const path3 of OPENCODE_FALLBACK_PATHS) {
+    if (existsSync(path3)) return path3;
   }
   return null;
 }
@@ -596,7 +598,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
   if (isLinux && !simulate) {
     secretServiceAvailable = await isSecretServiceAvailable();
   }
-  const { display, path: path2 } = detectShellProfile();
+  const { display, path: path3 } = detectShellProfile();
   const saveOptions = (() => {
     if (isMac) {
       return [
@@ -655,9 +657,9 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
     if (await saveToCredentialStore(trimmedKey)) {
       try {
         const autoLoadLine = `export OPENCODE_API_KEY="$(security find-generic-password -s relay-ai -a ${GLOBAL_OPENCODE_KEYRING_ACCOUNT} -w 2>/dev/null)"`;
-        const existing = existsSync2(path2) ? readFileSync(path2, "utf8") : "";
+        const existing = existsSync2(path3) ? readFileSync(path3, "utf8") : "";
         if (!existing.includes(autoLoadLine)) {
-          appendFileSync(path2, `
+          appendFileSync(path3, `
 # relay-ai: load API key from macOS Keychain
 ${autoLoadLine}
 `);
@@ -692,9 +694,9 @@ ${autoLoadLine}
     }
   } else if (saveChoice === "profile") {
     try {
-      if (!existsSync2(path2)) appendFileSync(path2, "");
+      if (!existsSync2(path3)) appendFileSync(path3, "");
       const escapedKey = trimmedKey.replace(/'/g, "'\\''");
-      appendFileSync(path2, `
+      appendFileSync(path3, `
 export OPENCODE_API_KEY='${escapedKey}'
 `);
       p.log.success(`Key saved to ${display} \u2014 active now and in all future terminals.`);
@@ -3812,11 +3814,11 @@ function ownedOverlayPaths(env = process.env) {
   }
   return paths;
 }
-function atomicWriteFile(path2, content) {
-  mkdirSync(dirname(path2), { recursive: true });
-  const tmp = `${path2}.tmp.${process.pid}`;
+function atomicWriteFile(path3, content) {
+  mkdirSync(dirname(path3), { recursive: true });
+  const tmp = `${path3}.tmp.${process.pid}`;
   writeFileSync(tmp, content, "utf8");
-  renameSync(tmp, path2);
+  renameSync(tmp, path3);
 }
 function rotateBackups(filePath, env = process.env) {
   if (!existsSync3(filePath)) return;
@@ -3834,24 +3836,24 @@ function rotateBackups(filePath, env = process.env) {
     }
   }
 }
-function writeOverlayFile(path2, content, env = process.env) {
-  rotateBackups(path2, env);
-  atomicWriteFile(path2, content);
+function writeOverlayFile(path3, content, env = process.env) {
+  rotateBackups(path3, env);
+  atomicWriteFile(path3, content);
 }
 function readSessionLock(env = process.env) {
-  const path2 = getSessionLockPath(env);
-  if (!existsSync3(path2)) return null;
+  const path3 = getSessionLockPath(env);
+  if (!existsSync3(path3)) return null;
   try {
-    const parsed = JSON.parse(readFileSync2(path2, "utf8"));
+    const parsed = JSON.parse(readFileSync2(path3, "utf8"));
     if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string") return parsed;
   } catch {
   }
   return null;
 }
 function writeSessionLock(lock, env = process.env) {
-  const path2 = getSessionLockPath(env);
+  const path3 = getSessionLockPath(env);
   mkdirSync(getRelayAiCodexDir(env), { recursive: true });
-  atomicWriteFile(path2, `${JSON.stringify(lock, null, 2)}
+  atomicWriteFile(path3, `${JSON.stringify(lock, null, 2)}
 `);
 }
 function isProcessAlive(pid) {
@@ -3868,11 +3870,11 @@ function isConcurrentSession(lock) {
 }
 function restoreCodexOverlay(env = process.env) {
   const removed = [];
-  for (const path2 of ownedOverlayPaths(env)) {
-    if (!existsSync3(path2)) continue;
+  for (const path3 of ownedOverlayPaths(env)) {
+    if (!existsSync3(path3)) continue;
     try {
-      rmSync(path2, { force: true });
-      removed.push(path2);
+      rmSync(path3, { force: true });
+      removed.push(path3);
     } catch {
     }
   }
@@ -4019,16 +4021,16 @@ function findCodexBinary() {
 }
 function selectCodexBinary(candidates, exists, canRun) {
   const seen = /* @__PURE__ */ new Set();
-  for (const path2 of candidates) {
-    if (!path2 || seen.has(path2)) continue;
-    seen.add(path2);
-    if (exists(path2) && canRun(path2)) return path2;
+  for (const path3 of candidates) {
+    if (!path3 || seen.has(path3)) continue;
+    seen.add(path3);
+    if (exists(path3) && canRun(path3)) return path3;
   }
   return null;
 }
-function canRunCodexBinary(path2) {
+function canRunCodexBinary(path3) {
   try {
-    execFileSync(path2, ["--version"], {
+    execFileSync(path3, ["--version"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 5e3,
@@ -8248,12 +8250,12 @@ function findAntigravityCliBinary() {
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"]
     });
-    const path2 = result.trim().split("\n")[0]?.trim();
-    if (path2) return path2;
+    const path3 = result.trim().split("\n")[0]?.trim();
+    if (path3) return path3;
   } catch {
   }
-  for (const path2 of FALLBACK_PATHS) {
-    if (existsSync6(path2)) return path2;
+  for (const path3 of FALLBACK_PATHS) {
+    if (existsSync6(path3)) return path3;
   }
   return null;
 }
@@ -9111,9 +9113,9 @@ function applyRestoreNumber(config, key, had, value) {
     delete config[key];
   }
 }
-function readCodexConfigText(path2 = getCodexConfigPath()) {
-  if (!existsSync8(path2)) return "";
-  return readFileSync3(path2, "utf8");
+function readCodexConfigText(path3 = getCodexConfigPath()) {
+  if (!existsSync8(path3)) return "";
+  return readFileSync3(path3, "utf8");
 }
 function parseCodexConfig(text4) {
   if (!text4.trim()) return {};
@@ -9321,10 +9323,10 @@ function getAppCatalogPath(providerId, env = process.env) {
   return join10(getRelayAiCodexDir(env), `app-models-${providerId}.json`);
 }
 function readAppSessionLock(env = process.env) {
-  const path2 = getAppSessionLockPath(env);
-  if (!existsSync9(path2)) return null;
+  const path3 = getAppSessionLockPath(env);
+  if (!existsSync9(path3)) return null;
   try {
-    const parsed = JSON.parse(readFileSync4(path2, "utf8"));
+    const parsed = JSON.parse(readFileSync4(path3, "utf8"));
     if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string") return parsed;
   } catch {
   }
@@ -9335,14 +9337,14 @@ function writeAppSessionLock(lock, env = process.env) {
 `);
 }
 function clearAppSessionLock(env = process.env) {
-  const path2 = getAppSessionLockPath(env);
-  if (existsSync9(path2)) rmSync4(path2, { force: true });
+  const path3 = getAppSessionLockPath(env);
+  if (existsSync9(path3)) rmSync4(path3, { force: true });
 }
 function readAppRestoreState(env = process.env) {
-  const path2 = getAppRestoreStatePath(env);
-  if (!existsSync9(path2)) return null;
+  const path3 = getAppRestoreStatePath(env);
+  if (!existsSync9(path3)) return null;
   try {
-    return JSON.parse(readFileSync4(path2, "utf8"));
+    return JSON.parse(readFileSync4(path3, "utf8"));
   } catch {
     return null;
   }
@@ -9353,8 +9355,8 @@ function writeAppRestoreState(state, env = process.env) {
 `);
 }
 function clearAppRestoreState(env = process.env) {
-  const path2 = getAppRestoreStatePath(env);
-  if (existsSync9(path2)) rmSync4(path2, { force: true });
+  const path3 = getAppRestoreStatePath(env);
+  if (existsSync9(path3)) rmSync4(path3, { force: true });
 }
 function backupConfigToml(env = process.env) {
   const configPath = getCodexConfigPath();
@@ -9384,10 +9386,10 @@ function ownedAppCatalogPaths(env = process.env) {
 }
 function removeAppCatalogs(env = process.env) {
   const removed = [];
-  for (const path2 of ownedAppCatalogPaths(env)) {
+  for (const path3 of ownedAppCatalogPaths(env)) {
     try {
-      rmSync4(path2, { force: true });
-      removed.push(path2);
+      rmSync4(path3, { force: true });
+      removed.push(path3);
     } catch {
     }
   }
@@ -10235,10 +10237,10 @@ function getSessionLockPath2() {
   return join12(getClaudeDesktopHome(), ".relay-ai.lock");
 }
 function inspectSessionLock() {
-  const path2 = getSessionLockPath2();
-  if (!existsSync11(path2)) return { status: "missing" };
+  const path3 = getSessionLockPath2();
+  if (!existsSync11(path3)) return { status: "missing" };
   try {
-    const parsed = JSON.parse(readFileSync6(path2, "utf8"));
+    const parsed = JSON.parse(readFileSync6(path3, "utf8"));
     if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string" && typeof parsed.uuid === "string" && typeof parsed.proxyPort === "number") {
       return { status: "valid", lock: parsed };
     }
@@ -10247,13 +10249,13 @@ function inspectSessionLock() {
   return { status: "unreadable" };
 }
 function writeSessionLock2(lock) {
-  const path2 = getSessionLockPath2();
-  const tempPath = `${path2}.tmp.${process.pid}`;
-  mkdirSync6(dirname4(path2), { recursive: true });
+  const path3 = getSessionLockPath2();
+  const tempPath = `${path3}.tmp.${process.pid}`;
+  mkdirSync6(dirname4(path3), { recursive: true });
   try {
     writeFileSync5(tempPath, `${JSON.stringify(lock, null, 2)}
 `, "utf8");
-    renameSync2(tempPath, path2);
+    renameSync2(tempPath, path3);
   } finally {
     try {
       rmSync5(tempPath, { force: true });
@@ -11153,24 +11155,59 @@ function printAiInstallResult(result) {
   console.error(`relay-ai agent skill target version: v${result.version}`);
   if (result.installed.length > 0) {
     console.error(`Installed ${result.installed.length} new skill(s):`);
-    for (const path2 of result.installed) console.error(`  \u2713 ${path2}`);
+    for (const path3 of result.installed) console.error(`  \u2713 ${path3}`);
   }
   if (result.updated.length > 0) {
     console.error(`Updated ${result.updated.length} skill(s):`);
-    for (const { path: path2, fromVersion } of result.updated) {
+    for (const { path: path3, fromVersion } of result.updated) {
       const from = fromVersion ? `v${fromVersion}` : "unknown";
-      console.error(`  \u2713 ${path2} (${from} \u2192 v${result.version})`);
+      console.error(`  \u2713 ${path3} (${from} \u2192 v${result.version})`);
     }
   }
   if (result.skipped.length > 0) {
     console.error(`Skipped ${result.skipped.length} (already v${result.version}):`);
-    for (const path2 of result.skipped) console.error(`  \xB7 ${path2}`);
+    for (const path3 of result.skipped) console.error(`  \xB7 ${path3}`);
   }
   if (result.failed.length > 0) {
     console.error(`Failed ${result.failed.length}:`);
-    for (const path2 of result.failed) console.error(`  \u2717 ${path2}`);
+    for (const path3 of result.failed) console.error(`  \u2717 ${path3}`);
   }
   return result.failed.length > 0 ? 1 : 0;
+}
+
+// src/http-proxy/discovery-cache.ts
+import * as fs2 from "fs";
+import * as path2 from "path";
+import * as os from "os";
+
+// src/http-proxy/anthropic-host.ts
+var ANTHROPIC_UPSTREAM_HOST = "api.anthropic.com";
+var RELAY_SENTINEL_HOST = "api.anthropic.com.relay.invalid";
+var RELAY_BASE_URL = `https://${RELAY_SENTINEL_HOST}`;
+
+// src/http-proxy/discovery-cache.ts
+var GATEWAY_DISCOVERY_BASE_URL = RELAY_BASE_URL;
+var CACHE_FILE = "gateway-models.json";
+function cachePath(baseEnv) {
+  const claudeDir = baseEnv["CLAUDE_CONFIG_DIR"]?.trim() || path2.join(os.homedir(), ".claude");
+  return path2.join(claudeDir, "cache", CACHE_FILE);
+}
+function writeGatewayDiscoveryCache(baseEnv, routes) {
+  try {
+    const models = routes.filter((route) => Boolean(route.gatewayAliasId)).map((route) => formatAnthropicModelEntry(
+      route.gatewayAliasId,
+      route.displayName,
+      route.contextWindow
+    ));
+    const file = cachePath(baseEnv);
+    fs2.mkdirSync(path2.dirname(file), { recursive: true });
+    fs2.writeFileSync(
+      file,
+      JSON.stringify({ baseUrl: GATEWAY_DISCOVERY_BASE_URL, fetchedAt: Date.now(), models }),
+      { encoding: "utf8", mode: 384 }
+    );
+  } catch {
+  }
 }
 
 // src/http-proxy/env.ts
@@ -11254,6 +11291,8 @@ function buildHttpProxyChildEnv(baseEnv, proxyUrl, caCertPath) {
     if (name === "ANTHROPIC_API_KEY" || name === "ANTHROPIC_AUTH_TOKEN") continue;
     delete env[name];
   }
+  env["ANTHROPIC_BASE_URL"] = RELAY_BASE_URL;
+  env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1";
   return env;
 }
 
@@ -11262,14 +11301,14 @@ import { randomBytes, randomUUID as randomUUID3 } from "crypto";
 import {
   chmodSync,
   existsSync as existsSync13,
-  mkdirSync as mkdirSync8,
+  mkdirSync as mkdirSync9,
   readFileSync as readFileSync8,
   readdirSync as readdirSync3,
   rmSync as rmSync6,
   statSync as statSync2,
-  writeFileSync as writeFileSync7
+  writeFileSync as writeFileSync8
 } from "fs";
-import { dirname as dirname5, join as join14, resolve } from "path";
+import { dirname as dirname6, join as join15, resolve } from "path";
 import forge from "node-forge";
 var SESSION_ROOT = "http-proxy-sessions";
 var OWNER_FILE = "owner.pid";
@@ -11289,15 +11328,15 @@ function processIsRunning(pid) {
   }
 }
 function cleanupStaleHttpProxySessions(appHome = getAppHome()) {
-  const root = join14(appHome, SESSION_ROOT);
+  const root = join15(appHome, SESSION_ROOT);
   if (!existsSync13(root)) return;
   const now = Date.now();
   for (const name of readdirSync3(root)) {
-    const sessionDir = join14(root, name);
+    const sessionDir = join15(root, name);
     try {
       const stat = statSync2(sessionDir);
       if (!stat.isDirectory()) continue;
-      const ownerPath = join14(sessionDir, OWNER_FILE);
+      const ownerPath = join15(sessionDir, OWNER_FILE);
       if (!existsSync13(ownerPath)) {
         if (now - stat.mtimeMs > MID_CREATION_GRACE_MS) {
           rmSync6(sessionDir, { recursive: true, force: true });
@@ -11320,13 +11359,13 @@ function cleanupStaleHttpProxySessions(appHome = getAppHome()) {
 }
 function createHttpProxyCertificates(appHome = getAppHome()) {
   cleanupStaleHttpProxySessions(appHome);
-  const root = join14(appHome, SESSION_ROOT);
-  mkdirSync8(root, { recursive: true, mode: 448 });
+  const root = join15(appHome, SESSION_ROOT);
+  mkdirSync9(root, { recursive: true, mode: 448 });
   chmodSync(root, 448);
-  const sessionDir = join14(root, randomUUID3());
-  mkdirSync8(sessionDir, { mode: 448 });
+  const sessionDir = join15(root, randomUUID3());
+  mkdirSync9(sessionDir, { mode: 448 });
   chmodSync(sessionDir, 448);
-  writeFileSync7(join14(sessionDir, OWNER_FILE), `${process.pid}
+  writeFileSync8(join15(sessionDir, OWNER_FILE), `${process.pid}
 `, { mode: 384 });
   try {
     const caKeys = forge.pki.rsa.generateKeyPair(2048);
@@ -11350,19 +11389,19 @@ function createHttpProxyCertificates(appHome = getAppHome()) {
     server.serialNumber = serialNumber();
     server.validity.notBefore = new Date(Date.now() - 6e4);
     server.validity.notAfter = new Date(Date.now() + 48 * 60 * 60 * 1e3);
-    server.setSubject([{ name: "commonName", value: "api.anthropic.com" }]);
+    server.setSubject([{ name: "commonName", value: RELAY_SENTINEL_HOST }]);
     server.setIssuer(ca.subject.attributes);
     server.setExtensions([
       { name: "basicConstraints", cA: false, critical: true },
       { name: "keyUsage", digitalSignature: true, keyEncipherment: true, critical: true },
       { name: "extKeyUsage", serverAuth: true },
-      { name: "subjectAltName", altNames: [{ type: 2, value: "api.anthropic.com" }] },
+      { name: "subjectAltName", altNames: [{ type: 2, value: RELAY_SENTINEL_HOST }] },
       { name: "subjectKeyIdentifier" }
     ]);
     server.sign(caKeys.privateKey, forge.md.sha256.create());
     const caCert = forge.pki.certificateToPem(ca);
-    const caCertPath = join14(sessionDir, "relay-ai-ca.pem");
-    writeFileSync7(caCertPath, caCert, { encoding: "utf8", mode: 384 });
+    const caCertPath = join15(sessionDir, "relay-ai-ca.pem");
+    writeFileSync8(caCertPath, caCert, { encoding: "utf8", mode: 384 });
     chmodSync(caCertPath, 384);
     let cleaned = false;
     const cleanupOnExit = () => {
@@ -11407,8 +11446,8 @@ function createHttpProxyCaBundle(relayCaCertPath, additionalCaCertPath) {
   const relayCa = readFileSync8(relayCaCertPath, "utf8").trimEnd();
   const additionalCa = readFileSync8(additionalCaCertPath, "utf8").trim();
   if (!additionalCa) return relayCaCertPath;
-  const combinedPath = join14(dirname5(relayCaCertPath), "combined-ca.pem");
-  writeFileSync7(
+  const combinedPath = join15(dirname6(relayCaCertPath), "combined-ca.pem");
+  writeFileSync8(
     combinedPath,
     `${relayCa}
 ${additionalCa}
@@ -11429,6 +11468,20 @@ import { URL as URL2 } from "url";
 // src/anthropic-endpoints.ts
 var MESSAGE_PATH = "/v1/messages";
 var COUNT_TOKENS_PATH = "/v1/messages/count_tokens";
+var MODELS_PATH = "/v1/models";
+function anthropicModelsEndpoint(url) {
+  if (!url) return null;
+  try {
+    const pathname = new URL(url, "http://relay.local").pathname;
+    if (pathname === MODELS_PATH || pathname === `${MODELS_PATH}/`) return "list";
+    if (pathname.startsWith(`${MODELS_PATH}/`)) {
+      const id = decodeURIComponent(pathname.slice(MODELS_PATH.length + 1));
+      if (id) return { id };
+    }
+  } catch {
+  }
+  return null;
+}
 function anthropicMessagesEndpoint(url) {
   if (!url) return null;
   try {
@@ -11459,7 +11512,7 @@ function estimateAnthropicInputTokens(body) {
 }
 
 // src/http-proxy/server.ts
-var ANTHROPIC_HOST = "api.anthropic.com";
+var ANTHROPIC_HOST = RELAY_SENTINEL_HOST;
 var MAX_BODY_BYTES = 50 * 1024 * 1024;
 var PROXY_USERNAME = "relay-ai";
 function authorityParts(authority) {
@@ -11533,12 +11586,26 @@ function readRawBody(req) {
     req.once("error", fail);
   });
 }
-function requestHeadersWithoutProxyHeaders(req) {
+function requestHeadersWithoutProxyHeaders(req, hostOverride) {
   const headers = [];
   for (let index = 0; index < req.rawHeaders.length; index += 2) {
     const name = req.rawHeaders[index];
     if (/^proxy-(authorization|connection)$/i.test(name)) continue;
+    if (hostOverride && /^host$/i.test(name)) {
+      headers.push(name, hostOverride);
+      continue;
+    }
     headers.push(name, req.rawHeaders[index + 1] ?? "");
+  }
+  return headers;
+}
+function restoreBillingCch(headers) {
+  for (let index = 0; index < headers.length; index += 2) {
+    if (!/^x-anthropic-billing-header$/i.test(headers[index])) continue;
+    const value = headers[index + 1] ?? "";
+    if (/(?:^|;)\s*cch=/.test(value)) break;
+    headers[index + 1] = `${value.replace(/;?\s*$/, "")}; cch=00000;`;
+    break;
   }
   return headers;
 }
@@ -11562,7 +11629,7 @@ function forwardRawRequest(req, res, rawBody, origin, rejectUnauthorized) {
       port: origin.port || void 0,
       method: req.method,
       path: req.url,
-      headers: requestHeadersWithoutProxyHeaders(req),
+      headers: restoreBillingCch(requestHeadersWithoutProxyHeaders(req, ANTHROPIC_UPSTREAM_HOST)),
       ...origin.protocol === "https:" ? { rejectUnauthorized } : {}
     }, (upstreamRes) => {
       copyResponse(upstreamRes, res);
@@ -11618,6 +11685,40 @@ function forwardToAdapter(req, res, rawBody, adapter) {
     upstream.end(rawBody);
   });
 }
+function fetchUpstreamModelsList(req, origin, rejectUnauthorized) {
+  return new Promise((resolve2) => {
+    const transport = origin.protocol === "https:" ? https : http2;
+    const rawHeaders = requestHeadersWithoutProxyHeaders(req, ANTHROPIC_UPSTREAM_HOST);
+    const headers = ["accept-encoding", "identity"];
+    for (let i = 0; i < rawHeaders.length; i += 2) {
+      const name = rawHeaders[i];
+      if (/^accept-encoding$/i.test(name)) continue;
+      headers.push(name, rawHeaders[i + 1] ?? "");
+    }
+    const upstream = transport.request({
+      protocol: origin.protocol,
+      hostname: origin.hostname,
+      port: origin.port || void 0,
+      method: "GET",
+      path: req.url,
+      headers,
+      ...origin.protocol === "https:" ? { rejectUnauthorized } : {}
+    }, (upstreamRes) => {
+      const chunks = [];
+      upstreamRes.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      upstreamRes.once("end", () => {
+        resolve2({
+          statusCode: upstreamRes.statusCode ?? 500,
+          headers: upstreamRes.headers,
+          body: Buffer.concat(chunks)
+        });
+      });
+      upstreamRes.once("error", () => resolve2(null));
+    });
+    upstream.once("error", () => resolve2(null));
+    upstream.end();
+  });
+}
 function forwardPlainHttp(req, res) {
   let target;
   try {
@@ -11656,6 +11757,9 @@ async function startHttpProxy(options) {
   const routesById = /* @__PURE__ */ new Map();
   for (const route of options.routes) {
     for (const id of routeLookupIds(route.aliasId)) routesById.set(id, route);
+    if (route.gatewayAliasId) {
+      for (const id of routeLookupIds(route.gatewayAliasId)) routesById.set(id, route);
+    }
   }
   const anthropicOrigin = new URL2(options.anthropicOrigin ?? "https://api.anthropic.com");
   if (anthropicOrigin.protocol !== "http:" && anthropicOrigin.protocol !== "https:") {
@@ -11689,6 +11793,75 @@ async function startHttpProxy(options) {
         res.end(error instanceof Error ? error.message : String(error));
       }
       return;
+    }
+    const modelsEndpoint = anthropicModelsEndpoint(req.url);
+    if (req.method === "GET" && modelsEndpoint && options.routes.length > 0) {
+      if (modelsEndpoint === "list") {
+        const upstreamResult = await fetchUpstreamModelsList(
+          req,
+          anthropicOrigin,
+          options.anthropicRejectUnauthorized ?? true
+        );
+        const relayEntries = options.routes.filter((r) => Boolean(r.gatewayAliasId)).map((r) => formatAnthropicModelEntry(
+          r.gatewayAliasId,
+          r.displayName,
+          r.contextWindow
+        ));
+        if (upstreamResult && upstreamResult.statusCode === 200) {
+          try {
+            const parsed = JSON.parse(upstreamResult.body.toString("utf8"));
+            if (Array.isArray(parsed.data)) {
+              const existingIds = new Set(parsed.data.map((m) => String(m.id ?? "")));
+              for (const entry of relayEntries) {
+                if (!existingIds.has(entry.id)) {
+                  parsed.data.push(entry);
+                }
+              }
+              const responseBuffer = Buffer.from(JSON.stringify(parsed));
+              const headers = { ...upstreamResult.headers };
+              delete headers["content-length"];
+              delete headers["content-encoding"];
+              headers["content-type"] = "application/json";
+              headers["content-length"] = String(responseBuffer.length);
+              res.writeHead(200, headers);
+              res.end(responseBuffer);
+              return;
+            }
+          } catch {
+          }
+        }
+        const fallbackList = formatAnthropicModelList(
+          options.routes.map((r) => ({
+            id: r.gatewayAliasId ?? r.aliasId,
+            name: r.displayName,
+            contextWindow: r.contextWindow
+          }))
+        );
+        const buffer = Buffer.from(JSON.stringify(fallbackList));
+        res.writeHead(200, {
+          "content-type": "application/json",
+          "content-length": String(buffer.length)
+        });
+        res.end(buffer);
+        return;
+      }
+      if (typeof modelsEndpoint === "object" && modelsEndpoint.id) {
+        const matched = routesById.get(modelsEndpoint.id);
+        if (matched) {
+          const entry = formatAnthropicModelEntry(
+            matched.gatewayAliasId ?? matched.aliasId,
+            matched.displayName,
+            matched.contextWindow
+          );
+          const buffer = Buffer.from(JSON.stringify(entry));
+          res.writeHead(200, {
+            "content-type": "application/json",
+            "content-length": String(buffer.length)
+          });
+          res.end(buffer);
+          return;
+        }
+      }
     }
     const endpoint = anthropicMessagesEndpoint(req.url);
     if (req.method === "POST" && endpoint) {
@@ -11891,6 +12064,7 @@ async function launchClaudeWithHttpProxy(options, dependencies = defaultDependen
       proxy.handle.proxyUrl,
       proxy.handle.caCertPath
     );
+    writeGatewayDiscoveryCache(options.baseEnv, proxy.loaded.routes);
     const exitCode = await dependencies.launch(
       childEnv,
       proxy.startingModel,
@@ -13264,7 +13438,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-S3TQKB3D.js");
+    const { runUiCommand } = await import("./ui-command-4P64AOCL.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

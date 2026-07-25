@@ -1,5 +1,6 @@
 import { launchClaude } from '../launch.js';
 import type { FavoriteModel, LocalProvider } from '../types.js';
+import { writeGatewayDiscoveryCache } from './discovery-cache.js';
 import {
   buildHttpProxyChildEnv,
   findUnsupportedInheritedProxy,
@@ -63,6 +64,7 @@ export async function launchClaudeWithHttpProxy(
       proxy.handle.proxyUrl,
       proxy.handle.caCertPath,
     );
+    writeGatewayDiscoveryCache(options.baseEnv, proxy.loaded.routes);
     const exitCode = await dependencies.launch(
       childEnv,
       proxy.startingModel,

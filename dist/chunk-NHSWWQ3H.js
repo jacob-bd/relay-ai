@@ -10904,12 +10904,17 @@ function buildHttpProxyRoutes(providers, favorites, selected, max = MAX_MODEL_CA
       unavailable.push(item);
       continue;
     }
+    const gatewayAliasId2 = claudeCodeClientModelId(
+      aliasModelId(model.id, provider.id),
+      model.contextWindow
+    );
     routes.push({
       ...route,
       aliasId: claudeCodeClientModelId(
         httpProxyModelId(provider.id, model.id),
         model.contextWindow
       ),
+      gatewayAliasId: gatewayAliasId2,
       displayName: `${model.name || model.id} (${provider.name})`
     });
   }
@@ -11880,6 +11885,8 @@ export {
   readBody,
   extractApiKey,
   sendJson,
+  formatAnthropicModelEntry,
+  formatAnthropicModelList,
   gatewayProviderLabel,
   openAiIdCollisions,
   createGatewayModelCatalog,
@@ -11959,4 +11966,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-6CBNKM55.js.map
+//# sourceMappingURL=chunk-NHSWWQ3H.js.map

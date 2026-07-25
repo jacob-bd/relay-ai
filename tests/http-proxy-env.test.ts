@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildHttpProxyChildEnv, findUnsupportedInheritedProxy } from '../src/http-proxy/env.js';
+import { RELAY_BASE_URL } from '../src/http-proxy/anthropic-host.js';
 
 describe('transparent HTTP proxy child environment', () => {
   it('rejects a corporate or remote inherited proxy with a clear explanation', () => {
@@ -59,6 +60,8 @@ describe('transparent HTTP proxy child environment', () => {
       ANTHROPIC_AUTH_TOKEN: 'native-oauth-token',
       ENABLE_TOOL_SEARCH: 'false',
       CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT: '1',
+      CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: '1',
+      ANTHROPIC_BASE_URL: RELAY_BASE_URL,
     });
     expect(child.CLAUDE_CODE_USE_VERTEX).toBeUndefined();
     expect(child.ANTHROPIC_VERTEX_PROJECT_ID).toBeUndefined();

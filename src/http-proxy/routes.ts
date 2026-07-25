@@ -2,7 +2,7 @@ import { localModelToRoute } from '../catalog.js';
 import { MAX_MODEL_CATALOG } from '../constants.js';
 import { claudeCodeClientModelId } from '../context-model-id.js';
 import { isSdkMigratedNpm } from '../provider-factory.js';
-import type { ProxyRoute } from '../proxy.js';
+import { aliasModelId, type ProxyRoute } from '../proxy.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from '../types.js';
 
 export const HTTP_PROXY_MODEL_PREFIX = 'relay:';
@@ -59,12 +59,17 @@ export function buildHttpProxyRoutes(
       unavailable.push(item);
       continue;
     }
+    const gatewayAliasId = claudeCodeClientModelId(
+      aliasModelId(model.id, provider.id),
+      model.contextWindow,
+    );
     routes.push({
       ...route,
       aliasId: claudeCodeClientModelId(
         httpProxyModelId(provider.id, model.id),
         model.contextWindow,
       ),
+      gatewayAliasId,
       displayName: `${model.name || model.id} (${provider.name})`,
     });
   }

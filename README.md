@@ -216,7 +216,7 @@ To skip that question, use `--http-proxy`. A selected model does not need to be 
 relay-ai claude --http-proxy --provider moonshot --model kimi-k3
 ```
 
-Using `--http-proxy` without a provider/model keeps native Claude as the starting model and adds any compatible saved favorites. Relay models cannot be inserted into Claude Code's built-in model picker, so the terminal prints the exact `/model relay:<provider>:<model>` commands you can use to switch. The temporary local connection is password-protected, uses a per-session certificate, and closes automatically when Claude Code exits. Existing non-local network or corporate proxy settings are rejected with a clear error because proxy chaining is not supported yet.
+Using `--http-proxy` without a provider/model keeps native Claude as the starting model and adds any compatible saved favorites into Claude Code's normal `/model` picker (alongside your Anthropic subscription models). The temporary local connection is password-protected, uses a per-session certificate, and closes automatically when Claude Code exits. Existing non-local network or corporate proxy settings are rejected with a clear error because proxy chaining is not supported yet.
 
 > **Compatibility:** This mixed Anthropic + Relay mode currently supports Claude Code connected directly to Anthropic. It does not preserve Google Vertex AI configuration. Vertex users should continue using their normal Claude Code launch or Relay-only mode.
 
@@ -232,7 +232,7 @@ Add up to 20 favorites from Zen, Go, or any OpenCode-configured provider. When y
 
 No favorites? Launch works like before: single model, no switch menu. `--dry-run` ignores saved favorites so you can preview a single-model launch.
 
-That built-in favorites catalog applies to **Relay-only mode** (choose **No** when asked whether to keep your normal Claude models). In mixed Anthropic + Relay mode, compatible favorites are available through the printed `/model relay:<provider>:<model>` commands instead; Claude Code cannot add them to its built-in picker.
+That built-in favorites catalog applies to **Relay-only mode** (choose **No** when asked whether to keep your normal Claude models). In mixed Anthropic + Relay mode (`--http-proxy` / choose **Yes**), compatible favorites also show up in Claude Code's normal `/model` picker next to your Anthropic models.
 
 #### `relay-ai claude` options
 
@@ -556,7 +556,7 @@ When you launch, relay-ai builds a clean child environment:
 
 When Claude Code exits (normal exit, Ctrl+C, terminal close), your shell is unchanged. No cleanup step. No restore needed.
 
-In `--http-proxy` mode, relay-ai does not replace your Anthropic credential. It removes stale third-party endpoint/cloud overrides from the child process, sets a password-protected loopback proxy plus a temporary CA bundle, and forwards native Anthropic requests—including their original auth and body—unchanged. Only the selected Relay model and compatible favorites are allowed to use registry provider credentials.
+In `--http-proxy` mode, relay-ai does not replace your Anthropic credential. It removes stale third-party endpoint/cloud overrides from the child process, sets a password-protected loopback proxy plus a temporary CA bundle, points Claude Code at a local sentinel Anthropic host (still forwarded to real Anthropic), seeds the gateway models cache so favorites appear in `/model`, and forwards native Anthropic requests—including their original auth and body—unchanged (restoring Host + billing attribution headers on the way out). Only the selected Relay model and compatible favorites are allowed to use registry provider credentials.
 
 **Caveat: Claude Code persists the model.** relay-ai doesn't edit `~/.claude/settings.json`, but Claude Code saves the model you launched with (via `--model` and `ANTHROPIC_MODEL`). A later bare `claude` launch may still show that model, e.g. `anthropic-opencode-go__deepseek-v4-flash` from a prior relay-ai session. To get back to a first-party default, run `claude --model sonnet` (or your preferred Claude model), or remove the `"model"` key from `~/.claude/settings.json`. If you used the favorites switch menu, Claude Code may also cache the gateway catalog at `~/.claude/cache/gateway-models.json`. Delete that file if `/model` shows stale entries from a dead proxy.
 

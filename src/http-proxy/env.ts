@@ -1,4 +1,5 @@
 import { CONFLICTING_ENV_VARS } from '../constants.js';
+import { RELAY_BASE_URL } from './anthropic-host.js';
 
 const PROXY_ENV_NAMES = [
   'HTTPS_PROXY',
@@ -108,5 +109,12 @@ export function buildHttpProxyChildEnv(
     if (name === 'ANTHROPIC_API_KEY' || name === 'ANTHROPIC_AUTH_TOKEN') continue;
     delete env[name];
   }
+  // Gateway model discovery only fires when a base URL is configured (Claude Code
+  // skips it for the implicit default origin), AND Claude Code only reads the
+  // seeded models cache when the base URL host is NOT api.anthropic.com. Point
+  // it at the sentinel host (still MITM-intercepted and forwarded to real
+  // Anthropic) so both conditions are satisfied.
+  env['ANTHROPIC_BASE_URL'] = RELAY_BASE_URL;
+  env['CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY'] = '1';
   return env;
 }

@@ -66,10 +66,15 @@ describe('transparent HTTP proxy routes', () => {
       'relay:moonshot:kimi-k3[1m]',
       'relay:groq:llama-3.3-70b',
     ]);
+    expect(result.routes.map(route => route.gatewayAliasId)).toEqual([
+      'anthropic-moonshot__kimi-k3[1m]',
+      'anthropic-groq__llama-3.3-70b',
+    ]);
     expect(result.routes[0]).toMatchObject({
       realModelId: 'kimi-k3-upstream',
       apiKey: 'moonshot-secret',
       providerId: 'moonshot',
+      gatewayAliasId: 'anthropic-moonshot__kimi-k3[1m]',
     });
   });
 

@@ -94,6 +94,25 @@ After exit, relay-ai prints errors from `~/.relay-ai/logs/claude-debug.log` (sec
 
 ---
 
+## Mixed Anthropic + Relay mode (`--http-proxy`): favorites missing from `/model`
+
+### What you see
+
+Claude Code starts on your normal Anthropic login, but `/model` only shows Anthropic models — saved Relay favorites never appear.
+
+### What should happen (v0.7.2+)
+
+In `--http-proxy` mode, Relay seeds Claude Code's gateway models cache and merges favorites into model discovery so they show in the normal `/model` picker next to Anthropic models.
+
+### Quick checks
+
+1. Confirm you launched with mixed mode (`relay-ai claude --http-proxy` or answered **Yes** to keep normal Claude models).
+2. Confirm favorites exist and are compatible: `relay-ai models`.
+3. If `/model` still looks stale from an older session, delete `~/.claude/cache/gateway-models.json` and relaunch with `relay-ai claude --http-proxy`.
+4. If your shell already sets a non-local `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`, this mode exits on purpose (proxy chaining is not supported yet). Clear those for the session and retry.
+
+---
+
 ## Docker / Server + Admin UI
 
 Container deploy, ports, LAN advertise IPs, `secrets.json`, and Compose troubleshooting live in **[DOCKER.md](./DOCKER.md)**. Quick checks:

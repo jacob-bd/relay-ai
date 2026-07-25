@@ -5,12 +5,18 @@ import type { Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { URL } from 'node:url';
-import { anthropicMessagesEndpoint, estimateAnthropicInputTokens } from '../anthropic-endpoints.js';
+import {
+  anthropicMessagesEndpoint,
+  anthropicModelsEndpoint,
+  estimateAnthropicInputTokens,
+} from '../anthropic-endpoints.js';
 import { routeLookupIds } from '../context-model-id.js';
+import { formatAnthropicModelEntry, formatAnthropicModelList } from '../server/models.js';
 import { startProxyCatalog, type ProxyHandle, type ProxyRoute } from '../proxy.js';
 import { createHttpProxyCertificates } from './ca.js';
+import { ANTHROPIC_UPSTREAM_HOST, RELAY_SENTINEL_HOST } from './anthropic-host.js';
 
-const ANTHROPIC_HOST = 'api.anthropic.com';
+const ANTHROPIC_HOST = RELAY_SENTINEL_HOST;
 const MAX_BODY_BYTES = 50 * 1024 * 1024;
 const PROXY_USERNAME = 'relay-ai';
 
@@ -115,12 +121,36 @@ function readRawBody(req: http.IncomingMessage): Promise<Buffer> {
   });
 }
 
-function requestHeadersWithoutProxyHeaders(req: http.IncomingMessage): string[] {
+function requestHeadersWithoutProxyHeaders(
+  req: http.IncomingMessage,
+  hostOverride?: string,
+): string[] {
   const headers: string[] = [];
   for (let index = 0; index < req.rawHeaders.length; index += 2) {
     const name = req.rawHeaders[index]!;
     if (/^proxy-(authorization|connection)$/i.test(name)) continue;
+    if (hostOverride && /^host$/i.test(name)) {
+      headers.push(name, hostOverride);
+      continue;
+    }
     headers.push(name, req.rawHeaders[index + 1] ?? '');
+  }
+  return headers;
+}
+
+/**
+ * Claude Code only appends the `cch=00000;` billing-attribution segment to
+ * `x-anthropic-billing-header` when it thinks it's talking to api.anthropic.com
+ * directly. Since we point it at a sentinel host instead (see anthropic-host.ts),
+ * restore that segment here so real Anthropic sees the same header it always has.
+ */
+function restoreBillingCch(headers: string[]): string[] {
+  for (let index = 0; index < headers.length; index += 2) {
+    if (!/^x-anthropic-billing-header$/i.test(headers[index]!)) continue;
+    const value = headers[index + 1] ?? '';
+    if (/(?:^|;)\s*cch=/.test(value)) break;
+    headers[index + 1] = `${value.replace(/;?\s*$/, '')}; cch=00000;`;
+    break;
   }
   return headers;
 }
@@ -152,7 +182,7 @@ function forwardRawRequest(
       port: origin.port || undefined,
       method: req.method,
       path: req.url,
-      headers: requestHeadersWithoutProxyHeaders(req),
+      headers: restoreBillingCch(requestHeadersWithoutProxyHeaders(req, ANTHROPIC_UPSTREAM_HOST)),
       ...(origin.protocol === 'https:' ? { rejectUnauthorized } : {}),
     }, upstreamRes => {
       copyResponse(upstreamRes, res);
@@ -215,6 +245,46 @@ function forwardToAdapter(
   });
 }
 
+function fetchUpstreamModelsList(
+  req: http.IncomingMessage,
+  origin: URL,
+  rejectUnauthorized: boolean,
+): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: Buffer } | null> {
+  return new Promise(resolve => {
+    const transport = origin.protocol === 'https:' ? https : http;
+    const rawHeaders = requestHeadersWithoutProxyHeaders(req, ANTHROPIC_UPSTREAM_HOST);
+    const headers: string[] = ['accept-encoding', 'identity'];
+    for (let i = 0; i < rawHeaders.length; i += 2) {
+      const name = rawHeaders[i]!;
+      if (/^accept-encoding$/i.test(name)) continue;
+      headers.push(name, rawHeaders[i + 1] ?? '');
+    }
+
+    const upstream = transport.request({
+      protocol: origin.protocol,
+      hostname: origin.hostname,
+      port: origin.port || undefined,
+      method: 'GET',
+      path: req.url,
+      headers,
+      ...(origin.protocol === 'https:' ? { rejectUnauthorized } : {}),
+    }, upstreamRes => {
+      const chunks: Buffer[] = [];
+      upstreamRes.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      upstreamRes.once('end', () => {
+        resolve({
+          statusCode: upstreamRes.statusCode ?? 500,
+          headers: upstreamRes.headers,
+          body: Buffer.concat(chunks),
+        });
+      });
+      upstreamRes.once('error', () => resolve(null));
+    });
+    upstream.once('error', () => resolve(null));
+    upstream.end();
+  });
+}
+
 function forwardPlainHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
   let target: URL;
   try {
@@ -255,6 +325,9 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
   const routesById = new Map<string, ProxyRoute>();
   for (const route of options.routes) {
     for (const id of routeLookupIds(route.aliasId)) routesById.set(id, route);
+    if (route.gatewayAliasId) {
+      for (const id of routeLookupIds(route.gatewayAliasId)) routesById.set(id, route);
+    }
   }
   const anthropicOrigin = new URL(options.anthropicOrigin ?? 'https://api.anthropic.com');
   if (anthropicOrigin.protocol !== 'http:' && anthropicOrigin.protocol !== 'https:') {
@@ -290,6 +363,82 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
         res.end(error instanceof Error ? error.message : String(error));
       }
       return;
+    }
+
+    const modelsEndpoint = anthropicModelsEndpoint(req.url);
+    if (req.method === 'GET' && modelsEndpoint && options.routes.length > 0) {
+      if (modelsEndpoint === 'list') {
+        const upstreamResult = await fetchUpstreamModelsList(
+          req,
+          anthropicOrigin,
+          options.anthropicRejectUnauthorized ?? true,
+        );
+        const relayEntries = options.routes
+          .filter(r => Boolean(r.gatewayAliasId))
+          .map(r => formatAnthropicModelEntry(
+            r.gatewayAliasId!,
+            r.displayName,
+            r.contextWindow,
+          ));
+
+        if (upstreamResult && upstreamResult.statusCode === 200) {
+          try {
+            const parsed = JSON.parse(upstreamResult.body.toString('utf8')) as { data?: Array<Record<string, unknown>> };
+            if (Array.isArray(parsed.data)) {
+              const existingIds = new Set(parsed.data.map(m => String(m.id ?? '')));
+              for (const entry of relayEntries) {
+                if (!existingIds.has(entry.id)) {
+                  parsed.data.push(entry);
+                }
+              }
+              const responseBuffer = Buffer.from(JSON.stringify(parsed));
+              const headers = { ...upstreamResult.headers };
+              delete headers['content-length'];
+              delete headers['content-encoding'];
+              headers['content-type'] = 'application/json';
+              headers['content-length'] = String(responseBuffer.length);
+              res.writeHead(200, headers);
+              res.end(responseBuffer);
+              return;
+            }
+          } catch {
+            // Fallthrough to fallback catalog if upstream response parsing fails
+          }
+        }
+
+        const fallbackList = formatAnthropicModelList(
+          options.routes.map(r => ({
+            id: r.gatewayAliasId ?? r.aliasId,
+            name: r.displayName,
+            contextWindow: r.contextWindow,
+          })),
+        );
+        const buffer = Buffer.from(JSON.stringify(fallbackList));
+        res.writeHead(200, {
+          'content-type': 'application/json',
+          'content-length': String(buffer.length),
+        });
+        res.end(buffer);
+        return;
+      }
+
+      if (typeof modelsEndpoint === 'object' && modelsEndpoint.id) {
+        const matched = routesById.get(modelsEndpoint.id);
+        if (matched) {
+          const entry = formatAnthropicModelEntry(
+            matched.gatewayAliasId ?? matched.aliasId,
+            matched.displayName,
+            matched.contextWindow,
+          );
+          const buffer = Buffer.from(JSON.stringify(entry));
+          res.writeHead(200, {
+            'content-type': 'application/json',
+            'content-length': String(buffer.length),
+          });
+          res.end(buffer);
+          return;
+        }
+      }
     }
 
     const endpoint = anthropicMessagesEndpoint(req.url);

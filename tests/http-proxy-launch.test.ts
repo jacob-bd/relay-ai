@@ -1,6 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { launchClaudeWithHttpProxy } from '../src/http-proxy/launch.js';
+import { RELAY_BASE_URL } from '../src/http-proxy/anthropic-host.js';
 import type { LocalProvider } from '../src/types.js';
+
+const tempDirs: string[] = [];
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 const providers: LocalProvider[] = [{
   id: 'moonshot',
@@ -35,6 +44,8 @@ describe('transparent Claude launch lifecycle', () => {
       startingModel: 'relay:moonshot:kimi-k3[1m]',
     }));
 
+    const cfg = mkdtempSync(join(tmpdir(), 'relay-ai-launch-'));
+    tempDirs.push(cfg);
     const result = await launchClaudeWithHttpProxy({
       providers,
       favorites: [],
@@ -42,6 +53,7 @@ describe('transparent Claude launch lifecycle', () => {
       baseEnv: {
         ANTHROPIC_AUTH_TOKEN: 'native-oauth-token',
         ANTHROPIC_BASE_URL: 'https://stale-gateway.example',
+        CLAUDE_CONFIG_DIR: cfg,
       },
       claudeArgs: ['-c'],
     }, { start, launch });
@@ -56,7 +68,7 @@ describe('transparent Claude launch lifecycle', () => {
       'relay:moonshot:kimi-k3[1m]',
       ['-c'],
     );
-    expect(launch.mock.calls[0]![0]).not.toHaveProperty('ANTHROPIC_BASE_URL');
+    expect(launch.mock.calls[0]![0]).toHaveProperty('ANTHROPIC_BASE_URL', RELAY_BASE_URL);
     expect(close).toHaveBeenCalledOnce();
   });
 

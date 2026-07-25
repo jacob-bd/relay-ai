@@ -7,6 +7,7 @@ import * as http from 'node:http';
 import * as net from 'node:net';
 import * as tls from 'node:tls';
 import { startHttpProxy, type HttpProxyHandle } from '../src/http-proxy/server.js';
+import { RELAY_SENTINEL_HOST } from '../src/http-proxy/anthropic-host.js';
 
 const testHome = mkdtempSync(join(tmpdir(), 'relay-ai-http-proxy-'));
 const previousRelayHome = process.env['RELAY_AI_HOME'];
@@ -31,8 +32,8 @@ async function rawConnect(proxy: HttpProxyHandle, authorized: boolean): Promise<
   const socket = net.connect(proxy.port, proxy.host);
   await once(socket, 'connect');
   socket.write([
-    'CONNECT api.anthropic.com:443 HTTP/1.1',
-    'Host: api.anthropic.com:443',
+    `CONNECT ${RELAY_SENTINEL_HOST}:443 HTTP/1.1`,
+    `Host: ${RELAY_SENTINEL_HOST}:443`,
     ...(authorized ? [`Proxy-Authorization: ${proxyAuthorization(proxy)}`] : []),
     '',
     '',
@@ -53,7 +54,7 @@ async function connectMitm(proxy: HttpProxyHandle): Promise<tls.TLSSocket> {
   if (remainder.length > 0) socket.unshift(remainder);
   const secure = tls.connect({
     socket,
-    servername: 'api.anthropic.com',
+    servername: RELAY_SENTINEL_HOST,
     ca: readFileSync(proxy.caCertPath, 'utf8'),
   });
   await once(secure, 'secureConnect');
@@ -126,12 +127,16 @@ describe('transparent HTTP proxy server', () => {
   it('forwards native Anthropic request bytes and auth unchanged', async () => {
     let receivedBody = Buffer.alloc(0);
     let receivedAuth: string | undefined;
+    let receivedHost: string | undefined;
+    let receivedBilling: string | undefined;
     const origin = http.createServer(async (req, res) => {
       const chunks: Buffer[] = [];
       req.on('data', chunk => chunks.push(Buffer.from(chunk)));
       await once(req, 'end');
       receivedBody = Buffer.concat(chunks);
       receivedAuth = req.headers.authorization;
+      receivedHost = req.headers.host;
+      receivedBilling = req.headers['x-anthropic-billing-header'] as string | undefined;
       res.writeHead(200, { 'Content-Type': 'application/json', Connection: 'close' });
       res.end('{"ok":true}');
     });
@@ -147,9 +152,10 @@ describe('transparent HTTP proxy server', () => {
       secure.on('data', chunk => { response += chunk.toString(); });
       secure.write([
         'POST /v1/messages?beta=true HTTP/1.1',
-        'Host: api.anthropic.com',
+        `Host: ${RELAY_SENTINEL_HOST}`,
         'Authorization: Bearer native-anthropic-login',
         'Content-Type: application/json',
+        'x-anthropic-billing-header: cc_version=claude-cli/2.1.220; cc_entrypoint=cli;',
         `Content-Length: ${body.length}`,
         'Connection: close',
         '',
@@ -160,6 +166,14 @@ describe('transparent HTTP proxy server', () => {
       expect(response).toContain('200 OK');
       expect(receivedAuth).toBe('Bearer native-anthropic-login');
       expect(receivedBody.equals(body)).toBe(true);
+      // The client dials the sentinel host (see anthropic-host.ts) so the
+      // picker's gateway-discovery cache check passes; the proxy must rewrite
+      // it back before forwarding, or real Anthropic would reject the request.
+      expect(receivedHost).toBe('api.anthropic.com');
+      // Claude Code only appends `cch=00000;` when it thinks it's talking to
+      // api.anthropic.com directly; restore it so Anthropic sees the same
+      // billing-attribution header it always has.
+      expect(receivedBilling).toContain('cch=00000;');
     } finally {
       await proxy.close();
       await new Promise<void>(resolve => origin.close(() => resolve()));
@@ -263,7 +277,7 @@ describe('transparent HTTP proxy server', () => {
       secure.resume();
       secure.write([
         'POST /v1/messages HTTP/1.1',
-        'Host: api.anthropic.com',
+        `Host: ${RELAY_SENTINEL_HOST}`,
         'Authorization: Bearer native-anthropic-login',
         'Content-Type: application/json',
         `Content-Length: ${Buffer.byteLength(body)}`,
@@ -323,7 +337,7 @@ describe('transparent HTTP proxy server', () => {
       secure.resume();
       secure.write([
         'POST /v1/messages HTTP/1.1',
-        'Host: api.anthropic.com',
+        `Host: ${RELAY_SENTINEL_HOST}`,
         'Authorization: Bearer native-anthropic-login',
         'Content-Type: application/json',
         `Content-Length: ${Buffer.byteLength(body)}`,
@@ -386,7 +400,7 @@ describe('transparent HTTP proxy server', () => {
       secure.on('data', chunk => { response += chunk.toString(); });
       secure.write([
         'POST /v1/messages/count_tokens HTTP/1.1',
-        'Host: api.anthropic.com',
+        `Host: ${RELAY_SENTINEL_HOST}`,
         'Content-Type: application/json',
         `Content-Length: ${Buffer.byteLength(body)}`,
         'Connection: close',
@@ -444,7 +458,7 @@ describe('transparent HTTP proxy server', () => {
       secure.on('error', () => {});
       secure.write([
         'POST /v1/messages HTTP/1.1',
-        'Host: api.anthropic.com',
+        `Host: ${RELAY_SENTINEL_HOST}`,
         'Content-Type: application/json',
         `Content-Length: ${Buffer.byteLength(body)}`,
         '',
@@ -467,5 +481,188 @@ describe('transparent HTTP proxy server', () => {
     expect(existsSync(certPath)).toBe(true);
     await proxy.close();
     expect(existsSync(certPath)).toBe(false);
+  });
+
+  it('intercepts GET /v1/models and merges upstream Anthropic models with relay models', async () => {
+    const origin = http.createServer((req, res) => {
+      if (req.url === '/v1/models' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json', Connection: 'close' });
+        res.end(JSON.stringify({
+          data: [
+            { id: 'claude-3-5-sonnet-20241022', type: 'model', display_name: 'Claude 3.5 Sonnet' },
+          ],
+          has_more: false,
+        }));
+        return;
+      }
+      res.writeHead(404, { Connection: 'close' });
+      res.end();
+    });
+    const originPort = await listen(origin);
+    const route = {
+      aliasId: 'relay:moonshot:kimi-k3',
+      gatewayAliasId: 'anthropic-moonshot__kimi-k3',
+      realModelId: 'kimi-k3-upstream',
+      displayName: 'Kimi K3 (Moonshot)',
+      upstreamUrl: '',
+      apiKey: 'moonshot-secret',
+      modelFormat: 'openai' as const,
+      npm: '@ai-sdk/openai-compatible',
+      providerId: 'moonshot',
+    };
+    const proxy = await startHttpProxy({
+      routes: [route],
+      anthropicOrigin: `http://127.0.0.1:${originPort}`,
+    });
+    try {
+      const secure = await connectMitm(proxy);
+      let response = '';
+      secure.on('data', chunk => { response += chunk.toString(); });
+      secure.write([
+        'GET /v1/models HTTP/1.1',
+        `Host: ${RELAY_SENTINEL_HOST}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n'));
+      await once(secure, 'close');
+
+      expect(response).toContain('200 OK');
+      expect(response).toContain('claude-3-5-sonnet-20241022');
+      expect(response).toContain('anthropic-moonshot__kimi-k3');
+      expect(response).toContain('Kimi K3 (Moonshot)');
+    } finally {
+      await proxy.close();
+      await new Promise<void>(resolve => origin.close(() => resolve()));
+    }
+  });
+
+  it('falls back to relay models list when upstream GET /v1/models fails', async () => {
+    const origin = http.createServer((_req, res) => {
+      res.writeHead(500, { Connection: 'close' });
+      res.end('Internal Error');
+    });
+    const originPort = await listen(origin);
+    const route = {
+      aliasId: 'relay:moonshot:kimi-k3',
+      gatewayAliasId: 'anthropic-moonshot__kimi-k3',
+      realModelId: 'kimi-k3-upstream',
+      displayName: 'Kimi K3 (Moonshot)',
+      upstreamUrl: '',
+      apiKey: 'moonshot-secret',
+      modelFormat: 'openai' as const,
+      npm: '@ai-sdk/openai-compatible',
+      providerId: 'moonshot',
+    };
+    const proxy = await startHttpProxy({
+      routes: [route],
+      anthropicOrigin: `http://127.0.0.1:${originPort}`,
+    });
+    try {
+      const secure = await connectMitm(proxy);
+      let response = '';
+      secure.on('data', chunk => { response += chunk.toString(); });
+      secure.write([
+        'GET /v1/models HTTP/1.1',
+        `Host: ${RELAY_SENTINEL_HOST}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n'));
+      await once(secure, 'close');
+
+      expect(response).toContain('200 OK');
+      expect(response).toContain('anthropic-moonshot__kimi-k3');
+    } finally {
+      await proxy.close();
+      await new Promise<void>(resolve => origin.close(() => resolve()));
+    }
+  });
+
+  it('handles GET /v1/models/{gatewayAliasId} for a known relay model', async () => {
+    const route = {
+      aliasId: 'relay:moonshot:kimi-k3',
+      gatewayAliasId: 'anthropic-moonshot__kimi-k3',
+      realModelId: 'kimi-k3-upstream',
+      displayName: 'Kimi K3 (Moonshot)',
+      upstreamUrl: '',
+      apiKey: 'moonshot-secret',
+      modelFormat: 'openai' as const,
+      npm: '@ai-sdk/openai-compatible',
+      providerId: 'moonshot',
+    };
+    const proxy = await startHttpProxy({
+      routes: [route],
+    });
+    try {
+      const secure = await connectMitm(proxy);
+      let response = '';
+      secure.on('data', chunk => { response += chunk.toString(); });
+      secure.write([
+        'GET /v1/models/anthropic-moonshot__kimi-k3 HTTP/1.1',
+        `Host: ${RELAY_SENTINEL_HOST}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n'));
+      await once(secure, 'close');
+
+      expect(response).toContain('200 OK');
+      expect(response).toContain('anthropic-moonshot__kimi-k3');
+      expect(response).toContain('Kimi K3 (Moonshot)');
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it('routes POST requests with gatewayAliasId to the adapter', async () => {
+    let adapterBody = '';
+    const adapterServer = http.createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      await once(req, 'end');
+      adapterBody = Buffer.concat(chunks).toString();
+      res.writeHead(200, { 'Content-Type': 'application/json', Connection: 'close' });
+      res.end('{"translated":true}');
+    });
+    const adapterPort = await listen(adapterServer);
+    const route = {
+      aliasId: 'relay:moonshot:kimi-k3',
+      gatewayAliasId: 'anthropic-moonshot__kimi-k3',
+      realModelId: 'kimi-k3-upstream',
+      displayName: 'Kimi K3 (Moonshot)',
+      upstreamUrl: '',
+      apiKey: 'moonshot-secret',
+      modelFormat: 'openai' as const,
+      npm: '@ai-sdk/openai-compatible',
+      providerId: 'moonshot',
+    };
+    const proxy = await startHttpProxy({
+      routes: [route],
+      adapterHandle: {
+        port: adapterPort,
+        token: 'adapter-local-token',
+        close: () => adapterServer.close(),
+      },
+    });
+    try {
+      const body = JSON.stringify({ model: 'anthropic-moonshot__kimi-k3', messages: [], stream: false });
+      const secure = await connectMitm(proxy);
+      secure.resume();
+      secure.write([
+        'POST /v1/messages HTTP/1.1',
+        `Host: ${RELAY_SENTINEL_HOST}`,
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(body)}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n') + body);
+      await once(secure, 'close');
+
+      expect(JSON.parse(adapterBody)).toMatchObject({ model: route.aliasId });
+    } finally {
+      await proxy.close();
+    }
   });
 });

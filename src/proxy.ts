@@ -79,6 +79,7 @@ export interface ProxyHandle {
  */
 export interface ProxyRoute {
   aliasId: string;
+  gatewayAliasId?: string;
   realModelId: string;
   displayName: string;
   upstreamUrl: string;

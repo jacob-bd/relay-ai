@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.2] - 2026-07-25
+
+### Fixed
+
+- **Mixed Anthropic + Relay mode (`relay-ai claude --http-proxy`) now puts Relay favorites in Claude Code's normal `/model` picker.** Claude Code only reads its gateway models cache when `ANTHROPIC_BASE_URL` is not the real `api.anthropic.com` host. Relay now points the child at a local sentinel host (`api.anthropic.com.relay.invalid`), still MITM-intercepted and forwarded to real Anthropic, seeds `~/.claude/cache/gateway-models.json` with the session routes, and merges those entries into live `GET /v1/models` responses. Host + `x-anthropic-billing-header` (`cch=00000;`) are restored on the way upstream so Anthropic still sees byte-identical traffic. Subscription/OAuth login is unchanged.
+
+### Docs
+
+- README, AI-agents guide, troubleshooting, and internal architecture notes updated for the sentinel-host / gateway-cache path (removed the old “type `/model relay:...` manually” guidance).
+
 ## [0.7.1] - 2026-07-24
 
 ### Added

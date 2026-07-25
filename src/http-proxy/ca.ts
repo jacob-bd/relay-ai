@@ -12,6 +12,7 @@ import {
 import { dirname, join, resolve } from 'node:path';
 import forge from 'node-forge';
 import { getAppHome } from '../paths.js';
+import { RELAY_SENTINEL_HOST } from './anthropic-host.js';
 
 const SESSION_ROOT = 'http-proxy-sessions';
 const OWNER_FILE = 'owner.pid';
@@ -118,13 +119,13 @@ export function createHttpProxyCertificates(appHome = getAppHome()): HttpProxyCe
     server.serialNumber = serialNumber();
     server.validity.notBefore = new Date(Date.now() - 60_000);
     server.validity.notAfter = new Date(Date.now() + 48 * 60 * 60 * 1000);
-    server.setSubject([{ name: 'commonName', value: 'api.anthropic.com' }]);
+    server.setSubject([{ name: 'commonName', value: RELAY_SENTINEL_HOST }]);
     server.setIssuer(ca.subject.attributes);
     server.setExtensions([
       { name: 'basicConstraints', cA: false, critical: true },
       { name: 'keyUsage', digitalSignature: true, keyEncipherment: true, critical: true },
       { name: 'extKeyUsage', serverAuth: true },
-      { name: 'subjectAltName', altNames: [{ type: 2, value: 'api.anthropic.com' }] },
+      { name: 'subjectAltName', altNames: [{ type: 2, value: RELAY_SENTINEL_HOST }] },
       { name: 'subjectKeyIdentifier' },
     ]);
     server.sign(caKeys.privateKey, forge.md.sha256.create());
