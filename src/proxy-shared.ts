@@ -175,7 +175,12 @@ export function stripToolUseIdSuffix(toolUseId: string): string {
 }
 
 export function serializeToolResultContent(content: unknown): string {
-  return typeof content === 'string' ? content : JSON.stringify(content);
+  if (typeof content === 'string') return content;
+  // JSON.stringify(undefined) returns the JS value `undefined`, not a string — guard
+  // explicitly so a missing tool_result content field can never ship an empty/malformed
+  // tool-result payload upstream.
+  if (content === undefined) return '';
+  return JSON.stringify(content);
 }
 
 /** Incrementally read SSE lines from an upstream stream without re-splitting the full buffer. */

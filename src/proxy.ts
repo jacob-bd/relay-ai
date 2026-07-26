@@ -5,6 +5,7 @@ import type { ServerResponse } from 'node:http';
 import { appendFileSync, openSync, writeSync, closeSync } from 'node:fs';
 import { readBody, extractApiKey, sendJson } from './http-utils.js';
 import { formatAnthropicModelEntry, formatAnthropicModelList } from './server/models.js';
+import { estimateAnthropicInputTokens } from './anthropic-endpoints.js';
 import { claudeCodeClientModelId, routeLookupIds, stripOneMContextSuffix } from './context-model-id.js';
 import { getProxyDebugLogPath, redactTraceLine, resetTraceLog } from './trace-log.js';
 import { fetchWithOAuthRetry, relayAnthropicMessages, UpstreamUnreachableError } from './upstream-forward.js';
@@ -275,6 +276,7 @@ export function startProxyCatalog(
         const params = sdkTranslateRequest(anthropicBody, route.npm!, {
           openAiOAuth,
           maxTools: maxToolsForNpm(route.npm),
+          onDebug: (msg) => plog(() => msg),
           reasoningMetadata: {
             providerId: route.providerId,
             apiBaseUrl: route.baseURL,
@@ -309,7 +311,10 @@ export function startProxyCatalog(
               'Cache-Control': 'no-cache',
               'Connection': 'keep-alive',
             });
-            await streamAnthropicResponse(model, params, originalModel, (c) => res.write(c), plog);
+            await streamAnthropicResponse(
+              model, params, originalModel, (c) => res.write(c), plog,
+              estimateAnthropicInputTokens(anthropicBody),
+            );
             res.end();
           } else {
             // ChatGPT's Codex backend (OpenAI OAuth) rejects non-streaming requests

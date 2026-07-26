@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.3] - 2026-07-26
+
+### Fixed
+
+- **Qwen (`@ai-sdk/alibaba`) no longer derails mid-session with a hallucinated "empty message"/translation tangent.** Every occurrence traced back to the same trigger: a request ending on a tool result (i.e. every step of a normal agentic tool loop) — a documented qwen/DashScope function-calling quirk where the model hallucinates an empty user turn instead of summarizing the tool output. Relay now appends a minimal neutral continuation turn when a qwen request ends on a tool message, scoped narrowly to that provider and invisible to Claude Code.
+- **Status-line context meter no longer flickers empty→full on every turn for SDK-routed (non-Anthropic) models.** Relay was seeding `message_start` with `input_tokens: 0` and only reporting the real count once the stream finished; it now seeds a same-request estimate upfront so the meter shows a stable number from the first token.
+- Hardened `serializeToolResultContent` against a missing tool-result `content` field, which previously could ship a JS `undefined` (not a string) into the upstream SDK call instead of an empty string.
+
+### Added
+
+- Diagnostic log line (`sdk: dropped user turn with unrecognized block types: [...]`, visible under `--trace` in `~/.relay-ai/logs/proxy-debug.log`) for the case where a translated user turn would otherwise silently vanish instead of reaching the provider.
+
 ## [0.7.2] - 2026-07-25
 
 ### Fixed

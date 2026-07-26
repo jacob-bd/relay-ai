@@ -109,6 +109,59 @@ describe('translateMessages', () => {
     expect(out[0].content[0].mediaType).toBe('image/png');
     expect(Buffer.isBuffer(out[0].content[0].image)).toBe(true);
   });
+
+  it('logs via onDebug when a user turn has only unrecognized block types (would otherwise silently vanish)', () => {
+    const onDebug = vi.fn();
+    const out = translateMessages([
+      { role: 'user', content: [{ type: 'redacted_thinking' } as any] },
+    ], '@ai-sdk/xai', onDebug);
+    expect(out).toEqual([]);
+    expect(onDebug).toHaveBeenCalledWith(
+      expect.stringContaining('dropped user turn with unrecognized block types'),
+    );
+    expect(onDebug).toHaveBeenCalledWith(expect.stringContaining('redacted_thinking'));
+  });
+
+  it('does not log when a user turn has real content or tool results', () => {
+    const onDebug = vi.fn();
+    translateMessages([{ role: 'user', content: 'hello' }], '@ai-sdk/xai', onDebug);
+    translateMessages([
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'ok' }] },
+    ], '@ai-sdk/xai', onDebug);
+    expect(onDebug).not.toHaveBeenCalled();
+  });
+
+  it('appends a continuation nudge for qwen/alibaba when the request ends on a tool result', () => {
+    const messages = [
+      { role: 'assistant' as const, content: [{ type: 'tool_use', id: 'call_1', name: 'Read', input: {} }] },
+      { role: 'user' as const, content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'file body' }] },
+    ];
+    annotateToolNames(messages);
+    const out = translateMessages(messages, '@ai-sdk/alibaba') as any[];
+    expect(out).toHaveLength(3);
+    expect(out[1].role).toBe('tool');
+    expect(out[2]).toEqual({ role: 'user', content: [{ type: 'text', text: 'Continue.' }] });
+  });
+
+  it('does NOT append the nudge for non-alibaba providers ending on a tool result', () => {
+    const messages = [
+      { role: 'assistant' as const, content: [{ type: 'tool_use', id: 'call_1', name: 'Read', input: {} }] },
+      { role: 'user' as const, content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'file body' }] },
+    ];
+    annotateToolNames(messages);
+    const out = translateMessages(messages, '@ai-sdk/xai') as any[];
+    expect(out).toHaveLength(2);
+    expect(out[out.length - 1].role).toBe('tool');
+  });
+
+  it('does NOT append the nudge for alibaba when the conversation ends on a normal turn', () => {
+    const out = translateMessages([
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+    ], '@ai-sdk/alibaba') as any[];
+    expect(out).toHaveLength(2);
+    expect(out[out.length - 1].role).toBe('assistant');
+  });
 });
 
 describe('translateRequest', () => {

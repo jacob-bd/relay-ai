@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { parseDsmlToolCalls } from '../src/proxy-shared.js';
+import { parseDsmlToolCalls, serializeToolResultContent } from '../src/proxy-shared.js';
+
+describe('serializeToolResultContent', () => {
+  it('passes strings through unchanged', () => {
+    expect(serializeToolResultContent('hello')).toBe('hello');
+    expect(serializeToolResultContent('')).toBe('');
+  });
+  it('JSON-stringifies non-string content', () => {
+    expect(serializeToolResultContent({ a: 1 })).toBe('{"a":1}');
+    expect(serializeToolResultContent(null)).toBe('null');
+  });
+  it('returns an empty string for undefined instead of the JS value undefined', () => {
+    // JSON.stringify(undefined) returns the JS value `undefined`, not a string —
+    // this must never leak an empty/malformed tool-result payload upstream.
+    expect(serializeToolResultContent(undefined)).toBe('');
+  });
+});
 
 describe('parseDsmlToolCalls', () => {
   it('parses a single invoke with a string parameter (clean fullwidth-pipe spec form)', () => {

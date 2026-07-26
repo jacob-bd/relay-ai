@@ -38,6 +38,14 @@ interface AnthropicBlock {
   _name?: string;
 }
 interface AnthropicMsg { role: 'user' | 'assistant' | 'system'; content: string | AnthropicBlock[]; }
+
+// Providers whose serving-side chat template mishandles a conversation that ends on a
+// tool/function result — it hallucinates an empty user turn (qwen: quotes a phantom
+// `<<HUMAN_CONVERSATION_START>>` marker and stops working) instead of summarizing the tool
+// output. Documented qwen/DashScope quirk; the standard mitigation is to append a neutral
+// user "continue" turn so the template gets a real human turn. See docs/CORE.md / plan.
+const NEEDS_TRAILING_TOOL_NUDGE = new Set(['@ai-sdk/alibaba']);
+const TRAILING_TOOL_NUDGE_TEXT = 'Continue.';
 interface AnthropicTool { name: string; description?: string; input_schema: Record<string, unknown>; }
 export interface AnthropicRequest {
   model: string;
@@ -60,6 +68,8 @@ export interface TranslateRequestOptions {
   openAiOAuth?: boolean;
   /** Hard cap on tools sent to the provider (e.g. Groq: 128). Excess tools are silently dropped. */
   maxTools?: number;
+  /** Diagnostic sink — e.g. surfaces user turns silently dropped by translateMessages. */
+  onDebug?: (msg: string) => void;
 }
 
 /** Read reasoning effort from an Anthropic-format request body. */
@@ -151,7 +161,11 @@ function thinkingToSdkPart(
 }
 
 // ── messages: Anthropic → SDK ModelMessage[] ─────────────────────────────────
-export function translateMessages(messages: AnthropicMsg[], npm: string): ModelMessage[] {
+export function translateMessages(
+  messages: AnthropicMsg[],
+  npm: string,
+  onDebug?: (msg: string) => void,
+): ModelMessage[] {
   const isGoogle = npm === '@ai-sdk/google';
   const out: ModelMessage[] = [];
 
@@ -166,6 +180,10 @@ export function translateMessages(messages: AnthropicMsg[], npm: string): ModelM
       for (const b of blocks) {
         if (b.type === 'text') parts.push({ type: 'text', text: b.text ?? '' });
         else if (b.type === 'image') { const p = imagePart(b); if (p) parts.push(p); }
+      }
+      if (blocks.length && !toolResults.length && !parts.length) {
+        const types = blocks.map(b => b.type).join(', ');
+        onDebug?.(`sdk: dropped user turn with unrecognized block types: [${types}]`);
       }
       if (toolResults.length) {
         out.push({
@@ -199,6 +217,16 @@ export function translateMessages(messages: AnthropicMsg[], npm: string): ModelM
       if (parts.length) out.push({ role: 'assistant', content: parts } as unknown as ModelMessage);
     }
   }
+
+  // qwen/DashScope hallucinates an "empty message" when the request ends on a tool result
+  // (every agentic tool-loop step). Append a neutral user turn so its chat template gets a
+  // real human turn to respond to. Scoped to providers with the quirk; transparent to Claude
+  // Code (the nudge lives only in the upstream request, never echoed back).
+  if (NEEDS_TRAILING_TOOL_NUDGE.has(npm) && (out[out.length - 1] as { role?: string })?.role === 'tool') {
+    out.push({ role: 'user', content: [{ type: 'text', text: TRAILING_TOOL_NUDGE_TEXT }] } as unknown as ModelMessage);
+    onDebug?.('sdk: appended continuation nudge (request ended on tool result)');
+  }
+
   return out;
 }
 
@@ -269,7 +297,7 @@ export function translateRequest(
 
   return {
     system: options?.openAiOAuth ? undefined : systemText,
-    messages: translateMessages(messages, npm),
+    messages: translateMessages(messages, npm, options?.onDebug),
     tools: translateTools(upstreamTools.length ? upstreamTools : undefined),
     toolChoice: translateToolChoice(body.tool_choice),
     maxOutputTokens: options?.openAiOAuth ? undefined : body.max_tokens,
@@ -288,6 +316,7 @@ export async function writeAnthropicStream(
   modelId: string,
   write: WriteFn,
   log?: LogFn,
+  estimatedInputTokens = 0,
 ): Promise<void> {
   const messageId = 'msg_' + Date.now();
   let blockIndex = -1;
@@ -296,7 +325,7 @@ export async function writeAnthropicStream(
   let pendingThinkingSig: string | undefined;
   const idToBlock = new Map<string, number>();
   let finishReason = 'end_turn';
-  let usage = { input_tokens: 0, output_tokens: 0 };
+  let usage = { input_tokens: estimatedInputTokens, output_tokens: 0 };
 
   const emit = (event: string, data: unknown) => write(sseChunk(event, data));
   const ensureStart = () => {
@@ -306,7 +335,7 @@ export async function writeAnthropicStream(
       message: {
         id: messageId, type: 'message', role: 'assistant', content: [],
         model: modelId, stop_reason: null, stop_sequence: null,
-        usage: { input_tokens: 0, output_tokens: 0 },
+        usage: { input_tokens: estimatedInputTokens, output_tokens: 0 },
       },
     });
     started = true;
@@ -394,7 +423,7 @@ export async function writeAnthropicStream(
       case 'finish':
         if (part.totalUsage) {
           usage = {
-            input_tokens: part.totalUsage.inputTokens ?? 0,
+            input_tokens: part.totalUsage.inputTokens ?? estimatedInputTokens,
             output_tokens: part.totalUsage.outputTokens ?? 0,
           };
         }
@@ -430,6 +459,7 @@ export async function streamAnthropicResponse(
   modelId: string,
   write: WriteFn,
   log?: LogFn,
+  estimatedInputTokens = 0,
 ): Promise<void> {
   const result = streamText({ model, ...params, onError: () => {} } as Parameters<typeof streamText>[0]);
   // Prevent unhandled promise rejections on stream properties:
@@ -439,7 +469,9 @@ export async function streamAnthropicResponse(
   Promise.resolve(result.finishReason).catch(() => {});
   Promise.resolve(result.usage).catch(() => {});
 
-  await writeAnthropicStream(result.fullStream as AsyncIterable<FullStreamPart>, modelId, write, log);
+  await writeAnthropicStream(
+    result.fullStream as AsyncIterable<FullStreamPart>, modelId, write, log, estimatedInputTokens,
+  );
 }
 
 export async function generateAnthropicResponse(
