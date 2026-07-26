@@ -14,6 +14,8 @@ import {
   addOpencodeCloudFromApiKey,
   addProviderFromTemplate,
   aliasModelId,
+  anthropicMessagesEndpoint,
+  anthropicModelsEndpoint,
   appendCodexBodyDump,
   authenticateProvider,
   buildAntigravityChildEnv,
@@ -45,6 +47,7 @@ import {
   effectiveProviderBaseUrl,
   effortProviderOptions,
   encodeToolUseId,
+  estimateAnthropicInputTokens,
   evaluateAgySwitchCompatibility,
   extractApiKey,
   favoriteProviderDisplayName,
@@ -174,7 +177,7 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-LNQ46VW7.js";
+} from "./chunk-C7P45QG2.js";
 import {
   filterTemplates,
   init_provider_templates,
@@ -11464,54 +11467,6 @@ import * as https from "https";
 import * as net from "net";
 import { randomBytes as randomBytes2, timingSafeEqual } from "crypto";
 import { URL as URL2 } from "url";
-
-// src/anthropic-endpoints.ts
-var MESSAGE_PATH = "/v1/messages";
-var COUNT_TOKENS_PATH = "/v1/messages/count_tokens";
-var MODELS_PATH = "/v1/models";
-function anthropicModelsEndpoint(url) {
-  if (!url) return null;
-  try {
-    const pathname = new URL(url, "http://relay.local").pathname;
-    if (pathname === MODELS_PATH || pathname === `${MODELS_PATH}/`) return "list";
-    if (pathname.startsWith(`${MODELS_PATH}/`)) {
-      const id = decodeURIComponent(pathname.slice(MODELS_PATH.length + 1));
-      if (id) return { id };
-    }
-  } catch {
-  }
-  return null;
-}
-function anthropicMessagesEndpoint(url) {
-  if (!url) return null;
-  try {
-    const pathname = new URL(url, "http://relay.local").pathname;
-    if (pathname === MESSAGE_PATH) return "messages";
-    if (pathname === COUNT_TOKENS_PATH) return "count_tokens";
-  } catch {
-  }
-  return null;
-}
-var NON_CONTEXT_FIELDS = /* @__PURE__ */ new Set([
-  "model",
-  "stream",
-  "max_tokens",
-  "temperature",
-  "top_p",
-  "top_k",
-  "stop_sequences",
-  "metadata"
-]);
-function estimateAnthropicInputTokens(body) {
-  const contextBody = Object.fromEntries(
-    Object.entries(body).filter(([key]) => !NON_CONTEXT_FIELDS.has(key))
-  );
-  const serialized = JSON.stringify(contextBody);
-  if (!serialized || serialized === "{}") return 0;
-  return Math.max(1, Math.ceil(Buffer.byteLength(serialized, "utf8") / 4));
-}
-
-// src/http-proxy/server.ts
 var ANTHROPIC_HOST = RELAY_SENTINEL_HOST;
 var MAX_BODY_BYTES = 50 * 1024 * 1024;
 var PROXY_USERNAME = "relay-ai";
@@ -13438,7 +13393,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-5VEFZ5GM.js");
+    const { runUiCommand } = await import("./ui-command-JBVYWTNA.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

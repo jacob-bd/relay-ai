@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.7.2",
+  version: "0.7.3",
   publishConfig: {
     access: "public"
   },
@@ -4429,6 +4429,52 @@ function formatOpenAIModels(models) {
   };
 }
 
+// src/anthropic-endpoints.ts
+var MESSAGE_PATH = "/v1/messages";
+var COUNT_TOKENS_PATH = "/v1/messages/count_tokens";
+var MODELS_PATH = "/v1/models";
+function anthropicModelsEndpoint(url) {
+  if (!url) return null;
+  try {
+    const pathname = new URL(url, "http://relay.local").pathname;
+    if (pathname === MODELS_PATH || pathname === `${MODELS_PATH}/`) return "list";
+    if (pathname.startsWith(`${MODELS_PATH}/`)) {
+      const id = decodeURIComponent(pathname.slice(MODELS_PATH.length + 1));
+      if (id) return { id };
+    }
+  } catch {
+  }
+  return null;
+}
+function anthropicMessagesEndpoint(url) {
+  if (!url) return null;
+  try {
+    const pathname = new URL(url, "http://relay.local").pathname;
+    if (pathname === MESSAGE_PATH) return "messages";
+    if (pathname === COUNT_TOKENS_PATH) return "count_tokens";
+  } catch {
+  }
+  return null;
+}
+var NON_CONTEXT_FIELDS = /* @__PURE__ */ new Set([
+  "model",
+  "stream",
+  "max_tokens",
+  "temperature",
+  "top_p",
+  "top_k",
+  "stop_sequences",
+  "metadata"
+]);
+function estimateAnthropicInputTokens(body) {
+  const contextBody = Object.fromEntries(
+    Object.entries(body).filter(([key]) => !NON_CONTEXT_FIELDS.has(key))
+  );
+  const serialized = JSON.stringify(contextBody);
+  if (!serialized || serialized === "{}") return 0;
+  return Math.max(1, Math.ceil(Buffer.byteLength(serialized, "utf8") / 4));
+}
+
 // src/upstream-forward.ts
 import { Readable } from "stream";
 
@@ -4646,7 +4692,9 @@ function encodeToolUseId(rawId, thoughtSignature, inline = true) {
   return `${rawId}${TOOL_USE_SIG_SEP}${encoded}`;
 }
 function serializeToolResultContent(content) {
-  return typeof content === "string" ? content : JSON.stringify(content);
+  if (typeof content === "string") return content;
+  if (content === void 0) return "";
+  return JSON.stringify(content);
 }
 
 // src/antigravity/request-adapter.ts
@@ -5432,6 +5480,8 @@ function sanitizeMessage(message) {
 }
 
 // src/sdk-adapter.ts
+var NEEDS_TRAILING_TOOL_NUDGE = /* @__PURE__ */ new Set(["@ai-sdk/alibaba"]);
+var TRAILING_TOOL_NUDGE_TEXT = "Continue.";
 function anthropicEffortFromRequest(body) {
   const effort = body.output_config?.effort;
   if (typeof effort === "string" && effort.trim()) return effort.trim();
@@ -5492,7 +5542,7 @@ function thinkingToSdkPart(block, npm) {
   }
   return part;
 }
-function translateMessages(messages, npm) {
+function translateMessages(messages, npm, onDebug) {
   const isGoogle = npm === "@ai-sdk/google";
   const out = [];
   for (const msg of messages) {
@@ -5506,6 +5556,10 @@ function translateMessages(messages, npm) {
           const p8 = imagePart(b);
           if (p8) parts.push(p8);
         }
+      }
+      if (blocks.length && !toolResults.length && !parts.length) {
+        const types = blocks.map((b) => b.type).join(", ");
+        onDebug?.(`sdk: dropped user turn with unrecognized block types: [${types}]`);
       }
       if (toolResults.length) {
         out.push({
@@ -5541,6 +5595,10 @@ function translateMessages(messages, npm) {
       }
       if (parts.length) out.push({ role: "assistant", content: parts });
     }
+  }
+  if (NEEDS_TRAILING_TOOL_NUDGE.has(npm) && out[out.length - 1]?.role === "tool") {
+    out.push({ role: "user", content: [{ type: "text", text: TRAILING_TOOL_NUDGE_TEXT }] });
+    onDebug?.("sdk: appended continuation nudge (request ended on tool result)");
   }
   return out;
 }
@@ -5592,7 +5650,7 @@ function translateRequest2(body, npm, options) {
   }
   return {
     system: options?.openAiOAuth ? void 0 : systemText,
-    messages: translateMessages(messages, npm),
+    messages: translateMessages(messages, npm, options?.onDebug),
     tools: translateTools3(upstreamTools.length ? upstreamTools : void 0),
     toolChoice: translateToolChoice(body.tool_choice),
     maxOutputTokens: options?.openAiOAuth ? void 0 : body.max_tokens,
@@ -5600,7 +5658,7 @@ function translateRequest2(body, npm, options) {
     providerOptions
   };
 }
-async function writeAnthropicStream(fullStream, modelId, write, log7) {
+async function writeAnthropicStream(fullStream, modelId, write, log7, estimatedInputTokens = 0) {
   const messageId = "msg_" + Date.now();
   let blockIndex = -1;
   let started = false;
@@ -5608,7 +5666,7 @@ async function writeAnthropicStream(fullStream, modelId, write, log7) {
   let pendingThinkingSig;
   const idToBlock = /* @__PURE__ */ new Map();
   let finishReason = "end_turn";
-  let usage = { input_tokens: 0, output_tokens: 0 };
+  let usage = { input_tokens: estimatedInputTokens, output_tokens: 0 };
   const emit = (event, data) => write(sseChunk(event, data));
   const ensureStart = () => {
     if (started) return;
@@ -5622,7 +5680,7 @@ async function writeAnthropicStream(fullStream, modelId, write, log7) {
         model: modelId,
         stop_reason: null,
         stop_sequence: null,
-        usage: { input_tokens: 0, output_tokens: 0 }
+        usage: { input_tokens: estimatedInputTokens, output_tokens: 0 }
       }
     });
     started = true;
@@ -5721,7 +5779,7 @@ async function writeAnthropicStream(fullStream, modelId, write, log7) {
       case "finish":
         if (part.totalUsage) {
           usage = {
-            input_tokens: part.totalUsage.inputTokens ?? 0,
+            input_tokens: part.totalUsage.inputTokens ?? estimatedInputTokens,
             output_tokens: part.totalUsage.outputTokens ?? 0
           };
         }
@@ -5747,7 +5805,7 @@ async function writeAnthropicStream(fullStream, modelId, write, log7) {
   emit("message_delta", { type: "message_delta", delta: { stop_reason: finishReason, stop_sequence: null }, usage });
   emit("message_stop", { type: "message_stop" });
 }
-async function streamAnthropicResponse(model, params, modelId, write, log7) {
+async function streamAnthropicResponse(model, params, modelId, write, log7, estimatedInputTokens = 0) {
   const result = streamText({ model, ...params, onError: () => {
   } });
   Promise.resolve(result.text).catch(() => {
@@ -5760,7 +5818,13 @@ async function streamAnthropicResponse(model, params, modelId, write, log7) {
   });
   Promise.resolve(result.usage).catch(() => {
   });
-  await writeAnthropicStream(result.fullStream, modelId, write, log7);
+  await writeAnthropicStream(
+    result.fullStream,
+    modelId,
+    write,
+    log7,
+    estimatedInputTokens
+  );
 }
 async function generateAnthropicResponse(model, params, modelId, options) {
   let text4;
@@ -5965,6 +6029,7 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
         const params = translateRequest2(anthropicBody, route.npm, {
           openAiOAuth,
           maxTools: maxToolsForNpm(route.npm),
+          onDebug: (msg) => plog(() => msg),
           reasoningMetadata: {
             providerId: route.providerId,
             apiBaseUrl: route.baseURL,
@@ -5998,7 +6063,14 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
               "Cache-Control": "no-cache",
               "Connection": "keep-alive"
             });
-            await streamAnthropicResponse(model, params, originalModel, (c) => res.write(c), plog);
+            await streamAnthropicResponse(
+              model,
+              params,
+              originalModel,
+              (c) => res.write(c),
+              plog,
+              estimateAnthropicInputTokens(anthropicBody)
+            );
             res.end();
           } else {
             const anthropicResponse = await generateAnthropicResponse(
@@ -9870,6 +9942,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
     const params = translateRequest2(body, model.npm, {
       defaultEffort: anthropicEffortFromRequest(body) ? void 0 : model.defaultEffort,
       openAiOAuth: model.npm === "@ai-sdk/openai" && model.authType === "oauth",
+      onDebug: plog,
       reasoningMetadata: {
         providerId: model.providerId,
         apiBaseUrl: model.apiBaseUrl,
@@ -9890,7 +9963,14 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
           "Cache-Control": "no-cache",
           "Connection": "keep-alive"
         });
-        await streamAnthropicResponse(languageModel, params, responseModelId, (chunk) => res.write(chunk));
+        await streamAnthropicResponse(
+          languageModel,
+          params,
+          responseModelId,
+          (chunk) => res.write(chunk),
+          void 0,
+          estimateAnthropicInputTokens(body)
+        );
         res.end();
       } else {
         const anthropicResponse = await generateAnthropicResponse(languageModel, params, responseModelId);
@@ -11891,6 +11971,9 @@ export {
   openAiIdCollisions,
   createGatewayModelCatalog,
   buildDedupedModelRows,
+  anthropicModelsEndpoint,
+  anthropicMessagesEndpoint,
+  estimateAnthropicInputTokens,
   grabRoundTripSignature,
   silenceSdkWarnings,
   parseToolArguments,
@@ -11966,4 +12049,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-LNQ46VW7.js.map
+//# sourceMappingURL=chunk-C7P45QG2.js.map
