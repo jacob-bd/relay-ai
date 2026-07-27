@@ -8,7 +8,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-COPY tsconfig.json tsup.config.ts ./
+COPY tsconfig.json tsup*.config.ts ./
 COPY src ./src
 COPY assets ./assets
 COPY scripts ./scripts
