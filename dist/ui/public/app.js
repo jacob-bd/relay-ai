@@ -1,6 +1,7 @@
 import {
   formatModelPrice,
   getProviderModelPage,
+  isFreeModel,
   PROVIDER_MODEL_PAGE_SIZE,
 } from './provider-model-browser.js';
 import { copyDeviceCode, copyTextToClipboard, oauthConnectionLabel } from './oauth-device.js';
@@ -24,6 +25,8 @@ const state = {
   providerFilter: '',
   activeProviderId: null,
   providerModelFilter: '',
+  providerModelMinCtx: 0,
+  providerModelFreeOnly: false,
   providerModelPage: 1,
   modelFilter: '',
   modelFreeOnly: false,
@@ -351,10 +354,6 @@ function fmtCtx(n) {
   return String(n);
 }
 
-function isFreeModel(model) {
-  return Boolean(model?.isFree || model?.freeStatus === 'verified_free' || model?.freeStatus === 'free_provider');
-}
-
 function freeBadgeLabel(model) {
   if (model?.freeStatus === 'free_provider') {
     const isCloudflare = model?.providerId === 'cloudflare' || model?.id?.startsWith('@cf/') || model?.id?.startsWith('@hf/');
@@ -503,7 +502,87 @@ function syncProviderModelBrowserFromHash() {
   renderProviderModelBrowser();
 }
 
+let activeModelFavPopover = null;
+
+function closeModelFavPopover() {
+  if (activeModelFavPopover) {
+    activeModelFavPopover.remove();
+    activeModelFavPopover = null;
+  }
+}
+
+function toggleModelFavoriteMenu(button, providerId, modelId) {
+  const targetKey = `${providerId}::${modelId}`;
+  if (activeModelFavPopover && activeModelFavPopover.dataset.targetId === targetKey) {
+    closeModelFavPopover();
+    return;
+  }
+  closeModelFavPopover();
+
+  const isGenFav = isGeneralFavorite(providerId, modelId);
+  const isAgyFav = state.agyFavorites.some(f => f.providerId === providerId && f.modelId === modelId);
+  const genAtCapacity = state.generalFavorites.length >= GENERAL_MAX;
+  const agyAtCapacity = state.agyFavorites.length >= AGY_MAX;
+
+  const popover = document.createElement('div');
+  popover.className = 'model-fav-popover';
+  popover.dataset.targetId = targetKey;
+
+  const genDisabled = isGenFav || genAtCapacity;
+  let genLabel = '★ Add to Favorites';
+  if (isGenFav) genLabel = '✓ In Global Favorites';
+  else if (genAtCapacity) genLabel = `★ Favorites full (${GENERAL_MAX}/${GENERAL_MAX})`;
+
+  const agyDisabled = isAgyFav || agyAtCapacity;
+  let agyLabel = '✦ Add to Antigravity Favorites';
+  if (isAgyFav) agyLabel = '✓ In Antigravity Favorites';
+  else if (agyAtCapacity) agyLabel = `✦ Antigravity full (${AGY_MAX}/${AGY_MAX})`;
+
+  popover.innerHTML = `
+    <button class="model-fav-popover-item ${genDisabled ? 'disabled' : ''}" type="button" data-type="general" ${genDisabled ? 'disabled' : ''}>
+      <span>${genLabel}</span>
+      <span class="popover-slot-count">${state.generalFavorites.length}/${GENERAL_MAX}</span>
+    </button>
+    <button class="model-fav-popover-item ${agyDisabled ? 'disabled' : ''}" type="button" data-type="agy" ${agyDisabled ? 'disabled' : ''}>
+      <span>${agyLabel}</span>
+      <span class="popover-slot-count">${state.agyFavorites.length}/${AGY_MAX}</span>
+    </button>
+  `;
+
+  popover.querySelectorAll('.model-fav-popover-item').forEach(item => {
+    item.addEventListener('click', event => {
+      event.stopPropagation();
+      const listType = item.dataset.type;
+      addToFavorites({ providerId, modelId }, listType);
+      closeModelFavPopover();
+      showToast(listType === 'agy' ? 'Added to Antigravity Favorites' : 'Added to Global Favorites');
+      renderProviderModelBrowser();
+    });
+  });
+
+  const rect = button.getBoundingClientRect();
+  popover.style.position = 'fixed';
+  popover.style.top = `${rect.bottom + 4}px`;
+  popover.style.left = `${Math.max(10, rect.right - 220)}px`;
+  popover.style.zIndex = '9999';
+
+  document.body.appendChild(popover);
+  activeModelFavPopover = popover;
+}
+
+document.addEventListener('click', event => {
+  if (activeModelFavPopover && !activeModelFavPopover.contains(event.target) && !event.target.closest('.btn-model-add')) {
+    closeModelFavPopover();
+  }
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && activeModelFavPopover) {
+    closeModelFavPopover();
+  }
+});
+
 function renderProviderModelBrowser() {
+  closeModelFavPopover();
   const container = document.getElementById('provider-model-browser');
   if (!state.activeProviderId) return;
 
@@ -515,7 +594,11 @@ function renderProviderModelBrowser() {
     return;
   }
 
-  const result = getProviderModelPage(provider.models ?? [], state.providerModelFilter, state.providerModelPage);
+  const showActions = !isServerAdminUi();
+  const result = getProviderModelPage(provider.models ?? [], state.providerModelFilter, state.providerModelPage, {
+    minContextWindow: state.providerModelMinCtx,
+    freeOnly: state.providerModelFreeOnly,
+  });
   state.providerModelPage = result.page;
   const first = result.total === 0 ? 0 : (result.page - 1) * PROVIDER_MODEL_PAGE_SIZE + 1;
   const last = Math.min(result.page * PROVIDER_MODEL_PAGE_SIZE, result.total);
@@ -537,19 +620,37 @@ function renderProviderModelBrowser() {
         <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         <input class="search-input" id="provider-model-search" type="search" value="${escapeHtml(state.providerModelFilter)}" placeholder="Search ${escapeHtml(displayName)} models…" aria-label="Search ${escapeHtml(displayName)} models">
       </div>
+      <div class="provider-model-filters">
+        <select class="filter-select" id="provider-model-ctx-select" aria-label="Filter by context window size">
+          <option value="0" ${state.providerModelMinCtx === 0 ? 'selected' : ''}>All context sizes</option>
+          <option value="128000" ${state.providerModelMinCtx === 128000 ? 'selected' : ''}>≥ 128k</option>
+          <option value="200000" ${state.providerModelMinCtx === 200000 ? 'selected' : ''}>≥ 200k</option>
+          <option value="500000" ${state.providerModelMinCtx === 500000 ? 'selected' : ''}>≥ 500k</option>
+          <option value="1000000" ${state.providerModelMinCtx === 1000000 ? 'selected' : ''}>≥ 1M</option>
+        </select>
+        <label class="filter-checkbox-label">
+          <input type="checkbox" id="provider-model-free-checkbox" ${state.providerModelFreeOnly ? 'checked' : ''}>
+          <span>Free models only</span>
+        </label>
+      </div>
       <button class="btn btn-ghost" id="provider-model-refresh" type="button">Refresh</button>
     </div>
     <div class="provider-model-table-wrap">
       <table class="provider-model-table">
-        <thead><tr><th>Model</th><th>Context</th><th>Price in / out</th></tr></thead>
+        <thead><tr><th>Model</th><th>Context</th><th>Price in / out</th>${showActions ? '<th class="th-actions">Actions</th>' : ''}</tr></thead>
         <tbody>
           ${result.items.map(model => `
             <tr>
               <td><strong>${escapeHtml(model.name || model.id)}</strong><code>${escapeHtml(model.id)}</code></td>
               <td>${fmtCtx(model.contextWindow) || '—'}</td>
               <td>${formatModelPrice(model.cost, isFreeModel(model), freeBadgeLabel(model))}</td>
+              ${showActions ? `
+                <td class="td-actions">
+                  <button class="btn-model-add" type="button" data-model-id="${escapeHtml(model.id)}" title="Add to favorites">+</button>
+                </td>
+              ` : ''}
             </tr>
-          `).join('') || '<tr><td colspan="3" class="provider-model-empty">No models match your search.</td></tr>'}
+          `).join('') || `<tr><td colspan="${showActions ? 4 : 3}" class="provider-model-empty">No models match your search and filters.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -571,6 +672,25 @@ function renderProviderModelBrowser() {
     search?.focus();
     search?.setSelectionRange(search.value.length, search.value.length);
   });
+  document.getElementById('provider-model-ctx-select')?.addEventListener('change', event => {
+    state.providerModelMinCtx = parseInt(event.target.value, 10) || 0;
+    state.providerModelPage = 1;
+    renderProviderModelBrowser();
+  });
+  document.getElementById('provider-model-free-checkbox')?.addEventListener('change', event => {
+    state.providerModelFreeOnly = event.target.checked;
+    state.providerModelPage = 1;
+    renderProviderModelBrowser();
+  });
+  if (showActions) {
+    container.querySelectorAll('.btn-model-add').forEach(btn => {
+      btn.addEventListener('click', event => {
+        event.stopPropagation();
+        const modelId = btn.dataset.modelId;
+        toggleModelFavoriteMenu(btn, provider.id, modelId);
+      });
+    });
+  }
   document.getElementById('provider-model-prev').addEventListener('click', () => {
     state.providerModelPage -= 1;
     renderProviderModelBrowser();
@@ -2336,6 +2456,7 @@ function seedServerFormFromSaved(saved) {
   f.freeModelsOnly = Boolean(saved.freeModelsOnly);
   f.exposedProviders = saved.exposedProviders ? [...saved.exposedProviders] : [];
   f.maskGatewayIds = saved.maskGatewayIds;
+  f.autostart = Boolean(saved.autostart);
   // Published Docker ports only reach 0.0.0.0 inside the container.
   f.listenMode = isServerAdminUi() || saved.listenMode === 'network' ? 'network' : 'local';
   // Env password (Docker): prefill the field so Start works and clients can copy it.
@@ -2530,6 +2651,10 @@ function renderServerSetup(s) {
           <input type="checkbox" ${f.freeModelsOnly ? 'checked' : ''} onchange="setServerFreeModelsOnly(this.checked)">
           <span>Free models only <span class="server-field-hint">(includes verified $0 models and free developer access)</span></span>
         </label>
+        <label class="server-toggle-row">
+          <input type="checkbox" ${f.autostart ? 'checked' : ''} onchange="setServerAutostart(this.checked)">
+          <span>Auto-start API Gateway when relay-ai starts <span class="server-field-hint">(port 17645 auto-starts on service boot)</span></span>
+        </label>
         <div class="server-field-hint">${escapeHtml(freeModelsHint)}</div>
       </div>
 
@@ -2695,6 +2820,12 @@ function setServerFreeModelsOnly(checked) {
   renderServerPanel();
 }
 
+function setServerAutostart(checked) {
+  state.server.form.autostart = checked;
+  api('POST', '/api/server/config', { autostart: checked }).catch(() => {});
+  renderServerPanel();
+}
+
 function setServerListenMode(mode) {
   state.server.form.listenMode = mode;
   state.server.error = null;
@@ -2735,6 +2866,7 @@ async function submitServerStart() {
       : null,
     maskGatewayIds: f.maskGatewayIds,
     listenMode: f.listenMode,
+    autostart: f.autostart,
     passwordMode: f.passwordMode,
     password: f.password,
     savePassword: f.savePassword,

@@ -112,6 +112,8 @@ export interface UserPreferences {
     freeModelsOnly?: boolean;
     /** Saved listen mode for one-step `relay-ai server --quick` launches. */
     listenMode?: 'local' | 'network';
+    /** Automatically start API Gateway (port 17645) when relay-ai boots. */
+    autostart?: boolean;
   };
 }
 

@@ -308,3 +308,26 @@ export function setServerListenMode(listenMode: 'local' | 'network'): void {
   };
   writeConfig(config);
 }
+
+export function getServerAutostart(): boolean {
+  return readConfig().server?.autostart ?? false;
+}
+
+export function setServerAutostart(autostart: boolean): void {
+  const config = readConfig();
+  config.server = {
+    ...(config.server ?? {}),
+    autostart,
+  };
+  writeConfig(config);
+}
+
+/** Check RELAY_AI_SERVER_AUTOSTART env var first, then config preference. */
+export function resolveServerAutostart(env: NodeJS.ProcessEnv = process.env): boolean {
+  const envVal = env['RELAY_AI_SERVER_AUTOSTART']?.trim().toLowerCase();
+  if (envVal !== undefined && envVal !== '') {
+    return ['1', 'true', 'yes', 'on'].includes(envVal);
+  }
+  return getServerAutostart();
+}
+

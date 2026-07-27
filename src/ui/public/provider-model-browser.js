@@ -1,16 +1,35 @@
 export const PROVIDER_MODEL_PAGE_SIZE = 25;
 
-export function filterProviderModels(models, query) {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return models;
-  return models.filter(model =>
-    model.id.toLowerCase().includes(needle)
-    || (model.name ?? '').toLowerCase().includes(needle),
+export function isFreeModel(model) {
+  return Boolean(
+    model?.isFree
+    || model?.freeStatus === 'verified_free'
+    || model?.freeStatus === 'free_provider'
+    || (model?.cost && model?.cost.input === 0 && model?.cost.output === 0),
   );
 }
 
-export function getProviderModelPage(models, query, requestedPage) {
-  const filtered = filterProviderModels(models, query);
+export function filterProviderModels(models, query, opts = {}) {
+  const needle = query.trim().toLowerCase();
+  const minCtx = opts.minContextWindow ?? 0;
+  const freeOnly = Boolean(opts.freeOnly);
+
+  return models.filter(model => {
+    if (needle && !model.id.toLowerCase().includes(needle) && !(model.name ?? '').toLowerCase().includes(needle)) {
+      return false;
+    }
+    if (minCtx > 0 && (model.contextWindow ?? 0) < minCtx) {
+      return false;
+    }
+    if (freeOnly && !isFreeModel(model)) {
+      return false;
+    }
+    return true;
+  });
+}
+
+export function getProviderModelPage(models, query, requestedPage, opts = {}) {
+  const filtered = filterProviderModels(models, query, opts);
   const totalPages = Math.max(1, Math.ceil(filtered.length / PROVIDER_MODEL_PAGE_SIZE));
   const page = Math.min(Math.max(1, requestedPage), totalPages);
   const start = (page - 1) * PROVIDER_MODEL_PAGE_SIZE;

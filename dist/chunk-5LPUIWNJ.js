@@ -1900,6 +1900,24 @@ function setServerListenMode(listenMode) {
   };
   writeConfig(config);
 }
+function getServerAutostart() {
+  return readConfig().server?.autostart ?? false;
+}
+function setServerAutostart(autostart) {
+  const config = readConfig();
+  config.server = {
+    ...config.server ?? {},
+    autostart
+  };
+  writeConfig(config);
+}
+function resolveServerAutostart(env = process.env) {
+  const envVal = env["RELAY_AI_SERVER_AUTOSTART"]?.trim().toLowerCase();
+  if (envVal !== void 0 && envVal !== "") {
+    return ["1", "true", "yes", "on"].includes(envVal);
+  }
+  return getServerAutostart();
+}
 
 // src/launch.ts
 import { execSync, spawn } from "child_process";
@@ -11898,6 +11916,8 @@ export {
   setServerFreeModelsOnly,
   getServerListenMode,
   setServerListenMode,
+  setServerAutostart,
+  resolveServerAutostart,
   findBinaryOnPath,
   findClaudeBinary,
   launchClaude,
@@ -12049,4 +12069,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-C7P45QG2.js.map
+//# sourceMappingURL=chunk-5LPUIWNJ.js.map

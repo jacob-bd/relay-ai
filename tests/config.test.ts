@@ -6,13 +6,16 @@ import {
   clearSavedServerPassword,
   getAppPathOverride,
   getSavedServerPassword,
+  getServerAutostart,
   getServerFreeModelsOnly,
   getServerListenMode,
   loadPreferences,
   recordLaunchFolder,
+  resolveServerAutostart,
   savePreferences,
   setAppPathOverride,
   setSavedServerPassword,
+  setServerAutostart,
   setServerFreeModelsOnly,
   setServerListenMode,
 } from '../src/config.js';
@@ -160,6 +163,18 @@ describe('dotfolder config', () => {
 
     setServerListenMode('local');
     expect(getServerListenMode()).toBe('local');
+  });
+
+  it('persists and resolves server autostart preference and env override', () => {
+    expect(getServerAutostart()).toBe(false);
+    expect(resolveServerAutostart({})).toBe(false);
+
+    setServerAutostart(true);
+    expect(getServerAutostart()).toBe(true);
+    expect(resolveServerAutostart({})).toBe(true);
+
+    expect(resolveServerAutostart({ RELAY_AI_SERVER_AUTOSTART: '0' })).toBe(false);
+    expect(resolveServerAutostart({ RELAY_AI_SERVER_AUTOSTART: 'true' })).toBe(true);
   });
 
   it('creates the app home lazily', () => {

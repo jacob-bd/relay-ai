@@ -170,9 +170,9 @@ In all cases `process.env['OPENCODE_API_KEY']` is set immediately so the key is 
 - `EADDRINUSE` on port `17645` (e.g. a terminal `relay-ai server` already running) surfaces as a specific inline error rather than a generic failure.
 - Frontend (`src/ui/public/app.js`, `state.server`): polls `GET /api/server/status` every 5s (cheap enough to run continuously; also drives the sidebar "Live" badge). Setup-state and running-state are two fully-templated views swapped into a single `#server-panel` container, matching the file's existing full-innerHTML-replace convention (see `renderApps()`).
 
-## Release status (v0.6.3)
+## Release status (v0.7.3)
 
-Current version is **v0.6.3** — maintenance: `relay-ai claude-app` now exposes the selected model followed by available saved favorites through one ordered, credential-aware catalog (max 20), with one context-accurate picker entry per model, while preserving Cloud Code routing and OAuth identity metadata. The release also hardens non-TTY Claude launches, Windows build/app detection and tests, concurrent transparent-proxy and Claude Desktop session cleanup, app help dispatch, parent Claude session isolation, and Docker build asset copying.
+Current version is **v0.7.3** — includes container lockfile health probing to prevent Docker restart loops ([#40](https://github.com/jacob-bd/relay-ai/issues/40)), persistent API Gateway Server auto-start (`RELAY_AI_SERVER_AUTOSTART=true` / `server.autostart: true`), Provider Model Catalog context window & free-models filtering with `+` Favorites action popovers, Qwen function-calling loop fixes, status-line context meter stabilization, Cloudflare Workers AI integration, embedded `@jacobbd/relay-ai/core` package, Linux launcher support for Claude Desktop and Antigravity, minimum context window enforcement, and enhanced model context display.
 
 **Known limitations (by design):**
 - Cost display in Codex is always inaccurate for non-Anthropic models.

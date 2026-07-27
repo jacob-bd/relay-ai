@@ -25,6 +25,29 @@ describe('provider model browser', () => {
     expect(filterProviderModels(models, 'model-12')).toEqual([models[11]]);
   });
 
+  it('filters models by context window size and free status', async () => {
+    const { filterProviderModels } = await loadBrowserHelpers();
+    const testModels = [
+      { id: 'm1', name: 'Model 1', contextWindow: 128000, isFree: true },
+      { id: 'm2', name: 'Model 2', contextWindow: 200000, cost: { input: 3, output: 15 } },
+      { id: 'm3', name: 'Model 3', contextWindow: 1000000, freeStatus: 'verified_free' },
+      { id: 'm4', name: 'Model 4', contextWindow: 64000, cost: { input: 0, output: 0 } },
+    ];
+
+    expect(filterProviderModels(testModels, '', { minContextWindow: 200000 })).toEqual([
+      testModels[1],
+      testModels[2],
+    ]);
+    expect(filterProviderModels(testModels, '', { freeOnly: true })).toEqual([
+      testModels[0],
+      testModels[2],
+      testModels[3],
+    ]);
+    expect(filterProviderModels(testModels, '', { minContextWindow: 200000, freeOnly: true })).toEqual([
+      testModels[2],
+    ]);
+  });
+
   it('paginates models in groups of 25 and clamps invalid pages', async () => {
     const { getProviderModelPage } = await loadBrowserHelpers();
 

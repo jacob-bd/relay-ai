@@ -58,6 +58,7 @@ import {
   resolveAdvertiseAddresses,
   resolveAdvertiseGatewayPort,
   resolveProviderCredential,
+  resolveServerAutostart,
   resolveServerUpstreamApiKey,
   saveNativeOAuthCredential,
   savePreferences,
@@ -65,6 +66,7 @@ import {
   sendJson,
   setAppPathOverride,
   setSavedServerPassword,
+  setServerAutostart,
   setServerExposedProviders,
   setServerFavoritesOnly,
   setServerFreeModelsOnly,
@@ -75,7 +77,7 @@ import {
   supportsClaudeTransparentMode,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-C7P45QG2.js";
+} from "./chunk-5LPUIWNJ.js";
 import {
   __toCommonJS,
   init_provider_templates,
@@ -397,6 +399,7 @@ async function buildSavedConfig() {
     exposedProviders: getServerExposedProviders(),
     maskGatewayIds: getServerMaskGatewayIds(),
     listenMode: getServerListenMode(),
+    autostart: resolveServerAutostart(),
     hasSavedPassword: await hasSavedPasswordCached(),
     hasEnvPassword: Boolean(envPassword),
     ...envPassword ? { prefillPassword: envPassword } : {}
@@ -509,6 +512,9 @@ async function doStartGatewayServer(req, opts) {
   }
   setServerMaskGatewayIds(req.maskGatewayIds);
   setServerListenMode(req.listenMode);
+  if (req.autostart !== void 0) {
+    setServerAutostart(req.autostart);
+  }
   const host = req.listenMode === "network" ? "0.0.0.0" : "127.0.0.1";
   const gateway = req.maskGatewayIds ? { maskGatewayIds: true } : void 0;
   let handle;
@@ -536,7 +542,8 @@ async function doStartGatewayServer(req, opts) {
       freeModelsOnly: req.freeModelsOnly,
       exposedProviders: req.exposedProviders,
       maskGatewayIds: req.maskGatewayIds,
-      listenMode: req.listenMode
+      listenMode: req.listenMode,
+      autostart: req.autostart ?? resolveServerAutostart()
     },
     providerSummary: summarizeServerProviders(models),
     modelRows: buildModelRows(models, gateway)
@@ -550,6 +557,23 @@ async function stopGatewayServer() {
     return { ok: true, stopped: true };
   }
   return { ok: true, stopped: false };
+}
+async function startGatewayServerFromSavedConfig(opts) {
+  const req = {
+    favoritesOnly: getServerFavoritesOnly(),
+    freeModelsOnly: getServerFreeModelsOnly(),
+    exposedProviders: getServerExposedProviders(),
+    maskGatewayIds: getServerMaskGatewayIds(),
+    listenMode: getServerListenMode(),
+    autostart: resolveServerAutostart(),
+    passwordMode: "saved"
+  };
+  const res = await startGatewayServer(req, opts);
+  if (res.ok) {
+    return res.status;
+  }
+  console.warn(`[server-autostart] Warning: ${res.error}`);
+  return null;
 }
 
 // src/ui/api.ts
@@ -650,6 +674,8 @@ function handleUiApiRequest(req, res, opts = {}) {
     handleStartServer(req, res, opts);
   } else if (url === "/api/server/stop" && req.method === "POST") {
     handleStopServer(res, opts);
+  } else if (url === "/api/server/config" && req.method === "POST") {
+    handlePostServerConfig(req, res);
   } else {
     sendJson(res, 404, { error: "Not found" });
   }
@@ -1284,6 +1310,7 @@ async function handleStartServer(req, res, opts) {
       exposedProviders: Array.isArray(body.exposedProviders) ? body.exposedProviders : null,
       maskGatewayIds: body.maskGatewayIds,
       listenMode,
+      autostart: typeof body.autostart === "boolean" ? body.autostart : void 0,
       passwordMode: body.passwordMode === "saved" ? "saved" : "new",
       password: typeof body.password === "string" ? body.password : void 0,
       savePassword: Boolean(body.savePassword)
@@ -1301,6 +1328,17 @@ async function handleStartServer(req, res, opts) {
     sendJson(res, 200, result);
   } catch (err) {
     sendJson(res, 500, { ok: false, error: String(err) });
+  }
+}
+async function handlePostServerConfig(req, res) {
+  try {
+    const body = JSON.parse(await readBody(req));
+    if (typeof body.autostart === "boolean") {
+      setServerAutostart(body.autostart);
+    }
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    sendJson(res, 400, { error: String(err) });
   }
 }
 async function handleStopServer(res, opts) {
@@ -1454,11 +1492,35 @@ function removeLock() {
   } catch {
   }
 }
-function checkExistingServer() {
+async function probeServerHealth(port) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 500);
+    const res = await fetch(`http://127.0.0.1:${port}/api/config`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (res.status === 200) {
+      const data = await res.json().catch(() => null);
+      if (data && typeof data === "object") return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+async function checkExistingServer() {
   if (!existsSync3(LOCK_FILE)) return null;
   try {
     const { pid, port } = JSON.parse(readFileSync(LOCK_FILE, "utf8"));
+    if (pid === process.pid) {
+      removeLock();
+      return null;
+    }
     process.kill(pid, 0);
+    const isAlive = await probeServerHealth(port ?? DEFAULT_SERVER_UI_PORT);
+    if (!isAlive) {
+      removeLock();
+      return null;
+    }
     return `http://127.0.0.1:${port}`;
   } catch {
     removeLock();
@@ -1487,7 +1549,7 @@ async function resolveUiShutdownDecision(signal, promptClose = () => p.confirm({
 async function runUiCommand(opts = {}) {
   const runtime = resolveUiRuntimeConfig(opts);
   await ensureOpencodeCloudProviders();
-  const existing = checkExistingServer();
+  const existing = await checkExistingServer();
   if (existing) {
     console.log(`
   ${pc.bold("relay-ai UI")} already running at ${pc.cyan(existing)}
@@ -1542,6 +1604,11 @@ async function runUiCommand(opts = {}) {
   const url = `http://${displayHost}:${port}`;
   mkdirSync(getAppHome(), { recursive: true });
   writeFileSync2(LOCK_FILE, JSON.stringify({ pid: process.pid, port, mode: runtime.mode }));
+  if (resolveServerAutostart()) {
+    startGatewayServerFromSavedConfig().catch((err) => {
+      trace?.(`gateway autostart error: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
   const cleanup = () => {
     removeLock();
     server.close();
@@ -1596,11 +1663,13 @@ async function runUiCommand(opts = {}) {
   return 0;
 }
 export {
+  checkExistingServer,
   formatUiServerLifecycleMessage,
   isUiApiRoute,
+  probeServerHealth,
   resolveUiMode,
   resolveUiRuntimeConfig,
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-JBVYWTNA.js.map
+//# sourceMappingURL=ui-command-DMPYSK7W.js.map

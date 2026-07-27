@@ -142,6 +142,7 @@ Then open `http://127.0.0.1:18787` and use gateway port **17646** in client Base
 | Variable | Required | Purpose |
 |----------|----------|---------|
 | `RELAY_AI_SERVER_PASSWORD` | Yes for network clients | Gateway password (`Bearer` / `x-api-key`). Prefills the Server form in the admin UI (masked, Reveal to show). |
+| `RELAY_AI_SERVER_AUTOSTART` | Optional | Set to `true` or `1` to auto-start the API Gateway on port 17645 automatically on container/service boot. |
 | `OPENCODE_API_KEY` | If using Zen/Go | Seeds Zen + Go providers when the volume is empty |
 | `RELAY_AI_KEY_<ID>` | Optional | Per-provider key (`groq` → `RELAY_AI_KEY_GROQ`) |
 | `RELAY_AI_HOME` | Set to `/data` in image | Config, `providers.json`, `secrets.json`, logs |

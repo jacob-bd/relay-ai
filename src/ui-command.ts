@@ -10,6 +10,8 @@ import { handleUiApiRequest, type UiServerLifecycleEvent } from './ui/api.js';
 import { getUiDebugLogPath, makeTraceLogger } from './trace-log.js';
 import { VERSION } from './constants.js';
 import { ensureOpencodeCloudProviders } from './registry/crud.js';
+import { resolveServerAutostart } from './config.js';
+import { startGatewayServerFromSavedConfig } from './ui/server-control.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, 'ui', 'public');
@@ -108,11 +110,38 @@ function removeLock(): void {
   try { unlinkSync(LOCK_FILE); } catch {}
 }
 
-function checkExistingServer(): string | null {
+export async function probeServerHealth(port: number): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 500);
+    const res = await fetch(`http://127.0.0.1:${port}/api/config`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (res.status === 200) {
+      const data = await res.json().catch(() => null);
+      if (data && typeof data === 'object') return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+export async function checkExistingServer(): Promise<string | null> {
   if (!existsSync(LOCK_FILE)) return null;
   try {
     const { pid, port } = JSON.parse(readFileSync(LOCK_FILE, 'utf8'));
+    if (pid === process.pid) {
+      removeLock();
+      return null;
+    }
     process.kill(pid, 0);
+
+    const isAlive = await probeServerHealth(port ?? DEFAULT_SERVER_UI_PORT);
+    if (!isAlive) {
+      removeLock();
+      return null;
+    }
+
     return `http://127.0.0.1:${port}`;
   } catch {
     removeLock();
@@ -152,7 +181,7 @@ export async function runUiCommand(opts: UiCommandOptions = {}): Promise<number>
   // Docker / empty RELAY_AI_HOME: seed Zen/Go once at UI boot (not on every catalog load).
   await ensureOpencodeCloudProviders();
 
-  const existing = checkExistingServer();
+  const existing = await checkExistingServer();
   if (existing) {
     console.log(`\n  ${pc.bold('relay-ai UI')} already running at ${pc.cyan(existing)}\n`);
     return 0;
@@ -214,6 +243,12 @@ export async function runUiCommand(opts: UiCommandOptions = {}): Promise<number>
 
   mkdirSync(getAppHome(), { recursive: true });
   writeFileSync(LOCK_FILE, JSON.stringify({ pid: process.pid, port, mode: runtime.mode }));
+
+  if (resolveServerAutostart()) {
+    startGatewayServerFromSavedConfig().catch(err => {
+      trace?.(`gateway autostart error: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
 
   const cleanup = () => {
     removeLock();

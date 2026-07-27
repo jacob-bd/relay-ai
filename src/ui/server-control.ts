@@ -7,13 +7,16 @@ import { BACKENDS, MAX_MODEL_CATALOG } from '../constants.js';
 import {
   getEnvServerPassword,
   getSavedServerPassword,
+  getServerAutostart,
   getServerExposedProviders,
   getServerFavoritesOnly,
   getServerFreeModelsOnly,
   getServerListenMode,
   getServerMaskGatewayIds,
   loadPreferences,
+  resolveServerAutostart,
   setSavedServerPassword,
+  setServerAutostart,
   setServerExposedProviders,
   setServerFavoritesOnly,
   setServerFreeModelsOnly,
@@ -48,6 +51,7 @@ export interface ServerStartRequest {
   exposedProviders: string[] | null;
   maskGatewayIds: boolean;
   listenMode: ServerListenMode;
+  autostart?: boolean;
   /** Only relevant when listenMode is 'network'. */
   passwordMode?: 'saved' | 'new';
   password?: string;
@@ -78,6 +82,7 @@ export interface ServerSavedConfig {
   exposedProviders: string[] | null;
   maskGatewayIds: boolean;
   listenMode: ServerListenMode;
+  autostart: boolean;
   hasSavedPassword: boolean;
   /** True when RELAY_AI_SERVER_PASSWORD is set. */
   hasEnvPassword: boolean;
@@ -154,6 +159,7 @@ async function buildSavedConfig(): Promise<ServerSavedConfig> {
     exposedProviders: getServerExposedProviders(),
     maskGatewayIds: getServerMaskGatewayIds(),
     listenMode: getServerListenMode(),
+    autostart: resolveServerAutostart(),
     hasSavedPassword: await hasSavedPasswordCached(),
     hasEnvPassword: Boolean(envPassword),
     ...(envPassword ? { prefillPassword: envPassword } : {}),
@@ -292,6 +298,9 @@ async function doStartGatewayServer(
   }
   setServerMaskGatewayIds(req.maskGatewayIds);
   setServerListenMode(req.listenMode);
+  if (req.autostart !== undefined) {
+    setServerAutostart(req.autostart);
+  }
 
   const host = req.listenMode === 'network' ? '0.0.0.0' : '127.0.0.1';
   const gateway = req.maskGatewayIds ? { maskGatewayIds: true as const } : undefined;
@@ -325,6 +334,7 @@ async function doStartGatewayServer(
       exposedProviders: req.exposedProviders,
       maskGatewayIds: req.maskGatewayIds,
       listenMode: req.listenMode,
+      autostart: req.autostart ?? resolveServerAutostart(),
     },
     providerSummary: summarizeServerProviders(models),
     modelRows: buildModelRows(models, gateway),
@@ -341,3 +351,27 @@ export async function stopGatewayServer(): Promise<{ ok: true; stopped: boolean 
   }
   return { ok: true, stopped: false };
 }
+
+/**
+ * Auto-starts the in-process API Gateway from saved configuration or env parameters.
+ * Does not throw — returns null and logs warning on configuration or startup error.
+ */
+export async function startGatewayServerFromSavedConfig(opts?: { requestHost?: string }): Promise<ServerStatusPayload | null> {
+  const req: ServerStartRequest = {
+    favoritesOnly: getServerFavoritesOnly(),
+    freeModelsOnly: getServerFreeModelsOnly(),
+    exposedProviders: getServerExposedProviders(),
+    maskGatewayIds: getServerMaskGatewayIds(),
+    listenMode: getServerListenMode(),
+    autostart: resolveServerAutostart(),
+    passwordMode: 'saved',
+  };
+
+  const res = await startGatewayServer(req, opts);
+  if (res.ok) {
+    return res.status;
+  }
+  console.warn(`[server-autostart] Warning: ${res.error}`);
+  return null;
+}
+

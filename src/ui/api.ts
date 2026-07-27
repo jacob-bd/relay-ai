@@ -6,7 +6,7 @@ const execAsync = promisify(exec);
 import { existsSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { loadPreferences, recordLaunchFolder, savePreferences, setAppPathOverride } from '../config.js';
+import { loadPreferences, recordLaunchFolder, savePreferences, setAppPathOverride, setServerAutostart } from '../config.js';
 import { fetchProviderCatalog } from '../provider-catalog.js';
 import { providersForTarget, type RelayLaunchTarget } from '../target-compatibility.js';
 import { favoriteProviderDisplayName } from '../favorite-provider-display.js';
@@ -174,6 +174,8 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
     handleStartServer(req, res, opts);
   } else if (url === '/api/server/stop' && req.method === 'POST') {
     handleStopServer(res, opts);
+  } else if (url === '/api/server/config' && req.method === 'POST') {
+    handlePostServerConfig(req, res);
   } else {
     sendJson(res, 404, { error: 'Not found' });
   }
@@ -882,6 +884,7 @@ async function handleStartServer(req: IncomingMessage, res: ServerResponse, opts
       exposedProviders: Array.isArray(body.exposedProviders) ? body.exposedProviders : null,
       maskGatewayIds: body.maskGatewayIds,
       listenMode,
+      autostart: typeof body.autostart === 'boolean' ? body.autostart : undefined,
       passwordMode: body.passwordMode === 'saved' ? 'saved' : 'new',
       password: typeof body.password === 'string' ? body.password : undefined,
       savePassword: Boolean(body.savePassword),
@@ -899,6 +902,18 @@ async function handleStartServer(req: IncomingMessage, res: ServerResponse, opts
     sendJson(res, 200, result);
   } catch (err) {
     sendJson(res, 500, { ok: false, error: String(err) });
+  }
+}
+
+async function handlePostServerConfig(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const body = JSON.parse(await readBody(req));
+    if (typeof body.autostart === 'boolean') {
+      setServerAutostart(body.autostart);
+    }
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    sendJson(res, 400, { error: String(err) });
   }
 }
 
