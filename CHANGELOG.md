@@ -2,18 +2,18 @@
 
 ## [0.7.3] - 2026-07-26
 
+### Added
+
+- **API Gateway Server Auto-Start ([#40](https://github.com/jacob-bd/relay-ai/issues/40))**: Support `RELAY_AI_SERVER_AUTOSTART=true` (or `server.autostart: true` in `~/.relay-ai/config.json`) to automatically launch the in-process API Gateway server (port 17645) on container/system boot without requiring manual user interaction in the Web UI. Added a toggle control in the Web UI Server tab.
+- **Provider Model Catalog Filters & Favorites Action Button**: Added a minimum context window size filter (`≥ 128k`, `≥ 200k`, `≥ 500k`, `≥ 1M`) and a `Free models only` checkbox to the Provider Model Catalog browser (`#provider/{id}`). Added an interactive `+` action button for each model row in full UI mode to quickly add models to Global Favorites (max 20/20) or Antigravity Favorites (max 6/6) with real-time room capacity checks and duplicate protection (hidden in API Gateway Server mode).
+- Diagnostic log line (`sdk: dropped user turn with unrecognized block types: [...]`, visible under `--trace` in `~/.relay-ai/logs/proxy-debug.log`) for the case where a translated user turn would otherwise silently vanish instead of reaching the provider.
+
 ### Fixed
 
 - **Container boot reboot loops from stale `/data/ui.lock` ([#40](https://github.com/jacob-bd/relay-ai/issues/40))**: `checkExistingServer` now uses a 3-tier health check combining same-PID matching, process existence checking, and an HTTP health probe against `/api/config`. Stale lockfiles from container restarts or hard crashes are cleared automatically instead of causing infinite Docker PID 1 restart loops.
 - **Qwen (`@ai-sdk/alibaba`) no longer derails mid-session with a hallucinated "empty message"/translation tangent.** Every occurrence traced back to the same trigger: a request ending on a tool result (i.e. every step of a normal agentic tool loop) — a documented qwen/DashScope function-calling quirk where the model hallucinates an empty user turn instead of summarizing the tool output. Relay now appends a minimal neutral continuation turn when a qwen request ends on a tool message, scoped narrowly to that provider and invisible to Claude Code.
 - **Status-line context meter no longer flickers empty→full on every turn for SDK-routed (non-Anthropic) models.** Relay was seeding `message_start` with `input_tokens: 0` and only reporting the real count once the stream finished; it now seeds a same-request estimate upfront so the meter shows a stable number from the first token.
 - Hardened `serializeToolResultContent` against a missing tool-result `content` field, which previously could ship a JS `undefined` (not a string) into the upstream SDK call instead of an empty string.
-
-### Added
-
-- **API Gateway Server Auto-Start ([#40](https://github.com/jacob-bd/relay-ai/issues/40))**: Support `RELAY_AI_SERVER_AUTOSTART=true` (or `server.autostart: true` in `~/.relay-ai/config.json`) to automatically launch the in-process API Gateway server (port 17645) on container/system boot without requiring manual user interaction in the Web UI. Added a toggle control in the Web UI Server tab.
-- **Provider Model Catalog Filters & Favorites Action Button**: Added a minimum context window size filter (`≥ 128k`, `≥ 200k`, `≥ 500k`, `≥ 1M`) and a `Free models only` checkbox to the Provider Model Catalog browser (`#provider/{id}`). Added an interactive `+` action button for each model row in full UI mode to quickly add models to Global Favorites (max 20/20) or Antigravity Favorites (max 6/6) with real-time room capacity checks and duplicate protection (hidden in API Gateway Server mode).
-- Diagnostic log line (`sdk: dropped user turn with unrecognized block types: [...]`, visible under `--trace` in `~/.relay-ai/logs/proxy-debug.log`) for the case where a translated user turn would otherwise silently vanish instead of reaching the provider.
 
 ## [0.7.2] - 2026-07-25
 
