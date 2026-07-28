@@ -1776,12 +1776,27 @@ function isCliEntryPoint(): boolean {
 
 if (isCliEntryPoint()) {
   main().then((exitCode) => {
-    process.exit(exitCode);
+    gracefulExit(exitCode);
   }).catch((err: unknown) => {
     if (err === Symbol.for('clack:cancel')) {
-      process.exit(0);
+      gracefulExit(0);
+      return;
     }
     console.error(pc.red('\nUnexpected error:'), err);
-    process.exit(1);
+    gracefulExit(1);
   });
+}
+
+/**
+ * Set the exit code and let the event loop drain naturally instead of calling
+ * process.exit() immediately. On Windows, process.exit() force-tears-down
+ * libuv handles that may still be mid-cleanup (stdin listeners from
+ * @clack/prompts, native keyring module), triggering:
+ *   Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c
+ * A safety-net timer (unref'd, so it won't keep the process alive) forces
+ * exit if something lingers.
+ */
+function gracefulExit(code: number): void {
+  process.exitCode = code;
+  setTimeout(() => process.exit(code), 500).unref();
 }

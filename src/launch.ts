@@ -1,5 +1,6 @@
 // src/launch.ts
-import { execSync, spawn } from 'node:child_process';
+import { execSync } from 'node:child_process';
+import spawn from 'cross-spawn';
 import { existsSync, appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -90,7 +91,7 @@ export function launchClaude(
     const child = spawn(claudePath, args, {
       stdio: 'inherit',
       env,
-      shell: isWindows,
+
     });
 
     const forward = (signal: NodeJS.Signals): void => {

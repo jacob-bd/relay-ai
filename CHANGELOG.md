@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.4] - 2026-07-28
+
+### Fixed
+
+- **Windows: `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` crash on exit.** Every relay-ai command on Windows printed an ugly libuv assertion failure during process teardown. The entry point called `process.exit()` immediately, force-tearing-down libuv handles (stdin listeners, native keyring module) that were still mid-cleanup. Replaced with a graceful shutdown: set `process.exitCode` and let the event loop drain naturally, with an unref'd safety timer as a fallback.
+- **Windows: multi-word CLI arguments silently truncated when launching Claude Code.** `launchClaude` spawns `claude.cmd` with `{ shell: true }` (required for `.cmd` files), but Node's `spawn` does not escape arguments in shell mode. cmd.exe re-tokenizes on whitespace, so `relay-ai claude -p "What is 7 times 8?"` reached Claude Code as just `What`. Replaced `child_process.spawn` with `cross-spawn`, which handles `.cmd` resolution and argument escaping internally without `shell: true`. Verified on a live Windows install: multi-word prompts now arrive intact as a single argument.
+
+
 ## [0.7.3] - 2026-07-26
 
 ### Added

@@ -77,7 +77,7 @@ import {
   supportsClaudeTransparentMode,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-5LPUIWNJ.js";
+} from "./chunk-EUY2MVOS.js";
 import {
   __toCommonJS,
   init_provider_templates,
@@ -1672,4 +1672,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-DMPYSK7W.js.map
+//# sourceMappingURL=ui-command-CF3IEIZP.js.map

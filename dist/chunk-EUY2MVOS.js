@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.7.3",
+  version: "0.7.4",
   publishConfig: {
     access: "public"
   },
@@ -75,6 +75,7 @@ var package_default = {
     "@clack/prompts": "^0.9.1",
     "@openrouter/ai-sdk-provider": "^2.9.0",
     ai: "^6.0.197",
+    "cross-spawn": "^7.0.6",
     "gitlab-ai-provider": "^6.8.0",
     graphql: "^16.14.2",
     "ipaddr.js": "^2.4.0",
@@ -87,6 +88,7 @@ var package_default = {
     zod: "^3.25.76"
   },
   devDependencies: {
+    "@types/cross-spawn": "^6.0.6",
     "@types/node": "^22.0.0",
     "@types/node-forge": "^1.3.14",
     "@types/ws": "^8.18.1",
@@ -1920,7 +1922,8 @@ function resolveServerAutostart(env = process.env) {
 }
 
 // src/launch.ts
-import { execSync, spawn } from "child_process";
+import { execSync } from "child_process";
+import spawn from "cross-spawn";
 import { existsSync as existsSync3, appendFileSync } from "fs";
 import { homedir as homedir3 } from "os";
 import { join as join4 } from "path";
@@ -2011,8 +2014,7 @@ function launchClaude(env, model, extraArgs) {
     };
     const child = spawn(claudePath, args, {
       stdio: "inherit",
-      env,
-      shell: isWindows
+      env
     });
     const forward = (signal) => {
       child.kill(signal);
@@ -12069,4 +12071,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-5LPUIWNJ.js.map
+//# sourceMappingURL=chunk-EUY2MVOS.js.map

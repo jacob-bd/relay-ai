@@ -177,7 +177,7 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-5LPUIWNJ.js";
+} from "./chunk-EUY2MVOS.js";
 import {
   filterTemplates,
   init_provider_templates,
@@ -13393,7 +13393,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-DMPYSK7W.js");
+    const { runUiCommand } = await import("./ui-command-CF3IEIZP.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {
@@ -13534,14 +13534,19 @@ function isCliEntryPoint() {
 }
 if (isCliEntryPoint()) {
   main().then((exitCode) => {
-    process.exit(exitCode);
+    gracefulExit(exitCode);
   }).catch((err) => {
     if (err === /* @__PURE__ */ Symbol.for("clack:cancel")) {
-      process.exit(0);
+      gracefulExit(0);
+      return;
     }
     console.error(pc12.red("\nUnexpected error:"), err);
-    process.exit(1);
+    gracefulExit(1);
   });
+}
+function gracefulExit(code) {
+  process.exitCode = code;
+  setTimeout(() => process.exit(code), 500).unref();
 }
 export {
   antigravityAppHelpText,
