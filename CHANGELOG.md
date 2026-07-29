@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.6] - 2026-07-29
+
+### Fixed
+
+- **Claude Code and Claude Desktop subagents now inherit the Relay model that launched them.** Partner models such as Qwen, Grok, and Kimi no longer fall back to Claude Sonnet when they delegate work, preventing `400 Unknown model: claude-sonnet-...` failures from providers that do not expose Anthropic models.
+- **Explicit subagent model choices now respect the models available in the current Relay session.** When a partner model requests a favorite model for a subagent, Relay routes that child to the requested favorite; otherwise, the child inherits its parent's exact provider and model. The routing is isolated per Claude session and supports concurrent and nested subagents without leaking selections between conversations.
+- **Claude Code 2.1.220's restricted subagent model validation is handled transparently.** Relay bridges Claude's locally accepted model aliases to session-scoped Relay routes, removes its internal routing marker before upstream requests, and leaves native Anthropic passthrough and unrelated tools unchanged.
+
 ## [0.7.5] - 2026-07-28
 
 ### Fixed
