@@ -8,6 +8,7 @@ import {
   GLOBAL_OPENCODE_KEYRING_ACCOUNT,
   MAX_MODEL_CATALOG,
   PREVIEW_PROXY_PORT,
+  UNSUPPORTED_VOICE_MESSAGE,
   VERSION,
   VERTEX_ANTHROPIC_NPM,
   addCustomEndpointProvider,
@@ -154,6 +155,7 @@ import {
   routableModelsForTarget,
   routeLookupIds,
   runServerCommand,
+  sanitizeUnsupportedInlineData,
   savePreferences,
   saveProviderCredential,
   saveRegistry,
@@ -180,7 +182,7 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-HEMJFOXG.js";
+} from "./chunk-RAT6P7WT.js";
 import {
   filterTemplates,
   init_provider_templates,
@@ -7547,7 +7549,12 @@ async function startCloudCodeGateway(routes, opts = {}) {
       } catch {
       }
       if (trace && parsed) {
-        const preview = JSON.stringify(parsed).slice(0, 500);
+        const preview = JSON.stringify(parsed, function(key, value) {
+          if (key === "data" && typeof value === "string" && this && typeof this === "object" && typeof this.mimeType === "string") {
+            return `[${value.length} media chars]`;
+          }
+          return value;
+        }).slice(0, 500);
         log14(`[gateway]   body-preview: ${preview}`);
       }
       if (lowerUrl.includes("loadcodeassist")) {
@@ -7574,6 +7581,13 @@ async function startCloudCodeGateway(routes, opts = {}) {
             log14(
               `[gateway]   resolved route: ${route.catalogId} (${route.providerId}/${route.upstreamModelId} via ${model})`
             );
+          }
+          const media = sanitizeUnsupportedInlineData(parsed);
+          parsed = media.request;
+          if (media.latestUserTurnHasUnsupportedMedia) {
+            if (trace) log14("[gateway] unsupported media in current user turn; provider call skipped");
+            respondUnsupportedMedia(res, route, lowerUrl.includes("stream"));
+            return;
           }
           if (trackActiveRoute && selectedSlotIds.has(model ?? "") && isUserTurnRequest(parsed)) {
             activeRoute = route;
@@ -7943,6 +7957,41 @@ function respondJson(res, status, data) {
     "grpc-status": status < 400 ? "0" : "13"
   });
   res.end(body);
+}
+function respondUnsupportedMedia(res, route, streaming) {
+  const responseId = `relay-${Date.now()}`;
+  if (streaming) {
+    const chunk = formatCloudCodeChunk({
+      text: UNSUPPORTED_VOICE_MESSAGE,
+      modelVersion: route.catalogId,
+      responseId,
+      finishReason: "STOP"
+    });
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      "grpc-status": "0"
+    });
+    res.end(`data: ${JSON.stringify(chunk)}
+
+`);
+    return;
+  }
+  respondJson(res, 200, {
+    response: {
+      candidates: [{
+        content: {
+          role: "model",
+          parts: [{ text: UNSUPPORTED_VOICE_MESSAGE }]
+        },
+        finishReason: "STOP"
+      }],
+      modelVersion: route.catalogId,
+      responseId
+    },
+    traceId: "relay-trace",
+    metadata: {}
+  });
 }
 function parsePseudoToolCall(text4, knownToolNames) {
   const trimmed = text4.trim();
@@ -13443,7 +13492,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-26QQUWTQ.js");
+    const { runUiCommand } = await import("./ui-command-JFTLPRSH.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

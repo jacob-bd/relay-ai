@@ -300,6 +300,113 @@ describe('cloud-code-gateway', () => {
     expect(createLanguageModel).not.toHaveBeenCalled();
   });
 
+  it('completes a streaming audio turn locally without calling a provider', async () => {
+    vi.mocked(createLanguageModel).mockClear();
+    vi.mocked(streamText).mockClear();
+    const logs: string[] = [];
+    const handle = await startCloudCodeGateway(testRoutes, {
+      templateKey: 'gemini-3.5-flash-low',
+      trace: true,
+      logFn: line => logs.push(line),
+    });
+    handles.push(handle);
+
+    const res = await postJson(handle, '/v1internal:streamGenerateContent?alt=sse', {
+      model: 'gemini-3.5-flash-low',
+      request: {
+        contents: [{
+          role: 'user',
+          parts: [{
+            inlineData: {
+              mimeType: 'audio/webm;codecs=opus',
+              data: 'private-audio-base64',
+            },
+          }],
+        }],
+      },
+    });
+    const text = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/event-stream');
+    expect(text).toContain('Voice transcription isn’t supported by Relay AI yet.');
+    expect(text).toContain('"finishReason":"STOP"');
+    expect(createLanguageModel).not.toHaveBeenCalled();
+    expect(streamText).not.toHaveBeenCalled();
+    expect(logs.join('\n')).not.toContain('private-audio-base64');
+  });
+
+  it('completes a unary audio turn locally without calling a provider', async () => {
+    vi.mocked(createLanguageModel).mockClear();
+    vi.mocked(generateText).mockClear();
+    const handle = await start();
+
+    const res = await postJson(handle, '/v1internal:generateContent', {
+      model: 'gemini-3.5-flash-low',
+      request: {
+        contents: [{
+          role: 'user',
+          parts: [{
+            inlineData: {
+              mimeType: 'audio/webm;codecs=opus',
+              data: 'private-audio-base64',
+            },
+          }],
+        }],
+      },
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.response.candidates[0].content.parts[0].text)
+      .toContain('Voice transcription isn’t supported by Relay AI yet.');
+    expect(body.response.candidates[0].finishReason).toBe('STOP');
+    expect(createLanguageModel).not.toHaveBeenCalled();
+    expect(generateText).not.toHaveBeenCalled();
+  });
+
+  it('continues a later text turn after omitting historical audio', async () => {
+    vi.mocked(streamText).mockImplementationOnce((options: any) => {
+      expect(JSON.stringify(options.messages)).not.toContain('historical-audio-base64');
+      expect(JSON.stringify(options.messages)).not.toContain('"type":"image"');
+      return {
+        fullStream: (async function* () {
+          yield { type: 'text-delta', id: 'text-1', text: 'Session recovered' };
+          yield { type: 'finish', finishReason: 'stop', totalUsage: {} };
+        })(),
+      } as any;
+    });
+    const handle = await start();
+
+    const res = await postJson(handle, '/v1internal:streamGenerateContent?alt=sse', {
+      model: 'gemini-3.5-flash-low',
+      request: {
+        contents: [
+          {
+            role: 'user',
+            parts: [{
+              inlineData: {
+                mimeType: 'audio/webm;codecs=opus',
+                data: 'historical-audio-base64',
+              },
+            }],
+          },
+          {
+            role: 'model',
+            parts: [{ text: 'Voice transcription is not supported.' }],
+          },
+          {
+            role: 'user',
+            parts: [{ text: 'hello?' }],
+          },
+        ],
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('Session recovered');
+  });
+
   it('routes the hidden Flash Lite planner model through the launch route', async () => {
     const handle = await start();
     const res = await postJson(handle, '/v1internal:streamGenerateContent?alt=sse', {
