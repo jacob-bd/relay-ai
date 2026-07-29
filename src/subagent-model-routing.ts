@@ -78,8 +78,18 @@ export function normalizeClaudeAgentInput(
   }
 
   const rawModel = source.model;
-  const selector = typeof rawModel === 'string' ? rawModel.trim() : '';
-  if (rawModel == null || selector === '' || selector === 'inherit') {
+  if (rawModel == null) {
+    normalized.model = routing.parentModelId;
+    return {
+      input: normalized,
+      decision: { kind: 'inherit', resolvedModelId: routing.parentModelId },
+    };
+  }
+  if (typeof rawModel !== 'string') {
+    throw new UnavailableSubagentModelError(String(rawModel), routing);
+  }
+  const selector = rawModel.trim();
+  if (selector === '' || selector === 'inherit') {
     normalized.model = routing.parentModelId;
     return {
       input: normalized,

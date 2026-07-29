@@ -570,7 +570,7 @@ export async function generateAnthropicResponse(
   model: LanguageModel,
   params: SdkCallParams,
   modelId: string,
-  options?: { forceStream?: boolean },
+  options?: { forceStream?: boolean; log?: LogFn },
 ): Promise<Record<string, unknown>> {
   const { subagentRouting, ...providerParams } = params;
   let text: string;
@@ -595,9 +595,12 @@ export async function generateAnthropicResponse(
     content: [
       ...(text ? [{ type: 'text', text }] : []),
       ...toolCalls.map(tc => {
-        const input = subagentRouting && tc.toolName === 'Agent'
-          ? normalizeClaudeAgentInput(tc.input, subagentRouting).input
-          : tc.input as Record<string, unknown>;
+        let input = tc.input as Record<string, unknown>;
+        if (subagentRouting && tc.toolName === 'Agent') {
+          const normalized = normalizeClaudeAgentInput(tc.input, subagentRouting);
+          logSubagentDecision(options?.log, normalized.decision);
+          input = normalized.input;
+        }
         return {
           type: 'tool_use',
           id: encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc as FullStreamPart)),

@@ -9,6 +9,15 @@ import {
   type ProxyRoute,
 } from '../src/proxy.js';
 import { getProxyDebugLogPath } from '../src/trace-log.js';
+import { translateRequest } from '../src/sdk-adapter.js';
+
+vi.mock('../src/sdk-adapter.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/sdk-adapter.js')>();
+  return {
+    ...actual,
+    translateRequest: vi.fn(actual.translateRequest),
+  };
+});
 
 /** POST JSON to a local proxy via node:http (avoids vi.stubGlobal('fetch') interception). */
 function postToProxy(port: number, token: string, body: unknown): Promise<{ status: number; body: string }> {
@@ -208,7 +217,66 @@ describe('SDK anonymous route handling', () => {
     expect(res.status).toBe(502);
     expect(res.body).not.toContain('Missing API key');
   });
+
+  it('passes routing for the route actually selected by the request', async () => {
+    vi.mocked(translateRequest).mockClear();
+    const qwen: ProxyRoute = {
+      aliasId: 'relay:qwen',
+      gatewayAliasId: 'anthropic-relay__qwen-3',
+      realModelId: 'qwen-3',
+      displayName: 'Qwen 3',
+      upstreamUrl: '',
+      apiKey: '',
+      modelFormat: 'openai',
+      npm: 'missing-sdk-provider-for-test',
+      providerId: 'relay',
+    };
+    const grok: ProxyRoute = {
+      aliasId: 'relay:grok',
+      gatewayAliasId: 'anthropic-relay__grok-4',
+      realModelId: 'grok-4',
+      displayName: 'Grok 4',
+      upstreamUrl: '',
+      apiKey: '',
+      modelFormat: 'openai',
+      npm: 'missing-sdk-provider-for-test',
+      providerId: 'relay',
+    };
+    const handle = await startProxyCatalog([qwen, grok], qwen.aliasId, false);
+
+    await postToProxy(handle.port, handle.token, {
+      model: grok.aliasId,
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [claudeAgentDefinition()],
+      stream: false,
+    });
+    handle.close();
+
+    const options = vi.mocked(translateRequest).mock.calls.at(-1)?.[2] as any;
+    expect(options.subagentRouting.parentModelId).toBe(grok.gatewayAliasId);
+    expect(options.subagentRouting.models.map((item: any) => item.id)).toEqual([
+      qwen.gatewayAliasId,
+      grok.gatewayAliasId,
+    ]);
+  });
 });
+
+function claudeAgentDefinition() {
+  return {
+    name: 'Agent',
+    description: 'Launch an agent',
+    input_schema: {
+      type: 'object',
+      properties: {
+        description: { type: 'string' },
+        prompt: { type: 'string' },
+        subagent_type: { type: 'string' },
+        model: { type: 'string' },
+      },
+    },
+  };
+}
 
 describe('anthropic passthrough debug logging', () => {
   afterEach(() => {

@@ -3,6 +3,7 @@ import { isAuthorized } from './auth.js';
 import {
   formatGatewayAnthropicModels,
   formatOpenAIModels,
+  buildServerSubagentModelRouting,
   gatewayDisplayName,
   supportsDirectOpenAIChatCompletions,
   type GatewayModelOptions,
@@ -238,6 +239,11 @@ async function handleAnthropicMessages(
       defaultEffort: anthropicEffortFromRequest(body as AnthropicRequest) ? undefined : model.defaultEffort,
       openAiOAuth: model.npm === '@ai-sdk/openai' && model.authType === 'oauth',
       onDebug: plog,
+      subagentRouting: buildServerSubagentModelRouting(
+        options.catalog.list(),
+        model,
+        options.gateway,
+      ),
       reasoningMetadata: {
         providerId: model.providerId,
         apiBaseUrl: model.apiBaseUrl,
@@ -264,12 +270,17 @@ async function handleAnthropicMessages(
           'Connection': 'keep-alive',
         });
         await streamAnthropicResponse(
-          languageModel, params, responseModelId, chunk => res.write(chunk), undefined,
+          languageModel, params, responseModelId, chunk => res.write(chunk), plog,
           estimateAnthropicInputTokens(body),
         );
         res.end();
       } else {
-        const anthropicResponse = await generateAnthropicResponse(languageModel, params, responseModelId);
+        const anthropicResponse = await generateAnthropicResponse(
+          languageModel,
+          params,
+          responseModelId,
+          { log: plog },
+        );
         sendJson(res, 200, anthropicResponse);
       }
     } catch (err) {

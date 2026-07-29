@@ -1,8 +1,9 @@
 import { createServer, type Server } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createGatewayModelCatalog, type ServerModelInfo } from '../src/server/models.js';
+import { createGatewayModelCatalog, gatewayModelIdentity, type ServerModelInfo } from '../src/server/models.js';
 import { startServer, type ServerHandle } from '../src/server/router.js';
 import { createLanguageModel } from '../src/provider-factory.js';
+import { generateAnthropicResponse } from '../src/sdk-adapter.js';
 
 vi.mock('../src/provider-factory.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/provider-factory.js')>();
@@ -246,6 +247,44 @@ describe('server router', () => {
     });
   });
 
+  it('passes masked request-local catalog routing to SDK-backed partner requests', async () => {
+    const qwen: ServerModelInfo = {
+      ...model('qwen-3', 'openai', 'go'),
+      name: 'Qwen 3',
+      providerId: 'go',
+      npm: '@ai-sdk/alibaba',
+    };
+    const grok: ServerModelInfo = {
+      ...model('grok-4', 'openai', 'go'),
+      name: 'Grok 4',
+      providerId: 'xai',
+      npm: '@ai-sdk/xai',
+    };
+    const serverModels = [qwen, grok];
+    const gateway = { maskGatewayIds: true };
+    const server = await startTestServer({
+      catalog: createGatewayModelCatalog(serverModels, gateway),
+      gateway,
+    });
+    const qwenId = gatewayModelIdentity(qwen, serverModels, gateway).publicId;
+
+    const response = await fetch(`${server.url}/anthropic/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: qwenId,
+        messages: [{ role: 'user', content: 'delegate' }],
+        tools: [claudeAgentDefinition()],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const params = vi.mocked(generateAnthropicResponse).mock.calls.at(-1)?.[1] as any;
+    expect(params.subagentRouting.parentModelId).toBe(qwenId);
+    expect(params.subagentRouting.models).toHaveLength(2);
+    expect(params.subagentRouting.models[0].id).toBe(qwenId);
+  });
+
   it('forwards OpenAI chat completions for OpenAI-format models unchanged', async () => {
     const upstream = await startUpstream({
       id: 'chatcmpl-test',
@@ -476,3 +515,19 @@ describe('server router', () => {
     });
   });
 });
+
+function claudeAgentDefinition() {
+  return {
+    name: 'Agent',
+    description: 'Launch an agent',
+    input_schema: {
+      type: 'object',
+      properties: {
+        description: { type: 'string' },
+        prompt: { type: 'string' },
+        subagent_type: { type: 'string' },
+        model: { type: 'string' },
+      },
+    },
+  };
+}

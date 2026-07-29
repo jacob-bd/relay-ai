@@ -302,6 +302,7 @@ export function startProxyCatalog(
           openAiOAuth,
           maxTools: maxToolsForNpm(route.npm),
           onDebug: (msg) => plog(() => msg),
+          subagentRouting: buildProxySubagentModelRouting(routes, route),
           reasoningMetadata: {
             providerId: route.providerId,
             apiBaseUrl: route.baseURL,
@@ -346,7 +347,7 @@ export function startProxyCatalog(
             // outright ("Stream must be set to true"), so always stream internally
             // for it and collect the result, regardless of what the client asked for.
             const anthropicResponse = await generateAnthropicResponse(
-              model, params, originalModel, { forceStream: openAiOAuth },
+              model, params, originalModel, { forceStream: openAiOAuth, log: plog },
             );
             sendJson(res, 200, anthropicResponse);
           }

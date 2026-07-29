@@ -159,6 +159,13 @@ describe('normalizeClaudeAgentInput', () => {
     }
   });
 
+  it('rejects a non-string explicit selector instead of treating it as inheritance', () => {
+    expect(() => normalizeClaudeAgentInput({
+      subagent_type: 'general-purpose',
+      model: 42,
+    }, routing)).toThrow('42');
+  });
+
   it('does not mutate the original input', () => {
     const input = { prompt: 'inspect', subagent_type: 'general-purpose' };
     normalizeClaudeAgentInput(input, routing);
