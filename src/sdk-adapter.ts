@@ -19,6 +19,11 @@ import {
 import { resolveUpstreamTools } from './tool-search.js';
 import type { AnthropicRequestMessage, AnthropicToolDefinition } from './proxy-types.js';
 import { anthropicErrorType, upstreamHttpStatus } from './codex/upstream-error.js';
+import {
+  augmentClaudeAgentTool,
+  isClaudeAgentTool,
+  type SubagentModelRouting,
+} from './subagent-model-routing.js';
 
 export { silenceSdkWarnings };
 
@@ -70,6 +75,8 @@ export interface TranslateRequestOptions {
   maxTools?: number;
   /** Diagnostic sink — e.g. surfaces user turns silently dropped by translateMessages. */
   onDebug?: (msg: string) => void;
+  /** Request-local Claude Agent model catalog for SDK-backed partner routes. */
+  subagentRouting?: SubagentModelRouting;
 }
 
 /** Read reasoning effort from an Anthropic-format request body. */
@@ -87,6 +94,8 @@ export interface SdkCallParams {
   maxOutputTokens?: number;
   temperature?: number;
   providerOptions?: Record<string, Record<string, unknown>>;
+  /** Internal response-normalization metadata; never forwarded to an SDK provider. */
+  subagentRouting?: SubagentModelRouting;
 }
 
 // ── system ───────────────────────────────────────────────────────────────────
@@ -281,6 +290,23 @@ export function translateRequest(
   if (options?.maxTools !== undefined && upstreamTools.length > options.maxTools) {
     upstreamTools = upstreamTools.slice(0, options.maxTools);
   }
+  let responseSubagentRouting: SubagentModelRouting | undefined;
+  if (options?.subagentRouting) {
+    const agentIndex = upstreamTools.findIndex(toolDefinition => (
+      isClaudeAgentTool(toolDefinition as AnthropicToolDefinition)
+    ));
+    if (agentIndex >= 0) {
+      upstreamTools = upstreamTools.map((toolDefinition, index) => (
+        index === agentIndex
+          ? augmentClaudeAgentTool(
+            toolDefinition as AnthropicToolDefinition,
+            options.subagentRouting!,
+          ) as AnthropicTool
+          : toolDefinition
+      ));
+      responseSubagentRouting = options.subagentRouting;
+    }
+  }
   const effort = anthropicEffortFromRequest(body) ?? options?.defaultEffort;
   let providerOptions = deepMergeProviderOptions(
     thinkingProviderOptions(npm),
@@ -303,6 +329,7 @@ export function translateRequest(
     maxOutputTokens: options?.openAiOAuth ? undefined : body.max_tokens,
     temperature: body.temperature,
     providerOptions,
+    subagentRouting: responseSubagentRouting,
   };
 }
 
@@ -461,7 +488,8 @@ export async function streamAnthropicResponse(
   log?: LogFn,
   estimatedInputTokens = 0,
 ): Promise<void> {
-  const result = streamText({ model, ...params, onError: () => {} } as Parameters<typeof streamText>[0]);
+  const { subagentRouting: _subagentRouting, ...providerParams } = params;
+  const result = streamText({ model, ...providerParams, onError: () => {} } as Parameters<typeof streamText>[0]);
   // Prevent unhandled promise rejections on stream properties:
   Promise.resolve(result.text).catch(() => {});
   Promise.resolve(result.toolCalls).catch(() => {});
@@ -480,6 +508,7 @@ export async function generateAnthropicResponse(
   modelId: string,
   options?: { forceStream?: boolean },
 ): Promise<Record<string, unknown>> {
+  const { subagentRouting: _subagentRouting, ...providerParams } = params;
   let text: string;
   let toolCalls: Array<{ toolCallId: string; toolName: string; input: unknown }>;
   let finishReason: string;
@@ -489,11 +518,11 @@ export async function generateAnthropicResponse(
     // Some upstreams (e.g. ChatGPT's Codex backend) reject non-streaming requests
     // outright. Request a real stream from the SDK and collect it into one
     // response instead of forwarding the client's non-streaming request upstream.
-    const r = streamText({ model, ...params, onError: () => {} } as Parameters<typeof streamText>[0]);
+    const r = streamText({ model, ...providerParams, onError: () => {} } as Parameters<typeof streamText>[0]);
     Promise.resolve(r.toolResults).catch(() => {});
     [text, toolCalls, finishReason, usage] = await Promise.all([r.text, r.toolCalls, r.finishReason, r.usage]);
   } else {
-    const r = await generateText({ model, ...params } as Parameters<typeof generateText>[0]);
+    const r = await generateText({ model, ...providerParams } as Parameters<typeof generateText>[0]);
     ({ text, toolCalls, finishReason, usage } = r);
   }
 

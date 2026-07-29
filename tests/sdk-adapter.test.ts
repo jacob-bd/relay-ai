@@ -8,6 +8,40 @@ import {
   translateRequest,
   writeAnthropicStream,
 } from '../src/sdk-adapter.js';
+import { MAX_MODEL_CATALOG } from '../src/constants.js';
+import type { SubagentModelRouting } from '../src/subagent-model-routing.js';
+
+const subagentRouting: SubagentModelRouting = {
+  parentModelId: 'anthropic-relay__qwen-3',
+  models: [
+    {
+      id: 'anthropic-relay__qwen-3',
+      compatibilityIds: ['relay:qwen'],
+      displayName: 'Qwen 3',
+    },
+    {
+      id: 'anthropic-relay__grok-4',
+      compatibilityIds: ['relay:grok'],
+      displayName: 'Grok 4',
+    },
+  ],
+};
+
+function claudeAgentTool() {
+  return {
+    name: 'Agent',
+    description: 'Launch an agent',
+    input_schema: {
+      type: 'object',
+      properties: {
+        description: { type: 'string' },
+        prompt: { type: 'string' },
+        subagent_type: { type: 'string' },
+        model: { type: 'string', enum: ['sonnet', 'opus', 'haiku', 'fable'] },
+      },
+    },
+  };
+}
 
 describe('translateTools', () => {
   it('builds client-side tools (no execute) keyed by name', () => {
@@ -329,6 +363,72 @@ describe('translateRequest', () => {
       ],
     }, '@ai-sdk/xai');
     expect(params.tools && Object.keys(params.tools)).toEqual(['Read']);
+  });
+
+  it('augments a retained Claude Agent schema and carries request-scoped routing metadata', () => {
+    const source = claudeAgentTool();
+    const original = structuredClone(source);
+    const params = translateRequest({
+      model: subagentRouting.parentModelId,
+      messages: [{ role: 'user', content: 'delegate' }],
+      tools: [source],
+    }, '@ai-sdk/xai', { subagentRouting } as any);
+    const translated = (params.tools!.Agent as any).inputSchema.jsonSchema;
+
+    expect(translated.properties.model.enum).toContain('anthropic-relay__grok-4');
+    expect((params.tools!.Agent as any).description).toContain(`default: ${subagentRouting.parentModelId}`);
+    expect((params as any).subagentRouting).toBe(subagentRouting);
+    expect(source).toEqual(original);
+  });
+
+  it('does not enable normalization for an unrelated name-only Agent tool', () => {
+    const params = translateRequest({
+      model: subagentRouting.parentModelId,
+      messages: [{ role: 'user', content: 'delegate' }],
+      tools: [{
+        name: 'Agent',
+        description: 'Application agent',
+        input_schema: { type: 'object', properties: { prompt: { type: 'string' } } },
+      }],
+    }, '@ai-sdk/xai', { subagentRouting } as any);
+
+    expect((params as any).subagentRouting).toBeUndefined();
+    expect((params.tools!.Agent as any).description).toBe('Application agent');
+  });
+
+  it('detects Agent only after provider maxTools truncation', () => {
+    const params = translateRequest({
+      model: subagentRouting.parentModelId,
+      messages: [{ role: 'user', content: 'delegate' }],
+      tools: [
+        { name: 'Read', input_schema: { type: 'object', properties: {} } },
+        claudeAgentTool(),
+      ],
+    }, '@ai-sdk/xai', { subagentRouting, maxTools: 1 } as any);
+
+    expect(Object.keys(params.tools!)).toEqual(['Read']);
+    expect((params as any).subagentRouting).toBeUndefined();
+  });
+
+  it('keeps large-catalog Agent guidance bounded', () => {
+    const largeRouting: SubagentModelRouting = {
+      parentModelId: 'model-0',
+      models: Array.from({ length: MAX_MODEL_CATALOG + 1 }, (_, index) => ({
+        id: `model-${index}`,
+        compatibilityIds: [],
+        displayName: `Model ${index}`,
+      })),
+    };
+    const params = translateRequest({
+      model: largeRouting.parentModelId,
+      messages: [{ role: 'user', content: 'delegate' }],
+      tools: [claudeAgentTool()],
+    }, '@ai-sdk/xai', { subagentRouting: largeRouting } as any);
+    const translatedTool = params.tools!.Agent as any;
+
+    expect(translatedTool.inputSchema.jsonSchema.properties.model.enum).toBeUndefined();
+    expect(translatedTool.description).toContain('default: model-0');
+    expect(translatedTool.description).not.toContain('model-20');
   });
 });
 
