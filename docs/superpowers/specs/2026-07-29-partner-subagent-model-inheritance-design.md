@@ -20,13 +20,20 @@ without calling a real provider:
 3. The child request used `claude-sonnet-5`.
 4. The next parent request returned to `anthropic-relay__qwen-probe`.
 
-The probe also established two constraints:
+The probes also established these constraints:
 
 - A newly advertised `claude-relay-*` id is rejected by the bundled client before
   it sends an API request, so changing the catalog prefix is not a viable fix.
 - The `Agent` tool schema exposes `model` as an optional enum containing only
   `sonnet`, `opus`, `haiku`, and `fable`. Partner models are therefore not told
   that Relay AI catalog ids are valid subagent selections.
+- When a custom agent has `model: sonnet` frontmatter and the visible `Agent` call
+  omits `model`, the child request still uses `claude-sonnet-5`. The frontmatter
+  value is not exposed in the tool input Relay AI can normalize.
+- When the fake gateway returns an `Agent` call with an explicit
+  `anthropic-*` gateway id, Claude accepts it and sends the child request with
+  that id. Claude also accepts the `[1m]` picker variant, then strips `[1m]` from
+  the child request; Relay AI's existing route lookup already accepts both forms.
 
 Anthropic documents omitted subagent models as inheriting the main conversation,
 but the current bundled runtime does not preserve that behavior for the custom
@@ -57,30 +64,32 @@ gateway id used by a partner model.
 - Do not change the catalog size limit, favorites behavior, provider credential
   resolution, or upstream model ids.
 - Do not infer a hidden custom-agent frontmatter model after Claude Code has
-  omitted it from the visible `Agent` tool call. An explicit favorite selection
-  must be represented by the per-invocation `model` field.
+  omitted it from the visible `Agent` tool call. The runtime probe proves that
+  Relay AI cannot distinguish this case from ordinary inheritance. Default
+  partner inheritance therefore wins; an explicit favorite selection must be
+  represented by the per-invocation `model` field.
 
 ## Routing contract
 
-For an `Agent` tool call emitted by an SDK-backed partner model, Relay AI applies
-this precedence:
+For a Claude Code `Agent` tool call emitted by an SDK-backed partner model, Relay
+AI applies this precedence:
 
-1. `subagent_type: "fork"` remains owned by Claude Code because forks always
+1. `subagent_type: "fork"` remains untouched because forks always
    inherit according to the client schema.
 2. If `model` is omitted, `null`, empty, or `inherit`, Relay AI writes the exact
-   inbound parent gateway id into `model`.
+   public id of the route that served the parent request into `model`.
 3. If `model` is an exact exposed catalog id, Relay AI preserves it.
-4. If `model` is an exact unmasked compatibility id for the same catalog entry,
+4. If `model` is an exact compatibility id for the same catalog entry,
    Relay AI rewrites it to the exposed id.
-5. If `model` is `sonnet`, `opus`, `haiku`, or `fable`, Relay AI resolves it only
-   when that family is represented by an available native Claude catalog entry.
-   If more than one available entry has the same family, the first entry in
-   catalog order wins.
+5. If `model` is `sonnet`, `opus`, `haiku`, or `fable`, Relay AI resolves it to
+   the first available native Claude entry of that family in catalog order. If
+   no such entry exists, it degrades to the public parent id and records a trace
+   warning instead of failing a common built-in/custom-agent workflow.
 6. Any other explicit selector is rejected with a clear unavailable-model error.
 
-The gateway catalog for that running Relay AI process is the authority. A model
-available elsewhere but absent from the selected-model-plus-favorites catalog is
-not eligible.
+The active gateway catalog served by that running Relay AI process is the
+authority. A model available elsewhere but absent from that catalog is not
+eligible.
 
 ## Considered approaches
 
@@ -129,26 +138,61 @@ export interface SubagentModelRouting {
 }
 ```
 
-The Claude Desktop/server path builds this structure from
-`ModelCatalog.list()`, the gateway exposure options, and the inbound
-`body.model`. The Claude Code proxy path builds it from its active
-`ProxyRoute[]` and the inbound model id. No process-global "current model" is
-introduced.
+The Claude Code proxy path derives ids from the route actually selected by
+`lookupRoute`, not from the request body after other layers may have rewritten
+it. Its public-id rule is:
+
+```ts
+route.gatewayAliasId ?? route.aliasId
+```
+
+This is required in transparent mode: the MITM layer rewrites the request model
+to an internal `relay:{provider}:{model}` alias before forwarding to the SDK
+adapter, while Claude Code only knows `route.gatewayAliasId`. It also handles the
+existing `lookupRoute(...) ?? defaultRoute` fallback without injecting the
+unrecognized inbound string.
+
+The Claude Desktop/server path derives each option's public id with
+`exposedGatewayAliasId(model, gatewayOptions)`. A shared gateway-alias helper will
+produce both that public id and the exact compatibility-id set used by
+`createGatewayModelCatalog`, so catalog lookup and subagent normalization cannot
+drift. That set includes the real/bare id, scoped collision id, raw gateway
+alias, masked alias, and applicable bare/`[1m]` variants.
+
+Native Claude status and family are derived from the real model—not the masked
+public id—using the real/upstream `claude-*` id and
+`modelFormat === 'anthropic'`. The first matching entry in catalog order wins.
+No process-global "current model" is introduced.
 
 ### Partner-model awareness
 
-When translating tools for an SDK-backed request, Relay AI detects the exact
-`Agent` tool and clones its definition. It makes two bounded changes:
+When translating tools for an SDK-backed request, Relay AI detects Claude Code's
+`Agent` tool by both name and schema shape: the schema must contain
+`properties.subagent_type` and the normal `description`/`prompt` fields. A
+generic client's unrelated tool named `Agent` is left unchanged.
+
+Relay AI clones the detected definition after `resolveUpstreamTools` and provider
+tool-count truncation, but before `translateTools`. It makes bounded changes:
 
 - Append a compact routing note stating that the parent id is the default and
-  listing each available display name with its exact exposed id.
-- Extend the existing `model` enum with the exposed catalog ids while retaining
-  the built-in Claude family values.
+  listing each available display name with its exact exposed id when the catalog
+  is within the guidance limit.
+- For catalogs of at most `MAX_MODEL_CATALOG`, extend the existing `model` enum
+  with all exposed catalog ids while retaining the built-in Claude family values.
+- For larger shared-server catalogs, replace the cloned model property's enum
+  constraint with a plain string schema so an exact user-supplied catalog id
+  remains legal. The compact note identifies the exact parent default and says
+  that other explicit values must be exact ids from the session catalog; it does
+  not enumerate the full catalog.
 
 Relay AI does not modify other tools and does not mutate the client request body.
-The catalog is already capped at `MAX_MODEL_CATALOG`, so the added text and enum
-remain bounded. Because the catalog is stable for a running session, the injected
-tool definition is also prompt-cache stable.
+Claude App and CLI catalogs are capped, but the general server catalog is not, so
+guidance has its own independent `MAX_MODEL_CATALOG` bound. Because a running
+catalog is stable, the injected tool definition is prompt-cache stable.
+
+The response adapter receives routing metadata only when that Claude Agent schema
+was detected in the tools actually sent upstream. This prevents name-only output
+normalization from affecting a generic client's unrelated `Agent` tool.
 
 ### Tool-call enforcement
 
@@ -156,10 +200,19 @@ A pure helper normalizes a completed `Agent` tool input against
 `SubagentModelRouting`. It returns either the normalized input or a typed
 unavailable-model result. Other tool calls pass through unchanged.
 
-For streamed SDK output, the Anthropic response adapter buffers only `Agent`
-tool-input deltas. When the SDK emits the completed `tool-call` part, Relay AI
-normalizes the complete input and emits one valid `input_json_delta`. All other
-tools retain the existing pass-through streaming behavior.
+For streamed SDK output, the Anthropic response adapter buffers only detected
+Claude `Agent` tool-input deltas, keyed by tool-call id. AI SDK v6 emits the
+completed `tool-call` immediately after that tool's `tool-input-end`; this order
+was verified against `runToolsTransformation` in the installed SDK. On the
+completed part, Relay AI normalizes the SDK's complete input and emits one valid
+`input_json_delta` at the buffered block index. The in-stream non-streamed
+`tool-call` branch applies the same normalization. All other tools retain the
+existing incremental pass-through behavior.
+
+If an upstream error arrives before a buffered Agent call completes, Relay AI
+discards its buffered deltas, closes the open block exactly once, and emits the
+existing Anthropic error event. It never emits a delta after
+`content_block_stop`.
 
 For non-streaming SDK output, Relay AI normalizes each completed tool call before
 building the Anthropic `tool_use` content block.
@@ -181,7 +234,9 @@ before Claude Code launches the native child.
 For default inheritance:
 
 1. Claude Code sends a parent request with Qwen's exposed gateway id.
-2. Relay AI resolves Qwen and builds routing metadata with Qwen as the parent.
+2. Relay AI resolves Qwen and builds routing metadata with the serving route's
+   public id as the parent. In transparent mode this is `gatewayAliasId`, never
+   the internal `relay:` alias.
 3. Relay AI sends Qwen an `Agent` schema that identifies Qwen as the default.
 4. Qwen emits an `Agent` call with no model or with `inherit`.
 5. Relay AI writes Qwen's exact exposed gateway id into the tool input.
@@ -200,10 +255,15 @@ For an explicit Grok favorite:
 
 - An explicit selector absent from the active catalog produces a Relay AI
   unavailable-subagent-model error; it is never silently mapped to the parent.
+- An unavailable built-in family alias is the exception: it degrades to the
+  parent with a trace warning because Claude's client-relative family resolution
+  is precisely what fails in partner-only catalogs.
 - A malformed non-object `Agent` input is left to the existing tool-schema
   validation path.
-- A streaming normalization error is emitted as an Anthropic SSE `error` event
-  before the affected tool block is completed.
+- For a streaming unavailable-model error, Relay AI discards buffered input,
+  closes the affected block, and then emits an Anthropic SSE `error` event. The
+  bounded message lists up to `MAX_MODEL_CATALOG` available exposed ids and the
+  count omitted, if any.
 - A non-streaming normalization error is returned through the existing request
   error handling.
 - Trace mode logs only the routing decision and safe catalog ids:
@@ -216,6 +276,8 @@ For an explicit Grok favorite:
 - Existing masked and unmasked gateway aliases remain accepted.
 - Existing catalog discovery ids and display names remain unchanged.
 - Non-`Agent` tools produce byte-equivalent Anthropic tool-call events.
+- A generic tool named `Agent` without Claude Code's subagent schema produces
+  byte-equivalent request and response behavior.
 - Requests without an `Agent` tool receive no injected routing text.
 - Native Anthropic passthrough is unchanged.
 - The feature is derived from the request's catalog and requires no new user
@@ -226,25 +288,57 @@ For an explicit Grok favorite:
 Tests are written before production changes and cover:
 
 - missing, `null`, empty, and `inherit` model values becoming the parent id;
+- transparent-mode routes using `gatewayAliasId ?? aliasId` for both guidance and
+  inheritance, with no internal `relay:` id exposed;
 - an exact exposed favorite id being preserved;
 - an unmasked compatibility id becoming the exposed id;
 - an available native `sonnet`, `opus`, `haiku`, or `fable` family resolving to
   the matching catalog entry;
+- an unavailable family alias degrading to the parent with a trace warning;
+- family derivation from a real native Claude id when the exposed id is masked;
 - an unavailable explicit selector producing the typed error;
 - `fork` calls remaining untouched;
 - non-`Agent` tools remaining untouched;
+- a generic `Agent` tool without `subagent_type` remaining untouched;
 - the `Agent` description and enum receiving the bounded catalog additions;
+- an uncapped server catalog with more than `MAX_MODEL_CATALOG` entries producing
+  bounded, note-only guidance and a plain-string explicit selector;
 - requests without `Agent` receiving no additions;
-- streamed `Agent` input being buffered and emitted once after normalization;
+- a full streamed omission regression proving the single emitted
+  `input_json_delta` parses to the public parent id;
+- two sequential Agent calls retaining their individual block indexes;
+- an Agent call followed by text flushing before block close;
+- an upstream error during buffered Agent input discarding deltas and stopping
+  the block exactly once;
+- the in-stream non-streamed Agent branch receiving the same normalization;
 - streamed non-`Agent` input retaining incremental pass-through;
 - non-streaming tool calls receiving the same normalization;
-- Claude Code proxy routing metadata using the inbound parent and route catalog;
-- Claude Desktop/server routing metadata using the inbound parent and exposed
-  masked catalog;
+- Claude Code proxy routing metadata using the serving route's public id and route
+  catalog;
+- Claude Desktop/server routing metadata using exposed masked ids and the shared
+  catalog alias-key helper;
 - simultaneous Qwen and Grok routing objects remaining independent;
 - recursive partner-agent calls treating the child's inbound model as its parent.
 
 Verification includes focused adapter, proxy, and server tests; the full Vitest
 suite; TypeScript typecheck; production build; and a black-box fake-gateway probe
 against the bundled Claude runtime showing Qwen→Qwen and Qwen→explicit Grok child
-requests.
+requests. The probe matrix covers normal CLI aliases, transparent
+`gatewayAliasId`, masked Desktop ids, and their `[1m]` variants. CLI acceptance of
+normal and `[1m]` aliases is already verified; Desktop and transparent-mode
+acceptance remain release-gate checks before the feature is considered complete.
+
+## Accepted limitations and residual risks
+
+- When a custom agent's frontmatter model is omitted from the visible tool call,
+  Relay AI cannot distinguish it from ordinary inheritance. The verified behavior
+  is to inject the partner parent id, overriding that hidden frontmatter choice.
+  Users who want a catalog favorite must make it an explicit per-invocation
+  selection.
+- Native Anthropic passthrough parents do not receive the augmented schema, so
+  explicit partner-favorite selection from a native parent remains unchanged.
+- Client acceptance of injected ids is version-dependent. The black-box matrix
+  must be rerun for supported Claude Code/Desktop releases.
+- The adapter already assumes Anthropic content blocks are serialized even if an
+  SDK provider internally interleaves tool inputs. Per-id buffering does not
+  expand that pre-existing limitation.
