@@ -6,6 +6,8 @@ import {
   formatGatewayAnthropicModels,
   formatOpenAIModels,
   gatewayAliasId,
+  gatewayModelIdentity,
+  buildServerSubagentModelRouting,
   upstreamModelId,
   type ServerModelInfo,
 } from '../src/server/models.js';
@@ -112,6 +114,61 @@ describe('server model catalog', () => {
     const catalog = createGatewayModelCatalog(models);
     expect(catalog.get('deepseek-test')).toMatchObject({ id: 'deepseek-test' });
     expect(catalog.get('anthropic-go__deepseek-test')).toMatchObject({ id: 'deepseek-test' });
+  });
+
+  it('uses the catalog lookup ids as authoritative subagent compatibility ids', () => {
+    const identity = gatewayModelIdentity(models[1]!, models);
+    const catalog = createGatewayModelCatalog(models);
+
+    expect(identity.publicId).toBe('anthropic-go__deepseek-test');
+    expect(identity.compatibilityIds).toEqual([
+      'deepseek-test',
+      'anthropic-go__deepseek-test',
+    ]);
+    for (const id of identity.compatibilityIds) {
+      expect(catalog.get(id)).toBe(models[1]);
+    }
+  });
+
+  it('scopes colliding model ids to the correct provider', () => {
+    const colliding = [
+      { ...models[1]!, providerId: 'go' },
+      { ...models[1]!, providerId: 'other', sourceBackend: 'other' },
+    ];
+    const first = gatewayModelIdentity(colliding[0]!, colliding);
+    const second = gatewayModelIdentity(colliding[1]!, colliding);
+    const catalog = createGatewayModelCatalog(colliding);
+
+    expect(first.compatibilityIds).toContain('deepseek-test');
+    expect(first.compatibilityIds).toContain('go/deepseek-test');
+    expect(second.compatibilityIds).not.toContain('deepseek-test');
+    expect(second.compatibilityIds).toContain('other/deepseek-test');
+    expect(catalog.get('other/deepseek-test')).toBe(colliding[1]);
+  });
+
+  it('builds catalog-ordered routing and derives native families from real Anthropic ids', () => {
+    const maskedNative = {
+      ...models[0]!,
+      upstreamModelId: 'claude-sonnet-4-6',
+    };
+    const partnerNamedClaude = {
+      ...models[1]!,
+      id: 'claude-haiku-lookalike',
+      modelFormat: 'openai' as const,
+    };
+    const catalogModels = [partnerNamedClaude, maskedNative, models[1]!];
+    const result = buildServerSubagentModelRouting(
+      catalogModels,
+      partnerNamedClaude,
+      { maskGatewayIds: true },
+    );
+
+    expect(result.parentModelId).toBe(gatewayModelIdentity(
+      partnerNamedClaude,
+      catalogModels,
+      { maskGatewayIds: true },
+    ).publicId);
+    expect(result.models.map(option => option.family)).toEqual([undefined, 'sonnet', undefined]);
   });
 
   it('exposes one context-accurate entry per model in Claude App mode', () => {

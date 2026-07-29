@@ -4,6 +4,10 @@ import { stripOneMContextSuffix } from '../context-model-id.js';
 import { aliasModelId } from '../proxy.js';
 import { maskGatewayModelId } from './vendor-mask.js';
 import type { FreeStatus } from '../free-models.js';
+import {
+  claudeModelFamily,
+  type SubagentModelRouting,
+} from '../subagent-model-routing.js';
 
 export interface GatewayModelOptions {
   maskGatewayIds?: boolean;
@@ -168,6 +172,85 @@ export function exposedGatewayAliasId(model: ServerModelInfo, opts?: GatewayMode
   return singleOneM ? `${stripOneMContextSuffix(exposed)}[1m]` : exposed;
 }
 
+export interface GatewayModelIdentity {
+  publicId: string;
+  compatibilityIds: string[];
+}
+
+/**
+ * Public and compatibility ids for one gateway model. These are the same keys
+ * registered by createGatewayModelCatalog, including collision and 1M aliases.
+ */
+export function gatewayModelIdentity(
+  model: ServerModelInfo,
+  models: ServerModelInfo[],
+  opts?: GatewayModelOptions,
+): GatewayModelIdentity {
+  const collisions = openAiIdCollisions(models);
+  const ids: string[] = [];
+  const modelIndex = models.indexOf(model);
+  const firstBareIndex = models.findIndex(candidate => candidate.id === model.id);
+  if (modelIndex === firstBareIndex || modelIndex < 0) ids.push(model.id);
+
+  const scopedId = openAiExposedId(model, collisions);
+  if (scopedId !== model.id) ids.push(scopedId);
+
+  const publicId = exposedGatewayAliasId(model, opts);
+  if (publicId !== model.id) ids.push(publicId);
+
+  const singleOneM = usesSingleOneMEntry(model, opts);
+  if (singleOneM) {
+    const bareModel = { ...model, id: stripOneMContextSuffix(model.id) };
+    const rawBareAlias = gatewayAliasId(bareModel);
+    const exposedBareAlias = opts?.maskGatewayIds
+      ? maskGatewayModelId(rawBareAlias)
+      : rawBareAlias;
+    ids.push(
+      stripOneMContextSuffix(model.id),
+      rawBareAlias,
+      `${rawBareAlias}[1m]`,
+      exposedBareAlias,
+      `${exposedBareAlias}[1m]`,
+    );
+  }
+
+  if (opts?.maskGatewayIds) {
+    const rawAlias = gatewayAliasId(singleOneM
+      ? { ...model, id: stripOneMContextSuffix(model.id) }
+      : model);
+    if (rawAlias !== publicId) ids.push(rawAlias);
+  }
+
+  return {
+    publicId,
+    compatibilityIds: [...new Set(ids)],
+  };
+}
+
+export function buildServerSubagentModelRouting(
+  models: ServerModelInfo[],
+  parentModel: ServerModelInfo,
+  opts?: GatewayModelOptions,
+): SubagentModelRouting {
+  const identities = models.map(model => gatewayModelIdentity(model, models, opts));
+  const parentIndex = models.indexOf(parentModel);
+  const parentModelId = parentIndex >= 0
+    ? identities[parentIndex]!.publicId
+    : exposedGatewayAliasId(parentModel, opts);
+
+  return {
+    parentModelId,
+    models: models.map((model, index) => ({
+      id: identities[index]!.publicId,
+      compatibilityIds: identities[index]!.compatibilityIds,
+      displayName: gatewayDisplayName(model, opts),
+      family: model.modelFormat === 'anthropic'
+        ? claudeModelFamily(model.upstreamModelId ?? model.id)
+        : undefined,
+    })),
+  };
+}
+
 /** Readable picker label — discovery ids may be masked; names stay real. */
 export function gatewayDisplayName(model: ServerModelInfo, opts?: GatewayModelOptions): string {
   const name = opts?.maskGatewayIds
@@ -197,35 +280,10 @@ function usesSingleOneMEntry(model: ServerModelInfo, opts?: GatewayModelOptions)
 /** Catalog with alias → model lookup for gateway clients (Claude Desktop, Claude Code). */
 export function createGatewayModelCatalog(models: ServerModelInfo[], opts?: GatewayModelOptions): ModelCatalog {
   const byId = new Map<string, ServerModelInfo>();
-  const collisions = openAiIdCollisions(models);
   for (const model of models) {
-    if (!byId.has(model.id)) byId.set(model.id, model); // bare id: first-wins on collision
-    const scopedId = openAiExposedId(model, collisions);
-    if (scopedId !== model.id) byId.set(scopedId, model);
-    const alias = exposedGatewayAliasId(model, opts);
-    if (alias !== model.id) byId.set(alias, model);
-    const singleOneM = usesSingleOneMEntry(model, opts);
-    if (singleOneM) {
-      const bareModel = { ...model, id: stripOneMContextSuffix(model.id) };
-      const rawBareAlias = gatewayAliasId(bareModel);
-      const exposedBareAlias = opts?.maskGatewayIds
-        ? maskGatewayModelId(rawBareAlias)
-        : rawBareAlias;
-      for (const compatibleId of [
-        stripOneMContextSuffix(model.id),
-        rawBareAlias,
-        `${rawBareAlias}[1m]`,
-        exposedBareAlias,
-        `${exposedBareAlias}[1m]`,
-      ]) {
-        byId.set(compatibleId, model);
-      }
-    }
-    if (opts?.maskGatewayIds) {
-      const rawAlias = gatewayAliasId(singleOneM
-        ? { ...model, id: stripOneMContextSuffix(model.id) }
-        : model);
-      if (rawAlias !== alias) byId.set(rawAlias, model);
+    const identity = gatewayModelIdentity(model, models, opts);
+    for (const compatibleId of identity.compatibilityIds) {
+      byId.set(compatibleId, model);
     }
   }
 

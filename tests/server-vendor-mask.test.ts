@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { createGatewayModelCatalog, formatGatewayAnthropicModels } from '../src/server/models.js';
+import {
+  createGatewayModelCatalog,
+  formatGatewayAnthropicModels,
+  gatewayModelIdentity,
+} from '../src/server/models.js';
 import type { ServerModelInfo } from '../src/server/models.js';
 import { maskGatewayModelId, unmaskGatewayModelId } from '../src/server/vendor-mask.js';
 
@@ -64,5 +68,24 @@ describe('gateway id masking', () => {
     expect(listed.data[0]!.display_name).toBe('GPT-5.5 Fast (OpenAI)');
     expect(listed.data[0]!.id).not.toContain('openai');
     expect(listed.data[0]!.id).not.toContain('gpt');
+  });
+
+  it('shares masked, raw, bare, and 1M compatibility ids with catalog lookup', () => {
+    const oneMillion = model({
+      id: 'deepseek-1m[1m]',
+      contextWindow: 1_000_000,
+    });
+    const options = { maskGatewayIds: true, longContextDisplay: 'single-1m' as const };
+    const identity = gatewayModelIdentity(oneMillion, [oneMillion], options);
+    const catalog = createGatewayModelCatalog([oneMillion], options);
+
+    expect(identity.publicId).toMatch(/\[1m\]$/);
+    expect(identity.compatibilityIds).toContain('deepseek-1m');
+    expect(identity.compatibilityIds).toContain('anthropic-zen__deepseek-1m');
+    expect(identity.compatibilityIds).toContain('anthropic-zen__deepseek-1m[1m]');
+    expect(identity.compatibilityIds).toContain(identity.publicId);
+    for (const id of identity.compatibilityIds) {
+      expect(catalog.get(id)).toBe(oneMillion);
+    }
   });
 });

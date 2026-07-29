@@ -35,6 +35,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+export function claudeModelFamily(modelId: string): ClaudeModelFamily | undefined {
+  const normalized = modelId.toLowerCase();
+  if (!normalized.startsWith('claude-')) return undefined;
+  return CLAUDE_MODEL_FAMILIES.find(family => normalized.includes(family));
+}
+
 export function isClaudeAgentTool(tool: AnthropicToolDefinition): boolean {
   if (tool.name !== 'Agent' || !isRecord(tool.input_schema)) return false;
   const properties = tool.input_schema.properties;

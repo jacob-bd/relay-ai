@@ -2,7 +2,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import http from 'node:http';
 import { readFileSync } from 'node:fs';
-import { aliasModelId, startProxyCatalog, type ProxyRoute } from '../src/proxy.js';
+import {
+  aliasModelId,
+  buildProxySubagentModelRouting,
+  startProxyCatalog,
+  type ProxyRoute,
+} from '../src/proxy.js';
 import { getProxyDebugLogPath } from '../src/trace-log.js';
 
 /** POST JSON to a local proxy via node:http (avoids vi.stubGlobal('fetch') interception). */
@@ -45,6 +50,51 @@ describe('aliasModelId', () => {
 
   it('uses stable provider id slug in alias', () => {
     expect(aliasModelId('deepseek-v4', 'go')).toBe('anthropic-go__deepseek-v4');
+  });
+});
+
+describe('buildProxySubagentModelRouting', () => {
+  it('uses the transparent public gateway id instead of an internal relay alias', () => {
+    const partner: ProxyRoute = {
+      aliasId: 'relay:qwen:3',
+      gatewayAliasId: 'anthropic-relay__qwen-3',
+      realModelId: 'qwen-3',
+      displayName: 'Qwen 3',
+      upstreamUrl: '',
+      apiKey: 'key',
+      modelFormat: 'openai',
+      providerId: 'relay',
+    };
+    const native: ProxyRoute = {
+      aliasId: 'claude-sonnet-4-6',
+      realModelId: 'claude-sonnet-4-6',
+      displayName: 'Claude Sonnet 4.6',
+      upstreamUrl: '',
+      apiKey: 'key',
+      modelFormat: 'anthropic',
+      providerId: 'claude',
+    };
+
+    const result = buildProxySubagentModelRouting([partner, native], partner);
+
+    expect(result.parentModelId).toBe('anthropic-relay__qwen-3');
+    expect(result.parentModelId).not.toContain('relay:');
+    expect(result.models[0]?.compatibilityIds).toContain('relay:qwen:3');
+    expect(result.models[0]?.compatibilityIds).toContain('anthropic-relay__qwen-3[1m]');
+    expect(result.models.map(option => option.family)).toEqual([undefined, 'sonnet']);
+  });
+
+  it('falls back to aliasId when no transparent gateway id exists', () => {
+    const route: ProxyRoute = {
+      aliasId: 'anthropic-go__grok-4',
+      realModelId: 'grok-4',
+      displayName: 'Grok 4',
+      upstreamUrl: '',
+      apiKey: 'key',
+      modelFormat: 'openai',
+      providerId: 'go',
+    };
+    expect(buildProxySubagentModelRouting([route], route).parentModelId).toBe(route.aliasId);
   });
 });
 

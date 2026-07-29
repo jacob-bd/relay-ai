@@ -26,6 +26,10 @@ import {
   silenceSdkWarnings,
 } from './sdk-adapter.js';
 import { anthropicErrorType, upstreamHttpStatus } from './codex/upstream-error.js';
+import {
+  claudeModelFamily,
+  type SubagentModelRouting,
+} from './subagent-model-routing.js';
 
 type ProxyLog = (message: string | (() => string)) => void;
 
@@ -116,6 +120,27 @@ export function aliasModelId(realId: string, providerId: string): string {
   if (realId.startsWith('claude-')) return realId;
   const sanitized = providerId.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   return `anthropic-${sanitized}__${realId}`;
+}
+
+export function buildProxySubagentModelRouting(
+  routes: ProxyRoute[],
+  parentRoute: ProxyRoute,
+): SubagentModelRouting {
+  const publicId = (route: ProxyRoute) => route.gatewayAliasId ?? route.aliasId;
+  return {
+    parentModelId: publicId(parentRoute),
+    models: routes.map(route => ({
+      id: publicId(route),
+      compatibilityIds: [...new Set([
+        ...routeLookupIds(route.aliasId),
+        ...(route.gatewayAliasId ? routeLookupIds(route.gatewayAliasId) : []),
+      ])],
+      displayName: route.displayName,
+      family: route.modelFormat === 'anthropic'
+        ? claudeModelFamily(route.realModelId)
+        : undefined,
+    })),
+  };
 }
 
 /** Resolve catalog alias when Claude Code or legacy registry ids differ by prefix/suffix. */
