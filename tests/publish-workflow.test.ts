@@ -1,4 +1,12 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -31,6 +39,18 @@ function runReleaseStep(releaseExists: boolean) {
   tempDirs.push(dir);
   const callLog = join(dir, 'gh-calls.log');
   const fakeGh = join(dir, 'gh');
+  mkdirSync(join(dir, 'scripts'));
+  copyFileSync('scripts/release-metadata.mjs', join(dir, 'scripts', 'release-metadata.mjs'));
+  copyFileSync('CHANGELOG.md', join(dir, 'CHANGELOG.md'));
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name: '@jacobbd/relay-ai',
+    version: '0.4.9',
+  }));
+  writeFileSync(join(dir, 'package-lock.json'), JSON.stringify({
+    name: '@jacobbd/relay-ai',
+    version: '0.4.9',
+    packages: { '': { name: '@jacobbd/relay-ai', version: '0.4.9' } },
+  }));
   writeFileSync(fakeGh, `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$GH_CALL_LOG"
 if [[ "$1 $2" == "release view" ]]; then
@@ -47,7 +67,7 @@ fi
   chmodSync(fakeGh, 0o755);
 
   const result = spawnSync('bash', ['-e', '-c', releaseStepScript()], {
-    cwd: process.cwd(),
+    cwd: dir,
     encoding: 'utf8',
     env: {
       ...process.env,
@@ -55,6 +75,7 @@ fi
       GH_CALL_LOG: callLog,
       GH_RELEASE_EXISTS: releaseExists ? '1' : '0',
       GITHUB_REF_NAME: 'v0.4.9',
+      RELEASE_TAG: 'v0.4.9',
     },
   });
 
@@ -84,5 +105,7 @@ describe('npm publish workflow GitHub Release step', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.calls[0]).toBe('release view v0.4.9');
     expect(result.calls[1]).toContain('release create v0.4.9');
+    expect(result.calls.join('\n')).toContain('Clearer device-code sign-in');
+    expect(result.calls.join('\n')).not.toContain('Windows: `Assertion failed');
   });
 });

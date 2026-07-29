@@ -2,7 +2,6 @@ import pc from 'picocolors';
 
 const SHUTDOWN_DRAIN_MS = 500;
 import * as p from '@clack/prompts';
-import { appendFileSync } from 'node:fs';
 import { loadPreferences, savePreferences } from './config.js';
 import { fetchProviderCatalog, providersForPicker } from './provider-catalog.js';
 import { providersForTarget } from './target-compatibility.js';
@@ -26,6 +25,7 @@ import {
   waitForAntigravityIdeQuit,
 } from './antigravity/launch-ide.js';
 import { pickLocalModel } from './prompts.js';
+import { getAntigravityDebugLogPath, makeTraceLogger } from './trace-log.js';
 import { providerSelectOption, formatModelLabel, relayIntro, relayOutro } from './ui.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -298,19 +298,41 @@ async function resolveAndBuildRoutes(
   return { routes: result.routes, apiKey: result.apiKey };
 }
 
-function waitForShutdown(): Promise<'sigint' | 'sigterm' | 'sighup'> {
+export function waitForShutdown(
+  input: NodeJS.ReadStream = process.stdin,
+  platform: NodeJS.Platform = process.platform,
+): Promise<'sigint' | 'sigterm' | 'sighup'> {
   return new Promise(resolve => {
+    const captureWindowsCtrlC = platform === 'win32' && input.isTTY;
+    const wasRaw = input.isRaw;
+    const wasPaused = input.isPaused();
     const cleanup = (): void => {
       process.removeListener('SIGINT', onSigint);
       process.removeListener('SIGTERM', onSigterm);
       process.removeListener('SIGHUP', onSighup);
+      if (captureWindowsCtrlC) {
+        input.removeListener('data', onInput);
+        input.setRawMode(wasRaw);
+        if (wasPaused) input.pause();
+      }
     };
     const onSigint = (): void => { cleanup(); resolve('sigint'); };
     const onSigterm = (): void => { cleanup(); resolve('sigterm'); };
     const onSighup = (): void => { cleanup(); resolve('sighup'); };
+    const onInput = (chunk: Buffer | string): void => {
+      const receivedCtrlC = typeof chunk === 'string'
+        ? chunk.includes('\u0003')
+        : chunk.includes(0x03);
+      if (receivedCtrlC) onSigint();
+    };
     process.once('SIGINT', onSigint);
     process.once('SIGTERM', onSigterm);
     process.once('SIGHUP', onSighup);
+    if (captureWindowsCtrlC) {
+      input.on('data', onInput);
+      input.setRawMode(true);
+      input.resume();
+    }
   });
 }
 
@@ -373,8 +395,8 @@ async function runAntigravityCommand(
     lastAntigravityModel: model.id,
   });
 
-  const traceLogPath = `/tmp/relay-ai-${tracePrefix}-trace-${Date.now()}.log`;
-  const logFn = trace ? (msg: string) => { try { appendFileSync(traceLogPath, `${msg}\n`); } catch {} } : undefined;
+  const traceLogPath = trace ? getAntigravityDebugLogPath(tracePrefix) : undefined;
+  const logFn = traceLogPath ? makeTraceLogger(traceLogPath) : undefined;
 
   let gatewayHandle: CloudCodeGatewayHandle;
   try {
@@ -386,7 +408,7 @@ async function runAntigravityCommand(
 
   p.log.info(`Cloud Code gateway on ${pc.cyan(`127.0.0.1:${gatewayHandle.port}`)}`);
   p.log.success(`Active model: ${formatModelLabel(model)} ${pc.dim('via')} ${provider.name}`);
-  if (trace) p.log.info(`Gateway trace → ${pc.dim(traceLogPath)}`);
+  if (traceLogPath) p.log.info(`Gateway trace → ${pc.dim(traceLogPath)}`);
 
   relayOutro('Launching', `${formatModelLabel(model)} (${provider.name})`);
 

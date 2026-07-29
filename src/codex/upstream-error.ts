@@ -1,12 +1,68 @@
 // Short user-facing messages from SDK/upstream failures — no stack traces in Codex TUI.
 
 interface ApiCallLike {
+  name?: string;
   message?: string;
   statusCode?: number;
   responseBody?: string;
   data?: { error?: { message?: string; type?: string } };
   lastError?: { message?: string; statusCode?: number };
   errors?: Array<{ message?: string; statusCode?: number }>;
+  cause?: unknown;
+}
+
+const TRACE_FIELD_LIMIT = 4_000;
+
+function clipTraceField(value: string): string {
+  return value.length <= TRACE_FIELD_LIMIT ? value : `${value.slice(0, TRACE_FIELD_LIMIT)}…`;
+}
+
+function safeUpstreamErrorFields(err: unknown, includeCause: boolean): Record<string, unknown> {
+  if (!err || typeof err !== 'object') {
+    return { message: clipTraceField(String(err)) };
+  }
+
+  const rec = err as ApiCallLike;
+  const result: Record<string, unknown> = {};
+  if (rec.name) result.name = rec.name;
+  if (rec.message) result.message = clipTraceField(rec.message);
+  if (rec.statusCode !== undefined) result.statusCode = rec.statusCode;
+  if (rec.responseBody) result.responseBody = clipTraceField(rec.responseBody);
+  if (rec.data?.error) {
+    result.data = {
+      error: {
+        ...(rec.data.error.type ? { type: rec.data.error.type } : {}),
+        ...(rec.data.error.message
+          ? { message: clipTraceField(rec.data.error.message) }
+          : {}),
+      },
+    };
+  }
+  if (rec.lastError) {
+    result.lastError = {
+      ...(rec.lastError.message
+        ? { message: clipTraceField(rec.lastError.message) }
+        : {}),
+      ...(rec.lastError.statusCode !== undefined
+        ? { statusCode: rec.lastError.statusCode }
+        : {}),
+    };
+  }
+  if (rec.errors?.length) {
+    result.errors = rec.errors.map(item => ({
+      ...(item.message ? { message: clipTraceField(item.message) } : {}),
+      ...(item.statusCode !== undefined ? { statusCode: item.statusCode } : {}),
+    }));
+  }
+  if (includeCause && rec.cause !== undefined) {
+    result.cause = safeUpstreamErrorFields(rec.cause, false);
+  }
+  return result;
+}
+
+/** Safe diagnostic fields for trace logs; deliberately excludes request data and headers. */
+export function formatUpstreamErrorTrace(err: unknown): string {
+  return JSON.stringify(safeUpstreamErrorFields(err, true));
 }
 
 export function formatUpstreamError(err: unknown): string {

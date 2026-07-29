@@ -337,11 +337,17 @@ export function launchAntigravityIde(
   extraArgs: string[],
 ): Promise<number> {
   return new Promise((resolve) => {
+    let settled = false;
+    const settle = (code: number): void => {
+      if (settled) return;
+      settled = true;
+      resolve(code);
+    };
     const binaryPath = findAntigravityIdeBinary();
     if (!binaryPath) {
       console.error('Antigravity IDE not found.');
       console.error('Please make sure Antigravity IDE is installed.');
-      resolve(127);
+      settle(127);
       return;
     }
 
@@ -367,13 +373,17 @@ export function launchAntigravityIde(
       env,
     });
 
+    child.on('spawn', () => {
+      settle(0);
+    });
+
     child.on('exit', (code) => {
-      resolve(code ?? 1);
+      settle(code ?? 1);
     });
 
     child.on('error', (err) => {
       console.error(`Failed to launch Antigravity IDE: ${err.message}`);
-      resolve(1);
+      settle(1);
     });
   });
 }

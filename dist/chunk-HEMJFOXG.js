@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.7.4",
+  version: "0.7.5",
   publishConfig: {
     access: "public"
   },
@@ -48,11 +48,13 @@ var package_default = {
   scripts: {
     build: "tsup && tsup --config tsup.core.config.ts && node scripts/copy-ui-assets.mjs",
     dev: "tsup --watch",
-    test: "vitest run",
+    test: 'vitest run --exclude "tests/debug-*.test.ts"',
+    "test:live": "vitest run tests/debug-xai.test.ts tests/debug-openai-oauth.test.ts",
     "test:watch": "vitest",
     typecheck: "tsc --noEmit",
+    "release:check": "node scripts/release-metadata.mjs",
     "refresh:models-dev": "node scripts/refresh-models-dev-cache.mjs",
-    prepublishOnly: `node -e "if (require('./package.json').version !== require('./package-lock.json').version) { console.error('Error: package.json and package-lock.json versions are out of sync! Run npm install to sync.'); process.exit(1); }" && npm run build`
+    prepublishOnly: "npm run release:check && npm run build"
   },
   dependencies: {
     "@ai-sdk/alibaba": "^1.0.26",
@@ -4174,6 +4176,10 @@ function getUiDebugLogPath() {
 function getServerDebugLogPath() {
   return join8(ensureLogsDir(), SERVER_DEBUG_LOG);
 }
+function getAntigravityDebugLogPath(tracePrefix) {
+  const surface = tracePrefix === "antigravity" ? "app" : tracePrefix;
+  return join8(ensureLogsDir(), `antigravity-${surface}-debug.log`);
+}
 function makeTraceLogger(logPath) {
   resetTraceLog(logPath);
   return (message) => writeSecureLogLine(logPath, `${(/* @__PURE__ */ new Date()).toISOString()} ${message}`);
@@ -4718,6 +4724,46 @@ function serializeToolResultContent(content) {
 }
 
 // src/antigravity/request-adapter.ts
+function tracePartChars(part) {
+  if (typeof part.text === "string") return part.text.length;
+  if (part.type !== "tool-result") return void 0;
+  const output = part.output;
+  if (typeof output === "string") return output.length;
+  if (output && typeof output === "object" && typeof output.value === "string") {
+    return output.value.length;
+  }
+  try {
+    return output === void 0 ? void 0 : JSON.stringify(output).length;
+  } catch {
+    return void 0;
+  }
+}
+function summarizeSdkRequestForTrace(request) {
+  const messages = request.messages.map((message) => {
+    const content = message.content;
+    if (typeof content === "string") {
+      return { role: message.role, parts: [{ type: "text", chars: content.length }] };
+    }
+    const parts = Array.isArray(content) ? content.map((rawPart) => {
+      const part = rawPart;
+      const summary = {
+        type: typeof part.type === "string" ? part.type : typeof rawPart
+      };
+      const chars = tracePartChars(part);
+      if (chars !== void 0) summary.chars = chars;
+      if (typeof part.toolName === "string") summary.toolName = part.toolName;
+      if (typeof part.toolCallId === "string") summary.toolCallId = part.toolCallId;
+      return summary;
+    }) : [{ type: typeof content }];
+    return { role: message.role, parts };
+  });
+  return {
+    systemChars: request.system?.length ?? 0,
+    messages,
+    toolNames: Object.keys(request.tools ?? {}),
+    ...request.toolChoice ? { toolChoice: request.toolChoice } : {}
+  };
+}
 var JSON_SCHEMA_TYPES = /* @__PURE__ */ new Map([
   ["ARRAY", "array"],
   ["BOOLEAN", "boolean"],
@@ -5430,6 +5476,48 @@ function resolveUpstreamTools(tools, messages) {
 }
 
 // src/codex/upstream-error.ts
+var TRACE_FIELD_LIMIT = 4e3;
+function clipTraceField(value) {
+  return value.length <= TRACE_FIELD_LIMIT ? value : `${value.slice(0, TRACE_FIELD_LIMIT)}\u2026`;
+}
+function safeUpstreamErrorFields(err, includeCause) {
+  if (!err || typeof err !== "object") {
+    return { message: clipTraceField(String(err)) };
+  }
+  const rec = err;
+  const result = {};
+  if (rec.name) result.name = rec.name;
+  if (rec.message) result.message = clipTraceField(rec.message);
+  if (rec.statusCode !== void 0) result.statusCode = rec.statusCode;
+  if (rec.responseBody) result.responseBody = clipTraceField(rec.responseBody);
+  if (rec.data?.error) {
+    result.data = {
+      error: {
+        ...rec.data.error.type ? { type: rec.data.error.type } : {},
+        ...rec.data.error.message ? { message: clipTraceField(rec.data.error.message) } : {}
+      }
+    };
+  }
+  if (rec.lastError) {
+    result.lastError = {
+      ...rec.lastError.message ? { message: clipTraceField(rec.lastError.message) } : {},
+      ...rec.lastError.statusCode !== void 0 ? { statusCode: rec.lastError.statusCode } : {}
+    };
+  }
+  if (rec.errors?.length) {
+    result.errors = rec.errors.map((item) => ({
+      ...item.message ? { message: clipTraceField(item.message) } : {},
+      ...item.statusCode !== void 0 ? { statusCode: item.statusCode } : {}
+    }));
+  }
+  if (includeCause && rec.cause !== void 0) {
+    result.cause = safeUpstreamErrorFields(rec.cause, false);
+  }
+  return result;
+}
+function formatUpstreamErrorTrace(err) {
+  return JSON.stringify(safeUpstreamErrorFields(err, true));
+}
 function formatUpstreamError(err) {
   if (!err || typeof err !== "object") return "Upstream model request failed.";
   const rec = err;
@@ -11973,6 +12061,7 @@ export {
   getGeminiProxyDebugLogPath,
   getUiDebugLogPath,
   getServerDebugLogPath,
+  getAntigravityDebugLogPath,
   makeTraceLogger,
   writeSecureLogLine,
   printTraceLog,
@@ -12004,7 +12093,9 @@ export {
   splitToolUseId,
   encodeToolUseId,
   serializeToolResultContent,
+  summarizeSdkRequestForTrace,
   translateRequest,
+  formatUpstreamErrorTrace,
   formatUpstreamError,
   upstreamHttpStatus,
   aliasModelId,
@@ -12071,4 +12162,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-EUY2MVOS.js.map
+//# sourceMappingURL=chunk-HEMJFOXG.js.map

@@ -669,7 +669,7 @@ ${pc.bold('Usage:')}
 ${pc.bold('Relay options:')}
   --provider <id>    Use a specific provider (skip picker)
   --model <id>       Use a specific model (skip picker)
-  --trace            Write debug log to /tmp/relay-ai-debug.log
+  --trace            Write debug log to ~/.relay-ai/logs/antigravity-agy-debug.log
   -h, --help         Show this help
   -v, --version      Show version
 
@@ -696,7 +696,7 @@ ${pc.bold('Usage:')}
 ${pc.bold('Relay options:')}
   --provider <id>    Use a specific provider (skip picker)
   --model <id>       Use a specific model (skip picker)
-  --trace            Write debug log to /tmp/relay-ai-debug.log
+  --trace            Write debug log to ~/.relay-ai/logs/antigravity-ide-debug.log
   -h, --help         Show this help
   -v, --version      Show version
 
@@ -725,7 +725,7 @@ ${pc.bold('Usage:')}
 ${pc.bold('Relay options:')}
   --provider <id>    Use a specific provider (skip picker)
   --model <id>       Use a specific model (skip picker)
-  --trace            Write debug log to /tmp/relay-ai-debug.log
+  --trace            Write debug log to ~/.relay-ai/logs/antigravity-app-debug.log
   -h, --help         Show this help
   -v, --version      Show version
 

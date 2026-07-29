@@ -1,4 +1,5 @@
-import { execFileSync, execSync, spawn } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
+import spawn from 'cross-spawn';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -82,7 +83,6 @@ export function launchAntigravityCli(
     const child = spawn(binaryPath, extraArgs, {
       stdio: 'inherit',
       env,
-      shell: isWindows,
     });
 
     const forward = (signal: NodeJS.Signals): void => {

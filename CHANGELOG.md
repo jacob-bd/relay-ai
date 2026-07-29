@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.7.5] - 2026-07-28
+
+### Fixed
+
+- **Codex App sessions can resume after switching from a Relay model to a native OpenAI model.** Relay-generated Responses API function-call items now always use the required `fc_` item-ID prefix while preserving the provider's original tool `call_id`. Previously, a resumed session could send a saved `call_...` value as an item ID and fail with `invalid_id_prefix`.
+- **Windows Antigravity IDE launches now reach and respond to Relay's Ctrl+C shutdown prompt.** The detached IDE launcher resolves as soon as the GUI process spawns instead of blocking until it exits, allowing Relay to install its shutdown listener. On Windows, Relay also captures Ctrl+C directly from raw terminal input and restores the terminal state before asking whether to close the isolated Relay IDE. Verified against a live Windows installation.
+- **Windows Antigravity CLI preserves multi-word arguments.** The `agy.exe` launcher now uses `cross-spawn` without `shell: true`, preventing `cmd.exe` from re-tokenizing model labels and prompts containing spaces.
+- **Big Pickle and GLM tool loops retain required reasoning context in Antigravity.** These OpenAI-compatible reasoning models now use the same bounded reasoning replay already used for DeepSeek when Antigravity omits thought parts from the next tool-result request.
+- **Antigravity trace logging works consistently on Windows and every launch surface.** `agy`, Antigravity, and Antigravity IDE traces now use stable files under `~/.relay-ai/logs/`; traces include the resolved route, privacy-safe request structure, and sanitized upstream error details without recording prompts, tool arguments, request headers, or credentials.
+
+### Maintenance
+
+- Release CI now rejects a tag, package version, lockfile, or changelog mismatch before installing dependencies or publishing. GitHub Release notes are extracted from the section matching the pushed tag rather than whichever changelog section appears first.
+- Live provider probes are excluded from the deterministic default test suite and remain available through `npm run test:live`, preventing local credentials, revoked tokens, or provider outages from breaking maintenance releases.
+
 ## [0.7.4] - 2026-07-28
 
 ### Fixed

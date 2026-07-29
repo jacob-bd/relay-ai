@@ -628,7 +628,7 @@ describe('writeResponsesStream', () => {
     expect(completed.output.some((item: { type: string }) => item.type === 'message')).toBe(false);
   });
 
-  it('keeps streaming Responses call_id native-safe when provider signatures exist', async () => {
+  it('keeps streaming Responses item id and call_id native-safe when provider signatures exist', async () => {
     const { writeResponsesStream } = await import('../src/codex-responses-adapter.js');
     const chunks: string[] = [];
     const write = (c: string) => chunks.push(c);
@@ -649,6 +649,8 @@ describe('writeResponsesStream', () => {
       .map(event => event.data.item)
       .find(item => item?.type === 'function_call');
 
+    expect(toolCall.id).toMatch(/^fc_/);
+    expect(toolCall.id).not.toBe(toolCall.call_id);
     expect(toolCall.call_id).toBe('call_1');
     expect(toolCall.call_id.length).toBeLessThanOrEqual(64);
   });
@@ -779,7 +781,7 @@ describe('streamResponsesResponse idle timeout', () => {
 });
 
 describe('generateResponsesResponse', () => {
-  it('keeps Responses call_id native-safe while preserving Gemini signatures in memory', async () => {
+  it('keeps Responses item id and call_id native-safe while preserving Gemini signatures in memory', async () => {
     vi.resetModules();
     vi.doMock('ai', () => ({
       generateText: vi.fn(async () => ({
@@ -801,6 +803,8 @@ describe('generateResponsesResponse', () => {
     const { generateResponsesResponse } = await import('../src/codex-responses-adapter.js');
     const body = await generateResponsesResponse({} as never, { messages: [] }, 'gemini-2.5-pro');
     const toolCall = (body.output as any[]).find(item => item.type === 'function_call');
+    expect(toolCall.id).toMatch(/^fc_/);
+    expect(toolCall.id).not.toBe(toolCall.call_id);
     expect(toolCall.call_id).toBe('call_1');
     expect(toolCall.call_id.length).toBeLessThanOrEqual(64);
 

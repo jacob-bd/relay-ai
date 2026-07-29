@@ -18,6 +18,11 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Verify release metadata
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/release-metadata.mjs
+
       - run: npm ci
 
       # Gate the release on a green test + type-check + build before anything is published.
@@ -33,8 +38,9 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          NOTES=$(node -e "const fs=require('fs');const cl=fs.readFileSync('CHANGELOG.md','utf8');const m=cl.match(/## \[[\d.]+\][^\n]*\n([\s\S]*?)(?=\n## \[|$)/);console.log(m?m[1].trim():'')")
+          NOTES=$(node scripts/release-metadata.mjs --notes)
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release edit "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes "$NOTES"
           else

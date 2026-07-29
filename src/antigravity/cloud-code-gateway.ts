@@ -8,9 +8,13 @@ import {
   thinkingProviderOptions,
 } from '../provider-factory.js';
 import { silenceSdkWarnings } from '../sdk-adapter.js';
-import { formatUpstreamError } from '../codex/upstream-error.js';
+import { formatUpstreamError, formatUpstreamErrorTrace } from '../codex/upstream-error.js';
 import { readBody } from '../http-utils.js';
-import { translateRequest, type TranslateRequestOptions } from './request-adapter.js';
+import {
+  summarizeSdkRequestForTrace,
+  translateRequest,
+  type TranslateRequestOptions,
+} from './request-adapter.js';
 import { formatCloudCodeChunk, mapFinishReason, normalizeFunctionCallArgs } from './response-adapter.js';
 import { applyClaudeCodeOAuthIdentity } from '../oauth/claude-code-identity.js';
 import { ANTIGRAVITY_BASE_URLS } from '../oauth/antigravity-oauth.js';
@@ -196,6 +200,12 @@ export async function startCloudCodeGateway(
 
         const route = resolveRouteForModel(model);
         if (route) {
+          if (trace) {
+            log(
+              `[gateway]   resolved route: ${route.catalogId}`
+              + ` (${route.providerId}/${route.upstreamModelId} via ${model})`,
+            );
+          }
           if (trackActiveRoute && selectedSlotIds.has(model ?? '') && isUserTurnRequest(parsed)) {
             activeRoute = route;
             if (trace) log(`[gateway]   active route: ${route.catalogId} via ${model}`);
@@ -224,8 +234,10 @@ export async function startCloudCodeGateway(
             handleStreamingRequest(res, route, baseProviderOptions, parsed as any, log, {
               requestOptions,
               onReasoningWithToolCall: rememberReasoning,
+              trace,
             }).catch(err => {
-              log(`[gateway] stream error: ${err instanceof Error ? err.stack || err.message : String(err)}`);
+              log(`[gateway] stream error: ${formatUpstreamError(err)}`);
+              if (trace) log(`[gateway] stream error detail: ${formatUpstreamErrorTrace(err)}`);
               if (!res.headersSent) {
                 respondJson(res, 500, { error: { code: 500, message: formatUpstreamError(err) } });
               } else if (!res.writableEnded) {
@@ -236,8 +248,10 @@ export async function startCloudCodeGateway(
             handleUnaryRequest(res, route, baseProviderOptions, parsed as any, log, {
               requestOptions,
               onReasoningWithToolCall: rememberReasoning,
+              trace,
             }).catch(err => {
-              log(`[gateway] unary error: ${err instanceof Error ? err.stack || err.message : String(err)}`);
+              log(`[gateway] unary error: ${formatUpstreamError(err)}`);
+              if (trace) log(`[gateway] unary error detail: ${formatUpstreamErrorTrace(err)}`);
               if (!res.headersSent) {
                 respondJson(res, 500, { error: { code: 500, message: formatUpstreamError(err) } });
               }
@@ -412,7 +426,7 @@ function shouldEchoReasoningForRoute(route: AntigravityRoute): boolean {
     route.displayName,
     route.baseURL,
   ].join(' ');
-  return /deepseek/i.test(routeIdentity);
+  return /deepseek|big[\s_-]?pickle|\bglm[\s_-]/i.test(routeIdentity);
 }
 
 function reasoningEchoOptionsForRoute(
@@ -509,6 +523,7 @@ async function handleCloudCodeForwardRequest(
 interface RequestHandlerOptions {
   requestOptions?: TranslateRequestOptions;
   onReasoningWithToolCall?: (reasoning: string) => void;
+  trace?: boolean;
 }
 
 function emitThinkingDelta(
@@ -647,6 +662,9 @@ async function handleStreamingRequest(
     ...options.requestOptions,
     maxTools: maxToolsForNpm(route.npm),
   }));
+  if (options.trace) {
+    log(`[gateway]   sdk request: ${JSON.stringify(summarizeSdkRequestForTrace(sdkParams))}`);
+  }
   const effectiveProviderOptions = deepMergeProviderOptions(
     providerOptions,
     sdkParams.providerOptions,
@@ -806,6 +824,9 @@ async function handleStreamingRequest(
     } else if (p.type === 'error') {
       const message = formatUpstreamError(p.error);
       log(`[gateway] stream provider error: ${message}`);
+      if (options.trace) {
+        log(`[gateway] stream provider error detail: ${formatUpstreamErrorTrace(p.error)}`);
+      }
       // Buffered JSON-shaped text is real output — don't lose it to the error.
       flushBufferedText();
       emitStreamError(res, route, responseId, message, startSse);
@@ -831,13 +852,16 @@ async function handleUnaryRequest(
   route: AntigravityRoute,
   providerOptions: any,
   parsed: any,
-  _log: (msg: string) => void,
+  log: (msg: string) => void,
   options: RequestHandlerOptions = {},
 ): Promise<void> {
   const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
     ...options.requestOptions,
     maxTools: maxToolsForNpm(route.npm),
   }));
+  if (options.trace) {
+    log(`[gateway]   sdk request: ${JSON.stringify(summarizeSdkRequestForTrace(sdkParams))}`);
+  }
   const effectiveProviderOptions = deepMergeProviderOptions(
     providerOptions,
     sdkParams.providerOptions,

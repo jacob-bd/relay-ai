@@ -1,5 +1,36 @@
 import { describe, it, expect } from 'vitest';
-import { formatUpstreamError, upstreamHttpStatus, anthropicErrorType } from '../src/codex/upstream-error.js';
+import {
+  formatUpstreamError,
+  formatUpstreamErrorTrace,
+  upstreamHttpStatus,
+  anthropicErrorType,
+} from '../src/codex/upstream-error.js';
+
+describe('formatUpstreamErrorTrace', () => {
+  it('keeps provider diagnostics while excluding request bodies, headers, and credentials', () => {
+    const detail = formatUpstreamErrorTrace({
+      name: 'APICallError',
+      message: 'Upstream request failed',
+      statusCode: 400,
+      responseBody: '{"error":{"message":"invalid tool result id"}}',
+      data: { error: { type: 'invalid_request_error', message: 'invalid tool result id' } },
+      requestBodyValues: { messages: [{ content: 'private prompt' }] },
+      requestHeaders: { authorization: 'Bearer secret-token' },
+      apiKey: 'sk-private',
+    });
+
+    expect(JSON.parse(detail)).toEqual({
+      name: 'APICallError',
+      message: 'Upstream request failed',
+      statusCode: 400,
+      responseBody: '{"error":{"message":"invalid tool result id"}}',
+      data: { error: { type: 'invalid_request_error', message: 'invalid tool result id' } },
+    });
+    expect(detail).not.toContain('private prompt');
+    expect(detail).not.toContain('secret-token');
+    expect(detail).not.toContain('sk-private');
+  });
+});
 
 describe('formatUpstreamError', () => {
   it('uses lastError message and status without stack', () => {

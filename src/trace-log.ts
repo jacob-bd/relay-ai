@@ -98,6 +98,11 @@ export function getServerDebugLogPath(): string {
   return join(ensureLogsDir(), SERVER_DEBUG_LOG);
 }
 
+export function getAntigravityDebugLogPath(tracePrefix: string): string {
+  const surface = tracePrefix === 'antigravity' ? 'app' : tracePrefix;
+  return join(ensureLogsDir(), `antigravity-${surface}-debug.log`);
+}
+
 export function prepareProviderTraceLog(): string {
   const path = getProviderDebugLogPath();
   resetTraceLog(path);

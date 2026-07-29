@@ -749,6 +749,55 @@ describe('cloud-code-gateway', () => {
     expect(text).toContain('"path":"a.ts"');
   });
 
+  it('traces the resolved route and content-free SDK tool-loop structure', async () => {
+    const logs: string[] = [];
+    const handle = await startCloudCodeGateway(testRoutes, {
+      templateKey: 'gemini-3.5-flash-low',
+      trace: true,
+      logFn: line => logs.push(line),
+    });
+    handles.push(handle);
+
+    await postJson(handle, '/v1internal:streamGenerateContent?alt=sse', {
+      model: 'gemini-3.5-flash-low',
+      request: {
+        contents: [
+          { role: 'user', parts: [{ text: 'private prompt' }] },
+          {
+            role: 'model',
+            parts: [{
+              functionCall: {
+                name: 'list_dir',
+                args: { DirectoryPath: 'C:\\private' },
+              },
+            }],
+          },
+          {
+            role: 'user',
+            parts: [{
+              functionResponse: {
+                name: 'list_dir',
+                response: { content: 'private directory listing' },
+              },
+            }],
+          },
+        ],
+      },
+    });
+
+    expect(logs).toContain(
+      '[gateway]   resolved route: relay-ai__zen__deepseek-v4-flash-free'
+      + ' (zen/deepseek-v4-flash-free via gemini-3.5-flash-low)',
+    );
+    const requestLog = logs.find(line => line.startsWith('[gateway]   sdk request:'));
+    expect(requestLog).toContain('"role":"assistant"');
+    expect(requestLog).toContain('"type":"tool-call"');
+    expect(requestLog).toContain('"type":"tool-result"');
+    expect(requestLog).toContain('"toolName":"list_dir"');
+    expect(requestLog).not.toContain('private');
+    expect(requestLog).not.toContain('DirectoryPath');
+  });
+
   it('returns provider stream errors instead of an empty successful response', async () => {
     vi.mocked(streamText).mockImplementationOnce(() => ({
       fullStream: (async function* () {
@@ -849,6 +898,81 @@ describe('cloud-code-gateway', () => {
     expect(assistantWithToolCall.content[0]).toEqual({
       type: 'reasoning',
       text: 'hidden DeepSeek plan',
+    });
+  });
+
+  it('echoes Big Pickle reasoning back when Antigravity replays a tool-call turn without thought parts', async () => {
+    const bigPickleRoute: AntigravityRoute = {
+      catalogId: 'relay-ai__zen__big-pickle',
+      providerId: 'zen',
+      providerName: 'OpenCode Zen',
+      modelId: 'big-pickle',
+      upstreamModelId: 'big-pickle',
+      displayName: 'Big Pickle (Relay)',
+      npm: '@ai-sdk/openai-compatible',
+      apiKey: 'test-key',
+      baseURL: 'https://opencode.ai/zen/v1',
+      contextWindow: 200_000,
+    };
+    let secondRequestArgs: any;
+    vi.mocked(streamText)
+      .mockImplementationOnce(() => ({
+        fullStream: (async function* () {
+          yield { type: 'reasoning-start', id: 'reasoning-1' };
+          yield { type: 'reasoning-delta', id: 'reasoning-1', text: 'hidden Big Pickle plan' };
+          yield { type: 'reasoning-end', id: 'reasoning-1' };
+          yield { type: 'tool-call', toolCallId: 'call-1', toolName: 'grep_search', input: { Query: 'NotebookLM' } };
+          yield { type: 'finish', finishReason: 'tool-calls', totalUsage: {} };
+        })(),
+      }) as any)
+      .mockImplementationOnce((args: any) => {
+        secondRequestArgs = args;
+        return {
+          fullStream: (async function* () {
+            yield { type: 'text-delta', id: 'text-1', text: 'done' };
+            yield { type: 'finish', finishReason: 'stop', totalUsage: {} };
+          })(),
+        } as any;
+      });
+    const handle = await start([bigPickleRoute]);
+
+    await postJson(handle, '/v1internal:streamGenerateContent?alt=sse', {
+      model: 'relay-ai__zen__big-pickle',
+      requestId: 'agent/session-1/turn-1',
+      request: { contents: [{ role: 'user', parts: [{ text: 'find NotebookLM' }] }] },
+    }).then(res => res.text());
+
+    await postJson(handle, '/v1internal:streamGenerateContent?alt=sse', {
+      model: 'relay-ai__zen__big-pickle',
+      requestId: 'agent/session-1/turn-2',
+      request: {
+        contents: [
+          {
+            role: 'model',
+            parts: [{
+              functionCall: { name: 'grep_search', args: { Query: 'NotebookLM' } },
+            }],
+          },
+          {
+            role: 'user',
+            parts: [{
+              functionResponse: {
+                name: 'grep_search',
+                response: { content: 'No results found' },
+              },
+            }],
+          },
+        ],
+      },
+    }).then(res => res.text());
+
+    const assistantWithToolCall = secondRequestArgs.messages.find((msg: any) => {
+      return msg.role === 'assistant' && Array.isArray(msg.content)
+        && msg.content.some((part: any) => part.type === 'tool-call');
+    });
+    expect(assistantWithToolCall.content[0]).toEqual({
+      type: 'reasoning',
+      text: 'hidden Big Pickle plan',
     });
   });
 

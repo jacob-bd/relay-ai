@@ -119,7 +119,7 @@ import { join as join3 } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.7.4",
+  version: "0.7.5",
   publishConfig: {
     access: "public"
   },
@@ -156,11 +156,13 @@ var package_default = {
   scripts: {
     build: "tsup && tsup --config tsup.core.config.ts && node scripts/copy-ui-assets.mjs",
     dev: "tsup --watch",
-    test: "vitest run",
+    test: 'vitest run --exclude "tests/debug-*.test.ts"',
+    "test:live": "vitest run tests/debug-xai.test.ts tests/debug-openai-oauth.test.ts",
     "test:watch": "vitest",
     typecheck: "tsc --noEmit",
+    "release:check": "node scripts/release-metadata.mjs",
     "refresh:models-dev": "node scripts/refresh-models-dev-cache.mjs",
-    prepublishOnly: `node -e "if (require('./package.json').version !== require('./package-lock.json').version) { console.error('Error: package.json and package-lock.json versions are out of sync! Run npm install to sync.'); process.exit(1); }" && npm run build`
+    prepublishOnly: "npm run release:check && npm run build"
   },
   dependencies: {
     "@ai-sdk/alibaba": "^1.0.26",

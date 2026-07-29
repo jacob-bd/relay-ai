@@ -59,6 +59,69 @@ export interface TranslateRequestOptions {
   maxTools?: number;
 }
 
+export interface SdkRequestTracePart {
+  type: string;
+  chars?: number;
+  toolName?: string;
+  toolCallId?: string;
+}
+
+export interface SdkRequestTraceSummary {
+  systemChars: number;
+  messages: Array<{ role: string; parts: SdkRequestTracePart[] }>;
+  toolNames: string[];
+  toolChoice?: 'auto' | 'required';
+}
+
+function tracePartChars(part: Record<string, unknown>): number | undefined {
+  if (typeof part.text === 'string') return part.text.length;
+  if (part.type !== 'tool-result') return undefined;
+
+  const output = part.output;
+  if (typeof output === 'string') return output.length;
+  if (output && typeof output === 'object' && typeof (output as { value?: unknown }).value === 'string') {
+    return (output as { value: string }).value.length;
+  }
+  try {
+    return output === undefined ? undefined : JSON.stringify(output).length;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Content-free SDK request structure for trace logs. */
+export function summarizeSdkRequestForTrace(request: SdkRequest): SdkRequestTraceSummary {
+  const messages = request.messages.map(message => {
+    const content = message.content;
+    if (typeof content === 'string') {
+      return { role: message.role, parts: [{ type: 'text', chars: content.length }] };
+    }
+
+    const parts = Array.isArray(content)
+      ? content.map(rawPart => {
+          const part = rawPart as unknown as Record<string, unknown>;
+          const summary: SdkRequestTracePart = {
+            type: typeof part.type === 'string' ? part.type : typeof rawPart,
+          };
+          const chars = tracePartChars(part);
+          if (chars !== undefined) summary.chars = chars;
+          if (typeof part.toolName === 'string') summary.toolName = part.toolName;
+          if (typeof part.toolCallId === 'string') summary.toolCallId = part.toolCallId;
+          return summary;
+        })
+      : [{ type: typeof content }];
+
+    return { role: message.role, parts };
+  });
+
+  return {
+    systemChars: request.system?.length ?? 0,
+    messages,
+    toolNames: Object.keys(request.tools ?? {}),
+    ...(request.toolChoice ? { toolChoice: request.toolChoice } : {}),
+  };
+}
+
 const JSON_SCHEMA_TYPES = new Map([
   ['ARRAY', 'array'],
   ['BOOLEAN', 'boolean'],

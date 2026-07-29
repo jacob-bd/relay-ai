@@ -69,6 +69,8 @@ import {
   formatRegistryAuthLabel,
   formatUpdateNotification,
   formatUpstreamError,
+  formatUpstreamErrorTrace,
+  getAntigravityDebugLogPath,
   getAppHome,
   getAppPathOverride,
   getClaudeDebugLogPath,
@@ -167,6 +169,7 @@ import {
   startProxy,
   startProxyCatalog,
   startServer,
+  summarizeSdkRequestForTrace,
   supportsClaudeTransparentMode,
   supportsNativeOAuth,
   syntheticTemplate,
@@ -177,7 +180,7 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-EUY2MVOS.js";
+} from "./chunk-HEMJFOXG.js";
 import {
   filterTemplates,
   init_provider_templates,
@@ -2342,6 +2345,9 @@ function newResponseId() {
 function newItemId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
+function functionCallItemId(upstreamId) {
+  return upstreamId.startsWith("fc_") ? upstreamId : newItemId("fc");
+}
 function usageFromPart(part) {
   const input = part.totalUsage?.inputTokens ?? 0;
   const output = part.totalUsage?.outputTokens ?? 0;
@@ -2441,10 +2447,11 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
     return state;
   };
   const createToolState = (rawId, name, signature) => {
-    const itemId = rawId ?? newItemId("fc");
+    const upstreamId = rawId ?? newItemId("call");
+    const itemId = functionCallItemId(upstreamId);
     const state = rememberToolState({
       itemId,
-      callId: encodeToolUseId(itemId, signature, false),
+      callId: encodeToolUseId(upstreamId, signature, false),
       name: name ?? "unknown",
       outputIndex: outputIndex++,
       args: ""
@@ -2828,7 +2835,13 @@ async function generateResponsesResponse(model, params, modelId) {
   for (const tc of r.toolCalls) {
     const encodedId = encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc), false);
     const argsStr = JSON.stringify(tc.input ?? {});
-    output.push(buildFinalToolItem(resolveOutputKind(tc.toolName, toolContext), tc.toolName, encodedId, tc.toolCallId, argsStr));
+    output.push(buildFinalToolItem(
+      resolveOutputKind(tc.toolName, toolContext),
+      tc.toolName,
+      encodedId,
+      functionCallItemId(tc.toolCallId),
+      argsStr
+    ));
   }
   if (output.length === 0) {
     output.push({ id: newItemId("msg"), type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "(conversation context was too large to summarize)" }] });
@@ -6416,7 +6429,6 @@ Error: ${launchPlan.error}
 // src/antigravity.ts
 import pc9 from "picocolors";
 import * as p11 from "@clack/prompts";
-import { appendFileSync as appendFileSync2 } from "fs";
 
 // src/antigravity/cloud-code-gateway.ts
 import http from "http";
@@ -7558,6 +7570,11 @@ async function startCloudCodeGateway(routes, opts = {}) {
         if (trace) log14(`[gateway]   extracted model: ${model ?? "N/A"}`);
         const route = resolveRouteForModel(model);
         if (route) {
+          if (trace) {
+            log14(
+              `[gateway]   resolved route: ${route.catalogId} (${route.providerId}/${route.upstreamModelId} via ${model})`
+            );
+          }
           if (trackActiveRoute && selectedSlotIds.has(model ?? "") && isUserTurnRequest(parsed)) {
             activeRoute = route;
             if (trace) log14(`[gateway]   active route: ${route.catalogId} via ${model}`);
@@ -7584,9 +7601,11 @@ async function startCloudCodeGateway(routes, opts = {}) {
           if (isStream) {
             handleStreamingRequest(res, route, baseProviderOptions, parsed, log14, {
               requestOptions,
-              onReasoningWithToolCall: rememberReasoning
+              onReasoningWithToolCall: rememberReasoning,
+              trace
             }).catch((err) => {
-              log14(`[gateway] stream error: ${err instanceof Error ? err.stack || err.message : String(err)}`);
+              log14(`[gateway] stream error: ${formatUpstreamError(err)}`);
+              if (trace) log14(`[gateway] stream error detail: ${formatUpstreamErrorTrace(err)}`);
               if (!res.headersSent) {
                 respondJson(res, 500, { error: { code: 500, message: formatUpstreamError(err) } });
               } else if (!res.writableEnded) {
@@ -7596,9 +7615,11 @@ async function startCloudCodeGateway(routes, opts = {}) {
           } else {
             handleUnaryRequest(res, route, baseProviderOptions, parsed, log14, {
               requestOptions,
-              onReasoningWithToolCall: rememberReasoning
+              onReasoningWithToolCall: rememberReasoning,
+              trace
             }).catch((err) => {
-              log14(`[gateway] unary error: ${err instanceof Error ? err.stack || err.message : String(err)}`);
+              log14(`[gateway] unary error: ${formatUpstreamError(err)}`);
+              if (trace) log14(`[gateway] unary error detail: ${formatUpstreamErrorTrace(err)}`);
               if (!res.headersSent) {
                 respondJson(res, 500, { error: { code: 500, message: formatUpstreamError(err) } });
               }
@@ -7766,7 +7787,7 @@ function shouldEchoReasoningForRoute(route) {
     route.displayName,
     route.baseURL
   ].join(" ");
-  return /deepseek/i.test(routeIdentity);
+  return /deepseek|big[\s_-]?pickle|\bglm[\s_-]/i.test(routeIdentity);
 }
 function reasoningEchoOptionsForRoute(route, parsed, cache) {
   if (!shouldEchoReasoningForRoute(route)) return {};
@@ -7944,6 +7965,9 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
     ...options.requestOptions,
     maxTools: maxToolsForNpm(route.npm)
   }));
+  if (options.trace) {
+    log14(`[gateway]   sdk request: ${JSON.stringify(summarizeSdkRequestForTrace(sdkParams))}`);
+  }
   const effectiveProviderOptions = deepMergeProviderOptions(
     providerOptions,
     sdkParams.providerOptions
@@ -8104,6 +8128,9 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
     } else if (p15.type === "error") {
       const message = formatUpstreamError(p15.error);
       log14(`[gateway] stream provider error: ${message}`);
+      if (options.trace) {
+        log14(`[gateway] stream provider error detail: ${formatUpstreamErrorTrace(p15.error)}`);
+      }
       flushBufferedText();
       emitStreamError(res, route, responseId, message, startSse);
       break;
@@ -8119,11 +8146,14 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
   }
   res.end();
 }
-async function handleUnaryRequest(res, route, providerOptions, parsed, _log, options = {}) {
+async function handleUnaryRequest(res, route, providerOptions, parsed, log14, options = {}) {
   const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
     ...options.requestOptions,
     maxTools: maxToolsForNpm(route.npm)
   }));
+  if (options.trace) {
+    log14(`[gateway]   sdk request: ${JSON.stringify(summarizeSdkRequestForTrace(sdkParams))}`);
+  }
   const effectiveProviderOptions = deepMergeProviderOptions(
     providerOptions,
     sdkParams.providerOptions
@@ -8230,7 +8260,8 @@ async function resolveAntigravityLaunchRoutes(opts) {
 }
 
 // src/antigravity/launch-cli.ts
-import { execFileSync as execFileSync2, execSync as execSync3, spawn as spawn4 } from "child_process";
+import { execFileSync as execFileSync2, execSync as execSync3 } from "child_process";
+import spawn4 from "cross-spawn";
 import { existsSync as existsSync6 } from "fs";
 import { homedir as homedir6 } from "os";
 import { join as join6 } from "path";
@@ -8290,8 +8321,7 @@ function launchAntigravityCli(env, extraArgs) {
     }
     const child = spawn4(binaryPath, extraArgs, {
       stdio: "inherit",
-      env,
-      shell: isWindows4
+      env
     });
     const forward = (signal) => {
       child.kill(signal);
@@ -8589,11 +8619,17 @@ function launchAntigravityApp(env, profileDir, gatewayUrl, extraArgs) {
 }
 function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs) {
   return new Promise((resolve2) => {
+    let settled = false;
+    const settle = (code) => {
+      if (settled) return;
+      settled = true;
+      resolve2(code);
+    };
     const binaryPath = findAntigravityIdeBinary();
     if (!binaryPath) {
       console.error("Antigravity IDE not found.");
       console.error("Please make sure Antigravity IDE is installed.");
-      resolve2(127);
+      settle(127);
       return;
     }
     prepareIdeProfile(profileDir, gatewayUrl);
@@ -8612,12 +8648,15 @@ function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs) {
       detached: true,
       env
     });
+    child.on("spawn", () => {
+      settle(0);
+    });
     child.on("exit", (code) => {
-      resolve2(code ?? 1);
+      settle(code ?? 1);
     });
     child.on("error", (err) => {
       console.error(`Failed to launch Antigravity IDE: ${err.message}`);
-      resolve2(1);
+      settle(1);
     });
   });
 }
@@ -8809,12 +8848,20 @@ async function resolveAndBuildRoutes(provider, model, allProviders, prefs, opts)
   }
   return { routes: result.routes, apiKey: result.apiKey };
 }
-function waitForShutdown() {
+function waitForShutdown(input = process.stdin, platform = process.platform) {
   return new Promise((resolve2) => {
+    const captureWindowsCtrlC = platform === "win32" && input.isTTY;
+    const wasRaw = input.isRaw;
+    const wasPaused = input.isPaused();
     const cleanup = () => {
       process.removeListener("SIGINT", onSigint);
       process.removeListener("SIGTERM", onSigterm);
       process.removeListener("SIGHUP", onSighup);
+      if (captureWindowsCtrlC) {
+        input.removeListener("data", onInput);
+        input.setRawMode(wasRaw);
+        if (wasPaused) input.pause();
+      }
     };
     const onSigint = () => {
       cleanup();
@@ -8828,9 +8875,18 @@ function waitForShutdown() {
       cleanup();
       resolve2("sighup");
     };
+    const onInput = (chunk) => {
+      const receivedCtrlC = typeof chunk === "string" ? chunk.includes("") : chunk.includes(3);
+      if (receivedCtrlC) onSigint();
+    };
     process.once("SIGINT", onSigint);
     process.once("SIGTERM", onSigterm);
     process.once("SIGHUP", onSighup);
+    if (captureWindowsCtrlC) {
+      input.on("data", onInput);
+      input.setRawMode(true);
+      input.resume();
+    }
   });
 }
 async function runAntigravityCommand(intro, tracePrefix, trace, boot, launch, opts = {}) {
@@ -8864,14 +8920,8 @@ async function runAntigravityCommand(intro, tracePrefix, trace, boot, launch, op
     lastAntigravityProvider: provider.id,
     lastAntigravityModel: model.id
   });
-  const traceLogPath = `/tmp/relay-ai-${tracePrefix}-trace-${Date.now()}.log`;
-  const logFn = trace ? (msg) => {
-    try {
-      appendFileSync2(traceLogPath, `${msg}
-`);
-    } catch {
-    }
-  } : void 0;
+  const traceLogPath = trace ? getAntigravityDebugLogPath(tracePrefix) : void 0;
+  const logFn = traceLogPath ? makeTraceLogger(traceLogPath) : void 0;
   let gatewayHandle;
   try {
     gatewayHandle = await startCloudCodeGateway(routeResult.routes, { trace, logFn });
@@ -8881,7 +8931,7 @@ async function runAntigravityCommand(intro, tracePrefix, trace, boot, launch, op
   }
   p11.log.info(`Cloud Code gateway on ${pc9.cyan(`127.0.0.1:${gatewayHandle.port}`)}`);
   p11.log.success(`Active model: ${formatCodexModelLabel(model)} ${pc9.dim("via")} ${provider.name}`);
-  if (trace) p11.log.info(`Gateway trace \u2192 ${pc9.dim(traceLogPath)}`);
+  if (traceLogPath) p11.log.info(`Gateway trace \u2192 ${pc9.dim(traceLogPath)}`);
   relayOutro("Launching", `${formatCodexModelLabel(model)} (${provider.name})`);
   try {
     const cleanEnv = buildAntigravityChildEnv(gatewayHandle.url);
@@ -12611,7 +12661,7 @@ ${pc12.bold("Usage:")}
 ${pc12.bold("Relay options:")}
   --provider <id>    Use a specific provider (skip picker)
   --model <id>       Use a specific model (skip picker)
-  --trace            Write debug log to /tmp/relay-ai-debug.log
+  --trace            Write debug log to ~/.relay-ai/logs/antigravity-agy-debug.log
   -h, --help         Show this help
   -v, --version      Show version
 
@@ -12637,7 +12687,7 @@ ${pc12.bold("Usage:")}
 ${pc12.bold("Relay options:")}
   --provider <id>    Use a specific provider (skip picker)
   --model <id>       Use a specific model (skip picker)
-  --trace            Write debug log to /tmp/relay-ai-debug.log
+  --trace            Write debug log to ~/.relay-ai/logs/antigravity-ide-debug.log
   -h, --help         Show this help
   -v, --version      Show version
 
@@ -12665,7 +12715,7 @@ ${pc12.bold("Usage:")}
 ${pc12.bold("Relay options:")}
   --provider <id>    Use a specific provider (skip picker)
   --model <id>       Use a specific model (skip picker)
-  --trace            Write debug log to /tmp/relay-ai-debug.log
+  --trace            Write debug log to ~/.relay-ai/logs/antigravity-app-debug.log
   -h, --help         Show this help
   -v, --version      Show version
 
@@ -13393,7 +13443,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-CF3IEIZP.js");
+    const { runUiCommand } = await import("./ui-command-26QQUWTQ.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

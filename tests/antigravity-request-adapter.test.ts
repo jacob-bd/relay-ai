@@ -1,5 +1,72 @@
 import { describe, it, expect } from 'vitest';
-import { translateRequest, expandTextWithThinking, type CloudCodeGenerateRequest } from '../src/antigravity/request-adapter.js';
+import {
+  summarizeSdkRequestForTrace,
+  translateRequest,
+  expandTextWithThinking,
+  type CloudCodeGenerateRequest,
+  type SdkRequest,
+} from '../src/antigravity/request-adapter.js';
+
+describe('Antigravity request trace summary', () => {
+  it('records tool-loop structure without logging message content, arguments, or results', () => {
+    const request = {
+      system: 'private system prompt',
+      messages: [
+        { role: 'user', content: 'private user prompt' },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'reasoning', text: 'private reasoning' },
+            {
+              type: 'tool-call',
+              toolCallId: 'call_123',
+              toolName: 'list_dir',
+              input: { DirectoryPath: 'C:\\private' },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [{
+            type: 'tool-result',
+            toolCallId: 'call_123',
+            toolName: 'list_dir',
+            output: { type: 'text', value: 'private directory listing' },
+          }],
+        },
+      ],
+      tools: { list_dir: {} },
+      toolChoice: 'auto',
+    } as unknown as SdkRequest;
+
+    const summary = summarizeSdkRequestForTrace(request);
+
+    expect(summary).toEqual({
+      systemChars: 21,
+      messages: [
+        { role: 'user', parts: [{ type: 'text', chars: 19 }] },
+        {
+          role: 'assistant',
+          parts: [
+            { type: 'reasoning', chars: 17 },
+            { type: 'tool-call', toolName: 'list_dir', toolCallId: 'call_123' },
+          ],
+        },
+        {
+          role: 'tool',
+          parts: [
+            { type: 'tool-result', toolName: 'list_dir', toolCallId: 'call_123', chars: 25 },
+          ],
+        },
+      ],
+      toolNames: ['list_dir'],
+      toolChoice: 'auto',
+    });
+    const serialized = JSON.stringify(summary);
+    expect(serialized).not.toContain('private');
+    expect(serialized).not.toContain('DirectoryPath');
+  });
+});
 
 describe('antigravity request-adapter', () => {
   it('translates a single user text message', () => {

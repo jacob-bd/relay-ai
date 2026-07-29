@@ -617,6 +617,10 @@ function newItemId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function functionCallItemId(upstreamId: string): string {
+  return upstreamId.startsWith('fc_') ? upstreamId : newItemId('fc');
+}
+
 function usageFromPart(part: FullStreamPart): { input_tokens: number; output_tokens: number; total_tokens: number } {
   const input = part.totalUsage?.inputTokens ?? 0;
   const output = part.totalUsage?.outputTokens ?? 0;
@@ -820,10 +824,11 @@ export async function writeResponsesStream(
     name: string | undefined,
     signature: string | undefined,
   ): StreamingToolState => {
-    const itemId = rawId ?? newItemId('fc');
+    const upstreamId = rawId ?? newItemId('call');
+    const itemId = functionCallItemId(upstreamId);
     const state = rememberToolState({
       itemId,
-      callId: encodeToolUseId(itemId, signature, false),
+      callId: encodeToolUseId(upstreamId, signature, false),
       name: name ?? 'unknown',
       outputIndex: outputIndex++,
       args: '',
@@ -1269,7 +1274,13 @@ export async function generateResponsesResponse(
   for (const tc of r.toolCalls) {
     const encodedId = encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc as FullStreamPart), false);
     const argsStr = JSON.stringify(tc.input ?? {});
-    output.push(buildFinalToolItem(resolveOutputKind(tc.toolName, toolContext), tc.toolName, encodedId, tc.toolCallId, argsStr));
+    output.push(buildFinalToolItem(
+      resolveOutputKind(tc.toolName, toolContext),
+      tc.toolName,
+      encodedId,
+      functionCallItemId(tc.toolCallId),
+      argsStr,
+    ));
   }
 
   if (output.length === 0) {
