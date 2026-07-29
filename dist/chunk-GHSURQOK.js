@@ -4319,7 +4319,7 @@ function maskGatewayModelId(aliasId) {
 import { randomUUID as randomUUID2 } from "crypto";
 var DEFAULT_TTL_MS = 5 * 6e4;
 var DEFAULT_MAX_ENTRIES = 1024;
-var ROUTE_MARKER_PATTERN = /(?:\n\n)?<relay-ai-subagent-route token="([0-9a-f-]{36})"\s*\/>/i;
+var ROUTE_MARKER_PATTERN = /(?:\n\n)?<relay-ai-subagent-route token="([0-9a-f-]{36})"\s*\/>/gi;
 function firstHeader(value) {
   const first = Array.isArray(value) ? value[0] : value;
   return typeof first === "string" && first.trim() ? first.trim() : void 0;
@@ -4341,38 +4341,39 @@ function appendSubagentRouteMarker(prompt, token) {
 
 <relay-ai-subagent-route token="${token}"/>`;
 }
-function findMarkerInUserMessages(body) {
+function findMarkersInUserMessages(body) {
   if (!Array.isArray(body.messages)) return void 0;
-  for (let messageIndex = 0; messageIndex < body.messages.length; messageIndex++) {
+  const tokens = [];
+  const messages = [...body.messages];
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
     const message = body.messages[messageIndex];
     if (!message || message.role !== "user") continue;
     if (typeof message.content === "string") {
-      const match = message.content.match(ROUTE_MARKER_PATTERN);
-      if (!match?.[1]) continue;
-      const messages = [...body.messages];
+      const matches = [...message.content.matchAll(ROUTE_MARKER_PATTERN)];
+      if (matches.length === 0) continue;
+      tokens.push(...matches.flatMap((match) => match[1] ? [match[1]] : []));
       messages[messageIndex] = {
         ...message,
         content: message.content.replace(ROUTE_MARKER_PATTERN, "").trimEnd()
       };
-      return { token: match[1], body: { ...body, messages } };
+      continue;
     }
     if (!Array.isArray(message.content)) continue;
+    const content = [...message.content];
     for (let partIndex = 0; partIndex < message.content.length; partIndex++) {
       const part = message.content[partIndex];
       if (!part || part.type !== "text" || typeof part.text !== "string") continue;
-      const match = part.text.match(ROUTE_MARKER_PATTERN);
-      if (!match?.[1]) continue;
-      const content = [...message.content];
+      const matches = [...part.text.matchAll(ROUTE_MARKER_PATTERN)];
+      if (matches.length === 0) continue;
+      tokens.push(...matches.flatMap((match) => match[1] ? [match[1]] : []));
       content[partIndex] = {
         ...part,
         text: part.text.replace(ROUTE_MARKER_PATTERN, "").trimEnd()
       };
-      const messages = [...body.messages];
-      messages[messageIndex] = { ...message, content };
-      return { token: match[1], body: { ...body, messages } };
     }
+    messages[messageIndex] = { ...message, content };
   }
-  return void 0;
+  return tokens.length > 0 ? { tokens, body: { ...body, messages } } : void 0;
 }
 var SubagentRouteRegistry = class {
   entries = /* @__PURE__ */ new Map();
@@ -4400,11 +4401,12 @@ var SubagentRouteRegistry = class {
     if (!firstHeader(headers["x-claude-code-agent-id"])) return void 0;
     const sessionId = extractClaudeSessionId(headers, body);
     if (!sessionId) return void 0;
-    const marked = findMarkerInUserMessages(body);
+    const marked = findMarkersInUserMessages(body);
     if (!marked) return void 0;
-    const entry = this.entries.get(marked.token);
-    if (!entry || entry.sessionId !== sessionId) return void 0;
-    this.entries.delete(marked.token);
+    const token = [...marked.tokens].reverse().find((candidate) => this.entries.get(candidate)?.sessionId === sessionId);
+    if (!token) return void 0;
+    const entry = this.entries.get(token);
+    this.entries.delete(token);
     return { modelId: entry.modelId, body: marked.body };
   }
   cleanup() {
@@ -12589,4 +12591,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-RAT6P7WT.js.map
+//# sourceMappingURL=chunk-GHSURQOK.js.map

@@ -53,6 +53,21 @@ describe('SubagentRouteRegistry', () => {
     expect(registry.consume(childHeaders, childBody(markedPrompt))).toBeUndefined();
   });
 
+  it('uses a newer valid marker after a copied consumed marker', () => {
+    const registry = new SubagentRouteRegistry();
+    const consumedToken = registry.register('session-a', 'claude-haiku-4-5');
+    const copiedPrompt = appendSubagentRouteMarker('Inspect the router.', consumedToken);
+    expect(registry.consume(childHeaders, childBody(copiedPrompt))?.modelId)
+      .toBe('claude-haiku-4-5');
+
+    const geminiToken = registry.register('session-a', 'anthropic-google__gemini-3.6-flash');
+    const retriedPrompt = appendSubagentRouteMarker(copiedPrompt, geminiToken);
+    const resolved = registry.consume(childHeaders, childBody(retriedPrompt));
+
+    expect(resolved?.modelId).toBe('anthropic-google__gemini-3.6-flash');
+    expect((resolved?.body.messages[0].content[1] as any).text).toBe('Inspect the router.');
+  });
+
   it('does not consume a marker without an agent id or for another session', () => {
     const registry = new SubagentRouteRegistry();
     const token = registry.register('session-a', 'anthropic-relay__qwen-3');
