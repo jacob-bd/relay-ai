@@ -1,5 +1,41 @@
 # Partner-model subagent routing — design
 
+## Runtime compatibility correction — Claude Code 2.1.220
+
+Claude Code 2.1.220 introduced a local validator that rejects every
+`Agent.model` value except `sonnet`, `opus`, `haiku`, and `fable`, even when the
+gateway-provided tool schema contains additional exact Relay AI ids. This was
+confirmed by a real CLI transcript: the exact Grok id reached Claude correctly,
+then failed locally with `InputValidationError` before a child request started.
+
+This correction supersedes the portions of the original design below that say
+Relay returns an exact partner id directly in the visible `Agent.model` field.
+Relay still performs the same selector precedence internally, but bridges the
+client boundary as follows:
+
+1. Resolve inheritance, compatibility ids, explicit favorites, and native
+   families to one exact exposed catalog id.
+2. Register that target under a cryptographically random, session-bound,
+   single-use token with a five-minute TTL.
+3. Append an opaque route marker to the Agent prompt. For partner targets, omit
+   `model`; for native targets, use only the legal family value.
+4. Claude starts the child with its built-in family model id and sends the same
+   session id, an agent id, and the marked prompt.
+5. Relay consumes the token, strips the marker before any provider sees it, and
+   routes the child to the registered exact catalog model.
+
+Each running proxy/server owns its own bounded registry. There is no
+process-global current model. Random per-invocation tokens keep parallel calls
+with identical prompts distinct; session binding prevents cross-session use;
+single-use consumption, TTL cleanup, and a fixed capacity bound prevent replay
+and unbounded memory growth. Recursive partner agents repeat the same flow with
+their resolved child route as the new parent.
+
+The real Claude Code 2.1.220 fake-provider verification produced:
+
+- inherited selection: `qwen-3 → qwen-3 → qwen-3`
+- explicit favorite: `qwen-3 → grok-4 → qwen-3`
+
 ## Context
 
 Claude Code and Claude Desktop can run non-Anthropic partner models through Relay
