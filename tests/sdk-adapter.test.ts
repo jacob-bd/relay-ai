@@ -487,13 +487,56 @@ describe('generateAnthropicResponse', () => {
     vi.doUnmock('ai');
     vi.resetModules();
   });
+
+  it('normalizes completed Claude Agent calls without changing unrelated tools', async () => {
+    vi.resetModules();
+    vi.doMock('ai', () => ({
+      generateText: vi.fn(async () => ({
+        text: '',
+        toolCalls: [
+          {
+            toolCallId: 'call_agent',
+            toolName: 'Agent',
+            input: { prompt: 'inspect', subagent_type: 'general-purpose' },
+          },
+          {
+            toolCallId: 'call_read',
+            toolName: 'Read',
+            input: { path: 'a' },
+          },
+        ],
+        finishReason: 'tool-calls',
+        usage: { inputTokens: 1, outputTokens: 2 },
+      })),
+      streamText: vi.fn(),
+      tool: vi.fn((spec: unknown) => spec),
+      jsonSchema: vi.fn((schema: unknown) => schema),
+    }));
+
+    const { generateAnthropicResponse } = await import('../src/sdk-adapter.js');
+    const body = await generateAnthropicResponse({} as never, {
+      messages: [],
+      subagentRouting,
+    }, 'qwen-3');
+    const toolUses = (body.content as any[]).filter(item => item.type === 'tool_use');
+
+    expect(toolUses[0].input.model).toBe(subagentRouting.parentModelId);
+    expect(toolUses[1].input).toEqual({ path: 'a' });
+
+    vi.doUnmock('ai');
+    vi.resetModules();
+  });
 });
 
 // ── streaming translation ────────────────────────────────────────────────────
-async function collect(parts: any[], model = 'm'): Promise<{ events: Array<{ event: string; data: any }>; raw: string }> {
+async function collect(
+  parts: any[],
+  model = 'm',
+  routing?: SubagentModelRouting,
+): Promise<{ events: Array<{ event: string; data: any }>; raw: string }> {
   let raw = '';
   async function* gen() { for (const p of parts) yield p; }
-  await writeAnthropicStream(gen() as any, model, (c) => { raw += c; });
+  await writeAnthropicStream(gen() as any, model, (c) => { raw += c; }, undefined, 0, routing);
   const events = raw.split('\n\n').filter(Boolean).map(block => {
     const [evLine, dataLine] = block.split('\n');
     return { event: evLine.replace('event: ', ''), data: JSON.parse(dataLine.replace('data: ', '')) };
@@ -552,6 +595,85 @@ describe('writeAnthropicStream', () => {
     expect(start.data.content_block.type).toBe('tool_use');
     expect(start.data.content_block.id).toBe('call_9__ts__U0lHOQ');
     expect(events.find(e => e.event === 'message_delta')!.data.delta.stop_reason).toBe('tool_use');
+  });
+
+  it('buffers Claude Agent input and emits one normalized JSON delta', async () => {
+    const { events, raw } = await collect([
+      { type: 'start' },
+      { type: 'tool-input-start', id: 'call_agent', toolName: 'Agent' },
+      { type: 'tool-input-delta', id: 'call_agent', delta: '{"prompt":"inspect",' },
+      { type: 'tool-input-delta', id: 'call_agent', delta: '"subagent_type":"general-purpose"}' },
+      { type: 'tool-input-end', id: 'call_agent' },
+      {
+        type: 'tool-call',
+        toolCallId: 'call_agent',
+        toolName: 'Agent',
+        input: { prompt: 'inspect', subagent_type: 'general-purpose' },
+      },
+      { type: 'finish', finishReason: 'tool-calls' },
+    ], 'qwen-3', subagentRouting);
+    const deltas = events.filter(event => (
+      event.event === 'content_block_delta'
+      && event.data.delta.type === 'input_json_delta'
+    ));
+
+    expect(deltas).toHaveLength(1);
+    expect(JSON.parse(deltas[0].data.delta.partial_json)).toEqual({
+      prompt: 'inspect',
+      subagent_type: 'general-purpose',
+      model: subagentRouting.parentModelId,
+    });
+    expect(raw).not.toContain('\"prompt\":\"inspect\",');
+    expect(events.indexOf(deltas[0])).toBeLessThan(
+      events.findIndex(event => event.event === 'content_block_stop'),
+    );
+  });
+
+  it('normalizes an Agent tool-call that arrives without streamed input parts', async () => {
+    const { events } = await collect([
+      { type: 'start' },
+      {
+        type: 'tool-call',
+        toolCallId: 'call_agent',
+        toolName: 'Agent',
+        input: { subagent_type: 'general-purpose', model: 'relay:grok' },
+      },
+      { type: 'finish', finishReason: 'tool-calls' },
+    ], 'qwen-3', subagentRouting);
+    const delta = events.find(event => event.data?.delta?.type === 'input_json_delta')!;
+
+    expect(JSON.parse(delta.data.delta.partial_json).model).toBe('anthropic-relay__grok-4');
+  });
+
+  it('discards buffered Agent input when the upstream stream errors', async () => {
+    const { events } = await collect([
+      { type: 'start' },
+      { type: 'tool-input-start', id: 'call_agent', toolName: 'Agent' },
+      { type: 'tool-input-delta', id: 'call_agent', delta: '{"prompt":"partial"}' },
+      { type: 'error', error: { statusCode: 429, message: 'rate limited' } },
+    ], 'qwen-3', subagentRouting);
+
+    expect(events.filter(event => event.data?.delta?.type === 'input_json_delta')).toHaveLength(0);
+    expect(events.filter(event => event.event === 'content_block_stop')).toHaveLength(1);
+    expect(events.at(-1)?.event).toBe('error');
+  });
+
+  it('closes the Agent block before reporting an invalid explicit selector', async () => {
+    const { events } = await collect([
+      { type: 'start' },
+      { type: 'tool-input-start', id: 'call_agent', toolName: 'Agent' },
+      { type: 'tool-input-end', id: 'call_agent' },
+      {
+        type: 'tool-call',
+        toolCallId: 'call_agent',
+        toolName: 'Agent',
+        input: { subagent_type: 'general-purpose', model: 'claude-sonnet-5' },
+      },
+    ], 'qwen-3', subagentRouting);
+
+    expect(events.map(event => event.event).slice(-2)).toEqual(['content_block_stop', 'error']);
+    expect(events.at(-1)?.data.error.type).toBe('invalid_request_error');
+    expect(events.at(-1)?.data.error.message).toContain('claude-sonnet-5');
   });
 
   it('emits thinking block with a signature_delta close (Google SDK)', async () => {

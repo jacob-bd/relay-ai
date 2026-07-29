@@ -22,6 +22,9 @@ import { anthropicErrorType, upstreamHttpStatus } from './codex/upstream-error.j
 import {
   augmentClaudeAgentTool,
   isClaudeAgentTool,
+  normalizeClaudeAgentInput,
+  UnavailableSubagentModelError,
+  type SubagentRoutingDecision,
   type SubagentModelRouting,
 } from './subagent-model-routing.js';
 
@@ -338,12 +341,20 @@ type WriteFn = (chunk: string) => void;
 
 type LogFn = (msg: () => string) => void;
 
+function logSubagentDecision(log: LogFn | undefined, decision: SubagentRoutingDecision): void {
+  if (!log || decision.kind === 'fork' || decision.kind === 'explicit') return;
+  log(() => decision.kind === 'family-fallback'
+    ? `sdk Agent model "${decision.requestedModelId}" unavailable; using parent ${decision.resolvedModelId}`
+    : `sdk Agent model ${decision.kind}: ${'requestedModelId' in decision ? `${decision.requestedModelId} -> ` : ''}${decision.resolvedModelId}`);
+}
+
 export async function writeAnthropicStream(
   fullStream: AsyncIterable<FullStreamPart>,
   modelId: string,
   write: WriteFn,
   log?: LogFn,
   estimatedInputTokens = 0,
+  subagentRouting?: SubagentModelRouting,
 ): Promise<void> {
   const messageId = 'msg_' + Date.now();
   let blockIndex = -1;
@@ -351,6 +362,7 @@ export async function writeAnthropicStream(
   let openType: 'text' | 'thinking' | 'tool' | null = null;
   let pendingThinkingSig: string | undefined;
   const idToBlock = new Map<string, number>();
+  const bufferedAgentCalls = new Map<string, { blockIndex: number }>();
   let finishReason = 'end_turn';
   let usage = { input_tokens: estimatedInputTokens, output_tokens: 0 };
 
@@ -421,9 +433,13 @@ export async function writeAnthropicStream(
           type: 'tool_use', id: encodeToolUseId(part.id ?? '', sig), name: part.toolName, input: {},
         });
         idToBlock.set(part.id ?? '', blockIndex);
+        if (subagentRouting && part.toolName === 'Agent') {
+          bufferedAgentCalls.set(part.id ?? '', { blockIndex });
+        }
         break;
       }
       case 'tool-input-delta':
+        if (bufferedAgentCalls.has(part.id ?? '')) break;
         emit('content_block_delta', {
           type: 'content_block_delta', index: idToBlock.get(part.id ?? '') ?? blockIndex,
           delta: { type: 'input_json_delta', partial_json: part.delta ?? part.text ?? '' },
@@ -433,11 +449,53 @@ export async function writeAnthropicStream(
 
       case 'tool-call': {
         finishReason = 'tool_use';
+        const toolCallId = part.toolCallId ?? '';
+        if (subagentRouting && part.toolName === 'Agent') {
+          try {
+            const normalized = normalizeClaudeAgentInput(part.input, subagentRouting);
+            logSubagentDecision(log, normalized.decision);
+            const buffered = bufferedAgentCalls.get(toolCallId);
+            if (!buffered && !idToBlock.has(toolCallId)) {
+              const sig = grabRoundTripSignature(part);
+              openBlock('tool', {
+                type: 'tool_use',
+                id: encodeToolUseId(toolCallId, sig),
+                name: part.toolName,
+                input: {},
+              });
+              idToBlock.set(toolCallId, blockIndex);
+            }
+            emit('content_block_delta', {
+              type: 'content_block_delta',
+              index: buffered?.blockIndex ?? idToBlock.get(toolCallId) ?? blockIndex,
+              delta: {
+                type: 'input_json_delta',
+                partial_json: JSON.stringify(stripNullInputs(normalized.input)),
+              },
+            });
+            bufferedAgentCalls.delete(toolCallId);
+          } catch (error) {
+            if (error instanceof UnavailableSubagentModelError) {
+              bufferedAgentCalls.delete(toolCallId);
+              closeOpen();
+              emit('error', {
+                type: 'error',
+                error: {
+                  type: anthropicErrorType(error.statusCode),
+                  message: error.message,
+                },
+              });
+              return;
+            }
+            throw error;
+          }
+          break;
+        }
         // Non-streamed tool call (no input-start/delta arrived): emit a full block.
-        if (!idToBlock.has(part.toolCallId ?? '') && openType !== 'tool') {
+        if (!idToBlock.has(toolCallId) && openType !== 'tool') {
           const sig = grabRoundTripSignature(part);
           openBlock('tool', {
-            type: 'tool_use', id: encodeToolUseId(part.toolCallId ?? '', sig), name: part.toolName, input: {},
+            type: 'tool_use', id: encodeToolUseId(toolCallId, sig), name: part.toolName, input: {},
           });
           emit('content_block_delta', {
             type: 'content_block_delta', index: blockIndex,
@@ -464,6 +522,7 @@ export async function writeAnthropicStream(
         const errMsg = e?.message || (typeof part.error === 'string' ? part.error : JSON.stringify(e?.data ?? part.error));
         const errorType = anthropicErrorType(upstreamHttpStatus(part.error, errMsg));
         log?.(() => `sdk stream error (${errorType}): ${errMsg}`);
+        bufferedAgentCalls.clear();
         closeOpen();
         emit('error', { type: 'error', error: { type: errorType, message: errMsg } });
         return;
@@ -488,7 +547,7 @@ export async function streamAnthropicResponse(
   log?: LogFn,
   estimatedInputTokens = 0,
 ): Promise<void> {
-  const { subagentRouting: _subagentRouting, ...providerParams } = params;
+  const { subagentRouting, ...providerParams } = params;
   const result = streamText({ model, ...providerParams, onError: () => {} } as Parameters<typeof streamText>[0]);
   // Prevent unhandled promise rejections on stream properties:
   Promise.resolve(result.text).catch(() => {});
@@ -498,7 +557,12 @@ export async function streamAnthropicResponse(
   Promise.resolve(result.usage).catch(() => {});
 
   await writeAnthropicStream(
-    result.fullStream as AsyncIterable<FullStreamPart>, modelId, write, log, estimatedInputTokens,
+    result.fullStream as AsyncIterable<FullStreamPart>,
+    modelId,
+    write,
+    log,
+    estimatedInputTokens,
+    subagentRouting,
   );
 }
 
@@ -508,7 +572,7 @@ export async function generateAnthropicResponse(
   modelId: string,
   options?: { forceStream?: boolean },
 ): Promise<Record<string, unknown>> {
-  const { subagentRouting: _subagentRouting, ...providerParams } = params;
+  const { subagentRouting, ...providerParams } = params;
   let text: string;
   let toolCalls: Array<{ toolCallId: string; toolName: string; input: unknown }>;
   let finishReason: string;
@@ -530,12 +594,17 @@ export async function generateAnthropicResponse(
     id: 'msg_' + Date.now(), type: 'message', role: 'assistant', model: modelId,
     content: [
       ...(text ? [{ type: 'text', text }] : []),
-      ...toolCalls.map(tc => ({
-        type: 'tool_use',
-        id: encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc as FullStreamPart)),
-        name: tc.toolName,
-        input: stripNullInputs(tc.input as Record<string, unknown>),
-      })),
+      ...toolCalls.map(tc => {
+        const input = subagentRouting && tc.toolName === 'Agent'
+          ? normalizeClaudeAgentInput(tc.input, subagentRouting).input
+          : tc.input as Record<string, unknown>;
+        return {
+          type: 'tool_use',
+          id: encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc as FullStreamPart)),
+          name: tc.toolName,
+          input: stripNullInputs(input),
+        };
+      }),
     ],
     stop_reason: finishReason === 'tool-calls' ? 'tool_use' : 'end_turn',
     usage: { input_tokens: usage?.inputTokens ?? 0, output_tokens: usage?.outputTokens ?? 0 },
