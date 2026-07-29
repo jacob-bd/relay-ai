@@ -22,7 +22,7 @@ import { anthropicErrorType, upstreamHttpStatus } from './codex/upstream-error.j
 import {
   augmentClaudeAgentTool,
   isClaudeAgentTool,
-  normalizeClaudeAgentInput,
+  prepareClaudeAgentInput,
   UnavailableSubagentModelError,
   type SubagentRoutingDecision,
   type SubagentModelRouting,
@@ -452,7 +452,7 @@ export async function writeAnthropicStream(
         const toolCallId = part.toolCallId ?? '';
         if (subagentRouting && part.toolName === 'Agent') {
           try {
-            const normalized = normalizeClaudeAgentInput(part.input, subagentRouting);
+            const normalized = prepareClaudeAgentInput(part.input, subagentRouting);
             logSubagentDecision(log, normalized.decision);
             const buffered = bufferedAgentCalls.get(toolCallId);
             if (!buffered && !idToBlock.has(toolCallId)) {
@@ -597,7 +597,7 @@ export async function generateAnthropicResponse(
       ...toolCalls.map(tc => {
         let input = tc.input as Record<string, unknown>;
         if (subagentRouting && tc.toolName === 'Agent') {
-          const normalized = normalizeClaudeAgentInput(tc.input, subagentRouting);
+          const normalized = prepareClaudeAgentInput(tc.input, subagentRouting);
           logSubagentDecision(options?.log, normalized.decision);
           input = normalized.input;
         }

@@ -27,6 +27,11 @@ const subagentRouting: SubagentModelRouting = {
   ],
 };
 
+const correlatedSubagentRouting: SubagentModelRouting = {
+  ...subagentRouting,
+  registerSubagentRoute: () => '11111111-1111-4111-8111-111111111111',
+};
+
 function claudeAgentTool() {
   return {
     name: 'Agent',
@@ -611,7 +616,7 @@ describe('writeAnthropicStream', () => {
         input: { prompt: 'inspect', subagent_type: 'general-purpose' },
       },
       { type: 'finish', finishReason: 'tool-calls' },
-    ], 'qwen-3', subagentRouting);
+    ], 'qwen-3', correlatedSubagentRouting);
     const deltas = events.filter(event => (
       event.event === 'content_block_delta'
       && event.data.delta.type === 'input_json_delta'
@@ -619,9 +624,8 @@ describe('writeAnthropicStream', () => {
 
     expect(deltas).toHaveLength(1);
     expect(JSON.parse(deltas[0].data.delta.partial_json)).toEqual({
-      prompt: 'inspect',
       subagent_type: 'general-purpose',
-      model: subagentRouting.parentModelId,
+      prompt: expect.stringContaining('<relay-ai-subagent-route'),
     });
     expect(raw).not.toContain('\"prompt\":\"inspect\",');
     expect(events.indexOf(deltas[0])).toBeLessThan(
@@ -636,13 +640,15 @@ describe('writeAnthropicStream', () => {
         type: 'tool-call',
         toolCallId: 'call_agent',
         toolName: 'Agent',
-        input: { subagent_type: 'general-purpose', model: 'relay:grok' },
+        input: { prompt: 'Inspect.', subagent_type: 'general-purpose', model: 'relay:grok' },
       },
       { type: 'finish', finishReason: 'tool-calls' },
-    ], 'qwen-3', subagentRouting);
+    ], 'qwen-3', correlatedSubagentRouting);
     const delta = events.find(event => event.data?.delta?.type === 'input_json_delta')!;
 
-    expect(JSON.parse(delta.data.delta.partial_json).model).toBe('anthropic-relay__grok-4');
+    const input = JSON.parse(delta.data.delta.partial_json);
+    expect(input.model).toBeUndefined();
+    expect(input.prompt).toContain('<relay-ai-subagent-route');
   });
 
   it('discards buffered Agent input when the upstream stream errors', async () => {

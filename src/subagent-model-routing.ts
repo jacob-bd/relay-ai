@@ -1,5 +1,6 @@
 import { MAX_MODEL_CATALOG } from './constants.js';
 import type { AnthropicToolDefinition } from './proxy-types.js';
+import { appendSubagentRouteMarker } from './subagent-route-registry.js';
 
 export type ClaudeModelFamily = 'sonnet' | 'opus' | 'haiku' | 'fable';
 
@@ -13,6 +14,7 @@ export interface SubagentModelOption {
 export interface SubagentModelRouting {
   parentModelId: string;
   models: SubagentModelOption[];
+  registerSubagentRoute?: (modelId: string) => string;
 }
 
 export type SubagentRoutingDecision =
@@ -133,6 +135,27 @@ export function normalizeClaudeAgentInput(
   }
 
   throw new UnavailableSubagentModelError(selector, routing);
+}
+
+export function prepareClaudeAgentInput(
+  input: unknown,
+  routing: SubagentModelRouting,
+): NormalizedSubagentInput {
+  const normalized = normalizeClaudeAgentInput(input, routing);
+  const decision = normalized.decision;
+  if (decision.kind === 'fork') return normalized;
+  if (!routing.registerSubagentRoute) return normalized;
+  const prompt = normalized.input.prompt;
+  if (typeof prompt !== 'string') return normalized;
+
+  const token = routing.registerSubagentRoute(decision.resolvedModelId);
+  const clientInput = { ...normalized.input };
+  const target = routing.models.find(model => model.id === decision.resolvedModelId);
+  if (target?.family) clientInput.model = target.family;
+  else delete clientInput.model;
+  clientInput.prompt = appendSubagentRouteMarker(prompt, token);
+
+  return { input: clientInput, decision };
 }
 
 export function augmentClaudeAgentTool(

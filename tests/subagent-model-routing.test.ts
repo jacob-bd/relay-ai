@@ -5,6 +5,7 @@ import {
   augmentClaudeAgentTool,
   isClaudeAgentTool,
   normalizeClaudeAgentInput,
+  prepareClaudeAgentInput,
   type SubagentModelRouting,
 } from '../src/subagent-model-routing.js';
 
@@ -188,6 +189,82 @@ describe('normalizeClaudeAgentInput', () => {
       expect(message).toContain(`and 3 more`);
       expect(message).not.toContain(`model-${MAX_MODEL_CATALOG + 2}`);
     }
+  });
+});
+
+describe('prepareClaudeAgentInput', () => {
+  const token = '11111111-1111-4111-8111-111111111111';
+
+  it('omits an inherited partner model and appends a correlation marker', () => {
+    const registered: string[] = [];
+    const result = prepareClaudeAgentInput(
+      { prompt: 'Inspect.', subagent_type: 'general-purpose' },
+      {
+        ...routing,
+        registerSubagentRoute: modelId => {
+          registered.push(modelId);
+          return token;
+        },
+      },
+    );
+
+    expect(result.input.model).toBeUndefined();
+    expect(result.input.prompt).toBe(
+      `Inspect.\n\n<relay-ai-subagent-route token="${token}"/>`,
+    );
+    expect(registered).toEqual([routing.parentModelId]);
+  });
+
+  it('hides an explicit partner id from Claude while registering the exact favorite', () => {
+    const registered: string[] = [];
+    const result = prepareClaudeAgentInput(
+      {
+        prompt: 'Inspect.',
+        subagent_type: 'general-purpose',
+        model: 'anthropic-relay__grok-4',
+      },
+      {
+        ...routing,
+        registerSubagentRoute: modelId => {
+          registered.push(modelId);
+          return token;
+        },
+      },
+    );
+
+    expect(result.input.model).toBeUndefined();
+    expect(registered).toEqual(['anthropic-relay__grok-4']);
+  });
+
+  it('uses a legal family value when the exact target is native Claude', () => {
+    const result = prepareClaudeAgentInput(
+      {
+        prompt: 'Inspect.',
+        subagent_type: 'general-purpose',
+        model: 'claude-native__sonnet-4-6',
+      },
+      {
+        ...routing,
+        registerSubagentRoute: () => token,
+      },
+    );
+
+    expect(result.input.model).toBe('sonnet');
+  });
+
+  it('does not register or modify fork calls', () => {
+    let registrations = 0;
+    const input = { prompt: 'Continue.', subagent_type: 'fork' };
+    const result = prepareClaudeAgentInput(input, {
+      ...routing,
+      registerSubagentRoute: () => {
+        registrations++;
+        return token;
+      },
+    });
+
+    expect(result.input).toEqual(input);
+    expect(registrations).toBe(0);
   });
 });
 
