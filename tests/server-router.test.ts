@@ -4,6 +4,7 @@ import { createGatewayModelCatalog, gatewayModelIdentity, type ServerModelInfo }
 import { startServer, type ServerHandle } from '../src/server/router.js';
 import { createLanguageModel } from '../src/provider-factory.js';
 import { generateAnthropicResponse } from '../src/sdk-adapter.js';
+import { appendSubagentRouteMarker } from '../src/subagent-route-registry.js';
 
 vi.mock('../src/provider-factory.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/provider-factory.js')>();
@@ -270,7 +271,10 @@ describe('server router', () => {
 
     const response = await fetch(`${server.url}/anthropic/v1/messages`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-claude-code-session-id': 'session-qwen',
+      },
       body: JSON.stringify({
         model: qwenId,
         messages: [{ role: 'user', content: 'delegate' }],
@@ -283,6 +287,34 @@ describe('server router', () => {
     expect(params.subagentRouting.parentModelId).toBe(qwenId);
     expect(params.subagentRouting.models).toHaveLength(2);
     expect(params.subagentRouting.models[0].id).toBe(qwenId);
+    expect(params.subagentRouting.registerSubagentRoute).toBeTypeOf('function');
+
+    const grokId = gatewayModelIdentity(grok, serverModels, gateway).publicId;
+    const token = params.subagentRouting.registerSubagentRoute(grokId);
+    const childResponse = await fetch(`${server.url}/anthropic/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-claude-code-session-id': 'session-qwen',
+        'x-claude-code-agent-id': 'agent-grok',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-5',
+        messages: [{
+          role: 'user',
+          content: [{
+            type: 'text',
+            text: appendSubagentRouteMarker('Inspect.', token),
+          }],
+        }],
+        tools: [claudeAgentDefinition()],
+      }),
+    });
+
+    expect(childResponse.status).toBe(200);
+    const childParams = vi.mocked(generateAnthropicResponse).mock.calls.at(-1)?.[1] as any;
+    expect(childParams.subagentRouting.parentModelId).toBe(grokId);
+    expect((childParams.messages[0].content as any[])[0].text).toBe('Inspect.');
   });
 
   it('forwards OpenAI chat completions for OpenAI-format models unchanged', async () => {

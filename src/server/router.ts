@@ -40,6 +40,10 @@ import {
   anthropicEffortFromRequest,
   type AnthropicRequest,
 } from '../sdk-adapter.js';
+import {
+  extractClaudeSessionId,
+  SubagentRouteRegistry,
+} from '../subagent-route-registry.js';
 
 export interface ServerBackend {
   baseUrl: string;
@@ -85,9 +89,10 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
   silenceSdkWarnings();
   const languageModelCache = new Map<string, LanguageModel>();
   const plog = makeServerLog(options.debugLogPath);
+  const subagentRouteRegistry = new SubagentRouteRegistry();
 
   const server = createServer((req, res) => {
-    void routeRequest(req, res, options, languageModelCache, plog);
+    void routeRequest(req, res, options, languageModelCache, plog, subagentRouteRegistry);
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -114,7 +119,14 @@ export async function startServer(options: ServerOptions): Promise<ServerHandle>
   };
 }
 
-async function routeRequest(req: IncomingMessage, res: ServerResponse, options: ServerOptions, modelCache: Map<string, LanguageModel>, plog: PLog): Promise<void> {
+async function routeRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: ServerOptions,
+  modelCache: Map<string, LanguageModel>,
+  plog: PLog,
+  subagentRouteRegistry: SubagentRouteRegistry,
+): Promise<void> {
   try {
     const pathname = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`).pathname;
     plog(`${req.method} ${pathname}`);
@@ -145,7 +157,7 @@ async function routeRequest(req: IncomingMessage, res: ServerResponse, options: 
     }
 
     if (req.method === 'POST' && pathname === '/anthropic/v1/messages') {
-      await handleAnthropicMessages(req, res, options, modelCache, plog);
+      await handleAnthropicMessages(req, res, options, modelCache, plog, subagentRouteRegistry);
       return;
     }
 
@@ -166,14 +178,18 @@ async function handleAnthropicMessages(
   options: ServerOptions,
   modelCache: Map<string, LanguageModel>,
   plog: PLog,
+  subagentRouteRegistry: SubagentRouteRegistry,
 ): Promise<void> {
-  const body = await readJson(req);
+  let body = await readJson(req);
   if (!body) {
     sendJson(res, 400, { error: { message: 'Invalid JSON body' } });
     return;
   }
 
-  const model = lookupModel(res, options.catalog, body.model);
+  const correlatedSubagent = subagentRouteRegistry.consume(req.headers, body);
+  if (correlatedSubagent) body = correlatedSubagent.body;
+  const requestedModelId = correlatedSubagent?.modelId ?? body.model;
+  const model = lookupModel(res, options.catalog, requestedModelId);
   if (!model) {
     plog(`model not found: ${body.model}`);
     return;
@@ -235,15 +251,22 @@ async function handleAnthropicMessages(
     if (npmMaxTools !== undefined && toolCount > npmMaxTools) {
       plog(`tools truncated: ${toolCount} → ${npmMaxTools} (provider limit)`);
     }
+    const subagentRouting = buildServerSubagentModelRouting(
+      options.catalog.list(),
+      model,
+      options.gateway,
+    );
+    const sessionId = extractClaudeSessionId(req.headers, body);
+    if (sessionId) {
+      subagentRouting.registerSubagentRoute = modelId => (
+        subagentRouteRegistry.register(sessionId, modelId)
+      );
+    }
     const params = sdkTranslateRequest(body as unknown as AnthropicRequest, model.npm!, {
       defaultEffort: anthropicEffortFromRequest(body as AnthropicRequest) ? undefined : model.defaultEffort,
       openAiOAuth: model.npm === '@ai-sdk/openai' && model.authType === 'oauth',
       onDebug: plog,
-      subagentRouting: buildServerSubagentModelRouting(
-        options.catalog.list(),
-        model,
-        options.gateway,
-      ),
+      subagentRouting,
       reasoningMetadata: {
         providerId: model.providerId,
         apiBaseUrl: model.apiBaseUrl,

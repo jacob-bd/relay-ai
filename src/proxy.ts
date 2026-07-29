@@ -30,6 +30,10 @@ import {
   claudeModelFamily,
   type SubagentModelRouting,
 } from './subagent-model-routing.js';
+import {
+  extractClaudeSessionId,
+  SubagentRouteRegistry,
+} from './subagent-route-registry.js';
 
 type ProxyLog = (message: string | (() => string)) => void;
 
@@ -167,6 +171,7 @@ export function startProxyCatalog(
 
   const byAlias = new Map(routes.map(r => [r.aliasId, r]));
   const defaultRoute = byAlias.get(defaultAliasId) ?? routes[0]!;
+  const subagentRouteRegistry = new SubagentRouteRegistry();
 
   const plog = makeProxyLog(debug);
 
@@ -232,11 +237,18 @@ export function startProxyCatalog(
         return;
       }
 
+      const correlatedSubagent = subagentRouteRegistry.consume(req.headers, anthropicBody);
+      if (correlatedSubagent) anthropicBody = correlatedSubagent.body;
       const originalModel = anthropicBody.model;
       const clientWantsStream = Boolean(anthropicBody.stream);
 
       // Per-request route resolution: look up the alias, fall back to default
-      const route = lookupRoute(byAlias, originalModel) ?? defaultRoute;
+      const correlatedRoute = correlatedSubagent
+        ? routes.find(candidate => (
+          (candidate.gatewayAliasId ?? candidate.aliasId) === correlatedSubagent.modelId
+        ))
+        : undefined;
+      const route = correlatedRoute ?? lookupRoute(byAlias, originalModel) ?? defaultRoute;
       const apiKey = route.apiKey;
       const upstreamUrl = route.upstreamUrl;
 
@@ -298,11 +310,18 @@ export function startProxyCatalog(
       // format, endpoint selection, and provider quirks.
       if (usesSdkAdapter) {
         const openAiOAuth = route.npm === '@ai-sdk/openai' && route.authType === 'oauth';
+        const subagentRouting = buildProxySubagentModelRouting(routes, route);
+        const sessionId = extractClaudeSessionId(req.headers, anthropicBody);
+        if (sessionId) {
+          subagentRouting.registerSubagentRoute = modelId => (
+            subagentRouteRegistry.register(sessionId, modelId)
+          );
+        }
         const params = sdkTranslateRequest(anthropicBody, route.npm!, {
           openAiOAuth,
           maxTools: maxToolsForNpm(route.npm),
           onDebug: (msg) => plog(() => msg),
-          subagentRouting: buildProxySubagentModelRouting(routes, route),
+          subagentRouting,
           reasoningMetadata: {
             providerId: route.providerId,
             apiBaseUrl: route.baseURL,

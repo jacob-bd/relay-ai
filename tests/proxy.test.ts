@@ -10,6 +10,7 @@ import {
 } from '../src/proxy.js';
 import { getProxyDebugLogPath } from '../src/trace-log.js';
 import { translateRequest } from '../src/sdk-adapter.js';
+import { appendSubagentRouteMarker } from '../src/subagent-route-registry.js';
 
 vi.mock('../src/sdk-adapter.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/sdk-adapter.js')>();
@@ -20,7 +21,12 @@ vi.mock('../src/sdk-adapter.js', async importOriginal => {
 });
 
 /** POST JSON to a local proxy via node:http (avoids vi.stubGlobal('fetch') interception). */
-function postToProxy(port: number, token: string, body: unknown): Promise<{ status: number; body: string }> {
+function postToProxy(
+  port: number,
+  token: string,
+  body: unknown,
+  extraHeaders: Record<string, string> = {},
+): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
     const req = http.request(
@@ -34,6 +40,7 @@ function postToProxy(port: number, token: string, body: unknown): Promise<{ stat
           'Authorization': `Bearer ${token}`,
           'anthropic-version': '2023-06-01',
           'Content-Length': Buffer.byteLength(payload),
+          ...extraHeaders,
         },
       },
       (res) => {
@@ -250,6 +257,8 @@ describe('SDK anonymous route handling', () => {
       messages: [{ role: 'user', content: 'hi' }],
       tools: [claudeAgentDefinition()],
       stream: false,
+    }, {
+      'x-claude-code-session-id': 'session-grok',
     });
     handle.close();
 
@@ -259,6 +268,59 @@ describe('SDK anonymous route handling', () => {
       qwen.gatewayAliasId,
       grok.gatewayAliasId,
     ]);
+    expect(options.subagentRouting.registerSubagentRoute).toBeTypeOf('function');
+  });
+
+  it('correlates Claude 2.1.220 family-model children to the registered exact route', async () => {
+    vi.mocked(translateRequest).mockClear();
+    const qwen: ProxyRoute = {
+      aliasId: 'anthropic-probe__qwen-3',
+      realModelId: 'qwen-3',
+      displayName: 'Qwen 3',
+      upstreamUrl: '',
+      apiKey: '',
+      modelFormat: 'openai',
+      npm: 'missing-sdk-provider-for-test',
+      providerId: 'probe',
+    };
+    const grok: ProxyRoute = {
+      aliasId: 'anthropic-probe__grok-4',
+      realModelId: 'grok-4',
+      displayName: 'Grok 4',
+      upstreamUrl: '',
+      apiKey: '',
+      modelFormat: 'openai',
+      npm: 'missing-sdk-provider-for-test',
+      providerId: 'probe',
+    };
+    const handle = await startProxyCatalog([qwen, grok], qwen.aliasId, false);
+    const sessionHeaders = { 'x-claude-code-session-id': 'session-a' };
+
+    await postToProxy(handle.port, handle.token, {
+      model: qwen.aliasId,
+      messages: [{ role: 'user', content: 'parent' }],
+      tools: [claudeAgentDefinition()],
+    }, sessionHeaders);
+    const parentRouting = (vi.mocked(translateRequest).mock.calls.at(-1)?.[2] as any).subagentRouting;
+    const token = parentRouting.registerSubagentRoute(grok.aliasId);
+    const markedPrompt = appendSubagentRouteMarker('Inspect.', token);
+
+    await postToProxy(handle.port, handle.token, {
+      model: 'claude-sonnet-5',
+      messages: [{
+        role: 'user',
+        content: [{ type: 'text', text: markedPrompt }],
+      }],
+      tools: [claudeAgentDefinition()],
+    }, {
+      ...sessionHeaders,
+      'x-claude-code-agent-id': 'agent-grok',
+    });
+    handle.close();
+
+    const childCall = vi.mocked(translateRequest).mock.calls.at(-1)!;
+    expect((childCall[2] as any).subagentRouting.parentModelId).toBe(grok.aliasId);
+    expect((childCall[0].messages[0].content as any[])[0].text).toBe('Inspect.');
   });
 });
 
