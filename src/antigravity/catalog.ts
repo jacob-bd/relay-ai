@@ -267,6 +267,14 @@ export function injectRelayModels(
         }],
       },
     ];
+    for (const entry of Object.values(result.models)) {
+      const mimeTypes = entry.supportedMimeTypes;
+      if (!mimeTypes || typeof mimeTypes !== 'object' || Array.isArray(mimeTypes)) continue;
+      entry.supportedMimeTypes = Object.fromEntries(
+        Object.entries(mimeTypes).filter(([mime]) => !mime.toLowerCase().includes('audio/')),
+      );
+    }
+    result.audioTranscriptionModelIds = [];
     return result;
   }
 

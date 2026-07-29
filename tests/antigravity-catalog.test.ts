@@ -436,6 +436,24 @@ describe('antigravity catalog', () => {
     expect(((configs.clientModelSorts as any[])[0].groups[0].modelLabels as string[])).toHaveLength(7);
   });
 
+  it('does not advertise audio support for relay-backed Antigravity models', () => {
+    const catalog = injectRelayModels(
+      catalogFixtureRaw as CatalogFixture,
+      routes,
+      'gemini-3.5-flash-low',
+    );
+    const configs = buildListModelConfigsResponse(routes, catalog);
+    const routeMimeTypes = catalog.models[routes[0]!.catalogId]!.supportedMimeTypes as Record<string, boolean>;
+    const slotMimeTypes = catalog.models['gemini-3.5-flash-low']!.supportedMimeTypes as Record<string, boolean>;
+    const clientMimeTypes = (configs.clientModelConfigs as any[])[0]!.supportedMimeTypes as Record<string, boolean>;
+
+    for (const mimeTypes of [routeMimeTypes, slotMimeTypes, clientMimeTypes]) {
+      expect(Object.keys(mimeTypes).some(mime => mime.toLowerCase().includes('audio/'))).toBe(false);
+      expect(mimeTypes['image/png']).toBe(true);
+    }
+    expect(catalog.audioTranscriptionModelIds).toEqual([]);
+  });
+
   it('uses unique route labels consistently for duplicate dropdown model names', () => {
     const duplicateRoutes = buildAntigravityRoutes([
       {

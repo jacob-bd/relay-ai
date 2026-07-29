@@ -4315,6 +4315,238 @@ function maskGatewayModelId(aliasId) {
   return `anthropic-${reverseSegment(providerSlug)}__${reverseSegment(modelSuffix)}`;
 }
 
+// src/subagent-route-registry.ts
+import { randomUUID as randomUUID2 } from "crypto";
+var DEFAULT_TTL_MS = 5 * 6e4;
+var DEFAULT_MAX_ENTRIES = 1024;
+var ROUTE_MARKER_PATTERN = /(?:\n\n)?<relay-ai-subagent-route token="([0-9a-f-]{36})"\s*\/>/i;
+function firstHeader(value) {
+  const first = Array.isArray(value) ? value[0] : value;
+  return typeof first === "string" && first.trim() ? first.trim() : void 0;
+}
+function extractClaudeSessionId(headers, body) {
+  const headerSession = firstHeader(headers["x-claude-code-session-id"]);
+  if (headerSession) return headerSession;
+  const userId = body?.metadata?.user_id;
+  if (typeof userId !== "string") return void 0;
+  try {
+    const parsed = JSON.parse(userId);
+    return typeof parsed.session_id === "string" && parsed.session_id.trim() ? parsed.session_id.trim() : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function appendSubagentRouteMarker(prompt, token) {
+  return `${prompt}
+
+<relay-ai-subagent-route token="${token}"/>`;
+}
+function findMarkerInUserMessages(body) {
+  if (!Array.isArray(body.messages)) return void 0;
+  for (let messageIndex = 0; messageIndex < body.messages.length; messageIndex++) {
+    const message = body.messages[messageIndex];
+    if (!message || message.role !== "user") continue;
+    if (typeof message.content === "string") {
+      const match = message.content.match(ROUTE_MARKER_PATTERN);
+      if (!match?.[1]) continue;
+      const messages = [...body.messages];
+      messages[messageIndex] = {
+        ...message,
+        content: message.content.replace(ROUTE_MARKER_PATTERN, "").trimEnd()
+      };
+      return { token: match[1], body: { ...body, messages } };
+    }
+    if (!Array.isArray(message.content)) continue;
+    for (let partIndex = 0; partIndex < message.content.length; partIndex++) {
+      const part = message.content[partIndex];
+      if (!part || part.type !== "text" || typeof part.text !== "string") continue;
+      const match = part.text.match(ROUTE_MARKER_PATTERN);
+      if (!match?.[1]) continue;
+      const content = [...message.content];
+      content[partIndex] = {
+        ...part,
+        text: part.text.replace(ROUTE_MARKER_PATTERN, "").trimEnd()
+      };
+      const messages = [...body.messages];
+      messages[messageIndex] = { ...message, content };
+      return { token: match[1], body: { ...body, messages } };
+    }
+  }
+  return void 0;
+}
+var SubagentRouteRegistry = class {
+  entries = /* @__PURE__ */ new Map();
+  ttlMs;
+  maxEntries;
+  now;
+  constructor(options = {}) {
+    this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
+    this.maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
+    this.now = options.now ?? Date.now;
+  }
+  register(sessionId, modelId) {
+    this.cleanup();
+    while (this.entries.size >= this.maxEntries) {
+      const oldest = this.entries.keys().next().value;
+      if (!oldest) break;
+      this.entries.delete(oldest);
+    }
+    const token = randomUUID2();
+    this.entries.set(token, { sessionId, modelId, createdAt: this.now() });
+    return token;
+  }
+  consume(headers, body) {
+    this.cleanup();
+    if (!firstHeader(headers["x-claude-code-agent-id"])) return void 0;
+    const sessionId = extractClaudeSessionId(headers, body);
+    if (!sessionId) return void 0;
+    const marked = findMarkerInUserMessages(body);
+    if (!marked) return void 0;
+    const entry = this.entries.get(marked.token);
+    if (!entry || entry.sessionId !== sessionId) return void 0;
+    this.entries.delete(marked.token);
+    return { modelId: entry.modelId, body: marked.body };
+  }
+  cleanup() {
+    const cutoff = this.now() - this.ttlMs;
+    for (const [token, entry] of this.entries) {
+      if (entry.createdAt < cutoff) this.entries.delete(token);
+    }
+  }
+};
+
+// src/subagent-model-routing.ts
+var CLAUDE_MODEL_FAMILIES = ["sonnet", "opus", "haiku", "fable"];
+var CLAUDE_MODEL_FAMILY_SET = new Set(CLAUDE_MODEL_FAMILIES);
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function claudeModelFamily(modelId) {
+  const normalized = modelId.toLowerCase();
+  if (!normalized.startsWith("claude-")) return void 0;
+  return CLAUDE_MODEL_FAMILIES.find((family) => normalized.includes(family));
+}
+function isClaudeAgentTool(tool4) {
+  if (tool4.name !== "Agent" || !isRecord(tool4.input_schema)) return false;
+  const properties = tool4.input_schema.properties;
+  if (!isRecord(properties)) return false;
+  return ["description", "prompt", "subagent_type"].every((name) => isRecord(properties[name]));
+}
+var UnavailableSubagentModelError = class extends Error {
+  constructor(selector, routing) {
+    const visible = routing.models.slice(0, MAX_MODEL_CATALOG).map((model) => model.id);
+    const omitted = routing.models.length - visible.length;
+    const suffix = omitted > 0 ? `, and ${omitted} more` : "";
+    super(
+      `Subagent model "${selector}" is unavailable in this Relay AI session. Available model ids: ${visible.join(", ")}${suffix}.`
+    );
+    this.selector = selector;
+    this.name = "UnavailableSubagentModelError";
+  }
+  selector;
+  statusCode = 400;
+};
+function normalizeClaudeAgentInput(input, routing) {
+  const source = isRecord(input) ? input : {};
+  const normalized = { ...source };
+  if (source.subagent_type === "fork") {
+    return { input: normalized, decision: { kind: "fork" } };
+  }
+  const rawModel = source.model;
+  if (rawModel == null) {
+    normalized.model = routing.parentModelId;
+    return {
+      input: normalized,
+      decision: { kind: "inherit", resolvedModelId: routing.parentModelId }
+    };
+  }
+  if (typeof rawModel !== "string") {
+    throw new UnavailableSubagentModelError(String(rawModel), routing);
+  }
+  const selector = rawModel.trim();
+  if (selector === "" || selector === "inherit") {
+    normalized.model = routing.parentModelId;
+    return {
+      input: normalized,
+      decision: { kind: "inherit", resolvedModelId: routing.parentModelId }
+    };
+  }
+  const exposed = routing.models.find((model) => model.id === selector);
+  if (exposed) {
+    normalized.model = exposed.id;
+    return {
+      input: normalized,
+      decision: { kind: "explicit", resolvedModelId: exposed.id }
+    };
+  }
+  const compatible = routing.models.find((model) => model.compatibilityIds.includes(selector));
+  if (compatible) {
+    normalized.model = compatible.id;
+    return {
+      input: normalized,
+      decision: {
+        kind: "compatibility",
+        requestedModelId: selector,
+        resolvedModelId: compatible.id
+      }
+    };
+  }
+  if (CLAUDE_MODEL_FAMILY_SET.has(selector)) {
+    const family = selector;
+    const nativeModel = routing.models.find((model) => model.family === family);
+    const resolvedModelId = nativeModel?.id ?? routing.parentModelId;
+    normalized.model = resolvedModelId;
+    return {
+      input: normalized,
+      decision: nativeModel ? { kind: "family", requestedModelId: family, resolvedModelId } : { kind: "family-fallback", requestedModelId: family, resolvedModelId }
+    };
+  }
+  throw new UnavailableSubagentModelError(selector, routing);
+}
+function prepareClaudeAgentInput(input, routing) {
+  const normalized = normalizeClaudeAgentInput(input, routing);
+  const decision = normalized.decision;
+  if (decision.kind === "fork") return normalized;
+  if (!routing.registerSubagentRoute) return normalized;
+  const prompt = normalized.input.prompt;
+  if (typeof prompt !== "string") return normalized;
+  const token = routing.registerSubagentRoute(decision.resolvedModelId);
+  const clientInput = { ...normalized.input };
+  const target = routing.models.find((model) => model.id === decision.resolvedModelId);
+  if (target?.family) clientInput.model = target.family;
+  else delete clientInput.model;
+  clientInput.prompt = appendSubagentRouteMarker(prompt, token);
+  return { input: clientInput, decision };
+}
+function augmentClaudeAgentTool(tool4, routing) {
+  const inputSchema = isRecord(tool4.input_schema) ? tool4.input_schema : {};
+  const properties = isRecord(inputSchema.properties) ? inputSchema.properties : {};
+  const originalModel = isRecord(properties.model) ? properties.model : {};
+  const smallCatalog = routing.models.length <= MAX_MODEL_CATALOG;
+  const modelProperty = {
+    ...originalModel,
+    type: "string"
+  };
+  if (smallCatalog) {
+    const originalEnum = Array.isArray(originalModel.enum) ? originalModel.enum.filter((value) => typeof value === "string") : CLAUDE_MODEL_FAMILIES;
+    modelProperty.enum = [.../* @__PURE__ */ new Set([...originalEnum, ...routing.models.map((model) => model.id)])];
+  } else {
+    delete modelProperty.enum;
+  }
+  const guidance = smallCatalog ? `Relay AI subagent model routing (default: ${routing.parentModelId}). ` + routing.models.map((model) => `${model.displayName}: ${model.id}`).join("; ") : `Relay AI subagent model routing (default: ${routing.parentModelId}). Other explicit model values must be exact ids from the current session catalog.`;
+  return {
+    ...tool4,
+    description: [tool4.description?.trim(), guidance].filter(Boolean).join("\n\n"),
+    input_schema: {
+      ...inputSchema,
+      properties: {
+        ...properties,
+        model: modelProperty
+      }
+    }
+  };
+}
+
 // src/server/models.ts
 var CREATED_AT_ISO = "2025-01-01T00:00:00Z";
 var CREATED_AT_UNIX = 1735689600;
@@ -4368,6 +4600,52 @@ function exposedGatewayAliasId(model, opts) {
   const exposed = opts?.maskGatewayIds ? maskGatewayModelId(alias) : alias;
   return singleOneM ? `${stripOneMContextSuffix(exposed)}[1m]` : exposed;
 }
+function gatewayModelIdentity(model, models, opts) {
+  const collisions = openAiIdCollisions(models);
+  const ids = [];
+  const modelIndex = models.indexOf(model);
+  const firstBareIndex = models.findIndex((candidate) => candidate.id === model.id);
+  if (modelIndex === firstBareIndex || modelIndex < 0) ids.push(model.id);
+  const scopedId = openAiExposedId(model, collisions);
+  if (scopedId !== model.id) ids.push(scopedId);
+  const publicId = exposedGatewayAliasId(model, opts);
+  if (publicId !== model.id) ids.push(publicId);
+  const singleOneM = usesSingleOneMEntry(model, opts);
+  if (singleOneM) {
+    const bareModel = { ...model, id: stripOneMContextSuffix(model.id) };
+    const rawBareAlias = gatewayAliasId(bareModel);
+    const exposedBareAlias = opts?.maskGatewayIds ? maskGatewayModelId(rawBareAlias) : rawBareAlias;
+    ids.push(
+      stripOneMContextSuffix(model.id),
+      rawBareAlias,
+      `${rawBareAlias}[1m]`,
+      exposedBareAlias,
+      `${exposedBareAlias}[1m]`
+    );
+  }
+  if (opts?.maskGatewayIds) {
+    const rawAlias = gatewayAliasId(singleOneM ? { ...model, id: stripOneMContextSuffix(model.id) } : model);
+    if (rawAlias !== publicId) ids.push(rawAlias);
+  }
+  return {
+    publicId,
+    compatibilityIds: [...new Set(ids)]
+  };
+}
+function buildServerSubagentModelRouting(models, parentModel, opts) {
+  const identities = models.map((model) => gatewayModelIdentity(model, models, opts));
+  const parentIndex = models.indexOf(parentModel);
+  const parentModelId = parentIndex >= 0 ? identities[parentIndex].publicId : exposedGatewayAliasId(parentModel, opts);
+  return {
+    parentModelId,
+    models: models.map((model, index) => ({
+      id: identities[index].publicId,
+      compatibilityIds: identities[index].compatibilityIds,
+      displayName: gatewayDisplayName(model, opts),
+      family: model.modelFormat === "anthropic" ? claudeModelFamily(model.upstreamModelId ?? model.id) : void 0
+    }))
+  };
+}
 function gatewayDisplayName(model, opts) {
   const name = opts?.maskGatewayIds ? `${model.name} (${gatewayProviderLabel(model)})` : model.name;
   return usesSingleOneMEntry(model, opts) && !/\b1m$/i.test(name) ? `${name} 1M` : name;
@@ -4387,31 +4665,10 @@ function usesSingleOneMEntry(model, opts) {
 }
 function createGatewayModelCatalog(models, opts) {
   const byId = /* @__PURE__ */ new Map();
-  const collisions = openAiIdCollisions(models);
   for (const model of models) {
-    if (!byId.has(model.id)) byId.set(model.id, model);
-    const scopedId = openAiExposedId(model, collisions);
-    if (scopedId !== model.id) byId.set(scopedId, model);
-    const alias = exposedGatewayAliasId(model, opts);
-    if (alias !== model.id) byId.set(alias, model);
-    const singleOneM = usesSingleOneMEntry(model, opts);
-    if (singleOneM) {
-      const bareModel = { ...model, id: stripOneMContextSuffix(model.id) };
-      const rawBareAlias = gatewayAliasId(bareModel);
-      const exposedBareAlias = opts?.maskGatewayIds ? maskGatewayModelId(rawBareAlias) : rawBareAlias;
-      for (const compatibleId of [
-        stripOneMContextSuffix(model.id),
-        rawBareAlias,
-        `${rawBareAlias}[1m]`,
-        exposedBareAlias,
-        `${exposedBareAlias}[1m]`
-      ]) {
-        byId.set(compatibleId, model);
-      }
-    }
-    if (opts?.maskGatewayIds) {
-      const rawAlias = gatewayAliasId(singleOneM ? { ...model, id: stripOneMContextSuffix(model.id) } : model);
-      if (rawAlias !== alias) byId.set(rawAlias, model);
+    const identity = gatewayModelIdentity(model, models, opts);
+    for (const compatibleId of identity.compatibilityIds) {
+      byId.set(compatibleId, model);
     }
   }
   return {
@@ -4611,10 +4868,10 @@ async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWant
 }
 
 // src/antigravity/anthropic-to-cloudcode.ts
-import { randomUUID as randomUUID3 } from "crypto";
+import { randomUUID as randomUUID4 } from "crypto";
 
 // src/antigravity/request-adapter.ts
-import { randomUUID as randomUUID2 } from "crypto";
+import { randomUUID as randomUUID3 } from "crypto";
 import { tool, jsonSchema } from "ai";
 
 // src/proxy-shared.ts
@@ -4724,6 +4981,43 @@ function serializeToolResultContent(content) {
 }
 
 // src/antigravity/request-adapter.ts
+var UNSUPPORTED_VOICE_MESSAGE = "Voice transcription isn\u2019t supported by Relay AI yet. Please type your message. Your coding session remains active.";
+var OMITTED_VOICE_TEXT = "[Voice recording omitted because transcription is not supported by Relay AI.]";
+function isSupportedImage(part) {
+  return part.inlineData?.mimeType.toLowerCase().startsWith("image/") ?? false;
+}
+function isUnsupportedInlineData(part) {
+  return !!part.inlineData && !isSupportedImage(part);
+}
+function sanitizeUnsupportedInlineData(ccReq) {
+  const contents = ccReq.request?.contents ?? [];
+  let latestUserIndex = -1;
+  for (let i = contents.length - 1; i >= 0; i--) {
+    if (contents[i].role === "user") {
+      latestUserIndex = i;
+      break;
+    }
+  }
+  let latestUserTurnHasUnsupportedMedia = false;
+  const sanitizedContents = contents.map((message, index) => ({
+    ...message,
+    parts: message.parts.map((part) => {
+      if (!isUnsupportedInlineData(part)) return part;
+      if (index === latestUserIndex) latestUserTurnHasUnsupportedMedia = true;
+      return { text: OMITTED_VOICE_TEXT };
+    })
+  }));
+  return {
+    request: {
+      ...ccReq,
+      request: {
+        ...ccReq.request,
+        contents: sanitizedContents
+      }
+    },
+    latestUserTurnHasUnsupportedMedia
+  };
+}
 function tracePartChars(part) {
   if (typeof part.text === "string") return part.text.length;
   if (part.type !== "tool-result") return void 0;
@@ -4883,13 +5177,17 @@ function translateRequest(ccReq, options = {}) {
           }
         }
       } else if (part.inlineData) {
-        contentParts.push({
-          type: "image",
-          image: part.inlineData.data,
-          mimeType: part.inlineData.mimeType
-        });
+        if (isSupportedImage(part)) {
+          contentParts.push({
+            type: "image",
+            image: part.inlineData.data,
+            mimeType: part.inlineData.mimeType
+          });
+        } else {
+          contentParts.push({ type: "text", text: OMITTED_VOICE_TEXT });
+        }
       } else if (part.functionCall) {
-        const id = "call_" + randomUUID2().replace(/-/g, "");
+        const id = "call_" + randomUUID3().replace(/-/g, "");
         const name = part.functionCall.name;
         if (!nameToIdList.has(name)) nameToIdList.set(name, []);
         nameToIdList.get(name).push(id);
@@ -4902,7 +5200,7 @@ function translateRequest(ccReq, options = {}) {
       } else if (part.functionResponse) {
         const name = part.functionResponse.name;
         const idList = nameToIdList.get(name) || [];
-        const id = idList.shift() || "call_" + randomUUID2().replace(/-/g, "");
+        const id = idList.shift() || "call_" + randomUUID3().replace(/-/g, "");
         toolResults.push({
           type: "tool-result",
           toolCallId: id,
@@ -5111,7 +5409,7 @@ function anthropicToCloudCode(body, realModelId, projectId) {
   }
   return {
     project: projectId,
-    requestId: randomUUID3(),
+    requestId: randomUUID4(),
     model: realModelId,
     userAgent: ANTIGRAVITY_USER_AGENT2,
     requestType: "agent",
@@ -5121,7 +5419,7 @@ function anthropicToCloudCode(body, realModelId, projectId) {
 }
 
 // src/antigravity/cloudcode-to-anthropic.ts
-import { randomUUID as randomUUID4 } from "crypto";
+import { randomUUID as randomUUID5 } from "crypto";
 function writeEvent(res, event, data) {
   res.write(`event: ${event}
 data: ${JSON.stringify(data)}
@@ -5211,7 +5509,7 @@ function closeBlock(res, state) {
 }
 async function streamCloudCodeToAnthropic(res, upstreamRes, model, log7) {
   const state = {
-    messageId: `msg_${randomUUID4().replace(/-/g, "").slice(0, 24)}`,
+    messageId: `msg_${randomUUID5().replace(/-/g, "").slice(0, 24)}`,
     model,
     blockIdx: 0,
     textBlockOpen: false,
@@ -5300,7 +5598,7 @@ async function streamCloudCodeToAnthropic(res, upstreamRes, model, log7) {
             closeBlock(res, state);
           }
           for (const tc of state.toolCalls) {
-            const rawToolId = `toolu_${randomUUID4().replace(/-/g, "").slice(0, 16)}`;
+            const rawToolId = `toolu_${randomUUID5().replace(/-/g, "").slice(0, 16)}`;
             const toolId = encodeToolUseId(rawToolId, tc.signature);
             writeEvent(res, "content_block_start", {
               type: "content_block_start",
@@ -5351,7 +5649,7 @@ async function streamCloudCodeToAnthropic(res, upstreamRes, model, log7) {
 }
 async function collectCloudCodeToAnthropic(upstreamRes, model, log7) {
   const text4 = await upstreamRes.text();
-  const messageId = `msg_${randomUUID4().replace(/-/g, "").slice(0, 24)}`;
+  const messageId = `msg_${randomUUID5().replace(/-/g, "").slice(0, 24)}`;
   const content = [];
   let stopReason = "end_turn";
   let inputTokens = 0;
@@ -5380,7 +5678,7 @@ async function collectCloudCodeToAnthropic(upstreamRes, model, log7) {
         else content.push({ type: "text", text: part.text });
       } else if (part.functionCall && typeof part.functionCall === "object") {
         const fc = part.functionCall;
-        const rawToolId = `toolu_${randomUUID4().replace(/-/g, "").slice(0, 16)}`;
+        const rawToolId = `toolu_${randomUUID5().replace(/-/g, "").slice(0, 16)}`;
         content.push({
           type: "tool_use",
           id: encodeToolUseId(rawToolId, signature ?? pendingThoughtSignature),
@@ -5413,7 +5711,7 @@ async function collectCloudCodeToAnthropic(upstreamRes, model, log7) {
 }
 
 // src/proxy.ts
-import { randomUUID as randomUUID5 } from "crypto";
+import { randomUUID as randomUUID6 } from "crypto";
 
 // src/sdk-adapter.ts
 import { streamText, generateText, tool as tool2, jsonSchema as jsonSchema2 } from "ai";
@@ -5746,6 +6044,17 @@ function translateRequest2(body, npm, options) {
   if (options?.maxTools !== void 0 && upstreamTools.length > options.maxTools) {
     upstreamTools = upstreamTools.slice(0, options.maxTools);
   }
+  let responseSubagentRouting;
+  if (options?.subagentRouting) {
+    const agentIndex = upstreamTools.findIndex((toolDefinition) => isClaudeAgentTool(toolDefinition));
+    if (agentIndex >= 0) {
+      upstreamTools = upstreamTools.map((toolDefinition, index) => index === agentIndex ? augmentClaudeAgentTool(
+        toolDefinition,
+        options.subagentRouting
+      ) : toolDefinition);
+      responseSubagentRouting = options.subagentRouting;
+    }
+  }
   const effort = anthropicEffortFromRequest(body) ?? options?.defaultEffort;
   let providerOptions = deepMergeProviderOptions(
     thinkingProviderOptions(npm),
@@ -5763,16 +6072,22 @@ function translateRequest2(body, npm, options) {
     toolChoice: translateToolChoice(body.tool_choice),
     maxOutputTokens: options?.openAiOAuth ? void 0 : body.max_tokens,
     temperature: body.temperature,
-    providerOptions
+    providerOptions,
+    subagentRouting: responseSubagentRouting
   };
 }
-async function writeAnthropicStream(fullStream, modelId, write, log7, estimatedInputTokens = 0) {
+function logSubagentDecision(log7, decision) {
+  if (!log7 || decision.kind === "fork" || decision.kind === "explicit") return;
+  log7(() => decision.kind === "family-fallback" ? `sdk Agent model "${decision.requestedModelId}" unavailable; using parent ${decision.resolvedModelId}` : `sdk Agent model ${decision.kind}: ${"requestedModelId" in decision ? `${decision.requestedModelId} -> ` : ""}${decision.resolvedModelId}`);
+}
+async function writeAnthropicStream(fullStream, modelId, write, log7, estimatedInputTokens = 0, subagentRouting) {
   const messageId = "msg_" + Date.now();
   let blockIndex = -1;
   let started = false;
   let openType = null;
   let pendingThinkingSig;
   const idToBlock = /* @__PURE__ */ new Map();
+  const bufferedAgentCalls = /* @__PURE__ */ new Map();
   let finishReason = "end_turn";
   let usage = { input_tokens: estimatedInputTokens, output_tokens: 0 };
   const emit = (event, data) => write(sseChunk(event, data));
@@ -5855,9 +6170,13 @@ async function writeAnthropicStream(fullStream, modelId, write, log7, estimatedI
           input: {}
         });
         idToBlock.set(part.id ?? "", blockIndex);
+        if (subagentRouting && part.toolName === "Agent") {
+          bufferedAgentCalls.set(part.id ?? "", { blockIndex });
+        }
         break;
       }
       case "tool-input-delta":
+        if (bufferedAgentCalls.has(part.id ?? "")) break;
         emit("content_block_delta", {
           type: "content_block_delta",
           index: idToBlock.get(part.id ?? "") ?? blockIndex,
@@ -5868,11 +6187,53 @@ async function writeAnthropicStream(fullStream, modelId, write, log7, estimatedI
         break;
       case "tool-call": {
         finishReason = "tool_use";
-        if (!idToBlock.has(part.toolCallId ?? "") && openType !== "tool") {
+        const toolCallId = part.toolCallId ?? "";
+        if (subagentRouting && part.toolName === "Agent") {
+          try {
+            const normalized = prepareClaudeAgentInput(part.input, subagentRouting);
+            logSubagentDecision(log7, normalized.decision);
+            const buffered = bufferedAgentCalls.get(toolCallId);
+            if (!buffered && !idToBlock.has(toolCallId)) {
+              const sig = grabRoundTripSignature(part);
+              openBlock("tool", {
+                type: "tool_use",
+                id: encodeToolUseId(toolCallId, sig),
+                name: part.toolName,
+                input: {}
+              });
+              idToBlock.set(toolCallId, blockIndex);
+            }
+            emit("content_block_delta", {
+              type: "content_block_delta",
+              index: buffered?.blockIndex ?? idToBlock.get(toolCallId) ?? blockIndex,
+              delta: {
+                type: "input_json_delta",
+                partial_json: JSON.stringify(stripNullInputs(normalized.input))
+              }
+            });
+            bufferedAgentCalls.delete(toolCallId);
+          } catch (error) {
+            if (error instanceof UnavailableSubagentModelError) {
+              bufferedAgentCalls.delete(toolCallId);
+              closeOpen();
+              emit("error", {
+                type: "error",
+                error: {
+                  type: anthropicErrorType(error.statusCode),
+                  message: error.message
+                }
+              });
+              return;
+            }
+            throw error;
+          }
+          break;
+        }
+        if (!idToBlock.has(toolCallId) && openType !== "tool") {
           const sig = grabRoundTripSignature(part);
           openBlock("tool", {
             type: "tool_use",
-            id: encodeToolUseId(part.toolCallId ?? "", sig),
+            id: encodeToolUseId(toolCallId, sig),
             name: part.toolName,
             input: {}
           });
@@ -5900,6 +6261,7 @@ async function writeAnthropicStream(fullStream, modelId, write, log7, estimatedI
         const errMsg = e?.message || (typeof part.error === "string" ? part.error : JSON.stringify(e?.data ?? part.error));
         const errorType = anthropicErrorType(upstreamHttpStatus(part.error, errMsg));
         log7?.(() => `sdk stream error (${errorType}): ${errMsg}`);
+        bufferedAgentCalls.clear();
         closeOpen();
         emit("error", { type: "error", error: { type: errorType, message: errMsg } });
         return;
@@ -5914,7 +6276,8 @@ async function writeAnthropicStream(fullStream, modelId, write, log7, estimatedI
   emit("message_stop", { type: "message_stop" });
 }
 async function streamAnthropicResponse(model, params, modelId, write, log7, estimatedInputTokens = 0) {
-  const result = streamText({ model, ...params, onError: () => {
+  const { subagentRouting, ...providerParams } = params;
+  const result = streamText({ model, ...providerParams, onError: () => {
   } });
   Promise.resolve(result.text).catch(() => {
   });
@@ -5931,22 +6294,24 @@ async function streamAnthropicResponse(model, params, modelId, write, log7, esti
     modelId,
     write,
     log7,
-    estimatedInputTokens
+    estimatedInputTokens,
+    subagentRouting
   );
 }
 async function generateAnthropicResponse(model, params, modelId, options) {
+  const { subagentRouting, ...providerParams } = params;
   let text4;
   let toolCalls;
   let finishReason;
   let usage;
   if (options?.forceStream) {
-    const r = streamText({ model, ...params, onError: () => {
+    const r = streamText({ model, ...providerParams, onError: () => {
     } });
     Promise.resolve(r.toolResults).catch(() => {
     });
     [text4, toolCalls, finishReason, usage] = await Promise.all([r.text, r.toolCalls, r.finishReason, r.usage]);
   } else {
-    const r = await generateText({ model, ...params });
+    const r = await generateText({ model, ...providerParams });
     ({ text: text4, toolCalls, finishReason, usage } = r);
   }
   return {
@@ -5956,12 +6321,20 @@ async function generateAnthropicResponse(model, params, modelId, options) {
     model: modelId,
     content: [
       ...text4 ? [{ type: "text", text: text4 }] : [],
-      ...toolCalls.map((tc) => ({
-        type: "tool_use",
-        id: encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc)),
-        name: tc.toolName,
-        input: stripNullInputs(tc.input)
-      }))
+      ...toolCalls.map((tc) => {
+        let input = tc.input;
+        if (subagentRouting && tc.toolName === "Agent") {
+          const normalized = prepareClaudeAgentInput(tc.input, subagentRouting);
+          logSubagentDecision(options?.log, normalized.decision);
+          input = normalized.input;
+        }
+        return {
+          type: "tool_use",
+          id: encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc)),
+          name: tc.toolName,
+          input: stripNullInputs(input)
+        };
+      })
     ],
     stop_reason: finishReason === "tool-calls" ? "tool_use" : "end_turn",
     usage: { input_tokens: usage?.inputTokens ?? 0, output_tokens: usage?.outputTokens ?? 0 }
@@ -6008,6 +6381,21 @@ function aliasModelId(realId, providerId) {
   const sanitized = providerId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   return `anthropic-${sanitized}__${realId}`;
 }
+function buildProxySubagentModelRouting(routes, parentRoute) {
+  const publicId = (route) => route.gatewayAliasId ?? route.aliasId;
+  return {
+    parentModelId: publicId(parentRoute),
+    models: routes.map((route) => ({
+      id: publicId(route),
+      compatibilityIds: [.../* @__PURE__ */ new Set([
+        ...routeLookupIds(route.aliasId),
+        ...route.gatewayAliasId ? routeLookupIds(route.gatewayAliasId) : []
+      ])],
+      displayName: route.displayName,
+      family: route.modelFormat === "anthropic" ? claudeModelFamily(route.realModelId) : void 0
+    }))
+  };
+}
 function lookupRoute(byAlias, id) {
   for (const key of routeLookupIds(id)) {
     const route = byAlias.get(key);
@@ -6016,13 +6404,14 @@ function lookupRoute(byAlias, id) {
   return void 0;
 }
 function startProxyCatalog(routes, defaultAliasId, debug = false) {
-  const proxyToken = randomUUID5();
+  const proxyToken = randomUUID6();
   silenceSdkWarnings();
   if (routes.length === 0) {
     return Promise.reject(new Error("Proxy catalog requires at least one route"));
   }
   const byAlias = new Map(routes.map((r) => [r.aliasId, r]));
   const defaultRoute = byAlias.get(defaultAliasId) ?? routes[0];
+  const subagentRouteRegistry = new SubagentRouteRegistry();
   const plog = makeProxyLog(debug);
   const onRejection = (reason) => {
     plog(() => `Unhandled Rejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`);
@@ -6076,9 +6465,12 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
         anthropicError(res, 400, "Invalid JSON body");
         return;
       }
+      const correlatedSubagent = subagentRouteRegistry.consume(req.headers, anthropicBody);
+      if (correlatedSubagent) anthropicBody = correlatedSubagent.body;
       const originalModel = anthropicBody.model;
       const clientWantsStream = Boolean(anthropicBody.stream);
-      const route = lookupRoute(byAlias, originalModel) ?? defaultRoute;
+      const correlatedRoute = correlatedSubagent ? routes.find((candidate) => (candidate.gatewayAliasId ?? candidate.aliasId) === correlatedSubagent.modelId) : void 0;
+      const route = correlatedRoute ?? lookupRoute(byAlias, originalModel) ?? defaultRoute;
       const apiKey = route.apiKey;
       const upstreamUrl = route.upstreamUrl;
       plog(
@@ -6134,10 +6526,16 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
       }
       if (usesSdkAdapter) {
         const openAiOAuth = route.npm === "@ai-sdk/openai" && route.authType === "oauth";
+        const subagentRouting = buildProxySubagentModelRouting(routes, route);
+        const sessionId = extractClaudeSessionId(req.headers, anthropicBody);
+        if (sessionId) {
+          subagentRouting.registerSubagentRoute = (modelId) => subagentRouteRegistry.register(sessionId, modelId);
+        }
         const params = translateRequest2(anthropicBody, route.npm, {
           openAiOAuth,
           maxTools: maxToolsForNpm(route.npm),
           onDebug: (msg) => plog(() => msg),
+          subagentRouting,
           reasoningMetadata: {
             providerId: route.providerId,
             apiBaseUrl: route.baseURL,
@@ -6185,7 +6583,7 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
               model,
               params,
               originalModel,
-              { forceStream: openAiOAuth }
+              { forceStream: openAiOAuth, log: plog }
             );
             sendJson(res, 200, anthropicResponse);
           }
@@ -7926,6 +8324,14 @@ function injectRelayModels(fixture, routes, templateKey) {
         }]
       }
     ];
+    for (const entry of Object.values(result.models)) {
+      const mimeTypes = entry.supportedMimeTypes;
+      if (!mimeTypes || typeof mimeTypes !== "object" || Array.isArray(mimeTypes)) continue;
+      entry.supportedMimeTypes = Object.fromEntries(
+        Object.entries(mimeTypes).filter(([mime]) => !mime.toLowerCase().includes("audio/"))
+      );
+    }
+    result.audioTranscriptionModelIds = [];
     return result;
   }
   if (!result.agentModelSorts?.[0]?.groups?.[0]) {
@@ -9921,8 +10327,9 @@ async function startServer(options) {
   silenceSdkWarnings();
   const languageModelCache = /* @__PURE__ */ new Map();
   const plog = makeServerLog(options.debugLogPath);
+  const subagentRouteRegistry = new SubagentRouteRegistry();
   const server = createServer2((req, res) => {
-    void routeRequest(req, res, options, languageModelCache, plog);
+    void routeRequest(req, res, options, languageModelCache, plog, subagentRouteRegistry);
   });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -9945,7 +10352,7 @@ async function startServer(options) {
     })
   };
 }
-async function routeRequest(req, res, options, modelCache, plog) {
+async function routeRequest(req, res, options, modelCache, plog, subagentRouteRegistry) {
   try {
     const pathname = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`).pathname;
     plog(`${req.method} ${pathname}`);
@@ -9970,7 +10377,7 @@ async function routeRequest(req, res, options, modelCache, plog) {
       return;
     }
     if (req.method === "POST" && pathname === "/anthropic/v1/messages") {
-      await handleAnthropicMessages(req, res, options, modelCache, plog);
+      await handleAnthropicMessages(req, res, options, modelCache, plog, subagentRouteRegistry);
       return;
     }
     if (req.method === "POST" && pathname === "/openai/v1/chat/completions") {
@@ -9982,13 +10389,16 @@ async function routeRequest(req, res, options, modelCache, plog) {
     sendJson(res, 500, { error: { message: err instanceof Error ? err.message : String(err) } });
   }
 }
-async function handleAnthropicMessages(req, res, options, modelCache, plog) {
-  const body = await readJson(req);
+async function handleAnthropicMessages(req, res, options, modelCache, plog, subagentRouteRegistry) {
+  let body = await readJson(req);
   if (!body) {
     sendJson(res, 400, { error: { message: "Invalid JSON body" } });
     return;
   }
-  const model = lookupModel(res, options.catalog, body.model);
+  const correlatedSubagent = subagentRouteRegistry.consume(req.headers, body);
+  if (correlatedSubagent) body = correlatedSubagent.body;
+  const requestedModelId = correlatedSubagent?.modelId ?? body.model;
+  const model = lookupModel(res, options.catalog, requestedModelId);
   if (!model) {
     plog(`model not found: ${body.model}`);
     return;
@@ -10047,10 +10457,20 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
     if (npmMaxTools !== void 0 && toolCount > npmMaxTools) {
       plog(`tools truncated: ${toolCount} \u2192 ${npmMaxTools} (provider limit)`);
     }
+    const subagentRouting = buildServerSubagentModelRouting(
+      options.catalog.list(),
+      model,
+      options.gateway
+    );
+    const sessionId = extractClaudeSessionId(req.headers, body);
+    if (sessionId) {
+      subagentRouting.registerSubagentRoute = (modelId) => subagentRouteRegistry.register(sessionId, modelId);
+    }
     const params = translateRequest2(body, model.npm, {
       defaultEffort: anthropicEffortFromRequest(body) ? void 0 : model.defaultEffort,
       openAiOAuth: model.npm === "@ai-sdk/openai" && model.authType === "oauth",
       onDebug: plog,
+      subagentRouting,
       reasoningMetadata: {
         providerId: model.providerId,
         apiBaseUrl: model.apiBaseUrl,
@@ -10076,12 +10496,17 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog) {
           params,
           responseModelId,
           (chunk) => res.write(chunk),
-          void 0,
+          plog,
           estimateAnthropicInputTokens(body)
         );
         res.end();
       } else {
-        const anthropicResponse = await generateAnthropicResponse(languageModel, params, responseModelId);
+        const anthropicResponse = await generateAnthropicResponse(
+          languageModel,
+          params,
+          responseModelId,
+          { log: plog }
+        );
         sendJson(res, 200, anthropicResponse);
       }
     } catch (err) {
@@ -12093,6 +12518,8 @@ export {
   splitToolUseId,
   encodeToolUseId,
   serializeToolResultContent,
+  UNSUPPORTED_VOICE_MESSAGE,
+  sanitizeUnsupportedInlineData,
   summarizeSdkRequestForTrace,
   translateRequest,
   formatUpstreamErrorTrace,
@@ -12162,4 +12589,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-HEMJFOXG.js.map
+//# sourceMappingURL=chunk-22CTCCTC.js.map

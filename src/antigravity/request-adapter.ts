@@ -59,6 +59,54 @@ export interface TranslateRequestOptions {
   maxTools?: number;
 }
 
+export const UNSUPPORTED_VOICE_MESSAGE =
+  'Voice transcription isn’t supported by Relay AI yet. Please type your message. Your coding session remains active.';
+
+const OMITTED_VOICE_TEXT =
+  '[Voice recording omitted because transcription is not supported by Relay AI.]';
+
+function isSupportedImage(part: CloudCodePart): boolean {
+  return part.inlineData?.mimeType.toLowerCase().startsWith('image/') ?? false;
+}
+
+function isUnsupportedInlineData(part: CloudCodePart): boolean {
+  return !!part.inlineData && !isSupportedImage(part);
+}
+
+export function sanitizeUnsupportedInlineData(
+  ccReq: CloudCodeGenerateRequest,
+): { request: CloudCodeGenerateRequest; latestUserTurnHasUnsupportedMedia: boolean } {
+  const contents = ccReq.request?.contents ?? [];
+  let latestUserIndex = -1;
+  for (let i = contents.length - 1; i >= 0; i--) {
+    if (contents[i]!.role === 'user') {
+      latestUserIndex = i;
+      break;
+    }
+  }
+
+  let latestUserTurnHasUnsupportedMedia = false;
+  const sanitizedContents = contents.map((message, index) => ({
+    ...message,
+    parts: message.parts.map(part => {
+      if (!isUnsupportedInlineData(part)) return part;
+      if (index === latestUserIndex) latestUserTurnHasUnsupportedMedia = true;
+      return { text: OMITTED_VOICE_TEXT };
+    }),
+  }));
+
+  return {
+    request: {
+      ...ccReq,
+      request: {
+        ...ccReq.request,
+        contents: sanitizedContents,
+      },
+    },
+    latestUserTurnHasUnsupportedMedia,
+  };
+}
+
 export interface SdkRequestTracePart {
   type: string;
   chars?: number;
@@ -275,11 +323,15 @@ export function translateRequest(
           }
         }
       } else if (part.inlineData) {
-        contentParts.push({
-          type: 'image',
-          image: part.inlineData.data,
-          mimeType: part.inlineData.mimeType,
-        });
+        if (isSupportedImage(part)) {
+          contentParts.push({
+            type: 'image',
+            image: part.inlineData.data,
+            mimeType: part.inlineData.mimeType,
+          });
+        } else {
+          contentParts.push({ type: 'text', text: OMITTED_VOICE_TEXT });
+        }
       } else if (part.functionCall) {
         const id = 'call_' + randomUUID().replace(/-/g, '');
         const name = part.functionCall.name;

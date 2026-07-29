@@ -11,8 +11,11 @@ import { silenceSdkWarnings } from '../sdk-adapter.js';
 import { formatUpstreamError, formatUpstreamErrorTrace } from '../codex/upstream-error.js';
 import { readBody } from '../http-utils.js';
 import {
+  sanitizeUnsupportedInlineData,
   summarizeSdkRequestForTrace,
   translateRequest,
+  UNSUPPORTED_VOICE_MESSAGE,
+  type CloudCodeGenerateRequest,
   type TranslateRequestOptions,
 } from './request-adapter.js';
 import { formatCloudCodeChunk, mapFinishReason, normalizeFunctionCallArgs } from './response-adapter.js';
@@ -166,7 +169,18 @@ export async function startCloudCodeGateway(
       try { parsed = JSON.parse(bodyStr) as Record<string, unknown>; } catch {}
 
       if (trace && parsed) {
-        const preview = JSON.stringify(parsed).slice(0, 500);
+        const preview = JSON.stringify(parsed, function (key, value) {
+          if (
+            key === 'data'
+            && typeof value === 'string'
+            && this
+            && typeof this === 'object'
+            && typeof (this as { mimeType?: unknown }).mimeType === 'string'
+          ) {
+            return `[${value.length} media chars]`;
+          }
+          return value;
+        }).slice(0, 500);
         log(`[gateway]   body-preview: ${preview}`);
       }
 
@@ -205,6 +219,13 @@ export async function startCloudCodeGateway(
               `[gateway]   resolved route: ${route.catalogId}`
               + ` (${route.providerId}/${route.upstreamModelId} via ${model})`,
             );
+          }
+          const media = sanitizeUnsupportedInlineData(parsed as unknown as CloudCodeGenerateRequest);
+          parsed = media.request as unknown as Record<string, unknown>;
+          if (media.latestUserTurnHasUnsupportedMedia) {
+            if (trace) log('[gateway] unsupported media in current user turn; provider call skipped');
+            respondUnsupportedMedia(res, route, lowerUrl.includes('stream'));
+            return;
           }
           if (trackActiveRoute && selectedSlotIds.has(model ?? '') && isUserTurnRequest(parsed)) {
             activeRoute = route;
@@ -620,6 +641,45 @@ function respondJson(res: http.ServerResponse, status: number, data: unknown): v
     'grpc-status': status < 400 ? '0' : '13',
   });
   res.end(body);
+}
+
+function respondUnsupportedMedia(
+  res: http.ServerResponse,
+  route: AntigravityRoute,
+  streaming: boolean,
+): void {
+  const responseId = `relay-${Date.now()}`;
+  if (streaming) {
+    const chunk = formatCloudCodeChunk({
+      text: UNSUPPORTED_VOICE_MESSAGE,
+      modelVersion: route.catalogId,
+      responseId,
+      finishReason: 'STOP',
+    });
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      'grpc-status': '0',
+    });
+    res.end(`data: ${JSON.stringify(chunk)}\n\n`);
+    return;
+  }
+
+  respondJson(res, 200, {
+    response: {
+      candidates: [{
+        content: {
+          role: 'model',
+          parts: [{ text: UNSUPPORTED_VOICE_MESSAGE }],
+        },
+        finishReason: 'STOP',
+      }],
+      modelVersion: route.catalogId,
+      responseId,
+    },
+    traceId: 'relay-trace',
+    metadata: {},
+  });
 }
 
 /**

@@ -223,6 +223,32 @@ describe('antigravity request-adapter', () => {
     });
   });
 
+  it('does not translate audio inline data into an SDK image', () => {
+    const ccReq: CloudCodeGenerateRequest = {
+      model: 'relay-ai__zen__deepseek-v4-flash-free',
+      request: {
+        contents: [{
+          role: 'user',
+          parts: [{
+            inlineData: {
+              mimeType: 'audio/webm;codecs=opus',
+              data: 'GkXfo59ChoEB',
+            },
+          }],
+        }],
+      },
+    };
+
+    const sdkReq = translateRequest(ccReq);
+    const content = sdkReq.messages[0]!.content as any[];
+
+    expect(content).toEqual([{
+      type: 'text',
+      text: '[Voice recording omitted because transcription is not supported by Relay AI.]',
+    }]);
+    expect(JSON.stringify(content)).not.toContain('GkXfo59ChoEB');
+  });
+
   it('translates function declarations into SDK tools', () => {
     const ccReq: CloudCodeGenerateRequest = {
       model: 'relay-ai__zen__deepseek-v4-flash-free',
