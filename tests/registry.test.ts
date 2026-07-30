@@ -384,9 +384,12 @@ describe('ensureOpencodeCloudProviders', () => {
     if (prevHome === undefined) delete process.env.RELAY_AI_HOME;
     else process.env.RELAY_AI_HOME = prevHome;
     rmSync(home, { recursive: true, force: true });
+    vi.restoreAllMocks();
   });
 
   it('seeds zen and go when an OpenCode key is available and registry is empty', async () => {
+    vi.spyOn(await import('../src/registry/refresh-models.js'), 'refreshProviderModels')
+      .mockImplementation(async id => ({ id, name: id, ok: true, modelCount: 0 }));
     const { ensureOpencodeCloudProviders, loadRegistry } = await import('../src/registry/index.js');
     const result = await ensureOpencodeCloudProviders(async () => true);
     expect(result.seeded).toBe(true);
