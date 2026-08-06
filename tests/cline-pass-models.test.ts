@@ -28,7 +28,7 @@ describe('ClinePass model catalog', () => {
   it('parses only ClinePass and free models while preserving full model slugs', () => {
     const models = parseClinePassModels({
       clinePass: [
-        { id: 'cline-pass/qwen3.8-max', name: 'Qwen 3.8 Max', tags: ['reasoning'] },
+        { id: 'cline-pass/qwen3.8-max', name: 'Qwen 3.8 Max', context_window: 262144, tags: ['reasoning'] },
         { id: 'cline-pass/kimi-k3', name: 'Kimi K3' },
       ],
       free: [
@@ -49,9 +49,12 @@ describe('ClinePass model catalog', () => {
     expect(models[0]).toMatchObject({
       id: 'cline-pass/qwen3.8-max',
       upstreamModelId: 'cline-pass/qwen3.8-max',
-      contextWindow: 131072,
+      contextWindow: 262144,
     });
-    expect(models[1]?.name).toBe('Kimi K3');
+    expect(models[1]).toMatchObject({
+      name: 'Kimi K3',
+      contextWindow: undefined,
+    });
     expect(models[2]).toMatchObject({
       upstreamModelId: 'poolside/laguna-s-2.1:free',
       isFree: true,

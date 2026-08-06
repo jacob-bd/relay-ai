@@ -10,6 +10,7 @@ import {
   saveRegistry,
   slugifyProviderId,
 } from '../src/registry/index.js';
+import { cachedModelToLocal } from '../src/registry/materialize.js';
 
 describe('provider id validation', () => {
   it('accepts stable slugs', () => {
@@ -211,6 +212,27 @@ describe('registry io', () => {
 });
 
 describe('materializeRegistry', () => {
+  it('does not invent a context window for ClinePass models without metadata', () => {
+    const provider = {
+      id: 'cline-pass',
+      templateId: 'cline-pass',
+      name: 'ClinePass',
+      enabled: true,
+      authRef: 'keyring:provider:cline-pass',
+      api: { npm: '@ai-sdk/openai-compatible', url: 'https://api.cline.bot/api/v1' },
+      addedAt: '2026-08-06T00:00:00.000Z',
+    };
+    const local = cachedModelToLocal({
+      id: 'cline-pass/kimi-k3',
+      name: 'Kimi K3',
+      upstreamModelId: 'cline-pass/kimi-k3',
+      modelFormat: 'openai',
+      npm: '@ai-sdk/openai-compatible',
+    }, provider);
+
+    expect(local?.contextWindow).toBeUndefined();
+  });
+
   it('materializes enabled providers with credentials and models', () => {
     const registry = emptyRegistry();
     registry.providers.push({

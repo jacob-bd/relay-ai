@@ -2,7 +2,6 @@ import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import { deriveBrand } from '../models.js';
 import {
   CLINE_PASS_CATALOG_URL,
-  CLINE_PASS_DEFAULT_CONTEXT_WINDOW,
   CLINE_PASS_VALIDATION_URL,
 } from '../cline-pass.js';
 import type { CachedModel } from './types.js';
@@ -12,6 +11,11 @@ const REQUEST_TIMEOUT_MS = 10_000;
 interface ClineModelEntry {
   id?: unknown;
   name?: unknown;
+  context_window?: unknown;
+  contextWindow?: unknown;
+  context_length?: unknown;
+  max_input_tokens?: unknown;
+  limit?: { context?: unknown };
 }
 
 interface ClineRecommendedModelsPayload {
@@ -22,6 +26,25 @@ interface ClineRecommendedModelsPayload {
 function entries(value: unknown): ClineModelEntry[] {
   if (!Array.isArray(value)) return [];
   return value.filter((entry): entry is ClineModelEntry => Boolean(entry && typeof entry === 'object'));
+}
+
+function positiveNumber(value: unknown): number | undefined {
+  const number = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && value.trim()
+      ? Number(value)
+      : undefined;
+  return typeof number === 'number' && Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
+function contextWindow(entry: ClineModelEntry): number | undefined {
+  return [
+    entry.context_window,
+    entry.contextWindow,
+    entry.context_length,
+    entry.max_input_tokens,
+    entry.limit?.context,
+  ].map(positiveNumber).find((value): value is number => value !== undefined);
 }
 
 function toCachedModel(entry: ClineModelEntry, isFree: boolean): CachedModel | null {
@@ -37,7 +60,7 @@ function toCachedModel(entry: ClineModelEntry, isFree: boolean): CachedModel | n
     upstreamModelId: id,
     family,
     brand: deriveBrand(family),
-    contextWindow: CLINE_PASS_DEFAULT_CONTEXT_WINDOW,
+    contextWindow: contextWindow(entry),
     cost,
     isFree: isFreeStatus(freeStatus),
     freeStatus,

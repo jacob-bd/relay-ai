@@ -617,7 +617,6 @@ var CLINE_PASS_CATALOG_URL = `${CLINE_PASS_HOST}/api/v1/ai/cline/recommended-mod
 var CLINE_PASS_VALIDATION_URL = `${CLINE_PASS_HOST}/api/v1/models`;
 var CLINE_PASS_REGISTER_URL = `${CLINE_PASS_HOST}/api/v1/auth/register`;
 var CLINE_PASS_REFRESH_URL = `${CLINE_PASS_HOST}/api/v1/auth/refresh`;
-var CLINE_PASS_DEFAULT_CONTEXT_WINDOW = 131072;
 var CLINE_PASS_WORKOS_PREFIX = "workos:";
 function isClinePassOAuth(providerId, authType) {
   return providerId === "cline-pass" && authType === "oauth";
@@ -1548,9 +1547,9 @@ function modelSelectOption(model, hint) {
     hint: defaultHint && ctxSuffix ? `${defaultHint} \xB7 ${ctxSuffix}` : defaultHint || ctxSuffix
   };
 }
-function fmtContextWindow(contextWindow) {
-  if (!contextWindow) return "";
-  const k = contextWindow >= 1e3 ? `${Math.round(contextWindow / 1e3)}k` : String(contextWindow);
+function fmtContextWindow(contextWindow2) {
+  if (!contextWindow2) return "";
+  const k = contextWindow2 >= 1e3 ? `${Math.round(contextWindow2 / 1e3)}k` : String(contextWindow2);
   return pc.dim(`${k} ctx`);
 }
 function navOption(value, label, hint = "") {
@@ -2192,9 +2191,9 @@ var ONE_M_CONTEXT_SUFFIX = "[1m]";
 function stripOneMContextSuffix(modelId) {
   return modelId.replace(/\[1m\]$/i, "");
 }
-function claudeCodeClientModelId(modelId, contextWindow) {
+function claudeCodeClientModelId(modelId, contextWindow2) {
   const bare = stripOneMContextSuffix(modelId);
-  const window = resolveContextWindow(bare, contextWindow);
+  const window = resolveContextWindow(bare, contextWindow2);
   if (window > DEFAULT_CONTEXT_WINDOW) {
     return `${bare}${ONE_M_CONTEXT_SUFFIX}`;
   }
@@ -3295,7 +3294,7 @@ function applyClaudeCodeThirdPartyCompat(env) {
   env["ENABLE_TOOL_SEARCH"] = "true";
   env["CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT"] = "0";
 }
-function buildChildEnv(baseUrl, model, apiKey, proxyPort, contextWindow, enableGatewayDiscovery) {
+function buildChildEnv(baseUrl, model, apiKey, proxyPort, contextWindow2, enableGatewayDiscovery) {
   const env = { ...process.env };
   for (const name of CONFLICTING_ENV_VARS) {
     delete env[name];
@@ -3306,8 +3305,8 @@ function buildChildEnv(baseUrl, model, apiKey, proxyPort, contextWindow, enableG
   env["ANTHROPIC_BASE_URL"] = proxyPort ? `http://127.0.0.1:${proxyPort}` : baseUrl;
   env["ANTHROPIC_API_KEY"] = apiKey;
   const bareModel = stripOneMContextSuffix(model);
-  env["ANTHROPIC_MODEL"] = claudeCodeClientModelId(model, contextWindow);
-  env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = String(resolveContextWindow(bareModel, contextWindow));
+  env["ANTHROPIC_MODEL"] = claudeCodeClientModelId(model, contextWindow2);
+  env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = String(resolveContextWindow(bareModel, contextWindow2));
   if (enableGatewayDiscovery) {
     env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1";
   }
@@ -4757,8 +4756,8 @@ function augmentClaudeAgentTool(tool4, routing) {
 // src/server/models.ts
 var CREATED_AT_ISO = "2025-01-01T00:00:00Z";
 var CREATED_AT_UNIX = 1735689600;
-function formatAnthropicModelEntry(id, displayName, contextWindow, options) {
-  const maxInput = resolveContextWindow(id, contextWindow);
+function formatAnthropicModelEntry(id, displayName, contextWindow2, options) {
+  const maxInput = resolveContextWindow(id, contextWindow2);
   return {
     id,
     type: "model",
@@ -6890,9 +6889,9 @@ data: ${JSON.stringify({ type: "error", error: { type: errorType, message } })}
     });
   });
 }
-function startProxy(completionsUrl, modelId, debug = false, contextWindow, sdk, apiKey) {
+function startProxy(completionsUrl, modelId, debug = false, contextWindow2, sdk, apiKey) {
   const bareModelId = stripOneMContextSuffix(modelId);
-  const clientModelId = claudeCodeClientModelId(modelId, contextWindow);
+  const clientModelId = claudeCodeClientModelId(modelId, contextWindow2);
   return startProxyCatalog([{
     aliasId: clientModelId,
     realModelId: sdk?.upstreamModelId ?? bareModelId,
@@ -6900,7 +6899,7 @@ function startProxy(completionsUrl, modelId, debug = false, contextWindow, sdk, 
     upstreamUrl: completionsUrl,
     apiKey: apiKey ?? "",
     modelFormat: sdk?.modelFormat ?? "openai",
-    contextWindow,
+    contextWindow: contextWindow2,
     npm: sdk?.npm,
     baseURL: sdk?.baseURL,
     providerId: sdk?.providerId,
@@ -7825,7 +7824,12 @@ function cachedModelToLocal(cached, provider) {
     cost: cached.cost,
     isFree: isFreeStatus(freeStatus),
     freeStatus,
-    contextWindow: cached.contextWindow ?? resolveContextWindow(id),
+    // ClinePass's public catalog does not currently report per-model context
+    // limits. Preserve that unknown state for the picker instead of displaying
+    // a heuristic as if it were provider metadata. Launch-time callers still
+    // resolve their required safety fallback when they build the child env or
+    // proxy catalog.
+    contextWindow: cached.contextWindow ?? (provider.id === "cline-pass" ? void 0 : resolveContextWindow(id)),
     supportedParameters: cached.supportedParameters,
     reasoning: cached.reasoning ?? modelsDev?.reasoning,
     interleavedReasoningField: cached.interleavedReasoningField ?? modelsDev?.interleaved?.field,
@@ -7906,14 +7910,14 @@ function normalizeCopilotModels(rows, tier) {
     const lowerId = id.toLowerCase();
     const isFree = tier !== "paid" || copilotModelIsIncluded(row);
     const family = lowerId.split(/[-/:]/)[0] ?? lowerId;
-    const contextWindow = numericValue(row["context_length"]) ?? numericValue(row["contextWindow"]) ?? numericValue(row["context_window"]) ?? resolveContextWindow(id);
+    const contextWindow2 = numericValue(row["context_length"]) ?? numericValue(row["contextWindow"]) ?? numericValue(row["context_window"]) ?? resolveContextWindow(id);
     models.push({
       id,
       name: `${id} [Copilot]`,
       upstreamModelId: id,
       family,
       brand: deriveBrand(family),
-      contextWindow,
+      contextWindow: contextWindow2,
       isFree,
       freeStatus: isFree ? "verified_free" : "unknown",
       modelFormat: "openai",
@@ -8579,7 +8583,7 @@ function buildAntigravityRoutes(resolvedFavorites, maxRoutes = MAX_MODEL_CATALOG
     const npm = favModel.npm || "@ai-sdk/openai-compatible";
     const upstreamModelId2 = favModel.upstreamModelId || modelId;
     const baseURL = favModel.apiBaseUrl || favModel.completionsUrl || void 0;
-    const contextWindow = favModel.contextWindow;
+    const contextWindow2 = favModel.contextWindow;
     const modelFormat = favModel.modelFormat;
     routes.push({
       catalogId,
@@ -8597,7 +8601,7 @@ function buildAntigravityRoutes(resolvedFavorites, maxRoutes = MAX_MODEL_CATALOG
       ...fav.headers ? { headers: fav.headers } : {},
       ...fav.refreshToken ? { refreshToken: fav.refreshToken } : {},
       baseURL,
-      contextWindow
+      contextWindow: contextWindow2
     });
   }
   return applyUniqueAntigravityRouteLabels(routes);
@@ -8813,8 +8817,8 @@ function contextFloorForTarget(target) {
   if (target === "server") return 0;
   return MIN_CONTEXT_WINDOW;
 }
-function meetsContextFloor(target, contextWindow) {
-  return contextWindow === void 0 || contextWindow >= contextFloorForTarget(target);
+function meetsContextFloor(target, contextWindow2) {
+  return contextWindow2 === void 0 || contextWindow2 >= contextFloorForTarget(target);
 }
 function isTargetCompatibleModel(ctx) {
   const blacklistAgent = blacklistAgentForTarget(ctx.target);
@@ -8990,14 +8994,14 @@ function parseModelList(body, npm) {
       // daily Neuron allowance, so free access is a provider rule, not a price.
       freeAccess: isFreeFromProps === true
     });
-    const contextWindow = contextWindowFromProps ?? row.context_length ?? row.contextWindow ?? row.context_window ?? resolveContextWindow(id);
+    const contextWindow2 = contextWindowFromProps ?? row.context_length ?? row.contextWindow ?? row.context_window ?? resolveContextWindow(id);
     models.push({
       id,
       name: normalizeGoogleDisplayName(row.name, id),
       upstreamModelId: upstreamModelId2,
       family,
       brand: deriveBrand(family),
-      contextWindow,
+      contextWindow: contextWindow2,
       cost,
       isFree: isFreeStatus(freeStatus),
       freeStatus,
@@ -9405,6 +9409,19 @@ function entries(value) {
   if (!Array.isArray(value)) return [];
   return value.filter((entry) => Boolean(entry && typeof entry === "object"));
 }
+function positiveNumber(value) {
+  const number = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : void 0;
+  return typeof number === "number" && Number.isFinite(number) && number > 0 ? number : void 0;
+}
+function contextWindow(entry) {
+  return [
+    entry.context_window,
+    entry.contextWindow,
+    entry.context_length,
+    entry.max_input_tokens,
+    entry.limit?.context
+  ].map(positiveNumber).find((value) => value !== void 0);
+}
 function toCachedModel(entry, isFree) {
   const id = typeof entry.id === "string" ? entry.id.trim() : "";
   if (!id) return null;
@@ -9418,7 +9435,7 @@ function toCachedModel(entry, isFree) {
     upstreamModelId: id,
     family,
     brand: deriveBrand(family),
-    contextWindow: CLINE_PASS_DEFAULT_CONTEXT_WINDOW,
+    contextWindow: contextWindow(entry),
     cost,
     isFree: isFreeStatus(freeStatus),
     freeStatus,
@@ -12962,4 +12979,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-YVHM3MVS.js.map
+//# sourceMappingURL=chunk-W7PNEI5A.js.map

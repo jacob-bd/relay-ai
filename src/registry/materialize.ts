@@ -70,7 +70,12 @@ export function cachedModelToLocal(
     cost: cached.cost,
     isFree: isFreeStatus(freeStatus),
     freeStatus,
-    contextWindow: cached.contextWindow ?? resolveContextWindow(id),
+    // ClinePass's public catalog does not currently report per-model context
+    // limits. Preserve that unknown state for the picker instead of displaying
+    // a heuristic as if it were provider metadata. Launch-time callers still
+    // resolve their required safety fallback when they build the child env or
+    // proxy catalog.
+    contextWindow: cached.contextWindow ?? (provider.id === 'cline-pass' ? undefined : resolveContextWindow(id)),
     supportedParameters: cached.supportedParameters,
     reasoning: cached.reasoning ?? modelsDev?.reasoning,
     interleavedReasoningField: cached.interleavedReasoningField ?? modelsDev?.interleaved?.field,
