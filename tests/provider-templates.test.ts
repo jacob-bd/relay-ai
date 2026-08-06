@@ -71,6 +71,19 @@ describe('provider templates', () => {
     });
   });
 
+  it('defines ClinePass with API-key and OAuth authentication methods', () => {
+    expect(getTemplateById('cline-pass')).toMatchObject({
+      id: 'cline-pass',
+      name: 'ClinePass',
+      authType: 'api',
+      authMethods: ['api', 'oauth'],
+      npm: '@ai-sdk/openai-compatible',
+      defaultBaseUrl: 'https://api.cline.bot/api/v1',
+      modelSource: 'cline-recommended',
+      supported: true,
+    });
+  });
+
   it('keeps all three DashScope variants separately addable', () => {
     const ids = listAddableTemplates([]).map(t => t.id);
     expect(ids).toEqual(expect.arrayContaining([
@@ -96,6 +109,7 @@ describe('provider templates', () => {
 
   it('lists only visible OAuth templates for discovery surfaces', () => {
     expect(listVisibleOAuthTemplates().map(t => t.id).sort()).toEqual([
+      'cline-pass',
       'github-copilot',
       'openai-oauth',
       'xai-oauth',

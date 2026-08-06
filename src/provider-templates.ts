@@ -1,12 +1,14 @@
 // src/provider-templates.ts — builtin provider templates for relay-ai providers add
 
 export type ProviderAuthType = 'api' | 'oauth' | 'none';
-export type ProviderModelSource = 'api-list' | 'static-seed' | 'manual-only' | 'zen-go-api';
+export type ProviderModelSource = 'api-list' | 'static-seed' | 'manual-only' | 'zen-go-api' | 'cline-recommended';
 
 export interface ProviderTemplate {
   id: string;
   name: string;
   authType: ProviderAuthType;
+  /** Supported setup methods; defaults to the template's authType. */
+  authMethods?: ProviderAuthType[];
   npm: string;
   defaultBaseUrl?: string;
   modelsPath?: string;
@@ -30,6 +32,18 @@ export interface ProviderTemplate {
 
 /** Templates aligned with SDK packages shipped in package.json (API-key providers first). */
 export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
+  {
+    id: 'cline-pass',
+    name: 'ClinePass',
+    authType: 'api',
+    authMethods: ['api', 'oauth'],
+    npm: '@ai-sdk/openai-compatible',
+    defaultBaseUrl: 'https://api.cline.bot/api/v1',
+    signupUrl: 'https://app.cline.bot',
+    modelSource: 'cline-recommended',
+    supported: true,
+    subscriptionRisk: true,
+  },
   {
     id: 'groq',
     name: 'Groq',
@@ -415,7 +429,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
 
 export function listSupportedTemplates(): ProviderTemplate[] {
   return PROVIDER_TEMPLATES
-    .filter(t => t.supported && t.authType === 'api' && t.addable !== false && !t.hidden)
+    .filter(t => t.supported && (t.authMethods ?? [t.authType]).includes('api') && t.addable !== false && !t.hidden)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -433,7 +447,7 @@ export function listAddableTemplates(configuredIds: Iterable<string> = []): Prov
 export function listVisibleOAuthTemplates(configuredIds: Iterable<string> = []): ProviderTemplate[] {
   const configured = new Set(configuredIds);
   return PROVIDER_TEMPLATES
-    .filter(t => t.authType === 'oauth' && t.supported && t.addable !== false && !t.hidden && !configured.has(t.id))
+    .filter(t => (t.authMethods ?? [t.authType]).includes('oauth') && t.supported && t.addable !== false && !t.hidden && !configured.has(t.id))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
