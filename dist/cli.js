@@ -116,6 +116,7 @@ import {
   parseDsmlToolCalls,
   parseToolArguments,
   prepareClaudeTraceLog,
+  prepareProviderTraceLog,
   printApiKeyPanel,
   printCloudProviderPanel,
   printDryRunPanel,
@@ -183,7 +184,7 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-NXMDQV3I.js";
+} from "./chunk-3FTW3QA3.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -13587,7 +13588,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-BPXBXASV.js");
+    const { runUiCommand } = await import("./ui-command-BLOMS7YQ.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {
@@ -13612,6 +13613,12 @@ Options:
     }
     if (parsed.trace) {
       process.env.RELAY_AI_TRACE = "1";
+      const providerTraceLogPath = prepareProviderTraceLog();
+      try {
+        return await runProvidersCommand(parsed.claudeArgs);
+      } finally {
+        printTraceLog(providerTraceLogPath);
+      }
     }
     return runProvidersCommand(parsed.claudeArgs);
   }

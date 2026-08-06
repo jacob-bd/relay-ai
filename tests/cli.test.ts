@@ -1,5 +1,8 @@
 // tests/cli.test.ts
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import {
   antigravityAppHelpText,
   antigravityCliHelpText,
@@ -514,6 +517,31 @@ describe('main routing', () => {
     await expect(main(['codex-app', '--help'])).resolves.toBe(0);
     expect(log.mock.calls.flat().join('\n')).toContain('relay-ai codex-app');
     expect(error).not.toHaveBeenCalled();
+  });
+
+  it('resets and prints the provider trace for providers --trace', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'relay-ai-provider-trace-'));
+    const previousHome = process.env.RELAY_AI_HOME;
+    const previousTrace = process.env.RELAY_AI_TRACE;
+    process.env.RELAY_AI_HOME = home;
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      const stalePath = join(home, 'logs', 'provider-debug.log');
+      mkdirSync(join(home, 'logs'), { recursive: true });
+      writeFileSync(stalePath, 'stale provider trace');
+
+      await expect(main(['providers', '--trace', 'list'])).resolves.toBe(0);
+
+      expect(readFileSync(stalePath, 'utf8')).not.toContain('stale provider trace');
+      expect(log.mock.calls.flat().join('\n')).toContain('Full log:');
+    } finally {
+      log.mockRestore();
+      rmSync(home, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.RELAY_AI_HOME;
+      else process.env.RELAY_AI_HOME = previousHome;
+      if (previousTrace === undefined) delete process.env.RELAY_AI_TRACE;
+      else process.env.RELAY_AI_TRACE = previousTrace;
+    }
   });
 });
 

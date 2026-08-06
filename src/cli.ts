@@ -40,7 +40,7 @@ import { runGeminiCommand, geminiHelpText } from './gemini.js';
 import { runAgyCommand, runAntigravityAppCommand, runAntigravityIdeCommand } from './antigravity.js';
 import { runCodexAppCommand, codexAppHelpText } from './codex-app.js';
 import { runClaudeAppCommand, claudeAppHelpText } from './claude-app.js';
-import { prepareClaudeTraceLog, printTraceLog } from './trace-log.js';
+import { prepareClaudeTraceLog, prepareProviderTraceLog, printTraceLog } from './trace-log.js';
 import { ANTIGRAVITY_BASE_URLS } from './oauth/antigravity-oauth.js';
 import { providersForTarget } from './target-compatibility.js';
 import { refreshModelsDevCacheAsync } from './registry/models-dev.js';
@@ -1652,6 +1652,12 @@ Options:
     }
     if (parsed.trace) {
       process.env.RELAY_AI_TRACE = '1';
+      const providerTraceLogPath = prepareProviderTraceLog();
+      try {
+        return await runProvidersCommand(parsed.claudeArgs);
+      } finally {
+        printTraceLog(providerTraceLogPath);
+      }
     }
     return runProvidersCommand(parsed.claudeArgs);
   }

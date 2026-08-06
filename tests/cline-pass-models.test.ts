@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import {
   CLINE_PASS_CATALOG_URL,
   CLINE_PASS_REFRESH_URL,
@@ -13,8 +16,15 @@ import {
 } from '../src/registry/fetch-cline-pass-models.js';
 
 describe('ClinePass model catalog', () => {
+  const previousHome = process.env.RELAY_AI_HOME;
+  const previousTrace = process.env.RELAY_AI_TRACE;
+
   afterEach(() => {
     vi.unstubAllGlobals();
+    if (previousHome === undefined) delete process.env.RELAY_AI_HOME;
+    else process.env.RELAY_AI_HOME = previousHome;
+    if (previousTrace === undefined) delete process.env.RELAY_AI_TRACE;
+    else process.env.RELAY_AI_TRACE = previousTrace;
   });
 
   it('defines exact host-root and SDK endpoint URLs', () => {
@@ -98,5 +108,24 @@ describe('ClinePass model catalog', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401 }));
 
     await expect(validateClinePassApiKey('bad-key')).rejects.toThrow('API key was rejected');
+  });
+
+  it('traces ClinePass validation status and response body without logging the API key', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'relay-ai-cline-trace-'));
+    process.env.RELAY_AI_HOME = home;
+    process.env.RELAY_AI_TRACE = '1';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      clone: () => ({ text: async () => '{"error":"Invalid API key"}' }),
+    }));
+
+    await expect(validateClinePassApiKey('secret-cline-api-key')).rejects.toThrow('API key was rejected');
+
+    const trace = readFileSync(join(home, 'logs', 'provider-debug.log'), 'utf8');
+    expect(trace).toContain('ClinePass response status=401');
+    expect(trace).toContain('Invalid API key');
+    expect(trace).not.toContain('secret-cline-api-key');
+    rmSync(home, { recursive: true, force: true });
   });
 });

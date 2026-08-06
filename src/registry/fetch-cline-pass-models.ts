@@ -4,6 +4,7 @@ import {
   CLINE_PASS_CATALOG_URL,
   CLINE_PASS_VALIDATION_URL,
 } from '../cline-pass.js';
+import { getProviderDebugLogPath, writeSecureLogLine } from '../trace-log.js';
 import type { CachedModel } from './types.js';
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -21,6 +22,24 @@ interface ClineModelEntry {
 interface ClineRecommendedModelsPayload {
   clinePass?: unknown;
   free?: unknown;
+}
+
+function trace(message: string): void {
+  if (process.env.RELAY_AI_TRACE !== '1') return;
+  writeSecureLogLine(
+    getProviderDebugLogPath(),
+    `${new Date().toISOString()} ${message}`,
+  );
+}
+
+async function responseBodyPreview(response: Response): Promise<string> {
+  try {
+    const clone = typeof response.clone === 'function' ? response.clone() : response;
+    if (typeof clone.text !== 'function') return '';
+    return (await clone.text()).slice(0, 500).trim();
+  } catch {
+    return '';
+  }
 }
 
 function entries(value: unknown): ClineModelEntry[] {
@@ -92,13 +111,19 @@ export function parseClinePassModels(payload: unknown): CachedModel[] {
 async function fetchJson(url: string, headers?: Record<string, string>): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  trace(`ClinePass GET ${url} authorization=${headers?.Authorization ? 'present' : 'absent'}`);
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       method: 'GET',
       headers: { Accept: 'application/json', ...headers },
       redirect: 'manual',
       signal: controller.signal,
     });
+    trace(`ClinePass response status=${response.status} url=${url}`);
+    return response;
+  } catch (err) {
+    trace(`ClinePass request failed url=${url} error=${err instanceof Error ? err.message : String(err)}`);
+    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -106,9 +131,14 @@ async function fetchJson(url: string, headers?: Record<string, string>): Promise
 
 export async function fetchClinePassModels(): Promise<CachedModel[]> {
   const response = await fetchJson(CLINE_PASS_CATALOG_URL);
-  if (!response.ok) throw new Error(`ClinePass catalog returned HTTP ${response.status}.`);
+  if (!response.ok) {
+    const body = await responseBodyPreview(response);
+    if (body) trace(`ClinePass catalog body=${body}`);
+    throw new Error(`ClinePass catalog returned HTTP ${response.status}.`);
+  }
   const payload = await response.json().catch(() => null);
   const models = parseClinePassModels(payload);
+  trace(`ClinePass catalog parsed models=${models.length}`);
   if (models.length === 0) throw new Error('ClinePass catalog returned no usable models.');
   return models;
 }
@@ -117,6 +147,8 @@ export async function validateClinePassApiKey(apiKey: string): Promise<void> {
   const response = await fetchJson(CLINE_PASS_VALIDATION_URL, {
     Authorization: `Bearer ${apiKey.trim()}`,
   });
+  const body = await responseBodyPreview(response);
+  if (body) trace(`ClinePass validation body=${body}`);
   if (response.status === 401 || response.status === 403) {
     throw new Error('API key was rejected.');
   }

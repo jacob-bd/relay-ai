@@ -4385,6 +4385,16 @@ function getAntigravityDebugLogPath(tracePrefix) {
   const surface = tracePrefix === "antigravity" ? "app" : tracePrefix;
   return join8(ensureLogsDir(), `antigravity-${surface}-debug.log`);
 }
+function prepareProviderTraceLog() {
+  const path = getProviderDebugLogPath();
+  resetTraceLog(path);
+  try {
+    writeFileSync5(path, "", { mode: FILE_MODE5 });
+    chmodSync5(path, FILE_MODE5);
+  } catch {
+  }
+  return path;
+}
 function makeTraceLogger(logPath) {
   resetTraceLog(logPath);
   return (message) => writeSecureLogLine(logPath, `${(/* @__PURE__ */ new Date()).toISOString()} ${message}`);
@@ -9406,6 +9416,22 @@ async function addCustomEndpointProvider(input) {
 
 // src/registry/fetch-cline-pass-models.ts
 var REQUEST_TIMEOUT_MS = 1e4;
+function trace(message) {
+  if (process.env.RELAY_AI_TRACE !== "1") return;
+  writeSecureLogLine(
+    getProviderDebugLogPath(),
+    `${(/* @__PURE__ */ new Date()).toISOString()} ${message}`
+  );
+}
+async function responseBodyPreview(response) {
+  try {
+    const clone = typeof response.clone === "function" ? response.clone() : response;
+    if (typeof clone.text !== "function") return "";
+    return (await clone.text()).slice(0, 500).trim();
+  } catch {
+    return "";
+  }
+}
 function entries(value) {
   if (!Array.isArray(value)) return [];
   return value.filter((entry) => Boolean(entry && typeof entry === "object"));
@@ -9463,22 +9489,33 @@ function parseClinePassModels(payload) {
 async function fetchJson(url, headers) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  trace(`ClinePass GET ${url} authorization=${headers?.Authorization ? "present" : "absent"}`);
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       method: "GET",
       headers: { Accept: "application/json", ...headers },
       redirect: "manual",
       signal: controller.signal
     });
+    trace(`ClinePass response status=${response.status} url=${url}`);
+    return response;
+  } catch (err) {
+    trace(`ClinePass request failed url=${url} error=${err instanceof Error ? err.message : String(err)}`);
+    throw err;
   } finally {
     clearTimeout(timer);
   }
 }
 async function fetchClinePassModels() {
   const response = await fetchJson(CLINE_PASS_CATALOG_URL);
-  if (!response.ok) throw new Error(`ClinePass catalog returned HTTP ${response.status}.`);
+  if (!response.ok) {
+    const body = await responseBodyPreview(response);
+    if (body) trace(`ClinePass catalog body=${body}`);
+    throw new Error(`ClinePass catalog returned HTTP ${response.status}.`);
+  }
   const payload = await response.json().catch(() => null);
   const models = parseClinePassModels(payload);
+  trace(`ClinePass catalog parsed models=${models.length}`);
   if (models.length === 0) throw new Error("ClinePass catalog returned no usable models.");
   return models;
 }
@@ -9486,6 +9523,8 @@ async function validateClinePassApiKey(apiKey) {
   const response = await fetchJson(CLINE_PASS_VALIDATION_URL, {
     Authorization: `Bearer ${apiKey.trim()}`
   });
+  const body = await responseBodyPreview(response);
+  if (body) trace(`ClinePass validation body=${body}`);
   if (response.status === 401 || response.status === 403) {
     throw new Error("API key was rejected.");
   }
@@ -12879,6 +12918,7 @@ export {
   getUiDebugLogPath,
   getServerDebugLogPath,
   getAntigravityDebugLogPath,
+  prepareProviderTraceLog,
   makeTraceLogger,
   writeSecureLogLine,
   printTraceLog,
@@ -12982,4 +13022,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-NXMDQV3I.js.map
+//# sourceMappingURL=chunk-3FTW3QA3.js.map

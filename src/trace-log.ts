@@ -106,6 +106,12 @@ export function getAntigravityDebugLogPath(tracePrefix: string): string {
 export function prepareProviderTraceLog(): string {
   const path = getProviderDebugLogPath();
   resetTraceLog(path);
+  try {
+    writeFileSync(path, '', { mode: FILE_MODE });
+    chmodSync(path, FILE_MODE);
+  } catch {
+    // best-effort
+  }
   return path;
 }
 
