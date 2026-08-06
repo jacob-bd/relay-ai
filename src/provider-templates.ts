@@ -41,6 +41,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     defaultBaseUrl: 'https://api.cline.bot/api/v1',
     signupUrl: 'https://app.cline.bot',
     modelSource: 'cline-recommended',
+    headers: { 'HTTP-Referer': 'https://cline.bot', 'X-Title': 'Cline' },
     supported: true,
     subscriptionRisk: true,
   },

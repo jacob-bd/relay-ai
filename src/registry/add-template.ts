@@ -1,11 +1,12 @@
 // src/registry/add-template.ts — add a provider from a builtin template
 
-import { saveProviderCredential } from '../env.js';
+import { deleteProviderCredential, saveProviderCredential } from '../env.js';
 import { isSdkMigratedNpm } from '../provider-factory.js';
 import type { ProviderTemplate } from '../provider-templates.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import { addOpencodeCloudFromApiKey } from './crud.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
+import { fetchClinePassModels, validateClinePassApiKey } from './fetch-cline-pass-models.js';
 import { loadRegistry, saveRegistry } from './io.js';
 import {
   buildPricingIndex,
@@ -13,7 +14,7 @@ import {
   enrichPricingAsync,
   loadPricingCache,
 } from './pricing.js';
-import type { RegistryProvider } from './types.js';
+import type { CachedModel, RegistryProvider } from './types.js';
 
 export interface AddTemplateResult {
   added: boolean;
@@ -80,7 +81,24 @@ export async function addProviderFromTemplate(
     };
   }
 
-  const fetched = await fetchTemplateModels(template, trimmedKey, opts?.baseUrl);
+  let fetched: { models: CachedModel[]; baseUrl: string; error?: string; hint?: string };
+  if (template.modelSource === 'cline-recommended') {
+    try {
+      await validateClinePassApiKey(trimmedKey);
+      fetched = {
+        models: await fetchClinePassModels(),
+        baseUrl: template.defaultBaseUrl ?? '',
+      };
+    } catch (err) {
+      return {
+        added: false,
+        error: err instanceof Error ? err.message : String(err),
+        hint: template.signupUrl ? `Verify your key at ${template.signupUrl}` : undefined,
+      };
+    }
+  } else {
+    fetched = await fetchTemplateModels(template, trimmedKey, opts?.baseUrl);
+  }
   if (fetched.error || fetched.models.length === 0) {
     return {
       added: false,
@@ -127,6 +145,7 @@ export async function addProviderFromTemplate(
     api: {
       npm: template.npm,
       url: fetched.baseUrl,
+      ...(template.headers ? { headers: template.headers } : {}),
     },
     addedAt: existing?.addedAt ?? now,
     refreshedAt: now,
@@ -143,6 +162,9 @@ export async function addProviderFromTemplate(
     registry.providers.push(entry);
   }
   saveRegistry(registry);
+  if (existing?.authRef && existing.authRef !== authRef) {
+    await deleteProviderCredential(existing.authRef);
+  }
   enrichPricingAsync();
 
   return { added: true, provider: entry, modelCount: pricedModels.length };

@@ -4,7 +4,7 @@ import { printOAuthStepsPanel, confirmSubscriptionOAuthRisk } from '../ui.js';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import open from 'open';
-import { saveProviderCredential } from '../env.js';
+import { deleteProviderCredential, saveProviderCredential } from '../env.js';
 import { runOpenAiDeviceCodeFlow } from '../oauth/openai.js';
 import {
   supportsNativeOAuth,
@@ -218,6 +218,7 @@ async function upsertOAuthProvider(providerId: string, cred: OpencodeOAuthCreden
   const authRef = oauthAuthRef(registryId);
   const template = getTemplateById(templateId) ?? getTemplateById(registryId);
   let entry: RegistryProvider | undefined = registry.providers.find(pr => pr.id === registryId);
+  const previousAuthRef = entry?.authRef;
 
   if (!entry) {
     if (!template) {
@@ -246,6 +247,9 @@ async function upsertOAuthProvider(providerId: string, cred: OpencodeOAuthCreden
   if (idx >= 0) registry.providers[idx] = entry;
   else registry.providers.push(entry);
   saveRegistry(registry);
+  if (previousAuthRef && previousAuthRef !== authRef) {
+    await deleteProviderCredential(previousAuthRef);
+  }
   return entry;
 }
 

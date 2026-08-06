@@ -26,8 +26,20 @@ vi.mock('../src/oauth/claude-code.js', () => ({
   })),
   generateCliUserID: vi.fn(() => 'cli-user-id'),
 }));
+vi.mock('../src/oauth/cline-pass.js', () => ({
+  runClinePassDeviceCodeFlow: vi.fn(async () => ({
+    tokens: {
+      access_token: 'cline-access',
+      refresh_token: 'cline-refresh',
+      expires_in: 3600,
+    },
+    accountId: 'cline-user',
+    providerData: { email: 'jacob@example.com' },
+  })),
+}));
 vi.mock('../src/env.js', () => ({
   saveProviderCredential: vi.fn(async () => false),
+  deleteProviderCredential: vi.fn(async () => true),
 }));
 vi.mock('../src/registry/io.js', () => ({
   loadRegistry: vi.fn(() => ({ version: 1, providers: [] })),
@@ -44,20 +56,25 @@ vi.mock('@clack/prompts', () => ({
 }));
 
 import { saveProviderCredential } from '../src/env.js';
-import { saveRegistry } from '../src/registry/io.js';
+import { deleteProviderCredential } from '../src/env.js';
+import { loadRegistry, saveRegistry } from '../src/registry/io.js';
 import { authenticateProvider } from '../src/registry/provider-auth.js';
 import { runOpencodeAuthBroker } from '../src/registry/auth-broker.js';
 import { runAntigravityOAuthFlow } from '../src/oauth/antigravity-oauth.js';
 import { runClaudeCodeOAuthFlow } from '../src/oauth/claude-code.js';
+import { runClinePassDeviceCodeFlow } from '../src/oauth/cline-pass.js';
 import * as prompts from '@clack/prompts';
 
 describe('authenticateProvider', () => {
   beforeEach(() => {
     vi.mocked(saveProviderCredential).mockClear();
+    vi.mocked(deleteProviderCredential).mockClear();
     vi.mocked(saveRegistry).mockClear();
+    vi.mocked(loadRegistry).mockReturnValue({ version: 1, providers: [] });
     vi.mocked(runOpencodeAuthBroker).mockClear();
     vi.mocked(runAntigravityOAuthFlow).mockClear();
     vi.mocked(runClaudeCodeOAuthFlow).mockClear();
+    vi.mocked(runClinePassDeviceCodeFlow).mockClear();
     vi.mocked(prompts.select).mockClear();
   });
 
@@ -88,5 +105,39 @@ describe('authenticateProvider', () => {
     expect(runOpencodeAuthBroker).not.toHaveBeenCalled();
     expect(runClaudeCodeOAuthFlow).toHaveBeenCalled();
     expect(result.providerId).toBe('claude-code');
+  });
+
+  it('launches the ClinePass device flow instead of falling through to OpenAI', async () => {
+    vi.mocked(saveProviderCredential).mockResolvedValue(true);
+    const result = await authenticateProvider('cline-pass');
+
+    expect(runClinePassDeviceCodeFlow).toHaveBeenCalled();
+    expect(result.providerId).toBe('cline-pass');
+    expect(saveProviderCredential).toHaveBeenCalledWith(
+      'keyring:oauth:provider:cline-pass',
+      expect.stringContaining('cline-access'),
+      expect.any(Function),
+    );
+  });
+
+  it('deletes an old API-key secret after ClinePass OAuth replacement succeeds', async () => {
+    vi.mocked(saveProviderCredential).mockResolvedValue(true);
+    vi.mocked(loadRegistry).mockReturnValue({
+      version: 1,
+      providers: [{
+        id: 'cline-pass',
+        templateId: 'cline-pass',
+        name: 'ClinePass',
+        enabled: true,
+        authType: 'api',
+        authRef: 'keyring:provider:cline-pass',
+        api: { npm: '@ai-sdk/openai-compatible', url: 'https://api.cline.bot/api/v1' },
+        addedAt: '2026-08-06T00:00:00.000Z',
+      }],
+    });
+
+    await authenticateProvider('cline-pass');
+
+    expect(deleteProviderCredential).toHaveBeenCalledWith('keyring:provider:cline-pass');
   });
 });

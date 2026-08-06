@@ -4,6 +4,7 @@ import { BACKENDS } from '../constants.js';
 import { getModels } from '../models.js';
 import { fetchAnthropicModels } from './custom-endpoint.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
+import { fetchClinePassModels } from './fetch-cline-pass-models.js';
 import { fetchClaudeCodeModels } from '../oauth/claude-code.js';
 import { loadRegistry, saveRegistry } from './io.js';
 import { resolveModelSource } from './model-source.js';
@@ -580,6 +581,20 @@ export async function refreshProviderModels(
 
     if (source === 'zen-go-api') {
       models = await refreshZenGoProvider(provider);
+    } else if (source === 'cline-recommended') {
+      try {
+        models = await fetchClinePassModels();
+        baseUrl = provider.api.url ?? 'https://api.cline.bot/api/v1';
+      } catch (err) {
+        if (cachedModelCount(provider) > 0) {
+          return skipWithCachedModels(
+            provider,
+            `ClinePass catalog refresh failed: ${err instanceof Error ? err.message : String(err)} `
+              + 'Kept the existing cached model list; try again later.',
+          );
+        }
+        throw err;
+      }
     } else if (provider.authType === 'oauth' && (['openai', 'xai', 'xai-oauth', 'github-copilot', 'claude-code', 'antigravity'].includes(provider.templateId ?? provider.id) || provider.id === 'openai-oauth' || provider.id === 'xai-oauth')) {
       // OAuth tokens are not valid API keys for the developer endpoints.
       // OpenAI: ChatGPT JWT rejected by api.openai.com; no /v1/models on ChatGPT backend.

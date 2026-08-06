@@ -3,15 +3,20 @@ import { addProviderFromTemplate } from '../src/registry/add-template.js';
 import * as env from '../src/env.js';
 import * as providerFactory from '../src/provider-factory.js';
 import * as fetchTemplate from '../src/registry/fetch-template-models.js';
+import * as fetchClinePass from '../src/registry/fetch-cline-pass-models.js';
 import * as io from '../src/registry/io.js';
 import * as pricing from '../src/registry/pricing.js';
 import { getTemplateById } from '../src/provider-templates.js';
 import type { ProviderTemplate } from '../src/provider-templates.js';
 import type { ProviderRegistry } from '../src/registry/types.js';
 
-vi.mock('../src/env.js', () => ({ saveProviderCredential: vi.fn() }));
+vi.mock('../src/env.js', () => ({ saveProviderCredential: vi.fn(), deleteProviderCredential: vi.fn() }));
 vi.mock('../src/provider-factory.js', () => ({ isSdkMigratedNpm: vi.fn() }));
 vi.mock('../src/registry/fetch-template-models.js', () => ({ fetchTemplateModels: vi.fn() }));
+vi.mock('../src/registry/fetch-cline-pass-models.js', () => ({
+  fetchClinePassModels: vi.fn(),
+  validateClinePassApiKey: vi.fn(),
+}));
 vi.mock('../src/registry/io.js', () => ({ loadRegistry: vi.fn(), saveRegistry: vi.fn() }));
 vi.mock('../src/registry/pricing.js', () => ({
   loadPricingCache: vi.fn(),
@@ -47,6 +52,10 @@ describe('registry/add-template', () => {
       models: [{ id: 'model-1', name: 'Model 1', upstreamModelId: 'model-1', family: 'fam', brand: 'brand', modelFormat: 'openai' }],
       baseUrl: 'https://api.example.com',
     });
+    vi.mocked(fetchClinePass.fetchClinePassModels).mockResolvedValue([
+      { id: 'cline-pass/qwen3.8-max', name: 'Qwen 3.8 Max', upstreamModelId: 'cline-pass/qwen3.8-max', family: 'qwen3.8', brand: 'Qwen', modelFormat: 'openai' },
+    ]);
+    vi.mocked(fetchClinePass.validateClinePassApiKey).mockResolvedValue(undefined);
 
     vi.mocked(pricing.enrichModelsWithPricing).mockImplementation((models) => models);
   });
@@ -116,6 +125,40 @@ describe('registry/add-template', () => {
 
     expect(env.saveProviderCredential).toHaveBeenCalledWith('keyring:provider:test-template', 'key_123');
     expect(io.saveRegistry).toHaveBeenCalled();
+  });
+
+  it('validates and adds ClinePass using its public catalog and isolated API-key ref', async () => {
+    const res = await addProviderFromTemplate(getTemplateById('cline-pass')!, 'cline-api-key');
+
+    expect(res.added).toBe(true);
+    expect(fetchClinePass.validateClinePassApiKey).toHaveBeenCalledWith('cline-api-key');
+    expect(fetchClinePass.fetchClinePassModels).toHaveBeenCalled();
+    expect(env.saveProviderCredential).toHaveBeenCalledWith('keyring:provider:cline-pass', 'cline-api-key');
+    expect(res.provider?.api.url).toBe('https://api.cline.bot/api/v1');
+    expect(res.provider?.api.headers).toEqual({ 'HTTP-Referer': 'https://cline.bot', 'X-Title': 'Cline' });
+  });
+
+  it('deletes the superseded OAuth secret after replacing ClinePass with an API key', async () => {
+    vi.mocked(io.loadRegistry).mockReturnValue({
+      version: 1,
+      providers: [{
+        id: 'cline-pass',
+        templateId: 'cline-pass',
+        name: 'ClinePass',
+        enabled: true,
+        authType: 'oauth',
+        authRef: 'keyring:oauth:provider:cline-pass',
+        api: { npm: '@ai-sdk/openai-compatible', url: 'https://api.cline.bot/api/v1' },
+        modelsCache: { fetchedAt: '2026-08-06T00:00:00.000Z', models: [{ id: 'old', name: 'Old', upstreamModelId: 'old', modelFormat: 'openai' }] },
+        addedAt: '2026-08-06T00:00:00.000Z',
+      }],
+    });
+
+    const res = await addProviderFromTemplate(getTemplateById('cline-pass')!, 'cline-api-key', { replaceExisting: true });
+
+    expect(res.added).toBe(true);
+    expect(env.deleteProviderCredential).toHaveBeenCalledWith('keyring:oauth:provider:cline-pass');
+    expect(res.provider?.authType).toBe('api');
   });
 
   it('adds the three separate DashScope variants with independent credential refs', async () => {

@@ -5,6 +5,8 @@ import * as env from '../src/env.js';
 import * as pricing from '../src/registry/pricing.js';
 import type { ProviderRegistry, RegistryProvider } from '../src/registry/types.js';
 
+import * as clinePassModels from '../src/registry/fetch-cline-pass-models.js';
+
 vi.mock('../src/registry/io.js', () => ({
   loadRegistry: vi.fn(),
   saveRegistry: vi.fn(),
@@ -17,6 +19,9 @@ vi.mock('../src/registry/pricing.js', () => ({
   enrichPricingAsync: vi.fn(),
   pricingPlatformForProvider: vi.fn(),
   buildPricingIndex: vi.fn(),
+}));
+vi.mock('../src/registry/fetch-cline-pass-models.js', () => ({
+  fetchClinePassModels: vi.fn(),
 }));
 
 describe('registry/refresh-models', () => {
@@ -66,6 +71,31 @@ describe('registry/refresh-models', () => {
       'qwen-cloud-token-plan',
       'qwen-cloud-token-plan',
     );
+  });
+
+  it('refreshes ClinePass from the public catalog for API-key providers', async () => {
+    vi.mocked(clinePassModels.fetchClinePassModels).mockResolvedValue([
+      { id: 'cline-pass/qwen3.8-max', name: 'Qwen 3.8 Max', upstreamModelId: 'cline-pass/qwen3.8-max', modelFormat: 'openai' },
+    ]);
+    const registry: ProviderRegistry = {
+      schemaVersion: 1,
+      providers: [{
+        id: 'cline-pass',
+        templateId: 'cline-pass',
+        name: 'ClinePass',
+        enabled: true,
+        authRef: 'keyring:provider:cline-pass',
+        authType: 'api',
+        api: { npm: '@ai-sdk/openai-compatible', url: 'https://api.cline.bot/api/v1' },
+        addedAt: '2026-08-06T00:00:00.000Z',
+      }],
+    };
+
+    const result = await refreshProviderModels('cline-pass', 'cline-api-key', registry);
+
+    expect(result.ok).toBe(true);
+    expect(clinePassModels.fetchClinePassModels).toHaveBeenCalled();
+    expect(registry.providers[0]?.modelsCache?.models[0]?.id).toBe('cline-pass/qwen3.8-max');
   });
 
   describe('refreshProviderModels (OpenAI OAuth 3-tier fetch)', () => {
