@@ -338,6 +338,33 @@ describe('createLanguageModel', () => {
     vi.doUnmock('@ai-sdk/openai-compatible');
   });
 
+  it('formats ClinePass OAuth credentials only for the SDK runtime and installs a refresh fetch', async () => {
+    const factory = vi.fn((modelId: string) => ({ modelId }));
+    const createOpenAICompatible = vi.fn(() => factory);
+    vi.doMock('@ai-sdk/openai-compatible', () => ({ createOpenAICompatible }));
+
+    const { createLanguageModel: create } = await import('../src/provider-factory.js');
+    await create({
+      npm: '@ai-sdk/openai-compatible',
+      modelId: 'cline-pass/qwen3.8-max',
+      apiKey: 'raw-oauth-token',
+      baseURL: 'https://api.cline.bot/api/v1',
+      providerId: 'cline-pass',
+      authType: 'oauth',
+      headers: { 'X-Title': 'Cline' },
+      refreshToken: vi.fn(async () => 'refreshed-token'),
+      onTokenRefreshed: vi.fn(),
+    });
+
+    expect(createOpenAICompatible).toHaveBeenCalledWith(expect.objectContaining({
+      apiKey: 'workos:raw-oauth-token',
+      baseURL: 'https://api.cline.bot/api/v1',
+      headers: { 'X-Title': 'Cline' },
+      fetch: expect.any(Function),
+    }));
+    vi.doUnmock('@ai-sdk/openai-compatible');
+  });
+
   it('omits apiKey for anonymous openai-compatible providers', async () => {
     const factory = vi.fn((modelId: string) => ({ modelId }));
     const createOpenAICompatible = vi.fn(() => factory);

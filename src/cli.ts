@@ -22,6 +22,7 @@ import type { ModelFormat } from './types.js';
 import { loadPreferences, savePreferences, recordLaunchSelection } from './config.js';
 import { claudeTransparentModeOptions, pickLocalModel, browseAllModels } from './prompts.js';
 import { fetchProviderCatalog, providersForPicker, resolveLocalProviderApiKey } from './provider-catalog.js';
+import { providerRefreshToken } from './provider-runtime.js';
 import { BACKENDS, VERSION } from './constants.js';
 import { checkForUpdates, formatUpdateNotification } from './update-check.js';
 import type { ParsedArgs, ModelInfo, FavoriteModel, LocalProvider, LocalProviderModel } from './types.js';
@@ -1508,6 +1509,8 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
           interleavedReasoningField: selectedModel.interleavedReasoningField,
           useResponsesLite: selectedModel.useResponsesLite,
           preferWebSockets: selectedModel.preferWebSockets,
+          refreshToken: providerRefreshToken(activeProvider.id, activeProvider.authType, activeProvider.authRef),
+          headers: activeProvider.headers,
         },
         launchApiKey,
       );

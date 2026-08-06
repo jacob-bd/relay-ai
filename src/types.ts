@@ -69,6 +69,8 @@ export interface LocalProvider {
   id: string;
   name: string;
   apiKey: string;
+  /** Registry credential reference used for OAuth refresh callbacks. */
+  authRef?: string;
   authType?: 'api' | 'oauth' | 'none';
   oauthAccountId?: string;
   providerData?: Record<string, unknown>;

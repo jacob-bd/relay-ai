@@ -51,7 +51,7 @@ Pick your backend:
 | `relay-ai agy` | Launch Antigravity CLI with Relay models ([warning + guide](docs/ANTIGRAVITY.md)) |
 | `relay-ai antigravity` | Launch Antigravity app with Relay models, macOS ([warning + guide](docs/ANTIGRAVITY.md)) |
 | `relay-ai antigravity-ide` | Launch Antigravity IDE with Relay models, macOS ([warning + guide](docs/ANTIGRAVITY.md)) |
-| `relay-ai providers auth <id>` | Authenticate an OAuth provider (GitHub Copilot, xAI, OpenAI) |
+| `relay-ai providers auth <id>` | Authenticate an OAuth provider (GitHub Copilot, xAI, OpenAI, ClinePass) |
 | `relay-ai --ai` | Full agent reference for scripts and alef-agent ([guide](docs/AI-AGENTS.md)) |
 | `@jacobbd/relay-ai/core` | Embed Relay AI in a Node app in-process — no CLI/UI/server ([guide](docs/CORE.md)) |
 
@@ -100,6 +100,7 @@ Pick your backend:
 | GitHub Copilot OAuth | `relay-ai providers auth github-copilot` | ✅ Device code flow ([guide](docs/SUBSCRIPTION-OAUTH.md)) |
 | xAI SuperGrok OAuth | `relay-ai providers auth xai-oauth` | ✅ Device code flow ([guide](docs/SUBSCRIPTION-OAUTH.md)) |
 | OpenAI ChatGPT OAuth | `relay-ai providers auth openai-oauth` | ✅ Device code flow ([guide](docs/SUBSCRIPTION-OAUTH.md)) |
+| ClinePass OAuth | `relay-ai providers auth cline-pass` | ✅ Device code flow ([guide](docs/SUBSCRIPTION-OAUTH.md)) |
 
 ## Prerequisites
 
@@ -195,7 +196,7 @@ Opens a browser-based dashboard on a random local port. From the UI you can:
 - **Keep Claude Code's Anthropic login** — on the Claude Code CLI card, check **Keep my Anthropic login and add Relay models** to keep your normal Claude models while adding the selected Relay model and compatible favorites. This option is not shown for Claude Desktop.
 - **Manage General Favorites** — the sidebar shows your saved favorite models with a slot indicator (Slots used X/20). Favorites launch through all supported agents.
 - **Manage Antigravity Favorites** — separate favorites panel for Antigravity sessions.
-- **Manage providers** — add providers from templates, delete providers, and refresh model lists inline, all without leaving the browser. For GitHub Copilot, ChatGPT, and xAI OAuth, the UI displays a one-time device code with **Copy code** and **Open sign-in page** buttons so you can complete sign-in without using the terminal. Connected Copilot cards also identify the account as Free, Paid, or Plan unverified so the visible model catalog is easier to understand.
+- **Manage providers** — add providers from templates, delete providers, and refresh model lists inline, all without leaving the browser. For GitHub Copilot, ChatGPT, xAI, and ClinePass OAuth, the UI displays a one-time device code with **Copy code** and **Open sign-in page** buttons so you can complete sign-in without using the terminal. ClinePass can also be configured with an API key from the same provider card.
 - **Run the Server tab** — configure and start the same gateway as `relay-ai server` (favorites-only or specific providers, discovery id masking, local/network listen mode) and see the resulting URLs, API key, and model catalog right in the browser. Runs in the same process as the UI, so it stops when you close the dashboard. See [Registry gateway (`relay-ai server`)](#registry-gateway-relay-ai-server) below for what each option does.
 
 Press `Ctrl+C` in the terminal where `relay-ai ui` is running to shut down the dashboard server (this also stops the gateway if you started it from the Server tab).
@@ -462,6 +463,7 @@ Device code flows for existing subscriptions:
 relay-ai providers auth github-copilot   # GitHub Copilot
 relay-ai providers auth openai-oauth     # ChatGPT Plus / Pro
 relay-ai providers auth xai-oauth        # xAI SuperGrok
+relay-ai providers auth cline-pass       # ClinePass account
 ```
 
 ### Codex CLI (`relay-ai codex`)

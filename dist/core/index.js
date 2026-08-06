@@ -487,6 +487,43 @@ function injectClaudeIdentity(body, providerData, seed) {
   return { sessionId, userId };
 }
 
+// src/cline-pass.ts
+var CLINE_PASS_HOST = "https://api.cline.bot";
+var CLINE_PASS_SDK_BASE_URL = `${CLINE_PASS_HOST}/api/v1`;
+var CLINE_PASS_CATALOG_URL = `${CLINE_PASS_HOST}/api/v1/ai/cline/recommended-models`;
+var CLINE_PASS_VALIDATION_URL = `${CLINE_PASS_HOST}/api/v1/models`;
+var CLINE_PASS_REGISTER_URL = `${CLINE_PASS_HOST}/api/v1/auth/register`;
+var CLINE_PASS_REFRESH_URL = `${CLINE_PASS_HOST}/api/v1/auth/refresh`;
+var CLINE_PASS_WORKOS_PREFIX = "workos:";
+function isClinePassOAuth(providerId, authType) {
+  return providerId === "cline-pass" && authType === "oauth";
+}
+function formatClineRuntimeCredential(providerId, authType, key) {
+  if (!isClinePassOAuth(providerId, authType)) return key;
+  return key.toLowerCase().startsWith(CLINE_PASS_WORKOS_PREFIX) ? key : `${CLINE_PASS_WORKOS_PREFIX}${key}`;
+}
+function createClinePassOAuthFetch(initialRuntimeCredential, refreshToken, onTokenRefreshed, fetchImpl = globalThis.fetch) {
+  let currentRuntimeCredential = initialRuntimeCredential;
+  return async (input, init) => {
+    const request = new Request(input, init);
+    const send = (runtimeCredential) => {
+      const headers = new Headers(request.headers);
+      headers.set("Authorization", `Bearer ${runtimeCredential}`);
+      return fetchImpl(request.clone(), { headers });
+    };
+    const response = await send(currentRuntimeCredential);
+    if (response.status !== 401) return response;
+    const refreshedRawToken = await refreshToken().catch(() => null);
+    const refreshedRuntimeCredential = refreshedRawToken ? formatClineRuntimeCredential("cline-pass", "oauth", refreshedRawToken) : null;
+    if (!refreshedRawToken || !refreshedRuntimeCredential || refreshedRuntimeCredential === currentRuntimeCredential) {
+      return response;
+    }
+    currentRuntimeCredential = refreshedRuntimeCredential;
+    onTokenRefreshed?.(refreshedRawToken);
+    return send(currentRuntimeCredential);
+  };
+}
+
 // src/provider-factory.ts
 var RESPONSES_ONLY_PREFIXES = [
   "gpt-5-codex",
@@ -615,11 +652,19 @@ async function createLanguageModel(spec) {
   let model;
   if (npm === "@ai-sdk/openai-compatible") {
     const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
+    const runtimeApiKey = formatClineRuntimeCredential(spec.providerId, spec.authType, apiKey);
     const options = {
       name: spec.providerId ?? "openai-compatible",
       baseURL: baseURL ?? "",
-      ...apiKey.trim() ? { apiKey } : {},
-      ...spec.headers ? { headers: spec.headers } : {}
+      ...runtimeApiKey.trim() ? { apiKey: runtimeApiKey } : {},
+      ...spec.headers ? { headers: spec.headers } : {},
+      ...isClinePassOAuth(spec.providerId, spec.authType) && spec.refreshToken ? {
+        fetch: createClinePassOAuthFetch(
+          runtimeApiKey,
+          spec.refreshToken,
+          spec.onTokenRefreshed
+        )
+      } : {}
     };
     model = createOpenAICompatible({
       ...options
@@ -1296,7 +1341,7 @@ function accessTokenIsExpiring(token, skewMs = OAUTH_REFRESH_SKEW_MS) {
     return false;
   }
 }
-var NATIVE_OAUTH_PROVIDER_IDS = ["xai", "xai-oauth", "openai", "openai-oauth", "github-copilot", "claude-code", "antigravity"];
+var NATIVE_OAUTH_PROVIDER_IDS = ["xai", "xai-oauth", "openai", "openai-oauth", "github-copilot", "claude-code", "antigravity", "cline-pass"];
 
 // src/oauth/github.ts
 var COPILOT_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token";
@@ -1482,6 +1527,66 @@ async function refreshAntigravityToken(refreshToken) {
   );
 }
 
+// src/oauth/cline-pass.ts
+var DEFAULT_EXPIRES_MS = 10 * 60 * 1e3;
+function jsonHeaders() {
+  return {
+    Accept: "application/json",
+    "Content-Type": "application/json"
+  };
+}
+function expiresInFromIso(expiresAt) {
+  if (typeof expiresAt !== "string") throw new Error("ClinePass response is missing a valid expiresAt");
+  const timestamp = Date.parse(expiresAt);
+  if (!Number.isFinite(timestamp)) throw new Error("ClinePass response is missing a valid expiresAt");
+  return Math.max(1, Math.floor((timestamp - Date.now()) / 1e3));
+}
+function toOAuthResult(data) {
+  if (typeof data.accessToken !== "string" || !data.accessToken) {
+    throw new Error("ClinePass response is missing accessToken");
+  }
+  const userInfo = data.userInfo && typeof data.userInfo === "object" && !Array.isArray(data.userInfo) ? data.userInfo : void 0;
+  const accountId = typeof userInfo?.clineUserId === "string" ? userInfo.clineUserId : void 0;
+  return {
+    tokens: {
+      access_token: data.accessToken,
+      ...typeof data.refreshToken === "string" ? { refresh_token: data.refreshToken } : {},
+      expires_in: expiresInFromIso(data.expiresAt),
+      ...userInfo ? { providerData: userInfo } : {}
+    },
+    ...accountId ? { accountId } : {},
+    ...userInfo ? { providerData: userInfo } : {}
+  };
+}
+async function readError(response) {
+  const text = await response.text().catch(() => "");
+  if (!text) return `HTTP ${response.status}`;
+  try {
+    const parsed = JSON.parse(text);
+    const detail = typeof parsed.error === "string" ? parsed.error : typeof parsed.message === "string" ? parsed.message : "";
+    return detail || `HTTP ${response.status}`;
+  } catch {
+    return text.slice(0, 120);
+  }
+}
+async function refreshClinePassAccessToken(refreshToken) {
+  const response = await fetch(CLINE_PASS_REFRESH_URL, {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({ refreshToken, grantType: "refresh_token" })
+  });
+  if (!response.ok) {
+    const detail = await readError(response);
+    throw new Error(`ClinePass token refresh failed (${response.status}): ${detail}`);
+  }
+  const body = await response.json();
+  if (body.success !== true || !body.data) {
+    const detail = typeof body.error === "string" ? body.error : typeof body.message === "string" ? body.message : "unsuccessful response";
+    throw new Error(`ClinePass token refresh failed: ${detail}`);
+  }
+  return toOAuthResult(body.data).tokens;
+}
+
 // src/oauth/refresh.ts
 function oauthCredentialShouldRefresh(cred, providerId) {
   if (oauthCredentialNeedsRefresh(cred)) return true;
@@ -1503,10 +1608,13 @@ async function refreshStoredOAuthCredential(providerId, cred) {
     tokens = await refreshClaudeCodeToken(cred.refresh);
   } else if (providerId === "antigravity") {
     tokens = await refreshAntigravityToken(cred.refresh);
+  } else if (providerId === "cline-pass") {
+    tokens = await refreshClinePassAccessToken(cred.refresh);
   } else {
     throw new Error(`OAuth refresh not implemented for provider "${providerId}"`);
   }
-  return tokensToStoredCredential(tokens, cred.refresh, cred.accountId, cred.providerData);
+  const accountId = providerId === "cline-pass" && typeof tokens.providerData?.clineUserId === "string" ? tokens.providerData.clineUserId : cred.accountId;
+  return tokensToStoredCredential(tokens, cred.refresh, accountId, cred.providerData);
 }
 
 // src/secrets-file.ts
@@ -1705,6 +1813,18 @@ async function resolveProviderCredential(providerId, authRef, diag) {
   }
   return readProviderSecret(parsed.account, diag);
 }
+async function forceRefreshProviderCredential(providerId, authRef, diag) {
+  const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
+  if (namespaced) return namespaced;
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== "keyring") {
+    return resolveProviderCredential(providerId, authRef, diag);
+  }
+  const oauthProviderId = oauthProviderIdFromAccount(parsed.account);
+  const raw = await readKeyringAccount(parsed.account, diag);
+  if (!raw || !oauthProviderId) return decodeProviderSecret(raw);
+  return refreshOAuthKeyringAccount(parsed.account, oauthProviderId, raw, diag, true);
+}
 async function resolveProviderOAuthAccountId(authRef, diag) {
   const parsed = parseAuthRef(authRef);
   if (!parsed || parsed.kind !== "keyring" || !oauthProviderIdFromAccount(parsed.account)) return void 0;
@@ -1731,12 +1851,12 @@ function decodeProviderSecret(raw) {
   }
   return trimmed;
 }
-async function refreshOAuthKeyringAccount(account, providerId, raw, diag) {
+async function refreshOAuthKeyringAccount(account, providerId, raw, diag, force = false) {
   const existing = oauthRefreshInflight.get(account);
   if (existing) return existing;
   const work = (async () => {
     const cred = parseStoredOAuthCredential(raw);
-    if (!cred || !oauthCredentialShouldRefresh(cred, providerId)) {
+    if (!cred || !force && !oauthCredentialShouldRefresh(cred, providerId)) {
       return decodeProviderSecret(raw);
     }
     try {
@@ -1765,6 +1885,506 @@ async function readProviderSecret(account, diag) {
     return refreshOAuthKeyringAccount(account, oauthProviderId, raw, diag);
   }
   return decodeProviderSecret(raw);
+}
+
+// src/data/model-incompatible.json
+var model_incompatible_default = {
+  schema_version: "1",
+  entries: [
+    {
+      provider: "google",
+      modelId: "antigravity-preview-05-2026",
+      category: "managed_agent",
+      reason: "Interactions API only; coding agents send multiturn chat via @ai-sdk/google streamGenerateContent",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "manual UAT 2026-06-10"
+      ],
+      verifiedAt: "2026-06-10"
+    },
+    {
+      provider: "*",
+      modelId: "z-ai/glm4.7",
+      category: "gated_access",
+      reason: "NVIDIA NIM requires separate access approval (HTTP 410)",
+      sources: [
+        "manual probe 2026-06"
+      ],
+      verifiedAt: "2026-06-10"
+    },
+    {
+      provider: "*",
+      modelId: "qwen3.6-plus-free",
+      category: "stale_promotion",
+      reason: "Free promotion ended; API returns 401",
+      sources: [
+        "OpenCode Zen catalog"
+      ],
+      verifiedAt: "2026-06-10"
+    },
+    {
+      provider: "*",
+      modelId: "mimo-v2-pro",
+      category: "deprecated",
+      reason: "Deprecated; API returns 400 \u2014 use mimo-v2.5-pro",
+      sources: [
+        "OpenCode Zen catalog"
+      ],
+      verifiedAt: "2026-06-10"
+    },
+    {
+      provider: "*",
+      modelId: "mimo-v2-omni",
+      category: "deprecated",
+      reason: "Deprecated; API returns 400 \u2014 use mimo-v2.5",
+      sources: [
+        "OpenCode Zen catalog"
+      ],
+      verifiedAt: "2026-06-10"
+    },
+    {
+      provider: "google",
+      modelId: "aqa",
+      category: "managed_agent",
+      reason: "Attributed QA model \u2014 not for coding agents",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "deep-research-max-preview-04-2026",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "deep-research-preview-04-2026",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "deep-research-pro-preview-12-2025",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-computer-use-preview-10-2025",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-flash-image",
+      category: "image_generation",
+      reason: "Image-output model \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-flash-native-audio-latest",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-flash-native-audio-preview-09-2025",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-flash-native-audio-preview-12-2025",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-flash-preview-tts",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-pro-preview-tts",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3-pro-preview",
+      category: "deprecated",
+      reason: "Retired preview; API returns 404 \u2014 use gemini-3.1-pro-preview or newer",
+      sources: [
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview",
+        "manual UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3-pro-image",
+      category: "image_generation",
+      reason: "Image-output model \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3-pro-image-preview",
+      category: "image_generation",
+      reason: "Image-output model \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3.1-flash-image",
+      category: "image_generation",
+      reason: "Image-output model \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3.1-flash-image-preview",
+      category: "image_generation",
+      reason: "Image-output model \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3.1-flash-live-preview",
+      category: "managed_agent",
+      reason: "Live/session API \u2014 not for Codex multiturn chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3.1-flash-tts-preview",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3.5-live-translate-preview",
+      category: "managed_agent",
+      reason: "Live/session API \u2014 not for Codex multiturn chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-embedding-001",
+      category: "embedding",
+      reason: "Embedding model \u2014 not for chat or tools",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-embedding-2",
+      category: "embedding",
+      reason: "Embedding model \u2014 not for chat or tools",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-embedding-2-preview",
+      category: "embedding",
+      reason: "Embedding model \u2014 not for chat or tools",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-robotics-er-1.5-preview",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-robotics-er-1.6-preview",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "imagen-4.0-fast-generate-001",
+      category: "image_generation",
+      reason: "Image generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "imagen-4.0-generate-001",
+      category: "image_generation",
+      reason: "Image generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "imagen-4.0-ultra-generate-001",
+      category: "image_generation",
+      reason: "Image generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "lyria-3-clip-preview",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "lyria-3-pro-preview",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "lyria-realtime-exp",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "nano-banana-pro-preview",
+      category: "image_generation",
+      reason: "Image generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-2.0-generate-001",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-3.0-fast-generate-001",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-3.0-generate-001",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-3.1-fast-generate-preview",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-3.1-generate-preview",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-3.1-lite-generate-preview",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    }
+  ]
+};
+
+// src/registry/models-dev.ts
+import {
+  chmodSync as chmodSync4,
+  existsSync as existsSync6,
+  mkdirSync as mkdirSync5,
+  readFileSync as readFileSync8,
+  statSync as statSync2,
+  writeFileSync as writeFileSync4
+} from "fs";
+import { dirname as dirname4, join as join6 } from "path";
+
+// src/registry/pricing.ts
+import {
+  chmodSync as chmodSync3,
+  existsSync as existsSync5,
+  mkdirSync as mkdirSync4,
+  readFileSync as readFileSync7,
+  writeFileSync as writeFileSync3
+} from "fs";
+import { dirname as dirname3, join as join5 } from "path";
+
+// src/model-compatibility.ts
+var BLACKLIST_ENTRIES = model_incompatible_default.entries ?? [];
+
+// src/registry/import-build.ts
+function oauthAuthRef(providerId) {
+  return `keyring:oauth:provider:${providerId}`;
+}
+
+// src/provider-runtime.ts
+function providerRefreshToken(providerId, authType, authRef) {
+  if (authType !== "oauth" || !providerId) return void 0;
+  return () => forceRefreshProviderCredential(providerId, authRef ?? oauthAuthRef(providerId));
 }
 
 // src/core/model.ts
@@ -1833,6 +2453,7 @@ async function createRelayModel(routeId) {
     oauthAccountId,
     providerData,
     headers: provider.api.headers,
+    refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
     useResponsesLite: model.useResponsesLite,
     preferWebSockets: model.preferWebSockets
   };

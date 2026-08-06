@@ -94,6 +94,6 @@ describe('UI OAuth device helpers', () => {
       fileURLToPath(new URL('../src/ui/public/app.js', import.meta.url)),
       'utf8',
     );
-    expect(app.match(/=> beginDeviceOAuthFlow\(\{/g)).toHaveLength(2);
+    expect(app.match(/=> beginDeviceOAuthFlow\(\{/g)).toHaveLength(3);
   });
 });

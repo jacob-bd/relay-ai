@@ -126,6 +126,7 @@ import {
   printTraceLog,
   printWelcomePanel,
   providerAuthHelpText,
+  providerRefreshToken,
   providerSelectOption,
   providersForPicker,
   providersForTarget,
@@ -182,14 +183,14 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-GHSURQOK.js";
+} from "./chunk-57B6WHNI.js";
 import {
   filterTemplates,
   init_provider_templates,
   listAddableTemplates,
   listSupportedTemplates,
   listVisibleOAuthTemplates
-} from "./chunk-HXGZ4CTV.js";
+} from "./chunk-3KMKYAHO.js";
 
 // src/cli.ts
 import pc12 from "picocolors";
@@ -1288,7 +1289,7 @@ ${pc4.bold("Subcommands:")}
   (none)      Provider hub wizard ${pc4.dim("[Phase 1.1]")}
   add         Add a provider (Groq, Mistral, Together AI, \u2026) ${pc4.dim("[Phase 1.1]")}
   import      Optional one-time import from OpenCode CLI ${pc4.dim("[Phase 1.0]")}
-  auth        Sign in with OAuth (GitHub Copilot, xAI, OpenAI)
+  auth        Sign in with OAuth (GitHub Copilot, xAI, OpenAI, ClinePass)
   list        Show configured providers ${pc4.dim("[Phase 1.0]")}
   remove      Remove a provider by id ${pc4.dim("[Phase 1.1]")}
   refresh-models  Update cached model lists ${pc4.dim("[Phase 1.2]")}`;
@@ -3199,7 +3200,11 @@ async function startCodexProxy(routes, options = {}) {
       oauthAccountId: route.oauthAccountId,
       providerData: route.providerData,
       vertex: route.vertex,
-      headers: route.headers
+      headers: route.headers,
+      refreshToken: route.refreshToken,
+      onTokenRefreshed: (refreshed) => {
+        route.apiKey = refreshed;
+      }
     }));
   }
   return new Promise((resolve2, reject2) => {
@@ -3744,7 +3749,8 @@ function resolveCodexRoute(provider, model, apiKey) {
     supportedParameters: model.supportedParameters,
     reasoning: model.reasoning,
     interleavedReasoningField: model.interleavedReasoningField,
-    headers: provider.headers
+    headers: provider.headers,
+    refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
   };
   if (model.modelFormat === "cloud-code") {
     return {
@@ -3762,7 +3768,8 @@ function resolveCodexRoute(provider, model, apiKey) {
       supportedParameters: model.supportedParameters,
       reasoning: model.reasoning,
       interleavedReasoningField: model.interleavedReasoningField,
-      headers: provider.headers
+      headers: provider.headers,
+      refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
     };
   }
   if (model.npm === "@ai-sdk/openai" && provider.authType !== "oauth" && model.modelFormat === "openai") {
@@ -4304,7 +4311,9 @@ async function resolveFavorite(fav, ctx) {
       apiKey: await resolveLocalProviderApiKey(found.provider) ?? "",
       authType: found.provider.authType,
       oauthAccountId: found.provider.oauthAccountId,
-      providerData: found.provider.providerData
+      providerData: found.provider.providerData,
+      headers: found.provider.headers,
+      refreshToken: providerRefreshToken(found.provider.id, found.provider.authType, found.provider.authRef)
     };
   }
   return void 0;
@@ -5206,7 +5215,8 @@ Error: ${launchPlan.error}
         supportedParameters: route.supportedParameters,
         reasoning: route.reasoning,
         interleavedReasoningField: route.interleavedReasoningField,
-        headers: route.headers
+        headers: route.headers,
+        refreshToken: route.refreshToken
       }], { debug: trace });
       proxyPort = proxyHandle.port;
     }
@@ -5700,7 +5710,11 @@ async function startGeminiProxy(routes, debug = false) {
         authType: route.authType,
         oauthAccountId: route.oauthAccountId,
         providerData: route.providerData,
-        headers: route.headers
+        headers: route.headers,
+        refreshToken: route.refreshToken,
+        onTokenRefreshed: (refreshed) => {
+          route.apiKey = refreshed;
+        }
       });
       models.set(route.aliasId, m);
     }
@@ -7471,6 +7485,26 @@ var MAX_REASONING_ECHOES_PER_CONVERSATION = 20;
 function isCloudCodeOAuthRoute(route) {
   return route.providerId === "antigravity" && route.authType === "oauth" && route.modelFormat === "cloud-code";
 }
+async function createRouteLanguageModel(route) {
+  const spec = {
+    npm: route.npm,
+    modelId: route.upstreamModelId,
+    apiKey: route.apiKey,
+    baseURL: route.baseURL,
+    providerId: route.providerId,
+    authType: route.authType,
+    oauthAccountId: route.oauthAccountId,
+    providerData: route.providerData
+  };
+  if (route.headers !== void 0) spec.headers = route.headers;
+  if (route.refreshToken) {
+    spec.refreshToken = route.refreshToken;
+    spec.onTokenRefreshed = (refreshed) => {
+      route.apiKey = refreshed;
+    };
+  }
+  return createLanguageModel(spec);
+}
 function isUserTurnRequest(parsed) {
   return typeof parsed?.requestId === "string" && parsed.requestId.startsWith("agent/");
 }
@@ -8021,16 +8055,7 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
     providerOptions,
     sdkParams.providerOptions
   );
-  const langModel = await createLanguageModel({
-    npm: route.npm,
-    modelId: route.upstreamModelId,
-    apiKey: route.apiKey,
-    baseURL: route.baseURL,
-    providerId: route.providerId,
-    authType: route.authType,
-    oauthAccountId: route.oauthAccountId,
-    providerData: route.providerData
-  });
+  const langModel = await createRouteLanguageModel(route);
   const responseId = `relay-${Date.now()}`;
   const { fullStream } = streamText3({
     model: langModel,
@@ -8207,16 +8232,7 @@ async function handleUnaryRequest(res, route, providerOptions, parsed, log14, op
     providerOptions,
     sdkParams.providerOptions
   );
-  const langModel = await createLanguageModel({
-    npm: route.npm,
-    modelId: route.upstreamModelId,
-    apiKey: route.apiKey,
-    baseURL: route.baseURL,
-    providerId: route.providerId,
-    authType: route.authType,
-    oauthAccountId: route.oauthAccountId,
-    providerData: route.providerData
-  });
+  const langModel = await createRouteLanguageModel(route);
   const responseId = `relay-${Date.now()}`;
   const result = await generateText3({
     model: langModel,
@@ -8275,7 +8291,9 @@ async function resolveAntigravityLaunchRoutes(opts) {
     apiKey,
     authType: opts.provider.authType,
     oauthAccountId: opts.provider.oauthAccountId,
-    providerData: opts.provider.providerData
+    providerData: opts.provider.providerData,
+    headers: opts.provider.headers,
+    refreshToken: providerRefreshToken(opts.provider.id, opts.provider.authType, opts.provider.authRef)
   };
   const ctx = {
     agent: "antigravity",
@@ -9117,7 +9135,8 @@ function codexRouteToProxyRoute(provider, model, apiKey) {
     supportedParameters: route.supportedParameters,
     reasoning: route.reasoning,
     interleavedReasoningField: route.interleavedReasoningField,
-    headers: route.headers
+    headers: route.headers,
+    refreshToken: route.refreshToken
   };
 }
 async function buildCodexAppProviderCatalogRoutes(provider, apiKey, selectedModelId, trace) {
@@ -9583,7 +9602,8 @@ function codexProxyRouteToCodexRoute(route, fallbackProviderId) {
     supportedParameters: route.supportedParameters,
     reasoning: route.reasoning,
     interleavedReasoningField: route.interleavedReasoningField,
-    headers: route.headers
+    headers: route.headers,
+    refreshToken: route.refreshToken
   };
 }
 async function waitForShutdownWithConfirm() {
@@ -13384,7 +13404,9 @@ Error: ${launchPlan.error}
           reasoning: selectedModel.reasoning,
           interleavedReasoningField: selectedModel.interleavedReasoningField,
           useResponsesLite: selectedModel.useResponsesLite,
-          preferWebSockets: selectedModel.preferWebSockets
+          preferWebSockets: selectedModel.preferWebSockets,
+          refreshToken: providerRefreshToken(activeProvider.id, activeProvider.authType, activeProvider.authRef),
+          headers: activeProvider.headers
         },
         launchApiKey
       );
@@ -13492,7 +13514,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-27X4WJKC.js");
+    const { runUiCommand } = await import("./ui-command-CBJW3RG7.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

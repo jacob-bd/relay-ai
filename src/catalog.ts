@@ -4,6 +4,7 @@ import { claudeCodeClientModelId } from './context-model-id.js';
 import { ANTIGRAVITY_BASE_URLS } from './oauth/antigravity-oauth.js';
 import { isSdkMigratedNpm } from './provider-factory.js';
 import { aliasModelId } from './proxy.js';
+import { providerRefreshToken } from './provider-runtime.js';
 import type { ProxyRoute } from './proxy.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel, ModelInfo } from './types.js';
 
@@ -27,6 +28,7 @@ export function localModelToRoute(lp: LocalProvider, model: LocalProviderModel):
     authType: lp.authType,
     oauthAccountId: lp.oauthAccountId,
     providerData: lp.providerData,
+    refreshToken: providerRefreshToken(lp.id, lp.authType, lp.authRef),
     headers: lp.headers,
     supportedParameters: model.supportedParameters,
     reasoning: model.reasoning,

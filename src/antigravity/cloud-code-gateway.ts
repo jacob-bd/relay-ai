@@ -61,6 +61,25 @@ function isCloudCodeOAuthRoute(route: AntigravityRoute): boolean {
   return route.providerId === 'antigravity' && route.authType === 'oauth' && route.modelFormat === 'cloud-code';
 }
 
+async function createRouteLanguageModel(route: AntigravityRoute) {
+  const spec: Parameters<typeof createLanguageModel>[0] = {
+    npm: route.npm,
+    modelId: route.upstreamModelId,
+    apiKey: route.apiKey,
+    baseURL: route.baseURL,
+    providerId: route.providerId,
+    authType: route.authType,
+    oauthAccountId: route.oauthAccountId,
+    providerData: route.providerData,
+  };
+  if (route.headers !== undefined) spec.headers = route.headers;
+  if (route.refreshToken) {
+    spec.refreshToken = route.refreshToken;
+    spec.onTokenRefreshed = refreshed => { route.apiKey = refreshed; };
+  }
+  return createLanguageModel(spec);
+}
+
 function isUserTurnRequest(parsed: Record<string, unknown> | undefined): boolean {
   return typeof parsed?.requestId === 'string' && parsed.requestId.startsWith('agent/');
 }
@@ -729,16 +748,7 @@ async function handleStreamingRequest(
     providerOptions,
     sdkParams.providerOptions,
   );
-  const langModel = await createLanguageModel({
-    npm: route.npm,
-    modelId: route.upstreamModelId,
-    apiKey: route.apiKey,
-    baseURL: route.baseURL,
-    providerId: route.providerId,
-    authType: route.authType,
-    oauthAccountId: route.oauthAccountId,
-    providerData: route.providerData,
-  });
+  const langModel = await createRouteLanguageModel(route);
   const responseId = `relay-${Date.now()}`;
 
   const { fullStream } = streamText({
@@ -926,16 +936,7 @@ async function handleUnaryRequest(
     providerOptions,
     sdkParams.providerOptions,
   );
-  const langModel = await createLanguageModel({
-    npm: route.npm,
-    modelId: route.upstreamModelId,
-    apiKey: route.apiKey,
-    baseURL: route.baseURL,
-    providerId: route.providerId,
-    authType: route.authType,
-    oauthAccountId: route.oauthAccountId,
-    providerData: route.providerData,
-  });
+  const langModel = await createRouteLanguageModel(route);
   const responseId = `relay-${Date.now()}`;
 
   const result = await generateText({

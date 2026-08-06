@@ -24,3 +24,44 @@ export function formatClineRuntimeCredential(
     ? key
     : `${CLINE_PASS_WORKOS_PREFIX}${key}`;
 }
+
+/**
+ * Wrap the SDK fetch used by ClinePass OAuth routes.
+ *
+ * WorkOS access tokens are stored without the runtime marker. ClinePass
+ * requires `workos:` on the wire, and an expired token gets one retry after
+ * the caller refreshes it. The request is cloned so a POST body can safely be
+ * sent a second time, and the wrapper never retries more than once.
+ */
+export function createClinePassOAuthFetch(
+  initialRuntimeCredential: string,
+  refreshToken: () => Promise<string | null>,
+  onTokenRefreshed?: (rawToken: string) => void,
+  fetchImpl: typeof globalThis.fetch = globalThis.fetch,
+): typeof globalThis.fetch {
+  let currentRuntimeCredential = initialRuntimeCredential;
+
+  return async (input, init) => {
+    const request = new Request(input, init);
+    const send = (runtimeCredential: string) => {
+      const headers = new Headers(request.headers);
+      headers.set('Authorization', `Bearer ${runtimeCredential}`);
+      return fetchImpl(request.clone(), { headers });
+    };
+
+    const response = await send(currentRuntimeCredential);
+    if (response.status !== 401) return response;
+
+    const refreshedRawToken = await refreshToken().catch(() => null);
+    const refreshedRuntimeCredential = refreshedRawToken
+      ? formatClineRuntimeCredential('cline-pass', 'oauth', refreshedRawToken)
+      : null;
+    if (!refreshedRawToken || !refreshedRuntimeCredential || refreshedRuntimeCredential === currentRuntimeCredential) {
+      return response;
+    }
+
+    currentRuntimeCredential = refreshedRuntimeCredential;
+    onTokenRefreshed?.(refreshedRawToken);
+    return send(currentRuntimeCredential);
+  };
+}

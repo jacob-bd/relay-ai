@@ -335,6 +335,8 @@ export function buildAntigravityRoutes(
       ...(fav.authType ? { authType: fav.authType } : {}),
       ...(fav.oauthAccountId ? { oauthAccountId: fav.oauthAccountId } : {}),
       ...(fav.providerData ? { providerData: fav.providerData } : {}),
+      ...(fav.headers ? { headers: fav.headers } : {}),
+      ...(fav.refreshToken ? { refreshToken: fav.refreshToken } : {}),
       baseURL,
       contextWindow,
     });

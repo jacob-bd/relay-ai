@@ -17,6 +17,8 @@ export interface AntigravityRoute {
   authType?: 'api' | 'oauth' | 'none';
   oauthAccountId?: string;
   providerData?: Record<string, unknown>;
+  headers?: Record<string, string>;
+  refreshToken?: () => Promise<string | null>;
   /** Provider base URL — never serialized into the catalog. */
   baseURL?: string;
   contextWindow?: number;

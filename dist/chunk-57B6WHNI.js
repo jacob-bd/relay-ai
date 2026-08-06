@@ -2,7 +2,7 @@
 import {
   getTemplateById,
   init_provider_templates
-} from "./chunk-HXGZ4CTV.js";
+} from "./chunk-3KMKYAHO.js";
 
 // src/constants.ts
 import { homedir } from "os";
@@ -610,6 +610,44 @@ function injectClaudeIdentity(body, providerData, seed) {
   return { sessionId, userId };
 }
 
+// src/cline-pass.ts
+var CLINE_PASS_HOST = "https://api.cline.bot";
+var CLINE_PASS_SDK_BASE_URL = `${CLINE_PASS_HOST}/api/v1`;
+var CLINE_PASS_CATALOG_URL = `${CLINE_PASS_HOST}/api/v1/ai/cline/recommended-models`;
+var CLINE_PASS_VALIDATION_URL = `${CLINE_PASS_HOST}/api/v1/models`;
+var CLINE_PASS_REGISTER_URL = `${CLINE_PASS_HOST}/api/v1/auth/register`;
+var CLINE_PASS_REFRESH_URL = `${CLINE_PASS_HOST}/api/v1/auth/refresh`;
+var CLINE_PASS_DEFAULT_CONTEXT_WINDOW = 131072;
+var CLINE_PASS_WORKOS_PREFIX = "workos:";
+function isClinePassOAuth(providerId, authType) {
+  return providerId === "cline-pass" && authType === "oauth";
+}
+function formatClineRuntimeCredential(providerId, authType, key) {
+  if (!isClinePassOAuth(providerId, authType)) return key;
+  return key.toLowerCase().startsWith(CLINE_PASS_WORKOS_PREFIX) ? key : `${CLINE_PASS_WORKOS_PREFIX}${key}`;
+}
+function createClinePassOAuthFetch(initialRuntimeCredential, refreshToken, onTokenRefreshed, fetchImpl = globalThis.fetch) {
+  let currentRuntimeCredential = initialRuntimeCredential;
+  return async (input, init) => {
+    const request = new Request(input, init);
+    const send = (runtimeCredential) => {
+      const headers = new Headers(request.headers);
+      headers.set("Authorization", `Bearer ${runtimeCredential}`);
+      return fetchImpl(request.clone(), { headers });
+    };
+    const response = await send(currentRuntimeCredential);
+    if (response.status !== 401) return response;
+    const refreshedRawToken = await refreshToken().catch(() => null);
+    const refreshedRuntimeCredential = refreshedRawToken ? formatClineRuntimeCredential("cline-pass", "oauth", refreshedRawToken) : null;
+    if (!refreshedRawToken || !refreshedRuntimeCredential || refreshedRuntimeCredential === currentRuntimeCredential) {
+      return response;
+    }
+    currentRuntimeCredential = refreshedRuntimeCredential;
+    onTokenRefreshed?.(refreshedRawToken);
+    return send(currentRuntimeCredential);
+  };
+}
+
 // src/provider-factory.ts
 var RESPONSES_ONLY_PREFIXES = [
   "gpt-5-codex",
@@ -744,11 +782,19 @@ async function createLanguageModel(spec) {
   let model;
   if (npm === "@ai-sdk/openai-compatible") {
     const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
+    const runtimeApiKey = formatClineRuntimeCredential(spec.providerId, spec.authType, apiKey);
     const options = {
       name: spec.providerId ?? "openai-compatible",
       baseURL: baseURL ?? "",
-      ...apiKey.trim() ? { apiKey } : {},
-      ...spec.headers ? { headers: spec.headers } : {}
+      ...runtimeApiKey.trim() ? { apiKey: runtimeApiKey } : {},
+      ...spec.headers ? { headers: spec.headers } : {},
+      ...isClinePassOAuth(spec.providerId, spec.authType) && spec.refreshToken ? {
+        fetch: createClinePassOAuthFetch(
+          runtimeApiKey,
+          spec.refreshToken,
+          spec.onTokenRefreshed
+        )
+      } : {}
     };
     model = createOpenAICompatible({
       ...options
@@ -2509,16 +2555,16 @@ function readOpencodeAuthFile(env = process.env) {
   } catch {
     return { path, entries: {}, permissionWarning: authFilePermissionWarning(path) };
   }
-  const entries = {};
+  const entries2 = {};
   if (parsed && typeof parsed === "object") {
     for (const [providerId, value] of Object.entries(parsed)) {
       const entry = decodeAuthEntry(value);
-      if (entry) entries[providerId] = entry;
+      if (entry) entries2[providerId] = entry;
     }
   }
   return {
     path,
-    entries,
+    entries: entries2,
     permissionWarning: authFilePermissionWarning(path)
   };
 }
@@ -2570,7 +2616,7 @@ function accessTokenIsExpiring(token, skewMs = OAUTH_REFRESH_SKEW_MS) {
     return false;
   }
 }
-var NATIVE_OAUTH_PROVIDER_IDS = ["xai", "xai-oauth", "openai", "openai-oauth", "github-copilot", "claude-code", "antigravity"];
+var NATIVE_OAUTH_PROVIDER_IDS = ["xai", "xai-oauth", "openai", "openai-oauth", "github-copilot", "claude-code", "antigravity", "cline-pass"];
 function supportsNativeOAuth(providerId) {
   return NATIVE_OAUTH_PROVIDER_IDS.includes(providerId);
 }
@@ -2981,19 +3027,163 @@ async function fetchClaudeCodeModels(accessToken) {
     throw new Error(`Claude Code model discovery failed (HTTP ${res.status}): ${await res.text().catch(() => "")}`);
   }
   const body = await res.json();
-  const entries = (body.data ?? []).filter((m) => typeof m.id === "string" && m.id.length > 0).map((m) => ({
+  const entries2 = (body.data ?? []).filter((m) => typeof m.id === "string" && m.id.length > 0).map((m) => ({
     id: m.id,
     displayName: typeof m.display_name === "string" ? m.display_name : m.id,
     maxInputTokens: typeof m.max_input_tokens === "number" ? m.max_input_tokens : void 0,
     maxTokens: typeof m.max_tokens === "number" ? m.max_tokens : void 0
   }));
-  if (entries.length === 0) {
+  if (entries2.length === 0) {
     throw new Error("Claude Code model discovery returned no models");
   }
-  return entries;
+  return entries2;
 }
 function guiCallbackRedirectUri(host) {
   return `http://${host}/oauth/callback`;
+}
+
+// src/oauth/cline-pass.ts
+var WORKOS_CLIENT_ID = "client_01K3A541FN8TA3EPPHTD2325AR";
+var WORKOS_DEVICE_URL = "https://api.workos.com/user_management/authorize/device";
+var WORKOS_TOKEN_URL = "https://api.workos.com/user_management/authenticate";
+var DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
+var DEFAULT_INTERVAL_MS = 5e3;
+var SLOW_DOWN_INCREMENT_MS = 1e3;
+var DEFAULT_EXPIRES_MS = 10 * 60 * 1e3;
+function formHeaders() {
+  return {
+    Accept: "application/json",
+    "Content-Type": "application/x-www-form-urlencoded"
+  };
+}
+function jsonHeaders() {
+  return {
+    Accept: "application/json",
+    "Content-Type": "application/json"
+  };
+}
+function expiresInFromIso(expiresAt) {
+  if (typeof expiresAt !== "string") throw new Error("ClinePass response is missing a valid expiresAt");
+  const timestamp = Date.parse(expiresAt);
+  if (!Number.isFinite(timestamp)) throw new Error("ClinePass response is missing a valid expiresAt");
+  return Math.max(1, Math.floor((timestamp - Date.now()) / 1e3));
+}
+function toOAuthResult(data) {
+  if (typeof data.accessToken !== "string" || !data.accessToken) {
+    throw new Error("ClinePass response is missing accessToken");
+  }
+  const userInfo = data.userInfo && typeof data.userInfo === "object" && !Array.isArray(data.userInfo) ? data.userInfo : void 0;
+  const accountId = typeof userInfo?.clineUserId === "string" ? userInfo.clineUserId : void 0;
+  return {
+    tokens: {
+      access_token: data.accessToken,
+      ...typeof data.refreshToken === "string" ? { refresh_token: data.refreshToken } : {},
+      expires_in: expiresInFromIso(data.expiresAt),
+      ...userInfo ? { providerData: userInfo } : {}
+    },
+    ...accountId ? { accountId } : {},
+    ...userInfo ? { providerData: userInfo } : {}
+  };
+}
+async function readError(response) {
+  const text4 = await response.text().catch(() => "");
+  if (!text4) return `HTTP ${response.status}`;
+  try {
+    const parsed = JSON.parse(text4);
+    const detail = typeof parsed.error === "string" ? parsed.error : typeof parsed.message === "string" ? parsed.message : "";
+    return detail || `HTTP ${response.status}`;
+  } catch {
+    return text4.slice(0, 120);
+  }
+}
+async function requestClinePassDeviceCode() {
+  const response = await fetch(WORKOS_DEVICE_URL, {
+    method: "POST",
+    headers: formHeaders(),
+    body: new URLSearchParams({ client_id: WORKOS_CLIENT_ID }).toString()
+  });
+  if (!response.ok) throw new Error(`ClinePass device code request failed (${response.status})`);
+  const json = await response.json();
+  if (!json.device_code || !json.user_code || !json.verification_uri) {
+    throw new Error("ClinePass device code response is missing required fields");
+  }
+  return json;
+}
+async function registerClinePassTokens(accessToken, refreshToken) {
+  const response = await fetch(CLINE_PASS_REGISTER_URL, {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({ accessToken, refreshToken })
+  });
+  if (!response.ok) throw new Error(`ClinePass registration failed (${response.status})`);
+  const body = await response.json();
+  if (body.success !== true || !body.data) {
+    const detail = typeof body.error === "string" ? body.error : typeof body.message === "string" ? body.message : "unsuccessful response";
+    throw new Error(`ClinePass registration failed: ${detail}`);
+  }
+  return toOAuthResult(body.data);
+}
+async function pollClinePassDeviceCode(device, opts) {
+  const sleep3 = opts?.sleep ?? sleepMs;
+  const now = opts?.now ?? (() => Date.now());
+  const deadline = now() + positiveSecondsToMs(device.expires_in, DEFAULT_EXPIRES_MS);
+  let intervalMs = Math.max(positiveSecondsToMs(device.interval, DEFAULT_INTERVAL_MS), 1e3);
+  while (now() < deadline) {
+    const response = await fetch(WORKOS_TOKEN_URL, {
+      method: "POST",
+      headers: formHeaders(),
+      body: new URLSearchParams({
+        grant_type: DEVICE_GRANT_TYPE,
+        client_id: WORKOS_CLIENT_ID,
+        device_code: device.device_code
+      }).toString()
+    });
+    if (response.ok) {
+      const workos = await response.json();
+      if (!workos.access_token || !workos.refresh_token) {
+        throw new Error("ClinePass WorkOS response is missing required tokens");
+      }
+      return registerClinePassTokens(workos.access_token, workos.refresh_token);
+    }
+    const body = await response.json().catch(() => ({}));
+    const remaining = Math.max(0, deadline - now());
+    if (body.error === "authorization_pending") {
+      await sleep3(Math.min(intervalMs, remaining));
+      continue;
+    }
+    if (body.error === "slow_down") {
+      intervalMs += SLOW_DOWN_INCREMENT_MS;
+      await sleep3(Math.min(intervalMs, remaining));
+      continue;
+    }
+    throw new Error(`ClinePass device authorization failed${body.error ? `: ${body.error}` : ""}`);
+  }
+  throw new Error("ClinePass device authorization timed out");
+}
+async function runClinePassDeviceCodeFlow(onDeviceCode, opts) {
+  const device = await requestClinePassDeviceCode();
+  onDeviceCode({
+    url: device.verification_uri_complete ?? device.verification_uri,
+    userCode: device.user_code
+  });
+  return pollClinePassDeviceCode(device, opts);
+}
+async function refreshClinePassAccessToken(refreshToken) {
+  const response = await fetch(CLINE_PASS_REFRESH_URL, {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({ refreshToken, grantType: "refresh_token" })
+  });
+  if (!response.ok) {
+    const detail = await readError(response);
+    throw new Error(`ClinePass token refresh failed (${response.status}): ${detail}`);
+  }
+  const body = await response.json();
+  if (body.success !== true || !body.data) {
+    const detail = typeof body.error === "string" ? body.error : typeof body.message === "string" ? body.message : "unsuccessful response";
+    throw new Error(`ClinePass token refresh failed: ${detail}`);
+  }
+  return toOAuthResult(body.data).tokens;
 }
 
 // src/oauth/refresh.ts
@@ -3017,10 +3207,13 @@ async function refreshStoredOAuthCredential(providerId, cred) {
     tokens = await refreshClaudeCodeToken(cred.refresh);
   } else if (providerId === "antigravity") {
     tokens = await refreshAntigravityToken(cred.refresh);
+  } else if (providerId === "cline-pass") {
+    tokens = await refreshClinePassAccessToken(cred.refresh);
   } else {
     throw new Error(`OAuth refresh not implemented for provider "${providerId}"`);
   }
-  return tokensToStoredCredential(tokens, cred.refresh, cred.accountId, cred.providerData);
+  const accountId = providerId === "cline-pass" && typeof tokens.providerData?.clineUserId === "string" ? tokens.providerData.clineUserId : cred.accountId;
+  return tokensToStoredCredential(tokens, cred.refresh, accountId, cred.providerData);
 }
 
 // src/secrets-file.ts
@@ -3311,6 +3504,18 @@ async function resolveProviderCredential(providerId, authRef, diag) {
   }
   return readProviderSecret(parsed.account, diag);
 }
+async function forceRefreshProviderCredential(providerId, authRef, diag) {
+  const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
+  if (namespaced) return namespaced;
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== "keyring") {
+    return resolveProviderCredential(providerId, authRef, diag);
+  }
+  const oauthProviderId = oauthProviderIdFromAccount(parsed.account);
+  const raw = await readKeyringAccount(parsed.account, diag);
+  if (!raw || !oauthProviderId) return decodeProviderSecret(raw);
+  return refreshOAuthKeyringAccount(parsed.account, oauthProviderId, raw, diag, true);
+}
 async function resolveProviderOAuthAccountId(authRef, diag) {
   const parsed = parseAuthRef(authRef);
   if (!parsed || parsed.kind !== "keyring" || !oauthProviderIdFromAccount(parsed.account)) return void 0;
@@ -3359,12 +3564,12 @@ function decodeProviderSecret(raw) {
   }
   return trimmed;
 }
-async function refreshOAuthKeyringAccount(account, providerId, raw, diag) {
+async function refreshOAuthKeyringAccount(account, providerId, raw, diag, force = false) {
   const existing = oauthRefreshInflight.get(account);
   if (existing) return existing;
   const work = (async () => {
     const cred = parseStoredOAuthCredential(raw);
-    if (!cred || !oauthCredentialShouldRefresh(cred, providerId)) {
+    if (!cred || !force && !oauthCredentialShouldRefresh(cred, providerId)) {
       return decodeProviderSecret(raw);
     }
     try {
@@ -4564,17 +4769,17 @@ function formatAnthropicModelEntry(id, displayName, contextWindow, options) {
     ...options?.supportsOneM !== void 0 ? { supports_1m: options.supportsOneM } : {}
   };
 }
-function formatAnthropicModelList(entries) {
+function formatAnthropicModelList(entries2) {
   return {
-    data: entries.map((entry) => formatAnthropicModelEntry(
+    data: entries2.map((entry) => formatAnthropicModelEntry(
       entry.id,
       entry.name,
       entry.contextWindow,
       { supportsOneM: entry.supportsOneM }
     )),
     has_more: false,
-    first_id: entries[0]?.id ?? null,
-    last_id: entries.at(-1)?.id ?? null
+    first_id: entries2[0]?.id ?? null,
+    last_id: entries2.at(-1)?.id ?? null
   };
 }
 function gatewayProviderLabel(model) {
@@ -6561,6 +6766,10 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
             oauthAccountId: route.oauthAccountId,
             providerData: route.providerData,
             headers: route.headers,
+            refreshToken: route.refreshToken,
+            onTokenRefreshed: (refreshed) => {
+              route.apiKey = refreshed;
+            },
             useResponsesLite: route.useResponsesLite,
             preferWebSockets: route.preferWebSockets,
             onDebug: (msg) => plog(() => msg)
@@ -6698,60 +6907,14 @@ function startProxy(completionsUrl, modelId, debug = false, contextWindow, sdk, 
     authType: sdk?.authType,
     oauthAccountId: sdk?.oauthAccountId,
     providerData: sdk?.providerData,
+    refreshToken: sdk?.refreshToken,
+    headers: sdk?.headers,
     supportedParameters: sdk?.supportedParameters,
     reasoning: sdk?.reasoning,
     interleavedReasoningField: sdk?.interleavedReasoningField,
     useResponsesLite: sdk?.useResponsesLite,
     preferWebSockets: sdk?.preferWebSockets
   }], clientModelId, debug);
-}
-
-// src/catalog.ts
-function localModelToRoute(lp, model) {
-  if (model.modelFormat === "anthropic" && !model.baseUrl) return null;
-  if (model.modelFormat === "openai" && !isSdkMigratedNpm(model.npm) && !model.completionsUrl) return null;
-  const upstreamUrl = model.modelFormat === "cloud-code" ? model.baseUrl ?? ANTIGRAVITY_BASE_URLS[0] : model.modelFormat === "anthropic" ? model.baseUrl : model.completionsUrl;
-  return {
-    aliasId: claudeCodeClientModelId(aliasModelId(model.id, lp.id), model.contextWindow),
-    realModelId: model.upstreamModelId,
-    displayName: `${model.name || model.id} (${lp.name})`,
-    upstreamUrl: upstreamUrl ?? "",
-    apiKey: lp.apiKey,
-    modelFormat: model.modelFormat,
-    contextWindow: model.contextWindow,
-    npm: model.npm,
-    baseURL: model.apiBaseUrl,
-    providerId: lp.id,
-    authType: lp.authType,
-    oauthAccountId: lp.oauthAccountId,
-    providerData: lp.providerData,
-    headers: lp.headers,
-    supportedParameters: model.supportedParameters,
-    reasoning: model.reasoning,
-    interleavedReasoningField: model.interleavedReasoningField,
-    useResponsesLite: model.useResponsesLite,
-    preferWebSockets: model.preferWebSockets
-  };
-}
-function makeRouteResolver(localProviders) {
-  return (providerId, modelId) => {
-    const provider = localProviders?.find((lp) => lp.id === providerId);
-    const model = provider?.models.find((m) => m.id === modelId);
-    return provider && model ? localModelToRoute(provider, model) ?? void 0 : void 0;
-  };
-}
-function buildCatalogRoutes(startingRoute, favorites, resolveRoute, max = MAX_MODEL_CATALOG) {
-  const droppedFavorites = [];
-  const tail = favorites.map((fav) => {
-    const route = resolveRoute(fav.providerId, fav.modelId);
-    if (!route) droppedFavorites.push(fav);
-    return route;
-  }).filter((route) => route !== void 0);
-  const routes = [
-    startingRoute,
-    ...tail.filter((route) => route.aliasId !== startingRoute.aliasId)
-  ].slice(0, max);
-  return { routes, droppedFavorites };
 }
 
 // src/data/model-incompatible.json
@@ -7561,6 +7724,61 @@ function listCredentialSkippedProviders(raw, authEntries, importedIds, alreadyRe
   return skipped;
 }
 
+// src/provider-runtime.ts
+function providerRefreshToken(providerId, authType, authRef) {
+  if (authType !== "oauth" || !providerId) return void 0;
+  return () => forceRefreshProviderCredential(providerId, authRef ?? oauthAuthRef(providerId));
+}
+
+// src/catalog.ts
+function localModelToRoute(lp, model) {
+  if (model.modelFormat === "anthropic" && !model.baseUrl) return null;
+  if (model.modelFormat === "openai" && !isSdkMigratedNpm(model.npm) && !model.completionsUrl) return null;
+  const upstreamUrl = model.modelFormat === "cloud-code" ? model.baseUrl ?? ANTIGRAVITY_BASE_URLS[0] : model.modelFormat === "anthropic" ? model.baseUrl : model.completionsUrl;
+  return {
+    aliasId: claudeCodeClientModelId(aliasModelId(model.id, lp.id), model.contextWindow),
+    realModelId: model.upstreamModelId,
+    displayName: `${model.name || model.id} (${lp.name})`,
+    upstreamUrl: upstreamUrl ?? "",
+    apiKey: lp.apiKey,
+    modelFormat: model.modelFormat,
+    contextWindow: model.contextWindow,
+    npm: model.npm,
+    baseURL: model.apiBaseUrl,
+    providerId: lp.id,
+    authType: lp.authType,
+    oauthAccountId: lp.oauthAccountId,
+    providerData: lp.providerData,
+    refreshToken: providerRefreshToken(lp.id, lp.authType, lp.authRef),
+    headers: lp.headers,
+    supportedParameters: model.supportedParameters,
+    reasoning: model.reasoning,
+    interleavedReasoningField: model.interleavedReasoningField,
+    useResponsesLite: model.useResponsesLite,
+    preferWebSockets: model.preferWebSockets
+  };
+}
+function makeRouteResolver(localProviders) {
+  return (providerId, modelId) => {
+    const provider = localProviders?.find((lp) => lp.id === providerId);
+    const model = provider?.models.find((m) => m.id === modelId);
+    return provider && model ? localModelToRoute(provider, model) ?? void 0 : void 0;
+  };
+}
+function buildCatalogRoutes(startingRoute, favorites, resolveRoute, max = MAX_MODEL_CATALOG) {
+  const droppedFavorites = [];
+  const tail = favorites.map((fav) => {
+    const route = resolveRoute(fav.providerId, fav.modelId);
+    if (!route) droppedFavorites.push(fav);
+    return route;
+  }).filter((route) => route !== void 0);
+  const routes = [
+    startingRoute,
+    ...tail.filter((route) => route.aliasId !== startingRoute.aliasId)
+  ].slice(0, max);
+  return { routes, droppedFavorites };
+}
+
 // src/registry/materialize.ts
 init_provider_templates();
 function cachedModelToLocal(cached, provider) {
@@ -7644,6 +7862,7 @@ function materializeOne(provider, resolveCredential, agent) {
     id: provider.id,
     name: provider.name,
     apiKey,
+    authRef: provider.authRef,
     authType: provider.authType,
     headers: provider.api.headers,
     models
@@ -7852,9 +8071,9 @@ function formatRegistryAuthLabel(provider) {
 }
 async function resolveProvidersForDisplay() {
   const reg = loadRegistry();
-  const entries = [];
+  const entries2 = [];
   for (const provider of reg.providers) {
-    entries.push({
+    entries2.push({
       id: provider.id,
       name: provider.name,
       modelCount: provider.modelsCache?.models.length ?? 0,
@@ -7863,7 +8082,7 @@ async function resolveProvidersForDisplay() {
       inRegistry: true
     });
   }
-  return entries.sort((a, b) => a.name.localeCompare(b.name));
+  return entries2.sort((a, b) => a.name.localeCompare(b.name));
 }
 function localProvidersToServerModels(localProviders) {
   return localProviders.flatMap(
@@ -8375,6 +8594,8 @@ function buildAntigravityRoutes(resolvedFavorites, maxRoutes = MAX_MODEL_CATALOG
       ...fav.authType ? { authType: fav.authType } : {},
       ...fav.oauthAccountId ? { oauthAccountId: fav.oauthAccountId } : {},
       ...fav.providerData ? { providerData: fav.providerData } : {},
+      ...fav.headers ? { headers: fav.headers } : {},
+      ...fav.refreshToken ? { refreshToken: fav.refreshToken } : {},
       baseURL,
       contextWindow
     });
@@ -9178,6 +9399,81 @@ async function addCustomEndpointProvider(input) {
   return { added: true, provider: entry, modelCount: fetched.models.length };
 }
 
+// src/registry/fetch-cline-pass-models.ts
+var REQUEST_TIMEOUT_MS = 1e4;
+function entries(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry) => Boolean(entry && typeof entry === "object"));
+}
+function toCachedModel(entry, isFree) {
+  const id = typeof entry.id === "string" ? entry.id.trim() : "";
+  if (!id) return null;
+  const name = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : id;
+  const cost = isFree ? { input: 0, output: 0 } : void 0;
+  const freeStatus = classifyFreeStatus({ model: { cost, isFree } });
+  const family = id.split("/").pop()?.split(/[-:]/)[0] ?? id;
+  return {
+    id,
+    name,
+    upstreamModelId: id,
+    family,
+    brand: deriveBrand(family),
+    contextWindow: CLINE_PASS_DEFAULT_CONTEXT_WINDOW,
+    cost,
+    isFree: isFreeStatus(freeStatus),
+    freeStatus,
+    modelFormat: "openai",
+    npm: "@ai-sdk/openai-compatible"
+  };
+}
+function parseClinePassModels(payload) {
+  if (!payload || typeof payload !== "object") return [];
+  const body = payload;
+  const byId = /* @__PURE__ */ new Map();
+  for (const entry of entries(body.clinePass)) {
+    const model = toCachedModel(entry, false);
+    if (model) byId.set(model.id, model);
+  }
+  for (const entry of entries(body.free)) {
+    const model = toCachedModel(entry, true);
+    if (model && !byId.has(model.id)) byId.set(model.id, model);
+  }
+  return [...byId.values()];
+}
+async function fetchJson(url, headers) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json", ...headers },
+      redirect: "manual",
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function fetchClinePassModels() {
+  const response = await fetchJson(CLINE_PASS_CATALOG_URL);
+  if (!response.ok) throw new Error(`ClinePass catalog returned HTTP ${response.status}.`);
+  const payload = await response.json().catch(() => null);
+  const models = parseClinePassModels(payload);
+  if (models.length === 0) throw new Error("ClinePass catalog returned no usable models.");
+  return models;
+}
+async function validateClinePassApiKey(apiKey) {
+  const response = await fetchJson(CLINE_PASS_VALIDATION_URL, {
+    Authorization: `Bearer ${apiKey.trim()}`
+  });
+  if (response.status === 401 || response.status === 403) {
+    throw new Error("API key was rejected.");
+  }
+  if (!response.ok) {
+    throw new Error(`ClinePass API key validation returned HTTP ${response.status}.`);
+  }
+}
+
 // src/registry/model-source.ts
 init_provider_templates();
 
@@ -9347,8 +9643,8 @@ async function refreshZenGoProvider(provider) {
   });
 }
 async function refreshClaudeCodeOAuthModels(accessToken) {
-  const entries = await fetchClaudeCodeModels(accessToken);
-  const models = entries.map((entry) => ({
+  const entries2 = await fetchClaudeCodeModels(accessToken);
+  const models = entries2.map((entry) => ({
     id: entry.id,
     name: entry.displayName,
     upstreamModelId: entry.id,
@@ -9529,7 +9825,7 @@ async function fetchJsonWithAuth(url, accessToken, timeoutMs, extraHeaders = {})
 async function refreshOpenAiOAuthModels(accessToken) {
   const TIMEOUT_MS = 1e4;
   const seedById = new Map(buildOpenAiOAuthModels().map((m) => [m.id, m]));
-  const toModels = (entries) => entries.map((entry) => buildDynamicOAuthModel(entry, seedById));
+  const toModels = (entries2) => entries2.map((entry) => buildDynamicOAuthModel(entry, seedById));
   const claudeVersion = getInstalledClaudeVersion();
   const codexResult = await fetchJsonWithAuth(
     `https://chatgpt.com/backend-api/codex/models?client_version=${claudeVersion}`,
@@ -9560,9 +9856,9 @@ async function refreshXaiOAuthModels(accessToken) {
   const seedById = new Map(seed.map((m) => [m.id, m]));
   const result = await fetchJsonWithAuth("https://api.x.ai/v1/models", accessToken, 8e3);
   if (result.body) {
-    const entries = (result.body.data ?? []).filter((m) => !!m.id);
-    if (entries.length > 0) {
-      const live = entries.map(({ id, context_length }) => {
+    const entries2 = (result.body.data ?? []).filter((m) => !!m.id);
+    if (entries2.length > 0) {
+      const live = entries2.map(({ id, context_length }) => {
         const cached = seedById.get(id);
         if (cached) return cached;
         const prefix = id.split("-")[0] ?? id;
@@ -9669,6 +9965,19 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
     let oauthFallbackReason;
     if (source === "zen-go-api") {
       models = await refreshZenGoProvider(provider);
+    } else if (source === "cline-recommended") {
+      try {
+        models = await fetchClinePassModels();
+        baseUrl = provider.api.url ?? "https://api.cline.bot/api/v1";
+      } catch (err) {
+        if (cachedModelCount(provider) > 0) {
+          return skipWithCachedModels(
+            provider,
+            `ClinePass catalog refresh failed: ${err instanceof Error ? err.message : String(err)} Kept the existing cached model list; try again later.`
+          );
+        }
+        throw err;
+      }
     } else if (provider.authType === "oauth" && (["openai", "xai", "xai-oauth", "github-copilot", "claude-code", "antigravity"].includes(provider.templateId ?? provider.id) || provider.id === "openai-oauth" || provider.id === "xai-oauth")) {
       if (!apiKey) {
         return {
@@ -10453,7 +10762,15 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog, suba
       return;
     }
     const apiKey = model.apiKey ?? options.apiKey;
-    const languageModel = await getOrInitLanguageModel(modelCache, model, model.npm, model.apiBaseUrl, apiKey, options.vertex);
+    const languageModel = await getOrInitLanguageModel(
+      modelCache,
+      model,
+      model.npm,
+      model.apiBaseUrl,
+      apiKey,
+      options.vertex,
+      providerRefreshToken(model.providerId, model.authType)
+    );
     const npmMaxTools = maxToolsForNpm(model.npm);
     const toolCount = Array.isArray(body.tools) ? body.tools.length : 0;
     if (npmMaxTools !== void 0 && toolCount > npmMaxTools) {
@@ -10569,7 +10886,15 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
   }
   const apiKey = model.apiKey ?? options.apiKey;
   const baseURL = model.modelFormat === "anthropic" ? model.baseUrl : model.apiBaseUrl;
-  const languageModel = await getOrInitLanguageModel(modelCache, model, npm, baseURL, apiKey, options.vertex);
+  const languageModel = await getOrInitLanguageModel(
+    modelCache,
+    model,
+    npm,
+    baseURL,
+    apiKey,
+    options.vertex,
+    providerRefreshToken(model.providerId, model.authType)
+  );
   const params = translateOpenAiRequest(body);
   const clientWantsStream = Boolean(body.stream);
   const responseModelId = getResponseModelId(body.model, model, options);
@@ -10616,7 +10941,7 @@ function backendFor(options, model) {
   if (model.sourceBackend === "go") return options.backends.go;
   throw new Error(`Provider ${model.sourceBackend} is not a cloud backend \u2014 model must set baseUrl/completionsUrl`);
 }
-async function getOrInitLanguageModel(modelCache, model, npm, baseURL, apiKey, vertex) {
+async function getOrInitLanguageModel(modelCache, model, npm, baseURL, apiKey, vertex, refreshToken) {
   const cacheKey = [
     model.providerId ?? model.sourceBackend,
     model.id,
@@ -10636,6 +10961,10 @@ async function getOrInitLanguageModel(modelCache, model, npm, baseURL, apiKey, v
       oauthAccountId: model.oauthAccountId,
       vertex,
       headers: model.headers,
+      refreshToken,
+      onTokenRefreshed: (refreshed) => {
+        model.apiKey = refreshed;
+      },
       useResponsesLite: model.useResponsesLite,
       preferWebSockets: model.preferWebSockets
     });
@@ -11579,7 +11908,24 @@ async function addProviderFromTemplate(template, apiKey, opts) {
       hint: `Remove it first with: relay-ai providers remove ${template.id}`
     };
   }
-  const fetched = await fetchTemplateModels(template, trimmedKey, opts?.baseUrl);
+  let fetched;
+  if (template.modelSource === "cline-recommended") {
+    try {
+      await validateClinePassApiKey(trimmedKey);
+      fetched = {
+        models: await fetchClinePassModels(),
+        baseUrl: template.defaultBaseUrl ?? ""
+      };
+    } catch (err) {
+      return {
+        added: false,
+        error: err instanceof Error ? err.message : String(err),
+        hint: template.signupUrl ? `Verify your key at ${template.signupUrl}` : void 0
+      };
+    }
+  } else {
+    fetched = await fetchTemplateModels(template, trimmedKey, opts?.baseUrl);
+  }
   if (fetched.error || fetched.models.length === 0) {
     return {
       added: false,
@@ -11621,7 +11967,8 @@ async function addProviderFromTemplate(template, apiKey, opts) {
     authType: template.authType,
     api: {
       npm: template.npm,
-      url: fetched.baseUrl
+      url: fetched.baseUrl,
+      ...template.headers ? { headers: template.headers } : {}
     },
     addedAt: existing?.addedAt ?? now,
     refreshedAt: now,
@@ -11637,6 +11984,9 @@ async function addProviderFromTemplate(template, apiKey, opts) {
     registry.providers.push(entry);
   }
   saveRegistry(registry);
+  if (existing?.authRef && existing.authRef !== authRef) {
+    await deleteProviderCredential(existing.authRef);
+  }
   enrichPricingAsync();
   return { added: true, provider: entry, modelCount: pricedModels.length };
 }
@@ -11654,7 +12004,8 @@ var PROVIDER_DISPLAY = {
   "openai-oauth": OPENAI_DISPLAY,
   "github-copilot": "GitHub Copilot",
   "claude-code": "Claude Code (Anthropic subscription)",
-  antigravity: "Antigravity (Google Cloud Code Assist)"
+  antigravity: "Antigravity (Google Cloud Code Assist)",
+  "cline-pass": "ClinePass"
 };
 function openBrowser(url) {
   open3(url).catch(() => {
@@ -11687,6 +12038,17 @@ async function runNativeDeviceCode(providerId) {
       });
       spinner3.stop(pc6.green("Signed in to GitHub Copilot"));
       return tokensToStoredCredential(tokens2);
+    }
+    if (providerId === "cline-pass") {
+      const result = await runClinePassDeviceCodeFlow(({ url, userCode }) => {
+        spinner3.stop("");
+        p5.log.info(`Visit: ${pc6.cyan(url)}`);
+        p5.log.info(`Enter code: ${pc6.bold(userCode)}`);
+        openBrowser(url);
+        spinner3.start("Waiting for authorization...");
+      });
+      spinner3.stop(pc6.green("Signed in to ClinePass"));
+      return tokensToStoredCredential(result.tokens, void 0, result.accountId, result.providerData);
     }
     const { tokens, accountId } = await runOpenAiDeviceCodeFlow(({ url, userCode }) => {
       spinner3.stop("");
@@ -11781,6 +12143,7 @@ async function upsertOAuthProvider(providerId, cred) {
   const authRef = oauthAuthRef(registryId);
   const template = getTemplateById(templateId) ?? getTemplateById(registryId);
   let entry = registry.providers.find((pr) => pr.id === registryId);
+  const previousAuthRef = entry?.authRef;
   if (!entry) {
     if (!template) {
       throw new Error(`Provider "${providerId}" is not in your registry and has no template`);
@@ -11807,6 +12170,9 @@ async function upsertOAuthProvider(providerId, cred) {
   if (idx >= 0) registry.providers[idx] = entry;
   else registry.providers.push(entry);
   saveRegistry(registry);
+  if (previousAuthRef && previousAuthRef !== authRef) {
+    await deleteProviderCredential(previousAuthRef);
+  }
   return entry;
 }
 async function authenticateProvider(providerId, options = {}) {
@@ -11852,11 +12218,13 @@ ${pc6.bold("Usage:")}
   relay-ai providers auth xai-oauth
   relay-ai providers auth openai-oauth
   relay-ai providers auth github-copilot
+  relay-ai providers auth cline-pass
 
 ${pc6.bold("Device code (works on SSH/VPS):")}
   xai-oauth        SuperGrok / X Premium (device code at x.ai/device)
   openai-oauth     ChatGPT Plus/Pro (device code at auth.openai.com/codex/device)
   github-copilot   GitHub Copilot Free or paid (device code at github.com/login/device)
+  cline-pass       ClinePass account (device code at app.cline.bot)
 
 ${pc6.dim("OpenCode CLI configs: use")} relay-ai providers import${pc6.dim(" (optional one-time migration).")}`;
 }
@@ -12452,6 +12820,8 @@ export {
   ANTIGRAVITY_BASE_URLS,
   buildAntigravityAuthUrl,
   completeAntigravityExchange,
+  requestClinePassDeviceCode,
+  pollClinePassDeviceCode,
   detectConflicts,
   resolveApiKey,
   buildChildEnv,
@@ -12530,6 +12900,7 @@ export {
   aliasModelId,
   startProxyCatalog,
   startProxy,
+  providerRefreshToken,
   makeRouteResolver,
   buildCatalogRoutes,
   hostFromHeader,
@@ -12591,4 +12962,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-GHSURQOK.js.map
+//# sourceMappingURL=chunk-57B6WHNI.js.map

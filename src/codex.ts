@@ -643,6 +643,7 @@ export async function runCodexCommand(
         reasoning: route.reasoning,
         interleavedReasoningField: route.interleavedReasoningField,
         headers: route.headers,
+        refreshToken: route.refreshToken,
       }], { debug: trace });
       proxyPort = proxyHandle.port;
     }

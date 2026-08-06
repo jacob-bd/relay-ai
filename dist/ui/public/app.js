@@ -1059,9 +1059,112 @@ function buildOAuthTemplateBodyContent(template) {
   return content;
 }
 
+function buildClinePassBodyContent(template, card, provider) {
+  const content = document.createElement('div');
+  content.className = 'provider-body-content';
+
+  const note = document.createElement('div');
+  note.className = 'oauth-device-note';
+  note.textContent = provider
+    ? 'Choose API key or ClinePass account sign-in. Switching methods replaces the stored credential safely.'
+    : 'Choose an API key or sign in with a one-time device code.';
+  content.appendChild(note);
+
+  const apiLabel = document.createElement('div');
+  apiLabel.className = 'oauth-device-note';
+  apiLabel.textContent = 'API key';
+  apiLabel.style.marginTop = '10px';
+  content.appendChild(apiLabel);
+
+  const keyRow = document.createElement('div');
+  keyRow.className = 'key-row';
+  const input = document.createElement('input');
+  input.type = 'password';
+  input.className = 'key-input';
+  input.placeholder = 'Paste ClinePass API key…';
+  input.autocomplete = 'off';
+  const addBtn = document.createElement('button');
+  addBtn.className = 'btn btn-primary';
+  addBtn.textContent = provider ? 'Switch to API key' : 'Add with API key';
+  keyRow.append(input, addBtn);
+  content.appendChild(keyRow);
+
+  const apiFeedback = document.createElement('div');
+  apiFeedback.className = 'key-feedback';
+  content.appendChild(apiFeedback);
+
+  addBtn.addEventListener('click', async () => {
+    const key = input.value.trim();
+    if (!key) {
+      apiFeedback.textContent = 'Enter an API key first.';
+      apiFeedback.className = 'key-feedback error';
+      return;
+    }
+    addBtn.disabled = true;
+    apiFeedback.textContent = 'Validating key and fetching models…';
+    apiFeedback.className = 'key-feedback muted';
+    const result = await api('POST', '/api/providers/add', {
+      templateId: 'cline-pass',
+      key,
+      replaceExisting: Boolean(provider),
+    });
+    addBtn.disabled = false;
+    if (result.ok) {
+      apiFeedback.textContent = `✓ ClinePass API key saved · ${result.count} models available`;
+      apiFeedback.className = 'key-feedback success';
+      state.modelsLoaded = false;
+      await loadTemplates();
+      await initModels();
+      renderProviders();
+      showToast('ClinePass API key saved');
+    } else {
+      apiFeedback.textContent = result.error ?? 'Failed to save ClinePass API key';
+      if (result.hint) apiFeedback.textContent += ` — ${result.hint}`;
+      apiFeedback.className = 'key-feedback error';
+    }
+  });
+
+  const oauthLabel = document.createElement('div');
+  oauthLabel.className = 'oauth-device-note';
+  oauthLabel.textContent = 'ClinePass account';
+  oauthLabel.style.marginTop = '12px';
+  content.appendChild(oauthLabel);
+
+  const oauthRow = document.createElement('div');
+  oauthRow.className = 'key-row';
+  const signInBtn = document.createElement('button');
+  signInBtn.className = 'btn btn-ghost';
+  signInBtn.textContent = provider?.authType === 'oauth' ? 'Re-authenticate with ClinePass' : 'Sign in with ClinePass';
+  oauthRow.appendChild(signInBtn);
+  content.appendChild(oauthRow);
+
+  const oauthFeedback = document.createElement('div');
+  oauthFeedback.className = 'key-feedback';
+  content.appendChild(oauthFeedback);
+  signInBtn.addEventListener('click', () => beginDeviceOAuthFlow({
+    providerId: 'cline-pass',
+    signInButton: signInBtn,
+    feedback: oauthFeedback,
+    onDone: async () => {
+      showToast('ClinePass account connected');
+      state.modelsLoaded = false;
+      await loadTemplates();
+      await initModels();
+      renderProviders();
+    },
+  }));
+
+  if (provider) content.appendChild(buildDeleteProviderRow(provider));
+  return content;
+}
+
 function buildTemplateBodyContent(template, card) {
   const isCustom = template.id === '__custom_openai__' || template.id === '__custom_anthropic__';
   if (isCustom) return buildCustomEndpointBodyContent(template, card);
+  if (template.id === 'cline-pass'
+    || (template.authMethods?.includes('api') && template.authMethods?.includes('oauth'))) {
+    return buildClinePassBodyContent(template, card);
+  }
   if (template.authType === 'oauth') return buildOAuthTemplateBodyContent(template, card);
 
   const content = document.createElement('div');
@@ -1162,6 +1265,9 @@ function buildTemplateBodyContent(template, card) {
 }
 
 function buildProviderBodyContent(provider) {
+  if (provider.id === 'cline-pass') {
+    return buildClinePassBodyContent({ id: 'cline-pass', name: 'ClinePass' }, null, provider);
+  }
   if (provider.authType === 'oauth') return buildOAuthProviderBodyContent(provider);
 
   const content = document.createElement('div');

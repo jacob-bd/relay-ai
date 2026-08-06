@@ -310,11 +310,13 @@ ${pc.bold('Usage:')}
   relay-ai providers auth xai-oauth
   relay-ai providers auth openai-oauth
   relay-ai providers auth github-copilot
+  relay-ai providers auth cline-pass
 
 ${pc.bold('Device code (works on SSH/VPS):')}
   xai-oauth        SuperGrok / X Premium (device code at x.ai/device)
   openai-oauth     ChatGPT Plus/Pro (device code at auth.openai.com/codex/device)
   github-copilot   GitHub Copilot Free or paid (device code at github.com/login/device)
+  cline-pass       ClinePass account (device code at app.cline.bot)
 
 ${pc.dim('OpenCode CLI configs: use')} relay-ai providers import${pc.dim(' (optional one-time migration).')}`;
 }

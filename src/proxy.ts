@@ -346,6 +346,8 @@ export function startProxyCatalog(
             oauthAccountId: route.oauthAccountId,
             providerData: route.providerData,
             headers: route.headers,
+            refreshToken: route.refreshToken,
+            onTokenRefreshed: refreshed => { route.apiKey = refreshed; },
             useResponsesLite: route.useResponsesLite,
             preferWebSockets: route.preferWebSockets,
             onDebug: (msg: string) => plog(() => msg),
@@ -496,6 +498,8 @@ export function startProxy(
     interleavedReasoningField?: string;
     useResponsesLite?: boolean;
     preferWebSockets?: boolean;
+    refreshToken?: () => Promise<string | null>;
+    headers?: Record<string, string>;
   },
   apiKey?: string,
 ): Promise<ProxyHandle> {
@@ -515,6 +519,8 @@ export function startProxy(
     authType: sdk?.authType,
     oauthAccountId: sdk?.oauthAccountId,
     providerData: sdk?.providerData,
+    refreshToken: sdk?.refreshToken,
+    headers: sdk?.headers,
     supportedParameters: sdk?.supportedParameters,
     reasoning: sdk?.reasoning,
     interleavedReasoningField: sdk?.interleavedReasoningField,

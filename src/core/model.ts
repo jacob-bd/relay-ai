@@ -7,6 +7,7 @@ import {
   resolveProviderOAuthProviderData,
 } from '../env.js';
 import { createLanguageModel, type ProviderModelSpec } from '../provider-factory.js';
+import { providerRefreshToken } from '../provider-runtime.js';
 import type { CachedModel, RegistryProvider } from '../registry/types.js';
 import { loadCoreRegistry } from './catalog.js';
 import { RelayCoreError, isRelayCoreError } from './errors.js';
@@ -93,6 +94,7 @@ export async function createRelayModel(routeId: RelayRouteId): Promise<LanguageM
     oauthAccountId,
     providerData,
     headers: provider.api.headers,
+    refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
     useResponsesLite: model.useResponsesLite,
     preferWebSockets: model.preferWebSockets,
   };

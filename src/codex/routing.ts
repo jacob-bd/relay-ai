@@ -8,6 +8,7 @@ import {
   type RelayLaunchTarget,
 } from '../target-compatibility.js';
 import type { LocalProvider, LocalProviderModel } from '../types.js';
+import { providerRefreshToken } from '../provider-runtime.js';
 
 export interface CodexRoute {
   tier: 'direct' | 'proxy' | 'cloud-code';
@@ -26,6 +27,7 @@ export interface CodexRoute {
   interleavedReasoningField?: string;
   /** Static headers sent on every upstream request (e.g. a plan/auth-tracking header a custom endpoint requires). */
   headers?: Record<string, string>;
+  refreshToken?: () => Promise<string | null>;
 }
 
 export function isRoutableModel(
@@ -82,6 +84,7 @@ export function resolveCodexRoute(
     reasoning: model.reasoning,
     interleavedReasoningField: model.interleavedReasoningField,
     headers: provider.headers,
+    refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
   };
 
   if (model.modelFormat === 'cloud-code') {
@@ -101,6 +104,7 @@ export function resolveCodexRoute(
       reasoning: model.reasoning,
       interleavedReasoningField: model.interleavedReasoningField,
       headers: provider.headers,
+      refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
     };
   }
 
@@ -148,6 +152,7 @@ export function buildCodexProxyRoutesForProvider(
       interleavedReasoningField: route.interleavedReasoningField,
       contextWindow: route.contextWindow,
       headers: route.headers,
+      refreshToken: route.refreshToken,
     };
   });
 }

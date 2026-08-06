@@ -5,6 +5,7 @@ Relay AI can connect these subscription providers without asking you to paste an
 - GitHub Copilot
 - OpenAI ChatGPT
 - xAI SuperGrok
+- ClinePass
 
 ## Sign in from the web UI
 
@@ -31,9 +32,14 @@ You can use the same providers without the web UI:
 relay-ai providers auth github-copilot
 relay-ai providers auth openai-oauth
 relay-ai providers auth xai-oauth
+relay-ai providers auth cline-pass
 ```
 
 Follow the device-code instructions printed in the terminal. Credentials are stored in the operating system's secure credential store when available, or in `RELAY_AI_HOME/secrets.json` (e.g. Docker) when the OS store is unavailable.
+
+## ClinePass API keys and OAuth
+
+ClinePass is the one subscription provider that supports both modes. Use `relay-ai providers add` to configure an API key, or `relay-ai providers auth cline-pass` to sign in to a Cline account. The browser UI exposes both choices on one ClinePass card. Changing modes saves the replacement credential before removing the previous one.
 
 ## GitHub Copilot plans and models
 

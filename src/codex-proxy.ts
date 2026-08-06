@@ -228,6 +228,8 @@ export interface CodexProxyRoute {
   contextWindow?: number;
   /** Static headers sent on every upstream request (e.g. a plan/auth-tracking header a custom endpoint requires). */
   headers?: Record<string, string>;
+  /** Refresh an OAuth access token after one upstream 401. */
+  refreshToken?: () => Promise<string | null>;
 }
 
 export interface CodexProxyHandle {
@@ -310,6 +312,8 @@ export async function startCodexProxy(
       providerData: route.providerData,
       vertex: route.vertex,
       headers: route.headers,
+      refreshToken: route.refreshToken,
+      onTokenRefreshed: refreshed => { route.apiKey = refreshed; },
     }));
   }
 

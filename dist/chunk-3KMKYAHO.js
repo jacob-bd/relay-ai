@@ -31,7 +31,7 @@ __export(provider_templates_exports, {
   listVisibleOAuthTemplates: () => listVisibleOAuthTemplates
 });
 function listSupportedTemplates() {
-  return PROVIDER_TEMPLATES.filter((t) => t.supported && t.authType === "api" && t.addable !== false && !t.hidden).sort((a, b) => a.name.localeCompare(b.name));
+  return PROVIDER_TEMPLATES.filter((t) => t.supported && (t.authMethods ?? [t.authType]).includes("api") && t.addable !== false && !t.hidden).sort((a, b) => a.name.localeCompare(b.name));
 }
 function listAddableTemplates(configuredIds = []) {
   const configured = new Set(configuredIds);
@@ -44,7 +44,7 @@ function listAddableTemplates(configuredIds = []) {
 }
 function listVisibleOAuthTemplates(configuredIds = []) {
   const configured = new Set(configuredIds);
-  return PROVIDER_TEMPLATES.filter((t) => t.authType === "oauth" && t.supported && t.addable !== false && !t.hidden && !configured.has(t.id)).sort((a, b) => a.name.localeCompare(b.name));
+  return PROVIDER_TEMPLATES.filter((t) => (t.authMethods ?? [t.authType]).includes("oauth") && t.supported && t.addable !== false && !t.hidden && !configured.has(t.id)).sort((a, b) => a.name.localeCompare(b.name));
 }
 function getTemplateById(id) {
   return PROVIDER_TEMPLATES.find((t) => t.id === id);
@@ -60,6 +60,19 @@ var PROVIDER_TEMPLATES;
 var init_provider_templates = __esm({
   "src/provider-templates.ts"() {
     PROVIDER_TEMPLATES = [
+      {
+        id: "cline-pass",
+        name: "ClinePass",
+        authType: "api",
+        authMethods: ["api", "oauth"],
+        npm: "@ai-sdk/openai-compatible",
+        defaultBaseUrl: "https://api.cline.bot/api/v1",
+        signupUrl: "https://app.cline.bot",
+        modelSource: "cline-recommended",
+        headers: { "HTTP-Referer": "https://cline.bot", "X-Title": "Cline" },
+        supported: true,
+        subscriptionRisk: true
+      },
       {
         id: "groq",
         name: "Groq",
@@ -456,4 +469,4 @@ export {
   provider_templates_exports,
   init_provider_templates
 };
-//# sourceMappingURL=chunk-HXGZ4CTV.js.map
+//# sourceMappingURL=chunk-3KMKYAHO.js.map

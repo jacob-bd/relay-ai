@@ -347,6 +347,30 @@ export async function resolveProviderCredential(
   return readProviderSecret(parsed.account, diag);
 }
 
+/**
+ * Force-refresh a stored OAuth credential after an upstream 401.
+ * Normal resolution refreshes only when expiry metadata says it is needed;
+ * providers can revoke a token early, so the retry path must bypass that gate.
+ */
+export async function forceRefreshProviderCredential(
+  providerId: string,
+  authRef: string,
+  diag?: (msg: string) => void,
+): Promise<string | null> {
+  const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
+  if (namespaced) return namespaced;
+
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== 'keyring') {
+    return resolveProviderCredential(providerId, authRef, diag);
+  }
+
+  const oauthProviderId = oauthProviderIdFromAccount(parsed.account);
+  const raw = await readKeyringAccount(parsed.account, diag);
+  if (!raw || !oauthProviderId) return decodeProviderSecret(raw);
+  return refreshOAuthKeyringAccount(parsed.account, oauthProviderId, raw, diag, true);
+}
+
 /** Read OAuth metadata retained alongside the access token. */
 export async function resolveProviderOAuthAccountId(
   authRef: string,
@@ -416,13 +440,14 @@ async function refreshOAuthKeyringAccount(
   providerId: string,
   raw: string,
   diag?: (msg: string) => void,
+  force = false,
 ): Promise<string | null> {
   const existing = oauthRefreshInflight.get(account);
   if (existing) return existing;
 
   const work = (async (): Promise<string | null> => {
     const cred = parseStoredOAuthCredential(raw);
-    if (!cred || !oauthCredentialShouldRefresh(cred, providerId)) {
+    if (!cred || (!force && !oauthCredentialShouldRefresh(cred, providerId))) {
       return decodeProviderSecret(raw);
     }
     try {

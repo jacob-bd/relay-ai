@@ -23,6 +23,7 @@ import { removeProviderFromRegistry } from '../registry/crud.js';
 import { requestXaiDeviceCode, pollXaiDeviceCodeToken } from '../oauth/xai.js';
 import { requestOpenAiDeviceCode, pollOpenAiDeviceCodeToken, openAiDeviceCodeUrl } from '../oauth/openai.js';
 import { requestGithubDeviceCode, pollGithubDeviceCodeToken } from '../oauth/github.js';
+import { requestClinePassDeviceCode, pollClinePassDeviceCode } from '../oauth/cline-pass.js';
 import {
   guiCallbackRedirectUri,
 } from '../oauth/claude-code.js';
@@ -309,6 +310,7 @@ function handleGetTemplates(res: ServerResponse): void {
   const registry = loadRegistry();
   const configured = new Set(registry.providers.map(p => p.id));
 
+  const templates = new Map<string, any>();
   const apiTemplates = listAddableTemplates(configured).map(t => ({
     id: t.id,
     name: t.name,
@@ -319,8 +321,10 @@ function handleGetTemplates(res: ServerResponse): void {
     accountIdPrompt: t.accountIdPrompt ?? null,
     defaultBaseUrl: t.defaultBaseUrl ?? null,
     apiKeyOptional: t.apiKeyOptional ?? false,
+    authMethods: t.authMethods ?? [t.authType],
     custom: false,
   }));
+  for (const template of apiTemplates) templates.set(template.id, template);
 
   const oauthTemplates = listVisibleOAuthTemplates(configured)
     .map(t => ({
@@ -328,11 +332,24 @@ function handleGetTemplates(res: ServerResponse): void {
       name: t.name,
       signupUrl: t.signupUrl ?? null,
       authType: t.authType,
+      authMethods: t.authMethods ?? [t.authType],
       subscriptionRisk: t.subscriptionRisk ?? false,
       custom: false,
     }));
+  for (const template of oauthTemplates) {
+    const existing = templates.get(template.id);
+    if (existing) {
+      templates.set(template.id, {
+        ...existing,
+        authMethods: [...new Set([...(existing.authMethods ?? []), ...(template.authMethods ?? [])])],
+        subscriptionRisk: template.subscriptionRisk,
+      });
+    } else {
+      templates.set(template.id, template);
+    }
+  }
 
-  sendJson(res, 200, { templates: [...apiTemplates, ...oauthTemplates, ...CUSTOM_TEMPLATES] });
+  sendJson(res, 200, { templates: [...templates.values(), ...CUSTOM_TEMPLATES] });
 }
 
 async function handleAddCustomProvider(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -405,7 +422,11 @@ async function handleAddProvider(req: IncomingMessage, res: ServerResponse): Pro
       }
     }
 
-    const result: AddTemplateResult = await addProviderFromTemplate(template, keyText, { baseUrl: baseUrlOverride });
+    const replaceExisting = template.id === 'cline-pass' && body.replaceExisting === true;
+    const result: AddTemplateResult = await addProviderFromTemplate(template, keyText, {
+      baseUrl: baseUrlOverride,
+      replaceExisting,
+    });
     if (result.added) {
       sendJson(res, 200, { ok: true, name: template.name, count: result.modelCount ?? 0 });
     } else {
@@ -487,7 +508,7 @@ async function handleDeleteProvider(req: IncomingMessage, res: ServerResponse): 
   }
 }
 
-const DEVICE_CODE_PROVIDER_IDS = new Set(['xai-oauth', 'openai-oauth', 'github-copilot']);
+const DEVICE_CODE_PROVIDER_IDS = new Set(['xai-oauth', 'openai-oauth', 'github-copilot', 'cline-pass']);
 const PKCE_PROVIDER_IDS = new Set(['claude-code', 'antigravity']);
 const NATIVE_OAUTH_PROVIDER_IDS = DEVICE_CODE_PROVIDER_IDS;
 
@@ -535,6 +556,24 @@ async function handleOAuthStart(req: IncomingMessage, res: ServerResponse): Prom
 
       pollGithubDeviceCodeToken(device).then(async tokens => {
         await saveNativeOAuthCredential(providerId, tokens);
+        await refreshOAuthProviderModels(providerId);
+        oauthSessions.set(sessionId, { ...session, status: 'done' });
+      }).catch(err => {
+        oauthSessions.set(sessionId, { ...session, status: 'error', error: String(err) });
+      });
+
+      sendJson(res, 200, { sessionId, url, userCode: device.user_code });
+      return;
+    }
+
+    if (providerId === 'cline-pass') {
+      const device = await requestClinePassDeviceCode();
+      const url = device.verification_uri_complete ?? device.verification_uri;
+      const session: OAuthSession = { status: 'pending', url, userCode: device.user_code, providerId };
+      oauthSessions.set(sessionId, session);
+
+      pollClinePassDeviceCode(device).then(async result => {
+        await saveNativeOAuthCredential(providerId, result.tokens, result.accountId, result.providerData);
         await refreshOAuthProviderModels(providerId);
         oauthSessions.set(sessionId, { ...session, status: 'done' });
       }).catch(err => {

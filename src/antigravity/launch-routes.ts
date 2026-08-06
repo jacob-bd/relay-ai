@@ -1,5 +1,6 @@
 import { MAX_MODEL_CATALOG } from '../constants.js';
 import { resolveLocalProviderApiKey } from '../provider-catalog.js';
+import { providerRefreshToken } from '../provider-runtime.js';
 import { buildFavoritesList, type ResolveContext } from '../favorites-resolver.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from '../types.js';
 import { buildAntigravityRoutes } from './catalog.js';
@@ -36,6 +37,8 @@ export async function resolveAntigravityLaunchRoutes(
     authType: opts.provider.authType,
     oauthAccountId: opts.provider.oauthAccountId,
     providerData: opts.provider.providerData,
+    headers: opts.provider.headers,
+    refreshToken: providerRefreshToken(opts.provider.id, opts.provider.authType, opts.provider.authRef),
   };
   const ctx: ResolveContext = {
     agent: 'antigravity',

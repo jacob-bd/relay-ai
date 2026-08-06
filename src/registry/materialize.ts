@@ -116,6 +116,7 @@ function materializeOne(
     id: provider.id,
     name: provider.name,
     apiKey,
+    authRef: provider.authRef,
     authType: provider.authType,
     headers: provider.api.headers,
     models,

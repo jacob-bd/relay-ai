@@ -23,6 +23,10 @@ vi.mock('../src/registry/provider-auth.js', () => ({
   saveNativeOAuthCredential: vi.fn(async () => true),
 }));
 
+vi.mock('../src/registry/add-template.js', () => ({
+  addProviderFromTemplate: vi.fn(async () => ({ added: true, modelCount: 3 })),
+}));
+
 vi.mock('../src/registry/refresh-models.js', () => ({
   refreshProviderModels: vi.fn(async () => ({ ok: true, modelCount: 1 })),
   refreshAllProviderModels: vi.fn(async () => ({ refreshed: [] })),
@@ -46,6 +50,15 @@ vi.mock('../src/oauth/openai.js', () => ({
   requestOpenAiDeviceCode: vi.fn(),
   pollOpenAiDeviceCodeToken: vi.fn(),
   openAiDeviceCodeUrl: vi.fn(),
+}));
+
+vi.mock('../src/oauth/cline-pass.js', () => ({
+  requestClinePassDeviceCode: vi.fn(async () => ({
+    device_code: 'cline-device-secret',
+    user_code: 'CLINE-1234',
+    verification_uri: 'https://app.cline.bot/device',
+  })),
+  pollClinePassDeviceCode: vi.fn(() => new Promise(() => undefined)),
 }));
 
 async function call(method: string, url: string, body?: unknown) {
@@ -121,6 +134,52 @@ describe('UI OAuth API', () => {
     });
     expect(result.body.sessionId).toEqual(expect.any(String));
     expect(JSON.stringify(result.body)).not.toContain('device-secret');
+  });
+
+  it('starts the ClinePass device-code flow without returning the private device secret', async () => {
+    const result = await call('POST', '/api/providers/oauth/start', { providerId: 'cline-pass' });
+
+    expect(result).toMatchObject({ code: 200 });
+    expect(result.body).toMatchObject({
+      userCode: 'CLINE-1234',
+      url: 'https://app.cline.bot/device',
+    });
+    expect(result.body.sessionId).toEqual(expect.any(String));
+    expect(JSON.stringify(result.body)).not.toContain('cline-device-secret');
+  });
+
+  it('merges ClinePass API and OAuth auth methods into one template', async () => {
+    const result = await call('GET', '/api/providers/templates');
+    const cline = result.body.templates.filter((template: any) => template.id === 'cline-pass');
+
+    expect(cline).toHaveLength(1);
+    expect(cline[0].authMethods).toEqual(expect.arrayContaining(['api', 'oauth']));
+  });
+
+  it('allows the UI to explicitly replace an existing ClinePass credential', async () => {
+    state.registry.providers = [{
+      id: 'cline-pass',
+      templateId: 'cline-pass',
+      name: 'ClinePass',
+      enabled: true,
+      authRef: 'keyring:oauth:provider:cline-pass',
+      authType: 'oauth',
+      api: {},
+    }];
+
+    const result = await call('POST', '/api/providers/add', {
+      templateId: 'cline-pass',
+      key: 'cline-api-key',
+      replaceExisting: true,
+    });
+
+    expect(result.body).toMatchObject({ ok: true, count: 3 });
+    const { addProviderFromTemplate } = await import('../src/registry/add-template.js');
+    expect(addProviderFromTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'cline-pass' }),
+      'cline-api-key',
+      expect.objectContaining({ replaceExisting: true }),
+    );
   });
 
   it('rejects non-visible OAuth IDs without naming them in the response', async () => {

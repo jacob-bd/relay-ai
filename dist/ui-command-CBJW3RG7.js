@@ -42,6 +42,7 @@ import {
   makeTraceLogger,
   openAiDeviceCodeUrl,
   openAiIdCollisions,
+  pollClinePassDeviceCode,
   pollGithubDeviceCodeToken,
   pollOpenAiDeviceCodeToken,
   pollXaiDeviceCodeToken,
@@ -52,6 +53,7 @@ import {
   refreshAllProviderModels,
   refreshProviderModels,
   removeProviderFromRegistry,
+  requestClinePassDeviceCode,
   requestGithubDeviceCode,
   requestOpenAiDeviceCode,
   requestXaiDeviceCode,
@@ -77,14 +79,14 @@ import {
   supportsClaudeTransparentMode,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-GHSURQOK.js";
+} from "./chunk-57B6WHNI.js";
 import {
   __toCommonJS,
   init_provider_templates,
   listAddableTemplates,
   listVisibleOAuthTemplates,
   provider_templates_exports
-} from "./chunk-HXGZ4CTV.js";
+} from "./chunk-3KMKYAHO.js";
 
 // src/ui-command.ts
 import { createServer } from "http";
@@ -792,6 +794,7 @@ var CUSTOM_TEMPLATES = [
 function handleGetTemplates(res) {
   const registry = loadRegistry();
   const configured = new Set(registry.providers.map((p2) => p2.id));
+  const templates = /* @__PURE__ */ new Map();
   const apiTemplates = listAddableTemplates(configured).map((t) => ({
     id: t.id,
     name: t.name,
@@ -802,17 +805,32 @@ function handleGetTemplates(res) {
     accountIdPrompt: t.accountIdPrompt ?? null,
     defaultBaseUrl: t.defaultBaseUrl ?? null,
     apiKeyOptional: t.apiKeyOptional ?? false,
+    authMethods: t.authMethods ?? [t.authType],
     custom: false
   }));
+  for (const template of apiTemplates) templates.set(template.id, template);
   const oauthTemplates = listVisibleOAuthTemplates(configured).map((t) => ({
     id: t.id,
     name: t.name,
     signupUrl: t.signupUrl ?? null,
     authType: t.authType,
+    authMethods: t.authMethods ?? [t.authType],
     subscriptionRisk: t.subscriptionRisk ?? false,
     custom: false
   }));
-  sendJson(res, 200, { templates: [...apiTemplates, ...oauthTemplates, ...CUSTOM_TEMPLATES] });
+  for (const template of oauthTemplates) {
+    const existing = templates.get(template.id);
+    if (existing) {
+      templates.set(template.id, {
+        ...existing,
+        authMethods: [.../* @__PURE__ */ new Set([...existing.authMethods ?? [], ...template.authMethods ?? []])],
+        subscriptionRisk: template.subscriptionRisk
+      });
+    } else {
+      templates.set(template.id, template);
+    }
+  }
+  sendJson(res, 200, { templates: [...templates.values(), ...CUSTOM_TEMPLATES] });
 }
 async function handleAddCustomProvider(req, res) {
   try {
@@ -855,7 +873,7 @@ async function handleAddProvider(req, res) {
       sendJson(res, 400, { error: "templateId required" });
       return;
     }
-    const { listSupportedTemplates } = await import("./provider-templates-4H3C4DRL.js");
+    const { listSupportedTemplates } = await import("./provider-templates-PUCNE34O.js");
     const template = listSupportedTemplates().find((t) => t.id === templateId);
     if (!template) {
       sendJson(res, 404, { error: `Template '${templateId}' not found` });
@@ -888,7 +906,11 @@ async function handleAddProvider(req, res) {
         return;
       }
     }
-    const result = await addProviderFromTemplate(template, keyText, { baseUrl: baseUrlOverride });
+    const replaceExisting = template.id === "cline-pass" && body.replaceExisting === true;
+    const result = await addProviderFromTemplate(template, keyText, {
+      baseUrl: baseUrlOverride,
+      replaceExisting
+    });
     if (result.added) {
       sendJson(res, 200, { ok: true, name: template.name, count: result.modelCount ?? 0 });
     } else {
@@ -964,7 +986,7 @@ async function handleDeleteProvider(req, res) {
     sendJson(res, 500, { error: String(err) });
   }
 }
-var DEVICE_CODE_PROVIDER_IDS = /* @__PURE__ */ new Set(["xai-oauth", "openai-oauth", "github-copilot"]);
+var DEVICE_CODE_PROVIDER_IDS = /* @__PURE__ */ new Set(["xai-oauth", "openai-oauth", "github-copilot", "cline-pass"]);
 var PKCE_PROVIDER_IDS = /* @__PURE__ */ new Set(["claude-code", "antigravity"]);
 var NATIVE_OAUTH_PROVIDER_IDS = DEVICE_CODE_PROVIDER_IDS;
 async function refreshOAuthProviderModels(providerId) {
@@ -1005,6 +1027,21 @@ async function handleOAuthStart(req, res) {
       oauthSessions.set(sessionId, session2);
       pollGithubDeviceCodeToken(device2).then(async (tokens) => {
         await saveNativeOAuthCredential(providerId, tokens);
+        await refreshOAuthProviderModels(providerId);
+        oauthSessions.set(sessionId, { ...session2, status: "done" });
+      }).catch((err) => {
+        oauthSessions.set(sessionId, { ...session2, status: "error", error: String(err) });
+      });
+      sendJson(res, 200, { sessionId, url: url2, userCode: device2.user_code });
+      return;
+    }
+    if (providerId === "cline-pass") {
+      const device2 = await requestClinePassDeviceCode();
+      const url2 = device2.verification_uri_complete ?? device2.verification_uri;
+      const session2 = { status: "pending", url: url2, userCode: device2.user_code, providerId };
+      oauthSessions.set(sessionId, session2);
+      pollClinePassDeviceCode(device2).then(async (result) => {
+        await saveNativeOAuthCredential(providerId, result.tokens, result.accountId, result.providerData);
         await refreshOAuthProviderModels(providerId);
         oauthSessions.set(sessionId, { ...session2, status: "done" });
       }).catch((err) => {
@@ -1672,4 +1709,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-27X4WJKC.js.map
+//# sourceMappingURL=ui-command-CBJW3RG7.js.map

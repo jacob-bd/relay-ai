@@ -10,6 +10,11 @@ import {
   CLAUDE_CODE_USER_AGENT,
   injectClaudeIdentity,
 } from './oauth/claude-identity.js';
+import {
+  createClinePassOAuthFetch,
+  formatClineRuntimeCredential,
+  isClinePassOAuth,
+} from './cline-pass.js';
 
 /** Models that must use /v1/responses instead of /v1/chat/completions. */
 const RESPONSES_ONLY_PREFIXES = [
@@ -20,7 +25,13 @@ const RESPONSES_ONLY_PREFIXES = [
   'o4',
 ];
 
-type SdkProviderFactory = (options: { apiKey: string; baseURL?: string; name?: string; headers?: Record<string, string> }) => {
+type SdkProviderFactory = (options: {
+  apiKey: string;
+  baseURL?: string;
+  name?: string;
+  headers?: Record<string, string>;
+  fetch?: typeof globalThis.fetch;
+}) => {
   (modelId: string): LanguageModel;
   chat: (modelId: string) => LanguageModel;
   responses: (modelId: string) => LanguageModel;
@@ -86,6 +97,10 @@ export interface ProviderModelSpec {
   vertex?: VertexProviderConfig;
   /** Static headers sent on every upstream request (e.g. a plan/auth-tracking header a custom endpoint requires). */
   headers?: Record<string, string>;
+  /** Refresh an OAuth access token after the SDK receives one 401 response. */
+  refreshToken?: () => Promise<string | null>;
+  /** Persist a newly refreshed raw token for future requests. */
+  onTokenRefreshed?: (token: string) => void;
   /** Backend capability: model requires the Responses-Lite request shape (x-openai-internal-codex-responses-lite). */
   useResponsesLite?: boolean;
   /** Backend capability: model must use the WebSocket Responses transport instead of HTTP. */
@@ -225,11 +240,21 @@ export async function createLanguageModel(spec: ProviderModelSpec): Promise<Lang
 
   if (npm === '@ai-sdk/openai-compatible') {
     const { createOpenAICompatible } = await import('@ai-sdk/openai-compatible');
+    const runtimeApiKey = formatClineRuntimeCredential(spec.providerId, spec.authType, apiKey);
     const options = {
       name: spec.providerId ?? 'openai-compatible',
       baseURL: baseURL ?? '',
-      ...(apiKey.trim() ? { apiKey } : {}),
+      ...(runtimeApiKey.trim() ? { apiKey: runtimeApiKey } : {}),
       ...(spec.headers ? { headers: spec.headers } : {}),
+      ...(isClinePassOAuth(spec.providerId, spec.authType) && spec.refreshToken
+        ? {
+            fetch: createClinePassOAuthFetch(
+              runtimeApiKey,
+              spec.refreshToken,
+              spec.onTokenRefreshed,
+            ),
+          }
+        : {}),
     };
     model = createOpenAICompatible({
       ...options,

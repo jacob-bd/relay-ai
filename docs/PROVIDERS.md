@@ -97,6 +97,14 @@ Relay's API Server because it is commonly used as a coding/agent bridge.
 - **Description**: Unified API proxy providing access to dozens of different models.
 - **Base URL**: `https://openrouter.ai/api/v1`
 
+### ClinePass
+- **Description**: Cline's paid coding model subscription, available through either an API key or Cline account OAuth.
+- **API key setup**: Add `ClinePass` from `relay-ai providers add` or the UI and paste a key from the Cline account settings.
+- **OAuth setup**: Run `relay-ai providers auth cline-pass`, or choose **Sign in with ClinePass** in the UI.
+- **Endpoint**: `https://api.cline.bot/api/v1`
+- **Model IDs**: Relay refreshes ClinePass's live catalog and preserves full IDs such as `cline-pass/qwen3.8-max`.
+- **Credential isolation**: API keys and OAuth tokens use separate keychain entries. Switching methods replaces the old credential only after the new one is saved.
+
 ### Local Models (Ollama & LM Studio)
 - **Description**: Connects to locally running inference engines.
 - **Base URLs**: Custom prompts ask for your local URL (e.g., `http://127.0.0.1:11434/v1`).
@@ -111,10 +119,13 @@ Relay AI can connect supported subscriptions with a one-time device code instead
 - **GitHub Copilot**: `relay-ai providers auth github-copilot`
 - **OpenAI ChatGPT**: `relay-ai providers auth openai-oauth`
 - **xAI SuperGrok**: `relay-ai providers auth xai-oauth`
+- **ClinePass**: `relay-ai providers auth cline-pass`
 
 You can also connect them from **Providers & Keys** in `relay-ai ui`. Relay AI displays the device code, provides a **Copy code** button, and opens the provider's sign-in page only after you select **Open sign-in page**.
 
 GitHub Copilot catalogs are plan-aware. Paid accounts receive the callable chat models returned for that account. Free accounts receive only the verified Free-compatible models. If the plan cannot be verified, Relay AI uses the same conservative Free policy so it does not expose models that may consume paid requests. Use **Refresh Models** after changing plans.
+
+ClinePass supports both API-key and OAuth authentication. OAuth access tokens are stored without a transport prefix and are formatted as `workos:` only for ClinePass requests. The runtime retries one expired-token request after refreshing OAuth; it does not loop indefinitely.
 
 See [Subscription OAuth](SUBSCRIPTION-OAUTH.md) for complete setup and troubleshooting instructions.
 

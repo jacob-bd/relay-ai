@@ -3,6 +3,7 @@ import type { FavoriteModel, LocalProvider, LocalProviderModel, ModelInfo } from
 import type { ServerModelInfo } from './server/models.js';
 import { shouldHideModel, type CompatibilityAgent } from './model-compatibility.js';
 import { resolveLocalProviderApiKey } from './provider-catalog.js';
+import { providerRefreshToken } from './provider-runtime.js';
 
 export interface ResolvedFavorite {
   providerId: string;
@@ -12,6 +13,8 @@ export interface ResolvedFavorite {
   authType?: 'api' | 'oauth' | 'none';
   oauthAccountId?: string;
   providerData?: Record<string, unknown>;
+  headers?: Record<string, string>;
+  refreshToken?: () => Promise<string | null>;
 }
 
 /**
@@ -61,6 +64,8 @@ export async function resolveFavorite(
       authType: found.provider.authType,
       oauthAccountId: found.provider.oauthAccountId,
       providerData: found.provider.providerData,
+      headers: found.provider.headers,
+      refreshToken: providerRefreshToken(found.provider.id, found.provider.authType, found.provider.authRef),
     };
   }
 

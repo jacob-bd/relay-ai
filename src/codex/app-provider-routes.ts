@@ -39,6 +39,7 @@ function codexRouteToProxyRoute(
     reasoning: route.reasoning,
     interleavedReasoningField: route.interleavedReasoningField,
     headers: route.headers,
+    refreshToken: route.refreshToken,
   };
 }
 

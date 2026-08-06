@@ -250,6 +250,8 @@ export async function startGeminiProxy(
         oauthAccountId: route.oauthAccountId,
         providerData: route.providerData,
         headers: route.headers,
+        refreshToken: route.refreshToken,
+        onTokenRefreshed: refreshed => { route.apiKey = refreshed; },
       });
       models.set(route.aliasId, m);
     }
