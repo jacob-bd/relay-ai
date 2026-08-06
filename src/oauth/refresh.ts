@@ -7,6 +7,7 @@ import { accessTokenIsExpiring, NATIVE_OAUTH_PROVIDER_IDS, oauthCredentialNeedsR
 import { refreshXaiAccessToken } from './xai.js';
 import { refreshClaudeCodeToken } from './claude-code.js';
 import { refreshAntigravityToken } from './antigravity-oauth.js';
+import { refreshClinePassAccessToken } from './cline-pass.js';
 
 export function oauthCredentialShouldRefresh(
   cred: StoredOAuthCredential,
@@ -38,9 +39,14 @@ export async function refreshStoredOAuthCredential(
     tokens = await refreshClaudeCodeToken(cred.refresh);
   } else if (providerId === 'antigravity') {
     tokens = await refreshAntigravityToken(cred.refresh);
+  } else if (providerId === 'cline-pass') {
+    tokens = await refreshClinePassAccessToken(cred.refresh);
   } else {
     throw new Error(`OAuth refresh not implemented for provider "${providerId}"`);
   }
 
-  return tokensToStoredCredential(tokens, cred.refresh, cred.accountId, cred.providerData);
+  const accountId = providerId === 'cline-pass' && typeof tokens.providerData?.clineUserId === 'string'
+    ? tokens.providerData.clineUserId
+    : cred.accountId;
+  return tokensToStoredCredential(tokens, cred.refresh, accountId, cred.providerData);
 }

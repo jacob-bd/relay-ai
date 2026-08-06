@@ -19,6 +19,7 @@ import {
   generateCliUserID,
 } from '../oauth/claude-code.js';
 import { runAntigravityOAuthFlow } from '../oauth/antigravity-oauth.js';
+import { runClinePassDeviceCodeFlow } from '../oauth/cline-pass.js';
 import { getTemplateById } from '../provider-templates.js';
 import { oauthAuthRef, toOAuthRegistryId } from './import-build.js';
 import { loadRegistry, saveRegistry } from './io.js';
@@ -52,6 +53,7 @@ const PROVIDER_DISPLAY: Record<NativeOAuthProviderId, string> = {
   'github-copilot': 'GitHub Copilot',
   'claude-code': 'Claude Code (Anthropic subscription)',
   antigravity: 'Antigravity (Google Cloud Code Assist)',
+  'cline-pass': 'ClinePass',
 };
 
 function openBrowser(url: string): void {
@@ -88,6 +90,18 @@ async function runNativeDeviceCode(providerId: NativeOAuthProviderId): Promise<O
       });
       spinner.stop(pc.green('Signed in to GitHub Copilot'));
       return tokensToStoredCredential(tokens);
+    }
+
+    if (providerId === 'cline-pass') {
+      const result = await runClinePassDeviceCodeFlow(({ url, userCode }) => {
+        spinner.stop('');
+        p.log.info(`Visit: ${pc.cyan(url)}`);
+        p.log.info(`Enter code: ${pc.bold(userCode)}`);
+        openBrowser(url);
+        spinner.start('Waiting for authorization...');
+      });
+      spinner.stop(pc.green('Signed in to ClinePass'));
+      return tokensToStoredCredential(result.tokens, undefined, result.accountId, result.providerData);
     }
 
     const { tokens, accountId } = await runOpenAiDeviceCodeFlow(({ url, userCode }) => {

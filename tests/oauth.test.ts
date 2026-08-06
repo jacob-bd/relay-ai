@@ -194,6 +194,28 @@ describe('oauth refresh', () => {
     expect(cred.access).toBe('new-access');
     expect(oauthCredentialShouldRefresh(cred, 'xai')).toBe(false);
   });
+
+  it('refreshes ClinePass tokens through the Cline JSON endpoint', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      success: true,
+      data: {
+        accessToken: 'cline-new-access',
+        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+        userInfo: { clineUserId: 'cline-user' },
+      },
+    }), { status: 200 })));
+
+    const cred = await refreshStoredOAuthCredential('cline-pass', {
+      type: 'oauth',
+      access: 'old',
+      refresh: 'cline-refresh',
+      expires: 0,
+    });
+
+    expect(cred.access).toBe('cline-new-access');
+    expect(cred.accountId).toBe('cline-user');
+    expect(oauthCredentialShouldRefresh(cred, 'cline-pass')).toBe(false);
+  });
 });
 
 describe('codexCompatibleProviders', () => {
