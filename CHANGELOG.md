@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0] - 2026-08-06
+
+### Added
+
+- **ClinePass provider support** — Relay now supports ClinePass through both API-key and WorkOS device-code OAuth authentication, including model catalog discovery, credential storage, token refresh, and the CLI/Admin UI setup flows.
+- **ClinePass model routing** — ClinePass models are available across Relay launch surfaces with provider-scoped credentials and one-shot recovery when an OAuth access token expires.
+
 ## [0.7.6] - 2026-07-29
 
 ### Fixed
