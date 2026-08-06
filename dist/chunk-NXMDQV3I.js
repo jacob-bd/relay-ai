@@ -2,7 +2,7 @@
 import {
   getTemplateById,
   init_provider_templates
-} from "./chunk-3KMKYAHO.js";
+} from "./chunk-Q2FTCICO.js";
 
 // src/constants.ts
 import { homedir } from "os";
@@ -12982,4 +12982,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-2J5VLRTI.js.map
+//# sourceMappingURL=chunk-NXMDQV3I.js.map

@@ -7,7 +7,7 @@ import {
   listAddableTemplates,
   listSupportedTemplates,
   listVisibleOAuthTemplates
-} from "./chunk-3KMKYAHO.js";
+} from "./chunk-Q2FTCICO.js";
 init_provider_templates();
 export {
   PROVIDER_TEMPLATES,
@@ -17,4 +17,4 @@ export {
   listSupportedTemplates,
   listVisibleOAuthTemplates
 };
-//# sourceMappingURL=provider-templates-PUCNE34O.js.map
+//# sourceMappingURL=provider-templates-XKNRKAQU.js.map

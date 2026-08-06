@@ -448,7 +448,15 @@ export function listAddableTemplates(configuredIds: Iterable<string> = []): Prov
 export function listVisibleOAuthTemplates(configuredIds: Iterable<string> = []): ProviderTemplate[] {
   const configured = new Set(configuredIds);
   return PROVIDER_TEMPLATES
-    .filter(t => (t.authMethods ?? [t.authType]).includes('oauth') && t.supported && t.addable !== false && !t.hidden && !configured.has(t.id))
+    .filter(t => {
+      const methods = t.authMethods ?? [t.authType];
+      return methods.includes('oauth')
+        && !methods.includes('api')
+        && t.supported
+        && t.addable !== false
+        && !t.hidden
+        && !configured.has(t.id);
+    })
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 

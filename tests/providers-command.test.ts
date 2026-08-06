@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseProvidersArgs, providerHubChoiceValue, providersHelpText, runProvidersAdd } from '../src/providers-command.js';
+import { parseProvidersArgs, providerHubChoiceValue, providersHelpText, runProvidersAdd, runProvidersHub } from '../src/providers-command.js';
 import {
   addZenRegistryStub,
   removeProviderFromRegistry,
@@ -13,14 +13,22 @@ import { zenRegistryStub } from '../src/registry/builtins.js';
 import { providerAuthHelpText } from '../src/registry/provider-auth.js';
 import { PROVIDER_TEMPLATES } from '../src/provider-templates.js';
 import * as env from '../src/env.js';
+import * as addTemplate from '../src/registry/add-template.js';
+import * as providerAuth from '../src/registry/provider-auth.js';
 
 const selectMock = vi.hoisted(() => vi.fn());
+const textMock = vi.hoisted(() => vi.fn());
+const passwordMock = vi.hoisted(() => vi.fn());
+const spinnerMock = vi.hoisted(() => vi.fn(() => ({ start: vi.fn(), stop: vi.fn() })));
 
 vi.mock('@clack/prompts', async importOriginal => {
   const actual = await importOriginal<typeof import('@clack/prompts')>();
   return {
     ...actual,
     select: selectMock,
+    text: textMock,
+    password: passwordMock,
+    spinner: spinnerMock,
   };
 });
 
@@ -179,6 +187,11 @@ describe('providers add menu', () => {
     home = mkdtempSync(join(tmpdir(), 'relay-ai-providers-add-'));
     process.env.RELAY_AI_HOME = home;
     selectMock.mockReset();
+    textMock.mockReset();
+    passwordMock.mockReset();
+    spinnerMock.mockClear();
+    vi.spyOn(addTemplate, 'addProviderFromTemplate').mockResolvedValue({ added: true, modelCount: 12 });
+    vi.spyOn(providerAuth, 'authenticateProvider').mockResolvedValue({ registryProvider: { name: 'ClinePass' } } as never);
   });
 
   afterEach(() => {
@@ -195,5 +208,93 @@ describe('providers add menu', () => {
 
     const options = selectMock.mock.calls[0]?.[0].options.map(option => option.value);
     expect(options).toEqual(['templates', 'custom', 'import']);
+  });
+
+  it('offers OAuth after selecting ClinePass and does not use the API-key path', async () => {
+    selectMock
+      .mockResolvedValueOnce('templates')
+      .mockResolvedValueOnce('search')
+      .mockResolvedValueOnce('cline-pass')
+      .mockResolvedValueOnce('oauth');
+    textMock.mockResolvedValue('cline');
+
+    await runProvidersAdd();
+
+    expect(providerAuth.authenticateProvider).toHaveBeenCalledWith('cline-pass', { method: undefined });
+    expect(addTemplate.addProviderFromTemplate).not.toHaveBeenCalled();
+  });
+
+  it('offers API key after selecting ClinePass and adds it as the same provider', async () => {
+    selectMock
+      .mockResolvedValueOnce('templates')
+      .mockResolvedValueOnce('search')
+      .mockResolvedValueOnce('cline-pass')
+      .mockResolvedValueOnce('api');
+    textMock.mockResolvedValue('cline');
+    passwordMock.mockResolvedValue('cline-api-key');
+
+    await runProvidersAdd();
+
+    expect(addTemplate.addProviderFromTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'cline-pass' }),
+      'cline-api-key',
+      { replaceExisting: false },
+    );
+    expect(providerAuth.authenticateProvider).not.toHaveBeenCalled();
+  });
+
+  it('allows an existing ClinePass provider to switch to a new API key', async () => {
+    saveRegistry({
+      schemaVersion: 1,
+      providers: [{
+        id: 'cline-pass',
+        templateId: 'cline-pass',
+        name: 'ClinePass',
+        enabled: true,
+        authType: 'oauth',
+        authRef: 'keyring:oauth:provider:cline-pass',
+        api: { npm: '@ai-sdk/openai-compatible', url: 'https://api.cline.bot/api/v1' },
+        addedAt: new Date().toISOString(),
+      }],
+    });
+    selectMock
+      .mockResolvedValueOnce('provider:cline-pass')
+      .mockResolvedValueOnce('change-auth')
+      .mockResolvedValueOnce('api')
+      .mockResolvedValueOnce('done');
+    passwordMock.mockResolvedValue('replacement-api-key');
+
+    await runProvidersHub();
+
+    expect(addTemplate.addProviderFromTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'cline-pass' }),
+      'replacement-api-key',
+      { replaceExisting: true },
+    );
+  });
+
+  it('allows an existing ClinePass provider to switch to OAuth', async () => {
+    saveRegistry({
+      schemaVersion: 1,
+      providers: [{
+        id: 'cline-pass',
+        templateId: 'cline-pass',
+        name: 'ClinePass',
+        enabled: true,
+        authType: 'api',
+        authRef: 'keyring:provider:cline-pass',
+        api: { npm: '@ai-sdk/openai-compatible', url: 'https://api.cline.bot/api/v1' },
+        addedAt: new Date().toISOString(),
+      }],
+    });
+    selectMock
+      .mockResolvedValueOnce('provider:cline-pass')
+      .mockResolvedValueOnce('change-auth')
+      .mockResolvedValueOnce('oauth')
+      .mockResolvedValueOnce('done');
+
+    await runProvidersHub();
+
+    expect(providerAuth.authenticateProvider).toHaveBeenCalledWith('cline-pass', { method: undefined });
   });
 });

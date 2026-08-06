@@ -79,14 +79,14 @@ import {
   supportsClaudeTransparentMode,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-2J5VLRTI.js";
+} from "./chunk-NXMDQV3I.js";
 import {
   __toCommonJS,
   init_provider_templates,
   listAddableTemplates,
   listVisibleOAuthTemplates,
   provider_templates_exports
-} from "./chunk-3KMKYAHO.js";
+} from "./chunk-Q2FTCICO.js";
 
 // src/ui-command.ts
 import { createServer } from "http";
@@ -873,7 +873,7 @@ async function handleAddProvider(req, res) {
       sendJson(res, 400, { error: "templateId required" });
       return;
     }
-    const { listSupportedTemplates } = await import("./provider-templates-PUCNE34O.js");
+    const { listSupportedTemplates } = await import("./provider-templates-XKNRKAQU.js");
     const template = listSupportedTemplates().find((t) => t.id === templateId);
     if (!template) {
       sendJson(res, 404, { error: `Template '${templateId}' not found` });
@@ -1709,4 +1709,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-LRDFBU4D.js.map
+//# sourceMappingURL=ui-command-BPXBXASV.js.map

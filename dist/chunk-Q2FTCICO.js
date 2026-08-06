@@ -44,7 +44,10 @@ function listAddableTemplates(configuredIds = []) {
 }
 function listVisibleOAuthTemplates(configuredIds = []) {
   const configured = new Set(configuredIds);
-  return PROVIDER_TEMPLATES.filter((t) => (t.authMethods ?? [t.authType]).includes("oauth") && t.supported && t.addable !== false && !t.hidden && !configured.has(t.id)).sort((a, b) => a.name.localeCompare(b.name));
+  return PROVIDER_TEMPLATES.filter((t) => {
+    const methods = t.authMethods ?? [t.authType];
+    return methods.includes("oauth") && !methods.includes("api") && t.supported && t.addable !== false && !t.hidden && !configured.has(t.id);
+  }).sort((a, b) => a.name.localeCompare(b.name));
 }
 function getTemplateById(id) {
   return PROVIDER_TEMPLATES.find((t) => t.id === id);
@@ -469,4 +472,4 @@ export {
   provider_templates_exports,
   init_provider_templates
 };
-//# sourceMappingURL=chunk-3KMKYAHO.js.map
+//# sourceMappingURL=chunk-Q2FTCICO.js.map

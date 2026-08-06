@@ -11,6 +11,7 @@ import {
 import { findOpencodeBinary } from './opencode-serve.js';
 import {
   filterTemplates,
+  getTemplateById,
   listAddableTemplates,
   listSupportedTemplates,
   listVisibleOAuthTemplates,
@@ -35,6 +36,7 @@ import { browseAllModels } from './prompts.js';
 import { cachedModelToLocal } from './registry/materialize.js';
 import { loadPreferences } from './config.js';
 import type { LocalProvider } from './types.js';
+import type { RegistryProvider } from './registry/types.js';
 import {
   fmtCount,
   fmtEnabledStar,
@@ -392,6 +394,77 @@ async function pickTemplateFromCatalog(): Promise<ProviderTemplate | null> {
   }
 }
 
+function hasApiAndOAuth(template: ProviderTemplate): boolean {
+  const methods = template.authMethods ?? [template.authType];
+  return methods.includes('api') && methods.includes('oauth');
+}
+
+async function runDualAuthTemplateFlow(
+  template: ProviderTemplate,
+  existing?: RegistryProvider,
+): Promise<number> {
+  const method = await p.select({
+    message: existing
+      ? `Change ${template.name} authentication`
+      : `How would you like to connect to ${template.name}?`,
+    options: [
+      {
+        value: 'api',
+        label: 'Use an API key',
+        hint: existing?.authType === 'api' ? 'Replace the current API key' : 'Use your ClinePass API key',
+      },
+      {
+        value: 'oauth',
+        label: 'Sign in with ClinePass',
+        hint: 'One-time device code; uses your ClinePass account',
+      },
+      { value: 'back', label: 'Back', hint: '' },
+    ],
+  });
+  if (p.isCancel(method) || method === 'back') return 0;
+
+  if (method === 'oauth') {
+    return runProvidersAuth(template.id);
+  }
+
+  if (template.signupUrl) {
+    printPanel(fmtProvider(template.name), [
+      `${pc.white('Get an API key at:')} ${fmtUrl(template.signupUrl)}`,
+    ]);
+  }
+
+  const apiKeyInput = await p.password({
+    message: `Paste your ${template.name} API key:`,
+    validate: value => value.trim() ? undefined : 'Key cannot be empty',
+  });
+  if (p.isCancel(apiKeyInput)) {
+    p.cancel('Cancelled.');
+    return 0;
+  }
+
+  const apiKey = String(apiKeyInput).trim();
+  if (!apiKey) {
+    p.log.error('Key cannot be empty');
+    return 1;
+  }
+
+  const spinner = p.spinner();
+  spinner.start(`Testing connection to ${template.name}...`);
+  const result = await addProviderFromTemplate(template, apiKey, {
+    replaceExisting: Boolean(existing),
+  });
+  spinner.stop('');
+
+  if (!result.added) {
+    p.log.error(result.error ?? 'Could not add provider.');
+    if (result.hint) p.log.info(result.hint);
+    return 1;
+  }
+
+  logConnected(template.name, result.modelCount ?? 0);
+  return 0;
+}
+
 async function runTemplateAddFlow(): Promise<number> {
   if (listAddableTemplates(loadRegistry().providers.map(p => p.id)).length === 0) {
     p.log.info('All catalog providers are already configured.');
@@ -400,6 +473,10 @@ async function runTemplateAddFlow(): Promise<number> {
 
   const template = await pickTemplateFromCatalog();
   if (!template) return 0;
+
+  if (hasApiAndOAuth(template)) {
+    return runDualAuthTemplateFlow(template);
+  }
 
   if (template.modelSource === 'zen-go-api') {
     const existingKey = await readGlobalOpencodeCredential();
@@ -715,6 +792,8 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed'> {
   const modelCount = provider.modelsCache?.models.length ?? 0;
   const authLabel = formatRegistryAuthLabel(provider);
   printProviderDetailPanel(provider.name, modelCount, authLabel);
+  const template = getTemplateById(provider.templateId) ?? getTemplateById(id);
+  const hasDualAuth = template ? hasApiAndOAuth(template) : false;
 
   const detailOptions: Array<{ value: string; label: string; hint?: string }> = [];
   if (modelCount > 0) {
@@ -729,7 +808,13 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed'> {
     label: 'Refresh model list',
     hint: 'Fetch latest models from the provider API',
   });
-  if (supportsNativeOAuth(id) || provider.authType === 'oauth') {
+  if (hasDualAuth && template) {
+    detailOptions.push({
+      value: 'change-auth',
+      label: 'Change authentication (API/OAuth)',
+      hint: 'Switch between a ClinePass API key and account sign-in',
+    });
+  } else if (supportsNativeOAuth(id) || provider.authType === 'oauth') {
     detailOptions.push({
       value: 'auth',
       label: 'Sign in again (OAuth)',
@@ -769,6 +854,11 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed'> {
 
   if (action === 'refresh') {
     await runProvidersRefreshModels(id);
+    return 'back';
+  }
+
+  if (action === 'change-auth' && template) {
+    await runDualAuthTemplateFlow(template, provider);
     return 'back';
   }
 
