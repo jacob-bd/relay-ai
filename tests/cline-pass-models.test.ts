@@ -30,7 +30,7 @@ describe('ClinePass model catalog', () => {
   it('defines exact host-root and SDK endpoint URLs', () => {
     expect(CLINE_PASS_SDK_BASE_URL).toBe('https://api.cline.bot/api/v1');
     expect(CLINE_PASS_CATALOG_URL).toBe('https://api.cline.bot/api/v1/ai/cline/recommended-models');
-    expect(CLINE_PASS_VALIDATION_URL).toBe('https://api.cline.bot/api/v1/models');
+    expect(CLINE_PASS_VALIDATION_URL).toBe('https://api.cline.bot/api/v1/users/me');
     expect(CLINE_PASS_REGISTER_URL).toBe('https://api.cline.bot/api/v1/auth/register');
     expect(CLINE_PASS_REFRESH_URL).toBe('https://api.cline.bot/api/v1/auth/refresh');
   });
@@ -90,7 +90,7 @@ describe('ClinePass model catalog', () => {
     );
   });
 
-  it('validates an API key against the authenticated models endpoint', async () => {
+  it('validates an API key against the authenticated account endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     vi.stubGlobal('fetch', fetchMock);
 

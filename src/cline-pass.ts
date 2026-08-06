@@ -3,7 +3,8 @@
 export const CLINE_PASS_HOST = 'https://api.cline.bot';
 export const CLINE_PASS_SDK_BASE_URL = `${CLINE_PASS_HOST}/api/v1`;
 export const CLINE_PASS_CATALOG_URL = `${CLINE_PASS_HOST}/api/v1/ai/cline/recommended-models`;
-export const CLINE_PASS_VALIDATION_URL = `${CLINE_PASS_HOST}/api/v1/models`;
+/** Authenticated, non-inference endpoint used to verify API-key credentials. */
+export const CLINE_PASS_VALIDATION_URL = `${CLINE_PASS_HOST}/api/v1/users/me`;
 export const CLINE_PASS_REGISTER_URL = `${CLINE_PASS_HOST}/api/v1/auth/register`;
 export const CLINE_PASS_REFRESH_URL = `${CLINE_PASS_HOST}/api/v1/auth/refresh`;
 /** Value written by Relay 0.8.0 before ClinePass reported context metadata. */

@@ -614,7 +614,7 @@ function injectClaudeIdentity(body, providerData, seed) {
 var CLINE_PASS_HOST = "https://api.cline.bot";
 var CLINE_PASS_SDK_BASE_URL = `${CLINE_PASS_HOST}/api/v1`;
 var CLINE_PASS_CATALOG_URL = `${CLINE_PASS_HOST}/api/v1/ai/cline/recommended-models`;
-var CLINE_PASS_VALIDATION_URL = `${CLINE_PASS_HOST}/api/v1/models`;
+var CLINE_PASS_VALIDATION_URL = `${CLINE_PASS_HOST}/api/v1/users/me`;
 var CLINE_PASS_REGISTER_URL = `${CLINE_PASS_HOST}/api/v1/auth/register`;
 var CLINE_PASS_REFRESH_URL = `${CLINE_PASS_HOST}/api/v1/auth/refresh`;
 var CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW = 131072;
@@ -13022,4 +13022,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-3FTW3QA3.js.map
+//# sourceMappingURL=chunk-5DDQJSTU.js.map

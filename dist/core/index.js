@@ -491,7 +491,7 @@ function injectClaudeIdentity(body, providerData, seed) {
 var CLINE_PASS_HOST = "https://api.cline.bot";
 var CLINE_PASS_SDK_BASE_URL = `${CLINE_PASS_HOST}/api/v1`;
 var CLINE_PASS_CATALOG_URL = `${CLINE_PASS_HOST}/api/v1/ai/cline/recommended-models`;
-var CLINE_PASS_VALIDATION_URL = `${CLINE_PASS_HOST}/api/v1/models`;
+var CLINE_PASS_VALIDATION_URL = `${CLINE_PASS_HOST}/api/v1/users/me`;
 var CLINE_PASS_REGISTER_URL = `${CLINE_PASS_HOST}/api/v1/auth/register`;
 var CLINE_PASS_REFRESH_URL = `${CLINE_PASS_HOST}/api/v1/auth/refresh`;
 var CLINE_PASS_WORKOS_PREFIX = "workos:";
