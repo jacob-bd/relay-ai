@@ -617,6 +617,7 @@ var CLINE_PASS_CATALOG_URL = `${CLINE_PASS_HOST}/api/v1/ai/cline/recommended-mod
 var CLINE_PASS_VALIDATION_URL = `${CLINE_PASS_HOST}/api/v1/models`;
 var CLINE_PASS_REGISTER_URL = `${CLINE_PASS_HOST}/api/v1/auth/register`;
 var CLINE_PASS_REFRESH_URL = `${CLINE_PASS_HOST}/api/v1/auth/refresh`;
+var CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW = 131072;
 var CLINE_PASS_WORKOS_PREFIX = "workos:";
 function isClinePassOAuth(providerId, authType) {
   return providerId === "cline-pass" && authType === "oauth";
@@ -7829,7 +7830,7 @@ function cachedModelToLocal(cached, provider) {
     // a heuristic as if it were provider metadata. Launch-time callers still
     // resolve their required safety fallback when they build the child env or
     // proxy catalog.
-    contextWindow: cached.contextWindow ?? (provider.id === "cline-pass" ? void 0 : resolveContextWindow(id)),
+    contextWindow: provider.id === "cline-pass" && cached.contextWindow === CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW && cached.contextWindowSource !== "provider" ? void 0 : cached.contextWindow ?? (provider.id === "cline-pass" ? void 0 : resolveContextWindow(id)),
     supportedParameters: cached.supportedParameters,
     reasoning: cached.reasoning ?? modelsDev?.reasoning,
     interleavedReasoningField: cached.interleavedReasoningField ?? modelsDev?.interleaved?.field,
@@ -9426,6 +9427,7 @@ function toCachedModel(entry, isFree) {
   const id = typeof entry.id === "string" ? entry.id.trim() : "";
   if (!id) return null;
   const name = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : id;
+  const reportedContextWindow = contextWindow(entry);
   const cost = isFree ? { input: 0, output: 0 } : void 0;
   const freeStatus = classifyFreeStatus({ model: { cost, isFree } });
   const family = id.split("/").pop()?.split(/[-:]/)[0] ?? id;
@@ -9435,7 +9437,8 @@ function toCachedModel(entry, isFree) {
     upstreamModelId: id,
     family,
     brand: deriveBrand(family),
-    contextWindow: contextWindow(entry),
+    contextWindow: reportedContextWindow,
+    contextWindowSource: reportedContextWindow === void 0 ? void 0 : "provider",
     cost,
     isFree: isFreeStatus(freeStatus),
     freeStatus,
@@ -12979,4 +12982,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-W7PNEI5A.js.map
+//# sourceMappingURL=chunk-2J5VLRTI.js.map

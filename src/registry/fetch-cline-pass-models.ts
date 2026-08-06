@@ -51,6 +51,7 @@ function toCachedModel(entry: ClineModelEntry, isFree: boolean): CachedModel | n
   const id = typeof entry.id === 'string' ? entry.id.trim() : '';
   if (!id) return null;
   const name = typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : id;
+  const reportedContextWindow = contextWindow(entry);
   const cost = isFree ? { input: 0, output: 0 } : undefined;
   const freeStatus = classifyFreeStatus({ model: { cost, isFree } });
   const family = id.split('/').pop()?.split(/[-:]/)[0] ?? id;
@@ -60,7 +61,8 @@ function toCachedModel(entry: ClineModelEntry, isFree: boolean): CachedModel | n
     upstreamModelId: id,
     family,
     brand: deriveBrand(family),
-    contextWindow: contextWindow(entry),
+    contextWindow: reportedContextWindow,
+    contextWindowSource: reportedContextWindow === undefined ? undefined : 'provider',
     cost,
     isFree: isFreeStatus(freeStatus),
     freeStatus,

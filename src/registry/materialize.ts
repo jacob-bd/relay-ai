@@ -1,6 +1,7 @@
 // src/registry/materialize.ts — registry entries → LocalProvider runtime shape
 
 import { shouldHideModel, type CompatibilityAgent } from '../model-compatibility.js';
+import { CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW } from '../cline-pass.js';
 import { deriveBrand } from '../models.js';
 import { resolveEndpoint } from '../providers.js';
 import { resolveContextWindow } from '../context-window.js';
@@ -75,7 +76,11 @@ export function cachedModelToLocal(
     // a heuristic as if it were provider metadata. Launch-time callers still
     // resolve their required safety fallback when they build the child env or
     // proxy catalog.
-    contextWindow: cached.contextWindow ?? (provider.id === 'cline-pass' ? undefined : resolveContextWindow(id)),
+    contextWindow: provider.id === 'cline-pass' &&
+      cached.contextWindow === CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW &&
+      cached.contextWindowSource !== 'provider'
+      ? undefined
+      : cached.contextWindow ?? (provider.id === 'cline-pass' ? undefined : resolveContextWindow(id)),
     supportedParameters: cached.supportedParameters,
     reasoning: cached.reasoning ?? modelsDev?.reasoning,
     interleavedReasoningField: cached.interleavedReasoningField ?? modelsDev?.interleaved?.field,

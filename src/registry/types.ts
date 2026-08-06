@@ -13,6 +13,8 @@ export interface CachedModel {
   family?: string;
   brand?: string;
   contextWindow?: number;
+  /** Distinguishes provider-reported context from legacy Relay guesses. */
+  contextWindowSource?: 'provider';
   cost?: { input: number; output: number; cache_read?: number; cache_write?: number };
   isFree?: boolean;
   freeStatus?: FreeStatus;

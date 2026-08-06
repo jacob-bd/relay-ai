@@ -6,6 +6,8 @@ export const CLINE_PASS_CATALOG_URL = `${CLINE_PASS_HOST}/api/v1/ai/cline/recomm
 export const CLINE_PASS_VALIDATION_URL = `${CLINE_PASS_HOST}/api/v1/models`;
 export const CLINE_PASS_REGISTER_URL = `${CLINE_PASS_HOST}/api/v1/auth/register`;
 export const CLINE_PASS_REFRESH_URL = `${CLINE_PASS_HOST}/api/v1/auth/refresh`;
+/** Value written by Relay 0.8.0 before ClinePass reported context metadata. */
+export const CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW = 131_072;
 export const CLINE_PASS_WORKOS_PREFIX = 'workos:';
 
 export function isClinePassOAuth(providerId?: string, authType?: string): boolean {

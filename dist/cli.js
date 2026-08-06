@@ -183,7 +183,7 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-W7PNEI5A.js";
+} from "./chunk-2J5VLRTI.js";
 import {
   filterTemplates,
   init_provider_templates,
@@ -13514,7 +13514,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-UXNILO4W.js");
+    const { runUiCommand } = await import("./ui-command-LRDFBU4D.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

@@ -50,6 +50,7 @@ describe('ClinePass model catalog', () => {
       id: 'cline-pass/qwen3.8-max',
       upstreamModelId: 'cline-pass/qwen3.8-max',
       contextWindow: 262144,
+      contextWindowSource: 'provider',
     });
     expect(models[1]).toMatchObject({
       name: 'Kimi K3',
