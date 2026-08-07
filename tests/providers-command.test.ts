@@ -243,6 +243,25 @@ describe('providers add menu', () => {
     expect(providerAuth.authenticateProvider).not.toHaveBeenCalled();
   });
 
+  it('keeps the hub failure status when an API-key add fails', async () => {
+    selectMock
+      .mockResolvedValueOnce('add')
+      .mockResolvedValueOnce('templates')
+      .mockResolvedValueOnce('search')
+      .mockResolvedValueOnce('cline-pass')
+      .mockResolvedValueOnce('api')
+      .mockResolvedValueOnce('done');
+    textMock.mockResolvedValue('cline');
+    passwordMock.mockResolvedValue('rejected-api-key');
+    vi.mocked(addTemplate.addProviderFromTemplate).mockResolvedValueOnce({
+      added: false,
+      error: 'API key was rejected.',
+      hint: 'Verify your key at https://app.cline.bot',
+    });
+
+    await expect(runProvidersHub()).resolves.toBe(1);
+  });
+
   it('allows an existing ClinePass provider to switch to a new API key', async () => {
     saveRegistry({
       schemaVersion: 1,

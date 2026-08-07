@@ -1517,6 +1517,13 @@ function hasApiAndOAuth(template) {
   const methods = template.authMethods ?? [template.authType];
   return methods.includes("api") && methods.includes("oauth");
 }
+function showProviderAddFailure(error, hint, fallback) {
+  printPanel(pc4.red("Provider was not added"), [
+    pc4.white(error ?? fallback),
+    pc4.dim("No changes were saved."),
+    ...hint ? [pc4.white(hint)] : []
+  ]);
+}
 async function runDualAuthTemplateFlow(template, existing) {
   const method = await p5.select({
     message: existing ? `Change ${template.name} authentication` : `How would you like to connect to ${template.name}?`,
@@ -1553,7 +1560,7 @@ async function runDualAuthTemplateFlow(template, existing) {
   }
   const apiKey = String(apiKeyInput).trim();
   if (!apiKey) {
-    p5.log.error("Key cannot be empty");
+    showProviderAddFailure("Key cannot be empty.", void 0, "Could not add provider.");
     return 1;
   }
   const spinner9 = p5.spinner();
@@ -1563,8 +1570,7 @@ async function runDualAuthTemplateFlow(template, existing) {
   });
   spinner9.stop("");
   if (!result.added) {
-    p5.log.error(result.error ?? "Could not add provider.");
-    if (result.hint) p5.log.info(result.hint);
+    showProviderAddFailure(result.error, result.hint, "Could not add provider.");
     return 1;
   }
   logConnected(template.name, result.modelCount ?? 0);
@@ -1662,8 +1668,7 @@ async function runTemplateAddFlow() {
   const result = await addProviderFromTemplate(template, apiKey, { baseUrl: baseUrlOverride });
   spinner9.stop("");
   if (!result.added) {
-    p5.log.error(result.error ?? "Could not add provider.");
-    if (result.hint) p5.log.info(result.hint);
+    showProviderAddFailure(result.error, result.hint, "Could not add provider.");
     return 1;
   }
   logConnected(template.name, result.modelCount ?? 0);
@@ -1751,8 +1756,7 @@ async function runCustomEndpointAddFlow() {
   });
   spinner9.stop("");
   if (!result.added) {
-    p5.log.error(result.error ?? "Could not add custom provider.");
-    if (result.hint) p5.log.info(result.hint);
+    showProviderAddFailure(result.error, result.hint, "Could not add custom provider.");
     return 1;
   }
   logConnected(result.provider?.name ?? "Provider", result.modelCount ?? 0);
@@ -1910,16 +1914,13 @@ async function runProviderDetail(id) {
     return "back";
   }
   if (action === "refresh") {
-    await runProvidersRefreshModels(id);
-    return "back";
+    return await runProvidersRefreshModels(id) === 0 ? "back" : "failed";
   }
   if (action === "change-auth" && template) {
-    await runDualAuthTemplateFlow(template, provider);
-    return "back";
+    return await runDualAuthTemplateFlow(template, provider) === 0 ? "back" : "failed";
   }
   if (action === "auth") {
-    await runProvidersAuth(id);
-    return "back";
+    return await runProvidersAuth(id) === 0 ? "back" : "failed";
   }
   if (action === "toggle") {
     const result = toggleProviderEnabled(id);
@@ -1929,10 +1930,11 @@ async function runProviderDetail(id) {
     return "back";
   }
   const code = await runProvidersRemove(id, true);
-  return code === 0 ? "removed" : "back";
+  return code === 0 ? "removed" : "failed";
 }
 async function runProvidersHub() {
   const hasOpencode = findOpencodeBinary() !== null;
+  let lastOperationFailed = false;
   while (true) {
     const entries = await resolveProvidersForDisplay();
     const options = [
@@ -1960,18 +1962,18 @@ async function runProvidersHub() {
       options
     });
     if (p5.isCancel(choice) || choice === "done") {
-      return 0;
+      return lastOperationFailed ? 1 : 0;
     }
     if (choice === "add") {
-      await runProvidersAdd();
+      lastOperationFailed = await runProvidersAdd() !== 0;
       continue;
     }
     if (choice === "import") {
-      await runProvidersImport();
+      lastOperationFailed = await runProvidersImport() !== 0;
       continue;
     }
     if (choice === "refresh-all") {
-      await runProvidersRefreshModels();
+      lastOperationFailed = await runProvidersRefreshModels() !== 0;
       continue;
     }
     if (choice === "auth-menu") {
@@ -1989,7 +1991,9 @@ async function runProvidersHub() {
           hint: "device code"
         }))
       });
-      if (!p5.isCancel(providerId)) await runProvidersAuth(providerId);
+      if (!p5.isCancel(providerId)) {
+        lastOperationFailed = await runProvidersAuth(providerId) !== 0;
+      }
       continue;
     }
     if (typeof choice === "string" && choice.startsWith("cloud:")) {
@@ -2000,6 +2004,7 @@ async function runProvidersHub() {
     if (typeof choice === "string" && choice.startsWith("provider:")) {
       const id = choice.slice("provider:".length);
       const outcome = await runProviderDetail(id);
+      lastOperationFailed = outcome === "failed";
       if (outcome === "removed") continue;
     }
   }

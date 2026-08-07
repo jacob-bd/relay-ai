@@ -399,6 +399,14 @@ function hasApiAndOAuth(template: ProviderTemplate): boolean {
   return methods.includes('api') && methods.includes('oauth');
 }
 
+function showProviderAddFailure(error: string | undefined, hint: string | undefined, fallback: string): void {
+  printPanel(pc.red('Provider was not added'), [
+    pc.white(error ?? fallback),
+    pc.dim('No changes were saved.'),
+    ...(hint ? [pc.white(hint)] : []),
+  ]);
+}
+
 async function runDualAuthTemplateFlow(
   template: ProviderTemplate,
   existing?: RegistryProvider,
@@ -444,7 +452,7 @@ async function runDualAuthTemplateFlow(
 
   const apiKey = String(apiKeyInput).trim();
   if (!apiKey) {
-    p.log.error('Key cannot be empty');
+    showProviderAddFailure('Key cannot be empty.', undefined, 'Could not add provider.');
     return 1;
   }
 
@@ -456,8 +464,7 @@ async function runDualAuthTemplateFlow(
   spinner.stop('');
 
   if (!result.added) {
-    p.log.error(result.error ?? 'Could not add provider.');
-    if (result.hint) p.log.info(result.hint);
+    showProviderAddFailure(result.error, result.hint, 'Could not add provider.');
     return 1;
   }
 
@@ -574,8 +581,7 @@ async function runTemplateAddFlow(): Promise<number> {
   spinner.stop('');
 
   if (!result.added) {
-    p.log.error(result.error ?? 'Could not add provider.');
-    if (result.hint) p.log.info(result.hint);
+    showProviderAddFailure(result.error, result.hint, 'Could not add provider.');
     return 1;
   }
 
@@ -674,8 +680,7 @@ async function runCustomEndpointAddFlow(): Promise<number> {
   spinner.stop('');
 
   if (!result.added) {
-    p.log.error(result.error ?? 'Could not add custom provider.');
-    if (result.hint) p.log.info(result.hint);
+    showProviderAddFailure(result.error, result.hint, 'Could not add custom provider.');
     return 1;
   }
 
@@ -784,7 +789,7 @@ export function providerHubChoiceValue(entry: ProviderDisplayEntry): string {
   return `provider:${entry.id}`;
 }
 
-async function runProviderDetail(id: string): Promise<'back' | 'removed'> {
+async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'failed'> {
   const registry = loadRegistry();
   const provider = registry.providers.find(pr => pr.id === id);
   if (!provider) return 'back';
@@ -853,18 +858,15 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed'> {
   }
 
   if (action === 'refresh') {
-    await runProvidersRefreshModels(id);
-    return 'back';
+    return (await runProvidersRefreshModels(id)) === 0 ? 'back' : 'failed';
   }
 
   if (action === 'change-auth' && template) {
-    await runDualAuthTemplateFlow(template, provider);
-    return 'back';
+    return (await runDualAuthTemplateFlow(template, provider)) === 0 ? 'back' : 'failed';
   }
 
   if (action === 'auth') {
-    await runProvidersAuth(id);
-    return 'back';
+    return (await runProvidersAuth(id)) === 0 ? 'back' : 'failed';
   }
 
   if (action === 'toggle') {
@@ -876,11 +878,12 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed'> {
   }
 
   const code = await runProvidersRemove(id, true);
-  return code === 0 ? 'removed' : 'back';
+  return code === 0 ? 'removed' : 'failed';
 }
 
 export async function runProvidersHub(): Promise<number> {
   const hasOpencode = findOpencodeBinary() !== null;
+  let lastOperationFailed = false;
 
   while (true) {
     const entries = await resolveProvidersForDisplay();
@@ -912,18 +915,18 @@ export async function runProvidersHub(): Promise<number> {
       options,
     });
     if (p.isCancel(choice) || choice === 'done') {
-      return 0;
+      return lastOperationFailed ? 1 : 0;
     }
     if (choice === 'add') {
-      await runProvidersAdd();
+      lastOperationFailed = (await runProvidersAdd()) !== 0;
       continue;
     }
     if (choice === 'import') {
-      await runProvidersImport();
+      lastOperationFailed = (await runProvidersImport()) !== 0;
       continue;
     }
     if (choice === 'refresh-all') {
-      await runProvidersRefreshModels();
+      lastOperationFailed = (await runProvidersRefreshModels()) !== 0;
       continue;
     }
     if (choice === 'auth-menu') {
@@ -941,7 +944,9 @@ export async function runProvidersHub(): Promise<number> {
           hint: 'device code',
         })),
       });
-      if (!p.isCancel(providerId)) await runProvidersAuth(providerId as string);
+      if (!p.isCancel(providerId)) {
+        lastOperationFailed = (await runProvidersAuth(providerId as string)) !== 0;
+      }
       continue;
     }
     if (typeof choice === 'string' && choice.startsWith('cloud:')) {
@@ -952,6 +957,7 @@ export async function runProvidersHub(): Promise<number> {
     if (typeof choice === 'string' && choice.startsWith('provider:')) {
       const id = choice.slice('provider:'.length);
       const outcome = await runProviderDetail(id);
+      lastOperationFailed = outcome === 'failed';
       if (outcome === 'removed') continue;
     }
   }
