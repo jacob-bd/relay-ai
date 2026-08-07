@@ -30,7 +30,7 @@ Both methods use the same endpoint and model catalog:
 - SDK runtime base URL: `https://api.cline.bot/api/v1` (used only for chat completions)
 - Runtime protocol: OpenAI-compatible Chat Completions
 - Public model catalog: `GET https://api.cline.bot/api/v1/ai/cline/recommended-models`
-- Authenticated credential validation: `GET https://api.cline.bot/api/v1/models`
+- Authenticated credential validation: `GET https://api.cline.bot/api/v1/users/me`
 - OAuth registration: `POST https://api.cline.bot/api/v1/auth/register`
 - OAuth refresh: `POST https://api.cline.bot/api/v1/auth/refresh`
 - Model IDs: preserve the full `cline-pass/...` slug in both Relay and upstream request bodies, as required by Cline's API documentation.
@@ -62,14 +62,14 @@ The OAuth implementation will handle pending authorization, server-requested slo
 
 1. User selects ClinePass API key in `relay-ai providers` or the web UI.
 2. Relay accepts a key created in Cline Settings > API Keys.
-3. Relay validates the key with authenticated `GET https://api.cline.bot/api/v1/models` before saving it.
+3. Relay validates the key with authenticated `GET https://api.cline.bot/api/v1/users/me` before saving it.
 4. Relay stores the key using the existing API-key credential path and caches the current dynamic model list.
 
 API-key credentials remain raw Bearer tokens; they must not receive the OAuth-only `workos:` prefix.
 
 ## Model catalog
 
-The existing generic `/v1/models` discovery path is not the ClinePass catalog: it is an authenticated validation endpoint and may contain usage-billed Cline models. Relay will add a dedicated `cline-recommended` model source and parser for the public catalog. The catalog and validation URL builders will use explicit full URLs so the SDK runtime base cannot accidentally produce `/api/v1/api/v1` paths.
+The existing generic `/v1/models` discovery path is not the ClinePass catalog. Relay validates API keys through the authenticated account endpoint and uses a dedicated `cline-recommended` model source and parser for the public catalog. The catalog and validation URL builders use explicit full URLs so the SDK runtime base cannot accidentally produce `/api/v1/api/v1` paths.
 
 The parser will:
 

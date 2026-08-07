@@ -39,7 +39,9 @@ Follow the device-code instructions printed in the terminal. Credentials are sto
 
 ## ClinePass API keys and OAuth
 
-ClinePass is the one subscription provider that supports both modes. Use `relay-ai providers add` to configure an API key, or `relay-ai providers auth cline-pass` to sign in to a Cline account. The browser UI exposes both choices on one ClinePass card. Changing modes saves the replacement credential before removing the previous one.
+ClinePass is the one subscription provider that supports both modes. In the CLI, run `relay-ai providers`, choose **+ Add a provider** → **ClinePass**, and then choose **Use an API key** or **Sign in with ClinePass**. You can also use `relay-ai providers auth cline-pass` directly for OAuth, or configure either method from the browser UI's single ClinePass card. Changing modes saves the replacement credential before removing the previous one.
+
+Both methods use the ClinePass account and subscription limits; Relay does not create separate pay-as-you-go billing. If API-key setup fails, the wizard displays the error and does not save the provider.
 
 ## GitHub Copilot plans and models
 

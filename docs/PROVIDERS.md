@@ -99,11 +99,14 @@ Relay's API Server because it is commonly used as a coding/agent bridge.
 
 ### ClinePass
 - **Description**: Cline's paid coding model subscription, available through either an API key or Cline account OAuth.
-- **API key setup**: Add `ClinePass` from `relay-ai providers add` or the UI and paste a key from the Cline account settings.
-- **OAuth setup**: Run `relay-ai providers auth cline-pass`, or choose **Sign in with ClinePass** in the UI.
+- **Unified CLI setup**: Run `relay-ai providers`, choose **+ Add a provider** → **ClinePass**, then choose **Use an API key** or **Sign in with ClinePass**. For an existing ClinePass entry, choose **Change authentication (API/OAuth)** to switch methods.
+- **API key setup**: Get a key from the [Cline account settings](https://app.cline.bot), then paste it into the CLI or UI. Relay validates the key before saving it.
+- **OAuth setup**: Run `relay-ai providers auth cline-pass`, or choose **Sign in with ClinePass** in the unified CLI flow or UI.
+- **Usage and billing**: Both authentication methods use the ClinePass account and its subscription limits. Relay does not create a separate pay-as-you-go account or bill.
 - **Endpoint**: `https://api.cline.bot/api/v1`
 - **Model IDs**: Relay refreshes ClinePass's live catalog and preserves full IDs such as `cline-pass/qwen3.8-max`.
 - **Credential isolation**: API keys and OAuth tokens use separate keychain entries. Switching methods replaces the old credential only after the new one is saved.
+- **Troubleshooting**: If validation fails, the wizard shows the provider's error and confirms that no registry entry was saved. Add `--trace` to write a redacted diagnostic log under `~/.relay-ai/logs/`.
 
 ### Local Models (Ollama & LM Studio)
 - **Description**: Connects to locally running inference engines.

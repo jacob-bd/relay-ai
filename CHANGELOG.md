@@ -10,6 +10,12 @@
 ### Fixed
 
 - **ClinePass context display now reflects available metadata.** Models without a provider-reported context window no longer all appear as `131k ctx`; Relay leaves the value unknown until ClinePass supplies a model-specific limit.
+- **ClinePass API-key setup now validates against the account endpoint.** Valid keys are no longer rejected because Relay probed the obsolete model-list endpoint before saving them.
+- **Provider wizard failures are now visible and actionable.** Failed additions show the exact provider error, confirm that no changes were saved, and preserve a nonzero exit status when the wizard is finished after a failed operation.
+
+### Docs
+
+- **ClinePass setup documentation** now covers the unified CLI/API-key/OAuth flow, credential switching, subscription billing semantics, and troubleshooting.
 
 ## [0.7.6] - 2026-07-29
 
