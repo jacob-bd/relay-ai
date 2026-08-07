@@ -14,7 +14,6 @@ import {
   isSessionStale,
   ownedOverlayPaths,
   readSessionLock,
-  recoverInterruptedCodexSession,
   remainingOverlayPaths,
   restoreCodexOverlay,
   writeOverlayFile,

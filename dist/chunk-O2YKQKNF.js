@@ -94,10 +94,11 @@ var package_default = {
     "@types/node": "^22.0.0",
     "@types/node-forge": "^1.3.14",
     "@types/ws": "^8.18.1",
-    "@vitest/coverage-v8": "^2.1.9",
+    "@vitest/coverage-v8": "^4.1.10",
     tsup: "^8.0.0",
     typescript: "^5.5.0",
-    vitest: "^2.0.0"
+    "vite-node": "^6.0.0",
+    vitest: "^4.1.10"
   },
   optionalDependencies: {
     "@napi-rs/keyring": "^1.3.0"
@@ -13022,4 +13023,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-5DDQJSTU.js.map
+//# sourceMappingURL=chunk-O2YKQKNF.js.map

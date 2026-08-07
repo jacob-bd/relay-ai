@@ -22,7 +22,7 @@ import {
 
 const testHomes: string[] = [];
 const execFileAsync = promisify(execFile);
-const viteNodePath = fileURLToPath(new URL('../node_modules/vite-node/vite-node.mjs', import.meta.url));
+const viteNodePath = fileURLToPath(new URL('../node_modules/vite-node/dist/cli.mjs', import.meta.url));
 const caProcessPath = fileURLToPath(new URL('./fixtures/http-proxy-ca-process.ts', import.meta.url));
 
 interface ProcessCertificateResult {
