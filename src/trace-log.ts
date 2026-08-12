@@ -11,6 +11,7 @@ import {
 import { join } from 'node:path';
 import pc from 'picocolors';
 import { getLogsPath } from './paths.js';
+import { redactCodexTraceValue } from './codex/trace-redaction.js';
 
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -73,7 +74,7 @@ export function resetCodexBodyDumpLog(): void {
 export function appendCodexBodyDump(entry: Record<string, unknown>): void {
   ensureLogsDir();
   const path = getCodexBodyDumpLogPath();
-  const redacted = redactTraceLine(JSON.stringify(entry));
+  const redacted = redactTraceLine(JSON.stringify(redactCodexTraceValue(entry)));
   try {
     writeFileSync(path, `${redacted}\n`, { flag: 'a', mode: FILE_MODE });
     chmodSync(path, FILE_MODE);

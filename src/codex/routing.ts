@@ -1,4 +1,5 @@
 // Codex routing: tier 1 (direct OpenAI) vs tier 2 (Responses proxy).
+import { randomBytes } from 'node:crypto';
 import type { CodexProxyRoute } from '../codex-proxy.js';
 import { BACKENDS } from '../constants.js';
 import {
@@ -9,6 +10,42 @@ import {
 } from '../target-compatibility.js';
 import type { LocalProvider, LocalProviderModel } from '../types.js';
 import { providerRefreshToken } from '../provider-runtime.js';
+
+export type CodexDispatch =
+  | { kind: 'relay'; route: CodexProxyRoute }
+  | { kind: 'native'; modelId: string }
+  | { kind: 'unknown'; modelId: string };
+
+/** Mixed mode deliberately does not use the legacy fuzzy route resolver. */
+export function classifyCodexDispatch(
+  modelId: string,
+  relayRoutes: readonly CodexProxyRoute[],
+  nativeModelIds: ReadonlySet<string>,
+): CodexDispatch {
+  if (nativeModelIds.has(modelId)) return { kind: 'native', modelId };
+  const route = relayRoutes.find(candidate => candidate.modelId === modelId);
+  if (route) return { kind: 'relay', route };
+  return { kind: 'unknown', modelId };
+}
+
+export function createMixedProxyCapability(): string {
+  return randomBytes(32).toString('base64url');
+}
+
+export function mixedProxyBaseUrl(port: number, capability: string): string {
+  return `http://127.0.0.1:${port}/_relay-codex/${capability}`;
+}
+
+export function parseMixedProxyPath(
+  pathname: string,
+  capability: string,
+): { capability: string; suffix: '/v1/models' | '/v1/responses' | '/health' } | null {
+  const prefix = `/_relay-codex/${capability}`;
+  if (!pathname.startsWith(prefix)) return null;
+  const suffix = pathname.slice(prefix.length);
+  if (suffix !== '/v1/models' && suffix !== '/v1/responses' && suffix !== '/health') return null;
+  return { capability, suffix };
+}
 
 export interface CodexRoute {
   tier: 'direct' | 'proxy' | 'cloud-code';

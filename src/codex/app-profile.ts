@@ -1,5 +1,6 @@
 // Codex App config.toml content — keep the built-in OpenAI provider so existing threads remain visible.
 import type { CodexRoute } from './routing.js';
+import { CODEX_MULTI_AGENT_V2 } from './multi-agent.js';
 
 /** Legacy provider id used by relay-ai <= 0.2.6. Retained for cleanup and recovery. */
 export const CODEX_APP_PROVIDER_ID = 'relay-ai-launch-codex-app';
@@ -37,6 +38,8 @@ export interface CodexAppConfigSpec {
   route: CodexRoute;
   proxyPort: number;
   catalogPath: string;
+  proxyBaseUrl?: string;
+  multiAgentV2Enabled?: boolean;
 }
 
 export function buildCodexAppRootConfig(spec: CodexAppConfigSpec): {
@@ -46,13 +49,17 @@ export function buildCodexAppRootConfig(spec: CodexAppConfigSpec): {
   model_catalog_json: string;
   model_context_window?: number;
   model_auto_compact_token_limit?: number;
+  features?: Record<string, unknown>;
 } {
   const ctxWindow = spec.route.contextWindow;
   return {
     model: codexAppModelSlug(spec.route.modelId),
     model_provider: 'openai',
-    openai_base_url: `http://127.0.0.1:${spec.proxyPort}/v1`,
+    openai_base_url: spec.proxyBaseUrl ?? `http://127.0.0.1:${spec.proxyPort}/v1`,
     model_catalog_json: spec.catalogPath,
+    ...(spec.multiAgentV2Enabled ? {
+      features: { multi_agent_v2: CODEX_MULTI_AGENT_V2 },
+    } : {}),
     ...(ctxWindow && ctxWindow > 0 ? {
       model_context_window: ctxWindow,
       model_auto_compact_token_limit: Math.floor(ctxWindow * CODEX_APP_AUTO_COMPACT_RATIO),

@@ -11,6 +11,40 @@ import {
 } from '../ui.js';
 import { browseAllModels } from '../prompts.js';
 
+export type CodexLaunchMode = 'mixed' | 'relay-only';
+
+export function codexLaunchModeOptions(): Array<{
+  value: CodexLaunchMode;
+  label: string;
+  hint: string;
+}> {
+  return [
+    {
+      value: 'relay-only',
+      label: 'Relay models only',
+      hint: 'Keep native Codex models hidden for this launch',
+    },
+    {
+      value: 'mixed',
+      label: 'Relay + native Codex models',
+      hint: 'Expose native Codex models alongside your Relay catalog',
+    },
+  ];
+}
+
+export async function pickCodexLaunchMode(): Promise<CodexLaunchMode | null> {
+  const choice = await p.select<CodexLaunchMode>({
+    message: 'Load native Codex models alongside Relay models?',
+    options: codexLaunchModeOptions(),
+    initialValue: 'relay-only',
+  });
+  if (p.isCancel(choice)) {
+    p.cancel('Cancelled.');
+    return null;
+  }
+  return choice;
+}
+
 export async function pickCodexProvider(
   providers: LocalProvider[],
   prefs: UserPreferences,

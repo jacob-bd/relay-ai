@@ -32,6 +32,10 @@ export interface CodexCatalogModel {
   max_context_window?: number;
   input_modalities?: string[];
   description?: string;
+  /** Collaboration capability advertised by the target Codex runtime. */
+  multi_agent_version?: string;
+  /** Preserve native catalog fields Relay does not know about. */
+  [key: string]: unknown;
 }
 
 export interface CodexCatalogFile {

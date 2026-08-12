@@ -1,6 +1,8 @@
 // codex.ts — relay-ai codex: launch OpenAI Codex CLI with registry providers
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
+import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
 import { fetchProviderCatalog, providersForPicker, resolveLocalProviderApiKey } from './provider-catalog.js';
 import { loadPreferences, recordLaunchSelection } from './config.js';
 import { resolveApiKey, readFromCredentialStore } from './env.js';
@@ -8,9 +10,9 @@ import { resolveOrCollectApiKey } from './key-setup.js';
 import { startCodexProxy } from './codex-proxy.js';
 import type { CodexProxyHandle } from './codex-proxy.js';
 import { buildCatalogFile, formatCodexModelLabel, serializeCatalog } from './codex/catalog.js';
-import { buildCodexProfileToml, getCatalogOutputPath, getProfileOutputPath } from './codex/profile.js';
+import { buildCodexMixedProfileToml, buildCodexProfileToml, getCatalogOutputPath, getProfileOutputPath } from './codex/profile.js';
 import { findCodexBinary, buildCodexChildEnv, launchCodex } from './codex/launch.js';
-import { pickCodexProvider, pickCodexModel, confirmCodexLaunch, rejectManagedFlags } from './codex/prompts.js';
+import { pickCodexProvider, pickCodexModel, pickCodexLaunchMode, confirmCodexLaunch, rejectManagedFlags } from './codex/prompts.js';
 import {
   codexCliIntro,
   codexCliOutro,
@@ -30,6 +32,8 @@ import {
   recoverInterruptedCodexSession,
   remainingOverlayPaths,
   restoreCodexOverlay,
+  getCodexHome,
+  getRelayAiCodexDir,
   writeOverlayFile,
   writeSessionLock,
 } from './codex/session.js';
@@ -48,9 +52,15 @@ import {
 } from './codex/favorites-catalog.js';
 import {
   buildCodexProxyRoutesFromResolved,
+  assertConfiguredCodexSubagentsResolved,
   pickFavoriteStartingModel,
+  resolveCodexMixedModels,
   resolveCodexFavorites,
 } from './codex/favorites-launch.js';
+import { captureNativeCodexCatalog } from './codex/native-catalog.js';
+import { buildCodexMixedLaunchPlan, prepareCodexMixedRelayRoutes } from './codex/mixed-launch.js';
+import { supportsMultiAgentV2 } from './codex/multi-agent.js';
+import { mixedProxyBaseUrl } from './codex/routing.js';
 import { getFavoritesCatalogPath } from './codex/profile.js';
 import type { LocalProvider, LocalProviderModel } from './types.js';
 import {
@@ -86,6 +96,8 @@ ${pc.bold('Options:')}
   --provider   Boot provider id (skip wizard when paired with --model or non-interactive)
   --model      Boot model id (skip wizard when paired with --provider or non-interactive)
   --vertex     Use Claude models through Google Vertex AI
+  --with-native Load native Codex models beside Relay models for this launch
+  --relay-only Keep the current Relay-only launch behavior
   --restore    Remove interrupted-session overlay files
   --config     Preview/write launch configuration without starting Codex
   --help       Show this command help
@@ -179,6 +191,25 @@ async function writeFavoritesLaunchArtifacts(
     modelReasoningEffort: defaultReasoningEffortForFavorite(starting),
   }));
   return { profilePath, catalogPath };
+}
+
+async function writeMixedLaunchArtifacts(
+  plan: ReturnType<typeof buildCodexMixedLaunchPlan>,
+  proxyPort: number,
+): Promise<{ profilePath: string; catalogPath: string }> {
+  const catalogPath = join(getRelayAiCodexDir(), 'models-mixed.json');
+  writeOverlayFile(catalogPath, serializeCatalog(plan.catalog));
+  const profilePath = getProfileOutputPath();
+  writeOverlayFile(profilePath, buildCodexMixedProfileToml({
+    model: plan.selectedSlug,
+    catalogPath,
+    baseUrl: `${mixedProxyBaseUrl(proxyPort, plan.capability)}/v1`,
+    multiAgentV2Enabled: plan.multiAgentV2Enabled,
+  }));
+  return {
+    profilePath,
+    catalogPath,
+  };
 }
 
 function printCodexCleanupReminder(hadProxy: boolean): void {
@@ -307,7 +338,7 @@ async function runCodexVertexLaunch(
 export async function runCodexCommand(
   codexArgs: string[],
   trace = false,
-  launch: { launchProvider?: string; launchModel?: string; vertex?: boolean } = {},
+  launch: { launchProvider?: string; launchModel?: string; vertex?: boolean; codexLaunchMode?: 'mixed' | 'relay-only' } = {},
 ): Promise<number> {
   if (codexArgs.includes('--help') || codexArgs.includes('-h')) {
     console.log(codexHelpText());
@@ -432,7 +463,13 @@ export async function runCodexCommand(
   }
 
   const favorites = prefs.favoriteModels ?? [];
-  const favoritesActive = favorites.length > 0 && !launchPlan.skip;
+  let mixedMode = launch.codexLaunchMode === 'mixed';
+  if (!configOnly && isTty && !launchPlan.skip && launch.codexLaunchMode === undefined) {
+    const selectedLaunchMode = await pickCodexLaunchMode();
+    if (!selectedLaunchMode) return 0;
+    mixedMode = selectedLaunchMode === 'mixed';
+  }
+  const favoritesActive = favorites.length > 0 && !launchPlan.skip && !mixedMode;
   if (favoritesActive && !configOnly) {
     p.log.info(
       `Favorites mode active — Codex picker will show ${favorites.length + 1} models (1 starting + ${favorites.length} favorites).`,
@@ -514,6 +551,42 @@ export async function runCodexCommand(
 
   const route = resolveCodexRoute(activeProvider, selectedModel, apiKey);
 
+  let cloudCodeBackend: CloudCodeBackend | null = null;
+  let cloudCodeBackendFav: CloudCodeBackend | null = null;
+  let mixedPlan: ReturnType<typeof buildCodexMixedLaunchPlan> | null = null;
+  if (mixedMode) {
+    try {
+      const version = execFileSync(codexPath, ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      const mixedModels = await resolveCodexMixedModels({
+        activeProvider,
+        selectedModel,
+        compatible,
+        generalFavorites: favorites,
+        subagentFavorites: prefs.codexSubagentModels ?? [],
+      });
+      assertConfiguredCodexSubagentsResolved(prefs.codexSubagentModels ?? [], mixedModels);
+      const multiAgentV2Supported = mixedModels.subagents.length === 0 || supportsMultiAgentV2(codexPath);
+      if (!multiAgentV2Supported) {
+        throw new Error('This Codex CLI does not support multi_agent_v2, which is required for the configured Codex SubAgent');
+      }
+      const nativeCatalog = await captureNativeCodexCatalog({ target: 'cli', binaryPath: codexPath, codexVersion: version });
+      const preparedRoutes = await prepareCodexMixedRelayRoutes(mixedModels, trace);
+      cloudCodeBackend = preparedRoutes.cloudCodeBackend;
+      mixedPlan = buildCodexMixedLaunchPlan({
+        nativeCatalog,
+        models: mixedModels,
+        relayRoutes: preparedRoutes.routes,
+        multiAgentV2Supported,
+      });
+    } catch (err) {
+      cloudCodeBackend?.handle.close();
+      cloudCodeBackend = null;
+      console.error(pc.red(`\nMixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
+      console.error('Use relay-ai codex --relay-only to continue with Relay models.');
+      return 1;
+    }
+  }
+
   if (!configOnly && !(launchPlan.skip && launchPlan.target)) {
     const modelLabel = formatCodexModelLabel(selectedModel);
     const confirmed = await confirmCodexLaunch(
@@ -526,11 +599,21 @@ export async function runCodexCommand(
   }
 
   let proxyHandle: CodexProxyHandle | null = null;
-  let cloudCodeBackend: CloudCodeBackend | null = null;
-  let cloudCodeBackendFav: CloudCodeBackend | null = null;
   try {
     let proxyPort: number | undefined;
-    if (favoritesActive && resolvedFavorites.length > 0) {
+    if (mixedPlan) {
+      proxyHandle = await startCodexProxy(mixedPlan.relayRoutes, {
+        requireAuth: false,
+        debug: trace,
+        mixedNative: {
+          nativeModelIds: mixedPlan.nativeModelIds,
+          subagentRouteModelId: mixedPlan.subagentRouteModelId,
+          capability: mixedPlan.capability,
+          nativePayloadRelayModel: mixedPlan.nativePayloadRelayModel,
+        },
+      });
+      proxyPort = proxyHandle.port;
+    } else if (favoritesActive && resolvedFavorites.length > 0) {
       const needsBackend = (r: typeof resolvedFavorites[0]) => {
         const m = r.model as LocalProviderModel;
         const prov = providersById.get(r.providerId);
@@ -651,7 +734,9 @@ export async function runCodexCommand(
     const startingFavorite = resolvedFavorites.find(
       r => r.providerId === activeProvider.id && r.model.id === selectedModel.id,
     ) ?? resolvedFavorites[0];
-    const { profilePath, catalogPath } = favoritesActive && resolvedFavorites.length > 0 && proxyPort && startingFavorite
+    const { profilePath, catalogPath } = mixedPlan && proxyPort
+      ? await writeMixedLaunchArtifacts(mixedPlan, proxyPort)
+      : favoritesActive && resolvedFavorites.length > 0 && proxyPort && startingFavorite
       ? await writeFavoritesLaunchArtifacts(resolvedFavorites, startingFavorite, proxyPort)
       : await writeLaunchArtifacts(route, selectedModel, activeProvider.name, proxyPort);
 
@@ -671,7 +756,11 @@ export async function runCodexCommand(
       console.log(pc.bold(pc.cyan('  CONFIG PREVIEW — relay-ai codex')));
       console.log('');
 
-      if (favoritesActive && resolvedFavorites.length > 0) {
+      if (mixedPlan) {
+        console.log(`  ${pc.bold('Mode:')}     Native + Relay mixed catalog`);
+        console.log(`  ${pc.bold('Native:')}   ${mixedPlan.nativeModelIds.size} native Codex models`);
+        console.log(`  ${pc.bold('Relay:')}    ${mixedPlan.relayRoutes.length} Relay routes (${mixedPlan.subagentModelCount} Codex SubAgent model)`);
+      } else if (favoritesActive && resolvedFavorites.length > 0) {
         console.log(`  ${pc.bold('Mode:')}     Favorites Catalog (${resolvedFavorites.length} model${resolvedFavorites.length !== 1 ? 's' : ''})`);
         console.log('');
         console.log(`  ${pc.bold('Models:')}`);
@@ -710,7 +799,7 @@ export async function runCodexCommand(
     const favoritesLaunch = favoritesActive && resolvedFavorites.length > 0;
     const launchModelId = favoritesLaunch
       ? codexCliFavoritesSlug(activeProvider.id, selectedModel.id)
-      : selectedModel.id;
+      : mixedPlan?.selectedSlug ?? selectedModel.id;
     if (!agentStdout) {
       logCodexActiveModel(modelLabel, launchModelId);
       printCodexCliCleanupPanel('relay-ai codex --restore');
@@ -727,8 +816,9 @@ export async function runCodexCommand(
     const childEnv = buildCodexChildEnv(
       (favoritesLaunch || route.tier === 'cloud-code') ? dummyRoute : route,
       proxyPort,
+      { mixedNative: !!mixedPlan },
     );
-    const hadProxy = (route.tier === 'proxy' || route.tier === 'cloud-code' || favoritesLaunch) && !!proxyPort;
+    const hadProxy = (!!mixedPlan || route.tier === 'proxy' || route.tier === 'cloud-code' || favoritesLaunch) && !!proxyPort;
     const exitCode = await launchCodex(launchModelId, childEnv, passthroughArgs);
     if (trace) printTraceLog(debugLogPath);
     printCodexCleanupReminder(hadProxy);

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.0] - 2026-08-12
+
+### Added
+
+- **Codex mixed native/Relay launches** — Codex CLI and the ChatGPT desktop app can load the selected Relay model alongside Codex's native model catalog, while Relay keeps native and Relay requests on their correct routes.
+- **Codex SubAgent catalog** — users can build a separate, initially empty catalog from the CLI or Relay UI. It has one slot, does not import or synchronize with General Favorites, and routes every Codex-marked sub-agent to the configured Relay model.
+- **Linux ChatGPT/Codex desktop support** — `relay-ai codex-app` and `relay-ai chatgpt` now discover and launch the Linux ChatGPT desktop package, including its embedded Codex runtime. On X11/RDP, Relay resolves the display that owns the launching terminal so the app opens in the active graphical session.
+
+### Fixed
+
+- **Codex SubAgents worker boundary** — marked Codex child requests no longer receive collaboration-management tools, preventing recursive worker deployment while preserving repository tools.
+- **Codex SubAgents payload routing** — HTTP and Responses-Lite WebSocket child requests now resolve and normalize collaboration payloads before the Relay model is contacted.
+- **Plaintext Codex SubAgents results** — valid text-only collaboration envelopes are accepted without duplicating their payload or rejecting the worker result.
+- **Deterministic Codex SubAgent selection** — every Codex-marked child uses the one configured Relay model; Relay no longer creates model-specific files in `$CODEX_HOME/agents` and removes only stale Relay-managed definitions.
+- **Linux desktop restart behavior** — ChatGPT and Claude Desktop are restarted deterministically when Relay must apply a temporary configuration, including tray-hidden Electron processes.
+
 ## [0.8.0] - 2026-08-06
 
 ### Added

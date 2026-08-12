@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { formatGatewayAnthropicModels, type ServerModelInfo } from '../src/server/models.js';
 import type { LocalProvider, LocalProviderModel, UserPreferences } from '../src/types.js';
 
@@ -157,6 +158,20 @@ describe('modelToServerModelInfo', () => {
       apiKey: 'backend-token',
       contextWindow: helperModel.contextWindow,
     });
+  });
+});
+
+describe('Linux Claude Desktop launcher', () => {
+  it('uses direct executable launching for the active RDP session', () => {
+    const source = readFileSync(new URL('../src/claude-desktop/app-launch.ts', import.meta.url), 'utf8');
+    expect(source).toContain('linuxLaunchEnv()');
+    expect(source).not.toContain('gtk-launch');
+  });
+
+  it('documents deterministic Linux restart for tray-hidden instances', () => {
+    const source = readFileSync(new URL('../src/claude-desktop/app-launch.ts', import.meta.url), 'utf8');
+    expect(source).toContain('Restarting Claude Desktop to apply relay-ai settings...');
+    expect(source).toContain('linuxQuit();');
   });
 });
 

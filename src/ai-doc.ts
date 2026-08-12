@@ -276,6 +276,14 @@ FAVORITES / MID-SESSION SWITCHING:
   Exception: Claude --http-proxy combines the selected compatible model with
   compatible saved favorites while keeping native Anthropic models available.
 
+CODEX SUBAGENT / MIXED NATIVE MODE:
+  relay-ai subagents          manage the separate one-model Codex SubAgent catalog
+  The catalog starts empty and never imports or synchronizes with General Favorites.
+  In mixed mode, Codex decides when to launch a sub-agent and Relay routes every
+  Codex-marked child to the configured Codex SubAgent model.
+  Enable native models alongside Relay with --with-native on codex/codex-app, or
+  use the same option in the Relay UI launch card. Use --relay-only to opt out.
+
 ================================================================================
 COMMANDS
 ================================================================================
@@ -356,14 +364,16 @@ PROVIDERS REGISTRY
 MODELS / FAVORITES
   relay-ai models                 manage favoriteModels in config (alias: favorites)
   Used for mid-session /model switching in interactive Claude/Codex/Gemini sessions.
+  relay-ai subagents              manage the separate one-model Codex SubAgent catalog.
 
 API GATEWAY (for tools that speak Anthropic/OpenAI HTTP)
   relay-ai server                 foreground gateway on port 17645
   relay-ai server --vertex        Vertex AI gateway (gcloud ADC)
 
 DESKTOP APPS
-  relay-ai codex-app              ChatGPT desktop, Codex mode (macOS/Windows); alias: chatgpt
-  relay-ai claude-app             Claude desktop (macOS/Windows)
+  relay-ai codex-app              ChatGPT desktop, Codex mode (macOS/Windows/Linux); alias: chatgpt
+  relay-ai claude-app             Claude desktop (macOS/Windows/Linux)
+  Linux desktop launches resolve the X11/RDP display from the terminal WINDOWID.
 
 ================================================================================
 CONFIGURATION PATHS

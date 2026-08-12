@@ -102,6 +102,40 @@ describe('dotfolder config', () => {
     });
   });
 
+  it('starts Codex Sub-agents empty and persists it independently from General Favorites', () => {
+    expect(loadPreferences().codexSubagentModels).toBeUndefined();
+
+    const general = [{ providerId: 'global', modelId: 'claude' }];
+    const subagents = [
+      { providerId: 'kilo', modelId: 'kilo-auto/free' },
+      { providerId: 'google', modelId: 'gemini-3.5-flash' },
+    ];
+    savePreferences({ favoriteModels: general, codexSubagentModels: subagents });
+
+    expect(loadPreferences().codexSubagentModels).toEqual([subagents[0]]);
+    expect(loadPreferences().favoriteModels).toEqual(general);
+    expect(JSON.parse(readFileSync(getConfigPath(), 'utf8'))).toMatchObject({
+      favoriteModels: general,
+      codexSubagentModels: [subagents[0]],
+    });
+  });
+
+  it('migrates a legacy multi-model Codex Sub-agent catalog by keeping its first entry', () => {
+    const configPath = getConfigPath();
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(configPath, JSON.stringify({
+      codexSubagentModels: [
+        { providerId: 'deepseek', modelId: 'deepseek-v4-flash' },
+        { providerId: 'go', modelId: 'minimax-m3' },
+        { providerId: 'google', modelId: 'gemini-3.5-flash' },
+      ],
+    }), 'utf8');
+
+    expect(loadPreferences().codexSubagentModels).toEqual([
+      { providerId: 'deepseek', modelId: 'deepseek-v4-flash' },
+    ]);
+  });
+
   it('saves and clears app path overrides', () => {
     setAppPathOverride('codex', '/tmp/custom-codex');
 

@@ -128,6 +128,13 @@ describe('parseArgs', () => {
     });
   });
 
+  it('selects mixed or Relay-only Codex launch mode and rejects both', () => {
+    expect(parseArgs(['codex', '--with-native']).codexLaunchMode).toBe('mixed');
+    expect(parseArgs(['codex', '--relay-only']).codexLaunchMode).toBe('relay-only');
+    expect(parseArgs(['codex', '--with-native', '--relay-only']).error).toContain('cannot be used together');
+    expect(parseArgs(['codex-app', '--with-native']).codexLaunchMode).toBe('mixed');
+  });
+
   it('consumes relay launch flags for claude and codex', () => {
     expect(parseArgs(['claude', '--provider', 'groq', '--model', 'llama-3.3-70b', '-p', 'hi'])).toMatchObject({
       command: 'claude',
@@ -454,14 +461,40 @@ describe('help text', () => {
     expect(help).toContain('~/.relay-ai/config.json');
   });
 
+  it('parses Codex Sub-agents as an independent models scope', () => {
+    expect(parseArgs(['subagents'])).toMatchObject({
+      command: 'models',
+      modelCatalogScope: 'codex-subagents',
+    });
+    expect(parseArgs(['subagents', '--agy']).error).toContain('does not accept');
+  });
+
+  it('documents the empty independent Codex Sub-agents catalog', () => {
+    const help = modelsHelpText();
+    expect(help).toContain('relay-ai subagents');
+    expect(help).toContain('starts empty');
+    expect(help).toContain('General Favorites');
+    expect(help).toContain('does not sync');
+  });
+
+  it('uses Sub-agents wording in the dedicated help output', () => {
+    const help = modelsHelpText('codex-subagents');
+    expect(help).toContain('Search all models');
+    expect(help).toContain('Codex SubAgent');
+    expect(help).toContain('one model');
+    expect(help).toContain('max 1');
+    expect(help).not.toContain('Back to favorites');
+    expect(help).not.toContain('favorite models');
+  });
+
   it('app and Codex help document every relay-ai-managed option', () => {
     const codex = codexHelpText();
-    for (const option of ['--trace', '--provider', '--model', '--vertex', '--restore', '--config', '--help', '--version']) {
+    for (const option of ['--trace', '--provider', '--model', '--vertex', '--with-native', '--relay-only', '--restore', '--config', '--help', '--version']) {
       expect(codex).toContain(option);
     }
 
     const codexApp = codexAppHelpText();
-    for (const option of ['--vertex', '--restore', '--config', '--help', '--version']) {
+    for (const option of ['--vertex', '--with-native', '--relay-only', '--restore', '--config', '--help', '--version']) {
       expect(codexApp).toContain(option);
     }
 
@@ -516,6 +549,7 @@ describe('main routing', () => {
 
     await expect(main(['codex-app', '--help'])).resolves.toBe(0);
     expect(log.mock.calls.flat().join('\n')).toContain('relay-ai codex-app');
+    expect(log.mock.calls.flat().join('\n')).toContain('Linux');
     expect(error).not.toHaveBeenCalled();
   });
 

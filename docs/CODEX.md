@@ -5,7 +5,7 @@ Use **OpenAI Codex** (terminal CLI or desktop app) with models from your relay-a
 | Command | What it launches | Config target |
 |---------|------------------|---------------|
 | **`relay-ai codex`** | Codex **terminal** (TUI) | Temporary sidecar profile — never touches your main Codex config |
-| **`relay-ai codex-app`** | Codex **desktop app** (macOS / Windows) | Patches `~/.codex/config.toml` with backup; restored on Ctrl+C |
+| **`relay-ai codex-app`** | Codex **desktop app** (macOS / Windows / Linux) | Patches `~/.codex/config.toml` with backup; restored on Ctrl+C |
 
 Both commands use the same registry (`~/.relay-ai/providers.json`) and provider picker. The CLI uses OpenAI directly when possible; the desktop app always uses the local Responses proxy so it can keep Codex's built-in provider identity and preserve history visibility.
 
@@ -25,7 +25,7 @@ Both commands use the same registry (`~/.relay-ai/providers.json`) and provider 
    ```
 3. **Codex installed:**
    - **CLI:** `npm install -g @openai/codex` (required for `relay-ai codex`)
-   - **Desktop app:** [Codex for macOS or Windows](https://developers.openai.com/codex/cli) (required for `relay-ai codex-app`)
+   - **Desktop app:** [ChatGPT desktop app with Codex](https://developers.openai.com/codex/cli) for macOS, Windows, or Linux (required for `relay-ai codex-app`)
 
 **Supported in Codex:** registry providers plus OpenCode Zen/Go cloud backends route through relay-ai's local Responses proxy.
 
@@ -148,7 +148,13 @@ relay-ai codex-app
 
 Pick provider → pick model → Codex **app** opens. **Keep the relay-ai terminal open** until you’re done (the app always uses the foreground proxy). Press **Ctrl+C** to stop the proxy and restore your previous Codex config.
 
-**Platforms:** macOS and Windows. Linux is not supported (no Codex desktop app).
+**Platforms:** macOS, Windows, and Linux. On Linux, Relay detects the packaged ChatGPT app at `/usr/bin/chatgpt` or `/usr/lib/chatgpt/ChatGPT` and its embedded Codex runtime at `/usr/lib/chatgpt/resources/codex`.
+
+### Linux and RDP
+
+Relay launches the Linux desktop executable directly instead of delegating to the desktop launcher. When the terminal is running inside X11 or an RDP session, Relay checks the terminal's `WINDOWID` and `WM_CLASS` across available X servers and passes the matching `DISPLAY` to ChatGPT. This handles desktop environments where the inherited `DISPLAY` points at a different graphical session.
+
+Linux desktop launches also restart an existing ChatGPT process when necessary so the temporary Relay configuration is actually loaded, including when the old Electron process is minimized to the tray. Keep the Relay terminal open for the lifetime of the session.
 
 ### relay-ai flags
 
@@ -214,6 +220,37 @@ The catalog `display_name` uses human-readable labels (e.g. `Claude Haiku 4.5`).
 ## Favorites catalog mode
 
 When you have saved favorites via `relay-ai models`, both `relay-ai codex` and `relay-ai codex-app` will show your starting model + favorites in the mid-session model picker. Zen/Go favorites are included when an OpenCode API key is available.
+
+## Mixed native + Relay mode
+
+Build the independent Codex SubAgents catalog before launch:
+
+```bash
+relay-ai subagents
+```
+
+It starts empty and never imports or synchronizes with General Favorites. Choose exactly one Relay provider/model pair; Codex uses that model for every redirected SubAgent. Existing multi-model configurations keep their first entry when loaded.
+
+Opt into mixed mode explicitly:
+
+```bash
+relay-ai codex --with-native
+relay-ai codex-app --with-native
+```
+
+In the Relay web UI, enable **Load native Codex models alongside Relay models** on the Codex CLI or ChatGPT Desktop launch card. The choice applies to that launch only; the independent Codex SubAgents catalog remains saved separately.
+
+The selected Relay model remains the initial model. Native Codex models, General Favorites, and the configured Codex SubAgents model are entries in the mixed catalog. Codex decides when to launch a sub-agent; every child request marked by Codex is routed to the one configured Relay model regardless of the native model id inherited by the child. Because Codex's orchestration eligibility is tied to catalog metadata, the Codex SubAgents model may also be visible in the normal model picker. Relay starts one local capability-protected proxy for the session. Native HTTP and Responses-Lite WebSocket requests are forwarded to the authenticated Codex backend; Relay routes use the existing SDK translation path.
+
+Relay does not create custom Codex agent definitions. Codex owns agent roles and child settings; Relay owns only the selected provider/model route. Upgrades remove obsolete Relay-managed files named `relay-model-*.toml` while preserving every user-created agent file.
+
+Mixed mode fails closed if the configured Codex SubAgents model cannot be resolved from the current provider catalog or credential store. Relay reports the provider/model entry and does not launch with a partial catalog that would silently fall back to native sub-agents.
+
+When the Codex SubAgents model is configured, Relay probes the installed Codex runtime and enables `multi_agent_v2` for that launch. If the runtime cannot load that feature, Relay stops before launch with an upgrade message rather than starting a session whose Codex SubAgent route cannot work.
+
+Use `--relay-only` to force the existing Relay-only behavior. Mixed mode fails closed if the exact target Codex runtime cannot provide a valid native catalog, native forwarding, or safe collaboration-payload resolution.
+
+Relay does not decrypt native collaboration ciphertext. When a native parent delegates to a Codex SubAgent, Relay asks the authenticated native Codex backend to return the opaque envelope through a strict transport tool, validates the envelope boundary, and only then contacts the external provider. The same normalization runs before both HTTP and desktop WebSocket provider forwarding. This is transport validation, not independent cryptographic verification. Sensitive credentials, ciphertext, and collaboration content are redacted from Relay traces.
 
 ### Slug policy
 

@@ -170,6 +170,15 @@ describe('globalFavoriteSelectOption', () => {
     expect(favorited.hint).toContain('already in favorites');
   });
 
+  it('uses the Codex Sub-agents label when rendering that catalog', () => {
+    const index = buildGlobalFavoriteIndex(providers);
+    const zen = index.find(e => e.providerId === 'zen')!;
+    const option = globalFavoriteSelectOption(zen, [{ providerId: 'zen', modelId: zen.model.id }], {
+      listLabel: 'Codex Sub-agents',
+    });
+    expect(option.hint).toContain('already in Codex Sub-agents');
+  });
+
   it('labels OAuth subscription providers explicitly in favorites search', () => {
     const oauthProviders: LocalProvider[] = [{
       id: 'antigravity',

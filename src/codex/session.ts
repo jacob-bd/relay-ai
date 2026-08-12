@@ -1,6 +1,7 @@
 // Codex overlay session: backup, restore, lock, stale cleanup.
 import {
   copyFileSync,
+  chmodSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -27,8 +28,8 @@ export interface CodexSessionLock {
   proxyPort?: number;
 }
 
-export function getCodexHome(): string {
-  return join(homedir(), '.codex');
+export function getCodexHome(env: NodeJS.ProcessEnv = process.env): string {
+  return env['CODEX_HOME'] || join(homedir(), '.codex');
 }
 
 export function getCodexProfilePath(): string {
@@ -53,7 +54,7 @@ export function getCatalogPath(providerId: string, env: NodeJS.ProcessEnv = proc
 
 /** Files relay-ai owns for Codex launch — never touch ~/.codex/config.toml. */
 export function ownedOverlayPaths(env: NodeJS.ProcessEnv = process.env): string[] {
-  const paths = [getCodexProfilePath(), getSessionLockPath(env)];
+  const paths = [getCodexProfilePath()];
   const codexDir = getRelayAiCodexDir(env);
   if (existsSync(codexDir)) {
     for (const name of readdirSync(codexDir)) {
@@ -62,14 +63,24 @@ export function ownedOverlayPaths(env: NodeJS.ProcessEnv = process.env): string[
       }
     }
   }
+  const agentsDir = join(getCodexHome(env), 'agents');
+  if (existsSync(agentsDir)) {
+    for (const name of readdirSync(agentsDir)) {
+      if (/^relay-model-[a-z0-9-]+\.toml$/i.test(name)) {
+        paths.push(join(agentsDir, name));
+      }
+    }
+  }
+  paths.push(getSessionLockPath(env));
   return paths;
 }
 
 export function atomicWriteFile(path: string, content: string): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp.${process.pid}`;
-  writeFileSync(tmp, content, 'utf8');
+  writeFileSync(tmp, content, { encoding: 'utf8', mode: 0o600 });
   renameSync(tmp, path);
+  try { chmodSync(path, 0o600); } catch { /* Windows may not expose POSIX mode bits */ }
 }
 
 export function rotateBackups(filePath: string, env: NodeJS.ProcessEnv = process.env): void {

@@ -9,6 +9,8 @@ import {
   restoreConfigFromState,
   previewAppConfigToml,
 } from '../src/codex/app-config.js';
+import { restoreCodexAppOverlay } from '../src/codex/app-session.js';
+import { getBackupsDir } from '../src/codex/session.js';
 import { CODEX_APP_PROVIDER_ID, CODEX_APP_AUTO_COMPACT_RATIO } from '../src/codex/app-profile.js';
 import type { CodexAppConfigSpec } from '../src/codex/app-profile.js';
 
@@ -165,5 +167,60 @@ describe('app-config', () => {
     expect(toml).toContain('model_provider = "openai"');
     expect(toml).toContain('openai_base_url = "http://127.0.0.1:54321/v1"');
     expect(existsSync(join(home, '.codex', 'config.toml'))).toBe(false);
+  });
+
+  it('accepts the capability-protected mixed proxy base URL', () => {
+    const configPath = join(home, '.codex', 'config.toml');
+    const spec = proxySpec('/tmp/app-models-mixed.json');
+    spec.proxyBaseUrl = 'http://127.0.0.1:54321/_relay-codex/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/v1';
+    applyAppConfigPatch(spec, configPath);
+    expect(readFileSync(configPath, 'utf8')).toContain(spec.proxyBaseUrl);
+    expect(isAppManagedConfig(readFileSync(configPath, 'utf8'))).toBe(true);
+  });
+
+  it('enables multi-agent v2 for mixed desktop launches and restores it', () => {
+    const configPath = join(home, '.codex', 'config.toml');
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    const before = 'model = "gpt-5.6-sol"\nmodel_provider = "openai"\n';
+    writeFileSync(configPath, before, 'utf8');
+    const state = captureRestoreState(before);
+    const spec = proxySpec('/tmp/app-models-mixed.json');
+    spec.multiAgentV2Enabled = true;
+    applyAppConfigPatch(spec, configPath);
+    const patched = readFileSync(configPath, 'utf8');
+    expect(patched).toContain('[features.multi_agent_v2]');
+    expect(patched).toContain('enabled = true');
+    restoreConfigFromState(state, configPath);
+    expect(readFileSync(configPath, 'utf8')).not.toContain('multi_agent_v2');
+  });
+
+  it('does not inject temporary agent registrations into the desktop config', () => {
+    const configPath = join(home, '.codex', 'config.toml');
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    applyAppConfigPatch(proxySpec('/tmp/app-models-mixed.json'), configPath);
+    expect(readFileSync(configPath, 'utf8')).not.toContain('[agents.');
+  });
+
+  it('restores the newest config backup when an app overlay is orphaned', () => {
+    const configPath = join(home, '.codex', 'config.toml');
+    const backupDir = getBackupsDir();
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    mkdirSync(backupDir, { recursive: true });
+
+    const original = 'model = "gpt-5.6-sol"\nmodel_provider = "openai"\n';
+    writeFileSync(join(backupDir, 'config.toml.older.bak'), 'model = "gpt-5.5"\n', 'utf8');
+    writeFileSync(join(backupDir, 'config.toml.newer.bak'), original, 'utf8');
+    writeFileSync(configPath, [
+      'model = "go__glm-5.2"',
+      'model_provider = "openai"',
+      'openai_base_url = "http://127.0.0.1:54321/_relay-codex/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/v1"',
+      'model_catalog_json = "/tmp/app-models-mixed.json"',
+      '',
+    ].join('\n'), 'utf8');
+
+    const result = restoreCodexAppOverlay();
+
+    expect(result.restored).toBe(true);
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
   });
 });

@@ -67,6 +67,13 @@ describe('native-launcher', () => {
     ]));
   });
 
+  it('finds the Linux ChatGPT desktop package', () => {
+    expect(fallbackPathsForApp('codex-app', 'linux')).toEqual(expect.arrayContaining([
+      '/usr/bin/chatgpt',
+      '/usr/lib/chatgpt/ChatGPT',
+    ]));
+  });
+
   it('detects system application list structure', () => {
     const apps = getSupportedApps();
     expect(apps.length).toBeGreaterThanOrEqual(4);
@@ -135,6 +142,14 @@ describe('native-launcher', () => {
     );
     expect(() => getRelayLaunchCommand('claude-app', { httpProxy: true }))
       .toThrow(/only.*Claude Code/i);
+  });
+
+  it('adds native mixed mode only to Codex launchers', () => {
+    const cli = getRelayLaunchCommand('codex', { withNative: true });
+    const app = getRelayLaunchCommand('codex-app', { withNative: true });
+    assertLaunchCommandContains(cli, '--with-native');
+    assertLaunchCommandContains(app, '--with-native');
+    expect(() => getRelayLaunchCommand('claude', { withNative: true })).toThrow('only for Codex CLI');
   });
 
   it('rejects ambiguous Relay model launches', () => {

@@ -21,7 +21,7 @@
 |:---:|:---:|:---:|:---:|:---:|
 | [![Claude Demo](https://img.youtube.com/vi/IvsUPHLhX0o/mqdefault.jpg)](https://youtu.be/IvsUPHLhX0o) | [![Codex Demo](https://img.youtube.com/vi/42oiOB8IAu4/mqdefault.jpg)](https://youtu.be/42oiOB8IAu4) | [![Gemini Demo](https://img.youtube.com/vi/g7JKvqOHJl4/mqdefault.jpg)](https://www.youtube.com/watch?v=g7JKvqOHJl4) | [![UI & Antigravity Demo](https://img.youtube.com/vi/8vXJ0LfpdoY/mqdefault.jpg)](https://www.youtube.com/watch?v=8vXJ0LfpdoY) | [![Server Gateway Demo](https://img.youtube.com/vi/4CEw0MQUE9I/mqdefault.jpg)](https://www.youtube.com/watch?v=4CEw0MQUE9I) |
 
-**relay-ai** is an interactive CLI — and now a **visual launcher** — that connects AI coding tools to any provider and runs local API gateways on your machine. It supports **Claude Code**, **Claude Desktop (Cowork + Code)**, the **OpenAI Codex CLI**, the **ChatGPT desktop app in Codex mode (macOS + Windows)**, **Google Gemini CLI**, and experimental **Antigravity CLI / IDE** support.
+**relay-ai** is an interactive CLI — and now a **visual launcher** — that connects AI coding tools to any provider and runs local API gateways on your machine. It supports **Claude Code**, **Claude Desktop (Cowork + Code)**, the **OpenAI Codex CLI**, the **ChatGPT desktop app in Codex mode (macOS + Windows + Linux)**, **Google Gemini CLI**, and experimental **Antigravity CLI / IDE** support.
 
 > **Deploy with Docker / AI assistants:** To run an always-on **Server + Admin UI** from this repo (`docker compose up`), read **[docs/DOCKER.md](docs/DOCKER.md)** first — it includes questions to ask the user and an exact checklist. The container is **not** full desktop Relay AI (no Claude/Codex/Antigravity app launch inside Docker).
 
@@ -42,6 +42,7 @@ Pick your backend:
 | `relay-ai claude` | Pick a provider → launch Claude Code |
 | `relay-ai providers` | Add, import, list, remove, and refresh your AI providers |
 | `relay-ai models` | Manage favorite models for mid-session `/model` switching |
+| `relay-ai subagents` | Manage the separate one-model Codex SubAgent catalog |
 | `relay-ai server` | Foreground API gateway (registry providers + optional Zen/Go) |
 | `relay-ai server --vertex` | Foreground Anthropic-compatible gateway to Claude on Vertex AI |
 | `relay-ai claude-app` | Launch Claude Desktop app with registry providers ([guide](docs/CLAUDE_DESKTOP_SETUP.md)) |
@@ -66,6 +67,7 @@ Pick your backend:
 - **OpenCode Zen / Go:** Optional cloud backends when you have an OpenCode API key
 - **SDK adapter proxy:** Non-Anthropic providers route through the Vercel AI SDK (same packages OpenCode uses), so Claude Code still speaks Anthropic format. Labeled `(via proxy)` in the picker
 - **Favorite models:** Save up to 20 and switch mid-session with Claude Code's `/model` command
+- **Codex SubAgent:** Build a separate, initially empty one-model catalog for Codex delegation; it never imports or synchronizes with General Favorites
 - **Smart model pickers:** Recent models per provider, search for large lists (>25), paginated browse (15 per page)
 - **Refresh model lists:** `relay-ai providers refresh-models` updates cached catalogs per provider
 - **API server:** Run a local gateway on port **17645** for Claude Code, Claude Desktop, or any Anthropic-compatible client
@@ -90,9 +92,9 @@ Pick your backend:
 | Favorite models | `relay-ai models` | ✅ Supported |
 | OpenCode API server | `relay-ai server` | ✅ Supported |
 | Vertex API gateway | `relay-ai server --vertex` | ✅ Supported |
-| Claude Desktop (Cowork + Code) | `relay-ai claude-app` | ✅ Supported macOS + Windows ([guide](docs/CLAUDE_DESKTOP_SETUP.md)) |
+| Claude Desktop (Cowork + Code) | `relay-ai claude-app` | ✅ Supported macOS + Windows + Linux ([guide](docs/CLAUDE_DESKTOP_SETUP.md)) |
 | Codex CLI | `relay-ai codex` | ✅ Supported ([guide](docs/CODEX.md)) |
-| ChatGPT desktop app (Codex mode) | `relay-ai codex-app` (alias `chatgpt`) | ✅ Supported macOS + Windows ([guide](docs/CODEX.md)) |
+| ChatGPT desktop app (Codex mode) | `relay-ai codex-app` (alias `chatgpt`) | ✅ Supported macOS + Windows + Linux ([guide](docs/CODEX.md)) |
 | Google Gemini CLI | `relay-ai gemini` | ⚠️ Experimental, model switching is done via .model prompt |
 | Antigravity CLI | `relay-ai agy` | ⚠️ Experimental, use a throwaway Google account ([guide](docs/ANTIGRAVITY.md)) |
 | Antigravity app | `relay-ai antigravity` | ⚠️ Experimental macOS + Windows support, use a throwaway Google account ([guide](docs/ANTIGRAVITY.md)) |
@@ -295,7 +297,7 @@ Run relay-ai as a foreground API gateway on port **17645**:
 | **Vertex gateway** | `relay-ai server --vertex` | gcloud Application Default Credentials | Claude on Vertex AI |
 | **Docker Server + Admin UI** | `docker compose up --build` | `RELAY_AI_SERVER_PASSWORD` + UI / env keys | Same registry gateway, managed in the browser |
 
-> **Claude Desktop (Cowork + Code):** For the automated macOS/Windows setup, use `relay-ai claude-app`. For manual or network setups, see [docs/CLAUDE_DESKTOP_SETUP.md](docs/CLAUDE_DESKTOP_SETUP.md).
+> **Claude Desktop (Cowork + Code):** For the automated macOS/Windows/Linux setup, use `relay-ai claude-app`. For manual or network setups, see [docs/CLAUDE_DESKTOP_SETUP.md](docs/CLAUDE_DESKTOP_SETUP.md).
 >
 > **Docker (recommended for always-on home lab / NAS):** clone this repo → `cp .env.docker.example .env` → set `RELAY_AI_SERVER_PASSWORD` → `docker compose up --build` → open **http://127.0.0.1:8787**. Full playbook for humans and AI assistants: **[docs/DOCKER.md](docs/DOCKER.md)**.
 
@@ -479,7 +481,7 @@ relay-ai codex            # pick provider + model → Codex TUI
 
 ### Claude Desktop app (`relay-ai claude-app`)
 
-Launch **Claude Desktop** (macOS or Windows) with registry providers:
+Launch **Claude Desktop** (macOS, Windows, or Linux) with registry providers:
 
 ```bash
 relay-ai claude-app
@@ -512,13 +514,23 @@ For agent / alef-agent integration (boot flags, NDJSON, JSONL): **[docs/AI-AGENT
 
 > OpenAI merged the standalone Codex app into the ChatGPT desktop app on 2026-07-09 — it's now named "ChatGPT" on disk (bundle id and config format unchanged) and opens in Codex mode for existing Codex users. `relay-ai codex-app` and `relay-ai chatgpt` are the same command.
 
-Launch the **ChatGPT app in Codex mode** (macOS or Windows) with registry providers:
+Launch the **ChatGPT app in Codex mode** (macOS, Windows, or Linux) with registry providers:
 
 ```bash
 relay-ai codex-app
 ```
 
 Patches `~/.codex/config.toml` with backup; **Ctrl+C** in the relay-ai terminal asks whether to close ChatGPT Desktop and restore your config (choose "No, keep session running" to decline and keep going). The app keeps Codex's built-in `openai` provider active so existing conversation history remains visible, and routes the selected model through a foreground local proxy. Preview config without writing: `relay-ai codex-app --config`. Recovery: `relay-ai codex-app --restore`.
+
+On Linux, Relay supports the packaged ChatGPT desktop app at `/usr/bin/chatgpt` or `/usr/lib/chatgpt/ChatGPT`. When launched from an X11/RDP terminal, Relay uses that terminal's window identity to resolve the active display, so the app opens in the current graphical session even when the inherited `DISPLAY` value is stale. Keep the Relay terminal open while using the app; it owns the local proxy.
+
+To configure the model Codex uses when it launches a sub-agent, build the independent catalog before starting Codex:
+
+```bash
+relay-ai subagents
+```
+
+The catalog starts empty and has one slot. In mixed native/Relay mode, Codex decides when to launch a sub-agent and Relay routes that child to the configured Codex SubAgent model. Enable **Load native Codex models alongside Relay models** in the UI, or pass `--with-native` from the CLI. General Favorites and Codex SubAgent are separate lists.
 
 See **[docs/CODEX.md](docs/CODEX.md)** for CLI vs app differences, file ownership, and troubleshooting.
 

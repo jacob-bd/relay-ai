@@ -54,6 +54,14 @@ describe('buildCodexChildEnv', () => {
     expect(env['RELAY_AI_CODEX_KEY']).toBe('proxy-local');
     expect(env['CI']).toBeUndefined();
   });
+
+  it('provides the Relay proxy credential for mixed-mode agent providers', () => {
+    const env = buildCodexChildEnv({
+      tier: 'proxy', npm: '@ai-sdk/xai', upstreamModelId: 'grok-3', apiKey: 'relay-secret', modelId: 'kilo__auto', providerId: 'kilo',
+    }, 12345, { mixedNative: true });
+    expect(env['RELAY_AI_CODEX_KEY']).toBe('proxy-local');
+    expect(env['XAI_API_KEY']).toBeUndefined();
+  });
 });
 
 describe('selectCodexBinary', () => {

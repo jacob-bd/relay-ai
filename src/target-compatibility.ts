@@ -101,3 +101,20 @@ export function providersForTarget(
     .map(provider => providerForTarget(provider, target))
     .filter(provider => provider.models.length > 0);
 }
+
+/** Models offered to Codex Sub-agents must be routable by both Codex targets. */
+export function providersForCodexSubagents(providers: LocalProvider[]): LocalProvider[] {
+  const cli = providersForTarget(providers, 'codex');
+  const app = new Map(
+    providersForTarget(providers, 'codex-app').map(provider => [
+      provider.id,
+      new Set(provider.models.map(model => model.id)),
+    ]),
+  );
+  return cli
+    .map(provider => ({
+      ...provider,
+      models: provider.models.filter(model => app.get(provider.id)?.has(model.id)),
+    }))
+    .filter(provider => provider.models.length > 0);
+}

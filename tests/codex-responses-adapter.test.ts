@@ -290,6 +290,85 @@ describe('Codex MCP namespace tool round-trip (relay-ai/relay-ai#21)', () => {
   });
 });
 
+describe('Codex sub-agent tool argument normalization', () => {
+  it('removes empty optional fields and keeps structured items when both forms are emitted', async () => {
+    const { writeResponsesStream } = await import('../src/codex-responses-adapter.js');
+    const chunks: string[] = [];
+    async function* stream() {
+      yield { type: 'tool-input-start', id: 'fc_agent', toolName: 'spawn_agent' };
+      yield {
+        type: 'tool-input-delta',
+        delta: JSON.stringify({
+          fork_context: false,
+          items: [{ type: 'text', text: 'Summarize the README.' }],
+          message: '',
+          model: '',
+          reasoning_effort: '',
+          service_tier: '',
+        }),
+      };
+      yield { type: 'finish', totalUsage: { inputTokens: 1, outputTokens: 2 } };
+    }
+
+    await writeResponsesStream(stream(), 'test-model', chunk => chunks.push(chunk));
+    const completed = parseSseEvents(chunks.join('')).find(e => e.event === 'response.completed')!.data.response;
+    expect(completed.output).toEqual([
+      expect.objectContaining({
+        type: 'function_call',
+        name: 'spawn_agent',
+        arguments: JSON.stringify({
+          fork_context: false,
+          items: [{ type: 'text', text: 'Summarize the README.' }],
+        }),
+      }),
+    ]);
+  });
+
+  it('keeps the plain message when the model emits an empty items array', async () => {
+    const { writeResponsesStream } = await import('../src/codex-responses-adapter.js');
+    const chunks: string[] = [];
+    async function* stream() {
+      yield { type: 'tool-input-start', id: 'fc_agent', toolName: 'spawn_agent' };
+      yield {
+        type: 'tool-input-delta',
+        delta: JSON.stringify({ items: [], message: 'Read the README.' }),
+      };
+      yield { type: 'finish', totalUsage: { inputTokens: 1, outputTokens: 2 } };
+    }
+
+    await writeResponsesStream(stream(), 'test-model', chunk => chunks.push(chunk));
+    const completed = parseSseEvents(chunks.join('')).find(e => e.event === 'response.completed')!.data.response;
+    expect(completed.output[0].arguments).toBe(JSON.stringify({ message: 'Read the README.' }));
+  });
+
+  it('normalizes namespace-qualified collaboration spawn_agent calls', async () => {
+    const { writeResponsesStream } = await import('../src/codex-responses-adapter.js');
+    const chunks: string[] = [];
+    async function* stream() {
+      yield { type: 'tool-input-start', id: 'fc_agent', toolName: 'collaboration__spawn_agent' };
+      yield {
+        type: 'tool-input-delta',
+        delta: JSON.stringify({
+          agent_type: 'worker',
+          message: 'Summarize the README.',
+          model: '',
+          reasoning_effort: '',
+          task_name: 'README summary',
+        }),
+      };
+      yield { type: 'finish', totalUsage: { inputTokens: 1, outputTokens: 2 } };
+    }
+
+    await writeResponsesStream(stream(), 'test-model', chunk => chunks.push(chunk));
+    const completed = parseSseEvents(chunks.join('')).find(e => e.event === 'response.completed')!.data.response;
+    expect(completed.output[0].arguments).toBe(JSON.stringify({
+      agent_type: 'worker',
+      message: 'Summarize the README.',
+      task_name: 'README summary',
+    }));
+  });
+});
+
 describe('Codex additional_tools input lifting (relay-ai/relay-ai#21)', () => {
   it('lifts an additional_tools input item into the top-level tool set', () => {
     const params = translateResponsesRequest({

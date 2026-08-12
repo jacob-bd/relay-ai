@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import * as p from '@clack/prompts';
+import { linuxLaunchEnv } from '../linux-display.js';
 
 const CLAUDE_BUNDLE_ID = 'com.anthropic.claudefordesktop';
 
@@ -259,7 +260,8 @@ function openClaudeAppAt(path: string): void {
   if (process.platform === 'linux') {
     // No userData override — the app must resolve its default ~/.config/Claude so
     // the 3P config at ~/.config/Claude-3p (getPath('userData') + "-3p") is picked up.
-    spawn(path, [], { stdio: 'ignore', detached: true }).unref();
+    // Launch directly in the X11 server that owns the current terminal.
+    spawn(path, [], { stdio: 'ignore', detached: true, env: linuxLaunchEnv() }).unref();
   }
 }
 
@@ -311,15 +313,23 @@ export async function launchOrRestartClaudeApp(
     return;
   }
 
-  const restart = await p.confirm({ message: prompt, initialValue: true });
-  if (p.isCancel(restart) || !restart) {
-    p.log.info('Quit and reopen Claude Desktop when you are ready for the new model to take effect.');
-    return;
-  }
+  // Linux desktop apps can remain alive in the tray after their main window
+  // is closed. A second-instance launch does not reliably restore a visible
+  // window, and Relay must reload its temporary config, so restart Linux
+  // Claude deterministically.
+  if (process.platform === 'linux') {
+    p.log.info('Restarting Claude Desktop to apply relay-ai settings...');
+    linuxQuit();
+  } else {
+    const restart = await p.confirm({ message: prompt, initialValue: true });
+    if (p.isCancel(restart) || !restart) {
+      p.log.info('Quit and reopen Claude Desktop when you are ready for the new model to take effect.');
+      return;
+    }
 
-  if (process.platform === 'darwin') darwinQuit();
-  else if (process.platform === 'win32') winQuitGraceful();
-  else if (process.platform === 'linux') linuxQuit();
+    if (process.platform === 'darwin') darwinQuit();
+    else if (process.platform === 'win32') winQuitGraceful();
+  }
 
   if (!(await waitForQuit(5000))) {
     if (process.platform === 'win32') winForceQuit();

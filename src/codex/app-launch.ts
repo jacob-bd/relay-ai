@@ -1,9 +1,10 @@
-// Find, open, quit, and restart the ChatGPT desktop app / Codex mode (macOS + Windows).
+// Find, open, quit, and restart the ChatGPT desktop app / Codex mode (macOS + Windows + Linux).
 import { execSync, spawn } from 'node:child_process';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import * as p from '@clack/prompts';
+import { linuxLaunchEnv } from '../linux-display.js';
 
 const CODEX_BUNDLE_ID = 'com.openai.codex';
 // OpenAI merged the Codex desktop app into the ChatGPT desktop app (2026-07-09).
@@ -17,9 +18,9 @@ const DARWIN_APP_NAMES = ['ChatGPT', 'Codex'];
 // as a best-effort guess until confirmed on a real Windows install.
 const WIN_APP_NAMES = ['ChatGPT', 'Codex'];
 
-export function codexAppSupported(): void {
-  if (process.platform !== 'darwin' && process.platform !== 'win32') {
-    throw new Error('Codex App launch is supported on macOS and Windows only.');
+export function codexAppSupported(platform: NodeJS.Platform = process.platform): void {
+  if (platform !== 'darwin' && platform !== 'win32' && platform !== 'linux') {
+    throw new Error('Codex App launch is supported on macOS, Windows, and Linux.');
   }
 }
 
@@ -36,6 +37,27 @@ function darwinAppCandidates(): string[] {
     `/Applications/${name}.app`,
     join(homedir(), 'Applications', `${name}.app`),
   ]);
+}
+
+export function linuxCodexAppCandidates(home = homedir()): string[] {
+  return [
+    '/usr/bin/chatgpt',
+    '/usr/lib/chatgpt/ChatGPT',
+    '/opt/chatgpt/ChatGPT',
+    '/usr/local/lib/chatgpt/ChatGPT',
+    join(home, '.local', 'bin', 'chatgpt'),
+    join(home, '.local', 'share', 'chatgpt', 'ChatGPT'),
+  ];
+}
+
+export function linuxEmbeddedCodexCandidates(appPath: string): string[] {
+  const resolvedPath = (() => {
+    try { return realpathSync(appPath); } catch { return appPath; }
+  })();
+  return [...new Set([
+    join(dirname(resolvedPath), 'resources', 'codex'),
+    join(dirname(appPath), 'resources', 'codex'),
+  ])];
 }
 
 function winLocalAppData(): string {
@@ -82,14 +104,14 @@ function mdfindCodexApp(): string | null {
   }
 }
 
-export function findCodexApp(): string | null {
-  if (process.platform === 'darwin') {
+export function findCodexApp(platform: NodeJS.Platform = process.platform): string | null {
+  if (platform === 'darwin') {
     for (const path of darwinAppCandidates()) {
       if (existsSync(path)) return path;
     }
     return mdfindCodexApp();
   }
-  if (process.platform === 'win32') {
+  if (platform === 'win32') {
     for (const path of winCodexExeCandidates()) {
       try {
         if (existsSync(path) && statSync(path).isFile()) return path;
@@ -105,6 +127,24 @@ export function findCodexApp(): string | null {
       if (appId) return `shell:AppsFolder\\${appId}`;
     } catch { /* ignore */ }
   }
+  if (platform === 'linux') {
+    return linuxCodexAppCandidates().find(path => existsSync(path)) ?? null;
+  }
+  return null;
+}
+
+/** Exact embedded Codex runtime used by ChatGPT Desktop. */
+export function findEmbeddedCodexBinary(platform: NodeJS.Platform = process.platform): string | null {
+  const appPath = findCodexApp(platform);
+  if (!appPath) return null;
+  if (platform === 'darwin') {
+    const binary = join(appPath, 'Contents', 'Resources', 'codex');
+    return existsSync(binary) ? binary : null;
+  }
+  if (platform === 'linux') {
+    return linuxEmbeddedCodexCandidates(appPath).find(path => existsSync(path)) ?? null;
+  }
+  // The Windows embedded path is intentionally gated until a real install is available.
   return null;
 }
 
@@ -117,6 +157,15 @@ function darwinIsRunning(): boolean {
       return false;
     }
   });
+}
+
+function linuxIsRunning(): boolean {
+  for (const name of ['ChatGPT', 'chatgpt']) {
+    try {
+      if (run(`pgrep -x ${name}`)) return true;
+    } catch { /* app is not running */ }
+  }
+  return false;
 }
 
 function winMatchingPids(): number[] {
@@ -151,6 +200,7 @@ function winHasWindow(): boolean {
 export function isCodexAppRunning(): boolean {
   if (process.platform === 'darwin') return darwinIsRunning();
   if (process.platform === 'win32') return winMatchingPids().length > 0 || winHasWindow();
+  if (process.platform === 'linux') return linuxIsRunning();
   return false;
 }
 
@@ -167,12 +217,13 @@ async function waitForQuit(timeoutMs: number): Promise<boolean> {
     // old process (and its old config) still running.
     if (process.platform === 'win32') {
       if (winMatchingPids().length === 0) return true;
-    } else if (!darwinIsRunning()) {
+    } else if (process.platform === 'linux' ? !linuxIsRunning() : !darwinIsRunning()) {
       return true;
     }
     await sleep(200);
   }
-  return process.platform === 'win32' ? winMatchingPids().length === 0 : !darwinIsRunning();
+  if (process.platform === 'win32') return winMatchingPids().length === 0;
+  return process.platform === 'linux' ? !linuxIsRunning() : !darwinIsRunning();
 }
 
 function openCodexAppAt(path: string): void {
@@ -191,6 +242,11 @@ function openCodexAppAt(path: string): void {
     } else {
       runPowerShell(`Start-Process -FilePath '${path.replace(/'/g, "''")}'`);
     }
+    return;
+  }
+  if (process.platform === 'linux') {
+    // Launch directly in the X11 server that owns the current terminal.
+    spawn(path, [], { stdio: 'ignore', detached: true, env: linuxLaunchEnv() }).unref();
   }
 }
 
@@ -219,9 +275,19 @@ function winQuitGraceful(): void {
   );
 }
 
+function linuxQuitGraceful(): void {
+  for (const name of ['ChatGPT', 'chatgpt']) {
+    try {
+      execSync(`pkill -TERM -x ${name}`, { stdio: 'ignore' });
+      return;
+    } catch { /* process name is not running */ }
+  }
+}
+
 export function quitCodexAppGracefully(): void {
   if (process.platform === 'darwin') darwinQuit();
   else if (process.platform === 'win32') winQuitGraceful();
+  else if (process.platform === 'linux') linuxQuitGraceful();
 }
 
 function winForceQuit(): void {
@@ -244,14 +310,23 @@ export async function launchOrRestartCodexApp(
     return;
   }
 
-  const restart = await p.confirm({ message: prompt, initialValue: true });
-  if (p.isCancel(restart) || !restart) {
-    p.log.info('Quit and reopen ChatGPT Desktop when you are ready for the new model to take effect.');
-    return;
-  }
+  // Linux desktop apps can remain alive in the tray after their main window
+  // is closed. A second-instance launch does not reliably restore a visible
+  // window, and Relay must reload its temporary config, so restart Linux
+  // ChatGPT deterministically.
+  if (process.platform === 'linux') {
+    p.log.info('Restarting ChatGPT Desktop to apply relay-ai settings...');
+    linuxQuitGraceful();
+  } else {
+    const restart = await p.confirm({ message: prompt, initialValue: true });
+    if (p.isCancel(restart) || !restart) {
+      p.log.info('Quit and reopen ChatGPT Desktop when you are ready for the new model to take effect.');
+      return;
+    }
 
-  if (process.platform === 'darwin') darwinQuit();
-  else winQuitGraceful();
+    if (process.platform === 'darwin') darwinQuit();
+    else if (process.platform === 'win32') winQuitGraceful();
+  }
 
   if (!(await waitForQuit(5000))) {
     if (process.platform === 'win32') winForceQuit();
@@ -263,5 +338,5 @@ export async function launchOrRestartCodexApp(
 }
 
 export function codexAppInstallHint(): string {
-  return 'Install the ChatGPT desktop app (Codex mode) for macOS or Windows: https://developers.openai.com/codex/app';
+  return 'Install the ChatGPT desktop app (Codex mode) for macOS, Windows, or Linux: https://developers.openai.com/codex/app';
 }

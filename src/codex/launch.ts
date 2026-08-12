@@ -115,10 +115,13 @@ export function ensureCodexSandboxArgs(extraArgs: string[]): string[] {
   return ['-s', CODEX_LAUNCH_SANDBOX, ...extraArgs];
 }
 
-export function buildCodexChildEnv(route: CodexRoute, proxyPort?: number): NodeJS.ProcessEnv {
+export function buildCodexChildEnv(route: CodexRoute, proxyPort?: number, options: { mixedNative?: boolean } = {}): NodeJS.ProcessEnv {
   const env = stripCodexInheritedEnv(process.env);
 
-  if (route.tier === 'proxy' && proxyPort) {
+  if (options.mixedNative) {
+    env['RELAY_AI_CODEX_KEY'] = PROXY_PLACEHOLDER_KEY;
+    delete env[codexProviderEnvKey(route.providerId)];
+  } else if (route.tier === 'proxy' && proxyPort) {
     env['RELAY_AI_CODEX_KEY'] = PROXY_PLACEHOLDER_KEY;
   } else {
     const envKey = codexProviderEnvKey(route.providerId);

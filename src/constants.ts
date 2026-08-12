@@ -73,6 +73,9 @@ export const OPENCODE_CACHE_PATH = join(homedir(), '.cache', 'opencode', 'models
 /** Max models in favorites list and mid-session /model switch catalog. */
 export const MAX_MODEL_CATALOG = 20;
 
+/** Codex redirects every marked child session to this one explicit Relay model. */
+export const CODEX_SUBAGENT_MODEL_CAP = 1;
+
 /**
  * Smallest context window worth offering: agent system prompts plus tool definitions
  * consume ~25K before the first user message, so smaller models fail immediately.

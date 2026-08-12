@@ -82,6 +82,12 @@
           </span>
           Favorites
         </a>
+        <a href="#section-codex-subagents" class="nav-item" data-section="section-codex-subagents" id="nav-codex-subagents">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg>
+          </span>
+          Codex SubAgent
+        </a>
         <a href="#antigravity" class="nav-item" data-section="antigravity">
           <span class="nav-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/></svg>
@@ -170,6 +176,32 @@
         </div>
         <div id="model-results" class="model-results" hidden></div>
         <div id="favorites-list" class="fav-list" role="list" aria-label="General favorites" data-list="general"></div>
+      </section>
+
+      <!-- Codex SubAgent section -->
+      <section id="section-codex-subagents" class="section">
+        <div class="section-hero">
+          <div class="section-eyebrow">Codex Runtime</div>
+          <h1 class="section-heading">Codex <span class="heading-accent">SubAgent</span></h1>
+          <p class="section-sub">Choose one Relay model for the Codex SubAgent. This selection starts empty and does not sync with General Favorites.</p>
+        </div>
+        <div class="agy-slot-bar">
+          <div class="agy-slot-label">Slots used</div>
+          <div class="agy-slot-pips" id="codex-subagent-pips"></div>
+          <div class="agy-slot-count" id="codex-subagent-slot-count">0<span class="agy-slot-max">/1</span></div>
+        </div>
+        <div class="search-row">
+          <div class="search-field">
+            <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input type="search" id="codex-subagent-search" class="search-input" placeholder="Search models to add…" aria-label="Search Codex SubAgent models">
+          </div>
+          <label class="free-only-toggle">
+            <input type="checkbox" id="codex-subagent-free-only">
+            <span>Free models only</span>
+          </label>
+        </div>
+        <div id="codex-subagent-results" class="model-results" hidden></div>
+        <div id="codex-subagent-list" class="fav-list" role="list" aria-label="Codex SubAgent" data-list="codex-subagents"></div>
       </section>
 
       <!-- Antigravity section -->

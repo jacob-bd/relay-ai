@@ -4,6 +4,10 @@ import {
   BACKENDS,
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
+  CODEX_RESPONSES_LITE_VERSION,
+  CODEX_RESPONSES_LITE_WS_URL,
+  CODEX_RESPONSES_WEBSOCKETS_BETA,
+  CODEX_SUBAGENT_MODEL_CAP,
   CONFLICTING_ENV_VARS,
   GLOBAL_OPENCODE_KEYRING_ACCOUNT,
   MAX_MODEL_CATALOG,
@@ -12,6 +16,7 @@ import {
   VERSION,
   VERTEX_ANTHROPIC_NPM,
   addCustomEndpointProvider,
+  addFavorite,
   addOpencodeCloudFromApiKey,
   addProviderFromTemplate,
   aliasModelId,
@@ -57,6 +62,7 @@ import {
   fetchTemplateModels,
   findBinaryOnPath,
   findClaudeBinary,
+  findEmbeddedCodexBinary,
   fmtCommand,
   fmtCount,
   fmtEnabledStar,
@@ -88,6 +94,7 @@ import {
   injectRelayModels,
   isClaudeAppRunning,
   isCodexAppRunning,
+  isFavorite,
   isFreeStatus,
   isLikelyPlaceholderKey,
   isOAuthImportProvider,
@@ -115,6 +122,7 @@ import {
   parseCodexAppModelSlug,
   parseDsmlToolCalls,
   parseToolArguments,
+  preferredRelayCredentialAuthRef,
   prepareClaudeTraceLog,
   prepareProviderTraceLog,
   printApiKeyPanel,
@@ -129,6 +137,7 @@ import {
   providerAuthHelpText,
   providerRefreshToken,
   providerSelectOption,
+  providersForCodexSubagents,
   providersForPicker,
   providersForTarget,
   quitClaudeAppGracefully,
@@ -137,13 +146,16 @@ import {
   readFromCredentialStore,
   readGlobalOpencodeCredential,
   readOpencodeAuthFile,
+  readStoredProviderCredential,
   recordLaunchSelection,
   refreshAllProviderModels,
   refreshModelsDevCacheAsync,
   refreshProviderModels,
   relayIntro,
   relayOutro,
+  removeFavorite,
   removeProviderFromRegistry,
+  renderMultiAgentV2Feature,
   resetCodexBodyDumpLog,
   resolveApiKey,
   resolveContextWindow,
@@ -175,6 +187,7 @@ import {
   startServer,
   summarizeSdkRequestForTrace,
   supportsClaudeTransparentMode,
+  supportsMultiAgentV2,
   supportsNativeOAuth,
   syntheticTemplate,
   thinkingProviderOptions,
@@ -184,7 +197,7 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-O2YKQKNF.js";
+} from "./chunk-R4AWEK7T.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -1105,19 +1118,6 @@ async function pickLocalModel(provider, conflicts, prefs) {
   return selectedModel;
 }
 
-// src/favorites.ts
-function isFavorite(list, fav) {
-  return list.some((f) => f.providerId === fav.providerId && f.modelId === fav.modelId);
-}
-function addFavorite(list, fav, max = MAX_MODEL_CATALOG) {
-  if (isFavorite(list, fav)) return { ok: false, reason: "duplicate" };
-  if (list.length >= max) return { ok: false, reason: "cap" };
-  return { ok: true, list: [...list, fav] };
-}
-function removeFavorite(list, fav) {
-  return list.filter((f) => !(f.providerId === fav.providerId && f.modelId === fav.modelId));
-}
-
 // src/favorites-picker.ts
 import * as p4 from "@clack/prompts";
 import pc3 from "picocolors";
@@ -1164,14 +1164,15 @@ function filterGlobalFavoriteIndex(entries, query, opts) {
     return a.index - b.index;
   }).map((result) => result.entry);
 }
-function globalFavoriteSelectOption(entry, favorites) {
+function globalFavoriteSelectOption(entry, favorites, opts) {
   const label = formatCodexModelLabel(entry.model);
   const favorited = isFavorite(favorites, { providerId: entry.providerId, modelId: entry.model.id });
   const providerTag = fmtProviderBracket(entry.providerId, entry.providerName, entry.model.isFree);
+  const listLabel = opts?.listLabel ?? "favorites";
   return {
     value: globalFavoritePickKey(entry),
     label: `${fmtModel(label, entry.model.id)} ${providerTag}`,
-    hint: favorited ? pc3.dim("already in favorites") : ""
+    hint: favorited ? pc3.dim(`already in ${listLabel}`) : ""
   };
 }
 function parseGlobalFavoritePickKey(key, index) {
@@ -1181,16 +1182,18 @@ async function pickGlobalFavoriteModel(providers, favorites, opts) {
   const index = buildGlobalFavoriteIndex(providers);
   if (index.length === 0) return null;
   const freeOnly = opts?.freeOnly === true;
+  const listLabel = opts?.listLabel ?? "favorites";
+  const subagents = listLabel === "Codex Sub-agents";
   while (true) {
     const searchInput = await p4.text({
-      message: freeOnly ? `Search free models (${filterGlobalFavoriteIndex(index, "", { freeOnly: true }).length} models):` : `Search all providers (${index.length} models):`,
+      message: freeOnly ? `Search free models (${filterGlobalFavoriteIndex(index, "", { freeOnly: true }).length} models):` : `${subagents ? "Search all models" : "Search all providers"} (${index.length} models):`,
       placeholder: "e.g. deepseek, claude, sonnet"
     });
     if (p4.isCancel(searchInput)) {
       const fallback = await p4.select({
-        message: "Add a favorite",
+        message: subagents ? "Add a Codex Sub-agent model" : "Add a favorite",
         options: [
-          { value: "back", label: pc3.cyan("\u2190 Back to favorites"), hint: "" },
+          { value: "back", label: pc3.cyan(subagents ? "\u2190 Back to Codex Sub-agents" : "\u2190 Back to favorites"), hint: "" },
           { value: ADD_BY_PROVIDER, label: pc3.cyan("Browse by provider \u2192"), hint: "Pick one provider first" }
         ]
       });
@@ -1207,7 +1210,8 @@ async function pickGlobalFavoriteModel(providers, favorites, opts) {
       matched.map((e) => ({ ...e, id: globalFavoritePickKey(e) })),
       (e) => globalFavoriteSelectOption(
         { providerId: e.providerId, providerName: e.providerName, model: e.model },
-        favorites
+        favorites,
+        { listLabel }
       ),
       matched.length === 1 ? "Match found" : `Select model (${matched.length} matches)`,
       void 0,
@@ -1218,7 +1222,7 @@ async function pickGlobalFavoriteModel(providers, favorites, opts) {
     const picked = parseGlobalFavoritePickKey(result.id, matched);
     if (!picked) continue;
     if (isFavorite(favorites, { providerId: picked.providerId, modelId: picked.model.id })) {
-      p4.log.warn(`${picked.model.name || picked.model.id} (${picked.providerName}) is already in your favorites.`);
+      p4.log.warn(`${picked.model.name || picked.model.id} (${picked.providerName}) is already in ${listLabel}.`);
       continue;
     }
     return picked;
@@ -1887,6 +1891,13 @@ async function runProviderDetail(id) {
       hint: "Refresh OAuth tokens or switch accounts"
     });
   }
+  if (provider.authType !== "oauth" && provider.authRef.startsWith("keyring:")) {
+    detailOptions.push({
+      value: "change-key",
+      label: "Change API key",
+      hint: "Test a new key and optionally replace the stored key"
+    });
+  }
   detailOptions.push(
     {
       value: "toggle",
@@ -1916,6 +1927,9 @@ async function runProviderDetail(id) {
   if (action === "refresh") {
     return await runProvidersRefreshModels(id) === 0 ? "back" : "failed";
   }
+  if (action === "change-key") {
+    return await runProviderApiKeyChange(provider, registry) === 0 ? "back" : "failed";
+  }
   if (action === "change-auth" && template) {
     return await runDualAuthTemplateFlow(template, provider) === 0 ? "back" : "failed";
   }
@@ -1931,6 +1945,51 @@ async function runProviderDetail(id) {
   }
   const code = await runProvidersRemove(id, true);
   return code === 0 ? "removed" : "failed";
+}
+async function runProviderApiKeyChange(provider, registry) {
+  const entered = await p5.password({
+    message: `Enter the new API key for ${provider.name}`,
+    mask: "\u2022"
+  });
+  if (p5.isCancel(entered)) {
+    p5.cancel("Cancelled.");
+    return 0;
+  }
+  const key = String(entered).trim();
+  if (!key) {
+    p5.log.warn("API key cannot be empty.");
+    return 1;
+  }
+  const targetAuthRef = preferredRelayCredentialAuthRef(provider.id, provider.authRef);
+  let existing = await readStoredProviderCredential(targetAuthRef);
+  if (!existing && targetAuthRef !== provider.authRef) {
+    existing = await readStoredProviderCredential(provider.authRef);
+  }
+  if (existing && existing !== key) {
+    const confirmed = await p5.confirm({
+      message: "A different key is already stored. Replace it?",
+      initialValue: false
+    });
+    if (p5.isCancel(confirmed) || !confirmed) {
+      p5.log.info("Kept the existing stored key.");
+      return 0;
+    }
+  }
+  const spinner9 = p5.spinner();
+  spinner9.start(`Testing ${provider.name} and refreshing models...`);
+  const result = await refreshProviderModels(provider.id, key, registry);
+  spinner9.stop("");
+  if (!result.ok) {
+    p5.log.error(`${provider.name}: ${result.reason ?? "The new key was rejected."}`);
+    return 1;
+  }
+  const saved = await saveProviderCredential(targetAuthRef, key);
+  if (!saved) {
+    p5.log.error("The new key works, but the credential store was unavailable \u2014 key was not saved.");
+    return 1;
+  }
+  p5.log.success(`${provider.name}: key updated and ${result.modelCount ?? 0} model${result.modelCount === 1 ? "" : "s"} available.`);
+  return 0;
 }
 async function runProvidersHub() {
   const hasOpencode = findOpencodeBinary() !== null;
@@ -2038,10 +2097,13 @@ async function runProvidersCommand(args) {
 // src/codex.ts
 import pc7 from "picocolors";
 import * as p8 from "@clack/prompts";
+import { execFileSync as execFileSync2 } from "child_process";
+import { join as join5 } from "path";
 
 // src/codex-proxy.ts
-import { createHash } from "crypto";
+import { createHash as createHash2 } from "crypto";
 import { createServer } from "http";
+import { WebSocket } from "ws";
 
 // src/oauth/claude-code-identity.ts
 function isClaudeCodeOAuthRoute(input) {
@@ -2147,8 +2209,8 @@ function extractDeveloperAndInstructions(items, instructions) {
   const remaining = [];
   for (const item of items) {
     if ("role" in item && item.role === "developer") {
-      const text4 = messageText(item.content);
-      if (text4.trim()) developerParts.push(text4.trim());
+      const text5 = messageText(item.content);
+      if (text5.trim()) developerParts.push(text5.trim());
     } else {
       remaining.push(item);
     }
@@ -2221,11 +2283,11 @@ function ensureUserFirst(messages) {
 function reasoningSummaryText(item) {
   return (item.summary ?? []).map((part) => part.type === "summary_text" ? part.text ?? "" : "").join("");
 }
-function makeReasoningOutputItem(id, text4) {
+function makeReasoningOutputItem(id, text5) {
   return {
     id,
     type: "reasoning",
-    summary: text4.trim() ? [{ type: "summary_text", text: text4 }] : []
+    summary: text5.trim() ? [{ type: "summary_text", text: text5 }] : []
   };
 }
 function translateResponsesInput(input, instructions, npm, toolContext = createCodexToolContext()) {
@@ -2325,6 +2387,11 @@ function translateResponsesInput(input, instructions, npm, toolContext = createC
           output: { type: "text", value: serializeToolResultContent(item.output) }
         }]
       });
+    } else if (item.type === "agent_message") {
+      const text5 = messageText(item.content);
+      if (text5.trim()) {
+        messages.push({ role: "user", content: [{ type: "text", text: text5 }] });
+      }
     } else if (item.type === "compaction" || item.type === "context_compaction") {
       const summary = decodeCompactionContent(item.encrypted_content) ?? "";
       if (summary.trim()) {
@@ -2333,8 +2400,8 @@ ${summary}` }] });
       }
     } else if ("role" in item) {
       const role = item.role === "assistant" ? "assistant" : "user";
-      const text4 = messageText(item.content);
-      messages.push({ role, content: [{ type: "text", text: text4 }] });
+      const text5 = messageText(item.content);
+      messages.push({ role, content: [{ type: "text", text: text5 }] });
     }
   }
   return {
@@ -2435,6 +2502,27 @@ function usageFromPart(part) {
   const output = part.totalUsage?.outputTokens ?? 0;
   return { input_tokens: input, output_tokens: output, total_tokens: input + output };
 }
+var CODEX_SUBAGENT_TOOL_NAMES = /* @__PURE__ */ new Set(["spawn_agent", "multi_agent_v1__spawn_agent"]);
+function isCodexSubagentToolName(toolName) {
+  return CODEX_SUBAGENT_TOOL_NAMES.has(toolName) || toolName.endsWith("__spawn_agent");
+}
+function normalizeCodexSubagentArguments(toolName, argsStr) {
+  if (!isCodexSubagentToolName(toolName)) return argsStr;
+  const args = parseToolArguments(argsStr);
+  for (const key of ["model", "reasoning_effort", "service_tier"]) {
+    if (args[key] === "") delete args[key];
+  }
+  const items = args.items;
+  const message = args.message;
+  if (Array.isArray(items) && items.length > 0) {
+    delete args.message;
+  } else if (typeof message === "string" && message.trim()) {
+    delete args.items;
+  } else if (Array.isArray(items) && items.length === 0) {
+    delete args.items;
+  }
+  return JSON.stringify(args);
+}
 function resolveOutputKind(flatName, ctx) {
   if (!ctx) return { kind: "plain" };
   if (flatName === TOOL_SEARCH_NAME) return { kind: "tool_search" };
@@ -2444,6 +2532,7 @@ function resolveOutputKind(flatName, ctx) {
   return { kind: "plain" };
 }
 function buildFinalToolItem(kind, flatName, callId, itemId, argsStr) {
+  argsStr = normalizeCodexSubagentArguments(flatName, argsStr);
   switch (kind.kind) {
     case "namespace":
       return { type: "function_call", id: itemId, call_id: callId, namespace: kind.namespace, name: kind.name, arguments: argsStr, status: "completed" };
@@ -2815,13 +2904,14 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
     outputItems.unshift(reasoningItem);
   }
   for (const tool3 of toolStates) {
+    const normalizedArgs = normalizeCodexSubagentArguments(tool3.name, tool3.args);
     emit("response.function_call_arguments.done", {
       type: "response.function_call_arguments.done",
       item_id: tool3.itemId,
       output_index: tool3.outputIndex,
-      arguments: tool3.args
+      arguments: normalizedArgs
     });
-    const fcItem = buildFinalToolItem(resolveOutputKind(tool3.name, options?.toolContext), tool3.name, tool3.callId, tool3.itemId, tool3.args);
+    const fcItem = buildFinalToolItem(resolveOutputKind(tool3.name, options?.toolContext), tool3.name, tool3.callId, tool3.itemId, normalizedArgs);
     emit("response.output_item.done", {
       type: "response.output_item.done",
       output_index: tool3.outputIndex,
@@ -3104,6 +3194,412 @@ function responsesRateLimitBody(modelId, message) {
   };
 }
 
+// src/codex/routing.ts
+import { randomBytes } from "crypto";
+function classifyCodexDispatch(modelId, relayRoutes, nativeModelIds) {
+  if (nativeModelIds.has(modelId)) return { kind: "native", modelId };
+  const route = relayRoutes.find((candidate) => candidate.modelId === modelId);
+  if (route) return { kind: "relay", route };
+  return { kind: "unknown", modelId };
+}
+function createMixedProxyCapability() {
+  return randomBytes(32).toString("base64url");
+}
+function mixedProxyBaseUrl(port, capability) {
+  return `http://127.0.0.1:${port}/_relay-codex/${capability}`;
+}
+function parseMixedProxyPath(pathname, capability) {
+  const prefix = `/_relay-codex/${capability}`;
+  if (!pathname.startsWith(prefix)) return null;
+  const suffix = pathname.slice(prefix.length);
+  if (suffix !== "/v1/models" && suffix !== "/v1/responses" && suffix !== "/health") return null;
+  return { capability, suffix };
+}
+function codexCompatibleProviders(providers, agent = "codex") {
+  return providersForTarget(providers, agent);
+}
+function resolveBaseURL(model, provider) {
+  if (provider.id === "zen" || provider.id === "go") {
+    const isAnthropic = model.modelFormat === "anthropic";
+    const baseUrl = BACKENDS[provider.id].baseUrl;
+    return isAnthropic ? baseUrl : `${baseUrl}/v1`;
+  }
+  return model.apiBaseUrl ?? model.completionsUrl?.replace(/\/chat\/completions$/, "") ?? model.baseUrl;
+}
+function resolveCodexRoute(provider, model, apiKey) {
+  const upstreamModelId = model.upstreamModelId || model.id;
+  const inferredNpm = model.modelFormat === "anthropic" ? "@ai-sdk/anthropic" : "@ai-sdk/openai-compatible";
+  const isZenGo = provider.id === "zen" || provider.id === "go";
+  const base = {
+    npm: isZenGo ? inferredNpm : model.npm ?? inferredNpm,
+    baseURL: resolveBaseURL(model, provider),
+    upstreamModelId,
+    apiKey,
+    contextWindow: model.contextWindow,
+    modelId: model.id,
+    providerId: provider.id,
+    authType: provider.authType,
+    oauthAccountId: provider.oauthAccountId,
+    providerData: provider.providerData,
+    supportedParameters: model.supportedParameters,
+    reasoning: model.reasoning,
+    interleavedReasoningField: model.interleavedReasoningField,
+    headers: provider.headers,
+    refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
+  };
+  if (model.modelFormat === "cloud-code") {
+    return {
+      tier: "cloud-code",
+      npm: "@ai-sdk/anthropic",
+      baseURL: "",
+      upstreamModelId: model.upstreamModelId || model.id,
+      apiKey,
+      contextWindow: model.contextWindow,
+      modelId: model.id,
+      providerId: provider.id,
+      authType: provider.authType,
+      oauthAccountId: provider.oauthAccountId,
+      providerData: provider.providerData,
+      supportedParameters: model.supportedParameters,
+      reasoning: model.reasoning,
+      interleavedReasoningField: model.interleavedReasoningField,
+      headers: provider.headers,
+      refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
+    };
+  }
+  if (model.npm === "@ai-sdk/openai" && provider.authType !== "oauth" && model.modelFormat === "openai") {
+    return { tier: "direct", ...base };
+  }
+  return { tier: "proxy", ...base };
+}
+function routableModelsForProvider(provider, agent = "codex") {
+  return routableModelsForTarget(provider, agent);
+}
+function codexProviderEnvKey(providerId) {
+  const known = {
+    openai: "OPENAI_API_KEY",
+    xai: "XAI_API_KEY",
+    "xai-oauth": "XAI_API_KEY",
+    anthropic: "ANTHROPIC_API_KEY",
+    google: "GEMINI_API_KEY"
+  };
+  return known[providerId] ?? `${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
+}
+
+// src/codex/native-forward.ts
+var NATIVE_CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
+var NATIVE_FORWARD_HEADERS = /* @__PURE__ */ new Set([
+  "authorization",
+  "chatgpt-account-id",
+  "openai-beta",
+  "originator",
+  "session_id",
+  "session-id",
+  "thread_id",
+  "thread-id",
+  "turn_id",
+  "turn-id",
+  "user-agent",
+  "version",
+  "x-client-request-id",
+  "x-codex-turn-metadata",
+  "x-codex-turn-state",
+  "x-codex-window-id",
+  "x-codex-ws-stream-request-start-ms",
+  "x-openai-internal-codex-responses-lite"
+]);
+var NATIVE_HEADER_NAMES = {
+  "chatgpt-account-id": "ChatGPT-Account-Id",
+  "openai-beta": "OpenAI-Beta"
+};
+function headerValue(headers, key) {
+  const found = Object.entries(headers).find(([name]) => name.toLowerCase() === key);
+  const value = found?.[1];
+  return Array.isArray(value) ? value[0] : value;
+}
+function allowlistedNativeHeaders(inboundHeaders) {
+  const out = {};
+  for (const key of NATIVE_FORWARD_HEADERS) {
+    const value = headerValue(inboundHeaders, key);
+    if (!value) continue;
+    out[NATIVE_HEADER_NAMES[key] ?? key] = value;
+  }
+  return out;
+}
+async function forwardNativeCodexHttp(options) {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const headers = allowlistedNativeHeaders(options.inboundHeaders);
+  headers["content-type"] = headerValue(options.inboundHeaders, "content-type") ?? "application/json";
+  return fetchImpl(options.nativeUrl ?? NATIVE_CODEX_RESPONSES_URL, {
+    method: "POST",
+    headers,
+    body: options.body,
+    signal: options.signal,
+    redirect: "manual"
+  });
+}
+function nativeResponsesWebSocketOptions(options) {
+  const headers = allowlistedNativeHeaders(options.headers);
+  if (!headers["OpenAI-Beta"]) headers["OpenAI-Beta"] = CODEX_RESPONSES_WEBSOCKETS_BETA;
+  if (!headers.version) headers.version = CODEX_RESPONSES_LITE_VERSION;
+  if (!headers.originator) headers.originator = "codex_cli_rs";
+  return {
+    url: options.wsUrl ?? CODEX_RESPONSES_LITE_WS_URL,
+    headers
+  };
+}
+
+// src/codex/collaboration-payload.ts
+import { createHash } from "crypto";
+var NATIVE_ENCRYPTED_TOKEN = /^gAAAAA[A-Za-z0-9_-]+={0,2}$/;
+var COLLABORATION_HEADER = /Message Type:\s*(?:NEW_TASK|MESSAGE|FOLLOWUP_TASK|FINAL_ANSWER)\b[\s\S]*\nPayload:\s*/i;
+var PAYLOAD_BOUNDARY = /^Payload:\s*$/m;
+var NATIVE_PAYLOAD_MAX_BYTES = 4 * 1024 * 1024;
+var NATIVE_PAYLOAD_CACHE_MAX_ENTRIES = 256;
+var NATIVE_PAYLOAD_CACHE_MAX_BYTES = 8 * 1024 * 1024;
+var AGENT_PAYLOAD_RELAY_TOOL = "relay_external_agent_payload";
+function itemContent(item) {
+  return Array.isArray(item.content) ? item.content.filter((v) => v && typeof v === "object") : [];
+}
+function encryptedPart(item) {
+  const part = itemContent(item).find((v) => v.type === "encrypted_content");
+  return typeof part?.encrypted_content === "string" ? part.encrypted_content : void 0;
+}
+function visibleCollaborationText(item) {
+  return itemContent(item).filter((v) => (v.type === "input_text" || v.type === "text") && typeof v.text === "string").map((v) => v.text).join("");
+}
+function envelopePayload(envelope) {
+  if (!/^Message Type:\s*\S+/m.test(envelope)) return null;
+  const boundary = envelope.match(PAYLOAD_BOUNDARY);
+  if (!boundary || boundary.index === void 0) return null;
+  const payload = envelope.slice(boundary.index + boundary[0].length).replace(/^\r?\n/, "");
+  return payload.length > 0 ? payload : null;
+}
+function inspectCollaborationItem(item) {
+  if (!item || typeof item !== "object") return { kind: "none" };
+  const record = item;
+  if (record.type === "compaction" || record.type === "context_compaction") return { kind: "none" };
+  if (record.type !== "agent_message") return { kind: "none" };
+  const visible = visibleCollaborationText(record);
+  const encrypted = encryptedPart(record);
+  if (encrypted === void 0) {
+    const payload2 = COLLABORATION_HEADER.test(visible) ? envelopePayload(visible) : null;
+    return payload2 !== null ? { kind: "relay-plaintext", plaintext: payload2 } : { kind: "malformed", reason: "agent_message has no encrypted_content part" };
+  }
+  if (NATIVE_ENCRYPTED_TOKEN.test(encrypted)) return { kind: "native-encrypted", ciphertext: encrypted };
+  if (!COLLABORATION_HEADER.test(visible)) {
+    return { kind: "malformed", reason: "unrecognized collaboration envelope" };
+  }
+  const payload = envelopePayload(encrypted);
+  return { kind: "relay-plaintext", plaintext: payload ?? encrypted };
+}
+function normalizePlaintextCollaborationForExternal(input) {
+  return input.map((item) => {
+    const inspection = inspectCollaborationItem(item);
+    if (inspection.kind !== "relay-plaintext") return item;
+    if (encryptedPart(item) === void 0) return item;
+    return replaceCollaborationPayload(item, inspection.plaintext);
+  });
+}
+var COLLABORATION_TOOL_NAMES = /* @__PURE__ */ new Set([
+  "collaboration",
+  "spawn_agent",
+  "wait_agent",
+  "send_input",
+  "close_agent",
+  "list_agents"
+]);
+function isCollaborationTool(value) {
+  if (!value || typeof value !== "object") return false;
+  const tool3 = value;
+  const name = typeof tool3.name === "string" ? tool3.name : "";
+  if (tool3.type === "namespace") return name === "collaboration" || name === "multi_agent_v1";
+  return COLLABORATION_TOOL_NAMES.has(name) || name.startsWith("collaboration__") || name.startsWith("multi_agent_v1__");
+}
+function stripCollaborationToolList(value) {
+  if (!Array.isArray(value)) return value;
+  return value.filter((tool3) => !isCollaborationTool(tool3)).map((tool3) => {
+    if (!tool3 || typeof tool3 !== "object") return tool3;
+    const record = tool3;
+    if (!Array.isArray(record.tools)) return tool3;
+    return { ...record, tools: stripCollaborationToolList(record.tools) };
+  });
+}
+function stripCodexCollaborationTools(body) {
+  const stripped = { ...body };
+  if (Array.isArray(body.tools)) stripped.tools = stripCollaborationToolList(body.tools);
+  if (Array.isArray(body.input)) {
+    stripped.input = body.input.map((item) => {
+      if (!item || typeof item !== "object") return item;
+      const record = item;
+      if (record.type !== "additional_tools" || !Array.isArray(record.tools)) return item;
+      return { ...record, tools: stripCollaborationToolList(record.tools) };
+    });
+  }
+  return stripped;
+}
+function replaceCollaborationPayload(item, plaintext) {
+  return {
+    ...item,
+    content: [
+      ...item.content.filter((part) => part.type !== "encrypted_content"),
+      { type: "input_text", text: plaintext }
+    ]
+  };
+}
+function nativeHeaders(headers) {
+  const out = {};
+  for (const key of ["authorization", "chatgpt-account-id", "openai-beta", "originator", "session_id", "user-agent"]) {
+    const value = headers[key] ?? headers[Object.keys(headers).find((k) => k.toLowerCase() === key) ?? ""];
+    if (value) out[key === "chatgpt-account-id" ? "ChatGPT-Account-Id" : key] = value;
+  }
+  out["content-type"] = "application/json";
+  out.Accept = "text/event-stream";
+  return out;
+}
+function parsePayloadArguments(value) {
+  try {
+    const args = typeof value === "string" ? JSON.parse(value) : value;
+    return typeof args?.payload === "string" ? args.payload : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function parseFunctionCalls(value) {
+  if (!value || typeof value !== "object") return [];
+  const record = value;
+  const direct = record.type === "function_call" ? [record] : [];
+  const item = record.item && typeof record.item === "object" ? [record.item] : [];
+  const output = Array.isArray(record.output) ? record.output : record.response && typeof record.response === "object" && Array.isArray(record.response.output) ? record.response.output : [];
+  return [...direct, ...item, ...output].filter(
+    (v) => v && typeof v === "object" && v.type === "function_call"
+  );
+}
+function parsePayloadResponse(text5) {
+  const relayIds = /* @__PURE__ */ new Set();
+  const completedPayloads = [];
+  let argumentDeltas = "";
+  for (const line of text5.split(/\r?\n/)) {
+    if (!line.startsWith("data:")) continue;
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") continue;
+    try {
+      const event = JSON.parse(data);
+      for (const call of parseFunctionCalls(event)) {
+        if (call.name !== AGENT_PAYLOAD_RELAY_TOOL) continue;
+        if (typeof call.id === "string") relayIds.add(call.id);
+        if (typeof call.call_id === "string") relayIds.add(call.call_id);
+        const payload = parsePayloadArguments(call.arguments);
+        if (payload !== void 0) completedPayloads.push(payload);
+      }
+      const eventId = typeof event.item_id === "string" ? event.item_id : typeof event.call_id === "string" ? event.call_id : void 0;
+      const related = relayIds.size === 0 || eventId !== void 0 && relayIds.has(eventId);
+      if (related && event.type === "response.function_call_arguments.delta" && typeof event.delta === "string") {
+        argumentDeltas += event.delta;
+      }
+      if (related && event.type === "response.function_call_arguments.done") {
+        const payload = parsePayloadArguments(event.arguments);
+        if (payload !== void 0) completedPayloads.push(payload);
+      }
+    } catch {
+    }
+  }
+  try {
+    for (const call of parseFunctionCalls(JSON.parse(text5))) {
+      if (call.name !== AGENT_PAYLOAD_RELAY_TOOL) continue;
+      const payload = parsePayloadArguments(call.arguments);
+      if (payload !== void 0) completedPayloads.push(payload);
+    }
+  } catch {
+  }
+  const accumulated = parsePayloadArguments(argumentDeltas);
+  if (completedPayloads.length === 0 && accumulated !== void 0) completedPayloads.push(accumulated);
+  const unique = [...new Set(completedPayloads)];
+  if (unique.length !== 1 || unique[0].length === 0) {
+    throw new Error("Native collaboration relay did not return exactly one task payload");
+  }
+  return unique[0];
+}
+function createNativePayloadRelay(options) {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const cache = /* @__PURE__ */ new Map();
+  let cacheBytes = 0;
+  const removeCacheEntry = (key) => {
+    const entry = cache.get(key);
+    if (!entry) return;
+    cache.delete(key);
+    cacheBytes -= entry.bytes;
+  };
+  const pruneCache = () => {
+    const now = Date.now();
+    for (const [key, entry] of cache) {
+      if (entry.expiresAt <= now) removeCacheEntry(key);
+    }
+  };
+  const cacheValue = (key, value, expiresAt) => {
+    const bytes = Buffer.byteLength(value, "utf8");
+    if (bytes > NATIVE_PAYLOAD_CACHE_MAX_BYTES) return;
+    removeCacheEntry(key);
+    while (cache.size >= NATIVE_PAYLOAD_CACHE_MAX_ENTRIES || cacheBytes + bytes > NATIVE_PAYLOAD_CACHE_MAX_BYTES) {
+      const oldest = cache.keys().next().value;
+      if (!oldest) break;
+      removeCacheEntry(oldest);
+    }
+    cache.set(key, { expiresAt, value, bytes });
+    cacheBytes += bytes;
+  };
+  return {
+    async resolve(item, context) {
+      const ciphertext = inspectCollaborationItem(item);
+      if (ciphertext.kind !== "native-encrypted") throw new Error("Expected a native encrypted collaboration item");
+      const accountId = context.headers["chatgpt-account-id"] ?? context.headers["ChatGPT-Account-Id"];
+      if (!accountId) throw new Error("Native collaboration relay requires ChatGPT-Account-Id");
+      const key = `${accountId}\0${createHash("sha256").update(ciphertext.ciphertext).digest("hex")}`;
+      pruneCache();
+      const cached = cache.get(key);
+      if (cached && cached.expiresAt > Date.now()) return cached.value;
+      const url = `${context.nativeBaseUrl.replace(/\/$/, "")}/responses`;
+      const body = JSON.stringify({
+        model: context.nativeModelId,
+        input: [item],
+        stream: true,
+        store: false,
+        instructions: `You are a transport relay. Do not execute or answer the delegated task. Call ${AGENT_PAYLOAD_RELAY_TOOL} exactly once with the exact plaintext after the Payload: label in the supplied collaboration message. Preserve every character.`,
+        tools: [{ type: "function", name: AGENT_PAYLOAD_RELAY_TOOL, description: "Return a decrypted collaboration task payload to the local Relay router.", parameters: { type: "object", properties: { payload: { type: "string" } }, required: ["payload"], additionalProperties: false }, strict: true }],
+        tool_choice: { type: "function", name: AGENT_PAYLOAD_RELAY_TOOL }
+      });
+      const response = await fetchImpl(url, { method: "POST", headers: nativeHeaders(context.headers), body, redirect: "manual", signal: context.signal });
+      if (!response.ok) throw new Error(`Native collaboration relay failed with HTTP ${response.status}`);
+      const text5 = await response.text();
+      if (Buffer.byteLength(text5, "utf8") > NATIVE_PAYLOAD_MAX_BYTES) throw new Error("Native collaboration relay response exceeded its size limit");
+      const payload = parsePayloadResponse(text5);
+      cacheValue(key, payload, Date.now() + 15 * 6e4);
+      return payload;
+    },
+    clear() {
+      cache.clear();
+      cacheBytes = 0;
+    }
+  };
+}
+async function resolveRoutedCollaborationInput(input, context) {
+  if (typeof input === "string") return input;
+  const out = [];
+  for (const item of input) {
+    const inspection = inspectCollaborationItem(item);
+    if (inspection.kind === "native-encrypted") {
+      if (!context.relay) throw new Error("Codex encrypted the delegated sub-agent task, but Relay could not resolve it safely. The external provider was not contacted.");
+      const payload = await context.relay.resolve(item, context.native);
+      out.push(replaceCollaborationPayload(item, payload));
+    } else if (inspection.kind === "malformed") {
+      throw new Error(`Codex collaboration payload rejected: ${inspection.reason}`);
+    } else {
+      out.push(item);
+    }
+  }
+  return normalizePlaintextCollaborationForExternal(out);
+}
+
 // src/codex-proxy.ts
 function captureCompletedResponse(sseText) {
   if (!sseText.includes("response.completed")) return void 0;
@@ -3135,15 +3631,15 @@ function estimateCodexRequestChars(params) {
   }
   return chars;
 }
-function clipTextForContext(text4, maxChars) {
-  if (text4.length <= maxChars) return text4;
+function clipTextForContext(text5, maxChars) {
+  if (text5.length <= maxChars) return text5;
   const marker = `
 
-[... ${text4.length} chars clipped from oversized context item ...]
+[... ${text5.length} chars clipped from oversized context item ...]
 
 `;
   const edge = Math.max(1, Math.floor((maxChars - marker.length) / 2));
-  return `${text4.slice(0, edge)}${marker}${text4.slice(-edge)}`;
+  return `${text5.slice(0, edge)}${marker}${text5.slice(-edge)}`;
 }
 function clipLargeTextParts(params, maxCharsPerPart) {
   const messages = params.messages.map((msg) => {
@@ -3227,6 +3723,7 @@ function protectCodexCompactionParams(body, params, contextWindow) {
   };
 }
 var PROXY_PLACEHOLDER_KEY = "proxy-local";
+var MAX_CODEX_REQUEST_BYTES = 4 * 1024 * 1024;
 function codexRouteLookupIds(requestedModel) {
   const ids = routeLookupIds(requestedModel);
   const bare = parseCodexAppModelSlug(requestedModel);
@@ -3255,6 +3752,27 @@ function findCodexProxyRoute(routes, requestedModel) {
   }
   return void 0;
 }
+function requestHeaderValue(headers, name) {
+  if (!headers) return void 0;
+  const key = Object.keys(headers).find((candidate) => candidate.toLowerCase() === name);
+  if (!key) return void 0;
+  const value = headers[key];
+  return Array.isArray(value) ? value[0] : value;
+}
+function isCodexSubagentRequest(body, headers) {
+  const metadata = body.client_metadata;
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    const record = metadata;
+    if (Object.prototype.hasOwnProperty.call(record, "x-openai-subagent")) return true;
+    if (Object.prototype.hasOwnProperty.call(record, "x_openai_subagent")) return true;
+  }
+  return requestHeaderValue(headers, "x-openai-subagent") !== void 0;
+}
+function resolveCodexSubagentRoute(routes, configuredModelId, body, headers) {
+  if (!isCodexSubagentRequest(body, headers)) return void 0;
+  if (!configuredModelId) return void 0;
+  return routes.find((route) => route.modelId === configuredModelId);
+}
 function resolveModel(routes, models, requestedModel) {
   const route = findCodexProxyRoute(routes, requestedModel);
   if (!route) return void 0;
@@ -3262,10 +3780,30 @@ function resolveModel(routes, models, requestedModel) {
   if (!languageModel) return void 0;
   return { route, languageModel };
 }
+async function prepareExternalCodexBody(body, context) {
+  const externalBody = isCodexSubagentRequest(body, context.headers) ? stripCodexCollaborationTools(body) : body;
+  if (!Array.isArray(externalBody.input)) return externalBody;
+  const resolvedInput = await resolveRoutedCollaborationInput(
+    externalBody.input,
+    {
+      relay: context.relay,
+      native: {
+        nativeBaseUrl: context.mixedNative?.nativeBaseUrl ?? "https://chatgpt.com/backend-api/codex",
+        nativeModelId: context.mixedNative?.nativePayloadRelayModel ?? "gpt-5.5",
+        headers: Object.fromEntries(Object.entries(context.headers).flatMap(([key, value]) => [
+          [key, Array.isArray(value) ? value[0] : value ?? ""]
+        ]))
+      }
+    }
+  );
+  return { ...externalBody, input: resolvedInput };
+}
 async function startCodexProxy(routes, options = {}) {
   const opts = typeof options === "boolean" ? { debug: options } : options;
   const debug = opts.debug ?? false;
   const requireAuth = opts.requireAuth ?? true;
+  const mixedNative = opts.mixedNative;
+  const nativePayloadRelay = mixedNative ? createNativePayloadRelay({}) : void 0;
   silenceSdkWarnings();
   const models = /* @__PURE__ */ new Map();
   for (const route of routes) {
@@ -3296,6 +3834,17 @@ async function startCodexProxy(routes, options = {}) {
     process.on("unhandledRejection", onRejection);
     const server = createServer(async (req, res) => {
       const url = req.url ?? "/";
+      const parsedUrl = new URL(url, "http://127.0.0.1");
+      const mixedPath = mixedNative ? parseMixedProxyPath(parsedUrl.pathname, mixedNative.capability) : null;
+      if (mixedNative && !mixedPath) {
+        sendJson(res, 404, { error: { message: "Not found", type: "invalid_request_error" } });
+        return;
+      }
+      if (mixedNative && mixedPath && mixedPath.suffix === "/health" && req.method === "GET") {
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+      const effectivePath = mixedPath?.suffix ?? url;
       if (debug) {
         log14(`-> ${req.method} ${url} content-type=${req.headers["content-type"] ?? "(none)"} content-encoding=${req.headers["content-encoding"] ?? "(none)"} content-length=${req.headers["content-length"] ?? "(none)"}`);
       }
@@ -3317,11 +3866,11 @@ async function startCodexProxy(routes, options = {}) {
           return;
         }
       }
-      if (req.method === "GET" && url === "/health") {
+      if (req.method === "GET" && effectivePath === "/health") {
         sendJson(res, 200, { ok: true });
         return;
       }
-      if (req.method === "GET" && url === "/v1/models") {
+      if (req.method === "GET" && effectivePath === "/v1/models") {
         const data = [];
         const seenIds = /* @__PURE__ */ new Set();
         const addModel = (id, providerId) => {
@@ -3341,14 +3890,21 @@ async function startCodexProxy(routes, options = {}) {
             addModel(`${route.providerId}__${route.modelId}`, route.providerId);
           }
         }
+        if (mixedNative) {
+          for (const nativeModelId of mixedNative.nativeModelIds) addModel(nativeModelId, "openai");
+        }
         sendJson(res, 200, {
           object: "list",
           data
         });
         return;
       }
-      if (req.method === "GET" && url.startsWith("/v1/models/")) {
-        const id = url.slice("/v1/models/".length);
+      if (req.method === "GET" && effectivePath.startsWith("/v1/models/")) {
+        const id = effectivePath.slice("/v1/models/".length);
+        if (mixedNative && mixedNative.nativeModelIds.has(id)) {
+          sendJson(res, 200, { id, object: "model", created: Math.floor(Date.now() / 1e3), owned_by: "openai" });
+          return;
+        }
         const route = findCodexProxyRoute(routes, id);
         if (!route) {
           sendJson(res, 404, { error: { message: `Model not found: ${id}`, type: "invalid_request_error" } });
@@ -3362,8 +3918,8 @@ async function startCodexProxy(routes, options = {}) {
         });
         return;
       }
-      if (req.method === "POST" && url === "/v1/responses") {
-        if (requireAuth) {
+      if (req.method === "POST" && effectivePath === "/v1/responses") {
+        if (requireAuth && !mixedPath) {
           const inboundKey = extractApiKey(req);
           if (!inboundKey || inboundKey !== PROXY_PLACEHOLDER_KEY) {
             sendJson(res, 401, { error: { message: "Unauthorized", type: "invalid_api_key" } });
@@ -3414,7 +3970,49 @@ async function startCodexProxy(routes, options = {}) {
           }
         }
         const modelId = String(body.model ?? "");
-        let resolved = resolveModel(routes, models, modelId);
+        const markedSubagent = Boolean(mixedNative && isCodexSubagentRequest(body, req.headers));
+        const subagentRoute = mixedNative && markedSubagent ? resolveCodexSubagentRoute(routes, mixedNative.subagentRouteModelId, body, req.headers) : void 0;
+        if (debug && markedSubagent) {
+          log14(`subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? "(none)"}`);
+        }
+        if (mixedNative && markedSubagent && !subagentRoute) {
+          sendJson(res, 503, {
+            error: {
+              message: "Codex marked this request as a Sub-agent, but no configured Codex Sub-agent route is available.",
+              type: "service_unavailable"
+            }
+          });
+          return;
+        }
+        if (mixedNative) {
+          if (!markedSubagent) {
+            const dispatch = classifyCodexDispatch(modelId, routes, mixedNative.nativeModelIds);
+            if (dispatch.kind === "unknown") {
+              sendJson(res, 404, { error: { message: `Unknown model: ${modelId}`, type: "invalid_request_error" } });
+              return;
+            }
+            if (dispatch.kind === "native") {
+              const controller = new AbortController();
+              req.once("aborted", () => controller.abort());
+              try {
+                const nativeResponse = await forwardNativeCodexHttp({
+                  body: rawBody,
+                  inboundHeaders: req.headers,
+                  nativeUrl: mixedNative.nativeBaseUrl ? `${mixedNative.nativeBaseUrl.replace(/\/$/, "")}/responses` : NATIVE_CODEX_RESPONSES_URL,
+                  signal: controller.signal,
+                  fetchImpl: mixedNative.nativeFetchImpl
+                });
+                const contentType = nativeResponse.headers.get("content-type");
+                res.writeHead(nativeResponse.status, contentType ? { "content-type": contentType } : void 0);
+                res.end(Buffer.from(await nativeResponse.arrayBuffer()));
+              } catch (err) {
+                if (!res.writableEnded) sendJson(res, 502, { error: { message: "Native Codex request failed", type: "upstream_error" } });
+              }
+              return;
+            }
+          }
+        }
+        let resolved = subagentRoute ? resolveModel(routes, models, subagentRoute.modelId) : resolveModel(routes, models, modelId);
         if (!resolved) {
           const fallbackRoute = routes[0];
           const fallbackLm = fallbackRoute ? models.get(fallbackRoute.modelId) : void 0;
@@ -3433,8 +4031,13 @@ async function startCodexProxy(routes, options = {}) {
         }
         const { route, languageModel } = resolved;
         try {
+          const routedBody = await prepareExternalCodexBody(body, {
+            relay: nativePayloadRelay,
+            mixedNative,
+            headers: req.headers
+          });
           let params = applyClaudeCodeOAuthIdentity(route, translateResponsesRequest(
-            body,
+            routedBody,
             route.npm,
             {
               providerId: route.providerId,
@@ -3549,7 +4152,7 @@ async function startCodexProxy(routes, options = {}) {
       sendJson(res, 404, { error: { message: "Not found", type: "invalid_request_error" } });
     });
     function wsAcceptKey(clientKey) {
-      return createHash("sha1").update(clientKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+      return createHash2("sha1").update(clientKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
     }
     function wsDecodeFrame(buf) {
       if (buf.length < 2) return null;
@@ -3564,9 +4167,12 @@ async function startCodexProxy(routes, options = {}) {
         offset = 4;
       } else if (payloadLen === 127) {
         if (buf.length < 10) return null;
-        payloadLen = Number(buf.readBigUInt64BE(2));
+        const declaredLength = buf.readBigUInt64BE(2);
+        if (declaredLength > BigInt(MAX_CODEX_REQUEST_BYTES)) return { text: "", complete: true, opcode: -1 };
+        payloadLen = Number(declaredLength);
         offset = 10;
       }
+      if (payloadLen > MAX_CODEX_REQUEST_BYTES) return { text: "", complete: true, opcode: -1 };
       const maskLen = masked ? 4 : 0;
       if (buf.length < offset + maskLen + payloadLen) return null;
       const mask = masked ? buf.slice(offset, offset + 4) : null;
@@ -3576,11 +4182,11 @@ async function startCodexProxy(routes, options = {}) {
         payload[i] = buf[offset + i] ^ (mask ? mask[i % 4] : 0);
       }
       const opcode = b0 & 15;
-      if (opcode !== 1) return null;
-      return { text: payload.toString("utf8"), complete: true };
+      if (![1, 8, 9, 10].includes(opcode)) return { text: "", complete: true, opcode };
+      return { text: payload.toString("utf8"), complete: true, opcode };
     }
-    function wsEncodeTextFrame(text4) {
-      const payload = Buffer.from(text4, "utf8");
+    function wsEncodeTextFrame(text5) {
+      const payload = Buffer.from(text5, "utf8");
       const len = payload.length;
       let header;
       if (len < 126) {
@@ -3598,13 +4204,33 @@ async function startCodexProxy(routes, options = {}) {
       }
       return Buffer.concat([header, payload]);
     }
-    function wsCloseFrame() {
-      return Buffer.from([136, 0]);
+    function wsCloseFrame(code = 1e3) {
+      const payload = Buffer.alloc(2);
+      payload.writeUInt16BE(code, 0);
+      return Buffer.concat([Buffer.from([136, 2]), payload]);
     }
     function wsPingFrame() {
       return Buffer.from([137, 0]);
     }
+    function wsPongFrame(payload = "") {
+      const bytes = Buffer.from(payload, "utf8");
+      if (bytes.length > 125) return Buffer.from([138, 0]);
+      return Buffer.concat([Buffer.from([138, bytes.length]), bytes]);
+    }
     server.on("upgrade", (req, socket, head) => {
+      if (mixedNative) {
+        const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+        const mixedPath = parseMixedProxyPath(pathname, mixedNative.capability);
+        if (!mixedPath || mixedPath.suffix !== "/v1/responses") {
+          socket.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+      } else if (req.url !== "/v1/responses") {
+        socket.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        socket.destroy();
+        return;
+      }
       if (requireAuth) {
         const inboundKey = extractApiKey(req);
         if (!inboundKey || inboundKey !== PROXY_PLACEHOLDER_KEY) {
@@ -3629,10 +4255,12 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
       );
       let frameBuf = Buffer.alloc(0);
       let handled = false;
+      let nativeActive = false;
+      let nativeUpstream;
       let currentRequestModel = "";
-      const closeSocket = () => {
+      const closeSocket = (code = 1e3) => {
         if (!socket.destroyed) {
-          socket.write(wsCloseFrame());
+          socket.write(wsCloseFrame(code));
           socket.end();
         }
       };
@@ -3658,10 +4286,28 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
       };
       const onData = (chunk) => {
         frameBuf = Buffer.concat([frameBuf, chunk]);
-        if (handled) return;
+        if (handled && !nativeActive) return;
         const frame = wsDecodeFrame(frameBuf);
         if (!frame) return;
         frameBuf = Buffer.alloc(0);
+        if (frame.opcode === 9) {
+          socket.write(wsPongFrame(frame.text));
+          return;
+        }
+        if (frame.opcode === 8) {
+          closeSocket();
+          return;
+        }
+        if (frame.opcode === -1) {
+          socket.write(wsCloseFrame(1009));
+          socket.end();
+          return;
+        }
+        if (frame.opcode !== 1) {
+          socket.write(wsCloseFrame(1003));
+          socket.end();
+          return;
+        }
         handled = true;
         void (async () => {
           let body;
@@ -3682,6 +4328,9 @@ data: ${JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_reques
             const tools = Array.isArray(body.tools) ? body.tools : [];
             const toolNames = tools.map((t) => t && typeof t === "object" && "name" in t ? t.name : "?").join(",");
             log14(`WS request: model=${String(body.model ?? "")} previous_response_id=${prevId ?? "(none)"} input_items=${inputItems} body_bytes=${frame.text.length} tools=[${toolNames || "none"}]`);
+            const reasoning = body.reasoning && typeof body.reasoning === "object" ? Object.keys(body.reasoning).join(",") : typeof body.reasoning;
+            const clientMetadata = body.client_metadata && typeof body.client_metadata === "object" ? Object.keys(body.client_metadata).join(",") : typeof body.client_metadata;
+            log14(`WS request shape: stream=${String(body.stream)} store=${String(body.store)} generate=${String(body.generate)} parallel_tool_calls=${String(body.parallel_tool_calls)} reasoning_keys=[${reasoning || "none"}] include=${Array.isArray(body.include) ? body.include.join(",") : String(body.include)} client_metadata_keys=[${clientMetadata || "none"}]`);
             appendCodexBodyDump({
               ts: (/* @__PURE__ */ new Date()).toISOString(),
               transport: "ws",
@@ -3694,7 +4343,145 @@ data: ${JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_reques
           }
           const modelId = String(body.model ?? "");
           currentRequestModel = modelId;
-          let resolved = resolveModel(routes, models, modelId);
+          const markedSubagent = Boolean(mixedNative && isCodexSubagentRequest(body, req.headers));
+          const subagentRoute = mixedNative && markedSubagent ? resolveCodexSubagentRoute(routes, mixedNative.subagentRouteModelId, body, req.headers) : void 0;
+          if (debug && markedSubagent) {
+            log14(`WS subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? "(none)"}`);
+          }
+          if (mixedNative && markedSubagent && !subagentRoute) {
+            sendWsEvent(`event: error
+data: ${JSON.stringify({ error: {
+              message: "Codex marked this request as a Sub-agent, but no configured Codex Sub-agent route is available.",
+              type: "service_unavailable"
+            } })}
+
+`);
+            closeSocket();
+            return;
+          }
+          if (mixedNative) {
+            if (!markedSubagent) {
+              const dispatch = classifyCodexDispatch(modelId, routes, mixedNative.nativeModelIds);
+              if (dispatch.kind === "unknown") {
+                sendWsEvent(`event: error
+data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "invalid_request_error" } })}
+
+`);
+                closeSocket();
+                return;
+              }
+              if (dispatch.kind === "native") {
+                if (nativeActive && nativeUpstream) {
+                  if (nativeUpstream.readyState === WebSocket.OPEN) {
+                    if (debug) log14(`WS native forwarding next turn: model=${modelId}`);
+                    nativeUpstream.send(JSON.stringify({ type: "response.create", ...body }));
+                  } else if (debug) {
+                    log14(`WS native cannot forward next turn: upstream_state=${nativeUpstream.readyState}`);
+                  }
+                  return;
+                }
+                const wsTarget = mixedNative.nativeBaseUrl ? `${mixedNative.nativeBaseUrl.replace(/^http:/, "ws:").replace(/^https:/, "wss:").replace(/\/$/, "")}/responses` : void 0;
+                const target = nativeResponsesWebSocketOptions({ headers: req.headers, wsUrl: wsTarget });
+                let upstream;
+                let nativeOpened = false;
+                let nativeCompleted = false;
+                let nativeFrameCount = 0;
+                let finished = false;
+                let connectTimer;
+                let firstFrameTimer;
+                const clearTimers = () => {
+                  if (connectTimer) clearTimeout(connectTimer);
+                  if (firstFrameTimer) clearTimeout(firstFrameTimer);
+                };
+                const sendNativeError = (message) => {
+                  if (socket.destroyed) return;
+                  socket.write(wsEncodeTextFrame(JSON.stringify({
+                    type: "error",
+                    error: { type: "upstream_error", message }
+                  })));
+                };
+                const closeBoth = (message, closeCode = 1011) => {
+                  if (finished) return;
+                  finished = true;
+                  nativeActive = false;
+                  if (nativeUpstream === upstream) nativeUpstream = void 0;
+                  clearTimers();
+                  if (debug && message) {
+                    log14(`WS native upstream failed: model=${modelId} opened=${nativeOpened} frames=${nativeFrameCount} message=${message}`);
+                  }
+                  if (message && !nativeCompleted) sendNativeError(message);
+                  try {
+                    upstream?.close();
+                  } catch {
+                  }
+                  closeSocket(closeCode);
+                };
+                try {
+                  if (debug) {
+                    log14(`WS native connecting: model=${modelId} url=${target.url} headers=[${Object.keys(target.headers).join(",")}]`);
+                  }
+                  upstream = new WebSocket(target.url, { headers: target.headers });
+                  nativeUpstream = upstream;
+                  nativeActive = true;
+                  connectTimer = setTimeout(() => closeBoth("Native Codex WebSocket connection timed out"), 15e3);
+                  upstream.once("open", () => {
+                    nativeOpened = true;
+                    if (connectTimer) clearTimeout(connectTimer);
+                    if (debug) log14(`WS native upstream open: model=${modelId}`);
+                    upstream?.send(JSON.stringify({ type: "response.create", ...body }));
+                    firstFrameTimer = setTimeout(() => closeBoth("Native Codex WebSocket response timed out"), 6e4);
+                  });
+                  upstream.once("unexpected-response", (_request, response) => {
+                    if (debug) log14(`WS native upstream HTTP rejection: model=${modelId} status=${response.statusCode}`);
+                    response.resume();
+                    closeBoth(`Native Codex WebSocket rejected (${response.statusCode})`);
+                  });
+                  upstream.on("message", (data) => {
+                    if (socket.destroyed) return;
+                    nativeFrameCount += 1;
+                    if (firstFrameTimer) clearTimeout(firstFrameTimer);
+                    const text5 = Array.isArray(data) ? Buffer.concat(data).toString("utf8") : data.toString("utf8");
+                    let eventType = "non-json";
+                    try {
+                      const parsed = JSON.parse(text5);
+                      if (typeof parsed.type === "string") eventType = parsed.type;
+                      if (eventType === "response.completed" || eventType === "response.failed" || eventType === "response.incomplete") {
+                        nativeCompleted = true;
+                      }
+                    } catch {
+                    }
+                    if (debug && (nativeFrameCount <= 3 || nativeCompleted || eventType === "error" || nativeFrameCount % 25 === 0)) {
+                      log14(`WS native frame#${nativeFrameCount}: model=${modelId} type=${eventType} bytes=${text5.length}`);
+                    }
+                    socket.write(wsEncodeTextFrame(text5));
+                  });
+                  upstream.once("error", (err) => closeBoth(`Native Codex WebSocket error: ${err.message}`));
+                  upstream.once("close", (code, reason) => {
+                    const detail = reason?.length ? ` reason=${reason.toString("utf8").slice(0, 200)}` : "";
+                    if (debug) log14(`WS native upstream close: model=${modelId} code=${code}${detail} frames=${nativeFrameCount}`);
+                    if (nativeUpstream === upstream) nativeUpstream = void 0;
+                    nativeActive = false;
+                    if (!finished) closeBoth(nativeCompleted ? void 0 : `Native Codex WebSocket closed before completion (${code})`);
+                  });
+                  socket.once("close", () => {
+                    if (debug) log14(`WS native downstream close: model=${modelId} frames=${nativeFrameCount} completed=${nativeCompleted}`);
+                    finished = true;
+                    nativeActive = false;
+                    if (nativeUpstream === upstream) nativeUpstream = void 0;
+                    clearTimers();
+                    try {
+                      upstream?.close();
+                    } catch {
+                    }
+                  });
+                } catch (err) {
+                  closeBoth(`Native Codex WebSocket setup failed: ${err instanceof Error ? err.message : String(err)}`);
+                }
+                return;
+              }
+            }
+          }
+          let resolved = subagentRoute ? resolveModel(routes, models, subagentRoute.modelId) : resolveModel(routes, models, modelId);
           if (!resolved) {
             const fb = routes[0];
             const fbLm = fb ? models.get(fb.modelId) : void 0;
@@ -3713,8 +4500,13 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
           }
           const { route, languageModel } = resolved;
           try {
+            const routedBody = await prepareExternalCodexBody(body, {
+              relay: nativePayloadRelay,
+              mixedNative,
+              headers: req.headers
+            });
             let params = applyClaudeCodeOAuthIdentity(route, translateResponsesRequest(
-              body,
+              routedBody,
               route.npm,
               {
                 providerId: route.providerId,
@@ -3798,81 +4590,10 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
 // src/codex/profile.ts
 import { join as join3 } from "path";
 
-// src/codex/routing.ts
-function codexCompatibleProviders(providers, agent = "codex") {
-  return providersForTarget(providers, agent);
-}
-function resolveBaseURL(model, provider) {
-  if (provider.id === "zen" || provider.id === "go") {
-    const isAnthropic = model.modelFormat === "anthropic";
-    const baseUrl = BACKENDS[provider.id].baseUrl;
-    return isAnthropic ? baseUrl : `${baseUrl}/v1`;
-  }
-  return model.apiBaseUrl ?? model.completionsUrl?.replace(/\/chat\/completions$/, "") ?? model.baseUrl;
-}
-function resolveCodexRoute(provider, model, apiKey) {
-  const upstreamModelId = model.upstreamModelId || model.id;
-  const inferredNpm = model.modelFormat === "anthropic" ? "@ai-sdk/anthropic" : "@ai-sdk/openai-compatible";
-  const isZenGo = provider.id === "zen" || provider.id === "go";
-  const base = {
-    npm: isZenGo ? inferredNpm : model.npm ?? inferredNpm,
-    baseURL: resolveBaseURL(model, provider),
-    upstreamModelId,
-    apiKey,
-    contextWindow: model.contextWindow,
-    modelId: model.id,
-    providerId: provider.id,
-    authType: provider.authType,
-    oauthAccountId: provider.oauthAccountId,
-    providerData: provider.providerData,
-    supportedParameters: model.supportedParameters,
-    reasoning: model.reasoning,
-    interleavedReasoningField: model.interleavedReasoningField,
-    headers: provider.headers,
-    refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
-  };
-  if (model.modelFormat === "cloud-code") {
-    return {
-      tier: "cloud-code",
-      npm: "@ai-sdk/anthropic",
-      baseURL: "",
-      upstreamModelId: model.upstreamModelId || model.id,
-      apiKey,
-      contextWindow: model.contextWindow,
-      modelId: model.id,
-      providerId: provider.id,
-      authType: provider.authType,
-      oauthAccountId: provider.oauthAccountId,
-      providerData: provider.providerData,
-      supportedParameters: model.supportedParameters,
-      reasoning: model.reasoning,
-      interleavedReasoningField: model.interleavedReasoningField,
-      headers: provider.headers,
-      refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
-    };
-  }
-  if (model.npm === "@ai-sdk/openai" && provider.authType !== "oauth" && model.modelFormat === "openai") {
-    return { tier: "direct", ...base };
-  }
-  return { tier: "proxy", ...base };
-}
-function routableModelsForProvider(provider, agent = "codex") {
-  return routableModelsForTarget(provider, agent);
-}
-function codexProviderEnvKey(providerId) {
-  const known = {
-    openai: "OPENAI_API_KEY",
-    xai: "XAI_API_KEY",
-    "xai-oauth": "XAI_API_KEY",
-    anthropic: "ANTHROPIC_API_KEY",
-    google: "GEMINI_API_KEY"
-  };
-  return known[providerId] ?? `${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
-}
-
 // src/codex/session.ts
 import {
   copyFileSync,
+  chmodSync,
   existsSync as existsSync3,
   mkdirSync,
   readdirSync,
@@ -3888,8 +4609,8 @@ import { basename, dirname, join as join2 } from "path";
 var CODEX_PROFILE_NAME = "relay-ai-launch";
 var STALE_SESSION_MS = 5 * 60 * 1e3;
 var MAX_BACKUPS = 5;
-function getCodexHome() {
-  return join2(homedir3(), ".codex");
+function getCodexHome(env = process.env) {
+  return env["CODEX_HOME"] || join2(homedir3(), ".codex");
 }
 function getCodexProfilePath() {
   return join2(getCodexHome(), `${CODEX_PROFILE_NAME}.config.toml`);
@@ -3907,7 +4628,7 @@ function getCatalogPath(providerId, env = process.env) {
   return join2(getRelayAiCodexDir(env), `models-${providerId}.json`);
 }
 function ownedOverlayPaths(env = process.env) {
-  const paths = [getCodexProfilePath(), getSessionLockPath(env)];
+  const paths = [getCodexProfilePath()];
   const codexDir = getRelayAiCodexDir(env);
   if (existsSync3(codexDir)) {
     for (const name of readdirSync(codexDir)) {
@@ -3916,13 +4637,26 @@ function ownedOverlayPaths(env = process.env) {
       }
     }
   }
+  const agentsDir = join2(getCodexHome(env), "agents");
+  if (existsSync3(agentsDir)) {
+    for (const name of readdirSync(agentsDir)) {
+      if (/^relay-model-[a-z0-9-]+\.toml$/i.test(name)) {
+        paths.push(join2(agentsDir, name));
+      }
+    }
+  }
+  paths.push(getSessionLockPath(env));
   return paths;
 }
 function atomicWriteFile(path3, content) {
   mkdirSync(dirname(path3), { recursive: true });
   const tmp = `${path3}.tmp.${process.pid}`;
-  writeFileSync(tmp, content, "utf8");
+  writeFileSync(tmp, content, { encoding: "utf8", mode: 384 });
   renameSync(tmp, path3);
+  try {
+    chmodSync(path3, 384);
+  } catch {
+  }
 }
 function rotateBackups(filePath, env = process.env) {
   if (!existsSync3(filePath)) return;
@@ -4055,6 +4789,23 @@ env_key = "RELAY_AI_CODEX_KEY"
 wire_api = "responses"
 `;
 }
+function buildCodexMixedProfileToml(spec) {
+  const multiAgentV2 = spec.multiAgentV2Enabled ? `${renderMultiAgentV2Feature()}
+` : "";
+  return `# Generated by relay-ai \u2014 do not edit
+${profileSandboxLine()}model = ${tomlString(spec.model)}
+model_provider = "openai"
+openai_base_url = ${tomlString(spec.baseUrl)}
+model_catalog_json = ${tomlString(spec.catalogPath)}
+
+${multiAgentV2}
+[model_providers.relay-ai]
+name = "Relay AI"
+base_url = ${tomlString(spec.baseUrl)}
+wire_api = "responses"
+env_key = "RELAY_AI_CODEX_KEY"
+`;
+}
 function getProfileOutputPath() {
   return getCodexProfilePath();
 }
@@ -4159,9 +4910,12 @@ function ensureCodexSandboxArgs(extraArgs) {
   if (codexArgsIncludeSandboxFlag(extraArgs)) return extraArgs;
   return ["-s", CODEX_LAUNCH_SANDBOX, ...extraArgs];
 }
-function buildCodexChildEnv(route, proxyPort) {
+function buildCodexChildEnv(route, proxyPort, options = {}) {
   const env = stripCodexInheritedEnv(process.env);
-  if (route.tier === "proxy" && proxyPort) {
+  if (options.mixedNative) {
+    env["RELAY_AI_CODEX_KEY"] = PROXY_PLACEHOLDER_KEY;
+    delete env[codexProviderEnvKey(route.providerId)];
+  } else if (route.tier === "proxy" && proxyPort) {
     env["RELAY_AI_CODEX_KEY"] = PROXY_PLACEHOLDER_KEY;
   } else {
     const envKey = codexProviderEnvKey(route.providerId);
@@ -4190,6 +4944,32 @@ function launchCodex(modelId, env, extraArgs) {
 // src/codex/prompts.ts
 import pc5 from "picocolors";
 import * as p6 from "@clack/prompts";
+function codexLaunchModeOptions() {
+  return [
+    {
+      value: "relay-only",
+      label: "Relay models only",
+      hint: "Keep native Codex models hidden for this launch"
+    },
+    {
+      value: "mixed",
+      label: "Relay + native Codex models",
+      hint: "Expose native Codex models alongside your Relay catalog"
+    }
+  ];
+}
+async function pickCodexLaunchMode() {
+  const choice = await p6.select({
+    message: "Load native Codex models alongside Relay models?",
+    options: codexLaunchModeOptions(),
+    initialValue: "relay-only"
+  });
+  if (p6.isCancel(choice)) {
+    p6.cancel("Cancelled.");
+    return null;
+  }
+  return choice;
+}
 async function pickCodexProvider(providers, prefs, hasFavorites = false, initialProviderId) {
   if (providers.length === 0 && !hasFavorites) return null;
   const options = providers.map((lp) => providerSelectOption(lp));
@@ -4542,6 +5322,136 @@ async function resolveCodexFavorites(activeProvider, selectedModel, compatible, 
     providersById: new Map(compatible.map((lp) => [lp.id, lp]))
   };
 }
+function assertConfiguredCodexSubagentsResolved(configured, resolved) {
+  const resolvedKeys = new Set(
+    resolved.subagents.map((entry) => `${entry.providerId}:${entry.model.id}`)
+  );
+  const missing = configured.filter((entry) => !resolvedKeys.has(`${entry.providerId}:${entry.modelId}`));
+  if (missing.length === 0) return;
+  throw new Error(
+    `Configured Codex Sub-agent model(s) are unavailable for this launch: ${missing.map((entry) => `${entry.providerId}:${entry.modelId}`).join(", ")}. Check the provider credential and refresh the provider model catalog. Mixed mode was not started.`
+  );
+}
+async function resolveCodexMixedModels(input) {
+  const ctx = {
+    agent: "codex",
+    localProviders: input.compatible,
+    findLocalModel: (providerId, modelId) => {
+      const provider = input.compatible.find((lp) => lp.id === providerId);
+      const model = provider?.models.find((m) => m.id === modelId);
+      return provider && model ? { provider, model } : void 0;
+    }
+  };
+  const selected = await resolveFavorite(
+    { providerId: input.activeProvider.id, modelId: input.selectedModel.id },
+    ctx
+  );
+  if (!selected) throw new Error("Selected Codex model is no longer available");
+  const visibleResult = await buildFavoritesList(selected, input.generalFavorites, ctx, 20, { trackCapacitySkipped: true });
+  const subagentResult = await buildFavoritesList(void 0, input.subagentFavorites, ctx, 20, { trackCapacitySkipped: true });
+  const all = [...visibleResult.resolved];
+  for (const entry of subagentResult.resolved) {
+    const key = `${entry.providerId}\0${entry.model.id}`;
+    if (!all.some((existing) => `${existing.providerId}\0${existing.model.id}` === key)) all.push(entry);
+  }
+  return {
+    selected,
+    visible: visibleResult.resolved,
+    subagents: subagentResult.resolved,
+    all,
+    providersById: new Map(input.compatible.map((provider) => [provider.id, provider])),
+    dropped: [...visibleResult.droppedFavorites, ...subagentResult.droppedFavorites]
+  };
+}
+
+// src/codex/native-catalog.ts
+import { execFile } from "child_process";
+import { promisify } from "util";
+var execFileAsync = promisify(execFile);
+function isCatalogModel(value) {
+  if (!value || typeof value !== "object") return false;
+  const model = value;
+  return typeof model.slug === "string" && model.slug.length > 0 && typeof model.visibility === "string" && typeof model.display_name === "string";
+}
+function validateNativeCodexCatalog(value) {
+  if (!value || typeof value !== "object" || !Array.isArray(value.models)) {
+    throw new Error("Invalid native Codex catalog: expected a models array");
+  }
+  const models = value.models;
+  if (models.length === 0) throw new Error("Invalid native Codex catalog: no models");
+  if (!models.every(isCatalogModel)) throw new Error("Invalid native Codex catalog: invalid model entry");
+  return { models };
+}
+async function captureNativeCodexCatalog(options) {
+  const run = options.run ?? (async (args) => {
+    const result = await execFileAsync(options.binaryPath, args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+    return result.stdout;
+  });
+  const stdout = await run(options.bundled ? ["debug", "models", "--bundled"] : ["debug", "models"]);
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error("Native Codex catalog was not valid JSON");
+  }
+  const catalog = validateNativeCodexCatalog(parsed);
+  return {
+    schemaVersion: 1,
+    target: options.target,
+    binaryPath: options.binaryPath,
+    codexVersion: options.codexVersion,
+    capturedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    source: options.bundled ? "bundled" : "refreshed",
+    models: catalog.models
+  };
+}
+
+// src/codex/mixed-catalog.ts
+function externalCatalogEntryFromTemplate(template, entry, priority, visibility, multiAgentVersion) {
+  const resolvedModel = entry.resolved.model;
+  const generated = catalogEntryFromModel(
+    resolvedModel,
+    entry.resolved.providerName,
+    priority,
+    false,
+    entry.slug
+  );
+  return {
+    ...template,
+    ...generated,
+    slug: entry.slug,
+    display_name: `${generated.display_name} \xB7 ${entry.resolved.providerName}`,
+    visibility,
+    multi_agent_version: multiAgentVersion
+  };
+}
+function composeMixedCodexCatalog(input) {
+  const template = input.nativeModels.find((model) => model.slug === "gpt-5.5") ?? input.nativeModels.find((model) => model.visibility === "list") ?? input.nativeModels[0];
+  if (!template) throw new Error("Native Codex catalog has no template model");
+  const hasSubagents = input.subagentRelay.length > 0;
+  const models = input.nativeModels.map((model) => {
+    if (!hasSubagents || model.visibility !== "list" || model.multi_agent_version === "disabled") return model;
+    return { ...model, multi_agent_version: input.externalMultiAgentVersion };
+  });
+  const added = new Set(models.map((model) => model.slug));
+  const visible = [...input.visibleRelay].sort((a, b) => (a.slug === input.selectedSlug ? -1 : 0) - (b.slug === input.selectedSlug ? -1 : 0));
+  const subagentSlugs = new Set(input.subagentRelay.map((entry) => entry.slug));
+  for (const entry of [...visible, ...input.subagentRelay]) {
+    if (added.has(entry.slug)) continue;
+    added.add(entry.slug);
+    models.push(externalCatalogEntryFromTemplate(
+      template,
+      entry,
+      entry.slug === input.selectedSlug ? 0 : models.length,
+      "list",
+      hasSubagents || subagentSlugs.has(entry.slug) ? input.externalMultiAgentVersion : "v1"
+    ));
+  }
+  return { models };
+}
+function mixedRelaySlug(providerId, modelId) {
+  return codexCliFavoritesSlug(providerId, modelId);
+}
 
 // src/cloud-code-backend.ts
 function needsCloudCodeBackend(model, authType) {
@@ -4604,6 +5514,93 @@ async function buildSingleModelCloudCodeRoute(model, apiKey, providerId, provide
 async function startCloudCodeCatalogBackend(routes, startingAliasId, trace) {
   const handle = await startProxyCatalog(routes, startingAliasId, trace ?? false);
   return { port: handle.port, token: handle.token, handle };
+}
+
+// src/codex/mixed-launch.ts
+async function prepareCodexMixedRelayRoutes(models, trace = false) {
+  const backendResolved = models.all.filter((entry) => {
+    const provider = models.providersById.get(entry.providerId);
+    return needsCloudCodeBackend(entry.model, provider?.authType);
+  });
+  const regularResolved = models.all.filter((entry) => !backendResolved.includes(entry));
+  let cloudCodeBackend = null;
+  let backendRoutes = [];
+  if (backendResolved.length > 0) {
+    const partitioned = await partitionAndStartCloudCodeBackend(
+      backendResolved.map((entry) => {
+        const provider = models.providersById.get(entry.providerId);
+        if (!provider) throw new Error(`Provider ${entry.providerId} is unavailable for mixed Codex mode`);
+        return {
+          providerId: entry.providerId,
+          model: entry.model,
+          apiKey: entry.apiKey,
+          oauthAccountId: provider.oauthAccountId,
+          providerData: provider.providerData ?? {}
+        };
+      }),
+      (proxyRoute, backend, original) => ({
+        modelId: codexCliFavoritesSlug(original.providerId, original.model.id),
+        npm: "@ai-sdk/anthropic",
+        apiKey: backend.token,
+        baseURL: `http://127.0.0.1:${backend.port}`,
+        upstreamModelId: proxyRoute.aliasId,
+        providerId: original.providerId,
+        authType: "oauth",
+        oauthAccountId: original.oauthAccountId,
+        providerData: original.providerData,
+        contextWindow: proxyRoute.contextWindow
+      }),
+      trace
+    );
+    cloudCodeBackend = partitioned.backend;
+    backendRoutes = partitioned.backendItems;
+  }
+  return {
+    routes: [...backendRoutes, ...buildCodexProxyRoutesFromResolved(regularResolved, models.providersById)],
+    cloudCodeBackend
+  };
+}
+function selectNativePayloadRelayModel(models) {
+  for (const preferred of ["gpt-5.4-mini", "gpt-5.4"]) {
+    if (models.some((model) => model.slug === preferred)) return preferred;
+  }
+  const fallback = models.find((model) => model.visibility === "list" && model.multi_agent_version !== "disabled");
+  if (!fallback) throw new Error("Mixed Codex mode requires one native model for collaboration payload relay");
+  return fallback.slug;
+}
+function buildCodexMixedLaunchPlan(input) {
+  const relayRoutes = input.relayRoutes ?? buildCodexProxyRoutesFromResolved(input.models.all, input.models.providersById);
+  const routeByKey = new Set(relayRoutes.map((route) => route.modelId));
+  const visibleRelay = input.models.visible.map((resolved) => ({ resolved, slug: mixedRelaySlug(resolved.providerId, resolved.model.id) })).filter((entry) => routeByKey.has(entry.slug));
+  const subagentRelay = input.models.subagents.map((resolved) => ({ resolved, slug: mixedRelaySlug(resolved.providerId, resolved.model.id) })).filter((entry) => routeByKey.has(entry.slug));
+  const selectedSlug = codexCliFavoritesSlug(input.models.selected.providerId, input.models.selected.model.id);
+  const hasSubagents = input.models.subagents.length > 0;
+  if (input.models.subagents.length > 1) {
+    throw new Error("Codex mixed mode supports exactly one Relay Sub-agent model");
+  }
+  if (hasSubagents && input.multiAgentV2Supported === false) {
+    throw new Error("Configured Codex Sub-agents require a Codex runtime with multi_agent_v2 support");
+  }
+  const multiAgent = input.nativeCatalog.models.some((model) => model.multi_agent_version === "v2") ? "v2" : "v1";
+  const multiAgentV2Enabled = hasSubagents && input.multiAgentV2Supported === true;
+  return {
+    selectedSlug,
+    nativeCatalog: input.nativeCatalog,
+    catalog: composeMixedCodexCatalog({
+      nativeModels: input.nativeCatalog.models,
+      visibleRelay,
+      subagentRelay,
+      selectedSlug,
+      externalMultiAgentVersion: multiAgent
+    }),
+    relayRoutes,
+    nativeModelIds: new Set(input.nativeCatalog.models.map((model) => model.slug)),
+    subagentModelCount: input.models.subagents.length,
+    subagentRouteModelId: subagentRelay[0]?.slug,
+    multiAgentV2Enabled,
+    nativePayloadRelayModel: selectNativePayloadRelayModel(input.nativeCatalog.models),
+    capability: createMixedProxyCapability()
+  };
 }
 
 // src/agent-io.ts
@@ -4791,6 +5788,8 @@ ${pc7.bold("Options:")}
   --provider   Boot provider id (skip wizard when paired with --model or non-interactive)
   --model      Boot model id (skip wizard when paired with --provider or non-interactive)
   --vertex     Use Claude models through Google Vertex AI
+  --with-native Load native Codex models beside Relay models for this launch
+  --relay-only Keep the current Relay-only launch behavior
   --restore    Remove interrupted-session overlay files
   --config     Preview/write launch configuration without starting Codex
   --help       Show this command help
@@ -4873,6 +5872,21 @@ async function writeFavoritesLaunchArtifacts(resolved, starting, proxyPort) {
     modelReasoningEffort: defaultReasoningEffortForFavorite(starting)
   }));
   return { profilePath, catalogPath };
+}
+async function writeMixedLaunchArtifacts(plan, proxyPort) {
+  const catalogPath = join5(getRelayAiCodexDir(), "models-mixed.json");
+  writeOverlayFile(catalogPath, serializeCatalog(plan.catalog));
+  const profilePath = getProfileOutputPath();
+  writeOverlayFile(profilePath, buildCodexMixedProfileToml({
+    model: plan.selectedSlug,
+    catalogPath,
+    baseUrl: `${mixedProxyBaseUrl(proxyPort, plan.capability)}/v1`,
+    multiAgentV2Enabled: plan.multiAgentV2Enabled
+  }));
+  return {
+    profilePath,
+    catalogPath
+  };
 }
 function printCodexCleanupReminder(hadProxy) {
   if (isAgentStdoutMode()) return;
@@ -5098,7 +6112,13 @@ Error: ${launchPlan.error}
     return 0;
   }
   const favorites = prefs.favoriteModels ?? [];
-  const favoritesActive = favorites.length > 0 && !launchPlan.skip;
+  let mixedMode = launch.codexLaunchMode === "mixed";
+  if (!configOnly && isTty && !launchPlan.skip && launch.codexLaunchMode === void 0) {
+    const selectedLaunchMode = await pickCodexLaunchMode();
+    if (!selectedLaunchMode) return 0;
+    mixedMode = selectedLaunchMode === "mixed";
+  }
+  const favoritesActive = favorites.length > 0 && !launchPlan.skip && !mixedMode;
   if (favoritesActive && !configOnly) {
     p8.log.info(
       `Favorites mode active \u2014 Codex picker will show ${favorites.length + 1} models (1 starting + ${favorites.length} favorites).`
@@ -5171,6 +6191,42 @@ Error: ${launchPlan.error}
     return 1;
   }
   const route = resolveCodexRoute(activeProvider, selectedModel, apiKey);
+  let cloudCodeBackend = null;
+  let cloudCodeBackendFav = null;
+  let mixedPlan = null;
+  if (mixedMode) {
+    try {
+      const version = execFileSync2(codexPath, ["--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+      const mixedModels = await resolveCodexMixedModels({
+        activeProvider,
+        selectedModel,
+        compatible,
+        generalFavorites: favorites,
+        subagentFavorites: prefs.codexSubagentModels ?? []
+      });
+      assertConfiguredCodexSubagentsResolved(prefs.codexSubagentModels ?? [], mixedModels);
+      const multiAgentV2Supported = mixedModels.subagents.length === 0 || supportsMultiAgentV2(codexPath);
+      if (!multiAgentV2Supported) {
+        throw new Error("This Codex CLI does not support multi_agent_v2, which is required for the configured Codex SubAgent");
+      }
+      const nativeCatalog = await captureNativeCodexCatalog({ target: "cli", binaryPath: codexPath, codexVersion: version });
+      const preparedRoutes = await prepareCodexMixedRelayRoutes(mixedModels, trace);
+      cloudCodeBackend = preparedRoutes.cloudCodeBackend;
+      mixedPlan = buildCodexMixedLaunchPlan({
+        nativeCatalog,
+        models: mixedModels,
+        relayRoutes: preparedRoutes.routes,
+        multiAgentV2Supported
+      });
+    } catch (err) {
+      cloudCodeBackend?.handle.close();
+      cloudCodeBackend = null;
+      console.error(pc7.red(`
+Mixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
+      console.error("Use relay-ai codex --relay-only to continue with Relay models.");
+      return 1;
+    }
+  }
   if (!configOnly && !(launchPlan.skip && launchPlan.target)) {
     const modelLabel = formatCodexModelLabel(selectedModel);
     const confirmed = await confirmCodexLaunch(
@@ -5182,11 +6238,21 @@ Error: ${launchPlan.error}
     if (!confirmed) return 0;
   }
   let proxyHandle = null;
-  let cloudCodeBackend = null;
-  let cloudCodeBackendFav = null;
   try {
     let proxyPort;
-    if (favoritesActive && resolvedFavorites.length > 0) {
+    if (mixedPlan) {
+      proxyHandle = await startCodexProxy(mixedPlan.relayRoutes, {
+        requireAuth: false,
+        debug: trace,
+        mixedNative: {
+          nativeModelIds: mixedPlan.nativeModelIds,
+          subagentRouteModelId: mixedPlan.subagentRouteModelId,
+          capability: mixedPlan.capability,
+          nativePayloadRelayModel: mixedPlan.nativePayloadRelayModel
+        }
+      });
+      proxyPort = proxyHandle.port;
+    } else if (favoritesActive && resolvedFavorites.length > 0) {
       const needsBackend = (r) => {
         const m = r.model;
         const prov = providersById.get(r.providerId);
@@ -5302,7 +6368,7 @@ Error: ${launchPlan.error}
     const startingFavorite = resolvedFavorites.find(
       (r) => r.providerId === activeProvider.id && r.model.id === selectedModel.id
     ) ?? resolvedFavorites[0];
-    const { profilePath, catalogPath } = favoritesActive && resolvedFavorites.length > 0 && proxyPort && startingFavorite ? await writeFavoritesLaunchArtifacts(resolvedFavorites, startingFavorite, proxyPort) : await writeLaunchArtifacts(route, selectedModel, activeProvider.name, proxyPort);
+    const { profilePath, catalogPath } = mixedPlan && proxyPort ? await writeMixedLaunchArtifacts(mixedPlan, proxyPort) : favoritesActive && resolvedFavorites.length > 0 && proxyPort && startingFavorite ? await writeFavoritesLaunchArtifacts(resolvedFavorites, startingFavorite, proxyPort) : await writeLaunchArtifacts(route, selectedModel, activeProvider.name, proxyPort);
     writeSessionLock({
       pid: process.pid,
       startedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -5316,7 +6382,11 @@ Error: ${launchPlan.error}
       console.log("");
       console.log(pc7.bold(pc7.cyan("  CONFIG PREVIEW \u2014 relay-ai codex")));
       console.log("");
-      if (favoritesActive && resolvedFavorites.length > 0) {
+      if (mixedPlan) {
+        console.log(`  ${pc7.bold("Mode:")}     Native + Relay mixed catalog`);
+        console.log(`  ${pc7.bold("Native:")}   ${mixedPlan.nativeModelIds.size} native Codex models`);
+        console.log(`  ${pc7.bold("Relay:")}    ${mixedPlan.relayRoutes.length} Relay routes (${mixedPlan.subagentModelCount} Codex SubAgent model)`);
+      } else if (favoritesActive && resolvedFavorites.length > 0) {
         console.log(`  ${pc7.bold("Mode:")}     Favorites Catalog (${resolvedFavorites.length} model${resolvedFavorites.length !== 1 ? "s" : ""})`);
         console.log("");
         console.log(`  ${pc7.bold("Models:")}`);
@@ -5347,7 +6417,7 @@ Error: ${launchPlan.error}
       }
     }
     const favoritesLaunch = favoritesActive && resolvedFavorites.length > 0;
-    const launchModelId = favoritesLaunch ? codexCliFavoritesSlug(activeProvider.id, selectedModel.id) : selectedModel.id;
+    const launchModelId = favoritesLaunch ? codexCliFavoritesSlug(activeProvider.id, selectedModel.id) : mixedPlan?.selectedSlug ?? selectedModel.id;
     if (!agentStdout) {
       logActiveModel(modelLabel, launchModelId);
       printCodexCliCleanupPanel("relay-ai codex --restore");
@@ -5363,9 +6433,10 @@ Error: ${launchPlan.error}
     };
     const childEnv = buildCodexChildEnv(
       favoritesLaunch || route.tier === "cloud-code" ? dummyRoute : route,
-      proxyPort
+      proxyPort,
+      { mixedNative: !!mixedPlan }
     );
-    const hadProxy = (route.tier === "proxy" || route.tier === "cloud-code" || favoritesLaunch) && !!proxyPort;
+    const hadProxy = (!!mixedPlan || route.tier === "proxy" || route.tier === "cloud-code" || favoritesLaunch) && !!proxyPort;
     const exitCode = await launchCodex(launchModelId, childEnv, passthroughArgs);
     if (trace) printTraceLog(debugLogPath);
     printCodexCleanupReminder(hadProxy);
@@ -5390,15 +6461,15 @@ import * as p10 from "@clack/prompts";
 import { spawn as spawn3 } from "child_process";
 import { existsSync as existsSync5, mkdirSync as mkdirSync2, mkdtempSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "fs";
 import { homedir as homedir5, tmpdir } from "os";
-import { join as join5 } from "path";
+import { join as join6 } from "path";
 var isWindows3 = process.platform === "win32";
 var GEMINI_API_KEY_AUTH_TYPE = "gemini-api-key";
 var GEMINI_FALLBACK_PATHS = isWindows3 ? [
-  join5(process.env["APPDATA"] ?? homedir5(), "npm", "gemini.cmd"),
-  join5(process.env["APPDATA"] ?? homedir5(), "npm", "gemini")
+  join6(process.env["APPDATA"] ?? homedir5(), "npm", "gemini.cmd"),
+  join6(process.env["APPDATA"] ?? homedir5(), "npm", "gemini")
 ] : [
-  join5(homedir5(), ".local", "bin", "gemini"),
-  join5(homedir5(), ".npm", "bin", "gemini"),
+  join6(homedir5(), ".local", "bin", "gemini"),
+  join6(homedir5(), ".npm", "bin", "gemini"),
   "/usr/local/bin/gemini",
   "/opt/homebrew/bin/gemini"
 ];
@@ -5419,7 +6490,7 @@ function buildGeminiChildEnv(proxyPort, proxyToken) {
   return env;
 }
 function createGeminiCliHomeOverlay() {
-  const cliHome = mkdtempSync(join5(tmpdir(), "relay-ai-gemini-"));
+  const cliHome = mkdtempSync(join6(tmpdir(), "relay-ai-gemini-"));
   const settings = {
     security: {
       auth: {
@@ -5427,9 +6498,9 @@ function createGeminiCliHomeOverlay() {
       }
     }
   };
-  const geminiDir = join5(cliHome, ".gemini");
+  const geminiDir = join6(cliHome, ".gemini");
   mkdirSync2(geminiDir);
-  writeFileSync2(join5(geminiDir, "settings.json"), `${JSON.stringify(settings, null, 2)}
+  writeFileSync2(join6(geminiDir, "settings.json"), `${JSON.stringify(settings, null, 2)}
 `, {
     encoding: "utf8",
     mode: 384
@@ -5646,8 +6717,8 @@ function mergeConsecutiveMessages2(messages) {
   }
   return merged;
 }
-function stripGeminiIdentity(text4) {
-  return text4.replace(/You are Gemini CLI[\s\S]*?(?=\n\n|$)/gi, "").replace(/I'm Gemini CLI[\s\S]*?(?=\n\n|$)/gi, "").replace(/Gemini CLI/gi, "AI CLI");
+function stripGeminiIdentity(text5) {
+  return text5.replace(/You are Gemini CLI[\s\S]*?(?=\n\n|$)/gi, "").replace(/I'm Gemini CLI[\s\S]*?(?=\n\n|$)/gi, "").replace(/Gemini CLI/gi, "AI CLI");
 }
 function translateGeminiRequest(body, options = {}) {
   let system;
@@ -5665,16 +6736,16 @@ function translateGeminiRequest(body, options = {}) {
     const turnParts = turn.parts || [];
     for (const p15 of turnParts) {
       if (p15.text !== void 0) {
-        const text4 = stripGeminiIdentity(p15.text);
-        if (text4.includes("<thinking>")) {
-          const tokens = text4.split(/<thinking>([\s\S]*?)<\/thinking>/);
+        const text5 = stripGeminiIdentity(p15.text);
+        if (text5.includes("<thinking>")) {
+          const tokens = text5.split(/<thinking>([\s\S]*?)<\/thinking>/);
           for (let i = 0; i < tokens.length; i++) {
             const token = tokens[i].trim();
             if (!token) continue;
             parts.push({ type: i % 2 === 1 ? "reasoning" : "text", text: token });
           }
         } else {
-          parts.push({ type: "text", text: text4 });
+          parts.push({ type: "text", text: text5 });
         }
       } else if (p15.inlineData) {
         parts.push({
@@ -5859,14 +6930,14 @@ ${rawBody}`);
             const current = sessionRouteOverride ?? (lookupGeminiRoute(routes, requestedModel) ?? defaultRoute);
             const availableList = routes.map((r) => `  - ${r.aliasId} (${r.displayName})`).join("\n");
             const exampleId = routes.length > 1 ? routes[1].aliasId : routes[0]?.aliasId ?? "deepseek-v4";
-            const text4 = `Current model: ${current.displayName} (${current.aliasId})
+            const text5 = `Current model: ${current.displayName} (${current.aliasId})
 
 Available models:
 ${availableList}
 
 \u{1F4A1} To switch models, type: .model <id>
 Example: .model ${exampleId}`;
-            sendMockGeminiResponse(res, text4, isStream, current.aliasId);
+            sendMockGeminiResponse(res, text5, isStream, current.aliasId);
             return;
           }
           const targetRoute = lookupGeminiRoute(routes, modelCommand);
@@ -5929,33 +7000,33 @@ ${JSON.stringify(params, null, 2)}`);
 `);
             }
             if (p15.type === "reasoning") {
-              let text4 = p15.textDelta ?? p15.text ?? "";
+              let text5 = p15.textDelta ?? p15.text ?? "";
               if (!isThinking) {
                 isThinking = true;
-                text4 = `<thinking>
-` + text4;
+                text5 = `<thinking>
+` + text5;
               }
               const chunk = {
-                candidates: [{ content: { role: "model", parts: [{ text: text4 }] } }],
+                candidates: [{ content: { role: "model", parts: [{ text: text5 }] } }],
                 modelVersion: route.aliasId
               };
               res.write(`data: ${JSON.stringify(chunk)}
 
 `);
             } else if (p15.type === "text-delta") {
-              let text4 = p15.textDelta ?? p15.text ?? "";
+              let text5 = p15.textDelta ?? p15.text ?? "";
               if (isThinking) {
                 isThinking = false;
-                text4 = `
+                text5 = `
 </thinking>
 
-` + text4;
+` + text5;
               }
               const chunk = {
                 candidates: [{
                   content: {
                     role: "model",
-                    parts: [{ text: text4 }]
+                    parts: [{ text: text5 }]
                   }
                 }],
                 modelVersion: route.aliasId
@@ -6138,28 +7209,28 @@ function parseModelCommand(turn) {
   if (!turn || turn.role !== "user") return null;
   const parts = turn.parts || [];
   if (parts.length !== 1) return null;
-  const text4 = parts[0]?.text;
-  if (typeof text4 !== "string") return null;
-  const trimmed = text4.trim();
+  const text5 = parts[0]?.text;
+  if (typeof text5 !== "string") return null;
+  const trimmed = text5.trim();
   if (!trimmed.startsWith(".model")) return null;
   if (trimmed === ".model") return "";
   if (trimmed.charAt(6) !== " ") return null;
   return trimmed.slice(7).trim();
 }
-function sendMockGeminiResponse(res, text4, isStream, modelVersion) {
+function sendMockGeminiResponse(res, text5, isStream, modelVersion) {
   if (isStream) {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       "Connection": "keep-alive"
     });
-    writeGeminiStreamText(res, text4, modelVersion);
+    writeGeminiStreamText(res, text5, modelVersion);
     res.end();
   } else {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
       candidates: [{
-        content: { role: "model", parts: [{ text: text4 }] },
+        content: { role: "model", parts: [{ text: text5 }] },
         finishReason: "STOP"
       }],
       usageMetadata: { promptTokenCount: 0, candidatesTokenCount: 0 },
@@ -6167,10 +7238,10 @@ function sendMockGeminiResponse(res, text4, isStream, modelVersion) {
     }));
   }
 }
-function writeGeminiStreamText(res, text4, modelVersion) {
+function writeGeminiStreamText(res, text5, modelVersion) {
   const chunk = {
     candidates: [{
-      content: { role: "model", parts: [{ text: text4 }] },
+      content: { role: "model", parts: [{ text: text5 }] },
       finishReason: "STOP"
     }],
     usageMetadata: { promptTokenCount: 0, candidatesTokenCount: 0 },
@@ -7987,11 +9058,11 @@ async function handleCloudCodeForwardRequest(res, route, parsed, lowerUrl, log14
   });
   res.end(body);
 }
-function emitThinkingDelta(res, route, responseId, text4, startSse) {
-  if (!text4) return;
+function emitThinkingDelta(res, route, responseId, text5, startSse) {
+  if (!text5) return;
   startSse();
   const chunk = formatCloudCodeChunk({
-    thought: text4,
+    thought: text5,
     modelVersion: route.catalogId,
     responseId
   });
@@ -7999,9 +9070,9 @@ function emitThinkingDelta(res, route, responseId, text4, startSse) {
 
 `);
 }
-function trailingPartial(text4, tag) {
-  for (let len = Math.min(tag.length - 1, text4.length); len > 0; len--) {
-    if (text4.endsWith(tag.slice(0, len))) return len;
+function trailingPartial(text5, tag) {
+  for (let len = Math.min(tag.length - 1, text5.length); len > 0; len--) {
+    if (text5.endsWith(tag.slice(0, len))) return len;
   }
   return 0;
 }
@@ -8013,13 +9084,13 @@ function createThinkFilter() {
     let src = partial + chunk;
     partial = "";
     let thought = "";
-    let text4 = "";
+    let text5 = "";
     while (src.length > 0) {
       if (state === "scanning") {
         const idx = src.indexOf("<think>");
         if (idx === -1) {
           const len = trailingPartial(src, "<think>");
-          text4 += src.slice(0, src.length - len);
+          text5 += src.slice(0, src.length - len);
           if (len > 0) {
             partial = src.slice(src.length - len);
           } else {
@@ -8027,7 +9098,7 @@ function createThinkFilter() {
           }
           break;
         }
-        text4 += src.slice(0, idx);
+        text5 += src.slice(0, idx);
         src = src.slice(idx + 7);
         state = "inside";
       } else {
@@ -8044,7 +9115,7 @@ function createThinkFilter() {
         state = "passthrough";
       }
     }
-    return { thought, text: text4 };
+    return { thought, text: text5 };
   };
 }
 function emitStreamError(res, route, responseId, message, startSse) {
@@ -8106,8 +9177,8 @@ function respondUnsupportedMedia(res, route, streaming) {
     metadata: {}
   });
 }
-function parsePseudoToolCall(text4, knownToolNames) {
-  const trimmed = text4.trim();
+function parsePseudoToolCall(text5, knownToolNames) {
+  const trimmed = text5.trim();
   if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
   try {
     const obj = JSON.parse(trimmed);
@@ -8196,18 +9267,18 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
       continue;
     }
     if (p15.type === "text-delta") {
-      const { thought, text: text4 } = thinkFilter(reasoningDeltaText(p15));
+      const { thought, text: text5 } = thinkFilter(reasoningDeltaText(p15));
       if (thought) {
         responseReasoning += thought;
         emitThinkingDelta(res, route, responseId, thought, startSse);
       }
-      if (text4) {
-        log14(`[gateway] text-delta: ${JSON.stringify(text4.slice(0, 500))}`);
-        if (!bufferingJsonText && (textBuffer + text4).trimStart().startsWith("{")) {
+      if (text5) {
+        log14(`[gateway] text-delta: ${JSON.stringify(text5.slice(0, 500))}`);
+        if (!bufferingJsonText && (textBuffer + text5).trimStart().startsWith("{")) {
           bufferingJsonText = true;
         }
         if (bufferingJsonText) {
-          textBuffer += text4;
+          textBuffer += text5;
           const pseudoTool = textBuffer.trimEnd().endsWith("}") ? parsePseudoToolCall(textBuffer, knownToolNames) : null;
           if (pseudoTool) {
             log14(`[gateway] parsed pseudo tool-call from text: ${pseudoTool.name}`);
@@ -8216,7 +9287,7 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
         } else {
           startSse();
           const chunk = formatCloudCodeChunk({
-            text: text4,
+            text: text5,
             modelVersion: route.catalogId,
             responseId
           });
@@ -8406,19 +9477,19 @@ async function resolveAntigravityLaunchRoutes(opts) {
 }
 
 // src/antigravity/launch-cli.ts
-import { execFileSync as execFileSync2, execSync as execSync3 } from "child_process";
+import { execFileSync as execFileSync3, execSync as execSync3 } from "child_process";
 import spawn4 from "cross-spawn";
 import { existsSync as existsSync6 } from "fs";
 import { homedir as homedir6 } from "os";
-import { join as join6 } from "path";
+import { join as join7 } from "path";
 var isWindows4 = process.platform === "win32";
 var FALLBACK_PATHS = isWindows4 ? [
-  join6(process.env["APPDATA"] ?? homedir6(), "npm", "agy.cmd"),
-  join6(process.env["APPDATA"] ?? homedir6(), "npm", "agy"),
-  join6(homedir6(), "AppData", "Roaming", "npm", "agy.cmd")
+  join7(process.env["APPDATA"] ?? homedir6(), "npm", "agy.cmd"),
+  join7(process.env["APPDATA"] ?? homedir6(), "npm", "agy"),
+  join7(homedir6(), "AppData", "Roaming", "npm", "agy.cmd")
 ] : [
-  join6(homedir6(), ".local", "bin", "agy"),
-  join6(homedir6(), ".npm", "bin", "agy"),
+  join7(homedir6(), ".local", "bin", "agy"),
+  join7(homedir6(), ".npm", "bin", "agy"),
   "/usr/local/bin/agy",
   "/opt/homebrew/bin/agy"
 ];
@@ -8444,7 +9515,7 @@ function readAntigravityCliVersion(binaryPath = findAntigravityCliBinary() ?? vo
     return { version: null, error: 'Antigravity CLI binary "agy" not found' };
   }
   try {
-    const raw = execFileSync2(binaryPath, ["--version"], {
+    const raw = execFileSync3(binaryPath, ["--version"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"]
     }).trim();
@@ -8493,10 +9564,10 @@ function launchAntigravityCli(env, extraArgs) {
 }
 
 // src/antigravity/launch-ide.ts
-import { execFileSync as execFileSync3, execSync as execSync4, spawn as spawn5 } from "child_process";
+import { execFileSync as execFileSync4, execSync as execSync4, spawn as spawn5 } from "child_process";
 import { existsSync as existsSync7 } from "fs";
 import { homedir as homedir7 } from "os";
-import { join as join7 } from "path";
+import { join as join8 } from "path";
 
 // src/antigravity/ide-profile.ts
 import fs from "fs";
@@ -8530,8 +9601,8 @@ function prepareIdeProfile(profileDir, gatewayUrl) {
 }
 
 // src/antigravity/launch-ide.ts
-var LINUX_APP_PROFILE_DIR = join7(homedir7(), ".relay-ai", "antigravity", "app-profile");
-var LINUX_IDE_PROFILE_DIR = join7(homedir7(), ".relay-ai", "antigravity", "profile");
+var LINUX_APP_PROFILE_DIR = join8(homedir7(), ".relay-ai", "antigravity", "app-profile");
+var LINUX_IDE_PROFILE_DIR = join8(homedir7(), ".relay-ai", "antigravity", "profile");
 function sleep(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
@@ -8539,7 +9610,7 @@ function linuxAntigravityBinary() {
   const candidates = [
     "/usr/share/antigravity/antigravity",
     "/opt/antigravity/antigravity",
-    join7(homedir7(), ".local", "share", "antigravity", "antigravity")
+    join8(homedir7(), ".local", "share", "antigravity", "antigravity")
   ];
   for (const candidate of candidates) {
     if (existsSync7(candidate)) return candidate;
@@ -8597,7 +9668,7 @@ function defaultProcessList() {
   const psArgs = process.platform === "linux" ? ["-eo", "pid=,args="] : ["-axo", "pid=,command="];
   if (process.platform !== "darwin" && process.platform !== "linux") return "";
   try {
-    return execFileSync3("ps", psArgs, {
+    return execFileSync4("ps", psArgs, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       maxBuffer: 1024 * 1024 * 4
@@ -8661,11 +9732,11 @@ function quitAntigravityIdeGracefully() {
   }
   if (process.platform !== "darwin") return;
   try {
-    execFileSync3("osascript", ["-e", 'tell application "Antigravity IDE" to quit'], {
+    execFileSync4("osascript", ["-e", 'tell application "Antigravity IDE" to quit'], {
       stdio: ["ignore", "pipe", "pipe"]
     });
   } catch {
-    execFileSync3("osascript", ["-e", 'tell application id "com.google.antigravity-ide" to quit'], {
+    execFileSync4("osascript", ["-e", 'tell application id "com.google.antigravity-ide" to quit'], {
       stdio: ["ignore", "pipe", "pipe"]
     });
   }
@@ -8681,11 +9752,11 @@ function quitAntigravityAppGracefully() {
   }
   if (process.platform !== "darwin") return;
   try {
-    execFileSync3("osascript", ["-e", 'tell application "Antigravity" to quit'], {
+    execFileSync4("osascript", ["-e", 'tell application "Antigravity" to quit'], {
       stdio: ["ignore", "pipe", "pipe"]
     });
   } catch {
-    execFileSync3("osascript", ["-e", 'tell application id "com.google.antigravity" to quit'], {
+    execFileSync4("osascript", ["-e", 'tell application id "com.google.antigravity" to quit'], {
       stdio: ["ignore", "pipe", "pipe"]
     });
   }
@@ -8694,15 +9765,15 @@ function findAntigravityAppBinary() {
   const override = getAppPathOverride("antigravity");
   if (override) return existsSync7(override) ? override : null;
   if (process.platform === "win32") {
-    const localAppData = process.env["LOCALAPPDATA"] ?? join7(homedir7(), "AppData", "Local");
-    const winPath = join7(localAppData, "Programs", "Antigravity", "Antigravity.exe");
+    const localAppData = process.env["LOCALAPPDATA"] ?? join8(homedir7(), "AppData", "Local");
+    const winPath = join8(localAppData, "Programs", "Antigravity", "Antigravity.exe");
     return existsSync7(winPath) ? winPath : null;
   }
   if (process.platform === "linux") return linuxAntigravityBinary();
   if (process.platform !== "darwin") return null;
   const defaultPath = "/Applications/Antigravity.app/Contents/MacOS/Antigravity";
   if (existsSync7(defaultPath)) return defaultPath;
-  const homePath = join7(homedir7(), "Applications", "Antigravity.app", "Contents", "MacOS", "Antigravity");
+  const homePath = join8(homedir7(), "Applications", "Antigravity.app", "Contents", "MacOS", "Antigravity");
   if (existsSync7(homePath)) return homePath;
   return null;
 }
@@ -8710,15 +9781,15 @@ function findAntigravityIdeBinary() {
   const override = getAppPathOverride("antigravity-ide");
   if (override) return existsSync7(override) ? override : null;
   if (process.platform === "win32") {
-    const localAppData = process.env["LOCALAPPDATA"] ?? join7(homedir7(), "AppData", "Local");
-    const winPath = join7(localAppData, "Programs", "Antigravity IDE", "Antigravity IDE.exe");
+    const localAppData = process.env["LOCALAPPDATA"] ?? join8(homedir7(), "AppData", "Local");
+    const winPath = join8(localAppData, "Programs", "Antigravity IDE", "Antigravity IDE.exe");
     return existsSync7(winPath) ? winPath : null;
   }
   if (process.platform === "linux") return linuxAntigravityBinary();
   if (process.platform !== "darwin") return null;
   const defaultPath = "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide";
   if (existsSync7(defaultPath)) return defaultPath;
-  const homePath = join7(homedir7(), "Applications", "Antigravity IDE.app", "Contents", "Resources", "app", "bin", "antigravity-ide");
+  const homePath = join8(homedir7(), "Applications", "Antigravity IDE.app", "Contents", "Resources", "app", "bin", "antigravity-ide");
   if (existsSync7(homePath)) return homePath;
   return null;
 }
@@ -8779,7 +9850,7 @@ function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs) {
       return;
     }
     prepareIdeProfile(profileDir, gatewayUrl);
-    const relayExtensionsDir = join7(homedir7(), ".relay-ai", "antigravity", "extensions");
+    const relayExtensionsDir = join8(homedir7(), ".relay-ai", "antigravity", "extensions");
     const args = [
       `--user-data-dir=${profileDir}`,
       `--extensions-dir=${relayExtensionsDir}`,
@@ -8809,7 +9880,7 @@ function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs) {
 
 // src/antigravity.ts
 import { homedir as homedir8 } from "os";
-import { join as join8 } from "path";
+import { join as join9 } from "path";
 var SHUTDOWN_DRAIN_MS = 500;
 var AGY_FAVORITES_PROVIDER_ID = "__relay_agy_favorites__";
 var AGY_FAVORITES_PROVIDER_LABEL = "\u2605 Antigravity CLI Favorites";
@@ -9103,7 +10174,7 @@ async function runAntigravityAppCommand(childArgs, trace = false, boot) {
     trace,
     boot,
     async (env, _routes, gatewayHandle) => {
-      const profileDir = join8(homedir8(), ".relay-ai", "antigravity", "app-profile");
+      const profileDir = join9(homedir8(), ".relay-ai", "antigravity", "app-profile");
       if (isAntigravityAppRunning(profileDir)) {
         const restart = await p11.confirm({
           message: "Restart Antigravity to apply this Relay gateway?",
@@ -9151,7 +10222,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
     trace,
     boot,
     async (env, _routes, gatewayHandle) => {
-      const profileDir = join8(homedir8(), ".relay-ai", "antigravity", "profile");
+      const profileDir = join9(homedir8(), ".relay-ai", "antigravity", "profile");
       if (isAntigravityIdeRunning(profileDir)) {
         const restart = await p11.confirm({
           message: "Restart Antigravity IDE to apply this Relay gateway?",
@@ -9196,6 +10267,8 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
 // src/codex-app.ts
 import pc10 from "picocolors";
 import * as p12 from "@clack/prompts";
+import { execFileSync as execFileSync5 } from "child_process";
+import { join as join12 } from "path";
 
 // src/codex/app-provider-routes.ts
 function codexRouteToProxyRoute(provider, model, apiKey) {
@@ -9285,13 +10358,13 @@ async function buildCodexAppProviderCatalogRoutes(provider, apiKey, selectedMode
 
 // src/codex/app-config.ts
 import { existsSync as existsSync8, readFileSync as readFileSync3, rmSync as rmSync3, writeFileSync as writeFileSync3, mkdirSync as mkdirSync3 } from "fs";
-import { dirname as dirname2, join as join9 } from "path";
+import { dirname as dirname2, join as join10 } from "path";
 import { parse, stringify } from "smol-toml";
 function getCodexConfigPath() {
-  return join9(getCodexHome(), "config.toml");
+  return join10(getCodexHome(), "config.toml");
 }
 function getCodexAppSidecarProfilePath() {
-  return join9(getCodexHome(), `${CODEX_APP_PROVIDER_ID}.config.toml`);
+  return join10(getCodexHome(), `${CODEX_APP_PROVIDER_ID}.config.toml`);
 }
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -9313,16 +10386,20 @@ function applyRestoreNumber(config, key, had, value) {
     delete config[key];
   }
 }
+function isMultiAgentV2Enabled(value) {
+  if (value === true) return true;
+  return asRecord(value).enabled === true;
+}
 function readCodexConfigText(path3 = getCodexConfigPath()) {
   if (!existsSync8(path3)) return "";
   return readFileSync3(path3, "utf8");
 }
-function parseCodexConfig(text4) {
-  if (!text4.trim()) return {};
-  return asRecord(parse(text4));
+function parseCodexConfig(text5) {
+  if (!text5.trim()) return {};
+  return asRecord(parse(text5));
 }
-function captureRestoreState(text4) {
-  const config = parseCodexConfig(text4);
+function captureRestoreState(text5) {
+  const config = parseCodexConfig(text5);
   const profile = rootString(config, "profile");
   const model = rootString(config, "model");
   const modelProvider = rootString(config, "model_provider");
@@ -9331,6 +10408,8 @@ function captureRestoreState(text4) {
   const reasoning = rootString(config, "model_reasoning_effort");
   const contextWindow = rootNumber(config, "model_context_window");
   const autoCompact = rootNumber(config, "model_auto_compact_token_limit");
+  const features = asRecord(config.features);
+  const multiAgentV2 = "multi_agent_v2" in features;
   return {
     hadProfile: profile.had,
     profile: profile.value,
@@ -9347,16 +10426,18 @@ function captureRestoreState(text4) {
     hadModelContextWindow: contextWindow.had,
     modelContextWindow: contextWindow.value,
     hadModelAutoCompactTokenLimit: autoCompact.had,
-    modelAutoCompactTokenLimit: autoCompact.value
+    modelAutoCompactTokenLimit: autoCompact.value,
+    hadMultiAgentV2: multiAgentV2,
+    multiAgentV2: features.multi_agent_v2
   };
 }
-function isAppManagedConfig(text4) {
-  const config = parseCodexConfig(text4);
+function isAppManagedConfig(text5) {
+  const config = parseCodexConfig(text5);
   const mp = rootString(config, "model_provider");
   if (mp.had && mp.value === CODEX_APP_PROVIDER_ID) return true;
   const baseUrl = rootString(config, "openai_base_url");
   const catalog = rootString(config, "model_catalog_json");
-  return mp.value === "openai" && /^http:\/\/127\.0\.0\.1:\d+\/v1$/.test(baseUrl.value) && /(?:^|[\\/])app-models-[^\\/]+\.json$/.test(catalog.value);
+  return mp.value === "openai" && (/^http:\/\/127\.0\.0\.1:\d+\/v1$/.test(baseUrl.value) || /^http:\/\/127\.0\.0\.1:\d+\/_relay-codex\/[A-Za-z0-9_-]{43}\/v1$/.test(baseUrl.value)) && /(?:^|[\\/])app-models-[^\\/]+\.json$/.test(catalog.value);
 }
 function mergeAppConfig(existing, spec) {
   const patch = buildCodexAppRootConfig(spec);
@@ -9376,6 +10457,16 @@ function mergeAppConfig(existing, spec) {
   } else {
     delete out.model_auto_compact_token_limit;
   }
+  const features = asRecord(out.features);
+  if (spec.multiAgentV2Enabled) {
+    const existingV2 = features.multi_agent_v2;
+    if (existingV2 !== void 0 && !isMultiAgentV2Enabled(existingV2)) {
+      throw new Error("Codex config explicitly disables multi_agent_v2; remove that override before using Codex Sub-agents");
+    }
+    features.multi_agent_v2 = existingV2 ?? patch.features?.["multi_agent_v2"];
+  }
+  if (Object.keys(features).length === 0) delete out.features;
+  else out.features = features;
   const providers = asRecord(out.model_providers);
   delete providers[CODEX_APP_PROVIDER_ID];
   const profiles = asRecord(out.profiles);
@@ -9409,8 +10500,8 @@ function mergeAppConfig(existing, spec) {
   }
   return out;
 }
-function validateAppConfigText(text4, spec) {
-  const config = parseCodexConfig(text4);
+function validateAppConfigText(text5, spec) {
+  const config = parseCodexConfig(text5);
   if ("profile" in config) {
     throw new Error("Generated config still contains legacy root profile key");
   }
@@ -9423,12 +10514,16 @@ function validateAppConfigText(text4, spec) {
     throw new Error("Generated config must keep the built-in OpenAI model_provider");
   }
   const baseUrl = rootString(config, "openai_base_url");
-  if (baseUrl.value !== `http://127.0.0.1:${spec.proxyPort}/v1`) {
+  const expectedBaseUrl = spec.proxyBaseUrl ?? `http://127.0.0.1:${spec.proxyPort}/v1`;
+  if (baseUrl.value !== expectedBaseUrl) {
     throw new Error("Generated config openai_base_url mismatch");
   }
   const catalog = rootString(config, "model_catalog_json");
   if (catalog.value !== spec.catalogPath) {
     throw new Error("Generated config model_catalog_json mismatch");
+  }
+  if (spec.multiAgentV2Enabled && !isMultiAgentV2Enabled(asRecord(config.features).multi_agent_v2)) {
+    throw new Error("Generated config is missing multi_agent_v2 support");
   }
 }
 function applyAppConfigPatch(spec, configPath = getCodexConfigPath()) {
@@ -9440,12 +10535,12 @@ function applyAppConfigPatch(spec, configPath = getCodexConfigPath()) {
     throw new Error(`Invalid existing Codex config at ${configPath}: ${err instanceof Error ? err.message : err}`);
   }
   const merged = mergeAppConfig(existing, spec);
-  const text4 = `${stringify(merged)}
+  const text5 = `${stringify(merged)}
 `;
-  validateAppConfigText(text4, spec);
+  validateAppConfigText(text5, spec);
   mkdirSync3(dirname2(configPath), { recursive: true });
-  writeFileSync3(configPath, text4, "utf8");
-  return text4;
+  writeFileSync3(configPath, text5, "utf8");
+  return text5;
 }
 function applyRestoreKey(config, key, had, value) {
   if (had && value !== void 0) {
@@ -9464,6 +10559,14 @@ function restoreConfigFromState(state, configPath = getCodexConfigPath()) {
   } else {
     config.model_providers = providers;
   }
+  const features = asRecord(config.features);
+  if (state.hadMultiAgentV2 && "multiAgentV2" in state) {
+    features.multi_agent_v2 = state.multiAgentV2;
+  } else {
+    delete features.multi_agent_v2;
+  }
+  if (Object.keys(features).length === 0) delete config.features;
+  else config.features = features;
   if (state.hadProfile && state.profile) {
     config.profile = state.profile;
   } else {
@@ -9497,10 +10600,10 @@ function restoreConfigFromState(state, configPath = getCodexConfigPath()) {
   return true;
 }
 function previewAppConfigToml(spec) {
-  const text4 = `${stringify(buildCodexAppRootConfig(spec))}
+  const text5 = `${stringify(buildCodexAppRootConfig(spec))}
 `;
-  validateAppConfigText(text4, spec);
-  return text4;
+  validateAppConfigText(text5, spec);
+  return text5;
 }
 
 // src/codex/app-session.ts
@@ -9510,17 +10613,18 @@ import {
   mkdirSync as mkdirSync4,
   readdirSync as readdirSync2,
   readFileSync as readFileSync4,
-  rmSync as rmSync4
+  rmSync as rmSync4,
+  statSync as statSync2
 } from "fs";
-import { basename as basename2, join as join10 } from "path";
+import { basename as basename2, join as join11 } from "path";
 function getAppSessionLockPath(env = process.env) {
-  return join10(getRelayAiCodexDir(env), "session-app.json");
+  return join11(getRelayAiCodexDir(env), "session-app.json");
 }
 function getAppRestoreStatePath(env = process.env) {
-  return join10(getRelayAiCodexDir(env), "app-restore-state.json");
+  return join11(getRelayAiCodexDir(env), "app-restore-state.json");
 }
 function getAppCatalogPath(providerId, env = process.env) {
-  return join10(getRelayAiCodexDir(env), `app-models-${providerId}.json`);
+  return join11(getRelayAiCodexDir(env), `app-models-${providerId}.json`);
 }
 function readAppSessionLock(env = process.env) {
   const path3 = getAppSessionLockPath(env);
@@ -9565,24 +10669,24 @@ function backupConfigToml(env = process.env) {
   const backupsDir = getBackupsDir(env);
   mkdirSync4(backupsDir, { recursive: true });
   const base = basename2(configPath);
-  const backupPath = join10(backupsDir, `${base}.${Date.now()}.bak`);
+  const backupPath = join11(backupsDir, `${base}.${Date.now()}.bak`);
   copyFileSync2(configPath, backupPath);
   return backupPath;
 }
 function saveAppRestoreStateBeforePatch(env = process.env) {
-  const text4 = readCodexConfigText();
+  const text5 = readCodexConfigText();
   const existing = readAppRestoreState(env);
-  if (existing && isAppManagedConfig(text4)) {
+  if (existing && isAppManagedConfig(text5)) {
     return existing;
   }
-  const state = captureRestoreState(text4);
+  const state = captureRestoreState(text5);
   writeAppRestoreState(state, env);
   return state;
 }
 function ownedAppCatalogPaths(env = process.env) {
   const codexDir = getRelayAiCodexDir(env);
   if (!existsSync9(codexDir)) return [];
-  return readdirSync2(codexDir).filter((n) => n.startsWith("app-models-") && n.endsWith(".json")).map((n) => join10(codexDir, n));
+  return readdirSync2(codexDir).filter((n) => n.startsWith("app-models-") && n.endsWith(".json")).map((n) => join11(codexDir, n));
 }
 function removeAppCatalogs(env = process.env) {
   const removed = [];
@@ -9595,6 +10699,20 @@ function removeAppCatalogs(env = process.env) {
   }
   return removed;
 }
+function newestConfigBackup(env = process.env) {
+  const backupDir = getBackupsDir(env);
+  if (!existsSync9(backupDir)) return null;
+  const configBase = basename2(getCodexConfigPath());
+  const candidates = readdirSync2(backupDir).filter((name) => name.startsWith(`${configBase}.`) && name.endsWith(".bak")).map((name) => {
+    const path3 = join11(backupDir, name);
+    try {
+      return { path: path3, mtimeMs: statSync2(path3).mtimeMs };
+    } catch {
+      return null;
+    }
+  }).filter((entry) => entry !== null).sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return candidates[0]?.path ?? null;
+}
 function restoreCodexAppOverlay(env = process.env) {
   const lock = readAppSessionLock(env);
   if (lock && lock.pid !== process.pid && isConcurrentSession(lock)) {
@@ -9604,8 +10722,8 @@ function restoreCodexAppOverlay(env = process.env) {
       message: `Another relay-ai codex-app session is running (pid ${lock.pid}). Ctrl+C it first, then run --restore.`
     };
   }
-  const text4 = readCodexConfigText();
-  const managed = isAppManagedConfig(text4);
+  const text5 = readCodexConfigText();
+  const managed = isAppManagedConfig(text5);
   const restoreState = readAppRestoreState(env);
   if (!managed && !restoreState && !lock) {
     removeAppCatalogs(env);
@@ -9616,6 +10734,9 @@ function restoreCodexAppOverlay(env = process.env) {
     restoreConfigFromState(restoreState);
   } else if (lock?.backupPath && existsSync9(lock.backupPath)) {
     copyFileSync2(lock.backupPath, getCodexConfigPath());
+  } else if (managed) {
+    const backupPath = newestConfigBackup(env);
+    if (backupPath) copyFileSync2(backupPath, getCodexConfigPath());
   }
   removeAppCatalogs(env);
   clearAppRestoreState(env);
@@ -9723,6 +10844,8 @@ ${pc10.bold("Usage:")}
 
 ${pc10.bold("Options:")}
   --vertex     Use Claude models through Google Vertex AI
+  --with-native Load native Codex models beside Relay models for this launch
+  --relay-only Keep the current Relay-only launch behavior
   --restore    Restore Codex config after an interrupted app session
   --config     Preview the generated Codex app configuration without launching
   --trace      Write proxy debug logs to ~/.relay-ai/logs/ and show errors on exit
@@ -9735,7 +10858,7 @@ ${pc10.bold("Description:")}
   ChatGPT desktop app in Codex mode. Keep this terminal open while using Codex.
 
 ${pc10.bold("Platforms:")}
-  macOS and Windows. Linux is not supported (no ChatGPT desktop app).
+  macOS, Windows, and Linux (ChatGPT desktop app preview).
 
 ${pc10.bold("Cleanup:")}
   Ctrl+C stops the proxy and restores your previous Codex config.
@@ -9964,7 +11087,13 @@ async function runCodexAppCommand(args, opts = {}) {
   }
   const prefs = loadPreferences();
   const favorites = prefs.favoriteModels ?? [];
-  const favoritesActive = favorites.length > 0;
+  let mixedMode = opts.codexLaunchMode === "mixed";
+  if (!configOnly && isTty && !(opts.launchProvider && opts.launchModel) && opts.codexLaunchMode === void 0) {
+    const selectedLaunchMode = await pickCodexLaunchMode();
+    if (!selectedLaunchMode) return 0;
+    mixedMode = selectedLaunchMode === "mixed";
+  }
+  const favoritesActive = favorites.length > 0 && !mixedMode;
   if (favoritesActive && !configOnly) {
     p12.log.info(
       `Favorites mode active \u2014 Codex App picker will show ${favorites.length + 1} models (1 starting + ${favorites.length} favorites).`
@@ -10028,7 +11157,7 @@ async function runCodexAppCommand(args, opts = {}) {
   activeProvider.apiKey = apiKey;
   let cloudCodeBackend = null;
   let cloudCodeBackendFav = null;
-  const appProviderRoutes = favoritesActive ? null : await buildCodexAppProviderCatalogRoutes(activeProvider, apiKey, selectedModel.id, trace);
+  const appProviderRoutes = mixedMode || favoritesActive ? null : await buildCodexAppProviderCatalogRoutes(activeProvider, apiKey, selectedModel.id, trace);
   cloudCodeBackend = appProviderRoutes?.backend ?? null;
   const route = appProviderRoutes ? codexProxyRouteToCodexRoute(appProviderRoutes.selectedRoute, activeProvider.id) : resolveCodexRoute(activeProvider, selectedModel, apiKey);
   const appRoute = { ...route, tier: "proxy" };
@@ -10040,6 +11169,42 @@ async function runCodexAppCommand(args, opts = {}) {
     const res = await resolveCodexFavorites(activeProvider, selectedModel, compatible, favorites, "codex-app");
     resolvedFavorites = res.resolvedFavorites;
     providersById = res.providersById;
+  }
+  let mixedPlan = null;
+  if (mixedMode) {
+    try {
+      const embeddedBinary = findEmbeddedCodexBinary();
+      if (!embeddedBinary) throw new Error("Embedded ChatGPT/Codex runtime was not found; mixed Desktop mode is unavailable on this installation");
+      const version = execFileSync5(embeddedBinary, ["--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+      const mixedModels = await resolveCodexMixedModels({
+        activeProvider,
+        selectedModel,
+        compatible,
+        generalFavorites: favorites,
+        subagentFavorites: prefs.codexSubagentModels ?? []
+      });
+      assertConfiguredCodexSubagentsResolved(prefs.codexSubagentModels ?? [], mixedModels);
+      const multiAgentV2Supported = mixedModels.subagents.length === 0 || supportsMultiAgentV2(embeddedBinary);
+      if (!multiAgentV2Supported) {
+        throw new Error("This ChatGPT/Codex runtime does not support multi_agent_v2, which is required for the configured Codex SubAgent");
+      }
+      const nativeCatalog = await captureNativeCodexCatalog({ target: "app", binaryPath: embeddedBinary, codexVersion: version });
+      const preparedRoutes = await prepareCodexMixedRelayRoutes(mixedModels, trace);
+      cloudCodeBackendFav = preparedRoutes.cloudCodeBackend;
+      mixedPlan = buildCodexMixedLaunchPlan({
+        nativeCatalog,
+        models: mixedModels,
+        relayRoutes: preparedRoutes.routes,
+        multiAgentV2Supported
+      });
+    } catch (err) {
+      cloudCodeBackendFav?.handle.close();
+      cloudCodeBackendFav = null;
+      console.error(pc10.red(`
+Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}`));
+      console.error("Use relay-ai codex-app --relay-only to continue with Relay models.");
+      return 1;
+    }
   }
   if (!configOnly) {
     const modelLabel = formatCodexModelLabel(selectedModel);
@@ -10057,8 +11222,16 @@ async function runCodexAppCommand(args, opts = {}) {
   let proxyHandle = null;
   let sessionActive = false;
   try {
-    const catalogPath = favoritesActive && resolvedFavorites.length > 0 ? getFavoritesAppCatalogPath() : getAppCatalogPath(route.providerId);
-    const activeRoute = favoritesActive && resolvedFavorites.length > 0 ? {
+    const catalogPath = mixedPlan ? join12(getRelayAiCodexDir(), "app-models-mixed.json") : favoritesActive && resolvedFavorites.length > 0 ? getFavoritesAppCatalogPath() : getAppCatalogPath(route.providerId);
+    const activeRoute = mixedPlan ? {
+      tier: "proxy",
+      modelId: mixedPlan.selectedSlug,
+      providerId: activeProvider.id,
+      npm: "",
+      upstreamModelId: "",
+      apiKey: "",
+      contextWindow: selectedModel.contextWindow
+    } : favoritesActive && resolvedFavorites.length > 0 ? {
       tier: "proxy",
       modelId: codexCliFavoritesSlug(activeProvider.id, selectedModel.id),
       providerId: activeProvider.id,
@@ -10074,7 +11247,11 @@ async function runCodexAppCommand(args, opts = {}) {
       console.log("");
       console.log(pc10.bold(pc10.cyan("  CONFIG PREVIEW \u2014 relay-ai codex-app")));
       console.log("");
-      if (favoritesActive) {
+      if (mixedPlan) {
+        console.log(`  ${pc10.bold("Mode:")}     Native + Relay mixed catalog`);
+        console.log(`  ${pc10.bold("Native:")}   ${mixedPlan.nativeModelIds.size} native Codex models`);
+        console.log(`  ${pc10.bold("Relay:")}    ${mixedPlan.relayRoutes.length} Relay routes (${mixedPlan.subagentModelCount} Codex SubAgent model)`);
+      } else if (favoritesActive) {
         console.log(`  ${pc10.bold("Mode:")}     Favorites Catalog (${resolvedFavorites.length} model${resolvedFavorites.length !== 1 ? "s" : ""})`);
         console.log("");
         console.log(`  ${pc10.bold("Models:")}`);
@@ -10091,7 +11268,9 @@ async function runCodexAppCommand(args, opts = {}) {
       console.log(`  ${pc10.bold("config.toml patch preview:")}`);
       const tomlPreview = previewAppConfigToml({
         ...specBase,
-        proxyPort: PREVIEW_PROXY_PORT
+        proxyPort: PREVIEW_PROXY_PORT,
+        ...mixedPlan?.multiAgentV2Enabled ? { multiAgentV2Enabled: true } : {},
+        ...mixedPlan ? { proxyBaseUrl: `${mixedProxyBaseUrl(PREVIEW_PROXY_PORT, mixedPlan.capability)}/v1` } : {}
       });
       for (const line of tomlPreview.split("\n")) {
         console.log(`    ${pc10.dim(line)}`);
@@ -10106,7 +11285,19 @@ async function runCodexAppCommand(args, opts = {}) {
       return 0;
     }
     let proxyPort;
-    if (favoritesActive && resolvedFavorites.length > 0) {
+    if (mixedPlan) {
+      proxyHandle = await startCodexProxy(mixedPlan.relayRoutes, {
+        requireAuth: false,
+        debug: trace,
+        mixedNative: {
+          nativeModelIds: mixedPlan.nativeModelIds,
+          subagentRouteModelId: mixedPlan.subagentRouteModelId,
+          capability: mixedPlan.capability,
+          nativePayloadRelayModel: mixedPlan.nativePayloadRelayModel
+        }
+      });
+      proxyPort = proxyHandle.port;
+    } else if (favoritesActive && resolvedFavorites.length > 0) {
       const needsBackend = (r) => {
         const m = r.model;
         const prov = providersById.get(r.providerId);
@@ -10155,12 +11346,14 @@ async function runCodexAppCommand(args, opts = {}) {
       proxyPort = proxyHandle.port;
     }
     const modelLabel = formatCodexModelLabel(selectedModel);
-    const catalogFile = favoritesActive && resolvedFavorites.length > 0 ? buildFavoritesAppCatalog(resolvedFavorites) : buildAppCatalogFile(catalogModels, activeProvider.name, appRoute.modelId);
+    const catalogFile = mixedPlan ? mixedPlan.catalog : favoritesActive && resolvedFavorites.length > 0 ? buildFavoritesAppCatalog(resolvedFavorites) : buildAppCatalogFile(catalogModels, activeProvider.name, appRoute.modelId);
     writeOverlayFile(catalogPath, serializeCatalog(catalogFile));
     const spec = {
       route: activeRoute,
       proxyPort,
-      catalogPath
+      catalogPath,
+      ...mixedPlan?.multiAgentV2Enabled ? { multiAgentV2Enabled: true } : {},
+      ...mixedPlan ? { proxyBaseUrl: `${mixedProxyBaseUrl(proxyPort, mixedPlan.capability)}/v1` } : {}
     };
     saveAppRestoreStateBeforePatch();
     const backupPath = backupConfigToml();
@@ -10225,22 +11418,22 @@ import * as p13 from "@clack/prompts";
 // src/claude-desktop/app-config.ts
 import { existsSync as existsSync10, readFileSync as readFileSync5, writeFileSync as writeFileSync4, mkdirSync as mkdirSync5 } from "fs";
 import { homedir as homedir9 } from "os";
-import { join as join11, dirname as dirname3 } from "path";
+import { join as join13, dirname as dirname3 } from "path";
 import { randomUUID as randomUUID2 } from "crypto";
 function getClaudeDesktopHome() {
   if (process.platform === "win32") {
-    return join11(process.env.LOCALAPPDATA || join11(homedir9(), "AppData", "Local"), "Claude-3p");
+    return join13(process.env.LOCALAPPDATA || join13(homedir9(), "AppData", "Local"), "Claude-3p");
   }
   if (process.platform === "linux") {
-    return join11(process.env.XDG_CONFIG_HOME || join11(homedir9(), ".config"), "Claude-3p");
+    return join13(process.env.XDG_CONFIG_HOME || join13(homedir9(), ".config"), "Claude-3p");
   }
-  return join11(homedir9(), "Library", "Application Support", "Claude-3p");
+  return join13(homedir9(), "Library", "Application Support", "Claude-3p");
 }
 function getConfigLibraryPath() {
-  return join11(getClaudeDesktopHome(), "configLibrary");
+  return join13(getClaudeDesktopHome(), "configLibrary");
 }
 function getMetaJsonPath() {
-  return join11(getConfigLibraryPath(), "_meta.json");
+  return join13(getConfigLibraryPath(), "_meta.json");
 }
 function readMetaJson() {
   const metaPath = getMetaJsonPath();
@@ -10268,7 +11461,7 @@ function buildRelayAiConfig(proxyPort) {
 }
 function writeRelayAiConfig(proxyPort) {
   const uuid = randomUUID2();
-  const configPath = join11(getConfigLibraryPath(), `${uuid}.json`);
+  const configPath = join13(getConfigLibraryPath(), `${uuid}.json`);
   const config = buildRelayAiConfig(proxyPort);
   mkdirSync5(dirname3(configPath), { recursive: true });
   writeFileSync4(configPath, `${JSON.stringify(config, null, 2)}
@@ -10433,9 +11626,9 @@ import {
   unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync5
 } from "fs";
-import { dirname as dirname4, join as join12 } from "path";
+import { dirname as dirname4, join as join14 } from "path";
 function getSessionLockPath2() {
-  return join12(getClaudeDesktopHome(), ".relay-ai.lock");
+  return join14(getClaudeDesktopHome(), ".relay-ai.lock");
 }
 function inspectSessionLock() {
   const path3 = getSessionLockPath2();
@@ -10489,7 +11682,7 @@ function restoreMetaJson() {
   }
 }
 function removeRelayAiConfig(uuid) {
-  const configPath = join12(getConfigLibraryPath(), `${uuid}.json`);
+  const configPath = join14(getConfigLibraryPath(), `${uuid}.json`);
   if (existsSync11(configPath)) {
     try {
       rmSync5(configPath, { force: true });
@@ -10809,15 +12002,15 @@ ${pc11.bold("Claude Desktop 3P Mode Active")}`);
 // src/ai-doc.ts
 import { existsSync as existsSync12, mkdirSync as mkdirSync7, readFileSync as readFileSync7, writeFileSync as writeFileSync6 } from "fs";
 import { homedir as homedir10 } from "os";
-import { join as join13 } from "path";
+import { join as join15 } from "path";
 var SKILL_DIR_NAME = "relay-ai-cli";
 var SKILL_INSTALL_DIRS = [
-  join13(getAppHome(), "skills"),
-  join13(homedir10(), ".claude", "skills"),
-  join13(homedir10(), ".agents", "skills"),
-  join13(homedir10(), ".codex", "skills"),
-  join13(homedir10(), ".cursor", "skills"),
-  join13(homedir10(), ".cursor", "skills-cursor")
+  join15(getAppHome(), "skills"),
+  join15(homedir10(), ".claude", "skills"),
+  join15(homedir10(), ".agents", "skills"),
+  join15(homedir10(), ".codex", "skills"),
+  join15(homedir10(), ".cursor", "skills"),
+  join15(homedir10(), ".cursor", "skills-cursor")
 ];
 function parseSkillVersion(content) {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -10831,7 +12024,7 @@ function parseSkillVersion(content) {
   return null;
 }
 function readInstalledSkillVersion(skillDir) {
-  const skillPath = join13(skillDir, "SKILL.md");
+  const skillPath = join15(skillDir, "SKILL.md");
   if (!existsSync12(skillPath)) return null;
   try {
     const head = readFileSync7(skillPath, "utf-8").slice(0, 1024);
@@ -10844,8 +12037,8 @@ function readInstalledSkillVersion(skillDir) {
 }
 function skillInstallTargets() {
   return SKILL_INSTALL_DIRS.map((dir) => {
-    const skillDir = join13(dir, SKILL_DIR_NAME);
-    return { skillDir, skillPath: join13(skillDir, "SKILL.md") };
+    const skillDir = join15(dir, SKILL_DIR_NAME);
+    return { skillDir, skillPath: join15(skillDir, "SKILL.md") };
   });
 }
 function formatProviderModels(provider) {
@@ -11060,6 +12253,14 @@ FAVORITES / MID-SESSION SWITCHING:
   Exception: Claude --http-proxy combines the selected compatible model with
   compatible saved favorites while keeping native Anthropic models available.
 
+CODEX SUBAGENT / MIXED NATIVE MODE:
+  relay-ai subagents          manage the separate one-model Codex SubAgent catalog
+  The catalog starts empty and never imports or synchronizes with General Favorites.
+  In mixed mode, Codex decides when to launch a sub-agent and Relay routes every
+  Codex-marked child to the configured Codex SubAgent model.
+  Enable native models alongside Relay with --with-native on codex/codex-app, or
+  use the same option in the Relay UI launch card. Use --relay-only to opt out.
+
 ================================================================================
 COMMANDS
 ================================================================================
@@ -11140,14 +12341,16 @@ PROVIDERS REGISTRY
 MODELS / FAVORITES
   relay-ai models                 manage favoriteModels in config (alias: favorites)
   Used for mid-session /model switching in interactive Claude/Codex/Gemini sessions.
+  relay-ai subagents              manage the separate one-model Codex SubAgent catalog.
 
 API GATEWAY (for tools that speak Anthropic/OpenAI HTTP)
   relay-ai server                 foreground gateway on port 17645
   relay-ai server --vertex        Vertex AI gateway (gcloud ADC)
 
 DESKTOP APPS
-  relay-ai codex-app              ChatGPT desktop, Codex mode (macOS/Windows); alias: chatgpt
-  relay-ai claude-app             Claude desktop (macOS/Windows)
+  relay-ai codex-app              ChatGPT desktop, Codex mode (macOS/Windows/Linux); alias: chatgpt
+  relay-ai claude-app             Claude desktop (macOS/Windows/Linux)
+  Linux desktop launches resolve the X11/RDP display from the terminal WINDOWID.
 
 ================================================================================
 CONFIGURATION PATHS
@@ -11498,24 +12701,24 @@ function buildHttpProxyChildEnv(baseEnv, proxyUrl, caCertPath) {
 }
 
 // src/http-proxy/ca.ts
-import { randomBytes, randomUUID as randomUUID3 } from "crypto";
+import { randomBytes as randomBytes2, randomUUID as randomUUID3 } from "crypto";
 import {
-  chmodSync,
+  chmodSync as chmodSync2,
   existsSync as existsSync13,
   mkdirSync as mkdirSync9,
   readFileSync as readFileSync8,
   readdirSync as readdirSync3,
   rmSync as rmSync6,
-  statSync as statSync2,
+  statSync as statSync3,
   writeFileSync as writeFileSync8
 } from "fs";
-import { dirname as dirname6, join as join15, resolve } from "path";
+import { dirname as dirname6, join as join17, resolve } from "path";
 import forge from "node-forge";
 var SESSION_ROOT = "http-proxy-sessions";
 var OWNER_FILE = "owner.pid";
 var MID_CREATION_GRACE_MS = 3e4;
 function serialNumber() {
-  const bytes = randomBytes(16);
+  const bytes = randomBytes2(16);
   bytes[0] &= 127;
   return bytes.toString("hex");
 }
@@ -11529,15 +12732,15 @@ function processIsRunning(pid) {
   }
 }
 function cleanupStaleHttpProxySessions(appHome = getAppHome()) {
-  const root = join15(appHome, SESSION_ROOT);
+  const root = join17(appHome, SESSION_ROOT);
   if (!existsSync13(root)) return;
   const now = Date.now();
   for (const name of readdirSync3(root)) {
-    const sessionDir = join15(root, name);
+    const sessionDir = join17(root, name);
     try {
-      const stat = statSync2(sessionDir);
+      const stat = statSync3(sessionDir);
       if (!stat.isDirectory()) continue;
-      const ownerPath = join15(sessionDir, OWNER_FILE);
+      const ownerPath = join17(sessionDir, OWNER_FILE);
       if (!existsSync13(ownerPath)) {
         if (now - stat.mtimeMs > MID_CREATION_GRACE_MS) {
           rmSync6(sessionDir, { recursive: true, force: true });
@@ -11546,7 +12749,7 @@ function cleanupStaleHttpProxySessions(appHome = getAppHome()) {
       }
       const pid = Number(readFileSync8(ownerPath, "utf8").trim());
       if (!Number.isSafeInteger(pid) || pid <= 0) {
-        const ownerStat = statSync2(ownerPath);
+        const ownerStat = statSync3(ownerPath);
         const newestMtimeMs = Math.max(stat.mtimeMs, ownerStat.mtimeMs);
         if (now - newestMtimeMs > MID_CREATION_GRACE_MS) {
           rmSync6(sessionDir, { recursive: true, force: true });
@@ -11560,13 +12763,13 @@ function cleanupStaleHttpProxySessions(appHome = getAppHome()) {
 }
 function createHttpProxyCertificates(appHome = getAppHome()) {
   cleanupStaleHttpProxySessions(appHome);
-  const root = join15(appHome, SESSION_ROOT);
+  const root = join17(appHome, SESSION_ROOT);
   mkdirSync9(root, { recursive: true, mode: 448 });
-  chmodSync(root, 448);
-  const sessionDir = join15(root, randomUUID3());
+  chmodSync2(root, 448);
+  const sessionDir = join17(root, randomUUID3());
   mkdirSync9(sessionDir, { mode: 448 });
-  chmodSync(sessionDir, 448);
-  writeFileSync8(join15(sessionDir, OWNER_FILE), `${process.pid}
+  chmodSync2(sessionDir, 448);
+  writeFileSync8(join17(sessionDir, OWNER_FILE), `${process.pid}
 `, { mode: 384 });
   try {
     const caKeys = forge.pki.rsa.generateKeyPair(2048);
@@ -11601,9 +12804,9 @@ function createHttpProxyCertificates(appHome = getAppHome()) {
     ]);
     server.sign(caKeys.privateKey, forge.md.sha256.create());
     const caCert = forge.pki.certificateToPem(ca);
-    const caCertPath = join15(sessionDir, "relay-ai-ca.pem");
+    const caCertPath = join17(sessionDir, "relay-ai-ca.pem");
     writeFileSync8(caCertPath, caCert, { encoding: "utf8", mode: 384 });
-    chmodSync(caCertPath, 384);
+    chmodSync2(caCertPath, 384);
     let cleaned = false;
     const cleanupOnExit = () => {
       if (cleaned) return;
@@ -11647,7 +12850,7 @@ function createHttpProxyCaBundle(relayCaCertPath, additionalCaCertPath) {
   const relayCa = readFileSync8(relayCaCertPath, "utf8").trimEnd();
   const additionalCa = readFileSync8(additionalCaCertPath, "utf8").trim();
   if (!additionalCa) return relayCaCertPath;
-  const combinedPath = join15(dirname6(relayCaCertPath), "combined-ca.pem");
+  const combinedPath = join17(dirname6(relayCaCertPath), "combined-ca.pem");
   writeFileSync8(
     combinedPath,
     `${relayCa}
@@ -11655,7 +12858,7 @@ ${additionalCa}
 `,
     { encoding: "utf8", mode: 384 }
   );
-  chmodSync(combinedPath, 384);
+  chmodSync2(combinedPath, 384);
   return combinedPath;
 }
 
@@ -11663,7 +12866,7 @@ ${additionalCa}
 import * as http2 from "http";
 import * as https from "https";
 import * as net from "net";
-import { randomBytes as randomBytes2, timingSafeEqual } from "crypto";
+import { randomBytes as randomBytes3, timingSafeEqual } from "crypto";
 import { URL as URL2 } from "url";
 var ANTHROPIC_HOST = RELAY_SENTINEL_HOST;
 var MAX_BODY_BYTES = 50 * 1024 * 1024;
@@ -12049,7 +13252,7 @@ async function startHttpProxy(options) {
   });
   mitmServer.on("tlsClientError", () => {
   });
-  const password3 = randomBytes2(32).toString("base64url");
+  const password3 = randomBytes3(32).toString("base64url");
   const expectedAuthorization = `Basic ${Buffer.from(`${PROXY_USERNAME}:${password3}`).toString("base64")}`;
   const sockets = /* @__PURE__ */ new Set();
   const proxyServer = http2.createServer((req, res) => {
@@ -12359,14 +13562,26 @@ function parseArgs(args) {
     }
     return parsed2;
   }
+  if (first === "subagents") {
+    const parsed2 = emptyParsed("models");
+    parsed2.modelCatalogScope = "codex-subagents";
+    for (const arg of rest) {
+      if (arg === "--help" || arg === "-h") parsed2.showHelp = true;
+      else if (arg === "--version" || arg === "-v") parsed2.showVersion = true;
+      else if (!parsed2.error) parsed2.error = "subagents does not accept model catalog flags";
+    }
+    return parsed2;
+  }
   if (first === "models" || first === "favorites") {
     const parsed2 = emptyParsed("models");
+    parsed2.modelCatalogScope = "global";
     for (const arg of rest) {
       if (arg === "--help" || arg === "-h") parsed2.showHelp = true;
       else if (arg === "--version" || arg === "-v") parsed2.showVersion = true;
       else if (arg === "--agy") parsed2.favoritesAgy = true;
       else if (!parsed2.error) parsed2.error = `Unknown models option: ${arg}`;
     }
+    if (parsed2.favoritesAgy) parsed2.modelCatalogScope = "agy";
     return parsed2;
   }
   if (first === "providers") {
@@ -12405,6 +13620,16 @@ function parseArgs(args) {
       }
       if (arg === "--vertex") {
         parsed2.vertex = true;
+        continue;
+      }
+      if (arg === "--with-native") {
+        if (parsed2.codexLaunchMode === "relay-only") parsed2.error = "--with-native and --relay-only cannot be used together";
+        parsed2.codexLaunchMode = "mixed";
+        continue;
+      }
+      if (arg === "--relay-only") {
+        if (parsed2.codexLaunchMode === "mixed") parsed2.error = "--with-native and --relay-only cannot be used together";
+        parsed2.codexLaunchMode = "relay-only";
         continue;
       }
       const consumed = tryConsumeRelayLaunchFlag(arg, rest, i, parsed2);
@@ -12453,6 +13678,16 @@ function parseArgs(args) {
       }
       if (arg === "--vertex") {
         parsed2.vertex = true;
+        continue;
+      }
+      if (arg === "--with-native") {
+        if (parsed2.codexLaunchMode === "relay-only") parsed2.error = "--with-native and --relay-only cannot be used together";
+        parsed2.codexLaunchMode = "mixed";
+        continue;
+      }
+      if (arg === "--relay-only") {
+        if (parsed2.codexLaunchMode === "mixed") parsed2.error = "--with-native and --relay-only cannot be used together";
+        parsed2.codexLaunchMode = "relay-only";
         continue;
       }
       if (arg === "--help" || arg === "-h") {
@@ -12610,6 +13845,7 @@ ${pc12.bold("Usage:")}
   relay-ai ui
   relay-ai models
   relay-ai favorites
+  relay-ai subagents
   relay-ai providers
   relay-ai --help
   relay-ai --version
@@ -12628,6 +13864,7 @@ ${pc12.bold("Commands:")}
   claude      Launch Claude Code \u2014 pick a provider from your registry
   models      Manage favorite models for mid-session /model switching (max ${MAX_MODEL_CATALOG})
   favorites   Alias for models
+  subagents   Manage the independent Codex SubAgent model catalog (starts empty)
   providers   Add, import, and manage your AI providers
   server      Run a foreground API gateway (OpenCode Zen / Go and local providers)
   codex       Launch OpenAI Codex CLI with registry providers
@@ -12635,9 +13872,9 @@ ${pc12.bold("Commands:")}
   agy         Launch Antigravity CLI with registry providers
   antigravity Launch Antigravity app with registry providers (macOS)
   antigravity-ide  Launch Antigravity IDE with registry providers (macOS)
-  codex-app   Launch ChatGPT desktop app (Codex mode) with registry providers (macOS + Windows)
+  codex-app   Launch ChatGPT desktop app (Codex mode) with registry providers (macOS + Windows + Linux)
   chatgpt     Alias for codex-app
-  claude-app  Launch Claude Desktop app with registry providers (macOS + Windows)
+  claude-app  Launch Claude Desktop app with registry providers (macOS + Windows + Linux)
 
 ${pc12.bold("Antigravity favorites:")}
   agy, antigravity, and antigravity-ide share up to six Antigravity favorites
@@ -12767,7 +14004,22 @@ ${pc12.bold("Endpoints:")}
   OpenAI-compatible:     OPENAI_BASE_URL=http://127.0.0.1:17645/openai/v1
   API key: use anything locally; use the server password in network mode.`;
 }
-function modelsHelpText() {
+function modelsHelpText(scope = "global") {
+  if (scope === "codex-subagents") {
+    return `${pc12.bold("relay-ai subagents")} v${VERSION}
+Manage the separate Codex SubAgent model catalog.
+
+${pc12.bold("Usage:")}
+  relay-ai subagents
+  relay-ai subagents --help
+  relay-ai subagents --version
+
+${pc12.bold("Behavior:")}
+  Starts empty and is managed independently from General Favorites.
+  Search all models at once or browse models by provider.
+  Select one model that Codex uses for every SubAgent in mixed mode.
+  The Codex SubAgent is saved to ~/.relay-ai/config.json (max ${CODEX_SUBAGENT_MODEL_CAP}).`;
+  }
   return `${pc12.bold("relay-ai favorites")} v${VERSION}
 Manage favorite models for mid-session switching.
 
@@ -12777,6 +14029,7 @@ ${pc12.bold("Usage:")}
   relay-ai models
   relay-ai favorites --help
   relay-ai favorites --version
+  relay-ai subagents
 
 ${pc12.bold("Behavior:")}
   Opens an interactive manager to add or remove favorites.
@@ -12784,9 +14037,11 @@ ${pc12.bold("Behavior:")}
   Pick from Zen, Go, or any provider in your registry.
   Global favorites are saved to ~/.relay-ai/config.json (max ${MAX_MODEL_CATALOG}).
   --agy manages Antigravity CLI favorites only (max 6).
+  relay-ai subagents manages the Codex SubAgent (starts empty; does not sync with General Favorites).
 
 ${pc12.bold("How it works:")}
-  Claude/Codex/Gemini/server use the global favorites list.
+  Claude/Codex/Gemini/server use the global favorites list. The Codex SubAgent is a
+  separate model-only catalog used when Codex mixed mode is enabled.
   Favorites appear in supported /model switch menus.
   relay-ai agy, antigravity, and antigravity-ide use the Antigravity favorites
   list so the limited native switch slots stay predictable: one selected launch
@@ -12883,9 +14138,9 @@ ${pc12.bold("Examples:")}
   relay-ai antigravity
   relay-ai antigravity --provider zen --model deepseek-v4-flash-free`;
 }
-function printHelp(text4) {
+function printHelp(text5) {
   console.log(`
-${text4}
+${text5}
 `);
 }
 async function launchClaudeViaCatalog(catalogRoutes, startingRoute, contextWindow, trace, claudeArgs) {
@@ -12922,15 +14177,19 @@ async function launchClaudeViaCatalog(catalogRoutes, startingRoute, contextWindo
 var AGY_CLI_FAVORITES_CAP = 6;
 async function runModelsCommand(opts = {}) {
   const scope = opts.scope ?? "global";
-  const maxFavorites = scope === "agy" ? AGY_CLI_FAVORITES_CAP : MAX_MODEL_CATALOG;
-  const scopeName = scope === "agy" ? "Antigravity CLI Favorites" : "Favorite Models";
-  const configKey = scope === "agy" ? "antigravityCliFavoriteModels" : "favoriteModels";
+  const maxFavorites = scope === "agy" ? AGY_CLI_FAVORITES_CAP : scope === "codex-subagents" ? CODEX_SUBAGENT_MODEL_CAP : MAX_MODEL_CATALOG;
+  const scopeName = scope === "agy" ? "Antigravity CLI Favorites" : scope === "codex-subagents" ? "Codex SubAgent" : "Favorite Models";
+  const subagentScope = scope === "codex-subagents";
+  const listLabel = subagentScope ? "Codex SubAgent" : scope === "agy" ? "Antigravity Favorites" : "favorites";
+  const listItemLabel = subagentScope ? "Codex SubAgent model" : scope === "agy" ? "Antigravity favorite" : "favorite";
+  const configKey = scope === "agy" ? "antigravityCliFavoriteModels" : scope === "codex-subagents" ? "codexSubagentModels" : "favoriteModels";
   relayIntro(scopeName);
   const spinner9 = p14.spinner();
   spinner9.start("Loading providers...");
   const catalog = await fetchProviderCatalog();
   spinner9.stop("");
-  const allProviders = scope === "agy" ? providersForTarget(providersForPicker(catalog), "antigravity") : providersForPicker(catalog);
+  const pickedProviders = providersForPicker(catalog);
+  const allProviders = scope === "agy" ? providersForTarget(pickedProviders, "antigravity") : scope === "codex-subagents" ? providersForCodexSubagents(pickedProviders) : pickedProviders;
   const favoriteProviders = allProviders.map((provider) => ({
     ...provider,
     name: favoriteProviderDisplayName(provider)
@@ -12948,7 +14207,7 @@ async function runModelsCommand(opts = {}) {
     }
   }
   const prefs = loadPreferences();
-  let favorites = scope === "agy" ? prefs.antigravityCliFavoriteModels ?? [] : prefs.favoriteModels ?? [];
+  let favorites = scope === "agy" ? prefs.antigravityCliFavoriteModels ?? [] : scope === "codex-subagents" ? prefs.codexSubagentModels ?? [] : prefs.favoriteModels ?? [];
   let favoritesDirty = false;
   while (true) {
     const options = [];
@@ -12962,7 +14221,7 @@ async function runModelsCommand(opts = {}) {
     options.push({
       value: "__add__",
       label: atCap ? pc12.dim(`+ Add a model \u2192 (limit of ${maxFavorites} reached)`) : pc12.cyan("+ Add a model \u2192"),
-      hint: atCap ? "Remove a favorite first to make room" : `${allProviders.length} provider${allProviders.length !== 1 ? "s" : ""} available`
+      hint: atCap ? `Remove a ${listItemLabel} first to make room` : `${allProviders.length} provider${allProviders.length !== 1 ? "s" : ""} available`
     });
     options.push({ value: "__done__", label: "Done", hint: "" });
     const header = favorites.length === 0 ? `${scopeName} (0/${maxFavorites})` : `${scopeName} (${favorites.length}/${maxFavorites}) \u2014 select to remove`;
@@ -12974,16 +14233,16 @@ async function runModelsCommand(opts = {}) {
     if (p14.isCancel(choice) || choice === "__done__") break;
     if (choice === "__add__") {
       if (atCap) {
-        p14.log.warn(`Limit of ${maxFavorites} favorites reached \u2014 remove one first.`);
+        p14.log.warn(`Limit of ${maxFavorites} ${subagentScope ? "Codex SubAgent" : "favorites"} reached \u2014 remove one first.`);
         continue;
       }
       const globalCount = buildGlobalFavoriteIndex(favoriteProviders).length;
       const addPath = await p14.select({
-        message: "Add a favorite",
+        message: subagentScope ? "Add a Codex SubAgent model" : "Add a favorite",
         options: [
           {
             value: "global",
-            label: pc12.cyan("Search all providers"),
+            label: pc12.cyan(subagentScope ? "Search all models" : "Search all providers"),
             hint: `${globalCount} models \xB7 ${favoriteProviders.length} provider${favoriteProviders.length !== 1 ? "s" : ""}`
           },
           {
@@ -13002,7 +14261,7 @@ async function runModelsCommand(opts = {}) {
       let provider;
       let browsedMultiple = [];
       if (addPath === "global") {
-        const globalPick = await pickGlobalFavoriteModel(favoriteProviders, favorites);
+        const globalPick = await pickGlobalFavoriteModel(favoriteProviders, favorites, { listLabel });
         if (globalPick === null) continue;
         if (globalPick !== ADD_BY_PROVIDER) {
           provider = favoriteProviders.find((ap) => ap.id === globalPick.providerId);
@@ -13010,7 +14269,7 @@ async function runModelsCommand(opts = {}) {
         }
       }
       if (addPath === "free") {
-        const globalPick = await pickGlobalFavoriteModel(favoriteProviders, favorites, { freeOnly: true });
+        const globalPick = await pickGlobalFavoriteModel(favoriteProviders, favorites, { freeOnly: true, listLabel });
         if (globalPick === null) continue;
         if (globalPick !== ADD_BY_PROVIDER) {
           provider = favoriteProviders.find((ap) => ap.id === globalPick.providerId);
@@ -13028,13 +14287,30 @@ async function runModelsCommand(opts = {}) {
           });
           if (p14.isCancel(pickedProviderId)) break;
           provider = favoriteProviders.find((ap) => ap.id === pickedProviderId);
-          const options2 = provider.models.map((m) => {
+          let modelsToPick = provider.models;
+          if (provider.models.length > MODEL_SEARCH_THRESHOLD) {
+            const searchInput = await p14.text({
+              message: `Search ${provider.name} models (${provider.models.length} available):`,
+              placeholder: "e.g. flash 3.6, claude, llama"
+            });
+            if (p14.isCancel(searchInput)) {
+              currentInitialProvider = provider.id;
+              continue;
+            }
+            modelsToPick = filterModelsBySearch(provider.models, String(searchInput));
+            if (modelsToPick.length === 0) {
+              p14.log.warn("No models match \u2014 try a different search");
+              currentInitialProvider = provider.id;
+              continue;
+            }
+          }
+          const options2 = modelsToPick.map((m) => {
             const favorited = isFavorite(favorites, { providerId: provider.id, modelId: m.id });
             const label = formatCodexModelLabel(m);
             return {
               value: m.id,
               label: fmtModel(label, m.id),
-              hint: favorited ? pc12.yellow("\u2605 already favorite") : ""
+              hint: favorited ? pc12.yellow(`\u2605 already in ${listLabel}`) : ""
             };
           });
           const pickedModelIds = await p14.multiselect({
@@ -13050,7 +14326,7 @@ async function runModelsCommand(opts = {}) {
             currentInitialProvider = provider.id;
             continue;
           }
-          browsedMultiple = provider.models.filter((m) => pickedModelIds.includes(m.id));
+          browsedMultiple = modelsToPick.filter((m) => pickedModelIds.includes(m.id));
           break;
         }
         if (browsedMultiple.length === 0) continue;
@@ -13077,36 +14353,36 @@ async function runModelsCommand(opts = {}) {
       if (addedModels.length > 0) {
         if (addedModels.length === 1) {
           const modelName = addedModels[0].name || addedModels[0].id;
-          p14.log.success(`Added ${modelName} (${provider.name}) to favorites.`);
+          p14.log.success(`Added ${modelName} (${provider.name}) to ${listLabel}.`);
         } else {
-          p14.log.success(`Added ${addedModels.length} models from ${provider.name} to favorites.`);
+          p14.log.success(`Added ${addedModels.length} models from ${provider.name} to ${listLabel}.`);
         }
       }
       if (duplicateCount > 0) {
-        p14.log.warn(`${duplicateCount} selected model(s) were already in your favorites.`);
+        p14.log.warn(`${duplicateCount} selected model(s) were already in ${listLabel}.`);
       }
       if (limitReached) {
-        p14.log.warn(`Limit of ${maxFavorites} favorites reached \u2014 some selected models could not be added.`);
+        p14.log.warn(`Limit of ${maxFavorites} ${subagentScope ? "Codex SubAgent" : "favorites"} reached \u2014 some selected models could not be added.`);
       }
     } else if (choice.startsWith("fav-")) {
       const idx = parseInt(choice.slice(4), 10);
       const fav = favorites[idx];
       const entry = modelLookup.get(`${fav.providerId}:${fav.modelId}`);
       const label = entry ? `${entry.modelName} (${entry.providerName})` : fav.modelId;
-      const confirmed = await p14.confirm({ message: `Remove ${label} from favorites?` });
+      const confirmed = await p14.confirm({ message: `Remove ${label} from ${listLabel}?` });
       if (p14.isCancel(confirmed) || !confirmed) continue;
       favorites = removeFavorite(favorites, fav);
       favoritesDirty = true;
-      p14.log.success(`Removed ${label} from favorites.`);
+      p14.log.success(`Removed ${label} from ${listLabel}.`);
     }
   }
   if (favoritesDirty) {
     savePreferences({ [configKey]: favorites });
   }
-  const favLabel = scope === "agy" ? "Antigravity CLI " : "";
+  const summary = subagentScope ? favorites.length === 0 ? "No Codex SubAgent configured" : `${favorites.length} Codex SubAgent model${favorites.length !== 1 ? "s" : ""} saved` : favorites.length === 0 ? `No ${scope === "agy" ? "Antigravity CLI favorites" : "favorites"} saved` : `${favorites.length} ${scope === "agy" ? "Antigravity CLI favorite" : "favorite"}${favorites.length !== 1 ? "s" : ""} saved`;
   relayOutro(
-    favorites.length === 0 ? `No ${favLabel}favorites saved` : `${favorites.length} ${favLabel}favorite${favorites.length !== 1 ? "s" : ""} saved`,
-    favorites.length === 0 ? pc12.dim("Launch uses single-model mode") : pc12.cyan("/model menu ready on next launch")
+    summary,
+    favorites.length === 0 ? pc12.dim("Launch uses single-model mode") : subagentScope ? pc12.cyan("Codex will use this model for every Relay SubAgent") : pc12.cyan("/model menu ready on next launch")
   );
   return 0;
 }
@@ -13593,7 +14869,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-IJRKQ3NA.js");
+    const { runUiCommand } = await import("./ui-command-FARF2BF4.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {
@@ -13602,10 +14878,10 @@ Options:
       return 0;
     }
     if (parsed.showHelp) {
-      printHelp(modelsHelpText());
+      printHelp(modelsHelpText(parsed.modelCatalogScope === "codex-subagents" ? "codex-subagents" : "global"));
       return 0;
     }
-    return runModelsCommand({ scope: parsed.favoritesAgy ? "agy" : "global" });
+    return runModelsCommand({ scope: parsed.modelCatalogScope ?? (parsed.favoritesAgy ? "agy" : "global") });
   }
   if (parsed.command === "providers") {
     if (parsed.showVersion) {
@@ -13636,7 +14912,7 @@ Options:
       console.log(codexAppHelpText());
       return 0;
     }
-    return runCodexAppCommand(parsed.claudeArgs, { vertex: parsed.vertex, launchProvider: parsed.launchProvider, launchModel: parsed.launchModel });
+    return runCodexAppCommand(parsed.claudeArgs, { vertex: parsed.vertex, launchProvider: parsed.launchProvider, launchModel: parsed.launchModel, codexLaunchMode: parsed.codexLaunchMode });
   }
   if (parsed.command === "claude-app") {
     if (parsed.showVersion) {
@@ -13661,7 +14937,8 @@ Options:
     return runCodexCommand(parsed.claudeArgs, parsed.trace, {
       launchProvider: parsed.launchProvider,
       launchModel: parsed.launchModel,
-      vertex: parsed.vertex
+      vertex: parsed.vertex,
+      codexLaunchMode: parsed.codexLaunchMode
     });
   }
   if (parsed.command === "gemini") {

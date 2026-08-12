@@ -37,6 +37,9 @@ export interface CodexAppRestoreState {
   modelContextWindow?: number;
   hadModelAutoCompactTokenLimit?: boolean;
   modelAutoCompactTokenLimit?: number;
+  /** Optional for restore files written before mixed-mode v2 support. */
+  hadMultiAgentV2?: boolean;
+  multiAgentV2?: unknown;
 }
 
 export function asRecord(value: unknown): TomlRecord {
@@ -65,6 +68,11 @@ function applyRestoreNumber(config: TomlRecord, key: string, had: boolean, value
   }
 }
 
+function isMultiAgentV2Enabled(value: unknown): boolean {
+  if (value === true) return true;
+  return asRecord(value).enabled === true;
+}
+
 export function readCodexConfigText(path = getCodexConfigPath()): string {
   if (!existsSync(path)) return '';
   return readFileSync(path, 'utf8');
@@ -85,6 +93,8 @@ export function captureRestoreState(text: string): CodexAppRestoreState {
   const reasoning = rootString(config, 'model_reasoning_effort');
   const contextWindow = rootNumber(config, 'model_context_window');
   const autoCompact = rootNumber(config, 'model_auto_compact_token_limit');
+  const features = asRecord(config.features);
+  const multiAgentV2 = 'multi_agent_v2' in features;
   return {
     hadProfile: profile.had,
     profile: profile.value,
@@ -102,6 +112,8 @@ export function captureRestoreState(text: string): CodexAppRestoreState {
     modelContextWindow: contextWindow.value,
     hadModelAutoCompactTokenLimit: autoCompact.had,
     modelAutoCompactTokenLimit: autoCompact.value,
+    hadMultiAgentV2: multiAgentV2,
+    multiAgentV2: features.multi_agent_v2,
   };
 }
 
@@ -112,7 +124,8 @@ export function isAppManagedConfig(text: string): boolean {
   const baseUrl = rootString(config, 'openai_base_url');
   const catalog = rootString(config, 'model_catalog_json');
   return mp.value === 'openai'
-    && /^http:\/\/127\.0\.0\.1:\d+\/v1$/.test(baseUrl.value)
+    && (/^http:\/\/127\.0\.0\.1:\d+\/v1$/.test(baseUrl.value)
+      || /^http:\/\/127\.0\.0\.1:\d+\/_relay-codex\/[A-Za-z0-9_-]{43}\/v1$/.test(baseUrl.value))
     && /(?:^|[\\/])app-models-[^\\/]+\.json$/.test(catalog.value);
 }
 
@@ -134,6 +147,16 @@ function mergeAppConfig(existing: TomlRecord, spec: CodexAppConfigSpec): TomlRec
   } else {
     delete out.model_auto_compact_token_limit;
   }
+  const features = asRecord(out.features);
+  if (spec.multiAgentV2Enabled) {
+    const existingV2 = features.multi_agent_v2;
+    if (existingV2 !== undefined && !isMultiAgentV2Enabled(existingV2)) {
+      throw new Error('Codex config explicitly disables multi_agent_v2; remove that override before using Codex Sub-agents');
+    }
+    features.multi_agent_v2 = existingV2 ?? patch.features?.['multi_agent_v2'];
+  }
+  if (Object.keys(features).length === 0) delete out.features;
+  else out.features = features;
   const providers = asRecord(out.model_providers);
   delete providers[CODEX_APP_PROVIDER_ID];
   const profiles = asRecord(out.profiles);
@@ -184,12 +207,16 @@ export function validateAppConfigText(text: string, spec: CodexAppConfigSpec): v
     throw new Error('Generated config must keep the built-in OpenAI model_provider');
   }
   const baseUrl = rootString(config, 'openai_base_url');
-  if (baseUrl.value !== `http://127.0.0.1:${spec.proxyPort}/v1`) {
+  const expectedBaseUrl = spec.proxyBaseUrl ?? `http://127.0.0.1:${spec.proxyPort}/v1`;
+  if (baseUrl.value !== expectedBaseUrl) {
     throw new Error('Generated config openai_base_url mismatch');
   }
   const catalog = rootString(config, 'model_catalog_json');
   if (catalog.value !== spec.catalogPath) {
     throw new Error('Generated config model_catalog_json mismatch');
+  }
+  if (spec.multiAgentV2Enabled && !isMultiAgentV2Enabled(asRecord(config.features).multi_agent_v2)) {
+    throw new Error('Generated config is missing multi_agent_v2 support');
   }
 }
 
@@ -227,6 +254,15 @@ export function restoreConfigFromState(state: CodexAppRestoreState, configPath =
   } else {
     config.model_providers = providers;
   }
+
+  const features = asRecord(config.features);
+  if (state.hadMultiAgentV2 && 'multiAgentV2' in state) {
+    features.multi_agent_v2 = state.multiAgentV2;
+  } else {
+    delete features.multi_agent_v2;
+  }
+  if (Object.keys(features).length === 0) delete config.features;
+  else config.features = features;
 
   if (state.hadProfile && state.profile) {
     config.profile = state.profile;

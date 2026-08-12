@@ -2,6 +2,7 @@ import type { UserPreferences, FavoriteModel } from './types.js';
 import { dirname, join } from 'node:path';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { getAppHome, getConfigPath, getLegacyAppHome, getLegacyConfPath } from './paths.js';
+import { CODEX_SUBAGENT_MODEL_CAP } from './constants.js';
 
 function readJsonFile(path: string): UserPreferences | null {
   try {
@@ -79,6 +80,9 @@ export function loadPreferences(): UserPreferences {
     lastClaudeTransparentMode: config.lastClaudeTransparentMode,
     recentModelsByProvider: config.recentModelsByProvider,
     favoriteModels: config.favoriteModels,
+    codexSubagentModels: Array.isArray(config.codexSubagentModels)
+      ? config.codexSubagentModels.slice(0, CODEX_SUBAGENT_MODEL_CAP)
+      : undefined,
     antigravityCliFavoriteModels: config.antigravityCliFavoriteModels,
     antigravityCliFavoritesHintShown: config.antigravityCliFavoritesHintShown,
     appPathOverrides: config.appPathOverrides,
@@ -87,7 +91,7 @@ export function loadPreferences(): UserPreferences {
   };
 }
 
-export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBackend' | 'lastModel' | 'lastProvider' | 'lastCodexProvider' | 'lastCodexModel' | 'lastGeminiProvider' | 'lastGeminiModel' | 'lastAntigravityProvider' | 'lastAntigravityModel' | 'lastClaudeTransparentMode' | 'recentModelsByProvider' | 'favoriteModels' | 'antigravityCliFavoriteModels' | 'antigravityCliFavoritesHintShown' | 'appPathOverrides' | 'recentLaunchFolders'>>): void {
+export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBackend' | 'lastModel' | 'lastProvider' | 'lastCodexProvider' | 'lastCodexModel' | 'lastGeminiProvider' | 'lastGeminiModel' | 'lastAntigravityProvider' | 'lastAntigravityModel' | 'lastClaudeTransparentMode' | 'recentModelsByProvider' | 'favoriteModels' | 'codexSubagentModels' | 'antigravityCliFavoriteModels' | 'antigravityCliFavoritesHintShown' | 'appPathOverrides' | 'recentLaunchFolders'>>): void {
   const config = readConfig();
   if (prefs.lastBackend !== undefined) config.lastBackend = prefs.lastBackend;
   if (prefs.lastModel !== undefined) config.lastModel = prefs.lastModel;
@@ -101,6 +105,9 @@ export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBacken
   if (prefs.lastClaudeTransparentMode !== undefined) config.lastClaudeTransparentMode = prefs.lastClaudeTransparentMode;
   if (prefs.recentModelsByProvider !== undefined) config.recentModelsByProvider = prefs.recentModelsByProvider;
   if (prefs.favoriteModels !== undefined) config.favoriteModels = prefs.favoriteModels;
+  if (prefs.codexSubagentModels !== undefined) {
+    config.codexSubagentModels = prefs.codexSubagentModels.slice(0, CODEX_SUBAGENT_MODEL_CAP);
+  }
   if (prefs.antigravityCliFavoriteModels !== undefined) config.antigravityCliFavoriteModels = prefs.antigravityCliFavoriteModels;
   if (prefs.antigravityCliFavoritesHintShown !== undefined) config.antigravityCliFavoritesHintShown = prefs.antigravityCliFavoritesHintShown;
   if (prefs.appPathOverrides !== undefined) config.appPathOverrides = prefs.appPathOverrides;
@@ -330,4 +337,3 @@ export function resolveServerAutostart(env: NodeJS.ProcessEnv = process.env): bo
   }
   return getServerAutostart();
 }
-

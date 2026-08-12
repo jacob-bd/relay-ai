@@ -52,6 +52,13 @@ export interface ResponsesReasoningItem {
   summary?: Array<{ type: string; text?: string }>;
 }
 
+/** Codex collaboration handoff item. Native encrypted content is opaque to Relay. */
+export interface ResponsesAgentMessageItem {
+  type: 'agent_message';
+  id?: string;
+  content: Array<{ type: string; text?: string; encrypted_content?: string }>;
+}
+
 /** Codex's native managed tool-discovery call — see ResponsesToolSearchTool. */
 export interface ResponsesToolSearchCallItem {
   type: 'tool_search_call';
@@ -114,6 +121,7 @@ export type ResponsesInputItem =
   | ResponsesFunctionCallItem
   | ResponsesFunctionCallOutputItem
   | ResponsesReasoningItem
+  | ResponsesAgentMessageItem
   | ResponsesToolSearchCallItem
   | ResponsesToolSearchOutputItem
   | ResponsesCustomToolCallItem
@@ -486,6 +494,11 @@ export function translateResponsesInput(
           output: { type: 'text', value: serializeToolResultContent(item.output) },
         }],
       } as ModelMessage);
+    } else if (item.type === 'agent_message') {
+      const text = messageText(item.content);
+      if (text.trim()) {
+        messages.push({ role: 'user', content: [{ type: 'text', text }] } as ModelMessage);
+      }
     } else if (item.type === 'compaction' || item.type === 'context_compaction') {
       // A prior remote-compaction-v2 summary we emitted (buildCompactionResponseBody),
       // now replayed as history. Decode it back into a readable message so the model
@@ -635,6 +648,33 @@ interface StreamingToolState {
   args: string;
 }
 
+const CODEX_SUBAGENT_TOOL_NAMES = new Set(['spawn_agent', 'multi_agent_v1__spawn_agent']);
+
+function isCodexSubagentToolName(toolName: string): boolean {
+  return CODEX_SUBAGENT_TOOL_NAMES.has(toolName) || toolName.endsWith('__spawn_agent');
+}
+
+function normalizeCodexSubagentArguments(toolName: string, argsStr: string): string {
+  if (!isCodexSubagentToolName(toolName)) return argsStr;
+
+  const args = parseToolArguments(argsStr);
+  for (const key of ['model', 'reasoning_effort', 'service_tier']) {
+    if (args[key] === '') delete args[key];
+  }
+
+  const items = args.items;
+  const message = args.message;
+  if (Array.isArray(items) && items.length > 0) {
+    delete args.message;
+  } else if (typeof message === 'string' && message.trim()) {
+    delete args.items;
+  } else if (Array.isArray(items) && items.length === 0) {
+    delete args.items;
+  }
+
+  return JSON.stringify(args);
+}
+
 type ToolOutputKind =
   | { kind: 'namespace'; namespace: string; name: string }
   | { kind: 'tool_search' }
@@ -665,6 +705,7 @@ function buildFinalToolItem(
   itemId: string,
   argsStr: string,
 ): Record<string, unknown> {
+  argsStr = normalizeCodexSubagentArguments(flatName, argsStr);
   switch (kind.kind) {
     case 'namespace':
       return { type: 'function_call', id: itemId, call_id: callId, namespace: kind.namespace, name: kind.name, arguments: argsStr, status: 'completed' };
@@ -1141,13 +1182,14 @@ export async function writeResponsesStream(
   }
 
   for (const tool of toolStates) {
+    const normalizedArgs = normalizeCodexSubagentArguments(tool.name, tool.args);
     emit('response.function_call_arguments.done', {
       type: 'response.function_call_arguments.done',
       item_id: tool.itemId,
       output_index: tool.outputIndex,
-      arguments: tool.args,
+      arguments: normalizedArgs,
     });
-    const fcItem = buildFinalToolItem(resolveOutputKind(tool.name, options?.toolContext), tool.name, tool.callId, tool.itemId, tool.args);
+    const fcItem = buildFinalToolItem(resolveOutputKind(tool.name, options?.toolContext), tool.name, tool.callId, tool.itemId, normalizedArgs);
     emit('response.output_item.done', {
       type: 'response.output_item.done',
       output_index: tool.outputIndex,

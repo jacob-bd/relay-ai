@@ -131,6 +131,13 @@ export function providerKeyringAccount(providerId: string): string {
   return `provider:${providerId}`;
 }
 
+/** Auth-ref used for a user-managed Relay override of the shared OpenCode catalog key. */
+export function preferredRelayCredentialAuthRef(providerId: string, fallbackAuthRef: string): string {
+  return providerId === 'go' || providerId === 'zen'
+    ? `keyring:${providerKeyringAccount('opencode')}`
+    : fallbackAuthRef;
+}
+
 export function oauthProviderKeyringAccount(providerId: string): string {
   return `oauth:provider:${providerId}`;
 }
@@ -279,6 +286,16 @@ export async function readGlobalOpencodeCredential(diag?: (msg: string) => void)
   }
 }
 
+/** Read a stored credential without environment-variable precedence. */
+export async function readStoredProviderCredential(
+  authRef: string,
+  diag?: (msg: string) => void,
+): Promise<string | null> {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== 'keyring') return null;
+  return readProviderSecret(parsed.account, diag);
+}
+
 /**
  * Migrate legacy keychain entries to `global:opencode`.
  * Protocol: read → write → verify → delete old (only after verify succeeds).
@@ -330,11 +347,19 @@ export async function resolveProviderCredential(
   authRef: string,
   diag?: (msg: string) => void,
 ): Promise<string | null> {
-  const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
-  if (namespaced) return namespaced;
-
   const parsed = parseAuthRef(authRef);
   if (!parsed) return null;
+
+  // A key explicitly saved in Relay for the shared OpenCode catalog is a deliberate
+  // override. It must win over OPENCODE_API_KEY, RELAY_AI_KEY_GO/ ZEN, and OpenCode's
+  // own global key so a user can actually replace a stale credential.
+  if (parsed.kind === 'keyring' && parsed.account === GLOBAL_OPENCODE_KEYRING_ACCOUNT) {
+    const relayOverride = await readProviderSecret(providerKeyringAccount('opencode'), diag);
+    if (relayOverride) return relayOverride;
+  }
+
+  const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
+  if (namespaced) return namespaced;
 
   if (parsed.kind === 'env') {
     return readEnvCredential(parsed.varName);
@@ -357,13 +382,18 @@ export async function forceRefreshProviderCredential(
   authRef: string,
   diag?: (msg: string) => void,
 ): Promise<string | null> {
-  const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
-  if (namespaced) return namespaced;
-
   const parsed = parseAuthRef(authRef);
   if (!parsed || parsed.kind !== 'keyring') {
     return resolveProviderCredential(providerId, authRef, diag);
   }
+
+  if (parsed.account === GLOBAL_OPENCODE_KEYRING_ACCOUNT) {
+    const relayOverride = await readProviderSecret(providerKeyringAccount('opencode'), diag);
+    if (relayOverride) return relayOverride;
+  }
+
+  const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
+  if (namespaced) return namespaced;
 
   const oauthProviderId = oauthProviderIdFromAccount(parsed.account);
   const raw = await readKeyringAccount(parsed.account, diag);

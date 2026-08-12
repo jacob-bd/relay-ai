@@ -8,9 +8,16 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { loadPreferences, recordLaunchFolder, savePreferences, setAppPathOverride, setServerAutostart } from '../config.js';
 import { fetchProviderCatalog } from '../provider-catalog.js';
-import { providersForTarget, type RelayLaunchTarget } from '../target-compatibility.js';
+import { providersForCodexSubagents, providersForTarget, type RelayLaunchTarget } from '../target-compatibility.js';
+import { normalizeFavoriteModels } from '../favorites.js';
+import { CODEX_SUBAGENT_MODEL_CAP } from '../constants.js';
 import { favoriteProviderDisplayName } from '../favorite-provider-display.js';
-import { saveProviderCredential, resolveProviderCredential } from '../env.js';
+import {
+  preferredRelayCredentialAuthRef,
+  readStoredProviderCredential,
+  saveProviderCredential,
+  resolveProviderCredential,
+} from '../env.js';
 import { readBody, sendJson } from '../http-utils.js';
 import { loadRegistry } from '../registry/io.js';
 import { refreshProviderModels, refreshAllProviderModels } from '../registry/refresh-models.js';
@@ -136,7 +143,7 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
     handlePostConfig(req, res);
   } else if (url.startsWith('/api/models') && req.method === 'GET') {
     const appId = new URL(url, 'http://localhost').searchParams.get('appId') ?? '';
-    handleGetModels(res, APP_ID_TO_LAUNCH_TARGET[appId]);
+    handleGetModels(res, APP_ID_TO_LAUNCH_TARGET[appId], appId === 'codex-subagents');
   } else if (url === '/api/keys' && req.method === 'POST') {
     handlePostKeys(req, res);
   } else if (url === '/api/providers/refresh' && req.method === 'POST') {
@@ -190,6 +197,7 @@ function handleGetConfig(res: ServerResponse): void {
   const prefs = loadPreferences();
   sendJson(res, 200, {
     favoriteModels: prefs.favoriteModels ?? [],
+    codexSubagentModels: prefs.codexSubagentModels ?? [],
     antigravityCliFavoriteModels: prefs.antigravityCliFavoriteModels ?? [],
   });
 }
@@ -200,6 +208,14 @@ async function handlePostConfig(req: IncomingMessage, res: ServerResponse): Prom
     const update: Parameters<typeof savePreferences>[0] = {};
     if (Array.isArray(body.favoriteModels)) update.favoriteModels = body.favoriteModels;
     if (Array.isArray(body.antigravityCliFavoriteModels)) update.antigravityCliFavoriteModels = body.antigravityCliFavoriteModels;
+    if (Array.isArray(body.codexSubagentModels)) {
+      const normalized = normalizeFavoriteModels(body.codexSubagentModels, CODEX_SUBAGENT_MODEL_CAP + 1);
+      if (normalized.length > CODEX_SUBAGENT_MODEL_CAP) {
+        sendJson(res, 400, { error: 'Codex Sub-agents are limited to 1 model' });
+        return;
+      }
+      update.codexSubagentModels = normalized;
+    }
     if (Object.keys(update).length > 0) savePreferences(update);
     sendJson(res, 200, { ok: true });
   } catch (err) {
@@ -207,13 +223,14 @@ async function handlePostConfig(req: IncomingMessage, res: ServerResponse): Prom
   }
 }
 
-async function handleGetModels(res: ServerResponse, target?: RelayLaunchTarget): Promise<void> {
+async function handleGetModels(res: ServerResponse, target?: RelayLaunchTarget, codexSubagents = false): Promise<void> {
   try {
     let catalog = (await fetchModelsWithTimeout())
       .filter(provider => provider.authType !== 'oauth' || DEVICE_CODE_PROVIDER_IDS.has(provider.id));
     // Per-app launch pickers pass their target so unsupported/too-small models (context
     // floor, format compatibility) are filtered the same way the CLI wizards filter them.
-    if (target) catalog = providersForTarget(catalog, target);
+    if (codexSubagents) catalog = providersForCodexSubagents(catalog);
+    else if (target) catalog = providersForTarget(catalog, target);
     const registry = loadRegistry();
     const rawCountById = new Map(registry.providers.map(p => [p.id, p.modelsCache?.models.length ?? 0]));
     const providers = catalog.map(p => ({
@@ -282,14 +299,22 @@ function copilotSubscription(providerData?: Record<string, unknown>): { tier: 'f
 async function handlePostKeys(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
     const body = JSON.parse(await readBody(req));
-    const { providerId, key } = body;
+    const { providerId, key, confirmOverwrite } = body;
     if (!providerId || typeof providerId !== 'string') {
       sendJson(res, 400, { error: 'providerId required' }); return;
     }
     if (!key || typeof key !== 'string' || key.trim().length === 0) {
       sendJson(res, 400, { error: 'key must be a non-empty string' }); return;
     }
-    const authRef = `keyring:provider:${providerId}`;
+    const authRef = preferredRelayCredentialAuthRef(providerId, `keyring:provider:${providerId}`);
+    const existing = await readStoredProviderCredential(authRef)
+      ?? (providerId === 'go' || providerId === 'zen'
+        ? await readStoredProviderCredential('keyring:global:opencode')
+        : null);
+    if (existing && existing !== key.trim() && confirmOverwrite !== true) {
+      sendJson(res, 409, { ok: false, needsConfirmation: true, error: 'A different key is already stored in Relay.' });
+      return;
+    }
     const saved = await saveProviderCredential(authRef, key.trim());
     if (saved) {
       sendJson(res, 200, { ok: true });
@@ -476,8 +501,10 @@ async function handleProviderRefresh(req: IncomingMessage, res: ServerResponse):
     if (!registryProvider) {
       sendJson(res, 200, { ok: false, error: 'Provider not found in registry' }); return;
     }
-    // Resolve credential via authRef (covers both API keys and OAuth tokens)
-    const apiKey = await resolveProviderCredential(providerId, registryProvider.authRef);
+    // A key typed into the UI is a one-request override. Do not let env/keychain
+    // resolution silently replace it before the provider API sees the request.
+    const explicitKey = typeof body.key === 'string' ? body.key.trim() : '';
+    const apiKey = explicitKey || await resolveProviderCredential(providerId, registryProvider.authRef);
     // Use the same refresh path as `relay-ai providers refresh-models` so counts match CLI
     const result = await refreshProviderModels(providerId, apiKey, registry);
     if (result.ok) {
@@ -758,6 +785,7 @@ async function handleLaunchApp(req: IncomingMessage, res: ServerResponse, opts: 
     const body = JSON.parse(await readBody(req));
     const { appId, favorites, cwd } = body;
     const httpProxy = body.httpProxy === true;
+    const withNative = body.withNative === true;
     let { providerId, modelId } = body as { providerId?: string; modelId?: string };
     if (!appId) {
       sendJson(res, 400, { error: 'Missing appId' });
@@ -769,6 +797,14 @@ async function handleLaunchApp(req: IncomingMessage, res: ServerResponse, opts: 
     }
     if (body.httpProxy !== undefined && typeof body.httpProxy !== 'boolean') {
       sendJson(res, 400, { error: 'httpProxy must be true or false.' });
+      return;
+    }
+    if (body.withNative !== undefined && typeof body.withNative !== 'boolean') {
+      sendJson(res, 400, { error: 'withNative must be true or false.' });
+      return;
+    }
+    if (withNative && appId !== 'codex' && appId !== 'codex-app') {
+      sendJson(res, 400, { error: 'Native Codex mixed mode is available only for Codex CLI and ChatGPT Desktop.' });
       return;
     }
     if (httpProxy && appId !== 'claude') {
@@ -839,6 +875,7 @@ async function handleLaunchApp(req: IncomingMessage, res: ServerResponse, opts: 
       cwd: launchFolder,
       trace: opts.trace,
       httpProxy,
+      ...(withNative ? { withNative: true } : {}),
     });
     traceUi(
       opts,

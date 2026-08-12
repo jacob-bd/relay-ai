@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import {
   BACKENDS,
+  CODEX_SUBAGENT_MODEL_CAP,
   MAX_MODEL_CATALOG,
   VERSION,
   addCustomEndpointProvider,
@@ -40,15 +41,19 @@ import {
   loadRegistry,
   loadServerModels,
   makeTraceLogger,
+  normalizeFavoriteModels,
   openAiDeviceCodeUrl,
   openAiIdCollisions,
   pollClinePassDeviceCode,
   pollGithubDeviceCodeToken,
   pollOpenAiDeviceCodeToken,
   pollXaiDeviceCodeToken,
+  preferredRelayCredentialAuthRef,
   providerOptionsFromCatalog,
+  providersForCodexSubagents,
   providersForTarget,
   readBody,
+  readStoredProviderCredential,
   recordLaunchFolder,
   refreshAllProviderModels,
   refreshProviderModels,
@@ -79,7 +84,7 @@ import {
   supportsClaudeTransparentMode,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-O2YKQKNF.js";
+} from "./chunk-R4AWEK7T.js";
 import {
   __toCommonJS,
   init_provider_templates,
@@ -241,7 +246,14 @@ function fallbackPathsForApp(id, platform = process.platform) {
         join(localAppData, "Programs", "Codex", "Codex.exe"),
         join(localAppData, "Programs", "OpenAI Codex", "Codex.exe"),
         join(localAppData, "openai-codex-electron", "Codex.exe")
-      ] : [];
+      ] : [
+        "/usr/bin/chatgpt",
+        "/usr/lib/chatgpt/ChatGPT",
+        "/opt/chatgpt/ChatGPT",
+        "/usr/local/lib/chatgpt/ChatGPT",
+        join(homedir(), ".local", "bin", "chatgpt"),
+        join(homedir(), ".local", "share", "chatgpt", "ChatGPT")
+      ];
     default:
       return [];
   }
@@ -332,6 +344,12 @@ function getRelayLaunchCommand(appId, options = {}) {
       throw new Error("Transparent proxy mode is available only for Claude Code CLI.");
     }
     args.push("--http-proxy");
+  }
+  if (options.withNative) {
+    if (app.id !== "codex" && app.id !== "codex-app") {
+      throw new Error("Native Codex mixed mode is available only for Codex CLI and ChatGPT Desktop.");
+    }
+    args.push("--with-native");
   }
   if (options.providerId && options.modelId) {
     args.push("--provider", options.providerId, "--model", options.modelId);
@@ -637,7 +655,7 @@ function handleUiApiRequest(req, res, opts = {}) {
     handlePostConfig(req, res);
   } else if (url.startsWith("/api/models") && req.method === "GET") {
     const appId = new URL(url, "http://localhost").searchParams.get("appId") ?? "";
-    handleGetModels(res, APP_ID_TO_LAUNCH_TARGET[appId]);
+    handleGetModels(res, APP_ID_TO_LAUNCH_TARGET[appId], appId === "codex-subagents");
   } else if (url === "/api/keys" && req.method === "POST") {
     handlePostKeys(req, res);
   } else if (url === "/api/providers/refresh" && req.method === "POST") {
@@ -689,6 +707,7 @@ function handleGetConfig(res) {
   const prefs = loadPreferences();
   sendJson(res, 200, {
     favoriteModels: prefs.favoriteModels ?? [],
+    codexSubagentModels: prefs.codexSubagentModels ?? [],
     antigravityCliFavoriteModels: prefs.antigravityCliFavoriteModels ?? []
   });
 }
@@ -698,16 +717,25 @@ async function handlePostConfig(req, res) {
     const update = {};
     if (Array.isArray(body.favoriteModels)) update.favoriteModels = body.favoriteModels;
     if (Array.isArray(body.antigravityCliFavoriteModels)) update.antigravityCliFavoriteModels = body.antigravityCliFavoriteModels;
+    if (Array.isArray(body.codexSubagentModels)) {
+      const normalized = normalizeFavoriteModels(body.codexSubagentModels, CODEX_SUBAGENT_MODEL_CAP + 1);
+      if (normalized.length > CODEX_SUBAGENT_MODEL_CAP) {
+        sendJson(res, 400, { error: "Codex Sub-agents are limited to 1 model" });
+        return;
+      }
+      update.codexSubagentModels = normalized;
+    }
     if (Object.keys(update).length > 0) savePreferences(update);
     sendJson(res, 200, { ok: true });
   } catch (err) {
     sendJson(res, 400, { error: String(err) });
   }
 }
-async function handleGetModels(res, target) {
+async function handleGetModels(res, target, codexSubagents = false) {
   try {
     let catalog = (await fetchModelsWithTimeout()).filter((provider) => provider.authType !== "oauth" || DEVICE_CODE_PROVIDER_IDS.has(provider.id));
-    if (target) catalog = providersForTarget(catalog, target);
+    if (codexSubagents) catalog = providersForCodexSubagents(catalog);
+    else if (target) catalog = providersForTarget(catalog, target);
     const registry = loadRegistry();
     const rawCountById = new Map(registry.providers.map((p2) => [p2.id, p2.modelsCache?.models.length ?? 0]));
     const providers = catalog.map((p2) => ({
@@ -767,7 +795,7 @@ function copilotSubscription(providerData) {
 async function handlePostKeys(req, res) {
   try {
     const body = JSON.parse(await readBody(req));
-    const { providerId, key } = body;
+    const { providerId, key, confirmOverwrite } = body;
     if (!providerId || typeof providerId !== "string") {
       sendJson(res, 400, { error: "providerId required" });
       return;
@@ -776,7 +804,12 @@ async function handlePostKeys(req, res) {
       sendJson(res, 400, { error: "key must be a non-empty string" });
       return;
     }
-    const authRef = `keyring:provider:${providerId}`;
+    const authRef = preferredRelayCredentialAuthRef(providerId, `keyring:provider:${providerId}`);
+    const existing = await readStoredProviderCredential(authRef) ?? (providerId === "go" || providerId === "zen" ? await readStoredProviderCredential("keyring:global:opencode") : null);
+    if (existing && existing !== key.trim() && confirmOverwrite !== true) {
+      sendJson(res, 409, { ok: false, needsConfirmation: true, error: "A different key is already stored in Relay." });
+      return;
+    }
     const saved = await saveProviderCredential(authRef, key.trim());
     if (saved) {
       sendJson(res, 200, { ok: true });
@@ -957,7 +990,8 @@ async function handleProviderRefresh(req, res) {
       sendJson(res, 200, { ok: false, error: "Provider not found in registry" });
       return;
     }
-    const apiKey = await resolveProviderCredential(providerId, registryProvider.authRef);
+    const explicitKey = typeof body.key === "string" ? body.key.trim() : "";
+    const apiKey = explicitKey || await resolveProviderCredential(providerId, registryProvider.authRef);
     const result = await refreshProviderModels(providerId, apiKey, registry);
     if (result.ok) {
       sendJson(res, 200, { ok: true, count: result.modelCount ?? result.previousModelCount ?? 0 });
@@ -1202,6 +1236,7 @@ async function handleLaunchApp(req, res, opts) {
     const body = JSON.parse(await readBody(req));
     const { appId, favorites, cwd } = body;
     const httpProxy = body.httpProxy === true;
+    const withNative = body.withNative === true;
     let { providerId, modelId } = body;
     if (!appId) {
       sendJson(res, 400, { error: "Missing appId" });
@@ -1213,6 +1248,14 @@ async function handleLaunchApp(req, res, opts) {
     }
     if (body.httpProxy !== void 0 && typeof body.httpProxy !== "boolean") {
       sendJson(res, 400, { error: "httpProxy must be true or false." });
+      return;
+    }
+    if (body.withNative !== void 0 && typeof body.withNative !== "boolean") {
+      sendJson(res, 400, { error: "withNative must be true or false." });
+      return;
+    }
+    if (withNative && appId !== "codex" && appId !== "codex-app") {
+      sendJson(res, 400, { error: "Native Codex mixed mode is available only for Codex CLI and ChatGPT Desktop." });
       return;
     }
     if (httpProxy && appId !== "claude") {
@@ -1270,7 +1313,8 @@ async function handleLaunchApp(req, res, opts) {
       modelId,
       cwd: launchFolder,
       trace: opts.trace,
-      httpProxy
+      httpProxy,
+      ...withNative ? { withNative: true } : {}
     });
     traceUi(
       opts,
@@ -1709,4 +1753,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-IJRKQ3NA.js.map
+//# sourceMappingURL=ui-command-FARF2BF4.js.map

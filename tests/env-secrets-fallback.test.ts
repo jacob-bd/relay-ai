@@ -68,4 +68,14 @@ describe('credential file fallback when keyring fails', () => {
     expect(await resolveProviderCredential('mistral', authRef)).toBeNull();
     expect(readFileAccount('provider:mistral')).toBeNull();
   });
+
+  it('uses the Relay OpenCode override before OPENCODE_API_KEY', async () => {
+    process.env.OPENCODE_API_KEY = 'old-environment-key';
+    try {
+      expect(await saveProviderCredential('keyring:provider:opencode', 'new-relay-key')).toBe(true);
+      expect(await resolveProviderCredential('go', 'keyring:global:opencode')).toBe('new-relay-key');
+    } finally {
+      delete process.env.OPENCODE_API_KEY;
+    }
+  });
 });

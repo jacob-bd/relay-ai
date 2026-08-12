@@ -1,7 +1,7 @@
 // tests/favorites.test.ts
 import { describe, it, expect } from 'vitest';
 import { MAX_MODEL_CATALOG } from '../src/constants.js';
-import { addFavorite, removeFavorite, isFavorite } from '../src/favorites.js';
+import { addFavorite, removeFavorite, isFavorite, normalizeFavoriteModels } from '../src/favorites.js';
 import type { FavoriteModel } from '../src/types.js';
 
 const fav = (providerId: string, modelId: string): FavoriteModel => ({ providerId, modelId });
@@ -104,5 +104,38 @@ describe('removeFavorite', () => {
 describe('MAX_MODEL_CATALOG', () => {
   it('is 20', () => {
     expect(MAX_MODEL_CATALOG).toBe(20);
+  });
+});
+
+describe('normalizeFavoriteModels', () => {
+  it('returns an empty list for malformed input', () => {
+    expect(normalizeFavoriteModels(undefined, 20)).toEqual([]);
+    expect(normalizeFavoriteModels({ providerId: 'kilo' }, 20)).toEqual([]);
+  });
+
+  it('keeps valid entries in order, removes duplicates, and keeps provider boundaries', () => {
+    expect(normalizeFavoriteModels([
+      { providerId: 'kilo', modelId: 'same' },
+      { providerId: 'kilo', modelId: 'same' },
+      { providerId: 'google', modelId: 'same' },
+      { providerId: '  openai  ', modelId: '  gpt-5.5  ' },
+      { providerId: '', modelId: 'missing-provider' },
+      { providerId: 'missing-model', modelId: '' },
+    ], 20)).toEqual([
+      { providerId: 'kilo', modelId: 'same' },
+      { providerId: 'google', modelId: 'same' },
+      { providerId: 'openai', modelId: 'gpt-5.5' },
+    ]);
+  });
+
+  it('enforces the requested capacity after normalization', () => {
+    expect(normalizeFavoriteModels([
+      { providerId: 'a', modelId: '1' },
+      { providerId: 'b', modelId: '2' },
+      { providerId: 'c', modelId: '3' },
+    ], 2)).toEqual([
+      { providerId: 'a', modelId: '1' },
+      { providerId: 'b', modelId: '2' },
+    ]);
   });
 });

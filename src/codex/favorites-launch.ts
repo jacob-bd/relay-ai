@@ -164,3 +164,71 @@ export async function resolveCodexFavorites(
     providersById: new Map(compatible.map(lp => [lp.id, lp])),
   };
 }
+
+export interface ResolvedCodexMixedModels {
+  selected: ResolvedFavorite;
+  visible: ResolvedFavorite[];
+  subagents: ResolvedFavorite[];
+  all: ResolvedFavorite[];
+  providersById: Map<string, LocalProvider>;
+  dropped: FavoriteModel[];
+}
+
+/**
+ * Mixed mode must not silently fall back to native sub-agents when a configured
+ * Relay Sub-agent cannot be resolved. The catalog is user-controlled, so every
+ * configured entry is part of the launch contract.
+ */
+export function assertConfiguredCodexSubagentsResolved(
+  configured: FavoriteModel[],
+  resolved: Pick<ResolvedCodexMixedModels, 'subagents'>,
+): void {
+  const resolvedKeys = new Set(
+    resolved.subagents.map(entry => `${entry.providerId}:${entry.model.id}`),
+  );
+  const missing = configured.filter(entry => !resolvedKeys.has(`${entry.providerId}:${entry.modelId}`));
+  if (missing.length === 0) return;
+
+  throw new Error(
+    `Configured Codex Sub-agent model(s) are unavailable for this launch: ${missing.map(entry => `${entry.providerId}:${entry.modelId}`).join(', ')}. `
+      + 'Check the provider credential and refresh the provider model catalog. Mixed mode was not started.',
+  );
+}
+
+export async function resolveCodexMixedModels(input: {
+  activeProvider: LocalProvider;
+  selectedModel: LocalProviderModel;
+  compatible: LocalProvider[];
+  generalFavorites: FavoriteModel[];
+  subagentFavorites: FavoriteModel[];
+}): Promise<ResolvedCodexMixedModels> {
+  const ctx: ResolveContext = {
+    agent: 'codex',
+    localProviders: input.compatible,
+    findLocalModel: (providerId, modelId) => {
+      const provider = input.compatible.find(lp => lp.id === providerId);
+      const model = provider?.models.find(m => m.id === modelId);
+      return provider && model ? { provider, model } : undefined;
+    },
+  };
+  const selected = await resolveFavorite(
+    { providerId: input.activeProvider.id, modelId: input.selectedModel.id },
+    ctx,
+  );
+  if (!selected) throw new Error('Selected Codex model is no longer available');
+  const visibleResult = await buildFavoritesList(selected, input.generalFavorites, ctx, 20, { trackCapacitySkipped: true });
+  const subagentResult = await buildFavoritesList(undefined, input.subagentFavorites, ctx, 20, { trackCapacitySkipped: true });
+  const all: ResolvedFavorite[] = [...visibleResult.resolved];
+  for (const entry of subagentResult.resolved) {
+    const key = `${entry.providerId}\0${entry.model.id}`;
+    if (!all.some(existing => `${existing.providerId}\0${existing.model.id}` === key)) all.push(entry);
+  }
+  return {
+    selected,
+    visible: visibleResult.resolved,
+    subagents: subagentResult.resolved,
+    all,
+    providersById: new Map(input.compatible.map(provider => [provider.id, provider])),
+    dropped: [...visibleResult.droppedFavorites, ...subagentResult.droppedFavorites],
+  };
+}

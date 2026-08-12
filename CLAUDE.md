@@ -44,7 +44,7 @@ relay-ai claude --trace    # write debug log to /tmp/relay-ai-debug.log and prin
 relay-ai server           # foreground OpenCode/registry API gateway
 relay-ai server --vertex  # foreground Vertex AI gateway (gcloud ADC)
 relay-ai codex            # Codex CLI with registry providers (see docs/CODEX.md)
-relay-ai codex-app        # Codex desktop app (macOS/Windows; see docs/CODEX.md)
+relay-ai codex-app        # Codex desktop app (macOS/Windows/Linux; see docs/CODEX.md)
 relay-ai gemini           # Gemini CLI with registry providers
 
 # Rebuild after code changes before testing manually
@@ -181,6 +181,8 @@ In all cases `process.env['OPENCODE_API_KEY']` is set immediately so the key is 
 - `--restore` globs `models-*.json` (CLI) and `app-models-*.json` (App); the new files are `models-favorites.json` and `app-models-favorites.json`.
 - Zen/Go favorites are skipped in Codex (use Claude or Desktop gateway).
 
+**Linux desktop app launch:** `src/linux-display.ts::linuxLaunchEnv()` resolves the X11 display that owns the launching terminal's `WINDOWID` and `WM_CLASS`. `codex/app-launch.ts` and `claude-desktop/app-launch.ts` pass that environment to the detached Linux executable instead of using `gtk-launch`, which can route an app to another graphical session. Linux app restarts are deterministic because tray-hidden Electron processes must exit before Relay's temporary configuration can be reloaded. Verified on Ubuntu over RDP with the ChatGPT desktop app and a DeepSeek model.
+
 **ChatGPT/Codex desktop app rename (2026-07-09):** OpenAI merged the standalone Codex desktop app into the ChatGPT desktop app. `relay-ai chatgpt` is a full alias for `relay-ai codex-app` (added in `cli.ts`'s `first === 'codex-app' || first === 'chatgpt'` check — `emptyParsed('codex-app')` still drives dispatch either way, so no new `ParsedArgs['command']` variant was needed). On macOS the app is confirmed renamed `Codex.app` → `ChatGPT.app`, with the bundle id unchanged (`com.openai.codex`) and the running process/executable renamed `Codex` → `ChatGPT` — `src/codex/app-launch.ts`'s `DARWIN_APP_NAMES = ['ChatGPT', 'Codex']` and `native-launcher.ts`'s Windows/macOS fallback paths check both names so pre-update installs keep working. The Windows path/process names were updated by analogy with the confirmed macOS rename (same install-folder convention) via `WIN_APP_NAMES` in `app-launch.ts` — **not yet verified against a real Windows install**; confirm and correct if the actual folder/exe name differs once available.
 
 **Windows desktop-app restart bug (fixed 2026-07-09):** `waitForQuit()` in `codex/app-launch.ts` and `claude-desktop/app-launch.ts` used to treat "no visible main window" (`winHasWindow()`) as "the app has quit." Electron apps that minimize to the tray on window-close clear their window handle immediately while the process stays alive, so this returned `true` instantly, skipping the `winForceQuit()` fallback — the old process (with its already-loaded config) kept running, and a relaunch just refocused it. Fixed to poll actual process existence (`winMatchingPids().length === 0`) instead. `antigravity/launch-ide.ts`'s Windows detection was written process-existence-based from the start (`Win32_Process` filtered by `--user-data-dir`) so it didn't have this bug, but its `winQuitProcess()` (graceful `CloseMainWindow()` only) had no force-kill fallback at all — added `forceQuitAntigravityApp`/`forceQuitAntigravityIde`, wired into `antigravity.ts`'s four quit call sites after a `waitForAntigravity*Quit` timeout.
@@ -195,9 +197,9 @@ In all cases `process.env['OPENCODE_API_KEY']` is set immediately so the key is 
 - `EADDRINUSE` on port `17645` (e.g. a terminal `relay-ai server` already running) surfaces as a specific inline error rather than a generic failure.
 - Frontend (`src/ui/public/app.js`, `state.server`): polls `GET /api/server/status` every 5s (cheap enough to run continuously; also drives the sidebar "Live" badge). Setup-state and running-state are two fully-templated views swapped into a single `#server-panel` container, matching the file's existing full-innerHTML-replace convention (see `renderApps()`).
 
-## Release status (v0.6.3)
+## Release status
 
-Current version is **v0.6.3** — maintenance: `relay-ai claude-app` now exposes the selected model followed by available saved favorites through one ordered, credential-aware catalog (max 20), with one context-accurate picker entry per model, while preserving Cloud Code routing and OAuth identity metadata. The release also hardens non-TTY Claude launches, Windows build/app detection and tests, concurrent transparent-proxy and Claude Desktop session cleanup (including self-healing from a corrupt session lock instead of getting permanently stuck), app help dispatch, parent Claude session isolation, and Docker build asset copying.
+The package version in `package.json` is the source of truth. The maintenance notes below describe architecture and known limitations; do not infer the current release version from this file.
 
 
 **Known limitations (by design):**

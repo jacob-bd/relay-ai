@@ -28,6 +28,7 @@ export interface RelayLaunchOptions {
   cwd?: string;
   trace?: boolean;
   httpProxy?: boolean;
+  withNative?: boolean;
 }
 
 interface SupportedAppDefinition {
@@ -196,7 +197,14 @@ export function fallbackPathsForApp(id: string, platform: NodeJS.Platform = proc
             join(localAppData, 'Programs', 'OpenAI Codex', 'Codex.exe'),
             join(localAppData, 'openai-codex-electron', 'Codex.exe'),
           ]
-        : [];
+        : [
+            '/usr/bin/chatgpt',
+            '/usr/lib/chatgpt/ChatGPT',
+            '/opt/chatgpt/ChatGPT',
+            '/usr/local/lib/chatgpt/ChatGPT',
+            join(homedir(), '.local', 'bin', 'chatgpt'),
+            join(homedir(), '.local', 'share', 'chatgpt', 'ChatGPT'),
+          ];
     default:
       return [];
   }
@@ -329,6 +337,12 @@ export function getRelayLaunchCommand(appId: string, options: RelayLaunchOptions
       throw new Error('Transparent proxy mode is available only for Claude Code CLI.');
     }
     args.push('--http-proxy');
+  }
+  if (options.withNative) {
+    if (app.id !== 'codex' && app.id !== 'codex-app') {
+      throw new Error('Native Codex mixed mode is available only for Codex CLI and ChatGPT Desktop.');
+    }
+    args.push('--with-native');
   }
   if (options.providerId && options.modelId) {
     args.push('--provider', options.providerId, '--model', options.modelId);

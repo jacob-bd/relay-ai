@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
+import { WebSocket } from 'ws';
 import type { LanguageModel } from 'ai';
 import { readBody, extractApiKey, sendJson } from './http-utils.js';
 import { routeLookupIds } from './context-model-id.js';
@@ -28,6 +29,13 @@ import {
 import { silenceSdkWarnings } from './sdk-adapter.js';
 import { formatUpstreamError, upstreamHttpStatus } from './codex/upstream-error.js';
 import { getCodexProxyDebugLogPath, makeTraceLogger, resetCodexBodyDumpLog, appendCodexBodyDump } from './trace-log.js';
+import { classifyCodexDispatch, parseMixedProxyPath } from './codex/routing.js';
+import { forwardNativeCodexHttp, allowlistedNativeHeaders, nativeResponsesWebSocketOptions, NATIVE_CODEX_RESPONSES_URL } from './codex/native-forward.js';
+import {
+  createNativePayloadRelay,
+  resolveRoutedCollaborationInput,
+  stripCodexCollaborationTools,
+} from './codex/collaboration-payload.js';
 
 /**
  * Pull the full `response` object out of a single SSE event chunk if it's the
@@ -238,6 +246,7 @@ export interface CodexProxyHandle {
 }
 
 const PROXY_PLACEHOLDER_KEY = 'proxy-local';
+export const MAX_CODEX_REQUEST_BYTES = 4 * 1024 * 1024;
 
 function codexRouteLookupIds(requestedModel: string): string[] {
   const ids = routeLookupIds(requestedModel);
@@ -272,6 +281,50 @@ export function findCodexProxyRoute(
   return undefined;
 }
 
+type CodexRequestHeaders = Record<string, string | string[] | undefined>;
+
+function requestHeaderValue(headers: CodexRequestHeaders | undefined, name: string): string | undefined {
+  if (!headers) return undefined;
+  const key = Object.keys(headers).find(candidate => candidate.toLowerCase() === name);
+  if (!key) return undefined;
+  const value = headers[key];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+/**
+ * Codex child sessions can arrive with the parent's native model id. The
+ * marker is carried in client_metadata on current runtimes and in the
+ * x-openai-subagent header on older/native transport variants.
+ */
+export function isCodexSubagentRequest(
+  body: Record<string, unknown>,
+  headers?: CodexRequestHeaders,
+): boolean {
+  const metadata = body.client_metadata;
+  if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
+    const record = metadata as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(record, 'x-openai-subagent')) return true;
+    if (Object.prototype.hasOwnProperty.call(record, 'x_openai_subagent')) return true;
+  }
+  return requestHeaderValue(headers, 'x-openai-subagent') !== undefined;
+}
+
+/**
+ * Resolve a marked Codex child to the launcher's one configured Sub-agent route.
+ * The incoming child model never changes that explicit Relay choice. Unmarked
+ * native parent requests never enter this path.
+ */
+export function resolveCodexSubagentRoute(
+  routes: readonly CodexProxyRoute[],
+  configuredModelId: string | undefined,
+  body: Record<string, unknown>,
+  headers?: CodexRequestHeaders,
+): CodexProxyRoute | undefined {
+  if (!isCodexSubagentRequest(body, headers)) return undefined;
+  if (!configuredModelId) return undefined;
+  return routes.find(route => route.modelId === configuredModelId);
+}
+
 function resolveModel(
   routes: CodexProxyRoute[],
   models: Map<string, LanguageModel>,
@@ -288,6 +341,42 @@ export interface CodexProxyOptions {
   debug?: boolean;
   /** Default true. App mode passes false — GUI cannot inherit RELAY_AI_CODEX_KEY. */
   requireAuth?: boolean;
+  mixedNative?: {
+    nativeModelIds: ReadonlySet<string>;
+    subagentRouteModelId?: string;
+    nativeBaseUrl?: string;
+    capability: string;
+    nativePayloadRelayModel?: string;
+    nativeFetchImpl?: typeof fetch;
+  };
+}
+
+async function prepareExternalCodexBody(
+  body: Record<string, unknown>,
+  context: {
+    relay: ReturnType<typeof createNativePayloadRelay> | undefined;
+    mixedNative: CodexProxyOptions['mixedNative'];
+    headers: CodexRequestHeaders;
+  },
+): Promise<Record<string, unknown>> {
+  const externalBody = isCodexSubagentRequest(body, context.headers)
+    ? stripCodexCollaborationTools(body)
+    : body;
+  if (!Array.isArray(externalBody.input)) return externalBody;
+  const resolvedInput = await resolveRoutedCollaborationInput(
+    externalBody.input as import('./codex-responses-adapter.js').ResponsesInputItem[],
+    {
+      relay: context.relay,
+      native: {
+        nativeBaseUrl: context.mixedNative?.nativeBaseUrl ?? 'https://chatgpt.com/backend-api/codex',
+        nativeModelId: context.mixedNative?.nativePayloadRelayModel ?? 'gpt-5.5',
+        headers: Object.fromEntries(Object.entries(context.headers).flatMap(([key, value]) => [
+          [key, Array.isArray(value) ? value[0] : value ?? ''],
+        ])),
+      },
+    },
+  );
+  return { ...externalBody, input: resolvedInput };
 }
 
 export async function startCodexProxy(
@@ -297,6 +386,8 @@ export async function startCodexProxy(
   const opts: CodexProxyOptions = typeof options === 'boolean' ? { debug: options } : options;
   const debug = opts.debug ?? false;
   const requireAuth = opts.requireAuth ?? true;
+  const mixedNative = opts.mixedNative;
+  const nativePayloadRelay = mixedNative ? createNativePayloadRelay({}) : undefined;
   silenceSdkWarnings();
 
   const models = new Map<string, LanguageModel>();
@@ -329,6 +420,17 @@ export async function startCodexProxy(
 
     const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
       const url = req.url ?? '/';
+      const parsedUrl = new URL(url, 'http://127.0.0.1');
+      const mixedPath = mixedNative ? parseMixedProxyPath(parsedUrl.pathname, mixedNative.capability) : null;
+      if (mixedNative && !mixedPath) {
+        sendJson(res, 404, { error: { message: 'Not found', type: 'invalid_request_error' } });
+        return;
+      }
+      if (mixedNative && mixedPath && mixedPath.suffix === '/health' && req.method === 'GET') {
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+      const effectivePath = mixedPath?.suffix ?? url;
 
       if (debug) {
         log(`-> ${req.method} ${url} content-type=${req.headers['content-type'] ?? '(none)'} content-encoding=${req.headers['content-encoding'] ?? '(none)'} content-length=${req.headers['content-length'] ?? '(none)'}`);
@@ -353,12 +455,12 @@ export async function startCodexProxy(
         }
       }
 
-      if (req.method === 'GET' && url === '/health') {
+      if (req.method === 'GET' && effectivePath === '/health') {
         sendJson(res, 200, { ok: true });
         return;
       }
 
-      if (req.method === 'GET' && url === '/v1/models') {
+      if (req.method === 'GET' && effectivePath === '/v1/models') {
         const data: Array<{ id: string; object: string; created: number; owned_by: string }> = [];
         const seenIds = new Set<string>();
         const addModel = (id: string, providerId?: string) => {
@@ -380,6 +482,10 @@ export async function startCodexProxy(
           }
         }
 
+        if (mixedNative) {
+          for (const nativeModelId of mixedNative.nativeModelIds) addModel(nativeModelId, 'openai');
+        }
+
         sendJson(res, 200, {
           object: 'list',
           data,
@@ -387,8 +493,12 @@ export async function startCodexProxy(
         return;
       }
 
-      if (req.method === 'GET' && url.startsWith('/v1/models/')) {
-        const id = url.slice('/v1/models/'.length);
+      if (req.method === 'GET' && effectivePath.startsWith('/v1/models/')) {
+        const id = effectivePath.slice('/v1/models/'.length);
+        if (mixedNative && mixedNative.nativeModelIds.has(id)) {
+          sendJson(res, 200, { id, object: 'model', created: Math.floor(Date.now() / 1000), owned_by: 'openai' });
+          return;
+        }
         const route = findCodexProxyRoute(routes, id);
         if (!route) {
           sendJson(res, 404, { error: { message: `Model not found: ${id}`, type: 'invalid_request_error' } });
@@ -403,8 +513,8 @@ export async function startCodexProxy(
         return;
       }
 
-      if (req.method === 'POST' && url === '/v1/responses') {
-        if (requireAuth) {
+      if (req.method === 'POST' && effectivePath === '/v1/responses') {
+        if (requireAuth && !mixedPath) {
           const inboundKey = extractApiKey(req);
           if (!inboundKey || inboundKey !== PROXY_PLACEHOLDER_KEY) {
             sendJson(res, 401, { error: { message: 'Unauthorized', type: 'invalid_api_key' } });
@@ -459,7 +569,55 @@ export async function startCodexProxy(
         }
 
         const modelId = String(body.model ?? '');
-        let resolved = resolveModel(routes, models, modelId);
+        const markedSubagent = Boolean(mixedNative && isCodexSubagentRequest(body, req.headers));
+        const subagentRoute = mixedNative && markedSubagent
+          ? resolveCodexSubagentRoute(routes, mixedNative.subagentRouteModelId, body, req.headers)
+          : undefined;
+        if (debug && markedSubagent) {
+          log(`subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? '(none)'}`);
+        }
+        if (mixedNative && markedSubagent && !subagentRoute) {
+          sendJson(res, 503, {
+            error: {
+              message: 'Codex marked this request as a Sub-agent, but no configured Codex Sub-agent route is available.',
+              type: 'service_unavailable',
+            },
+          });
+          return;
+        }
+        if (mixedNative) {
+          if (!markedSubagent) {
+            const dispatch = classifyCodexDispatch(modelId, routes, mixedNative.nativeModelIds);
+            if (dispatch.kind === 'unknown') {
+              sendJson(res, 404, { error: { message: `Unknown model: ${modelId}`, type: 'invalid_request_error' } });
+              return;
+            }
+            if (dispatch.kind === 'native') {
+              const controller = new AbortController();
+              req.once('aborted', () => controller.abort());
+              try {
+                const nativeResponse = await forwardNativeCodexHttp({
+                  body: rawBody,
+                  inboundHeaders: req.headers,
+                  nativeUrl: mixedNative.nativeBaseUrl
+                    ? `${mixedNative.nativeBaseUrl.replace(/\/$/, '')}/responses`
+                    : NATIVE_CODEX_RESPONSES_URL,
+                  signal: controller.signal,
+                  fetchImpl: mixedNative.nativeFetchImpl,
+                });
+                const contentType = nativeResponse.headers.get('content-type');
+                res.writeHead(nativeResponse.status, contentType ? { 'content-type': contentType } : undefined);
+                res.end(Buffer.from(await nativeResponse.arrayBuffer()));
+              } catch (err) {
+                if (!res.writableEnded) sendJson(res, 502, { error: { message: 'Native Codex request failed', type: 'upstream_error' } });
+              }
+              return;
+            }
+          }
+        }
+        let resolved = subagentRoute
+          ? resolveModel(routes, models, subagentRoute.modelId)
+          : resolveModel(routes, models, modelId);
         if (!resolved) {
           const fallbackRoute = routes[0];
           const fallbackLm = fallbackRoute ? models.get(fallbackRoute.modelId) : undefined;
@@ -480,8 +638,13 @@ export async function startCodexProxy(
         const { route, languageModel } = resolved;
 
         try {
+          const routedBody = await prepareExternalCodexBody(body, {
+            relay: nativePayloadRelay,
+            mixedNative,
+            headers: req.headers,
+          });
           let params = applyClaudeCodeOAuthIdentity(route, translateResponsesRequest(
-            body as unknown as import('./codex-responses-adapter.js').ResponsesRequest,
+            routedBody as unknown as import('./codex-responses-adapter.js').ResponsesRequest,
             route.npm,
             {
               providerId: route.providerId,
@@ -623,7 +786,7 @@ export async function startCodexProxy(
         .digest('base64');
     }
 
-    function wsDecodeFrame(buf: Buffer): { text: string; complete: boolean } | null {
+    function wsDecodeFrame(buf: Buffer): { text: string; complete: boolean; opcode: number } | null {
       if (buf.length < 2) return null;
       const b0 = buf[0]!;
       const b1 = buf[1]!;
@@ -636,9 +799,12 @@ export async function startCodexProxy(
         offset = 4;
       } else if (payloadLen === 127) {
         if (buf.length < 10) return null;
-        payloadLen = Number(buf.readBigUInt64BE(2));
+        const declaredLength = buf.readBigUInt64BE(2);
+        if (declaredLength > BigInt(MAX_CODEX_REQUEST_BYTES)) return { text: '', complete: true, opcode: -1 };
+        payloadLen = Number(declaredLength);
         offset = 10;
       }
+      if (payloadLen > MAX_CODEX_REQUEST_BYTES) return { text: '', complete: true, opcode: -1 };
       const maskLen = masked ? 4 : 0;
       if (buf.length < offset + maskLen + payloadLen) return null;
       const mask = masked ? buf.slice(offset, offset + 4) : null;
@@ -648,8 +814,8 @@ export async function startCodexProxy(
         payload[i] = buf[offset + i]! ^ (mask ? mask[i % 4]! : 0);
       }
       const opcode = b0 & 0x0f;
-      if (opcode !== 0x1) return null; // text frame only
-      return { text: payload.toString('utf8'), complete: true };
+      if (![0x1, 0x8, 0x9, 0xa].includes(opcode)) return { text: '', complete: true, opcode };
+      return { text: payload.toString('utf8'), complete: true, opcode };
     }
 
     function wsEncodeTextFrame(text: string): Buffer {
@@ -670,15 +836,36 @@ export async function startCodexProxy(
       return Buffer.concat([header, payload]);
     }
 
-    function wsCloseFrame(): Buffer {
-      return Buffer.from([0x88, 0x00]); // close, no payload
+    function wsCloseFrame(code = 1000): Buffer {
+      const payload = Buffer.alloc(2);
+      payload.writeUInt16BE(code, 0);
+      return Buffer.concat([Buffer.from([0x88, 0x02]), payload]);
     }
 
     function wsPingFrame(): Buffer {
       return Buffer.from([0x89, 0x00]); // ping, no payload
     }
 
+    function wsPongFrame(payload = ''): Buffer {
+      const bytes = Buffer.from(payload, 'utf8');
+      if (bytes.length > 125) return Buffer.from([0x8a, 0x00]);
+      return Buffer.concat([Buffer.from([0x8a, bytes.length]), bytes]);
+    }
+
     server.on('upgrade', (req: IncomingMessage, socket: Socket, head: Buffer) => {
+      if (mixedNative) {
+        const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
+        const mixedPath = parseMixedProxyPath(pathname, mixedNative.capability);
+        if (!mixedPath || mixedPath.suffix !== '/v1/responses') {
+          socket.write('HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+      } else if (req.url !== '/v1/responses') {
+        socket.write('HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
       // Accept the WS upgrade and stream the response as WS text frames.
       // Rejecting (503) or immediately closing (1013) causes Codex App to show
       // "Stream error / Reconnecting 5/5" regardless — proper WS support avoids it.
@@ -708,12 +895,14 @@ export async function startCodexProxy(
 
       let frameBuf = Buffer.alloc(0);
       let handled = false;
+      let nativeActive = false;
+      let nativeUpstream: WebSocket | undefined;
       // Set once the request body is parsed, below — sendWsEvent is defined before
       // that point but needs the model id for its own debug dump.
       let currentRequestModel = '';
 
-      const closeSocket = () => {
-        if (!socket.destroyed) { socket.write(wsCloseFrame()); socket.end(); }
+      const closeSocket = (code = 1000) => {
+        if (!socket.destroyed) { socket.write(wsCloseFrame(code)); socket.end(); }
       };
 
       const sendWsEvent = (sseChunk: string) => {
@@ -740,10 +929,31 @@ export async function startCodexProxy(
 
       const onData = (chunk: Buffer) => {
         frameBuf = Buffer.concat([frameBuf, chunk]);
-        if (handled) return;
+        // Native Codex keeps one Responses WebSocket open across turns. Relay
+        // routes still use the original one-request guard, but native frames
+        // must continue through the established upstream connection.
+        if (handled && !nativeActive) return;
         const frame = wsDecodeFrame(frameBuf);
         if (!frame) return;
         frameBuf = Buffer.alloc(0);
+        if (frame.opcode === 0x9) {
+          socket.write(wsPongFrame(frame.text));
+          return;
+        }
+        if (frame.opcode === 0x8) {
+          closeSocket();
+          return;
+        }
+        if (frame.opcode === -1) {
+          socket.write(wsCloseFrame(1009));
+          socket.end();
+          return;
+        }
+        if (frame.opcode !== 0x1) {
+          socket.write(wsCloseFrame(1003));
+          socket.end();
+          return;
+        }
         handled = true;
 
         void (async () => {
@@ -760,6 +970,13 @@ export async function startCodexProxy(
             const tools = Array.isArray(body.tools) ? body.tools : [];
             const toolNames = tools.map((t: unknown) => (t && typeof t === 'object' && 'name' in t ? (t as { name: unknown }).name : '?')).join(',');
             log(`WS request: model=${String(body.model ?? '')} previous_response_id=${prevId ?? '(none)'} input_items=${inputItems} body_bytes=${frame.text.length} tools=[${toolNames || 'none'}]`);
+            const reasoning = body.reasoning && typeof body.reasoning === 'object'
+              ? Object.keys(body.reasoning as Record<string, unknown>).join(',')
+              : typeof body.reasoning;
+            const clientMetadata = body.client_metadata && typeof body.client_metadata === 'object'
+              ? Object.keys(body.client_metadata as Record<string, unknown>).join(',')
+              : typeof body.client_metadata;
+            log(`WS request shape: stream=${String(body.stream)} store=${String(body.store)} generate=${String(body.generate)} parallel_tool_calls=${String(body.parallel_tool_calls)} reasoning_keys=[${reasoning || 'none'}] include=${Array.isArray(body.include) ? body.include.join(',') : String(body.include)} client_metadata_keys=[${clientMetadata || 'none'}]`);
             appendCodexBodyDump({
               ts: new Date().toISOString(),
               transport: 'ws',
@@ -773,7 +990,140 @@ export async function startCodexProxy(
 
           const modelId = String(body.model ?? '');
           currentRequestModel = modelId;
-          let resolved = resolveModel(routes, models, modelId);
+          const markedSubagent = Boolean(mixedNative && isCodexSubagentRequest(body, req.headers));
+          const subagentRoute = mixedNative && markedSubagent
+            ? resolveCodexSubagentRoute(routes, mixedNative.subagentRouteModelId, body, req.headers)
+            : undefined;
+          if (debug && markedSubagent) {
+            log(`WS subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? '(none)'}`);
+          }
+          if (mixedNative && markedSubagent && !subagentRoute) {
+            sendWsEvent(`event: error\ndata: ${JSON.stringify({ error: {
+              message: 'Codex marked this request as a Sub-agent, but no configured Codex Sub-agent route is available.',
+              type: 'service_unavailable',
+            } })}\n\n`);
+            closeSocket();
+            return;
+          }
+          if (mixedNative) {
+            if (!markedSubagent) {
+              const dispatch = classifyCodexDispatch(modelId, routes, mixedNative.nativeModelIds);
+              if (dispatch.kind === 'unknown') {
+                sendWsEvent(`event: error\ndata: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: 'invalid_request_error' } })}\n\n`);
+                closeSocket();
+                return;
+              }
+              if (dispatch.kind === 'native') {
+                if (nativeActive && nativeUpstream) {
+                  if (nativeUpstream.readyState === WebSocket.OPEN) {
+                    if (debug) log(`WS native forwarding next turn: model=${modelId}`);
+                    nativeUpstream.send(JSON.stringify({ type: 'response.create', ...body }));
+                  } else if (debug) {
+                    log(`WS native cannot forward next turn: upstream_state=${nativeUpstream.readyState}`);
+                  }
+                  return;
+                }
+                const wsTarget = mixedNative.nativeBaseUrl
+                  ? `${mixedNative.nativeBaseUrl.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:').replace(/\/$/, '')}/responses`
+                  : undefined;
+                const target = nativeResponsesWebSocketOptions({ headers: req.headers, wsUrl: wsTarget });
+                let upstream: WebSocket | undefined;
+                let nativeOpened = false;
+                let nativeCompleted = false;
+                let nativeFrameCount = 0;
+                let finished = false;
+                let connectTimer: NodeJS.Timeout | undefined;
+                let firstFrameTimer: NodeJS.Timeout | undefined;
+                const clearTimers = () => {
+                  if (connectTimer) clearTimeout(connectTimer);
+                  if (firstFrameTimer) clearTimeout(firstFrameTimer);
+                };
+                const sendNativeError = (message: string) => {
+                  if (socket.destroyed) return;
+                  socket.write(wsEncodeTextFrame(JSON.stringify({
+                    type: 'error',
+                    error: { type: 'upstream_error', message },
+                  })));
+                };
+                const closeBoth = (message?: string, closeCode = 1011) => {
+                  if (finished) return;
+                  finished = true;
+                  nativeActive = false;
+                  if (nativeUpstream === upstream) nativeUpstream = undefined;
+                  clearTimers();
+                  if (debug && message) {
+                    log(`WS native upstream failed: model=${modelId} opened=${nativeOpened} frames=${nativeFrameCount} message=${message}`);
+                  }
+                  if (message && !nativeCompleted) sendNativeError(message);
+                  try { upstream?.close(); } catch { /* ignore */ }
+                  closeSocket(closeCode);
+                };
+                try {
+                  if (debug) {
+                    log(`WS native connecting: model=${modelId} url=${target.url} headers=[${Object.keys(target.headers).join(',')}]`);
+                  }
+                  upstream = new WebSocket(target.url, { headers: target.headers });
+                  nativeUpstream = upstream;
+                  nativeActive = true;
+                  connectTimer = setTimeout(() => closeBoth('Native Codex WebSocket connection timed out'), 15_000);
+                  upstream.once('open', () => {
+                    nativeOpened = true;
+                    if (connectTimer) clearTimeout(connectTimer);
+                    if (debug) log(`WS native upstream open: model=${modelId}`);
+                    upstream?.send(JSON.stringify({ type: 'response.create', ...body }));
+                    firstFrameTimer = setTimeout(() => closeBoth('Native Codex WebSocket response timed out'), 60_000);
+                  });
+                  upstream.once('unexpected-response', (_request, response) => {
+                    if (debug) log(`WS native upstream HTTP rejection: model=${modelId} status=${response.statusCode}`);
+                    response.resume();
+                    closeBoth(`Native Codex WebSocket rejected (${response.statusCode})`);
+                  });
+                  upstream.on('message', data => {
+                    if (socket.destroyed) return;
+                    nativeFrameCount += 1;
+                    if (firstFrameTimer) clearTimeout(firstFrameTimer);
+                    const text = Array.isArray(data)
+                      ? Buffer.concat(data).toString('utf8')
+                      : data.toString('utf8');
+                    let eventType = 'non-json';
+                    try {
+                      const parsed = JSON.parse(text) as { type?: unknown };
+                      if (typeof parsed.type === 'string') eventType = parsed.type;
+                      if (eventType === 'response.completed' || eventType === 'response.failed' || eventType === 'response.incomplete') {
+                        nativeCompleted = true;
+                      }
+                    } catch { /* forward the native frame unchanged */ }
+                    if (debug && (nativeFrameCount <= 3 || nativeCompleted || eventType === 'error' || nativeFrameCount % 25 === 0)) {
+                      log(`WS native frame#${nativeFrameCount}: model=${modelId} type=${eventType} bytes=${text.length}`);
+                    }
+                    socket.write(wsEncodeTextFrame(text));
+                  });
+                  upstream.once('error', (err: Error) => closeBoth(`Native Codex WebSocket error: ${err.message}`));
+                  upstream.once('close', (code: number, reason: Buffer) => {
+                    const detail = reason?.length ? ` reason=${reason.toString('utf8').slice(0, 200)}` : '';
+                    if (debug) log(`WS native upstream close: model=${modelId} code=${code}${detail} frames=${nativeFrameCount}`);
+                    if (nativeUpstream === upstream) nativeUpstream = undefined;
+                    nativeActive = false;
+                    if (!finished) closeBoth(nativeCompleted ? undefined : `Native Codex WebSocket closed before completion (${code})`);
+                  });
+                  socket.once('close', () => {
+                    if (debug) log(`WS native downstream close: model=${modelId} frames=${nativeFrameCount} completed=${nativeCompleted}`);
+                    finished = true;
+                    nativeActive = false;
+                    if (nativeUpstream === upstream) nativeUpstream = undefined;
+                    clearTimers();
+                    try { upstream?.close(); } catch { /* ignore */ }
+                  });
+                } catch (err) {
+                  closeBoth(`Native Codex WebSocket setup failed: ${err instanceof Error ? err.message : String(err)}`);
+                }
+                return;
+              }
+            }
+          }
+          let resolved = subagentRoute
+            ? resolveModel(routes, models, subagentRoute.modelId)
+            : resolveModel(routes, models, modelId);
           if (!resolved) {
             const fb = routes[0];
             const fbLm = fb ? models.get(fb.modelId) : undefined;
@@ -788,8 +1138,13 @@ export async function startCodexProxy(
 
           const { route, languageModel } = resolved;
           try {
+            const routedBody = await prepareExternalCodexBody(body, {
+              relay: nativePayloadRelay,
+              mixedNative,
+              headers: req.headers,
+            });
             let params = applyClaudeCodeOAuthIdentity(route, translateResponsesRequest(
-              body as unknown as import('./codex-responses-adapter.js').ResponsesRequest,
+              routedBody as unknown as import('./codex-responses-adapter.js').ResponsesRequest,
               route.npm,
               {
                 providerId: route.providerId,

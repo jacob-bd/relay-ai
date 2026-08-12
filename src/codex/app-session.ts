@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
 } from 'node:fs';
 import { basename, join } from 'node:path';
 import {
@@ -132,6 +133,25 @@ export function removeAppCatalogs(env: NodeJS.ProcessEnv = process.env): string[
   return removed;
 }
 
+function newestConfigBackup(env: NodeJS.ProcessEnv = process.env): string | null {
+  const backupDir = getBackupsDir(env);
+  if (!existsSync(backupDir)) return null;
+  const configBase = basename(getCodexConfigPath());
+  const candidates = readdirSync(backupDir)
+    .filter(name => name.startsWith(`${configBase}.`) && name.endsWith('.bak'))
+    .map(name => {
+      const path = join(backupDir, name);
+      try {
+        return { path, mtimeMs: statSync(path).mtimeMs };
+      } catch {
+        return null;
+      }
+    })
+    .filter((entry): entry is { path: string; mtimeMs: number } => entry !== null)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return candidates[0]?.path ?? null;
+}
+
 export type RestoreAppOverlayResult = {
   restored: boolean;
   liveSession?: boolean;
@@ -161,6 +181,9 @@ export function restoreCodexAppOverlay(env: NodeJS.ProcessEnv = process.env): Re
     restoreConfigFromState(restoreState);
   } else if (lock?.backupPath && existsSync(lock.backupPath)) {
     copyFileSync(lock.backupPath, getCodexConfigPath());
+  } else if (managed) {
+    const backupPath = newestConfigBackup(env);
+    if (backupPath) copyFileSync(backupPath, getCodexConfigPath());
   }
 
   removeAppCatalogs(env);

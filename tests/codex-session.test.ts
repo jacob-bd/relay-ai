@@ -7,6 +7,7 @@ import {
   cleanupStaleSession,
   recoverInterruptedCodexSession,
   getCodexProfilePath,
+  getCodexHome,
   getRelayAiCodexDir,
   getSessionLockPath,
   isConcurrentSession,
@@ -24,13 +25,16 @@ import {
 let tempHome: string;
 let previousHome: string | undefined;
 let previousRelayHome: string | undefined;
+let previousCodexHome: string | undefined;
 
 beforeEach(() => {
   tempHome = mkdtempSync(join(tmpdir(), 'relay-codex-'));
   previousHome = process.env['HOME'];
   previousRelayHome = process.env['RELAY_AI_HOME'];
+  previousCodexHome = process.env['CODEX_HOME'];
   process.env['HOME'] = tempHome;
   process.env['RELAY_AI_HOME'] = join(tempHome, 'relay-ai');
+  process.env['CODEX_HOME'] = join(tempHome, '.codex');
 });
 
 afterEach(() => {
@@ -39,6 +43,8 @@ afterEach(() => {
   else process.env['HOME'] = previousHome;
   if (previousRelayHome === undefined) delete process.env['RELAY_AI_HOME'];
   else process.env['RELAY_AI_HOME'] = previousRelayHome;
+  if (previousCodexHome === undefined) delete process.env['CODEX_HOME'];
+  else process.env['CODEX_HOME'] = previousCodexHome;
 });
 
 describe('codex session', () => {
@@ -65,6 +71,33 @@ describe('codex session', () => {
     expect(first.length).toBeGreaterThan(0);
     expect(restoreCodexOverlay()).toEqual([]);
     expect(ownedOverlayPaths().every(p => !existsSync(p) || p === getCodexProfilePath())).toBe(true);
+  });
+
+  it('restore removes Relay-managed Codex Sub-agent files recorded in the lock', () => {
+    const agentPath = join(getCodexHome(), 'agents', 'relay-model-kilo-auto.toml');
+    mkdirSync(join(agentPath, '..'), { recursive: true });
+    writeFileSync(agentPath, 'model = "kilo__auto"');
+    writeSessionLock({
+      pid: 999999,
+      startedAt: new Date().toISOString(),
+      profilePath: getCodexProfilePath(),
+      catalogPaths: [],
+    });
+
+    expect(restoreCodexOverlay()).toContain(agentPath);
+    expect(existsSync(agentPath)).toBe(false);
+  });
+
+  it('restore removes an orphaned Relay-managed Sub-agent file without a lock', () => {
+    const agentPath = join(getCodexHome(), 'agents', 'relay-model-orphan.toml');
+    const userAgentPath = join(getCodexHome(), 'agents', 'user-reviewer.toml');
+    mkdirSync(join(agentPath, '..'), { recursive: true });
+    writeFileSync(agentPath, 'model = "kilo__orphan"');
+    writeFileSync(userAgentPath, 'model = "gpt-5.6-luna"');
+
+    expect(restoreCodexOverlay()).toContain(agentPath);
+    expect(existsSync(agentPath)).toBe(false);
+    expect(existsSync(userAgentPath)).toBe(true);
   });
 
   it('treats dead pid as stale', () => {

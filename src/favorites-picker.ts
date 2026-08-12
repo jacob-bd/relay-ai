@@ -78,14 +78,16 @@ export function filterGlobalFavoriteIndex(
 export function globalFavoriteSelectOption(
   entry: GlobalFavoritePick,
   favorites: FavoriteModel[],
+  opts?: { listLabel?: string },
 ) {
   const label = formatModelLabel(entry.model);
   const favorited = isFavorite(favorites, { providerId: entry.providerId, modelId: entry.model.id });
   const providerTag = fmtProviderBracket(entry.providerId, entry.providerName, entry.model.isFree);
+  const listLabel = opts?.listLabel ?? 'favorites';
   return {
     value: globalFavoritePickKey(entry),
     label: `${fmtModel(label, entry.model.id)} ${providerTag}`,
-    hint: favorited ? pc.dim('already in favorites') : '',
+    hint: favorited ? pc.dim(`already in ${listLabel}`) : '',
   };
 }
 
@@ -100,25 +102,27 @@ function parseGlobalFavoritePickKey(
 export async function pickGlobalFavoriteModel(
   providers: LocalProvider[],
   favorites: FavoriteModel[],
-  opts?: { freeOnly?: boolean },
+  opts?: { freeOnly?: boolean; listLabel?: string },
 ): Promise<GlobalFavoritePick | typeof ADD_BY_PROVIDER | null> {
   const index = buildGlobalFavoriteIndex(providers);
   if (index.length === 0) return null;
   const freeOnly = opts?.freeOnly === true;
+  const listLabel = opts?.listLabel ?? 'favorites';
+  const subagents = listLabel === 'Codex Sub-agents';
 
   while (true) {
     const searchInput = await p.text({
       message: freeOnly
         ? `Search free models (${filterGlobalFavoriteIndex(index, '', { freeOnly: true }).length} models):`
-        : `Search all providers (${index.length} models):`,
+        : `${subagents ? 'Search all models' : 'Search all providers'} (${index.length} models):`,
       placeholder: 'e.g. deepseek, claude, sonnet',
     });
 
     if (p.isCancel(searchInput)) {
       const fallback = await p.select({
-        message: 'Add a favorite',
+        message: subagents ? 'Add a Codex Sub-agent model' : 'Add a favorite',
         options: [
-          { value: 'back', label: pc.cyan('← Back to favorites'), hint: '' },
+          { value: 'back', label: pc.cyan(subagents ? '← Back to Codex Sub-agents' : '← Back to favorites'), hint: '' },
           { value: ADD_BY_PROVIDER, label: pc.cyan('Browse by provider →'), hint: 'Pick one provider first' },
         ],
       });
@@ -138,6 +142,7 @@ export async function pickGlobalFavoriteModel(
       e => globalFavoriteSelectOption(
         { providerId: e.providerId, providerName: e.providerName, model: e.model },
         favorites,
+        { listLabel },
       ),
       matched.length === 1 ? 'Match found' : `Select model (${matched.length} matches)`,
       undefined,
@@ -151,7 +156,7 @@ export async function pickGlobalFavoriteModel(
     if (!picked) continue;
 
     if (isFavorite(favorites, { providerId: picked.providerId, modelId: picked.model.id })) {
-      p.log.warn(`${picked.model.name || picked.model.id} (${picked.providerName}) is already in your favorites.`);
+      p.log.warn(`${picked.model.name || picked.model.id} (${picked.providerName}) is already in ${listLabel}.`);
       continue;
     }
 

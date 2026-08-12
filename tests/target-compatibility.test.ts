@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isTargetCompatibleModel,
   providersForTarget,
+  providersForCodexSubagents,
   routableModelsForTarget,
 } from '../src/target-compatibility.js';
 import type { LocalProvider, LocalProviderModel } from '../src/types.js';
@@ -36,6 +37,15 @@ const cloudCodeModel: LocalProviderModel = {
 };
 
 describe('target compatibility matrix', () => {
+  it('returns only models compatible with both Codex CLI and Codex App', () => {
+    const providers: LocalProvider[] = [
+      { id: 'both', name: 'Both', apiKey: 'k', models: [openAiModel, anthropicModel] },
+      { id: 'cli-only', name: 'CLI only', apiKey: 'k', models: [openAiModel] },
+    ];
+    expect(providersForCodexSubagents(providers).map(provider => provider.id)).toEqual(['both', 'cli-only']);
+    expect(providersForCodexSubagents(providers).find(provider => provider.id === 'both')?.models.map(model => model.id))
+      .toEqual(['gpt-4o', 'claude-sonnet-4-6']);
+  });
   it('keeps normal API-key OpenAI and Anthropic routes broadly compatible', () => {
     expect(isTargetCompatibleModel({
       target: 'codex',

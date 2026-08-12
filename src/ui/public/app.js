@@ -2,6 +2,7 @@ import {
   formatModelPrice,
   getProviderModelPage,
   isFreeModel,
+  matchesModelSearch,
   PROVIDER_MODEL_PAGE_SIZE,
 } from './provider-model-browser.js';
 import { copyDeviceCode, copyTextToClipboard, oauthConnectionLabel } from './oauth-device.js';
@@ -11,6 +12,7 @@ import { providerInitial, providerLogoHtml } from './provider-logo.js';
 
 const AGY_MAX = 6;
 const GENERAL_MAX = 20;
+const CODEX_SUBAGENT_MAX = 1;
 const UPDATE_COMMAND = 'npm install -g @jacobbd/relay-ai@latest';
 
 const state = {
@@ -19,6 +21,7 @@ const state = {
   allModels: [],
   appModelsByTarget: {}, // launch target → flattened, compatibility-filtered model list
   generalFavorites: [],
+  codexSubagentModels: [],
   agyFavorites: [],
   modelsLoaded: false,
   modelsError: null,
@@ -32,6 +35,8 @@ const state = {
   modelFreeOnly: false,
   agyFilter: '',
   agyFreeOnly: false,
+  codexSubagentFilter: '',
+  codexSubagentFreeOnly: false,
   appModelFilter: '',
   appFreeOnly: false,
   providerNameMap: {}, // providerId → full display name
@@ -41,6 +46,7 @@ const state = {
   appModelOpen: null,
   appSelections: {},
   appHttpProxy: {},
+  appWithNative: {},
   server: {
     status: null,
     error: null,
@@ -185,6 +191,7 @@ async function api(method, path, body) {
 async function loadConfig() {
   const data = await api('GET', '/api/config');
   state.generalFavorites = data.favoriteModels ?? [];
+  state.codexSubagentModels = (data.codexSubagentModels ?? []).slice(0, CODEX_SUBAGENT_MAX);
   state.agyFavorites = data.antigravityCliFavoriteModels ?? [];
 }
 
@@ -264,7 +271,7 @@ function flattenModelProviders(providers) {
 // Mirrors src/ui/api.ts's APP_ID_TO_LAUNCH_TARGET — which models are compatible with
 // which app depends on the launch target, not just the raw catalog.
 const APP_ID_NEEDS_TARGET_FILTER = new Set([
-  'claude', 'claude-app', 'codex', 'codex-app', 'gemini', 'agy', 'antigravity', 'antigravity-ide',
+  'claude', 'claude-app', 'codex', 'codex-app', 'codex-subagents', 'gemini', 'agy', 'antigravity', 'antigravity-ide',
 ]);
 
 async function loadAppModels(appId) {
@@ -306,8 +313,12 @@ async function loadModels() {
 }
 
 async function saveFavorites(payload) { return api('POST', '/api/config', payload); }
-async function saveKey(providerId, key) { return api('POST', '/api/keys', { providerId, key }); }
-async function refreshProvider(providerId) { return api('POST', '/api/providers/refresh', { providerId }); }
+async function saveKey(providerId, key, confirmOverwrite = false) {
+  return api('POST', '/api/keys', { providerId, key, confirmOverwrite });
+}
+async function refreshProvider(providerId, key) {
+  return api('POST', '/api/providers/refresh', key ? { providerId, key } : { providerId });
+}
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 
@@ -521,8 +532,10 @@ function toggleModelFavoriteMenu(button, providerId, modelId) {
 
   const isGenFav = isGeneralFavorite(providerId, modelId);
   const isAgyFav = state.agyFavorites.some(f => f.providerId === providerId && f.modelId === modelId);
+  const isSubagent = state.codexSubagentModels.some(f => f.providerId === providerId && f.modelId === modelId);
   const genAtCapacity = state.generalFavorites.length >= GENERAL_MAX;
   const agyAtCapacity = state.agyFavorites.length >= AGY_MAX;
+  const subagentAtCapacity = state.codexSubagentModels.length >= CODEX_SUBAGENT_MAX;
 
   const popover = document.createElement('div');
   popover.className = 'model-fav-popover';
@@ -538,6 +551,11 @@ function toggleModelFavoriteMenu(button, providerId, modelId) {
   if (isAgyFav) agyLabel = '✓ In Antigravity Favorites';
   else if (agyAtCapacity) agyLabel = `✦ Antigravity full (${AGY_MAX}/${AGY_MAX})`;
 
+  const subagentDisabled = isSubagent || subagentAtCapacity;
+  let subagentLabel = '✦ Add to Codex SubAgent';
+  if (isSubagent) subagentLabel = '✓ In Codex SubAgent';
+  else if (subagentAtCapacity) subagentLabel = `✦ Codex SubAgent full (${CODEX_SUBAGENT_MAX}/${CODEX_SUBAGENT_MAX})`;
+
   popover.innerHTML = `
     <button class="model-fav-popover-item ${genDisabled ? 'disabled' : ''}" type="button" data-type="general" ${genDisabled ? 'disabled' : ''}>
       <span>${genLabel}</span>
@@ -547,6 +565,10 @@ function toggleModelFavoriteMenu(button, providerId, modelId) {
       <span>${agyLabel}</span>
       <span class="popover-slot-count">${state.agyFavorites.length}/${AGY_MAX}</span>
     </button>
+    <button class="model-fav-popover-item ${subagentDisabled ? 'disabled' : ''}" type="button" data-type="codex-subagents" ${subagentDisabled ? 'disabled' : ''}>
+      <span>${subagentLabel}</span>
+      <span class="popover-slot-count">${state.codexSubagentModels.length}/${CODEX_SUBAGENT_MAX}</span>
+    </button>
   `;
 
   popover.querySelectorAll('.model-fav-popover-item').forEach(item => {
@@ -555,7 +577,13 @@ function toggleModelFavoriteMenu(button, providerId, modelId) {
       const listType = item.dataset.type;
       addToFavorites({ providerId, modelId }, listType);
       closeModelFavPopover();
-      showToast(listType === 'agy' ? 'Added to Antigravity Favorites' : 'Added to Global Favorites');
+      showToast(
+        listType === 'agy'
+          ? 'Added to Antigravity Favorites'
+          : listType === 'codex-subagents'
+            ? 'Added to Codex SubAgent'
+            : 'Added to Global Favorites',
+      );
       renderProviderModelBrowser();
     });
   });
@@ -1298,33 +1326,34 @@ function buildProviderBodyContent(provider) {
   content.appendChild(keyRow);
   content.appendChild(feedback);
 
-  async function doSave(key) {
-    if (!key.trim()) return;
-    const result = await saveKey(provider.id, key);
-    if (result.ok) {
-      feedback.textContent = '✓ Key saved to keychain';
-      feedback.className = 'key-feedback success';
-      provider.hasKey = true;
-      const chip = document.querySelector(`[data-id="${CSS.escape(provider.id)}"] .status-chip`);
-      if (chip) { chip.className = 'status-chip has-key'; chip.textContent = 'Key stored'; }
-    } else {
-      feedback.textContent = result.error ?? 'Failed to save key';
-      feedback.className = 'key-feedback error';
-    }
-    setTimeout(() => { feedback.textContent = ''; feedback.className = 'key-feedback'; }, 3500);
-  }
-
-  input.addEventListener('blur', () => { if (input.value) doSave(input.value); });
-
   testBtn.addEventListener('click', async () => {
-    if (input.value) await doSave(input.value);
+    const enteredKey = input.value.trim();
     feedback.textContent = 'Refreshing…';
     feedback.className = 'key-feedback muted';
     testBtn.disabled = true;
-    const result = await refreshProvider(provider.id);
+    const result = await refreshProvider(provider.id, enteredKey || undefined);
     testBtn.disabled = false;
     if (result.ok) {
-      feedback.textContent = `✓ ${result.count} models available`;
+      let savedMessage = '';
+      if (enteredKey && window.confirm('Save this API key for future Relay launches?')) {
+        let saved = await saveKey(provider.id, enteredKey);
+        if (saved.needsConfirmation && window.confirm('Replace the existing stored API key?')) {
+          saved = await saveKey(provider.id, enteredKey, true);
+        }
+        if (saved.ok) {
+          savedMessage = ' · key saved';
+          provider.hasKey = true;
+          const chip = document.querySelector(`[data-id="${CSS.escape(provider.id)}"] .status-chip`);
+          if (chip) { chip.className = 'status-chip has-key'; chip.textContent = 'Key stored'; }
+        } else if (saved.needsConfirmation) {
+          savedMessage = ' · key used for this refresh only';
+        } else {
+          feedback.textContent = saved.error ?? 'Failed to save key';
+          feedback.className = 'key-feedback error';
+          return;
+        }
+      }
+      feedback.textContent = `✓ ${result.count} models available${savedMessage}`;
       feedback.className = 'key-feedback success';
       const countEl = document.querySelector(`[data-id="${CSS.escape(provider.id)}"] .provider-models-count`);
       if (countEl) countEl.textContent = `${result.count} models`;
@@ -1480,11 +1509,14 @@ function buildOAuthProviderBodyContent(provider) {
 // ─── Model search results ─────────────────────────────────────────────────────
 
 function buildModelResults(filter, listType) {
-  const containerId = listType === 'agy' ? 'agy-results' : 'model-results';
+  const containerId = listType === 'agy' ? 'agy-results' : listType === 'codex-subagents' ? 'codex-subagent-results' : 'model-results';
   const container = document.getElementById(containerId);
-  const currentFavs = listType === 'agy' ? state.agyFavorites : state.generalFavorites;
-  const atCapacity = listType === 'agy' && currentFavs.length >= AGY_MAX;
-  const freeOnly = listType === 'agy' ? state.agyFreeOnly : state.modelFreeOnly;
+  const currentFavs = listType === 'agy'
+    ? state.agyFavorites
+    : listType === 'codex-subagents' ? state.codexSubagentModels : state.generalFavorites;
+  const max = listType === 'agy' ? AGY_MAX : listType === 'codex-subagents' ? CODEX_SUBAGENT_MAX : GENERAL_MAX;
+  const atCapacity = currentFavs.length >= max;
+  const freeOnly = listType === 'agy' ? state.agyFreeOnly : listType === 'codex-subagents' ? state.codexSubagentFreeOnly : state.modelFreeOnly;
 
   if (!filter) { container.hidden = true; return; }
   container.hidden = false;
@@ -1503,13 +1535,22 @@ function buildModelResults(filter, listType) {
     return;
   }
 
+  if (listType === 'codex-subagents' && !Object.prototype.hasOwnProperty.call(state.appModelsByTarget, 'codex-subagents')) {
+    container.innerHTML = Array(3).fill('<div class="skeleton" style="height:36px;margin:4px 12px;border-radius:6px"></div>').join('');
+    loadAppModels('codex-subagents').then(() => buildModelResults(filter, listType));
+    return;
+  }
+
   const q = filter.trim().toLowerCase();
-  const base = state.allModels.filter(m => !freeOnly || isFreeModel(m));
+  const sourceModels = listType === 'codex-subagents'
+    ? state.appModelsByTarget['codex-subagents']
+    : state.allModels;
+  const base = sourceModels.filter(m => !freeOnly || isFreeModel(m));
   const matched = base.filter(m =>
     !q ||
-    m.id.toLowerCase().includes(q) ||
-    (m.name && m.name.toLowerCase().includes(q)) ||
-    m.providerName.toLowerCase().includes(q)
+    matchesModelSearch(m.id, q) ||
+    (m.name && matchesModelSearch(m.name, q)) ||
+    matchesModelSearch(m.providerName, q)
   ).slice(0, freeOnly && !q ? 80 : 40);
 
   if (matched.length === 0) {
@@ -1554,7 +1595,7 @@ function buildModelResults(filter, listType) {
       addBtn.className = 'btn-add' + (isFav ? ' already-added' : '');
       addBtn.textContent = isFav ? '✓' : '+';
       addBtn.disabled = isFav || (!isFav && atCapacity);
-      addBtn.title = atCapacity && !isFav ? `Antigravity is full (${AGY_MAX}/${AGY_MAX})` : (isFav ? 'Already added' : 'Add to favorites');
+      addBtn.title = atCapacity && !isFav ? `${listType === 'codex-subagents' ? 'Codex SubAgent' : listType === 'agy' ? 'Antigravity' : 'Favorites'} is full (${max}/${max})` : (isFav ? 'Already added' : 'Add to favorites');
       if (!isFav && !atCapacity) {
         addBtn.addEventListener('click', () => {
           addToFavorites({ providerId: m.providerId, modelId: m.id }, listType);
@@ -1576,11 +1617,20 @@ function buildModelResults(filter, listType) {
 function addToFavorites(fav, listType) {
   if (listType === 'agy') {
     if (state.agyFavorites.length >= AGY_MAX) return;
+    if (state.agyFavorites.some(item => item.providerId === fav.providerId && item.modelId === fav.modelId)) return;
     state.agyFavorites = [...state.agyFavorites, fav];
     saveFavorites({ antigravityCliFavoriteModels: state.agyFavorites });
     renderAgyList();
     updateAgyCounter();
+  } else if (listType === 'codex-subagents') {
+    if (state.codexSubagentModels.length >= CODEX_SUBAGENT_MAX) return;
+    if (state.codexSubagentModels.some(item => item.providerId === fav.providerId && item.modelId === fav.modelId)) return;
+    state.codexSubagentModels = [...state.codexSubagentModels, fav];
+    saveFavorites({ codexSubagentModels: state.codexSubagentModels });
+    renderCodexSubagentList();
+    updateCodexSubagentCounter();
   } else {
+    if (state.generalFavorites.some(item => item.providerId === fav.providerId && item.modelId === fav.modelId)) return;
     state.generalFavorites = [...state.generalFavorites, fav];
     saveFavorites({ favoriteModels: state.generalFavorites });
     renderFavList();
@@ -1598,6 +1648,16 @@ function removeFromFavorites(index, listType) {
       saveFavorites({ antigravityCliFavoriteModels: state.agyFavorites });
       renderAgyList(); updateAgyCounter();
     });
+  } else if (listType === 'codex-subagents') {
+    const prev = [...state.codexSubagentModels];
+    state.codexSubagentModels = state.codexSubagentModels.filter((_, i) => i !== index);
+    saveFavorites({ codexSubagentModels: state.codexSubagentModels });
+    renderCodexSubagentList(); updateCodexSubagentCounter();
+    showToast('Removed from Codex SubAgent', () => {
+      state.codexSubagentModels = prev;
+      saveFavorites({ codexSubagentModels: state.codexSubagentModels });
+      renderCodexSubagentList(); updateCodexSubagentCounter();
+    });
   } else {
     const prev = [...state.generalFavorites];
     state.generalFavorites = state.generalFavorites.filter((_, i) => i !== index);
@@ -1612,7 +1672,7 @@ function removeFromFavorites(index, listType) {
 }
 
 function reorderFavorites(from, to, listType) {
-  const arr = listType === 'agy' ? [...state.agyFavorites] : [...state.generalFavorites];
+  const arr = listType === 'agy' ? [...state.agyFavorites] : listType === 'codex-subagents' ? [...state.codexSubagentModels] : [...state.generalFavorites];
   const prev = [...arr];
   const [item] = arr.splice(from, 1);
   arr.splice(to, 0, item);
@@ -1620,6 +1680,10 @@ function reorderFavorites(from, to, listType) {
     state.agyFavorites = arr;
     saveFavorites({ antigravityCliFavoriteModels: state.agyFavorites });
     renderAgyList();
+  } else if (listType === 'codex-subagents') {
+    state.codexSubagentModels = arr;
+    saveFavorites({ codexSubagentModels: state.codexSubagentModels });
+    renderCodexSubagentList();
   } else {
     state.generalFavorites = arr;
     saveFavorites({ favoriteModels: state.generalFavorites });
@@ -1630,6 +1694,10 @@ function reorderFavorites(from, to, listType) {
       state.agyFavorites = prev;
       saveFavorites({ antigravityCliFavoriteModels: state.agyFavorites });
       renderAgyList();
+    } else if (listType === 'codex-subagents') {
+      state.codexSubagentModels = prev;
+      saveFavorites({ codexSubagentModels: state.codexSubagentModels });
+      renderCodexSubagentList();
     } else {
       state.generalFavorites = prev;
       saveFavorites({ favoriteModels: state.generalFavorites });
@@ -1719,7 +1787,7 @@ function buildFavItem(fav, index, listType) {
 
   // Keyboard reorder
   item.addEventListener('keydown', e => {
-    const arr = listType === 'agy' ? state.agyFavorites : state.generalFavorites;
+    const arr = listType === 'agy' ? state.agyFavorites : listType === 'codex-subagents' ? state.codexSubagentModels : state.generalFavorites;
     if (e.altKey && e.key === 'ArrowUp' && index > 0) { e.preventDefault(); reorderFavorites(index, index - 1, listType); }
     else if (e.altKey && e.key === 'ArrowDown' && index < arr.length - 1) { e.preventDefault(); reorderFavorites(index, index + 1, listType); }
   });
@@ -1765,6 +1833,33 @@ function renderAgyList() {
   state.agyFavorites.forEach((f, i) => list.appendChild(buildFavItem(f, i, 'agy')));
 }
 
+function renderCodexSubagentList() {
+  const list = document.getElementById('codex-subagent-list');
+  if (!list) return;
+  list.innerHTML = '';
+  if (state.codexSubagentModels.length === 0) {
+    list.innerHTML = '<div class="fav-empty">No Codex SubAgent configured yet. Search above to add one.</div>';
+  } else {
+    state.codexSubagentModels.forEach((f, i) => list.appendChild(buildFavItem(f, i, 'codex-subagents')));
+  }
+  updateCodexSubagentCounter();
+}
+
+function updateCodexSubagentCounter() {
+  const count = state.codexSubagentModels.length;
+  const counter = document.getElementById('codex-subagent-slot-count');
+  if (counter) counter.innerHTML = `${count}<span class="agy-slot-max">/${CODEX_SUBAGENT_MAX}</span>`;
+  const pips = document.getElementById('codex-subagent-pips');
+  if (pips) {
+    pips.innerHTML = '';
+    for (let i = 0; i < CODEX_SUBAGENT_MAX; i++) {
+      const pip = document.createElement('div');
+      pip.className = 'agy-pip' + (i < count ? ' filled' : '');
+      pips.appendChild(pip);
+    }
+  }
+}
+
 function updateAgyCounter() {
   const count = state.agyFavorites.length;
 
@@ -1801,7 +1896,7 @@ function initNav() {
   // Host-only sections stay in the DOM but are CSS-hidden in server admin mode.
   const sectionIds = isServerAdminUi()
     ? ['providers', 'favorites', 'server']
-    : ['providers', 'favorites', 'antigravity', 'apps', 'server'];
+    : ['providers', 'favorites', 'section-codex-subagents', 'antigravity', 'apps', 'server'];
   const navItems = document.querySelectorAll('.nav-item');
   const content = document.getElementById('content');
 
@@ -1909,6 +2004,7 @@ async function init() {
 
   await loadConfig();
   renderFavList();
+  renderCodexSubagentList();
   updateGeneralCounter();
   if (!isServerAdminUi()) {
     renderAgyList();
@@ -1929,9 +2025,11 @@ async function init() {
     if (!isServerAdminUi()) renderApps();
     // Re-render favorites now that we have full provider names
     renderFavList();
+    renderCodexSubagentList();
     if (!isServerAdminUi()) renderAgyList();
     if (state.modelFilter) buildModelResults(state.modelFilter, 'general');
     if (!isServerAdminUi() && state.agyFilter) buildModelResults(state.agyFilter, 'agy');
+    if (!isServerAdminUi() && state.codexSubagentFilter) buildModelResults(state.codexSubagentFilter, 'codex-subagents');
     syncProviderModelBrowserFromHash();
   });
 
@@ -2035,6 +2133,15 @@ async function init() {
     buildModelResults(state.agyFilter, 'agy');
   });
 
+  document.getElementById('codex-subagent-search')?.addEventListener('input', e => {
+    state.codexSubagentFilter = e.target.value;
+    buildModelResults(state.codexSubagentFilter, 'codex-subagents');
+  });
+  document.getElementById('codex-subagent-free-only')?.addEventListener('change', e => {
+    state.codexSubagentFreeOnly = e.target.checked;
+    buildModelResults(state.codexSubagentFilter, 'codex-subagents');
+  });
+
   document.getElementById('app-model-search')?.addEventListener('input', e => {
     state.appModelFilter = e.target.value;
     renderApps();
@@ -2095,10 +2202,10 @@ function matchedAppModels(appId) {
     const providerName = getProviderName(m.providerId);
     if (state.appFreeOnly && !isFreeModel(m)) return false;
     if (!q) return true;
-    return m.id.toLowerCase().includes(q)
-      || (m.name && m.name.toLowerCase().includes(q))
-      || providerName.toLowerCase().includes(q)
-      || (m.providerName && m.providerName.toLowerCase().includes(q));
+    return matchesModelSearch(m.id, q)
+      || (m.name && matchesModelSearch(m.name, q))
+      || matchesModelSearch(providerName, q)
+      || (m.providerName && matchesModelSearch(m.providerName, q));
   });
   return matched.slice(0, 80);
 }
@@ -2238,6 +2345,15 @@ function renderApps() {
               </span>
             </label>
             ` : ''}
+            ${app.id === 'codex' || app.id === 'codex-app' ? `
+            <label class="claude-proxy-option">
+              <input type="checkbox" ${state.appWithNative[app.id] ? 'checked' : ''} onchange="setCodexNativeMode('${app.id}', this.checked)">
+              <span class="claude-proxy-label">
+                Load native Codex models alongside Relay models
+                <span class="claude-proxy-tooltip" tabindex="0" role="img" aria-label="Keeps native Codex models available while exposing your Relay models and Codex SubAgent for this launch only." data-tooltip="Keeps native Codex models available while exposing your Relay models and Codex SubAgent for this launch only.">?</span>
+              </span>
+            </label>
+            ` : ''}
             ${app.type !== 'app' ? `
             <div class="launch-folder-control">
               <label style="font-size: 12px; font-weight: 500; color: var(--color-muted);">Launch folder 📁</label>
@@ -2281,6 +2397,10 @@ function renderApps() {
   renderAppPathSettings();
 }
 
+function setCodexNativeMode(appId, enabled) {
+  state.appWithNative[appId] = Boolean(enabled);
+}
+
 function renderAppPathSettings() {
   const container = document.getElementById('app-paths-list');
   if (!container) return;
@@ -2322,6 +2442,9 @@ async function launchApp(appId) {
   }
   if (appId === 'claude' && state.appHttpProxy[appId] && claudeHttpProxyAvailable(appId)) {
     body.httpProxy = true;
+  }
+  if ((appId === 'codex' || appId === 'codex-app') && state.appWithNative[appId]) {
+    body.withNative = true;
   }
 
   const folder = (state.appLaunchFolders[appId] ?? '').trim();

@@ -1,6 +1,8 @@
 // codex-app.ts — relay-ai codex-app / chatgpt: launch the ChatGPT desktop app (Codex mode) with registry providers
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
+import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
 import { fetchProviderCatalog, providersForPicker, resolveLocalProviderApiKey } from './provider-catalog.js';
 import { loadPreferences, savePreferences } from './config.js';
 import { resolveApiKey, readFromCredentialStore } from './env.js';
@@ -9,7 +11,11 @@ import { startCodexProxy } from './codex-proxy.js';
 import type { CodexProxyHandle, CodexProxyRoute } from './codex-proxy.js';
 import { getCodexProxyDebugLogPath, printTraceLog } from './trace-log.js';
 import { buildAppCatalogFile, formatCodexModelLabel, serializeCatalog } from './codex/catalog.js';
-import { pickCodexProvider, pickCodexModel, confirmCodexLaunch } from './codex/prompts.js';
+import { captureNativeCodexCatalog } from './codex/native-catalog.js';
+import { buildCodexMixedLaunchPlan, prepareCodexMixedRelayRoutes } from './codex/mixed-launch.js';
+import { supportsMultiAgentV2 } from './codex/multi-agent.js';
+import { mixedProxyBaseUrl } from './codex/routing.js';
+import { pickCodexProvider, pickCodexModel, pickCodexLaunchMode, confirmCodexLaunch } from './codex/prompts.js';
 import {
   codexCompatibleProviders,
   resolveCodexRoute,
@@ -33,7 +39,7 @@ import {
   writeAppSessionLock,
 } from './codex/app-session.js';
 import { writeOverlayFile } from './codex/session.js';
-import { codexAppInstallHint, codexAppSupported, launchOrRestartCodexApp, isCodexAppRunning, quitCodexAppGracefully } from './codex/app-launch.js';
+import { codexAppInstallHint, codexAppSupported, findEmbeddedCodexBinary, launchOrRestartCodexApp, isCodexAppRunning, quitCodexAppGracefully } from './codex/app-launch.js';
 import {
   codexAppIntro,
   codexAppOutro,
@@ -52,11 +58,14 @@ import { VERTEX_ANTHROPIC_NPM } from './constants.js';
 import { resolveContextWindow } from './context-window.js';
 import {
   buildCodexProxyRoutesFromResolved,
+  assertConfiguredCodexSubagentsResolved,
   pickFavoriteStartingModel,
   resolveBootSelection,
   resolveCodexFavorites,
+  resolveCodexMixedModels,
 } from './codex/favorites-launch.js';
 import { getFavoritesAppCatalogPath } from './codex/profile.js';
+import { getRelayAiCodexDir } from './codex/session.js';
 import {
   buildCloudCodeProxyRoute,
   buildOAuthAnthropicProxyRoute,
@@ -127,6 +136,8 @@ ${pc.bold('Usage:')}
 
 ${pc.bold('Options:')}
   --vertex     Use Claude models through Google Vertex AI
+  --with-native Load native Codex models beside Relay models for this launch
+  --relay-only Keep the current Relay-only launch behavior
   --restore    Restore Codex config after an interrupted app session
   --config     Preview the generated Codex app configuration without launching
   --trace      Write proxy debug logs to ~/.relay-ai/logs/ and show errors on exit
@@ -139,7 +150,7 @@ ${pc.bold('Description:')}
   ChatGPT desktop app in Codex mode. Keep this terminal open while using Codex.
 
 ${pc.bold('Platforms:')}
-  macOS and Windows. Linux is not supported (no ChatGPT desktop app).
+  macOS, Windows, and Linux (ChatGPT desktop app preview).
 
 ${pc.bold('Cleanup:')}
   Ctrl+C stops the proxy and restores your previous Codex config.
@@ -319,7 +330,7 @@ async function runCodexAppVertexLaunch(configOnly: boolean, trace = false): Prom
   }
 }
 
-export async function runCodexAppCommand(args: string[], opts: { vertex?: boolean; launchProvider?: string; launchModel?: string } = {}): Promise<number> {
+export async function runCodexAppCommand(args: string[], opts: { vertex?: boolean; launchProvider?: string; launchModel?: string; codexLaunchMode?: 'mixed' | 'relay-only' } = {}): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(codexAppHelpText());
     return 0;
@@ -394,7 +405,13 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
 
   const prefs = loadPreferences();
   const favorites = prefs.favoriteModels ?? [];
-  const favoritesActive = favorites.length > 0;
+  let mixedMode = opts.codexLaunchMode === 'mixed';
+  if (!configOnly && isTty && !(opts.launchProvider && opts.launchModel) && opts.codexLaunchMode === undefined) {
+    const selectedLaunchMode = await pickCodexLaunchMode();
+    if (!selectedLaunchMode) return 0;
+    mixedMode = selectedLaunchMode === 'mixed';
+  }
+  const favoritesActive = favorites.length > 0 && !mixedMode;
 
   if (favoritesActive && !configOnly) {
     p.log.info(
@@ -468,7 +485,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
 
   let cloudCodeBackend: CloudCodeBackend | null = null;
   let cloudCodeBackendFav: CloudCodeBackend | null = null;
-  const appProviderRoutes = favoritesActive
+  const appProviderRoutes = mixedMode || favoritesActive
     ? null
     : await buildCodexAppProviderCatalogRoutes(activeProvider, apiKey, selectedModel.id, trace);
   cloudCodeBackend = appProviderRoutes?.backend ?? null;
@@ -489,6 +506,42 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
     providersById = res.providersById;
   }
 
+  let mixedPlan: ReturnType<typeof buildCodexMixedLaunchPlan> | null = null;
+  if (mixedMode) {
+    try {
+      const embeddedBinary = findEmbeddedCodexBinary();
+      if (!embeddedBinary) throw new Error('Embedded ChatGPT/Codex runtime was not found; mixed Desktop mode is unavailable on this installation');
+      const version = execFileSync(embeddedBinary, ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      const mixedModels = await resolveCodexMixedModels({
+        activeProvider,
+        selectedModel,
+        compatible,
+        generalFavorites: favorites,
+        subagentFavorites: prefs.codexSubagentModels ?? [],
+      });
+      assertConfiguredCodexSubagentsResolved(prefs.codexSubagentModels ?? [], mixedModels);
+      const multiAgentV2Supported = mixedModels.subagents.length === 0 || supportsMultiAgentV2(embeddedBinary);
+      if (!multiAgentV2Supported) {
+        throw new Error('This ChatGPT/Codex runtime does not support multi_agent_v2, which is required for the configured Codex SubAgent');
+      }
+      const nativeCatalog = await captureNativeCodexCatalog({ target: 'app', binaryPath: embeddedBinary, codexVersion: version });
+      const preparedRoutes = await prepareCodexMixedRelayRoutes(mixedModels, trace);
+      cloudCodeBackendFav = preparedRoutes.cloudCodeBackend;
+      mixedPlan = buildCodexMixedLaunchPlan({
+        nativeCatalog,
+        models: mixedModels,
+        relayRoutes: preparedRoutes.routes,
+        multiAgentV2Supported,
+      });
+    } catch (err) {
+      cloudCodeBackendFav?.handle.close();
+      cloudCodeBackendFav = null;
+      console.error(pc.red(`\nMixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}`));
+      console.error('Use relay-ai codex-app --relay-only to continue with Relay models.');
+      return 1;
+    }
+  }
+
   if (!configOnly) {
     const modelLabel = formatCodexModelLabel(selectedModel);
     const confirmed = await confirmCodexLaunch(
@@ -506,11 +559,21 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
   let proxyHandle: CodexProxyHandle | null = null;
   let sessionActive = false;
   try {
-    const catalogPath = favoritesActive && resolvedFavorites.length > 0
-      ? getFavoritesAppCatalogPath()
-      : getAppCatalogPath(route.providerId);
+    const catalogPath = mixedPlan
+      ? join(getRelayAiCodexDir(), 'app-models-mixed.json')
+      : favoritesActive && resolvedFavorites.length > 0
+        ? getFavoritesAppCatalogPath()
+        : getAppCatalogPath(route.providerId);
 
-    const activeRoute = favoritesActive && resolvedFavorites.length > 0 ? {
+    const activeRoute = mixedPlan ? {
+      tier: 'proxy' as const,
+      modelId: mixedPlan.selectedSlug,
+      providerId: activeProvider.id,
+      npm: '',
+      upstreamModelId: '',
+      apiKey: '',
+      contextWindow: selectedModel.contextWindow,
+    } : favoritesActive && resolvedFavorites.length > 0 ? {
       tier: 'proxy' as const,
       modelId: codexCliFavoritesSlug(activeProvider.id, selectedModel.id),
       providerId: activeProvider.id,
@@ -530,7 +593,11 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
       console.log(pc.bold(pc.cyan('  CONFIG PREVIEW — relay-ai codex-app')));
       console.log('');
 
-      if (favoritesActive) {
+      if (mixedPlan) {
+        console.log(`  ${pc.bold('Mode:')}     Native + Relay mixed catalog`);
+        console.log(`  ${pc.bold('Native:')}   ${mixedPlan.nativeModelIds.size} native Codex models`);
+        console.log(`  ${pc.bold('Relay:')}    ${mixedPlan.relayRoutes.length} Relay routes (${mixedPlan.subagentModelCount} Codex SubAgent model)`);
+      } else if (favoritesActive) {
         console.log(`  ${pc.bold('Mode:')}     Favorites Catalog (${resolvedFavorites.length} model${resolvedFavorites.length !== 1 ? 's' : ''})`);
         console.log('');
         console.log(`  ${pc.bold('Models:')}`);
@@ -549,6 +616,8 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
       const tomlPreview = previewAppConfigToml({
         ...specBase,
         proxyPort: PREVIEW_PROXY_PORT,
+        ...(mixedPlan?.multiAgentV2Enabled ? { multiAgentV2Enabled: true } : {}),
+        ...(mixedPlan ? { proxyBaseUrl: `${mixedProxyBaseUrl(PREVIEW_PROXY_PORT, mixedPlan.capability)}/v1` } : {}),
       });
       for (const line of tomlPreview.split('\n')) {
         console.log(`    ${pc.dim(line)}`);
@@ -566,7 +635,19 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
     }
 
     let proxyPort: number;
-    if (favoritesActive && resolvedFavorites.length > 0) {
+    if (mixedPlan) {
+      proxyHandle = await startCodexProxy(mixedPlan.relayRoutes, {
+        requireAuth: false,
+        debug: trace,
+        mixedNative: {
+          nativeModelIds: mixedPlan.nativeModelIds,
+          subagentRouteModelId: mixedPlan.subagentRouteModelId,
+          capability: mixedPlan.capability,
+          nativePayloadRelayModel: mixedPlan.nativePayloadRelayModel,
+        },
+      });
+      proxyPort = proxyHandle.port;
+    } else if (favoritesActive && resolvedFavorites.length > 0) {
       const needsBackend = (r: typeof resolvedFavorites[0]) => {
         const m = r.model as LocalProviderModel;
         const prov = providersById.get(r.providerId);
@@ -621,9 +702,11 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
     }
 
     const modelLabel = formatCodexModelLabel(selectedModel);
-    const catalogFile = favoritesActive && resolvedFavorites.length > 0
-      ? buildFavoritesAppCatalog(resolvedFavorites)
-      : buildAppCatalogFile(catalogModels, activeProvider.name, appRoute.modelId);
+    const catalogFile = mixedPlan
+      ? mixedPlan.catalog
+      : favoritesActive && resolvedFavorites.length > 0
+        ? buildFavoritesAppCatalog(resolvedFavorites)
+        : buildAppCatalogFile(catalogModels, activeProvider.name, appRoute.modelId);
 
     writeOverlayFile(catalogPath, serializeCatalog(catalogFile));
 
@@ -631,6 +714,8 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
       route: activeRoute,
       proxyPort,
       catalogPath,
+      ...(mixedPlan?.multiAgentV2Enabled ? { multiAgentV2Enabled: true } : {}),
+      ...(mixedPlan ? { proxyBaseUrl: `${mixedProxyBaseUrl(proxyPort, mixedPlan.capability)}/v1` } : {}),
     };
 
     saveAppRestoreStateBeforePatch();

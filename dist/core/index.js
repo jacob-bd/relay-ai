@@ -1,5 +1,5 @@
 // src/config.ts
-import { dirname, join as join2 } from "path";
+import { dirname, join as join3 } from "path";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 
 // src/paths.ts
@@ -43,83 +43,14 @@ function getLegacyConfPath(env = process.env, platform = process.platform) {
   return join(env.XDG_CONFIG_HOME ?? join(home, ".config"), appName, "config.json");
 }
 
-// src/config.ts
-function readJsonFile(path) {
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8"));
-    return parsed && typeof parsed === "object" ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-function ensureAppHomeMigrated() {
-  const configPath = getConfigPath();
-  if (existsSync(configPath)) return;
-  const legacyConfig = join2(getLegacyAppHome(), "config.json");
-  if (!existsSync(legacyConfig)) return;
-  mkdirSync(getAppHome(), { recursive: true, mode: 448 });
-  copyFileSync(legacyConfig, configPath);
-  const legacyVertex = join2(getLegacyAppHome(), "vertex-models.json");
-  const vertexPath = join2(getAppHome(), "vertex-models.json");
-  if (existsSync(legacyVertex) && !existsSync(vertexPath)) {
-    copyFileSync(legacyVertex, vertexPath);
-  }
-}
-function ensureConfigMigrated() {
-  ensureAppHomeMigrated();
-  const configPath = getConfigPath();
-  if (existsSync(configPath)) return;
-  const legacyPath = getLegacyConfPath();
-  if (!existsSync(legacyPath)) return;
-  const legacy = readJsonFile(legacyPath);
-  if (!legacy) return;
-  mkdirSync(dirname(configPath), { recursive: true, mode: 448 });
-  writeFileSync(configPath, `${JSON.stringify(legacy, null, 2)}
-`, { encoding: "utf8", mode: 384 });
-  try {
-    renameSync(legacyPath, `${legacyPath}.migrated`);
-  } catch {
-  }
-}
-function readConfig() {
-  ensureConfigMigrated();
-  return readJsonFile(getConfigPath()) ?? {};
-}
-function loadPreferences() {
-  const config = readConfig();
-  const lastProvider = config.lastProvider === "opencode" ? "zen" : config.lastProvider;
-  return {
-    lastBackend: config.lastBackend,
-    lastModel: config.lastModel,
-    lastProvider,
-    lastCodexProvider: config.lastCodexProvider,
-    lastCodexModel: config.lastCodexModel,
-    lastGeminiProvider: config.lastGeminiProvider,
-    lastGeminiModel: config.lastGeminiModel,
-    lastAntigravityProvider: config.lastAntigravityProvider,
-    lastAntigravityModel: config.lastAntigravityModel,
-    lastClaudeTransparentMode: config.lastClaudeTransparentMode,
-    recentModelsByProvider: config.recentModelsByProvider,
-    favoriteModels: config.favoriteModels,
-    antigravityCliFavoriteModels: config.antigravityCliFavoriteModels,
-    antigravityCliFavoritesHintShown: config.antigravityCliFavoritesHintShown,
-    appPathOverrides: config.appPathOverrides,
-    recentLaunchFolders: config.recentLaunchFolders,
-    server: config.server
-  };
-}
-
-// src/provider-factory.ts
-import { wrapLanguageModel, extractReasoningMiddleware } from "ai";
-
 // src/constants.ts
 import { homedir as homedir2 } from "os";
-import { join as join3 } from "path";
+import { join as join2 } from "path";
 
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.8.0",
+  version: "0.9.0",
   publishConfig: {
     access: "public"
   },
@@ -228,9 +159,80 @@ var package_default = {
 var CODEX_RESPONSES_LITE_WS_URL = "wss://chatgpt.com/backend-api/codex/responses";
 var CODEX_RESPONSES_LITE_VERSION = "0.144.1";
 var CODEX_RESPONSES_WEBSOCKETS_BETA = "responses_websockets=2026-02-06";
-var OPENCODE_CACHE_PATH = join3(homedir2(), ".cache", "opencode", "models.json");
+var OPENCODE_CACHE_PATH = join2(homedir2(), ".cache", "opencode", "models.json");
+var CODEX_SUBAGENT_MODEL_CAP = 1;
 var VERTEX_ANTHROPIC_NPM = "@ai-sdk/google-vertex/anthropic";
 var VERSION = package_default.version;
+
+// src/config.ts
+function readJsonFile(path) {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+function ensureAppHomeMigrated() {
+  const configPath = getConfigPath();
+  if (existsSync(configPath)) return;
+  const legacyConfig = join3(getLegacyAppHome(), "config.json");
+  if (!existsSync(legacyConfig)) return;
+  mkdirSync(getAppHome(), { recursive: true, mode: 448 });
+  copyFileSync(legacyConfig, configPath);
+  const legacyVertex = join3(getLegacyAppHome(), "vertex-models.json");
+  const vertexPath = join3(getAppHome(), "vertex-models.json");
+  if (existsSync(legacyVertex) && !existsSync(vertexPath)) {
+    copyFileSync(legacyVertex, vertexPath);
+  }
+}
+function ensureConfigMigrated() {
+  ensureAppHomeMigrated();
+  const configPath = getConfigPath();
+  if (existsSync(configPath)) return;
+  const legacyPath = getLegacyConfPath();
+  if (!existsSync(legacyPath)) return;
+  const legacy = readJsonFile(legacyPath);
+  if (!legacy) return;
+  mkdirSync(dirname(configPath), { recursive: true, mode: 448 });
+  writeFileSync(configPath, `${JSON.stringify(legacy, null, 2)}
+`, { encoding: "utf8", mode: 384 });
+  try {
+    renameSync(legacyPath, `${legacyPath}.migrated`);
+  } catch {
+  }
+}
+function readConfig() {
+  ensureConfigMigrated();
+  return readJsonFile(getConfigPath()) ?? {};
+}
+function loadPreferences() {
+  const config = readConfig();
+  const lastProvider = config.lastProvider === "opencode" ? "zen" : config.lastProvider;
+  return {
+    lastBackend: config.lastBackend,
+    lastModel: config.lastModel,
+    lastProvider,
+    lastCodexProvider: config.lastCodexProvider,
+    lastCodexModel: config.lastCodexModel,
+    lastGeminiProvider: config.lastGeminiProvider,
+    lastGeminiModel: config.lastGeminiModel,
+    lastAntigravityProvider: config.lastAntigravityProvider,
+    lastAntigravityModel: config.lastAntigravityModel,
+    lastClaudeTransparentMode: config.lastClaudeTransparentMode,
+    recentModelsByProvider: config.recentModelsByProvider,
+    favoriteModels: config.favoriteModels,
+    codexSubagentModels: Array.isArray(config.codexSubagentModels) ? config.codexSubagentModels.slice(0, CODEX_SUBAGENT_MODEL_CAP) : void 0,
+    antigravityCliFavoriteModels: config.antigravityCliFavoriteModels,
+    antigravityCliFavoritesHintShown: config.antigravityCliFavoritesHintShown,
+    appPathOverrides: config.appPathOverrides,
+    recentLaunchFolders: config.recentLaunchFolders,
+    server: config.server
+  };
+}
+
+// src/provider-factory.ts
+import { wrapLanguageModel, extractReasoningMiddleware } from "ai";
 
 // src/oauth/refresh-http.ts
 async function postOAuthRefresh(url, body, options) {
@@ -1711,6 +1713,9 @@ var KEYRING_CHUNK_SIZE = 1200;
 var LEGACY_KEYRING_SERVICE = "opencode-starter";
 var LEGACY_KEYRING_ACCOUNT = "opencode-starter";
 var GLOBAL_OPENCODE_KEYRING_ACCOUNT = "global:opencode";
+function providerKeyringAccount(providerId) {
+  return `provider:${providerId}`;
+}
 function oauthProviderIdFromAccount(account) {
   const prefix = "oauth:provider:";
   return account.startsWith(prefix) ? account.slice(prefix.length) : null;
@@ -1802,10 +1807,14 @@ async function readGlobalOpencodeCredential(diag) {
   }
 }
 async function resolveProviderCredential(providerId, authRef, diag) {
-  const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
-  if (namespaced) return namespaced;
   const parsed = parseAuthRef(authRef);
   if (!parsed) return null;
+  if (parsed.kind === "keyring" && parsed.account === GLOBAL_OPENCODE_KEYRING_ACCOUNT) {
+    const relayOverride = await readProviderSecret(providerKeyringAccount("opencode"), diag);
+    if (relayOverride) return relayOverride;
+  }
+  const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
+  if (namespaced) return namespaced;
   if (parsed.kind === "env") {
     return readEnvCredential(parsed.varName);
   }
@@ -1815,12 +1824,16 @@ async function resolveProviderCredential(providerId, authRef, diag) {
   return readProviderSecret(parsed.account, diag);
 }
 async function forceRefreshProviderCredential(providerId, authRef, diag) {
-  const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
-  if (namespaced) return namespaced;
   const parsed = parseAuthRef(authRef);
   if (!parsed || parsed.kind !== "keyring") {
     return resolveProviderCredential(providerId, authRef, diag);
   }
+  if (parsed.account === GLOBAL_OPENCODE_KEYRING_ACCOUNT) {
+    const relayOverride = await readProviderSecret(providerKeyringAccount("opencode"), diag);
+    if (relayOverride) return relayOverride;
+  }
+  const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
+  if (namespaced) return namespaced;
   const oauthProviderId = oauthProviderIdFromAccount(parsed.account);
   const raw = await readKeyringAccount(parsed.account, diag);
   if (!raw || !oauthProviderId) return decodeProviderSecret(raw);

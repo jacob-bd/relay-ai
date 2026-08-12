@@ -2,7 +2,14 @@
 
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
-import { migrateGlobalOpencodeCredential, readGlobalOpencodeCredential, resolveProviderCredential } from './env.js';
+import {
+  migrateGlobalOpencodeCredential,
+  preferredRelayCredentialAuthRef,
+  readGlobalOpencodeCredential,
+  readStoredProviderCredential,
+  resolveProviderCredential,
+  saveProviderCredential,
+} from './env.js';
 import {
   formatRegistryAuthLabel,
   resolveProvidersForDisplay,
@@ -826,6 +833,13 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
       hint: 'Refresh OAuth tokens or switch accounts',
     });
   }
+  if (provider.authType !== 'oauth' && provider.authRef.startsWith('keyring:')) {
+    detailOptions.push({
+      value: 'change-key',
+      label: 'Change API key',
+      hint: 'Test a new key and optionally replace the stored key',
+    });
+  }
   detailOptions.push(
     {
       value: 'toggle',
@@ -861,6 +875,10 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
     return (await runProvidersRefreshModels(id)) === 0 ? 'back' : 'failed';
   }
 
+  if (action === 'change-key') {
+    return (await runProviderApiKeyChange(provider, registry)) === 0 ? 'back' : 'failed';
+  }
+
   if (action === 'change-auth' && template) {
     return (await runDualAuthTemplateFlow(template, provider)) === 0 ? 'back' : 'failed';
   }
@@ -879,6 +897,58 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
 
   const code = await runProvidersRemove(id, true);
   return code === 0 ? 'removed' : 'failed';
+}
+
+async function runProviderApiKeyChange(
+  provider: RegistryProvider,
+  registry: ReturnType<typeof loadRegistry>,
+): Promise<number> {
+  const entered = await p.password({
+    message: `Enter the new API key for ${provider.name}`,
+    mask: '•',
+  });
+  if (p.isCancel(entered)) {
+    p.cancel('Cancelled.');
+    return 0;
+  }
+  const key = String(entered).trim();
+  if (!key) {
+    p.log.warn('API key cannot be empty.');
+    return 1;
+  }
+
+  const targetAuthRef = preferredRelayCredentialAuthRef(provider.id, provider.authRef);
+  let existing = await readStoredProviderCredential(targetAuthRef);
+  if (!existing && targetAuthRef !== provider.authRef) {
+    existing = await readStoredProviderCredential(provider.authRef);
+  }
+  if (existing && existing !== key) {
+    const confirmed = await p.confirm({
+      message: 'A different key is already stored. Replace it?',
+      initialValue: false,
+    });
+    if (p.isCancel(confirmed) || !confirmed) {
+      p.log.info('Kept the existing stored key.');
+      return 0;
+    }
+  }
+
+  const spinner = p.spinner();
+  spinner.start(`Testing ${provider.name} and refreshing models...`);
+  const result = await refreshProviderModels(provider.id, key, registry);
+  spinner.stop('');
+  if (!result.ok) {
+    p.log.error(`${provider.name}: ${result.reason ?? 'The new key was rejected.'}`);
+    return 1;
+  }
+
+  const saved = await saveProviderCredential(targetAuthRef, key);
+  if (!saved) {
+    p.log.error('The new key works, but the credential store was unavailable — key was not saved.');
+    return 1;
+  }
+  p.log.success(`${provider.name}: key updated and ${result.modelCount ?? 0} model${result.modelCount === 1 ? '' : 's'} available.`);
+  return 0;
 }
 
 export async function runProvidersHub(): Promise<number> {

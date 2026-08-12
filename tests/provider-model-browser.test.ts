@@ -25,6 +25,13 @@ describe('provider model browser', () => {
     expect(filterProviderModels(models, 'model-12')).toEqual([models[11]]);
   });
 
+  it('matches model search terms in any order', async () => {
+    const { filterProviderModels } = await loadBrowserHelpers();
+    const googleModel = { id: 'gemini-3.6-flash', name: 'gemini-3.6-flash' };
+
+    expect(filterProviderModels([googleModel], 'flash 3.6')).toEqual([googleModel]);
+  });
+
   it('filters models by context window size and free status', async () => {
     const { filterProviderModels } = await loadBrowserHelpers();
     const testModels = [

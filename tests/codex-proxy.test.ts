@@ -1,14 +1,18 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createServer } from 'node:http';
 import { parse } from 'smol-toml';
 import {
   estimateCodexRequestChars,
   isLikelyCodexCompactionRequest,
   isCodexV2CompactionRequest,
+  isCodexSubagentRequest,
   protectCodexCompactionParams,
+  resolveCodexSubagentRoute,
   startCodexProxy,
 } from '../src/codex-proxy.js';
 import type { CodexSdkCallParams } from '../src/codex-responses-adapter.js';
 import { CODEX_APP_AUTO_COMPACT_RATIO } from '../src/codex/app-profile.js';
+import { WebSocket, WebSocketServer } from 'ws';
 
 describe('startCodexProxy', () => {
   let handle: Awaited<ReturnType<typeof startCodexProxy>> | null = null;
@@ -174,6 +178,263 @@ describe('startCodexProxy', () => {
     expect(resModelInvalid.status).toBe(404);
   });
 
+  it('requires the mixed capability path and forwards native Responses unchanged', async () => {
+    const nativeFetch = vi.fn(async () => new Response('native-sse', {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    }));
+    const capability = 'A'.repeat(43);
+    handle = await startCodexProxy([], {
+      requireAuth: false,
+      mixedNative: { nativeModelIds: new Set(['gpt-5.5']), capability, nativeFetchImpl: nativeFetch as typeof fetch },
+    });
+    try {
+      const wrong = await fetch(`http://127.0.0.1:${handle.port}/v1/responses`, {
+        method: 'POST',
+        body: JSON.stringify({ model: 'gpt-5.5', input: 'hi' }),
+      });
+      expect(wrong.status).toBe(404);
+
+      const native = await fetch(`http://127.0.0.1:${handle.port}/_relay-codex/${capability}/v1/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer native',
+          'chatgpt-account-id': 'acct',
+          'x-provider-key': 'relay-secret',
+        },
+        body: JSON.stringify({ model: 'gpt-5.5', input: 'hi' }),
+      });
+      expect(native.status).toBe(200);
+      expect(await native.text()).toBe('native-sse');
+      expect(nativeFetch).toHaveBeenCalledOnce();
+      const init = nativeFetch.mock.calls[0]![1] as RequestInit;
+      expect(init.headers).toEqual(expect.objectContaining({ authorization: 'Bearer native', 'ChatGPT-Account-Id': 'acct' }));
+      expect(JSON.stringify(init.headers)).not.toContain('relay-secret');
+
+      const unknown = await fetch(`http://127.0.0.1:${handle.port}/_relay-codex/${capability}/v1/responses`, {
+        method: 'POST',
+        body: JSON.stringify({ model: 'gpt-5.6-sol', input: 'hi' }),
+      });
+      expect(unknown.status).toBe(404);
+    } finally { /* proxy cleanup runs in afterEach */ }
+  });
+
+  it('rejects an unknown model in mixed mode instead of silently using the first Relay route', async () => {
+    const capability = 'C'.repeat(43);
+    handle = await startCodexProxy([{
+      modelId: 'provider__approved-subagent',
+      npm: '@ai-sdk/anthropic',
+      apiKey: 'sk-test',
+      upstreamModelId: 'approved-subagent',
+    }], {
+      requireAuth: false,
+      mixedNative: { nativeModelIds: new Set(['gpt-5.5']), capability },
+    });
+    const response = await fetch(`http://127.0.0.1:${handle.port}/_relay-codex/${capability}/v1/responses`, {
+      method: 'POST',
+      body: JSON.stringify({ model: 'provider__not-approved', input: 'hi' }),
+    });
+    expect(response.status).toBe(404);
+  });
+
+  it('forwards a mixed native WebSocket response.create frame to the native upstream', async () => {
+    const upstream = new WebSocketServer({ port: 0 });
+    const upstreamPort = await new Promise<number>(resolve => upstream.on('listening', () => resolve((upstream.address() as { port: number }).port)));
+    const received: Record<string, unknown>[] = [];
+    upstream.on('connection', socket => {
+      socket.once('message', data => {
+        received.push(JSON.parse(data.toString()) as Record<string, unknown>);
+        socket.send(JSON.stringify({ type: 'response.completed', response: { status: 'completed' } }));
+        socket.close();
+      });
+    });
+    const capability = 'B'.repeat(43);
+    handle = await startCodexProxy([], {
+      requireAuth: false,
+      mixedNative: { nativeModelIds: new Set(['gpt-5.5']), capability, nativeBaseUrl: `http://127.0.0.1:${upstreamPort}` },
+    });
+    try {
+      const messages: string[] = [];
+      await new Promise<void>((resolve, reject) => {
+        const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/_relay-codex/${capability}/v1/responses`, {
+          headers: { authorization: 'Bearer native', 'chatgpt-account-id': 'acct' },
+        });
+        client.on('open', () => client.send(JSON.stringify({ model: 'gpt-5.5', input: 'hi' })));
+        client.on('message', data => messages.push(data.toString()));
+        client.on('close', () => resolve());
+        client.on('error', reject);
+      });
+      expect(received[0]).toMatchObject({ type: 'response.create', model: 'gpt-5.5', input: 'hi' });
+      expect(messages).toContain(JSON.stringify({ type: 'response.completed', response: { status: 'completed' } }));
+    } finally {
+      await new Promise<void>(resolve => upstream.close(() => resolve()));
+    }
+  });
+
+  it('keeps the native WebSocket bridge open for multiple response.create turns', async () => {
+    const upstream = new WebSocketServer({ port: 0 });
+    const upstreamPort = await new Promise<number>(resolve => upstream.on('listening', () => resolve((upstream.address() as { port: number }).port)));
+    const received: Record<string, unknown>[] = [];
+    upstream.on('connection', socket => {
+      socket.on('message', data => {
+        received.push(JSON.parse(data.toString()) as Record<string, unknown>);
+        socket.send(JSON.stringify({ type: 'response.completed', response: { status: 'completed' } }));
+        if (received.length === 2) socket.close();
+      });
+    });
+    const capability = 'D'.repeat(43);
+    handle = await startCodexProxy([], {
+      requireAuth: false,
+      mixedNative: { nativeModelIds: new Set(['gpt-5.5']), capability, nativeBaseUrl: `http://127.0.0.1:${upstreamPort}` },
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/_relay-codex/${capability}/v1/responses`);
+        const timer = setTimeout(() => { client.close(); reject(new Error('timed out waiting for second native turn')); }, 2000);
+        let responseCount = 0;
+        client.on('open', () => client.send(JSON.stringify({ model: 'gpt-5.5', input: 'first' })));
+        client.on('message', data => {
+          const event = JSON.parse(data.toString()) as { type?: string };
+          if (event.type !== 'response.completed') return;
+          responseCount += 1;
+          if (responseCount === 1) client.send(JSON.stringify({ model: 'gpt-5.5', input: 'second' }));
+        });
+        client.on('close', () => { clearTimeout(timer); resolve(); });
+        client.on('error', reject);
+      });
+      expect(received).toHaveLength(2);
+      expect(received[0]).toMatchObject({ type: 'response.create', input: 'first' });
+      expect(received[1]).toMatchObject({ type: 'response.create', input: 'second' });
+    } finally {
+      await new Promise<void>(resolve => upstream.close(() => resolve()));
+    }
+  });
+
+  it('resolves a WebSocket child payload before contacting the Relay model', async () => {
+    const nativeRelay = createServer((req, res) => {
+      req.resume();
+      req.once('end', () => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({
+          output: [{
+            type: 'function_call',
+            name: 'relay_external_agent_payload',
+            arguments: JSON.stringify({ payload: 'DELEGATED_MARKER' }),
+          }],
+        }));
+      });
+    });
+    const nativePort = await new Promise<number>(resolve => nativeRelay.listen(0, '127.0.0.1', () => resolve((nativeRelay.address() as { port: number }).port)));
+
+    let receiveProviderBody!: (body: Record<string, unknown>) => void;
+    const providerBodyPromise = new Promise<Record<string, unknown>>(resolve => {
+      receiveProviderBody = resolve;
+    });
+    const provider = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      req.once('end', () => {
+        receiveProviderBody(JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>);
+        res.writeHead(500, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'test provider stopped after capture' } }));
+      });
+    });
+    const providerPort = await new Promise<number>(resolve => provider.listen(0, '127.0.0.1', () => resolve((provider.address() as { port: number }).port)));
+
+    const capability = 'E'.repeat(43);
+    handle = await startCodexProxy([{
+      modelId: 'provider__child',
+      npm: '@ai-sdk/openai-compatible',
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${providerPort}/v1`,
+      upstreamModelId: 'child-model',
+      providerId: 'provider',
+    }], {
+      requireAuth: false,
+      mixedNative: {
+        nativeModelIds: new Set(['gpt-5.6-luna']),
+        subagentRouteModelId: 'provider__child',
+        capability,
+        nativeBaseUrl: `http://127.0.0.1:${nativePort}`,
+        nativePayloadRelayModel: 'gpt-5.6-luna',
+      },
+    });
+
+    try {
+      const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/_relay-codex/${capability}/v1/responses`, {
+        headers: { authorization: 'Bearer native', 'chatgpt-account-id': 'acct' },
+      });
+      await new Promise<void>((resolve, reject) => {
+        client.on('open', () => {
+          client.send(JSON.stringify({
+            model: 'gpt-5.6-luna',
+            stream: true,
+            client_metadata: { 'x-openai-subagent': true },
+            input: [{
+              type: 'agent_message',
+              content: [
+                { type: 'input_text', text: 'Message Type: NEW_TASK\nTask name: /root/probe\nSender: /root\nPayload:' },
+                { type: 'encrypted_content', encrypted_content: `gAAAAA${'A'.repeat(40)}` },
+              ],
+            }],
+          }));
+          resolve();
+        });
+        client.on('error', reject);
+      });
+      const providerBody = await Promise.race([
+        providerBodyPromise,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timed out waiting for provider request')), 2_000)),
+      ]);
+      client.close();
+
+      expect(JSON.stringify(providerBody)).toContain('DELEGATED_MARKER');
+      expect(JSON.stringify(providerBody)).not.toContain(`gAAAAA${'A'.repeat(40)}`);
+    } finally {
+      await new Promise<void>(resolve => nativeRelay.close(() => resolve()));
+      await new Promise<void>(resolve => provider.close(() => resolve()));
+    }
+  });
+
+});
+
+describe('Codex mixed sub-agent dispatch', () => {
+  const routes = [
+    { modelId: 'kilo__kilo-auto/free' },
+    { modelId: 'google__gemini-3.5-flash' },
+  ];
+
+  it('recognizes the Codex child marker in client metadata without treating the parent as a child', () => {
+    expect(isCodexSubagentRequest({ client_metadata: { session_id: 'parent' } })).toBe(false);
+    expect(isCodexSubagentRequest({ client_metadata: { 'x-openai-subagent': true } })).toBe(true);
+    expect(isCodexSubagentRequest({ client_metadata: { 'x-openai-subagent': 'relay_kilo' } })).toBe(true);
+  });
+
+  it('selects only configured sub-agent routes even when the child asks for a native model id', () => {
+    const route = resolveCodexSubagentRoute(
+      routes,
+      'google__gemini-3.5-flash',
+      { model: 'gpt-5.6-luna', client_metadata: { 'x-openai-subagent': true } },
+    );
+    expect(route?.modelId).toBe('google__gemini-3.5-flash');
+  });
+
+  it('ignores the incoming child model when one explicit sub-agent route is configured', () => {
+    const route = resolveCodexSubagentRoute(
+      routes,
+      'kilo__kilo-auto/free',
+      { model: 'google__gemini-3.5-flash', client_metadata: { 'x-openai-subagent': true } },
+    );
+    expect(route?.modelId).toBe('kilo__kilo-auto/free');
+  });
+
+  it('does not redirect an unmarked native parent request', () => {
+    expect(resolveCodexSubagentRoute(
+      routes,
+      'kilo__kilo-auto/free',
+      { model: 'gpt-5.6-luna' },
+    )).toBeUndefined();
+  });
 });
 
 describe('Codex compaction protection', () => {

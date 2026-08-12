@@ -10,7 +10,7 @@ import { resolveApiKey, detectConflicts, buildChildEnv, readGlobalOpencodeCreden
 import { claudeCodeClientModelId } from './context-model-id.js';
 import { resolveOrCollectApiKey } from './key-setup.js';
 import { needsFirstRunSetup, runFirstRunWizard } from './first-run.js';
-import { MAX_MODEL_CATALOG } from './constants.js';
+import { CODEX_SUBAGENT_MODEL_CAP, MAX_MODEL_CATALOG } from './constants.js';
 import { startProxy, startProxyCatalog } from './proxy.js';
 import type { ProxyHandle, ProxyRoute } from './proxy.js';
 import {
@@ -20,7 +20,7 @@ import {
 import { runServerCommand } from './server/index.js';
 import type { ModelFormat } from './types.js';
 import { loadPreferences, savePreferences, recordLaunchSelection } from './config.js';
-import { claudeTransparentModeOptions, pickLocalModel, browseAllModels } from './prompts.js';
+import { claudeTransparentModeOptions, pickLocalModel, browseAllModels, filterModelsBySearch, MODEL_SEARCH_THRESHOLD } from './prompts.js';
 import { fetchProviderCatalog, providersForPicker, resolveLocalProviderApiKey } from './provider-catalog.js';
 import { providerRefreshToken } from './provider-runtime.js';
 import { BACKENDS, VERSION } from './constants.js';
@@ -42,7 +42,7 @@ import { runCodexAppCommand, codexAppHelpText } from './codex-app.js';
 import { runClaudeAppCommand, claudeAppHelpText } from './claude-app.js';
 import { prepareClaudeTraceLog, prepareProviderTraceLog, printTraceLog } from './trace-log.js';
 import { ANTIGRAVITY_BASE_URLS } from './oauth/antigravity-oauth.js';
-import { providersForTarget } from './target-compatibility.js';
+import { providersForCodexSubagents, providersForTarget } from './target-compatibility.js';
 import { refreshModelsDevCacheAsync } from './registry/models-dev.js';
 import { setAgentStdoutMode, isAgentStdoutMode } from './agent-io.js';
 import {
@@ -215,14 +215,27 @@ export function parseArgs(args: string[]): ParsedArgs {
     return parsed;
   }
 
+  if (first === 'subagents') {
+    const parsed = emptyParsed('models');
+    parsed.modelCatalogScope = 'codex-subagents';
+    for (const arg of rest) {
+      if (arg === '--help' || arg === '-h') parsed.showHelp = true;
+      else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
+      else if (!parsed.error) parsed.error = 'subagents does not accept model catalog flags';
+    }
+    return parsed;
+  }
+
   if (first === 'models' || first === 'favorites') {
     const parsed = emptyParsed('models');
+    parsed.modelCatalogScope = 'global';
     for (const arg of rest) {
       if (arg === '--help' || arg === '-h') parsed.showHelp = true;
       else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
       else if (arg === '--agy') parsed.favoritesAgy = true;
       else if (!parsed.error) parsed.error = `Unknown models option: ${arg}`;
     }
+    if (parsed.favoritesAgy) parsed.modelCatalogScope = 'agy';
     return parsed;
   }
 
@@ -257,6 +270,16 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (arg === '--help' || arg === '-h') { parsed.showHelp = true; continue; }
       if (arg === '--version' || arg === '-v') { parsed.showVersion = true; continue; }
       if (arg === '--vertex') { parsed.vertex = true; continue; }
+      if (arg === '--with-native') {
+        if (parsed.codexLaunchMode === 'relay-only') parsed.error = '--with-native and --relay-only cannot be used together';
+        parsed.codexLaunchMode = 'mixed';
+        continue;
+      }
+      if (arg === '--relay-only') {
+        if (parsed.codexLaunchMode === 'mixed') parsed.error = '--with-native and --relay-only cannot be used together';
+        parsed.codexLaunchMode = 'relay-only';
+        continue;
+      }
       const consumed = tryConsumeRelayLaunchFlag(arg, rest, i, parsed);
       if (consumed !== null) {
         if ('error' in consumed) return parsed;
@@ -299,6 +322,16 @@ export function parseArgs(args: string[]): ParsedArgs {
       }
       if (arg === '--vertex') {
         parsed.vertex = true;
+        continue;
+      }
+      if (arg === '--with-native') {
+        if (parsed.codexLaunchMode === 'relay-only') parsed.error = '--with-native and --relay-only cannot be used together';
+        parsed.codexLaunchMode = 'mixed';
+        continue;
+      }
+      if (arg === '--relay-only') {
+        if (parsed.codexLaunchMode === 'mixed') parsed.error = '--with-native and --relay-only cannot be used together';
+        parsed.codexLaunchMode = 'relay-only';
         continue;
       }
       if (arg === '--help' || arg === '-h') {
@@ -466,6 +499,7 @@ ${pc.bold('Usage:')}
   relay-ai ui
   relay-ai models
   relay-ai favorites
+  relay-ai subagents
   relay-ai providers
   relay-ai --help
   relay-ai --version
@@ -484,6 +518,7 @@ ${pc.bold('Commands:')}
   claude      Launch Claude Code — pick a provider from your registry
   models      Manage favorite models for mid-session /model switching (max ${MAX_MODEL_CATALOG})
   favorites   Alias for models
+  subagents   Manage the independent Codex SubAgent model catalog (starts empty)
   providers   Add, import, and manage your AI providers
   server      Run a foreground API gateway (OpenCode Zen / Go and local providers)
   codex       Launch OpenAI Codex CLI with registry providers
@@ -491,9 +526,9 @@ ${pc.bold('Commands:')}
   agy         Launch Antigravity CLI with registry providers
   antigravity Launch Antigravity app with registry providers (macOS)
   antigravity-ide  Launch Antigravity IDE with registry providers (macOS)
-  codex-app   Launch ChatGPT desktop app (Codex mode) with registry providers (macOS + Windows)
+  codex-app   Launch ChatGPT desktop app (Codex mode) with registry providers (macOS + Windows + Linux)
   chatgpt     Alias for codex-app
-  claude-app  Launch Claude Desktop app with registry providers (macOS + Windows)
+  claude-app  Launch Claude Desktop app with registry providers (macOS + Windows + Linux)
 
 ${pc.bold('Antigravity favorites:')}
   agy, antigravity, and antigravity-ide share up to six Antigravity favorites
@@ -626,7 +661,22 @@ ${pc.bold('Endpoints:')}
   API key: use anything locally; use the server password in network mode.`;
 }
 
-export function modelsHelpText(): string {
+export function modelsHelpText(scope: 'global' | 'codex-subagents' = 'global'): string {
+  if (scope === 'codex-subagents') {
+    return `${pc.bold('relay-ai subagents')} v${VERSION}
+Manage the separate Codex SubAgent model catalog.
+
+${pc.bold('Usage:')}
+  relay-ai subagents
+  relay-ai subagents --help
+  relay-ai subagents --version
+
+${pc.bold('Behavior:')}
+  Starts empty and is managed independently from General Favorites.
+  Search all models at once or browse models by provider.
+  Select one model that Codex uses for every SubAgent in mixed mode.
+  The Codex SubAgent is saved to ~/.relay-ai/config.json (max ${CODEX_SUBAGENT_MODEL_CAP}).`;
+  }
   return `${pc.bold('relay-ai favorites')} v${VERSION}
 Manage favorite models for mid-session switching.
 
@@ -636,6 +686,7 @@ ${pc.bold('Usage:')}
   relay-ai models
   relay-ai favorites --help
   relay-ai favorites --version
+  relay-ai subagents
 
 ${pc.bold('Behavior:')}
   Opens an interactive manager to add or remove favorites.
@@ -643,9 +694,11 @@ ${pc.bold('Behavior:')}
   Pick from Zen, Go, or any provider in your registry.
   Global favorites are saved to ~/.relay-ai/config.json (max ${MAX_MODEL_CATALOG}).
   --agy manages Antigravity CLI favorites only (max 6).
+  relay-ai subagents manages the Codex SubAgent (starts empty; does not sync with General Favorites).
 
 ${pc.bold('How it works:')}
-  Claude/Codex/Gemini/server use the global favorites list.
+  Claude/Codex/Gemini/server use the global favorites list. The Codex SubAgent is a
+  separate model-only catalog used when Codex mixed mode is enabled.
   Favorites appear in supported /model switch menus.
   relay-ai agy, antigravity, and antigravity-ide use the Antigravity favorites
   list so the limited native switch slots stay predictable: one selected launch
@@ -848,14 +901,23 @@ function printDryRun(
 const AGY_CLI_FAVORITES_CAP = 6;
 
 interface FavoritesCommandOptions {
-  scope?: 'global' | 'agy';
+  scope?: 'global' | 'agy' | 'codex-subagents';
 }
 
 export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Promise<number> {
   const scope = opts.scope ?? 'global';
-  const maxFavorites = scope === 'agy' ? AGY_CLI_FAVORITES_CAP : MAX_MODEL_CATALOG;
-  const scopeName = scope === 'agy' ? 'Antigravity CLI Favorites' : 'Favorite Models';
-  const configKey = scope === 'agy' ? 'antigravityCliFavoriteModels' : 'favoriteModels';
+  const maxFavorites = scope === 'agy'
+    ? AGY_CLI_FAVORITES_CAP
+    : scope === 'codex-subagents' ? CODEX_SUBAGENT_MODEL_CAP : MAX_MODEL_CATALOG;
+  const scopeName = scope === 'agy'
+    ? 'Antigravity CLI Favorites'
+    : scope === 'codex-subagents' ? 'Codex SubAgent' : 'Favorite Models';
+  const subagentScope = scope === 'codex-subagents';
+  const listLabel = subagentScope ? 'Codex SubAgent' : scope === 'agy' ? 'Antigravity Favorites' : 'favorites';
+  const listItemLabel = subagentScope ? 'Codex SubAgent model' : scope === 'agy' ? 'Antigravity favorite' : 'favorite';
+  const configKey = scope === 'agy'
+    ? 'antigravityCliFavoriteModels'
+    : scope === 'codex-subagents' ? 'codexSubagentModels' : 'favoriteModels';
   relayIntro(scopeName);
 
   const spinner = p.spinner();
@@ -864,9 +926,12 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
   const catalog = await fetchProviderCatalog();
   spinner.stop('');
 
+  const pickedProviders = providersForPicker(catalog);
   const allProviders = scope === 'agy'
-    ? providersForTarget(providersForPicker(catalog), 'antigravity')
-    : providersForPicker(catalog);
+    ? providersForTarget(pickedProviders, 'antigravity')
+    : scope === 'codex-subagents'
+      ? providersForCodexSubagents(pickedProviders)
+      : pickedProviders;
   const favoriteProviders = allProviders.map(provider => ({
     ...provider,
     name: favoriteProviderDisplayName(provider),
@@ -890,7 +955,9 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
   const prefs = loadPreferences();
   let favorites = scope === 'agy'
     ? prefs.antigravityCliFavoriteModels ?? []
-    : prefs.favoriteModels ?? [];
+    : scope === 'codex-subagents'
+      ? prefs.codexSubagentModels ?? []
+      : prefs.favoriteModels ?? [];
   let favoritesDirty = false;
 
   // eslint-disable-next-line no-constant-condition
@@ -913,7 +980,7 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
       value: '__add__',
       label: atCap ? pc.dim(`+ Add a model → (limit of ${maxFavorites} reached)`) : pc.cyan('+ Add a model →'),
       hint: atCap
-        ? 'Remove a favorite first to make room'
+        ? `Remove a ${listItemLabel} first to make room`
         : `${allProviders.length} provider${allProviders.length !== 1 ? 's' : ''} available`,
     });
     options.push({ value: '__done__', label: 'Done', hint: '' });
@@ -932,17 +999,17 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
 
     if (choice === '__add__') {
       if (atCap) {
-        p.log.warn(`Limit of ${maxFavorites} favorites reached — remove one first.`);
+        p.log.warn(`Limit of ${maxFavorites} ${subagentScope ? 'Codex SubAgent' : 'favorites'} reached — remove one first.`);
         continue;
       }
 
       const globalCount = buildGlobalFavoriteIndex(favoriteProviders).length;
       const addPath = await p.select<string>({
-        message: 'Add a favorite',
+        message: subagentScope ? 'Add a Codex SubAgent model' : 'Add a favorite',
         options: [
           {
             value: 'global',
-            label: pc.cyan('Search all providers'),
+            label: pc.cyan(subagentScope ? 'Search all models' : 'Search all providers'),
                 hint: `${globalCount} models · ${favoriteProviders.length} provider${favoriteProviders.length !== 1 ? 's' : ''}`,
           },
           {
@@ -963,7 +1030,7 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
       let browsedMultiple: LocalProviderModel[] = [];
 
       if (addPath === 'global') {
-        const globalPick = await pickGlobalFavoriteModel(favoriteProviders, favorites);
+        const globalPick = await pickGlobalFavoriteModel(favoriteProviders, favorites, { listLabel });
         if (globalPick === null) continue;
         if (globalPick !== browseByProviderChoice) {
           provider = favoriteProviders.find(ap => ap.id === globalPick.providerId);
@@ -971,7 +1038,7 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
         }
       }
       if (addPath === 'free') {
-        const globalPick = await pickGlobalFavoriteModel(favoriteProviders, favorites, { freeOnly: true });
+        const globalPick = await pickGlobalFavoriteModel(favoriteProviders, favorites, { freeOnly: true, listLabel });
         if (globalPick === null) continue;
         if (globalPick !== browseByProviderChoice) {
           provider = favoriteProviders.find(ap => ap.id === globalPick.providerId);
@@ -992,13 +1059,31 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
 
           provider = favoriteProviders.find(ap => ap.id === pickedProviderId)!;
           
-          const options = provider.models.map(m => {
+          let modelsToPick = provider.models;
+          if (provider.models.length > MODEL_SEARCH_THRESHOLD) {
+            const searchInput = await p.text({
+              message: `Search ${provider.name} models (${provider.models.length} available):`,
+              placeholder: 'e.g. flash 3.6, claude, llama',
+            });
+            if (p.isCancel(searchInput)) {
+              currentInitialProvider = provider.id;
+              continue;
+            }
+            modelsToPick = filterModelsBySearch(provider.models, String(searchInput));
+            if (modelsToPick.length === 0) {
+              p.log.warn('No models match — try a different search');
+              currentInitialProvider = provider.id;
+              continue;
+            }
+          }
+
+          const options = modelsToPick.map(m => {
             const favorited = isFavorite(favorites, { providerId: provider!.id, modelId: m.id });
             const label = formatModelLabel(m);
             return {
               value: m.id,
               label: fmtModel(label, m.id),
-              hint: favorited ? pc.yellow('★ already favorite') : '',
+              hint: favorited ? pc.yellow(`★ already in ${listLabel}`) : '',
             };
           });
 
@@ -1018,7 +1103,7 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
             continue;
           }
 
-          browsedMultiple = provider.models.filter(m => (pickedModelIds as string[]).includes(m.id));
+          browsedMultiple = modelsToPick.filter(m => (pickedModelIds as string[]).includes(m.id));
           break;
         }
         if (browsedMultiple.length === 0) continue;
@@ -1048,27 +1133,27 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
       if (addedModels.length > 0) {
         if (addedModels.length === 1) {
           const modelName = addedModels[0].name || addedModels[0].id;
-          p.log.success(`Added ${modelName} (${provider!.name}) to favorites.`);
+          p.log.success(`Added ${modelName} (${provider!.name}) to ${listLabel}.`);
         } else {
-          p.log.success(`Added ${addedModels.length} models from ${provider!.name} to favorites.`);
+          p.log.success(`Added ${addedModels.length} models from ${provider!.name} to ${listLabel}.`);
         }
       }
       if (duplicateCount > 0) {
-        p.log.warn(`${duplicateCount} selected model(s) were already in your favorites.`);
+        p.log.warn(`${duplicateCount} selected model(s) were already in ${listLabel}.`);
       }
       if (limitReached) {
-        p.log.warn(`Limit of ${maxFavorites} favorites reached — some selected models could not be added.`);
+        p.log.warn(`Limit of ${maxFavorites} ${subagentScope ? 'Codex SubAgent' : 'favorites'} reached — some selected models could not be added.`);
       }
     } else if ((choice as string).startsWith('fav-')) {
       const idx = parseInt((choice as string).slice(4), 10);
       const fav = favorites[idx]!;
       const entry = modelLookup.get(`${fav.providerId}:${fav.modelId}`);
       const label = entry ? `${entry.modelName} (${entry.providerName})` : fav.modelId;
-      const confirmed = await p.confirm({ message: `Remove ${label} from favorites?` });
+      const confirmed = await p.confirm({ message: `Remove ${label} from ${listLabel}?` });
       if (p.isCancel(confirmed) || !confirmed) continue;
       favorites = removeFavorite(favorites, fav);
       favoritesDirty = true;
-      p.log.success(`Removed ${label} from favorites.`);
+      p.log.success(`Removed ${label} from ${listLabel}.`);
     }
   }
 
@@ -1076,14 +1161,20 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
     savePreferences({ [configKey]: favorites });
   }
 
-  const favLabel = scope === 'agy' ? 'Antigravity CLI ' : '';
+  const summary = subagentScope
+    ? favorites.length === 0
+      ? 'No Codex SubAgent configured'
+      : `${favorites.length} Codex SubAgent model${favorites.length !== 1 ? 's' : ''} saved`
+    : favorites.length === 0
+      ? `No ${scope === 'agy' ? 'Antigravity CLI favorites' : 'favorites'} saved`
+      : `${favorites.length} ${scope === 'agy' ? 'Antigravity CLI favorite' : 'favorite'}${favorites.length !== 1 ? 's' : ''} saved`;
   relayOutro(
-    favorites.length === 0
-      ? `No ${favLabel}favorites saved`
-      : `${favorites.length} ${favLabel}favorite${favorites.length !== 1 ? 's' : ''} saved`,
+    summary,
     favorites.length === 0
       ? pc.dim('Launch uses single-model mode')
-      : pc.cyan('/model menu ready on next launch'),
+      : subagentScope
+        ? pc.cyan('Codex will use this model for every Relay SubAgent')
+        : pc.cyan('/model menu ready on next launch'),
   );
   return 0;
 }
@@ -1635,10 +1726,10 @@ Options:
       return 0;
     }
     if (parsed.showHelp) {
-      printHelp(modelsHelpText());
+      printHelp(modelsHelpText(parsed.modelCatalogScope === 'codex-subagents' ? 'codex-subagents' : 'global'));
       return 0;
     }
-    return runModelsCommand({ scope: parsed.favoritesAgy ? 'agy' : 'global' });
+    return runModelsCommand({ scope: parsed.modelCatalogScope ?? (parsed.favoritesAgy ? 'agy' : 'global') });
   }
 
   if (parsed.command === 'providers') {
@@ -1671,7 +1762,7 @@ Options:
       console.log(codexAppHelpText());
       return 0;
     }
-    return runCodexAppCommand(parsed.claudeArgs, { vertex: parsed.vertex, launchProvider: parsed.launchProvider, launchModel: parsed.launchModel });
+    return runCodexAppCommand(parsed.claudeArgs, { vertex: parsed.vertex, launchProvider: parsed.launchProvider, launchModel: parsed.launchModel, codexLaunchMode: parsed.codexLaunchMode });
   }
 
   if (parsed.command === 'claude-app') {
@@ -1699,6 +1790,7 @@ Options:
       launchProvider: parsed.launchProvider,
       launchModel: parsed.launchModel,
       vertex: parsed.vertex,
+      codexLaunchMode: parsed.codexLaunchMode,
     });
   }
 

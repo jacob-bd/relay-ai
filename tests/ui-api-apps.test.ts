@@ -37,10 +37,30 @@ vi.mock('../src/native-launcher.js', () => ({
       relayCommand: 'claude-app',
       launchCommand: 'mock-launch',
     },
+    {
+      id: 'codex',
+      name: 'Codex CLI',
+      type: 'cli',
+      installed: true,
+      path: '/bin/codex',
+      relayCommand: 'codex',
+      launchCommand: 'mock-launch',
+    },
+    {
+      id: 'codex-app',
+      name: 'ChatGPT Desktop (Codex)',
+      type: 'desktop',
+      installed: true,
+      path: '/Applications/ChatGPT.app',
+      relayCommand: 'codex-app',
+      launchCommand: 'mock-launch',
+    },
   ],
   detectApp: (id: string) => {
     if (id === 'claude') return { installed: true, path: '/bin/claude' };
     if (id === 'claude-app') return { installed: true, path: '/Applications/Claude.app' };
+    if (id === 'codex') return { installed: true, path: '/bin/codex' };
+    if (id === 'codex-app') return { installed: true, path: '/Applications/ChatGPT.app' };
     return { installed: false, path: null };
   },
   getSupportedApp: (id: string) => {
@@ -50,12 +70,19 @@ vi.mock('../src/native-launcher.js', () => ({
     if (id === 'claude-app') {
       return { id: 'claude-app', name: 'Claude Desktop App', type: 'desktop', detectId: 'claude-app', relayCommand: 'claude-app' };
     }
+    if (id === 'codex') {
+      return { id: 'codex', name: 'Codex CLI', type: 'cli', detectId: 'codex', relayCommand: 'codex' };
+    }
+    if (id === 'codex-app') {
+      return { id: 'codex-app', name: 'ChatGPT Desktop (Codex)', type: 'desktop', detectId: 'codex-app', relayCommand: 'codex-app' };
+    }
     return undefined;
   },
-  getRelayLaunchCommand: (appId: string, options: { providerId?: string; modelId?: string; cwd?: string; trace?: boolean; httpProxy?: boolean }) => {
+  getRelayLaunchCommand: (appId: string, options: { providerId?: string; modelId?: string; cwd?: string; trace?: boolean; httpProxy?: boolean; withNative?: boolean }) => {
     const args = [appId];
     if (options.trace) args.push('--trace');
     if (options.httpProxy) args.push('--http-proxy');
+    if (options.withNative) args.push('--with-native');
     if (options.providerId && options.modelId) {
       args.push('--provider', options.providerId, '--model', options.modelId);
     }
@@ -95,7 +122,7 @@ describe('UI API Apps endpoints', () => {
     console.log('GET /api/apps raw response:', mockRes.result.data);
 
     const response = JSON.parse(mockRes.result.data);
-    expect(response.apps).toHaveLength(2);
+    expect(response.apps.length).toBeGreaterThanOrEqual(4);
     expect(response.apps[0].id).toBe('claude');
   });
 
@@ -140,6 +167,34 @@ describe('UI API Apps endpoints', () => {
     expect(mockRes.result.code).toBe(200);
     const response = JSON.parse(mockRes.result.data);
     expect(response.command).toContain('relay-ai claude --trace');
+  });
+
+  it('passes native mixed mode through for Codex launches', async () => {
+    const req = createMockRequest('POST', '/api/apps/launch', JSON.stringify({
+      appId: 'codex-app',
+      withNative: true,
+    }));
+    const mockRes = createMockResponse();
+
+    handleUiApiRequest(req, mockRes.res);
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(mockRes.result.code).toBe(200);
+    expect(JSON.parse(mockRes.result.data).command).toContain('relay-ai codex-app --with-native');
+  });
+
+  it('rejects native mixed mode for non-Codex applications', async () => {
+    const req = createMockRequest('POST', '/api/apps/launch', JSON.stringify({
+      appId: 'claude',
+      withNative: true,
+    }));
+    const mockRes = createMockResponse();
+
+    handleUiApiRequest(req, mockRes.res);
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(mockRes.result.code).toBe(400);
+    expect(JSON.parse(mockRes.result.data).error).toContain('only for Codex');
   });
 
   it('launches Claude App Favorites from the first saved favorite', async () => {
