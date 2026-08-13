@@ -55,21 +55,31 @@ describe('shouldHideModel', () => {
     expect(entry?.agents).toBeUndefined();
   });
 
-  it('hides unvalidated Antigravity OAuth Cloud Code slots', () => {
+  it('hides Antigravity OAuth Cloud Code helper slots', () => {
     expect(shouldHideModel({
       providerId: 'antigravity',
-      modelId: 'gemini-2.5-pro',
+      modelId: 'tab_flash_lite_preview',
+      agent: 'claude',
+    })).toBe(true);
+    expect(shouldHideModel({
+      providerId: 'antigravity',
+      modelId: 'chat_20706',
+      agent: 'claude',
+    })).toBe(true);
+    expect(shouldHideModel({
+      providerId: 'antigravity',
+      modelId: 'gemini-3.1-flash-image',
       agent: 'claude',
     })).toBe(true);
     expect(hideReason({
       providerId: 'antigravity',
-      modelId: 'gemini-2.5-pro',
+      modelId: 'tab_jump_flash_lite_preview',
       agent: 'claude',
-    })).toContain('not a validated');
+    })).toContain('helper/internal');
   });
 
-  it('keeps validated Antigravity OAuth agent slots visible', () => {
-    const validated = [
+  it('keeps current Antigravity OAuth agent models visible, including new Gemini Flash tiers', () => {
+    const visible = [
       'gemini-3.5-flash-low',
       'gemini-3.5-flash-extra-low',
       'gemini-3.1-pro-low',
@@ -77,14 +87,21 @@ describe('shouldHideModel', () => {
       'claude-sonnet-4-6',
       'claude-opus-4-6-thinking',
       'gpt-oss-120b-medium',
+      'gemini-3.6-flash-low',
+      'gemini-3.6-flash-medium',
+      'gemini-3.6-flash-high',
+      'gemini-3.7-flash-low',
+      'gemini-3.7-flash-medium',
+      'gemini-3.7-flash-high',
+      'gemini-3-flash-agent',
     ];
 
-    for (const modelId of validated) {
+    for (const modelId of visible) {
       expect(shouldHideModel({ providerId: 'antigravity', modelId, agent: 'claude' }), modelId).toBe(false);
     }
   });
 
-  it('does not apply the Antigravity OAuth allowlist to normal Google API models', () => {
+  it('does not treat normal Google API models as Cloud Code helper slots', () => {
     expect(shouldHideModel({
       providerId: 'google',
       modelId: 'gemini-2.5-pro',

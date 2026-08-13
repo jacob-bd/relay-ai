@@ -34,7 +34,7 @@ import { modelPrefersResponsesApi } from '../provider-factory.js';
 import { deriveBrand } from '../models.js';
 import { resolveContextWindow } from '../context-window.js';
 import { getInstalledClaudeVersion } from '../launch.js';
-import { shouldHideModel } from '../model-compatibility.js';
+import { isAntigravityCloudCodeHelperSlot, shouldHideModel } from '../model-compatibility.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import {
   copilotPlanTier,
@@ -151,9 +151,9 @@ async function refreshAntigravityOAuthModels(
       if (raw.length === 0) continue;
 
       const models: CachedModel[] = raw
-        .filter(m => typeof m.id === 'string' && m.id.length > 0)
+        .filter(m => typeof m.id === 'string' && m.id.length > 0 && !isAntigravityCloudCodeHelperSlot(m.id))
         .map(m => {
-          const id = m.id as string;
+          const id = m.id;
           const name = (m.displayName ?? m.name ?? id) as string;
           const isGemini = id.startsWith('gemini');
           const isClaude = id.startsWith('claude');
@@ -691,7 +691,7 @@ export async function refreshProviderModels(
         id: provider.id,
         name: provider.name,
         ok: false,
-        reason: 'No validated Antigravity agent models were returned — kept the existing model cache.',
+        reason: 'Cloud Code returned no usable Antigravity models — kept the existing model cache.',
       };
     }
 

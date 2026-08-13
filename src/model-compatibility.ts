@@ -32,22 +32,14 @@ interface IncompatibleModelFile {
 
 const BLACKLIST_ENTRIES = (blacklistData as IncompatibleModelFile).entries ?? [];
 
-// Antigravity OAuth's Cloud Code catalog includes helper, internal, and
-// candidate slots. Expose only slots we have validated as user-selectable agent
-// models; keep normal Google API models governed by the generic rules below.
-// Intentionally local allow-list, not model-incompatible.json:
-// model-incompatible.json is deny-only and has no allow/deny polarity.
-// Moving this would require a data schema migration. See
-// docs/superpowers/specs/2026-07-08-agent-launch-consolidation-design.md#111--antigravitys-model-allow-list-vs-the-shared-blacklist-file-deferred
-const ANTIGRAVITY_VALIDATED_AGENT_MODELS = new Set([
-  'gemini-3.5-flash-low',
-  'gemini-3.5-flash-extra-low',
-  'gemini-3.1-pro-low',
-  'gemini-pro-agent',
-  'claude-sonnet-4-6',
-  'claude-opus-4-6-thinking',
-  'gpt-oss-120b-medium',
-]);
+// Cloud Code's fetchAvailableModels blob also contains tab-complete, chat, and
+// image-generation slots. Those are not agent models — drop them. Everything
+// else from the live catalog is shown; there is no Relay allowlist.
+const ANTIGRAVITY_HELPER_SLOT = /^(tab_|chat_|models\/)|image/i;
+
+export function isAntigravityCloudCodeHelperSlot(modelId: string): boolean {
+  return ANTIGRAVITY_HELPER_SLOT.test(modelId);
+}
 
 function matchesAgent(entryAgents: CompatibilityAgent[] | undefined, agent: CompatibilityAgent): boolean {
   if (!entryAgents || entryAgents.length === 0) return true;
@@ -69,8 +61,8 @@ export function findBlacklistEntry(ctx: CompatibilityContext): IncompatibleModel
 }
 
 export function hideReason(ctx: CompatibilityContext): string | null {
-  if (ctx.providerId === 'antigravity' && !ANTIGRAVITY_VALIDATED_AGENT_MODELS.has(ctx.modelId)) {
-    return '[antigravity-oauth] not a validated user-selectable Cloud Code agent model';
+  if (ctx.providerId === 'antigravity' && isAntigravityCloudCodeHelperSlot(ctx.modelId)) {
+    return '[antigravity-oauth] Cloud Code helper/internal slot';
   }
 
   const blacklist = findBlacklistEntry(ctx);

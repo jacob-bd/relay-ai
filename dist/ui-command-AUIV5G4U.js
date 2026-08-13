@@ -84,7 +84,7 @@ import {
   supportsClaudeTransparentMode,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-R4AWEK7T.js";
+} from "./chunk-B26COSLT.js";
 import {
   __toCommonJS,
   init_provider_templates,
@@ -655,7 +655,7 @@ function handleUiApiRequest(req, res, opts = {}) {
     handlePostConfig(req, res);
   } else if (url.startsWith("/api/models") && req.method === "GET") {
     const appId = new URL(url, "http://localhost").searchParams.get("appId") ?? "";
-    handleGetModels(res, APP_ID_TO_LAUNCH_TARGET[appId], appId === "codex-subagents");
+    handleGetModels(res, APP_ID_TO_LAUNCH_TARGET[appId], appId === "codex-subagents", opts.uiMode);
   } else if (url === "/api/keys" && req.method === "POST") {
     handlePostKeys(req, res);
   } else if (url === "/api/providers/refresh" && req.method === "POST") {
@@ -731,9 +731,9 @@ async function handlePostConfig(req, res) {
     sendJson(res, 400, { error: String(err) });
   }
 }
-async function handleGetModels(res, target, codexSubagents = false) {
+async function handleGetModels(res, target, codexSubagents = false, uiMode) {
   try {
-    let catalog = (await fetchModelsWithTimeout()).filter((provider) => provider.authType !== "oauth" || DEVICE_CODE_PROVIDER_IDS.has(provider.id));
+    let catalog = (await fetchModelsWithTimeout()).filter((provider) => provider.authType !== "oauth" || isUiCatalogOAuthProvider(provider.id, uiMode));
     if (codexSubagents) catalog = providersForCodexSubagents(catalog);
     else if (target) catalog = providersForTarget(catalog, target);
     const registry = loadRegistry();
@@ -766,7 +766,7 @@ async function handleGetModels(res, target, codexSubagents = false) {
     }));
     const materializedIds = new Set(catalog.map((p2) => p2.id));
     for (const rp of registry.providers) {
-      if (rp.authType !== "oauth" || !DEVICE_CODE_PROVIDER_IDS.has(rp.id) || !rp.enabled || materializedIds.has(rp.id)) continue;
+      if (rp.authType !== "oauth" || !isUiCatalogOAuthProvider(rp.id, uiMode) || !rp.enabled || materializedIds.has(rp.id)) continue;
       const credential = await resolveProviderCredential(rp.id, rp.authRef).catch(() => null);
       if (!credential) continue;
       providers.push({
@@ -1023,6 +1023,11 @@ async function handleDeleteProvider(req, res) {
 var DEVICE_CODE_PROVIDER_IDS = /* @__PURE__ */ new Set(["xai-oauth", "openai-oauth", "github-copilot", "cline-pass"]);
 var PKCE_PROVIDER_IDS = /* @__PURE__ */ new Set(["claude-code", "antigravity"]);
 var NATIVE_OAUTH_PROVIDER_IDS = DEVICE_CODE_PROVIDER_IDS;
+function isUiCatalogOAuthProvider(providerId, uiMode) {
+  if (DEVICE_CODE_PROVIDER_IDS.has(providerId)) return true;
+  if (uiMode === "server") return false;
+  return PKCE_PROVIDER_IDS.has(providerId);
+}
 async function refreshOAuthProviderModels(providerId) {
   const registry = loadRegistry();
   const entry = registry.providers.find((p2) => p2.id === providerId);
@@ -1753,4 +1758,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-FARF2BF4.js.map
+//# sourceMappingURL=ui-command-AUIV5G4U.js.map

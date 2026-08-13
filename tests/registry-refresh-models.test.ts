@@ -540,7 +540,7 @@ describe('registry/refresh-models', () => {
   });
 
   describe('refreshProviderModels (Antigravity OAuth)', () => {
-    it('uses the live Cloud Code model catalog object and keeps only validated agent slots', async () => {
+    it('caches the live Cloud Code catalog and only drops helper slots', async () => {
       const mockRegistry: ProviderRegistry = {
         version: 1,
         providers: [{
@@ -563,10 +563,28 @@ describe('registry/refresh-models', () => {
               maxTokens: 1048576,
               supportsThinking: true,
             },
+            'gemini-3.6-flash-low': {
+              displayName: 'Gemini 3.6 Flash (Low)',
+              maxTokens: 1048576,
+              supportsThinking: true,
+            },
+            'gemini-3.6-flash-high': {
+              displayName: 'Gemini 3.6 Flash (High)',
+              maxTokens: 1048576,
+              supportsThinking: true,
+            },
+            'gemini-3.7-flash-medium': {
+              displayName: 'Gemini 3.7 Flash (Medium)',
+              maxTokens: 1048576,
+              supportsThinking: true,
+            },
             'gemini-3-flash': {
               displayName: 'Gemini 3 Flash',
               maxTokens: 1048576,
               supportsThinking: true,
+            },
+            tab_flash_lite_preview: {
+              maxTokens: 16384,
             },
           },
         }),
@@ -581,10 +599,14 @@ describe('registry/refresh-models', () => {
       );
       const savedRegistry = vi.mocked(io.saveRegistry).mock.calls[0]?.[0] as ProviderRegistry;
       const models = savedRegistry.providers[0]?.modelsCache?.models ?? [];
-      expect(result.modelCount).toBe(1);
-      expect(models.map(m => m.id)).toEqual(['gemini-3.5-flash-low']);
-      expect(models.map(m => m.id)).not.toContain('gemini-3.5-flash-high');
-      expect(models.map(m => m.id)).not.toContain('gemini-3-flash');
+      expect(models.map(m => m.id)).toEqual([
+        'gemini-3.5-flash-low',
+        'gemini-3.6-flash-low',
+        'gemini-3.6-flash-high',
+        'gemini-3.7-flash-medium',
+        'gemini-3-flash',
+      ]);
+      expect(models.map(m => m.id)).not.toContain('tab_flash_lite_preview');
       expect(models[0]).toMatchObject({
         id: 'gemini-3.5-flash-low',
         name: 'Gemini 3.5 Flash (Medium)',
@@ -620,7 +642,7 @@ describe('registry/refresh-models', () => {
       expect(io.saveRegistry).not.toHaveBeenCalled();
     });
 
-    it('fails refresh when Cloud Code returns no validated agent slots', async () => {
+    it('fails refresh when Cloud Code returns only helper slots', async () => {
       const mockRegistry: ProviderRegistry = {
         version: 1,
         providers: [{
@@ -646,10 +668,11 @@ describe('registry/refresh-models', () => {
         ok: true,
         json: async () => ({
           models: {
-            'gemini-2.5-pro': {
-              displayName: 'Gemini 2.5 Pro',
-              maxTokens: 1048576,
-              supportsThinking: true,
+            tab_flash_lite_preview: {
+              maxTokens: 16384,
+            },
+            chat_20706: {
+              maxTokens: 8192,
             },
           },
         }),
@@ -658,7 +681,7 @@ describe('registry/refresh-models', () => {
       const result = await refreshProviderModels('antigravity', 'mock_token', mockRegistry);
 
       expect(result.ok).toBe(false);
-      expect(result.reason).toContain('No validated Antigravity agent models');
+      expect(result.reason).toContain('Antigravity live model refresh failed');
       expect(io.saveRegistry).not.toHaveBeenCalled();
     });
   });

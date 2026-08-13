@@ -143,7 +143,7 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
     handlePostConfig(req, res);
   } else if (url.startsWith('/api/models') && req.method === 'GET') {
     const appId = new URL(url, 'http://localhost').searchParams.get('appId') ?? '';
-    handleGetModels(res, APP_ID_TO_LAUNCH_TARGET[appId], appId === 'codex-subagents');
+    handleGetModels(res, APP_ID_TO_LAUNCH_TARGET[appId], appId === 'codex-subagents', opts.uiMode);
   } else if (url === '/api/keys' && req.method === 'POST') {
     handlePostKeys(req, res);
   } else if (url === '/api/providers/refresh' && req.method === 'POST') {
@@ -223,10 +223,15 @@ async function handlePostConfig(req: IncomingMessage, res: ServerResponse): Prom
   }
 }
 
-async function handleGetModels(res: ServerResponse, target?: RelayLaunchTarget, codexSubagents = false): Promise<void> {
+async function handleGetModels(
+  res: ServerResponse,
+  target?: RelayLaunchTarget,
+  codexSubagents = false,
+  uiMode?: 'full' | 'server',
+): Promise<void> {
   try {
     let catalog = (await fetchModelsWithTimeout())
-      .filter(provider => provider.authType !== 'oauth' || DEVICE_CODE_PROVIDER_IDS.has(provider.id));
+      .filter(provider => provider.authType !== 'oauth' || isUiCatalogOAuthProvider(provider.id, uiMode));
     // Per-app launch pickers pass their target so unsupported/too-small models (context
     // floor, format compatibility) are filtered the same way the CLI wizards filter them.
     if (codexSubagents) catalog = providersForCodexSubagents(catalog);
@@ -265,7 +270,7 @@ async function handleGetModels(res: ServerResponse, target?: RelayLaunchTarget, 
     const materializedIds = new Set(catalog.map(p => p.id));
     for (const rp of registry.providers) {
       if (rp.authType !== 'oauth'
-        || !DEVICE_CODE_PROVIDER_IDS.has(rp.id)
+        || !isUiCatalogOAuthProvider(rp.id, uiMode)
         || !rp.enabled
         || materializedIds.has(rp.id)) continue;
       const credential = await resolveProviderCredential(rp.id, rp.authRef).catch(() => null);
@@ -537,7 +542,16 @@ async function handleDeleteProvider(req: IncomingMessage, res: ServerResponse): 
 
 const DEVICE_CODE_PROVIDER_IDS = new Set(['xai-oauth', 'openai-oauth', 'github-copilot', 'cline-pass']);
 const PKCE_PROVIDER_IDS = new Set(['claude-code', 'antigravity']);
+// Device-code OAuth can be started from the UI. PKCE (Claude Code / Antigravity)
+// stays CLI-secret for add/sign-in, but a provider already in the registry still
+// belongs on the local Providers page. Docker/server admin UI stays device-code only.
 const NATIVE_OAUTH_PROVIDER_IDS = DEVICE_CODE_PROVIDER_IDS;
+
+function isUiCatalogOAuthProvider(providerId: string, uiMode?: 'full' | 'server'): boolean {
+  if (DEVICE_CODE_PROVIDER_IDS.has(providerId)) return true;
+  if (uiMode === 'server') return false;
+  return PKCE_PROVIDER_IDS.has(providerId);
+}
 
 async function refreshOAuthProviderModels(providerId: string): Promise<void> {
   const registry = loadRegistry();

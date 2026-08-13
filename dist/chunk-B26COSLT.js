@@ -7501,15 +7501,10 @@ var model_incompatible_default = {
 
 // src/model-compatibility.ts
 var BLACKLIST_ENTRIES = model_incompatible_default.entries ?? [];
-var ANTIGRAVITY_VALIDATED_AGENT_MODELS = /* @__PURE__ */ new Set([
-  "gemini-3.5-flash-low",
-  "gemini-3.5-flash-extra-low",
-  "gemini-3.1-pro-low",
-  "gemini-pro-agent",
-  "claude-sonnet-4-6",
-  "claude-opus-4-6-thinking",
-  "gpt-oss-120b-medium"
-]);
+var ANTIGRAVITY_HELPER_SLOT = /^(tab_|chat_|models\/)|image/i;
+function isAntigravityCloudCodeHelperSlot(modelId) {
+  return ANTIGRAVITY_HELPER_SLOT.test(modelId);
+}
 function matchesAgent(entryAgents, agent) {
   if (!entryAgents || entryAgents.length === 0) return true;
   return entryAgents.includes(agent);
@@ -7527,8 +7522,8 @@ function findBlacklistEntry(ctx) {
   return null;
 }
 function hideReason(ctx) {
-  if (ctx.providerId === "antigravity" && !ANTIGRAVITY_VALIDATED_AGENT_MODELS.has(ctx.modelId)) {
-    return "[antigravity-oauth] not a validated user-selectable Cloud Code agent model";
+  if (ctx.providerId === "antigravity" && isAntigravityCloudCodeHelperSlot(ctx.modelId)) {
+    return "[antigravity-oauth] Cloud Code helper/internal slot";
   }
   const blacklist = findBlacklistEntry(ctx);
   if (blacklist) return `[blacklist:${blacklist.category}] ${blacklist.reason}`;
@@ -9855,7 +9850,7 @@ async function refreshAntigravityOAuthModels(accessToken) {
       const body = await res.json();
       const raw = body.models && typeof body.models === "object" && !Array.isArray(body.models) ? Object.entries(body.models).map(([id, model]) => ({ id, ...model })) : Array.isArray(body.models) ? body.models.filter((m) => typeof m.id === "string" && m.id.length > 0) : [];
       if (raw.length === 0) continue;
-      const models = raw.filter((m) => typeof m.id === "string" && m.id.length > 0).map((m) => {
+      const models = raw.filter((m) => typeof m.id === "string" && m.id.length > 0 && !isAntigravityCloudCodeHelperSlot(m.id)).map((m) => {
         const id = m.id;
         const name = m.displayName ?? m.name ?? id;
         const isGemini = id.startsWith("gemini");
@@ -10240,7 +10235,7 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
         id: provider.id,
         name: provider.name,
         ok: false,
-        reason: "No validated Antigravity agent models were returned \u2014 kept the existing model cache."
+        reason: "Cloud Code returned no usable Antigravity models \u2014 kept the existing model cache."
       };
     }
     updateProviderCache(registry, providerId, enriched, baseUrl);
@@ -13297,4 +13292,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-R4AWEK7T.js.map
+//# sourceMappingURL=chunk-B26COSLT.js.map

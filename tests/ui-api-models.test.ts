@@ -14,11 +14,11 @@ vi.mock('../src/registry/io.js', () => ({
   loadRegistry: vi.fn(() => state.registry),
 }));
 
-async function call(method: string, url: string) {
+async function call(method: string, url: string, opts?: { uiMode?: 'full' | 'server' }) {
   const { handleUiApiRequest } = await import('../src/ui/api.js');
   const req = createMockRequest(method, url);
   const response = createMockResponse();
-  handleUiApiRequest(req, response.res);
+  handleUiApiRequest(req, response.res, opts);
   await vi.waitFor(() => expect(response.result.data).not.toBe(''));
   return { code: response.result.code, body: JSON.parse(response.result.data) };
 }
@@ -75,5 +75,51 @@ describe('GET /api/models appId filtering', () => {
   it('ignores an unknown appId and returns the unfiltered catalog', async () => {
     const result = await call('GET', '/api/models?appId=not-a-real-app');
     expect(result.body.providers[0].models).toHaveLength(2);
+  });
+});
+
+describe('GET /api/models Antigravity OAuth visibility', () => {
+  const antigravity = {
+    id: 'antigravity',
+    name: 'Antigravity (Google Cloud Code Assist)',
+    authType: 'oauth' as const,
+    apiKey: 'agy-token',
+    models: [{
+      id: 'gemini-3.6-flash-low',
+      name: 'Gemini 3.6 Flash (Low)',
+      modelFormat: 'cloud-code',
+      upstreamModelId: 'gemini-3.6-flash-low',
+      contextWindow: 1048576,
+    }],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.catalog = [antigravity];
+    state.registry = {
+      schemaVersion: 1,
+      providers: [{
+        id: 'antigravity',
+        templateId: 'antigravity',
+        name: antigravity.name,
+        enabled: true,
+        authRef: 'keyring:oauth:provider:antigravity',
+        authType: 'oauth',
+        api: {},
+        modelsCache: { fetchedAt: '2026-08-13T00:00:00.000Z', models: antigravity.models },
+      }],
+    };
+  });
+
+  it('shows a configured Antigravity OAuth provider in the local UI catalog', async () => {
+    const result = await call('GET', '/api/models');
+    expect(result.body.providers.map((p: { id: string }) => p.id)).toContain('antigravity');
+    expect(result.body.providers.find((p: { id: string }) => p.id === 'antigravity').models.map((m: { id: string }) => m.id))
+      .toEqual(['gemini-3.6-flash-low']);
+  });
+
+  it('keeps Antigravity OAuth off the Docker/server admin UI catalog', async () => {
+    const result = await call('GET', '/api/models', { uiMode: 'server' });
+    expect(result.body.providers.map((p: { id: string }) => p.id)).not.toContain('antigravity');
   });
 });
