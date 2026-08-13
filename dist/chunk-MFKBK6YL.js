@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.9.0",
+  version: "0.9.1",
   publishConfig: {
     access: "public"
   },
@@ -13292,4 +13292,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-B26COSLT.js.map
+//# sourceMappingURL=chunk-MFKBK6YL.js.map

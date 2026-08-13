@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.1] - 2026-08-13
+
+### Fixed
+
+- **General OAuth catalog and UI visibility.**
+
 ## [0.9.0] - 2026-08-12
 
 ### Added
