@@ -93,6 +93,62 @@ describe('refreshProviderModels', () => {
     expect(second).toMatchObject({ ok: true, modelCount: 2, previousModelCount: 2 });
   });
 
+  it('refreshes a custom backend served over local http', async () => {
+    // The user approved insecure HTTP when adding the backend, but that grant was
+    // never persisted, so refresh re-validated with allowInsecureLocal:false and
+    // every local custom backend failed with "Only HTTPS URLs are allowed".
+    const spy = vi.spyOn(urlSecurity, 'validateCustomEndpointUrl');
+    const registry: ProviderRegistry = {
+      version: 1,
+      providers: [{
+        id: 'custom-olmx',
+        templateId: 'custom-openai',
+        name: 'olmx',
+        enabled: true,
+        authRef: 'keyring:provider:custom-olmx',
+        authType: 'api',
+        api: { npm: '@ai-sdk/openai-compatible', url: 'http://127.0.0.1:8000/v1' },
+        addedAt: '2026-01-01T00:00:00.000Z',
+      }],
+    };
+    vi.mocked(fetchTemplateModels).mockResolvedValue({
+      models: [{ id: 'm1', name: 'm1', upstreamModelId: 'm1', modelFormat: 'openai' }],
+      baseUrl: 'http://127.0.0.1:8000/v1',
+    });
+
+    const result = await refreshProviderModels('custom-olmx', 'sk-test', registry);
+
+    expect(spy).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/v1',
+      expect.objectContaining({ allowInsecureLocal: true }),
+    );
+    expect(result).toMatchObject({ ok: true, modelCount: 1 });
+  });
+
+  it('does not grant insecure http to a non-custom provider', async () => {
+    const spy = vi.spyOn(urlSecurity, 'validateCustomEndpointUrl');
+    const registry: ProviderRegistry = {
+      version: 1,
+      providers: [{
+        id: 'groq',
+        templateId: 'groq',
+        name: 'Groq',
+        enabled: true,
+        authRef: 'keyring:provider:groq',
+        authType: 'api',
+        api: { npm: '@ai-sdk/openai-compatible', url: 'http://sneaky.internal/v1' },
+        addedAt: '2026-01-01T00:00:00.000Z',
+      }],
+    };
+
+    await refreshProviderModels('groq', 'sk-test', registry);
+
+    expect(spy).toHaveBeenCalledWith(
+      'http://sneaky.internal/v1',
+      expect.objectContaining({ allowInsecureLocal: false }),
+    );
+  });
+
   it('forwards custom headers to fetchTemplateModels for an openai-kind custom backend', async () => {
     vi.spyOn(urlSecurity, 'validateCustomEndpointUrl').mockResolvedValue({
       ok: true,

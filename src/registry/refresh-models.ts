@@ -3,6 +3,7 @@
 import { BACKENDS } from '../constants.js';
 import { getModels } from '../models.js';
 import { fetchAnthropicModels } from './fetch-anthropic-models.js';
+import { customEndpointKind } from './custom-endpoint.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
 import { fetchClinePassModels } from './fetch-cline-pass-models.js';
 import { fetchClaudeCodeModels } from '../oauth/claude-code.js';
@@ -472,8 +473,15 @@ async function refreshApiListProvider(
   const configuredUrl = provider.api.url?.trim();
   const templateDefault = catalogTemplate?.defaultBaseUrl?.trim();
   if (configuredUrl && configuredUrl !== templateDefault) {
+    // A custom backend on http:// only got into the registry because the user
+    // approved insecure HTTP when adding it, and that grant is not persisted
+    // anywhere — so refresh must re-grant it or every local custom backend
+    // fails with "Only HTTPS URLs are allowed". This does not widen the guard:
+    // validateCustomEndpointUrl still rejects http:// unless every resolved
+    // address is loopback or private.
     const urlCheck = await validateCustomEndpointUrl(baseUrl, {
-      allowInsecureLocal: catalogTemplate?.apiKeyOptional === true,
+      allowInsecureLocal:
+        catalogTemplate?.apiKeyOptional === true || customEndpointKind(provider) !== null,
     });
     if (!urlCheck.ok || !urlCheck.normalizedUrl) {
       return { models: [], error: `${urlCheck.error ?? 'Invalid API base URL.'} ${urlCheck.hint ?? ''}`.trim() };
