@@ -121,8 +121,12 @@ export interface ProxyRoute {
  * Uses stable provider id (slug), not display name — renaming a provider does not break aliases.
  */
 export function aliasModelId(realId: string, providerId: string): string {
-  if (realId.startsWith('claude-')) return realId;
   const sanitized = providerId.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  // A custom backend can be added many times against one upstream (two accounts
+  // on one gateway), so its claude-* ids are NOT unique across providers and must
+  // be scoped like everything else. `anthropic-` still satisfies Claude Code's
+  // gateway model discovery filter, so the picker keeps working.
+  if (realId.startsWith('claude-') && !sanitized.startsWith('custom-')) return realId;
   return `anthropic-${sanitized}__${realId}`;
 }
 

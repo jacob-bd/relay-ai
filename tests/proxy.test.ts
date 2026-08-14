@@ -56,8 +56,9 @@ function postToProxy(
 }
 
 describe('aliasModelId', () => {
-  it('returns claude-* ids unchanged', () => {
+  it('returns claude-* ids unchanged for built-in providers', () => {
     expect(aliasModelId('claude-sonnet-4', 'Anthropic')).toBe('claude-sonnet-4');
+    expect(aliasModelId('claude-sonnet-4', 'claude-code')).toBe('claude-sonnet-4');
   });
 
   it('prefixes non-claude ids with anthropic-{providerId}__', () => {
@@ -66,6 +67,15 @@ describe('aliasModelId', () => {
 
   it('uses stable provider id slug in alias', () => {
     expect(aliasModelId('deepseek-v4', 'go')).toBe('anthropic-go__deepseek-v4');
+  });
+
+  it('scopes claude-* ids for custom providers so two instances never collide', () => {
+    expect(aliasModelId('claude-sonnet-4', 'custom-acme-work'))
+      .toBe('anthropic-custom-acme-work__claude-sonnet-4');
+    expect(aliasModelId('claude-sonnet-4', 'custom-acme-personal'))
+      .toBe('anthropic-custom-acme-personal__claude-sonnet-4');
+    expect(aliasModelId('claude-sonnet-4', 'custom-acme-work'))
+      .not.toBe(aliasModelId('claude-sonnet-4', 'custom-acme-personal'));
   });
 });
 
