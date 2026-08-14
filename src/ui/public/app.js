@@ -884,7 +884,23 @@ function buildCustomEndpointBodyContent(template, card) {
     feedback.textContent = 'Connecting and fetching models…';
     feedback.className = 'key-feedback muted';
 
-    const result = await api('POST', '/api/providers/add-custom', { kind, displayName, baseUrl, apiKey, headers });
+    let result = await api('POST', '/api/providers/add-custom', { kind, displayName, baseUrl, apiKey, headers });
+
+    if (!result.ok && result.duplicateOf) {
+      const proceed = window.confirm(
+        `You already have a backend with the same URL, key and headers (${result.duplicateOf}).\n\nAdd another anyway?`,
+      );
+      if (!proceed) {
+        addBtn.disabled = false;
+        feedback.textContent = 'Cancelled.';
+        feedback.className = 'key-feedback muted';
+        return;
+      }
+      feedback.textContent = 'Connecting and fetching models…';
+      result = await api('POST', '/api/providers/add-custom', {
+        kind, displayName, baseUrl, apiKey, headers, confirmDuplicate: true,
+      });
+    }
 
     addBtn.disabled = false;
     if (result.ok) {
@@ -1367,8 +1383,181 @@ function buildProviderBodyContent(provider) {
     setTimeout(() => { feedback.textContent = ''; feedback.className = 'key-feedback'; }, 4000);
   });
 
+  if (provider.customEndpoint) content.appendChild(buildEditCustomEndpointRow(provider));
   content.appendChild(buildDeleteProviderRow(provider));
   return content;
+}
+
+function buildEditCustomEndpointRow(provider) {
+  const custom = provider.customEndpoint;
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'margin-top:12px;padding-top:12px;border-top:1px solid oklch(22% 0.015 265)';
+
+  const editBtn = document.createElement('button');
+  editBtn.className = 'btn btn-ghost';
+  editBtn.textContent = 'Edit Backend Settings';
+
+  const form = document.createElement('div');
+  form.style.cssText = 'display:none;flex-direction:column;gap:8px;margin-top:10px';
+
+  function row(label, input) {
+    const wrap = document.createElement('div');
+    wrap.className = 'key-row';
+    wrap.style.flexDirection = 'column';
+    wrap.style.gap = '4px';
+    const lbl = document.createElement('label');
+    lbl.textContent = label;
+    lbl.style.cssText = 'font-size:12px;color:var(--text-muted,#aaa);display:block';
+    wrap.appendChild(lbl);
+    wrap.appendChild(input);
+    return wrap;
+  }
+
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.className = 'key-input';
+  nameInput.value = provider.name ?? '';
+
+  const urlInput = document.createElement('input');
+  urlInput.type = 'url';
+  urlInput.className = 'key-input';
+  urlInput.value = custom.baseUrl ?? '';
+
+  const keyInput = document.createElement('input');
+  keyInput.type = 'password';
+  keyInput.className = 'key-input';
+  keyInput.placeholder = 'Leave empty to keep current key';
+  keyInput.autocomplete = 'off';
+
+  const headersInput = document.createElement('textarea');
+  headersInput.className = 'key-input';
+  headersInput.rows = 2;
+  headersInput.placeholder = 'One per line\nX-Plan: coding';
+  headersInput.value = Object.entries(custom.headers ?? {})
+    .map(([k, v]) => `${k}: ${v}`)
+    .join('\n');
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn btn-primary';
+  saveBtn.textContent = 'Save Changes';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-ghost';
+  cancelBtn.textContent = 'Cancel';
+
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:8px';
+  btnRow.appendChild(saveBtn);
+  btnRow.appendChild(cancelBtn);
+
+  const feedback = document.createElement('div');
+  feedback.className = 'key-feedback';
+
+  form.appendChild(row('Provider name', nameInput));
+  form.appendChild(row('Base URL', urlInput));
+  form.appendChild(row('API key', keyInput));
+  form.appendChild(row('Custom headers (replaces all; empty removes all)', headersInput));
+  form.appendChild(btnRow);
+  form.appendChild(feedback);
+
+  wrapper.appendChild(editBtn);
+  wrapper.appendChild(form);
+
+  function parseHeaders(text) {
+    const headers = {};
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const idx = trimmed.indexOf(':');
+      if (idx < 1) continue;
+      const name = trimmed.slice(0, idx).trim();
+      const value = trimmed.slice(idx + 1).trim();
+      if (name) headers[name] = value;
+    }
+    return headers;
+  }
+
+  editBtn.addEventListener('click', () => {
+    editBtn.style.display = 'none';
+    form.style.display = 'flex';
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    form.style.display = 'none';
+    editBtn.style.display = '';
+    feedback.textContent = '';
+    feedback.className = 'key-feedback';
+  });
+
+  async function submit(saveAnyway) {
+    const payload = {
+      providerId: provider.id,
+      displayName: nameInput.value.trim(),
+      baseUrl: urlInput.value.trim(),
+      apiKey: keyInput.value.trim(),
+      headers: parseHeaders(headersInput.value),
+      saveAnyway,
+    };
+    if (!payload.displayName) {
+      feedback.textContent = 'Enter a provider name.';
+      feedback.className = 'key-feedback error';
+      return null;
+    }
+    if (!payload.baseUrl) {
+      feedback.textContent = 'Enter a base URL.';
+      feedback.className = 'key-feedback error';
+      return null;
+    }
+    saveBtn.disabled = true;
+    feedback.textContent = 'Testing connection…';
+    feedback.className = 'key-feedback muted';
+    const result = await api('POST', '/api/providers/edit-custom', payload);
+    saveBtn.disabled = false;
+    return result;
+  }
+
+  saveBtn.addEventListener('click', async () => {
+    let result = await submit(false);
+    if (!result) return;
+
+    if (!result.ok) {
+      const message = [result.error, result.hint].filter(Boolean).join(' ');
+      // Only a failed connection test is overridable. A blocked URL or a
+      // non-custom provider can never be saved, so never offer the choice.
+      if (!result.canSaveAnyway) {
+        // "Nothing to change" is a no-op, not a failure — the CLI logs it as
+        // info, so don't shout in red here either.
+        const benign = result.error === 'Nothing to change.';
+        feedback.textContent = message;
+        feedback.className = benign ? 'key-feedback muted' : 'key-feedback error';
+        return;
+      }
+      if (!window.confirm(`${message}\n\nSave these settings anyway? The model list will not be refreshed.`)) {
+        feedback.textContent = message;
+        feedback.className = 'key-feedback error';
+        return;
+      }
+      result = await submit(true);
+      if (!result || !result.ok) {
+        feedback.textContent = (result && result.error) || 'Update failed';
+        feedback.className = 'key-feedback error';
+        return;
+      }
+    }
+
+    feedback.textContent = result.modelsStale
+      ? `✓ Saved · model list may be out of date`
+      : `✓ ${result.name} updated · ${result.count} models available`;
+    feedback.className = result.modelsStale ? 'key-feedback muted' : 'key-feedback success';
+    keyInput.value = '';
+    showToast(`${result.name} updated`);
+    state.modelsLoaded = false;
+    await loadTemplates();
+    await initModels();
+    renderProviders();
+  });
+
+  return wrapper;
 }
 
 function buildDeleteProviderRow(provider) {
