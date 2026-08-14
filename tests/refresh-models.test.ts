@@ -14,7 +14,9 @@ vi.mock('../src/registry/io.js', () => ({
 }));
 
 import { fetchTemplateModels } from '../src/registry/fetch-template-models.js';
+import { fetchAnthropicModels } from '../src/registry/custom-endpoint.js';
 import { saveRegistry } from '../src/registry/io.js';
+import * as urlSecurity from '../src/registry/url-security.js';
 
 describe('refreshProviderModels', () => {
   beforeEach(() => {
@@ -89,5 +91,78 @@ describe('refreshProviderModels', () => {
     expect(first).toMatchObject({ ok: true, modelCount: 2 });
     expect(first.previousModelCount).toBeUndefined();
     expect(second).toMatchObject({ ok: true, modelCount: 2, previousModelCount: 2 });
+  });
+
+  it('forwards custom headers to fetchTemplateModels for an openai-kind custom backend', async () => {
+    vi.spyOn(urlSecurity, 'validateCustomEndpointUrl').mockResolvedValue({
+      ok: true,
+      normalizedUrl: 'https://gw.example.com/v1',
+    });
+    const registry: ProviderRegistry = {
+      version: 1,
+      providers: [{
+        id: 'custom-acme',
+        templateId: 'custom-openai',
+        name: 'Acme',
+        enabled: true,
+        authRef: 'keyring:provider:custom-acme',
+        authType: 'api',
+        api: {
+          npm: '@ai-sdk/openai-compatible',
+          url: 'https://gw.example.com/v1',
+          headers: { 'X-Plan': 'coding' },
+        },
+        addedAt: '2026-01-01T00:00:00.000Z',
+      }],
+    };
+    vi.mocked(fetchTemplateModels).mockResolvedValue({
+      models: [{ id: 'm1', name: 'm1', upstreamModelId: 'm1', modelFormat: 'openai' }],
+      baseUrl: 'https://gw.example.com/v1',
+    });
+
+    await refreshProviderModels('custom-acme', 'sk-test', registry);
+
+    expect(fetchTemplateModels).toHaveBeenCalledWith(
+      expect.anything(),
+      'sk-test',
+      'https://gw.example.com/v1',
+      { 'X-Plan': 'coding' },
+    );
+  });
+
+  it('forwards custom headers to fetchAnthropicModels for an anthropic-kind custom backend', async () => {
+    vi.spyOn(urlSecurity, 'validateCustomEndpointUrl').mockResolvedValue({
+      ok: true,
+      normalizedUrl: 'https://claude-gw.example.com',
+    });
+    const registry: ProviderRegistry = {
+      version: 1,
+      providers: [{
+        id: 'custom-claude-gw',
+        templateId: 'custom-anthropic',
+        name: 'Claude GW',
+        enabled: true,
+        authRef: 'keyring:provider:custom-claude-gw',
+        authType: 'api',
+        api: {
+          npm: '@ai-sdk/anthropic',
+          url: 'https://claude-gw.example.com',
+          headers: { 'X-Plan': 'coding' },
+        },
+        addedAt: '2026-01-01T00:00:00.000Z',
+      }],
+    };
+    vi.mocked(fetchAnthropicModels).mockResolvedValue({
+      models: [{ id: 'claude-x', name: 'claude-x', upstreamModelId: 'claude-x', modelFormat: 'anthropic' }],
+      baseUrl: 'https://claude-gw.example.com',
+    });
+
+    await refreshProviderModels('custom-claude-gw', 'sk-test', registry);
+
+    expect(fetchAnthropicModels).toHaveBeenCalledWith(
+      'https://claude-gw.example.com',
+      'sk-test',
+      { 'X-Plan': 'coding' },
+    );
   });
 });

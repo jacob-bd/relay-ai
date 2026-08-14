@@ -482,9 +482,12 @@ async function refreshApiListProvider(
   }
 
   const template = catalogTemplate ?? syntheticTemplate(provider, safeBaseUrl);
+  const extraHeaders = provider.api.headers && Object.keys(provider.api.headers).length > 0
+    ? provider.api.headers
+    : undefined;
 
   if (npm === '@ai-sdk/anthropic') {
-    const fetched = await fetchAnthropicModels(safeBaseUrl, apiKey);
+    const fetched = await fetchAnthropicModels(safeBaseUrl, apiKey, extraHeaders);
     if (fetched.error || fetched.models.length === 0) {
       return { models: [], error: fetched.error ?? 'No models returned.', baseUrl: fetched.baseUrl };
     }
@@ -494,7 +497,7 @@ async function refreshApiListProvider(
     };
   }
 
-  const fetched = await fetchTemplateModels(template, apiKey, safeBaseUrl);
+  const fetched = await fetchTemplateModels(template, apiKey, safeBaseUrl, extraHeaders);
   if (fetched.error || fetched.models.length === 0) {
     return { models: [], error: fetched.error ?? 'No models returned.' };
   }
