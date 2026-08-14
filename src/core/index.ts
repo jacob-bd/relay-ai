@@ -7,4 +7,4 @@ export { listRelayModels } from './catalog.js';
 export { createRelayModel } from './model.js';
 export { parseRelayRouteId, toRelayRouteId } from './route-id.js';
 export { RelayCoreError, isRelayCoreError } from './errors.js';
-export type { RelayCoreErrorCode, RelayModelDescriptor, RelayRouteId } from './types.js';
+export type { RelayCoreErrorCode, RelayModelDescriptor, RelayRouteId, CreateRelayModelOptions } from './types.js';

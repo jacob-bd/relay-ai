@@ -13,7 +13,7 @@ import { createAntigravityCloudCodeModel } from './antigravity-model.js';
 import { loadCoreRegistry } from './catalog.js';
 import { RelayCoreError, isRelayCoreError } from './errors.js';
 import { parseRelayRouteId } from './route-id.js';
-import type { RelayRouteId } from './types.js';
+import type { CreateRelayModelOptions, RelayRouteId } from './types.js';
 
 function isAntigravityCloudCodeRoute(provider: RegistryProvider, model: CachedModel): boolean {
   return provider.id === 'antigravity'
@@ -72,7 +72,7 @@ async function resolveCredential(provider: RegistryProvider, routeId: RelayRoute
  * resolved (and OAuth tokens refreshed) by Relay's existing machinery; the
  * credential and the intermediate spec never leave this function.
  */
-export async function createRelayModel(routeId: RelayRouteId): Promise<LanguageModel> {
+export async function createRelayModel(routeId: RelayRouteId, options?: CreateRelayModelOptions): Promise<LanguageModel> {
   const { providerId, modelId } = parseRelayRouteId(routeId);
   const registry = loadCoreRegistry();
   const { provider, model } = findRoute(registry, providerId, modelId, routeId);
@@ -132,6 +132,7 @@ export async function createRelayModel(routeId: RelayRouteId): Promise<LanguageM
     refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
     useResponsesLite: model.useResponsesLite,
     preferWebSockets: model.preferWebSockets,
+    ...(options?.onDebug ? { onDebug: options.onDebug } : {}),
   };
 
   try {

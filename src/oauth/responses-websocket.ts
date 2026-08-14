@@ -18,7 +18,269 @@ import { CODEX_RESPONSES_WEBSOCKETS_BETA } from '../constants.js';
 
 const RESPONSES_LITE_HEADER = 'x-openai-internal-codex-responses-lite';
 // Responses event types after which the stream is complete and the socket closes.
-const TERMINAL_EVENT_TYPES = new Set(['response.completed', 'response.failed', 'response.incomplete']);
+const TERMINAL_EVENT_TYPES = new Set(['response.completed', 'response.failed', 'response.incomplete', 'error']);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function recordKeys(value: unknown): string {
+  return isRecord(value) ? Object.keys(value).sort().join(',') : '';
+}
+
+/** Sanitized one-line summary: types, keys, counts, lengths — never field values. */
+export function summarizeResponsesLiteEvent(event: unknown): string {
+  if (!isRecord(event)) return `kind=${event == null ? 'null' : typeof event}`;
+  const parts = [`type=${typeof event.type === 'string' ? event.type : 'unknown'}`, `keys=${recordKeys(event)}`];
+  if (typeof event.delta === 'string') parts.push(`deltaChars=${event.delta.length}`);
+  if (typeof event.output_index === 'number') parts.push(`hasOutputIndex=1`);
+  if (typeof event.item_id === 'string') parts.push(`hasItemId=1`);
+  if (isRecord(event.item)) {
+    parts.push(`itemType=${typeof event.item.type === 'string' ? event.item.type : 'unknown'}`);
+    parts.push(`itemKeys=${recordKeys(event.item)}`);
+    if (typeof event.item.arguments === 'string') parts.push(`argumentsChars=${event.item.arguments.length}`);
+  }
+  if (isRecord(event.response)) {
+    parts.push(`responseKeys=${recordKeys(event.response)}`);
+    if (Array.isArray(event.response.output)) {
+      parts.push(`outputCount=${event.response.output.length}`);
+      parts.push(`outputTypes=${event.response.output.map(item => (isRecord(item) && typeof item.type === 'string' ? item.type : 'unknown')).join(',')}`);
+    }
+    if (isRecord(event.response.usage)) parts.push(`usageKeys=${recordKeys(event.response.usage)}`);
+    if (typeof event.response.status === 'string') parts.push(`status=${event.response.status}`);
+  }
+  if (isRecord(event.error)) {
+    parts.push(`errorKeys=${recordKeys(event.error)}`);
+    if (typeof event.error.message === 'string') parts.push(`messageChars=${event.error.message.length}`);
+  }
+  return parts.join(' ');
+}
+
+export interface ResponsesLiteNormalizeState {
+  nextId: number;
+  lastMessageItemId?: string;
+  lastFunctionItemId?: string;
+  lastOutputIndex: number;
+  textDeltaForwarded: boolean;
+  messageAddedIds: Set<string>;
+  messageDoneIds: Set<string>;
+  functionAddedIndexes: Set<number>;
+  functionDeltaIndexes: Set<number>;
+  functionDoneCallIds: Set<string>;
+}
+
+export function createResponsesLiteNormalizeState(): ResponsesLiteNormalizeState {
+  return {
+    nextId: 1,
+    lastOutputIndex: 0,
+    textDeltaForwarded: false,
+    messageAddedIds: new Set(),
+    messageDoneIds: new Set(),
+    functionAddedIndexes: new Set(),
+    functionDeltaIndexes: new Set(),
+    functionDoneCallIds: new Set(),
+  };
+}
+
+function nextId(state: ResponsesLiteNormalizeState, prefix: string): string {
+  const id = `${prefix}_${state.nextId}`;
+  state.nextId += 1;
+  return id;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function normalizeErrorEvent(event: Record<string, unknown>): Record<string, unknown> {
+  const raw = isRecord(event.error) ? event.error : { message: typeof event.error === 'string' ? event.error : 'upstream error' };
+  return {
+    type: 'error',
+    sequence_number: typeof event.sequence_number === 'number' ? event.sequence_number : 0,
+    error: {
+      type: asString(raw.type) ?? 'server_error',
+      code: asString(raw.code) ?? 'unknown',
+      message: asString(raw.message) ?? 'upstream error',
+      ...(raw.param == null ? {} : { param: raw.param }),
+    },
+  };
+}
+
+function normalizeFunctionItem(item: Record<string, unknown>, state: ResponsesLiteNormalizeState, forDone = false): Record<string, unknown> {
+  const callId = asString(item.call_id) ?? asString(item.id) ?? nextId(state, 'call');
+  const id = asString(item.id) ?? nextId(state, 'fc');
+  state.lastFunctionItemId = id;
+  return {
+    ...item,
+    type: 'function_call',
+    id,
+    call_id: callId,
+    name: asString(item.name) ?? '',
+    arguments: typeof item.arguments === 'string' ? item.arguments : '',
+    ...(forDone ? { status: 'completed' } : {}),
+  };
+}
+
+function messageText(item: Record<string, unknown>): string {
+  if (typeof item.text === 'string') return item.text;
+  if (!Array.isArray(item.content)) return '';
+  let out = '';
+  for (const part of item.content) {
+    if (isRecord(part) && typeof part.text === 'string' && (part.type === 'output_text' || part.type === 'text')) {
+      out += part.text;
+    }
+  }
+  return out;
+}
+
+function synthesizeMessage(item: Record<string, unknown>, outputIndex: number, state: ResponsesLiteNormalizeState): unknown[] {
+  const text = messageText(item);
+  if (!text) return [];
+  const id = asString(item.id) ?? nextId(state, 'msg');
+  state.lastMessageItemId = id;
+  state.textDeltaForwarded = true;
+  state.messageAddedIds.add(id);
+  state.messageDoneIds.add(id);
+  return [
+    { type: 'response.output_item.added', output_index: outputIndex, item: { type: 'message', id } },
+    { type: 'response.output_text.delta', item_id: id, delta: text },
+    { type: 'response.output_item.done', output_index: outputIndex, item: { type: 'message', id } },
+  ];
+}
+
+function synthesizeFunctionCall(item: Record<string, unknown>, outputIndex: number, state: ResponsesLiteNormalizeState): unknown[] {
+  const normalized = normalizeFunctionItem(item, state);
+  const callId = String(normalized.call_id);
+  if (state.functionDoneCallIds.has(callId)) return [];
+  const events: unknown[] = [];
+  if (!state.functionAddedIndexes.has(outputIndex)) {
+    events.push({
+      type: 'response.output_item.added',
+      output_index: outputIndex,
+      item: { ...normalized, arguments: '' },
+    });
+    state.functionAddedIndexes.add(outputIndex);
+  }
+  if (!state.functionDeltaIndexes.has(outputIndex) && typeof normalized.arguments === 'string' && normalized.arguments.length > 0) {
+    events.push({
+      type: 'response.function_call_arguments.delta',
+      item_id: normalized.id,
+      output_index: outputIndex,
+      delta: normalized.arguments,
+    });
+    state.functionDeltaIndexes.add(outputIndex);
+  }
+  events.push({
+    type: 'response.output_item.done',
+    output_index: outputIndex,
+    item: { ...normalized, status: 'completed' },
+  });
+  state.functionDoneCallIds.add(callId);
+  state.lastOutputIndex = outputIndex;
+  return events;
+}
+
+function recoverFromCompletedOutput(response: Record<string, unknown>, state: ResponsesLiteNormalizeState): unknown[] {
+  if (!Array.isArray(response.output)) return [];
+  const recovered: unknown[] = [];
+  response.output.forEach((item, index) => {
+    if (!isRecord(item) || typeof item.type !== 'string') return;
+    if (item.type === 'message' && !state.textDeltaForwarded) {
+      recovered.push(...synthesizeMessage(item, index, state));
+    } else if (item.type === 'function_call') {
+      recovered.push(...synthesizeFunctionCall(item, index, state));
+    }
+  });
+  return recovered;
+}
+
+/**
+ * Fill fields `@ai-sdk/openai` requires and recover final output that only
+ * exists on `response.completed`. Incomplete frames otherwise become
+ * `unknown_chunk` and are dropped while usage still parses — the production
+ * "empty response after N calls" shape.
+ */
+export function normalizeResponsesLiteEvent(event: unknown, state: ResponsesLiteNormalizeState): unknown[] {
+  if (!isRecord(event) || typeof event.type !== 'string') return [event];
+
+  if (event.type === 'error') return [normalizeErrorEvent(event)];
+
+  if (event.type === 'response.output_item.added' && isRecord(event.item)) {
+    const outputIndex = typeof event.output_index === 'number' ? event.output_index : state.lastOutputIndex;
+    state.lastOutputIndex = outputIndex;
+    if (event.item.type === 'message') {
+      const id = asString(event.item.id) ?? nextId(state, 'msg');
+      state.lastMessageItemId = id;
+      state.messageAddedIds.add(id);
+      return [{ ...event, output_index: outputIndex, item: { ...event.item, id } }];
+    }
+    if (event.item.type === 'function_call') {
+      const item = normalizeFunctionItem(event.item, state);
+      state.functionAddedIndexes.add(outputIndex);
+      return [{ ...event, output_index: outputIndex, item }];
+    }
+    return [{ ...event, output_index: outputIndex }];
+  }
+
+  if (event.type === 'response.output_item.done' && isRecord(event.item)) {
+    const outputIndex = typeof event.output_index === 'number' ? event.output_index : state.lastOutputIndex;
+    if (event.item.type === 'function_call') {
+      const item = normalizeFunctionItem(event.item, state, true);
+      const callId = String(item.call_id);
+      state.functionDoneCallIds.add(callId);
+      return [{ ...event, output_index: outputIndex, item }];
+    }
+    if (event.item.type === 'message') {
+      const id = asString(event.item.id) ?? state.lastMessageItemId ?? nextId(state, 'msg');
+      state.lastMessageItemId = id;
+      state.messageDoneIds.add(id);
+      return [{ ...event, output_index: outputIndex, item: { ...event.item, id } }];
+    }
+    return [{ ...event, output_index: outputIndex }];
+  }
+
+  if (event.type === 'response.output_text.delta') {
+    const itemId = asString(event.item_id) ?? state.lastMessageItemId ?? nextId(state, 'msg');
+    state.lastMessageItemId = itemId;
+    state.textDeltaForwarded = true;
+    const events: unknown[] = [];
+    if (!state.messageAddedIds.has(itemId)) {
+      events.push({
+        type: 'response.output_item.added',
+        output_index: state.lastOutputIndex,
+        item: { type: 'message', id: itemId },
+      });
+      state.messageAddedIds.add(itemId);
+    }
+    events.push({ ...event, item_id: itemId, delta: typeof event.delta === 'string' ? event.delta : '' });
+    return events;
+  }
+
+  if (event.type === 'response.function_call_arguments.delta') {
+    const itemId = asString(event.item_id) ?? state.lastFunctionItemId ?? nextId(state, 'fc');
+    const outputIndex = typeof event.output_index === 'number' ? event.output_index : state.lastOutputIndex;
+    state.lastFunctionItemId = itemId;
+    state.lastOutputIndex = outputIndex;
+    state.functionDeltaIndexes.add(outputIndex);
+    return [{ ...event, item_id: itemId, output_index: outputIndex, delta: typeof event.delta === 'string' ? event.delta : '' }];
+  }
+
+  if (event.type === 'response.completed' || event.type === 'response.incomplete') {
+    const response = isRecord(event.response) ? event.response : {};
+    const recovered = recoverFromCompletedOutput(response, state);
+    if (state.lastMessageItemId && state.textDeltaForwarded && !state.messageDoneIds.has(state.lastMessageItemId)) {
+      recovered.push({
+        type: 'response.output_item.done',
+        output_index: state.lastOutputIndex,
+        item: { type: 'message', id: state.lastMessageItemId },
+      });
+      state.messageDoneIds.add(state.lastMessageItemId);
+    }
+    return [...recovered, event];
+  }
+
+  return [event];
+}
 
 /** Normalize the SDK's HeadersInit into a plain lowercased-key record for `ws`. */
 function toHeaderRecord(headers: HeadersInit | undefined): Record<string, string> {
@@ -92,6 +354,12 @@ export function createResponsesWebSocketFetch(wsUrl: string, log?: (msg: string)
     if (hasResponsesLiteHeader(headers)) {
       payload = applyResponsesLiteShape(payload);
     }
+    debug(
+      `request type=response.create keys=${Object.keys(payload).sort().join(',')} `
+      + `toolCount=${Array.isArray(payload.tools) ? payload.tools.length : 0} `
+      + `store=${String(payload.store)} parallelToolCalls=${String(payload.parallel_tool_calls)} `
+      + `reasoningKeys=${recordKeys(payload.reasoning)}`,
+    );
     // The Codex WS Responses protocol is internally tagged: the first (and only)
     // client message must be a `response.create` event carrying the Responses
     // body fields at the top level, alongside the type tag — not the raw body.
@@ -101,6 +369,7 @@ export function createResponsesWebSocketFetch(wsUrl: string, log?: (msg: string)
     const encoder = new TextEncoder();
     let socket: WsWebSocket;
     let frameCount = 0;
+    const normalizeState = createResponsesLiteNormalizeState();
 
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -113,12 +382,11 @@ export function createResponsesWebSocketFetch(wsUrl: string, log?: (msg: string)
         };
         const fail = (message: string) => {
           if (closed) return;
-          debug(`fail: ${message}`);
+          debug(`fail messageChars=${message.length}`);
           // Surface as an SSE error event the SDK's responses parser understands.
           try {
-            controller.enqueue(encoder.encode(
-              `data: ${JSON.stringify({ type: 'error', error: { message } })}\n\n`,
-            ));
+            const [errorEvent] = normalizeResponsesLiteEvent({ type: 'error', error: { message } }, normalizeState);
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
           } catch { /* ignore */ }
           close();
         };
@@ -138,20 +406,20 @@ export function createResponsesWebSocketFetch(wsUrl: string, log?: (msg: string)
             ? Buffer.concat(data).toString('utf8')
             : data.toString('utf8');
           frameCount += 1;
-          if (frameCount <= 3) debug(`frame#${frameCount}: ${text.slice(0, 200)}`);
-          // Collapse any pretty-printed JSON onto a single SSE data line; if a
-          // frame isn't JSON, forward it stripped of newlines rather than emit
-          // an invalid multi-line SSE event.
           let event: unknown;
           try {
             event = JSON.parse(text);
           } catch {
+            debug(`frame#${frameCount} non-json chars=${text.length}`);
             controller.enqueue(encoder.encode(`data: ${text.replace(/\r?\n/g, ' ')}\n\n`));
             return;
           }
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-          const type = (event as { type?: unknown }).type;
-          if (typeof type === 'string' && TERMINAL_EVENT_TYPES.has(type)) {
+          if (frameCount <= 8) debug(`frame#${frameCount} ${summarizeResponsesLiteEvent(event)}`);
+          for (const next of normalizeResponsesLiteEvent(event, normalizeState)) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(next)}\n\n`));
+          }
+          const type = isRecord(event) && typeof event.type === 'string' ? event.type : undefined;
+          if (type && TERMINAL_EVENT_TYPES.has(type)) {
             debug(`terminal event: ${type} (after ${frameCount} frames)`);
             close();
           }
@@ -159,7 +427,7 @@ export function createResponsesWebSocketFetch(wsUrl: string, log?: (msg: string)
 
         socket.on('error', (err: Error) => fail(err.message));
         socket.on('close', (code: number, reason: Buffer) => {
-          debug(`close code=${code} frames=${frameCount}${reason?.length ? ` reason=${reason.toString('utf8').slice(0, 200)}` : ''}`);
+          debug(`close code=${code} frames=${frameCount}${reason?.length ? ` reasonChars=${reason.length}` : ''}`);
           if (closed) return;
           if (code === 1000 || code === 1005) { close(); return; }
           fail(`WebSocket closed (${code})${reason?.length ? `: ${reason.toString('utf8')}` : ''}`);

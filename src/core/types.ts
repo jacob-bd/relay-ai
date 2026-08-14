@@ -13,6 +13,14 @@ export type RelayCoreErrorCode =
   | 'UNSUPPORTED_REGISTRY_VERSION'
   | 'PROVIDER_LOAD_FAILED';
 
+export interface CreateRelayModelOptions {
+  /**
+   * Optional sanitized transport diagnostics. Messages contain event types,
+   * field names, counts, and lengths — never credentials, prompts, or bodies.
+   */
+  onDebug?: (message: string) => void;
+}
+
 export interface RelayModelDescriptor {
   routeId: RelayRouteId;
   providerId: string;

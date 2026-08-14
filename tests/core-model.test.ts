@@ -131,6 +131,14 @@ describe('createRelayModel', () => {
     });
   });
 
+  it('forwards an optional onDebug hook on the provider spec', async () => {
+    writeRegistry([provider({})]);
+    writeSecrets({ 'provider:groq': 'gsk_test_key' });
+    const onDebug = () => undefined;
+    await createRelayModel('groq::llama-3.3-70b', { onDebug });
+    expect(createLanguageModelMock.mock.calls[0]![0].onDebug).toBe(onDebug);
+  });
+
   it('missing provider → ROUTE_NOT_FOUND', async () => {
     writeRegistry([provider({})]);
     await expectCode('nope::model', 'ROUTE_NOT_FOUND');

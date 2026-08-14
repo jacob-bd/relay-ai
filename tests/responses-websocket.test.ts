@@ -19,7 +19,7 @@ class FakeWebSocket extends EventEmitter {
 
 vi.mock('ws', () => ({ WebSocket: FakeWebSocket, default: FakeWebSocket }));
 
-import { createResponsesWebSocketFetch } from '../src/oauth/responses-websocket.js';
+import { createResponsesWebSocketFetch, createResponsesLiteNormalizeState, normalizeResponsesLiteEvent, summarizeResponsesLiteEvent } from '../src/oauth/responses-websocket.js';
 
 const WS_URL = 'wss://chatgpt.com/backend-api/codex/responses';
 
@@ -116,8 +116,18 @@ describe('createResponsesWebSocketFetch', () => {
 
     const body = await readAll(res);
     const lines = body.split('\n\n').filter(Boolean);
-    expect(lines[0]).toBe('data: {"type":"response.output_text.delta","delta":"hi"}');
-    expect(lines[1]).toBe('data: {"type":"response.completed"}');
+    const parsed = lines.map(line => JSON.parse(line.slice('data: '.length)));
+    expect(parsed.map(event => event.type)).toEqual([
+      'response.output_item.added',
+      'response.output_text.delta',
+      'response.output_item.done',
+      'response.completed',
+    ]);
+    expect(parsed[1]).toEqual({
+      type: 'response.output_text.delta',
+      delta: 'hi',
+      item_id: 'msg_1',
+    });
     expect(socket.close).toHaveBeenCalled();
   });
 
@@ -129,6 +139,11 @@ describe('createResponsesWebSocketFetch', () => {
     const body = await readAll(res);
     expect(body).toContain('"type":"error"');
     expect(body).toContain('boom');
+    expect(body).toContain('"sequence_number"');
+    expect(JSON.parse(body.trim().slice('data: '.length))).toMatchObject({
+      type: 'error',
+      error: { message: 'boom', type: 'server_error', code: 'unknown' },
+    });
   });
 
   it('closes the socket when the request is aborted', async () => {
@@ -139,5 +154,120 @@ describe('createResponsesWebSocketFetch', () => {
     controller.abort();
     await readAll(res);
     expect(socket.close).toHaveBeenCalled();
+  });
+
+  it('sanitizes debug logs so frame bodies and credentials never appear', async () => {
+    const lines: string[] = [];
+    const wsFetch = createResponsesWebSocketFetch(WS_URL, msg => lines.push(msg));
+    const res = await wsFetch('https://x', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer secret-token-zzz', 'x-openai-internal-codex-responses-lite': 'true' },
+      body: JSON.stringify({ model: 'gpt-5.6-luna', input: [{ role: 'user', content: 'secret-prompt-zzz' }] }),
+    });
+    const socket = lastSocket();
+    socket.emit('open');
+    socket.emit('message', Buffer.from(JSON.stringify({
+      type: 'response.output_text.delta',
+      delta: 'secret-response-zzz',
+    })));
+    socket.emit('message', Buffer.from(JSON.stringify({ type: 'response.completed', response: { usage: { input_tokens: 1, output_tokens: 1 } } })));
+    await readAll(res);
+    const joined = lines.join('\n');
+    expect(joined).toContain('type=response.output_text.delta');
+    expect(joined).toContain('deltaChars=19');
+    expect(joined).not.toContain('secret-token-zzz');
+    expect(joined).not.toContain('secret-prompt-zzz');
+    expect(joined).not.toContain('secret-response-zzz');
+    expect(joined).not.toContain('Bearer');
+  });
+});
+
+describe('normalizeResponsesLiteEvent', () => {
+  it('fills item_id on text deltas that the SDK would otherwise drop', () => {
+    const state = createResponsesLiteNormalizeState();
+    const events = normalizeResponsesLiteEvent({ type: 'response.output_text.delta', delta: 'hi' }, state);
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ type: 'response.output_item.added', item: { type: 'message', id: 'msg_1' } });
+    expect(events[1]).toMatchObject({ type: 'response.output_text.delta', delta: 'hi', item_id: 'msg_1' });
+  });
+
+  it('recovers text that exists only on response.completed.output', () => {
+    const state = createResponsesLiteNormalizeState();
+    const events = normalizeResponsesLiteEvent({
+      type: 'response.completed',
+      response: {
+        usage: { input_tokens: 1, output_tokens: 1 },
+        output: [{ type: 'message', id: 'msg_buf', role: 'assistant', content: [{ type: 'output_text', text: 'buffered' }] }],
+      },
+    }, state);
+    expect(events.map(e => (e as { type: string }).type)).toEqual([
+      'response.output_item.added',
+      'response.output_text.delta',
+      'response.output_item.done',
+      'response.completed',
+    ]);
+    expect(events[1]).toMatchObject({ delta: 'buffered', item_id: 'msg_buf' });
+  });
+
+  it('does not duplicate text already forwarded as deltas', () => {
+    const state = createResponsesLiteNormalizeState();
+    normalizeResponsesLiteEvent({ type: 'response.output_text.delta', item_id: 'msg_1', delta: 'hello' }, state);
+    const events = normalizeResponsesLiteEvent({
+      type: 'response.completed',
+      response: {
+        usage: { input_tokens: 1, output_tokens: 1 },
+        output: [{ type: 'message', id: 'msg_1', content: [{ type: 'output_text', text: 'hello' }] }],
+      },
+    }, state);
+    expect(events.map(e => (e as { type: string }).type)).toEqual([
+      'response.output_item.done',
+      'response.completed',
+    ]);
+    expect(events[1]).toMatchObject({ type: 'response.completed' });
+  });
+
+  it('fills function_call fields and recovers a missing output_item.done', () => {
+    const state = createResponsesLiteNormalizeState();
+    const [added] = normalizeResponsesLiteEvent({
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: { type: 'function_call', name: 'getWeather', call_id: 'call_weather' },
+    }, state);
+    expect(added).toMatchObject({
+      item: { id: 'fc_1', call_id: 'call_weather', name: 'getWeather', arguments: '' },
+    });
+    normalizeResponsesLiteEvent({ type: 'response.function_call_arguments.delta', delta: '{"city":"NYC"}' }, state);
+    const completed = normalizeResponsesLiteEvent({
+      type: 'response.completed',
+      response: {
+        usage: { input_tokens: 1, output_tokens: 1 },
+        output: [{ type: 'function_call', id: 'fc_1', call_id: 'call_weather', name: 'getWeather', arguments: '{"city":"NYC"}' }],
+      },
+    }, state);
+    expect(completed.map(e => (e as { type: string }).type)).toEqual(['response.output_item.done', 'response.completed']);
+    expect(completed[0]).toMatchObject({
+      item: { id: 'fc_1', call_id: 'call_weather', name: 'getWeather', arguments: '{"city":"NYC"}', status: 'completed' },
+    });
+  });
+
+  it('does not treat usage-only completed frames as text', () => {
+    const state = createResponsesLiteNormalizeState();
+    const events = normalizeResponsesLiteEvent({
+      type: 'response.completed',
+      response: { usage: { input_tokens: 4, output_tokens: 2 } },
+    }, state);
+    expect(events).toEqual([{ type: 'response.completed', response: { usage: { input_tokens: 4, output_tokens: 2 } } }]);
+  });
+
+  it('summarizes events without copying string values', () => {
+    const summary = summarizeResponsesLiteEvent({
+      type: 'response.output_text.delta',
+      delta: 'classified-text',
+      item_id: 'msg_secret',
+    });
+    expect(summary).toContain('type=response.output_text.delta');
+    expect(summary).toContain('deltaChars=15');
+    expect(summary).not.toContain('classified-text');
+    expect(summary).not.toContain('msg_secret');
   });
 });
