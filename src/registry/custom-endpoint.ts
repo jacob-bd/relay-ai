@@ -1,6 +1,6 @@
 // src/registry/custom-endpoint.ts — add custom OpenAI/Anthropic-compatible providers
 
-import { saveProviderCredential } from '../env.js';
+import { readStoredProviderCredential, saveProviderCredential } from '../env.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
 import { fetchAnthropicModels } from './fetch-anthropic-models.js';
 import { loadRegistry, saveRegistry } from './io.js';
@@ -147,4 +147,191 @@ export async function addCustomEndpointProvider(input: AddCustomEndpointInput): 
   saveRegistry(registry);
 
   return { added: true, provider: entry, modelCount: fetched.models.length };
+}
+
+export interface UpdateCustomEndpointInput {
+  providerId: string;
+  displayName?: string;
+  baseUrl?: string;
+  /** Blank or omitted keeps the stored key. */
+  apiKey?: string;
+  /** Present replaces the whole set; an empty object removes all headers. */
+  headers?: Record<string, string>;
+  allowInsecureLocal?: boolean;
+  /** Write the config even when the connection test fails. */
+  saveAnyway?: boolean;
+}
+
+export interface UpdateCustomEndpointResult {
+  updated: boolean;
+  provider?: RegistryProvider;
+  modelCount?: number;
+  /** True when saved via saveAnyway — the model list was not refreshed. */
+  modelsStale?: boolean;
+  /**
+   * Only set when the failure was a connection test, i.e. the settings are
+   * storable but unverified. Refusals (unknown id, non-custom provider, blocked
+   * URL, missing key, credential store failure) never set it, so a caller must
+   * never offer "save anyway" for something that can never be saved.
+   */
+  canSaveAnyway?: boolean;
+  error?: string;
+  hint?: string;
+}
+
+export function customEndpointKind(provider: RegistryProvider): CustomEndpointKind | null {
+  if (provider.templateId === 'custom-anthropic') return 'anthropic';
+  if (provider.templateId === 'custom-openai') return 'openai';
+  return null;
+}
+
+function sameHeaders(a?: Record<string, string>, b?: Record<string, string>): boolean {
+  const norm = (h?: Record<string, string>) =>
+    JSON.stringify(Object.entries(h ?? {}).sort(([x], [y]) => x.localeCompare(y)));
+  return norm(a) === norm(b);
+}
+
+export async function updateCustomEndpointProvider(
+  input: UpdateCustomEndpointInput,
+): Promise<UpdateCustomEndpointResult> {
+  const registry = loadRegistry();
+  const provider = registry.providers.find(pr => pr.id === input.providerId);
+  if (!provider) {
+    return { updated: false, error: `Provider not found: ${input.providerId}` };
+  }
+
+  const kind = customEndpointKind(provider);
+  if (!kind) {
+    return {
+      updated: false,
+      error: 'Edit is only available for custom backends.',
+      hint: 'Template providers can only change their API key.',
+    };
+  }
+
+  const nextName = input.displayName?.trim();
+
+  let nextBaseUrl = provider.api.url ?? '';
+  let urlChanged = false;
+  const requestedUrl = input.baseUrl?.trim();
+  if (requestedUrl) {
+    const urlCheck = await validateCustomEndpointUrl(requestedUrl, {
+      allowInsecureLocal: input.allowInsecureLocal,
+    });
+    if (!urlCheck.ok || !urlCheck.normalizedUrl) {
+      return { updated: false, error: urlCheck.error, hint: urlCheck.hint };
+    }
+    urlChanged = urlCheck.normalizedUrl !== nextBaseUrl;
+    nextBaseUrl = urlCheck.normalizedUrl;
+  }
+
+  const newKey = input.apiKey?.trim();
+  const headersChanged =
+    input.headers !== undefined && !sameHeaders(input.headers, provider.api.headers);
+  const nextHeaders = input.headers !== undefined
+    ? (Object.keys(input.headers).length > 0 ? input.headers : undefined)
+    : provider.api.headers;
+
+  const nameChanged = Boolean(nextName) && nextName !== provider.name;
+  const needsTest = urlChanged || Boolean(newKey) || headersChanged;
+
+  if (!needsTest) {
+    if (!nameChanged) return { updated: false, error: 'Nothing to change.' };
+    provider.name = nextName as string;
+    saveRegistry(registry);
+    return {
+      updated: true,
+      provider,
+      modelCount: provider.modelsCache?.models.length ?? 0,
+    };
+  }
+
+  const apiKey = newKey || (await readStoredProviderCredential(provider.authRef)) || '';
+  if (!apiKey) {
+    return {
+      updated: false,
+      error: 'No stored API key was found for this backend.',
+      hint: 'Enter an API key to continue.',
+    };
+  }
+
+  const fetched = await fetchCustomEndpointModels({
+    providerId: provider.id,
+    displayName: nextName || provider.name,
+    kind,
+    normalizedBaseUrl: nextBaseUrl,
+    apiKey,
+    headers: nextHeaders,
+  });
+
+  const testFailed = Boolean(fetched.error) || fetched.models.length === 0;
+  if (testFailed && !input.saveAnyway) {
+    // The only failure a caller may offer to override — the settings are
+    // storable, just unverified. Every earlier return is a hard refusal.
+    return {
+      updated: false,
+      error: fetched.error ?? 'No models returned.',
+      hint: fetched.hint,
+      canSaveAnyway: true,
+    };
+  }
+
+  // Credential first: a failed keychain write must never leave the registry
+  // pointing at a key that was not stored.
+  if (newKey) {
+    const saved = await saveProviderCredential(provider.authRef, newKey);
+    if (!saved) {
+      return {
+        updated: false,
+        error: 'Could not save API key to credential store.',
+        hint: 'Grant Keychain access, or ensure RELAY_AI_HOME is writable (file fallback).',
+      };
+    }
+  }
+
+  const now = new Date().toISOString();
+  if (nameChanged) provider.name = nextName as string;
+
+  // An Anthropic base URL must NOT keep a trailing /v1 — the Anthropic SDK
+  // appends /v1/messages itself, so storing .../v1 yields .../v1/v1/messages
+  // and a 404. fetchAnthropicModels already strips it on the success path;
+  // the saveAnyway path never called it, so strip here too.
+  const storedBaseUrl = kind === 'anthropic'
+    ? nextBaseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '')
+    : nextBaseUrl;
+
+  provider.api.url = testFailed ? storedBaseUrl : (fetched.baseUrl || storedBaseUrl);
+  if (nextHeaders) provider.api.headers = nextHeaders;
+  else delete provider.api.headers;
+
+  if (!testFailed) {
+    provider.modelsCache = {
+      fetchedAt: now,
+      models: fetched.models.map(m => ({
+        ...m,
+        modelFormat: modelFormatForKind(kind),
+        npm: npmForKind(kind),
+        apiUrl: fetched.baseUrl || storedBaseUrl,
+      })),
+    };
+    provider.refreshedAt = now;
+  } else if (provider.modelsCache) {
+    // Each cached model carries its own apiUrl, and materialize.ts:51 reads
+    // `cached.apiUrl ?? provider.api.url` — the per-model value WINS. Leaving
+    // the stale one here would keep sending live traffic to the OLD endpoint
+    // even though the provider now shows the new URL.
+    provider.modelsCache = {
+      ...provider.modelsCache,
+      models: provider.modelsCache.models.map(m => ({ ...m, apiUrl: storedBaseUrl })),
+    };
+  }
+
+  saveRegistry(registry);
+
+  return {
+    updated: true,
+    provider,
+    modelCount: provider.modelsCache?.models.length ?? 0,
+    ...(testFailed ? { modelsStale: true } : {}),
+  };
 }
