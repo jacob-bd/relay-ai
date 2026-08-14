@@ -25,7 +25,11 @@ import {
   type ProviderTemplate,
 } from './provider-templates.js';
 import { addProviderFromTemplate } from './registry/add-template.js';
-import { addCustomEndpointProvider } from './registry/custom-endpoint.js';
+import {
+  addCustomEndpointProvider,
+  customEndpointKind,
+  updateCustomEndpointProvider,
+} from './registry/custom-endpoint.js';
 import { validateCustomEndpointUrl } from './registry/url-security.js';
 import { importFromOpencode, type ImportConflictChoice, type ImportConflictContext } from './registry/import-opencode.js';
 import {
@@ -674,17 +678,33 @@ async function runCustomEndpointAddFlow(): Promise<number> {
     }
   }
 
-  const spinner = p.spinner();
-  spinner.start('Testing connection...');
-  const result = await addCustomEndpointProvider({
+  const addInput = {
     displayName: String(displayName).trim(),
     baseUrl: String(baseUrl).trim(),
     apiKey: String(apiKey ?? '').trim(),
     kind: kindChoice as 'openai' | 'anthropic',
     allowInsecureLocal: allowInsecureHttp,
     headers: Object.keys(headers).length > 0 ? headers : undefined,
-  });
+  };
+
+  const spinner = p.spinner();
+  spinner.start('Testing connection...');
+  let result = await addCustomEndpointProvider(addInput);
   spinner.stop('');
+
+  if (!result.added && result.duplicateOf) {
+    const addAnyway = await p.confirm({
+      message: `You already have a backend with the same URL, key and headers (${result.duplicateOf}). Add another?`,
+      initialValue: false,
+    });
+    if (p.isCancel(addAnyway) || !addAnyway) {
+      p.cancel('Cancelled.');
+      return 0;
+    }
+    spinner.start('Testing connection...');
+    result = await addCustomEndpointProvider({ ...addInput, confirmDuplicate: true });
+    spinner.stop('');
+  }
 
   if (!result.added) {
     showProviderAddFailure(result.error, result.hint, 'Could not add custom provider.');
@@ -692,6 +712,120 @@ async function runCustomEndpointAddFlow(): Promise<number> {
   }
 
   logConnected(result.provider?.name ?? 'Provider', result.modelCount ?? 0);
+  return 0;
+}
+
+async function runCustomEndpointEditFlow(provider: RegistryProvider): Promise<number> {
+  const currentHeaders = provider.api.headers ?? {};
+  const headerSummary = Object.keys(currentHeaders).length > 0
+    ? Object.entries(currentHeaders).map(([k, v]) => `${k}: ${v}`).join(', ')
+    : 'none';
+
+  p.log.info(`Base URL: ${provider.api.url ?? '(none)'}\nHeaders: ${headerSummary}`);
+
+  const displayName = await p.text({
+    message: 'Display name:',
+    initialValue: provider.name,
+    validate: v => v.trim() ? undefined : 'Name is required',
+  });
+  if (p.isCancel(displayName)) { p.cancel('Cancelled.'); return 0; }
+
+  const baseUrl = await p.text({
+    message: 'Base URL:',
+    initialValue: provider.api.url ?? '',
+    validate: v => v.trim() ? undefined : 'URL is required',
+  });
+  if (p.isCancel(baseUrl)) { p.cancel('Cancelled.'); return 0; }
+
+  const usesHttp = /^http:\/\//i.test(String(baseUrl).trim());
+  let allowInsecureHttp = false;
+  if (usesHttp) {
+    p.log.warn('HTTP is not encrypted. Only use it for a trusted local or LAN server, like Ollama on your own network.');
+    const allowLocal = await p.confirm({
+      message: 'Allow insecure HTTP for this local/LAN server?',
+      initialValue: true,
+    });
+    if (p.isCancel(allowLocal)) return 0;
+    allowInsecureHttp = allowLocal === true;
+  }
+
+  const apiKey = await p.password({
+    message: 'API key (leave empty to keep the current key):',
+  });
+  if (p.isCancel(apiKey)) { p.cancel('Cancelled.'); return 0; }
+
+  const editHeaders = await p.confirm({
+    message: `Replace custom headers? (current: ${headerSummary})`,
+    initialValue: false,
+  });
+  if (p.isCancel(editHeaders)) { p.cancel('Cancelled.'); return 0; }
+
+  let headers: Record<string, string> | undefined;
+  if (editHeaders) {
+    headers = {};
+    p.log.info('Enter the full header set. Leave the first one empty to remove all headers.');
+    for (;;) {
+      const headerLine = await p.text({
+        message: 'Header (leave empty when done):',
+        placeholder: 'X-Plan: coding',
+      });
+      if (p.isCancel(headerLine)) { p.cancel('Cancelled.'); return 0; }
+      const trimmed = String(headerLine).trim();
+      if (!trimmed) break;
+      const idx = trimmed.indexOf(':');
+      if (idx < 1) {
+        p.log.warn('Use the format "Name: Value" — skipped.');
+        continue;
+      }
+      const name = trimmed.slice(0, idx).trim();
+      const value = trimmed.slice(idx + 1).trim();
+      if (name) headers[name] = value;
+    }
+  }
+
+  const runUpdate = (saveAnyway: boolean) => updateCustomEndpointProvider({
+    providerId: provider.id,
+    displayName: String(displayName).trim(),
+    baseUrl: String(baseUrl).trim(),
+    apiKey: String(apiKey ?? '').trim(),
+    headers,
+    allowInsecureLocal: allowInsecureHttp,
+    saveAnyway,
+  });
+
+  const spinner = p.spinner();
+  spinner.start('Testing connection...');
+  let result = await runUpdate(false);
+  spinner.stop('');
+
+  if (!result.updated && result.error === 'Nothing to change.') {
+    p.log.info('No changes made.');
+    return 0;
+  }
+
+  if (!result.updated) {
+    showProviderAddFailure(result.error, result.hint, 'Could not update backend.');
+    // Only a failed connection test is overridable. A blocked URL, an unknown
+    // provider or a credential-store failure can never be saved, so offering
+    // "save anyway" there would be a prompt that cannot succeed.
+    if (!result.canSaveAnyway) return 1;
+    const saveAnyway = await p.confirm({
+      message: 'Save these settings anyway? The model list will not be refreshed.',
+      initialValue: false,
+    });
+    if (p.isCancel(saveAnyway) || !saveAnyway) return 1;
+    result = await runUpdate(true);
+    if (!result.updated) {
+      showProviderAddFailure(result.error, result.hint, 'Could not update backend.');
+      return 1;
+    }
+  }
+
+  if (result.modelsStale) {
+    p.log.warn(`${result.provider?.name ?? provider.name} saved, but the model list may be out of date.`);
+  } else {
+    logConnected(result.provider?.name ?? provider.name, result.modelCount ?? 0);
+  }
   return 0;
 }
 
@@ -833,7 +967,14 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
       hint: 'Refresh OAuth tokens or switch accounts',
     });
   }
-  if (provider.authType !== 'oauth' && provider.authRef.startsWith('keyring:')) {
+  const editableCustomKind = customEndpointKind(provider);
+  if (editableCustomKind) {
+    detailOptions.push({
+      value: 'edit-custom',
+      label: 'Edit backend settings',
+      hint: 'Name, base URL, API key, headers',
+    });
+  } else if (provider.authType !== 'oauth' && provider.authRef.startsWith('keyring:')) {
     detailOptions.push({
       value: 'change-key',
       label: 'Change API key',
@@ -873,6 +1014,10 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
 
   if (action === 'refresh') {
     return (await runProvidersRefreshModels(id)) === 0 ? 'back' : 'failed';
+  }
+
+  if (action === 'edit-custom') {
+    return (await runCustomEndpointEditFlow(provider)) === 0 ? 'back' : 'failed';
   }
 
   if (action === 'change-key') {
