@@ -82,9 +82,10 @@ import {
   startServer,
   summarizeServerProviders,
   supportsClaudeTransparentMode,
+  updateCustomEndpointProvider,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-S3E3M33X.js";
+} from "./chunk-PVGAE7HA.js";
 import {
   __toCommonJS,
   init_provider_templates,
@@ -668,6 +669,8 @@ function handleUiApiRequest(req, res, opts = {}) {
     handleAddProvider(req, res);
   } else if (url === "/api/providers/add-custom" && req.method === "POST") {
     handleAddCustomProvider(req, res);
+  } else if (url === "/api/providers/edit-custom" && req.method === "POST") {
+    handleEditCustomProvider(req, res);
   } else if (url === "/api/providers/delete" && req.method === "POST") {
     handleDeleteProvider(req, res);
   } else if (url === "/api/providers/oauth/start" && req.method === "POST") {
@@ -738,6 +741,13 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
     else if (target) catalog = providersForTarget(catalog, target);
     const registry = loadRegistry();
     const rawCountById = new Map(registry.providers.map((p2) => [p2.id, p2.modelsCache?.models.length ?? 0]));
+    const customById = new Map(
+      registry.providers.filter((rp) => rp.templateId === "custom-openai" || rp.templateId === "custom-anthropic").map((rp) => [rp.id, {
+        kind: rp.templateId === "custom-anthropic" ? "anthropic" : "openai",
+        baseUrl: rp.api.url ?? "",
+        headers: rp.api.headers ?? {}
+      }])
+    );
     const providers = catalog.map((p2) => ({
       id: p2.id,
       name: p2.name,
@@ -753,6 +763,7 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
       // that safe count with the larger raw cache count.
       modelCount: p2.id === "github-copilot" ? p2.models.length : rawCountById.get(p2.id) ?? p2.models.length,
       ...p2.id === "github-copilot" ? { subscription: copilotSubscription(p2.providerData) } : {},
+      ...customById.has(p2.id) ? { customEndpoint: customById.get(p2.id) } : {},
       models: p2.models.map((m) => ({
         id: m.id,
         name: m.name,
@@ -868,7 +879,7 @@ function handleGetTemplates(res) {
 async function handleAddCustomProvider(req, res) {
   try {
     const body = JSON.parse(await readBody(req));
-    const { kind, displayName, baseUrl, apiKey = "", headers } = body;
+    const { kind, displayName, baseUrl, apiKey = "", headers, confirmDuplicate } = body;
     if (kind !== "openai" && kind !== "anthropic") {
       sendJson(res, 400, { error: 'kind must be "openai" or "anthropic"' });
       return;
@@ -887,12 +898,53 @@ async function handleAddCustomProvider(req, res) {
       baseUrl: baseUrl.trim(),
       apiKey: apiKey.trim(),
       allowInsecureLocal: true,
-      headers: headers && Object.keys(headers).length > 0 ? headers : void 0
+      headers: headers && Object.keys(headers).length > 0 ? headers : void 0,
+      confirmDuplicate: confirmDuplicate === true
     });
     if (result.added) {
       sendJson(res, 200, { ok: true, name: displayName.trim(), count: result.modelCount ?? 0 });
     } else {
-      sendJson(res, 200, { ok: false, error: result.error, hint: result.hint });
+      sendJson(res, 200, {
+        ok: false,
+        error: result.error,
+        hint: result.hint,
+        ...result.duplicateOf ? { duplicateOf: result.duplicateOf } : {}
+      });
+    }
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+async function handleEditCustomProvider(req, res) {
+  try {
+    const body = JSON.parse(await readBody(req));
+    if (!body.providerId?.trim()) {
+      sendJson(res, 400, { error: "providerId required" });
+      return;
+    }
+    const result = await updateCustomEndpointProvider({
+      providerId: body.providerId.trim(),
+      displayName: body.displayName?.trim(),
+      baseUrl: body.baseUrl?.trim(),
+      apiKey: body.apiKey?.trim(),
+      headers: body.headers,
+      allowInsecureLocal: true,
+      saveAnyway: body.saveAnyway === true
+    });
+    if (result.updated) {
+      sendJson(res, 200, {
+        ok: true,
+        name: result.provider?.name ?? body.providerId,
+        count: result.modelCount ?? 0,
+        ...result.modelsStale ? { modelsStale: true } : {}
+      });
+    } else {
+      sendJson(res, 200, {
+        ok: false,
+        error: result.error,
+        hint: result.hint,
+        ...result.canSaveAnyway ? { canSaveAnyway: true } : {}
+      });
     }
   } catch (err) {
     sendJson(res, 500, { error: String(err) });
@@ -1758,4 +1810,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-MILYNNWN.js.map
+//# sourceMappingURL=ui-command-JQPEZAMN.js.map

@@ -7089,8 +7089,8 @@ function anthropicError(res, status, message) {
   });
 }
 function aliasModelId(realId, providerId) {
-  if (realId.startsWith("claude-")) return realId;
   const sanitized = providerId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (realId.startsWith("claude-") && !sanitized.startsWith("custom-")) return realId;
   return `anthropic-${sanitized}__${realId}`;
 }
 function buildProxySubagentModelRouting(routes, parentRoute) {
@@ -9404,6 +9404,80 @@ function goRegistryStub() {
   };
 }
 
+// src/registry/fetch-anthropic-models.ts
+async function fetchAnthropicModels(baseUrl, apiKey, extraHeaders) {
+  const root = baseUrl.replace(/\/v1\/?$/, "").replace(/\/$/, "");
+  const modelsUrl2 = `${root}/v1/models`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1e4);
+  try {
+    const response = await fetch(modelsUrl2, {
+      method: "GET",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        Accept: "application/json",
+        ...extraHeaders
+      },
+      redirect: "manual",
+      signal: controller.signal
+    });
+    let logTrace;
+    if (process.env.RELAY_AI_TRACE === "1") {
+      logTrace = makeTraceLogger(getProviderDebugLogPath());
+    }
+    const rawBodyText = await response.text().catch(() => "");
+    if (logTrace) {
+      logTrace(`[fetchAnthropicModels] HTTP ${response.status} from ${modelsUrl2}`);
+      logTrace(`[fetchAnthropicModels] Body: ${rawBodyText}`);
+    }
+    if (response.ok) {
+      let json = {};
+      try {
+        if (rawBodyText.trim()) {
+          json = JSON.parse(rawBodyText);
+        }
+      } catch {
+      }
+      const models = [];
+      for (const row of json.data ?? []) {
+        const id = row.id?.trim();
+        if (!id) continue;
+        models.push({
+          id,
+          name: row.name?.trim() || id,
+          upstreamModelId: id,
+          family: id.split("-")[0] ?? id,
+          brand: deriveBrand(id),
+          contextWindow: resolveContextWindow(id),
+          modelFormat: "anthropic",
+          npm: "@ai-sdk/anthropic",
+          apiUrl: root
+        });
+      }
+      if (models.length > 0) return { models, baseUrl: root };
+    }
+    if (response.status === 401 || response.status === 403) {
+      return { models: [], baseUrl: root, error: "API key was rejected.", hint: "Check your Anthropic-compatible API key." };
+    }
+    return {
+      models: [],
+      baseUrl: root,
+      error: `Could not list models (HTTP ${response.status}).`,
+      hint: "Verify the base URL supports Anthropic-compatible /v1/models or try the OpenAI-compatible option instead."
+    };
+  } catch {
+    return {
+      models: [],
+      baseUrl: root,
+      error: "Could not reach the Anthropic-compatible server.",
+      hint: "Check the base URL and that the server is running."
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // src/registry/fetch-template-models.ts
 var TEST_TIMEOUT_MS = 1e4;
 function modelFormatForNpm(npm) {
@@ -9764,77 +9838,28 @@ function npmForKind(kind) {
 function modelFormatForKind(kind) {
   return kind === "anthropic" ? "anthropic" : "openai";
 }
-async function fetchAnthropicModels(baseUrl, apiKey, extraHeaders) {
-  const root = baseUrl.replace(/\/v1\/?$/, "").replace(/\/$/, "");
-  const modelsUrl2 = `${root}/v1/models`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1e4);
-  try {
-    const response = await fetch(modelsUrl2, {
-      method: "GET",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        Accept: "application/json",
-        ...extraHeaders
-      },
-      redirect: "manual",
-      signal: controller.signal
-    });
-    let logTrace;
-    if (process.env.RELAY_AI_TRACE === "1") {
-      logTrace = makeTraceLogger(getProviderDebugLogPath());
-    }
-    const rawBodyText = await response.text().catch(() => "");
-    if (logTrace) {
-      logTrace(`[fetchAnthropicModels] HTTP ${response.status} from ${modelsUrl2}`);
-      logTrace(`[fetchAnthropicModels] Body: ${rawBodyText}`);
-    }
-    if (response.ok) {
-      let json = {};
-      try {
-        if (rawBodyText.trim()) {
-          json = JSON.parse(rawBodyText);
-        }
-      } catch {
-      }
-      const models = [];
-      for (const row of json.data ?? []) {
-        const id = row.id?.trim();
-        if (!id) continue;
-        models.push({
-          id,
-          name: row.name?.trim() || id,
-          upstreamModelId: id,
-          family: id.split("-")[0] ?? id,
-          brand: deriveBrand(id),
-          contextWindow: resolveContextWindow(id),
-          modelFormat: "anthropic",
-          npm: "@ai-sdk/anthropic",
-          apiUrl: root
-        });
-      }
-      if (models.length > 0) return { models, baseUrl: root };
-    }
-    if (response.status === 401 || response.status === 403) {
-      return { models: [], baseUrl: root, error: "API key was rejected.", hint: "Check your Anthropic-compatible API key." };
-    }
-    return {
-      models: [],
-      baseUrl: root,
-      error: `Could not list models (HTTP ${response.status}).`,
-      hint: "Verify the base URL supports Anthropic-compatible /v1/models or try the OpenAI-compatible option instead."
-    };
-  } catch {
-    return {
-      models: [],
-      baseUrl: root,
-      error: "Could not reach the Anthropic-compatible server.",
-      hint: "Check the base URL and that the server is running."
-    };
-  } finally {
-    clearTimeout(timer);
+function customEndpointKind(provider) {
+  if (provider.templateId === "custom-anthropic") return "anthropic";
+  if (provider.templateId === "custom-openai") return "openai";
+  return null;
+}
+function sameHeaders(a, b) {
+  const norm = (h) => JSON.stringify(Object.entries(h ?? {}).sort(([x], [y]) => x.localeCompare(y)));
+  return norm(a) === norm(b);
+}
+function compareableUrl(url) {
+  return url.replace(/\/v1\/?$/, "").replace(/\/$/, "");
+}
+async function findDuplicateCustomProvider(registry, normalizedUrl, apiKey, headers) {
+  const target = compareableUrl(normalizedUrl);
+  for (const existing of registry.providers) {
+    if (!customEndpointKind(existing)) continue;
+    if (compareableUrl(existing.api.url ?? "") !== target) continue;
+    if (!sameHeaders(existing.api.headers, headers)) continue;
+    const storedKey = await readStoredProviderCredential(existing.authRef);
+    if ((storedKey ?? "") === apiKey) return existing.id;
   }
+  return null;
 }
 function uniqueProviderId(displayName, registry) {
   let base = customProviderId(displayName);
@@ -9849,6 +9874,25 @@ function uniqueProviderId(displayName, registry) {
   }
   return `${base}-${Date.now()}`;
 }
+async function fetchCustomEndpointModels(input) {
+  if (input.kind === "anthropic") {
+    return fetchAnthropicModels(input.normalizedBaseUrl, input.apiKey, input.headers);
+  }
+  return fetchTemplateModels(
+    {
+      id: input.providerId,
+      name: input.displayName,
+      authType: input.apiKey === "local" ? "none" : "api",
+      npm: npmForKind(input.kind),
+      defaultBaseUrl: input.normalizedBaseUrl,
+      modelSource: "api-list",
+      supported: true
+    },
+    input.apiKey,
+    input.normalizedBaseUrl,
+    input.headers
+  );
+}
 async function addCustomEndpointProvider(input) {
   const urlCheck = await validateCustomEndpointUrl(input.baseUrl, {
     allowInsecureLocal: input.allowInsecureLocal
@@ -9857,29 +9901,34 @@ async function addCustomEndpointProvider(input) {
     return { added: false, error: urlCheck.error, hint: urlCheck.hint };
   }
   const registry = loadRegistry();
-  const providerId = uniqueProviderId(input.displayName.trim(), registry);
-  const npm = npmForKind(input.kind);
   const apiKey = input.apiKey.trim() || "local";
   const headers = input.headers && Object.keys(input.headers).length > 0 ? input.headers : void 0;
-  let fetched;
-  if (input.kind === "anthropic") {
-    fetched = await fetchAnthropicModels(urlCheck.normalizedUrl, apiKey, headers);
-  } else {
-    fetched = await fetchTemplateModels(
-      {
-        id: providerId,
-        name: input.displayName,
-        authType: apiKey === "local" ? "none" : "api",
-        npm,
-        defaultBaseUrl: urlCheck.normalizedUrl,
-        modelSource: "api-list",
-        supported: true
-      },
-      apiKey,
+  if (!input.confirmDuplicate) {
+    const duplicateOf = await findDuplicateCustomProvider(
+      registry,
       urlCheck.normalizedUrl,
+      apiKey,
       headers
     );
+    if (duplicateOf) {
+      return {
+        added: false,
+        duplicateOf,
+        error: `A backend with the same URL, key and headers already exists (${duplicateOf}).`,
+        hint: "Add it anyway to keep both, or cancel."
+      };
+    }
   }
+  const providerId = uniqueProviderId(input.displayName.trim(), registry);
+  const npm = npmForKind(input.kind);
+  const fetched = await fetchCustomEndpointModels({
+    providerId,
+    displayName: input.displayName,
+    kind: input.kind,
+    normalizedBaseUrl: urlCheck.normalizedUrl,
+    apiKey,
+    headers
+  });
   if (fetched.error || fetched.models.length === 0) {
     return { added: false, error: fetched.error ?? "No models returned.", hint: fetched.hint };
   }
@@ -9915,6 +9964,115 @@ async function addCustomEndpointProvider(input) {
   registry.providers.push(entry);
   saveRegistry(registry);
   return { added: true, provider: entry, modelCount: fetched.models.length };
+}
+async function updateCustomEndpointProvider(input) {
+  const registry = loadRegistry();
+  const provider = registry.providers.find((pr) => pr.id === input.providerId);
+  if (!provider) {
+    return { updated: false, error: `Provider not found: ${input.providerId}` };
+  }
+  const kind = customEndpointKind(provider);
+  if (!kind) {
+    return {
+      updated: false,
+      error: "Edit is only available for custom backends.",
+      hint: "Template providers can only change their API key."
+    };
+  }
+  const nextName = input.displayName?.trim();
+  let nextBaseUrl = provider.api.url ?? "";
+  let urlChanged = false;
+  const requestedUrl = input.baseUrl?.trim();
+  if (requestedUrl) {
+    const urlCheck = await validateCustomEndpointUrl(requestedUrl, {
+      allowInsecureLocal: input.allowInsecureLocal
+    });
+    if (!urlCheck.ok || !urlCheck.normalizedUrl) {
+      return { updated: false, error: urlCheck.error, hint: urlCheck.hint };
+    }
+    urlChanged = urlCheck.normalizedUrl !== nextBaseUrl;
+    nextBaseUrl = urlCheck.normalizedUrl;
+  }
+  const newKey = input.apiKey?.trim();
+  const headersChanged = input.headers !== void 0 && !sameHeaders(input.headers, provider.api.headers);
+  const nextHeaders = input.headers !== void 0 ? Object.keys(input.headers).length > 0 ? input.headers : void 0 : provider.api.headers;
+  const nameChanged = Boolean(nextName) && nextName !== provider.name;
+  const needsTest = urlChanged || Boolean(newKey) || headersChanged;
+  if (!needsTest) {
+    if (!nameChanged) return { updated: false, error: "Nothing to change." };
+    provider.name = nextName;
+    saveRegistry(registry);
+    return {
+      updated: true,
+      provider,
+      modelCount: provider.modelsCache?.models.length ?? 0
+    };
+  }
+  const apiKey = newKey || await readStoredProviderCredential(provider.authRef) || "";
+  if (!apiKey) {
+    return {
+      updated: false,
+      error: "No stored API key was found for this backend.",
+      hint: "Enter an API key to continue."
+    };
+  }
+  const fetched = await fetchCustomEndpointModels({
+    providerId: provider.id,
+    displayName: nextName || provider.name,
+    kind,
+    normalizedBaseUrl: nextBaseUrl,
+    apiKey,
+    headers: nextHeaders
+  });
+  const testFailed = Boolean(fetched.error) || fetched.models.length === 0;
+  if (testFailed && !input.saveAnyway) {
+    return {
+      updated: false,
+      error: fetched.error ?? "No models returned.",
+      hint: fetched.hint,
+      canSaveAnyway: true
+    };
+  }
+  if (newKey) {
+    const saved = await saveProviderCredential(provider.authRef, newKey);
+    if (!saved) {
+      return {
+        updated: false,
+        error: "Could not save API key to credential store.",
+        hint: "Grant Keychain access, or ensure RELAY_AI_HOME is writable (file fallback)."
+      };
+    }
+  }
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  if (nameChanged) provider.name = nextName;
+  const storedBaseUrl = kind === "anthropic" ? nextBaseUrl.replace(/\/v1\/?$/, "").replace(/\/$/, "") : nextBaseUrl;
+  provider.api.url = testFailed ? storedBaseUrl : fetched.baseUrl || storedBaseUrl;
+  if (nextHeaders) provider.api.headers = nextHeaders;
+  else delete provider.api.headers;
+  if (!testFailed) {
+    provider.modelsCache = {
+      fetchedAt: now,
+      models: fetched.models.map((m) => ({
+        ...m,
+        modelFormat: modelFormatForKind(kind),
+        npm: npmForKind(kind),
+        apiUrl: fetched.baseUrl || storedBaseUrl
+      }))
+    };
+    provider.refreshedAt = now;
+  } else if (provider.modelsCache) {
+    provider.modelsCache = {
+      ...provider.modelsCache,
+      models: provider.modelsCache.models.map((m) => ({ ...m, apiUrl: storedBaseUrl }))
+    };
+  }
+  saveRegistry(registry);
+  return {
+    updated: true,
+    provider,
+    modelCount: provider.modelsCache?.models.length ?? 0,
+    ...testFailed ? { modelsStale: true } : {}
+  };
 }
 
 // src/registry/fetch-cline-pass-models.ts
@@ -10443,7 +10601,7 @@ async function refreshApiListProvider(provider, apiKey) {
   const templateDefault = catalogTemplate?.defaultBaseUrl?.trim();
   if (configuredUrl && configuredUrl !== templateDefault) {
     const urlCheck = await validateCustomEndpointUrl(baseUrl, {
-      allowInsecureLocal: catalogTemplate?.apiKeyOptional === true
+      allowInsecureLocal: catalogTemplate?.apiKeyOptional === true || customEndpointKind(provider) !== null
     });
     if (!urlCheck.ok || !urlCheck.normalizedUrl) {
       return { models: [], error: `${urlCheck.error ?? "Invalid API base URL."} ${urlCheck.hint ?? ""}`.trim() };
@@ -10451,8 +10609,9 @@ async function refreshApiListProvider(provider, apiKey) {
     safeBaseUrl = urlCheck.normalizedUrl;
   }
   const template = catalogTemplate ?? syntheticTemplate(provider, safeBaseUrl);
+  const extraHeaders = provider.api.headers && Object.keys(provider.api.headers).length > 0 ? provider.api.headers : void 0;
   if (npm === "@ai-sdk/anthropic") {
-    const fetched2 = await fetchAnthropicModels(safeBaseUrl, apiKey);
+    const fetched2 = await fetchAnthropicModels(safeBaseUrl, apiKey, extraHeaders);
     if (fetched2.error || fetched2.models.length === 0) {
       return { models: [], error: fetched2.error ?? "No models returned.", baseUrl: fetched2.baseUrl };
     }
@@ -10461,7 +10620,7 @@ async function refreshApiListProvider(provider, apiKey) {
       baseUrl: fetched2.baseUrl
     };
   }
-  const fetched = await fetchTemplateModels(template, apiKey, safeBaseUrl);
+  const fetched = await fetchTemplateModels(template, apiKey, safeBaseUrl, extraHeaders);
   if (fetched.error || fetched.models.length === 0) {
     return { models: [], error: fetched.error ?? "No models returned." };
   }
@@ -13574,14 +13733,13 @@ export {
   makeTraceLogger,
   writeSecureLogLine,
   printTraceLog,
-  fetchTemplateModels,
-  validateCustomEndpointUrl,
   fetchAnthropicModels,
-  addCustomEndpointProvider,
+  fetchTemplateModels,
   resolveProviderTemplate,
   effectiveProviderBaseUrl,
   syntheticTemplate,
   resolveModelSource,
+  validateCustomEndpointUrl,
   readBody,
   extractApiKey,
   sendJson,
@@ -13636,6 +13794,9 @@ export {
   routableModelsForTarget,
   providersForTarget,
   providersForCodexSubagents,
+  customEndpointKind,
+  addCustomEndpointProvider,
+  updateCustomEndpointProvider,
   refreshProviderModels,
   refreshAllProviderModels,
   removeProviderFromRegistry,
@@ -13680,4 +13841,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-S3E3M33X.js.map
+//# sourceMappingURL=chunk-PVGAE7HA.js.map

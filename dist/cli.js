@@ -48,6 +48,7 @@ import {
   confirmLaunchMessage,
   createGatewayModelCatalog,
   createLanguageModel,
+  customEndpointKind,
   deepMergeProviderOptions,
   detectConflicts,
   effectiveProviderBaseUrl,
@@ -193,11 +194,12 @@ import {
   thinkingProviderOptions,
   toggleProviderEnabled,
   translateRequest,
+  updateCustomEndpointProvider,
   upstreamHttpStatus,
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-S3E3M33X.js";
+} from "./chunk-PVGAE7HA.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -1748,22 +1750,148 @@ async function runCustomEndpointAddFlow() {
       if (name) headers[name] = value;
     }
   }
-  const spinner9 = p5.spinner();
-  spinner9.start("Testing connection...");
-  const result = await addCustomEndpointProvider({
+  const addInput = {
     displayName: String(displayName).trim(),
     baseUrl: String(baseUrl).trim(),
     apiKey: String(apiKey ?? "").trim(),
     kind: kindChoice,
     allowInsecureLocal: allowInsecureHttp,
     headers: Object.keys(headers).length > 0 ? headers : void 0
-  });
+  };
+  const spinner9 = p5.spinner();
+  spinner9.start("Testing connection...");
+  let result = await addCustomEndpointProvider(addInput);
   spinner9.stop("");
+  if (!result.added && result.duplicateOf) {
+    const addAnyway = await p5.confirm({
+      message: `You already have a backend with the same URL, key and headers (${result.duplicateOf}). Add another?`,
+      initialValue: false
+    });
+    if (p5.isCancel(addAnyway) || !addAnyway) {
+      p5.cancel("Cancelled.");
+      return 0;
+    }
+    spinner9.start("Testing connection...");
+    result = await addCustomEndpointProvider({ ...addInput, confirmDuplicate: true });
+    spinner9.stop("");
+  }
   if (!result.added) {
     showProviderAddFailure(result.error, result.hint, "Could not add custom provider.");
     return 1;
   }
   logConnected(result.provider?.name ?? "Provider", result.modelCount ?? 0);
+  return 0;
+}
+async function runCustomEndpointEditFlow(provider) {
+  const currentHeaders = provider.api.headers ?? {};
+  const headerSummary = Object.keys(currentHeaders).length > 0 ? Object.entries(currentHeaders).map(([k, v]) => `${k}: ${v}`).join(", ") : "none";
+  p5.log.info(`Base URL: ${provider.api.url ?? "(none)"}
+Headers: ${headerSummary}`);
+  const displayName = await p5.text({
+    message: "Display name:",
+    initialValue: provider.name,
+    validate: (v) => v.trim() ? void 0 : "Name is required"
+  });
+  if (p5.isCancel(displayName)) {
+    p5.cancel("Cancelled.");
+    return 0;
+  }
+  const baseUrl = await p5.text({
+    message: "Base URL:",
+    initialValue: provider.api.url ?? "",
+    validate: (v) => v.trim() ? void 0 : "URL is required"
+  });
+  if (p5.isCancel(baseUrl)) {
+    p5.cancel("Cancelled.");
+    return 0;
+  }
+  const usesHttp = /^http:\/\//i.test(String(baseUrl).trim());
+  let allowInsecureHttp = false;
+  if (usesHttp) {
+    p5.log.warn("HTTP is not encrypted. Only use it for a trusted local or LAN server, like Ollama on your own network.");
+    const allowLocal = await p5.confirm({
+      message: "Allow insecure HTTP for this local/LAN server?",
+      initialValue: true
+    });
+    if (p5.isCancel(allowLocal)) return 0;
+    allowInsecureHttp = allowLocal === true;
+  }
+  const apiKey = await p5.password({
+    message: "API key (leave empty to keep the current key):"
+  });
+  if (p5.isCancel(apiKey)) {
+    p5.cancel("Cancelled.");
+    return 0;
+  }
+  const editHeaders = await p5.confirm({
+    message: `Replace custom headers? (current: ${headerSummary})`,
+    initialValue: false
+  });
+  if (p5.isCancel(editHeaders)) {
+    p5.cancel("Cancelled.");
+    return 0;
+  }
+  let headers;
+  if (editHeaders) {
+    headers = {};
+    p5.log.info("Enter the full header set. Leave the first one empty to remove all headers.");
+    for (; ; ) {
+      const headerLine = await p5.text({
+        message: "Header (leave empty when done):",
+        placeholder: "X-Plan: coding"
+      });
+      if (p5.isCancel(headerLine)) {
+        p5.cancel("Cancelled.");
+        return 0;
+      }
+      const trimmed = String(headerLine).trim();
+      if (!trimmed) break;
+      const idx = trimmed.indexOf(":");
+      if (idx < 1) {
+        p5.log.warn('Use the format "Name: Value" \u2014 skipped.');
+        continue;
+      }
+      const name = trimmed.slice(0, idx).trim();
+      const value = trimmed.slice(idx + 1).trim();
+      if (name) headers[name] = value;
+    }
+  }
+  const runUpdate = (saveAnyway) => updateCustomEndpointProvider({
+    providerId: provider.id,
+    displayName: String(displayName).trim(),
+    baseUrl: String(baseUrl).trim(),
+    apiKey: String(apiKey ?? "").trim(),
+    headers,
+    allowInsecureLocal: allowInsecureHttp,
+    saveAnyway
+  });
+  const spinner9 = p5.spinner();
+  spinner9.start("Testing connection...");
+  let result = await runUpdate(false);
+  spinner9.stop("");
+  if (!result.updated && result.error === "Nothing to change.") {
+    p5.log.info("No changes made.");
+    return 0;
+  }
+  if (!result.updated) {
+    showProviderAddFailure(result.error, result.hint, "Could not update backend.");
+    if (!result.canSaveAnyway) return 1;
+    const saveAnyway = await p5.confirm({
+      message: "Save these settings anyway? The model list will not be refreshed.",
+      initialValue: false
+    });
+    if (p5.isCancel(saveAnyway) || !saveAnyway) return 1;
+    result = await runUpdate(true);
+    if (!result.updated) {
+      showProviderAddFailure(result.error, result.hint, "Could not update backend.");
+      return 1;
+    }
+  }
+  if (result.modelsStale) {
+    p5.log.warn(`${result.provider?.name ?? provider.name} saved, but the model list may be out of date.`);
+  } else {
+    logConnected(result.provider?.name ?? provider.name, result.modelCount ?? 0);
+  }
   return 0;
 }
 async function runProvidersAdd() {
@@ -1891,7 +2019,14 @@ async function runProviderDetail(id) {
       hint: "Refresh OAuth tokens or switch accounts"
     });
   }
-  if (provider.authType !== "oauth" && provider.authRef.startsWith("keyring:")) {
+  const editableCustomKind = customEndpointKind(provider);
+  if (editableCustomKind) {
+    detailOptions.push({
+      value: "edit-custom",
+      label: "Edit backend settings",
+      hint: "Name, base URL, API key, headers"
+    });
+  } else if (provider.authType !== "oauth" && provider.authRef.startsWith("keyring:")) {
     detailOptions.push({
       value: "change-key",
       label: "Change API key",
@@ -1926,6 +2061,9 @@ async function runProviderDetail(id) {
   }
   if (action === "refresh") {
     return await runProvidersRefreshModels(id) === 0 ? "back" : "failed";
+  }
+  if (action === "edit-custom") {
+    return await runCustomEndpointEditFlow(provider) === 0 ? "back" : "failed";
   }
   if (action === "change-key") {
     return await runProviderApiKeyChange(provider, registry) === 0 ? "back" : "failed";
@@ -14870,7 +15008,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-MILYNNWN.js");
+    const { runUiCommand } = await import("./ui-command-JQPEZAMN.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {
