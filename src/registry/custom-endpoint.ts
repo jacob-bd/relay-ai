@@ -18,6 +18,8 @@ export interface AddCustomEndpointInput {
   allowInsecureLocal?: boolean;
   /** Static headers this endpoint requires on every request (e.g. a plan/auth-tracking header). */
   headers?: Record<string, string>;
+  /** Skip the exact-duplicate guard after the user confirmed. */
+  confirmDuplicate?: boolean;
 }
 
 export interface AddCustomEndpointResult {
@@ -26,6 +28,8 @@ export interface AddCustomEndpointResult {
   modelCount?: number;
   error?: string;
   hint?: string;
+  /** Set when an existing provider has the same url + key + headers. */
+  duplicateOf?: string;
 }
 
 function npmForKind(kind: CustomEndpointKind): string {
@@ -34,6 +38,44 @@ function npmForKind(kind: CustomEndpointKind): string {
 
 function modelFormatForKind(kind: CustomEndpointKind): 'anthropic' | 'openai' {
   return kind === 'anthropic' ? 'anthropic' : 'openai';
+}
+
+export function customEndpointKind(provider: RegistryProvider): CustomEndpointKind | null {
+  if (provider.templateId === 'custom-anthropic') return 'anthropic';
+  if (provider.templateId === 'custom-openai') return 'openai';
+  return null;
+}
+
+function sameHeaders(a?: Record<string, string>, b?: Record<string, string>): boolean {
+  const norm = (h?: Record<string, string>) =>
+    JSON.stringify(Object.entries(h ?? {}).sort(([x], [y]) => x.localeCompare(y)));
+  return norm(a) === norm(b);
+}
+
+/**
+ * Anthropic entries are stored with /v1 stripped (fetchAnthropicModels does it),
+ * OpenAI entries keep theirs. Compare on a common form or an anthropic duplicate
+ * never matches: stored "https://gw.example.com" vs typed "https://gw.example.com/v1".
+ */
+function compareableUrl(url: string): string {
+  return url.replace(/\/v1\/?$/, '').replace(/\/$/, '');
+}
+
+async function findDuplicateCustomProvider(
+  registry: { providers: RegistryProvider[] },
+  normalizedUrl: string,
+  apiKey: string,
+  headers?: Record<string, string>,
+): Promise<string | null> {
+  const target = compareableUrl(normalizedUrl);
+  for (const existing of registry.providers) {
+    if (!customEndpointKind(existing)) continue;
+    if (compareableUrl(existing.api.url ?? '') !== target) continue;
+    if (!sameHeaders(existing.api.headers, headers)) continue;
+    const storedKey = await readStoredProviderCredential(existing.authRef);
+    if ((storedKey ?? '') === apiKey) return existing.id;
+  }
+  return null;
 }
 
 function uniqueProviderId(displayName: string, registry: { providers: RegistryProvider[] }): string {
@@ -92,11 +134,28 @@ export async function addCustomEndpointProvider(input: AddCustomEndpointInput): 
   }
 
   const registry = loadRegistry();
+  const apiKey = input.apiKey.trim() || 'local';
+  const headers = input.headers && Object.keys(input.headers).length > 0 ? input.headers : undefined;
+
+  if (!input.confirmDuplicate) {
+    const duplicateOf = await findDuplicateCustomProvider(
+      registry,
+      urlCheck.normalizedUrl,
+      apiKey,
+      headers,
+    );
+    if (duplicateOf) {
+      return {
+        added: false,
+        duplicateOf,
+        error: `A backend with the same URL, key and headers already exists (${duplicateOf}).`,
+        hint: 'Add it anyway to keep both, or cancel.',
+      };
+    }
+  }
+
   const providerId = uniqueProviderId(input.displayName.trim(), registry);
   const npm = npmForKind(input.kind);
-  const apiKey = input.apiKey.trim() || 'local';
-
-  const headers = input.headers && Object.keys(input.headers).length > 0 ? input.headers : undefined;
 
   const fetched = await fetchCustomEndpointModels({
     providerId,
@@ -177,18 +236,6 @@ export interface UpdateCustomEndpointResult {
   canSaveAnyway?: boolean;
   error?: string;
   hint?: string;
-}
-
-export function customEndpointKind(provider: RegistryProvider): CustomEndpointKind | null {
-  if (provider.templateId === 'custom-anthropic') return 'anthropic';
-  if (provider.templateId === 'custom-openai') return 'openai';
-  return null;
-}
-
-function sameHeaders(a?: Record<string, string>, b?: Record<string, string>): boolean {
-  const norm = (h?: Record<string, string>) =>
-    JSON.stringify(Object.entries(h ?? {}).sort(([x], [y]) => x.localeCompare(y)));
-  return norm(a) === norm(b);
 }
 
 export async function updateCustomEndpointProvider(

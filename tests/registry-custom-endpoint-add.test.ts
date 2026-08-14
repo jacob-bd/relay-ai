@@ -154,3 +154,115 @@ describe('registry/custom-endpoint add', () => {
     expect(io.saveRegistry).not.toHaveBeenCalled();
   });
 });
+
+describe('duplicate detection', () => {
+  const existing = {
+    id: 'custom-acme-gateway',
+    templateId: 'custom-openai' as const,
+    name: 'Acme Gateway',
+    enabled: true,
+    authRef: 'keyring:provider:custom-acme-gateway',
+    api: {
+      npm: '@ai-sdk/openai-compatible',
+      url: 'https://gw.example.com/v1',
+      headers: { 'X-Plan': 'coding' },
+    },
+    addedAt: '2026-01-01T00:00:00.000Z',
+  };
+
+  beforeEach(() => {
+    vi.mocked(io.loadRegistry).mockReturnValue({ schemaVersion: 1, providers: [existing] });
+    vi.mocked(env.readStoredProviderCredential).mockResolvedValue('sk-same');
+    vi.mocked(env.saveProviderCredential).mockResolvedValue(true);
+    vi.mocked(urlSecurity.validateCustomEndpointUrl).mockResolvedValue({
+      ok: true,
+      normalizedUrl: 'https://gw.example.com/v1',
+    });
+    vi.mocked(fetchTemplate.fetchTemplateModels).mockResolvedValue({
+      models: [{ id: 'm1', name: 'm1', upstreamModelId: 'm1', modelFormat: 'openai' }],
+      baseUrl: 'https://gw.example.com/v1',
+    });
+  });
+
+  it('flags an exact url + key + headers match without writing', async () => {
+    const result = await addCustomEndpointProvider({
+      displayName: 'Acme Again',
+      baseUrl: 'https://gw.example.com/v1',
+      apiKey: 'sk-same',
+      kind: 'openai',
+      headers: { 'X-Plan': 'coding' },
+    });
+
+    expect(result.added).toBe(false);
+    expect(result.duplicateOf).toBe('custom-acme-gateway');
+    expect(io.saveRegistry).not.toHaveBeenCalled();
+    expect(fetchTemplate.fetchTemplateModels).not.toHaveBeenCalled();
+  });
+
+  it('does not flag the same url with a different key', async () => {
+    const result = await addCustomEndpointProvider({
+      displayName: 'Acme Personal',
+      baseUrl: 'https://gw.example.com/v1',
+      apiKey: 'sk-different',
+      kind: 'openai',
+      headers: { 'X-Plan': 'coding' },
+    });
+
+    expect(result.duplicateOf).toBeUndefined();
+    expect(result.added).toBe(true);
+  });
+
+  it('does not flag the same url with different headers', async () => {
+    const result = await addCustomEndpointProvider({
+      displayName: 'Acme Team B',
+      baseUrl: 'https://gw.example.com/v1',
+      apiKey: 'sk-same',
+      kind: 'openai',
+      headers: { 'X-Plan': 'max' },
+    });
+
+    expect(result.duplicateOf).toBeUndefined();
+    expect(result.added).toBe(true);
+  });
+
+  it('matches an anthropic duplicate despite the stored /v1 difference', async () => {
+    vi.mocked(io.loadRegistry).mockReturnValue({
+      schemaVersion: 1,
+      providers: [{
+        ...existing,
+        id: 'custom-claude-gw',
+        templateId: 'custom-anthropic' as const,
+        authRef: 'keyring:provider:custom-claude-gw',
+        // fetchAnthropicModels strips /v1 before the entry is written
+        api: { npm: '@ai-sdk/anthropic', url: 'https://claude-gw.example.com' },
+      }],
+    });
+    vi.mocked(urlSecurity.validateCustomEndpointUrl).mockResolvedValue({
+      ok: true,
+      normalizedUrl: 'https://claude-gw.example.com/v1',
+    });
+
+    const result = await addCustomEndpointProvider({
+      displayName: 'Claude GW Again',
+      baseUrl: 'https://claude-gw.example.com/v1',
+      apiKey: 'sk-same',
+      kind: 'anthropic',
+    });
+
+    expect(result.duplicateOf).toBe('custom-claude-gw');
+  });
+
+  it('proceeds past an exact match when confirmDuplicate is set', async () => {
+    const result = await addCustomEndpointProvider({
+      displayName: 'Acme Again',
+      baseUrl: 'https://gw.example.com/v1',
+      apiKey: 'sk-same',
+      kind: 'openai',
+      headers: { 'X-Plan': 'coding' },
+      confirmDuplicate: true,
+    });
+
+    expect(result.added).toBe(true);
+    expect(result.provider?.id).toBe('custom-acme-again');
+  });
+});
