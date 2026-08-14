@@ -539,7 +539,7 @@ describe('registry/refresh-models', () => {
     });
   });
 
-  describe('refreshProviderModels (Antigravity OAuth)', () => {
+  describe('refreshProviderModels (Cloud Code Assist)', () => {
     it('caches the live Cloud Code catalog and only drops helper slots', async () => {
       const mockRegistry: ProviderRegistry = {
         version: 1,

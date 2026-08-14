@@ -92,7 +92,7 @@ const providers: LocalProvider[] = [
   },
   {
     id: 'antigravity',
-    name: 'Antigravity OAuth',
+    name: 'Cloud Code Assist',
     apiKey: 'cloud-code-token',
     authType: 'oauth',
     oauthAccountId: 'user@example.com',
@@ -294,7 +294,7 @@ describe('antigravity launch routes', () => {
     ]);
   });
 
-  it('preserves Antigravity OAuth Cloud Code route metadata', async () => {
+  it('preserves Cloud Code Assist Cloud Code route metadata', async () => {
     const result = await resolveAntigravityLaunchRoutes({
       provider: providers[5]!,
       model: providers[5]!.models[0]!,

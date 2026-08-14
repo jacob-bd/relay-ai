@@ -176,7 +176,7 @@ Volume: Compose named volume `relay-ai-data` → `/data` (`RELAY_AI_HOME`).
 | `/data/secrets.json` | API keys + OAuth tokens when keyring is unavailable (`0600`) |
 | `/data/logs/` | Trace / debug logs |
 
-Device-code OAuth (GitHub Copilot, ChatGPT, xAI, ClinePass) works from the admin UI; tokens persist in `secrets.json`. ClinePass API keys can also be added from the same UI. Claude / Antigravity OAuth flows are not intended for this public admin UI.
+Device-code OAuth (GitHub Copilot, ChatGPT, xAI, ClinePass) works from the admin UI; tokens persist in `secrets.json`. ClinePass API keys can also be added from the same UI. Browser/device flows that need a local desktop session (for example Claude login) are not intended for this public admin UI.
 
 ---
 

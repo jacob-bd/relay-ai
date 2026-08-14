@@ -647,7 +647,7 @@ describe('cloud-code-gateway', () => {
     expect(streamCall.providerOptions?.anthropic?.anthropicBeta).toContain('claude-code-20250219');
   });
 
-  it('forwards Antigravity OAuth Cloud Code routes without the OpenAI-compatible SDK', async () => {
+  it('forwards Cloud Code Assist Cloud Code routes without the OpenAI-compatible SDK', async () => {
     vi.mocked(createLanguageModel).mockClear();
     const originalFetch = globalThis.fetch;
     const upstreamBodies: any[] = [];
@@ -672,7 +672,7 @@ describe('cloud-code-gateway', () => {
         {
           catalogId: 'relay-ai__antigravity__gemini-3.5-flash-extra-low',
           providerId: 'antigravity',
-          providerName: 'Antigravity OAuth',
+          providerName: 'Cloud Code Assist',
           modelId: 'gemini-3.5-flash-extra-low',
           upstreamModelId: 'gemini-3.5-flash-extra-low',
           displayName: 'Gemini 3.5 Flash (Low) (Relay)',

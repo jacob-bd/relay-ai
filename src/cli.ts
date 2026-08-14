@@ -1517,7 +1517,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   const isOAuthAnthropic = selectedModel.modelFormat === 'anthropic' && activeProvider.authType === 'oauth' && !isAntigravityOAuth;
 
   if (isAntigravityOAuth) {
-    // Antigravity OAuth — proxy translates Anthropic → Cloud Code Assist format.
+    // Cloud Code Assist — proxy translates Anthropic → Assist format.
     try {
       proxyHandle = await startProxy(
         ANTIGRAVITY_BASE_URLS[0],

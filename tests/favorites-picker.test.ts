@@ -182,7 +182,7 @@ describe('globalFavoriteSelectOption', () => {
   it('labels OAuth subscription providers explicitly in favorites search', () => {
     const oauthProviders: LocalProvider[] = [{
       id: 'antigravity',
-      name: 'Antigravity (Google Cloud Code Assist)',
+      name: 'Cloud Code Assist OAuth (Google)',
       apiKey: 'tok',
       authType: 'oauth',
       models: [{
@@ -211,7 +211,7 @@ describe('globalFavoriteSelectOption', () => {
     const index = buildGlobalFavoriteIndex(oauthProviders);
     expect(index.map(e => e.providerName)).toEqual([
       'Claude Code OAuth (Anthropic subscription)',
-      'Antigravity OAuth (Google Cloud Code Assist)',
+      'Cloud Code Assist OAuth (Google)',
     ]);
     expect(filterGlobalFavoriteIndex(index, 'oauth').map(globalFavoritePickKey)).toEqual([
       'claude-code::claude-sonnet-4-6',

@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- **Embedded Core now supports Antigravity OAuth Cloud Code routes.** `createRelayModel()` returns a native Google LanguageModel that calls Cloud Code Assist with the stored OAuth token and project id, instead of launching a local proxy.
+- **Embedded Core now supports OAuth Cloud Code Assist routes.** `createRelayModel()` returns a native Google LanguageModel that calls Cloud Code Assist with the stored OAuth token and project id, instead of launching a local proxy.
 - **Core no longer sends cloud-code models to an empty OpenAI-compatible `/chat/completions` URL.** Those routes are discriminated by provider id, OAuth auth, and `modelFormat: 'cloud-code'` before the generic factory path.
 - **Streaming, tools, OAuth refresh, and Gemini signature round-tripping are covered.** The Cloud Code transport unwraps Assist envelopes, retries a 401 once, forwards AbortSignal, and preserves thought signatures across tool loops.
 - **OpenAI OAuth Luna (`gpt-5.6-luna`) now streams text and tool calls through Core.** `createRelayModel('openai-oauth::gpt-5.6-luna')` consumed by AI SDK `streamText()` was completing with usage and OpenAI provider metadata but no assistant text or tool calls. Responses-Lite WebSocket frames that omit SDK-required fields (`item_id`, `output_index`, function-call `id`/`arguments`/`status`) were forwarded unchanged; `@ai-sdk/openai` classified them as `unknown_chunk` and kept only `response.completed` usage. The WebSocket adapter now fills those fields and recovers final `response.output` when no deltas were forwarded. This is a separate transport bug from Cloud Code Assist — other OAuth providers are unchanged.

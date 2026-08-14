@@ -78,10 +78,10 @@ describe('GET /api/models appId filtering', () => {
   });
 });
 
-describe('GET /api/models Antigravity OAuth visibility', () => {
+describe('GET /api/models Cloud Code Assist visibility', () => {
   const antigravity = {
     id: 'antigravity',
-    name: 'Antigravity (Google Cloud Code Assist)',
+    name: 'Cloud Code Assist OAuth (Google)',
     authType: 'oauth' as const,
     apiKey: 'agy-token',
     models: [{
@@ -111,14 +111,14 @@ describe('GET /api/models Antigravity OAuth visibility', () => {
     };
   });
 
-  it('shows a configured Antigravity OAuth provider in the local UI catalog', async () => {
+  it('shows a configured Cloud Code Assist provider in the local UI catalog', async () => {
     const result = await call('GET', '/api/models');
     expect(result.body.providers.map((p: { id: string }) => p.id)).toContain('antigravity');
     expect(result.body.providers.find((p: { id: string }) => p.id === 'antigravity').models.map((m: { id: string }) => m.id))
       .toEqual(['gemini-3.6-flash-low']);
   });
 
-  it('keeps Antigravity OAuth off the Docker/server admin UI catalog', async () => {
+  it('keeps Cloud Code Assist off the Docker/server admin UI catalog', async () => {
     const result = await call('GET', '/api/models', { uiMode: 'server' });
     expect(result.body.providers.map((p: { id: string }) => p.id)).not.toContain('antigravity');
   });

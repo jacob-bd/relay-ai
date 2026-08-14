@@ -52,7 +52,7 @@ const PROVIDER_DISPLAY: Record<NativeOAuthProviderId, string> = {
   'openai-oauth': OPENAI_DISPLAY,
   'github-copilot': 'GitHub Copilot',
   'claude-code': 'Claude Code (Anthropic subscription)',
-  antigravity: 'Antigravity (Google Cloud Code Assist)',
+  antigravity: 'Cloud Code Assist OAuth (Google)',
   'cline-pass': 'ClinePass',
 };
 
@@ -159,7 +159,7 @@ async function runNativeBrowserOAuth(providerId: NativeOAuthProviderId): Promise
     }
   }
 
-  // Antigravity OAuth
+  // Cloud Code Assist OAuth
   const spinner = p.spinner();
   spinner.start('Opening browser for Google sign-in…');
   try {
@@ -168,7 +168,7 @@ async function runNativeBrowserOAuth(providerId: NativeOAuthProviderId): Promise
       p.log.info(`Opening: ${pc.cyan(url)}`);
       spinner.start('Waiting for authorization…');
     });
-    spinner.stop(pc.green('Signed in to Antigravity'));
+    spinner.stop(pc.green('Signed in to Cloud Code Assist'));
 
     const providerData: Record<string, unknown> = {};
     if (projectId) providerData.projectId = projectId;

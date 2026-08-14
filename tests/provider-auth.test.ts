@@ -89,7 +89,7 @@ describe('authenticateProvider', () => {
     expect(runOpencodeAuthBroker).not.toHaveBeenCalled();
   });
 
-  it('launches Antigravity OAuth directly without an OpenCode submenu', async () => {
+  it('launches Cloud Code Assist directly without an OpenCode submenu', async () => {
     const result = await authenticateProvider('antigravity');
 
     expect(prompts.select).not.toHaveBeenCalled();

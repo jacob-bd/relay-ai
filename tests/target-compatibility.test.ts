@@ -86,7 +86,7 @@ describe('target compatibility matrix', () => {
     }
   });
 
-  it('allows Antigravity OAuth Cloud Code for all targets except server', () => {
+  it('allows Cloud Code Assist Cloud Code for all targets except server', () => {
     for (const target of ['claude', 'codex', 'codex-app', 'claude-app', 'gemini', 'antigravity'] as const) {
       expect(isTargetCompatibleModel({
         target,
@@ -107,7 +107,7 @@ describe('target compatibility matrix', () => {
     const providers: LocalProvider[] = [
       { id: 'openai', name: 'OpenAI', apiKey: 'k', authType: 'api', models: [openAiModel] },
       { id: 'claude-code', name: 'Claude Code OAuth', apiKey: 'tok', authType: 'oauth', models: [anthropicModel] },
-      { id: 'antigravity', name: 'Antigravity OAuth', apiKey: 'tok', authType: 'oauth', models: [cloudCodeModel] },
+      { id: 'antigravity', name: 'Cloud Code Assist', apiKey: 'tok', authType: 'oauth', models: [cloudCodeModel] },
     ];
 
     const allThree = ['antigravity', 'claude-code', 'openai'];

@@ -417,7 +417,7 @@ var init_provider_templates = __esm({
       },
       {
         id: "antigravity",
-        name: "Antigravity (Google Cloud Code Assist)",
+        name: "Cloud Code Assist OAuth (Google)",
         authType: "oauth",
         npm: "@ai-sdk/openai-compatible",
         signupUrl: "https://antigravity.google",
@@ -472,4 +472,4 @@ export {
   provider_templates_exports,
   init_provider_templates
 };
-//# sourceMappingURL=chunk-Q2FTCICO.js.map
+//# sourceMappingURL=chunk-NYKVDBQC.js.map

@@ -386,7 +386,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   },
   {
     id: 'antigravity',
-    name: 'Antigravity (Google Cloud Code Assist)',
+    name: 'Cloud Code Assist OAuth (Google)',
     authType: 'oauth',
     npm: '@ai-sdk/openai-compatible',
     signupUrl: 'https://antigravity.google',

@@ -390,7 +390,7 @@ export function startProxyCatalog(
         return;
       }
 
-      // ── Cloud Code Assist (Antigravity OAuth) ───────────────────────
+      // ── Cloud Code Assist ─────────────────────────────────────────────
       if (route.modelFormat === 'cloud-code') {
         const projectId = (route.providerData?.projectId as string | undefined) ?? '';
         if (!projectId) {

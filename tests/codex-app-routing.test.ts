@@ -79,7 +79,7 @@ describe('buildCodexAppProviderCatalogRoutes', () => {
   it('rewrites every cloud-code model in the Codex App provider catalog, not only the launch model', async () => {
     const provider: LocalProvider = {
       id: 'antigravity',
-      name: 'Antigravity OAuth',
+      name: 'Cloud Code Assist',
       apiKey: 'agy-token',
       authType: 'oauth',
       providerData: { projectId: 'p1' },

@@ -176,7 +176,7 @@ const openAiModel: LocalProviderModel = {
 
 const antigravityProvider: LocalProvider = {
   id: 'antigravity',
-  name: 'Antigravity OAuth',
+  name: 'Cloud Code Assist',
   apiKey: 'oauth-token',
   authType: 'oauth',
   models: [cloudCodeModel],

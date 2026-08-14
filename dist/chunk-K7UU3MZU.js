@@ -2,7 +2,7 @@
 import {
   getTemplateById,
   init_provider_templates
-} from "./chunk-Q2FTCICO.js";
+} from "./chunk-NYKVDBQC.js";
 
 // src/constants.ts
 import { homedir } from "os";
@@ -12234,7 +12234,7 @@ function removeFavorite(list, fav) {
 // src/favorite-provider-display.ts
 var OAUTH_FAVORITE_NAMES = {
   "claude-code": "Claude Code OAuth (Anthropic subscription)",
-  antigravity: "Antigravity OAuth (Google Cloud Code Assist)",
+  antigravity: "Cloud Code Assist OAuth (Google)",
   "openai-oauth": "OpenAI OAuth (ChatGPT)",
   "xai-oauth": "xAI OAuth (SuperGrok)"
 };
@@ -12437,7 +12437,7 @@ var PROVIDER_DISPLAY = {
   "openai-oauth": OPENAI_DISPLAY,
   "github-copilot": "GitHub Copilot",
   "claude-code": "Claude Code (Anthropic subscription)",
-  antigravity: "Antigravity (Google Cloud Code Assist)",
+  antigravity: "Cloud Code Assist OAuth (Google)",
   "cline-pass": "ClinePass"
 };
 function openBrowser(url) {
@@ -12540,7 +12540,7 @@ async function runNativeBrowserOAuth(providerId) {
       p5.log.info(`Opening: ${pc6.cyan(url)}`);
       spinner3.start("Waiting for authorization\u2026");
     });
-    spinner3.stop(pc6.green("Signed in to Antigravity"));
+    spinner3.stop(pc6.green("Signed in to Cloud Code Assist"));
     const providerData = {};
     if (projectId) providerData.projectId = projectId;
     if (tierId) providerData.tier = tierId;
@@ -13520,4 +13520,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-GQCFLSEM.js.map
+//# sourceMappingURL=chunk-K7UU3MZU.js.map

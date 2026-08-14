@@ -55,7 +55,7 @@ describe('shouldHideModel', () => {
     expect(entry?.agents).toBeUndefined();
   });
 
-  it('hides Antigravity OAuth Cloud Code helper slots', () => {
+  it('hides Cloud Code Assist Cloud Code helper slots', () => {
     expect(shouldHideModel({
       providerId: 'antigravity',
       modelId: 'tab_flash_lite_preview',
@@ -78,7 +78,7 @@ describe('shouldHideModel', () => {
     })).toContain('helper/internal');
   });
 
-  it('keeps current Antigravity OAuth agent models visible, including new Gemini Flash tiers', () => {
+  it('keeps current Cloud Code Assist agent models visible, including new Gemini Flash tiers', () => {
     const visible = [
       'gemini-3.5-flash-low',
       'gemini-3.5-flash-extra-low',
