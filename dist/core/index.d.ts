@@ -3,6 +3,13 @@ import { LanguageModel } from 'ai';
 /** Unconditionally-scoped route id: `${providerId}::${modelId}`. Never bare. */
 type RelayRouteId = `${string}::${string}`;
 type RelayCoreErrorCode = 'INVALID_ROUTE_ID' | 'ROUTE_NOT_FOUND' | 'PROVIDER_DISABLED' | 'CREDENTIAL_UNAVAILABLE' | 'OAUTH_REFRESH_FAILED' | 'UNSUPPORTED_MODEL' | 'UNSUPPORTED_REGISTRY_VERSION' | 'PROVIDER_LOAD_FAILED';
+interface CreateRelayModelOptions {
+    /**
+     * Optional sanitized transport diagnostics. Messages contain event types,
+     * field names, counts, and lengths — never credentials, prompts, or bodies.
+     */
+    onDebug?: (message: string) => void;
+}
 interface RelayModelDescriptor {
     routeId: RelayRouteId;
     providerId: string;
@@ -50,7 +57,7 @@ declare function listRelayModels(registryPath?: string): RelayModelDescriptor[];
  * resolved (and OAuth tokens refreshed) by Relay's existing machinery; the
  * credential and the intermediate spec never leave this function.
  */
-declare function createRelayModel(routeId: RelayRouteId): Promise<LanguageModel>;
+declare function createRelayModel(routeId: RelayRouteId, options?: CreateRelayModelOptions): Promise<LanguageModel>;
 
 /**
  * Build a route id from a provider id and a model id. The provider id must pass
@@ -88,4 +95,4 @@ declare class RelayCoreError extends Error {
 }
 declare function isRelayCoreError(err: unknown): err is RelayCoreError;
 
-export { RelayCoreError, type RelayCoreErrorCode, type RelayModelDescriptor, type RelayRouteId, createRelayModel, isRelayCoreError, listRelayModels, parseRelayRouteId, toRelayRouteId };
+export { type CreateRelayModelOptions, RelayCoreError, type RelayCoreErrorCode, type RelayModelDescriptor, type RelayRouteId, createRelayModel, isRelayCoreError, listRelayModels, parseRelayRouteId, toRelayRouteId };

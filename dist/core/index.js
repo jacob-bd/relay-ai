@@ -50,7 +50,7 @@ import { join as join2 } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.9.1",
+  version: "0.9.2",
   publishConfig: {
     access: "public"
   },
@@ -288,7 +288,229 @@ async function refreshOpenAiAccessToken(refreshToken) {
 
 // src/oauth/responses-websocket.ts
 var RESPONSES_LITE_HEADER = "x-openai-internal-codex-responses-lite";
-var TERMINAL_EVENT_TYPES = /* @__PURE__ */ new Set(["response.completed", "response.failed", "response.incomplete"]);
+var TERMINAL_EVENT_TYPES = /* @__PURE__ */ new Set(["response.completed", "response.failed", "response.incomplete", "error"]);
+function isRecord(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+function recordKeys(value) {
+  return isRecord(value) ? Object.keys(value).sort().join(",") : "";
+}
+function summarizeResponsesLiteEvent(event) {
+  if (!isRecord(event)) return `kind=${event == null ? "null" : typeof event}`;
+  const parts = [`type=${typeof event.type === "string" ? event.type : "unknown"}`, `keys=${recordKeys(event)}`];
+  if (typeof event.delta === "string") parts.push(`deltaChars=${event.delta.length}`);
+  if (typeof event.output_index === "number") parts.push(`hasOutputIndex=1`);
+  if (typeof event.item_id === "string") parts.push(`hasItemId=1`);
+  if (isRecord(event.item)) {
+    parts.push(`itemType=${typeof event.item.type === "string" ? event.item.type : "unknown"}`);
+    parts.push(`itemKeys=${recordKeys(event.item)}`);
+    if (typeof event.item.arguments === "string") parts.push(`argumentsChars=${event.item.arguments.length}`);
+  }
+  if (isRecord(event.response)) {
+    parts.push(`responseKeys=${recordKeys(event.response)}`);
+    if (Array.isArray(event.response.output)) {
+      parts.push(`outputCount=${event.response.output.length}`);
+      parts.push(`outputTypes=${event.response.output.map((item) => isRecord(item) && typeof item.type === "string" ? item.type : "unknown").join(",")}`);
+    }
+    if (isRecord(event.response.usage)) parts.push(`usageKeys=${recordKeys(event.response.usage)}`);
+    if (typeof event.response.status === "string") parts.push(`status=${event.response.status}`);
+  }
+  if (isRecord(event.error)) {
+    parts.push(`errorKeys=${recordKeys(event.error)}`);
+    if (typeof event.error.message === "string") parts.push(`messageChars=${event.error.message.length}`);
+  }
+  return parts.join(" ");
+}
+function createResponsesLiteNormalizeState() {
+  return {
+    nextId: 1,
+    lastOutputIndex: 0,
+    textDeltaForwarded: false,
+    messageAddedIds: /* @__PURE__ */ new Set(),
+    messageDoneIds: /* @__PURE__ */ new Set(),
+    functionAddedIndexes: /* @__PURE__ */ new Set(),
+    functionDeltaIndexes: /* @__PURE__ */ new Set(),
+    functionDoneCallIds: /* @__PURE__ */ new Set()
+  };
+}
+function nextId(state, prefix) {
+  const id = `${prefix}_${state.nextId}`;
+  state.nextId += 1;
+  return id;
+}
+function asString(value) {
+  return typeof value === "string" && value.length > 0 ? value : void 0;
+}
+function normalizeErrorEvent(event) {
+  const raw = isRecord(event.error) ? event.error : { message: typeof event.error === "string" ? event.error : "upstream error" };
+  return {
+    type: "error",
+    sequence_number: typeof event.sequence_number === "number" ? event.sequence_number : 0,
+    error: {
+      type: asString(raw.type) ?? "server_error",
+      code: asString(raw.code) ?? "unknown",
+      message: asString(raw.message) ?? "upstream error",
+      ...raw.param == null ? {} : { param: raw.param }
+    }
+  };
+}
+function normalizeFunctionItem(item, state, forDone = false) {
+  const callId = asString(item.call_id) ?? asString(item.id) ?? nextId(state, "call");
+  const id = asString(item.id) ?? nextId(state, "fc");
+  state.lastFunctionItemId = id;
+  return {
+    ...item,
+    type: "function_call",
+    id,
+    call_id: callId,
+    name: asString(item.name) ?? "",
+    arguments: typeof item.arguments === "string" ? item.arguments : "",
+    ...forDone ? { status: "completed" } : {}
+  };
+}
+function messageText(item) {
+  if (typeof item.text === "string") return item.text;
+  if (!Array.isArray(item.content)) return "";
+  let out = "";
+  for (const part of item.content) {
+    if (isRecord(part) && typeof part.text === "string" && (part.type === "output_text" || part.type === "text")) {
+      out += part.text;
+    }
+  }
+  return out;
+}
+function synthesizeMessage(item, outputIndex, state) {
+  const text = messageText(item);
+  if (!text) return [];
+  const id = asString(item.id) ?? nextId(state, "msg");
+  state.lastMessageItemId = id;
+  state.textDeltaForwarded = true;
+  state.messageAddedIds.add(id);
+  state.messageDoneIds.add(id);
+  return [
+    { type: "response.output_item.added", output_index: outputIndex, item: { type: "message", id } },
+    { type: "response.output_text.delta", item_id: id, delta: text },
+    { type: "response.output_item.done", output_index: outputIndex, item: { type: "message", id } }
+  ];
+}
+function synthesizeFunctionCall(item, outputIndex, state) {
+  const normalized = normalizeFunctionItem(item, state);
+  const callId = String(normalized.call_id);
+  if (state.functionDoneCallIds.has(callId)) return [];
+  const events = [];
+  if (!state.functionAddedIndexes.has(outputIndex)) {
+    events.push({
+      type: "response.output_item.added",
+      output_index: outputIndex,
+      item: { ...normalized, arguments: "" }
+    });
+    state.functionAddedIndexes.add(outputIndex);
+  }
+  if (!state.functionDeltaIndexes.has(outputIndex) && typeof normalized.arguments === "string" && normalized.arguments.length > 0) {
+    events.push({
+      type: "response.function_call_arguments.delta",
+      item_id: normalized.id,
+      output_index: outputIndex,
+      delta: normalized.arguments
+    });
+    state.functionDeltaIndexes.add(outputIndex);
+  }
+  events.push({
+    type: "response.output_item.done",
+    output_index: outputIndex,
+    item: { ...normalized, status: "completed" }
+  });
+  state.functionDoneCallIds.add(callId);
+  state.lastOutputIndex = outputIndex;
+  return events;
+}
+function recoverFromCompletedOutput(response, state) {
+  if (!Array.isArray(response.output)) return [];
+  const recovered = [];
+  response.output.forEach((item, index) => {
+    if (!isRecord(item) || typeof item.type !== "string") return;
+    if (item.type === "message" && !state.textDeltaForwarded) {
+      recovered.push(...synthesizeMessage(item, index, state));
+    } else if (item.type === "function_call") {
+      recovered.push(...synthesizeFunctionCall(item, index, state));
+    }
+  });
+  return recovered;
+}
+function normalizeResponsesLiteEvent(event, state) {
+  if (!isRecord(event) || typeof event.type !== "string") return [event];
+  if (event.type === "error") return [normalizeErrorEvent(event)];
+  if (event.type === "response.output_item.added" && isRecord(event.item)) {
+    const outputIndex = typeof event.output_index === "number" ? event.output_index : state.lastOutputIndex;
+    state.lastOutputIndex = outputIndex;
+    if (event.item.type === "message") {
+      const id = asString(event.item.id) ?? nextId(state, "msg");
+      state.lastMessageItemId = id;
+      state.messageAddedIds.add(id);
+      return [{ ...event, output_index: outputIndex, item: { ...event.item, id } }];
+    }
+    if (event.item.type === "function_call") {
+      const item = normalizeFunctionItem(event.item, state);
+      state.functionAddedIndexes.add(outputIndex);
+      return [{ ...event, output_index: outputIndex, item }];
+    }
+    return [{ ...event, output_index: outputIndex }];
+  }
+  if (event.type === "response.output_item.done" && isRecord(event.item)) {
+    const outputIndex = typeof event.output_index === "number" ? event.output_index : state.lastOutputIndex;
+    if (event.item.type === "function_call") {
+      const item = normalizeFunctionItem(event.item, state, true);
+      const callId = String(item.call_id);
+      state.functionDoneCallIds.add(callId);
+      return [{ ...event, output_index: outputIndex, item }];
+    }
+    if (event.item.type === "message") {
+      const id = asString(event.item.id) ?? state.lastMessageItemId ?? nextId(state, "msg");
+      state.lastMessageItemId = id;
+      state.messageDoneIds.add(id);
+      return [{ ...event, output_index: outputIndex, item: { ...event.item, id } }];
+    }
+    return [{ ...event, output_index: outputIndex }];
+  }
+  if (event.type === "response.output_text.delta") {
+    const itemId = asString(event.item_id) ?? state.lastMessageItemId ?? nextId(state, "msg");
+    state.lastMessageItemId = itemId;
+    state.textDeltaForwarded = true;
+    const events = [];
+    if (!state.messageAddedIds.has(itemId)) {
+      events.push({
+        type: "response.output_item.added",
+        output_index: state.lastOutputIndex,
+        item: { type: "message", id: itemId }
+      });
+      state.messageAddedIds.add(itemId);
+    }
+    events.push({ ...event, item_id: itemId, delta: typeof event.delta === "string" ? event.delta : "" });
+    return events;
+  }
+  if (event.type === "response.function_call_arguments.delta") {
+    const itemId = asString(event.item_id) ?? state.lastFunctionItemId ?? nextId(state, "fc");
+    const outputIndex = typeof event.output_index === "number" ? event.output_index : state.lastOutputIndex;
+    state.lastFunctionItemId = itemId;
+    state.lastOutputIndex = outputIndex;
+    state.functionDeltaIndexes.add(outputIndex);
+    return [{ ...event, item_id: itemId, output_index: outputIndex, delta: typeof event.delta === "string" ? event.delta : "" }];
+  }
+  if (event.type === "response.completed" || event.type === "response.incomplete") {
+    const response = isRecord(event.response) ? event.response : {};
+    const recovered = recoverFromCompletedOutput(response, state);
+    if (state.lastMessageItemId && state.textDeltaForwarded && !state.messageDoneIds.has(state.lastMessageItemId)) {
+      recovered.push({
+        type: "response.output_item.done",
+        output_index: state.lastOutputIndex,
+        item: { type: "message", id: state.lastMessageItemId }
+      });
+      state.messageDoneIds.add(state.lastMessageItemId);
+    }
+    return [...recovered, event];
+  }
+  return [event];
+}
 function toHeaderRecord(headers) {
   const out = {};
   if (!headers) return out;
@@ -346,10 +568,14 @@ function createResponsesWebSocketFetch(wsUrl, log) {
     if (hasResponsesLiteHeader(headers)) {
       payload = applyResponsesLiteShape(payload);
     }
+    debug(
+      `request type=response.create keys=${Object.keys(payload).sort().join(",")} toolCount=${Array.isArray(payload.tools) ? payload.tools.length : 0} store=${String(payload.store)} parallelToolCalls=${String(payload.parallel_tool_calls)} reasoningKeys=${recordKeys(payload.reasoning)}`
+    );
     const outgoing = JSON.stringify({ type: "response.create", ...payload });
     const encoder = new TextEncoder();
     let socket;
     let frameCount = 0;
+    const normalizeState = createResponsesLiteNormalizeState();
     const stream = new ReadableStream({
       start(controller) {
         let closed = false;
@@ -367,13 +593,12 @@ function createResponsesWebSocketFetch(wsUrl, log) {
         };
         const fail = (message) => {
           if (closed) return;
-          debug(`fail: ${message}`);
+          debug(`fail messageChars=${message.length}`);
           try {
-            controller.enqueue(encoder.encode(
-              `data: ${JSON.stringify({ type: "error", error: { message } })}
+            const [errorEvent] = normalizeResponsesLiteEvent({ type: "error", error: { message } }, normalizeState);
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}
 
-`
-            ));
+`));
           } catch {
           }
           close();
@@ -389,28 +614,31 @@ function createResponsesWebSocketFetch(wsUrl, log) {
         socket.on("message", (data) => {
           const text = Array.isArray(data) ? Buffer.concat(data).toString("utf8") : data.toString("utf8");
           frameCount += 1;
-          if (frameCount <= 3) debug(`frame#${frameCount}: ${text.slice(0, 200)}`);
           let event;
           try {
             event = JSON.parse(text);
           } catch {
+            debug(`frame#${frameCount} non-json chars=${text.length}`);
             controller.enqueue(encoder.encode(`data: ${text.replace(/\r?\n/g, " ")}
 
 `));
             return;
           }
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}
+          if (frameCount <= 8) debug(`frame#${frameCount} ${summarizeResponsesLiteEvent(event)}`);
+          for (const next of normalizeResponsesLiteEvent(event, normalizeState)) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(next)}
 
 `));
-          const type = event.type;
-          if (typeof type === "string" && TERMINAL_EVENT_TYPES.has(type)) {
+          }
+          const type = isRecord(event) && typeof event.type === "string" ? event.type : void 0;
+          if (type && TERMINAL_EVENT_TYPES.has(type)) {
             debug(`terminal event: ${type} (after ${frameCount} frames)`);
             close();
           }
         });
         socket.on("error", (err) => fail(err.message));
         socket.on("close", (code, reason) => {
-          debug(`close code=${code} frames=${frameCount}${reason?.length ? ` reason=${reason.toString("utf8").slice(0, 200)}` : ""}`);
+          debug(`close code=${code} frames=${frameCount}${reason?.length ? ` reasonChars=${reason.length}` : ""}`);
           if (closed) return;
           if (code === 1e3 || code === 1005) {
             close();
@@ -1513,6 +1741,12 @@ var SCOPES = [
 ].join(" ");
 var ANTIGRAVITY_VERSION = "4.2.0";
 var ANTIGRAVITY_USER_AGENT = `vscode/1.X.X (Antigravity/${ANTIGRAVITY_VERSION})`;
+var ANTIGRAVITY_BASE_URLS = [
+  "https://daily-cloudcode-pa.googleapis.com",
+  "https://cloudcode-pa.googleapis.com",
+  "https://daily-cloudcode-pa.sandbox.googleapis.com"
+];
+var ANTIGRAVITY_API_VERSION = "v1internal";
 async function refreshAntigravityToken(refreshToken) {
   return postOAuthRefresh(
     TOKEN_URL3,
@@ -2401,7 +2635,185 @@ function providerRefreshToken(providerId, authType, authRef) {
   return () => forceRefreshProviderCredential(providerId, authRef ?? oauthAuthRef(providerId));
 }
 
+// src/core/antigravity-model.ts
+import { randomUUID as randomUUID2 } from "crypto";
+var CLOUD_CODE_BASE = ANTIGRAVITY_BASE_URLS[0].replace(/\/+$/, "");
+var STREAM_URL = `${CLOUD_CODE_BASE}/${ANTIGRAVITY_API_VERSION}:streamGenerateContent?alt=sse`;
+var UNARY_URL = `${CLOUD_CODE_BASE}/${ANTIGRAVITY_API_VERSION}:generateContent`;
+var SDK_BASE_URL = `${CLOUD_CODE_BASE}/v1beta`;
+function unwrapCloudCodeSsePayload(payload) {
+  const trimmed = payload.trim();
+  if (trimmed === "" || trimmed === "[DONE]") return payload;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (isWrappedCloudCodeBody(parsed)) {
+      return JSON.stringify(parsed.response);
+    }
+  } catch {
+  }
+  return payload;
+}
+function unwrapCloudCodeJsonBody(text) {
+  try {
+    const parsed = JSON.parse(text);
+    if (isWrappedCloudCodeBody(parsed)) {
+      return JSON.stringify(parsed.response);
+    }
+  } catch {
+  }
+  return text;
+}
+function consumeCloudCodeSseBuffer(buffer) {
+  const separator = /\r?\n\r?\n/;
+  let rest = buffer;
+  let emitted = "";
+  while (true) {
+    const match = separator.exec(rest);
+    if (!match || match.index === void 0) break;
+    const rawEvent = rest.slice(0, match.index);
+    const sep = match[0];
+    rest = rest.slice(match.index + sep.length);
+    emitted += transformSseEvent(rawEvent) + sep;
+  }
+  return { emitted, rest };
+}
+function createCloudCodeSseUnwrapper() {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let pending = "";
+  return new TransformStream({
+    transform(chunk, controller) {
+      pending += decoder.decode(chunk, { stream: true });
+      const { emitted, rest } = consumeCloudCodeSseBuffer(pending);
+      pending = rest;
+      if (emitted) controller.enqueue(encoder.encode(emitted));
+    },
+    flush(controller) {
+      pending += decoder.decode();
+      if (!pending) return;
+      const { emitted, rest } = consumeCloudCodeSseBuffer(pending);
+      const tail = emitted + (rest ? transformSseEvent(rest) : "");
+      if (tail) controller.enqueue(encoder.encode(tail));
+    }
+  });
+}
+function createCloudCodeFetch(options, fetchImpl) {
+  let accessToken = options.accessToken;
+  return async (input, init) => {
+    const url = requestUrl(input);
+    const streaming = url.includes("streamGenerateContent");
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : void 0);
+    const geminiBody = await readJsonBody(input, init);
+    const envelope = {
+      project: options.projectId,
+      requestId: randomUUID2(),
+      model: options.modelId,
+      userAgent: ANTIGRAVITY_USER_AGENT,
+      requestType: "agent",
+      enabledCreditTypes: ["GOOGLE_ONE_AI"],
+      request: geminiBody
+    };
+    const body = JSON.stringify(envelope);
+    const upstreamUrl = streaming ? STREAM_URL : UNARY_URL;
+    const doFetch = fetchImpl ?? ((input2, init2) => globalThis.fetch(input2, init2));
+    const send = (token) => doFetch(upstreamUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "User-Agent": ANTIGRAVITY_USER_AGENT
+      },
+      body,
+      signal
+    });
+    let response;
+    try {
+      response = await send(accessToken);
+    } catch (err) {
+      if (isAbortError(err, signal)) throw abortError(signal, err);
+      throw err;
+    }
+    if (response.status === 401 && options.refreshToken && !signal?.aborted) {
+      const refreshed = await options.refreshToken().catch(() => null);
+      if (refreshed && refreshed !== accessToken && !signal?.aborted) {
+        accessToken = refreshed;
+        try {
+          response = await send(accessToken);
+        } catch (err) {
+          if (isAbortError(err, signal)) throw abortError(signal, err);
+          throw err;
+        }
+      }
+    }
+    return adaptUpstreamResponse(response, streaming);
+  };
+}
+async function createAntigravityCloudCodeModel(options) {
+  const { createGoogleGenerativeAI } = await import("@ai-sdk/google");
+  const google = createGoogleGenerativeAI({
+    apiKey: "relay-cloud-code",
+    baseURL: SDK_BASE_URL,
+    fetch: createCloudCodeFetch(options)
+  });
+  return google(options.modelId);
+}
+function isWrappedCloudCodeBody(parsed) {
+  return !!parsed && typeof parsed === "object" && !Array.isArray(parsed) && "response" in parsed && parsed.response !== null && typeof parsed.response === "object";
+}
+function transformSseEvent(event) {
+  return event.replace(/^(data:[ \t]*)(.*)$/gm, (_all, prefix, payload) => `${prefix}${unwrapCloudCodeSsePayload(payload)}`);
+}
+function requestUrl(input) {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+}
+async function readJsonBody(input, init) {
+  const body = init?.body;
+  if (typeof body === "string") return JSON.parse(body);
+  if (body instanceof Uint8Array) return JSON.parse(new TextDecoder().decode(body));
+  if (body instanceof ArrayBuffer) return JSON.parse(new TextDecoder().decode(body));
+  const request = input instanceof Request ? input.clone() : new Request(input, init);
+  return request.json();
+}
+async function adaptUpstreamResponse(upstream, streaming) {
+  const fallbackType = streaming ? "text/event-stream" : "application/json";
+  const contentType = upstream.headers.get("content-type") ?? fallbackType;
+  const headers = new Headers({ "Content-Type": contentType });
+  if (!upstream.ok) {
+    const errBody = await upstream.text();
+    return new Response(errBody, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers
+    });
+  }
+  if (streaming) {
+    const body = upstream.body ? upstream.body.pipeThrough(createCloudCodeSseUnwrapper()) : null;
+    return new Response(body, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers
+    });
+  }
+  const text = await upstream.text();
+  headers.set("Content-Type", "application/json");
+  return new Response(unwrapCloudCodeJsonBody(text), { status: 200, headers });
+}
+function isAbortError(err, signal) {
+  if (signal?.aborted) return true;
+  return !!err && typeof err === "object" && err.name === "AbortError";
+}
+function abortError(signal, cause) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  if (cause instanceof Error) return cause;
+  return new DOMException("This operation was aborted", "AbortError");
+}
+
 // src/core/model.ts
+function isAntigravityCloudCodeRoute(provider, model) {
+  return provider.id === "antigravity" && provider.authType === "oauth" && model.modelFormat === "cloud-code";
+}
 function findRoute(registry, providerId, modelId, routeId) {
   const provider = registry.providers.find((p) => p.id === providerId);
   if (!provider) {
@@ -2442,10 +2854,37 @@ async function resolveCredential(provider, routeId) {
     );
   }
 }
-async function createRelayModel(routeId) {
+async function createRelayModel(routeId, options) {
   const { providerId, modelId } = parseRelayRouteId(routeId);
   const registry = loadCoreRegistry();
   const { provider, model } = findRoute(registry, providerId, modelId, routeId);
+  if (isAntigravityCloudCodeRoute(provider, model)) {
+    const apiKey2 = await resolveCredential(provider, routeId);
+    const providerData2 = await resolveProviderOAuthProviderData(provider.authRef);
+    const projectId = typeof providerData2?.projectId === "string" ? providerData2.projectId.trim() : "";
+    if (!projectId) {
+      throw new RelayCoreError(
+        "CREDENTIAL_UNAVAILABLE",
+        `Provider "${provider.name}" is missing project metadata \u2014 re-authenticate in relay-ai ui.`,
+        { providerId: provider.id, routeId }
+      );
+    }
+    try {
+      return await createAntigravityCloudCodeModel({
+        modelId: model.upstreamModelId ?? model.id,
+        accessToken: apiKey2,
+        projectId,
+        refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
+      });
+    } catch (err) {
+      if (isRelayCoreError(err)) throw err;
+      throw new RelayCoreError(
+        "PROVIDER_LOAD_FAILED",
+        `Failed to construct model "${modelId}" for provider "${provider.name}".`,
+        { providerId, routeId, cause: err }
+      );
+    }
+  }
   const npm = model.npm ?? provider.api.npm;
   if (!npm) {
     throw new RelayCoreError("UNSUPPORTED_MODEL", `Model "${modelId}" has no SDK provider package \u2014 refresh the provider's models in relay-ai ui.`, { providerId, routeId });
@@ -2469,7 +2908,8 @@ async function createRelayModel(routeId) {
     headers: provider.api.headers,
     refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
     useResponsesLite: model.useResponsesLite,
-    preferWebSockets: model.preferWebSockets
+    preferWebSockets: model.preferWebSockets,
+    ...options?.onDebug ? { onDebug: options.onDebug } : {}
   };
   try {
     return await createLanguageModel(spec);

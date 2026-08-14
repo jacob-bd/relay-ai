@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.9.1",
+  version: "0.9.2",
   publishConfig: {
     access: "public"
   },
@@ -345,7 +345,229 @@ async function runOpenAiDeviceCodeFlow(onDeviceCode, opts) {
 
 // src/oauth/responses-websocket.ts
 var RESPONSES_LITE_HEADER = "x-openai-internal-codex-responses-lite";
-var TERMINAL_EVENT_TYPES = /* @__PURE__ */ new Set(["response.completed", "response.failed", "response.incomplete"]);
+var TERMINAL_EVENT_TYPES = /* @__PURE__ */ new Set(["response.completed", "response.failed", "response.incomplete", "error"]);
+function isRecord(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+function recordKeys(value) {
+  return isRecord(value) ? Object.keys(value).sort().join(",") : "";
+}
+function summarizeResponsesLiteEvent(event) {
+  if (!isRecord(event)) return `kind=${event == null ? "null" : typeof event}`;
+  const parts = [`type=${typeof event.type === "string" ? event.type : "unknown"}`, `keys=${recordKeys(event)}`];
+  if (typeof event.delta === "string") parts.push(`deltaChars=${event.delta.length}`);
+  if (typeof event.output_index === "number") parts.push(`hasOutputIndex=1`);
+  if (typeof event.item_id === "string") parts.push(`hasItemId=1`);
+  if (isRecord(event.item)) {
+    parts.push(`itemType=${typeof event.item.type === "string" ? event.item.type : "unknown"}`);
+    parts.push(`itemKeys=${recordKeys(event.item)}`);
+    if (typeof event.item.arguments === "string") parts.push(`argumentsChars=${event.item.arguments.length}`);
+  }
+  if (isRecord(event.response)) {
+    parts.push(`responseKeys=${recordKeys(event.response)}`);
+    if (Array.isArray(event.response.output)) {
+      parts.push(`outputCount=${event.response.output.length}`);
+      parts.push(`outputTypes=${event.response.output.map((item) => isRecord(item) && typeof item.type === "string" ? item.type : "unknown").join(",")}`);
+    }
+    if (isRecord(event.response.usage)) parts.push(`usageKeys=${recordKeys(event.response.usage)}`);
+    if (typeof event.response.status === "string") parts.push(`status=${event.response.status}`);
+  }
+  if (isRecord(event.error)) {
+    parts.push(`errorKeys=${recordKeys(event.error)}`);
+    if (typeof event.error.message === "string") parts.push(`messageChars=${event.error.message.length}`);
+  }
+  return parts.join(" ");
+}
+function createResponsesLiteNormalizeState() {
+  return {
+    nextId: 1,
+    lastOutputIndex: 0,
+    textDeltaForwarded: false,
+    messageAddedIds: /* @__PURE__ */ new Set(),
+    messageDoneIds: /* @__PURE__ */ new Set(),
+    functionAddedIndexes: /* @__PURE__ */ new Set(),
+    functionDeltaIndexes: /* @__PURE__ */ new Set(),
+    functionDoneCallIds: /* @__PURE__ */ new Set()
+  };
+}
+function nextId(state, prefix) {
+  const id = `${prefix}_${state.nextId}`;
+  state.nextId += 1;
+  return id;
+}
+function asString(value) {
+  return typeof value === "string" && value.length > 0 ? value : void 0;
+}
+function normalizeErrorEvent(event) {
+  const raw = isRecord(event.error) ? event.error : { message: typeof event.error === "string" ? event.error : "upstream error" };
+  return {
+    type: "error",
+    sequence_number: typeof event.sequence_number === "number" ? event.sequence_number : 0,
+    error: {
+      type: asString(raw.type) ?? "server_error",
+      code: asString(raw.code) ?? "unknown",
+      message: asString(raw.message) ?? "upstream error",
+      ...raw.param == null ? {} : { param: raw.param }
+    }
+  };
+}
+function normalizeFunctionItem(item, state, forDone = false) {
+  const callId = asString(item.call_id) ?? asString(item.id) ?? nextId(state, "call");
+  const id = asString(item.id) ?? nextId(state, "fc");
+  state.lastFunctionItemId = id;
+  return {
+    ...item,
+    type: "function_call",
+    id,
+    call_id: callId,
+    name: asString(item.name) ?? "",
+    arguments: typeof item.arguments === "string" ? item.arguments : "",
+    ...forDone ? { status: "completed" } : {}
+  };
+}
+function messageText(item) {
+  if (typeof item.text === "string") return item.text;
+  if (!Array.isArray(item.content)) return "";
+  let out = "";
+  for (const part of item.content) {
+    if (isRecord(part) && typeof part.text === "string" && (part.type === "output_text" || part.type === "text")) {
+      out += part.text;
+    }
+  }
+  return out;
+}
+function synthesizeMessage(item, outputIndex, state) {
+  const text4 = messageText(item);
+  if (!text4) return [];
+  const id = asString(item.id) ?? nextId(state, "msg");
+  state.lastMessageItemId = id;
+  state.textDeltaForwarded = true;
+  state.messageAddedIds.add(id);
+  state.messageDoneIds.add(id);
+  return [
+    { type: "response.output_item.added", output_index: outputIndex, item: { type: "message", id } },
+    { type: "response.output_text.delta", item_id: id, delta: text4 },
+    { type: "response.output_item.done", output_index: outputIndex, item: { type: "message", id } }
+  ];
+}
+function synthesizeFunctionCall(item, outputIndex, state) {
+  const normalized = normalizeFunctionItem(item, state);
+  const callId = String(normalized.call_id);
+  if (state.functionDoneCallIds.has(callId)) return [];
+  const events = [];
+  if (!state.functionAddedIndexes.has(outputIndex)) {
+    events.push({
+      type: "response.output_item.added",
+      output_index: outputIndex,
+      item: { ...normalized, arguments: "" }
+    });
+    state.functionAddedIndexes.add(outputIndex);
+  }
+  if (!state.functionDeltaIndexes.has(outputIndex) && typeof normalized.arguments === "string" && normalized.arguments.length > 0) {
+    events.push({
+      type: "response.function_call_arguments.delta",
+      item_id: normalized.id,
+      output_index: outputIndex,
+      delta: normalized.arguments
+    });
+    state.functionDeltaIndexes.add(outputIndex);
+  }
+  events.push({
+    type: "response.output_item.done",
+    output_index: outputIndex,
+    item: { ...normalized, status: "completed" }
+  });
+  state.functionDoneCallIds.add(callId);
+  state.lastOutputIndex = outputIndex;
+  return events;
+}
+function recoverFromCompletedOutput(response, state) {
+  if (!Array.isArray(response.output)) return [];
+  const recovered = [];
+  response.output.forEach((item, index) => {
+    if (!isRecord(item) || typeof item.type !== "string") return;
+    if (item.type === "message" && !state.textDeltaForwarded) {
+      recovered.push(...synthesizeMessage(item, index, state));
+    } else if (item.type === "function_call") {
+      recovered.push(...synthesizeFunctionCall(item, index, state));
+    }
+  });
+  return recovered;
+}
+function normalizeResponsesLiteEvent(event, state) {
+  if (!isRecord(event) || typeof event.type !== "string") return [event];
+  if (event.type === "error") return [normalizeErrorEvent(event)];
+  if (event.type === "response.output_item.added" && isRecord(event.item)) {
+    const outputIndex = typeof event.output_index === "number" ? event.output_index : state.lastOutputIndex;
+    state.lastOutputIndex = outputIndex;
+    if (event.item.type === "message") {
+      const id = asString(event.item.id) ?? nextId(state, "msg");
+      state.lastMessageItemId = id;
+      state.messageAddedIds.add(id);
+      return [{ ...event, output_index: outputIndex, item: { ...event.item, id } }];
+    }
+    if (event.item.type === "function_call") {
+      const item = normalizeFunctionItem(event.item, state);
+      state.functionAddedIndexes.add(outputIndex);
+      return [{ ...event, output_index: outputIndex, item }];
+    }
+    return [{ ...event, output_index: outputIndex }];
+  }
+  if (event.type === "response.output_item.done" && isRecord(event.item)) {
+    const outputIndex = typeof event.output_index === "number" ? event.output_index : state.lastOutputIndex;
+    if (event.item.type === "function_call") {
+      const item = normalizeFunctionItem(event.item, state, true);
+      const callId = String(item.call_id);
+      state.functionDoneCallIds.add(callId);
+      return [{ ...event, output_index: outputIndex, item }];
+    }
+    if (event.item.type === "message") {
+      const id = asString(event.item.id) ?? state.lastMessageItemId ?? nextId(state, "msg");
+      state.lastMessageItemId = id;
+      state.messageDoneIds.add(id);
+      return [{ ...event, output_index: outputIndex, item: { ...event.item, id } }];
+    }
+    return [{ ...event, output_index: outputIndex }];
+  }
+  if (event.type === "response.output_text.delta") {
+    const itemId = asString(event.item_id) ?? state.lastMessageItemId ?? nextId(state, "msg");
+    state.lastMessageItemId = itemId;
+    state.textDeltaForwarded = true;
+    const events = [];
+    if (!state.messageAddedIds.has(itemId)) {
+      events.push({
+        type: "response.output_item.added",
+        output_index: state.lastOutputIndex,
+        item: { type: "message", id: itemId }
+      });
+      state.messageAddedIds.add(itemId);
+    }
+    events.push({ ...event, item_id: itemId, delta: typeof event.delta === "string" ? event.delta : "" });
+    return events;
+  }
+  if (event.type === "response.function_call_arguments.delta") {
+    const itemId = asString(event.item_id) ?? state.lastFunctionItemId ?? nextId(state, "fc");
+    const outputIndex = typeof event.output_index === "number" ? event.output_index : state.lastOutputIndex;
+    state.lastFunctionItemId = itemId;
+    state.lastOutputIndex = outputIndex;
+    state.functionDeltaIndexes.add(outputIndex);
+    return [{ ...event, item_id: itemId, output_index: outputIndex, delta: typeof event.delta === "string" ? event.delta : "" }];
+  }
+  if (event.type === "response.completed" || event.type === "response.incomplete") {
+    const response = isRecord(event.response) ? event.response : {};
+    const recovered = recoverFromCompletedOutput(response, state);
+    if (state.lastMessageItemId && state.textDeltaForwarded && !state.messageDoneIds.has(state.lastMessageItemId)) {
+      recovered.push({
+        type: "response.output_item.done",
+        output_index: state.lastOutputIndex,
+        item: { type: "message", id: state.lastMessageItemId }
+      });
+      state.messageDoneIds.add(state.lastMessageItemId);
+    }
+    return [...recovered, event];
+  }
+  return [event];
+}
 function toHeaderRecord(headers) {
   const out = {};
   if (!headers) return out;
@@ -403,10 +625,14 @@ function createResponsesWebSocketFetch(wsUrl, log7) {
     if (hasResponsesLiteHeader(headers)) {
       payload = applyResponsesLiteShape(payload);
     }
+    debug(
+      `request type=response.create keys=${Object.keys(payload).sort().join(",")} toolCount=${Array.isArray(payload.tools) ? payload.tools.length : 0} store=${String(payload.store)} parallelToolCalls=${String(payload.parallel_tool_calls)} reasoningKeys=${recordKeys(payload.reasoning)}`
+    );
     const outgoing = JSON.stringify({ type: "response.create", ...payload });
     const encoder = new TextEncoder();
     let socket;
     let frameCount = 0;
+    const normalizeState = createResponsesLiteNormalizeState();
     const stream = new ReadableStream({
       start(controller) {
         let closed = false;
@@ -424,13 +650,12 @@ function createResponsesWebSocketFetch(wsUrl, log7) {
         };
         const fail = (message) => {
           if (closed) return;
-          debug(`fail: ${message}`);
+          debug(`fail messageChars=${message.length}`);
           try {
-            controller.enqueue(encoder.encode(
-              `data: ${JSON.stringify({ type: "error", error: { message } })}
+            const [errorEvent] = normalizeResponsesLiteEvent({ type: "error", error: { message } }, normalizeState);
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}
 
-`
-            ));
+`));
           } catch {
           }
           close();
@@ -446,28 +671,31 @@ function createResponsesWebSocketFetch(wsUrl, log7) {
         socket.on("message", (data) => {
           const text4 = Array.isArray(data) ? Buffer.concat(data).toString("utf8") : data.toString("utf8");
           frameCount += 1;
-          if (frameCount <= 3) debug(`frame#${frameCount}: ${text4.slice(0, 200)}`);
           let event;
           try {
             event = JSON.parse(text4);
           } catch {
+            debug(`frame#${frameCount} non-json chars=${text4.length}`);
             controller.enqueue(encoder.encode(`data: ${text4.replace(/\r?\n/g, " ")}
 
 `));
             return;
           }
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}
+          if (frameCount <= 8) debug(`frame#${frameCount} ${summarizeResponsesLiteEvent(event)}`);
+          for (const next of normalizeResponsesLiteEvent(event, normalizeState)) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(next)}
 
 `));
-          const type = event.type;
-          if (typeof type === "string" && TERMINAL_EVENT_TYPES.has(type)) {
+          }
+          const type = isRecord(event) && typeof event.type === "string" ? event.type : void 0;
+          if (type && TERMINAL_EVENT_TYPES.has(type)) {
             debug(`terminal event: ${type} (after ${frameCount} frames)`);
             close();
           }
         });
         socket.on("error", (err) => fail(err.message));
         socket.on("close", (code, reason) => {
-          debug(`close code=${code} frames=${frameCount}${reason?.length ? ` reason=${reason.toString("utf8").slice(0, 200)}` : ""}`);
+          debug(`close code=${code} frames=${frameCount}${reason?.length ? ` reasonChars=${reason.length}` : ""}`);
           if (closed) return;
           if (code === 1e3 || code === 1005) {
             close();
@@ -2348,7 +2576,7 @@ var ANTIGRAVITY_BASE_URLS = [
   "https://cloudcode-pa.googleapis.com",
   "https://daily-cloudcode-pa.sandbox.googleapis.com"
 ];
-var API_VERSION = "v1internal";
+var ANTIGRAVITY_API_VERSION = "v1internal";
 async function buildAntigravityAuthUrl(redirectUri) {
   const { verifier, challenge } = await generatePkce();
   const state = generateOAuthState();
@@ -2470,7 +2698,7 @@ function resolveAntigravityOnboardTierId(data) {
   return pickTierId(sub.currentTier) ?? "legacy-tier";
 }
 async function loadCodeAssist(accessToken) {
-  const endpoints = ANTIGRAVITY_BASE_URLS.map((b) => `${b}/${API_VERSION}:loadCodeAssist`);
+  const endpoints = ANTIGRAVITY_BASE_URLS.map((b) => `${b}/${ANTIGRAVITY_API_VERSION}:loadCodeAssist`);
   const res = await fetchFirstOk(endpoints, {
     method: "POST",
     headers: apiHeaders(accessToken),
@@ -2487,7 +2715,7 @@ async function loadCodeAssist(accessToken) {
   };
 }
 async function onboardUser(accessToken, tierId, maxAttempts = 10) {
-  const endpoints = ANTIGRAVITY_BASE_URLS.map((b) => `${b}/${API_VERSION}:onboardUser`);
+  const endpoints = ANTIGRAVITY_BASE_URLS.map((b) => `${b}/${ANTIGRAVITY_API_VERSION}:onboardUser`);
   let finalProjectId = "";
   for (let i = 0; i < maxAttempts; i++) {
     const res = await fetchFirstOk(endpoints, {
@@ -4742,7 +4970,7 @@ var SubagentRouteRegistry = class {
 // src/subagent-model-routing.ts
 var CLAUDE_MODEL_FAMILIES = ["sonnet", "opus", "haiku", "fable"];
 var CLAUDE_MODEL_FAMILY_SET = new Set(CLAUDE_MODEL_FAMILIES);
-function isRecord(value) {
+function isRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function claudeModelFamily(modelId) {
@@ -4751,10 +4979,10 @@ function claudeModelFamily(modelId) {
   return CLAUDE_MODEL_FAMILIES.find((family) => normalized.includes(family));
 }
 function isClaudeAgentTool(tool4) {
-  if (tool4.name !== "Agent" || !isRecord(tool4.input_schema)) return false;
+  if (tool4.name !== "Agent" || !isRecord2(tool4.input_schema)) return false;
   const properties = tool4.input_schema.properties;
-  if (!isRecord(properties)) return false;
-  return ["description", "prompt", "subagent_type"].every((name) => isRecord(properties[name]));
+  if (!isRecord2(properties)) return false;
+  return ["description", "prompt", "subagent_type"].every((name) => isRecord2(properties[name]));
 }
 var UnavailableSubagentModelError = class extends Error {
   constructor(selector, routing) {
@@ -4771,7 +4999,7 @@ var UnavailableSubagentModelError = class extends Error {
   statusCode = 400;
 };
 function normalizeClaudeAgentInput(input, routing) {
-  const source = isRecord(input) ? input : {};
+  const source = isRecord2(input) ? input : {};
   const normalized = { ...source };
   if (source.subagent_type === "fork") {
     return { input: normalized, decision: { kind: "fork" } };
@@ -4843,9 +5071,9 @@ function prepareClaudeAgentInput(input, routing) {
   return { input: clientInput, decision };
 }
 function augmentClaudeAgentTool(tool4, routing) {
-  const inputSchema = isRecord(tool4.input_schema) ? tool4.input_schema : {};
-  const properties = isRecord(inputSchema.properties) ? inputSchema.properties : {};
-  const originalModel = isRecord(properties.model) ? properties.model : {};
+  const inputSchema = isRecord2(tool4.input_schema) ? tool4.input_schema : {};
+  const properties = isRecord2(inputSchema.properties) ? inputSchema.properties : {};
+  const originalModel = isRecord2(properties.model) ? properties.model : {};
   const smallCatalog = routing.models.length <= MAX_MODEL_CATALOG;
   const modelProperty = {
     ...originalModel,
@@ -13292,4 +13520,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-MFKBK6YL.js.map
+//# sourceMappingURL=chunk-GQCFLSEM.js.map
