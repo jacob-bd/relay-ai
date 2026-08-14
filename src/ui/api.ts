@@ -23,7 +23,11 @@ import { loadRegistry } from '../registry/io.js';
 import { refreshProviderModels, refreshAllProviderModels } from '../registry/refresh-models.js';
 import { listAddableTemplates, listVisibleOAuthTemplates, PROVIDER_TEMPLATES } from '../provider-templates.js';
 import { addProviderFromTemplate, type AddTemplateResult } from '../registry/add-template.js';
-import { addCustomEndpointProvider, type CustomEndpointKind } from '../registry/custom-endpoint.js';
+import {
+  addCustomEndpointProvider,
+  updateCustomEndpointProvider,
+  type CustomEndpointKind,
+} from '../registry/custom-endpoint.js';
 import { validateCustomEndpointUrl } from '../registry/url-security.js';
 import { saveNativeOAuthCredential } from '../registry/provider-auth.js';
 import { removeProviderFromRegistry } from '../registry/crud.js';
@@ -156,6 +160,8 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
     handleAddProvider(req, res);
   } else if (url === '/api/providers/add-custom' && req.method === 'POST') {
     handleAddCustomProvider(req, res);
+  } else if (url === '/api/providers/edit-custom' && req.method === 'POST') {
+    handleEditCustomProvider(req, res);
   } else if (url === '/api/providers/delete' && req.method === 'POST') {
     handleDeleteProvider(req, res);
   } else if (url === '/api/providers/oauth/start' && req.method === 'POST') {
@@ -238,6 +244,15 @@ async function handleGetModels(
     else if (target) catalog = providersForTarget(catalog, target);
     const registry = loadRegistry();
     const rawCountById = new Map(registry.providers.map(p => [p.id, p.modelsCache?.models.length ?? 0]));
+    const customById = new Map(
+      registry.providers
+        .filter(rp => rp.templateId === 'custom-openai' || rp.templateId === 'custom-anthropic')
+        .map(rp => [rp.id, {
+          kind: rp.templateId === 'custom-anthropic' ? 'anthropic' as const : 'openai' as const,
+          baseUrl: rp.api.url ?? '',
+          headers: rp.api.headers ?? {},
+        }]),
+    );
     const providers = catalog.map(p => ({
       id: p.id,
       name: p.name,
@@ -253,6 +268,7 @@ async function handleGetModels(
       // that safe count with the larger raw cache count.
       modelCount: p.id === 'github-copilot' ? p.models.length : (rawCountById.get(p.id) ?? p.models.length),
       ...(p.id === 'github-copilot' ? { subscription: copilotSubscription(p.providerData) } : {}),
+      ...(customById.has(p.id) ? { customEndpoint: customById.get(p.id) } : {}),
       models: p.models.map(m => ({
         id: m.id,
         name: m.name,
@@ -385,9 +401,10 @@ function handleGetTemplates(res: ServerResponse): void {
 async function handleAddCustomProvider(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
     const body = JSON.parse(await readBody(req)) as {
-      kind?: string; displayName?: string; baseUrl?: string; apiKey?: string; headers?: Record<string, string>;
+      kind?: string; displayName?: string; baseUrl?: string; apiKey?: string;
+      headers?: Record<string, string>; confirmDuplicate?: boolean;
     };
-    const { kind, displayName, baseUrl, apiKey = '', headers } = body;
+    const { kind, displayName, baseUrl, apiKey = '', headers, confirmDuplicate } = body;
     if (kind !== 'openai' && kind !== 'anthropic') {
       sendJson(res, 400, { error: 'kind must be "openai" or "anthropic"' }); return;
     }
@@ -404,11 +421,63 @@ async function handleAddCustomProvider(req: IncomingMessage, res: ServerResponse
       apiKey: apiKey.trim(),
       allowInsecureLocal: true,
       headers: headers && Object.keys(headers).length > 0 ? headers : undefined,
+      confirmDuplicate: confirmDuplicate === true,
     });
     if (result.added) {
       sendJson(res, 200, { ok: true, name: displayName.trim(), count: result.modelCount ?? 0 });
     } else {
-      sendJson(res, 200, { ok: false, error: result.error, hint: result.hint });
+      sendJson(res, 200, {
+        ok: false,
+        error: result.error,
+        hint: result.hint,
+        ...(result.duplicateOf ? { duplicateOf: result.duplicateOf } : {}),
+      });
+    }
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+async function handleEditCustomProvider(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  try {
+    const body = JSON.parse(await readBody(req)) as {
+      providerId?: string;
+      displayName?: string;
+      baseUrl?: string;
+      apiKey?: string;
+      headers?: Record<string, string>;
+      saveAnyway?: boolean;
+    };
+    if (!body.providerId?.trim()) {
+      sendJson(res, 400, { error: 'providerId required' });
+      return;
+    }
+    const result = await updateCustomEndpointProvider({
+      providerId: body.providerId.trim(),
+      displayName: body.displayName?.trim(),
+      baseUrl: body.baseUrl?.trim(),
+      apiKey: body.apiKey?.trim(),
+      headers: body.headers,
+      allowInsecureLocal: true,
+      saveAnyway: body.saveAnyway === true,
+    });
+    if (result.updated) {
+      sendJson(res, 200, {
+        ok: true,
+        name: result.provider?.name ?? body.providerId,
+        count: result.modelCount ?? 0,
+        ...(result.modelsStale ? { modelsStale: true } : {}),
+      });
+    } else {
+      sendJson(res, 200, {
+        ok: false,
+        error: result.error,
+        hint: result.hint,
+        ...(result.canSaveAnyway ? { canSaveAnyway: true } : {}),
+      });
     }
   } catch (err) {
     sendJson(res, 500, { error: String(err) });
