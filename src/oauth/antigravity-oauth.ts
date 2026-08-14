@@ -35,7 +35,7 @@ const SCOPES = [
 
 // Pinned to Antigravity-Manager version used for header fingerprinting.
 const ANTIGRAVITY_VERSION = '4.2.0';
-const ANTIGRAVITY_USER_AGENT = `vscode/1.X.X (Antigravity/${ANTIGRAVITY_VERSION})`;
+export const ANTIGRAVITY_USER_AGENT = `vscode/1.X.X (Antigravity/${ANTIGRAVITY_VERSION})`;
 const ANTIGRAVITY_METADATA = { ideType: 'ANTIGRAVITY' };
 
 // Cloud Code Assist base URLs — tried in order, first success wins.
@@ -44,7 +44,7 @@ export const ANTIGRAVITY_BASE_URLS = [
   'https://cloudcode-pa.googleapis.com',
   'https://daily-cloudcode-pa.sandbox.googleapis.com',
 ];
-const API_VERSION = 'v1internal';
+export const ANTIGRAVITY_API_VERSION = 'v1internal';
 
 export interface AntigravityPkceParams {
   authUrl: string;
@@ -210,7 +210,7 @@ export interface AntigravityBootstrap {
 }
 
 async function loadCodeAssist(accessToken: string): Promise<AntigravityBootstrap> {
-  const endpoints = ANTIGRAVITY_BASE_URLS.map(b => `${b}/${API_VERSION}:loadCodeAssist`);
+  const endpoints = ANTIGRAVITY_BASE_URLS.map(b => `${b}/${ANTIGRAVITY_API_VERSION}:loadCodeAssist`);
 
   const res = await fetchFirstOk(endpoints, {
     method: 'POST',
@@ -235,7 +235,7 @@ async function onboardUser(
   tierId: string,
   maxAttempts = 10,
 ): Promise<string> {
-  const endpoints = ANTIGRAVITY_BASE_URLS.map(b => `${b}/${API_VERSION}:onboardUser`);
+  const endpoints = ANTIGRAVITY_BASE_URLS.map(b => `${b}/${ANTIGRAVITY_API_VERSION}:onboardUser`);
   let finalProjectId = '';
 
   for (let i = 0; i < maxAttempts; i++) {

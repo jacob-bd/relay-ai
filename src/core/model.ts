@@ -9,10 +9,17 @@ import {
 import { createLanguageModel, type ProviderModelSpec } from '../provider-factory.js';
 import { providerRefreshToken } from '../provider-runtime.js';
 import type { CachedModel, RegistryProvider } from '../registry/types.js';
+import { createAntigravityCloudCodeModel } from './antigravity-model.js';
 import { loadCoreRegistry } from './catalog.js';
 import { RelayCoreError, isRelayCoreError } from './errors.js';
 import { parseRelayRouteId } from './route-id.js';
 import type { RelayRouteId } from './types.js';
+
+function isAntigravityCloudCodeRoute(provider: RegistryProvider, model: CachedModel): boolean {
+  return provider.id === 'antigravity'
+    && provider.authType === 'oauth'
+    && model.modelFormat === 'cloud-code';
+}
 
 function findRoute(registry: ReturnType<typeof loadCoreRegistry>, providerId: string, modelId: string, routeId: RelayRouteId): { provider: RegistryProvider; model: CachedModel } {
   const provider = registry.providers.find(p => p.id === providerId);
@@ -69,6 +76,34 @@ export async function createRelayModel(routeId: RelayRouteId): Promise<LanguageM
   const { providerId, modelId } = parseRelayRouteId(routeId);
   const registry = loadCoreRegistry();
   const { provider, model } = findRoute(registry, providerId, modelId, routeId);
+
+  if (isAntigravityCloudCodeRoute(provider, model)) {
+    const apiKey = await resolveCredential(provider, routeId);
+    const providerData = await resolveProviderOAuthProviderData(provider.authRef);
+    const projectId = typeof providerData?.projectId === 'string' ? providerData.projectId.trim() : '';
+    if (!projectId) {
+      throw new RelayCoreError(
+        'CREDENTIAL_UNAVAILABLE',
+        `Provider "${provider.name}" is missing project metadata — re-authenticate in relay-ai ui.`,
+        { providerId: provider.id, routeId },
+      );
+    }
+    try {
+      return await createAntigravityCloudCodeModel({
+        modelId: model.upstreamModelId ?? model.id,
+        accessToken: apiKey,
+        projectId,
+        refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
+      });
+    } catch (err) {
+      if (isRelayCoreError(err)) throw err;
+      throw new RelayCoreError(
+        'PROVIDER_LOAD_FAILED',
+        `Failed to construct model "${modelId}" for provider "${provider.name}".`,
+        { providerId, routeId, cause: err },
+      );
+    }
+  }
 
   const npm = model.npm ?? provider.api.npm;
   if (!npm) {

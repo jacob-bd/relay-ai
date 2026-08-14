@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.2] - 2026-08-13
+
+### Fixed
+
+- **Embedded Core now supports Antigravity OAuth Cloud Code routes.** `createRelayModel()` returns a native Google LanguageModel that calls Cloud Code Assist with the stored OAuth token and project id, instead of launching a local proxy.
+- **Core no longer sends cloud-code models to an empty OpenAI-compatible `/chat/completions` URL.** Those routes are discriminated by provider id, OAuth auth, and `modelFormat: 'cloud-code'` before the generic factory path.
+- **Streaming, tools, OAuth refresh, and Gemini signature round-tripping are covered.** The Cloud Code transport unwraps Assist envelopes, retries a 401 once, forwards AbortSignal, and preserves thought signatures across tool loops.
+
 ## [0.9.1] - 2026-08-13
 
 ### Fixed
