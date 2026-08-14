@@ -197,7 +197,7 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-K7UU3MZU.js";
+} from "./chunk-S3E3M33X.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -10488,7 +10488,8 @@ function mergeAppConfig(existing, spec) {
       apiBaseUrl: spec.route.baseURL,
       supportedParameters: spec.route.supportedParameters,
       reasoning: spec.route.reasoning,
-      interleavedReasoningField: spec.route.interleavedReasoningField
+      interleavedReasoningField: spec.route.interleavedReasoningField,
+      upstreamModelId: spec.route.upstreamModelId
     });
     if (caps.levels.length === 0 || !caps.levels.includes(existingEffort)) {
       if (caps.levels.length > 0 && caps.defaultLevel) {
@@ -14869,7 +14870,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-VYO2H22E.js");
+    const { runUiCommand } = await import("./ui-command-MILYNNWN.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

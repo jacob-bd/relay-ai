@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.9.2",
+  version: "0.9.3",
   publishConfig: {
     access: "public"
   },
@@ -385,9 +385,7 @@ function createResponsesLiteNormalizeState() {
     textDeltaForwarded: false,
     messageAddedIds: /* @__PURE__ */ new Set(),
     messageDoneIds: /* @__PURE__ */ new Set(),
-    functionAddedIndexes: /* @__PURE__ */ new Set(),
-    functionDeltaIndexes: /* @__PURE__ */ new Set(),
-    functionDoneCallIds: /* @__PURE__ */ new Set()
+    functionCalls: []
   };
 }
 function nextId(state, prefix) {
@@ -411,19 +409,91 @@ function normalizeErrorEvent(event) {
     }
   };
 }
-function normalizeFunctionItem(item, state, forDone = false) {
-  const callId = asString(item.call_id) ?? asString(item.id) ?? nextId(state, "call");
-  const id = asString(item.id) ?? nextId(state, "fc");
-  state.lastFunctionItemId = id;
-  return {
-    ...item,
-    type: "function_call",
-    id,
-    call_id: callId,
-    name: asString(item.name) ?? "",
-    arguments: typeof item.arguments === "string" ? item.arguments : "",
-    ...forDone ? { status: "completed" } : {}
+function resolveFunctionCall(state, hint) {
+  if (hint.callId) {
+    const byCallId = state.functionCalls.find((entry2) => entry2.callId === hint.callId);
+    if (byCallId) return byCallId;
+  }
+  if (hint.itemId) {
+    const byItemId = state.functionCalls.find((entry2) => entry2.itemId === hint.itemId);
+    if (byItemId) return byItemId;
+  }
+  if (hint.outputIndex !== void 0) {
+    const open4 = [...state.functionCalls].reverse().find((entry2) => entry2.outputIndex === hint.outputIndex && !entry2.done && !(hint.callId && entry2.callId !== hint.callId));
+    if (open4) return open4;
+  }
+  if (hint.callId === void 0 && hint.itemId === void 0 && hint.outputIndex === void 0 && state.lastFunctionCall) {
+    return state.lastFunctionCall;
+  }
+  const entry = {
+    itemId: hint.itemId ?? nextId(state, "fc"),
+    callId: hint.callId ?? hint.itemId ?? nextId(state, "call"),
+    name: "",
+    args: "",
+    upstream: {},
+    outputIndex: hint.outputIndex ?? state.lastOutputIndex,
+    added: false,
+    deltaForwarded: false,
+    doneSeen: false,
+    done: false
   };
+  state.functionCalls.push(entry);
+  return entry;
+}
+function absorbFunctionItem(entry, item, authoritative) {
+  entry.upstream = { ...entry.upstream, ...item };
+  const name = asString(item.name);
+  if (name) entry.name = name;
+  const callId = asString(item.call_id);
+  if (callId) entry.callId = callId;
+  if (authoritative && typeof item.arguments === "string") entry.upstreamArgs = item.arguments;
+}
+function resolveFunctionArgs(entry) {
+  if (entry.upstreamArgs) return entry.upstreamArgs;
+  if (entry.args) return entry.args;
+  return entry.upstreamArgs;
+}
+function functionItemPayload(entry, extra) {
+  return {
+    ...entry.upstream,
+    type: "function_call",
+    id: entry.itemId,
+    call_id: entry.callId,
+    name: entry.name,
+    ...extra
+  };
+}
+function functionAddedEvent(entry) {
+  entry.added = true;
+  return {
+    type: "response.output_item.added",
+    output_index: entry.outputIndex,
+    item: functionItemPayload(entry, { arguments: "" })
+  };
+}
+function functionDoneEvent(entry, args) {
+  entry.done = true;
+  return {
+    type: "response.output_item.done",
+    output_index: entry.outputIndex,
+    item: functionItemPayload(entry, { arguments: args, status: "completed" })
+  };
+}
+function completeFunctionCall(entry, args) {
+  if (entry.done) return [];
+  const events = [];
+  if (!entry.added) events.push(functionAddedEvent(entry));
+  if (!entry.deltaForwarded && args.length > 0) {
+    entry.deltaForwarded = true;
+    events.push({
+      type: "response.function_call_arguments.delta",
+      item_id: entry.itemId,
+      output_index: entry.outputIndex,
+      delta: args
+    });
+  }
+  events.push(functionDoneEvent(entry, args));
+  return events;
 }
 function messageText(item) {
   if (typeof item.text === "string") return item.text;
@@ -451,47 +521,43 @@ function synthesizeMessage(item, outputIndex, state) {
   ];
 }
 function synthesizeFunctionCall(item, outputIndex, state) {
-  const normalized = normalizeFunctionItem(item, state);
-  const callId = String(normalized.call_id);
-  if (state.functionDoneCallIds.has(callId)) return [];
-  const events = [];
-  if (!state.functionAddedIndexes.has(outputIndex)) {
-    events.push({
-      type: "response.output_item.added",
-      output_index: outputIndex,
-      item: { ...normalized, arguments: "" }
-    });
-    state.functionAddedIndexes.add(outputIndex);
-  }
-  if (!state.functionDeltaIndexes.has(outputIndex) && typeof normalized.arguments === "string" && normalized.arguments.length > 0) {
-    events.push({
-      type: "response.function_call_arguments.delta",
-      item_id: normalized.id,
-      output_index: outputIndex,
-      delta: normalized.arguments
-    });
-    state.functionDeltaIndexes.add(outputIndex);
-  }
-  events.push({
-    type: "response.output_item.done",
-    output_index: outputIndex,
-    item: { ...normalized, status: "completed" }
+  const entry = resolveFunctionCall(state, {
+    itemId: asString(item.id),
+    callId: asString(item.call_id),
+    outputIndex
   });
-  state.functionDoneCallIds.add(callId);
-  state.lastOutputIndex = outputIndex;
-  return events;
+  absorbFunctionItem(entry, item, true);
+  state.lastFunctionCall = entry;
+  state.lastOutputIndex = entry.outputIndex;
+  const args = resolveFunctionArgs(entry);
+  if (args === void 0) {
+    entry.doneSeen = true;
+    return [];
+  }
+  return completeFunctionCall(entry, args);
 }
 function recoverFromCompletedOutput(response, state) {
-  if (!Array.isArray(response.output)) return [];
   const recovered = [];
-  response.output.forEach((item, index) => {
-    if (!isRecord(item) || typeof item.type !== "string") return;
-    if (item.type === "message" && !state.textDeltaForwarded) {
-      recovered.push(...synthesizeMessage(item, index, state));
-    } else if (item.type === "function_call") {
-      recovered.push(...synthesizeFunctionCall(item, index, state));
-    }
-  });
+  if (Array.isArray(response.output)) {
+    response.output.forEach((item, index) => {
+      if (!isRecord(item) || typeof item.type !== "string") return;
+      if (item.type === "message" && !state.textDeltaForwarded) {
+        recovered.push(...synthesizeMessage(item, index, state));
+      } else if (item.type === "function_call") {
+        recovered.push(...synthesizeFunctionCall(item, index, state));
+      }
+    });
+  }
+  for (const entry of state.functionCalls) {
+    if (entry.done || !entry.doneSeen) continue;
+    recovered.push(normalizeErrorEvent({
+      error: {
+        type: "invalid_response",
+        code: "incomplete_function_call",
+        message: `Provider ended the response without arguments for function call "${entry.callId}"${entry.name ? ` (${entry.name})` : ""}.`
+      }
+    }));
+  }
   return recovered;
 }
 function normalizeResponsesLiteEvent(event, state) {
@@ -507,19 +573,40 @@ function normalizeResponsesLiteEvent(event, state) {
       return [{ ...event, output_index: outputIndex, item: { ...event.item, id } }];
     }
     if (event.item.type === "function_call") {
-      const item = normalizeFunctionItem(event.item, state);
-      state.functionAddedIndexes.add(outputIndex);
-      return [{ ...event, output_index: outputIndex, item }];
+      const entry = resolveFunctionCall(state, {
+        itemId: asString(event.item.id),
+        callId: asString(event.item.call_id),
+        outputIndex
+      });
+      absorbFunctionItem(entry, event.item, false);
+      entry.outputIndex = outputIndex;
+      entry.added = true;
+      state.lastFunctionCall = entry;
+      return [{ ...event, output_index: outputIndex, item: functionItemPayload(entry, { arguments: "" }) }];
     }
     return [{ ...event, output_index: outputIndex }];
   }
   if (event.type === "response.output_item.done" && isRecord(event.item)) {
     const outputIndex = typeof event.output_index === "number" ? event.output_index : state.lastOutputIndex;
     if (event.item.type === "function_call") {
-      const item = normalizeFunctionItem(event.item, state, true);
-      const callId = String(item.call_id);
-      state.functionDoneCallIds.add(callId);
-      return [{ ...event, output_index: outputIndex, item }];
+      const entry = resolveFunctionCall(state, {
+        itemId: asString(event.item.id),
+        callId: asString(event.item.call_id),
+        outputIndex
+      });
+      absorbFunctionItem(entry, event.item, true);
+      entry.outputIndex = outputIndex;
+      entry.doneSeen = true;
+      state.lastFunctionCall = entry;
+      state.lastOutputIndex = outputIndex;
+      const args = resolveFunctionArgs(entry);
+      if (args === void 0 || !entry.name) return [];
+      if (entry.done) return [];
+      const events = [];
+      if (!entry.added) events.push(functionAddedEvent(entry));
+      events.push({ ...event, output_index: outputIndex, item: functionItemPayload(entry, { arguments: args, status: "completed" }) });
+      entry.done = true;
+      return events;
     }
     if (event.item.type === "message") {
       const id = asString(event.item.id) ?? state.lastMessageItemId ?? nextId(state, "msg");
@@ -546,12 +633,16 @@ function normalizeResponsesLiteEvent(event, state) {
     return events;
   }
   if (event.type === "response.function_call_arguments.delta") {
-    const itemId = asString(event.item_id) ?? state.lastFunctionItemId ?? nextId(state, "fc");
-    const outputIndex = typeof event.output_index === "number" ? event.output_index : state.lastOutputIndex;
-    state.lastFunctionItemId = itemId;
-    state.lastOutputIndex = outputIndex;
-    state.functionDeltaIndexes.add(outputIndex);
-    return [{ ...event, item_id: itemId, output_index: outputIndex, delta: typeof event.delta === "string" ? event.delta : "" }];
+    const entry = resolveFunctionCall(state, {
+      itemId: asString(event.item_id),
+      outputIndex: typeof event.output_index === "number" ? event.output_index : void 0
+    });
+    const delta = typeof event.delta === "string" ? event.delta : "";
+    entry.args += delta;
+    entry.deltaForwarded = true;
+    state.lastFunctionCall = entry;
+    state.lastOutputIndex = entry.outputIndex;
+    return [{ ...event, item_id: entry.itemId, output_index: entry.outputIndex, delta }];
   }
   if (event.type === "response.completed" || event.type === "response.incomplete") {
     const response = isRecord(event.response) ? event.response : {};
@@ -1051,10 +1142,11 @@ async function createLanguageModel(spec) {
   return model;
 }
 var ANTHROPIC_EFFORT_LEVELS = ["low", "medium", "high"];
-var OPENAI_EFFORT_LEVELS = ["low", "medium", "high", "xhigh"];
+var OPENAI_EFFORT_LEVELS = ["low", "medium", "high"];
 var GEMINI_EFFORT_LEVELS = ["low", "medium", "high"];
 var MISTRAL_EFFORT_LEVELS = ["high", "off"];
-var XAI_EFFORT_LEVELS = ["none", "low", "medium", "high"];
+var XAI_CHAT_EFFORT_LEVELS = ["low", "high"];
+var XAI_RESPONSES_EFFORT_LEVELS = ["low", "medium", "high"];
 var OPENROUTER_EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh"];
 var DEEPSEEK_EFFORT_LEVELS = ["high", "max", "off"];
 var GLM_52_EFFORT_LEVELS = ["high", "xhigh"];
@@ -1225,7 +1317,50 @@ function mapCodexEffortToAnthropic(effort) {
       return void 0;
   }
 }
-function mapCodexEffortToOpenAI(effort) {
+var OPENAI_MODEL_REASONING = {
+  "gpt-5-pro": { levels: ["high"], defaultLevel: "high" },
+  "gpt-5.1": { levels: ["none", "low", "medium", "high"], defaultLevel: "none" },
+  "gpt-5.1-codex-max": { levels: ["low", "medium", "high", "xhigh"], defaultLevel: "medium" },
+  "gpt-5.2": { levels: ["none", "low", "medium", "high", "xhigh"], defaultLevel: "none" },
+  "gpt-5.2-codex": { levels: ["low", "medium", "high", "xhigh"], defaultLevel: "medium" },
+  "gpt-5.2-pro": { levels: ["medium", "high", "xhigh"], defaultLevel: "medium" },
+  "gpt-5.3-codex": { levels: ["low", "medium", "high", "xhigh"], defaultLevel: "medium" },
+  "gpt-5.4": { levels: ["none", "low", "medium", "high", "xhigh"], defaultLevel: "none" },
+  "gpt-5.4-mini": { levels: ["none", "low", "medium", "high", "xhigh"], defaultLevel: "none" },
+  "gpt-5.4-nano": { levels: ["none", "low", "medium", "high", "xhigh"], defaultLevel: "none" },
+  "gpt-5.4-pro": { levels: ["medium", "high", "xhigh"], defaultLevel: "medium" },
+  "gpt-5.5": { levels: ["none", "low", "medium", "high", "xhigh"], defaultLevel: "medium" },
+  "gpt-5.5-pro": { levels: ["medium", "high", "xhigh"], defaultLevel: "high" },
+  "gpt-5.6": { levels: ["none", "low", "medium", "high", "xhigh", "max"], defaultLevel: "medium" },
+  "gpt-5.6-luna": { levels: ["none", "low", "medium", "high", "xhigh", "max"], defaultLevel: "medium" },
+  "gpt-5.6-sol": { levels: ["none", "low", "medium", "high", "xhigh", "max"], defaultLevel: "medium" },
+  "gpt-5.6-terra": { levels: ["none", "low", "medium", "high", "xhigh", "max"], defaultLevel: "medium" }
+};
+var OPENAI_NON_REASONING_MODELS = /* @__PURE__ */ new Set([
+  "chat-latest",
+  "gpt-5-chat-latest",
+  "gpt-5.1-chat-latest",
+  "gpt-5.2-chat-latest",
+  "gpt-5.3-chat-latest"
+]);
+var OPENAI_DATED_SNAPSHOT_SUFFIX = /-\d{4}-\d{2}-\d{2}$/;
+function canonicalOpenAiModelId(modelId, metadata) {
+  return (metadata?.upstreamModelId ?? modelId ?? "").toLowerCase();
+}
+function openAiReasoningProfile(modelId, metadata) {
+  const id = canonicalOpenAiModelId(modelId, metadata);
+  if (!id) return void 0;
+  return OPENAI_MODEL_REASONING[id] ?? OPENAI_MODEL_REASONING[id.replace(OPENAI_DATED_SNAPSHOT_SUFFIX, "")];
+}
+function openAiModelReasons(modelId, metadata) {
+  const id = canonicalOpenAiModelId(modelId, metadata);
+  if (OPENAI_NON_REASONING_MODELS.has(id.replace(OPENAI_DATED_SNAPSHOT_SUFFIX, ""))) return false;
+  return !!openAiReasoningProfile(modelId, metadata) || modelPrefersResponsesApi(id) || !!metadata?.reasoning;
+}
+function mapCodexEffortToOpenAI(effort, allowed) {
+  return allowed.includes(effort) ? effort : void 0;
+}
+function mapCodexEffortToOpenAICompatible(effort) {
   if (effort === "xhigh") return "high";
   const allowed = ["low", "medium", "high"];
   return allowed.includes(effort) ? effort : void 0;
@@ -1241,16 +1376,12 @@ function mapCodexEffortToGlm52(effort) {
       return void 0;
   }
 }
-function mapCodexEffortToXai(effort) {
+function mapCodexEffortToXai(effort, supportsMedium) {
   switch (effort) {
-    case "none":
-    case "minimal":
-      return void 0;
-    // xAI SDK only accepts 'low'|'high'; omit param for 'none'
     case "low":
-    case "medium":
       return "low";
-    // 'medium' has no xAI equivalent — nearest valid value
+    case "medium":
+      return supportsMedium ? "medium" : void 0;
     case "high":
     case "xhigh":
     case "max":
@@ -1282,7 +1413,31 @@ function mapCodexEffortToGeminiBudget(effort) {
   if (!level) return void 0;
   return GEMINI_25_BUDGETS[level];
 }
+function withMappableLevels(caps, npm, modelId, metadata) {
+  if (caps.mode !== "controllable") return caps;
+  const seen = /* @__PURE__ */ new Set();
+  const levels = caps.levels.filter((level) => {
+    const mapped = effortProviderOptions(npm, level, modelId, metadata);
+    if (mapped === void 0) return false;
+    const wire = JSON.stringify(mapped);
+    if (seen.has(wire)) return false;
+    seen.add(wire);
+    return true;
+  });
+  if (levels.length === caps.levels.length) return caps;
+  if (levels.length === 0) {
+    return { ...caps, levels: [], defaultLevel: "", mode: "internal-only" };
+  }
+  return {
+    ...caps,
+    levels,
+    defaultLevel: levels.includes(caps.defaultLevel) ? caps.defaultLevel : levels[levels.length - 1]
+  };
+}
 function getReasoningCapabilities(npm, modelId, metadata) {
+  return withMappableLevels(resolveRawReasoningCapabilities(npm, modelId, metadata), npm, modelId, metadata);
+}
+function resolveRawReasoningCapabilities(npm, modelId, metadata) {
   const id = modelId.toLowerCase();
   if (isOpenRouterRoute(npm, metadata)) {
     return openRouterReasoningCapabilities(metadata);
@@ -1303,15 +1458,18 @@ function getReasoningCapabilities(npm, modelId, metadata) {
     return EMPTY_REASONING;
   }
   if (npm === "@ai-sdk/openai" || npm === "@ai-sdk/azure") {
-    const prefersResponses = modelPrefersResponsesApi(modelId);
-    if (prefersResponses || metadata?.reasoning) {
+    const canonicalId = canonicalOpenAiModelId(modelId, metadata);
+    const profile = openAiReasoningProfile(modelId, metadata);
+    const prefersResponses = modelPrefersResponsesApi(canonicalId);
+    if (openAiModelReasons(modelId, metadata) && shouldUseOpenAiResponsesEndpoint(canonicalId)) {
+      const levels = profile?.levels ?? [...OPENAI_EFFORT_LEVELS];
       return {
-        levels: [...OPENAI_EFFORT_LEVELS],
-        defaultLevel: "medium",
+        levels: [...levels],
+        defaultLevel: profile?.defaultLevel ?? (levels.includes("medium") ? "medium" : levels[levels.length - 1]),
         supportsSummaries: true,
+        source: profile || prefersResponses ? "provider-rule" : "model-metadata",
+        confidence: profile || prefersResponses ? "documented" : "inferred",
         mode: "controllable",
-        source: prefersResponses ? "provider-rule" : "model-metadata",
-        confidence: prefersResponses ? "documented" : "inferred",
         wireFormat: { kind: "openai-reasoning-effort" }
       };
     }
@@ -1347,7 +1505,7 @@ function getReasoningCapabilities(npm, modelId, metadata) {
   }
   if (npm === "@ai-sdk/xai") {
     if (isXaiReasoningEffortModel(modelId)) {
-      const levels = modelPrefersResponsesApi(modelId) ? ["low", "medium", "high", "xhigh"] : [...XAI_EFFORT_LEVELS];
+      const levels = modelPrefersResponsesApi(modelId) ? [...XAI_RESPONSES_EFFORT_LEVELS] : [...XAI_CHAT_EFFORT_LEVELS];
       return {
         levels,
         defaultLevel: xaiDefaultReasoningEffort(modelId),
@@ -1444,13 +1602,15 @@ function effortProviderOptions(npm, effort, modelId, metadata) {
     return mapped ? { openrouter: { reasoning: { effort: mapped, exclude: false } } } : void 0;
   }
   if (npm === "@ai-sdk/openai" || npm === "@ai-sdk/azure") {
-    if (!modelId || !modelPrefersResponsesApi(modelId)) return void 0;
-    const reasoningEffort = mapCodexEffortToOpenAI(effort);
+    if (!modelId || !shouldUseOpenAiResponsesEndpoint(canonicalOpenAiModelId(modelId, metadata))) return void 0;
+    if (!openAiModelReasons(modelId, metadata)) return void 0;
+    const allowed = openAiReasoningProfile(modelId, metadata)?.levels ?? OPENAI_EFFORT_LEVELS;
+    const reasoningEffort = mapCodexEffortToOpenAI(effort, allowed);
     return reasoningEffort ? { openai: { reasoningEffort } } : void 0;
   }
   if (npm === "@ai-sdk/xai") {
     if (!modelId || !isXaiReasoningEffortModel(modelId)) return void 0;
-    const reasoningEffort = mapCodexEffortToXai(effort);
+    const reasoningEffort = mapCodexEffortToXai(effort, modelPrefersResponsesApi(modelId));
     return reasoningEffort ? { xai: { reasoningEffort } } : void 0;
   }
   if (npm === "@ai-sdk/anthropic" || npm === VERTEX_ANTHROPIC_NPM) {
@@ -1478,7 +1638,7 @@ function effortProviderOptions(npm, effort, modelId, metadata) {
       return deepSeekEffortProviderOptions(effort);
     }
     if (isKimiReasoningModel(modelId)) {
-      const reasoningEffort = mapCodexEffortToOpenAI(effort);
+      const reasoningEffort = mapCodexEffortToOpenAICompatible(effort);
       if (reasoningEffort) {
         const key = metadata?.providerId ? toCamelCase(metadata.providerId) : "openaiCompatible";
         return { [key]: { reasoningEffort } };
@@ -1494,7 +1654,7 @@ function effortProviderOptions(npm, effort, modelId, metadata) {
       return void 0;
     }
     if (hasSupportedParameter(metadata, "reasoning_effort")) {
-      const reasoningEffort = mapCodexEffortToOpenAI(effort);
+      const reasoningEffort = mapCodexEffortToOpenAICompatible(effort);
       return reasoningEffort ? { openai: { reasoningEffort }, openaiCompatible: { reasoningEffort } } : void 0;
     }
     if (hasSupportedParameter(metadata, "reasoning")) {
@@ -13520,4 +13680,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-K7UU3MZU.js.map
+//# sourceMappingURL=chunk-S3E3M33X.js.map
