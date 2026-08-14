@@ -116,16 +116,28 @@ describe('getReasoningCapabilities', () => {
     expect(caps.levels).toEqual([]);
   });
 
+  // Per @ai-sdk/xai's docs, chat models accept low|high and Responses models
+  // accept low|medium|high. There is no xAI 'none'.
   it('returns effort levels for grok-4.3, defaulting to low per xAI docs', () => {
     const caps = getReasoningCapabilities('@ai-sdk/xai', 'grok-4.3');
-    expect(caps.levels).toEqual(['none', 'low', 'medium', 'high']);
+    expect(caps.levels).toEqual(['low', 'high']);
     expect(caps.defaultLevel).toBe('low');
   });
 
   it('returns effort levels for grok-4.5, defaulting to high per xAI docs', () => {
     const caps = getReasoningCapabilities('@ai-sdk/xai', 'grok-4.5');
-    expect(caps.levels).toEqual(['none', 'low', 'medium', 'high']);
+    expect(caps.levels).toEqual(['low', 'high']);
     expect(caps.defaultLevel).toBe('high');
+  });
+
+  it('offers medium only on the xAI Responses transport', () => {
+    const responses = getReasoningCapabilities('@ai-sdk/xai', 'grok-4.20-multi-agent');
+    expect(responses.levels).toEqual(['low', 'medium', 'high']);
+    expect(effortProviderOptions('@ai-sdk/xai', 'medium', 'grok-4.20-multi-agent'))
+      .toEqual({ xai: { reasoningEffort: 'medium' } });
+    // Chat has no medium — it is neither offered nor silently downgraded.
+    expect(getReasoningCapabilities('@ai-sdk/xai', 'grok-4.5').levels).not.toContain('medium');
+    expect(effortProviderOptions('@ai-sdk/xai', 'medium', 'grok-4.5')).toBeUndefined();
   });
 
   it('returns high/max/off for deepseek-v4-flash', () => {

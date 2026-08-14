@@ -352,7 +352,9 @@ describe('createRelayModel Cloud Code Assist routes', () => {
 
   it('returns actionable non-2xx errors without credential material', async () => {
     seedAntigravity();
-    fetchMock.mockResolvedValue(jsonResponse(
+    // A fresh Response per call: 429 is an endpoint-failover status, so every
+    // base URL is tried before the error surfaces.
+    fetchMock.mockImplementation(async () => jsonResponse(
       { error: { code: 429, message: 'quota exceeded', status: 'RESOURCE_EXHAUSTED' } },
       429,
     ));
@@ -479,6 +481,103 @@ describe('createRelayModel Cloud Code Assist routes', () => {
     expect(JSON.stringify(followUp)).not.toContain(ACCESS_CANARY);
   });
 
+  // The catalog classified cloud-code routes by the provider's registry npm
+  // (openai-compatible) while Core builds them with @ai-sdk/google, so the
+  // descriptor reported "fixed" for levels Core actually accepts.
+  it('reports Cloud Code reasoning capabilities that match what Core accepts', async () => {
+    seedAntigravity();
+    const { listRelayModels } = await import('../src/core/catalog.js');
+    const descriptor = listRelayModels().find(m => m.routeId === `antigravity::${UPSTREAM_MODEL}`)!;
+    expect(descriptor.capabilities.reasoning).toBe('adjustable');
+    expect(descriptor.capabilities.reasoningLevels).toEqual(['low', 'medium', 'high']);
+
+    // Every advertised level must actually construct.
+    for (const level of descriptor.capabilities.reasoningLevels ?? []) {
+      fetchMock.mockResolvedValue(streamResponse([sseChunk(geminiTextPayload('ok'))]));
+      await expect(createRelayModel(`antigravity::${UPSTREAM_MODEL}`, { reasoning: level })).resolves.toBeTruthy();
+    }
+  });
+
+  it('maps a Core reasoning level onto the Cloud Code route in Gemini terms', async () => {
+    seedAntigravity();
+    fetchMock.mockResolvedValue(streamResponse([sseChunk(geminiTextPayload('ok'))]));
+    const model = await createRelayModel(`antigravity::${UPSTREAM_MODEL}`, { reasoning: 'high' });
+    await streamText({ model, prompt: 'hi', maxRetries: 0 }).text;
+
+    const envelope = await requestJson(fetchMock.mock.calls[0]!);
+    const request = envelope.request as { generationConfig?: Record<string, unknown> };
+    // Provider-specific shape stays inside Relay Core — the caller only said 'high'.
+    expect(request.generationConfig?.thinkingConfig).toBeTruthy();
+  });
+
+  it('fails clearly when a Cloud Code route is asked for an unsupported level', async () => {
+    seedAntigravity();
+    await expect(createRelayModel(`antigravity::${UPSTREAM_MODEL}`, { reasoning: 'banana' as never }))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_REASONING_LEVEL' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // Gemini exposes low/medium/high. The shared CLI mapper substitutes the
+  // nearest value for none/minimal/xhigh; Core must refuse instead, or it would
+  // report a level it never sent.
+  it.each(['none', 'minimal', 'xhigh'] as const)(
+    'refuses reasoning level %s on a Gemini-backed route instead of substituting',
+    async level => {
+      seedAntigravity();
+      let caught: unknown;
+      try {
+        await createRelayModel(`antigravity::${UPSTREAM_MODEL}`, { reasoning: level });
+      } catch (err) {
+        caught = err;
+      }
+      expect(isRelayCoreError(caught)).toBe(true);
+      expect((caught as { code: string }).code).toBe('UNSUPPORTED_REASONING_LEVEL');
+      // The message points at the levels the route really has.
+      expect((caught as Error).message).toMatch(/low.*medium.*high/);
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it('forwards sanitized transport diagnostics through the Cloud Code route', async () => {
+    seedAntigravity();
+    const PROMPT_CANARY = 'what-is-the-weather-canary-zzz';
+    const debugLines: string[] = [];
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'endpoint down' } }, 503))
+      .mockResolvedValueOnce(streamResponse([sseChunk(geminiToolPayload())]));
+
+    const model = await createRelayModel(`antigravity::${UPSTREAM_MODEL}`, {
+      onDebug: msg => debugLines.push(msg),
+    });
+    const result = streamText({
+      model,
+      prompt: PROMPT_CANARY,
+      maxRetries: 0,
+      stopWhen: stepCountIs(1),
+      tools: {
+        getWeather: tool({ description: 'Get the weather', inputSchema: z.object({ city: z.string() }) }),
+      },
+    });
+    await result.steps;
+
+    // The hook is documented as a Core transport diagnostics hook — it has to
+    // actually produce something on this route.
+    expect(debugLines.length).toBeGreaterThan(0);
+    const joined = debugLines.join('\n');
+    expect(joined).not.toContain(ACCESS_CANARY);
+    expect(joined).not.toContain(REFRESH_CANARY);
+    expect(joined).not.toContain(REFRESHED_ACCESS);
+    expect(joined).not.toContain('Bearer');
+    expect(joined).not.toContain(PROMPT_CANARY);
+    expect(joined).not.toContain(PROJECT_ID);
+    expect(joined).not.toContain('NYC');               // tool-call arguments
+    expect(joined).not.toContain('checking weather');  // response body text
+    expect(joined).not.toContain(TOOL_SIGNATURE);
+    expect(joined).not.toContain(THINK_SIGNATURE);
+    // Still useful: the endpoint failover is visible.
+    expect(joined).toMatch(/503/);
+  });
+
   it('re-reads registry state on every createRelayModel call', async () => {
     seedAntigravity();
     fetchMock.mockResolvedValue(streamResponse([sseChunk(geminiTextPayload('ok'))]));
@@ -487,6 +586,372 @@ describe('createRelayModel Cloud Code Assist routes', () => {
     await expect(createRelayModel(`antigravity::${UPSTREAM_MODEL}`)).rejects.toMatchObject({
       code: 'PROVIDER_DISABLED',
     });
+  });
+});
+
+describe('Cloud Code ordered endpoint failover', () => {
+  const TOKEN = 'ya29.failover-token-canary-zzz';
+
+  const streamUrls = ANTIGRAVITY_BASE_URLS.map(b => `${b}/v1internal:streamGenerateContent?alt=sse`);
+  const unaryUrls = ANTIGRAVITY_BASE_URLS.map(b => `${b}/v1internal:generateContent`);
+
+  /** Drive one request through `createCloudCodeFetch` with a scripted upstream. */
+  async function run(
+    handler: (url: string, init: RequestInit | undefined, attempt: number) => Promise<Response>,
+    opts: { streaming?: boolean; signal?: AbortSignal; refreshToken?: () => Promise<string | null> } = {},
+  ) {
+    const urls: string[] = [];
+    let attempt = 0;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      urls.push(url);
+      attempt += 1;
+      return handler(url, init, attempt);
+    });
+    const { createCloudCodeFetch } = await import('../src/core/antigravity-model.js');
+    const cloudFetch = createCloudCodeFetch({
+      modelId: UPSTREAM_MODEL,
+      accessToken: TOKEN,
+      projectId: PROJECT_ID,
+      ...(opts.refreshToken ? { refreshToken: opts.refreshToken } : {}),
+    }, fetchImpl as unknown as typeof globalThis.fetch);
+
+    const requestUrlIn = opts.streaming
+      ? 'https://sdk.local/v1beta/models/m:streamGenerateContent?alt=sse'
+      : 'https://sdk.local/v1beta/models/m:generateContent';
+    const response = await cloudFetch(requestUrlIn, {
+      method: 'POST',
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] }),
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    });
+    return { response, urls, fetchImpl };
+  }
+
+  it('exposes more than one base URL, so failover is meaningful', () => {
+    expect(ANTIGRAVITY_BASE_URLS.length).toBeGreaterThan(1);
+  });
+
+  it('falls back to the next endpoint after a network failure (streaming)', async () => {
+    const { response, urls } = await run(async (_url, _init, attempt) => {
+      if (attempt === 1) throw new TypeError('fetch failed');
+      return streamResponse([sseChunk(geminiTextPayload('second endpoint'))]);
+    }, { streaming: true });
+    expect(response.status).toBe(200);
+    expect(urls).toEqual([streamUrls[0], streamUrls[1]]);
+    expect(await response.text()).toContain('second endpoint');
+  });
+
+  it('falls back to the next endpoint after a network failure (unary)', async () => {
+    const { response, urls } = await run(async (_url, _init, attempt) => {
+      if (attempt === 1) throw new TypeError('fetch failed');
+      return jsonResponse({ response: geminiTextPayload('second endpoint') });
+    });
+    expect(response.status).toBe(200);
+    expect(urls).toEqual([unaryUrls[0], unaryUrls[1]]);
+  });
+
+  it.each([404, 408, 429, 500, 503])('falls back on a retryable %i and keeps endpoint order', async status => {
+    const { response, urls } = await run(async (_url, _init, attempt) => (
+      attempt === 1
+        ? jsonResponse({ error: { message: 'endpoint down' } }, status)
+        : jsonResponse({ response: geminiTextPayload('recovered') })
+    ));
+    expect(response.status).toBe(200);
+    expect(urls).toEqual([unaryUrls[0], unaryUrls[1]]);
+  });
+
+  it('does not call a second endpoint when the first succeeds', async () => {
+    const { response, urls, fetchImpl } = await run(async () => (
+      jsonResponse({ response: geminiTextPayload('first endpoint') })
+    ));
+    expect(response.status).toBe(200);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(urls).toEqual([unaryUrls[0]]);
+  });
+
+  it.each([400, 401, 403, 422])('does not replay a non-retryable %i across endpoints', async status => {
+    const { response, fetchImpl } = await run(async () => (
+      jsonResponse({ error: { message: 'client error' } }, status)
+    ));
+    expect(response.status).toBe(status);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns the last endpoint response when every endpoint is retryable-failing', async () => {
+    const { response, fetchImpl } = await run(async () => (
+      jsonResponse({ error: { message: 'down' } }, 503)
+    ));
+    expect(response.status).toBe(503);
+    expect(fetchImpl).toHaveBeenCalledTimes(ANTIGRAVITY_BASE_URLS.length);
+  });
+
+  it('throws when every endpoint has a network failure', async () => {
+    await expect(run(async () => { throw new TypeError('fetch failed'); }))
+      .rejects.toThrow(/fetch failed/);
+  });
+
+  it('stops attempting further endpoints once aborted', async () => {
+    const abort = new AbortController();
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      abort.abort();
+      throw new DOMException('This operation was aborted', 'AbortError');
+    });
+    const { createCloudCodeFetch } = await import('../src/core/antigravity-model.js');
+    const cloudFetch = createCloudCodeFetch({
+      modelId: UPSTREAM_MODEL,
+      accessToken: TOKEN,
+      projectId: PROJECT_ID,
+    }, fetchImpl as unknown as typeof globalThis.fetch);
+
+    await expect(cloudFetch('https://sdk.local/v1beta/models/m:generateContent', {
+      method: 'POST',
+      body: JSON.stringify({ contents: [] }),
+      signal: abort.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    // Aborted on the first endpoint — the remaining endpoints are never tried.
+    expect(calls).toEqual([unaryUrls[0]]);
+  });
+
+  it('keeps upstream error text out of failover diagnostics', async () => {
+    const BODY_CANARY = 'upstream-error-text-canary-zzz';
+    const debugLines: string[] = [];
+    const fetchImpl = vi.fn(async () => { throw new TypeError(`fetch failed: ${BODY_CANARY}`); });
+    const { createCloudCodeFetch } = await import('../src/core/antigravity-model.js');
+    const cloudFetch = createCloudCodeFetch({
+      modelId: UPSTREAM_MODEL,
+      accessToken: TOKEN,
+      projectId: PROJECT_ID,
+      onDebug: msg => debugLines.push(msg),
+    }, fetchImpl as unknown as typeof globalThis.fetch);
+
+    await expect(cloudFetch('https://sdk.local/v1beta/models/m:generateContent', {
+      method: 'POST',
+      body: JSON.stringify({ contents: [] }),
+    })).rejects.toThrow();
+
+    const joined = debugLines.join('\n');
+    expect(joined).toContain('errorName=TypeError');
+    expect(joined).not.toContain(BODY_CANARY);
+    expect(joined).not.toContain(TOKEN);
+  });
+
+  it('does not advance to the next endpoint when abort lands between attempts', async () => {
+    const abort = new AbortController();
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      // Endpoint 1 is retryable-failing, but the caller gives up before we
+      // would have moved on to endpoint 2.
+      abort.abort();
+      return jsonResponse({ error: { message: 'down' } }, 503);
+    });
+    const { createCloudCodeFetch } = await import('../src/core/antigravity-model.js');
+    const cloudFetch = createCloudCodeFetch({
+      modelId: UPSTREAM_MODEL,
+      accessToken: TOKEN,
+      projectId: PROJECT_ID,
+    }, fetchImpl as unknown as typeof globalThis.fetch);
+
+    await expect(cloudFetch('https://sdk.local/v1beta/models/m:generateContent', {
+      method: 'POST',
+      body: JSON.stringify({ contents: [] }),
+      signal: abort.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(calls).toEqual([unaryUrls[0]]);
+  });
+
+  it('does not switch endpoints after a streaming response has begun', async () => {
+    const { response, fetchImpl } = await run(async () => (
+      streamResponse([sseChunk(geminiTextPayload('streamed'))])
+    ), { streaming: true });
+    const text = await response.text();
+    expect(text).toContain('streamed');
+    // The body was only consumed after the endpoint was committed to.
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  // A refresh must not cancel failover: if the retried endpoint is itself down,
+  // the remaining endpoints are still the documented fallback.
+  it('resumes endpoint failover when the post-refresh retry hits a dead endpoint', async () => {
+    let refreshCalls = 0;
+    const { response, urls } = await run(async (url, init) => {
+      const auth = new Headers(init?.headers).get('Authorization') ?? '';
+      if (url === unaryUrls[0]) {
+        return auth === `Bearer ${TOKEN}`
+          ? jsonResponse({ error: { message: 'expired' } }, 401)
+          : jsonResponse({ error: { message: 'down' } }, 503);
+      }
+      return jsonResponse({ response: geminiTextPayload('second endpoint after refresh') });
+    }, {
+      refreshToken: async () => { refreshCalls += 1; return 'ya29.refreshed-failover-zzz'; },
+    });
+    expect(response.status).toBe(200);
+    expect(refreshCalls).toBe(1);
+    // endpoint1 (401) -> refresh -> endpoint1 retry (503) -> endpoint2 (200)
+    expect(urls).toEqual([unaryUrls[0], unaryUrls[0], unaryUrls[1]]);
+  });
+
+  it('does not replay endpoints that already failed before the 401', async () => {
+    const { response, urls } = await run(async (url, init) => {
+      const auth = new Headers(init?.headers).get('Authorization') ?? '';
+      if (url === unaryUrls[0]) return jsonResponse({ error: { message: 'down' } }, 503);
+      if (url === unaryUrls[1]) {
+        return auth === `Bearer ${TOKEN}`
+          ? jsonResponse({ error: { message: 'expired' } }, 401)
+          : jsonResponse({ error: { message: 'down' } }, 503);
+      }
+      return jsonResponse({ response: geminiTextPayload('third endpoint') });
+    }, { refreshToken: async () => 'ya29.refreshed-failover-zzz' });
+    expect(response.status).toBe(200);
+    // endpoint1 is never retried after the refresh — it failed for its own reason.
+    expect(urls).toEqual([unaryUrls[0], unaryUrls[1], unaryUrls[1], unaryUrls[2]]);
+  });
+
+  it('refreshes once and retries only the endpoint that issued the 401', async () => {
+    let refreshCalls = 0;
+    const { response, urls } = await run(async (url, init) => {
+      const auth = new Headers(init?.headers).get('Authorization') ?? '';
+      if (url === unaryUrls[0]) return jsonResponse({ error: { message: 'down' } }, 503);
+      if (auth === `Bearer ${TOKEN}`) return jsonResponse({ error: { message: 'expired' } }, 401);
+      return jsonResponse({ response: geminiTextPayload('after refresh') });
+    }, {
+      refreshToken: async () => { refreshCalls += 1; return 'ya29.refreshed-failover-zzz'; },
+    });
+    expect(response.status).toBe(200);
+    expect(refreshCalls).toBe(1);
+    // First endpoint 503 → second endpoint 401 → refresh → retry the *second*.
+    expect(urls).toEqual([unaryUrls[0], unaryUrls[1], unaryUrls[1]]);
+  });
+});
+
+describe('Cloud Code concurrent 401 refresh', () => {
+  const OLD_TOKEN = 'ya29.old-token-canary-zzz';
+  const NEW_TOKEN = 'ya29.new-token-canary-zzz';
+
+  function unaryUrl(): string {
+    return 'https://generativelanguage.example/v1beta/models/m:generateContent';
+  }
+
+  /**
+   * Two requests share one model (one `createCloudCodeFetch` closure), both send
+   * the same expired token, and both 401 before either refresh resolves. The
+   * refresh path is deduplicated — one in-flight promise handed to both callers.
+   */
+  async function runConcurrentPair(overrides: { streaming?: boolean } = {}) {
+    const authHeaders: string[] = [];
+    let refreshCalls = 0;
+    let refreshPromise: Promise<string | null> | undefined;
+
+    let releaseFirstPair!: () => void;
+    const firstPairIssued = new Promise<void>(resolve => { releaseFirstPair = resolve; });
+    let oldTokenRequests = 0;
+
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const auth = new Headers(init?.headers).get('Authorization') ?? '';
+      authHeaders.push(auth);
+      if (auth === `Bearer ${OLD_TOKEN}`) {
+        oldTokenRequests += 1;
+        if (oldTokenRequests === 2) releaseFirstPair();
+        // Hold both 401s open so neither refresh can resolve first.
+        await firstPairIssued;
+        return jsonResponse({ error: { message: 'expired' } }, 401);
+      }
+      return overrides.streaming
+        ? streamResponse([sseChunk(geminiTextPayload('after refresh'))])
+        : jsonResponse({ response: geminiTextPayload('after refresh') });
+    });
+
+    const { createCloudCodeFetch } = await import('../src/core/antigravity-model.js');
+    const cloudFetch = createCloudCodeFetch({
+      modelId: UPSTREAM_MODEL,
+      accessToken: OLD_TOKEN,
+      projectId: PROJECT_ID,
+      refreshToken: () => {
+        refreshCalls += 1;
+        refreshPromise ??= new Promise<string | null>(resolve => setTimeout(() => resolve(NEW_TOKEN), 5));
+        return refreshPromise;
+      },
+    }, fetchImpl as unknown as typeof globalThis.fetch);
+
+    const url = overrides.streaming
+      ? 'https://generativelanguage.example/v1beta/models/m:streamGenerateContent?alt=sse'
+      : unaryUrl();
+    const request = () => cloudFetch(url, {
+      method: 'POST',
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] }),
+    });
+
+    const responses = await Promise.all([request(), request()]);
+    return { responses, authHeaders, fetchImpl, refreshCalls };
+  }
+
+  it('lets both concurrent 401s retry with the refreshed token (unary)', async () => {
+    const { responses, authHeaders, fetchImpl } = await runConcurrentPair();
+    expect(responses.map(r => r.status)).toEqual([200, 200]);
+    expect(authHeaders.filter(h => h === `Bearer ${OLD_TOKEN}`)).toHaveLength(2);
+    expect(authHeaders.filter(h => h === `Bearer ${NEW_TOKEN}`)).toHaveLength(2);
+    // Exactly one retry each — no infinite retry loop.
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+  });
+
+  it('lets both concurrent 401s retry with the refreshed token (streaming)', async () => {
+    const { responses, authHeaders, fetchImpl } = await runConcurrentPair({ streaming: true });
+    expect(responses.map(r => r.status)).toEqual([200, 200]);
+    expect(authHeaders.filter(h => h === `Bearer ${NEW_TOKEN}`)).toHaveLength(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+  });
+
+  it('does not retry a concurrent 401 after the request is aborted', async () => {
+    const abort = new AbortController();
+    const authHeaders: string[] = [];
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      authHeaders.push(new Headers(init?.headers).get('Authorization') ?? '');
+      abort.abort();
+      return jsonResponse({ error: { message: 'expired' } }, 401);
+    });
+    const { createCloudCodeFetch } = await import('../src/core/antigravity-model.js');
+    const cloudFetch = createCloudCodeFetch({
+      modelId: UPSTREAM_MODEL,
+      accessToken: OLD_TOKEN,
+      projectId: PROJECT_ID,
+      refreshToken: async () => NEW_TOKEN,
+    }, fetchImpl as unknown as typeof globalThis.fetch);
+
+    const res = await cloudFetch(unaryUrl(), {
+      method: 'POST',
+      body: JSON.stringify({ contents: [] }),
+      signal: abort.signal,
+    });
+    expect(res.status).toBe(401);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(authHeaders).toEqual([`Bearer ${OLD_TOKEN}`]);
+  });
+
+  it('keeps tokens out of diagnostics for the concurrent refresh path', async () => {
+    const debugLines: string[] = [];
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const auth = new Headers(init?.headers).get('Authorization') ?? '';
+      return auth === `Bearer ${OLD_TOKEN}`
+        ? jsonResponse({ error: { message: 'expired' } }, 401)
+        : jsonResponse({ response: geminiTextPayload('ok') });
+    });
+    const { createCloudCodeFetch } = await import('../src/core/antigravity-model.js');
+    const cloudFetch = createCloudCodeFetch({
+      modelId: UPSTREAM_MODEL,
+      accessToken: OLD_TOKEN,
+      projectId: PROJECT_ID,
+      refreshToken: async () => NEW_TOKEN,
+      onDebug: msg => debugLines.push(msg),
+    }, fetchImpl as unknown as typeof globalThis.fetch);
+
+    await cloudFetch(unaryUrl(), { method: 'POST', body: JSON.stringify({ contents: [] }) });
+    expect(debugLines.length).toBeGreaterThan(0);
+    const joined = debugLines.join('\n');
+    expect(joined).not.toContain(OLD_TOKEN);
+    expect(joined).not.toContain(NEW_TOKEN);
+    expect(joined).not.toContain('Bearer');
   });
 });
 

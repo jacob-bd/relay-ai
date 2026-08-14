@@ -61,6 +61,37 @@ describe('app-config', () => {
     expect(text).toContain('model_reasoning_effort = "high"');
   });
 
+  // The catalog id can differ from the id sent upstream. Classifying the route
+  // by the alias loses the upstream model's real levels, and this merge then
+  // rewrites the user's saved effort to the wrong model's default.
+  it('keeps a saved xhigh effort for an alias route whose upstream supports it', () => {
+    const configPath = join(home, '.codex', 'config.toml');
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    writeFileSync(configPath, 'model_reasoning_effort = "xhigh"\n', 'utf8');
+    const spec = proxySpec(join(home, '.relay-ai', 'codex', 'app-models-openai.json'));
+    spec.route.npm = '@ai-sdk/openai';
+    spec.route.providerId = 'openai';
+    spec.route.modelId = 'gpt-5.5-fast';
+    spec.route.upstreamModelId = 'gpt-5.5';
+
+    applyAppConfigPatch(spec, configPath);
+    expect(readFileSync(configPath, 'utf8')).toContain('model_reasoning_effort = "xhigh"');
+  });
+
+  it('still corrects a saved effort the upstream model does not support', () => {
+    const configPath = join(home, '.codex', 'config.toml');
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    writeFileSync(configPath, 'model_reasoning_effort = "none"\n', 'utf8');
+    const spec = proxySpec(join(home, '.relay-ai', 'codex', 'app-models-openai.json'));
+    spec.route.npm = '@ai-sdk/openai';
+    spec.route.providerId = 'openai';
+    spec.route.modelId = 'pro-alias';
+    spec.route.upstreamModelId = 'gpt-5.5-pro';   // documented: medium/high/xhigh, default high
+
+    applyAppConfigPatch(spec, configPath);
+    expect(readFileSync(configPath, 'utf8')).toContain('model_reasoning_effort = "high"');
+  });
+
   it('sets the auto-compact threshold from the context window and ratio', () => {
     const configPath = join(home, '.codex', 'config.toml');
     mkdirSync(join(home, '.codex'), { recursive: true });

@@ -12,6 +12,7 @@ import type { CachedModel, RegistryProvider } from '../registry/types.js';
 import { createAntigravityCloudCodeModel } from './antigravity-model.js';
 import { loadCoreRegistry } from './catalog.js';
 import { RelayCoreError, isRelayCoreError } from './errors.js';
+import { resolveReasoningProviderOptions, withReasoningProviderOptions, type RelayProviderOptions } from './reasoning.js';
 import { parseRelayRouteId } from './route-id.js';
 import type { CreateRelayModelOptions, RelayRouteId } from './types.js';
 
@@ -77,6 +78,15 @@ export async function createRelayModel(routeId: RelayRouteId, options?: CreateRe
   const registry = loadCoreRegistry();
   const { provider, model } = findRoute(registry, providerId, modelId, routeId);
 
+  // Resolved before any credential work so an unsupported level fails fast and
+  // without touching the keyring or the network.
+  const reasoningOptions: RelayProviderOptions | undefined = options?.reasoning === undefined
+    ? undefined
+    : resolveReasoningProviderOptions(options.reasoning, provider, model, routeId);
+  const finish = (built: LanguageModel): Promise<LanguageModel> => (
+    reasoningOptions ? withReasoningProviderOptions(built, reasoningOptions) : Promise.resolve(built)
+  );
+
   if (isAntigravityCloudCodeRoute(provider, model)) {
     const apiKey = await resolveCredential(provider, routeId);
     const providerData = await resolveProviderOAuthProviderData(provider.authRef);
@@ -89,12 +99,13 @@ export async function createRelayModel(routeId: RelayRouteId, options?: CreateRe
       );
     }
     try {
-      return await createAntigravityCloudCodeModel({
+      return await finish(await createAntigravityCloudCodeModel({
         modelId: model.upstreamModelId ?? model.id,
         accessToken: apiKey,
         projectId,
         refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
-      });
+        ...(options?.onDebug ? { onDebug: options.onDebug } : {}),
+      }));
     } catch (err) {
       if (isRelayCoreError(err)) throw err;
       throw new RelayCoreError(
@@ -136,7 +147,7 @@ export async function createRelayModel(routeId: RelayRouteId, options?: CreateRe
   };
 
   try {
-    return await createLanguageModel(spec);
+    return await finish(await createLanguageModel(spec));
   } catch (err) {
     if (isRelayCoreError(err)) throw err;
     throw new RelayCoreError(

@@ -17,13 +17,37 @@ export interface AntigravityCloudCodeModelOptions {
   accessToken: string;
   projectId: string;
   refreshToken?: () => Promise<string | null>;
+  /**
+   * Sanitized transport diagnostics. Messages carry endpoint host, attempt
+   * number, status, byte counts and error *names* only — never tokens, the
+   * project id, prompts, tool arguments, or any response body.
+   */
+  onDebug?: (message: string) => void;
 }
 
-const CLOUD_CODE_BASE = ANTIGRAVITY_BASE_URLS[0]!.replace(/\/+$/, '');
-const STREAM_URL = `${CLOUD_CODE_BASE}/${ANTIGRAVITY_API_VERSION}:streamGenerateContent?alt=sse`;
-const UNARY_URL = `${CLOUD_CODE_BASE}/${ANTIGRAVITY_API_VERSION}:generateContent`;
+const CLOUD_CODE_BASES = ANTIGRAVITY_BASE_URLS.map(base => base.replace(/\/+$/, ''));
+const CLOUD_CODE_BASE = CLOUD_CODE_BASES[0]!;
+/** Ordered fallback lists — same order as ANTIGRAVITY_BASE_URLS, first success wins. */
+const STREAM_URLS = CLOUD_CODE_BASES.map(base => `${base}/${ANTIGRAVITY_API_VERSION}:streamGenerateContent?alt=sse`);
+const UNARY_URLS = CLOUD_CODE_BASES.map(base => `${base}/${ANTIGRAVITY_API_VERSION}:generateContent`);
 /** Syntactically valid Google SDK prefix — every request is intercepted by custom fetch. */
 const SDK_BASE_URL = `${CLOUD_CODE_BASE}/v1beta`;
+
+/**
+ * Statuses that mean "this endpoint can't serve the request" rather than
+ * "this request is wrong". Only these fail over — replaying a 400/401/403 across
+ * every endpoint would just repeat a request the caller has to fix.
+ */
+const ENDPOINT_FAILOVER_STATUSES = new Set([404, 408, 429]);
+
+function shouldTryNextEndpoint(status: number): boolean {
+  return ENDPOINT_FAILOVER_STATUSES.has(status) || status >= 500;
+}
+
+/** Release a response we are abandoning, so its socket is not held open. */
+function discardResponse(response: Response): void {
+  try { void response.body?.cancel(); } catch { /* already released */ }
+}
 
 export function unwrapCloudCodeSsePayload(payload: string): string {
   const trimmed = payload.trim();
@@ -92,6 +116,7 @@ export function createCloudCodeFetch(
   fetchImpl?: typeof globalThis.fetch,
 ): typeof globalThis.fetch {
   let accessToken = options.accessToken;
+  const debug = (msg: string) => { try { options.onDebug?.(`cloud-code: ${msg}`); } catch { /* ignore */ } };
 
   return async (input, init) => {
     const url = requestUrl(input);
@@ -108,38 +133,86 @@ export function createCloudCodeFetch(
       request: geminiBody,
     };
     const body = JSON.stringify(envelope);
-    const upstreamUrl = streaming ? STREAM_URL : UNARY_URL;
+    // `String.length` is UTF-16 code units, not bytes — non-ASCII prompts would
+    // under-report. The diagnostic claims bytes, so measure bytes.
+    const bodyByteLength = Buffer.byteLength(body, 'utf8');
+    const upstreamUrls = streaming ? STREAM_URLS : UNARY_URLS;
     const doFetch = fetchImpl ?? ((input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init));
 
-    const send = (token: string) => doFetch(upstreamUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        'User-Agent': ANTIGRAVITY_USER_AGENT,
-      },
-      body,
-      signal,
-    });
+    const send = async (url: string, token: string): Promise<Response> => {
+      try {
+        return await doFetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+            'User-Agent': ANTIGRAVITY_USER_AGENT,
+          },
+          body,
+          signal,
+        });
+      } catch (err) {
+        if (isAbortError(err, signal)) throw abortError(signal, err);
+        throw err;
+      }
+    };
 
-    let response: Response;
-    try {
-      response = await send(accessToken);
-    } catch (err) {
-      if (isAbortError(err, signal)) throw abortError(signal, err);
-      throw err;
-    }
+    /**
+     * Walk the ordered endpoint list. The decision to move on is made from the
+     * status line alone, before the body is read — so once a response is
+     * returned, its (possibly streaming) body is committed to and no later
+     * endpoint is ever tried.
+     */
+    const sendWithFailover = async (token: string, startIndex = 0): Promise<{ response: Response; url: string; index: number }> => {
+      let lastError: unknown;
+      for (let i = startIndex; i < upstreamUrls.length; i += 1) {
+        const url = upstreamUrls[i]!;
+        const isLast = i === upstreamUrls.length - 1;
+        const where = `endpoint=${i + 1}/${upstreamUrls.length} host=${endpointHost(url)}`;
+        let response: Response | undefined;
+        try {
+          debug(`request ${where} kind=${streaming ? 'stream' : 'unary'} payloadBytes=${bodyByteLength}`);
+          response = await send(url, token);
+        } catch (err) {
+          if (isAbortError(err, signal)) throw err;
+          lastError = err;
+          debug(`network failure ${where} errorName=${errorName(err)}`);
+        }
+        if (response) {
+          if (isLast || !shouldTryNextEndpoint(response.status)) {
+            debug(`response ${where} status=${response.status}`);
+            return { response, url, index: i };
+          }
+          discardResponse(response);
+          lastError = new Error(`Cloud Code Assist endpoint returned ${response.status}`);
+          debug(`retryable status=${response.status} ${where} — trying next endpoint`);
+        }
+        // Only reached when another endpoint is still to be tried.
+        if (signal?.aborted) throw abortError(signal);
+      }
+      throw lastError ?? new Error('All Cloud Code Assist endpoints failed');
+    };
+
+    // The token *this* request actually sent. Comparing the refresh result
+    // against the shared `accessToken` instead would let whichever concurrent
+    // request refreshed first suppress every other in-flight request's retry.
+    const tokenUsed = accessToken;
+    let { response, index: servedByIndex } = await sendWithFailover(tokenUsed);
 
     if (response.status === 401 && options.refreshToken && !signal?.aborted) {
+      debug('status=401 — refreshing credential');
       const refreshed = await options.refreshToken().catch(() => null);
-      if (refreshed && refreshed !== accessToken && !signal?.aborted) {
+      if (refreshed && refreshed !== tokenUsed && !signal?.aborted) {
         accessToken = refreshed;
-        try {
-          response = await send(accessToken);
-        } catch (err) {
-          if (isAbortError(err, signal)) throw abortError(signal, err);
-          throw err;
-        }
+        discardResponse(response);
+        // One refresh, one retry — resuming the ordered fallback *at* the
+        // endpoint that issued the 401. Earlier endpoints already failed for
+        // their own reasons, so they are not replayed; later ones are still the
+        // documented fallback if the retried endpoint is itself down.
+        ({ response } = await sendWithFailover(refreshed, servedByIndex));
+        debug(`retry after refresh status=${response.status}`);
+      } else {
+        debug(`refresh did not yield a new credential (refreshed=${refreshed ? 'same' : 'none'})`);
       }
     }
 
@@ -157,6 +230,17 @@ export async function createAntigravityCloudCodeModel(
     fetch: createCloudCodeFetch(options),
   });
   return google(options.modelId);
+}
+
+/** Host only — the endpoint URLs are compile-time constants, never user data. */
+function endpointHost(url: string): string {
+  try { return new URL(url).host; } catch { return 'unknown'; }
+}
+
+/** Error *name* only — messages can embed request URLs or upstream body text. */
+function errorName(err: unknown): string {
+  if (err instanceof Error) return err.name || 'Error';
+  return typeof err;
 }
 
 function isWrappedCloudCodeBody(parsed: unknown): parsed is { response: object } {

@@ -5,6 +5,7 @@ import { getReasoningCapabilities } from '../provider-factory.js';
 import { loadRegistry } from '../registry/io.js';
 import { REGISTRY_SCHEMA_VERSION, type CachedModel, type ProviderRegistry, type RegistryProvider } from '../registry/types.js';
 import { RelayCoreError } from './errors.js';
+import { isRelayReasoningLevel, reasoningNpmForRoute } from './reasoning.js';
 import { toRelayRouteId } from './route-id.js';
 import type { RelayModelDescriptor } from './types.js';
 
@@ -24,7 +25,11 @@ type ReasoningInfo = RelayModelDescriptor['capabilities'];
 
 function mapReasoning(provider: RegistryProvider, model: CachedModel): ReasoningInfo {
   const base = { tools: 'unknown' as const, vision: 'unknown' as const };
-  const npm = model.npm ?? provider.api.npm ?? '';
+  // Must be the SDK package the model is actually *built* with, not the
+  // provider's registry npm — Cloud Code routes are registered as
+  // openai-compatible but served by @ai-sdk/google, so classifying by the
+  // registry value reported reasoning capabilities Core does not agree with.
+  const npm = reasoningNpmForRoute(provider, model);
   const upstreamModelId = model.upstreamModelId ?? model.id;
   try {
     const caps = getReasoningCapabilities(npm, upstreamModelId, {
@@ -40,13 +45,20 @@ function mapReasoning(provider: RegistryProvider, model: CachedModel): Reasoning
         return { ...base, reasoning: 'none' };
       case 'internal-only':
         return { ...base, reasoning: 'fixed' };
-      case 'controllable':
+      case 'controllable': {
+        // `ReasoningCapabilities.levels` is the internal `string[]`; narrow it
+        // so the public descriptor only ever exposes real RelayReasoningLevels.
+        const levels = caps.levels.filter(isRelayReasoningLevel);
+        if (levels.length === 0) return { ...base, reasoning: 'fixed' };
         return {
           ...base,
           reasoning: 'adjustable',
-          reasoningLevels: [...caps.levels],
-          defaultReasoningLevel: caps.defaultLevel,
+          reasoningLevels: levels,
+          ...(isRelayReasoningLevel(caps.defaultLevel)
+            ? { defaultReasoningLevel: caps.defaultLevel }
+            : {}),
         };
+      }
       default:
         return { ...base, reasoning: 'unknown' };
     }

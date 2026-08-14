@@ -319,10 +319,18 @@ export interface ReasoningCapabilities {
 }
 
 const ANTHROPIC_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
-const OPENAI_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
+const OPENAI_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
+const OPENAI_XHIGH_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
 const GEMINI_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
 const MISTRAL_EFFORT_LEVELS = ['high', 'off'] as const;
-const XAI_EFFORT_LEVELS = ['none', 'low', 'medium', 'high'] as const;
+/**
+ * xAI's accepted reasoning_effort values differ by transport, per the installed
+ * adapter's own docs (`@ai-sdk/xai/docs/01-xai.mdx`): chat models take
+ * `low | high`, Responses models take `low | medium | high`. Neither accepts a
+ * `none`/`xhigh` value, so neither is offered.
+ */
+const XAI_CHAT_EFFORT_LEVELS = ['low', 'high'] as const;
+const XAI_RESPONSES_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
 const OPENROUTER_EFFORT_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
 /** DeepSeek V4 wire values (low/medium map to high; xhigh maps to max). */
 const DEEPSEEK_EFFORT_LEVELS = ['high', 'max', 'off'] as const;
@@ -549,7 +557,111 @@ function mapCodexEffortToAnthropic(effort: string): string | undefined {
   }
 }
 
-function mapCodexEffortToOpenAI(effort: string): string | undefined {
+interface OpenAiReasoningProfile {
+  levels: readonly string[];
+  defaultLevel: string;
+}
+
+/**
+ * Reasoning-effort profile per **exact** OpenAI model id.
+ *
+ * Sourced from developers.openai.com model pages (verified 2026-08-14) rather
+ * than the installed `@ai-sdk/openai` docs, which still describe `xhigh` as
+ * GPT-5.1-Codex-Max-only and are behind the API.
+ *
+ * Matching is deliberately exact, not prefix-based. A named descendant is a
+ * different model with a different effort set — `gpt-5.5-pro` drops `none`/`low`
+ * and defaults to `high`, `gpt-5.2-codex` drops `none`, and
+ * `gpt-5.2-chat-latest` has no reasoning at all. Letting `gpt-5.5` classify
+ * every `gpt-5.5-*` id would advertise values OpenAI rejects. The only alias
+ * treated as the same model is a dated snapshot suffix.
+ *
+ * Unlisted reasoning models fall back to OPENAI_EFFORT_LEVELS, which
+ * under-offers rather than sending a value the model may reject. Add entries
+ * only with a documented source; re-check when new models ship.
+ */
+const OPENAI_MODEL_REASONING: Readonly<Record<string, OpenAiReasoningProfile>> = {
+  'gpt-5-pro': { levels: ['high'], defaultLevel: 'high' },
+  'gpt-5.1': { levels: ['none', 'low', 'medium', 'high'], defaultLevel: 'none' },
+  'gpt-5.1-codex-max': { levels: ['low', 'medium', 'high', 'xhigh'], defaultLevel: 'medium' },
+  'gpt-5.2': { levels: ['none', 'low', 'medium', 'high', 'xhigh'], defaultLevel: 'none' },
+  'gpt-5.2-codex': { levels: ['low', 'medium', 'high', 'xhigh'], defaultLevel: 'medium' },
+  'gpt-5.2-pro': { levels: ['medium', 'high', 'xhigh'], defaultLevel: 'medium' },
+  'gpt-5.3-codex': { levels: ['low', 'medium', 'high', 'xhigh'], defaultLevel: 'medium' },
+  'gpt-5.4': { levels: ['none', 'low', 'medium', 'high', 'xhigh'], defaultLevel: 'none' },
+  'gpt-5.4-mini': { levels: ['none', 'low', 'medium', 'high', 'xhigh'], defaultLevel: 'none' },
+  'gpt-5.4-nano': { levels: ['none', 'low', 'medium', 'high', 'xhigh'], defaultLevel: 'none' },
+  'gpt-5.4-pro': { levels: ['medium', 'high', 'xhigh'], defaultLevel: 'medium' },
+  'gpt-5.5': { levels: ['none', 'low', 'medium', 'high', 'xhigh'], defaultLevel: 'medium' },
+  'gpt-5.5-pro': { levels: ['medium', 'high', 'xhigh'], defaultLevel: 'high' },
+  'gpt-5.6': { levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'], defaultLevel: 'medium' },
+  'gpt-5.6-luna': { levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'], defaultLevel: 'medium' },
+  'gpt-5.6-sol': { levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'], defaultLevel: 'medium' },
+  'gpt-5.6-terra': { levels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'], defaultLevel: 'medium' },
+};
+
+/**
+ * Chat-tuned ids documented as having no reasoning-effort support at all.
+ *
+ * This overrides `metadata.reasoning`: the bundled models.dev cache marks some
+ * of these as reasoning-capable, and trusting it would advertise (and send) an
+ * effort OpenAI rejects for the model.
+ */
+const OPENAI_NON_REASONING_MODELS = new Set([
+  'chat-latest',
+  'gpt-5-chat-latest',
+  'gpt-5.1-chat-latest',
+  'gpt-5.2-chat-latest',
+  'gpt-5.3-chat-latest',
+]);
+
+/** `gpt-5.5-2026-04-23` is the same model as `gpt-5.5`; `gpt-5.5-pro` is not. */
+const OPENAI_DATED_SNAPSHOT_SUFFIX = /-\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The id capabilities are decided by: what actually goes on the wire.
+ *
+ * Catalog ids can be aliases (`gpt-5.5-fast` → `gpt-5.5`), so classifying by
+ * the local id would give an alias the wrong — or no — profile, and Codex would
+ * then rewrite a valid saved `xhigh` down to the fallback default.
+ */
+function canonicalOpenAiModelId(modelId: string | undefined, metadata?: ReasoningMetadata): string {
+  return (metadata?.upstreamModelId ?? modelId ?? '').toLowerCase();
+}
+
+/** The documented profile for a model, or undefined when it isn't listed. */
+function openAiReasoningProfile(modelId: string | undefined, metadata?: ReasoningMetadata): OpenAiReasoningProfile | undefined {
+  const id = canonicalOpenAiModelId(modelId, metadata);
+  if (!id) return undefined;
+  return OPENAI_MODEL_REASONING[id]
+    ?? OPENAI_MODEL_REASONING[id.replace(OPENAI_DATED_SNAPSHOT_SUFFIX, '')];
+}
+
+/**
+ * Does this OpenAI model reason at all? Shared by the capability table and the
+ * request mapper so they cannot disagree — otherwise the mapper happily builds
+ * a `reasoning_effort` for a chat model the catalog reports as non-reasoning.
+ * Deliberately free of any call back into `getReasoningCapabilities`, which
+ * filters its levels *through* the mapper.
+ */
+function openAiModelReasons(modelId: string, metadata?: ReasoningMetadata): boolean {
+  const id = canonicalOpenAiModelId(modelId, metadata);
+  if (OPENAI_NON_REASONING_MODELS.has(id.replace(OPENAI_DATED_SNAPSHOT_SUFFIX, ''))) return false;
+  return !!openAiReasoningProfile(modelId, metadata) || modelPrefersResponsesApi(id) || !!metadata?.reasoning;
+}
+
+/**
+ * First-party OpenAI/Azure: the value is sent verbatim when the model documents
+ * it, and omitted otherwise. Never substituted — collapsing `xhigh` to `high`
+ * silently sent a weaker level than the caller asked for, and sending `xhigh`
+ * to a model without it is an upstream 400.
+ */
+function mapCodexEffortToOpenAI(effort: string, allowed: readonly string[]): string | undefined {
+  return allowed.includes(effort) ? effort : undefined;
+}
+
+/** Legacy nearest-value mapping, still used by metadata-inferred routes. */
+function mapCodexEffortToOpenAICompatible(effort: string): string | undefined {
   if (effort === 'xhigh') return 'high';
   const allowed = ['low', 'medium', 'high'];
   return allowed.includes(effort) ? effort : undefined;
@@ -567,20 +679,20 @@ function mapCodexEffortToGlm52(effort: string): 'high' | 'max' | undefined {
   }
 }
 
-function mapCodexEffortToXai(effort: string): string | undefined {
+/** `supportsMedium` is true only for the Responses transport — see XAI_*_EFFORT_LEVELS. */
+function mapCodexEffortToXai(effort: string, supportsMedium: boolean): string | undefined {
   switch (effort) {
-    case 'none':
-    case 'minimal':
-      return undefined;   // xAI SDK only accepts 'low'|'high'; omit param for 'none'
     case 'low':
+      return 'low';
     case 'medium':
-      return 'low';       // 'medium' has no xAI equivalent — nearest valid value
+      // Chat has no 'medium'; returning 'low' there would be a silent downgrade.
+      return supportsMedium ? 'medium' : undefined;
     case 'high':
     case 'xhigh':
     case 'max':
       return 'high';
     default:
-      return undefined;
+      return undefined;   // none/minimal have no xAI equivalent
   }
 }
 
@@ -611,8 +723,58 @@ function mapCodexEffortToGeminiBudget(effort: string): number | undefined {
   return GEMINI_25_BUDGETS[level];
 }
 
+/**
+ * Keep the advertised levels and the actual request mapping in lockstep.
+ *
+ * The capability table dispatches largely on *model id* while
+ * `effortProviderOptions` dispatches on the SDK *package*, so the two used to
+ * disagree — e.g. GLM/DeepSeek/Kimi ids served through `@ai-sdk/alibaba`
+ * advertised levels that mapped to nothing, and xAI advertised a `none` its API
+ * has no value for. Filtering the advertised list through the mapper makes that
+ * class of drift impossible rather than merely fixed once.
+ */
+function withMappableLevels(
+  caps: ReasoningCapabilities,
+  npm: string,
+  modelId: string,
+  metadata?: ReasoningMetadata,
+): ReasoningCapabilities {
+  if (caps.mode !== 'controllable') return caps;
+  // Keep a level only if it maps to a request at all, *and* to one no
+  // lower-ranked level already produces. Two levels that send identical bytes
+  // are one level with two names — offering both means the weaker-sounding
+  // choice silently wins, which is the substitution this contract forbids.
+  const seen = new Set<string>();
+  const levels = caps.levels.filter(level => {
+    const mapped = effortProviderOptions(npm, level, modelId, metadata);
+    if (mapped === undefined) return false;
+    const wire = JSON.stringify(mapped);
+    if (seen.has(wire)) return false;
+    seen.add(wire);
+    return true;
+  });
+  if (levels.length === caps.levels.length) return caps;
+  if (levels.length === 0) {
+    // Reasons, but nothing about it can actually be set from here.
+    return { ...caps, levels: [], defaultLevel: '', mode: 'internal-only' };
+  }
+  return {
+    ...caps,
+    levels,
+    defaultLevel: levels.includes(caps.defaultLevel) ? caps.defaultLevel : levels[levels.length - 1]!,
+  };
+}
+
 /** Per-model reasoning UI + wire metadata for Codex catalog and adapters. */
 export function getReasoningCapabilities(
+  npm: string,
+  modelId: string,
+  metadata?: ReasoningMetadata,
+): ReasoningCapabilities {
+  return withMappableLevels(resolveRawReasoningCapabilities(npm, modelId, metadata), npm, modelId, metadata);
+}
+
+function resolveRawReasoningCapabilities(
   npm: string,
   modelId: string,
   metadata?: ReasoningMetadata,
@@ -640,15 +802,24 @@ export function getReasoningCapabilities(
   }
 
   if (npm === '@ai-sdk/openai' || npm === '@ai-sdk/azure') {
-    const prefersResponses = modelPrefersResponsesApi(modelId);
-    if (prefersResponses || metadata?.reasoning) {
+    // Everything below keys off the id that actually reaches OpenAI, not a
+    // local catalog alias.
+    const canonicalId = canonicalOpenAiModelId(modelId, metadata);
+    const profile = openAiReasoningProfile(modelId, metadata);
+    const prefersResponses = modelPrefersResponsesApi(canonicalId);
+    // Two separate questions: does this model reason at all, and can this
+    // transport carry `reasoning_effort`? Only the Responses endpoint can, and
+    // that decision has to match the one the model factory actually makes.
+    if (openAiModelReasons(modelId, metadata) && shouldUseOpenAiResponsesEndpoint(canonicalId)) {
+      const levels = profile?.levels ?? [...OPENAI_EFFORT_LEVELS];
       return {
-        levels: [...OPENAI_EFFORT_LEVELS],
-        defaultLevel: 'medium',
+        levels: [...levels],
+        defaultLevel: profile?.defaultLevel
+          ?? (levels.includes('medium') ? 'medium' : levels[levels.length - 1]!),
         supportsSummaries: true,
+        source: profile || prefersResponses ? 'provider-rule' : 'model-metadata',
+        confidence: profile || prefersResponses ? 'documented' : 'inferred',
         mode: 'controllable',
-        source: prefersResponses ? 'provider-rule' : 'model-metadata',
-        confidence: prefersResponses ? 'documented' : 'inferred',
         wireFormat: { kind: 'openai-reasoning-effort' },
       };
     }
@@ -688,8 +859,8 @@ export function getReasoningCapabilities(
   if (npm === '@ai-sdk/xai') {
     if (isXaiReasoningEffortModel(modelId)) {
       const levels = modelPrefersResponsesApi(modelId)
-        ? ['low', 'medium', 'high', 'xhigh']
-        : [...XAI_EFFORT_LEVELS];
+        ? [...XAI_RESPONSES_EFFORT_LEVELS]
+        : [...XAI_CHAT_EFFORT_LEVELS];
       return {
         levels,
         defaultLevel: xaiDefaultReasoningEffort(modelId),
@@ -811,14 +982,20 @@ export function effortProviderOptions(
   }
 
   if (npm === '@ai-sdk/openai' || npm === '@ai-sdk/azure') {
-    if (!modelId || !modelPrefersResponsesApi(modelId)) return undefined;
-    const reasoningEffort = mapCodexEffortToOpenAI(effort);
+    // `reasoning_effort` only exists on the Responses transport — use the same
+    // decision the model factory makes, not the narrower "prefers responses" —
+    // and only for models that reason at all. Keyed on the upstream id so an
+    // alias route gets its real model's levels.
+    if (!modelId || !shouldUseOpenAiResponsesEndpoint(canonicalOpenAiModelId(modelId, metadata))) return undefined;
+    if (!openAiModelReasons(modelId, metadata)) return undefined;
+    const allowed = openAiReasoningProfile(modelId, metadata)?.levels ?? OPENAI_EFFORT_LEVELS;
+    const reasoningEffort = mapCodexEffortToOpenAI(effort, allowed);
     return reasoningEffort ? { openai: { reasoningEffort } } : undefined;
   }
 
   if (npm === '@ai-sdk/xai') {
     if (!modelId || !isXaiReasoningEffortModel(modelId)) return undefined;
-    const reasoningEffort = mapCodexEffortToXai(effort);
+    const reasoningEffort = mapCodexEffortToXai(effort, modelPrefersResponsesApi(modelId));
     return reasoningEffort ? { xai: { reasoningEffort } } : undefined;
   }
 
@@ -856,7 +1033,7 @@ export function effortProviderOptions(
       return deepSeekEffortProviderOptions(effort);
     }
     if (isKimiReasoningModel(modelId)) {
-      const reasoningEffort = mapCodexEffortToOpenAI(effort);
+      const reasoningEffort = mapCodexEffortToOpenAICompatible(effort);
       if (reasoningEffort) {
         const key = metadata?.providerId ? toCamelCase(metadata.providerId) : 'openaiCompatible';
         return { [key]: { reasoningEffort } };
@@ -872,7 +1049,7 @@ export function effortProviderOptions(
       return undefined;
     }
     if (hasSupportedParameter(metadata, 'reasoning_effort')) {
-      const reasoningEffort = mapCodexEffortToOpenAI(effort);
+      const reasoningEffort = mapCodexEffortToOpenAICompatible(effort);
       return reasoningEffort
         ? { openai: { reasoningEffort }, openaiCompatible: { reasoningEffort } }
         : undefined;

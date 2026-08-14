@@ -250,6 +250,365 @@ describe('normalizeResponsesLiteEvent', () => {
     });
   });
 
+  // Synthetic fixture reproducing the reported production symptom (no captured
+  // production frames): `added`, `delta` and `done` each omit fields the SDK
+  // requires, and only `response.completed.output` is authoritative. v0.9.2
+  // minted a fresh id per frame, dropped the accumulated arguments, and then
+  // suppressed recovery because the call_id was already marked done —
+  // producing one tool call with empty arguments.
+  it('retains function-call identity and arguments across incomplete added/delta/done frames', () => {
+    const state = createResponsesLiteNormalizeState();
+
+    const added = normalizeResponsesLiteEvent({
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: { type: 'function_call', name: 'getWeather', call_id: 'call_weather' },
+    }, state) as Array<{ item: Record<string, unknown> }>;
+    const itemId = added[0]!.item.id;
+    expect(typeof itemId).toBe('string');
+
+    const delta = normalizeResponsesLiteEvent({
+      type: 'response.function_call_arguments.delta',
+      delta: '{"city":"NYC"}',
+    }, state) as Array<Record<string, unknown>>;
+    expect(delta[0]!.item_id).toBe(itemId);
+
+    const done = normalizeResponsesLiteEvent({
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: { type: 'function_call', name: 'getWeather', call_id: 'call_weather' },
+    }, state);
+
+    const completed = normalizeResponsesLiteEvent({
+      type: 'response.completed',
+      response: {
+        usage: { input_tokens: 1, output_tokens: 1 },
+        output: [{
+          type: 'function_call',
+          id: 'fc_upstream',
+          call_id: 'call_weather',
+          name: 'getWeather',
+          status: 'completed',
+          arguments: '{"city":"NYC"}',
+        }],
+      },
+    }, state);
+
+    const emitted = [...done, ...completed] as Array<{ type: string; item?: Record<string, unknown> }>;
+    const dones = emitted.filter(e => e.type === 'response.output_item.done');
+    expect(dones).toHaveLength(1);
+    expect(dones[0]!.item).toMatchObject({
+      type: 'function_call',
+      id: itemId,
+      call_id: 'call_weather',
+      name: 'getWeather',
+      arguments: '{"city":"NYC"}',
+      status: 'completed',
+    });
+    // No second `added` for the same call — that would duplicate the tool call.
+    expect(emitted.filter(e => e.type === 'response.output_item.added')).toHaveLength(0);
+  });
+
+  it('keeps two incomplete function calls from leaking identity or arguments into each other', () => {
+    const state = createResponsesLiteNormalizeState();
+    const emitted: Array<{ type: string; item?: Record<string, unknown> }> = [];
+    const push = (event: unknown) => {
+      emitted.push(...normalizeResponsesLiteEvent(event, state) as Array<{ type: string; item?: Record<string, unknown> }>);
+    };
+
+    push({ type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', name: 'alpha', call_id: 'call_a' } });
+    push({ type: 'response.function_call_arguments.delta', delta: '{"n":1}' });
+    push({ type: 'response.output_item.done', output_index: 0, item: { type: 'function_call', name: 'alpha', call_id: 'call_a' } });
+    push({ type: 'response.output_item.added', output_index: 1, item: { type: 'function_call', name: 'beta', call_id: 'call_b' } });
+    push({ type: 'response.function_call_arguments.delta', delta: '{"n":2}' });
+    push({ type: 'response.output_item.done', output_index: 1, item: { type: 'function_call', name: 'beta', call_id: 'call_b' } });
+    push({
+      type: 'response.completed',
+      response: {
+        usage: { input_tokens: 1, output_tokens: 1 },
+        output: [
+          { type: 'function_call', id: 'fc_a', call_id: 'call_a', name: 'alpha', status: 'completed', arguments: '{"n":1}' },
+          { type: 'function_call', id: 'fc_b', call_id: 'call_b', name: 'beta', status: 'completed', arguments: '{"n":2}' },
+        ],
+      },
+    });
+
+    const dones = emitted.filter(e => e.type === 'response.output_item.done');
+    expect(dones.map(e => [e.item?.call_id, e.item?.name, e.item?.arguments])).toEqual([
+      ['call_a', 'alpha', '{"n":1}'],
+      ['call_b', 'beta', '{"n":2}'],
+    ]);
+    const addeds = emitted.filter(e => e.type === 'response.output_item.added');
+    expect(addeds.map(e => e.item?.call_id)).toEqual(['call_a', 'call_b']);
+    // Each call keeps one stable item id from `added` through `done`.
+    expect(dones[0]!.item?.id).toBe(addeds[0]!.item?.id);
+    expect(dones[1]!.item?.id).toBe(addeds[1]!.item?.id);
+    expect(dones[0]!.item?.id).not.toBe(dones[1]!.item?.id);
+  });
+
+  it('defers completion when a done frame has neither upstream nor accumulated arguments', () => {
+    const state = createResponsesLiteNormalizeState();
+    normalizeResponsesLiteEvent({
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: { type: 'function_call', name: 'getWeather', call_id: 'call_weather' },
+    }, state);
+    const done = normalizeResponsesLiteEvent({
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: { type: 'function_call', name: 'getWeather', call_id: 'call_weather' },
+    }, state) as Array<{ type: string }>;
+    // Nothing fabricated here — recovery from response.completed stays available.
+    expect(done.filter(e => e.type === 'response.output_item.done')).toHaveLength(0);
+
+    const completed = normalizeResponsesLiteEvent({
+      type: 'response.completed',
+      response: {
+        usage: { input_tokens: 1, output_tokens: 1 },
+        output: [{
+          type: 'function_call', id: 'fc_upstream', call_id: 'call_weather',
+          name: 'getWeather', status: 'completed', arguments: '{"city":"NYC"}',
+        }],
+      },
+    }, state) as Array<{ type: string; item?: Record<string, unknown> }>;
+    const dones = completed.filter(e => e.type === 'response.output_item.done');
+    expect(dones).toHaveLength(1);
+    expect(dones[0]!.item).toMatchObject({ call_id: 'call_weather', arguments: '{"city":"NYC"}', status: 'completed' });
+  });
+
+  // Some backends restart `output_index` per call rather than incrementing it.
+  // Matching purely on output_index would merge two distinct calls into one.
+  it('keeps calls separate when upstream reuses the same output_index', () => {
+    const state = createResponsesLiteNormalizeState();
+    const emitted: Array<{ type: string; item?: Record<string, unknown> }> = [];
+    const push = (event: unknown) => {
+      emitted.push(...normalizeResponsesLiteEvent(event, state) as Array<{ type: string; item?: Record<string, unknown> }>);
+    };
+
+    push({ type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', name: 'alpha', call_id: 'call_a' } });
+    push({ type: 'response.function_call_arguments.delta', delta: '{"n":1}' });
+    push({ type: 'response.output_item.done', output_index: 0, item: { type: 'function_call', name: 'alpha', call_id: 'call_a' } });
+    push({ type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', name: 'beta', call_id: 'call_b' } });
+    push({ type: 'response.function_call_arguments.delta', delta: '{"n":2}' });
+    push({ type: 'response.output_item.done', output_index: 0, item: { type: 'function_call', name: 'beta', call_id: 'call_b' } });
+
+    const dones = emitted.filter(e => e.type === 'response.output_item.done');
+    expect(dones.map(e => [e.item?.call_id, e.item?.name, e.item?.arguments])).toEqual([
+      ['call_a', 'alpha', '{"n":1}'],
+      ['call_b', 'beta', '{"n":2}'],
+    ]);
+  });
+
+  // Same index reuse, but the deltas *do* carry `output_index` while still
+  // omitting `item_id`. Matching the oldest entry at that index sends the
+  // second call's arguments to the first, and completes the second with "".
+  it('routes an indexed delta to the active call when output_index is reused', () => {
+    const state = createResponsesLiteNormalizeState();
+    const emitted: Array<{ type: string; item?: Record<string, unknown> }> = [];
+    const push = (event: unknown) => {
+      emitted.push(...normalizeResponsesLiteEvent(event, state) as Array<{ type: string; item?: Record<string, unknown> }>);
+    };
+
+    push({ type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', name: 'alpha', call_id: 'call_a' } });
+    push({ type: 'response.function_call_arguments.delta', output_index: 0, delta: '{"n":1}' });
+    push({ type: 'response.output_item.done', output_index: 0, item: { type: 'function_call', name: 'alpha', call_id: 'call_a' } });
+    push({ type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', name: 'beta', call_id: 'call_b' } });
+    push({ type: 'response.function_call_arguments.delta', output_index: 0, delta: '{"n":2}' });
+    push({ type: 'response.output_item.done', output_index: 0, item: { type: 'function_call', name: 'beta', call_id: 'call_b' } });
+    push({ type: 'response.completed', response: { usage: { input_tokens: 1, output_tokens: 1 } } });
+
+    const dones = emitted.filter(e => e.type === 'response.output_item.done');
+    expect(dones.map(e => [e.item?.call_id, e.item?.name, e.item?.arguments])).toEqual([
+      ['call_a', 'alpha', '{"n":1}'],
+      ['call_b', 'beta', '{"n":2}'],
+    ]);
+  });
+
+  // Two calls can be open at the same index at once: the first deferred (its
+  // done frame carried no arguments), the second freshly added. A bare indexed
+  // delta belongs to the newest one.
+  it('routes an indexed delta to the newest open call when two share an index', () => {
+    const state = createResponsesLiteNormalizeState();
+    const emitted: Array<{ type: string; item?: Record<string, unknown> }> = [];
+    const push = (event: unknown) => {
+      emitted.push(...normalizeResponsesLiteEvent(event, state) as Array<{ type: string; item?: Record<string, unknown> }>);
+    };
+
+    push({ type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', name: 'alpha', call_id: 'call_a' } });
+    push({ type: 'response.output_item.done', output_index: 0, item: { type: 'function_call', name: 'alpha', call_id: 'call_a' } });
+    push({ type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', name: 'beta', call_id: 'call_b' } });
+    push({ type: 'response.function_call_arguments.delta', output_index: 0, delta: '{"n":2}' });
+    push({ type: 'response.output_item.done', output_index: 0, item: { type: 'function_call', name: 'beta', call_id: 'call_b' } });
+
+    const dones = emitted.filter(e => e.type === 'response.output_item.done');
+    expect(dones.map(e => [e.item?.call_id, e.item?.arguments])).toEqual([
+      ['call_b', '{"n":2}'],
+    ]);
+  });
+
+  // Out-of-order completion: the newer call at the index finishes first, so a
+  // later bare delta belongs to the older call that is still open.
+  it('never appends an indexed delta to a call that already completed', () => {
+    const state = createResponsesLiteNormalizeState();
+    const emitted: Array<{ type: string; item?: Record<string, unknown> }> = [];
+    const push = (event: unknown) => {
+      emitted.push(...normalizeResponsesLiteEvent(event, state) as Array<{ type: string; item?: Record<string, unknown> }>);
+    };
+
+    push({ type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', name: 'alpha', call_id: 'call_a' } });
+    push({ type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', name: 'beta', call_id: 'call_b' } });
+    push({ type: 'response.output_item.done', output_index: 0, item: { type: 'function_call', name: 'beta', call_id: 'call_b', arguments: '{"n":2}' } });
+    push({ type: 'response.function_call_arguments.delta', output_index: 0, delta: '{"n":1}' });
+    push({ type: 'response.output_item.done', output_index: 0, item: { type: 'function_call', name: 'alpha', call_id: 'call_a' } });
+
+    const dones = emitted.filter(e => e.type === 'response.output_item.done');
+    expect(dones.map(e => [e.item?.call_id, e.item?.arguments])).toEqual([
+      ['call_b', '{"n":2}'],
+      ['call_a', '{"n":1}'],
+    ]);
+  });
+
+  it('routes an indexed delta to a still-open call before a completed one at the same index', () => {
+    const state = createResponsesLiteNormalizeState();
+    const emitted: Array<{ type: string; item?: Record<string, unknown> }> = [];
+    const push = (event: unknown) => {
+      emitted.push(...normalizeResponsesLiteEvent(event, state) as Array<{ type: string; item?: Record<string, unknown> }>);
+    };
+    // Interleaved: alpha completes at index 0, beta opens at index 0, then a
+    // late no-identity delta must belong to beta — the only open call.
+    push({ type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', name: 'alpha', call_id: 'call_a', arguments: '' } });
+    push({ type: 'response.output_item.done', output_index: 0, item: { type: 'function_call', name: 'alpha', call_id: 'call_a', arguments: '{"n":1}' } });
+    push({ type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', name: 'beta', call_id: 'call_b' } });
+    push({ type: 'response.function_call_arguments.delta', output_index: 0, delta: '{"n":2}' });
+    push({ type: 'response.output_item.done', output_index: 0, item: { type: 'function_call', name: 'beta', call_id: 'call_b' } });
+
+    const dones = emitted.filter(e => e.type === 'response.output_item.done');
+    expect(dones.map(e => [e.item?.call_id, e.item?.arguments])).toEqual([
+      ['call_a', '{"n":1}'],
+      ['call_b', '{"n":2}'],
+    ]);
+  });
+
+  // The accumulated deltas are the *only* argument source here: `done` omits
+  // `arguments` and `response.completed` carries no authoritative output at all.
+  it('completes a call from accumulated deltas when done omits arguments', () => {
+    const state = createResponsesLiteNormalizeState();
+    normalizeResponsesLiteEvent({
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: { type: 'function_call', name: 'getWeather', call_id: 'call_weather' },
+    }, state);
+    normalizeResponsesLiteEvent({ type: 'response.function_call_arguments.delta', delta: '{"city":' }, state);
+    normalizeResponsesLiteEvent({ type: 'response.function_call_arguments.delta', delta: '"NYC"}' }, state);
+    const done = normalizeResponsesLiteEvent({
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: { type: 'function_call', name: 'getWeather', call_id: 'call_weather' },
+    }, state) as Array<{ type: string; item?: Record<string, unknown> }>;
+    const completed = normalizeResponsesLiteEvent({
+      type: 'response.completed',
+      response: { usage: { input_tokens: 1, output_tokens: 1 } },
+    }, state) as Array<{ type: string; item?: Record<string, unknown> }>;
+
+    const dones = [...done, ...completed].filter(e => e.type === 'response.output_item.done');
+    expect(dones).toHaveLength(1);
+    // Deltas appended in arrival order, not reversed or partially retained.
+    expect(dones[0]!.item).toMatchObject({
+      call_id: 'call_weather', name: 'getWeather', arguments: '{"city":"NYC"}', status: 'completed',
+    });
+  });
+
+  // When neither deltas nor authoritative output ever supply arguments, there
+  // is no honest way to complete the call — `arguments: ""` is not valid JSON
+  // and is exactly the failure this release claims to remove. Surface the
+  // malformed stream instead of manufacturing a tool call.
+  it('surfaces malformed provider output instead of completing a call with empty arguments', () => {
+    const state = createResponsesLiteNormalizeState();
+    normalizeResponsesLiteEvent({
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: { type: 'function_call', name: 'ping', call_id: 'call_ping' },
+    }, state);
+    normalizeResponsesLiteEvent({
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: { type: 'function_call', name: 'ping', call_id: 'call_ping' },
+    }, state);
+    const completed = normalizeResponsesLiteEvent({
+      type: 'response.completed',
+      response: { usage: { input_tokens: 1, output_tokens: 1 } },
+    }, state) as Array<{ type: string; item?: Record<string, unknown>; error?: Record<string, unknown> }>;
+
+    expect(completed.filter(e => e.type === 'response.output_item.done')).toHaveLength(0);
+    const errors = completed.filter(e => e.type === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.error).toMatchObject({ code: 'incomplete_function_call' });
+    // Names the call so it is debuggable, but never invents an argument string.
+    expect(JSON.stringify(errors[0])).toContain('call_ping');
+    expect(JSON.stringify(completed)).not.toContain('"arguments":""');
+  });
+
+  // `response.completed.output` is authoritative for identity but can still omit
+  // `arguments`. Recovering from it must not invent an empty argument string —
+  // that is the same fabrication, just reached through the recovery path.
+  it('surfaces malformed output when completed.output repeats a call with no arguments', () => {
+    const state = createResponsesLiteNormalizeState();
+    normalizeResponsesLiteEvent({
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: { type: 'function_call', name: 'ping', call_id: 'call_ping' },
+    }, state);
+    normalizeResponsesLiteEvent({
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: { type: 'function_call', name: 'ping', call_id: 'call_ping' },
+    }, state);
+    const completed = normalizeResponsesLiteEvent({
+      type: 'response.completed',
+      response: {
+        usage: { input_tokens: 1, output_tokens: 1 },
+        output: [{ type: 'function_call', id: 'fc_x', call_id: 'call_ping', name: 'ping', status: 'completed' }],
+      },
+    }, state) as Array<{ type: string; error?: Record<string, unknown> }>;
+
+    expect(completed.filter(e => e.type === 'response.output_item.done')).toHaveLength(0);
+    const errors = completed.filter(e => e.type === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.error).toMatchObject({ code: 'incomplete_function_call' });
+    expect(JSON.stringify(completed)).not.toContain('"arguments":""');
+  });
+
+  it('reports a call that only ever appears in completed.output with no arguments', () => {
+    const state = createResponsesLiteNormalizeState();
+    const completed = normalizeResponsesLiteEvent({
+      type: 'response.completed',
+      response: {
+        usage: { input_tokens: 1, output_tokens: 1 },
+        output: [{ type: 'function_call', id: 'fc_y', call_id: 'call_solo', name: 'solo' }],
+      },
+    }, state) as Array<{ type: string; error?: Record<string, unknown> }>;
+    expect(completed.filter(e => e.type === 'response.output_item.done')).toHaveLength(0);
+    expect(completed.filter(e => e.type === 'error')).toHaveLength(1);
+  });
+
+  it('still completes a deferred call from accumulated deltas when completed adds nothing', () => {
+    const state = createResponsesLiteNormalizeState();
+    normalizeResponsesLiteEvent({
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: { type: 'function_call', name: 'ping', call_id: 'call_ping' },
+    }, state);
+    normalizeResponsesLiteEvent({ type: 'response.function_call_arguments.delta', delta: '{}' }, state);
+    const done = normalizeResponsesLiteEvent({
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: { type: 'function_call', name: 'ping', call_id: 'call_ping' },
+    }, state) as Array<{ type: string; item?: Record<string, unknown> }>;
+    const dones = done.filter(e => e.type === 'response.output_item.done');
+    expect(dones).toHaveLength(1);
+    expect(dones[0]!.item).toMatchObject({ call_id: 'call_ping', arguments: '{}', status: 'completed' });
+  });
+
   it('does not treat usage-only completed frames as text', () => {
     const state = createResponsesLiteNormalizeState();
     const events = normalizeResponsesLiteEvent({

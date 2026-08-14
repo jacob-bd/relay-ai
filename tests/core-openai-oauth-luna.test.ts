@@ -41,6 +41,7 @@ vi.mock('../src/oauth/refresh.js', async importOriginal => {
 });
 
 const { createRelayModel } = await import('../src/core/model.js');
+const { isRelayCoreError } = await import('../src/core/errors.js');
 
 function lastSocket(): FakeWebSocket {
   return fakeSockets[fakeSockets.length - 1]!;
@@ -107,6 +108,90 @@ function productionLikeToolFrames() {
           name: 'getWeather',
           arguments: '{"city":"NYC"}',
         }],
+      },
+    },
+  ];
+}
+
+/**
+ * Synthetic fixture reproducing the reported production symptom — the exact
+ * production frame bytes were never captured. `added` carries no `id` and no
+ * `arguments`; the delta carries no `item_id`/`output_index`; `done` repeats
+ * the same incomplete item with no `arguments` and no `status`; only
+ * `response.completed.output` is authoritative.
+ */
+function incompleteToolFrames() {
+  return [
+    { type: 'response.created', response: { id: 'resp_tool_incomplete', created_at: 1, model: 'gpt-5.6-luna' } },
+    {
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: { type: 'function_call', name: 'getWeather', call_id: 'call_weather' },
+    },
+    { type: 'response.function_call_arguments.delta', delta: '{"city":"NYC"}' },
+    {
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: { type: 'function_call', name: 'getWeather', call_id: 'call_weather' },
+    },
+    {
+      type: 'response.completed',
+      response: {
+        usage: usageBlock(),
+        output: [{
+          type: 'function_call',
+          id: 'fc_upstream',
+          call_id: 'call_weather',
+          name: 'getWeather',
+          status: 'completed',
+          arguments: '{"city":"NYC"}',
+        }],
+      },
+    },
+  ];
+}
+
+/**
+ * Same malformed sequence, but `response.completed` carries no authoritative
+ * output — the accumulated argument deltas are the only possible source.
+ */
+function incompleteToolFramesWithoutRecovery() {
+  return [
+    { type: 'response.created', response: { id: 'resp_tool_no_recovery', created_at: 1, model: 'gpt-5.6-luna' } },
+    {
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: { type: 'function_call', name: 'getWeather', call_id: 'call_weather' },
+    },
+    { type: 'response.function_call_arguments.delta', delta: '{"city":' },
+    { type: 'response.function_call_arguments.delta', delta: '"NYC"}' },
+    {
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: { type: 'function_call', name: 'getWeather', call_id: 'call_weather' },
+    },
+    { type: 'response.completed', response: { usage: usageBlock() } },
+  ];
+}
+
+/** Two function calls, every frame incomplete, deltas carrying no identity at all. */
+function incompleteMultiToolFrames() {
+  return [
+    { type: 'response.created', response: { id: 'resp_multi_incomplete', created_at: 1, model: 'gpt-5.6-luna' } },
+    { type: 'response.output_item.added', output_index: 0, item: { type: 'function_call', name: 'alpha', call_id: 'call_a' } },
+    { type: 'response.function_call_arguments.delta', delta: '{"n":1}' },
+    { type: 'response.output_item.done', output_index: 0, item: { type: 'function_call', name: 'alpha', call_id: 'call_a' } },
+    { type: 'response.output_item.added', output_index: 1, item: { type: 'function_call', name: 'beta', call_id: 'call_b' } },
+    { type: 'response.function_call_arguments.delta', delta: '{"n":2}' },
+    { type: 'response.output_item.done', output_index: 1, item: { type: 'function_call', name: 'beta', call_id: 'call_b' } },
+    {
+      type: 'response.completed',
+      response: {
+        usage: usageBlock(),
+        output: [
+          { type: 'function_call', id: 'fc_a', call_id: 'call_a', name: 'alpha', status: 'completed', arguments: '{"n":1}' },
+          { type: 'function_call', id: 'fc_b', call_id: 'call_b', name: 'beta', status: 'completed', arguments: '{"n":2}' },
+        ],
       },
     },
   ];
@@ -179,6 +264,10 @@ describe('createRelayModel openai-oauth Luna via streamText', () => {
               id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', upstreamModelId: 'gpt-5.6-sol',
               modelFormat: 'openai', reasoning: true,
             },
+            {
+              id: 'text-only-model', name: 'Text Only', upstreamModelId: 'text-only-model',
+              modelFormat: 'openai', reasoning: false,
+            },
           ],
         },
         addedAt: '2026-08-13T00:00:00Z',
@@ -204,9 +293,14 @@ describe('createRelayModel openai-oauth Luna via streamText', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  async function runLuna(frames: unknown[], extra: Parameters<typeof streamText>[0] = {} as never) {
+  async function runLuna(
+    frames: unknown[],
+    extra: Parameters<typeof streamText>[0] = {} as never,
+    coreOptions: Omit<Parameters<typeof createRelayModel>[1] & object, 'onDebug'> = {},
+  ) {
     const debugLines: string[] = [];
     const model = await createRelayModel('openai-oauth::gpt-5.6-luna', {
+      ...coreOptions,
       onDebug: msg => { debugLines.push(msg); },
     });
     expect(model.provider).toContain('openai');
@@ -277,6 +371,78 @@ describe('createRelayModel openai-oauth Luna via streamText', () => {
     expect(text).toBe('xhigh-ok');
   });
 
+  // The contract Alef actually uses: a provider-neutral level handed to Core,
+  // with the OpenAI-specific request shape resolved inside Relay Core.
+  it('turns a Core reasoning level of xhigh into the Responses-Lite request shape', async () => {
+    const { text, socket } = await runLuna(
+      productionLikeTextFrames('core-xhigh-ok'),
+      { prompt: 'hey' } as Parameters<typeof streamText>[0],
+      { reasoning: 'xhigh' },
+    );
+    const sent = JSON.parse(socket.send.mock.calls[0]![0] as string);
+    expect(sent.reasoning.effort).toBe('xhigh');
+    expect(sent.reasoning.context).toBe('all_turns');
+    expect(text).toBe('core-xhigh-ok');
+  });
+
+  it.each(['low', 'medium', 'high', 'xhigh'] as const)(
+    'passes Core reasoning level %s through without collapsing it',
+    async level => {
+      const { socket } = await runLuna(
+        productionLikeTextFrames('ok'),
+        { prompt: 'hey' } as Parameters<typeof streamText>[0],
+        { reasoning: level },
+      );
+      const sent = JSON.parse(socket.send.mock.calls[0]![0] as string);
+      expect(sent.reasoning.effort).toBe(level);
+    },
+  );
+
+  it('stays backward compatible when no reasoning level is given', async () => {
+    const { socket } = await runLuna(productionLikeTextFrames('ok'));
+    const sent = JSON.parse(socket.send.mock.calls[0]![0] as string);
+    expect(sent.reasoning.effort).toBeUndefined();
+    // The transport-owned Responses-Lite field is still applied.
+    expect(sent.reasoning.context).toBe('all_turns');
+  });
+
+  it('lets a per-call providerOptions override win over the Core reasoning level', async () => {
+    const { socket } = await runLuna(
+      productionLikeTextFrames('ok'),
+      { prompt: 'hey', providerOptions: { openai: { reasoningEffort: 'low' } } } as Parameters<typeof streamText>[0],
+      { reasoning: 'xhigh' },
+    );
+    const sent = JSON.parse(socket.send.mock.calls[0]![0] as string);
+    expect(sent.reasoning.effort).toBe('low');
+  });
+
+  it('fails clearly rather than misrepresenting an unsupported reasoning level', async () => {
+    let caught: unknown;
+    try {
+      await createRelayModel('openai-oauth::gpt-5.6-luna', {
+        reasoning: 'banana' as never,
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(isRelayCoreError(caught)).toBe(true);
+    expect((caught as { code: string }).code).toBe('UNSUPPORTED_REASONING_LEVEL');
+    expect((caught as Error).message).toContain('banana');
+    expect(JSON.stringify(caught)).not.toContain(ACCESS_CANARY);
+  });
+
+  it('fails clearly when the route cannot control reasoning at all', async () => {
+    let caught: unknown;
+    try {
+      await createRelayModel('openai-oauth::text-only-model', { reasoning: 'high' });
+    } catch (err) {
+      caught = err;
+    }
+    expect(isRelayCoreError(caught)).toBe(true);
+    expect((caught as { code: string }).code).toBe('UNSUPPORTED_REASONING_LEVEL');
+    expect(JSON.stringify(caught)).not.toContain(ACCESS_CANARY);
+  });
+
   it('does not fabricate assistant text from usage-only completed frames', async () => {
     const { text } = await runLuna([
       { type: 'response.created', response: { id: 'resp_empty', created_at: 1, model: 'gpt-5.6-luna' } },
@@ -313,6 +479,68 @@ describe('createRelayModel openai-oauth Luna via streamText', () => {
       toolCallId: 'call_weather',
       input: { city: 'NYC' },
     });
+  });
+
+  it('completes a tool call when added, delta and done frames are all incomplete', async () => {
+    const { result, toolCalls } = await runLuna(incompleteToolFrames(), {
+      prompt: 'weather?',
+      stopWhen: stepCountIs(1),
+      tools: {
+        getWeather: tool({
+          description: 'Get weather',
+          inputSchema: z.object({ city: z.string() }),
+        }),
+      },
+    } as Parameters<typeof streamText>[0]);
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0]).toMatchObject({
+      toolName: 'getWeather',
+      toolCallId: 'call_weather',
+      input: { city: 'NYC' },
+    });
+    // No fabricated empty-argument call, and no duplicate from the recovery path.
+    const raw = (await result.steps).flatMap(step => step.content)
+      .filter((part): part is { type: 'tool-call'; input: unknown } => part.type === 'tool-call');
+    expect(raw).toHaveLength(1);
+    expect(JSON.stringify(raw[0]!.input)).not.toBe('""');
+  });
+
+  it('completes a tool call from accumulated deltas when completed carries no output', async () => {
+    const { toolCalls } = await runLuna(incompleteToolFramesWithoutRecovery(), {
+      prompt: 'weather?',
+      stopWhen: stepCountIs(1),
+      tools: {
+        getWeather: tool({
+          description: 'Get weather',
+          inputSchema: z.object({ city: z.string() }),
+        }),
+      },
+    } as Parameters<typeof streamText>[0]);
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0]).toMatchObject({
+      toolName: 'getWeather',
+      toolCallId: 'call_weather',
+      input: { city: 'NYC' },
+    });
+  });
+
+  it('keeps two incomplete tool calls from leaking identity or arguments into each other', async () => {
+    const { toolCalls } = await runLuna(incompleteMultiToolFrames(), {
+      prompt: 'multi',
+      stopWhen: stepCountIs(1),
+      tools: {
+        alpha: tool({ description: 'A', inputSchema: z.object({ n: z.number() }) }),
+        beta: tool({ description: 'B', inputSchema: z.object({ n: z.number() }) }),
+      },
+    } as Parameters<typeof streamText>[0]);
+    expect(toolCalls.map(call => [
+      (call as { toolName: string }).toolName,
+      (call as { toolCallId: string }).toolCallId,
+      (call as { input: unknown }).input,
+    ])).toEqual([
+      ['alpha', 'call_a', { n: 1 }],
+      ['beta', 'call_b', { n: 2 }],
+    ]);
   });
 
   it('keeps multiple tool-call boundaries intact on a valid stream', async () => {

@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const CORE_BUNDLE = resolve(__dirname, '../dist/core/index.js');
+const CORE_TYPES = resolve(__dirname, '../dist/core/index.d.ts');
 const built = existsSync(CORE_BUNDLE);
 
 describe.skipIf(!built)('dist/core package surface', () => {
@@ -42,6 +43,23 @@ describe.skipIf(!built)('dist/core package surface', () => {
     ]);
     // No files created or modified in the consumer's RELAY_AI_HOME.
     expect(readdirSync(home)).toEqual([]);
+  });
+
+  it('ships declarations for the public options surface', () => {
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    expect(existsSync(CORE_TYPES)).toBe(true);
+    const dts = readFileSync(CORE_TYPES, 'utf8');
+    // Consumers type against these — a stale build would silently drop them.
+    expect(dts).toContain('CreateRelayModelOptions');
+    expect(dts).toContain('RelayReasoningLevel');
+    expect(dts).toContain('UNSUPPORTED_REASONING_LEVEL');
+    expect(dts).toMatch(/reasoning\?:\s*RelayReasoningLevel/);
+    expect(dts).toMatch(/onDebug\?:/);
+    // The documented round-trip — read a level off a descriptor, pass it to
+    // createRelayModel — must typecheck, so these cannot be bare `string`.
+    expect(dts).toMatch(/reasoningLevels\?:\s*RelayReasoningLevel\[\]/);
+    expect(dts).toMatch(/defaultReasoningLevel\?:\s*RelayReasoningLevel/);
+    expect(dts).toMatch(/createRelayModel\s*\(\s*routeId:\s*RelayRouteId\s*,\s*options\?:\s*CreateRelayModelOptions/);
   });
 
   it('listRelayModels against a fixture home writes nothing', () => {

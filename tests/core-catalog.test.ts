@@ -1,4 +1,5 @@
 // tests/core-catalog.test.ts
+import type { RelayReasoningLevel } from '../src/core/types.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -116,6 +117,11 @@ describe('listRelayModels', () => {
     expect(claude.capabilities.reasoning).toBe('adjustable');
     expect(claude.capabilities.reasoningLevels).toContain('high');
     expect(claude.capabilities.defaultReasoningLevel).toBe('high');
+    // The documented round-trip must compile: a level read off the descriptor
+    // is assignable to CreateRelayModelOptions.reasoning with no cast.
+    const roundTrip: RelayReasoningLevel[] = claude.capabilities.reasoningLevels ?? [];
+    const chosen: RelayReasoningLevel | undefined = roundTrip[0];
+    expect(chosen).toBeDefined();
     const plain = models.find(m => m.modelId === 'plain-model')!;
     expect(plain.capabilities.reasoning).toBe('none');
     expect(plain.capabilities.tools).toBe('unknown');

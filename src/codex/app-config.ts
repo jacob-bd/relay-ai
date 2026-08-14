@@ -174,12 +174,16 @@ function mergeAppConfig(existing: TomlRecord, spec: CodexAppConfigSpec): TomlRec
 
   const existingEffort = typeof out.model_reasoning_effort === 'string' ? out.model_reasoning_effort : undefined;
   if (existingEffort !== undefined) {
+      // `upstreamModelId` is what reaches the provider; without it an alias
+      // route is classified as an unknown model and a valid saved effort gets
+      // rewritten to the fallback default.
       const caps = getReasoningCapabilities(spec.route.npm, spec.route.modelId, {
         providerId: spec.route.providerId,
         apiBaseUrl: spec.route.baseURL,
         supportedParameters: spec.route.supportedParameters,
         reasoning: spec.route.reasoning,
         interleavedReasoningField: spec.route.interleavedReasoningField,
+        upstreamModelId: spec.route.upstreamModelId,
       });
     if (caps.levels.length === 0 || !caps.levels.includes(existingEffort)) {
       if (caps.levels.length > 0 && caps.defaultLevel) {
