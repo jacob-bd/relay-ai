@@ -1,6 +1,6 @@
 // src/registry/validate-import-key.ts — verify OpenCode credentials before import
 
-import { fetchAnthropicModels } from './custom-endpoint.js';
+import { fetchAnthropicModels } from './fetch-anthropic-models.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
 import { isLikelyPlaceholderKey } from './refresh-credentials.js';
 import { resolveModelSource } from './model-source.js';

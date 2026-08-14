@@ -5,7 +5,7 @@ import type { ProviderRegistry } from '../src/registry/types.js';
 vi.mock('../src/registry/fetch-template-models.js', () => ({
   fetchTemplateModels: vi.fn(),
 }));
-vi.mock('../src/registry/custom-endpoint.js', () => ({
+vi.mock('../src/registry/fetch-anthropic-models.js', () => ({
   fetchAnthropicModels: vi.fn(),
 }));
 vi.mock('../src/registry/io.js', () => ({
@@ -14,7 +14,7 @@ vi.mock('../src/registry/io.js', () => ({
 }));
 
 import { fetchTemplateModels } from '../src/registry/fetch-template-models.js';
-import { fetchAnthropicModels } from '../src/registry/custom-endpoint.js';
+import { fetchAnthropicModels } from '../src/registry/fetch-anthropic-models.js';
 import { saveRegistry } from '../src/registry/io.js';
 import * as urlSecurity from '../src/registry/url-security.js';
 

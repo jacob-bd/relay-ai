@@ -2,7 +2,7 @@
 
 import { BACKENDS } from '../constants.js';
 import { getModels } from '../models.js';
-import { fetchAnthropicModels } from './custom-endpoint.js';
+import { fetchAnthropicModels } from './fetch-anthropic-models.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
 import { fetchClinePassModels } from './fetch-cline-pass-models.js';
 import { fetchClaudeCodeModels } from '../oauth/claude-code.js';
