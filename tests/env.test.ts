@@ -188,13 +188,22 @@ describe('buildChildEnv', () => {
     expect(buildChildEnv(BACKENDS.zen.baseUrl, 'custom-model', 'k', undefined, 1_048_576)['CLAUDE_CODE_MAX_CONTEXT_TOKENS']).toBe('1048576');
   });
 
-  it('sets the launch model window AND gateway discovery in switch-menu mode', () => {
-    // Claude Code's gateway model discovery only carries id + display_name (no
-    // context_window), so this env var is the only context-window lever and it
-    // reflects the launch model. It cannot update on live /model switch.
+  it('lets Claude Code recalculate context after live model switches in gateway mode', () => {
     const env = buildChildEnv(BACKENDS.zen.baseUrl, 'big-pickle', 'k', 1234, 200_000, true);
-    expect(env['CLAUDE_CODE_MAX_CONTEXT_TOKENS']).toBe('200000');
+    expect(env['CLAUDE_CODE_MAX_CONTEXT_TOKENS']).toBeUndefined();
     expect(env['CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY']).toBe('1');
+  });
+
+  it('removes an inherited context pin in gateway mode', () => {
+    const previous = process.env['CLAUDE_CODE_MAX_CONTEXT_TOKENS'];
+    process.env['CLAUDE_CODE_MAX_CONTEXT_TOKENS'] = '200000';
+    try {
+      const env = buildChildEnv(BACKENDS.zen.baseUrl, 'big-pickle', 'k', 1234, 200_000, true);
+      expect(env['CLAUDE_CODE_MAX_CONTEXT_TOKENS']).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env['CLAUDE_CODE_MAX_CONTEXT_TOKENS'];
+      else process.env['CLAUDE_CODE_MAX_CONTEXT_TOKENS'] = previous;
+    }
   });
 
   it('does NOT mutate process.env', () => {

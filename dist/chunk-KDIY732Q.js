@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.9.3",
+  version: "0.9.4",
   publishConfig: {
     access: "public"
   },
@@ -3746,8 +3746,11 @@ function buildChildEnv(baseUrl, model, apiKey, proxyPort, contextWindow2, enable
   env["ANTHROPIC_API_KEY"] = apiKey;
   const bareModel = stripOneMContextSuffix(model);
   env["ANTHROPIC_MODEL"] = claudeCodeClientModelId(model, contextWindow2);
-  env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = String(resolveContextWindow(bareModel, contextWindow2));
+  if (!enableGatewayDiscovery) {
+    env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = String(resolveContextWindow(bareModel, contextWindow2));
+  }
   if (enableGatewayDiscovery) {
+    delete env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"];
     env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1";
   }
   applyClaudeCodeThirdPartyCompat(env);
@@ -13841,4 +13844,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-PVGAE7HA.js.map
+//# sourceMappingURL=chunk-KDIY732Q.js.map

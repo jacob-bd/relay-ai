@@ -62,14 +62,14 @@ export function buildChildEnv(
   env['ANTHROPIC_API_KEY'] = apiKey;
   const bareModel = stripOneMContextSuffix(model);
   env['ANTHROPIC_MODEL'] = claudeCodeClientModelId(model, contextWindow);
-  // Claude Code defaults to 200K for non-api.anthropic.com base URLs; override with
-  // the launch model's real window. NOTE: in switch-menu mode this is fixed at launch
-  // and does NOT update on live /model switch — Claude Code's gateway model discovery
-  // only carries id + display_name (no context_window), so this env var is the only
-  // lever and it reflects the model you started with.
-  // Third-party routes also require a `[1m]` model-id suffix for 1M+ windows in the UI.
-  env['CLAUDE_CODE_MAX_CONTEXT_TOKENS'] = String(resolveContextWindow(bareModel, contextWindow));
+  // Keep an explicit context budget for single-model proxy sessions. With
+  // gateway discovery enabled, Claude Code can recalculate the window when the
+  // user switches models, including between native and Relay 1M models.
+  if (!enableGatewayDiscovery) {
+    env['CLAUDE_CODE_MAX_CONTEXT_TOKENS'] = String(resolveContextWindow(bareModel, contextWindow));
+  }
   if (enableGatewayDiscovery) {
+    delete env['CLAUDE_CODE_MAX_CONTEXT_TOKENS'];
     env['CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY'] = '1';
   }
   applyClaudeCodeThirdPartyCompat(env);

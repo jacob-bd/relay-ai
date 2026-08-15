@@ -185,7 +185,7 @@ The package version in `package.json` is the source of truth; do not hard-code a
 - Bedrock/Azure are not first-class API-key providers yet (optional `providers import` if already configured in OpenCode CLI). Vertex uses `relay-ai server --vertex` + gcloud ADC.
 - Providers with custom auth mechanisms (e.g. Azure OpenAI with deployment URLs) are not fully supported.
 - The `::ts::` separator in tool_use ids encodes `thought_signature`; would break if a signature ever literally contained `::ts::`. Extremely unlikely.
-- In switch-menu (gateway-discovery) mode the displayed context window reflects the **launch** model and does NOT update on live `/model` switch. Codex's gateway model discovery only carries `id` + `display_name` (no `context_window`) and fetches `/v1/models` once at startup, so `CLAUDE_CODE_MAX_CONTEXT_TOKENS` (fixed at launch) is the only lever. Single-model launches show the correct window.
+- In switch-menu (gateway-discovery) mode Relay leaves `CLAUDE_CODE_MAX_CONTEXT_TOKENS` unset so Claude Code can recalculate context on live `/model` switches. Native model metadata and Relay's `[1m]` model identity are preserved for the per-model window calculation. Single-model launches still set the exact window explicitly.
 
 **Provider quirks (documented from testing):**
 - **Mistral free tier:** strict API rate limits (HTTP 429, code `1300`). Tool-heavy Codex sessions burn quota quickly (parallel title-generation requests, Skill injection, multi-turn tool loops). The SDK handles Mistral message ordering; throttling is unaffected.

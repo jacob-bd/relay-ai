@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.4] - 2026-08-15
+
+### Fixed
+
+- **Claude Code model switches now recalculate context windows.** Gateway sessions no longer pin `CLAUDE_CODE_MAX_CONTEXT_TOKENS` to the launch model or inherit a stale parent-shell value, so live switches between native Claude and Relay 1M models can use the correct window instead of triggering premature compaction or a compaction loop. Relay's `[1m]` model identity remains intact.
+
 ## [0.9.3] - 2026-08-14
 
 ### Fixed
