@@ -30,7 +30,7 @@ import { silenceSdkWarnings } from './sdk-adapter.js';
 import { formatUpstreamError, upstreamHttpStatus } from './codex/upstream-error.js';
 import { getCodexProxyDebugLogPath, makeTraceLogger, resetCodexBodyDumpLog, appendCodexBodyDump } from './trace-log.js';
 import { classifyCodexDispatch, parseMixedProxyPath } from './codex/routing.js';
-import { forwardNativeCodexHttp, allowlistedNativeHeaders, nativeResponsesWebSocketOptions, NATIVE_CODEX_RESPONSES_URL } from './codex/native-forward.js';
+import { forwardNativeCodexHttp, allowlistedNativeHeaders, nativeResponsesWebSocketOptions, prepareNativeCodexBody, NATIVE_CODEX_RESPONSES_URL } from './codex/native-forward.js';
 import {
   createNativePayloadRelay,
   resolveRoutedCollaborationInput,
@@ -1014,10 +1014,14 @@ export async function startCodexProxy(
                 return;
               }
               if (dispatch.kind === 'native') {
+                const nativeBody = prepareNativeCodexBody(body);
+                if (debug && nativeBody !== body) {
+                  log(`WS native history normalized: model=${modelId} converted Relay compaction for native verification`);
+                }
                 if (nativeActive && nativeUpstream) {
                   if (nativeUpstream.readyState === WebSocket.OPEN) {
                     if (debug) log(`WS native forwarding next turn: model=${modelId}`);
-                    nativeUpstream.send(JSON.stringify({ type: 'response.create', ...body }));
+                    nativeUpstream.send(JSON.stringify({ type: 'response.create', ...nativeBody }));
                   } else if (debug) {
                     log(`WS native cannot forward next turn: upstream_state=${nativeUpstream.readyState}`);
                   }
@@ -1070,7 +1074,7 @@ export async function startCodexProxy(
                     nativeOpened = true;
                     if (connectTimer) clearTimeout(connectTimer);
                     if (debug) log(`WS native upstream open: model=${modelId}`);
-                    upstream?.send(JSON.stringify({ type: 'response.create', ...body }));
+                    upstream?.send(JSON.stringify({ type: 'response.create', ...nativeBody }));
                     firstFrameTimer = setTimeout(() => closeBoth('Native Codex WebSocket response timed out'), 60_000);
                   });
                   upstream.once('unexpected-response', (_request, response) => {

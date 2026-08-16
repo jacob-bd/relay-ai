@@ -10,7 +10,7 @@ import {
   resolveCodexSubagentRoute,
   startCodexProxy,
 } from '../src/codex-proxy.js';
-import type { CodexSdkCallParams } from '../src/codex-responses-adapter.js';
+import { buildCompactionResponseBody, type CodexSdkCallParams } from '../src/codex-responses-adapter.js';
 import { CODEX_APP_AUTO_COMPACT_RATIO } from '../src/codex/app-profile.js';
 import { WebSocket, WebSocketServer } from 'ws';
 
@@ -259,12 +259,23 @@ describe('startCodexProxy', () => {
         const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/_relay-codex/${capability}/v1/responses`, {
           headers: { authorization: 'Bearer native', 'chatgpt-account-id': 'acct' },
         });
-        client.on('open', () => client.send(JSON.stringify({ model: 'gpt-5.5', input: 'hi' })));
+        const relayCompaction = (
+          buildCompactionResponseBody('earlier Relay work', 'relay-model').output as Record<string, unknown>[]
+        )[0]!;
+        client.on('open', () => client.send(JSON.stringify({ model: 'gpt-5.5', input: [relayCompaction] })));
         client.on('message', data => messages.push(data.toString()));
         client.on('close', () => resolve());
         client.on('error', reject);
       });
-      expect(received[0]).toMatchObject({ type: 'response.create', model: 'gpt-5.5', input: 'hi' });
+      expect(received[0]).toMatchObject({
+        type: 'response.create',
+        model: 'gpt-5.5',
+        input: [{
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: '[Summary of earlier conversation]\nearlier Relay work' }],
+        }],
+      });
       expect(messages).toContain(JSON.stringify({ type: 'response.completed', response: { status: 'completed' } }));
     } finally {
       await new Promise<void>(resolve => upstream.close(() => resolve()));
