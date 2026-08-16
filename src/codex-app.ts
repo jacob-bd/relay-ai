@@ -1,7 +1,6 @@
 // codex-app.ts — relay-ai codex-app / chatgpt: launch the ChatGPT desktop app (Codex mode) with registry providers
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
-import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { fetchProviderCatalog, providersForPicker, resolveLocalProviderApiKey } from './provider-catalog.js';
 import { loadPreferences, savePreferences } from './config.js';
@@ -12,6 +11,7 @@ import type { CodexProxyHandle, CodexProxyRoute } from './codex-proxy.js';
 import { getCodexProxyDebugLogPath, printTraceLog } from './trace-log.js';
 import { buildAppCatalogFile, formatCodexModelLabel, serializeCatalog } from './codex/catalog.js';
 import { captureNativeCodexCatalog } from './codex/native-catalog.js';
+import { runCodexCommandSync } from './codex/process.js';
 import { buildCodexMixedLaunchPlan, prepareCodexMixedRelayRoutes } from './codex/mixed-launch.js';
 import { supportsMultiAgentV2 } from './codex/multi-agent.js';
 import { mixedProxyBaseUrl } from './codex/routing.js';
@@ -511,7 +511,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
     try {
       const embeddedBinary = findEmbeddedCodexBinary();
       if (!embeddedBinary) throw new Error('Embedded ChatGPT/Codex runtime was not found; mixed Desktop mode is unavailable on this installation');
-      const version = execFileSync(embeddedBinary, ['--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      const version = runCodexCommandSync(embeddedBinary, ['--version']).stdout.trim();
       const mixedModels = await resolveCodexMixedModels({
         activeProvider,
         selectedModel,
