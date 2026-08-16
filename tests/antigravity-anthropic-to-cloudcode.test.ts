@@ -99,6 +99,44 @@ describe('anthropicToCloudCode', () => {
     expect(JSON.stringify(parameters)).not.toContain('exclusiveMinimum');
   });
 
+  it('strips Codex encrypted annotations from nested tool properties', () => {
+    const envelope = anthropicToCloudCode({
+      max_tokens: 64,
+      messages: [{ role: 'user', content: 'use the tool' }],
+      tools: [{
+        name: 'codex_tool',
+        input_schema: {
+          type: 'object',
+          properties: {
+            authority: {
+              type: 'object',
+              encrypted: true,
+              properties: {
+                token: { type: 'string', encrypted: true },
+              },
+            },
+          },
+        },
+      }],
+    }, 'gemini-3.7-flash-high', 'project-id');
+
+    const request = envelope.request as any;
+    const parameters = request.tools[0].functionDeclarations[0].parameters;
+
+    expect(parameters).toEqual({
+      type: 'OBJECT',
+      properties: {
+        authority: {
+          type: 'OBJECT',
+          properties: {
+            token: { type: 'STRING' },
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(parameters)).not.toContain('encrypted');
+  });
+
   it('normalizes JSON Schema constructs that Cloud Code Schema rejects', () => {
     const envelope = anthropicToCloudCode({
       max_tokens: 64,

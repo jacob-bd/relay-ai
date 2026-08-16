@@ -28,6 +28,9 @@ const STRIP_KEYS = new Set([
   'minProperties', 'maxProperties', 'dependencies', 'dependentRequired', 'dependentSchemas',
   'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else',
   'const', 'default', 'examples', 'readOnly', 'writeOnly', 'deprecated',
+  // Codex app tool schemas can include this internal annotation. It is not a
+  // JSON Schema keyword and Cloud Code's Schema protobuf rejects it.
+  'encrypted',
 ]);
 
 const CLOUD_CODE_SCHEMA_TYPES = new Map([
