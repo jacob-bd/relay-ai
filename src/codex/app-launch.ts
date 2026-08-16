@@ -298,6 +298,7 @@ function winForceQuit(): void {
 
 export async function launchOrRestartCodexApp(
   prompt = 'Restart ChatGPT Desktop to apply relay-ai settings?',
+  assumeYes = false,
 ): Promise<void> {
   const appPath = findCodexApp();
   if (!isCodexAppRunning()) {
@@ -317,6 +318,9 @@ export async function launchOrRestartCodexApp(
   if (process.platform === 'linux') {
     p.log.info('Restarting ChatGPT Desktop to apply relay-ai settings...');
     linuxQuitGraceful();
+  } else if (assumeYes) {
+    if (process.platform === 'darwin') darwinQuit();
+    else if (process.platform === 'win32') winQuitGraceful();
   } else {
     const restart = await p.confirm({ message: prompt, initialValue: true });
     if (p.isCancel(restart) || !restart) {

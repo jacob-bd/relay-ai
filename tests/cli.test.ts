@@ -100,6 +100,19 @@ describe('parseArgs', () => {
     });
   });
 
+  it('consumes the non-interactive Codex App confirmation flag', () => {
+    expect(parseArgs(['codex-app', '--yes'])).toMatchObject({
+      command: 'codex-app',
+      assumeYes: true,
+      claudeArgs: [],
+    });
+    expect(parseArgs(['chatgpt', '-y'])).toMatchObject({
+      command: 'codex-app',
+      assumeYes: true,
+      claudeArgs: [],
+    });
+  });
+
   it('parses codex command', () => {
     expect(parseArgs(['codex'])).toMatchObject({
       command: 'codex',
@@ -550,7 +563,17 @@ describe('main routing', () => {
     await expect(main(['codex-app', '--help'])).resolves.toBe(0);
     expect(log.mock.calls.flat().join('\n')).toContain('relay-ai codex-app');
     expect(log.mock.calls.flat().join('\n')).toContain('Linux');
+    expect(log.mock.calls.flat().join('\n')).toContain('--yes');
     expect(error).not.toHaveBeenCalled();
+  });
+
+  it('rejects ambiguous non-interactive Codex App launches', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(main(['codex-app', '--yes'])).resolves.toBe(1);
+    expect(error.mock.calls.flat().join('\n')).toContain(
+      '--yes requires --provider, --model, and either --with-native or --relay-only',
+    );
   });
 
   it('resets and prints the provider trace for providers --trace', async () => {

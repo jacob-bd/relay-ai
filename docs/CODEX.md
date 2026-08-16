@@ -146,6 +146,16 @@ On macOS, profile TOML alone may not be enough; relay-ai also passes `-s danger-
 relay-ai codex-app
 ```
 
+For unattended startup, specify every launch choice and add `--yes`:
+
+```bash
+relay-ai codex-app --provider antigravity --model gemini-3.1-pro-high --with-native --yes
+```
+
+`--yes` bypasses the launch and restart confirmations. To prevent an unattended
+launch from relying on saved or default choices, it requires `--provider`,
+`--model`, and either `--with-native` or `--relay-only`.
+
 Pick provider → pick model → Codex **app** opens. **Keep the relay-ai terminal open** until you’re done (the app always uses the foreground proxy). Press **Ctrl+C** to stop the proxy and restore your previous Codex config.
 
 **Platforms:** macOS, Windows, and Linux. On Linux, Relay detects the packaged ChatGPT app at `/usr/bin/chatgpt` or `/usr/lib/chatgpt/ChatGPT` and its embedded Codex runtime at `/usr/lib/chatgpt/resources/codex`.

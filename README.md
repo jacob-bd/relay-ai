@@ -520,6 +520,8 @@ Launch the **ChatGPT app in Codex mode** (macOS, Windows, or Linux) with registr
 relay-ai codex-app
 ```
 
+Unattended launches must be fully specified: `relay-ai codex-app --provider <id> --model <id> --with-native --yes` (or use `--relay-only`).
+
 Patches `~/.codex/config.toml` with backup; **Ctrl+C** in the relay-ai terminal asks whether to close ChatGPT Desktop and restore your config (choose "No, keep session running" to decline and keep going). The app keeps Codex's built-in `openai` provider active so existing conversation history remains visible, and routes the selected model through a foreground local proxy. Preview config without writing: `relay-ai codex-app --config`. Recovery: `relay-ai codex-app --restore`.
 
 On Linux, Relay supports the packaged ChatGPT desktop app at `/usr/bin/chatgpt` or `/usr/lib/chatgpt/ChatGPT`. When launched from an X11/RDP terminal, Relay uses that terminal's window identity to resolve the active display, so the app opens in the current graphical session even when the inherited `DISPLAY` value is stale. Keep the Relay terminal open while using the app; it owns the local proxy.
