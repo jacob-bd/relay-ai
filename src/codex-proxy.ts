@@ -271,6 +271,19 @@ export function findCodexProxyRoute(
   routes: CodexProxyRoute[],
   requestedModel: string,
 ): CodexProxyRoute | undefined {
+  const bareRequestedModel = parseCodexAppModelSlug(requestedModel);
+  const providerSeparator = bareRequestedModel.indexOf('__');
+  if (providerSeparator > 0) {
+    const requestedProvider = bareRequestedModel.slice(0, providerSeparator);
+    const requestedIds = codexRouteLookupIds(bareRequestedModel.slice(providerSeparator + 2));
+    const providerRoute = routes.find(route => {
+      if (route.providerId !== requestedProvider) return false;
+      const routeIds = codexRouteLookupIds(route.modelId);
+      return requestedIds.some(id => routeIds.includes(id));
+    });
+    if (providerRoute) return providerRoute;
+  }
+
   const ids = codexRouteLookupIds(requestedModel);
   for (const id of ids) {
     const route = routes.find(r =>
