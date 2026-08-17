@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.9.4",
+  version: "0.9.5",
   publishConfig: {
     access: "public"
   },
@@ -1693,10 +1693,86 @@ function thinkingProviderOptions(npm) {
 }
 
 // src/codex/multi-agent.ts
-import { execFileSync } from "child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join as join2 } from "path";
+
+// src/codex/process.ts
+import spawn from "cross-spawn";
+function commandError(binaryPath, args, stdout, stderr, detail) {
+  const error = new Error(`Command failed: ${binaryPath} ${args.join(" ")} (${detail})`);
+  return Object.assign(error, { stdout, stderr });
+}
+function runCodexCommandSync(binaryPath, args, options = {}) {
+  const result = spawn.sync(binaryPath, args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: options.env,
+    timeout: options.timeout,
+    maxBuffer: options.maxBuffer
+  });
+  const stdout = result.stdout ?? "";
+  const stderr = result.stderr ?? "";
+  if (result.error) {
+    throw Object.assign(result.error, { stdout, stderr });
+  }
+  if (result.status !== 0) {
+    throw commandError(binaryPath, args, stdout, stderr, `exit ${result.status ?? result.signal ?? "unknown"}`);
+  }
+  return { stdout, stderr };
+}
+function runCodexCommand(binaryPath, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(binaryPath, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: options.env
+    });
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    let outputBytes = 0;
+    let settled = false;
+    const finishError = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(Object.assign(error, {
+        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+        stderr: Buffer.concat(stderrChunks).toString("utf8")
+      }));
+    };
+    const collect = (target, chunk) => {
+      target.push(chunk);
+      outputBytes += chunk.length;
+      if (options.maxBuffer !== void 0 && outputBytes > options.maxBuffer) {
+        child.kill();
+        finishError(commandError(binaryPath, args, "", "", `output exceeded ${options.maxBuffer} bytes`));
+      }
+    };
+    child.stdout?.on("data", (chunk) => collect(stdoutChunks, chunk));
+    child.stderr?.on("data", (chunk) => collect(stderrChunks, chunk));
+    child.on("error", finishError);
+    let timer;
+    if (options.timeout !== void 0) {
+      timer = setTimeout(() => {
+        child.kill();
+        finishError(commandError(binaryPath, args, "", "", `timed out after ${options.timeout}ms`));
+      }, options.timeout);
+    }
+    child.on("close", (code, signal) => {
+      if (timer) clearTimeout(timer);
+      if (settled) return;
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      if (code !== 0) {
+        finishError(commandError(binaryPath, args, stdout, stderr, `exit ${code ?? signal ?? "unknown"}`));
+        return;
+      }
+      settled = true;
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+// src/codex/multi-agent.ts
 var CODEX_MULTI_AGENT_V2 = Object.freeze({
   enabled: true,
   max_concurrent_threads_per_session: 6,
@@ -1711,12 +1787,7 @@ function probeText(value) {
   return `${result.stdout ?? ""}
 ${result.stderr ?? ""}`;
 }
-function supportsMultiAgentV2(binaryPath, run3 = (path, args, env) => execFileSync(path, args, {
-  encoding: "utf8",
-  stdio: ["ignore", "pipe", "pipe"],
-  timeout: 1e4,
-  env
-})) {
+function supportsMultiAgentV2(binaryPath, run3 = (path, args, env) => runCodexCommandSync(path, args, { timeout: 1e4, env })) {
   const probeHome = mkdtempSync(join2(tmpdir(), "relay-codex-v2-probe-"));
   try {
     writeFileSync(join2(probeHome, "config.toml"), renderMultiAgentV2Feature(), { encoding: "utf8", mode: 384 });
@@ -2410,18 +2481,18 @@ function resolveServerAutostart(env = process.env) {
 
 // src/launch.ts
 import { execSync } from "child_process";
-import spawn from "cross-spawn";
+import spawn2 from "cross-spawn";
 import { existsSync as existsSync3, appendFileSync } from "fs";
 import { homedir as homedir3 } from "os";
 import { join as join5 } from "path";
 
 // src/binary-lookup.ts
-import { execFileSync as execFileSync2 } from "child_process";
+import { execFileSync } from "child_process";
 import { existsSync as existsSync2 } from "fs";
 function findBinaryOnPath(name, fallbackPaths, options = {}) {
   const isWindows2 = options.isWindows ?? process.platform === "win32";
   const exists = options.exists ?? existsSync2;
-  const runWhich = options.runWhich ?? ((binary, win) => execFileSync2(win ? "where.exe" : "which", [binary], {
+  const runWhich = options.runWhich ?? ((binary, win) => execFileSync(win ? "where.exe" : "which", [binary], {
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"]
   }));
@@ -2499,7 +2570,7 @@ function launchClaude(env, model, extraArgs) {
       process.stdout.write = originalStdoutWrite;
       process.stderr.write = originalStderrWrite;
     };
-    const child = spawn(claudePath, args, {
+    const child = spawn2(claudePath, args, {
       stdio: "inherit",
       env
     });
@@ -5141,9 +5212,9 @@ function claudeModelFamily(modelId) {
   if (!normalized.startsWith("claude-")) return void 0;
   return CLAUDE_MODEL_FAMILIES.find((family) => normalized.includes(family));
 }
-function isClaudeAgentTool(tool4) {
-  if (tool4.name !== "Agent" || !isRecord2(tool4.input_schema)) return false;
-  const properties = tool4.input_schema.properties;
+function isClaudeAgentTool(tool3) {
+  if (tool3.name !== "Agent" || !isRecord2(tool3.input_schema)) return false;
+  const properties = tool3.input_schema.properties;
   if (!isRecord2(properties)) return false;
   return ["description", "prompt", "subagent_type"].every((name) => isRecord2(properties[name]));
 }
@@ -5233,8 +5304,8 @@ function prepareClaudeAgentInput(input, routing) {
   clientInput.prompt = appendSubagentRouteMarker(prompt, token);
   return { input: clientInput, decision };
 }
-function augmentClaudeAgentTool(tool4, routing) {
-  const inputSchema = isRecord2(tool4.input_schema) ? tool4.input_schema : {};
+function augmentClaudeAgentTool(tool3, routing) {
+  const inputSchema = isRecord2(tool3.input_schema) ? tool3.input_schema : {};
   const properties = isRecord2(inputSchema.properties) ? inputSchema.properties : {};
   const originalModel = isRecord2(properties.model) ? properties.model : {};
   const smallCatalog = routing.models.length <= MAX_MODEL_CATALOG;
@@ -5250,8 +5321,8 @@ function augmentClaudeAgentTool(tool4, routing) {
   }
   const guidance = smallCatalog ? `Relay AI subagent model routing (default: ${routing.parentModelId}). ` + routing.models.map((model) => `${model.displayName}: ${model.id}`).join("; ") : `Relay AI subagent model routing (default: ${routing.parentModelId}). Other explicit model values must be exact ids from the current session catalog.`;
   return {
-    ...tool4,
-    description: [tool4.description?.trim(), guidance].filter(Boolean).join("\n\n"),
+    ...tool3,
+    description: [tool3.description?.trim(), guidance].filter(Boolean).join("\n\n"),
     input_schema: {
       ...inputSchema,
       properties: {
@@ -5583,11 +5654,7 @@ async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWant
 }
 
 // src/antigravity/anthropic-to-cloudcode.ts
-import { randomUUID as randomUUID4 } from "crypto";
-
-// src/antigravity/request-adapter.ts
 import { randomUUID as randomUUID3 } from "crypto";
-import { tool, jsonSchema } from "ai";
 
 // src/proxy-shared.ts
 function grabRoundTripSignature(part) {
@@ -5695,265 +5762,6 @@ function serializeToolResultContent(content) {
   return JSON.stringify(content);
 }
 
-// src/antigravity/request-adapter.ts
-var UNSUPPORTED_VOICE_MESSAGE = "Voice transcription isn\u2019t supported by Relay AI yet. Please type your message. Your coding session remains active.";
-var OMITTED_VOICE_TEXT = "[Voice recording omitted because transcription is not supported by Relay AI.]";
-function isSupportedImage(part) {
-  return part.inlineData?.mimeType.toLowerCase().startsWith("image/") ?? false;
-}
-function isUnsupportedInlineData(part) {
-  return !!part.inlineData && !isSupportedImage(part);
-}
-function sanitizeUnsupportedInlineData(ccReq) {
-  const contents = ccReq.request?.contents ?? [];
-  let latestUserIndex = -1;
-  for (let i = contents.length - 1; i >= 0; i--) {
-    if (contents[i].role === "user") {
-      latestUserIndex = i;
-      break;
-    }
-  }
-  let latestUserTurnHasUnsupportedMedia = false;
-  const sanitizedContents = contents.map((message, index) => ({
-    ...message,
-    parts: message.parts.map((part) => {
-      if (!isUnsupportedInlineData(part)) return part;
-      if (index === latestUserIndex) latestUserTurnHasUnsupportedMedia = true;
-      return { text: OMITTED_VOICE_TEXT };
-    })
-  }));
-  return {
-    request: {
-      ...ccReq,
-      request: {
-        ...ccReq.request,
-        contents: sanitizedContents
-      }
-    },
-    latestUserTurnHasUnsupportedMedia
-  };
-}
-function tracePartChars(part) {
-  if (typeof part.text === "string") return part.text.length;
-  if (part.type !== "tool-result") return void 0;
-  const output = part.output;
-  if (typeof output === "string") return output.length;
-  if (output && typeof output === "object" && typeof output.value === "string") {
-    return output.value.length;
-  }
-  try {
-    return output === void 0 ? void 0 : JSON.stringify(output).length;
-  } catch {
-    return void 0;
-  }
-}
-function summarizeSdkRequestForTrace(request) {
-  const messages = request.messages.map((message) => {
-    const content = message.content;
-    if (typeof content === "string") {
-      return { role: message.role, parts: [{ type: "text", chars: content.length }] };
-    }
-    const parts = Array.isArray(content) ? content.map((rawPart) => {
-      const part = rawPart;
-      const summary = {
-        type: typeof part.type === "string" ? part.type : typeof rawPart
-      };
-      const chars = tracePartChars(part);
-      if (chars !== void 0) summary.chars = chars;
-      if (typeof part.toolName === "string") summary.toolName = part.toolName;
-      if (typeof part.toolCallId === "string") summary.toolCallId = part.toolCallId;
-      return summary;
-    }) : [{ type: typeof content }];
-    return { role: message.role, parts };
-  });
-  return {
-    systemChars: request.system?.length ?? 0,
-    messages,
-    toolNames: Object.keys(request.tools ?? {}),
-    ...request.toolChoice ? { toolChoice: request.toolChoice } : {}
-  };
-}
-var JSON_SCHEMA_TYPES = /* @__PURE__ */ new Map([
-  ["ARRAY", "array"],
-  ["BOOLEAN", "boolean"],
-  ["INTEGER", "integer"],
-  ["NULL", "null"],
-  ["NUMBER", "number"],
-  ["OBJECT", "object"],
-  ["STRING", "string"]
-]);
-function expandTextWithThinking(text4) {
-  if (!text4.includes("<thinking>")) {
-    return [{ type: "text", text: text4 }];
-  }
-  const out = [];
-  const tokens = text4.split(/<thinking>([\s\S]*?)<\/thinking>/);
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i] ?? "";
-    if (!token.trim()) continue;
-    out.push({ type: i % 2 === 1 ? "reasoning" : "text", text: token });
-  }
-  return out.length > 0 ? out : [{ type: "text", text: text4 }];
-}
-function normalizeSchemaType(value) {
-  if (typeof value === "string") {
-    return JSON_SCHEMA_TYPES.get(value) ?? value;
-  }
-  if (Array.isArray(value)) {
-    return value.map(normalizeSchemaType);
-  }
-  return value;
-}
-function normalizeJsonSchema(value) {
-  if (Array.isArray(value)) {
-    return value.map(normalizeJsonSchema);
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-  return Object.fromEntries(
-    Object.entries(value).map(([key, child]) => [
-      key,
-      key === "type" ? normalizeSchemaType(child) : normalizeJsonSchema(child)
-    ])
-  );
-}
-function translateTools(ccTools, options = {}) {
-  if (!ccTools?.length) return void 0;
-  const tools = {};
-  let toolCount = 0;
-  for (const t of ccTools) {
-    if (t.functionDeclarations) {
-      for (const fd of t.functionDeclarations) {
-        if (options.maxTools !== void 0 && toolCount >= options.maxTools) break;
-        tools[fd.name] = tool({
-          description: fd.description || "",
-          inputSchema: jsonSchema(
-            normalizeJsonSchema(fd.parameters || { type: "object", properties: {} })
-          )
-        });
-        toolCount++;
-      }
-    }
-  }
-  return Object.keys(tools).length > 0 ? tools : void 0;
-}
-function translateRequest(ccReq, options = {}) {
-  const systemInstructions = [];
-  const sdkMessages = [];
-  const nameToIdList = /* @__PURE__ */ new Map();
-  const fallbackAssistantReasoning = [...options.fallbackAssistantReasoning ?? []];
-  const request = ccReq.request || {};
-  if (request.systemInstruction?.parts) {
-    for (const part of request.systemInstruction.parts) {
-      if (part.text) {
-        systemInstructions.push(part.text);
-      }
-    }
-  }
-  const contents = request.contents || [];
-  for (const msg of contents) {
-    const role = msg.role;
-    if (role === "system") {
-      for (const part of msg.parts) {
-        if (part.text) {
-          systemInstructions.push(part.text);
-        }
-      }
-      continue;
-    }
-    const sdkRole = role === "model" ? "assistant" : "user";
-    const hasFunctionCall = msg.parts.some((p8) => p8.functionCall);
-    const hasAssistantReasoning = role === "model" && msg.parts.some((p8) => p8.thought || p8.text?.includes("<thinking>"));
-    const hasComplexParts = msg.parts.some((p8) => p8.thought || p8.inlineData || p8.functionCall || p8.functionResponse);
-    const singleText = msg.parts.length === 1 ? msg.parts[0]?.text : void 0;
-    if (!hasComplexParts && singleText !== void 0 && !singleText.includes("<thinking>")) {
-      sdkMessages.push({
-        role: sdkRole,
-        content: singleText
-      });
-      continue;
-    }
-    const contentParts = [];
-    const toolResults = [];
-    if (role === "model" && hasFunctionCall && !hasAssistantReasoning) {
-      const fallback = fallbackAssistantReasoning.shift();
-      if (fallback?.trim()) {
-        contentParts.push({ type: "reasoning", text: fallback });
-      }
-    }
-    for (const part of msg.parts) {
-      if (part.text !== void 0) {
-        if (part.thought) {
-          contentParts.push({ type: "reasoning", text: part.text });
-        } else {
-          for (const piece of expandTextWithThinking(part.text)) {
-            contentParts.push(piece);
-          }
-        }
-      } else if (part.inlineData) {
-        if (isSupportedImage(part)) {
-          contentParts.push({
-            type: "image",
-            image: part.inlineData.data,
-            mimeType: part.inlineData.mimeType
-          });
-        } else {
-          contentParts.push({ type: "text", text: OMITTED_VOICE_TEXT });
-        }
-      } else if (part.functionCall) {
-        const id = "call_" + randomUUID3().replace(/-/g, "");
-        const name = part.functionCall.name;
-        if (!nameToIdList.has(name)) nameToIdList.set(name, []);
-        nameToIdList.get(name).push(id);
-        contentParts.push({
-          type: "tool-call",
-          toolCallId: id,
-          toolName: name,
-          input: part.functionCall.args || {}
-        });
-      } else if (part.functionResponse) {
-        const name = part.functionResponse.name;
-        const idList = nameToIdList.get(name) || [];
-        const id = idList.shift() || "call_" + randomUUID3().replace(/-/g, "");
-        toolResults.push({
-          type: "tool-result",
-          toolCallId: id,
-          toolName: name,
-          output: { type: "text", value: serializeToolResultContent(part.functionResponse.response) }
-        });
-      }
-    }
-    if (toolResults.length > 0) {
-      sdkMessages.push({
-        role: "tool",
-        content: toolResults
-      });
-    }
-    if (contentParts.length > 0) {
-      sdkMessages.push({
-        role: sdkRole,
-        content: contentParts
-      });
-    }
-  }
-  const system = systemInstructions.length > 0 ? systemInstructions.join("\n\n") : void 0;
-  const tools = translateTools(request.tools, options);
-  let toolChoice;
-  const mode = request.toolConfig?.functionCallingConfig?.mode;
-  if (mode === "ANY") {
-    toolChoice = "required";
-  } else if (mode === "AUTO" || tools) {
-    toolChoice = "auto";
-  }
-  return {
-    system,
-    messages: sdkMessages,
-    tools,
-    toolChoice
-  };
-}
-
 // src/antigravity/anthropic-to-cloudcode.ts
 var DEFAULT_SAFETY_SETTINGS = [
   { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "OFF" },
@@ -5963,7 +5771,6 @@ var DEFAULT_SAFETY_SETTINGS = [
 ];
 var ANTIGRAVITY_USER_AGENT2 = "vscode/1.X.X (Antigravity/4.2.0)";
 var MIN_ANTIGRAVITY_OUTPUT_TOKENS = 1024;
-var DISABLE_CLOUD_CODE_THINKING = { thinkingBudget: 0, includeThoughts: false };
 var STRIP_KEYS = /* @__PURE__ */ new Set([
   "$schema",
   "$defs",
@@ -5973,6 +5780,7 @@ var STRIP_KEYS = /* @__PURE__ */ new Set([
   "additionalProperties",
   "propertyNames",
   "patternProperties",
+  "prefixItems",
   "title",
   "exclusiveMinimum",
   "exclusiveMaximum",
@@ -6006,15 +5814,105 @@ var STRIP_KEYS = /* @__PURE__ */ new Set([
   "examples",
   "readOnly",
   "writeOnly",
-  "deprecated"
+  "deprecated",
+  // Codex app tool schemas can include this internal annotation. It is not a
+  // JSON Schema keyword and Cloud Code's Schema protobuf rejects it.
+  "encrypted"
 ]);
-function stripDraftMeta(obj) {
+var CLOUD_CODE_SCHEMA_TYPES = /* @__PURE__ */ new Map([
+  ["array", "ARRAY"],
+  ["boolean", "BOOLEAN"],
+  ["integer", "INTEGER"],
+  ["null", "NULL"],
+  ["number", "NUMBER"],
+  ["object", "OBJECT"],
+  ["string", "STRING"]
+]);
+function normalizeCloudCodeSchemaType(value) {
+  if (typeof value === "string") {
+    return CLOUD_CODE_SCHEMA_TYPES.get(value.toLowerCase()) ?? value;
+  }
+  return value;
+}
+function isNullSchema(obj) {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return false;
+  const type = obj.type;
+  return type === "null" || type === "NULL" || Array.isArray(type) && type.every((value) => value === "null" || value === "NULL");
+}
+function resolveLocalSchemaRef(ref, root) {
+  if (!ref.startsWith("#/$defs/")) return void 0;
+  const name = ref.slice("#/$defs/".length).replace(/~1/g, "/").replace(/~0/g, "~");
+  const defs = root.$defs;
+  if (!defs || typeof defs !== "object" || Array.isArray(defs)) return void 0;
+  return defs[name];
+}
+function stripDraftMeta(obj, root = void 0, resolvingRefs = /* @__PURE__ */ new Set()) {
   if (!obj || typeof obj !== "object") return obj;
-  if (Array.isArray(obj)) return obj.map(stripDraftMeta);
+  if (Array.isArray(obj)) return obj.map((value) => stripDraftMeta(value, root, resolvingRefs));
+  const source = obj;
+  const schemaRoot = root ?? source;
+  if (typeof source.$ref === "string") {
+    const resolved = resolveLocalSchemaRef(source.$ref, schemaRoot);
+    if (resolved !== void 0) {
+      if (resolvingRefs.has(source.$ref)) return { type: "OBJECT" };
+      const nextRefs = new Set(resolvingRefs);
+      nextRefs.add(source.$ref);
+      const dereferenced = stripDraftMeta(resolved, schemaRoot, nextRefs);
+      if (dereferenced && typeof dereferenced === "object" && !Array.isArray(dereferenced)) {
+        const siblings = { ...source };
+        delete siblings.$ref;
+        const sanitizedSiblings = stripDraftMeta(siblings, schemaRoot, resolvingRefs);
+        return {
+          ...dereferenced,
+          ...sanitizedSiblings
+        };
+      }
+      return dereferenced;
+    }
+  }
   const out = {};
-  for (const [k, v] of Object.entries(obj)) {
+  for (const [k, v] of Object.entries(source)) {
     if (STRIP_KEYS.has(k) || k.startsWith("x-")) continue;
-    out[k] = stripDraftMeta(v);
+    if (k === "properties" && v && typeof v === "object" && !Array.isArray(v)) {
+      out.properties = Object.fromEntries(
+        Object.entries(v).map(([name, schema]) => [
+          name,
+          stripDraftMeta(schema, schemaRoot, resolvingRefs)
+        ])
+      );
+      continue;
+    }
+    if (k === "type") {
+      const types = (Array.isArray(v) ? v : [v]).map(normalizeCloudCodeSchemaType).filter((type) => typeof type === "string");
+      const concreteType = types.find((type) => type !== "NULL");
+      out.type = concreteType ?? "STRING";
+      if (types.includes("NULL")) out.nullable = true;
+      continue;
+    }
+    if (k === "enum" && Array.isArray(v)) {
+      out.enum = v.filter((value) => value !== null && value !== void 0).map(String);
+      continue;
+    }
+    if (k === "items" && Array.isArray(v)) {
+      out.items = stripDraftMeta(v[0] ?? {}, schemaRoot, resolvingRefs);
+      continue;
+    }
+    out[k] = stripDraftMeta(v, schemaRoot, resolvingRefs);
+  }
+  const union = Array.isArray(source.anyOf) ? source.anyOf : Array.isArray(source.oneOf) ? source.oneOf : void 0;
+  if (union) {
+    const nullable = union.some(isNullSchema);
+    const alternatives = union.filter((branch) => !isNullSchema(branch)).map((branch) => stripDraftMeta(branch, schemaRoot, resolvingRefs)).filter((branch) => Boolean(branch) && typeof branch === "object" && !Array.isArray(branch));
+    if (alternatives.length === 1) Object.assign(out, alternatives[0], out);
+    else if (alternatives.length > 1) out.anyOf = alternatives;
+    if (nullable) out.nullable = true;
+  }
+  if (!out.type) {
+    if (out.properties && typeof out.properties === "object" && !Array.isArray(out.properties)) {
+      out.type = "OBJECT";
+    } else if (out.items && typeof out.items === "object" && !Array.isArray(out.items)) {
+      out.type = "ARRAY";
+    }
   }
   if (Array.isArray(out.required) && out.properties && typeof out.properties === "object") {
     const props = out.properties;
@@ -6075,15 +5973,18 @@ function extractSystem(system) {
   }
   return void 0;
 }
-function translateTools2(tools) {
+function translateTools(tools) {
   if (!Array.isArray(tools) || tools.length === 0) return void 0;
   const decls = [];
   for (const t of tools) {
     if (typeof t.name !== "string") continue;
+    const translated = stripDraftMeta(t.input_schema ?? { type: "object", properties: {} });
+    const parameters = translated && typeof translated === "object" && !Array.isArray(translated) ? translated : { type: "OBJECT", properties: {} };
+    if (!parameters.type) parameters.type = "OBJECT";
     decls.push({
       name: t.name,
       description: typeof t.description === "string" ? t.description : "",
-      parameters: stripDraftMeta(normalizeJsonSchema(t.input_schema ?? { type: "object", properties: {} }))
+      parameters
     });
   }
   return decls.length > 0 ? [{ functionDeclarations: decls }] : void 0;
@@ -6109,8 +6010,7 @@ function anthropicToCloudCode(body, realModelId, projectId) {
   }
   if (typeof body.temperature === "number") generationConfig.temperature = body.temperature;
   if (typeof body.top_p === "number") generationConfig.topP = body.top_p;
-  generationConfig.thinkingConfig = DISABLE_CLOUD_CODE_THINKING;
-  const ccTools = translateTools2(body.tools);
+  const ccTools = translateTools(body.tools);
   const systemInstruction = extractSystem(body.system);
   const request = {
     contents,
@@ -6124,7 +6024,7 @@ function anthropicToCloudCode(body, realModelId, projectId) {
   }
   return {
     project: projectId,
-    requestId: randomUUID4(),
+    requestId: randomUUID3(),
     model: realModelId,
     userAgent: ANTIGRAVITY_USER_AGENT2,
     requestType: "agent",
@@ -6134,7 +6034,7 @@ function anthropicToCloudCode(body, realModelId, projectId) {
 }
 
 // src/antigravity/cloudcode-to-anthropic.ts
-import { randomUUID as randomUUID5 } from "crypto";
+import { randomUUID as randomUUID4 } from "crypto";
 function writeEvent(res, event, data) {
   res.write(`event: ${event}
 data: ${JSON.stringify(data)}
@@ -6224,7 +6124,7 @@ function closeBlock(res, state) {
 }
 async function streamCloudCodeToAnthropic(res, upstreamRes, model, log7) {
   const state = {
-    messageId: `msg_${randomUUID5().replace(/-/g, "").slice(0, 24)}`,
+    messageId: `msg_${randomUUID4().replace(/-/g, "").slice(0, 24)}`,
     model,
     blockIdx: 0,
     textBlockOpen: false,
@@ -6313,7 +6213,7 @@ async function streamCloudCodeToAnthropic(res, upstreamRes, model, log7) {
             closeBlock(res, state);
           }
           for (const tc of state.toolCalls) {
-            const rawToolId = `toolu_${randomUUID5().replace(/-/g, "").slice(0, 16)}`;
+            const rawToolId = `toolu_${randomUUID4().replace(/-/g, "").slice(0, 16)}`;
             const toolId = encodeToolUseId(rawToolId, tc.signature);
             writeEvent(res, "content_block_start", {
               type: "content_block_start",
@@ -6364,7 +6264,7 @@ async function streamCloudCodeToAnthropic(res, upstreamRes, model, log7) {
 }
 async function collectCloudCodeToAnthropic(upstreamRes, model, log7) {
   const text4 = await upstreamRes.text();
-  const messageId = `msg_${randomUUID5().replace(/-/g, "").slice(0, 24)}`;
+  const messageId = `msg_${randomUUID4().replace(/-/g, "").slice(0, 24)}`;
   const content = [];
   let stopReason = "end_turn";
   let inputTokens = 0;
@@ -6393,7 +6293,7 @@ async function collectCloudCodeToAnthropic(upstreamRes, model, log7) {
         else content.push({ type: "text", text: part.text });
       } else if (part.functionCall && typeof part.functionCall === "object") {
         const fc = part.functionCall;
-        const rawToolId = `toolu_${randomUUID5().replace(/-/g, "").slice(0, 16)}`;
+        const rawToolId = `toolu_${randomUUID4().replace(/-/g, "").slice(0, 16)}`;
         content.push({
           type: "tool_use",
           id: encodeToolUseId(rawToolId, signature ?? pendingThoughtSignature),
@@ -6426,16 +6326,16 @@ async function collectCloudCodeToAnthropic(upstreamRes, model, log7) {
 }
 
 // src/proxy.ts
-import { randomUUID as randomUUID6 } from "crypto";
+import { randomUUID as randomUUID5 } from "crypto";
 
 // src/sdk-adapter.ts
-import { streamText, generateText, tool as tool2, jsonSchema as jsonSchema2 } from "ai";
+import { streamText, generateText, tool, jsonSchema } from "ai";
 
 // src/tool-search.ts
 var TOOL_SEARCH_TYPE_PREFIX = "tool_search_tool";
-function isToolSearchTool(tool4) {
-  if (typeof tool4.type === "string" && tool4.type.startsWith(TOOL_SEARCH_TYPE_PREFIX)) return true;
-  const name = tool4.name ?? "";
+function isToolSearchTool(tool3) {
+  if (typeof tool3.type === "string" && tool3.type.startsWith(TOOL_SEARCH_TYPE_PREFIX)) return true;
+  const name = tool3.name ?? "";
   return name.includes("tool_search") || name === "ToolSearch";
 }
 function extractReferencedToolNames(messages) {
@@ -6474,16 +6374,16 @@ function resolveUpstreamTools(tools, messages) {
   if (!tools?.length) return [];
   const referenced = extractReferencedToolNames(messages);
   const upstream = [];
-  for (const tool4 of tools) {
-    if (isToolSearchTool(tool4)) {
-      upstream.push(tool4);
+  for (const tool3 of tools) {
+    if (isToolSearchTool(tool3)) {
+      upstream.push(tool3);
       continue;
     }
-    if (tool4.defer_loading === true) {
-      if (referenced.has(tool4.name)) upstream.push(tool4);
+    if (tool3.defer_loading === true) {
+      if (referenced.has(tool3.name)) upstream.push(tool3);
       continue;
     }
-    upstream.push(tool4);
+    upstream.push(tool3);
   }
   return upstream;
 }
@@ -6730,12 +6630,12 @@ function stripNullInputs(input) {
   }
   return out;
 }
-function translateTools3(anthropicTools) {
+function translateTools2(anthropicTools) {
   if (!anthropicTools?.length) return void 0;
   const tools = {};
   for (const t of anthropicTools) {
     if (!t.name || !t.input_schema) continue;
-    tools[t.name] = tool2({ description: t.description ?? "", inputSchema: jsonSchema2(t.input_schema) });
+    tools[t.name] = tool({ description: t.description ?? "", inputSchema: jsonSchema(t.input_schema) });
   }
   return Object.keys(tools).length ? tools : void 0;
 }
@@ -6746,7 +6646,7 @@ function translateToolChoice(tc) {
   if (tc.type === "tool" && tc.name) return { type: "tool", toolName: tc.name };
   return void 0;
 }
-function translateRequest2(body, npm, options) {
+function translateRequest(body, npm, options) {
   const messages = body.messages ?? [];
   annotateToolNames(messages);
   const baseSystem = systemToString(body.system);
@@ -6783,7 +6683,7 @@ function translateRequest2(body, npm, options) {
   return {
     system: options?.openAiOAuth ? void 0 : systemText,
     messages: translateMessages(messages, npm, options?.onDebug),
-    tools: translateTools3(upstreamTools.length ? upstreamTools : void 0),
+    tools: translateTools2(upstreamTools.length ? upstreamTools : void 0),
     toolChoice: translateToolChoice(body.tool_choice),
     maxOutputTokens: options?.openAiOAuth ? void 0 : body.max_tokens,
     temperature: body.temperature,
@@ -7119,7 +7019,7 @@ function lookupRoute(byAlias, id) {
   return void 0;
 }
 function startProxyCatalog(routes, defaultAliasId, debug = false) {
-  const proxyToken = randomUUID6();
+  const proxyToken = randomUUID5();
   silenceSdkWarnings();
   if (routes.length === 0) {
     return Promise.reject(new Error("Proxy catalog requires at least one route"));
@@ -7246,7 +7146,7 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
         if (sessionId) {
           subagentRouting.registerSubagentRoute = (modelId) => subagentRouteRegistry.register(sessionId, modelId);
         }
-        const params = translateRequest2(anthropicBody, route.npm, {
+        const params = translateRequest(anthropicBody, route.npm, {
           openAiOAuth,
           maxTools: maxToolsForNpm(route.npm),
           onDebug: (msg) => plog(() => msg),
@@ -10397,6 +10297,20 @@ async function refreshAntigravityOAuthModels(accessToken) {
       }).finally(() => clearTimeout(timer));
       if (!res.ok) continue;
       const body = await res.json();
+      const deprecatedModelIds = body.deprecatedModelIds && typeof body.deprecatedModelIds === "object" && !Array.isArray(body.deprecatedModelIds) ? body.deprecatedModelIds : {};
+      const resolveUpstreamModelId = (id) => {
+        let current = id;
+        const seen = /* @__PURE__ */ new Set();
+        while (!seen.has(current)) {
+          seen.add(current);
+          const alias = deprecatedModelIds[current];
+          if (!alias || typeof alias !== "object" || Array.isArray(alias)) break;
+          const next = alias.newModelId;
+          if (typeof next !== "string" || next.length === 0) break;
+          current = next;
+        }
+        return current;
+      };
       const raw = body.models && typeof body.models === "object" && !Array.isArray(body.models) ? Object.entries(body.models).map(([id, model]) => ({ id, ...model })) : Array.isArray(body.models) ? body.models.filter((m) => typeof m.id === "string" && m.id.length > 0) : [];
       if (raw.length === 0) continue;
       const models = raw.filter((m) => typeof m.id === "string" && m.id.length > 0 && !isAntigravityCloudCodeHelperSlot(m.id)).map((m) => {
@@ -10409,7 +10323,7 @@ async function refreshAntigravityOAuthModels(accessToken) {
         return {
           id,
           name,
-          upstreamModelId: id,
+          upstreamModelId: resolveUpstreamModelId(id),
           family: isGemini ? "gemini" : id.split("-")[0] ?? id,
           brand: isGemini ? "Google" : isClaude ? "Anthropic" : isOpenAi ? "OpenAI" : "Other",
           contextWindow: maxTokens ?? resolveContextWindow(id),
@@ -11150,7 +11064,7 @@ async function askSaveServerPassword() {
 import { createServer as createServer2 } from "http";
 
 // src/openai-adapter.ts
-import { tool as tool3, jsonSchema as jsonSchema3, streamText as streamText2, generateText as generateText2 } from "ai";
+import { tool as tool2, jsonSchema as jsonSchema2, streamText as streamText2, generateText as generateText2 } from "ai";
 function translateOpenAiRequest(body) {
   const toolNameById = /* @__PURE__ */ new Map();
   for (const msg of body.messages) {
@@ -11216,10 +11130,10 @@ function translateOpenAiRequest(body) {
     tools = {};
     for (const t of body.tools) {
       if (t.type === "function" && t.function.name) {
-        const schema = t.function.parameters ? jsonSchema3(t.function.parameters) : void 0;
-        tools[t.function.name] = tool3({
+        const schema = t.function.parameters ? jsonSchema2(t.function.parameters) : void 0;
+        tools[t.function.name] = tool2({
           description: t.function.description ?? "",
-          inputSchema: schema ?? jsonSchema3({ type: "object", properties: {} })
+          inputSchema: schema ?? jsonSchema2({ type: "object", properties: {} })
         });
       }
     }
@@ -11509,7 +11423,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog, suba
     if (sessionId) {
       subagentRouting.registerSubagentRoute = (modelId) => subagentRouteRegistry.register(sessionId, modelId);
     }
-    const params = translateRequest2(body, model.npm, {
+    const params = translateRequest(body, model.npm, {
       defaultEffort: anthropicEffortFromRequest(body) ? void 0 : model.defaultEffort,
       openAiOAuth: model.npm === "@ai-sdk/openai" && model.authType === "oauth",
       onDebug: plog,
@@ -12985,18 +12899,18 @@ ${pc6.dim("OpenCode CLI configs: use")} relay-ai providers import${pc6.dim(" (op
 }
 
 // src/codex/app-launch.ts
-import { execSync as execSync2, spawn as spawn2 } from "child_process";
-import { existsSync as existsSync11, readdirSync as readdirSync2, realpathSync, statSync as statSync3 } from "fs";
+import { execSync as execSync2, spawn as spawn3 } from "child_process";
+import { copyFileSync as copyFileSync3, existsSync as existsSync11, mkdirSync as mkdirSync8, readdirSync as readdirSync2, realpathSync, statSync as statSync3 } from "fs";
 import { homedir as homedir7 } from "os";
-import { dirname as dirname5, join as join12 } from "path";
+import { dirname as dirname5, join as join12, win32 as winPath } from "path";
 import * as p6 from "@clack/prompts";
 
 // src/linux-display.ts
-import { execFileSync as execFileSync3 } from "child_process";
+import { execFileSync as execFileSync2 } from "child_process";
 import { readdirSync } from "fs";
 function displayHasWindow(display, windowId) {
   try {
-    const output = execFileSync3("xprop", ["-display", display, "-id", windowId, "WM_CLASS"], {
+    const output = execFileSync2("xprop", ["-display", display, "-id", windowId, "WM_CLASS"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"]
     });
@@ -13074,6 +12988,54 @@ function linuxEmbeddedCodexCandidates(appPath) {
 function winLocalAppData() {
   return process.env.LOCALAPPDATA ?? join12(homedir7(), "AppData", "Local");
 }
+function windowsEmbeddedCodexCandidates(appPath, packageInstallLocations) {
+  const candidates = [];
+  if (appPath && !appPath.startsWith("shell:AppsFolder\\")) {
+    const appDir = winPath.dirname(appPath);
+    candidates.push(
+      winPath.join(appDir, "resources", "codex.exe"),
+      winPath.join(appDir, "app", "resources", "codex.exe")
+    );
+  }
+  for (const installLocation of packageInstallLocations) {
+    if (!installLocation.trim()) continue;
+    candidates.push(
+      winPath.join(installLocation, "app", "resources", "codex.exe"),
+      winPath.join(installLocation, "resources", "codex.exe")
+    );
+  }
+  return [...new Set(candidates)];
+}
+function windowsEmbeddedCodexCachePath(sourcePath, home = homedir7()) {
+  const normalized = sourcePath.replaceAll("/", "\\");
+  const match = normalized.match(/\\WindowsApps\\([^\\]+)\\/i);
+  if (!match) return null;
+  const packageDirectory = match[1].replace(/[^a-zA-Z0-9._-]/g, "_");
+  return winPath.join(home, ".relay-ai", "codex", "embedded-runtime", packageDirectory, "codex.exe");
+}
+function executableWindowsEmbeddedCodexPath(sourcePath) {
+  const cachePath2 = windowsEmbeddedCodexCachePath(sourcePath);
+  if (!cachePath2) return sourcePath;
+  try {
+    const sourceSize = statSync3(sourcePath).size;
+    if (existsSync11(cachePath2) && statSync3(cachePath2).size === sourceSize) return cachePath2;
+    mkdirSync8(winPath.dirname(cachePath2), { recursive: true });
+    copyFileSync3(sourcePath, cachePath2);
+    return statSync3(cachePath2).size === sourceSize ? cachePath2 : null;
+  } catch {
+    return null;
+  }
+}
+function winCodexPackageInstallLocations() {
+  try {
+    const out = runPowerShell(
+      "Get-AppxPackage -Name 'OpenAI.Codex' | Sort-Object Version -Descending | Select-Object -ExpandProperty InstallLocation"
+    );
+    return out.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
 function winCodexExeCandidates() {
   const local = winLocalAppData();
   const bases = WIN_APP_NAMES.flatMap((name) => [
@@ -13143,13 +13105,24 @@ function findCodexApp(platform = process.platform) {
 }
 function findEmbeddedCodexBinary(platform = process.platform) {
   const appPath = findCodexApp(platform);
-  if (!appPath) return null;
   if (platform === "darwin") {
+    if (!appPath) return null;
     const binary = join12(appPath, "Contents", "Resources", "codex");
     return existsSync11(binary) ? binary : null;
   }
   if (platform === "linux") {
+    if (!appPath) return null;
     return linuxEmbeddedCodexCandidates(appPath).find((path) => existsSync11(path)) ?? null;
+  }
+  if (platform === "win32") {
+    const sourcePath = windowsEmbeddedCodexCandidates(appPath, winCodexPackageInstallLocations()).find((path) => {
+      try {
+        return existsSync11(path) && statSync3(path).isFile();
+      } catch {
+        return false;
+      }
+    });
+    return sourcePath ? executableWindowsEmbeddedCodexPath(sourcePath) : null;
   }
   return null;
 }
@@ -13227,14 +13200,14 @@ function openCodexAppAt(path) {
   }
   if (process.platform === "win32") {
     if (path.startsWith("shell:AppsFolder\\")) {
-      spawn2("cmd.exe", ["/c", "start", "", path], { stdio: "ignore", detached: true }).unref();
+      spawn3("cmd.exe", ["/c", "start", "", path], { stdio: "ignore", detached: true }).unref();
     } else {
       runPowerShell(`Start-Process -FilePath '${path.replace(/'/g, "''")}'`);
     }
     return;
   }
   if (process.platform === "linux") {
-    spawn2(path, [], { stdio: "ignore", detached: true, env: linuxLaunchEnv() }).unref();
+    spawn3(path, [], { stdio: "ignore", detached: true, env: linuxLaunchEnv() }).unref();
   }
 }
 function openCodexApp() {
@@ -13278,7 +13251,7 @@ function winForceQuit() {
   if (pids.length === 0) return;
   runPowerShell(`Stop-Process -Id ${pids.join(",")} -Force -ErrorAction SilentlyContinue`);
 }
-async function launchOrRestartCodexApp(prompt = "Restart ChatGPT Desktop to apply relay-ai settings?") {
+async function launchOrRestartCodexApp(prompt = "Restart ChatGPT Desktop to apply relay-ai settings?", assumeYes = false) {
   const appPath = findCodexApp();
   if (!isCodexAppRunning()) {
     if (!appPath) {
@@ -13292,6 +13265,9 @@ async function launchOrRestartCodexApp(prompt = "Restart ChatGPT Desktop to appl
   if (process.platform === "linux") {
     p6.log.info("Restarting ChatGPT Desktop to apply relay-ai settings...");
     linuxQuitGraceful();
+  } else if (assumeYes) {
+    if (process.platform === "darwin") darwinQuit();
+    else if (process.platform === "win32") winQuitGraceful();
   } else {
     const restart = await p6.confirm({ message: prompt, initialValue: true });
     if (p6.isCancel(restart) || !restart) {
@@ -13313,7 +13289,7 @@ function codexAppInstallHint() {
 }
 
 // src/claude-desktop/app-launch.ts
-import { execSync as execSync3, spawn as spawn3 } from "child_process";
+import { execSync as execSync3, spawn as spawn4 } from "child_process";
 import { existsSync as existsSync12, readdirSync as readdirSync3, readFileSync as readFileSync12, statSync as statSync4 } from "fs";
 import { homedir as homedir8 } from "os";
 import { join as join13 } from "path";
@@ -13520,14 +13496,14 @@ function openClaudeAppAt(path) {
   }
   if (process.platform === "win32") {
     if (path.startsWith("shell:AppsFolder\\")) {
-      spawn3("cmd.exe", ["/c", "start", "", path], { stdio: "ignore", detached: true }).unref();
+      spawn4("cmd.exe", ["/c", "start", "", path], { stdio: "ignore", detached: true }).unref();
     } else {
       runPowerShell2(`Start-Process -FilePath '${path.replace(/'/g, "''")}'`);
     }
     return;
   }
   if (process.platform === "linux") {
-    spawn3(path, [], { stdio: "ignore", detached: true, env: linuxLaunchEnv() }).unref();
+    spawn4(path, [], { stdio: "ignore", detached: true, env: linuxLaunchEnv() }).unref();
   }
 }
 function openClaudeApp() {
@@ -13613,6 +13589,8 @@ export {
   effortProviderOptions,
   deepMergeProviderOptions,
   thinkingProviderOptions,
+  runCodexCommandSync,
+  runCodexCommand,
   renderMultiAgentV2Feature,
   supportsMultiAgentV2,
   CODEX_APP_PROVIDER_ID,
@@ -13763,10 +13741,6 @@ export {
   splitToolUseId,
   encodeToolUseId,
   serializeToolResultContent,
-  UNSUPPORTED_VOICE_MESSAGE,
-  sanitizeUnsupportedInlineData,
-  summarizeSdkRequestForTrace,
-  translateRequest,
   formatUpstreamErrorTrace,
   formatUpstreamError,
   upstreamHttpStatus,
@@ -13844,4 +13818,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-KDIY732Q.js.map
+//# sourceMappingURL=chunk-SCW2TYSG.js.map

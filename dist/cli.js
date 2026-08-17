@@ -12,7 +12,6 @@ import {
   GLOBAL_OPENCODE_KEYRING_ACCOUNT,
   MAX_MODEL_CATALOG,
   PREVIEW_PROXY_PORT,
-  UNSUPPORTED_VOICE_MESSAGE,
   VERSION,
   VERTEX_ANTHROPIC_NPM,
   addCustomEndpointProvider,
@@ -169,8 +168,9 @@ import {
   resolveRelayCatalogSlots,
   routableModelsForTarget,
   routeLookupIds,
+  runCodexCommand,
+  runCodexCommandSync,
   runServerCommand,
-  sanitizeUnsupportedInlineData,
   savePreferences,
   saveProviderCredential,
   saveRegistry,
@@ -186,20 +186,18 @@ import {
   startProxy,
   startProxyCatalog,
   startServer,
-  summarizeSdkRequestForTrace,
   supportsClaudeTransparentMode,
   supportsMultiAgentV2,
   supportsNativeOAuth,
   syntheticTemplate,
   thinkingProviderOptions,
   toggleProviderEnabled,
-  translateRequest,
   updateCustomEndpointProvider,
   upstreamHttpStatus,
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-KDIY732Q.js";
+} from "./chunk-SCW2TYSG.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -2235,7 +2233,6 @@ async function runProvidersCommand(args) {
 // src/codex.ts
 import pc7 from "picocolors";
 import * as p8 from "@clack/prompts";
-import { execFileSync as execFileSync2 } from "child_process";
 import { join as join5 } from "path";
 
 // src/codex-proxy.ts
@@ -3041,18 +3038,18 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
     });
     outputItems.unshift(reasoningItem);
   }
-  for (const tool3 of toolStates) {
-    const normalizedArgs = normalizeCodexSubagentArguments(tool3.name, tool3.args);
+  for (const tool4 of toolStates) {
+    const normalizedArgs = normalizeCodexSubagentArguments(tool4.name, tool4.args);
     emit("response.function_call_arguments.done", {
       type: "response.function_call_arguments.done",
-      item_id: tool3.itemId,
-      output_index: tool3.outputIndex,
+      item_id: tool4.itemId,
+      output_index: tool4.outputIndex,
       arguments: normalizedArgs
     });
-    const fcItem = buildFinalToolItem(resolveOutputKind(tool3.name, options?.toolContext), tool3.name, tool3.callId, tool3.itemId, normalizedArgs);
+    const fcItem = buildFinalToolItem(resolveOutputKind(tool4.name, options?.toolContext), tool4.name, tool4.callId, tool4.itemId, normalizedArgs);
     emit("response.output_item.done", {
       type: "response.output_item.done",
-      output_index: tool3.outputIndex,
+      output_index: tool4.outputIndex,
       item: fcItem
     });
     outputItems.push(fcItem);
@@ -3180,7 +3177,7 @@ function decodeCompactionContent(encrypted) {
   if (!encrypted) return null;
   try {
     const obj = JSON.parse(Buffer.from(encrypted, "base64").toString("utf8"));
-    return typeof obj?.summary === "string" ? obj.summary : null;
+    return obj?.v === 1 && typeof obj.summary === "string" ? obj.summary : null;
   } catch {
     return null;
   }
@@ -3464,6 +3461,41 @@ function allowlistedNativeHeaders(inboundHeaders) {
   }
   return out;
 }
+function prepareNativeCodexBody(body) {
+  if (!Array.isArray(body.input)) return body;
+  let changed = false;
+  const input = body.input.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+    const record = item;
+    if (record.type !== "compaction" && record.type !== "context_compaction") return item;
+    const summary = decodeCompactionContent(
+      typeof record.encrypted_content === "string" ? record.encrypted_content : void 0
+    );
+    if (summary === null) return item;
+    changed = true;
+    return {
+      type: "message",
+      role: "user",
+      content: [{
+        type: "input_text",
+        text: `[Summary of earlier conversation]
+${summary}`
+      }]
+    };
+  });
+  return changed ? { ...body, input } : body;
+}
+function prepareNativeHttpBody(body) {
+  const text5 = typeof body === "string" ? body : Buffer.from(body).toString("utf8");
+  try {
+    const parsed = JSON.parse(text5);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return body;
+    const prepared = prepareNativeCodexBody(parsed);
+    return prepared === parsed ? body : JSON.stringify(prepared);
+  } catch {
+    return body;
+  }
+}
 async function forwardNativeCodexHttp(options) {
   const fetchImpl = options.fetchImpl ?? fetch;
   const headers = allowlistedNativeHeaders(options.inboundHeaders);
@@ -3471,7 +3503,7 @@ async function forwardNativeCodexHttp(options) {
   return fetchImpl(options.nativeUrl ?? NATIVE_CODEX_RESPONSES_URL, {
     method: "POST",
     headers,
-    body: options.body,
+    body: prepareNativeHttpBody(options.body),
     signal: options.signal,
     redirect: "manual"
   });
@@ -3549,17 +3581,17 @@ var COLLABORATION_TOOL_NAMES = /* @__PURE__ */ new Set([
 ]);
 function isCollaborationTool(value) {
   if (!value || typeof value !== "object") return false;
-  const tool3 = value;
-  const name = typeof tool3.name === "string" ? tool3.name : "";
-  if (tool3.type === "namespace") return name === "collaboration" || name === "multi_agent_v1";
+  const tool4 = value;
+  const name = typeof tool4.name === "string" ? tool4.name : "";
+  if (tool4.type === "namespace") return name === "collaboration" || name === "multi_agent_v1";
   return COLLABORATION_TOOL_NAMES.has(name) || name.startsWith("collaboration__") || name.startsWith("multi_agent_v1__");
 }
 function stripCollaborationToolList(value) {
   if (!Array.isArray(value)) return value;
-  return value.filter((tool3) => !isCollaborationTool(tool3)).map((tool3) => {
-    if (!tool3 || typeof tool3 !== "object") return tool3;
-    const record = tool3;
-    if (!Array.isArray(record.tools)) return tool3;
+  return value.filter((tool4) => !isCollaborationTool(tool4)).map((tool4) => {
+    if (!tool4 || typeof tool4 !== "object") return tool4;
+    const record = tool4;
+    if (!Array.isArray(record.tools)) return tool4;
     return { ...record, tools: stripCollaborationToolList(record.tools) };
   });
 }
@@ -3881,6 +3913,18 @@ function codexRouteLookupIds(requestedModel) {
   return [...new Set(ids)];
 }
 function findCodexProxyRoute(routes, requestedModel) {
+  const bareRequestedModel = parseCodexAppModelSlug(requestedModel);
+  const providerSeparator = bareRequestedModel.indexOf("__");
+  if (providerSeparator > 0) {
+    const requestedProvider = bareRequestedModel.slice(0, providerSeparator);
+    const requestedIds = codexRouteLookupIds(bareRequestedModel.slice(providerSeparator + 2));
+    const providerRoute = routes.find((route) => {
+      if (route.providerId !== requestedProvider) return false;
+      const routeIds = codexRouteLookupIds(route.modelId);
+      return requestedIds.some((id) => routeIds.includes(id));
+    });
+    if (providerRoute) return providerRoute;
+  }
   const ids = codexRouteLookupIds(requestedModel);
   for (const id of ids) {
     const route = routes.find(
@@ -4509,10 +4553,14 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "i
                 return;
               }
               if (dispatch.kind === "native") {
+                const nativeBody = prepareNativeCodexBody(body);
+                if (debug && nativeBody !== body) {
+                  log14(`WS native history normalized: model=${modelId} converted Relay compaction for native verification`);
+                }
                 if (nativeActive && nativeUpstream) {
                   if (nativeUpstream.readyState === WebSocket.OPEN) {
                     if (debug) log14(`WS native forwarding next turn: model=${modelId}`);
-                    nativeUpstream.send(JSON.stringify({ type: "response.create", ...body }));
+                    nativeUpstream.send(JSON.stringify({ type: "response.create", ...nativeBody }));
                   } else if (debug) {
                     log14(`WS native cannot forward next turn: upstream_state=${nativeUpstream.readyState}`);
                   }
@@ -4566,7 +4614,7 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "i
                     nativeOpened = true;
                     if (connectTimer) clearTimeout(connectTimer);
                     if (debug) log14(`WS native upstream open: model=${modelId}`);
-                    upstream?.send(JSON.stringify({ type: "response.create", ...body }));
+                    upstream?.send(JSON.stringify({ type: "response.create", ...nativeBody }));
                     firstFrameTimer = setTimeout(() => closeBoth("Native Codex WebSocket response timed out"), 6e4);
                   });
                   upstream.once("unexpected-response", (_request, response) => {
@@ -4961,7 +5009,8 @@ function profileName() {
 }
 
 // src/codex/launch.ts
-import { execFileSync, execSync as execSync2, spawn as spawn2 } from "child_process";
+import { execSync as execSync2 } from "child_process";
+import spawn2 from "cross-spawn";
 import { existsSync as existsSync4 } from "fs";
 import { homedir as homedir4 } from "os";
 import { join as join4 } from "path";
@@ -5023,12 +5072,7 @@ function selectCodexBinary(candidates, exists, canRun) {
 }
 function canRunCodexBinary(path3) {
   try {
-    execFileSync(path3, ["--version"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 5e3,
-      shell: isWindows2
-    });
+    runCodexCommandSync(path3, ["--version"], { timeout: 5e3 });
     return true;
   } catch {
     return false;
@@ -5067,8 +5111,7 @@ function launchCodex(modelId, env, extraArgs) {
     const args = ["--profile", profileName(), "-m", modelId, ...ensureCodexSandboxArgs(extraArgs)];
     const child = spawn2(codexPath, args, {
       stdio: "inherit",
-      env,
-      shell: isWindows2
+      env
     });
     const forward = (signal) => {
       child.kill(signal);
@@ -5503,9 +5546,6 @@ async function resolveCodexMixedModels(input) {
 }
 
 // src/codex/native-catalog.ts
-import { execFile } from "child_process";
-import { promisify } from "util";
-var execFileAsync = promisify(execFile);
 function isCatalogModel(value) {
   if (!value || typeof value !== "object") return false;
   const model = value;
@@ -5522,7 +5562,7 @@ function validateNativeCodexCatalog(value) {
 }
 async function captureNativeCodexCatalog(options) {
   const run = options.run ?? (async (args) => {
-    const result = await execFileAsync(options.binaryPath, args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+    const result = await runCodexCommand(options.binaryPath, args, { maxBuffer: 16 * 1024 * 1024 });
     return result.stdout;
   });
   const stdout = await run(options.bundled ? ["debug", "models", "--bundled"] : ["debug", "models"]);
@@ -5545,6 +5585,22 @@ async function captureNativeCodexCatalog(options) {
 }
 
 // src/codex/mixed-catalog.ts
+function externalInstructionValue(value) {
+  if (typeof value === "string") {
+    return value.replace(/^You are Codex,[^\n]*?\.\s*/i, "").replace(/\bAs Codex,\s+(\w)/g, (_match, nextChar) => nextChar.toUpperCase()).replace(/\s+as Codex\b/gi, "");
+  }
+  if (Array.isArray(value)) return value.map(externalInstructionValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [
+      key,
+      externalInstructionValue(nested)
+    ])
+  );
+}
+function externalModelMessages(templateMessages) {
+  return externalInstructionValue(templateMessages);
+}
 function externalCatalogEntryFromTemplate(template, entry, priority, visibility, multiAgentVersion) {
   const resolvedModel = entry.resolved.model;
   const generated = catalogEntryFromModel(
@@ -5554,7 +5610,7 @@ function externalCatalogEntryFromTemplate(template, entry, priority, visibility,
     false,
     entry.slug
   );
-  return {
+  const external = {
     ...template,
     ...generated,
     slug: entry.slug,
@@ -5562,6 +5618,9 @@ function externalCatalogEntryFromTemplate(template, entry, priority, visibility,
     visibility,
     multi_agent_version: multiAgentVersion
   };
+  external.model_messages = externalModelMessages(template.model_messages);
+  delete external.comp_hash;
+  return external;
 }
 function composeMixedCodexCatalog(input) {
   const template = input.nativeModels.find((model) => model.slug === "gpt-5.5") ?? input.nativeModels.find((model) => model.visibility === "list") ?? input.nativeModels[0];
@@ -6136,7 +6195,7 @@ async function runCodexVertexLaunch(passthroughArgs, trace) {
     restoreCodexOverlay();
   }
 }
-async function runCodexCommand(codexArgs, trace = false, launch = {}) {
+async function runCodexCommand2(codexArgs, trace = false, launch = {}) {
   if (codexArgs.includes("--help") || codexArgs.includes("-h")) {
     console.log(codexHelpText());
     return 0;
@@ -6334,7 +6393,7 @@ Error: ${launchPlan.error}
   let mixedPlan = null;
   if (mixedMode) {
     try {
-      const version = execFileSync2(codexPath, ["--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+      const version = runCodexCommandSync(codexPath, ["--version"]).stdout.trim();
       const mixedModels = await resolveCodexMixedModels({
         activeProvider,
         selectedModel,
@@ -7737,6 +7796,267 @@ import * as p11 from "@clack/prompts";
 // src/antigravity/cloud-code-gateway.ts
 import http from "http";
 import { streamText as streamText3, generateText as generateText3 } from "ai";
+
+// src/antigravity/request-adapter.ts
+import { randomUUID as randomUUID2 } from "crypto";
+import { tool as tool3, jsonSchema as jsonSchema3 } from "ai";
+var UNSUPPORTED_VOICE_MESSAGE = "Voice transcription isn\u2019t supported by Relay AI yet. Please type your message. Your coding session remains active.";
+var OMITTED_VOICE_TEXT = "[Voice recording omitted because transcription is not supported by Relay AI.]";
+function isSupportedImage(part) {
+  return part.inlineData?.mimeType.toLowerCase().startsWith("image/") ?? false;
+}
+function isUnsupportedInlineData(part) {
+  return !!part.inlineData && !isSupportedImage(part);
+}
+function sanitizeUnsupportedInlineData(ccReq) {
+  const contents = ccReq.request?.contents ?? [];
+  let latestUserIndex = -1;
+  for (let i = contents.length - 1; i >= 0; i--) {
+    if (contents[i].role === "user") {
+      latestUserIndex = i;
+      break;
+    }
+  }
+  let latestUserTurnHasUnsupportedMedia = false;
+  const sanitizedContents = contents.map((message, index) => ({
+    ...message,
+    parts: message.parts.map((part) => {
+      if (!isUnsupportedInlineData(part)) return part;
+      if (index === latestUserIndex) latestUserTurnHasUnsupportedMedia = true;
+      return { text: OMITTED_VOICE_TEXT };
+    })
+  }));
+  return {
+    request: {
+      ...ccReq,
+      request: {
+        ...ccReq.request,
+        contents: sanitizedContents
+      }
+    },
+    latestUserTurnHasUnsupportedMedia
+  };
+}
+function tracePartChars(part) {
+  if (typeof part.text === "string") return part.text.length;
+  if (part.type !== "tool-result") return void 0;
+  const output = part.output;
+  if (typeof output === "string") return output.length;
+  if (output && typeof output === "object" && typeof output.value === "string") {
+    return output.value.length;
+  }
+  try {
+    return output === void 0 ? void 0 : JSON.stringify(output).length;
+  } catch {
+    return void 0;
+  }
+}
+function summarizeSdkRequestForTrace(request2) {
+  const messages = request2.messages.map((message) => {
+    const content = message.content;
+    if (typeof content === "string") {
+      return { role: message.role, parts: [{ type: "text", chars: content.length }] };
+    }
+    const parts = Array.isArray(content) ? content.map((rawPart) => {
+      const part = rawPart;
+      const summary = {
+        type: typeof part.type === "string" ? part.type : typeof rawPart
+      };
+      const chars = tracePartChars(part);
+      if (chars !== void 0) summary.chars = chars;
+      if (typeof part.toolName === "string") summary.toolName = part.toolName;
+      if (typeof part.toolCallId === "string") summary.toolCallId = part.toolCallId;
+      return summary;
+    }) : [{ type: typeof content }];
+    return { role: message.role, parts };
+  });
+  return {
+    systemChars: request2.system?.length ?? 0,
+    messages,
+    toolNames: Object.keys(request2.tools ?? {}),
+    ...request2.toolChoice ? { toolChoice: request2.toolChoice } : {}
+  };
+}
+var JSON_SCHEMA_TYPES = /* @__PURE__ */ new Map([
+  ["ARRAY", "array"],
+  ["BOOLEAN", "boolean"],
+  ["INTEGER", "integer"],
+  ["NULL", "null"],
+  ["NUMBER", "number"],
+  ["OBJECT", "object"],
+  ["STRING", "string"]
+]);
+function expandTextWithThinking(text5) {
+  if (!text5.includes("<thinking>")) {
+    return [{ type: "text", text: text5 }];
+  }
+  const out = [];
+  const tokens = text5.split(/<thinking>([\s\S]*?)<\/thinking>/);
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i] ?? "";
+    if (!token.trim()) continue;
+    out.push({ type: i % 2 === 1 ? "reasoning" : "text", text: token });
+  }
+  return out.length > 0 ? out : [{ type: "text", text: text5 }];
+}
+function normalizeSchemaType(value) {
+  if (typeof value === "string") {
+    return JSON_SCHEMA_TYPES.get(value) ?? value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(normalizeSchemaType);
+  }
+  return value;
+}
+function normalizeJsonSchema(value) {
+  if (Array.isArray(value)) {
+    return value.map(normalizeJsonSchema);
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [
+      key,
+      key === "type" ? normalizeSchemaType(child) : normalizeJsonSchema(child)
+    ])
+  );
+}
+function translateTools(ccTools, options = {}) {
+  if (!ccTools?.length) return void 0;
+  const tools = {};
+  let toolCount = 0;
+  for (const t of ccTools) {
+    if (t.functionDeclarations) {
+      for (const fd of t.functionDeclarations) {
+        if (options.maxTools !== void 0 && toolCount >= options.maxTools) break;
+        tools[fd.name] = tool3({
+          description: fd.description || "",
+          inputSchema: jsonSchema3(
+            normalizeJsonSchema(fd.parameters || { type: "object", properties: {} })
+          )
+        });
+        toolCount++;
+      }
+    }
+  }
+  return Object.keys(tools).length > 0 ? tools : void 0;
+}
+function translateRequest(ccReq, options = {}) {
+  const systemInstructions = [];
+  const sdkMessages = [];
+  const nameToIdList = /* @__PURE__ */ new Map();
+  const fallbackAssistantReasoning = [...options.fallbackAssistantReasoning ?? []];
+  const request2 = ccReq.request || {};
+  if (request2.systemInstruction?.parts) {
+    for (const part of request2.systemInstruction.parts) {
+      if (part.text) {
+        systemInstructions.push(part.text);
+      }
+    }
+  }
+  const contents = request2.contents || [];
+  for (const msg of contents) {
+    const role = msg.role;
+    if (role === "system") {
+      for (const part of msg.parts) {
+        if (part.text) {
+          systemInstructions.push(part.text);
+        }
+      }
+      continue;
+    }
+    const sdkRole = role === "model" ? "assistant" : "user";
+    const hasFunctionCall = msg.parts.some((p15) => p15.functionCall);
+    const hasAssistantReasoning = role === "model" && msg.parts.some((p15) => p15.thought || p15.text?.includes("<thinking>"));
+    const hasComplexParts = msg.parts.some((p15) => p15.thought || p15.inlineData || p15.functionCall || p15.functionResponse);
+    const singleText = msg.parts.length === 1 ? msg.parts[0]?.text : void 0;
+    if (!hasComplexParts && singleText !== void 0 && !singleText.includes("<thinking>")) {
+      sdkMessages.push({
+        role: sdkRole,
+        content: singleText
+      });
+      continue;
+    }
+    const contentParts = [];
+    const toolResults = [];
+    if (role === "model" && hasFunctionCall && !hasAssistantReasoning) {
+      const fallback = fallbackAssistantReasoning.shift();
+      if (fallback?.trim()) {
+        contentParts.push({ type: "reasoning", text: fallback });
+      }
+    }
+    for (const part of msg.parts) {
+      if (part.text !== void 0) {
+        if (part.thought) {
+          contentParts.push({ type: "reasoning", text: part.text });
+        } else {
+          for (const piece of expandTextWithThinking(part.text)) {
+            contentParts.push(piece);
+          }
+        }
+      } else if (part.inlineData) {
+        if (isSupportedImage(part)) {
+          contentParts.push({
+            type: "image",
+            image: part.inlineData.data,
+            mimeType: part.inlineData.mimeType
+          });
+        } else {
+          contentParts.push({ type: "text", text: OMITTED_VOICE_TEXT });
+        }
+      } else if (part.functionCall) {
+        const id = "call_" + randomUUID2().replace(/-/g, "");
+        const name = part.functionCall.name;
+        if (!nameToIdList.has(name)) nameToIdList.set(name, []);
+        nameToIdList.get(name).push(id);
+        contentParts.push({
+          type: "tool-call",
+          toolCallId: id,
+          toolName: name,
+          input: part.functionCall.args || {}
+        });
+      } else if (part.functionResponse) {
+        const name = part.functionResponse.name;
+        const idList = nameToIdList.get(name) || [];
+        const id = idList.shift() || "call_" + randomUUID2().replace(/-/g, "");
+        toolResults.push({
+          type: "tool-result",
+          toolCallId: id,
+          toolName: name,
+          output: { type: "text", value: serializeToolResultContent(part.functionResponse.response) }
+        });
+      }
+    }
+    if (toolResults.length > 0) {
+      sdkMessages.push({
+        role: "tool",
+        content: toolResults
+      });
+    }
+    if (contentParts.length > 0) {
+      sdkMessages.push({
+        role: sdkRole,
+        content: contentParts
+      });
+    }
+  }
+  const system = systemInstructions.length > 0 ? systemInstructions.join("\n\n") : void 0;
+  const tools = translateTools(request2.tools, options);
+  let toolChoice;
+  const mode = request2.toolConfig?.functionCallingConfig?.mode;
+  if (mode === "ANY") {
+    toolChoice = "required";
+  } else if (mode === "AUTO" || tools) {
+    toolChoice = "auto";
+  }
+  return {
+    system,
+    messages: sdkMessages,
+    tools,
+    toolChoice
+  };
+}
 
 // src/antigravity/response-adapter.ts
 function normalizeFunctionCallArgs(args) {
@@ -9615,7 +9935,7 @@ async function resolveAntigravityLaunchRoutes(opts) {
 }
 
 // src/antigravity/launch-cli.ts
-import { execFileSync as execFileSync3, execSync as execSync3 } from "child_process";
+import { execFileSync, execSync as execSync3 } from "child_process";
 import spawn4 from "cross-spawn";
 import { existsSync as existsSync6 } from "fs";
 import { homedir as homedir6 } from "os";
@@ -9653,7 +9973,7 @@ function readAntigravityCliVersion(binaryPath = findAntigravityCliBinary() ?? vo
     return { version: null, error: 'Antigravity CLI binary "agy" not found' };
   }
   try {
-    const raw = execFileSync3(binaryPath, ["--version"], {
+    const raw = execFileSync(binaryPath, ["--version"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"]
     }).trim();
@@ -9702,7 +10022,7 @@ function launchAntigravityCli(env, extraArgs) {
 }
 
 // src/antigravity/launch-ide.ts
-import { execFileSync as execFileSync4, execSync as execSync4, spawn as spawn5 } from "child_process";
+import { execFileSync as execFileSync2, execSync as execSync4, spawn as spawn5 } from "child_process";
 import { existsSync as existsSync7 } from "fs";
 import { homedir as homedir7 } from "os";
 import { join as join8 } from "path";
@@ -9806,7 +10126,7 @@ function defaultProcessList() {
   const psArgs = process.platform === "linux" ? ["-eo", "pid=,args="] : ["-axo", "pid=,command="];
   if (process.platform !== "darwin" && process.platform !== "linux") return "";
   try {
-    return execFileSync4("ps", psArgs, {
+    return execFileSync2("ps", psArgs, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       maxBuffer: 1024 * 1024 * 4
@@ -9870,11 +10190,11 @@ function quitAntigravityIdeGracefully() {
   }
   if (process.platform !== "darwin") return;
   try {
-    execFileSync4("osascript", ["-e", 'tell application "Antigravity IDE" to quit'], {
+    execFileSync2("osascript", ["-e", 'tell application "Antigravity IDE" to quit'], {
       stdio: ["ignore", "pipe", "pipe"]
     });
   } catch {
-    execFileSync4("osascript", ["-e", 'tell application id "com.google.antigravity-ide" to quit'], {
+    execFileSync2("osascript", ["-e", 'tell application id "com.google.antigravity-ide" to quit'], {
       stdio: ["ignore", "pipe", "pipe"]
     });
   }
@@ -9890,11 +10210,11 @@ function quitAntigravityAppGracefully() {
   }
   if (process.platform !== "darwin") return;
   try {
-    execFileSync4("osascript", ["-e", 'tell application "Antigravity" to quit'], {
+    execFileSync2("osascript", ["-e", 'tell application "Antigravity" to quit'], {
       stdio: ["ignore", "pipe", "pipe"]
     });
   } catch {
-    execFileSync4("osascript", ["-e", 'tell application id "com.google.antigravity" to quit'], {
+    execFileSync2("osascript", ["-e", 'tell application id "com.google.antigravity" to quit'], {
       stdio: ["ignore", "pipe", "pipe"]
     });
   }
@@ -10405,7 +10725,6 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
 // src/codex-app.ts
 import pc10 from "picocolors";
 import * as p12 from "@clack/prompts";
-import { execFileSync as execFileSync5 } from "child_process";
 import { join as join12 } from "path";
 
 // src/codex/app-provider-routes.ts
@@ -10945,10 +11264,11 @@ function codexProxyRouteToCodexRoute(route, fallbackProviderId) {
     refreshToken: route.refreshToken
   };
 }
-async function waitForShutdownWithConfirm() {
+async function waitForShutdownWithConfirm(assumeYes = false) {
   while (true) {
     const signal = await waitForShutdown2();
     if (signal !== "sigint") break;
+    if (assumeYes) break;
     console.log("");
     const choice = await p12.select({
       message: "Close ChatGPT Desktop and restore your Codex config?",
@@ -10960,8 +11280,13 @@ async function waitForShutdownWithConfirm() {
     if (p12.isCancel(choice) || choice === "yes") break;
   }
 }
-async function maybeCloseRunningCodexApp() {
+async function maybeCloseRunningCodexApp(assumeYes = false) {
   if (!isCodexAppRunning()) return;
+  if (assumeYes) {
+    p12.log.step("Stopping ChatGPT Desktop...");
+    quitCodexAppGracefully();
+    return;
+  }
   const shouldClose = await p12.confirm({ message: "ChatGPT Desktop is still running. Close it?" });
   if (shouldClose && !p12.isCancel(shouldClose)) {
     p12.log.step("Stopping ChatGPT Desktop...");
@@ -10985,6 +11310,7 @@ ${pc10.bold("Options:")}
   --vertex     Use Claude models through Google Vertex AI
   --with-native Load native Codex models beside Relay models for this launch
   --relay-only Keep the current Relay-only launch behavior
+  --yes, -y     Run a fully specified launch unattended (no launch/stop prompts)
   --restore    Restore Codex config after an interrupted app session
   --config     Preview the generated Codex app configuration without launching
   --trace      Write proxy debug logs to ~/.relay-ai/logs/ and show errors on exit
@@ -11011,6 +11337,7 @@ ${pc10.bold("Preview (no writes):")}
 ${pc10.bold("Examples:")}
   relay-ai codex-app
   relay-ai codex-app --vertex
+  relay-ai codex-app --provider antigravity --model gemini-3.1-pro-high --with-native --yes
   relay-ai codex-app --config
   relay-ai codex-app --restore
   
@@ -11170,6 +11497,13 @@ async function runCodexAppCommand(args, opts = {}) {
     console.log(result.message);
     return result.liveSession ? 1 : 0;
   }
+  const configOnly = args.includes("--config");
+  if (opts.assumeYes && !configOnly) {
+    if (opts.vertex || !opts.launchProvider || !opts.launchModel || !opts.codexLaunchMode) {
+      console.error(pc10.red("--yes requires --provider, --model, and either --with-native or --relay-only."));
+      return 1;
+    }
+  }
   try {
     codexAppSupported();
   } catch (err) {
@@ -11177,7 +11511,6 @@ async function runCodexAppCommand(args, opts = {}) {
     return 1;
   }
   const interrupted = recoverInterruptedCodexAppSession();
-  const configOnly = args.includes("--config");
   const trace = args.includes("--trace");
   const debugLogPath = getCodexProxyDebugLogPath();
   if (trace && !configOnly) {
@@ -11185,7 +11518,7 @@ async function runCodexAppCommand(args, opts = {}) {
   }
   const isTty = Boolean(process.stdin.isTTY);
   if (!configOnly) {
-    const sessionCheck = checkAppSessionLock(isTty);
+    const sessionCheck = checkAppSessionLock(isTty || Boolean(opts.assumeYes));
     if (!sessionCheck.ok) {
       if (sessionCheck.reason === "non_tty") {
         console.error(pc10.red("relay-ai codex-app requires an interactive terminal."));
@@ -11314,7 +11647,7 @@ async function runCodexAppCommand(args, opts = {}) {
     try {
       const embeddedBinary = findEmbeddedCodexBinary();
       if (!embeddedBinary) throw new Error("Embedded ChatGPT/Codex runtime was not found; mixed Desktop mode is unavailable on this installation");
-      const version = execFileSync5(embeddedBinary, ["--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+      const version = runCodexCommandSync(embeddedBinary, ["--version"]).stdout.trim();
       const mixedModels = await resolveCodexMixedModels({
         activeProvider,
         selectedModel,
@@ -11345,7 +11678,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
       return 1;
     }
   }
-  if (!configOnly) {
+  if (!configOnly && !opts.assumeYes) {
     const modelLabel = formatCodexModelLabel(selectedModel);
     const confirmed = await confirmCodexLaunch(
       activeProvider.name,
@@ -11517,7 +11850,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
     logProxy(proxyPort);
     logActiveModel(modelLabel, selectedModel.id);
     try {
-      await launchOrRestartCodexApp();
+      await launchOrRestartCodexApp(void 0, opts.assumeYes);
     } catch (err) {
       p12.log.warn(String(err instanceof Error ? err.message : err));
       p12.log.info(codexAppInstallHint());
@@ -11529,14 +11862,14 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
       restoreCommand: "relay-ai codex-app --restore"
     });
     codexAppOutro(modelLabel);
-    await waitForShutdownWithConfirm();
+    await waitForShutdownWithConfirm(opts.assumeYes);
     if (trace) printTraceLog(debugLogPath);
     console.log("");
     if (sessionActive) {
       restoreCodexAppOverlay();
       sessionActive = false;
     }
-    await maybeCloseRunningCodexApp();
+    await maybeCloseRunningCodexApp(opts.assumeYes);
     return 0;
   } finally {
     proxyHandle?.close();
@@ -11558,7 +11891,7 @@ import * as p13 from "@clack/prompts";
 import { existsSync as existsSync10, readFileSync as readFileSync5, writeFileSync as writeFileSync4, mkdirSync as mkdirSync5 } from "fs";
 import { homedir as homedir9 } from "os";
 import { join as join13, dirname as dirname3 } from "path";
-import { randomUUID as randomUUID2 } from "crypto";
+import { randomUUID as randomUUID3 } from "crypto";
 function getClaudeDesktopHome() {
   if (process.platform === "win32") {
     return join13(process.env.LOCALAPPDATA || join13(homedir9(), "AppData", "Local"), "Claude-3p");
@@ -11599,7 +11932,7 @@ function buildRelayAiConfig(proxyPort) {
   };
 }
 function writeRelayAiConfig(proxyPort) {
-  const uuid = randomUUID2();
+  const uuid = randomUUID3();
   const configPath = join13(getConfigLibraryPath(), `${uuid}.json`);
   const config = buildRelayAiConfig(proxyPort);
   mkdirSync5(dirname3(configPath), { recursive: true });
@@ -12840,7 +13173,7 @@ function buildHttpProxyChildEnv(baseEnv, proxyUrl, caCertPath) {
 }
 
 // src/http-proxy/ca.ts
-import { randomBytes as randomBytes2, randomUUID as randomUUID3 } from "crypto";
+import { randomBytes as randomBytes2, randomUUID as randomUUID4 } from "crypto";
 import {
   chmodSync as chmodSync2,
   existsSync as existsSync13,
@@ -12905,7 +13238,7 @@ function createHttpProxyCertificates(appHome = getAppHome()) {
   const root = join17(appHome, SESSION_ROOT);
   mkdirSync9(root, { recursive: true, mode: 448 });
   chmodSync2(root, 448);
-  const sessionDir = join17(root, randomUUID3());
+  const sessionDir = join17(root, randomUUID4());
   mkdirSync9(sessionDir, { mode: 448 });
   chmodSync2(sessionDir, 448);
   writeFileSync8(join17(sessionDir, OWNER_FILE), `${process.pid}
@@ -13759,6 +14092,10 @@ function parseArgs(args) {
       }
       if (arg === "--vertex") {
         parsed2.vertex = true;
+        continue;
+      }
+      if (arg === "--yes" || arg === "-y") {
+        parsed2.assumeYes = true;
         continue;
       }
       if (arg === "--with-native") {
@@ -15008,7 +15345,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-OIY4243G.js");
+    const { runUiCommand } = await import("./ui-command-Q6LBKVM3.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {
@@ -15051,7 +15388,7 @@ Options:
       console.log(codexAppHelpText());
       return 0;
     }
-    return runCodexAppCommand(parsed.claudeArgs, { vertex: parsed.vertex, launchProvider: parsed.launchProvider, launchModel: parsed.launchModel, codexLaunchMode: parsed.codexLaunchMode });
+    return runCodexAppCommand(parsed.claudeArgs, { vertex: parsed.vertex, launchProvider: parsed.launchProvider, launchModel: parsed.launchModel, codexLaunchMode: parsed.codexLaunchMode, assumeYes: parsed.assumeYes });
   }
   if (parsed.command === "claude-app") {
     if (parsed.showVersion) {
@@ -15073,7 +15410,7 @@ Options:
       console.log(codexHelpText());
       return 0;
     }
-    return runCodexCommand(parsed.claudeArgs, parsed.trace, {
+    return runCodexCommand2(parsed.claudeArgs, parsed.trace, {
       launchProvider: parsed.launchProvider,
       launchModel: parsed.launchModel,
       vertex: parsed.vertex,
