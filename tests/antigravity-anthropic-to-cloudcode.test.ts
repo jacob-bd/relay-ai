@@ -3,6 +3,34 @@ import { anthropicToCloudCode } from '../src/antigravity/anthropic-to-cloudcode.
 import { collectCloudCodeToAnthropic } from '../src/antigravity/cloudcode-to-anthropic.js';
 
 describe('anthropicToCloudCode', () => {
+  it('preserves user and assistant perspective through the Google role mapping', () => {
+    const envelope = anthropicToCloudCode({
+      messages: [
+        { role: 'user', content: 'USER_MARKER' },
+        { role: 'assistant', content: 'ASSISTANT_REPLY' },
+        { role: 'user', content: 'USER_CORRECTION' },
+      ],
+    }, 'gemini-3-pro', 'project-id');
+
+    expect((envelope.request as any).contents).toEqual([
+      { role: 'user', parts: [{ text: 'USER_MARKER' }] },
+      { role: 'model', parts: [{ text: 'ASSISTANT_REPLY' }] },
+      { role: 'user', parts: [{ text: 'USER_CORRECTION' }] },
+    ]);
+  });
+
+  it('presents the request as the Antigravity Google client using Google One AI credit', () => {
+    const envelope = anthropicToCloudCode({
+      messages: [{ role: 'user', content: 'hello' }],
+    }, 'gemini-3-pro', 'project-id');
+
+    expect(envelope.userAgent).toBe('vscode/1.X.X (Antigravity/4.2.0)');
+    expect(envelope.requestType).toBe('agent');
+    expect(envelope.enabledCreditTypes).toEqual(['GOOGLE_ONE_AI']);
+    expect(envelope.project).toBe('project-id');
+    expect(envelope.model).toBe('gemini-3-pro');
+  });
+
   it('floors maxOutputTokens so Gemini hidden thoughts do not consume the full budget', () => {
     const envelope = anthropicToCloudCode({
       max_tokens: 64,
@@ -12,17 +40,14 @@ describe('anthropicToCloudCode', () => {
     expect((envelope.request as any).generationConfig.maxOutputTokens).toBe(1024);
   });
 
-  it('disables Cloud Code thought output so Claude Code receives visible turns', () => {
+  it('omits the obsolete thinking budget rejected by current Gemini models', () => {
     const envelope = anthropicToCloudCode({
       max_tokens: 32000,
       output_config: { effort: 'xhigh' },
       messages: [{ role: 'user', content: 'count notebooks' }],
     }, 'gemini-3-flash-extra-low', 'project-id');
 
-    expect((envelope.request as any).generationConfig.thinkingConfig).toEqual({
-      thinkingBudget: 0,
-      includeThoughts: false,
-    });
+    expect((envelope.request as any).generationConfig.thinkingConfig).toBeUndefined();
   });
 
   it('strips JSON Schema validation keywords rejected by Cloud Code tools', () => {
@@ -58,20 +83,129 @@ describe('anthropicToCloudCode', () => {
     const parameters = request.tools[0].functionDeclarations[0].parameters;
 
     expect(parameters).toEqual({
-      type: 'object',
+      type: 'OBJECT',
       properties: {
         value: {
-          type: 'number',
+          type: 'NUMBER',
           description: 'Limit value',
         },
         mode: {
-          type: 'string',
+          type: 'STRING',
           enum: ['fast', 'safe'],
         },
       },
       required: ['value', 'mode'],
     });
     expect(JSON.stringify(parameters)).not.toContain('exclusiveMinimum');
+  });
+
+  it('strips Codex encrypted annotations from nested tool properties', () => {
+    const envelope = anthropicToCloudCode({
+      max_tokens: 64,
+      messages: [{ role: 'user', content: 'use the tool' }],
+      tools: [{
+        name: 'codex_tool',
+        input_schema: {
+          type: 'object',
+          properties: {
+            authority: {
+              type: 'object',
+              encrypted: true,
+              properties: {
+                token: { type: 'string', encrypted: true },
+              },
+            },
+          },
+        },
+      }],
+    }, 'gemini-3.7-flash-high', 'project-id');
+
+    const request = envelope.request as any;
+    const parameters = request.tools[0].functionDeclarations[0].parameters;
+
+    expect(parameters).toEqual({
+      type: 'OBJECT',
+      properties: {
+        authority: {
+          type: 'OBJECT',
+          properties: {
+            token: { type: 'STRING' },
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(parameters)).not.toContain('encrypted');
+  });
+
+  it('normalizes JSON Schema constructs that Cloud Code Schema rejects', () => {
+    const envelope = anthropicToCloudCode({
+      max_tokens: 64,
+      messages: [{ role: 'user', content: 'use the tool' }],
+      tools: [{
+        name: 'complex_schema',
+        input_schema: {
+          properties: {
+            maybe: { type: ['string', 'null'], enum: ['yes', 2, null] },
+            tuple: {
+              type: 'array',
+              prefixItems: [{ type: 'string' }, { type: 'number' }],
+              items: [{ type: 'integer' }, { type: 'string' }],
+            },
+            inferredArray: { items: { type: 'boolean' } },
+            inferredObject: { properties: { value: { type: 'number' } } },
+            union: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'number' } }] },
+            referenced: { $ref: '#/$defs/Range' },
+            reservedNames: {
+              type: 'object',
+              properties: {
+                type: { type: 'string' },
+                items: { type: 'array', items: { type: 'number' } },
+              },
+            },
+          },
+          $defs: {
+            Range: {
+              type: 'object',
+              properties: { min: { type: 'integer' }, max: { type: 'integer' } },
+            },
+          },
+        },
+      }],
+    }, 'gemini-3-flash', 'project-id');
+
+    const request = envelope.request as any;
+    const parameters = request.tools[0].functionDeclarations[0].parameters;
+
+    expect(parameters).toEqual({
+      type: 'OBJECT',
+      properties: {
+        maybe: { type: 'STRING', nullable: true, enum: ['yes', '2'] },
+        tuple: { type: 'ARRAY', items: { type: 'INTEGER' } },
+        inferredArray: { items: { type: 'BOOLEAN' }, type: 'ARRAY' },
+        inferredObject: {
+          properties: { value: { type: 'NUMBER' } },
+          type: 'OBJECT',
+        },
+        union: {
+          anyOf: [
+            { type: 'STRING' },
+            { type: 'ARRAY', items: { type: 'NUMBER' } },
+          ],
+        },
+        referenced: {
+          type: 'OBJECT',
+          properties: { min: { type: 'INTEGER' }, max: { type: 'INTEGER' } },
+        },
+        reservedNames: {
+          type: 'OBJECT',
+          properties: {
+            type: { type: 'STRING' },
+            items: { type: 'ARRAY', items: { type: 'NUMBER' } },
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(parameters)).not.toContain('prefixItems');
   });
 
   it('round-trips Cloud Code thought signatures on historical tool calls', async () => {

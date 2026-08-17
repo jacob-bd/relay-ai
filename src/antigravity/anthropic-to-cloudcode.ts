@@ -2,7 +2,6 @@
 // into the Cloud Code Assist envelope format for cloudcode-pa.googleapis.com.
 
 import { randomUUID } from 'node:crypto';
-import { normalizeJsonSchema } from './request-adapter.js';
 import { splitToolUseId } from '../proxy-shared.js';
 
 type JsonRecord = Record<string, unknown>;
@@ -18,27 +17,137 @@ const DEFAULT_SAFETY_SETTINGS = [
 
 const ANTIGRAVITY_USER_AGENT = 'vscode/1.X.X (Antigravity/4.2.0)';
 const MIN_ANTIGRAVITY_OUTPUT_TOKENS = 1024;
-const DISABLE_CLOUD_CODE_THINKING = { thinkingBudget: 0, includeThoughts: false };
 
 // Draft-meta keywords that Cloud Code rejects — strip them from tool schemas.
 const STRIP_KEYS = new Set([
   '$schema', '$defs', 'definitions', '$ref', '$comment',
-  'additionalProperties', 'propertyNames', 'patternProperties', 'title',
+  'additionalProperties', 'propertyNames', 'patternProperties', 'prefixItems', 'title',
   'exclusiveMinimum', 'exclusiveMaximum', 'minimum', 'maximum',
   'multipleOf', 'minLength', 'maxLength', 'pattern', 'format',
   'minItems', 'maxItems', 'uniqueItems', 'contains', 'minContains', 'maxContains',
   'minProperties', 'maxProperties', 'dependencies', 'dependentRequired', 'dependentSchemas',
   'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else',
   'const', 'default', 'examples', 'readOnly', 'writeOnly', 'deprecated',
+  // Codex app tool schemas can include this internal annotation. It is not a
+  // JSON Schema keyword and Cloud Code's Schema protobuf rejects it.
+  'encrypted',
 ]);
 
-function stripDraftMeta(obj: unknown): unknown {
+const CLOUD_CODE_SCHEMA_TYPES = new Map([
+  ['array', 'ARRAY'],
+  ['boolean', 'BOOLEAN'],
+  ['integer', 'INTEGER'],
+  ['null', 'NULL'],
+  ['number', 'NUMBER'],
+  ['object', 'OBJECT'],
+  ['string', 'STRING'],
+]);
+
+function normalizeCloudCodeSchemaType(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return CLOUD_CODE_SCHEMA_TYPES.get(value.toLowerCase()) ?? value;
+  }
+  return value;
+}
+
+function isNullSchema(obj: unknown): boolean {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
+  const type = (obj as JsonRecord).type;
+  return type === 'null' || type === 'NULL'
+    || (Array.isArray(type) && type.every(value => value === 'null' || value === 'NULL'));
+}
+
+function resolveLocalSchemaRef(ref: string, root: JsonRecord): unknown {
+  if (!ref.startsWith('#/$defs/')) return undefined;
+  const name = ref.slice('#/$defs/'.length).replace(/~1/g, '/').replace(/~0/g, '~');
+  const defs = root.$defs;
+  if (!defs || typeof defs !== 'object' || Array.isArray(defs)) return undefined;
+  return (defs as JsonRecord)[name];
+}
+
+function stripDraftMeta(
+  obj: unknown,
+  root: JsonRecord | undefined = undefined,
+  resolvingRefs: ReadonlySet<string> = new Set(),
+): unknown {
   if (!obj || typeof obj !== 'object') return obj;
-  if (Array.isArray(obj)) return obj.map(stripDraftMeta);
+  if (Array.isArray(obj)) return obj.map(value => stripDraftMeta(value, root, resolvingRefs));
+  const source = obj as JsonRecord;
+  const schemaRoot = root ?? source;
+
+  if (typeof source.$ref === 'string') {
+    const resolved = resolveLocalSchemaRef(source.$ref, schemaRoot);
+    if (resolved !== undefined) {
+      if (resolvingRefs.has(source.$ref)) return { type: 'OBJECT' };
+      const nextRefs = new Set(resolvingRefs);
+      nextRefs.add(source.$ref);
+      const dereferenced = stripDraftMeta(resolved, schemaRoot, nextRefs);
+      if (dereferenced && typeof dereferenced === 'object' && !Array.isArray(dereferenced)) {
+        const siblings = { ...source };
+        delete siblings.$ref;
+        const sanitizedSiblings = stripDraftMeta(siblings, schemaRoot, resolvingRefs);
+        return {
+          ...(dereferenced as JsonRecord),
+          ...(sanitizedSiblings as JsonRecord),
+        };
+      }
+      return dereferenced;
+    }
+  }
+
   const out: JsonRecord = {};
-  for (const [k, v] of Object.entries(obj as JsonRecord)) {
+  for (const [k, v] of Object.entries(source)) {
     if (STRIP_KEYS.has(k) || k.startsWith('x-')) continue;
-    out[k] = stripDraftMeta(v);
+    if (k === 'properties' && v && typeof v === 'object' && !Array.isArray(v)) {
+      out.properties = Object.fromEntries(
+        Object.entries(v as JsonRecord).map(([name, schema]) => [
+          name,
+          stripDraftMeta(schema, schemaRoot, resolvingRefs),
+        ]),
+      );
+      continue;
+    }
+    if (k === 'type') {
+      const types = (Array.isArray(v) ? v : [v])
+        .map(normalizeCloudCodeSchemaType)
+        .filter((type): type is string => typeof type === 'string');
+      const concreteType = types.find(type => type !== 'NULL');
+      out.type = concreteType ?? 'STRING';
+      if (types.includes('NULL')) out.nullable = true;
+      continue;
+    }
+    if (k === 'enum' && Array.isArray(v)) {
+      out.enum = v.filter(value => value !== null && value !== undefined).map(String);
+      continue;
+    }
+    if (k === 'items' && Array.isArray(v)) {
+      out.items = stripDraftMeta(v[0] ?? {}, schemaRoot, resolvingRefs);
+      continue;
+    }
+    out[k] = stripDraftMeta(v, schemaRoot, resolvingRefs);
+  }
+
+  const union = Array.isArray(source.anyOf)
+    ? source.anyOf
+    : Array.isArray(source.oneOf)
+      ? source.oneOf
+      : undefined;
+  if (union) {
+    const nullable = union.some(isNullSchema);
+    const alternatives = union
+      .filter(branch => !isNullSchema(branch))
+      .map(branch => stripDraftMeta(branch, schemaRoot, resolvingRefs))
+      .filter((branch): branch is JsonRecord => Boolean(branch) && typeof branch === 'object' && !Array.isArray(branch));
+    if (alternatives.length === 1) Object.assign(out, alternatives[0], out);
+    else if (alternatives.length > 1) out.anyOf = alternatives;
+    if (nullable) out.nullable = true;
+  }
+  if (!out.type) {
+    if (out.properties && typeof out.properties === 'object' && !Array.isArray(out.properties)) {
+      out.type = 'OBJECT';
+    } else if (out.items && typeof out.items === 'object' && !Array.isArray(out.items)) {
+      out.type = 'ARRAY';
+    }
   }
   // Trim `required` to only list fields that survived in `properties`.
   if (Array.isArray(out.required) && out.properties && typeof out.properties === 'object') {
@@ -119,10 +228,15 @@ function translateTools(tools: unknown): JsonRecord[] | undefined {
   const decls: JsonRecord[] = [];
   for (const t of tools as JsonRecord[]) {
     if (typeof t.name !== 'string') continue;
+    const translated = stripDraftMeta(t.input_schema ?? { type: 'object', properties: {} });
+    const parameters = translated && typeof translated === 'object' && !Array.isArray(translated)
+      ? translated as JsonRecord
+      : { type: 'OBJECT', properties: {} };
+    if (!parameters.type) parameters.type = 'OBJECT';
     decls.push({
       name: t.name,
       description: typeof t.description === 'string' ? t.description : '',
-      parameters: stripDraftMeta(normalizeJsonSchema(t.input_schema ?? { type: 'object', properties: {} })),
+      parameters,
     });
   }
   return decls.length > 0
@@ -176,7 +290,6 @@ export function anthropicToCloudCode(
   }
   if (typeof body.temperature === 'number') generationConfig.temperature = body.temperature;
   if (typeof body.top_p === 'number') generationConfig.topP = body.top_p;
-  generationConfig.thinkingConfig = DISABLE_CLOUD_CODE_THINKING;
 
   const ccTools = translateTools(body.tools);
   const systemInstruction = extractSystem(body.system);
