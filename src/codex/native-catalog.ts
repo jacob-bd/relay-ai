@@ -1,8 +1,5 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import type { CodexCatalogFile, CodexCatalogModel } from './catalog.js';
-
-const execFileAsync = promisify(execFile);
+import { runCodexCommand } from './process.js';
 
 export interface NativeCodexCatalogSnapshot {
   schemaVersion: 1;
@@ -45,7 +42,7 @@ export async function captureNativeCodexCatalog(
   options: CaptureNativeCodexCatalogOptions,
 ): Promise<NativeCodexCatalogSnapshot> {
   const run = options.run ?? (async (args: string[]) => {
-    const result = await execFileAsync(options.binaryPath, args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+    const result = await runCodexCommand(options.binaryPath, args, { maxBuffer: 16 * 1024 * 1024 });
     return result.stdout;
   });
   const stdout = await run(options.bundled ? ['debug', 'models', '--bundled'] : ['debug', 'models']);

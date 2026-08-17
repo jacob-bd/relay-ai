@@ -1,7 +1,7 @@
-import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { runCodexCommandSync } from './process.js';
 
 /** The Codex Router-compatible feature shape that exposes model overrides. */
 export const CODEX_MULTI_AGENT_V2 = Object.freeze({
@@ -30,12 +30,7 @@ function probeText(value: unknown): string {
  */
 export function supportsMultiAgentV2(
   binaryPath: string,
-  run: ProbeRunner = (path, args, env) => execFileSync(path, args, {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 10_000,
-    env,
-  }),
+  run: ProbeRunner = (path, args, env) => runCodexCommandSync(path, args, { timeout: 10_000, env }),
 ): boolean {
   const probeHome = mkdtempSync(join(tmpdir(), 'relay-codex-v2-probe-'));
   try {

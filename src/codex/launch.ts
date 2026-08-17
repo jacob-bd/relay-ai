@@ -1,5 +1,6 @@
 // Spawn Codex CLI with relay-ai-launch profile.
-import { execFileSync, execSync, spawn } from 'node:child_process';
+import { execSync } from 'node:child_process';
+import spawn from 'cross-spawn';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +9,7 @@ import { codexProviderEnvKey } from './routing.js';
 import type { CodexRoute } from './routing.js';
 import { PROXY_PLACEHOLDER_KEY } from '../codex-proxy.js';
 import { getAppPathOverride } from '../config.js';
+import { runCodexCommandSync } from './process.js';
 
 const isWindows = process.platform === 'win32';
 
@@ -82,12 +84,7 @@ export function selectCodexBinary(
 
 function canRunCodexBinary(path: string): boolean {
   try {
-    execFileSync(path, ['--version'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 5000,
-      shell: isWindows,
-    });
+    runCodexCommandSync(path, ['--version'], { timeout: 5000 });
     return true;
   } catch {
     return false;
@@ -142,7 +139,6 @@ export function launchCodex(
     const child = spawn(codexPath, args, {
       stdio: 'inherit',
       env,
-      shell: isWindows,
     });
 
     const forward = (signal: NodeJS.Signals): void => {
