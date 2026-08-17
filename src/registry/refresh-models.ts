@@ -143,6 +143,24 @@ async function refreshAntigravityOAuthModels(
       if (!res.ok) continue;
       const body = await res.json() as Record<string, unknown>;
 
+      const deprecatedModelIds = body.deprecatedModelIds && typeof body.deprecatedModelIds === 'object'
+        && !Array.isArray(body.deprecatedModelIds)
+        ? body.deprecatedModelIds as Record<string, unknown>
+        : {};
+      const resolveUpstreamModelId = (id: string): string => {
+        let current = id;
+        const seen = new Set<string>();
+        while (!seen.has(current)) {
+          seen.add(current);
+          const alias = deprecatedModelIds[current];
+          if (!alias || typeof alias !== 'object' || Array.isArray(alias)) break;
+          const next = (alias as Record<string, unknown>).newModelId;
+          if (typeof next !== 'string' || next.length === 0) break;
+          current = next;
+        }
+        return current;
+      };
+
       // Response shape: { models: { [id]: { displayName, maxTokens, supportsThinking, ... } } }
       const raw: Array<Record<string, unknown> & { id: string }> = body.models && typeof body.models === 'object' && !Array.isArray(body.models)
         ? Object.entries(body.models as Record<string, Record<string, unknown>>).map(([id, model]) => ({ id, ...model }))
@@ -163,7 +181,7 @@ async function refreshAntigravityOAuthModels(
           return {
             id,
             name,
-            upstreamModelId: id,
+            upstreamModelId: resolveUpstreamModelId(id),
             family: isGemini ? 'gemini' : id.split('-')[0] ?? id,
             brand: isGemini ? 'Google' : isClaude ? 'Anthropic' : isOpenAi ? 'OpenAI' : 'Other',
             contextWindow: maxTokens ?? resolveContextWindow(id),

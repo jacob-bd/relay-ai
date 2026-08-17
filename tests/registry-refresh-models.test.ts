@@ -583,9 +583,22 @@ describe('registry/refresh-models', () => {
               maxTokens: 1048576,
               supportsThinking: true,
             },
+            'gemini-3.1-pro-high': {
+              displayName: 'Gemini 3.1 Pro (High)',
+              maxTokens: 1048576,
+              supportsThinking: true,
+            },
+            'gemini-pro-agent': {
+              displayName: 'Gemini 3.1 Pro (High)',
+              maxTokens: 1048576,
+              supportsThinking: true,
+            },
             tab_flash_lite_preview: {
               maxTokens: 16384,
             },
+          },
+          deprecatedModelIds: {
+            'gemini-3.1-pro-high': { newModelId: 'gemini-pro-agent' },
           },
         }),
       } as Response);
@@ -605,6 +618,8 @@ describe('registry/refresh-models', () => {
         'gemini-3.6-flash-high',
         'gemini-3.7-flash-medium',
         'gemini-3-flash',
+        'gemini-3.1-pro-high',
+        'gemini-pro-agent',
       ]);
       expect(models.map(m => m.id)).not.toContain('tab_flash_lite_preview');
       expect(models[0]).toMatchObject({
@@ -613,6 +628,9 @@ describe('registry/refresh-models', () => {
         contextWindow: 1048576,
         modelFormat: 'cloud-code',
         reasoning: true,
+      });
+      expect(models.find(model => model.id === 'gemini-3.1-pro-high')).toMatchObject({
+        upstreamModelId: 'gemini-pro-agent',
       });
     });
 
