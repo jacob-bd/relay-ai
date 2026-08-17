@@ -1373,8 +1373,8 @@ function encodeCompactionContent(summary: string): string {
 export function decodeCompactionContent(encrypted: string | undefined): string | null {
   if (!encrypted) return null;
   try {
-    const obj = JSON.parse(Buffer.from(encrypted, 'base64').toString('utf8')) as { summary?: unknown };
-    return typeof obj?.summary === 'string' ? obj.summary : null;
+    const obj = JSON.parse(Buffer.from(encrypted, 'base64').toString('utf8')) as { v?: unknown; summary?: unknown };
+    return obj?.v === 1 && typeof obj.summary === 'string' ? obj.summary : null;
   } catch {
     return null;
   }

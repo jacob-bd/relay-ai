@@ -524,6 +524,9 @@ describe('Codex remote compaction v2 synthesis (relay-ai/relay-ai#21 follow-up)'
 
   it('tolerates an undecodable encrypted_content without throwing (foreign/real-backend item)', () => {
     expect(decodeCompactionContent('not-our-base64-json')).toBeNull();
+    expect(decodeCompactionContent(
+      Buffer.from(JSON.stringify({ summary: 'foreign summary without Relay version marker' })).toString('base64'),
+    )).toBeNull();
   });
 });
 
