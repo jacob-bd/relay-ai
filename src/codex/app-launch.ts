@@ -1,8 +1,8 @@
 // Find, open, quit, and restart the ChatGPT desktop app / Codex mode (macOS + Windows + Linux).
 import { execSync, spawn } from 'node:child_process';
-import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, win32 as winPath } from 'node:path';
 import * as p from '@clack/prompts';
 import { linuxLaunchEnv } from '../linux-display.js';
 
@@ -62,6 +62,64 @@ export function linuxEmbeddedCodexCandidates(appPath: string): string[] {
 
 function winLocalAppData(): string {
   return process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local');
+}
+
+export function windowsEmbeddedCodexCandidates(
+  appPath: string | null,
+  packageInstallLocations: readonly string[],
+): string[] {
+  const candidates: string[] = [];
+  if (appPath && !appPath.startsWith('shell:AppsFolder\\')) {
+    const appDir = winPath.dirname(appPath);
+    candidates.push(
+      winPath.join(appDir, 'resources', 'codex.exe'),
+      winPath.join(appDir, 'app', 'resources', 'codex.exe'),
+    );
+  }
+  for (const installLocation of packageInstallLocations) {
+    if (!installLocation.trim()) continue;
+    candidates.push(
+      winPath.join(installLocation, 'app', 'resources', 'codex.exe'),
+      winPath.join(installLocation, 'resources', 'codex.exe'),
+    );
+  }
+  return [...new Set(candidates)];
+}
+
+export function windowsEmbeddedCodexCachePath(
+  sourcePath: string,
+  home = homedir(),
+): string | null {
+  const normalized = sourcePath.replaceAll('/', '\\');
+  const match = normalized.match(/\\WindowsApps\\([^\\]+)\\/i);
+  if (!match) return null;
+  const packageDirectory = match[1]!.replace(/[^a-zA-Z0-9._-]/g, '_');
+  return winPath.join(home, '.relay-ai', 'codex', 'embedded-runtime', packageDirectory, 'codex.exe');
+}
+
+function executableWindowsEmbeddedCodexPath(sourcePath: string): string | null {
+  const cachePath = windowsEmbeddedCodexCachePath(sourcePath);
+  if (!cachePath) return sourcePath;
+  try {
+    const sourceSize = statSync(sourcePath).size;
+    if (existsSync(cachePath) && statSync(cachePath).size === sourceSize) return cachePath;
+    mkdirSync(winPath.dirname(cachePath), { recursive: true });
+    copyFileSync(sourcePath, cachePath);
+    return statSync(cachePath).size === sourceSize ? cachePath : null;
+  } catch {
+    return null;
+  }
+}
+
+function winCodexPackageInstallLocations(): string[] {
+  try {
+    const out = runPowerShell(
+      "Get-AppxPackage -Name 'OpenAI.Codex' | Sort-Object Version -Descending | Select-Object -ExpandProperty InstallLocation",
+    );
+    return out.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 function winCodexExeCandidates(): string[] {
@@ -136,15 +194,22 @@ export function findCodexApp(platform: NodeJS.Platform = process.platform): stri
 /** Exact embedded Codex runtime used by ChatGPT Desktop. */
 export function findEmbeddedCodexBinary(platform: NodeJS.Platform = process.platform): string | null {
   const appPath = findCodexApp(platform);
-  if (!appPath) return null;
   if (platform === 'darwin') {
+    if (!appPath) return null;
     const binary = join(appPath, 'Contents', 'Resources', 'codex');
     return existsSync(binary) ? binary : null;
   }
   if (platform === 'linux') {
+    if (!appPath) return null;
     return linuxEmbeddedCodexCandidates(appPath).find(path => existsSync(path)) ?? null;
   }
-  // The Windows embedded path is intentionally gated until a real install is available.
+  if (platform === 'win32') {
+    const sourcePath = windowsEmbeddedCodexCandidates(appPath, winCodexPackageInstallLocations())
+      .find(path => {
+        try { return existsSync(path) && statSync(path).isFile(); } catch { return false; }
+      });
+    return sourcePath ? executableWindowsEmbeddedCodexPath(sourcePath) : null;
+  }
   return null;
 }
 

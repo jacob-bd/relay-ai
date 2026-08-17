@@ -5,6 +5,8 @@ import {
   codexAppSupported,
   linuxCodexAppCandidates,
   linuxEmbeddedCodexCandidates,
+  windowsEmbeddedCodexCachePath,
+  windowsEmbeddedCodexCandidates,
 } from '../src/codex/app-launch.js';
 
 describe('Linux ChatGPT desktop launcher', () => {
@@ -41,5 +43,29 @@ describe('Linux ChatGPT desktop launcher', () => {
     const source = readFileSync(new URL('../src/codex/app-launch.ts', import.meta.url), 'utf8');
     expect(source).toContain('Restarting ChatGPT Desktop to apply relay-ai settings...');
     expect(source).toContain('linuxQuitGraceful();');
+  });
+});
+
+describe('Windows ChatGPT desktop launcher', () => {
+  it('derives the embedded runtime from Microsoft Store and unpackaged installs', () => {
+    const packageRoot = 'C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.810.7004.0_x64__publisher';
+    const candidates = windowsEmbeddedCodexCandidates(
+      'C:\\Users\\Tony\\AppData\\Local\\Programs\\ChatGPT\\ChatGPT.exe',
+      [packageRoot],
+    );
+
+    expect(candidates).toContain(
+      'C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.810.7004.0_x64__publisher\\app\\resources\\codex.exe',
+    );
+    expect(candidates).toContain(
+      'C:\\Users\\Tony\\AppData\\Local\\Programs\\ChatGPT\\resources\\codex.exe',
+    );
+    expect(windowsEmbeddedCodexCachePath(
+      `${packageRoot}\\app\\resources\\codex.exe`,
+      'C:\\Users\\Tony',
+    )).toBe(
+      'C:\\Users\\Tony\\.relay-ai\\codex\\embedded-runtime'
+      + '\\OpenAI.Codex_26.810.7004.0_x64__publisher\\codex.exe',
+    );
   });
 });
