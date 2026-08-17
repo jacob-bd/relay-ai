@@ -104,6 +104,32 @@ describe('startCodexProxy', () => {
     expect(route?.modelId).toBe('grok-4.3');
   });
 
+  it('honors the provider in double underscore model ids', async () => {
+    const { findCodexProxyRoute } = await import('../src/codex-proxy.js');
+    const routes = [
+      {
+        modelId: 'shared-model',
+        providerId: 'first',
+        npm: '@ai-sdk/openai-compatible',
+        apiKey: 'first-key',
+        upstreamModelId: 'first-upstream',
+      },
+      {
+        modelId: 'shared-model',
+        providerId: 'second',
+        npm: '@ai-sdk/openai-compatible',
+        apiKey: 'second-key',
+        upstreamModelId: 'second-upstream',
+      },
+    ];
+
+    expect(findCodexProxyRoute(routes, 'second__shared-model')?.providerId).toBe('second');
+    expect(findCodexProxyRoute(
+      routes,
+      'relay-ai-launch-codex-app/second__shared-model',
+    )?.providerId).toBe('second');
+  });
+
   it('allows POST /v1/responses without auth when requireAuth is false', async () => {
     handle = await startCodexProxy([{
       modelId: 'test-model',
