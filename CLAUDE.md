@@ -15,9 +15,11 @@ To release a new version:
 npm version patch --no-git-tag-version   # bump package.json + package-lock (use minor/major as needed)
 npm run build                            # rebuild dist — VERSION is derived from package.json automatically
 git add -A && git commit -m "release: vX.Y.Z"
-git tag vX.Y.Z
+git tag -a vX.Y.Z -m "vX.Y.Z"            # MUST be annotated (-a); see below
 git push --follow-tags                   # tag push triggers CI → npm publish + GitHub Release
 ```
+
+**The tag must be annotated (`git tag -a`).** `git push --follow-tags` pushes only annotated tags, so a lightweight `git tag vX.Y.Z` is silently left behind: the push reports `main -> main`, no `v*` ref reaches the remote, and the publish workflow never triggers. The release looks committed but nothing is published. If that happens, `git tag -d vX.Y.Z && git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z` recovers it. Verify with `git ls-remote --tags origin | grep vX.Y.Z` — an annotated tag shows both `refs/tags/vX.Y.Z` and `refs/tags/vX.Y.Z^{}`.
 
 `package.json` is the single source of truth for the version. Never edit `src/constants.ts` manually for version bumps. `dist/` is committed, so rebuild it in the release commit.
 
