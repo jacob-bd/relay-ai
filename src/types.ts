@@ -136,6 +136,8 @@ export interface ParsedArgs {
   launchProvider?: string;
   /** relay-ai boot model (claude/codex); not passed to child CLI */
   launchModel?: string;
+  /** Approve a fully specified Codex App launch without interactive prompts. */
+  assumeYes?: boolean;
   /** Print comprehensive AI agent reference (relay-ai --ai) */
   showAi?: boolean;
   /** Install --ai SKILL.md to agent skill directories */

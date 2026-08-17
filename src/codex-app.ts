@@ -138,6 +138,7 @@ ${pc.bold('Options:')}
   --vertex     Use Claude models through Google Vertex AI
   --with-native Load native Codex models beside Relay models for this launch
   --relay-only Keep the current Relay-only launch behavior
+  --yes, -y     Approve a fully specified launch/restart without prompting
   --restore    Restore Codex config after an interrupted app session
   --config     Preview the generated Codex app configuration without launching
   --trace      Write proxy debug logs to ~/.relay-ai/logs/ and show errors on exit
@@ -164,6 +165,7 @@ ${pc.bold('Preview (no writes):')}
 ${pc.bold('Examples:')}
   relay-ai codex-app
   relay-ai codex-app --vertex
+  relay-ai codex-app --provider antigravity --model gemini-3.1-pro-high --with-native --yes
   relay-ai codex-app --config
   relay-ai codex-app --restore
   
@@ -330,7 +332,7 @@ async function runCodexAppVertexLaunch(configOnly: boolean, trace = false): Prom
   }
 }
 
-export async function runCodexAppCommand(args: string[], opts: { vertex?: boolean; launchProvider?: string; launchModel?: string; codexLaunchMode?: 'mixed' | 'relay-only' } = {}): Promise<number> {
+export async function runCodexAppCommand(args: string[], opts: { vertex?: boolean; launchProvider?: string; launchModel?: string; codexLaunchMode?: 'mixed' | 'relay-only'; assumeYes?: boolean } = {}): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(codexAppHelpText());
     return 0;
@@ -342,6 +344,14 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
     return result.liveSession ? 1 : 0;
   }
 
+  const configOnly = args.includes('--config');
+  if (opts.assumeYes && !configOnly) {
+    if (opts.vertex || !opts.launchProvider || !opts.launchModel || !opts.codexLaunchMode) {
+      console.error(pc.red('--yes requires --provider, --model, and either --with-native or --relay-only.'));
+      return 1;
+    }
+  }
+
   try {
     codexAppSupported();
   } catch (err) {
@@ -350,7 +360,6 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
   }
 
   const interrupted = recoverInterruptedCodexAppSession();
-  const configOnly = args.includes('--config');
   const trace = args.includes('--trace');
   const debugLogPath = getCodexProxyDebugLogPath();
   if (trace && !configOnly) {
@@ -359,7 +368,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
 
   const isTty = Boolean(process.stdin.isTTY);
   if (!configOnly) {
-    const sessionCheck = checkAppSessionLock(isTty);
+    const sessionCheck = checkAppSessionLock(isTty || Boolean(opts.assumeYes));
     if (!sessionCheck.ok) {
       if (sessionCheck.reason === 'non_tty') {
         console.error(pc.red('relay-ai codex-app requires an interactive terminal.'));
@@ -542,7 +551,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
     }
   }
 
-  if (!configOnly) {
+  if (!configOnly && !opts.assumeYes) {
     const modelLabel = formatCodexModelLabel(selectedModel);
     const confirmed = await confirmCodexLaunch(
       activeProvider.name,
@@ -746,7 +755,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
     logCodexActiveModel(modelLabel, selectedModel.id);
 
     try {
-      await launchOrRestartCodexApp();
+      await launchOrRestartCodexApp(undefined, opts.assumeYes);
     } catch (err) {
       p.log.warn(String(err instanceof Error ? err.message : err));
       p.log.info(codexAppInstallHint());

@@ -270,6 +270,7 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (arg === '--help' || arg === '-h') { parsed.showHelp = true; continue; }
       if (arg === '--version' || arg === '-v') { parsed.showVersion = true; continue; }
       if (arg === '--vertex') { parsed.vertex = true; continue; }
+      if (arg === '--yes' || arg === '-y') { parsed.assumeYes = true; continue; }
       if (arg === '--with-native') {
         if (parsed.codexLaunchMode === 'relay-only') parsed.error = '--with-native and --relay-only cannot be used together';
         parsed.codexLaunchMode = 'mixed';
@@ -1762,7 +1763,7 @@ Options:
       console.log(codexAppHelpText());
       return 0;
     }
-    return runCodexAppCommand(parsed.claudeArgs, { vertex: parsed.vertex, launchProvider: parsed.launchProvider, launchModel: parsed.launchModel, codexLaunchMode: parsed.codexLaunchMode });
+    return runCodexAppCommand(parsed.claudeArgs, { vertex: parsed.vertex, launchProvider: parsed.launchProvider, launchModel: parsed.launchModel, codexLaunchMode: parsed.codexLaunchMode, assumeYes: parsed.assumeYes });
   }
 
   if (parsed.command === 'claude-app') {
