@@ -94,10 +94,11 @@ function codexProxyRouteToCodexRoute(route: CodexProxyRoute, fallbackProviderId:
   };
 }
 
-async function waitForShutdownWithConfirm(): Promise<void> {
+export async function waitForShutdownWithConfirm(assumeYes = false): Promise<void> {
   while (true) {
     const signal = await waitForShutdown();
     if (signal !== 'sigint') break; // SIGTERM/SIGHUP: close immediately, no one to ask
+    if (assumeYes) break; // unattended launch: no one to ask either
     console.log('');
     const choice = await p.select({
       message: 'Close ChatGPT Desktop and restore your Codex config?',
@@ -111,8 +112,14 @@ async function waitForShutdownWithConfirm(): Promise<void> {
   }
 }
 
-export async function maybeCloseRunningCodexApp(): Promise<void> {
+export async function maybeCloseRunningCodexApp(assumeYes = false): Promise<void> {
   if (!isCodexAppRunning()) return;
+
+  if (assumeYes) {
+    p.log.step('Stopping ChatGPT Desktop...');
+    quitCodexAppGracefully();
+    return;
+  }
 
   const shouldClose = await p.confirm({ message: 'ChatGPT Desktop is still running. Close it?' });
   if (shouldClose && !p.isCancel(shouldClose)) {
@@ -138,7 +145,7 @@ ${pc.bold('Options:')}
   --vertex     Use Claude models through Google Vertex AI
   --with-native Load native Codex models beside Relay models for this launch
   --relay-only Keep the current Relay-only launch behavior
-  --yes, -y     Approve a fully specified launch/restart without prompting
+  --yes, -y     Run a fully specified launch unattended (no launch/stop prompts)
   --restore    Restore Codex config after an interrupted app session
   --config     Preview the generated Codex app configuration without launching
   --trace      Write proxy debug logs to ~/.relay-ai/logs/ and show errors on exit
@@ -769,7 +776,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
     });
 
     codexAppOutro(modelLabel);
-    await waitForShutdownWithConfirm();
+    await waitForShutdownWithConfirm(opts.assumeYes);
     if (trace) printTraceLog(debugLogPath);
     console.log('');
 
@@ -777,7 +784,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
       restoreCodexAppOverlay();
       sessionActive = false;
     }
-    await maybeCloseRunningCodexApp();
+    await maybeCloseRunningCodexApp(opts.assumeYes);
     return 0;
   } finally {
     proxyHandle?.close();

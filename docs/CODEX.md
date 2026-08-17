@@ -152,9 +152,14 @@ For unattended startup, specify every launch choice and add `--yes`:
 relay-ai codex-app --provider antigravity --model gemini-3.1-pro-high --with-native --yes
 ```
 
-`--yes` bypasses the launch and restart confirmations. To prevent an unattended
-launch from relying on saved or default choices, it requires `--provider`,
-`--model`, and either `--with-native` or `--relay-only`.
+`--yes` bypasses the launch, restart, and shutdown confirmations. To prevent an
+unattended launch from relying on saved or default choices, it requires
+`--provider`, `--model`, and either `--with-native` or `--relay-only`.
+
+Under `--yes`, `SIGINT` stops the session the same way `SIGTERM` already does:
+the Codex config is restored and the app is closed without asking. Without
+`--yes`, `SIGINT` still asks before closing, so an interactive session can keep
+the app running.
 
 Pick provider → pick model → Codex **app** opens. **Keep the relay-ai terminal open** until you’re done (the app always uses the foreground proxy). Press **Ctrl+C** to stop the proxy and restore your previous Codex config.
 
