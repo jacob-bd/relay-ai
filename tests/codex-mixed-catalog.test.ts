@@ -10,6 +10,15 @@ const native = {
   base_instructions: 'native', supports_reasoning_summaries: true, support_verbosity: false,
   default_verbosity: null, apply_patch_tool_type: null, truncation_policy: { mode: 'tokens', limit: 1000 },
   supports_parallel_tool_calls: true, experimental_supported_tools: [], multi_agent_version: 'v2',
+  model_messages: {
+    instructions_template: 'You are Codex, a coding agent. You and the user share one workspace.',
+    instructions_variables: {
+      personality_friendly: 'You have a vivid inner life as Codex: curious and present.',
+      tool_guidance: 'Use the Codex app tools carefully.',
+    },
+    approvals: { allow: true },
+  },
+  comp_hash: 'native-instruction-hash',
   nested_unknown: { stable: true },
 };
 
@@ -36,6 +45,20 @@ describe('mixed Codex catalog composition', () => {
     expect(catalog.models.find(m => m.slug === 'kilo__auto')?.multi_agent_version).toBe('v2');
     expect(catalog.models.find(m => m.slug === 'google__gemini')?.multi_agent_version).toBe('v2');
     expect(catalog.models.find(m => m.slug === 'kilo__auto')?.nested_unknown).toEqual({ stable: true });
+    expect(catalog.models[0]?.model_messages).toEqual(native.model_messages);
+    expect(catalog.models[0]?.comp_hash).toBe('native-instruction-hash');
+
+    const external = catalog.models.find(m => m.slug === 'google__gemini');
+    expect((external?.model_messages as any)?.instructions_template).toBe(
+      'You and the user share one workspace.',
+    );
+    expect((external?.model_messages as any)?.instructions_variables).toEqual({
+      personality_friendly: 'You have a vivid inner life: curious and present.',
+      tool_guidance: 'Use the Codex app tools carefully.',
+    });
+    expect((external?.model_messages as any)?.approvals).toEqual({ allow: true });
+    expect(external?.comp_hash).toBeUndefined();
+    expect(JSON.stringify(external)).not.toMatch(/You are Codex|as Codex/i);
   });
 
   it('deduplicates a sub-agent entry already visible', () => {
