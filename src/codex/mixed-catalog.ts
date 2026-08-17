@@ -19,6 +19,11 @@ function externalInstructionValue(value: unknown): unknown {
   if (typeof value === 'string') {
     return value
       .replace(/^You are Codex,[^\n]*?\.\s*/i, '')
+      // Drop a sentence-initial "As Codex," before the general rule below, which
+      // would otherwise consume the blank line separating it from the preceding
+      // markdown heading (turning "# Personality\n\nAs Codex, you are ..." into
+      // "# Personality, you are ...").
+      .replace(/\bAs Codex,\s+(\w)/g, (_match, nextChar: string) => nextChar.toUpperCase())
       .replace(/\s+as Codex\b/gi, '');
   }
   if (Array.isArray(value)) return value.map(externalInstructionValue);

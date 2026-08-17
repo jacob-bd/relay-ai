@@ -61,6 +61,29 @@ describe('mixed Codex catalog composition', () => {
     expect(JSON.stringify(external)).not.toMatch(/You are Codex|as Codex/i);
   });
 
+  it('keeps markdown structure when stripping a sentence-initial identity claim', () => {
+    // Real Codex instructions open a section with "# Personality\n\nAs Codex, you are ...".
+    const withHeading = {
+      ...native,
+      model_messages: {
+        instructions_template:
+          'You are Codex, an agent based on GPT-5. You and the user share one workspace.\n\n# Personality\n\nAs Codex, you are an excellent communicator.',
+      },
+    };
+    const catalog = composeMixedCodexCatalog({
+      nativeModels: [withHeading],
+      visibleRelay: [{ resolved: favorite('google', 'gemini'), slug: 'google__gemini' }],
+      subagentRelay: [],
+      selectedSlug: 'google__gemini',
+      externalMultiAgentVersion: 'v2',
+    });
+    const external = catalog.models.find(m => m.slug === 'google__gemini');
+    expect((external?.model_messages as any)?.instructions_template).toBe(
+      'You and the user share one workspace.\n\n# Personality\n\nYou are an excellent communicator.',
+    );
+    expect(JSON.stringify(external)).not.toMatch(/You are Codex|as Codex/i);
+  });
+
   it('deduplicates a sub-agent entry already visible', () => {
     const catalog = composeMixedCodexCatalog({
       nativeModels: [native],
