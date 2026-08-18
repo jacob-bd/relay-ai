@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import {
+  applyExternalCodexRuntimeIdentity,
   estimateCodexRequestChars,
   isLikelyCodexCompactionRequest,
   isCodexV2CompactionRequest,
@@ -14,12 +18,46 @@ import { buildCompactionResponseBody, type CodexSdkCallParams } from '../src/cod
 import { CODEX_APP_AUTO_COMPACT_RATIO } from '../src/codex/app-profile.js';
 import { WebSocket, WebSocketServer } from 'ws';
 
+describe('external Codex runtime identity', () => {
+  it('distinguishes the selected external model from the Codex host', () => {
+    const params = applyExternalCodexRuntimeIdentity({
+      system: 'Use the Codex app tools carefully.',
+      messages: [{ role: 'user', content: 'what model are you?' }],
+    }, {
+      modelId: 'antigravity__gemini-3.1-pro-high',
+      providerId: 'antigravity',
+      upstreamModelId: 'gemini-pro-agent',
+      auditUpstreamModelId: 'gemini-3.1-pro-high',
+    });
+
+    expect(params.system).toContain('"gemini-3.1-pro-high" through provider "antigravity"');
+    expect(params.system).toContain('Codex is the host application and agent environment, not the model identity.');
+    expect(params.system).toContain('Use the Codex app tools carefully.');
+    expect(params.system).not.toContain('gemini-pro-agent');
+  });
+
+  it('uses the dynamic upstream model and does not hard-code Gemini', () => {
+    const params = applyExternalCodexRuntimeIdentity({
+      messages: [{ role: 'user', content: 'identify yourself' }],
+    }, {
+      modelId: 'antigravity__claude-sonnet-4-6',
+      providerId: 'antigravity',
+      upstreamModelId: 'claude-sonnet-4-6',
+    });
+
+    expect(params.system).toContain('"claude-sonnet-4-6" through provider "antigravity"');
+    expect(params.system).not.toContain('gemini-3.1-pro-high');
+  });
+});
+
 describe('startCodexProxy', () => {
   let handle: Awaited<ReturnType<typeof startCodexProxy>> | null = null;
+  const auditDirs: string[] = [];
 
   afterEach(() => {
     handle?.close();
     handle = null;
+    for (const dir of auditDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
   it('serves GET /health', async () => {
@@ -210,8 +248,12 @@ describe('startCodexProxy', () => {
       headers: { 'content-type': 'text/event-stream' },
     }));
     const capability = 'A'.repeat(43);
+    const auditDir = mkdtempSync(join(tmpdir(), 'relay-route-audit-'));
+    auditDirs.push(auditDir);
+    const routeAuditPath = join(auditDir, 'route-audit.jsonl');
     handle = await startCodexProxy([], {
       requireAuth: false,
+      routeAuditPath,
       mixedNative: { nativeModelIds: new Set(['gpt-5.5']), capability, nativeFetchImpl: nativeFetch as typeof fetch },
     });
     try {
@@ -236,6 +278,17 @@ describe('startCodexProxy', () => {
       const init = nativeFetch.mock.calls[0]![1] as RequestInit;
       expect(init.headers).toEqual(expect.objectContaining({ authorization: 'Bearer native', 'ChatGPT-Account-Id': 'acct' }));
       expect(JSON.stringify(init.headers)).not.toContain('relay-secret');
+
+      const auditText = readFileSync(routeAuditPath, 'utf8');
+      const auditEvents = auditText.trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>);
+      expect(auditEvents).toEqual(expect.arrayContaining([
+        expect.objectContaining({ dispatch: 'native', phase: 'dispatch', requestedModel: 'gpt-5.5', provider: 'openai-native' }),
+        expect.objectContaining({ dispatch: 'native', phase: 'complete', requestedModel: 'gpt-5.5', outcome: 'ok', status: 200 }),
+      ]));
+      expect(auditText).not.toContain('hi');
+      expect(auditText).not.toContain('Bearer');
+      expect(auditText).not.toContain('relay-secret');
+      expect(statSync(routeAuditPath).mode & 0o777).toBe(0o600);
 
       const unknown = await fetch(`http://127.0.0.1:${handle.port}/_relay-codex/${capability}/v1/responses`, {
         method: 'POST',
@@ -379,15 +432,20 @@ describe('startCodexProxy', () => {
     const providerPort = await new Promise<number>(resolve => provider.listen(0, '127.0.0.1', () => resolve((provider.address() as { port: number }).port)));
 
     const capability = 'E'.repeat(43);
+    const auditDir = mkdtempSync(join(tmpdir(), 'relay-route-audit-'));
+    auditDirs.push(auditDir);
+    const routeAuditPath = join(auditDir, 'route-audit.jsonl');
     handle = await startCodexProxy([{
       modelId: 'provider__child',
       npm: '@ai-sdk/openai-compatible',
       apiKey: 'test-key',
       baseURL: `http://127.0.0.1:${providerPort}/v1`,
       upstreamModelId: 'child-model',
+      auditUpstreamModelId: 'provider-facing-child-model',
       providerId: 'provider',
     }], {
       requireAuth: false,
+      routeAuditPath,
       mixedNative: {
         nativeModelIds: new Set(['gpt-5.6-luna']),
         subagentRouteModelId: 'provider__child',
@@ -427,6 +485,12 @@ describe('startCodexProxy', () => {
 
       expect(JSON.stringify(providerBody)).toContain('DELEGATED_MARKER');
       expect(JSON.stringify(providerBody)).not.toContain(`gAAAAA${'A'.repeat(40)}`);
+      const routeAudit = readFileSync(routeAuditPath, 'utf8');
+      expect(routeAudit).toContain('"dispatch":"relay-subagent"');
+      expect(routeAudit).toContain('"provider":"provider"');
+      expect(routeAudit).toContain('"upstreamModel":"provider-facing-child-model"');
+      expect(routeAudit).not.toContain('DELEGATED_MARKER');
+      expect(routeAudit).not.toContain('encrypted_content');
     } finally {
       await new Promise<void>(resolve => nativeRelay.close(() => resolve()));
       await new Promise<void>(resolve => provider.close(() => resolve()));

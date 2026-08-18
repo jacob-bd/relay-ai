@@ -152,16 +152,18 @@ For unattended startup, specify every launch choice and add `--yes`:
 relay-ai codex-app --provider antigravity --model gemini-3.1-pro-high --with-native --yes
 ```
 
-`--yes` bypasses the launch, restart, and shutdown confirmations. To prevent an
-unattended launch from relying on saved or default choices, it requires
-`--provider`, `--model`, and either `--with-native` or `--relay-only`.
-
-Under `--yes`, `SIGINT` stops the session the same way `SIGTERM` already does:
-the Codex config is restored and the app is closed without asking. Without
-`--yes`, `SIGINT` still asks before closing, so an interactive session can keep
-the app running.
+`--yes` bypasses the launch and restart confirmations. To prevent an unattended
+launch from relying on saved or default choices, it requires `--provider`,
+`--model`, and either `--with-native` or `--relay-only`.
 
 Pick provider → pick model → Codex **app** opens. **Keep the relay-ai terminal open** until you’re done (the app always uses the foreground proxy). Press **Ctrl+C** to stop the proxy and restore your previous Codex config.
+
+Relay does not launch ChatGPT until the provider catalog resolves, the proxy is
+listening, its health and model catalog pass validation, and the temporary
+`config.toml` patch has been written and read back successfully. On macOS it
+targets the `com.openai.codex` bundle directly and verifies that the prior main
+process actually exited; closing only the visible Electron window is not
+treated as a restart.
 
 **Platforms:** macOS, Windows, and Linux. On Linux, Relay detects the packaged ChatGPT app at `/usr/bin/chatgpt` or `/usr/lib/chatgpt/ChatGPT` and its embedded Codex runtime at `/usr/lib/chatgpt/resources/codex`.
 
@@ -180,7 +182,10 @@ Linux desktop launches also restart an existing ChatGPT process when necessary s
 | `--config` | **Preview only** — print TOML that would be written; no disk writes, no app, no proxy |
 | `--help` | Help text |
 
-**`--config` note:** Skips the picker. Uses your last Codex provider/model from prefs (or the first compatible provider). The proxy port shown (`54321`) is a **placeholder**; a real launch uses a random port.
+**`--config` note:** Skips the picker. When `--provider` and `--model` are
+supplied, the preview uses that exact selection; otherwise it uses your last
+Codex provider/model from prefs (or the first compatible provider). The proxy
+port shown (`54321`) is a **placeholder**; a real launch uses a random port.
 
 ### Files relay-ai owns (App)
 
@@ -191,6 +196,7 @@ Linux desktop launches also restart an existing ChatGPT process when necessary s
 | `~/.relay-ai/codex/session-app.json` | App session lock |
 | `~/.relay-ai/codex/app-restore-state.json` | Snapshot of your pre-session root keys (for surgical restore) |
 | `~/.relay-ai/codex/backups/config.toml.*.bak` | Rotating file backups before each patch |
+| `~/.relay-ai/logs/codex-route-audit.jsonl` | Private (`0600`) metadata-only routing receipt for mixed mode; no prompts, headers, tools, tokens, or credentials |
 
 CLI files (`relay-ai-launch.config.toml`, `session.json`, `models-*.json`) are **separate**. Running CLI after app (or vice versa) should not break the other.
 
@@ -221,6 +227,37 @@ The catalog `display_name` uses human-readable labels (e.g. `Claude Haiku 4.5`).
 | Codex already running | relay-ai asks to **restart Codex** so new settings apply; you can decline and reopen manually |
 | Crash / killed terminal | Next launch auto-recovers when possible, or `relay-ai codex-app --restore` |
 | Live session still running | `--restore` refuses until you Ctrl+C the other terminal |
+
+Restoration is transaction-safe. If `config.toml` still matches the exact Relay
+patch, Relay restores the verified backup byte-for-byte. If ChatGPT or the user
+changed unrelated settings during the session, Relay removes only its owned
+overlay keys and preserves those concurrent edits. Writes are atomic and retain
+private file permissions.
+
+For an unattended `--yes` session, `SIGTERM` or `SIGHUP` restores the config,
+stops the proxy, and gracefully quits ChatGPT so the app is never left pointing
+at a dead local provider. A hard crash cannot run cleanup; once the Relay process
+is confirmed absent, recover with:
+
+```bash
+relay-ai codex-app --restore
+```
+
+Do not delete `config.toml`, the session lock, or the backup directory manually.
+If ChatGPT is configured as a login item, it can start independently after a
+login; keep it closed until a foreground Relay launch reports ready. A login
+agent should start Relay first and let Relay launch ChatGPT only after readiness,
+rather than starting both independently.
+
+### Verifying the real route
+
+Picker labels and model self-identification are not routing proof. Mixed-mode
+launches reset and append to `~/.relay-ai/logs/codex-route-audit.jsonl`. Each
+JSONL row records only the time, transport, requested model, native-vs-Relay
+dispatch, provider/upstream model, and outcome. Use its `complete` rows to prove
+that a native request reached OpenAI's native route or an external request
+reached the selected Relay provider. Full `--trace` is unnecessary for normal
+operation.
 
 ### App vs CLI — config safety
 
@@ -353,12 +390,14 @@ Codex exposes a **reasoning effort** picker when relay-ai's model catalog includ
 | Existing conversations disappear during a relay-ai session | Update relay-ai. Older releases selected a custom `model_provider`, so Codex filtered the sidebar to relay-ai-only threads. Current releases keep the built-in `openai` provider and preserve normal history visibility. |
 | App didn’t open | Open Codex manually once, run `relay-ai codex-app` again |
 | Model errors / disconnected | Keep relay-ai terminal open (proxy must run) |
+| Models appear but requests do not answer | Confirm the foreground Relay process is still running. Picker presence alone does not prove the proxy is alive; recover with `relay-ai codex-app --restore` only after the Relay process is confirmed absent. |
 | Stuck on relay-ai settings | `relay-ai codex-app --restore` |
 | `--restore` blocked | Ctrl+C the other relay-ai codex-app terminal first |
 | Wrong config after test | `--restore`; backups in `~/.relay-ai/codex/backups/` |
 | "prompt too long" / session crashes after many turns | The conversation history grew past the model’s context limit. Start a fresh conversation in Codex. relay-ai now sets `model_auto_compact_token_limit` in config.toml to prevent this going forward — see [Context management](#context-management-and-session-architecture). |
 | Trying to continue a large GPT-5.5 session on a different model | Codex sends the full conversation history inline; 1 M-token models reject 2 M-token payloads. relay-ai trims the oldest messages automatically, but some early context will be lost. Starting fresh is the cleanest option. |
 | Model shows as "Custom" in the Codex UI | Expected — Codex labels all external catalog models as "Custom". The correct model is in use. |
+| Need to prove which provider answered | Inspect `~/.relay-ai/logs/codex-route-audit.jsonl`; use `complete` rows, not the model's self-identification. |
 
 ### Shared
 

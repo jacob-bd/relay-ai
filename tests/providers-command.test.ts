@@ -70,7 +70,7 @@ describe('parseProvidersArgs', () => {
     expect(help).toContain('providers remove');
     expect(help).toContain('refresh-models');
     expect(help).toContain('Phase 1.1');
-    for (const template of PROVIDER_TEMPLATES.filter(t => t.hidden)) {
+    for (const template of PROVIDER_TEMPLATES.filter(t => t.hidden && t.id !== 'antigravity')) {
       expect(help).not.toContain(template.id);
       expect(help).not.toContain(template.name);
     }
@@ -81,7 +81,8 @@ describe('parseProvidersArgs', () => {
     expect(help).toContain('github-copilot');
     expect(help).toContain('openai-oauth');
     expect(help).toContain('xai-oauth');
-    for (const template of PROVIDER_TEMPLATES.filter(t => t.hidden)) {
+    expect(help).toContain('antigravity');
+    for (const template of PROVIDER_TEMPLATES.filter(t => t.hidden && t.id !== 'antigravity')) {
       expect(help).not.toContain(template.id);
       expect(help).not.toContain(template.name);
     }

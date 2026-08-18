@@ -12888,6 +12888,7 @@ ${pc6.bold("Usage:")}
   relay-ai providers auth openai-oauth
   relay-ai providers auth github-copilot
   relay-ai providers auth cline-pass
+  relay-ai providers auth antigravity
 
 ${pc6.bold("Device code (works on SSH/VPS):")}
   xai-oauth        SuperGrok / X Premium (device code at x.ai/device)
@@ -12895,11 +12896,14 @@ ${pc6.bold("Device code (works on SSH/VPS):")}
   github-copilot   GitHub Copilot Free or paid (device code at github.com/login/device)
   cline-pass       ClinePass account (device code at app.cline.bot)
 
+${pc6.bold("Browser sign-in:")}
+  antigravity      Google Cloud Code Assist OAuth (opens Google sign-in)
+
 ${pc6.dim("OpenCode CLI configs: use")} relay-ai providers import${pc6.dim(" (optional one-time migration).")}`;
 }
 
 // src/codex/app-launch.ts
-import { execSync as execSync2, spawn as spawn3 } from "child_process";
+import { execFileSync as execFileSync3, execSync as execSync2, spawn as spawn3 } from "child_process";
 import { copyFileSync as copyFileSync3, existsSync as existsSync11, mkdirSync as mkdirSync8, readdirSync as readdirSync2, realpathSync, statSync as statSync3 } from "fs";
 import { homedir as homedir7 } from "os";
 import { dirname as dirname5, join as join12, win32 as winPath } from "path";
@@ -13136,6 +13140,43 @@ function darwinIsRunning() {
     }
   });
 }
+function pgrepExact(names) {
+  const pids = /* @__PURE__ */ new Set();
+  for (const name of names) {
+    try {
+      for (const raw of run(`pgrep -x ${JSON.stringify(name)}`).split(/\s+/)) {
+        const pid = Number.parseInt(raw, 10);
+        if (Number.isFinite(pid) && pid > 0 && pid !== process.pid) pids.add(pid);
+      }
+    } catch {
+    }
+  }
+  return [...pids];
+}
+function darwinMainExecutableCandidates(appPath) {
+  return DARWIN_APP_NAMES.map((name) => join12(appPath, "Contents", "MacOS", name));
+}
+function pgrepExactCommand(commands) {
+  const pids = /* @__PURE__ */ new Set();
+  for (const command of commands) {
+    try {
+      const out = execFileSync3("pgrep", ["-f", `^${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`], {
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "pipe"]
+      }).trim();
+      for (const raw of out.split(/\s+/)) {
+        const pid = Number.parseInt(raw, 10);
+        if (Number.isFinite(pid) && pid > 0 && pid !== process.pid) pids.add(pid);
+      }
+    } catch {
+    }
+  }
+  return [...pids];
+}
+function darwinMatchingPids() {
+  const appPath = findCodexApp("darwin");
+  return appPath ? pgrepExactCommand(darwinMainExecutableCandidates(appPath)) : [];
+}
 function linuxIsRunning() {
   for (const name of ["ChatGPT", "chatgpt"]) {
     try {
@@ -13144,6 +13185,9 @@ function linuxIsRunning() {
     }
   }
   return false;
+}
+function linuxMatchingPids() {
+  return pgrepExact(["ChatGPT", "chatgpt"]);
 }
 function winMatchingPids() {
   try {
@@ -13173,21 +13217,30 @@ function isCodexAppRunning() {
   if (process.platform === "linux") return linuxIsRunning();
   return false;
 }
+function codexAppMainPids(platform = process.platform) {
+  if (platform === "darwin") return darwinMatchingPids();
+  if (platform === "win32") return winMatchingPids();
+  if (platform === "linux") return linuxMatchingPids();
+  return [];
+}
+function pidIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-async function waitForQuit(timeoutMs) {
+async function waitForOriginalCodexPids(originalPids, timeoutMs, alive = pidIsAlive) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (process.platform === "win32") {
-      if (winMatchingPids().length === 0) return true;
-    } else if (process.platform === "linux" ? !linuxIsRunning() : !darwinIsRunning()) {
-      return true;
-    }
+    if (originalPids.every((pid) => !alive(pid))) return true;
     await sleep(200);
   }
-  if (process.platform === "win32") return winMatchingPids().length === 0;
-  return process.platform === "linux" ? !linuxIsRunning() : !darwinIsRunning();
+  return originalPids.every((pid) => !alive(pid));
 }
 function openCodexAppAt(path) {
   if (process.platform === "darwin") {
@@ -13219,12 +13272,11 @@ function openCodexApp() {
   }
   openCodexAppAt(path);
 }
+function darwinQuitAppleScript() {
+  return `tell application id "${CODEX_BUNDLE_ID}" to quit`;
+}
 function darwinQuit() {
-  try {
-    execSync2(`osascript -e 'tell application "Codex" to quit'`, { stdio: "pipe" });
-  } catch {
-    execSync2(`osascript -e 'tell application id "${CODEX_BUNDLE_ID}" to quit'`, { stdio: "pipe" });
-  }
+  execFileSync3("osascript", ["-e", darwinQuitAppleScript()], { stdio: "pipe" });
 }
 function winQuitGraceful() {
   const nameFilter = WIN_APP_NAMES.map((name) => `'${name}'`).join(",");
@@ -13246,13 +13298,19 @@ function quitCodexAppGracefully() {
   else if (process.platform === "win32") winQuitGraceful();
   else if (process.platform === "linux") linuxQuitGraceful();
 }
-function winForceQuit() {
-  const pids = winMatchingPids();
+function winForceQuit(pids = winMatchingPids()) {
   if (pids.length === 0) return;
   runPowerShell(`Stop-Process -Id ${pids.join(",")} -Force -ErrorAction SilentlyContinue`);
 }
+function restartTimeoutAction(platform) {
+  return platform === "win32" ? "force-quit" : "fail-closed";
+}
+function gracefulQuitTimeoutMs(platform) {
+  return platform === "darwin" ? 3e4 : 5e3;
+}
 async function launchOrRestartCodexApp(prompt = "Restart ChatGPT Desktop to apply relay-ai settings?", assumeYes = false) {
   const appPath = findCodexApp();
+  const originalPids = codexAppMainPids();
   if (!isCodexAppRunning()) {
     if (!appPath) {
       throw new Error(
@@ -13261,6 +13319,9 @@ async function launchOrRestartCodexApp(prompt = "Restart ChatGPT Desktop to appl
     }
     openCodexAppAt(appPath);
     return;
+  }
+  if (originalPids.length === 0) {
+    throw new Error("ChatGPT Desktop is running but Relay could not identify its main process; refusing an unsafe restart.");
   }
   if (process.platform === "linux") {
     p6.log.info("Restarting ChatGPT Desktop to apply relay-ai settings...");
@@ -13277,10 +13338,18 @@ async function launchOrRestartCodexApp(prompt = "Restart ChatGPT Desktop to appl
     if (process.platform === "darwin") darwinQuit();
     else if (process.platform === "win32") winQuitGraceful();
   }
-  if (!await waitForQuit(5e3)) {
-    if (process.platform === "win32") winForceQuit();
-    await waitForQuit(5e3);
+  const gracefulTimeout = gracefulQuitTimeoutMs(process.platform);
+  if (!await waitForOriginalCodexPids(originalPids, gracefulTimeout)) {
+    if (restartTimeoutAction(process.platform) === "force-quit") {
+      winForceQuit(originalPids);
+      if (!await waitForOriginalCodexPids(originalPids, 5e3)) {
+        throw new Error("ChatGPT Desktop did not exit after its force-quit timeout; refusing to launch a duplicate process.");
+      }
+    } else {
+      throw new Error("ChatGPT Desktop did not exit after graceful shutdown; refusing to relaunch or force-quit it.");
+    }
   }
+  if (isCodexAppRunning()) return;
   if (appPath) openCodexAppAt(appPath);
   else openCodexApp();
 }
@@ -13356,7 +13425,7 @@ function linuxWhichClaude() {
     return null;
   }
 }
-function linuxMatchingPids() {
+function linuxMatchingPids2() {
   try {
     const out = run2("pgrep -x claude-desktop");
     return out.split(/\s+/).map((s) => Number.parseInt(s, 10)).filter((n) => Number.isFinite(n) && n > 0);
@@ -13365,7 +13434,7 @@ function linuxMatchingPids() {
   }
 }
 function linuxMainPid() {
-  const pids = linuxMatchingPids();
+  const pids = linuxMatchingPids2();
   for (const pid of pids) {
     try {
       const cmdline = readFileSync12(`/proc/${pid}/cmdline`, "utf8");
@@ -13384,7 +13453,7 @@ function linuxQuit() {
   }
 }
 function linuxForceQuit() {
-  for (const pid of linuxMatchingPids()) {
+  for (const pid of linuxMatchingPids2()) {
     try {
       process.kill(pid, "SIGKILL");
     } catch {
@@ -13463,26 +13532,26 @@ function winHasWindow2() {
 function isClaudeAppRunning() {
   if (process.platform === "darwin") return darwinIsRunning2();
   if (process.platform === "win32") return winMatchingPids2().length > 0 || winHasWindow2();
-  if (process.platform === "linux") return linuxMatchingPids().length > 0;
+  if (process.platform === "linux") return linuxMatchingPids2().length > 0;
   return false;
 }
 function sleep2(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-async function waitForQuit2(timeoutMs) {
+async function waitForQuit(timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (process.platform === "win32") {
       if (winMatchingPids2().length === 0) return true;
     } else if (process.platform === "linux") {
-      if (linuxMatchingPids().length === 0) return true;
+      if (linuxMatchingPids2().length === 0) return true;
     } else if (!darwinIsRunning2()) {
       return true;
     }
     await sleep2(200);
   }
   if (process.platform === "win32") return winMatchingPids2().length === 0;
-  if (process.platform === "linux") return linuxMatchingPids().length === 0;
+  if (process.platform === "linux") return linuxMatchingPids2().length === 0;
   return !darwinIsRunning2();
 }
 function openClaudeAppAt(path) {
@@ -13558,10 +13627,10 @@ async function launchOrRestartClaudeApp(prompt = "Restart Claude Desktop to appl
     if (process.platform === "darwin") darwinQuit2();
     else if (process.platform === "win32") winQuitGraceful2();
   }
-  if (!await waitForQuit2(5e3)) {
+  if (!await waitForQuit(5e3)) {
     if (process.platform === "win32") winForceQuit2();
     else if (process.platform === "linux") linuxForceQuit();
-    await waitForQuit2(5e3);
+    await waitForQuit(5e3);
   }
   if (appPath) openClaudeAppAt(appPath);
   else openClaudeApp();
@@ -13631,6 +13700,7 @@ export {
   getAppHome,
   getConfigPath,
   getProvidersPath,
+  getLogsPath,
   loadPreferences,
   savePreferences,
   getAppPathOverride,
@@ -13818,4 +13888,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-SCW2TYSG.js.map
+//# sourceMappingURL=chunk-OIYXDMMG.js.map

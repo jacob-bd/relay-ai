@@ -9,6 +9,7 @@ import {
 } from './app-profile.js';
 import { getReasoningCapabilities } from '../provider-factory.js';
 import { getCodexHome } from './session.js';
+import { atomicWriteFile } from './session.js';
 
 export type TomlRecord = Record<string, unknown>;
 
@@ -236,7 +237,12 @@ export function applyAppConfigPatch(spec: CodexAppConfigSpec, configPath = getCo
   const text = `${stringify(merged)}\n`;
   validateAppConfigText(text, spec);
   mkdirSync(dirname(configPath), { recursive: true });
-  writeFileSync(configPath, text, 'utf8');
+  atomicWriteFile(configPath, text);
+  const written = readCodexConfigText(configPath);
+  if (written !== text) {
+    throw new Error(`Codex config readback mismatch at ${configPath}`);
+  }
+  validateAppConfigText(written, spec);
   return text;
 }
 

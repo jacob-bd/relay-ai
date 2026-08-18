@@ -36,6 +36,7 @@ import {
   resolveRoutedCollaborationInput,
   stripCodexCollaborationTools,
 } from './codex/collaboration-payload.js';
+import { appendCodexRouteAudit } from './codex/route-audit.js';
 
 /**
  * Pull the full `response` object out of a single SSE event chunk if it's the
@@ -225,6 +226,8 @@ export interface CodexProxyRoute {
   apiKey: string;
   baseURL?: string;
   upstreamModelId: string;
+  /** Provider-facing model id recorded in the metadata-only route audit. */
+  auditUpstreamModelId?: string;
   providerId?: string;
   authType?: 'api' | 'oauth' | 'none';
   oauthAccountId?: string;
@@ -354,6 +357,8 @@ export interface CodexProxyOptions {
   debug?: boolean;
   /** Default true. App mode passes false — GUI cannot inherit RELAY_AI_CODEX_KEY. */
   requireAuth?: boolean;
+  /** Metadata-only request routing receipt. Never records prompts, headers, tools, or credentials. */
+  routeAuditPath?: string;
   mixedNative?: {
     nativeModelIds: ReadonlySet<string>;
     subagentRouteModelId?: string;
@@ -392,6 +397,33 @@ async function prepareExternalCodexBody(
   return { ...externalBody, input: resolvedInput };
 }
 
+/**
+ * Codex's developer context describes the host application, tools, and agent
+ * role. External models must retain those operating instructions, but must not
+ * infer from them that their own model is Codex, GPT, or OpenAI-hosted. Bind the
+ * selected Relay route explicitly at the final provider boundary so this stays
+ * correct for Gemini, Claude, OSS, and future dynamically discovered models.
+ */
+export function applyExternalCodexRuntimeIdentity(
+  params: CodexSdkCallParams,
+  route: Pick<CodexProxyRoute, 'modelId' | 'providerId' | 'upstreamModelId' | 'auditUpstreamModelId'>,
+): CodexSdkCallParams {
+  const selectedModel = route.auditUpstreamModelId ?? route.upstreamModelId ?? route.modelId;
+  const provider = route.providerId ?? 'relay';
+  const identity = [
+    '<external-model-identity>',
+    `The selected model for this turn is ${JSON.stringify(selectedModel)} through provider ${JSON.stringify(provider)}.`,
+    'Codex is the host application and agent environment, not the model identity.',
+    'Follow Codex host and tool instructions normally, but do not infer that you are an OpenAI or GPT model from host names, tool names, documentation, or conversation context.',
+    'If asked what model you are, report the selected model and provider above; do not use self-identification as evidence of the network route.',
+    '</external-model-identity>',
+  ].join('\n');
+  return {
+    ...params,
+    system: params.system?.trim() ? `${identity}\n\n${params.system}` : identity,
+  };
+}
+
 export async function startCodexProxy(
   routes: CodexProxyRoute[],
   options: CodexProxyOptions | boolean = {},
@@ -400,6 +432,9 @@ export async function startCodexProxy(
   const debug = opts.debug ?? false;
   const requireAuth = opts.requireAuth ?? true;
   const mixedNative = opts.mixedNative;
+  const audit = (event: Parameters<typeof appendCodexRouteAudit>[1]) => {
+    if (opts.routeAuditPath) appendCodexRouteAudit(opts.routeAuditPath, event);
+  };
   const nativePayloadRelay = mixedNative ? createNativePayloadRelay({}) : undefined;
   silenceSdkWarnings();
 
@@ -590,6 +625,7 @@ export async function startCodexProxy(
           log(`subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? '(none)'}`);
         }
         if (mixedNative && markedSubagent && !subagentRoute) {
+          audit({ transport: 'http', requestedModel: modelId, dispatch: 'relay-subagent', phase: 'complete', outcome: 'error', status: 503 });
           sendJson(res, 503, {
             error: {
               message: 'Codex marked this request as a Sub-agent, but no configured Codex Sub-agent route is available.',
@@ -602,10 +638,15 @@ export async function startCodexProxy(
           if (!markedSubagent) {
             const dispatch = classifyCodexDispatch(modelId, routes, mixedNative.nativeModelIds);
             if (dispatch.kind === 'unknown') {
+              audit({ transport: 'http', requestedModel: modelId, dispatch: 'unknown', phase: 'complete', outcome: 'error', status: 404 });
               sendJson(res, 404, { error: { message: `Unknown model: ${modelId}`, type: 'invalid_request_error' } });
               return;
             }
             if (dispatch.kind === 'native') {
+              audit({
+                transport: 'http', requestedModel: modelId, dispatch: 'native', phase: 'dispatch',
+                provider: 'openai-native', routeModel: modelId, upstreamModel: modelId,
+              });
               const controller = new AbortController();
               req.once('aborted', () => controller.abort());
               try {
@@ -621,7 +662,17 @@ export async function startCodexProxy(
                 const contentType = nativeResponse.headers.get('content-type');
                 res.writeHead(nativeResponse.status, contentType ? { 'content-type': contentType } : undefined);
                 res.end(Buffer.from(await nativeResponse.arrayBuffer()));
+                audit({
+                  transport: 'http', requestedModel: modelId, dispatch: 'native', phase: 'complete',
+                  provider: 'openai-native', routeModel: modelId, upstreamModel: modelId,
+                  outcome: nativeResponse.ok ? 'ok' : 'error', status: nativeResponse.status,
+                });
               } catch (err) {
+                audit({
+                  transport: 'http', requestedModel: modelId, dispatch: 'native', phase: 'complete',
+                  provider: 'openai-native', routeModel: modelId, upstreamModel: modelId,
+                  outcome: 'error', status: 'forward-failed',
+                });
                 if (!res.writableEnded) sendJson(res, 502, { error: { message: 'Native Codex request failed', type: 'upstream_error' } });
               }
               return;
@@ -649,6 +700,12 @@ export async function startCodexProxy(
         }
 
         const { route, languageModel } = resolved;
+        const relayDispatch = markedSubagent ? 'relay-subagent' as const : 'relay' as const;
+        audit({
+          transport: 'http', requestedModel: modelId, dispatch: relayDispatch, phase: 'dispatch',
+          provider: route.providerId ?? 'relay', routeModel: route.modelId,
+          upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+        });
 
         try {
           const routedBody = await prepareExternalCodexBody(body, {
@@ -656,7 +713,7 @@ export async function startCodexProxy(
             mixedNative,
             headers: req.headers,
           });
-          let params = applyClaudeCodeOAuthIdentity(route, translateResponsesRequest(
+          let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
             routedBody as unknown as import('./codex-responses-adapter.js').ResponsesRequest,
             route.npm,
             {
@@ -668,7 +725,7 @@ export async function startCodexProxy(
               upstreamModelId: route.upstreamModelId,
             },
             { maxTools: maxToolsForNpm(route.npm) },
-          ));
+          ), route));
           if (route.contextWindow && route.contextWindow > 0) {
             const before = params.messages.length;
             const estimatedChars = estimateCodexRequestChars(params);
@@ -726,9 +783,19 @@ export async function startCodexProxy(
                   log(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
                 }
               });
+              audit({
+                transport: 'http', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
+                provider: route.providerId ?? 'relay', routeModel: route.modelId,
+                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId, outcome: 'ok', status: 200,
+              });
             } catch (err) {
               const msg = formatUpstreamError(err);
               const status = upstreamHttpStatus(err, msg);
+              audit({
+                transport: 'http', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
+                provider: route.providerId ?? 'relay', routeModel: route.modelId,
+                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId, outcome: 'error', status,
+              });
               if (debug) log(`sdk error: ${route.modelId}: ${msg}`);
               if (status === 429) {
                 writeResponsesRateLimitStream(modelId, msg, write);
@@ -752,9 +819,19 @@ export async function startCodexProxy(
                 });
               }
               sendJson(res, 200, response);
+              audit({
+                transport: 'http', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
+                provider: route.providerId ?? 'relay', routeModel: route.modelId,
+                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId, outcome: 'ok', status: 200,
+              });
             } catch (err) {
               const msg = formatUpstreamError(err);
               const status = upstreamHttpStatus(err, msg);
+              audit({
+                transport: 'http', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
+                provider: route.providerId ?? 'relay', routeModel: route.modelId,
+                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId, outcome: 'error', status,
+              });
               if (debug) log(`sdk error: ${route.modelId}: ${msg}`);
               if (status === 429) {
                 sendJson(res, 200, responsesRateLimitBody(modelId, msg));
@@ -1011,6 +1088,7 @@ export async function startCodexProxy(
             log(`WS subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? '(none)'}`);
           }
           if (mixedNative && markedSubagent && !subagentRoute) {
+            audit({ transport: 'ws', requestedModel: modelId, dispatch: 'relay-subagent', phase: 'complete', outcome: 'error', status: 503 });
             sendWsEvent(`event: error\ndata: ${JSON.stringify({ error: {
               message: 'Codex marked this request as a Sub-agent, but no configured Codex Sub-agent route is available.',
               type: 'service_unavailable',
@@ -1022,11 +1100,16 @@ export async function startCodexProxy(
             if (!markedSubagent) {
               const dispatch = classifyCodexDispatch(modelId, routes, mixedNative.nativeModelIds);
               if (dispatch.kind === 'unknown') {
+                audit({ transport: 'ws', requestedModel: modelId, dispatch: 'unknown', phase: 'complete', outcome: 'error', status: 404 });
                 sendWsEvent(`event: error\ndata: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: 'invalid_request_error' } })}\n\n`);
                 closeSocket();
                 return;
               }
               if (dispatch.kind === 'native') {
+                audit({
+                  transport: 'ws', requestedModel: modelId, dispatch: 'native', phase: 'dispatch',
+                  provider: 'openai-native', routeModel: modelId, upstreamModel: modelId,
+                });
                 const nativeBody = prepareNativeCodexBody(body);
                 if (debug && nativeBody !== body) {
                   log(`WS native history normalized: model=${modelId} converted Relay compaction for native verification`);
@@ -1071,6 +1154,13 @@ export async function startCodexProxy(
                   if (debug && message) {
                     log(`WS native upstream failed: model=${modelId} opened=${nativeOpened} frames=${nativeFrameCount} message=${message}`);
                   }
+                  if (message && !nativeCompleted) {
+                    audit({
+                      transport: 'ws', requestedModel: modelId, dispatch: 'native', phase: 'complete',
+                      provider: 'openai-native', routeModel: modelId, upstreamModel: modelId,
+                      outcome: 'error', status: 'upstream-failed',
+                    });
+                  }
                   if (message && !nativeCompleted) sendNativeError(message);
                   try { upstream?.close(); } catch { /* ignore */ }
                   closeSocket(closeCode);
@@ -1108,6 +1198,11 @@ export async function startCodexProxy(
                       if (typeof parsed.type === 'string') eventType = parsed.type;
                       if (eventType === 'response.completed' || eventType === 'response.failed' || eventType === 'response.incomplete') {
                         nativeCompleted = true;
+                        audit({
+                          transport: 'ws', requestedModel: modelId, dispatch: 'native', phase: 'complete',
+                          provider: 'openai-native', routeModel: modelId, upstreamModel: modelId,
+                          outcome: eventType === 'response.completed' ? 'ok' : 'error', status: eventType,
+                        });
                       }
                     } catch { /* forward the native frame unchanged */ }
                     if (debug && (nativeFrameCount <= 3 || nativeCompleted || eventType === 'error' || nativeFrameCount % 25 === 0)) {
@@ -1154,13 +1249,19 @@ export async function startCodexProxy(
           }
 
           const { route, languageModel } = resolved;
+          const relayDispatch = markedSubagent ? 'relay-subagent' as const : 'relay' as const;
+          audit({
+            transport: 'ws', requestedModel: modelId, dispatch: relayDispatch, phase: 'dispatch',
+            provider: route.providerId ?? 'relay', routeModel: route.modelId,
+            upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+          });
           try {
             const routedBody = await prepareExternalCodexBody(body, {
               relay: nativePayloadRelay,
               mixedNative,
               headers: req.headers,
             });
-            let params = applyClaudeCodeOAuthIdentity(route, translateResponsesRequest(
+            let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
               routedBody as unknown as import('./codex-responses-adapter.js').ResponsesRequest,
               route.npm,
               {
@@ -1172,7 +1273,7 @@ export async function startCodexProxy(
                 upstreamModelId: route.upstreamModelId,
               },
               { maxTools: maxToolsForNpm(route.npm) },
-            ));
+            ), route));
             if (route.contextWindow && route.contextWindow > 0) {
               const before = params.messages.length;
               const estimatedChars = estimateCodexRequestChars(params);
@@ -1205,9 +1306,19 @@ export async function startCodexProxy(
                 log(`WS response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
               }
             });
+            audit({
+              transport: 'ws', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
+              provider: route.providerId ?? 'relay', routeModel: route.modelId,
+              upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId, outcome: 'ok', status: 'response.completed',
+            });
           } catch (err) {
             const msg = formatUpstreamError(err);
             const status = upstreamHttpStatus(err, msg);
+            audit({
+              transport: 'ws', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
+              provider: route.providerId ?? 'relay', routeModel: route.modelId,
+              upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId, outcome: 'error', status,
+            });
             if (debug) log(`WS sdk error: ${route.modelId}: ${msg}`);
             if (status === 429) {
               writeResponsesRateLimitStream(modelId, msg, sendWsEvent);

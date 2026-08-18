@@ -9,6 +9,7 @@ import {
   statSync,
 } from 'node:fs';
 import { basename, join } from 'node:path';
+import { createHash } from 'node:crypto';
 import {
   atomicWriteFile,
   getRelayAiCodexDir,
@@ -50,6 +51,13 @@ export interface CodexAppSessionLock {
   restoreStatePath: string;
   backupPath?: string;
   proxyPort?: number;
+  /** Hashes bind exact-byte restoration to the files this session actually wrote. */
+  patchedConfigSha256?: string;
+  originalConfigSha256?: string;
+}
+
+export function fileSha256(path: string): string {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
 export function readAppSessionLock(env: NodeJS.ProcessEnv = process.env): CodexAppSessionLock | null {
@@ -177,7 +185,19 @@ export function restoreCodexAppOverlay(env: NodeJS.ProcessEnv = process.env): Re
     return { restored: false, message: 'Nothing to restore.' };
   }
 
-  if (restoreState) {
+  const exactBackupIsSafe = Boolean(
+    managed
+    && lock?.backupPath
+    && existsSync(lock.backupPath)
+    && lock.patchedConfigSha256
+    && lock.originalConfigSha256
+    && fileSha256(getCodexConfigPath()) === lock.patchedConfigSha256
+    && fileSha256(lock.backupPath) === lock.originalConfigSha256,
+  );
+
+  if (exactBackupIsSafe) {
+    copyFileSync(lock!.backupPath!, getCodexConfigPath());
+  } else if (restoreState) {
     restoreConfigFromState(restoreState);
   } else if (lock?.backupPath && existsSync(lock.backupPath)) {
     copyFileSync(lock.backupPath, getCodexConfigPath());
