@@ -241,26 +241,44 @@ export function darwinMainExecutableCandidates(appPath: string): string[] {
   return DARWIN_APP_NAMES.map(name => join(appPath, 'Contents', 'MacOS', name));
 }
 
-function pgrepExactCommand(commands: readonly string[]): number[] {
+export function darwinMainPidsFromProcessList(
+  processList: string,
+  commands: readonly string[],
+  currentPid = process.pid,
+): number[] {
   const pids = new Set<number>();
-  for (const command of commands) {
-    try {
-      const out = execFileSync('pgrep', ['-f', `^${command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`], {
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }).trim();
-      for (const raw of out.split(/\s+/)) {
-        const pid = Number.parseInt(raw, 10);
-        if (Number.isFinite(pid) && pid > 0 && pid !== process.pid) pids.add(pid);
-      }
-    } catch { /* exact command is not running */ }
+  for (const line of processList.split('\n')) {
+    const match = line.match(/^\s*(\d+)\s+(.+?)\s*$/);
+    if (!match) continue;
+    const pid = Number.parseInt(match[1]!, 10);
+    const command = match[2]!;
+    if (
+      Number.isFinite(pid)
+      && pid > 0
+      && pid !== currentPid
+      && commands.some(candidate => command === candidate || command.startsWith(`${candidate} `))
+    ) {
+      pids.add(pid);
+    }
   }
   return [...pids];
 }
 
 function darwinMatchingPids(): number[] {
   const appPath = findCodexApp('darwin');
-  return appPath ? pgrepExactCommand(darwinMainExecutableCandidates(appPath)) : [];
+  if (!appPath) return [];
+  try {
+    const processList = execFileSync('ps', ['-axo', 'pid=,command='], {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return darwinMainPidsFromProcessList(
+      processList,
+      darwinMainExecutableCandidates(appPath),
+    );
+  } catch {
+    return [];
+  }
 }
 
 function linuxIsRunning(): boolean {

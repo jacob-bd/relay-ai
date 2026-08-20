@@ -5,6 +5,7 @@ import {
   codexAppSupported,
   darwinQuitAppleScript,
   darwinMainExecutableCandidates,
+  darwinMainPidsFromProcessList,
   linuxCodexAppCandidates,
   linuxEmbeddedCodexCandidates,
   restartTimeoutAction,
@@ -57,6 +58,19 @@ describe('ChatGPT desktop restart safety', () => {
       '/Applications/ChatGPT.app/Contents/MacOS/ChatGPT',
       '/Applications/ChatGPT.app/Contents/MacOS/Codex',
     ]);
+  });
+
+  it('finds the macOS main PID when pgrep omits ChatGPT but ps reports its full command', () => {
+    const commands = darwinMainExecutableCandidates('/Applications/ChatGPT.app');
+    const processList = [
+      ' 2757 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT',
+      ' 2773 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Helpers/Codex (Service) --type=gpu-process',
+      ' 3122 /Applications/ChatGPT.app/Contents/Resources/native/bare-modifier-monitor --key DoubleCommand',
+      ' 4000 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT -psn_0_12345',
+      ' 5000 /Applications/Other.app/Contents/MacOS/ChatGPT',
+    ].join('\n');
+
+    expect(darwinMainPidsFromProcessList(processList, commands, 4000)).toEqual([2757]);
   });
 
   it('targets the stable macOS bundle id instead of the deprecated Codex app name', () => {
