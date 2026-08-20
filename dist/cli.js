@@ -4592,18 +4592,19 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
 `
       );
       let frameBuf = Buffer.alloc(0);
-      let handled = false;
+      let externalActive = false;
       let nativeActive = false;
       let nativeUpstream;
+      let socketClosing = false;
       let currentRequestModel = "";
       const closeSocket = (code = 1e3) => {
-        if (!socket.destroyed) {
-          socket.write(wsCloseFrame(code));
-          socket.end();
-        }
+        if (socketClosing || socket.destroyed) return;
+        socketClosing = true;
+        socket.write(wsCloseFrame(code));
+        socket.end();
       };
       const sendWsEvent = (sseChunk2) => {
-        if (socket.destroyed) return;
+        if (socketClosing || socket.destroyed) return;
         if (debug) {
           const completed = captureCompletedResponse(sseChunk2);
           if (completed) {
@@ -4624,7 +4625,6 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
       };
       const onData = (chunk) => {
         frameBuf = Buffer.concat([frameBuf, chunk]);
-        if (handled && !nativeActive) return;
         const frame = wsDecodeFrame(frameBuf);
         if (!frame) return;
         frameBuf = Buffer.alloc(0);
@@ -4646,7 +4646,10 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
           socket.end();
           return;
         }
-        handled = true;
+        if (externalActive) {
+          closeSocket(1008);
+          return;
+        }
         void (async () => {
           let body;
           try {
@@ -4858,6 +4861,7 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "i
               }
             }
           }
+          externalActive = true;
           let resolved = subagentRoute ? resolveModel(routes, models, subagentRoute.modelId) : resolveModel(routes, models, modelId);
           if (!resolved) {
             const fb = routes[0];
@@ -4969,7 +4973,7 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
               writeResponsesErrorStream(modelId, msg, sendWsEvent, status);
             }
           }
-          closeSocket();
+          externalActive = false;
         })();
       };
       socket.on("error", () => socket.destroy());
