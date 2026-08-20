@@ -67,10 +67,11 @@ describe('ChatGPT desktop restart safety', () => {
       ' 2773 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Helpers/Codex (Service) --type=gpu-process',
       ' 3122 /Applications/ChatGPT.app/Contents/Resources/native/bare-modifier-monitor --key DoubleCommand',
       ' 4000 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT -psn_0_12345',
+      ' 4010 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT -psn_0_67890',
       ' 5000 /Applications/Other.app/Contents/MacOS/ChatGPT',
     ].join('\n');
 
-    expect(darwinMainPidsFromProcessList(processList, commands, 4000)).toEqual([2757]);
+    expect(darwinMainPidsFromProcessList(processList, commands, 4000)).toEqual([2757, 4010]);
   });
 
   it('targets the stable macOS bundle id instead of the deprecated Codex app name', () => {
