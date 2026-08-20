@@ -400,6 +400,130 @@ describe('startCodexProxy', () => {
     }
   });
 
+  it('keeps an external WebSocket open for sequential response.create turns', async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const provider = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      req.once('end', () => {
+        requestBodies.push(JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>);
+        const turn = requestBodies.length;
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.write(`data: ${JSON.stringify({
+          id: `chatcmpl-${turn}`,
+          object: 'chat.completion.chunk',
+          choices: [{ index: 0, delta: { role: 'assistant', content: `turn-${turn}` }, finish_reason: null }],
+        })}\n\n`);
+        res.write(`data: ${JSON.stringify({
+          id: `chatcmpl-${turn}`,
+          object: 'chat.completion.chunk',
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        })}\n\n`);
+        res.end('data: [DONE]\n\n');
+      });
+    });
+    const providerPort = await new Promise<number>(resolve => provider.listen(0, '127.0.0.1', () => resolve((provider.address() as { port: number }).port)));
+    const capability = 'F'.repeat(43);
+    handle = await startCodexProxy([{
+      modelId: 'relay-model',
+      npm: '@ai-sdk/openai-compatible',
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${providerPort}/v1`,
+      upstreamModelId: 'relay-model',
+      providerId: 'relay-provider',
+    }], {
+      requireAuth: false,
+      mixedNative: { nativeModelIds: new Set(['gpt-5.5']), capability },
+    });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/_relay-codex/${capability}/v1/responses`);
+        const timer = setTimeout(() => { client.close(); reject(new Error('timed out waiting for the second external turn')); }, 3_000);
+        let completed = 0;
+        client.on('open', () => client.send(JSON.stringify({ model: 'relay-model', input: 'first' })));
+        client.on('message', data => {
+          const event = JSON.parse(data.toString()) as { type?: string };
+          if (event.type !== 'response.completed') return;
+          completed += 1;
+          if (completed === 1) client.send(JSON.stringify({ model: 'relay-model', input: 'second' }));
+          if (completed === 2) client.close();
+        });
+        client.on('close', code => {
+          clearTimeout(timer);
+          if (code !== 1000 || completed !== 2) {
+            reject(new Error(`external socket closed before two turns completed: code=${code} completed=${completed}`));
+            return;
+          }
+          resolve();
+        });
+        client.on('error', reject);
+      });
+      expect(requestBodies).toHaveLength(2);
+      expect(JSON.stringify(requestBodies[0])).toContain('first');
+      expect(JSON.stringify(requestBodies[1])).toContain('second');
+    } finally {
+      await new Promise<void>(resolve => provider.close(() => resolve()));
+    }
+  });
+
+  it('closes an external WebSocket with policy code when a turn overlaps an active provider request', async () => {
+    let providerCalls = 0;
+    let firstRequest!: () => void;
+    const firstRequestSeen = new Promise<void>(resolve => { firstRequest = resolve; });
+    let releaseFirst!: () => void;
+    const firstResponseReleased = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const provider = createServer((req, res) => {
+      req.resume();
+      req.once('end', () => {
+        providerCalls += 1;
+        if (providerCalls !== 1) {
+          res.writeHead(500);
+          res.end();
+          return;
+        }
+        firstRequest();
+        void firstResponseReleased.then(() => {
+          res.writeHead(200, { 'content-type': 'text/event-stream' });
+          res.end(`data: ${JSON.stringify({
+            id: 'chatcmpl-1',
+            object: 'chat.completion.chunk',
+            choices: [{ index: 0, delta: { content: 'first' }, finish_reason: 'stop' }],
+          })}\n\ndata: [DONE]\n\n`);
+        });
+      });
+    });
+    const providerPort = await new Promise<number>(resolve => provider.listen(0, '127.0.0.1', () => resolve((provider.address() as { port: number }).port)));
+    const capability = 'G'.repeat(43);
+    handle = await startCodexProxy([{
+      modelId: 'relay-model',
+      npm: '@ai-sdk/openai-compatible',
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${providerPort}/v1`,
+      upstreamModelId: 'relay-model',
+      providerId: 'relay-provider',
+    }], {
+      requireAuth: false,
+      mixedNative: { nativeModelIds: new Set(['gpt-5.5']), capability },
+    });
+
+    try {
+      const closeCode = await new Promise<number>((resolve, reject) => {
+        const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/_relay-codex/${capability}/v1/responses`);
+        const timer = setTimeout(() => { client.close(); reject(new Error('timed out waiting for overlap rejection')); }, 3_000);
+        client.on('open', () => client.send(JSON.stringify({ model: 'relay-model', input: 'first' })));
+        void firstRequestSeen.then(() => client.send(JSON.stringify({ model: 'relay-model', input: 'second' })));
+        client.on('close', code => { clearTimeout(timer); resolve(code); });
+        client.on('error', reject);
+      });
+      expect(closeCode).toBe(1008);
+      expect(providerCalls).toBe(1);
+    } finally {
+      releaseFirst();
+      await new Promise<void>(resolve => provider.close(() => resolve()));
+    }
+  });
+
   it('resolves a WebSocket child payload before contacting the Relay model', async () => {
     const nativeRelay = createServer((req, res) => {
       req.resume();

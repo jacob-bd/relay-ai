@@ -984,19 +984,23 @@ export async function startCodexProxy(
       );
 
       let frameBuf = Buffer.alloc(0);
-      let handled = false;
+      let externalActive = false;
       let nativeActive = false;
       let nativeUpstream: WebSocket | undefined;
+      let socketClosing = false;
       // Set once the request body is parsed, below — sendWsEvent is defined before
       // that point but needs the model id for its own debug dump.
       let currentRequestModel = '';
 
       const closeSocket = (code = 1000) => {
-        if (!socket.destroyed) { socket.write(wsCloseFrame(code)); socket.end(); }
+        if (socketClosing || socket.destroyed) return;
+        socketClosing = true;
+        socket.write(wsCloseFrame(code));
+        socket.end();
       };
 
       const sendWsEvent = (sseChunk: string) => {
-        if (socket.destroyed) return;
+        if (socketClosing || socket.destroyed) return;
         if (debug) {
           const completed = captureCompletedResponse(sseChunk);
           if (completed) {
@@ -1019,10 +1023,6 @@ export async function startCodexProxy(
 
       const onData = (chunk: Buffer) => {
         frameBuf = Buffer.concat([frameBuf, chunk]);
-        // Native Codex keeps one Responses WebSocket open across turns. Relay
-        // routes still use the original one-request guard, but native frames
-        // must continue through the established upstream connection.
-        if (handled && !nativeActive) return;
         const frame = wsDecodeFrame(frameBuf);
         if (!frame) return;
         frameBuf = Buffer.alloc(0);
@@ -1044,7 +1044,13 @@ export async function startCodexProxy(
           socket.end();
           return;
         }
-        handled = true;
+        if (externalActive) {
+          // The external SDK stream cannot safely multiplex turns. Closing with
+          // policy violation makes the client fail closed instead of starting a
+          // second provider request that could be retried or double-billed.
+          closeSocket(1008);
+          return;
+        }
 
         void (async () => {
           let body: Record<string, unknown>;
@@ -1233,6 +1239,7 @@ export async function startCodexProxy(
               }
             }
           }
+          externalActive = true;
           let resolved = subagentRoute
             ? resolveModel(routes, models, subagentRoute.modelId)
             : resolveModel(routes, models, modelId);
@@ -1326,7 +1333,7 @@ export async function startCodexProxy(
               writeResponsesErrorStream(modelId, msg, sendWsEvent, status);
             }
           }
-          closeSocket();
+          externalActive = false;
         })();
       };
 
