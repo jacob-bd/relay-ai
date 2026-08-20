@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.9.5",
+  version: "0.9.6",
   publishConfig: {
     access: "public"
   },
@@ -13156,26 +13156,34 @@ function pgrepExact(names) {
 function darwinMainExecutableCandidates(appPath) {
   return DARWIN_APP_NAMES.map((name) => join12(appPath, "Contents", "MacOS", name));
 }
-function pgrepExactCommand(commands) {
+function darwinMainPidsFromProcessList(processList, commands, currentPid = process.pid) {
   const pids = /* @__PURE__ */ new Set();
-  for (const command of commands) {
-    try {
-      const out = execFileSync3("pgrep", ["-f", `^${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`], {
-        encoding: "utf8",
-        stdio: ["pipe", "pipe", "pipe"]
-      }).trim();
-      for (const raw of out.split(/\s+/)) {
-        const pid = Number.parseInt(raw, 10);
-        if (Number.isFinite(pid) && pid > 0 && pid !== process.pid) pids.add(pid);
-      }
-    } catch {
+  for (const line of processList.split("\n")) {
+    const match = line.match(/^\s*(\d+)\s+(.+?)\s*$/);
+    if (!match) continue;
+    const pid = Number.parseInt(match[1], 10);
+    const command = match[2];
+    if (Number.isFinite(pid) && pid > 0 && pid !== currentPid && commands.some((candidate) => command === candidate || command.startsWith(`${candidate} `))) {
+      pids.add(pid);
     }
   }
   return [...pids];
 }
 function darwinMatchingPids() {
   const appPath = findCodexApp("darwin");
-  return appPath ? pgrepExactCommand(darwinMainExecutableCandidates(appPath)) : [];
+  if (!appPath) return [];
+  try {
+    const processList = execFileSync3("ps", ["-axo", "pid=,command="], {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    return darwinMainPidsFromProcessList(
+      processList,
+      darwinMainExecutableCandidates(appPath)
+    );
+  } catch {
+    return [];
+  }
 }
 function linuxIsRunning() {
   for (const name of ["ChatGPT", "chatgpt"]) {
@@ -13888,4 +13896,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-OIYXDMMG.js.map
+//# sourceMappingURL=chunk-PYJQMEJD.js.map
