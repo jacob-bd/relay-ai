@@ -984,7 +984,7 @@ export async function startCodexProxy(
       );
 
       let frameBuf = Buffer.alloc(0);
-      let handled = false;
+      let externalInFlight = false;
       let nativeActive = false;
       let nativeUpstream: WebSocket | undefined;
       // Set once the request body is parsed, below — sendWsEvent is defined before
@@ -1019,10 +1019,6 @@ export async function startCodexProxy(
 
       const onData = (chunk: Buffer) => {
         frameBuf = Buffer.concat([frameBuf, chunk]);
-        // Native Codex keeps one Responses WebSocket open across turns. Relay
-        // routes still use the original one-request guard, but native frames
-        // must continue through the established upstream connection.
-        if (handled && !nativeActive) return;
         const frame = wsDecodeFrame(frameBuf);
         if (!frame) return;
         frameBuf = Buffer.alloc(0);
@@ -1044,7 +1040,14 @@ export async function startCodexProxy(
           socket.end();
           return;
         }
-        handled = true;
+        // Responses WebSockets are persistent across turns. Native requests
+        // already stream through one upstream socket; external Relay requests
+        // run sequentially on the downstream connection because their SDK
+        // adapter owns one provider stream at a time.
+        if (externalInFlight) {
+          closeSocket(1008);
+          return;
+        }
 
         void (async () => {
           let body: Record<string, unknown>;
@@ -1255,6 +1258,7 @@ export async function startCodexProxy(
             provider: route.providerId ?? 'relay', routeModel: route.modelId,
             upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
           });
+          externalInFlight = true;
           try {
             const routedBody = await prepareExternalCodexBody(body, {
               relay: nativePayloadRelay,
@@ -1325,8 +1329,9 @@ export async function startCodexProxy(
             } else {
               writeResponsesErrorStream(modelId, msg, sendWsEvent, status);
             }
+          } finally {
+            externalInFlight = false;
           }
-          closeSocket();
         })();
       };
 

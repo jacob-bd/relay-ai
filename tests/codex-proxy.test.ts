@@ -18,6 +18,27 @@ import { buildCompactionResponseBody, type CodexSdkCallParams } from '../src/cod
 import { CODEX_APP_AUTO_COMPACT_RATIO } from '../src/codex/app-profile.js';
 import { WebSocket, WebSocketServer } from 'ws';
 
+function openAiCompatibleTextStream(id: string, text: string, created: number): string {
+  return [
+    `data: ${JSON.stringify({
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model: 'relay-upstream',
+      choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }],
+    })}`,
+    `data: ${JSON.stringify({
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model: 'relay-upstream',
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+    })}`,
+    'data: [DONE]',
+    '',
+  ].join('\n\n');
+}
+
 describe('external Codex runtime identity', () => {
   it('distinguishes the selected external model from the Codex host', () => {
     const params = applyExternalCodexRuntimeIdentity({
@@ -397,6 +418,119 @@ describe('startCodexProxy', () => {
       expect(received[1]).toMatchObject({ type: 'response.create', input: 'second' });
     } finally {
       await new Promise<void>(resolve => upstream.close(() => resolve()));
+    }
+  });
+
+  it('keeps a Relay WebSocket open for multiple response.create turns', async () => {
+    let providerCalls = 0;
+    const provider = createServer((req, res) => {
+      req.resume();
+      req.once('end', () => {
+        providerCalls += 1;
+        const responseId = `chatcmpl-${providerCalls}`;
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.end(openAiCompatibleTextStream(responseId, `turn-${providerCalls}`, providerCalls));
+      });
+    });
+    const providerPort = await new Promise<number>(resolve => {
+      provider.listen(0, '127.0.0.1', () => resolve((provider.address() as { port: number }).port));
+    });
+
+    handle = await startCodexProxy([{
+      modelId: 'provider__relay-model',
+      npm: '@ai-sdk/openai-compatible',
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${providerPort}/v1`,
+      upstreamModelId: 'relay-upstream',
+      providerId: 'provider',
+    }], { requireAuth: false });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/v1/responses`);
+        const timer = setTimeout(() => {
+          client.close();
+          reject(new Error('timed out waiting for the second Relay turn'));
+        }, 5000);
+        let responseCount = 0;
+        client.on('open', () => {
+          client.send(JSON.stringify({ model: 'provider__relay-model', input: 'first', stream: true }));
+        });
+        client.on('message', data => {
+          const event = JSON.parse(data.toString()) as { type?: string };
+          if (event.type !== 'response.completed') return;
+          responseCount += 1;
+          if (responseCount === 1) {
+            client.send(JSON.stringify({ model: 'provider__relay-model', input: 'second', stream: true }));
+          } else {
+            client.close();
+          }
+        });
+        client.on('close', () => {
+          clearTimeout(timer);
+          if (responseCount === 2) resolve();
+          else reject(new Error(`Relay closed after ${responseCount} completed response(s)`));
+        });
+        client.on('error', reject);
+      });
+      expect(providerCalls).toBe(2);
+    } finally {
+      await new Promise<void>(resolve => provider.close(() => resolve()));
+    }
+  });
+
+  it('rejects overlapping Relay WebSocket turns without duplicating provider work', async () => {
+    let providerCalls = 0;
+    let markProviderCalled!: () => void;
+    const providerCalled = new Promise<void>(resolve => { markProviderCalled = resolve; });
+    const provider = createServer((req, res) => {
+      req.resume();
+      req.once('end', () => {
+        providerCalls += 1;
+        markProviderCalled();
+        setTimeout(() => {
+          res.writeHead(200, { 'content-type': 'text/event-stream' });
+          res.end(openAiCompatibleTextStream('chatcmpl-overlap', 'first', 1));
+        }, 100);
+      });
+    });
+    const providerPort = await new Promise<number>(resolve => {
+      provider.listen(0, '127.0.0.1', () => resolve((provider.address() as { port: number }).port));
+    });
+
+    handle = await startCodexProxy([{
+      modelId: 'provider__relay-model',
+      npm: '@ai-sdk/openai-compatible',
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${providerPort}/v1`,
+      upstreamModelId: 'relay-upstream',
+      providerId: 'provider',
+    }], { requireAuth: false });
+
+    try {
+      const closeCode = await new Promise<number>((resolve, reject) => {
+        const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/v1/responses`);
+        const timer = setTimeout(() => {
+          client.close();
+          reject(new Error('timed out waiting for overlapping Relay turn rejection'));
+        }, 5000);
+        client.on('open', () => {
+          client.send(JSON.stringify({ model: 'provider__relay-model', input: 'first', stream: true }));
+          void providerCalled.then(() => {
+            client.send(JSON.stringify({ model: 'provider__relay-model', input: 'overlap', stream: true }));
+          });
+        });
+        client.on('close', code => {
+          clearTimeout(timer);
+          resolve(code);
+        });
+        client.on('error', reject);
+      });
+      await providerCalled;
+      expect(closeCode).toBe(1008);
+      expect(providerCalls).toBe(1);
+    } finally {
+      await new Promise<void>(resolve => provider.close(() => resolve()));
     }
   });
 
