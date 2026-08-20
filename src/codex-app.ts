@@ -110,10 +110,11 @@ export function codexAppUsesExplicitSelection(
 
 type AppShutdownSignal = 'sigint' | 'sigterm' | 'sighup';
 
-async function waitForShutdownWithConfirm(): Promise<AppShutdownSignal> {
+export async function waitForShutdownWithConfirm(assumeYes = false): Promise<AppShutdownSignal> {
   while (true) {
     const signal = await waitForShutdown();
     if (signal !== 'sigint') return signal; // SIGTERM/SIGHUP: close immediately, no one to ask
+    if (assumeYes) return signal; // unattended launch: no one to ask either
     console.log('');
     const choice = await p.select({
       message: 'Close ChatGPT Desktop and restore your Codex config?',
@@ -131,8 +132,14 @@ export function unattendedShutdownClosesApp(assumeYes: boolean, signal: AppShutd
   return assumeYes && signal !== 'sigint';
 }
 
-export async function maybeCloseRunningCodexApp(): Promise<void> {
+export async function maybeCloseRunningCodexApp(assumeYes = false): Promise<void> {
   if (!isCodexAppRunning()) return;
+
+  if (assumeYes) {
+    p.log.step('Stopping ChatGPT Desktop...');
+    quitCodexAppGracefully();
+    return;
+  }
 
   const shouldClose = await p.confirm({ message: 'ChatGPT Desktop is still running. Close it?' });
   if (shouldClose && !p.isCancel(shouldClose)) {
@@ -809,7 +816,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
     });
 
     codexAppOutro(modelLabel);
-    const shutdownSignal = await waitForShutdownWithConfirm();
+    const shutdownSignal = await waitForShutdownWithConfirm(opts.assumeYes);
     if (trace) printTraceLog(debugLogPath);
     console.log('');
 
@@ -823,7 +830,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
         quitCodexAppGracefully();
       }
     } else {
-      await maybeCloseRunningCodexApp();
+      await maybeCloseRunningCodexApp(opts.assumeYes);
     }
     return 0;
   } finally {

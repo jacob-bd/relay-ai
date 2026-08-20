@@ -11541,10 +11541,11 @@ function codexAppUsesExplicitSelection(configOnly, launchProvider, launchModel) 
   void configOnly;
   return Boolean(launchProvider && launchModel);
 }
-async function waitForShutdownWithConfirm() {
+async function waitForShutdownWithConfirm(assumeYes = false) {
   while (true) {
     const signal = await waitForShutdown2();
     if (signal !== "sigint") return signal;
+    if (assumeYes) return signal;
     console.log("");
     const choice = await p12.select({
       message: "Close ChatGPT Desktop and restore your Codex config?",
@@ -11559,8 +11560,13 @@ async function waitForShutdownWithConfirm() {
 function unattendedShutdownClosesApp(assumeYes, signal) {
   return assumeYes && signal !== "sigint";
 }
-async function maybeCloseRunningCodexApp() {
+async function maybeCloseRunningCodexApp(assumeYes = false) {
   if (!isCodexAppRunning()) return;
+  if (assumeYes) {
+    p12.log.step("Stopping ChatGPT Desktop...");
+    quitCodexAppGracefully();
+    return;
+  }
   const shouldClose = await p12.confirm({ message: "ChatGPT Desktop is still running. Close it?" });
   if (shouldClose && !p12.isCancel(shouldClose)) {
     p12.log.step("Stopping ChatGPT Desktop...");
@@ -12152,7 +12158,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
       restoreCommand: "relay-ai codex-app --restore"
     });
     codexAppOutro(modelLabel);
-    const shutdownSignal = await waitForShutdownWithConfirm();
+    const shutdownSignal = await waitForShutdownWithConfirm(opts.assumeYes);
     if (trace) printTraceLog(debugLogPath);
     console.log("");
     if (sessionActive) {
@@ -12165,7 +12171,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
         quitCodexAppGracefully();
       }
     } else {
-      await maybeCloseRunningCodexApp();
+      await maybeCloseRunningCodexApp(opts.assumeYes);
     }
     return 0;
   } finally {
