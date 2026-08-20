@@ -25,6 +25,7 @@ import {
   streamCompactionResponse,
   generateCompactionResponse,
   type CodexSdkCallParams,
+  type ResponsesInputItem,
 } from './codex-responses-adapter.js';
 import { silenceSdkWarnings } from './sdk-adapter.js';
 import { formatUpstreamError, upstreamHttpStatus } from './codex/upstream-error.js';
@@ -45,17 +46,49 @@ import { appendCodexRouteAudit } from './codex/route-audit.js';
  * (see codex-responses-adapter.ts's `emit`/`sseChunk`), so no cross-call buffering
  * is needed here.
  */
-function captureCompletedResponse(sseText: string): unknown | undefined {
+function captureCompletedResponse(sseText: string): Record<string, unknown> | undefined {
   if (!sseText.includes('response.completed')) return undefined;
   const dataLine = sseText.split('\n').find(l => l.startsWith('data:'));
   if (!dataLine) return undefined;
   try {
     const obj = JSON.parse(dataLine.slice(5).trim()) as { type?: string; response?: unknown };
-    if (obj && obj.type === 'response.completed') return obj.response;
+    if (obj && obj.type === 'response.completed' && obj.response && typeof obj.response === 'object') {
+      return obj.response as Record<string, unknown>;
+    }
   } catch {
     // ignore — not our event to parse
   }
   return undefined;
+}
+
+const MAX_EXTERNAL_RESPONSE_STATES = 8;
+const EXTERNAL_TOOL_OUTPUT_TYPES = new Set([
+  'function_call_output',
+  'custom_tool_call_output',
+  'tool_search_output',
+]);
+
+interface ExternalResponseState {
+  input: ResponsesInputItem[];
+  output: ResponsesInputItem[];
+}
+
+function responsesInputItems(input: unknown): ResponsesInputItem[] {
+  if (Array.isArray(input)) return input as ResponsesInputItem[];
+  if (typeof input === 'string') {
+    return [{ type: 'message', role: 'user', content: input }];
+  }
+  return [];
+}
+
+function isExternalToolOutputItem(item: unknown): boolean {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  const type = (item as { type?: unknown }).type;
+  return typeof type === 'string' && EXTERNAL_TOOL_OUTPUT_TYPES.has(type);
+}
+
+function isExternalToolContinuation(input: unknown): input is ResponsesInputItem[] {
+  return Array.isArray(input) && input.length > 0 && input.every(isExternalToolOutputItem);
 }
 
 export function estimateCodexRequestChars(params: CodexSdkCallParams): number {
@@ -987,10 +1020,49 @@ export async function startCodexProxy(
       let externalActive = false;
       let nativeActive = false;
       let nativeUpstream: WebSocket | undefined;
+      let nativeSendTurn: ((body: Record<string, unknown>, modelId: string) => void) | undefined;
       let socketClosing = false;
+      const externalResponseStates = new Map<string, ExternalResponseState>();
+      let currentExternalCompletedResponse: Record<string, unknown> | undefined;
+      let currentExternalStateInput: ResponsesInputItem[] | undefined;
+      let currentExternalConsumedResponseId: string | undefined;
       // Set once the request body is parsed, below — sendWsEvent is defined before
       // that point but needs the model id for its own debug dump.
       let currentRequestModel = '';
+
+      const rememberExternalResponse = (
+        response: Record<string, unknown>,
+        input: ResponsesInputItem[],
+      ) => {
+        const responseId = typeof response.id === 'string' ? response.id : undefined;
+        const output = Array.isArray(response.output) ? response.output as ResponsesInputItem[] : undefined;
+        if (!responseId || !output || response.error) return;
+        externalResponseStates.delete(responseId);
+        externalResponseStates.set(responseId, { input: [...input], output: [...output] });
+        while (externalResponseStates.size > MAX_EXTERNAL_RESPONSE_STATES) {
+          const oldest = externalResponseStates.keys().next().value as string | undefined;
+          if (!oldest) break;
+          externalResponseStates.delete(oldest);
+        }
+      };
+
+      const resolveExternalContinuation = (
+        body: Record<string, unknown>,
+      ): { body: Record<string, unknown>; consumedResponseId?: string; orphanedResponseId?: string } => {
+        const previousResponseId = typeof body.previous_response_id === 'string'
+          ? body.previous_response_id
+          : undefined;
+        if (!previousResponseId || !isExternalToolContinuation(body.input)) return { body };
+        const previous = externalResponseStates.get(previousResponseId);
+        if (!previous) return { body, orphanedResponseId: previousResponseId };
+        return {
+          body: {
+            ...body,
+            input: [...previous.input, ...previous.output, ...body.input],
+          },
+          consumedResponseId: previousResponseId,
+        };
+      };
 
       const closeSocket = (code = 1000) => {
         if (socketClosing || socket.destroyed) return;
@@ -1001,9 +1073,10 @@ export async function startCodexProxy(
 
       const sendWsEvent = (sseChunk: string) => {
         if (socketClosing || socket.destroyed) return;
-        if (debug) {
-          const completed = captureCompletedResponse(sseChunk);
-          if (completed) {
+        const completed = captureCompletedResponse(sseChunk);
+        if (completed) {
+          currentExternalCompletedResponse = completed;
+          if (debug) {
             appendCodexBodyDump({
               ts: new Date().toISOString(),
               transport: 'ws',
@@ -1123,7 +1196,7 @@ export async function startCodexProxy(
                 if (nativeActive && nativeUpstream) {
                   if (nativeUpstream.readyState === WebSocket.OPEN) {
                     if (debug) log(`WS native forwarding next turn: model=${modelId}`);
-                    nativeUpstream.send(JSON.stringify({ type: 'response.create', ...nativeBody }));
+                    nativeSendTurn?.(nativeBody, modelId);
                   } else if (debug) {
                     log(`WS native cannot forward next turn: upstream_state=${nativeUpstream.readyState}`);
                   }
@@ -1136,6 +1209,7 @@ export async function startCodexProxy(
                 let upstream: WebSocket | undefined;
                 let nativeOpened = false;
                 let nativeCompleted = false;
+                let nativeTurnModelId = modelId;
                 let nativeFrameCount = 0;
                 let finished = false;
                 let connectTimer: NodeJS.Timeout | undefined;
@@ -1155,15 +1229,16 @@ export async function startCodexProxy(
                   if (finished) return;
                   finished = true;
                   nativeActive = false;
+                  nativeSendTurn = undefined;
                   if (nativeUpstream === upstream) nativeUpstream = undefined;
                   clearTimers();
                   if (debug && message) {
-                    log(`WS native upstream failed: model=${modelId} opened=${nativeOpened} frames=${nativeFrameCount} message=${message}`);
+                    log(`WS native upstream failed: model=${nativeTurnModelId} opened=${nativeOpened} frames=${nativeFrameCount} message=${message}`);
                   }
                   if (message && !nativeCompleted) {
                     audit({
-                      transport: 'ws', requestedModel: modelId, dispatch: 'native', phase: 'complete',
-                      provider: 'openai-native', routeModel: modelId, upstreamModel: modelId,
+                      transport: 'ws', requestedModel: nativeTurnModelId, dispatch: 'native', phase: 'complete',
+                      provider: 'openai-native', routeModel: nativeTurnModelId, upstreamModel: nativeTurnModelId,
                       outcome: 'error', status: 'upstream-failed',
                     });
                   }
@@ -1171,20 +1246,31 @@ export async function startCodexProxy(
                   try { upstream?.close(); } catch { /* ignore */ }
                   closeSocket(closeCode);
                 };
+                const sendNativeTurn = (turnBody: Record<string, unknown>, turnModelId: string) => {
+                  if (!upstream || upstream.readyState !== WebSocket.OPEN) {
+                    if (debug) log(`WS native cannot send turn: model=${turnModelId} upstream_state=${upstream?.readyState ?? 'missing'}`);
+                    return;
+                  }
+                  nativeTurnModelId = turnModelId;
+                  nativeCompleted = false;
+                  if (firstFrameTimer) clearTimeout(firstFrameTimer);
+                  upstream.send(JSON.stringify({ type: 'response.create', ...turnBody }));
+                  firstFrameTimer = setTimeout(() => closeBoth('Native Codex WebSocket response timed out'), 60_000);
+                };
                 try {
                   if (debug) {
                     log(`WS native connecting: model=${modelId} url=${target.url} headers=[${Object.keys(target.headers).join(',')}]`);
                   }
                   upstream = new WebSocket(target.url, { headers: target.headers });
                   nativeUpstream = upstream;
+                  nativeSendTurn = sendNativeTurn;
                   nativeActive = true;
                   connectTimer = setTimeout(() => closeBoth('Native Codex WebSocket connection timed out'), 15_000);
                   upstream.once('open', () => {
                     nativeOpened = true;
                     if (connectTimer) clearTimeout(connectTimer);
                     if (debug) log(`WS native upstream open: model=${modelId}`);
-                    upstream?.send(JSON.stringify({ type: 'response.create', ...nativeBody }));
-                    firstFrameTimer = setTimeout(() => closeBoth('Native Codex WebSocket response timed out'), 60_000);
+                    sendNativeTurn(nativeBody, modelId);
                   });
                   upstream.once('unexpected-response', (_request, response) => {
                     if (debug) log(`WS native upstream HTTP rejection: model=${modelId} status=${response.statusCode}`);
@@ -1228,6 +1314,7 @@ export async function startCodexProxy(
                     if (debug) log(`WS native downstream close: model=${modelId} frames=${nativeFrameCount} completed=${nativeCompleted}`);
                     finished = true;
                     nativeActive = false;
+                    nativeSendTurn = undefined;
                     if (nativeUpstream === upstream) nativeUpstream = undefined;
                     clearTimers();
                     try { upstream?.close(); } catch { /* ignore */ }
@@ -1262,12 +1349,24 @@ export async function startCodexProxy(
             provider: route.providerId ?? 'relay', routeModel: route.modelId,
             upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
           });
+          currentExternalCompletedResponse = undefined;
+          currentExternalStateInput = undefined;
+          currentExternalConsumedResponseId = undefined;
+          const continuation = resolveExternalContinuation(body);
+          if (continuation.orphanedResponseId) {
+            if (debug) log(`WS continuation rejected: unknown previous_response_id=${continuation.orphanedResponseId}`);
+            writeResponsesErrorStream(modelId, 'Unknown or expired previous_response_id', sendWsEvent, 400);
+            externalActive = false;
+            return;
+          }
           try {
-            const routedBody = await prepareExternalCodexBody(body, {
+            const routedBody = await prepareExternalCodexBody(continuation.body, {
               relay: nativePayloadRelay,
               mixedNative,
               headers: req.headers,
             });
+            currentExternalStateInput = responsesInputItems(routedBody.input);
+            currentExternalConsumedResponseId = continuation.consumedResponseId;
             let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
               routedBody as unknown as import('./codex-responses-adapter.js').ResponsesRequest,
               route.npm,
@@ -1313,6 +1412,12 @@ export async function startCodexProxy(
                 log(`WS response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
               }
             });
+            if (currentExternalCompletedResponse && currentExternalStateInput) {
+              if (currentExternalConsumedResponseId) {
+                externalResponseStates.delete(currentExternalConsumedResponseId);
+              }
+              rememberExternalResponse(currentExternalCompletedResponse, currentExternalStateInput);
+            }
             audit({
               transport: 'ws', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
               provider: route.providerId ?? 'relay', routeModel: route.modelId,
@@ -1338,6 +1443,7 @@ export async function startCodexProxy(
       };
 
       socket.on('error', () => socket.destroy());
+      socket.once('close', () => externalResponseStates.clear());
       socket.on('data', onData);
       onData(head);
     });
