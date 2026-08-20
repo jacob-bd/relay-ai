@@ -58,6 +58,38 @@ function captureCompletedResponse(sseText: string): unknown | undefined {
   return undefined;
 }
 
+const MAX_EXTERNAL_RESPONSE_STATES_PER_SOCKET = 8;
+
+function responsesInputItems(input: unknown): unknown[] {
+  if (Array.isArray(input)) return input;
+  if (typeof input === 'string') return [{ role: 'user', content: input }];
+  return [];
+}
+
+function responsesInputNeedsPreviousState(input: unknown): boolean {
+  if (!Array.isArray(input)) return false;
+  const callIds = new Set<string>();
+  for (const item of input) {
+    if (!item || typeof item !== 'object') continue;
+    const record = item as { type?: unknown; call_id?: unknown };
+    if (
+      typeof record.type === 'string'
+      && record.type.endsWith('_call')
+      && typeof record.call_id === 'string'
+    ) {
+      callIds.add(record.call_id);
+    }
+  }
+  return input.some(item => {
+    if (!item || typeof item !== 'object') return false;
+    const record = item as { type?: unknown; call_id?: unknown };
+    return typeof record.type === 'string'
+      && record.type.endsWith('_call_output')
+      && typeof record.call_id === 'string'
+      && !callIds.has(record.call_id);
+  });
+}
+
 export function estimateCodexRequestChars(params: CodexSdkCallParams): number {
   let chars = (params.system ?? '').length;
   for (const msg of params.messages) {
@@ -987,6 +1019,15 @@ export async function startCodexProxy(
       let externalActive = false;
       let nativeActive = false;
       let nativeUpstream: WebSocket | undefined;
+      const externalResponseStates = new Map<string, unknown[]>();
+      const completedExternalResponse: {
+        current?: {
+          id?: unknown;
+          status?: unknown;
+          output?: unknown;
+        };
+      } = {};
+      const readCompletedExternalResponse = () => completedExternalResponse.current;
       let socketClosing = false;
       // Set once the request body is parsed, below — sendWsEvent is defined before
       // that point but needs the model id for its own debug dump.
@@ -1001,9 +1042,10 @@ export async function startCodexProxy(
 
       const sendWsEvent = (sseChunk: string) => {
         if (socketClosing || socket.destroyed) return;
-        if (debug) {
-          const completed = captureCompletedResponse(sseChunk);
-          if (completed) {
+        const completed = captureCompletedResponse(sseChunk) as typeof completedExternalResponse.current;
+        if (completed) {
+          completedExternalResponse.current = completed;
+          if (debug) {
             appendCodexBodyDump({
               ts: new Date().toISOString(),
               transport: 'ws',
@@ -1262,8 +1304,32 @@ export async function startCodexProxy(
             provider: route.providerId ?? 'relay', routeModel: route.modelId,
             upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
           });
+          completedExternalResponse.current = undefined;
           try {
-            const routedBody = await prepareExternalCodexBody(body, {
+            const previousResponseId = typeof body.previous_response_id === 'string'
+              ? body.previous_response_id
+              : undefined;
+            const previousInput = previousResponseId
+              ? externalResponseStates.get(previousResponseId)
+              : undefined;
+            if (
+              previousResponseId
+              && !previousInput
+              && responsesInputNeedsPreviousState(body.input)
+            ) {
+              writeResponsesErrorStream(
+                modelId,
+                'Unknown or expired previous_response_id for tool continuation',
+                sendWsEvent,
+                400,
+              );
+              externalActive = false;
+              return;
+            }
+            const continuedBody = previousInput
+              ? { ...body, input: [...previousInput, ...responsesInputItems(body.input)] }
+              : body;
+            const routedBody = await prepareExternalCodexBody(continuedBody, {
               relay: nativePayloadRelay,
               mixedNative,
               headers: req.headers,
@@ -1313,6 +1379,23 @@ export async function startCodexProxy(
                 log(`WS response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
               }
             });
+            const completed = readCompletedExternalResponse();
+            if (
+              completed?.status === 'completed'
+              && typeof completed.id === 'string'
+              && Array.isArray(completed.output)
+            ) {
+              externalResponseStates.set(completed.id, [
+                ...responsesInputItems(routedBody.input),
+                ...completed.output,
+              ]);
+              if (previousResponseId) externalResponseStates.delete(previousResponseId);
+              while (externalResponseStates.size > MAX_EXTERNAL_RESPONSE_STATES_PER_SOCKET) {
+                const oldest = externalResponseStates.keys().next().value;
+                if (typeof oldest !== 'string') break;
+                externalResponseStates.delete(oldest);
+              }
+            }
             audit({
               transport: 'ws', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
               provider: route.providerId ?? 'relay', routeModel: route.modelId,

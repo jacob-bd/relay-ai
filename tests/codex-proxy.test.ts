@@ -18,6 +18,60 @@ import { buildCompactionResponseBody, type CodexSdkCallParams } from '../src/cod
 import { CODEX_APP_AUTO_COMPACT_RATIO } from '../src/codex/app-profile.js';
 import { WebSocket, WebSocketServer } from 'ws';
 
+function openAiCompatibleTextStream(id: string, text: string, created: number): string {
+  return [
+    `data: ${JSON.stringify({
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model: 'relay-upstream',
+      choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }],
+    })}`,
+    `data: ${JSON.stringify({
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model: 'relay-upstream',
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+    })}`,
+    'data: [DONE]',
+    '',
+  ].join('\n\n');
+}
+
+function openAiCompatibleToolStream(id: string, callId: string): string {
+  return [
+    `data: ${JSON.stringify({
+      id,
+      object: 'chat.completion.chunk',
+      created: 1,
+      model: 'relay-upstream',
+      choices: [{
+        index: 0,
+        delta: {
+          role: 'assistant',
+          tool_calls: [{
+            index: 0,
+            id: callId,
+            type: 'function',
+            function: { name: 'run_shell', arguments: '{"command":"pwd"}' },
+          }],
+        },
+        finish_reason: null,
+      }],
+    })}`,
+    `data: ${JSON.stringify({
+      id,
+      object: 'chat.completion.chunk',
+      created: 1,
+      model: 'relay-upstream',
+      choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+    })}`,
+    'data: [DONE]',
+    '',
+  ].join('\n\n');
+}
+
 describe('external Codex runtime identity', () => {
   it('distinguishes the selected external model from the Codex host', () => {
     const params = applyExternalCodexRuntimeIdentity({
@@ -520,6 +574,202 @@ describe('startCodexProxy', () => {
       expect(providerCalls).toBe(1);
     } finally {
       releaseFirst();
+      await new Promise<void>(resolve => provider.close(() => resolve()));
+    }
+  });
+
+  it('continues an external tool turn from previous_response_id and function_call_output', async () => {
+    const providerBodies: Array<{ messages?: Array<{ role?: string }> }> = [];
+    const provider = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      req.once('end', () => {
+        providerBodies.push(JSON.parse(Buffer.concat(chunks).toString('utf8')) as { messages?: Array<{ role?: string }> });
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        if (providerBodies.length === 1) {
+          res.end(openAiCompatibleToolStream('chatcmpl-tool', 'provider-call-1'));
+        } else {
+          res.end(openAiCompatibleTextStream('chatcmpl-final', 'FINAL_TOOL_OK', 2));
+        }
+      });
+    });
+    const providerPort = await new Promise<number>(resolve => {
+      provider.listen(0, '127.0.0.1', () => resolve((provider.address() as { port: number }).port));
+    });
+
+    handle = await startCodexProxy([{
+      modelId: 'provider__relay-model',
+      npm: '@ai-sdk/openai-compatible',
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${providerPort}/v1`,
+      upstreamModelId: 'relay-upstream',
+      providerId: 'provider',
+    }], { requireAuth: false });
+
+    const tools = [{
+      type: 'function',
+      name: 'run_shell',
+      description: 'Run one shell command',
+      parameters: {
+        type: 'object',
+        properties: { command: { type: 'string' } },
+        required: ['command'],
+        additionalProperties: false,
+      },
+      strict: true,
+    }];
+
+    try {
+      const finalText = await new Promise<string>((resolve, reject) => {
+        const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/v1/responses`);
+        const timer = setTimeout(() => {
+          client.close();
+          reject(new Error('timed out waiting for external post-tool continuation'));
+        }, 5000);
+        let responseCount = 0;
+        client.on('open', () => {
+          client.send(JSON.stringify({
+            type: 'response.create',
+            model: 'provider__relay-model',
+            input: 'Run pwd, then report completion.',
+            tools,
+            stream: true,
+          }));
+        });
+        client.on('message', data => {
+          const event = JSON.parse(data.toString()) as {
+            type?: string;
+            response?: {
+              id?: string;
+              output?: Array<{
+                type?: string;
+                call_id?: string;
+                content?: Array<{ type?: string; text?: string }>;
+              }>;
+            };
+          };
+          if (event.type !== 'response.completed') return;
+          responseCount += 1;
+          if (responseCount === 1) {
+            const call = event.response?.output?.find(item => item.type === 'function_call');
+            if (!event.response?.id || !call?.call_id) {
+              client.close();
+              reject(new Error('first response did not contain a callable function result'));
+              return;
+            }
+            client.send(JSON.stringify({
+              type: 'response.create',
+              model: 'provider__relay-model',
+              previous_response_id: event.response.id,
+              input: [{ type: 'function_call_output', call_id: call.call_id, output: '/tmp/project' }],
+              tools,
+              stream: true,
+            }));
+            return;
+          }
+          const message = event.response?.output?.find(item => item.type === 'message');
+          const text = message?.content?.find(part => part.type === 'output_text')?.text ?? '';
+          clearTimeout(timer);
+          client.close();
+          resolve(text);
+        });
+        client.on('error', reject);
+      });
+
+      expect(finalText).toBe('FINAL_TOOL_OK');
+      expect(providerBodies).toHaveLength(2);
+      expect(providerBodies[1]?.messages?.map(message => message.role).slice(-3)).toEqual([
+        'user',
+        'assistant',
+        'tool',
+      ]);
+    } finally {
+      await new Promise<void>(resolve => provider.close(() => resolve()));
+    }
+  });
+
+  it('rejects an unknown previous_response_id without contacting the provider', async () => {
+    let providerCalls = 0;
+    const provider = createServer((req, res) => {
+      providerCalls += 1;
+      req.resume();
+      req.once('end', () => {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.end(openAiCompatibleTextStream('chatcmpl-standalone', 'STANDALONE_OK', 1));
+      });
+    });
+    const providerPort = await new Promise<number>(resolve => {
+      provider.listen(0, '127.0.0.1', () => resolve((provider.address() as { port: number }).port));
+    });
+
+    handle = await startCodexProxy([{
+      modelId: 'provider__relay-model',
+      npm: '@ai-sdk/openai-compatible',
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${providerPort}/v1`,
+      upstreamModelId: 'relay-upstream',
+      providerId: 'provider',
+    }], { requireAuth: false });
+
+    try {
+      const status = await new Promise<string>((resolve, reject) => {
+        const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/v1/responses`);
+        const timer = setTimeout(() => {
+          client.close();
+          reject(new Error('timed out waiting for unknown previous_response_id rejection'));
+        }, 5000);
+        client.on('open', () => {
+          client.send(JSON.stringify({
+            type: 'response.create',
+            model: 'provider__relay-model',
+            previous_response_id: 'resp_missing',
+            input: [{ type: 'function_call_output', call_id: 'call_missing', output: 'result' }],
+            stream: true,
+          }));
+        });
+        client.on('message', data => {
+          const event = JSON.parse(data.toString()) as {
+            type?: string;
+            response?: { status?: string };
+          };
+          if (event.type !== 'response.completed') return;
+          clearTimeout(timer);
+          client.close();
+          resolve(event.response?.status ?? 'unknown');
+        });
+        client.on('error', reject);
+      });
+
+      expect(status).toBe('failed');
+      expect(providerCalls).toBe(0);
+
+      const standaloneText = await new Promise<string>((resolve, reject) => {
+        const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/v1/responses`);
+        client.on('open', () => {
+          client.send(JSON.stringify({
+            type: 'response.create',
+            model: 'provider__relay-model',
+            previous_response_id: 'resp_missing',
+            input: 'Start a self-contained turn.',
+            stream: true,
+          }));
+        });
+        client.on('message', data => {
+          const event = JSON.parse(data.toString()) as {
+            type?: string;
+            response?: { output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }> };
+          };
+          if (event.type !== 'response.completed') return;
+          const message = event.response?.output?.find(item => item.type === 'message');
+          const text = message?.content?.find(part => part.type === 'output_text')?.text ?? '';
+          client.close();
+          resolve(text);
+        });
+        client.on('error', reject);
+      });
+      expect(standaloneText).toBe('STANDALONE_OK');
+      expect(providerCalls).toBe(1);
+    } finally {
       await new Promise<void>(resolve => provider.close(() => resolve()));
     }
   });
