@@ -84,6 +84,7 @@ import {
   getCodexProxyDebugLogPath,
   getConfigPath,
   getGeminiProxyDebugLogPath,
+  getLogsPath,
   getProvidersPath,
   getProxyDebugLogPath,
   getReasoningCapabilities,
@@ -197,7 +198,7 @@ import {
   validateCustomEndpointUrl,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-SCW2TYSG.js";
+} from "./chunk-OIYXDMMG.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -1295,7 +1296,7 @@ ${pc4.bold("Subcommands:")}
   (none)      Provider hub wizard ${pc4.dim("[Phase 1.1]")}
   add         Add a provider (Groq, Mistral, Together AI, \u2026) ${pc4.dim("[Phase 1.1]")}
   import      Optional one-time import from OpenCode CLI ${pc4.dim("[Phase 1.0]")}
-  auth        Sign in with OAuth (GitHub Copilot, xAI, OpenAI, ClinePass)
+  auth        Sign in with OAuth (Antigravity, GitHub Copilot, xAI, OpenAI, ClinePass)
   list        Show configured providers ${pc4.dim("[Phase 1.0]")}
   remove      Remove a provider by id ${pc4.dim("[Phase 1.1]")}
   refresh-models  Update cached model lists ${pc4.dim("[Phase 1.2]")}`;
@@ -2233,7 +2234,7 @@ async function runProvidersCommand(args) {
 // src/codex.ts
 import pc7 from "picocolors";
 import * as p8 from "@clack/prompts";
-import { join as join5 } from "path";
+import { join as join6 } from "path";
 
 // src/codex-proxy.ts
 import { createHash as createHash2 } from "crypto";
@@ -3770,6 +3771,53 @@ async function resolveRoutedCollaborationInput(input, context) {
   return normalizePlaintextCollaborationForExternal(out);
 }
 
+// src/codex/route-audit.ts
+import { chmodSync, mkdirSync, writeFileSync } from "fs";
+import { join as join2 } from "path";
+var DIR_MODE = 448;
+var FILE_MODE = 384;
+var CODEX_ROUTE_AUDIT_LOG = "codex-route-audit.jsonl";
+function safeIdentifier(value) {
+  if (value === void 0) return void 0;
+  return value.replace(/[\u0000-\u001f\u007f]/g, "_").slice(0, 300);
+}
+function sanitizeCodexRouteAuditEvent(event) {
+  return {
+    ts: (/* @__PURE__ */ new Date()).toISOString(),
+    transport: event.transport,
+    requestedModel: safeIdentifier(event.requestedModel),
+    dispatch: event.dispatch,
+    phase: event.phase,
+    ...event.provider ? { provider: safeIdentifier(event.provider) } : {},
+    ...event.routeModel ? { routeModel: safeIdentifier(event.routeModel) } : {},
+    ...event.upstreamModel ? { upstreamModel: safeIdentifier(event.upstreamModel) } : {},
+    ...event.outcome ? { outcome: event.outcome } : {},
+    ...event.status !== void 0 ? { status: typeof event.status === "string" ? safeIdentifier(event.status) : event.status } : {}
+  };
+}
+function getCodexRouteAuditLogPath() {
+  const dir = getLogsPath();
+  mkdirSync(dir, { recursive: true, mode: DIR_MODE });
+  try {
+    chmodSync(dir, DIR_MODE);
+  } catch {
+  }
+  return join2(dir, CODEX_ROUTE_AUDIT_LOG);
+}
+function prepareCodexRouteAuditLog(path3 = getCodexRouteAuditLogPath()) {
+  writeFileSync(path3, "", { mode: FILE_MODE });
+  chmodSync(path3, FILE_MODE);
+  return path3;
+}
+function appendCodexRouteAudit(path3, event) {
+  try {
+    writeFileSync(path3, `${JSON.stringify(sanitizeCodexRouteAuditEvent(event))}
+`, { flag: "a", mode: FILE_MODE });
+    chmodSync(path3, FILE_MODE);
+  } catch {
+  }
+}
+
 // src/codex-proxy.ts
 function captureCompletedResponse(sseText) {
   if (!sseText.includes("response.completed")) return void 0;
@@ -3980,11 +4028,32 @@ async function prepareExternalCodexBody(body, context) {
   );
   return { ...externalBody, input: resolvedInput };
 }
+function applyExternalCodexRuntimeIdentity(params, route) {
+  const selectedModel = route.auditUpstreamModelId ?? route.upstreamModelId ?? route.modelId;
+  const provider = route.providerId ?? "relay";
+  const identity = [
+    "<external-model-identity>",
+    `The selected model for this turn is ${JSON.stringify(selectedModel)} through provider ${JSON.stringify(provider)}.`,
+    "Codex is the host application and agent environment, not the model identity.",
+    "Follow Codex host and tool instructions normally, but do not infer that you are an OpenAI or GPT model from host names, tool names, documentation, or conversation context.",
+    "If asked what model you are, report the selected model and provider above; do not use self-identification as evidence of the network route.",
+    "</external-model-identity>"
+  ].join("\n");
+  return {
+    ...params,
+    system: params.system?.trim() ? `${identity}
+
+${params.system}` : identity
+  };
+}
 async function startCodexProxy(routes, options = {}) {
   const opts = typeof options === "boolean" ? { debug: options } : options;
   const debug = opts.debug ?? false;
   const requireAuth = opts.requireAuth ?? true;
   const mixedNative = opts.mixedNative;
+  const audit = (event) => {
+    if (opts.routeAuditPath) appendCodexRouteAudit(opts.routeAuditPath, event);
+  };
   const nativePayloadRelay = mixedNative ? createNativePayloadRelay({}) : void 0;
   silenceSdkWarnings();
   const models = /* @__PURE__ */ new Map();
@@ -4158,6 +4227,7 @@ async function startCodexProxy(routes, options = {}) {
           log14(`subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? "(none)"}`);
         }
         if (mixedNative && markedSubagent && !subagentRoute) {
+          audit({ transport: "http", requestedModel: modelId, dispatch: "relay-subagent", phase: "complete", outcome: "error", status: 503 });
           sendJson(res, 503, {
             error: {
               message: "Codex marked this request as a Sub-agent, but no configured Codex Sub-agent route is available.",
@@ -4170,10 +4240,20 @@ async function startCodexProxy(routes, options = {}) {
           if (!markedSubagent) {
             const dispatch = classifyCodexDispatch(modelId, routes, mixedNative.nativeModelIds);
             if (dispatch.kind === "unknown") {
+              audit({ transport: "http", requestedModel: modelId, dispatch: "unknown", phase: "complete", outcome: "error", status: 404 });
               sendJson(res, 404, { error: { message: `Unknown model: ${modelId}`, type: "invalid_request_error" } });
               return;
             }
             if (dispatch.kind === "native") {
+              audit({
+                transport: "http",
+                requestedModel: modelId,
+                dispatch: "native",
+                phase: "dispatch",
+                provider: "openai-native",
+                routeModel: modelId,
+                upstreamModel: modelId
+              });
               const controller = new AbortController();
               req.once("aborted", () => controller.abort());
               try {
@@ -4187,7 +4267,29 @@ async function startCodexProxy(routes, options = {}) {
                 const contentType = nativeResponse.headers.get("content-type");
                 res.writeHead(nativeResponse.status, contentType ? { "content-type": contentType } : void 0);
                 res.end(Buffer.from(await nativeResponse.arrayBuffer()));
+                audit({
+                  transport: "http",
+                  requestedModel: modelId,
+                  dispatch: "native",
+                  phase: "complete",
+                  provider: "openai-native",
+                  routeModel: modelId,
+                  upstreamModel: modelId,
+                  outcome: nativeResponse.ok ? "ok" : "error",
+                  status: nativeResponse.status
+                });
               } catch (err) {
+                audit({
+                  transport: "http",
+                  requestedModel: modelId,
+                  dispatch: "native",
+                  phase: "complete",
+                  provider: "openai-native",
+                  routeModel: modelId,
+                  upstreamModel: modelId,
+                  outcome: "error",
+                  status: "forward-failed"
+                });
                 if (!res.writableEnded) sendJson(res, 502, { error: { message: "Native Codex request failed", type: "upstream_error" } });
               }
               return;
@@ -4212,13 +4314,23 @@ async function startCodexProxy(routes, options = {}) {
           }
         }
         const { route, languageModel } = resolved;
+        const relayDispatch = markedSubagent ? "relay-subagent" : "relay";
+        audit({
+          transport: "http",
+          requestedModel: modelId,
+          dispatch: relayDispatch,
+          phase: "dispatch",
+          provider: route.providerId ?? "relay",
+          routeModel: route.modelId,
+          upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId
+        });
         try {
           const routedBody = await prepareExternalCodexBody(body, {
             relay: nativePayloadRelay,
             mixedNative,
             headers: req.headers
           });
-          let params = applyClaudeCodeOAuthIdentity(route, translateResponsesRequest(
+          let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
             routedBody,
             route.npm,
             {
@@ -4230,7 +4342,7 @@ async function startCodexProxy(routes, options = {}) {
               upstreamModelId: route.upstreamModelId
             },
             { maxTools: maxToolsForNpm(route.npm) }
-          ));
+          ), route));
           if (route.contextWindow && route.contextWindow > 0) {
             const before = params.messages.length;
             const estimatedChars = estimateCodexRequestChars(params);
@@ -4285,9 +4397,31 @@ async function startCodexProxy(routes, options = {}) {
                     log14(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
                   }
                 });
+              audit({
+                transport: "http",
+                requestedModel: modelId,
+                dispatch: relayDispatch,
+                phase: "complete",
+                provider: route.providerId ?? "relay",
+                routeModel: route.modelId,
+                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+                outcome: "ok",
+                status: 200
+              });
             } catch (err) {
               const msg = formatUpstreamError(err);
               const status = upstreamHttpStatus(err, msg);
+              audit({
+                transport: "http",
+                requestedModel: modelId,
+                dispatch: relayDispatch,
+                phase: "complete",
+                provider: route.providerId ?? "relay",
+                routeModel: route.modelId,
+                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+                outcome: "error",
+                status
+              });
               if (debug) log14(`sdk error: ${route.modelId}: ${msg}`);
               if (status === 429) {
                 writeResponsesRateLimitStream(modelId, msg, write);
@@ -4309,9 +4443,31 @@ async function startCodexProxy(routes, options = {}) {
                 });
               }
               sendJson(res, 200, response);
+              audit({
+                transport: "http",
+                requestedModel: modelId,
+                dispatch: relayDispatch,
+                phase: "complete",
+                provider: route.providerId ?? "relay",
+                routeModel: route.modelId,
+                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+                outcome: "ok",
+                status: 200
+              });
             } catch (err) {
               const msg = formatUpstreamError(err);
               const status = upstreamHttpStatus(err, msg);
+              audit({
+                transport: "http",
+                requestedModel: modelId,
+                dispatch: relayDispatch,
+                phase: "complete",
+                provider: route.providerId ?? "relay",
+                routeModel: route.modelId,
+                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+                outcome: "error",
+                status
+              });
               if (debug) log14(`sdk error: ${route.modelId}: ${msg}`);
               if (status === 429) {
                 sendJson(res, 200, responsesRateLimitBody(modelId, msg));
@@ -4531,6 +4687,7 @@ data: ${JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_reques
             log14(`WS subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? "(none)"}`);
           }
           if (mixedNative && markedSubagent && !subagentRoute) {
+            audit({ transport: "ws", requestedModel: modelId, dispatch: "relay-subagent", phase: "complete", outcome: "error", status: 503 });
             sendWsEvent(`event: error
 data: ${JSON.stringify({ error: {
               message: "Codex marked this request as a Sub-agent, but no configured Codex Sub-agent route is available.",
@@ -4545,6 +4702,7 @@ data: ${JSON.stringify({ error: {
             if (!markedSubagent) {
               const dispatch = classifyCodexDispatch(modelId, routes, mixedNative.nativeModelIds);
               if (dispatch.kind === "unknown") {
+                audit({ transport: "ws", requestedModel: modelId, dispatch: "unknown", phase: "complete", outcome: "error", status: 404 });
                 sendWsEvent(`event: error
 data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "invalid_request_error" } })}
 
@@ -4553,6 +4711,15 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "i
                 return;
               }
               if (dispatch.kind === "native") {
+                audit({
+                  transport: "ws",
+                  requestedModel: modelId,
+                  dispatch: "native",
+                  phase: "dispatch",
+                  provider: "openai-native",
+                  routeModel: modelId,
+                  upstreamModel: modelId
+                });
                 const nativeBody = prepareNativeCodexBody(body);
                 if (debug && nativeBody !== body) {
                   log14(`WS native history normalized: model=${modelId} converted Relay compaction for native verification`);
@@ -4595,6 +4762,19 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "i
                   if (debug && message) {
                     log14(`WS native upstream failed: model=${modelId} opened=${nativeOpened} frames=${nativeFrameCount} message=${message}`);
                   }
+                  if (message && !nativeCompleted) {
+                    audit({
+                      transport: "ws",
+                      requestedModel: modelId,
+                      dispatch: "native",
+                      phase: "complete",
+                      provider: "openai-native",
+                      routeModel: modelId,
+                      upstreamModel: modelId,
+                      outcome: "error",
+                      status: "upstream-failed"
+                    });
+                  }
                   if (message && !nativeCompleted) sendNativeError(message);
                   try {
                     upstream?.close();
@@ -4633,6 +4813,17 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "i
                       if (typeof parsed.type === "string") eventType = parsed.type;
                       if (eventType === "response.completed" || eventType === "response.failed" || eventType === "response.incomplete") {
                         nativeCompleted = true;
+                        audit({
+                          transport: "ws",
+                          requestedModel: modelId,
+                          dispatch: "native",
+                          phase: "complete",
+                          provider: "openai-native",
+                          routeModel: modelId,
+                          upstreamModel: modelId,
+                          outcome: eventType === "response.completed" ? "ok" : "error",
+                          status: eventType
+                        });
                       }
                     } catch {
                     }
@@ -4685,13 +4876,23 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
             }
           }
           const { route, languageModel } = resolved;
+          const relayDispatch = markedSubagent ? "relay-subagent" : "relay";
+          audit({
+            transport: "ws",
+            requestedModel: modelId,
+            dispatch: relayDispatch,
+            phase: "dispatch",
+            provider: route.providerId ?? "relay",
+            routeModel: route.modelId,
+            upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId
+          });
           try {
             const routedBody = await prepareExternalCodexBody(body, {
               relay: nativePayloadRelay,
               mixedNative,
               headers: req.headers
             });
-            let params = applyClaudeCodeOAuthIdentity(route, translateResponsesRequest(
+            let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
               routedBody,
               route.npm,
               {
@@ -4703,7 +4904,7 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
                 upstreamModelId: route.upstreamModelId
               },
               { maxTools: maxToolsForNpm(route.npm) }
-            ));
+            ), route));
             if (route.contextWindow && route.contextWindow > 0) {
               const before = params.messages.length;
               const estimatedChars = estimateCodexRequestChars(params);
@@ -4736,9 +4937,31 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
                   log14(`WS response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
                 }
               });
+            audit({
+              transport: "ws",
+              requestedModel: modelId,
+              dispatch: relayDispatch,
+              phase: "complete",
+              provider: route.providerId ?? "relay",
+              routeModel: route.modelId,
+              upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+              outcome: "ok",
+              status: "response.completed"
+            });
           } catch (err) {
             const msg = formatUpstreamError(err);
             const status = upstreamHttpStatus(err, msg);
+            audit({
+              transport: "ws",
+              requestedModel: modelId,
+              dispatch: relayDispatch,
+              phase: "complete",
+              provider: route.providerId ?? "relay",
+              routeModel: route.modelId,
+              upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+              outcome: "error",
+              status
+            });
             if (debug) log14(`WS sdk error: ${route.modelId}: ${msg}`);
             if (status === 429) {
               writeResponsesRateLimitStream(modelId, msg, sendWsEvent);
@@ -4774,44 +4997,44 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
 }
 
 // src/codex/profile.ts
-import { join as join3 } from "path";
+import { join as join4 } from "path";
 
 // src/codex/session.ts
 import {
   copyFileSync,
-  chmodSync,
+  chmodSync as chmodSync2,
   existsSync as existsSync3,
-  mkdirSync,
+  mkdirSync as mkdirSync2,
   readdirSync,
   readFileSync as readFileSync2,
   renameSync,
   rmSync,
   statSync,
   unlinkSync,
-  writeFileSync
+  writeFileSync as writeFileSync2
 } from "fs";
 import { homedir as homedir3 } from "os";
-import { basename, dirname, join as join2 } from "path";
+import { basename, dirname, join as join3 } from "path";
 var CODEX_PROFILE_NAME = "relay-ai-launch";
 var STALE_SESSION_MS = 5 * 60 * 1e3;
 var MAX_BACKUPS = 5;
 function getCodexHome(env = process.env) {
-  return env["CODEX_HOME"] || join2(homedir3(), ".codex");
+  return env["CODEX_HOME"] || join3(homedir3(), ".codex");
 }
 function getCodexProfilePath() {
-  return join2(getCodexHome(), `${CODEX_PROFILE_NAME}.config.toml`);
+  return join3(getCodexHome(), `${CODEX_PROFILE_NAME}.config.toml`);
 }
 function getRelayAiCodexDir(env = process.env) {
-  return join2(getAppHome(env), "codex");
+  return join3(getAppHome(env), "codex");
 }
 function getSessionLockPath(env = process.env) {
-  return join2(getRelayAiCodexDir(env), "session.json");
+  return join3(getRelayAiCodexDir(env), "session.json");
 }
 function getBackupsDir(env = process.env) {
-  return join2(getRelayAiCodexDir(env), "backups");
+  return join3(getRelayAiCodexDir(env), "backups");
 }
 function getCatalogPath(providerId, env = process.env) {
-  return join2(getRelayAiCodexDir(env), `models-${providerId}.json`);
+  return join3(getRelayAiCodexDir(env), `models-${providerId}.json`);
 }
 function ownedOverlayPaths(env = process.env) {
   const paths = [getCodexProfilePath()];
@@ -4819,15 +5042,15 @@ function ownedOverlayPaths(env = process.env) {
   if (existsSync3(codexDir)) {
     for (const name of readdirSync(codexDir)) {
       if (name.startsWith("models-") && name.endsWith(".json")) {
-        paths.push(join2(codexDir, name));
+        paths.push(join3(codexDir, name));
       }
     }
   }
-  const agentsDir = join2(getCodexHome(env), "agents");
+  const agentsDir = join3(getCodexHome(env), "agents");
   if (existsSync3(agentsDir)) {
     for (const name of readdirSync(agentsDir)) {
       if (/^relay-model-[a-z0-9-]+\.toml$/i.test(name)) {
-        paths.push(join2(agentsDir, name));
+        paths.push(join3(agentsDir, name));
       }
     }
   }
@@ -4835,27 +5058,27 @@ function ownedOverlayPaths(env = process.env) {
   return paths;
 }
 function atomicWriteFile(path3, content) {
-  mkdirSync(dirname(path3), { recursive: true });
+  mkdirSync2(dirname(path3), { recursive: true });
   const tmp = `${path3}.tmp.${process.pid}`;
-  writeFileSync(tmp, content, { encoding: "utf8", mode: 384 });
+  writeFileSync2(tmp, content, { encoding: "utf8", mode: 384 });
   renameSync(tmp, path3);
   try {
-    chmodSync(path3, 384);
+    chmodSync2(path3, 384);
   } catch {
   }
 }
 function rotateBackups(filePath, env = process.env) {
   if (!existsSync3(filePath)) return;
   const backupsDir = getBackupsDir(env);
-  mkdirSync(backupsDir, { recursive: true });
+  mkdirSync2(backupsDir, { recursive: true });
   const base = basename(filePath);
   const stamp = Date.now();
-  const backupPath = join2(backupsDir, `${base}.${stamp}.bak`);
+  const backupPath = join3(backupsDir, `${base}.${stamp}.bak`);
   copyFileSync(filePath, backupPath);
-  const backups = readdirSync(backupsDir).filter((n) => n.startsWith(`${base}.`) && n.endsWith(".bak")).map((n) => ({ name: n, mtime: statSync(join2(backupsDir, n)).mtimeMs })).sort((a, b) => b.mtime - a.mtime);
+  const backups = readdirSync(backupsDir).filter((n) => n.startsWith(`${base}.`) && n.endsWith(".bak")).map((n) => ({ name: n, mtime: statSync(join3(backupsDir, n)).mtimeMs })).sort((a, b) => b.mtime - a.mtime);
   for (const old of backups.slice(MAX_BACKUPS)) {
     try {
-      unlinkSync(join2(backupsDir, old.name));
+      unlinkSync(join3(backupsDir, old.name));
     } catch {
     }
   }
@@ -4876,7 +5099,7 @@ function readSessionLock(env = process.env) {
 }
 function writeSessionLock(lock, env = process.env) {
   const path3 = getSessionLockPath(env);
-  mkdirSync(getRelayAiCodexDir(env), { recursive: true });
+  mkdirSync2(getRelayAiCodexDir(env), { recursive: true });
   atomicWriteFile(path3, `${JSON.stringify(lock, null, 2)}
 `);
 }
@@ -4999,10 +5222,10 @@ function getCatalogOutputPath(providerId) {
   return getCatalogPath(providerId);
 }
 function getFavoritesCatalogPath() {
-  return join3(getRelayAiCodexDir(), "models-favorites.json");
+  return join4(getRelayAiCodexDir(), "models-favorites.json");
 }
 function getFavoritesAppCatalogPath() {
-  return join3(getRelayAiCodexDir(), "app-models-favorites.json");
+  return join4(getRelayAiCodexDir(), "app-models-favorites.json");
 }
 function profileName() {
   return CODEX_PROFILE_NAME;
@@ -5013,7 +5236,7 @@ import { execSync as execSync2 } from "child_process";
 import spawn2 from "cross-spawn";
 import { existsSync as existsSync4 } from "fs";
 import { homedir as homedir4 } from "os";
-import { join as join4 } from "path";
+import { join as join5 } from "path";
 var isWindows2 = process.platform === "win32";
 var CODEX_CI_ENV_VARS = [
   "CI",
@@ -5034,11 +5257,11 @@ function stripCodexInheritedEnv(env) {
   return out;
 }
 var CODEX_FALLBACK_PATHS = isWindows2 ? [
-  join4(process.env["APPDATA"] ?? homedir4(), "npm", "codex.cmd"),
-  join4(process.env["APPDATA"] ?? homedir4(), "npm", "codex")
+  join5(process.env["APPDATA"] ?? homedir4(), "npm", "codex.cmd"),
+  join5(process.env["APPDATA"] ?? homedir4(), "npm", "codex")
 ] : [
-  join4(homedir4(), ".local", "bin", "codex"),
-  join4(homedir4(), ".npm", "bin", "codex"),
+  join5(homedir4(), ".local", "bin", "codex"),
+  join5(homedir4(), ".npm", "bin", "codex"),
   "/usr/local/bin/codex",
   "/opt/homebrew/bin/codex"
 ];
@@ -5541,7 +5764,8 @@ async function resolveCodexMixedModels(input) {
     subagents: subagentResult.resolved,
     all,
     providersById: new Map(input.compatible.map((provider) => [provider.id, provider])),
-    dropped: [...visibleResult.droppedFavorites, ...subagentResult.droppedFavorites]
+    dropped: [...visibleResult.droppedFavorites, ...subagentResult.droppedFavorites],
+    capacitySkipped: [...visibleResult.capacitySkippedFavorites, ...subagentResult.capacitySkippedFavorites]
   };
 }
 
@@ -5741,6 +5965,7 @@ async function prepareCodexMixedRelayRoutes(models, trace = false) {
         apiKey: backend.token,
         baseURL: `http://127.0.0.1:${backend.port}`,
         upstreamModelId: proxyRoute.aliasId,
+        auditUpstreamModelId: original.model.upstreamModelId || original.model.id,
         providerId: original.providerId,
         authType: "oauth",
         oauthAccountId: original.oauthAccountId,
@@ -6071,7 +6296,7 @@ async function writeFavoritesLaunchArtifacts(resolved, starting, proxyPort) {
   return { profilePath, catalogPath };
 }
 async function writeMixedLaunchArtifacts(plan, proxyPort) {
-  const catalogPath = join5(getRelayAiCodexDir(), "models-mixed.json");
+  const catalogPath = join6(getRelayAiCodexDir(), "models-mixed.json");
   writeOverlayFile(catalogPath, serializeCatalog(plan.catalog));
   const profilePath = getProfileOutputPath();
   writeOverlayFile(profilePath, buildCodexMixedProfileToml({
@@ -6656,17 +6881,17 @@ import * as p10 from "@clack/prompts";
 
 // src/gemini/launch.ts
 import { spawn as spawn3 } from "child_process";
-import { existsSync as existsSync5, mkdirSync as mkdirSync2, mkdtempSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "fs";
+import { existsSync as existsSync5, mkdirSync as mkdirSync3, mkdtempSync, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "fs";
 import { homedir as homedir5, tmpdir } from "os";
-import { join as join6 } from "path";
+import { join as join7 } from "path";
 var isWindows3 = process.platform === "win32";
 var GEMINI_API_KEY_AUTH_TYPE = "gemini-api-key";
 var GEMINI_FALLBACK_PATHS = isWindows3 ? [
-  join6(process.env["APPDATA"] ?? homedir5(), "npm", "gemini.cmd"),
-  join6(process.env["APPDATA"] ?? homedir5(), "npm", "gemini")
+  join7(process.env["APPDATA"] ?? homedir5(), "npm", "gemini.cmd"),
+  join7(process.env["APPDATA"] ?? homedir5(), "npm", "gemini")
 ] : [
-  join6(homedir5(), ".local", "bin", "gemini"),
-  join6(homedir5(), ".npm", "bin", "gemini"),
+  join7(homedir5(), ".local", "bin", "gemini"),
+  join7(homedir5(), ".npm", "bin", "gemini"),
   "/usr/local/bin/gemini",
   "/opt/homebrew/bin/gemini"
 ];
@@ -6687,7 +6912,7 @@ function buildGeminiChildEnv(proxyPort, proxyToken) {
   return env;
 }
 function createGeminiCliHomeOverlay() {
-  const cliHome = mkdtempSync(join6(tmpdir(), "relay-ai-gemini-"));
+  const cliHome = mkdtempSync(join7(tmpdir(), "relay-ai-gemini-"));
   const settings = {
     security: {
       auth: {
@@ -6695,9 +6920,9 @@ function createGeminiCliHomeOverlay() {
       }
     }
   };
-  const geminiDir = join6(cliHome, ".gemini");
-  mkdirSync2(geminiDir);
-  writeFileSync2(join6(geminiDir, "settings.json"), `${JSON.stringify(settings, null, 2)}
+  const geminiDir = join7(cliHome, ".gemini");
+  mkdirSync3(geminiDir);
+  writeFileSync3(join7(geminiDir, "settings.json"), `${JSON.stringify(settings, null, 2)}
 `, {
     encoding: "utf8",
     mode: 384
@@ -9939,15 +10164,15 @@ import { execFileSync, execSync as execSync3 } from "child_process";
 import spawn4 from "cross-spawn";
 import { existsSync as existsSync6 } from "fs";
 import { homedir as homedir6 } from "os";
-import { join as join7 } from "path";
+import { join as join8 } from "path";
 var isWindows4 = process.platform === "win32";
 var FALLBACK_PATHS = isWindows4 ? [
-  join7(process.env["APPDATA"] ?? homedir6(), "npm", "agy.cmd"),
-  join7(process.env["APPDATA"] ?? homedir6(), "npm", "agy"),
-  join7(homedir6(), "AppData", "Roaming", "npm", "agy.cmd")
+  join8(process.env["APPDATA"] ?? homedir6(), "npm", "agy.cmd"),
+  join8(process.env["APPDATA"] ?? homedir6(), "npm", "agy"),
+  join8(homedir6(), "AppData", "Roaming", "npm", "agy.cmd")
 ] : [
-  join7(homedir6(), ".local", "bin", "agy"),
-  join7(homedir6(), ".npm", "bin", "agy"),
+  join8(homedir6(), ".local", "bin", "agy"),
+  join8(homedir6(), ".npm", "bin", "agy"),
   "/usr/local/bin/agy",
   "/opt/homebrew/bin/agy"
 ];
@@ -10025,7 +10250,7 @@ function launchAntigravityCli(env, extraArgs) {
 import { execFileSync as execFileSync2, execSync as execSync4, spawn as spawn5 } from "child_process";
 import { existsSync as existsSync7 } from "fs";
 import { homedir as homedir7 } from "os";
-import { join as join8 } from "path";
+import { join as join9 } from "path";
 
 // src/antigravity/ide-profile.ts
 import fs from "fs";
@@ -10059,8 +10284,8 @@ function prepareIdeProfile(profileDir, gatewayUrl) {
 }
 
 // src/antigravity/launch-ide.ts
-var LINUX_APP_PROFILE_DIR = join8(homedir7(), ".relay-ai", "antigravity", "app-profile");
-var LINUX_IDE_PROFILE_DIR = join8(homedir7(), ".relay-ai", "antigravity", "profile");
+var LINUX_APP_PROFILE_DIR = join9(homedir7(), ".relay-ai", "antigravity", "app-profile");
+var LINUX_IDE_PROFILE_DIR = join9(homedir7(), ".relay-ai", "antigravity", "profile");
 function sleep(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
@@ -10068,7 +10293,7 @@ function linuxAntigravityBinary() {
   const candidates = [
     "/usr/share/antigravity/antigravity",
     "/opt/antigravity/antigravity",
-    join8(homedir7(), ".local", "share", "antigravity", "antigravity")
+    join9(homedir7(), ".local", "share", "antigravity", "antigravity")
   ];
   for (const candidate of candidates) {
     if (existsSync7(candidate)) return candidate;
@@ -10223,15 +10448,15 @@ function findAntigravityAppBinary() {
   const override = getAppPathOverride("antigravity");
   if (override) return existsSync7(override) ? override : null;
   if (process.platform === "win32") {
-    const localAppData = process.env["LOCALAPPDATA"] ?? join8(homedir7(), "AppData", "Local");
-    const winPath = join8(localAppData, "Programs", "Antigravity", "Antigravity.exe");
+    const localAppData = process.env["LOCALAPPDATA"] ?? join9(homedir7(), "AppData", "Local");
+    const winPath = join9(localAppData, "Programs", "Antigravity", "Antigravity.exe");
     return existsSync7(winPath) ? winPath : null;
   }
   if (process.platform === "linux") return linuxAntigravityBinary();
   if (process.platform !== "darwin") return null;
   const defaultPath = "/Applications/Antigravity.app/Contents/MacOS/Antigravity";
   if (existsSync7(defaultPath)) return defaultPath;
-  const homePath = join8(homedir7(), "Applications", "Antigravity.app", "Contents", "MacOS", "Antigravity");
+  const homePath = join9(homedir7(), "Applications", "Antigravity.app", "Contents", "MacOS", "Antigravity");
   if (existsSync7(homePath)) return homePath;
   return null;
 }
@@ -10239,15 +10464,15 @@ function findAntigravityIdeBinary() {
   const override = getAppPathOverride("antigravity-ide");
   if (override) return existsSync7(override) ? override : null;
   if (process.platform === "win32") {
-    const localAppData = process.env["LOCALAPPDATA"] ?? join8(homedir7(), "AppData", "Local");
-    const winPath = join8(localAppData, "Programs", "Antigravity IDE", "Antigravity IDE.exe");
+    const localAppData = process.env["LOCALAPPDATA"] ?? join9(homedir7(), "AppData", "Local");
+    const winPath = join9(localAppData, "Programs", "Antigravity IDE", "Antigravity IDE.exe");
     return existsSync7(winPath) ? winPath : null;
   }
   if (process.platform === "linux") return linuxAntigravityBinary();
   if (process.platform !== "darwin") return null;
   const defaultPath = "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide";
   if (existsSync7(defaultPath)) return defaultPath;
-  const homePath = join8(homedir7(), "Applications", "Antigravity IDE.app", "Contents", "Resources", "app", "bin", "antigravity-ide");
+  const homePath = join9(homedir7(), "Applications", "Antigravity IDE.app", "Contents", "Resources", "app", "bin", "antigravity-ide");
   if (existsSync7(homePath)) return homePath;
   return null;
 }
@@ -10308,7 +10533,7 @@ function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs) {
       return;
     }
     prepareIdeProfile(profileDir, gatewayUrl);
-    const relayExtensionsDir = join8(homedir7(), ".relay-ai", "antigravity", "extensions");
+    const relayExtensionsDir = join9(homedir7(), ".relay-ai", "antigravity", "extensions");
     const args = [
       `--user-data-dir=${profileDir}`,
       `--extensions-dir=${relayExtensionsDir}`,
@@ -10338,7 +10563,7 @@ function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs) {
 
 // src/antigravity.ts
 import { homedir as homedir8 } from "os";
-import { join as join9 } from "path";
+import { join as join10 } from "path";
 var SHUTDOWN_DRAIN_MS = 500;
 var AGY_FAVORITES_PROVIDER_ID = "__relay_agy_favorites__";
 var AGY_FAVORITES_PROVIDER_LABEL = "\u2605 Antigravity CLI Favorites";
@@ -10632,7 +10857,7 @@ async function runAntigravityAppCommand(childArgs, trace = false, boot) {
     trace,
     boot,
     async (env, _routes, gatewayHandle) => {
-      const profileDir = join9(homedir8(), ".relay-ai", "antigravity", "app-profile");
+      const profileDir = join10(homedir8(), ".relay-ai", "antigravity", "app-profile");
       if (isAntigravityAppRunning(profileDir)) {
         const restart = await p11.confirm({
           message: "Restart Antigravity to apply this Relay gateway?",
@@ -10680,7 +10905,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
     trace,
     boot,
     async (env, _routes, gatewayHandle) => {
-      const profileDir = join9(homedir8(), ".relay-ai", "antigravity", "profile");
+      const profileDir = join10(homedir8(), ".relay-ai", "antigravity", "profile");
       if (isAntigravityIdeRunning(profileDir)) {
         const restart = await p11.confirm({
           message: "Restart Antigravity IDE to apply this Relay gateway?",
@@ -10725,7 +10950,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
 // src/codex-app.ts
 import pc10 from "picocolors";
 import * as p12 from "@clack/prompts";
-import { join as join12 } from "path";
+import { join as join13 } from "path";
 
 // src/codex/app-provider-routes.ts
 function codexRouteToProxyRoute(provider, model, apiKey) {
@@ -10814,14 +11039,14 @@ async function buildCodexAppProviderCatalogRoutes(provider, apiKey, selectedMode
 }
 
 // src/codex/app-config.ts
-import { existsSync as existsSync8, readFileSync as readFileSync3, rmSync as rmSync3, writeFileSync as writeFileSync3, mkdirSync as mkdirSync3 } from "fs";
-import { dirname as dirname2, join as join10 } from "path";
+import { existsSync as existsSync8, readFileSync as readFileSync3, rmSync as rmSync3, writeFileSync as writeFileSync4, mkdirSync as mkdirSync4 } from "fs";
+import { dirname as dirname2, join as join11 } from "path";
 import { parse, stringify } from "smol-toml";
 function getCodexConfigPath() {
-  return join10(getCodexHome(), "config.toml");
+  return join11(getCodexHome(), "config.toml");
 }
 function getCodexAppSidecarProfilePath() {
-  return join10(getCodexHome(), `${CODEX_APP_PROVIDER_ID}.config.toml`);
+  return join11(getCodexHome(), `${CODEX_APP_PROVIDER_ID}.config.toml`);
 }
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -10996,8 +11221,13 @@ function applyAppConfigPatch(spec, configPath = getCodexConfigPath()) {
   const text5 = `${stringify(merged)}
 `;
   validateAppConfigText(text5, spec);
-  mkdirSync3(dirname2(configPath), { recursive: true });
-  writeFileSync3(configPath, text5, "utf8");
+  mkdirSync4(dirname2(configPath), { recursive: true });
+  atomicWriteFile(configPath, text5);
+  const written = readCodexConfigText(configPath);
+  if (written !== text5) {
+    throw new Error(`Codex config readback mismatch at ${configPath}`);
+  }
+  validateAppConfigText(written, spec);
   return text5;
 }
 function applyRestoreKey(config, key, had, value) {
@@ -11053,7 +11283,7 @@ function restoreConfigFromState(state, configPath = getCodexConfigPath()) {
     rmSync3(configPath, { force: true });
     return true;
   }
-  writeFileSync3(configPath, `${stringify(config)}
+  writeFileSync4(configPath, `${stringify(config)}
 `, "utf8");
   return true;
 }
@@ -11064,31 +11294,69 @@ function previewAppConfigToml(spec) {
   return text5;
 }
 
+// src/codex/app-readiness.ts
+import { readFileSync as readFileSync4 } from "fs";
+function proxyRoot(spec) {
+  const base = spec.proxyBaseUrl ?? `http://127.0.0.1:${spec.proxyPort}/v1`;
+  if (!base.endsWith("/v1")) throw new Error("Codex App proxy base URL must end in /v1");
+  return base.slice(0, -3);
+}
+async function checkedJson(url, fetchImpl) {
+  const response = await fetchImpl(url);
+  if (!response.ok) throw new Error(`Relay readiness check failed: GET ${url} returned HTTP ${response.status}`);
+  return response.json();
+}
+async function verifyCodexAppReadiness(spec, options = {}) {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const root = proxyRoot(spec);
+  const health = await checkedJson(`${root}/health`, fetchImpl);
+  if (health.ok !== true) throw new Error("Relay proxy health check did not report ready");
+  const catalog = JSON.parse(readFileSync4(spec.catalogPath, "utf8"));
+  if (!Array.isArray(catalog.models) || catalog.models.length === 0) {
+    throw new Error("Relay Codex model catalog is empty or invalid");
+  }
+  const catalogIds = catalog.models.map((model) => model?.slug).filter((id) => typeof id === "string" && id.length > 0);
+  if (catalogIds.length !== catalog.models.length) throw new Error("Relay Codex model catalog contains an invalid model slug");
+  if (!catalogIds.includes(spec.route.modelId)) {
+    throw new Error(`Relay Codex model catalog is missing selected model ${spec.route.modelId}`);
+  }
+  const advertised = await checkedJson(`${root}/v1/models`, fetchImpl);
+  const advertisedIds = new Set((advertised.data ?? []).map((model) => model.id).filter((id) => typeof id === "string"));
+  for (const id of catalogIds) {
+    if (!advertisedIds.has(id)) throw new Error(`Relay proxy does not advertise catalog model ${id}`);
+  }
+  validateAppConfigText(readCodexConfigText(options.configPath), spec);
+}
+
 // src/codex/app-session.ts
 import {
   copyFileSync as copyFileSync2,
   existsSync as existsSync9,
-  mkdirSync as mkdirSync4,
+  mkdirSync as mkdirSync5,
   readdirSync as readdirSync2,
-  readFileSync as readFileSync4,
+  readFileSync as readFileSync5,
   rmSync as rmSync4,
   statSync as statSync2
 } from "fs";
-import { basename as basename2, join as join11 } from "path";
+import { basename as basename2, join as join12 } from "path";
+import { createHash as createHash3 } from "crypto";
 function getAppSessionLockPath(env = process.env) {
-  return join11(getRelayAiCodexDir(env), "session-app.json");
+  return join12(getRelayAiCodexDir(env), "session-app.json");
 }
 function getAppRestoreStatePath(env = process.env) {
-  return join11(getRelayAiCodexDir(env), "app-restore-state.json");
+  return join12(getRelayAiCodexDir(env), "app-restore-state.json");
 }
 function getAppCatalogPath(providerId, env = process.env) {
-  return join11(getRelayAiCodexDir(env), `app-models-${providerId}.json`);
+  return join12(getRelayAiCodexDir(env), `app-models-${providerId}.json`);
+}
+function fileSha256(path3) {
+  return createHash3("sha256").update(readFileSync5(path3)).digest("hex");
 }
 function readAppSessionLock(env = process.env) {
   const path3 = getAppSessionLockPath(env);
   if (!existsSync9(path3)) return null;
   try {
-    const parsed = JSON.parse(readFileSync4(path3, "utf8"));
+    const parsed = JSON.parse(readFileSync5(path3, "utf8"));
     if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string") return parsed;
   } catch {
   }
@@ -11106,7 +11374,7 @@ function readAppRestoreState(env = process.env) {
   const path3 = getAppRestoreStatePath(env);
   if (!existsSync9(path3)) return null;
   try {
-    return JSON.parse(readFileSync4(path3, "utf8"));
+    return JSON.parse(readFileSync5(path3, "utf8"));
   } catch {
     return null;
   }
@@ -11125,9 +11393,9 @@ function backupConfigToml(env = process.env) {
   if (!existsSync9(configPath)) return void 0;
   rotateBackups(configPath, env);
   const backupsDir = getBackupsDir(env);
-  mkdirSync4(backupsDir, { recursive: true });
+  mkdirSync5(backupsDir, { recursive: true });
   const base = basename2(configPath);
-  const backupPath = join11(backupsDir, `${base}.${Date.now()}.bak`);
+  const backupPath = join12(backupsDir, `${base}.${Date.now()}.bak`);
   copyFileSync2(configPath, backupPath);
   return backupPath;
 }
@@ -11144,7 +11412,7 @@ function saveAppRestoreStateBeforePatch(env = process.env) {
 function ownedAppCatalogPaths(env = process.env) {
   const codexDir = getRelayAiCodexDir(env);
   if (!existsSync9(codexDir)) return [];
-  return readdirSync2(codexDir).filter((n) => n.startsWith("app-models-") && n.endsWith(".json")).map((n) => join11(codexDir, n));
+  return readdirSync2(codexDir).filter((n) => n.startsWith("app-models-") && n.endsWith(".json")).map((n) => join12(codexDir, n));
 }
 function removeAppCatalogs(env = process.env) {
   const removed = [];
@@ -11162,7 +11430,7 @@ function newestConfigBackup(env = process.env) {
   if (!existsSync9(backupDir)) return null;
   const configBase = basename2(getCodexConfigPath());
   const candidates = readdirSync2(backupDir).filter((name) => name.startsWith(`${configBase}.`) && name.endsWith(".bak")).map((name) => {
-    const path3 = join11(backupDir, name);
+    const path3 = join12(backupDir, name);
     try {
       return { path: path3, mtimeMs: statSync2(path3).mtimeMs };
     } catch {
@@ -11188,7 +11456,12 @@ function restoreCodexAppOverlay(env = process.env) {
     clearAppSessionLock(env);
     return { restored: false, message: "Nothing to restore." };
   }
-  if (restoreState) {
+  const exactBackupIsSafe = Boolean(
+    managed && lock?.backupPath && existsSync9(lock.backupPath) && lock.patchedConfigSha256 && lock.originalConfigSha256 && fileSha256(getCodexConfigPath()) === lock.patchedConfigSha256 && fileSha256(lock.backupPath) === lock.originalConfigSha256
+  );
+  if (exactBackupIsSafe) {
+    copyFileSync2(lock.backupPath, getCodexConfigPath());
+  } else if (restoreState) {
     restoreConfigFromState(restoreState);
   } else if (lock?.backupPath && existsSync9(lock.backupPath)) {
     copyFileSync2(lock.backupPath, getCodexConfigPath());
@@ -11264,11 +11537,15 @@ function codexProxyRouteToCodexRoute(route, fallbackProviderId) {
     refreshToken: route.refreshToken
   };
 }
+function codexAppUsesExplicitSelection(configOnly, launchProvider, launchModel) {
+  void configOnly;
+  return Boolean(launchProvider && launchModel);
+}
 async function waitForShutdownWithConfirm(assumeYes = false) {
   while (true) {
     const signal = await waitForShutdown2();
-    if (signal !== "sigint") break;
-    if (assumeYes) break;
+    if (signal !== "sigint") return signal;
+    if (assumeYes) return signal;
     console.log("");
     const choice = await p12.select({
       message: "Close ChatGPT Desktop and restore your Codex config?",
@@ -11277,8 +11554,11 @@ async function waitForShutdownWithConfirm(assumeYes = false) {
         { value: "no", label: "No, keep session running" }
       ]
     });
-    if (p12.isCancel(choice) || choice === "yes") break;
+    if (p12.isCancel(choice) || choice === "yes") return signal;
   }
+}
+function unattendedShutdownClosesApp(assumeYes, signal) {
+  return assumeYes && signal !== "sigint";
 }
 async function maybeCloseRunningCodexApp(assumeYes = false) {
   if (!isCodexAppRunning()) return;
@@ -11310,7 +11590,7 @@ ${pc10.bold("Options:")}
   --vertex     Use Claude models through Google Vertex AI
   --with-native Load native Codex models beside Relay models for this launch
   --relay-only Keep the current Relay-only launch behavior
-  --yes, -y     Run a fully specified launch unattended (no launch/stop prompts)
+  --yes, -y     Approve a fully specified launch/restart without prompting
   --restore    Restore Codex config after an interrupted app session
   --config     Preview the generated Codex app configuration without launching
   --trace      Write proxy debug logs to ~/.relay-ai/logs/ and show errors on exit
@@ -11446,8 +11726,10 @@ async function runCodexAppVertexLaunch(configOnly, trace = false) {
       catalogPath
     };
     saveAppRestoreStateBeforePatch();
+    sessionActive = true;
     const backupPath = backupConfigToml();
     applyAppConfigPatch(spec);
+    await verifyCodexAppReadiness(spec);
     writeAppSessionLock({
       pid: process.pid,
       startedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -11455,9 +11737,10 @@ async function runCodexAppVertexLaunch(configOnly, trace = false) {
       catalogPaths: [catalogPath],
       restoreStatePath: getAppRestoreStatePath(),
       backupPath,
-      proxyPort
+      proxyPort,
+      patchedConfigSha256: fileSha256(getCodexConfigPath()),
+      ...backupPath ? { originalConfigSha256: fileSha256(backupPath) } : {}
     });
-    sessionActive = true;
     p12.log.info(`Vertex AI \xB7 ${selectedEntry.display_name} \u2014 project: ${config.project} / location: ${config.location}`);
     logProxy(proxyPort);
     logActiveModel(selectedEntry.display_name, selectedEntry.id);
@@ -11466,6 +11749,7 @@ async function runCodexAppVertexLaunch(configOnly, trace = false) {
     } catch (err) {
       p12.log.warn(String(err instanceof Error ? err.message : err));
       p12.log.info(codexAppInstallHint());
+      throw err;
     }
     printCodexAppSessionPanel({
       modelLabel: selectedEntry.display_name,
@@ -11576,7 +11860,7 @@ async function runCodexAppCommand(args, opts = {}) {
     compatible.find((lp) => lp.id === prefs.lastCodexProvider) ?? compatible[0]
   );
   let selectedModel = activeProvider.models.find((m) => m.id === prefs.lastCodexModel) ?? activeProvider.models[0];
-  if (!configOnly && opts.launchProvider && opts.launchModel) {
+  if (codexAppUsesExplicitSelection(configOnly, opts.launchProvider, opts.launchModel)) {
     const bootSelection = resolveBootSelection(
       compatible,
       opts.launchProvider,
@@ -11655,6 +11939,11 @@ async function runCodexAppCommand(args, opts = {}) {
         generalFavorites: favorites,
         subagentFavorites: prefs.codexSubagentModels ?? []
       });
+      if (mixedModels.capacitySkipped.length > 0) {
+        p12.log.warn(
+          `Skipped ${mixedModels.capacitySkipped.length} favorite(s) because the mixed catalog is full: ` + mixedModels.capacitySkipped.map((f) => `${f.providerId}:${f.modelId}`).join(", ")
+        );
+      }
       assertConfiguredCodexSubagentsResolved(prefs.codexSubagentModels ?? [], mixedModels);
       const multiAgentV2Supported = mixedModels.subagents.length === 0 || supportsMultiAgentV2(embeddedBinary);
       if (!multiAgentV2Supported) {
@@ -11694,7 +11983,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
   let proxyHandle = null;
   let sessionActive = false;
   try {
-    const catalogPath = mixedPlan ? join12(getRelayAiCodexDir(), "app-models-mixed.json") : favoritesActive && resolvedFavorites.length > 0 ? getFavoritesAppCatalogPath() : getAppCatalogPath(route.providerId);
+    const catalogPath = mixedPlan ? join13(getRelayAiCodexDir(), "app-models-mixed.json") : favoritesActive && resolvedFavorites.length > 0 ? getFavoritesAppCatalogPath() : getAppCatalogPath(route.providerId);
     const activeRoute = mixedPlan ? {
       tier: "proxy",
       modelId: mixedPlan.selectedSlug,
@@ -11757,10 +12046,12 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
       return 0;
     }
     let proxyPort;
+    const routeAuditPath = mixedPlan ? prepareCodexRouteAuditLog() : void 0;
     if (mixedPlan) {
       proxyHandle = await startCodexProxy(mixedPlan.relayRoutes, {
         requireAuth: false,
         debug: trace,
+        routeAuditPath,
         mixedNative: {
           nativeModelIds: mixedPlan.nativeModelIds,
           subagentRouteModelId: mixedPlan.subagentRouteModelId,
@@ -11769,6 +12060,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
         }
       });
       proxyPort = proxyHandle.port;
+      p12.log.info(`Route audit (metadata only): ${routeAuditPath}`);
     } else if (favoritesActive && resolvedFavorites.length > 0) {
       const needsBackend = (r) => {
         const m = r.model;
@@ -11828,8 +12120,10 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
       ...mixedPlan ? { proxyBaseUrl: `${mixedProxyBaseUrl(proxyPort, mixedPlan.capability)}/v1` } : {}
     };
     saveAppRestoreStateBeforePatch();
+    sessionActive = true;
     const backupPath = backupConfigToml();
     applyAppConfigPatch(spec);
+    await verifyCodexAppReadiness(spec);
     writeAppSessionLock({
       pid: process.pid,
       startedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -11837,9 +12131,10 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
       catalogPaths: [catalogPath],
       restoreStatePath: getAppRestoreStatePath(),
       backupPath,
-      proxyPort
+      proxyPort,
+      patchedConfigSha256: fileSha256(getCodexConfigPath()),
+      ...backupPath ? { originalConfigSha256: fileSha256(backupPath) } : {}
     });
-    sessionActive = true;
     const prevRecent = prefs.recentModelsByProvider?.[activeProvider.id] ?? [];
     const updatedRecent = [selectedModel.id, ...prevRecent.filter((id) => id !== selectedModel.id)].slice(0, 3);
     savePreferences({
@@ -11854,6 +12149,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
     } catch (err) {
       p12.log.warn(String(err instanceof Error ? err.message : err));
       p12.log.info(codexAppInstallHint());
+      throw err;
     }
     printCodexAppSessionPanel({
       modelLabel,
@@ -11862,14 +12158,21 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
       restoreCommand: "relay-ai codex-app --restore"
     });
     codexAppOutro(modelLabel);
-    await waitForShutdownWithConfirm(opts.assumeYes);
+    const shutdownSignal = await waitForShutdownWithConfirm(opts.assumeYes);
     if (trace) printTraceLog(debugLogPath);
     console.log("");
     if (sessionActive) {
       restoreCodexAppOverlay();
       sessionActive = false;
     }
-    await maybeCloseRunningCodexApp(opts.assumeYes);
+    if (unattendedShutdownClosesApp(Boolean(opts.assumeYes), shutdownSignal)) {
+      if (isCodexAppRunning()) {
+        p12.log.step("Stopping ChatGPT Desktop after unattended Relay shutdown...");
+        quitCodexAppGracefully();
+      }
+    } else {
+      await maybeCloseRunningCodexApp(opts.assumeYes);
+    }
     return 0;
   } finally {
     proxyHandle?.close();
@@ -11888,38 +12191,38 @@ import pc11 from "picocolors";
 import * as p13 from "@clack/prompts";
 
 // src/claude-desktop/app-config.ts
-import { existsSync as existsSync10, readFileSync as readFileSync5, writeFileSync as writeFileSync4, mkdirSync as mkdirSync5 } from "fs";
+import { existsSync as existsSync10, readFileSync as readFileSync6, writeFileSync as writeFileSync5, mkdirSync as mkdirSync6 } from "fs";
 import { homedir as homedir9 } from "os";
-import { join as join13, dirname as dirname3 } from "path";
+import { join as join14, dirname as dirname3 } from "path";
 import { randomUUID as randomUUID3 } from "crypto";
 function getClaudeDesktopHome() {
   if (process.platform === "win32") {
-    return join13(process.env.LOCALAPPDATA || join13(homedir9(), "AppData", "Local"), "Claude-3p");
+    return join14(process.env.LOCALAPPDATA || join14(homedir9(), "AppData", "Local"), "Claude-3p");
   }
   if (process.platform === "linux") {
-    return join13(process.env.XDG_CONFIG_HOME || join13(homedir9(), ".config"), "Claude-3p");
+    return join14(process.env.XDG_CONFIG_HOME || join14(homedir9(), ".config"), "Claude-3p");
   }
-  return join13(homedir9(), "Library", "Application Support", "Claude-3p");
+  return join14(homedir9(), "Library", "Application Support", "Claude-3p");
 }
 function getConfigLibraryPath() {
-  return join13(getClaudeDesktopHome(), "configLibrary");
+  return join14(getClaudeDesktopHome(), "configLibrary");
 }
 function getMetaJsonPath() {
-  return join13(getConfigLibraryPath(), "_meta.json");
+  return join14(getConfigLibraryPath(), "_meta.json");
 }
 function readMetaJson() {
   const metaPath = getMetaJsonPath();
   if (!existsSync10(metaPath)) return null;
   try {
-    return JSON.parse(readFileSync5(metaPath, "utf8"));
+    return JSON.parse(readFileSync6(metaPath, "utf8"));
   } catch {
     return null;
   }
 }
 function writeMetaJson(meta) {
   const metaPath = getMetaJsonPath();
-  mkdirSync5(dirname3(metaPath), { recursive: true });
-  writeFileSync4(metaPath, `${JSON.stringify(meta, null, 2)}
+  mkdirSync6(dirname3(metaPath), { recursive: true });
+  writeFileSync5(metaPath, `${JSON.stringify(meta, null, 2)}
 `, "utf8");
 }
 function buildRelayAiConfig(proxyPort) {
@@ -11933,10 +12236,10 @@ function buildRelayAiConfig(proxyPort) {
 }
 function writeRelayAiConfig(proxyPort) {
   const uuid = randomUUID3();
-  const configPath = join13(getConfigLibraryPath(), `${uuid}.json`);
+  const configPath = join14(getConfigLibraryPath(), `${uuid}.json`);
   const config = buildRelayAiConfig(proxyPort);
-  mkdirSync5(dirname3(configPath), { recursive: true });
-  writeFileSync4(configPath, `${JSON.stringify(config, null, 2)}
+  mkdirSync6(dirname3(configPath), { recursive: true });
+  writeFileSync5(configPath, `${JSON.stringify(config, null, 2)}
 `, "utf8");
   const meta = readMetaJson() || { appliedId: "", entries: [] };
   meta.appliedId = uuid;
@@ -12091,22 +12394,22 @@ async function buildClaudeAppServerCatalog(entries, providersById, trace) {
 import {
   copyFileSync as copyFileSync3,
   existsSync as existsSync11,
-  mkdirSync as mkdirSync6,
-  readFileSync as readFileSync6,
+  mkdirSync as mkdirSync7,
+  readFileSync as readFileSync7,
   renameSync as renameSync2,
   rmSync as rmSync5,
   unlinkSync as unlinkSync2,
-  writeFileSync as writeFileSync5
+  writeFileSync as writeFileSync6
 } from "fs";
-import { dirname as dirname4, join as join14 } from "path";
+import { dirname as dirname4, join as join15 } from "path";
 function getSessionLockPath2() {
-  return join14(getClaudeDesktopHome(), ".relay-ai.lock");
+  return join15(getClaudeDesktopHome(), ".relay-ai.lock");
 }
 function inspectSessionLock() {
   const path3 = getSessionLockPath2();
   if (!existsSync11(path3)) return { status: "missing" };
   try {
-    const parsed = JSON.parse(readFileSync6(path3, "utf8"));
+    const parsed = JSON.parse(readFileSync7(path3, "utf8"));
     if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string" && typeof parsed.uuid === "string" && typeof parsed.proxyPort === "number") {
       return { status: "valid", lock: parsed };
     }
@@ -12117,9 +12420,9 @@ function inspectSessionLock() {
 function writeSessionLock2(lock) {
   const path3 = getSessionLockPath2();
   const tempPath = `${path3}.tmp.${process.pid}`;
-  mkdirSync6(dirname4(path3), { recursive: true });
+  mkdirSync7(dirname4(path3), { recursive: true });
   try {
-    writeFileSync5(tempPath, `${JSON.stringify(lock, null, 2)}
+    writeFileSync6(tempPath, `${JSON.stringify(lock, null, 2)}
 `, "utf8");
     renameSync2(tempPath, path3);
   } finally {
@@ -12154,7 +12457,7 @@ function restoreMetaJson() {
   }
 }
 function removeRelayAiConfig(uuid) {
-  const configPath = join14(getConfigLibraryPath(), `${uuid}.json`);
+  const configPath = join15(getConfigLibraryPath(), `${uuid}.json`);
   if (existsSync11(configPath)) {
     try {
       rmSync5(configPath, { force: true });
@@ -12472,17 +12775,17 @@ ${pc11.bold("Claude Desktop 3P Mode Active")}`);
 }
 
 // src/ai-doc.ts
-import { existsSync as existsSync12, mkdirSync as mkdirSync7, readFileSync as readFileSync7, writeFileSync as writeFileSync6 } from "fs";
+import { existsSync as existsSync12, mkdirSync as mkdirSync8, readFileSync as readFileSync8, writeFileSync as writeFileSync7 } from "fs";
 import { homedir as homedir10 } from "os";
-import { join as join15 } from "path";
+import { join as join16 } from "path";
 var SKILL_DIR_NAME = "relay-ai-cli";
 var SKILL_INSTALL_DIRS = [
-  join15(getAppHome(), "skills"),
-  join15(homedir10(), ".claude", "skills"),
-  join15(homedir10(), ".agents", "skills"),
-  join15(homedir10(), ".codex", "skills"),
-  join15(homedir10(), ".cursor", "skills"),
-  join15(homedir10(), ".cursor", "skills-cursor")
+  join16(getAppHome(), "skills"),
+  join16(homedir10(), ".claude", "skills"),
+  join16(homedir10(), ".agents", "skills"),
+  join16(homedir10(), ".codex", "skills"),
+  join16(homedir10(), ".cursor", "skills"),
+  join16(homedir10(), ".cursor", "skills-cursor")
 ];
 function parseSkillVersion(content) {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -12496,10 +12799,10 @@ function parseSkillVersion(content) {
   return null;
 }
 function readInstalledSkillVersion(skillDir) {
-  const skillPath = join15(skillDir, "SKILL.md");
+  const skillPath = join16(skillDir, "SKILL.md");
   if (!existsSync12(skillPath)) return null;
   try {
-    const head = readFileSync7(skillPath, "utf-8").slice(0, 1024);
+    const head = readFileSync8(skillPath, "utf-8").slice(0, 1024);
     return parseSkillVersion(head.includes("---", 4) ? head : `${head}
 ---
 `);
@@ -12509,8 +12812,8 @@ function readInstalledSkillVersion(skillDir) {
 }
 function skillInstallTargets() {
   return SKILL_INSTALL_DIRS.map((dir) => {
-    const skillDir = join15(dir, SKILL_DIR_NAME);
-    return { skillDir, skillPath: join15(skillDir, "SKILL.md") };
+    const skillDir = join16(dir, SKILL_DIR_NAME);
+    return { skillDir, skillPath: join16(skillDir, "SKILL.md") };
   });
 }
 function formatProviderModels(provider) {
@@ -13014,8 +13317,8 @@ function installAiDoc(opts = {}) {
         result.skipped.push(skillPath);
         continue;
       }
-      mkdirSync7(skillDir, { recursive: true });
-      writeFileSync6(skillPath, doc, "utf-8");
+      mkdirSync8(skillDir, { recursive: true });
+      writeFileSync7(skillPath, doc, "utf-8");
       if (previous) {
         result.updated.push({ path: skillPath, fromVersion: previous });
       } else {
@@ -13175,16 +13478,16 @@ function buildHttpProxyChildEnv(baseEnv, proxyUrl, caCertPath) {
 // src/http-proxy/ca.ts
 import { randomBytes as randomBytes2, randomUUID as randomUUID4 } from "crypto";
 import {
-  chmodSync as chmodSync2,
+  chmodSync as chmodSync3,
   existsSync as existsSync13,
-  mkdirSync as mkdirSync9,
-  readFileSync as readFileSync8,
+  mkdirSync as mkdirSync10,
+  readFileSync as readFileSync9,
   readdirSync as readdirSync3,
   rmSync as rmSync6,
   statSync as statSync3,
-  writeFileSync as writeFileSync8
+  writeFileSync as writeFileSync9
 } from "fs";
-import { dirname as dirname6, join as join17, resolve } from "path";
+import { dirname as dirname6, join as join18, resolve } from "path";
 import forge from "node-forge";
 var SESSION_ROOT = "http-proxy-sessions";
 var OWNER_FILE = "owner.pid";
@@ -13204,22 +13507,22 @@ function processIsRunning(pid) {
   }
 }
 function cleanupStaleHttpProxySessions(appHome = getAppHome()) {
-  const root = join17(appHome, SESSION_ROOT);
+  const root = join18(appHome, SESSION_ROOT);
   if (!existsSync13(root)) return;
   const now = Date.now();
   for (const name of readdirSync3(root)) {
-    const sessionDir = join17(root, name);
+    const sessionDir = join18(root, name);
     try {
       const stat = statSync3(sessionDir);
       if (!stat.isDirectory()) continue;
-      const ownerPath = join17(sessionDir, OWNER_FILE);
+      const ownerPath = join18(sessionDir, OWNER_FILE);
       if (!existsSync13(ownerPath)) {
         if (now - stat.mtimeMs > MID_CREATION_GRACE_MS) {
           rmSync6(sessionDir, { recursive: true, force: true });
         }
         continue;
       }
-      const pid = Number(readFileSync8(ownerPath, "utf8").trim());
+      const pid = Number(readFileSync9(ownerPath, "utf8").trim());
       if (!Number.isSafeInteger(pid) || pid <= 0) {
         const ownerStat = statSync3(ownerPath);
         const newestMtimeMs = Math.max(stat.mtimeMs, ownerStat.mtimeMs);
@@ -13235,13 +13538,13 @@ function cleanupStaleHttpProxySessions(appHome = getAppHome()) {
 }
 function createHttpProxyCertificates(appHome = getAppHome()) {
   cleanupStaleHttpProxySessions(appHome);
-  const root = join17(appHome, SESSION_ROOT);
-  mkdirSync9(root, { recursive: true, mode: 448 });
-  chmodSync2(root, 448);
-  const sessionDir = join17(root, randomUUID4());
-  mkdirSync9(sessionDir, { mode: 448 });
-  chmodSync2(sessionDir, 448);
-  writeFileSync8(join17(sessionDir, OWNER_FILE), `${process.pid}
+  const root = join18(appHome, SESSION_ROOT);
+  mkdirSync10(root, { recursive: true, mode: 448 });
+  chmodSync3(root, 448);
+  const sessionDir = join18(root, randomUUID4());
+  mkdirSync10(sessionDir, { mode: 448 });
+  chmodSync3(sessionDir, 448);
+  writeFileSync9(join18(sessionDir, OWNER_FILE), `${process.pid}
 `, { mode: 384 });
   try {
     const caKeys = forge.pki.rsa.generateKeyPair(2048);
@@ -13276,9 +13579,9 @@ function createHttpProxyCertificates(appHome = getAppHome()) {
     ]);
     server.sign(caKeys.privateKey, forge.md.sha256.create());
     const caCert = forge.pki.certificateToPem(ca);
-    const caCertPath = join17(sessionDir, "relay-ai-ca.pem");
-    writeFileSync8(caCertPath, caCert, { encoding: "utf8", mode: 384 });
-    chmodSync2(caCertPath, 384);
+    const caCertPath = join18(sessionDir, "relay-ai-ca.pem");
+    writeFileSync9(caCertPath, caCert, { encoding: "utf8", mode: 384 });
+    chmodSync3(caCertPath, 384);
     let cleaned = false;
     const cleanupOnExit = () => {
       if (cleaned) return;
@@ -13319,18 +13622,18 @@ function createHttpProxyCaBundle(relayCaCertPath, additionalCaCertPath) {
   if (resolve(additionalCaCertPath) === resolve(relayCaCertPath)) {
     return relayCaCertPath;
   }
-  const relayCa = readFileSync8(relayCaCertPath, "utf8").trimEnd();
-  const additionalCa = readFileSync8(additionalCaCertPath, "utf8").trim();
+  const relayCa = readFileSync9(relayCaCertPath, "utf8").trimEnd();
+  const additionalCa = readFileSync9(additionalCaCertPath, "utf8").trim();
   if (!additionalCa) return relayCaCertPath;
-  const combinedPath = join17(dirname6(relayCaCertPath), "combined-ca.pem");
-  writeFileSync8(
+  const combinedPath = join18(dirname6(relayCaCertPath), "combined-ca.pem");
+  writeFileSync9(
     combinedPath,
     `${relayCa}
 ${additionalCa}
 `,
     { encoding: "utf8", mode: 384 }
   );
-  chmodSync2(combinedPath, 384);
+  chmodSync3(combinedPath, 384);
   return combinedPath;
 }
 
@@ -15345,7 +15648,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-Q6LBKVM3.js");
+    const { runUiCommand } = await import("./ui-command-MKOUZ3AI.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

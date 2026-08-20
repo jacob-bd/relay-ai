@@ -1,5 +1,5 @@
 // Find, open, quit, and restart the ChatGPT desktop app / Codex mode (macOS + Windows + Linux).
-import { execSync, spawn } from 'node:child_process';
+import { execFileSync, execSync, spawn } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, win32 as winPath } from 'node:path';
@@ -224,6 +224,45 @@ function darwinIsRunning(): boolean {
   });
 }
 
+function pgrepExact(names: readonly string[]): number[] {
+  const pids = new Set<number>();
+  for (const name of names) {
+    try {
+      for (const raw of run(`pgrep -x ${JSON.stringify(name)}`).split(/\s+/)) {
+        const pid = Number.parseInt(raw, 10);
+        if (Number.isFinite(pid) && pid > 0 && pid !== process.pid) pids.add(pid);
+      }
+    } catch { /* process name is not running */ }
+  }
+  return [...pids];
+}
+
+export function darwinMainExecutableCandidates(appPath: string): string[] {
+  return DARWIN_APP_NAMES.map(name => join(appPath, 'Contents', 'MacOS', name));
+}
+
+function pgrepExactCommand(commands: readonly string[]): number[] {
+  const pids = new Set<number>();
+  for (const command of commands) {
+    try {
+      const out = execFileSync('pgrep', ['-f', `^${command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`], {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+      for (const raw of out.split(/\s+/)) {
+        const pid = Number.parseInt(raw, 10);
+        if (Number.isFinite(pid) && pid > 0 && pid !== process.pid) pids.add(pid);
+      }
+    } catch { /* exact command is not running */ }
+  }
+  return [...pids];
+}
+
+function darwinMatchingPids(): number[] {
+  const appPath = findCodexApp('darwin');
+  return appPath ? pgrepExactCommand(darwinMainExecutableCandidates(appPath)) : [];
+}
+
 function linuxIsRunning(): boolean {
   for (const name of ['ChatGPT', 'chatgpt']) {
     try {
@@ -231,6 +270,10 @@ function linuxIsRunning(): boolean {
     } catch { /* app is not running */ }
   }
   return false;
+}
+
+function linuxMatchingPids(): number[] {
+  return pgrepExact(['ChatGPT', 'chatgpt']);
 }
 
 function winMatchingPids(): number[] {
@@ -269,26 +312,37 @@ export function isCodexAppRunning(): boolean {
   return false;
 }
 
+export function codexAppMainPids(platform: NodeJS.Platform = process.platform): number[] {
+  if (platform === 'darwin') return darwinMatchingPids();
+  if (platform === 'win32') return winMatchingPids();
+  if (platform === 'linux') return linuxMatchingPids();
+  return [];
+}
+
+function pidIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function waitForQuit(timeoutMs: number): Promise<boolean> {
+export async function waitForOriginalCodexPids(
+  originalPids: readonly number[],
+  timeoutMs: number,
+  alive: (pid: number) => boolean = pidIsAlive,
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    // Check actual process existence, not window visibility — apps that
-    // minimize to the tray on close clear their window handle immediately
-    // while staying alive, which would make this return early with the
-    // old process (and its old config) still running.
-    if (process.platform === 'win32') {
-      if (winMatchingPids().length === 0) return true;
-    } else if (process.platform === 'linux' ? !linuxIsRunning() : !darwinIsRunning()) {
-      return true;
-    }
+    if (originalPids.every(pid => !alive(pid))) return true;
     await sleep(200);
   }
-  if (process.platform === 'win32') return winMatchingPids().length === 0;
-  return process.platform === 'linux' ? !linuxIsRunning() : !darwinIsRunning();
+  return originalPids.every(pid => !alive(pid));
 }
 
 function openCodexAppAt(path: string): void {
@@ -325,12 +379,15 @@ export function openCodexApp(): void {
   openCodexAppAt(path);
 }
 
+export function darwinQuitAppleScript(): string {
+  // The product name changed from Codex to ChatGPT while the bundle id stayed
+  // stable. Addressing the obsolete name can return success without signaling
+  // the running ChatGPT process, so always target the bundle identifier.
+  return `tell application id "${CODEX_BUNDLE_ID}" to quit`;
+}
+
 function darwinQuit(): void {
-  try {
-    execSync('osascript -e \'tell application "Codex" to quit\'', { stdio: 'pipe' });
-  } catch {
-    execSync(`osascript -e 'tell application id "${CODEX_BUNDLE_ID}" to quit'`, { stdio: 'pipe' });
-  }
+  execFileSync('osascript', ['-e', darwinQuitAppleScript()], { stdio: 'pipe' });
 }
 
 function winQuitGraceful(): void {
@@ -355,10 +412,19 @@ export function quitCodexAppGracefully(): void {
   else if (process.platform === 'linux') linuxQuitGraceful();
 }
 
-function winForceQuit(): void {
-  const pids = winMatchingPids();
+function winForceQuit(pids = winMatchingPids()): void {
   if (pids.length === 0) return;
   runPowerShell(`Stop-Process -Id ${pids.join(',')} -Force -ErrorAction SilentlyContinue`);
+}
+
+export function restartTimeoutAction(platform: NodeJS.Platform): 'force-quit' | 'fail-closed' {
+  return platform === 'win32' ? 'force-quit' : 'fail-closed';
+}
+
+export function gracefulQuitTimeoutMs(platform: NodeJS.Platform): number {
+  // ChatGPT for macOS waits for active Codex task plumbing to settle before
+  // terminating. Five seconds races that normal graceful path on a live task.
+  return platform === 'darwin' ? 30_000 : 5_000;
 }
 
 export async function launchOrRestartCodexApp(
@@ -366,6 +432,7 @@ export async function launchOrRestartCodexApp(
   assumeYes = false,
 ): Promise<void> {
   const appPath = findCodexApp();
+  const originalPids = codexAppMainPids();
   if (!isCodexAppRunning()) {
     if (!appPath) {
       throw new Error(
@@ -374,6 +441,9 @@ export async function launchOrRestartCodexApp(
     }
     openCodexAppAt(appPath);
     return;
+  }
+  if (originalPids.length === 0) {
+    throw new Error('ChatGPT Desktop is running but Relay could not identify its main process; refusing an unsafe restart.');
   }
 
   // Linux desktop apps can remain alive in the tray after their main window
@@ -397,10 +467,22 @@ export async function launchOrRestartCodexApp(
     else if (process.platform === 'win32') winQuitGraceful();
   }
 
-  if (!(await waitForQuit(5000))) {
-    if (process.platform === 'win32') winForceQuit();
-    await waitForQuit(5000);
+  const gracefulTimeout = gracefulQuitTimeoutMs(process.platform);
+  if (!(await waitForOriginalCodexPids(originalPids, gracefulTimeout))) {
+    if (restartTimeoutAction(process.platform) === 'force-quit') {
+      winForceQuit(originalPids);
+      if (!(await waitForOriginalCodexPids(originalPids, 5000))) {
+        throw new Error('ChatGPT Desktop did not exit after its force-quit timeout; refusing to launch a duplicate process.');
+      }
+    } else {
+      throw new Error('ChatGPT Desktop did not exit after graceful shutdown; refusing to relaunch or force-quit it.');
+    }
   }
+
+  // A login item or app supervisor may relaunch ChatGPT immediately after the
+  // original PID exits. That replacement already loaded Relay's validated
+  // temporary config, so keep the proxy alive and never open a duplicate.
+  if (isCodexAppRunning()) return;
 
   if (appPath) openCodexAppAt(appPath);
   else openCodexApp();

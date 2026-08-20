@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildCodexMixedLaunchPlan } from '../src/codex/mixed-launch.js';
-import { assertConfiguredCodexSubagentsResolved } from '../src/codex/favorites-launch.js';
+import { assertConfiguredCodexSubagentsResolved, resolveCodexMixedModels } from '../src/codex/favorites-launch.js';
 import { codexLaunchModeOptions } from '../src/codex/prompts.js';
 import type { NativeCodexCatalogSnapshot } from '../src/codex/native-catalog.js';
 import type { ResolvedCodexMixedModels } from '../src/codex/favorites-launch.js';
@@ -13,6 +13,40 @@ const nativeCatalog: NativeCodexCatalogSnapshot = {
 const relay = (providerId: string, id: string) => ({ providerId, providerName: providerId, apiKey: 'key', model: { id, name: id, modelFormat: 'openai', npm: '@ai-sdk/openai-compatible', upstreamModelId: id } }) as never;
 
 describe('Codex mixed launch planning', () => {
+  it('reports a favorite excluded because the selected model consumes a catalog slot', async () => {
+    const models = Array.from({ length: 21 }, (_, index) => ({
+      id: `test-model-${index}`,
+      name: `Test Model ${index}`,
+      modelFormat: 'openai' as const,
+      npm: '@ai-sdk/openai-compatible',
+      upstreamModelId: `test-model-${index}`,
+      contextWindow: 200_000,
+    }));
+    const provider = {
+      id: 'test-provider',
+      name: 'Test Provider',
+      authType: 'none' as const,
+      models,
+    };
+    const favorites = models.slice(1).map(model => ({
+      providerId: provider.id,
+      modelId: model.id,
+    }));
+
+    const result = await resolveCodexMixedModels({
+      activeProvider: provider,
+      selectedModel: models[0]!,
+      compatible: [provider],
+      generalFavorites: favorites,
+      subagentFavorites: [],
+    });
+
+    expect(result.visible).toHaveLength(20);
+    expect(result.capacitySkipped).toEqual([
+      { providerId: provider.id, modelId: 'test-model-20' },
+    ]);
+  });
+
   it('rejects a mixed launch when configured Codex Sub-agents disappear during resolution', () => {
     expect(() => assertConfiguredCodexSubagentsResolved(
       [{ providerId: 'google', modelId: 'gemini-3.5-flash' }],
@@ -51,6 +85,7 @@ describe('Codex mixed launch planning', () => {
         ['google', { id: 'google', name: 'google', models: [subagent.model as never], authType: 'api' } as never],
       ]),
       dropped: [],
+      capacitySkipped: [],
     };
     const plan = buildCodexMixedLaunchPlan({ nativeCatalog, models, multiAgentV2Supported: true });
     expect(plan.nativeModelIds).toEqual(new Set(['gpt-5.5']));
@@ -83,6 +118,7 @@ describe('Codex mixed launch planning', () => {
         ['google', { id: 'google', name: 'google', models: [second.model as never], authType: 'api' } as never],
       ]),
       dropped: [],
+      capacitySkipped: [],
     };
 
     expect(() => buildCodexMixedLaunchPlan({ nativeCatalog, models, multiAgentV2Supported: true }))

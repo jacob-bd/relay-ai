@@ -31,7 +31,34 @@ vi.mock('../src/codex/app-launch.js', () => ({
   quitCodexAppGracefully: mocks.quitCodexAppGracefully,
 }));
 
-import { maybeCloseRunningCodexApp, waitForShutdownWithConfirm } from '../src/codex-app.js';
+import {
+  codexAppUsesExplicitSelection,
+  maybeCloseRunningCodexApp,
+  unattendedShutdownClosesApp,
+  waitForShutdownWithConfirm,
+} from '../src/codex-app.js';
+
+describe('unattended Codex App selection', () => {
+  it('honors explicit provider/model flags in non-launching config preview', () => {
+    expect(codexAppUsesExplicitSelection(true, 'antigravity', 'gemini-3.1-pro-high')).toBe(true);
+  });
+
+  it('does not silently accept a partial explicit selection', () => {
+    expect(codexAppUsesExplicitSelection(false, 'antigravity')).toBe(false);
+  });
+});
+
+describe('unattended Codex App shutdown', () => {
+  it('closes the app after SIGTERM/SIGHUP so it cannot retain a dead proxy runtime', () => {
+    expect(unattendedShutdownClosesApp(true, 'sigterm')).toBe(true);
+    expect(unattendedShutdownClosesApp(true, 'sighup')).toBe(true);
+  });
+
+  it('keeps interactive Ctrl+C under the existing confirmation flow', () => {
+    expect(unattendedShutdownClosesApp(true, 'sigint')).toBe(false);
+    expect(unattendedShutdownClosesApp(false, 'sigterm')).toBe(false);
+  });
+});
 
 describe('maybeCloseRunningCodexApp', () => {
   beforeEach(() => {
