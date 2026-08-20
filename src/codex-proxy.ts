@@ -987,6 +987,7 @@ export async function startCodexProxy(
       let externalActive = false;
       let nativeActive = false;
       let nativeUpstream: WebSocket | undefined;
+      let sendNativeTurn: ((body: Record<string, unknown>) => void) | undefined;
       let socketClosing = false;
       // Set once the request body is parsed, below — sendWsEvent is defined before
       // that point but needs the model id for its own debug dump.
@@ -1121,9 +1122,9 @@ export async function startCodexProxy(
                   log(`WS native history normalized: model=${modelId} converted Relay compaction for native verification`);
                 }
                 if (nativeActive && nativeUpstream) {
-                  if (nativeUpstream.readyState === WebSocket.OPEN) {
+                  if (nativeUpstream.readyState === WebSocket.OPEN && sendNativeTurn) {
                     if (debug) log(`WS native forwarding next turn: model=${modelId}`);
-                    nativeUpstream.send(JSON.stringify({ type: 'response.create', ...nativeBody }));
+                    sendNativeTurn(nativeBody);
                   } else if (debug) {
                     log(`WS native cannot forward next turn: upstream_state=${nativeUpstream.readyState}`);
                   }
@@ -1171,6 +1172,12 @@ export async function startCodexProxy(
                   try { upstream?.close(); } catch { /* ignore */ }
                   closeSocket(closeCode);
                 };
+                const beginNativeTurn = (turnBody: Record<string, unknown>) => {
+                  nativeCompleted = false;
+                  if (firstFrameTimer) clearTimeout(firstFrameTimer);
+                  upstream?.send(JSON.stringify({ type: 'response.create', ...turnBody }));
+                  firstFrameTimer = setTimeout(() => closeBoth('Native Codex WebSocket response timed out'), 60_000);
+                };
                 try {
                   if (debug) {
                     log(`WS native connecting: model=${modelId} url=${target.url} headers=[${Object.keys(target.headers).join(',')}]`);
@@ -1183,8 +1190,8 @@ export async function startCodexProxy(
                     nativeOpened = true;
                     if (connectTimer) clearTimeout(connectTimer);
                     if (debug) log(`WS native upstream open: model=${modelId}`);
-                    upstream?.send(JSON.stringify({ type: 'response.create', ...nativeBody }));
-                    firstFrameTimer = setTimeout(() => closeBoth('Native Codex WebSocket response timed out'), 60_000);
+                    sendNativeTurn = beginNativeTurn;
+                    beginNativeTurn(nativeBody);
                   });
                   upstream.once('unexpected-response', (_request, response) => {
                     if (debug) log(`WS native upstream HTTP rejection: model=${modelId} status=${response.statusCode}`);
@@ -1221,6 +1228,7 @@ export async function startCodexProxy(
                     const detail = reason?.length ? ` reason=${reason.toString('utf8').slice(0, 200)}` : '';
                     if (debug) log(`WS native upstream close: model=${modelId} code=${code}${detail} frames=${nativeFrameCount}`);
                     if (nativeUpstream === upstream) nativeUpstream = undefined;
+                    if (sendNativeTurn === beginNativeTurn) sendNativeTurn = undefined;
                     nativeActive = false;
                     if (!finished) closeBoth(nativeCompleted ? undefined : `Native Codex WebSocket closed before completion (${code})`);
                   });
@@ -1229,6 +1237,7 @@ export async function startCodexProxy(
                     finished = true;
                     nativeActive = false;
                     if (nativeUpstream === upstream) nativeUpstream = undefined;
+                    if (sendNativeTurn === beginNativeTurn) sendNativeTurn = undefined;
                     clearTimers();
                     try { upstream?.close(); } catch { /* ignore */ }
                   });

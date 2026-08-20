@@ -400,6 +400,73 @@ describe('startCodexProxy', () => {
     }
   });
 
+  it('reports a later native WebSocket turn that closes before completion', async () => {
+    const upstream = new WebSocketServer({ port: 0 });
+    const upstreamPort = await new Promise<number>(resolve => {
+      upstream.on('listening', () => resolve((upstream.address() as { port: number }).port));
+    });
+    let requestCount = 0;
+    upstream.on('connection', socket => {
+      socket.on('message', () => {
+        requestCount += 1;
+        if (requestCount === 1) {
+          socket.send(JSON.stringify({ type: 'response.completed', response: { status: 'completed' } }));
+        } else {
+          socket.close(1011, 'second turn failed');
+        }
+      });
+    });
+    const capability = 'N'.repeat(43);
+    handle = await startCodexProxy([], {
+      requireAuth: false,
+      mixedNative: {
+        nativeModelIds: new Set(['gpt-5.5']),
+        capability,
+        nativeBaseUrl: `http://127.0.0.1:${upstreamPort}`,
+      },
+    });
+
+    try {
+      const result = await new Promise<{ closeCode: number; errors: string[] }>((resolve, reject) => {
+        const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/_relay-codex/${capability}/v1/responses`);
+        const errors: string[] = [];
+        const timer = setTimeout(() => {
+          client.close();
+          reject(new Error('timed out waiting for failed second native turn'));
+        }, 5000);
+        let completed = 0;
+        client.on('open', () => {
+          client.send(JSON.stringify({ model: 'gpt-5.5', input: 'first' }));
+        });
+        client.on('message', data => {
+          const event = JSON.parse(data.toString()) as {
+            type?: string;
+            error?: { message?: string };
+          };
+          if (event.type === 'response.completed') {
+            completed += 1;
+            if (completed === 1) client.send(JSON.stringify({ model: 'gpt-5.5', input: 'second' }));
+          } else if (event.type === 'error' && event.error?.message) {
+            errors.push(event.error.message);
+          }
+        });
+        client.on('close', closeCode => {
+          clearTimeout(timer);
+          resolve({ closeCode, errors });
+        });
+        client.on('error', reject);
+      });
+
+      expect(requestCount).toBe(2);
+      expect(result.closeCode).toBe(1011);
+      expect(result.errors).toEqual([
+        'Native Codex WebSocket closed before completion (1011)',
+      ]);
+    } finally {
+      await new Promise<void>(resolve => upstream.close(() => resolve()));
+    }
+  });
+
   it('keeps an external WebSocket open for sequential response.create turns', async () => {
     const requestBodies: Record<string, unknown>[] = [];
     const provider = createServer((req, res) => {
