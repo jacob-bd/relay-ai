@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.7] - 2026-08-30
+
+### Fixed
+
+- **`relay-ai codex-app` now closes ChatGPT Desktop before restoring Relay's temporary Codex configuration.** Relay waits for Desktop to exit before restoring the config and stopping its proxy; if Desktop does not exit, it reports recovery instructions instead of claiming cleanup completed. ([Issue #65](https://github.com/jacob-bd/relay-ai/issues/65))
+
 ## [0.9.6] - 2026-08-20
 
 ### Fixed
