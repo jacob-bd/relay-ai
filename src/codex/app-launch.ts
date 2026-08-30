@@ -273,7 +273,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function waitForQuit(timeoutMs: number): Promise<boolean> {
+export async function waitForCodexAppQuit(timeoutMs = 5000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     // Check actual process existence, not window visibility — apps that
@@ -397,9 +397,9 @@ export async function launchOrRestartCodexApp(
     else if (process.platform === 'win32') winQuitGraceful();
   }
 
-  if (!(await waitForQuit(5000))) {
+  if (!(await waitForCodexAppQuit(5000))) {
     if (process.platform === 'win32') winForceQuit();
-    await waitForQuit(5000);
+    await waitForCodexAppQuit(5000);
   }
 
   if (appPath) openCodexAppAt(appPath);

@@ -38,7 +38,7 @@ export function printCodexAppSessionPanel(opts: {
     `${pc.bold('Provider')}  ${fmtProvider(opts.providerName)}`,
     '',
     `${pc.yellow(pc.bold('Keep this terminal open'))}${pc.white(' while you use Codex.')}`,
-    `${pc.white('Press ')}${pc.bold(pc.red('Ctrl+C'))}${pc.white(' to stop the proxy and restore ')}${fmtCommand('~/.codex/config.toml')}${pc.white('.')}`,
+    `${pc.white('Press ')}${pc.bold(pc.red('Ctrl+C'))}${pc.white(' to close ChatGPT Desktop, restore ')}${fmtCommand('~/.codex/config.toml')}${pc.white(', and stop the proxy.')}`,
     `${pc.dim('Codex may show ')}${pc.yellow('"Custom"')}${pc.dim(' if the desktop picker cannot resolve registry models — check the terminal line above. After restart, pick your model from the picker if it appears.')}`,
     `${pc.dim('If Codex asks you to sign in after restart: choose API key and enter any character — that unlocks the model picker for registry providers.')}`,
     `${pc.dim('Stuck? Run ')}${fmtCommand(opts.restoreCommand)}${pc.dim('.')}`,

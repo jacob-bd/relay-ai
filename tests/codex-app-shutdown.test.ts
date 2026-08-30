@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   isCancel: vi.fn(() => false),
   isCodexAppRunning: vi.fn(),
   quitCodexAppGracefully: vi.fn(),
+  waitForCodexAppQuit: vi.fn(),
   select: vi.fn(),
   waitForShutdown: vi.fn(),
 }));
@@ -29,6 +30,7 @@ vi.mock('../src/codex/app-launch.js', () => ({
   launchOrRestartCodexApp: vi.fn(),
   isCodexAppRunning: mocks.isCodexAppRunning,
   quitCodexAppGracefully: mocks.quitCodexAppGracefully,
+  waitForCodexAppQuit: mocks.waitForCodexAppQuit,
 }));
 
 import { maybeCloseRunningCodexApp, waitForShutdownWithConfirm } from '../src/codex-app.js';
@@ -39,6 +41,7 @@ describe('maybeCloseRunningCodexApp', () => {
     mocks.confirm.mockResolvedValue(true);
     mocks.isCancel.mockReturnValue(false);
     mocks.isCodexAppRunning.mockReturnValue(true);
+    mocks.waitForCodexAppQuit.mockResolvedValue(true);
   });
 
   it('uses the compact close prompt and quits ChatGPT Desktop when confirmed', async () => {
@@ -48,6 +51,7 @@ describe('maybeCloseRunningCodexApp', () => {
       message: 'ChatGPT Desktop is still running. Close it?',
     });
     expect(mocks.quitCodexAppGracefully).toHaveBeenCalledOnce();
+    expect(mocks.waitForCodexAppQuit).toHaveBeenCalledOnce();
   });
 
   it('leaves ChatGPT Desktop running when the close prompt is declined', async () => {
@@ -63,6 +67,13 @@ describe('maybeCloseRunningCodexApp', () => {
 
     expect(mocks.confirm).not.toHaveBeenCalled();
     expect(mocks.quitCodexAppGracefully).toHaveBeenCalledOnce();
+    expect(mocks.waitForCodexAppQuit).toHaveBeenCalledOnce();
+  });
+
+  it('reports when ChatGPT Desktop does not exit after the quit request', async () => {
+    mocks.waitForCodexAppQuit.mockResolvedValue(false);
+
+    await expect(maybeCloseRunningCodexApp(true)).resolves.toBe(false);
   });
 });
 

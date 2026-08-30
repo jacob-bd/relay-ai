@@ -161,7 +161,7 @@ the Codex config is restored and the app is closed without asking. Without
 `--yes`, `SIGINT` still asks before closing, so an interactive session can keep
 the app running.
 
-Pick provider → pick model → Codex **app** opens. **Keep the relay-ai terminal open** until you’re done (the app always uses the foreground proxy). Press **Ctrl+C** to stop the proxy and restore your previous Codex config.
+Pick provider → pick model → Codex **app** opens. **Keep the relay-ai terminal open** until you’re done (the app always uses the foreground proxy). Press **Ctrl+C** to close ChatGPT Desktop, restore your previous Codex config, and stop the proxy.
 
 **Platforms:** macOS, Windows, and Linux. On Linux, Relay detects the packaged ChatGPT app at `/usr/bin/chatgpt` or `/usr/lib/chatgpt/ChatGPT` and its embedded Codex runtime at `/usr/lib/chatgpt/resources/codex`.
 
@@ -217,7 +217,7 @@ The catalog `display_name` uses human-readable labels (e.g. `Claude Haiku 4.5`).
 
 | Situation | What to do |
 |-----------|--------------|
-| Normal end of session | **Ctrl+C** in the relay-ai terminal → config restored, proxy stopped |
+| Normal end of session | **Ctrl+C** in the relay-ai terminal → ChatGPT Desktop closes, config restores, proxy stops |
 | Codex already running | relay-ai asks to **restart Codex** so new settings apply; you can decline and reopen manually |
 | Crash / killed terminal | Next launch auto-recovers when possible, or `relay-ai codex-app --restore` |
 | Live session still running | `--restore` refuses until you Ctrl+C the other terminal |
