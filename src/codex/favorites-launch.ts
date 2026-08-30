@@ -172,6 +172,7 @@ export interface ResolvedCodexMixedModels {
   all: ResolvedFavorite[];
   providersById: Map<string, LocalProvider>;
   dropped: FavoriteModel[];
+  capacitySkipped: FavoriteModel[];
 }
 
 /**
@@ -230,5 +231,6 @@ export async function resolveCodexMixedModels(input: {
     all,
     providersById: new Map(input.compatible.map(provider => [provider.id, provider])),
     dropped: [...visibleResult.droppedFavorites, ...subagentResult.droppedFavorites],
+    capacitySkipped: [...visibleResult.capacitySkippedFavorites, ...subagentResult.capacitySkippedFavorites],
   };
 }

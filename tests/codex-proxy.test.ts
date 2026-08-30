@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import {
+  applyExternalCodexRuntimeIdentity,
   estimateCodexRequestChars,
   isLikelyCodexCompactionRequest,
   isCodexV2CompactionRequest,
@@ -14,12 +18,46 @@ import { buildCompactionResponseBody, type CodexSdkCallParams } from '../src/cod
 import { CODEX_APP_AUTO_COMPACT_RATIO } from '../src/codex/app-profile.js';
 import { WebSocket, WebSocketServer } from 'ws';
 
+describe('external Codex runtime identity', () => {
+  it('distinguishes the selected external model from the Codex host', () => {
+    const params = applyExternalCodexRuntimeIdentity({
+      system: 'Use the Codex app tools carefully.',
+      messages: [{ role: 'user', content: 'what model are you?' }],
+    }, {
+      modelId: 'antigravity__gemini-3.1-pro-high',
+      providerId: 'antigravity',
+      upstreamModelId: 'gemini-pro-agent',
+      auditUpstreamModelId: 'gemini-3.1-pro-high',
+    });
+
+    expect(params.system).toContain('"gemini-3.1-pro-high" through provider "antigravity"');
+    expect(params.system).toContain('Codex is the host application and agent environment, not the model identity.');
+    expect(params.system).toContain('Use the Codex app tools carefully.');
+    expect(params.system).not.toContain('gemini-pro-agent');
+  });
+
+  it('uses the dynamic upstream model and does not hard-code Gemini', () => {
+    const params = applyExternalCodexRuntimeIdentity({
+      messages: [{ role: 'user', content: 'identify yourself' }],
+    }, {
+      modelId: 'antigravity__claude-sonnet-4-6',
+      providerId: 'antigravity',
+      upstreamModelId: 'claude-sonnet-4-6',
+    });
+
+    expect(params.system).toContain('"claude-sonnet-4-6" through provider "antigravity"');
+    expect(params.system).not.toContain('gemini-3.1-pro-high');
+  });
+});
+
 describe('startCodexProxy', () => {
   let handle: Awaited<ReturnType<typeof startCodexProxy>> | null = null;
+  const auditDirs: string[] = [];
 
   afterEach(() => {
     handle?.close();
     handle = null;
+    for (const dir of auditDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
   it('serves GET /health', async () => {
@@ -210,8 +248,12 @@ describe('startCodexProxy', () => {
       headers: { 'content-type': 'text/event-stream' },
     }));
     const capability = 'A'.repeat(43);
+    const auditDir = mkdtempSync(join(tmpdir(), 'relay-route-audit-'));
+    auditDirs.push(auditDir);
+    const routeAuditPath = join(auditDir, 'route-audit.jsonl');
     handle = await startCodexProxy([], {
       requireAuth: false,
+      routeAuditPath,
       mixedNative: { nativeModelIds: new Set(['gpt-5.5']), capability, nativeFetchImpl: nativeFetch as typeof fetch },
     });
     try {
@@ -236,6 +278,17 @@ describe('startCodexProxy', () => {
       const init = nativeFetch.mock.calls[0]![1] as RequestInit;
       expect(init.headers).toEqual(expect.objectContaining({ authorization: 'Bearer native', 'ChatGPT-Account-Id': 'acct' }));
       expect(JSON.stringify(init.headers)).not.toContain('relay-secret');
+
+      const auditText = readFileSync(routeAuditPath, 'utf8');
+      const auditEvents = auditText.trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>);
+      expect(auditEvents).toEqual(expect.arrayContaining([
+        expect.objectContaining({ dispatch: 'native', phase: 'dispatch', requestedModel: 'gpt-5.5', provider: 'openai-native' }),
+        expect.objectContaining({ dispatch: 'native', phase: 'complete', requestedModel: 'gpt-5.5', outcome: 'ok', status: 200 }),
+      ]));
+      expect(auditText).not.toContain('hi');
+      expect(auditText).not.toContain('Bearer');
+      expect(auditText).not.toContain('relay-secret');
+      expect(statSync(routeAuditPath).mode & 0o777).toBe(0o600);
 
       const unknown = await fetch(`http://127.0.0.1:${handle.port}/_relay-codex/${capability}/v1/responses`, {
         method: 'POST',
@@ -347,6 +400,337 @@ describe('startCodexProxy', () => {
     }
   });
 
+  it('reports a later native turn that closes before completion', async () => {
+    const upstream = new WebSocketServer({ port: 0 });
+    const upstreamPort = await new Promise<number>(resolve => upstream.on('listening', () => resolve((upstream.address() as { port: number }).port)));
+    const received: Record<string, unknown>[] = [];
+    upstream.on('connection', socket => {
+      socket.on('message', data => {
+        const body = JSON.parse(data.toString()) as Record<string, unknown>;
+        received.push(body);
+        if (received.length === 1) {
+          socket.send(JSON.stringify({ type: 'response.completed', response: { status: 'completed' } }));
+        } else {
+          socket.close(1011, 'later turn failed');
+        }
+      });
+    });
+    const capability = 'H'.repeat(43);
+    handle = await startCodexProxy([], {
+      requireAuth: false,
+      mixedNative: { nativeModelIds: new Set(['gpt-5.5']), capability, nativeBaseUrl: `http://127.0.0.1:${upstreamPort}` },
+    });
+    try {
+      const result = await new Promise<{ closeCode: number; errors: Record<string, unknown>[] }>((resolve, reject) => {
+        const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/_relay-codex/${capability}/v1/responses`);
+        const errors: Record<string, unknown>[] = [];
+        const timer = setTimeout(() => { client.close(); reject(new Error('timed out waiting for later native turn failure')); }, 3_000);
+        let completed = 0;
+        client.on('open', () => client.send(JSON.stringify({ model: 'gpt-5.5', input: 'first' })));
+        client.on('message', data => {
+          const event = JSON.parse(data.toString()) as Record<string, unknown>;
+          if (event.type === 'response.completed') {
+            completed += 1;
+            if (completed === 1) client.send(JSON.stringify({ model: 'gpt-5.5', input: 'second' }));
+          }
+          if (event.type === 'error') errors.push(event);
+        });
+        client.on('close', closeCode => { clearTimeout(timer); resolve({ closeCode, errors }); });
+        client.on('error', reject);
+      });
+      expect(received).toHaveLength(2);
+      expect(result.closeCode).toBe(1011);
+      expect(result.errors).toContainEqual(expect.objectContaining({
+        type: 'error',
+        error: expect.objectContaining({
+          type: 'upstream_error',
+          message: 'Native Codex WebSocket closed before completion (1011)',
+        }),
+      }));
+    } finally {
+      await new Promise<void>(resolve => upstream.close(() => resolve()));
+    }
+  });
+
+  it('keeps an external WebSocket open for sequential response.create turns', async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const provider = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      req.once('end', () => {
+        requestBodies.push(JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>);
+        const turn = requestBodies.length;
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.write(`data: ${JSON.stringify({
+          id: `chatcmpl-${turn}`,
+          object: 'chat.completion.chunk',
+          choices: [{ index: 0, delta: { role: 'assistant', content: `turn-${turn}` }, finish_reason: null }],
+        })}\n\n`);
+        res.write(`data: ${JSON.stringify({
+          id: `chatcmpl-${turn}`,
+          object: 'chat.completion.chunk',
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        })}\n\n`);
+        res.end('data: [DONE]\n\n');
+      });
+    });
+    const providerPort = await new Promise<number>(resolve => provider.listen(0, '127.0.0.1', () => resolve((provider.address() as { port: number }).port)));
+    const capability = 'F'.repeat(43);
+    handle = await startCodexProxy([{
+      modelId: 'relay-model',
+      npm: '@ai-sdk/openai-compatible',
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${providerPort}/v1`,
+      upstreamModelId: 'relay-model',
+      providerId: 'relay-provider',
+    }], {
+      requireAuth: false,
+      mixedNative: { nativeModelIds: new Set(['gpt-5.5']), capability },
+    });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/_relay-codex/${capability}/v1/responses`);
+        const timer = setTimeout(() => { client.close(); reject(new Error('timed out waiting for the second external turn')); }, 3_000);
+        let completed = 0;
+        client.on('open', () => client.send(JSON.stringify({ model: 'relay-model', input: 'first' })));
+        client.on('message', data => {
+          const event = JSON.parse(data.toString()) as { type?: string };
+          if (event.type !== 'response.completed') return;
+          completed += 1;
+          if (completed === 1) client.send(JSON.stringify({ model: 'relay-model', input: 'second' }));
+          if (completed === 2) client.close();
+        });
+        client.on('close', code => {
+          clearTimeout(timer);
+          if (code !== 1000 || completed !== 2) {
+            reject(new Error(`external socket closed before two turns completed: code=${code} completed=${completed}`));
+            return;
+          }
+          resolve();
+        });
+        client.on('error', reject);
+      });
+      expect(requestBodies).toHaveLength(2);
+      expect(JSON.stringify(requestBodies[0])).toContain('first');
+      expect(JSON.stringify(requestBodies[1])).toContain('second');
+    } finally {
+      await new Promise<void>(resolve => provider.close(() => resolve()));
+    }
+  });
+
+  it('reconstructs an external tool continuation from previous_response_id', async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const provider = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      req.once('end', () => {
+        requestBodies.push(JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>);
+        const turn = requestBodies.length;
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        if (turn === 1) {
+          res.write(`data: ${JSON.stringify({
+            id: 'chatcmpl-tool-call',
+            object: 'chat.completion.chunk',
+            choices: [{ index: 0, delta: {
+              role: 'assistant',
+              tool_calls: [{ index: 0, id: 'call_pwd', type: 'function', function: { name: 'shell', arguments: '{"cmd":"pwd"}' } }],
+            }, finish_reason: 'tool_calls' }],
+          })}\n\n`);
+        } else {
+          res.write(`data: ${JSON.stringify({
+            id: 'chatcmpl-final',
+            object: 'chat.completion.chunk',
+            choices: [{ index: 0, delta: { role: 'assistant', content: 'CONTINUATION_OK' }, finish_reason: null }],
+          })}\n\n`);
+          res.write(`data: ${JSON.stringify({
+            id: 'chatcmpl-final',
+            object: 'chat.completion.chunk',
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+          })}\n\n`);
+        }
+        res.end('data: [DONE]\n\n');
+      });
+    });
+    const providerPort = await new Promise<number>(resolve => provider.listen(0, '127.0.0.1', () => resolve((provider.address() as { port: number }).port)));
+    const capability = 'I'.repeat(43);
+    handle = await startCodexProxy([{
+      modelId: 'relay-model',
+      npm: '@ai-sdk/openai-compatible',
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${providerPort}/v1`,
+      upstreamModelId: 'relay-model',
+      providerId: 'relay-provider',
+    }], {
+      requireAuth: false,
+      mixedNative: { nativeModelIds: new Set(['gpt-5.5']), capability },
+    });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/_relay-codex/${capability}/v1/responses`);
+        const timer = setTimeout(() => { client.close(); reject(new Error('timed out waiting for external continuation')); }, 3_000);
+        let completed = 0;
+        let responseId = '';
+        client.on('open', () => client.send(JSON.stringify({
+          model: 'relay-model',
+          stream: true,
+          tools: [{ type: 'function', name: 'shell', parameters: { type: 'object' } }],
+          input: 'run pwd',
+        })));
+        client.on('message', data => {
+          const event = JSON.parse(data.toString()) as { type?: string; response?: { id?: string } };
+          if (event.type !== 'response.completed') return;
+          completed += 1;
+          if (completed === 1) {
+            responseId = event.response?.id ?? '';
+            client.send(JSON.stringify({
+              model: 'relay-model',
+              stream: true,
+              previous_response_id: responseId,
+              tools: [{ type: 'function', name: 'shell', parameters: { type: 'object' } }],
+              input: [{ type: 'function_call_output', call_id: 'call_pwd', output: 'workspace' }],
+            }));
+          } else {
+            client.close();
+          }
+        });
+        client.on('close', code => {
+          clearTimeout(timer);
+          if (code !== 1000 || completed !== 2 || !responseId) {
+            reject(new Error(`external continuation failed: code=${code} completed=${completed} responseId=${responseId || '(none)'}`));
+            return;
+          }
+          resolve();
+        });
+        client.on('error', reject);
+      });
+      expect(requestBodies).toHaveLength(2);
+      const messages = requestBodies[1]!.messages as Array<{ role?: string }>;
+      expect(messages.slice(-3).map(message => message.role)).toEqual(['user', 'assistant', 'tool']);
+      expect(JSON.stringify(requestBodies[1])).toContain('run pwd');
+      expect(JSON.stringify(requestBodies[1])).toContain('call_pwd');
+      expect(JSON.stringify(requestBodies[1])).toContain('workspace');
+    } finally {
+      await new Promise<void>(resolve => provider.close(() => resolve()));
+    }
+  });
+
+  it('rejects an orphaned external tool continuation before contacting the provider', async () => {
+    let providerCalls = 0;
+    const provider = createServer((req, res) => {
+      providerCalls += 1;
+      req.resume();
+      req.once('end', () => {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.end(`data: ${JSON.stringify({
+          id: 'chatcmpl-orphan',
+          object: 'chat.completion.chunk',
+          choices: [{ index: 0, delta: { role: 'assistant', content: 'provider-was-contacted' }, finish_reason: 'stop' }],
+        })}\n\ndata: [DONE]\n\n`);
+      });
+    });
+    const providerPort = await new Promise<number>(resolve => provider.listen(0, '127.0.0.1', () => resolve((provider.address() as { port: number }).port)));
+    const capability = 'J'.repeat(43);
+    handle = await startCodexProxy([{
+      modelId: 'relay-model',
+      npm: '@ai-sdk/openai-compatible',
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${providerPort}/v1`,
+      upstreamModelId: 'relay-model',
+      providerId: 'relay-provider',
+    }], {
+      requireAuth: false,
+      mixedNative: { nativeModelIds: new Set(['gpt-5.5']), capability },
+    });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/_relay-codex/${capability}/v1/responses`);
+        const timer = setTimeout(() => { client.close(); reject(new Error('timed out waiting for orphan rejection')); }, 3_000);
+        client.on('open', () => client.send(JSON.stringify({
+          model: 'relay-model',
+          stream: true,
+          previous_response_id: 'resp-expired',
+          input: [{ type: 'function_call_output', call_id: 'call_expired', output: 'orphan' }],
+        })));
+        client.on('message', data => {
+          const event = JSON.parse(data.toString()) as { type?: string };
+          if (event.type === 'response.completed') client.close();
+        });
+        client.on('close', code => {
+          clearTimeout(timer);
+          if (code !== 1000) {
+            reject(new Error(`orphan continuation closed unexpectedly: code=${code}`));
+            return;
+          }
+          resolve();
+        });
+        client.on('error', reject);
+      });
+      expect(providerCalls).toBe(0);
+    } finally {
+      await new Promise<void>(resolve => provider.close(() => resolve()));
+    }
+  });
+
+  it('closes an external WebSocket with policy code when a turn overlaps an active provider request', async () => {
+    let providerCalls = 0;
+    let firstRequest!: () => void;
+    const firstRequestSeen = new Promise<void>(resolve => { firstRequest = resolve; });
+    let releaseFirst!: () => void;
+    const firstResponseReleased = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const provider = createServer((req, res) => {
+      req.resume();
+      req.once('end', () => {
+        providerCalls += 1;
+        if (providerCalls !== 1) {
+          res.writeHead(500);
+          res.end();
+          return;
+        }
+        firstRequest();
+        void firstResponseReleased.then(() => {
+          res.writeHead(200, { 'content-type': 'text/event-stream' });
+          res.end(`data: ${JSON.stringify({
+            id: 'chatcmpl-1',
+            object: 'chat.completion.chunk',
+            choices: [{ index: 0, delta: { content: 'first' }, finish_reason: 'stop' }],
+          })}\n\ndata: [DONE]\n\n`);
+        });
+      });
+    });
+    const providerPort = await new Promise<number>(resolve => provider.listen(0, '127.0.0.1', () => resolve((provider.address() as { port: number }).port)));
+    const capability = 'G'.repeat(43);
+    handle = await startCodexProxy([{
+      modelId: 'relay-model',
+      npm: '@ai-sdk/openai-compatible',
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${providerPort}/v1`,
+      upstreamModelId: 'relay-model',
+      providerId: 'relay-provider',
+    }], {
+      requireAuth: false,
+      mixedNative: { nativeModelIds: new Set(['gpt-5.5']), capability },
+    });
+
+    try {
+      const closeCode = await new Promise<number>((resolve, reject) => {
+        const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/_relay-codex/${capability}/v1/responses`);
+        const timer = setTimeout(() => { client.close(); reject(new Error('timed out waiting for overlap rejection')); }, 3_000);
+        client.on('open', () => client.send(JSON.stringify({ model: 'relay-model', input: 'first' })));
+        void firstRequestSeen.then(() => client.send(JSON.stringify({ model: 'relay-model', input: 'second' })));
+        client.on('close', code => { clearTimeout(timer); resolve(code); });
+        client.on('error', reject);
+      });
+      expect(closeCode).toBe(1008);
+      expect(providerCalls).toBe(1);
+    } finally {
+      releaseFirst();
+      await new Promise<void>(resolve => provider.close(() => resolve()));
+    }
+  });
+
   it('resolves a WebSocket child payload before contacting the Relay model', async () => {
     const nativeRelay = createServer((req, res) => {
       req.resume();
@@ -379,15 +763,20 @@ describe('startCodexProxy', () => {
     const providerPort = await new Promise<number>(resolve => provider.listen(0, '127.0.0.1', () => resolve((provider.address() as { port: number }).port)));
 
     const capability = 'E'.repeat(43);
+    const auditDir = mkdtempSync(join(tmpdir(), 'relay-route-audit-'));
+    auditDirs.push(auditDir);
+    const routeAuditPath = join(auditDir, 'route-audit.jsonl');
     handle = await startCodexProxy([{
       modelId: 'provider__child',
       npm: '@ai-sdk/openai-compatible',
       apiKey: 'test-key',
       baseURL: `http://127.0.0.1:${providerPort}/v1`,
       upstreamModelId: 'child-model',
+      auditUpstreamModelId: 'provider-facing-child-model',
       providerId: 'provider',
     }], {
       requireAuth: false,
+      routeAuditPath,
       mixedNative: {
         nativeModelIds: new Set(['gpt-5.6-luna']),
         subagentRouteModelId: 'provider__child',
@@ -427,6 +816,12 @@ describe('startCodexProxy', () => {
 
       expect(JSON.stringify(providerBody)).toContain('DELEGATED_MARKER');
       expect(JSON.stringify(providerBody)).not.toContain(`gAAAAA${'A'.repeat(40)}`);
+      const routeAudit = readFileSync(routeAuditPath, 'utf8');
+      expect(routeAudit).toContain('"dispatch":"relay-subagent"');
+      expect(routeAudit).toContain('"provider":"provider"');
+      expect(routeAudit).toContain('"upstreamModel":"provider-facing-child-model"');
+      expect(routeAudit).not.toContain('DELEGATED_MARKER');
+      expect(routeAudit).not.toContain('encrypted_content');
     } finally {
       await new Promise<void>(resolve => nativeRelay.close(() => resolve()));
       await new Promise<void>(resolve => provider.close(() => resolve()));

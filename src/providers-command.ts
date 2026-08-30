@@ -132,7 +132,7 @@ ${pc.bold('Subcommands:')}
   (none)      Provider hub wizard ${pc.dim('[Phase 1.1]')}
   add         Add a provider (Groq, Mistral, Together AI, …) ${pc.dim('[Phase 1.1]')}
   import      Optional one-time import from OpenCode CLI ${pc.dim('[Phase 1.0]')}
-  auth        Sign in with OAuth (GitHub Copilot, xAI, OpenAI, ClinePass)
+  auth        Sign in with OAuth (Antigravity, GitHub Copilot, xAI, OpenAI, ClinePass)
   list        Show configured providers ${pc.dim('[Phase 1.0]')}
   remove      Remove a provider by id ${pc.dim('[Phase 1.1]')}
   refresh-models  Update cached model lists ${pc.dim('[Phase 1.2]')}`;

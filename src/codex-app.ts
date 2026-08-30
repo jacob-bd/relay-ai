@@ -24,6 +24,7 @@ import {
 } from './codex/routing.js';
 import { buildCodexAppProviderCatalogRoutes } from './codex/app-provider-routes.js';
 import { applyAppConfigPatch, previewAppConfigToml } from './codex/app-config.js';
+import { verifyCodexAppReadiness } from './codex/app-readiness.js';
 import { PREVIEW_PROXY_PORT, type CodexAppConfigSpec } from './codex/app-profile.js';
 import type { LocalProvider, LocalProviderModel } from './types.js';
 import {
@@ -32,6 +33,7 @@ import {
   getAppCatalogPath,
   getAppRestoreStatePath,
   getCodexConfigPath,
+  fileSha256,
   recoverInterruptedCodexAppSession,
   restoreCodexAppOverlay,
   saveAppRestoreStateBeforePatch,
@@ -75,6 +77,7 @@ import {
 import { shutdownCodexAppSession } from './codex/app-shutdown.js';
 import { getFavoritesAppCatalogPath } from './codex/profile.js';
 import { getRelayAiCodexDir } from './codex/session.js';
+import { prepareCodexRouteAuditLog } from './codex/route-audit.js';
 import {
   buildCloudCodeProxyRoute,
   buildOAuthAnthropicProxyRoute,
@@ -103,11 +106,24 @@ function codexProxyRouteToCodexRoute(route: CodexProxyRoute, fallbackProviderId:
   };
 }
 
-export async function waitForShutdownWithConfirm(assumeYes = false): Promise<void> {
+export function codexAppUsesExplicitSelection(
+  configOnly: boolean,
+  launchProvider?: string,
+  launchModel?: string,
+): boolean {
+  // configOnly is intentionally accepted so the preview behavior stays an
+  // explicit, regression-tested part of this decision.
+  void configOnly;
+  return Boolean(launchProvider && launchModel);
+}
+
+type AppShutdownSignal = 'sigint' | 'sigterm' | 'sighup';
+
+export async function waitForShutdownWithConfirm(assumeYes = false): Promise<AppShutdownSignal> {
   while (true) {
     const signal = await waitForShutdown();
-    if (signal !== 'sigint') break; // SIGTERM/SIGHUP: close immediately, no one to ask
-    if (assumeYes) break; // unattended launch: no one to ask either
+    if (signal !== 'sigint') return signal; // SIGTERM/SIGHUP: close immediately, no one to ask
+    if (assumeYes) return signal; // unattended launch: no one to ask either
     console.log('');
     const choice = await p.select({
       message: 'Close ChatGPT Desktop and restore your Codex config?',
@@ -116,9 +132,13 @@ export async function waitForShutdownWithConfirm(assumeYes = false): Promise<voi
         { value: 'no', label: 'No, keep session running' },
       ],
     });
-    if (p.isCancel(choice) || choice === 'yes') break; // Ctrl+C or Yes = close
+    if (p.isCancel(choice) || choice === 'yes') return signal; // Ctrl+C or Yes = close
     // choice === 'no' → loop back and keep waiting
   }
+}
+
+export function unattendedShutdownClosesApp(assumeYes: boolean, signal: AppShutdownSignal): boolean {
+  return assumeYes && signal !== 'sigint';
 }
 
 async function closeRunningCodexApp(): Promise<boolean> {
@@ -158,7 +178,7 @@ ${pc.bold('Options:')}
   --vertex     Use Claude models through Google Vertex AI
   --with-native Load native Codex models beside Relay models for this launch
   --relay-only Keep the current Relay-only launch behavior
-  --yes, -y     Run a fully specified launch unattended (no launch/stop prompts)
+  --yes, -y     Approve a fully specified launch/restart without prompting
   --restore    Restore Codex config after an interrupted app session
   --config     Preview the generated Codex app configuration without launching
   --trace      Write proxy debug logs to ~/.relay-ai/logs/ and show errors on exit
@@ -323,8 +343,10 @@ async function runCodexAppVertexLaunch(configOnly: boolean, trace = false): Prom
     };
 
     saveAppRestoreStateBeforePatch();
+    sessionActive = true;
     const backupPath = backupConfigToml();
     applyAppConfigPatch(spec);
+    await verifyCodexAppReadiness(spec);
 
     writeAppSessionLock({
       pid: process.pid,
@@ -334,8 +356,9 @@ async function runCodexAppVertexLaunch(configOnly: boolean, trace = false): Prom
       restoreStatePath: getAppRestoreStatePath(),
       backupPath,
       proxyPort,
+      patchedConfigSha256: fileSha256(getCodexConfigPath()),
+      ...(backupPath ? { originalConfigSha256: fileSha256(backupPath) } : {}),
     });
-    sessionActive = true;
 
     p.log.info(`Vertex AI · ${selectedEntry.display_name} — project: ${config.project} / location: ${config.location}`);
     logCodexProxy(proxyPort);
@@ -346,6 +369,7 @@ async function runCodexAppVertexLaunch(configOnly: boolean, trace = false): Prom
     } catch (err) {
       p.log.warn(String(err instanceof Error ? err.message : err));
       p.log.info(codexAppInstallHint());
+      throw err;
     }
 
     printCodexAppSessionPanel({
@@ -486,11 +510,14 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
   let selectedModel = activeProvider.models.find(m => m.id === prefs.lastCodexModel)
     ?? activeProvider.models[0]!;
 
-  if (!configOnly && opts.launchProvider && opts.launchModel) {
+  // --config must preview the exact unattended launch selection. Ignoring
+  // explicit flags here made a safe preview silently show the previously saved
+  // model instead of the requested provider/model pair.
+  if (codexAppUsesExplicitSelection(configOnly, opts.launchProvider, opts.launchModel)) {
     const bootSelection = resolveBootSelection(
       compatible,
-      opts.launchProvider,
-      opts.launchModel,
+      opts.launchProvider!,
+      opts.launchModel!,
       providerForCodexPicker,
     );
     if ('error' in bootSelection) {
@@ -579,6 +606,12 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
         generalFavorites: favorites,
         subagentFavorites: prefs.codexSubagentModels ?? [],
       });
+      if (mixedModels.capacitySkipped.length > 0) {
+        p.log.warn(
+          `Skipped ${mixedModels.capacitySkipped.length} favorite(s) because the mixed catalog is full: `
+            + mixedModels.capacitySkipped.map(f => `${f.providerId}:${f.modelId}`).join(', '),
+        );
+      }
       assertConfiguredCodexSubagentsResolved(prefs.codexSubagentModels ?? [], mixedModels);
       const multiAgentV2Supported = mixedModels.subagents.length === 0 || supportsMultiAgentV2(embeddedBinary);
       if (!multiAgentV2Supported) {
@@ -716,10 +749,12 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
     }
 
     let proxyPort: number;
+    const routeAuditPath = mixedPlan ? prepareCodexRouteAuditLog() : undefined;
     if (mixedPlan) {
       proxyHandle = await startCodexProxy(mixedPlan.relayRoutes, {
         requireAuth: false,
         debug: trace,
+        routeAuditPath,
         mixedNative: {
           nativeModelIds: mixedPlan.nativeModelIds,
           subagentRouteModelId: mixedPlan.subagentRouteModelId,
@@ -728,6 +763,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
         },
       });
       proxyPort = proxyHandle.port;
+      p.log.info(`Route audit (metadata only): ${routeAuditPath}`);
     } else if (favoritesActive && resolvedFavorites.length > 0) {
       const needsBackend = (r: typeof resolvedFavorites[0]) => {
         const m = r.model as LocalProviderModel;
@@ -800,8 +836,10 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
     };
 
     saveAppRestoreStateBeforePatch();
+    sessionActive = true;
     const backupPath = backupConfigToml();
     applyAppConfigPatch(spec);
+    await verifyCodexAppReadiness(spec);
 
     writeAppSessionLock({
       pid: process.pid,
@@ -811,8 +849,9 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
       restoreStatePath: getAppRestoreStatePath(),
       backupPath,
       proxyPort,
+      patchedConfigSha256: fileSha256(getCodexConfigPath()),
+      ...(backupPath ? { originalConfigSha256: fileSha256(backupPath) } : {}),
     });
-    sessionActive = true;
 
     const prevRecent = prefs.recentModelsByProvider?.[activeProvider.id] ?? [];
     const updatedRecent = [selectedModel.id, ...prevRecent.filter(id => id !== selectedModel.id)].slice(0, 3);
@@ -831,6 +870,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
     } catch (err) {
       p.log.warn(String(err instanceof Error ? err.message : err));
       p.log.info(codexAppInstallHint());
+      throw err;
     }
 
     printCodexAppSessionPanel({

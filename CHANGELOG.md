@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.6] - 2026-08-20
+
+### Fixed
+
+- **macOS ChatGPT Desktop restarts now identify the main process reliably.** Relay uses a full `ps` process snapshot and the exact installed executable path, while excluding helper processes, unrelated applications, and Relay's own PID. Thanks to [@Derivedbetter](https://github.com/Derivedbetter) in [PR #64](https://github.com/jacob-bd/relay-ai/pull/64) for the fix and live reproduction.
+- **Codex Desktop launches are safer across startup, identity, and shutdown.** Relay waits for the app to become ready, preserves the correct external runtime identity, and keeps unattended shutdown and macOS lifecycle handling fail-closed. Thanks to [@Derivedbetter](https://github.com/Derivedbetter) in [PR #53](https://github.com/jacob-bd/relay-ai/pull/53).
+- **External Codex Responses WebSocket sessions now remain persistent across turns.** Relay keeps the connection alive for follow-up requests and preserves the expected close behavior for overlapping requests. Thanks to [@jacob-bd](https://github.com/jacob-bd) in [PR #58](https://github.com/jacob-bd/relay-ai/pull/58), addressing [Issue #55](https://github.com/jacob-bd/relay-ai/issues/55).
+- **Codex WebSocket tool continuations now preserve response context.** External `previous_response_id` state is retained per connection with bounded history and orphaned continuations are rejected before reaching the provider; native persistent connections reset per-turn completion state correctly. Thanks to [@jacob-bd](https://github.com/jacob-bd) in [PR #62](https://github.com/jacob-bd/relay-ai/pull/62), addressing [Issues #57](https://github.com/jacob-bd/relay-ai/issues/57) and [#59](https://github.com/jacob-bd/relay-ai/issues/59).
+
 ## [0.9.5] - 2026-08-17
 
 ### Fixed
