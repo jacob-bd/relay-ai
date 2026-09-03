@@ -50,7 +50,7 @@ import { join as join2 } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.9.6",
+  version: "0.9.8",
   publishConfig: {
     access: "public"
   },
@@ -1739,6 +1739,431 @@ function saveRegistry(registry, path = getProvidersPath()) {
   renameSync2(tmp, path);
 }
 
+// src/provider-templates.ts
+var PROVIDER_TEMPLATES = [
+  {
+    id: "cline-pass",
+    name: "ClinePass",
+    authType: "api",
+    authMethods: ["api", "oauth"],
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.cline.bot/api/v1",
+    signupUrl: "https://app.cline.bot",
+    modelSource: "cline-recommended",
+    headers: { "HTTP-Referer": "https://cline.bot", "X-Title": "Cline" },
+    supported: true,
+    subscriptionRisk: true
+  },
+  {
+    id: "groq",
+    name: "Groq",
+    authType: "api",
+    npm: "@ai-sdk/groq",
+    defaultBaseUrl: "https://api.groq.com/openai/v1",
+    signupUrl: "https://console.groq.com/keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "nvidia",
+    name: "Nvidia",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://integrate.api.nvidia.com/v1",
+    signupUrl: "https://build.nvidia.com",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "mistral",
+    name: "Mistral",
+    authType: "api",
+    npm: "@ai-sdk/mistral",
+    defaultBaseUrl: "https://api.mistral.ai/v1",
+    signupUrl: "https://console.mistral.ai/api-keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "togetherai",
+    name: "Together AI",
+    authType: "api",
+    npm: "@ai-sdk/togetherai",
+    defaultBaseUrl: "https://api.together.xyz/v1",
+    signupUrl: "https://api.together.xyz/settings/api-keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "cerebras",
+    name: "Cerebras",
+    authType: "api",
+    npm: "@ai-sdk/cerebras",
+    defaultBaseUrl: "https://api.cerebras.ai/v1",
+    signupUrl: "https://cloud.cerebras.ai",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "deepinfra",
+    name: "DeepInfra",
+    authType: "api",
+    npm: "@ai-sdk/deepinfra",
+    defaultBaseUrl: "https://api.deepinfra.com/v1/openai",
+    signupUrl: "https://deepinfra.com/dash/api_keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.deepseek.com/v1",
+    signupUrl: "https://platform.deepseek.com",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "zhipu",
+    name: "Zhipu AI (GLM)",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://open.bigmodel.cn/api/paas/v4",
+    signupUrl: "https://open.bigmodel.cn",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "moonshot",
+    name: "Moonshot (Kimi)",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.moonshot.cn/v1",
+    signupUrl: "https://platform.moonshot.cn",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "moonshot-global",
+    name: "Moonshot Global (kimi.ai)",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.moonshot.ai/v1",
+    signupUrl: "https://platform.kimi.ai",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "kimi-code",
+    name: "Kimi Code (Subscription Required)",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.kimi.com/coding/v1",
+    modelSource: "static-seed",
+    staticModels: [
+      { id: "kimi-for-coding", name: "Kimi Code K2.7 (Unified)" }
+    ],
+    supported: true
+  },
+  {
+    id: "xai",
+    name: "xAI",
+    authType: "api",
+    npm: "@ai-sdk/xai",
+    defaultBaseUrl: "https://api.x.ai/v1",
+    signupUrl: "https://console.x.ai",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "perplexity",
+    name: "Perplexity",
+    authType: "api",
+    npm: "@ai-sdk/perplexity",
+    defaultBaseUrl: "https://api.perplexity.ai",
+    signupUrl: "https://www.perplexity.ai/settings/api",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "cohere",
+    name: "Cohere",
+    authType: "api",
+    npm: "@ai-sdk/cohere",
+    defaultBaseUrl: "https://api.cohere.com/compatibility/v1",
+    signupUrl: "https://dashboard.cohere.com/api-keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "openai",
+    name: "OpenAI",
+    authType: "api",
+    npm: "@ai-sdk/openai",
+    defaultBaseUrl: "https://api.openai.com/v1",
+    signupUrl: "https://platform.openai.com/api-keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "google",
+    name: "Google Gemini",
+    authType: "api",
+    npm: "@ai-sdk/google",
+    defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    signupUrl: "https://aistudio.google.com/apikey",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "alibaba",
+    name: "Alibaba DashScope (China)",
+    authType: "api",
+    npm: "@ai-sdk/alibaba",
+    defaultBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    signupUrl: "https://dashscope.console.aliyun.com/apiKey",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "qwen-cloud-token-plan",
+    name: "Qwen Cloud (Token Plan)",
+    shortName: "Qwen Cloud",
+    authType: "api",
+    npm: "@ai-sdk/alibaba",
+    defaultBaseUrl: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+    signupUrl: "https://home.qwencloud.com/api-keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "qwen-cloud-payg",
+    name: "Qwen Cloud (Pay-As-You-Go)",
+    shortName: "Qwen Cloud",
+    authType: "api",
+    npm: "@ai-sdk/alibaba",
+    defaultBaseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    signupUrl: "https://home.qwencloud.com/api-keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    authType: "api",
+    npm: "@openrouter/ai-sdk-provider",
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    signupUrl: "https://openrouter.ai/keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "kilo",
+    name: "Kilo Code",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.kilo.ai/api/gateway",
+    modelsPath: "/models",
+    signupUrl: "https://app.kilo.ai",
+    apiKeyOptional: true,
+    anonymousFreeModels: true,
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "ollama",
+    name: "Ollama",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "http://127.0.0.1:11434/v1",
+    urlPrompt: "Ollama API Base URL:",
+    apiKeyOptional: true,
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "lmstudio",
+    name: "LM Studio",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "http://127.0.0.1:1234/v1",
+    urlPrompt: "LM Studio API Base URL:",
+    apiKeyOptional: true,
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "venice",
+    name: "Venice AI",
+    authType: "api",
+    npm: "venice-ai-sdk-provider",
+    defaultBaseUrl: "https://api.venice.ai/api/v1",
+    signupUrl: "https://venice.ai/settings/api",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "cloudflare",
+    name: "Cloudflare Workers AI",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/v1",
+    modelsPath: "/models/search?task=Text%20Generation",
+    signupUrl: "https://dash.cloudflare.com",
+    accountIdPrompt: "Cloudflare Account ID:",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    authType: "api",
+    npm: "@ai-sdk/anthropic",
+    defaultBaseUrl: "https://api.anthropic.com",
+    signupUrl: "https://console.anthropic.com/settings/keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "bedrock",
+    name: "Amazon Bedrock",
+    authType: "api",
+    npm: "@ai-sdk/amazon-bedrock",
+    modelSource: "manual-only",
+    supported: false,
+    unsupportedReason: "Not supported yet (requires AWS credentials). Optional: relay-ai providers import if already set up in OpenCode CLI."
+  },
+  {
+    id: "azure",
+    name: "Azure OpenAI",
+    authType: "api",
+    npm: "@ai-sdk/azure",
+    modelSource: "manual-only",
+    supported: false,
+    unsupportedReason: "Not supported yet (requires Azure deployment URLs). Optional: relay-ai providers import if already set up in OpenCode CLI."
+  },
+  {
+    id: "vertex",
+    name: "Google Vertex AI",
+    authType: "none",
+    npm: "@ai-sdk/google-vertex",
+    modelSource: "manual-only",
+    supported: false,
+    unsupportedReason: "Uses gcloud Application Default Credentials \u2014 use relay-ai server --vertex, not an API key."
+  },
+  {
+    id: "opencode-cloud",
+    name: "OpenCode Zen / Go",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    signupUrl: "https://opencode.ai/auth",
+    modelSource: "zen-go-api",
+    supported: true
+  },
+  {
+    id: "zen",
+    name: "OpenCode Zen",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    signupUrl: "https://opencode.ai/auth",
+    modelSource: "zen-go-api",
+    supported: true,
+    addable: false
+  },
+  {
+    id: "go",
+    name: "OpenCode Go",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    signupUrl: "https://opencode.ai/auth",
+    modelSource: "zen-go-api",
+    supported: true,
+    addable: false
+  },
+  // Subscription OAuth providers — Authorization Code + PKCE (browser redirect)
+  // ⚠️  These extract tokens from paid subscriptions. Account risk — see plan docs.
+  {
+    id: "claude-code",
+    name: "Claude Code (Anthropic subscription)",
+    shortName: "Claude Code",
+    authType: "oauth",
+    npm: "@ai-sdk/anthropic",
+    defaultBaseUrl: "https://api.anthropic.com",
+    signupUrl: "https://claude.ai",
+    modelSource: "api-list",
+    supported: true,
+    hidden: true,
+    subscriptionRisk: true
+  },
+  {
+    id: "antigravity",
+    name: "Cloud Code Assist OAuth (Google)",
+    shortName: "Cloud Code Assist",
+    authType: "oauth",
+    npm: "@ai-sdk/openai-compatible",
+    signupUrl: "https://antigravity.google",
+    modelSource: "api-list",
+    supported: true,
+    hidden: true,
+    subscriptionRisk: true
+  },
+  // OAuth-gated subscription providers — device code or broker sign-in
+  {
+    id: "xai-oauth",
+    name: "xAI Grok (SuperGrok)",
+    shortName: "xAI Grok",
+    authType: "oauth",
+    npm: "@ai-sdk/xai",
+    signupUrl: "https://x.ai",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "openai-oauth",
+    name: "OpenAI (ChatGPT)",
+    shortName: "OpenAI",
+    authType: "oauth",
+    npm: "@ai-sdk/openai",
+    signupUrl: "https://chatgpt.com",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "github-copilot",
+    name: "GitHub Copilot",
+    authType: "oauth",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.githubcopilot.com",
+    modelsPath: "/models",
+    signupUrl: "https://github.com/features/copilot",
+    modelSource: "api-list",
+    headers: { "Editor-Version": "vscode/1.85.1" },
+    supported: true
+  }
+];
+function getTemplateById(id) {
+  return PROVIDER_TEMPLATES.find((t) => t.id === id);
+}
+
+// src/registry/resolve-template.ts
+var TEMPLATE_ID_ALIASES = {
+  "google-vertex": "vertex"
+};
+function resolveProviderTemplate(provider) {
+  const candidates = [
+    TEMPLATE_ID_ALIASES[provider.templateId],
+    provider.templateId,
+    TEMPLATE_ID_ALIASES[provider.id],
+    provider.id
+  ].filter(Boolean);
+  for (const id of candidates) {
+    const template = getTemplateById(id);
+    if (template) return template;
+  }
+  return void 0;
+}
+
 // src/core/errors.ts
 var DEFAULT_RETRYABLE = {
   INVALID_ROUTE_ID: false,
@@ -1928,10 +2353,12 @@ function favoriteKey(providerId, modelId) {
 }
 function toDescriptor(provider, model, favorites) {
   const upstreamModelId = model.upstreamModelId ?? model.id;
+  const providerShortName = resolveProviderTemplate(provider)?.shortName ?? provider.name;
   return {
     routeId: toRelayRouteId(provider.id, model.id),
     providerId: provider.id,
     providerName: provider.name,
+    providerShortName,
     modelId: model.id,
     upstreamModelId,
     displayName: model.name,

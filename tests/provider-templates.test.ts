@@ -71,6 +71,24 @@ describe('provider templates', () => {
     });
   });
 
+  it('defines compact labels for providers with long display names', () => {
+    expect({
+      claude: getTemplateById('claude-code')?.shortName,
+      google: getTemplateById('antigravity')?.shortName,
+      qwenTokenPlan: getTemplateById('qwen-cloud-token-plan')?.shortName,
+      qwenPayg: getTemplateById('qwen-cloud-payg')?.shortName,
+      xai: getTemplateById('xai-oauth')?.shortName,
+      openai: getTemplateById('openai-oauth')?.shortName,
+    }).toEqual({
+      claude: 'Claude Code',
+      google: 'Cloud Code Assist',
+      qwenTokenPlan: 'Qwen Cloud',
+      qwenPayg: 'Qwen Cloud',
+      xai: 'xAI Grok',
+      openai: 'OpenAI',
+    });
+  });
+
   it('defines ClinePass with API-key and OAuth authentication methods', () => {
     expect(getTemplateById('cline-pass')).toMatchObject({
       id: 'cline-pass',

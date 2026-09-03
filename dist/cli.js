@@ -196,9 +196,10 @@ import {
   updateCustomEndpointProvider,
   upstreamHttpStatus,
   validateCustomEndpointUrl,
+  waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-PYJQMEJD.js";
+} from "./chunk-WIXM2H2D.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -206,7 +207,7 @@ import {
   listAddableTemplates,
   listSupportedTemplates,
   listVisibleOAuthTemplates
-} from "./chunk-NYKVDBQC.js";
+} from "./chunk-P4IS6537.js";
 
 // src/cli.ts
 import pc12 from "picocolors";
@@ -5574,7 +5575,7 @@ function printCodexAppSessionPanel(opts) {
     `${pc6.bold("Provider")}  ${fmtProvider(opts.providerName)}`,
     "",
     `${pc6.yellow(pc6.bold("Keep this terminal open"))}${pc6.white(" while you use Codex.")}`,
-    `${pc6.white("Press ")}${pc6.bold(pc6.red("Ctrl+C"))}${pc6.white(" to stop the proxy and restore ")}${fmtCommand("~/.codex/config.toml")}${pc6.white(".")}`,
+    `${pc6.white("Press ")}${pc6.bold(pc6.red("Ctrl+C"))}${pc6.white(" to close ChatGPT Desktop, restore ")}${fmtCommand("~/.codex/config.toml")}${pc6.white(", and stop the proxy.")}`,
     `${pc6.dim("Codex may show ")}${pc6.yellow('"Custom"')}${pc6.dim(" if the desktop picker cannot resolve registry models \u2014 check the terminal line above. After restart, pick your model from the picker if it appears.")}`,
     `${pc6.dim("If Codex asks you to sign in after restart: choose API key and enter any character \u2014 that unlocks the model picker for registry providers.")}`,
     `${pc6.dim("Stuck? Run ")}${fmtCommand(opts.restoreCommand)}${pc6.dim(".")}`
@@ -11608,6 +11609,23 @@ function waitForShutdown2() {
   });
 }
 
+// src/codex/app-shutdown.ts
+async function shutdownCodexAppSession(dependencies) {
+  if (dependencies.isAppRunning()) {
+    dependencies.quitApp();
+    const exited = await dependencies.waitForAppExit();
+    if (!exited) {
+      throw new Error(
+        "ChatGPT Desktop did not exit after graceful shutdown; refusing to restore config until Desktop exits. Close Desktop, then run relay-ai codex-app --restore."
+      );
+    }
+  }
+  const result = dependencies.restoreOverlay();
+  if (result.liveSession) throw new Error(result.message);
+  dependencies.closeResources();
+  return result;
+}
+
 // src/codex-app.ts
 function codexProxyRouteToCodexRoute(route, fallbackProviderId) {
   return {
@@ -11648,22 +11666,6 @@ async function waitForShutdownWithConfirm(assumeYes = false) {
     if (p12.isCancel(choice) || choice === "yes") return signal;
   }
 }
-function unattendedShutdownClosesApp(assumeYes, signal) {
-  return assumeYes && signal !== "sigint";
-}
-async function maybeCloseRunningCodexApp(assumeYes = false) {
-  if (!isCodexAppRunning()) return;
-  if (assumeYes) {
-    p12.log.step("Stopping ChatGPT Desktop...");
-    quitCodexAppGracefully();
-    return;
-  }
-  const shouldClose = await p12.confirm({ message: "ChatGPT Desktop is still running. Close it?" });
-  if (shouldClose && !p12.isCancel(shouldClose)) {
-    p12.log.step("Stopping ChatGPT Desktop...");
-    quitCodexAppGracefully();
-  }
-}
 function codexAppHelpText() {
   return `${pc10.bold("relay-ai codex-app")} \u2014 launch the ChatGPT desktop app (Codex mode) with your registry providers
 ${pc10.dim('(OpenAI merged the Codex app into ChatGPT desktop on 2026-07-09; "chatgpt" is an alias for this command)')}
@@ -11697,7 +11699,7 @@ ${pc10.bold("Platforms:")}
   macOS, Windows, and Linux (ChatGPT desktop app preview).
 
 ${pc10.bold("Cleanup:")}
-  Ctrl+C stops the proxy and restores your previous Codex config.
+  Ctrl+C closes ChatGPT Desktop, restores your previous Codex config, and stops the proxy.
   After crash: relay-ai codex-app --restore
 
 ${pc10.bold("Preview (no writes):")}
@@ -11795,6 +11797,25 @@ async function runCodexAppVertexLaunch(configOnly, trace = false) {
   }
   let proxyHandle = null;
   let sessionActive = false;
+  let shutdownFailed = false;
+  let resourcesClosed = false;
+  const closeResources = () => {
+    if (resourcesClosed) return;
+    resourcesClosed = true;
+    proxyHandle?.close();
+  };
+  const restoreOverlay = () => {
+    const result = restoreCodexAppOverlay();
+    if (!result.liveSession) sessionActive = false;
+    return result;
+  };
+  const restoreOverlaySafely = () => {
+    try {
+      restoreOverlay();
+    } catch (err) {
+      p12.log.error(String(err instanceof Error ? err.message : err));
+    }
+  };
   try {
     proxyHandle = await startCodexProxy(
       vertexModels.map((m) => ({
@@ -11851,15 +11872,27 @@ async function runCodexAppVertexLaunch(configOnly, trace = false) {
     codexAppOutro(selectedEntry.display_name);
     await waitForShutdownWithConfirm();
     console.log("");
-    if (sessionActive) {
-      restoreCodexAppOverlay();
-      sessionActive = false;
+    try {
+      const result = await shutdownCodexAppSession({
+        isAppRunning: isCodexAppRunning,
+        quitApp: quitCodexAppGracefully,
+        waitForAppExit: () => waitForCodexAppQuit(),
+        restoreOverlay,
+        closeResources
+      });
+      p12.log.success(result.message);
+      return 0;
+    } catch (err) {
+      shutdownFailed = true;
+      p12.log.error(String(err instanceof Error ? err.message : err));
+      return 1;
     }
-    await maybeCloseRunningCodexApp();
-    return 0;
   } finally {
-    proxyHandle?.close();
-    if (sessionActive) restoreCodexAppOverlay();
+    if (sessionActive && !isCodexAppRunning()) restoreOverlaySafely();
+    closeResources();
+    if (sessionActive && !shutdownFailed) {
+      p12.log.error("ChatGPT Desktop is still running; config restoration was skipped. Close Desktop, then run relay-ai codex-app --restore.");
+    }
   }
 }
 async function runCodexAppCommand(args, opts = {}) {
@@ -12073,6 +12106,27 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
   }
   let proxyHandle = null;
   let sessionActive = false;
+  let shutdownFailed = false;
+  let resourcesClosed = false;
+  const closeResources = () => {
+    if (resourcesClosed) return;
+    resourcesClosed = true;
+    proxyHandle?.close();
+    cloudCodeBackend?.handle.close();
+    cloudCodeBackendFav?.handle.close();
+  };
+  const restoreOverlay = () => {
+    const result = restoreCodexAppOverlay();
+    if (!result.liveSession) sessionActive = false;
+    return result;
+  };
+  const restoreOverlaySafely = () => {
+    try {
+      restoreOverlay();
+    } catch (err) {
+      p12.log.error(String(err instanceof Error ? err.message : err));
+    }
+  };
   try {
     const catalogPath = mixedPlan ? join13(getRelayAiCodexDir(), "app-models-mixed.json") : favoritesActive && resolvedFavorites.length > 0 ? getFavoritesAppCatalogPath() : getAppCatalogPath(route.providerId);
     const activeRoute = mixedPlan ? {
@@ -12249,31 +12303,30 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
       restoreCommand: "relay-ai codex-app --restore"
     });
     codexAppOutro(modelLabel);
-    const shutdownSignal = await waitForShutdownWithConfirm(opts.assumeYes);
+    await waitForShutdownWithConfirm(opts.assumeYes);
     if (trace) printTraceLog(debugLogPath);
     console.log("");
-    if (sessionActive) {
-      restoreCodexAppOverlay();
-      sessionActive = false;
+    try {
+      const result = await shutdownCodexAppSession({
+        isAppRunning: isCodexAppRunning,
+        quitApp: quitCodexAppGracefully,
+        waitForAppExit: () => waitForCodexAppQuit(),
+        restoreOverlay,
+        closeResources
+      });
+      p12.log.success(result.message);
+      return 0;
+    } catch (err) {
+      shutdownFailed = true;
+      p12.log.error(String(err instanceof Error ? err.message : err));
+      return 1;
     }
-    if (unattendedShutdownClosesApp(Boolean(opts.assumeYes), shutdownSignal)) {
-      if (isCodexAppRunning()) {
-        p12.log.step("Stopping ChatGPT Desktop after unattended Relay shutdown...");
-        quitCodexAppGracefully();
-      }
-    } else {
-      await maybeCloseRunningCodexApp(opts.assumeYes);
-    }
-    return 0;
   } finally {
-    proxyHandle?.close();
-    if (cloudCodeBackend) {
-      cloudCodeBackend.handle.close();
+    if (sessionActive && !isCodexAppRunning()) restoreOverlaySafely();
+    closeResources();
+    if (sessionActive && !shutdownFailed) {
+      p12.log.error("ChatGPT Desktop is still running; config restoration was skipped. Close Desktop, then run relay-ai codex-app --restore.");
     }
-    if (cloudCodeBackendFav) {
-      cloudCodeBackendFav.handle.close();
-    }
-    if (sessionActive) restoreCodexAppOverlay();
   }
 }
 
@@ -15739,7 +15792,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-NYYLGTCD.js");
+    const { runUiCommand } = await import("./ui-command-JIRLAHM6.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

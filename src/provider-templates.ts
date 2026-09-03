@@ -6,6 +6,8 @@ export type ProviderModelSource = 'api-list' | 'static-seed' | 'manual-only' | '
 export interface ProviderTemplate {
   id: string;
   name: string;
+  /** Compact label for constrained model lists. */
+  shortName?: string;
   authType: ProviderAuthType;
   /** Supported setup methods; defaults to the template's authType. */
   authMethods?: ProviderAuthType[];
@@ -220,6 +222,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   {
     id: 'qwen-cloud-token-plan',
     name: 'Qwen Cloud (Token Plan)',
+    shortName: 'Qwen Cloud',
     authType: 'api',
     npm: '@ai-sdk/alibaba',
     defaultBaseUrl: 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
@@ -230,6 +233,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   {
     id: 'qwen-cloud-payg',
     name: 'Qwen Cloud (Pay-As-You-Go)',
+    shortName: 'Qwen Cloud',
     authType: 'api',
     npm: '@ai-sdk/alibaba',
     defaultBaseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
@@ -375,6 +379,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   {
     id: 'claude-code',
     name: 'Claude Code (Anthropic subscription)',
+    shortName: 'Claude Code',
     authType: 'oauth',
     npm: '@ai-sdk/anthropic',
     defaultBaseUrl: 'https://api.anthropic.com',
@@ -387,6 +392,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   {
     id: 'antigravity',
     name: 'Cloud Code Assist OAuth (Google)',
+    shortName: 'Cloud Code Assist',
     authType: 'oauth',
     npm: '@ai-sdk/openai-compatible',
     signupUrl: 'https://antigravity.google',
@@ -399,6 +405,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   {
     id: 'xai-oauth',
     name: 'xAI Grok (SuperGrok)',
+    shortName: 'xAI Grok',
     authType: 'oauth',
     npm: '@ai-sdk/xai',
     signupUrl: 'https://x.ai',
@@ -408,6 +415,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
   {
     id: 'openai-oauth',
     name: 'OpenAI (ChatGPT)',
+    shortName: 'OpenAI',
     authType: 'oauth',
     npm: '@ai-sdk/openai',
     signupUrl: 'https://chatgpt.com',

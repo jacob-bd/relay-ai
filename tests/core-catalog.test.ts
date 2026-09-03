@@ -152,6 +152,24 @@ describe('listRelayModels', () => {
     expect(json).not.toContain(CANARY);
   });
 
+  it('exposes a compact template label while preserving the provider name', () => {
+    writeRegistry([provider({
+      id: 'custom-google',
+      templateId: 'antigravity',
+      name: 'Antigravity (Google Cloud Code Assist)',
+      authRef: 'keychain:custom-google',
+    })]);
+    const [model] = listRelayModels();
+    expect(model!.providerName).toBe('Antigravity (Google Cloud Code Assist)');
+    expect(model!.providerShortName).toBe('Cloud Code Assist');
+  });
+
+  it('falls back to the provider name when no compact template label exists', () => {
+    writeRegistry([provider({})]);
+    const [model] = listRelayModels();
+    expect(model!.providerShortName).toBe('Provider One');
+  });
+
   it('rejects a newer registry schema and never rewrites the file', () => {
     writeRegistry([provider({})], 99);
     const before = readFileSync(join(home, 'providers.json'), 'utf8');

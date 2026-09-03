@@ -2,7 +2,7 @@
 import {
   getTemplateById,
   init_provider_templates
-} from "./chunk-NYKVDBQC.js";
+} from "./chunk-P4IS6537.js";
 
 // src/constants.ts
 import { homedir } from "os";
@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.9.6",
+  version: "0.9.8",
   publishConfig: {
     access: "public"
   },
@@ -13250,6 +13250,19 @@ async function waitForOriginalCodexPids(originalPids, timeoutMs, alive = pidIsAl
   }
   return originalPids.every((pid) => !alive(pid));
 }
+async function waitForCodexAppQuit(timeoutMs = 5e3) {
+  const originalPids = codexAppMainPids();
+  if (originalPids.length > 0) {
+    const exited = await waitForOriginalCodexPids(originalPids, timeoutMs);
+    return exited && !isCodexAppRunning();
+  }
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isCodexAppRunning()) return true;
+    await sleep(200);
+  }
+  return !isCodexAppRunning();
+}
 function openCodexAppAt(path) {
   if (process.platform === "darwin") {
     if (path.endsWith(".app")) {
@@ -13884,6 +13897,7 @@ export {
   findCodexApp,
   findEmbeddedCodexBinary,
   isCodexAppRunning,
+  waitForCodexAppQuit,
   quitCodexAppGracefully,
   launchOrRestartCodexApp,
   codexAppInstallHint,
@@ -13896,4 +13910,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-PYJQMEJD.js.map
+//# sourceMappingURL=chunk-WIXM2H2D.js.map

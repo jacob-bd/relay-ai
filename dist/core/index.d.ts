@@ -37,6 +37,7 @@ interface RelayModelDescriptor {
     routeId: RelayRouteId;
     providerId: string;
     providerName: string;
+    providerShortName: string;
     modelId: string;
     upstreamModelId: string;
     displayName: string;

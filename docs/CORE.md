@@ -138,6 +138,7 @@ Scope, accurately:
 | `routeId` | `RelayRouteId` | `` `${providerId}::${modelId}` `` — pass this straight to `createRelayModel()`. |
 | `providerId` | `string` | Stable provider slug (e.g. `openai-oauth`, `openrouter`). |
 | `providerName` | `string` | Human-readable provider name for display. |
+| `providerShortName` | `string` | Compact human-readable provider label for constrained UI; falls back to `providerName`. |
 | `modelId` | `string` | Catalog id used to look the model up again in relay-ai. |
 | `upstreamModelId` | `string` | The id actually sent to the upstream API (can differ from `modelId`). |
 | `displayName` | `string` | Human-readable model name for display. |

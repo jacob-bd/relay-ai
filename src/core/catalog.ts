@@ -3,6 +3,7 @@
 import { loadPreferences } from '../config.js';
 import { getReasoningCapabilities } from '../provider-factory.js';
 import { loadRegistry } from '../registry/io.js';
+import { resolveProviderTemplate } from '../registry/resolve-template.js';
 import { REGISTRY_SCHEMA_VERSION, type CachedModel, type ProviderRegistry, type RegistryProvider } from '../registry/types.js';
 import { RelayCoreError } from './errors.js';
 import { isRelayReasoningLevel, reasoningNpmForRoute } from './reasoning.js';
@@ -74,10 +75,12 @@ function favoriteKey(providerId: string, modelId: string): string {
 
 function toDescriptor(provider: RegistryProvider, model: CachedModel, favorites: Set<string>): RelayModelDescriptor {
   const upstreamModelId = model.upstreamModelId ?? model.id;
+  const providerShortName = resolveProviderTemplate(provider)?.shortName ?? provider.name;
   return {
     routeId: toRelayRouteId(provider.id, model.id),
     providerId: provider.id,
     providerName: provider.name,
+    providerShortName,
     modelId: model.id,
     upstreamModelId,
     displayName: model.name,

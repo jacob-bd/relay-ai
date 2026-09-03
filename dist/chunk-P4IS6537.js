@@ -251,6 +251,7 @@ var init_provider_templates = __esm({
       {
         id: "qwen-cloud-token-plan",
         name: "Qwen Cloud (Token Plan)",
+        shortName: "Qwen Cloud",
         authType: "api",
         npm: "@ai-sdk/alibaba",
         defaultBaseUrl: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
@@ -261,6 +262,7 @@ var init_provider_templates = __esm({
       {
         id: "qwen-cloud-payg",
         name: "Qwen Cloud (Pay-As-You-Go)",
+        shortName: "Qwen Cloud",
         authType: "api",
         npm: "@ai-sdk/alibaba",
         defaultBaseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
@@ -406,6 +408,7 @@ var init_provider_templates = __esm({
       {
         id: "claude-code",
         name: "Claude Code (Anthropic subscription)",
+        shortName: "Claude Code",
         authType: "oauth",
         npm: "@ai-sdk/anthropic",
         defaultBaseUrl: "https://api.anthropic.com",
@@ -418,6 +421,7 @@ var init_provider_templates = __esm({
       {
         id: "antigravity",
         name: "Cloud Code Assist OAuth (Google)",
+        shortName: "Cloud Code Assist",
         authType: "oauth",
         npm: "@ai-sdk/openai-compatible",
         signupUrl: "https://antigravity.google",
@@ -430,6 +434,7 @@ var init_provider_templates = __esm({
       {
         id: "xai-oauth",
         name: "xAI Grok (SuperGrok)",
+        shortName: "xAI Grok",
         authType: "oauth",
         npm: "@ai-sdk/xai",
         signupUrl: "https://x.ai",
@@ -439,6 +444,7 @@ var init_provider_templates = __esm({
       {
         id: "openai-oauth",
         name: "OpenAI (ChatGPT)",
+        shortName: "OpenAI",
         authType: "oauth",
         npm: "@ai-sdk/openai",
         signupUrl: "https://chatgpt.com",
@@ -472,4 +478,4 @@ export {
   provider_templates_exports,
   init_provider_templates
 };
-//# sourceMappingURL=chunk-NYKVDBQC.js.map
+//# sourceMappingURL=chunk-P4IS6537.js.map

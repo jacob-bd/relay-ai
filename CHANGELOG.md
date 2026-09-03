@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.8] - 2026-09-02
+
+### Added
+
+- **Compact provider labels for embedded Core consumers.** `listRelayModels()` now includes `providerShortName` for space-constrained model lists, with a fallback to `providerName`. Built-in long provider names expose concise labels without changing their existing display names. ([Issue #67](https://github.com/jacob-bd/relay-ai/issues/67))
+
 ## [0.9.7] - 2026-08-30
 
 ### Fixed
