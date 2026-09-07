@@ -2,7 +2,7 @@
 import {
   getTemplateById,
   init_provider_templates
-} from "./chunk-P4IS6537.js";
+} from "./chunk-TFMHIGRX.js";
 
 // src/constants.ts
 import { homedir } from "os";
@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.10.0",
+  version: "0.10.1",
   publishConfig: {
     access: "public"
   },
@@ -14064,4 +14064,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-2NXLK3O6.js.map
+//# sourceMappingURL=chunk-YYI6EJ2X.js.map

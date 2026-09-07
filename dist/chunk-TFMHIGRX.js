@@ -421,7 +421,9 @@ var init_provider_templates = __esm({
       {
         id: "antigravity",
         name: "Cloud Code Assist OAuth (Google)",
-        shortName: "Cloud Code Assist",
+        // Compact label users actually recognise: every surface that shows this
+        // provider calls it Antigravity, and it is also the shortest of the two.
+        shortName: "Antigravity",
         authType: "oauth",
         npm: "@ai-sdk/openai-compatible",
         signupUrl: "https://antigravity.google",
@@ -478,4 +480,4 @@ export {
   provider_templates_exports,
   init_provider_templates
 };
-//# sourceMappingURL=chunk-P4IS6537.js.map
+//# sourceMappingURL=chunk-TFMHIGRX.js.map

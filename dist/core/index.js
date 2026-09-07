@@ -50,7 +50,7 @@ import { join as join2 } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.10.0",
+  version: "0.10.1",
   publishConfig: {
     access: "public"
   },
@@ -2099,7 +2099,9 @@ var PROVIDER_TEMPLATES = [
   {
     id: "antigravity",
     name: "Cloud Code Assist OAuth (Google)",
-    shortName: "Cloud Code Assist",
+    // Compact label users actually recognise: every surface that shows this
+    // provider calls it Antigravity, and it is also the shortest of the two.
+    shortName: "Antigravity",
     authType: "oauth",
     npm: "@ai-sdk/openai-compatible",
     signupUrl: "https://antigravity.google",

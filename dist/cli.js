@@ -202,7 +202,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-2NXLK3O6.js";
+} from "./chunk-YYI6EJ2X.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -210,7 +210,7 @@ import {
   listAddableTemplates,
   listSupportedTemplates,
   listVisibleOAuthTemplates
-} from "./chunk-P4IS6537.js";
+} from "./chunk-TFMHIGRX.js";
 
 // src/cli.ts
 import pc12 from "picocolors";
@@ -15846,7 +15846,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-6ZMM5K5K.js");
+    const { runUiCommand } = await import("./ui-command-LZWTWTQ6.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

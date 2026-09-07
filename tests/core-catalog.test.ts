@@ -161,7 +161,7 @@ describe('listRelayModels', () => {
     })]);
     const [model] = listRelayModels();
     expect(model!.providerName).toBe('Antigravity (Google Cloud Code Assist)');
-    expect(model!.providerShortName).toBe('Cloud Code Assist');
+    expect(model!.providerShortName).toBe('Antigravity');
   });
 
   it('falls back to the provider name when no compact template label exists', () => {

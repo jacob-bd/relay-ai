@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.1] - 2026-09-07
+
+### Changed
+
+- **Antigravity's compact label is now `Antigravity`.** `providerShortName` returned `Cloud Code Assist`, which is both longer than necessary and not the name any surface actually uses for this provider — an embedded Core consumer showing compact labels still ended up with a long, unfamiliar string. The provider's full `name` is unchanged, so nothing that displays the long form is affected.
+
 ## [0.10.0] - 2026-09-07
 
 ### Added

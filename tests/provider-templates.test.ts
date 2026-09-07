@@ -81,7 +81,7 @@ describe('provider templates', () => {
       openai: getTemplateById('openai-oauth')?.shortName,
     }).toEqual({
       claude: 'Claude Code',
-      google: 'Cloud Code Assist',
+      google: 'Antigravity',
       qwenTokenPlan: 'Qwen Cloud',
       qwenPayg: 'Qwen Cloud',
       xai: 'xAI Grok',
