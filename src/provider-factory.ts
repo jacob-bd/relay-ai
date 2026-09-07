@@ -118,6 +118,15 @@ export function maxToolsForNpm(npm: string | undefined): number | undefined {
   return npm === '@ai-sdk/groq' ? 128 : undefined;
 }
 
+/**
+ * Venice's published SDK package still peers on AI SDK 6. Route it through the
+ * first-party openai-compatible provider so Relay does not nest a v6 tree.
+ * Existing registries that stored `venice-ai-sdk-provider` keep working.
+ */
+export function resolveProviderNpm(npm: string): string {
+  return npm === 'venice-ai-sdk-provider' ? '@ai-sdk/openai-compatible' : npm;
+}
+
 function findCreateFactory(mod: Record<string, unknown>): SdkProviderFactory {
   for (const value of Object.values(mod)) {
     if (typeof value === 'function' && value.name.startsWith('create')) {
@@ -149,7 +158,8 @@ async function loadSdkProviderFactory(npm: string): Promise<SdkProviderFactory> 
 }
 
 export async function createLanguageModel(spec: ProviderModelSpec): Promise<LanguageModel> {
-  const { npm, modelId, apiKey, baseURL } = spec;
+  const npm = resolveProviderNpm(spec.npm);
+  const { modelId, apiKey, baseURL } = spec;
 
   if (npm === VERTEX_ANTHROPIC_NPM) {
     if (!spec.vertex?.project) {

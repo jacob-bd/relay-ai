@@ -205,7 +205,7 @@ export function createCodexToolContext(): CodexToolContext {
 }
 
 export interface CodexSdkCallParams {
-  system?: string;
+  instructions?: string;
   messages: ModelMessage[];
   tools?: ToolSet;
   maxOutputTokens?: number;
@@ -399,10 +399,10 @@ export function translateResponsesInput(
   instructions: string | undefined,
   npm: string,
   toolContext: CodexToolContext = createCodexToolContext(),
-): { system?: string; messages: ModelMessage[]; deferredTools: ResponsesTool[] } {
+): { instructions?: string; messages: ModelMessage[]; deferredTools: ResponsesTool[] } {
   if (typeof input === 'string') {
     return {
-      system: instructions?.trim() || undefined,
+      instructions: instructions?.trim() || undefined,
       messages: [{ role: 'user', content: [{ type: 'text', text: input }] } as ModelMessage],
       deferredTools: [],
     };
@@ -520,7 +520,7 @@ export function translateResponsesInput(
   }
 
   return {
-    system,
+    instructions: system,
     messages: ensureUserFirst(mergeConsecutiveMessages(messages)),
     deferredTools,
   };
@@ -608,7 +608,7 @@ export function translateResponsesRequest(
   // the eventual response split resolve consistently against the same context.
   ingestToolDefs(effectiveTools, toolContext);
 
-  const { system, messages, deferredTools } = translateResponsesInput(effectiveInput, body.instructions, npm, toolContext);
+  const { instructions: system, messages, deferredTools } = translateResponsesInput(effectiveInput, body.instructions, npm, toolContext);
   const effort = body.reasoning?.effort;
   const providerOptions = deepMergeProviderOptions(
     thinkingProviderOptions(npm),
@@ -616,7 +616,7 @@ export function translateResponsesRequest(
   );
   const tools = translateResponsesTools([...effectiveTools, ...deferredTools], options);
   return {
-    system,
+    instructions: system,
     messages,
     tools,
     toolContext,
@@ -1274,7 +1274,7 @@ export async function streamResponsesResponse(
 
   const watchedStream = (async function* () {
     try {
-      for await (const part of result.fullStream as AsyncIterable<FullStreamPart>) {
+      for await (const part of result.stream as AsyncIterable<FullStreamPart>) {
         clearTimeout(idleTimer);
         idleTimer = setTimeout(
           () => abort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1000)}s`)),

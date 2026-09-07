@@ -17,7 +17,7 @@ describe('translateResponsesRequest', () => {
       input: 'hello',
       instructions: 'be helpful',
     }, '@ai-sdk/anthropic');
-    expect(params.system).toBe('be helpful');
+    expect(params.instructions).toBe('be helpful');
     expect(params.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hello' }] }]);
   });
 
@@ -30,7 +30,7 @@ describe('translateResponsesRequest', () => {
       ],
       instructions: 'extra',
     }, '@ai-sdk/anthropic');
-    expect(params.system).toBe('dev rules\nextra');
+    expect(params.instructions).toBe('dev rules\nextra');
     expect(params.messages).toHaveLength(1);
     expect(params.messages[0]!.role).toBe('user');
   });
@@ -834,11 +834,11 @@ describe('streamResponsesResponse idle timeout', () => {
     const chunks: string[] = [];
     const write = (c: string) => chunks.push(c);
 
-    // Fake LanguageModelV3 whose doStream hangs forever unless aborted —
+    // Fake LanguageModel whose doStream hangs forever unless aborted —
     // simulates an upstream gateway silently dropping the connection before
     // sending a single byte (observed live with OpenCode Zen).
     const hangingModel = {
-      specificationVersion: 'v3' as const,
+      specificationVersion: 'v4' as const,
       provider: 'test',
       modelId: 'test-model',
       supportedUrls: {},

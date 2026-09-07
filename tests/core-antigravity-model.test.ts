@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { generateText, stepCountIs, streamText, tool } from 'ai';
+import { generateText, isStepCount, streamText, tool } from 'ai';
 import { z } from 'zod';
 import { createRelayModel } from '../src/core/model.js';
 import { isRelayCoreError } from '../src/core/errors.js';
@@ -444,7 +444,7 @@ describe('createRelayModel Cloud Code Assist routes', () => {
       model,
       prompt: 'weather in NYC?',
       maxRetries: 0,
-      stopWhen: stepCountIs(2),
+      stopWhen: isStepCount(2),
       tools: {
         getWeather: tool({
           description: 'Get the weather',
@@ -553,7 +553,7 @@ describe('createRelayModel Cloud Code Assist routes', () => {
       model,
       prompt: PROMPT_CANARY,
       maxRetries: 0,
-      stopWhen: stepCountIs(1),
+      stopWhen: isStepCount(1),
       tools: {
         getWeather: tool({ description: 'Get the weather', inputSchema: z.object({ city: z.string() }) }),
       },

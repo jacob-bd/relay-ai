@@ -14,12 +14,12 @@ describe('claude-code OAuth identity', () => {
       providerData: { cliUserID, accountUUID },
       upstreamModelId: 'claude-sonnet-4-6',
     }, {
-      system: 'hello',
+      instructions: 'hello',
       tools: { read_file: {} },
     });
 
-    expect(params.system).toContain('x-anthropic-billing-header:');
-    expect(params.system).toContain('hello');
+    expect(params.instructions).toContain('x-anthropic-billing-header:');
+    expect(params.instructions).toContain('hello');
     expect(params.providerOptions?.anthropic?.metadata?.userId).toContain(`"device_id":"${cliUserID}"`);
     expect(params.providerOptions?.anthropic?.metadata?.userId).toContain(`"account_uuid":"${accountUUID}"`);
     expect(params.providerOptions?.anthropic?.anthropicBeta).toContain('oauth-2025-04-20');
@@ -29,7 +29,7 @@ describe('claude-code OAuth identity', () => {
   });
 
   it('does nothing for non-Claude-Code OAuth routes', () => {
-    const original = { system: 'hello' };
+    const original = { instructions: 'hello' };
     const params = applyClaudeCodeOAuthIdentity({
       providerId: 'anthropic',
       authType: 'oauth',

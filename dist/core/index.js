@@ -50,7 +50,7 @@ import { join as join2 } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.10.1",
+  version: "0.11.0",
   publishConfig: {
     access: "public"
   },
@@ -82,7 +82,7 @@ var package_default = {
     "README.md"
   ],
   engines: {
-    node: ">=18"
+    node: ">=22"
   },
   scripts: {
     build: "tsup && tsup --config tsup.core.config.ts && node scripts/copy-ui-assets.mjs",
@@ -96,35 +96,34 @@ var package_default = {
     prepublishOnly: "npm run release:check && npm run build"
   },
   dependencies: {
-    "@ai-sdk/alibaba": "^1.0.26",
-    "@ai-sdk/amazon-bedrock": "^4.0.113",
-    "@ai-sdk/azure": "^3.0.70",
-    "@ai-sdk/cerebras": "^2.0.54",
-    "@ai-sdk/cohere": "^3.0.36",
-    "@ai-sdk/deepinfra": "^2.0.52",
-    "@ai-sdk/gateway": "^3.0.125",
-    "@ai-sdk/google": "^3.0.80",
-    "@ai-sdk/google-vertex": "^4.0.142",
-    "@ai-sdk/groq": "^3.0.39",
-    "@ai-sdk/mistral": "^3.0.37",
-    "@ai-sdk/openai": "^3.0.68",
-    "@ai-sdk/openai-compatible": "^2.0.48",
-    "@ai-sdk/perplexity": "^3.0.33",
-    "@ai-sdk/togetherai": "^2.0.53",
-    "@ai-sdk/vercel": "^2.0.50",
-    "@ai-sdk/xai": "^3.0.93",
+    "@ai-sdk/alibaba": "^2.0.41",
+    "@ai-sdk/amazon-bedrock": "^5.0.76",
+    "@ai-sdk/azure": "^4.0.63",
+    "@ai-sdk/cerebras": "^3.0.44",
+    "@ai-sdk/cohere": "^4.0.37",
+    "@ai-sdk/deepinfra": "^3.0.44",
+    "@ai-sdk/gateway": "^4.0.75",
+    "@ai-sdk/google": "^4.0.64",
+    "@ai-sdk/google-vertex": "^5.0.76",
+    "@ai-sdk/groq": "^4.0.37",
+    "@ai-sdk/mistral": "^4.0.39",
+    "@ai-sdk/openai": "^4.0.60",
+    "@ai-sdk/openai-compatible": "^3.0.44",
+    "@ai-sdk/perplexity": "^4.0.39",
+    "@ai-sdk/togetherai": "^3.0.45",
+    "@ai-sdk/vercel": "^3.0.30",
+    "@ai-sdk/xai": "^4.0.54",
     "@clack/prompts": "^0.9.1",
-    "@openrouter/ai-sdk-provider": "^2.9.0",
-    ai: "^6.0.197",
+    "@openrouter/ai-sdk-provider": "^3.0.0",
+    ai: "^7.0.93",
     "cross-spawn": "^7.0.6",
-    "gitlab-ai-provider": "^6.8.0",
+    "gitlab-ai-provider": "^6.15.0",
     graphql: "^16.14.2",
     "ipaddr.js": "^2.4.0",
     "node-forge": "^1.4.0",
     open: "^11.0.0",
     picocolors: "^1.1.1",
     "smol-toml": "^1.6.1",
-    "venice-ai-sdk-provider": "^2.0.2",
     ws: "^8.21.0",
     zod: "^3.25.76"
   },
@@ -874,6 +873,9 @@ var OPENAI_CHAT_COMPLETIONS_ONLY = [
 function shouldUseOpenAiResponsesEndpoint(modelId) {
   return !OPENAI_CHAT_COMPLETIONS_ONLY.includes(modelId.toLowerCase());
 }
+function resolveProviderNpm(npm) {
+  return npm === "venice-ai-sdk-provider" ? "@ai-sdk/openai-compatible" : npm;
+}
 function findCreateFactory(mod) {
   for (const value of Object.values(mod)) {
     if (typeof value === "function" && value.name.startsWith("create")) {
@@ -903,7 +905,8 @@ async function loadSdkProviderFactory(npm) {
   return cached;
 }
 async function createLanguageModel(spec) {
-  const { npm, modelId, apiKey, baseURL } = spec;
+  const npm = resolveProviderNpm(spec.npm);
+  const { modelId, apiKey, baseURL } = spec;
   if (npm === VERTEX_ANTHROPIC_NPM) {
     if (!spec.vertex?.project) {
       throw new Error("Vertex project is required for @ai-sdk/google-vertex/anthropic");
@@ -1997,7 +2000,7 @@ var PROVIDER_TEMPLATES = [
     id: "venice",
     name: "Venice AI",
     authType: "api",
-    npm: "venice-ai-sdk-provider",
+    npm: "@ai-sdk/openai-compatible",
     defaultBaseUrl: "https://api.venice.ai/api/v1",
     signupUrl: "https://venice.ai/settings/api",
     modelSource: "api-list",
@@ -2317,7 +2320,7 @@ async function withReasoningProviderOptions(model, providerOptions) {
     // interface; everything Core builds is a concrete current-spec model.
     model,
     middleware: {
-      specificationVersion: "v3",
+      specificationVersion: "v4",
       transformParams: async ({ params }) => ({
         ...params,
         providerOptions: deepMergeProviderOptions(
@@ -2333,7 +2336,7 @@ async function withRequestHeaders(model, headers) {
   return wrapLanguageModel2({
     model,
     middleware: {
-      specificationVersion: "v3",
+      specificationVersion: "v4",
       transformParams: async ({ params }) => ({
         ...params,
         headers: mergeHeaders(

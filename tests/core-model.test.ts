@@ -141,7 +141,7 @@ describe('createRelayModel', () => {
 
   it('adds a caller-supplied OpenCode Go session header to every model call', async () => {
     const baseModel = {
-      specificationVersion: 'v3',
+      specificationVersion: 'v4',
       provider: 'openai-compatible.go',
       modelId: 'deepseek-v4-flash',
       supportedUrls: {},
@@ -171,7 +171,7 @@ describe('createRelayModel', () => {
 
   it('never fabricates an OpenCode Go session for a reusable embedded Core model', async () => {
     const baseModel = {
-      specificationVersion: 'v3',
+      specificationVersion: 'v4',
       provider: 'openai-compatible.go',
       modelId: 'deepseek-v4-flash',
       supportedUrls: {},

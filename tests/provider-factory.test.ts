@@ -7,10 +7,18 @@ import {
   isSdkMigratedNpm,
   maxToolsForNpm,
   modelPrefersResponsesApi,
+  resolveProviderNpm,
   shouldUseOpenAiResponsesEndpoint,
   thinkingProviderOptions,
 } from '../src/provider-factory.js';
 import { VERTEX_ANTHROPIC_NPM } from '../src/constants.js';
+
+describe('resolveProviderNpm', () => {
+  it('routes the legacy Venice package through openai-compatible', () => {
+    expect(resolveProviderNpm('venice-ai-sdk-provider')).toBe('@ai-sdk/openai-compatible');
+    expect(resolveProviderNpm('@ai-sdk/groq')).toBe('@ai-sdk/groq');
+  });
+});
 
 describe('isSdkMigratedNpm', () => {
   it('returns true for any OpenCode-assigned npm except anthropic', () => {

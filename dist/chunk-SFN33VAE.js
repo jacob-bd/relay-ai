@@ -319,7 +319,7 @@ var init_provider_templates = __esm({
         id: "venice",
         name: "Venice AI",
         authType: "api",
-        npm: "venice-ai-sdk-provider",
+        npm: "@ai-sdk/openai-compatible",
         defaultBaseUrl: "https://api.venice.ai/api/v1",
         signupUrl: "https://venice.ai/settings/api",
         modelSource: "api-list",
@@ -480,4 +480,4 @@ export {
   provider_templates_exports,
   init_provider_templates
 };
-//# sourceMappingURL=chunk-TFMHIGRX.js.map
+//# sourceMappingURL=chunk-SFN33VAE.js.map

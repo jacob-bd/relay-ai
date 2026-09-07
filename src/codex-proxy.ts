@@ -93,7 +93,7 @@ function isExternalToolContinuation(input: unknown): input is ResponsesInputItem
 }
 
 export function estimateCodexRequestChars(params: CodexSdkCallParams): number {
-  let chars = (params.system ?? '').length;
+  let chars = (params.instructions ?? '').length;
   for (const msg of params.messages) {
     if (Array.isArray(msg.content)) {
       for (const part of msg.content) {
@@ -454,7 +454,7 @@ export function applyExternalCodexRuntimeIdentity(
   ].join('\n');
   return {
     ...params,
-    system: params.system?.trim() ? `${identity}\n\n${params.system}` : identity,
+    instructions: params.instructions?.trim() ? `${identity}\n\n${params.instructions}` : identity,
   };
 }
 

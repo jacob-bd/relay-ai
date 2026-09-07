@@ -290,7 +290,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     id: 'venice',
     name: 'Venice AI',
     authType: 'api',
-    npm: 'venice-ai-sdk-provider',
+    npm: '@ai-sdk/openai-compatible',
     defaultBaseUrl: 'https://api.venice.ai/api/v1',
     signupUrl: 'https://venice.ai/settings/api',
     modelSource: 'api-list',

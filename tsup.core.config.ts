@@ -6,7 +6,7 @@ export default defineConfig({
   entry: ['src/core/index.ts'],
   outDir: 'dist/core',
   format: ['esm'],
-  target: 'node18',
+  target: 'node22',
   dts: true,
   clean: false,
   minify: false,
@@ -17,7 +17,6 @@ export default defineConfig({
     /^@ai-sdk\//,
     '@openrouter/ai-sdk-provider',
     'gitlab-ai-provider',
-    'venice-ai-sdk-provider',
     'open',
   ],
 });

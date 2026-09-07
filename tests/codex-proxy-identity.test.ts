@@ -77,8 +77,8 @@ describe('Codex proxy Claude Code OAuth identity', () => {
 
     expect(res.status, await res.text()).toBe(200);
     const params = vi.mocked(generateResponsesResponse).mock.calls.at(-1)![1] as any;
-    expect(params.system).toContain('x-anthropic-billing-header:');
-    expect(params.system).toContain('You are helpful.');
+    expect(params.instructions).toContain('x-anthropic-billing-header:');
+    expect(params.instructions).toContain('You are helpful.');
     expect(params.providerOptions?.anthropic?.metadata?.userId).toContain(`"device_id":"${cliUserID}"`);
     expect(params.providerOptions?.anthropic?.metadata?.userId).toContain(`"account_uuid":"${accountUUID}"`);
     expect(params.providerOptions?.anthropic?.anthropicBeta).toContain('oauth-2025-04-20');

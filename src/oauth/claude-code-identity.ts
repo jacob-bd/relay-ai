@@ -14,7 +14,7 @@ export interface ClaudeCodeOAuthIdentityInput {
 }
 
 export interface ClaudeCodeOAuthSdkParams {
-  system?: string;
+  instructions?: string;
   tools?: Record<string, unknown>;
   providerOptions?: Record<string, Record<string, unknown>>;
 }
@@ -52,7 +52,7 @@ function claudeCodeProviderOptions(
   const seed = input.oauthAccountId ?? input.apiKey;
   const { userId } = injectClaudeIdentity({}, input.providerData, seed);
   const betaBody = {
-    ...(sdkParams.system ? { system: [{ type: 'text', text: sdkParams.system }] } : {}),
+    ...(sdkParams.instructions ? { system: [{ type: 'text', text: sdkParams.instructions }] } : {}),
     ...(sdkParams.tools ? { tools: Object.keys(sdkParams.tools).map(name => ({ name })) } : {}),
   };
   return {
@@ -69,7 +69,7 @@ export function applyClaudeCodeOAuthIdentity<T extends ClaudeCodeOAuthSdkParams>
 ): T {
   if (!isClaudeCodeOAuthRoute(input)) return sdkParams;
 
-  sdkParams.system = prependClaudeCodeBillingLine(sdkParams.system);
+  sdkParams.instructions = prependClaudeCodeBillingLine(sdkParams.instructions);
   sdkParams.providerOptions = mergeProviderOptions(
     sdkParams.providerOptions,
     claudeCodeProviderOptions(input, sdkParams),

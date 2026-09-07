@@ -21,7 +21,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 describe('external Codex runtime identity', () => {
   it('distinguishes the selected external model from the Codex host', () => {
     const params = applyExternalCodexRuntimeIdentity({
-      system: 'Use the Codex app tools carefully.',
+      instructions: 'Use the Codex app tools carefully.',
       messages: [{ role: 'user', content: 'what model are you?' }],
     }, {
       modelId: 'antigravity__gemini-3.1-pro-high',
@@ -30,10 +30,10 @@ describe('external Codex runtime identity', () => {
       auditUpstreamModelId: 'gemini-3.1-pro-high',
     });
 
-    expect(params.system).toContain('"gemini-3.1-pro-high" through provider "antigravity"');
-    expect(params.system).toContain('Codex is the host application and agent environment, not the model identity.');
-    expect(params.system).toContain('Use the Codex app tools carefully.');
-    expect(params.system).not.toContain('gemini-pro-agent');
+    expect(params.instructions).toContain('"gemini-3.1-pro-high" through provider "antigravity"');
+    expect(params.instructions).toContain('Codex is the host application and agent environment, not the model identity.');
+    expect(params.instructions).toContain('Use the Codex app tools carefully.');
+    expect(params.instructions).not.toContain('gemini-pro-agent');
   });
 
   it('uses the dynamic upstream model and does not hard-code Gemini', () => {
@@ -45,8 +45,8 @@ describe('external Codex runtime identity', () => {
       upstreamModelId: 'claude-sonnet-4-6',
     });
 
-    expect(params.system).toContain('"claude-sonnet-4-6" through provider "antigravity"');
-    expect(params.system).not.toContain('gemini-3.1-pro-high');
+    expect(params.instructions).toContain('"claude-sonnet-4-6" through provider "antigravity"');
+    expect(params.instructions).not.toContain('gemini-3.1-pro-high');
   });
 });
 

@@ -5,7 +5,7 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { stepCountIs, streamText, tool } from 'ai';
+import { isStepCount, streamText, tool } from 'ai';
 import { z } from 'zod';
 
 const ACCESS_CANARY = 'sk-canary-openai-oauth-zzz';
@@ -464,7 +464,7 @@ describe('createRelayModel openai-oauth Luna via streamText', () => {
   it('maps a Responses-Lite function call into an AI SDK tool call', async () => {
     const { result } = await runLuna(productionLikeToolFrames(), {
       prompt: 'weather?',
-      stopWhen: stepCountIs(1),
+      stopWhen: isStepCount(1),
       tools: {
         getWeather: tool({
           description: 'Get weather',
@@ -484,7 +484,7 @@ describe('createRelayModel openai-oauth Luna via streamText', () => {
   it('completes a tool call when added, delta and done frames are all incomplete', async () => {
     const { result, toolCalls } = await runLuna(incompleteToolFrames(), {
       prompt: 'weather?',
-      stopWhen: stepCountIs(1),
+      stopWhen: isStepCount(1),
       tools: {
         getWeather: tool({
           description: 'Get weather',
@@ -508,7 +508,7 @@ describe('createRelayModel openai-oauth Luna via streamText', () => {
   it('completes a tool call from accumulated deltas when completed carries no output', async () => {
     const { toolCalls } = await runLuna(incompleteToolFramesWithoutRecovery(), {
       prompt: 'weather?',
-      stopWhen: stepCountIs(1),
+      stopWhen: isStepCount(1),
       tools: {
         getWeather: tool({
           description: 'Get weather',
@@ -527,7 +527,7 @@ describe('createRelayModel openai-oauth Luna via streamText', () => {
   it('keeps two incomplete tool calls from leaking identity or arguments into each other', async () => {
     const { toolCalls } = await runLuna(incompleteMultiToolFrames(), {
       prompt: 'multi',
-      stopWhen: stepCountIs(1),
+      stopWhen: isStepCount(1),
       tools: {
         alpha: tool({ description: 'A', inputSchema: z.object({ n: z.number() }) }),
         beta: tool({ description: 'B', inputSchema: z.object({ n: z.number() }) }),
@@ -572,7 +572,7 @@ describe('createRelayModel openai-oauth Luna via streamText', () => {
     ];
     const { result } = await runLuna(frames, {
       prompt: 'multi',
-      stopWhen: stepCountIs(1),
+      stopWhen: isStepCount(1),
       tools: {
         alpha: tool({ description: 'A', inputSchema: z.object({ n: z.number() }) }),
         beta: tool({ description: 'B', inputSchema: z.object({ n: z.number() }) }),

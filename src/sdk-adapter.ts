@@ -92,7 +92,7 @@ export function anthropicEffortFromRequest(body: AnthropicRequest): string | und
 }
 
 export interface SdkCallParams {
-  system?: string;
+  instructions?: string;
   messages: ModelMessage[];
   tools?: Record<string, ReturnType<typeof tool>>;
   toolChoice?: 'auto' | 'required' | { type: 'tool'; toolName: string };
@@ -127,14 +127,14 @@ function inlineSystemText(messages: AnthropicMsg[]): string[] {
 }
 
 // ── images ───────────────────────────────────────────────────────────────────
-function imagePart(block: AnthropicBlock): { type: 'image'; image: Uint8Array | URL; mediaType?: string } | null {
+function imagePart(block: AnthropicBlock): { type: 'file'; mediaType: string; data: Uint8Array | { type: 'url'; url: URL } } | null {
   const src = block.source;
   if (!src) return null;
   if (src.type === 'base64' && src.data) {
-    return { type: 'image', image: Buffer.from(src.data, 'base64'), mediaType: src.media_type };
+    return { type: 'file', mediaType: src.media_type ?? 'image', data: Buffer.from(src.data, 'base64') };
   }
   if (src.type === 'url' && src.url) {
-    return { type: 'image', image: new URL(src.url) };
+    return { type: 'file', mediaType: src.media_type ?? 'image', data: { type: 'url', url: new URL(src.url) } };
   }
   return null;
 }
@@ -329,7 +329,7 @@ export function translateRequest(
   }
 
   return {
-    system: options?.openAiOAuth ? undefined : systemText,
+    instructions: options?.openAiOAuth ? undefined : systemText,
     messages: translateMessages(messages, npm, options?.onDebug),
     tools: translateTools(upstreamTools.length ? upstreamTools : undefined),
     toolChoice: translateToolChoice(body.tool_choice),
@@ -562,7 +562,7 @@ export async function streamAnthropicResponse(
   Promise.resolve(result.usage).catch(() => {});
 
   await writeAnthropicStream(
-    result.fullStream as AsyncIterable<FullStreamPart>,
+    result.stream as AsyncIterable<FullStreamPart>,
     modelId,
     write,
     log,

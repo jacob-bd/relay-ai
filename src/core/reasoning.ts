@@ -117,7 +117,7 @@ export async function withReasoningProviderOptions(
     // interface; everything Core builds is a concrete current-spec model.
     model: model as WrapArgs['model'],
     middleware: {
-      specificationVersion: 'v3',
+      specificationVersion: 'v4',
       transformParams: async ({ params }) => ({
         ...params,
         providerOptions: deepMergeProviderOptions(
@@ -143,7 +143,7 @@ export async function withRequestHeaders(
   return wrapLanguageModel({
     model: model as WrapArgs['model'],
     middleware: {
-      specificationVersion: 'v3',
+      specificationVersion: 'v4',
       transformParams: async ({ params }) => ({
         ...params,
         headers: mergeHeaders(

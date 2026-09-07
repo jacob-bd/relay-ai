@@ -103,7 +103,7 @@ describe('streamOpenAiResponse finish_reason mapping', () => {
     vi.doMock('ai', () => ({
       generateText: vi.fn(),
       streamText: vi.fn(() => ({
-        fullStream: (async function* () {
+        stream: (async function* () {
           yield { type: 'text-delta', textDelta: 'hi' };
           yield { type: 'finish', finishReason: 'tool-calls' };
         })(),
@@ -135,7 +135,7 @@ describe('streamOpenAiResponse consolidated tool-call handling', () => {
     vi.doMock('ai', () => ({
       generateText: vi.fn(),
       streamText: vi.fn(() => ({
-        fullStream: (async function* () {
+        stream: (async function* () {
           yield { type: 'reasoning-delta', text: 'thinking...' };
           yield { type: 'tool-call', toolCallId: 'call_1', toolName: 'read_file', input: { path: 'x' } };
           yield { type: 'finish', finishReason: 'tool-calls' };
@@ -158,7 +158,7 @@ describe('streamOpenAiResponse consolidated tool-call handling', () => {
     vi.doMock('ai', () => ({
       generateText: vi.fn(),
       streamText: vi.fn(() => ({
-        fullStream: (async function* () {
+        stream: (async function* () {
           yield { type: 'tool-call', toolCallId: 'call_1', toolName: 'read_file', input: {} };
           yield { type: 'tool-call', toolCallId: 'call_2', toolName: 'list_dir', input: {} };
           yield { type: 'finish', finishReason: 'tool-calls' };
@@ -180,7 +180,7 @@ describe('streamOpenAiResponse consolidated tool-call handling', () => {
     vi.doMock('ai', () => ({
       generateText: vi.fn(),
       streamText: vi.fn(() => ({
-        fullStream: (async function* () {
+        stream: (async function* () {
           yield { type: 'tool-input-start', id: 'call_1', toolName: 'read_file' };
           yield { type: 'tool-input-delta', id: 'call_1', delta: '{"path":"x"}' };
           yield { type: 'tool-call', toolCallId: 'call_1', toolName: 'read_file', input: { path: 'x' } };
@@ -240,7 +240,7 @@ describe('streamOpenAiResponse surfaces stream errors instead of dropping them',
     vi.doMock('ai', () => ({
       generateText: vi.fn(),
       streamText: vi.fn(() => ({
-        fullStream: (async function* () {
+        stream: (async function* () {
           yield { type: 'reasoning-delta', text: 'thinking...' };
           yield { type: 'error', error: { message: 'upstream connection reset' } };
         })(),
@@ -286,7 +286,7 @@ describe('reasoning content surfaced instead of dropped', () => {
     vi.doMock('ai', () => ({
       generateText: vi.fn(),
       streamText: vi.fn(() => ({
-        fullStream: (async function* () {
+        stream: (async function* () {
           yield { type: 'reasoning-delta', text: 'reasoning about the task' };
           yield { type: 'finish', finishReason: 'stop' };
         })(),

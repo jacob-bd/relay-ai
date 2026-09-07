@@ -120,8 +120,8 @@ export function translateGeminiRequest(body: any, options: TranslateGeminiReques
         }
       } else if (p.inlineData) {
         parts.push({
-          type: 'image',
-          image: Buffer.from(p.inlineData.data, 'base64'),
+          type: 'file',
+          data: Buffer.from(p.inlineData.data, 'base64'),
           mediaType: p.inlineData.mimeType,
         });
       } else if (p.functionCall) {
@@ -207,7 +207,7 @@ export function translateGeminiRequest(body: any, options: TranslateGeminiReques
   }
 
   return {
-    system,
+    instructions: system,
     messages: mergedMessages,
     tools: tools && Object.keys(tools).length > 0 ? tools : undefined,
     toolChoice,
@@ -387,7 +387,7 @@ export async function startGeminiProxy(
           });
 
           plog('Starting streamText...');
-          const { fullStream } = streamText({
+          const { stream } = streamText({
             model: languageModel,
             ...params,
           });
@@ -395,7 +395,7 @@ export async function startGeminiProxy(
           const toolCallBuffers = new Map<string, { name: string; json: string }>();
           let isThinking = false;
 
-          for await (const part of fullStream) {
+          for await (const part of stream) {
             const p = part as any;
             plog(`Stream chunk type: ${p.type}`);
             

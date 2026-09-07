@@ -47,7 +47,7 @@ export interface CloudCodeGenerateRequest {
 }
 
 export interface SdkRequest {
-  system?: string;
+  instructions?: string;
   messages: ModelMessage[];
   tools?: Record<string, ReturnType<typeof tool>>;
   toolChoice?: 'auto' | 'required';
@@ -167,7 +167,7 @@ export function summarizeSdkRequestForTrace(request: SdkRequest): SdkRequestTrac
   });
 
   return {
-    systemChars: request.system?.length ?? 0,
+    systemChars: request.instructions?.length ?? 0,
     messages,
     toolNames: Object.keys(request.tools ?? {}),
     ...(request.toolChoice ? { toolChoice: request.toolChoice } : {}),
@@ -329,9 +329,9 @@ export function translateRequest(
       } else if (part.inlineData) {
         if (isSupportedImage(part)) {
           contentParts.push({
-            type: 'image',
-            image: part.inlineData.data,
-            mimeType: part.inlineData.mimeType,
+            type: 'file',
+            data: Buffer.from(part.inlineData.data, 'base64'),
+            mediaType: part.inlineData.mimeType,
           });
         } else {
           contentParts.push({ type: 'text', text: OMITTED_VOICE_TEXT });
@@ -389,7 +389,7 @@ export function translateRequest(
   }
 
   return {
-    system,
+    instructions: system,
     messages: sdkMessages,
     tools,
     toolChoice,

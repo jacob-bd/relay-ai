@@ -10,7 +10,7 @@ import {
 describe('Antigravity request trace summary', () => {
   it('records tool-loop structure without logging message content, arguments, or results', () => {
     const request = {
-      system: 'private system prompt',
+      instructions: 'private system prompt',
       messages: [
         { role: 'user', content: 'private user prompt' },
         {
@@ -143,7 +143,7 @@ describe('antigravity request-adapter', () => {
     };
 
     const sdkReq = translateRequest(ccReq);
-    expect(sdkReq.system).toBe('You are a helpful coding assistant.');
+    expect(sdkReq.instructions).toBe('You are a helpful coding assistant.');
     expect(sdkReq.messages).toHaveLength(1);
     expect(sdkReq.messages[0]).toEqual({ role: 'user', content: 'Hi' });
   });
@@ -190,7 +190,7 @@ describe('antigravity request-adapter', () => {
     };
 
     const sdkReq = translateRequest(ccReq);
-    expect(sdkReq.system).toBe('First instruction.\n\nSecond instruction.');
+    expect(sdkReq.instructions).toBe('First instruction.\n\nSecond instruction.');
     expect(sdkReq.messages).toHaveLength(1);
     expect(sdkReq.messages[0]).toEqual({ role: 'user', content: 'Hi' });
   });
@@ -225,9 +225,9 @@ describe('antigravity request-adapter', () => {
     expect(parts).toHaveLength(2);
     expect(parts[0]).toEqual({ type: 'text', text: 'Analyze this image:' });
     expect(parts[1]).toEqual({
-      type: 'image',
-      image: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-      mimeType: 'image/png'
+      type: 'file',
+      data: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'),
+      mediaType: 'image/png'
     });
   });
 

@@ -128,7 +128,7 @@ export function translateOpenAiRequest(
   }
 
   return {
-    system,
+    instructions: system,
     messages,
     tools,
     toolChoice: sdkToolChoice,
@@ -203,7 +203,7 @@ export async function streamOpenAiResponse(
   onChunk: (chunk: string) => void,
   log?: (msg: () => string) => void,
 ): Promise<void> {
-  const { fullStream } = streamText({ model, ...(params as any) });
+  const { stream } = streamText({ model, ...(params as any) });
   const baseData = {
     id: `chatcmpl-${Date.now()}`,
     object: 'chat.completion.chunk',
@@ -222,7 +222,7 @@ export async function streamOpenAiResponse(
   const seenPartTypes = new Set<string>();
   let toolCallChunksEmitted = 0;
 
-  for await (const part of fullStream) {
+  for await (const part of stream) {
     const p = part as any;
     seenPartTypes.add(p.type);
     switch (p.type) {
