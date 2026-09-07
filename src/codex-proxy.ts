@@ -38,6 +38,7 @@ import {
   stripCodexCollaborationTools,
 } from './codex/collaboration-payload.js';
 import { appendCodexRouteAudit } from './codex/route-audit.js';
+import { extractConversationId, openCodeGoHeaders } from './opencode-session.js';
 
 /**
  * Pull the full `response` object out of a single SSE event chunk if it's the
@@ -746,6 +747,12 @@ export async function startCodexProxy(
             mixedNative,
             headers: req.headers,
           });
+          const requestHeaders = openCodeGoHeaders(
+            route.providerId,
+            route.baseURL,
+            extractConversationId(req.headers, routedBody),
+            route.headers,
+          );
           let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
             routedBody as unknown as import('./codex-responses-adapter.js').ResponsesRequest,
             route.npm,
@@ -757,7 +764,10 @@ export async function startCodexProxy(
               interleavedReasoningField: route.interleavedReasoningField,
               upstreamModelId: route.upstreamModelId,
             },
-            { maxTools: maxToolsForNpm(route.npm) },
+            {
+              maxTools: maxToolsForNpm(route.npm),
+              ...(requestHeaders ? { requestHeaders } : {}),
+            },
           ), route));
           if (route.contextWindow && route.contextWindow > 0) {
             const before = params.messages.length;
@@ -1365,6 +1375,12 @@ export async function startCodexProxy(
               mixedNative,
               headers: req.headers,
             });
+            const requestHeaders = openCodeGoHeaders(
+              route.providerId,
+              route.baseURL,
+              extractConversationId(req.headers, routedBody),
+              route.headers,
+            );
             currentExternalStateInput = responsesInputItems(routedBody.input);
             currentExternalConsumedResponseId = continuation.consumedResponseId;
             let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
@@ -1378,7 +1394,10 @@ export async function startCodexProxy(
                 interleavedReasoningField: route.interleavedReasoningField,
                 upstreamModelId: route.upstreamModelId,
               },
-              { maxTools: maxToolsForNpm(route.npm) },
+              {
+                maxTools: maxToolsForNpm(route.npm),
+                ...(requestHeaders ? { requestHeaders } : {}),
+              },
             ), route));
             if (route.contextWindow && route.contextWindow > 0) {
               const before = params.messages.length;

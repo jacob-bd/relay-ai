@@ -15,6 +15,7 @@ import { formatAnthropicModelEntry, formatAnthropicModelList } from '../server/m
 import { startProxyCatalog, type ProxyHandle, type ProxyRoute } from '../proxy.js';
 import { createHttpProxyCertificates } from './ca.js';
 import { ANTHROPIC_UPSTREAM_HOST, RELAY_SENTINEL_HOST } from './anthropic-host.js';
+import { OPENCODE_SESSION_HEADER } from '../opencode-session.js';
 
 const ANTHROPIC_HOST = RELAY_SENTINEL_HOST;
 const MAX_BODY_BYTES = 50 * 1024 * 1024;
@@ -216,6 +217,7 @@ function forwardToAdapter(
       resolve();
     };
     const sessionId = req.headers['x-claude-code-session-id'];
+    const opencodeSession = req.headers[OPENCODE_SESSION_HEADER];
     const upstream = http.request({
       hostname: '127.0.0.1',
       port: adapter.port,
@@ -225,7 +227,16 @@ function forwardToAdapter(
         'Content-Type': 'application/json',
         'Content-Length': String(rawBody.length),
         'x-api-key': adapter.token,
-        ...(typeof sessionId === 'string' ? { 'x-claude-code-session-id': sessionId } : {}),
+        ...(typeof sessionId === 'string'
+          ? { 'x-claude-code-session-id': sessionId }
+          : Array.isArray(sessionId) && sessionId[0]
+            ? { 'x-claude-code-session-id': sessionId[0] }
+            : {}),
+        ...(typeof opencodeSession === 'string'
+          ? { [OPENCODE_SESSION_HEADER]: opencodeSession }
+          : Array.isArray(opencodeSession) && opencodeSession[0]
+            ? { [OPENCODE_SESSION_HEADER]: opencodeSession[0] }
+            : {}),
       },
     }, upstreamRes => {
       copyResponse(upstreamRes, res);

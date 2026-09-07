@@ -91,6 +91,16 @@ describe('translateResponsesRequest', () => {
     expect(params.maxOutputTokens).toBe(8192);
   });
 
+  it('carries request-scoped headers into the SDK call', () => {
+    const params = translateResponsesRequest({
+      model: 'deepseek-v4-flash',
+      input: 'hello',
+    }, '@ai-sdk/openai-compatible', undefined, {
+      requestHeaders: { 'x-opencode-session': 'conversation-1' },
+    });
+    expect(params.headers).toEqual({ 'x-opencode-session': 'conversation-1' });
+  });
+
   it('limits translated Codex tools when maxTools is set', () => {
     const tools = Array.from({ length: 130 }, (_, i) => ({
       type: 'function' as const,

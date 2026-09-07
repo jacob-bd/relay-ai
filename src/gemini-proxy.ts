@@ -18,6 +18,7 @@ import { getGeminiProxyDebugLogPath, makeTraceLogger } from './trace-log.js';
 import type { ProxyRoute, ProxyHandle } from './proxy.js';
 import { routeLookupIds } from './context-model-id.js';
 import { formatUpstreamError } from './codex/upstream-error.js';
+import { extractConversationId, openCodeGoHeaders } from './opencode-session.js';
 
 function mapFinishReason(reason: string): string {
   if (reason === 'stop' || reason === 'tool-calls') return 'STOP';
@@ -51,6 +52,8 @@ function lookupGeminiRoute(routes: ProxyRoute[], requestedModel: string): ProxyR
 
 export interface TranslateGeminiRequestOptions {
   maxTools?: number;
+  /** Request-scoped transport headers (for example OpenCode Go conversation identity). */
+  requestHeaders?: Record<string, string>;
 }
 
 function mergeConsecutiveMessages(messages: any[]): any[] {
@@ -211,6 +214,7 @@ export function translateGeminiRequest(body: any, options: TranslateGeminiReques
     maxOutputTokens: generationConfig.maxOutputTokens,
     temperature: generationConfig.temperature,
     responseFormat,
+    headers: options.requestHeaders,
   };
 }
 
@@ -353,9 +357,18 @@ export async function startGeminiProxy(
         body.contents = sanitizeModelSwitchTurns(body.contents || []);
 
         const languageModel = await getOrInitModel(route);
+        const requestHeaders = openCodeGoHeaders(
+          route.providerId,
+          route.baseURL,
+          extractConversationId(req.headers, body),
+          route.headers,
+        );
         const params = applyClaudeCodeOAuthIdentity(
           { ...route, upstreamModelId: route.realModelId },
-          translateGeminiRequest(body, { maxTools: maxToolsForNpm(route.npm) }),
+          translateGeminiRequest(body, {
+            maxTools: maxToolsForNpm(route.npm),
+            ...(requestHeaders ? { requestHeaders } : {}),
+          }),
         );
         params.providerOptions = deepMergeProviderOptions(
           params.providerOptions,

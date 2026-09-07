@@ -50,7 +50,7 @@ import { join as join2 } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.9.8",
+  version: "0.10.0",
   publishConfig: {
     access: "public"
   },
@@ -2204,6 +2204,55 @@ function isRelayCoreError(err) {
   return err instanceof RelayCoreError;
 }
 
+// src/opencode-session.ts
+import { randomUUID as randomUUID2 } from "crypto";
+var OPENCODE_SESSION_HEADER = "x-opencode-session";
+var MAX_OPENCODE_SESSION_LENGTH = 256;
+var RELAY_USER_AGENT = `relay-ai/${VERSION}`;
+function sanitizeSessionId(value) {
+  if (typeof value !== "string") return void 0;
+  const normalized = value.trim();
+  if (!normalized || normalized.length > MAX_OPENCODE_SESSION_LENGTH) return void 0;
+  if (/[\u0000-\u001f\u007f\r\n]/.test(normalized)) return void 0;
+  return normalized;
+}
+function isOpenCodeGoEndpoint(providerId, endpoint) {
+  const id = providerId?.trim().toLowerCase();
+  if (id === "go" || id === "opencode-go") return true;
+  if (!endpoint) return false;
+  try {
+    const url = new URL(endpoint);
+    if (url.hostname.toLowerCase() !== "opencode.ai") return false;
+    return url.pathname.split("/").some((segment) => segment.toLowerCase() === "go");
+  } catch {
+    return false;
+  }
+}
+function mergeHeaders(base, overrides) {
+  const result = {};
+  for (const [key, value] of Object.entries(base ?? {})) {
+    if (typeof value === "string") result[key] = value;
+  }
+  for (const [key, value] of Object.entries(overrides ?? {})) {
+    for (const existing of Object.keys(result)) {
+      if (existing.toLowerCase() === key.toLowerCase()) delete result[existing];
+    }
+    result[key] = value;
+  }
+  return result;
+}
+function openCodeGoHeaders(providerId, endpoint, sessionId, baseHeaders, options) {
+  if (!isOpenCodeGoEndpoint(providerId, endpoint)) return void 0;
+  let normalizedSessionId = sanitizeSessionId(sessionId);
+  if (!normalizedSessionId && (options?.generateFallbackSession ?? true)) {
+    normalizedSessionId = `relay-${randomUUID2()}`;
+  }
+  return mergeHeaders(baseHeaders, {
+    "User-Agent": RELAY_USER_AGENT,
+    ...normalizedSessionId ? { [OPENCODE_SESSION_HEADER]: normalizedSessionId } : {}
+  });
+}
+
 // src/core/reasoning.ts
 var RELAY_REASONING_LEVELS = [
   "off",
@@ -2272,6 +2321,22 @@ async function withReasoningProviderOptions(model, providerOptions) {
         providerOptions: deepMergeProviderOptions(
           providerOptions,
           params.providerOptions
+        )
+      })
+    }
+  });
+}
+async function withRequestHeaders(model, headers) {
+  const { wrapLanguageModel: wrapLanguageModel2 } = await import("ai");
+  return wrapLanguageModel2({
+    model,
+    middleware: {
+      specificationVersion: "v3",
+      transformParams: async ({ params }) => ({
+        ...params,
+        headers: mergeHeaders(
+          headers,
+          params.headers
         )
       })
     }
@@ -3509,7 +3574,7 @@ function providerRefreshToken(providerId, authType, authRef) {
 }
 
 // src/core/antigravity-model.ts
-import { randomUUID as randomUUID2 } from "crypto";
+import { randomUUID as randomUUID3 } from "crypto";
 var CLOUD_CODE_BASES = ANTIGRAVITY_BASE_URLS.map((base) => base.replace(/\/+$/, ""));
 var CLOUD_CODE_BASE = CLOUD_CODE_BASES[0];
 var STREAM_URLS = CLOUD_CODE_BASES.map((base) => `${base}/${ANTIGRAVITY_API_VERSION}:streamGenerateContent?alt=sse`);
@@ -3596,7 +3661,7 @@ function createCloudCodeFetch(options, fetchImpl) {
     const geminiBody = await readJsonBody(input, init);
     const envelope = {
       project: options.projectId,
-      requestId: randomUUID2(),
+      requestId: randomUUID3(),
       model: options.modelId,
       userAgent: ANTIGRAVITY_USER_AGENT,
       requestType: "agent",
@@ -3791,7 +3856,21 @@ async function createRelayModel(routeId, options) {
   const registry = loadCoreRegistry();
   const { provider, model } = findRoute(registry, providerId, modelId, routeId);
   const reasoningOptions = options?.reasoning === void 0 ? void 0 : resolveReasoningProviderOptions(options.reasoning, provider, model, routeId);
-  const finish = (built) => reasoningOptions ? withReasoningProviderOptions(built, reasoningOptions) : Promise.resolve(built);
+  const transportHeaders = openCodeGoHeaders(
+    provider.id,
+    model.apiUrl ?? provider.api.url,
+    options?.sessionId,
+    provider.api.headers,
+    // The returned model may be reused across conversations, so never fabricate a
+    // session here — a baked-in id would blend histories. The host passes sessionId.
+    { generateFallbackSession: false }
+  );
+  const finish = async (built) => {
+    let finished = built;
+    if (reasoningOptions) finished = await withReasoningProviderOptions(finished, reasoningOptions);
+    if (transportHeaders) finished = await withRequestHeaders(finished, transportHeaders);
+    return finished;
+  };
   if (isAntigravityCloudCodeRoute(provider, model)) {
     const apiKey2 = await resolveCredential(provider, routeId);
     const providerData2 = await resolveProviderOAuthProviderData(provider.authRef);

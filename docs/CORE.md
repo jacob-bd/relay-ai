@@ -72,6 +72,7 @@ type RelayReasoningLevel =
   | 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 interface CreateRelayModelOptions {
+  sessionId?: string;
   onDebug?: (message: string) => void;
   reasoning?: RelayReasoningLevel;
 }
@@ -93,7 +94,17 @@ Resolves the route to a provider + cached model, resolves the credential (transp
 | Models flagged `preferWebSockets` (e.g. OpenAI OAuth `gpt-5.6-luna`) | The generic `@ai-sdk/openai` provider, driven by relay-ai's Responses-Lite **WebSocket** `fetch` instead of HTTP. |
 | Cloud Code Assist models (`modelFormat: 'cloud-code'`) | A **specialized native transport**: `@ai-sdk/google` wrapped so requests are enveloped for Cloud Code Assist. Not the generic factory path. |
 
-Passing `reasoning` additionally returns a *wrapped* model (see below), so the returned object is not guaranteed to be identical to what `createLanguageModel()` alone would build. Everything returned is a normal AI SDK `LanguageModel` and works with `streamText`/`generateText` the same way.
+Passing `reasoning` or `sessionId` additionally returns a *wrapped* model (see below), so the returned object is not guaranteed to be identical to what `createLanguageModel()` alone would build. Everything returned is a normal AI SDK `LanguageModel` and works with `streamText`/`generateText` the same way.
+
+### `options.sessionId` — OpenCode Go conversation identity
+
+When the route is OpenCode Go, `sessionId` is sent as `x-opencode-session` on
+every upstream model call, including streamed, retried, and tool-loop calls.
+The value is opaque, trimmed, bounded to 256 characters, and rejected when it
+contains control characters. Headers supplied directly on an individual AI SDK
+call take precedence over this default. See
+[OpenCode Go conversation sessions](OPENCODE-GO-SESSIONS.md) for the client
+matrix and the Alef migration checklist.
 
 **Nothing is cached across calls.** Every call re-reads the registry from disk and re-resolves the credential, so a provider you disable, re-authenticate, or add after your app started takes effect on the very next call — no restart needed.
 

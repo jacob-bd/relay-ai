@@ -39,6 +39,19 @@ describe('translateOpenAiRequest assistant array content', () => {
   });
 });
 
+describe('translateOpenAiRequest headers', () => {
+  it('carries request-scoped headers into SDK params', async () => {
+    const { translateOpenAiRequest } = await import('../src/openai-adapter.js');
+    const params = translateOpenAiRequest({
+      model: 'm',
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      'x-opencode-session': 'conversation-1',
+    });
+    expect(params.headers).toEqual({ 'x-opencode-session': 'conversation-1' });
+  });
+});
+
 describe('generateOpenAiResponse finish_reason mapping', () => {
   it('maps the SDK\'s hyphenated tool-calls to the OpenAI wire value tool_calls', async () => {
     vi.doMock('ai', () => ({

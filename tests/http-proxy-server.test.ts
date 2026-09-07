@@ -233,6 +233,7 @@ describe('transparent HTTP proxy server', () => {
     let adapterBody = '';
     let adapterAuth: string | undefined;
     let adapterKey: string | undefined;
+    let adapterSession: string | undefined;
     let anthropicRequests = 0;
     const origin = http.createServer((req, res) => {
       anthropicRequests += 1;
@@ -248,6 +249,7 @@ describe('transparent HTTP proxy server', () => {
       adapterBody = Buffer.concat(chunks).toString();
       adapterAuth = req.headers.authorization;
       adapterKey = req.headers['x-api-key'] as string | undefined;
+      adapterSession = req.headers['x-opencode-session'] as string | undefined;
       res.writeHead(200, { 'Content-Type': 'application/json', Connection: 'close' });
       res.end('{"translated":true}');
     });
@@ -281,6 +283,7 @@ describe('transparent HTTP proxy server', () => {
         'Authorization: Bearer native-anthropic-login',
         'Content-Type: application/json',
         `Content-Length: ${Buffer.byteLength(body)}`,
+        'x-opencode-session: conversation-transparent-1',
         'Connection: close',
         '',
         '',
@@ -290,6 +293,7 @@ describe('transparent HTTP proxy server', () => {
       expect(anthropicRequests).toBe(0);
       expect(adapterAuth).toBeUndefined();
       expect(adapterKey).toBe('adapter-local-token');
+      expect(adapterSession).toBe('conversation-transparent-1');
       expect(JSON.parse(adapterBody)).toMatchObject({ model: route.aliasId });
     } finally {
       await proxy.close();

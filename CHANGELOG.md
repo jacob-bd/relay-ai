@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.0] - 2026-09-07
+
+### Added
+
+- **OpenCode Go conversation sessions.** Relay now forwards a stable conversation identifier as `x-opencode-session` on every OpenCode Go request, resolved from the client's own native session/thread/conversation headers or request metadata, and carries a truthful `relay-ai/<version>` user agent. When a per-request call has no client identifier (for example a client's pre-conversation availability probe), Relay fabricates a fresh unique per-request id so Console Go accepts it; a per-request id is unique and never blends two conversations the way a shared per-process id would. Embedded Core opts out of fabrication (its model can be reused across conversations) and adds an optional `sessionId` to `createRelayModel(...)`. Wired through the Claude Code proxy, transparent proxy, `relay-ai server`, Codex Responses, Gemini, and Antigravity transports. See [docs/OPENCODE-GO-SESSIONS.md](docs/OPENCODE-GO-SESSIONS.md). ([Issue #69](https://github.com/jacob-bd/relay-ai/issues/69), [Issue #70](https://github.com/jacob-bd/relay-ai/issues/70))
+
+### Fixed
+
+- **Antigravity multi-model switching now works on newer `agy` versions.** Relay gated switching behind a hand-maintained list of tested `agy` versions, so any release past the last-listed one silently dropped to single-model mode — only the launch model in `/model`, favorites not exposed — even when Antigravity's internal slot config was unchanged. Relay now trusts its slot-config shape validation as the real gate: an unlisted version whose shape still matches keeps multi-model switching, while genuinely changed layouts and known-incompatible versions still fall back safely.
+- **Antigravity now sends the OpenCode Go session header it computes.** The Cloud Code gateway built its `streamText`/`generateText` calls by listing fields explicitly and omitted the request headers, so `x-opencode-session` and the Relay user agent were computed and then dropped on the `relay-ai agy` transport.
+
 ## [0.9.8] - 2026-09-02
 
 ### Added

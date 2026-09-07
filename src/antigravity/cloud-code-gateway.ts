@@ -28,6 +28,7 @@ import {
   buildListModelConfigsResponse,
   buildListExperimentsResponse,
 } from './catalog.js';
+import { extractConversationId, openCodeGoHeaders } from '../opencode-session.js';
 import loadCodeAssistFixture from './fixtures/loadCodeAssist.json' with { type: 'json' };
 import catalogFixtureRaw from './fixtures/fetchAvailableModels.json' with { type: 'json' };
 
@@ -264,7 +265,16 @@ export async function startCloudCodeGateway(
           const baseProviderOptions = providerOptionsCache.get(route.catalogId);
           const isStream = lowerUrl.includes('stream');
           const conversationKey = conversationKeyFromRequest(parsed);
-          const requestOptions = reasoningEchoOptionsForRoute(route, parsed, reasoningEchoesByConversation);
+          const requestHeaders = openCodeGoHeaders(
+            route.providerId,
+            route.baseURL,
+            antigravityConversationId(parsed, req.headers),
+            route.headers,
+          );
+          const requestOptions = {
+            ...reasoningEchoOptionsForRoute(route, parsed, reasoningEchoesByConversation),
+            ...(requestHeaders ? { requestHeaders } : {}),
+          };
           const rememberReasoning = (reasoning: string) => {
             if (!shouldEchoReasoningForRoute(route)) return;
             rememberReasoningEcho(reasoningEchoesByConversation, conversationKey, reasoning);
@@ -453,6 +463,20 @@ function conversationKeyFromRequest(parsed: Record<string, unknown> | undefined)
     return `${segments[0]}/${segments[1]}`;
   }
   return 'global';
+}
+
+/** Cloud Code requestId is `agent/<conversation>/<turn>`; only the stable
+ * conversation prefix is suitable for OpenCode's conversation header. */
+function antigravityConversationId(
+  parsed: Record<string, unknown> | undefined,
+  headers?: Record<string, string | string[] | undefined>,
+): string | undefined {
+  const explicit = extractConversationId(headers, parsed);
+  if (explicit) return explicit;
+  const requestId = typeof parsed?.requestId === 'string' ? parsed.requestId : '';
+  const segments = requestId.split('/');
+  if (segments.length >= 2 && segments[0] && segments[1]) return `${segments[0]}/${segments[1]}`;
+  return undefined;
 }
 
 function shouldEchoReasoningForRoute(route: AntigravityRoute): boolean {
@@ -758,6 +782,7 @@ async function handleStreamingRequest(
     tools: sdkParams.tools,
     toolChoice: sdkParams.toolChoice,
     providerOptions: effectiveProviderOptions as any,
+    headers: sdkParams.headers,
   });
 
   const startSse = () => {
@@ -946,6 +971,7 @@ async function handleUnaryRequest(
     tools: sdkParams.tools,
     toolChoice: sdkParams.toolChoice,
     providerOptions: effectiveProviderOptions as any,
+    headers: sdkParams.headers,
   });
 
   const parts: any[] = [];

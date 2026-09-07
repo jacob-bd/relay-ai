@@ -281,6 +281,68 @@ describe('SDK anonymous route handling', () => {
     expect(options.subagentRouting.registerSubagentRoute).toBeTypeOf('function');
   });
 
+  it('passes the client conversation identity to OpenCode Go SDK calls', async () => {
+    vi.mocked(translateRequest).mockClear();
+    const route: ProxyRoute = {
+      aliasId: 'anthropic-go__deepseek-v4-flash',
+      realModelId: 'deepseek-v4-flash',
+      displayName: 'DeepSeek V4 Flash',
+      upstreamUrl: 'https://opencode.ai/zen/go/v1/chat/completions',
+      baseURL: 'https://opencode.ai/zen/go',
+      apiKey: 'go-key',
+      modelFormat: 'openai',
+      npm: 'missing-sdk-provider-for-test',
+      providerId: 'go',
+    };
+    const handle = await startProxyCatalog([route], route.aliasId, false);
+
+    await postToProxy(handle.port, handle.token, {
+      model: route.aliasId,
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: false,
+    }, {
+      'x-opencode-session': 'conversation-go-1',
+    });
+    handle.close();
+
+    const options = vi.mocked(translateRequest).mock.calls.at(-1)?.[2] as any;
+    expect(options.requestHeaders).toMatchObject({
+      'x-opencode-session': 'conversation-go-1',
+      'User-Agent': expect.stringMatching(/^relay-ai\//),
+    });
+  });
+
+  it('fabricates a session for OpenCode Go SDK calls that arrive without one', async () => {
+    vi.mocked(translateRequest).mockClear();
+    const route: ProxyRoute = {
+      aliasId: 'anthropic-go__deepseek-v4-flash',
+      realModelId: 'deepseek-v4-flash',
+      displayName: 'DeepSeek V4 Flash',
+      upstreamUrl: 'https://opencode.ai/zen/go/v1/chat/completions',
+      baseURL: 'https://opencode.ai/zen/go',
+      apiKey: 'go-key',
+      modelFormat: 'openai',
+      npm: 'missing-sdk-provider-for-test',
+      providerId: 'go',
+    };
+    const handle = await startProxyCatalog([route], route.aliasId, false);
+
+    // No x-opencode-session header — mirrors a client availability probe. Go
+    // would reject this without a fabricated id.
+    await postToProxy(handle.port, handle.token, {
+      model: route.aliasId,
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: false,
+    });
+    handle.close();
+
+    const options = vi.mocked(translateRequest).mock.calls.at(-1)?.[2] as any;
+    expect(options.requestHeaders['x-opencode-session']).toMatch(/^relay-/);
+    expect(options.requestHeaders['User-Agent']).toMatch(/^relay-ai\//);
+  });
+
   it('correlates Claude 2.1.220 family-model children to the registered exact route', async () => {
     vi.mocked(translateRequest).mockClear();
     const qwen: ProxyRoute = {

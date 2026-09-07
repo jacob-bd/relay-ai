@@ -34,6 +34,10 @@ import {
   extractClaudeSessionId,
   SubagentRouteRegistry,
 } from './subagent-route-registry.js';
+import {
+  extractConversationId,
+  openCodeGoHeaders,
+} from './opencode-session.js';
 
 type ProxyLog = (message: string | (() => string)) => void;
 
@@ -275,6 +279,12 @@ export function startProxyCatalog(
         const forwardBody = { ...anthropicBody, model: route.realModelId };
         const targetUrl = `${upstreamUrl}/v1/messages`;
         const isOAuth = route.authType === 'oauth';
+        const upstreamHeaders = openCodeGoHeaders(
+          route.providerId,
+          route.baseURL ?? upstreamUrl,
+          extractConversationId(req.headers, anthropicBody),
+          route.headers,
+        ) ?? route.headers;
 
         let effectiveBeta = inboundBeta;
         let claudeCodeSessionId: string | undefined;
@@ -297,7 +307,7 @@ export function startProxyCatalog(
             isOAuth ? 'oauth' : 'api',
             message => plog(message),
             claudeCodeSessionId,
-            route.headers,
+            upstreamHeaders,
             route.refreshToken,
             refreshed => { route.apiKey = refreshed; },
           );
@@ -316,6 +326,12 @@ export function startProxyCatalog(
         const openAiOAuth = route.npm === '@ai-sdk/openai' && route.authType === 'oauth';
         const subagentRouting = buildProxySubagentModelRouting(routes, route);
         const sessionId = extractClaudeSessionId(req.headers, anthropicBody);
+        const requestHeaders = openCodeGoHeaders(
+          route.providerId,
+          route.baseURL ?? upstreamUrl,
+          extractConversationId(req.headers, anthropicBody),
+          route.headers,
+        );
         if (sessionId) {
           subagentRouting.registerSubagentRoute = modelId => (
             subagentRouteRegistry.register(sessionId, modelId)
@@ -326,6 +342,7 @@ export function startProxyCatalog(
           maxTools: maxToolsForNpm(route.npm),
           onDebug: (msg) => plog(() => msg),
           subagentRouting,
+          ...(requestHeaders ? { requestHeaders } : {}),
           reasoningMetadata: {
             providerId: route.providerId,
             apiBaseUrl: route.baseURL,

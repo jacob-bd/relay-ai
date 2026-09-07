@@ -13,8 +13,10 @@ import { createAntigravityCloudCodeModel } from './antigravity-model.js';
 import { loadCoreRegistry } from './catalog.js';
 import { RelayCoreError, isRelayCoreError } from './errors.js';
 import { resolveReasoningProviderOptions, withReasoningProviderOptions, type RelayProviderOptions } from './reasoning.js';
+import { withRequestHeaders } from './reasoning.js';
 import { parseRelayRouteId } from './route-id.js';
 import type { CreateRelayModelOptions, RelayRouteId } from './types.js';
+import { openCodeGoHeaders } from '../opencode-session.js';
 
 function isAntigravityCloudCodeRoute(provider: RegistryProvider, model: CachedModel): boolean {
   return provider.id === 'antigravity'
@@ -83,9 +85,21 @@ export async function createRelayModel(routeId: RelayRouteId, options?: CreateRe
   const reasoningOptions: RelayProviderOptions | undefined = options?.reasoning === undefined
     ? undefined
     : resolveReasoningProviderOptions(options.reasoning, provider, model, routeId);
-  const finish = (built: LanguageModel): Promise<LanguageModel> => (
-    reasoningOptions ? withReasoningProviderOptions(built, reasoningOptions) : Promise.resolve(built)
+  const transportHeaders = openCodeGoHeaders(
+    provider.id,
+    model.apiUrl ?? provider.api.url,
+    options?.sessionId,
+    provider.api.headers,
+    // The returned model may be reused across conversations, so never fabricate a
+    // session here — a baked-in id would blend histories. The host passes sessionId.
+    { generateFallbackSession: false },
   );
+  const finish = async (built: LanguageModel): Promise<LanguageModel> => {
+    let finished = built;
+    if (reasoningOptions) finished = await withReasoningProviderOptions(finished, reasoningOptions);
+    if (transportHeaders) finished = await withRequestHeaders(finished, transportHeaders);
+    return finished;
+  };
 
   if (isAntigravityCloudCodeRoute(provider, model)) {
     const apiKey = await resolveCredential(provider, routeId);

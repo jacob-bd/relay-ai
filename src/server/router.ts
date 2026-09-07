@@ -45,6 +45,10 @@ import {
   extractClaudeSessionId,
   SubagentRouteRegistry,
 } from '../subagent-route-registry.js';
+import {
+  extractConversationId,
+  openCodeGoHeaders,
+} from '../opencode-session.js';
 
 export interface ServerBackend {
   baseUrl: string;
@@ -212,6 +216,12 @@ async function handleAnthropicMessages(
     const clientWantsStream = Boolean(body.stream);
     const forwardBody: Record<string, unknown> = { ...body, model: upstreamModelId(model) };
     const isOAuth = model.authType === 'oauth';
+    const upstreamHeaders = openCodeGoHeaders(
+      model.providerId ?? model.sourceBackend,
+      model.baseUrl ?? messagesUrl,
+      extractConversationId(req.headers, body),
+      model.headers,
+    ) ?? model.headers;
 
     let effectiveBeta = inboundBeta;
     let claudeCodeSessionId: string | undefined;
@@ -233,7 +243,7 @@ async function handleAnthropicMessages(
       isOAuth ? 'oauth' : 'api',
       message => plog(message),
       claudeCodeSessionId,
-      model.headers,
+      upstreamHeaders,
       refreshToken,
       refreshed => { model.apiKey = refreshed; },
     );
@@ -285,6 +295,15 @@ async function handleAnthropicMessages(
         upstreamModelId: upstreamModelId(model),
       },
       maxTools: npmMaxTools,
+      ...(() => {
+        const requestHeaders = openCodeGoHeaders(
+          model.providerId ?? model.sourceBackend,
+          model.apiBaseUrl ?? model.baseUrl,
+          extractConversationId(req.headers, body),
+          model.headers,
+        );
+        return requestHeaders ? { requestHeaders } : {};
+      })(),
     });
     const clientWantsStream = Boolean(body.stream);
     // Use the display name in the response model field when masking is on — Claude
@@ -382,8 +401,17 @@ async function handleOpenAIChatCompletions(
     // body.model is whatever the client sent (bare, scoped, or an alias) — rewrite to the
     // real upstream id before forwarding, or a scoped/alias id leaks to the upstream API.
     const forwardBody = { ...body, model: upstreamModelId(model) };
+    const upstreamHeaders = openCodeGoHeaders(
+      model.providerId ?? model.sourceBackend,
+      model.completionsUrl ?? model.apiBaseUrl,
+      extractConversationId(req.headers, body),
+      model.headers,
+    ) ?? model.headers;
     plog(() => `openai-direct-passthrough → ${completionsUrl} model=${forwardBody.model} stream=${Boolean(body.stream)}`);
-    await relayAnthropicMessages(res, completionsUrl, forwardBody, apiKey, Boolean(body.stream), undefined, undefined, message => plog(message));
+    await relayAnthropicMessages(
+      res, completionsUrl, forwardBody, apiKey, Boolean(body.stream), undefined, undefined,
+      message => plog(message), undefined, upstreamHeaders,
+    );
     return;
   }
 
@@ -405,7 +433,13 @@ async function handleOpenAIChatCompletions(
     options.vertex,
     providerRefreshToken(model.providerId, model.authType),
   );
-  const params = translateOpenAiRequest(body as unknown as OpenAiRequest);
+  const requestHeaders = openCodeGoHeaders(
+    model.providerId ?? model.sourceBackend,
+    baseURL,
+    extractConversationId(req.headers, body),
+    model.headers,
+  );
+  const params = translateOpenAiRequest(body as unknown as OpenAiRequest, requestHeaders);
   const clientWantsStream = Boolean(body.stream);
   const responseModelId = getResponseModelId(body.model, model, options);
 

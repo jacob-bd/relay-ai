@@ -31,6 +31,13 @@ describe('translateGeminiRequest', () => {
     ]);
   });
 
+  it('carries request-scoped headers into the SDK params', () => {
+    const params = translateGeminiRequest({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] }, {
+      requestHeaders: { 'x-opencode-session': 'conversation-1' },
+    });
+    expect(params.headers).toEqual({ 'x-opencode-session': 'conversation-1' });
+  });
+
   it('extracts system instructions', () => {
     const body = {
       systemInstruction: {

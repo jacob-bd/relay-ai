@@ -30,6 +30,24 @@ describe('anthropicUpstreamHeaders', () => {
       'X-Claude-Code-Session-Id': 'session-123',
     });
   });
+
+  it('preserves OpenCode Go session and Relay user-agent headers for API requests', () => {
+    expect(anthropicUpstreamHeaders(
+      'go-key',
+      false,
+      undefined,
+      'api',
+      undefined,
+      {
+        'x-opencode-session': 'conversation-1',
+        'User-Agent': 'relay-ai/0.0.0-test',
+      },
+    )).toMatchObject({
+      'x-opencode-session': 'conversation-1',
+      'User-Agent': 'relay-ai/0.0.0-test',
+      'x-api-key': 'go-key',
+    });
+  });
 });
 
 describe('fetchWithOAuthRetry', () => {

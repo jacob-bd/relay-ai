@@ -647,6 +647,58 @@ describe('cloud-code-gateway', () => {
     expect(streamCall.providerOptions?.anthropic?.anthropicBeta).toContain('claude-code-20250219');
   });
 
+  it('sends the OpenCode Go session header on streaming SDK calls', async () => {
+    vi.mocked(streamText).mockClear();
+    const handle = await start([
+      {
+        ...testRoutes[0]!,
+        catalogId: 'relay-ai__go__deepseek-v4',
+        providerId: 'go',
+        providerName: 'OpenCode Go',
+        modelId: 'deepseek-v4',
+        upstreamModelId: 'deepseek-v4',
+        baseURL: 'https://opencode.ai/zen/go',
+      },
+    ]);
+    const res = await postJson(handle, '/v1internal:streamGenerateContent?alt=sse', {
+      model: 'relay-ai__go__deepseek-v4',
+      requestId: 'agent/session-xyz/turn-1',
+      request: { contents: [{ role: 'user', parts: [{ text: 'hello' }] }] },
+    });
+    expect(res.status, await res.text()).toBe(200);
+    const streamCall = vi.mocked(streamText).mock.calls.at(-1)![0] as any;
+    expect(streamCall.headers).toMatchObject({
+      'x-opencode-session': 'agent/session-xyz',
+      'User-Agent': expect.stringMatching(/^relay-ai\//),
+    });
+  });
+
+  it('sends the OpenCode Go session header on unary SDK calls', async () => {
+    vi.mocked(generateText).mockClear();
+    const handle = await start([
+      {
+        ...testRoutes[0]!,
+        catalogId: 'relay-ai__go__deepseek-v4',
+        providerId: 'go',
+        providerName: 'OpenCode Go',
+        modelId: 'deepseek-v4',
+        upstreamModelId: 'deepseek-v4',
+        baseURL: 'https://opencode.ai/zen/go',
+      },
+    ]);
+    const res = await postJson(handle, '/v1internal:generateContent', {
+      model: 'relay-ai__go__deepseek-v4',
+      requestId: 'agent/session-abc/turn-1',
+      request: { contents: [{ role: 'user', parts: [{ text: 'hi' }] }] },
+    });
+    expect(res.status, await res.text()).toBe(200);
+    const genCall = vi.mocked(generateText).mock.calls.at(-1)![0] as any;
+    expect(genCall.headers).toMatchObject({
+      'x-opencode-session': 'agent/session-abc',
+      'User-Agent': expect.stringMatching(/^relay-ai\//),
+    });
+  });
+
   it('forwards Cloud Code Assist Cloud Code routes without the OpenAI-compatible SDK', async () => {
     vi.mocked(createLanguageModel).mockClear();
     const originalFetch = globalThis.fetch;

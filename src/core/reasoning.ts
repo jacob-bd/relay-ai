@@ -16,6 +16,7 @@ import {
 import type { CachedModel, RegistryProvider } from '../registry/types.js';
 import { RelayCoreError } from './errors.js';
 import type { RelayReasoningLevel, RelayRouteId } from './types.js';
+import { mergeHeaders } from '../opencode-session.js';
 
 /** Runtime mirror of `RelayReasoningLevel` — the whole catalog vocabulary. */
 export const RELAY_REASONING_LEVELS: readonly RelayReasoningLevel[] = [
@@ -123,6 +124,32 @@ export async function withReasoningProviderOptions(
           providerOptions,
           params.providerOptions as RelayProviderOptions | undefined,
         ) as typeof params.providerOptions,
+      }),
+    },
+  });
+}
+
+/**
+ * Wrap a model with default transport headers. Request-local headers supplied by
+ * the consumer win case-insensitively, so a caller can preserve or replace an
+ * OpenCode session identity for a particular call without mutating the model.
+ */
+export async function withRequestHeaders(
+  model: LanguageModel,
+  headers: Record<string, string>,
+): Promise<LanguageModel> {
+  const { wrapLanguageModel } = await import('ai');
+  type WrapArgs = Parameters<typeof wrapLanguageModel>[0];
+  return wrapLanguageModel({
+    model: model as WrapArgs['model'],
+    middleware: {
+      specificationVersion: 'v3',
+      transformParams: async ({ params }) => ({
+        ...params,
+        headers: mergeHeaders(
+          headers,
+          params.headers as Record<string, string> | undefined,
+        ),
       }),
     },
   });

@@ -211,12 +211,16 @@ export interface CodexSdkCallParams {
   maxOutputTokens?: number;
   temperature?: number;
   providerOptions?: Record<string, Record<string, unknown>>;
+  /** Request-scoped transport headers passed to the AI SDK on every upstream attempt. */
+  headers?: Record<string, string>;
   /** Non-SDK field — strip before spreading params into streamText/generateText. */
   toolContext?: CodexToolContext;
 }
 
 export interface TranslateToolOptions {
   maxTools?: number;
+  /** Request-scoped transport headers (for example OpenCode Go conversation identity). */
+  requestHeaders?: Record<string, string>;
 }
 
 export const TOOL_SEARCH_NAME = 'tool_search';
@@ -619,6 +623,7 @@ export function translateResponsesRequest(
     maxOutputTokens: body.max_output_tokens,
     temperature: body.temperature,
     providerOptions,
+    headers: options.requestHeaders,
   };
 }
 

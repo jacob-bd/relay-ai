@@ -309,14 +309,14 @@ export function evaluateAgySwitchCompatibility(opts: {
   }
 
   if (opts.version && !KNOWN_COMPATIBLE_AGY_VERSIONS.has(opts.version)) {
-    return {
-      mode: 'single-model',
-      validatedSwitchSlotCount: validation.switchSlots.length,
-      warnings: [
-        ...warnings,
-        `Unvalidated AGY version ${opts.version}; falling back to single-model mode for maximum stability.`,
-      ],
-    };
+    // The slot-config shape check above is the real safety gate: it fails when
+    // Antigravity changes its internal slots. So an unlisted version whose shape
+    // still matches gets multi-model switching, rather than being blocked purely
+    // for not being in the hand-maintained allowlist. Known-bad versions are
+    // already denied above.
+    warnings.push(
+      `AGY version ${opts.version} is not in the explicitly validated set, but its slot config shape matches; multi-model switching is enabled.`,
+    );
   } else if (!opts.version && !opts.versionReadError) {
     warnings.push('AGY version is unknown; fixture shape matches, so multi-model switching remains enabled.');
   }

@@ -69,6 +69,14 @@ describe('Antigravity request trace summary', () => {
 });
 
 describe('antigravity request-adapter', () => {
+  it('carries request-scoped headers into SDK params', () => {
+    const sdkReq = translateRequest({
+      model: 'relay-model',
+      request: { contents: [{ role: 'user', parts: [{ text: 'hi' }] }] },
+    }, { requestHeaders: { 'x-opencode-session': 'conversation-1' } });
+    expect(sdkReq.headers).toEqual({ 'x-opencode-session': 'conversation-1' });
+  });
+
   it('translates a single user text message', () => {
     const ccReq: CloudCodeGenerateRequest = {
       model: 'relay-ai__zen__deepseek-v4-flash-free',

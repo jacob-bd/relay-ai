@@ -34,7 +34,10 @@ export interface OpenAiRequest {
 
 // ── Translation: OpenAI Request → SDK Call Params ───────────────────────────
 
-export function translateOpenAiRequest(body: OpenAiRequest): SdkCallParams {
+export function translateOpenAiRequest(
+  body: OpenAiRequest,
+  requestHeaders?: Record<string, string>,
+): SdkCallParams {
   // Pre-scan to map tool_call_id → function name so tool result messages can reference it.
   const toolNameById = new Map<string, string>();
   for (const msg of body.messages) {
@@ -131,6 +134,7 @@ export function translateOpenAiRequest(body: OpenAiRequest): SdkCallParams {
     toolChoice: sdkToolChoice,
     temperature: body.temperature,
     maxOutputTokens: body.max_completion_tokens ?? body.max_tokens,
+    headers: requestHeaders,
   };
 }
 

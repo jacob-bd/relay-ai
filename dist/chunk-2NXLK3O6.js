@@ -11,7 +11,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.9.8",
+  version: "0.10.0",
   publishConfig: {
     access: "public"
   },
@@ -6326,7 +6326,7 @@ async function collectCloudCodeToAnthropic(upstreamRes, model, log7) {
 }
 
 // src/proxy.ts
-import { randomUUID as randomUUID5 } from "crypto";
+import { randomUUID as randomUUID6 } from "crypto";
 
 // src/sdk-adapter.ts
 import { streamText, generateText, tool, jsonSchema } from "ai";
@@ -6688,6 +6688,7 @@ function translateRequest(body, npm, options) {
     maxOutputTokens: options?.openAiOAuth ? void 0 : body.max_tokens,
     temperature: body.temperature,
     providerOptions,
+    headers: options?.requestHeaders,
     subagentRouting: responseSubagentRouting
   };
 }
@@ -6956,6 +6957,109 @@ async function generateAnthropicResponse(model, params, modelId, options) {
   };
 }
 
+// src/opencode-session.ts
+import { randomUUID as randomUUID5 } from "crypto";
+var OPENCODE_SESSION_HEADER = "x-opencode-session";
+var MAX_OPENCODE_SESSION_LENGTH = 256;
+var RELAY_USER_AGENT = `relay-ai/${VERSION}`;
+var NATIVE_CONVERSATION_HEADERS = [
+  "x-claude-code-session-id",
+  "session_id",
+  "session-id",
+  "x-session-id",
+  "thread_id",
+  "thread-id",
+  "x-thread-id",
+  "conversation_id",
+  "conversation-id",
+  "x-conversation-id"
+];
+function sanitizeSessionId(value) {
+  if (typeof value !== "string") return void 0;
+  const normalized = value.trim();
+  if (!normalized || normalized.length > MAX_OPENCODE_SESSION_LENGTH) return void 0;
+  if (/[\u0000-\u001f\u007f\r\n]/.test(normalized)) return void 0;
+  return normalized;
+}
+function headerValue(headers, name) {
+  if (!headers) return void 0;
+  if (headers instanceof Headers) {
+    return sanitizeSessionId(headers.get(name));
+  }
+  const lowerName = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() !== lowerName) continue;
+    const first = Array.isArray(value) ? value[0] : value;
+    return sanitizeSessionId(first);
+  }
+  return void 0;
+}
+function metadataSessionId(body) {
+  if (!body || typeof body !== "object") return void 0;
+  const record = body;
+  const metadata = record.metadata;
+  if (metadata && typeof metadata === "object") {
+    const metadataRecord = metadata;
+    const direct = sanitizeSessionId(metadataRecord.session_id ?? metadataRecord.sessionId);
+    if (direct) return direct;
+    const userId = metadataRecord.user_id;
+    if (typeof userId === "string") {
+      try {
+        const parsed = JSON.parse(userId);
+        const parsedId = sanitizeSessionId(parsed.session_id ?? parsed.sessionId);
+        if (parsedId) return parsedId;
+      } catch {
+      }
+    }
+  }
+  return sanitizeSessionId(record.session_id ?? record.sessionId ?? record.thread_id ?? record.threadId);
+}
+function extractConversationId(headers, body) {
+  const explicit = headerValue(headers, OPENCODE_SESSION_HEADER);
+  if (explicit) return explicit;
+  for (const name of NATIVE_CONVERSATION_HEADERS) {
+    const native = headerValue(headers, name);
+    if (native) return native;
+  }
+  return metadataSessionId(body);
+}
+function isOpenCodeGoEndpoint(providerId, endpoint) {
+  const id = providerId?.trim().toLowerCase();
+  if (id === "go" || id === "opencode-go") return true;
+  if (!endpoint) return false;
+  try {
+    const url = new URL(endpoint);
+    if (url.hostname.toLowerCase() !== "opencode.ai") return false;
+    return url.pathname.split("/").some((segment) => segment.toLowerCase() === "go");
+  } catch {
+    return false;
+  }
+}
+function mergeHeaders(base, overrides) {
+  const result = {};
+  for (const [key, value] of Object.entries(base ?? {})) {
+    if (typeof value === "string") result[key] = value;
+  }
+  for (const [key, value] of Object.entries(overrides ?? {})) {
+    for (const existing of Object.keys(result)) {
+      if (existing.toLowerCase() === key.toLowerCase()) delete result[existing];
+    }
+    result[key] = value;
+  }
+  return result;
+}
+function openCodeGoHeaders(providerId, endpoint, sessionId, baseHeaders, options) {
+  if (!isOpenCodeGoEndpoint(providerId, endpoint)) return void 0;
+  let normalizedSessionId = sanitizeSessionId(sessionId);
+  if (!normalizedSessionId && (options?.generateFallbackSession ?? true)) {
+    normalizedSessionId = `relay-${randomUUID5()}`;
+  }
+  return mergeHeaders(baseHeaders, {
+    "User-Agent": RELAY_USER_AGENT,
+    ...normalizedSessionId ? { [OPENCODE_SESSION_HEADER]: normalizedSessionId } : {}
+  });
+}
+
 // src/proxy.ts
 function appendSecureLog(logPath, line) {
   const redacted = redactTraceLine(line);
@@ -7019,7 +7123,7 @@ function lookupRoute(byAlias, id) {
   return void 0;
 }
 function startProxyCatalog(routes, defaultAliasId, debug = false) {
-  const proxyToken = randomUUID5();
+  const proxyToken = randomUUID6();
   silenceSdkWarnings();
   if (routes.length === 0) {
     return Promise.reject(new Error("Proxy catalog requires at least one route"));
@@ -7102,6 +7206,12 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
         const forwardBody = { ...anthropicBody, model: route.realModelId };
         const targetUrl = `${upstreamUrl}/v1/messages`;
         const isOAuth = route.authType === "oauth";
+        const upstreamHeaders = openCodeGoHeaders(
+          route.providerId,
+          route.baseURL ?? upstreamUrl,
+          extractConversationId(req.headers, anthropicBody),
+          route.headers
+        ) ?? route.headers;
         let effectiveBeta = inboundBeta;
         let claudeCodeSessionId;
         if (isOAuth) {
@@ -7126,7 +7236,7 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
             isOAuth ? "oauth" : "api",
             (message) => plog(message),
             claudeCodeSessionId,
-            route.headers,
+            upstreamHeaders,
             route.refreshToken,
             (refreshed) => {
               route.apiKey = refreshed;
@@ -7143,6 +7253,12 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
         const openAiOAuth = route.npm === "@ai-sdk/openai" && route.authType === "oauth";
         const subagentRouting = buildProxySubagentModelRouting(routes, route);
         const sessionId = extractClaudeSessionId(req.headers, anthropicBody);
+        const requestHeaders = openCodeGoHeaders(
+          route.providerId,
+          route.baseURL ?? upstreamUrl,
+          extractConversationId(req.headers, anthropicBody),
+          route.headers
+        );
         if (sessionId) {
           subagentRouting.registerSubagentRoute = (modelId) => subagentRouteRegistry.register(sessionId, modelId);
         }
@@ -7151,6 +7267,7 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
           maxTools: maxToolsForNpm(route.npm),
           onDebug: (msg) => plog(() => msg),
           subagentRouting,
+          ...requestHeaders ? { requestHeaders } : {},
           reasoningMetadata: {
             providerId: route.providerId,
             apiBaseUrl: route.baseURL,
@@ -8768,14 +8885,9 @@ function evaluateAgySwitchCompatibility(opts) {
     };
   }
   if (opts.version && !KNOWN_COMPATIBLE_AGY_VERSIONS.has(opts.version)) {
-    return {
-      mode: "single-model",
-      validatedSwitchSlotCount: validation.switchSlots.length,
-      warnings: [
-        ...warnings,
-        `Unvalidated AGY version ${opts.version}; falling back to single-model mode for maximum stability.`
-      ]
-    };
+    warnings.push(
+      `AGY version ${opts.version} is not in the explicitly validated set, but its slot config shape matches; multi-model switching is enabled.`
+    );
   } else if (!opts.version && !opts.versionReadError) {
     warnings.push("AGY version is unknown; fixture shape matches, so multi-model switching remains enabled.");
   }
@@ -11065,7 +11177,7 @@ import { createServer as createServer2 } from "http";
 
 // src/openai-adapter.ts
 import { tool as tool2, jsonSchema as jsonSchema2, streamText as streamText2, generateText as generateText2 } from "ai";
-function translateOpenAiRequest(body) {
+function translateOpenAiRequest(body, requestHeaders) {
   const toolNameById = /* @__PURE__ */ new Map();
   for (const msg of body.messages) {
     if (msg.role === "assistant" && msg.tool_calls) {
@@ -11144,7 +11256,8 @@ function translateOpenAiRequest(body) {
     tools,
     toolChoice: sdkToolChoice,
     temperature: body.temperature,
-    maxOutputTokens: body.max_completion_tokens ?? body.max_tokens
+    maxOutputTokens: body.max_completion_tokens ?? body.max_tokens,
+    headers: requestHeaders
   };
 }
 function toOpenAiFinishReason(reason) {
@@ -11365,6 +11478,12 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog, suba
     const clientWantsStream = Boolean(body.stream);
     const forwardBody = { ...body, model: upstreamModelId(model) };
     const isOAuth = model.authType === "oauth";
+    const upstreamHeaders = openCodeGoHeaders(
+      model.providerId ?? model.sourceBackend,
+      model.baseUrl ?? messagesUrl,
+      extractConversationId(req.headers, body),
+      model.headers
+    ) ?? model.headers;
     let effectiveBeta = inboundBeta;
     let claudeCodeSessionId;
     if (isOAuth) {
@@ -11386,7 +11505,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog, suba
       isOAuth ? "oauth" : "api",
       (message) => plog(message),
       claudeCodeSessionId,
-      model.headers,
+      upstreamHeaders,
       refreshToken,
       (refreshed) => {
         model.apiKey = refreshed;
@@ -11436,7 +11555,16 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog, suba
         interleavedReasoningField: model.interleavedReasoningField,
         upstreamModelId: upstreamModelId(model)
       },
-      maxTools: npmMaxTools
+      maxTools: npmMaxTools,
+      ...(() => {
+        const requestHeaders = openCodeGoHeaders(
+          model.providerId ?? model.sourceBackend,
+          model.apiBaseUrl ?? model.baseUrl,
+          extractConversationId(req.headers, body),
+          model.headers
+        );
+        return requestHeaders ? { requestHeaders } : {};
+      })()
     });
     const clientWantsStream = Boolean(body.stream);
     const responseModelId = getResponseModelId(body.model, model, options);
@@ -11513,8 +11641,25 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
     const completionsUrl = model.completionsUrl ? model.completionsUrl : `${backendFor(options, model).baseUrl}/v1/chat/completions`;
     const apiKey2 = model.apiKey ?? options.apiKey;
     const forwardBody = { ...body, model: upstreamModelId(model) };
+    const upstreamHeaders = openCodeGoHeaders(
+      model.providerId ?? model.sourceBackend,
+      model.completionsUrl ?? model.apiBaseUrl,
+      extractConversationId(req.headers, body),
+      model.headers
+    ) ?? model.headers;
     plog(() => `openai-direct-passthrough \u2192 ${completionsUrl} model=${forwardBody.model} stream=${Boolean(body.stream)}`);
-    await relayAnthropicMessages(res, completionsUrl, forwardBody, apiKey2, Boolean(body.stream), void 0, void 0, (message) => plog(message));
+    await relayAnthropicMessages(
+      res,
+      completionsUrl,
+      forwardBody,
+      apiKey2,
+      Boolean(body.stream),
+      void 0,
+      void 0,
+      (message) => plog(message),
+      void 0,
+      upstreamHeaders
+    );
     return;
   }
   const npm = model.npm || (model.modelFormat === "anthropic" ? "@ai-sdk/anthropic" : void 0);
@@ -11533,7 +11678,13 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
     options.vertex,
     providerRefreshToken(model.providerId, model.authType)
   );
-  const params = translateOpenAiRequest(body);
+  const requestHeaders = openCodeGoHeaders(
+    model.providerId ?? model.sourceBackend,
+    baseURL,
+    extractConversationId(req.headers, body),
+    model.headers
+  );
+  const params = translateOpenAiRequest(body, requestHeaders);
   const clientWantsStream = Boolean(body.stream);
   const responseModelId = getResponseModelId(body.model, model, options);
   plog(() => `sdk-openai npm=${npm} upstream=${upstreamModelId(model)} responseModel=${responseModelId} stream=${clientWantsStream}`);
@@ -13835,6 +13986,9 @@ export {
   formatUpstreamErrorTrace,
   formatUpstreamError,
   upstreamHttpStatus,
+  OPENCODE_SESSION_HEADER,
+  extractConversationId,
+  openCodeGoHeaders,
   aliasModelId,
   startProxyCatalog,
   startProxy,
@@ -13910,4 +14064,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-WIXM2H2D.js.map
+//# sourceMappingURL=chunk-2NXLK3O6.js.map

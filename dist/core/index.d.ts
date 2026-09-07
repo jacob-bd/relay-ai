@@ -17,6 +17,13 @@ type RelayCoreErrorCode = 'INVALID_ROUTE_ID' | 'ROUTE_NOT_FOUND' | 'PROVIDER_DIS
 type RelayReasoningLevel = 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 interface CreateRelayModelOptions {
     /**
+     * Optional stable conversation identifier for OpenCode Go. Relay sends this
+     * as `x-opencode-session` on every upstream model call for the returned model.
+     * The value is treated as opaque and bounded to OpenCode's 256-character
+     * header limit. Per-call `headers` supplied to the AI SDK take precedence.
+     */
+    sessionId?: string;
+    /**
      * Optional sanitized transport diagnostics. Messages contain event types,
      * field names, counts, and lengths — never credentials, prompts, or bodies.
      *

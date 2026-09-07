@@ -218,6 +218,23 @@ describe('translateRequest', () => {
     expect(params.providerOptions).toEqual({ google: { thinkingConfig: { includeThoughts: true } } });
   });
 
+  it('carries request-scoped headers through to the SDK call', () => {
+    const params = translateRequest({
+      model: 'deepseek-v4-flash',
+      messages: [{ role: 'user', content: 'hello' }],
+    }, '@ai-sdk/openai-compatible', {
+      requestHeaders: {
+        'x-opencode-session': 'conversation-1',
+        'User-Agent': 'relay-ai/test',
+      },
+    });
+
+    expect(params.headers).toEqual({
+      'x-opencode-session': 'conversation-1',
+      'User-Agent': 'relay-ai/test',
+    });
+  });
+
   it('requests OpenAI encrypted reasoning for Responses API round-trip', () => {
     const params = translateRequest({
       model: 'gpt-5.5',

@@ -52,11 +52,15 @@ export interface SdkRequest {
   tools?: Record<string, ReturnType<typeof tool>>;
   toolChoice?: 'auto' | 'required';
   providerOptions?: Record<string, Record<string, unknown>>;
+  /** Request-scoped transport headers passed to the AI SDK on every upstream attempt. */
+  headers?: Record<string, string>;
 }
 
 export interface TranslateRequestOptions {
   fallbackAssistantReasoning?: string[];
   maxTools?: number;
+  /** Request-scoped transport headers (for example OpenCode Go conversation identity). */
+  requestHeaders?: Record<string, string>;
 }
 
 export const UNSUPPORTED_VOICE_MESSAGE =
@@ -389,5 +393,6 @@ export function translateRequest(
     messages: sdkMessages,
     tools,
     toolChoice,
+    headers: options.requestHeaders,
   };
 }

@@ -139,6 +139,64 @@ describe('createRelayModel', () => {
     expect(createLanguageModelMock.mock.calls[0]![0].onDebug).toBe(onDebug);
   });
 
+  it('adds a caller-supplied OpenCode Go session header to every model call', async () => {
+    const baseModel = {
+      specificationVersion: 'v3',
+      provider: 'openai-compatible.go',
+      modelId: 'deepseek-v4-flash',
+      supportedUrls: {},
+      doGenerate: vi.fn(async () => ({ warnings: [], text: 'ok' })),
+      doStream: vi.fn(async () => ({ stream: new ReadableStream() })),
+    } as any;
+    createLanguageModelMock.mockResolvedValue(baseModel);
+    writeRegistry([provider({
+      id: 'go',
+      templateId: 'go',
+      name: 'OpenCode Go',
+      api: { npm: '@ai-sdk/openai-compatible', url: 'https://opencode.ai/zen/go' },
+    })]);
+    writeSecrets({ 'provider:groq': 'go-key' });
+
+    const model = await createRelayModel('go::llama-3.3-70b', { sessionId: 'conversation-1' }) as any;
+    await model.doGenerate({ headers: { 'x-client': 'keep' } });
+
+    expect(baseModel.doGenerate).toHaveBeenCalledWith(expect.objectContaining({
+      headers: {
+        'x-opencode-session': 'conversation-1',
+        'User-Agent': expect.stringMatching(/^relay-ai\//),
+        'x-client': 'keep',
+      },
+    }));
+  });
+
+  it('never fabricates an OpenCode Go session for a reusable embedded Core model', async () => {
+    const baseModel = {
+      specificationVersion: 'v3',
+      provider: 'openai-compatible.go',
+      modelId: 'deepseek-v4-flash',
+      supportedUrls: {},
+      doGenerate: vi.fn(async () => ({ warnings: [], text: 'ok' })),
+      doStream: vi.fn(async () => ({ stream: new ReadableStream() })),
+    } as any;
+    createLanguageModelMock.mockResolvedValue(baseModel);
+    writeRegistry([provider({
+      id: 'go',
+      templateId: 'go',
+      name: 'OpenCode Go',
+      api: { npm: '@ai-sdk/openai-compatible', url: 'https://opencode.ai/zen/go' },
+    })]);
+    writeSecrets({ 'provider:groq': 'go-key' });
+
+    // No sessionId supplied — the model could be reused across conversations, so
+    // Core must add only the user agent, never a fabricated session header.
+    const model = await createRelayModel('go::llama-3.3-70b') as any;
+    await model.doGenerate({ headers: {} });
+
+    const headers = baseModel.doGenerate.mock.calls.at(-1)![0].headers;
+    expect(headers['User-Agent']).toMatch(/^relay-ai\//);
+    expect(headers['x-opencode-session']).toBeUndefined();
+  });
+
   it('missing provider → ROUTE_NOT_FOUND', async () => {
     writeRegistry([provider({})]);
     await expectCode('nope::model', 'ROUTE_NOT_FOUND');

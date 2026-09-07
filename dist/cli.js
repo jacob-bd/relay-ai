@@ -11,6 +11,7 @@ import {
   CONFLICTING_ENV_VARS,
   GLOBAL_OPENCODE_KEYRING_ACCOUNT,
   MAX_MODEL_CATALOG,
+  OPENCODE_SESSION_HEADER,
   PREVIEW_PROXY_PORT,
   VERSION,
   VERTEX_ANTHROPIC_NPM,
@@ -56,6 +57,7 @@ import {
   estimateAnthropicInputTokens,
   evaluateAgySwitchCompatibility,
   extractApiKey,
+  extractConversationId,
   favoriteProviderDisplayName,
   fetchAnthropicModels,
   fetchProviderCatalog,
@@ -120,6 +122,7 @@ import {
   navOption,
   oauthAuthRef,
   oauthCredentialToKeychainJson,
+  openCodeGoHeaders,
   parseCodexAppModelSlug,
   parseDsmlToolCalls,
   parseToolArguments,
@@ -199,7 +202,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-WIXM2H2D.js";
+} from "./chunk-2NXLK3O6.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -2622,7 +2625,8 @@ function translateResponsesRequest(body, npm, metadata, options = {}) {
     toolContext,
     maxOutputTokens: body.max_output_tokens,
     temperature: body.temperature,
-    providerOptions
+    providerOptions,
+    headers: options.requestHeaders
   };
 }
 function newResponseId() {
@@ -4354,6 +4358,12 @@ async function startCodexProxy(routes, options = {}) {
             mixedNative,
             headers: req.headers
           });
+          const requestHeaders = openCodeGoHeaders(
+            route.providerId,
+            route.baseURL,
+            extractConversationId(req.headers, routedBody),
+            route.headers
+          );
           let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
             routedBody,
             route.npm,
@@ -4365,7 +4375,10 @@ async function startCodexProxy(routes, options = {}) {
               interleavedReasoningField: route.interleavedReasoningField,
               upstreamModelId: route.upstreamModelId
             },
-            { maxTools: maxToolsForNpm(route.npm) }
+            {
+              maxTools: maxToolsForNpm(route.npm),
+              ...requestHeaders ? { requestHeaders } : {}
+            }
           ), route));
           if (route.contextWindow && route.contextWindow > 0) {
             const before = params.messages.length;
@@ -4975,6 +4988,12 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
               mixedNative,
               headers: req.headers
             });
+            const requestHeaders = openCodeGoHeaders(
+              route.providerId,
+              route.baseURL,
+              extractConversationId(req.headers, routedBody),
+              route.headers
+            );
             currentExternalStateInput = responsesInputItems(routedBody.input);
             currentExternalConsumedResponseId = continuation.consumedResponseId;
             let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
@@ -4988,7 +5007,10 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
                 interleavedReasoningField: route.interleavedReasoningField,
                 upstreamModelId: route.upstreamModelId
               },
-              { maxTools: maxToolsForNpm(route.npm) }
+              {
+                maxTools: maxToolsForNpm(route.npm),
+                ...requestHeaders ? { requestHeaders } : {}
+              }
             ), route));
             if (route.contextWindow && route.contextWindow > 0) {
               const before = params.messages.length;
@@ -7343,7 +7365,8 @@ function translateGeminiRequest(body, options = {}) {
     toolChoice,
     maxOutputTokens: generationConfig.maxOutputTokens,
     temperature: generationConfig.temperature,
-    responseFormat
+    responseFormat,
+    headers: options.requestHeaders
   };
 }
 async function startGeminiProxy(routes, debug = false) {
@@ -7471,9 +7494,18 @@ Available: ${available}`, isStream);
         plog(`Route selected: ${route.aliasId} (upstream model: ${route.realModelId})`);
         body.contents = sanitizeModelSwitchTurns(body.contents || []);
         const languageModel = await getOrInitModel(route);
+        const requestHeaders = openCodeGoHeaders(
+          route.providerId,
+          route.baseURL,
+          extractConversationId(req.headers, body),
+          route.headers
+        );
         const params = applyClaudeCodeOAuthIdentity(
           { ...route, upstreamModelId: route.realModelId },
-          translateGeminiRequest(body, { maxTools: maxToolsForNpm(route.npm) })
+          translateGeminiRequest(body, {
+            maxTools: maxToolsForNpm(route.npm),
+            ...requestHeaders ? { requestHeaders } : {}
+          })
         );
         params.providerOptions = deepMergeProviderOptions(
           params.providerOptions,
@@ -8371,7 +8403,8 @@ function translateRequest(ccReq, options = {}) {
     system,
     messages: sdkMessages,
     tools,
-    toolChoice
+    toolChoice,
+    headers: options.requestHeaders
   };
 }
 
@@ -9566,7 +9599,16 @@ async function startCloudCodeGateway(routes, opts = {}) {
           const baseProviderOptions = providerOptionsCache.get(route.catalogId);
           const isStream = lowerUrl.includes("stream");
           const conversationKey = conversationKeyFromRequest(parsed);
-          const requestOptions = reasoningEchoOptionsForRoute(route, parsed, reasoningEchoesByConversation);
+          const requestHeaders = openCodeGoHeaders(
+            route.providerId,
+            route.baseURL,
+            antigravityConversationId(parsed, req.headers),
+            route.headers
+          );
+          const requestOptions = {
+            ...reasoningEchoOptionsForRoute(route, parsed, reasoningEchoesByConversation),
+            ...requestHeaders ? { requestHeaders } : {}
+          };
           const rememberReasoning = (reasoning) => {
             if (!shouldEchoReasoningForRoute(route)) return;
             rememberReasoningEcho(reasoningEchoesByConversation, conversationKey, reasoning);
@@ -9748,6 +9790,14 @@ function conversationKeyFromRequest(parsed) {
     return `${segments[0]}/${segments[1]}`;
   }
   return "global";
+}
+function antigravityConversationId(parsed, headers) {
+  const explicit = extractConversationId(headers, parsed);
+  if (explicit) return explicit;
+  const requestId = typeof parsed?.requestId === "string" ? parsed.requestId : "";
+  const segments = requestId.split("/");
+  if (segments.length >= 2 && segments[0] && segments[1]) return `${segments[0]}/${segments[1]}`;
+  return void 0;
 }
 function shouldEchoReasoningForRoute(route) {
   if (route.npm !== "@ai-sdk/openai-compatible") return false;
@@ -9988,7 +10038,8 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
     messages: sdkParams.messages,
     tools: sdkParams.tools,
     toolChoice: sdkParams.toolChoice,
-    providerOptions: effectiveProviderOptions
+    providerOptions: effectiveProviderOptions,
+    headers: sdkParams.headers
   });
   const startSse = () => {
     if (res.headersSent) return;
@@ -10165,7 +10216,8 @@ async function handleUnaryRequest(res, route, providerOptions, parsed, log14, op
     messages: sdkParams.messages,
     tools: sdkParams.tools,
     toolChoice: sdkParams.toolChoice,
-    providerOptions: effectiveProviderOptions
+    providerOptions: effectiveProviderOptions,
+    headers: sdkParams.headers
   });
   const parts = [];
   const reasoning = reasoningOutputText(result.reasoning);
@@ -13932,6 +13984,7 @@ function forwardToAdapter(req, res, rawBody, adapter) {
       resolve2();
     };
     const sessionId = req.headers["x-claude-code-session-id"];
+    const opencodeSession = req.headers[OPENCODE_SESSION_HEADER];
     const upstream = http2.request({
       hostname: "127.0.0.1",
       port: adapter.port,
@@ -13941,7 +13994,8 @@ function forwardToAdapter(req, res, rawBody, adapter) {
         "Content-Type": "application/json",
         "Content-Length": String(rawBody.length),
         "x-api-key": adapter.token,
-        ...typeof sessionId === "string" ? { "x-claude-code-session-id": sessionId } : {}
+        ...typeof sessionId === "string" ? { "x-claude-code-session-id": sessionId } : Array.isArray(sessionId) && sessionId[0] ? { "x-claude-code-session-id": sessionId[0] } : {},
+        ...typeof opencodeSession === "string" ? { [OPENCODE_SESSION_HEADER]: opencodeSession } : Array.isArray(opencodeSession) && opencodeSession[0] ? { [OPENCODE_SESSION_HEADER]: opencodeSession[0] } : {}
       }
     }, (upstreamRes) => {
       copyResponse(upstreamRes, res);
@@ -15792,7 +15846,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-JIRLAHM6.js");
+    const { runUiCommand } = await import("./ui-command-6ZMM5K5K.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

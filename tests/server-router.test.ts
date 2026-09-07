@@ -284,6 +284,10 @@ describe('server router', () => {
 
     expect(response.status).toBe(200);
     const params = vi.mocked(generateAnthropicResponse).mock.calls.at(-1)?.[1] as any;
+    expect(params.headers).toMatchObject({
+      'x-opencode-session': 'session-qwen',
+      'User-Agent': expect.stringMatching(/^relay-ai\//),
+    });
     expect(params.subagentRouting.parentModelId).toBe(qwenId);
     expect(params.subagentRouting.models).toHaveLength(2);
     expect(params.subagentRouting.models[0].id).toBe(qwenId);

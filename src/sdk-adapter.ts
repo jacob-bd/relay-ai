@@ -80,6 +80,8 @@ export interface TranslateRequestOptions {
   onDebug?: (msg: string) => void;
   /** Request-local Claude Agent model catalog for SDK-backed partner routes. */
   subagentRouting?: SubagentModelRouting;
+  /** Request-scoped transport headers (for example OpenCode Go conversation identity). */
+  requestHeaders?: Record<string, string>;
 }
 
 /** Read reasoning effort from an Anthropic-format request body. */
@@ -97,6 +99,8 @@ export interface SdkCallParams {
   maxOutputTokens?: number;
   temperature?: number;
   providerOptions?: Record<string, Record<string, unknown>>;
+  /** Request-scoped transport headers passed to the AI SDK on every upstream attempt. */
+  headers?: Record<string, string>;
   /** Internal response-normalization metadata; never forwarded to an SDK provider. */
   subagentRouting?: SubagentModelRouting;
 }
@@ -332,6 +336,7 @@ export function translateRequest(
     maxOutputTokens: options?.openAiOAuth ? undefined : body.max_tokens,
     temperature: body.temperature,
     providerOptions,
+    headers: options?.requestHeaders,
     subagentRouting: responseSubagentRouting,
   };
 }
