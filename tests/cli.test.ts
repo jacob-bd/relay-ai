@@ -13,6 +13,7 @@ import {
   serverHelpText,
   modelsHelpText,
   main,
+  shouldRefreshModelsDev,
 } from '../src/cli.js';
 import { VERSION } from '../src/constants.js';
 import { codexHelpText } from '../src/codex.js';
@@ -367,6 +368,19 @@ describe('parseArgs', () => {
       command: 'providers',
       showHelp: true,
     });
+  });
+});
+
+describe('CLI background refresh safety', () => {
+  it('does not start models.dev refresh for help or recovery commands', () => {
+    expect(shouldRefreshModelsDev(parseArgs(['--help']))).toBe(false);
+    expect(shouldRefreshModelsDev(parseArgs(['codex-app', '--help']))).toBe(false);
+    expect(shouldRefreshModelsDev(parseArgs(['codex-app', '--restore']))).toBe(false);
+    expect(shouldRefreshModelsDev(parseArgs(['codex', '--restore']))).toBe(false);
+  });
+
+  it('keeps models.dev refresh for an actual launch command', () => {
+    expect(shouldRefreshModelsDev(parseArgs(['codex-app', '--provider', 'p', '--model', 'm']))).toBe(true);
   });
 });
 

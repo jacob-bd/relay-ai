@@ -8985,6 +8985,9 @@ function winForceQuit(pids = winMatchingPids()) {
   if (pids.length === 0) return;
   runPowerShell(`Stop-Process -Id ${pids.join(",")} -Force -ErrorAction SilentlyContinue`);
 }
+function forceQuitCodexApp() {
+  if (process.platform === "win32") winForceQuit();
+}
 function restartTimeoutAction(platform) {
   return platform === "win32" ? "force-quit" : "fail-closed";
 }
@@ -9493,6 +9496,7 @@ export {
   isCodexAppRunning,
   waitForCodexAppQuit,
   quitCodexAppGracefully,
+  forceQuitCodexApp,
   launchOrRestartCodexApp,
   codexAppInstallHint,
   claudeAppSupported,
@@ -9504,4 +9508,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-KVZSGD6K.js.map
+//# sourceMappingURL=chunk-YD6A3ZB3.js.map

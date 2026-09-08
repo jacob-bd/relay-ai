@@ -56,6 +56,7 @@ import {
   fmtProvider,
   fmtProviderBracket,
   fmtUrl,
+  forceQuitCodexApp,
   formatAnthropicModelEntry,
   formatAnthropicModelList,
   formatCodexModelLabel,
@@ -147,7 +148,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-KVZSGD6K.js";
+} from "./chunk-YD6A3ZB3.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -11784,10 +11785,14 @@ function waitForShutdown2() {
 async function shutdownCodexAppSession(dependencies) {
   if (dependencies.isAppRunning()) {
     dependencies.quitApp();
-    const exited = await dependencies.waitForAppExit();
+    let exited = await dependencies.waitForAppExit();
+    if (!exited && dependencies.forceQuitApp) {
+      dependencies.forceQuitApp();
+      exited = await dependencies.waitForAppExit();
+    }
     if (!exited) {
       throw new Error(
-        "ChatGPT Desktop did not exit after graceful shutdown; refusing to restore config until Desktop exits. Close Desktop, then run relay-ai codex-app --restore."
+        "ChatGPT Desktop did not exit after graceful shutdown or force-quit; refusing to restore config until Desktop exits. Close Desktop, then run relay-ai codex-app --restore."
       );
     }
   }
@@ -12048,6 +12053,7 @@ async function runCodexAppVertexLaunch(configOnly, trace = false) {
         isAppRunning: isCodexAppRunning,
         quitApp: quitCodexAppGracefully,
         waitForAppExit: () => waitForCodexAppQuit(),
+        ...process.platform === "win32" ? { forceQuitApp: forceQuitCodexApp } : {},
         restoreOverlay,
         closeResources
       });
@@ -12482,6 +12488,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
         isAppRunning: isCodexAppRunning,
         quitApp: quitCodexAppGracefully,
         waitForAppExit: () => waitForCodexAppQuit(),
+        ...process.platform === "win32" ? { forceQuitApp: forceQuitCodexApp } : {},
         restoreOverlay,
         closeResources
       });
@@ -15910,7 +15917,7 @@ Error: ${parsed.error}
     printHelp(rootHelpText());
     return 1;
   }
-  if (!parsed.showVersion && !parsed.showAi) {
+  if (shouldRefreshModelsDev(parsed)) {
     refreshModelsDevCacheAsync();
   }
   if (parsed.command === "root") {
@@ -15965,7 +15972,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-QBA3YV5H.js");
+    const { runUiCommand } = await import("./ui-command-WKPJI2CU.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {
@@ -16103,6 +16110,9 @@ Options:
   }
   return runClaudeCommand(parsed);
 }
+function shouldRefreshModelsDev(parsed) {
+  return !parsed.showVersion && !parsed.showAi && !parsed.showHelp && !parsed.claudeArgs.includes("--restore");
+}
 function isCliEntryPoint() {
   if (!process.argv[1]) return false;
   try {
@@ -16138,6 +16148,7 @@ export {
   rootHelpText,
   runClaudeCommand,
   runModelsCommand,
-  serverHelpText
+  serverHelpText,
+  shouldRefreshModelsDev
 };
 //# sourceMappingURL=cli.js.map

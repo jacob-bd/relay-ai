@@ -4,6 +4,8 @@ export interface CodexAppShutdownDependencies {
   isAppRunning: () => boolean;
   quitApp: () => void;
   waitForAppExit: () => Promise<boolean>;
+  /** Optional platform-specific escalation after graceful shutdown stalls. */
+  forceQuitApp?: () => void;
   restoreOverlay: () => RestoreAppOverlayResult;
   closeResources: () => void;
 }
@@ -19,10 +21,14 @@ export async function shutdownCodexAppSession(
 ): Promise<RestoreAppOverlayResult> {
   if (dependencies.isAppRunning()) {
     dependencies.quitApp();
-    const exited = await dependencies.waitForAppExit();
+    let exited = await dependencies.waitForAppExit();
+    if (!exited && dependencies.forceQuitApp) {
+      dependencies.forceQuitApp();
+      exited = await dependencies.waitForAppExit();
+    }
     if (!exited) {
       throw new Error(
-        'ChatGPT Desktop did not exit after graceful shutdown; refusing to restore config until Desktop exits. '
+        'ChatGPT Desktop did not exit after graceful shutdown or force-quit; refusing to restore config until Desktop exits. '
         + 'Close Desktop, then run relay-ai codex-app --restore.',
       );
     }

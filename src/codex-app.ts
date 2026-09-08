@@ -45,6 +45,7 @@ import {
   codexAppInstallHint,
   codexAppSupported,
   findEmbeddedCodexBinary,
+  forceQuitCodexApp,
   isCodexAppRunning,
   launchOrRestartCodexApp,
   quitCodexAppGracefully,
@@ -388,6 +389,7 @@ async function runCodexAppVertexLaunch(configOnly: boolean, trace = false): Prom
         isAppRunning: isCodexAppRunning,
         quitApp: quitCodexAppGracefully,
         waitForAppExit: () => waitForCodexAppQuit(),
+        ...(process.platform === 'win32' ? { forceQuitApp: forceQuitCodexApp } : {}),
         restoreOverlay,
         closeResources,
       });
@@ -890,6 +892,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
         isAppRunning: isCodexAppRunning,
         quitApp: quitCodexAppGracefully,
         waitForAppExit: () => waitForCodexAppQuit(),
+        ...(process.platform === 'win32' ? { forceQuitApp: forceQuitCodexApp } : {}),
         restoreOverlay,
         closeResources,
       });

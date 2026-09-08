@@ -450,6 +450,11 @@ function winForceQuit(pids = winMatchingPids()): void {
   runPowerShell(`Stop-Process -Id ${pids.join(',')} -Force -ErrorAction SilentlyContinue`);
 }
 
+/** Escalate a stuck Windows Electron process during Ctrl+C cleanup. */
+export function forceQuitCodexApp(): void {
+  if (process.platform === 'win32') winForceQuit();
+}
+
 export function restartTimeoutAction(platform: NodeJS.Platform): 'force-quit' | 'fail-closed' {
   return platform === 'win32' ? 'force-quit' : 'fail-closed';
 }

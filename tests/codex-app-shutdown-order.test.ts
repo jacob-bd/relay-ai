@@ -42,6 +42,29 @@ describe('Codex App shutdown ordering', () => {
     expect(events).toEqual(['quit', 'wait']);
   });
 
+  it('force-quits Desktop on supported platforms before restoring after graceful shutdown stalls', async () => {
+    const events: string[] = [];
+    let waitCount = 0;
+
+    await shutdownCodexAppSession({
+      isAppRunning: () => true,
+      quitApp: () => events.push('quit'),
+      waitForAppExit: async () => {
+        events.push('wait');
+        waitCount++;
+        return waitCount > 1;
+      },
+      forceQuitApp: () => events.push('force-quit'),
+      restoreOverlay: () => {
+        events.push('restore');
+        return { restored: true, message: 'Restored.' };
+      },
+      closeResources: () => events.push('close'),
+    });
+
+    expect(events).toEqual(['quit', 'wait', 'force-quit', 'wait', 'restore', 'close']);
+  });
+
   it('restores without sending a quit request when Desktop is already stopped', async () => {
     const events: string[] = [];
 

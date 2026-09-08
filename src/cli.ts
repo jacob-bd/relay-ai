@@ -1659,7 +1659,7 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
     return 1;
   }
 
-  if (!parsed.showVersion && !parsed.showAi) {
+  if (shouldRefreshModelsDev(parsed)) {
     refreshModelsDevCacheAsync();
   }
 
@@ -1865,6 +1865,16 @@ Options:
   }
 
   return runClaudeCommand(parsed);
+}
+
+/** Background catalog refresh is useful for real launches, but recovery/help
+ * commands must be able to finish without leaving a Windows network handle
+ * alive during Node shutdown. */
+export function shouldRefreshModelsDev(parsed: ParsedArgs): boolean {
+  return !parsed.showVersion
+    && !parsed.showAi
+    && !parsed.showHelp
+    && !parsed.claudeArgs.includes('--restore');
 }
 
 function isCliEntryPoint(): boolean {
