@@ -1267,6 +1267,7 @@ async function runManualModelAddFlow(provider) {
     validate: (value) => contextWindowError(value?.trim() ? Number(value) : void 0)
   });
   if (p5.isCancel(context)) return 0;
+  const contextText = typeof context === "string" ? context.trim() : "";
   const confirmed = await p5.confirm({ message: "Test & add? Sends three small requests to this provider; API charges may apply.", initialValue: true });
   if (p5.isCancel(confirmed) || !confirmed) return 0;
   const spinner10 = p5.spinner();
@@ -1275,7 +1276,7 @@ async function runManualModelAddFlow(provider) {
     providerId: provider.id,
     modelId: String(modelId),
     displayName: String(displayName),
-    ...String(context).trim() ? { contextWindow: Number(context) } : {}
+    ...contextText ? { contextWindow: Number(contextText) } : {}
   });
   spinner10.stop(result.ok ? "Validation passed" : "Validation failed");
   if (!result.ok) {

@@ -12,12 +12,13 @@ export async function runManualModelAddFlow(provider: RegistryProvider): Promise
   const context = await p.text({ message: 'Context size in tokens (optional — leave blank if unknown)',
     validate: value => contextWindowError(value?.trim() ? Number(value) : undefined) });
   if (p.isCancel(context)) return 0;
+  const contextText = typeof context === 'string' ? context.trim() : '';
   const confirmed = await p.confirm({ message: 'Test & add? Sends three small requests to this provider; API charges may apply.', initialValue: true });
   if (p.isCancel(confirmed) || !confirmed) return 0;
   const spinner = p.spinner();
   spinner.start('Testing generation, streaming and tool round-trip (up to 90 seconds)…');
   const result = await addManualModel({ providerId: provider.id, modelId: String(modelId), displayName: String(displayName),
-    ...(String(context).trim() ? { contextWindow: Number(context) } : {}) });
+    ...(contextText ? { contextWindow: Number(contextText) } : {}) });
   spinner.stop(result.ok ? 'Validation passed' : 'Validation failed');
   if (!result.ok) { p.log.error(result.error ?? 'Model was not added.'); return 1; }
   p.log.success(`${result.model!.name} added. Manual models are preserved when you refresh the catalog.`);

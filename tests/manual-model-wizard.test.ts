@@ -16,7 +16,7 @@ describe('manual model wizard', () => {
     expect(addManualModel).toHaveBeenCalledWith({ providerId: 'deepseek', modelId: 'beta', displayName: 'Beta', contextWindow: 128000 });
   });
   it('keeps missing context unknown and shows failed validation', async () => {
-    vi.mocked(p.text).mockResolvedValueOnce('beta').mockResolvedValueOnce('').mockResolvedValueOnce('');
+    vi.mocked(p.text).mockResolvedValueOnce('beta').mockResolvedValueOnce('').mockResolvedValueOnce(undefined as never);
     vi.mocked(p.confirm).mockResolvedValue(true);
     vi.mocked(addManualModel).mockResolvedValue({ ok: false, error: 'Model rejected' });
     expect(await runManualModelAddFlow(provider)).toBe(1);
