@@ -1,6 +1,7 @@
 // src/registry/refresh-credentials.ts — keys for refresh-models (OpenCode placeholders, env fallbacks)
 
 import type { RegistryProvider } from './types.js';
+import { getProviderModels } from './provider-models.js';
 
 /** OpenCode uses these when OAuth/env supplies the real credential at runtime. */
 const PLACEHOLDER_KEYS = new Set([
@@ -33,7 +34,7 @@ export function isLikelyPlaceholderKey(key: string | null | undefined): boolean 
 }
 
 export function cachedModelCount(provider: RegistryProvider): number {
-  return provider.modelsCache?.models.length ?? 0;
+  return getProviderModels(provider).length;
 }
 
 export function skipWithCachedModels(

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.1] - 2026-09-08
+
+### Added
+
+- **Manually add models missing from a provider's catalog.** The Providers page and `relay-ai providers` wizard offer **Add model manually** for API-key OpenAI-compatible, Anthropic, OpenAI, and OpenRouter providers. Enter an exact model ID, optional display name and optional context size. **Test & Add** uses the provider's existing credentials for three small streamed requests: generation, a harmless tool call with automatic tool selection, and a tool-result continuation. Failed or incomplete responses are not saved. Manual entries are stored separately, survive model-list refreshes, and appear in launch catalogs, favorites, the gateway, and embedded Core. Both interfaces support removing a manual entry. Unknown pricing, vision support, and unspecified context sizes are not claimed as verified capabilities.
+
+### Fixed
+
+- **GPT Astra with OpenAI OAuth:** update Relay's Codex Responses-Lite version header from `0.144.1` to `0.153.4`, which passed a live Astra request after the old header was rejected. The Claude adapter now preserves the original upstream status and message when collecting a streamed response instead of replacing it with `502 No output generated`. ([Issue #68](https://github.com/jacob-bd/relay-ai/issues/68))
+- **Codex App WebSocket framing:** correctly handles control frames, multiple frames received in one network chunk, and fragmented request messages. This prevents valid Windows ChatGPT/Codex requests from being dropped or parsed as invalid JSON, avoiding the reconnect loop reported in [Issue #72](https://github.com/jacob-bd/relay-ai/issues/72).
+- **Codex App image input:** preserve Responses API `input_image` parts when translating requests to external providers, so image prompts are no longer silently reduced to text-only prompts.
+
 ## [0.11.0] - 2026-09-07
 
 ### Changed

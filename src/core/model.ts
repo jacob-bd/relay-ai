@@ -9,6 +9,7 @@ import {
 import { createLanguageModel, type ProviderModelSpec } from '../provider-factory.js';
 import { providerRefreshToken } from '../provider-runtime.js';
 import type { CachedModel, RegistryProvider } from '../registry/types.js';
+import { getProviderModels } from '../registry/provider-models.js';
 import { createAntigravityCloudCodeModel } from './antigravity-model.js';
 import { loadCoreRegistry } from './catalog.js';
 import { RelayCoreError, isRelayCoreError } from './errors.js';
@@ -32,7 +33,7 @@ function findRoute(registry: ReturnType<typeof loadCoreRegistry>, providerId: st
   if (!provider.enabled) {
     throw new RelayCoreError('PROVIDER_DISABLED', `Provider "${provider.name}" is disabled — enable it in relay-ai ui.`, { providerId, routeId });
   }
-  const model = provider.modelsCache?.models.find(m => m.id === modelId);
+  const model = getProviderModels(provider).find(m => m.id === modelId);
   if (!model) {
     throw new RelayCoreError('UNSUPPORTED_MODEL', `Provider "${provider.name}" has no cached model "${modelId}" — refresh its models in relay-ai ui.`, { providerId, routeId });
   }

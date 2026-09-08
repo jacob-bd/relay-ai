@@ -35,6 +35,27 @@ describe('translateResponsesRequest', () => {
     expect(params.messages[0]!.role).toBe('user');
   });
 
+  it('preserves input images alongside text when translating a user message', () => {
+    const params = translateResponsesRequest({
+      model: 'gemini-3.1-pro',
+      input: [{
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'Describe this image' },
+          { type: 'input_image', image_url: 'data:image/png;base64,aGVsbG8=' },
+        ],
+      }],
+    }, '@ai-sdk/google');
+
+    expect(params.messages).toEqual([{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Describe this image' },
+        { type: 'image', image: 'data:image/png;base64,aGVsbG8=' },
+      ],
+    }]);
+  });
+
   it('prepends user placeholder when first message is assistant', () => {
     const params = translateResponsesInput([
       { role: 'assistant', content: 'prior' },

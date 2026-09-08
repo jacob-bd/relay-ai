@@ -22,6 +22,7 @@ import {
   migrateOAuthXaiProvider,
 } from './migrate.js';
 import { isValidProviderId } from './validate.js';
+import { parseManualModel } from './provider-models.js';
 
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -81,6 +82,12 @@ function parseProvider(raw: unknown): RegistryProvider | null {
     provider.authType = p.authType;
   }
   if (typeof p.refreshedAt === 'string') provider.refreshedAt = p.refreshedAt;
+  if (Array.isArray(p.manualModels)) {
+    provider.manualModels = p.manualModels.flatMap(raw => {
+      const model = parseManualModel(raw);
+      return model ? [model] : [];
+    });
+  }
   if (p.modelsCache && typeof p.modelsCache === 'object') {
     const cache = p.modelsCache as { fetchedAt?: string; models?: unknown[] };
     if (typeof cache.fetchedAt === 'string' && Array.isArray(cache.models)) {

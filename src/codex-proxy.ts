@@ -919,10 +919,11 @@ export async function startCodexProxy(
         .digest('base64');
     }
 
-    function wsDecodeFrame(buf: Buffer): { text: string; complete: boolean; opcode: number } | null {
+    function wsDecodeFrame(buf: Buffer): { payload: Buffer; complete: boolean; opcode: number; fin: boolean; consumed: number } | null {
       if (buf.length < 2) return null;
       const b0 = buf[0]!;
       const b1 = buf[1]!;
+      const fin = (b0 & 0x80) !== 0;
       const masked = (b1 & 0x80) !== 0;
       let payloadLen = b1 & 0x7f;
       let offset = 2;
@@ -933,11 +934,11 @@ export async function startCodexProxy(
       } else if (payloadLen === 127) {
         if (buf.length < 10) return null;
         const declaredLength = buf.readBigUInt64BE(2);
-        if (declaredLength > BigInt(MAX_CODEX_REQUEST_BYTES)) return { text: '', complete: true, opcode: -1 };
+        if (declaredLength > BigInt(MAX_CODEX_REQUEST_BYTES)) return { payload: Buffer.alloc(0), complete: true, opcode: -1, fin, consumed: buf.length };
         payloadLen = Number(declaredLength);
         offset = 10;
       }
-      if (payloadLen > MAX_CODEX_REQUEST_BYTES) return { text: '', complete: true, opcode: -1 };
+      if (payloadLen > MAX_CODEX_REQUEST_BYTES) return { payload: Buffer.alloc(0), complete: true, opcode: -1, fin, consumed: buf.length };
       const maskLen = masked ? 4 : 0;
       if (buf.length < offset + maskLen + payloadLen) return null;
       const mask = masked ? buf.slice(offset, offset + 4) : null;
@@ -947,8 +948,8 @@ export async function startCodexProxy(
         payload[i] = buf[offset + i]! ^ (mask ? mask[i % 4]! : 0);
       }
       const opcode = b0 & 0x0f;
-      if (![0x1, 0x8, 0x9, 0xa].includes(opcode)) return { text: '', complete: true, opcode };
-      return { text: payload.toString('utf8'), complete: true, opcode };
+      if (![0x0, 0x1, 0x8, 0x9, 0xa].includes(opcode)) return { payload: Buffer.alloc(0), complete: true, opcode: -1, fin, consumed: offset + payloadLen };
+      return { payload, complete: true, opcode, fin, consumed: offset + payloadLen };
     }
 
     function wsEncodeTextFrame(text: string): Buffer {
@@ -1027,6 +1028,7 @@ export async function startCodexProxy(
       );
 
       let frameBuf = Buffer.alloc(0);
+      let fragmentedText: Buffer[] | undefined;
       let externalActive = false;
       let nativeActive = false;
       let nativeUpstream: WebSocket | undefined;
@@ -1106,39 +1108,69 @@ export async function startCodexProxy(
 
       const onData = (chunk: Buffer) => {
         frameBuf = Buffer.concat([frameBuf, chunk]);
-        const frame = wsDecodeFrame(frameBuf);
-        if (!frame) return;
-        frameBuf = Buffer.alloc(0);
-        if (frame.opcode === 0x9) {
-          socket.write(wsPongFrame(frame.text));
-          return;
-        }
-        if (frame.opcode === 0x8) {
-          closeSocket();
-          return;
-        }
-        if (frame.opcode === -1) {
-          socket.write(wsCloseFrame(1009));
-          socket.end();
-          return;
-        }
-        if (frame.opcode !== 0x1) {
-          socket.write(wsCloseFrame(1003));
-          socket.end();
-          return;
-        }
-        if (externalActive) {
-          // The external SDK stream cannot safely multiplex turns. Closing with
-          // policy violation makes the client fail closed instead of starting a
-          // second provider request that could be retried or double-billed.
-          closeSocket(1008);
-          return;
-        }
+        while (!socketClosing) {
+          const frame = wsDecodeFrame(frameBuf);
+          if (!frame) return;
+          frameBuf = frameBuf.slice(frame.consumed);
+          if (frame.opcode === 0x9) {
+            if (!frame.fin || frame.payload.length > 125) {
+              socket.write(wsCloseFrame(1002));
+              socket.end();
+              return;
+            }
+            socket.write(wsPongFrame(frame.payload.toString('utf8')));
+            continue;
+          }
+          if (frame.opcode === 0xa) continue;
+          if (frame.opcode === 0x8) {
+            closeSocket();
+            return;
+          }
+          if (frame.opcode === -1) {
+            socket.write(wsCloseFrame(1009));
+            socket.end();
+            return;
+          }
+          if (frame.opcode === 0x1) {
+            if (fragmentedText) {
+              socket.write(wsCloseFrame(1002));
+              socket.end();
+              return;
+            }
+            if (!frame.fin) {
+              fragmentedText = [frame.payload];
+              continue;
+            }
+          } else if (frame.opcode === 0x0) {
+            if (!fragmentedText) {
+              socket.write(wsCloseFrame(1002));
+              socket.end();
+              return;
+            }
+            fragmentedText.push(frame.payload);
+            if (!frame.fin) continue;
+          } else {
+            socket.write(wsCloseFrame(1003));
+            socket.end();
+            return;
+          }
 
-        void (async () => {
+          const frameText = frame.opcode === 0x0
+            ? Buffer.concat(fragmentedText ?? []).toString('utf8')
+            : frame.payload.toString('utf8');
+          fragmentedText = undefined;
+          if (externalActive) {
+            // The external SDK stream cannot safely multiplex turns. Closing with
+            // policy violation makes the client fail closed instead of starting a
+            // second provider request that could be retried or double-billed.
+            closeSocket(1008);
+            return;
+          }
+
+          void (async () => {
           let body: Record<string, unknown>;
-          try { body = JSON.parse(frame.text); } catch {
-            if (debug) log(`WS Error: Invalid JSON body: rawBody=${JSON.stringify(frame.text.slice(0, 2000))}`);
+          try { body = JSON.parse(frameText); } catch {
+            if (debug) log(`WS Error: Invalid JSON body: rawBody=${JSON.stringify(frameText.slice(0, 2000))}`);
             sendWsEvent(`event: error\ndata: ${JSON.stringify({ error: { message: 'Invalid JSON', type: 'invalid_request_error' } })}\n\n`);
             closeSocket(); return;
           }
@@ -1148,7 +1180,7 @@ export async function startCodexProxy(
             const inputItems = Array.isArray(body.input) ? body.input.length : (typeof body.input === 'string' ? 1 : 0);
             const tools = Array.isArray(body.tools) ? body.tools : [];
             const toolNames = tools.map((t: unknown) => (t && typeof t === 'object' && 'name' in t ? (t as { name: unknown }).name : '?')).join(',');
-            log(`WS request: model=${String(body.model ?? '')} previous_response_id=${prevId ?? '(none)'} input_items=${inputItems} body_bytes=${frame.text.length} tools=[${toolNames || 'none'}]`);
+            log(`WS request: model=${String(body.model ?? '')} previous_response_id=${prevId ?? '(none)'} input_items=${inputItems} body_bytes=${frameText.length} tools=[${toolNames || 'none'}]`);
             const reasoning = body.reasoning && typeof body.reasoning === 'object'
               ? Object.keys(body.reasoning as Record<string, unknown>).join(',')
               : typeof body.reasoning;
@@ -1458,7 +1490,8 @@ export async function startCodexProxy(
             }
           }
           externalActive = false;
-        })();
+          })();
+        }
       };
 
       socket.on('error', () => socket.destroy());

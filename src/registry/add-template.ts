@@ -156,6 +156,7 @@ export async function addProviderFromTemplate(
   };
 
   if (existing) {
+    entry.manualModels = existing.manualModels;
     const idx = registry.providers.findIndex(p => p.id === template.id);
     registry.providers[idx] = entry;
   } else {

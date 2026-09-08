@@ -3,6 +3,7 @@
 import { loadPreferences } from '../config.js';
 import { getReasoningCapabilities } from '../provider-factory.js';
 import { loadRegistry } from '../registry/io.js';
+import { getProviderModels } from '../registry/provider-models.js';
 import { resolveProviderTemplate } from '../registry/resolve-template.js';
 import { REGISTRY_SCHEMA_VERSION, type CachedModel, type ProviderRegistry, type RegistryProvider } from '../registry/types.js';
 import { RelayCoreError } from './errors.js';
@@ -115,7 +116,7 @@ export function listRelayModels(registryPath?: string): RelayModelDescriptor[] {
   const descriptors: RelayModelDescriptor[] = [];
   for (const provider of registry.providers) {
     if (!provider.enabled) continue;
-    for (const model of provider.modelsCache?.models ?? []) {
+    for (const model of getProviderModels(provider)) {
       descriptors.push(toDescriptor(provider, model, favorites));
     }
   }

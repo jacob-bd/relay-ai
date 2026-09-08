@@ -194,7 +194,7 @@ export async function importFromOpencode(options: ImportOpencodeOptions = {}): P
     }
 
     if (existingIdx >= 0) {
-      registry.providers[existingIdx] = { ...entry, addedAt: registry.providers[existingIdx]!.addedAt };
+      registry.providers[existingIdx] = { ...entry, addedAt: registry.providers[existingIdx]!.addedAt, manualModels: registry.providers[existingIdx]!.manualModels };
     } else {
       registry.providers.push(entry);
     }

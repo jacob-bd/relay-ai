@@ -31,6 +31,7 @@ const state = {
   providerModelMinCtx: 0,
   providerModelFreeOnly: false,
   providerModelPage: 1,
+  manualModelForms: new Map(), // provider ID → draft and in-flight action, survives browser re-renders
   modelFilter: '',
   modelFreeOnly: false,
   agyFilter: '',
@@ -643,6 +644,7 @@ function renderProviderModelBrowser() {
         <p class="section-sub">${provider.models?.length ?? 0} models available · prices shown per 1M tokens</p>
       </div>
     </div>
+    ${provider.supportsManualModels ? '<div id="manual-model-panel"></div>' : ''}
     <div class="provider-browser-tools">
       <div class="search-field">
         <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -661,7 +663,7 @@ function renderProviderModelBrowser() {
           <span>Free models only</span>
         </label>
       </div>
-      <button class="btn btn-ghost" id="provider-model-refresh" type="button">Refresh</button>
+      <button class="btn btn-ghost" id="provider-model-refresh" type="button" ${state.manualModelForms.get(provider.id)?.pending ? 'disabled' : ''}>Refresh</button>
     </div>
     <div class="provider-model-table-wrap">
       <table class="provider-model-table">
@@ -669,7 +671,7 @@ function renderProviderModelBrowser() {
         <tbody>
           ${result.items.map(model => `
             <tr>
-              <td><strong>${escapeHtml(model.name || model.id)}</strong><code>${escapeHtml(model.id)}</code></td>
+              <td><strong>${escapeHtml(model.name || model.id)}</strong>${model.source === 'manual' ? ' <span class="manual-model-badge">Manual</span>' : ''}<code>${escapeHtml(model.id)}</code></td>
               <td>${fmtCtx(model.contextWindow) || '—'}</td>
               <td>${formatModelPrice(model.cost, isFreeModel(model), freeBadgeLabel(model))}</td>
               ${showActions ? `
@@ -691,6 +693,10 @@ function renderProviderModelBrowser() {
       </div>
     </div>
   `;
+
+  if (provider.supportsManualModels) {
+    document.getElementById('manual-model-panel').appendChild(buildManualModelPanel(provider));
+  }
 
   document.getElementById('provider-model-search').addEventListener('input', event => {
     state.providerModelFilter = event.target.value;
@@ -744,6 +750,143 @@ function renderProviderModelBrowser() {
     renderProviderModelBrowser();
     showToast(`${refreshed.count} models refreshed`);
   });
+}
+
+function buildManualModelPanel(provider) {
+  let draft = state.manualModelForms.get(provider.id);
+  if (!draft) {
+    draft = { modelId: '', displayName: '', contextWindow: '', pending: false, message: '', status: '' };
+    state.manualModelForms.set(provider.id, draft);
+  }
+  const panel = document.createElement('section');
+  panel.className = 'manual-model-panel';
+  const heading = document.createElement('h2');
+  heading.textContent = 'Add model manually';
+  const note = document.createElement('p');
+  note.className = 'section-sub';
+  note.id = 'manual-model-note';
+  note.textContent = 'Validation makes 3 small API calls and may incur provider charges. The model is saved only after all checks pass.';
+  const form = document.createElement('form');
+  form.className = 'manual-model-form';
+  form.setAttribute('aria-describedby', note.id);
+  for (const [name, labelText, type] of [
+    ['modelId', 'Model ID (required)', 'text'],
+    ['displayName', 'Display name (optional)', 'text'],
+    ['contextWindow', 'Context tokens (optional)', 'number'],
+  ]) {
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    const input = document.createElement('input');
+    input.className = 'key-input';
+    input.name = name;
+    input.type = type;
+    input.value = draft[name];
+    input.disabled = draft.pending;
+    input.required = name === 'modelId';
+    if (type === 'number') { input.min = '1'; input.step = '1'; input.max = String(Number.MAX_SAFE_INTEGER); }
+    input.addEventListener('input', () => { draft[name] = input.value; });
+    label.appendChild(input);
+    form.appendChild(label);
+  }
+  const addButton = document.createElement('button');
+  addButton.type = 'submit';
+  addButton.className = 'btn btn-primary';
+  addButton.textContent = draft.pending ? 'Please wait…' : 'Test & Add';
+  addButton.disabled = draft.pending;
+  form.appendChild(addButton);
+  const feedback = document.createElement('div');
+  feedback.className = `key-feedback ${draft.status}`;
+  feedback.setAttribute('role', 'status');
+  feedback.setAttribute('aria-live', 'polite');
+  feedback.textContent = draft.message;
+  panel.append(heading, note, form, feedback);
+
+  async function perform(action, modelId, payload = {}) {
+    if (draft.pending) return;
+    draft.pending = true;
+    draft.status = 'muted';
+    draft.message = action === 'add' ? 'Validating model with the provider… This may take a moment.' : 'Removing manual entry…';
+    renderProviderModelBrowser();
+    try {
+      const result = await api('POST', `/api/providers/models/${action}`, { providerId: provider.id, modelId, ...payload });
+      if (!result.ok) {
+        draft.status = 'error';
+        draft.message = result.error || 'The operation failed. Please try again.';
+        return;
+      }
+      draft.status = 'success';
+      draft.message = action === 'add' ? `✓ ${modelId} validated and added.` : `✓ Manual entry for ${modelId} removed.`;
+      if (action === 'add') {
+        draft.modelId = '';
+        draft.displayName = '';
+        draft.contextWindow = '';
+        if (state.activeProviderId === provider.id) {
+          state.providerModelFilter = '';
+          state.providerModelMinCtx = 0;
+          state.providerModelFreeOnly = false;
+          state.providerModelPage = 1;
+        }
+      }
+      state.appModelsByTarget = {};
+      await initModels();
+      if (state.modelsError) draft.message += ' Catalog reload failed; refresh the model list to see the change.';
+      renderProviders();
+      renderFavList();
+      if (!isServerAdminUi()) {
+        renderCodexSubagentList();
+        renderAgyList();
+        renderApps();
+      }
+    } catch {
+      draft.status = 'error';
+      draft.message = 'Could not complete the request. Refresh the model list to check whether it saved before retrying.';
+    } finally {
+      draft.pending = false;
+      renderProviderModelBrowser();
+    }
+  }
+
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    if (draft.pending || !form.reportValidity()) return;
+    const modelId = draft.modelId.trim();
+    const contextWindow = draft.contextWindow === '' ? undefined : Number(draft.contextWindow);
+    if (!modelId || (contextWindow !== undefined && (!Number.isSafeInteger(contextWindow) || contextWindow <= 0))) {
+      draft.status = 'error';
+      draft.message = 'Enter a model ID and, if provided, a positive whole number of context tokens.';
+      renderProviderModelBrowser();
+      return;
+    }
+    void perform('add', modelId, {
+      ...(draft.displayName.trim() ? { displayName: draft.displayName.trim() } : {}),
+      ...(contextWindow !== undefined ? { contextWindow } : {}),
+    });
+  });
+
+  for (const model of provider.manualModels ?? []) {
+    const row = document.createElement('div');
+    row.className = 'manual-model-entry';
+    const badge = document.createElement('span');
+    badge.className = 'manual-model-badge';
+    badge.textContent = 'Manual';
+    const label = document.createElement('span');
+    label.className = 'manual-model-entry-name';
+    label.textContent = `${model.name || model.id}${model.name && model.name !== model.id ? ` (${model.id})` : ''}`;
+    label.title = model.validatedAt ? `Validated ${model.validatedAt}` : '';
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'btn btn-ghost';
+    removeButton.textContent = 'Remove manual entry';
+    removeButton.setAttribute('aria-label', `Remove manual entry for ${model.id}`);
+    removeButton.disabled = draft.pending;
+    removeButton.addEventListener('click', () => {
+      if (draft.pending || !window.confirm(`Remove the manual entry for ${model.id}? If the provider also lists this model, its discovered entry will remain.`)) return;
+      void perform('remove', model.id);
+    });
+    row.append(badge, label, removeButton);
+    panel.appendChild(row);
+  }
+  return panel;
 }
 
 function buildTemplateCard(template) {
@@ -1383,6 +1526,14 @@ function buildProviderBodyContent(provider) {
     setTimeout(() => { feedback.textContent = ''; feedback.className = 'key-feedback'; }, 4000);
   });
 
+  if (provider.supportsManualModels) {
+    const manualButton = document.createElement('button');
+    manualButton.type = 'button';
+    manualButton.className = 'btn btn-ghost';
+    manualButton.textContent = 'Add model manually';
+    manualButton.addEventListener('click', () => openProviderModelBrowser(provider.id));
+    content.appendChild(manualButton);
+  }
   if (provider.customEndpoint) content.appendChild(buildEditCustomEndpointRow(provider));
   content.appendChild(buildDeleteProviderRow(provider));
   return content;

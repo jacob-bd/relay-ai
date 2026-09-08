@@ -18,6 +18,18 @@ import { buildCompactionResponseBody, type CodexSdkCallParams } from '../src/cod
 import { CODEX_APP_AUTO_COMPACT_RATIO } from '../src/codex/app-profile.js';
 import { WebSocket, WebSocketServer } from 'ws';
 
+function maskedClientFrame(text: string, opcode = 0x1, fin = true): Buffer {
+  const payload = Buffer.from(text, 'utf8');
+  if (payload.length >= 126) throw new Error('test frame payload is unexpectedly large');
+  const mask = Buffer.from([1, 2, 3, 4]);
+  const masked = Buffer.from(payload.map((byte, index) => byte ^ mask[index % mask.length]!));
+  return Buffer.concat([
+    Buffer.from([(fin ? 0x80 : 0) | opcode, 0x80 | payload.length]),
+    mask,
+    masked,
+  ]);
+}
+
 describe('external Codex runtime identity', () => {
   it('distinguishes the selected external model from the Codex host', () => {
     const params = applyExternalCodexRuntimeIdentity({
@@ -514,6 +526,81 @@ describe('startCodexProxy', () => {
       expect(requestBodies).toHaveLength(2);
       expect(JSON.stringify(requestBodies[0])).toContain('first');
       expect(JSON.stringify(requestBodies[1])).toContain('second');
+    } finally {
+      await new Promise<void>(resolve => provider.close(() => resolve()));
+    }
+  });
+
+  it('drains multiple frames and reassembles fragmented external WebSocket requests', async () => {
+    const provider = createServer((req, res) => {
+      req.resume();
+      req.once('end', () => {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.write(`data: ${JSON.stringify({
+          id: 'fixture', object: 'chat.completion.chunk',
+          choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: null }],
+        })}\n\n`);
+        res.write(`data: ${JSON.stringify({
+          id: 'fixture', object: 'chat.completion.chunk',
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        })}\n\n`);
+        res.end('data: [DONE]\n\n');
+      });
+    });
+    const providerPort = await new Promise<number>(resolve => provider.listen(0, '127.0.0.1', () => resolve((provider.address() as { port: number }).port)));
+    const capability = 'W'.repeat(43);
+    let providerRequests = 0;
+    provider.on('request', () => { providerRequests++; });
+    handle = await startCodexProxy([{
+      modelId: 'relay-model',
+      npm: '@ai-sdk/openai-compatible',
+      apiKey: 'test-key',
+      baseURL: `http://127.0.0.1:${providerPort}/v1`,
+      upstreamModelId: 'relay-model',
+      providerId: 'relay-provider',
+    }], {
+      requireAuth: false,
+      mixedNative: { nativeModelIds: new Set(['gpt-5.5']), capability },
+    });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const client = new WebSocket(`ws://127.0.0.1:${handle!.port}/_relay-codex/${capability}/v1/responses`);
+        const timer = setTimeout(() => { client.close(); reject(new Error('timed out waiting for framed requests')); }, 3_000);
+        let completed = 0;
+        const sendRaw = (frames: Buffer[]) => {
+          const socket = (client as unknown as { _socket?: { write(data: Buffer): void } })._socket;
+          if (!socket) throw new Error('WebSocket socket is not ready');
+          socket.write(Buffer.concat(frames));
+        };
+        client.on('open', () => {
+          const first = JSON.stringify({ model: 'relay-model', input: 'first' });
+          sendRaw([maskedClientFrame('', 0x9), maskedClientFrame(first)]);
+        });
+        client.on('message', data => {
+          if ((JSON.parse(data.toString()) as { type?: string }).type !== 'response.completed') return;
+          completed++;
+          if (completed === 1) {
+            const second = JSON.stringify({ model: 'relay-model', input: 'second' });
+            sendRaw([
+              maskedClientFrame(second.slice(0, 18), 0x1, false),
+              maskedClientFrame(second.slice(18), 0x0),
+            ]);
+          } else {
+            client.close();
+          }
+        });
+        client.on('close', code => {
+          clearTimeout(timer);
+          if (code !== 1000 || completed !== 2) {
+            reject(new Error(`framed requests failed: code=${code} completed=${completed}`));
+            return;
+          }
+          resolve();
+        });
+        client.on('error', reject);
+      });
+      expect(providerRequests).toBe(2);
     } finally {
       await new Promise<void>(resolve => provider.close(() => resolve()));
     }

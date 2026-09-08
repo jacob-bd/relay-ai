@@ -12,6 +12,7 @@ import type { CachedModel, ProviderRegistry, RegistryProvider } from './types.js
 import { isValidProviderId } from './validate.js';
 import { getTemplateById } from '../provider-templates.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
+import { getProviderModels } from './provider-models.js';
 
 export type CredentialResolver = (provider: RegistryProvider) => string | null;
 
@@ -76,7 +77,7 @@ export function cachedModelToLocal(
     // a heuristic as if it were provider metadata. Launch-time callers still
     // resolve their required safety fallback when they build the child env or
     // proxy catalog.
-    contextWindow: provider.id === 'cline-pass' &&
+    contextWindow: cached.source === 'manual' ? cached.contextWindow : provider.id === 'cline-pass' &&
       cached.contextWindow === CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW &&
       cached.contextWindowSource !== 'provider'
       ? undefined
@@ -106,7 +107,7 @@ function materializeOne(
   const apiKey = resolveCredential(provider) ?? '';
   const anonymousFreeOnly = !apiKey.trim() && providerAllowsAnonymousFreeModels(provider);
   const models: LocalProviderModel[] = [];
-  for (const cached of provider.modelsCache?.models ?? []) {
+  for (const cached of getProviderModels(provider)) {
     const freeStatus = classifyFreeStatus({
       model: cached,
       providerId: provider.id,

@@ -5,6 +5,7 @@ import { MAX_MODEL_CATALOG, VERSION } from './constants.js';
 import { loadPreferences } from './config.js';
 import { getAppHome, getConfigPath, getProvidersPath } from './paths.js';
 import { loadRegistry } from './registry/io.js';
+import { getProviderModels } from './registry/provider-models.js';
 import type { RegistryProvider } from './registry/types.js';
 
 const SKILL_DIR_NAME = 'relay-ai-cli';
@@ -56,7 +57,7 @@ function skillInstallTargets(): Array<{ skillDir: string; skillPath: string }> {
 }
 
 function formatProviderModels(provider: RegistryProvider): string {
-  const models = provider.modelsCache?.models ?? [];
+  const models = getProviderModels(provider);
   if (models.length === 0) return `  (no cached models — run: relay-ai providers refresh-models ${provider.id})`;
   const lines = models.slice(0, 40).map(m => `    ${m.id}${m.name !== m.id ? `  (${m.name})` : ''}`);
   if (models.length > 40) lines.push(`    ... and ${models.length - 40} more`);
@@ -88,7 +89,7 @@ function buildLiveStateSection(): string {
   const providerBlocks = enabled.length === 0
     ? ['  No registry providers configured. Built-in cloud: zen, go (OpenCode Zen/Go).']
     : enabled.map(p => [
-      `  ${p.name} (${p.id}) — ${p.modelsCache?.models.length ?? 0} cached model(s)`,
+      `  ${p.name} (${p.id}) — ${getProviderModels(p).length} model(s)`,
       formatProviderModels(p),
     ].join('\n'));
 

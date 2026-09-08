@@ -20,6 +20,8 @@ import {
 } from '../env.js';
 import { readBody, sendJson } from '../http-utils.js';
 import { loadRegistry } from '../registry/io.js';
+import { getProviderModels, supportsManualModels } from '../registry/provider-models.js';
+import type { ManualModel } from '../registry/types.js';
 import { refreshProviderModels, refreshAllProviderModels } from '../registry/refresh-models.js';
 import { listAddableTemplates, listVisibleOAuthTemplates, PROVIDER_TEMPLATES } from '../provider-templates.js';
 import { addProviderFromTemplate, type AddTemplateResult } from '../registry/add-template.js';
@@ -164,6 +166,10 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
     handleEditCustomProvider(req, res);
   } else if (url === '/api/providers/delete' && req.method === 'POST') {
     handleDeleteProvider(req, res);
+  } else if (url === '/api/providers/models/add' && req.method === 'POST') {
+    handleManualModel(req, res, 'add');
+  } else if (url === '/api/providers/models/remove' && req.method === 'POST') {
+    handleManualModel(req, res, 'remove');
   } else if (url === '/api/providers/oauth/start' && req.method === 'POST') {
     handleOAuthStart(req, res);
   } else if (url.startsWith('/api/providers/oauth/status') && req.method === 'GET') {
@@ -243,7 +249,18 @@ async function handleGetModels(
     if (codexSubagents) catalog = providersForCodexSubagents(catalog);
     else if (target) catalog = providersForTarget(catalog, target);
     const registry = loadRegistry();
-    const rawCountById = new Map(registry.providers.map(p => [p.id, p.modelsCache?.models.length ?? 0]));
+    const registryById = new Map(registry.providers.map(p => [p.id, p]));
+    const rawCountById = new Map(registry.providers.map(p => [p.id, getProviderModels(p).length]));
+    const manualIdsByProvider = new Map(registry.providers.map(p => [p.id,
+      new Set(getProviderModels(p).filter(m => m.source === 'manual').map(m => m.id)),
+    ]));
+    const manualMetadata = (id: string) => {
+      const provider = registryById.get(id);
+      return {
+        supportsManualModels: provider ? provider.enabled && supportsManualModels(provider) : false,
+        manualModels: (provider?.manualModels ?? []).map(publicManualModel),
+      };
+    };
     const customById = new Map(
       registry.providers
         .filter(rp => rp.templateId === 'custom-openai' || rp.templateId === 'custom-anthropic')
@@ -264,6 +281,7 @@ async function handleGetModels(
         return getTemplateById(t)?.anonymousFreeModels === true;
       })(),
       authType: p.authType ?? 'api',
+      ...manualMetadata(p.id),
       // Copilot's runtime catalog is policy-filtered by account plan. Never replace
       // that safe count with the larger raw cache count.
       modelCount: p.id === 'github-copilot' ? p.models.length : (rawCountById.get(p.id) ?? p.models.length),
@@ -278,6 +296,8 @@ async function handleGetModels(
         contextWindow: m.contextWindow,
         cost: m.cost,
         claudeTransparentCompatible: supportsClaudeTransparentMode(m),
+        ...(manualIdsByProvider.get(p.id)?.has(m.id)
+          ? { source: 'manual' as const } : {}),
       })),
     }));
 
@@ -298,15 +318,90 @@ async function handleGetModels(
         hasKey: true,
         freeAccess: false,
         authType: 'oauth',
+        ...manualMetadata(rp.id),
         modelCount: 0,
         ...(rp.id === 'github-copilot' ? { subscription: copilotSubscription(undefined) } : {}),
         models: [],
       });
     }
 
+    // Empty configured API providers need a browser entry to add their first model.
+    // Do not restore providers excluded by a launch target's compatibility filter.
+    if (!target && !codexSubagents) {
+      for (const rp of registry.providers) {
+        if (!rp.enabled || !supportsManualModels(rp) || materializedIds.has(rp.id)
+          || getProviderModels(rp).length !== 0) continue;
+        const credential = await resolveProviderCredential(rp.id, rp.authRef).catch(() => null);
+        providers.push({
+          id: rp.id,
+          name: rp.name,
+          favoriteName: favoriteProviderDisplayName({ id: rp.id, name: rp.name, authType: rp.authType }),
+          hasKey: Boolean(credential),
+          freeAccess: false,
+          authType: rp.authType ?? 'api',
+          modelCount: 0,
+          ...manualMetadata(rp.id),
+          ...(customById.has(rp.id) ? { customEndpoint: customById.get(rp.id) } : {}),
+          models: [],
+        });
+      }
+    }
+
     sendJson(res, 200, { providers });
   } catch (err) {
     sendCatalogFetchError(res, err, 'Model fetch');
+  }
+}
+
+function publicManualModel(model: ManualModel) {
+  return {
+    id: model.id,
+    name: model.name,
+    contextWindow: model.contextWindow,
+    validatedAt: model.validatedAt,
+    source: 'manual' as const,
+  };
+}
+
+async function handleManualModel(req: IncomingMessage, res: ServerResponse, action: 'add' | 'remove'): Promise<void> {
+  let body: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(await readBody(req));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('object required');
+    body = parsed as Record<string, unknown>;
+  } catch {
+    sendJson(res, 400, { ok: false, error: 'Request body must be a JSON object' });
+    return;
+  }
+  const { providerId, modelId, displayName, contextWindow } = body;
+  if (typeof providerId !== 'string' || !providerId.trim()
+    || typeof modelId !== 'string' || !modelId.trim()) {
+    sendJson(res, 400, { ok: false, error: 'providerId and modelId must be non-empty strings' });
+    return;
+  }
+  if (action === 'add' && ((displayName !== undefined && typeof displayName !== 'string')
+    || (contextWindow !== undefined && (typeof contextWindow !== 'number'
+      || !Number.isSafeInteger(contextWindow) || contextWindow <= 0)))) {
+    sendJson(res, 400, { ok: false, error: 'displayName must be a string and contextWindow must be a positive integer when provided' });
+    return;
+  }
+  try {
+    // Keep validation dependencies lazy; unrelated UI routes do not need them.
+    const { addManualModel, removeManualModel } = await import('../registry/manual-models.js');
+    const result = action === 'add'
+      ? await addManualModel({
+        providerId: providerId.trim(), modelId: modelId.trim(),
+        ...(typeof displayName === 'string' && displayName.trim() ? { displayName: displayName.trim() } : {}),
+        ...(typeof contextWindow === 'number' ? { contextWindow } : {}),
+      })
+      : removeManualModel(providerId.trim(), modelId.trim());
+    sendJson(res, 200, {
+      ok: result.ok,
+      ...(!result.ok ? { error: result.error ?? 'Manual model operation failed' } : {}),
+      ...(result.ok && 'model' in result && result.model ? { model: publicManualModel(result.model) } : {}),
+    });
+  } catch {
+    sendJson(res, 500, { ok: false, error: `Unable to ${action} manual model. Please try again.` });
   }
 }
 

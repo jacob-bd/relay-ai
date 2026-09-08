@@ -7,6 +7,8 @@ export const REGISTRY_SCHEMA_VERSION = 1;
 export type RegistrySubscriptionFilter = 'free' | 'zen' | 'go';
 
 export interface CachedModel {
+  /** User-owned addition, kept separately from the downloaded catalog. */
+  source?: 'manual';
   id: string;
   name: string;
   upstreamModelId: string;
@@ -14,7 +16,7 @@ export interface CachedModel {
   brand?: string;
   contextWindow?: number;
   /** Distinguishes provider-reported context from legacy Relay guesses. */
-  contextWindowSource?: 'provider';
+  contextWindowSource?: 'provider' | 'user';
   cost?: { input: number; output: number; cache_read?: number; cache_write?: number };
   isFree?: boolean;
   freeStatus?: FreeStatus;
@@ -36,6 +38,12 @@ export interface CachedModel {
   preferWebSockets?: boolean;
 }
 
+export interface ManualModel extends CachedModel {
+  source: 'manual';
+  /** Time generation, streaming and a harmless tool round-trip last passed. */
+  validatedAt: string;
+}
+
 export interface RegistryProvider {
   id: string;
   templateId: string;
@@ -55,6 +63,7 @@ export interface RegistryProvider {
     fetchedAt: string;
     models: CachedModel[];
   };
+  manualModels?: ManualModel[];
   addedAt: string;
   refreshedAt?: string;
 }

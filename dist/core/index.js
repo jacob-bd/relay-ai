@@ -50,7 +50,7 @@ import { join as join2 } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.11.0",
+  version: "0.11.1",
   publishConfig: {
     access: "public"
   },
@@ -156,7 +156,7 @@ var package_default = {
 
 // src/constants.ts
 var CODEX_RESPONSES_LITE_WS_URL = "wss://chatgpt.com/backend-api/codex/responses";
-var CODEX_RESPONSES_LITE_VERSION = "0.144.1";
+var CODEX_RESPONSES_LITE_VERSION = "0.153.4";
 var CODEX_RESPONSES_WEBSOCKETS_BETA = "responses_websockets=2026-02-06";
 var OPENCODE_CACHE_PATH = join2(homedir2(), ".cache", "opencode", "models.json");
 var CODEX_SUBAGENT_MODEL_CAP = 1;
@@ -1623,6 +1623,51 @@ function isValidProviderId(id) {
   return PROVIDER_ID_PATTERN.test(id);
 }
 
+// src/registry/provider-models.ts
+var MANUAL_MODEL_PACKAGES = /* @__PURE__ */ new Set([
+  "@ai-sdk/openai-compatible",
+  "@ai-sdk/openai",
+  "@ai-sdk/anthropic",
+  "@openrouter/ai-sdk-provider"
+]);
+function supportsManualModels(provider) {
+  return provider.authType !== "oauth" && !["zen", "go", "antigravity"].includes(provider.templateId) && MANUAL_MODEL_PACKAGES.has(provider.api.npm ?? "");
+}
+function getProviderModels(provider) {
+  const models = new Map((provider.modelsCache?.models ?? []).map((model) => [model.id, model]));
+  if (supportsManualModels(provider)) {
+    for (const model of provider.manualModels ?? []) {
+      models.set(model.id, { ...model, modelFormat: provider.api.npm === "@ai-sdk/anthropic" ? "anthropic" : "openai" });
+    }
+  }
+  return [...models.values()];
+}
+function modelIdError(value) {
+  if (typeof value !== "string" || !value.trim()) return "Model ID is required.";
+  if (value.trim().length > 512 || /[\s\u0000-\u001f\u007f]/u.test(value.trim())) {
+    return "Model ID must be at most 512 characters with no whitespace or control characters.";
+  }
+}
+function contextWindowError(value) {
+  if (value !== void 0 && (!Number.isSafeInteger(value) || Number(value) <= 0)) {
+    return "Context size must be a positive whole number of tokens, or left blank.";
+  }
+}
+function parseManualModel(raw) {
+  if (!raw || typeof raw !== "object") return void 0;
+  const m = raw;
+  if (modelIdError(m.id) || typeof m.name !== "string" || !m.name.trim() || m.name.length > 200 || m.source !== "manual" || typeof m.validatedAt !== "string" || !Number.isFinite(Date.parse(m.validatedAt)) || contextWindowError(m.contextWindow) || m.modelFormat !== "openai" && m.modelFormat !== "anthropic") return void 0;
+  return {
+    id: m.id.trim(),
+    name: m.name.trim(),
+    upstreamModelId: m.id.trim(),
+    modelFormat: m.modelFormat,
+    source: "manual",
+    validatedAt: m.validatedAt,
+    ...m.contextWindow === void 0 ? {} : { contextWindow: m.contextWindow, contextWindowSource: "user" }
+  };
+}
+
 // src/registry/io.ts
 var DIR_MODE = 448;
 var FILE_MODE = 384;
@@ -1675,6 +1720,12 @@ function parseProvider(raw) {
     provider.authType = p.authType;
   }
   if (typeof p.refreshedAt === "string") provider.refreshedAt = p.refreshedAt;
+  if (Array.isArray(p.manualModels)) {
+    provider.manualModels = p.manualModels.flatMap((raw2) => {
+      const model = parseManualModel(raw2);
+      return model ? [model] : [];
+    });
+  }
   if (p.modelsCache && typeof p.modelsCache === "object") {
     const cache = p.modelsCache;
     if (typeof cache.fetchedAt === "string" && Array.isArray(cache.models)) {
@@ -2454,7 +2505,7 @@ function listRelayModels(registryPath) {
   const descriptors = [];
   for (const provider of registry.providers) {
     if (!provider.enabled) continue;
-    for (const model of provider.modelsCache?.models ?? []) {
+    for (const model of getProviderModels(provider)) {
       descriptors.push(toDescriptor(provider, model, favorites));
     }
   }
@@ -3824,7 +3875,7 @@ function findRoute(registry, providerId, modelId, routeId) {
   if (!provider.enabled) {
     throw new RelayCoreError("PROVIDER_DISABLED", `Provider "${provider.name}" is disabled \u2014 enable it in relay-ai ui.`, { providerId, routeId });
   }
-  const model = provider.modelsCache?.models.find((m) => m.id === modelId);
+  const model = getProviderModels(provider).find((m) => m.id === modelId);
   if (!model) {
     throw new RelayCoreError("UNSUPPORTED_MODEL", `Provider "${provider.name}" has no cached model "${modelId}" \u2014 refresh its models in relay-ai ui.`, { providerId, routeId });
   }

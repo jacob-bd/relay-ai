@@ -95,7 +95,7 @@ describe('native Codex forwarding', () => {
       authorization: 'Bearer native',
       'ChatGPT-Account-Id': 'acct',
       'OpenAI-Beta': 'responses_websockets=2026-02-06',
-      version: '0.144.1',
+      version: '0.153.4',
       originator: 'codex_cli_rs',
       'x-codex-turn-metadata': '{"turn_id":"turn-1"}',
     });

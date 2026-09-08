@@ -389,7 +389,7 @@ Codex exposes a **reasoning effort** picker when relay-ai's model catalog includ
 |---------|-----|
 | Existing conversations disappear during a relay-ai session | Update relay-ai. Older releases selected a custom `model_provider`, so Codex filtered the sidebar to relay-ai-only threads. Current releases keep the built-in `openai` provider and preserve normal history visibility. |
 | App didn’t open | Open Codex manually once, run `relay-ai codex-app` again |
-| Model errors / disconnected | Keep relay-ai terminal open (proxy must run) |
+| Model errors / disconnected | Keep relay-ai terminal open (proxy must run). On Codex App/ChatGPT Desktop, update to relay-ai 0.11.1 or newer; it fixes WebSocket framing that could cause valid requests to be dropped and trigger reconnects. |
 | Models appear but requests do not answer | Confirm the foreground Relay process is still running. Picker presence alone does not prove the proxy is alive; recover with `relay-ai codex-app --restore` only after the Relay process is confirmed absent. |
 | Stuck on relay-ai settings | `relay-ai codex-app --restore` |
 | `--restore` blocked | Ctrl+C the other relay-ai codex-app terminal first |
@@ -398,6 +398,7 @@ Codex exposes a **reasoning effort** picker when relay-ai's model catalog includ
 | Trying to continue a large GPT-5.5 session on a different model | Codex sends the full conversation history inline; 1 M-token models reject 2 M-token payloads. relay-ai trims the oldest messages automatically, but some early context will be lost. Starting fresh is the cleanest option. |
 | Model shows as "Custom" in the Codex UI | Expected — Codex labels all external catalog models as "Custom". The correct model is in use. |
 | Need to prove which provider answered | Inspect `~/.relay-ai/logs/codex-route-audit.jsonl`; use `complete` rows, not the model's self-identification. |
+| External model ignores an attached image | Update to relay-ai 0.11.1 or newer. Relay now forwards Responses `input_image` parts, but the selected provider/model must support vision. |
 
 ### Shared
 

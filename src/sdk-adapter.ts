@@ -587,9 +587,20 @@ export async function generateAnthropicResponse(
     // Some upstreams (e.g. ChatGPT's Codex backend) reject non-streaming requests
     // outright. Request a real stream from the SDK and collect it into one
     // response instead of forwarding the client's non-streaming request upstream.
-    const r = streamText({ model, ...providerParams, onError: () => {} } as Parameters<typeof streamText>[0]);
+    let firstStreamError: { error: unknown } | undefined;
+    const r = streamText({
+      model,
+      ...providerParams,
+      onError: (event) => { firstStreamError ??= event; },
+    } as Parameters<typeof streamText>[0]);
     Promise.resolve(r.toolResults).catch(() => {});
-    [text, toolCalls, finishReason, usage] = await Promise.all([r.text, r.toolCalls, r.finishReason, r.usage]);
+    try {
+      [text, toolCalls, finishReason, usage] = await Promise.all([r.text, r.toolCalls, r.finishReason, r.usage]);
+    } catch (error) {
+      // The SDK can replace an upstream failure with NoOutputGeneratedError
+      // when its result promises reject. Keep the original status and details.
+      throw firstStreamError ? firstStreamError.error : error;
+    }
   } else {
     const r = await generateText({ model, ...providerParams } as Parameters<typeof generateText>[0]);
     ({ text, toolCalls, finishReason, usage } = r);

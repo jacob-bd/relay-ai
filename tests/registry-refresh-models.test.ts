@@ -30,6 +30,7 @@ describe('registry/refresh-models', () => {
   beforeEach(() => {
     global.fetch = vi.fn();
     vi.clearAllMocks();
+    vi.mocked(io.loadRegistry).mockReturnValue({ schemaVersion: 1, providers: [] });
     vi.spyOn(env, 'enrichGithubCopilotOAuthProviderData').mockResolvedValue(undefined);
   });
 

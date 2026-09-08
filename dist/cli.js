@@ -1,20 +1,13 @@
 #!/usr/bin/env node
 import {
-  ANTIGRAVITY_BASE_URLS,
-  BACKENDS,
+  addManualModel,
+  removeManualModel
+} from "./chunk-VXQ7ZVTW.js";
+import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
-  CODEX_RESPONSES_LITE_VERSION,
-  CODEX_RESPONSES_LITE_WS_URL,
-  CODEX_RESPONSES_WEBSOCKETS_BETA,
-  CODEX_SUBAGENT_MODEL_CAP,
-  CONFLICTING_ENV_VARS,
-  GLOBAL_OPENCODE_KEYRING_ACCOUNT,
-  MAX_MODEL_CATALOG,
   OPENCODE_SESSION_HEADER,
   PREVIEW_PROXY_PORT,
-  VERSION,
-  VERTEX_ANTHROPIC_NPM,
   addCustomEndpointProvider,
   addFavorite,
   addOpencodeCloudFromApiKey,
@@ -24,13 +17,10 @@ import {
   anthropicModelsEndpoint,
   appendCodexBodyDump,
   authenticateProvider,
-  buildAntigravityChildEnv,
   buildAntigravityRoutes,
   buildAppCatalogFile,
   buildCatalogFile,
   buildCatalogRoutes,
-  buildChildEnv,
-  buildClaudeCodeBillingSystemLine,
   buildCodexAppRootConfig,
   buildHttpProxyRoutes,
   buildImportProviderList,
@@ -41,19 +31,13 @@ import {
   catalogEntryFromModel,
   checkForUpdates,
   claudeAppSupported,
-  claudeCodeClientModelId,
   codexAppInstallHint,
   codexAppModelSlug,
   codexAppSupported,
   confirmLaunchMessage,
   createGatewayModelCatalog,
-  createLanguageModel,
   customEndpointKind,
-  deepMergeProviderOptions,
-  detectConflicts,
   effectiveProviderBaseUrl,
-  effortProviderOptions,
-  encodeToolUseId,
   estimateAnthropicInputTokens,
   evaluateAgySwitchCompatibility,
   extractApiKey,
@@ -77,23 +61,14 @@ import {
   formatCodexModelLabel,
   formatRegistryAuthLabel,
   formatUpdateNotification,
-  formatUpstreamError,
-  formatUpstreamErrorTrace,
   getAntigravityDebugLogPath,
-  getAppHome,
   getAppPathOverride,
   getClaudeDebugLogPath,
   getCodexProxyDebugLogPath,
-  getConfigPath,
   getGeminiProxyDebugLogPath,
-  getLogsPath,
-  getProvidersPath,
   getProxyDebugLogPath,
-  getReasoningCapabilities,
-  grabRoundTripSignature,
   hasApplicationDefaultCredentials,
   httpProxyModelId,
-  injectClaudeIdentity,
   injectRelayModels,
   isClaudeAppRunning,
   isCodexAppRunning,
@@ -101,32 +76,22 @@ import {
   isFreeStatus,
   isLikelyPlaceholderKey,
   isOAuthImportProvider,
-  isSecretServiceAvailable,
-  isValidProviderId,
   launchClaude,
   launchOrRestartClaudeApp,
   launchOrRestartCodexApp,
   listCredentialSkippedProviders,
   loadPreferences,
-  loadRegistry,
   logActiveModel,
   logConnected,
   logProxy,
   makeRouteResolver,
   makeTraceLogger,
-  maxToolsForNpm,
   meetsContextFloor,
-  migrateGlobalOpencodeCredential,
-  migrateLegacyCloudProviders,
   modelSelectOption,
   navOption,
   oauthAuthRef,
-  oauthCredentialToKeychainJson,
   openCodeGoHeaders,
   parseCodexAppModelSlug,
-  parseDsmlToolCalls,
-  parseToolArguments,
-  preferredRelayCredentialAuthRef,
   prepareClaudeTraceLog,
   prepareProviderTraceLog,
   printApiKeyPanel,
@@ -147,10 +112,6 @@ import {
   quitClaudeAppGracefully,
   quitCodexAppGracefully,
   readBody,
-  readFromCredentialStore,
-  readGlobalOpencodeCredential,
-  readOpencodeAuthFile,
-  readStoredProviderCredential,
   recordLaunchSelection,
   refreshAllProviderModels,
   refreshModelsDevCacheAsync,
@@ -161,48 +122,32 @@ import {
   removeProviderFromRegistry,
   renderMultiAgentV2Feature,
   resetCodexBodyDumpLog,
-  resolveApiKey,
-  resolveContextWindow,
   resolveLocalProviderApiKey,
   resolveModelSource,
-  resolveProviderCredential,
   resolveProviderTemplate,
   resolveProvidersForDisplay,
   resolveRefreshCredential,
   resolveRelayCatalogSlots,
   routableModelsForTarget,
-  routeLookupIds,
   runCodexCommand,
   runCodexCommandSync,
   runServerCommand,
   savePreferences,
-  saveProviderCredential,
-  saveRegistry,
-  saveToCredentialStore,
-  selectBetaFlags,
   sendJson,
   serializeCatalog,
-  serializeToolResultContent,
   shouldHideModel,
-  silenceSdkWarnings,
-  splitToolUseId,
-  sseChunk,
   startProxy,
   startProxyCatalog,
   startServer,
   supportsClaudeTransparentMode,
   supportsMultiAgentV2,
-  supportsNativeOAuth,
   syntheticTemplate,
-  thinkingProviderOptions,
   toggleProviderEnabled,
   updateCustomEndpointProvider,
-  upstreamHttpStatus,
-  validateCustomEndpointUrl,
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-G6QWYYAY.js";
+} from "./chunk-KVZSGD6K.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -210,11 +155,77 @@ import {
   listAddableTemplates,
   listSupportedTemplates,
   listVisibleOAuthTemplates
-} from "./chunk-SFN33VAE.js";
+} from "./chunk-TRM2WGI6.js";
+import {
+  ANTIGRAVITY_BASE_URLS,
+  BACKENDS,
+  CODEX_RESPONSES_LITE_VERSION,
+  CODEX_RESPONSES_LITE_WS_URL,
+  CODEX_RESPONSES_WEBSOCKETS_BETA,
+  CODEX_SUBAGENT_MODEL_CAP,
+  CONFLICTING_ENV_VARS,
+  GLOBAL_OPENCODE_KEYRING_ACCOUNT,
+  MAX_MODEL_CATALOG,
+  VERSION,
+  VERTEX_ANTHROPIC_NPM,
+  buildAntigravityChildEnv,
+  buildChildEnv,
+  buildClaudeCodeBillingSystemLine,
+  claudeCodeClientModelId,
+  contextWindowError,
+  createLanguageModel,
+  deepMergeProviderOptions,
+  detectConflicts,
+  effortProviderOptions,
+  encodeToolUseId,
+  formatUpstreamError,
+  formatUpstreamErrorTrace,
+  getAppHome,
+  getConfigPath,
+  getLogsPath,
+  getProviderModels,
+  getProvidersPath,
+  getReasoningCapabilities,
+  grabRoundTripSignature,
+  injectClaudeIdentity,
+  isSecretServiceAvailable,
+  isValidProviderId,
+  loadRegistry,
+  maxToolsForNpm,
+  migrateGlobalOpencodeCredential,
+  migrateLegacyCloudProviders,
+  modelIdError,
+  oauthCredentialToKeychainJson,
+  parseDsmlToolCalls,
+  parseToolArguments,
+  preferredRelayCredentialAuthRef,
+  readFromCredentialStore,
+  readGlobalOpencodeCredential,
+  readOpencodeAuthFile,
+  readStoredProviderCredential,
+  resolveApiKey,
+  resolveContextWindow,
+  resolveProviderCredential,
+  routeLookupIds,
+  saveProviderCredential,
+  saveRegistry,
+  saveToCredentialStore,
+  selectBetaFlags,
+  serializeToolResultContent,
+  silenceSdkWarnings,
+  splitToolUseId,
+  sseChunk,
+  supportsManualModels,
+  supportsNativeOAuth,
+  thinkingProviderOptions,
+  upstreamHttpStatus,
+  validateCustomEndpointUrl
+} from "./chunk-O2XZFXHG.js";
+import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
 import pc12 from "picocolors";
-import * as p14 from "@clack/prompts";
+import * as p15 from "@clack/prompts";
 import { realpathSync } from "fs";
 import { fileURLToPath } from "url";
 
@@ -507,7 +518,7 @@ async function importFromOpencode(options = {}) {
       }
       continue;
     }
-    const existingIdx = registry.providers.findIndex((p15) => p15.id === entry.id);
+    const existingIdx = registry.providers.findIndex((p16) => p16.id === entry.id);
     const existing = existingIdx >= 0 ? registry.providers[existingIdx] : void 0;
     if (existing && options.resolveConflict) {
       const choice = await options.resolveConflict({
@@ -535,7 +546,7 @@ async function importFromOpencode(options = {}) {
       continue;
     }
     if (existingIdx >= 0) {
-      registry.providers[existingIdx] = { ...entry, addedAt: registry.providers[existingIdx].addedAt };
+      registry.providers[existingIdx] = { ...entry, addedAt: registry.providers[existingIdx].addedAt, manualModels: registry.providers[existingIdx].manualModels };
     } else {
       registry.providers.push(entry);
     }
@@ -545,7 +556,7 @@ async function importFromOpencode(options = {}) {
     if (isOAuth) oauthImported += 1;
   }
   const alreadyReportedIds = new Set(skipped.map((s) => s.id));
-  const registryProviderIds = new Set(registry.providers.map((p15) => p15.id));
+  const registryProviderIds = new Set(registry.providers.map((p16) => p16.id));
   for (const provider of listCredentialSkippedProviders(
     raw,
     authEntries,
@@ -800,10 +811,10 @@ async function runFirstRunWizard(trace = false) {
       p2.log.error("OpenCode CLI not found. Install from https://opencode.ai \u2014 or use Quick start / providers add instead.");
       return runFirstRunWizard(trace);
     }
-    const spinner9 = p2.spinner();
-    spinner9.start("Importing from OpenCode CLI...");
+    const spinner10 = p2.spinner();
+    spinner10.start("Importing from OpenCode CLI...");
     const result = await importFromOpencode();
-    spinner9.stop("");
+    spinner10.stop("");
     if (result.error) {
       p2.log.error(result.error);
       return runFirstRunWizard(trace);
@@ -1236,8 +1247,61 @@ async function pickGlobalFavoriteModel(providers, favorites, opts) {
 
 // src/providers-command.ts
 import pc4 from "picocolors";
-import * as p5 from "@clack/prompts";
+import * as p6 from "@clack/prompts";
 init_provider_templates();
+
+// src/manual-model-wizard.ts
+import * as p5 from "@clack/prompts";
+async function runManualModelAddFlow(provider) {
+  const modelId = await p5.text({ message: "Exact model ID from your provider", placeholder: "e.g. deepseek-v4.1-flash-expires-on-0910", validate: modelIdError });
+  if (p5.isCancel(modelId)) return 0;
+  const displayName = await p5.text({
+    message: "Display name (optional)",
+    defaultValue: modelId,
+    validate: (value) => value && (value.length > 200 || /[\u0000-\u001f\u007f]/u.test(value)) ? "Use at most 200 characters without control characters." : void 0
+  });
+  if (p5.isCancel(displayName)) return 0;
+  const context = await p5.text({
+    message: "Context size in tokens (optional \u2014 leave blank if unknown)",
+    validate: (value) => contextWindowError(value?.trim() ? Number(value) : void 0)
+  });
+  if (p5.isCancel(context)) return 0;
+  const confirmed = await p5.confirm({ message: "Test & add? Sends three small requests to this provider; API charges may apply.", initialValue: true });
+  if (p5.isCancel(confirmed) || !confirmed) return 0;
+  const spinner10 = p5.spinner();
+  spinner10.start("Testing generation, streaming and tool round-trip (up to 90 seconds)\u2026");
+  const result = await addManualModel({
+    providerId: provider.id,
+    modelId: String(modelId),
+    displayName: String(displayName),
+    ...String(context).trim() ? { contextWindow: Number(context) } : {}
+  });
+  spinner10.stop(result.ok ? "Validation passed" : "Validation failed");
+  if (!result.ok) {
+    p5.log.error(result.error ?? "Model was not added.");
+    return 1;
+  }
+  p5.log.success(`${result.model.name} added. Manual models are preserved when you refresh the catalog.`);
+  p5.log.info("Generation, streaming and tools passed. Pricing and vision support are unknown; context size is user-supplied if set.");
+  return 0;
+}
+async function runManualModelRemoveFlow(provider) {
+  const models = provider.manualModels ?? [];
+  if (!models.length) return 0;
+  const id = await p5.select({ message: "Remove which manual model?", options: models.map((m) => ({ value: m.id, label: m.name, hint: m.id })) });
+  if (p5.isCancel(id)) return 0;
+  const confirmed = await p5.confirm({ message: `Remove the manual entry for ${id}?`, initialValue: false });
+  if (p5.isCancel(confirmed) || !confirmed) return 0;
+  const result = removeManualModel(provider.id, String(id));
+  if (!result.ok) {
+    p5.log.error(result.error ?? "Could not remove model.");
+    return 1;
+  }
+  p5.log.success("Manual entry removed. If the provider now lists this ID, its discovered entry remains available.");
+  return 0;
+}
+
+// src/providers-command.ts
 function parseProvidersArgs(args) {
   if (args.length === 0) return { subcommand: "hub", showHelp: false };
   const [first, ...rest] = args;
@@ -1313,7 +1377,7 @@ async function runProvidersImport() {
   const hasExisting = registry.providers.length > 0;
   const resolveConflict = hasExisting ? async (ctx) => {
     printImportConflictPanel(ctx.existing.name, ctx.existingKeyHint, ctx.incomingKeyHint);
-    const choice = await p5.select({
+    const choice = await p6.select({
       message: "Which configuration should we keep?",
       options: [
         { value: "keep", label: pc4.cyan("Keep mine"), hint: "Leave your current relay-ai config unchanged" },
@@ -1321,46 +1385,46 @@ async function runProvidersImport() {
         { value: "skip", label: pc4.dim("Skip this provider"), hint: "" }
       ]
     });
-    if (p5.isCancel(choice)) return "skip";
+    if (p6.isCancel(choice)) return "skip";
     return choice;
   } : void 0;
-  const spinner9 = p5.spinner();
-  spinner9.start("Importing from OpenCode...");
+  const spinner10 = p6.spinner();
+  spinner10.start("Importing from OpenCode...");
   const result = await importFromOpencode({ resolveConflict });
-  spinner9.stop("");
+  spinner10.stop("");
   if (result.error) {
-    p5.log.error(result.error);
+    p6.log.error(result.error);
     return 1;
   }
   if (result.imported.length === 0 && result.skipped.length === 0) {
-    p5.log.warn("No configured providers found in OpenCode.");
-    p5.log.info("Add providers in OpenCode first, or use relay-ai providers add.");
+    p6.log.warn("No configured providers found in OpenCode.");
+    p6.log.info("Add providers in OpenCode first, or use relay-ai providers add.");
     return 0;
   }
   if (result.authFileWarning) {
-    p5.log.warn(result.authFileWarning);
+    p6.log.warn(result.authFileWarning);
   }
   const importedNames = result.imported.map((pr) => pr.name).join(", ");
   const modelTotal = result.imported.reduce((n, pr) => n + (pr.modelsCache?.models.length ?? 0), 0);
   const credNote = result.oauthImported > 0 ? ` (${result.oauthImported} via OAuth)` : "";
-  p5.log.success(
+  p6.log.success(
     `Imported ${importedNames} \u2014 ${modelTotal} model${modelTotal === 1 ? "" : "s"}, ${result.keysSaved} credential${result.keysSaved === 1 ? "" : "s"} saved to Keychain${credNote}.`
   );
   if (result.skipped.length > 0) {
     for (const s of result.skipped) {
       const reason = s.reason === "user-skipped" ? "skipped by you" : s.reason === "conflict-kept" ? "kept your existing config" : s.reason === "oauth-no-token" ? "OAuth provider in OpenCode but not signed in \u2014 run relay-ai providers auth" : s.reason === "no-api-key" ? "no API key in OpenCode \u2014 add key there or use relay-ai providers add" : s.reason === "manual-only" ? "uses gcloud/AWS credentials \u2014 not importable via API key" : s.reason === "placeholder-key" ? "placeholder API key \u2014 provider not imported" : s.reason === "invalid-key" ? "API key failed verification \u2014 provider not imported" : s.reason === "credential-save-failed" ? "could not save credential \u2014 provider not imported" : s.reason;
-      p5.log.warn(`Skipped ${s.name} (${s.id}): ${reason}`);
+      p6.log.warn(`Skipped ${s.name} (${s.id}): ${reason}`);
     }
   }
   if (result.keysSkipped.length > 0) {
     for (const k of result.keysSkipped) {
       if (k.detail) {
-        p5.log.info(`${k.name} (${k.id}): ${k.detail}`);
+        p6.log.info(`${k.name} (${k.id}): ${k.detail}`);
       }
     }
   }
   if (result.imported.length > 0) {
-    const refreshSpinner = p5.spinner();
+    const refreshSpinner = p6.spinner();
     refreshSpinner.start("Fetching model capabilities from providers...");
     const registry2 = loadRegistry();
     for (const provider of result.imported) {
@@ -1377,14 +1441,14 @@ async function runProvidersImport() {
 async function runProvidersAuth(providerId, method) {
   try {
     const result = await authenticateProvider(providerId, { method });
-    p5.log.success(`Signed in to ${result.registryProvider.name} \u2014 credential saved to Keychain.`);
+    p6.log.success(`Signed in to ${result.registryProvider.name} \u2014 credential saved to Keychain.`);
     return 0;
   } catch (err) {
     if (err instanceof Error && err.message === "Cancelled") {
-      p5.cancel("Cancelled.");
+      p6.cancel("Cancelled.");
       return 0;
     }
-    p5.log.error(err instanceof Error ? err.message : String(err));
+    p6.log.error(err instanceof Error ? err.message : String(err));
     return 1;
   }
 }
@@ -1392,67 +1456,67 @@ async function runProvidersRefreshModels(providerId) {
   const resolveKey = async (provider) => resolveProviderCredential(provider.id, provider.authRef);
   if (providerId) {
     const registry = loadRegistry();
-    const provider = registry.providers.find((p15) => p15.id === providerId);
+    const provider = registry.providers.find((p16) => p16.id === providerId);
     if (!provider) {
-      p5.log.error(`Provider not found: ${providerId}`);
+      p6.log.error(`Provider not found: ${providerId}`);
       return 1;
     }
-    const spinner10 = p5.spinner();
-    spinner10.start(`Refreshing ${provider.name}...`);
+    const spinner11 = p6.spinner();
+    spinner11.start(`Refreshing ${provider.name}...`);
     const key = await resolveRefreshCredential(
       provider,
-      async (p15) => resolveProviderCredential(p15.id, p15.authRef)
+      async (p16) => resolveProviderCredential(p16.id, p16.authRef)
     );
     const result = await refreshProviderModels(providerId, key);
-    spinner10.stop("");
+    spinner11.stop("");
     if (result.skipped) {
       const countNote = result.modelCount ? ` (${result.modelCount} cached models kept)` : "";
-      p5.log.warn(`${result.name}: ${result.reason}${countNote}`);
+      p6.log.warn(`${result.name}: ${result.reason}${countNote}`);
       return 0;
     }
     if (!result.ok) {
-      p5.log.error(`${result.name}: ${result.reason ?? "Refresh failed."}`);
+      p6.log.error(`${result.name}: ${result.reason ?? "Refresh failed."}`);
       return 1;
     }
     const diff = result.previousModelCount === void 0 ? 0 : (result.modelCount ?? 0) - result.previousModelCount;
     const diffStr = result.previousModelCount === void 0 ? "" : diff > 0 ? ` (+${diff})` : diff < 0 ? ` (${diff})` : "";
-    p5.log.success(`${result.name}: ${result.modelCount} model${result.modelCount === 1 ? "" : "s"} updated${diffStr}.`);
+    p6.log.success(`${result.name}: ${result.modelCount} model${result.modelCount === 1 ? "" : "s"} updated${diffStr}.`);
     if (result.reason) {
-      p5.log.warn(result.reason);
+      p6.log.warn(result.reason);
     }
     return 0;
   }
-  const spinner9 = p5.spinner();
-  spinner9.start("Refreshing model lists...");
+  const spinner10 = p6.spinner();
+  spinner10.start("Refreshing model lists...");
   const { refreshed } = await refreshAllProviderModels(resolveKey);
-  spinner9.stop("");
+  spinner10.stop("");
   const ok = refreshed.filter((r) => r.ok && !r.skipped);
   const skipped = refreshed.filter((r) => r.skipped);
   const failed = refreshed.filter((r) => !r.ok);
   if (ok.length > 0) {
-    p5.log.success(`Updated ${ok.length} provider${ok.length === 1 ? "" : "s"}.`);
+    p6.log.success(`Updated ${ok.length} provider${ok.length === 1 ? "" : "s"}.`);
     for (const r of ok) {
       const diff = r.previousModelCount === void 0 ? 0 : (r.modelCount ?? 0) - r.previousModelCount;
       const diffStr = r.previousModelCount === void 0 ? "" : diff > 0 ? ` (+${diff})` : diff < 0 ? ` (${diff})` : "";
-      p5.log.info(`  ${r.name}: ${r.modelCount} model${r.modelCount === 1 ? "" : "s"}${diffStr}`);
+      p6.log.info(`  ${r.name}: ${r.modelCount} model${r.modelCount === 1 ? "" : "s"}${diffStr}`);
       if (r.reason) {
-        p5.log.warn(`  ${r.reason}`);
+        p6.log.warn(`  ${r.reason}`);
       }
     }
   }
   for (const r of skipped) {
     const countNote = r.modelCount ? ` (${r.modelCount} cached models kept)` : "";
-    p5.log.warn(`Skipped ${r.name}: ${r.reason}${countNote}`);
+    p6.log.warn(`Skipped ${r.name}: ${r.reason}${countNote}`);
   }
   for (const r of failed) {
-    p5.log.error(`${r.name}: ${r.reason ?? "Refresh failed."}`);
+    p6.log.error(`${r.name}: ${r.reason ?? "Refresh failed."}`);
   }
   return failed.length > 0 ? 1 : 0;
 }
 async function runProvidersList() {
   const entries = await resolveProvidersForDisplay();
   if (entries.length === 0) {
-    p5.log.info("No providers configured. Run relay-ai providers add or import.");
+    p6.log.info("No providers configured. Run relay-ai providers add or import.");
     return 0;
   }
   console.log("");
@@ -1468,10 +1532,10 @@ async function runProvidersList() {
 async function pickTemplateFromCatalog() {
   while (true) {
     const registry = loadRegistry();
-    const configuredIds = new Set(registry.providers.map((p15) => p15.id));
+    const configuredIds = new Set(registry.providers.map((p16) => p16.id));
     const templates = listAddableTemplates(configuredIds);
     if (templates.length === 0) return null;
-    const method = await p5.select({
+    const method = await p6.select({
       message: `Choose a provider (${templates.length} available)`,
       options: [
         { value: "search", label: "Search providers", hint: "e.g. gro, mistral, together" },
@@ -1479,32 +1543,32 @@ async function pickTemplateFromCatalog() {
         { value: "back", label: "Back", hint: "" }
       ]
     });
-    if (p5.isCancel(method) || method === "back") return null;
+    if (p6.isCancel(method) || method === "back") return null;
     if (method === "browse") {
       const options2 = templates.map((t) => ({
         value: t.id,
         label: t.name,
         hint: t.npm
       }));
-      const picked2 = await p5.select({ message: "Select a provider", options: options2 });
-      if (p5.isCancel(picked2)) continue;
+      const picked2 = await p6.select({ message: "Select a provider", options: options2 });
+      if (p6.isCancel(picked2)) continue;
       const template2 = templates.find((t) => t.id === picked2);
       if (template2) return template2;
       continue;
     }
-    const searchInput = await p5.text({
+    const searchInput = await p6.text({
       message: "Search providers:",
       placeholder: "e.g. groq, mistral, openrouter"
     });
-    if (p5.isCancel(searchInput)) continue;
+    if (p6.isCancel(searchInput)) continue;
     const query = String(searchInput);
     const matched = filterTemplates(templates, query);
     if (matched.length === 0) {
       const alreadyAdded = filterTemplates(listSupportedTemplates(), query).filter((t) => configuredIds.has(t.id));
       if (alreadyAdded.length > 0) {
-        p5.log.info(`Already configured: ${alreadyAdded.map((t) => t.name).join(", ")}`);
+        p6.log.info(`Already configured: ${alreadyAdded.map((t) => t.name).join(", ")}`);
       } else {
-        p5.log.warn("No providers match \u2014 try a different search");
+        p6.log.warn("No providers match \u2014 try a different search");
       }
       continue;
     }
@@ -1513,11 +1577,11 @@ async function pickTemplateFromCatalog() {
       label: t.name,
       hint: t.npm
     }));
-    const picked = await p5.select({
+    const picked = await p6.select({
       message: matched.length === 1 ? "Match found" : `Select provider (${matched.length} matches)`,
       options
     });
-    if (p5.isCancel(picked)) continue;
+    if (p6.isCancel(picked)) continue;
     const template = matched.find((t) => t.id === picked);
     if (template) return template;
   }
@@ -1534,7 +1598,7 @@ function showProviderAddFailure(error, hint, fallback) {
   ]);
 }
 async function runDualAuthTemplateFlow(template, existing) {
-  const method = await p5.select({
+  const method = await p6.select({
     message: existing ? `Change ${template.name} authentication` : `How would you like to connect to ${template.name}?`,
     options: [
       {
@@ -1550,7 +1614,7 @@ async function runDualAuthTemplateFlow(template, existing) {
       { value: "back", label: "Back", hint: "" }
     ]
   });
-  if (p5.isCancel(method) || method === "back") return 0;
+  if (p6.isCancel(method) || method === "back") return 0;
   if (method === "oauth") {
     return runProvidersAuth(template.id);
   }
@@ -1559,12 +1623,12 @@ async function runDualAuthTemplateFlow(template, existing) {
       `${pc4.white("Get an API key at:")} ${fmtUrl(template.signupUrl)}`
     ]);
   }
-  const apiKeyInput = await p5.password({
+  const apiKeyInput = await p6.password({
     message: `Paste your ${template.name} API key:`,
     validate: (value) => value.trim() ? void 0 : "Key cannot be empty"
   });
-  if (p5.isCancel(apiKeyInput)) {
-    p5.cancel("Cancelled.");
+  if (p6.isCancel(apiKeyInput)) {
+    p6.cancel("Cancelled.");
     return 0;
   }
   const apiKey = String(apiKeyInput).trim();
@@ -1572,12 +1636,12 @@ async function runDualAuthTemplateFlow(template, existing) {
     showProviderAddFailure("Key cannot be empty.", void 0, "Could not add provider.");
     return 1;
   }
-  const spinner9 = p5.spinner();
-  spinner9.start(`Testing connection to ${template.name}...`);
+  const spinner10 = p6.spinner();
+  spinner10.start(`Testing connection to ${template.name}...`);
   const result = await addProviderFromTemplate(template, apiKey, {
     replaceExisting: Boolean(existing)
   });
-  spinner9.stop("");
+  spinner10.stop("");
   if (!result.added) {
     showProviderAddFailure(result.error, result.hint, "Could not add provider.");
     return 1;
@@ -1586,8 +1650,8 @@ async function runDualAuthTemplateFlow(template, existing) {
   return 0;
 }
 async function runTemplateAddFlow() {
-  if (listAddableTemplates(loadRegistry().providers.map((p15) => p15.id)).length === 0) {
-    p5.log.info("All catalog providers are already configured.");
+  if (listAddableTemplates(loadRegistry().providers.map((p16) => p16.id)).length === 0) {
+    p6.log.info("All catalog providers are already configured.");
     return 0;
   }
   const template = await pickTemplateFromCatalog();
@@ -1605,25 +1669,25 @@ async function runTemplateAddFlow() {
       ]);
       const collected = await resolveOrCollectApiKey(false, false);
       if (!collected) {
-        p5.cancel("Cancelled.");
+        p6.cancel("Cancelled.");
         return 0;
       }
       apiKey2 = collected;
     }
     await migrateGlobalOpencodeCredential();
-    const spinner10 = p5.spinner();
-    spinner10.start(`Adding ${template.name}...`);
+    const spinner11 = p6.spinner();
+    spinner11.start(`Adding ${template.name}...`);
     const result2 = await addOpencodeCloudFromApiKey(apiKey2);
-    spinner10.stop("");
+    spinner11.stop("");
     if (!result2.added) {
-      p5.log.warn(result2.error ?? "OpenCode Zen / Go is already configured.");
-      if (result2.hint) p5.log.info(result2.hint);
+      p6.log.warn(result2.error ?? "OpenCode Zen / Go is already configured.");
+      if (result2.hint) p6.log.info(result2.hint);
       return 0;
     }
     if (result2.hint) {
-      p5.log.warn(`Added ${template.name}. ${result2.hint}`);
+      p6.log.warn(`Added ${template.name}. ${result2.hint}`);
     } else {
-      p5.log.success(`Added ${template.name} \u2014 ${fmtCount(result2.modelCount ?? 0, "model")} updated.`);
+      p6.log.success(`Added ${template.name} \u2014 ${fmtCount(result2.modelCount ?? 0, "model")} updated.`);
     }
     return 0;
   }
@@ -1634,48 +1698,48 @@ async function runTemplateAddFlow() {
   }
   let baseUrlOverride;
   if (template.accountIdPrompt) {
-    const accountInput = await p5.text({
+    const accountInput = await p6.text({
       message: template.accountIdPrompt,
       placeholder: "e.g. 4ff191dac2d0bd7538cb1c9126594de3",
       validate: (v) => v.trim() ? void 0 : "Account ID is required"
     });
-    if (p5.isCancel(accountInput)) return 0;
+    if (p6.isCancel(accountInput)) return 0;
     const accountId = String(accountInput).trim();
     baseUrlOverride = template.defaultBaseUrl?.replace("{ACCOUNT_ID}", accountId);
   } else if (template.urlPrompt) {
-    const urlInput = await p5.text({
+    const urlInput = await p6.text({
       message: template.urlPrompt,
       initialValue: template.defaultBaseUrl,
       validate: (v) => v.trim() ? void 0 : "URL is required"
     });
-    if (p5.isCancel(urlInput)) return 0;
+    if (p6.isCancel(urlInput)) return 0;
     baseUrlOverride = String(urlInput).trim();
     const usesHttp = /^http:\/\//i.test(baseUrlOverride);
     if (usesHttp) {
-      p5.log.warn("HTTP is not encrypted. Use it only for trusted local or LAN servers, like Ollama on your own network.");
+      p6.log.warn("HTTP is not encrypted. Use it only for trusted local or LAN servers, like Ollama on your own network.");
     }
     const valid = await validateCustomEndpointUrl(baseUrlOverride, { allowInsecureLocal: usesHttp });
     if (!valid.ok) {
-      p5.log.error(valid.error ?? "Invalid URL");
-      if (valid.hint) p5.log.info(valid.hint);
+      p6.log.error(valid.error ?? "Invalid URL");
+      if (valid.hint) p6.log.info(valid.hint);
       return 1;
     }
   }
   const apiKeyMsg = template.anonymousFreeModels ? `API key (leave empty to use free models only):` : template.apiKeyOptional ? `API key (leave empty for local servers without auth):` : `Paste your ${template.name} API key:`;
-  const apiKeyInput = await p5.password({
+  const apiKeyInput = await p6.password({
     message: apiKeyMsg,
     validate: (val) => template.apiKeyOptional ? void 0 : val.trim() ? void 0 : "Key cannot be empty"
   });
-  if (p5.isCancel(apiKeyInput)) {
-    p5.cancel("Cancelled.");
+  if (p6.isCancel(apiKeyInput)) {
+    p6.cancel("Cancelled.");
     return 0;
   }
   const rawKey = String(apiKeyInput).trim();
   const apiKey = template.apiKeyOptional && !rawKey && !template.anonymousFreeModels ? template.id : rawKey;
-  const spinner9 = p5.spinner();
-  spinner9.start(`Testing connection to ${template.name}...`);
+  const spinner10 = p6.spinner();
+  spinner10.start(`Testing connection to ${template.name}...`);
   const result = await addProviderFromTemplate(template, apiKey, { baseUrl: baseUrlOverride });
-  spinner9.stop("");
+  spinner10.stop("");
   if (!result.added) {
     showProviderAddFailure(result.error, result.hint, "Could not add provider.");
     return 1;
@@ -1684,7 +1748,7 @@ async function runTemplateAddFlow() {
   return 0;
 }
 async function runCustomEndpointAddFlow() {
-  const kindChoice = await p5.select({
+  const kindChoice = await p6.select({
     message: "Custom server type",
     options: [
       {
@@ -1700,52 +1764,52 @@ async function runCustomEndpointAddFlow() {
       { value: "back", label: "Back", hint: "" }
     ]
   });
-  if (p5.isCancel(kindChoice) || kindChoice === "back") return 0;
-  const displayName = await p5.text({
+  if (p6.isCancel(kindChoice) || kindChoice === "back") return 0;
+  const displayName = await p6.text({
     message: "Display name:",
     placeholder: "My Work LLM",
     validate: (v) => v.trim() ? void 0 : "Name is required"
   });
-  if (p5.isCancel(displayName)) return 0;
-  const baseUrl = await p5.text({
+  if (p6.isCancel(displayName)) return 0;
+  const baseUrl = await p6.text({
     message: "Base URL:",
     placeholder: kindChoice === "openai" ? "https://api.together.xyz/v1" : "https://api.anthropic.com",
     validate: (v) => v.trim() ? void 0 : "URL is required"
   });
-  if (p5.isCancel(baseUrl)) return 0;
+  if (p6.isCancel(baseUrl)) return 0;
   const usesHttp = /^http:\/\//i.test(String(baseUrl).trim());
   let allowInsecureHttp = false;
   if (usesHttp) {
-    p5.log.warn("HTTP is not encrypted. Only use it for a trusted local or LAN server, like Ollama on your own network.");
-    const allowLocal = await p5.confirm({
+    p6.log.warn("HTTP is not encrypted. Only use it for a trusted local or LAN server, like Ollama on your own network.");
+    const allowLocal = await p6.confirm({
       message: "Allow insecure HTTP for this local/LAN server?",
       initialValue: true
     });
-    if (p5.isCancel(allowLocal)) return 0;
+    if (p6.isCancel(allowLocal)) return 0;
     allowInsecureHttp = allowLocal === true;
   }
-  const apiKey = await p5.password({
+  const apiKey = await p6.password({
     message: "API key (leave empty for local servers without auth):"
   });
-  if (p5.isCancel(apiKey)) return 0;
-  const wantsHeaders = await p5.confirm({
+  if (p6.isCancel(apiKey)) return 0;
+  const wantsHeaders = await p6.confirm({
     message: "Does this endpoint need extra custom headers? (e.g. a plan/auth-tracking header)",
     initialValue: false
   });
-  if (p5.isCancel(wantsHeaders)) return 0;
+  if (p6.isCancel(wantsHeaders)) return 0;
   const headers = {};
   if (wantsHeaders) {
     for (; ; ) {
-      const headerLine = await p5.text({
+      const headerLine = await p6.text({
         message: "Header (leave empty when done):",
         placeholder: "X-Plan: coding"
       });
-      if (p5.isCancel(headerLine)) return 0;
+      if (p6.isCancel(headerLine)) return 0;
       const trimmed = String(headerLine).trim();
       if (!trimmed) break;
       const idx = trimmed.indexOf(":");
       if (idx < 1) {
-        p5.log.warn('Use the format "Name: Value" \u2014 skipped.');
+        p6.log.warn('Use the format "Name: Value" \u2014 skipped.');
         continue;
       }
       const name = trimmed.slice(0, idx).trim();
@@ -1761,22 +1825,22 @@ async function runCustomEndpointAddFlow() {
     allowInsecureLocal: allowInsecureHttp,
     headers: Object.keys(headers).length > 0 ? headers : void 0
   };
-  const spinner9 = p5.spinner();
-  spinner9.start("Testing connection...");
+  const spinner10 = p6.spinner();
+  spinner10.start("Testing connection...");
   let result = await addCustomEndpointProvider(addInput);
-  spinner9.stop("");
+  spinner10.stop("");
   if (!result.added && result.duplicateOf) {
-    const addAnyway = await p5.confirm({
+    const addAnyway = await p6.confirm({
       message: `You already have a backend with the same URL, key and headers (${result.duplicateOf}). Add another?`,
       initialValue: false
     });
-    if (p5.isCancel(addAnyway) || !addAnyway) {
-      p5.cancel("Cancelled.");
+    if (p6.isCancel(addAnyway) || !addAnyway) {
+      p6.cancel("Cancelled.");
       return 0;
     }
-    spinner9.start("Testing connection...");
+    spinner10.start("Testing connection...");
     result = await addCustomEndpointProvider({ ...addInput, confirmDuplicate: true });
-    spinner9.stop("");
+    spinner10.stop("");
   }
   if (!result.added) {
     showProviderAddFailure(result.error, result.hint, "Could not add custom provider.");
@@ -1788,70 +1852,70 @@ async function runCustomEndpointAddFlow() {
 async function runCustomEndpointEditFlow(provider) {
   const currentHeaders = provider.api.headers ?? {};
   const headerSummary = Object.keys(currentHeaders).length > 0 ? Object.entries(currentHeaders).map(([k, v]) => `${k}: ${v}`).join(", ") : "none";
-  p5.log.info(`Base URL: ${provider.api.url ?? "(none)"}
+  p6.log.info(`Base URL: ${provider.api.url ?? "(none)"}
 Headers: ${headerSummary}`);
-  const displayName = await p5.text({
+  const displayName = await p6.text({
     message: "Display name:",
     initialValue: provider.name,
     validate: (v) => v.trim() ? void 0 : "Name is required"
   });
-  if (p5.isCancel(displayName)) {
-    p5.cancel("Cancelled.");
+  if (p6.isCancel(displayName)) {
+    p6.cancel("Cancelled.");
     return 0;
   }
-  const baseUrl = await p5.text({
+  const baseUrl = await p6.text({
     message: "Base URL:",
     initialValue: provider.api.url ?? "",
     validate: (v) => v.trim() ? void 0 : "URL is required"
   });
-  if (p5.isCancel(baseUrl)) {
-    p5.cancel("Cancelled.");
+  if (p6.isCancel(baseUrl)) {
+    p6.cancel("Cancelled.");
     return 0;
   }
   const usesHttp = /^http:\/\//i.test(String(baseUrl).trim());
   let allowInsecureHttp = false;
   if (usesHttp) {
-    p5.log.warn("HTTP is not encrypted. Only use it for a trusted local or LAN server, like Ollama on your own network.");
-    const allowLocal = await p5.confirm({
+    p6.log.warn("HTTP is not encrypted. Only use it for a trusted local or LAN server, like Ollama on your own network.");
+    const allowLocal = await p6.confirm({
       message: "Allow insecure HTTP for this local/LAN server?",
       initialValue: true
     });
-    if (p5.isCancel(allowLocal)) return 0;
+    if (p6.isCancel(allowLocal)) return 0;
     allowInsecureHttp = allowLocal === true;
   }
-  const apiKey = await p5.password({
+  const apiKey = await p6.password({
     message: "API key (leave empty to keep the current key):"
   });
-  if (p5.isCancel(apiKey)) {
-    p5.cancel("Cancelled.");
+  if (p6.isCancel(apiKey)) {
+    p6.cancel("Cancelled.");
     return 0;
   }
-  const editHeaders = await p5.confirm({
+  const editHeaders = await p6.confirm({
     message: `Replace custom headers? (current: ${headerSummary})`,
     initialValue: false
   });
-  if (p5.isCancel(editHeaders)) {
-    p5.cancel("Cancelled.");
+  if (p6.isCancel(editHeaders)) {
+    p6.cancel("Cancelled.");
     return 0;
   }
   let headers;
   if (editHeaders) {
     headers = {};
-    p5.log.info("Enter the full header set. Leave the first one empty to remove all headers.");
+    p6.log.info("Enter the full header set. Leave the first one empty to remove all headers.");
     for (; ; ) {
-      const headerLine = await p5.text({
+      const headerLine = await p6.text({
         message: "Header (leave empty when done):",
         placeholder: "X-Plan: coding"
       });
-      if (p5.isCancel(headerLine)) {
-        p5.cancel("Cancelled.");
+      if (p6.isCancel(headerLine)) {
+        p6.cancel("Cancelled.");
         return 0;
       }
       const trimmed = String(headerLine).trim();
       if (!trimmed) break;
       const idx = trimmed.indexOf(":");
       if (idx < 1) {
-        p5.log.warn('Use the format "Name: Value" \u2014 skipped.');
+        p6.log.warn('Use the format "Name: Value" \u2014 skipped.');
         continue;
       }
       const name = trimmed.slice(0, idx).trim();
@@ -1868,22 +1932,22 @@ Headers: ${headerSummary}`);
     allowInsecureLocal: allowInsecureHttp,
     saveAnyway
   });
-  const spinner9 = p5.spinner();
-  spinner9.start("Testing connection...");
+  const spinner10 = p6.spinner();
+  spinner10.start("Testing connection...");
   let result = await runUpdate(false);
-  spinner9.stop("");
+  spinner10.stop("");
   if (!result.updated && result.error === "Nothing to change.") {
-    p5.log.info("No changes made.");
+    p6.log.info("No changes made.");
     return 0;
   }
   if (!result.updated) {
     showProviderAddFailure(result.error, result.hint, "Could not update backend.");
     if (!result.canSaveAnyway) return 1;
-    const saveAnyway = await p5.confirm({
+    const saveAnyway = await p6.confirm({
       message: "Save these settings anyway? The model list will not be refreshed.",
       initialValue: false
     });
-    if (p5.isCancel(saveAnyway) || !saveAnyway) return 1;
+    if (p6.isCancel(saveAnyway) || !saveAnyway) return 1;
     result = await runUpdate(true);
     if (!result.updated) {
       showProviderAddFailure(result.error, result.hint, "Could not update backend.");
@@ -1891,7 +1955,7 @@ Headers: ${headerSummary}`);
     }
   }
   if (result.modelsStale) {
-    p5.log.warn(`${result.provider?.name ?? provider.name} saved, but the model list may be out of date.`);
+    p6.log.warn(`${result.provider?.name ?? provider.name} saved, but the model list may be out of date.`);
   } else {
     logConnected(result.provider?.name ?? provider.name, result.modelCount ?? 0);
   }
@@ -1901,7 +1965,7 @@ async function runProvidersAdd() {
   const registry = loadRegistry();
   const hasOpencode = findOpencodeBinary() !== null;
   const options = [];
-  const addableTemplates = listAddableTemplates(registry.providers.map((p15) => p15.id));
+  const addableTemplates = listAddableTemplates(registry.providers.map((p16) => p16.id));
   if (addableTemplates.length > 0) {
     options.push({
       value: "templates",
@@ -1919,14 +1983,14 @@ async function runProvidersAdd() {
     label: "Import providers from OpenCode CLI",
     hint: hasOpencode ? "Import Groq, OpenAI, etc. from your OpenCode config" : "Requires OpenCode CLI"
   });
-  const choice = await p5.select({ message: "Add a provider", options });
-  if (p5.isCancel(choice)) {
-    p5.cancel("Cancelled.");
+  const choice = await p6.select({ message: "Add a provider", options });
+  if (p6.isCancel(choice)) {
+    p6.cancel("Cancelled.");
     return 0;
   }
   if (choice === "import") {
     if (!hasOpencode) {
-      p5.log.error("OpenCode CLI not found. Install from https://opencode.ai");
+      p6.log.error("OpenCode CLI not found. Install from https://opencode.ai");
       return 1;
     }
     return runProvidersImport();
@@ -1939,27 +2003,27 @@ async function runProvidersRemove(id, interactive = false) {
   const registry = loadRegistry();
   const provider = registry.providers.find((pr) => pr.id === id);
   if (!provider) {
-    p5.log.error(`Provider not found: ${id}`);
+    p6.log.error(`Provider not found: ${id}`);
     return 1;
   }
   if (interactive) {
-    const confirm9 = await p5.confirm({
+    const confirm10 = await p6.confirm({
       message: `Remove ${provider.name} (${id})?`,
       initialValue: false
     });
-    if (p5.isCancel(confirm9) || !confirm9) {
-      p5.cancel("Cancelled.");
+    if (p6.isCancel(confirm10) || !confirm10) {
+      p6.cancel("Cancelled.");
       return 0;
     }
   }
   const result = await removeProviderFromRegistry(id);
   if (!result.removed) {
-    p5.log.error(result.error ?? `Could not remove ${id}`);
+    p6.log.error(result.error ?? `Could not remove ${id}`);
     return 1;
   }
-  p5.log.success(`Removed ${result.name ?? id}.`);
+  p6.log.success(`Removed ${result.name ?? id}.`);
   if (result.credentialDeleted) {
-    p5.log.info("Provider API key removed from Keychain.");
+    p6.log.info("Provider API key removed from Keychain.");
   }
   return 0;
 }
@@ -1968,7 +2032,7 @@ async function runOpenCodeCloudDetail() {
   const routes = registry.providers.filter((provider) => provider.id === "zen" || provider.id === "go");
   printCloudProviderPanel("OpenCode Zen / Go");
   if (routes.length === 0) return "back";
-  const choice = await p5.select({
+  const choice = await p6.select({
     message: "Manage an OpenCode catalog",
     options: [
       ...routes.map((provider) => ({
@@ -1979,7 +2043,7 @@ async function runOpenCodeCloudDetail() {
       { value: "back", label: "Back", hint: "" }
     ]
   });
-  if (!p5.isCancel(choice) && choice !== "back") {
+  if (!p6.isCancel(choice) && choice !== "back") {
     await runProviderDetail(String(choice));
   }
   return "back";
@@ -1991,12 +2055,18 @@ async function runProviderDetail(id) {
   const registry = loadRegistry();
   const provider = registry.providers.find((pr) => pr.id === id);
   if (!provider) return "back";
-  const modelCount = provider.modelsCache?.models.length ?? 0;
+  const modelCount = getProviderModels(provider).length;
   const authLabel = formatRegistryAuthLabel(provider);
   printProviderDetailPanel(provider.name, modelCount, authLabel);
   const template = getTemplateById(provider.templateId) ?? getTemplateById(id);
   const hasDualAuth = template ? hasApiAndOAuth(template) : false;
   const detailOptions = [];
+  if (supportsManualModels(provider) && provider.enabled) {
+    detailOptions.push({ value: "add-model", label: "Add model manually", hint: "Test an exact model ID, then save it" });
+  }
+  if (provider.manualModels?.length) {
+    detailOptions.push({ value: "remove-model", label: "Remove manual model", hint: "Keep discovered models" });
+  }
   if (modelCount > 0) {
     detailOptions.push({
       value: "browse",
@@ -2045,13 +2115,15 @@ async function runProviderDetail(id) {
     { value: "remove", label: "Remove provider", hint: "Delete from registry and Keychain when safe" },
     { value: "back", label: "Back", hint: "" }
   );
-  const action = await p5.select({
+  const action = await p6.select({
     message: "What would you like to do?",
     options: detailOptions
   });
-  if (p5.isCancel(action) || action === "back") return "back";
+  if (p6.isCancel(action) || action === "back") return "back";
+  if (action === "add-model") return await runManualModelAddFlow(provider) === 0 ? "back" : "failed";
+  if (action === "remove-model") return await runManualModelRemoveFlow(provider) === 0 ? "back" : "failed";
   if (action === "browse") {
-    const cachedModels = provider.modelsCache?.models ?? [];
+    const cachedModels = getProviderModels(provider);
     const localModels = cachedModels.map((m) => cachedModelToLocal(m, provider)).filter((m) => m !== null);
     const localProvider = {
       id: provider.id,
@@ -2080,7 +2152,7 @@ async function runProviderDetail(id) {
   if (action === "toggle") {
     const result = toggleProviderEnabled(id);
     if (result.toggled) {
-      p5.log.success(`${provider.name} ${result.enabled ? "enabled" : "disabled"}.`);
+      p6.log.success(`${provider.name} ${result.enabled ? "enabled" : "disabled"}.`);
     }
     return "back";
   }
@@ -2088,17 +2160,17 @@ async function runProviderDetail(id) {
   return code === 0 ? "removed" : "failed";
 }
 async function runProviderApiKeyChange(provider, registry) {
-  const entered = await p5.password({
+  const entered = await p6.password({
     message: `Enter the new API key for ${provider.name}`,
     mask: "\u2022"
   });
-  if (p5.isCancel(entered)) {
-    p5.cancel("Cancelled.");
+  if (p6.isCancel(entered)) {
+    p6.cancel("Cancelled.");
     return 0;
   }
   const key = String(entered).trim();
   if (!key) {
-    p5.log.warn("API key cannot be empty.");
+    p6.log.warn("API key cannot be empty.");
     return 1;
   }
   const targetAuthRef = preferredRelayCredentialAuthRef(provider.id, provider.authRef);
@@ -2107,29 +2179,29 @@ async function runProviderApiKeyChange(provider, registry) {
     existing = await readStoredProviderCredential(provider.authRef);
   }
   if (existing && existing !== key) {
-    const confirmed = await p5.confirm({
+    const confirmed = await p6.confirm({
       message: "A different key is already stored. Replace it?",
       initialValue: false
     });
-    if (p5.isCancel(confirmed) || !confirmed) {
-      p5.log.info("Kept the existing stored key.");
+    if (p6.isCancel(confirmed) || !confirmed) {
+      p6.log.info("Kept the existing stored key.");
       return 0;
     }
   }
-  const spinner9 = p5.spinner();
-  spinner9.start(`Testing ${provider.name} and refreshing models...`);
+  const spinner10 = p6.spinner();
+  spinner10.start(`Testing ${provider.name} and refreshing models...`);
   const result = await refreshProviderModels(provider.id, key, registry);
-  spinner9.stop("");
+  spinner10.stop("");
   if (!result.ok) {
-    p5.log.error(`${provider.name}: ${result.reason ?? "The new key was rejected."}`);
+    p6.log.error(`${provider.name}: ${result.reason ?? "The new key was rejected."}`);
     return 1;
   }
   const saved = await saveProviderCredential(targetAuthRef, key);
   if (!saved) {
-    p5.log.error("The new key works, but the credential store was unavailable \u2014 key was not saved.");
+    p6.log.error("The new key works, but the credential store was unavailable \u2014 key was not saved.");
     return 1;
   }
-  p5.log.success(`${provider.name}: key updated and ${result.modelCount ?? 0} model${result.modelCount === 1 ? "" : "s"} available.`);
+  p6.log.success(`${provider.name}: key updated and ${result.modelCount ?? 0} model${result.modelCount === 1 ? "" : "s"} available.`);
   return 0;
 }
 async function runProvidersHub() {
@@ -2157,11 +2229,11 @@ async function runProvidersHub() {
       options.push({ value: "import", label: "\u2192 Import providers from OpenCode CLI", hint: "One-time import" });
     }
     options.push({ value: "done", label: "Done", hint: "" });
-    const choice = await p5.select({
+    const choice = await p6.select({
       message: entries.length > 0 ? "Your AI providers" : "Get started",
       options
     });
-    if (p5.isCancel(choice) || choice === "done") {
+    if (p6.isCancel(choice) || choice === "done") {
       return lastOperationFailed ? 1 : 0;
     }
     if (choice === "add") {
@@ -2180,10 +2252,10 @@ async function runProvidersHub() {
       const configuredIds = loadRegistry().providers.map((provider) => provider.id);
       const oauthTemplates = listVisibleOAuthTemplates(configuredIds);
       if (oauthTemplates.length === 0) {
-        p5.log.info("All visible OAuth providers are already configured.");
+        p6.log.info("All visible OAuth providers are already configured.");
         continue;
       }
-      const providerId = await p5.select({
+      const providerId = await p6.select({
         message: "Which provider?",
         options: oauthTemplates.map((template) => ({
           value: template.id,
@@ -2191,7 +2263,7 @@ async function runProvidersHub() {
           hint: "device code"
         }))
       });
-      if (!p5.isCancel(providerId)) {
+      if (!p6.isCancel(providerId)) {
         lastOperationFailed = await runProvidersAuth(providerId) !== 0;
       }
       continue;
@@ -2212,7 +2284,7 @@ async function runProvidersHub() {
 async function runProvidersCommand(args) {
   const parsed = parseProvidersArgs(args);
   if (parsed.error) {
-    p5.log.error(parsed.error);
+    p6.log.error(parsed.error);
     return 1;
   }
   if (parsed.showHelp) {
@@ -2237,7 +2309,7 @@ async function runProvidersCommand(args) {
 
 // src/codex.ts
 import pc7 from "picocolors";
-import * as p8 from "@clack/prompts";
+import * as p9 from "@clack/prompts";
 import { join as join6 } from "path";
 
 // src/codex-proxy.ts
@@ -2342,15 +2414,28 @@ function liftAdditionalToolsInput(input, tools) {
 }
 function messageText(content) {
   if (typeof content === "string") return content;
-  return (content ?? []).map((p15) => p15.type === "output_text" || p15.type === "input_text" || p15.type === "text" ? p15.text ?? "" : "").join("");
+  return (content ?? []).map((p16) => p16.type === "output_text" || p16.type === "input_text" || p16.type === "text" ? p16.text ?? "" : "").join("");
+}
+function messageContent(content) {
+  if (typeof content === "string") return content;
+  const parts = (content ?? []).flatMap((part) => {
+    if (part.type === "output_text" || part.type === "input_text" || part.type === "text") {
+      return typeof part.text === "string" ? [{ type: "text", text: part.text }] : [];
+    }
+    if (part.type === "input_image" && typeof part.image_url === "string" && part.image_url.trim()) {
+      return [{ type: "image", image: part.image_url }];
+    }
+    return [];
+  });
+  return parts.length > 0 ? parts : [{ type: "text", text: "" }];
 }
 function extractDeveloperAndInstructions(items, instructions) {
   const developerParts = [];
   const remaining = [];
   for (const item of items) {
     if ("role" in item && item.role === "developer") {
-      const text5 = messageText(item.content);
-      if (text5.trim()) developerParts.push(text5.trim());
+      const text6 = messageText(item.content);
+      if (text6.trim()) developerParts.push(text6.trim());
     } else {
       remaining.push(item);
     }
@@ -2423,11 +2508,11 @@ function ensureUserFirst(messages) {
 function reasoningSummaryText(item) {
   return (item.summary ?? []).map((part) => part.type === "summary_text" ? part.text ?? "" : "").join("");
 }
-function makeReasoningOutputItem(id, text5) {
+function makeReasoningOutputItem(id, text6) {
   return {
     id,
     type: "reasoning",
-    summary: text5.trim() ? [{ type: "summary_text", text: text5 }] : []
+    summary: text6.trim() ? [{ type: "summary_text", text: text6 }] : []
   };
 }
 function translateResponsesInput(input, instructions, npm, toolContext = createCodexToolContext()) {
@@ -2528,9 +2613,9 @@ function translateResponsesInput(input, instructions, npm, toolContext = createC
         }]
       });
     } else if (item.type === "agent_message") {
-      const text5 = messageText(item.content);
-      if (text5.trim()) {
-        messages.push({ role: "user", content: [{ type: "text", text: text5 }] });
+      const text6 = messageText(item.content);
+      if (text6.trim()) {
+        messages.push({ role: "user", content: [{ type: "text", text: text6 }] });
       }
     } else if (item.type === "compaction" || item.type === "context_compaction") {
       const summary = decodeCompactionContent(item.encrypted_content) ?? "";
@@ -2540,8 +2625,8 @@ ${summary}` }] });
       }
     } else if ("role" in item) {
       const role = item.role === "assistant" ? "assistant" : "user";
-      const text5 = messageText(item.content);
-      messages.push({ role, content: [{ type: "text", text: text5 }] });
+      const content = messageContent(item.content);
+      messages.push({ role, content });
     }
   }
   return {
@@ -3492,9 +3577,9 @@ ${summary}`
   return changed ? { ...body, input } : body;
 }
 function prepareNativeHttpBody(body) {
-  const text5 = typeof body === "string" ? body : Buffer.from(body).toString("utf8");
+  const text6 = typeof body === "string" ? body : Buffer.from(body).toString("utf8");
   try {
-    const parsed = JSON.parse(text5);
+    const parsed = JSON.parse(text6);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return body;
     const prepared = prepareNativeCodexBody(parsed);
     return prepared === parsed ? body : JSON.stringify(prepared);
@@ -3651,11 +3736,11 @@ function parseFunctionCalls(value) {
     (v) => v && typeof v === "object" && v.type === "function_call"
   );
 }
-function parsePayloadResponse(text5) {
+function parsePayloadResponse(text6) {
   const relayIds = /* @__PURE__ */ new Set();
   const completedPayloads = [];
   let argumentDeltas = "";
-  for (const line of text5.split(/\r?\n/)) {
+  for (const line of text6.split(/\r?\n/)) {
     if (!line.startsWith("data:")) continue;
     const data = line.slice(5).trim();
     if (!data || data === "[DONE]") continue;
@@ -3681,7 +3766,7 @@ function parsePayloadResponse(text5) {
     }
   }
   try {
-    for (const call of parseFunctionCalls(JSON.parse(text5))) {
+    for (const call of parseFunctionCalls(JSON.parse(text6))) {
       if (call.name !== AGENT_PAYLOAD_RELAY_TOOL) continue;
       const payload = parsePayloadArguments(call.arguments);
       if (payload !== void 0) completedPayloads.push(payload);
@@ -3746,9 +3831,9 @@ function createNativePayloadRelay(options) {
       });
       const response = await fetchImpl(url, { method: "POST", headers: nativeHeaders(context.headers), body, redirect: "manual", signal: context.signal });
       if (!response.ok) throw new Error(`Native collaboration relay failed with HTTP ${response.status}`);
-      const text5 = await response.text();
-      if (Buffer.byteLength(text5, "utf8") > NATIVE_PAYLOAD_MAX_BYTES) throw new Error("Native collaboration relay response exceeded its size limit");
-      const payload = parsePayloadResponse(text5);
+      const text6 = await response.text();
+      if (Buffer.byteLength(text6, "utf8") > NATIVE_PAYLOAD_MAX_BYTES) throw new Error("Native collaboration relay response exceeded its size limit");
+      const payload = parsePayloadResponse(text6);
       cacheValue(key, payload, Date.now() + 15 * 6e4);
       return payload;
     },
@@ -3864,9 +3949,9 @@ function estimateCodexRequestChars(params) {
     if (Array.isArray(msg.content)) {
       for (const part of msg.content) {
         if (!part || typeof part !== "object") continue;
-        const p15 = part;
-        if (typeof p15["text"] === "string") {
-          chars += p15["text"].length;
+        const p16 = part;
+        if (typeof p16["text"] === "string") {
+          chars += p16["text"].length;
         } else {
           chars += JSON.stringify(part).length;
         }
@@ -3877,15 +3962,15 @@ function estimateCodexRequestChars(params) {
   }
   return chars;
 }
-function clipTextForContext(text5, maxChars) {
-  if (text5.length <= maxChars) return text5;
+function clipTextForContext(text6, maxChars) {
+  if (text6.length <= maxChars) return text6;
   const marker = `
 
-[... ${text5.length} chars clipped from oversized context item ...]
+[... ${text6.length} chars clipped from oversized context item ...]
 
 `;
   const edge = Math.max(1, Math.floor((maxChars - marker.length) / 2));
-  return `${text5.slice(0, edge)}${marker}${text5.slice(-edge)}`;
+  return `${text6.slice(0, edge)}${marker}${text6.slice(-edge)}`;
 }
 function clipLargeTextParts(params, maxCharsPerPart) {
   const messages = params.messages.map((msg) => {
@@ -3897,9 +3982,9 @@ function clipLargeTextParts(params, maxCharsPerPart) {
       ...msg,
       content: msg.content.map((part) => {
         if (!part || typeof part !== "object") return part;
-        const p15 = part;
-        if (typeof p15.text !== "string") return part;
-        return { ...p15, text: clipTextForContext(p15.text, maxCharsPerPart) };
+        const p16 = part;
+        if (typeof p16.text !== "string") return part;
+        return { ...p16, text: clipTextForContext(p16.text, maxCharsPerPart) };
       })
     };
   });
@@ -3933,7 +4018,7 @@ var COMPACTION_PROMPT_MARKER = "You are performing a CONTEXT CHECKPOINT COMPACTI
 function inputItemText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-  return content.map((p15) => p15 && typeof p15 === "object" && typeof p15.text === "string" ? p15.text : "").join("");
+  return content.map((p16) => p16 && typeof p16 === "object" && typeof p16.text === "string" ? p16.text : "").join("");
 }
 function isLikelyCodexCompactionRequest(body) {
   if (!Array.isArray(body.input)) return false;
@@ -4104,11 +4189,11 @@ async function startCodexProxy(routes, options = {}) {
     }));
   }
   return new Promise((resolve2, reject2) => {
-    const log14 = debug ? makeTraceLogger(getCodexProxyDebugLogPath()) : () => {
+    const log15 = debug ? makeTraceLogger(getCodexProxyDebugLogPath()) : () => {
     };
     if (debug) resetCodexBodyDumpLog();
     const onRejection = (reason) => {
-      if (debug) log14(`unhandled-rejection: ${formatUpstreamError(reason)}`);
+      if (debug) log15(`unhandled-rejection: ${formatUpstreamError(reason)}`);
     };
     process.on("unhandledRejection", onRejection);
     const server = createServer(async (req, res) => {
@@ -4125,7 +4210,7 @@ async function startCodexProxy(routes, options = {}) {
       }
       const effectivePath = mixedPath?.suffix ?? url;
       if (debug) {
-        log14(`-> ${req.method} ${url} content-type=${req.headers["content-type"] ?? "(none)"} content-encoding=${req.headers["content-encoding"] ?? "(none)"} content-length=${req.headers["content-length"] ?? "(none)"}`);
+        log15(`-> ${req.method} ${url} content-type=${req.headers["content-type"] ?? "(none)"} content-encoding=${req.headers["content-encoding"] ?? "(none)"} content-length=${req.headers["content-length"] ?? "(none)"}`);
       }
       if (!requireAuth && req.method === "POST") {
         const origin = req.headers.origin;
@@ -4210,7 +4295,7 @@ async function startCodexProxy(routes, options = {}) {
           rawBody = await readBody(req);
         } catch (err) {
           if (debug) {
-            log14(`Error: failed to read/decode request body on POST ${url}: ${formatUpstreamError(err)} content-encoding=${req.headers["content-encoding"] ?? "(none)"}`);
+            log15(`Error: failed to read/decode request body on POST ${url}: ${formatUpstreamError(err)} content-encoding=${req.headers["content-encoding"] ?? "(none)"}`);
           }
           sendJson(res, 400, { error: { message: "Invalid request body", type: "invalid_request_error" } });
           return;
@@ -4221,7 +4306,7 @@ async function startCodexProxy(routes, options = {}) {
         } catch (err) {
           if (debug) {
             const headers = JSON.stringify(req.headers);
-            log14(`Error: Invalid JSON body on POST ${url}: ${formatUpstreamError(err)} headers=${headers} rawBody=${JSON.stringify(rawBody.slice(0, 2e3))}`);
+            log15(`Error: Invalid JSON body on POST ${url}: ${formatUpstreamError(err)} headers=${headers} rawBody=${JSON.stringify(rawBody.slice(0, 2e3))}`);
           }
           sendJson(res, 400, { error: { message: "Invalid JSON body", type: "invalid_request_error" } });
           return;
@@ -4231,7 +4316,7 @@ async function startCodexProxy(routes, options = {}) {
           const inputItems = Array.isArray(body.input) ? body.input.length : typeof body.input === "string" ? 1 : 0;
           const tools = Array.isArray(body.tools) ? body.tools : [];
           const toolNames = tools.map((t) => t && typeof t === "object" && "name" in t ? t.name : "?").join(",");
-          log14(`request: model=${String(body.model ?? "")} previous_response_id=${prevId ?? "(none)"} input_items=${inputItems} body_bytes=${rawBody.length} tools=[${toolNames || "none"}]`);
+          log15(`request: model=${String(body.model ?? "")} previous_response_id=${prevId ?? "(none)"} input_items=${inputItems} body_bytes=${rawBody.length} tools=[${toolNames || "none"}]`);
           appendCodexBodyDump({
             ts: (/* @__PURE__ */ new Date()).toISOString(),
             transport: "http",
@@ -4245,14 +4330,14 @@ async function startCodexProxy(routes, options = {}) {
           for (const t of mcpTools) {
             const mt = t;
             const subTools = mt.type === "namespace" && Array.isArray(mt.tools) ? ` subTools=[${mt.tools.length}]` : "";
-            log14(`  mcp-tool: name=${mt.name} type=${mt.type} desc=${JSON.stringify(String(mt.description ?? "")).slice(0, 120)}${subTools}`);
+            log15(`  mcp-tool: name=${mt.name} type=${mt.type} desc=${JSON.stringify(String(mt.description ?? "")).slice(0, 120)}${subTools}`);
           }
         }
         const modelId = String(body.model ?? "");
         const markedSubagent = Boolean(mixedNative && isCodexSubagentRequest(body, req.headers));
         const subagentRoute = mixedNative && markedSubagent ? resolveCodexSubagentRoute(routes, mixedNative.subagentRouteModelId, body, req.headers) : void 0;
         if (debug && markedSubagent) {
-          log14(`subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? "(none)"}`);
+          log15(`subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? "(none)"}`);
         }
         if (mixedNative && markedSubagent && !subagentRoute) {
           audit({ transport: "http", requestedModel: modelId, dispatch: "relay-subagent", phase: "complete", outcome: "error", status: 503 });
@@ -4330,12 +4415,12 @@ async function startCodexProxy(routes, options = {}) {
           const fallbackLm = fallbackRoute ? models.get(fallbackRoute.modelId) : void 0;
           if (fallbackRoute && fallbackLm) {
             if (debug) {
-              log14(`resolveModel fallback: requested="${modelId}" \u2192 ${fallbackRoute.modelId}`);
+              log15(`resolveModel fallback: requested="${modelId}" \u2192 ${fallbackRoute.modelId}`);
             }
             resolved = { route: fallbackRoute, languageModel: fallbackLm };
           } else {
             if (debug) {
-              log14(`resolveModel failed: requested="${modelId}" known=[${routes.map((r) => r.modelId).join(", ")}]`);
+              log15(`resolveModel failed: requested="${modelId}" known=[${routes.map((r) => r.modelId).join(", ")}]`);
             }
             sendJson(res, 404, { error: { message: `Unknown model: ${modelId}`, type: "invalid_request_error" } });
             return;
@@ -4384,20 +4469,20 @@ async function startCodexProxy(routes, options = {}) {
             const before = params.messages.length;
             const estimatedChars = estimateCodexRequestChars(params);
             const compaction = isLikelyCodexCompactionRequest(body);
-            if (debug) log14(`context check: model=${route.modelId} window=${route.contextWindow} chars=${estimatedChars} compaction=${compaction ? "yes" : "no"} messages=${before}`);
+            if (debug) log15(`context check: model=${route.modelId} window=${route.contextWindow} chars=${estimatedChars} compaction=${compaction ? "yes" : "no"} messages=${before}`);
             params = protectCodexCompactionParams(body, params, route.contextWindow);
             if (debug && params.messages.length < before) {
-              log14(`context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages`);
+              log15(`context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages`);
             }
           }
           const v2Compaction = isCodexV2CompactionRequest(body);
           if (v2Compaction) {
             params = appendCompactionInstruction(params);
-            if (debug) log14(`compaction v2: synthesizing single compaction item for model=${route.modelId}`);
+            if (debug) log15(`compaction v2: synthesizing single compaction item for model=${route.modelId}`);
           }
           if (debug) {
             const effort = body.reasoning?.effort;
-            log14(`model=${route.modelId} effort=${effort ?? "(none)"} providerOptions=${JSON.stringify(params.providerOptions)}`);
+            log15(`model=${route.modelId} effort=${effort ?? "(none)"} providerOptions=${JSON.stringify(params.providerOptions)}`);
           }
           if (body.stream) {
             res.writeHead(200, {
@@ -4427,11 +4512,11 @@ async function startCodexProxy(routes, options = {}) {
                 await streamResponsesResponse(languageModel, params, modelId, write, (summary) => {
                   if (debug) {
                     const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
-                    log14(`response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
+                    log15(`response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
                   }
                 }, (progress) => {
                   if (debug) {
-                    log14(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
+                    log15(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
                   }
                 });
               audit({
@@ -4459,7 +4544,7 @@ async function startCodexProxy(routes, options = {}) {
                 outcome: "error",
                 status
               });
-              if (debug) log14(`sdk error: ${route.modelId}: ${msg}`);
+              if (debug) log15(`sdk error: ${route.modelId}: ${msg}`);
               if (status === 429) {
                 writeResponsesRateLimitStream(modelId, msg, write);
               } else {
@@ -4505,7 +4590,7 @@ async function startCodexProxy(routes, options = {}) {
                 outcome: "error",
                 status
               });
-              if (debug) log14(`sdk error: ${route.modelId}: ${msg}`);
+              if (debug) log15(`sdk error: ${route.modelId}: ${msg}`);
               if (status === 429) {
                 sendJson(res, 200, responsesRateLimitBody(modelId, msg));
               } else {
@@ -4515,7 +4600,7 @@ async function startCodexProxy(routes, options = {}) {
           }
         } catch (err) {
           const msg = formatUpstreamError(err);
-          log14(`handler error: ${msg}`);
+          log15(`handler error: ${msg}`);
           sendJson(res, 500, { error: { message: msg, type: "api_error" } });
         }
         return;
@@ -4533,6 +4618,7 @@ async function startCodexProxy(routes, options = {}) {
       if (buf.length < 2) return null;
       const b0 = buf[0];
       const b1 = buf[1];
+      const fin = (b0 & 128) !== 0;
       const masked = (b1 & 128) !== 0;
       let payloadLen = b1 & 127;
       let offset = 2;
@@ -4543,11 +4629,11 @@ async function startCodexProxy(routes, options = {}) {
       } else if (payloadLen === 127) {
         if (buf.length < 10) return null;
         const declaredLength = buf.readBigUInt64BE(2);
-        if (declaredLength > BigInt(MAX_CODEX_REQUEST_BYTES)) return { text: "", complete: true, opcode: -1 };
+        if (declaredLength > BigInt(MAX_CODEX_REQUEST_BYTES)) return { payload: Buffer.alloc(0), complete: true, opcode: -1, fin, consumed: buf.length };
         payloadLen = Number(declaredLength);
         offset = 10;
       }
-      if (payloadLen > MAX_CODEX_REQUEST_BYTES) return { text: "", complete: true, opcode: -1 };
+      if (payloadLen > MAX_CODEX_REQUEST_BYTES) return { payload: Buffer.alloc(0), complete: true, opcode: -1, fin, consumed: buf.length };
       const maskLen = masked ? 4 : 0;
       if (buf.length < offset + maskLen + payloadLen) return null;
       const mask = masked ? buf.slice(offset, offset + 4) : null;
@@ -4557,11 +4643,11 @@ async function startCodexProxy(routes, options = {}) {
         payload[i] = buf[offset + i] ^ (mask ? mask[i % 4] : 0);
       }
       const opcode = b0 & 15;
-      if (![1, 8, 9, 10].includes(opcode)) return { text: "", complete: true, opcode };
-      return { text: payload.toString("utf8"), complete: true, opcode };
+      if (![0, 1, 8, 9, 10].includes(opcode)) return { payload: Buffer.alloc(0), complete: true, opcode: -1, fin, consumed: offset + payloadLen };
+      return { payload, complete: true, opcode, fin, consumed: offset + payloadLen };
     }
-    function wsEncodeTextFrame(text5) {
-      const payload = Buffer.from(text5, "utf8");
+    function wsEncodeTextFrame(text6) {
+      const payload = Buffer.from(text6, "utf8");
       const len = payload.length;
       let header;
       if (len < 126) {
@@ -4629,6 +4715,7 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
 `
       );
       let frameBuf = Buffer.alloc(0);
+      let fragmentedText;
       let externalActive = false;
       let nativeActive = false;
       let nativeUpstream;
@@ -4693,397 +4780,425 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
       };
       const onData = (chunk) => {
         frameBuf = Buffer.concat([frameBuf, chunk]);
-        const frame = wsDecodeFrame(frameBuf);
-        if (!frame) return;
-        frameBuf = Buffer.alloc(0);
-        if (frame.opcode === 9) {
-          socket.write(wsPongFrame(frame.text));
-          return;
-        }
-        if (frame.opcode === 8) {
-          closeSocket();
-          return;
-        }
-        if (frame.opcode === -1) {
-          socket.write(wsCloseFrame(1009));
-          socket.end();
-          return;
-        }
-        if (frame.opcode !== 1) {
-          socket.write(wsCloseFrame(1003));
-          socket.end();
-          return;
-        }
-        if (externalActive) {
-          closeSocket(1008);
-          return;
-        }
-        void (async () => {
-          let body;
-          try {
-            body = JSON.parse(frame.text);
-          } catch {
-            if (debug) log14(`WS Error: Invalid JSON body: rawBody=${JSON.stringify(frame.text.slice(0, 2e3))}`);
-            sendWsEvent(`event: error
-data: ${JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_request_error" } })}
-
-`);
-            closeSocket();
-            return;
-          }
-          if (debug) {
-            const prevId = body.previous_response_id ?? null;
-            const inputItems = Array.isArray(body.input) ? body.input.length : typeof body.input === "string" ? 1 : 0;
-            const tools = Array.isArray(body.tools) ? body.tools : [];
-            const toolNames = tools.map((t) => t && typeof t === "object" && "name" in t ? t.name : "?").join(",");
-            log14(`WS request: model=${String(body.model ?? "")} previous_response_id=${prevId ?? "(none)"} input_items=${inputItems} body_bytes=${frame.text.length} tools=[${toolNames || "none"}]`);
-            const reasoning = body.reasoning && typeof body.reasoning === "object" ? Object.keys(body.reasoning).join(",") : typeof body.reasoning;
-            const clientMetadata = body.client_metadata && typeof body.client_metadata === "object" ? Object.keys(body.client_metadata).join(",") : typeof body.client_metadata;
-            log14(`WS request shape: stream=${String(body.stream)} store=${String(body.store)} generate=${String(body.generate)} parallel_tool_calls=${String(body.parallel_tool_calls)} reasoning_keys=[${reasoning || "none"}] include=${Array.isArray(body.include) ? body.include.join(",") : String(body.include)} client_metadata_keys=[${clientMetadata || "none"}]`);
-            appendCodexBodyDump({
-              ts: (/* @__PURE__ */ new Date()).toISOString(),
-              transport: "ws",
-              direction: "request",
-              model: String(body.model ?? ""),
-              previous_response_id: prevId,
-              tools: body.tools,
-              input: body.input
-            });
-          }
-          const modelId = String(body.model ?? "");
-          currentRequestModel = modelId;
-          const markedSubagent = Boolean(mixedNative && isCodexSubagentRequest(body, req.headers));
-          const subagentRoute = mixedNative && markedSubagent ? resolveCodexSubagentRoute(routes, mixedNative.subagentRouteModelId, body, req.headers) : void 0;
-          if (debug && markedSubagent) {
-            log14(`WS subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? "(none)"}`);
-          }
-          if (mixedNative && markedSubagent && !subagentRoute) {
-            audit({ transport: "ws", requestedModel: modelId, dispatch: "relay-subagent", phase: "complete", outcome: "error", status: 503 });
-            sendWsEvent(`event: error
-data: ${JSON.stringify({ error: {
-              message: "Codex marked this request as a Sub-agent, but no configured Codex Sub-agent route is available.",
-              type: "service_unavailable"
-            } })}
-
-`);
-            closeSocket();
-            return;
-          }
-          if (mixedNative) {
-            if (!markedSubagent) {
-              const dispatch = classifyCodexDispatch(modelId, routes, mixedNative.nativeModelIds);
-              if (dispatch.kind === "unknown") {
-                audit({ transport: "ws", requestedModel: modelId, dispatch: "unknown", phase: "complete", outcome: "error", status: 404 });
-                sendWsEvent(`event: error
-data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "invalid_request_error" } })}
-
-`);
-                closeSocket();
-                return;
-              }
-              if (dispatch.kind === "native") {
-                audit({
-                  transport: "ws",
-                  requestedModel: modelId,
-                  dispatch: "native",
-                  phase: "dispatch",
-                  provider: "openai-native",
-                  routeModel: modelId,
-                  upstreamModel: modelId
-                });
-                const nativeBody = prepareNativeCodexBody(body);
-                if (debug && nativeBody !== body) {
-                  log14(`WS native history normalized: model=${modelId} converted Relay compaction for native verification`);
-                }
-                if (nativeActive && nativeUpstream) {
-                  if (nativeUpstream.readyState === WebSocket.OPEN) {
-                    if (debug) log14(`WS native forwarding next turn: model=${modelId}`);
-                    nativeSendTurn?.(nativeBody, modelId);
-                  } else if (debug) {
-                    log14(`WS native cannot forward next turn: upstream_state=${nativeUpstream.readyState}`);
-                  }
-                  return;
-                }
-                const wsTarget = mixedNative.nativeBaseUrl ? `${mixedNative.nativeBaseUrl.replace(/^http:/, "ws:").replace(/^https:/, "wss:").replace(/\/$/, "")}/responses` : void 0;
-                const target = nativeResponsesWebSocketOptions({ headers: req.headers, wsUrl: wsTarget });
-                let upstream;
-                let nativeOpened = false;
-                let nativeCompleted = false;
-                let nativeTurnModelId = modelId;
-                let nativeFrameCount = 0;
-                let finished = false;
-                let connectTimer;
-                let firstFrameTimer;
-                const clearTimers = () => {
-                  if (connectTimer) clearTimeout(connectTimer);
-                  if (firstFrameTimer) clearTimeout(firstFrameTimer);
-                };
-                const sendNativeError = (message) => {
-                  if (socket.destroyed) return;
-                  socket.write(wsEncodeTextFrame(JSON.stringify({
-                    type: "error",
-                    error: { type: "upstream_error", message }
-                  })));
-                };
-                const closeBoth = (message, closeCode = 1011) => {
-                  if (finished) return;
-                  finished = true;
-                  nativeActive = false;
-                  nativeSendTurn = void 0;
-                  if (nativeUpstream === upstream) nativeUpstream = void 0;
-                  clearTimers();
-                  if (debug && message) {
-                    log14(`WS native upstream failed: model=${nativeTurnModelId} opened=${nativeOpened} frames=${nativeFrameCount} message=${message}`);
-                  }
-                  if (message && !nativeCompleted) {
-                    audit({
-                      transport: "ws",
-                      requestedModel: nativeTurnModelId,
-                      dispatch: "native",
-                      phase: "complete",
-                      provider: "openai-native",
-                      routeModel: nativeTurnModelId,
-                      upstreamModel: nativeTurnModelId,
-                      outcome: "error",
-                      status: "upstream-failed"
-                    });
-                  }
-                  if (message && !nativeCompleted) sendNativeError(message);
-                  try {
-                    upstream?.close();
-                  } catch {
-                  }
-                  closeSocket(closeCode);
-                };
-                const sendNativeTurn = (turnBody, turnModelId) => {
-                  if (!upstream || upstream.readyState !== WebSocket.OPEN) {
-                    if (debug) log14(`WS native cannot send turn: model=${turnModelId} upstream_state=${upstream?.readyState ?? "missing"}`);
-                    return;
-                  }
-                  nativeTurnModelId = turnModelId;
-                  nativeCompleted = false;
-                  if (firstFrameTimer) clearTimeout(firstFrameTimer);
-                  upstream.send(JSON.stringify({ type: "response.create", ...turnBody }));
-                  firstFrameTimer = setTimeout(() => closeBoth("Native Codex WebSocket response timed out"), 6e4);
-                };
-                try {
-                  if (debug) {
-                    log14(`WS native connecting: model=${modelId} url=${target.url} headers=[${Object.keys(target.headers).join(",")}]`);
-                  }
-                  upstream = new WebSocket(target.url, { headers: target.headers });
-                  nativeUpstream = upstream;
-                  nativeSendTurn = sendNativeTurn;
-                  nativeActive = true;
-                  connectTimer = setTimeout(() => closeBoth("Native Codex WebSocket connection timed out"), 15e3);
-                  upstream.once("open", () => {
-                    nativeOpened = true;
-                    if (connectTimer) clearTimeout(connectTimer);
-                    if (debug) log14(`WS native upstream open: model=${modelId}`);
-                    sendNativeTurn(nativeBody, modelId);
-                  });
-                  upstream.once("unexpected-response", (_request, response) => {
-                    if (debug) log14(`WS native upstream HTTP rejection: model=${modelId} status=${response.statusCode}`);
-                    response.resume();
-                    closeBoth(`Native Codex WebSocket rejected (${response.statusCode})`);
-                  });
-                  upstream.on("message", (data) => {
-                    if (socket.destroyed) return;
-                    nativeFrameCount += 1;
-                    if (firstFrameTimer) clearTimeout(firstFrameTimer);
-                    const text5 = Array.isArray(data) ? Buffer.concat(data).toString("utf8") : data.toString("utf8");
-                    let eventType = "non-json";
-                    try {
-                      const parsed = JSON.parse(text5);
-                      if (typeof parsed.type === "string") eventType = parsed.type;
-                      if (eventType === "response.completed" || eventType === "response.failed" || eventType === "response.incomplete") {
-                        nativeCompleted = true;
-                        audit({
-                          transport: "ws",
-                          requestedModel: modelId,
-                          dispatch: "native",
-                          phase: "complete",
-                          provider: "openai-native",
-                          routeModel: modelId,
-                          upstreamModel: modelId,
-                          outcome: eventType === "response.completed" ? "ok" : "error",
-                          status: eventType
-                        });
-                      }
-                    } catch {
-                    }
-                    if (debug && (nativeFrameCount <= 3 || nativeCompleted || eventType === "error" || nativeFrameCount % 25 === 0)) {
-                      log14(`WS native frame#${nativeFrameCount}: model=${modelId} type=${eventType} bytes=${text5.length}`);
-                    }
-                    socket.write(wsEncodeTextFrame(text5));
-                  });
-                  upstream.once("error", (err) => closeBoth(`Native Codex WebSocket error: ${err.message}`));
-                  upstream.once("close", (code, reason) => {
-                    const detail = reason?.length ? ` reason=${reason.toString("utf8").slice(0, 200)}` : "";
-                    if (debug) log14(`WS native upstream close: model=${modelId} code=${code}${detail} frames=${nativeFrameCount}`);
-                    if (nativeUpstream === upstream) nativeUpstream = void 0;
-                    nativeActive = false;
-                    if (!finished) closeBoth(nativeCompleted ? void 0 : `Native Codex WebSocket closed before completion (${code})`);
-                  });
-                  socket.once("close", () => {
-                    if (debug) log14(`WS native downstream close: model=${modelId} frames=${nativeFrameCount} completed=${nativeCompleted}`);
-                    finished = true;
-                    nativeActive = false;
-                    nativeSendTurn = void 0;
-                    if (nativeUpstream === upstream) nativeUpstream = void 0;
-                    clearTimers();
-                    try {
-                      upstream?.close();
-                    } catch {
-                    }
-                  });
-                } catch (err) {
-                  closeBoth(`Native Codex WebSocket setup failed: ${err instanceof Error ? err.message : String(err)}`);
-                }
-                return;
-              }
+        while (!socketClosing) {
+          const frame = wsDecodeFrame(frameBuf);
+          if (!frame) return;
+          frameBuf = frameBuf.slice(frame.consumed);
+          if (frame.opcode === 9) {
+            if (!frame.fin || frame.payload.length > 125) {
+              socket.write(wsCloseFrame(1002));
+              socket.end();
+              return;
             }
+            socket.write(wsPongFrame(frame.payload.toString("utf8")));
+            continue;
           }
-          externalActive = true;
-          let resolved = subagentRoute ? resolveModel(routes, models, subagentRoute.modelId) : resolveModel(routes, models, modelId);
-          if (!resolved) {
-            const fb = routes[0];
-            const fbLm = fb ? models.get(fb.modelId) : void 0;
-            if (fb && fbLm) {
-              if (debug) log14(`WS resolveModel fallback: requested="${modelId}" \u2192 ${fb.modelId}`);
-              resolved = { route: fb, languageModel: fbLm };
-            } else {
-              if (debug) log14(`WS resolveModel failed: requested="${modelId}" known=[${routes.map((r) => r.modelId).join(", ")}]`);
+          if (frame.opcode === 10) continue;
+          if (frame.opcode === 8) {
+            closeSocket();
+            return;
+          }
+          if (frame.opcode === -1) {
+            socket.write(wsCloseFrame(1009));
+            socket.end();
+            return;
+          }
+          if (frame.opcode === 1) {
+            if (fragmentedText) {
+              socket.write(wsCloseFrame(1002));
+              socket.end();
+              return;
+            }
+            if (!frame.fin) {
+              fragmentedText = [frame.payload];
+              continue;
+            }
+          } else if (frame.opcode === 0) {
+            if (!fragmentedText) {
+              socket.write(wsCloseFrame(1002));
+              socket.end();
+              return;
+            }
+            fragmentedText.push(frame.payload);
+            if (!frame.fin) continue;
+          } else {
+            socket.write(wsCloseFrame(1003));
+            socket.end();
+            return;
+          }
+          const frameText = frame.opcode === 0 ? Buffer.concat(fragmentedText ?? []).toString("utf8") : frame.payload.toString("utf8");
+          fragmentedText = void 0;
+          if (externalActive) {
+            closeSocket(1008);
+            return;
+          }
+          void (async () => {
+            let body;
+            try {
+              body = JSON.parse(frameText);
+            } catch {
+              if (debug) log15(`WS Error: Invalid JSON body: rawBody=${JSON.stringify(frameText.slice(0, 2e3))}`);
               sendWsEvent(`event: error
-data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
+data: ${JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_request_error" } })}
 
 `);
               closeSocket();
               return;
             }
-          }
-          const { route, languageModel } = resolved;
-          const relayDispatch = markedSubagent ? "relay-subagent" : "relay";
-          audit({
-            transport: "ws",
-            requestedModel: modelId,
-            dispatch: relayDispatch,
-            phase: "dispatch",
-            provider: route.providerId ?? "relay",
-            routeModel: route.modelId,
-            upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId
-          });
-          currentExternalCompletedResponse = void 0;
-          currentExternalStateInput = void 0;
-          currentExternalConsumedResponseId = void 0;
-          const continuation = resolveExternalContinuation(body);
-          if (continuation.orphanedResponseId) {
-            if (debug) log14(`WS continuation rejected: unknown previous_response_id=${continuation.orphanedResponseId}`);
-            writeResponsesErrorStream(modelId, "Unknown or expired previous_response_id", sendWsEvent, 400);
-            externalActive = false;
-            return;
-          }
-          try {
-            const routedBody = await prepareExternalCodexBody(continuation.body, {
-              relay: nativePayloadRelay,
-              mixedNative,
-              headers: req.headers
-            });
-            const requestHeaders = openCodeGoHeaders(
-              route.providerId,
-              route.baseURL,
-              extractConversationId(req.headers, routedBody),
-              route.headers
-            );
-            currentExternalStateInput = responsesInputItems(routedBody.input);
-            currentExternalConsumedResponseId = continuation.consumedResponseId;
-            let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
-              routedBody,
-              route.npm,
-              {
-                providerId: route.providerId,
-                apiBaseUrl: route.baseURL,
-                supportedParameters: route.supportedParameters,
-                reasoning: route.reasoning,
-                interleavedReasoningField: route.interleavedReasoningField,
-                upstreamModelId: route.upstreamModelId
-              },
-              {
-                maxTools: maxToolsForNpm(route.npm),
-                ...requestHeaders ? { requestHeaders } : {}
-              }
-            ), route));
-            if (route.contextWindow && route.contextWindow > 0) {
-              const before = params.messages.length;
-              const estimatedChars = estimateCodexRequestChars(params);
-              const compaction = isLikelyCodexCompactionRequest(body);
-              if (debug) log14(`WS context check: model=${route.modelId} window=${route.contextWindow} chars=${estimatedChars} compaction=${compaction ? "yes" : "no"} messages=${before} tools=${params.tools ? Object.keys(params.tools).length : 0}`);
-              params = protectCodexCompactionParams(body, params, route.contextWindow);
-              if (debug && params.messages.length < before) {
-                log14(`WS context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages tools=${params.tools ? Object.keys(params.tools).length : 0}`);
-              }
-            }
-            const v2Compaction = isCodexV2CompactionRequest(body);
-            if (v2Compaction) {
-              params = appendCompactionInstruction(params);
-              if (debug) log14(`WS compaction v2: synthesizing single compaction item for model=${route.modelId}`);
-            }
             if (debug) {
-              const effort = body.reasoning?.effort;
-              log14(`WS model=${route.modelId} effort=${effort ?? "(none)"} providerOptions=${JSON.stringify(params.providerOptions)}`);
-            }
-            if (v2Compaction) {
-              await streamCompactionResponse(languageModel, params, modelId, sendWsEvent);
-            } else
-              await streamResponsesResponse(languageModel, params, modelId, sendWsEvent, (summary) => {
-                if (debug) {
-                  const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
-                  log14(`WS response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
-                }
-              }, (progress) => {
-                if (debug) {
-                  log14(`WS response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
-                }
+              const prevId = body.previous_response_id ?? null;
+              const inputItems = Array.isArray(body.input) ? body.input.length : typeof body.input === "string" ? 1 : 0;
+              const tools = Array.isArray(body.tools) ? body.tools : [];
+              const toolNames = tools.map((t) => t && typeof t === "object" && "name" in t ? t.name : "?").join(",");
+              log15(`WS request: model=${String(body.model ?? "")} previous_response_id=${prevId ?? "(none)"} input_items=${inputItems} body_bytes=${frameText.length} tools=[${toolNames || "none"}]`);
+              const reasoning = body.reasoning && typeof body.reasoning === "object" ? Object.keys(body.reasoning).join(",") : typeof body.reasoning;
+              const clientMetadata = body.client_metadata && typeof body.client_metadata === "object" ? Object.keys(body.client_metadata).join(",") : typeof body.client_metadata;
+              log15(`WS request shape: stream=${String(body.stream)} store=${String(body.store)} generate=${String(body.generate)} parallel_tool_calls=${String(body.parallel_tool_calls)} reasoning_keys=[${reasoning || "none"}] include=${Array.isArray(body.include) ? body.include.join(",") : String(body.include)} client_metadata_keys=[${clientMetadata || "none"}]`);
+              appendCodexBodyDump({
+                ts: (/* @__PURE__ */ new Date()).toISOString(),
+                transport: "ws",
+                direction: "request",
+                model: String(body.model ?? ""),
+                previous_response_id: prevId,
+                tools: body.tools,
+                input: body.input
               });
-            if (currentExternalCompletedResponse && currentExternalStateInput) {
-              if (currentExternalConsumedResponseId) {
-                externalResponseStates.delete(currentExternalConsumedResponseId);
+            }
+            const modelId = String(body.model ?? "");
+            currentRequestModel = modelId;
+            const markedSubagent = Boolean(mixedNative && isCodexSubagentRequest(body, req.headers));
+            const subagentRoute = mixedNative && markedSubagent ? resolveCodexSubagentRoute(routes, mixedNative.subagentRouteModelId, body, req.headers) : void 0;
+            if (debug && markedSubagent) {
+              log15(`WS subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? "(none)"}`);
+            }
+            if (mixedNative && markedSubagent && !subagentRoute) {
+              audit({ transport: "ws", requestedModel: modelId, dispatch: "relay-subagent", phase: "complete", outcome: "error", status: 503 });
+              sendWsEvent(`event: error
+data: ${JSON.stringify({ error: {
+                message: "Codex marked this request as a Sub-agent, but no configured Codex Sub-agent route is available.",
+                type: "service_unavailable"
+              } })}
+
+`);
+              closeSocket();
+              return;
+            }
+            if (mixedNative) {
+              if (!markedSubagent) {
+                const dispatch = classifyCodexDispatch(modelId, routes, mixedNative.nativeModelIds);
+                if (dispatch.kind === "unknown") {
+                  audit({ transport: "ws", requestedModel: modelId, dispatch: "unknown", phase: "complete", outcome: "error", status: 404 });
+                  sendWsEvent(`event: error
+data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "invalid_request_error" } })}
+
+`);
+                  closeSocket();
+                  return;
+                }
+                if (dispatch.kind === "native") {
+                  audit({
+                    transport: "ws",
+                    requestedModel: modelId,
+                    dispatch: "native",
+                    phase: "dispatch",
+                    provider: "openai-native",
+                    routeModel: modelId,
+                    upstreamModel: modelId
+                  });
+                  const nativeBody = prepareNativeCodexBody(body);
+                  if (debug && nativeBody !== body) {
+                    log15(`WS native history normalized: model=${modelId} converted Relay compaction for native verification`);
+                  }
+                  if (nativeActive && nativeUpstream) {
+                    if (nativeUpstream.readyState === WebSocket.OPEN) {
+                      if (debug) log15(`WS native forwarding next turn: model=${modelId}`);
+                      nativeSendTurn?.(nativeBody, modelId);
+                    } else if (debug) {
+                      log15(`WS native cannot forward next turn: upstream_state=${nativeUpstream.readyState}`);
+                    }
+                    return;
+                  }
+                  const wsTarget = mixedNative.nativeBaseUrl ? `${mixedNative.nativeBaseUrl.replace(/^http:/, "ws:").replace(/^https:/, "wss:").replace(/\/$/, "")}/responses` : void 0;
+                  const target = nativeResponsesWebSocketOptions({ headers: req.headers, wsUrl: wsTarget });
+                  let upstream;
+                  let nativeOpened = false;
+                  let nativeCompleted = false;
+                  let nativeTurnModelId = modelId;
+                  let nativeFrameCount = 0;
+                  let finished = false;
+                  let connectTimer;
+                  let firstFrameTimer;
+                  const clearTimers = () => {
+                    if (connectTimer) clearTimeout(connectTimer);
+                    if (firstFrameTimer) clearTimeout(firstFrameTimer);
+                  };
+                  const sendNativeError = (message) => {
+                    if (socket.destroyed) return;
+                    socket.write(wsEncodeTextFrame(JSON.stringify({
+                      type: "error",
+                      error: { type: "upstream_error", message }
+                    })));
+                  };
+                  const closeBoth = (message, closeCode = 1011) => {
+                    if (finished) return;
+                    finished = true;
+                    nativeActive = false;
+                    nativeSendTurn = void 0;
+                    if (nativeUpstream === upstream) nativeUpstream = void 0;
+                    clearTimers();
+                    if (debug && message) {
+                      log15(`WS native upstream failed: model=${nativeTurnModelId} opened=${nativeOpened} frames=${nativeFrameCount} message=${message}`);
+                    }
+                    if (message && !nativeCompleted) {
+                      audit({
+                        transport: "ws",
+                        requestedModel: nativeTurnModelId,
+                        dispatch: "native",
+                        phase: "complete",
+                        provider: "openai-native",
+                        routeModel: nativeTurnModelId,
+                        upstreamModel: nativeTurnModelId,
+                        outcome: "error",
+                        status: "upstream-failed"
+                      });
+                    }
+                    if (message && !nativeCompleted) sendNativeError(message);
+                    try {
+                      upstream?.close();
+                    } catch {
+                    }
+                    closeSocket(closeCode);
+                  };
+                  const sendNativeTurn = (turnBody, turnModelId) => {
+                    if (!upstream || upstream.readyState !== WebSocket.OPEN) {
+                      if (debug) log15(`WS native cannot send turn: model=${turnModelId} upstream_state=${upstream?.readyState ?? "missing"}`);
+                      return;
+                    }
+                    nativeTurnModelId = turnModelId;
+                    nativeCompleted = false;
+                    if (firstFrameTimer) clearTimeout(firstFrameTimer);
+                    upstream.send(JSON.stringify({ type: "response.create", ...turnBody }));
+                    firstFrameTimer = setTimeout(() => closeBoth("Native Codex WebSocket response timed out"), 6e4);
+                  };
+                  try {
+                    if (debug) {
+                      log15(`WS native connecting: model=${modelId} url=${target.url} headers=[${Object.keys(target.headers).join(",")}]`);
+                    }
+                    upstream = new WebSocket(target.url, { headers: target.headers });
+                    nativeUpstream = upstream;
+                    nativeSendTurn = sendNativeTurn;
+                    nativeActive = true;
+                    connectTimer = setTimeout(() => closeBoth("Native Codex WebSocket connection timed out"), 15e3);
+                    upstream.once("open", () => {
+                      nativeOpened = true;
+                      if (connectTimer) clearTimeout(connectTimer);
+                      if (debug) log15(`WS native upstream open: model=${modelId}`);
+                      sendNativeTurn(nativeBody, modelId);
+                    });
+                    upstream.once("unexpected-response", (_request, response) => {
+                      if (debug) log15(`WS native upstream HTTP rejection: model=${modelId} status=${response.statusCode}`);
+                      response.resume();
+                      closeBoth(`Native Codex WebSocket rejected (${response.statusCode})`);
+                    });
+                    upstream.on("message", (data) => {
+                      if (socket.destroyed) return;
+                      nativeFrameCount += 1;
+                      if (firstFrameTimer) clearTimeout(firstFrameTimer);
+                      const text6 = Array.isArray(data) ? Buffer.concat(data).toString("utf8") : data.toString("utf8");
+                      let eventType = "non-json";
+                      try {
+                        const parsed = JSON.parse(text6);
+                        if (typeof parsed.type === "string") eventType = parsed.type;
+                        if (eventType === "response.completed" || eventType === "response.failed" || eventType === "response.incomplete") {
+                          nativeCompleted = true;
+                          audit({
+                            transport: "ws",
+                            requestedModel: modelId,
+                            dispatch: "native",
+                            phase: "complete",
+                            provider: "openai-native",
+                            routeModel: modelId,
+                            upstreamModel: modelId,
+                            outcome: eventType === "response.completed" ? "ok" : "error",
+                            status: eventType
+                          });
+                        }
+                      } catch {
+                      }
+                      if (debug && (nativeFrameCount <= 3 || nativeCompleted || eventType === "error" || nativeFrameCount % 25 === 0)) {
+                        log15(`WS native frame#${nativeFrameCount}: model=${modelId} type=${eventType} bytes=${text6.length}`);
+                      }
+                      socket.write(wsEncodeTextFrame(text6));
+                    });
+                    upstream.once("error", (err) => closeBoth(`Native Codex WebSocket error: ${err.message}`));
+                    upstream.once("close", (code, reason) => {
+                      const detail = reason?.length ? ` reason=${reason.toString("utf8").slice(0, 200)}` : "";
+                      if (debug) log15(`WS native upstream close: model=${modelId} code=${code}${detail} frames=${nativeFrameCount}`);
+                      if (nativeUpstream === upstream) nativeUpstream = void 0;
+                      nativeActive = false;
+                      if (!finished) closeBoth(nativeCompleted ? void 0 : `Native Codex WebSocket closed before completion (${code})`);
+                    });
+                    socket.once("close", () => {
+                      if (debug) log15(`WS native downstream close: model=${modelId} frames=${nativeFrameCount} completed=${nativeCompleted}`);
+                      finished = true;
+                      nativeActive = false;
+                      nativeSendTurn = void 0;
+                      if (nativeUpstream === upstream) nativeUpstream = void 0;
+                      clearTimers();
+                      try {
+                        upstream?.close();
+                      } catch {
+                      }
+                    });
+                  } catch (err) {
+                    closeBoth(`Native Codex WebSocket setup failed: ${err instanceof Error ? err.message : String(err)}`);
+                  }
+                  return;
+                }
               }
-              rememberExternalResponse(currentExternalCompletedResponse, currentExternalStateInput);
             }
+            externalActive = true;
+            let resolved = subagentRoute ? resolveModel(routes, models, subagentRoute.modelId) : resolveModel(routes, models, modelId);
+            if (!resolved) {
+              const fb = routes[0];
+              const fbLm = fb ? models.get(fb.modelId) : void 0;
+              if (fb && fbLm) {
+                if (debug) log15(`WS resolveModel fallback: requested="${modelId}" \u2192 ${fb.modelId}`);
+                resolved = { route: fb, languageModel: fbLm };
+              } else {
+                if (debug) log15(`WS resolveModel failed: requested="${modelId}" known=[${routes.map((r) => r.modelId).join(", ")}]`);
+                sendWsEvent(`event: error
+data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
+
+`);
+                closeSocket();
+                return;
+              }
+            }
+            const { route, languageModel } = resolved;
+            const relayDispatch = markedSubagent ? "relay-subagent" : "relay";
             audit({
               transport: "ws",
               requestedModel: modelId,
               dispatch: relayDispatch,
-              phase: "complete",
+              phase: "dispatch",
               provider: route.providerId ?? "relay",
               routeModel: route.modelId,
-              upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
-              outcome: "ok",
-              status: "response.completed"
+              upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId
             });
-          } catch (err) {
-            const msg = formatUpstreamError(err);
-            const status = upstreamHttpStatus(err, msg);
-            audit({
-              transport: "ws",
-              requestedModel: modelId,
-              dispatch: relayDispatch,
-              phase: "complete",
-              provider: route.providerId ?? "relay",
-              routeModel: route.modelId,
-              upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
-              outcome: "error",
-              status
-            });
-            if (debug) log14(`WS sdk error: ${route.modelId}: ${msg}`);
-            if (status === 429) {
-              writeResponsesRateLimitStream(modelId, msg, sendWsEvent);
-            } else {
-              writeResponsesErrorStream(modelId, msg, sendWsEvent, status);
+            currentExternalCompletedResponse = void 0;
+            currentExternalStateInput = void 0;
+            currentExternalConsumedResponseId = void 0;
+            const continuation = resolveExternalContinuation(body);
+            if (continuation.orphanedResponseId) {
+              if (debug) log15(`WS continuation rejected: unknown previous_response_id=${continuation.orphanedResponseId}`);
+              writeResponsesErrorStream(modelId, "Unknown or expired previous_response_id", sendWsEvent, 400);
+              externalActive = false;
+              return;
             }
-          }
-          externalActive = false;
-        })();
+            try {
+              const routedBody = await prepareExternalCodexBody(continuation.body, {
+                relay: nativePayloadRelay,
+                mixedNative,
+                headers: req.headers
+              });
+              const requestHeaders = openCodeGoHeaders(
+                route.providerId,
+                route.baseURL,
+                extractConversationId(req.headers, routedBody),
+                route.headers
+              );
+              currentExternalStateInput = responsesInputItems(routedBody.input);
+              currentExternalConsumedResponseId = continuation.consumedResponseId;
+              let params = applyClaudeCodeOAuthIdentity(route, applyExternalCodexRuntimeIdentity(translateResponsesRequest(
+                routedBody,
+                route.npm,
+                {
+                  providerId: route.providerId,
+                  apiBaseUrl: route.baseURL,
+                  supportedParameters: route.supportedParameters,
+                  reasoning: route.reasoning,
+                  interleavedReasoningField: route.interleavedReasoningField,
+                  upstreamModelId: route.upstreamModelId
+                },
+                {
+                  maxTools: maxToolsForNpm(route.npm),
+                  ...requestHeaders ? { requestHeaders } : {}
+                }
+              ), route));
+              if (route.contextWindow && route.contextWindow > 0) {
+                const before = params.messages.length;
+                const estimatedChars = estimateCodexRequestChars(params);
+                const compaction = isLikelyCodexCompactionRequest(body);
+                if (debug) log15(`WS context check: model=${route.modelId} window=${route.contextWindow} chars=${estimatedChars} compaction=${compaction ? "yes" : "no"} messages=${before} tools=${params.tools ? Object.keys(params.tools).length : 0}`);
+                params = protectCodexCompactionParams(body, params, route.contextWindow);
+                if (debug && params.messages.length < before) {
+                  log15(`WS context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages tools=${params.tools ? Object.keys(params.tools).length : 0}`);
+                }
+              }
+              const v2Compaction = isCodexV2CompactionRequest(body);
+              if (v2Compaction) {
+                params = appendCompactionInstruction(params);
+                if (debug) log15(`WS compaction v2: synthesizing single compaction item for model=${route.modelId}`);
+              }
+              if (debug) {
+                const effort = body.reasoning?.effort;
+                log15(`WS model=${route.modelId} effort=${effort ?? "(none)"} providerOptions=${JSON.stringify(params.providerOptions)}`);
+              }
+              if (v2Compaction) {
+                await streamCompactionResponse(languageModel, params, modelId, sendWsEvent);
+              } else
+                await streamResponsesResponse(languageModel, params, modelId, sendWsEvent, (summary) => {
+                  if (debug) {
+                    const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
+                    log15(`WS response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
+                  }
+                }, (progress) => {
+                  if (debug) {
+                    log15(`WS response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
+                  }
+                });
+              if (currentExternalCompletedResponse && currentExternalStateInput) {
+                if (currentExternalConsumedResponseId) {
+                  externalResponseStates.delete(currentExternalConsumedResponseId);
+                }
+                rememberExternalResponse(currentExternalCompletedResponse, currentExternalStateInput);
+              }
+              audit({
+                transport: "ws",
+                requestedModel: modelId,
+                dispatch: relayDispatch,
+                phase: "complete",
+                provider: route.providerId ?? "relay",
+                routeModel: route.modelId,
+                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+                outcome: "ok",
+                status: "response.completed"
+              });
+            } catch (err) {
+              const msg = formatUpstreamError(err);
+              const status = upstreamHttpStatus(err, msg);
+              audit({
+                transport: "ws",
+                requestedModel: modelId,
+                dispatch: relayDispatch,
+                phase: "complete",
+                provider: route.providerId ?? "relay",
+                routeModel: route.modelId,
+                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+                outcome: "error",
+                status
+              });
+              if (debug) log15(`WS sdk error: ${route.modelId}: ${msg}`);
+              if (status === 429) {
+                writeResponsesRateLimitStream(modelId, msg, sendWsEvent);
+              } else {
+                writeResponsesErrorStream(modelId, msg, sendWsEvent, status);
+              }
+            }
+            externalActive = false;
+          })();
+        }
       };
       socket.on("error", () => socket.destroy());
       socket.once("close", () => externalResponseStates.clear());
@@ -5242,7 +5357,7 @@ function restoreCodexOverlay(env = process.env) {
   return removed;
 }
 function remainingOverlayPaths(env = process.env) {
-  return ownedOverlayPaths(env).filter((p15) => existsSync3(p15));
+  return ownedOverlayPaths(env).filter((p16) => existsSync3(p16));
 }
 function recoverInterruptedCodexSession(env = process.env) {
   const before = remainingOverlayPaths(env);
@@ -5461,7 +5576,7 @@ function launchCodex(modelId, env, extraArgs) {
 
 // src/codex/prompts.ts
 import pc5 from "picocolors";
-import * as p6 from "@clack/prompts";
+import * as p7 from "@clack/prompts";
 function codexLaunchModeOptions() {
   return [
     {
@@ -5477,13 +5592,13 @@ function codexLaunchModeOptions() {
   ];
 }
 async function pickCodexLaunchMode() {
-  const choice = await p6.select({
+  const choice = await p7.select({
     message: "Load native Codex models alongside Relay models?",
     options: codexLaunchModeOptions(),
     initialValue: "relay-only"
   });
-  if (p6.isCancel(choice)) {
-    p6.cancel("Cancelled.");
+  if (p7.isCancel(choice)) {
+    p7.cancel("Cancelled.");
     return null;
   }
   return choice;
@@ -5499,13 +5614,13 @@ async function pickCodexProvider(providers, prefs, hasFavorites = false, initial
     });
   }
   const initial = initialProviderId && options.some((o) => o.value === initialProviderId) ? initialProviderId : prefs.lastCodexProvider && options.some((o) => o.value === prefs.lastCodexProvider) ? prefs.lastCodexProvider : options[0].value;
-  const chosen = await p6.select({
+  const chosen = await p7.select({
     message: "Which provider for Codex?",
     options,
     initialValue: initial
   });
-  if (p6.isCancel(chosen)) {
-    p6.cancel("Cancelled.");
+  if (p7.isCancel(chosen)) {
+    p7.cancel("Cancelled.");
     return null;
   }
   if (chosen === "__favorites__") return "__favorites__";
@@ -5522,12 +5637,12 @@ async function pickCodexModel(provider, prefs) {
         navOption("__browse_all__", "Browse all models \u2192", `${provider.models.length} available`),
         navOption("__back__", "\u2190 Go back", "Select a different provider")
       ];
-      const picked = await p6.select({
+      const picked = await p7.select({
         message: `Model for ${provider.name}?`,
         options,
         initialValue: recentModels[0].id
       });
-      if (p6.isCancel(picked) || String(picked) === "__back__") {
+      if (p7.isCancel(picked) || String(picked) === "__back__") {
         return "back";
       }
       if (String(picked) === "__browse_all__") {
@@ -5556,12 +5671,12 @@ async function pickCodexModel(provider, prefs) {
 }
 function confirmCodexLaunch(providerName, modelLabel, modelId, route) {
   const via = route.tier === "direct" ? pc5.green("direct") : `${pc5.dim("via")} ${pc5.yellow("relay-ai proxy")}`;
-  return p6.confirm({
+  return p7.confirm({
     message: `${confirmLaunchMessage("Codex", modelLabel, modelId, providerName)} ${pc5.dim("(")}${via}${pc5.dim(")")}`,
     initialValue: true
   }).then((answer) => {
-    if (p6.isCancel(answer)) {
-      p6.cancel("Cancelled.");
+    if (p7.isCancel(answer)) {
+      p7.cancel("Cancelled.");
       return false;
     }
     return answer;
@@ -5671,7 +5786,7 @@ function buildFavoritesAppCatalog(resolved) {
 }
 
 // src/codex/favorites-launch.ts
-import * as p7 from "@clack/prompts";
+import * as p8 from "@clack/prompts";
 
 // src/favorites-resolver.ts
 async function resolveFavorite(fav, ctx) {
@@ -5748,7 +5863,7 @@ async function pickFavoriteStartingModel(compatible, favorites, agent, productLa
     if (provider && model) available.push({ provider, model });
   }
   if (available.length === 0) {
-    p7.log.warn(`No saved ${productLabel} favorites are currently available.`);
+    p8.log.warn(`No saved ${productLabel} favorites are currently available.`);
     return "unavailable";
   }
   const favOptions = available.map((f, i) => ({
@@ -5756,13 +5871,13 @@ async function pickFavoriteStartingModel(compatible, favorites, agent, productLa
     label: `${f.model.name || f.model.id} \u2014 ${f.provider.name}`,
     hint: f.model.id
   }));
-  const pickedIdx = await p7.select({
+  const pickedIdx = await p8.select({
     message: "Starting model?",
     options: favOptions,
     initialValue: "0"
   });
-  if (p7.isCancel(pickedIdx)) {
-    p7.cancel("Cancelled.");
+  if (p8.isCancel(pickedIdx)) {
+    p8.cancel("Cancelled.");
     return "cancelled";
   }
   return available[Number(pickedIdx)] ?? "unavailable";
@@ -5805,7 +5920,7 @@ function buildCodexProxyRoutesFromResolved(resolved, providersById) {
     };
   }).filter((r) => r !== void 0);
   if (skippedOAuth.length > 0) {
-    p7.log.warn(
+    p8.log.warn(
       `Skipped ${skippedOAuth.length} OAuth favorite(s) (OAuth auth not supported in favorites catalog): ${skippedOAuth.join(", ")}`
     );
   }
@@ -5831,7 +5946,7 @@ async function resolveCodexFavorites(activeProvider, selectedModel, compatible, 
     ctx
   );
   if (droppedFavorites.length > 0) {
-    p7.log.warn(
+    p8.log.warn(
       `Skipped ${droppedFavorites.length} stale/unauthorized favorite(s): ${droppedFavorites.map((f) => `${f.providerId}:${f.modelId}`).join(", ")}`
     );
   }
@@ -6241,7 +6356,7 @@ function resolveLaunchTarget(explicit, prefs, agent) {
 }
 function findProviderAndModel(providers, target) {
   if (!target.providerId || !target.modelId) return null;
-  const provider = providers.find((p15) => p15.id === target.providerId);
+  const provider = providers.find((p16) => p16.id === target.providerId);
   if (!provider) return null;
   const model = provider.models.find((m) => m.id === target.modelId);
   if (!model) return null;
@@ -6428,14 +6543,14 @@ function printCodexCleanupReminder(hadProxy) {
   if (isAgentStdoutMode()) return;
   const left = remainingOverlayPaths();
   if (left.length > 0) {
-    p8.log.warn("Temporary Codex overlay files may still be on disk.");
-    p8.log.info("Run: relay-ai codex --restore");
+    p9.log.warn("Temporary Codex overlay files may still be on disk.");
+    p9.log.info("Run: relay-ai codex --restore");
     return;
   }
   const parts = ["Temporary Codex profile removed."];
   if (hadProxy) parts.push("Local Responses proxy stopped.");
   parts.push("If a future session acts stuck: relay-ai codex --restore");
-  p8.log.info(parts.join(" "));
+  p9.log.info(parts.join(" "));
 }
 function vertexEntryToLocalModel(entry) {
   return {
@@ -6452,26 +6567,26 @@ function vertexEntryToLocalModel(entry) {
 }
 async function runCodexVertexLaunch(passthroughArgs, trace) {
   if (!hasApplicationDefaultCredentials()) {
-    p8.log.error("Google Application Default Credentials not found.");
-    p8.log.info("Run: gcloud auth application-default login");
+    p9.log.error("Google Application Default Credentials not found.");
+    p9.log.info("Run: gcloud auth application-default login");
     return 1;
   }
   const config = buildVertexRuntimeConfig();
   if (!config) {
-    p8.log.error("ANTHROPIC_VERTEX_PROJECT_ID (or GOOGLE_CLOUD_PROJECT) is not set.");
-    p8.log.info("Set your project: export ANTHROPIC_VERTEX_PROJECT_ID=your-project-id");
+    p9.log.error("ANTHROPIC_VERTEX_PROJECT_ID (or GOOGLE_CLOUD_PROJECT) is not set.");
+    p9.log.info("Set your project: export ANTHROPIC_VERTEX_PROJECT_ID=your-project-id");
     return 1;
   }
   let selectedEntry;
   if (config.models.length === 1) {
     selectedEntry = config.models[0];
   } else {
-    const choice = await p8.select({
+    const choice = await p9.select({
       message: "Select a Vertex AI model:",
       options: config.models.map((m) => ({ value: m, label: m.display_name, hint: m.id }))
     });
-    if (p8.isCancel(choice)) {
-      p8.cancel("Cancelled.");
+    if (p9.isCancel(choice)) {
+      p9.cancel("Cancelled.");
       return 0;
     }
     selectedEntry = choice;
@@ -6499,7 +6614,7 @@ async function runCodexVertexLaunch(passthroughArgs, trace) {
   const debugLogPath = getCodexProxyDebugLogPath();
   let proxyHandle = null;
   try {
-    p8.log.info(`Vertex AI \xB7 ${selectedEntry.display_name} \u2014 project: ${config.project} / location: ${config.location}`);
+    p9.log.info(`Vertex AI \xB7 ${selectedEntry.display_name} \u2014 project: ${config.project} / location: ${config.location}`);
     proxyHandle = await startCodexProxy(allRoutes, { debug: trace });
     const proxyPort = proxyHandle.port;
     const catalogPath = getCatalogOutputPath("vertex");
@@ -6562,7 +6677,7 @@ async function runCodexCommand2(codexArgs, trace = false, launch = {}) {
   setAgentStdoutMode(agentStdout);
   const debugLogPath = getCodexProxyDebugLogPath();
   if (trace && !configOnly) {
-    p8.log.info(`Debug log: ${debugLogPath}`);
+    p9.log.info(`Debug log: ${debugLogPath}`);
   }
   const isTty = Boolean(process.stdin.isTTY);
   if (launch.vertex) {
@@ -6611,10 +6726,10 @@ Error: ${launchPlan.error}
   if (!configOnly) {
     if (!agentStdout) codexCliIntro();
     if (interrupted.recovered && !agentStdout) {
-      p8.log.warn(
+      p9.log.warn(
         "Found leftover Codex files from an interrupted session (closed terminal, crash, or force-quit)."
       );
-      p8.log.info(
+      p9.log.info(
         `Removed ${interrupted.removedCount ?? "those"} file(s) automatically. If anything still looks wrong: relay-ai codex --restore`
       );
     }
@@ -6628,7 +6743,7 @@ Error: ${launchPlan.error}
       return 1;
     }
   } else {
-    const catalogSpinner = p8.spinner();
+    const catalogSpinner = p9.spinner();
     catalogSpinner.start("Loading your providers...");
     try {
       catalog = await fetchProviderCatalog({ agent: "codex" });
@@ -6642,8 +6757,8 @@ Error: ${launchPlan.error}
   const compatible = codexCompatibleProviders(providersForPicker(catalog), "codex");
   if (compatible.length === 0) {
     if (!configOnly) {
-      p8.log.warn("No Codex-compatible providers in your registry.");
-      p8.log.info("Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai-oauth.");
+      p9.log.warn("No Codex-compatible providers in your registry.");
+      p9.log.info("Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai-oauth.");
     }
     return 0;
   }
@@ -6656,17 +6771,17 @@ Error: ${launchPlan.error}
   }
   const favoritesActive = favorites.length > 0 && !launchPlan.skip && !mixedMode;
   if (favoritesActive && !configOnly) {
-    p8.log.info(
+    p9.log.info(
       `Favorites mode active \u2014 Codex picker will show ${favorites.length + 1} models (1 starting + ${favorites.length} favorites).`
     );
-    p8.log.info("Edit with `relay-ai models`.");
+    p9.log.info("Edit with `relay-ai models`.");
   }
   let activeProvider = compatible.find((lp) => lp.id === prefs.lastCodexProvider) ?? compatible[0];
   let selectedModel = activeProvider.models.find((m) => m.id === prefs.lastCodexModel) ?? activeProvider.models[0];
   if (!configOnly && launchPlan.skip && launchPlan.target) {
     const resolved = findProviderAndModel(compatible, launchPlan.target);
     if (!resolved) {
-      p8.log.error(
+      p9.log.error(
         `Provider/model not found: ${launchPlan.target.providerId} / ${launchPlan.target.modelId}`
       );
       return 1;
@@ -6674,7 +6789,7 @@ Error: ${launchPlan.error}
     activeProvider = resolved.provider;
     selectedModel = resolved.model;
     if (!agentStdout) {
-      p8.log.step(`Using ${selectedModel.name || selectedModel.id} (${activeProvider.name})`);
+      p9.log.step(`Using ${selectedModel.name || selectedModel.id} (${activeProvider.name})`);
     }
   } else if (!configOnly) {
     let currentInitialProvider = prefs.lastCodexProvider && compatible.some((o) => o.id === prefs.lastCodexProvider) ? prefs.lastCodexProvider : compatible[0].id;
@@ -6722,7 +6837,7 @@ Error: ${launchPlan.error}
   const apiKey = await resolveLocalProviderApiKey(activeProvider);
   if (!apiKey) {
     if (!configOnly) {
-      p8.log.error(`No credential for ${activeProvider.name}. Run relay-ai providers auth ${activeProvider.id} or add an API key.`);
+      p9.log.error(`No credential for ${activeProvider.name}. Run relay-ai providers auth ${activeProvider.id} or add an API key.`);
     }
     return 1;
   }
@@ -6914,7 +7029,7 @@ Mixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
     });
     if (configOnly) {
       const home = process.env["HOME"] ?? "";
-      const shortenPath = (p15) => home ? p15.replace(home, "~") : p15;
+      const shortenPath = (p16) => home ? p16.replace(home, "~") : p16;
       console.log("");
       console.log(pc7.bold(pc7.cyan("  CONFIG PREVIEW \u2014 relay-ai codex")));
       console.log("");
@@ -6991,7 +7106,7 @@ Mixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
 
 // src/gemini.ts
 import pc8 from "picocolors";
-import * as p10 from "@clack/prompts";
+import * as p11 from "@clack/prompts";
 
 // src/gemini/launch.ts
 import { spawn as spawn3 } from "child_process";
@@ -7080,7 +7195,7 @@ function launchGemini(geminiPath, modelId, env, extraArgs) {
 }
 
 // src/gemini/prompts.ts
-import * as p9 from "@clack/prompts";
+import * as p10 from "@clack/prompts";
 async function pickGeminiProvider(providers, prefs, hasFavorites = false, initialProviderId) {
   if (providers.length === 0 && !hasFavorites) return null;
   const options = providers.map((lp) => providerSelectOption(lp));
@@ -7092,13 +7207,13 @@ async function pickGeminiProvider(providers, prefs, hasFavorites = false, initia
     });
   }
   const initial = initialProviderId && options.some((o) => o.value === initialProviderId) ? initialProviderId : prefs.lastGeminiProvider && options.some((o) => o.value === prefs.lastGeminiProvider) ? prefs.lastGeminiProvider : options[0].value;
-  const chosen = await p9.select({
+  const chosen = await p10.select({
     message: "Which provider for Gemini CLI?",
     options,
     initialValue: initial
   });
-  if (p9.isCancel(chosen)) {
-    p9.cancel("Cancelled.");
+  if (p10.isCancel(chosen)) {
+    p10.cancel("Cancelled.");
     return null;
   }
   if (chosen === "__favorites__") return "__favorites__";
@@ -7115,12 +7230,12 @@ async function pickGeminiModel(provider, prefs) {
         navOption("__browse_all__", "Browse all models \u2192", `${provider.models.length} available`),
         navOption("__back__", "\u2190 Go back", "Select a different provider")
       ];
-      const picked = await p9.select({
+      const picked = await p10.select({
         message: `Model for ${provider.name}?`,
         options,
         initialValue: recentModels[0].id
       });
-      if (p9.isCancel(picked) || String(picked) === "__back__") {
+      if (p10.isCancel(picked) || String(picked) === "__back__") {
         return "back";
       }
       if (String(picked) === "__browse_all__") {
@@ -7148,12 +7263,12 @@ async function pickGeminiModel(provider, prefs) {
   return selectedModel;
 }
 function confirmGeminiLaunch(providerName, modelLabel, modelId) {
-  return p9.confirm({
+  return p10.confirm({
     message: confirmLaunchMessage("Gemini CLI", modelLabel, modelId, providerName),
     initialValue: true
   }).then((answer) => {
-    if (p9.isCancel(answer)) {
-      p9.cancel("Cancelled.");
+    if (p10.isCancel(answer)) {
+      p10.cancel("Cancelled.");
       return false;
     }
     return answer;
@@ -7167,7 +7282,7 @@ async function pickGeminiFavoriteModel(providers, favorites) {
     if (provider2 && model2) favList.push({ provider: provider2, model: model2 });
   }
   if (favList.length === 0) {
-    p9.log.warn("None of your saved favorites are available in the current registry.");
+    p10.log.warn("None of your saved favorites are available in the current registry.");
     return null;
   }
   const options = [
@@ -7178,12 +7293,12 @@ async function pickGeminiFavoriteModel(providers, favorites) {
     })),
     { value: "__back__", label: "\u2190 Go back", hint: "Select a different provider" }
   ];
-  const picked = await p9.select({
+  const picked = await p10.select({
     message: "Pick a favorite model for Gemini CLI:",
     options,
     initialValue: options[0].value
   });
-  if (p9.isCancel(picked) || String(picked) === "__back__") return "back";
+  if (p10.isCancel(picked) || String(picked) === "__back__") return "back";
   const [pickedProviderId, pickedModelId] = picked.split("::");
   const provider = providers.find((lp) => lp.id === pickedProviderId);
   const model = provider?.models.find((m) => m.id === pickedModelId);
@@ -7253,13 +7368,13 @@ function mergeConsecutiveMessages2(messages) {
   }
   return merged;
 }
-function stripGeminiIdentity(text5) {
-  return text5.replace(/You are Gemini CLI[\s\S]*?(?=\n\n|$)/gi, "").replace(/I'm Gemini CLI[\s\S]*?(?=\n\n|$)/gi, "").replace(/Gemini CLI/gi, "AI CLI");
+function stripGeminiIdentity(text6) {
+  return text6.replace(/You are Gemini CLI[\s\S]*?(?=\n\n|$)/gi, "").replace(/I'm Gemini CLI[\s\S]*?(?=\n\n|$)/gi, "").replace(/Gemini CLI/gi, "AI CLI");
 }
 function translateGeminiRequest(body, options = {}) {
   let system;
   if (body.systemInstruction?.parts) {
-    const rawSystem = body.systemInstruction.parts.map((p15) => p15.text || "").join("\n");
+    const rawSystem = body.systemInstruction.parts.map((p16) => p16.text || "").join("\n");
     system = stripGeminiIdentity(rawSystem).trim();
   }
   const messages = [];
@@ -7270,38 +7385,38 @@ function translateGeminiRequest(body, options = {}) {
     const parts = [];
     const toolResults = [];
     const turnParts = turn.parts || [];
-    for (const p15 of turnParts) {
-      if (p15.text !== void 0) {
-        const text5 = stripGeminiIdentity(p15.text);
-        if (text5.includes("<thinking>")) {
-          const tokens = text5.split(/<thinking>([\s\S]*?)<\/thinking>/);
+    for (const p16 of turnParts) {
+      if (p16.text !== void 0) {
+        const text6 = stripGeminiIdentity(p16.text);
+        if (text6.includes("<thinking>")) {
+          const tokens = text6.split(/<thinking>([\s\S]*?)<\/thinking>/);
           for (let i = 0; i < tokens.length; i++) {
             const token = tokens[i].trim();
             if (!token) continue;
             parts.push({ type: i % 2 === 1 ? "reasoning" : "text", text: token });
           }
         } else {
-          parts.push({ type: "text", text: text5 });
+          parts.push({ type: "text", text: text6 });
         }
-      } else if (p15.inlineData) {
+      } else if (p16.inlineData) {
         parts.push({
           type: "file",
-          data: Buffer.from(p15.inlineData.data, "base64"),
-          mediaType: p15.inlineData.mimeType
+          data: Buffer.from(p16.inlineData.data, "base64"),
+          mediaType: p16.inlineData.mimeType
         });
-      } else if (p15.functionCall) {
+      } else if (p16.functionCall) {
         const id = "call_" + randomUUID().replace(/-/g, "");
-        const name = p15.functionCall.name;
+        const name = p16.functionCall.name;
         if (!nameToIdList.has(name)) nameToIdList.set(name, []);
         nameToIdList.get(name).push(id);
         parts.push({
           type: "tool-call",
           toolCallId: id,
           toolName: name,
-          input: p15.functionCall.args || {}
+          input: p16.functionCall.args || {}
         });
-      } else if (p15.functionResponse) {
-        const name = p15.functionResponse.name;
+      } else if (p16.functionResponse) {
+        const name = p16.functionResponse.name;
         const idList = nameToIdList.get(name) || [];
         const id = idList.shift() || "call_" + randomUUID().replace(/-/g, "");
         toolResults.push({
@@ -7310,7 +7425,7 @@ function translateGeminiRequest(body, options = {}) {
           toolName: name,
           output: {
             type: "text",
-            value: typeof p15.functionResponse.response === "string" ? p15.functionResponse.response : JSON.stringify(p15.functionResponse.response || {})
+            value: typeof p16.functionResponse.response === "string" ? p16.functionResponse.response : JSON.stringify(p16.functionResponse.response || {})
           }
         });
       }
@@ -7467,14 +7582,14 @@ ${rawBody}`);
             const current = sessionRouteOverride ?? (lookupGeminiRoute(routes, requestedModel) ?? defaultRoute);
             const availableList = routes.map((r) => `  - ${r.aliasId} (${r.displayName})`).join("\n");
             const exampleId = routes.length > 1 ? routes[1].aliasId : routes[0]?.aliasId ?? "deepseek-v4";
-            const text5 = `Current model: ${current.displayName} (${current.aliasId})
+            const text6 = `Current model: ${current.displayName} (${current.aliasId})
 
 Available models:
 ${availableList}
 
 \u{1F4A1} To switch models, type: .model <id>
 Example: .model ${exampleId}`;
-            sendMockGeminiResponse(res, text5, isStream, current.aliasId);
+            sendMockGeminiResponse(res, text6, isStream, current.aliasId);
             return;
           }
           const targetRoute = lookupGeminiRoute(routes, modelCommand);
@@ -7530,9 +7645,9 @@ ${JSON.stringify(params, null, 2)}`);
           const toolCallBuffers = /* @__PURE__ */ new Map();
           let isThinking = false;
           for await (const part of stream) {
-            const p15 = part;
-            plog(`Stream chunk type: ${p15.type}`);
-            if (isThinking && (p15.type === "tool-input-start" || p15.type === "tool-call" || p15.type === "finish")) {
+            const p16 = part;
+            plog(`Stream chunk type: ${p16.type}`);
+            if (isThinking && (p16.type === "tool-input-start" || p16.type === "tool-call" || p16.type === "finish")) {
               isThinking = false;
               const chunk = {
                 candidates: [{ content: { role: "model", parts: [{ text: `
@@ -7545,34 +7660,34 @@ ${JSON.stringify(params, null, 2)}`);
 
 `);
             }
-            if (p15.type === "reasoning") {
-              let text5 = p15.textDelta ?? p15.text ?? "";
+            if (p16.type === "reasoning") {
+              let text6 = p16.textDelta ?? p16.text ?? "";
               if (!isThinking) {
                 isThinking = true;
-                text5 = `<thinking>
-` + text5;
+                text6 = `<thinking>
+` + text6;
               }
               const chunk = {
-                candidates: [{ content: { role: "model", parts: [{ text: text5 }] } }],
+                candidates: [{ content: { role: "model", parts: [{ text: text6 }] } }],
                 modelVersion: route.aliasId
               };
               res.write(`data: ${JSON.stringify(chunk)}
 
 `);
-            } else if (p15.type === "text-delta") {
-              let text5 = p15.textDelta ?? p15.text ?? "";
+            } else if (p16.type === "text-delta") {
+              let text6 = p16.textDelta ?? p16.text ?? "";
               if (isThinking) {
                 isThinking = false;
-                text5 = `
+                text6 = `
 </thinking>
 
-` + text5;
+` + text6;
               }
               const chunk = {
                 candidates: [{
                   content: {
                     role: "model",
-                    parts: [{ text: text5 }]
+                    parts: [{ text: text6 }]
                   }
                 }],
                 modelVersion: route.aliasId
@@ -7580,17 +7695,17 @@ ${JSON.stringify(params, null, 2)}`);
               const data = `data: ${JSON.stringify(chunk)}
 
 `;
-              plog(`Streaming text delta: ${p15.textDelta}`);
+              plog(`Streaming text delta: ${p16.textDelta}`);
               res.write(data);
-            } else if (p15.type === "tool-input-start") {
-              toolCallBuffers.set(p15.toolCallId, { name: p15.toolName, json: "" });
-            } else if (p15.type === "tool-input-delta") {
-              const buf = toolCallBuffers.get(p15.toolCallId);
-              if (buf) buf.json += p15.delta;
-            } else if (p15.type === "tool-call") {
-              const buf = toolCallBuffers.get(p15.toolCallId);
-              const args = buf ? JSON.parse(buf.json || "{}") : p15.input || {};
-              const name = buf ? buf.name : p15.toolName;
+            } else if (p16.type === "tool-input-start") {
+              toolCallBuffers.set(p16.toolCallId, { name: p16.toolName, json: "" });
+            } else if (p16.type === "tool-input-delta") {
+              const buf = toolCallBuffers.get(p16.toolCallId);
+              if (buf) buf.json += p16.delta;
+            } else if (p16.type === "tool-call") {
+              const buf = toolCallBuffers.get(p16.toolCallId);
+              const args = buf ? JSON.parse(buf.json || "{}") : p16.input || {};
+              const name = buf ? buf.name : p16.toolName;
               plog(`Streaming tool call: ${name} with args: ${JSON.stringify(args)}`);
               const chunk = {
                 candidates: [{
@@ -7606,18 +7721,18 @@ ${JSON.stringify(params, null, 2)}`);
               res.write(`data: ${JSON.stringify(chunk)}
 
 `);
-            } else if (p15.type === "finish") {
+            } else if (p16.type === "finish") {
               const chunk = {
                 candidates: [{
-                  finishReason: mapFinishReason(p15.finishReason ?? "")
+                  finishReason: mapFinishReason(p16.finishReason ?? "")
                 }],
                 usageMetadata: {
-                  promptTokenCount: p15.totalUsage?.inputTokens || 0,
-                  candidatesTokenCount: p15.totalUsage?.outputTokens || 0
+                  promptTokenCount: p16.totalUsage?.inputTokens || 0,
+                  candidatesTokenCount: p16.totalUsage?.outputTokens || 0
                 },
                 modelVersion: route.aliasId
               };
-              plog(`Stream finish. Reason: ${p15.finishReason}`);
+              plog(`Stream finish. Reason: ${p16.finishReason}`);
               res.write(`data: ${JSON.stringify(chunk)}
 
 `);
@@ -7755,28 +7870,28 @@ function parseModelCommand(turn) {
   if (!turn || turn.role !== "user") return null;
   const parts = turn.parts || [];
   if (parts.length !== 1) return null;
-  const text5 = parts[0]?.text;
-  if (typeof text5 !== "string") return null;
-  const trimmed = text5.trim();
+  const text6 = parts[0]?.text;
+  if (typeof text6 !== "string") return null;
+  const trimmed = text6.trim();
   if (!trimmed.startsWith(".model")) return null;
   if (trimmed === ".model") return "";
   if (trimmed.charAt(6) !== " ") return null;
   return trimmed.slice(7).trim();
 }
-function sendMockGeminiResponse(res, text5, isStream, modelVersion) {
+function sendMockGeminiResponse(res, text6, isStream, modelVersion) {
   if (isStream) {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       "Connection": "keep-alive"
     });
-    writeGeminiStreamText(res, text5, modelVersion);
+    writeGeminiStreamText(res, text6, modelVersion);
     res.end();
   } else {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
       candidates: [{
-        content: { role: "model", parts: [{ text: text5 }] },
+        content: { role: "model", parts: [{ text: text6 }] },
         finishReason: "STOP"
       }],
       usageMetadata: { promptTokenCount: 0, candidatesTokenCount: 0 },
@@ -7784,10 +7899,10 @@ function sendMockGeminiResponse(res, text5, isStream, modelVersion) {
     }));
   }
 }
-function writeGeminiStreamText(res, text5, modelVersion) {
+function writeGeminiStreamText(res, text6, modelVersion) {
   const chunk = {
     candidates: [{
-      content: { role: "model", parts: [{ text: text5 }] },
+      content: { role: "model", parts: [{ text: text6 }] },
       finishReason: "STOP"
     }],
     usageMetadata: { promptTokenCount: 0, candidatesTokenCount: 0 },
@@ -7944,7 +8059,7 @@ Error: ${launchPlan.error}
       return 1;
     }
   } else {
-    const catalogSpinner = p10.spinner();
+    const catalogSpinner = p11.spinner();
     catalogSpinner.start("Loading your providers...");
     try {
       catalog = await fetchProviderCatalog({ agent: "gemini" });
@@ -7957,21 +8072,21 @@ Error: ${launchPlan.error}
   }
   const compatible = providersForTarget(providersForPicker(catalog), "gemini");
   if (compatible.length === 0) {
-    p10.log.warn("No Gemini-compatible providers in your registry.");
-    p10.log.info("Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai-oauth.");
+    p11.log.warn("No Gemini-compatible providers in your registry.");
+    p11.log.info("Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai-oauth.");
     return 0;
   }
   let activeProvider = compatible.find((lp) => lp.id === prefs.lastGeminiProvider) ?? compatible[0];
   let selectedModel = activeProvider.models.find((m) => m.id === prefs.lastGeminiModel) ?? activeProvider.models[0];
   if (!selectedModel) {
-    p10.log.error(`Provider "${activeProvider.name}" has no models available.`);
+    p11.log.error(`Provider "${activeProvider.name}" has no models available.`);
     return 1;
   }
   ;
   if (launchPlan.skip && launchPlan.target) {
     const resolved = findProviderAndModel(compatible, launchPlan.target);
     if (!resolved) {
-      p10.log.error(
+      p11.log.error(
         `Provider/model not found: ${launchPlan.target.providerId} / ${launchPlan.target.modelId}`
       );
       return 1;
@@ -7979,12 +8094,12 @@ Error: ${launchPlan.error}
     activeProvider = resolved.provider;
     selectedModel = resolved.model;
     if (!agentStdout) {
-      p10.log.step(`Using ${selectedModel.name || selectedModel.id} (${activeProvider.name})`);
+      p11.log.step(`Using ${selectedModel.name || selectedModel.id} (${activeProvider.name})`);
     }
   } else {
     if (!agentStdout) {
       console.log("");
-      p10.log.info(`Launching ${pc8.bold("Gemini CLI")} with relay-ai`);
+      p11.log.info(`Launching ${pc8.bold("Gemini CLI")} with relay-ai`);
     }
     const chosenProvider = await pickGeminiProvider(
       compatible,
@@ -8016,7 +8131,7 @@ Error: ${launchPlan.error}
   recordLaunchSelection("gemini", activeProvider.id, selectedModel.id, prefs);
   const launchApiKey = await resolveLocalProviderApiKey(activeProvider);
   if (!launchApiKey?.trim()) {
-    p10.log.error(
+    p11.log.error(
       `No API key found for ${activeProvider.name}. Set it with relay-ai providers add.`
     );
     return 1;
@@ -8112,14 +8227,14 @@ Error: ${launchPlan.error}
     oauthBackend = backendRoutes.backend;
     proxyHandle = await startGeminiProxy(finalRoutes, trace);
   } catch (err) {
-    p10.log.error(`Failed to start Gemini proxy: ${err instanceof Error ? err.message : String(err)}`);
+    p11.log.error(`Failed to start Gemini proxy: ${err instanceof Error ? err.message : String(err)}`);
     oauthBackend?.handle.close();
     return 1;
   }
   const childEnv = prepareGeminiChildEnv(proxyHandle.port, proxyHandle.token);
   if (!agentStdout) {
-    p10.log.info(`Gemini proxy started on port ${proxyHandle.port}`);
-    p10.log.info(`\u{1F4A1} Type ${pc8.bold(".model <id>")} in the chat to switch models mid-session.`);
+    p11.log.info(`Gemini proxy started on port ${proxyHandle.port}`);
+    p11.log.info(`\u{1F4A1} Type ${pc8.bold(".model <id>")} in the chat to switch models mid-session.`);
   }
   let exitCode = 1;
   try {
@@ -8130,7 +8245,7 @@ Error: ${launchPlan.error}
     oauthBackend?.handle.close();
   }
   if (!agentStdout) {
-    p10.log.info("Gemini proxy stopped.");
+    p11.log.info("Gemini proxy stopped.");
   }
   if (trace) {
     printTraceLog(getGeminiProxyDebugLogPath());
@@ -8140,7 +8255,7 @@ Error: ${launchPlan.error}
 
 // src/antigravity.ts
 import pc9 from "picocolors";
-import * as p11 from "@clack/prompts";
+import * as p12 from "@clack/prompts";
 
 // src/antigravity/cloud-code-gateway.ts
 import http from "http";
@@ -8235,18 +8350,18 @@ var JSON_SCHEMA_TYPES = /* @__PURE__ */ new Map([
   ["OBJECT", "object"],
   ["STRING", "string"]
 ]);
-function expandTextWithThinking(text5) {
-  if (!text5.includes("<thinking>")) {
-    return [{ type: "text", text: text5 }];
+function expandTextWithThinking(text6) {
+  if (!text6.includes("<thinking>")) {
+    return [{ type: "text", text: text6 }];
   }
   const out = [];
-  const tokens = text5.split(/<thinking>([\s\S]*?)<\/thinking>/);
+  const tokens = text6.split(/<thinking>([\s\S]*?)<\/thinking>/);
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i] ?? "";
     if (!token.trim()) continue;
     out.push({ type: i % 2 === 1 ? "reasoning" : "text", text: token });
   }
-  return out.length > 0 ? out : [{ type: "text", text: text5 }];
+  return out.length > 0 ? out : [{ type: "text", text: text6 }];
 }
 function normalizeSchemaType(value) {
   if (typeof value === "string") {
@@ -8316,9 +8431,9 @@ function translateRequest(ccReq, options = {}) {
       continue;
     }
     const sdkRole = role === "model" ? "assistant" : "user";
-    const hasFunctionCall = msg.parts.some((p15) => p15.functionCall);
-    const hasAssistantReasoning = role === "model" && msg.parts.some((p15) => p15.thought || p15.text?.includes("<thinking>"));
-    const hasComplexParts = msg.parts.some((p15) => p15.thought || p15.inlineData || p15.functionCall || p15.functionResponse);
+    const hasFunctionCall = msg.parts.some((p16) => p16.functionCall);
+    const hasAssistantReasoning = role === "model" && msg.parts.some((p16) => p16.thought || p16.text?.includes("<thinking>"));
+    const hasComplexParts = msg.parts.some((p16) => p16.thought || p16.inlineData || p16.functionCall || p16.functionResponse);
     const singleText = msg.parts.length === 1 ? msg.parts[0]?.text : void 0;
     if (!hasComplexParts && singleText !== void 0 && !singleText.includes("<thinking>")) {
       sdkMessages.push({
@@ -9471,7 +9586,7 @@ async function startCloudCodeGateway(routes, opts = {}) {
   const templateKey = opts.templateKey ?? "gemini-3.5-flash-low";
   const trace = opts.trace ?? false;
   const trackActiveRoute = opts.trackActiveRoute ?? false;
-  const log14 = opts.logFn ?? (() => {
+  const log15 = opts.logFn ?? (() => {
   });
   const catalogFixture = fetchAvailableModels_default;
   const injectedCatalog = injectRelayModels(catalogFixture, routes, templateKey);
@@ -9521,12 +9636,12 @@ async function startCloudCodeGateway(routes, opts = {}) {
       const contentType = (req.headers["content-type"] ?? "").toLowerCase();
       const lowerUrl = url.toLowerCase();
       if (trace) {
-        log14(`[gateway] ${method} ${url}`);
-        log14(`[gateway]   content-type: ${contentType}`);
-        log14(`[gateway]   body-size: ${bodyStr.length}`);
+        log15(`[gateway] ${method} ${url}`);
+        log15(`[gateway]   content-type: ${contentType}`);
+        log15(`[gateway]   body-size: ${bodyStr.length}`);
       }
       if (contentType.includes("proto") || contentType.includes("grpc") && !contentType.includes("json")) {
-        log14(`[gateway] UNSUPPORTED content-type: ${contentType}`);
+        log15(`[gateway] UNSUPPORTED content-type: ${contentType}`);
         respondJson(res, 415, {
           error: {
             code: 415,
@@ -9547,47 +9662,47 @@ async function startCloudCodeGateway(routes, opts = {}) {
           }
           return value;
         }).slice(0, 500);
-        log14(`[gateway]   body-preview: ${preview}`);
+        log15(`[gateway]   body-preview: ${preview}`);
       }
       if (lowerUrl.includes("loadcodeassist")) {
-        if (trace) log14("[gateway] \u2192 loadCodeAssist");
+        if (trace) log15("[gateway] \u2192 loadCodeAssist");
         respondJson(res, 200, loadCodeAssist_default);
         return;
       }
       if (lowerUrl.includes("fetchavailablemodels") || lowerUrl.includes("getavailablemodels")) {
-        if (trace) log14("[gateway] \u2192 fetchAvailableModels");
+        if (trace) log15("[gateway] \u2192 fetchAvailableModels");
         respondJson(res, 200, injectedCatalog);
         return;
       }
       if (lowerUrl.includes("modelconfigs")) {
-        if (trace) log14("[gateway] \u2192 listModelConfigs");
+        if (trace) log15("[gateway] \u2192 listModelConfigs");
         respondJson(res, 200, modelConfigsResponse);
         return;
       }
       if (lowerUrl.includes("generatecontent") || lowerUrl.includes("generatechat")) {
         const model = parsed?.model;
-        if (trace) log14(`[gateway]   extracted model: ${model ?? "N/A"}`);
+        if (trace) log15(`[gateway]   extracted model: ${model ?? "N/A"}`);
         const route = resolveRouteForModel(model);
         if (route) {
           if (trace) {
-            log14(
+            log15(
               `[gateway]   resolved route: ${route.catalogId} (${route.providerId}/${route.upstreamModelId} via ${model})`
             );
           }
           const media = sanitizeUnsupportedInlineData(parsed);
           parsed = media.request;
           if (media.latestUserTurnHasUnsupportedMedia) {
-            if (trace) log14("[gateway] unsupported media in current user turn; provider call skipped");
+            if (trace) log15("[gateway] unsupported media in current user turn; provider call skipped");
             respondUnsupportedMedia(res, route, lowerUrl.includes("stream"));
             return;
           }
           if (trackActiveRoute && selectedSlotIds.has(model ?? "") && isUserTurnRequest(parsed)) {
             activeRoute = route;
-            if (trace) log14(`[gateway]   active route: ${route.catalogId} via ${model}`);
+            if (trace) log15(`[gateway]   active route: ${route.catalogId} via ${model}`);
           }
           if (isCloudCodeOAuthRoute(route)) {
-            handleCloudCodeForwardRequest(res, route, parsed, lowerUrl, log14).catch((err) => {
-              log14(`[gateway] cloud-code forward error: ${err instanceof Error ? err.stack || err.message : String(err)}`);
+            handleCloudCodeForwardRequest(res, route, parsed, lowerUrl, log15).catch((err) => {
+              log15(`[gateway] cloud-code forward error: ${err instanceof Error ? err.stack || err.message : String(err)}`);
               if (!res.headersSent) {
                 respondJson(res, 500, { error: { code: 500, message: formatUpstreamError(err) } });
               } else if (!res.writableEnded) {
@@ -9614,13 +9729,13 @@ async function startCloudCodeGateway(routes, opts = {}) {
             rememberReasoningEcho(reasoningEchoesByConversation, conversationKey, reasoning);
           };
           if (isStream) {
-            handleStreamingRequest(res, route, baseProviderOptions, parsed, log14, {
+            handleStreamingRequest(res, route, baseProviderOptions, parsed, log15, {
               requestOptions,
               onReasoningWithToolCall: rememberReasoning,
               trace
             }).catch((err) => {
-              log14(`[gateway] stream error: ${formatUpstreamError(err)}`);
-              if (trace) log14(`[gateway] stream error detail: ${formatUpstreamErrorTrace(err)}`);
+              log15(`[gateway] stream error: ${formatUpstreamError(err)}`);
+              if (trace) log15(`[gateway] stream error detail: ${formatUpstreamErrorTrace(err)}`);
               if (!res.headersSent) {
                 respondJson(res, 500, { error: { code: 500, message: formatUpstreamError(err) } });
               } else if (!res.writableEnded) {
@@ -9628,13 +9743,13 @@ async function startCloudCodeGateway(routes, opts = {}) {
               }
             });
           } else {
-            handleUnaryRequest(res, route, baseProviderOptions, parsed, log14, {
+            handleUnaryRequest(res, route, baseProviderOptions, parsed, log15, {
               requestOptions,
               onReasoningWithToolCall: rememberReasoning,
               trace
             }).catch((err) => {
-              log14(`[gateway] unary error: ${formatUpstreamError(err)}`);
-              if (trace) log14(`[gateway] unary error detail: ${formatUpstreamErrorTrace(err)}`);
+              log15(`[gateway] unary error: ${formatUpstreamError(err)}`);
+              if (trace) log15(`[gateway] unary error detail: ${formatUpstreamErrorTrace(err)}`);
               if (!res.headersSent) {
                 respondJson(res, 500, { error: { code: 500, message: formatUpstreamError(err) } });
               }
@@ -9730,7 +9845,7 @@ async function startCloudCodeGateway(routes, opts = {}) {
         return;
       }
       if (trace) {
-        log14(`[gateway] unknown endpoint: ${url}`);
+        log15(`[gateway] unknown endpoint: ${url}`);
       }
       respondJson(res, 200, {});
     }).catch((err) => {
@@ -9824,7 +9939,7 @@ function rememberReasoningEcho(cache, key, reasoning) {
   existing.push(normalized);
   cache.set(key, existing.slice(-MAX_REASONING_ECHOES_PER_CONVERSATION));
 }
-async function handleCloudCodeForwardRequest(res, route, parsed, lowerUrl, log14) {
+async function handleCloudCodeForwardRequest(res, route, parsed, lowerUrl, log15) {
   const projectId = typeof route.providerData?.projectId === "string" ? route.providerData.projectId : "";
   if (!projectId) {
     respondJson(res, 500, {
@@ -9853,7 +9968,7 @@ async function handleCloudCodeForwardRequest(res, route, parsed, lowerUrl, log14
   });
   if (!upstream.ok) {
     const errBody = await upstream.text();
-    log14(`[gateway] cloud-code upstream error ${upstream.status}: ${errBody}`);
+    log15(`[gateway] cloud-code upstream error ${upstream.status}: ${errBody}`);
     respondJson(res, upstream.status >= 500 ? 502 : upstream.status, {
       error: { code: upstream.status, message: errBody || upstream.statusText }
     });
@@ -9883,11 +9998,11 @@ async function handleCloudCodeForwardRequest(res, route, parsed, lowerUrl, log14
   });
   res.end(body);
 }
-function emitThinkingDelta(res, route, responseId, text5, startSse) {
-  if (!text5) return;
+function emitThinkingDelta(res, route, responseId, text6, startSse) {
+  if (!text6) return;
   startSse();
   const chunk = formatCloudCodeChunk({
-    thought: text5,
+    thought: text6,
     modelVersion: route.catalogId,
     responseId
   });
@@ -9895,9 +10010,9 @@ function emitThinkingDelta(res, route, responseId, text5, startSse) {
 
 `);
 }
-function trailingPartial(text5, tag) {
-  for (let len = Math.min(tag.length - 1, text5.length); len > 0; len--) {
-    if (text5.endsWith(tag.slice(0, len))) return len;
+function trailingPartial(text6, tag) {
+  for (let len = Math.min(tag.length - 1, text6.length); len > 0; len--) {
+    if (text6.endsWith(tag.slice(0, len))) return len;
   }
   return 0;
 }
@@ -9909,13 +10024,13 @@ function createThinkFilter() {
     let src = partial + chunk;
     partial = "";
     let thought = "";
-    let text5 = "";
+    let text6 = "";
     while (src.length > 0) {
       if (state === "scanning") {
         const idx = src.indexOf("<think>");
         if (idx === -1) {
           const len = trailingPartial(src, "<think>");
-          text5 += src.slice(0, src.length - len);
+          text6 += src.slice(0, src.length - len);
           if (len > 0) {
             partial = src.slice(src.length - len);
           } else {
@@ -9923,7 +10038,7 @@ function createThinkFilter() {
           }
           break;
         }
-        text5 += src.slice(0, idx);
+        text6 += src.slice(0, idx);
         src = src.slice(idx + 7);
         state = "inside";
       } else {
@@ -9940,7 +10055,7 @@ function createThinkFilter() {
         state = "passthrough";
       }
     }
-    return { thought, text: text5 };
+    return { thought, text: text6 };
   };
 }
 function emitStreamError(res, route, responseId, message, startSse) {
@@ -10002,8 +10117,8 @@ function respondUnsupportedMedia(res, route, streaming) {
     metadata: {}
   });
 }
-function parsePseudoToolCall(text5, knownToolNames) {
-  const trimmed = text5.trim();
+function parsePseudoToolCall(text6, knownToolNames) {
+  const trimmed = text6.trim();
   if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
   try {
     const obj = JSON.parse(trimmed);
@@ -10018,13 +10133,13 @@ function parsePseudoToolCall(text5, knownToolNames) {
   }
   return null;
 }
-async function handleStreamingRequest(res, route, providerOptions, parsed, log14, options = {}) {
+async function handleStreamingRequest(res, route, providerOptions, parsed, log15, options = {}) {
   const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
     ...options.requestOptions,
     maxTools: maxToolsForNpm(route.npm)
   }));
   if (options.trace) {
-    log14(`[gateway]   sdk request: ${JSON.stringify(summarizeSdkRequestForTrace(sdkParams))}`);
+    log15(`[gateway]   sdk request: ${JSON.stringify(summarizeSdkRequestForTrace(sdkParams))}`);
   }
   const effectiveProviderOptions = deepMergeProviderOptions(
     providerOptions,
@@ -10085,35 +10200,35 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
     bufferingJsonText = false;
   };
   for await (const part of stream) {
-    const p15 = part;
-    if (p15.type === "reasoning-delta" || p15.type === "reasoning") {
-      const reasoning = reasoningDeltaText(p15);
+    const p16 = part;
+    if (p16.type === "reasoning-delta" || p16.type === "reasoning") {
+      const reasoning = reasoningDeltaText(p16);
       responseReasoning += reasoning;
       emitThinkingDelta(res, route, responseId, reasoning, startSse);
       continue;
     }
-    if (p15.type === "text-delta") {
-      const { thought, text: text5 } = thinkFilter(reasoningDeltaText(p15));
+    if (p16.type === "text-delta") {
+      const { thought, text: text6 } = thinkFilter(reasoningDeltaText(p16));
       if (thought) {
         responseReasoning += thought;
         emitThinkingDelta(res, route, responseId, thought, startSse);
       }
-      if (text5) {
-        log14(`[gateway] text-delta: ${JSON.stringify(text5.slice(0, 500))}`);
-        if (!bufferingJsonText && (textBuffer + text5).trimStart().startsWith("{")) {
+      if (text6) {
+        log15(`[gateway] text-delta: ${JSON.stringify(text6.slice(0, 500))}`);
+        if (!bufferingJsonText && (textBuffer + text6).trimStart().startsWith("{")) {
           bufferingJsonText = true;
         }
         if (bufferingJsonText) {
-          textBuffer += text5;
+          textBuffer += text6;
           const pseudoTool = textBuffer.trimEnd().endsWith("}") ? parsePseudoToolCall(textBuffer, knownToolNames) : null;
           if (pseudoTool) {
-            log14(`[gateway] parsed pseudo tool-call from text: ${pseudoTool.name}`);
+            log15(`[gateway] parsed pseudo tool-call from text: ${pseudoTool.name}`);
             emitPseudoToolCall(pseudoTool);
           }
         } else {
           startSse();
           const chunk = formatCloudCodeChunk({
-            text: text5,
+            text: text6,
             modelVersion: route.catalogId,
             responseId
           });
@@ -10122,25 +10237,25 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
 `);
         }
       }
-    } else if (p15.type === "tool-input-start") {
-      const id = p15.id ?? p15.toolCallId;
-      toolCallBuffers.set(id, { name: p15.toolName, json: "" });
-    } else if (p15.type === "tool-input-delta") {
-      const id = p15.id ?? p15.toolCallId;
+    } else if (p16.type === "tool-input-start") {
+      const id = p16.id ?? p16.toolCallId;
+      toolCallBuffers.set(id, { name: p16.toolName, json: "" });
+    } else if (p16.type === "tool-input-delta") {
+      const id = p16.id ?? p16.toolCallId;
       const buf = toolCallBuffers.get(id);
-      if (buf) buf.json += p15.delta;
-    } else if (p15.type === "tool-call") {
+      if (buf) buf.json += p16.delta;
+    } else if (p16.type === "tool-call") {
       sawToolCall = true;
-      const id = p15.toolCallId ?? p15.id;
+      const id = p16.toolCallId ?? p16.id;
       const buf = toolCallBuffers.get(id);
       let args = {};
       try {
-        args = buf ? JSON.parse(buf.json || "{}") : p15.input || {};
+        args = buf ? JSON.parse(buf.json || "{}") : p16.input || {};
       } catch {
-        args = p15.input || {};
+        args = p16.input || {};
       }
-      const name = buf ? buf.name : p15.toolName;
-      log14(`[gateway] tool-call: ${name}`);
+      const name = buf ? buf.name : p16.toolName;
+      log15(`[gateway] tool-call: ${name}`);
       startSse();
       const chunk = formatCloudCodeChunk({
         functionCall: { name, args: normalizeFunctionCallArgs(args) },
@@ -10150,42 +10265,42 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
       res.write(`data: ${JSON.stringify(chunk)}
 
 `);
-    } else if (p15.type === "finish") {
-      log14(`[gateway] finish: ${p15.finishReason ?? "unknown"}`);
+    } else if (p16.type === "finish") {
+      log15(`[gateway] finish: ${p16.finishReason ?? "unknown"}`);
       if (textBuffer) {
         const pseudoTool = parsePseudoToolCall(textBuffer, knownToolNames);
         if (pseudoTool) {
-          log14(`[gateway] parsed pseudo tool-call on finish: ${pseudoTool.name}`);
+          log15(`[gateway] parsed pseudo tool-call on finish: ${pseudoTool.name}`);
           emitPseudoToolCall(pseudoTool);
         } else {
           flushBufferedText();
         }
       }
       startSse();
-      const reason = mapFinishReason2(p15.finishReason ?? "");
+      const reason = mapFinishReason2(p16.finishReason ?? "");
       const chunk = formatCloudCodeChunk({
         modelVersion: route.catalogId,
         responseId,
         finishReason: reason,
         usage: {
-          promptTokens: p15.totalUsage?.inputTokens || 0,
-          completionTokens: p15.totalUsage?.outputTokens || 0
+          promptTokens: p16.totalUsage?.inputTokens || 0,
+          completionTokens: p16.totalUsage?.outputTokens || 0
         }
       });
       res.write(`data: ${JSON.stringify(chunk)}
 
 `);
-    } else if (p15.type === "error") {
-      const message = formatUpstreamError(p15.error);
-      log14(`[gateway] stream provider error: ${message}`);
+    } else if (p16.type === "error") {
+      const message = formatUpstreamError(p16.error);
+      log15(`[gateway] stream provider error: ${message}`);
       if (options.trace) {
-        log14(`[gateway] stream provider error detail: ${formatUpstreamErrorTrace(p15.error)}`);
+        log15(`[gateway] stream provider error detail: ${formatUpstreamErrorTrace(p16.error)}`);
       }
       flushBufferedText();
       emitStreamError(res, route, responseId, message, startSse);
       break;
-    } else if (p15.type === "reasoning-start" || p15.type === "reasoning-end") {
-      log14(`[gateway] ${p15.type}`);
+    } else if (p16.type === "reasoning-start" || p16.type === "reasoning-end") {
+      log15(`[gateway] ${p16.type}`);
     }
   }
   if (!res.headersSent) {
@@ -10196,13 +10311,13 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
   }
   res.end();
 }
-async function handleUnaryRequest(res, route, providerOptions, parsed, log14, options = {}) {
+async function handleUnaryRequest(res, route, providerOptions, parsed, log15, options = {}) {
   const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
     ...options.requestOptions,
     maxTools: maxToolsForNpm(route.npm)
   }));
   if (options.trace) {
-    log14(`[gateway]   sdk request: ${JSON.stringify(summarizeSdkRequestForTrace(sdkParams))}`);
+    log15(`[gateway]   sdk request: ${JSON.stringify(summarizeSdkRequestForTrace(sdkParams))}`);
   }
   const effectiveProviderOptions = deepMergeProviderOptions(
     providerOptions,
@@ -10757,11 +10872,11 @@ function resolveAntigravityBootModel(provider, modelSelector) {
 async function pickAntigravityCliFavoriteLaunchModel(favorites, allProviders) {
   const resolved = favorites.map((favorite) => resolveFavoriteModel(favorite, allProviders)).filter((entry) => entry !== null);
   if (resolved.length === 0) {
-    p11.log.warn("No Antigravity CLI favorites are available.");
-    p11.log.info(pc9.dim("Manage them with `relay-ai favorites --agy`."));
+    p12.log.warn("No Antigravity CLI favorites are available.");
+    p12.log.info(pc9.dim("Manage them with `relay-ai favorites --agy`."));
     return null;
   }
-  const picked = await p11.select({
+  const picked = await p12.select({
     message: "Launch from Antigravity CLI favorites",
     options: resolved.map(({ provider, model }) => ({
       value: `${provider.id}:${model.id}`,
@@ -10770,8 +10885,8 @@ async function pickAntigravityCliFavoriteLaunchModel(favorites, allProviders) {
     })),
     initialValue: `${resolved[0].provider.id}:${resolved[0].model.id}`
   });
-  if (p11.isCancel(picked)) {
-    p11.cancel("Cancelled.");
+  if (p12.isCancel(picked)) {
+    p12.cancel("Cancelled.");
     return null;
   }
   const [providerId, ...modelParts] = picked.split(":");
@@ -10780,31 +10895,31 @@ async function pickAntigravityCliFavoriteLaunchModel(favorites, allProviders) {
 }
 async function resolveAntigravityLaunch(prefs, boot) {
   let catalog;
-  const catalogSpinner = p11.spinner();
+  const catalogSpinner = p12.spinner();
   catalogSpinner.start("Loading providers...");
   try {
     catalog = await fetchProviderCatalog();
   } catch (err) {
     catalogSpinner.stop("");
-    p11.log.error(String(err instanceof Error ? err.message : err));
+    p12.log.error(String(err instanceof Error ? err.message : err));
     return null;
   }
   catalogSpinner.stop("");
   const allProviders = providersForTarget(providersForPicker(catalog), "antigravity");
   if (allProviders.length === 0) {
-    p11.log.warn("No providers available.");
-    p11.log.info(pc9.dim("Run relay-ai providers add or import to get started."));
+    p12.log.warn("No providers available.");
+    p12.log.info(pc9.dim("Run relay-ai providers add or import to get started."));
     return null;
   }
   if (boot?.launchProvider && boot?.launchModel) {
-    const provider = allProviders.find((p15) => p15.id === boot.launchProvider);
+    const provider = allProviders.find((p16) => p16.id === boot.launchProvider);
     if (!provider) {
-      p11.log.error(`Provider not found: ${boot.launchProvider}`);
+      p12.log.error(`Provider not found: ${boot.launchProvider}`);
       return null;
     }
     const { model, error } = resolveAntigravityBootModel(provider, boot.launchModel);
     if (!model) {
-      p11.log.error(error ?? `Model not found: ${boot.launchModel} on provider ${provider.name}`);
+      p12.log.error(error ?? `Model not found: ${boot.launchModel} on provider ${provider.name}`);
       return null;
     }
     return { provider, model, allProviders };
@@ -10821,13 +10936,13 @@ async function resolveAntigravityLaunch(prefs, boot) {
   const conflicts = detectConflicts();
   let currentInitialProvider = initialProvider;
   while (true) {
-    const chosen = await p11.select({
+    const chosen = await p12.select({
       message: "Which provider?",
       options: providerOptions,
       initialValue: currentInitialProvider
     });
-    if (p11.isCancel(chosen)) {
-      p11.cancel("Cancelled.");
+    if (p12.isCancel(chosen)) {
+      p12.cancel("Cancelled.");
       return null;
     }
     if (chosen === AGY_FAVORITES_PROVIDER_ID) {
@@ -10860,32 +10975,32 @@ async function resolveAndBuildRoutes(provider, model, allProviders, prefs, opts)
     maxRoutes: opts.maxRoutes
   });
   if (!result) {
-    p11.log.error(`No credential for ${provider.name}. Run: relay-ai providers auth ${provider.id} or add an API key.`);
+    p12.log.error(`No credential for ${provider.name}. Run: relay-ai providers auth ${provider.id} or add an API key.`);
     return null;
   }
   if (result.routes.length > 1) {
-    p11.log.info(
+    p12.log.info(
       `Favorites mode active \u2014 Antigravity picker will show ${result.routes.length} models.`
     );
-    p11.log.info("Edit with `relay-ai favorites --agy`.");
+    p12.log.info("Edit with `relay-ai favorites --agy`.");
   }
   if (result.droppedFavorites.length > 0) {
-    p11.log.warn(
+    p12.log.warn(
       `Skipped ${result.droppedFavorites.length} stale/unauthorized favorite(s): ` + result.droppedFavorites.map((fav) => `${fav.providerId}:${fav.modelId}`).join(", ")
     );
   }
   if (result.capacitySkippedFavorites.length > 0) {
-    p11.log.warn(formatAgyCapacityWarning(opts.validatedSlotCount, result.capacitySkippedFavorites.length));
-    p11.log.warn(
+    p12.log.warn(formatAgyCapacityWarning(opts.validatedSlotCount, result.capacitySkippedFavorites.length));
+    p12.log.warn(
       "Not exposed: " + result.capacitySkippedFavorites.map((fav) => `${fav.providerId}:${fav.modelId}`).join(", ")
     );
     if (opts.pauseForCapacityWarning && isInteractiveTerminal() && !agyArgsAreNonInteractive(opts.childArgs)) {
-      const proceed = await p11.confirm({
+      const proceed = await p12.confirm({
         message: "Continue with the validated AGY switch catalog?",
         initialValue: true
       });
-      if (p11.isCancel(proceed) || !proceed) {
-        p11.cancel("Cancelled.");
+      if (p12.isCancel(proceed) || !proceed) {
+        p12.cancel("Cancelled.");
         return null;
       }
     }
@@ -10937,7 +11052,7 @@ async function runAntigravityCommand(intro, tracePrefix, trace, boot, launch, op
   const prefs = loadPreferences();
   relayIntro(intro);
   if (tracePrefix === "agy" && (prefs.favoriteModels?.length ?? 0) > 0 && (prefs.antigravityCliFavoriteModels?.length ?? 0) === 0 && !prefs.antigravityCliFavoritesHintShown) {
-    p11.log.info("Tip: AGY uses its own favorites list. Run `relay-ai favorites --agy` to set up switching.");
+    p12.log.info("Tip: AGY uses its own favorites list. Run `relay-ai favorites --agy` to set up switching.");
     savePreferences({ antigravityCliFavoritesHintShown: true });
   }
   const selection = await resolveAntigravityLaunch(prefs, boot);
@@ -10950,7 +11065,7 @@ async function runAntigravityCommand(intro, tracePrefix, trace, boot, launch, op
     fixture: fetchAvailableModels_default
   });
   for (const warning of compatibility.warnings) {
-    p11.log.warn(warning);
+    p12.log.warn(warning);
   }
   const routeLimit = compatibility.mode === "multi-model" ? compatibility.validatedSwitchSlotCount : 1;
   const routeResult = await resolveAndBuildRoutes(provider, model, allProviders, prefs, {
@@ -10970,12 +11085,12 @@ async function runAntigravityCommand(intro, tracePrefix, trace, boot, launch, op
   try {
     gatewayHandle = await startCloudCodeGateway(routeResult.routes, { trace, logFn });
   } catch (err) {
-    p11.log.error(`Failed to start Cloud Code gateway: ${err}`);
+    p12.log.error(`Failed to start Cloud Code gateway: ${err}`);
     return 1;
   }
-  p11.log.info(`Cloud Code gateway on ${pc9.cyan(`127.0.0.1:${gatewayHandle.port}`)}`);
-  p11.log.success(`Active model: ${formatCodexModelLabel(model)} ${pc9.dim("via")} ${provider.name}`);
-  if (traceLogPath) p11.log.info(`Gateway trace \u2192 ${pc9.dim(traceLogPath)}`);
+  p12.log.info(`Cloud Code gateway on ${pc9.cyan(`127.0.0.1:${gatewayHandle.port}`)}`);
+  p12.log.success(`Active model: ${formatCodexModelLabel(model)} ${pc9.dim("via")} ${provider.name}`);
+  if (traceLogPath) p12.log.info(`Gateway trace \u2192 ${pc9.dim(traceLogPath)}`);
   relayOutro("Launching", `${formatCodexModelLabel(model)} (${provider.name})`);
   try {
     const cleanEnv = buildAntigravityChildEnv(gatewayHandle.url);
@@ -11003,12 +11118,12 @@ async function runAntigravityAppCommand(childArgs, trace = false, boot) {
     async (env, _routes, gatewayHandle) => {
       const profileDir = join10(homedir8(), ".relay-ai", "antigravity", "app-profile");
       if (isAntigravityAppRunning(profileDir)) {
-        const restart = await p11.confirm({
+        const restart = await p12.confirm({
           message: "Restart Antigravity to apply this Relay gateway?",
           initialValue: true
         });
-        if (p11.isCancel(restart) || !restart) {
-          p11.log.info("Quit and reopen Antigravity when you are ready for the new gateway to take effect.");
+        if (p12.isCancel(restart) || !restart) {
+          p12.log.info("Quit and reopen Antigravity when you are ready for the new gateway to take effect.");
           return 0;
         }
         quitAntigravityAppGracefully();
@@ -11019,18 +11134,18 @@ async function runAntigravityAppCommand(childArgs, trace = false, boot) {
       }
       const launchCode = await launchAntigravityApp(env, profileDir, gatewayHandle.url, childArgs);
       if (launchCode !== 0) return launchCode;
-      p11.log.info("Antigravity is using the Relay Cloud Code gateway.");
-      p11.log.info(pc9.cyan("Press Ctrl+C to stop the gateway."));
+      p12.log.info("Antigravity is using the Relay Cloud Code gateway.");
+      p12.log.info(pc9.cyan("Press Ctrl+C to stop the gateway."));
       await waitForShutdown();
       await new Promise((r) => setTimeout(r, SHUTDOWN_DRAIN_MS));
       console.log("");
-      p11.log.step("Gateway stopped.");
-      const shouldClose = await p11.confirm({
+      p12.log.step("Gateway stopped.");
+      const shouldClose = await p12.confirm({
         message: "Close Antigravity?",
         initialValue: true
       });
-      if (!p11.isCancel(shouldClose) && shouldClose) {
-        p11.log.step("Stopping Antigravity...");
+      if (!p12.isCancel(shouldClose) && shouldClose) {
+        p12.log.step("Stopping Antigravity...");
         quitAntigravityAppGracefully();
         if (!await waitForAntigravityAppQuit(profileDir)) {
           forceQuitAntigravityApp(profileDir);
@@ -11051,12 +11166,12 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
     async (env, _routes, gatewayHandle) => {
       const profileDir = join10(homedir8(), ".relay-ai", "antigravity", "profile");
       if (isAntigravityIdeRunning(profileDir)) {
-        const restart = await p11.confirm({
+        const restart = await p12.confirm({
           message: "Restart Antigravity IDE to apply this Relay gateway?",
           initialValue: true
         });
-        if (p11.isCancel(restart) || !restart) {
-          p11.log.info("Quit and reopen Antigravity IDE when you are ready for the new gateway to take effect.");
+        if (p12.isCancel(restart) || !restart) {
+          p12.log.info("Quit and reopen Antigravity IDE when you are ready for the new gateway to take effect.");
           return 0;
         }
         quitAntigravityIdeGracefully();
@@ -11067,18 +11182,18 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
       }
       const launchCode = await launchAntigravityIde(env, profileDir, gatewayHandle.url, childArgs);
       if (launchCode !== 0) return launchCode;
-      p11.log.info("Antigravity IDE is using the Relay Cloud Code gateway.");
-      p11.log.info(pc9.cyan("Press Ctrl+C to stop the gateway."));
+      p12.log.info("Antigravity IDE is using the Relay Cloud Code gateway.");
+      p12.log.info(pc9.cyan("Press Ctrl+C to stop the gateway."));
       await waitForShutdown();
       await new Promise((r) => setTimeout(r, SHUTDOWN_DRAIN_MS));
       console.log("");
-      p11.log.step("Gateway stopped.");
-      const shouldClose = await p11.confirm({
+      p12.log.step("Gateway stopped.");
+      const shouldClose = await p12.confirm({
         message: "Close Antigravity IDE?",
         initialValue: true
       });
-      if (!p11.isCancel(shouldClose) && shouldClose) {
-        p11.log.step("Stopping Antigravity IDE...");
+      if (!p12.isCancel(shouldClose) && shouldClose) {
+        p12.log.step("Stopping Antigravity IDE...");
         quitAntigravityIdeGracefully();
         if (!await waitForAntigravityIdeQuit(profileDir)) {
           forceQuitAntigravityIde(profileDir);
@@ -11093,7 +11208,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
 
 // src/codex-app.ts
 import pc10 from "picocolors";
-import * as p12 from "@clack/prompts";
+import * as p13 from "@clack/prompts";
 import { join as join13 } from "path";
 
 // src/codex/app-provider-routes.ts
@@ -11220,12 +11335,12 @@ function readCodexConfigText(path3 = getCodexConfigPath()) {
   if (!existsSync8(path3)) return "";
   return readFileSync3(path3, "utf8");
 }
-function parseCodexConfig(text5) {
-  if (!text5.trim()) return {};
-  return asRecord(parse(text5));
+function parseCodexConfig(text6) {
+  if (!text6.trim()) return {};
+  return asRecord(parse(text6));
 }
-function captureRestoreState(text5) {
-  const config = parseCodexConfig(text5);
+function captureRestoreState(text6) {
+  const config = parseCodexConfig(text6);
   const profile = rootString(config, "profile");
   const model = rootString(config, "model");
   const modelProvider = rootString(config, "model_provider");
@@ -11257,8 +11372,8 @@ function captureRestoreState(text5) {
     multiAgentV2: features.multi_agent_v2
   };
 }
-function isAppManagedConfig(text5) {
-  const config = parseCodexConfig(text5);
+function isAppManagedConfig(text6) {
+  const config = parseCodexConfig(text6);
   const mp = rootString(config, "model_provider");
   if (mp.had && mp.value === CODEX_APP_PROVIDER_ID) return true;
   const baseUrl = rootString(config, "openai_base_url");
@@ -11327,8 +11442,8 @@ function mergeAppConfig(existing, spec) {
   }
   return out;
 }
-function validateAppConfigText(text5, spec) {
-  const config = parseCodexConfig(text5);
+function validateAppConfigText(text6, spec) {
+  const config = parseCodexConfig(text6);
   if ("profile" in config) {
     throw new Error("Generated config still contains legacy root profile key");
   }
@@ -11362,17 +11477,17 @@ function applyAppConfigPatch(spec, configPath = getCodexConfigPath()) {
     throw new Error(`Invalid existing Codex config at ${configPath}: ${err instanceof Error ? err.message : err}`);
   }
   const merged = mergeAppConfig(existing, spec);
-  const text5 = `${stringify(merged)}
+  const text6 = `${stringify(merged)}
 `;
-  validateAppConfigText(text5, spec);
+  validateAppConfigText(text6, spec);
   mkdirSync4(dirname2(configPath), { recursive: true });
-  atomicWriteFile(configPath, text5);
+  atomicWriteFile(configPath, text6);
   const written = readCodexConfigText(configPath);
-  if (written !== text5) {
+  if (written !== text6) {
     throw new Error(`Codex config readback mismatch at ${configPath}`);
   }
   validateAppConfigText(written, spec);
-  return text5;
+  return text6;
 }
 function applyRestoreKey(config, key, had, value) {
   if (had && value !== void 0) {
@@ -11432,10 +11547,10 @@ function restoreConfigFromState(state, configPath = getCodexConfigPath()) {
   return true;
 }
 function previewAppConfigToml(spec) {
-  const text5 = `${stringify(buildCodexAppRootConfig(spec))}
+  const text6 = `${stringify(buildCodexAppRootConfig(spec))}
 `;
-  validateAppConfigText(text5, spec);
-  return text5;
+  validateAppConfigText(text6, spec);
+  return text6;
 }
 
 // src/codex/app-readiness.ts
@@ -11544,12 +11659,12 @@ function backupConfigToml(env = process.env) {
   return backupPath;
 }
 function saveAppRestoreStateBeforePatch(env = process.env) {
-  const text5 = readCodexConfigText();
+  const text6 = readCodexConfigText();
   const existing = readAppRestoreState(env);
-  if (existing && isAppManagedConfig(text5)) {
+  if (existing && isAppManagedConfig(text6)) {
     return existing;
   }
-  const state = captureRestoreState(text5);
+  const state = captureRestoreState(text6);
   writeAppRestoreState(state, env);
   return state;
 }
@@ -11592,8 +11707,8 @@ function restoreCodexAppOverlay(env = process.env) {
       message: `Another relay-ai codex-app session is running (pid ${lock.pid}). Ctrl+C it first, then run --restore.`
     };
   }
-  const text5 = readCodexConfigText();
-  const managed = isAppManagedConfig(text5);
+  const text6 = readCodexConfigText();
+  const managed = isAppManagedConfig(text6);
   const restoreState = readAppRestoreState(env);
   if (!managed && !restoreState && !lock) {
     removeAppCatalogs(env);
@@ -11708,14 +11823,14 @@ async function waitForShutdownWithConfirm(assumeYes = false) {
     if (signal !== "sigint") return signal;
     if (assumeYes) return signal;
     console.log("");
-    const choice = await p12.select({
+    const choice = await p13.select({
       message: "Close ChatGPT Desktop and restore your Codex config?",
       options: [
         { value: "yes", label: "Yes, close ChatGPT Desktop and restore config" },
         { value: "no", label: "No, keep session running" }
       ]
     });
-    if (p12.isCancel(choice) || choice === "yes") return signal;
+    if (p13.isCancel(choice) || choice === "yes") return signal;
   }
 }
 function codexAppHelpText() {
@@ -11789,26 +11904,26 @@ function vertexEntryToLocalModel2(entry) {
 }
 async function runCodexAppVertexLaunch(configOnly, trace = false) {
   if (!hasApplicationDefaultCredentials()) {
-    p12.log.error("Google Application Default Credentials not found.");
-    p12.log.info("Run: gcloud auth application-default login");
+    p13.log.error("Google Application Default Credentials not found.");
+    p13.log.info("Run: gcloud auth application-default login");
     return 1;
   }
   const config = buildVertexRuntimeConfig();
   if (!config) {
-    p12.log.error("ANTHROPIC_VERTEX_PROJECT_ID (or GOOGLE_CLOUD_PROJECT) is not set.");
-    p12.log.info("Set your project: export ANTHROPIC_VERTEX_PROJECT_ID=your-project-id");
+    p13.log.error("ANTHROPIC_VERTEX_PROJECT_ID (or GOOGLE_CLOUD_PROJECT) is not set.");
+    p13.log.info("Set your project: export ANTHROPIC_VERTEX_PROJECT_ID=your-project-id");
     return 1;
   }
   let selectedEntry;
   if (config.models.length === 1) {
     selectedEntry = config.models[0];
   } else {
-    const choice = await p12.select({
+    const choice = await p13.select({
       message: "Select a starting Vertex AI model:",
       options: config.models.map((m) => ({ value: m, label: m.display_name, hint: m.id }))
     });
-    if (p12.isCancel(choice)) {
-      p12.cancel("Cancelled.");
+    if (p13.isCancel(choice)) {
+      p13.cancel("Cancelled.");
       return 0;
     }
     selectedEntry = choice;
@@ -11865,7 +11980,7 @@ async function runCodexAppVertexLaunch(configOnly, trace = false) {
     try {
       restoreOverlay();
     } catch (err) {
-      p12.log.error(String(err instanceof Error ? err.message : err));
+      p13.log.error(String(err instanceof Error ? err.message : err));
     }
   };
   try {
@@ -11905,14 +12020,14 @@ async function runCodexAppVertexLaunch(configOnly, trace = false) {
       patchedConfigSha256: fileSha256(getCodexConfigPath()),
       ...backupPath ? { originalConfigSha256: fileSha256(backupPath) } : {}
     });
-    p12.log.info(`Vertex AI \xB7 ${selectedEntry.display_name} \u2014 project: ${config.project} / location: ${config.location}`);
+    p13.log.info(`Vertex AI \xB7 ${selectedEntry.display_name} \u2014 project: ${config.project} / location: ${config.location}`);
     logProxy(proxyPort);
     logActiveModel(selectedEntry.display_name, selectedEntry.id);
     try {
       await launchOrRestartCodexApp();
     } catch (err) {
-      p12.log.warn(String(err instanceof Error ? err.message : err));
-      p12.log.info(codexAppInstallHint());
+      p13.log.warn(String(err instanceof Error ? err.message : err));
+      p13.log.info(codexAppInstallHint());
       throw err;
     }
     printCodexAppSessionPanel({
@@ -11932,18 +12047,18 @@ async function runCodexAppVertexLaunch(configOnly, trace = false) {
         restoreOverlay,
         closeResources
       });
-      p12.log.success(result.message);
+      p13.log.success(result.message);
       return 0;
     } catch (err) {
       shutdownFailed = true;
-      p12.log.error(String(err instanceof Error ? err.message : err));
+      p13.log.error(String(err instanceof Error ? err.message : err));
       return 1;
     }
   } finally {
     if (sessionActive && !isCodexAppRunning()) restoreOverlaySafely();
     closeResources();
     if (sessionActive && !shutdownFailed) {
-      p12.log.error("ChatGPT Desktop is still running; config restoration was skipped. Close Desktop, then run relay-ai codex-app --restore.");
+      p13.log.error("ChatGPT Desktop is still running; config restoration was skipped. Close Desktop, then run relay-ai codex-app --restore.");
     }
   }
 }
@@ -11974,7 +12089,7 @@ async function runCodexAppCommand(args, opts = {}) {
   const trace = args.includes("--trace");
   const debugLogPath = getCodexProxyDebugLogPath();
   if (trace && !configOnly) {
-    p12.log.info(`Debug log: ${debugLogPath}`);
+    p13.log.info(`Debug log: ${debugLogPath}`);
   }
   const isTty = Boolean(process.stdin.isTTY);
   if (!configOnly) {
@@ -11992,13 +12107,13 @@ async function runCodexAppCommand(args, opts = {}) {
   if (!configOnly) {
     codexAppIntro();
     if (interrupted.recovered) {
-      p12.log.warn("Recovered from an interrupted codex-app session (restored Codex config).");
+      p13.log.warn("Recovered from an interrupted codex-app session (restored Codex config).");
     }
   }
   if (opts.vertex) {
     return runCodexAppVertexLaunch(configOnly, trace);
   }
-  const catalogSpinner = p12.spinner();
+  const catalogSpinner = p13.spinner();
   catalogSpinner.start("Loading your providers...");
   let catalog;
   try {
@@ -12012,8 +12127,8 @@ async function runCodexAppCommand(args, opts = {}) {
   const compatible = codexCompatibleProviders(providersForPicker(catalog), "codex-app");
   if (compatible.length === 0) {
     if (!configOnly) {
-      p12.log.warn("No Codex-compatible providers in your registry.");
-      p12.log.info("Add a provider with relay-ai providers add.");
+      p13.log.warn("No Codex-compatible providers in your registry.");
+      p13.log.info("Add a provider with relay-ai providers add.");
     }
     return 0;
   }
@@ -12027,10 +12142,10 @@ async function runCodexAppCommand(args, opts = {}) {
   }
   const favoritesActive = favorites.length > 0 && !mixedMode;
   if (favoritesActive && !configOnly) {
-    p12.log.info(
+    p13.log.info(
       `Favorites mode active \u2014 Codex App picker will show ${favorites.length + 1} models (1 starting + ${favorites.length} favorites).`
     );
-    p12.log.info("Edit with `relay-ai models`.");
+    p13.log.info("Edit with `relay-ai models`.");
   }
   let activeProvider = providerForCodexPicker(
     compatible.find((lp) => lp.id === prefs.lastCodexProvider) ?? compatible[0]
@@ -12044,7 +12159,7 @@ async function runCodexAppCommand(args, opts = {}) {
       providerForCodexPicker
     );
     if ("error" in bootSelection) {
-      p12.log.error(bootSelection.error);
+      p13.log.error(bootSelection.error);
       return 1;
     }
     activeProvider = bootSelection.provider;
@@ -12082,7 +12197,7 @@ async function runCodexAppCommand(args, opts = {}) {
   const apiKey = await resolveLocalProviderApiKey(activeProvider);
   if (!apiKey) {
     if (!configOnly) {
-      p12.log.error(`No credential for ${activeProvider.name}. Run relay-ai providers auth ${activeProvider.id}.`);
+      p13.log.error(`No credential for ${activeProvider.name}. Run relay-ai providers auth ${activeProvider.id}.`);
     }
     return 1;
   }
@@ -12116,7 +12231,7 @@ async function runCodexAppCommand(args, opts = {}) {
         subagentFavorites: prefs.codexSubagentModels ?? []
       });
       if (mixedModels.capacitySkipped.length > 0) {
-        p12.log.warn(
+        p13.log.warn(
           `Skipped ${mixedModels.capacitySkipped.length} favorite(s) because the mixed catalog is full: ` + mixedModels.capacitySkipped.map((f) => `${f.providerId}:${f.modelId}`).join(", ")
         );
       }
@@ -12176,7 +12291,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
     try {
       restoreOverlay();
     } catch (err) {
-      p12.log.error(String(err instanceof Error ? err.message : err));
+      p13.log.error(String(err instanceof Error ? err.message : err));
     }
   };
   try {
@@ -12257,7 +12372,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
         }
       });
       proxyPort = proxyHandle.port;
-      p12.log.info(`Route audit (metadata only): ${routeAuditPath}`);
+      p13.log.info(`Route audit (metadata only): ${routeAuditPath}`);
     } else if (favoritesActive && resolvedFavorites.length > 0) {
       const needsBackend = (r) => {
         const m = r.model;
@@ -12344,8 +12459,8 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
     try {
       await launchOrRestartCodexApp(void 0, opts.assumeYes);
     } catch (err) {
-      p12.log.warn(String(err instanceof Error ? err.message : err));
-      p12.log.info(codexAppInstallHint());
+      p13.log.warn(String(err instanceof Error ? err.message : err));
+      p13.log.info(codexAppInstallHint());
       throw err;
     }
     printCodexAppSessionPanel({
@@ -12366,25 +12481,25 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
         restoreOverlay,
         closeResources
       });
-      p12.log.success(result.message);
+      p13.log.success(result.message);
       return 0;
     } catch (err) {
       shutdownFailed = true;
-      p12.log.error(String(err instanceof Error ? err.message : err));
+      p13.log.error(String(err instanceof Error ? err.message : err));
       return 1;
     }
   } finally {
     if (sessionActive && !isCodexAppRunning()) restoreOverlaySafely();
     closeResources();
     if (sessionActive && !shutdownFailed) {
-      p12.log.error("ChatGPT Desktop is still running; config restoration was skipped. Close Desktop, then run relay-ai codex-app --restore.");
+      p13.log.error("ChatGPT Desktop is still running; config restoration was skipped. Close Desktop, then run relay-ai codex-app --restore.");
     }
   }
 }
 
 // src/claude-app.ts
 import pc11 from "picocolors";
-import * as p13 from "@clack/prompts";
+import * as p14 from "@clack/prompts";
 
 // src/claude-desktop/app-config.ts
 import { existsSync as existsSync10, readFileSync as readFileSync6, writeFileSync as writeFileSync5, mkdirSync as mkdirSync6 } from "fs";
@@ -12811,10 +12926,10 @@ async function runClaudeAppCommand(args, boot) {
     return 1;
   }
   if (hasStaleSession()) {
-    p13.log.warn("Recovered from an interrupted claude-app session.");
+    p14.log.warn("Recovered from an interrupted claude-app session.");
     recoverSession();
   }
-  const catalogSpinner = p13.spinner();
+  const catalogSpinner = p14.spinner();
   catalogSpinner.start("Loading your providers...");
   let catalog;
   try {
@@ -12827,7 +12942,7 @@ async function runClaudeAppCommand(args, boot) {
   catalogSpinner.stop("");
   const compatible = codexCompatibleProviders(providersForPicker(catalog), "claude-app");
   if (compatible.length === 0) {
-    p13.log.warn("No compatible providers in your registry.");
+    p14.log.warn("No compatible providers in your registry.");
     return 0;
   }
   const prefs = loadPreferences();
@@ -12844,7 +12959,7 @@ async function runClaudeAppCommand(args, boot) {
       providerForClaudePicker
     );
     if ("error" in bootSelection) {
-      p13.log.error(bootSelection.error);
+      p14.log.error(bootSelection.error);
       return 1;
     }
     activeProvider = bootSelection.provider;
@@ -12856,7 +12971,7 @@ async function runClaudeAppCommand(args, boot) {
       useFavorites = true;
       const firstFavorite = resolveFirstAvailableFavorite(favorites, compatible);
       if (!firstFavorite) {
-        p13.log.warn("No saved Claude App favorites are currently available.");
+        p14.log.warn("No saved Claude App favorites are currently available.");
         return 0;
       }
       activeProvider = firstFavorite.provider;
@@ -12869,7 +12984,7 @@ async function runClaudeAppCommand(args, boot) {
     }
   }
   if (!activeProvider || !selectedModel) {
-    p13.log.error("No Claude App launch model was selected.");
+    p14.log.error("No Claude App launch model was selected.");
     return 1;
   }
   const catalogResolution = await resolveClaudeAppCatalog(
@@ -12879,16 +12994,16 @@ async function runClaudeAppCommand(args, boot) {
     favorites
   );
   if (!catalogResolution.ok) {
-    p13.log.error(catalogResolution.error);
+    p14.log.error(catalogResolution.error);
     return 1;
   }
   if (catalogResolution.droppedFavorites.length > 0) {
     const skipped = catalogResolution.droppedFavorites.map((favorite) => `${favorite.providerId}/${favorite.modelId}`).join(", ");
-    p13.log.warn(`Skipped unavailable or unauthorized favorite(s): ${skipped}`);
+    p14.log.warn(`Skipped unavailable or unauthorized favorite(s): ${skipped}`);
   }
   if (catalogResolution.capacitySkippedFavorites.length > 0) {
     const skipped = catalogResolution.capacitySkippedFavorites.map((favorite) => `${favorite.providerId}/${favorite.modelId}`).join(", ");
-    p13.log.warn(`Skipped favorite(s) beyond the 20-model catalog limit: ${skipped}`);
+    p14.log.warn(`Skipped favorite(s) beyond the 20-model catalog limit: ${skipped}`);
   }
   let cloudCodeBackend = null;
   let proxyHandle = null;
@@ -12937,7 +13052,7 @@ ${pc11.green("\u2714")} Proxy started on port ${proxyHandle.port}`);
     try {
       await launchOrRestartClaudeApp();
     } catch (err) {
-      p13.log.warn(String(err instanceof Error ? err.message : err));
+      p14.log.warn(String(err instanceof Error ? err.message : err));
     }
     console.log(`
 ${pc11.bold("Claude Desktop 3P Mode Active")}`);
@@ -12953,8 +13068,8 @@ ${pc11.bold("Claude Desktop 3P Mode Active")}`);
     sessionActive = false;
     if (cloudCodeBackend) cloudCodeBackend.handle.close();
     if (isClaudeAppRunning()) {
-      const shouldClose = await p13.confirm({ message: "Claude Desktop is still running. Close it?" });
-      if (shouldClose && !p13.isCancel(shouldClose)) {
+      const shouldClose = await p14.confirm({ message: "Claude Desktop is still running. Close it?" });
+      if (shouldClose && !p14.isCancel(shouldClose)) {
         quitClaudeAppGracefully();
       }
     }
@@ -12965,7 +13080,7 @@ ${pc11.bold("Claude Desktop 3P Mode Active")}`);
       cleanupSession(uuid);
     }
     if (cloudCodeBackend) cloudCodeBackend.handle.close();
-    p13.log.error(String(err instanceof Error ? err.message : err));
+    p14.log.error(String(err instanceof Error ? err.message : err));
     return 1;
   }
 }
@@ -13013,7 +13128,7 @@ function skillInstallTargets() {
   });
 }
 function formatProviderModels(provider) {
-  const models = provider.modelsCache?.models ?? [];
+  const models = getProviderModels(provider);
   if (models.length === 0) return `  (no cached models \u2014 run: relay-ai providers refresh-models ${provider.id})`;
   const lines = models.slice(0, 40).map((m) => `    ${m.id}${m.name !== m.id ? `  (${m.name})` : ""}`);
   if (models.length > 40) lines.push(`    ... and ${models.length - 40} more`);
@@ -13022,7 +13137,7 @@ function formatProviderModels(provider) {
 function buildLiveStateSection() {
   const prefs = loadPreferences();
   const registry = loadRegistry();
-  const enabled = registry.providers.filter((p15) => p15.enabled);
+  const enabled = registry.providers.filter((p16) => p16.enabled);
   const prefLines = [];
   if (prefs.lastProvider || prefs.lastModel) {
     prefLines.push(`  Claude last launch: provider=${prefs.lastProvider ?? "(none)"} model=${prefs.lastModel ?? "(none)"}`);
@@ -13039,9 +13154,9 @@ function buildLiveStateSection() {
       prefLines.push(`    ${f.providerId} / ${f.modelId}`);
     }
   }
-  const providerBlocks = enabled.length === 0 ? ["  No registry providers configured. Built-in cloud: zen, go (OpenCode Zen/Go)."] : enabled.map((p15) => [
-    `  ${p15.name} (${p15.id}) \u2014 ${p15.modelsCache?.models.length ?? 0} cached model(s)`,
-    formatProviderModels(p15)
+  const providerBlocks = enabled.length === 0 ? ["  No registry providers configured. Built-in cloud: zen, go (OpenCode Zen/Go)."] : enabled.map((p16) => [
+    `  ${p16.name} (${p16.id}) \u2014 ${getProviderModels(p16).length} model(s)`,
+    formatProviderModels(p16)
   ].join("\n"));
   return `
 ================================================================================
@@ -15115,20 +15230,20 @@ ${pc12.bold("Examples:")}
   relay-ai antigravity
   relay-ai antigravity --provider zen --model deepseek-v4-flash-free`;
 }
-function printHelp(text5) {
+function printHelp(text6) {
   console.log(`
-${text5}
+${text6}
 `);
 }
 async function launchClaudeViaCatalog(catalogRoutes, startingRoute, contextWindow, trace, claudeArgs) {
   let proxyHandle;
   try {
     proxyHandle = await startProxyCatalog(catalogRoutes, startingRoute.aliasId, trace);
-    p14.log.info(
+    p15.log.info(
       `Switch menu active \u2014 proxy on port ${proxyHandle.port} ` + pc12.dim(`(${catalogRoutes.length} model${catalogRoutes.length !== 1 ? "s" : ""} in /model)`)
     );
   } catch (err) {
-    p14.log.error(`Failed to start proxy: ${err instanceof Error ? err.message : String(err)}`);
+    p15.log.error(`Failed to start proxy: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
   }
   const childEnv = buildChildEnv(
@@ -15141,7 +15256,7 @@ async function launchClaudeViaCatalog(catalogRoutes, startingRoute, contextWindo
   );
   const debugLogPath = prepareClaudeTraceLog();
   const traceArgs = trace ? ["--debug-file", debugLogPath] : [];
-  if (trace) p14.log.info(`Debug log: ${debugLogPath}`);
+  if (trace) p15.log.info(`Debug log: ${debugLogPath}`);
   const exitCode = await launchClaude(
     childEnv,
     claudeCodeClientModelId(startingRoute.aliasId, contextWindow),
@@ -15161,10 +15276,10 @@ async function runModelsCommand(opts = {}) {
   const listItemLabel = subagentScope ? "Codex SubAgent model" : scope === "agy" ? "Antigravity favorite" : "favorite";
   const configKey = scope === "agy" ? "antigravityCliFavoriteModels" : scope === "codex-subagents" ? "codexSubagentModels" : "favoriteModels";
   relayIntro(scopeName);
-  const spinner9 = p14.spinner();
-  spinner9.start("Loading providers...");
+  const spinner10 = p15.spinner();
+  spinner10.start("Loading providers...");
   const catalog = await fetchProviderCatalog();
-  spinner9.stop("");
+  spinner10.stop("");
   const pickedProviders = providersForPicker(catalog);
   const allProviders = scope === "agy" ? providersForTarget(pickedProviders, "antigravity") : scope === "codex-subagents" ? providersForCodexSubagents(pickedProviders) : pickedProviders;
   const favoriteProviders = allProviders.map((provider) => ({
@@ -15172,8 +15287,8 @@ async function runModelsCommand(opts = {}) {
     name: favoriteProviderDisplayName(provider)
   }));
   if (favoriteProviders.length === 0) {
-    p14.log.warn("No providers found.");
-    p14.log.info(`${pc12.dim("OpenCode Zen/Go is always available. Add providers with ")}${pc12.cyan("relay-ai providers")}${pc12.dim(".")}`);
+    p15.log.warn("No providers found.");
+    p15.log.info(`${pc12.dim("OpenCode Zen/Go is always available. Add providers with ")}${pc12.cyan("relay-ai providers")}${pc12.dim(".")}`);
     relayOutro("Done");
     return 0;
   }
@@ -15202,19 +15317,19 @@ async function runModelsCommand(opts = {}) {
     });
     options.push({ value: "__done__", label: "Done", hint: "" });
     const header = favorites.length === 0 ? `${scopeName} (0/${maxFavorites})` : `${scopeName} (${favorites.length}/${maxFavorites}) \u2014 select to remove`;
-    const choice = await p14.select({
+    const choice = await p15.select({
       message: header,
       options,
       initialValue: "__done__"
     });
-    if (p14.isCancel(choice) || choice === "__done__") break;
+    if (p15.isCancel(choice) || choice === "__done__") break;
     if (choice === "__add__") {
       if (atCap) {
-        p14.log.warn(`Limit of ${maxFavorites} ${subagentScope ? "Codex SubAgent" : "favorites"} reached \u2014 remove one first.`);
+        p15.log.warn(`Limit of ${maxFavorites} ${subagentScope ? "Codex SubAgent" : "favorites"} reached \u2014 remove one first.`);
         continue;
       }
       const globalCount = buildGlobalFavoriteIndex(favoriteProviders).length;
-      const addPath = await p14.select({
+      const addPath = await p15.select({
         message: subagentScope ? "Add a Codex SubAgent model" : "Add a favorite",
         options: [
           {
@@ -15234,7 +15349,7 @@ async function runModelsCommand(opts = {}) {
           }
         ]
       });
-      if (p14.isCancel(addPath)) continue;
+      if (p15.isCancel(addPath)) continue;
       let provider;
       let browsedMultiple = [];
       if (addPath === "global") {
@@ -15257,26 +15372,26 @@ async function runModelsCommand(opts = {}) {
         let currentInitialProvider = void 0;
         while (true) {
           const providerOptions = favoriteProviders.map((ap) => providerSelectOption(ap));
-          const pickedProviderId = await p14.select({
+          const pickedProviderId = await p15.select({
             message: "Which provider?",
             options: providerOptions,
             initialValue: currentInitialProvider
           });
-          if (p14.isCancel(pickedProviderId)) break;
+          if (p15.isCancel(pickedProviderId)) break;
           provider = favoriteProviders.find((ap) => ap.id === pickedProviderId);
           let modelsToPick = provider.models;
           if (provider.models.length > MODEL_SEARCH_THRESHOLD) {
-            const searchInput = await p14.text({
+            const searchInput = await p15.text({
               message: `Search ${provider.name} models (${provider.models.length} available):`,
               placeholder: "e.g. flash 3.6, claude, llama"
             });
-            if (p14.isCancel(searchInput)) {
+            if (p15.isCancel(searchInput)) {
               currentInitialProvider = provider.id;
               continue;
             }
             modelsToPick = filterModelsBySearch(provider.models, String(searchInput));
             if (modelsToPick.length === 0) {
-              p14.log.warn("No models match \u2014 try a different search");
+              p15.log.warn("No models match \u2014 try a different search");
               currentInitialProvider = provider.id;
               continue;
             }
@@ -15290,12 +15405,12 @@ async function runModelsCommand(opts = {}) {
               hint: favorited ? pc12.yellow(`\u2605 already in ${listLabel}`) : ""
             };
           });
-          const pickedModelIds = await p14.multiselect({
+          const pickedModelIds = await p15.multiselect({
             message: `Select models to add from ${provider.name} ${pc12.dim("(Space to select, Enter to confirm)")}`,
             options: options2,
             required: false
           });
-          if (p14.isCancel(pickedModelIds)) {
+          if (p15.isCancel(pickedModelIds)) {
             currentInitialProvider = provider.id;
             continue;
           }
@@ -15330,27 +15445,27 @@ async function runModelsCommand(opts = {}) {
       if (addedModels.length > 0) {
         if (addedModels.length === 1) {
           const modelName = addedModels[0].name || addedModels[0].id;
-          p14.log.success(`Added ${modelName} (${provider.name}) to ${listLabel}.`);
+          p15.log.success(`Added ${modelName} (${provider.name}) to ${listLabel}.`);
         } else {
-          p14.log.success(`Added ${addedModels.length} models from ${provider.name} to ${listLabel}.`);
+          p15.log.success(`Added ${addedModels.length} models from ${provider.name} to ${listLabel}.`);
         }
       }
       if (duplicateCount > 0) {
-        p14.log.warn(`${duplicateCount} selected model(s) were already in ${listLabel}.`);
+        p15.log.warn(`${duplicateCount} selected model(s) were already in ${listLabel}.`);
       }
       if (limitReached) {
-        p14.log.warn(`Limit of ${maxFavorites} ${subagentScope ? "Codex SubAgent" : "favorites"} reached \u2014 some selected models could not be added.`);
+        p15.log.warn(`Limit of ${maxFavorites} ${subagentScope ? "Codex SubAgent" : "favorites"} reached \u2014 some selected models could not be added.`);
       }
     } else if (choice.startsWith("fav-")) {
       const idx = parseInt(choice.slice(4), 10);
       const fav = favorites[idx];
       const entry = modelLookup.get(`${fav.providerId}:${fav.modelId}`);
       const label = entry ? `${entry.modelName} (${entry.providerName})` : fav.modelId;
-      const confirmed = await p14.confirm({ message: `Remove ${label} from ${listLabel}?` });
-      if (p14.isCancel(confirmed) || !confirmed) continue;
+      const confirmed = await p15.confirm({ message: `Remove ${label} from ${listLabel}?` });
+      if (p15.isCancel(confirmed) || !confirmed) continue;
       favorites = removeFavorite(favorites, fav);
       favoritesDirty = true;
-      p14.log.success(`Removed ${label} from ${listLabel}.`);
+      p15.log.success(`Removed ${label} from ${listLabel}.`);
     }
   }
   if (favoritesDirty) {
@@ -15402,7 +15517,7 @@ Error: ${launchPlan.error}
   }
   if (!agentStdout) relayIntro("Claude Code");
   if (setup && !dryRun && !agentStdout) {
-    p14.log.info("Provider setup now lives in relay-ai providers \u2014 opening that next is recommended.");
+    p15.log.info("Provider setup now lives in relay-ai providers \u2014 opening that next is recommended.");
   }
   if (!httpProxyOnly && !dryRun && await needsFirstRunSetup()) {
     const firstRun = await runFirstRunWizard(trace);
@@ -15417,7 +15532,7 @@ Error: ${launchPlan.error}
       return 1;
     }
   } else {
-    const catalogSpinner = p14.spinner();
+    const catalogSpinner = p15.spinner();
     catalogSpinner.start("Loading your providers...");
     try {
       catalog = await fetchProviderCatalog();
@@ -15430,8 +15545,8 @@ Error: ${launchPlan.error}
   }
   const allProviders = providersForTarget(providersForPicker(catalog), "claude");
   if (allProviders.length === 0 && !httpProxyOnly) {
-    p14.log.warn("No providers available.");
-    p14.log.info(pc12.dim("Run relay-ai providers add or import to get started."));
+    p15.log.warn("No providers available.");
+    p15.log.info(pc12.dim("Run relay-ai providers add or import to get started."));
     return 0;
   }
   const runTransparentProxy = async (selected) => {
@@ -15449,7 +15564,7 @@ Error: ${launchPlan.error}
     }
     const debugLogPath2 = prepareClaudeTraceLog();
     const traceArgs2 = trace ? ["--debug-file", debugLogPath2] : [];
-    if (trace && !agentStdout) p14.log.info(`Debug log: ${debugLogPath2}`);
+    if (trace && !agentStdout) p15.log.info(`Debug log: ${debugLogPath2}`);
     try {
       const result = await launchClaudeWithHttpProxy({
         providers: catalog,
@@ -15461,26 +15576,26 @@ Error: ${launchPlan.error}
         onProxyReady: (proxy) => {
           if (agentStdout) return;
           const count = proxy.handle.modelIds.length;
-          p14.log.info(
+          p15.log.info(
             count === 0 ? "Secure Anthropic passthrough ready; no compatible Relay models were added." : `Secure Anthropic passthrough ready with ${count} Relay model${count === 1 ? "" : "s"}.`
           );
-          for (const modelId of proxy.handle.modelIds) p14.log.message(pc12.dim(`  /model ${modelId}`));
+          for (const modelId of proxy.handle.modelIds) p15.log.message(pc12.dim(`  /model ${modelId}`));
         }
       });
       if (!agentStdout && result.proxy.loaded.unavailable.length > 0) {
-        p14.log.warn(
+        p15.log.warn(
           `${result.proxy.loaded.unavailable.length} favorite${result.proxy.loaded.unavailable.length === 1 ? "" : "s"} unavailable or missing credentials.`
         );
       }
       if (!agentStdout && result.proxy.loaded.unsupported.length > 0) {
-        p14.log.warn(
+        p15.log.warn(
           `${result.proxy.loaded.unsupported.length} incompatible favorite${result.proxy.loaded.unsupported.length === 1 ? "" : "s"} skipped.`
         );
       }
       if (trace) printTraceLog(debugLogPath2);
       return result.exitCode;
     } catch (error) {
-      p14.log.error(
+      p15.log.error(
         `Could not start secure Anthropic + Relay mode: ${error instanceof Error ? error.message : String(error)}`
       );
       return 1;
@@ -15501,7 +15616,7 @@ Error: ${launchPlan.error}
   if (launchPlan.skip && launchPlan.target) {
     const resolved = findProviderAndModel(allProviders, launchPlan.target);
     if (!resolved) {
-      p14.log.error(
+      p15.log.error(
         `Provider/model not found: ${launchPlan.target.providerId} / ${launchPlan.target.modelId}`
       );
       return 1;
@@ -15509,19 +15624,19 @@ Error: ${launchPlan.error}
     activeProvider = resolved.provider;
     selectedModel = resolved.model;
     if (!agentStdout) {
-      p14.log.step(`Using ${selectedModel.name || selectedModel.id} (${activeProvider.name})`);
+      p15.log.step(`Using ${selectedModel.name || selectedModel.id} (${activeProvider.name})`);
     }
     if (!dryRun) recordLaunchSelection("claude", activeProvider.id, selectedModel.id, prefs);
   } else {
     let currentInitialProvider = initialProvider;
     while (true) {
-      const chosen = await p14.select({
+      const chosen = await p15.select({
         message: "Which provider?",
         options: providerOptions,
         initialValue: currentInitialProvider
       });
-      if (p14.isCancel(chosen)) {
-        p14.cancel("Cancelled.");
+      if (p15.isCancel(chosen)) {
+        p15.cancel("Cancelled.");
         return 0;
       }
       const providerChoice = chosen;
@@ -15533,7 +15648,7 @@ Error: ${launchPlan.error}
           if (prov && mod) available.push({ provider: prov, model: mod });
         }
         if (available.length === 0) {
-          p14.log.warn("No saved favorites are currently available.");
+          p15.log.warn("No saved favorites are currently available.");
           return 0;
         }
         const favOptions = available.map((f, i) => ({
@@ -15541,13 +15656,13 @@ Error: ${launchPlan.error}
           label: `${f.model.name || f.model.id} \u2014 ${f.provider.name}`,
           hint: f.model.id
         }));
-        const pickedIdx = await p14.select({
+        const pickedIdx = await p15.select({
           message: "Starting model?",
           options: favOptions,
           initialValue: "0"
         });
-        if (p14.isCancel(pickedIdx)) {
-          p14.cancel("Cancelled.");
+        if (p15.isCancel(pickedIdx)) {
+          p15.cancel("Cancelled.");
           return 0;
         }
         const sel = available[Number(pickedIdx)];
@@ -15571,13 +15686,13 @@ Error: ${launchPlan.error}
   }
   let useHttpProxy = Boolean(httpProxy);
   if (!httpProxy && !launchPlan.skip && supportsClaudeTransparentMode(selectedModel)) {
-    const transparentChoice = await p14.select({
+    const transparentChoice = await p15.select({
       message: "Keep your normal Claude models available too?",
       options: claudeTransparentModeOptions(selectedModel.name || selectedModel.id),
       initialValue: prefs.lastClaudeTransparentMode ?? true
     });
-    if (p14.isCancel(transparentChoice)) {
-      p14.cancel("Cancelled.");
+    if (p15.isCancel(transparentChoice)) {
+      p15.cancel("Cancelled.");
       return 0;
     }
     useHttpProxy = transparentChoice;
@@ -15596,12 +15711,12 @@ Error: ${launchPlan.error}
     );
     const startingRoute = resolveRoute(activeProvider.id, selectedModel.id) ?? null;
     if (!startingRoute) {
-      p14.log.error("Could not resolve a proxy route for the selected model.");
+      p15.log.error("Could not resolve a proxy route for the selected model.");
       return 1;
     }
     const { routes: catalogRoutes, droppedFavorites } = buildCatalogRoutes(startingRoute, favorites, resolveRoute);
     if (droppedFavorites.length > 0) {
-      p14.log.warn(
+      p15.log.warn(
         `Skipping ${droppedFavorites.length} favorite${droppedFavorites.length === 1 ? "" : "s"} that are no longer available in /model`
       );
     }
@@ -15646,7 +15761,7 @@ Error: ${launchPlan.error}
   }
   const launchApiKey = await resolveLocalProviderApiKey(activeProvider);
   if (!launchApiKey?.trim()) {
-    p14.log.error(
+    p15.log.error(
       `No credential found for ${activeProvider.name}. Add a key with relay-ai providers or set OPENCODE_API_KEY.`
     );
     return 1;
@@ -15670,9 +15785,9 @@ Error: ${launchPlan.error}
         },
         launchApiKey
       );
-      if (!isAgentStdoutMode()) p14.log.info(`Cloud Code proxy started on port ${proxyHandle.port}`);
+      if (!isAgentStdoutMode()) p15.log.info(`Cloud Code proxy started on port ${proxyHandle.port}`);
     } catch (err) {
-      p14.log.error(`Failed to start Cloud Code proxy: ${err instanceof Error ? err.message : String(err)}`);
+      p15.log.error(`Failed to start Cloud Code proxy: ${err instanceof Error ? err.message : String(err)}`);
       return 1;
     }
     childEnv = buildChildEnv(
@@ -15698,9 +15813,9 @@ Error: ${launchPlan.error}
         },
         launchApiKey
       );
-      if (!isAgentStdoutMode()) p14.log.info(`OAuth proxy started on port ${proxyHandle.port}`);
+      if (!isAgentStdoutMode()) p15.log.info(`OAuth proxy started on port ${proxyHandle.port}`);
     } catch (err) {
-      p14.log.error(`Failed to start OAuth proxy: ${err instanceof Error ? err.message : String(err)}`);
+      p15.log.error(`Failed to start OAuth proxy: ${err instanceof Error ? err.message : String(err)}`);
       return 1;
     }
     childEnv = buildChildEnv(
@@ -15743,12 +15858,12 @@ Error: ${launchPlan.error}
         launchApiKey
       );
       if (!isAgentStdoutMode()) {
-        p14.log.info(
+        p15.log.info(
           `SDK adapter proxy started on port ${proxyHandle.port}` + (selectedModel.npm ? pc12.dim(` (${selectedModel.npm})`) : "")
         );
       }
     } catch (err) {
-      p14.log.error(`Failed to start SDK adapter proxy: ${err instanceof Error ? err.message : String(err)}`);
+      p15.log.error(`Failed to start SDK adapter proxy: ${err instanceof Error ? err.message : String(err)}`);
       return 1;
     }
     childEnv = buildChildEnv(
@@ -15764,7 +15879,7 @@ Error: ${launchPlan.error}
   }
   const debugLogPath = prepareClaudeTraceLog();
   const traceArgs = trace ? ["--debug-file", debugLogPath] : [];
-  if (trace) p14.log.info(`Debug log: ${debugLogPath}`);
+  if (trace) p15.log.info(`Debug log: ${debugLogPath}`);
   const exitCode = await launchClaude(
     childEnv,
     claudeCodeClientModelId(selectedModel.id, selectedModel.contextWindow),
@@ -15846,7 +15961,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-RJVKDGGG.js");
+    const { runUiCommand } = await import("./ui-command-QBA3YV5H.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

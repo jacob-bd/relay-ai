@@ -1,6 +1,6 @@
 // OpenAI Responses API (/v1/responses) ↔ Vercel AI SDK. One turn per request; Codex owns the tool loop.
 import { streamText, generateText, tool, jsonSchema } from 'ai';
-import type { LanguageModel, ModelMessage, ToolSet } from 'ai';
+import type { LanguageModel, ModelMessage, ToolSet, UserContent } from 'ai';
 import {
   sseChunk,
   encodeToolUseId,
@@ -43,7 +43,13 @@ export interface ResponsesFunctionCallOutputItem {
 export interface ResponsesMessageItem {
   type?: 'message';
   role: 'user' | 'assistant' | 'developer';
-  content: string | Array<{ type: string; text?: string }>;
+  content: string | Array<{
+    type: string;
+    text?: string;
+    image_url?: string;
+    file_id?: string;
+    detail?: string;
+  }>;
 }
 
 export interface ResponsesReasoningItem {
@@ -292,6 +298,20 @@ function messageText(content: ResponsesMessageItem['content'] | undefined): stri
     .join('');
 }
 
+function messageContent(content: ResponsesMessageItem['content'] | undefined): UserContent {
+  if (typeof content === 'string') return content;
+  const parts: Array<{ type: 'text'; text: string } | { type: 'image'; image: string }> = (content ?? []).flatMap((part): Array<{ type: 'text'; text: string } | { type: 'image'; image: string }> => {
+    if (part.type === 'output_text' || part.type === 'input_text' || part.type === 'text') {
+      return typeof part.text === 'string' ? [{ type: 'text' as const, text: part.text }] : [];
+    }
+    if (part.type === 'input_image' && typeof part.image_url === 'string' && part.image_url.trim()) {
+      return [{ type: 'image' as const, image: part.image_url }];
+    }
+    return [];
+  });
+  return parts.length > 0 ? parts : [{ type: 'text', text: '' }];
+}
+
 function extractDeveloperAndInstructions(
   items: ResponsesInputItem[],
   instructions?: string,
@@ -514,8 +534,8 @@ export function translateResponsesInput(
       }
     } else if ('role' in item) {
       const role = item.role === 'assistant' ? 'assistant' : 'user';
-      const text = messageText(item.content);
-      messages.push({ role, content: [{ type: 'text', text }] } as ModelMessage);
+      const content = messageContent(item.content);
+      messages.push({ role, content } as ModelMessage);
     }
   }
 

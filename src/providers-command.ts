@@ -38,6 +38,8 @@ import {
   toggleProviderEnabled,
 } from './registry/crud.js';
 import { loadRegistry, saveRegistry } from './registry/io.js';
+import { getProviderModels, supportsManualModels } from './registry/provider-models.js';
+import { runManualModelAddFlow, runManualModelRemoveFlow } from './manual-model-wizard.js';
 import { refreshAllProviderModels, refreshProviderModels } from './registry/refresh-models.js';
 import { resolveRefreshCredential } from './registry/refresh-credentials.js';
 import { resolveOrCollectApiKey } from './key-setup.js';
@@ -935,13 +937,19 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
   const provider = registry.providers.find(pr => pr.id === id);
   if (!provider) return 'back';
 
-  const modelCount = provider.modelsCache?.models.length ?? 0;
+  const modelCount = getProviderModels(provider).length;
   const authLabel = formatRegistryAuthLabel(provider);
   printProviderDetailPanel(provider.name, modelCount, authLabel);
   const template = getTemplateById(provider.templateId) ?? getTemplateById(id);
   const hasDualAuth = template ? hasApiAndOAuth(template) : false;
 
   const detailOptions: Array<{ value: string; label: string; hint?: string }> = [];
+  if (supportsManualModels(provider) && provider.enabled) {
+    detailOptions.push({ value: 'add-model', label: 'Add model manually', hint: 'Test an exact model ID, then save it' });
+  }
+  if (provider.manualModels?.length) {
+    detailOptions.push({ value: 'remove-model', label: 'Remove manual model', hint: 'Keep discovered models' });
+  }
   if (modelCount > 0) {
     detailOptions.push({
       value: 'browse',
@@ -997,8 +1005,11 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
   });
   if (p.isCancel(action) || action === 'back') return 'back';
 
+  if (action === 'add-model') return (await runManualModelAddFlow(provider)) === 0 ? 'back' : 'failed';
+  if (action === 'remove-model') return (await runManualModelRemoveFlow(provider)) === 0 ? 'back' : 'failed';
+
   if (action === 'browse') {
-    const cachedModels = provider.modelsCache?.models ?? [];
+    const cachedModels = getProviderModels(provider);
     const localModels = cachedModels
       .map(m => cachedModelToLocal(m, provider))
       .filter((m): m is NonNullable<typeof m> => m !== null);

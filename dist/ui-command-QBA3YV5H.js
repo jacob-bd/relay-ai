@@ -1,15 +1,9 @@
 #!/usr/bin/env node
 import {
-  BACKENDS,
-  CODEX_SUBAGENT_MODEL_CAP,
-  MAX_MODEL_CATALOG,
-  VERSION,
   addCustomEndpointProvider,
   addProviderFromTemplate,
-  buildAntigravityAuthUrl,
   buildDedupedModelRows,
   checkForUpdates,
-  completeAntigravityExchange,
   copilotPlanTier,
   createGatewayModelCatalog,
   ensureOpencodeCloudProviders,
@@ -24,7 +18,6 @@ import {
   formatGatewayUrls,
   freeStatusLabel,
   gatewayProviderLabel,
-  getAppHome,
   getAppPathOverride,
   getEnvServerPassword,
   getSavedServerPassword,
@@ -35,41 +28,26 @@ import {
   getServerListenMode,
   getServerMaskGatewayIds,
   getUiDebugLogPath,
-  guiCallbackRedirectUri,
   hostFromHeader,
   loadPreferences,
-  loadRegistry,
   loadServerModels,
   makeTraceLogger,
   normalizeFavoriteModels,
-  openAiDeviceCodeUrl,
   openAiIdCollisions,
-  pollClinePassDeviceCode,
-  pollGithubDeviceCodeToken,
-  pollOpenAiDeviceCodeToken,
-  pollXaiDeviceCodeToken,
-  preferredRelayCredentialAuthRef,
   providerOptionsFromCatalog,
   providersForCodexSubagents,
   providersForTarget,
   readBody,
-  readStoredProviderCredential,
   recordLaunchFolder,
   refreshAllProviderModels,
   refreshProviderModels,
   removeProviderFromRegistry,
-  requestClinePassDeviceCode,
-  requestGithubDeviceCode,
-  requestOpenAiDeviceCode,
-  requestXaiDeviceCode,
   resolveAdvertiseAddresses,
   resolveAdvertiseGatewayPort,
-  resolveProviderCredential,
   resolveServerAutostart,
   resolveServerUpstreamApiKey,
   saveNativeOAuthCredential,
   savePreferences,
-  saveProviderCredential,
   sendJson,
   setAppPathOverride,
   setSavedServerPassword,
@@ -83,16 +61,44 @@ import {
   summarizeServerProviders,
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider,
-  validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-G6QWYYAY.js";
+} from "./chunk-KVZSGD6K.js";
 import {
-  __toCommonJS,
   init_provider_templates,
   listAddableTemplates,
   listVisibleOAuthTemplates,
   provider_templates_exports
-} from "./chunk-SFN33VAE.js";
+} from "./chunk-TRM2WGI6.js";
+import {
+  BACKENDS,
+  CODEX_SUBAGENT_MODEL_CAP,
+  MAX_MODEL_CATALOG,
+  VERSION,
+  buildAntigravityAuthUrl,
+  completeAntigravityExchange,
+  getAppHome,
+  getProviderModels,
+  guiCallbackRedirectUri,
+  loadRegistry,
+  openAiDeviceCodeUrl,
+  pollClinePassDeviceCode,
+  pollGithubDeviceCodeToken,
+  pollOpenAiDeviceCodeToken,
+  pollXaiDeviceCodeToken,
+  preferredRelayCredentialAuthRef,
+  readStoredProviderCredential,
+  requestClinePassDeviceCode,
+  requestGithubDeviceCode,
+  requestOpenAiDeviceCode,
+  requestXaiDeviceCode,
+  resolveProviderCredential,
+  saveProviderCredential,
+  supportsManualModels,
+  validateCustomEndpointUrl
+} from "./chunk-O2XZFXHG.js";
+import {
+  __toCommonJS
+} from "./chunk-JIDIH7DS.js";
 
 // src/ui-command.ts
 import { createServer } from "http";
@@ -673,6 +679,10 @@ function handleUiApiRequest(req, res, opts = {}) {
     handleEditCustomProvider(req, res);
   } else if (url === "/api/providers/delete" && req.method === "POST") {
     handleDeleteProvider(req, res);
+  } else if (url === "/api/providers/models/add" && req.method === "POST") {
+    handleManualModel(req, res, "add");
+  } else if (url === "/api/providers/models/remove" && req.method === "POST") {
+    handleManualModel(req, res, "remove");
   } else if (url === "/api/providers/oauth/start" && req.method === "POST") {
     handleOAuthStart(req, res);
   } else if (url.startsWith("/api/providers/oauth/status") && req.method === "GET") {
@@ -740,7 +750,19 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
     if (codexSubagents) catalog = providersForCodexSubagents(catalog);
     else if (target) catalog = providersForTarget(catalog, target);
     const registry = loadRegistry();
-    const rawCountById = new Map(registry.providers.map((p2) => [p2.id, p2.modelsCache?.models.length ?? 0]));
+    const registryById = new Map(registry.providers.map((p2) => [p2.id, p2]));
+    const rawCountById = new Map(registry.providers.map((p2) => [p2.id, getProviderModels(p2).length]));
+    const manualIdsByProvider = new Map(registry.providers.map((p2) => [
+      p2.id,
+      new Set(getProviderModels(p2).filter((m) => m.source === "manual").map((m) => m.id))
+    ]));
+    const manualMetadata = (id) => {
+      const provider = registryById.get(id);
+      return {
+        supportsManualModels: provider ? provider.enabled && supportsManualModels(provider) : false,
+        manualModels: (provider?.manualModels ?? []).map(publicManualModel)
+      };
+    };
     const customById = new Map(
       registry.providers.filter((rp) => rp.templateId === "custom-openai" || rp.templateId === "custom-anthropic").map((rp) => [rp.id, {
         kind: rp.templateId === "custom-anthropic" ? "anthropic" : "openai",
@@ -759,6 +781,7 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
         return getTemplateById(t)?.anonymousFreeModels === true;
       })(),
       authType: p2.authType ?? "api",
+      ...manualMetadata(p2.id),
       // Copilot's runtime catalog is policy-filtered by account plan. Never replace
       // that safe count with the larger raw cache count.
       modelCount: p2.id === "github-copilot" ? p2.models.length : rawCountById.get(p2.id) ?? p2.models.length,
@@ -772,7 +795,8 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
         freeLabel: freeStatusLabel(m.freeStatus),
         contextWindow: m.contextWindow,
         cost: m.cost,
-        claudeTransparentCompatible: supportsClaudeTransparentMode(m)
+        claudeTransparentCompatible: supportsClaudeTransparentMode(m),
+        ...manualIdsByProvider.get(p2.id)?.has(m.id) ? { source: "manual" } : {}
       }))
     }));
     const materializedIds = new Set(catalog.map((p2) => p2.id));
@@ -787,14 +811,78 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
         hasKey: true,
         freeAccess: false,
         authType: "oauth",
+        ...manualMetadata(rp.id),
         modelCount: 0,
         ...rp.id === "github-copilot" ? { subscription: copilotSubscription(void 0) } : {},
         models: []
       });
     }
+    if (!target && !codexSubagents) {
+      for (const rp of registry.providers) {
+        if (!rp.enabled || !supportsManualModels(rp) || materializedIds.has(rp.id) || getProviderModels(rp).length !== 0) continue;
+        const credential = await resolveProviderCredential(rp.id, rp.authRef).catch(() => null);
+        providers.push({
+          id: rp.id,
+          name: rp.name,
+          favoriteName: favoriteProviderDisplayName({ id: rp.id, name: rp.name, authType: rp.authType }),
+          hasKey: Boolean(credential),
+          freeAccess: false,
+          authType: rp.authType ?? "api",
+          modelCount: 0,
+          ...manualMetadata(rp.id),
+          ...customById.has(rp.id) ? { customEndpoint: customById.get(rp.id) } : {},
+          models: []
+        });
+      }
+    }
     sendJson(res, 200, { providers });
   } catch (err) {
     sendCatalogFetchError(res, err, "Model fetch");
+  }
+}
+function publicManualModel(model) {
+  return {
+    id: model.id,
+    name: model.name,
+    contextWindow: model.contextWindow,
+    validatedAt: model.validatedAt,
+    source: "manual"
+  };
+}
+async function handleManualModel(req, res, action) {
+  let body;
+  try {
+    const parsed = JSON.parse(await readBody(req));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("object required");
+    body = parsed;
+  } catch {
+    sendJson(res, 400, { ok: false, error: "Request body must be a JSON object" });
+    return;
+  }
+  const { providerId, modelId, displayName, contextWindow } = body;
+  if (typeof providerId !== "string" || !providerId.trim() || typeof modelId !== "string" || !modelId.trim()) {
+    sendJson(res, 400, { ok: false, error: "providerId and modelId must be non-empty strings" });
+    return;
+  }
+  if (action === "add" && (displayName !== void 0 && typeof displayName !== "string" || contextWindow !== void 0 && (typeof contextWindow !== "number" || !Number.isSafeInteger(contextWindow) || contextWindow <= 0))) {
+    sendJson(res, 400, { ok: false, error: "displayName must be a string and contextWindow must be a positive integer when provided" });
+    return;
+  }
+  try {
+    const { addManualModel, removeManualModel } = await import("./manual-models-VEBTRQFK.js");
+    const result = action === "add" ? await addManualModel({
+      providerId: providerId.trim(),
+      modelId: modelId.trim(),
+      ...typeof displayName === "string" && displayName.trim() ? { displayName: displayName.trim() } : {},
+      ...typeof contextWindow === "number" ? { contextWindow } : {}
+    }) : removeManualModel(providerId.trim(), modelId.trim());
+    sendJson(res, 200, {
+      ok: result.ok,
+      ...!result.ok ? { error: result.error ?? "Manual model operation failed" } : {},
+      ...result.ok && "model" in result && result.model ? { model: publicManualModel(result.model) } : {}
+    });
+  } catch {
+    sendJson(res, 500, { ok: false, error: `Unable to ${action} manual model. Please try again.` });
   }
 }
 function copilotSubscription(providerData) {
@@ -958,7 +1046,7 @@ async function handleAddProvider(req, res) {
       sendJson(res, 400, { error: "templateId required" });
       return;
     }
-    const { listSupportedTemplates } = await import("./provider-templates-TZOM62WC.js");
+    const { listSupportedTemplates } = await import("./provider-templates-JY3NXZK7.js");
     const template = listSupportedTemplates().find((t) => t.id === templateId);
     if (!template) {
       sendJson(res, 404, { error: `Template '${templateId}' not found` });
@@ -1810,4 +1898,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-RJVKDGGG.js.map
+//# sourceMappingURL=ui-command-QBA3YV5H.js.map
