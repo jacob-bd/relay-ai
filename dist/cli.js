@@ -3555,16 +3555,20 @@ function allowlistedNativeHeaders(inboundHeaders) {
 function prepareNativeCodexBody(body) {
   if (!Array.isArray(body.input)) return body;
   let changed = false;
-  const input = body.input.map((item) => {
-    if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+  const input = body.input.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [item];
     const record = item;
-    if (record.type !== "compaction" && record.type !== "context_compaction") return item;
+    if (record.type === "reasoning" && typeof record.encrypted_content !== "string") {
+      changed = true;
+      return [];
+    }
+    if (record.type !== "compaction" && record.type !== "context_compaction") return [item];
     const summary = decodeCompactionContent(
       typeof record.encrypted_content === "string" ? record.encrypted_content : void 0
     );
-    if (summary === null) return item;
+    if (summary === null) return [item];
     changed = true;
-    return {
+    return [{
       type: "message",
       role: "user",
       content: [{
@@ -3572,7 +3576,7 @@ function prepareNativeCodexBody(body) {
         text: `[Summary of earlier conversation]
 ${summary}`
       }]
-    };
+    }];
   });
   return changed ? { ...body, input } : body;
 }

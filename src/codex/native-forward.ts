@@ -69,23 +69,31 @@ export interface NativeHttpForwardOptions {
 export function prepareNativeCodexBody<T extends Record<string, unknown>>(body: T): T {
   if (!Array.isArray(body.input)) return body;
   let changed = false;
-  const input = body.input.map(item => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+  const input = body.input.flatMap(item => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [item];
     const record = item as Record<string, unknown>;
-    if (record.type !== 'compaction' && record.type !== 'context_compaction') return item;
+    // Relay models emit readable reasoning summaries with Relay-generated item
+    // ids. Native Codex cannot resolve those ids when store=false; forwarding
+    // them makes the native backend fail with "Item with id ... not found".
+    // Native reasoning items carry encrypted_content and remain valid input.
+    if (record.type === 'reasoning' && typeof record.encrypted_content !== 'string') {
+      changed = true;
+      return [];
+    }
+    if (record.type !== 'compaction' && record.type !== 'context_compaction') return [item];
     const summary = decodeCompactionContent(
       typeof record.encrypted_content === 'string' ? record.encrypted_content : undefined,
     );
-    if (summary === null) return item;
+    if (summary === null) return [item];
     changed = true;
-    return {
+    return [{
       type: 'message',
       role: 'user',
       content: [{
         type: 'input_text',
         text: `[Summary of earlier conversation]\n${summary}`,
       }],
-    };
+    }];
   });
   return changed ? { ...body, input } : body;
 }
