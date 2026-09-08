@@ -1019,8 +1019,8 @@ export async function writeResponsesStream(
           loopDetected,
           aborted: true,
         });
-        emit('response.completed', {
-          type: 'response.completed',
+        emit('response.failed', {
+          type: 'response.failed',
           response: {
             id: responseId,
             object: 'response',
@@ -1053,8 +1053,8 @@ export async function writeResponsesStream(
         if (is429) {
           writeResponsesRateLimitStream(modelId, msg, write);
         } else {
-          emit('response.completed', {
-            type: 'response.completed',
+          emit('response.failed', {
+            type: 'response.failed',
             response: {
               id: responseId,
               object: 'response',
@@ -1493,8 +1493,8 @@ export function responsesErrorBody(
 }
 
 export function writeResponsesErrorStream(modelId: string, message: string, write: WriteFn, statusCode = 401): void {
-  write(sseChunk('response.completed', {
-    type: 'response.completed',
+  write(sseChunk('response.failed', {
+    type: 'response.failed',
     response: responsesErrorBody(modelId, message, statusCode),
   }));
 }

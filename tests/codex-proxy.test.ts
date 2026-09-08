@@ -743,7 +743,7 @@ describe('startCodexProxy', () => {
         })));
         client.on('message', data => {
           const event = JSON.parse(data.toString()) as { type?: string };
-          if (event.type === 'response.completed') client.close();
+          if (event.type === 'response.completed' || event.type === 'response.failed') client.close();
         });
         client.on('close', code => {
           clearTimeout(timer);

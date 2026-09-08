@@ -2958,8 +2958,8 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
           loopDetected,
           aborted: true
         });
-        emit("response.completed", {
-          type: "response.completed",
+        emit("response.failed", {
+          type: "response.failed",
           response: {
             id: responseId,
             object: "response",
@@ -2989,8 +2989,8 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
         if (is429) {
           writeResponsesRateLimitStream(modelId, msg, write);
         } else {
-          emit("response.completed", {
-            type: "response.completed",
+          emit("response.failed", {
+            type: "response.failed",
             response: {
               id: responseId,
               object: "response",
@@ -3336,8 +3336,8 @@ function responsesErrorBody(modelId, message, statusCode = 401) {
   };
 }
 function writeResponsesErrorStream(modelId, message, write, statusCode = 401) {
-  write(sseChunk("response.completed", {
-    type: "response.completed",
+  write(sseChunk("response.failed", {
+    type: "response.failed",
     response: responsesErrorBody(modelId, message, statusCode)
   }));
 }
