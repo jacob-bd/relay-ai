@@ -156,7 +156,7 @@ relay-ai codex-app --provider antigravity --model gemini-3.1-pro-high --with-nat
 launch from relying on saved or default choices, it requires `--provider`,
 `--model`, and either `--with-native` or `--relay-only`.
 
-Pick provider → pick model → Codex **app** opens. **Keep the relay-ai terminal open** until you’re done (the app always uses the foreground proxy). Press **Ctrl+C** to close ChatGPT Desktop, restore your previous Codex config, and stop the proxy.
+Pick provider → pick model → Codex **app** opens. **Keep the relay-ai terminal open** until you’re done (the app always uses the foreground proxy). Press **Ctrl+C** to close ChatGPT Desktop, restore your previous Codex config, and stop the proxy. On Windows, Relay first requests a graceful close and then force-quits a stuck tray/background process if necessary; config restoration waits until the Desktop process has actually exited. If ChatGPT was already running, the restart prompt is expected because the app must reload the temporary Relay configuration.
 
 Relay does not launch ChatGPT until the provider catalog resolves, the proxy is
 listening, its health and model catalog pass validation, and the temporary
@@ -225,6 +225,7 @@ The catalog `display_name` uses human-readable labels (e.g. `Claude Haiku 4.5`).
 |-----------|--------------|
 | Normal end of session | **Ctrl+C** in the relay-ai terminal → ChatGPT Desktop closes, config restores, proxy stops |
 | Codex already running | relay-ai asks to **restart Codex** so new settings apply; you can decline and reopen manually |
+| Windows Desktop remains in the background after Ctrl+C | Relay waits for graceful shutdown, then force-quits the stuck process before restoring config |
 | Crash / killed terminal | Next launch auto-recovers when possible, or `relay-ai codex-app --restore` |
 | Live session still running | `--restore` refuses until you Ctrl+C the other terminal |
 
@@ -235,8 +236,9 @@ overlay keys and preserves those concurrent edits. Writes are atomic and retain
 private file permissions.
 
 For an unattended `--yes` session, `SIGTERM` or `SIGHUP` restores the config,
-stops the proxy, and gracefully quits ChatGPT so the app is never left pointing
-at a dead local provider. A hard crash cannot run cleanup; once the Relay process
+stops the proxy, and quits ChatGPT so the app is never left pointing at a dead
+local provider. On Windows, shutdown escalates to a force-quit if the graceful
+close leaves a background process alive. A hard crash cannot run cleanup; once the Relay process
 is confirmed absent, recover with:
 
 ```bash
@@ -393,12 +395,15 @@ Codex exposes a **reasoning effort** picker when relay-ai's model catalog includ
 | Models appear but requests do not answer | Confirm the foreground Relay process is still running. Picker presence alone does not prove the proxy is alive; recover with `relay-ai codex-app --restore` only after the Relay process is confirmed absent. |
 | Stuck on relay-ai settings | `relay-ai codex-app --restore` |
 | `--restore` blocked | Ctrl+C the other relay-ai codex-app terminal first |
+| Ctrl+C says ChatGPT Desktop did not exit | Update to relay-ai 0.11.1 or newer and try again. On Windows, Relay now force-quits a stuck background Desktop process before restoring config. If it still cannot exit, close ChatGPT in Task Manager, then run `relay-ai codex-app --restore`. |
+| Windows shows a Node/libuv assertion after `--restore` or `--help` | Update to relay-ai 0.11.1 or newer. Recovery and help commands no longer start the background model-catalog refresh that could keep a Windows network handle alive during process shutdown. |
 | Wrong config after test | `--restore`; backups in `~/.relay-ai/codex/backups/` |
 | "prompt too long" / session crashes after many turns | The conversation history grew past the model’s context limit. Start a fresh conversation in Codex. relay-ai now sets `model_auto_compact_token_limit` in config.toml to prevent this going forward — see [Context management](#context-management-and-session-architecture). |
 | Trying to continue a large GPT-5.5 session on a different model | Codex sends the full conversation history inline; 1 M-token models reject 2 M-token payloads. relay-ai trims the oldest messages automatically, but some early context will be lost. Starting fresh is the cleanest option. |
 | Model shows as "Custom" in the Codex UI | Expected — Codex labels all external catalog models as "Custom". The correct model is in use. |
 | Need to prove which provider answered | Inspect `~/.relay-ai/logs/codex-route-audit.jsonl`; use `complete` rows, not the model's self-identification. |
 | External model ignores an attached image | Update to relay-ai 0.11.1 or newer. Relay now forwards Responses `input_image` parts, but the selected provider/model must support vision. |
+| Provider reports that no endpoint supports image input | The selected provider/model does not advertise a vision-capable endpoint for this request. Relay now forwards the provider failure as a visible Codex error; choose a vision-capable model or remove the image. |
 
 ### Shared
 

@@ -11,6 +11,9 @@
 - **GPT Astra with OpenAI OAuth:** update Relay's Codex Responses-Lite version header from `0.144.1` to `0.153.4`, which passed a live Astra request after the old header was rejected. The Claude adapter now preserves the original upstream status and message when collecting a streamed response instead of replacing it with `502 No output generated`. ([Issue #68](https://github.com/jacob-bd/relay-ai/issues/68))
 - **Codex App WebSocket framing:** correctly handles control frames, multiple frames received in one network chunk, and fragmented request messages. This prevents valid Windows ChatGPT/Codex requests from being dropped or parsed as invalid JSON, avoiding the reconnect loop reported in [Issue #72](https://github.com/jacob-bd/relay-ai/issues/72).
 - **Codex App image input:** preserve Responses API `input_image` parts when translating requests to external providers, so image prompts are no longer silently reduced to text-only prompts.
+- **Codex provider failures:** emit a proper Responses `response.failed` event for upstream errors, so capability failures such as “No endpoints found that support image input” are shown to the user instead of appearing as a blank response or successful empty turn.
+- **Windows ChatGPT cleanup:** when ChatGPT remains alive as a tray/background process after Ctrl+C, Relay now escalates from graceful shutdown to a guarded force-quit before restoring `config.toml`. Help and `--restore` paths also skip the background models.dev refresh, preventing a Windows Node/libuv shutdown assertion.
+- **Blank manual-model context:** optional context input is now omitted when blank or undefined, instead of being converted to `NaN` and rejected by the model registry.
 
 ## [0.11.0] - 2026-09-07
 

@@ -7,7 +7,7 @@
 For beta models, private model IDs, or aliases missing from the provider's model list:
 
 1. In `relay-ai ui`, open **Providers & Keys**, select a provider, and use **Add model manually**. In the terminal, run `relay-ai providers`, select the provider, and choose **Add model manually**.
-2. Enter the exact upstream model ID and an optional display name. Enter a context size only if your provider documents it; otherwise leave it blank.
+2. Enter the exact upstream model ID and an optional display name. The context-size field is optional in both the UI and CLI; enter it only if your provider documents it, otherwise leave it blank and Relay omits the context metadata.
 3. Choose **Test & Add**. Relay makes three small API calls to test text generation, streaming, a harmless tool call, and continuation after its result. Provider charges may apply. Validation stops on failure and has a 90-second request budget. Only passing entries are saved.
 
 Manual models use the provider's existing endpoint, headers and credentials. The initial release supports non-OAuth OpenAI-compatible, Anthropic, OpenAI, and OpenRouter providers. Subscription-specific and cloud protocols continue to use their normal catalogs. Tool support is tested using automatic selection because some reasoning models reject forced tool selection.
