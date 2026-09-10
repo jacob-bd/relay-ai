@@ -144,6 +144,9 @@ Counts come from Command Code's own plan pages and match what Relay discovers. C
 - **Temporary outages do not shrink your catalog**: Command Code returns HTTP 503 when the provider behind a model is overloaded. Relay keeps those models listed, and only an explicit `MODEL_NOT_IN_PLAN` rejection removes one.
 - **Model IDs**: Relay preserves the provider's full IDs, such as `deepseek/deepseek-v4.1-flash` and `claude-sonnet-5`.
 - **Usage and billing**: Requests draw on your existing Command Code subscription credits. Relay does not create a separate account or bill.
+- **Works with**: `relay-ai claude`, `codex`, `gemini`, the desktop apps, Antigravity, and `relay-ai server`. Models are routed the same way in every launcher.
+- **Troubleshooting `Stream error occurred`**: That message comes from Command Code, not Relay. When the provider behind a model is overloaded, Command Code returns HTTP 503 on a normal request but sends HTTP 200 followed by an in-stream error chunk carrying that generic text on a streaming one, which is all any client receives. Try the same prompt on a different Command Code model to confirm; if other models answer, the one you picked is having an upstream outage and will recover on its own.
+- **Troubleshooting `MODEL_NOT_IN_PLAN`**: Your plan does not include that model. Run `relay-ai providers refresh-models commandcode` to re-check availability, which also picks up models you gained by upgrading.
 - **The Go plan**: Go works only through the private `/alpha/generate` endpoint that the Command Code CLI uses. Command Code rejects requests to it that do not carry the CLI's own identifying headers, so reaching it from Relay would require impersonating the CLI to bypass a control the vendor added deliberately. Relay does not do this, and using a third-party bridge that does may put your Command Code account at risk. Use GOAT or above for API access.
 
 ### Local Models (Ollama & LM Studio)

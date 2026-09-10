@@ -27,7 +27,7 @@
 
 Pick your backend:
 
-- **Your providers** — configure once with `relay-ai providers` (ClinePass, Groq, Mistral, Nvidia, DeepSeek, custom OpenAI/Anthropic endpoints, and more)
+- **Your providers** — configure once with `relay-ai providers` (Command Code, ClinePass, Groq, Mistral, Nvidia, DeepSeek, custom OpenAI/Anthropic endpoints, and more)
 - **OpenCode Zen / Go** — cloud models with your OpenCode API key (optional; add via `relay-ai providers`)
 - **One-time OpenCode import** — bring existing OpenCode provider settings into the registry (`relay-ai providers import`)
 - **Google Vertex AI** — Claude on Vertex via `relay-ai server --vertex` and local gcloud credentials (no OpenCode key required)
@@ -62,7 +62,7 @@ Pick your backend:
 - **Docker Server + Admin UI:** `docker compose up` (see **[docs/DOCKER.md](docs/DOCKER.md)**) runs an always-on admin UI + gateway for LAN/home-lab use — providers, favorites, and Start Server without a desktop keychain. Host CLI still launches Claude / Codex / Antigravity.
 - **Server tab in the UI:** Run the same API gateway as `relay-ai server` — favorites-only or specific providers, discovery id masking for Claude Desktop / Cowork, local or network listen mode — from a browser form instead of a terminal wizard. Shows live URLs, the API key, and the full model catalog once started, with a one-click Stop.
 - **Native provider registry:** `relay-ai providers` stores config in `~/.relay-ai/providers.json` and secrets in the OS keychain — no OpenCode binary required at launch. See **[docs/PROVIDERS.md](docs/PROVIDERS.md)** for a full list of providers and known issues.
-- **Provider templates:** Add ClinePass, Groq, Mistral, Together, OpenRouter, and 15+ SDK-backed providers, plus custom OpenAI/Anthropic-compatible endpoints
+- **Provider templates:** Add Command Code, ClinePass, Groq, Mistral, Together, OpenRouter, and 15+ SDK-backed providers, plus custom OpenAI/Anthropic-compatible endpoints
 - **OpenCode import:** One-time migration from OpenCode (`providers import`); validates API keys and skips placeholders like `anything`
 - **OpenCode Zen / Go:** Optional cloud backends when you have an OpenCode API key
 - **SDK adapter proxy:** Non-Anthropic providers route through the Vercel AI SDK (same packages OpenCode uses), so Claude Code still speaks Anthropic format. Labeled `(via proxy)` in the picker
