@@ -2,7 +2,7 @@
 import {
   getTemplateById,
   init_provider_templates
-} from "./chunk-TRM2WGI6.js";
+} from "./chunk-3R25QO5X.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   BACKENDS,
@@ -24,6 +24,7 @@ import {
   classifyModelFormat,
   claudeCodeClientModelId,
   claudeModelFamily,
+  contextWindowFromHeuristics,
   createLanguageModel,
   customProviderId,
   deleteProviderCredential,
@@ -49,7 +50,6 @@ import {
   isOpencodeOAuth,
   isSdkMigratedNpm,
   isValidProviderId,
-  loadOpencodeCache,
   loadRegistry,
   maxToolsForNpm,
   modelPrefersResponsesApi,
@@ -85,7 +85,7 @@ import {
   translateRequest,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-O2XZFXHG.js";
+} from "./chunk-Z5GL4ALA.js";
 
 // src/registry/google-model-id.ts
 var GOOGLE_MODEL_PREFIX = "models/";
@@ -1285,6 +1285,8 @@ var memoryCache = null;
 var memoryCachePath = null;
 var memoryCacheMtime = 0;
 var REGISTRY_TO_MODELS_DEV = {
+  zen: "opencode",
+  go: "opencode-go",
   google: "google",
   openai: "openai",
   groq: "groq",
@@ -3583,27 +3585,26 @@ function deriveBrand(family) {
   }
   return "Other";
 }
-function readModelsFromCache(backendId) {
-  const cache = loadOpencodeCache();
-  if (!cache) return null;
-  const providerKey = backendId === "zen" ? "opencode" : "opencode-go";
+function readModelsFromModelsDev(backendId, cache = loadModelsDevCache()) {
+  const providerKey = resolveModelsDevSlug(backendId);
   const providerData = cache[providerKey];
   if (!providerData?.models) return null;
   const result = /* @__PURE__ */ new Map();
-  for (const entry of Object.values(providerData.models)) {
-    if (!entry.id || entry.status === "deprecated") continue;
+  for (const [modelKey, entry] of Object.entries(providerData.models)) {
+    const id = entry.id ?? modelKey;
+    if (entry.status === "deprecated") continue;
     const isFree = entry.cost !== void 0 && entry.cost.input === 0 && entry.cost.output === 0;
-    const rawFormat = classifyModelFormat(entry.id, entry.provider?.npm);
+    const rawFormat = classifyModelFormat(id, entry.provider?.npm);
     const modelFormat = backendId === "go" && rawFormat === "anthropic" ? "openai" : rawFormat;
-    result.set(entry.id, {
-      id: entry.id,
-      name: entry.name ?? entry.id,
+    result.set(id, {
+      id,
+      name: entry.name ?? id,
       isFree,
-      brand: deriveBrand(entry.family ?? ""),
+      brand: deriveBrand(entry.family ?? id),
       sourceBackend: backendId,
       modelFormat,
       cost: entry.cost,
-      contextWindow: resolveContextWindow(entry.id, entry.limit?.context),
+      contextWindow: entry.limit?.context ?? contextWindowFromHeuristics(id),
       reasoning: entry.reasoning,
       interleavedReasoningField: entry.interleaved?.field
     });
@@ -3641,12 +3642,12 @@ function mergeModels(apiIds, cache, backendId) {
       brand: "Other",
       sourceBackend: backendId,
       modelFormat,
-      contextWindow: resolveContextWindow(id)
+      contextWindow: contextWindowFromHeuristics(id)
     };
   });
 }
 async function getModels(backend, fallbackModels) {
-  const cache = readModelsFromCache(backend.id);
+  const cache = readModelsFromModelsDev(backend.id);
   try {
     const apiIds = await fetchModelsFromApi(backend);
     return { models: mergeModels(apiIds, cache, backend.id), fromCache: false };
@@ -5714,6 +5715,79 @@ async function validateClinePassApiKey(apiKey) {
   }
 }
 
+// src/registry/fetch-commandcode-models.ts
+var COMMANDCODE_BASE_URL = "https://api.commandcode.ai/provider/v1";
+var REQUEST_TIMEOUT_MS2 = 1e4;
+function isAnthropicSchemaModel(id) {
+  return id.startsWith("claude-");
+}
+var PLAN_SUFFIX = " (Pro+)";
+function positiveNumber2(value) {
+  const number = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : void 0;
+  return typeof number === "number" && Number.isFinite(number) && number > 0 ? number : void 0;
+}
+function toCachedModel2(entry, baseUrl) {
+  const id = typeof entry.id === "string" ? entry.id.trim() : "";
+  if (!id) return null;
+  const anthropicSchema = isAnthropicSchemaModel(id);
+  const displayName = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : id;
+  const contextWindow2 = positiveNumber2(entry.context_length);
+  const family = id.split("/").pop()?.split(/[-:]/)[0] ?? id;
+  return {
+    id,
+    name: anthropicSchema ? `${displayName}${PLAN_SUFFIX}` : displayName,
+    upstreamModelId: id,
+    family,
+    brand: deriveBrand(family),
+    contextWindow: contextWindow2,
+    contextWindowSource: contextWindow2 === void 0 ? void 0 : "provider",
+    modelFormat: anthropicSchema ? "anthropic" : "openai",
+    npm: anthropicSchema ? "@ai-sdk/anthropic" : "@ai-sdk/openai-compatible",
+    apiUrl: baseUrl
+  };
+}
+function parseCommandCodeModels(payload, baseUrl) {
+  if (!payload || typeof payload !== "object") return [];
+  const rows = payload.data;
+  if (!Array.isArray(rows)) return [];
+  const models = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const model = toCachedModel2(row, baseUrl);
+    if (model) models.push(model);
+  }
+  return models;
+}
+async function fetchCommandCodeModels(baseUrl = COMMANDCODE_BASE_URL, apiKey) {
+  const normalizedBaseUrl = baseUrl.replace(/\/$/, "");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS2);
+  let response;
+  try {
+    response = await fetch(`${normalizedBaseUrl}/models`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        ...apiKey?.trim() ? { Authorization: `Bearer ${apiKey.trim()}` } : {}
+      },
+      redirect: "manual",
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new Error("Command Code rejected the API key.");
+  }
+  if (!response.ok) {
+    throw new Error(`Command Code model list returned HTTP ${response.status}.`);
+  }
+  const payload = await response.json().catch(() => null);
+  const models = parseCommandCodeModels(payload, normalizedBaseUrl);
+  if (models.length === 0) throw new Error("Command Code returned no usable models.");
+  return models;
+}
+
 // src/registry/model-source.ts
 init_provider_templates();
 
@@ -5874,6 +5948,7 @@ function modelInfoToCached(m, npm, apiUrl) {
 }
 async function refreshZenGoProvider(provider) {
   const backendId = provider.id === "go" || provider.templateId === "go" ? "go" : "zen";
+  await fetchModelsDevCache();
   const result = await getModels(BACKENDS[backendId]);
   return result.models.filter((m) => m.modelFormat !== "unsupported").map((m) => {
     const isAnthropic = m.modelFormat === "anthropic";
@@ -6225,6 +6300,20 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
     let oauthFallbackReason;
     if (source === "zen-go-api") {
       models = await refreshZenGoProvider(provider);
+    } else if (source === "commandcode") {
+      const ccBaseUrl = (provider.api.url ?? COMMANDCODE_BASE_URL).replace(/\/$/, "");
+      try {
+        models = await fetchCommandCodeModels(ccBaseUrl, apiKey ?? void 0);
+        baseUrl = ccBaseUrl;
+      } catch (err) {
+        if (cachedModelCount(provider) > 0) {
+          return skipWithCachedModels(
+            provider,
+            `Command Code catalog refresh failed: ${err instanceof Error ? err.message : String(err)} Kept the existing cached model list; try again later.`
+          );
+        }
+        throw err;
+      }
     } else if (source === "cline-recommended") {
       try {
         models = await fetchClinePassModels();
@@ -8253,6 +8342,17 @@ async function addProviderFromTemplate(template, apiKey, opts) {
         hint: template.signupUrl ? `Verify your key at ${template.signupUrl}` : void 0
       };
     }
+  } else if (template.modelSource === "commandcode") {
+    try {
+      const baseUrl = (opts?.baseUrl?.trim() || template.defaultBaseUrl || COMMANDCODE_BASE_URL).replace(/\/$/, "");
+      fetched = { models: await fetchCommandCodeModels(baseUrl, trimmedKey), baseUrl };
+    } catch (err) {
+      return {
+        added: false,
+        error: err instanceof Error ? err.message : String(err),
+        hint: template.signupUrl ? `Verify your key at ${template.signupUrl}` : void 0
+      };
+    }
   } else {
     fetched = await fetchTemplateModels(template, trimmedKey, opts?.baseUrl);
   }
@@ -9508,4 +9608,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-YD6A3ZB3.js.map
+//# sourceMappingURL=chunk-PSD656XC.js.map

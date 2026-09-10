@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-VXQ7ZVTW.js";
+} from "./chunk-FD5EDSBM.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -148,7 +148,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-YD6A3ZB3.js";
+} from "./chunk-PSD656XC.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -156,7 +156,7 @@ import {
   listAddableTemplates,
   listSupportedTemplates,
   listVisibleOAuthTemplates
-} from "./chunk-TRM2WGI6.js";
+} from "./chunk-3R25QO5X.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   BACKENDS,
@@ -196,6 +196,7 @@ import {
   migrateGlobalOpencodeCredential,
   migrateLegacyCloudProviders,
   modelIdError,
+  normalizeToolSchemaForNpm,
   oauthCredentialToKeychainJson,
   parseDsmlToolCalls,
   parseToolArguments,
@@ -221,7 +222,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-O2XZFXHG.js";
+} from "./chunk-Z5GL4ALA.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -2661,7 +2662,7 @@ function translateResponsesTools(tools, options = {}) {
     if (options.maxTools !== void 0 && toolCount >= options.maxTools) return;
     out[name] = tool({
       description: description ?? "",
-      inputSchema: jsonSchema(parameters ?? { type: "object", properties: {} })
+      inputSchema: jsonSchema(normalizeToolSchemaForNpm(parameters ?? { type: "object", properties: {} }, options.npm))
     });
     toolCount++;
   };
@@ -2688,6 +2689,9 @@ function translateResponsesTools(tools, options = {}) {
   }
   return Object.keys(out).length ? out : void 0;
 }
+function omitsMaxOutputTokens(metadata) {
+  return metadata?.providerId === "openrouter" || (metadata?.apiBaseUrl?.includes("openrouter.ai") ?? false);
+}
 function translateResponsesRequest(body, npm, metadata, options = {}) {
   const toolContext = createCodexToolContext();
   let effectiveTools = body.tools ?? [];
@@ -2704,13 +2708,13 @@ function translateResponsesRequest(body, npm, metadata, options = {}) {
     thinkingProviderOptions(npm),
     effortProviderOptions(npm, effort, metadata?.upstreamModelId ?? body.model, metadata)
   );
-  const tools = translateResponsesTools([...effectiveTools, ...deferredTools], options);
+  const tools = translateResponsesTools([...effectiveTools, ...deferredTools], { ...options, npm });
   return {
     instructions: system,
     messages,
     tools,
     toolContext,
-    maxOutputTokens: body.max_output_tokens,
+    maxOutputTokens: omitsMaxOutputTokens(metadata) ? void 0 : body.max_output_tokens,
     temperature: body.temperature,
     providerOptions,
     headers: options.requestHeaders
@@ -3430,6 +3434,14 @@ function classifyCodexDispatch(modelId, relayRoutes, nativeModelIds) {
   if (route) return { kind: "relay", route };
   return { kind: "unknown", modelId };
 }
+function classifyCodexMixedDispatch(input) {
+  if (input.subagentRoute) return { kind: "relay", route: input.subagentRoute };
+  const dispatch = classifyCodexDispatch(input.modelId, input.relayRoutes, input.nativeModelIds);
+  if (dispatch.kind === "unknown" && input.markedSubagent) {
+    return { kind: "native", modelId: input.modelId };
+  }
+  return dispatch;
+}
 function createMixedProxyCapability() {
   return randomBytes(32).toString("base64url");
 }
@@ -4046,6 +4058,13 @@ function isCodexV2CompactionRequest(body) {
   );
 }
 var COMPACTION_MAX_OUTPUT_TOKENS = 4e3;
+function streamOutcome(failure, okStatus) {
+  if (!failure) return { outcome: "ok", status: okStatus };
+  return {
+    outcome: "error",
+    status: failure.errorMessage ? upstreamHttpStatus(void 0, failure.errorMessage) : "stream-aborted"
+  };
+}
 function protectCodexCompactionParams(body, params, contextWindow) {
   if (!isLikelyCodexCompactionRequest(body)) {
     return trimToContextLimit(params, contextWindow);
@@ -4345,74 +4364,68 @@ async function startCodexProxy(routes, options = {}) {
         if (debug && markedSubagent) {
           log15(`subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? "(none)"}`);
         }
-        if (mixedNative && markedSubagent && !subagentRoute) {
-          audit({ transport: "http", requestedModel: modelId, dispatch: "relay-subagent", phase: "complete", outcome: "error", status: 503 });
-          sendJson(res, 503, {
-            error: {
-              message: "Codex marked this request as a Sub-agent, but no configured Codex Sub-agent route is available.",
-              type: "service_unavailable"
-            }
-          });
-          return;
-        }
         if (mixedNative) {
-          if (!markedSubagent) {
-            const dispatch = classifyCodexDispatch(modelId, routes, mixedNative.nativeModelIds);
-            if (dispatch.kind === "unknown") {
-              audit({ transport: "http", requestedModel: modelId, dispatch: "unknown", phase: "complete", outcome: "error", status: 404 });
-              sendJson(res, 404, { error: { message: `Unknown model: ${modelId}`, type: "invalid_request_error" } });
-              return;
-            }
-            if (dispatch.kind === "native") {
+          const dispatch = classifyCodexMixedDispatch({
+            modelId,
+            markedSubagent,
+            subagentRoute,
+            relayRoutes: routes,
+            nativeModelIds: mixedNative.nativeModelIds
+          });
+          if (dispatch.kind === "unknown") {
+            audit({ transport: "http", requestedModel: modelId, dispatch: "unknown", phase: "complete", outcome: "error", status: 404 });
+            sendJson(res, 404, { error: { message: `Unknown model: ${modelId}`, type: "invalid_request_error" } });
+            return;
+          }
+          if (dispatch.kind === "native") {
+            audit({
+              transport: "http",
+              requestedModel: modelId,
+              dispatch: "native",
+              phase: "dispatch",
+              provider: "openai-native",
+              routeModel: modelId,
+              upstreamModel: modelId
+            });
+            const controller = new AbortController();
+            req.once("aborted", () => controller.abort());
+            try {
+              const nativeResponse = await forwardNativeCodexHttp({
+                body: rawBody,
+                inboundHeaders: req.headers,
+                nativeUrl: mixedNative.nativeBaseUrl ? `${mixedNative.nativeBaseUrl.replace(/\/$/, "")}/responses` : NATIVE_CODEX_RESPONSES_URL,
+                signal: controller.signal,
+                fetchImpl: mixedNative.nativeFetchImpl
+              });
+              const contentType = nativeResponse.headers.get("content-type");
+              res.writeHead(nativeResponse.status, contentType ? { "content-type": contentType } : void 0);
+              res.end(Buffer.from(await nativeResponse.arrayBuffer()));
               audit({
                 transport: "http",
                 requestedModel: modelId,
                 dispatch: "native",
-                phase: "dispatch",
+                phase: "complete",
                 provider: "openai-native",
                 routeModel: modelId,
-                upstreamModel: modelId
+                upstreamModel: modelId,
+                outcome: nativeResponse.ok ? "ok" : "error",
+                status: nativeResponse.status
               });
-              const controller = new AbortController();
-              req.once("aborted", () => controller.abort());
-              try {
-                const nativeResponse = await forwardNativeCodexHttp({
-                  body: rawBody,
-                  inboundHeaders: req.headers,
-                  nativeUrl: mixedNative.nativeBaseUrl ? `${mixedNative.nativeBaseUrl.replace(/\/$/, "")}/responses` : NATIVE_CODEX_RESPONSES_URL,
-                  signal: controller.signal,
-                  fetchImpl: mixedNative.nativeFetchImpl
-                });
-                const contentType = nativeResponse.headers.get("content-type");
-                res.writeHead(nativeResponse.status, contentType ? { "content-type": contentType } : void 0);
-                res.end(Buffer.from(await nativeResponse.arrayBuffer()));
-                audit({
-                  transport: "http",
-                  requestedModel: modelId,
-                  dispatch: "native",
-                  phase: "complete",
-                  provider: "openai-native",
-                  routeModel: modelId,
-                  upstreamModel: modelId,
-                  outcome: nativeResponse.ok ? "ok" : "error",
-                  status: nativeResponse.status
-                });
-              } catch (err) {
-                audit({
-                  transport: "http",
-                  requestedModel: modelId,
-                  dispatch: "native",
-                  phase: "complete",
-                  provider: "openai-native",
-                  routeModel: modelId,
-                  upstreamModel: modelId,
-                  outcome: "error",
-                  status: "forward-failed"
-                });
-                if (!res.writableEnded) sendJson(res, 502, { error: { message: "Native Codex request failed", type: "upstream_error" } });
-              }
-              return;
+            } catch (err) {
+              audit({
+                transport: "http",
+                requestedModel: modelId,
+                dispatch: "native",
+                phase: "complete",
+                provider: "openai-native",
+                routeModel: modelId,
+                upstreamModel: modelId,
+                outcome: "error",
+                status: "forward-failed"
+              });
+              if (!res.writableEnded) sendJson(res, 502, { error: { message: "Native Codex request failed", type: "upstream_error" } });
             }
+            return;
           }
         }
         let resolved = subagentRoute ? resolveModel(routes, models, subagentRoute.modelId) : resolveModel(routes, models, modelId);
@@ -4511,11 +4524,13 @@ async function startCodexProxy(routes, options = {}) {
                 }
               }
             };
+            let streamFailure;
             try {
               if (v2Compaction) {
                 await streamCompactionResponse(languageModel, params, modelId, write);
               } else
                 await streamResponsesResponse(languageModel, params, modelId, write, (summary) => {
+                  if (summary.errorMessage || summary.aborted) streamFailure = summary;
                   if (debug) {
                     const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
                     log15(`response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
@@ -4533,8 +4548,7 @@ async function startCodexProxy(routes, options = {}) {
                 provider: route.providerId ?? "relay",
                 routeModel: route.modelId,
                 upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
-                outcome: "ok",
-                status: 200
+                ...streamOutcome(streamFailure, 200)
               });
             } catch (err) {
               const msg = formatUpstreamError(err);
@@ -4877,190 +4891,182 @@ data: ${JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_reques
             if (debug && markedSubagent) {
               log15(`WS subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? "(none)"}`);
             }
-            if (mixedNative && markedSubagent && !subagentRoute) {
-              audit({ transport: "ws", requestedModel: modelId, dispatch: "relay-subagent", phase: "complete", outcome: "error", status: 503 });
-              sendWsEvent(`event: error
-data: ${JSON.stringify({ error: {
-                message: "Codex marked this request as a Sub-agent, but no configured Codex Sub-agent route is available.",
-                type: "service_unavailable"
-              } })}
-
-`);
-              closeSocket();
-              return;
-            }
             if (mixedNative) {
-              if (!markedSubagent) {
-                const dispatch = classifyCodexDispatch(modelId, routes, mixedNative.nativeModelIds);
-                if (dispatch.kind === "unknown") {
-                  audit({ transport: "ws", requestedModel: modelId, dispatch: "unknown", phase: "complete", outcome: "error", status: 404 });
-                  sendWsEvent(`event: error
+              const dispatch = classifyCodexMixedDispatch({
+                modelId,
+                markedSubagent,
+                subagentRoute,
+                relayRoutes: routes,
+                nativeModelIds: mixedNative.nativeModelIds
+              });
+              if (dispatch.kind === "unknown") {
+                audit({ transport: "ws", requestedModel: modelId, dispatch: "unknown", phase: "complete", outcome: "error", status: 404 });
+                sendWsEvent(`event: error
 data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "invalid_request_error" } })}
 
 `);
-                  closeSocket();
+                closeSocket();
+                return;
+              }
+              if (dispatch.kind === "native") {
+                audit({
+                  transport: "ws",
+                  requestedModel: modelId,
+                  dispatch: "native",
+                  phase: "dispatch",
+                  provider: "openai-native",
+                  routeModel: modelId,
+                  upstreamModel: modelId
+                });
+                const nativeBody = prepareNativeCodexBody(body);
+                if (debug && nativeBody !== body) {
+                  log15(`WS native history normalized: model=${modelId} converted Relay compaction for native verification`);
+                }
+                if (nativeActive && nativeUpstream) {
+                  if (nativeUpstream.readyState === WebSocket.OPEN) {
+                    if (debug) log15(`WS native forwarding next turn: model=${modelId}`);
+                    nativeSendTurn?.(nativeBody, modelId);
+                  } else if (debug) {
+                    log15(`WS native cannot forward next turn: upstream_state=${nativeUpstream.readyState}`);
+                  }
                   return;
                 }
-                if (dispatch.kind === "native") {
-                  audit({
-                    transport: "ws",
-                    requestedModel: modelId,
-                    dispatch: "native",
-                    phase: "dispatch",
-                    provider: "openai-native",
-                    routeModel: modelId,
-                    upstreamModel: modelId
-                  });
-                  const nativeBody = prepareNativeCodexBody(body);
-                  if (debug && nativeBody !== body) {
-                    log15(`WS native history normalized: model=${modelId} converted Relay compaction for native verification`);
+                const wsTarget = mixedNative.nativeBaseUrl ? `${mixedNative.nativeBaseUrl.replace(/^http:/, "ws:").replace(/^https:/, "wss:").replace(/\/$/, "")}/responses` : void 0;
+                const target = nativeResponsesWebSocketOptions({ headers: req.headers, wsUrl: wsTarget });
+                let upstream;
+                let nativeOpened = false;
+                let nativeCompleted = false;
+                let nativeTurnModelId = modelId;
+                let nativeFrameCount = 0;
+                let finished = false;
+                let connectTimer;
+                let firstFrameTimer;
+                const clearTimers = () => {
+                  if (connectTimer) clearTimeout(connectTimer);
+                  if (firstFrameTimer) clearTimeout(firstFrameTimer);
+                };
+                const sendNativeError = (message) => {
+                  if (socket.destroyed) return;
+                  socket.write(wsEncodeTextFrame(JSON.stringify({
+                    type: "error",
+                    error: { type: "upstream_error", message }
+                  })));
+                };
+                const closeBoth = (message, closeCode = 1011) => {
+                  if (finished) return;
+                  finished = true;
+                  nativeActive = false;
+                  nativeSendTurn = void 0;
+                  if (nativeUpstream === upstream) nativeUpstream = void 0;
+                  clearTimers();
+                  if (debug && message) {
+                    log15(`WS native upstream failed: model=${nativeTurnModelId} opened=${nativeOpened} frames=${nativeFrameCount} message=${message}`);
                   }
-                  if (nativeActive && nativeUpstream) {
-                    if (nativeUpstream.readyState === WebSocket.OPEN) {
-                      if (debug) log15(`WS native forwarding next turn: model=${modelId}`);
-                      nativeSendTurn?.(nativeBody, modelId);
-                    } else if (debug) {
-                      log15(`WS native cannot forward next turn: upstream_state=${nativeUpstream.readyState}`);
-                    }
+                  if (message && !nativeCompleted) {
+                    audit({
+                      transport: "ws",
+                      requestedModel: nativeTurnModelId,
+                      dispatch: "native",
+                      phase: "complete",
+                      provider: "openai-native",
+                      routeModel: nativeTurnModelId,
+                      upstreamModel: nativeTurnModelId,
+                      outcome: "error",
+                      status: "upstream-failed"
+                    });
+                  }
+                  if (message && !nativeCompleted) sendNativeError(message);
+                  try {
+                    upstream?.close();
+                  } catch {
+                  }
+                  closeSocket(closeCode);
+                };
+                const sendNativeTurn = (turnBody, turnModelId) => {
+                  if (!upstream || upstream.readyState !== WebSocket.OPEN) {
+                    if (debug) log15(`WS native cannot send turn: model=${turnModelId} upstream_state=${upstream?.readyState ?? "missing"}`);
                     return;
                   }
-                  const wsTarget = mixedNative.nativeBaseUrl ? `${mixedNative.nativeBaseUrl.replace(/^http:/, "ws:").replace(/^https:/, "wss:").replace(/\/$/, "")}/responses` : void 0;
-                  const target = nativeResponsesWebSocketOptions({ headers: req.headers, wsUrl: wsTarget });
-                  let upstream;
-                  let nativeOpened = false;
-                  let nativeCompleted = false;
-                  let nativeTurnModelId = modelId;
-                  let nativeFrameCount = 0;
-                  let finished = false;
-                  let connectTimer;
-                  let firstFrameTimer;
-                  const clearTimers = () => {
+                  nativeTurnModelId = turnModelId;
+                  nativeCompleted = false;
+                  if (firstFrameTimer) clearTimeout(firstFrameTimer);
+                  upstream.send(JSON.stringify({ type: "response.create", ...turnBody }));
+                  firstFrameTimer = setTimeout(() => closeBoth("Native Codex WebSocket response timed out"), 6e4);
+                };
+                try {
+                  if (debug) {
+                    log15(`WS native connecting: model=${modelId} url=${target.url} headers=[${Object.keys(target.headers).join(",")}]`);
+                  }
+                  upstream = new WebSocket(target.url, { headers: target.headers });
+                  nativeUpstream = upstream;
+                  nativeSendTurn = sendNativeTurn;
+                  nativeActive = true;
+                  connectTimer = setTimeout(() => closeBoth("Native Codex WebSocket connection timed out"), 15e3);
+                  upstream.once("open", () => {
+                    nativeOpened = true;
                     if (connectTimer) clearTimeout(connectTimer);
-                    if (firstFrameTimer) clearTimeout(firstFrameTimer);
-                  };
-                  const sendNativeError = (message) => {
+                    if (debug) log15(`WS native upstream open: model=${modelId}`);
+                    sendNativeTurn(nativeBody, modelId);
+                  });
+                  upstream.once("unexpected-response", (_request, response) => {
+                    if (debug) log15(`WS native upstream HTTP rejection: model=${modelId} status=${response.statusCode}`);
+                    response.resume();
+                    closeBoth(`Native Codex WebSocket rejected (${response.statusCode})`);
+                  });
+                  upstream.on("message", (data) => {
                     if (socket.destroyed) return;
-                    socket.write(wsEncodeTextFrame(JSON.stringify({
-                      type: "error",
-                      error: { type: "upstream_error", message }
-                    })));
-                  };
-                  const closeBoth = (message, closeCode = 1011) => {
-                    if (finished) return;
+                    nativeFrameCount += 1;
+                    if (firstFrameTimer) clearTimeout(firstFrameTimer);
+                    const text6 = Array.isArray(data) ? Buffer.concat(data).toString("utf8") : data.toString("utf8");
+                    let eventType = "non-json";
+                    try {
+                      const parsed = JSON.parse(text6);
+                      if (typeof parsed.type === "string") eventType = parsed.type;
+                      if (eventType === "response.completed" || eventType === "response.failed" || eventType === "response.incomplete") {
+                        nativeCompleted = true;
+                        audit({
+                          transport: "ws",
+                          requestedModel: modelId,
+                          dispatch: "native",
+                          phase: "complete",
+                          provider: "openai-native",
+                          routeModel: modelId,
+                          upstreamModel: modelId,
+                          outcome: eventType === "response.completed" ? "ok" : "error",
+                          status: eventType
+                        });
+                      }
+                    } catch {
+                    }
+                    if (debug && (nativeFrameCount <= 3 || nativeCompleted || eventType === "error" || nativeFrameCount % 25 === 0)) {
+                      log15(`WS native frame#${nativeFrameCount}: model=${modelId} type=${eventType} bytes=${text6.length}`);
+                    }
+                    socket.write(wsEncodeTextFrame(text6));
+                  });
+                  upstream.once("error", (err) => closeBoth(`Native Codex WebSocket error: ${err.message}`));
+                  upstream.once("close", (code, reason) => {
+                    const detail = reason?.length ? ` reason=${reason.toString("utf8").slice(0, 200)}` : "";
+                    if (debug) log15(`WS native upstream close: model=${modelId} code=${code}${detail} frames=${nativeFrameCount}`);
+                    if (nativeUpstream === upstream) nativeUpstream = void 0;
+                    nativeActive = false;
+                    if (!finished) closeBoth(nativeCompleted ? void 0 : `Native Codex WebSocket closed before completion (${code})`);
+                  });
+                  socket.once("close", () => {
+                    if (debug) log15(`WS native downstream close: model=${modelId} frames=${nativeFrameCount} completed=${nativeCompleted}`);
                     finished = true;
                     nativeActive = false;
                     nativeSendTurn = void 0;
                     if (nativeUpstream === upstream) nativeUpstream = void 0;
                     clearTimers();
-                    if (debug && message) {
-                      log15(`WS native upstream failed: model=${nativeTurnModelId} opened=${nativeOpened} frames=${nativeFrameCount} message=${message}`);
-                    }
-                    if (message && !nativeCompleted) {
-                      audit({
-                        transport: "ws",
-                        requestedModel: nativeTurnModelId,
-                        dispatch: "native",
-                        phase: "complete",
-                        provider: "openai-native",
-                        routeModel: nativeTurnModelId,
-                        upstreamModel: nativeTurnModelId,
-                        outcome: "error",
-                        status: "upstream-failed"
-                      });
-                    }
-                    if (message && !nativeCompleted) sendNativeError(message);
                     try {
                       upstream?.close();
                     } catch {
                     }
-                    closeSocket(closeCode);
-                  };
-                  const sendNativeTurn = (turnBody, turnModelId) => {
-                    if (!upstream || upstream.readyState !== WebSocket.OPEN) {
-                      if (debug) log15(`WS native cannot send turn: model=${turnModelId} upstream_state=${upstream?.readyState ?? "missing"}`);
-                      return;
-                    }
-                    nativeTurnModelId = turnModelId;
-                    nativeCompleted = false;
-                    if (firstFrameTimer) clearTimeout(firstFrameTimer);
-                    upstream.send(JSON.stringify({ type: "response.create", ...turnBody }));
-                    firstFrameTimer = setTimeout(() => closeBoth("Native Codex WebSocket response timed out"), 6e4);
-                  };
-                  try {
-                    if (debug) {
-                      log15(`WS native connecting: model=${modelId} url=${target.url} headers=[${Object.keys(target.headers).join(",")}]`);
-                    }
-                    upstream = new WebSocket(target.url, { headers: target.headers });
-                    nativeUpstream = upstream;
-                    nativeSendTurn = sendNativeTurn;
-                    nativeActive = true;
-                    connectTimer = setTimeout(() => closeBoth("Native Codex WebSocket connection timed out"), 15e3);
-                    upstream.once("open", () => {
-                      nativeOpened = true;
-                      if (connectTimer) clearTimeout(connectTimer);
-                      if (debug) log15(`WS native upstream open: model=${modelId}`);
-                      sendNativeTurn(nativeBody, modelId);
-                    });
-                    upstream.once("unexpected-response", (_request, response) => {
-                      if (debug) log15(`WS native upstream HTTP rejection: model=${modelId} status=${response.statusCode}`);
-                      response.resume();
-                      closeBoth(`Native Codex WebSocket rejected (${response.statusCode})`);
-                    });
-                    upstream.on("message", (data) => {
-                      if (socket.destroyed) return;
-                      nativeFrameCount += 1;
-                      if (firstFrameTimer) clearTimeout(firstFrameTimer);
-                      const text6 = Array.isArray(data) ? Buffer.concat(data).toString("utf8") : data.toString("utf8");
-                      let eventType = "non-json";
-                      try {
-                        const parsed = JSON.parse(text6);
-                        if (typeof parsed.type === "string") eventType = parsed.type;
-                        if (eventType === "response.completed" || eventType === "response.failed" || eventType === "response.incomplete") {
-                          nativeCompleted = true;
-                          audit({
-                            transport: "ws",
-                            requestedModel: modelId,
-                            dispatch: "native",
-                            phase: "complete",
-                            provider: "openai-native",
-                            routeModel: modelId,
-                            upstreamModel: modelId,
-                            outcome: eventType === "response.completed" ? "ok" : "error",
-                            status: eventType
-                          });
-                        }
-                      } catch {
-                      }
-                      if (debug && (nativeFrameCount <= 3 || nativeCompleted || eventType === "error" || nativeFrameCount % 25 === 0)) {
-                        log15(`WS native frame#${nativeFrameCount}: model=${modelId} type=${eventType} bytes=${text6.length}`);
-                      }
-                      socket.write(wsEncodeTextFrame(text6));
-                    });
-                    upstream.once("error", (err) => closeBoth(`Native Codex WebSocket error: ${err.message}`));
-                    upstream.once("close", (code, reason) => {
-                      const detail = reason?.length ? ` reason=${reason.toString("utf8").slice(0, 200)}` : "";
-                      if (debug) log15(`WS native upstream close: model=${modelId} code=${code}${detail} frames=${nativeFrameCount}`);
-                      if (nativeUpstream === upstream) nativeUpstream = void 0;
-                      nativeActive = false;
-                      if (!finished) closeBoth(nativeCompleted ? void 0 : `Native Codex WebSocket closed before completion (${code})`);
-                    });
-                    socket.once("close", () => {
-                      if (debug) log15(`WS native downstream close: model=${modelId} frames=${nativeFrameCount} completed=${nativeCompleted}`);
-                      finished = true;
-                      nativeActive = false;
-                      nativeSendTurn = void 0;
-                      if (nativeUpstream === upstream) nativeUpstream = void 0;
-                      clearTimers();
-                      try {
-                        upstream?.close();
-                      } catch {
-                      }
-                    });
-                  } catch (err) {
-                    closeBoth(`Native Codex WebSocket setup failed: ${err instanceof Error ? err.message : String(err)}`);
-                  }
-                  return;
+                  });
+                } catch (err) {
+                  closeBoth(`Native Codex WebSocket setup failed: ${err instanceof Error ? err.message : String(err)}`);
                 }
+                return;
               }
             }
             externalActive = true;
@@ -5095,6 +5101,7 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
             currentExternalCompletedResponse = void 0;
             currentExternalStateInput = void 0;
             currentExternalConsumedResponseId = void 0;
+            let streamFailure;
             const continuation = resolveExternalContinuation(body);
             if (continuation.orphanedResponseId) {
               if (debug) log15(`WS continuation rejected: unknown previous_response_id=${continuation.orphanedResponseId}`);
@@ -5155,6 +5162,7 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
                 await streamCompactionResponse(languageModel, params, modelId, sendWsEvent);
               } else
                 await streamResponsesResponse(languageModel, params, modelId, sendWsEvent, (summary) => {
+                  if (summary.errorMessage || summary.aborted) streamFailure = summary;
                   if (debug) {
                     const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
                     log15(`WS response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
@@ -5178,8 +5186,7 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
                 provider: route.providerId ?? "relay",
                 routeModel: route.modelId,
                 upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
-                outcome: "ok",
-                status: "response.completed"
+                ...streamOutcome(streamFailure, "response.completed")
               });
             } catch (err) {
               const msg = formatUpstreamError(err);
@@ -15973,7 +15980,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-WKPJI2CU.js");
+    const { runUiCommand } = await import("./ui-command-HNRE72CP.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

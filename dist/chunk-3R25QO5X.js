@@ -61,6 +61,16 @@ var init_provider_templates = __esm({
         subscriptionRisk: true
       },
       {
+        id: "commandcode",
+        name: "Command Code",
+        authType: "api",
+        npm: "@ai-sdk/openai-compatible",
+        defaultBaseUrl: "https://api.commandcode.ai/provider/v1",
+        signupUrl: "https://commandcode.ai/settings",
+        modelSource: "commandcode",
+        supported: true
+      },
+      {
         id: "groq",
         name: "Groq",
         authType: "api",
@@ -463,4 +473,4 @@ export {
   provider_templates_exports,
   init_provider_templates
 };
-//# sourceMappingURL=chunk-TRM2WGI6.js.map
+//# sourceMappingURL=chunk-3R25QO5X.js.map

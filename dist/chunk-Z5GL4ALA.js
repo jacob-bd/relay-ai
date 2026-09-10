@@ -7,7 +7,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.11.1",
+  version: "0.12.0",
   publishConfig: {
     access: "public"
   },
@@ -4173,6 +4173,30 @@ function resolveUpstreamTools(tools, messages) {
   return upstream;
 }
 
+// src/tool-schema.ts
+var GOOGLE_NPM = /* @__PURE__ */ new Set(["@ai-sdk/google", "@ai-sdk/google-vertex"]);
+function collapseSchemaUnionTypes(value) {
+  if (Array.isArray(value)) return value.map(collapseSchemaUnionTypes);
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "type" && Array.isArray(child)) {
+      const nonNull = child.filter((entry) => entry !== "null");
+      if (nonNull.length === 1) {
+        out.type = nonNull[0];
+        if (nonNull.length < child.length) out.nullable = true;
+        continue;
+      }
+    }
+    out[key] = collapseSchemaUnionTypes(child);
+  }
+  return out;
+}
+function normalizeToolSchemaForNpm(schema, npm) {
+  if (!npm || !GOOGLE_NPM.has(npm)) return schema;
+  return collapseSchemaUnionTypes(schema);
+}
+
 // src/sdk-adapter.ts
 var NEEDS_TRAILING_TOOL_NUDGE = /* @__PURE__ */ new Set(["@ai-sdk/alibaba"]);
 var TRAILING_TOOL_NUDGE_TEXT = "Continue.";
@@ -4303,12 +4327,15 @@ function stripNullInputs(input) {
   }
   return out;
 }
-function translateTools(anthropicTools) {
+function translateTools(anthropicTools, npm) {
   if (!anthropicTools?.length) return void 0;
   const tools = {};
   for (const t of anthropicTools) {
     if (!t.name || !t.input_schema) continue;
-    tools[t.name] = tool({ description: t.description ?? "", inputSchema: jsonSchema(t.input_schema) });
+    tools[t.name] = tool({
+      description: t.description ?? "",
+      inputSchema: jsonSchema(normalizeToolSchemaForNpm(t.input_schema, npm))
+    });
   }
   return Object.keys(tools).length ? tools : void 0;
 }
@@ -4356,7 +4383,7 @@ function translateRequest(body, npm, options) {
   return {
     instructions: options?.openAiOAuth ? void 0 : systemText,
     messages: translateMessages(messages, npm, options?.onDebug),
-    tools: translateTools(upstreamTools.length ? upstreamTools : void 0),
+    tools: translateTools(upstreamTools.length ? upstreamTools : void 0, npm),
     toolChoice: translateToolChoice(body.tool_choice),
     maxOutputTokens: options?.openAiOAuth ? void 0 : body.max_tokens,
     temperature: body.temperature,
@@ -4681,7 +4708,7 @@ export {
   getLogsPath,
   getVertexModelsPath,
   getLegacyConfPath,
-  loadOpencodeCache,
+  contextWindowFromHeuristics,
   resolveContextWindow,
   stripOneMContextSuffix,
   claudeCodeClientModelId,
@@ -4751,6 +4778,7 @@ export {
   splitToolUseId,
   encodeToolUseId,
   serializeToolResultContent,
+  normalizeToolSchemaForNpm,
   formatUpstreamErrorTrace,
   formatUpstreamError,
   upstreamHttpStatus,
@@ -4760,4 +4788,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-O2XZFXHG.js.map
+//# sourceMappingURL=chunk-Z5GL4ALA.js.map

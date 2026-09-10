@@ -62,13 +62,13 @@ import {
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider,
   writeSecureLogLine
-} from "./chunk-YD6A3ZB3.js";
+} from "./chunk-PSD656XC.js";
 import {
   init_provider_templates,
   listAddableTemplates,
   listVisibleOAuthTemplates,
   provider_templates_exports
-} from "./chunk-TRM2WGI6.js";
+} from "./chunk-3R25QO5X.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -95,7 +95,7 @@ import {
   saveProviderCredential,
   supportsManualModels,
   validateCustomEndpointUrl
-} from "./chunk-O2XZFXHG.js";
+} from "./chunk-Z5GL4ALA.js";
 import {
   __toCommonJS
 } from "./chunk-JIDIH7DS.js";
@@ -869,7 +869,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-VEBTRQFK.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-A6FSQV3S.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1046,7 +1046,7 @@ async function handleAddProvider(req, res) {
       sendJson(res, 400, { error: "templateId required" });
       return;
     }
-    const { listSupportedTemplates } = await import("./provider-templates-JY3NXZK7.js");
+    const { listSupportedTemplates } = await import("./provider-templates-WXVGL4XE.js");
     const template = listSupportedTemplates().find((t) => t.id === templateId);
     if (!template) {
       sendJson(res, 404, { error: `Template '${templateId}' not found` });
@@ -1898,4 +1898,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-WKPJI2CU.js.map
+//# sourceMappingURL=ui-command-HNRE72CP.js.map

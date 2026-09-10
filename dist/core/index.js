@@ -50,7 +50,7 @@ import { join as join2 } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.11.1",
+  version: "0.12.0",
   publishConfig: {
     access: "public"
   },
@@ -1807,6 +1807,16 @@ var PROVIDER_TEMPLATES = [
     headers: { "HTTP-Referer": "https://cline.bot", "X-Title": "Cline" },
     supported: true,
     subscriptionRisk: true
+  },
+  {
+    id: "commandcode",
+    name: "Command Code",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.commandcode.ai/provider/v1",
+    signupUrl: "https://commandcode.ai/settings",
+    modelSource: "commandcode",
+    supported: true
   },
   {
     id: "groq",
