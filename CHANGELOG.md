@@ -1,6 +1,10 @@
 # Changelog
 
-## [0.11.2] - 2026-09-10
+## [0.12.0] - 2026-09-10
+
+### Added
+
+- **Command Code is now a builtin provider.** Add it with `relay-ai providers` → **+ Add a provider** → **Command Code** and paste your API key; no base URL to type. Relay pins the right protocol per model when it refreshes the catalog, because Command Code accepts Claude models only on its Anthropic-schema `/messages` endpoint and every other model only on its OpenAI-schema `/chat/completions` endpoint — something a custom endpoint cannot express, since it speaks one protocol or the other. Every plan except Go can call the Provider API; Claude models additionally require Pro or above and are listed with a `(Pro+)` suffix, since Command Code exposes no way to read your plan from the API. The Go plan is not supported: it works only through the private endpoint the Command Code CLI uses, which rejects requests that do not carry the CLI's own identifying headers, and Relay does not impersonate the CLI to get around that. See [docs/PROVIDERS.md](docs/PROVIDERS.md). ([Issue #66](https://github.com/jacob-bd/relay-ai/issues/66))
 
 ### Fixed
 

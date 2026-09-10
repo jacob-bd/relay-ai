@@ -6,6 +6,7 @@ import { fetchAnthropicModels } from './fetch-anthropic-models.js';
 import { customEndpointKind } from './custom-endpoint.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
 import { fetchClinePassModels } from './fetch-cline-pass-models.js';
+import { fetchCommandCodeModels, COMMANDCODE_BASE_URL } from './fetch-commandcode-models.js';
 import { fetchClaudeCodeModels } from '../oauth/claude-code.js';
 import { loadRegistry, saveRegistry } from './io.js';
 import { resolveModelSource } from './model-source.js';
@@ -619,6 +620,21 @@ export async function refreshProviderModels(
 
     if (source === 'zen-go-api') {
       models = await refreshZenGoProvider(provider);
+    } else if (source === 'commandcode') {
+      const ccBaseUrl = (provider.api.url ?? COMMANDCODE_BASE_URL).replace(/\/$/, '');
+      try {
+        models = await fetchCommandCodeModels(ccBaseUrl, apiKey ?? undefined);
+        baseUrl = ccBaseUrl;
+      } catch (err) {
+        if (cachedModelCount(provider) > 0) {
+          return skipWithCachedModels(
+            provider,
+            `Command Code catalog refresh failed: ${err instanceof Error ? err.message : String(err)} `
+              + 'Kept the existing cached model list; try again later.',
+          );
+        }
+        throw err;
+      }
     } else if (source === 'cline-recommended') {
       try {
         models = await fetchClinePassModels();

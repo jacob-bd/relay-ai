@@ -7,6 +7,7 @@ import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import { addOpencodeCloudFromApiKey } from './crud.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
 import { fetchClinePassModels, validateClinePassApiKey } from './fetch-cline-pass-models.js';
+import { fetchCommandCodeModels, COMMANDCODE_BASE_URL } from './fetch-commandcode-models.js';
 import { loadRegistry, saveRegistry } from './io.js';
 import {
   buildPricingIndex,
@@ -89,6 +90,17 @@ export async function addProviderFromTemplate(
         models: await fetchClinePassModels(),
         baseUrl: template.defaultBaseUrl ?? '',
       };
+    } catch (err) {
+      return {
+        added: false,
+        error: err instanceof Error ? err.message : String(err),
+        hint: template.signupUrl ? `Verify your key at ${template.signupUrl}` : undefined,
+      };
+    }
+  } else if (template.modelSource === 'commandcode') {
+    try {
+      const baseUrl = (opts?.baseUrl?.trim() || template.defaultBaseUrl || COMMANDCODE_BASE_URL).replace(/\/$/, '');
+      fetched = { models: await fetchCommandCodeModels(baseUrl, trimmedKey), baseUrl };
     } catch (err) {
       return {
         added: false,

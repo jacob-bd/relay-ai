@@ -1,7 +1,7 @@
 // src/provider-templates.ts — builtin provider templates for relay-ai providers add
 
 export type ProviderAuthType = 'api' | 'oauth' | 'none';
-export type ProviderModelSource = 'api-list' | 'static-seed' | 'manual-only' | 'zen-go-api' | 'cline-recommended';
+export type ProviderModelSource = 'api-list' | 'static-seed' | 'manual-only' | 'zen-go-api' | 'cline-recommended' | 'commandcode';
 
 export interface ProviderTemplate {
   id: string;
@@ -46,6 +46,16 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     headers: { 'HTTP-Referer': 'https://cline.bot', 'X-Title': 'Cline' },
     supported: true,
     subscriptionRisk: true,
+  },
+  {
+    id: 'commandcode',
+    name: 'Command Code',
+    authType: 'api',
+    npm: '@ai-sdk/openai-compatible',
+    defaultBaseUrl: 'https://api.commandcode.ai/provider/v1',
+    signupUrl: 'https://commandcode.ai/settings',
+    modelSource: 'commandcode',
+    supported: true,
   },
   {
     id: 'groq',

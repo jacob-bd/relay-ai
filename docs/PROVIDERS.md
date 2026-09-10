@@ -122,6 +122,27 @@ Relay's API Server because it is commonly used as a coding/agent bridge.
 - **Credential isolation**: API keys and OAuth tokens use separate keychain entries. Switching methods replaces the old credential only after the new one is saved.
 - **Troubleshooting**: If validation fails, the wizard shows the provider's error and confirms that no registry entry was saved. Add `--trace` to write a redacted diagnostic log under `~/.relay-ai/logs/`.
 
+### Command Code
+- **Description**: A subscription gateway to Anthropic, OpenAI, Google, and open-source models through one key.
+- **Setup**: Run `relay-ai providers`, choose **+ Add a provider** → **Command Code**, then paste the API key from your [Command Code settings](https://commandcode.ai/settings).
+- **Endpoint**: `https://api.commandcode.ai/provider/v1`
+- **Plans**: Every plan except **Go** can call the Provider API. Go ($1/mo) has no API access at all and cannot be used with Relay — see below.
+
+| Plan | Price | Provider API | Models available in Relay |
+| --- | --- | --- | --- |
+| Go | $1/mo | No | None — not supported |
+| GOAT | $10/mo | Yes | The 61 OpenAI and open-source models |
+| Pro | $20/mo | Yes | All 69, including Claude |
+| Max 10x / 20x | $100 / $200 per month | Yes | All 69, including Claude |
+| Team Pro | $40/mo | Yes | All 69, including Claude |
+| Provider | $15/mo pay-as-you-go | Yes | All 69, including Claude |
+
+- **Two protocols, one provider**: Command Code accepts Claude models only on its Anthropic-schema `/messages` endpoint and every other model only on its OpenAI-schema `/chat/completions` endpoint. Relay pins the correct protocol per model when it refreshes the catalog, so both work from a single provider entry. This is why Command Code is a builtin provider rather than a custom endpoint — a custom endpoint speaks one protocol or the other, never both.
+- **Claude models need Pro or above**: They are listed with a `(Pro+)` suffix. Command Code exposes no way to read your plan from the API, so on GOAT they appear in the picker and return `MODEL_NOT_IN_PLAN` if selected. Every model without that suffix works on any plan with API access.
+- **Model IDs**: Relay preserves the provider's full IDs, such as `deepseek/deepseek-v4.1-flash` and `claude-sonnet-5`.
+- **Usage and billing**: Requests draw on your existing Command Code subscription credits. Relay does not create a separate account or bill.
+- **The Go plan**: Go works only through the private `/alpha/generate` endpoint that the Command Code CLI uses. Command Code rejects requests to it that do not carry the CLI's own identifying headers, so reaching it from Relay would require impersonating the CLI to bypass a control the vendor added deliberately. Relay does not do this, and using a third-party bridge that does may put your Command Code account at risk. Use GOAT or above for API access.
+
 ### Local Models (Ollama & LM Studio)
 - **Description**: Connects to locally running inference engines.
 - **Base URLs**: Custom prompts ask for your local URL (e.g., `http://127.0.0.1:11434/v1`).
