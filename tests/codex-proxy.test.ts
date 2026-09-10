@@ -13,6 +13,7 @@ import {
   protectCodexCompactionParams,
   resolveCodexSubagentRoute,
   startCodexProxy,
+  streamOutcome,
 } from '../src/codex-proxy.js';
 import { buildCompactionResponseBody, type CodexSdkCallParams } from '../src/codex-responses-adapter.js';
 import { CODEX_APP_AUTO_COMPACT_RATIO } from '../src/codex/app-profile.js';
@@ -29,6 +30,30 @@ function maskedClientFrame(text: string, opcode = 0x1, fin = true): Buffer {
     masked,
   ]);
 }
+
+describe('streamOutcome', () => {
+  it('reports ok when the stream finished cleanly', () => {
+    expect(streamOutcome(undefined, 200)).toEqual({ outcome: 'ok', status: 200 });
+    expect(streamOutcome(undefined, 'response.completed'))
+      .toEqual({ outcome: 'ok', status: 'response.completed' });
+  });
+
+  it('reports the upstream status when the stream ended in an error part (issue #72)', () => {
+    const summary = {
+      reasoningChars: 0, reasoningPreview: '', textChars: 0, toolCallCount: 0, toolNames: [],
+      errorMessage: 'referenced_image_paths.items: field predicate failed (HTTP 400)',
+    };
+    expect(streamOutcome(summary, 'response.completed')).toEqual({ outcome: 'error', status: 400 });
+  });
+
+  it('reports an error for an aborted stream', () => {
+    const summary = {
+      reasoningChars: 0, reasoningPreview: '', textChars: 0, toolCallCount: 0, toolNames: [],
+      aborted: true,
+    };
+    expect(streamOutcome(summary, 200)).toEqual({ outcome: 'error', status: 'stream-aborted' });
+  });
+});
 
 describe('external Codex runtime identity', () => {
   it('distinguishes the selected external model from the Codex host', () => {

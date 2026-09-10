@@ -19,6 +19,7 @@ import {
   type ReasoningMetadata,
 } from './provider-factory.js';
 import { formatUpstreamError } from './codex/upstream-error.js';
+import { normalizeToolSchemaForNpm } from './tool-schema.js';
 
 export { silenceSdkWarnings };
 
@@ -227,6 +228,8 @@ export interface TranslateToolOptions {
   maxTools?: number;
   /** Request-scoped transport headers (for example OpenCode Go conversation identity). */
   requestHeaders?: Record<string, string>;
+  /** Route's SDK package — selects provider-specific tool schema fixups. */
+  npm?: string;
 }
 
 export const TOOL_SEARCH_NAME = 'tool_search';
@@ -576,7 +579,7 @@ export function translateResponsesTools(
     if (options.maxTools !== undefined && toolCount >= options.maxTools) return;
     out[name] = tool({
       description: description ?? '',
-      inputSchema: jsonSchema(parameters ?? { type: 'object', properties: {} }),
+      inputSchema: jsonSchema(normalizeToolSchemaForNpm(parameters ?? { type: 'object', properties: {} }, options.npm)),
     });
     toolCount++;
   };
@@ -609,6 +612,20 @@ export function translateResponsesTools(
   return Object.keys(out).length ? out : undefined;
 }
 
+/**
+ * OpenRouter reserves credit for the full `max_tokens` up front and rejects the
+ * request with HTTP 402 when the balance can't cover the reservation — even when
+ * the actual reply would cost a fraction of it. Codex asks for a blind 65536
+ * regardless of the model's real output limit, so accounts with usable credit
+ * still 402 on "whats ur name?". Nothing in the registry records a per-model
+ * output cap to clamp against, so send none and let OpenRouter apply the model
+ * default.
+ */
+function omitsMaxOutputTokens(metadata?: ReasoningMetadata): boolean {
+  return metadata?.providerId === 'openrouter'
+    || (metadata?.apiBaseUrl?.includes('openrouter.ai') ?? false);
+}
+
 export function translateResponsesRequest(
   body: ResponsesRequest,
   npm: string,
@@ -634,13 +651,13 @@ export function translateResponsesRequest(
     thinkingProviderOptions(npm),
     effortProviderOptions(npm, effort, metadata?.upstreamModelId ?? body.model, metadata),
   );
-  const tools = translateResponsesTools([...effectiveTools, ...deferredTools], options);
+  const tools = translateResponsesTools([...effectiveTools, ...deferredTools], { ...options, npm });
   return {
     instructions: system,
     messages,
     tools,
     toolContext,
-    maxOutputTokens: body.max_output_tokens,
+    maxOutputTokens: omitsMaxOutputTokens(metadata) ? undefined : body.max_output_tokens,
     temperature: body.temperature,
     providerOptions,
     headers: options.requestHeaders,

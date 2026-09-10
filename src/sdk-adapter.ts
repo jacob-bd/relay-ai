@@ -17,6 +17,7 @@ import {
   type ReasoningMetadata,
 } from './provider-factory.js';
 import { resolveUpstreamTools } from './tool-search.js';
+import { normalizeToolSchemaForNpm } from './tool-schema.js';
 import type { AnthropicRequestMessage, AnthropicToolDefinition } from './proxy-types.js';
 import { anthropicErrorType, upstreamHttpStatus } from './codex/upstream-error.js';
 import {
@@ -255,12 +256,15 @@ function stripNullInputs(input: Record<string, unknown>): Record<string, unknown
   return out;
 }
 
-export function translateTools(anthropicTools?: AnthropicTool[]): Record<string, ReturnType<typeof tool>> | undefined {
+export function translateTools(anthropicTools?: AnthropicTool[], npm?: string): Record<string, ReturnType<typeof tool>> | undefined {
   if (!anthropicTools?.length) return undefined;
   const tools: Record<string, ReturnType<typeof tool>> = {};
   for (const t of anthropicTools) {
     if (!t.name || !t.input_schema) continue;
-    tools[t.name] = tool({ description: t.description ?? '', inputSchema: jsonSchema(t.input_schema) });
+    tools[t.name] = tool({
+      description: t.description ?? '',
+      inputSchema: jsonSchema(normalizeToolSchemaForNpm(t.input_schema, npm)),
+    });
   }
   return Object.keys(tools).length ? tools : undefined;
 }
@@ -331,7 +335,7 @@ export function translateRequest(
   return {
     instructions: options?.openAiOAuth ? undefined : systemText,
     messages: translateMessages(messages, npm, options?.onDebug),
-    tools: translateTools(upstreamTools.length ? upstreamTools : undefined),
+    tools: translateTools(upstreamTools.length ? upstreamTools : undefined, npm),
     toolChoice: translateToolChoice(body.tool_choice),
     maxOutputTokens: options?.openAiOAuth ? undefined : body.max_tokens,
     temperature: body.temperature,

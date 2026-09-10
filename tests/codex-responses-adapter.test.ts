@@ -10,6 +10,30 @@ import {
   COMPACTION_SUMMARY_INSTRUCTION,
 } from '../src/codex-responses-adapter.js';
 
+describe('translateResponsesRequest max_output_tokens', () => {
+  const body = { model: 'meta/muse-spark-1.3-contributor', input: 'whats ur name?', max_output_tokens: 65536 };
+
+  it('drops the cap on OpenRouter, whose credit pre-check 402s on a blind 65536 (issue #72)', () => {
+    expect(translateResponsesRequest(body, '@openrouter/ai-sdk-provider', {
+      providerId: 'openrouter',
+    }).maxOutputTokens).toBeUndefined();
+  });
+
+  it('drops the cap for a custom endpoint pointed at OpenRouter', () => {
+    expect(translateResponsesRequest(body, '@ai-sdk/openai-compatible', {
+      providerId: 'custom-openai-1',
+      apiBaseUrl: 'https://openrouter.ai/api/v1',
+    }).maxOutputTokens).toBeUndefined();
+  });
+
+  it('keeps the cap for every other provider', () => {
+    expect(translateResponsesRequest(body, '@ai-sdk/google', {
+      providerId: 'google',
+    }).maxOutputTokens).toBe(65536);
+    expect(translateResponsesRequest(body, '@ai-sdk/anthropic').maxOutputTokens).toBe(65536);
+  });
+});
+
 describe('translateResponsesRequest', () => {
   it('maps string input to user message', () => {
     const params = translateResponsesRequest({

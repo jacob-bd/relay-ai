@@ -28,6 +28,32 @@ export function classifyCodexDispatch(
   return { kind: 'unknown', modelId };
 }
 
+/**
+ * Mixed-mode dispatch, including Codex child sessions.
+ *
+ * A configured Relay Sub-agent always wins for a marked child — that is the
+ * explicit launcher choice. Without one the child is Codex's own, so it falls
+ * through to normal classification instead of failing: its model id is usually
+ * native, and Codex-internal aliases (`codex-auto-review`) never appear in the
+ * native catalog, so an unknown id from a marked child belongs upstream too.
+ * Treating "no Relay Sub-agent configured" as an error is what made auto-review
+ * return 503 on every turn.
+ */
+export function classifyCodexMixedDispatch(input: {
+  modelId: string;
+  markedSubagent: boolean;
+  subagentRoute?: CodexProxyRoute;
+  relayRoutes: readonly CodexProxyRoute[];
+  nativeModelIds: ReadonlySet<string>;
+}): CodexDispatch {
+  if (input.subagentRoute) return { kind: 'relay', route: input.subagentRoute };
+  const dispatch = classifyCodexDispatch(input.modelId, input.relayRoutes, input.nativeModelIds);
+  if (dispatch.kind === 'unknown' && input.markedSubagent) {
+    return { kind: 'native', modelId: input.modelId };
+  }
+  return dispatch;
+}
+
 export function createMixedProxyCapability(): string {
   return randomBytes(32).toString('base64url');
 }
