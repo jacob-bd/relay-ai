@@ -5718,10 +5718,11 @@ async function validateClinePassApiKey(apiKey) {
 // src/registry/fetch-commandcode-models.ts
 var COMMANDCODE_BASE_URL = "https://api.commandcode.ai/provider/v1";
 var REQUEST_TIMEOUT_MS2 = 1e4;
+var PROBE_TIMEOUT_MS = 25e3;
+var PROBE_CONCURRENCY = 6;
 function isAnthropicSchemaModel(id) {
   return id.startsWith("claude-");
 }
-var PLAN_SUFFIX = " (Pro+)";
 function positiveNumber2(value) {
   const number = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : void 0;
   return typeof number === "number" && Number.isFinite(number) && number > 0 ? number : void 0;
@@ -5735,7 +5736,7 @@ function toCachedModel2(entry, baseUrl) {
   const family = id.split("/").pop()?.split(/[-:]/)[0] ?? id;
   return {
     id,
-    name: anthropicSchema ? `${displayName}${PLAN_SUFFIX}` : displayName,
+    name: displayName,
     upstreamModelId: id,
     family,
     brand: deriveBrand(family),
@@ -5757,6 +5758,56 @@ function parseCommandCodeModels(payload, baseUrl) {
     if (model) models.push(model);
   }
   return models;
+}
+function classifyProbeResponse(status, body) {
+  const message = typeof body === "object" && body !== null ? String(body.error?.message ?? "") : "";
+  if (status === 403 && message.includes("MODEL_NOT_IN_PLAN")) return "not-in-plan";
+  if (status >= 500) return "unknown";
+  if (status === 429) return "unknown";
+  if (status === 401 || status === 403) return "unknown";
+  if (status >= 200 && status < 500) return "available";
+  return "unknown";
+}
+async function probeModel(model, baseUrl, apiKey) {
+  const anthropicSchema = model.modelFormat === "anthropic";
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${baseUrl}/${anthropicSchema ? "messages" : "chat/completions"}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...anthropicSchema ? { "x-api-key": apiKey, "anthropic-version": "2023-06-01" } : { Authorization: `Bearer ${apiKey}` }
+      },
+      body: JSON.stringify({
+        model: model.upstreamModelId,
+        max_tokens: 1,
+        messages: [{ role: "user", content: "hi" }]
+      }),
+      signal: controller.signal
+    });
+    const payload = await response.json().catch(() => null);
+    return classifyProbeResponse(response.status, payload);
+  } catch {
+    return "unknown";
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function filterModelsByPlan(models, baseUrl, apiKey) {
+  if (!apiKey.trim()) return models;
+  const keep = [];
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(PROBE_CONCURRENCY, models.length) }, async () => {
+      for (let i = next++; i < models.length; i = next++) {
+        const model = models[i];
+        if (await probeModel(model, baseUrl, apiKey) !== "not-in-plan") keep.push(model);
+      }
+    })
+  );
+  const order = new Map(models.map((m, i) => [m.id, i]));
+  return keep.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
 }
 async function fetchCommandCodeModels(baseUrl = COMMANDCODE_BASE_URL, apiKey) {
   const normalizedBaseUrl = baseUrl.replace(/\/$/, "");
@@ -5785,7 +5836,9 @@ async function fetchCommandCodeModels(baseUrl = COMMANDCODE_BASE_URL, apiKey) {
   const payload = await response.json().catch(() => null);
   const models = parseCommandCodeModels(payload, normalizedBaseUrl);
   if (models.length === 0) throw new Error("Command Code returned no usable models.");
-  return models;
+  if (!apiKey?.trim()) return models;
+  const available = await filterModelsByPlan(models, normalizedBaseUrl, apiKey);
+  return available.length > 0 ? available : models;
 }
 
 // src/registry/model-source.ts
@@ -9608,4 +9661,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-PSD656XC.js.map
+//# sourceMappingURL=chunk-HL3EZ4OU.js.map

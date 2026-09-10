@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   COMMANDCODE_BASE_URL,
+  classifyProbeResponse,
   parseCommandCodeModels,
 } from '../src/registry/fetch-commandcode-models.js';
 import { PROVIDER_TEMPLATES } from '../src/provider-templates.js';
@@ -41,12 +42,8 @@ describe('parseCommandCodeModels', () => {
     }
   });
 
-  it('marks Claude models as Pro+ so the picker shows the plan requirement', () => {
-    expect(byId('claude-sonnet-5').name).toBe('Claude Sonnet 5 (Pro+)');
-    expect(byId('claude-haiku-4-5-20251001').name).toBe('Claude Haiku 4.5 (Pro+)');
-  });
-
-  it('does not mark models every plan can use', () => {
+  it('keeps provider display names verbatim', () => {
+    expect(byId('claude-sonnet-5').name).toBe('Claude Sonnet 5');
     expect(byId('gpt-5.6-luna').name).toBe('GPT-5.6 Luna');
   });
 
@@ -105,5 +102,34 @@ describe('Command Code template', () => {
     expect(template?.authType).toBe('api');
     expect(template?.defaultBaseUrl).toBe(COMMANDCODE_BASE_URL);
     expect(template?.modelSource).toBe('commandcode');
+  });
+});
+
+describe('classifyProbeResponse', () => {
+  const notInPlan = { error: { message: 'MODEL_NOT_IN_PLAN: Claude Sonnet 5 available in Pro and above plans' } };
+
+  it('marks a plan-gated model unavailable', () => {
+    expect(classifyProbeResponse(403, notInPlan)).toBe('not-in-plan');
+  });
+
+  it('keeps a model that answered', () => {
+    expect(classifyProbeResponse(200, { choices: [] })).toBe('available');
+  });
+
+  it('keeps a model whose upstream is temporarily down', () => {
+    // Command Code 503s when the underlying provider is overloaded. A model the
+    // plan does include must not be dropped from the catalog over an outage.
+    const outage = { error: { message: 'Upstream model provider is temporarily unavailable.' } };
+    expect(classifyProbeResponse(503, outage)).toBe('unknown');
+  });
+
+  it('keeps a model on any other failure rather than guessing it is gated', () => {
+    expect(classifyProbeResponse(429, { error: { message: 'rate limited' } })).toBe('unknown');
+    expect(classifyProbeResponse(500, {})).toBe('unknown');
+    expect(classifyProbeResponse(400, { error: { message: 'bad max_tokens' } })).toBe('available');
+  });
+
+  it('does not treat a bare 403 without the plan marker as gated', () => {
+    expect(classifyProbeResponse(403, { error: { message: 'forbidden' } })).toBe('unknown');
   });
 });

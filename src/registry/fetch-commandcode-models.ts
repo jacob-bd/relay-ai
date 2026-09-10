@@ -6,6 +6,8 @@ import type { CachedModel } from './types.js';
 export const COMMANDCODE_BASE_URL = 'https://api.commandcode.ai/provider/v1';
 
 const REQUEST_TIMEOUT_MS = 10_000;
+const PROBE_TIMEOUT_MS = 25_000;
+const PROBE_CONCURRENCY = 6;
 
 /**
  * Command Code splits its catalog across two wire protocols on the same base
@@ -19,14 +21,6 @@ const REQUEST_TIMEOUT_MS = 10_000;
 function isAnthropicSchemaModel(id: string): boolean {
   return id.startsWith('claude-');
 }
-
-/**
- * Claude models require Pro or above; every other model works on any plan with
- * API access (all but Go). The API exposes no way to read the caller's plan —
- * every account endpoint 404s — so the requirement is surfaced in the model name
- * where the picker will show it, instead of being discovered as a runtime 403.
- */
-const PLAN_SUFFIX = ' (Pro+)';
 
 interface CommandCodeModelEntry {
   id?: unknown;
@@ -54,7 +48,7 @@ function toCachedModel(entry: CommandCodeModelEntry, baseUrl: string): CachedMod
 
   return {
     id,
-    name: anthropicSchema ? `${displayName}${PLAN_SUFFIX}` : displayName,
+    name: displayName,
     upstreamModelId: id,
     family,
     brand: deriveBrand(family),
@@ -79,6 +73,86 @@ export function parseCommandCodeModels(payload: unknown, baseUrl: string): Cache
     if (model) models.push(model);
   }
   return models;
+}
+
+export type ProbeResult = 'available' | 'not-in-plan' | 'unknown';
+
+/**
+ * Command Code gates models by plan, and the gating does not follow model
+ * family: on GOAT, gpt-5.6-sol works while gpt-5.5 does not, and gemini-3.8-flash
+ * works while gemini-3.5-flash does not. No endpoint reports the caller's plan
+ * (every account path 404s), so availability is probed per key.
+ *
+ * Only an explicit MODEL_NOT_IN_PLAN rejection removes a model. A 503 means the
+ * provider behind it is temporarily overloaded, and any other failure is
+ * something we cannot attribute, so both keep the model listed rather than
+ * silently shrinking the catalog over a transient error.
+ */
+export function classifyProbeResponse(status: number, body: unknown): ProbeResult {
+  const message = typeof body === 'object' && body !== null
+    ? String((body as { error?: { message?: unknown } }).error?.message ?? '')
+    : '';
+  if (status === 403 && message.includes('MODEL_NOT_IN_PLAN')) return 'not-in-plan';
+  if (status >= 500) return 'unknown';
+  if (status === 429) return 'unknown';
+  if (status === 401 || status === 403) return 'unknown';
+  if (status >= 200 && status < 500) return 'available';
+  return 'unknown';
+}
+
+/** One minimal generation: a gated model is refused before it bills anything. */
+async function probeModel(
+  model: CachedModel,
+  baseUrl: string,
+  apiKey: string,
+): Promise<ProbeResult> {
+  const anthropicSchema = model.modelFormat === 'anthropic';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${baseUrl}/${anthropicSchema ? 'messages' : 'chat/completions'}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(anthropicSchema
+          ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
+          : { Authorization: `Bearer ${apiKey}` }),
+      },
+      body: JSON.stringify({
+        model: model.upstreamModelId,
+        max_tokens: 1,
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => null);
+    return classifyProbeResponse(response.status, payload);
+  } catch {
+    return 'unknown';
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Drop models this key's plan cannot call. Concurrency-limited to stay polite. */
+export async function filterModelsByPlan(
+  models: CachedModel[],
+  baseUrl: string,
+  apiKey: string,
+): Promise<CachedModel[]> {
+  if (!apiKey.trim()) return models;
+  const keep: CachedModel[] = [];
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(PROBE_CONCURRENCY, models.length) }, async () => {
+      for (let i = next++; i < models.length; i = next++) {
+        const model = models[i]!;
+        if (await probeModel(model, baseUrl, apiKey) !== 'not-in-plan') keep.push(model);
+      }
+    }),
+  );
+  const order = new Map(models.map((m, i) => [m.id, i]));
+  return keep.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
 }
 
 export async function fetchCommandCodeModels(
@@ -113,5 +187,9 @@ export async function fetchCommandCodeModels(
   const payload = await response.json().catch(() => null);
   const models = parseCommandCodeModels(payload, normalizedBaseUrl);
   if (models.length === 0) throw new Error('Command Code returned no usable models.');
-  return models;
+  if (!apiKey?.trim()) return models;
+
+  const available = await filterModelsByPlan(models, normalizedBaseUrl, apiKey);
+  // Never hand back an empty catalog because every probe happened to fail.
+  return available.length > 0 ? available : models;
 }
