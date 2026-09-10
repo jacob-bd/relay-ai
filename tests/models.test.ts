@@ -4,9 +4,11 @@ import {
   deriveBrand,
   mergeModels,
   groupModels,
+  readModelsFromModelsDev,
 } from '../src/models.js';
 import { classifyModelFormat } from '../src/constants.js';
 import type { ModelInfo } from '../src/types.js';
+import type { ModelsDevCacheFile } from '../src/registry/models-dev.js';
 
 describe('deriveBrand', () => {
   it.each([
@@ -77,6 +79,41 @@ describe('classifyModelFormat', () => {
 });
 
 describe('mergeModels', () => {
+  it('uses Relay metadata for friendly names and context windows', () => {
+    const metadata: ModelsDevCacheFile = {
+      'opencode-go': {
+        models: {
+          'deepseek-flash': {
+            id: 'deepseek-flash',
+            name: 'DeepSeek V4.1 Flash',
+            family: 'deepseek-flash',
+            reasoning: true,
+            cost: { input: 0.15, output: 0.6 },
+            limit: { context: 1_000_000 },
+          },
+        },
+      },
+    };
+    const metadataModels = readModelsFromModelsDev('go', metadata);
+    const result = mergeModels(['deepseek-flash'], metadataModels, 'go');
+
+    expect(result[0]).toMatchObject({
+      id: 'deepseek-flash',
+      name: 'DeepSeek V4.1 Flash',
+      contextWindow: 1_000_000,
+      reasoning: true,
+    });
+  });
+
+  it('does not use the installed OpenCode cache for uncached Zen/Go models', () => {
+    const result = mergeModels(['deepseek-flash'], null, 'go');
+    expect(result[0]).toMatchObject({
+      id: 'deepseek-flash',
+      name: 'deepseek-flash',
+      contextWindow: 64_000,
+    });
+  });
+
   it('returns ModelInfo with format classification when cache is null', () => {
     const result = mergeModels(['claude-opus-4-8'], null, 'zen');
     expect(result).toHaveLength(1);

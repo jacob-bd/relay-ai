@@ -38,6 +38,7 @@ import { resolveContextWindow } from '../context-window.js';
 import { getInstalledClaudeVersion } from '../launch.js';
 import { isAntigravityCloudCodeHelperSlot, shouldHideModel } from '../model-compatibility.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
+import { fetchModelsDevCache } from './models-dev.js';
 import {
   copilotPlanTier,
   normalizeCopilotModels,
@@ -93,6 +94,7 @@ function modelInfoToCached(
 
 async function refreshZenGoProvider(provider: RegistryProvider): Promise<CachedModel[]> {
   const backendId = provider.id === 'go' || provider.templateId === 'go' ? 'go' : 'zen';
+  await fetchModelsDevCache();
   const result = await getModels(BACKENDS[backendId]);
   return result.models
     .filter(m => m.modelFormat !== 'unsupported')

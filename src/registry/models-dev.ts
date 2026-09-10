@@ -25,6 +25,11 @@ export interface ModelsDevModalities {
 export interface ModelsDevModel {
   id?: string;
   name?: string;
+  status?: string;
+  family?: string;
+  provider?: { npm?: string };
+  cost?: { input: number; output: number; cache_read?: number; cache_write?: number };
+  limit?: { context?: number };
   tool_call?: boolean;
   chat?: boolean;
   interactions?: boolean;
@@ -56,6 +61,8 @@ let memoryCacheMtime = 0;
 
 /** Registry / OpenCode provider id → models.dev top-level key */
 export const REGISTRY_TO_MODELS_DEV: Record<string, string> = {
+  zen: 'opencode',
+  go: 'opencode-go',
   google: 'google',
   openai: 'openai',
   groq: 'groq',

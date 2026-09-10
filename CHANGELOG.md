@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.11.2] - 2026-09-10
+
+### Fixed
+
+- **Zen/Go model refresh no longer depends on the installed OpenCode cache.** Live model IDs still come from the OpenCode backend, while names and capability metadata are fetched from Relay's direct models.dev catalog. New models such as DeepSeek V4.1 Flash now appear correctly even when the installed OpenCode version is outdated. ([Issue #73](https://github.com/jacob-bd/relay-ai/issues/73))
+
 ## [0.11.1] - 2026-09-08
 
 ### Added

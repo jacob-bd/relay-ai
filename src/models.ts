@@ -2,7 +2,12 @@
 import type { ModelInfo, BackendConfig } from './types.js';
 import { classifyModelFormat } from './constants.js';
 import { shouldHideModel } from './model-compatibility.js';
-import { loadOpencodeCache, resolveContextWindow } from './context-window.js';
+import { contextWindowFromHeuristics } from './context-window.js';
+import {
+  loadModelsDevCache,
+  resolveModelsDevSlug,
+  type ModelsDevCacheFile,
+} from './registry/models-dev.js';
 
 const BRAND_MAP: Array<[string, string]> = [
   ['claude', 'Claude'],
@@ -26,35 +31,34 @@ export function deriveBrand(family: string): string {
   return 'Other';
 }
 
-export function readModelsFromCache(
+export function readModelsFromModelsDev(
   backendId: 'zen' | 'go',
+  cache: ModelsDevCacheFile = loadModelsDevCache(),
 ): Map<string, ModelInfo> | null {
-  const cache = loadOpencodeCache();
-  if (!cache) return null;
-
-  const providerKey = backendId === 'zen' ? 'opencode' : 'opencode-go'; // OpenCode cache file keys
+  const providerKey = resolveModelsDevSlug(backendId);
   const providerData = cache[providerKey];
   if (!providerData?.models) return null;
 
   const result = new Map<string, ModelInfo>();
-  for (const entry of Object.values(providerData.models)) {
-    if (!entry.id || entry.status === 'deprecated') continue;
+  for (const [modelKey, entry] of Object.entries(providerData.models)) {
+    const id = entry.id ?? modelKey;
+    if (entry.status === 'deprecated') continue;
     const isFree =
       entry.cost !== undefined &&
       entry.cost.input === 0 &&
       entry.cost.output === 0;
-    const rawFormat = classifyModelFormat(entry.id, entry.provider?.npm);
+    const rawFormat = classifyModelFormat(id, entry.provider?.npm);
     // Go is an OpenAI-compatible gateway; @ai-sdk/anthropic in the cache is a metadata error.
     const modelFormat = backendId === 'go' && rawFormat === 'anthropic' ? 'openai' : rawFormat;
-    result.set(entry.id, {
-      id: entry.id,
-      name: entry.name ?? entry.id,
+    result.set(id, {
+      id,
+      name: entry.name ?? id,
       isFree,
-      brand: deriveBrand(entry.family ?? ''),
+      brand: deriveBrand(entry.family ?? id),
       sourceBackend: backendId,
       modelFormat,
       cost: entry.cost,
-      contextWindow: resolveContextWindow(entry.id, entry.limit?.context),
+      contextWindow: entry.limit?.context ?? contextWindowFromHeuristics(id),
       reasoning: entry.reasoning,
       interleavedReasoningField: entry.interleaved?.field,
     });
@@ -104,7 +108,7 @@ export function mergeModels(
         brand: 'Other',
         sourceBackend: backendId,
         modelFormat,
-        contextWindow: resolveContextWindow(id),
+        contextWindow: contextWindowFromHeuristics(id),
       };
     });
 }
@@ -133,7 +137,7 @@ export async function getModels(
   backend: BackendConfig,
   fallbackModels?: ModelInfo[],
 ): Promise<{ models: ModelInfo[]; fromCache: boolean }> {
-  const cache = readModelsFromCache(backend.id);
+  const cache = readModelsFromModelsDev(backend.id);
 
   try {
     const apiIds = await fetchModelsFromApi(backend);
