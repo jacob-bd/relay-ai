@@ -7,7 +7,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.12.1",
+  version: "0.12.2",
   publishConfig: {
     access: "public"
   },
@@ -4044,18 +4044,21 @@ function safeUpstreamErrorFields(err, includeCause) {
 function formatUpstreamErrorTrace(err) {
   return JSON.stringify(safeUpstreamErrorFields(err, true));
 }
+function joinProviderMessage(message) {
+  return message.split("\n").map((line) => line.trim()).filter(Boolean).join(" ");
+}
 function formatUpstreamError(err) {
   if (!err || typeof err !== "object") return "Upstream model request failed.";
   const rec = err;
   if (rec.data?.error?.message) {
-    const short = sanitizeMessage(rec.data.error.message);
+    const short = joinProviderMessage(rec.data.error.message);
     return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
   }
   if (rec.responseBody) {
     try {
       const parsed = JSON.parse(rec.responseBody);
       if (parsed.error?.message) {
-        const short = sanitizeMessage(parsed.error.message);
+        const short = joinProviderMessage(parsed.error.message);
         return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
       }
     } catch {
@@ -4788,4 +4791,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-7ASGPECN.js.map
+//# sourceMappingURL=chunk-KP67Q2B7.js.map
