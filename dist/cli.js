@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-FD5EDSBM.js";
+} from "./chunk-UQKYSNDM.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -148,7 +148,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-HL3EZ4OU.js";
+} from "./chunk-OYE6YZYP.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -222,7 +222,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-Z5GL4ALA.js";
+} from "./chunk-7ASGPECN.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -2990,7 +2990,8 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
           toolCallCount: toolStates.length,
           toolNames: toolStates.map((t) => t.name),
           loopDetected,
-          errorMessage: msg
+          errorMessage: msg,
+          errorStatus: part.error?.statusCode
         });
         if (is429) {
           writeResponsesRateLimitStream(modelId, msg, write);
@@ -4062,7 +4063,7 @@ function streamOutcome(failure, okStatus) {
   if (!failure) return { outcome: "ok", status: okStatus };
   return {
     outcome: "error",
-    status: failure.errorMessage ? upstreamHttpStatus(void 0, failure.errorMessage) : "stream-aborted"
+    status: failure.errorStatus ?? (failure.errorMessage ? upstreamHttpStatus(void 0, failure.errorMessage) : "stream-aborted")
   };
 }
 function protectCodexCompactionParams(body, params, contextWindow) {
@@ -15980,7 +15981,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-J7PTTCM5.js");
+    const { runUiCommand } = await import("./ui-command-QFXKL6HH.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

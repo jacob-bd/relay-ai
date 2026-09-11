@@ -7,7 +7,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.12.0",
+  version: "0.12.1",
   publishConfig: {
     access: "public"
   },
@@ -4788,4 +4788,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-Z5GL4ALA.js.map
+//# sourceMappingURL=chunk-7ASGPECN.js.map
