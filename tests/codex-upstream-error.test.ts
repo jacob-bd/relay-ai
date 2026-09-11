@@ -62,6 +62,26 @@ describe('formatUpstreamError', () => {
     expect(msg).toContain('API usage limits');
     expect(msg).toContain('HTTP 400');
   });
+
+  // Shape observed live from OpenRouter (issue #72): the reason sits on the lines after the headline.
+  const openRouterPolicyMessage = '0 endpoints out of 1 requested are available matching your guardrail restrictions and data policy. We removed them for the following reasons (an endpoint may have matched multiple reasons):\nPaid model training violation (account settings): 1 endpoint excluded; configurable at https://openrouter.ai/settings/privacy';
+
+  it('keeps the reason lines of a multi-line provider message', () => {
+    const msg = formatUpstreamError({
+      statusCode: 404,
+      data: { error: { message: openRouterPolicyMessage } },
+    });
+    expect(msg).toBe('0 endpoints out of 1 requested are available matching your guardrail restrictions and data policy. We removed them for the following reasons (an endpoint may have matched multiple reasons): Paid model training violation (account settings): 1 endpoint excluded; configurable at https://openrouter.ai/settings/privacy (HTTP 404)');
+  });
+
+  it('keeps the reason lines when the provider message only arrives in the raw response body', () => {
+    const msg = formatUpstreamError({
+      statusCode: 404,
+      responseBody: JSON.stringify({ error: { message: openRouterPolicyMessage } }),
+    });
+    expect(msg).toContain('Paid model training violation (account settings)');
+    expect(msg).toMatch(/\(HTTP 404\)$/);
+  });
 });
 
 describe('upstreamHttpStatus', () => {

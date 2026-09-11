@@ -65,13 +65,18 @@ export function formatUpstreamErrorTrace(err: unknown): string {
   return JSON.stringify(safeUpstreamErrorFields(err, true));
 }
 
+/** Provider-written error text: the reason often sits on the lines after the headline, so keep them all. */
+function joinProviderMessage(message: string): string {
+  return message.split('\n').map(line => line.trim()).filter(Boolean).join(' ');
+}
+
 export function formatUpstreamError(err: unknown): string {
   if (!err || typeof err !== 'object') return 'Upstream model request failed.';
 
   const rec = err as ApiCallLike;
 
   if (rec.data?.error?.message) {
-    const short = sanitizeMessage(rec.data.error.message);
+    const short = joinProviderMessage(rec.data.error.message);
     return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
   }
 
@@ -79,7 +84,7 @@ export function formatUpstreamError(err: unknown): string {
     try {
       const parsed = JSON.parse(rec.responseBody) as { error?: { message?: string } };
       if (parsed.error?.message) {
-        const short = sanitizeMessage(parsed.error.message);
+        const short = joinProviderMessage(parsed.error.message);
         return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
       }
     } catch { /* ignore */ }
