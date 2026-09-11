@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.2] - 2026-09-11
+
+### Fixed
+
+- **Provider error messages lost their reason.** Relay kept only the first line of every upstream error, and providers often put the reason on the lines after it. OpenRouter's data-policy rejection showed "…We removed them for the following reasons (an endpoint may have matched multiple reasons):" with nothing after the colon, dropping "Paid model training violation (account settings)". Provider-written messages now keep every line, joined into one, in Codex, Gemini CLI, Antigravity and the Relay gateway (`relay-ai server` and the UI's Server tab). Relay's own internal error messages are still trimmed to their first line. ([Issue #72](https://github.com/jacob-bd/relay-ai/issues/72))
+
 ## [0.12.1] - 2026-09-11
 
 ### Fixed
