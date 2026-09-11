@@ -853,6 +853,22 @@ describe('writeResponsesStream', () => {
     expect(summaries[0].reasoningChars).toBe(8);
   });
 
+  it('keeps the upstream status code so the route audit can record it (issue #72)', async () => {
+    const { writeResponsesStream } = await import('../src/codex-responses-adapter.js');
+    const summaries: any[] = [];
+
+    // Shape observed live from OpenRouter's credit pre-check via @openrouter/ai-sdk-provider.
+    async function* stream() {
+      yield {
+        type: 'error',
+        error: Object.assign(new Error('This request requires more credits, or fewer max_tokens.'), { statusCode: 402 }),
+      };
+    }
+
+    await writeResponsesStream(stream(), 'openrouter__meta/muse-spark-1.3-contributor', () => {}, s => summaries.push(s));
+    expect(summaries[0].errorStatus).toBe(402);
+  });
+
   it('emits response.failed so provider capability errors are visible in Codex', async () => {
     const { writeResponsesStream } = await import('../src/codex-responses-adapter.js');
     const chunks: string[] = [];

@@ -777,6 +777,8 @@ export interface ResponsesStreamSummary {
   aborted?: boolean;
   /** Set when the stream ended with an upstream error part (e.g. HTTP 4xx/5xx). */
   errorMessage?: string;
+  /** Upstream HTTP status from that error part, when the SDK error carries one. */
+  errorStatus?: number;
 }
 
 export interface ResponsesStreamProgress {
@@ -1066,6 +1068,7 @@ export async function writeResponsesStream(
           toolNames: toolStates.map(t => t.name),
           loopDetected,
           errorMessage: msg,
+          errorStatus: (part.error as { statusCode?: number } | undefined)?.statusCode,
         });
         if (is429) {
           writeResponsesRateLimitStream(modelId, msg, write);

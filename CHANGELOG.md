@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.1] - 2026-09-11
+
+### Fixed
+
+- **The Codex route audit recorded most provider errors as HTTP 500.** The SDK reports most upstream failures as a stream error part, and the audit guessed the status from that part's formatted message, which only recognized 400 and 429. A credit rejection (402), a blocked model (403) and a data-policy rejection (404) all showed up as `500`, so `codex-route-audit.jsonl` could not tell an account problem from a Relay failure. The audit now records the provider's own status code from the error. Error messages shown in Codex and routing are unchanged. ([Issue #72](https://github.com/jacob-bd/relay-ai/issues/72))
+
 ## [0.12.0] - 2026-09-10
 
 ### Added

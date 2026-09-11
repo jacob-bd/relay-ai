@@ -46,6 +46,15 @@ describe('streamOutcome', () => {
     expect(streamOutcome(summary, 'response.completed')).toEqual({ outcome: 'error', status: 400 });
   });
 
+  it('records the real upstream status instead of a generic 500 (issue #72)', () => {
+    const summary = {
+      reasoningChars: 0, reasoningPreview: '', textChars: 0, toolCallCount: 0, toolNames: [],
+      errorMessage: 'This request requires more credits, or fewer max_tokens. (HTTP 402)',
+      errorStatus: 402,
+    };
+    expect(streamOutcome(summary, 'response.completed')).toEqual({ outcome: 'error', status: 402 });
+  });
+
   it('reports an error for an aborted stream', () => {
     const summary = {
       reasoningChars: 0, reasoningPreview: '', textChars: 0, toolCallCount: 0, toolNames: [],

@@ -243,7 +243,8 @@ export function streamOutcome(
   if (!failure) return { outcome: 'ok', status: okStatus };
   return {
     outcome: 'error',
-    status: failure.errorMessage ? upstreamHttpStatus(undefined, failure.errorMessage) : 'stream-aborted',
+    status: failure.errorStatus
+      ?? (failure.errorMessage ? upstreamHttpStatus(undefined, failure.errorMessage) : 'stream-aborted'),
   };
 }
 
