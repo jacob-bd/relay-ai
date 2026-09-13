@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-C5ZXSNNA.js";
+} from "./chunk-3K2DFBNP.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -148,7 +148,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-5R26P2P2.js";
+} from "./chunk-R427D6VA.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -222,7 +222,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-KP67Q2B7.js";
+} from "./chunk-C7TTIGMR.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -12541,6 +12541,43 @@ function getConfigLibraryPath() {
 function getMetaJsonPath() {
   return join14(getConfigLibraryPath(), "_meta.json");
 }
+function getClaudeDesktopConfigJsonPath() {
+  return join14(getClaudeDesktopHome(), "claude_desktop_config.json");
+}
+function readDesktopConfigJson() {
+  const path3 = getClaudeDesktopConfigJsonPath();
+  if (!existsSync10(path3)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync6(path3, "utf8"));
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+function writeDesktopConfigJson(config) {
+  const path3 = getClaudeDesktopConfigJsonPath();
+  mkdirSync6(dirname3(path3), { recursive: true });
+  writeFileSync5(path3, `${JSON.stringify(config, null, 2)}
+`, "utf8");
+}
+function readDeploymentMode() {
+  const mode = readDesktopConfigJson()["deploymentMode"];
+  return mode === "3p" || mode === "1p" ? mode : null;
+}
+function applyDeploymentMode3p() {
+  const config = readDesktopConfigJson();
+  const previous = readDeploymentMode();
+  if (previous === "3p") return void 0;
+  config["deploymentMode"] = "3p";
+  writeDesktopConfigJson(config);
+  return { previous };
+}
+function restoreDeploymentMode(previous) {
+  const config = readDesktopConfigJson();
+  if (previous === null) delete config["deploymentMode"];
+  else config["deploymentMode"] = previous;
+  writeDesktopConfigJson(config);
+}
 function readMetaJson() {
   const metaPath = getMetaJsonPath();
   if (!existsSync10(metaPath)) return null;
@@ -12787,6 +12824,17 @@ function restoreMetaJson() {
     unlinkSync2(backupPath);
   }
 }
+function restoreDeploymentModeFromLock(lock) {
+  if (!lock || !("previousDeploymentMode" in lock)) return;
+  restoreDeploymentMode(lock.previousDeploymentMode ?? null);
+}
+function safeCleanupStep(label, fn) {
+  try {
+    fn();
+  } catch (err) {
+    console.error(`[claude-app] ${label} failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
 function removeRelayAiConfig(uuid) {
   const configPath = join15(getConfigLibraryPath(), `${uuid}.json`);
   if (existsSync11(configPath)) {
@@ -12811,7 +12859,7 @@ function lockHeldByAnotherLiveProcess(lock) {
 function recoverSession() {
   const state = inspectSessionLock();
   if (state.status === "unreadable") {
-    restoreMetaJson();
+    safeCleanupStep("restore _meta.json", restoreMetaJson);
     try {
       rmSync5(getSessionLockPath2(), { force: true });
     } catch {
@@ -12828,14 +12876,15 @@ function recoverSession() {
     };
   }
   if (lock) {
-    restoreMetaJson();
+    safeCleanupStep("restore _meta.json", restoreMetaJson);
+    safeCleanupStep("restore deploymentMode", () => restoreDeploymentModeFromLock(lock));
     removeRelayAiConfig(lock.uuid);
     try {
       rmSync5(getSessionLockPath2(), { force: true });
     } catch {
     }
   } else {
-    restoreMetaJson();
+    safeCleanupStep("restore _meta.json", restoreMetaJson);
   }
   return { recovered: true, message: "Restored Claude Desktop relay-ai config." };
 }
@@ -12862,7 +12911,8 @@ function cleanupSession(uuid) {
   const lock = state.status === "valid" ? state.lock : null;
   const sharedStateIsOwnedElsewhere = lockHeldByAnotherLiveProcess(lock);
   if (!sharedStateIsOwnedElsewhere) {
-    restoreMetaJson();
+    safeCleanupStep("restore _meta.json", restoreMetaJson);
+    safeCleanupStep("restore deploymentMode", () => restoreDeploymentModeFromLock(lock));
     try {
       rmSync5(getSessionLockPath2(), { force: true });
     } catch {
@@ -12875,7 +12925,13 @@ function cleanupSession(uuid) {
   }
 }
 function setupExitCleanup(uuid) {
-  process.on("exit", () => cleanupSession(uuid));
+  process.on("exit", () => {
+    try {
+      cleanupSession(uuid);
+    } catch (err) {
+      console.error(`[claude-app] cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
 }
 
 // src/claude-app.ts
@@ -13050,11 +13106,13 @@ async function runClaudeAppCommand(args, boot) {
       debugLogPath
     });
     uuid = writeRelayAiConfig(proxyHandle.port);
+    const deploymentModeChange = applyDeploymentMode3p();
     writeSessionLock2({
       pid: process.pid,
       startedAt: (/* @__PURE__ */ new Date()).toISOString(),
       uuid,
-      proxyPort: proxyHandle.port
+      proxyPort: proxyHandle.port,
+      ...deploymentModeChange ? { previousDeploymentMode: deploymentModeChange.previous } : {}
     });
     sessionActive = true;
     setupExitCleanup(uuid);
@@ -13069,6 +13127,9 @@ async function runClaudeAppCommand(args, boot) {
     }
     console.log(`
 ${pc11.green("\u2714")} Proxy started on port ${proxyHandle.port}`);
+    if (deploymentModeChange?.previous === "1p") {
+      p14.log.info("Claude Desktop was pinned to first-party mode; switched it to third-party for this session.");
+    }
     try {
       await launchOrRestartClaudeApp();
     } catch (err) {
@@ -15981,7 +16042,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-RLYV2FK6.js");
+    const { runUiCommand } = await import("./ui-command-Q27TKD53.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

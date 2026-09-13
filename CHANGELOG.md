@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.3] - 2026-09-13
+
+### Fixed
+
+- **`relay-ai claude-app` launched Claude Desktop with no models and no error when the app was pinned to first-party mode.** Claude Desktop only honors the third-party gateway config while its own `deploymentMode` is not `"1p"` in `Claude-3p/claude_desktop_config.json` — a value the app writes itself whenever you sign back into claude.ai, and that our own revert instructions also set deliberately. While pinned, the app boots against claude.ai instead of the relay proxy: no request ever reaches the proxy, so nothing in the terminal or the app surfaces an error, and the model picker (including OAuth models like GPT-5.6 Luna) never shows relay models at all. `relay-ai claude-app` now switches `deploymentMode` to `"3p"` for the session and restores your previous value on `Ctrl+C` or `--restore`.
+- **A `claude-app` cleanup failure (e.g. a full disk) could crash instead of exiting cleanly, and skip later restore steps.** Session cleanup restores `_meta.json`, restores `deploymentMode`, and removes the lock file in sequence; one step throwing used to abort the rest, and an exception during the `Ctrl+C` exit handler surfaced as a raw Node crash trace rather than a clean error. Each step now runs independently and failures are logged instead of propagating, so a disk-full mid-cleanup restores everything it still can and reports what it couldn't.
+
 ## [0.12.2] - 2026-09-11
 
 ### Fixed

@@ -22,13 +22,20 @@ describe('claude-app session ownership', () => {
   let home: string;
   let prevLocalAppData: string | undefined;
   let prevHome: string | undefined;
+  let prevXdgConfigHome: string | undefined;
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'relay-claude-app-session-'));
     prevLocalAppData = process.env.LOCALAPPDATA;
     prevHome = process.env.HOME;
+    // getClaudeDesktopHome()'s Linux branch checks XDG_CONFIG_HOME before
+    // falling back to homedir() — GitHub Actions' Ubuntu runners set it to the
+    // real ~/.config, so leaving it untouched here makes every test silently
+    // read/write the CI runner's actual home instead of this temp dir.
+    prevXdgConfigHome = process.env.XDG_CONFIG_HOME;
     process.env.LOCALAPPDATA = home;
     process.env.HOME = home;
+    process.env.XDG_CONFIG_HOME = home;
     mkdirSync(getConfigLibraryPath(), { recursive: true });
   });
 
@@ -38,6 +45,8 @@ describe('claude-app session ownership', () => {
     else process.env.LOCALAPPDATA = prevLocalAppData;
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
+    if (prevXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = prevXdgConfigHome;
   });
 
   it('allows the owning process to clean up its own session', () => {

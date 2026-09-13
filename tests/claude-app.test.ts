@@ -41,6 +41,7 @@ vi.mock('../src/claude-desktop/app-launch.js', () => ({
 vi.mock('../src/claude-desktop/app-config.js', () => ({
   writeRelayAiConfig: vi.fn(() => 'test-session-uuid'),
   getClaudeDesktopHome: vi.fn(() => '/tmp/relay-ai-test-claude-home'),
+  applyDeploymentMode3p: vi.fn(() => undefined),
 }));
 vi.mock('../src/registry/load.js', () => ({
   loadRegistryProviders: vi.fn(async () => state.providers),

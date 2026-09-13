@@ -9,13 +9,26 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { getClaudeDesktopHome, getMetaJsonPath, getConfigLibraryPath, readMetaJson } from './app-config.js';
+import {
+  getClaudeDesktopHome,
+  getMetaJsonPath,
+  getConfigLibraryPath,
+  readMetaJson,
+  restoreDeploymentMode,
+  type DeploymentMode,
+} from './app-config.js';
 
 export interface ClaudeSessionLock {
   pid: number;
   startedAt: string;
   uuid: string;
   proxyPort: number;
+  /**
+   * `deploymentMode` as it was before this session forced `"3p"`, so cleanup
+   * (and `--restore` after a crash) can put the user's own value back.
+   * Absent when the session did not have to change it.
+   */
+  previousDeploymentMode?: DeploymentMode | null;
 }
 
 export function getSessionLockPath(): string {
@@ -88,6 +101,26 @@ export function restoreMetaJson(): void {
   }
 }
 
+/** No-op unless this session actually forced `deploymentMode: "3p"`. */
+function restoreDeploymentModeFromLock(lock: ClaudeSessionLock | null): void {
+  if (!lock || !('previousDeploymentMode' in lock)) return;
+  restoreDeploymentMode(lock.previousDeploymentMode ?? null);
+}
+
+/**
+ * Run one cleanup step without letting its failure block the others (e.g. a
+ * full disk mid-`Ctrl+C`: `_meta.json` restore throwing must not also skip
+ * the `deploymentMode` restore and the lock removal that follow it). Logs
+ * instead of swallowing, so a genuine failure is still visible.
+ */
+function safeCleanupStep(label: string, fn: () => void): void {
+  try {
+    fn();
+  } catch (err) {
+    console.error(`[claude-app] ${label} failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 export function removeRelayAiConfig(uuid: string): void {
   const configPath = join(getConfigLibraryPath(), `${uuid}.json`);
   if (existsSync(configPath)) {
@@ -131,7 +164,7 @@ export function recoverSession(): RecoverSessionResult {
   if (state.status === 'unreadable') {
     // No pid to check liveness against, but the atomic write guarantees this
     // isn't a live session's lock (see hasStaleSession) — safe to self-heal.
-    restoreMetaJson();
+    safeCleanupStep('restore _meta.json', restoreMetaJson);
     try { rmSync(getSessionLockPath(), { force: true }); } catch { /* ignore */ }
     return { recovered: true, message: 'Cleared a corrupt claude-app session lock and restored shared config.' };
   }
@@ -145,12 +178,13 @@ export function recoverSession(): RecoverSessionResult {
     };
   }
   if (lock) {
-    restoreMetaJson();
+    safeCleanupStep('restore _meta.json', restoreMetaJson);
+    safeCleanupStep('restore deploymentMode', () => restoreDeploymentModeFromLock(lock));
     removeRelayAiConfig(lock.uuid);
     try { rmSync(getSessionLockPath(), { force: true }); } catch { /* ignore */ }
   } else {
     // Just in case there is no lock but the backup exists
-    restoreMetaJson();
+    safeCleanupStep('restore _meta.json', restoreMetaJson);
   }
   return { recovered: true, message: 'Restored Claude Desktop relay-ai config.' };
 }
@@ -179,7 +213,8 @@ export function cleanupSession(uuid: string): void {
   const lock = state.status === 'valid' ? state.lock : null;
   const sharedStateIsOwnedElsewhere = lockHeldByAnotherLiveProcess(lock);
   if (!sharedStateIsOwnedElsewhere) {
-    restoreMetaJson();
+    safeCleanupStep('restore _meta.json', restoreMetaJson);
+    safeCleanupStep('restore deploymentMode', () => restoreDeploymentModeFromLock(lock));
     try { rmSync(getSessionLockPath(), { force: true }); } catch { /* ignore */ }
   }
   const meta = readMetaJson();
@@ -192,5 +227,16 @@ export function cleanupSession(uuid: string): void {
 }
 
 export function setupExitCleanup(uuid: string): void {
-  process.on('exit', () => cleanupSession(uuid));
+  // A step throwing (e.g. disk full mid-Ctrl+C) must not surface as an
+  // uncaught exception on the 'exit' event — Node has no recovery path left
+  // at that point and would print a raw stack trace instead of cleaning up
+  // what it still can. cleanupSession's own steps are independently guarded
+  // by safeCleanupStep; this is the last line of defense around the whole call.
+  process.on('exit', () => {
+    try {
+      cleanupSession(uuid);
+    } catch (err) {
+      console.error(`[claude-app] cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
 }

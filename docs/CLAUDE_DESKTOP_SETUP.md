@@ -320,11 +320,10 @@ Example (merge with any existing keys — do not delete your `preferences` block
 open -a Claude
 ```
 
-Optional one-shot override if Desktop still picks up stale 3P state:
-
-```bash
-/Applications/Claude.app/Contents/MacOS/Claude --boot-1p-once
-```
+Step 3 is what actually pins first-party mode — Claude Desktop reads `deploymentMode` from the
+**`Claude-3p`** config file, so set it there as well if you want the revert to stick across a
+later `relay-ai claude-app` run. (The `--boot-1p-once` one-shot override documented for older
+builds no longer exists in Claude Desktop 1.52386.3.)
 
 Stop the Relay AI server (`Ctrl+C` in its terminal) if you no longer need the gateway.
 
@@ -391,6 +390,22 @@ To re-enable later (e.g. for another gateway experiment): set `"allowDevTools": 
 - Logs:
   - macOS: `~/Library/Logs/Claude-3p/main.log`
   - Windows: `%LOCALAPPDATA%\Claude-3p\Logs\main.log`
+
+### Claude Desktop launches but no gateway model appears (and nothing errors)
+
+Claude Desktop only honours the third-party gateway config while its own `deploymentMode`
+is not pinned to first-party. With `"deploymentMode": "1p"` in
+
+- **macOS:** `~/Library/Application Support/Claude-3p/claude_desktop_config.json`
+- **Windows:** `%LOCALAPPDATA%\Claude-3p\claude_desktop_config.json`
+
+the app boots against claude.ai, never calls the proxy, and shows none of the relay models —
+with no error in the terminal or the app. The app writes that pin itself when you sign back
+into claude.ai, and the revert steps above set it deliberately.
+
+`relay-ai claude-app` sets `deploymentMode` to `"3p"` for the session and restores your previous
+value on `Ctrl+C` (or `--restore`). If you configured the gateway manually, set it yourself and
+relaunch. To confirm the app actually took the 3P path, check `main.log` for `[custom-3p]` lines.
 
 ### Test connection or Test model discovery fails
 

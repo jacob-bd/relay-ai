@@ -11,7 +11,7 @@ import {
 import { startServer, type ServerHandle } from './server/router.js';
 import { createGatewayModelCatalog, type GatewayModelOptions } from './server/models.js';
 import { BACKENDS } from './constants.js';
-import { writeRelayAiConfig } from './claude-desktop/app-config.js';
+import { applyDeploymentMode3p, writeRelayAiConfig } from './claude-desktop/app-config.js';
 import {
   buildClaudeAppServerCatalog,
   resolveClaudeAppCatalog,
@@ -224,11 +224,18 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
 
     uuid = writeRelayAiConfig(proxyHandle.port);
 
+    // Claude Desktop ignores the gateway config while its own
+    // `deploymentMode` is pinned to "1p" — the app then boots first-party and
+    // never contacts the proxy, so none of the catalog models show up and
+    // nothing reports an error. Force 3P for the session; cleanup restores it.
+    const deploymentModeChange = applyDeploymentMode3p();
+
     writeSessionLock({
       pid: process.pid,
       startedAt: new Date().toISOString(),
       uuid,
-      proxyPort: proxyHandle.port
+      proxyPort: proxyHandle.port,
+      ...(deploymentModeChange ? { previousDeploymentMode: deploymentModeChange.previous } : {}),
     });
     sessionActive = true;
     setupExitCleanup(uuid);
@@ -244,6 +251,9 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
     }
 
     console.log(`\n${pc.green('✔')} Proxy started on port ${proxyHandle.port}`);
+    if (deploymentModeChange?.previous === '1p') {
+      p.log.info('Claude Desktop was pinned to first-party mode; switched it to third-party for this session.');
+    }
 
     try {
       await launchOrRestartClaudeApp();
