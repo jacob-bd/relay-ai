@@ -127,6 +127,46 @@ export function resolveProviderNpm(npm: string): string {
   return npm === 'venice-ai-sdk-provider' ? '@ai-sdk/openai-compatible' : npm;
 }
 
+/**
+ * Codex sends a blind 65,536-token output cap. OpenRouter reserves credit for
+ * that entire amount before generation, so a low-limit key can receive HTTP
+ * 402 even for a tiny prompt. Keep the guard at the actual HTTP boundary as
+ * well as in the Responses translator: this catches stale metadata and any
+ * future call path that constructs SDK params directly.
+ */
+export const OPENROUTER_BLIND_MAX_OUTPUT_TOKENS = 65_536;
+
+export function createOpenRouterFetch(
+  fetchImpl: typeof globalThis.fetch = globalThis.fetch,
+): typeof globalThis.fetch {
+  return async (input, init) => {
+    if (!init || typeof init.body !== 'string') {
+      return fetchImpl(input, init);
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(init.body);
+    } catch {
+      return fetchImpl(input, init);
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return fetchImpl(input, init);
+    }
+
+    const body = parsed as Record<string, unknown>;
+    if (body.max_tokens !== OPENROUTER_BLIND_MAX_OUTPUT_TOKENS) {
+      return fetchImpl(input, init);
+    }
+
+    const { max_tokens: _blindCap, ...withoutBlindCap } = body;
+    return fetchImpl(input, {
+      ...init,
+      body: JSON.stringify(withoutBlindCap),
+    });
+  };
+}
+
 function findCreateFactory(mod: Record<string, unknown>): SdkProviderFactory {
   for (const value of Object.values(mod)) {
     if (typeof value === 'function' && value.name.startsWith('create')) {
@@ -271,7 +311,12 @@ export async function createLanguageModel(spec: ProviderModelSpec): Promise<Lang
     })(modelId);
   } else if (npm === '@openrouter/ai-sdk-provider') {
     const { createOpenRouter } = await import('@openrouter/ai-sdk-provider');
-    model = createOpenRouter({ apiKey, baseURL, ...(spec.headers ? { headers: spec.headers } : {}) })(modelId);
+    model = createOpenRouter({
+      apiKey,
+      baseURL,
+      fetch: createOpenRouterFetch(),
+      ...(spec.headers ? { headers: spec.headers } : {}),
+    })(modelId);
   } else {
     const create = await loadSdkProviderFactory(npm);
     const provider = create({

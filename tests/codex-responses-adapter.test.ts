@@ -264,6 +264,34 @@ describe('translateResponsesRequest', () => {
       'Bash',
     ]);
   });
+
+  it('aliases oversized namespace tool names without losing their original identity', () => {
+    const namespace = 'mcp__codex_apps__codex_document_control';
+    const name = '_get_document_tool_schemas';
+    const tools = translateResponsesTools([
+      {
+        type: 'namespace',
+        name: namespace,
+        tools: [{ type: 'function', name, description: 'inspect schemas', parameters: { type: 'object', properties: {} } }],
+      },
+    ]);
+
+    const alias = Object.keys(tools ?? {})[0];
+    expect(alias).toBeDefined();
+    expect(alias!.length).toBeLessThanOrEqual(64);
+    expect(alias).not.toBe(`${namespace}__${name}`);
+
+    const params = translateResponsesRequest({
+      model: 'meta/muse-spark-1.3-contributor',
+      input: 'hi',
+      tools: [{
+        type: 'namespace',
+        name: namespace,
+        tools: [{ type: 'function', name, description: 'inspect schemas', parameters: { type: 'object', properties: {} } }],
+      }],
+    }, '@openrouter/ai-sdk-provider', { providerId: 'openrouter' });
+    expect(params.toolContext?.namespaceByFlatName.get(alias!)).toMatchObject({ namespace, name });
+  });
 });
 
 describe('Codex MCP namespace tool round-trip (relay-ai/relay-ai#21)', () => {

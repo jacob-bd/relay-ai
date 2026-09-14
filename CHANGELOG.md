@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.4] - 2026-09-14
+
+### Fixed
+
+- **OpenRouter no longer receives Codex's blind 65,536-token budget.** The Responses translator already omits the cap for OpenRouter routes; a final HTTP-boundary guard now removes that exact value if any alternate or stale route still passes it through, preventing low-limit keys from receiving HTTP 402 before generation.
+- **OpenRouter accepts long Codex App MCP tool names.** Namespace flattening now aliases names above the 64-character provider limit with a stable digest and restores the original namespace/tool identity when the model calls it, preventing HTTP 400 failures from oversized function names.
+- **Codex traces now show the token budget at both boundaries.** HTTP and WebSocket `--trace` logs and body dumps record the incoming `max_output_tokens` and translated `maxOutputTokens`, making provider-budget mismatches diagnosable without exposing credentials.
+
 ## [0.12.3] - 2026-09-13
 
 ### Fixed

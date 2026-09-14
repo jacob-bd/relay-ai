@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
+import { streamText } from 'ai';
 import {
   createLanguageModel,
+  createOpenRouterFetch,
   deepMergeProviderOptions,
   effortProviderOptions,
   getReasoningCapabilities,
@@ -214,6 +216,56 @@ describe('effortProviderOptions + deepMergeProviderOptions', () => {
 });
 
 describe('createLanguageModel', () => {
+  it('removes Codex blind max_tokens at the OpenRouter HTTP boundary', async () => {
+    const forwarded: Array<Record<string, unknown>> = [];
+    const fetchImpl: typeof globalThis.fetch = async (_input, init) => {
+      forwarded.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      return new Response('{}', { status: 200 });
+    };
+    const guardedFetch = createOpenRouterFetch(fetchImpl);
+
+    await guardedFetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'meta/muse-spark-1.3-contributor', max_tokens: 65536 }),
+    });
+    await guardedFetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'meta/muse-spark-1.3-contributor', max_tokens: 4096 }),
+    });
+
+    expect(forwarded).toEqual([
+      { model: 'meta/muse-spark-1.3-contributor' },
+      { model: 'meta/muse-spark-1.3-contributor', max_tokens: 4096 },
+    ]);
+  });
+
+  it('keeps the actual OpenRouter SDK request free of the blind cap', async () => {
+    const fetchMock = vi.fn<typeof globalThis.fetch>(async () => new Response(
+      'data: {"id":"x","choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const model = await createLanguageModel({
+        npm: '@openrouter/ai-sdk-provider',
+        modelId: 'meta/muse-spark-1.3-contributor',
+        apiKey: 'test-key',
+      });
+      const result = streamText({
+        model,
+        messages: [{ role: 'user', content: 'whats ur name?' }],
+        maxOutputTokens: 65536,
+      });
+      await result.text;
+
+      const [, init] = fetchMock.mock.calls[0] ?? [];
+      const outbound = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      expect(outbound.max_tokens).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('routes OpenAI OAuth through the ChatGPT Codex backend with the account header', async () => {
     const responses = vi.fn((modelId: string) => ({ modelId, provider: 'openai-responses' }));
     const chat = vi.fn((modelId: string) => ({ modelId, provider: 'openai-chat' }));

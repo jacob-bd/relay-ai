@@ -651,13 +651,14 @@ export async function startCodexProxy(
           const inputItems = Array.isArray(body.input) ? body.input.length : (typeof body.input === 'string' ? 1 : 0);
           const tools = Array.isArray(body.tools) ? body.tools : [];
           const toolNames = tools.map((t: unknown) => (t && typeof t === 'object' && 'name' in t ? (t as { name: unknown }).name : '?')).join(',');
-          log(`request: model=${String(body.model ?? '')} previous_response_id=${prevId ?? '(none)'} input_items=${inputItems} body_bytes=${rawBody.length} tools=[${toolNames || 'none'}]`);
+          log(`request: model=${String(body.model ?? '')} previous_response_id=${prevId ?? '(none)'} input_items=${inputItems} body_bytes=${rawBody.length} max_output_tokens=${String(body.max_output_tokens ?? '(none)')} tools=[${toolNames || 'none'}]`);
           appendCodexBodyDump({
             ts: new Date().toISOString(),
             transport: 'http',
             direction: 'request',
             model: String(body.model ?? ''),
             previous_response_id: prevId,
+            max_output_tokens: body.max_output_tokens,
             tools: body.tools,
             input: body.input,
           });
@@ -797,7 +798,7 @@ export async function startCodexProxy(
           }
           if (debug) {
             const effort = (body as { reasoning?: { effort?: string } }).reasoning?.effort;
-            log(`model=${route.modelId} effort=${effort ?? '(none)'} providerOptions=${JSON.stringify(params.providerOptions)}`);
+            log(`model=${route.modelId} effort=${effort ?? '(none)'} maxOutputTokens=${String(params.maxOutputTokens ?? '(omitted)')} providerOptions=${JSON.stringify(params.providerOptions)}`);
           }
 
           if (body.stream) {
@@ -1192,7 +1193,7 @@ export async function startCodexProxy(
             const inputItems = Array.isArray(body.input) ? body.input.length : (typeof body.input === 'string' ? 1 : 0);
             const tools = Array.isArray(body.tools) ? body.tools : [];
             const toolNames = tools.map((t: unknown) => (t && typeof t === 'object' && 'name' in t ? (t as { name: unknown }).name : '?')).join(',');
-            log(`WS request: model=${String(body.model ?? '')} previous_response_id=${prevId ?? '(none)'} input_items=${inputItems} body_bytes=${frameText.length} tools=[${toolNames || 'none'}]`);
+            log(`WS request: model=${String(body.model ?? '')} previous_response_id=${prevId ?? '(none)'} input_items=${inputItems} body_bytes=${frameText.length} max_output_tokens=${String(body.max_output_tokens ?? '(none)')} tools=[${toolNames || 'none'}]`);
             const reasoning = body.reasoning && typeof body.reasoning === 'object'
               ? Object.keys(body.reasoning as Record<string, unknown>).join(',')
               : typeof body.reasoning;
@@ -1206,6 +1207,7 @@ export async function startCodexProxy(
               direction: 'request',
               model: String(body.model ?? ''),
               previous_response_id: prevId,
+              max_output_tokens: body.max_output_tokens,
               tools: body.tools,
               input: body.input,
             });
@@ -1452,7 +1454,7 @@ export async function startCodexProxy(
             }
             if (debug) {
               const effort = (body as { reasoning?: { effort?: string } }).reasoning?.effort;
-              log(`WS model=${route.modelId} effort=${effort ?? '(none)'} providerOptions=${JSON.stringify(params.providerOptions)}`);
+              log(`WS model=${route.modelId} effort=${effort ?? '(none)'} maxOutputTokens=${String(params.maxOutputTokens ?? '(omitted)')} providerOptions=${JSON.stringify(params.providerOptions)}`);
             }
             if (v2Compaction) {
               await streamCompactionResponse(languageModel, params, modelId, sendWsEvent);

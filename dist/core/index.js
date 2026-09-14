@@ -50,7 +50,7 @@ import { join as join2 } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.12.3",
+  version: "0.12.4",
   publishConfig: {
     access: "public"
   },
@@ -876,6 +876,32 @@ function shouldUseOpenAiResponsesEndpoint(modelId) {
 function resolveProviderNpm(npm) {
   return npm === "venice-ai-sdk-provider" ? "@ai-sdk/openai-compatible" : npm;
 }
+var OPENROUTER_BLIND_MAX_OUTPUT_TOKENS = 65536;
+function createOpenRouterFetch(fetchImpl = globalThis.fetch) {
+  return async (input, init) => {
+    if (!init || typeof init.body !== "string") {
+      return fetchImpl(input, init);
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(init.body);
+    } catch {
+      return fetchImpl(input, init);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return fetchImpl(input, init);
+    }
+    const body = parsed;
+    if (body.max_tokens !== OPENROUTER_BLIND_MAX_OUTPUT_TOKENS) {
+      return fetchImpl(input, init);
+    }
+    const { max_tokens: _blindCap, ...withoutBlindCap } = body;
+    return fetchImpl(input, {
+      ...init,
+      body: JSON.stringify(withoutBlindCap)
+    });
+  };
+}
 function findCreateFactory(mod) {
   for (const value of Object.values(mod)) {
     if (typeof value === "function" && value.name.startsWith("create")) {
@@ -996,7 +1022,12 @@ async function createLanguageModel(spec) {
     })(modelId);
   } else if (npm === "@openrouter/ai-sdk-provider") {
     const { createOpenRouter } = await import("@openrouter/ai-sdk-provider");
-    model = createOpenRouter({ apiKey, baseURL, ...spec.headers ? { headers: spec.headers } : {} })(modelId);
+    model = createOpenRouter({
+      apiKey,
+      baseURL,
+      fetch: createOpenRouterFetch(),
+      ...spec.headers ? { headers: spec.headers } : {}
+    })(modelId);
   } else {
     const create = await loadSdkProviderFactory(npm);
     const provider = create({

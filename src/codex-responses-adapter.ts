@@ -1,4 +1,5 @@
 // OpenAI Responses API (/v1/responses) ↔ Vercel AI SDK. One turn per request; Codex owns the tool loop.
+import { createHash } from 'node:crypto';
 import { streamText, generateText, tool, jsonSchema } from 'ai';
 import type { LanguageModel, ModelMessage, ToolSet, UserContent } from 'ai';
 import {
@@ -234,8 +235,20 @@ export interface TranslateToolOptions {
 
 export const TOOL_SEARCH_NAME = 'tool_search';
 
+// OpenAI-compatible providers commonly enforce the OpenAI function-name limit,
+// including OpenRouter's upstream providers. Namespace flattening can exceed that
+// limit even when each original name is valid on its own. Keep a readable prefix and
+// append a stable digest so aliases remain collision-resistant and reversible through
+// CodexToolContext.
+const MAX_MODEL_TOOL_NAME_LENGTH = 64;
+const TOOL_NAME_DIGEST_LENGTH = 10;
+
 function flatNamespaceName(namespace: string, name: string): string {
-  return `${namespace}__${name}`;
+  const flat = `${namespace}__${name}`;
+  if (flat.length <= MAX_MODEL_TOOL_NAME_LENGTH) return flat;
+  const digest = createHash('sha256').update(flat).digest('hex').slice(0, TOOL_NAME_DIGEST_LENGTH);
+  const prefixLength = MAX_MODEL_TOOL_NAME_LENGTH - digest.length - 2;
+  return `${flat.slice(0, prefixLength)}__${digest}`;
 }
 
 /** Learn namespace splits and custom tool names from a request's tool defs (upfront or deferred). */

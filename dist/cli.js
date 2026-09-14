@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-3K2DFBNP.js";
+} from "./chunk-2OEMU2WC.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -148,7 +148,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-R427D6VA.js";
+} from "./chunk-LPOAO33X.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -222,7 +222,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-C7TTIGMR.js";
+} from "./chunk-5INR7PKO.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -2316,7 +2316,7 @@ import * as p9 from "@clack/prompts";
 import { join as join6 } from "path";
 
 // src/codex-proxy.ts
-import { createHash as createHash2 } from "crypto";
+import { createHash as createHash3 } from "crypto";
 import { createServer } from "http";
 import { WebSocket } from "ws";
 
@@ -2368,13 +2368,20 @@ function applyClaudeCodeOAuthIdentity(input, sdkParams) {
 }
 
 // src/codex-responses-adapter.ts
+import { createHash } from "crypto";
 import { streamText, generateText, tool, jsonSchema } from "ai";
 function createCodexToolContext() {
   return { namespaceByFlatName: /* @__PURE__ */ new Map(), customToolNames: /* @__PURE__ */ new Set() };
 }
 var TOOL_SEARCH_NAME = "tool_search";
+var MAX_MODEL_TOOL_NAME_LENGTH = 64;
+var TOOL_NAME_DIGEST_LENGTH = 10;
 function flatNamespaceName(namespace, name) {
-  return `${namespace}__${name}`;
+  const flat = `${namespace}__${name}`;
+  if (flat.length <= MAX_MODEL_TOOL_NAME_LENGTH) return flat;
+  const digest = createHash("sha256").update(flat).digest("hex").slice(0, TOOL_NAME_DIGEST_LENGTH);
+  const prefixLength = MAX_MODEL_TOOL_NAME_LENGTH - digest.length - 2;
+  return `${flat.slice(0, prefixLength)}__${digest}`;
 }
 function ingestToolDefs(tools, ctx) {
   for (const t of tools ?? []) {
@@ -3630,7 +3637,7 @@ function nativeResponsesWebSocketOptions(options) {
 }
 
 // src/codex/collaboration-payload.ts
-import { createHash } from "crypto";
+import { createHash as createHash2 } from "crypto";
 var NATIVE_ENCRYPTED_TOKEN = /^gAAAAA[A-Za-z0-9_-]+={0,2}$/;
 var COLLABORATION_HEADER = /Message Type:\s*(?:NEW_TASK|MESSAGE|FOLLOWUP_TASK|FINAL_ANSWER)\b[\s\S]*\nPayload:\s*/i;
 var PAYLOAD_BOUNDARY = /^Payload:\s*$/m;
@@ -3834,7 +3841,7 @@ function createNativePayloadRelay(options) {
       if (ciphertext.kind !== "native-encrypted") throw new Error("Expected a native encrypted collaboration item");
       const accountId = context.headers["chatgpt-account-id"] ?? context.headers["ChatGPT-Account-Id"];
       if (!accountId) throw new Error("Native collaboration relay requires ChatGPT-Account-Id");
-      const key = `${accountId}\0${createHash("sha256").update(ciphertext.ciphertext).digest("hex")}`;
+      const key = `${accountId}\0${createHash2("sha256").update(ciphertext.ciphertext).digest("hex")}`;
       pruneCache();
       const cached = cache.get(key);
       if (cached && cached.expiresAt > Date.now()) return cached.value;
@@ -4342,13 +4349,14 @@ async function startCodexProxy(routes, options = {}) {
           const inputItems = Array.isArray(body.input) ? body.input.length : typeof body.input === "string" ? 1 : 0;
           const tools = Array.isArray(body.tools) ? body.tools : [];
           const toolNames = tools.map((t) => t && typeof t === "object" && "name" in t ? t.name : "?").join(",");
-          log15(`request: model=${String(body.model ?? "")} previous_response_id=${prevId ?? "(none)"} input_items=${inputItems} body_bytes=${rawBody.length} tools=[${toolNames || "none"}]`);
+          log15(`request: model=${String(body.model ?? "")} previous_response_id=${prevId ?? "(none)"} input_items=${inputItems} body_bytes=${rawBody.length} max_output_tokens=${String(body.max_output_tokens ?? "(none)")} tools=[${toolNames || "none"}]`);
           appendCodexBodyDump({
             ts: (/* @__PURE__ */ new Date()).toISOString(),
             transport: "http",
             direction: "request",
             model: String(body.model ?? ""),
             previous_response_id: prevId,
+            max_output_tokens: body.max_output_tokens,
             tools: body.tools,
             input: body.input
           });
@@ -4502,7 +4510,7 @@ async function startCodexProxy(routes, options = {}) {
           }
           if (debug) {
             const effort = body.reasoning?.effort;
-            log15(`model=${route.modelId} effort=${effort ?? "(none)"} providerOptions=${JSON.stringify(params.providerOptions)}`);
+            log15(`model=${route.modelId} effort=${effort ?? "(none)"} maxOutputTokens=${String(params.maxOutputTokens ?? "(omitted)")} providerOptions=${JSON.stringify(params.providerOptions)}`);
           }
           if (body.stream) {
             res.writeHead(200, {
@@ -4633,7 +4641,7 @@ async function startCodexProxy(routes, options = {}) {
       sendJson(res, 404, { error: { message: "Not found", type: "invalid_request_error" } });
     });
     function wsAcceptKey(clientKey) {
-      return createHash2("sha1").update(clientKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+      return createHash3("sha1").update(clientKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
     }
     function wsDecodeFrame(buf) {
       if (buf.length < 2) return null;
@@ -4871,7 +4879,7 @@ data: ${JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_reques
               const inputItems = Array.isArray(body.input) ? body.input.length : typeof body.input === "string" ? 1 : 0;
               const tools = Array.isArray(body.tools) ? body.tools : [];
               const toolNames = tools.map((t) => t && typeof t === "object" && "name" in t ? t.name : "?").join(",");
-              log15(`WS request: model=${String(body.model ?? "")} previous_response_id=${prevId ?? "(none)"} input_items=${inputItems} body_bytes=${frameText.length} tools=[${toolNames || "none"}]`);
+              log15(`WS request: model=${String(body.model ?? "")} previous_response_id=${prevId ?? "(none)"} input_items=${inputItems} body_bytes=${frameText.length} max_output_tokens=${String(body.max_output_tokens ?? "(none)")} tools=[${toolNames || "none"}]`);
               const reasoning = body.reasoning && typeof body.reasoning === "object" ? Object.keys(body.reasoning).join(",") : typeof body.reasoning;
               const clientMetadata = body.client_metadata && typeof body.client_metadata === "object" ? Object.keys(body.client_metadata).join(",") : typeof body.client_metadata;
               log15(`WS request shape: stream=${String(body.stream)} store=${String(body.store)} generate=${String(body.generate)} parallel_tool_calls=${String(body.parallel_tool_calls)} reasoning_keys=[${reasoning || "none"}] include=${Array.isArray(body.include) ? body.include.join(",") : String(body.include)} client_metadata_keys=[${clientMetadata || "none"}]`);
@@ -4881,6 +4889,7 @@ data: ${JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_reques
                 direction: "request",
                 model: String(body.model ?? ""),
                 previous_response_id: prevId,
+                max_output_tokens: body.max_output_tokens,
                 tools: body.tools,
                 input: body.input
               });
@@ -5157,7 +5166,7 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
               }
               if (debug) {
                 const effort = body.reasoning?.effort;
-                log15(`WS model=${route.modelId} effort=${effort ?? "(none)"} providerOptions=${JSON.stringify(params.providerOptions)}`);
+                log15(`WS model=${route.modelId} effort=${effort ?? "(none)"} maxOutputTokens=${String(params.maxOutputTokens ?? "(omitted)")} providerOptions=${JSON.stringify(params.providerOptions)}`);
               }
               if (v2Compaction) {
                 await streamCompactionResponse(languageModel, params, modelId, sendWsEvent);
@@ -11612,7 +11621,7 @@ import {
   statSync as statSync2
 } from "fs";
 import { basename as basename2, join as join12 } from "path";
-import { createHash as createHash3 } from "crypto";
+import { createHash as createHash4 } from "crypto";
 function getAppSessionLockPath(env = process.env) {
   return join12(getRelayAiCodexDir(env), "session-app.json");
 }
@@ -11623,7 +11632,7 @@ function getAppCatalogPath(providerId, env = process.env) {
   return join12(getRelayAiCodexDir(env), `app-models-${providerId}.json`);
 }
 function fileSha256(path3) {
-  return createHash3("sha256").update(readFileSync5(path3)).digest("hex");
+  return createHash4("sha256").update(readFileSync5(path3)).digest("hex");
 }
 function readAppSessionLock(env = process.env) {
   const path3 = getAppSessionLockPath(env);
@@ -16042,7 +16051,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-Q27TKD53.js");
+    const { runUiCommand } = await import("./ui-command-XCYCQQRA.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {
