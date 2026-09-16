@@ -12,6 +12,7 @@ import { resolveOrCollectApiKey } from './key-setup.js';
 import { needsFirstRunSetup, runFirstRunWizard } from './first-run.js';
 import { CODEX_SUBAGENT_MODEL_CAP, MAX_MODEL_CATALOG } from './constants.js';
 import { startProxy, startProxyCatalog } from './proxy.js';
+import { isDualProtocolGateway } from './gateway-protocol.js';
 import type { ProxyHandle, ProxyRoute } from './proxy.js';
 import {
   buildCatalogRoutes,
@@ -1516,6 +1517,9 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
 
   const isAntigravityOAuth = activeProvider.id === 'antigravity' && activeProvider.authType === 'oauth';
   const isOAuthAnthropic = selectedModel.modelFormat === 'anthropic' && activeProvider.authType === 'oauth' && !isAntigravityOAuth;
+  const isDualProtocolAnthropic = selectedModel.modelFormat === 'anthropic'
+    && !isOAuthAnthropic
+    && isDualProtocolGateway(activeProvider.id, selectedModel.apiBaseUrl ?? selectedModel.baseUrl);
 
   if (isAntigravityOAuth) {
     // Cloud Code Assist — proxy translates Anthropic → Assist format.
@@ -1574,7 +1578,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       proxyHandle.port,
       selectedModel.contextWindow,
     );
-  } else if (selectedModel.modelFormat === 'anthropic') {
+  } else if (selectedModel.modelFormat === 'anthropic' && !isDualProtocolAnthropic) {
     childEnv = buildChildEnv(
       selectedModel.baseUrl!,
       selectedModel.id,
@@ -1591,11 +1595,12 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
         selectedModel.contextWindow,
         {
           npm: selectedModel.npm,
-          baseURL: selectedModel.apiBaseUrl,
+          baseURL: selectedModel.apiBaseUrl ?? selectedModel.baseUrl,
           upstreamModelId: selectedModel.upstreamModelId,
           providerId: activeProvider.id,
           authType: activeProvider.authType,
           oauthAccountId: activeProvider.oauthAccountId,
+          modelFormat: selectedModel.modelFormat,
           supportedParameters: selectedModel.supportedParameters,
           reasoning: selectedModel.reasoning,
           interleavedReasoningField: selectedModel.interleavedReasoningField,

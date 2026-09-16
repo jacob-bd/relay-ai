@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-3ELEJJXU.js";
+} from "./chunk-MCKFW2NN.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -148,7 +148,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-WO3TBEPN.js";
+} from "./chunk-WOZHYOW3.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -189,6 +189,7 @@ import {
   getReasoningCapabilities,
   grabRoundTripSignature,
   injectClaudeIdentity,
+  isDualProtocolGateway,
   isSecretServiceAvailable,
   isValidProviderId,
   loadRegistry,
@@ -222,7 +223,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-YKDCHJ5H.js";
+} from "./chunk-DXHAJH64.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -15864,6 +15865,7 @@ Error: ${launchPlan.error}
   let childEnv;
   const isAntigravityOAuth = activeProvider.id === "antigravity" && activeProvider.authType === "oauth";
   const isOAuthAnthropic = selectedModel.modelFormat === "anthropic" && activeProvider.authType === "oauth" && !isAntigravityOAuth;
+  const isDualProtocolAnthropic = selectedModel.modelFormat === "anthropic" && !isOAuthAnthropic && isDualProtocolGateway(activeProvider.id, selectedModel.apiBaseUrl ?? selectedModel.baseUrl);
   if (isAntigravityOAuth) {
     try {
       proxyHandle = await startProxy(
@@ -15919,7 +15921,7 @@ Error: ${launchPlan.error}
       proxyHandle.port,
       selectedModel.contextWindow
     );
-  } else if (selectedModel.modelFormat === "anthropic") {
+  } else if (selectedModel.modelFormat === "anthropic" && !isDualProtocolAnthropic) {
     childEnv = buildChildEnv(
       selectedModel.baseUrl,
       selectedModel.id,
@@ -15936,11 +15938,12 @@ Error: ${launchPlan.error}
         selectedModel.contextWindow,
         {
           npm: selectedModel.npm,
-          baseURL: selectedModel.apiBaseUrl,
+          baseURL: selectedModel.apiBaseUrl ?? selectedModel.baseUrl,
           upstreamModelId: selectedModel.upstreamModelId,
           providerId: activeProvider.id,
           authType: activeProvider.authType,
           oauthAccountId: activeProvider.oauthAccountId,
+          modelFormat: selectedModel.modelFormat,
           supportedParameters: selectedModel.supportedParameters,
           reasoning: selectedModel.reasoning,
           interleavedReasoningField: selectedModel.interleavedReasoningField,
@@ -16055,7 +16058,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-WZJ2V5JX.js");
+    const { runUiCommand } = await import("./ui-command-6VMSZNBA.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

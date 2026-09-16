@@ -219,8 +219,192 @@ function getLegacyConfPath(env = process.env, platform = process.platform) {
   return join2(env.XDG_CONFIG_HOME ?? join2(home, ".config"), appName, "config.json");
 }
 
+// src/gateway-protocol.ts
+import { createHash } from "crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "fs";
+import { dirname, join as join3 } from "path";
+var DUAL_PROVIDER_IDS = /* @__PURE__ */ new Set([
+  "zen",
+  "go",
+  "opencode",
+  "opencode-zen",
+  "opencode-go",
+  "openrouter",
+  "commandcode",
+  "command-code"
+]);
+function normalizedRoot(baseURL) {
+  return baseURL.replace(/\/+$/, "").replace(/\/v1$/i, "");
+}
+function isKnownDualHost(providerId, baseURL) {
+  if (!baseURL) return false;
+  let parsed;
+  try {
+    parsed = new URL(baseURL);
+  } catch {
+    return false;
+  }
+  const host = parsed.hostname.toLowerCase();
+  const path = parsed.pathname.toLowerCase();
+  const id = providerId?.trim().toLowerCase();
+  if (host === "opencode.ai" && path.includes("/zen")) return true;
+  if (host === "openrouter.ai" && path.includes("/api")) return true;
+  if (host === "commandcode.ai" || host.endsWith(".commandcode.ai")) {
+    if (path.includes("/provider")) return true;
+  }
+  return id !== void 0 && DUAL_PROVIDER_IDS.has(id) && (host === "opencode.ai" || host === "openrouter.ai" || host === "commandcode.ai");
+}
+function isDualProtocolGateway(providerId, baseURL) {
+  return isKnownDualHost(providerId, baseURL);
+}
+function resolveProtocolAlternative(input) {
+  if (!isDualProtocolGateway(input.providerId, input.baseURL)) return null;
+  if (!input.baseURL) return null;
+  const root = normalizedRoot(input.baseURL);
+  if (input.modelFormat === "openai") {
+    return {
+      modelFormat: "anthropic",
+      npm: "@ai-sdk/anthropic",
+      baseURL: root,
+      upstreamUrl: `${root}/v1/messages`
+    };
+  }
+  const openaiRoot = `${root}/v1`;
+  const openrouter = input.providerId?.trim().toLowerCase() === "openrouter" || input.npm === "@openrouter/ai-sdk-provider" || root.includes("openrouter.ai");
+  return {
+    modelFormat: "openai",
+    npm: openrouter ? "@openrouter/ai-sdk-provider" : "@ai-sdk/openai-compatible",
+    baseURL: openaiRoot,
+    upstreamUrl: `${openaiRoot}/chat/completions`
+  };
+}
+function errorText(value) {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object") return "";
+  const record = value;
+  const pieces = [record.message, record.responseBody, record.code].filter((item) => typeof item === "string");
+  return pieces.join(" ");
+}
+function findErrorField(error, field, depth = 0) {
+  if (!error || typeof error !== "object" || depth > 3) return void 0;
+  const record = error;
+  if (record[field] !== void 0) return record[field];
+  return findErrorField(record.cause, field, depth + 1) ?? findErrorField(record.lastError, field, depth + 1);
+}
+function classifyProtocolFailure(error) {
+  const statusValue = findErrorField(error, "statusCode") ?? findErrorField(error, "status");
+  const status = typeof statusValue === "number" ? statusValue : void 0;
+  const text = errorText(error) + " " + errorText(findErrorField(error, "cause")) + " " + errorText(findErrorField(error, "responseBody"));
+  const lower = text.toLowerCase();
+  if (lower.includes("abort") || lower.includes("cancel")) {
+    return { retryable: false, status, reason: "request cancelled" };
+  }
+  if (status === 401 || status === 403 || status === 429 || /invalid (api )?key|authentication|quota|billing|not in plan|model_not_in_plan/.test(lower)) {
+    return { retryable: false, status, reason: "authentication or quota failure" };
+  }
+  if (/context (length|window)|too many tokens|maximum context|invalid tool|tool schema|moderation/.test(lower)) {
+    return { retryable: false, status, reason: "request content was rejected" };
+  }
+  const explicitProtocol = status === 405 || status === 415 || status !== void 0 && [400, 404, 422].includes(status) && /endpoint|method|protocol|messages|chat\/completions|chat completions|anthropic/.test(lower);
+  if (explicitProtocol) {
+    return { retryable: true, status, reason: "provider rejected the selected API format" };
+  }
+  if (status === 500) {
+    return { retryable: true, status, reason: "gateway returned an early internal error" };
+  }
+  return { retryable: false, status, reason: "failure is not attributable to API format" };
+}
+var remembered = /* @__PURE__ */ new Map();
+var PREFERENCE_TTL_MS = 24 * 60 * 60 * 1e3;
+var FAILURE_COOLDOWN_MS = 5 * 60 * 1e3;
+var loadedPersistentPath = null;
+function persistentPath() {
+  return join3(getAppHome(), "protocol-cache.json");
+}
+function loadPersistent(now = Date.now()) {
+  const path = persistentPath();
+  if (loadedPersistentPath === path) return;
+  remembered.clear();
+  loadedPersistentPath = path;
+  try {
+    if (!existsSync(path)) return;
+    const raw = JSON.parse(readFileSync(path, "utf8"));
+    for (const [key, entry] of Object.entries(raw)) {
+      if (!entry || entry.protocol !== void 0 && entry.protocol !== "openai" && entry.protocol !== "anthropic") continue;
+      if (typeof entry.expiresAt !== "number" || entry.expiresAt <= now) continue;
+      if (entry.cooldownUntil !== void 0 && typeof entry.cooldownUntil !== "number") continue;
+      remembered.set(key, entry);
+    }
+  } catch {
+  }
+}
+function savePersistent() {
+  const path = persistentPath();
+  try {
+    mkdirSync(dirname(path), { recursive: true, mode: 448 });
+    const live = {};
+    const now = Date.now();
+    for (const [key, entry] of remembered) {
+      if (entry.expiresAt > now) live[key] = entry;
+    }
+    const tempPath = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+    writeFileSync(tempPath, `${JSON.stringify(live)}
+`, { mode: 384 });
+    renameSync(tempPath, path);
+  } catch {
+  }
+}
+function protocolCacheKey(parts) {
+  const credentialFingerprint = createHash("sha256").update(parts.apiKey ?? "").update("\0").update(JSON.stringify(Object.entries(parts.headers ?? {}).sort(([a], [b]) => a.localeCompare(b)))).digest("hex");
+  return createHash("sha256").update(JSON.stringify({
+    providerId: parts.providerId ?? "",
+    modelId: parts.modelId,
+    protocol: parts.protocol ?? "",
+    baseURL: parts.baseURL ?? "",
+    alternativeURL: parts.alternativeURL ?? "",
+    credentialFingerprint
+  })).digest("hex");
+}
+function rememberedProtocol(key, now = Date.now()) {
+  loadPersistent(now);
+  const entry = remembered.get(key);
+  if (!entry) return void 0;
+  if (entry.expiresAt <= now) {
+    remembered.delete(key);
+    savePersistent();
+    return void 0;
+  }
+  if (entry.cooldownUntil !== void 0 && entry.cooldownUntil > now) return void 0;
+  if (!entry.protocol) return void 0;
+  return entry.protocol;
+}
+function rememberProtocol(key, protocol, now = Date.now()) {
+  loadPersistent(now);
+  remembered.set(key, { protocol, expiresAt: now + PREFERENCE_TTL_MS });
+  savePersistent();
+}
+function protocolCooldownActive(key, now = Date.now()) {
+  loadPersistent(now);
+  const entry = remembered.get(key);
+  if (!entry) return false;
+  if (entry.expiresAt <= now) {
+    remembered.delete(key);
+    savePersistent();
+    return false;
+  }
+  return entry.cooldownUntil !== void 0 && entry.cooldownUntil > now;
+}
+function rememberProtocolFailure(key, now = Date.now()) {
+  loadPersistent(now);
+  remembered.set(key, {
+    expiresAt: now + PREFERENCE_TTL_MS,
+    cooldownUntil: now + FAILURE_COOLDOWN_MS
+  });
+  savePersistent();
+}
+
 // src/context-window.ts
-import { readFileSync } from "fs";
+import { readFileSync as readFileSync2 } from "fs";
 var DEFAULT_CONTEXT_WINDOW = 2e5;
 var CACHE_PROVIDER_PRIORITY = /* @__PURE__ */ new Set(["opencode", "opencode-go"]);
 var HEURISTIC_RULES = [
@@ -258,7 +442,7 @@ var heuristicCache = /* @__PURE__ */ new Map();
 function loadOpencodeCache() {
   if (parsedCache === void 0) {
     try {
-      parsedCache = JSON.parse(readFileSync(OPENCODE_CACHE_PATH, "utf8"));
+      parsedCache = JSON.parse(readFileSync2(OPENCODE_CACHE_PATH, "utf8"));
     } catch {
       parsedCache = null;
     }
@@ -345,7 +529,7 @@ function routeLookupIds(id) {
 
 // src/oauth/antigravity-oauth.ts
 import open from "open";
-import { readFileSync as readFileSync2 } from "fs";
+import { readFileSync as readFileSync3 } from "fs";
 import { homedir as homedir3 } from "os";
 import { join as pathJoin } from "path";
 
@@ -634,7 +818,7 @@ async function onboardUser(accessToken, tierId, maxAttempts = 10) {
 function readAgyProjectId() {
   try {
     const cache = pathJoin(homedir3(), ".gemini", "antigravity-cli", "cache", "projects.json");
-    const data = JSON.parse(readFileSync2(cache, "utf8"));
+    const data = JSON.parse(readFileSync3(cache, "utf8"));
     return data[homedir3()] ?? Object.values(data)[0] ?? "";
   } catch {
     return "";
@@ -680,15 +864,15 @@ async function completeAntigravityExchange(code, codeVerifier, redirectUri) {
 }
 
 // src/registry/opencode-auth.ts
-import { existsSync, readFileSync as readFileSync3, statSync } from "fs";
+import { existsSync as existsSync2, readFileSync as readFileSync4, statSync } from "fs";
 import { homedir as homedir4 } from "os";
-import { join as join3 } from "path";
+import { join as join4 } from "path";
 function resolveOpencodeAuthPath(env = process.env) {
-  const dataHome = env["XDG_DATA_HOME"] ?? join3(homedir4(), ".local", "share");
+  const dataHome = env["XDG_DATA_HOME"] ?? join4(homedir4(), ".local", "share");
   if (process.platform === "win32") {
-    return join3(env["APPDATA"] ?? join3(homedir4(), "AppData", "Roaming"), "opencode", "auth.json");
+    return join4(env["APPDATA"] ?? join4(homedir4(), "AppData", "Roaming"), "opencode", "auth.json");
   }
-  return join3(dataHome, "opencode", "auth.json");
+  return join4(dataHome, "opencode", "auth.json");
 }
 function decodeAuthEntry(value) {
   if (typeof value === "string" && value.trim()) return value.trim();
@@ -711,7 +895,7 @@ function decodeAuthEntry(value) {
   return null;
 }
 function authFilePermissionWarning(path) {
-  if (!existsSync(path)) return void 0;
+  if (!existsSync2(path)) return void 0;
   if (process.platform === "win32") return void 0;
   try {
     const mode = statSync(path).mode & 511;
@@ -724,10 +908,10 @@ function authFilePermissionWarning(path) {
 }
 function readOpencodeAuthFile(env = process.env) {
   const path = resolveOpencodeAuthPath(env);
-  if (!existsSync(path)) return null;
+  if (!existsSync2(path)) return null;
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync3(path, "utf8"));
+    parsed = JSON.parse(readFileSync4(path, "utf8"));
   } catch {
     return { path, entries: {}, permissionWarning: authFilePermissionWarning(path) };
   }
@@ -1529,7 +1713,7 @@ async function refreshStoredOAuthCredential(providerId, cred) {
 }
 
 // src/secrets-file.ts
-import { chmodSync, existsSync as existsSync2, mkdirSync, readFileSync as readFileSync4, writeFileSync } from "fs";
+import { chmodSync, existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync5, writeFileSync as writeFileSync2 } from "fs";
 var DIR_MODE = 448;
 var FILE_MODE = 384;
 function emptySecrets() {
@@ -1537,9 +1721,9 @@ function emptySecrets() {
 }
 function readSecretsFile(env = process.env) {
   const path = getSecretsPath(env);
-  if (!existsSync2(path)) return emptySecrets();
+  if (!existsSync3(path)) return emptySecrets();
   try {
-    const raw = JSON.parse(readFileSync4(path, "utf8"));
+    const raw = JSON.parse(readFileSync5(path, "utf8"));
     if (raw?.version !== 1 || !raw.accounts || typeof raw.accounts !== "object") {
       return emptySecrets();
     }
@@ -1554,13 +1738,13 @@ function readSecretsFile(env = process.env) {
 }
 function writeSecretsFile(data, env = process.env) {
   const home = getAppHome(env);
-  mkdirSync(home, { recursive: true, mode: DIR_MODE });
+  mkdirSync2(home, { recursive: true, mode: DIR_MODE });
   try {
     chmodSync(home, DIR_MODE);
   } catch {
   }
   const path = getSecretsPath(env);
-  writeFileSync(path, `${JSON.stringify(data, null, 2)}
+  writeFileSync2(path, `${JSON.stringify(data, null, 2)}
 `, { encoding: "utf8", mode: FILE_MODE });
   try {
     chmodSync(path, FILE_MODE);
@@ -2012,15 +2196,15 @@ function parseManualModel(raw) {
 import {
   chmodSync as chmodSync2,
   copyFileSync,
-  existsSync as existsSync3,
-  mkdirSync as mkdirSync2,
+  existsSync as existsSync4,
+  mkdirSync as mkdirSync3,
   openSync,
-  readFileSync as readFileSync5,
-  renameSync,
+  readFileSync as readFileSync6,
+  renameSync as renameSync2,
   writeSync,
   closeSync
 } from "fs";
-import { dirname } from "path";
+import { dirname as dirname2 } from "path";
 
 // src/registry/types.ts
 var REGISTRY_SCHEMA_VERSION = 1;
@@ -2111,7 +2295,7 @@ var DIR_MODE2 = 448;
 var FILE_MODE2 = 384;
 function ensureSecureAppHome() {
   const home = getAppHome();
-  mkdirSync2(home, { recursive: true, mode: DIR_MODE2 });
+  mkdirSync3(home, { recursive: true, mode: DIR_MODE2 });
   try {
     chmodSync2(home, DIR_MODE2);
   } catch {
@@ -2119,7 +2303,7 @@ function ensureSecureAppHome() {
 }
 function writeSecureFile(path, content) {
   ensureSecureAppHome();
-  mkdirSync2(dirname(path), { recursive: true, mode: DIR_MODE2 });
+  mkdirSync3(dirname2(path), { recursive: true, mode: DIR_MODE2 });
   const fd = openSync(path, "w", FILE_MODE2);
   try {
     writeSync(fd, content);
@@ -2195,11 +2379,11 @@ function parseRegistry(raw) {
   return registry;
 }
 function loadRegistry(path = getProvidersPath(), { persist = true } = {}) {
-  if (!existsSync3(path)) {
+  if (!existsSync4(path)) {
     return { schemaVersion: REGISTRY_SCHEMA_VERSION, providers: [] };
   }
   try {
-    const raw = JSON.parse(readFileSync5(path, "utf8"));
+    const raw = JSON.parse(readFileSync6(path, "utf8"));
     const registry = parseRegistry(raw);
     let migrated = migrateLegacyCloudProviders(registry);
     if (migrateOAuthOpenAiProvider(registry)) migrated = true;
@@ -2220,7 +2404,7 @@ function saveRegistry(registry, path = getProvidersPath()) {
   const payload = `${JSON.stringify(registry, null, 2)}
 `;
   const backup = `${path}.bak`;
-  if (existsSync3(path)) {
+  if (existsSync4(path)) {
     try {
       copyFileSync(path, backup);
     } catch {
@@ -2228,7 +2412,7 @@ function saveRegistry(registry, path = getProvidersPath()) {
   }
   const tmp = `${path}.tmp`;
   writeSecureFile(tmp, payload);
-  renameSync(tmp, path);
+  renameSync2(tmp, path);
 }
 
 // src/registry/url-security.ts
@@ -2344,7 +2528,7 @@ async function validateCustomEndpointUrl(rawUrl, opts = {}) {
 }
 
 // src/oauth/claude-identity.ts
-import { createHash, randomUUID } from "crypto";
+import { createHash as createHash2, randomUUID } from "crypto";
 var CLAUDE_CODE_CLI_VERSION2 = "2.1.195";
 var CLAUDE_CODE_USER_AGENT = `claude-cli/${CLAUDE_CODE_CLI_VERSION2} (external, cli)`;
 var CLAUDE_CODE_ENTRYPOINT = process.env.CLAUDE_CODE_ENTRYPOINT ?? "cli";
@@ -2359,7 +2543,7 @@ function getOrCreateSessionId(seed) {
   return id;
 }
 function uuidFromHash(input) {
-  const h = createHash("sha256").update(input).digest("hex");
+  const h = createHash2("sha256").update(input).digest("hex");
   return [
     h.slice(0, 8),
     h.slice(8, 12),
@@ -2373,7 +2557,7 @@ var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function resolveCliUserID(providerData, seed) {
   const v = providerData?.cliUserID;
   if (typeof v === "string" && HEX64_RE.test(v)) return v;
-  return createHash("sha256").update(`cliUserID:${seed}`).digest("hex");
+  return createHash2("sha256").update(`cliUserID:${seed}`).digest("hex");
 }
 function resolveAccountUUID(providerData, seed) {
   const v = providerData?.accountUUID;
@@ -2455,190 +2639,6 @@ function injectClaudeIdentity(body, providerData, seed) {
   const existing = body.metadata;
   body.metadata = { ...existing ?? {}, user_id: userId };
   return { sessionId, userId };
-}
-
-// src/gateway-protocol.ts
-import { createHash as createHash2 } from "crypto";
-import { existsSync as existsSync4, mkdirSync as mkdirSync3, readFileSync as readFileSync6, renameSync as renameSync2, unlinkSync, writeFileSync as writeFileSync2 } from "fs";
-import { dirname as dirname2, join as join4 } from "path";
-var DUAL_PROVIDER_IDS = /* @__PURE__ */ new Set([
-  "zen",
-  "go",
-  "opencode",
-  "opencode-zen",
-  "opencode-go",
-  "openrouter",
-  "commandcode",
-  "command-code"
-]);
-function normalizedRoot(baseURL) {
-  return baseURL.replace(/\/+$/, "").replace(/\/v1$/i, "");
-}
-function isKnownDualHost(providerId, baseURL) {
-  if (!baseURL) return false;
-  let parsed;
-  try {
-    parsed = new URL(baseURL);
-  } catch {
-    return false;
-  }
-  const host = parsed.hostname.toLowerCase();
-  const path = parsed.pathname.toLowerCase();
-  const id = providerId?.trim().toLowerCase();
-  if (host === "opencode.ai" && path.includes("/zen")) return true;
-  if (host === "openrouter.ai" && path.includes("/api")) return true;
-  if (host === "commandcode.ai" || host.endsWith(".commandcode.ai")) {
-    if (path.includes("/provider")) return true;
-  }
-  return id !== void 0 && DUAL_PROVIDER_IDS.has(id) && (host === "opencode.ai" || host === "openrouter.ai" || host === "commandcode.ai");
-}
-function isDualProtocolGateway(providerId, baseURL) {
-  return isKnownDualHost(providerId, baseURL);
-}
-function resolveProtocolAlternative(input) {
-  if (!isDualProtocolGateway(input.providerId, input.baseURL)) return null;
-  if (!input.baseURL) return null;
-  const root = normalizedRoot(input.baseURL);
-  if (input.modelFormat === "openai") {
-    return {
-      modelFormat: "anthropic",
-      npm: "@ai-sdk/anthropic",
-      baseURL: root,
-      upstreamUrl: `${root}/v1/messages`
-    };
-  }
-  const openaiRoot = `${root}/v1`;
-  const openrouter = input.providerId?.trim().toLowerCase() === "openrouter" || input.npm === "@openrouter/ai-sdk-provider" || root.includes("openrouter.ai");
-  return {
-    modelFormat: "openai",
-    npm: openrouter ? "@openrouter/ai-sdk-provider" : "@ai-sdk/openai-compatible",
-    baseURL: openaiRoot,
-    upstreamUrl: `${openaiRoot}/chat/completions`
-  };
-}
-function errorText(value) {
-  if (typeof value === "string") return value;
-  if (!value || typeof value !== "object") return "";
-  const record = value;
-  const pieces = [record.message, record.responseBody, record.code].filter((item) => typeof item === "string");
-  return pieces.join(" ");
-}
-function findErrorField(error, field, depth = 0) {
-  if (!error || typeof error !== "object" || depth > 3) return void 0;
-  const record = error;
-  if (record[field] !== void 0) return record[field];
-  return findErrorField(record.cause, field, depth + 1) ?? findErrorField(record.lastError, field, depth + 1);
-}
-function classifyProtocolFailure(error) {
-  const statusValue = findErrorField(error, "statusCode") ?? findErrorField(error, "status");
-  const status = typeof statusValue === "number" ? statusValue : void 0;
-  const text = errorText(error) + " " + errorText(findErrorField(error, "cause")) + " " + errorText(findErrorField(error, "responseBody"));
-  const lower = text.toLowerCase();
-  if (lower.includes("abort") || lower.includes("cancel")) {
-    return { retryable: false, status, reason: "request cancelled" };
-  }
-  if (status === 401 || status === 403 || status === 429 || /invalid (api )?key|authentication|quota|billing|not in plan|model_not_in_plan/.test(lower)) {
-    return { retryable: false, status, reason: "authentication or quota failure" };
-  }
-  if (/context (length|window)|too many tokens|maximum context|invalid tool|tool schema|moderation/.test(lower)) {
-    return { retryable: false, status, reason: "request content was rejected" };
-  }
-  const explicitProtocol = status === 405 || status === 415 || status !== void 0 && [400, 404, 422].includes(status) && /endpoint|method|protocol|messages|chat\/completions|chat completions|anthropic/.test(lower);
-  if (explicitProtocol) {
-    return { retryable: true, status, reason: "provider rejected the selected API format" };
-  }
-  if (status === 500) {
-    return { retryable: true, status, reason: "gateway returned an early internal error" };
-  }
-  return { retryable: false, status, reason: "failure is not attributable to API format" };
-}
-var remembered = /* @__PURE__ */ new Map();
-var PREFERENCE_TTL_MS = 24 * 60 * 60 * 1e3;
-var FAILURE_COOLDOWN_MS = 5 * 60 * 1e3;
-var loadedPersistentPath = null;
-function persistentPath() {
-  return join4(getAppHome(), "protocol-cache.json");
-}
-function loadPersistent(now = Date.now()) {
-  const path = persistentPath();
-  if (loadedPersistentPath === path) return;
-  remembered.clear();
-  loadedPersistentPath = path;
-  try {
-    if (!existsSync4(path)) return;
-    const raw = JSON.parse(readFileSync6(path, "utf8"));
-    for (const [key, entry] of Object.entries(raw)) {
-      if (!entry || entry.protocol !== void 0 && entry.protocol !== "openai" && entry.protocol !== "anthropic") continue;
-      if (typeof entry.expiresAt !== "number" || entry.expiresAt <= now) continue;
-      if (entry.cooldownUntil !== void 0 && typeof entry.cooldownUntil !== "number") continue;
-      remembered.set(key, entry);
-    }
-  } catch {
-  }
-}
-function savePersistent() {
-  const path = persistentPath();
-  try {
-    mkdirSync3(dirname2(path), { recursive: true, mode: 448 });
-    const live = {};
-    const now = Date.now();
-    for (const [key, entry] of remembered) {
-      if (entry.expiresAt > now) live[key] = entry;
-    }
-    const tempPath = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
-    writeFileSync2(tempPath, `${JSON.stringify(live)}
-`, { mode: 384 });
-    renameSync2(tempPath, path);
-  } catch {
-  }
-}
-function protocolCacheKey(parts) {
-  const credentialFingerprint = createHash2("sha256").update(parts.apiKey ?? "").update("\0").update(JSON.stringify(Object.entries(parts.headers ?? {}).sort(([a], [b]) => a.localeCompare(b)))).digest("hex");
-  return createHash2("sha256").update(JSON.stringify({
-    providerId: parts.providerId ?? "",
-    modelId: parts.modelId,
-    protocol: parts.protocol ?? "",
-    baseURL: parts.baseURL ?? "",
-    alternativeURL: parts.alternativeURL ?? "",
-    credentialFingerprint
-  })).digest("hex");
-}
-function rememberedProtocol(key, now = Date.now()) {
-  loadPersistent(now);
-  const entry = remembered.get(key);
-  if (!entry) return void 0;
-  if (entry.expiresAt <= now) {
-    remembered.delete(key);
-    savePersistent();
-    return void 0;
-  }
-  if (entry.cooldownUntil !== void 0 && entry.cooldownUntil > now) return void 0;
-  if (!entry.protocol) return void 0;
-  return entry.protocol;
-}
-function rememberProtocol(key, protocol, now = Date.now()) {
-  loadPersistent(now);
-  remembered.set(key, { protocol, expiresAt: now + PREFERENCE_TTL_MS });
-  savePersistent();
-}
-function protocolCooldownActive(key, now = Date.now()) {
-  loadPersistent(now);
-  const entry = remembered.get(key);
-  if (!entry) return false;
-  if (entry.expiresAt <= now) {
-    remembered.delete(key);
-    savePersistent();
-    return false;
-  }
-  return entry.cooldownUntil !== void 0 && entry.cooldownUntil > now;
-}
-function rememberProtocolFailure(key, now = Date.now()) {
-  loadPersistent(now);
-  remembered.set(key, {
-    expiresAt: now + PREFERENCE_TTL_MS,
-    cooldownUntil: now + FAILURE_COOLDOWN_MS
-  });
-  savePersistent();
 }
 
 // src/provider-factory.ts
@@ -5265,4 +5265,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-YKDCHJ5H.js.map
+//# sourceMappingURL=chunk-DXHAJH64.js.map
