@@ -390,7 +390,6 @@ export async function startGeminiProxy(
           const { stream } = streamText({
             model: languageModel,
             ...params,
-            maxRetries: 0,
           });
 
           const toolCallBuffers = new Map<string, { name: string; json: string }>();
@@ -485,7 +484,6 @@ export async function startGeminiProxy(
           const result = await generateText({
             model: languageModel,
             ...params,
-            maxRetries: 0,
           });
           plog('generateText finished.');
 

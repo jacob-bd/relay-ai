@@ -80,6 +80,13 @@ describe('classifyProtocolFailure', () => {
     })).toMatchObject({ retryable: true, status: 405 });
   });
 
+  it('allows a retry for OpenCode Go\'s wrong-format 401', () => {
+    expect(classifyProtocolFailure({
+      statusCode: 401,
+      responseBody: '{"type":"error","error":{"type":"ModelError","message":"Model qwen3.7-max is not supported for format oa-compat"}}',
+    })).toMatchObject({ retryable: true, status: 401 });
+  });
+
   it.each([
     [401, 'invalid api key'],
     [403, 'MODEL_NOT_IN_PLAN'],

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NoOutputGeneratedError, simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
-import type { LanguageModelV4StreamPart } from '@ai-sdk/provider';
-import { generateAnthropicResponse } from '../src/sdk-adapter.js';
+import { APICallError, type LanguageModelV4StreamPart } from '@ai-sdk/provider';
+import { generateAnthropicResponse, streamAnthropicResponse } from '../src/sdk-adapter.js';
 import { createLanguageModel } from '../src/provider-factory.js';
 import { upstreamHttpStatus } from '../src/codex/upstream-error.js';
 
@@ -92,5 +92,80 @@ describe('generateAnthropicResponse with the real SDK stream collector', () => {
         stop_reason: 'end_turn',
         usage: { input_tokens: 3, output_tokens: 4 },
       });
+  });
+});
+
+describe('SDK retries for transient provider errors', () => {
+  const finish = {
+    type: 'finish' as const,
+    finishReason: { unified: 'stop' as const, raw: 'stop' },
+    usage: {
+      inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+      outputTokens: { total: 1, text: 1, reasoning: 0 },
+    },
+  };
+  const rateLimited = () => new APICallError({
+    message: 'rate limit exceeded',
+    url: 'https://api.mistral.ai/v1/chat/completions',
+    requestBodyValues: {},
+    statusCode: 429,
+    // Zero delay keeps the SDK's backoff out of the test's runtime.
+    responseHeaders: { 'retry-after-ms': '0' },
+  });
+
+  function flakyModel() {
+    let calls = 0;
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => {
+        calls += 1;
+        if (calls === 1) throw rateLimited();
+        return {
+          content: [{ type: 'text', text: 'ok' }],
+          finishReason: finish.finishReason,
+          usage: finish.usage,
+          warnings: [],
+        };
+      },
+      doStream: async () => {
+        calls += 1;
+        if (calls === 1) throw rateLimited();
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              { type: 'stream-start', warnings: [] },
+              { type: 'text-start', id: 't' },
+              { type: 'text-delta', id: 't', delta: 'ok' },
+              { type: 'text-end', id: 't' },
+              finish,
+            ] as LanguageModelV4StreamPart[],
+            initialDelayInMs: null,
+            chunkDelayInMs: null,
+          }),
+        };
+      },
+    });
+    return { model, calls: () => calls };
+  }
+
+  it('retries a 429 on the non-streaming path', async () => {
+    const { model, calls } = flakyModel();
+    await expect(generateAnthropicResponse(model, params, 'mistral-large'))
+      .resolves.toMatchObject({ content: [{ type: 'text', text: 'ok' }] });
+    expect(calls()).toBe(2);
+  });
+
+  it('retries a 429 on the forced-stream path', async () => {
+    const { model, calls } = flakyModel();
+    await expect(generateAnthropicResponse(model, params, 'mistral-large', { forceStream: true }))
+      .resolves.toMatchObject({ content: [{ type: 'text', text: 'ok' }] });
+    expect(calls()).toBe(2);
+  });
+
+  it('retries a 429 on the streaming path', async () => {
+    const { model, calls } = flakyModel();
+    let out = '';
+    await streamAnthropicResponse(model, params, 'mistral-large', chunk => { out += chunk; });
+    expect(out).toContain('"text":"ok"');
+    expect(calls()).toBe(2);
   });
 });

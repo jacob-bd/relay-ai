@@ -557,7 +557,7 @@ export async function streamAnthropicResponse(
   estimatedInputTokens = 0,
 ): Promise<void> {
   const { subagentRouting, ...providerParams } = params;
-  const result = streamText({ model, ...providerParams, maxRetries: 0, onError: () => {} } as Parameters<typeof streamText>[0]);
+  const result = streamText({ model, ...providerParams, onError: () => {} } as Parameters<typeof streamText>[0]);
   // Prevent unhandled promise rejections on stream properties:
   Promise.resolve(result.text).catch(() => {});
   Promise.resolve(result.toolCalls).catch(() => {});
@@ -595,7 +595,6 @@ export async function generateAnthropicResponse(
     const r = streamText({
       model,
       ...providerParams,
-      maxRetries: 0,
       onError: (event) => { firstStreamError ??= event; },
     } as Parameters<typeof streamText>[0]);
     Promise.resolve(r.toolResults).catch(() => {});
@@ -607,7 +606,7 @@ export async function generateAnthropicResponse(
       throw firstStreamError ? firstStreamError.error : error;
     }
   } else {
-    const r = await generateText({ model, ...providerParams, maxRetries: 0 } as Parameters<typeof generateText>[0]);
+    const r = await generateText({ model, ...providerParams } as Parameters<typeof generateText>[0]);
     ({ text, toolCalls, finishReason, usage } = r);
   }
 

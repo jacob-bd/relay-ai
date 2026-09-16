@@ -567,3 +567,99 @@ function claudeAgentDefinition() {
     },
   };
 }
+
+describe('dual-protocol gateways keep direct passthrough', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('forwards an Anthropic model on OpenCode Zen without SDK translation', async () => {
+    const realFetch = globalThis.fetch;
+    const upstreamCalls: Array<{ url: string; body: any }> = [];
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (!url.startsWith('https://opencode.ai/')) return realFetch(input, init);
+      upstreamCalls.push({ url, body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify({
+        id: 'msg-zen',
+        type: 'message',
+        role: 'assistant',
+        model: 'claude-opus-5',
+        content: [{ type: 'text', text: 'zen ok' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    const zenClaude: ServerModelInfo = {
+      id: 'claude-opus-5',
+      name: 'Claude Opus 5',
+      isFree: false,
+      brand: 'Anthropic',
+      providerId: 'zen',
+      sourceBackend: 'zen',
+      modelFormat: 'anthropic',
+      npm: '@ai-sdk/anthropic',
+      baseUrl: 'https://opencode.ai/zen',
+      apiBaseUrl: 'https://opencode.ai/zen',
+      apiKey: 'zen-key',
+    };
+    const server = await startTestServer({ catalog: createGatewayModelCatalog([zenClaude]) });
+
+    const response = await fetch(`${server.url}/anthropic/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-opus-5',
+        max_tokens: 16,
+        system: [{ type: 'text', text: 'sys', cache_control: { type: 'ephemeral' } }],
+        messages: [{ role: 'user', content: 'hello' }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(createLanguageModel).not.toHaveBeenCalled();
+    expect(upstreamCalls).toHaveLength(1);
+    expect(upstreamCalls[0]!.url).toBe('https://opencode.ai/zen/v1/messages');
+    expect(upstreamCalls[0]!.body).toMatchObject({
+      system: [{ cache_control: { type: 'ephemeral' } }],
+    });
+  });
+
+  it('forwards an OpenCode Go chat request with every OpenAI field intact', async () => {
+    const upstream = await startUpstream({
+      id: 'chatcmpl-test',
+      choices: [{ message: { content: '{"ok":true}' }, finish_reason: 'stop' }],
+    });
+    handles.push(upstream);
+    const goModel: ServerModelInfo = {
+      id: 'deepseek-v4-flash',
+      name: 'DeepSeek V4 Flash',
+      isFree: false,
+      brand: 'DeepSeek',
+      providerId: 'go',
+      sourceBackend: 'go',
+      modelFormat: 'openai',
+      npm: '@ai-sdk/openai-compatible',
+      apiBaseUrl: 'https://opencode.ai/zen/go/v1',
+      completionsUrl: `${upstream.baseUrl}/v1/chat/completions`,
+      apiKey: 'go-key',
+    };
+    const server = await startTestServer({ catalog: createGatewayModelCatalog([goModel]) });
+
+    const response = await fetch(`${server.url}/openai/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'deepseek-v4-flash',
+        messages: [{ role: 'user', content: 'hi' }],
+        response_format: { type: 'json_object' },
+        top_p: 0.5,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(createLanguageModel).not.toHaveBeenCalled();
+    expect(upstream.requests[0]?.body).toMatchObject({
+      response_format: { type: 'json_object' },
+      top_p: 0.5,
+    });
+  });
+});

@@ -38,7 +38,6 @@ import {
   extractConversationId,
   openCodeGoHeaders,
 } from './opencode-session.js';
-import { isDualProtocolGateway } from './gateway-protocol.js';
 
 type ProxyLog = (message: string | (() => string)) => void;
 
@@ -265,11 +264,8 @@ export function startProxyCatalog(
         `POST /v1/messages - alias=${originalModel} route=${route.realModelId} format=${route.modelFormat} key=${apiKey ? `len:${apiKey.length}` : 'MISSING'}`,
       );
 
-      const dualProtocolAnthropic = route.modelFormat === 'anthropic'
-        && route.authType !== 'oauth'
-        && isDualProtocolGateway(route.providerId, route.baseURL ?? upstreamUrl);
-      const usesSdkAdapter = isSdkMigratedNpm(route.npm) || dualProtocolAnthropic;
-      if (!apiKey && (!usesSdkAdapter || dualProtocolAnthropic)) {
+      const usesSdkAdapter = isSdkMigratedNpm(route.npm);
+      if (!apiKey && !usesSdkAdapter) {
         anthropicError(res, 401, 'Missing API key');
         return;
       }
@@ -277,7 +273,7 @@ export function startProxyCatalog(
       // ── Anthropic passthrough ───────────────────────────────────────
       // Forward raw Anthropic body (with real model id) directly to the upstream.
       // No translation needed — the upstream speaks Anthropic natively.
-      if (route.modelFormat === 'anthropic' && !dualProtocolAnthropic) {
+      if (route.modelFormat === 'anthropic') {
         const betaHeaderRaw = req.headers['anthropic-beta'];
         const inboundBeta = Array.isArray(betaHeaderRaw) ? betaHeaderRaw.join(',') : betaHeaderRaw;
         const forwardBody = { ...anthropicBody, model: route.realModelId };
@@ -327,12 +323,7 @@ export function startProxyCatalog(
       // OpenCode-assigned npm packages route through the SDK, which owns wire
       // format, endpoint selection, and provider quirks.
       if (usesSdkAdapter) {
-        const sdkNpm = route.npm ?? (dualProtocolAnthropic ? '@ai-sdk/anthropic' : undefined);
-        if (!sdkNpm) {
-          anthropicError(res, 500, `No SDK provider configured for model ${originalModel}`);
-          return;
-        }
-        const openAiOAuth = sdkNpm === '@ai-sdk/openai' && route.authType === 'oauth';
+        const openAiOAuth = route.npm === '@ai-sdk/openai' && route.authType === 'oauth';
         const subagentRouting = buildProxySubagentModelRouting(routes, route);
         const sessionId = extractClaudeSessionId(req.headers, anthropicBody);
         const requestHeaders = openCodeGoHeaders(
@@ -346,9 +337,9 @@ export function startProxyCatalog(
             subagentRouteRegistry.register(sessionId, modelId)
           );
         }
-        const params = sdkTranslateRequest(anthropicBody, sdkNpm, {
+        const params = sdkTranslateRequest(anthropicBody, route.npm!, {
           openAiOAuth,
-          maxTools: maxToolsForNpm(sdkNpm),
+          maxTools: maxToolsForNpm(route.npm),
           onDebug: (msg) => plog(() => msg),
           subagentRouting,
           ...(requestHeaders ? { requestHeaders } : {}),
@@ -367,7 +358,7 @@ export function startProxyCatalog(
         );
         try {
           const model = await createLanguageModel({
-            npm: sdkNpm,
+            npm: route.npm!,
             modelId: route.realModelId,
             apiKey,
             baseURL: route.baseURL,

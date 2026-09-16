@@ -783,7 +783,6 @@ async function handleStreamingRequest(
     toolChoice: sdkParams.toolChoice,
     providerOptions: effectiveProviderOptions as any,
     headers: sdkParams.headers,
-    maxRetries: 0,
   });
 
   const startSse = () => {
@@ -973,7 +972,6 @@ async function handleUnaryRequest(
     toolChoice: sdkParams.toolChoice,
     providerOptions: effectiveProviderOptions as any,
     headers: sdkParams.headers,
-    maxRetries: 0,
   });
 
   const parts: any[] = [];

@@ -163,7 +163,7 @@ export async function generateOpenAiResponse(
   params: SdkCallParams,
   responseModelId: string,
 ) {
-  const result: any = await generateText({ model, ...(params as any), maxRetries: 0 });
+  const result: any = await generateText({ model, ...(params as any) });
   const message: Record<string, any> = { role: 'assistant', content: result.text || null };
   // Reasoning models can spend their entire turn on reasoning with little/no final text
   // (e.g. a very long system prompt leaves no budget for a visible answer). Surface it via
@@ -203,7 +203,7 @@ export async function streamOpenAiResponse(
   onChunk: (chunk: string) => void,
   log?: (msg: () => string) => void,
 ): Promise<void> {
-  const { stream } = streamText({ model, ...(params as any), maxRetries: 0 });
+  const { stream } = streamText({ model, ...(params as any) });
   const baseData = {
     id: `chatcmpl-${Date.now()}`,
     object: 'chat.completion.chunk',

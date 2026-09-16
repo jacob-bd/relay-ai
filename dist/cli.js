@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-GFN2OMV3.js";
+} from "./chunk-SJEJAHKL.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -148,7 +148,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-O7WWJRYD.js";
+} from "./chunk-ITPQY3LV.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -189,7 +189,6 @@ import {
   getReasoningCapabilities,
   grabRoundTripSignature,
   injectClaudeIdentity,
-  isDualProtocolGateway,
   isSecretServiceAvailable,
   isValidProviderId,
   loadRegistry,
@@ -223,7 +222,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-QTIEHFTW.js";
+} from "./chunk-2LUDFIZX.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -7664,8 +7663,7 @@ ${JSON.stringify(params, null, 2)}`);
           plog("Starting streamText...");
           const { stream } = streamText2({
             model: languageModel,
-            ...params,
-            maxRetries: 0
+            ...params
           });
           const toolCallBuffers = /* @__PURE__ */ new Map();
           let isThinking = false;
@@ -7769,8 +7767,7 @@ ${JSON.stringify(params, null, 2)}`);
           plog("Starting generateText...");
           const result = await generateText2({
             model: languageModel,
-            ...params,
-            maxRetries: 0
+            ...params
           });
           plog("generateText finished.");
           const parts = [];
@@ -10180,8 +10177,7 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log15
     tools: sdkParams.tools,
     toolChoice: sdkParams.toolChoice,
     providerOptions: effectiveProviderOptions,
-    headers: sdkParams.headers,
-    maxRetries: 0
+    headers: sdkParams.headers
   });
   const startSse = () => {
     if (res.headersSent) return;
@@ -10359,8 +10355,7 @@ async function handleUnaryRequest(res, route, providerOptions, parsed, log15, op
     tools: sdkParams.tools,
     toolChoice: sdkParams.toolChoice,
     providerOptions: effectiveProviderOptions,
-    headers: sdkParams.headers,
-    maxRetries: 0
+    headers: sdkParams.headers
   });
   const parts = [];
   const reasoning = reasoningOutputText(result.reasoning);
@@ -15865,7 +15860,6 @@ Error: ${launchPlan.error}
   let childEnv;
   const isAntigravityOAuth = activeProvider.id === "antigravity" && activeProvider.authType === "oauth";
   const isOAuthAnthropic = selectedModel.modelFormat === "anthropic" && activeProvider.authType === "oauth" && !isAntigravityOAuth;
-  const isDualProtocolAnthropic = selectedModel.modelFormat === "anthropic" && !isOAuthAnthropic && isDualProtocolGateway(activeProvider.id, selectedModel.apiBaseUrl ?? selectedModel.baseUrl);
   if (isAntigravityOAuth) {
     try {
       proxyHandle = await startProxy(
@@ -15921,7 +15915,7 @@ Error: ${launchPlan.error}
       proxyHandle.port,
       selectedModel.contextWindow
     );
-  } else if (selectedModel.modelFormat === "anthropic" && !isDualProtocolAnthropic) {
+  } else if (selectedModel.modelFormat === "anthropic") {
     childEnv = buildChildEnv(
       selectedModel.baseUrl,
       selectedModel.id,
@@ -15938,12 +15932,11 @@ Error: ${launchPlan.error}
         selectedModel.contextWindow,
         {
           npm: selectedModel.npm,
-          baseURL: selectedModel.apiBaseUrl ?? selectedModel.baseUrl,
+          baseURL: selectedModel.apiBaseUrl,
           upstreamModelId: selectedModel.upstreamModelId,
           providerId: activeProvider.id,
           authType: activeProvider.authType,
           oauthAccountId: activeProvider.oauthAccountId,
-          modelFormat: selectedModel.modelFormat,
           supportedParameters: selectedModel.supportedParameters,
           reasoning: selectedModel.reasoning,
           interleavedReasoningField: selectedModel.interleavedReasoningField,
@@ -16058,7 +16051,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-MR5GGB6J.js");
+    const { runUiCommand } = await import("./ui-command-MHIEJDAL.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

@@ -10,7 +10,7 @@ import {
   supportsManualModels,
   translateRequest,
   validateCustomEndpointUrl
-} from "./chunk-QTIEHFTW.js";
+} from "./chunk-2LUDFIZX.js";
 
 // src/registry/validate-manual-model.ts
 import { randomUUID } from "crypto";
@@ -149,4 +149,4 @@ export {
   addManualModel,
   removeManualModel
 };
-//# sourceMappingURL=chunk-GFN2OMV3.js.map
+//# sourceMappingURL=chunk-SJEJAHKL.js.map

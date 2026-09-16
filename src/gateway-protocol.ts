@@ -126,6 +126,11 @@ export function classifyProtocolFailure(error: unknown): ProtocolFailure {
   if (lower.includes('abort') || lower.includes('cancel')) {
     return { retryable: false, status, reason: 'request cancelled' };
   }
+  // OpenCode Go reports a wrong-format request as a 401 ModelError
+  // ("... is not supported for format oa-compat"), not an auth failure.
+  if (lower.includes('not supported for format')) {
+    return { retryable: true, status, reason: 'provider rejected the selected API format' };
+  }
   if (status === 401 || status === 403 || status === 429
     || /invalid (api )?key|authentication|quota|billing|not in plan|model_not_in_plan/.test(lower)) {
     return { retryable: false, status, reason: 'authentication or quota failure' };

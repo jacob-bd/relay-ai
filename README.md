@@ -566,12 +566,16 @@ When OpenCode Zen is in your registry, `subscriptionFilter` controls which Zen m
 
 Zen, Go, OpenRouter, and Command Code gateways can expose both Chat
 Completions and Anthropic Messages. Relay uses current model metadata first, so
-newly named models are not forced into a provider-wide format. If a stale or
-incorrect choice returns an early protocol or gateway error, Relay retries the
-same provider/account/model once on the sibling endpoint before streaming any
+newly named models are not forced into a provider-wide format. For requests
+Relay translates (OpenAI-format models, and any model used from Codex, Gemini,
+or Antigravity), an early protocol or gateway error makes Relay retry the same
+provider/account/model once on the sibling endpoint before streaming any
 output. Successful choices are remembered for 24 hours; two failed attempts
 pause protocol retries for five minutes. Authentication, quota, context,
-moderation, and cancellation errors do not trigger a retry.
+moderation, and cancellation errors do not trigger a retry. Anthropic-format
+models in Claude Code, and the server's direct routes, are forwarded untouched
+so prompt caching, beta headers, and thinking keep working; they do not retry
+on the sibling endpoint.
 
 ### Environment isolation
 
@@ -593,7 +597,7 @@ OpenCode exposes models through different API formats. relay-ai handles them whe
 
 | Model format | Examples | How it works | Label |
 |---|---|---|---|
-| Anthropic native | Claude, Union Alpha, Qwen, MiniMax (Go) | Direct connection; dual-protocol gateways can retry once through their Chat Completions sibling before output starts | *(none)* |
+| Anthropic native | Claude, Union Alpha, Qwen, MiniMax (Go) | Direct connection | *(none)* |
 | OpenAI chat completions | DeepSeek, Kimi, MiMo, GLM, Grok, GPT-4o (OpenCode OpenAI provider) | SDK adapter proxy (Vercel AI SDK) | `via proxy` |
 | OpenAI Responses API | GPT-5.4+, GPT-5.5, Codex, o-series (OpenCode OpenAI provider only) | Same proxy; SDK picks Responses API | `via proxy` |
 | Gemini native | Gemini (OpenCode Google provider) | SDK adapter, Gemini native API | `via proxy` |

@@ -434,48 +434,73 @@ function createProtocolFallbackMiddleware(
     onDebug?.(`[protocol-fallback] ${message}`);
   };
 
+  // Read on every call, not once at creation: the server reuses one wrapped
+  // model for its whole lifetime, so the learned order and the failure pause
+  // must be checked per request.
+  const attemptOrder = (runPrimary: () => PromiseLike<unknown>, runAlternate: () => PromiseLike<unknown>) => (
+    rememberedProtocol(cacheKey) === alternateProtocol
+      ? { first: runAlternate, second: runPrimary, firstProtocol: alternateProtocol, secondProtocol: primaryProtocol }
+      : { first: runPrimary, second: runAlternate, firstProtocol: primaryProtocol, secondProtocol: alternateProtocol }
+  );
+
+  // When the second endpoint also rejects the request as the wrong format,
+  // the first endpoint's error is the real one, and keeps the SDK's retry.
+  const surfacedError = (firstError: unknown, secondError: unknown): unknown => (
+    classifyProtocolFailure(secondError).retryable ? firstError : secondError
+  );
+
   return {
     specificationVersion: 'v4',
     wrapGenerate: async ({ doGenerate, params }): Promise<any> => {
+      if (protocolCooldownActive(cacheKey)) return doGenerate();
+      const { first, second, firstProtocol, secondProtocol } = attemptOrder(
+        doGenerate,
+        () => alternateModel.doGenerate(params),
+      );
       try {
-        const result = await doGenerate();
-        rememberProtocol(cacheKey, primaryProtocol);
+        const result = await first();
+        rememberProtocol(cacheKey, firstProtocol);
         return result;
       } catch (error) {
         const failure = classifyProtocolFailure(error);
         if (!failure.retryable) throw error;
-        note(`${primaryProtocol} failed (${failure.reason}${failure.status ? `, HTTP ${failure.status}` : ''}); retrying ${alternateProtocol}`);
+        note(`${firstProtocol} failed (${failure.reason}${failure.status ? `, HTTP ${failure.status}` : ''}); retrying ${secondProtocol}`);
         let result: unknown;
         try {
-          result = await alternateModel.doGenerate(params);
+          result = await second();
         } catch (alternateError) {
           const alternateFailure = classifyProtocolFailure(alternateError);
-          note(`${alternateProtocol} failed after fallback (${alternateFailure.reason}${alternateFailure.status ? `, HTTP ${alternateFailure.status}` : ''})`);
+          note(`${secondProtocol} failed after fallback (${alternateFailure.reason}${alternateFailure.status ? `, HTTP ${alternateFailure.status}` : ''})`);
           rememberProtocolFailure(cacheKey);
-          throw alternateError;
+          throw surfacedError(error, alternateError);
         }
-        rememberProtocol(cacheKey, alternateProtocol);
+        rememberProtocol(cacheKey, secondProtocol);
         return result;
       }
     },
     wrapStream: async ({ doStream, params }): Promise<any> => {
+      if (protocolCooldownActive(cacheKey)) return doStream();
+      const { first, second, firstProtocol, secondProtocol } = attemptOrder(
+        doStream,
+        () => alternateModel.doStream(params),
+      );
       let primaryResult: { stream: ReadableStream<unknown>; [key: string]: unknown };
       try {
-        primaryResult = await doStream();
+        primaryResult = await first() as typeof primaryResult;
       } catch (error) {
         const failure = classifyProtocolFailure(error);
         if (!failure.retryable) throw error;
-        note(`${primaryProtocol} stream failed (${failure.reason}${failure.status ? `, HTTP ${failure.status}` : ''}); retrying ${alternateProtocol}`);
+        note(`${firstProtocol} stream failed (${failure.reason}${failure.status ? `, HTTP ${failure.status}` : ''}); retrying ${secondProtocol}`);
         let alternateResult: { stream: ReadableStream<unknown>; [key: string]: unknown };
         try {
-          alternateResult = await alternateModel.doStream(params);
+          alternateResult = await second() as typeof alternateResult;
         } catch (alternateError) {
           const alternateFailure = classifyProtocolFailure(alternateError);
-          note(`${alternateProtocol} stream failed after fallback (${alternateFailure.reason}${alternateFailure.status ? `, HTTP ${alternateFailure.status}` : ''})`);
+          note(`${secondProtocol} stream failed after fallback (${alternateFailure.reason}${alternateFailure.status ? `, HTTP ${alternateFailure.status}` : ''})`);
           rememberProtocolFailure(cacheKey);
-          throw alternateError;
+          throw surfacedError(error, alternateError);
         }
-        return observeAlternateStream(alternateResult, alternateProtocol, cacheKey) as never;
+        return observeAlternateStream(alternateResult, secondProtocol, cacheKey) as never;
       }
 
       const primaryReader = primaryResult.stream.getReader();
@@ -499,7 +524,7 @@ function createProtocolFallbackMiddleware(
                 return;
               }
               switched = true;
-              note(`${primaryProtocol} stream failed (${failure.reason}${failure.status ? `, HTTP ${failure.status}` : ''}); retrying ${alternateProtocol}`);
+              note(`${firstProtocol} stream failed (${failure.reason}${failure.status ? `, HTTP ${failure.status}` : ''}); retrying ${secondProtocol}`);
               try {
                 await primaryReader.cancel();
               } catch {
@@ -507,12 +532,12 @@ function createProtocolFallbackMiddleware(
               }
               let alternateResult: { stream: ReadableStream<unknown>; [key: string]: unknown };
               try {
-                alternateResult = await alternateModel.doStream({ ...params });
+                alternateResult = await second() as typeof alternateResult;
               } catch (alternateError) {
                 const alternateFailure = classifyProtocolFailure(alternateError);
-                note(`${alternateProtocol} stream failed after fallback (${alternateFailure.reason}${alternateFailure.status ? `, HTTP ${alternateFailure.status}` : ''})`);
+                note(`${secondProtocol} stream failed after fallback (${alternateFailure.reason}${alternateFailure.status ? `, HTTP ${alternateFailure.status}` : ''})`);
                 rememberProtocolFailure(cacheKey);
-                throw alternateError;
+                throw surfacedError(cause, alternateError);
               }
               const reader = alternateResult.stream.getReader();
               let alternateSemantic = false;
@@ -527,7 +552,7 @@ function createProtocolFallbackMiddleware(
                   }
                   controller.enqueue(next.value);
                 }
-                if (alternateSemantic && alternateFinish) rememberProtocol(cacheKey, alternateProtocol);
+                if (alternateSemantic && alternateFinish) rememberProtocol(cacheKey, secondProtocol);
                 else rememberProtocolFailure(cacheKey);
                 controller.close();
               } finally {
@@ -542,7 +567,7 @@ function createProtocolFallbackMiddleware(
                   if (!committed && terminal) {
                     await pipeAlternate(new Error('provider returned an empty response'), true);
                   } else if (committed && terminal) {
-                    rememberProtocol(cacheKey, primaryProtocol);
+                    rememberProtocol(cacheKey, firstProtocol);
                     controller.close();
                   } else {
                     controller.close();
@@ -615,7 +640,6 @@ export async function createLanguageModel(spec: ProviderModelSpec): Promise<Lang
     apiKey: spec.apiKey,
     headers: spec.headers,
   });
-  if (protocolCooldownActive(cacheKey)) return primary;
 
   let alternate: LanguageModel;
   try {
@@ -629,20 +653,6 @@ export async function createLanguageModel(spec: ProviderModelSpec): Promise<Lang
     return primary;
   }
 
-  const remembered = rememberedProtocol(cacheKey);
-  if (remembered && remembered !== primaryProtocol && remembered === alternative.modelFormat) {
-    return wrapLanguageModel({
-      model: alternate as Parameters<typeof wrapLanguageModel>[0]['model'],
-      middleware: createProtocolFallbackMiddleware(
-        alternate,
-        primary,
-        alternative.modelFormat,
-        primaryProtocol,
-        cacheKey,
-        spec.onDebug,
-      ),
-    }) as unknown as LanguageModel;
-  }
   return wrapLanguageModel({
     model: primary as Parameters<typeof wrapLanguageModel>[0]['model'],
     middleware: createProtocolFallbackMiddleware(

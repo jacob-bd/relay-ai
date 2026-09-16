@@ -47,7 +47,6 @@ import {
   injectClaudeCodeBillingSystemLine,
   injectClaudeIdentity,
   isBrowserRedirectOAuth,
-  isDualProtocolGateway,
   isOpencodeOAuth,
   isSdkMigratedNpm,
   isValidProviderId,
@@ -86,7 +85,7 @@ import {
   translateRequest,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-QTIEHFTW.js";
+} from "./chunk-2LUDFIZX.js";
 
 // src/registry/google-model-id.ts
 var GOOGLE_MODEL_PREFIX = "models/";
@@ -2815,13 +2814,12 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
       plog(
         () => `POST /v1/messages - alias=${originalModel} route=${route.realModelId} format=${route.modelFormat} key=${apiKey ? `len:${apiKey.length}` : "MISSING"}`
       );
-      const dualProtocolAnthropic = route.modelFormat === "anthropic" && route.authType !== "oauth" && isDualProtocolGateway(route.providerId, route.baseURL ?? upstreamUrl);
-      const usesSdkAdapter = isSdkMigratedNpm(route.npm) || dualProtocolAnthropic;
-      if (!apiKey && (!usesSdkAdapter || dualProtocolAnthropic)) {
+      const usesSdkAdapter = isSdkMigratedNpm(route.npm);
+      if (!apiKey && !usesSdkAdapter) {
         anthropicError(res, 401, "Missing API key");
         return;
       }
-      if (route.modelFormat === "anthropic" && !dualProtocolAnthropic) {
+      if (route.modelFormat === "anthropic") {
         const betaHeaderRaw = req.headers["anthropic-beta"];
         const inboundBeta = Array.isArray(betaHeaderRaw) ? betaHeaderRaw.join(",") : betaHeaderRaw;
         const forwardBody = { ...anthropicBody, model: route.realModelId };
@@ -2871,12 +2869,7 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
         return;
       }
       if (usesSdkAdapter) {
-        const sdkNpm = route.npm ?? (dualProtocolAnthropic ? "@ai-sdk/anthropic" : void 0);
-        if (!sdkNpm) {
-          anthropicError(res, 500, `No SDK provider configured for model ${originalModel}`);
-          return;
-        }
-        const openAiOAuth = sdkNpm === "@ai-sdk/openai" && route.authType === "oauth";
+        const openAiOAuth = route.npm === "@ai-sdk/openai" && route.authType === "oauth";
         const subagentRouting = buildProxySubagentModelRouting(routes, route);
         const sessionId = extractClaudeSessionId(req.headers, anthropicBody);
         const requestHeaders = openCodeGoHeaders(
@@ -2888,9 +2881,9 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
         if (sessionId) {
           subagentRouting.registerSubagentRoute = (modelId) => subagentRouteRegistry.register(sessionId, modelId);
         }
-        const params = translateRequest(anthropicBody, sdkNpm, {
+        const params = translateRequest(anthropicBody, route.npm, {
           openAiOAuth,
-          maxTools: maxToolsForNpm(sdkNpm),
+          maxTools: maxToolsForNpm(route.npm),
           onDebug: (msg) => plog(() => msg),
           subagentRouting,
           ...requestHeaders ? { requestHeaders } : {},
@@ -2908,7 +2901,7 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
         );
         try {
           const model = await createLanguageModel({
-            npm: sdkNpm,
+            npm: route.npm,
             modelId: route.realModelId,
             apiKey,
             baseURL: route.baseURL,
@@ -6957,7 +6950,7 @@ function toOpenAiFinishReason(reason) {
   }
 }
 async function generateOpenAiResponse(model, params, responseModelId) {
-  const result = await generateText({ model, ...params, maxRetries: 0 });
+  const result = await generateText({ model, ...params });
   const message = { role: "assistant", content: result.text || null };
   if (result.reasoningText || result.reasoning) {
     message.reasoning_content = result.reasoningText ?? result.reasoning;
@@ -6983,7 +6976,7 @@ async function generateOpenAiResponse(model, params, responseModelId) {
   };
 }
 async function streamOpenAiResponse(model, params, responseModelId, onChunk, log7) {
-  const { stream } = streamText({ model, ...params, maxRetries: 0 });
+  const { stream } = streamText({ model, ...params });
   const baseData = {
     id: `chatcmpl-${Date.now()}`,
     object: "chat.completion.chunk",
@@ -7148,8 +7141,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog, suba
     return;
   }
   plog(() => `anthropic-messages model=${body.model} format=${model.modelFormat} npm=${model.npm ?? "none"} stream=${body.stream}`);
-  const dualProtocolAnthropic = model.modelFormat === "anthropic" && model.authType !== "oauth" && isDualProtocolGateway(model.providerId ?? model.sourceBackend, model.baseUrl);
-  if (model.modelFormat === "anthropic" && !dualProtocolAnthropic) {
+  if (model.modelFormat === "anthropic") {
     if (model.baseUrl && !/^https?:\/\//i.test(model.baseUrl)) {
       sendJson(res, 400, { error: { message: `Invalid provider baseUrl: must be http:// or https://` } });
       return;
@@ -7196,8 +7188,8 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog, suba
     );
     return;
   }
-  if (model.modelFormat === "openai" || dualProtocolAnthropic) {
-    if (!dualProtocolAnthropic && !isSdkMigratedNpm(model.npm)) {
+  if (model.modelFormat === "openai") {
+    if (!isSdkMigratedNpm(model.npm)) {
       sendJson(res, 400, { error: { message: `No SDK provider for model: ${model.id}` } });
       return;
     }
@@ -7316,9 +7308,7 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
   });
   const model = lookupModel(res, options.catalog, body.model);
   if (!model) return;
-  const modelGatewayBase = model.apiBaseUrl ?? model.baseUrl ?? (model.sourceBackend === "zen" || model.sourceBackend === "go" ? backendFor(options, model).baseUrl : void 0);
-  const dualProtocolOpenAi = model.modelFormat === "openai" && isDualProtocolGateway(model.providerId ?? model.sourceBackend, modelGatewayBase);
-  if (supportsDirectOpenAIChatCompletions(model) && !dualProtocolOpenAi) {
+  if (supportsDirectOpenAIChatCompletions(model)) {
     if (model.completionsUrl && !/^https?:\/\//i.test(model.completionsUrl)) {
       sendJson(res, 400, { error: { message: `Invalid provider completionsUrl: must be http:// or https://` } });
       return;
@@ -7353,7 +7343,7 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
     return;
   }
   const apiKey = model.apiKey ?? options.apiKey;
-  const baseURL = model.modelFormat === "anthropic" ? model.baseUrl : model.apiBaseUrl ?? modelGatewayBase;
+  const baseURL = model.modelFormat === "anthropic" ? model.baseUrl : model.apiBaseUrl;
   const languageModel = await getOrInitLanguageModel(
     modelCache,
     model,
@@ -9695,4 +9685,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-O7WWJRYD.js.map
+//# sourceMappingURL=chunk-ITPQY3LV.js.map

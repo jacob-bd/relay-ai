@@ -309,6 +309,87 @@ describe('createLanguageModel', () => {
     }
   });
 
+  it('uses a protocol learned after the model was created', async () => {
+    const calls: string[] = [];
+    const fetchMock = vi.fn<typeof globalThis.fetch>(async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith('/chat/completions')) {
+        return new Response('{"error":{"message":"Internal server error"}}', { status: 500 });
+      }
+      return new Response(JSON.stringify({
+        id: 'msg_union_alpha',
+        type: 'message',
+        role: 'assistant',
+        model: 'union-alpha',
+        content: [{ type: 'text', text: 'ok' }],
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      // A long-lived server reuses one model instance for every request.
+      const model = await createLanguageModel({
+        npm: '@ai-sdk/openai-compatible',
+        modelId: 'union-alpha',
+        apiKey: 'test-key',
+        providerId: 'go',
+        baseURL: 'https://opencode.ai/zen/go/v1',
+      });
+      const { generateText } = await import('ai');
+      await generateText({ model, messages: [{ role: 'user', content: 'one' }], maxRetries: 0 });
+      await generateText({ model, messages: [{ role: 'user', content: 'two' }], maxRetries: 0 });
+      expect(calls).toEqual([
+        'https://opencode.ai/zen/go/v1/chat/completions',
+        'https://opencode.ai/zen/go/v1/messages',
+        'https://opencode.ai/zen/go/v1/messages',
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+      clearRememberedProtocols();
+    }
+  });
+
+  it('pauses the alternate on a reused model and surfaces the primary error', async () => {
+    const calls: string[] = [];
+    const fetchMock = vi.fn<typeof globalThis.fetch>(async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith('/messages')) {
+        return new Response('{"error":{"message":"Unknown endpoint /v1/messages"}}', { status: 404 });
+      }
+      return new Response('{"error":{"message":"Internal server error"}}', { status: 500 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const model = await createLanguageModel({
+        npm: '@ai-sdk/openai-compatible',
+        modelId: 'deepseek-v4-flash',
+        apiKey: 'test-key',
+        providerId: 'go',
+        baseURL: 'https://opencode.ai/zen/go/v1',
+      });
+      const { generateText } = await import('ai');
+      const first = await generateText({ model, messages: [{ role: 'user', content: 'one' }], maxRetries: 0 })
+        .catch((error: unknown) => error);
+      // A wrong-endpoint 404 from the alternate must not hide the primary's
+      // retryable outage.
+      expect(first).toMatchObject({ statusCode: 500 });
+      await generateText({ model, messages: [{ role: 'user', content: 'two' }], maxRetries: 0 })
+        .catch(() => undefined);
+      expect(calls).toEqual([
+        'https://opencode.ai/zen/go/v1/chat/completions',
+        'https://opencode.ai/zen/go/v1/messages',
+        'https://opencode.ai/zen/go/v1/chat/completions',
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+      clearRememberedProtocols();
+    }
+  });
+
   it('removes Codex blind max_tokens at the OpenRouter HTTP boundary', async () => {
     const forwarded: Array<Record<string, unknown>> = [];
     const fetchImpl: typeof globalThis.fetch = async (_input, init) => {

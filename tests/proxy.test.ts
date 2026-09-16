@@ -418,6 +418,49 @@ describe('anthropic passthrough debug logging', () => {
     vi.clearAllMocks();
   });
 
+  it('keeps raw passthrough for Anthropic models on a dual-protocol gateway', async () => {
+    const route: ProxyRoute = {
+      aliasId: 'claude-opus-5',
+      realModelId: 'claude-opus-5',
+      displayName: 'Claude Opus 5 (OpenCode Zen)',
+      upstreamUrl: 'https://opencode.ai/zen',
+      apiKey: 'zen-key',
+      modelFormat: 'anthropic',
+      npm: '@ai-sdk/anthropic',
+      baseURL: 'https://opencode.ai/zen',
+      providerId: 'zen',
+    };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      id: 'msg_zen',
+      type: 'message',
+      role: 'assistant',
+      model: 'claude-opus-5',
+      content: [{ type: 'text', text: 'ok' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(translateRequest).mockClear();
+
+    const handle = await startProxyCatalog([route], route.aliasId, false);
+    const res = await postToProxy(handle.port, handle.token, {
+      model: 'claude-opus-5',
+      max_tokens: 100,
+      system: [{ type: 'text', text: 'sys', cache_control: { type: 'ephemeral' } }],
+      messages: [{ role: 'user', content: 'hi' }],
+    }, { 'anthropic-beta': 'context-1m-2025-08-07' });
+    handle.close();
+
+    expect(res.status).toBe(200);
+    expect(translateRequest).not.toHaveBeenCalled();
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://opencode.ai/zen/v1/messages');
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      system: [{ cache_control: { type: 'ephemeral' } }],
+    });
+    expect(new Headers(init.headers).get('anthropic-beta')).toContain('context-1m-2025-08-07');
+  });
+
   it('logs upstream non-OK status and body', async () => {
     const route: ProxyRoute = {
       aliasId: 'claude-sonnet-4-6',
