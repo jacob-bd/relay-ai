@@ -2457,6 +2457,190 @@ function injectClaudeIdentity(body, providerData, seed) {
   return { sessionId, userId };
 }
 
+// src/gateway-protocol.ts
+import { createHash as createHash2 } from "crypto";
+import { existsSync as existsSync4, mkdirSync as mkdirSync3, readFileSync as readFileSync6, renameSync as renameSync2, unlinkSync, writeFileSync as writeFileSync2 } from "fs";
+import { dirname as dirname2, join as join4 } from "path";
+var DUAL_PROVIDER_IDS = /* @__PURE__ */ new Set([
+  "zen",
+  "go",
+  "opencode",
+  "opencode-zen",
+  "opencode-go",
+  "openrouter",
+  "commandcode",
+  "command-code"
+]);
+function normalizedRoot(baseURL) {
+  return baseURL.replace(/\/+$/, "").replace(/\/v1$/i, "");
+}
+function isKnownDualHost(providerId, baseURL) {
+  if (!baseURL) return false;
+  let parsed;
+  try {
+    parsed = new URL(baseURL);
+  } catch {
+    return false;
+  }
+  const host = parsed.hostname.toLowerCase();
+  const path = parsed.pathname.toLowerCase();
+  const id = providerId?.trim().toLowerCase();
+  if (host === "opencode.ai" && path.includes("/zen")) return true;
+  if (host === "openrouter.ai" && path.includes("/api")) return true;
+  if (host === "commandcode.ai" || host.endsWith(".commandcode.ai")) {
+    if (path.includes("/provider")) return true;
+  }
+  return id !== void 0 && DUAL_PROVIDER_IDS.has(id) && (host === "opencode.ai" || host === "openrouter.ai" || host === "commandcode.ai");
+}
+function isDualProtocolGateway(providerId, baseURL) {
+  return isKnownDualHost(providerId, baseURL);
+}
+function resolveProtocolAlternative(input) {
+  if (!isDualProtocolGateway(input.providerId, input.baseURL)) return null;
+  if (!input.baseURL) return null;
+  const root = normalizedRoot(input.baseURL);
+  if (input.modelFormat === "openai") {
+    return {
+      modelFormat: "anthropic",
+      npm: "@ai-sdk/anthropic",
+      baseURL: root,
+      upstreamUrl: `${root}/v1/messages`
+    };
+  }
+  const openaiRoot = `${root}/v1`;
+  const openrouter = input.providerId?.trim().toLowerCase() === "openrouter" || input.npm === "@openrouter/ai-sdk-provider" || root.includes("openrouter.ai");
+  return {
+    modelFormat: "openai",
+    npm: openrouter ? "@openrouter/ai-sdk-provider" : "@ai-sdk/openai-compatible",
+    baseURL: openaiRoot,
+    upstreamUrl: `${openaiRoot}/chat/completions`
+  };
+}
+function errorText(value) {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object") return "";
+  const record = value;
+  const pieces = [record.message, record.responseBody, record.code].filter((item) => typeof item === "string");
+  return pieces.join(" ");
+}
+function findErrorField(error, field, depth = 0) {
+  if (!error || typeof error !== "object" || depth > 3) return void 0;
+  const record = error;
+  if (record[field] !== void 0) return record[field];
+  return findErrorField(record.cause, field, depth + 1) ?? findErrorField(record.lastError, field, depth + 1);
+}
+function classifyProtocolFailure(error) {
+  const statusValue = findErrorField(error, "statusCode") ?? findErrorField(error, "status");
+  const status = typeof statusValue === "number" ? statusValue : void 0;
+  const text = errorText(error) + " " + errorText(findErrorField(error, "cause")) + " " + errorText(findErrorField(error, "responseBody"));
+  const lower = text.toLowerCase();
+  if (lower.includes("abort") || lower.includes("cancel")) {
+    return { retryable: false, status, reason: "request cancelled" };
+  }
+  if (status === 401 || status === 403 || status === 429 || /invalid (api )?key|authentication|quota|billing|not in plan|model_not_in_plan/.test(lower)) {
+    return { retryable: false, status, reason: "authentication or quota failure" };
+  }
+  if (/context (length|window)|too many tokens|maximum context|invalid tool|tool schema|moderation/.test(lower)) {
+    return { retryable: false, status, reason: "request content was rejected" };
+  }
+  const explicitProtocol = status === 405 || status === 415 || status !== void 0 && [400, 404, 422].includes(status) && /endpoint|method|protocol|messages|chat\/completions|chat completions|anthropic/.test(lower);
+  if (explicitProtocol) {
+    return { retryable: true, status, reason: "provider rejected the selected API format" };
+  }
+  if (status === 500) {
+    return { retryable: true, status, reason: "gateway returned an early internal error" };
+  }
+  return { retryable: false, status, reason: "failure is not attributable to API format" };
+}
+var remembered = /* @__PURE__ */ new Map();
+var PREFERENCE_TTL_MS = 24 * 60 * 60 * 1e3;
+var FAILURE_COOLDOWN_MS = 5 * 60 * 1e3;
+var loadedPersistentPath = null;
+function persistentPath() {
+  return join4(getAppHome(), "protocol-cache.json");
+}
+function loadPersistent(now = Date.now()) {
+  const path = persistentPath();
+  if (loadedPersistentPath === path) return;
+  remembered.clear();
+  loadedPersistentPath = path;
+  try {
+    if (!existsSync4(path)) return;
+    const raw = JSON.parse(readFileSync6(path, "utf8"));
+    for (const [key, entry] of Object.entries(raw)) {
+      if (!entry || entry.protocol !== void 0 && entry.protocol !== "openai" && entry.protocol !== "anthropic") continue;
+      if (typeof entry.expiresAt !== "number" || entry.expiresAt <= now) continue;
+      if (entry.cooldownUntil !== void 0 && typeof entry.cooldownUntil !== "number") continue;
+      remembered.set(key, entry);
+    }
+  } catch {
+  }
+}
+function savePersistent() {
+  const path = persistentPath();
+  try {
+    mkdirSync3(dirname2(path), { recursive: true, mode: 448 });
+    const live = {};
+    const now = Date.now();
+    for (const [key, entry] of remembered) {
+      if (entry.expiresAt > now) live[key] = entry;
+    }
+    const tempPath = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+    writeFileSync2(tempPath, `${JSON.stringify(live)}
+`, { mode: 384 });
+    renameSync2(tempPath, path);
+  } catch {
+  }
+}
+function protocolCacheKey(parts) {
+  const credentialFingerprint = createHash2("sha256").update(parts.apiKey ?? "").update("\0").update(JSON.stringify(Object.entries(parts.headers ?? {}).sort(([a], [b]) => a.localeCompare(b)))).digest("hex");
+  return createHash2("sha256").update(JSON.stringify({
+    providerId: parts.providerId ?? "",
+    modelId: parts.modelId,
+    protocol: parts.protocol ?? "",
+    baseURL: parts.baseURL ?? "",
+    alternativeURL: parts.alternativeURL ?? "",
+    credentialFingerprint
+  })).digest("hex");
+}
+function rememberedProtocol(key, now = Date.now()) {
+  loadPersistent(now);
+  const entry = remembered.get(key);
+  if (!entry) return void 0;
+  if (entry.expiresAt <= now) {
+    remembered.delete(key);
+    savePersistent();
+    return void 0;
+  }
+  if (entry.cooldownUntil !== void 0 && entry.cooldownUntil > now) return void 0;
+  if (!entry.protocol) return void 0;
+  return entry.protocol;
+}
+function rememberProtocol(key, protocol, now = Date.now()) {
+  loadPersistent(now);
+  remembered.set(key, { protocol, expiresAt: now + PREFERENCE_TTL_MS });
+  savePersistent();
+}
+function protocolCooldownActive(key, now = Date.now()) {
+  loadPersistent(now);
+  const entry = remembered.get(key);
+  if (!entry) return false;
+  if (entry.expiresAt <= now) {
+    remembered.delete(key);
+    savePersistent();
+    return false;
+  }
+  return entry.cooldownUntil !== void 0 && entry.cooldownUntil > now;
+}
+function rememberProtocolFailure(key, now = Date.now()) {
+  loadPersistent(now);
+  remembered.set(key, {
+    expiresAt: now + PREFERENCE_TTL_MS,
+    cooldownUntil: now + FAILURE_COOLDOWN_MS
+  });
+  savePersistent();
+}
+
 // src/provider-factory.ts
 import { wrapLanguageModel, extractReasoningMiddleware } from "ai";
 
@@ -3025,7 +3209,7 @@ async function loadSdkProviderFactory(npm) {
   }
   return cached;
 }
-async function createLanguageModel(spec) {
+async function createLanguageModelSingle(spec) {
   const npm = resolveProviderNpm(spec.npm);
   const { modelId, apiKey, baseURL } = spec;
   if (npm === VERTEX_ANTHROPIC_NPM) {
@@ -3072,7 +3256,8 @@ async function createLanguageModel(spec) {
   if (npm === "@ai-sdk/anthropic") {
     const { createAnthropic } = await import("@ai-sdk/anthropic");
     const root = baseURL?.replace(/\/v1\/?$/, "").replace(/\/$/, "");
-    const anthropicOptions = spec.authType === "oauth" ? {
+    const openRouterBearer = spec.providerId?.trim().toLowerCase() === "openrouter" || root?.includes("openrouter.ai") === true;
+    const anthropicOptions = spec.authType === "oauth" || openRouterBearer ? {
       authToken: apiKey,
       ...spec.providerId === "claude-code" ? {
         headers: {
@@ -3140,6 +3325,262 @@ async function createLanguageModel(spec) {
     });
   }
   return model;
+}
+function protocolForNpm(npm) {
+  return npm === "@ai-sdk/anthropic" ? "anthropic" : "openai";
+}
+function isSemanticStreamPart(part) {
+  if (!part || typeof part !== "object") return false;
+  const type = part.type;
+  return type === "text-start" || type === "text-delta" || type === "reasoning-start" || type === "reasoning-delta" || type === "tool-input-start" || type === "tool-input-delta" || type === "tool-input-end" || type === "tool-call" || type === "tool-result" || type === "tool-approval-request";
+}
+var MAX_PROTOCOL_PRELUDE_BYTES = 64 * 1024;
+var MAX_PROTOCOL_PRELUDE_EVENTS = 256;
+function streamPartBytes(part) {
+  try {
+    return JSON.stringify(part)?.length ?? 0;
+  } catch {
+    return 0;
+  }
+}
+function observeAlternateStream(result, protocol, cacheKey) {
+  const reader = result.stream.getReader();
+  const stream = new ReadableStream({
+    start: (controller) => {
+      void (async () => {
+        let semantic = false;
+        let finish = false;
+        try {
+          while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            semantic ||= isSemanticStreamPart(next.value);
+            finish ||= Boolean(next.value && typeof next.value === "object" && next.value.type === "finish");
+            controller.enqueue(next.value);
+          }
+          if (semantic && finish) rememberProtocol(cacheKey, protocol);
+          else rememberProtocolFailure(cacheKey);
+          controller.close();
+        } catch (error) {
+          rememberProtocolFailure(cacheKey);
+          controller.error(error);
+        } finally {
+          reader.releaseLock();
+        }
+      })();
+    },
+    cancel: (reason) => reader.cancel(reason)
+  });
+  return { ...result, stream };
+}
+function createProtocolFallbackMiddleware(primary, alternate, primaryProtocol, alternateProtocol, cacheKey, onDebug) {
+  const alternateModel = alternate;
+  const note = (message) => {
+    onDebug?.(`[protocol-fallback] ${message}`);
+  };
+  return {
+    specificationVersion: "v4",
+    wrapGenerate: async ({ doGenerate, params }) => {
+      try {
+        const result = await doGenerate();
+        rememberProtocol(cacheKey, primaryProtocol);
+        return result;
+      } catch (error) {
+        const failure = classifyProtocolFailure(error);
+        if (!failure.retryable) throw error;
+        note(`${primaryProtocol} failed (${failure.reason}${failure.status ? `, HTTP ${failure.status}` : ""}); retrying ${alternateProtocol}`);
+        let result;
+        try {
+          result = await alternateModel.doGenerate(params);
+        } catch (alternateError) {
+          const alternateFailure = classifyProtocolFailure(alternateError);
+          note(`${alternateProtocol} failed after fallback (${alternateFailure.reason}${alternateFailure.status ? `, HTTP ${alternateFailure.status}` : ""})`);
+          rememberProtocolFailure(cacheKey);
+          throw alternateError;
+        }
+        rememberProtocol(cacheKey, alternateProtocol);
+        return result;
+      }
+    },
+    wrapStream: async ({ doStream, params }) => {
+      let primaryResult;
+      try {
+        primaryResult = await doStream();
+      } catch (error) {
+        const failure = classifyProtocolFailure(error);
+        if (!failure.retryable) throw error;
+        note(`${primaryProtocol} stream failed (${failure.reason}${failure.status ? `, HTTP ${failure.status}` : ""}); retrying ${alternateProtocol}`);
+        let alternateResult;
+        try {
+          alternateResult = await alternateModel.doStream(params);
+        } catch (alternateError) {
+          const alternateFailure = classifyProtocolFailure(alternateError);
+          note(`${alternateProtocol} stream failed after fallback (${alternateFailure.reason}${alternateFailure.status ? `, HTTP ${alternateFailure.status}` : ""})`);
+          rememberProtocolFailure(cacheKey);
+          throw alternateError;
+        }
+        return observeAlternateStream(alternateResult, alternateProtocol, cacheKey);
+      }
+      const primaryReader = primaryResult.stream.getReader();
+      let switched = false;
+      const stream = new ReadableStream({
+        start: (controller) => {
+          void (async () => {
+            const buffered = [];
+            let bufferedBytes = 0;
+            let committed = false;
+            let terminal = false;
+            const pipeAlternate = async (cause, force = false) => {
+              if (switched) {
+                controller.error(cause);
+                return;
+              }
+              const failure = classifyProtocolFailure(cause);
+              if (!force && !failure.retryable) {
+                controller.error(cause);
+                return;
+              }
+              switched = true;
+              note(`${primaryProtocol} stream failed (${failure.reason}${failure.status ? `, HTTP ${failure.status}` : ""}); retrying ${alternateProtocol}`);
+              try {
+                await primaryReader.cancel();
+              } catch {
+              }
+              let alternateResult;
+              try {
+                alternateResult = await alternateModel.doStream({ ...params });
+              } catch (alternateError) {
+                const alternateFailure = classifyProtocolFailure(alternateError);
+                note(`${alternateProtocol} stream failed after fallback (${alternateFailure.reason}${alternateFailure.status ? `, HTTP ${alternateFailure.status}` : ""})`);
+                rememberProtocolFailure(cacheKey);
+                throw alternateError;
+              }
+              const reader = alternateResult.stream.getReader();
+              let alternateSemantic = false;
+              let alternateFinish = false;
+              try {
+                while (true) {
+                  const next = await reader.read();
+                  if (next.done) break;
+                  if (isSemanticStreamPart(next.value)) alternateSemantic = true;
+                  if (next.value && typeof next.value === "object" && next.value.type === "finish") {
+                    alternateFinish = true;
+                  }
+                  controller.enqueue(next.value);
+                }
+                if (alternateSemantic && alternateFinish) rememberProtocol(cacheKey, alternateProtocol);
+                else rememberProtocolFailure(cacheKey);
+                controller.close();
+              } finally {
+                reader.releaseLock();
+              }
+            };
+            try {
+              while (true) {
+                const next = await primaryReader.read();
+                if (next.done) {
+                  if (!committed && terminal) {
+                    await pipeAlternate(new Error("provider returned an empty response"), true);
+                  } else if (committed && terminal) {
+                    rememberProtocol(cacheKey, primaryProtocol);
+                    controller.close();
+                  } else {
+                    controller.close();
+                  }
+                  return;
+                }
+                const part = next.value;
+                if (!committed && part && typeof part === "object" && part.type === "error") {
+                  await pipeAlternate(part.error ?? part);
+                  return;
+                }
+                if (!committed) {
+                  buffered.push(part);
+                  bufferedBytes += streamPartBytes(part);
+                  if (isSemanticStreamPart(part) || buffered.length >= MAX_PROTOCOL_PRELUDE_EVENTS || bufferedBytes >= MAX_PROTOCOL_PRELUDE_BYTES) {
+                    committed = true;
+                    for (const pending of buffered) controller.enqueue(pending);
+                    buffered.length = 0;
+                    bufferedBytes = 0;
+                  } else if (part && typeof part === "object" && part.type === "finish") {
+                    terminal = true;
+                  }
+                } else {
+                  controller.enqueue(part);
+                }
+              }
+            } catch (error) {
+              if (!committed) await pipeAlternate(error);
+              else controller.error(error);
+            } finally {
+              primaryReader.releaseLock();
+            }
+          })().catch((error) => controller.error(error));
+        },
+        cancel: (reason) => primaryReader.cancel(reason)
+      });
+      return { ...primaryResult, stream };
+    }
+  };
+}
+async function createLanguageModel(spec) {
+  const npm = resolveProviderNpm(spec.npm);
+  const primary = await createLanguageModelSingle(spec);
+  if (spec.authType === "oauth" || !spec.baseURL) return primary;
+  const primaryProtocol = protocolForNpm(npm);
+  const alternative = resolveProtocolAlternative({
+    providerId: spec.providerId,
+    modelFormat: primaryProtocol,
+    npm,
+    baseURL: spec.baseURL
+  });
+  if (!alternative || !isDualProtocolGateway(spec.providerId, spec.baseURL)) return primary;
+  const cacheKey = protocolCacheKey({
+    providerId: spec.providerId,
+    modelId: spec.modelId,
+    protocol: primaryProtocol,
+    baseURL: spec.baseURL,
+    alternativeURL: alternative.upstreamUrl,
+    apiKey: spec.apiKey,
+    headers: spec.headers
+  });
+  if (protocolCooldownActive(cacheKey)) return primary;
+  let alternate;
+  try {
+    alternate = await createLanguageModelSingle({
+      ...spec,
+      npm: alternative.npm,
+      baseURL: alternative.baseURL
+    });
+  } catch (error) {
+    spec.onDebug?.(`[protocol-fallback] alternate SDK unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    return primary;
+  }
+  const remembered2 = rememberedProtocol(cacheKey);
+  if (remembered2 && remembered2 !== primaryProtocol && remembered2 === alternative.modelFormat) {
+    return wrapLanguageModel({
+      model: alternate,
+      middleware: createProtocolFallbackMiddleware(
+        alternate,
+        primary,
+        alternative.modelFormat,
+        primaryProtocol,
+        cacheKey,
+        spec.onDebug
+      )
+    });
+  }
+  return wrapLanguageModel({
+    model: primary,
+    middleware: createProtocolFallbackMiddleware(
+      primary,
+      alternate,
+      primaryProtocol,
+      alternative.modelFormat,
+      cacheKey,
+      spec.onDebug
+    )
+  });
 }
 var ANTHROPIC_EFFORT_LEVELS = ["low", "medium", "high"];
 var OPENAI_EFFORT_LEVELS = ["low", "medium", "high"];
@@ -4627,7 +5068,7 @@ async function writeAnthropicStream(fullStream, modelId, write, log, estimatedIn
 }
 async function streamAnthropicResponse(model, params, modelId, write, log, estimatedInputTokens = 0) {
   const { subagentRouting, ...providerParams } = params;
-  const result = streamText({ model, ...providerParams, onError: () => {
+  const result = streamText({ model, ...providerParams, maxRetries: 0, onError: () => {
   } });
   Promise.resolve(result.text).catch(() => {
   });
@@ -4659,6 +5100,7 @@ async function generateAnthropicResponse(model, params, modelId, options) {
     const r = streamText({
       model,
       ...providerParams,
+      maxRetries: 0,
       onError: (event) => {
         firstStreamError ??= event;
       }
@@ -4671,7 +5113,7 @@ async function generateAnthropicResponse(model, params, modelId, options) {
       throw firstStreamError ? firstStreamError.error : error;
     }
   } else {
-    const r = await generateText({ model, ...providerParams });
+    const r = await generateText({ model, ...providerParams, maxRetries: 0 });
     ({ text, toolCalls, finishReason, usage } = r);
   }
   return {
@@ -4726,6 +5168,14 @@ export {
   CLINE_PASS_CATALOG_URL,
   CLINE_PASS_VALIDATION_URL,
   CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW,
+  getAppHome,
+  getLegacyAppHome,
+  getConfigPath,
+  getProvidersPath,
+  getLogsPath,
+  getVertexModelsPath,
+  getLegacyConfPath,
+  isDualProtocolGateway,
   modelPrefersResponsesApi,
   isSdkMigratedNpm,
   maxToolsForNpm,
@@ -4735,13 +5185,6 @@ export {
   effortProviderOptions,
   deepMergeProviderOptions,
   thinkingProviderOptions,
-  getAppHome,
-  getLegacyAppHome,
-  getConfigPath,
-  getProvidersPath,
-  getLogsPath,
-  getVertexModelsPath,
-  getLegacyConfPath,
   contextWindowFromHeuristics,
   resolveContextWindow,
   stripOneMContextSuffix,
@@ -4822,4 +5265,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-5INR7PKO.js.map
+//# sourceMappingURL=chunk-YKDCHJ5H.js.map

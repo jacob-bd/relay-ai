@@ -284,6 +284,42 @@ describe('materializeRegistry', () => {
     expect(locals[0]?.authType).toBe('oauth');
   });
 
+  it('repairs a stale OpenCode Go cache entry from current model metadata', () => {
+    const local = cachedModelToLocal({
+      id: 'union-alpha',
+      name: 'Union Alpha Free',
+      upstreamModelId: 'union-alpha',
+      modelFormat: 'openai',
+      npm: '@ai-sdk/openai-compatible',
+      apiUrl: 'https://opencode.ai/zen/go/v1',
+    }, {
+      id: 'go',
+      templateId: 'go',
+      name: 'OpenCode Go',
+      enabled: true,
+      authRef: 'keyring:global:opencode',
+      api: {},
+      addedAt: '2026-09-16T00:00:00.000Z',
+    }, {
+      'opencode-go': {
+        models: {
+          'union-alpha': {
+            id: 'union-alpha',
+            name: 'Union Alpha Free',
+            provider: { npm: '@ai-sdk/anthropic' },
+          },
+        },
+      },
+    });
+
+    expect(local).toMatchObject({
+      id: 'union-alpha',
+      modelFormat: 'anthropic',
+      npm: '@ai-sdk/anthropic',
+      baseUrl: 'https://opencode.ai/zen/go',
+    });
+  });
+
   it('returns empty when credential missing', () => {
     const registry = emptyRegistry();
     registry.providers.push({

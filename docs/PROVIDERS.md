@@ -110,6 +110,7 @@ Relay's API Server because it is commonly used as a coding/agent bridge.
 ### OpenRouter
 - **Description**: Unified API proxy providing access to dozens of different models.
 - **Base URL**: `https://openrouter.ai/api/v1`
+- **Protocol recovery**: OpenRouter exposes both Chat Completions and Anthropic Messages routes. Relay keeps the provider, account, and model fixed; if the selected route fails before output with a protocol or early gateway error, it makes one request on the sibling route. A successful choice is remembered for 24 hours, while two failed attempts pause further protocol retries for five minutes. Authentication, quota, context, and moderation errors are returned without a second request.
 
 ### ClinePass
 - **Description**: Cline's paid coding model subscription, available through either an API key or Cline account OAuth.
@@ -140,6 +141,7 @@ Relay's API Server because it is commonly used as a coding/agent bridge.
 Counts come from Command Code's own plan pages and match what Relay discovers. Check [their plan docs](https://commandcode.ai/docs/plans/goat) for the current per-model breakdown.
 
 - **Two protocols, one provider**: Command Code accepts Claude models only on its Anthropic-schema `/messages` endpoint and every other model only on its OpenAI-schema `/chat/completions` endpoint. Relay pins the correct protocol per model when it refreshes the catalog, so both work from a single provider entry. This is why Command Code is a builtin provider rather than a custom endpoint — a custom endpoint speaks one protocol or the other, never both.
+- **Protocol recovery**: The same provider-level fallback protects newly named or stale catalog entries. Relay tries the sibling endpoint once only after an early protocol or gateway failure and before any streamed content is committed; it never changes the account or model.
 - **Relay lists only the models your plan can actually call**: Command Code gates models by plan, and the gating does not follow model family. On GOAT, `gpt-5.6-sol` works but `gpt-5.5` does not, and `gemini-3.8-flash` works but `gemini-3.5-flash` does not. No endpoint reports your plan, so when you add the provider or run `relay-ai providers refresh-models commandcode`, Relay sends one minimal request per model and drops the ones your plan rejects. A rejected model is refused before it generates anything, so this costs nothing beyond a token or two for the models you do have. Expect the add and refresh steps to take roughly 20 to 30 seconds. If you change plans, refresh the model list to pick up the difference.
 - **Temporary outages do not shrink your catalog**: Command Code returns HTTP 503 when the provider behind a model is overloaded. Relay keeps those models listed, and only an explicit `MODEL_NOT_IN_PLAN` rejection removes one.
 - **Model IDs**: Relay preserves the provider's full IDs, such as `deepseek/deepseek-v4.1-flash` and `claude-sonnet-5`.

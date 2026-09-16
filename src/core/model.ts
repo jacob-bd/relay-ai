@@ -10,6 +10,7 @@ import { createLanguageModel, type ProviderModelSpec } from '../provider-factory
 import { providerRefreshToken } from '../provider-runtime.js';
 import type { CachedModel, RegistryProvider } from '../registry/types.js';
 import { getProviderModels } from '../registry/provider-models.js';
+import { reconcileCachedModelProtocol } from '../registry/model-protocol.js';
 import { createAntigravityCloudCodeModel } from './antigravity-model.js';
 import { loadCoreRegistry } from './catalog.js';
 import { RelayCoreError, isRelayCoreError } from './errors.js';
@@ -79,7 +80,9 @@ async function resolveCredential(provider: RegistryProvider, routeId: RelayRoute
 export async function createRelayModel(routeId: RelayRouteId, options?: CreateRelayModelOptions): Promise<LanguageModel> {
   const { providerId, modelId } = parseRelayRouteId(routeId);
   const registry = loadCoreRegistry();
-  const { provider, model } = findRoute(registry, providerId, modelId, routeId);
+  const found = findRoute(registry, providerId, modelId, routeId);
+  const provider = found.provider;
+  const model = reconcileCachedModelProtocol(found.model, provider);
 
   // Resolved before any credential work so an unsupported level fails fast and
   // without touching the keyring or the network.

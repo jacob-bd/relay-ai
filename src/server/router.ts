@@ -49,6 +49,7 @@ import {
   extractConversationId,
   openCodeGoHeaders,
 } from '../opencode-session.js';
+import { isDualProtocolGateway } from '../gateway-protocol.js';
 
 export interface ServerBackend {
   baseUrl: string;
@@ -202,7 +203,11 @@ async function handleAnthropicMessages(
 
   plog(() => `anthropic-messages model=${body.model} format=${model.modelFormat} npm=${model.npm ?? 'none'} stream=${body.stream}`);
 
-  if (model.modelFormat === 'anthropic') {
+  const dualProtocolAnthropic = model.modelFormat === 'anthropic'
+    && model.authType !== 'oauth'
+    && isDualProtocolGateway(model.providerId ?? model.sourceBackend, model.baseUrl);
+
+  if (model.modelFormat === 'anthropic' && !dualProtocolAnthropic) {
     if (model.baseUrl && !/^https?:\/\//i.test(model.baseUrl)) {
       sendJson(res, 400, { error: { message: `Invalid provider baseUrl: must be http:// or https://` } });
       return;
@@ -250,8 +255,8 @@ async function handleAnthropicMessages(
     return;
   }
 
-  if (model.modelFormat === 'openai') {
-    if (!isSdkMigratedNpm(model.npm)) {
+  if (model.modelFormat === 'openai' || dualProtocolAnthropic) {
+    if (!dualProtocolAnthropic && !isSdkMigratedNpm(model.npm)) {
       sendJson(res, 400, { error: { message: `No SDK provider for model: ${model.id}` } });
       return;
     }
@@ -389,7 +394,14 @@ async function handleOpenAIChatCompletions(
   const model = lookupModel(res, options.catalog, body.model);
   if (!model) return;
 
-  if (supportsDirectOpenAIChatCompletions(model)) {
+  const modelGatewayBase = model.apiBaseUrl ?? model.baseUrl
+    ?? (model.sourceBackend === 'zen' || model.sourceBackend === 'go'
+      ? backendFor(options, model).baseUrl
+      : undefined);
+  const dualProtocolOpenAi = model.modelFormat === 'openai'
+    && isDualProtocolGateway(model.providerId ?? model.sourceBackend, modelGatewayBase);
+
+  if (supportsDirectOpenAIChatCompletions(model) && !dualProtocolOpenAi) {
     if (model.completionsUrl && !/^https?:\/\//i.test(model.completionsUrl)) {
       sendJson(res, 400, { error: { message: `Invalid provider completionsUrl: must be http:// or https://` } });
       return;
@@ -423,7 +435,7 @@ async function handleOpenAIChatCompletions(
   }
 
   const apiKey = model.apiKey ?? options.apiKey;
-  const baseURL = model.modelFormat === 'anthropic' ? model.baseUrl : model.apiBaseUrl;
+  const baseURL = model.modelFormat === 'anthropic' ? model.baseUrl : (model.apiBaseUrl ?? modelGatewayBase);
   const languageModel = await getOrInitLanguageModel(
     modelCache,
     model,

@@ -14,6 +14,7 @@ import {
   thinkingProviderOptions,
 } from '../src/provider-factory.js';
 import { VERTEX_ANTHROPIC_NPM } from '../src/constants.js';
+import { clearRememberedProtocols } from '../src/gateway-protocol.js';
 
 describe('resolveProviderNpm', () => {
   it('routes the legacy Venice package through openai-compatible', () => {
@@ -216,6 +217,98 @@ describe('effortProviderOptions + deepMergeProviderOptions', () => {
 });
 
 describe('createLanguageModel', () => {
+  it('retries a dual-protocol gateway through Messages after an early Chat failure', async () => {
+    const calls: string[] = [];
+    const fetchMock = vi.fn<typeof globalThis.fetch>(async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (calls.length === 1) return new Response('{"error":{"message":"Internal server error"}}', { status: 500 });
+      return new Response(JSON.stringify({
+        id: 'msg_union_alpha',
+        type: 'message',
+        role: 'assistant',
+        model: 'union-alpha',
+        content: [{ type: 'text', text: 'ok' }],
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const model = await createLanguageModel({
+        npm: '@ai-sdk/openai-compatible',
+        modelId: 'union-alpha',
+        apiKey: 'test-key',
+        providerId: 'go',
+        baseURL: 'https://opencode.ai/zen/go/v1',
+      });
+      const result = await (await import('ai')).generateText({
+        model,
+        messages: [{ role: 'user', content: 'hello' }],
+      });
+      expect(result.text).toBe('ok');
+      expect(calls).toEqual([
+        'https://opencode.ai/zen/go/v1/chat/completions',
+        'https://opencode.ai/zen/go/v1/messages',
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+      clearRememberedProtocols();
+    }
+  });
+
+  it('recovers a streaming request when the primary endpoint fails before headers', async () => {
+    const calls: string[] = [];
+    const fetchMock = vi.fn<typeof globalThis.fetch>(async (input) => {
+      calls.push(String(input));
+      if (calls.length === 1) return new Response('{"error":{"message":"Internal server error"}}', { status: 500 });
+      const sse = [
+        'event: message_start',
+        'data: {"type":"message_start","message":{"id":"msg_union_alpha","type":"message","role":"assistant","content":[],"model":"union-alpha","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}',
+        '',
+        'event: content_block_start',
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+        '',
+        'event: content_block_delta',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}',
+        '',
+        'event: content_block_stop',
+        'data: {"type":"content_block_stop","index":0}',
+        '',
+        'event: message_delta',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":1}}',
+        '',
+        'event: message_stop',
+        'data: {"type":"message_stop"}',
+        '',
+      ].join('\n');
+      return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const model = await createLanguageModel({
+        npm: '@ai-sdk/openai-compatible',
+        modelId: 'union-alpha',
+        apiKey: 'test-key',
+        providerId: 'go',
+        baseURL: 'https://opencode.ai/zen/go/v1',
+      });
+      const result = (await import('ai')).streamText({
+        model,
+        messages: [{ role: 'user', content: 'hello' }],
+      });
+      expect(await result.text).toBe('ok');
+      expect(calls).toEqual([
+        'https://opencode.ai/zen/go/v1/chat/completions',
+        'https://opencode.ai/zen/go/v1/messages',
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+      clearRememberedProtocols();
+    }
+  });
+
   it('removes Codex blind max_tokens at the OpenRouter HTTP boundary', async () => {
     const forwarded: Array<Record<string, unknown>> = [];
     const fetchImpl: typeof globalThis.fetch = async (_input, init) => {

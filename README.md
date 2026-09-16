@@ -564,6 +564,15 @@ For agent / alef-agent integration (boot flags, NDJSON): **[docs/AI-AGENTS.md](d
 
 When OpenCode Zen is in your registry, `subscriptionFilter` controls which Zen models appear (`free` = free tier only; default = all Zen models). Add or change Zen via `relay-ai providers`.
 
+Zen, Go, OpenRouter, and Command Code gateways can expose both Chat
+Completions and Anthropic Messages. Relay uses current model metadata first, so
+newly named models are not forced into a provider-wide format. If a stale or
+incorrect choice returns an early protocol or gateway error, Relay retries the
+same provider/account/model once on the sibling endpoint before streaming any
+output. Successful choices are remembered for 24 hours; two failed attempts
+pause protocol retries for five minutes. Authentication, quota, context,
+moderation, and cancellation errors do not trigger a retry.
+
 ### Environment isolation
 
 When you launch, relay-ai builds a clean child environment:
@@ -584,7 +593,7 @@ OpenCode exposes models through different API formats. relay-ai handles them whe
 
 | Model format | Examples | How it works | Label |
 |---|---|---|---|
-| Anthropic native | Claude, Qwen, MiniMax (Go) | Direct connection | *(none)* |
+| Anthropic native | Claude, Union Alpha, Qwen, MiniMax (Go) | Direct connection; dual-protocol gateways can retry once through their Chat Completions sibling before output starts | *(none)* |
 | OpenAI chat completions | DeepSeek, Kimi, MiMo, GLM, Grok, GPT-4o (OpenCode OpenAI provider) | SDK adapter proxy (Vercel AI SDK) | `via proxy` |
 | OpenAI Responses API | GPT-5.4+, GPT-5.5, Codex, o-series (OpenCode OpenAI provider only) | Same proxy; SDK picks Responses API | `via proxy` |
 | Gemini native | Gemini (OpenCode Google provider) | SDK adapter, Gemini native API | `via proxy` |

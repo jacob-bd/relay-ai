@@ -206,7 +206,7 @@ describe('mergeModels', () => {
     expect(result[0]!.id).toBe('big-pickle');
   });
 
-  it('clamps anthropic format to openai for Go backend models', () => {
+  it('preserves anthropic format for Go models when metadata declares Messages', () => {
     const cache = new Map<string, ModelInfo>([
       ['minimax-m3', {
         id: 'minimax-m3', name: 'MiniMax M3', isFree: false, brand: 'MiniMax',
@@ -214,7 +214,30 @@ describe('mergeModels', () => {
       }],
     ]);
     const result = mergeModels(['minimax-m3'], cache, 'go');
-    expect(result[0]).toMatchObject({ id: 'minimax-m3', modelFormat: 'openai', sourceBackend: 'go' });
+    expect(result[0]).toMatchObject({ id: 'minimax-m3', modelFormat: 'anthropic', sourceBackend: 'go' });
+  });
+
+  it('routes newly named Union Alpha as anthropic on OpenCode Go', () => {
+    const metadata: ModelsDevCacheFile = {
+      'opencode-go': {
+        models: {
+          'union-alpha': {
+            id: 'union-alpha',
+            name: 'Union Alpha Free',
+            provider: { npm: '@ai-sdk/anthropic' },
+            limit: { context: 262_144 },
+          },
+        },
+      },
+    };
+    const cache = readModelsFromModelsDev('go', metadata);
+    const result = mergeModels(['union-alpha'], cache, 'go');
+    expect(result[0]).toMatchObject({
+      id: 'union-alpha',
+      modelFormat: 'anthropic',
+      sourceBackend: 'go',
+      contextWindow: 262_144,
+    });
   });
 
   it('preserves anthropic format for Zen backend claude models', () => {

@@ -3,16 +3,19 @@
 import { shouldHideModel, type CompatibilityAgent } from '../model-compatibility.js';
 import { CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW } from '../cline-pass.js';
 import { deriveBrand } from '../models.js';
+import { BACKENDS, classifyModelFormat } from '../constants.js';
 import { resolveEndpoint } from '../providers.js';
 import { resolveContextWindow } from '../context-window.js';
 import type { LocalProvider, LocalProviderModel } from '../types.js';
 import { normalizeGoogleDisplayName, normalizeGoogleModelId } from './google-model-id.js';
-import { findModelsDevModel } from './models-dev.js';
+import { findModelsDevModel, loadModelsDevCache } from './models-dev.js';
+import type { ModelsDevCacheFile } from './models-dev.js';
 import type { CachedModel, ProviderRegistry, RegistryProvider } from './types.js';
 import { isValidProviderId } from './validate.js';
 import { getTemplateById } from '../provider-templates.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import { getProviderModels } from './provider-models.js';
+import { reconcileCachedModelProtocol } from './model-protocol.js';
 
 export type CredentialResolver = (provider: RegistryProvider) => string | null;
 
@@ -23,7 +26,10 @@ export interface MaterializeOptions {
 export function cachedModelToLocal(
   cached: CachedModel,
   provider: RegistryProvider,
+  metadata: ModelsDevCacheFile = loadModelsDevCache(),
 ): LocalProviderModel | null {
+  const reconciled = reconcileCachedModelProtocol(cached, provider, metadata);
+  cached = reconciled;
   const freeStatus = classifyFreeStatus({
     model: cached,
     providerId: provider.id,
@@ -48,22 +54,31 @@ export function cachedModelToLocal(
     };
   }
 
+  const modelsDev = findModelsDevModel(provider.id, cached.id, metadata);
+  const isZenGo = provider.id === 'zen' || provider.id === 'go'
+    || provider.templateId === 'zen' || provider.templateId === 'go';
+  // A registry cache can outlive the metadata snapshot that originally
+  // classified it. Prefer the current models.dev provider package for the
+  // built-in OpenCode backends, while retaining manual/custom overrides.
+  const metadataNpm = !cached.source && isZenGo ? modelsDev?.provider?.npm : undefined;
   const npm = cached.npm ?? provider.api.npm ?? '';
-  const apiUrl = cached.apiUrl ?? provider.api.url ?? '';
+  const apiUrl = cached.apiUrl ?? provider.api.url
+    ?? (isZenGo ? BACKENDS[provider.id === 'go' || provider.templateId === 'go' ? 'go' : 'zen'].baseUrl : '');
   const endpoint = resolveEndpoint(npm, apiUrl);
   if (endpoint === null) return null;
 
-  const modelsDev = findModelsDevModel(provider.id, cached.id);
   const { id, upstreamModelId } = normalizeGoogleModelId(cached.id, npm);
   const normalizedUpstream = normalizeGoogleModelId(cached.upstreamModelId ?? cached.id, npm).upstreamModelId;
   const family = npm === '@ai-sdk/google' ? (id.split(/[-/:]/)[0] ?? id) : (cached.family ?? '');
+  const classifiedFormat = classifyModelFormat(cached.id, npm);
+  const resolvedFormat = classifiedFormat === 'anthropic' ? classifiedFormat : 'openai';
 
   return {
     id,
     name: npm === '@ai-sdk/google' ? normalizeGoogleDisplayName(cached.name, id) : cached.name,
     family,
     brand: npm === '@ai-sdk/google' ? deriveBrand(family) : (cached.brand ?? deriveBrand(cached.family ?? '')),
-    modelFormat: cached.modelFormat ?? endpoint.format,
+    modelFormat: metadataNpm ? resolvedFormat : cached.modelFormat ?? endpoint.format,
     upstreamModelId: normalizedUpstream,
     baseUrl: endpoint.baseUrl,
     completionsUrl: endpoint.completionsUrl,

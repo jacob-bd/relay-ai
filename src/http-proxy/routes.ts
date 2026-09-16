@@ -18,6 +18,7 @@ export interface HttpProxyRouteResult {
 }
 
 export function supportsClaudeTransparentMode(model: LocalProviderModel): boolean {
+  if (model.modelFormat === 'anthropic') return Boolean(model.baseUrl);
   return model.modelFormat === 'openai' && isSdkMigratedNpm(model.npm);
 }
 

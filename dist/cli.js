@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-2OEMU2WC.js";
+} from "./chunk-3ELEJJXU.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -148,7 +148,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-LPOAO33X.js";
+} from "./chunk-WO3TBEPN.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -222,7 +222,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-5INR7PKO.js";
+} from "./chunk-YKDCHJ5H.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -7663,7 +7663,8 @@ ${JSON.stringify(params, null, 2)}`);
           plog("Starting streamText...");
           const { stream } = streamText2({
             model: languageModel,
-            ...params
+            ...params,
+            maxRetries: 0
           });
           const toolCallBuffers = /* @__PURE__ */ new Map();
           let isThinking = false;
@@ -7767,7 +7768,8 @@ ${JSON.stringify(params, null, 2)}`);
           plog("Starting generateText...");
           const result = await generateText2({
             model: languageModel,
-            ...params
+            ...params,
+            maxRetries: 0
           });
           plog("generateText finished.");
           const parts = [];
@@ -10177,7 +10179,8 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log15
     tools: sdkParams.tools,
     toolChoice: sdkParams.toolChoice,
     providerOptions: effectiveProviderOptions,
-    headers: sdkParams.headers
+    headers: sdkParams.headers,
+    maxRetries: 0
   });
   const startSse = () => {
     if (res.headersSent) return;
@@ -10355,7 +10358,8 @@ async function handleUnaryRequest(res, route, providerOptions, parsed, log15, op
     tools: sdkParams.tools,
     toolChoice: sdkParams.toolChoice,
     providerOptions: effectiveProviderOptions,
-    headers: sdkParams.headers
+    headers: sdkParams.headers,
+    maxRetries: 0
   });
   const parts = [];
   const reasoning = reasoningOutputText(result.reasoning);
@@ -16051,7 +16055,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-XCYCQQRA.js");
+    const { runUiCommand } = await import("./ui-command-WZJ2V5JX.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

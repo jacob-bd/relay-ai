@@ -94,10 +94,13 @@ describe('transparent HTTP proxy routes', () => {
       { providerId: 'missing', modelId: 'gone' },
     ]);
 
-    expect(result.routes).toEqual([]);
-    expect(result.unsupported).toEqual([
-      { providerId: 'anthropic', modelId: 'claude-sonnet-4-6' },
-    ]);
+    expect(result.routes).toHaveLength(1);
+    expect(result.routes[0]).toMatchObject({
+      providerId: 'anthropic',
+      realModelId: 'claude-sonnet-4-6',
+      modelFormat: 'anthropic',
+    });
+    expect(result.unsupported).toEqual([]);
     expect(result.unavailable).toEqual([
       { providerId: 'groq', modelId: 'llama-3.3-70b' },
       { providerId: 'missing', modelId: 'gone' },
@@ -111,6 +114,30 @@ describe('transparent HTTP proxy routes', () => {
 
   it('offers transparent mode only for SDK-translated models', () => {
     expect(supportsClaudeTransparentMode(providers[0]!.models[0]!)).toBe(true);
-    expect(supportsClaudeTransparentMode(providers[2]!.models[0]!)).toBe(false);
+    expect(supportsClaudeTransparentMode(providers[2]!.models[0]!)).toBe(true);
+  });
+
+  it('includes an Anthropic-format gateway model in transparent mode', () => {
+    const result = buildHttpProxyRoutes([{
+      id: 'go',
+      name: 'OpenCode Go',
+      apiKey: 'go-secret',
+      models: [{
+        id: 'union-alpha',
+        upstreamModelId: 'union-alpha',
+        name: 'Union Alpha Free',
+        family: 'alpha',
+        brand: 'Other',
+        modelFormat: 'anthropic',
+        npm: '@ai-sdk/anthropic',
+        baseUrl: 'https://opencode.ai/zen/go',
+      }],
+    }], [], { providerId: 'go', modelId: 'union-alpha' });
+    expect(result.routes).toHaveLength(1);
+    expect(result.routes[0]).toMatchObject({
+      realModelId: 'union-alpha',
+      modelFormat: 'anthropic',
+      upstreamUrl: 'https://opencode.ai/zen/go',
+    });
   });
 });

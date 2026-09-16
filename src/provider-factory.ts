@@ -1,7 +1,7 @@
 // Maps an OpenCode provider's `npm` package (the field providers.ts already
 // reads) to a Vercel AI SDK LanguageModel instance. The SDK owns wire format,
 // endpoint selection, and provider quirks.
-import type { LanguageModel } from 'ai';
+import type { LanguageModel, LanguageModelMiddleware } from 'ai';
 import { wrapLanguageModel, extractReasoningMiddleware } from 'ai';
 import { VERTEX_ANTHROPIC_NPM, CODEX_RESPONSES_LITE_VERSION, CODEX_RESPONSES_LITE_WS_URL } from './constants.js';
 import { extractOpenAiAccountId } from './oauth/openai.js';
@@ -15,6 +15,17 @@ import {
   formatClineRuntimeCredential,
   isClinePassOAuth,
 } from './cline-pass.js';
+import {
+  classifyProtocolFailure,
+  isDualProtocolGateway,
+  protocolCacheKey,
+  protocolCooldownActive,
+  rememberProtocol,
+  rememberProtocolFailure,
+  rememberedProtocol,
+  resolveProtocolAlternative,
+  type GatewayProtocol,
+} from './gateway-protocol.js';
 
 /** Models that must use /v1/responses instead of /v1/chat/completions. */
 const RESPONSES_ONLY_PREFIXES = [
@@ -197,7 +208,7 @@ async function loadSdkProviderFactory(npm: string): Promise<SdkProviderFactory> 
   return cached;
 }
 
-export async function createLanguageModel(spec: ProviderModelSpec): Promise<LanguageModel> {
+async function createLanguageModelSingle(spec: ProviderModelSpec): Promise<LanguageModel> {
   const npm = resolveProviderNpm(spec.npm);
   const { modelId, apiKey, baseURL } = spec;
 
@@ -259,7 +270,9 @@ export async function createLanguageModel(spec: ProviderModelSpec): Promise<Lang
   if (npm === '@ai-sdk/anthropic') {
     const { createAnthropic } = await import('@ai-sdk/anthropic');
     const root = baseURL?.replace(/\/v1\/?$/, '').replace(/\/$/, '');
-    const anthropicOptions: Parameters<typeof createAnthropic>[0] = spec.authType === 'oauth'
+    const openRouterBearer = spec.providerId?.trim().toLowerCase() === 'openrouter'
+      || root?.includes('openrouter.ai') === true;
+    const anthropicOptions: Parameters<typeof createAnthropic>[0] = spec.authType === 'oauth' || openRouterBearer
       ? {
           authToken: apiKey,
           ...(spec.providerId === 'claude-code'
@@ -336,6 +349,311 @@ export async function createLanguageModel(spec: ProviderModelSpec): Promise<Lang
   }
 
   return model;
+}
+
+function protocolForNpm(npm: string): GatewayProtocol {
+  return npm === '@ai-sdk/anthropic' ? 'anthropic' : 'openai';
+}
+
+function isSemanticStreamPart(part: unknown): boolean {
+  if (!part || typeof part !== 'object') return false;
+  const type = (part as { type?: unknown }).type;
+  return type === 'text-start'
+    || type === 'text-delta'
+    || type === 'reasoning-start'
+    || type === 'reasoning-delta'
+    || type === 'tool-input-start'
+    || type === 'tool-input-delta'
+    || type === 'tool-input-end'
+    || type === 'tool-call'
+    || type === 'tool-result'
+    || type === 'tool-approval-request';
+}
+
+const MAX_PROTOCOL_PRELUDE_BYTES = 64 * 1024;
+const MAX_PROTOCOL_PRELUDE_EVENTS = 256;
+
+function streamPartBytes(part: unknown): number {
+  try { return JSON.stringify(part)?.length ?? 0; } catch { return 0; }
+}
+
+function observeAlternateStream(
+  result: { stream: ReadableStream<unknown>; [key: string]: unknown },
+  protocol: GatewayProtocol,
+  cacheKey: string,
+): { stream: ReadableStream<unknown>; [key: string]: unknown } {
+  const reader = result.stream.getReader();
+  const stream = new ReadableStream<unknown>({
+    start: controller => {
+      void (async () => {
+        let semantic = false;
+        let finish = false;
+        try {
+          while (true) {
+            const next = await reader.read();
+            if (next.done) break;
+            semantic ||= isSemanticStreamPart(next.value);
+            finish ||= Boolean(next.value && typeof next.value === 'object' && (next.value as { type?: unknown }).type === 'finish');
+            controller.enqueue(next.value);
+          }
+          if (semantic && finish) rememberProtocol(cacheKey, protocol);
+          else rememberProtocolFailure(cacheKey);
+          controller.close();
+        } catch (error) {
+          rememberProtocolFailure(cacheKey);
+          controller.error(error);
+        } finally {
+          reader.releaseLock();
+        }
+      })();
+    },
+    cancel: reason => reader.cancel(reason),
+  });
+  return { ...result, stream };
+}
+
+/**
+ * Wrap a dual-protocol route with one bounded alternate attempt. The stream
+ * is held until the first semantic event so a failed endpoint can never leak
+ * a partial Anthropic response before the alternate protocol takes over.
+ */
+function createProtocolFallbackMiddleware(
+  primary: LanguageModel,
+  alternate: LanguageModel,
+  primaryProtocol: GatewayProtocol,
+  alternateProtocol: GatewayProtocol,
+  cacheKey: string,
+  onDebug?: (msg: string) => void,
+): LanguageModelMiddleware {
+  const alternateModel = alternate as LanguageModel & {
+    doGenerate: (params: unknown) => Promise<unknown>;
+    doStream: (params: unknown) => Promise<{ stream: ReadableStream<unknown>; [key: string]: unknown }>;
+  };
+
+  const note = (message: string): void => {
+    onDebug?.(`[protocol-fallback] ${message}`);
+  };
+
+  return {
+    specificationVersion: 'v4',
+    wrapGenerate: async ({ doGenerate, params }): Promise<any> => {
+      try {
+        const result = await doGenerate();
+        rememberProtocol(cacheKey, primaryProtocol);
+        return result;
+      } catch (error) {
+        const failure = classifyProtocolFailure(error);
+        if (!failure.retryable) throw error;
+        note(`${primaryProtocol} failed (${failure.reason}${failure.status ? `, HTTP ${failure.status}` : ''}); retrying ${alternateProtocol}`);
+        let result: unknown;
+        try {
+          result = await alternateModel.doGenerate(params);
+        } catch (alternateError) {
+          const alternateFailure = classifyProtocolFailure(alternateError);
+          note(`${alternateProtocol} failed after fallback (${alternateFailure.reason}${alternateFailure.status ? `, HTTP ${alternateFailure.status}` : ''})`);
+          rememberProtocolFailure(cacheKey);
+          throw alternateError;
+        }
+        rememberProtocol(cacheKey, alternateProtocol);
+        return result;
+      }
+    },
+    wrapStream: async ({ doStream, params }): Promise<any> => {
+      let primaryResult: { stream: ReadableStream<unknown>; [key: string]: unknown };
+      try {
+        primaryResult = await doStream();
+      } catch (error) {
+        const failure = classifyProtocolFailure(error);
+        if (!failure.retryable) throw error;
+        note(`${primaryProtocol} stream failed (${failure.reason}${failure.status ? `, HTTP ${failure.status}` : ''}); retrying ${alternateProtocol}`);
+        let alternateResult: { stream: ReadableStream<unknown>; [key: string]: unknown };
+        try {
+          alternateResult = await alternateModel.doStream(params);
+        } catch (alternateError) {
+          const alternateFailure = classifyProtocolFailure(alternateError);
+          note(`${alternateProtocol} stream failed after fallback (${alternateFailure.reason}${alternateFailure.status ? `, HTTP ${alternateFailure.status}` : ''})`);
+          rememberProtocolFailure(cacheKey);
+          throw alternateError;
+        }
+        return observeAlternateStream(alternateResult, alternateProtocol, cacheKey) as never;
+      }
+
+      const primaryReader = primaryResult.stream.getReader();
+      let switched = false;
+      const stream = new ReadableStream<unknown>({
+        start: controller => {
+          void (async () => {
+            const buffered: unknown[] = [];
+            let bufferedBytes = 0;
+            let committed = false;
+            let terminal = false;
+
+            const pipeAlternate = async (cause: unknown, force = false): Promise<void> => {
+              if (switched) {
+                controller.error(cause);
+                return;
+              }
+              const failure = classifyProtocolFailure(cause);
+              if (!force && !failure.retryable) {
+                controller.error(cause);
+                return;
+              }
+              switched = true;
+              note(`${primaryProtocol} stream failed (${failure.reason}${failure.status ? `, HTTP ${failure.status}` : ''}); retrying ${alternateProtocol}`);
+              try {
+                await primaryReader.cancel();
+              } catch {
+                // best effort — the provider may already have closed the body
+              }
+              let alternateResult: { stream: ReadableStream<unknown>; [key: string]: unknown };
+              try {
+                alternateResult = await alternateModel.doStream({ ...params });
+              } catch (alternateError) {
+                const alternateFailure = classifyProtocolFailure(alternateError);
+                note(`${alternateProtocol} stream failed after fallback (${alternateFailure.reason}${alternateFailure.status ? `, HTTP ${alternateFailure.status}` : ''})`);
+                rememberProtocolFailure(cacheKey);
+                throw alternateError;
+              }
+              const reader = alternateResult.stream.getReader();
+              let alternateSemantic = false;
+              let alternateFinish = false;
+              try {
+                while (true) {
+                  const next = await reader.read();
+                  if (next.done) break;
+                  if (isSemanticStreamPart(next.value)) alternateSemantic = true;
+                  if (next.value && typeof next.value === 'object' && (next.value as { type?: unknown }).type === 'finish') {
+                    alternateFinish = true;
+                  }
+                  controller.enqueue(next.value);
+                }
+                if (alternateSemantic && alternateFinish) rememberProtocol(cacheKey, alternateProtocol);
+                else rememberProtocolFailure(cacheKey);
+                controller.close();
+              } finally {
+                reader.releaseLock();
+              }
+            };
+
+            try {
+              while (true) {
+                const next = await primaryReader.read();
+                if (next.done) {
+                  if (!committed && terminal) {
+                    await pipeAlternate(new Error('provider returned an empty response'), true);
+                  } else if (committed && terminal) {
+                    rememberProtocol(cacheKey, primaryProtocol);
+                    controller.close();
+                  } else {
+                    controller.close();
+                  }
+                  return;
+                }
+                const part = next.value;
+                if (!committed && part && typeof part === 'object' && (part as { type?: unknown }).type === 'error') {
+                  await pipeAlternate((part as { error?: unknown }).error ?? part);
+                  return;
+                }
+                if (!committed) {
+                  buffered.push(part);
+                  bufferedBytes += streamPartBytes(part);
+                  if (isSemanticStreamPart(part)
+                    || buffered.length >= MAX_PROTOCOL_PRELUDE_EVENTS
+                    || bufferedBytes >= MAX_PROTOCOL_PRELUDE_BYTES) {
+                    committed = true;
+                    for (const pending of buffered) controller.enqueue(pending);
+                    buffered.length = 0;
+                    bufferedBytes = 0;
+                  } else if (part && typeof part === 'object' && (part as { type?: unknown }).type === 'finish') {
+                    terminal = true;
+                  }
+                } else {
+                  controller.enqueue(part);
+                }
+              }
+            } catch (error) {
+              if (!committed) await pipeAlternate(error);
+              else controller.error(error);
+            } finally {
+              primaryReader.releaseLock();
+            }
+          })().catch(error => controller.error(error));
+        },
+        cancel: reason => primaryReader.cancel(reason),
+      });
+
+      return { ...primaryResult, stream } as never;
+    },
+  };
+}
+
+/** Create an SDK model and, for known dual-protocol gateways, arm one safe
+ * alternate-protocol retry for both generate and stream calls. */
+export async function createLanguageModel(spec: ProviderModelSpec): Promise<LanguageModel> {
+  const npm = resolveProviderNpm(spec.npm);
+  const primary = await createLanguageModelSingle(spec);
+
+  // OAuth backends often expose a gateway URL but require provider-specific
+  // request signing. Retrying those through a second SDK would be unsafe.
+  if (spec.authType === 'oauth' || !spec.baseURL) return primary;
+
+  const primaryProtocol = protocolForNpm(npm);
+  const alternative = resolveProtocolAlternative({
+    providerId: spec.providerId,
+    modelFormat: primaryProtocol,
+    npm,
+    baseURL: spec.baseURL,
+  });
+  if (!alternative || !isDualProtocolGateway(spec.providerId, spec.baseURL)) return primary;
+
+  const cacheKey = protocolCacheKey({
+    providerId: spec.providerId,
+    modelId: spec.modelId,
+    protocol: primaryProtocol,
+    baseURL: spec.baseURL,
+    alternativeURL: alternative.upstreamUrl,
+    apiKey: spec.apiKey,
+    headers: spec.headers,
+  });
+  if (protocolCooldownActive(cacheKey)) return primary;
+
+  let alternate: LanguageModel;
+  try {
+    alternate = await createLanguageModelSingle({
+      ...spec,
+      npm: alternative.npm,
+      baseURL: alternative.baseURL,
+    });
+  } catch (error) {
+    spec.onDebug?.(`[protocol-fallback] alternate SDK unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    return primary;
+  }
+
+  const remembered = rememberedProtocol(cacheKey);
+  if (remembered && remembered !== primaryProtocol && remembered === alternative.modelFormat) {
+    return wrapLanguageModel({
+      model: alternate as Parameters<typeof wrapLanguageModel>[0]['model'],
+      middleware: createProtocolFallbackMiddleware(
+        alternate,
+        primary,
+        alternative.modelFormat,
+        primaryProtocol,
+        cacheKey,
+        spec.onDebug,
+      ),
+    }) as unknown as LanguageModel;
+  }
+  return wrapLanguageModel({
+    model: primary as Parameters<typeof wrapLanguageModel>[0]['model'],
+    middleware: createProtocolFallbackMiddleware(
+      primary,
+      alternate,
+      primaryProtocol,
+      alternative.modelFormat,
+      cacheKey,
+      spec.onDebug,
+    ),
+  }) as unknown as LanguageModel;
 }
 
 export type ReasoningMode = 'none' | 'internal-only' | 'controllable';
