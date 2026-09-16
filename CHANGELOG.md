@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.5] - 2026-09-16
+
+### Fixed
+
+- **Union Alpha and newly named models no longer fail when a dual-protocol gateway has stale format metadata.** Relay now detects an early protocol or gateway rejection on OpenCode Zen/Go, OpenRouter, and Command Code, retries the same account and model through the sibling API before committing streamed output, and remembers the successful protocol for 24 hours. Authentication, quota, context, moderation, and cancelled requests are returned without a duplicate call; if both protocols fail, retries pause briefly to avoid hammering the provider.
+- **Protocol recovery is consistent across Relay entry points.** Claude Code single-model launches, the local gateway, server mode, and provider-registry metadata all use the same protocol-aware routing and cache, so a model added later by a supported provider does not require a code change or manual endpoint override.
+
 ## [0.12.4] - 2026-09-14
 
 ### Fixed
