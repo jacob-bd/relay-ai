@@ -8,6 +8,10 @@
 - **An empty stream from a gateway no longer surfaces as an error.** OpenCode Go's `union-alpha` answers roughly 4 in 10 streaming requests with HTTP 200 and no body. Relay's Anthropic pass-through now detects that before sending anything to the client, retries the same request once without streaming, and replays the answer as a normal stream, so Claude Code no longer shows "Streaming response ended before any complete data was received".
 - **Protocol recovery is consistent across translated routes.** Every request Relay translates through the AI SDK (Claude Code with OpenAI-format models, server mode, Codex, Gemini, and Antigravity) shares the same protocol-aware routing and cache, so a model added later by a supported provider does not require a code change or manual endpoint override. Anthropic-format models in Claude Code and the server's direct routes stay untouched pass-through, keeping prompt caching, beta headers, and thinking.
 
+### Known issues
+
+- **OpenCode Go's `union-alpha` streams are unstable right now.** Measured against the provider directly, with Relay out of the path, roughly 4 in 10 streaming requests to `/v1/messages` return HTTP 200 with an empty body, and `/v1/chat/completions` returns HTTP 500 for this model. It is a newly released model and most likely still under load, so this is expected to settle on the provider's side. Relay's pass-through recovers from the empty streams automatically (see above); sessions that use Relay's translated path — Codex, Gemini, and the API server — still rely on the client's own retry, so an occasional "reconnecting" or "stream ended" notice there is the provider, not Relay.
+
 ## [0.12.4] - 2026-09-14
 
 ### Fixed
