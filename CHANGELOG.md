@@ -5,6 +5,7 @@
 ### Fixed
 
 - **Union Alpha and newly named models no longer fail when a dual-protocol gateway has stale format metadata.** Relay now detects an early protocol or gateway rejection on OpenCode Zen/Go, OpenRouter, and Command Code, retries the same account and model through the sibling API before committing streamed output, and remembers the successful protocol for 24 hours. Authentication, quota, context, moderation, and cancelled requests are returned without a duplicate call; if both protocols fail, retries pause briefly to avoid hammering the provider.
+- **An empty stream from a gateway no longer surfaces as an error.** OpenCode Go's `union-alpha` answers roughly 4 in 10 streaming requests with HTTP 200 and no body. Relay's Anthropic pass-through now detects that before sending anything to the client, retries the same request once without streaming, and replays the answer as a normal stream, so Claude Code no longer shows "Streaming response ended before any complete data was received".
 - **Protocol recovery is consistent across translated routes.** Every request Relay translates through the AI SDK (Claude Code with OpenAI-format models, server mode, Codex, Gemini, and Antigravity) shares the same protocol-aware routing and cache, so a model added later by a supported provider does not require a code change or manual endpoint override. Anthropic-format models in Claude Code and the server's direct routes stay untouched pass-through, keeping prompt caching, beta headers, and thinking.
 
 ## [0.12.4] - 2026-09-14

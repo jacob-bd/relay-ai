@@ -310,6 +310,7 @@ export function startProxyCatalog(
             upstreamHeaders,
             route.refreshToken,
             refreshed => { route.apiKey = refreshed; },
+            true,
           );
         } catch (err) {
           const message = err instanceof UpstreamUnreachableError ? err.message : String(err);

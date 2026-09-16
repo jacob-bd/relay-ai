@@ -1,6 +1,7 @@
-import { Readable } from 'node:stream';
+import { once } from 'node:events';
 import type { ServerResponse } from 'node:http';
 import { sanitizeCredential } from './server/auth.js';
+import { sseChunk } from './proxy-shared.js';
 import { CLAUDE_CODE_USER_AGENT } from './oauth/claude-identity.js';
 
 export function anthropicUpstreamHeaders(
@@ -69,6 +70,7 @@ export async function relayAnthropicMessages(
   extraHeaders?: Record<string, string>,
   refreshToken?: () => Promise<string | null>,
   onTokenRefreshed?: (token: string) => void,
+  retryEmptyStream = false,
 ): Promise<void> {
   const doFetch = (key: string) => fetch(messagesUrl, {
     method: 'POST',
@@ -94,14 +96,42 @@ export async function relayAnthropicMessages(
   }
 
   if (clientWantsStream && upstreamRes.body) {
+    // Read the first chunk before committing the response: some gateways answer a
+    // streaming request with 200 and an empty body (OpenCode Go's union-alpha does
+    // this for roughly 4 in 10 requests), and that is only visible once the stream ends.
+    const reader = upstreamRes.body.getReader();
+    const first = await reader.read().catch(() => ({ done: true, value: undefined } as const));
+    if (first.done) {
+      reader.releaseLock();
+      if (retryEmptyStream) {
+        log?.('anthropic upstream returned an empty stream; retrying without streaming');
+        await replayWithoutStreaming(
+          res, messagesUrl, body, apiKey, inboundBeta, authType, claudeCodeSessionId, extraHeaders, log,
+        );
+        return;
+      }
+    }
+
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
     });
-    Readable.fromWeb(upstreamRes.body as Parameters<typeof Readable.fromWeb>[0])
-      .on('error', () => res.destroy())
-      .pipe(res);
+    if (first.done) {
+      res.end();
+      return;
+    }
+    res.write(Buffer.from(first.value!));
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        if (!res.write(Buffer.from(next.value))) await once(res, 'drain');
+      }
+      res.end();
+    } catch {
+      res.destroy();
+    }
     return;
   }
 
@@ -124,4 +154,107 @@ export async function relayAnthropicMessages(
     'Content-Length': Buffer.byteLength(text).toString(),
   });
   res.end(text);
+}
+
+/**
+ * Re-send a request that came back as an empty stream, this time without
+ * streaming, and replay the complete message to the client as SSE. The client
+ * asked for a stream, so it must still receive one.
+ */
+async function replayWithoutStreaming(
+  res: ServerResponse,
+  messagesUrl: string,
+  body: Record<string, unknown>,
+  apiKey: string,
+  inboundBeta: string | undefined,
+  authType: 'api' | 'oauth' | undefined,
+  claudeCodeSessionId: string | undefined,
+  extraHeaders: Record<string, string> | undefined,
+  log?: (message: string) => void,
+): Promise<void> {
+  let retryRes: Response;
+  try {
+    retryRes = await fetch(messagesUrl, {
+      method: 'POST',
+      headers: anthropicUpstreamHeaders(apiKey, false, inboundBeta, authType, claudeCodeSessionId, extraHeaders),
+      body: JSON.stringify({ ...body, stream: false }),
+    });
+  } catch (err) {
+    throw new UpstreamUnreachableError(err);
+  }
+
+  const text = await retryRes.text();
+  if (!retryRes.ok) {
+    log?.(`anthropic upstream ${retryRes.status} on empty-stream retry: ${text}`);
+    res.writeHead(retryRes.status, { 'Content-Type': retryRes.headers.get('content-type') || 'application/json' });
+    res.end(text);
+    return;
+  }
+
+  let message: Record<string, unknown>;
+  try {
+    message = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'Upstream response was not valid JSON' } }));
+    return;
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+  });
+  writeMessageAsSse(res, message);
+}
+
+function writeMessageAsSse(res: ServerResponse, message: Record<string, unknown>): void {
+  const content = Array.isArray(message.content) ? message.content as Array<Record<string, unknown>> : [];
+  res.write(sseChunk('message_start', {
+    type: 'message_start',
+    message: { ...message, content: [], stop_reason: null, stop_sequence: null },
+  }));
+
+  content.forEach((block, index) => {
+    const type = block.type;
+    const opening = type === 'text'
+      ? { type: 'text', text: '' }
+      : type === 'thinking'
+        ? { type: 'thinking', thinking: '', signature: '' }
+        : type === 'tool_use'
+          ? { type: 'tool_use', id: block.id, name: block.name, input: {} }
+          : block;
+    res.write(sseChunk('content_block_start', { type: 'content_block_start', index, content_block: opening }));
+
+    if (type === 'text') {
+      res.write(sseChunk('content_block_delta', {
+        type: 'content_block_delta', index, delta: { type: 'text_delta', text: block.text ?? '' },
+      }));
+    } else if (type === 'thinking') {
+      res.write(sseChunk('content_block_delta', {
+        type: 'content_block_delta', index, delta: { type: 'thinking_delta', thinking: block.thinking ?? '' },
+      }));
+      if (typeof block.signature === 'string') {
+        res.write(sseChunk('content_block_delta', {
+          type: 'content_block_delta', index, delta: { type: 'signature_delta', signature: block.signature },
+        }));
+      }
+    } else if (type === 'tool_use') {
+      res.write(sseChunk('content_block_delta', {
+        type: 'content_block_delta',
+        index,
+        delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input ?? {}) },
+      }));
+    }
+
+    res.write(sseChunk('content_block_stop', { type: 'content_block_stop', index }));
+  });
+
+  res.write(sseChunk('message_delta', {
+    type: 'message_delta',
+    delta: { stop_reason: message.stop_reason ?? 'end_turn', stop_sequence: message.stop_sequence ?? null },
+    usage: message.usage ?? {},
+  }));
+  res.write(sseChunk('message_stop', { type: 'message_stop' }));
+  res.end();
 }

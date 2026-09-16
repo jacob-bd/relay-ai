@@ -114,3 +114,109 @@ describe('createClinePassOAuthFetch', () => {
     expect(request).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('relayAnthropicMessages empty-stream recovery', () => {
+  function fakeRes() {
+    const chunks: string[] = [];
+    return {
+      chunks,
+      status: 0,
+      headers: {} as Record<string, string>,
+      writeHead(status: number, headers: Record<string, string>) { this.status = status; this.headers = headers; },
+      write(chunk: unknown) { chunks.push(String(chunk)); return true; },
+      end(chunk?: unknown) { if (chunk !== undefined) chunks.push(String(chunk)); },
+      destroy() { /* no-op */ },
+    };
+  }
+
+  const message = {
+    id: 'msg_1',
+    type: 'message',
+    role: 'assistant',
+    model: 'union-alpha',
+    content: [
+      { type: 'text', text: 'PONG' },
+      { type: 'tool_use', id: 'tu_1', name: 'get_time', input: { tz: 'UTC' } },
+    ],
+    stop_reason: 'tool_use',
+    usage: { input_tokens: 5, output_tokens: 7 },
+  };
+
+  function sseStream(text: string) {
+    return new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode(text)); controller.close(); },
+    });
+  }
+
+  it('retries without streaming when the gateway returns an empty stream', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      if (bodies.length === 1) {
+        return new Response(new ReadableStream({ start: c => c.close() }), {
+          status: 200, headers: { 'content-type': 'text/event-stream' },
+        });
+      }
+      return new Response(JSON.stringify(message), { status: 200, headers: { 'content-type': 'application/json' } });
+    }));
+    const res = fakeRes();
+    const { relayAnthropicMessages } = await import('../src/upstream-forward.js');
+    await relayAnthropicMessages(
+      res as never, 'https://opencode.ai/zen/go/v1/messages',
+      { model: 'union-alpha', stream: true }, 'key', true,
+      undefined, 'api', undefined, undefined, undefined, undefined, undefined, true,
+    );
+    vi.unstubAllGlobals();
+
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toMatchObject({ stream: false });
+    const out = res.chunks.join('');
+    expect(res.headers['Content-Type']).toBe('text/event-stream');
+    expect(out).toContain('event: message_start');
+    expect(out).toContain('"text_delta"');
+    expect(out).toContain('PONG');
+    expect(out).toContain('"input_json_delta"');
+    expect(out).toContain('{\\"tz\\":\\"UTC\\"}');
+    expect(out).toContain('event: message_stop');
+  });
+
+  it('passes a working stream straight through without a second request', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      calls.push(String(url));
+      return new Response(sseStream('event: message_start\ndata: {}\n\nevent: message_stop\ndata: {}\n\n'), {
+        status: 200, headers: { 'content-type': 'text/event-stream' },
+      });
+    }));
+    const res = fakeRes();
+    const { relayAnthropicMessages } = await import('../src/upstream-forward.js');
+    await relayAnthropicMessages(
+      res as never, 'https://opencode.ai/zen/go/v1/messages',
+      { model: 'union-alpha', stream: true }, 'key', true,
+      undefined, 'api', undefined, undefined, undefined, undefined, undefined, true,
+    );
+    vi.unstubAllGlobals();
+
+    expect(calls).toHaveLength(1);
+    expect(res.chunks.join('')).toContain('event: message_start');
+    expect(res.chunks.join('')).toContain('event: message_stop');
+  });
+
+  it('leaves an empty stream alone when recovery is not requested', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      calls.push(String(url));
+      return new Response(new ReadableStream({ start: c => c.close() }), {
+        status: 200, headers: { 'content-type': 'text/event-stream' },
+      });
+    }));
+    const res = fakeRes();
+    const { relayAnthropicMessages } = await import('../src/upstream-forward.js');
+    await relayAnthropicMessages(
+      res as never, 'https://opencode.ai/zen/go/v1/messages',
+      { model: 'union-alpha', stream: true }, 'key', true,
+    );
+    vi.unstubAllGlobals();
+    expect(calls).toHaveLength(1);
+  });
+});

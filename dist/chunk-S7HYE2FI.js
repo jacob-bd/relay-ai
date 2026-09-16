@@ -78,6 +78,7 @@ import {
   silenceSdkWarnings,
   slugifyProviderId,
   splitToolUseId,
+  sseChunk,
   streamAnthropicResponse,
   stripOneMContextSuffix,
   supportsNativeOAuth,
@@ -1901,7 +1902,7 @@ function estimateAnthropicInputTokens(body) {
 }
 
 // src/upstream-forward.ts
-import { Readable } from "stream";
+import { once } from "events";
 
 // src/server/auth.ts
 function sanitizeCredential(value) {
@@ -1959,7 +1960,7 @@ async function fetchWithOAuthRetry(apiKey, request, refreshToken) {
   response = await request(refreshed);
   return { response, apiKey: refreshed, refreshed: true };
 }
-async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWantsStream, inboundBeta, authType, log7, claudeCodeSessionId, extraHeaders, refreshToken, onTokenRefreshed) {
+async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWantsStream, inboundBeta, authType, log7, claudeCodeSessionId, extraHeaders, refreshToken, onTokenRefreshed, retryEmptyStream = false) {
   const doFetch = (key) => fetch(messagesUrl, {
     method: "POST",
     headers: anthropicUpstreamHeaders(key, clientWantsStream, inboundBeta, authType, claudeCodeSessionId, extraHeaders),
@@ -1981,12 +1982,46 @@ async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWant
     return;
   }
   if (clientWantsStream && upstreamRes.body) {
+    const reader = upstreamRes.body.getReader();
+    const first = await reader.read().catch(() => ({ done: true, value: void 0 }));
+    if (first.done) {
+      reader.releaseLock();
+      if (retryEmptyStream) {
+        log7?.("anthropic upstream returned an empty stream; retrying without streaming");
+        await replayWithoutStreaming(
+          res,
+          messagesUrl,
+          body,
+          apiKey,
+          inboundBeta,
+          authType,
+          claudeCodeSessionId,
+          extraHeaders,
+          log7
+        );
+        return;
+      }
+    }
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       "Connection": "keep-alive"
     });
-    Readable.fromWeb(upstreamRes.body).on("error", () => res.destroy()).pipe(res);
+    if (first.done) {
+      res.end();
+      return;
+    }
+    res.write(Buffer.from(first.value));
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        if (!res.write(Buffer.from(next.value))) await once(res, "drain");
+      }
+      res.end();
+    } catch {
+      res.destroy();
+    }
     return;
   }
   if (!upstreamRes.body) {
@@ -2007,6 +2042,85 @@ async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWant
     "Content-Length": Buffer.byteLength(text4).toString()
   });
   res.end(text4);
+}
+async function replayWithoutStreaming(res, messagesUrl, body, apiKey, inboundBeta, authType, claudeCodeSessionId, extraHeaders, log7) {
+  let retryRes;
+  try {
+    retryRes = await fetch(messagesUrl, {
+      method: "POST",
+      headers: anthropicUpstreamHeaders(apiKey, false, inboundBeta, authType, claudeCodeSessionId, extraHeaders),
+      body: JSON.stringify({ ...body, stream: false })
+    });
+  } catch (err) {
+    throw new UpstreamUnreachableError(err);
+  }
+  const text4 = await retryRes.text();
+  if (!retryRes.ok) {
+    log7?.(`anthropic upstream ${retryRes.status} on empty-stream retry: ${text4}`);
+    res.writeHead(retryRes.status, { "Content-Type": retryRes.headers.get("content-type") || "application/json" });
+    res.end(text4);
+    return;
+  }
+  let message;
+  try {
+    message = JSON.parse(text4);
+  } catch {
+    res.writeHead(502, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "Upstream response was not valid JSON" } }));
+    return;
+  }
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive"
+  });
+  writeMessageAsSse(res, message);
+}
+function writeMessageAsSse(res, message) {
+  const content = Array.isArray(message.content) ? message.content : [];
+  res.write(sseChunk("message_start", {
+    type: "message_start",
+    message: { ...message, content: [], stop_reason: null, stop_sequence: null }
+  }));
+  content.forEach((block, index) => {
+    const type = block.type;
+    const opening = type === "text" ? { type: "text", text: "" } : type === "thinking" ? { type: "thinking", thinking: "", signature: "" } : type === "tool_use" ? { type: "tool_use", id: block.id, name: block.name, input: {} } : block;
+    res.write(sseChunk("content_block_start", { type: "content_block_start", index, content_block: opening }));
+    if (type === "text") {
+      res.write(sseChunk("content_block_delta", {
+        type: "content_block_delta",
+        index,
+        delta: { type: "text_delta", text: block.text ?? "" }
+      }));
+    } else if (type === "thinking") {
+      res.write(sseChunk("content_block_delta", {
+        type: "content_block_delta",
+        index,
+        delta: { type: "thinking_delta", thinking: block.thinking ?? "" }
+      }));
+      if (typeof block.signature === "string") {
+        res.write(sseChunk("content_block_delta", {
+          type: "content_block_delta",
+          index,
+          delta: { type: "signature_delta", signature: block.signature }
+        }));
+      }
+    } else if (type === "tool_use") {
+      res.write(sseChunk("content_block_delta", {
+        type: "content_block_delta",
+        index,
+        delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input ?? {}) }
+      }));
+    }
+    res.write(sseChunk("content_block_stop", { type: "content_block_stop", index }));
+  });
+  res.write(sseChunk("message_delta", {
+    type: "message_delta",
+    delta: { stop_reason: message.stop_reason ?? "end_turn", stop_sequence: message.stop_sequence ?? null },
+    usage: message.usage ?? {}
+  }));
+  res.write(sseChunk("message_stop", { type: "message_stop" }));
+  res.end();
 }
 
 // src/antigravity/anthropic-to-cloudcode.ts
@@ -2859,7 +2973,8 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
             route.refreshToken,
             (refreshed) => {
               route.apiKey = refreshed;
-            }
+            },
+            true
           );
         } catch (err) {
           const message = err instanceof UpstreamUnreachableError ? err.message : String(err);
@@ -9685,4 +9800,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-ITPQY3LV.js.map
+//# sourceMappingURL=chunk-S7HYE2FI.js.map
