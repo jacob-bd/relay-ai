@@ -47,6 +47,7 @@ import {
   injectClaudeCodeBillingSystemLine,
   injectClaudeIdentity,
   isBrowserRedirectOAuth,
+  isOpencodeApi,
   isOpencodeOAuth,
   isSdkMigratedNpm,
   isValidProviderId,
@@ -86,7 +87,7 @@ import {
   translateRequest,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-2LUDFIZX.js";
+} from "./chunk-VPDX24ZR.js";
 
 // src/registry/google-model-id.ts
 var GOOGLE_MODEL_PREFIX = "models/";
@@ -3910,7 +3911,12 @@ function buildImportProviderList(raw, authEntries) {
   const oauthByProviderId = /* @__PURE__ */ new Map();
   const covered = /* @__PURE__ */ new Set();
   const merged = [];
-  for (const provider of normalizeProviders(raw)) {
+  const rawWithLegacyKeys = raw.map((provider) => {
+    const authEntry = authEntries[provider.id];
+    if (provider.key?.trim() || !isOpencodeApi(authEntry)) return provider;
+    return { ...provider, key: authEntry.key };
+  });
+  for (const provider of normalizeProviders(rawWithLegacyKeys)) {
     const normalized = normalizeImportProviderIdentity(provider);
     if (covered.has(normalized.id)) continue;
     merged.push(normalized);
@@ -3967,7 +3973,7 @@ function listCredentialSkippedProviders(raw, authEntries, importedIds, alreadyRe
     if (isOpencodeOAuth(authEntries[provider.id])) continue;
     if (!provider.models || Object.keys(provider.models).length === 0) continue;
     const reason = classifyOpencodeCredentialGap(provider.id);
-    if (reason !== "oauth-no-token" && !registryProviderIds.has(provider.id)) continue;
+    if (reason !== "oauth-no-token" && !provider.configured && !registryProviderIds.has(provider.id)) continue;
     skipped.push({ id: provider.id, name: provider.name, reason });
   }
   return skipped;
@@ -9800,4 +9806,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-S7HYE2FI.js.map
+//# sourceMappingURL=chunk-5MEDBKPX.js.map

@@ -35,6 +35,25 @@ describe('resolveOpencodeAuthPath', () => {
 });
 
 describe('readOpencodeAuthFile', () => {
+  it('parses legacy API-key entries retained after OpenCode v2 migration', () => {
+    const home = mkdtempSync(join(tmpdir(), 'relay-oauth-'));
+    const env = authEnvForHome(home);
+    const path = resolveOpencodeAuthPath(env);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({
+      nvidia: { type: 'api', key: 'nvapi-key', metadata: { account: 'work' } },
+    }), 'utf8');
+    if (process.platform !== 'win32') chmodSync(path, 0o600);
+
+    const result = readOpencodeAuthFile(env);
+    expect(result?.entries['nvidia']).toEqual({
+      type: 'api',
+      key: 'nvapi-key',
+      metadata: { account: 'work' },
+    });
+    rmSync(home, { recursive: true, force: true });
+  });
+
   it('parses oauth entries', () => {
     const home = mkdtempSync(join(tmpdir(), 'relay-oauth-'));
     const env = authEnvForHome(home);
@@ -106,6 +125,26 @@ describe('buildImportProviderList', () => {
     expect(oauth.oauthByProviderId.has('xai-oauth')).toBe(true);
   });
 
+  it('uses a legacy API key retained after OpenCode v2 migration', () => {
+    const keylessRaw: RawProvider[] = [{
+      id: 'groq',
+      name: 'Groq',
+      models: {
+        llama: {
+          id: 'llama',
+          api: { npm: '@ai-sdk/groq', url: 'https://api.groq.com/openai/v1' },
+        },
+      },
+    }];
+
+    const { providers } = buildImportProviderList(keylessRaw, {
+      groq: { type: 'api', key: 'gsk-from-legacy-auth-file' },
+    });
+
+    expect(providers).toHaveLength(1);
+    expect(providers[0]?.apiKey).toBe('gsk-from-legacy-auth-file');
+  });
+
   it('maps OpenCode cloud provider ids to relay-ai zen and go ids', () => {
     const cloudRaw: RawProvider[] = [{
       id: 'opencode',
@@ -153,6 +192,21 @@ describe('buildImportProviderList', () => {
       models: { gemini: { id: 'gemini', api: { npm: '@ai-sdk/google', url: '' } } },
     }];
     expect(listCredentialSkippedProviders(rawCatalog, {}, new Set(), new Set())).toEqual([]);
+  });
+
+  it('reports a connected v2 provider whose private credential cannot be imported', () => {
+    const connectedV2: RawProvider[] = [{
+      id: 'nvidia',
+      name: 'Nvidia',
+      configured: true,
+      models: {
+        qwen: { id: 'qwen', api: { npm: '@ai-sdk/openai-compatible', url: 'https://example.com/v1' } },
+      },
+    }];
+
+    expect(listCredentialSkippedProviders(connectedV2, {}, new Set())).toEqual([
+      { id: 'nvidia', name: 'Nvidia', reason: 'no-api-key' },
+    ]);
   });
 
   it('does not duplicate providers already reported as conflict-kept', () => {

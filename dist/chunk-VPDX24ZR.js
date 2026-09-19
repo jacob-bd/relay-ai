@@ -7,7 +7,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.12.5",
+  version: "0.12.6",
   publishConfig: {
     access: "public"
   },
@@ -694,6 +694,13 @@ function decodeAuthEntry(value) {
   if (typeof value === "string" && value.trim()) return value.trim();
   if (!value || typeof value !== "object") return null;
   const record = value;
+  if (record["type"] === "api" && typeof record["key"] === "string" && record["key"].trim()) {
+    return {
+      type: "api",
+      key: record["key"],
+      metadata: record["metadata"] && typeof record["metadata"] === "object" && !Array.isArray(record["metadata"]) ? record["metadata"] : void 0
+    };
+  }
   if (record["type"] === "oauth" && typeof record["access"] === "string" && typeof record["refresh"] === "string" && typeof record["expires"] === "number") {
     return {
       type: "oauth",
@@ -746,6 +753,9 @@ function readOpencodeAuthFile(env = process.env) {
 }
 function isOpencodeOAuth(entry) {
   return !!entry && typeof entry === "object" && entry.type === "oauth";
+}
+function isOpencodeApi(entry) {
+  return !!entry && typeof entry === "object" && entry.type === "api";
 }
 function oauthCredentialToKeychainJson(cred) {
   return JSON.stringify(cred);
@@ -5190,6 +5200,7 @@ export {
   routeLookupIds,
   readOpencodeAuthFile,
   isOpencodeOAuth,
+  isOpencodeApi,
   oauthCredentialToKeychainJson,
   tokensToStoredCredential,
   supportsNativeOAuth,
@@ -5263,4 +5274,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-2LUDFIZX.js.map
+//# sourceMappingURL=chunk-VPDX24ZR.js.map

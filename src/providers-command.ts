@@ -201,7 +201,7 @@ export async function runProvidersImport(): Promise<number> {
         s.reason === 'user-skipped' ? 'skipped by you'
         : s.reason === 'conflict-kept' ? 'kept your existing config'
         : s.reason === 'oauth-no-token' ? 'OAuth provider in OpenCode but not signed in — run relay-ai providers auth'
-        : s.reason === 'no-api-key' ? 'no API key in OpenCode — add key there or use relay-ai providers add'
+        : s.reason === 'no-api-key' ? 'API key is not available to import — use relay-ai providers add'
         : s.reason === 'manual-only' ? 'uses gcloud/AWS credentials — not importable via API key'
         : s.reason === 'placeholder-key' ? 'placeholder API key — provider not imported'
         : s.reason === 'invalid-key' ? 'API key failed verification — provider not imported'

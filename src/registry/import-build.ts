@@ -3,6 +3,7 @@
 import type { LocalProvider } from '../types.js';
 import { normalizeProviders, type RawProvider } from '../providers.js';
 import {
+  isOpencodeApi,
   isOpencodeOAuth,
   type OpencodeAuthEntry,
   type OpencodeOAuthCredential,
@@ -42,8 +43,13 @@ export function buildImportProviderList(
   const oauthByProviderId = new Map<string, OpencodeOAuthCredential>();
   const covered = new Set<string>();
   const merged: LocalProvider[] = [];
+  const rawWithLegacyKeys = raw.map((provider) => {
+    const authEntry = authEntries[provider.id];
+    if (provider.key?.trim() || !isOpencodeApi(authEntry)) return provider;
+    return { ...provider, key: authEntry.key };
+  });
 
-  for (const provider of normalizeProviders(raw)) {
+  for (const provider of normalizeProviders(rawWithLegacyKeys)) {
     const normalized = normalizeImportProviderIdentity(provider);
     if (covered.has(normalized.id)) continue;
     merged.push(normalized);
@@ -128,7 +134,7 @@ export function listCredentialSkippedProviders(
     // Only surface actionable gaps: OAuth sign-in needed, or a provider you already
     // use in relay-ai that OpenCode still has without credentials. Skip random OpenCode
     // catalog stubs (e.g. Google with models but no key) the user never configured.
-    if (reason !== 'oauth-no-token' && !registryProviderIds.has(provider.id)) continue;
+    if (reason !== 'oauth-no-token' && !provider.configured && !registryProviderIds.has(provider.id)) continue;
 
     skipped.push({ id: provider.id, name: provider.name, reason });
   }

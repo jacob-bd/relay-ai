@@ -2,11 +2,11 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-SJEJAHKL.js";
-import "./chunk-2LUDFIZX.js";
+} from "./chunk-6ULON7FU.js";
+import "./chunk-VPDX24ZR.js";
 import "./chunk-JIDIH7DS.js";
 export {
   addManualModel,
   removeManualModel
 };
-//# sourceMappingURL=manual-models-WCK2QGLV.js.map
+//# sourceMappingURL=manual-models-EIKWUZEG.js.map

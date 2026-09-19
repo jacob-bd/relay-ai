@@ -20,7 +20,13 @@ export interface OpencodeWellKnownCredential {
   token: string;
 }
 
-export type OpencodeAuthEntry = OpencodeOAuthCredential | OpencodeWellKnownCredential | string;
+export interface OpencodeApiCredential {
+  type: 'api';
+  key: string;
+  metadata?: Record<string, unknown>;
+}
+
+export type OpencodeAuthEntry = OpencodeApiCredential | OpencodeOAuthCredential | OpencodeWellKnownCredential | string;
 
 export interface ReadOpencodeAuthResult {
   path: string;
@@ -40,6 +46,15 @@ function decodeAuthEntry(value: unknown): OpencodeAuthEntry | null {
   if (typeof value === 'string' && value.trim()) return value.trim();
   if (!value || typeof value !== 'object') return null;
   const record = value as Record<string, unknown>;
+  if (record['type'] === 'api' && typeof record['key'] === 'string' && record['key'].trim()) {
+    return {
+      type: 'api',
+      key: record['key'],
+      metadata: record['metadata'] && typeof record['metadata'] === 'object' && !Array.isArray(record['metadata'])
+        ? record['metadata'] as Record<string, unknown>
+        : undefined,
+    };
+  }
   if (record['type'] === 'oauth'
     && typeof record['access'] === 'string'
     && typeof record['refresh'] === 'string'
@@ -107,6 +122,10 @@ export function readOpencodeAuthFile(env: NodeJS.ProcessEnv = process.env): Read
 
 export function isOpencodeOAuth(entry: OpencodeAuthEntry | undefined): entry is OpencodeOAuthCredential {
   return !!entry && typeof entry === 'object' && entry.type === 'oauth';
+}
+
+export function isOpencodeApi(entry: OpencodeAuthEntry | undefined): entry is OpencodeApiCredential {
+  return !!entry && typeof entry === 'object' && entry.type === 'api';
 }
 
 export function oauthCredentialToKeychainJson(cred: OpencodeOAuthCredential): string {

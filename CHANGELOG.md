@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.6] - 2026-09-19
+
+### Fixed
+
+- **Provider import works with OpenCode v2 while preserving OpenCode v1 compatibility.** Relay now recognizes both server generations, starts the temporary OpenCode server with isolated authentication, and reads v2's split integration, model, and provider APIs instead of the removed `/config/providers` endpoint. OpenCode's native provider packages, upstream model IDs, endpoint settings, context limits, and cache pricing are translated into Relay's existing provider format. API keys retained in OpenCode's legacy `auth.json` after migration and environment-backed credentials remain importable; credentials held only in OpenCode v2's private database are never accessed, and Relay instead reports the affected provider with a direct `relay-ai providers add` recovery path.
+
 ## [0.12.5] - 2026-09-16
 
 ### Fixed

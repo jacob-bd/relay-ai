@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-SJEJAHKL.js";
+} from "./chunk-6ULON7FU.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -148,7 +148,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-S7HYE2FI.js";
+} from "./chunk-5MEDBKPX.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -222,7 +222,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-2LUDFIZX.js";
+} from "./chunk-VPDX24ZR.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -237,6 +237,7 @@ import * as p2 from "@clack/prompts";
 
 // src/opencode-serve.ts
 import { execSync, spawn } from "child_process";
+import { randomBytes } from "crypto";
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -268,13 +269,99 @@ function findOpencodeBinary() {
   }
   return null;
 }
+function parseOpencodeServerBanner(output) {
+  const v1 = /opencode server listening on (http:\/\/127\.0\.0\.1:\d+)/.exec(output);
+  if (v1?.[1]) return { generation: "v1", url: v1[1] };
+  const v2 = /(?:^|\n)\s*server listening on (http:\/\/127\.0\.0\.1:\d+)/.exec(output);
+  if (v2?.[1]) return { generation: "v2", url: v2[1] };
+  return null;
+}
+function v2SdkPackage(packageName, baseUrl) {
+  if (packageName.startsWith("aisdk:")) return packageName.slice("aisdk:".length);
+  if (!packageName.startsWith("@opencode/ai/providers/")) return packageName;
+  const provider = packageName.slice("@opencode/ai/providers/".length);
+  const packages = {
+    anthropic: "@ai-sdk/anthropic",
+    "anthropic-compatible": "@ai-sdk/anthropic",
+    openai: "@ai-sdk/openai",
+    "openai-compatible": "@ai-sdk/openai-compatible",
+    google: "@ai-sdk/google",
+    "google-vertex": "@ai-sdk/google-vertex",
+    xai: "@ai-sdk/xai",
+    azure: "@ai-sdk/azure",
+    "amazon-bedrock": "@ai-sdk/amazon-bedrock",
+    openrouter: "@openrouter/ai-sdk-provider"
+  };
+  return packages[provider] ?? (baseUrl ? "@ai-sdk/openai-compatible" : "");
+}
+function normalizeV2Providers(models, integrations, providers, env = process.env) {
+  const providerById = /* @__PURE__ */ new Map();
+  for (const value of providers) {
+    if (!value || typeof value !== "object") continue;
+    const provider = value;
+    if (provider.id) providerById.set(provider.id, provider);
+  }
+  const v2Models = models.filter((value) => !!value && typeof value === "object");
+  const result = [];
+  for (const value of integrations) {
+    if (!value || typeof value !== "object") continue;
+    const integration = value;
+    if (!integration.id || !integration.connections?.length) continue;
+    const provider = providerById.get(integration.id);
+    const rawModels = {};
+    for (const model of v2Models) {
+      if (model.providerID !== integration.id || !model.id) continue;
+      if (model.enabled === false || model.status === "deprecated") continue;
+      const settings = { ...provider?.settings ?? {}, ...model.settings ?? {} };
+      const baseUrl = typeof settings["baseURL"] === "string" ? settings["baseURL"] : void 0;
+      const packageName = v2SdkPackage(model.package ?? provider?.package ?? "", baseUrl);
+      if (!packageName) continue;
+      const cost = model.cost?.[0];
+      rawModels[model.id] = {
+        id: model.id,
+        name: model.name,
+        family: model.family,
+        api: {
+          id: model.modelID ?? model.id,
+          npm: packageName,
+          url: baseUrl
+        },
+        cost: cost && typeof cost.input === "number" && typeof cost.output === "number" ? {
+          input: cost.input,
+          output: cost.output,
+          cache_read: cost.cache?.read,
+          cache_write: cost.cache?.write
+        } : void 0,
+        limit: model.limit
+      };
+    }
+    if (Object.keys(rawModels).length === 0) continue;
+    const envConnection = integration.connections.find((connection) => connection.type === "env" && connection.name);
+    result.push({
+      id: integration.id,
+      name: integration.name ?? integration.id,
+      key: envConnection?.name ? env[envConnection.name] : void 0,
+      configured: true,
+      models: rawModels
+    });
+  }
+  return result;
+}
+async function fetchV2Data(url, authHeader) {
+  const response = await fetch(url, { headers: { authorization: authHeader } });
+  if (!response.ok) return null;
+  const body = await response.json();
+  return body.data ?? null;
+}
 async function fetchRawOpencodeProviders() {
   const binary = findOpencodeBinary();
   if (!binary) return null;
   return new Promise((resolve2) => {
     let child = null;
     let settled = false;
-    const TIMEOUT_MS = 1e4;
+    const TIMEOUT_MS = 15e3;
+    const password3 = randomBytes(24).toString("hex");
+    const authHeader = `Basic ${Buffer.from(`opencode:${password3}`).toString("base64")}`;
     const finish = (value) => {
       if (settled) return;
       settled = true;
@@ -289,31 +376,49 @@ async function fetchRawOpencodeProviders() {
       finish(null);
     }, TIMEOUT_MS);
     try {
-      child = isWindows ? spawn("cmd.exe", ["/c", binary, "serve", "--port", "0"], { stdio: ["pipe", "pipe", "pipe"] }) : spawn(binary, ["serve", "--port", "0"], { stdio: ["pipe", "pipe", "pipe"] });
+      child = isWindows ? spawn("cmd.exe", ["/c", binary, "serve", "--port", "0"], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, OPENCODE_SERVER_PASSWORD: password3 }
+      }) : spawn(binary, ["serve", "--port", "0"], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, OPENCODE_SERVER_PASSWORD: password3 }
+      });
     } catch {
       finish(null);
       return;
     }
-    const portRegex = /opencode server listening on http:\/\/127\.0\.0\.1:(\d+)/;
     let portFound = false;
     let stdoutBuf = "";
     const onData = (chunk) => {
       if (portFound) return;
       stdoutBuf += chunk.toString();
-      const match = portRegex.exec(stdoutBuf);
-      if (!match) return;
+      const banner = parseOpencodeServerBanner(stdoutBuf);
+      if (!banner) return;
       portFound = true;
-      const port = match[1];
-      fetch(`http://127.0.0.1:${port}/config/providers`).then((res) => res.json()).then((data) => {
-        const raw = data.providers;
-        if (!Array.isArray(raw)) {
+      if (banner.generation === "v1") {
+        fetch(`${banner.url}/config/providers`, { headers: { authorization: authHeader } }).then((res) => res.json()).then((data) => {
+          const raw = data.providers;
+          finish(Array.isArray(raw) ? raw : null);
+        }).catch(() => finish(null));
+        return;
+      }
+      void (async () => {
+        try {
+          const integrations = await fetchV2Data(`${banner.url}/api/integration`, authHeader);
+          const models = await fetchV2Data(`${banner.url}/api/model`, authHeader);
+          if (!Array.isArray(integrations) || !Array.isArray(models)) {
+            finish(null);
+            return;
+          }
+          const connectedIds = integrations.filter((value) => !!value && typeof value === "object").filter((integration) => !!integration.id && !!integration.connections?.length).map((integration) => integration.id);
+          const providerValues = await Promise.all(connectedIds.map(
+            (id) => fetchV2Data(`${banner.url}/api/provider/${encodeURIComponent(id)}`, authHeader)
+          ));
+          finish(normalizeV2Providers(models, integrations, providerValues.filter((value) => value !== null)));
+        } catch {
           finish(null);
-          return;
         }
-        finish(raw);
-      }).catch(() => {
-        finish(null);
-      });
+      })();
     };
     child.stdout?.on("data", onData);
     child.stderr?.on("data", onData);
@@ -1415,7 +1520,7 @@ async function runProvidersImport() {
   );
   if (result.skipped.length > 0) {
     for (const s of result.skipped) {
-      const reason = s.reason === "user-skipped" ? "skipped by you" : s.reason === "conflict-kept" ? "kept your existing config" : s.reason === "oauth-no-token" ? "OAuth provider in OpenCode but not signed in \u2014 run relay-ai providers auth" : s.reason === "no-api-key" ? "no API key in OpenCode \u2014 add key there or use relay-ai providers add" : s.reason === "manual-only" ? "uses gcloud/AWS credentials \u2014 not importable via API key" : s.reason === "placeholder-key" ? "placeholder API key \u2014 provider not imported" : s.reason === "invalid-key" ? "API key failed verification \u2014 provider not imported" : s.reason === "credential-save-failed" ? "could not save credential \u2014 provider not imported" : s.reason;
+      const reason = s.reason === "user-skipped" ? "skipped by you" : s.reason === "conflict-kept" ? "kept your existing config" : s.reason === "oauth-no-token" ? "OAuth provider in OpenCode but not signed in \u2014 run relay-ai providers auth" : s.reason === "no-api-key" ? "API key is not available to import \u2014 use relay-ai providers add" : s.reason === "manual-only" ? "uses gcloud/AWS credentials \u2014 not importable via API key" : s.reason === "placeholder-key" ? "placeholder API key \u2014 provider not imported" : s.reason === "invalid-key" ? "API key failed verification \u2014 provider not imported" : s.reason === "credential-save-failed" ? "could not save credential \u2014 provider not imported" : s.reason;
       p6.log.warn(`Skipped ${s.name} (${s.id}): ${reason}`);
     }
   }
@@ -3435,7 +3540,7 @@ function responsesRateLimitBody(modelId, message) {
 }
 
 // src/codex/routing.ts
-import { randomBytes } from "crypto";
+import { randomBytes as randomBytes2 } from "crypto";
 function classifyCodexDispatch(modelId, relayRoutes, nativeModelIds) {
   if (nativeModelIds.has(modelId)) return { kind: "native", modelId };
   const route = relayRoutes.find((candidate) => candidate.modelId === modelId);
@@ -3451,7 +3556,7 @@ function classifyCodexMixedDispatch(input) {
   return dispatch;
 }
 function createMixedProxyCapability() {
-  return randomBytes(32).toString("base64url");
+  return randomBytes2(32).toString("base64url");
 }
 function mixedProxyBaseUrl(port, capability) {
   return `http://127.0.0.1:${port}/_relay-codex/${capability}`;
@@ -13877,7 +13982,7 @@ function buildHttpProxyChildEnv(baseEnv, proxyUrl, caCertPath) {
 }
 
 // src/http-proxy/ca.ts
-import { randomBytes as randomBytes2, randomUUID as randomUUID4 } from "crypto";
+import { randomBytes as randomBytes3, randomUUID as randomUUID4 } from "crypto";
 import {
   chmodSync as chmodSync3,
   existsSync as existsSync13,
@@ -13894,7 +13999,7 @@ var SESSION_ROOT = "http-proxy-sessions";
 var OWNER_FILE = "owner.pid";
 var MID_CREATION_GRACE_MS = 3e4;
 function serialNumber() {
-  const bytes = randomBytes2(16);
+  const bytes = randomBytes3(16);
   bytes[0] &= 127;
   return bytes.toString("hex");
 }
@@ -14042,7 +14147,7 @@ ${additionalCa}
 import * as http2 from "http";
 import * as https from "https";
 import * as net from "net";
-import { randomBytes as randomBytes3, timingSafeEqual } from "crypto";
+import { randomBytes as randomBytes4, timingSafeEqual } from "crypto";
 import { URL as URL2 } from "url";
 var ANTHROPIC_HOST = RELAY_SENTINEL_HOST;
 var MAX_BODY_BYTES = 50 * 1024 * 1024;
@@ -14430,7 +14535,7 @@ async function startHttpProxy(options) {
   });
   mitmServer.on("tlsClientError", () => {
   });
-  const password3 = randomBytes3(32).toString("base64url");
+  const password3 = randomBytes4(32).toString("base64url");
   const expectedAuthorization = `Basic ${Buffer.from(`${PROXY_USERNAME}:${password3}`).toString("base64")}`;
   const sockets = /* @__PURE__ */ new Set();
   const proxyServer = http2.createServer((req, res) => {
@@ -16051,7 +16156,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-7AZ7SLTB.js");
+    const { runUiCommand } = await import("./ui-command-U3L4LI2K.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

@@ -1,5 +1,5 @@
 // src/providers.ts
-import type { LocalProvider, LocalProviderModel } from './types.js';
+import type { LocalProvider, LocalProviderModel, ModelCost } from './types.js';
 import { deriveBrand } from './models.js';
 import { resolveContextWindow } from './context-window.js';
 import { shouldHideModel, type CompatibilityAgent } from './model-compatibility.js';
@@ -9,7 +9,7 @@ interface RawModel {
   name?: string;
   family?: string;
   api?: { id?: string; npm?: string; url?: string };
-  cost?: { input: number; output: number };
+  cost?: ModelCost;
   limit?: { context?: number; output?: number };
   supported_parameters?: string[];
   supportedParameters?: string[];
@@ -21,6 +21,8 @@ export interface RawProvider {
   id: string;
   name: string;
   key?: string;
+  /** True when OpenCode v2 reports an active connection, even if it withholds the secret. */
+  configured?: boolean;
   models?: Record<string, RawModel>;
 }
 
