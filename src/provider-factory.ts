@@ -809,13 +809,20 @@ function xaiDefaultReasoningEffort(modelId: string): string {
   return 'low';
 }
 
-/** DeepSeek V4 models with thinking mode + reasoning_effort (direct API). */
+/**
+ * DeepSeek V4.x models with thinking mode + reasoning_effort (direct API and
+ * OpenCode Go/Zen, which serve the same DeepSeek wire shape).
+ *
+ * Prefix-based so a new point release (e.g. `deepseek-v4.1-flash`) is
+ * recognized without a code change — v4.1 was missing here, which silently
+ * reduced its Codex catalog entry to a single `none` effort level. Snapshot
+ * suffixes (`deepseek-v4-pro-0813`) and vision variants still match.
+ */
+const DEEPSEEK_V4_REASONING_ID = /^deepseek-v4(?:\.\d+)?-(?:flash|pro)(?:-|$)/;
+
 function isDeepSeekReasoningModel(modelId: string): boolean {
   const lower = modelId.toLowerCase();
-  return lower === 'deepseek-v4-flash'
-    || lower === 'deepseek-v4-pro'
-    || lower.startsWith('deepseek-v4-flash-')
-    || lower.startsWith('deepseek-v4-pro-')
+  return DEEPSEEK_V4_REASONING_ID.test(lower)
     || lower === 'deepseek-reasoner'
     || lower === 'deepseek-chat';
 }
@@ -900,23 +907,29 @@ function mapCodexEffortToDeepSeek(effort: string): 'high' | 'max' | 'off' | unde
   }
 }
 
-/** DeepSeek thinking toggle spreads via provider id keys on @ai-sdk/openai-compatible. */
+/**
+ * DeepSeek thinking toggle + effort spreads via the *route's own* provider id.
+ *
+ * The SDK only reads `providerOptions[provider.name]` (or its camelCase form),
+ * and `@ai-sdk/openai-compatible` instances are created with the registry
+ * provider id as their name — `go` for OpenCode Go, `deepseek` for the direct
+ * API. The old hardcoded `openaiCompatible`/`deepseek` keys matched neither the
+ * Go instance nor any other openai-compatible route, so the effort was dropped
+ * before the request left Relay.
+ */
 function deepSeekEffortProviderOptions(
   effort: string,
+  metadata?: ReasoningMetadata,
 ): Record<string, Record<string, unknown>> | undefined {
   const mapped = mapCodexEffortToDeepSeek(effort);
   if (!mapped) return undefined;
+  const key = metadata?.providerId ? toCamelCase(metadata.providerId) : 'openaiCompatible';
   const thinking = { type: mapped === 'off' ? 'disabled' : 'enabled' };
-  const spread = { thinking };
   if (mapped === 'off') {
-    return {
-      deepseek: spread,
-      openaiCompatible: spread,
-    };
+    return { [key]: { thinking } };
   }
   return {
-    openaiCompatible: { reasoningEffort: mapped, ...spread },
-    deepseek: spread,
+    [key]: { reasoningEffort: mapped, thinking },
   };
 }
 
@@ -1413,7 +1426,7 @@ export function effortProviderOptions(
   if (npm === '@ai-sdk/openai-compatible' || npm === '@ai-sdk/openai') {
     if (!modelId) return undefined;
     if (isDeepSeekReasoningModel(modelId)) {
-      return deepSeekEffortProviderOptions(effort);
+      return deepSeekEffortProviderOptions(effort, metadata);
     }
     if (isKimiReasoningModel(modelId)) {
       const reasoningEffort = mapCodexEffortToOpenAICompatible(effort);

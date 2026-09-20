@@ -701,6 +701,8 @@ interface StreamingToolState {
   name: string;
   outputIndex: number;
   args: string;
+  /** Resolved once at tool start so the item id prefix and final item type stay in lockstep. */
+  kind: ToolOutputKind;
 }
 
 const CODEX_SUBAGENT_TOOL_NAMES = new Set(['spawn_agent', 'multi_agent_v1__spawn_agent']);
@@ -744,6 +746,24 @@ function resolveOutputKind(flatName: string, ctx?: CodexToolContext): ToolOutput
   const ns = ctx.namespaceByFlatName.get(flatName);
   if (ns) return { kind: 'namespace', namespace: ns.namespace, name: ns.name };
   return { kind: 'plain' };
+}
+
+/**
+ * Codex-native item id prefixes: `fc_` function calls, `tsc_` tool searches,
+ * `ctc_` custom tool calls. The native backend validates these on replayed
+ * history, so a relay turn stored under the wrong prefix (all three used to be
+ * `fc_`) makes the whole thread fail with `invalid_id_prefix` the moment the
+ * user switches to a native model in the same conversation.
+ */
+function toolItemId(kind: ToolOutputKind, upstreamId: string): string {
+  switch (kind.kind) {
+    case 'tool_search':
+      return upstreamId.startsWith('tsc_') ? upstreamId : newItemId('tsc');
+    case 'custom':
+      return upstreamId.startsWith('ctc_') ? upstreamId : newItemId('ctc');
+    default:
+      return functionCallItemId(upstreamId);
+  }
 }
 
 /**
@@ -922,14 +942,16 @@ export async function writeResponsesStream(
     name: string | undefined,
     signature: string | undefined,
   ): StreamingToolState => {
+    const kind = resolveOutputKind(name ?? '', options?.toolContext);
     const upstreamId = rawId ?? newItemId('call');
-    const itemId = functionCallItemId(upstreamId);
+    const itemId = toolItemId(kind, upstreamId);
     const state = rememberToolState({
       itemId,
       callId: encodeToolUseId(upstreamId, signature, false),
       name: name ?? 'unknown',
       outputIndex: outputIndex++,
       args: '',
+      kind,
     });
     emit('response.output_item.added', {
       type: 'response.output_item.added',
@@ -1247,7 +1269,7 @@ export async function writeResponsesStream(
       output_index: tool.outputIndex,
       arguments: normalizedArgs,
     });
-    const fcItem = buildFinalToolItem(resolveOutputKind(tool.name, options?.toolContext), tool.name, tool.callId, tool.itemId, normalizedArgs);
+    const fcItem = buildFinalToolItem(tool.kind, tool.name, tool.callId, tool.itemId, normalizedArgs);
     emit('response.output_item.done', {
       type: 'response.output_item.done',
       output_index: tool.outputIndex,
@@ -1374,11 +1396,12 @@ export async function generateResponsesResponse(
   for (const tc of r.toolCalls) {
     const encodedId = encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc as FullStreamPart), false);
     const argsStr = JSON.stringify(tc.input ?? {});
+    const kind = resolveOutputKind(tc.toolName, toolContext);
     output.push(buildFinalToolItem(
-      resolveOutputKind(tc.toolName, toolContext),
+      kind,
       tc.toolName,
       encodedId,
-      functionCallItemId(tc.toolCallId),
+      toolItemId(kind, tc.toolCallId),
       argsStr,
     ));
   }

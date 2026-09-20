@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-6ULON7FU.js";
+} from "./chunk-NDSDRL6T.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -148,7 +148,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-5MEDBKPX.js";
+} from "./chunk-VRSMQMWR.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -222,7 +222,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-VPDX24ZR.js";
+} from "./chunk-FJEZFHVS.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -2875,6 +2875,16 @@ function resolveOutputKind(flatName, ctx) {
   if (ns) return { kind: "namespace", namespace: ns.namespace, name: ns.name };
   return { kind: "plain" };
 }
+function toolItemId(kind, upstreamId) {
+  switch (kind.kind) {
+    case "tool_search":
+      return upstreamId.startsWith("tsc_") ? upstreamId : newItemId("tsc");
+    case "custom":
+      return upstreamId.startsWith("ctc_") ? upstreamId : newItemId("ctc");
+    default:
+      return functionCallItemId(upstreamId);
+  }
+}
 function buildFinalToolItem(kind, flatName, callId, itemId, argsStr) {
   argsStr = normalizeCodexSubagentArguments(flatName, argsStr);
   switch (kind.kind) {
@@ -2962,14 +2972,16 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
     return state;
   };
   const createToolState = (rawId, name, signature) => {
+    const kind = resolveOutputKind(name ?? "", options?.toolContext);
     const upstreamId = rawId ?? newItemId("call");
-    const itemId = functionCallItemId(upstreamId);
+    const itemId = toolItemId(kind, upstreamId);
     const state = rememberToolState({
       itemId,
       callId: encodeToolUseId(upstreamId, signature, false),
       name: name ?? "unknown",
       outputIndex: outputIndex++,
-      args: ""
+      args: "",
+      kind
     });
     emit("response.output_item.added", {
       type: "response.output_item.added",
@@ -3256,7 +3268,7 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
       output_index: tool4.outputIndex,
       arguments: normalizedArgs
     });
-    const fcItem = buildFinalToolItem(resolveOutputKind(tool4.name, options?.toolContext), tool4.name, tool4.callId, tool4.itemId, normalizedArgs);
+    const fcItem = buildFinalToolItem(tool4.kind, tool4.name, tool4.callId, tool4.itemId, normalizedArgs);
     emit("response.output_item.done", {
       type: "response.output_item.done",
       output_index: tool4.outputIndex,
@@ -3352,11 +3364,12 @@ async function generateResponsesResponse(model, params, modelId) {
   for (const tc of r.toolCalls) {
     const encodedId = encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc), false);
     const argsStr = JSON.stringify(tc.input ?? {});
+    const kind = resolveOutputKind(tc.toolName, toolContext);
     output.push(buildFinalToolItem(
-      resolveOutputKind(tc.toolName, toolContext),
+      kind,
       tc.toolName,
       encodedId,
-      functionCallItemId(tc.toolCallId),
+      toolItemId(kind, tc.toolCallId),
       argsStr
     ));
   }
@@ -4059,6 +4072,11 @@ var EXTERNAL_TOOL_OUTPUT_TYPES = /* @__PURE__ */ new Set([
   "custom_tool_call_output",
   "tool_search_output"
 ]);
+var EXTERNAL_TOOL_CALL_TYPES = /* @__PURE__ */ new Set([
+  "function_call",
+  "custom_tool_call",
+  "tool_search_call"
+]);
 function responsesInputItems(input) {
   if (Array.isArray(input)) return input;
   if (typeof input === "string") {
@@ -4071,8 +4089,13 @@ function isExternalToolOutputItem(item) {
   const type = item.type;
   return typeof type === "string" && EXTERNAL_TOOL_OUTPUT_TYPES.has(type);
 }
+function isExternalToolCallItem(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+  const type = item.type;
+  return typeof type === "string" && EXTERNAL_TOOL_CALL_TYPES.has(type);
+}
 function isExternalToolContinuation(input) {
-  return Array.isArray(input) && input.length > 0 && input.every(isExternalToolOutputItem);
+  return Array.isArray(input) && input.length > 0 && input.some(isExternalToolOutputItem) && !input.some(isExternalToolCallItem);
 }
 function estimateCodexRequestChars(params) {
   let chars = (params.instructions ?? "").length;
@@ -6044,6 +6067,12 @@ function buildCodexProxyRoutesFromResolved(resolved, providersById) {
       oauthAccountId: route.oauthAccountId,
       providerData: route.providerData,
       contextWindow: route.contextWindow,
+      // Reasoning metadata decides whether a picked effort can be translated
+      // at all (e.g. OpenRouter's supportedParameters gate). Dropping these
+      // silently turned every effort selection into a no-op on the wire.
+      supportedParameters: route.supportedParameters,
+      reasoning: route.reasoning,
+      interleavedReasoningField: route.interleavedReasoningField,
       headers: route.headers
     };
   }).filter((r) => r !== void 0);
@@ -6327,7 +6356,10 @@ async function prepareCodexMixedRelayRoutes(models, trace = false) {
         authType: "oauth",
         oauthAccountId: original.oauthAccountId,
         providerData: original.providerData,
-        contextWindow: proxyRoute.contextWindow
+        contextWindow: proxyRoute.contextWindow,
+        supportedParameters: original.model.supportedParameters,
+        reasoning: original.model.reasoning,
+        interleavedReasoningField: original.model.interleavedReasoningField
       }),
       trace
     );
@@ -16156,7 +16188,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-U3L4LI2K.js");
+    const { runUiCommand } = await import("./ui-command-DECEG7VQ.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

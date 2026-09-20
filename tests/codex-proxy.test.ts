@@ -10,6 +10,7 @@ import {
   isLikelyCodexCompactionRequest,
   isCodexV2CompactionRequest,
   isCodexSubagentRequest,
+  isExternalToolContinuation,
   protectCodexCompactionParams,
   resolveCodexSubagentRoute,
   startCodexProxy,
@@ -30,6 +31,32 @@ function maskedClientFrame(text: string, opcode = 0x1, fin = true): Buffer {
     masked,
   ]);
 }
+
+describe('isExternalToolContinuation', () => {
+  it('treats tool outputs plus a user message as a delta', () => {
+    expect(isExternalToolContinuation([
+      { type: 'function_call_output', call_id: 'call_1', output: 'x' },
+      { type: 'message', role: 'user', content: 'hi' },
+    ])).toBe(true);
+  });
+
+  it('treats a batch with replayed assistant tool calls as full history, not a delta', () => {
+    expect(isExternalToolContinuation([
+      { type: 'function_call', call_id: 'call_1', name: 'Read', arguments: '{}' },
+      { type: 'function_call_output', call_id: 'call_1', output: 'x' },
+    ])).toBe(false);
+    expect(isExternalToolContinuation([
+      { type: 'custom_tool_call', call_id: 'call_1', name: 'apply_patch', input: 'x' },
+      { type: 'custom_tool_call_output', call_id: 'call_1', output: 'y' },
+    ])).toBe(false);
+  });
+
+  it('rejects batches without any tool output', () => {
+    expect(isExternalToolContinuation([{ type: 'message', role: 'user', content: 'hi' }])).toBe(false);
+    expect(isExternalToolContinuation([])).toBe(false);
+    expect(isExternalToolContinuation('hello')).toBe(false);
+  });
+});
 
 describe('streamOutcome', () => {
   it('reports ok when the stream finished cleanly', () => {

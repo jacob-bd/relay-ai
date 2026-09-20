@@ -69,6 +69,12 @@ const EXTERNAL_TOOL_OUTPUT_TYPES = new Set([
   'custom_tool_call_output',
   'tool_search_output',
 ]);
+/** Assistant tool-call items — present when Codex replays full history, absent in a delta. */
+const EXTERNAL_TOOL_CALL_TYPES = new Set([
+  'function_call',
+  'custom_tool_call',
+  'tool_search_call',
+]);
 
 interface ExternalResponseState {
   input: ResponsesInputItem[];
@@ -89,8 +95,26 @@ function isExternalToolOutputItem(item: unknown): boolean {
   return typeof type === 'string' && EXTERNAL_TOOL_OUTPUT_TYPES.has(type);
 }
 
-function isExternalToolContinuation(input: unknown): input is ResponsesInputItem[] {
-  return Array.isArray(input) && input.length > 0 && input.every(isExternalToolOutputItem);
+function isExternalToolCallItem(item: unknown): boolean {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  const type = (item as { type?: unknown }).type;
+  return typeof type === 'string' && EXTERNAL_TOOL_CALL_TYPES.has(type);
+}
+
+/**
+ * A Codex continuation is a *delta*: tool outputs for the previous turn's calls,
+ * and nothing else — except when the user types while a tool is running, which
+ * appends their message to the same batch. Requiring every item to be a tool
+ * output treated that batch as full history, skipped state reconstruction, and
+ * forwarded an orphaned tool result with no matching call (live upstream 400).
+ * Full-history replays are identified by the assistant tool-call items they
+ * replay, so a batch without those is always a delta.
+ */
+export function isExternalToolContinuation(input: unknown): input is ResponsesInputItem[] {
+  return Array.isArray(input)
+    && input.length > 0
+    && input.some(isExternalToolOutputItem)
+    && !input.some(isExternalToolCallItem);
 }
 
 export function estimateCodexRequestChars(params: CodexSdkCallParams): number {

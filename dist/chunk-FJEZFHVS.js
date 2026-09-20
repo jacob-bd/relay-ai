@@ -7,7 +7,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.12.6",
+  version: "0.12.7",
   publishConfig: {
     access: "public"
   },
@@ -3666,9 +3666,10 @@ function xaiDefaultReasoningEffort(modelId) {
   if (lower === "grok-4.5" || lower.startsWith("grok-4.5-")) return "high";
   return "low";
 }
+var DEEPSEEK_V4_REASONING_ID = /^deepseek-v4(?:\.\d+)?-(?:flash|pro)(?:-|$)/;
 function isDeepSeekReasoningModel(modelId) {
   const lower = modelId.toLowerCase();
-  return lower === "deepseek-v4-flash" || lower === "deepseek-v4-pro" || lower.startsWith("deepseek-v4-flash-") || lower.startsWith("deepseek-v4-pro-") || lower === "deepseek-reasoner" || lower === "deepseek-chat";
+  return DEEPSEEK_V4_REASONING_ID.test(lower) || lower === "deepseek-reasoner" || lower === "deepseek-chat";
 }
 function isKimiReasoningModel(modelId) {
   const lower = modelId.toLowerCase();
@@ -3733,20 +3734,16 @@ function mapCodexEffortToDeepSeek(effort) {
       return void 0;
   }
 }
-function deepSeekEffortProviderOptions(effort) {
+function deepSeekEffortProviderOptions(effort, metadata) {
   const mapped = mapCodexEffortToDeepSeek(effort);
   if (!mapped) return void 0;
+  const key = metadata?.providerId ? toCamelCase(metadata.providerId) : "openaiCompatible";
   const thinking = { type: mapped === "off" ? "disabled" : "enabled" };
-  const spread = { thinking };
   if (mapped === "off") {
-    return {
-      deepseek: spread,
-      openaiCompatible: spread
-    };
+    return { [key]: { thinking } };
   }
   return {
-    openaiCompatible: { reasoningEffort: mapped, ...spread },
-    deepseek: spread
+    [key]: { reasoningEffort: mapped, thinking }
   };
 }
 function mapCodexEffortToAnthropic(effort) {
@@ -4086,7 +4083,7 @@ function effortProviderOptions(npm, effort, modelId, metadata) {
   if (npm === "@ai-sdk/openai-compatible" || npm === "@ai-sdk/openai") {
     if (!modelId) return void 0;
     if (isDeepSeekReasoningModel(modelId)) {
-      return deepSeekEffortProviderOptions(effort);
+      return deepSeekEffortProviderOptions(effort, metadata);
     }
     if (isKimiReasoningModel(modelId)) {
       const reasoningEffort = mapCodexEffortToOpenAICompatible(effort);
@@ -5274,4 +5271,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-VPDX24ZR.js.map
+//# sourceMappingURL=chunk-FJEZFHVS.js.map

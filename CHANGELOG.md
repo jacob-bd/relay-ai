@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.12.7] - 2026-09-19
+
+### Fixed
+
+- **DeepSeek V4.1 models on OpenCode Go now expose Codex's reasoning-effort selector.** Relay's DeepSeek recognition matched only `deepseek-v4-flash`, `deepseek-v4-pro`, `deepseek-reasoner`, and `deepseek-chat`, so `deepseek-v4.1-flash` was cataloged with a single `none` effort level and every effort request mapped to nothing. Version matching is now prefix-based (`deepseek-v4.x-flash/pro`), and DeepSeek's thinking/effort request options are keyed to the route's own provider ID instead of hardcoded `openaiCompatible`/`deepseek` keys that the OpenCode Go SDK instance never read — the effort previously never left Relay on Go routes, including for `deepseek-v4-flash`.
+- **Reasoning effort selected for a favorite model in Codex App is actually sent.** Mixed and favorites routes dropped their `supportedParameters`, `reasoning`, and `interleavedReasoningField` metadata when the proxy routes were built, so effort translation silently no-opped for any model whose vocabulary comes from provider metadata (OpenRouter, for example). The picker offered the levels; the request never carried them.
+- **A Codex continuation carrying a tool result plus a user message no longer fails with HTTP 400.** Relay rebuilt the prior conversation only when every input item was a tool output; a batch mixing a tool result with a message typed while the tool was running skipped the rebuild and forwarded an orphaned tool result with no matching call. A batch is now treated as a delta whenever it contains tool outputs and does not replay the assistant's tool calls.
+- **Relay-generated tool-search and custom-tool-call items now carry native Codex item ID prefixes.** Tool searches were emitted with `fc_` IDs and custom tool calls also used `fc_`, while native Codex requires `tsc_` and `ctc_` respectively — switching a thread from a Relay model to a native model failed with `Invalid 'input[N].id' ... Expected an ID that begins with 'tsc'`. Item IDs are now resolved from the tool's output kind when the call starts, keeping the ID prefix and the final item type in lockstep.
+
 ## [0.12.6] - 2026-09-19
 
 ### Fixed

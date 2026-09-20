@@ -157,6 +157,13 @@ describe('getReasoningCapabilities', () => {
     expect(caps.defaultLevel).toBe('high');
   });
 
+  it('recognizes DeepSeek V4.1 ids on OpenCode Go', () => {
+    const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'deepseek-v4.1-flash', { providerId: 'go' });
+    expect(caps.levels).toEqual(['high', 'max', 'off']);
+    expect(caps.defaultLevel).toBe('high');
+    expect(caps.wireFormat).toEqual({ kind: 'deepseek-thinking' });
+  });
+
   it('returns documented GLM-5.2 reasoning levels for OpenAI-compatible routes', () => {
     const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'glm-5.2');
     expect(caps.levels).toEqual(['high', 'xhigh']);
@@ -164,12 +171,20 @@ describe('getReasoningCapabilities', () => {
     expect(caps.wireFormat).toEqual({ kind: 'openai-reasoning-effort' });
   });
 
-  it('maps DeepSeek effort to openaiCompatible reasoningEffort + thinking enabled', () => {
+  it('maps DeepSeek effort to the route provider key + thinking enabled', () => {
+    // No provider id: falls back to the openai-compatible instance name.
     const merged = deepMergeProviderOptions(
       effortProviderOptions('@ai-sdk/openai-compatible', 'max', 'deepseek-v4-flash'),
     );
-    expect(merged?.openaiCompatible).toMatchObject({ reasoningEffort: 'max' });
-    expect(merged?.deepseek).toMatchObject({ thinking: { type: 'enabled' } });
+    expect(merged?.openaiCompatible).toMatchObject({
+      reasoningEffort: 'max',
+      thinking: { type: 'enabled' },
+    });
+    // OpenCode Go's SDK instance is named `go` — options keyed anything else are dropped.
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'max', 'deepseek-v4.1-flash', { providerId: 'go' }))
+      .toEqual({ go: { reasoningEffort: 'max', thinking: { type: 'enabled' } } });
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'off', 'deepseek-v4.1-flash', { providerId: 'go' }))
+      .toEqual({ go: { thinking: { type: 'disabled' } } });
   });
 
   it('maps Claude low effort to DeepSeek high', () => {

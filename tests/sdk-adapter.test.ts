@@ -340,8 +340,22 @@ describe('translateRequest', () => {
       output_config: { effort: 'max' },
       messages: [{ role: 'user', content: 'hi' }],
     }, '@ai-sdk/openai-compatible');
-    expect(params.providerOptions?.openaiCompatible).toMatchObject({ reasoningEffort: 'max' });
-    expect(params.providerOptions?.deepseek).toMatchObject({ thinking: { type: 'enabled' } });
+    expect(params.providerOptions?.openaiCompatible).toMatchObject({
+      reasoningEffort: 'max',
+      thinking: { type: 'enabled' },
+    });
+  });
+
+  it('keys DeepSeek effort to the route provider id when metadata is available', () => {
+    const params = translateRequest({
+      model: 'deepseek-v4.1-flash',
+      output_config: { effort: 'max' },
+      messages: [{ role: 'user', content: 'hi' }],
+    }, '@ai-sdk/openai-compatible', { reasoningMetadata: { providerId: 'go', upstreamModelId: 'deepseek-v4.1-flash' } });
+    expect(params.providerOptions?.go).toMatchObject({
+      reasoningEffort: 'max',
+      thinking: { type: 'enabled' },
+    });
   });
   it('flattens array system prompts', () => {
     const params = translateRequest({

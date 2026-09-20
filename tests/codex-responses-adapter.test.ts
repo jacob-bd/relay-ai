@@ -493,6 +493,8 @@ describe('Codex custom tool (apply_patch) round-trip (relay-ai/relay-ai#21)', ()
     expect(completed.output).toEqual([
       expect.objectContaining({ type: 'custom_tool_call', name: 'apply_patch', input: '*** Begin Patch\n*** End Patch' }),
     ]);
+    // Native Codex validates item id prefixes when history is replayed — ctc_ for custom calls.
+    expect(completed.output[0].id).toMatch(/^ctc_/);
   });
 
   it('re-joins a replayed custom_tool_call from Codex history into an SDK tool-call', () => {
@@ -535,6 +537,8 @@ describe('Codex native tool_search round-trip (relay-ai/relay-ai#21, defensive/u
     expect(completed.output).toEqual([
       expect.objectContaining({ type: 'tool_search_call', execution: 'client', arguments: { query: 'browser', limit: 5 } }),
     ]);
+    // Native Codex validates item id prefixes when history is replayed — tsc_ for tool searches.
+    expect(completed.output[0].id).toMatch(/^tsc_/);
   });
 
   it('ingests deferred namespaced tools surfaced by a tool_search_output history item so they become callable', () => {

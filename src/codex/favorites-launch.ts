@@ -111,6 +111,12 @@ export function buildCodexProxyRoutesFromResolved(
         oauthAccountId: route.oauthAccountId,
         providerData: route.providerData,
         contextWindow: route.contextWindow,
+        // Reasoning metadata decides whether a picked effort can be translated
+        // at all (e.g. OpenRouter's supportedParameters gate). Dropping these
+        // silently turned every effort selection into a no-op on the wire.
+        supportedParameters: route.supportedParameters,
+        reasoning: route.reasoning,
+        interleavedReasoningField: route.interleavedReasoningField,
         headers: route.headers,
       } as CodexProxyRoute;
     })

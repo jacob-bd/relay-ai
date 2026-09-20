@@ -74,6 +74,9 @@ export async function prepareCodexMixedRelayRoutes(
         oauthAccountId: original.oauthAccountId,
         providerData: original.providerData,
         contextWindow: proxyRoute.contextWindow,
+        supportedParameters: original.model.supportedParameters,
+        reasoning: original.model.reasoning,
+        interleavedReasoningField: original.model.interleavedReasoningField,
       }),
       trace,
     );
