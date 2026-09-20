@@ -7,7 +7,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.12.7",
+  version: "0.12.8",
   publishConfig: {
     access: "public"
   },
@@ -3595,12 +3595,14 @@ async function createLanguageModel(spec) {
 var ANTHROPIC_EFFORT_LEVELS = ["low", "medium", "high"];
 var OPENAI_EFFORT_LEVELS = ["low", "medium", "high"];
 var GEMINI_EFFORT_LEVELS = ["low", "medium", "high"];
-var MISTRAL_EFFORT_LEVELS = ["high", "off"];
+var MISTRAL_EFFORT_LEVELS = ["high", "none"];
 var XAI_CHAT_EFFORT_LEVELS = ["low", "high"];
 var XAI_RESPONSES_EFFORT_LEVELS = ["low", "medium", "high"];
 var OPENROUTER_EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh"];
-var DEEPSEEK_EFFORT_LEVELS = ["high", "max", "off"];
+var DEEPSEEK_EFFORT_LEVELS = ["high", "max", "none"];
+var DEEPSEEK_NATIVE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "none"];
 var GLM_52_EFFORT_LEVELS = ["high", "xhigh"];
+var GLM_53_EFFORT_LEVELS = ["low", "medium", "high", "xhigh"];
 var EMPTY_REASONING = {
   levels: [],
   defaultLevel: "",
@@ -3679,6 +3681,10 @@ function isGlm52ReasoningModel(modelId) {
   const lower = modelId.toLowerCase();
   return lower === "glm-5.2" || lower === "z-ai/glm-5.2" || lower === "zai/glm-5.2" || lower === "zai-org/glm-5.2" || lower === "zai-org/glm5.2" || lower === "glm5.2";
 }
+var GLM_53_REASONING_ID = /^(?:[a-z0-9-]+\/)?glm-?5\.3(?:-|$)/;
+function isGlm53ReasoningModel(modelId) {
+  return GLM_53_REASONING_ID.test(modelId.toLowerCase().trim());
+}
 function toCamelCase(str) {
   return str.replace(/[-_]([a-z])/g, (_, g) => g.toUpperCase());
 }
@@ -3717,25 +3723,33 @@ function openRouterReasoningCapabilities(metadata) {
   }
   return EMPTY_REASONING;
 }
-function mapCodexEffortToDeepSeek(effort) {
+function deepSeekAcceptsNativeEfforts(metadata) {
+  const providerId = metadata?.providerId?.toLowerCase();
+  if (providerId === "go" || providerId === "zen" || providerId === "opencode-go" || providerId === "opencode") {
+    return true;
+  }
+  return metadata?.apiBaseUrl?.includes("opencode.ai") === true;
+}
+function mapCodexEffortToDeepSeek(effort, nativeEfforts) {
   switch (effort) {
     case "off":
     case "none":
       return "off";
     case "low":
+      return nativeEfforts ? "low" : "high";
     case "medium":
+      return nativeEfforts ? "medium" : "high";
     case "high":
       return "high";
     case "xhigh":
     case "max":
       return "max";
     default:
-      if (effort === "high" || effort === "max") return effort;
       return void 0;
   }
 }
 function deepSeekEffortProviderOptions(effort, metadata) {
-  const mapped = mapCodexEffortToDeepSeek(effort);
+  const mapped = mapCodexEffortToDeepSeek(effort, deepSeekAcceptsNativeEfforts(metadata));
   if (!mapped) return void 0;
   const key = metadata?.providerId ? toCamelCase(metadata.providerId) : "openaiCompatible";
   const thinking = { type: mapped === "off" ? "disabled" : "enabled" };
@@ -3815,6 +3829,21 @@ function mapCodexEffortToOpenAICompatible(effort) {
 }
 function mapCodexEffortToGlm52(effort) {
   switch (effort) {
+    case "high":
+      return "high";
+    case "xhigh":
+    case "max":
+      return "max";
+    default:
+      return void 0;
+  }
+}
+function mapCodexEffortToGlm53(effort) {
+  switch (effort) {
+    case "low":
+      return "low";
+    case "medium":
+      return "medium";
     case "high":
       return "high";
     case "xhigh":
@@ -3967,8 +3996,9 @@ function resolveRawReasoningCapabilities(npm, modelId, metadata) {
     return EMPTY_REASONING;
   }
   if (isDeepSeekReasoningModel(modelId)) {
+    const levels = deepSeekAcceptsNativeEfforts(metadata) ? [...DEEPSEEK_NATIVE_EFFORT_LEVELS] : [...DEEPSEEK_EFFORT_LEVELS];
     return {
-      levels: [...DEEPSEEK_EFFORT_LEVELS],
+      levels,
       defaultLevel: "high",
       supportsSummaries: true,
       mode: "controllable",
@@ -3980,6 +4010,17 @@ function resolveRawReasoningCapabilities(npm, modelId, metadata) {
   if (isKimiReasoningModel(modelId)) {
     return {
       levels: [...OPENAI_EFFORT_LEVELS],
+      defaultLevel: "high",
+      supportsSummaries: false,
+      mode: "controllable",
+      source: "provider-rule",
+      confidence: "documented",
+      wireFormat: { kind: "openai-reasoning-effort" }
+    };
+  }
+  if (isGlm53ReasoningModel(modelId)) {
+    return {
+      levels: [...GLM_53_EFFORT_LEVELS],
       defaultLevel: "high",
       supportsSummaries: false,
       mode: "controllable",
@@ -4087,6 +4128,14 @@ function effortProviderOptions(npm, effort, modelId, metadata) {
     }
     if (isKimiReasoningModel(modelId)) {
       const reasoningEffort = mapCodexEffortToOpenAICompatible(effort);
+      if (reasoningEffort) {
+        const key = metadata?.providerId ? toCamelCase(metadata.providerId) : "openaiCompatible";
+        return { [key]: { reasoningEffort } };
+      }
+      return void 0;
+    }
+    if (isGlm53ReasoningModel(modelId)) {
+      const reasoningEffort = mapCodexEffortToGlm53(effort);
       if (reasoningEffort) {
         const key = metadata?.providerId ? toCamelCase(metadata.providerId) : "openaiCompatible";
         return { [key]: { reasoningEffort } };
@@ -5271,4 +5320,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-FJEZFHVS.js.map
+//# sourceMappingURL=chunk-HLPRPOIV.js.map

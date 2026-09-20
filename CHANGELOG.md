@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.8] - 2026-09-19
+
+### Fixed
+
+- **Codex App now shows the reasoning-effort slider for DeepSeek V4 models on OpenCode Go.** The app builds that slider from its own fixed ladder (`low`, `medium`, `high`, `xhigh`) and silently drops any effort outside it, so the `high / max / none` set Relay advertised rendered no control at all, just a "Medium" label. On OpenCode Go/Zen, DeepSeek now advertises `low / medium / high / xhigh / none` and sends the real `low` and `medium` values (verified live against the gateway; other DeepSeek routes keep the legacy collapse of low/medium into high). The top rung is `xhigh`, which sends the same wire value as the `max` the slider cannot render.
+- **GLM-5.3 models are recognized as reasoning models again.** The GLM rule matched only 5.2 ids, so `glm-5.3` and `glm-5.3-flash` were cataloged without effort levels and the app showed a fixed "Medium" with no selector. They now advertise `low / medium / high / xhigh` (`xhigh` maps to the wire `max`, the same label convention as GLM-5.2), and Relay forwards the full ladder the gateway accepts.
+- **Reasoning levels named `off` are now advertised as `none`.** Codex App's effort vocabulary (`none, minimal, low, medium, high, xhigh, max, ultra`) has no `off`, and the unrecognized value disabled its effort control for that model even though Relay maps both names to the same request. DeepSeek and Mistral now use `none`; `off` still maps for older cached catalogs.
+
 ## [0.12.7] - 2026-09-19
 
 ### Fixed

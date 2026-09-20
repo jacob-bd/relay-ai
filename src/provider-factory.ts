@@ -705,7 +705,12 @@ const ANTHROPIC_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
 const OPENAI_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
 const OPENAI_XHIGH_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
 const GEMINI_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
-const MISTRAL_EFFORT_LEVELS = ['high', 'off'] as const;
+/**
+ * Mistral accepts `high` or no effort at all. Advertise `none`, not `off`:
+ * Codex App's effort vocabulary has no `off` and drops it, which broke the
+ * selector for this model. Both values map to the same Mistral wire value.
+ */
+const MISTRAL_EFFORT_LEVELS = ['high', 'none'] as const;
 /**
  * xAI's accepted reasoning_effort values differ by transport, per the installed
  * adapter's own docs (`@ai-sdk/xai/docs/01-xai.mdx`): chat models take
@@ -715,10 +720,32 @@ const MISTRAL_EFFORT_LEVELS = ['high', 'off'] as const;
 const XAI_CHAT_EFFORT_LEVELS = ['low', 'high'] as const;
 const XAI_RESPONSES_EFFORT_LEVELS = ['low', 'medium', 'high'] as const;
 const OPENROUTER_EFFORT_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
-/** DeepSeek V4 wire values (low/medium map to high; xhigh maps to max). */
-const DEEPSEEK_EFFORT_LEVELS = ['high', 'max', 'off'] as const;
+/**
+ * DeepSeek V4 wire values (low/medium map to high; xhigh maps to max).
+ *
+ * `none` (not `off`) turns thinking off: Codex App validates effort values
+ * against a fixed vocabulary (`none, minimal, low, medium, high, xhigh, max,
+ * ultra`) and drops `off`, which broke its effort control for this model even
+ * though the wire mapping below treats the two identically.
+ */
+const DEEPSEEK_EFFORT_LEVELS = ['high', 'max', 'none'] as const;
+/**
+ * OpenCode Go/Zen accept DeepSeek's native ladder, and Codex App's effort
+ * slider needs the medium-anchored `low/medium/high` rungs to render at all.
+ * Verified live against the gateway: all of low/medium/high/max return 200.
+ *
+ * `xhigh` (not `max`) is the top rung: Codex App's slider vocabulary stops at
+ * `xhigh` and silently drops `max`, and both send the same wire value anyway.
+ */
+const DEEPSEEK_NATIVE_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'none'] as const;
 /** GLM-5.2 published efforts (OpenRouter metadata): high and xhigh, default high. */
 const GLM_52_EFFORT_LEVELS = ['high', 'xhigh'] as const;
+/**
+ * GLM-5.3 published efforts on OpenCode Go (`low, high, max` metadata) plus
+ * `medium`, which the gateway also accepts live. `xhigh` is Relay's label for
+ * the wire `max` value, matching the GLM-5.2 rule above.
+ */
+const GLM_53_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
 
 const EMPTY_REASONING: ReasoningCapabilities = {
   levels: [],
@@ -845,6 +872,17 @@ function isGlm52ReasoningModel(modelId: string): boolean {
     || lower === 'glm5.2';
 }
 
+/**
+ * GLM-5.3 and its `-flash`/snapshot ids. Unlike 5.2 (exact ids only), 5.3 ships
+ * under several vendor prefixes and suffixes, so this matches the version
+ * segment with an optional `vendor/` prefix.
+ */
+const GLM_53_REASONING_ID = /^(?:[a-z0-9-]+\/)?glm-?5\.3(?:-|$)/;
+
+function isGlm53ReasoningModel(modelId: string): boolean {
+  return GLM_53_REASONING_ID.test(modelId.toLowerCase().trim());
+}
+
 function toCamelCase(str: string): string {
   return str.replace(/[-_]([a-z])/g, (_, g) => g.toUpperCase());
 }
@@ -889,20 +927,37 @@ function openRouterReasoningCapabilities(metadata?: ReasoningMetadata): Reasonin
   return EMPTY_REASONING;
 }
 
-function mapCodexEffortToDeepSeek(effort: string): 'high' | 'max' | 'off' | undefined {
+/**
+ * OpenCode Go/Zen serve DeepSeek's native effort vocabulary (`low`, `medium`,
+ * `high`, `max`), verified live against the gateway. Other routes keep the
+ * legacy collapse where low/medium were the only way to ask for `high`.
+ */
+function deepSeekAcceptsNativeEfforts(metadata?: ReasoningMetadata): boolean {
+  const providerId = metadata?.providerId?.toLowerCase();
+  if (providerId === 'go' || providerId === 'zen' || providerId === 'opencode-go' || providerId === 'opencode') {
+    return true;
+  }
+  return metadata?.apiBaseUrl?.includes('opencode.ai') === true;
+}
+
+function mapCodexEffortToDeepSeek(
+  effort: string,
+  nativeEfforts: boolean,
+): 'low' | 'medium' | 'high' | 'max' | 'off' | undefined {
   switch (effort) {
     case 'off':
     case 'none':
       return 'off';
     case 'low':
+      return nativeEfforts ? 'low' : 'high';
     case 'medium':
+      return nativeEfforts ? 'medium' : 'high';
     case 'high':
       return 'high';
     case 'xhigh':
     case 'max':
       return 'max';
     default:
-      if (effort === 'high' || effort === 'max') return effort;
       return undefined;
   }
 }
@@ -921,7 +976,7 @@ function deepSeekEffortProviderOptions(
   effort: string,
   metadata?: ReasoningMetadata,
 ): Record<string, Record<string, unknown>> | undefined {
-  const mapped = mapCodexEffortToDeepSeek(effort);
+  const mapped = mapCodexEffortToDeepSeek(effort, deepSeekAcceptsNativeEfforts(metadata));
   if (!mapped) return undefined;
   const key = metadata?.providerId ? toCamelCase(metadata.providerId) : 'openaiCompatible';
   const thinking = { type: mapped === 'off' ? 'disabled' : 'enabled' };
@@ -1065,6 +1120,23 @@ function mapCodexEffortToOpenAICompatible(effort: string): string | undefined {
 
 function mapCodexEffortToGlm52(effort: string): 'high' | 'max' | undefined {
   switch (effort) {
+    case 'high':
+      return 'high';
+    case 'xhigh':
+    case 'max':
+      return 'max';
+    default:
+      return undefined;
+  }
+}
+
+/** GLM-5.3 accepts the fuller ladder (verified live on OpenCode Go). */
+function mapCodexEffortToGlm53(effort: string): 'low' | 'medium' | 'high' | 'max' | undefined {
+  switch (effort) {
+    case 'low':
+      return 'low';
+    case 'medium':
+      return 'medium';
     case 'high':
       return 'high';
     case 'xhigh':
@@ -1271,8 +1343,14 @@ function resolveRawReasoningCapabilities(
   }
 
   if (isDeepSeekReasoningModel(modelId)) {
+    // Codex App's effort slider is built from a medium-anchored ladder, so a
+    // `high/max/off`-only set rendered no control at all. Where the route
+    // accepts the native values, offer the real ladder.
+    const levels = deepSeekAcceptsNativeEfforts(metadata)
+      ? [...DEEPSEEK_NATIVE_EFFORT_LEVELS]
+      : [...DEEPSEEK_EFFORT_LEVELS];
     return {
-      levels: [...DEEPSEEK_EFFORT_LEVELS],
+      levels,
       defaultLevel: 'high',
       supportsSummaries: true,
       mode: 'controllable',
@@ -1285,6 +1363,18 @@ function resolveRawReasoningCapabilities(
   if (isKimiReasoningModel(modelId)) {
     return {
       levels: [...OPENAI_EFFORT_LEVELS],
+      defaultLevel: 'high',
+      supportsSummaries: false,
+      mode: 'controllable',
+      source: 'provider-rule',
+      confidence: 'documented',
+      wireFormat: { kind: 'openai-reasoning-effort' },
+    };
+  }
+
+  if (isGlm53ReasoningModel(modelId)) {
+    return {
+      levels: [...GLM_53_EFFORT_LEVELS],
       defaultLevel: 'high',
       supportsSummaries: false,
       mode: 'controllable',
@@ -1430,6 +1520,14 @@ export function effortProviderOptions(
     }
     if (isKimiReasoningModel(modelId)) {
       const reasoningEffort = mapCodexEffortToOpenAICompatible(effort);
+      if (reasoningEffort) {
+        const key = metadata?.providerId ? toCamelCase(metadata.providerId) : 'openaiCompatible';
+        return { [key]: { reasoningEffort } };
+      }
+      return undefined;
+    }
+    if (isGlm53ReasoningModel(modelId)) {
+      const reasoningEffort = mapCodexEffortToGlm53(effort);
       if (reasoningEffort) {
         const key = metadata?.providerId ? toCamelCase(metadata.providerId) : 'openaiCompatible';
         return { [key]: { reasoningEffort } };

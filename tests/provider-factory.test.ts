@@ -104,9 +104,9 @@ describe('getReasoningCapabilities', () => {
     expect(caps.supportsSummaries).toBe(false);
   });
 
-  it('returns high/off only for mistral-large', () => {
+  it('returns high/none only for mistral-large', () => {
     const caps = getReasoningCapabilities('@ai-sdk/mistral', 'mistral-large');
-    expect(caps.levels).toEqual(['high', 'off']);
+    expect(caps.levels).toEqual(['high', 'none']);
     expect(caps.defaultLevel).toBe('high');
   });
 
@@ -151,17 +151,41 @@ describe('getReasoningCapabilities', () => {
     expect(effortProviderOptions('@ai-sdk/xai', 'medium', 'grok-4.5')).toBeUndefined();
   });
 
-  it('returns high/max/off for deepseek-v4-flash', () => {
+  it('returns high/max/none for deepseek-v4-flash', () => {
     const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'deepseek-v4-flash');
-    expect(caps.levels).toEqual(['high', 'max', 'off']);
+    expect(caps.levels).toEqual(['high', 'max', 'none']);
     expect(caps.defaultLevel).toBe('high');
   });
 
-  it('recognizes DeepSeek V4.1 ids on OpenCode Go', () => {
+  it('recognizes DeepSeek V4.1 ids on OpenCode Go with the native ladder', () => {
     const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'deepseek-v4.1-flash', { providerId: 'go' });
-    expect(caps.levels).toEqual(['high', 'max', 'off']);
+    expect(caps.levels).toEqual(['low', 'medium', 'high', 'xhigh', 'none']);
     expect(caps.defaultLevel).toBe('high');
     expect(caps.wireFormat).toEqual({ kind: 'deepseek-thinking' });
+  });
+
+  it('keeps the legacy DeepSeek ladder away from OpenCode Go', () => {
+    const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'deepseek-v4.1-flash', { providerId: 'deepseek' });
+    expect(caps.levels).toEqual(['high', 'max', 'none']);
+  });
+
+  it('recognizes GLM-5.3 ids on OpenCode Go', () => {
+    const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'glm-5.3-flash', { providerId: 'go' });
+    expect(caps.levels).toEqual(['low', 'medium', 'high', 'xhigh']);
+    expect(caps.defaultLevel).toBe('high');
+    expect(caps.wireFormat).toEqual({ kind: 'openai-reasoning-effort' });
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'low', 'glm-5.3-flash', { providerId: 'go' }))
+      .toEqual({ go: { reasoningEffort: 'low' } });
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'medium', 'glm-5.3-flash', { providerId: 'go' }))
+      .toEqual({ go: { reasoningEffort: 'medium' } });
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'xhigh', 'glm-5.3-flash', { providerId: 'go' }))
+      .toEqual({ go: { reasoningEffort: 'max' } });
+  });
+
+  it('keeps GLM-5.2 limited to its documented efforts', () => {
+    const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'glm-5.2', { providerId: 'go' });
+    expect(caps.levels).toEqual(['high', 'xhigh']);
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'low', 'glm-5.2', { providerId: 'go' })).toBeUndefined();
   });
 
   it('returns documented GLM-5.2 reasoning levels for OpenAI-compatible routes', () => {
@@ -183,6 +207,19 @@ describe('getReasoningCapabilities', () => {
     // OpenCode Go's SDK instance is named `go` — options keyed anything else are dropped.
     expect(effortProviderOptions('@ai-sdk/openai-compatible', 'max', 'deepseek-v4.1-flash', { providerId: 'go' }))
       .toEqual({ go: { reasoningEffort: 'max', thinking: { type: 'enabled' } } });
+    // The advertised top rung is `xhigh` (slider vocabulary); it sends the wire `max`.
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'xhigh', 'deepseek-v4.1-flash', { providerId: 'go' }))
+      .toEqual({ go: { reasoningEffort: 'max', thinking: { type: 'enabled' } } });
+    // Go accepts DeepSeek's native low/medium (verified live); other routes collapse them.
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'low', 'deepseek-v4.1-flash', { providerId: 'go' }))
+      .toEqual({ go: { reasoningEffort: 'low', thinking: { type: 'enabled' } } });
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'medium', 'deepseek-v4.1-flash', { providerId: 'go' }))
+      .toEqual({ go: { reasoningEffort: 'medium', thinking: { type: 'enabled' } } });
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'low', 'deepseek-v4.1-flash', { providerId: 'deepseek' }))
+      .toEqual({ deepseek: { reasoningEffort: 'high', thinking: { type: 'enabled' } } });
+    // `none` is the advertised thinking-off level; `off` still maps for older catalogs.
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'none', 'deepseek-v4.1-flash', { providerId: 'go' }))
+      .toEqual({ go: { thinking: { type: 'disabled' } } });
     expect(effortProviderOptions('@ai-sdk/openai-compatible', 'off', 'deepseek-v4.1-flash', { providerId: 'go' }))
       .toEqual({ go: { thinking: { type: 'disabled' } } });
   });
