@@ -12,6 +12,12 @@ interface ApiCallLike {
 }
 
 const TRACE_FIELD_LIMIT = 4_000;
+/**
+ * Provider errors can be long and are the most useful thing in the log (a
+ * context-length rejection names the exact token counts). Only guard against
+ * unbounded dumps; keep the message otherwise.
+ */
+const MAX_ERROR_MESSAGE_CHARS = 2_000;
 
 function clipTraceField(value: string): string {
   return value.length <= TRACE_FIELD_LIMIT ? value : `${value.slice(0, TRACE_FIELD_LIMIT)}…`;
@@ -105,7 +111,7 @@ export function formatUpstreamError(err: unknown): string {
 
   if (rec.message) {
     const short = sanitizeMessage(rec.message);
-    if (short && !short.includes('file://') && !short.includes('APICallError') && short.length < 240) {
+    if (short && !short.includes('file://') && !short.includes('APICallError') && short.length < MAX_ERROR_MESSAGE_CHARS) {
       return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
     }
   }

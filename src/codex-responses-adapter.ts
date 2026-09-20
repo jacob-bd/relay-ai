@@ -328,6 +328,30 @@ function messageContent(content: ResponsesMessageItem['content'] | undefined): U
   return parts.length > 0 ? parts : [{ type: 'text', text: '' }];
 }
 
+/**
+ * Split images out of a tool output. The SDK stringifies tool-result content for
+ * OpenAI-compatible providers, so an image left in the tool result would ship as
+ * megabytes of base64 text (a 3.8 MB screenshot is ~1M tokens and blows the
+ * context window). Images are re-attached as a follow-up user message instead,
+ * where the SDK converts them to real image parts.
+ */
+function splitToolOutputImages(output: unknown): { content: string; images: string[] } {
+  if (!Array.isArray(output)) return { content: serializeToolResultContent(output), images: [] };
+  const images: string[] = [];
+  const rest: unknown[] = [];
+  for (const part of output) {
+    const record = part && typeof part === 'object' ? part as Record<string, unknown> : undefined;
+    const imageUrl = record?.['type'] === 'input_image' ? record['image_url'] : undefined;
+    if (typeof imageUrl === 'string' && imageUrl.trim()) images.push(imageUrl);
+    else rest.push(part);
+  }
+  if (images.length === 0) return { content: serializeToolResultContent(output), images };
+  return {
+    content: rest.length > 0 ? serializeToolResultContent(rest) : '[image attached in the following message]',
+    images,
+  };
+}
+
 function extractDeveloperAndInstructions(
   items: ResponsesInputItem[],
   instructions?: string,
@@ -475,15 +499,26 @@ export function translateResponsesInput(
       messages.push({ role: 'assistant', content: parts } as ModelMessage);
     } else if (item.type === 'function_call_output') {
       const { rawId } = splitToolUseId(item.call_id);
+      const toolName = toolNames.get(rawId) ?? 'unknown';
+      const { content, images } = splitToolOutputImages(item.output);
       messages.push({
         role: 'tool',
         content: [{
           type: 'tool-result',
           toolCallId: rawId,
-          toolName: toolNames.get(rawId) ?? 'unknown',
-          output: { type: 'text', value: serializeToolResultContent(item.output) },
+          toolName,
+          output: { type: 'text', value: content },
         }],
       } as ModelMessage);
+      if (images.length > 0) {
+        messages.push({
+          role: 'user',
+          content: [
+            { type: 'text', text: `Image${images.length > 1 ? 's' : ''} returned by ${toolName} (${rawId}):` },
+            ...images.map(image => ({ type: 'image' as const, image })),
+          ],
+        } as ModelMessage);
+      }
     } else if (item.type === 'tool_search_call') {
       const { rawId } = splitToolUseId(item.call_id);
       messages.push({

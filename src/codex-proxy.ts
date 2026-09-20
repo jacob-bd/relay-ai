@@ -117,6 +117,20 @@ export function isExternalToolContinuation(input: unknown): input is ResponsesIn
     && !input.some(isExternalToolCallItem);
 }
 
+/**
+ * An image part costs a few thousand vision tokens, not the megabytes of base64
+ * it carries. Counting the base64 would make the context guard trim (and clip)
+ * conversations that actually fit the model's window.
+ */
+const IMAGE_PART_CHAR_WEIGHT = 4_000;
+
+function isImageContentPart(part: Record<string, unknown>): boolean {
+  if (part['type'] === 'image') return true;
+  return part['type'] === 'file'
+    && typeof part['mediaType'] === 'string'
+    && part['mediaType'].startsWith('image');
+}
+
 export function estimateCodexRequestChars(params: CodexSdkCallParams): number {
   let chars = (params.instructions ?? '').length;
   for (const msg of params.messages) {
@@ -126,6 +140,8 @@ export function estimateCodexRequestChars(params: CodexSdkCallParams): number {
         const p = part as Record<string, unknown>;
         if (typeof p['text'] === 'string') {
           chars += p['text'].length;
+        } else if (isImageContentPart(p)) {
+          chars += IMAGE_PART_CHAR_WEIGHT;
         } else {
           chars += JSON.stringify(part).length;
         }
@@ -155,6 +171,17 @@ function clipLargeTextParts(params: CodexSdkCallParams, maxCharsPerPart: number)
       content: msg.content.map(part => {
         if (!part || typeof part !== 'object') return part;
         const p = part as Record<string, unknown>;
+        if (p['type'] === 'tool-result') {
+          const output = p['output'] as Record<string, unknown> | undefined;
+          if (!output) return part;
+          if (typeof output['value'] === 'string' && (output['type'] === 'text' || output['type'] === 'error-text')) {
+            return { ...p, output: { ...output, value: clipTextForContext(output['value'], maxCharsPerPart) } };
+          }
+          if (output['type'] === 'json') {
+            return { ...p, output: { type: 'text', value: clipTextForContext(JSON.stringify(output['value']), maxCharsPerPart) } };
+          }
+          return part;
+        }
         if (typeof p.text !== 'string') return part;
         return { ...p, text: clipTextForContext(p.text, maxCharsPerPart) };
       }),

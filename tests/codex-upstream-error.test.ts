@@ -82,6 +82,16 @@ describe('formatUpstreamError', () => {
     expect(msg).toContain('Paid model training violation (account settings)');
     expect(msg).toMatch(/\(HTTP 404\)$/);
   });
+  it('keeps long provider messages instead of hiding them behind a generic failure', () => {
+    const contextError = 'Upstream request failed: [invalid_request_error] This model\'s maximum context length is 1048576 tokens. '
+      + 'However, you requested 3410784 tokens (3410720 in the messages, 64 in the completion). '
+      + 'Please reduce the length of the messages or completion.';
+    const msg = formatUpstreamError({ message: contextError, statusCode: 400 });
+    expect(msg).toContain('maximum context length is 1048576 tokens');
+    expect(msg).toContain('requested 3410784 tokens');
+    expect(msg).toContain('(HTTP 400)');
+    expect(msg).not.toBe('Upstream model request failed.');
+  });
 });
 
 describe('upstreamHttpStatus', () => {

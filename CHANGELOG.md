@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.9] - 2026-09-20
+
+### Fixed
+
+- **Images returned by tools no longer blow up the context window.** Codex's `view_image` and screenshot tools return images inside a tool output, and Relay serialized tool outputs as text, so a 3.8 MB screenshot shipped as megabytes of base64 and one thread grew to 3.4M tokens against DeepSeek's 1M window, failing every turn with HTTP 400. Images are now split out of the tool result and re-attached as a follow-up message the provider reads as an image. Replayed against the same thread, the payload dropped from 3.4M tokens to 765K and the request succeeds.
+- **The context guard can always shrink an oversized request.** Image parts are measured by vision cost instead of base64 bytes, so a screenshot no longer makes Relay trim conversations that actually fit, and the last-resort clipper now caps oversized tool-result payloads too (one huge tool output could previously make a request unshrinkable and send it upstream as-is).
+- **Long provider errors are no longer hidden.** Provider messages over 240 characters were replaced with a generic "Upstream model request failed."; the real text (for example, the exact requested-versus-allowed token counts on a context-length rejection) now reaches the client.
+
 ## [0.12.8] - 2026-09-19
 
 ### Fixed

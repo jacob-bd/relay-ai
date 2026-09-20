@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-VUEGVJMH.js";
+} from "./chunk-TRCGBOYR.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -148,7 +148,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-BK34AFR4.js";
+} from "./chunk-KVH362S4.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -222,7 +222,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-HLPRPOIV.js";
+} from "./chunk-3KCKQRRR.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -2544,6 +2544,22 @@ function messageContent(content) {
   });
   return parts.length > 0 ? parts : [{ type: "text", text: "" }];
 }
+function splitToolOutputImages(output) {
+  if (!Array.isArray(output)) return { content: serializeToolResultContent(output), images: [] };
+  const images = [];
+  const rest = [];
+  for (const part of output) {
+    const record = part && typeof part === "object" ? part : void 0;
+    const imageUrl = record?.["type"] === "input_image" ? record["image_url"] : void 0;
+    if (typeof imageUrl === "string" && imageUrl.trim()) images.push(imageUrl);
+    else rest.push(part);
+  }
+  if (images.length === 0) return { content: serializeToolResultContent(output), images };
+  return {
+    content: rest.length > 0 ? serializeToolResultContent(rest) : "[image attached in the following message]",
+    images
+  };
+}
 function extractDeveloperAndInstructions(items, instructions) {
   const developerParts = [];
   const remaining = [];
@@ -2668,15 +2684,26 @@ function translateResponsesInput(input, instructions, npm, toolContext = createC
       messages.push({ role: "assistant", content: parts });
     } else if (item.type === "function_call_output") {
       const { rawId } = splitToolUseId(item.call_id);
+      const toolName = toolNames.get(rawId) ?? "unknown";
+      const { content, images } = splitToolOutputImages(item.output);
       messages.push({
         role: "tool",
         content: [{
           type: "tool-result",
           toolCallId: rawId,
-          toolName: toolNames.get(rawId) ?? "unknown",
-          output: { type: "text", value: serializeToolResultContent(item.output) }
+          toolName,
+          output: { type: "text", value: content }
         }]
       });
+      if (images.length > 0) {
+        messages.push({
+          role: "user",
+          content: [
+            { type: "text", text: `Image${images.length > 1 ? "s" : ""} returned by ${toolName} (${rawId}):` },
+            ...images.map((image) => ({ type: "image", image }))
+          ]
+        });
+      }
     } else if (item.type === "tool_search_call") {
       const { rawId } = splitToolUseId(item.call_id);
       messages.push({
@@ -4097,6 +4124,11 @@ function isExternalToolCallItem(item) {
 function isExternalToolContinuation(input) {
   return Array.isArray(input) && input.length > 0 && input.some(isExternalToolOutputItem) && !input.some(isExternalToolCallItem);
 }
+var IMAGE_PART_CHAR_WEIGHT = 4e3;
+function isImageContentPart(part) {
+  if (part["type"] === "image") return true;
+  return part["type"] === "file" && typeof part["mediaType"] === "string" && part["mediaType"].startsWith("image");
+}
 function estimateCodexRequestChars(params) {
   let chars = (params.instructions ?? "").length;
   for (const msg of params.messages) {
@@ -4106,6 +4138,8 @@ function estimateCodexRequestChars(params) {
         const p16 = part;
         if (typeof p16["text"] === "string") {
           chars += p16["text"].length;
+        } else if (isImageContentPart(p16)) {
+          chars += IMAGE_PART_CHAR_WEIGHT;
         } else {
           chars += JSON.stringify(part).length;
         }
@@ -4137,6 +4171,17 @@ function clipLargeTextParts(params, maxCharsPerPart) {
       content: msg.content.map((part) => {
         if (!part || typeof part !== "object") return part;
         const p16 = part;
+        if (p16["type"] === "tool-result") {
+          const output = p16["output"];
+          if (!output) return part;
+          if (typeof output["value"] === "string" && (output["type"] === "text" || output["type"] === "error-text")) {
+            return { ...p16, output: { ...output, value: clipTextForContext(output["value"], maxCharsPerPart) } };
+          }
+          if (output["type"] === "json") {
+            return { ...p16, output: { type: "text", value: clipTextForContext(JSON.stringify(output["value"]), maxCharsPerPart) } };
+          }
+          return part;
+        }
         if (typeof p16.text !== "string") return part;
         return { ...p16, text: clipTextForContext(p16.text, maxCharsPerPart) };
       })
@@ -16188,7 +16233,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-QUT3R4HW.js");
+    const { runUiCommand } = await import("./ui-command-CLMJUDHR.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

@@ -1230,6 +1230,45 @@ describe('Codex compaction protection', () => {
     const replay = { input: [{ type: 'compaction', encrypted_content: 'abc' }, { type: 'message', role: 'user', content: 'continue' }] };
     expect(isCodexV2CompactionRequest(replay)).toBe(false);
   });
+
+  it('clips oversized tool-result outputs when the request cannot be trimmed', () => {
+    const params = {
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'ok' }] },
+        {
+          role: 'tool',
+          content: [{
+            type: 'tool-result',
+            toolCallId: 'call_1',
+            toolName: 'Read',
+            output: { type: 'text', value: 'x'.repeat(40_000) },
+          }],
+        },
+      ],
+    } as unknown as CodexSdkCallParams;
+    const body = { input: [{ type: 'message', role: 'user', content: 'hi' }] };
+
+    const protectedParams = protectCodexCompactionParams(body, params, 1000);
+    const part = (protectedParams.messages[2]!.content as Array<Record<string, unknown>>)[0]!;
+    const value = (part['output'] as Record<string, unknown>)['value'] as string;
+    expect(value.length).toBeLessThan(20_000);
+    expect(value).toContain('clipped');
+  });
+
+  it('weights image parts by vision tokens instead of base64 bytes', () => {
+    const chars = estimateCodexRequestChars({
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'look' },
+          { type: 'image', image: `data:image/png;base64,${'A'.repeat(1_000_000)}` },
+        ],
+      }],
+    } as unknown as CodexSdkCallParams);
+    expect(chars).toBeGreaterThan(4_000);
+    expect(chars).toBeLessThan(10_000);
+  });
 });
 
 describe('resolveCodexRoute', () => {

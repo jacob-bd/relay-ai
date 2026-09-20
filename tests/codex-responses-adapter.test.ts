@@ -513,6 +513,53 @@ describe('Codex custom tool (apply_patch) round-trip (relay-ai/relay-ai#21)', ()
   });
 });
 
+describe('tool output images', () => {
+  const VIEW_IMAGE_TOOLS = [{ type: 'function' as const, name: 'view_image', description: 'view an image', parameters: { type: 'object', properties: {} } }];
+
+  it('moves images out of the tool result into a follow-up user message', () => {
+    const params = translateResponsesRequest({
+      model: 'm',
+      input: [
+        { type: 'function_call', call_id: 'call_1', name: 'view_image', arguments: '{}' },
+        {
+          type: 'function_call_output',
+          call_id: 'call_1',
+          output: [{ type: 'input_image', image_url: 'data:image/png;base64,AAAA' }],
+        },
+      ],
+      tools: VIEW_IMAGE_TOOLS,
+    } as never, '@ai-sdk/openai-compatible');
+
+    const toolMessage = params.messages.find(m => m.role === 'tool');
+    const toolText = JSON.stringify(toolMessage);
+    expect(toolText).toContain('image attached');
+    expect(toolText).not.toContain('base64,AAAA');
+
+    const imageMessage = params.messages.find(
+      m => m.role === 'user' && Array.isArray(m.content)
+        && m.content.some(p => (p as { type?: string }).type === 'image'),
+    );
+    expect(JSON.stringify(imageMessage)).toContain('data:image/png;base64,AAAA');
+  });
+
+  it('leaves tool outputs without images unchanged', () => {
+    const params = translateResponsesRequest({
+      model: 'm',
+      input: [
+        { type: 'function_call', call_id: 'call_1', name: 'Read', arguments: '{}' },
+        { type: 'function_call_output', call_id: 'call_1', output: 'file contents' },
+      ],
+    } as never, '@ai-sdk/openai-compatible');
+
+    const toolMessage = params.messages.find(m => m.role === 'tool');
+    expect(JSON.stringify(toolMessage)).toContain('file contents');
+    expect(params.messages.some(
+      m => m.role === 'user' && Array.isArray(m.content)
+        && m.content.some(p => (p as { type?: string }).type === 'image'),
+    )).toBe(false);
+  });
+});
+
 describe('Codex native tool_search round-trip (relay-ai/relay-ai#21, defensive/unverified live)', () => {
   it('converts a native tool_search managed tool into a callable SDK function tool', () => {
     const params = translateResponsesRequest({ model: 'm', input: 'hi', tools: [{ type: 'tool_search' } as never] }, '@ai-sdk/anthropic');

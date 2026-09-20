@@ -7,7 +7,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.12.8",
+  version: "0.12.9",
   publishConfig: {
     access: "public"
   },
@@ -4531,6 +4531,7 @@ function serializeToolResultContent(content) {
 
 // src/codex/upstream-error.ts
 var TRACE_FIELD_LIMIT = 4e3;
+var MAX_ERROR_MESSAGE_CHARS = 2e3;
 function clipTraceField(value) {
   return value.length <= TRACE_FIELD_LIMIT ? value : `${value.slice(0, TRACE_FIELD_LIMIT)}\u2026`;
 }
@@ -4605,7 +4606,7 @@ function formatUpstreamError(err) {
   }
   if (rec.message) {
     const short = sanitizeMessage(rec.message);
-    if (short && !short.includes("file://") && !short.includes("APICallError") && short.length < 240) {
+    if (short && !short.includes("file://") && !short.includes("APICallError") && short.length < MAX_ERROR_MESSAGE_CHARS) {
       return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
     }
   }
@@ -5320,4 +5321,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-HLPRPOIV.js.map
+//# sourceMappingURL=chunk-3KCKQRRR.js.map
