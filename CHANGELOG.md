@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Removed
+
+- **Installing Relay no longer pulls in the dead Vercel v0 package.** `@ai-sdk/vercel` was only the connector for Vercel's old v0 model API, which Vercel has removed. Relay still uses the Vercel AI SDK (`ai` and the `@ai-sdk/*` provider packages). That unused package made `npm install` print a deprecation warning that looked like a Relay failure.
+
 ## [0.12.10] - 2026-09-22
 
 ### Fixed

@@ -68,7 +68,6 @@ var package_default = {
     "@ai-sdk/openai-compatible": "^3.0.44",
     "@ai-sdk/perplexity": "^4.0.39",
     "@ai-sdk/togetherai": "^3.0.45",
-    "@ai-sdk/vercel": "^3.0.30",
     "@ai-sdk/xai": "^4.0.54",
     "@clack/prompts": "^0.9.1",
     "@openrouter/ai-sdk-provider": "^3.0.0",
@@ -5367,4 +5366,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-OIL75EGI.js.map
+//# sourceMappingURL=chunk-3ZAUH2ML.js.map
