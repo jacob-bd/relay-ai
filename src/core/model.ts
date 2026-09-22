@@ -14,11 +14,41 @@ import { reconcileCachedModelProtocol } from '../registry/model-protocol.js';
 import { createAntigravityCloudCodeModel } from './antigravity-model.js';
 import { loadCoreRegistry } from './catalog.js';
 import { RelayCoreError, isRelayCoreError } from './errors.js';
-import { resolveReasoningProviderOptions, withReasoningProviderOptions, type RelayProviderOptions } from './reasoning.js';
+import { reasoningNpmForRoute, resolveReasoningProviderOptions, withReasoningProviderOptions, type RelayProviderOptions } from './reasoning.js';
 import { withRequestHeaders } from './reasoning.js';
+import { normalizeToolSchemaForNpm } from '../tool-schema.js';
 import { parseRelayRouteId } from './route-id.js';
 import type { CreateRelayModelOptions, RelayRouteId } from './types.js';
 import { openCodeGoHeaders } from '../opencode-session.js';
+
+/**
+ * Rewrite tool schemas on every Core call. CLI proxies do this in their
+ * adapters; Core hands back a plain model, so Alef's tools never passed
+ * through that step and Command Code rejected Claude-shaped `pattern` values.
+ */
+export async function withPortableToolSchemas(model: LanguageModel, npm: string | undefined): Promise<LanguageModel> {
+  const { wrapLanguageModel } = await import('ai');
+  type WrapArgs = Parameters<typeof wrapLanguageModel>[0];
+  return wrapLanguageModel({
+    model: model as WrapArgs['model'],
+    middleware: {
+      specificationVersion: 'v4',
+      transformParams: async ({ params }) => {
+        const tools = params.tools;
+        if (!tools?.length) return params;
+        let changed = false;
+        const next = tools.map(entry => {
+          if (entry.type !== 'function' || !entry.inputSchema || typeof entry.inputSchema !== 'object') return entry;
+          const inputSchema = normalizeToolSchemaForNpm(entry.inputSchema, npm);
+          if (inputSchema === entry.inputSchema) return entry;
+          changed = true;
+          return { ...entry, inputSchema };
+        });
+        return changed ? { ...params, tools: next } : params;
+      },
+    },
+  });
+}
 
 function isAntigravityCloudCodeRoute(provider: RegistryProvider, model: CachedModel): boolean {
   return provider.id === 'antigravity'
@@ -98,8 +128,8 @@ export async function createRelayModel(routeId: RelayRouteId, options?: CreateRe
     // session here — a baked-in id would blend histories. The host passes sessionId.
     { generateFallbackSession: false },
   );
-  const finish = async (built: LanguageModel): Promise<LanguageModel> => {
-    let finished = built;
+  const finish = async (built: LanguageModel, schemaNpm?: string): Promise<LanguageModel> => {
+    let finished = await withPortableToolSchemas(built, schemaNpm);
     if (reasoningOptions) finished = await withReasoningProviderOptions(finished, reasoningOptions);
     if (transportHeaders) finished = await withRequestHeaders(finished, transportHeaders);
     return finished;
@@ -123,7 +153,7 @@ export async function createRelayModel(routeId: RelayRouteId, options?: CreateRe
         projectId,
         refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
         ...(options?.onDebug ? { onDebug: options.onDebug } : {}),
-      }));
+      }), reasoningNpmForRoute(provider, model));
     } catch (err) {
       if (isRelayCoreError(err)) throw err;
       throw new RelayCoreError(
@@ -165,7 +195,7 @@ export async function createRelayModel(routeId: RelayRouteId, options?: CreateRe
   };
 
   try {
-    return await finish(await createLanguageModel(spec));
+    return await finish(await createLanguageModel(spec), npm);
   } catch (err) {
     if (isRelayCoreError(err)) throw err;
     throw new RelayCoreError(

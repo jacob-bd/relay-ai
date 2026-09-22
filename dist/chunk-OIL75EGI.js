@@ -7,7 +7,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.12.9",
+  version: "0.12.10",
   publishConfig: {
     access: "public"
   },
@@ -3668,14 +3668,14 @@ function xaiDefaultReasoningEffort(modelId) {
   if (lower === "grok-4.5" || lower.startsWith("grok-4.5-")) return "high";
   return "low";
 }
-var DEEPSEEK_V4_REASONING_ID = /^deepseek-v4(?:\.\d+)?-(?:flash|pro)(?:-|$)/;
+var DEEPSEEK_V4_REASONING_ID = /^(?:[a-z0-9-]+\/)?deepseek-v4(?:\.\d+)?-(?:flash|pro)(?:-|$)/;
 function isDeepSeekReasoningModel(modelId) {
   const lower = modelId.toLowerCase();
   return DEEPSEEK_V4_REASONING_ID.test(lower) || lower === "deepseek-reasoner" || lower === "deepseek-chat";
 }
+var KIMI_REASONING_ID = /^(?:[a-z0-9-]+\/)?kimi-/;
 function isKimiReasoningModel(modelId) {
-  const lower = modelId.toLowerCase();
-  return lower.startsWith("kimi-");
+  return KIMI_REASONING_ID.test(modelId.toLowerCase().trim());
 }
 function isGlm52ReasoningModel(modelId) {
   const lower = modelId.toLowerCase();
@@ -3725,10 +3725,11 @@ function openRouterReasoningCapabilities(metadata) {
 }
 function deepSeekAcceptsNativeEfforts(metadata) {
   const providerId = metadata?.providerId?.toLowerCase();
-  if (providerId === "go" || providerId === "zen" || providerId === "opencode-go" || providerId === "opencode") {
+  if (providerId === "go" || providerId === "zen" || providerId === "opencode-go" || providerId === "opencode" || providerId === "commandcode") {
     return true;
   }
-  return metadata?.apiBaseUrl?.includes("opencode.ai") === true;
+  const baseUrl = metadata?.apiBaseUrl;
+  return baseUrl?.includes("opencode.ai") === true || baseUrl?.includes("commandcode.ai") === true;
 }
 function mapCodexEffortToDeepSeek(effort, nativeEfforts) {
   switch (effort) {
@@ -4724,9 +4725,54 @@ function collapseSchemaUnionTypes(value) {
   }
   return out;
 }
+function isDigit(ch) {
+  return ch !== void 0 && ch >= "0" && ch <= "9";
+}
+function rewriteNulEscapesInPattern(pattern) {
+  let out = "";
+  let escaped = false;
+  let changed = false;
+  for (let i = 0; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+    if (escaped) {
+      escaped = false;
+      if (ch === "0" && !isDigit(pattern[i + 1])) {
+        out += "x00";
+        changed = true;
+      } else {
+        out += ch;
+      }
+      continue;
+    }
+    if (ch === "\\") escaped = true;
+    out += ch;
+  }
+  return changed ? out : null;
+}
+function rewriteNulPatternEscapes(value) {
+  if (Array.isArray(value)) {
+    let changed2 = false;
+    const out2 = value.map((entry) => {
+      const next = rewriteNulPatternEscapes(entry);
+      if (next !== entry) changed2 = true;
+      return next;
+    });
+    return changed2 ? out2 : value;
+  }
+  if (!value || typeof value !== "object") return value;
+  let changed = false;
+  const out = {};
+  for (const [key, child] of Object.entries(value)) {
+    const next = key === "pattern" && typeof child === "string" ? rewriteNulEscapesInPattern(child) ?? child : rewriteNulPatternEscapes(child);
+    if (next !== child) changed = true;
+    out[key] = next;
+  }
+  return changed ? out : value;
+}
 function normalizeToolSchemaForNpm(schema, npm) {
-  if (!npm || !GOOGLE_NPM.has(npm)) return schema;
-  return collapseSchemaUnionTypes(schema);
+  const portable = rewriteNulPatternEscapes(schema);
+  if (!npm || !GOOGLE_NPM.has(npm)) return portable;
+  return collapseSchemaUnionTypes(portable);
 }
 
 // src/sdk-adapter.ts
@@ -5321,4 +5367,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-3KCKQRRR.js.map
+//# sourceMappingURL=chunk-OIL75EGI.js.map

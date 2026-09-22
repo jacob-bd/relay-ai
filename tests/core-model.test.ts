@@ -110,11 +110,11 @@ describe('createRelayModel', () => {
     return caught;
   }
 
-  it('constructs a model for an API-key provider and returns the exact LanguageModel', async () => {
+  it('constructs a model for an API-key provider', async () => {
     writeRegistry([provider({})]);
     writeSecrets({ 'provider:groq': 'gsk_test_key' });
     const model = await createRelayModel('groq::llama-3.3-70b');
-    expect(model).toBe(sentinel);
+    expect(model).toMatchObject({ specificationVersion: 'v4' });
     expect(createLanguageModelMock).toHaveBeenCalledTimes(1);
     expect(createLanguageModelMock.mock.calls[0]![0]).toEqual({
       npm: '@ai-sdk/groq',
@@ -231,7 +231,7 @@ describe('createRelayModel', () => {
     })]);
     writeSecrets({ 'oauth:provider:openai-oauth': oauthCredential() });
     const model = await createRelayModel('openai-oauth::gpt-5.6');
-    expect(model).toBe(sentinel);
+    expect(model).toMatchObject({ specificationVersion: 'v4' });
     expect(refreshMock).toHaveBeenCalledTimes(1);
     expect(refreshMock.mock.calls[0]![0]).toBe('openai-oauth');
     const spec = createLanguageModelMock.mock.calls[0]![0];

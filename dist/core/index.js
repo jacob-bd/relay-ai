@@ -50,7 +50,7 @@ import { join as join2 } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.12.9",
+  version: "0.12.10",
   publishConfig: {
     access: "public"
   },
@@ -1576,14 +1576,14 @@ function xaiDefaultReasoningEffort(modelId) {
   if (lower === "grok-4.5" || lower.startsWith("grok-4.5-")) return "high";
   return "low";
 }
-var DEEPSEEK_V4_REASONING_ID = /^deepseek-v4(?:\.\d+)?-(?:flash|pro)(?:-|$)/;
+var DEEPSEEK_V4_REASONING_ID = /^(?:[a-z0-9-]+\/)?deepseek-v4(?:\.\d+)?-(?:flash|pro)(?:-|$)/;
 function isDeepSeekReasoningModel(modelId) {
   const lower = modelId.toLowerCase();
   return DEEPSEEK_V4_REASONING_ID.test(lower) || lower === "deepseek-reasoner" || lower === "deepseek-chat";
 }
+var KIMI_REASONING_ID = /^(?:[a-z0-9-]+\/)?kimi-/;
 function isKimiReasoningModel(modelId) {
-  const lower = modelId.toLowerCase();
-  return lower.startsWith("kimi-");
+  return KIMI_REASONING_ID.test(modelId.toLowerCase().trim());
 }
 function isGlm52ReasoningModel(modelId) {
   const lower = modelId.toLowerCase();
@@ -1633,10 +1633,11 @@ function openRouterReasoningCapabilities(metadata) {
 }
 function deepSeekAcceptsNativeEfforts(metadata) {
   const providerId = metadata?.providerId?.toLowerCase();
-  if (providerId === "go" || providerId === "zen" || providerId === "opencode-go" || providerId === "opencode") {
+  if (providerId === "go" || providerId === "zen" || providerId === "opencode-go" || providerId === "opencode" || providerId === "commandcode") {
     return true;
   }
-  return metadata?.apiBaseUrl?.includes("opencode.ai") === true;
+  const baseUrl = metadata?.apiBaseUrl;
+  return baseUrl?.includes("opencode.ai") === true || baseUrl?.includes("commandcode.ai") === true;
 }
 function mapCodexEffortToDeepSeek(effort, nativeEfforts) {
   switch (effort) {
@@ -4537,7 +4538,98 @@ function abortError(signal, cause) {
   return new DOMException("This operation was aborted", "AbortError");
 }
 
+// src/tool-schema.ts
+var GOOGLE_NPM = /* @__PURE__ */ new Set(["@ai-sdk/google", "@ai-sdk/google-vertex"]);
+function collapseSchemaUnionTypes(value) {
+  if (Array.isArray(value)) return value.map(collapseSchemaUnionTypes);
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "type" && Array.isArray(child)) {
+      const nonNull = child.filter((entry) => entry !== "null");
+      if (nonNull.length === 1) {
+        out.type = nonNull[0];
+        if (nonNull.length < child.length) out.nullable = true;
+        continue;
+      }
+    }
+    out[key] = collapseSchemaUnionTypes(child);
+  }
+  return out;
+}
+function isDigit(ch) {
+  return ch !== void 0 && ch >= "0" && ch <= "9";
+}
+function rewriteNulEscapesInPattern(pattern) {
+  let out = "";
+  let escaped = false;
+  let changed = false;
+  for (let i = 0; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+    if (escaped) {
+      escaped = false;
+      if (ch === "0" && !isDigit(pattern[i + 1])) {
+        out += "x00";
+        changed = true;
+      } else {
+        out += ch;
+      }
+      continue;
+    }
+    if (ch === "\\") escaped = true;
+    out += ch;
+  }
+  return changed ? out : null;
+}
+function rewriteNulPatternEscapes(value) {
+  if (Array.isArray(value)) {
+    let changed2 = false;
+    const out2 = value.map((entry) => {
+      const next = rewriteNulPatternEscapes(entry);
+      if (next !== entry) changed2 = true;
+      return next;
+    });
+    return changed2 ? out2 : value;
+  }
+  if (!value || typeof value !== "object") return value;
+  let changed = false;
+  const out = {};
+  for (const [key, child] of Object.entries(value)) {
+    const next = key === "pattern" && typeof child === "string" ? rewriteNulEscapesInPattern(child) ?? child : rewriteNulPatternEscapes(child);
+    if (next !== child) changed = true;
+    out[key] = next;
+  }
+  return changed ? out : value;
+}
+function normalizeToolSchemaForNpm(schema, npm) {
+  const portable = rewriteNulPatternEscapes(schema);
+  if (!npm || !GOOGLE_NPM.has(npm)) return portable;
+  return collapseSchemaUnionTypes(portable);
+}
+
 // src/core/model.ts
+async function withPortableToolSchemas(model, npm) {
+  const { wrapLanguageModel: wrapLanguageModel2 } = await import("ai");
+  return wrapLanguageModel2({
+    model,
+    middleware: {
+      specificationVersion: "v4",
+      transformParams: async ({ params }) => {
+        const tools = params.tools;
+        if (!tools?.length) return params;
+        let changed = false;
+        const next = tools.map((entry) => {
+          if (entry.type !== "function" || !entry.inputSchema || typeof entry.inputSchema !== "object") return entry;
+          const inputSchema = normalizeToolSchemaForNpm(entry.inputSchema, npm);
+          if (inputSchema === entry.inputSchema) return entry;
+          changed = true;
+          return { ...entry, inputSchema };
+        });
+        return changed ? { ...params, tools: next } : params;
+      }
+    }
+  });
+}
 function isAntigravityCloudCodeRoute(provider, model) {
   return provider.id === "antigravity" && provider.authType === "oauth" && model.modelFormat === "cloud-code";
 }
@@ -4597,8 +4689,8 @@ async function createRelayModel(routeId, options) {
     // session here — a baked-in id would blend histories. The host passes sessionId.
     { generateFallbackSession: false }
   );
-  const finish = async (built) => {
-    let finished = built;
+  const finish = async (built, schemaNpm) => {
+    let finished = await withPortableToolSchemas(built, schemaNpm);
     if (reasoningOptions) finished = await withReasoningProviderOptions(finished, reasoningOptions);
     if (transportHeaders) finished = await withRequestHeaders(finished, transportHeaders);
     return finished;
@@ -4621,7 +4713,7 @@ async function createRelayModel(routeId, options) {
         projectId,
         refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
         ...options?.onDebug ? { onDebug: options.onDebug } : {}
-      }));
+      }), reasoningNpmForRoute(provider, model));
     } catch (err) {
       if (isRelayCoreError(err)) throw err;
       throw new RelayCoreError(
@@ -4658,7 +4750,7 @@ async function createRelayModel(routeId, options) {
     ...options?.onDebug ? { onDebug: options.onDebug } : {}
   };
   try {
-    return await finish(await createLanguageModel(spec));
+    return await finish(await createLanguageModel(spec), npm);
   } catch (err) {
     if (isRelayCoreError(err)) throw err;
     throw new RelayCoreError(

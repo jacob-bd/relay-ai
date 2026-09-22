@@ -169,6 +169,33 @@ describe('getReasoningCapabilities', () => {
     expect(caps.levels).toEqual(['high', 'max', 'none']);
   });
 
+  it('recognizes namespaced Command Code DeepSeek ids with the native ladder', () => {
+    const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'deepseek/deepseek-v4.1-flash', {
+      providerId: 'commandcode',
+      apiBaseUrl: 'https://api.commandcode.ai/provider/v1',
+    });
+    expect(caps.levels).toEqual(['low', 'medium', 'high', 'xhigh', 'none']);
+    expect(caps.wireFormat).toEqual({ kind: 'deepseek-thinking' });
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'low', 'deepseek/deepseek-v4.1-flash', { providerId: 'commandcode' }))
+      .toEqual({ commandcode: { reasoningEffort: 'low', thinking: { type: 'enabled' } } });
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'medium', 'deepseek/deepseek-v4-flash', {
+      apiBaseUrl: 'https://api.commandcode.ai/provider/v1',
+    })).toEqual({ openaiCompatible: { reasoningEffort: 'medium', thinking: { type: 'enabled' } } });
+  });
+
+  it('keeps a namespaced DeepSeek id on the legacy ladder off Command Code', () => {
+    const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'deepseek/deepseek-v4.1-flash', { providerId: 'deepseek' });
+    expect(caps.levels).toEqual(['high', 'max', 'none']);
+  });
+
+  it('recognizes namespaced Kimi ids', () => {
+    const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'moonshotai/Kimi-K3', { providerId: 'commandcode' });
+    expect(caps.levels).toEqual(['low', 'medium', 'high']);
+    expect(caps.defaultLevel).toBe('high');
+    expect(effortProviderOptions('@ai-sdk/openai-compatible', 'low', 'moonshotai/Kimi-K3', { providerId: 'commandcode' }))
+      .toEqual({ commandcode: { reasoningEffort: 'low' } });
+  });
+
   it('recognizes GLM-5.3 ids on OpenCode Go', () => {
     const caps = getReasoningCapabilities('@ai-sdk/openai-compatible', 'glm-5.3-flash', { providerId: 'go' });
     expect(caps.levels).toEqual(['low', 'medium', 'high', 'xhigh']);

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { collapseSchemaUnionTypes, normalizeToolSchemaForNpm } from '../src/tool-schema.js';
+import {
+  collapseSchemaUnionTypes,
+  normalizeToolSchemaForNpm,
+  rewriteNulPatternEscapes,
+} from '../src/tool-schema.js';
 
 // Codex's image_gen tool, the shape that 400s Gemini in issue #72.
 const IMAGE_GEN_PARAMETERS = {
@@ -13,6 +17,20 @@ const IMAGE_GEN_PARAMETERS = {
     },
   },
   required: ['prompt'],
+};
+
+// Claude Code's Artifact tool, as sent in interactive REPL sessions. `file_paths`
+// is `z.array(z.string().min(1).max(1024).regex(/^[^\0]*$/))`, and Command Code's
+// gateway refuses the entire request over that NUL escape.
+const ARTIFACT_PARAMETERS = {
+  type: 'object',
+  properties: {
+    file_paths: {
+      type: 'array',
+      items: { type: 'string', minLength: 1, maxLength: 1024, pattern: '^[^\\0]*$' },
+      minItems: 1,
+    },
+  },
 };
 
 describe('collapseSchemaUnionTypes', () => {
@@ -73,5 +91,71 @@ describe('normalizeToolSchemaForNpm', () => {
 
   it('leaves an unknown npm untouched', () => {
     expect(normalizeToolSchemaForNpm(IMAGE_GEN_PARAMETERS, undefined)).toBe(IMAGE_GEN_PARAMETERS);
+  });
+
+  it('rewrites NUL pattern escapes on openai-compatible routes', () => {
+    const out = normalizeToolSchemaForNpm(ARTIFACT_PARAMETERS, '@ai-sdk/openai-compatible') as any;
+    expect(out.properties.file_paths.items.pattern).toBe('^[^\\x00]*$');
+  });
+
+  it('rewrites NUL pattern escapes on google routes too', () => {
+    const out = normalizeToolSchemaForNpm(ARTIFACT_PARAMETERS, '@ai-sdk/google') as any;
+    expect(out.properties.file_paths.items.pattern).toBe('^[^\\x00]*$');
+  });
+
+  it('keeps the original reference when no pattern needs rewriting', () => {
+    expect(normalizeToolSchemaForNpm(IMAGE_GEN_PARAMETERS, '@ai-sdk/openai-compatible'))
+      .toBe(IMAGE_GEN_PARAMETERS);
+  });
+});
+
+describe('rewriteNulPatternEscapes', () => {
+  const patternOf = (schema: unknown) =>
+    (schema as any).properties.x.pattern as string;
+
+  it('rewrites the NUL escape inside a character class', () => {
+    const out = rewriteNulPatternEscapes({ properties: { x: { pattern: '^[^\\0]*$' } } }) as any;
+    expect(out.properties.x.pattern).toBe('^[^\\x00]*$');
+  });
+
+  it('rewrites a bare NUL escape', () => {
+    const out = rewriteNulPatternEscapes({ properties: { x: { pattern: '\\0' } } }) as any;
+    expect(out.properties.x.pattern).toBe('\\x00');
+  });
+
+  it('leaves octal escapes alone', () => {
+    const schema = { properties: { x: { pattern: '^\\012$' } } };
+    expect(patternOf(rewriteNulPatternEscapes(schema))).toBe('^\\012$');
+  });
+
+  it('leaves a NUL behind an escaped backslash alone', () => {
+    const schema = { properties: { x: { pattern: '^\\\\0$' } } };
+    expect(patternOf(rewriteNulPatternEscapes(schema))).toBe('^\\\\0$');
+  });
+
+  it('leaves patterns with nothing to rewrite at their original reference', () => {
+    const schema = { properties: { x: { pattern: '^[a-z]+$' } } };
+    expect(rewriteNulPatternEscapes(schema)).toBe(schema);
+  });
+
+  it('reaches patterns nested in array items and anyOf branches', () => {
+    const schema = {
+      properties: {
+        x: {
+          anyOf: [
+            { type: 'array', items: { pattern: '^[^\\0]*$' } },
+            { type: 'null' },
+          ],
+        },
+      },
+    };
+    const out = rewriteNulPatternEscapes(schema) as any;
+    expect(out.properties.x.anyOf[0].items.pattern).toBe('^[^\\x00]*$');
+    expect(out.properties.x.anyOf[1]).toEqual({ type: 'null' });
+  });
+
+  it('leaves non-string pattern values untouched', () => {
+    const schema = { properties: { x: { pattern: 0 } } };
+    expect(rewriteNulPatternEscapes(schema)).toBe(schema);
   });
 });

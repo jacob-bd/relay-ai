@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.10] - 2026-09-22
+
+### Fixed
+
+- **DeepSeek and Kimi on Command Code now get a reasoning-effort slider in Codex App.** Command Code catalogs those models with a vendor prefix (`deepseek/deepseek-v4.1-flash`, `moonshotai/Kimi-K3`). Relay only recognized the bare id, so the catalog advertised no effort levels and the app showed a fixed value with no selector. Recognition now tolerates a `vendor/` prefix. Command Code advertises the same `low / medium / high / xhigh / none` ladder OpenCode Go uses for DeepSeek, and sends the real `low` and `medium`. Kimi advertises `low / medium / high`. ([Issue #76](https://github.com/jacob-bd/relay-ai/issues/76))
+- **Interactive Claude Code can talk to Command Code while the Artifact tool is loaded.** Command Code rejects the JavaScript NUL escape `\0` inside a regex character class, and Claude Code's Artifact tool uses that pattern on file paths, so every interactive turn died with HTTP 400 before a token was generated. Relay rewrites `\0` to `\x00` in tool-schema patterns, which every regex engine reads as the same character. The rewrite now also runs for embedded Core (`@jacobbd/relay-ai/core`), not only the CLI proxies. ([Issue #75](https://github.com/jacob-bd/relay-ai/issues/75))
+
 ## [0.12.9] - 2026-09-20
 
 ### Fixed

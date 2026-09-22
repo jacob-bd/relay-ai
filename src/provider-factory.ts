@@ -844,8 +844,12 @@ function xaiDefaultReasoningEffort(modelId: string): string {
  * recognized without a code change — v4.1 was missing here, which silently
  * reduced its Codex catalog entry to a single `none` effort level. Snapshot
  * suffixes (`deepseek-v4-pro-0813`) and vision variants still match.
+ *
+ * An optional `vendor/` prefix matches Command Code ids such as
+ * `deepseek/deepseek-v4.1-flash`. Without it the catalog falls back to a
+ * single `none` effort and Codex App draws no slider.
  */
-const DEEPSEEK_V4_REASONING_ID = /^deepseek-v4(?:\.\d+)?-(?:flash|pro)(?:-|$)/;
+const DEEPSEEK_V4_REASONING_ID = /^(?:[a-z0-9-]+\/)?deepseek-v4(?:\.\d+)?-(?:flash|pro)(?:-|$)/;
 
 function isDeepSeekReasoningModel(modelId: string): boolean {
   const lower = modelId.toLowerCase();
@@ -854,9 +858,11 @@ function isDeepSeekReasoningModel(modelId: string): boolean {
     || lower === 'deepseek-chat';
 }
 
+/** Optional `vendor/` prefix, same tolerance as `GLM_53_REASONING_ID`. */
+const KIMI_REASONING_ID = /^(?:[a-z0-9-]+\/)?kimi-/;
+
 function isKimiReasoningModel(modelId: string): boolean {
-  const lower = modelId.toLowerCase();
-  return lower.startsWith('kimi-');
+  return KIMI_REASONING_ID.test(modelId.toLowerCase().trim());
 }
 
 // Keep exact matching. Kimi uses prefix matching, but switching GLM to prefix
@@ -929,15 +935,26 @@ function openRouterReasoningCapabilities(metadata?: ReasoningMetadata): Reasonin
 
 /**
  * OpenCode Go/Zen serve DeepSeek's native effort vocabulary (`low`, `medium`,
- * `high`, `max`), verified live against the gateway. Other routes keep the
+ * `high`, `max`), verified live against that gateway. Command Code serves the
+ * same DeepSeek wire shape, so it gets the same ladder. Other routes keep the
  * legacy collapse where low/medium were the only way to ask for `high`.
+ *
+ * The Codex catalog builder passes `apiBaseUrl` and not `providerId`, so the
+ * host check is what actually puts the slider on a Command Code model.
  */
 function deepSeekAcceptsNativeEfforts(metadata?: ReasoningMetadata): boolean {
   const providerId = metadata?.providerId?.toLowerCase();
-  if (providerId === 'go' || providerId === 'zen' || providerId === 'opencode-go' || providerId === 'opencode') {
+  if (
+    providerId === 'go'
+    || providerId === 'zen'
+    || providerId === 'opencode-go'
+    || providerId === 'opencode'
+    || providerId === 'commandcode'
+  ) {
     return true;
   }
-  return metadata?.apiBaseUrl?.includes('opencode.ai') === true;
+  const baseUrl = metadata?.apiBaseUrl;
+  return baseUrl?.includes('opencode.ai') === true || baseUrl?.includes('commandcode.ai') === true;
 }
 
 function mapCodexEffortToDeepSeek(

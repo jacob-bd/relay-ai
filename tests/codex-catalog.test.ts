@@ -59,4 +59,32 @@ describe('codex catalog entry generation', () => {
     expect(entry.default_reasoning_level).toBe('medium');
     expect(entry.supports_reasoning_summaries).toBe(false);
   });
+
+  it('gives Command Code DeepSeek the effort ladder from the base URL alone', () => {
+    const model: LocalProviderModel = {
+      id: 'deepseek/deepseek-v4.1-flash',
+      name: 'DeepSeek V4.1 Flash',
+      family: 'deepseek',
+      brand: 'DeepSeek',
+      modelFormat: 'openai',
+      upstreamModelId: 'deepseek/deepseek-v4.1-flash',
+      npm: '@ai-sdk/openai-compatible',
+      apiBaseUrl: 'https://api.commandcode.ai/provider/v1',
+    };
+    const entry = modelToCatalogEntry(model, 'Command Code');
+    expect(entry.supported_reasoning_levels.map(level => level.effort)).toEqual([
+      'low', 'medium', 'high', 'xhigh', 'none',
+    ]);
+
+    const kimi: LocalProviderModel = {
+      ...model,
+      id: 'moonshotai/Kimi-K3',
+      name: 'Kimi K3',
+      upstreamModelId: 'moonshotai/Kimi-K3',
+    };
+    const kimiEntry = modelToCatalogEntry(kimi, 'Command Code');
+    expect(kimiEntry.supported_reasoning_levels.map(level => level.effort)).toEqual([
+      'low', 'medium', 'high',
+    ]);
+  });
 });

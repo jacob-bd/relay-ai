@@ -24,6 +24,16 @@ const REPRESENTATIVE_ROUTES: Array<{ npm: string; modelId: string; metadata?: Re
   { npm: '@ai-sdk/alibaba', modelId: 'kimi-k2.7-code', metadata: { providerId: 'qwen-cloud-payg' } },
   { npm: '@ai-sdk/openai-compatible', modelId: 'glm-5.2', metadata: { providerId: 'opencode-go' } },
   { npm: '@ai-sdk/openai-compatible', modelId: 'deepseek-v4' },
+  {
+    npm: '@ai-sdk/openai-compatible',
+    modelId: 'deepseek/deepseek-v4.1-flash',
+    metadata: { providerId: 'commandcode', apiBaseUrl: 'https://api.commandcode.ai/provider/v1' },
+  },
+  {
+    npm: '@ai-sdk/openai-compatible',
+    modelId: 'moonshotai/Kimi-K3',
+    metadata: { providerId: 'commandcode' },
+  },
   // Metadata-driven route: levels come from supported_parameters, not a model rule.
   {
     npm: '@ai-sdk/openai-compatible',
