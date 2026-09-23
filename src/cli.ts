@@ -531,6 +531,10 @@ ${pc.bold('Commands:')}
   chatgpt     Alias for codex-app
   claude-app  Launch Claude Desktop app with registry providers (macOS + Windows + Linux)
 
+${pc.bold('Binary aliases:')}
+  relayai     Same CLI as relay-ai (shorter to type)
+  relai       Same CLI as relay-ai (shortest)
+
 ${pc.bold('Antigravity favorites:')}
   agy, antigravity, and antigravity-ide share up to six Antigravity favorites
   from relay-ai favorites --agy, plus the selected launch model.

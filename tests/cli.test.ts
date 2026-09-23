@@ -428,6 +428,9 @@ describe('help text', () => {
     expect(help).toContain('Launch OpenAI Codex CLI');
     expect(help).toContain('relay-ai antigravity');
     expect(help).toContain('six Antigravity favorites');
+    expect(help).toContain('Binary aliases:');
+    expect(help).toContain('relayai');
+    expect(help).toContain('relai');
   });
 
   it('claude help includes starter options, providers, and switch menu', () => {

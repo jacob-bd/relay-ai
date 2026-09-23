@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-XNTKZ3C3.js";
+} from "./chunk-4WUSKTVR.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -140,7 +140,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-XEPULMZ7.js";
+} from "./chunk-37GQTWDJ.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -220,7 +220,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-FRTO6LVI.js";
+} from "./chunk-LGQWKQKL.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -13549,6 +13549,8 @@ relay-ai launches Claude Code, OpenAI Codex, Google Gemini CLI, and desktop apps
 against YOUR provider registry (Groq, Mistral, OpenAI, Zen/Go, Ollama, custom endpoints, \u2026).
 It handles API translation, local proxies, env isolation, and model routing.
 
+Binary aliases: relayai and relai run the same CLI (e.g. relai claude --provider groq --model <model-id> -p "<prompt>").
+
 SKILL VERSIONING
   The installed skill version matches relay-ai --version (currently v${VERSION}).
   After upgrading relay-ai, run:
@@ -15321,6 +15323,10 @@ ${pc12.bold("Commands:")}
   chatgpt     Alias for codex-app
   claude-app  Launch Claude Desktop app with registry providers (macOS + Windows + Linux)
 
+${pc12.bold("Binary aliases:")}
+  relayai     Same CLI as relay-ai (shorter to type)
+  relai       Same CLI as relay-ai (shortest)
+
 ${pc12.bold("Antigravity favorites:")}
   agy, antigravity, and antigravity-ide share up to six Antigravity favorites
   from relay-ai favorites --agy, plus the selected launch model.
@@ -16314,7 +16320,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-ZWM6WTXP.js");
+    const { runUiCommand } = await import("./ui-command-QGVVDO63.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.0] - 2026-09-23
+
+### Added
+
+- **Shorter CLI names: `relayai` and `relai`.** Both run the exact same CLI as `relay-ai` (same commands, flags, config, and `~/.relay-ai` home). The `--help` screen documents them under `Binary aliases`, and the agent skill reference mentions them too.
+
 ## [0.12.11] - 2026-09-23
 
 ### Fixed
