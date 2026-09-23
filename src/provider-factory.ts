@@ -3,7 +3,8 @@
 // endpoint selection, and provider quirks.
 import type { LanguageModel, LanguageModelMiddleware } from 'ai';
 import { wrapLanguageModel, extractReasoningMiddleware } from 'ai';
-import { VERTEX_ANTHROPIC_NPM, CODEX_RESPONSES_LITE_VERSION, CODEX_RESPONSES_LITE_WS_URL } from './constants.js';
+import { VERTEX_ANTHROPIC_NPM, CODEX_RESPONSES_LITE_WS_URL } from './constants.js';
+import { resolveCodexClientVersion } from './codex/version.js';
 import { extractOpenAiAccountId } from './oauth/openai.js';
 import { createResponsesWebSocketFetch } from './oauth/responses-websocket.js';
 import {
@@ -237,9 +238,11 @@ async function createLanguageModelSingle(spec: ProviderModelSpec): Promise<Langu
             ...(accountId ? { 'ChatGPT-Account-Id': accountId } : {}),
             originator: 'relay-ai',
             // Responses-Lite models (backend prefer_websockets/use_responses_lite,
-            // e.g. gpt-5.6-luna) require these on the request.
+            // e.g. gpt-5.6-luna) require these on the request. The version is
+            // resolved at runtime (npm latest → installed CLI → bundled
+            // fallback) so new model gates don't need a Relay release.
             ...(spec.useResponsesLite
-              ? { version: CODEX_RESPONSES_LITE_VERSION, 'x-openai-internal-codex-responses-lite': 'true' }
+              ? { version: await resolveCodexClientVersion(), 'x-openai-internal-codex-responses-lite': 'true' }
               : {}),
           },
           // Models the backend flags with prefer_websockets are only served over

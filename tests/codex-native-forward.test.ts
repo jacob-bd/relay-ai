@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { CODEX_RESPONSES_LITE_VERSION } from '../src/constants.js';
 import { buildCompactionResponseBody } from '../src/codex-responses-adapter.js';
 import { forwardNativeCodexHttp, nativeResponsesWebSocketOptions, prepareNativeCodexBody, NATIVE_FORWARD_HEADERS } from '../src/codex/native-forward.js';
 
@@ -131,7 +132,7 @@ describe('native Codex forwarding', () => {
       authorization: 'Bearer native',
       'ChatGPT-Account-Id': 'acct',
       'OpenAI-Beta': 'responses_websockets=2026-02-06',
-      version: '0.153.4',
+      version: CODEX_RESPONSES_LITE_VERSION,
       originator: 'codex_cli_rs',
       'x-codex-turn-metadata': '{"turn_id":"turn-1"}',
     });

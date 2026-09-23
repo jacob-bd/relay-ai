@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-BRYCCZ6H.js";
+} from "./chunk-XNTKZ3C3.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -47,7 +47,6 @@ import {
   fetchProviderCatalog,
   fetchTemplateModels,
   findBinaryOnPath,
-  findClaudeBinary,
   findEmbeddedCodexBinary,
   fmtCommand,
   fmtCount,
@@ -63,7 +62,6 @@ import {
   formatRegistryAuthLabel,
   formatUpdateNotification,
   getAntigravityDebugLogPath,
-  getAppPathOverride,
   getClaudeDebugLogPath,
   getCodexProxyDebugLogPath,
   getGeminiProxyDebugLogPath,
@@ -77,11 +75,9 @@ import {
   isFreeStatus,
   isLikelyPlaceholderKey,
   isOAuthImportProvider,
-  launchClaude,
   launchOrRestartClaudeApp,
   launchOrRestartCodexApp,
   listCredentialSkippedProviders,
-  loadPreferences,
   logActiveModel,
   logConnected,
   logProxy,
@@ -113,7 +109,6 @@ import {
   quitClaudeAppGracefully,
   quitCodexAppGracefully,
   readBody,
-  recordLaunchSelection,
   refreshAllProviderModels,
   refreshModelsDevCacheAsync,
   refreshProviderModels,
@@ -130,10 +125,7 @@ import {
   resolveRefreshCredential,
   resolveRelayCatalogSlots,
   routableModelsForTarget,
-  runCodexCommand,
-  runCodexCommandSync,
   runServerCommand,
-  savePreferences,
   sendJson,
   serializeCatalog,
   shouldHideModel,
@@ -148,7 +140,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-KWLFEG7W.js";
+} from "./chunk-XEPULMZ7.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -182,6 +174,7 @@ import {
   formatUpstreamError,
   formatUpstreamErrorTrace,
   getAppHome,
+  getAppPathOverride,
   getConfigPath,
   getLogsPath,
   getProviderModels,
@@ -191,6 +184,7 @@ import {
   injectClaudeIdentity,
   isSecretServiceAvailable,
   isValidProviderId,
+  loadPreferences,
   loadRegistry,
   maxToolsForNpm,
   migrateGlobalOpencodeCredential,
@@ -205,10 +199,14 @@ import {
   readGlobalOpencodeCredential,
   readOpencodeAuthFile,
   readStoredProviderCredential,
+  recordLaunchSelection,
   resolveApiKey,
   resolveContextWindow,
   resolveProviderCredential,
   routeLookupIds,
+  runCodexCommand,
+  runCodexCommandSync,
+  savePreferences,
   saveProviderCredential,
   saveRegistry,
   saveToCredentialStore,
@@ -222,7 +220,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-3ZAUH2ML.js";
+} from "./chunk-FRTO6LVI.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -231,41 +229,124 @@ import * as p15 from "@clack/prompts";
 import { realpathSync } from "fs";
 import { fileURLToPath } from "url";
 
+// src/launch.ts
+import { execSync } from "child_process";
+import spawn from "cross-spawn";
+import { existsSync, appendFileSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
+var isWindows = process.platform === "win32";
+var FALLBACK_PATHS = isWindows ? [
+  join(process.env["APPDATA"] ?? homedir(), "npm", "claude.cmd"),
+  join(process.env["APPDATA"] ?? homedir(), "npm", "claude"),
+  join(homedir(), "AppData", "Roaming", "npm", "claude.cmd")
+] : [
+  join(homedir(), ".local", "bin", "claude"),
+  join(homedir(), ".npm", "bin", "claude"),
+  "/usr/local/bin/claude",
+  "/opt/homebrew/bin/claude"
+];
+function findClaudeBinary() {
+  const override = getAppPathOverride("claude");
+  if (override) return existsSync(override) ? override : null;
+  return findBinaryOnPath("claude", FALLBACK_PATHS);
+}
+function buildClaudeArgs(model, extraArgs) {
+  return model ? ["--model", model, ...extraArgs] : [...extraArgs];
+}
+function launchClaude(env, model, extraArgs) {
+  return new Promise((resolve2) => {
+    const claudePath = findClaudeBinary();
+    const args = buildClaudeArgs(model, extraArgs);
+    const debugFileIdx = extraArgs.indexOf("--debug-file");
+    const debugLogPath = debugFileIdx !== -1 && extraArgs[debugFileIdx + 1] ? extraArgs[debugFileIdx + 1] : void 0;
+    const originalStdoutWrite = process.stdout.write;
+    const originalStderrWrite = process.stderr.write;
+    const muteWrite = (chunk, encoding, callback) => {
+      if (typeof encoding === "function") {
+        callback = encoding;
+      }
+      if (debugLogPath) {
+        try {
+          const str = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+          appendFileSync(debugLogPath, `[parent] ${str}`);
+        } catch {
+        }
+      }
+      if (callback) callback();
+      return true;
+    };
+    process.stdout.write = muteWrite;
+    process.stderr.write = muteWrite;
+    const restore = () => {
+      process.stdout.write = originalStdoutWrite;
+      process.stderr.write = originalStderrWrite;
+    };
+    const child = spawn(claudePath, args, {
+      stdio: "inherit",
+      env
+    });
+    const forward = (signal) => {
+      child.kill(signal);
+    };
+    const onSigint = () => forward("SIGINT");
+    const onSigterm = () => forward("SIGTERM");
+    const onSighup = () => forward("SIGHUP");
+    const cleanup = () => {
+      restore();
+      process.off("SIGINT", onSigint);
+      process.off("SIGTERM", onSigterm);
+      process.off("SIGHUP", onSighup);
+    };
+    process.once("SIGINT", onSigint);
+    process.once("SIGTERM", onSigterm);
+    process.once("SIGHUP", onSighup);
+    child.on("exit", (code) => {
+      cleanup();
+      resolve2(code ?? 0);
+    });
+    child.on("error", (err) => {
+      cleanup();
+      resolve2(1);
+    });
+  });
+}
+
 // src/first-run.ts
 import pc from "picocolors";
 import * as p2 from "@clack/prompts";
 
 // src/opencode-serve.ts
-import { execSync, spawn } from "child_process";
+import { execSync as execSync2, spawn as spawn2 } from "child_process";
 import { randomBytes } from "crypto";
-import { existsSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
-var isWindows = process.platform === "win32";
-var OPENCODE_FALLBACK_PATHS = isWindows ? [
-  join(process.env["APPDATA"] ?? homedir(), "npm", "opencode.cmd"),
-  join(process.env["APPDATA"] ?? homedir(), "npm", "opencode"),
-  join(homedir(), "AppData", "Roaming", "npm", "opencode.cmd")
+import { existsSync as existsSync2 } from "fs";
+import { homedir as homedir2 } from "os";
+import { join as join2 } from "path";
+var isWindows2 = process.platform === "win32";
+var OPENCODE_FALLBACK_PATHS = isWindows2 ? [
+  join2(process.env["APPDATA"] ?? homedir2(), "npm", "opencode.cmd"),
+  join2(process.env["APPDATA"] ?? homedir2(), "npm", "opencode"),
+  join2(homedir2(), "AppData", "Roaming", "npm", "opencode.cmd")
 ] : [
-  join(homedir(), ".opencode", "bin", "opencode"),
-  join(homedir(), ".local", "bin", "opencode"),
-  join(homedir(), ".npm", "bin", "opencode"),
+  join2(homedir2(), ".opencode", "bin", "opencode"),
+  join2(homedir2(), ".local", "bin", "opencode"),
+  join2(homedir2(), ".npm", "bin", "opencode"),
   "/usr/local/bin/opencode",
   "/opt/homebrew/bin/opencode"
 ];
 function findOpencodeBinary() {
   try {
-    const result = execSync(isWindows ? "where.exe opencode" : "which opencode", {
+    const result = execSync2(isWindows2 ? "where.exe opencode" : "which opencode", {
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"]
     });
     const lines = result.trim().split("\n").map((l) => l.trim()).filter(Boolean);
-    const path3 = (isWindows ? lines.find((l) => l.toLowerCase().endsWith(".cmd")) : null) ?? lines[0];
+    const path3 = (isWindows2 ? lines.find((l) => l.toLowerCase().endsWith(".cmd")) : null) ?? lines[0];
     if (path3) return path3;
   } catch {
   }
   for (const path3 of OPENCODE_FALLBACK_PATHS) {
-    if (existsSync(path3)) return path3;
+    if (existsSync2(path3)) return path3;
   }
   return null;
 }
@@ -376,10 +457,10 @@ async function fetchRawOpencodeProviders() {
       finish(null);
     }, TIMEOUT_MS);
     try {
-      child = isWindows ? spawn("cmd.exe", ["/c", binary, "serve", "--port", "0"], {
+      child = isWindows2 ? spawn2("cmd.exe", ["/c", binary, "serve", "--port", "0"], {
         stdio: ["pipe", "pipe", "pipe"],
         env: { ...process.env, OPENCODE_SERVER_PASSWORD: password3 }
-      }) : spawn(binary, ["serve", "--port", "0"], {
+      }) : spawn2(binary, ["serve", "--port", "0"], {
         stdio: ["pipe", "pipe", "pipe"],
         env: { ...process.env, OPENCODE_SERVER_PASSWORD: password3 }
       });
@@ -687,23 +768,23 @@ async function importFromOpencode(options = {}) {
 
 // src/key-setup.ts
 import * as p from "@clack/prompts";
-import { appendFileSync, readFileSync, existsSync as existsSync2 } from "fs";
-import { homedir as homedir2 } from "os";
+import { appendFileSync as appendFileSync2, readFileSync, existsSync as existsSync3 } from "fs";
+import { homedir as homedir3 } from "os";
 import { spawnSync } from "child_process";
 function detectShellProfile() {
   const shell = process.env["SHELL"] ?? "";
   if (process.platform === "darwin") {
-    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir2()}/.zshrc` };
-    if (shell.includes("bash")) return { display: "~/.bash_profile", path: `${homedir2()}/.bash_profile` };
-    return { display: "~/.profile", path: `${homedir2()}/.profile` };
+    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir3()}/.zshrc` };
+    if (shell.includes("bash")) return { display: "~/.bash_profile", path: `${homedir3()}/.bash_profile` };
+    return { display: "~/.profile", path: `${homedir3()}/.profile` };
   }
   if (process.platform === "linux") {
-    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir2()}/.zshrc` };
-    if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir2()}/.bashrc` };
-    return { display: "~/.profile", path: `${homedir2()}/.profile` };
+    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir3()}/.zshrc` };
+    if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir3()}/.bashrc` };
+    return { display: "~/.profile", path: `${homedir3()}/.profile` };
   }
-  if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir2()}/.bashrc` };
-  return { display: "~/.profile", path: `${homedir2()}/.profile` };
+  if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir3()}/.bashrc` };
+  return { display: "~/.profile", path: `${homedir3()}/.profile` };
 }
 async function resolveOrCollectApiKey(simulate = false, trace = false) {
   if (!simulate) {
@@ -711,7 +792,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
     if (existing) return existing;
   }
   const isMac = process.platform === "darwin";
-  const isWindows5 = process.platform === "win32";
+  const isWindows6 = process.platform === "win32";
   const isLinux = process.platform === "linux";
   if (simulate) {
     printDryRunPanel();
@@ -725,7 +806,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
     };
     const storedKey = await readFromCredentialStore(keyDiag);
     if (storedKey) {
-      const storeName = isMac ? "macOS Keychain" : isWindows5 ? "Windows Credential Manager" : "Secret Service";
+      const storeName = isMac ? "macOS Keychain" : isWindows6 ? "Windows Credential Manager" : "Secret Service";
       p.log.success(`Found key in ${storeName}`);
       process.env["OPENCODE_API_KEY"] = storedKey;
       return storedKey;
@@ -755,7 +836,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
         { value: "session", label: "This session only", hint: "Not saved anywhere \u2014 you'll be asked again next time" }
       ];
     }
-    if (isWindows5) {
+    if (isWindows6) {
       return [
         { value: "credential-manager", label: "Windows Credential Manager", hint: "Key stored securely; relay-ai reads it automatically next time" },
         { value: "setx", label: "Persistent environment variable (plaintext)", hint: "Runs setx \u2014 key visible in System Properties \u2192 Environment Variables" },
@@ -777,7 +858,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
   const saveChoice = await p.select({
     message: "Where should we save the key?",
     options: saveOptions,
-    initialValue: isMac ? "keychain" : isWindows5 ? "credential-manager" : secretServiceAvailable ? "secret-service" : "profile"
+    initialValue: isMac ? "keychain" : isWindows6 ? "credential-manager" : secretServiceAvailable ? "secret-service" : "profile"
   });
   if (p.isCancel(saveChoice)) {
     p.cancel("Cancelled.");
@@ -804,9 +885,9 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
     if (await saveToCredentialStore(trimmedKey)) {
       try {
         const autoLoadLine = `export OPENCODE_API_KEY="$(security find-generic-password -s relay-ai -a ${GLOBAL_OPENCODE_KEYRING_ACCOUNT} -w 2>/dev/null)"`;
-        const existing = existsSync2(path3) ? readFileSync(path3, "utf8") : "";
+        const existing = existsSync3(path3) ? readFileSync(path3, "utf8") : "";
         if (!existing.includes(autoLoadLine)) {
-          appendFileSync(path3, `
+          appendFileSync2(path3, `
 # relay-ai: load API key from macOS Keychain
 ${autoLoadLine}
 `);
@@ -841,9 +922,9 @@ ${autoLoadLine}
     }
   } else if (saveChoice === "profile") {
     try {
-      if (!existsSync2(path3)) appendFileSync(path3, "");
+      if (!existsSync3(path3)) appendFileSync2(path3, "");
       const escapedKey = trimmedKey.replace(/'/g, "'\\''");
-      appendFileSync(path3, `
+      appendFileSync2(path3, `
 export OPENCODE_API_KEY='${escapedKey}'
 `);
       p.log.success(`Key saved to ${display} \u2014 active now and in all future terminals.`);
@@ -2418,7 +2499,7 @@ async function runProvidersCommand(args) {
 // src/codex.ts
 import pc7 from "picocolors";
 import * as p9 from "@clack/prompts";
-import { join as join6 } from "path";
+import { join as join7 } from "path";
 
 // src/codex-proxy.ts
 import { createHash as createHash3 } from "crypto";
@@ -4034,7 +4115,7 @@ async function resolveRoutedCollaborationInput(input, context) {
 
 // src/codex/route-audit.ts
 import { chmodSync, mkdirSync, writeFileSync } from "fs";
-import { join as join2 } from "path";
+import { join as join3 } from "path";
 var DIR_MODE = 448;
 var FILE_MODE = 384;
 var CODEX_ROUTE_AUDIT_LOG = "codex-route-audit.jsonl";
@@ -4063,7 +4144,7 @@ function getCodexRouteAuditLogPath() {
     chmodSync(dir, DIR_MODE);
   } catch {
   }
-  return join2(dir, CODEX_ROUTE_AUDIT_LOG);
+  return join3(dir, CODEX_ROUTE_AUDIT_LOG);
 }
 function prepareCodexRouteAuditLog(path3 = getCodexRouteAuditLogPath()) {
   writeFileSync(path3, "", { mode: FILE_MODE });
@@ -5422,13 +5503,13 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
 }
 
 // src/codex/profile.ts
-import { join as join4 } from "path";
+import { join as join5 } from "path";
 
 // src/codex/session.ts
 import {
   copyFileSync,
   chmodSync as chmodSync2,
-  existsSync as existsSync3,
+  existsSync as existsSync4,
   mkdirSync as mkdirSync2,
   readdirSync,
   readFileSync as readFileSync2,
@@ -5438,44 +5519,44 @@ import {
   unlinkSync,
   writeFileSync as writeFileSync2
 } from "fs";
-import { homedir as homedir3 } from "os";
-import { basename, dirname, join as join3 } from "path";
+import { homedir as homedir4 } from "os";
+import { basename, dirname, join as join4 } from "path";
 var CODEX_PROFILE_NAME = "relay-ai-launch";
 var STALE_SESSION_MS = 5 * 60 * 1e3;
 var MAX_BACKUPS = 5;
 function getCodexHome(env = process.env) {
-  return env["CODEX_HOME"] || join3(homedir3(), ".codex");
+  return env["CODEX_HOME"] || join4(homedir4(), ".codex");
 }
 function getCodexProfilePath() {
-  return join3(getCodexHome(), `${CODEX_PROFILE_NAME}.config.toml`);
+  return join4(getCodexHome(), `${CODEX_PROFILE_NAME}.config.toml`);
 }
 function getRelayAiCodexDir(env = process.env) {
-  return join3(getAppHome(env), "codex");
+  return join4(getAppHome(env), "codex");
 }
 function getSessionLockPath(env = process.env) {
-  return join3(getRelayAiCodexDir(env), "session.json");
+  return join4(getRelayAiCodexDir(env), "session.json");
 }
 function getBackupsDir(env = process.env) {
-  return join3(getRelayAiCodexDir(env), "backups");
+  return join4(getRelayAiCodexDir(env), "backups");
 }
 function getCatalogPath(providerId, env = process.env) {
-  return join3(getRelayAiCodexDir(env), `models-${providerId}.json`);
+  return join4(getRelayAiCodexDir(env), `models-${providerId}.json`);
 }
 function ownedOverlayPaths(env = process.env) {
   const paths = [getCodexProfilePath()];
   const codexDir = getRelayAiCodexDir(env);
-  if (existsSync3(codexDir)) {
+  if (existsSync4(codexDir)) {
     for (const name of readdirSync(codexDir)) {
       if (name.startsWith("models-") && name.endsWith(".json")) {
-        paths.push(join3(codexDir, name));
+        paths.push(join4(codexDir, name));
       }
     }
   }
-  const agentsDir = join3(getCodexHome(env), "agents");
-  if (existsSync3(agentsDir)) {
+  const agentsDir = join4(getCodexHome(env), "agents");
+  if (existsSync4(agentsDir)) {
     for (const name of readdirSync(agentsDir)) {
       if (/^relay-model-[a-z0-9-]+\.toml$/i.test(name)) {
-        paths.push(join3(agentsDir, name));
+        paths.push(join4(agentsDir, name));
       }
     }
   }
@@ -5493,17 +5574,17 @@ function atomicWriteFile(path3, content) {
   }
 }
 function rotateBackups(filePath, env = process.env) {
-  if (!existsSync3(filePath)) return;
+  if (!existsSync4(filePath)) return;
   const backupsDir = getBackupsDir(env);
   mkdirSync2(backupsDir, { recursive: true });
   const base = basename(filePath);
   const stamp = Date.now();
-  const backupPath = join3(backupsDir, `${base}.${stamp}.bak`);
+  const backupPath = join4(backupsDir, `${base}.${stamp}.bak`);
   copyFileSync(filePath, backupPath);
-  const backups = readdirSync(backupsDir).filter((n) => n.startsWith(`${base}.`) && n.endsWith(".bak")).map((n) => ({ name: n, mtime: statSync(join3(backupsDir, n)).mtimeMs })).sort((a, b) => b.mtime - a.mtime);
+  const backups = readdirSync(backupsDir).filter((n) => n.startsWith(`${base}.`) && n.endsWith(".bak")).map((n) => ({ name: n, mtime: statSync(join4(backupsDir, n)).mtimeMs })).sort((a, b) => b.mtime - a.mtime);
   for (const old of backups.slice(MAX_BACKUPS)) {
     try {
-      unlinkSync(join3(backupsDir, old.name));
+      unlinkSync(join4(backupsDir, old.name));
     } catch {
     }
   }
@@ -5514,7 +5595,7 @@ function writeOverlayFile(path3, content, env = process.env) {
 }
 function readSessionLock(env = process.env) {
   const path3 = getSessionLockPath(env);
-  if (!existsSync3(path3)) return null;
+  if (!existsSync4(path3)) return null;
   try {
     const parsed = JSON.parse(readFileSync2(path3, "utf8"));
     if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string") return parsed;
@@ -5543,7 +5624,7 @@ function isConcurrentSession(lock) {
 function restoreCodexOverlay(env = process.env) {
   const removed = [];
   for (const path3 of ownedOverlayPaths(env)) {
-    if (!existsSync3(path3)) continue;
+    if (!existsSync4(path3)) continue;
     try {
       rmSync(path3, { force: true });
       removed.push(path3);
@@ -5553,7 +5634,7 @@ function restoreCodexOverlay(env = process.env) {
   return removed;
 }
 function remainingOverlayPaths(env = process.env) {
-  return ownedOverlayPaths(env).filter((p16) => existsSync3(p16));
+  return ownedOverlayPaths(env).filter((p16) => existsSync4(p16));
 }
 function recoverInterruptedCodexSession(env = process.env) {
   const before = remainingOverlayPaths(env);
@@ -5647,22 +5728,22 @@ function getCatalogOutputPath(providerId) {
   return getCatalogPath(providerId);
 }
 function getFavoritesCatalogPath() {
-  return join4(getRelayAiCodexDir(), "models-favorites.json");
+  return join5(getRelayAiCodexDir(), "models-favorites.json");
 }
 function getFavoritesAppCatalogPath() {
-  return join4(getRelayAiCodexDir(), "app-models-favorites.json");
+  return join5(getRelayAiCodexDir(), "app-models-favorites.json");
 }
 function profileName() {
   return CODEX_PROFILE_NAME;
 }
 
 // src/codex/launch.ts
-import { execSync as execSync2 } from "child_process";
-import spawn2 from "cross-spawn";
-import { existsSync as existsSync4 } from "fs";
-import { homedir as homedir4 } from "os";
-import { join as join5 } from "path";
-var isWindows2 = process.platform === "win32";
+import { execSync as execSync3 } from "child_process";
+import spawn3 from "cross-spawn";
+import { existsSync as existsSync5 } from "fs";
+import { homedir as homedir5 } from "os";
+import { join as join6 } from "path";
+var isWindows3 = process.platform === "win32";
 var CODEX_CI_ENV_VARS = [
   "CI",
   "CODEX_CI",
@@ -5681,33 +5762,33 @@ function stripCodexInheritedEnv(env) {
   }
   return out;
 }
-var CODEX_FALLBACK_PATHS = isWindows2 ? [
-  join5(process.env["APPDATA"] ?? homedir4(), "npm", "codex.cmd"),
-  join5(process.env["APPDATA"] ?? homedir4(), "npm", "codex")
+var CODEX_FALLBACK_PATHS = isWindows3 ? [
+  join6(process.env["APPDATA"] ?? homedir5(), "npm", "codex.cmd"),
+  join6(process.env["APPDATA"] ?? homedir5(), "npm", "codex")
 ] : [
-  join5(homedir4(), ".local", "bin", "codex"),
-  join5(homedir4(), ".npm", "bin", "codex"),
+  join6(homedir5(), ".local", "bin", "codex"),
+  join6(homedir5(), ".npm", "bin", "codex"),
   "/usr/local/bin/codex",
   "/opt/homebrew/bin/codex"
 ];
 function findCodexBinary() {
   const override = getAppPathOverride("codex");
-  if (override) return selectCodexBinary([override], existsSync4, canRunCodexBinary);
+  if (override) return selectCodexBinary([override], existsSync5, canRunCodexBinary);
   const candidates = [];
   try {
-    const result = execSync2(isWindows2 ? "where.exe codex" : "which codex", {
+    const result = execSync3(isWindows3 ? "where.exe codex" : "which codex", {
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"]
     });
     const lines = result.trim().split("\n").map((l) => l.trim()).filter(Boolean);
-    if (isWindows2) {
+    if (isWindows3) {
       candidates.push(...lines.filter((l) => l.toLowerCase().endsWith(".cmd")));
     }
     candidates.push(...lines);
   } catch {
   }
   candidates.push(...CODEX_FALLBACK_PATHS);
-  return selectCodexBinary(candidates, existsSync4, canRunCodexBinary);
+  return selectCodexBinary(candidates, existsSync5, canRunCodexBinary);
 }
 function selectCodexBinary(candidates, exists, canRun) {
   const seen = /* @__PURE__ */ new Set();
@@ -5757,7 +5838,7 @@ function launchCodex(modelId, env, extraArgs) {
   return new Promise((resolve2) => {
     const codexPath = findCodexBinary();
     const args = ["--profile", profileName(), "-m", modelId, ...ensureCodexSandboxArgs(extraArgs)];
-    const child = spawn2(codexPath, args, {
+    const child = spawn3(codexPath, args, {
       stdio: "inherit",
       env
     });
@@ -6730,7 +6811,7 @@ async function writeFavoritesLaunchArtifacts(resolved, starting, proxyPort) {
   return { profilePath, catalogPath };
 }
 async function writeMixedLaunchArtifacts(plan, proxyPort) {
-  const catalogPath = join6(getRelayAiCodexDir(), "models-mixed.json");
+  const catalogPath = join7(getRelayAiCodexDir(), "models-mixed.json");
   writeOverlayFile(catalogPath, serializeCatalog(plan.catalog));
   const profilePath = getProfileOutputPath();
   writeOverlayFile(profilePath, buildCodexMixedProfileToml({
@@ -7314,24 +7395,24 @@ import pc8 from "picocolors";
 import * as p11 from "@clack/prompts";
 
 // src/gemini/launch.ts
-import { spawn as spawn3 } from "child_process";
-import { existsSync as existsSync5, mkdirSync as mkdirSync3, mkdtempSync, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "fs";
-import { homedir as homedir5, tmpdir } from "os";
-import { join as join7 } from "path";
-var isWindows3 = process.platform === "win32";
+import { spawn as spawn4 } from "child_process";
+import { existsSync as existsSync6, mkdirSync as mkdirSync3, mkdtempSync, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "fs";
+import { homedir as homedir6, tmpdir } from "os";
+import { join as join8 } from "path";
+var isWindows4 = process.platform === "win32";
 var GEMINI_API_KEY_AUTH_TYPE = "gemini-api-key";
-var GEMINI_FALLBACK_PATHS = isWindows3 ? [
-  join7(process.env["APPDATA"] ?? homedir5(), "npm", "gemini.cmd"),
-  join7(process.env["APPDATA"] ?? homedir5(), "npm", "gemini")
+var GEMINI_FALLBACK_PATHS = isWindows4 ? [
+  join8(process.env["APPDATA"] ?? homedir6(), "npm", "gemini.cmd"),
+  join8(process.env["APPDATA"] ?? homedir6(), "npm", "gemini")
 ] : [
-  join7(homedir5(), ".local", "bin", "gemini"),
-  join7(homedir5(), ".npm", "bin", "gemini"),
+  join8(homedir6(), ".local", "bin", "gemini"),
+  join8(homedir6(), ".npm", "bin", "gemini"),
   "/usr/local/bin/gemini",
   "/opt/homebrew/bin/gemini"
 ];
 function findGeminiBinary() {
   const override = getAppPathOverride("gemini");
-  if (override) return existsSync5(override) ? override : null;
+  if (override) return existsSync6(override) ? override : null;
   return findBinaryOnPath("gemini", GEMINI_FALLBACK_PATHS);
 }
 function buildGeminiChildEnv(proxyPort, proxyToken) {
@@ -7346,7 +7427,7 @@ function buildGeminiChildEnv(proxyPort, proxyToken) {
   return env;
 }
 function createGeminiCliHomeOverlay() {
-  const cliHome = mkdtempSync(join7(tmpdir(), "relay-ai-gemini-"));
+  const cliHome = mkdtempSync(join8(tmpdir(), "relay-ai-gemini-"));
   const settings = {
     security: {
       auth: {
@@ -7354,9 +7435,9 @@ function createGeminiCliHomeOverlay() {
       }
     }
   };
-  const geminiDir = join7(cliHome, ".gemini");
+  const geminiDir = join8(cliHome, ".gemini");
   mkdirSync3(geminiDir);
-  writeFileSync3(join7(geminiDir, "settings.json"), `${JSON.stringify(settings, null, 2)}
+  writeFileSync3(join8(geminiDir, "settings.json"), `${JSON.stringify(settings, null, 2)}
 `, {
     encoding: "utf8",
     mode: 384
@@ -7380,10 +7461,10 @@ function prepareGeminiChildEnv(proxyPort, proxyToken) {
 function launchGemini(geminiPath, modelId, env, extraArgs) {
   return new Promise((resolve2) => {
     const args = ["-m", modelId, ...extraArgs];
-    const child = spawn3(geminiPath, args, {
+    const child = spawn4(geminiPath, args, {
       stdio: "inherit",
       env,
-      shell: isWindows3
+      shell: isWindows4
     });
     const onSigInt = () => child.kill("SIGINT");
     const onSigTerm = () => child.kill("SIGTERM");
@@ -10624,27 +10705,27 @@ async function resolveAntigravityLaunchRoutes(opts) {
 }
 
 // src/antigravity/launch-cli.ts
-import { execFileSync, execSync as execSync3 } from "child_process";
-import spawn4 from "cross-spawn";
-import { existsSync as existsSync6 } from "fs";
-import { homedir as homedir6 } from "os";
-import { join as join8 } from "path";
-var isWindows4 = process.platform === "win32";
-var FALLBACK_PATHS = isWindows4 ? [
-  join8(process.env["APPDATA"] ?? homedir6(), "npm", "agy.cmd"),
-  join8(process.env["APPDATA"] ?? homedir6(), "npm", "agy"),
-  join8(homedir6(), "AppData", "Roaming", "npm", "agy.cmd")
+import { execFileSync, execSync as execSync4 } from "child_process";
+import spawn5 from "cross-spawn";
+import { existsSync as existsSync7 } from "fs";
+import { homedir as homedir7 } from "os";
+import { join as join9 } from "path";
+var isWindows5 = process.platform === "win32";
+var FALLBACK_PATHS2 = isWindows5 ? [
+  join9(process.env["APPDATA"] ?? homedir7(), "npm", "agy.cmd"),
+  join9(process.env["APPDATA"] ?? homedir7(), "npm", "agy"),
+  join9(homedir7(), "AppData", "Roaming", "npm", "agy.cmd")
 ] : [
-  join8(homedir6(), ".local", "bin", "agy"),
-  join8(homedir6(), ".npm", "bin", "agy"),
+  join9(homedir7(), ".local", "bin", "agy"),
+  join9(homedir7(), ".npm", "bin", "agy"),
   "/usr/local/bin/agy",
   "/opt/homebrew/bin/agy"
 ];
 function findAntigravityCliBinary() {
   const override = getAppPathOverride("agy");
-  if (override) return existsSync6(override) ? override : null;
+  if (override) return existsSync7(override) ? override : null;
   try {
-    const result = execSync3(isWindows4 ? "where.exe agy" : "which agy", {
+    const result = execSync4(isWindows5 ? "where.exe agy" : "which agy", {
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"]
     });
@@ -10652,8 +10733,8 @@ function findAntigravityCliBinary() {
     if (path3) return path3;
   } catch {
   }
-  for (const path3 of FALLBACK_PATHS) {
-    if (existsSync6(path3)) return path3;
+  for (const path3 of FALLBACK_PATHS2) {
+    if (existsSync7(path3)) return path3;
   }
   return null;
 }
@@ -10683,7 +10764,7 @@ function launchAntigravityCli(env, extraArgs) {
       resolve2(127);
       return;
     }
-    const child = spawn4(binaryPath, extraArgs, {
+    const child = spawn5(binaryPath, extraArgs, {
       stdio: "inherit",
       env
     });
@@ -10711,10 +10792,10 @@ function launchAntigravityCli(env, extraArgs) {
 }
 
 // src/antigravity/launch-ide.ts
-import { execFileSync as execFileSync2, execSync as execSync4, spawn as spawn5 } from "child_process";
-import { existsSync as existsSync7 } from "fs";
-import { homedir as homedir7 } from "os";
-import { join as join9 } from "path";
+import { execFileSync as execFileSync2, execSync as execSync5, spawn as spawn6 } from "child_process";
+import { existsSync as existsSync8 } from "fs";
+import { homedir as homedir8 } from "os";
+import { join as join10 } from "path";
 
 // src/antigravity/ide-profile.ts
 import fs from "fs";
@@ -10748,8 +10829,8 @@ function prepareIdeProfile(profileDir, gatewayUrl) {
 }
 
 // src/antigravity/launch-ide.ts
-var LINUX_APP_PROFILE_DIR = join9(homedir7(), ".relay-ai", "antigravity", "app-profile");
-var LINUX_IDE_PROFILE_DIR = join9(homedir7(), ".relay-ai", "antigravity", "profile");
+var LINUX_APP_PROFILE_DIR = join10(homedir8(), ".relay-ai", "antigravity", "app-profile");
+var LINUX_IDE_PROFILE_DIR = join10(homedir8(), ".relay-ai", "antigravity", "profile");
 function sleep(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
@@ -10757,10 +10838,10 @@ function linuxAntigravityBinary() {
   const candidates = [
     "/usr/share/antigravity/antigravity",
     "/opt/antigravity/antigravity",
-    join9(homedir7(), ".local", "share", "antigravity", "antigravity")
+    join10(homedir8(), ".local", "share", "antigravity", "antigravity")
   ];
   for (const candidate of candidates) {
-    if (existsSync7(candidate)) return candidate;
+    if (existsSync8(candidate)) return candidate;
   }
   return null;
 }
@@ -10778,7 +10859,7 @@ function linuxKillByProfile(profileDir, signal) {
   }
 }
 function runPowerShell(script) {
-  return execSync4(`powershell.exe -NoProfile -Command ${JSON.stringify(script)}`, {
+  return execSync5(`powershell.exe -NoProfile -Command ${JSON.stringify(script)}`, {
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"]
   }).trim();
@@ -10910,34 +10991,34 @@ function quitAntigravityAppGracefully() {
 }
 function findAntigravityAppBinary() {
   const override = getAppPathOverride("antigravity");
-  if (override) return existsSync7(override) ? override : null;
+  if (override) return existsSync8(override) ? override : null;
   if (process.platform === "win32") {
-    const localAppData = process.env["LOCALAPPDATA"] ?? join9(homedir7(), "AppData", "Local");
-    const winPath = join9(localAppData, "Programs", "Antigravity", "Antigravity.exe");
-    return existsSync7(winPath) ? winPath : null;
+    const localAppData = process.env["LOCALAPPDATA"] ?? join10(homedir8(), "AppData", "Local");
+    const winPath = join10(localAppData, "Programs", "Antigravity", "Antigravity.exe");
+    return existsSync8(winPath) ? winPath : null;
   }
   if (process.platform === "linux") return linuxAntigravityBinary();
   if (process.platform !== "darwin") return null;
   const defaultPath = "/Applications/Antigravity.app/Contents/MacOS/Antigravity";
-  if (existsSync7(defaultPath)) return defaultPath;
-  const homePath = join9(homedir7(), "Applications", "Antigravity.app", "Contents", "MacOS", "Antigravity");
-  if (existsSync7(homePath)) return homePath;
+  if (existsSync8(defaultPath)) return defaultPath;
+  const homePath = join10(homedir8(), "Applications", "Antigravity.app", "Contents", "MacOS", "Antigravity");
+  if (existsSync8(homePath)) return homePath;
   return null;
 }
 function findAntigravityIdeBinary() {
   const override = getAppPathOverride("antigravity-ide");
-  if (override) return existsSync7(override) ? override : null;
+  if (override) return existsSync8(override) ? override : null;
   if (process.platform === "win32") {
-    const localAppData = process.env["LOCALAPPDATA"] ?? join9(homedir7(), "AppData", "Local");
-    const winPath = join9(localAppData, "Programs", "Antigravity IDE", "Antigravity IDE.exe");
-    return existsSync7(winPath) ? winPath : null;
+    const localAppData = process.env["LOCALAPPDATA"] ?? join10(homedir8(), "AppData", "Local");
+    const winPath = join10(localAppData, "Programs", "Antigravity IDE", "Antigravity IDE.exe");
+    return existsSync8(winPath) ? winPath : null;
   }
   if (process.platform === "linux") return linuxAntigravityBinary();
   if (process.platform !== "darwin") return null;
   const defaultPath = "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide";
-  if (existsSync7(defaultPath)) return defaultPath;
-  const homePath = join9(homedir7(), "Applications", "Antigravity IDE.app", "Contents", "Resources", "app", "bin", "antigravity-ide");
-  if (existsSync7(homePath)) return homePath;
+  if (existsSync8(defaultPath)) return defaultPath;
+  const homePath = join10(homedir8(), "Applications", "Antigravity IDE.app", "Contents", "Resources", "app", "bin", "antigravity-ide");
+  if (existsSync8(homePath)) return homePath;
   return null;
 }
 function launchAntigravityApp(env, profileDir, gatewayUrl, extraArgs) {
@@ -10960,7 +11041,7 @@ function launchAntigravityApp(env, profileDir, gatewayUrl, extraArgs) {
       `--user-data-dir=${profileDir}`,
       ...extraArgs
     ];
-    const child = spawn5(binaryPath, args, {
+    const child = spawn6(binaryPath, args, {
       // GUI app: don't inherit the terminal's stdio (its Electron logs would
       // corrupt relay's interactive prompts) and detach into its own process
       // group so a Ctrl+C meant for the relay gateway doesn't also kill the app
@@ -10997,13 +11078,13 @@ function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs) {
       return;
     }
     prepareIdeProfile(profileDir, gatewayUrl);
-    const relayExtensionsDir = join9(homedir7(), ".relay-ai", "antigravity", "extensions");
+    const relayExtensionsDir = join10(homedir8(), ".relay-ai", "antigravity", "extensions");
     const args = [
       `--user-data-dir=${profileDir}`,
       `--extensions-dir=${relayExtensionsDir}`,
       ...extraArgs
     ];
-    const child = spawn5(binaryPath, args, {
+    const child = spawn6(binaryPath, args, {
       // GUI app: don't inherit the terminal's stdio (its Electron logs would
       // corrupt relay's interactive prompts) and detach into its own process
       // group so a Ctrl+C meant for the relay gateway doesn't also kill the app
@@ -11026,8 +11107,8 @@ function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs) {
 }
 
 // src/antigravity.ts
-import { homedir as homedir8 } from "os";
-import { join as join10 } from "path";
+import { homedir as homedir9 } from "os";
+import { join as join11 } from "path";
 var SHUTDOWN_DRAIN_MS = 500;
 var AGY_FAVORITES_PROVIDER_ID = "__relay_agy_favorites__";
 var AGY_FAVORITES_PROVIDER_LABEL = "\u2605 Antigravity CLI Favorites";
@@ -11321,7 +11402,7 @@ async function runAntigravityAppCommand(childArgs, trace = false, boot) {
     trace,
     boot,
     async (env, _routes, gatewayHandle) => {
-      const profileDir = join10(homedir8(), ".relay-ai", "antigravity", "app-profile");
+      const profileDir = join11(homedir9(), ".relay-ai", "antigravity", "app-profile");
       if (isAntigravityAppRunning(profileDir)) {
         const restart = await p12.confirm({
           message: "Restart Antigravity to apply this Relay gateway?",
@@ -11369,7 +11450,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
     trace,
     boot,
     async (env, _routes, gatewayHandle) => {
-      const profileDir = join10(homedir8(), ".relay-ai", "antigravity", "profile");
+      const profileDir = join11(homedir9(), ".relay-ai", "antigravity", "profile");
       if (isAntigravityIdeRunning(profileDir)) {
         const restart = await p12.confirm({
           message: "Restart Antigravity IDE to apply this Relay gateway?",
@@ -11414,7 +11495,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
 // src/codex-app.ts
 import pc10 from "picocolors";
 import * as p13 from "@clack/prompts";
-import { join as join13 } from "path";
+import { join as join14 } from "path";
 
 // src/codex/app-provider-routes.ts
 function codexRouteToProxyRoute(provider, model, apiKey) {
@@ -11503,14 +11584,14 @@ async function buildCodexAppProviderCatalogRoutes(provider, apiKey, selectedMode
 }
 
 // src/codex/app-config.ts
-import { existsSync as existsSync8, readFileSync as readFileSync3, rmSync as rmSync3, writeFileSync as writeFileSync4, mkdirSync as mkdirSync4 } from "fs";
-import { dirname as dirname2, join as join11 } from "path";
+import { existsSync as existsSync9, readFileSync as readFileSync3, rmSync as rmSync3, writeFileSync as writeFileSync4, mkdirSync as mkdirSync4 } from "fs";
+import { dirname as dirname2, join as join12 } from "path";
 import { parse, stringify } from "smol-toml";
 function getCodexConfigPath() {
-  return join11(getCodexHome(), "config.toml");
+  return join12(getCodexHome(), "config.toml");
 }
 function getCodexAppSidecarProfilePath() {
-  return join11(getCodexHome(), `${CODEX_APP_PROVIDER_ID}.config.toml`);
+  return join12(getCodexHome(), `${CODEX_APP_PROVIDER_ID}.config.toml`);
 }
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -11537,7 +11618,7 @@ function isMultiAgentV2Enabled(value) {
   return asRecord(value).enabled === true;
 }
 function readCodexConfigText(path3 = getCodexConfigPath()) {
-  if (!existsSync8(path3)) return "";
+  if (!existsSync9(path3)) return "";
   return readFileSync3(path3, "utf8");
 }
 function parseCodexConfig(text6) {
@@ -11734,13 +11815,13 @@ function restoreConfigFromState(state, configPath = getCodexConfigPath()) {
   applyRestoreNumber(config, "model_context_window", state.hadModelContextWindow ?? false, state.modelContextWindow);
   applyRestoreNumber(config, "model_auto_compact_token_limit", state.hadModelAutoCompactTokenLimit ?? false, state.modelAutoCompactTokenLimit);
   const sidecar = getCodexAppSidecarProfilePath();
-  if (existsSync8(sidecar)) {
+  if (existsSync9(sidecar)) {
     try {
       rmSync3(sidecar, { force: true });
     } catch {
     }
   }
-  const hadFile = existsSync8(configPath);
+  const hadFile = existsSync9(configPath);
   const empty = Object.keys(config).length === 0 || Object.keys(config).length === 1 && "model_providers" in config && Object.keys(asRecord(config.model_providers)).length === 0;
   if (!hadFile && empty) return false;
   if (empty) {
@@ -11795,30 +11876,30 @@ async function verifyCodexAppReadiness(spec, options = {}) {
 // src/codex/app-session.ts
 import {
   copyFileSync as copyFileSync2,
-  existsSync as existsSync9,
+  existsSync as existsSync10,
   mkdirSync as mkdirSync5,
   readdirSync as readdirSync2,
   readFileSync as readFileSync5,
   rmSync as rmSync4,
   statSync as statSync2
 } from "fs";
-import { basename as basename2, join as join12 } from "path";
+import { basename as basename2, join as join13 } from "path";
 import { createHash as createHash4 } from "crypto";
 function getAppSessionLockPath(env = process.env) {
-  return join12(getRelayAiCodexDir(env), "session-app.json");
+  return join13(getRelayAiCodexDir(env), "session-app.json");
 }
 function getAppRestoreStatePath(env = process.env) {
-  return join12(getRelayAiCodexDir(env), "app-restore-state.json");
+  return join13(getRelayAiCodexDir(env), "app-restore-state.json");
 }
 function getAppCatalogPath(providerId, env = process.env) {
-  return join12(getRelayAiCodexDir(env), `app-models-${providerId}.json`);
+  return join13(getRelayAiCodexDir(env), `app-models-${providerId}.json`);
 }
 function fileSha256(path3) {
   return createHash4("sha256").update(readFileSync5(path3)).digest("hex");
 }
 function readAppSessionLock(env = process.env) {
   const path3 = getAppSessionLockPath(env);
-  if (!existsSync9(path3)) return null;
+  if (!existsSync10(path3)) return null;
   try {
     const parsed = JSON.parse(readFileSync5(path3, "utf8"));
     if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string") return parsed;
@@ -11832,11 +11913,11 @@ function writeAppSessionLock(lock, env = process.env) {
 }
 function clearAppSessionLock(env = process.env) {
   const path3 = getAppSessionLockPath(env);
-  if (existsSync9(path3)) rmSync4(path3, { force: true });
+  if (existsSync10(path3)) rmSync4(path3, { force: true });
 }
 function readAppRestoreState(env = process.env) {
   const path3 = getAppRestoreStatePath(env);
-  if (!existsSync9(path3)) return null;
+  if (!existsSync10(path3)) return null;
   try {
     return JSON.parse(readFileSync5(path3, "utf8"));
   } catch {
@@ -11850,16 +11931,16 @@ function writeAppRestoreState(state, env = process.env) {
 }
 function clearAppRestoreState(env = process.env) {
   const path3 = getAppRestoreStatePath(env);
-  if (existsSync9(path3)) rmSync4(path3, { force: true });
+  if (existsSync10(path3)) rmSync4(path3, { force: true });
 }
 function backupConfigToml(env = process.env) {
   const configPath = getCodexConfigPath();
-  if (!existsSync9(configPath)) return void 0;
+  if (!existsSync10(configPath)) return void 0;
   rotateBackups(configPath, env);
   const backupsDir = getBackupsDir(env);
   mkdirSync5(backupsDir, { recursive: true });
   const base = basename2(configPath);
-  const backupPath = join12(backupsDir, `${base}.${Date.now()}.bak`);
+  const backupPath = join13(backupsDir, `${base}.${Date.now()}.bak`);
   copyFileSync2(configPath, backupPath);
   return backupPath;
 }
@@ -11875,8 +11956,8 @@ function saveAppRestoreStateBeforePatch(env = process.env) {
 }
 function ownedAppCatalogPaths(env = process.env) {
   const codexDir = getRelayAiCodexDir(env);
-  if (!existsSync9(codexDir)) return [];
-  return readdirSync2(codexDir).filter((n) => n.startsWith("app-models-") && n.endsWith(".json")).map((n) => join12(codexDir, n));
+  if (!existsSync10(codexDir)) return [];
+  return readdirSync2(codexDir).filter((n) => n.startsWith("app-models-") && n.endsWith(".json")).map((n) => join13(codexDir, n));
 }
 function removeAppCatalogs(env = process.env) {
   const removed = [];
@@ -11891,10 +11972,10 @@ function removeAppCatalogs(env = process.env) {
 }
 function newestConfigBackup(env = process.env) {
   const backupDir = getBackupsDir(env);
-  if (!existsSync9(backupDir)) return null;
+  if (!existsSync10(backupDir)) return null;
   const configBase = basename2(getCodexConfigPath());
   const candidates = readdirSync2(backupDir).filter((name) => name.startsWith(`${configBase}.`) && name.endsWith(".bak")).map((name) => {
-    const path3 = join12(backupDir, name);
+    const path3 = join13(backupDir, name);
     try {
       return { path: path3, mtimeMs: statSync2(path3).mtimeMs };
     } catch {
@@ -11921,13 +12002,13 @@ function restoreCodexAppOverlay(env = process.env) {
     return { restored: false, message: "Nothing to restore." };
   }
   const exactBackupIsSafe = Boolean(
-    managed && lock?.backupPath && existsSync9(lock.backupPath) && lock.patchedConfigSha256 && lock.originalConfigSha256 && fileSha256(getCodexConfigPath()) === lock.patchedConfigSha256 && fileSha256(lock.backupPath) === lock.originalConfigSha256
+    managed && lock?.backupPath && existsSync10(lock.backupPath) && lock.patchedConfigSha256 && lock.originalConfigSha256 && fileSha256(getCodexConfigPath()) === lock.patchedConfigSha256 && fileSha256(lock.backupPath) === lock.originalConfigSha256
   );
   if (exactBackupIsSafe) {
     copyFileSync2(lock.backupPath, getCodexConfigPath());
   } else if (restoreState) {
     restoreConfigFromState(restoreState);
-  } else if (lock?.backupPath && existsSync9(lock.backupPath)) {
+  } else if (lock?.backupPath && existsSync10(lock.backupPath)) {
     copyFileSync2(lock.backupPath, getCodexConfigPath());
   } else if (managed) {
     const backupPath = newestConfigBackup(env);
@@ -12505,7 +12586,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
     }
   };
   try {
-    const catalogPath = mixedPlan ? join13(getRelayAiCodexDir(), "app-models-mixed.json") : favoritesActive && resolvedFavorites.length > 0 ? getFavoritesAppCatalogPath() : getAppCatalogPath(route.providerId);
+    const catalogPath = mixedPlan ? join14(getRelayAiCodexDir(), "app-models-mixed.json") : favoritesActive && resolvedFavorites.length > 0 ? getFavoritesAppCatalogPath() : getAppCatalogPath(route.providerId);
     const activeRoute = mixedPlan ? {
       tier: "proxy",
       modelId: mixedPlan.selectedSlug,
@@ -12713,31 +12794,31 @@ import pc11 from "picocolors";
 import * as p14 from "@clack/prompts";
 
 // src/claude-desktop/app-config.ts
-import { existsSync as existsSync10, readFileSync as readFileSync6, writeFileSync as writeFileSync5, mkdirSync as mkdirSync6 } from "fs";
-import { homedir as homedir9 } from "os";
-import { join as join14, dirname as dirname3 } from "path";
+import { existsSync as existsSync11, readFileSync as readFileSync6, writeFileSync as writeFileSync5, mkdirSync as mkdirSync6 } from "fs";
+import { homedir as homedir10 } from "os";
+import { join as join15, dirname as dirname3 } from "path";
 import { randomUUID as randomUUID3 } from "crypto";
 function getClaudeDesktopHome() {
   if (process.platform === "win32") {
-    return join14(process.env.LOCALAPPDATA || join14(homedir9(), "AppData", "Local"), "Claude-3p");
+    return join15(process.env.LOCALAPPDATA || join15(homedir10(), "AppData", "Local"), "Claude-3p");
   }
   if (process.platform === "linux") {
-    return join14(process.env.XDG_CONFIG_HOME || join14(homedir9(), ".config"), "Claude-3p");
+    return join15(process.env.XDG_CONFIG_HOME || join15(homedir10(), ".config"), "Claude-3p");
   }
-  return join14(homedir9(), "Library", "Application Support", "Claude-3p");
+  return join15(homedir10(), "Library", "Application Support", "Claude-3p");
 }
 function getConfigLibraryPath() {
-  return join14(getClaudeDesktopHome(), "configLibrary");
+  return join15(getClaudeDesktopHome(), "configLibrary");
 }
 function getMetaJsonPath() {
-  return join14(getConfigLibraryPath(), "_meta.json");
+  return join15(getConfigLibraryPath(), "_meta.json");
 }
 function getClaudeDesktopConfigJsonPath() {
-  return join14(getClaudeDesktopHome(), "claude_desktop_config.json");
+  return join15(getClaudeDesktopHome(), "claude_desktop_config.json");
 }
 function readDesktopConfigJson() {
   const path3 = getClaudeDesktopConfigJsonPath();
-  if (!existsSync10(path3)) return {};
+  if (!existsSync11(path3)) return {};
   try {
     const parsed = JSON.parse(readFileSync6(path3, "utf8"));
     return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : {};
@@ -12771,7 +12852,7 @@ function restoreDeploymentMode(previous) {
 }
 function readMetaJson() {
   const metaPath = getMetaJsonPath();
-  if (!existsSync10(metaPath)) return null;
+  if (!existsSync11(metaPath)) return null;
   try {
     return JSON.parse(readFileSync6(metaPath, "utf8"));
   } catch {
@@ -12795,7 +12876,7 @@ function buildRelayAiConfig(proxyPort) {
 }
 function writeRelayAiConfig(proxyPort) {
   const uuid = randomUUID3();
-  const configPath = join14(getConfigLibraryPath(), `${uuid}.json`);
+  const configPath = join15(getConfigLibraryPath(), `${uuid}.json`);
   const config = buildRelayAiConfig(proxyPort);
   mkdirSync6(dirname3(configPath), { recursive: true });
   writeFileSync5(configPath, `${JSON.stringify(config, null, 2)}
@@ -12952,7 +13033,7 @@ async function buildClaudeAppServerCatalog(entries, providersById, trace) {
 // src/claude-desktop/app-session.ts
 import {
   copyFileSync as copyFileSync3,
-  existsSync as existsSync11,
+  existsSync as existsSync12,
   mkdirSync as mkdirSync7,
   readFileSync as readFileSync7,
   renameSync as renameSync2,
@@ -12960,13 +13041,13 @@ import {
   unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync6
 } from "fs";
-import { dirname as dirname4, join as join15 } from "path";
+import { dirname as dirname4, join as join16 } from "path";
 function getSessionLockPath2() {
-  return join15(getClaudeDesktopHome(), ".relay-ai.lock");
+  return join16(getClaudeDesktopHome(), ".relay-ai.lock");
 }
 function inspectSessionLock() {
   const path3 = getSessionLockPath2();
-  if (!existsSync11(path3)) return { status: "missing" };
+  if (!existsSync12(path3)) return { status: "missing" };
   try {
     const parsed = JSON.parse(readFileSync7(path3, "utf8"));
     if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string" && typeof parsed.uuid === "string" && typeof parsed.proxyPort === "number") {
@@ -13003,14 +13084,14 @@ function isProcessAlive3(pid) {
 function backupMetaJson() {
   const metaPath = getMetaJsonPath();
   const backupPath = `${metaPath}.bak`;
-  if (existsSync11(metaPath) && !existsSync11(backupPath)) {
+  if (existsSync12(metaPath) && !existsSync12(backupPath)) {
     copyFileSync3(metaPath, backupPath);
   }
 }
 function restoreMetaJson() {
   const metaPath = getMetaJsonPath();
   const backupPath = `${metaPath}.bak`;
-  if (existsSync11(backupPath)) {
+  if (existsSync12(backupPath)) {
     copyFileSync3(backupPath, metaPath);
     unlinkSync2(backupPath);
   }
@@ -13027,8 +13108,8 @@ function safeCleanupStep(label, fn) {
   }
 }
 function removeRelayAiConfig(uuid) {
-  const configPath = join15(getConfigLibraryPath(), `${uuid}.json`);
-  if (existsSync11(configPath)) {
+  const configPath = join16(getConfigLibraryPath(), `${uuid}.json`);
+  if (existsSync12(configPath)) {
     try {
       rmSync5(configPath, { force: true });
     } catch {
@@ -13110,7 +13191,7 @@ function cleanupSession(uuid) {
     }
   }
   const meta = readMetaJson();
-  const configIsReferenced = meta === null ? existsSync11(getMetaJsonPath()) : meta.appliedId === uuid || meta.entries.some((entry) => entry.id === uuid);
+  const configIsReferenced = meta === null ? existsSync12(getMetaJsonPath()) : meta.appliedId === uuid || meta.entries.some((entry) => entry.id === uuid);
   if (!sharedStateIsOwnedElsewhere || !configIsReferenced) {
     removeRelayAiConfig(uuid);
   }
@@ -13358,17 +13439,17 @@ ${pc11.bold("Claude Desktop 3P Mode Active")}`);
 }
 
 // src/ai-doc.ts
-import { existsSync as existsSync12, mkdirSync as mkdirSync8, readFileSync as readFileSync8, writeFileSync as writeFileSync7 } from "fs";
-import { homedir as homedir10 } from "os";
-import { join as join16 } from "path";
+import { existsSync as existsSync13, mkdirSync as mkdirSync8, readFileSync as readFileSync8, writeFileSync as writeFileSync7 } from "fs";
+import { homedir as homedir11 } from "os";
+import { join as join17 } from "path";
 var SKILL_DIR_NAME = "relay-ai-cli";
 var SKILL_INSTALL_DIRS = [
-  join16(getAppHome(), "skills"),
-  join16(homedir10(), ".claude", "skills"),
-  join16(homedir10(), ".agents", "skills"),
-  join16(homedir10(), ".codex", "skills"),
-  join16(homedir10(), ".cursor", "skills"),
-  join16(homedir10(), ".cursor", "skills-cursor")
+  join17(getAppHome(), "skills"),
+  join17(homedir11(), ".claude", "skills"),
+  join17(homedir11(), ".agents", "skills"),
+  join17(homedir11(), ".codex", "skills"),
+  join17(homedir11(), ".cursor", "skills"),
+  join17(homedir11(), ".cursor", "skills-cursor")
 ];
 function parseSkillVersion(content) {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -13382,8 +13463,8 @@ function parseSkillVersion(content) {
   return null;
 }
 function readInstalledSkillVersion(skillDir) {
-  const skillPath = join16(skillDir, "SKILL.md");
-  if (!existsSync12(skillPath)) return null;
+  const skillPath = join17(skillDir, "SKILL.md");
+  if (!existsSync13(skillPath)) return null;
   try {
     const head = readFileSync8(skillPath, "utf-8").slice(0, 1024);
     return parseSkillVersion(head.includes("---", 4) ? head : `${head}
@@ -13395,8 +13476,8 @@ function readInstalledSkillVersion(skillDir) {
 }
 function skillInstallTargets() {
   return SKILL_INSTALL_DIRS.map((dir) => {
-    const skillDir = join16(dir, SKILL_DIR_NAME);
-    return { skillDir, skillPath: join16(skillDir, "SKILL.md") };
+    const skillDir = join17(dir, SKILL_DIR_NAME);
+    return { skillDir, skillPath: join17(skillDir, "SKILL.md") };
   });
 }
 function formatProviderModels(provider) {
@@ -14062,7 +14143,7 @@ function buildHttpProxyChildEnv(baseEnv, proxyUrl, caCertPath) {
 import { randomBytes as randomBytes3, randomUUID as randomUUID4 } from "crypto";
 import {
   chmodSync as chmodSync3,
-  existsSync as existsSync13,
+  existsSync as existsSync14,
   mkdirSync as mkdirSync10,
   readFileSync as readFileSync9,
   readdirSync as readdirSync3,
@@ -14070,7 +14151,7 @@ import {
   statSync as statSync3,
   writeFileSync as writeFileSync9
 } from "fs";
-import { dirname as dirname6, join as join18, resolve } from "path";
+import { dirname as dirname6, join as join19, resolve } from "path";
 import forge from "node-forge";
 var SESSION_ROOT = "http-proxy-sessions";
 var OWNER_FILE = "owner.pid";
@@ -14090,16 +14171,16 @@ function processIsRunning(pid) {
   }
 }
 function cleanupStaleHttpProxySessions(appHome = getAppHome()) {
-  const root = join18(appHome, SESSION_ROOT);
-  if (!existsSync13(root)) return;
+  const root = join19(appHome, SESSION_ROOT);
+  if (!existsSync14(root)) return;
   const now = Date.now();
   for (const name of readdirSync3(root)) {
-    const sessionDir = join18(root, name);
+    const sessionDir = join19(root, name);
     try {
       const stat = statSync3(sessionDir);
       if (!stat.isDirectory()) continue;
-      const ownerPath = join18(sessionDir, OWNER_FILE);
-      if (!existsSync13(ownerPath)) {
+      const ownerPath = join19(sessionDir, OWNER_FILE);
+      if (!existsSync14(ownerPath)) {
         if (now - stat.mtimeMs > MID_CREATION_GRACE_MS) {
           rmSync6(sessionDir, { recursive: true, force: true });
         }
@@ -14121,13 +14202,13 @@ function cleanupStaleHttpProxySessions(appHome = getAppHome()) {
 }
 function createHttpProxyCertificates(appHome = getAppHome()) {
   cleanupStaleHttpProxySessions(appHome);
-  const root = join18(appHome, SESSION_ROOT);
+  const root = join19(appHome, SESSION_ROOT);
   mkdirSync10(root, { recursive: true, mode: 448 });
   chmodSync3(root, 448);
-  const sessionDir = join18(root, randomUUID4());
+  const sessionDir = join19(root, randomUUID4());
   mkdirSync10(sessionDir, { mode: 448 });
   chmodSync3(sessionDir, 448);
-  writeFileSync9(join18(sessionDir, OWNER_FILE), `${process.pid}
+  writeFileSync9(join19(sessionDir, OWNER_FILE), `${process.pid}
 `, { mode: 384 });
   try {
     const caKeys = forge.pki.rsa.generateKeyPair(2048);
@@ -14162,7 +14243,7 @@ function createHttpProxyCertificates(appHome = getAppHome()) {
     ]);
     server.sign(caKeys.privateKey, forge.md.sha256.create());
     const caCert = forge.pki.certificateToPem(ca);
-    const caCertPath = join18(sessionDir, "relay-ai-ca.pem");
+    const caCertPath = join19(sessionDir, "relay-ai-ca.pem");
     writeFileSync9(caCertPath, caCert, { encoding: "utf8", mode: 384 });
     chmodSync3(caCertPath, 384);
     let cleaned = false;
@@ -14208,7 +14289,7 @@ function createHttpProxyCaBundle(relayCaCertPath, additionalCaCertPath) {
   const relayCa = readFileSync9(relayCaCertPath, "utf8").trimEnd();
   const additionalCa = readFileSync9(additionalCaCertPath, "utf8").trim();
   if (!additionalCa) return relayCaCertPath;
-  const combinedPath = join18(dirname6(relayCaCertPath), "combined-ca.pem");
+  const combinedPath = join19(dirname6(relayCaCertPath), "combined-ca.pem");
   writeFileSync9(
     combinedPath,
     `${relayCa}
@@ -16233,7 +16314,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-COE5BHSJ.js");
+    const { runUiCommand } = await import("./ui-command-ZWM6WTXP.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

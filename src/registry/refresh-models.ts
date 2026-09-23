@@ -36,7 +36,7 @@ import { ANTIGRAVITY_BASE_URLS } from '../oauth/antigravity-oauth.js';
 import { modelPrefersResponsesApi } from '../provider-factory.js';
 import { deriveBrand } from '../models.js';
 import { resolveContextWindow } from '../context-window.js';
-import { getInstalledClaudeVersion } from '../launch.js';
+import { resolveCodexClientVersion } from '../codex/version.js';
 import { isAntigravityCloudCodeHelperSlot, shouldHideModel } from '../model-compatibility.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import { fetchModelsDevCache } from './models-dev.js';
@@ -418,11 +418,13 @@ async function refreshOpenAiOAuthModels(
   const toModels = (entries: OpenAiModelEntry[]) =>
     entries.map(entry => buildDynamicOAuthModel(entry, seedById));
 
-  const claudeVersion = getInstalledClaudeVersion();
+  // The Codex models endpoint gates listings by client version — send the
+  // resolved Codex version, not the Claude version.
+  const codexVersion = await resolveCodexClientVersion();
 
   // Tier 1: Codex-specific model listing — source of truth for Codex availability.
   const codexResult = await fetchJsonWithAuth(
-    `https://chatgpt.com/backend-api/codex/models?client_version=${claudeVersion}`,
+    `https://chatgpt.com/backend-api/codex/models?client_version=${codexVersion}`,
     accessToken,
     TIMEOUT_MS,
   );

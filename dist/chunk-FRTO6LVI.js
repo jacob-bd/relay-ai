@@ -7,7 +7,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.12.10",
+  version: "0.12.11",
   publishConfig: {
     access: "public"
   },
@@ -125,7 +125,7 @@ var BACKENDS = {
   }
 };
 var CODEX_RESPONSES_LITE_WS_URL = "wss://chatgpt.com/backend-api/codex/responses";
-var CODEX_RESPONSES_LITE_VERSION = "0.153.4";
+var CODEX_RESPONSES_LITE_VERSION = "0.155.1";
 var CODEX_RESPONSES_WEBSOCKETS_BETA = "responses_websockets=2026-02-06";
 var CONFLICTING_ENV_VARS = [
   "CLAUDE_CODE_USE_VERTEX",
@@ -218,8 +218,271 @@ function getLegacyConfPath(env = process.env, platform = process.platform) {
   return join2(env.XDG_CONFIG_HOME ?? join2(home, ".config"), appName, "config.json");
 }
 
+// src/config.ts
+import { dirname, join as join3 } from "path";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
+function readJsonFile(path) {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+function ensureAppHomeMigrated() {
+  const configPath = getConfigPath();
+  if (existsSync(configPath)) return;
+  const legacyConfig = join3(getLegacyAppHome(), "config.json");
+  if (!existsSync(legacyConfig)) return;
+  mkdirSync(getAppHome(), { recursive: true, mode: 448 });
+  copyFileSync(legacyConfig, configPath);
+  const legacyVertex = join3(getLegacyAppHome(), "vertex-models.json");
+  const vertexPath = join3(getAppHome(), "vertex-models.json");
+  if (existsSync(legacyVertex) && !existsSync(vertexPath)) {
+    copyFileSync(legacyVertex, vertexPath);
+  }
+}
+function ensureConfigMigrated() {
+  ensureAppHomeMigrated();
+  const configPath = getConfigPath();
+  if (existsSync(configPath)) return;
+  const legacyPath = getLegacyConfPath();
+  if (!existsSync(legacyPath)) return;
+  const legacy = readJsonFile(legacyPath);
+  if (!legacy) return;
+  mkdirSync(dirname(configPath), { recursive: true, mode: 448 });
+  writeFileSync(configPath, `${JSON.stringify(legacy, null, 2)}
+`, { encoding: "utf8", mode: 384 });
+  try {
+    renameSync(legacyPath, `${legacyPath}.migrated`);
+  } catch {
+  }
+}
+function readConfig() {
+  ensureConfigMigrated();
+  return readJsonFile(getConfigPath()) ?? {};
+}
+function writeConfig(config) {
+  const configPath = getConfigPath();
+  mkdirSync(dirname(configPath), { recursive: true, mode: 448 });
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}
+`, { encoding: "utf8", mode: 384 });
+}
+function loadPreferences() {
+  const config = readConfig();
+  const lastProvider = config.lastProvider === "opencode" ? "zen" : config.lastProvider;
+  return {
+    lastBackend: config.lastBackend,
+    lastModel: config.lastModel,
+    lastProvider,
+    lastCodexProvider: config.lastCodexProvider,
+    lastCodexModel: config.lastCodexModel,
+    lastGeminiProvider: config.lastGeminiProvider,
+    lastGeminiModel: config.lastGeminiModel,
+    lastAntigravityProvider: config.lastAntigravityProvider,
+    lastAntigravityModel: config.lastAntigravityModel,
+    lastClaudeTransparentMode: config.lastClaudeTransparentMode,
+    recentModelsByProvider: config.recentModelsByProvider,
+    favoriteModels: config.favoriteModels,
+    codexSubagentModels: Array.isArray(config.codexSubagentModels) ? config.codexSubagentModels.slice(0, CODEX_SUBAGENT_MODEL_CAP) : void 0,
+    antigravityCliFavoriteModels: config.antigravityCliFavoriteModels,
+    antigravityCliFavoritesHintShown: config.antigravityCliFavoritesHintShown,
+    appPathOverrides: config.appPathOverrides,
+    recentLaunchFolders: config.recentLaunchFolders,
+    server: config.server
+  };
+}
+function savePreferences(prefs) {
+  const config = readConfig();
+  if (prefs.lastBackend !== void 0) config.lastBackend = prefs.lastBackend;
+  if (prefs.lastModel !== void 0) config.lastModel = prefs.lastModel;
+  if (prefs.lastProvider !== void 0) config.lastProvider = prefs.lastProvider;
+  if (prefs.lastCodexProvider !== void 0) config.lastCodexProvider = prefs.lastCodexProvider;
+  if (prefs.lastCodexModel !== void 0) config.lastCodexModel = prefs.lastCodexModel;
+  if (prefs.lastGeminiProvider !== void 0) config.lastGeminiProvider = prefs.lastGeminiProvider;
+  if (prefs.lastGeminiModel !== void 0) config.lastGeminiModel = prefs.lastGeminiModel;
+  if (prefs.lastAntigravityProvider !== void 0) config.lastAntigravityProvider = prefs.lastAntigravityProvider;
+  if (prefs.lastAntigravityModel !== void 0) config.lastAntigravityModel = prefs.lastAntigravityModel;
+  if (prefs.lastClaudeTransparentMode !== void 0) config.lastClaudeTransparentMode = prefs.lastClaudeTransparentMode;
+  if (prefs.recentModelsByProvider !== void 0) config.recentModelsByProvider = prefs.recentModelsByProvider;
+  if (prefs.favoriteModels !== void 0) config.favoriteModels = prefs.favoriteModels;
+  if (prefs.codexSubagentModels !== void 0) {
+    config.codexSubagentModels = prefs.codexSubagentModels.slice(0, CODEX_SUBAGENT_MODEL_CAP);
+  }
+  if (prefs.antigravityCliFavoriteModels !== void 0) config.antigravityCliFavoriteModels = prefs.antigravityCliFavoriteModels;
+  if (prefs.antigravityCliFavoritesHintShown !== void 0) config.antigravityCliFavoritesHintShown = prefs.antigravityCliFavoritesHintShown;
+  if (prefs.appPathOverrides !== void 0) config.appPathOverrides = prefs.appPathOverrides;
+  if (prefs.recentLaunchFolders !== void 0) config.recentLaunchFolders = prefs.recentLaunchFolders;
+  writeConfig(config);
+}
+function getAppPathOverride(appId) {
+  const value = loadPreferences().appPathOverrides?.[appId];
+  return typeof value === "string" && value.trim() ? value : void 0;
+}
+function setAppPathOverride(appId, path) {
+  const config = readConfig();
+  const next = { ...config.appPathOverrides ?? {} };
+  const trimmed = path?.trim() ?? "";
+  if (trimmed) next[appId] = trimmed;
+  else delete next[appId];
+  config.appPathOverrides = next;
+  if (Object.keys(next).length === 0) delete config.appPathOverrides;
+  writeConfig(config);
+  return next;
+}
+var MAX_RECENT_MODELS = 3;
+var MAX_RECENT_LAUNCH_FOLDERS = 6;
+function recordLaunchFolder(folder) {
+  const trimmed = folder.trim();
+  if (!trimmed) return loadPreferences().recentLaunchFolders ?? [];
+  const config = readConfig();
+  const prev = config.recentLaunchFolders ?? [];
+  const next = [trimmed, ...prev.filter((path) => path !== trimmed)].slice(0, MAX_RECENT_LAUNCH_FOLDERS);
+  config.recentLaunchFolders = next;
+  writeConfig(config);
+  return next;
+}
+function recordLaunchSelection(agent, providerId, modelId, prefs) {
+  const prevRecent = prefs.recentModelsByProvider?.[providerId] ?? [];
+  const updatedRecent = [modelId, ...prevRecent.filter((id) => id !== modelId)].slice(0, MAX_RECENT_MODELS);
+  savePreferences({
+    ...agent === "claude" ? { lastProvider: providerId, lastModel: modelId } : agent === "codex" ? { lastCodexProvider: providerId, lastCodexModel: modelId } : { lastGeminiProvider: providerId, lastGeminiModel: modelId },
+    recentModelsByProvider: { ...prefs.recentModelsByProvider, [providerId]: updatedRecent }
+  });
+}
+var SERVER_PASSWORD_SERVICE = "relay-ai-server-password";
+var SERVER_PASSWORD_ACCOUNT = "server-password";
+async function getServerPasswordKeyring() {
+  try {
+    const { Entry } = await import("@napi-rs/keyring");
+    return new Entry(SERVER_PASSWORD_SERVICE, SERVER_PASSWORD_ACCOUNT);
+  } catch {
+    return null;
+  }
+}
+async function getSavedServerPassword() {
+  const config = readConfig();
+  if (config.server?.savedPassword) {
+    const pwd = config.server.savedPassword;
+    const keyring2 = await getServerPasswordKeyring();
+    if (keyring2) {
+      try {
+        await keyring2.setPassword(pwd);
+        delete config.server.savedPassword;
+        if (Object.keys(config.server).length === 0) delete config.server;
+        writeConfig(config);
+      } catch {
+      }
+    }
+    return pwd;
+  }
+  const keyring = await getServerPasswordKeyring();
+  if (keyring) {
+    try {
+      return await keyring.getPassword();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+function getEnvServerPassword() {
+  const value = process.env["RELAY_AI_SERVER_PASSWORD"]?.trim();
+  return value || null;
+}
+async function setSavedServerPassword(password) {
+  const keyring = await getServerPasswordKeyring();
+  if (keyring) {
+    try {
+      await keyring.setPassword(password);
+      return;
+    } catch {
+    }
+  }
+  const config = readConfig();
+  config.server = {
+    ...config.server ?? {},
+    savedPassword: password
+  };
+  writeConfig(config);
+}
+function getServerExposedProviders() {
+  const list = readConfig().server?.exposedProviders;
+  return list && list.length > 0 ? list : null;
+}
+function setServerExposedProviders(providerIds) {
+  const config = readConfig();
+  config.server = {
+    ...config.server ?? {},
+    exposedProviders: providerIds
+  };
+  writeConfig(config);
+}
+function getServerMaskGatewayIds() {
+  return readConfig().server?.maskGatewayIds ?? true;
+}
+function setServerMaskGatewayIds(mask) {
+  const config = readConfig();
+  config.server = {
+    ...config.server ?? {},
+    maskGatewayIds: mask
+  };
+  writeConfig(config);
+}
+function getServerFavoritesOnly() {
+  return readConfig().server?.favoritesOnly ?? false;
+}
+function setServerFavoritesOnly(favoritesOnly) {
+  const config = readConfig();
+  config.server = {
+    ...config.server ?? {},
+    favoritesOnly
+  };
+  writeConfig(config);
+}
+function getServerFreeModelsOnly() {
+  return readConfig().server?.freeModelsOnly ?? false;
+}
+function setServerFreeModelsOnly(freeModelsOnly) {
+  const config = readConfig();
+  config.server = {
+    ...config.server ?? {},
+    freeModelsOnly
+  };
+  writeConfig(config);
+}
+function getServerListenMode() {
+  return readConfig().server?.listenMode === "network" ? "network" : "local";
+}
+function setServerListenMode(listenMode) {
+  const config = readConfig();
+  config.server = {
+    ...config.server ?? {},
+    listenMode
+  };
+  writeConfig(config);
+}
+function getServerAutostart() {
+  return readConfig().server?.autostart ?? false;
+}
+function setServerAutostart(autostart) {
+  const config = readConfig();
+  config.server = {
+    ...config.server ?? {},
+    autostart
+  };
+  writeConfig(config);
+}
+function resolveServerAutostart(env = process.env) {
+  const envVal = env["RELAY_AI_SERVER_AUTOSTART"]?.trim().toLowerCase();
+  if (envVal !== void 0 && envVal !== "") {
+    return ["1", "true", "yes", "on"].includes(envVal);
+  }
+  return getServerAutostart();
+}
+
 // src/context-window.ts
-import { readFileSync } from "fs";
+import { readFileSync as readFileSync2 } from "fs";
 var DEFAULT_CONTEXT_WINDOW = 2e5;
 var CACHE_PROVIDER_PRIORITY = /* @__PURE__ */ new Set(["opencode", "opencode-go"]);
 var HEURISTIC_RULES = [
@@ -257,7 +520,7 @@ var heuristicCache = /* @__PURE__ */ new Map();
 function loadOpencodeCache() {
   if (parsedCache === void 0) {
     try {
-      parsedCache = JSON.parse(readFileSync(OPENCODE_CACHE_PATH, "utf8"));
+      parsedCache = JSON.parse(readFileSync2(OPENCODE_CACHE_PATH, "utf8"));
     } catch {
       parsedCache = null;
     }
@@ -296,8 +559,8 @@ function getCacheIndex() {
   return cacheIndex;
 }
 function contextWindowFromHeuristics(modelId) {
-  const cached = heuristicCache.get(modelId);
-  if (cached !== void 0) return cached;
+  const cached2 = heuristicCache.get(modelId);
+  if (cached2 !== void 0) return cached2;
   for (const [pattern, size] of HEURISTIC_RULES) {
     if (pattern.test(modelId)) {
       heuristicCache.set(modelId, size);
@@ -344,7 +607,7 @@ function routeLookupIds(id) {
 
 // src/oauth/antigravity-oauth.ts
 import open from "open";
-import { readFileSync as readFileSync2 } from "fs";
+import { readFileSync as readFileSync3 } from "fs";
 import { homedir as homedir3 } from "os";
 import { join as pathJoin } from "path";
 
@@ -633,7 +896,7 @@ async function onboardUser(accessToken, tierId, maxAttempts = 10) {
 function readAgyProjectId() {
   try {
     const cache = pathJoin(homedir3(), ".gemini", "antigravity-cli", "cache", "projects.json");
-    const data = JSON.parse(readFileSync2(cache, "utf8"));
+    const data = JSON.parse(readFileSync3(cache, "utf8"));
     return data[homedir3()] ?? Object.values(data)[0] ?? "";
   } catch {
     return "";
@@ -679,15 +942,15 @@ async function completeAntigravityExchange(code, codeVerifier, redirectUri) {
 }
 
 // src/registry/opencode-auth.ts
-import { existsSync, readFileSync as readFileSync3, statSync } from "fs";
+import { existsSync as existsSync2, readFileSync as readFileSync4, statSync } from "fs";
 import { homedir as homedir4 } from "os";
-import { join as join3 } from "path";
+import { join as join4 } from "path";
 function resolveOpencodeAuthPath(env = process.env) {
-  const dataHome = env["XDG_DATA_HOME"] ?? join3(homedir4(), ".local", "share");
+  const dataHome = env["XDG_DATA_HOME"] ?? join4(homedir4(), ".local", "share");
   if (process.platform === "win32") {
-    return join3(env["APPDATA"] ?? join3(homedir4(), "AppData", "Roaming"), "opencode", "auth.json");
+    return join4(env["APPDATA"] ?? join4(homedir4(), "AppData", "Roaming"), "opencode", "auth.json");
   }
-  return join3(dataHome, "opencode", "auth.json");
+  return join4(dataHome, "opencode", "auth.json");
 }
 function decodeAuthEntry(value) {
   if (typeof value === "string" && value.trim()) return value.trim();
@@ -717,7 +980,7 @@ function decodeAuthEntry(value) {
   return null;
 }
 function authFilePermissionWarning(path) {
-  if (!existsSync(path)) return void 0;
+  if (!existsSync2(path)) return void 0;
   if (process.platform === "win32") return void 0;
   try {
     const mode = statSync(path).mode & 511;
@@ -730,10 +993,10 @@ function authFilePermissionWarning(path) {
 }
 function readOpencodeAuthFile(env = process.env) {
   const path = resolveOpencodeAuthPath(env);
-  if (!existsSync(path)) return null;
+  if (!existsSync2(path)) return null;
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync3(path, "utf8"));
+    parsed = JSON.parse(readFileSync4(path, "utf8"));
   } catch {
     return { path, entries: {}, permissionWarning: authFilePermissionWarning(path) };
   }
@@ -1538,7 +1801,7 @@ async function refreshStoredOAuthCredential(providerId, cred) {
 }
 
 // src/secrets-file.ts
-import { chmodSync, existsSync as existsSync2, mkdirSync, readFileSync as readFileSync4, writeFileSync } from "fs";
+import { chmodSync, existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync5, writeFileSync as writeFileSync2 } from "fs";
 var DIR_MODE = 448;
 var FILE_MODE = 384;
 function emptySecrets() {
@@ -1546,9 +1809,9 @@ function emptySecrets() {
 }
 function readSecretsFile(env = process.env) {
   const path = getSecretsPath(env);
-  if (!existsSync2(path)) return emptySecrets();
+  if (!existsSync3(path)) return emptySecrets();
   try {
-    const raw = JSON.parse(readFileSync4(path, "utf8"));
+    const raw = JSON.parse(readFileSync5(path, "utf8"));
     if (raw?.version !== 1 || !raw.accounts || typeof raw.accounts !== "object") {
       return emptySecrets();
     }
@@ -1563,13 +1826,13 @@ function readSecretsFile(env = process.env) {
 }
 function writeSecretsFile(data, env = process.env) {
   const home = getAppHome(env);
-  mkdirSync(home, { recursive: true, mode: DIR_MODE });
+  mkdirSync2(home, { recursive: true, mode: DIR_MODE });
   try {
     chmodSync(home, DIR_MODE);
   } catch {
   }
   const path = getSecretsPath(env);
-  writeFileSync(path, `${JSON.stringify(data, null, 2)}
+  writeFileSync2(path, `${JSON.stringify(data, null, 2)}
 `, { encoding: "utf8", mode: FILE_MODE });
   try {
     chmodSync(path, FILE_MODE);
@@ -2020,16 +2283,16 @@ function parseManualModel(raw) {
 // src/registry/io.ts
 import {
   chmodSync as chmodSync2,
-  copyFileSync,
-  existsSync as existsSync3,
-  mkdirSync as mkdirSync2,
+  copyFileSync as copyFileSync2,
+  existsSync as existsSync4,
+  mkdirSync as mkdirSync3,
   openSync,
-  readFileSync as readFileSync5,
-  renameSync,
+  readFileSync as readFileSync6,
+  renameSync as renameSync2,
   writeSync,
   closeSync
 } from "fs";
-import { dirname } from "path";
+import { dirname as dirname2 } from "path";
 
 // src/registry/types.ts
 var REGISTRY_SCHEMA_VERSION = 1;
@@ -2120,7 +2383,7 @@ var DIR_MODE2 = 448;
 var FILE_MODE2 = 384;
 function ensureSecureAppHome() {
   const home = getAppHome();
-  mkdirSync2(home, { recursive: true, mode: DIR_MODE2 });
+  mkdirSync3(home, { recursive: true, mode: DIR_MODE2 });
   try {
     chmodSync2(home, DIR_MODE2);
   } catch {
@@ -2128,7 +2391,7 @@ function ensureSecureAppHome() {
 }
 function writeSecureFile(path, content) {
   ensureSecureAppHome();
-  mkdirSync2(dirname(path), { recursive: true, mode: DIR_MODE2 });
+  mkdirSync3(dirname2(path), { recursive: true, mode: DIR_MODE2 });
   const fd = openSync(path, "w", FILE_MODE2);
   try {
     writeSync(fd, content);
@@ -2204,11 +2467,11 @@ function parseRegistry(raw) {
   return registry;
 }
 function loadRegistry(path = getProvidersPath(), { persist = true } = {}) {
-  if (!existsSync3(path)) {
+  if (!existsSync4(path)) {
     return { schemaVersion: REGISTRY_SCHEMA_VERSION, providers: [] };
   }
   try {
-    const raw = JSON.parse(readFileSync5(path, "utf8"));
+    const raw = JSON.parse(readFileSync6(path, "utf8"));
     const registry = parseRegistry(raw);
     let migrated = migrateLegacyCloudProviders(registry);
     if (migrateOAuthOpenAiProvider(registry)) migrated = true;
@@ -2229,15 +2492,15 @@ function saveRegistry(registry, path = getProvidersPath()) {
   const payload = `${JSON.stringify(registry, null, 2)}
 `;
   const backup = `${path}.bak`;
-  if (existsSync3(path)) {
+  if (existsSync4(path)) {
     try {
-      copyFileSync(path, backup);
+      copyFileSync2(path, backup);
     } catch {
     }
   }
   const tmp = `${path}.tmp`;
   writeSecureFile(tmp, payload);
-  renameSync(tmp, path);
+  renameSync2(tmp, path);
 }
 
 // src/registry/url-security.ts
@@ -2350,6 +2613,81 @@ async function validateCustomEndpointUrl(rawUrl, opts = {}) {
   }
   const normalizedUrl = `${parsed.protocol}//${parsed.host}${parsed.pathname}`.replace(/\/$/, "");
   return { ok: true, normalizedUrl };
+}
+
+// src/codex/process.ts
+import spawn from "cross-spawn";
+function commandError(binaryPath, args, stdout, stderr, detail) {
+  const error = new Error(`Command failed: ${binaryPath} ${args.join(" ")} (${detail})`);
+  return Object.assign(error, { stdout, stderr });
+}
+function runCodexCommandSync(binaryPath, args, options = {}) {
+  const result = spawn.sync(binaryPath, args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: options.env,
+    timeout: options.timeout,
+    maxBuffer: options.maxBuffer
+  });
+  const stdout = result.stdout ?? "";
+  const stderr = result.stderr ?? "";
+  if (result.error) {
+    throw Object.assign(result.error, { stdout, stderr });
+  }
+  if (result.status !== 0) {
+    throw commandError(binaryPath, args, stdout, stderr, `exit ${result.status ?? result.signal ?? "unknown"}`);
+  }
+  return { stdout, stderr };
+}
+function runCodexCommand(binaryPath, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(binaryPath, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: options.env
+    });
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    let outputBytes = 0;
+    let settled = false;
+    const finishError = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(Object.assign(error, {
+        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+        stderr: Buffer.concat(stderrChunks).toString("utf8")
+      }));
+    };
+    const collect = (target, chunk) => {
+      target.push(chunk);
+      outputBytes += chunk.length;
+      if (options.maxBuffer !== void 0 && outputBytes > options.maxBuffer) {
+        child.kill();
+        finishError(commandError(binaryPath, args, "", "", `output exceeded ${options.maxBuffer} bytes`));
+      }
+    };
+    child.stdout?.on("data", (chunk) => collect(stdoutChunks, chunk));
+    child.stderr?.on("data", (chunk) => collect(stderrChunks, chunk));
+    child.on("error", finishError);
+    let timer;
+    if (options.timeout !== void 0) {
+      timer = setTimeout(() => {
+        child.kill();
+        finishError(commandError(binaryPath, args, "", "", `timed out after ${options.timeout}ms`));
+      }, options.timeout);
+    }
+    child.on("close", (code, signal) => {
+      if (timer) clearTimeout(timer);
+      if (settled) return;
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      if (code !== 0) {
+        finishError(commandError(binaryPath, args, stdout, stderr, `exit ${code ?? signal ?? "unknown"}`));
+        return;
+      }
+      settled = true;
+      resolve({ stdout, stderr });
+    });
+  });
 }
 
 // src/oauth/claude-identity.ts
@@ -2468,6 +2806,125 @@ function injectClaudeIdentity(body, providerData, seed) {
 
 // src/provider-factory.ts
 import { wrapLanguageModel, extractReasoningMiddleware } from "ai";
+
+// src/codex/version.ts
+import { execSync } from "child_process";
+import { existsSync as existsSync5 } from "fs";
+import { homedir as homedir5 } from "os";
+import { join as join5 } from "path";
+var isWindows = process.platform === "win32";
+var CODEX_NPM_LATEST_URL = "https://registry.npmjs.org/@openai/codex/latest";
+var CODEX_VERSION_CACHE_TTL_MS = 24 * 60 * 60 * 1e3;
+var NPM_FETCH_TIMEOUT_MS = 3e3;
+var cached = null;
+var inflight = null;
+function parseCodexVersion(input) {
+  const match = input.match(/(\d+)\.(\d+)\.(\d+)/);
+  return match ? `${match[1]}.${match[2]}.${match[3]}` : null;
+}
+function versionTuple(version) {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+function maxCodexVersion(candidates) {
+  let best = null;
+  let bestTuple = null;
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const tuple = versionTuple(candidate);
+    if (!tuple) continue;
+    const greater = !bestTuple || (tuple[0] !== bestTuple[0] ? tuple[0] > bestTuple[0] : tuple[1] !== bestTuple[1] ? tuple[1] > bestTuple[1] : tuple[2] > bestTuple[2]);
+    if (greater) {
+      best = candidate;
+      bestTuple = tuple;
+    }
+  }
+  return best ?? candidates.find((c) => !!c) ?? CODEX_RESPONSES_LITE_VERSION;
+}
+async function fetchNpmCodexVersion(fetchImpl = fetch, timeoutMs = NPM_FETCH_TIMEOUT_MS) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetchImpl(CODEX_NPM_LATEST_URL, {
+        headers: { Accept: "application/json" },
+        signal: controller.signal
+      });
+      if (!res.ok) return null;
+      const body = await res.json();
+      return typeof body.version === "string" ? parseCodexVersion(body.version) : null;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return null;
+  }
+}
+var CODEX_VERSION_FALLBACK_PATHS = isWindows ? [
+  join5(process.env["APPDATA"] ?? homedir5(), "npm", "codex.cmd"),
+  join5(process.env["APPDATA"] ?? homedir5(), "npm", "codex")
+] : [
+  join5(homedir5(), ".local", "bin", "codex"),
+  join5(homedir5(), ".npm", "bin", "codex"),
+  "/usr/local/bin/codex",
+  "/opt/homebrew/bin/codex"
+];
+function codexBinaryCandidates() {
+  const override = getAppPathOverride("codex");
+  if (override) return [override];
+  const candidates = [];
+  try {
+    const result = execSync(isWindows ? "where.exe codex" : "which codex", {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    candidates.push(...result.trim().split("\n").map((l) => l.trim()).filter(Boolean));
+  } catch {
+  }
+  candidates.push(...CODEX_VERSION_FALLBACK_PATHS);
+  return [...new Set(candidates)];
+}
+function installedCodexVersion() {
+  for (const binary of codexBinaryCandidates()) {
+    try {
+      if (!existsSync5(binary)) continue;
+      const { stdout } = runCodexCommandSync(binary, ["--version"], { timeout: 5e3 });
+      const parsed = parseCodexVersion(stdout);
+      if (parsed) return parsed;
+    } catch {
+    }
+  }
+  return null;
+}
+async function resolveCodexClientVersion(opts = {}) {
+  const override = process.env["RELAY_AI_CODEX_VERSION"]?.trim();
+  if (override) return parseCodexVersion(override) ?? CODEX_RESPONSES_LITE_VERSION;
+  if (process.env["VITEST"] || process.env["VITEST_WORKER_ID"]) {
+    return cached?.version ?? CODEX_RESPONSES_LITE_VERSION;
+  }
+  const now = Date.now();
+  if (!opts.forceRefresh && cached && now - cached.fetchedAt < CODEX_VERSION_CACHE_TTL_MS) {
+    return cached.version;
+  }
+  if (inflight && !opts.forceRefresh) return inflight;
+  inflight = (async () => {
+    try {
+      const [npm, local] = await Promise.all([
+        fetchNpmCodexVersion(opts.fetchImpl),
+        Promise.resolve().then(() => installedCodexVersion())
+      ]);
+      const best = maxCodexVersion([npm, local, CODEX_RESPONSES_LITE_VERSION]);
+      cached = { version: best, fetchedAt: Date.now() };
+      return best;
+    } catch {
+      return cached?.version ?? CODEX_RESPONSES_LITE_VERSION;
+    } finally {
+      inflight = null;
+    }
+  })();
+  return inflight;
+}
 
 // src/oauth/responses-websocket.ts
 var RESPONSES_LITE_HEADER = "x-openai-internal-codex-responses-lite";
@@ -2945,8 +3402,8 @@ function createResponsesWebSocketFetch(wsUrl, log) {
 
 // src/gateway-protocol.ts
 import { createHash as createHash2 } from "crypto";
-import { existsSync as existsSync4, mkdirSync as mkdirSync3, readFileSync as readFileSync6, renameSync as renameSync2, unlinkSync, writeFileSync as writeFileSync2 } from "fs";
-import { dirname as dirname2, join as join4 } from "path";
+import { existsSync as existsSync6, mkdirSync as mkdirSync4, readFileSync as readFileSync7, renameSync as renameSync3, unlinkSync, writeFileSync as writeFileSync3 } from "fs";
+import { dirname as dirname3, join as join6 } from "path";
 var DUAL_PROVIDER_IDS = /* @__PURE__ */ new Set([
   "zen",
   "go",
@@ -3046,7 +3503,7 @@ var PREFERENCE_TTL_MS = 24 * 60 * 60 * 1e3;
 var FAILURE_COOLDOWN_MS = 5 * 60 * 1e3;
 var loadedPersistentPath = null;
 function persistentPath() {
-  return join4(getAppHome(), "protocol-cache.json");
+  return join6(getAppHome(), "protocol-cache.json");
 }
 function loadPersistent(now = Date.now()) {
   const path = persistentPath();
@@ -3054,8 +3511,8 @@ function loadPersistent(now = Date.now()) {
   remembered.clear();
   loadedPersistentPath = path;
   try {
-    if (!existsSync4(path)) return;
-    const raw = JSON.parse(readFileSync6(path, "utf8"));
+    if (!existsSync6(path)) return;
+    const raw = JSON.parse(readFileSync7(path, "utf8"));
     for (const [key, entry] of Object.entries(raw)) {
       if (!entry || entry.protocol !== void 0 && entry.protocol !== "openai" && entry.protocol !== "anthropic") continue;
       if (typeof entry.expiresAt !== "number" || entry.expiresAt <= now) continue;
@@ -3068,16 +3525,16 @@ function loadPersistent(now = Date.now()) {
 function savePersistent() {
   const path = persistentPath();
   try {
-    mkdirSync3(dirname2(path), { recursive: true, mode: 448 });
+    mkdirSync4(dirname3(path), { recursive: true, mode: 448 });
     const live = {};
     const now = Date.now();
     for (const [key, entry] of remembered) {
       if (entry.expiresAt > now) live[key] = entry;
     }
     const tempPath = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
-    writeFileSync2(tempPath, `${JSON.stringify(live)}
+    writeFileSync3(tempPath, `${JSON.stringify(live)}
 `, { mode: 384 });
-    renameSync2(tempPath, path);
+    renameSync3(tempPath, path);
   } catch {
   }
 }
@@ -3202,9 +3659,9 @@ function findCreateFactory(mod) {
   throw new Error("No create* factory export found in provider package");
 }
 async function loadSdkProviderFactory(npm) {
-  let cached = factoryCache.get(npm);
-  if (!cached) {
-    cached = (async () => {
+  let cached2 = factoryCache.get(npm);
+  if (!cached2) {
+    cached2 = (async () => {
       try {
         const mod = await import(npm);
         return findCreateFactory(mod);
@@ -3216,10 +3673,10 @@ async function loadSdkProviderFactory(npm) {
         throw err;
       }
     })();
-    factoryCache.set(npm, cached);
-    cached.catch(() => factoryCache.delete(npm));
+    factoryCache.set(npm, cached2);
+    cached2.catch(() => factoryCache.delete(npm));
   }
-  return cached;
+  return cached2;
 }
 async function createLanguageModelSingle(spec) {
   const npm = resolveProviderNpm(spec.npm);
@@ -3245,8 +3702,10 @@ async function createLanguageModelSingle(spec) {
         ...accountId ? { "ChatGPT-Account-Id": accountId } : {},
         originator: "relay-ai",
         // Responses-Lite models (backend prefer_websockets/use_responses_lite,
-        // e.g. gpt-5.6-luna) require these on the request.
-        ...spec.useResponsesLite ? { version: CODEX_RESPONSES_LITE_VERSION, "x-openai-internal-codex-responses-lite": "true" } : {}
+        // e.g. gpt-5.6-luna) require these on the request. The version is
+        // resolved at runtime (npm latest → installed CLI → bundled
+        // fallback) so new model gates don't need a Relay release.
+        ...spec.useResponsesLite ? { version: await resolveCodexClientVersion(), "x-openai-internal-codex-responses-lite": "true" } : {}
       },
       // Models the backend flags with prefer_websockets are only served over
       // the WebSocket Responses transport, not HTTP.
@@ -5256,6 +5715,35 @@ export {
   VERTEX_ANTHROPIC_NPM,
   classifyModelFormat,
   VERSION,
+  getAppHome,
+  getConfigPath,
+  getProvidersPath,
+  getLogsPath,
+  getVertexModelsPath,
+  loadPreferences,
+  savePreferences,
+  getAppPathOverride,
+  setAppPathOverride,
+  recordLaunchFolder,
+  recordLaunchSelection,
+  getSavedServerPassword,
+  getEnvServerPassword,
+  setSavedServerPassword,
+  getServerExposedProviders,
+  setServerExposedProviders,
+  getServerMaskGatewayIds,
+  setServerMaskGatewayIds,
+  getServerFavoritesOnly,
+  setServerFavoritesOnly,
+  getServerFreeModelsOnly,
+  setServerFreeModelsOnly,
+  getServerListenMode,
+  setServerListenMode,
+  setServerAutostart,
+  resolveServerAutostart,
+  runCodexCommandSync,
+  runCodexCommand,
+  resolveCodexClientVersion,
   requestOpenAiDeviceCode,
   openAiDeviceCodeUrl,
   pollOpenAiDeviceCodeToken,
@@ -5269,13 +5757,6 @@ export {
   CLINE_PASS_CATALOG_URL,
   CLINE_PASS_VALIDATION_URL,
   CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW,
-  getAppHome,
-  getLegacyAppHome,
-  getConfigPath,
-  getProvidersPath,
-  getLogsPath,
-  getVertexModelsPath,
-  getLegacyConfPath,
   modelPrefersResponsesApi,
   isSdkMigratedNpm,
   maxToolsForNpm,
@@ -5366,4 +5847,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-3ZAUH2ML.js.map
+//# sourceMappingURL=chunk-FRTO6LVI.js.map

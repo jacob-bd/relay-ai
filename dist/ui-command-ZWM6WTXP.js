@@ -18,18 +18,9 @@ import {
   formatGatewayUrls,
   freeStatusLabel,
   gatewayProviderLabel,
-  getAppPathOverride,
-  getEnvServerPassword,
-  getSavedServerPassword,
   getServerDebugLogPath,
-  getServerExposedProviders,
-  getServerFavoritesOnly,
-  getServerFreeModelsOnly,
-  getServerListenMode,
-  getServerMaskGatewayIds,
   getUiDebugLogPath,
   hostFromHeader,
-  loadPreferences,
   loadServerModels,
   makeTraceLogger,
   normalizeFavoriteModels,
@@ -38,31 +29,20 @@ import {
   providersForCodexSubagents,
   providersForTarget,
   readBody,
-  recordLaunchFolder,
   refreshAllProviderModels,
   refreshProviderModels,
   removeProviderFromRegistry,
   resolveAdvertiseAddresses,
   resolveAdvertiseGatewayPort,
-  resolveServerAutostart,
   resolveServerUpstreamApiKey,
   saveNativeOAuthCredential,
-  savePreferences,
   sendJson,
-  setAppPathOverride,
-  setSavedServerPassword,
-  setServerAutostart,
-  setServerExposedProviders,
-  setServerFavoritesOnly,
-  setServerFreeModelsOnly,
-  setServerListenMode,
-  setServerMaskGatewayIds,
   startServer,
   summarizeServerProviders,
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider,
   writeSecureLogLine
-} from "./chunk-KWLFEG7W.js";
+} from "./chunk-XEPULMZ7.js";
 import {
   init_provider_templates,
   listAddableTemplates,
@@ -77,8 +57,17 @@ import {
   buildAntigravityAuthUrl,
   completeAntigravityExchange,
   getAppHome,
+  getAppPathOverride,
+  getEnvServerPassword,
   getProviderModels,
+  getSavedServerPassword,
+  getServerExposedProviders,
+  getServerFavoritesOnly,
+  getServerFreeModelsOnly,
+  getServerListenMode,
+  getServerMaskGatewayIds,
   guiCallbackRedirectUri,
+  loadPreferences,
   loadRegistry,
   openAiDeviceCodeUrl,
   pollClinePassDeviceCode,
@@ -87,15 +76,26 @@ import {
   pollXaiDeviceCodeToken,
   preferredRelayCredentialAuthRef,
   readStoredProviderCredential,
+  recordLaunchFolder,
   requestClinePassDeviceCode,
   requestGithubDeviceCode,
   requestOpenAiDeviceCode,
   requestXaiDeviceCode,
   resolveProviderCredential,
+  resolveServerAutostart,
+  savePreferences,
   saveProviderCredential,
+  setAppPathOverride,
+  setSavedServerPassword,
+  setServerAutostart,
+  setServerExposedProviders,
+  setServerFavoritesOnly,
+  setServerFreeModelsOnly,
+  setServerListenMode,
+  setServerMaskGatewayIds,
   supportsManualModels,
   validateCustomEndpointUrl
-} from "./chunk-3ZAUH2ML.js";
+} from "./chunk-FRTO6LVI.js";
 import {
   __toCommonJS
 } from "./chunk-JIDIH7DS.js";
@@ -869,7 +869,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-S7G3AIPU.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-IFENEEHO.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1898,4 +1898,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-COE5BHSJ.js.map
+//# sourceMappingURL=ui-command-ZWM6WTXP.js.map

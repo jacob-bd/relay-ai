@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.12.11] - 2026-09-23
+
+### Fixed
+
+- **GPT-6 Luna and Sol work over OpenAI OAuth again.** The ChatGPT Codex backend gates new models behind a minimum Codex client version sent as the `version` header, and Relay's hard-coded `0.153.4` was rejected with `The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account` (HTTP 400). Relay now resolves that version at runtime — npm latest for `@openai/codex`, then the installed Codex CLI, then the bundled fallback (now `0.155.1`, verified live) — so the next model gate no longer needs a Relay release. The Codex model-list refresh also sends the resolved Codex version as `client_version` instead of the Claude version. ([Issue #77](https://github.com/jacob-bd/relay-ai/issues/77))
 
 ### Removed
 

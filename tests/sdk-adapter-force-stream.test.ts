@@ -3,6 +3,7 @@ import { NoOutputGeneratedError, simulateReadableStream } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { APICallError, type LanguageModelV4StreamPart } from '@ai-sdk/provider';
 import { generateAnthropicResponse, streamAnthropicResponse } from '../src/sdk-adapter.js';
+import { CODEX_RESPONSES_LITE_VERSION } from '../src/constants.js';
 import { createLanguageModel } from '../src/provider-factory.js';
 import { upstreamHttpStatus } from '../src/codex/upstream-error.js';
 
@@ -57,7 +58,7 @@ describe('generateAnthropicResponse with the real SDK stream collector', () => {
 
     expect(error).toMatchObject({ name: 'AI_APICallError', statusCode: 400, message });
     expect(upstreamHttpStatus(error, message)).toBe(400);
-    expect(requestHeaders?.get('version')).toBe('0.153.4');
+    expect(requestHeaders?.get('version')).toBe(CODEX_RESPONSES_LITE_VERSION);
     await new Promise<void>(resolve => setImmediate(resolve));
   });
 
