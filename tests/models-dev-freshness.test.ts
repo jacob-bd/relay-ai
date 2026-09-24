@@ -6,6 +6,7 @@ import {
   isModelsDevCacheStale,
   MODELS_DEV_STALE_AFTER_MS,
   isUsableModelsDevPayload,
+  loadBundledModelsDevCache,
   type ModelsDevCacheFile,
 } from '../src/registry/models-dev.js';
 
@@ -112,6 +113,19 @@ describe('resolveModelReasoningMetadata', () => {
     const r = resolveModelReasoningMetadata('a', 'v/m', {}, conflict);
     expect(r.reasoningEffortConflict).toBe(true);
     expect(r.reasoningEffortLevels).toBeUndefined();
+  });
+});
+
+describe('bundled models.dev snapshot', () => {
+  // Guards against the bundled cache going stale in CI: if a refresh drops
+  // muse-spark (or is forgotten), this fails and signals the fixture needs updating.
+  it('resolves muse-spark reasoning effort to >=3 levels including medium', () => {
+    const result = resolveModelsDevEffort('meta/muse-spark-1.3-contributor', loadBundledModelsDevCache());
+    expect(result.kind).toBe('levels');
+    if (result.kind === 'levels') {
+      expect(result.levels.length).toBeGreaterThanOrEqual(3);
+      expect(result.levels).toContain('medium');
+    }
   });
 });
 

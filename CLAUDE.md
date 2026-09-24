@@ -12,6 +12,7 @@ To release a new version:
 
 ```bash
 # 1. Land all code changes and a CHANGELOG.md "## [x.y.z]" section first (committed).
+npm run refresh:models-dev               # refresh bundled models.dev snapshot (keeps reasoning-effort metadata current)
 npm version patch --no-git-tag-version   # bump package.json + package-lock (use minor/major as needed)
 npm run build                            # rebuild dist — VERSION is derived from package.json automatically
 git add -A && git commit -m "release: vX.Y.Z"
