@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-EVXDGFXP.js";
+} from "./chunk-EOPEWJL5.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -74,10 +74,12 @@ import {
   isFavorite,
   isFreeStatus,
   isLikelyPlaceholderKey,
+  isModelsDevCacheStale,
   isOAuthImportProvider,
   launchOrRestartClaudeApp,
   launchOrRestartCodexApp,
   listCredentialSkippedProviders,
+  loadModelsDevCache,
   logActiveModel,
   logConnected,
   logProxy,
@@ -140,7 +142,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-RAGDHX3I.js";
+} from "./chunk-WDDTJSGB.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -220,7 +222,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-RCFD4VL7.js";
+} from "./chunk-R4P7YOKS.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -3718,6 +3720,8 @@ function resolveCodexRoute(provider, model, apiKey) {
     supportedParameters: model.supportedParameters,
     reasoning: model.reasoning,
     interleavedReasoningField: model.interleavedReasoningField,
+    reasoningEffortLevels: model.reasoningEffortLevels,
+    reasoningEffortConflict: model.reasoningEffortConflict,
     headers: provider.headers,
     refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
   };
@@ -3737,6 +3741,8 @@ function resolveCodexRoute(provider, model, apiKey) {
       supportedParameters: model.supportedParameters,
       reasoning: model.reasoning,
       interleavedReasoningField: model.interleavedReasoningField,
+      reasoningEffortLevels: model.reasoningEffortLevels,
+      reasoningEffortConflict: model.reasoningEffortConflict,
       headers: provider.headers,
       refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
     };
@@ -4740,6 +4746,8 @@ async function startCodexProxy(routes, options = {}) {
               supportedParameters: route.supportedParameters,
               reasoning: route.reasoning,
               interleavedReasoningField: route.interleavedReasoningField,
+              reasoningEffortLevels: route.reasoningEffortLevels,
+              reasoningEffortConflict: route.reasoningEffortConflict,
               upstreamModelId: route.upstreamModelId
             },
             {
@@ -5396,6 +5404,8 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
                   supportedParameters: route.supportedParameters,
                   reasoning: route.reasoning,
                   interleavedReasoningField: route.interleavedReasoningField,
+                  reasoningEffortLevels: route.reasoningEffortLevels,
+                  reasoningEffortConflict: route.reasoningEffortConflict,
                   upstreamModelId: route.upstreamModelId
                 },
                 {
@@ -6047,7 +6057,9 @@ function defaultReasoningEffortForFavorite(r) {
     apiBaseUrl: model.apiBaseUrl,
     supportedParameters: model.supportedParameters,
     reasoning: model.reasoning,
-    interleavedReasoningField: model.interleavedReasoningField
+    interleavedReasoningField: model.interleavedReasoningField,
+    reasoningEffortLevels: model.reasoningEffortLevels,
+    reasoningEffortConflict: model.reasoningEffortConflict
   });
   return caps.levels.length > 0 ? caps.defaultLevel : "none";
 }
@@ -6199,6 +6211,8 @@ function buildCodexProxyRoutesFromResolved(resolved, providersById) {
       supportedParameters: route.supportedParameters,
       reasoning: route.reasoning,
       interleavedReasoningField: route.interleavedReasoningField,
+      reasoningEffortLevels: route.reasoningEffortLevels,
+      reasoningEffortConflict: route.reasoningEffortConflict,
       headers: route.headers
     };
   }).filter((r) => r !== void 0);
@@ -6485,7 +6499,9 @@ async function prepareCodexMixedRelayRoutes(models, trace = false) {
         contextWindow: proxyRoute.contextWindow,
         supportedParameters: original.model.supportedParameters,
         reasoning: original.model.reasoning,
-        interleavedReasoningField: original.model.interleavedReasoningField
+        interleavedReasoningField: original.model.interleavedReasoningField,
+        reasoningEffortLevels: original.model.reasoningEffortLevels,
+        reasoningEffortConflict: original.model.reasoningEffortConflict
       }),
       trace
     );
@@ -6778,7 +6794,9 @@ async function writeLaunchArtifacts(route, selectedModel, providerName, proxyPor
     apiBaseUrl: route.baseURL,
     supportedParameters: route.supportedParameters,
     reasoning: route.reasoning,
-    interleavedReasoningField: route.interleavedReasoningField
+    interleavedReasoningField: route.interleavedReasoningField,
+    reasoningEffortLevels: route.reasoningEffortLevels,
+    reasoningEffortConflict: route.reasoningEffortConflict
   });
   writeOverlayFile(profilePath, buildCodexProfileToml({
     route,
@@ -7254,7 +7272,9 @@ Mixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
         contextWindow: route.contextWindow,
         supportedParameters: route.supportedParameters,
         reasoning: route.reasoning,
-        interleavedReasoningField: route.interleavedReasoningField
+        interleavedReasoningField: route.interleavedReasoningField,
+        reasoningEffortLevels: route.reasoningEffortLevels,
+        reasoningEffortConflict: route.reasoningEffortConflict
       }], { debug: trace });
       proxyPort = proxyHandle.port;
     } else if (route.authType === "oauth" && selectedModel.modelFormat === "anthropic") {
@@ -7280,7 +7300,9 @@ Mixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
         contextWindow: route.contextWindow,
         supportedParameters: route.supportedParameters,
         reasoning: route.reasoning,
-        interleavedReasoningField: route.interleavedReasoningField
+        interleavedReasoningField: route.interleavedReasoningField,
+        reasoningEffortLevels: route.reasoningEffortLevels,
+        reasoningEffortConflict: route.reasoningEffortConflict
       }], { debug: trace });
       proxyPort = proxyHandle.port;
     } else if (route.tier === "proxy") {
@@ -7297,6 +7319,8 @@ Mixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
         supportedParameters: route.supportedParameters,
         reasoning: route.reasoning,
         interleavedReasoningField: route.interleavedReasoningField,
+        reasoningEffortLevels: route.reasoningEffortLevels,
+        reasoningEffortConflict: route.reasoningEffortConflict,
         headers: route.headers,
         refreshToken: route.refreshToken
       }], { debug: trace });
@@ -8224,7 +8248,9 @@ function routeToModel(route) {
     contextWindow: route.contextWindow,
     supportedParameters: route.supportedParameters,
     reasoning: route.reasoning,
-    interleavedReasoningField: route.interleavedReasoningField
+    interleavedReasoningField: route.interleavedReasoningField,
+    reasoningEffortLevels: route.reasoningEffortLevels,
+    reasoningEffortConflict: route.reasoningEffortConflict
   };
 }
 function routeNeedsBackend(route) {
@@ -8441,7 +8467,9 @@ Error: ${launchPlan.error}
     headers: activeProvider.headers,
     supportedParameters: m.supportedParameters,
     reasoning: m.reasoning,
-    interleavedReasoningField: m.interleavedReasoningField
+    interleavedReasoningField: m.interleavedReasoningField,
+    reasoningEffortLevels: m.reasoningEffortLevels,
+    reasoningEffortConflict: m.reasoningEffortConflict
   }));
   const resolvedFavs = [];
   const favorites = prefs.favoriteModels ?? [];
@@ -8468,7 +8496,9 @@ Error: ${launchPlan.error}
           headers: provider.headers,
           supportedParameters: model.supportedParameters,
           reasoning: model.reasoning,
-          interleavedReasoningField: model.interleavedReasoningField
+          interleavedReasoningField: model.interleavedReasoningField,
+          reasoningEffortLevels: model.reasoningEffortLevels,
+          reasoningEffortConflict: model.reasoningEffortConflict
         });
       }
     }
@@ -8501,7 +8531,9 @@ Error: ${launchPlan.error}
       headers: activeProvider.headers,
       supportedParameters: selectedModel.supportedParameters,
       reasoning: selectedModel.reasoning,
-      interleavedReasoningField: selectedModel.interleavedReasoningField
+      interleavedReasoningField: selectedModel.interleavedReasoningField,
+      reasoningEffortLevels: selectedModel.reasoningEffortLevels,
+      reasoningEffortConflict: selectedModel.reasoningEffortConflict
     });
   }
   let finalRoutes = [...routesMap.values()];
@@ -11516,6 +11548,8 @@ function codexRouteToProxyRoute(provider, model, apiKey) {
     supportedParameters: route.supportedParameters,
     reasoning: route.reasoning,
     interleavedReasoningField: route.interleavedReasoningField,
+    reasoningEffortLevels: route.reasoningEffortLevels,
+    reasoningEffortConflict: route.reasoningEffortConflict,
     headers: route.headers,
     refreshToken: route.refreshToken
   };
@@ -11555,6 +11589,8 @@ async function buildCodexAppProviderCatalogRoutes(provider, apiKey, selectedMode
       supportedParameters: original.model.supportedParameters,
       reasoning: original.model.reasoning,
       interleavedReasoningField: original.model.interleavedReasoningField,
+      reasoningEffortLevels: original.model.reasoningEffortLevels,
+      reasoningEffortConflict: original.model.reasoningEffortConflict,
       headers: provider.headers
     }),
     trace
@@ -11718,6 +11754,8 @@ function mergeAppConfig(existing, spec) {
       supportedParameters: spec.route.supportedParameters,
       reasoning: spec.route.reasoning,
       interleavedReasoningField: spec.route.interleavedReasoningField,
+      reasoningEffortLevels: spec.route.reasoningEffortLevels,
+      reasoningEffortConflict: spec.route.reasoningEffortConflict,
       upstreamModelId: spec.route.upstreamModelId
     });
     if (caps.levels.length === 0 || !caps.levels.includes(existingEffort)) {
@@ -12101,6 +12139,8 @@ function codexProxyRouteToCodexRoute(route, fallbackProviderId) {
     supportedParameters: route.supportedParameters,
     reasoning: route.reasoning,
     interleavedReasoningField: route.interleavedReasoningField,
+    reasoningEffortLevels: route.reasoningEffortLevels,
+    reasoningEffortConflict: route.reasoningEffortConflict,
     headers: route.headers,
     refreshToken: route.refreshToken
   };
@@ -12962,6 +13002,8 @@ function modelToServerModelInfo(model, provider, overrides = {}) {
     supportedParameters: model.supportedParameters,
     reasoning: model.reasoning,
     interleavedReasoningField: model.interleavedReasoningField,
+    reasoningEffortLevels: model.reasoningEffortLevels,
+    reasoningEffortConflict: model.reasoningEffortConflict,
     useResponsesLite: model.useResponsesLite,
     preferWebSockets: model.preferWebSockets,
     headers: provider.headers,
@@ -16211,6 +16253,8 @@ Error: ${launchPlan.error}
           supportedParameters: selectedModel.supportedParameters,
           reasoning: selectedModel.reasoning,
           interleavedReasoningField: selectedModel.interleavedReasoningField,
+          reasoningEffortLevels: selectedModel.reasoningEffortLevels,
+          reasoningEffortConflict: selectedModel.reasoningEffortConflict,
           useResponsesLite: selectedModel.useResponsesLite,
           preferWebSockets: selectedModel.preferWebSockets,
           refreshToken: providerRefreshToken(activeProvider.id, activeProvider.authType, activeProvider.authRef),
@@ -16267,7 +16311,7 @@ Error: ${parsed.error}
     printHelp(rootHelpText());
     return 1;
   }
-  if (shouldRefreshModelsDev(parsed)) {
+  if (shouldRefreshModelsDev(parsed) && !parsed.dryRun && isModelsDevCacheStale(loadModelsDevCache())) {
     refreshModelsDevCacheAsync();
   }
   if (parsed.command === "root") {
@@ -16322,7 +16366,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-265ATDSX.js");
+    const { runUiCommand } = await import("./ui-command-HV4RYDNN.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

@@ -4063,6 +4063,7 @@ var DEEPSEEK_EFFORT_LEVELS = ["high", "max", "none"];
 var DEEPSEEK_NATIVE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "none"];
 var GLM_52_EFFORT_LEVELS = ["high", "xhigh"];
 var GLM_53_EFFORT_LEVELS = ["low", "medium", "high", "xhigh"];
+var GENERIC_EFFORT_VOCAB = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 var EMPTY_REASONING = {
   levels: [],
   defaultLevel: "",
@@ -4147,6 +4148,15 @@ function isGlm53ReasoningModel(modelId) {
 }
 function toCamelCase(str) {
   return str.replace(/[-_]([a-z])/g, (_, g) => g.toUpperCase());
+}
+function nearestToMediumEffort(levels) {
+  if (levels.includes("medium")) return "medium";
+  const mediumIdx = GENERIC_EFFORT_VOCAB.indexOf("medium");
+  return levels.reduce((best, level) => {
+    const bestDist = Math.abs(GENERIC_EFFORT_VOCAB.indexOf(best) - mediumIdx);
+    const dist = Math.abs(GENERIC_EFFORT_VOCAB.indexOf(level) - mediumIdx);
+    return dist <= bestDist ? level : best;
+  }, levels[0]);
 }
 function hasSupportedParameter(metadata, param) {
   return (metadata?.supportedParameters ?? []).some((p) => p === param);
@@ -4501,6 +4511,23 @@ function resolveRawReasoningCapabilities(npm, modelId, metadata) {
       wireFormat: { kind: "openai-reasoning-effort" }
     };
   }
+  if (npm === "@ai-sdk/openai-compatible") {
+    if (metadata?.reasoningEffortConflict) return EMPTY_REASONING;
+    const declared = metadata?.reasoningEffortLevels;
+    if (declared && declared.length > 0) {
+      const levels = GENERIC_EFFORT_VOCAB.filter((v) => declared.includes(v));
+      if (levels.length === 0) return EMPTY_REASONING;
+      return {
+        levels,
+        defaultLevel: nearestToMediumEffort(levels),
+        supportsSummaries: false,
+        mode: "controllable",
+        source: "provider-metadata",
+        confidence: "documented",
+        wireFormat: { kind: "openai-reasoning-effort" }
+      };
+    }
+  }
   if (hasSupportedParameter(metadata, "reasoning_effort")) {
     return {
       levels: ["low", "medium", "high", "xhigh"],
@@ -4610,6 +4637,16 @@ function effortProviderOptions(npm, effort, modelId, metadata) {
         return { [key]: { reasoningEffort } };
       }
       return void 0;
+    }
+    if (npm === "@ai-sdk/openai-compatible") {
+      if (metadata?.reasoningEffortConflict) return void 0;
+      const declared = metadata?.reasoningEffortLevels;
+      if (declared && declared.length > 0) {
+        const accepted = new Set(GENERIC_EFFORT_VOCAB.filter((v) => declared.includes(v)));
+        if (!accepted.has(effort)) return void 0;
+        const key = metadata?.providerId ? toCamelCase(metadata.providerId) : "openaiCompatible";
+        return { [key]: { reasoningEffort: effort } };
+      }
     }
     if (hasSupportedParameter(metadata, "reasoning_effort")) {
       const reasoningEffort = mapCodexEffortToOpenAICompatible(effort);
@@ -5871,4 +5908,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-RCFD4VL7.js.map
+//# sourceMappingURL=chunk-R4P7YOKS.js.map
