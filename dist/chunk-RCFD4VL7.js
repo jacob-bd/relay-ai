@@ -5229,10 +5229,32 @@ function rewriteNulPatternEscapes(value) {
   }
   return changed ? out : value;
 }
+function synthesizeGoogleItems(prefixItems) {
+  if (Array.isArray(prefixItems) && prefixItems.length > 0) {
+    const types = new Set(
+      prefixItems.map((entry) => entry && typeof entry === "object" ? entry.type : void 0).filter((t) => typeof t === "string")
+    );
+    if (types.size === 1) return { type: [...types][0] };
+  }
+  return { type: "string" };
+}
+function fixGoogleArraySchemas(value) {
+  if (Array.isArray(value)) return value.map(fixGoogleArraySchemas);
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  for (const [key, child] of Object.entries(value)) {
+    out[key] = fixGoogleArraySchemas(child);
+  }
+  if (out.type === "array") {
+    if (out.items === void 0) out.items = synthesizeGoogleItems(out.prefixItems);
+    delete out.prefixItems;
+  }
+  return out;
+}
 function normalizeToolSchemaForNpm(schema, npm) {
   const portable = rewriteNulPatternEscapes(schema);
   if (!npm || !GOOGLE_NPM.has(npm)) return portable;
-  return collapseSchemaUnionTypes(portable);
+  return fixGoogleArraySchemas(collapseSchemaUnionTypes(portable));
 }
 
 // src/sdk-adapter.ts
@@ -5849,4 +5871,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-LGQWKQKL.js.map
+//# sourceMappingURL=chunk-RCFD4VL7.js.map

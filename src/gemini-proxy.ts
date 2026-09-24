@@ -14,6 +14,7 @@ import {
 } from './provider-factory.js';
 import { applyClaudeCodeOAuthIdentity } from './oauth/claude-code-identity.js';
 import { silenceSdkWarnings } from './sdk-adapter.js';
+import { normalizeToolSchemaForNpm } from './tool-schema.js';
 import { getGeminiProxyDebugLogPath, makeTraceLogger } from './trace-log.js';
 import type { ProxyRoute, ProxyHandle } from './proxy.js';
 import { routeLookupIds } from './context-model-id.js';
@@ -183,7 +184,9 @@ export function translateGeminiRequest(body: any, options: TranslateGeminiReques
           if (options.maxTools !== undefined && toolCount >= options.maxTools) break;
           tools[fd.name] = tool({
             description: fd.description || '',
-            inputSchema: jsonSchema(fd.parameters || { type: 'object', properties: {} }),
+            inputSchema: jsonSchema(
+              normalizeToolSchemaForNpm(fd.parameters || { type: 'object', properties: {} }, '@ai-sdk/google'),
+            ),
           });
           toolCount++;
         }

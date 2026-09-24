@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-4WUSKTVR.js";
+} from "./chunk-EVXDGFXP.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -140,7 +140,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-37GQTWDJ.js";
+} from "./chunk-RAGDHX3I.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -220,7 +220,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-LGQWKQKL.js";
+} from "./chunk-RCFD4VL7.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -7740,7 +7740,9 @@ function translateGeminiRequest(body, options = {}) {
           if (options.maxTools !== void 0 && toolCount >= options.maxTools) break;
           tools[fd.name] = tool2({
             description: fd.description || "",
-            inputSchema: jsonSchema2(fd.parameters || { type: "object", properties: {} })
+            inputSchema: jsonSchema2(
+              normalizeToolSchemaForNpm(fd.parameters || { type: "object", properties: {} }, "@ai-sdk/google")
+            )
           });
           toolCount++;
         }
@@ -16320,7 +16322,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-QGVVDO63.js");
+    const { runUiCommand } = await import("./ui-command-265ATDSX.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

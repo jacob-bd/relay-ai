@@ -1,9 +1,40 @@
 import { describe, it, expect } from 'vitest';
 import {
   collapseSchemaUnionTypes,
+  fixGoogleArraySchemas,
   normalizeToolSchemaForNpm,
   rewriteNulPatternEscapes,
 } from '../src/tool-schema.js';
+
+// ArtifactData's `query.where`, the tuple-array shape that 400s Gemini with
+// `properties[query].properties[where].items.items: missing field` — the inner
+// array uses `prefixItems` (a tuple), which Gemini's schema dialect can't read.
+const TUPLE_ARRAY_PARAMETERS = {
+  type: 'object',
+  properties: {
+    query: {
+      type: 'object',
+      properties: {
+        where: {
+          type: 'array',
+          items: {
+            type: 'array',
+            prefixItems: [{ type: 'string' }, { type: 'string' }, {}],
+          },
+        },
+      },
+    },
+  },
+};
+
+// Claude Docs' `batch`, declared `{ type: 'array' }` with no `items` at all —
+// Gemini rejects with `properties[batch].items: missing field`.
+const MISSING_ITEMS_PARAMETERS = {
+  type: 'object',
+  properties: {
+    batch: { type: 'array' },
+  },
+};
 
 // Codex's image_gen tool, the shape that 400s Gemini in issue #72.
 const IMAGE_GEN_PARAMETERS = {
@@ -106,6 +137,60 @@ describe('normalizeToolSchemaForNpm', () => {
   it('keeps the original reference when no pattern needs rewriting', () => {
     expect(normalizeToolSchemaForNpm(IMAGE_GEN_PARAMETERS, '@ai-sdk/openai-compatible'))
       .toBe(IMAGE_GEN_PARAMETERS);
+  });
+});
+
+describe('fixGoogleArraySchemas', () => {
+  it('gives a tuple (prefixItems) array a single items schema and drops prefixItems', () => {
+    const out = fixGoogleArraySchemas(TUPLE_ARRAY_PARAMETERS) as any;
+    const inner = out.properties.query.properties.where.items;
+    expect(inner.type).toBe('array');
+    expect(inner.items).toEqual({ type: 'string' });
+    expect(inner.prefixItems).toBeUndefined();
+  });
+
+  it('adds items to an array that declares none', () => {
+    const out = fixGoogleArraySchemas(MISSING_ITEMS_PARAMETERS) as any;
+    expect(out.properties.batch.items).toEqual({ type: 'string' });
+  });
+
+  it('collapses a homogeneous tuple to that element type', () => {
+    const out = fixGoogleArraySchemas({
+      type: 'array',
+      prefixItems: [{ type: 'number' }, { type: 'number' }],
+    }) as any;
+    expect(out.items).toEqual({ type: 'number' });
+    expect(out.prefixItems).toBeUndefined();
+  });
+
+  it('leaves a valid array with real items untouched', () => {
+    const schema = { type: 'array', items: { type: 'string', minLength: 1 } };
+    const out = fixGoogleArraySchemas(schema) as any;
+    expect(out.items).toEqual({ type: 'string', minLength: 1 });
+  });
+
+  it('leaves non-array nodes alone', () => {
+    const out = fixGoogleArraySchemas({ type: 'object', properties: { x: { type: 'string' } } }) as any;
+    expect(out).toEqual({ type: 'object', properties: { x: { type: 'string' } } });
+  });
+});
+
+describe('normalizeToolSchemaForNpm array fixups', () => {
+  it('fixes tuple arrays on google routes', () => {
+    const out = normalizeToolSchemaForNpm(TUPLE_ARRAY_PARAMETERS, '@ai-sdk/google') as any;
+    const inner = out.properties.query.properties.where.items;
+    expect(inner.items).toEqual({ type: 'string' });
+    expect(inner.prefixItems).toBeUndefined();
+  });
+
+  it('adds missing items on vertex routes', () => {
+    const out = normalizeToolSchemaForNpm(MISSING_ITEMS_PARAMETERS, '@ai-sdk/google-vertex') as any;
+    expect(out.properties.batch.items).toEqual({ type: 'string' });
+  });
+
+  it('does not touch array shapes on non-google routes', () => {
+    const out = normalizeToolSchemaForNpm(MISSING_ITEMS_PARAMETERS, '@ai-sdk/openai') as any;
+    expect(out.properties.batch.items).toBeUndefined();
   });
 });
 

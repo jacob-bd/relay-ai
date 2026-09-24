@@ -114,11 +114,59 @@ export function rewriteNulPatternEscapes(value: unknown): unknown {
 }
 
 /**
- * Every route gets NUL pattern escapes rewritten. Union types stay intact
- * except on Google, which cannot represent them.
+ * Pick the `items` schema for a Gemini array that declares none.
+ *
+ * A tuple (`prefixItems`) collapses to its element type when the entries agree;
+ * otherwise — and for an array with no element info at all — we fall back to
+ * `{ type: 'string' }`. Gemini's OpenAPI subset requires every array to carry a
+ * typed `items`, and has no "any" type, so a lossy-but-valid default beats a
+ * 400 that takes down every tool (and plain chat) on the request.
+ */
+function synthesizeGoogleItems(prefixItems: unknown): Record<string, unknown> {
+  if (Array.isArray(prefixItems) && prefixItems.length > 0) {
+    const types = new Set(
+      prefixItems
+        .map(entry => (entry && typeof entry === 'object' ? (entry as { type?: unknown }).type : undefined))
+        .filter((t): t is string => typeof t === 'string'),
+    );
+    if (types.size === 1) return { type: [...types][0]! };
+  }
+  return { type: 'string' };
+}
+
+/**
+ * Make array schemas valid for Gemini function declarations.
+ *
+ * Gemini rejects two shapes Claude Code / MCP tools ship freely:
+ *   - a `type: 'array'` with no `items` (e.g. Claude Docs' `batch`) →
+ *     `properties[batch].items: missing field`
+ *   - a tuple array via `prefixItems` (e.g. ArtifactData's `query.where`) →
+ *     `...where.items.items: missing field`
+ * Both 400 the whole request, killing every tool and plain chat with it. We add
+ * a typed `items` where absent and collapse `prefixItems` into one `items`
+ * schema, dropping `prefixItems` since Gemini's dialect does not accept it.
+ */
+export function fixGoogleArraySchemas(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(fixGoogleArraySchemas);
+  if (!value || typeof value !== 'object') return value;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    out[key] = fixGoogleArraySchemas(child);
+  }
+  if (out.type === 'array') {
+    if (out.items === undefined) out.items = synthesizeGoogleItems(out.prefixItems);
+    delete out.prefixItems;
+  }
+  return out;
+}
+
+/**
+ * Every route gets NUL pattern escapes rewritten. Union types and array shapes
+ * stay intact except on Google, which cannot represent them.
  */
 export function normalizeToolSchemaForNpm<T>(schema: T, npm: string | undefined): T {
   const portable = rewriteNulPatternEscapes(schema) as T;
   if (!npm || !GOOGLE_NPM.has(npm)) return portable;
-  return collapseSchemaUnionTypes(portable) as T;
+  return fixGoogleArraySchemas(collapseSchemaUnionTypes(portable)) as T;
 }
