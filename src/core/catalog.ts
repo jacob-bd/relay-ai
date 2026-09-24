@@ -2,6 +2,7 @@
 
 import { loadPreferences } from '../config.js';
 import { getReasoningCapabilities } from '../provider-factory.js';
+import { resolveModelReasoningMetadata } from '../registry/models-dev.js';
 import { loadRegistry } from '../registry/io.js';
 import { getProviderModels } from '../registry/provider-models.js';
 import { resolveProviderTemplate } from '../registry/resolve-template.js';
@@ -38,8 +39,12 @@ function mapReasoning(provider: RegistryProvider, model: CachedModel): Reasoning
       providerId: provider.id,
       apiBaseUrl: model.apiUrl ?? provider.api.url,
       supportedParameters: model.supportedParameters,
-      reasoning: model.reasoning,
-      interleavedReasoningField: model.interleavedReasoningField,
+      // Shared with the Codex materializer so Core can't diverge on reasoning/
+      // interleaved/effort. Effort resolves on the catalog id (models.dev's key).
+      ...resolveModelReasoningMetadata(provider.id, model.id, {
+        reasoning: model.reasoning,
+        interleavedField: model.interleavedReasoningField,
+      }),
       upstreamModelId,
     });
     switch (caps.mode) {

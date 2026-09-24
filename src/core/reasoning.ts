@@ -13,6 +13,7 @@ import {
   getReasoningCapabilities,
   type ReasoningMetadata,
 } from '../provider-factory.js';
+import { resolveModelReasoningMetadata } from '../registry/models-dev.js';
 import type { CachedModel, RegistryProvider } from '../registry/types.js';
 import { RelayCoreError } from './errors.js';
 import type { RelayReasoningLevel, RelayRouteId } from './types.js';
@@ -68,8 +69,12 @@ export function resolveReasoningProviderOptions(
     upstreamModelId,
     ...(model.apiUrl ?? provider.api.url ? { apiBaseUrl: model.apiUrl ?? provider.api.url } : {}),
     ...(model.supportedParameters ? { supportedParameters: model.supportedParameters } : {}),
-    ...(model.reasoning !== undefined ? { reasoning: model.reasoning } : {}),
-    ...(model.interleavedReasoningField ? { interleavedReasoningField: model.interleavedReasoningField } : {}),
+    // Shared with the Codex materializer so Core can't diverge on reasoning/
+    // interleaved/effort. Effort resolves on the catalog id (models.dev's key).
+    ...resolveModelReasoningMetadata(provider.id, model.id, {
+      reasoning: model.reasoning,
+      interleavedField: model.interleavedReasoningField,
+    }),
   };
 
   // `effortProviderOptions` is the CLI picker's mapper: it deliberately

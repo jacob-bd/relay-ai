@@ -144,6 +144,42 @@ describe('listRelayModels', () => {
     expect(m!.modelId).toBe('vendor/some-reasoner:free');
   });
 
+  it('exposes models.dev-declared effort levels for openai-compatible routes (cross-bucket)', () => {
+    const effortRow = (values: string[]) => ({
+      id: 'meta/muse-spark-1.3-contributor',
+      reasoning: true,
+      reasoning_options: [{ type: 'effort', values }],
+    });
+    // Written into the isolated home so loadModelsDevCache() reads it, not the bundled snapshot.
+    writeFileSync(join(home, 'models-dev-cache.json'), JSON.stringify({
+      _relay_meta: { fetched_at: new Date().toISOString() },
+      'nano-gpt': { id: 'nano-gpt', models: { 'meta/muse-spark-1.3-contributor': effortRow(['minimal', 'low', 'medium', 'high', 'xhigh']) } },
+      kilo: { id: 'kilo', models: { 'meta/muse-spark-1.3-contributor': effortRow(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']) } },
+    }));
+    writeRegistry([provider({
+      id: 'commandcode',
+      templateId: 'commandcode',
+      name: 'Command Code',
+      authRef: 'keychain:commandcode',
+      api: { npm: '@ai-sdk/openai-compatible', url: 'https://api.commandcode.ai/provider/v1' },
+      modelsCache: {
+        fetchedAt: '2026-09-24T00:00:00Z',
+        models: [{
+          id: 'meta/muse-spark-1.3-contributor',
+          name: 'Muse Spark 1.3',
+          upstreamModelId: 'meta/muse-spark-1.3-contributor',
+          modelFormat: 'openai',
+          npm: '@ai-sdk/openai-compatible',
+        }],
+      },
+    })]);
+
+    const [m] = listRelayModels();
+    expect(m!.capabilities.reasoning).toBe('adjustable');
+    expect(m!.capabilities.reasoningLevels).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh']);
+    expect(m!.capabilities.defaultReasoningLevel).toBe('medium');
+  });
+
   it('exposes no credential material', () => {
     writeRegistry([provider({})]);
     const models = listRelayModels();
