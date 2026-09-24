@@ -180,6 +180,38 @@ describe('listRelayModels', () => {
     expect(m!.capabilities.defaultReasoningLevel).toBe('medium');
   });
 
+  it('reports fixed reasoning from a models.dev reasoning flag with no controllable levels (Core matches Codex)', () => {
+    // Locks in the intended convergence: Core inherits models.dev's reasoning
+    // fallback (like the Codex materializer), so a model that reasons but exposes
+    // no settable effort reads as 'fixed', not 'none'. Non-openai-compatible npm
+    // on purpose — the effort feature is scoped to openai-compatible, this is the flag.
+    writeFileSync(join(home, 'models-dev-cache.json'), JSON.stringify({
+      _relay_meta: { fetched_at: new Date().toISOString() },
+      deepinfra: { id: 'deepinfra', models: { 'vendor/reasoner-27b': { id: 'vendor/reasoner-27b', reasoning: true } } },
+      filler: { id: 'filler', models: { x: { id: 'x' } } },
+    }));
+    writeRegistry([provider({
+      id: 'deepinfra',
+      templateId: 'deepinfra',
+      name: 'DeepInfra',
+      authRef: 'keychain:deepinfra',
+      api: { npm: '@ai-sdk/deepinfra', url: 'https://api.deepinfra.com/v1/openai' },
+      modelsCache: {
+        fetchedAt: '2026-09-24T00:00:00Z',
+        models: [{
+          id: 'vendor/reasoner-27b',
+          name: 'Reasoner 27B',
+          upstreamModelId: 'vendor/reasoner-27b',
+          modelFormat: 'openai',
+          npm: '@ai-sdk/deepinfra',
+        }],
+      },
+    })]);
+    const [m] = listRelayModels();
+    expect(m!.capabilities.reasoning).toBe('fixed');
+    expect(m!.capabilities.reasoningLevels).toBeUndefined();
+  });
+
   it('exposes no credential material', () => {
     writeRegistry([provider({})]);
     const models = listRelayModels();

@@ -66,6 +66,17 @@ describe('resolveModelsDevEffort', () => {
     const cache = { x: { id: 'x', models: { 'v/m': null } } } as unknown as ModelsDevCacheFile;
     expect(resolveModelsDevEffort('v/m', cache)).toEqual({ kind: 'unknown' });
   });
+  it('unknown (not conflict) when the only declared value is outside EFFORT_RANK', () => {
+    const cache = { x: { id: 'x', models: { 'v/m': { id: 'v/m', reasoning: true, reasoning_options: [{ type: 'effort', values: ['dynamic'] }] } } } } as unknown as ModelsDevCacheFile;
+    expect(resolveModelsDevEffort('v/m', cache)).toEqual({ kind: 'unknown' });
+  });
+  it('unknown when sources agree on an unrecognized value (no real disagreement)', () => {
+    const cache = {
+      a: { id: 'a', models: { 'v/m': { id: 'v/m', reasoning_options: [{ type: 'effort', values: ['dynamic'] }] } } },
+      b: { id: 'b', models: { 'v/m': { id: 'v/m', reasoning_options: [{ type: 'effort', values: ['dynamic'] }] } } },
+    } as unknown as ModelsDevCacheFile;
+    expect(resolveModelsDevEffort('v/m', cache)).toEqual({ kind: 'unknown' });
+  });
 });
 
 describe('freshness gate', () => {

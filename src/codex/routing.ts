@@ -170,6 +170,8 @@ export function resolveCodexRoute(
       supportedParameters: model.supportedParameters,
       reasoning: model.reasoning,
       interleavedReasoningField: model.interleavedReasoningField,
+      reasoningEffortLevels: model.reasoningEffortLevels,
+      reasoningEffortConflict: model.reasoningEffortConflict,
       headers: provider.headers,
       refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
     };

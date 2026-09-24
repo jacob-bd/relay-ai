@@ -350,8 +350,9 @@ function getEffortIndex(cache: ModelsDevCacheFile): Map<string, ModelsDevModel[]
  * (case-insensitive, no bare-name reduction) across every models.dev bucket and
  * intersecting the declared sets. Cross-bucket because aggregator buckets
  * (nano-gpt, kilo, openrouter, …) carry the exact proxied ids that a clean
- * vendor bucket may not. Ordered by {@link EFFORT_RANK}. Non-empty → levels;
- * empty intersection across ≥1 declaration → conflict; no declaration → unknown.
+ * vendor bucket may not. Ordered by {@link EFFORT_RANK}. Known-level overlap →
+ * levels; sources genuinely disagree (empty raw intersection) → conflict; no
+ * declaration, or agreement only on values outside EFFORT_RANK → unknown.
  */
 export function resolveModelsDevEffort(
   modelId: string,
@@ -371,8 +372,13 @@ export function resolveModelsDevEffort(
     const other = new Set(set.map(v => v.trim().toLowerCase()));
     intersection = new Set([...intersection].filter(v => other.has(v)));
   }
+  // An empty RAW intersection means ≥2 sources genuinely disagree → conflict
+  // (suppress). A non-empty intersection whose values are all outside our known
+  // vocab is not a disagreement — we just can't offer those levels, so treat it
+  // as unknown and let the caller's legacy heuristics apply instead.
+  if (intersection.size === 0) return { kind: 'conflict' };
   const levels = EFFORT_RANK.filter(rank => intersection.has(rank));
-  if (levels.length === 0) return { kind: 'conflict' };
+  if (levels.length === 0) return { kind: 'unknown' };
   return { kind: 'levels', levels };
 }
 
