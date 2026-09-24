@@ -55,6 +55,10 @@ export interface LocalProviderModel {
   reasoning?: boolean;
   /** Streaming/interleaved reasoning field name from metadata, e.g. reasoning_content. */
   interleavedReasoningField?: string;
+  /** Declared reasoning-effort levels from models.dev (cross-bucket, canonically ordered). */
+  reasoningEffortLevels?: string[];
+  /** models.dev buckets declared disjoint effort sets — suppress the effort control. */
+  reasoningEffortConflict?: boolean;
   /** Backend capability: model requires the Responses-Lite request shape (x-openai-internal-codex-responses-lite). */
   useResponsesLite?: boolean;
   /** Backend capability: model must use the WebSocket Responses transport instead of HTTP. */

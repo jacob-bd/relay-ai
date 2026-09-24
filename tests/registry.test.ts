@@ -320,6 +320,38 @@ describe('materializeRegistry', () => {
     });
   });
 
+  it('populates cross-bucket reasoning-effort levels from models.dev metadata', () => {
+    const provider = {
+      id: 'commandcode',
+      templateId: 'commandcode',
+      name: 'Command Code',
+      enabled: true,
+      authRef: 'keyring:provider:commandcode',
+      api: { npm: '@ai-sdk/openai-compatible', url: 'https://api.commandcode.ai/v1' },
+      addedAt: '2026-09-24T00:00:00.000Z',
+    };
+    const effortRow = (values: string[]) => ({
+      id: 'meta/muse-spark-1.3-contributor',
+      reasoning: true,
+      reasoning_options: [{ type: 'effort', values }],
+    });
+    const metadata = {
+      'nano-gpt': { id: 'nano-gpt', models: { 'meta/muse-spark-1.3-contributor': effortRow(['minimal', 'low', 'medium', 'high', 'xhigh']) } },
+      kilo: { id: 'kilo', models: { 'meta/muse-spark-1.3-contributor': effortRow(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']) } },
+    };
+    const local = cachedModelToLocal({
+      id: 'meta/muse-spark-1.3-contributor',
+      name: 'Muse Spark 1.3',
+      upstreamModelId: 'meta/muse-spark-1.3-contributor',
+      modelFormat: 'openai',
+      npm: '@ai-sdk/openai-compatible',
+      apiUrl: 'https://api.commandcode.ai/v1',
+    }, provider, metadata as never);
+
+    expect(local?.reasoningEffortLevels).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh']);
+    expect(local?.reasoningEffortConflict).toBeUndefined();
+  });
+
   it('returns empty when credential missing', () => {
     const registry = emptyRegistry();
     registry.providers.push({

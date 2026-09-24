@@ -8,7 +8,7 @@ import { resolveEndpoint } from '../providers.js';
 import { resolveContextWindow } from '../context-window.js';
 import type { LocalProvider, LocalProviderModel } from '../types.js';
 import { normalizeGoogleDisplayName, normalizeGoogleModelId } from './google-model-id.js';
-import { findModelsDevModel, loadModelsDevCache } from './models-dev.js';
+import { findModelsDevModel, loadModelsDevCache, resolveModelReasoningMetadata } from './models-dev.js';
 import type { ModelsDevCacheFile } from './models-dev.js';
 import type { CachedModel, ProviderRegistry, RegistryProvider } from './types.js';
 import { isValidProviderId } from './validate.js';
@@ -98,8 +98,12 @@ export function cachedModelToLocal(
       ? undefined
       : cached.contextWindow ?? (provider.id === 'cline-pass' ? undefined : resolveContextWindow(id)),
     supportedParameters: cached.supportedParameters,
-    reasoning: cached.reasoning ?? modelsDev?.reasoning,
-    interleavedReasoningField: cached.interleavedReasoningField ?? modelsDev?.interleaved?.field,
+    ...resolveModelReasoningMetadata(
+      provider.id,
+      cached.id,
+      { reasoning: cached.reasoning, interleavedField: cached.interleavedReasoningField },
+      metadata,
+    ),
     useResponsesLite: cached.useResponsesLite,
     preferWebSockets: cached.preferWebSockets,
   };
