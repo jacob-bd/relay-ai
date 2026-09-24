@@ -149,6 +149,69 @@ describe('resolveReasoningCapabilities', () => {
     expect(caps.levels).toEqual(['high', 'xhigh']);
     expect(caps.defaultLevel).toBe('high');
   });
+
+  it('exposes models.dev-declared effort levels for openai-compatible routes (Command Code)', () => {
+    const caps = resolveReasoningCapabilities({
+      providerId: 'commandcode',
+      npm: '@ai-sdk/openai-compatible',
+      modelId: 'meta/muse-spark-1.3-contributor',
+      reasoning: true,
+      reasoningEffortLevels: ['minimal', 'low', 'medium', 'high', 'xhigh'],
+    });
+
+    expect(caps.mode).toBe('controllable');
+    expect(caps.source).toBe('provider-metadata');
+    expect(caps.levels).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh']);
+    expect(caps.defaultLevel).toBe('medium');
+    expect(caps.wireFormat).toEqual({ kind: 'openai-reasoning-effort' });
+  });
+
+  it('defaults to the nearest-to-medium rung (ties → higher) when medium is not offered', () => {
+    const caps = resolveReasoningCapabilities({
+      providerId: 'commandcode',
+      npm: '@ai-sdk/openai-compatible',
+      modelId: 'meta/some-model',
+      reasoningEffortLevels: ['low', 'high'],
+    });
+
+    expect(caps.levels).toEqual(['low', 'high']);
+    expect(caps.defaultLevel).toBe('high');
+  });
+
+  it('suppresses the control when models.dev declared disjoint effort sets (conflict)', () => {
+    const caps = resolveReasoningCapabilities({
+      providerId: 'commandcode',
+      npm: '@ai-sdk/openai-compatible',
+      modelId: 'meta/conflicted',
+      reasoningEffortConflict: true,
+    });
+
+    expect(caps.mode).toBe('none');
+    expect(caps.levels).toEqual([]);
+  });
+
+  it('suppresses the control when all declared levels are outside the vocab', () => {
+    const caps = resolveReasoningCapabilities({
+      providerId: 'commandcode',
+      npm: '@ai-sdk/openai-compatible',
+      modelId: 'meta/weird',
+      reasoningEffortLevels: ['ultra', 'turbo'],
+    });
+
+    expect(caps.mode).toBe('none');
+    expect(caps.levels).toEqual([]);
+  });
+
+  it('does not let declared levels override a verified family rule (DeepSeek wins)', () => {
+    const caps = resolveReasoningCapabilities({
+      providerId: 'commandcode',
+      npm: '@ai-sdk/openai-compatible',
+      modelId: 'deepseek-v4-pro',
+      reasoningEffortLevels: ['minimal'],
+    });
+
+    expect(caps.wireFormat).toEqual({ kind: 'deepseek-thinking' });
+  });
 });
 
 describe('effortProviderOptions', () => {
@@ -346,5 +409,36 @@ describe('effortProviderOptions', () => {
         reasoningEffort: 'high',
       },
     });
+  });
+
+  it('maps a models.dev-declared effort verbatim to the provider-keyed reasoningEffort', () => {
+    expect(
+      effortProviderOptions('@ai-sdk/openai-compatible', 'medium', 'meta/muse-spark-1.3-contributor', {
+        providerId: 'commandcode',
+        reasoningEffortLevels: ['minimal', 'low', 'medium', 'high', 'xhigh'],
+      }),
+    ).toEqual({ commandcode: { reasoningEffort: 'medium' } });
+  });
+
+  it('drops an undeclared level rather than substituting it, even when a legacy param exists', () => {
+    // The regression this guards: an out-of-set level leaking into the legacy
+    // reasoning_effort mapping. Declared levels are terminal.
+    expect(
+      effortProviderOptions('@ai-sdk/openai-compatible', 'max', 'meta/muse-spark-1.3-contributor', {
+        providerId: 'commandcode',
+        reasoningEffortLevels: ['minimal', 'low', 'medium', 'high', 'xhigh'],
+        supportedParameters: ['reasoning_effort'],
+      }),
+    ).toBeUndefined();
+  });
+
+  it('suppresses effort entirely when models.dev declared a conflict', () => {
+    expect(
+      effortProviderOptions('@ai-sdk/openai-compatible', 'high', 'meta/conflicted', {
+        providerId: 'commandcode',
+        reasoningEffortConflict: true,
+        supportedParameters: ['reasoning_effort'],
+      }),
+    ).toBeUndefined();
   });
 });

@@ -692,6 +692,10 @@ export interface ReasoningMetadata {
    * Reasoning-capability id-pattern checks must match against this, not body.model.
    */
   upstreamModelId?: string;
+  /** Declared effort levels from models.dev (cross-bucket). Openai-compatible route only. */
+  reasoningEffortLevels?: string[];
+  /** models.dev declared disjoint effort sets — suppress the effort control. */
+  reasoningEffortConflict?: boolean;
 }
 
 export interface ReasoningCapabilities {
@@ -749,6 +753,14 @@ const GLM_52_EFFORT_LEVELS = ['high', 'xhigh'] as const;
  * the wire `max` value, matching the GLM-5.2 rule above.
  */
 const GLM_53_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
+
+/**
+ * The effort vocabulary Relay's controls understand. models.dev-declared levels
+ * are intersected with this — anything outside it (a novel keyword) is dropped
+ * rather than guessed at. `off` is excluded: it is Relay's alias, never a
+ * declared level.
+ */
+const GENERIC_EFFORT_VOCAB = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 const EMPTY_REASONING: ReasoningCapabilities = {
   levels: [],
@@ -894,6 +906,23 @@ function isGlm53ReasoningModel(modelId: string): boolean {
 
 function toCamelCase(str: string): string {
   return str.replace(/[-_]([a-z])/g, (_, g) => g.toUpperCase());
+}
+
+/**
+ * Pick the default effort: `medium` if offered, else the level closest to medium
+ * by vocabulary rank, ties resolving to the higher rung. `levels` must be a
+ * non-empty subset of {@link GENERIC_EFFORT_VOCAB} (ascending), which it always
+ * is at the one call site.
+ */
+function nearestToMediumEffort(levels: string[]): string {
+  if (levels.includes('medium')) return 'medium';
+  const mediumIdx = GENERIC_EFFORT_VOCAB.indexOf('medium');
+  return levels.reduce((best, level) => {
+    const bestDist = Math.abs(GENERIC_EFFORT_VOCAB.indexOf(best) - mediumIdx);
+    const dist = Math.abs(GENERIC_EFFORT_VOCAB.indexOf(level) - mediumIdx);
+    // ascending input → a later level with equal distance is the higher rung.
+    return dist <= bestDist ? level : best;
+  }, levels[0]!);
 }
 
 function hasSupportedParameter(metadata: ReasoningMetadata | undefined, param: string): boolean {
@@ -1416,6 +1445,30 @@ function resolveRawReasoningCapabilities(
     };
   }
 
+  // Generic models.dev-declared effort levels (openai-compatible route only —
+  // Command Code's non-Claude models live here). This is additive: it fires only
+  // after the verified DeepSeek/Kimi/GLM rules above, and never for the OpenAI/
+  // xAI/OpenRouter/Anthropic/Google/Mistral branches. Levels are taken verbatim
+  // from models.dev intersected with the vocab we can wire — an empty result is
+  // terminal (no slider), never a fall-through to a guessed level.
+  if (npm === '@ai-sdk/openai-compatible') {
+    if (metadata?.reasoningEffortConflict) return EMPTY_REASONING;
+    const declared = metadata?.reasoningEffortLevels;
+    if (declared && declared.length > 0) {
+      const levels = GENERIC_EFFORT_VOCAB.filter(v => declared.includes(v));
+      if (levels.length === 0) return EMPTY_REASONING;
+      return {
+        levels,
+        defaultLevel: nearestToMediumEffort(levels),
+        supportsSummaries: false,
+        mode: 'controllable',
+        source: 'provider-metadata',
+        confidence: 'documented',
+        wireFormat: { kind: 'openai-reasoning-effort' },
+      };
+    }
+  }
+
   if (hasSupportedParameter(metadata, 'reasoning_effort')) {
     return {
       levels: ['low', 'medium', 'high', 'xhigh'],
@@ -1561,6 +1614,19 @@ export function effortProviderOptions(
         return { [key]: { reasoningEffort } };
       }
       return undefined;
+    }
+    // Generic models.dev-declared effort (openai-compatible route). Verbatim: an
+    // undeclared/out-of-vocab level maps to nothing rather than being substituted
+    // onto a legacy value, so this branch is terminal once levels are declared.
+    if (npm === '@ai-sdk/openai-compatible') {
+      if (metadata?.reasoningEffortConflict) return undefined;
+      const declared = metadata?.reasoningEffortLevels;
+      if (declared && declared.length > 0) {
+        const accepted = new Set(GENERIC_EFFORT_VOCAB.filter(v => declared.includes(v)));
+        if (!accepted.has(effort)) return undefined;
+        const key = metadata?.providerId ? toCamelCase(metadata.providerId) : 'openaiCompatible';
+        return { [key]: { reasoningEffort: effort } };
+      }
     }
     if (hasSupportedParameter(metadata, 'reasoning_effort')) {
       const reasoningEffort = mapCodexEffortToOpenAICompatible(effort);
