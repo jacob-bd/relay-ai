@@ -39,6 +39,8 @@ function routeToModel(route: ProxyRoute): LocalProviderModel {
     supportedParameters: route.supportedParameters,
     reasoning: route.reasoning,
     interleavedReasoningField: route.interleavedReasoningField,
+    reasoningEffortLevels: route.reasoningEffortLevels,
+    reasoningEffortConflict: route.reasoningEffortConflict,
   };
 }
 

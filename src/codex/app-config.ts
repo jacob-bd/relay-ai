@@ -184,6 +184,8 @@ function mergeAppConfig(existing: TomlRecord, spec: CodexAppConfigSpec): TomlRec
         supportedParameters: spec.route.supportedParameters,
         reasoning: spec.route.reasoning,
         interleavedReasoningField: spec.route.interleavedReasoningField,
+        reasoningEffortLevels: spec.route.reasoningEffortLevels,
+        reasoningEffortConflict: spec.route.reasoningEffortConflict,
         upstreamModelId: spec.route.upstreamModelId,
       });
     if (caps.levels.length === 0 || !caps.levels.includes(existingEffort)) {

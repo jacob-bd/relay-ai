@@ -1603,6 +1603,8 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
           supportedParameters: selectedModel.supportedParameters,
           reasoning: selectedModel.reasoning,
           interleavedReasoningField: selectedModel.interleavedReasoningField,
+          reasoningEffortLevels: selectedModel.reasoningEffortLevels,
+          reasoningEffortConflict: selectedModel.reasoningEffortConflict,
           useResponsesLite: selectedModel.useResponsesLite,
           preferWebSockets: selectedModel.preferWebSockets,
           refreshToken: providerRefreshToken(activeProvider.id, activeProvider.authType, activeProvider.authRef),

@@ -77,6 +77,8 @@ export async function prepareCodexMixedRelayRoutes(
         supportedParameters: original.model.supportedParameters,
         reasoning: original.model.reasoning,
         interleavedReasoningField: original.model.interleavedReasoningField,
+        reasoningEffortLevels: original.model.reasoningEffortLevels,
+        reasoningEffortConflict: original.model.reasoningEffortConflict,
       }),
       trace,
     );

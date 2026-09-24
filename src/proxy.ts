@@ -110,6 +110,8 @@ export interface ProxyRoute {
   supportedParameters?: string[];
   reasoning?: boolean;
   interleavedReasoningField?: string;
+  reasoningEffortLevels?: string[];
+  reasoningEffortConflict?: boolean;
   /** Backend capability: model requires the Responses-Lite request shape (x-openai-internal-codex-responses-lite). */
   useResponsesLite?: boolean;
   /** Backend capability: model must use the WebSocket Responses transport instead of HTTP. */
@@ -350,6 +352,8 @@ export function startProxyCatalog(
             supportedParameters: route.supportedParameters,
             reasoning: route.reasoning,
             interleavedReasoningField: route.interleavedReasoningField,
+            reasoningEffortLevels: route.reasoningEffortLevels,
+            reasoningEffortConflict: route.reasoningEffortConflict,
             upstreamModelId: route.realModelId,
           },
         });
@@ -518,6 +522,8 @@ export function startProxy(
     supportedParameters?: string[];
     reasoning?: boolean;
     interleavedReasoningField?: string;
+    reasoningEffortLevels?: string[];
+    reasoningEffortConflict?: boolean;
     useResponsesLite?: boolean;
     preferWebSockets?: boolean;
     refreshToken?: () => Promise<string | null>;
@@ -546,6 +552,8 @@ export function startProxy(
     supportedParameters: sdk?.supportedParameters,
     reasoning: sdk?.reasoning,
     interleavedReasoningField: sdk?.interleavedReasoningField,
+    reasoningEffortLevels: sdk?.reasoningEffortLevels,
+    reasoningEffortConflict: sdk?.reasoningEffortConflict,
     useResponsesLite: sdk?.useResponsesLite,
     preferWebSockets: sdk?.preferWebSockets,
   }], clientModelId, debug);

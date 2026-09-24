@@ -73,6 +73,30 @@ describe('buildCodexProxyRoutesForProvider', () => {
     const routes = buildCodexProxyRoutesForProvider(provider, 'sk-test', 'claude-haiku-4-5');
     expect(routes[0]!.modelId).toBe('claude-haiku-4-5');
   });
+
+  it('carries models.dev reasoning-effort levels through to the proxy route (normal launch)', () => {
+    const provider: LocalProvider = {
+      id: 'commandcode',
+      name: 'Command Code',
+      apiKey: 'k',
+      models: [{
+        id: 'meta/muse-spark-1.3-contributor',
+        name: 'Muse Spark 1.3',
+        family: 'muse',
+        brand: 'Command Code',
+        modelFormat: 'openai',
+        upstreamModelId: 'meta/muse-spark-1.3-contributor',
+        npm: '@ai-sdk/openai-compatible',
+        apiBaseUrl: 'https://api.commandcode.ai/provider/v1',
+        contextWindow: 200000,
+        reasoning: true,
+        reasoningEffortLevels: ['minimal', 'low', 'medium', 'high', 'xhigh'],
+      }],
+    };
+    const [route] = buildCodexProxyRoutesForProvider(provider, 'sk-test');
+    expect(route!.reasoningEffortLevels).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh']);
+    expect(route!.reasoningEffortConflict).toBeUndefined();
+  });
 });
 
 describe('buildCodexAppProviderCatalogRoutes', () => {

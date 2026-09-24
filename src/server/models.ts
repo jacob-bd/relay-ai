@@ -44,6 +44,8 @@ export interface ServerModelInfo {
   supportedParameters?: string[];
   reasoning?: boolean;
   interleavedReasoningField?: string;
+  reasoningEffortLevels?: string[];
+  reasoningEffortConflict?: boolean;
   /** Backend capability: model requires the Responses-Lite request shape (x-openai-internal-codex-responses-lite). */
   useResponsesLite?: boolean;
   /** Backend capability: model must use the WebSocket Responses transport instead of HTTP. */

@@ -292,6 +292,8 @@ async function handleAnthropicMessages(
         supportedParameters: model.supportedParameters,
         reasoning: model.reasoning,
         interleavedReasoningField: model.interleavedReasoningField,
+        reasoningEffortLevels: model.reasoningEffortLevels,
+        reasoningEffortConflict: model.reasoningEffortConflict,
         upstreamModelId: upstreamModelId(model),
       },
       maxTools: npmMaxTools,

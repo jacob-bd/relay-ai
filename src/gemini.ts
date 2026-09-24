@@ -205,6 +205,8 @@ export async function runGeminiCommand(
     supportedParameters: m.supportedParameters,
     reasoning: m.reasoning,
     interleavedReasoningField: m.interleavedReasoningField,
+    reasoningEffortLevels: m.reasoningEffortLevels,
+    reasoningEffortConflict: m.reasoningEffortConflict,
   }));
 
   // Resolve and append favorites to proxy routes
@@ -234,6 +236,8 @@ export async function runGeminiCommand(
           supportedParameters: model.supportedParameters,
           reasoning: model.reasoning,
           interleavedReasoningField: model.interleavedReasoningField,
+          reasoningEffortLevels: model.reasoningEffortLevels,
+          reasoningEffortConflict: model.reasoningEffortConflict,
         });
       }
     }
@@ -270,6 +274,8 @@ export async function runGeminiCommand(
       supportedParameters: selectedModel.supportedParameters,
       reasoning: selectedModel.reasoning,
       interleavedReasoningField: selectedModel.interleavedReasoningField,
+      reasoningEffortLevels: selectedModel.reasoningEffortLevels,
+      reasoningEffortConflict: selectedModel.reasoningEffortConflict,
     });
   }
 

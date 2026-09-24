@@ -185,6 +185,8 @@ export function enrichServerModelReasoning(model: ServerModelInfo): ServerModelI
     supportedParameters: model.supportedParameters,
     reasoning: model.reasoning,
     interleavedReasoningField: model.interleavedReasoningField,
+    reasoningEffortLevels: model.reasoningEffortLevels,
+    reasoningEffortConflict: model.reasoningEffortConflict,
   });
   if (!caps.defaultLevel) return model;
   return { ...model, defaultEffort: caps.defaultLevel };

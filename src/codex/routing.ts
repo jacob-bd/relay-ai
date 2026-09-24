@@ -88,6 +88,8 @@ export interface CodexRoute {
   supportedParameters?: string[];
   reasoning?: boolean;
   interleavedReasoningField?: string;
+  reasoningEffortLevels?: string[];
+  reasoningEffortConflict?: boolean;
   /** Static headers sent on every upstream request (e.g. a plan/auth-tracking header a custom endpoint requires). */
   headers?: Record<string, string>;
   refreshToken?: () => Promise<string | null>;
@@ -146,6 +148,8 @@ export function resolveCodexRoute(
     supportedParameters: model.supportedParameters,
     reasoning: model.reasoning,
     interleavedReasoningField: model.interleavedReasoningField,
+    reasoningEffortLevels: model.reasoningEffortLevels,
+    reasoningEffortConflict: model.reasoningEffortConflict,
     headers: provider.headers,
     refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
   };
@@ -213,6 +217,8 @@ export function buildCodexProxyRoutesForProvider(
       supportedParameters: route.supportedParameters,
       reasoning: route.reasoning,
       interleavedReasoningField: route.interleavedReasoningField,
+      reasoningEffortLevels: route.reasoningEffortLevels,
+      reasoningEffortConflict: route.reasoningEffortConflict,
       contextWindow: route.contextWindow,
       headers: route.headers,
       refreshToken: route.refreshToken,

@@ -156,6 +156,8 @@ async function writeLaunchArtifacts(
     supportedParameters: route.supportedParameters,
     reasoning: route.reasoning,
     interleavedReasoningField: route.interleavedReasoningField,
+    reasoningEffortLevels: route.reasoningEffortLevels,
+    reasoningEffortConflict: route.reasoningEffortConflict,
   });
   writeOverlayFile(profilePath, buildCodexProfileToml({
     route,
@@ -683,6 +685,8 @@ export async function runCodexCommand(
         supportedParameters: route.supportedParameters,
         reasoning: route.reasoning,
         interleavedReasoningField: route.interleavedReasoningField,
+        reasoningEffortLevels: route.reasoningEffortLevels,
+        reasoningEffortConflict: route.reasoningEffortConflict,
       }], { debug: trace });
       proxyPort = proxyHandle.port;
     } else if (route.authType === 'oauth' && selectedModel.modelFormat === 'anthropic') {
@@ -709,6 +713,8 @@ export async function runCodexCommand(
         supportedParameters: route.supportedParameters,
         reasoning: route.reasoning,
         interleavedReasoningField: route.interleavedReasoningField,
+        reasoningEffortLevels: route.reasoningEffortLevels,
+        reasoningEffortConflict: route.reasoningEffortConflict,
       }], { debug: trace });
       proxyPort = proxyHandle.port;
     } else if (route.tier === 'proxy') {
@@ -725,6 +731,8 @@ export async function runCodexCommand(
         supportedParameters: route.supportedParameters,
         reasoning: route.reasoning,
         interleavedReasoningField: route.interleavedReasoningField,
+        reasoningEffortLevels: route.reasoningEffortLevels,
+        reasoningEffortConflict: route.reasoningEffortConflict,
         headers: route.headers,
         refreshToken: route.refreshToken,
       }], { debug: trace });

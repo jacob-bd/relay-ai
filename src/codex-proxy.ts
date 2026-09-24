@@ -339,6 +339,8 @@ export interface CodexProxyRoute {
   supportedParameters?: string[];
   reasoning?: boolean;
   interleavedReasoningField?: string;
+  reasoningEffortLevels?: string[];
+  reasoningEffortConflict?: boolean;
   vertex?: VertexProviderConfig;
   contextWindow?: number;
   /** Static headers sent on every upstream request (e.g. a plan/auth-tracking header a custom endpoint requires). */
@@ -823,6 +825,8 @@ export async function startCodexProxy(
               supportedParameters: route.supportedParameters,
               reasoning: route.reasoning,
               interleavedReasoningField: route.interleavedReasoningField,
+              reasoningEffortLevels: route.reasoningEffortLevels,
+              reasoningEffortConflict: route.reasoningEffortConflict,
               upstreamModelId: route.upstreamModelId,
             },
             {
@@ -1481,6 +1485,8 @@ export async function startCodexProxy(
                 supportedParameters: route.supportedParameters,
                 reasoning: route.reasoning,
                 interleavedReasoningField: route.interleavedReasoningField,
+                reasoningEffortLevels: route.reasoningEffortLevels,
+                reasoningEffortConflict: route.reasoningEffortConflict,
                 upstreamModelId: route.upstreamModelId,
               },
               {

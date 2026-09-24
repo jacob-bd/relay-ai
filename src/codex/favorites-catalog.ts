@@ -53,6 +53,8 @@ export function defaultReasoningEffortForFavorite(r: ResolvedFavorite): string {
     supportedParameters: model.supportedParameters,
     reasoning: model.reasoning,
     interleavedReasoningField: model.interleavedReasoningField,
+    reasoningEffortLevels: model.reasoningEffortLevels,
+    reasoningEffortConflict: model.reasoningEffortConflict,
   });
   return caps.levels.length > 0 ? caps.defaultLevel : 'none';
 }

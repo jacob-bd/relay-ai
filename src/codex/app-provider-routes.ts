@@ -38,6 +38,8 @@ function codexRouteToProxyRoute(
     supportedParameters: route.supportedParameters,
     reasoning: route.reasoning,
     interleavedReasoningField: route.interleavedReasoningField,
+    reasoningEffortLevels: route.reasoningEffortLevels,
+    reasoningEffortConflict: route.reasoningEffortConflict,
     headers: route.headers,
     refreshToken: route.refreshToken,
   };
@@ -86,6 +88,8 @@ export async function buildCodexAppProviderCatalogRoutes(
       supportedParameters: original.model.supportedParameters,
       reasoning: original.model.reasoning,
       interleavedReasoningField: original.model.interleavedReasoningField,
+      reasoningEffortLevels: original.model.reasoningEffortLevels,
+      reasoningEffortConflict: original.model.reasoningEffortConflict,
       headers: provider.headers,
     }),
     trace,

@@ -102,6 +102,8 @@ function codexProxyRouteToCodexRoute(route: CodexProxyRoute, fallbackProviderId:
     supportedParameters: route.supportedParameters,
     reasoning: route.reasoning,
     interleavedReasoningField: route.interleavedReasoningField,
+    reasoningEffortLevels: route.reasoningEffortLevels,
+    reasoningEffortConflict: route.reasoningEffortConflict,
     headers: route.headers,
     refreshToken: route.refreshToken,
   };

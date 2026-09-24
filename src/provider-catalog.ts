@@ -119,6 +119,8 @@ export function localProvidersToServerModels(localProviders: LocalProvider[]): S
       supportedParameters: model.supportedParameters,
       reasoning: model.reasoning,
       interleavedReasoningField: model.interleavedReasoningField,
+      reasoningEffortLevels: model.reasoningEffortLevels,
+      reasoningEffortConflict: model.reasoningEffortConflict,
       useResponsesLite: model.useResponsesLite,
       preferWebSockets: model.preferWebSockets,
       headers: provider.headers,
