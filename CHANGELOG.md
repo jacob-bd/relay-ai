@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.14.0] - 2026-09-24
+
+### Added
+
+- **Command Code (and other openai-compatible) models get a reasoning-effort slider from models.dev.** Relay used to derive effort levels only from a handful of hard-coded model-family rules, so newer models like `meta/muse-spark-1.3-contributor` showed no effort control in Codex App. Relay now reads the declared effort levels straight from models.dev — matched by full model id across aggregator catalogs (nano-gpt, kilo, openrouter, …) so proxied ids resolve even when the clean vendor bucket doesn't list them — for the `@ai-sdk/openai-compatible` route. Levels are taken verbatim (an undeclared level is never substituted onto a legacy value), the verified DeepSeek/Kimi/GLM/OpenAI/etc. rules are untouched, and a model whose sources genuinely disagree on effort gets no control rather than a guess.
+
+### Changed
+
+- **The bundled models.dev snapshot refreshes on launch only when stale.** Relay now refreshes its models.dev capability cache in the background only when the cache is older than 24h (and never on `--dry-run`), instead of attempting it on every launch. The bundled snapshot is refreshed and validated at release time so fresh installs start current.
+
+### Fixed
+
+- **Switching to a Gemini model with MCP tools loaded no longer fails with a schema error.** Gemini's API rejects array tool-parameters that omit an `items` schema (`function_declarations[..].parameters ... items: missing field`). Relay now fills in a permissive `items` (and handles `prefixItems`) so the tool schemas Claude Code and MCP servers emit are accepted.
+
 ## [0.13.0] - 2026-09-23
 
 ### Added
