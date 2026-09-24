@@ -43,7 +43,7 @@ import { runClaudeAppCommand, claudeAppHelpText } from './claude-app.js';
 import { prepareClaudeTraceLog, prepareProviderTraceLog, printTraceLog } from './trace-log.js';
 import { ANTIGRAVITY_BASE_URLS } from './oauth/antigravity-oauth.js';
 import { providersForCodexSubagents, providersForTarget } from './target-compatibility.js';
-import { refreshModelsDevCacheAsync } from './registry/models-dev.js';
+import { refreshModelsDevCacheAsync, isModelsDevCacheStale, loadModelsDevCache } from './registry/models-dev.js';
 import { setAgentStdoutMode, isAgentStdoutMode } from './agent-io.js';
 import {
   findProviderAndModel,
@@ -1665,7 +1665,9 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
     return 1;
   }
 
-  if (shouldRefreshModelsDev(parsed)) {
+  // Only spend a network fetch when the cache is actually stale (>24h). A fresh
+  // bundled/user cache serves fine offline, and --dry-run must not write.
+  if (shouldRefreshModelsDev(parsed) && !parsed.dryRun && isModelsDevCacheStale(loadModelsDevCache())) {
     refreshModelsDevCacheAsync();
   }
 
