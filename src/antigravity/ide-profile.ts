@@ -1,5 +1,46 @@
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
+
+const require = createRequire(import.meta.url);
+
+/** IDE state key holding the last model picked in the agent panel. */
+const MODEL_PREFERENCES_KEY = 'antigravityUnifiedStateSync.modelPreferences';
+
+/**
+ * Forget the model the IDE last had selected, so it opens on the catalog's
+ * default — the model chosen at launch.
+ *
+ * The IDE remembers that pick by its hidden model enum, but Relay reassigns
+ * enums on every launch (native slots and Relay-only entries follow catalog
+ * order), so a remembered enum reopens on whichever model holds it now.
+ * Only Relay's own isolated profile is touched, and only while the IDE is
+ * closed. Best effort: without `node:sqlite` (Node < 22.13) nothing changes.
+ */
+export function clearSavedModelSelection(profileDir: string): boolean {
+  const dbPath = path.join(profileDir, 'User', 'globalStorage', 'state.vscdb');
+  if (!fs.existsSync(dbPath)) return false;
+  const originalEmitWarning = process.emitWarning;
+  try {
+    // node:sqlite prints an ExperimentalWarning on load; keep the launch output clean.
+    process.emitWarning = ((warning: string | Error, ...rest: unknown[]) => {
+      const text = typeof warning === 'string' ? warning : warning.message;
+      if (text.includes('SQLite')) return;
+      (originalEmitWarning as (...args: unknown[]) => void).call(process, warning, ...rest);
+    }) as typeof process.emitWarning;
+    const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite');
+    const db = new DatabaseSync(dbPath);
+    try {
+      return Number(db.prepare('DELETE FROM ItemTable WHERE key = ?').run(MODEL_PREFERENCES_KEY).changes) > 0;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return false;
+  } finally {
+    process.emitWarning = originalEmitWarning;
+  }
+}
 
 /**
  * Read the settings.json file from the specified path.
@@ -58,6 +99,9 @@ export function prepareIdeProfile(profileDir: string, gatewayUrl: string): strin
 
   // 3. Write atomically to prevent corrupting settings on write failures
   writeIdeSettings(settingsPath, settings);
+
+  // 4. Open on the launch model, not whatever now holds the last-picked enum
+  clearSavedModelSelection(profileDir);
 
   return profileDir;
 }

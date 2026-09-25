@@ -10837,7 +10837,33 @@ import { join as join10 } from "path";
 
 // src/antigravity/ide-profile.ts
 import fs from "fs";
+import { createRequire } from "module";
 import path from "path";
+var require2 = createRequire(import.meta.url);
+var MODEL_PREFERENCES_KEY = "antigravityUnifiedStateSync.modelPreferences";
+function clearSavedModelSelection(profileDir) {
+  const dbPath = path.join(profileDir, "User", "globalStorage", "state.vscdb");
+  if (!fs.existsSync(dbPath)) return false;
+  const originalEmitWarning = process.emitWarning;
+  try {
+    process.emitWarning = ((warning, ...rest) => {
+      const text6 = typeof warning === "string" ? warning : warning.message;
+      if (text6.includes("SQLite")) return;
+      originalEmitWarning.call(process, warning, ...rest);
+    });
+    const { DatabaseSync } = require2("node:sqlite");
+    const db = new DatabaseSync(dbPath);
+    try {
+      return Number(db.prepare("DELETE FROM ItemTable WHERE key = ?").run(MODEL_PREFERENCES_KEY).changes) > 0;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return false;
+  } finally {
+    process.emitWarning = originalEmitWarning;
+  }
+}
 function readIdeSettings(settingsPath) {
   if (!fs.existsSync(settingsPath)) return {};
   try {
@@ -10863,6 +10889,7 @@ function prepareIdeProfile(profileDir, gatewayUrl) {
   settings["telemetry.enableTelemetry"] = false;
   settings["telemetry.enableCrashReporter"] = false;
   writeIdeSettings(settingsPath, settings);
+  clearSavedModelSelection(profileDir);
   return profileDir;
 }
 

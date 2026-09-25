@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { prepareIdeProfile, readIdeSettings } from '../src/antigravity/ide-profile.js';
+import { clearSavedModelSelection, prepareIdeProfile, readIdeSettings } from '../src/antigravity/ide-profile.js';
+import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -54,5 +55,48 @@ describe('antigravity ide-profile', () => {
     expect(settings['editor.fontSize']).toBe(14);
     expect(settings['jetski.cloudCodeUrl']).toBe(gatewayUrl);
     expect(settings['telemetry.telemetryLevel']).toBe('off');
+  });
+});
+
+describe('clearSavedModelSelection', () => {
+  let profileDir: string;
+  const dbPath = () => path.join(profileDir, 'User', 'globalStorage', 'state.vscdb');
+
+  beforeEach(() => {
+    profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-state-'));
+    fs.mkdirSync(path.dirname(dbPath()), { recursive: true });
+    const db = new DatabaseSync(dbPath());
+    db.exec('CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)');
+    const insert = db.prepare('INSERT INTO ItemTable (key, value) VALUES (?, ?)');
+    // The value real IDE 2.5.5 saved: last_selected_agent_model = enum 1403 (M403).
+    insert.run('antigravityUnifiedStateSync.modelPreferences', 'CjAKJmxhc3Rfc2VsZWN0ZWRfYWdlbnRfbW9kZWxfc2VudGluZWxfa2V5EgYKBEVQc0s=');
+    insert.run('colorThemeData', '{"id":"dark"}');
+    db.close();
+  });
+
+  afterEach(() => {
+    fs.rmSync(profileDir, { recursive: true, force: true });
+  });
+
+  const keys = () => {
+    const db = new DatabaseSync(dbPath());
+    const rows = db.prepare('SELECT key FROM ItemTable ORDER BY key').all() as Array<{ key: string }>;
+    db.close();
+    return rows.map(row => row.key);
+  };
+
+  it('forgets the last-picked model and keeps everything else', () => {
+    expect(clearSavedModelSelection(profileDir)).toBe(true);
+    expect(keys()).toEqual(['colorThemeData']);
+    expect(clearSavedModelSelection(profileDir)).toBe(false);
+  });
+
+  it('runs as part of preparing the profile', () => {
+    prepareIdeProfile(profileDir, 'http://127.0.0.1:1234');
+    expect(keys()).toEqual(['colorThemeData']);
+  });
+
+  it('does nothing for a profile the IDE has never opened', () => {
+    expect(clearSavedModelSelection(path.join(profileDir, 'fresh'))).toBe(false);
   });
 });
