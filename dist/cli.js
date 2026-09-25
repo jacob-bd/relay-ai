@@ -146,7 +146,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-7WBZNNTD.js";
+} from "./chunk-UWLW732V.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -16393,7 +16393,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-NV3ZSFDB.js");
+    const { runUiCommand } = await import("./ui-command-MHOAUN5E.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {
