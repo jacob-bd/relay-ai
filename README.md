@@ -90,6 +90,8 @@ To fully remove the tool and all its configuration data, you can delete the conf
 
 ## Commands
 
+> **Shorter names:** `relayai` and `relai` are aliases for `relay-ai` — every command below works with any of them (e.g. `relai agy`).
+
 | Command | Description |
 |---------|-------------|
 | `relay-ai` | Print help (does not launch Claude Code) |
