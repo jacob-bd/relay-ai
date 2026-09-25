@@ -372,6 +372,27 @@ Codex exposes a **reasoning effort** picker when relay-ai's model catalog includ
 
 ---
 
+## Out of ChatGPT usage? Keep working on Relay models
+
+When the ChatGPT account signed in to the Codex app reaches its usage limit, the app shows **"You're out of Codex and Work usage"** and disables Send for **every** model — including Relay models, which don't use ChatGPT usage at all. The check runs inside the app against the signed-in ChatGPT account, so Relay cannot lift it while that account is signed in. Switching to Relay-only mode alone is not enough.
+
+Your conversations are stored on your computer, so after either workaround you can reopen the stuck conversation, pick a Relay model, and continue.
+
+**Option A — sign in with an API key (no ChatGPT account):**
+
+1. Quit the app and run `relay-ai codex-app --relay-only`.
+2. In the app, log out (Settings → Account → Log out).
+3. At the sign-in screen choose **API key** and enter any character — Relay handles authentication.
+4. When you're done, sign back in with your ChatGPT account for normal use.
+
+Features that need a ChatGPT account — voice / speech-to-text, remote control, cloud tasks, the usage page — are unavailable while signed in with an API key.
+
+**Option B — sign in with another ChatGPT account that still has usage:**
+
+Use `relay-ai codex-app --relay-only` and sign in with any other ChatGPT account you own that has usage left; a free account works (free accounts include limited monthly usage). Relay models don't use that account's usage, so the block doesn't return, and account features stay available as far as that account's plan includes them. Use Relay-only mode for this: in mixed mode, native GPT models would spend that account's small allowance quickly.
+
+> OpenAI's terms prohibit circumventing usage limits. Relay models don't consume OpenAI usage, but decide for yourself whether switching accounts fits your situation.
+
 ## Troubleshooting
 
 ### CLI (`relay-ai codex`)
@@ -390,6 +411,7 @@ Codex exposes a **reasoning effort** picker when relay-ai's model catalog includ
 | Symptom | Fix |
 |---------|-----|
 | Existing conversations disappear during a relay-ai session | Update relay-ai. Older releases selected a custom `model_provider`, so Codex filtered the sidebar to relay-ai-only threads. Current releases keep the built-in `openai` provider and preserve normal history visibility. |
+| "You're out of Codex and Work usage" and Send is disabled, even on a Relay model | The app blocks every model when the signed-in ChatGPT account is out of usage. See [Out of ChatGPT usage?](#out-of-chatgpt-usage-keep-working-on-relay-models) |
 | App didn’t open | Open Codex manually once, run `relay-ai codex-app` again |
 | Model errors / disconnected | Keep relay-ai terminal open (proxy must run). On Codex App/ChatGPT Desktop, update to relay-ai 0.11.1 or newer; it fixes WebSocket framing that could cause valid requests to be dropped and trigger reconnects. |
 | Models appear but requests do not answer | Confirm the foreground Relay process is still running. Picker presence alone does not prove the proxy is alive; recover with `relay-ai codex-app --restore` only after the Relay process is confirmed absent. |

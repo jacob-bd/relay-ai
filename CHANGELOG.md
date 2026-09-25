@@ -7,6 +7,10 @@
 - **Codex app no longer hits `Recursive JSON schemas are not currently supported` with Meta's Muse Spark (via Command Code).** When the Codex app includes its own tool group — e.g. on its startup warm-up, before you type anything — the request failed with HTTP 400. One of those tools (`request_environment_input`) describes an "any value" field that refers to itself, and Meta rejects any tool definition with such a loop. Relay now flattens a looping definition before sending it (the looping part becomes "any value", which means the same thing), for every provider except OpenAI's own models, which accept loops. Tool definitions without a loop are sent unchanged. This covers the Codex app, Codex CLI and Claude Code routes.
 - **`relay-ai codex-app --relay-only` no longer refuses to start when a favorite comes from a sign-in provider.** With a favorite from Antigravity (Google sign-in) or a Claude sign-in provider, the launch stopped with `Relay proxy does not advertise catalog model antigravity__…`: the model list named the entry `provider__model`, but Relay registered its route under an internal name. The route now uses the same name. `relay-ai codex` had the same mismatch, where it failed quietly — that favorite couldn't be used — and is fixed too. Mixed mode was not affected.
 
+### Docs
+
+- **"Out of ChatGPT usage?" workarounds for the Codex app** ([docs/CODEX.md](docs/CODEX.md#out-of-chatgpt-usage-keep-working-on-relay-models)). When the signed-in ChatGPT account hits its limit, the Codex app blocks Send for every model, Relay models included. Two tested ways to keep working on Relay models: sign in with an API key in Relay-only mode, or sign in with another ChatGPT account that has usage left.
+
 ## [0.15.0] - 2026-09-25
 
 ### Added
