@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  breakRecursiveSchemaRefs,
   collapseSchemaUnionTypes,
   fixGoogleArraySchemas,
   normalizeToolSchemaForNpm,
@@ -242,5 +243,72 @@ describe('rewriteNulPatternEscapes', () => {
   it('leaves non-string pattern values untouched', () => {
     const schema = { properties: { x: { pattern: 0 } } };
     expect(rewriteNulPatternEscapes(schema)).toBe(schema);
+  });
+});
+
+// The Codex app's request_environment_input tool: `secrets[].target` is a
+// self-referencing "any JSON value". Meta (via Command Code) rejects the whole
+// request with "Recursive JSON schemas are not currently supported" (HTTP 400).
+const JSON_VALUE_DEF = {
+  anyOf: [
+    { type: 'string' },
+    { type: 'number' },
+    { type: 'boolean' },
+    { type: 'null' },
+    { type: 'array', items: { $ref: '#/$defs/__schema0' } },
+    { type: 'object', properties: {}, additionalProperties: { $ref: '#/$defs/__schema0' } },
+  ],
+};
+const REQUEST_ENVIRONMENT_INPUT = {
+  type: 'object',
+  properties: {
+    mode: { type: 'string', enum: ['repositories', 'secrets'] },
+    secrets: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { name: { type: 'string' }, target: { $ref: '#/$defs/__schema0' } },
+        required: ['name'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['mode'],
+  additionalProperties: false,
+  $defs: { __schema0: JSON_VALUE_DEF },
+};
+
+describe('breakRecursiveSchemaRefs', () => {
+  it('inlines a self-referencing definition, cutting the loop with an any-value schema', () => {
+    const out = breakRecursiveSchemaRefs(REQUEST_ENVIRONMENT_INPUT) as any;
+    expect(JSON.stringify(out)).not.toContain('$ref');
+    expect(out.$defs).toBeUndefined();
+    expect(out.properties.secrets.items.properties.target).toEqual({
+      anyOf: [
+        { type: 'string' },
+        { type: 'number' },
+        { type: 'boolean' },
+        { type: 'null' },
+        { type: 'array', items: {} },
+        { type: 'object', properties: {}, additionalProperties: {} },
+      ],
+    });
+    expect(out.properties.mode).toEqual(REQUEST_ENVIRONMENT_INPUT.properties.mode);
+  });
+
+  it('leaves schemas whose references do not loop untouched', () => {
+    const schema = {
+      type: 'object',
+      properties: { a: { $ref: '#/$defs/A' } },
+      $defs: { A: { type: 'object', properties: { b: { $ref: '#/$defs/B' } } }, B: { type: 'string' } },
+    };
+    expect(breakRecursiveSchemaRefs(schema)).toBe(schema);
+    const plain = { type: 'object', properties: {} };
+    expect(breakRecursiveSchemaRefs(plain)).toBe(plain);
+  });
+
+  it('is applied for non-OpenAI providers but not for OpenAI, which supports recursion', () => {
+    expect(JSON.stringify(normalizeToolSchemaForNpm(REQUEST_ENVIRONMENT_INPUT, '@ai-sdk/openai-compatible'))).not.toContain('$ref');
+    expect(normalizeToolSchemaForNpm(REQUEST_ENVIRONMENT_INPUT, '@ai-sdk/openai')).toEqual(REQUEST_ENVIRONMENT_INPUT);
   });
 });

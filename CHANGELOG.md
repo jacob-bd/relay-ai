@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.15.1] - 2026-09-25
+
+### Fixed
+
+- **Codex app no longer hits `Recursive JSON schemas are not currently supported` with Meta's Muse Spark (via Command Code).** When the Codex app includes its own tool group — e.g. on its startup warm-up, before you type anything — the request failed with HTTP 400. One of those tools (`request_environment_input`) describes an "any value" field that refers to itself, and Meta rejects any tool definition with such a loop. Relay now flattens a looping definition before sending it (the looping part becomes "any value", which means the same thing), for every provider except OpenAI's own models, which accept loops. Tool definitions without a loop are sent unchanged. This covers the Codex app, Codex CLI and Claude Code routes.
+
 ## [0.15.0] - 2026-09-25
 
 ### Added

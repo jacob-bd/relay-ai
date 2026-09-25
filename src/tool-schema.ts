@@ -165,8 +165,56 @@ export function fixGoogleArraySchemas(value: unknown): unknown {
  * Every route gets NUL pattern escapes rewritten. Union types and array shapes
  * stay intact except on Google, which cannot represent them.
  */
+const RECURSION_SAFE_NPM = new Set(['@ai-sdk/openai', '@ai-sdk/azure']);
+
+/**
+ * Inline a schema's local `#/$defs/` references when any of them loops back on
+ * itself, replacing the looping reference with `{}` (any value). Schemas without
+ * a loop are returned unchanged.
+ *
+ * Meta's models via Command Code reject the whole request with "Recursive JSON
+ * schemas are not currently supported" (HTTP 400). The Codex app always sends
+ * one: request_environment_input's `secrets[].target` is a self-referencing
+ * "any JSON value", so every Codex app request (even its startup warm-up)
+ * failed. Verified live: the inlined form is accepted and the model answers.
+ */
+export function breakRecursiveSchemaRefs(schema: unknown): unknown {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema;
+  const defs = (schema as Record<string, unknown>).$defs;
+  if (!defs || typeof defs !== 'object' || Array.isArray(defs)) return schema;
+  const definitions = defs as Record<string, unknown>;
+  let looped = false;
+
+  const walk = (node: unknown, resolving: ReadonlySet<string>): unknown => {
+    if (Array.isArray(node)) return node.map(child => walk(child, resolving));
+    if (!node || typeof node !== 'object') return node;
+    const { $ref, ...rest } = node as Record<string, unknown>;
+    if (typeof $ref === 'string' && $ref.startsWith('#/$defs/')) {
+      const name = $ref.slice('#/$defs/'.length);
+      if (name in definitions) {
+        if (resolving.has(name)) {
+          looped = true;
+          return {};
+        }
+        const target = walk(definitions[name], new Set([...resolving, name]));
+        return { ...(target as Record<string, unknown>), ...(walk(rest, resolving) as Record<string, unknown>) };
+      }
+    }
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(node as Record<string, unknown>)) {
+      if (key === '$defs' && resolving.size === 0 && node === schema) continue;
+      out[key] = walk(child, resolving);
+    }
+    return out;
+  };
+
+  const inlined = walk(schema, new Set());
+  return looped ? inlined : schema;
+}
+
 export function normalizeToolSchemaForNpm<T>(schema: T, npm: string | undefined): T {
-  const portable = rewriteNulPatternEscapes(schema) as T;
+  const acyclic = npm && RECURSION_SAFE_NPM.has(npm) ? schema : breakRecursiveSchemaRefs(schema) as T;
+  const portable = rewriteNulPatternEscapes(acyclic) as T;
   if (!npm || !GOOGLE_NPM.has(npm)) return portable;
   return fixGoogleArraySchemas(collapseSchemaUnionTypes(portable)) as T;
 }

@@ -7,7 +7,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.15.0",
+  version: "0.15.1",
   publishConfig: {
     access: "public"
   },
@@ -5302,8 +5302,41 @@ function fixGoogleArraySchemas(value) {
   }
   return out;
 }
+var RECURSION_SAFE_NPM = /* @__PURE__ */ new Set(["@ai-sdk/openai", "@ai-sdk/azure"]);
+function breakRecursiveSchemaRefs(schema) {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return schema;
+  const defs = schema.$defs;
+  if (!defs || typeof defs !== "object" || Array.isArray(defs)) return schema;
+  const definitions = defs;
+  let looped = false;
+  const walk = (node, resolving) => {
+    if (Array.isArray(node)) return node.map((child) => walk(child, resolving));
+    if (!node || typeof node !== "object") return node;
+    const { $ref, ...rest } = node;
+    if (typeof $ref === "string" && $ref.startsWith("#/$defs/")) {
+      const name = $ref.slice("#/$defs/".length);
+      if (name in definitions) {
+        if (resolving.has(name)) {
+          looped = true;
+          return {};
+        }
+        const target = walk(definitions[name], /* @__PURE__ */ new Set([...resolving, name]));
+        return { ...target, ...walk(rest, resolving) };
+      }
+    }
+    const out = {};
+    for (const [key, child] of Object.entries(node)) {
+      if (key === "$defs" && resolving.size === 0 && node === schema) continue;
+      out[key] = walk(child, resolving);
+    }
+    return out;
+  };
+  const inlined = walk(schema, /* @__PURE__ */ new Set());
+  return looped ? inlined : schema;
+}
 function normalizeToolSchemaForNpm(schema, npm) {
-  const portable = rewriteNulPatternEscapes(schema);
+  const acyclic = npm && RECURSION_SAFE_NPM.has(npm) ? schema : breakRecursiveSchemaRefs(schema);
+  const portable = rewriteNulPatternEscapes(acyclic);
   if (!npm || !GOOGLE_NPM.has(npm)) return portable;
   return fixGoogleArraySchemas(collapseSchemaUnionTypes(portable));
 }
@@ -5922,4 +5955,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-TAX7SVCS.js.map
+//# sourceMappingURL=chunk-JA5VDGAQ.js.map
