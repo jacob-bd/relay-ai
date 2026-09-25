@@ -2,6 +2,14 @@
 
 `relay-ai` uses a Native Provider Registry to store configuration and API keys securely in your OS keychain. This guide outlines all available providers, what they do, and common gotchas (like multiple variants of the same provider).
 
+## Refresh a provider's models
+
+Model lists are fetched when you add a provider and cached. To pick up new models:
+
+- `relay-ai providers refresh-models` (all providers) or `relay-ai providers refresh-models <id>`
+- **↻ Refresh models** in any launch picker (`relay-ai claude`, `agy`, `codex`, …) after you choose a provider — it refreshes that provider and reopens the model list
+- **Refresh All** on the Providers tab of `relay-ai ui`, or **Refresh** in a provider's details
+
 ## Add a model manually
 
 For beta models, private model IDs, or aliases missing from the provider's model list:

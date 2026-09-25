@@ -8,7 +8,9 @@ relay-ai antigravity      # Antigravity app
 relay-ai antigravity-ide  # Antigravity IDE
 ```
 
-Add `--provider <id> --model <id>` to skip the picker, and `--trace` to write a debug log to `~/.relay-ai/logs/`.
+Add `--provider <id> --model <id>` to skip the picker, and `--trace` to write a debug log to `~/.relay-ai/logs/` (it includes each request's model and settings, so you can confirm which effort level a message used).
+
+The IDE and the app open on the model you launched with: Relay clears their remembered last pick before each launch. For the app that pick lives in `~/.gemini/antigravity/antigravity_state.pbtxt`, which the app shares with non-Relay use, so your regular Antigravity app also forgets its last pick once.
 
 ## ⚠️ Use a throwaway Google account
 

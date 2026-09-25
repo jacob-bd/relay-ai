@@ -167,6 +167,8 @@ relay-ai providers refresh-models
 relay-ai providers refresh-models groq
 ```
 
+Interactively, every launch command's model list (after choosing a provider) also has a **↻ Refresh models** row that refreshes that provider and reopens the list.
+
 **Built-in cloud providers** (not in `providers.json`):
 
 | id | Requires |

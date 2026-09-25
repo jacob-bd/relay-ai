@@ -108,6 +108,7 @@ relay-ai claude-app
 3. Relay AI exposes the selected model first, followed by your available saved favorites (up to 50 models total, with duplicates and unavailable entries skipped).
 4. The command will **automatically enable Developer Mode**, configure the gateway to point to itself, and launch Claude Desktop for you.
 5. In Claude Desktop, confirm the model you want in the model picker. Relay AI orders the selected model first, but Claude Desktop controls which discovered model it activates initially.
+   - **Effort levels:** Claude Desktop shows its effort slider only for Claude models. Other models with adjustable effort are listed once per level instead (e.g. `GPT-6 Sol Low`, `GPT-6 Sol High`): every level for the selected model, medium and the two above it for each favorite. Each entry always runs at its level, whatever Claude Desktop sends. Effort entries count toward the 50-model limit.
 6. **Keep the terminal running!** It acts as the live proxy for Claude Desktop.
 7. When you are done, press `Ctrl+C` in the terminal to stop the proxy and seamlessly restore your original Claude Desktop configuration.
 

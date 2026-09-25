@@ -321,7 +321,7 @@ The reasoning-effort slider in the Codex picker is shown only for models with a 
 
 ### Proxy warm-up
 
-With 20 favorites spanning many providers, the first request after launch may be slow as the proxy initializes one `LanguageModel` per favorite. This is a known characteristic; subsequent requests are fast.
+With many favorites (up to 50) spanning many providers, the first request after launch may be slow as the proxy initializes one `LanguageModel` per favorite. This is a known characteristic; subsequent requests are fast.
 
 ---
 
