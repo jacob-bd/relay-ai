@@ -329,11 +329,13 @@ async function handleAnthropicMessages(
         );
         res.end();
       } else {
+        // ChatGPT's login backend rejects non-streaming requests (Claude Desktop's
+        // startup probe is one): stream upstream and collect, as proxy.ts does.
         const anthropicResponse = await generateAnthropicResponse(
           languageModel,
           params,
           responseModelId,
-          { log: plog },
+          { forceStream: model.npm === '@ai-sdk/openai' && model.authType === 'oauth', log: plog },
         );
         sendJson(res, 200, anthropicResponse);
       }

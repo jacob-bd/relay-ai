@@ -7144,7 +7144,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog, suba
           languageModel,
           params,
           responseModelId,
-          { log: plog }
+          { forceStream: model.npm === "@ai-sdk/openai" && model.authType === "oauth", log: plog }
         );
         sendJson(res, 200, anthropicResponse);
       }
@@ -9569,4 +9569,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-WUH34OWB.js.map
+//# sourceMappingURL=chunk-7WBZNNTD.js.map

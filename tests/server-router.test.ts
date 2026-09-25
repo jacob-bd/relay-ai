@@ -248,6 +248,30 @@ describe('server router', () => {
     });
   });
 
+  it('streams behind the scenes for ChatGPT-login models when the client asks for a non-streaming reply', async () => {
+    const chatgpt: ServerModelInfo = {
+      ...model('gpt-6-sol', 'openai', 'openai-oauth'),
+      providerId: 'openai-oauth',
+      npm: '@ai-sdk/openai',
+      authType: 'oauth',
+    };
+    const apiKeyed: ServerModelInfo = { ...chatgpt, id: 'gpt-6-luna', providerId: 'openai', authType: 'api' };
+    const server = await startTestServer({ catalog: createGatewayModelCatalog([chatgpt, apiKeyed]) });
+
+    for (const id of ['gpt-6-sol', 'gpt-6-luna']) {
+      const response = await fetch(`${server.url}/anthropic/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: id, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }),
+      });
+      expect(response.status).toBe(200);
+    }
+
+    const calls = vi.mocked(generateAnthropicResponse).mock.calls.slice(-2);
+    expect(calls[0]![3]).toMatchObject({ forceStream: true });
+    expect(calls[1]![3]).toMatchObject({ forceStream: false });
+  });
+
   it('passes masked request-local catalog routing to SDK-backed partner requests', async () => {
     const qwen: ServerModelInfo = {
       ...model('qwen-3', 'openai', 'go'),
