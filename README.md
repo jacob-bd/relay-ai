@@ -440,7 +440,7 @@ const result = await streamText({ model, prompt: 'Hello!' });
 
 Relay AI can launch the Antigravity CLI, standalone Antigravity app, and Antigravity IDE through a local Cloud Code gateway. This lets Antigravity's native model picker show Relay models from your configured providers.
 
-Antigravity has no reasoning-effort control, so Relay lists a model once per effort level: the model you launch with appears at every level it supports (e.g. `GPT-6 Sol None` … `GPT-6 Sol Max`), and each of your general favorites appears at three levels — medium and the two above it. Models without adjustable effort appear once. Up to 50 entries in total.
+In agy, each model is one row with agy's Low / Medium / High / Max effort slider (plus a separate XHigh row where supported). Antigravity IDE and the app have no effort control, so there Relay lists a model once per effort level: the model you launch with at every level it supports (e.g. `GPT-6 Sol None` … `GPT-6 Sol Max`), each of your general favorites at three levels — medium and the two above it. Models without adjustable effort appear once, and every entry names its provider. Up to 50 entries in total.
 
 ```bash
 relay-ai agy
@@ -491,6 +491,7 @@ relay-ai claude-app
 This command automates the "Third-Party Inference" (Developer Mode) setup. It temporarily configures Claude Desktop to point at a local gateway, launches the app, and exposes the selected model followed by your available saved favorites (up to 50 models total).
 
 - **Selected + favorites:** The selected model is listed first; duplicates and unavailable favorites are skipped. Claude Desktop ultimately controls which discovered model it activates initially.
+- **Effort levels:** Claude Desktop shows an effort slider only for Claude models, so other models with adjustable effort are listed once per level (e.g. `GPT-6 Sol Low`, `GPT-6 Sol High`) — every level for the selected model, medium and the two above it for each favorite. Each entry always runs at its level.
 - **Keep the terminal open:** The proxy runs in the foreground.
 - **Ctrl+C to restore:** When you're done, press `Ctrl+C` in the terminal to automatically restore Claude Desktop to its normal Anthropic cloud mode.
 - **Cleanup:** If the terminal crashes, run `relay-ai claude-app --restore`.

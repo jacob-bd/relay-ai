@@ -18,9 +18,13 @@ This use is probably not what Google intended, may violate Google's terms of ser
 
 ## What the model picker shows
 
-Antigravity has no reasoning-effort control, so Relay lists a model once per effort level:
+Every entry names the provider it comes from, e.g. `gemini-3.8-flash (Relay - Google Gemini)`, so the same model from two providers is easy to tell apart.
 
-- **The model you launch with** appears at every effort level it supports — for example `GPT-6 Sol None (Relay)` through `GPT-6 Sol Max (Relay)`.
+**agy (the Antigravity CLI)** has an effort slider. Each model appears as one row, e.g. `GPT-6 Sol (Relay - OpenAI (ChatGPT))`, with agy's Low / Medium / High / Max slider for the levels the model supports. The slider has no XHigh position, so a model that supports XHigh also gets a separate `XHigh` row. `None` is not offered. agy opens on your launch model at Medium.
+
+**Antigravity IDE and the Antigravity app** have no effort control, so Relay lists a model once per effort level:
+
+- **The model you launch with** appears at every effort level it supports — for example `GPT-6 Sol None` through `GPT-6 Sol Max`.
 - **Each of your favorites** (`relay-ai favorites`, the same list every other tool uses) appears at three levels: medium and the two above it, e.g. `GPT-6 Luna Medium / High / XHigh`. A model with fewer levels above medium is topped up from below (e.g. low / medium / high).
 - **Models without adjustable effort** appear once, with no level in the name.
 
