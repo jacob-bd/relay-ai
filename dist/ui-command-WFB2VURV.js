@@ -42,7 +42,7 @@ import {
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider,
   writeSecureLogLine
-} from "./chunk-UCK5RZX7.js";
+} from "./chunk-6QGO3LNO.js";
 import {
   init_provider_templates,
   listAddableTemplates,
@@ -95,7 +95,7 @@ import {
   setServerMaskGatewayIds,
   supportsManualModels,
   validateCustomEndpointUrl
-} from "./chunk-ZXOGVJ44.js";
+} from "./chunk-ZHJDF5LZ.js";
 import {
   __toCommonJS
 } from "./chunk-JIDIH7DS.js";
@@ -720,8 +720,7 @@ function handleGetConfig(res) {
   const prefs = loadPreferences();
   sendJson(res, 200, {
     favoriteModels: prefs.favoriteModels ?? [],
-    codexSubagentModels: prefs.codexSubagentModels ?? [],
-    antigravityCliFavoriteModels: prefs.antigravityCliFavoriteModels ?? []
+    codexSubagentModels: prefs.codexSubagentModels ?? []
   });
 }
 async function handlePostConfig(req, res) {
@@ -729,7 +728,6 @@ async function handlePostConfig(req, res) {
     const body = JSON.parse(await readBody(req));
     const update = {};
     if (Array.isArray(body.favoriteModels)) update.favoriteModels = body.favoriteModels;
-    if (Array.isArray(body.antigravityCliFavoriteModels)) update.antigravityCliFavoriteModels = body.antigravityCliFavoriteModels;
     if (Array.isArray(body.codexSubagentModels)) {
       const normalized = normalizeFavoriteModels(body.codexSubagentModels, CODEX_SUBAGENT_MODEL_CAP + 1);
       if (normalized.length > CODEX_SUBAGENT_MODEL_CAP) {
@@ -869,7 +867,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-TPVRFKOC.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-5HIEU577.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1365,7 +1363,6 @@ function handleGetApps(res) {
     sendJson(res, 500, { error: String(err) });
   }
 }
-var AGY_APP_IDS = /* @__PURE__ */ new Set(["antigravity", "agy", "antigravity-ide"]);
 var APP_ID_TO_LAUNCH_TARGET = {
   claude: "claude",
   "claude-app": "claude-app",
@@ -1434,7 +1431,7 @@ async function handleLaunchApp(req, res, opts) {
     }
     if (favorites && !httpProxy && !providerId && !modelId) {
       const prefs = loadPreferences();
-      const favList = AGY_APP_IDS.has(appId) ? prefs.antigravityCliFavoriteModels ?? [] : prefs.favoriteModels ?? [];
+      const favList = prefs.favoriteModels ?? [];
       if (favList.length > 0) {
         providerId = favList[0].providerId;
         modelId = favList[0].modelId;
@@ -1898,4 +1895,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-4TFUC7BG.js.map
+//# sourceMappingURL=ui-command-WFB2VURV.js.map

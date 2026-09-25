@@ -88,13 +88,6 @@
           </span>
           Codex SubAgent
         </a>
-        <a href="#antigravity" class="nav-item" data-section="antigravity">
-          <span class="nav-icon">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/></svg>
-          </span>
-          Antigravity Favorites
-          <span class="nav-badge" id="nav-agy-badge">0/6</span>
-        </a>
         <a href="#apps" class="nav-item" data-section="apps">
           <span class="nav-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
@@ -161,8 +154,8 @@
         </div>
         <div class="agy-slot-bar">
           <div class="agy-slot-label">Slots used</div>
-          <div class="agy-slot-pips" id="gen-pips"></div>
-          <div class="agy-slot-count" id="gen-counter">0<span class="agy-slot-max">/20</span></div>
+          <div class="agy-slot-pips dense" id="gen-pips"></div>
+          <div class="agy-slot-count" id="gen-counter">0<span class="agy-slot-max">/50</span></div>
         </div>
         <div class="search-row">
           <div class="search-field">
@@ -204,31 +197,6 @@
         <div id="codex-subagent-list" class="fav-list" role="list" aria-label="Codex SubAgent" data-list="codex-subagents"></div>
       </section>
 
-      <!-- Antigravity section -->
-      <section id="antigravity" class="section">
-        <div class="section-hero">
-          <div class="section-eyebrow">Antigravity CLI</div>
-          <h1 class="section-heading">Antigravity <span class="heading-accent">Favorites</span></h1>
-          <p class="section-sub">Models available in the Antigravity switch menu. Limited to <strong>6 slots</strong> — slot 7 is always the model you pick at launch.</p>
-        </div>
-        <div class="agy-slot-bar">
-          <div class="agy-slot-label">Slots used</div>
-          <div class="agy-slot-pips" id="agy-pips"></div>
-          <div class="agy-slot-count" id="agy-counter">0<span class="agy-slot-max">/6</span></div>
-        </div>
-        <div class="search-row">
-          <div class="search-field">
-            <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            <input type="search" id="agy-search" class="search-input" placeholder="Search models to add…" aria-label="Search Antigravity models">
-          </div>
-          <label class="free-only-toggle">
-            <input type="checkbox" id="agy-free-only">
-            <span>Free models only</span>
-          </label>
-        </div>
-        <div id="agy-results" class="model-results" hidden></div>
-        <div id="agy-list" class="fav-list" role="list" aria-label="Antigravity favorites" data-list="agy"></div>
-      </section>
 
       <!-- Apps section -->
       <section id="apps" class="section">

@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-7Q2CQAW7.js";
+} from "./chunk-P4RFOJEM.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -142,7 +142,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-UCK5RZX7.js";
+} from "./chunk-6QGO3LNO.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -222,7 +222,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-ZXOGVJ44.js";
+} from "./chunk-ZHJDF5LZ.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -9938,7 +9938,7 @@ async function startCloudCodeGateway(routes, opts = {}) {
       route.catalogId,
       deepMergeProviderOptions(
         thinkingProviderOptions(route.npm),
-        effortProviderOptions(route.npm, "high", route.upstreamModelId)
+        effortProviderOptions(route.npm, route.reasoningEffort ?? "high", route.upstreamModelId, route.reasoningMetadata)
       )
     );
   }
@@ -10032,6 +10032,7 @@ async function startCloudCodeGateway(routes, opts = {}) {
             return;
           }
           const baseProviderOptions = providerOptionsCache.get(route.catalogId);
+          if (trace) log15(`[gateway]   provider options: ${JSON.stringify(baseProviderOptions ?? {})}`);
           const isStream = lowerUrl.includes("stream");
           const conversationKey = conversationKeyFromRequest(parsed);
           const requestHeaders = openCodeGoHeaders(
@@ -10727,14 +10728,17 @@ async function resolveAntigravityLaunchRoutes(opts) {
     (entry) => !meetsContextFloor("antigravity", entry.model.contextWindow)
   );
   const launchable = resolved.filter((entry) => !tooSmall.includes(entry));
+  const routes = buildAntigravityRoutes(launchable, maxRoutes);
+  const routed = new Set(routes.map((route) => `${route.providerId}:${route.modelId}`));
+  const cutByVariants = launchable.filter((entry) => !routed.has(`${entry.providerId}:${entry.model.id}`)).map((entry) => ({ providerId: entry.providerId, modelId: entry.model.id }));
   return {
-    routes: buildAntigravityRoutes(launchable, maxRoutes),
+    routes,
     apiKey,
     droppedFavorites: [
       ...droppedFavorites,
       ...tooSmall.map((entry) => ({ providerId: entry.providerId, modelId: entry.model.id }))
     ],
-    capacitySkippedFavorites
+    capacitySkippedFavorites: [...cutByVariants, ...capacitySkippedFavorites]
   };
 }
 
@@ -11145,7 +11149,7 @@ import { homedir as homedir9 } from "os";
 import { join as join11 } from "path";
 var SHUTDOWN_DRAIN_MS = 500;
 var AGY_FAVORITES_PROVIDER_ID = "__relay_agy_favorites__";
-var AGY_FAVORITES_PROVIDER_LABEL = "\u2605 Antigravity CLI Favorites";
+var AGY_FAVORITES_PROVIDER_LABEL = "\u2605 Favorites";
 function agyArgsIncludeModelFlag(args) {
   return args.some((arg) => arg === "--model" || arg.startsWith("--model="));
 }
@@ -11156,10 +11160,10 @@ function buildAgyLaunchArgs(modelLabel, childArgs) {
 function agyArgsAreNonInteractive(args) {
   return args.some((arg) => arg === "-p" || arg === "--prompt" || arg.startsWith("--prompt="));
 }
-function formatAgyCapacityWarning(validatedSlotCount, skippedFavoriteCount) {
-  const slotWord = validatedSlotCount === 1 ? "slot" : "slots";
+function formatAgyCapacityWarning(maxEntries, skippedFavoriteCount) {
+  const entryWord = maxEntries === 1 ? "model" : "models";
   const favoritePhrase = skippedFavoriteCount === 1 ? "1 favorite was not exposed" : `${skippedFavoriteCount} favorites were not exposed`;
-  return `AGY can switch among ${validatedSlotCount} validated model ${slotWord}; ${favoritePhrase}.`;
+  return `Antigravity can list ${maxEntries} ${entryWord} (effort levels count separately); ${favoritePhrase}.`;
 }
 function isInteractiveTerminal() {
   return !!process.stdin.isTTY && !!process.stdout.isTTY;
@@ -11189,15 +11193,15 @@ function resolveAntigravityBootModel(provider, modelSelector) {
     error: exact.length > 1 || prefix.length > 1 ? `Model selector is ambiguous: ${modelSelector}.${candidateText}` : `Model not found: ${modelSelector} on provider ${provider.name}.${candidateText}`
   };
 }
-async function pickAntigravityCliFavoriteLaunchModel(favorites, allProviders) {
+async function pickAntigravityFavoriteLaunchModel(favorites, allProviders) {
   const resolved = favorites.map((favorite) => resolveFavoriteModel(favorite, allProviders)).filter((entry) => entry !== null);
   if (resolved.length === 0) {
-    p12.log.warn("No Antigravity CLI favorites are available.");
-    p12.log.info(pc9.dim("Manage them with `relay-ai favorites --agy`."));
+    p12.log.warn("No favorites are available for Antigravity.");
+    p12.log.info(pc9.dim("Manage them with `relay-ai favorites`."));
     return null;
   }
   const picked = await p12.select({
-    message: "Launch from Antigravity CLI favorites",
+    message: "Launch from favorites",
     options: resolved.map(({ provider, model }) => ({
       value: `${provider.id}:${model.id}`,
       label: formatCodexModelLabel(model),
@@ -11248,7 +11252,7 @@ async function resolveAntigravityLaunch(prefs, boot) {
     {
       value: AGY_FAVORITES_PROVIDER_ID,
       label: pc9.cyan(AGY_FAVORITES_PROVIDER_LABEL),
-      hint: `${prefs.antigravityCliFavoriteModels?.length ?? 0}/6 saved \xB7 manage with relay-ai favorites --agy`
+      hint: `${prefs.favoriteModels?.length ?? 0}/${MAX_MODEL_CATALOG} saved \xB7 manage with relay-ai favorites`
     },
     ...allProviders.map((lp) => providerSelectOption(lp))
   ];
@@ -11266,8 +11270,8 @@ async function resolveAntigravityLaunch(prefs, boot) {
       return null;
     }
     if (chosen === AGY_FAVORITES_PROVIDER_ID) {
-      const favoriteSelection = await pickAntigravityCliFavoriteLaunchModel(
-        prefs.antigravityCliFavoriteModels ?? [],
+      const favoriteSelection = await pickAntigravityFavoriteLaunchModel(
+        prefs.favoriteModels ?? [],
         allProviders
       );
       if (!favoriteSelection) {
@@ -11291,7 +11295,7 @@ async function resolveAndBuildRoutes(provider, model, allProviders, prefs, opts)
     provider,
     model,
     allProviders,
-    favorites: prefs.antigravityCliFavoriteModels ?? [],
+    favorites: prefs.favoriteModels ?? [],
     maxRoutes: opts.maxRoutes
   });
   if (!result) {
@@ -11300,9 +11304,9 @@ async function resolveAndBuildRoutes(provider, model, allProviders, prefs, opts)
   }
   if (result.routes.length > 1) {
     p12.log.info(
-      `Favorites mode active \u2014 Antigravity picker will show ${result.routes.length} models.`
+      `Favorites mode active \u2014 Antigravity picker will show ${result.routes.length} entries (effort levels are listed separately).`
     );
-    p12.log.info("Edit with `relay-ai favorites --agy`.");
+    p12.log.info("Edit with `relay-ai favorites`.");
   }
   if (result.droppedFavorites.length > 0) {
     p12.log.warn(
@@ -11310,7 +11314,7 @@ async function resolveAndBuildRoutes(provider, model, allProviders, prefs, opts)
     );
   }
   if (result.capacitySkippedFavorites.length > 0) {
-    p12.log.warn(formatAgyCapacityWarning(opts.validatedSlotCount, result.capacitySkippedFavorites.length));
+    p12.log.warn(formatAgyCapacityWarning(opts.maxRoutes, result.capacitySkippedFavorites.length));
     p12.log.warn(
       "Not exposed: " + result.capacitySkippedFavorites.map((fav) => `${fav.providerId}:${fav.modelId}`).join(", ")
     );
@@ -11371,10 +11375,6 @@ function waitForShutdown(input = process.stdin, platform = process.platform) {
 async function runAntigravityCommand(intro, tracePrefix, trace, boot, launch, opts = {}) {
   const prefs = loadPreferences();
   relayIntro(intro);
-  if (tracePrefix === "agy" && (prefs.favoriteModels?.length ?? 0) > 0 && (prefs.antigravityCliFavoriteModels?.length ?? 0) === 0 && !prefs.antigravityCliFavoritesHintShown) {
-    p12.log.info("Tip: AGY uses its own favorites list. Run `relay-ai favorites --agy` to set up switching.");
-    savePreferences({ antigravityCliFavoritesHintShown: true });
-  }
   const selection = await resolveAntigravityLaunch(prefs, boot);
   if (!selection) return 1;
   const { provider, model, allProviders } = selection;
@@ -11387,10 +11387,9 @@ async function runAntigravityCommand(intro, tracePrefix, trace, boot, launch, op
   for (const warning of compatibility.warnings) {
     p12.log.warn(warning);
   }
-  const routeLimit = compatibility.mode === "multi-model" ? compatibility.validatedSwitchSlotCount : 1;
+  const routeLimit = compatibility.mode === "multi-model" ? MAX_MODEL_CATALOG : 1;
   const routeResult = await resolveAndBuildRoutes(provider, model, allProviders, prefs, {
     maxRoutes: routeLimit,
-    validatedSlotCount: routeLimit,
     pauseForCapacityWarning: opts.pauseForCapacityWarning ?? false,
     childArgs: opts.childArgs ?? []
   });
@@ -15068,7 +15067,6 @@ function parseArgs(args) {
       else if (arg === "--agy") parsed2.favoritesAgy = true;
       else if (!parsed2.error) parsed2.error = `Unknown models option: ${arg}`;
     }
-    if (parsed2.favoritesAgy) parsed2.modelCatalogScope = "agy";
     return parsed2;
   }
   if (first === "providers") {
@@ -15371,9 +15369,10 @@ ${pc12.bold("Binary aliases:")}
   relayai     Same CLI as relay-ai (shorter to type)
   relai       Same CLI as relay-ai (shortest)
 
-${pc12.bold("Antigravity favorites:")}
-  agy, antigravity, and antigravity-ide share up to six Antigravity favorites
-  from relay-ai favorites --agy, plus the selected launch model.
+${pc12.bold("Favorites:")}
+  agy, antigravity, and antigravity-ide list the selected launch model at every
+  effort level it supports, then your favorites (relay-ai favorites) at three
+  effort levels each: medium and the two above it. Up to ${MAX_MODEL_CATALOG} entries.
 
 ${pc12.bold("Migration:")}
   Bare relay-ai prints this help instead of launching Claude Code.
@@ -15520,7 +15519,6 @@ Manage favorite models for mid-session switching.
 
 ${pc12.bold("Usage:")}
   relay-ai favorites
-  relay-ai favorites --agy
   relay-ai models
   relay-ai favorites --help
   relay-ai favorites --version
@@ -15531,20 +15529,18 @@ ${pc12.bold("Behavior:")}
   Search all providers at once (paginated results) or browse one provider at a time.
   Pick from Zen, Go, or any provider in your registry.
   Global favorites are saved to ~/.relay-ai/config.json (max ${MAX_MODEL_CATALOG}).
-  --agy manages Antigravity CLI favorites only (max 6).
   relay-ai subagents manages the Codex SubAgent (starts empty; does not sync with General Favorites).
 
 ${pc12.bold("How it works:")}
   Claude/Codex/Gemini/server use the global favorites list. The Codex SubAgent is a
   separate model-only catalog used when Codex mixed mode is enabled.
   Favorites appear in supported /model switch menus.
-  relay-ai agy, antigravity, and antigravity-ide use the Antigravity favorites
-  list so the limited native switch slots stay predictable: one selected launch
-  model plus up to six Antigravity favorites.
+  relay-ai agy, antigravity, and antigravity-ide use the same favorites. Antigravity
+  has no effort control, so each model is listed once per effort level: every level
+  for the launch model, three (medium and the two above it) for favorites.
 
 ${pc12.bold("Examples:")}
   relay-ai favorites
-  relay-ai favorites --agy
   relay-ai claude    # switch menu active when favorites are set`;
 }
 function antigravityCliHelpText() {
@@ -15623,8 +15619,8 @@ ${pc12.bold("How it works:")}
   The normal Antigravity profile is never modified.
 
 ${pc12.bold("Favorites:")}
-  Uses the same Antigravity favorites list as relay-ai favorites --agy:
-  up to six saved favorites plus the selected launch model.
+  Lists the selected launch model at every effort level it supports, then your
+  favorites (relay-ai favorites) at three effort levels each. Up to ${MAX_MODEL_CATALOG} entries.
 
 ${pc12.bold("Platform:")}
   macOS (Apple Silicon) \u2014 other platforms coming after testing.
@@ -15669,22 +15665,21 @@ async function launchClaudeViaCatalog(catalogRoutes, startingRoute, contextWindo
   if (trace) printTraceLog(debugLogPath);
   return exitCode;
 }
-var AGY_CLI_FAVORITES_CAP = 6;
 async function runModelsCommand(opts = {}) {
   const scope = opts.scope ?? "global";
-  const maxFavorites = scope === "agy" ? AGY_CLI_FAVORITES_CAP : scope === "codex-subagents" ? CODEX_SUBAGENT_MODEL_CAP : MAX_MODEL_CATALOG;
-  const scopeName = scope === "agy" ? "Antigravity CLI Favorites" : scope === "codex-subagents" ? "Codex SubAgent" : "Favorite Models";
+  const maxFavorites = scope === "codex-subagents" ? CODEX_SUBAGENT_MODEL_CAP : MAX_MODEL_CATALOG;
+  const scopeName = scope === "codex-subagents" ? "Codex SubAgent" : "Favorite Models";
   const subagentScope = scope === "codex-subagents";
-  const listLabel = subagentScope ? "Codex SubAgent" : scope === "agy" ? "Antigravity Favorites" : "favorites";
-  const listItemLabel = subagentScope ? "Codex SubAgent model" : scope === "agy" ? "Antigravity favorite" : "favorite";
-  const configKey = scope === "agy" ? "antigravityCliFavoriteModels" : scope === "codex-subagents" ? "codexSubagentModels" : "favoriteModels";
+  const listLabel = subagentScope ? "Codex SubAgent" : "favorites";
+  const listItemLabel = subagentScope ? "Codex SubAgent model" : "favorite";
+  const configKey = scope === "codex-subagents" ? "codexSubagentModels" : "favoriteModels";
   relayIntro(scopeName);
   const spinner10 = p15.spinner();
   spinner10.start("Loading providers...");
   const catalog = await fetchProviderCatalog();
   spinner10.stop("");
   const pickedProviders = providersForPicker(catalog);
-  const allProviders = scope === "agy" ? providersForTarget(pickedProviders, "antigravity") : scope === "codex-subagents" ? providersForCodexSubagents(pickedProviders) : pickedProviders;
+  const allProviders = scope === "codex-subagents" ? providersForCodexSubagents(pickedProviders) : pickedProviders;
   const favoriteProviders = allProviders.map((provider) => ({
     ...provider,
     name: favoriteProviderDisplayName(provider)
@@ -15702,7 +15697,7 @@ async function runModelsCommand(opts = {}) {
     }
   }
   const prefs = loadPreferences();
-  let favorites = scope === "agy" ? prefs.antigravityCliFavoriteModels ?? [] : scope === "codex-subagents" ? prefs.codexSubagentModels ?? [] : prefs.favoriteModels ?? [];
+  let favorites = scope === "codex-subagents" ? prefs.codexSubagentModels ?? [] : prefs.favoriteModels ?? [];
   let favoritesDirty = false;
   while (true) {
     const options = [];
@@ -15874,7 +15869,7 @@ async function runModelsCommand(opts = {}) {
   if (favoritesDirty) {
     savePreferences({ [configKey]: favorites });
   }
-  const summary = subagentScope ? favorites.length === 0 ? "No Codex SubAgent configured" : `${favorites.length} Codex SubAgent model${favorites.length !== 1 ? "s" : ""} saved` : favorites.length === 0 ? `No ${scope === "agy" ? "Antigravity CLI favorites" : "favorites"} saved` : `${favorites.length} ${scope === "agy" ? "Antigravity CLI favorite" : "favorite"}${favorites.length !== 1 ? "s" : ""} saved`;
+  const summary = subagentScope ? favorites.length === 0 ? "No Codex SubAgent configured" : `${favorites.length} Codex SubAgent model${favorites.length !== 1 ? "s" : ""} saved` : favorites.length === 0 ? "No favorites saved" : `${favorites.length} favorite${favorites.length !== 1 ? "s" : ""} saved`;
   relayOutro(
     summary,
     favorites.length === 0 ? pc12.dim("Launch uses single-model mode") : subagentScope ? pc12.cyan("Codex will use this model for every Relay SubAgent") : pc12.cyan("/model menu ready on next launch")
@@ -16366,7 +16361,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-4TFUC7BG.js");
+    const { runUiCommand } = await import("./ui-command-WFB2VURV.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {
@@ -16378,7 +16373,10 @@ Options:
       printHelp(modelsHelpText(parsed.modelCatalogScope === "codex-subagents" ? "codex-subagents" : "global"));
       return 0;
     }
-    return runModelsCommand({ scope: parsed.modelCatalogScope ?? (parsed.favoritesAgy ? "agy" : "global") });
+    if (parsed.favoritesAgy) {
+      p15.log.info("Antigravity now uses your general favorites \u2014 `--agy` is no longer needed.");
+    }
+    return runModelsCommand({ scope: parsed.modelCatalogScope ?? "global" });
   }
   if (parsed.command === "providers") {
     if (parsed.showVersion) {

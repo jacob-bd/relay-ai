@@ -7,7 +7,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.14.0",
+  version: "0.15.0",
   publishConfig: {
     access: "public"
   },
@@ -157,7 +157,7 @@ var PARENT_SESSION_ENV_VARS = [
   "CLAUDE_PID"
 ];
 var OPENCODE_CACHE_PATH = join(homedir(), ".cache", "opencode", "models.json");
-var MAX_MODEL_CATALOG = 20;
+var MAX_MODEL_CATALOG = 50;
 var CODEX_SUBAGENT_MODEL_CAP = 1;
 var MIN_CONTEXT_WINDOW = 128e3;
 var VERTEX_ANTHROPIC_NPM = "@ai-sdk/google-vertex/anthropic";
@@ -262,7 +262,20 @@ function ensureConfigMigrated() {
 }
 function readConfig() {
   ensureConfigMigrated();
-  return readJsonFile(getConfigPath()) ?? {};
+  return migrateAntigravityFavorites(readJsonFile(getConfigPath()) ?? {});
+}
+function migrateAntigravityFavorites(config) {
+  const legacy = config;
+  if (!("antigravityCliFavoriteModels" in legacy) && !("antigravityCliFavoritesHintShown" in legacy)) return config;
+  const merged = [...legacy.favoriteModels ?? []];
+  for (const fav of legacy.antigravityCliFavoriteModels ?? []) {
+    if (merged.length >= MAX_MODEL_CATALOG) break;
+    if (!merged.some((m) => m.providerId === fav.providerId && m.modelId === fav.modelId)) merged.push(fav);
+  }
+  const { antigravityCliFavoriteModels: _models, antigravityCliFavoritesHintShown: _hint, ...rest } = legacy;
+  const next = merged.length > 0 ? { ...rest, favoriteModels: merged } : rest;
+  writeConfig(next);
+  return next;
 }
 function writeConfig(config) {
   const configPath = getConfigPath();
@@ -287,8 +300,6 @@ function loadPreferences() {
     recentModelsByProvider: config.recentModelsByProvider,
     favoriteModels: config.favoriteModels,
     codexSubagentModels: Array.isArray(config.codexSubagentModels) ? config.codexSubagentModels.slice(0, CODEX_SUBAGENT_MODEL_CAP) : void 0,
-    antigravityCliFavoriteModels: config.antigravityCliFavoriteModels,
-    antigravityCliFavoritesHintShown: config.antigravityCliFavoritesHintShown,
     appPathOverrides: config.appPathOverrides,
     recentLaunchFolders: config.recentLaunchFolders,
     server: config.server
@@ -311,8 +322,6 @@ function savePreferences(prefs) {
   if (prefs.codexSubagentModels !== void 0) {
     config.codexSubagentModels = prefs.codexSubagentModels.slice(0, CODEX_SUBAGENT_MODEL_CAP);
   }
-  if (prefs.antigravityCliFavoriteModels !== void 0) config.antigravityCliFavoriteModels = prefs.antigravityCliFavoriteModels;
-  if (prefs.antigravityCliFavoritesHintShown !== void 0) config.antigravityCliFavoritesHintShown = prefs.antigravityCliFavoritesHintShown;
   if (prefs.appPathOverrides !== void 0) config.appPathOverrides = prefs.appPathOverrides;
   if (prefs.recentLaunchFolders !== void 0) config.recentLaunchFolders = prefs.recentLaunchFolders;
   writeConfig(config);
@@ -4382,6 +4391,12 @@ function withMappableLevels(caps, npm, modelId, metadata) {
     defaultLevel: levels.includes(caps.defaultLevel) ? caps.defaultLevel : levels[levels.length - 1]
   };
 }
+function openAiAllowedEffortLevels(modelId, metadata) {
+  const profile = openAiReasoningProfile(modelId, metadata);
+  if (profile) return profile.levels;
+  const declared = metadata?.reasoningEffortConflict ? void 0 : metadata?.reasoningEffortLevels;
+  return declared && declared.length > 0 ? declared : OPENAI_EFFORT_LEVELS;
+}
 function getReasoningCapabilities(npm, modelId, metadata) {
   return withMappableLevels(resolveRawReasoningCapabilities(npm, modelId, metadata), npm, modelId, metadata);
 }
@@ -4410,7 +4425,7 @@ function resolveRawReasoningCapabilities(npm, modelId, metadata) {
     const profile = openAiReasoningProfile(modelId, metadata);
     const prefersResponses = modelPrefersResponsesApi(canonicalId);
     if (openAiModelReasons(modelId, metadata) && shouldUseOpenAiResponsesEndpoint(canonicalId)) {
-      const levels = profile?.levels ?? [...OPENAI_EFFORT_LEVELS];
+      const levels = openAiAllowedEffortLevels(modelId, metadata);
       return {
         levels: [...levels],
         defaultLevel: profile?.defaultLevel ?? (levels.includes("medium") ? "medium" : levels[levels.length - 1]),
@@ -4581,8 +4596,7 @@ function effortProviderOptions(npm, effort, modelId, metadata) {
   if (npm === "@ai-sdk/openai" || npm === "@ai-sdk/azure") {
     if (!modelId || !shouldUseOpenAiResponsesEndpoint(canonicalOpenAiModelId(modelId, metadata))) return void 0;
     if (!openAiModelReasons(modelId, metadata)) return void 0;
-    const allowed = openAiReasoningProfile(modelId, metadata)?.levels ?? OPENAI_EFFORT_LEVELS;
-    const reasoningEffort = mapCodexEffortToOpenAI(effort, allowed);
+    const reasoningEffort = mapCodexEffortToOpenAI(effort, openAiAllowedEffortLevels(modelId, metadata));
     return reasoningEffort ? { openai: { reasoningEffort } } : void 0;
   }
   if (npm === "@ai-sdk/xai") {
@@ -5908,4 +5922,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-ZXOGVJ44.js.map
+//# sourceMappingURL=chunk-ZHJDF5LZ.js.map
