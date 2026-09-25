@@ -21,7 +21,7 @@
 |:---:|:---:|:---:|:---:|:---:|
 | [![Claude Demo](https://img.youtube.com/vi/IvsUPHLhX0o/mqdefault.jpg)](https://youtu.be/IvsUPHLhX0o) | [![Codex Demo](https://img.youtube.com/vi/42oiOB8IAu4/mqdefault.jpg)](https://youtu.be/42oiOB8IAu4) | [![Gemini Demo](https://img.youtube.com/vi/g7JKvqOHJl4/mqdefault.jpg)](https://www.youtube.com/watch?v=g7JKvqOHJl4) | [![UI & Antigravity Demo](https://img.youtube.com/vi/8vXJ0LfpdoY/mqdefault.jpg)](https://www.youtube.com/watch?v=8vXJ0LfpdoY) | [![Server Gateway Demo](https://img.youtube.com/vi/4CEw0MQUE9I/mqdefault.jpg)](https://www.youtube.com/watch?v=4CEw0MQUE9I) |
 
-**relay-ai** is an interactive CLI — and now a **visual launcher** — that connects AI coding tools to any provider and runs local API gateways on your machine. It supports **Claude Code**, **Claude Desktop (Cowork + Code)**, the **OpenAI Codex CLI**, the **ChatGPT desktop app in Codex mode (macOS + Windows + Linux)**, **Google Gemini CLI**, and experimental **Antigravity CLI / IDE** support.
+**relay-ai** is an interactive CLI — and now a **visual launcher** — that connects AI coding tools to any provider and runs local API gateways on your machine. It supports **Claude Code**, **Claude Desktop (Cowork + Code)**, the **OpenAI Codex CLI**, the **ChatGPT desktop app in Codex mode (macOS + Windows + Linux)**, **Google Gemini CLI**, and **Antigravity CLI / app / IDE**.
 
 > **Deploy with Docker / AI assistants:** To run an always-on **Server + Admin UI** from this repo (`docker compose up`), read **[docs/DOCKER.md](docs/DOCKER.md)** first — it includes questions to ask the user and an exact checklist. The container is **not** full desktop Relay AI (no Claude/Codex/Antigravity app launch inside Docker).
 
@@ -131,7 +131,7 @@ To fully remove the tool and all its configuration data, you can delete the conf
 - **API server:** Run a local gateway on port **17645** for Claude Code, Claude Desktop, or any Anthropic-compatible client
 - **Server wizard:** Filter exposed providers, mask discovery ids for Claude Desktop, optional favorites-only catalog, local vs network listen mode — available in the terminal (`relay-ai server`) or the `relay-ai ui` Server tab
 - **Vertex gateway:** Anthropic-compatible Claude on Google Vertex AI using gcloud Application Default Credentials
-- **Antigravity CLI / app / IDE support:** Experimental local Cloud Code gateway for Antigravity's native model picker. Read the account warning before using it
+- **Antigravity CLI / app / IDE support:** Local Cloud Code gateway that puts your Relay models in Antigravity's native model picker. Read the account warning before using it
 - **Clean environment isolation:** We strip 17 conflicting env vars (Vertex AI, Bedrock, AWS, Foundry, stale Anthropic config) from the child process only. We never touch `~/.claude/settings.json` (see caveat below)
 - **Secure key storage:** Per-provider keys and the OpenCode API key go in the OS credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service) or your shell profile
 - **Cross-platform:** macOS, Windows, Linux (Ubuntu, Fedora, distros with GNOME Keyring or KWallet)
@@ -154,9 +154,9 @@ To fully remove the tool and all its configuration data, you can delete the conf
 | Codex CLI | `relay-ai codex` | ✅ Supported ([guide](docs/CODEX.md)) |
 | ChatGPT desktop app (Codex mode) | `relay-ai codex-app` (alias `chatgpt`) | ✅ Supported macOS + Windows + Linux ([guide](docs/CODEX.md)) |
 | Google Gemini CLI | `relay-ai gemini` | ⚠️ Experimental, model switching is done via .model prompt |
-| Antigravity CLI | `relay-ai agy` | ⚠️ Experimental, use a throwaway Google account ([guide](docs/ANTIGRAVITY.md)) |
-| Antigravity app | `relay-ai antigravity` | ⚠️ Experimental macOS + Windows support, use a throwaway Google account ([guide](docs/ANTIGRAVITY.md)) |
-| Antigravity IDE | `relay-ai antigravity-ide` | ⚠️ Experimental macOS + Windows support, use a throwaway Google account ([guide](docs/ANTIGRAVITY.md)) |
+| Antigravity CLI | `relay-ai agy` | ✅ Supported — use a throwaway Google account ([guide](docs/ANTIGRAVITY.md)) |
+| Antigravity app | `relay-ai antigravity` | ✅ Supported macOS + Windows — use a throwaway Google account ([guide](docs/ANTIGRAVITY.md)) |
+| Antigravity IDE | `relay-ai antigravity-ide` | ✅ Supported macOS + Windows — use a throwaway Google account ([guide](docs/ANTIGRAVITY.md)) |
 | GitHub Copilot OAuth | `relay-ai providers auth github-copilot` | ✅ Device code flow ([guide](docs/SUBSCRIPTION-OAUTH.md)) |
 | xAI SuperGrok OAuth | `relay-ai providers auth xai-oauth` | ✅ Device code flow ([guide](docs/SUBSCRIPTION-OAUTH.md)) |
 | OpenAI ChatGPT OAuth | `relay-ai providers auth openai-oauth` | ✅ Device code flow ([guide](docs/SUBSCRIPTION-OAUTH.md)) |

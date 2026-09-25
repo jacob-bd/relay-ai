@@ -15,6 +15,7 @@
 - **Antigravity uses your general favorites.** The separate Antigravity Favorites list (limited to 6) is gone. On first run, any Antigravity favorites you had are merged into your general favorites (duplicates skipped). `relay-ai favorites --agy` still works and opens the general list, and the Antigravity Favorites panel is removed from `relay-ai ui`.
 - **Antigravity model names always show the provider.** Every Relay entry now reads `Model (Relay - Provider)`, e.g. `gemini-3.8-flash (Relay - Google Gemini)`, so the same model reached through two providers is easy to tell apart. Previously the provider appeared only when two names collided.
 - **`--trace` logs each Antigravity request's settings.** The debug log now shows the model ID and generation settings of every request, so you can confirm which effort level a message actually used.
+- **Antigravity CLI, app and IDE are no longer labeled experimental** in the README. The throwaway-Google-account warning stays.
 - **Providers are listed A to Z in `relay-ai ui` and the server setup.** The Providers tab (configured and available providers, with custom endpoints last) and the `relay-ai server` / Server tab provider list were in insertion order.
 - **Antigravity is no longer limited to 7 models.** The limit came from Antigravity IDE hiding any picker entry whose ID contains an underscore, not from its native model slots. Relay now gives entries past the first seven hyphen-only IDs, so the full catalog shows up.
 
