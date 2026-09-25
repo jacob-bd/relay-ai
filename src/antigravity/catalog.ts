@@ -513,11 +513,9 @@ function assertUniqueRouteDisplayNames(routes: AntigravityRoute[]): void {
   }
 }
 
+/** Every label names its provider, so the same model from two providers is easy to tell apart. */
 export function applyUniqueAntigravityRouteLabels(routes: AntigravityRoute[]): AntigravityRoute[] {
   const baseNames = routes.map(routeBaseModelName);
-  const baseNameCounts = duplicateCounts(baseNames);
-  const upstreamKey = (route: AntigravityRoute) => `${route.upstreamModelId}|${route.reasoningEffort ?? ''}`;
-  const upstreamCounts = duplicateCounts(routes.map(upstreamKey));
   // One count per distinct provider: effort variants of one provider must not look like two.
   const providerNameCounts = duplicateCounts(
     [...new Set(routes.map(route => `${route.providerId}\u0000${route.providerName}`))]
@@ -526,14 +524,6 @@ export function applyUniqueAntigravityRouteLabels(routes: AntigravityRoute[]): A
 
   const labeled = routes.map((route, index) => {
     const baseName = baseNames[index]!;
-    const needsSuffix =
-      (baseNameCounts.get(baseName) ?? 0) > 1
-      || (upstreamCounts.get(upstreamKey(route)) ?? 0) > 1;
-
-    if (!needsSuffix) {
-      return { ...route, displayName: `${baseName} (Relay)` };
-    }
-
     const providerName = route.providerName || route.providerId;
     const providerSuffix = (providerNameCounts.get(providerName) ?? 0) > 1
       ? `${providerName} ${authKindLabel(route)}`

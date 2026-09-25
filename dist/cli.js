@@ -146,7 +146,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-PN6HZ3EC.js";
+} from "./chunk-WUH34OWB.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -13425,7 +13425,7 @@ async function runClaudeAppCommand(args, boot) {
   }
   if (catalogResolution.capacitySkippedFavorites.length > 0) {
     const skipped = catalogResolution.capacitySkippedFavorites.map((favorite) => `${favorite.providerId}/${favorite.modelId}`).join(", ");
-    p14.log.warn(`Skipped favorite(s) beyond the 20-model catalog limit: ${skipped}`);
+    p14.log.warn(`Skipped favorite(s) beyond the ${MAX_MODEL_CATALOG}-model catalog limit: ${skipped}`);
   }
   let cloudCodeBackend = null;
   let proxyHandle = null;
@@ -16393,7 +16393,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-D24JT4XY.js");
+    const { runUiCommand } = await import("./ui-command-DWKC34QN.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

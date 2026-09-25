@@ -10,7 +10,7 @@ import {
 } from './codex/routing.js';
 import { startServer, type ServerHandle } from './server/router.js';
 import { createGatewayModelCatalog, type GatewayModelOptions } from './server/models.js';
-import { BACKENDS } from './constants.js';
+import { BACKENDS, MAX_MODEL_CATALOG } from './constants.js';
 import { applyDeploymentMode3p, writeRelayAiConfig } from './claude-desktop/app-config.js';
 import {
   buildClaudeAppServerCatalog,
@@ -198,7 +198,7 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
     const skipped = catalogResolution.capacitySkippedFavorites
       .map(favorite => `${favorite.providerId}/${favorite.modelId}`)
       .join(', ');
-    p.log.warn(`Skipped favorite(s) beyond the 20-model catalog limit: ${skipped}`);
+    p.log.warn(`Skipped favorite(s) beyond the ${MAX_MODEL_CATALOG}-model catalog limit: ${skipped}`);
   }
 
   let cloudCodeBackend: CloudCodeBackend | null = null;

@@ -4669,18 +4669,11 @@ function assertUniqueRouteDisplayNames(routes) {
 }
 function applyUniqueAntigravityRouteLabels(routes) {
   const baseNames = routes.map(routeBaseModelName);
-  const baseNameCounts = duplicateCounts(baseNames);
-  const upstreamKey = (route) => `${route.upstreamModelId}|${route.reasoningEffort ?? ""}`;
-  const upstreamCounts = duplicateCounts(routes.map(upstreamKey));
   const providerNameCounts = duplicateCounts(
     [...new Set(routes.map((route) => `${route.providerId}\0${route.providerName}`))].map((key) => key.split("\0")[1])
   );
   const labeled = routes.map((route, index) => {
     const baseName = baseNames[index];
-    const needsSuffix = (baseNameCounts.get(baseName) ?? 0) > 1 || (upstreamCounts.get(upstreamKey(route)) ?? 0) > 1;
-    if (!needsSuffix) {
-      return { ...route, displayName: `${baseName} (Relay)` };
-    }
     const providerName = route.providerName || route.providerId;
     const providerSuffix = (providerNameCounts.get(providerName) ?? 0) > 1 ? `${providerName} ${authKindLabel(route)}` : providerName;
     return {
@@ -9576,4 +9569,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-PN6HZ3EC.js.map
+//# sourceMappingURL=chunk-WUH34OWB.js.map

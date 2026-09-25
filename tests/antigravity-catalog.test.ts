@@ -585,7 +585,7 @@ describe('antigravity route resolution', () => {
       providerName: 'OpenCode Zen',
       modelId: 'llama-3.1-8b',
       upstreamModelId: 'llama-3.1-8b',
-      displayName: 'Llama 8B (Relay)',
+      displayName: 'Llama 8B (Relay - OpenCode Zen)',
       npm: '@ai-sdk/openai-compatible',
       apiKey: 'key-1',
       baseURL: undefined,
@@ -680,16 +680,16 @@ describe('antigravity effort variants', () => {
     ] as any[]);
 
     expect(routes.map(route => [route.displayName, route.reasoningEffort])).toEqual([
-      ['GPT-6 Sol None (Relay)', 'none'],
-      ['GPT-6 Sol Low (Relay)', 'low'],
-      ['GPT-6 Sol Medium (Relay)', 'medium'],
-      ['GPT-6 Sol High (Relay)', 'high'],
-      ['GPT-6 Sol XHigh (Relay)', 'xhigh'],
-      ['GPT-6 Sol Max (Relay)', 'max'],
-      ['GPT-6 Luna Medium (Relay)', 'medium'],
-      ['GPT-6 Luna High (Relay)', 'high'],
-      ['GPT-6 Luna XHigh (Relay)', 'xhigh'],
-      ['Llama 8B (Relay)', undefined],
+      ['GPT-6 Sol None (Relay - openai-oauth)', 'none'],
+      ['GPT-6 Sol Low (Relay - openai-oauth)', 'low'],
+      ['GPT-6 Sol Medium (Relay - openai-oauth)', 'medium'],
+      ['GPT-6 Sol High (Relay - openai-oauth)', 'high'],
+      ['GPT-6 Sol XHigh (Relay - openai-oauth)', 'xhigh'],
+      ['GPT-6 Sol Max (Relay - openai-oauth)', 'max'],
+      ['GPT-6 Luna Medium (Relay - openai)', 'medium'],
+      ['GPT-6 Luna High (Relay - openai)', 'high'],
+      ['GPT-6 Luna XHigh (Relay - openai)', 'xhigh'],
+      ['Llama 8B (Relay - groq)', undefined],
     ]);
     expect(routes[0]!.catalogId).toBe('relay-ai__openai-oauth__gpt-6-sol__effort_none');
     expect(new Set(routes.map(route => route.catalogId)).size).toBe(routes.length);
@@ -704,15 +704,15 @@ describe('antigravity effort variants', () => {
 
     // agy names the slider row after its first entry, so that one carries no level.
     expect(routes.map(route => [route.displayName, route.reasoningEffort])).toEqual([
-      ['GPT-6 Sol (Relay)', 'low'],
-      ['GPT-6 Sol Medium (Relay)', 'medium'],
-      ['GPT-6 Sol High (Relay)', 'high'],
-      ['GPT-6 Sol XHigh (Relay)', 'xhigh'],
-      ['GPT-6 Sol Max (Relay)', 'max'],
-      ['GLM 5 (Relay)', 'low'],
-      ['GLM 5 Medium (Relay)', 'medium'],
-      ['GLM 5 High (Relay)', 'high'],
-      ['Llama 8B (Relay)', undefined],
+      ['GPT-6 Sol (Relay - openai-oauth)', 'low'],
+      ['GPT-6 Sol Medium (Relay - openai-oauth)', 'medium'],
+      ['GPT-6 Sol High (Relay - openai-oauth)', 'high'],
+      ['GPT-6 Sol XHigh (Relay - openai-oauth)', 'xhigh'],
+      ['GPT-6 Sol Max (Relay - openai-oauth)', 'max'],
+      ['GLM 5 (Relay - zai)', 'low'],
+      ['GLM 5 Medium (Relay - zai)', 'medium'],
+      ['GLM 5 High (Relay - zai)', 'high'],
+      ['Llama 8B (Relay - groq)', undefined],
     ]);
   });
 
@@ -730,6 +730,6 @@ describe('antigravity effort variants', () => {
       fav('openai', gpt('gpt-6-luna', 'GPT-6 Luna')),
     ] as any[], 7);
     expect(routes).toHaveLength(7);
-    expect(routes.at(-1)!.displayName).toBe('GPT-6 Luna Medium (Relay)');
+    expect(routes.at(-1)!.displayName).toBe('GPT-6 Luna Medium (Relay - openai)');
   });
 });
