@@ -12,6 +12,7 @@ import { startCloudCodeGateway, type CloudCodeGatewayHandle } from './antigravit
 import { evaluateAgySwitchCompatibility } from './antigravity/slot-registry.js';
 import { resolveAntigravityLaunchRoutes } from './antigravity/launch-routes.js';
 import { launchAntigravityCli, readAntigravityCliVersion } from './antigravity/launch-cli.js';
+import { clearAppLastSelectedModel } from './antigravity/ide-profile.js';
 import catalogFixtureRaw from './antigravity/fixtures/fetchAvailableModels.json' with { type: 'json' };
 import {
   forceQuitAntigravityApp,
@@ -26,6 +27,7 @@ import {
   waitForAntigravityIdeQuit,
 } from './antigravity/launch-ide.js';
 import { pickLocalModel } from './prompts.js';
+import { pickerRefresh } from './picker-refresh.js';
 import { getAntigravityDebugLogPath, makeTraceLogger } from './trace-log.js';
 import { providerSelectOption, formatModelLabel, relayIntro, relayOutro } from './ui.js';
 import { homedir } from 'node:os';
@@ -39,6 +41,14 @@ const AGY_FAVORITES_PROVIDER_LABEL = '★ Favorites';
 /** True when child args already select a model (--model or --model=). */
 export function agyArgsIncludeModelFlag(args: string[]): boolean {
   return args.some(arg => arg === '--model' || arg.startsWith('--model='));
+}
+
+/** Label agy opens on: the launch model at medium when it has effort entries, else the first entry. */
+export function agyLaunchModelLabel(routes: ReturnType<typeof buildAntigravityRoutes>): string {
+  const first = routes[0]!;
+  const medium = routes.find(route =>
+    route.providerId === first.providerId && route.modelId === first.modelId && route.reasoningEffort === 'medium');
+  return (medium ?? first).displayName;
 }
 
 /** Prepend --model <display label> unless the user already passed --model. */
@@ -226,7 +236,8 @@ async function resolveAntigravityLaunch(
     }
 
     const activeProvider = allProviders.find(lp => lp.id === chosen)!;
-    const pickedModelResult = await pickLocalModel(activeProvider, conflicts, prefs);
+    const pickedModelResult = await pickLocalModel(activeProvider, conflicts, prefs, pickerRefresh(activeProvider, async () =>
+      providersForTarget(providersForPicker(await fetchProviderCatalog()), 'antigravity').find(lp => lp.id === activeProvider.id)));
     if (pickedModelResult === 'back') {
       currentInitialProvider = activeProvider.id;
       continue;
@@ -246,6 +257,7 @@ async function resolveAndBuildRoutes(
     maxRoutes: number;
     pauseForCapacityWarning: boolean;
     childArgs: string[];
+    agyEffortSlider: boolean;
   },
 ): Promise<{ routes: ReturnType<typeof buildAntigravityRoutes>; apiKey: string } | null> {
   const result = await resolveAntigravityLaunchRoutes({
@@ -254,6 +266,7 @@ async function resolveAndBuildRoutes(
     allProviders,
     favorites: prefs.favoriteModels ?? [],
     maxRoutes: opts.maxRoutes,
+    effortSlider: opts.agyEffortSlider,
   });
   if (!result) {
     p.log.error(`No credential for ${provider.name}. Run: relay-ai providers auth ${provider.id} or add an API key.`);
@@ -262,7 +275,9 @@ async function resolveAndBuildRoutes(
 
   if (result.routes.length > 1) {
     p.log.info(
-      `Favorites mode active — Antigravity picker will show ${result.routes.length} entries (effort levels are listed separately).`,
+      opts.agyEffortSlider
+        ? `Favorites mode active — ${result.routes.length} entries; each model's low/medium/high/max share one row with an effort slider.`
+        : `Favorites mode active — Antigravity picker will show ${result.routes.length} entries (effort levels are listed separately).`,
     );
     p.log.info('Edit with `relay-ai favorites`.');
   }
@@ -347,6 +362,8 @@ async function runAntigravityCommand(
     childArgs?: string[];
     versionGuard?: boolean;
     pauseForCapacityWarning?: boolean;
+    /** agy only: Relay-only entries (no native slots) with low/medium/high folded into a slider. */
+    agyEffortSlider?: boolean;
   } = {},
 ): Promise<number> {
   const prefs = loadPreferences();
@@ -375,6 +392,7 @@ async function runAntigravityCommand(
     maxRoutes: routeLimit,
     pauseForCapacityWarning: opts.pauseForCapacityWarning ?? false,
     childArgs: opts.childArgs ?? [],
+    agyEffortSlider: opts.agyEffortSlider ?? false,
   });
   if (!routeResult) return 1;
 
@@ -388,7 +406,7 @@ async function runAntigravityCommand(
 
   let gatewayHandle: CloudCodeGatewayHandle;
   try {
-    gatewayHandle = await startCloudCodeGateway(routeResult.routes, { trace, logFn });
+    gatewayHandle = await startCloudCodeGateway(routeResult.routes, { trace, logFn, nativeSlots: !opts.agyEffortSlider });
   } catch (err) {
     p.log.error(`Failed to start Cloud Code gateway: ${err}`);
     return 1;
@@ -415,8 +433,8 @@ export async function runAgyCommand(
 ): Promise<number> {
   return runAntigravityCommand(
     'relay-ai agy — Antigravity CLI', 'agy', trace, boot,
-    (env, routes) => launchAntigravityCli(env, buildAgyLaunchArgs(routes[0]!.displayName, childArgs)),
-    { childArgs, versionGuard: true, pauseForCapacityWarning: true },
+    (env, routes) => launchAntigravityCli(env, buildAgyLaunchArgs(agyLaunchModelLabel(routes), childArgs)),
+    { childArgs, versionGuard: true, pauseForCapacityWarning: true, agyEffortSlider: true },
   );
 }
 
@@ -445,6 +463,8 @@ export async function runAntigravityAppCommand(
         }
       }
 
+      // Open on the launch model, not whatever now holds the last-picked enum.
+      clearAppLastSelectedModel(join(homedir(), '.gemini', 'antigravity', 'antigravity_state.pbtxt'));
       const launchCode = await launchAntigravityApp(env, profileDir, gatewayHandle.url, childArgs);
       if (launchCode !== 0) return launchCode;
 

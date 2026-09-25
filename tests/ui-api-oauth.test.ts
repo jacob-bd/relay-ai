@@ -156,6 +156,14 @@ describe('UI OAuth API', () => {
     expect(cline[0].authMethods).toEqual(expect.arrayContaining(['api', 'oauth']));
   });
 
+  it('lists provider templates A to Z, with custom endpoints last', async () => {
+    const result = await call('GET', '/api/providers/templates');
+    const templates = result.body.templates as Array<{ name: string; custom?: boolean }>;
+    const names = templates.filter(template => !template.custom).map(template => template.name);
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true })));
+    expect(templates.at(-1)!.custom).toBe(true);
+  });
+
   it('allows the UI to explicitly replace an existing ClinePass credential', async () => {
     state.registry.providers = [{
       id: 'cline-pass',

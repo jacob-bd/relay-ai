@@ -45,6 +45,8 @@ export interface GatewayOptions {
   trackActiveRoute?: boolean;
   /** When trace is enabled, all gateway log lines are written here instead of stdout/stderr. */
   logFn?: (msg: string) => void;
+  /** Put the first routes on native slots (default true; agy passes false — see RelaySlotOptions). */
+  nativeSlots?: boolean;
 }
 
 type HelperRoutePolicy = 'launch' | 'launch-or-active';
@@ -111,9 +113,10 @@ export async function startCloudCodeGateway(
   const log = opts.logFn ?? (() => {});
 
   const catalogFixture = catalogFixtureRaw as unknown as CatalogFixture;
-  const injectedCatalog = injectRelayModels(catalogFixture, routes, templateKey);
+  const slotOptions = { nativeSlots: opts.nativeSlots ?? true };
+  const injectedCatalog = injectRelayModels(catalogFixture, routes, templateKey, slotOptions);
 
-  const selectedSlotRoutes = resolveRelayCatalogSlots(injectedCatalog, routes, templateKey);
+  const selectedSlotRoutes = resolveRelayCatalogSlots(injectedCatalog, routes, templateKey, slotOptions);
   const selectedSlotIds = new Set<string>();
   const routeMap = new Map<string, AntigravityRoute>();
   const reasoningEchoesByConversation = new Map<string, string[]>();
@@ -153,7 +156,7 @@ export async function startCloudCodeGateway(
 
   // Pre-compute invariant endpoint responses (routes don't change after startup)
   const experimentsResponse = buildListExperimentsResponse();
-  const modelConfigsResponse = buildListModelConfigsResponse(routes, injectedCatalog, templateKey);
+  const modelConfigsResponse = buildListModelConfigsResponse(routes, injectedCatalog, templateKey, slotOptions);
   const userSettings = {
     telemetryEnabled: false,
     userDataCollectionForceDisabled: true,

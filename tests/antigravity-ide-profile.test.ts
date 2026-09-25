@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { clearSavedModelSelection, prepareIdeProfile, readIdeSettings } from '../src/antigravity/ide-profile.js';
+import { clearAppLastSelectedModel, clearSavedModelSelection, prepareIdeProfile, readIdeSettings } from '../src/antigravity/ide-profile.js';
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -98,5 +98,44 @@ describe('clearSavedModelSelection', () => {
 
   it('does nothing for a profile the IDE has never opened', () => {
     expect(clearSavedModelSelection(path.join(profileDir, 'fresh'))).toBe(false);
+  });
+});
+
+describe('clearAppLastSelectedModel', () => {
+  let dir: string;
+  const statePath = () => path.join(dir, 'antigravity_state.pbtxt');
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-app-state-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('removes only the remembered model line', () => {
+    fs.writeFileSync(statePath(), [
+      'agent_onboarding_completed:  AGENT_ONBOARDING_STATE_COMPLETED',
+      'last_selected_agent_model:  MODEL_PLACEHOLDER_M319',
+      'migrations:  {',
+      '  key:  3',
+      '}',
+      '',
+    ].join('\n'));
+    expect(clearAppLastSelectedModel(statePath())).toBe(true);
+    expect(fs.readFileSync(statePath(), 'utf8')).toBe([
+      'agent_onboarding_completed:  AGENT_ONBOARDING_STATE_COMPLETED',
+      'migrations:  {',
+      '  key:  3',
+      '}',
+      '',
+    ].join('\n'));
+  });
+
+  it('leaves the file alone when nothing is remembered or it is missing', () => {
+    expect(clearAppLastSelectedModel(statePath())).toBe(false);
+    fs.writeFileSync(statePath(), 'migrations:  {\n}\n');
+    expect(clearAppLastSelectedModel(statePath())).toBe(false);
+    expect(fs.readFileSync(statePath(), 'utf8')).toBe('migrations:  {\n}\n');
   });
 });

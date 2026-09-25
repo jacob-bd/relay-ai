@@ -488,7 +488,8 @@ function handleGetTemplates(res: ServerResponse): void {
     }
   }
 
-  sendJson(res, 200, { templates: [...templates.values(), ...CUSTOM_TEMPLATES] });
+  const sorted = [...templates.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }));
+  sendJson(res, 200, { templates: [...sorted, ...CUSTOM_TEMPLATES] });
 }
 
 async function handleAddCustomProvider(req: IncomingMessage, res: ServerResponse): Promise<void> {

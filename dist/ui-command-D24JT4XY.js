@@ -42,7 +42,7 @@ import {
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider,
   writeSecureLogLine
-} from "./chunk-6QGO3LNO.js";
+} from "./chunk-PN6HZ3EC.js";
 import {
   init_provider_templates,
   listAddableTemplates,
@@ -95,7 +95,7 @@ import {
   setServerMaskGatewayIds,
   supportsManualModels,
   validateCustomEndpointUrl
-} from "./chunk-ZHJDF5LZ.js";
+} from "./chunk-TAX7SVCS.js";
 import {
   __toCommonJS
 } from "./chunk-JIDIH7DS.js";
@@ -867,7 +867,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-5HIEU577.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-6FBULZJU.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -960,7 +960,8 @@ function handleGetTemplates(res) {
       templates.set(template.id, template);
     }
   }
-  sendJson(res, 200, { templates: [...templates.values(), ...CUSTOM_TEMPLATES] });
+  const sorted = [...templates.values()].sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base", numeric: true }));
+  sendJson(res, 200, { templates: [...sorted, ...CUSTOM_TEMPLATES] });
 }
 async function handleAddCustomProvider(req, res) {
   try {
@@ -1895,4 +1896,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-WFB2VURV.js.map
+//# sourceMappingURL=ui-command-D24JT4XY.js.map

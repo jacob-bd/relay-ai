@@ -20,6 +20,7 @@ import type { CloudCodeBackend } from './cloud-code-backend.js';
 import { rewriteGeminiBackendRoutes } from './gemini/backend-routes.js';
 import { VERSION } from './constants.js';
 import { providersForTarget } from './target-compatibility.js';
+import { pickerRefresh } from './picker-refresh.js';
 
 export function geminiHelpText(): string {
   return `${pc.bold('relay-ai gemini')} v${VERSION}
@@ -160,7 +161,10 @@ export async function runGeminiCommand(
       selectedModel = favPick.model;
     } else {
       activeProvider = chosenProvider;
-      const chosenModel = await pickGeminiModel(activeProvider, prefs);
+      const pickerProvider = activeProvider;
+      const chosenModel = await pickGeminiModel(activeProvider, prefs, pickerRefresh(pickerProvider, async () =>
+        providersForTarget(providersForPicker(await fetchProviderCatalog({ agent: 'gemini' })), 'gemini')
+          .find(lp => lp.id === pickerProvider.id)));
       if (!chosenModel || chosenModel === 'back') return 0;
       selectedModel = chosenModel;
     }

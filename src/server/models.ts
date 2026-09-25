@@ -52,6 +52,8 @@ export interface ServerModelInfo {
   preferWebSockets?: boolean;
   /** Fallback reasoning effort when the client omits output_config.effort. */
   defaultEffort?: string;
+  /** Effort forced on every request, for effort-variant catalog entries. */
+  fixedEffort?: string;
   contextWindow?: number;
   /** Picker label for gateway aliases, e.g. "OpenCode Go" or local provider name. */
   providerLabel?: string;

@@ -4,11 +4,9 @@ import * as p from '@clack/prompts';
 import type { LocalProvider, LocalProviderModel, UserPreferences } from '../types.js';
 import {
   confirmLaunchMessage,
-  modelSelectOption,
-  navOption,
   providerSelectOption,
 } from '../ui.js';
-import { browseAllModels } from '../prompts.js';
+import { pickProviderModel } from '../prompts.js';
 
 export async function pickGeminiProvider(
   providers: LocalProvider[],
@@ -53,56 +51,9 @@ export async function pickGeminiProvider(
 export async function pickGeminiModel(
   provider: LocalProvider,
   prefs: UserPreferences,
+  refresh?: () => Promise<void>,
 ): Promise<LocalProviderModel | 'back' | null> {
-  const recentIds = (prefs.recentModelsByProvider?.[provider.id] ?? []).slice(0, 3);
-  const recentModels = recentIds
-    .map(id => provider.models.find(m => m.id === id))
-    .filter((m): m is LocalProviderModel => m !== undefined);
-
-  let selectedModel: LocalProviderModel | null = null;
-
-  while (true) {
-    if (recentModels.length > 0) {
-      const options = [
-        ...recentModels.map(m => modelSelectOption(m, 'recent')),
-        navOption('__browse_all__', 'Browse all models →', `${provider.models.length} available`),
-        navOption('__back__', '← Go back', 'Select a different provider'),
-      ];
-
-      const picked = await p.select({
-        message: `Model for ${provider.name}?`,
-        options,
-        initialValue: recentModels[0].id,
-      });
-
-      if (p.isCancel(picked) || String(picked) === '__back__') {
-        return 'back';
-      }
-
-      if (String(picked) === '__browse_all__') {
-        const browsed = await browseAllModels(provider, prefs);
-        if (browsed === 'back') {
-          continue;
-        }
-        if (!browsed) return null;
-        selectedModel = browsed;
-        break;
-      } else {
-        selectedModel = recentModels.find(m => m.id === String(picked))!;
-        break;
-      }
-    } else {
-      const browsed = await browseAllModels(provider, prefs);
-      if (browsed === 'back') {
-        return 'back';
-      }
-      if (!browsed) return null;
-      selectedModel = browsed;
-      break;
-    }
-  }
-
-  return selectedModel;
+  return pickProviderModel(provider, prefs, { message: `Model for ${provider.name}?`, maxRecent: 3, refresh });
 }
 
 export function confirmGeminiLaunch(

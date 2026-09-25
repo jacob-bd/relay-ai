@@ -258,9 +258,12 @@ describe('runClaudeAppCommand', () => {
     });
 
     expect(code).toBe(0);
+    // GPT-5.5 has adjustable effort, so it is listed once per level; the first is 'none'.
     const [model] = state.startServerOptions.catalog.list();
     expect(model).toMatchObject({
-      id: 'gpt-5.5',
+      id: 'gpt-5.5-effort-none',
+      upstreamModelId: 'gpt-5.5',
+      fixedEffort: 'none',
       providerId: 'openai-oauth',
       authType: 'oauth',
       oauthAccountId: 'account-123',

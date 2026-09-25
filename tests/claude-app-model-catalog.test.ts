@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_MODEL_CATALOG } from '../src/constants.js';
 import {
   buildClaudeAppServerCatalog,
+  expandClaudeAppEffortVariants,
   resolveClaudeAppCatalog,
 } from '../src/claude-desktop/model-catalog.js';
+import type { ServerModelInfo } from '../src/server/models.js';
 import type { ResolvedFavorite } from '../src/favorites-resolver.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from '../src/types.js';
 
@@ -282,5 +284,65 @@ describe('buildClaudeAppServerCatalog', () => {
       'resolved-selected-key',
       'resolved-favorite-key',
     ]);
+  });
+});
+
+describe('expandClaudeAppEffortVariants', () => {
+  const sol: ServerModelInfo = {
+    id: 'gpt-6-sol',
+    name: 'GPT-6 Sol',
+    isFree: false,
+    brand: 'OpenAI',
+    sourceBackend: 'openai-oauth',
+    providerId: 'openai-oauth',
+    modelFormat: 'openai',
+    npm: '@ai-sdk/openai',
+    reasoning: true,
+    reasoningEffortLevels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+  };
+  const claude: ServerModelInfo = {
+    id: 'claude-haiku-4-5',
+    name: 'Claude Haiku 4.5',
+    isFree: false,
+    brand: 'Anthropic',
+    sourceBackend: 'anthropic',
+    providerId: 'anthropic',
+    modelFormat: 'anthropic',
+  };
+
+  it('lists every level for the launch model and medium plus two above for favorites', () => {
+    const glm: ServerModelInfo = {
+      ...sol,
+      id: 'glm-5',
+      name: 'GLM 5',
+      providerId: 'zai',
+      npm: '@ai-sdk/openai-compatible',
+      reasoningEffortLevels: ['low', 'medium', 'high'],
+    };
+    const out = expandClaudeAppEffortVariants([sol, claude, { ...sol, providerId: 'other' }, glm]);
+    expect(out.map(m => m.name)).toEqual([
+      'GPT-6 Sol None', 'GPT-6 Sol Low', 'GPT-6 Sol Medium', 'GPT-6 Sol High', 'GPT-6 Sol XHigh', 'GPT-6 Sol Max',
+      'Claude Haiku 4.5',
+      'GPT-6 Sol Medium', 'GPT-6 Sol High', 'GPT-6 Sol XHigh',
+      'GLM 5 Low', 'GLM 5 Medium', 'GLM 5 High',
+    ]);
+  });
+
+  it('gives each variant its own id and forced effort, keeping the upstream id', () => {
+    const [none] = expandClaudeAppEffortVariants([sol]);
+    expect(none).toMatchObject({
+      id: 'gpt-6-sol-effort-none',
+      upstreamModelId: 'gpt-6-sol',
+      fixedEffort: 'none',
+    });
+  });
+
+  it('leaves Claude models and models without adjustable effort alone', () => {
+    const plain: ServerModelInfo = { ...sol, id: 'plain', name: 'Plain', reasoning: false, reasoningEffortLevels: undefined, npm: '@ai-sdk/openai-compatible' };
+    expect(expandClaudeAppEffortVariants([claude, plain])).toEqual([claude, plain]);
+  });
+
+  it('caps the expanded catalog', () => {
+    expect(expandClaudeAppEffortVariants([sol, sol], 4)).toHaveLength(4);
   });
 });

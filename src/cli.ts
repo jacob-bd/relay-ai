@@ -55,6 +55,7 @@ import {
 import { generateAiDoc, installAiDoc, printAiInstallResult } from './ai-doc.js';
 import { launchClaudeWithHttpProxy } from './http-proxy/launch.js';
 import { supportsClaudeTransparentMode } from './http-proxy/routes.js';
+import { pickerRefresh } from './picker-refresh.js';
 const STARTER_CLAUDE_FLAGS = new Set(['--dry-run', '--setup', '--trace', '--http-proxy', '--help', '-h', '--version', '-v']);
 const RELAY_LAUNCH_FLAGS = new Set(['--provider', '--model']);
 
@@ -1390,7 +1391,9 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
         break;
       } else {
         activeProvider = allProviders.find(lp => lp.id === providerChoice)!;
-        const pickedModelResult = await pickLocalModel(activeProvider, conflicts, prefs);
+        const pickerProvider = activeProvider;
+        const pickedModelResult = await pickLocalModel(activeProvider, conflicts, prefs, pickerRefresh(pickerProvider, async () =>
+          providersForTarget(providersForPicker(await fetchProviderCatalog()), 'claude').find(lp => lp.id === pickerProvider.id)));
         if (pickedModelResult === 'back') {
           currentInitialProvider = activeProvider.id;
           continue;

@@ -178,10 +178,20 @@ const RELAY_CASCADE_INTENT_MODEL_ENTRY: CatalogModelEntry = withCascadeCheckpoin
   model: RELAY_CASCADE_INTENT_MODEL,
 });
 
+export interface RelaySlotOptions {
+  /**
+   * Put the first routes on validated native slots (default). agy passes false:
+   * it folds entries into effort sliders by Google's model families on native
+   * slots, and by the -low/-medium/-high/-max ID suffix on Relay-only entries.
+   */
+  nativeSlots?: boolean;
+}
+
 export function planRelayCatalogSlots(
   catalog: CatalogFixture,
   routes: AntigravityRoute[],
   templateKey: string,
+  opts: RelaySlotOptions = {},
 ): RelayCatalogSlotPlan {
   const validation = validateAgySlotRegistry(catalog);
   const switchSlots = getValidatedAgySwitchSlots(catalog);
@@ -196,8 +206,9 @@ export function planRelayCatalogSlots(
 
   // Validated native slots first; every route past them becomes a Relay-only
   // entry with its own hyphen-only ID and an unused model enum.
-  const nativeRoutes = routes.slice(0, orderedSlots.length);
-  const overflowRoutes = routes.slice(orderedSlots.length);
+  const nativeCount = opts.nativeSlots === false ? 0 : orderedSlots.length;
+  const nativeRoutes = routes.slice(0, nativeCount);
+  const overflowRoutes = routes.slice(nativeCount);
   const slots: RelayCatalogSlot[] = nativeRoutes.map((route, index) => ({
     slotId: orderedSlots[index]!.slotId,
     route,
@@ -222,8 +233,9 @@ export function resolveRelayCatalogSlots(
   catalog: CatalogFixture,
   routes: AntigravityRoute[],
   templateKey: string,
+  opts: RelaySlotOptions = {},
 ): RelayCatalogSlot[] {
-  return planRelayCatalogSlots(catalog, routes, templateKey).slots;
+  return planRelayCatalogSlots(catalog, routes, templateKey, opts).slots;
 }
 
 /**
@@ -266,6 +278,7 @@ export function injectRelayModels(
   fixture: CatalogFixture,
   routes: AntigravityRoute[],
   templateKey: string,
+  opts: RelaySlotOptions = {},
 ): CatalogFixture {
   const result: CatalogFixture = structuredClone(fixture);
 
@@ -297,7 +310,7 @@ export function injectRelayModels(
       result.models[RELAY_CASCADE_PLAN_ANCHOR_ID] = planAnchor;
     }
 
-    const slotPlan = planRelayCatalogSlots(result, routes, templateKey);
+    const slotPlan = planRelayCatalogSlots(result, routes, templateKey, opts);
     const slots = slotPlan.slots;
     for (const { slotId, route, extraModelEnum } of slots) {
       if (extraModelEnum) {
@@ -354,6 +367,7 @@ export function injectRelayModels(
 export function buildAntigravityRoutes(
   resolvedFavorites: ResolvedFavorite[],
   maxRoutes = MAX_MODEL_CATALOG,
+  opts: { effortSlider?: boolean } = {},
 ): AntigravityRoute[] {
   const routes: AntigravityRoute[] = [];
   const seen = new Set<string>();
@@ -396,7 +410,7 @@ export function buildAntigravityRoutes(
       contextWindow,
     });
     const route = routes.pop()!;
-    routes.push(...effortVariants(route, favModel, routes.length === 0));
+    routes.push(...effortVariants(route, favModel, routes.length === 0, opts.effortSlider ?? false));
   }
 
   return applyUniqueAntigravityRouteLabels(routes.slice(0, maxRoutes));
@@ -412,16 +426,28 @@ export function favoriteEffortLevels(levels: readonly string[], defaultLevel: st
   return levels.slice(from, to);
 }
 
-function effortLabel(level: string): string {
+export function effortLabel(level: string): string {
   return level === 'xhigh' ? 'XHigh' : level.charAt(0).toUpperCase() + level.slice(1);
 }
 
+/** The levels agy folds into one picker row with its effort slider (verified on agy 1.2.11). */
+const AGY_SLIDER_LEVELS = ['low', 'medium', 'high', 'max'];
+/** The slider has no XHigh position, so it gets its own agy row when a model has it. */
+const AGY_EXTRA_LEVELS = ['xhigh'];
+
 /**
- * Antigravity has no effort control, so a model is listed once per effort level:
- * every level for the launch model, three for favorites. Models without
- * adjustable effort keep a single entry.
+ * The IDE and app have no effort control, so a model is listed once per effort
+ * level: every level for the launch model, three for favorites. agy
+ * (`effortSlider`) folds low/medium/high/max entries into one row with a slider,
+ * so every model gets those it supports, plus an XHigh row where supported (None
+ * is left out). Models without adjustable effort keep a single entry.
  */
-function effortVariants(route: AntigravityRoute, model: unknown, isLaunchModel: boolean): AntigravityRoute[] {
+function effortVariants(
+  route: AntigravityRoute,
+  model: unknown,
+  isLaunchModel: boolean,
+  effortSlider: boolean,
+): AntigravityRoute[] {
   // Cloud Code routes are forwarded to Google as-is; Relay's effort options never apply.
   if (route.modelFormat === 'cloud-code') return [route];
   const m = model as Partial<Pick<LocalProviderModel,
@@ -443,12 +469,17 @@ function effortVariants(route: AntigravityRoute, model: unknown, isLaunchModel: 
     return index < 0 ? EFFORT_RANK.length : index;
   };
   const ordered = [...caps.levels].sort((a, b) => rank(a) - rank(b));
-  const levels = isLaunchModel ? ordered : favoriteEffortLevels(ordered, caps.defaultLevel);
+  const levels = effortSlider
+    ? ordered.filter(level => AGY_SLIDER_LEVELS.includes(level) || AGY_EXTRA_LEVELS.includes(level))
+    : isLaunchModel ? ordered : favoriteEffortLevels(ordered, caps.defaultLevel);
+  if (levels.length < 2) return [route];
   const baseName = routeBaseModelName(route);
+  // agy names the slider row after its first entry, so that entry carries no level.
+  const sliderRowLevel = effortSlider ? levels.find(level => AGY_SLIDER_LEVELS.includes(level)) : undefined;
   return levels.map(level => ({
     ...route,
     catalogId: `${route.catalogId}__effort_${level}`,
-    displayName: `${baseName} ${effortLabel(level)} (Relay)`,
+    displayName: level === sliderRowLevel ? `${baseName} (Relay)` : `${baseName} ${effortLabel(level)} (Relay)`,
     reasoningEffort: level,
     reasoningMetadata: metadata,
   }));
@@ -590,10 +621,11 @@ export function buildListModelConfigsResponse(
   routes: AntigravityRoute[],
   catalog?: CatalogFixture,
   templateKey = RELAY_CASCADE_ANCHOR_ID,
+  opts: RelaySlotOptions = {},
 ): Record<string, unknown> {
   const catalogRoutes = routes.slice(0, MAX_MODEL_CATALOG);
   const slots = catalog
-    ? resolveRelayCatalogSlots(catalog, catalogRoutes, templateKey)
+    ? resolveRelayCatalogSlots(catalog, catalogRoutes, templateKey, opts)
     : catalogRoutes.map(route => ({ slotId: route.catalogId, route }));
   const config = slots.map(({ slotId }) => ({
     requestedModelId: slotId,

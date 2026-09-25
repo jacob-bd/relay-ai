@@ -14,6 +14,7 @@ import { BACKENDS } from './constants.js';
 import { applyDeploymentMode3p, writeRelayAiConfig } from './claude-desktop/app-config.js';
 import {
   buildClaudeAppServerCatalog,
+  expandClaudeAppEffortVariants,
   resolveClaudeAppCatalog,
 } from './claude-desktop/model-catalog.js';
 import { getProxyDebugLogPath } from './trace-log.js';
@@ -22,6 +23,7 @@ import { launchOrRestartClaudeApp, claudeAppSupported, isClaudeAppRunning, quitC
 import type { LocalProvider, LocalProviderModel } from './types.js';
 import type { CloudCodeBackend } from './cloud-code-backend.js';
 import { resolveFirstAvailableFavorite } from './favorites-resolver.js';
+import { pickerRefresh } from './picker-refresh.js';
 
 export { modelToServerModelInfo } from './claude-desktop/model-catalog.js';
 
@@ -159,7 +161,12 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
       selectedModel = firstFavorite.model;
     } else {
       activeProvider = providerForClaudePicker(pickedProvider);
-      const pickedModel = await pickCodexModel(activeProvider, prefs);
+      const pickerProvider = activeProvider;
+      const pickedModel = await pickCodexModel(activeProvider, prefs, pickerRefresh(pickerProvider, async () => {
+        const fresh = codexCompatibleProviders(providersForPicker(await fetchProviderCatalog({ agent: 'codex-app' })), 'claude-app')
+          .find(lp => lp.id === pickerProvider.id);
+        return fresh && providerForClaudePicker(fresh);
+      }));
       if (!pickedModel || pickedModel === 'back') return 0;
       selectedModel = pickedModel;
     }
@@ -206,7 +213,7 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
       catalogResolution.providersById,
       trace,
     );
-    const serverModels = builtCatalog.serverModels;
+    const serverModels = expandClaudeAppEffortVariants(builtCatalog.serverModels);
     cloudCodeBackend = builtCatalog.backend;
 
     backupMetaJson();

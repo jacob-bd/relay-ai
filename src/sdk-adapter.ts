@@ -72,6 +72,8 @@ export interface AnthropicRequest {
 export interface TranslateRequestOptions {
   /** Fallback when the client omits effort (e.g. Claude Desktop gateway). */
   defaultEffort?: string;
+  /** Effort forced on every request (effort-variant catalog entries); wins over the client's. */
+  fixedEffort?: string;
   reasoningMetadata?: ReasoningMetadata;
   /** ChatGPT Codex OAuth requires instructions and manages its own output limit. */
   openAiOAuth?: boolean;
@@ -318,7 +320,7 @@ export function translateRequest(
       responseSubagentRouting = options.subagentRouting;
     }
   }
-  const effort = anthropicEffortFromRequest(body) ?? options?.defaultEffort;
+  const effort = options?.fixedEffort ?? anthropicEffortFromRequest(body) ?? options?.defaultEffort;
   let providerOptions = deepMergeProviderOptions(
     thinkingProviderOptions(npm),
     effortProviderOptions(npm, effort, options?.reasoningMetadata?.upstreamModelId ?? body.model, options?.reasoningMetadata),

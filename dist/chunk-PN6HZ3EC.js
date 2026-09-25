@@ -99,7 +99,7 @@ import {
   translateRequest,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-ZHJDF5LZ.js";
+} from "./chunk-TAX7SVCS.js";
 
 // src/registry/google-model-id.ts
 var GOOGLE_MODEL_PREFIX = "models/";
@@ -4438,7 +4438,7 @@ var RELAY_CASCADE_INTENT_MODEL_ENTRY = withCascadeCheckpointer({
   ...RELAY_CASCADE_FALLBACK_ENTRY,
   model: RELAY_CASCADE_INTENT_MODEL
 });
-function planRelayCatalogSlots(catalog, routes, templateKey) {
+function planRelayCatalogSlots(catalog, routes, templateKey, opts = {}) {
   const validation = validateAgySlotRegistry(catalog);
   const switchSlots = getValidatedAgySwitchSlots(catalog);
   const templateSlot = switchSlots.find((slot) => slot.slotId === templateKey);
@@ -4446,8 +4446,9 @@ function planRelayCatalogSlots(catalog, routes, templateKey) {
   if (routes.length > 0 && orderedSlots.length === 0) {
     throw new Error("No validated AGY switch slots are available for the selected launch route");
   }
-  const nativeRoutes = routes.slice(0, orderedSlots.length);
-  const overflowRoutes = routes.slice(orderedSlots.length);
+  const nativeCount = opts.nativeSlots === false ? 0 : orderedSlots.length;
+  const nativeRoutes = routes.slice(0, nativeCount);
+  const overflowRoutes = routes.slice(nativeCount);
   const slots = nativeRoutes.map((route, index) => ({
     slotId: orderedSlots[index].slotId,
     route
@@ -4466,8 +4467,8 @@ function planRelayCatalogSlots(catalog, routes, templateKey) {
     validation
   };
 }
-function resolveRelayCatalogSlots(catalog, routes, templateKey) {
-  return planRelayCatalogSlots(catalog, routes, templateKey).slots;
+function resolveRelayCatalogSlots(catalog, routes, templateKey, opts = {}) {
+  return planRelayCatalogSlots(catalog, routes, templateKey, opts).slots;
 }
 function buildRelayCatalogEntry(route, template) {
   const entry = structuredClone(template);
@@ -4489,7 +4490,7 @@ function buildRelayCatalogSlotEntry(route, template) {
   delete entry.isInternal;
   return applyRouteContextBounds(entry, route);
 }
-function injectRelayModels(fixture, routes, templateKey) {
+function injectRelayModels(fixture, routes, templateKey, opts = {}) {
   const result = structuredClone(fixture);
   const template = fixture.models[templateKey];
   if (!template) {
@@ -4514,7 +4515,7 @@ function injectRelayModels(fixture, routes, templateKey) {
       planAnchor.model = RELAY_CASCADE_PLAN_MODEL;
       result.models[RELAY_CASCADE_PLAN_ANCHOR_ID] = planAnchor;
     }
-    const slotPlan = planRelayCatalogSlots(result, routes, templateKey);
+    const slotPlan = planRelayCatalogSlots(result, routes, templateKey, opts);
     const slots = slotPlan.slots;
     for (const { slotId, route, extraModelEnum } of slots) {
       if (extraModelEnum) {
@@ -4558,7 +4559,7 @@ function injectRelayModels(fixture, routes, templateKey) {
   }
   return result;
 }
-function buildAntigravityRoutes(resolvedFavorites, maxRoutes = MAX_MODEL_CATALOG) {
+function buildAntigravityRoutes(resolvedFavorites, maxRoutes = MAX_MODEL_CATALOG, opts = {}) {
   const routes = [];
   const seen = /* @__PURE__ */ new Set();
   for (const fav of resolvedFavorites) {
@@ -4593,7 +4594,7 @@ function buildAntigravityRoutes(resolvedFavorites, maxRoutes = MAX_MODEL_CATALOG
       contextWindow: contextWindow2
     });
     const route = routes.pop();
-    routes.push(...effortVariants(route, favModel, routes.length === 0));
+    routes.push(...effortVariants(route, favModel, routes.length === 0, opts.effortSlider ?? false));
   }
   return applyUniqueAntigravityRouteLabels(routes.slice(0, maxRoutes));
 }
@@ -4608,7 +4609,9 @@ function favoriteEffortLevels(levels, defaultLevel) {
 function effortLabel(level) {
   return level === "xhigh" ? "XHigh" : level.charAt(0).toUpperCase() + level.slice(1);
 }
-function effortVariants(route, model, isLaunchModel) {
+var AGY_SLIDER_LEVELS = ["low", "medium", "high", "max"];
+var AGY_EXTRA_LEVELS = ["xhigh"];
+function effortVariants(route, model, isLaunchModel, effortSlider) {
   if (route.modelFormat === "cloud-code") return [route];
   const m = model;
   const metadata = {
@@ -4628,12 +4631,14 @@ function effortVariants(route, model, isLaunchModel) {
     return index < 0 ? EFFORT_RANK.length : index;
   };
   const ordered = [...caps.levels].sort((a, b) => rank(a) - rank(b));
-  const levels = isLaunchModel ? ordered : favoriteEffortLevels(ordered, caps.defaultLevel);
+  const levels = effortSlider ? ordered.filter((level) => AGY_SLIDER_LEVELS.includes(level) || AGY_EXTRA_LEVELS.includes(level)) : isLaunchModel ? ordered : favoriteEffortLevels(ordered, caps.defaultLevel);
+  if (levels.length < 2) return [route];
   const baseName = routeBaseModelName(route);
+  const sliderRowLevel = effortSlider ? levels.find((level) => AGY_SLIDER_LEVELS.includes(level)) : void 0;
   return levels.map((level) => ({
     ...route,
     catalogId: `${route.catalogId}__effort_${level}`,
-    displayName: `${baseName} ${effortLabel(level)} (Relay)`,
+    displayName: level === sliderRowLevel ? `${baseName} (Relay)` : `${baseName} ${effortLabel(level)} (Relay)`,
     reasoningEffort: level,
     reasoningMetadata: metadata
   }));
@@ -4739,9 +4744,9 @@ function buildClientModelConfigData(routes, catalog, templateKey = RELAY_CASCADE
     defaultOverrideModelConfig: clientModelConfigs[0] ?? {}
   };
 }
-function buildListModelConfigsResponse(routes, catalog, templateKey = RELAY_CASCADE_ANCHOR_ID) {
+function buildListModelConfigsResponse(routes, catalog, templateKey = RELAY_CASCADE_ANCHOR_ID, opts = {}) {
   const catalogRoutes = routes.slice(0, MAX_MODEL_CATALOG);
-  const slots = catalog ? resolveRelayCatalogSlots(catalog, catalogRoutes, templateKey) : catalogRoutes.map((route) => ({ slotId: route.catalogId, route }));
+  const slots = catalog ? resolveRelayCatalogSlots(catalog, catalogRoutes, templateKey, opts) : catalogRoutes.map((route) => ({ slotId: route.catalogId, route }));
   const config = slots.map(({ slotId }) => ({
     requestedModelId: slotId,
     planModel: RELAY_CASCADE_PLAN_MODEL,
@@ -7097,6 +7102,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog, suba
     }
     const params = translateRequest(body, model.npm, {
       defaultEffort: anthropicEffortFromRequest(body) ? void 0 : model.defaultEffort,
+      fixedEffort: model.fixedEffort,
       openAiOAuth: model.npm === "@ai-sdk/openai" && model.authType === "oauth",
       onDebug: plog,
       subagentRouting,
@@ -7638,7 +7644,7 @@ function providerOptionsFromCatalog(catalog) {
       modelCount: provider.models.length
     });
   }
-  return options;
+  return options.sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base", numeric: true }));
 }
 async function loadServerModels() {
   const catalog = await fetchProviderCatalog({ agent: "server" });
@@ -9447,6 +9453,7 @@ export {
   isModelsDevCacheStale,
   loadModelsDevCache,
   refreshModelsDevCacheAsync,
+  EFFORT_RANK,
   shouldHideModel,
   zenRegistryStub,
   isLikelyPlaceholderKey,
@@ -9483,6 +9490,7 @@ export {
   gatewayProviderLabel,
   openAiIdCollisions,
   createGatewayModelCatalog,
+  upstreamModelId,
   buildDedupedModelRows,
   anthropicModelsEndpoint,
   anthropicMessagesEndpoint,
@@ -9511,6 +9519,8 @@ export {
   resolveRelayCatalogSlots,
   injectRelayModels,
   buildAntigravityRoutes,
+  favoriteEffortLevels,
+  effortLabel,
   buildListModelConfigsResponse,
   buildListExperimentsResponse,
   meetsContextFloor,
@@ -9566,4 +9576,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-6QGO3LNO.js.map
+//# sourceMappingURL=chunk-PN6HZ3EC.js.map

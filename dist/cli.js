@@ -2,10 +2,11 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-P4RFOJEM.js";
+} from "./chunk-ITYVPMMH.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
+  EFFORT_RANK,
   OPENCODE_SESSION_HEADER,
   PREVIEW_PROXY_PORT,
   addCustomEndpointProvider,
@@ -38,10 +39,12 @@ import {
   createGatewayModelCatalog,
   customEndpointKind,
   effectiveProviderBaseUrl,
+  effortLabel,
   estimateAnthropicInputTokens,
   evaluateAgySwitchCompatibility,
   extractApiKey,
   extractConversationId,
+  favoriteEffortLevels,
   favoriteProviderDisplayName,
   fetchAnthropicModels,
   fetchProviderCatalog,
@@ -139,10 +142,11 @@ import {
   syntheticTemplate,
   toggleProviderEnabled,
   updateCustomEndpointProvider,
+  upstreamModelId,
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-6QGO3LNO.js";
+} from "./chunk-PN6HZ3EC.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -222,7 +226,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-ZHJDF5LZ.js";
+} from "./chunk-TAX7SVCS.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -1065,6 +1069,10 @@ function claudeTransparentModeOptions(modelLabel) {
   ];
 }
 var BROWSE_ALL = "__browse_all__";
+var REFRESH = "__refresh__";
+function refreshOption() {
+  return navOption(REFRESH, "\u21BB Refresh models", "Fetch the latest list from the provider");
+}
 var MAX_RECENT = 3;
 var MODEL_SEARCH_THRESHOLD = 25;
 var MODEL_PAGE_SIZE = 15;
@@ -1159,7 +1167,7 @@ async function pickModelFromPagedList(list, toOption, messagePrefix, initialMode
     continue;
   }
 }
-async function selectLargeCatalog(models, browseList, toOption, message, initialModelId) {
+async function selectLargeCatalog(models, browseList, toOption, message, initialModelId, refreshable = false) {
   let mode = "choose";
   while (true) {
     if (mode === "choose") {
@@ -1172,12 +1180,14 @@ async function selectLargeCatalog(models, browseList, toOption, message, initial
             label: pc2.cyan("Browse all models"),
             hint: `${MODEL_PAGE_SIZE} per page \xB7 ${Math.ceil(browseList.length / MODEL_PAGE_SIZE)} pages`
           },
+          ...refreshable ? [refreshOption()] : [],
           navOption("__back__", "\u2190 Go back", "Select a different provider")
         ]
       });
       if (p3.isCancel(method) || String(method) === "__back__") {
         return "back";
       }
+      if (String(method) === REFRESH) return "refresh";
       mode = method === MODE_BROWSE ? "browse" : "search";
       continue;
     }
@@ -1232,12 +1242,13 @@ async function selectLargeCatalog(models, browseList, toOption, message, initial
     if (isSelectedModel(result)) return result;
   }
 }
-async function selectModelWithSearch(models, toOption, message, initialModelId, browseList) {
+async function selectModelWithSearch(models, toOption, message, initialModelId, browseList, refreshable = false) {
   if (models.length === 0) return null;
   const orderedBrowse = browseList ?? sortModelsByBrand(models);
   if (models.length <= MODEL_SEARCH_THRESHOLD) {
     const options = [
       ...models.map(toOption),
+      ...refreshable ? [refreshOption()] : [],
       navOption("__back__", "\u2190 Go back", "")
     ];
     const initialValue = initialModelId && options.some((o) => o.value === initialModelId) ? initialModelId : options[0]?.value;
@@ -1249,11 +1260,12 @@ async function selectModelWithSearch(models, toOption, message, initialModelId, 
     if (p3.isCancel(picked) || String(picked) === "__back__") {
       return "back";
     }
+    if (String(picked) === REFRESH) return "refresh";
     const selected = models.find((m) => m.id === String(picked));
     if (!selected) return null;
     return selected;
   }
-  return selectLargeCatalog(models, orderedBrowse, toOption, message, initialModelId);
+  return selectLargeCatalog(models, orderedBrowse, toOption, message, initialModelId, refreshable);
 }
 function noteEnvConflicts(conflicts) {
   printEnvConflictPanel(conflicts);
@@ -1261,55 +1273,55 @@ function noteEnvConflicts(conflicts) {
 function modelToOption(model, hint) {
   return modelSelectOption(model, hint);
 }
-async function browseAllModels(provider, prefs) {
+async function browseAllModels(provider, prefs, refreshable = false) {
   return selectModelWithSearch(
     provider.models,
     (m) => modelToOption(m),
     "Which model?",
-    prefs.lastModel
+    prefs.lastModel,
+    void 0,
+    refreshable
   );
 }
-async function pickLocalModel(provider, conflicts, prefs) {
-  const recentIds = (prefs.recentModelsByProvider?.[provider.id] ?? []).slice(0, MAX_RECENT);
-  const recentModels = recentIds.map((id) => provider.models.find((m) => m.id === id)).filter((m) => m !== void 0);
-  let selectedModel = null;
+async function pickProviderModel(provider, prefs, opts) {
+  const refreshable = Boolean(opts.refresh);
   while (true) {
+    const recentModels = (prefs.recentModelsByProvider?.[provider.id] ?? []).slice(0, opts.maxRecent).map((id) => provider.models.find((m) => m.id === id)).filter((m) => m !== void 0);
+    let picked;
     if (recentModels.length > 0) {
-      const options = [
-        ...recentModels.map((m) => modelToOption(m, "recent")),
-        navOption(BROWSE_ALL, "Browse all models \u2192", `${provider.models.length} available`),
-        navOption("__back__", "\u2190 Go back", "Select a different provider")
-      ];
-      const picked = await p3.select({
-        message: "Which model?",
-        options,
+      const choice = await p3.select({
+        message: opts.message,
+        options: [
+          ...recentModels.map((m) => modelToOption(m, "recent")),
+          navOption(BROWSE_ALL, "Browse all models \u2192", `${provider.models.length} available`),
+          ...refreshable ? [refreshOption()] : [],
+          navOption("__back__", "\u2190 Go back", "Select a different provider")
+        ],
         initialValue: recentModels[0].id
       });
-      if (p3.isCancel(picked) || String(picked) === "__back__") {
-        return "back";
-      }
-      if (String(picked) === BROWSE_ALL) {
-        const browsed = await browseAllModels(provider, prefs);
-        if (browsed === "back") {
-          continue;
-        }
-        if (!browsed) return null;
-        selectedModel = browsed;
-        break;
+      if (p3.isCancel(choice) || String(choice) === "__back__") return "back";
+      if (String(choice) === REFRESH) {
+        picked = "refresh";
+      } else if (String(choice) === BROWSE_ALL) {
+        picked = await browseAllModels(provider, prefs, refreshable);
+        if (picked === "back") continue;
       } else {
-        selectedModel = recentModels.find((m) => m.id === String(picked));
-        break;
+        picked = recentModels.find((m) => m.id === String(choice));
       }
     } else {
-      const browsed = await browseAllModels(provider, prefs);
-      if (browsed === "back") {
-        return "back";
-      }
-      if (!browsed) return null;
-      selectedModel = browsed;
-      break;
+      picked = await browseAllModels(provider, prefs, refreshable);
+      if (picked === "back") return "back";
     }
+    if (picked === "refresh") {
+      await opts.refresh();
+      continue;
+    }
+    return picked;
   }
+}
+async function pickLocalModel(provider, conflicts, prefs, refresh) {
+  const selectedModel = await pickProviderModel(provider, prefs, { message: "Which model?", maxRecent: MAX_RECENT, refresh });
+  if (selectedModel === "back" || !selectedModel) return selectedModel;
   noteEnvConflicts(conflicts);
   const modelLabel = formatCodexModelLabel(selectedModel);
   const confirmed = await p3.confirm({
@@ -3703,13 +3715,13 @@ function resolveBaseURL(model, provider) {
   return model.apiBaseUrl ?? model.completionsUrl?.replace(/\/chat\/completions$/, "") ?? model.baseUrl;
 }
 function resolveCodexRoute(provider, model, apiKey) {
-  const upstreamModelId = model.upstreamModelId || model.id;
+  const upstreamModelId2 = model.upstreamModelId || model.id;
   const inferredNpm = model.modelFormat === "anthropic" ? "@ai-sdk/anthropic" : "@ai-sdk/openai-compatible";
   const isZenGo = provider.id === "zen" || provider.id === "go";
   const base = {
     npm: isZenGo ? inferredNpm : model.npm ?? inferredNpm,
     baseURL: resolveBaseURL(model, provider),
-    upstreamModelId,
+    upstreamModelId: upstreamModelId2,
     apiKey,
     contextWindow: model.contextWindow,
     modelId: model.id,
@@ -5913,48 +5925,8 @@ async function pickCodexProvider(providers, prefs, hasFavorites = false, initial
   if (chosen === "__favorites__") return "__favorites__";
   return providers.find((lp) => lp.id === chosen) ?? null;
 }
-async function pickCodexModel(provider, prefs) {
-  const recentIds = (prefs.recentModelsByProvider?.[provider.id] ?? []).slice(0, 3);
-  const recentModels = recentIds.map((id) => provider.models.find((m) => m.id === id)).filter((m) => m !== void 0);
-  let selectedModel = null;
-  while (true) {
-    if (recentModels.length > 0) {
-      const options = [
-        ...recentModels.map((m) => modelSelectOption(m, "recent")),
-        navOption("__browse_all__", "Browse all models \u2192", `${provider.models.length} available`),
-        navOption("__back__", "\u2190 Go back", "Select a different provider")
-      ];
-      const picked = await p7.select({
-        message: `Model for ${provider.name}?`,
-        options,
-        initialValue: recentModels[0].id
-      });
-      if (p7.isCancel(picked) || String(picked) === "__back__") {
-        return "back";
-      }
-      if (String(picked) === "__browse_all__") {
-        const browsed = await browseAllModels(provider, prefs);
-        if (browsed === "back") {
-          continue;
-        }
-        if (!browsed) return null;
-        selectedModel = browsed;
-        break;
-      } else {
-        selectedModel = recentModels.find((m) => m.id === String(picked));
-        break;
-      }
-    } else {
-      const browsed = await browseAllModels(provider, prefs);
-      if (browsed === "back") {
-        return "back";
-      }
-      if (!browsed) return null;
-      selectedModel = browsed;
-      break;
-    }
-  }
-  return selectedModel;
+async function pickCodexModel(provider, prefs, refresh) {
+  return pickProviderModel(provider, prefs, { message: `Model for ${provider.name}?`, maxRecent: 3, refresh });
 }
 function confirmCodexLaunch(providerName, modelLabel, modelId, route) {
   const via = route.tier === "direct" ? pc5.green("direct") : `${pc5.dim("via")} ${pc5.yellow("relay-ai proxy")}`;
@@ -6724,6 +6696,15 @@ function isAntigravityNonInteractive(args) {
   return false;
 }
 
+// src/picker-refresh.ts
+function pickerRefresh(provider, reload) {
+  return async () => {
+    await runProvidersRefreshModels(provider.id);
+    const fresh = await reload();
+    if (fresh) provider.models = fresh.models;
+  };
+}
+
 // src/codex.ts
 function codexHelpText() {
   return `${pc7.bold("relay-ai codex")} \u2014 launch OpenAI Codex CLI with your registry providers
@@ -7114,7 +7095,8 @@ Error: ${launchPlan.error}
         break;
       } else {
         activeProvider = pickedProvider;
-        const pickedModelResult = await pickCodexModel(activeProvider, prefs);
+        const pickerProvider = activeProvider;
+        const pickedModelResult = await pickCodexModel(activeProvider, prefs, pickerRefresh(pickerProvider, async () => codexCompatibleProviders(providersForPicker(await fetchProviderCatalog({ agent: "codex" })), "codex").find((lp) => lp.id === pickerProvider.id)));
         if (pickedModelResult === "back") {
           currentInitialProvider = activeProvider.id;
           continue;
@@ -7529,48 +7511,8 @@ async function pickGeminiProvider(providers, prefs, hasFavorites = false, initia
   if (chosen === "__favorites__") return "__favorites__";
   return providers.find((lp) => lp.id === chosen) ?? null;
 }
-async function pickGeminiModel(provider, prefs) {
-  const recentIds = (prefs.recentModelsByProvider?.[provider.id] ?? []).slice(0, 3);
-  const recentModels = recentIds.map((id) => provider.models.find((m) => m.id === id)).filter((m) => m !== void 0);
-  let selectedModel = null;
-  while (true) {
-    if (recentModels.length > 0) {
-      const options = [
-        ...recentModels.map((m) => modelSelectOption(m, "recent")),
-        navOption("__browse_all__", "Browse all models \u2192", `${provider.models.length} available`),
-        navOption("__back__", "\u2190 Go back", "Select a different provider")
-      ];
-      const picked = await p10.select({
-        message: `Model for ${provider.name}?`,
-        options,
-        initialValue: recentModels[0].id
-      });
-      if (p10.isCancel(picked) || String(picked) === "__back__") {
-        return "back";
-      }
-      if (String(picked) === "__browse_all__") {
-        const browsed = await browseAllModels(provider, prefs);
-        if (browsed === "back") {
-          continue;
-        }
-        if (!browsed) return null;
-        selectedModel = browsed;
-        break;
-      } else {
-        selectedModel = recentModels.find((m) => m.id === String(picked));
-        break;
-      }
-    } else {
-      const browsed = await browseAllModels(provider, prefs);
-      if (browsed === "back") {
-        return "back";
-      }
-      if (!browsed) return null;
-      selectedModel = browsed;
-      break;
-    }
-  }
-  return selectedModel;
+async function pickGeminiModel(provider, prefs, refresh) {
+  return pickProviderModel(provider, prefs, { message: `Model for ${provider.name}?`, maxRecent: 3, refresh });
 }
 function confirmGeminiLaunch(providerName, modelLabel, modelId) {
   return p10.confirm({
@@ -8429,7 +8371,8 @@ Error: ${launchPlan.error}
       selectedModel = favPick.model;
     } else {
       activeProvider = chosenProvider;
-      const chosenModel = await pickGeminiModel(activeProvider, prefs);
+      const pickerProvider = activeProvider;
+      const chosenModel = await pickGeminiModel(activeProvider, prefs, pickerRefresh(pickerProvider, async () => providersForTarget(providersForPicker(await fetchProviderCatalog({ agent: "gemini" })), "gemini").find((lp) => lp.id === pickerProvider.id)));
       if (!chosenModel || chosenModel === "back") return 0;
       selectedModel = chosenModel;
     }
@@ -9909,8 +9852,9 @@ async function startCloudCodeGateway(routes, opts = {}) {
   const log15 = opts.logFn ?? (() => {
   });
   const catalogFixture = fetchAvailableModels_default;
-  const injectedCatalog = injectRelayModels(catalogFixture, routes, templateKey);
-  const selectedSlotRoutes = resolveRelayCatalogSlots(injectedCatalog, routes, templateKey);
+  const slotOptions = { nativeSlots: opts.nativeSlots ?? true };
+  const injectedCatalog = injectRelayModels(catalogFixture, routes, templateKey, slotOptions);
+  const selectedSlotRoutes = resolveRelayCatalogSlots(injectedCatalog, routes, templateKey, slotOptions);
   const selectedSlotIds = /* @__PURE__ */ new Set();
   const routeMap = /* @__PURE__ */ new Map();
   const reasoningEchoesByConversation = /* @__PURE__ */ new Map();
@@ -9943,7 +9887,7 @@ async function startCloudCodeGateway(routes, opts = {}) {
     );
   }
   const experimentsResponse = buildListExperimentsResponse();
-  const modelConfigsResponse = buildListModelConfigsResponse(routes, injectedCatalog, templateKey);
+  const modelConfigsResponse = buildListModelConfigsResponse(routes, injectedCatalog, templateKey, slotOptions);
   const userSettings = {
     telemetryEnabled: false,
     userDataCollectionForceDisabled: true,
@@ -10733,7 +10677,7 @@ async function resolveAntigravityLaunchRoutes(opts) {
     (entry) => !meetsContextFloor("antigravity", entry.model.contextWindow)
   );
   const launchable = resolved.filter((entry) => !tooSmall.includes(entry));
-  const routes = buildAntigravityRoutes(launchable, maxRoutes);
+  const routes = buildAntigravityRoutes(launchable, maxRoutes, { effortSlider: opts.effortSlider });
   const routed = new Set(routes.map((route) => `${route.providerId}:${route.modelId}`));
   const cutByVariants = launchable.filter((entry) => !routed.has(`${entry.providerId}:${entry.model.id}`)).map((entry) => ({ providerId: entry.providerId, modelId: entry.model.id }));
   return {
@@ -10834,12 +10778,6 @@ function launchAntigravityCli(env, extraArgs) {
   });
 }
 
-// src/antigravity/launch-ide.ts
-import { execFileSync as execFileSync2, execSync as execSync5, spawn as spawn6 } from "child_process";
-import { existsSync as existsSync8 } from "fs";
-import { homedir as homedir8 } from "os";
-import { join as join10 } from "path";
-
 // src/antigravity/ide-profile.ts
 import fs from "fs";
 import { createRequire } from "module";
@@ -10867,6 +10805,18 @@ function clearSavedModelSelection(profileDir) {
     return false;
   } finally {
     process.emitWarning = originalEmitWarning;
+  }
+}
+function clearAppLastSelectedModel(statePath) {
+  try {
+    const text6 = fs.readFileSync(statePath, "utf8");
+    const kept = text6.split("\n").filter((line) => !line.startsWith("last_selected_agent_model:"));
+    const next = kept.join("\n");
+    if (next === text6) return false;
+    fs.writeFileSync(statePath, next);
+    return true;
+  } catch {
+    return false;
   }
 }
 function readIdeSettings(settingsPath) {
@@ -10899,6 +10849,10 @@ function prepareIdeProfile(profileDir, gatewayUrl) {
 }
 
 // src/antigravity/launch-ide.ts
+import { execFileSync as execFileSync2, execSync as execSync5, spawn as spawn6 } from "child_process";
+import { existsSync as existsSync8 } from "fs";
+import { homedir as homedir8 } from "os";
+import { join as join10 } from "path";
 var LINUX_APP_PROFILE_DIR = join10(homedir8(), ".relay-ai", "antigravity", "app-profile");
 var LINUX_IDE_PROFILE_DIR = join10(homedir8(), ".relay-ai", "antigravity", "profile");
 function sleep(ms) {
@@ -11185,6 +11139,11 @@ var AGY_FAVORITES_PROVIDER_LABEL = "\u2605 Favorites";
 function agyArgsIncludeModelFlag(args) {
   return args.some((arg) => arg === "--model" || arg.startsWith("--model="));
 }
+function agyLaunchModelLabel(routes) {
+  const first = routes[0];
+  const medium = routes.find((route) => route.providerId === first.providerId && route.modelId === first.modelId && route.reasoningEffort === "medium");
+  return (medium ?? first).displayName;
+}
 function buildAgyLaunchArgs(modelLabel, childArgs) {
   if (agyArgsIncludeModelFlag(childArgs)) return childArgs;
   return ["--model", modelLabel, ...childArgs];
@@ -11313,7 +11272,7 @@ async function resolveAntigravityLaunch(prefs, boot) {
       return { ...favoriteSelection, allProviders };
     }
     const activeProvider = allProviders.find((lp) => lp.id === chosen);
-    const pickedModelResult = await pickLocalModel(activeProvider, conflicts, prefs);
+    const pickedModelResult = await pickLocalModel(activeProvider, conflicts, prefs, pickerRefresh(activeProvider, async () => providersForTarget(providersForPicker(await fetchProviderCatalog()), "antigravity").find((lp) => lp.id === activeProvider.id)));
     if (pickedModelResult === "back") {
       currentInitialProvider = activeProvider.id;
       continue;
@@ -11328,7 +11287,8 @@ async function resolveAndBuildRoutes(provider, model, allProviders, prefs, opts)
     model,
     allProviders,
     favorites: prefs.favoriteModels ?? [],
-    maxRoutes: opts.maxRoutes
+    maxRoutes: opts.maxRoutes,
+    effortSlider: opts.agyEffortSlider
   });
   if (!result) {
     p12.log.error(`No credential for ${provider.name}. Run: relay-ai providers auth ${provider.id} or add an API key.`);
@@ -11336,7 +11296,7 @@ async function resolveAndBuildRoutes(provider, model, allProviders, prefs, opts)
   }
   if (result.routes.length > 1) {
     p12.log.info(
-      `Favorites mode active \u2014 Antigravity picker will show ${result.routes.length} entries (effort levels are listed separately).`
+      opts.agyEffortSlider ? `Favorites mode active \u2014 ${result.routes.length} entries; each model's low/medium/high/max share one row with an effort slider.` : `Favorites mode active \u2014 Antigravity picker will show ${result.routes.length} entries (effort levels are listed separately).`
     );
     p12.log.info("Edit with `relay-ai favorites`.");
   }
@@ -11423,7 +11383,8 @@ async function runAntigravityCommand(intro, tracePrefix, trace, boot, launch, op
   const routeResult = await resolveAndBuildRoutes(provider, model, allProviders, prefs, {
     maxRoutes: routeLimit,
     pauseForCapacityWarning: opts.pauseForCapacityWarning ?? false,
-    childArgs: opts.childArgs ?? []
+    childArgs: opts.childArgs ?? [],
+    agyEffortSlider: opts.agyEffortSlider ?? false
   });
   if (!routeResult) return 1;
   savePreferences({
@@ -11434,7 +11395,7 @@ async function runAntigravityCommand(intro, tracePrefix, trace, boot, launch, op
   const logFn = traceLogPath ? makeTraceLogger(traceLogPath) : void 0;
   let gatewayHandle;
   try {
-    gatewayHandle = await startCloudCodeGateway(routeResult.routes, { trace, logFn });
+    gatewayHandle = await startCloudCodeGateway(routeResult.routes, { trace, logFn, nativeSlots: !opts.agyEffortSlider });
   } catch (err) {
     p12.log.error(`Failed to start Cloud Code gateway: ${err}`);
     return 1;
@@ -11456,8 +11417,8 @@ async function runAgyCommand(childArgs, trace = false, boot) {
     "agy",
     trace,
     boot,
-    (env, routes) => launchAntigravityCli(env, buildAgyLaunchArgs(routes[0].displayName, childArgs)),
-    { childArgs, versionGuard: true, pauseForCapacityWarning: true }
+    (env, routes) => launchAntigravityCli(env, buildAgyLaunchArgs(agyLaunchModelLabel(routes), childArgs)),
+    { childArgs, versionGuard: true, pauseForCapacityWarning: true, agyEffortSlider: true }
   );
 }
 async function runAntigravityAppCommand(childArgs, trace = false, boot) {
@@ -11483,6 +11444,7 @@ async function runAntigravityAppCommand(childArgs, trace = false, boot) {
           await waitForAntigravityAppQuit(profileDir);
         }
       }
+      clearAppLastSelectedModel(join11(homedir9(), ".gemini", "antigravity", "antigravity_state.pbtxt"));
       const launchCode = await launchAntigravityApp(env, profileDir, gatewayHandle.url, childArgs);
       if (launchCode !== 0) return launchCode;
       p12.log.info("Antigravity is using the Relay Cloud Code gateway.");
@@ -12547,7 +12509,11 @@ async function runCodexAppCommand(args, opts = {}) {
         break;
       } else {
         activeProvider = providerForCodexPicker(pickedProvider);
-        const pickedModelResult = await pickCodexModel(activeProvider, prefs);
+        const pickerProvider = activeProvider;
+        const pickedModelResult = await pickCodexModel(activeProvider, prefs, pickerRefresh(pickerProvider, async () => {
+          const fresh = codexCompatibleProviders(providersForPicker(await fetchProviderCatalog({ agent: "codex-app" })), "codex-app").find((lp) => lp.id === pickerProvider.id);
+          return fresh && providerForCodexPicker(fresh);
+        }));
         if (pickedModelResult === "back") {
           currentInitialProvider = activeProvider.id;
           continue;
@@ -13104,6 +13070,35 @@ async function buildClaudeAppServerCatalog(entries, providersById, trace) {
   });
   return { serverModels, backend };
 }
+function expandClaudeAppEffortVariants(models, max = MAX_MODEL_CATALOG) {
+  const out = models.flatMap((model, index) => {
+    if (model.modelFormat !== "openai" || !model.npm) return [model];
+    const caps = getReasoningCapabilities(model.npm, upstreamModelId(model), {
+      providerId: model.providerId,
+      apiBaseUrl: model.apiBaseUrl,
+      supportedParameters: model.supportedParameters,
+      reasoning: model.reasoning,
+      interleavedReasoningField: model.interleavedReasoningField,
+      reasoningEffortLevels: model.reasoningEffortLevels,
+      reasoningEffortConflict: model.reasoningEffortConflict
+    });
+    if (caps.mode !== "controllable" || caps.levels.length < 2) return [model];
+    const rank = (level) => {
+      const at = EFFORT_RANK.indexOf(level);
+      return at < 0 ? EFFORT_RANK.length : at;
+    };
+    const ordered = [...caps.levels].sort((a, b) => rank(a) - rank(b));
+    const levels = index === 0 ? ordered : favoriteEffortLevels(ordered, caps.defaultLevel);
+    return levels.map((level) => ({
+      ...model,
+      id: `${model.id}-effort-${level}`,
+      name: `${model.name} ${effortLabel(level)}`,
+      upstreamModelId: model.upstreamModelId ?? model.id,
+      fixedEffort: level
+    }));
+  });
+  return out.slice(0, max);
+}
 
 // src/claude-desktop/app-session.ts
 import {
@@ -13401,7 +13396,11 @@ async function runClaudeAppCommand(args, boot) {
       selectedModel = firstFavorite.model;
     } else {
       activeProvider = providerForClaudePicker(pickedProvider);
-      const pickedModel = await pickCodexModel(activeProvider, prefs);
+      const pickerProvider = activeProvider;
+      const pickedModel = await pickCodexModel(activeProvider, prefs, pickerRefresh(pickerProvider, async () => {
+        const fresh = codexCompatibleProviders(providersForPicker(await fetchProviderCatalog({ agent: "codex-app" })), "claude-app").find((lp) => lp.id === pickerProvider.id);
+        return fresh && providerForClaudePicker(fresh);
+      }));
       if (!pickedModel || pickedModel === "back") return 0;
       selectedModel = pickedModel;
     }
@@ -13438,7 +13437,7 @@ async function runClaudeAppCommand(args, boot) {
       catalogResolution.providersById,
       trace
     );
-    const serverModels = builtCatalog.serverModels;
+    const serverModels = expandClaudeAppEffortVariants(builtCatalog.serverModels);
     cloudCodeBackend = builtCatalog.backend;
     backupMetaJson();
     proxyHandle = await startServer({
@@ -16102,7 +16101,8 @@ Error: ${launchPlan.error}
         break;
       } else {
         activeProvider = allProviders.find((lp) => lp.id === providerChoice);
-        const pickedModelResult = await pickLocalModel(activeProvider, conflicts, prefs);
+        const pickerProvider = activeProvider;
+        const pickedModelResult = await pickLocalModel(activeProvider, conflicts, prefs, pickerRefresh(pickerProvider, async () => providersForTarget(providersForPicker(await fetchProviderCatalog()), "claude").find((lp) => lp.id === pickerProvider.id)));
         if (pickedModelResult === "back") {
           currentInitialProvider = activeProvider.id;
           continue;
@@ -16393,7 +16393,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-WFB2VURV.js");
+    const { runUiCommand } = await import("./ui-command-D24JT4XY.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

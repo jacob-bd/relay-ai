@@ -43,6 +43,26 @@ export function clearSavedModelSelection(profileDir: string): boolean {
 }
 
 /**
+ * Forget the model the Antigravity app last had selected, for the same reason
+ * as the IDE above. The app keeps it in its language server's state file
+ * (`~/.gemini/antigravity/antigravity_state.pbtxt`, shared with non-Relay use of
+ * the app — the app derives that folder from its own name, so it can't be
+ * isolated). Only the one line is removed, while the app is closed.
+ */
+export function clearAppLastSelectedModel(statePath: string): boolean {
+  try {
+    const text = fs.readFileSync(statePath, 'utf8');
+    const kept = text.split('\n').filter(line => !line.startsWith('last_selected_agent_model:'));
+    const next = kept.join('\n');
+    if (next === text) return false;
+    fs.writeFileSync(statePath, next);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Read the settings.json file from the specified path.
  *
  * @param settingsPath Absolute path to settings.json

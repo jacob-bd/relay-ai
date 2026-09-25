@@ -76,6 +76,7 @@ import {
   planLaunchWizard,
   wantsCleanAgentStdout,
 } from './launch-target.js';
+import { pickerRefresh } from './picker-refresh.js';
 
 export { findCodexBinary } from './codex/launch.js';
 export { codexCompatibleProviders } from './codex/routing.js';
@@ -516,7 +517,10 @@ export async function runCodexCommand(
         break;
       } else {
         activeProvider = pickedProvider as LocalProvider;
-        const pickedModelResult = await pickCodexModel(activeProvider, prefs);
+        const pickerProvider = activeProvider;
+        const pickedModelResult = await pickCodexModel(activeProvider, prefs, pickerRefresh(pickerProvider, async () =>
+          codexCompatibleProviders(providersForPicker(await fetchProviderCatalog({ agent: 'codex' })), 'codex')
+            .find(lp => lp.id === pickerProvider.id)));
         if (pickedModelResult === 'back') {
           currentInitialProvider = activeProvider.id;
           continue;

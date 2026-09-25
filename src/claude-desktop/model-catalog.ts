@@ -9,7 +9,10 @@ import {
   partitionAndStartCloudCodeBackend,
   type CloudCodeBackend,
 } from '../cloud-code-backend.js';
-import type { ServerModelInfo } from '../server/models.js';
+import { upstreamModelId, type ServerModelInfo } from '../server/models.js';
+import { getReasoningCapabilities } from '../provider-factory.js';
+import { effortLabel, favoriteEffortLevels } from '../antigravity/catalog.js';
+import { EFFORT_RANK } from '../registry/models-dev.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from '../types.js';
 
 export type ClaudeAppCatalogResolution =
@@ -186,4 +189,43 @@ export async function buildClaudeAppServerCatalog(
   });
 
   return { serverModels, backend };
+}
+
+/**
+ * Claude Desktop shows an effort slider only for Claude models, so every other
+ * model with adjustable effort is listed once per level (same rule as
+ * Antigravity): every level for the launch model (first entry), medium and the
+ * two above it for favorites. Each entry forces its level on every request.
+ */
+export function expandClaudeAppEffortVariants(
+  models: ServerModelInfo[],
+  max = MAX_MODEL_CATALOG,
+): ServerModelInfo[] {
+  const out = models.flatMap((model, index) => {
+    if (model.modelFormat !== 'openai' || !model.npm) return [model];
+    const caps = getReasoningCapabilities(model.npm, upstreamModelId(model), {
+      providerId: model.providerId,
+      apiBaseUrl: model.apiBaseUrl,
+      supportedParameters: model.supportedParameters,
+      reasoning: model.reasoning,
+      interleavedReasoningField: model.interleavedReasoningField,
+      reasoningEffortLevels: model.reasoningEffortLevels,
+      reasoningEffortConflict: model.reasoningEffortConflict,
+    });
+    if (caps.mode !== 'controllable' || caps.levels.length < 2) return [model];
+    const rank = (level: string) => {
+      const at = EFFORT_RANK.indexOf(level);
+      return at < 0 ? EFFORT_RANK.length : at;
+    };
+    const ordered = [...caps.levels].sort((a, b) => rank(a) - rank(b));
+    const levels = index === 0 ? ordered : favoriteEffortLevels(ordered, caps.defaultLevel);
+    return levels.map(level => ({
+      ...model,
+      id: `${model.id}-effort-${level}`,
+      name: `${model.name} ${effortLabel(level)}`,
+      upstreamModelId: model.upstreamModelId ?? model.id,
+      fixedEffort: level,
+    }));
+  });
+  return out.slice(0, max);
 }

@@ -418,6 +418,30 @@ describe('antigravity catalog', () => {
     for (const value of enums) expect(nativeEnums.has(value!)).toBe(false);
   });
 
+  it('nativeSlots: false lists every route as a Relay-only entry (agy)', () => {
+    const manyRoutes = Array.from({ length: 10 }, (_, i) => ({
+      ...routes[0]!,
+      catalogId: `relay-ai__zen__model-${i}`,
+      displayName: `Model ${i} (Relay)`,
+    }));
+    const raw = catalogFixtureRaw as CatalogFixture;
+    const plan = planRelayCatalogSlots(raw, manyRoutes, 'gemini-3.5-flash-low', { nativeSlots: false });
+    const slotIds = plan.slots.map(slot => slot.slotId);
+    expect(slotIds[0]).toBe('relay-ai-zen-model-0');
+    for (const id of slotIds) expect(NATIVE_SLOT_IDS).not.toContain(id);
+    for (const slot of plan.slots) expect(slot.extraModelEnum).toBeDefined();
+    expect(plan.switchableRoutes).toHaveLength(10);
+
+    // Every later pass (gateway routing, model configs) must agree on the same IDs.
+    const injected = injectRelayModels(raw, manyRoutes, 'gemini-3.5-flash-low', { nativeSlots: false });
+    expect(injected.agentModelSorts[0]!.groups[0]!.modelIds).toEqual(slotIds);
+    const again = resolveRelayCatalogSlots(injected, manyRoutes, 'gemini-3.5-flash-low', { nativeSlots: false });
+    expect(again.map(slot => slot.slotId)).toEqual(slotIds);
+    const configIds = (buildListModelConfigsResponse(manyRoutes, injected, 'gemini-3.5-flash-low', { nativeSlots: false })
+      .allowedModelConfigs as any[]).map(config => config.requestedModelId);
+    expect(configIds).toEqual(slotIds);
+  });
+
   it('lists every route in the picker and model configs, past the native slots', () => {
     const manyRoutes = Array.from({ length: 25 }, (_, i) => ({
       ...routes[0]!,
@@ -669,6 +693,27 @@ describe('antigravity effort variants', () => {
     ]);
     expect(routes[0]!.catalogId).toBe('relay-ai__openai-oauth__gpt-6-sol__effort_none');
     expect(new Set(routes.map(route => route.catalogId)).size).toBe(routes.length);
+  });
+
+  it('agy: low/medium/high/max for the slider, plus an XHigh row where supported', () => {
+    const routes = buildAntigravityRoutes([
+      fav('openai-oauth', gpt('gpt-6-sol', 'GPT-6 Sol')),
+      fav('zai', { ...gpt('glm-5', 'GLM 5'), npm: '@ai-sdk/openai-compatible', reasoningEffortLevels: ['low', 'medium', 'high'] }),
+      fav('groq', { id: 'llama-3.1-8b', name: 'Llama 8B' }),
+    ] as any[], undefined, { effortSlider: true });
+
+    // agy names the slider row after its first entry, so that one carries no level.
+    expect(routes.map(route => [route.displayName, route.reasoningEffort])).toEqual([
+      ['GPT-6 Sol (Relay)', 'low'],
+      ['GPT-6 Sol Medium (Relay)', 'medium'],
+      ['GPT-6 Sol High (Relay)', 'high'],
+      ['GPT-6 Sol XHigh (Relay)', 'xhigh'],
+      ['GPT-6 Sol Max (Relay)', 'max'],
+      ['GLM 5 (Relay)', 'low'],
+      ['GLM 5 Medium (Relay)', 'medium'],
+      ['GLM 5 High (Relay)', 'high'],
+      ['Llama 8B (Relay)', undefined],
+    ]);
   });
 
   it('keeps Cloud Code routes as a single entry', () => {

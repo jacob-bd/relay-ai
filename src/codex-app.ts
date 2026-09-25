@@ -86,6 +86,7 @@ import {
   type CloudCodeBackend,
 } from './cloud-code-backend.js';
 import type { ProxyRoute } from './proxy.js';
+import { pickerRefresh } from './picker-refresh.js';
 
 function codexProxyRouteToCodexRoute(route: CodexProxyRoute, fallbackProviderId: string): CodexRoute {
   return {
@@ -552,7 +553,12 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
         break;
       } else {
         activeProvider = providerForCodexPicker(pickedProvider as LocalProvider);
-        const pickedModelResult = await pickCodexModel(activeProvider, prefs);
+        const pickerProvider = activeProvider;
+        const pickedModelResult = await pickCodexModel(activeProvider, prefs, pickerRefresh(pickerProvider, async () => {
+          const fresh = codexCompatibleProviders(providersForPicker(await fetchProviderCatalog({ agent: 'codex-app' })), 'codex-app')
+            .find(lp => lp.id === pickerProvider.id);
+          return fresh && providerForCodexPicker(fresh);
+        }));
         if (pickedModelResult === 'back') {
           currentInitialProvider = activeProvider.id;
           continue;

@@ -305,6 +305,8 @@ async function loadModels() {
       }
     }
   }
+  const byShownName = (a, b) => getProviderName(a.id).localeCompare(getProviderName(b.id), undefined, { sensitivity: 'base', numeric: true });
+  state.providers.sort(byShownName);
   state.allModels = flattenModelProviders(state.providers);
 }
 

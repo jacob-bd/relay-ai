@@ -162,7 +162,7 @@ export function providerOptionsFromCatalog(catalog: import('../types.js').LocalP
       modelCount: provider.models.length,
     });
   }
-  return options;
+  return options.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }));
 }
 
 export async function loadServerModels(): Promise<ServerModelInfo[]> {

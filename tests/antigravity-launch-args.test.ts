@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   agyArgsAreNonInteractive,
   agyArgsIncludeModelFlag,
+  agyLaunchModelLabel,
   buildAgyLaunchArgs,
   formatAgyCapacityWarning,
   resolveAntigravityBootModel,
@@ -19,6 +20,19 @@ describe('agy launch args', () => {
   it('prepends the catalog display label when --model is absent', () => {
     expect(buildAgyLaunchArgs('deepseek-v4-flash (Relay)', ['-p', 'hi']))
       .toEqual(['--model', 'deepseek-v4-flash (Relay)', '-p', 'hi']);
+  });
+
+  it('opens agy on the launch model at medium when it has effort entries', () => {
+    const route = (displayName: string, modelId: string, reasoningEffort?: string) =>
+      ({ displayName, providerId: 'openai', modelId, reasoningEffort }) as any;
+    expect(agyLaunchModelLabel([
+      route('Sol Low (Relay)', 'sol', 'low'),
+      route('Sol Medium (Relay)', 'sol', 'medium'),
+      route('Sol High (Relay)', 'sol', 'high'),
+      route('Luna Medium (Relay)', 'luna', 'medium'),
+    ])).toBe('Sol Medium (Relay)');
+    expect(agyLaunchModelLabel([route('Llama (Relay)', 'llama'), route('Luna Medium (Relay)', 'luna', 'medium')]))
+      .toBe('Llama (Relay)');
   });
 
   it('preserves user --model override', () => {

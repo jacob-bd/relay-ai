@@ -26,6 +26,11 @@ export function claudeTransparentModeOptions(modelLabel: string): Array<{
 }
 
 const BROWSE_ALL = '__browse_all__';
+const REFRESH = '__refresh__';
+
+function refreshOption() {
+  return navOption(REFRESH, '↻ Refresh models', 'Fetch the latest list from the provider');
+}
 const MAX_RECENT = 3;
 /** Providers with more models than this offer search or paginated browse. */
 export const MODEL_SEARCH_THRESHOLD = 25;
@@ -170,7 +175,8 @@ async function selectLargeCatalog<T extends ModelSearchable & { id: string }>(
   toOption: (m: T) => ModelSelectOption,
   message: string,
   initialModelId?: string,
-): Promise<T | 'back' | null> {
+  refreshable = false,
+): Promise<T | 'back' | 'refresh' | null> {
   let mode: LargeCatalogMode = 'choose';
 
   while (true) {
@@ -184,6 +190,7 @@ async function selectLargeCatalog<T extends ModelSearchable & { id: string }>(
             label: pc.cyan('Browse all models'),
             hint: `${MODEL_PAGE_SIZE} per page · ${Math.ceil(browseList.length / MODEL_PAGE_SIZE)} pages`,
           },
+          ...(refreshable ? [refreshOption()] : []),
           navOption('__back__', '← Go back', 'Select a different provider'),
         ],
       });
@@ -191,6 +198,7 @@ async function selectLargeCatalog<T extends ModelSearchable & { id: string }>(
       if (p.isCancel(method) || String(method) === '__back__') {
         return 'back';
       }
+      if (String(method) === REFRESH) return 'refresh';
 
       mode = method === MODE_BROWSE ? 'browse' : 'search';
       continue;
@@ -261,7 +269,8 @@ async function selectModelWithSearch<T extends ModelSearchable & { id: string }>
   message: string,
   initialModelId?: string,
   browseList?: T[],
-): Promise<T | 'back' | null> {
+  refreshable = false,
+): Promise<T | 'back' | 'refresh' | null> {
   if (models.length === 0) return null;
 
   const orderedBrowse = browseList ?? sortModelsByBrand(models);
@@ -269,6 +278,7 @@ async function selectModelWithSearch<T extends ModelSearchable & { id: string }>
   if (models.length <= MODEL_SEARCH_THRESHOLD) {
     const options = [
       ...models.map(toOption),
+      ...(refreshable ? [refreshOption()] : []),
       navOption('__back__', '← Go back', ''),
     ];
     const initialValue =
@@ -285,13 +295,14 @@ async function selectModelWithSearch<T extends ModelSearchable & { id: string }>
     if (p.isCancel(picked) || String(picked) === '__back__') {
       return 'back';
     }
+    if (String(picked) === REFRESH) return 'refresh';
 
     const selected = models.find(m => m.id === String(picked));
     if (!selected) return null;
     return selected;
   }
 
-  return selectLargeCatalog(models, orderedBrowse, toOption, message, initialModelId);
+  return selectLargeCatalog(models, orderedBrowse, toOption, message, initialModelId, refreshable);
 }
 
 function noteEnvConflicts(conflicts: ConflictInfo[]): void {
@@ -305,68 +316,78 @@ function modelToOption(model: LocalProviderModel, hint?: string) {
 export async function browseAllModels(
   provider: LocalProvider,
   prefs: UserPreferences,
-): Promise<LocalProviderModel | 'back' | null> {
+  refreshable = false,
+): Promise<LocalProviderModel | 'back' | 'refresh' | null> {
   return selectModelWithSearch(
     provider.models,
     m => modelToOption(m),
     'Which model?',
     prefs.lastModel,
+    undefined,
+    refreshable,
   );
+}
+
+/**
+ * Recently used models first (plus Browse all / Go back), or the full list when
+ * there are none. With `refresh`, a "↻ Refresh models" row re-fetches the
+ * provider's models (updating `provider.models`) and reopens the list.
+ */
+export async function pickProviderModel(
+  provider: LocalProvider,
+  prefs: UserPreferences,
+  opts: { message: string; maxRecent: number; refresh?: () => Promise<void> },
+): Promise<LocalProviderModel | 'back' | null> {
+  const refreshable = Boolean(opts.refresh);
+  while (true) {
+    const recentModels = (prefs.recentModelsByProvider?.[provider.id] ?? [])
+      .slice(0, opts.maxRecent)
+      .map(id => provider.models.find(m => m.id === id))
+      .filter((m): m is LocalProviderModel => m !== undefined);
+
+    let picked: LocalProviderModel | 'back' | 'refresh' | null;
+    if (recentModels.length > 0) {
+      const choice = await p.select({
+        message: opts.message,
+        options: [
+          ...recentModels.map(m => modelToOption(m, 'recent')),
+          navOption(BROWSE_ALL, 'Browse all models →', `${provider.models.length} available`),
+          ...(refreshable ? [refreshOption()] : []),
+          navOption('__back__', '← Go back', 'Select a different provider'),
+        ],
+        initialValue: recentModels[0]!.id,
+      });
+
+      if (p.isCancel(choice) || String(choice) === '__back__') return 'back';
+      if (String(choice) === REFRESH) {
+        picked = 'refresh';
+      } else if (String(choice) === BROWSE_ALL) {
+        picked = await browseAllModels(provider, prefs, refreshable);
+        if (picked === 'back') continue;
+      } else {
+        picked = recentModels.find(m => m.id === String(choice))!;
+      }
+    } else {
+      picked = await browseAllModels(provider, prefs, refreshable);
+      if (picked === 'back') return 'back';
+    }
+
+    if (picked === 'refresh') {
+      await opts.refresh!();
+      continue;
+    }
+    return picked;
+  }
 }
 
 export async function pickLocalModel(
   provider: LocalProvider,
   conflicts: ConflictInfo[],
   prefs: UserPreferences,
+  refresh?: () => Promise<void>,
 ): Promise<LocalProviderModel | 'back' | null> {
-  // Show recently used models for this provider if we have any.
-  const recentIds = (prefs.recentModelsByProvider?.[provider.id] ?? []).slice(0, MAX_RECENT);
-  const recentModels = recentIds
-    .map(id => provider.models.find(m => m.id === id))
-    .filter((m): m is LocalProviderModel => m !== undefined);
-
-  let selectedModel: LocalProviderModel | null = null;
-
-  while (true) {
-    if (recentModels.length > 0) {
-      const options = [
-        ...recentModels.map(m => modelToOption(m, 'recent')),
-        navOption(BROWSE_ALL, 'Browse all models →', `${provider.models.length} available`),
-        navOption('__back__', '← Go back', 'Select a different provider'),
-      ];
-
-      const picked = await p.select({
-        message: 'Which model?',
-        options,
-        initialValue: recentModels[0].id,
-      });
-
-      if (p.isCancel(picked) || String(picked) === '__back__') {
-        return 'back';
-      }
-
-      if (String(picked) === BROWSE_ALL) {
-        const browsed = await browseAllModels(provider, prefs);
-        if (browsed === 'back') {
-          continue;
-        }
-        if (!browsed) return null;
-        selectedModel = browsed;
-        break;
-      } else {
-        selectedModel = recentModels.find(m => m.id === String(picked))!;
-        break;
-      }
-    } else {
-      const browsed = await browseAllModels(provider, prefs);
-      if (browsed === 'back') {
-        return 'back';
-      }
-      if (!browsed) return null;
-      selectedModel = browsed;
-      break;
-    }
-  }
+  const selectedModel = await pickProviderModel(provider, prefs, { message: 'Which model?', maxRecent: MAX_RECENT, refresh });
+  if (selectedModel === 'back' || !selectedModel) return selectedModel;
 
   noteEnvConflicts(conflicts);
 

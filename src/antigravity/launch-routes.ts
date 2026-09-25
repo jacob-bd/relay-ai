@@ -13,6 +13,8 @@ export interface ResolveAntigravityLaunchRoutesOptions {
   allProviders: LocalProvider[];
   favorites?: FavoriteModel[];
   maxRoutes?: number;
+  /** agy: list the levels it folds into one row with a slider (low/medium/high/max), plus XHigh. */
+  effortSlider?: boolean;
 }
 
 export interface ResolveAntigravityLaunchRoutesResult {
@@ -65,7 +67,7 @@ export async function resolveAntigravityLaunchRoutes(
   const launchable = resolved.filter(entry => !tooSmall.includes(entry));
 
   // Effort variants can push later favorites past the cap; report those too.
-  const routes = buildAntigravityRoutes(launchable, maxRoutes);
+  const routes = buildAntigravityRoutes(launchable, maxRoutes, { effortSlider: opts.effortSlider });
   const routed = new Set(routes.map(route => `${route.providerId}:${route.modelId}`));
   const cutByVariants = launchable
     .filter(entry => !routed.has(`${entry.providerId}:${entry.model.id}`))

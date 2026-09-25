@@ -5481,7 +5481,7 @@ function translateRequest(body, npm, options) {
       responseSubagentRouting = options.subagentRouting;
     }
   }
-  const effort = anthropicEffortFromRequest(body) ?? options?.defaultEffort;
+  const effort = options?.fixedEffort ?? anthropicEffortFromRequest(body) ?? options?.defaultEffort;
   let providerOptions = deepMergeProviderOptions(
     thinkingProviderOptions(npm),
     effortProviderOptions(npm, effort, options?.reasoningMetadata?.upstreamModelId ?? body.model, options?.reasoningMetadata)
@@ -5922,4 +5922,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-ZHJDF5LZ.js.map
+//# sourceMappingURL=chunk-TAX7SVCS.js.map

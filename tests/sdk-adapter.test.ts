@@ -311,6 +311,15 @@ describe('translateRequest', () => {
     });
   });
 
+  it('fixedEffort wins over the client output_config.effort', () => {
+    const params = translateRequest({
+      model: 'anthropic-xai__grok-4.3',
+      output_config: { effort: 'high' },
+      messages: [{ role: 'user', content: 'hi' }],
+    }, '@ai-sdk/xai', { fixedEffort: 'low', reasoningMetadata: { upstreamModelId: 'grok-4.3' } });
+    expect(params.providerOptions?.xai).toMatchObject({ reasoningEffort: 'low' });
+  });
+
   it('applies reasoning effort using reasoningMetadata.upstreamModelId, not the gateway-aliased body.model', () => {
     const params = translateRequest({
       model: 'anthropic-xai__grok-4.3',

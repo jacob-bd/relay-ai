@@ -283,6 +283,7 @@ async function handleAnthropicMessages(
     }
     const params = sdkTranslateRequest(body as unknown as AnthropicRequest, model.npm!, {
       defaultEffort: anthropicEffortFromRequest(body as AnthropicRequest) ? undefined : model.defaultEffort,
+      fixedEffort: model.fixedEffort,
       openAiOAuth: model.npm === '@ai-sdk/openai' && model.authType === 'oauth',
       onDebug: plog,
       subagentRouting,
