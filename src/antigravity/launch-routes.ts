@@ -64,13 +64,20 @@ export async function resolveAntigravityLaunchRoutes(
   );
   const launchable = resolved.filter(entry => !tooSmall.includes(entry));
 
+  // Effort variants can push later favorites past the cap; report those too.
+  const routes = buildAntigravityRoutes(launchable, maxRoutes);
+  const routed = new Set(routes.map(route => `${route.providerId}:${route.modelId}`));
+  const cutByVariants = launchable
+    .filter(entry => !routed.has(`${entry.providerId}:${entry.model.id}`))
+    .map(entry => ({ providerId: entry.providerId, modelId: entry.model.id }));
+
   return {
-    routes: buildAntigravityRoutes(launchable, maxRoutes),
+    routes,
     apiKey,
     droppedFavorites: [
       ...droppedFavorites,
       ...tooSmall.map(entry => ({ providerId: entry.providerId, modelId: entry.model.id })),
     ],
-    capacitySkippedFavorites,
+    capacitySkippedFavorites: [...cutByVariants, ...capacitySkippedFavorites],
   };
 }

@@ -104,8 +104,6 @@ export interface UserPreferences {
   favoriteModels?: FavoriteModel[];
   /** Independent, initially empty list containing at most one Codex Sub-agent model. */
   codexSubagentModels?: FavoriteModel[];
-  antigravityCliFavoriteModels?: FavoriteModel[];
-  antigravityCliFavoritesHintShown?: boolean;
   appPathOverrides?: Record<string, string>;
   recentLaunchFolders?: string[];
   server?: {
@@ -151,7 +149,7 @@ export interface ParsedArgs {
   /** Manage the AGY-specific favorites list instead of global favorites. */
   favoritesAgy?: boolean;
   /** Which model catalog the models command manages. */
-  modelCatalogScope?: 'global' | 'agy' | 'codex-subagents';
+  modelCatalogScope?: 'global' | 'codex-subagents';
   /** Whether Codex should expose native models beside Relay routes for this launch. */
   codexLaunchMode?: 'mixed' | 'relay-only';
   /** Start `relay-ai server` from saved/default settings without prompts. */

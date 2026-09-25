@@ -39,7 +39,7 @@ import { resolveContextWindow } from '../context-window.js';
 import { resolveCodexClientVersion } from '../codex/version.js';
 import { isAntigravityCloudCodeHelperSlot, shouldHideModel } from '../model-compatibility.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
-import { fetchModelsDevCache } from './models-dev.js';
+import { fetchModelsDevCache, findModelsDevModel } from './models-dev.js';
 import {
   copilotPlanTier,
   normalizeCopilotModels,
@@ -363,7 +363,7 @@ function buildDynamicOAuthModel(entry: OpenAiModelEntry, seedById: Map<string, C
     contextWindow: entry.context_window ?? resolveContextWindow(id),
     modelFormat: 'openai' as const,
     npm: '@ai-sdk/openai',
-    reasoning: modelPrefersResponsesApi(id),
+    reasoning: findModelsDevModel('openai-oauth', id)?.reasoning ?? modelPrefersResponsesApi(id),
     useResponsesLite: entry.useResponsesLite,
     preferWebSockets: entry.preferWebSockets,
   };

@@ -68,6 +68,7 @@ export const REGISTRY_TO_MODELS_DEV: Record<string, string> = {
   go: 'opencode-go',
   google: 'google',
   openai: 'openai',
+  'openai-oauth': 'openai',
   groq: 'groq',
   mistral: 'mistral',
   togetherai: 'together',
@@ -410,6 +411,15 @@ export function resolveModelReasoningMetadata(
 
   const interleaved = overrides.interleavedField ?? entry?.interleaved?.field;
   if (interleaved) result.interleavedReasoningField = interleaved;
+
+  // The serving provider's own declaration beats the cross-bucket intersection:
+  // one reseller listing fewer levels must not strip levels from the vendor itself.
+  const ownLevels = extractReasoningEffortLevels(entry)?.map(v => v.trim().toLowerCase());
+  const ownRanked = ownLevels ? EFFORT_RANK.filter(rank => ownLevels.includes(rank)) : [];
+  if (ownRanked.length > 0) {
+    result.reasoningEffortLevels = ownRanked;
+    return result;
+  }
 
   const effort = resolveModelsDevEffort(modelId, cache);
   if (effort.kind === 'levels') result.reasoningEffortLevels = effort.levels;

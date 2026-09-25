@@ -210,7 +210,6 @@ function handleGetConfig(res: ServerResponse): void {
   sendJson(res, 200, {
     favoriteModels: prefs.favoriteModels ?? [],
     codexSubagentModels: prefs.codexSubagentModels ?? [],
-    antigravityCliFavoriteModels: prefs.antigravityCliFavoriteModels ?? [],
   });
 }
 
@@ -219,7 +218,6 @@ async function handlePostConfig(req: IncomingMessage, res: ServerResponse): Prom
     const body = JSON.parse(await readBody(req));
     const update: Parameters<typeof savePreferences>[0] = {};
     if (Array.isArray(body.favoriteModels)) update.favoriteModels = body.favoriteModels;
-    if (Array.isArray(body.antigravityCliFavoriteModels)) update.antigravityCliFavoriteModels = body.antigravityCliFavoriteModels;
     if (Array.isArray(body.codexSubagentModels)) {
       const normalized = normalizeFavoriteModels(body.codexSubagentModels, CODEX_SUBAGENT_MODEL_CAP + 1);
       if (normalized.length > CODEX_SUBAGENT_MODEL_CAP) {
@@ -944,7 +942,6 @@ function handleGetApps(res: ServerResponse): void {
   }
 }
 
-const AGY_APP_IDS = new Set(['antigravity', 'agy', 'antigravity-ide']);
 
 /** Maps a `relay-ai ui` app card id to the launch target `target-compatibility.ts` understands. */
 const APP_ID_TO_LAUNCH_TARGET: Record<string, RelayLaunchTarget> = {
@@ -1024,9 +1021,7 @@ async function handleLaunchApp(req: IncomingMessage, res: ServerResponse, opts: 
     // shows the full provider wizard even though the user already chose "Favorites".
     if (favorites && !httpProxy && !providerId && !modelId) {
       const prefs = loadPreferences();
-      const favList = AGY_APP_IDS.has(appId)
-        ? (prefs.antigravityCliFavoriteModels ?? [])
-        : (prefs.favoriteModels ?? []);
+      const favList = prefs.favoriteModels ?? [];
       if (favList.length > 0) {
         providerId = favList[0]!.providerId;
         modelId = favList[0]!.modelId;

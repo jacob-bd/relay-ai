@@ -2,7 +2,7 @@ import type { UserPreferences, FavoriteModel } from './types.js';
 import { dirname, join } from 'node:path';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { getAppHome, getConfigPath, getLegacyAppHome, getLegacyConfPath } from './paths.js';
-import { CODEX_SUBAGENT_MODEL_CAP } from './constants.js';
+import { CODEX_SUBAGENT_MODEL_CAP, MAX_MODEL_CATALOG } from './constants.js';
 
 function readJsonFile(path: string): UserPreferences | null {
   try {
@@ -54,7 +54,30 @@ function ensureConfigMigrated(): void {
 
 function readConfig(): UserPreferences {
   ensureConfigMigrated();
-  return readJsonFile(getConfigPath()) ?? {};
+  return migrateAntigravityFavorites(readJsonFile(getConfigPath()) ?? {});
+}
+
+/**
+ * Antigravity used to keep its own favorites list (capped by its native picker
+ * slots). It now uses the general favorites, so fold the old list in once —
+ * duplicates skipped, capped at MAX_MODEL_CATALOG — and drop the old keys.
+ */
+export function migrateAntigravityFavorites(config: UserPreferences): UserPreferences {
+  const legacy = config as UserPreferences & {
+    antigravityCliFavoriteModels?: FavoriteModel[];
+    antigravityCliFavoritesHintShown?: boolean;
+  };
+  if (!('antigravityCliFavoriteModels' in legacy) && !('antigravityCliFavoritesHintShown' in legacy)) return config;
+
+  const merged = [...(legacy.favoriteModels ?? [])];
+  for (const fav of legacy.antigravityCliFavoriteModels ?? []) {
+    if (merged.length >= MAX_MODEL_CATALOG) break;
+    if (!merged.some(m => m.providerId === fav.providerId && m.modelId === fav.modelId)) merged.push(fav);
+  }
+  const { antigravityCliFavoriteModels: _models, antigravityCliFavoritesHintShown: _hint, ...rest } = legacy;
+  const next: UserPreferences = merged.length > 0 ? { ...rest, favoriteModels: merged } : rest;
+  writeConfig(next);
+  return next;
 }
 
 function writeConfig(config: UserPreferences): void {
@@ -83,15 +106,13 @@ export function loadPreferences(): UserPreferences {
     codexSubagentModels: Array.isArray(config.codexSubagentModels)
       ? config.codexSubagentModels.slice(0, CODEX_SUBAGENT_MODEL_CAP)
       : undefined,
-    antigravityCliFavoriteModels: config.antigravityCliFavoriteModels,
-    antigravityCliFavoritesHintShown: config.antigravityCliFavoritesHintShown,
     appPathOverrides: config.appPathOverrides,
     recentLaunchFolders: config.recentLaunchFolders,
     server: config.server,
   };
 }
 
-export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBackend' | 'lastModel' | 'lastProvider' | 'lastCodexProvider' | 'lastCodexModel' | 'lastGeminiProvider' | 'lastGeminiModel' | 'lastAntigravityProvider' | 'lastAntigravityModel' | 'lastClaudeTransparentMode' | 'recentModelsByProvider' | 'favoriteModels' | 'codexSubagentModels' | 'antigravityCliFavoriteModels' | 'antigravityCliFavoritesHintShown' | 'appPathOverrides' | 'recentLaunchFolders'>>): void {
+export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBackend' | 'lastModel' | 'lastProvider' | 'lastCodexProvider' | 'lastCodexModel' | 'lastGeminiProvider' | 'lastGeminiModel' | 'lastAntigravityProvider' | 'lastAntigravityModel' | 'lastClaudeTransparentMode' | 'recentModelsByProvider' | 'favoriteModels' | 'codexSubagentModels' | 'appPathOverrides' | 'recentLaunchFolders'>>): void {
   const config = readConfig();
   if (prefs.lastBackend !== undefined) config.lastBackend = prefs.lastBackend;
   if (prefs.lastModel !== undefined) config.lastModel = prefs.lastModel;
@@ -108,8 +129,6 @@ export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBacken
   if (prefs.codexSubagentModels !== undefined) {
     config.codexSubagentModels = prefs.codexSubagentModels.slice(0, CODEX_SUBAGENT_MODEL_CAP);
   }
-  if (prefs.antigravityCliFavoriteModels !== undefined) config.antigravityCliFavoriteModels = prefs.antigravityCliFavoriteModels;
-  if (prefs.antigravityCliFavoritesHintShown !== undefined) config.antigravityCliFavoritesHintShown = prefs.antigravityCliFavoritesHintShown;
   if (prefs.appPathOverrides !== undefined) config.appPathOverrides = prefs.appPathOverrides;
   if (prefs.recentLaunchFolders !== undefined) config.recentLaunchFolders = prefs.recentLaunchFolders;
   writeConfig(config);

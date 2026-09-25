@@ -1,3 +1,4 @@
+import { MAX_MODEL_CATALOG } from './constants.js';
 import pc from 'picocolors';
 
 const SHUTDOWN_DRAIN_MS = 500;
@@ -33,7 +34,7 @@ import type { FavoriteModel, UserPreferences, LocalProvider, LocalProviderModel 
 import type { CatalogFixture } from './antigravity/types.js';
 
 const AGY_FAVORITES_PROVIDER_ID = '__relay_agy_favorites__';
-const AGY_FAVORITES_PROVIDER_LABEL = '★ Antigravity CLI Favorites';
+const AGY_FAVORITES_PROVIDER_LABEL = '★ Favorites';
 
 /** True when child args already select a model (--model or --model=). */
 export function agyArgsIncludeModelFlag(args: string[]): boolean {
@@ -50,12 +51,12 @@ export function agyArgsAreNonInteractive(args: string[]): boolean {
   return args.some(arg => arg === '-p' || arg === '--prompt' || arg.startsWith('--prompt='));
 }
 
-export function formatAgyCapacityWarning(validatedSlotCount: number, skippedFavoriteCount: number): string {
-  const slotWord = validatedSlotCount === 1 ? 'slot' : 'slots';
+export function formatAgyCapacityWarning(maxEntries: number, skippedFavoriteCount: number): string {
+  const entryWord = maxEntries === 1 ? 'model' : 'models';
   const favoritePhrase = skippedFavoriteCount === 1
     ? '1 favorite was not exposed'
     : `${skippedFavoriteCount} favorites were not exposed`;
-  return `AGY can switch among ${validatedSlotCount} validated model ${slotWord}; ${favoritePhrase}.`;
+  return `Antigravity can list ${maxEntries} ${entryWord} (effort levels count separately); ${favoritePhrase}.`;
 }
 
 function isInteractiveTerminal(): boolean {
@@ -109,7 +110,7 @@ export function resolveAntigravityBootModel(
   };
 }
 
-async function pickAntigravityCliFavoriteLaunchModel(
+async function pickAntigravityFavoriteLaunchModel(
   favorites: FavoriteModel[],
   allProviders: LocalProvider[],
 ): Promise<{ provider: LocalProvider; model: LocalProviderModel } | null> {
@@ -118,13 +119,13 @@ async function pickAntigravityCliFavoriteLaunchModel(
     .filter((entry): entry is { provider: LocalProvider; model: LocalProviderModel } => entry !== null);
 
   if (resolved.length === 0) {
-    p.log.warn('No Antigravity CLI favorites are available.');
-    p.log.info(pc.dim('Manage them with `relay-ai favorites --agy`.'));
+    p.log.warn('No favorites are available for Antigravity.');
+    p.log.info(pc.dim('Manage them with `relay-ai favorites`.'));
     return null;
   }
 
   const picked = await p.select<string>({
-    message: 'Launch from Antigravity CLI favorites',
+    message: 'Launch from favorites',
     options: resolved.map(({ provider, model }) => ({
       value: `${provider.id}:${model.id}`,
       label: formatModelLabel(model),
@@ -187,7 +188,7 @@ async function resolveAntigravityLaunch(
     {
       value: AGY_FAVORITES_PROVIDER_ID,
       label: pc.cyan(AGY_FAVORITES_PROVIDER_LABEL),
-      hint: `${prefs.antigravityCliFavoriteModels?.length ?? 0}/6 saved · manage with relay-ai favorites --agy`,
+      hint: `${prefs.favoriteModels?.length ?? 0}/${MAX_MODEL_CATALOG} saved · manage with relay-ai favorites`,
     },
     ...allProviders.map(lp => providerSelectOption(lp)),
   ];
@@ -213,8 +214,8 @@ async function resolveAntigravityLaunch(
     }
 
     if (chosen === AGY_FAVORITES_PROVIDER_ID) {
-      const favoriteSelection = await pickAntigravityCliFavoriteLaunchModel(
-        prefs.antigravityCliFavoriteModels ?? [],
+      const favoriteSelection = await pickAntigravityFavoriteLaunchModel(
+        prefs.favoriteModels ?? [],
         allProviders,
       );
       if (!favoriteSelection) {
@@ -243,7 +244,6 @@ async function resolveAndBuildRoutes(
   prefs: UserPreferences,
   opts: {
     maxRoutes: number;
-    validatedSlotCount: number;
     pauseForCapacityWarning: boolean;
     childArgs: string[];
   },
@@ -252,7 +252,7 @@ async function resolveAndBuildRoutes(
     provider,
     model,
     allProviders,
-    favorites: prefs.antigravityCliFavoriteModels ?? [],
+    favorites: prefs.favoriteModels ?? [],
     maxRoutes: opts.maxRoutes,
   });
   if (!result) {
@@ -262,9 +262,9 @@ async function resolveAndBuildRoutes(
 
   if (result.routes.length > 1) {
     p.log.info(
-      `Favorites mode active — Antigravity picker will show ${result.routes.length} models.`,
+      `Favorites mode active — Antigravity picker will show ${result.routes.length} entries (effort levels are listed separately).`,
     );
-    p.log.info('Edit with `relay-ai favorites --agy`.');
+    p.log.info('Edit with `relay-ai favorites`.');
   }
   if (result.droppedFavorites.length > 0) {
     p.log.warn(
@@ -273,7 +273,7 @@ async function resolveAndBuildRoutes(
     );
   }
   if (result.capacitySkippedFavorites.length > 0) {
-    p.log.warn(formatAgyCapacityWarning(opts.validatedSlotCount, result.capacitySkippedFavorites.length));
+    p.log.warn(formatAgyCapacityWarning(opts.maxRoutes, result.capacitySkippedFavorites.length));
     p.log.warn(
       'Not exposed: '
       + result.capacitySkippedFavorites.map(fav => `${fav.providerId}:${fav.modelId}`).join(', '),
@@ -352,15 +352,6 @@ async function runAntigravityCommand(
   const prefs = loadPreferences();
 
   relayIntro(intro);
-  if (
-    tracePrefix === 'agy'
-    && (prefs.favoriteModels?.length ?? 0) > 0
-    && (prefs.antigravityCliFavoriteModels?.length ?? 0) === 0
-    && !prefs.antigravityCliFavoritesHintShown
-  ) {
-    p.log.info('Tip: AGY uses its own favorites list. Run `relay-ai favorites --agy` to set up switching.');
-    savePreferences({ antigravityCliFavoritesHintShown: true });
-  }
 
   const selection = await resolveAntigravityLaunch(prefs, boot);
   if (!selection) return 1;
@@ -379,12 +370,9 @@ async function runAntigravityCommand(
     p.log.warn(warning);
   }
 
-  const routeLimit = compatibility.mode === 'multi-model'
-    ? compatibility.validatedSwitchSlotCount
-    : 1;
+  const routeLimit = compatibility.mode === 'multi-model' ? MAX_MODEL_CATALOG : 1;
   const routeResult = await resolveAndBuildRoutes(provider, model, allProviders, prefs, {
     maxRoutes: routeLimit,
-    validatedSlotCount: routeLimit,
     pauseForCapacityWarning: opts.pauseForCapacityWarning ?? false,
     childArgs: opts.childArgs ?? [],
   });

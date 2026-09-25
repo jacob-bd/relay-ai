@@ -102,8 +102,8 @@ describe('removeFavorite', () => {
 });
 
 describe('MAX_MODEL_CATALOG', () => {
-  it('is 20', () => {
-    expect(MAX_MODEL_CATALOG).toBe(20);
+  it('is 50', () => {
+    expect(MAX_MODEL_CATALOG).toBe(50);
   });
 });
 

@@ -5,6 +5,7 @@ import {
   planRelayCatalogSlots,
   resolveRelayCatalogSlots,
   buildAntigravityRoutes,
+  favoriteEffortLevels,
   buildListModelConfigsResponse,
   buildListExperimentsResponse,
   RELAY_CASCADE_PLAN_MODEL,
@@ -377,12 +378,22 @@ describe('antigravity catalog', () => {
     ]);
   });
 
-  it('plans only validated native AGY slots and reports skipped relay routes', () => {
+  const NATIVE_SLOT_IDS = [
+    'gemini-3.5-flash-low',
+    'gemini-3.5-flash-extra-low',
+    'gemini-3.1-pro-low',
+    'gemini-pro-agent',
+    'claude-sonnet-4-6',
+    'claude-opus-4-6-thinking',
+    'gpt-oss-120b-medium',
+  ];
+
+  it('fills validated native slots first, then lists the rest as Relay-only entries', () => {
     const manyRoutes = Array.from({ length: 25 }, (_, i) => ({
       ...routes[0]!,
-      catalogId: `relay-ai__zen__model-${i}`,
-      modelId: `model-${i}`,
-      upstreamModelId: `model-${i}`,
+      catalogId: `relay-ai__zen__model_${i}`,
+      modelId: `model_${i}`,
+      upstreamModelId: `model_${i}`,
       displayName: `Model ${i} (Relay)`,
     }));
 
@@ -392,21 +403,22 @@ describe('antigravity catalog', () => {
       'gemini-3.5-flash-low',
     );
 
-    expect(plan.slots.map(slot => slot.slotId)).toEqual([
-      'gemini-3.5-flash-low',
-      'gemini-3.5-flash-extra-low',
-      'gemini-3.1-pro-low',
-      'gemini-pro-agent',
-      'claude-sonnet-4-6',
-      'claude-opus-4-6-thinking',
-      'gpt-oss-120b-medium',
-    ]);
-    expect(plan.switchableRoutes).toHaveLength(7);
-    expect(plan.skippedRoutes).toHaveLength(18);
-    expect(plan.skippedRoutes[0]!.catalogId).toBe('relay-ai__zen__model-7');
+    const slotIds = plan.slots.map(slot => slot.slotId);
+    expect(slotIds.slice(0, 7)).toEqual(NATIVE_SLOT_IDS);
+    // The IDE hides picker IDs containing underscores.
+    expect(slotIds[7]).toBe('relay-ai-zen-model-7');
+    for (const id of slotIds) expect(id).not.toContain('_');
+    expect(new Set(slotIds).size).toBe(25);
+    expect(plan.switchableRoutes).toHaveLength(25);
+    expect(plan.skippedRoutes).toHaveLength(0);
+
+    const enums = plan.slots.slice(7).map(slot => slot.extraModelEnum);
+    expect(new Set(enums).size).toBe(18);
+    const nativeEnums = new Set(Object.values((catalogFixtureRaw as CatalogFixture).models).map(m => m.model));
+    for (const value of enums) expect(nativeEnums.has(value!)).toBe(false);
   });
 
-  it('caps visible picker and model config entries to validated AGY switch slots', () => {
+  it('lists every route in the picker and model configs, past the native slots', () => {
     const manyRoutes = Array.from({ length: 25 }, (_, i) => ({
       ...routes[0]!,
       catalogId: `relay-ai__zen__model-${i}`,
@@ -418,22 +430,39 @@ describe('antigravity catalog', () => {
     const catalog = injectRelayModels(catalogFixtureRaw as CatalogFixture, manyRoutes, 'gemini-3.5-flash-low');
     const configs = buildListModelConfigsResponse(manyRoutes, catalog);
 
-    expect(catalog.agentModelSorts[0]!.groups[0]!.modelIds).toEqual([
-      'gemini-3.5-flash-low',
-      'gemini-3.5-flash-extra-low',
-      'gemini-3.1-pro-low',
-      'gemini-pro-agent',
-      'claude-sonnet-4-6',
-      'claude-opus-4-6-thinking',
-      'gpt-oss-120b-medium',
-    ]);
-    expect(catalog.agentModelSorts[0]!.groups[0]!.modelIds)
-      .not.toContain('relay-ai__zen__model-7');
-    expect(catalog.models['relay-ai__zen__model-6']).toBeDefined();
-    expect(catalog.models['relay-ai__zen__model-7']).toBeUndefined();
-    expect((configs.allowedModelConfigs as unknown[])).toHaveLength(7);
-    expect((configs.clientModelConfigs as unknown[])).toHaveLength(7);
-    expect(((configs.clientModelSorts as any[])[0].groups[0].modelLabels as string[])).toHaveLength(7);
+    const pickerIds = catalog.agentModelSorts[0]!.groups[0]!.modelIds;
+    expect(pickerIds).toHaveLength(25);
+    expect(pickerIds.slice(0, 7)).toEqual(NATIVE_SLOT_IDS);
+    expect(pickerIds).toContain('relay-ai-zen-model-7');
+    expect(catalog.models['relay-ai-zen-model-7']!.displayName).toBe('Model 7 (Relay)');
+    expect((configs.allowedModelConfigs as unknown[])).toHaveLength(25);
+    expect((configs.clientModelConfigs as unknown[])).toHaveLength(25);
+    expect(((configs.clientModelSorts as any[])[0].groups[0].modelLabels as string[])).toHaveLength(25);
+  });
+
+  it('plans the same slot IDs when run again on the injected catalog', () => {
+    // The gateway routes requests and builds listModelConfigs by planning against
+    // the catalog it already injected. Drift here means requests to Relay-only
+    // entries miss the route map and get rejected.
+    const manyRoutes = Array.from({ length: 12 }, (_, i) => ({
+      ...routes[0]!,
+      catalogId: `relay-ai__zen__model_${i}`,
+      modelId: `model_${i}`,
+      upstreamModelId: `model_${i}`,
+      displayName: `Model ${i} (Relay)`,
+    }));
+    const raw = catalogFixtureRaw as CatalogFixture;
+    const injected = injectRelayModels(raw, manyRoutes, 'gemini-3.5-flash-low');
+
+    const first = planRelayCatalogSlots(raw, manyRoutes, 'gemini-3.5-flash-low').slots;
+    const again = planRelayCatalogSlots(injected, manyRoutes, 'gemini-3.5-flash-low').slots;
+    expect(again.map(slot => slot.slotId)).toEqual(first.map(slot => slot.slotId));
+    expect(again.map(slot => slot.extraModelEnum)).toEqual(first.map(slot => slot.extraModelEnum));
+
+    const pickerIds = injected.agentModelSorts[0]!.groups[0]!.modelIds;
+    const configIds = (buildListModelConfigsResponse(manyRoutes, injected).allowedModelConfigs as any[])
+      .map(config => config.requestedModelId);
+    expect(configIds).toEqual(pickerIds);
   });
 
   it('does not advertise audio support for relay-backed Antigravity models', () => {
@@ -462,9 +491,9 @@ describe('antigravity catalog', () => {
         authType: 'oauth',
         oauthAccountId: 'acct-123',
         model: {
-          id: 'grok-4.3',
-          name: 'Grok 4.3',
-          upstreamModelId: 'grok-4.3',
+          id: 'grok-build-0.1',
+          name: 'Grok Build',
+          upstreamModelId: 'grok-build-0.1',
           npm: '@ai-sdk/xai',
         },
         apiKey: 'oauth-token',
@@ -474,9 +503,9 @@ describe('antigravity catalog', () => {
         providerName: 'xAI API',
         authType: 'api',
         model: {
-          id: 'grok-4.3',
-          name: 'Grok 4.3',
-          upstreamModelId: 'grok-4.3',
+          id: 'grok-build-0.1',
+          name: 'Grok Build',
+          upstreamModelId: 'grok-build-0.1',
           npm: '@ai-sdk/xai',
         },
         apiKey: 'api-key',
@@ -485,11 +514,11 @@ describe('antigravity catalog', () => {
     const catalog = injectRelayModels(fixture, duplicateRoutes, 'gemini-3.5-flash-low');
     const configs = buildListModelConfigsResponse(duplicateRoutes, catalog);
 
-    expect(catalog.models[RELAY_CASCADE_ANCHOR_ID]!.displayName).toBe('Grok 4.3 (Relay - xAI SuperGrok)');
-    expect(catalog.models['claude-sonnet-4-6']!.displayName).toBe('Grok 4.3 (Relay - xAI API)');
+    expect(catalog.models[RELAY_CASCADE_ANCHOR_ID]!.displayName).toBe('Grok Build (Relay - xAI SuperGrok)');
+    expect(catalog.models['claude-sonnet-4-6']!.displayName).toBe('Grok Build (Relay - xAI API)');
     expect((configs.clientModelConfigs as any[]).map(config => config.label)).toEqual([
-      'Grok 4.3 (Relay - xAI SuperGrok)',
-      'Grok 4.3 (Relay - xAI API)',
+      'Grok Build (Relay - xAI SuperGrok)',
+      'Grok Build (Relay - xAI API)',
     ]);
   });
 
@@ -513,7 +542,7 @@ describe('antigravity route resolution', () => {
       {
         providerId: 'zen',
         providerName: 'OpenCode Zen',
-        model: { id: 'deepseek-v4-flash-free', name: 'DeepSeek' },
+        model: { id: 'llama-3.1-8b', name: 'Llama 8B' },
         apiKey: 'key-1',
       },
       {
@@ -527,12 +556,12 @@ describe('antigravity route resolution', () => {
     const result = buildAntigravityRoutes(favorites);
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({
-      catalogId: 'relay-ai__zen__deepseek-v4-flash-free',
+      catalogId: 'relay-ai__zen__llama-3_1-8b',
       providerId: 'zen',
       providerName: 'OpenCode Zen',
-      modelId: 'deepseek-v4-flash-free',
-      upstreamModelId: 'deepseek-v4-flash-free',
-      displayName: 'DeepSeek (Relay)',
+      modelId: 'llama-3.1-8b',
+      upstreamModelId: 'llama-3.1-8b',
+      displayName: 'Llama 8B (Relay)',
       npm: '@ai-sdk/openai-compatible',
       apiKey: 'key-1',
       baseURL: undefined,
@@ -548,9 +577,9 @@ describe('antigravity route resolution', () => {
         authType: 'oauth',
         oauthAccountId: 'acct-123',
         model: {
-          id: 'grok-4.3',
-          name: 'Grok 4.3',
-          upstreamModelId: 'grok-4.3',
+          id: 'grok-build-0.1',
+          name: 'Grok Build',
+          upstreamModelId: 'grok-build-0.1',
           npm: '@ai-sdk/xai',
         },
         apiKey: 'oauth-token',
@@ -560,9 +589,9 @@ describe('antigravity route resolution', () => {
         providerName: 'xAI API',
         authType: 'api',
         model: {
-          id: 'grok-4.3',
-          name: 'Grok 4.3',
-          upstreamModelId: 'grok-4.3',
+          id: 'grok-build-0.1',
+          name: 'Grok Build',
+          upstreamModelId: 'grok-build-0.1',
           npm: '@ai-sdk/xai',
         },
         apiKey: 'api-key',
@@ -571,17 +600,17 @@ describe('antigravity route resolution', () => {
 
     expect(result).toMatchObject([
       {
-        catalogId: 'relay-ai__xai-oauth__grok-4_3',
+        catalogId: 'relay-ai__xai-oauth__grok-build-0_1',
         providerId: 'xai-oauth',
-        displayName: 'Grok 4.3 (Relay - xAI SuperGrok)',
+        displayName: 'Grok Build (Relay - xAI SuperGrok)',
         apiKey: 'oauth-token',
         authType: 'oauth',
         oauthAccountId: 'acct-123',
       },
       {
-        catalogId: 'relay-ai__xai__grok-4_3',
+        catalogId: 'relay-ai__xai__grok-build-0_1',
         providerId: 'xai',
-        displayName: 'Grok 4.3 (Relay - xAI API)',
+        displayName: 'Grok Build (Relay - xAI API)',
         apiKey: 'api-key',
         authType: 'api',
       },
@@ -598,5 +627,64 @@ describe('antigravity route resolution', () => {
 
     const result = buildAntigravityRoutes(favorites, 20);
     expect(result).toHaveLength(20);
+  });
+});
+
+describe('antigravity effort variants', () => {
+  const gpt = (id: string, name: string) => ({
+    id,
+    name,
+    upstreamModelId: id,
+    npm: '@ai-sdk/openai',
+    reasoning: true,
+    reasoningEffortLevels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+  });
+  const fav = (providerId: string, model: object) => ({ providerId, providerName: providerId, model, apiKey: 'k' });
+
+  it('picks medium and the two levels above it for favorites, topping up from below', () => {
+    expect(favoriteEffortLevels(['none', 'low', 'medium', 'high', 'xhigh', 'max'], 'medium')).toEqual(['medium', 'high', 'xhigh']);
+    expect(favoriteEffortLevels(['low', 'medium', 'high'], 'medium')).toEqual(['low', 'medium', 'high']);
+    expect(favoriteEffortLevels(['low', 'high'], 'high')).toEqual(['low', 'high']);
+    expect(favoriteEffortLevels(['low', 'high', 'xhigh', 'max'], 'high')).toEqual(['high', 'xhigh', 'max']);
+  });
+
+  it('lists the launch model at every level and favorites at three', () => {
+    const routes = buildAntigravityRoutes([
+      fav('openai-oauth', gpt('gpt-6-sol', 'GPT-6 Sol')),
+      fav('openai', gpt('gpt-6-luna', 'GPT-6 Luna')),
+      fav('groq', { id: 'llama-3.1-8b', name: 'Llama 8B' }),
+    ] as any[]);
+
+    expect(routes.map(route => [route.displayName, route.reasoningEffort])).toEqual([
+      ['GPT-6 Sol None (Relay)', 'none'],
+      ['GPT-6 Sol Low (Relay)', 'low'],
+      ['GPT-6 Sol Medium (Relay)', 'medium'],
+      ['GPT-6 Sol High (Relay)', 'high'],
+      ['GPT-6 Sol XHigh (Relay)', 'xhigh'],
+      ['GPT-6 Sol Max (Relay)', 'max'],
+      ['GPT-6 Luna Medium (Relay)', 'medium'],
+      ['GPT-6 Luna High (Relay)', 'high'],
+      ['GPT-6 Luna XHigh (Relay)', 'xhigh'],
+      ['Llama 8B (Relay)', undefined],
+    ]);
+    expect(routes[0]!.catalogId).toBe('relay-ai__openai-oauth__gpt-6-sol__effort_none');
+    expect(new Set(routes.map(route => route.catalogId)).size).toBe(routes.length);
+  });
+
+  it('keeps Cloud Code routes as a single entry', () => {
+    const routes = buildAntigravityRoutes([
+      fav('antigravity', { ...gpt('gemini-3.8-flash', 'Gemini 3.8 Flash'), modelFormat: 'cloud-code' }),
+    ] as any[]);
+    expect(routes).toHaveLength(1);
+    expect(routes[0]!.reasoningEffort).toBeUndefined();
+  });
+
+  it('counts effort variants against the catalog cap', () => {
+    const routes = buildAntigravityRoutes([
+      fav('openai-oauth', gpt('gpt-6-sol', 'GPT-6 Sol')),
+      fav('openai', gpt('gpt-6-luna', 'GPT-6 Luna')),
+    ] as any[], 7);
+    expect(routes).toHaveLength(7);
+    expect(routes.at(-1)!.displayName).toBe('GPT-6 Luna Medium (Relay)');
   });
 });

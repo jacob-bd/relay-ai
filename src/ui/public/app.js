@@ -10,8 +10,7 @@ import { providerInitial, providerLogoHtml } from './provider-logo.js';
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
-const AGY_MAX = 6;
-const GENERAL_MAX = 20;
+const GENERAL_MAX = 50;
 const CODEX_SUBAGENT_MAX = 1;
 const UPDATE_COMMAND = 'npm install -g @jacobbd/relay-ai@latest';
 
@@ -22,7 +21,6 @@ const state = {
   appModelsByTarget: {}, // launch target → flattened, compatibility-filtered model list
   generalFavorites: [],
   codexSubagentModels: [],
-  agyFavorites: [],
   modelsLoaded: false,
   modelsError: null,
   providerFilter: '',
@@ -34,8 +32,6 @@ const state = {
   manualModelForms: new Map(), // provider ID → draft and in-flight action, survives browser re-renders
   modelFilter: '',
   modelFreeOnly: false,
-  agyFilter: '',
-  agyFreeOnly: false,
   codexSubagentFilter: '',
   codexSubagentFreeOnly: false,
   appModelFilter: '',
@@ -193,7 +189,6 @@ async function loadConfig() {
   const data = await api('GET', '/api/config');
   state.generalFavorites = data.favoriteModels ?? [];
   state.codexSubagentModels = (data.codexSubagentModels ?? []).slice(0, CODEX_SUBAGENT_MAX);
-  state.agyFavorites = data.antigravityCliFavoriteModels ?? [];
 }
 
 async function initUpdateIndicator() {
@@ -532,10 +527,8 @@ function toggleModelFavoriteMenu(button, providerId, modelId) {
   closeModelFavPopover();
 
   const isGenFav = isGeneralFavorite(providerId, modelId);
-  const isAgyFav = state.agyFavorites.some(f => f.providerId === providerId && f.modelId === modelId);
   const isSubagent = state.codexSubagentModels.some(f => f.providerId === providerId && f.modelId === modelId);
   const genAtCapacity = state.generalFavorites.length >= GENERAL_MAX;
-  const agyAtCapacity = state.agyFavorites.length >= AGY_MAX;
   const subagentAtCapacity = state.codexSubagentModels.length >= CODEX_SUBAGENT_MAX;
 
   const popover = document.createElement('div');
@@ -547,11 +540,6 @@ function toggleModelFavoriteMenu(button, providerId, modelId) {
   if (isGenFav) genLabel = '✓ In Global Favorites';
   else if (genAtCapacity) genLabel = `★ Favorites full (${GENERAL_MAX}/${GENERAL_MAX})`;
 
-  const agyDisabled = isAgyFav || agyAtCapacity;
-  let agyLabel = '✦ Add to Antigravity Favorites';
-  if (isAgyFav) agyLabel = '✓ In Antigravity Favorites';
-  else if (agyAtCapacity) agyLabel = `✦ Antigravity full (${AGY_MAX}/${AGY_MAX})`;
-
   const subagentDisabled = isSubagent || subagentAtCapacity;
   let subagentLabel = '✦ Add to Codex SubAgent';
   if (isSubagent) subagentLabel = '✓ In Codex SubAgent';
@@ -561,10 +549,6 @@ function toggleModelFavoriteMenu(button, providerId, modelId) {
     <button class="model-fav-popover-item ${genDisabled ? 'disabled' : ''}" type="button" data-type="general" ${genDisabled ? 'disabled' : ''}>
       <span>${genLabel}</span>
       <span class="popover-slot-count">${state.generalFavorites.length}/${GENERAL_MAX}</span>
-    </button>
-    <button class="model-fav-popover-item ${agyDisabled ? 'disabled' : ''}" type="button" data-type="agy" ${agyDisabled ? 'disabled' : ''}>
-      <span>${agyLabel}</span>
-      <span class="popover-slot-count">${state.agyFavorites.length}/${AGY_MAX}</span>
     </button>
     <button class="model-fav-popover-item ${subagentDisabled ? 'disabled' : ''}" type="button" data-type="codex-subagents" ${subagentDisabled ? 'disabled' : ''}>
       <span>${subagentLabel}</span>
@@ -579,11 +563,9 @@ function toggleModelFavoriteMenu(button, providerId, modelId) {
       addToFavorites({ providerId, modelId }, listType);
       closeModelFavPopover();
       showToast(
-        listType === 'agy'
-          ? 'Added to Antigravity Favorites'
-          : listType === 'codex-subagents'
-            ? 'Added to Codex SubAgent'
-            : 'Added to Global Favorites',
+        listType === 'codex-subagents'
+          ? 'Added to Codex SubAgent'
+          : 'Added to Global Favorites',
       );
       renderProviderModelBrowser();
     });
@@ -834,7 +816,6 @@ function buildManualModelPanel(provider) {
       renderFavList();
       if (!isServerAdminUi()) {
         renderCodexSubagentList();
-        renderAgyList();
         renderApps();
       }
     } catch {
@@ -1849,14 +1830,12 @@ function buildOAuthProviderBodyContent(provider) {
 // ─── Model search results ─────────────────────────────────────────────────────
 
 function buildModelResults(filter, listType) {
-  const containerId = listType === 'agy' ? 'agy-results' : listType === 'codex-subagents' ? 'codex-subagent-results' : 'model-results';
+  const containerId = listType === 'codex-subagents' ? 'codex-subagent-results' : 'model-results';
   const container = document.getElementById(containerId);
-  const currentFavs = listType === 'agy'
-    ? state.agyFavorites
-    : listType === 'codex-subagents' ? state.codexSubagentModels : state.generalFavorites;
-  const max = listType === 'agy' ? AGY_MAX : listType === 'codex-subagents' ? CODEX_SUBAGENT_MAX : GENERAL_MAX;
+  const currentFavs = listType === 'codex-subagents' ? state.codexSubagentModels : state.generalFavorites;
+  const max = listType === 'codex-subagents' ? CODEX_SUBAGENT_MAX : GENERAL_MAX;
   const atCapacity = currentFavs.length >= max;
-  const freeOnly = listType === 'agy' ? state.agyFreeOnly : listType === 'codex-subagents' ? state.codexSubagentFreeOnly : state.modelFreeOnly;
+  const freeOnly = listType === 'codex-subagents' ? state.codexSubagentFreeOnly : state.modelFreeOnly;
 
   if (!filter) { container.hidden = true; return; }
   container.hidden = false;
@@ -1935,7 +1914,7 @@ function buildModelResults(filter, listType) {
       addBtn.className = 'btn-add' + (isFav ? ' already-added' : '');
       addBtn.textContent = isFav ? '✓' : '+';
       addBtn.disabled = isFav || (!isFav && atCapacity);
-      addBtn.title = atCapacity && !isFav ? `${listType === 'codex-subagents' ? 'Codex SubAgent' : listType === 'agy' ? 'Antigravity' : 'Favorites'} is full (${max}/${max})` : (isFav ? 'Already added' : 'Add to favorites');
+      addBtn.title = atCapacity && !isFav ? `${listType === 'codex-subagents' ? 'Codex SubAgent' : 'Favorites'} is full (${max}/${max})` : (isFav ? 'Already added' : 'Add to favorites');
       if (!isFav && !atCapacity) {
         addBtn.addEventListener('click', () => {
           addToFavorites({ providerId: m.providerId, modelId: m.id }, listType);
@@ -1955,14 +1934,7 @@ function buildModelResults(filter, listType) {
 // ─── Favorites CRUD ───────────────────────────────────────────────────────────
 
 function addToFavorites(fav, listType) {
-  if (listType === 'agy') {
-    if (state.agyFavorites.length >= AGY_MAX) return;
-    if (state.agyFavorites.some(item => item.providerId === fav.providerId && item.modelId === fav.modelId)) return;
-    state.agyFavorites = [...state.agyFavorites, fav];
-    saveFavorites({ antigravityCliFavoriteModels: state.agyFavorites });
-    renderAgyList();
-    updateAgyCounter();
-  } else if (listType === 'codex-subagents') {
+  if (listType === 'codex-subagents') {
     if (state.codexSubagentModels.length >= CODEX_SUBAGENT_MAX) return;
     if (state.codexSubagentModels.some(item => item.providerId === fav.providerId && item.modelId === fav.modelId)) return;
     state.codexSubagentModels = [...state.codexSubagentModels, fav];
@@ -1978,17 +1950,7 @@ function addToFavorites(fav, listType) {
 }
 
 function removeFromFavorites(index, listType) {
-  if (listType === 'agy') {
-    const prev = [...state.agyFavorites];
-    state.agyFavorites = state.agyFavorites.filter((_, i) => i !== index);
-    saveFavorites({ antigravityCliFavoriteModels: state.agyFavorites });
-    renderAgyList(); updateAgyCounter();
-    showToast('Removed from Antigravity', () => {
-      state.agyFavorites = prev;
-      saveFavorites({ antigravityCliFavoriteModels: state.agyFavorites });
-      renderAgyList(); updateAgyCounter();
-    });
-  } else if (listType === 'codex-subagents') {
+  if (listType === 'codex-subagents') {
     const prev = [...state.codexSubagentModels];
     state.codexSubagentModels = state.codexSubagentModels.filter((_, i) => i !== index);
     saveFavorites({ codexSubagentModels: state.codexSubagentModels });
@@ -2012,15 +1974,11 @@ function removeFromFavorites(index, listType) {
 }
 
 function reorderFavorites(from, to, listType) {
-  const arr = listType === 'agy' ? [...state.agyFavorites] : listType === 'codex-subagents' ? [...state.codexSubagentModels] : [...state.generalFavorites];
+  const arr = listType === 'codex-subagents' ? [...state.codexSubagentModels] : [...state.generalFavorites];
   const prev = [...arr];
   const [item] = arr.splice(from, 1);
   arr.splice(to, 0, item);
-  if (listType === 'agy') {
-    state.agyFavorites = arr;
-    saveFavorites({ antigravityCliFavoriteModels: state.agyFavorites });
-    renderAgyList();
-  } else if (listType === 'codex-subagents') {
+  if (listType === 'codex-subagents') {
     state.codexSubagentModels = arr;
     saveFavorites({ codexSubagentModels: state.codexSubagentModels });
     renderCodexSubagentList();
@@ -2030,11 +1988,7 @@ function reorderFavorites(from, to, listType) {
     renderFavList();
   }
   showToast('Order saved', () => {
-    if (listType === 'agy') {
-      state.agyFavorites = prev;
-      saveFavorites({ antigravityCliFavoriteModels: state.agyFavorites });
-      renderAgyList();
-    } else if (listType === 'codex-subagents') {
+    if (listType === 'codex-subagents') {
       state.codexSubagentModels = prev;
       saveFavorites({ codexSubagentModels: state.codexSubagentModels });
       renderCodexSubagentList();
@@ -2127,7 +2081,7 @@ function buildFavItem(fav, index, listType) {
 
   // Keyboard reorder
   item.addEventListener('keydown', e => {
-    const arr = listType === 'agy' ? state.agyFavorites : listType === 'codex-subagents' ? state.codexSubagentModels : state.generalFavorites;
+    const arr = listType === 'codex-subagents' ? state.codexSubagentModels : state.generalFavorites;
     if (e.altKey && e.key === 'ArrowUp' && index > 0) { e.preventDefault(); reorderFavorites(index, index - 1, listType); }
     else if (e.altKey && e.key === 'ArrowDown' && index < arr.length - 1) { e.preventDefault(); reorderFavorites(index, index + 1, listType); }
   });
@@ -2163,16 +2117,6 @@ function updateGeneralCounter() {
   if (counter) counter.innerHTML = `${count}<span class="agy-slot-max">/${GENERAL_MAX}</span>`;
 }
 
-function renderAgyList() {
-  const list = document.getElementById('agy-list');
-  list.innerHTML = '';
-  if (state.agyFavorites.length === 0) {
-    list.innerHTML = '<div class="fav-empty">No Antigravity favorites yet. Search above to add your first.</div>';
-    return;
-  }
-  state.agyFavorites.forEach((f, i) => list.appendChild(buildFavItem(f, i, 'agy')));
-}
-
 function renderCodexSubagentList() {
   const list = document.getElementById('codex-subagent-list');
   if (!list) return;
@@ -2197,32 +2141,6 @@ function updateCodexSubagentCounter() {
       pip.className = 'agy-pip' + (i < count ? ' filled' : '');
       pips.appendChild(pip);
     }
-  }
-}
-
-function updateAgyCounter() {
-  const count = state.agyFavorites.length;
-
-  // Section counter
-  const counter = document.getElementById('agy-counter');
-  if (counter) counter.innerHTML = `${count}<span class="agy-slot-max">/6</span>`;
-
-  // Slot pips
-  const pips = document.getElementById('agy-pips');
-  if (pips) {
-    pips.innerHTML = '';
-    for (let i = 0; i < AGY_MAX; i++) {
-      const pip = document.createElement('div');
-      pip.className = 'agy-pip' + (i < count ? ' filled' : '');
-      pips.appendChild(pip);
-    }
-  }
-
-  // Sidebar badge
-  const badge = document.getElementById('nav-agy-badge');
-  if (badge) {
-    badge.textContent = `${count}/${AGY_MAX}`;
-    badge.classList.toggle('full', count >= AGY_MAX);
   }
 }
 
@@ -2347,8 +2265,6 @@ async function init() {
   renderCodexSubagentList();
   updateGeneralCounter();
   if (!isServerAdminUi()) {
-    renderAgyList();
-    updateAgyCounter();
     await loadApps();
     renderApps();
   }
@@ -2366,9 +2282,7 @@ async function init() {
     // Re-render favorites now that we have full provider names
     renderFavList();
     renderCodexSubagentList();
-    if (!isServerAdminUi()) renderAgyList();
     if (state.modelFilter) buildModelResults(state.modelFilter, 'general');
-    if (!isServerAdminUi() && state.agyFilter) buildModelResults(state.agyFilter, 'agy');
     if (!isServerAdminUi() && state.codexSubagentFilter) buildModelResults(state.codexSubagentFilter, 'codex-subagents');
     syncProviderModelBrowserFromHash();
   });
@@ -2404,7 +2318,6 @@ async function init() {
       await initModels();
       renderProviders();
       if (state.modelFilter) buildModelResults(state.modelFilter, 'general');
-      if (state.agyFilter)   buildModelResults(state.agyFilter, 'agy');
 
       // Build status panel — use filtered count so it matches the search
       status.innerHTML = '';
@@ -2462,15 +2375,6 @@ async function init() {
   document.getElementById('model-free-only')?.addEventListener('change', e => {
     state.modelFreeOnly = e.target.checked;
     buildModelResults(state.modelFilter, 'general');
-  });
-
-  document.getElementById('agy-search').addEventListener('input', e => {
-    state.agyFilter = e.target.value;
-    buildModelResults(state.agyFilter, 'agy');
-  });
-  document.getElementById('agy-free-only')?.addEventListener('change', e => {
-    state.agyFreeOnly = e.target.checked;
-    buildModelResults(state.agyFilter, 'agy');
   });
 
   document.getElementById('codex-subagent-search')?.addEventListener('input', e => {

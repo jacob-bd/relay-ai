@@ -12,7 +12,9 @@ vi.mock('../src/registry/io.js', () => ({
   saveRegistry: vi.fn(),
 }));
 
-vi.mock('../src/registry/pricing.js', () => ({
+vi.mock('../src/registry/pricing.js', async importOriginal => ({
+  // Pure id normalizer used by the models.dev lookup — keep the real one.
+  normalizeModelIdCandidates: (await importOriginal<typeof import('../src/registry/pricing.js')>()).normalizeModelIdCandidates,
   loadPricingCache: vi.fn(),
   enrichModelsWithPricing: vi.fn((models) => models),
   enrichModelsForProviderPricing: vi.fn((models) => models),

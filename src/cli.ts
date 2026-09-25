@@ -235,7 +235,6 @@ export function parseArgs(args: string[]): ParsedArgs {
       else if (arg === '--agy') parsed.favoritesAgy = true;
       else if (!parsed.error) parsed.error = `Unknown models option: ${arg}`;
     }
-    if (parsed.favoritesAgy) parsed.modelCatalogScope = 'agy';
     return parsed;
   }
 
@@ -535,9 +534,10 @@ ${pc.bold('Binary aliases:')}
   relayai     Same CLI as relay-ai (shorter to type)
   relai       Same CLI as relay-ai (shortest)
 
-${pc.bold('Antigravity favorites:')}
-  agy, antigravity, and antigravity-ide share up to six Antigravity favorites
-  from relay-ai favorites --agy, plus the selected launch model.
+${pc.bold('Favorites:')}
+  agy, antigravity, and antigravity-ide list the selected launch model at every
+  effort level it supports, then your favorites (relay-ai favorites) at three
+  effort levels each: medium and the two above it. Up to ${MAX_MODEL_CATALOG} entries.
 
 ${pc.bold('Migration:')}
   Bare relay-ai prints this help instead of launching Claude Code.
@@ -687,7 +687,6 @@ Manage favorite models for mid-session switching.
 
 ${pc.bold('Usage:')}
   relay-ai favorites
-  relay-ai favorites --agy
   relay-ai models
   relay-ai favorites --help
   relay-ai favorites --version
@@ -698,20 +697,18 @@ ${pc.bold('Behavior:')}
   Search all providers at once (paginated results) or browse one provider at a time.
   Pick from Zen, Go, or any provider in your registry.
   Global favorites are saved to ~/.relay-ai/config.json (max ${MAX_MODEL_CATALOG}).
-  --agy manages Antigravity CLI favorites only (max 6).
   relay-ai subagents manages the Codex SubAgent (starts empty; does not sync with General Favorites).
 
 ${pc.bold('How it works:')}
   Claude/Codex/Gemini/server use the global favorites list. The Codex SubAgent is a
   separate model-only catalog used when Codex mixed mode is enabled.
   Favorites appear in supported /model switch menus.
-  relay-ai agy, antigravity, and antigravity-ide use the Antigravity favorites
-  list so the limited native switch slots stay predictable: one selected launch
-  model plus up to six Antigravity favorites.
+  relay-ai agy, antigravity, and antigravity-ide use the same favorites. Antigravity
+  has no effort control, so each model is listed once per effort level: every level
+  for the launch model, three (medium and the two above it) for favorites.
 
 ${pc.bold('Examples:')}
   relay-ai favorites
-  relay-ai favorites --agy
   relay-ai claude    # switch menu active when favorites are set`;
 }
 
@@ -794,8 +791,8 @@ ${pc.bold('How it works:')}
   The normal Antigravity profile is never modified.
 
 ${pc.bold('Favorites:')}
-  Uses the same Antigravity favorites list as relay-ai favorites --agy:
-  up to six saved favorites plus the selected launch model.
+  Lists the selected launch model at every effort level it supports, then your
+  favorites (relay-ai favorites) at three effort levels each. Up to ${MAX_MODEL_CATALOG} entries.
 
 ${pc.bold('Platform:')}
   macOS (Apple Silicon) — other platforms coming after testing.
@@ -903,26 +900,18 @@ function printDryRun(
   console.log('');
 }
 
-const AGY_CLI_FAVORITES_CAP = 6;
-
 interface FavoritesCommandOptions {
-  scope?: 'global' | 'agy' | 'codex-subagents';
+  scope?: 'global' | 'codex-subagents';
 }
 
 export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Promise<number> {
   const scope = opts.scope ?? 'global';
-  const maxFavorites = scope === 'agy'
-    ? AGY_CLI_FAVORITES_CAP
-    : scope === 'codex-subagents' ? CODEX_SUBAGENT_MODEL_CAP : MAX_MODEL_CATALOG;
-  const scopeName = scope === 'agy'
-    ? 'Antigravity CLI Favorites'
-    : scope === 'codex-subagents' ? 'Codex SubAgent' : 'Favorite Models';
+  const maxFavorites = scope === 'codex-subagents' ? CODEX_SUBAGENT_MODEL_CAP : MAX_MODEL_CATALOG;
+  const scopeName = scope === 'codex-subagents' ? 'Codex SubAgent' : 'Favorite Models';
   const subagentScope = scope === 'codex-subagents';
-  const listLabel = subagentScope ? 'Codex SubAgent' : scope === 'agy' ? 'Antigravity Favorites' : 'favorites';
-  const listItemLabel = subagentScope ? 'Codex SubAgent model' : scope === 'agy' ? 'Antigravity favorite' : 'favorite';
-  const configKey = scope === 'agy'
-    ? 'antigravityCliFavoriteModels'
-    : scope === 'codex-subagents' ? 'codexSubagentModels' : 'favoriteModels';
+  const listLabel = subagentScope ? 'Codex SubAgent' : 'favorites';
+  const listItemLabel = subagentScope ? 'Codex SubAgent model' : 'favorite';
+  const configKey = scope === 'codex-subagents' ? 'codexSubagentModels' : 'favoriteModels';
   relayIntro(scopeName);
 
   const spinner = p.spinner();
@@ -932,11 +921,9 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
   spinner.stop('');
 
   const pickedProviders = providersForPicker(catalog);
-  const allProviders = scope === 'agy'
-    ? providersForTarget(pickedProviders, 'antigravity')
-    : scope === 'codex-subagents'
-      ? providersForCodexSubagents(pickedProviders)
-      : pickedProviders;
+  const allProviders = scope === 'codex-subagents'
+    ? providersForCodexSubagents(pickedProviders)
+    : pickedProviders;
   const favoriteProviders = allProviders.map(provider => ({
     ...provider,
     name: favoriteProviderDisplayName(provider),
@@ -958,11 +945,9 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
   }
 
   const prefs = loadPreferences();
-  let favorites = scope === 'agy'
-    ? prefs.antigravityCliFavoriteModels ?? []
-    : scope === 'codex-subagents'
-      ? prefs.codexSubagentModels ?? []
-      : prefs.favoriteModels ?? [];
+  let favorites = scope === 'codex-subagents'
+    ? prefs.codexSubagentModels ?? []
+    : prefs.favoriteModels ?? [];
   let favoritesDirty = false;
 
   // eslint-disable-next-line no-constant-condition
@@ -1171,8 +1156,8 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
       ? 'No Codex SubAgent configured'
       : `${favorites.length} Codex SubAgent model${favorites.length !== 1 ? 's' : ''} saved`
     : favorites.length === 0
-      ? `No ${scope === 'agy' ? 'Antigravity CLI favorites' : 'favorites'} saved`
-      : `${favorites.length} ${scope === 'agy' ? 'Antigravity CLI favorite' : 'favorite'}${favorites.length !== 1 ? 's' : ''} saved`;
+      ? 'No favorites saved'
+      : `${favorites.length} favorite${favorites.length !== 1 ? 's' : ''} saved`;
   relayOutro(
     summary,
     favorites.length === 0
@@ -1738,7 +1723,10 @@ Options:
       printHelp(modelsHelpText(parsed.modelCatalogScope === 'codex-subagents' ? 'codex-subagents' : 'global'));
       return 0;
     }
-    return runModelsCommand({ scope: parsed.modelCatalogScope ?? (parsed.favoritesAgy ? 'agy' : 'global') });
+    if (parsed.favoritesAgy) {
+      p.log.info('Antigravity now uses your general favorites — `--agy` is no longer needed.');
+    }
+    return runModelsCommand({ scope: parsed.modelCatalogScope ?? 'global' });
   }
 
   if (parsed.command === 'providers') {

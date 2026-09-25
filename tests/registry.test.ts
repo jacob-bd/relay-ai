@@ -255,6 +255,32 @@ describe('materializeRegistry', () => {
     expect(local?.contextWindow).toBeUndefined();
   });
 
+  it("trusts models.dev over a saved name-guess for ChatGPT-login models", () => {
+    const provider = {
+      id: 'openai-oauth',
+      templateId: 'openai',
+      name: 'OpenAI (ChatGPT)',
+      enabled: true,
+      authRef: 'keyring:provider:openai-oauth',
+      authType: 'oauth' as const,
+      api: { npm: '@ai-sdk/openai' },
+      addedAt: '2026-09-23T00:00:00.000Z',
+    };
+    const metadata = {
+      openai: { id: 'openai', models: { 'gpt-x': { id: 'gpt-x', reasoning: true, reasoning_options: [{ type: 'effort', values: ['none', 'low', 'medium', 'high', 'xhigh', 'max'] }] } } },
+    } as any;
+    // Saved before the fix: an unseeded model got reasoning:false from a gpt-5.x-only name rule.
+    const stale = { id: 'gpt-x', name: 'gpt-x', upstreamModelId: 'gpt-x', modelFormat: 'openai' as const, npm: '@ai-sdk/openai', reasoning: false };
+
+    const local = cachedModelToLocal(stale, provider, metadata);
+    expect(local?.reasoning).toBe(true);
+    expect(local?.reasoningEffortLevels).toEqual(['none', 'low', 'medium', 'high', 'xhigh', 'max']);
+
+    // Other providers keep their saved value.
+    const other = cachedModelToLocal(stale, { ...provider, id: 'custom-openai' }, metadata);
+    expect(other?.reasoning).toBe(false);
+  });
+
   it('materializes enabled providers with credentials and models', () => {
     const registry = emptyRegistry();
     registry.providers.push({

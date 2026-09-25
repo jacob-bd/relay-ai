@@ -341,9 +341,9 @@ describe('runClaudeAppCommand', () => {
     expect(state.startServerOptions.catalog.list()).toHaveLength(1);
   });
 
-  it('caps the catalog at 20 models including the selected model', async () => {
+  it('caps the catalog at 50 models including the selected model', async () => {
     const selectedModel = appModel('selected-model');
-    const favoriteModels = Array.from({ length: 20 }, (_, index) => appModel(`favorite-${index}`));
+    const favoriteModels = Array.from({ length: 50 }, (_, index) => appModel(`favorite-${index}`));
     const selected = appProvider('selected', [selectedModel, ...favoriteModels]);
     state.providers = [selected];
     state.preferences = {
@@ -360,8 +360,8 @@ describe('runClaudeAppCommand', () => {
 
     expect(code).toBe(0);
     const catalog = state.startServerOptions.catalog.list() as ServerModelInfo[];
-    expect(catalog).toHaveLength(20);
+    expect(catalog).toHaveLength(50);
     expect(catalog[0]?.id).toBe(selectedModel.id);
-    expect(catalog.at(-1)?.id).toBe('favorite-18');
+    expect(catalog.at(-1)?.id).toBe('favorite-48');
   });
 });

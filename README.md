@@ -66,7 +66,7 @@ Pick your backend:
 - **OpenCode import:** One-time migration from OpenCode (`providers import`); validates API keys and skips placeholders like `anything`
 - **OpenCode Zen / Go:** Optional cloud backends when you have an OpenCode API key
 - **SDK adapter proxy:** Non-Anthropic providers route through the Vercel AI SDK (same packages OpenCode uses), so Claude Code still speaks Anthropic format. Labeled `(via proxy)` in the picker
-- **Favorite models:** Save up to 20 and switch mid-session with Claude Code's `/model` command
+- **Favorite models:** Save up to 50 and switch mid-session with Claude Code's `/model` command
 - **Codex SubAgent:** Build a separate, initially empty one-model catalog for Codex delegation; it never imports or synchronizes with General Favorites
 - **Smart model pickers:** Recent models per provider, search for large lists (>25), paginated browse (15 per page)
 - **Refresh model lists:** `relay-ai providers refresh-models` updates cached catalogs per provider
@@ -198,8 +198,7 @@ Opens a browser-based dashboard on a random local port. From the UI you can:
 
 - **Launch any supported tool** — app cards for Claude Code CLI, Codex CLI, Gemini CLI, Antigravity CLI, Antigravity App, Antigravity IDE, Claude Code Desktop, and the ChatGPT Desktop app (Codex mode). Select a provider and model in the card, then click **Launch** — a native terminal opens with the selection pre-wired. No second picker in the terminal.
 - **Keep Claude Code's Anthropic login** — on the Claude Code CLI card, check **Keep my Anthropic login and add Relay models** to keep your normal Claude models while adding the selected Relay model and compatible favorites. This option is not shown for Claude Desktop.
-- **Manage General Favorites** — the sidebar shows your saved favorite models with a slot indicator (Slots used X/20). Favorites launch through all supported agents.
-- **Manage Antigravity Favorites** — separate favorites panel for Antigravity sessions.
+- **Manage General Favorites** — the sidebar shows your saved favorite models with a slot indicator (Slots used X/50). Favorites launch through all supported agents, including Antigravity.
 - **Manage providers** — add providers from templates, delete providers, and refresh model lists inline, all without leaving the browser. For GitHub Copilot, ChatGPT, xAI, and ClinePass OAuth, the UI displays a one-time device code with **Copy code** and **Open sign-in page** buttons so you can complete sign-in without using the terminal. ClinePass can also be configured with an API key from the same provider card.
 - **Run the Server tab** — configure and start the same gateway as `relay-ai server` (favorites-only or specific providers, discovery id masking, local/network listen mode) and see the resulting URLs, API key, and model catalog right in the browser. Runs in the same process as the UI, so it stops when you close the dashboard. See [Registry gateway (`relay-ai server`)](#registry-gateway-relay-ai-server) below for what each option does.
 
@@ -233,7 +232,7 @@ Save the models you bounce between:
 relay-ai models
 ```
 
-Add up to 20 favorites from Zen, Go, or any OpenCode-configured provider. When you have favorites, `relay-ai claude` starts a multi-route proxy automatically. Claude Code's `/model` command lists your starting model plus favorites. Switch live, no restart.
+Add up to 50 favorites from Zen, Go, or any OpenCode-configured provider. When you have favorites, `relay-ai claude` starts a multi-route proxy automatically. Claude Code's `/model` command lists your starting model plus favorites. Switch live, no restart.
 
 No favorites? Launch works like before: single model, no switch menu. `--dry-run` ignores saved favorites so you can preview a single-model launch.
 
@@ -441,6 +440,8 @@ const result = await streamText({ model, prompt: 'Hello!' });
 
 Relay AI can launch the Antigravity CLI, standalone Antigravity app, and Antigravity IDE through a local Cloud Code gateway. This lets Antigravity's native model picker show Relay models from your configured providers.
 
+Antigravity has no reasoning-effort control, so Relay lists a model once per effort level: the model you launch with appears at every level it supports (e.g. `GPT-6 Sol None` … `GPT-6 Sol Max`), and each of your general favorites appears at three levels — medium and the two above it. Models without adjustable effort appear once. Up to 50 entries in total.
+
 ```bash
 relay-ai agy
 relay-ai antigravity
@@ -487,7 +488,7 @@ Launch **Claude Desktop** (macOS, Windows, or Linux) with registry providers:
 relay-ai claude-app
 ```
 
-This command automates the "Third-Party Inference" (Developer Mode) setup. It temporarily configures Claude Desktop to point at a local gateway, launches the app, and exposes the selected model followed by your available saved favorites (up to 20 models total).
+This command automates the "Third-Party Inference" (Developer Mode) setup. It temporarily configures Claude Desktop to point at a local gateway, launches the app, and exposes the selected model followed by your available saved favorites (up to 50 models total).
 
 - **Selected + favorites:** The selected model is listed first; duplicates and unavailable favorites are skipped. Claude Desktop ultimately controls which discovered model it activates initially.
 - **Keep the terminal open:** The proxy runs in the foreground.

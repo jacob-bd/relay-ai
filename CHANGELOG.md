@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.15.0] - 2026-09-25
+
+### Added
+
+- **Antigravity lists every effort level of your launch model.** Antigravity has no reasoning-effort control, so Relay now lists a model once per effort level: the model you launch with appears at every level it supports (GPT-6 Sol shows `None` through `Max`), and each favorite appears at three levels — medium and the two above it (e.g. `Medium / High / XHigh`), topped up from below when a model has fewer. Models without adjustable effort appear once. Previously every Antigravity model silently ran at `high`.
+
+### Changed
+
+- **Up to 50 favorites (was 20).** The favorites cap and the model catalog every tool receives went from 20 to 50 entries. In Antigravity, effort levels count toward the 50.
+- **Antigravity uses your general favorites.** The separate Antigravity Favorites list (limited to 6) is gone. On first run, any Antigravity favorites you had are merged into your general favorites (duplicates skipped). `relay-ai favorites --agy` still works and opens the general list, and the Antigravity Favorites panel is removed from `relay-ai ui`.
+- **Antigravity is no longer limited to 7 models.** The limit came from Antigravity IDE hiding any picker entry whose ID contains an underscore, not from its native model slots. Relay now gives entries past the first seven hyphen-only IDs, so the full catalog shows up.
+
+### Fixed
+
+- **GPT-6 Sol (and other new OpenAI models) get reasoning-effort controls over ChatGPT login.** New models from the ChatGPT model list were marked "non-reasoning" by a name rule that only knew `gpt-5.x`, so Claude desktop and Antigravity sent no effort at all and OpenAI fell back to its default. Relay now takes this from models.dev, and fixes already-saved model lists without needing a refresh.
+- **OpenAI models newer than Relay's built-in table get their full effort range.** Models missing from the hand-written per-model table were limited to low / medium / high. They now use the levels models.dev declares (GPT-6 Sol: none, low, medium, high, xhigh, max), so a new OpenAI release no longer needs a Relay update.
+- **One reseller no longer narrows a model's effort levels for everyone.** When providers on models.dev disagreed, Relay kept only the levels all of them listed, so a single reseller listing low / medium / high hid `none`, `xhigh` and `max` for OpenAI itself. The serving provider's own models.dev entry now wins; the shared intersection still applies to providers without one. ChatGPT-login models now read OpenAI's own entry.
+- **The README's Antigravity setup link works.** It pointed at a `docs/ANTIGRAVITY.md` that didn't exist; the page now exists and documents the model list and effort levels.
+
 ## [0.14.0] - 2026-09-24
 
 ### Added

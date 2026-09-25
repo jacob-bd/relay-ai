@@ -733,3 +733,32 @@ describe('createLanguageModel', () => {
     vi.doUnmock('@ai-sdk/anthropic');
   });
 });
+
+describe('OpenAI effort for models newer than the built-in table', () => {
+  const meta = {
+    providerId: 'openai-oauth',
+    upstreamModelId: 'gpt-6-sol',
+    reasoning: true,
+    reasoningEffortLevels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+  };
+
+  it("uses models.dev's declared levels and sends each one as-is", () => {
+    const caps = getReasoningCapabilities('@ai-sdk/openai', 'gpt-6-sol', meta);
+    expect(caps.mode).toBe('controllable');
+    expect(caps.levels).toEqual(['none', 'low', 'medium', 'high', 'xhigh', 'max']);
+    expect(caps.defaultLevel).toBe('medium');
+    for (const level of caps.levels) {
+      expect(effortProviderOptions('@ai-sdk/openai', level, 'gpt-6-sol', meta)).toEqual({ openai: { reasoningEffort: level } });
+    }
+  });
+
+  it('keeps the conservative default when models.dev declares nothing', () => {
+    const caps = getReasoningCapabilities('@ai-sdk/openai', 'gpt-6-sol', { ...meta, reasoningEffortLevels: undefined });
+    expect(caps.levels).toEqual(['low', 'medium', 'high']);
+  });
+
+  it('keeps the hand-written table for models it covers', () => {
+    const caps = getReasoningCapabilities('@ai-sdk/openai', 'gpt-5.5-pro', { ...meta, upstreamModelId: 'gpt-5.5-pro' });
+    expect(caps.levels).toEqual(['medium', 'high', 'xhigh']);
+  });
+});

@@ -182,7 +182,7 @@ describe('antigravity launch routes', () => {
   it('caps launch routes at the Antigravity catalog limit', async () => {
     const manyProviders: LocalProvider[] = [
       providers[0]!,
-      ...Array.from({ length: 25 }, (_, i) => ({
+      ...Array.from({ length: 60 }, (_, i) => ({
         id: `provider-${i}`,
         name: `Provider ${i}`,
         apiKey: `key-${i}`,
@@ -208,16 +208,11 @@ describe('antigravity launch routes', () => {
       favorites,
     });
 
-    expect(result!.routes).toHaveLength(20);
-    expect(result!.routes.at(-1)!.catalogId).toBe('relay-ai__provider-18__model-18');
-    expect(result!.capacitySkippedFavorites).toEqual([
-      { providerId: 'provider-19', modelId: 'model-19' },
-      { providerId: 'provider-20', modelId: 'model-20' },
-      { providerId: 'provider-21', modelId: 'model-21' },
-      { providerId: 'provider-22', modelId: 'model-22' },
-      { providerId: 'provider-23', modelId: 'model-23' },
-      { providerId: 'provider-24', modelId: 'model-24' },
-    ]);
+    expect(result!.routes).toHaveLength(50);
+    expect(result!.routes.at(-1)!.catalogId).toBe('relay-ai__provider-48__model-48');
+    expect(result!.capacitySkippedFavorites).toEqual(
+      Array.from({ length: 11 }, (_, i) => ({ providerId: `provider-${i + 49}`, modelId: `model-${i + 49}` })),
+    );
   });
 
   it('reports capacity-skipped favorites when a smaller AGY slot cap is supplied', async () => {
@@ -268,7 +263,7 @@ describe('antigravity launch routes', () => {
     });
   });
 
-  it('preserves auth identity for same-named OAuth and API-key favorites', async () => {
+  it('preserves auth identity for same-named OAuth and API-key favorites across effort variants', async () => {
     const result = await resolveAntigravityLaunchRoutes({
       provider: providers[3]!,
       model: providers[3]!.models[0]!,
@@ -279,19 +274,68 @@ describe('antigravity launch routes', () => {
     expect(result).not.toBeNull();
     expect(result!.routes).toMatchObject([
       {
-        catalogId: 'relay-ai__xai-oauth__grok-4_3',
-        displayName: 'Grok 4.3 (Relay - xAI SuperGrok)',
+        catalogId: 'relay-ai__xai-oauth__grok-4_3__effort_low',
+        displayName: 'Grok 4.3 Low (Relay - xAI SuperGrok)',
+        reasoningEffort: 'low',
         apiKey: 'oauth-token',
         authType: 'oauth',
         oauthAccountId: 'acct-123',
       },
       {
-        catalogId: 'relay-ai__xai__grok-4_3',
-        displayName: 'Grok 4.3 (Relay - xAI API)',
+        catalogId: 'relay-ai__xai-oauth__grok-4_3__effort_high',
+        displayName: 'Grok 4.3 High (Relay - xAI SuperGrok)',
+        reasoningEffort: 'high',
+        apiKey: 'oauth-token',
+        authType: 'oauth',
+      },
+      {
+        catalogId: 'relay-ai__xai__grok-4_3__effort_low',
+        displayName: 'Grok 4.3 Low (Relay - xAI API)',
+        reasoningEffort: 'low',
+        apiKey: 'api-key',
+        authType: 'api',
+      },
+      {
+        catalogId: 'relay-ai__xai__grok-4_3__effort_high',
+        displayName: 'Grok 4.3 High (Relay - xAI API)',
+        reasoningEffort: 'high',
         apiKey: 'api-key',
         authType: 'api',
       },
     ]);
+  });
+
+  it('reports favorites that effort variants push past the cap', async () => {
+    const gpt = (id: string) => ({
+      id,
+      name: id,
+      family: 'gpt',
+      brand: 'GPT',
+      modelFormat: 'openai' as const,
+      npm: '@ai-sdk/openai',
+      upstreamModelId: id,
+      reasoning: true,
+      reasoningEffortLevels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+    });
+    const openai: LocalProvider = {
+      id: 'openai',
+      name: 'OpenAI',
+      apiKey: 'sk-test',
+      models: [gpt('gpt-a'), gpt('gpt-b'), gpt('gpt-c'), gpt('gpt-d')],
+    };
+
+    const result = await resolveAntigravityLaunchRoutes({
+      provider: openai,
+      model: openai.models[0]!,
+      allProviders: [openai],
+      favorites: ['gpt-b', 'gpt-c', 'gpt-d'].map(modelId => ({ providerId: 'openai', modelId })),
+      maxRoutes: 10,
+    });
+
+    // 6 levels for the launch model + 3 for gpt-b + 1 of gpt-c's 3 = 10; gpt-d never fits.
+    expect(result!.routes).toHaveLength(10);
+    expect(result!.routes.map(route => route.modelId)).not.toContain('gpt-d');
+    expect(result!.capacitySkippedFavorites).toEqual([{ providerId: 'openai', modelId: 'gpt-d' }]);
   });
 
   it('preserves Cloud Code Assist Cloud Code route metadata', async () => {

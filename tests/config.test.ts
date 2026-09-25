@@ -83,23 +83,38 @@ describe('dotfolder config', () => {
     expect(JSON.parse(readFileSync(getConfigPath(), 'utf8')).lastClaudeTransparentMode).toBe(true);
   });
 
-  it('saves Antigravity CLI favorites separately from global favorites', () => {
-    savePreferences({
-      favoriteModels: [{ providerId: 'global', modelId: 'claude' }],
-      antigravityCliFavoriteModels: [{ providerId: 'xai-oauth', modelId: 'grok-4.3' }],
+  it('merges the retired Antigravity favorites list into general favorites once', () => {
+    mkdirSync(dirname(getConfigPath()), { recursive: true });
+    writeFileSync(getConfigPath(), JSON.stringify({
+      favoriteModels: [{ providerId: 'global', modelId: 'claude' }, { providerId: 'xai-oauth', modelId: 'grok-4.3' }],
+      antigravityCliFavoriteModels: [
+        { providerId: 'xai-oauth', modelId: 'grok-4.3' },
+        { providerId: 'go', modelId: 'minimax-m3' },
+      ],
       antigravityCliFavoritesHintShown: true,
-    });
+    }));
 
-    expect(loadPreferences()).toMatchObject({
-      favoriteModels: [{ providerId: 'global', modelId: 'claude' }],
-      antigravityCliFavoriteModels: [{ providerId: 'xai-oauth', modelId: 'grok-4.3' }],
-      antigravityCliFavoritesHintShown: true,
-    });
-    expect(JSON.parse(readFileSync(getConfigPath(), 'utf8'))).toMatchObject({
-      favoriteModels: [{ providerId: 'global', modelId: 'claude' }],
-      antigravityCliFavoriteModels: [{ providerId: 'xai-oauth', modelId: 'grok-4.3' }],
-      antigravityCliFavoritesHintShown: true,
-    });
+    expect(loadPreferences().favoriteModels).toEqual([
+      { providerId: 'global', modelId: 'claude' },
+      { providerId: 'xai-oauth', modelId: 'grok-4.3' },
+      { providerId: 'go', modelId: 'minimax-m3' },
+    ]);
+    const saved = JSON.parse(readFileSync(getConfigPath(), 'utf8'));
+    expect(saved).not.toHaveProperty('antigravityCliFavoriteModels');
+    expect(saved).not.toHaveProperty('antigravityCliFavoritesHintShown');
+    expect(saved.favoriteModels).toHaveLength(3);
+  });
+
+  it('stops merging retired Antigravity favorites at the favorites cap', () => {
+    mkdirSync(dirname(getConfigPath()), { recursive: true });
+    const general = Array.from({ length: 49 }, (_, i) => ({ providerId: 'p', modelId: `m-${i}` }));
+    writeFileSync(getConfigPath(), JSON.stringify({
+      favoriteModels: general,
+      antigravityCliFavoriteModels: [{ providerId: 'a', modelId: 'x' }, { providerId: 'a', modelId: 'y' }],
+    }));
+    const favorites = loadPreferences().favoriteModels!;
+    expect(favorites).toHaveLength(50);
+    expect(favorites.at(-1)).toEqual({ providerId: 'a', modelId: 'x' });
   });
 
   it('starts Codex Sub-agents empty and persists it independently from General Favorites', () => {

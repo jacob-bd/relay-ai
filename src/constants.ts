@@ -72,7 +72,7 @@ export const PARENT_SESSION_ENV_VARS = [
 export const OPENCODE_CACHE_PATH = join(homedir(), '.cache', 'opencode', 'models.json');
 
 /** Max models in favorites list and mid-session /model switch catalog. */
-export const MAX_MODEL_CATALOG = 20;
+export const MAX_MODEL_CATALOG = 50;
 
 /** Codex redirects every marked child session to this one explicit Relay model. */
 export const CODEX_SUBAGENT_MODEL_CAP = 1;

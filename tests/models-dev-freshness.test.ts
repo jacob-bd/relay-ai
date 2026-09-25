@@ -121,9 +121,25 @@ describe('resolveModelReasoningMetadata', () => {
       a: { id: 'a', models: { 'v/m': { id: 'v/m', reasoning_options: [{ type: 'effort', values: ['low'] }] } } },
       b: { id: 'b', models: { 'v/m': { id: 'v/m', reasoning_options: [{ type: 'effort', values: ['high'] }] } } },
     } as unknown as ModelsDevCacheFile;
-    const r = resolveModelReasoningMetadata('a', 'v/m', {}, conflict);
+    // 'c' has no entry of its own, so only the cross-bucket intersection applies.
+    const r = resolveModelReasoningMetadata('c', 'v/m', {}, conflict);
     expect(r.reasoningEffortConflict).toBe(true);
     expect(r.reasoningEffortLevels).toBeUndefined();
+  });
+
+  it("the serving provider's own levels beat a reseller that lists fewer", () => {
+    const cache = {
+      openai: { id: 'openai', models: { 'gpt-x': { id: 'gpt-x', reasoning: true, reasoning_options: [{ type: 'effort', values: ['none', 'low', 'medium', 'high', 'xhigh', 'max'] }] } } },
+      reseller: { id: 'reseller', models: { 'gpt-x': { id: 'gpt-x', reasoning_options: [{ type: 'effort', values: ['low', 'medium', 'high'] }] } } },
+    } as unknown as ModelsDevCacheFile;
+    expect(resolveModelReasoningMetadata('openai', 'gpt-x', {}, cache).reasoningEffortLevels)
+      .toEqual(['none', 'low', 'medium', 'high', 'xhigh', 'max']);
+    // ChatGPT-login models read OpenAI's own entry.
+    expect(resolveModelReasoningMetadata('openai-oauth', 'gpt-x', {}, cache).reasoningEffortLevels)
+      .toEqual(['none', 'low', 'medium', 'high', 'xhigh', 'max']);
+    // A provider without its own entry still gets the conservative intersection.
+    expect(resolveModelReasoningMetadata('other', 'gpt-x', {}, cache).reasoningEffortLevels)
+      .toEqual(['low', 'medium', 'high']);
   });
 });
 

@@ -145,7 +145,7 @@ export async function startCloudCodeGateway(
       route.catalogId,
       deepMergeProviderOptions(
         thinkingProviderOptions(route.npm),
-        effortProviderOptions(route.npm, 'high', route.upstreamModelId),
+        effortProviderOptions(route.npm, route.reasoningEffort ?? 'high', route.upstreamModelId, route.reasoningMetadata),
       ),
     );
   }
@@ -263,6 +263,7 @@ export async function startCloudCodeGateway(
             return;
           }
           const baseProviderOptions = providerOptionsCache.get(route.catalogId);
+          if (trace) log(`[gateway]   provider options: ${JSON.stringify(baseProviderOptions ?? {})}`);
           const isStream = lowerUrl.includes('stream');
           const conversationKey = conversationKeyFromRequest(parsed);
           const requestHeaders = openCodeGoHeaders(

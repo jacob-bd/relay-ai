@@ -1283,6 +1283,18 @@ function withMappableLevels(
 }
 
 /** Per-model reasoning UI + wire metadata for Codex catalog and adapters. */
+/**
+ * Effort levels an OpenAI model accepts: the hand-written profile when there is
+ * one, else models.dev's declared levels (models newer than the table), else
+ * the conservative default.
+ */
+function openAiAllowedEffortLevels(modelId: string, metadata?: ReasoningMetadata): readonly string[] {
+  const profile = openAiReasoningProfile(modelId, metadata);
+  if (profile) return profile.levels;
+  const declared = metadata?.reasoningEffortConflict ? undefined : metadata?.reasoningEffortLevels;
+  return declared && declared.length > 0 ? declared : OPENAI_EFFORT_LEVELS;
+}
+
 export function getReasoningCapabilities(
   npm: string,
   modelId: string,
@@ -1328,7 +1340,7 @@ function resolveRawReasoningCapabilities(
     // transport carry `reasoning_effort`? Only the Responses endpoint can, and
     // that decision has to match the one the model factory actually makes.
     if (openAiModelReasons(modelId, metadata) && shouldUseOpenAiResponsesEndpoint(canonicalId)) {
-      const levels = profile?.levels ?? [...OPENAI_EFFORT_LEVELS];
+      const levels = openAiAllowedEffortLevels(modelId, metadata);
       return {
         levels: [...levels],
         defaultLevel: profile?.defaultLevel
@@ -1547,8 +1559,7 @@ export function effortProviderOptions(
     // alias route gets its real model's levels.
     if (!modelId || !shouldUseOpenAiResponsesEndpoint(canonicalOpenAiModelId(modelId, metadata))) return undefined;
     if (!openAiModelReasons(modelId, metadata)) return undefined;
-    const allowed = openAiReasoningProfile(modelId, metadata)?.levels ?? OPENAI_EFFORT_LEVELS;
-    const reasoningEffort = mapCodexEffortToOpenAI(effort, allowed);
+    const reasoningEffort = mapCodexEffortToOpenAI(effort, openAiAllowedEffortLevels(modelId, metadata));
     return reasoningEffort ? { openai: { reasoningEffort } } : undefined;
   }
 

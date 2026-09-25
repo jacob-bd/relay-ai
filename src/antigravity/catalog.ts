@@ -1,11 +1,14 @@
 import { MAX_MODEL_CATALOG } from '../constants.js';
 import type { ResolvedFavorite } from '../favorites-resolver.js';
 import type { AntigravityRoute, CatalogFixture, CatalogModelEntry } from './types.js';
+import type { LocalProviderModel } from '../types.js';
 import {
   getValidatedAgySwitchSlots,
   validateAgySlotRegistry,
   type AgySlotValidationResult,
 } from './slot-registry.js';
+import { getReasoningCapabilities, type ReasoningMetadata } from '../provider-factory.js';
+import { EFFORT_RANK } from '../registry/models-dev.js';
 
 /** Current Antigravity IDE flash-agent enum from fetchAvailableModels. */
 export const RELAY_CASCADE_PLAN_MODEL = 'MODEL_PLACEHOLDER_M132';
@@ -32,6 +35,43 @@ export interface RelayCatalogSlot {
   slotId: string;
   /** The Relay route that slot should execute against. */
   route: AntigravityRoute;
+  /** Unused native model enum for a Relay-only entry past the native slots. */
+  extraModelEnum?: string;
+}
+
+/**
+ * Catalog keys Relay adds all start with this. Slot planning runs again on the
+ * already-injected catalog (gateway routing, listModelConfigs), so it must ignore
+ * Relay's own entries or the second pass would pick different IDs and enums.
+ */
+const RELAY_KEY_PREFIX = 'relay-';
+
+function nativeEntries(catalog: CatalogFixture): Array<[string, CatalogModelEntry]> {
+  return Object.entries(catalog.models).filter(([key]) => !key.startsWith(RELAY_KEY_PREFIX));
+}
+
+/** First unused MODEL_PLACEHOLDER_M<n> enums, well above the ones Google ships. */
+function unusedModelEnums(catalog: CatalogFixture, count: number): string[] {
+  const used = new Set(nativeEntries(catalog).map(([, entry]) => entry.model));
+  const out: string[] = [];
+  for (let n = 400; out.length < count && n < 650; n += 1) {
+    const candidate = `MODEL_PLACEHOLDER_M${n}`;
+    if (!used.has(candidate)) out.push(candidate);
+  }
+  return out;
+}
+
+/**
+ * Picker ID for a Relay-only entry. The IDE hides entries whose ID contains
+ * underscores (verified on Antigravity IDE 2.5.5), so catalog IDs are reduced to
+ * lowercase letters, digits and hyphens.
+ */
+function overflowSlotId(catalogId: string, taken: Set<string>): string {
+  const base = catalogId.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  let id = base;
+  for (let n = 2; taken.has(id); n += 1) id = `${base}-${n}`;
+  taken.add(id);
+  return id;
 }
 
 export interface RelayCatalogSlotPlan {
@@ -154,12 +194,21 @@ export function planRelayCatalogSlots(
     throw new Error('No validated AGY switch slots are available for the selected launch route');
   }
 
-  const switchableRoutes = routes.slice(0, orderedSlots.length);
-  const skippedRoutes = routes.slice(orderedSlots.length);
-  const slots = switchableRoutes.map((route, index) => ({
+  // Validated native slots first; every route past them becomes a Relay-only
+  // entry with its own hyphen-only ID and an unused model enum.
+  const nativeRoutes = routes.slice(0, orderedSlots.length);
+  const overflowRoutes = routes.slice(orderedSlots.length);
+  const slots: RelayCatalogSlot[] = nativeRoutes.map((route, index) => ({
     slotId: orderedSlots[index]!.slotId,
     route,
   }));
+  const enums = unusedModelEnums(catalog, overflowRoutes.length);
+  const taken = new Set(nativeEntries(catalog).map(([key]) => key));
+  overflowRoutes.slice(0, enums.length).forEach((route, index) => {
+    slots.push({ slotId: overflowSlotId(route.catalogId, taken), route, extraModelEnum: enums[index]! });
+  });
+  const switchableRoutes = slots.map(slot => slot.route);
+  const skippedRoutes = overflowRoutes.slice(enums.length);
 
   return {
     slots,
@@ -250,7 +299,13 @@ export function injectRelayModels(
 
     const slotPlan = planRelayCatalogSlots(result, routes, templateKey);
     const slots = slotPlan.slots;
-    for (const { slotId, route } of slots) {
+    for (const { slotId, route, extraModelEnum } of slots) {
+      if (extraModelEnum) {
+        const entry = buildRelayCatalogEntry(route, template);
+        entry.model = extraModelEnum;
+        result.models[slotId] = entry;
+        continue;
+      }
       const slotTemplate = result.models[slotId] ?? template;
       if (result.models[slotId]) {
         result.models[slotId] = buildRelayCatalogSlotEntry(route, slotTemplate);
@@ -340,9 +395,63 @@ export function buildAntigravityRoutes(
       baseURL,
       contextWindow,
     });
+    const route = routes.pop()!;
+    routes.push(...effortVariants(route, favModel, routes.length === 0));
   }
 
-  return applyUniqueAntigravityRouteLabels(routes);
+  return applyUniqueAntigravityRouteLabels(routes.slice(0, maxRoutes));
+}
+
+/** Levels shown for a non-launch model: medium and the two above it, topped up from below. */
+export function favoriteEffortLevels(levels: readonly string[], defaultLevel: string): string[] {
+  let start = levels.indexOf('medium');
+  if (start < 0) start = Math.max(0, levels.indexOf(defaultLevel));
+  let from = start;
+  let to = Math.min(levels.length, start + 3);
+  while (to - from < 3 && from > 0) from -= 1;
+  return levels.slice(from, to);
+}
+
+function effortLabel(level: string): string {
+  return level === 'xhigh' ? 'XHigh' : level.charAt(0).toUpperCase() + level.slice(1);
+}
+
+/**
+ * Antigravity has no effort control, so a model is listed once per effort level:
+ * every level for the launch model, three for favorites. Models without
+ * adjustable effort keep a single entry.
+ */
+function effortVariants(route: AntigravityRoute, model: unknown, isLaunchModel: boolean): AntigravityRoute[] {
+  // Cloud Code routes are forwarded to Google as-is; Relay's effort options never apply.
+  if (route.modelFormat === 'cloud-code') return [route];
+  const m = model as Partial<Pick<LocalProviderModel,
+    'supportedParameters' | 'reasoning' | 'interleavedReasoningField' | 'reasoningEffortLevels' | 'reasoningEffortConflict'>>;
+  const metadata: ReasoningMetadata = {
+    providerId: route.providerId,
+    upstreamModelId: route.upstreamModelId,
+    ...(route.baseURL ? { apiBaseUrl: route.baseURL } : {}),
+    ...(m.supportedParameters ? { supportedParameters: m.supportedParameters } : {}),
+    ...(m.reasoning !== undefined ? { reasoning: m.reasoning } : {}),
+    ...(m.interleavedReasoningField ? { interleavedReasoningField: m.interleavedReasoningField } : {}),
+    ...(m.reasoningEffortLevels ? { reasoningEffortLevels: m.reasoningEffortLevels } : {}),
+    ...(m.reasoningEffortConflict ? { reasoningEffortConflict: true } : {}),
+  };
+  const caps = getReasoningCapabilities(route.npm, route.upstreamModelId, metadata);
+  if (caps.mode !== 'controllable' || caps.levels.length < 2) return [route];
+  const rank = (level: string) => {
+    const index = EFFORT_RANK.indexOf(level);
+    return index < 0 ? EFFORT_RANK.length : index;
+  };
+  const ordered = [...caps.levels].sort((a, b) => rank(a) - rank(b));
+  const levels = isLaunchModel ? ordered : favoriteEffortLevels(ordered, caps.defaultLevel);
+  const baseName = routeBaseModelName(route);
+  return levels.map(level => ({
+    ...route,
+    catalogId: `${route.catalogId}__effort_${level}`,
+    displayName: `${baseName} ${effortLabel(level)} (Relay)`,
+    reasoningEffort: level,
+    reasoningMetadata: metadata,
+  }));
 }
 
 function routeBaseModelName(route: AntigravityRoute): string {
@@ -376,14 +485,19 @@ function assertUniqueRouteDisplayNames(routes: AntigravityRoute[]): void {
 export function applyUniqueAntigravityRouteLabels(routes: AntigravityRoute[]): AntigravityRoute[] {
   const baseNames = routes.map(routeBaseModelName);
   const baseNameCounts = duplicateCounts(baseNames);
-  const upstreamCounts = duplicateCounts(routes.map(route => route.upstreamModelId));
-  const providerNameCounts = duplicateCounts(routes.map(route => route.providerName));
+  const upstreamKey = (route: AntigravityRoute) => `${route.upstreamModelId}|${route.reasoningEffort ?? ''}`;
+  const upstreamCounts = duplicateCounts(routes.map(upstreamKey));
+  // One count per distinct provider: effort variants of one provider must not look like two.
+  const providerNameCounts = duplicateCounts(
+    [...new Set(routes.map(route => `${route.providerId}\u0000${route.providerName}`))]
+      .map(key => key.split('\u0000')[1]!),
+  );
 
   const labeled = routes.map((route, index) => {
     const baseName = baseNames[index]!;
     const needsSuffix =
       (baseNameCounts.get(baseName) ?? 0) > 1
-      || (upstreamCounts.get(route.upstreamModelId) ?? 0) > 1;
+      || (upstreamCounts.get(upstreamKey(route)) ?? 0) > 1;
 
     if (!needsSuffix) {
       return { ...route, displayName: `${baseName} (Relay)` };

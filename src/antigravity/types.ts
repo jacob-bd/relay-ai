@@ -1,3 +1,4 @@
+import type { ReasoningMetadata } from '../provider-factory.js';
 /** A resolved Relay AI route for an Antigravity catalog entry. */
 export interface AntigravityRoute {
   /** Opaque catalog ID — `relay-ai__<providerId>__<encoded-modelId>`. */
@@ -22,6 +23,10 @@ export interface AntigravityRoute {
   /** Provider base URL — never serialized into the catalog. */
   baseURL?: string;
   contextWindow?: number;
+  /** Reasoning effort this route sends. Unset: 'high' when the model supports it. */
+  reasoningEffort?: string;
+  /** Reasoning metadata used to map `reasoningEffort` to provider options. */
+  reasoningMetadata?: ReasoningMetadata;
 }
 
 /** A minimal model entry from the Cloud Code fetchAvailableModels response. */

@@ -310,9 +310,10 @@ describe('parseArgs', () => {
     });
   });
 
-  it('parses favorites --agy command', () => {
+  it('still accepts the retired favorites --agy flag, as the general list', () => {
     expect(parseArgs(['favorites', '--agy'])).toMatchObject({
       command: 'models',
+      modelCatalogScope: 'global',
       favoritesAgy: true,
       showHelp: false,
       claudeArgs: [],
@@ -427,7 +428,7 @@ describe('help text', () => {
     expect(help).toContain('Commands:');
     expect(help).toContain('Launch OpenAI Codex CLI');
     expect(help).toContain('relay-ai antigravity');
-    expect(help).toContain('six Antigravity favorites');
+    expect(help).toContain('every\n  effort level it supports');
     expect(help).toContain('Binary aliases:');
     expect(help).toContain('relayai');
     expect(help).toContain('relai');
@@ -481,13 +482,12 @@ describe('help text', () => {
 
     expect(help).toContain(`v${VERSION}`);
     expect(help).toContain('relay-ai favorites');
-    expect(help).toContain('relay-ai favorites --agy');
     expect(help).toContain('favorites');
     expect(help).toContain('registry');
     expect(help).toContain('/model');
-    expect(help).toContain('20');
-    expect(help).toContain('6');
-    expect(help).toContain('Antigravity CLI favorites');
+    expect(help).toContain('50');
+    expect(help).toContain('once per effort level');
+    expect(help).not.toContain('--agy');
     expect(help).toContain('~/.relay-ai/config.json');
   });
 

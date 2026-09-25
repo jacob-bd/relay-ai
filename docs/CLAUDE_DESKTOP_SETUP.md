@@ -90,7 +90,7 @@ To use Claude in Chrome, [restore 1P mode](#restore-claude-desktop-to-anthropics
 4. **Latest Claude Desktop** from [claude.com/download](https://claude.com/download).
 5. **Network access to the required services.** Standard installations fetch the Cowork VM workspace and Claude CLI from `downloads.claude.ai`; Claude Desktop also needs access to your configured inference provider.
 6. *(Optional)* **OpenCode CLI** with providers configured. Whatever you've set up in OpenCode (Groq, Mistral, OpenAI, Gemini, Ollama, etc.) appears in the server catalog automatically.
-7. *(Optional)* **Favorites** via `relay-ai models` to cap the catalog at up to 20 models.
+7. *(Optional)* **Favorites** via `relay-ai models` to cap the catalog at up to 50 models.
 8. *(Optional)* **Google Vertex** — configure in Claude Desktop (**Developer → third-party inference → Vertex**).
 
 ---
@@ -105,7 +105,7 @@ relay-ai claude-app
 
 1. Run the command above.
 2. Select a provider and a model.
-3. Relay AI exposes the selected model first, followed by your available saved favorites (up to 20 models total, with duplicates and unavailable entries skipped).
+3. Relay AI exposes the selected model first, followed by your available saved favorites (up to 50 models total, with duplicates and unavailable entries skipped).
 4. The command will **automatically enable Developer Mode**, configure the gateway to point to itself, and launch Claude Desktop for you.
 5. In Claude Desktop, confirm the model you want in the model picker. Relay AI orders the selected model first, but Claude Desktop controls which discovered model it activates initially.
 6. **Keep the terminal running!** It acts as the live proxy for Claude Desktop.

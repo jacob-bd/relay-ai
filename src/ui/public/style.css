@@ -1749,6 +1749,11 @@ input { font-family: inherit; }
   flex: 1;
 }
 
+/* The general list has 50 slots — tighter gaps keep each pip visible. */
+.agy-slot-pips.dense {
+  gap: 2px;
+}
+
 .agy-pip {
   flex: 1;
   height: 5px;

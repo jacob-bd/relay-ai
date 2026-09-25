@@ -16,7 +16,7 @@ describe('server favoritesOnly preference', () => {
 
 describe('server favorites-only catalog', () => {
   it('caps at MAX_MODEL_CATALOG', () => {
-    const models: ServerModelInfo[] = Array.from({ length: 25 }, (_, i) => ({
+    const models: ServerModelInfo[] = Array.from({ length: 60 }, (_, i) => ({
       providerId: `p${i}`,
       id: `m${i}`,
       displayName: `Model ${i}`,

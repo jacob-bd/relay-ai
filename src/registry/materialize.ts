@@ -101,7 +101,14 @@ export function cachedModelToLocal(
     ...resolveModelReasoningMetadata(
       provider.id,
       cached.id,
-      { reasoning: cached.reasoning, interleavedField: cached.interleavedReasoningField },
+      {
+        // ChatGPT-login models that aren't in the seed list were saved with a name-based
+        // reasoning guess; models.dev (OpenAI's own entry) is the better source.
+        reasoning: provider.id === 'openai-oauth'
+          ? findModelsDevModel(provider.id, cached.id, metadata)?.reasoning ?? cached.reasoning
+          : cached.reasoning,
+        interleavedField: cached.interleavedReasoningField,
+      },
       metadata,
     ),
     useResponsesLite: cached.useResponsesLite,

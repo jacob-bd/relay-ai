@@ -34,12 +34,12 @@ describe('agy launch args', () => {
     expect(agyArgsAreNonInteractive([])).toBe(false);
   });
 
-  it('formats validated-slot capacity warnings', () => {
-    expect(formatAgyCapacityWarning(7, 8)).toBe(
-      'AGY can switch among 7 validated model slots; 8 favorites were not exposed.',
+  it('formats catalog capacity warnings', () => {
+    expect(formatAgyCapacityWarning(50, 8)).toBe(
+      'Antigravity can list 50 models (effort levels count separately); 8 favorites were not exposed.',
     );
     expect(formatAgyCapacityWarning(1, 1)).toBe(
-      'AGY can switch among 1 validated model slot; 1 favorite was not exposed.',
+      'Antigravity can list 1 model (effort levels count separately); 1 favorite was not exposed.',
     );
   });
 
