@@ -202,6 +202,13 @@ export async function startCloudCodeGateway(
           return value;
         }).slice(0, 500);
         log(`[gateway]   body-preview: ${preview}`);
+        // Everything but the conversation, system prompt and tools — where the
+        // client's own settings (e.g. generationConfig) live, cut off by the preview.
+        const request = (parsed as { request?: unknown }).request;
+        if (request && typeof request === 'object') {
+          const { contents: _c, systemInstruction: _s, tools: _t, ...settings } = request as Record<string, unknown>;
+          log(`[gateway]   request-settings: ${JSON.stringify({ model: (parsed as { model?: unknown }).model, ...settings })}`);
+        }
       }
 
       // --- loadCodeAssist ---

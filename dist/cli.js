@@ -9983,6 +9983,11 @@ async function startCloudCodeGateway(routes, opts = {}) {
           return value;
         }).slice(0, 500);
         log15(`[gateway]   body-preview: ${preview}`);
+        const request2 = parsed.request;
+        if (request2 && typeof request2 === "object") {
+          const { contents: _c, systemInstruction: _s, tools: _t, ...settings } = request2;
+          log15(`[gateway]   request-settings: ${JSON.stringify({ model: parsed.model, ...settings })}`);
+        }
       }
       if (lowerUrl.includes("loadcodeassist")) {
         if (trace) log15("[gateway] \u2192 loadCodeAssist");
