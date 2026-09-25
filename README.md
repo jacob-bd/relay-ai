@@ -32,6 +32,62 @@ Pick your backend:
 - **One-time OpenCode import** — bring existing OpenCode provider settings into the registry (`relay-ai providers import`)
 - **Google Vertex AI** — Claude on Vertex via `relay-ai server --vertex` and local gcloud credentials (no OpenCode key required)
 
+## Prerequisites
+
+- Node.js 22+
+- A supported AI coding tool installed (e.g. [Claude Code](https://www.npmjs.com/package/@anthropic-ai/claude-code), [OpenAI Codex](https://www.npmjs.com/package/@openai/codex), or [Google Gemini CLI](https://www.npmjs.com/package/@google/gemini-cli))
+- At least one provider configured via `relay-ai providers add` or `import` — **or** an [OpenCode API key](https://opencode.ai/auth) for Zen/Go cloud backends
+- [OpenCode CLI](https://opencode.ai) only if you want **one-time import** from an existing OpenCode setup (optional)
+- For **Vertex gateway:** [Google Cloud SDK](https://cloud.google.com/sdk) with `gcloud auth application-default login`, a GCP project with Vertex AI enabled, and Claude partner models enabled in that project
+- For **Antigravity CLI / IDE:** a Google account is still needed for Antigravity authentication. Do **not** use your main Google account. Use a throwaway or secondary account you can afford to lose.
+
+**A note on providers:** relay-ai keeps your provider list in `~/.relay-ai/providers.json`. Add providers with API keys or device-code OAuth (`relay-ai providers add` / the UI). OpenCode Zen / Go are normal cloud providers (API key from [opencode.ai/auth](https://opencode.ai/auth)). Optional: `relay-ai providers import` once if you already use the OpenCode CLI — OpenCode is never required to run Relay.
+
+**ClinePass:** The CLI and UI expose API-key and Cline account OAuth as two authentication choices for one `ClinePass` provider entry. Both use the ClinePass account's subscription limits.
+
+## Installation
+
+To install the CLI globally:
+
+```bash
+npm install -g @jacobbd/relay-ai
+```
+
+### Upgrading
+
+To upgrade to the latest version:
+
+```bash
+npm update -g @jacobbd/relay-ai
+```
+
+### Uninstallation
+
+To uninstall the CLI globally:
+
+```bash
+npm uninstall -g @jacobbd/relay-ai
+```
+
+> [!NOTE]
+> If you use a Node version manager like **NVM**, make sure you run the uninstall command using the active Node version that was used to install it (e.g., run `nvm use <version>` first).
+
+To fully remove the tool and all its configuration data, you can delete the configuration directory (`.relay-ai`) on your operating system:
+
+- **macOS / Linux**:
+  ```bash
+  rm -rf ~/.relay-ai
+  ```
+- **Windows**:
+  - In Command Prompt:
+    ```cmd
+    rmdir /s /q "%USERPROFILE%\.relay-ai"
+    ```
+  - In PowerShell:
+    ```powershell
+    Remove-Item -Recurse -Force "$env:USERPROFILE\.relay-ai"
+    ```
+
 ## Commands
 
 | Command | Description |
@@ -103,63 +159,6 @@ Pick your backend:
 | xAI SuperGrok OAuth | `relay-ai providers auth xai-oauth` | ✅ Device code flow ([guide](docs/SUBSCRIPTION-OAUTH.md)) |
 | OpenAI ChatGPT OAuth | `relay-ai providers auth openai-oauth` | ✅ Device code flow ([guide](docs/SUBSCRIPTION-OAUTH.md)) |
 | ClinePass OAuth | `relay-ai providers auth cline-pass` | ✅ Device code flow ([guide](docs/SUBSCRIPTION-OAUTH.md)) |
-
-## Prerequisites
-
-- Node.js 22+
-- A supported AI coding tool installed (e.g. [Claude Code](https://www.npmjs.com/package/@anthropic-ai/claude-code), [OpenAI Codex](https://www.npmjs.com/package/@openai/codex), or [Google Gemini CLI](https://www.npmjs.com/package/@google/gemini-cli))
-- At least one provider configured via `relay-ai providers add` or `import` — **or** an [OpenCode API key](https://opencode.ai/auth) for Zen/Go cloud backends
-- [OpenCode CLI](https://opencode.ai) only if you want **one-time import** from an existing OpenCode setup (optional)
-- For **Vertex gateway:** [Google Cloud SDK](https://cloud.google.com/sdk) with `gcloud auth application-default login`, a GCP project with Vertex AI enabled, and Claude partner models enabled in that project
-- For **Antigravity CLI / IDE:** a Google account is still needed for Antigravity authentication. Do **not** use your main Google account. Use a throwaway or secondary account you can afford to lose.
-
-**A note on providers:** relay-ai keeps your provider list in `~/.relay-ai/providers.json`. Add providers with API keys or device-code OAuth (`relay-ai providers add` / the UI). OpenCode Zen / Go are normal cloud providers (API key from [opencode.ai/auth](https://opencode.ai/auth)). Optional: `relay-ai providers import` once if you already use the OpenCode CLI — OpenCode is never required to run Relay.
-
-**ClinePass:** The CLI and UI expose API-key and Cline account OAuth as two authentication choices for one `ClinePass` provider entry. Both use the ClinePass account's subscription limits.
-
-## Installation
-
-To install the CLI globally:
-
-```bash
-npm install -g @jacobbd/relay-ai
-```
-
-### Upgrading
-
-To upgrade to the latest version:
-
-```bash
-npm update -g @jacobbd/relay-ai
-```
-
-### Uninstallation
-
-To uninstall the CLI globally:
-
-```bash
-npm uninstall -g @jacobbd/relay-ai
-```
-
-> [!NOTE]
-> If you use a Node version manager like **NVM**, make sure you run the uninstall command using the active Node version that was used to install it (e.g., run `nvm use <version>` first).
-
-To fully remove the tool and all its configuration data, you can delete the configuration directory (`.relay-ai`) on your operating system:
-
-- **macOS / Linux**:
-  ```bash
-  rm -rf ~/.relay-ai
-  ```
-- **Windows**:
-  - In Command Prompt:
-    ```cmd
-    rmdir /s /q "%USERPROFILE%\.relay-ai"
-    ```
-  - In PowerShell:
-    ```powershell
-    Remove-Item -Recurse -Force "$env:USERPROFILE\.relay-ai"
-    ```
-
 
 ## Setup
 
