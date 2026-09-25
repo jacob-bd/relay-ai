@@ -313,13 +313,16 @@ describe('Codex CLI cloud-code single-model path', () => {
     );
     expect(mocks.startCodexProxy).toHaveBeenCalledWith(
       expect.arrayContaining([
+        // Routed under the same `provider__model` slug the favorites catalog lists.
         expect.objectContaining({
-          modelId: 'anthropic-antigravity__gemini-3.5-flash-low',
+          modelId: 'antigravity__gemini-3.5-flash-low',
+          upstreamModelId: 'anthropic-antigravity__gemini-3.5-flash-low',
           npm: '@ai-sdk/anthropic',
           apiKey: 'cloud-code-proxy-token',
         }),
         expect.objectContaining({
-          modelId: 'anthropic-claude-code__claude-sonnet-4-6',
+          modelId: 'claude-code__claude-sonnet-4-6',
+          upstreamModelId: 'anthropic-claude-code__claude-sonnet-4-6',
           npm: '@ai-sdk/anthropic',
           apiKey: 'cloud-code-proxy-token',
         }),

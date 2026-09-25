@@ -797,8 +797,9 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
         });
         const startingAlias = backendRoutes[0]!.aliasId;
         cloudCodeBackendFav = await startCloudCodeCatalogBackend(backendRoutes, startingAlias, trace);
-        backendCodexRoutes = backendRoutes.map(cr => ({
-          modelId: cr.aliasId,
+        backendCodexRoutes = backendRoutes.map((cr, i) => ({
+          // Same slug buildFavoritesAppCatalog lists; cr.aliasId is only the backend's name for it.
+          modelId: codexCliFavoritesSlug(backendResolved[i]!.providerId, backendResolved[i]!.model.id),
           npm: '@ai-sdk/anthropic',
           apiKey: cloudCodeBackendFav!.token,
           baseURL: `http://127.0.0.1:${cloudCodeBackendFav!.port}`,

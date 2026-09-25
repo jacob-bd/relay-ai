@@ -643,7 +643,8 @@ export async function runCodexCommand(
             };
           }),
           (cr, backend, original) => ({
-            modelId: cr.aliasId,
+            // Same slug the favorites catalog lists; cr.aliasId is only the backend's name for it.
+            modelId: codexCliFavoritesSlug(original.providerId, original.model.id),
             npm: '@ai-sdk/anthropic',
             apiKey: backend.token,
             baseURL: `http://127.0.0.1:${backend.port}`,
