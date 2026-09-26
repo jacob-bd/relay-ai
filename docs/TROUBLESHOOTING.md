@@ -58,6 +58,28 @@ You may also have a real Anthropic API key in your shell (`~/.zshrc`, etc.). Tha
 
 ---
 
+## OpenCode Zen: `403 OpenCode's free tier can only be used from within OpenCode`
+
+When calling free-tier models on OpenCode Zen (e.g. `mimo-v2.6-flash-free`, `big-pickle`, `muse-spark-1.3-contributor-free`, `nemotron-3-ultra-free`, or other `*-free` models) through Relay or any other third-party agent, the API returns:
+
+```text
+API Error: 403 OpenCode's free tier can only be used from within OpenCode
+```
+
+### Cause
+
+In mid-September 2026, OpenCode updated their Zen API gateway to block third-party tools, external agents, and alternative frontends from accessing zero-cost free-tier models. An OpenCode maintainer confirmed this policy change on GitHub ([Issue #49621](https://github.com/anomalyco/opencode/issues/49621#issuecomment-5723383322), [Issue #49580](https://github.com/anomalyco/opencode/issues/49580#issuecomment-5723289721)):
+
+> *"You cannot use the free tier in other harnesses (this is only a limitation for the free tier nothing else)."*
+
+### Solutions
+
+1. **Use OpenCode Go**: OpenCode's $10/month Go subscription (`--provider go`) is fully supported and continues to work with external agents and Relay AI as normal.
+2. **Use paid OpenCode Zen models**: Metered/pay-as-you-go Zen models with active credits or billing are unaffected by this restriction and work normally.
+3. **Use direct registry providers**: Instead of routing free models through Zen, add API keys directly for providers like Groq, Google AI Studio, DeepSeek, or Cerebras (`relay-ai providers add`).
+
+---
+
 ## Provider works in `relay-ai models` but not in `providers list`
 
 Zen and Go are **cloud builtins**: they appear when you have an OpenCode API key, even if they aren’t saved in `~/.relay-ai/providers.json`. `relay-ai providers list` shows them with `· cloud builtin`. Imported BYOK providers (Anthropic, Nvidia, Groq, …) come from the registry file.

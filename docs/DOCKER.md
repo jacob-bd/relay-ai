@@ -38,7 +38,7 @@ Deploy Relay AI’s **Server + Admin UI** from this repository with Docker Compo
 Ask only what you do not already know. Prefer short multiple-choice.
 
 1. **Where will Docker run?** Same machine they’ll open the browser on, or a remote NAS/VPS?
-2. **Do they have an OpenCode API key** for Zen/Go free/paid cloud models? (`OPENCODE_API_KEY`) — optional if they’ll only add other providers in the UI.
+2. **Do they have an OpenCode API key** for Zen/Go cloud models? (`OPENCODE_API_KEY`) — optional if they’ll only add other providers in the UI.
 3. **Gateway password** — invent a strong random password for `RELAY_AI_SERVER_PASSWORD` (required for network mode clients), or ask them for one. Never commit it.
 4. **Any other provider API keys now?** e.g. Groq → `RELAY_AI_KEY_GROQ`. Can be added later in the UI.
 5. **Host ports free?** Defaults **8787** (UI) and **17645** (gateway). If busy, set `RELAY_AI_UI_HOST_PORT` / `RELAY_AI_GATEWAY_HOST_PORT`.

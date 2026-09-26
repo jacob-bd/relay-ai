@@ -159,6 +159,12 @@ Counts come from Command Code's own plan pages and match what Relay discovers. C
 - **Troubleshooting `MODEL_NOT_IN_PLAN`**: Your plan does not include that model. Run `relay-ai providers refresh-models commandcode` to re-check availability, which also picks up models you gained by upgrading.
 - **The Go plan**: Go works only through the private `/alpha/generate` endpoint that the Command Code CLI uses. Command Code rejects requests to it that do not carry the CLI's own identifying headers, so reaching it from Relay would require impersonating the CLI to bypass a control the vendor added deliberately. Relay does not do this, and using a third-party bridge that does may put your Command Code account at risk. Use GOAT or above for API access.
 
+### OpenCode Zen & OpenCode Go
+- **Description**: Cloud gateway backends provided by OpenCode using your OpenCode API key ([opencode.ai/auth](https://opencode.ai/auth)).
+- **OpenCode Go**: $10/month flat-rate subscription (`--provider go`). Fully supported for external coding agents and Relay AI.
+- **OpenCode Zen**: Pay-as-you-go curated model gateway (`--provider zen`). Metered models with billing or credit balance work normally.
+- **Free-tier limitation (`403 OpenCode's free tier can only be used from within OpenCode`)**: As of September 2026, OpenCode blocks third-party clients and external agent harnesses from accessing zero-cost Zen free models (`*-free`, `big-pickle`). Attempting to use them outside the official OpenCode client returns HTTP 403. An OpenCode maintainer confirmed on GitHub that free-tier models cannot be called from other harnesses ([Issue #49621](https://github.com/anomalyco/opencode/issues/49621#issuecomment-5723383322), [Issue #49580](https://github.com/anomalyco/opencode/issues/49580#issuecomment-5723289721)). Paid Zen models and OpenCode Go are unaffected.
+
 ### Local Models (Ollama & LM Studio)
 - **Description**: Connects to locally running inference engines.
 - **Base URLs**: Custom prompts ask for your local URL (e.g., `http://127.0.0.1:11434/v1`).

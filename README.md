@@ -269,7 +269,7 @@ relay-ai claude abc-123
 
 ```bash
 relay-ai claude --provider groq --model llama-3.3-70b-versatile -p "Summarize README.md"
-relay-ai claude --model zen__deepseek-v4-flash-free -p "task" --output-format stream-json
+relay-ai claude --model go__deepseek-v4-flash -p "task" --output-format stream-json
 ```
 
 | Flag | Description |
@@ -441,7 +441,7 @@ const result = await streamText({ model, prompt: 'Hello!' });
 
 Relay AI can launch the Antigravity CLI, standalone Antigravity app, and Antigravity IDE through a local Cloud Code gateway. This lets Antigravity's native model picker show Relay models from your configured providers.
 
-In agy, each model is one row with agy's Low / Medium / High / Max effort slider (plus a separate XHigh row where supported). Antigravity IDE and the app have no effort control, so there Relay lists a model once per effort level: the model you launch with at every level it supports (e.g. `GPT-6 Sol None` … `GPT-6 Sol Max`), each of your general favorites at three levels — medium and the two above it. Models without adjustable effort appear once, and every entry names its provider. Up to 50 entries in total.
+In agy, each model is one row with agy's Low / Medium / High / Max effort slider (plus a separate XHigh row where supported). The Antigravity app folds effort into a Low / Medium / High submenu per model, with XHigh and Max as separate rows. Antigravity IDE lists a model once per effort level instead — its submenu is hidden once the list scrolls — with the model you launch with at every level it supports (e.g. `GPT-6 Sol None` … `GPT-6 Sol Max`) and each of your general favorites at three levels. Models without adjustable effort appear once, and every entry names its provider. Up to 50 entries in total.
 
 ```bash
 relay-ai agy
@@ -568,6 +568,8 @@ For agent / alef-agent integration (boot flags, NDJSON): **[docs/AI-AGENTS.md](d
 ### OpenCode Zen / Go filtering
 
 When OpenCode Zen is in your registry, `subscriptionFilter` controls which Zen models appear (`free` = free tier only; default = all Zen models). Add or change Zen via `relay-ai providers`.
+
+> **Note on Zen free models:** As of September 2026, OpenCode restricts its zero-cost free-tier models (`*-free`, `big-pickle`) exclusively to the official OpenCode client. Calls from third-party tools or external agents return `403 OpenCode's free tier can only be used from within OpenCode` ([maintainer confirmation](https://github.com/anomalyco/opencode/issues/49621#issuecomment-5723383322)). Paid OpenCode Zen models and OpenCode Go subscriptions continue to work normally through Relay.
 
 Zen, Go, OpenRouter, and Command Code gateways can expose both Chat
 Completions and Anthropic Messages. Relay uses current model metadata first, so

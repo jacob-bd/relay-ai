@@ -23,7 +23,7 @@ relay-ai --ai --install    # install SKILL.md to agent skill dirs
 | Codex JSONL events | `relay-ai codex --provider <id> --model <id> exec --json "prompt"` |
 | Gemini one-shot (text) | `relay-ai gemini --provider <id> --model <id> -p "prompt"` |
 | Gemini NDJSON stream | `relay-ai gemini --provider <id> --model <id> -p "…" -o stream-json` |
-| Model slug | `--model zen__deepseek-v4-flash-free` (= `--provider zen --model deepseek-v4-flash-free`) |
+| Model slug | `--model go__deepseek-v4-flash` (= `--provider go --model deepseek-v4-flash`) |
 | List providers/models | `relay-ai providers list` or read `~/.relay-ai/providers.json` |
 
 ---
@@ -70,19 +70,19 @@ relay-ai claude --provider groq --model llama-3.3-70b-versatile -p "Summarize RE
 relay-ai claude --http-proxy --provider moonshot --model kimi-k3 -p "Review this diff"
 
 # Claude — slug
-relay-ai claude --model zen__deepseek-v4-flash-free -p "Review this diff"
+relay-ai claude --model go__deepseek-v4-flash -p "Review this diff"
 
 # Codex — explicit boot
 relay-ai codex --provider openai --model gpt-5.4 exec "implement feature X"
 
 # Codex — slug
-relay-ai codex --model zen__deepseek-v4-flash-free exec "fix the test"
+relay-ai codex --model go__deepseek-v4-flash exec "fix the test"
 
 # Gemini — explicit boot
 relay-ai gemini --provider google --model gemini-2.5-flash -p "Review this file"
 
 # Gemini — slug
-relay-ai gemini --model zen__deepseek-v4-flash-free -p "Refactor the module"
+relay-ai gemini --model go__deepseek-v4-flash -p "Refactor the module"
 ```
 
 ---
@@ -105,15 +105,15 @@ relay-ai detects machine-readable mode and **suppresses all boot UI on stdout**.
 **Verify clean stdout:**
 
 ```bash
-relay-ai claude --provider zen --model deepseek-v4-flash-free \
+relay-ai claude --provider go --model deepseek-v4-flash \
   -p "PONG" --output-format stream-json 2>/dev/null \
   | node -e "process.stdin.on('data',d=>d.toString().split('\n').filter(Boolean).forEach(l=>JSON.parse(l))); console.log('ok')"
 
-relay-ai codex --provider zen --model deepseek-v4-flash-free \
+relay-ai codex --provider go --model deepseek-v4-flash \
   exec --json "PONG" 2>/dev/null \
   | node -e "process.stdin.on('data',d=>d.toString().split('\n').filter(Boolean).forEach(l=>JSON.parse(l))); console.log('ok')"
 
-relay-ai gemini --provider zen --model deepseek-v4-flash-free \
+relay-ai gemini --provider go --model deepseek-v4-flash \
   -p "PONG" -o stream-json 2>/dev/null \
   | node -e "process.stdin.on('data',d=>d.toString().split('\n').filter(Boolean).forEach(l=>JSON.parse(l))); console.log('ok')"
 ```
@@ -180,7 +180,7 @@ Interactively, every launch command's model list (after choosing a provider) als
 
 ```bash
 relay-ai claude --dry-run --provider groq --model llama-3.3-70b-versatile
-relay-ai codex --config --provider zen --model deepseek-v4-flash-free
+relay-ai codex --config --provider go --model deepseek-v4-flash
 ```
 
 ---
@@ -207,8 +207,8 @@ for model in llama-3.3-70b-versatile mixtral-8x7b-32768; do
   relay-ai claude --provider groq --model "$model" -p "Same prompt for all models"
 done
 
-for model in deepseek-v4-flash-free qwen3.6-plus-free; do
-  relay-ai codex --provider zen --model "$model" exec --json "Same task"
+for model in deepseek-v4-flash qwen3.7-plus; do
+  relay-ai codex --provider go --model "$model" exec --json "Same task"
 done
 
 for model in gemini-2.5-flash gemini-2.5-pro; do
@@ -221,6 +221,8 @@ By default, boot flags use **single-model Relay-only launch** (favorites catalog
 ---
 
 ## Zen / Go cloud providers
+
+> **OpenCode Zen free-tier restriction:** OpenCode blocks its zero-cost free models (`*-free`, `big-pickle`) when called outside the official OpenCode client (`403 OpenCode's free tier can only be used from within OpenCode`; confirmed by OpenCode maintainers in [GitHub Issue #49621](https://github.com/anomalyco/opencode/issues/49621#issuecomment-5723383322)). Use paid Zen models or OpenCode Go for agent workflows.
 
 For Claude `-p` and Codex `exec` against OpenCode Zen or Go:
 

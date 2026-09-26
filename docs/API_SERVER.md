@@ -79,13 +79,13 @@ Model catalog:
       anthropic: anthropic-go__qwen3.7-plus
       openai:    qwen3.7-plus
 
-  OpenCode Zen
-    Big Pickle
-      anthropic: anthropic-zen__big-pickle
-      openai:    big-pickle
-    MiMo V2.5 Free
-      anthropic: anthropic-zen__mimo-v2.5-free
-      openai:    mimo-v2.5-free
+  OpenCode Zen (paid models; free-tier models are blocked outside OpenCode)
+    MiniMax M3
+      anthropic: anthropic-zen__minimax-m3
+      openai:    minimax-m3
+    GLM 5.3
+      anthropic: anthropic-zen__glm-5.3
+      openai:    glm-5.3
 
   OpenRouter
     Z.ai: GLM 5.2
