@@ -4,16 +4,20 @@ import { deriveBrand } from '../models.js';
 import { resolveContextWindow } from '../context-window.js';
 import { makeTraceLogger, getProviderDebugLogPath } from '../trace-log.js';
 import type { CachedModel } from './types.js';
+import { clampModelTimeoutMs, endpointModelTimeoutMs } from './endpoint-timeout.js';
 
 export async function fetchAnthropicModels(
   baseUrl: string,
   apiKey: string,
   extraHeaders?: Record<string, string>,
+  timeoutMs?: number,
 ): Promise<{ models: CachedModel[]; baseUrl: string; error?: string; hint?: string }> {
   const root = baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '');
   const modelsUrl = `${root}/v1/models`;
+  const defaultTimeoutMs = endpointModelTimeoutMs('anthropic', root);
+  const effectiveTimeoutMs = clampModelTimeoutMs(timeoutMs ?? defaultTimeoutMs, defaultTimeoutMs);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10_000);
+  const timer = setTimeout(() => controller.abort(), effectiveTimeoutMs);
 
   try {
     const response = await fetch(modelsUrl, {
@@ -33,7 +37,11 @@ export async function fetchAnthropicModels(
       logTrace = makeTraceLogger(getProviderDebugLogPath());
     }
 
-    const rawBodyText = await response.text().catch(() => '');
+    // Keep a known HTTP error even if its body breaks. Successful catalogs must
+    // still propagate body-read failures so stalled bodies report the timeout.
+    const rawBodyText = response.ok
+      ? await response.text()
+      : await response.text().catch(() => '');
     if (logTrace) {
       logTrace(`[fetchAnthropicModels] HTTP ${response.status} from ${modelsUrl}`);
       logTrace(`[fetchAnthropicModels] Body: ${rawBodyText}`);
@@ -79,11 +87,16 @@ export async function fetchAnthropicModels(
       hint: 'Verify the base URL supports Anthropic-compatible /v1/models or try the OpenAI-compatible option instead.',
     };
   } catch {
+    const timedOut = controller.signal.aborted;
     return {
       models: [],
       baseUrl: root,
-      error: 'Could not reach the Anthropic-compatible server.',
-      hint: 'Check the base URL and that the server is running.',
+      error: timedOut
+        ? `Connection timed out after ${Math.round(effectiveTimeoutMs / 1000)} seconds.`
+        : 'Could not reach the Anthropic-compatible server.',
+      hint: timedOut
+        ? 'Check your network or try again.'
+        : 'Check the base URL and that the server is running.',
     };
   } finally {
     clearTimeout(timer);

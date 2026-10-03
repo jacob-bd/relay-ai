@@ -40,7 +40,7 @@ import {
 import { loadRegistry, saveRegistry } from './registry/io.js';
 import { getProviderModels, supportsManualModels } from './registry/provider-models.js';
 import { runManualModelAddFlow, runManualModelRemoveFlow } from './manual-model-wizard.js';
-import { refreshAllProviderModels, refreshProviderModels } from './registry/refresh-models.js';
+import { refreshAllProviderModels, refreshProviderModels, refreshProviderModelsBatch } from './registry/refresh-models.js';
 import { resolveRefreshCredential } from './registry/refresh-credentials.js';
 import { resolveOrCollectApiKey } from './key-setup.js';
 import { authenticateProvider, providerAuthHelpText, type ProviderAuthMethod } from './registry/provider-auth.js';
@@ -223,12 +223,8 @@ export async function runProvidersImport(): Promise<number> {
     const refreshSpinner = p.spinner();
     refreshSpinner.start('Fetching model capabilities from providers...');
     const registry = loadRegistry();
-    for (const provider of result.imported) {
-      const key = await resolveRefreshCredential(provider, async pr =>
-        resolveProviderCredential(pr.id, pr.authRef),
-      );
-      await refreshProviderModels(provider.id, key, registry);
-    }
+    await refreshProviderModelsBatch(result.imported,
+      async pr => resolveProviderCredential(pr.id, pr.authRef), registry);
     refreshSpinner.stop('Model capabilities refreshed.');
   }
 

@@ -6,6 +6,7 @@ import { isLikelyPlaceholderKey } from './refresh-credentials.js';
 import { resolveModelSource } from './model-source.js';
 import { effectiveProviderBaseUrl, resolveProviderTemplate, syntheticTemplate } from './resolve-template.js';
 import { validateCustomEndpointUrl } from './url-security.js';
+import { endpointModelTimeoutMs } from './endpoint-timeout.js';
 import type { RegistryProvider } from './types.js';
 import type { LocalProvider } from '../types.js';
 
@@ -78,8 +79,9 @@ export async function validateImportKey(
     safeBaseUrl = urlCheck.normalizedUrl;
   }
 
+  const timeoutMs = endpointModelTimeoutMs(catalogTemplate?.id ?? 'custom-openai', safeBaseUrl);
   if (npm === '@ai-sdk/anthropic') {
-    const result = await fetchAnthropicModels(safeBaseUrl, key);
+    const result = await fetchAnthropicModels(safeBaseUrl, key, entry.api.headers, timeoutMs);
     if (result.error) {
       return reject(
         placeholder ? 'placeholder-key' : 'invalid-key',
@@ -92,7 +94,7 @@ export async function validateImportKey(
   }
 
   const template = catalogTemplate ?? syntheticTemplate(entry, safeBaseUrl);
-  const result = await fetchTemplateModels(template, key, safeBaseUrl);
+  const result = await fetchTemplateModels(template, key, safeBaseUrl, entry.api.headers, timeoutMs);
   if (result.error) {
     return reject(
       placeholder ? 'placeholder-key' : 'invalid-key',

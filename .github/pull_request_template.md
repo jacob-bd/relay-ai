@@ -18,10 +18,14 @@
 
 - [ ] I added or updated focused tests.
 - [ ] `npm run typecheck` passes.
-- [ ] `npm test` passes.
+- [ ] The full `npm test` suite passes, not just focused tests.
 - [ ] `npm run build` passes.
 - [ ] I updated user-facing documentation where needed.
 - [ ] I included screenshots for visible UI changes, or the change has no visible UI.
+
+Commands run and results:
+
+<!-- Include the full-suite result, typecheck, build, and relevant manual checks. Fix failing checks before requesting review. -->
 
 ## Risks and limitations
 

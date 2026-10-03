@@ -7,6 +7,7 @@ import { loadRegistry, saveRegistry } from './io.js';
 import type { CachedModel, RegistryProvider } from './types.js';
 import { customProviderId, isValidProviderId, slugifyProviderId } from './validate.js';
 import { validateCustomEndpointUrl } from './url-security.js';
+import { endpointModelTimeoutMs } from './endpoint-timeout.js';
 
 export type CustomEndpointKind = 'openai' | 'anthropic';
 
@@ -106,8 +107,9 @@ export interface FetchCustomEndpointModelsInput {
 export async function fetchCustomEndpointModels(
   input: FetchCustomEndpointModelsInput,
 ): Promise<{ models: CachedModel[]; baseUrl: string; error?: string; hint?: string }> {
+  const timeoutMs = endpointModelTimeoutMs(`custom-${input.kind}`, input.normalizedBaseUrl);
   if (input.kind === 'anthropic') {
-    return fetchAnthropicModels(input.normalizedBaseUrl, input.apiKey, input.headers);
+    return fetchAnthropicModels(input.normalizedBaseUrl, input.apiKey, input.headers, timeoutMs);
   }
   return fetchTemplateModels(
     {
@@ -122,6 +124,7 @@ export async function fetchCustomEndpointModels(
     input.apiKey,
     input.normalizedBaseUrl,
     input.headers,
+    timeoutMs,
   );
 }
 

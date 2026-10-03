@@ -5,6 +5,7 @@ import { getModels } from '../models.js';
 import { fetchAnthropicModels } from './fetch-anthropic-models.js';
 import { customEndpointKind } from './custom-endpoint.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
+import { endpointModelTimeoutMs } from './endpoint-timeout.js';
 import { fetchClinePassModels } from './fetch-cline-pass-models.js';
 import { fetchCommandCodeModels, COMMANDCODE_BASE_URL } from './fetch-commandcode-models.js';
 import { fetchClaudeCodeModels } from '../oauth/claude-code.js';
@@ -514,12 +515,14 @@ async function refreshApiListProvider(
   }
 
   const template = catalogTemplate ?? syntheticTemplate(provider, safeBaseUrl);
+  // OpenCode imports can name a custom gateway anything, not just custom-*.
+  const timeoutMs = endpointModelTimeoutMs(catalogTemplate?.id ?? 'custom-openai', safeBaseUrl);
   const extraHeaders = provider.api.headers && Object.keys(provider.api.headers).length > 0
     ? provider.api.headers
     : undefined;
 
   if (npm === '@ai-sdk/anthropic') {
-    const fetched = await fetchAnthropicModels(safeBaseUrl, apiKey, extraHeaders);
+    const fetched = await fetchAnthropicModels(safeBaseUrl, apiKey, extraHeaders, timeoutMs);
     if (fetched.error || fetched.models.length === 0) {
       return { models: [], error: fetched.error ?? 'No models returned.', baseUrl: fetched.baseUrl };
     }
@@ -529,7 +532,7 @@ async function refreshApiListProvider(
     };
   }
 
-  const fetched = await fetchTemplateModels(template, apiKey, safeBaseUrl, extraHeaders);
+  const fetched = await fetchTemplateModels(template, apiKey, safeBaseUrl, extraHeaders, timeoutMs);
   if (fetched.error || fetched.models.length === 0) {
     return { models: [], error: fetched.error ?? 'No models returned.' };
   }
@@ -777,10 +780,31 @@ export async function refreshProviderModels(
   }
 }
 
+/** Share one registry snapshot while bounding network discovery across providers. */
+export async function refreshProviderModelsBatch(
+  providers: RegistryProvider[],
+  resolveKey: (provider: RegistryProvider) => Promise<string | null>,
+  registry: ProviderRegistry,
+): Promise<RefreshModelsResult> {
+  // Keychain/OAuth credential resolution can prompt the user. Keep it serial.
+  const keys: Array<string | null> = [];
+  for (const provider of providers) keys.push(await resolveRefreshCredential(provider, resolveKey));
+
+  const refreshed: RefreshProviderResult[] = new Array(providers.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < providers.length) {
+      const index = next++;
+      refreshed[index] = await refreshProviderModels(providers[index]!.id, keys[index]!, registry);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(3, providers.length) }, worker));
+  return { refreshed };
+}
+
 export async function refreshAllProviderModels(
   resolveKey: (provider: RegistryProvider) => Promise<string | null>,
 ): Promise<RefreshModelsResult> {
-  const refreshed: RefreshProviderResult[] = [];
   const registry = loadRegistry();
 
   const opencodeKey = await readGlobalOpencodeCredential();
@@ -822,10 +846,5 @@ export async function refreshAllProviderModels(
 
   const enabledProviders = registry.providers.filter(p => p.enabled);
 
-  for (const provider of enabledProviders) {
-    const key = await resolveRefreshCredential(provider, resolveKey);
-    refreshed.push(await refreshProviderModels(provider.id, key, registry));
-  }
-
-  return { refreshed };
+  return refreshProviderModelsBatch(enabledProviders, resolveKey, registry);
 }

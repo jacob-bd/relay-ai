@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { addCustomEndpointProvider } from '../src/registry/custom-endpoint.js';
 import * as env from '../src/env.js';
 import * as io from '../src/registry/io.js';
@@ -22,6 +22,7 @@ const emptyRegistry = (): ProviderRegistry => ({ schemaVersion: 1, providers: []
 describe('registry/custom-endpoint add', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv('RELAY_AI_CUSTOM_ENDPOINT_MODEL_TIMEOUT_MS', undefined);
     vi.mocked(io.loadRegistry).mockReturnValue(emptyRegistry());
     vi.mocked(env.saveProviderCredential).mockResolvedValue(true);
     vi.mocked(env.readStoredProviderCredential).mockResolvedValue(null);
@@ -34,6 +35,8 @@ describe('registry/custom-endpoint add', () => {
       baseUrl: 'https://gw.example.com/v1',
     });
   });
+
+  afterEach(() => vi.unstubAllEnvs());
 
   it('adds an openai-kind provider with a derived id and stores its key', async () => {
     const result = await addCustomEndpointProvider({
@@ -91,8 +94,28 @@ describe('registry/custom-endpoint add', () => {
       'sk-one',
       'https://gw.example.com/v1',
       { 'X-Plan': 'coding' },
+      30_000,
     );
     expect(result.provider?.api.headers).toEqual({ 'X-Plan': 'coding' });
+  });
+
+  it('allows the custom endpoint model timeout to be overridden', async () => {
+    vi.stubEnv('RELAY_AI_CUSTOM_ENDPOINT_MODEL_TIMEOUT_MS', '45000');
+
+    await addCustomEndpointProvider({
+      displayName: 'Slow Gateway',
+      baseUrl: 'https://gw.example.com/v1',
+      apiKey: 'sk-one',
+      kind: 'openai',
+    });
+
+    expect(fetchTemplate.fetchTemplateModels).toHaveBeenCalledWith(
+      expect.anything(),
+      'sk-one',
+      'https://gw.example.com/v1',
+      undefined,
+      45_000,
+    );
   });
 
   it('uses the anthropic fetcher for anthropic kind', async () => {

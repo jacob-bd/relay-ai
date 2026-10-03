@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { updateCustomEndpointProvider } from '../src/registry/custom-endpoint.js';
 import * as env from '../src/env.js';
 import * as io from '../src/registry/io.js';
@@ -41,6 +41,7 @@ function registryWith(provider: RegistryProvider): ProviderRegistry {
 describe('registry/custom-endpoint update', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv('RELAY_AI_CUSTOM_ENDPOINT_MODEL_TIMEOUT_MS', undefined);
     vi.mocked(env.saveProviderCredential).mockResolvedValue(true);
     vi.mocked(env.readStoredProviderCredential).mockResolvedValue('sk-stored');
     vi.mocked(urlSecurity.validateCustomEndpointUrl).mockImplementation(
@@ -54,6 +55,8 @@ describe('registry/custom-endpoint update', () => {
       baseUrl: 'https://new.example.com/v1',
     });
   });
+
+  afterEach(() => vi.unstubAllEnvs());
 
   it('renames without making any network call', async () => {
     const provider = customProvider();
@@ -116,6 +119,7 @@ describe('registry/custom-endpoint update', () => {
       'sk-stored',
       'https://new.example.com/v1',
       undefined,
+      30_000,
     );
     expect(env.saveProviderCredential).not.toHaveBeenCalled();
   });
@@ -163,6 +167,7 @@ describe('registry/custom-endpoint update', () => {
       'sk-stored',
       'https://gw.example.com/v1',
       { 'X-Plan': 'max' },
+      30_000,
     );
   });
 

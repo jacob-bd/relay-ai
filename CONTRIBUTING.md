@@ -35,6 +35,13 @@ npm test
 npm run build
 ```
 
+Run the full `npm test` suite, not just the tests for your change. All tests,
+type checking, and the build must pass before you submit a PR or request another
+review after making changes. Fix failures before submitting, and include the
+commands you ran and their results in the PR description. If you cannot complete
+a required check, explain why and keep the PR in draft until a maintainer agrees
+it is ready for review.
+
 Your pull request should include:
 
 - A plain-language explanation of the problem and the proposed change.

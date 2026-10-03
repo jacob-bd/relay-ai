@@ -172,6 +172,8 @@ relay-ai providers add      # pick a template or custom endpoint
 relay-ai providers import   # one-time migration from OpenCode (optional)
 ```
 
+Custom endpoints, Ollama/LM Studio templates, and endpoints at loopback or private IP addresses get a 30-second model discovery timeout across add, edit, import, and refresh. Set `RELAY_AI_CUSTOM_ENDPOINT_MODEL_TIMEOUT_MS` to override this window (1,000–120,000 ms); empty, whitespace-only, or non-finite values use the default. Other cloud templates keep their 10-second timeout. Bulk refresh runs at most three providers at a time, with credentials resolved one at a time.
+
 On first `relay-ai claude` run with an empty registry, an inline wizard walks you through Quick start (Zen), import, or opening `relay-ai providers`.
 
 ### OpenCode API key (Zen/Go only)

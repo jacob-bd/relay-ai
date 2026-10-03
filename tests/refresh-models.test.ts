@@ -183,6 +183,7 @@ describe('refreshProviderModels', () => {
       'sk-test',
       'https://gw.example.com/v1',
       { 'X-Plan': 'coding' },
+      30_000,
     );
   });
 
@@ -219,6 +220,7 @@ describe('refreshProviderModels', () => {
       'https://claude-gw.example.com',
       'sk-test',
       { 'X-Plan': 'coding' },
+      30_000,
     );
   });
 });
