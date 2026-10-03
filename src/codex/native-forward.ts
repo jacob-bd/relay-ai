@@ -5,6 +5,7 @@ import {
   CODEX_RESPONSES_WEBSOCKETS_BETA,
 } from '../constants.js';
 import { decodeCompactionContent } from '../codex-responses-adapter.js';
+import { stripToolUseIdSuffix } from '../proxy-shared.js';
 
 export const NATIVE_CODEX_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses';
 export const NATIVE_FORWARD_HEADERS = new Set([
@@ -72,6 +73,16 @@ export function prepareNativeCodexBody<T extends Record<string, unknown>>(body: 
   const input = body.input.flatMap(item => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return [item];
     const record = item as Record<string, unknown>;
+    // Older Relay sessions embedded Gemini thought signatures in call IDs.
+    // Native OpenAI accepts at most 64 characters and has no use for those
+    // signatures. Strip the suffix on calls and results so they still match.
+    if (typeof record.call_id === 'string') {
+      const callId = stripToolUseIdSuffix(record.call_id);
+      if (callId !== record.call_id) {
+        changed = true;
+        return [{ ...record, call_id: callId }];
+      }
+    }
     // Relay models emit readable reasoning summaries with Relay-generated item
     // ids. Native Codex cannot resolve those ids when store=false; forwarding
     // them makes the native backend fail with "Item with id ... not found".

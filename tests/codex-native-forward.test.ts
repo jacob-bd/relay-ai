@@ -4,6 +4,58 @@ import { buildCompactionResponseBody } from '../src/codex-responses-adapter.js';
 import { forwardNativeCodexHttp, nativeResponsesWebSocketOptions, prepareNativeCodexBody, NATIVE_FORWARD_HEADERS } from '../src/codex/native-forward.js';
 
 describe('native Codex forwarding', () => {
+  it.each(['__ts__', '::ts::'])('strips %s signatures from tool calls and matching results without mutating history', separator => {
+    const rawId = 'toolu_1234567890abcdef';
+    const callId = `${rawId}${separator}${'A'.repeat(300)}`;
+    const original = {
+      input: [
+        { type: 'function_call', id: 'fc_1', call_id: callId, name: 'exec_command', arguments: '{}' },
+        { type: 'function_call_output', call_id: callId, output: 'ok' },
+        { type: 'custom_tool_call', call_id: callId, name: 'apply_patch', input: 'patch' },
+        { type: 'custom_tool_call_output', call_id: callId, output: 'done' },
+        { type: 'tool_search_call', call_id: callId, arguments: { query: 'tools' } },
+        { type: 'tool_search_output', call_id: callId, tools: [] },
+      ],
+    };
+
+    const prepared = prepareNativeCodexBody(original);
+
+    expect(prepared.input).toEqual(original.input.map(item => ({ ...item, call_id: rawId })));
+    expect(original.input.every(item => item.call_id === callId)).toBe(true);
+  });
+
+  it('preserves ordinary native call IDs and message text containing signature markers', () => {
+    const original = {
+      input: [
+        { type: 'function_call', call_id: 'call_native', name: 'test', arguments: '{}' },
+        { type: 'function_call_output', call_id: 'call_native', output: '__ts__keep this text' },
+        { type: 'message', role: 'user', content: '::ts::keep this too' },
+      ],
+    };
+    expect(prepareNativeCodexBody(original)).toBe(original);
+  });
+
+  it('strips Gemini signatures before HTTP native forwarding', async () => {
+    const rawId = 'toolu_1234567890abcdef';
+    const callId = `${rawId}__ts__${'A'.repeat(300)}`;
+    let sentBody: Record<string, unknown> | undefined;
+    await forwardNativeCodexHttp({
+      body: Buffer.from(JSON.stringify({ input: [
+        { type: 'function_call', call_id: callId, name: 'test', arguments: '{}' },
+        { type: 'function_call_output', call_id: callId, output: 'ok' },
+      ] })),
+      inboundHeaders: {},
+      fetchImpl: (async (_url, init) => {
+        sentBody = JSON.parse(String(init?.body));
+        return new Response('ok');
+      }) as typeof fetch,
+    });
+    expect(sentBody?.input).toEqual([
+      { type: 'function_call', call_id: rawId, name: 'test', arguments: '{}' },
+      { type: 'function_call_output', call_id: rawId, output: 'ok' },
+    ]);
+  });
+
   it('removes Relay-generated reasoning items before native forwarding', () => {
     const relayReasoning = {
       type: 'reasoning',

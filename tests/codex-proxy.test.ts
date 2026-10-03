@@ -414,7 +414,12 @@ describe('startCodexProxy', () => {
         const relayCompaction = (
           buildCompactionResponseBody('earlier Relay work', 'relay-model').output as Record<string, unknown>[]
         )[0]!;
-        client.on('open', () => client.send(JSON.stringify({ model: 'gpt-5.5', input: [relayCompaction] })));
+        const callId = `toolu_gemini__ts__${'A'.repeat(300)}`;
+        client.on('open', () => client.send(JSON.stringify({ model: 'gpt-5.5', input: [
+          relayCompaction,
+          { type: 'function_call', call_id: callId, name: 'test', arguments: '{}' },
+          { type: 'function_call_output', call_id: callId, output: 'ok' },
+        ] })));
         client.on('message', data => messages.push(data.toString()));
         client.on('close', () => resolve());
         client.on('error', reject);
@@ -422,11 +427,15 @@ describe('startCodexProxy', () => {
       expect(received[0]).toMatchObject({
         type: 'response.create',
         model: 'gpt-5.5',
-        input: [{
-          type: 'message',
-          role: 'user',
-          content: [{ type: 'input_text', text: '[Summary of earlier conversation]\nearlier Relay work' }],
-        }],
+        input: [
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: '[Summary of earlier conversation]\nearlier Relay work' }],
+          },
+          { type: 'function_call', call_id: 'toolu_gemini', name: 'test', arguments: '{}' },
+          { type: 'function_call_output', call_id: 'toolu_gemini', output: 'ok' },
+        ],
       });
       expect(messages).toContain(JSON.stringify({ type: 'response.completed', response: { status: 'completed' } }));
     } finally {
