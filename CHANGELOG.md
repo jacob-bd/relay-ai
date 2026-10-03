@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.15.7] - 2026-10-03
+
+### Fixed
+
+- **Mid-session switches from Gemini to OpenAI native models (Sol, Luna) no longer fail with `[string_above_max_length] Invalid 'input[...].call_id': string too long`.** Relay carries Gemini thought signatures across turns by encoding them into the Anthropic tool-use ID / Responses `call_id` suffix (`__ts__...`). When a mixed Codex session switched from a Gemini model to a native OpenAI model, the replayed history carried those long call IDs (~300+ characters) to OpenAI's native Responses API, which strictly enforces a 64-character ceiling on `call_id` and rejected the request with HTTP 400. Relay now strips tool signature suffixes from both function calls and outputs in `prepareNativeCodexBody` before forwarding to OpenAI, restoring the raw identifier while keeping calls and results cleanly matched.
+- **Custom and local gateway model discovery now allows up to 30 seconds across add, edit, import, and refresh.** Previously, model discovery for custom endpoints shared the generic 10-second timeout, which rejected valid cold-start local servers or browser-backed gateways. The probe window is now 30 seconds for custom endpoints (`custom-openai`, `custom-anthropic`), Ollama/LM Studio templates, and loopback/private IP endpoints. Operators can override this window via `RELAY_AI_CUSTOM_ENDPOINT_MODEL_TIMEOUT_MS` (clamped to 1,000–120,000 ms; empty or non-numeric values safely fall back to 30 seconds). Remote cloud templates continue using the 10-second default. Thanks to Math Shamenson ([@insane66613](https://github.com/insane66613)) in [PR #81](https://github.com/jacob-bd/relay-ai/pull/81).
+- **Bulk provider refresh now runs with bounded concurrency instead of sequential blocking.** Refreshing all provider models now dispatches network catalog requests in parallel batches of up to three providers at a time while keeping credential resolution strictly sequential, preventing multiple unreachable endpoints from stalling the CLI or Web UI for minutes.
+- **Model discovery timeout detection now inspects request abort state instead of error string matching.** Stalled response-body reads on successful connections now reliably report connection timeouts rather than ambiguous parsing errors, while connection resets on error responses preserve their HTTP status codes so cached model lists are not erroneously discarded.
+
 ## [0.15.6] - 2026-10-01
 
 ### Added

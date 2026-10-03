@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-ZOY6LP6E.js";
+} from "./chunk-XERCHG4V.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -39,6 +39,7 @@ import {
   customEndpointKind,
   effectiveProviderBaseUrl,
   effortLabel,
+  endpointModelTimeoutMs,
   estimateAnthropicInputTokens,
   evaluateAgySwitchCompatibility,
   extractApiKey,
@@ -112,6 +113,7 @@ import {
   readBody,
   refreshAllProviderModels,
   refreshProviderModels,
+  refreshProviderModelsBatch,
   relayIntro,
   relayOutro,
   removeFavorite,
@@ -141,7 +143,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-TBK4KCV3.js";
+} from "./chunk-I2RHIRGP.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -221,12 +223,13 @@ import {
   silenceSdkWarnings,
   splitToolUseId,
   sseChunk,
+  stripToolUseIdSuffix,
   supportsManualModels,
   supportsNativeOAuth,
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-RWT7S5MM.js";
+} from "./chunk-5ZIW73IZ.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -612,8 +615,9 @@ async function validateImportKey(lp, entry) {
     }
     safeBaseUrl = urlCheck.normalizedUrl;
   }
+  const timeoutMs = endpointModelTimeoutMs(catalogTemplate?.id ?? "custom-openai", safeBaseUrl);
   if (npm === "@ai-sdk/anthropic") {
-    const result2 = await fetchAnthropicModels(safeBaseUrl, key);
+    const result2 = await fetchAnthropicModels(safeBaseUrl, key, entry.api.headers, timeoutMs);
     if (result2.error) {
       return reject(
         placeholder ? "placeholder-key" : "invalid-key",
@@ -623,7 +627,7 @@ async function validateImportKey(lp, entry) {
     return { canImport: true };
   }
   const template = catalogTemplate ?? syntheticTemplate(entry, safeBaseUrl);
-  const result = await fetchTemplateModels(template, key, safeBaseUrl);
+  const result = await fetchTemplateModels(template, key, safeBaseUrl, entry.api.headers, timeoutMs);
   if (result.error) {
     return reject(
       placeholder ? "placeholder-key" : "invalid-key",
@@ -1630,13 +1634,11 @@ async function runProvidersImport() {
     const refreshSpinner = p6.spinner();
     refreshSpinner.start("Fetching model capabilities from providers...");
     const registry2 = loadRegistry();
-    for (const provider of result.imported) {
-      const key = await resolveRefreshCredential(
-        provider,
-        async (pr) => resolveProviderCredential(pr.id, pr.authRef)
-      );
-      await refreshProviderModels(provider.id, key, registry2);
-    }
+    await refreshProviderModelsBatch(
+      result.imported,
+      async (pr) => resolveProviderCredential(pr.id, pr.authRef),
+      registry2
+    );
     refreshSpinner.stop("Model capabilities refreshed.");
   }
   return 0;
@@ -3824,6 +3826,13 @@ function prepareNativeCodexBody(body) {
   const input = body.input.flatMap((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return [item];
     const record = item;
+    if (typeof record.call_id === "string") {
+      const callId = stripToolUseIdSuffix(record.call_id);
+      if (callId !== record.call_id) {
+        changed = true;
+        return [{ ...record, call_id: callId }];
+      }
+    }
     if (record.type === "reasoning" && typeof record.encrypted_content !== "string") {
       changed = true;
       return [];
@@ -16389,7 +16398,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-H2GVS6V6.js");
+    const { runUiCommand } = await import("./ui-command-6WGFINWA.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

@@ -114,7 +114,7 @@ import {
   translateRequest,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-RWT7S5MM.js";
+} from "./chunk-5ZIW73IZ.js";
 
 // src/registry/google-model-id.ts
 var GOOGLE_MODEL_PREFIX = "models/";
@@ -4396,12 +4396,36 @@ function goRegistryStub() {
   };
 }
 
+// src/registry/endpoint-timeout.ts
+import ipaddr from "ipaddr.js";
+function clampModelTimeoutMs(value, fallback) {
+  return Number.isFinite(value) ? Math.min(12e4, Math.max(1e3, Math.round(value))) : fallback;
+}
+function isLocalEndpoint(baseUrl) {
+  try {
+    const hostname = new URL(baseUrl).hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
+    if (hostname === "localhost" || hostname.endsWith(".localhost")) return true;
+    const range = ipaddr.process(hostname).range();
+    return range === "loopback" || range === "private" || range === "uniqueLocal";
+  } catch {
+    return false;
+  }
+}
+function endpointModelTimeoutMs(templateId, baseUrl) {
+  const slowEndpoint = templateId.startsWith("custom-") || templateId === "ollama" || templateId === "lmstudio" || isLocalEndpoint(baseUrl);
+  if (!slowEndpoint) return 1e4;
+  const configured = process.env.RELAY_AI_CUSTOM_ENDPOINT_MODEL_TIMEOUT_MS?.trim();
+  return configured ? clampModelTimeoutMs(Number(configured), 3e4) : 3e4;
+}
+
 // src/registry/fetch-anthropic-models.ts
-async function fetchAnthropicModels(baseUrl, apiKey, extraHeaders) {
+async function fetchAnthropicModels(baseUrl, apiKey, extraHeaders, timeoutMs) {
   const root = baseUrl.replace(/\/v1\/?$/, "").replace(/\/$/, "");
   const modelsUrl2 = `${root}/v1/models`;
+  const defaultTimeoutMs = endpointModelTimeoutMs("anthropic", root);
+  const effectiveTimeoutMs = clampModelTimeoutMs(timeoutMs ?? defaultTimeoutMs, defaultTimeoutMs);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1e4);
+  const timer = setTimeout(() => controller.abort(), effectiveTimeoutMs);
   try {
     const response = await fetch(modelsUrl2, {
       method: "GET",
@@ -4418,7 +4442,7 @@ async function fetchAnthropicModels(baseUrl, apiKey, extraHeaders) {
     if (process.env.RELAY_AI_TRACE === "1") {
       logTrace = makeTraceLogger(getProviderDebugLogPath());
     }
-    const rawBodyText = await response.text().catch(() => "");
+    const rawBodyText = response.ok ? await response.text() : await response.text().catch(() => "");
     if (logTrace) {
       logTrace(`[fetchAnthropicModels] HTTP ${response.status} from ${modelsUrl2}`);
       logTrace(`[fetchAnthropicModels] Body: ${rawBodyText}`);
@@ -4459,11 +4483,12 @@ async function fetchAnthropicModels(baseUrl, apiKey, extraHeaders) {
       hint: "Verify the base URL supports Anthropic-compatible /v1/models or try the OpenAI-compatible option instead."
     };
   } catch {
+    const timedOut = controller.signal.aborted;
     return {
       models: [],
       baseUrl: root,
-      error: "Could not reach the Anthropic-compatible server.",
-      hint: "Check the base URL and that the server is running."
+      error: timedOut ? `Connection timed out after ${Math.round(effectiveTimeoutMs / 1e3)} seconds.` : "Could not reach the Anthropic-compatible server.",
+      hint: timedOut ? "Check your network or try again." : "Check the base URL and that the server is running."
     };
   } finally {
     clearTimeout(timer);
@@ -4471,7 +4496,6 @@ async function fetchAnthropicModels(baseUrl, apiKey, extraHeaders) {
 }
 
 // src/registry/fetch-template-models.ts
-var TEST_TIMEOUT_MS = 1e4;
 function modelFormatForNpm(npm) {
   return npm === "@ai-sdk/anthropic" ? "anthropic" : "openai";
 }
@@ -4594,7 +4618,7 @@ function parseModelList(body, npm) {
   }
   return models;
 }
-async function fetchTemplateModels(template, apiKey, baseUrlOverride, extraHeaders) {
+async function fetchTemplateModels(template, apiKey, baseUrlOverride, extraHeaders, timeoutMs) {
   const trimmedOverride = baseUrlOverride?.trim();
   const baseUrl = (trimmedOverride || template.defaultBaseUrl)?.replace(/\/$/, "");
   if (!baseUrl) {
@@ -4622,8 +4646,10 @@ async function fetchTemplateModels(template, apiKey, baseUrlOverride, extraHeade
     return { models, baseUrl };
   }
   const url = modelsUrl(baseUrl, template);
+  const defaultTimeoutMs = endpointModelTimeoutMs(template.id, baseUrl);
+  const effectiveTimeoutMs = clampModelTimeoutMs(timeoutMs ?? defaultTimeoutMs, defaultTimeoutMs);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), effectiveTimeoutMs);
   const headers = { Accept: "application/json" };
   const trimmedApiKey = apiKey.trim();
   if (template.npm === "@ai-sdk/anthropic") {
@@ -4675,7 +4701,7 @@ async function fetchTemplateModels(template, apiKey, baseUrlOverride, extraHeade
         hint: detail || "Check your API key and try again."
       };
     }
-    const rawBodyText = await response.text().catch(() => "");
+    const rawBodyText = await response.text();
     if (logTrace) {
       logTrace(`[fetchTemplateModels] HTTP ${response.status} from ${url}`);
       logTrace(`[fetchTemplateModels] Body: ${rawBodyText}`);
@@ -4697,13 +4723,12 @@ async function fetchTemplateModels(template, apiKey, baseUrlOverride, extraHeade
       };
     }
     return { models, baseUrl };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const timedOut = message.includes("abort") || message.includes("Abort");
+  } catch {
+    const timedOut = controller.signal.aborted;
     return {
       models: [],
       baseUrl,
-      error: timedOut ? "Connection timed out after 10 seconds." : "Could not reach the provider.",
+      error: timedOut ? `Connection timed out after ${Math.round(effectiveTimeoutMs / 1e3)} seconds.` : "Could not reach the provider.",
       hint: timedOut ? "Check your network or try again." : "Verify the provider is online and your API key is correct."
     };
   } finally {
@@ -4755,8 +4780,9 @@ function uniqueProviderId(displayName, registry) {
   return `${base}-${Date.now()}`;
 }
 async function fetchCustomEndpointModels(input) {
+  const timeoutMs = endpointModelTimeoutMs(`custom-${input.kind}`, input.normalizedBaseUrl);
   if (input.kind === "anthropic") {
-    return fetchAnthropicModels(input.normalizedBaseUrl, input.apiKey, input.headers);
+    return fetchAnthropicModels(input.normalizedBaseUrl, input.apiKey, input.headers, timeoutMs);
   }
   return fetchTemplateModels(
     {
@@ -4770,7 +4796,8 @@ async function fetchCustomEndpointModels(input) {
     },
     input.apiKey,
     input.normalizedBaseUrl,
-    input.headers
+    input.headers,
+    timeoutMs
   );
 }
 async function addCustomEndpointProvider(input) {
@@ -5759,9 +5786,10 @@ async function refreshApiListProvider(provider, apiKey) {
     safeBaseUrl = urlCheck.normalizedUrl;
   }
   const template = catalogTemplate ?? syntheticTemplate(provider, safeBaseUrl);
+  const timeoutMs = endpointModelTimeoutMs(catalogTemplate?.id ?? "custom-openai", safeBaseUrl);
   const extraHeaders = provider.api.headers && Object.keys(provider.api.headers).length > 0 ? provider.api.headers : void 0;
   if (npm === "@ai-sdk/anthropic") {
-    const fetched2 = await fetchAnthropicModels(safeBaseUrl, apiKey, extraHeaders);
+    const fetched2 = await fetchAnthropicModels(safeBaseUrl, apiKey, extraHeaders, timeoutMs);
     if (fetched2.error || fetched2.models.length === 0) {
       return { models: [], error: fetched2.error ?? "No models returned.", baseUrl: fetched2.baseUrl };
     }
@@ -5770,7 +5798,7 @@ async function refreshApiListProvider(provider, apiKey) {
       baseUrl: fetched2.baseUrl
     };
   }
-  const fetched = await fetchTemplateModels(template, apiKey, safeBaseUrl, extraHeaders);
+  const fetched = await fetchTemplateModels(template, apiKey, safeBaseUrl, extraHeaders, timeoutMs);
   if (fetched.error || fetched.models.length === 0) {
     return { models: [], error: fetched.error ?? "No models returned." };
   }
@@ -5976,8 +6004,21 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
     };
   }
 }
+async function refreshProviderModelsBatch(providers, resolveKey, registry) {
+  const keys = [];
+  for (const provider of providers) keys.push(await resolveRefreshCredential(provider, resolveKey));
+  const refreshed = new Array(providers.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < providers.length) {
+      const index = next++;
+      refreshed[index] = await refreshProviderModels(providers[index].id, keys[index], registry);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(3, providers.length) }, worker));
+  return { refreshed };
+}
 async function refreshAllProviderModels(resolveKey) {
-  const refreshed = [];
   const registry = loadRegistry();
   const opencodeKey = await readGlobalOpencodeCredential();
   if (opencodeKey) {
@@ -6015,11 +6056,7 @@ async function refreshAllProviderModels(resolveKey) {
     }
   }
   const enabledProviders = registry.providers.filter((p8) => p8.enabled);
-  for (const provider of enabledProviders) {
-    const key = await resolveRefreshCredential(provider, resolveKey);
-    refreshed.push(await refreshProviderModels(provider.id, key, registry));
-  }
-  return { refreshed };
+  return refreshProviderModelsBatch(enabledProviders, resolveKey, registry);
 }
 
 // src/registry/crud.ts
@@ -9055,6 +9092,7 @@ export {
   makeTraceLogger,
   writeSecureLogLine,
   printTraceLog,
+  endpointModelTimeoutMs,
   fetchAnthropicModels,
   fetchTemplateModels,
   resolveProviderTemplate,
@@ -9110,6 +9148,7 @@ export {
   addCustomEndpointProvider,
   updateCustomEndpointProvider,
   refreshProviderModels,
+  refreshProviderModelsBatch,
   refreshAllProviderModels,
   removeProviderFromRegistry,
   ensureOpencodeCloudProviders,
@@ -9155,4 +9194,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-TBK4KCV3.js.map
+//# sourceMappingURL=chunk-I2RHIRGP.js.map
