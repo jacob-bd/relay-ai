@@ -468,6 +468,38 @@ describe('Codex additional_tools input lifting (relay-ai/relay-ai#21)', () => {
 });
 
 describe('Codex custom tool (apply_patch) round-trip (relay-ai/relay-ai#21)', () => {
+  it('preserves code-mode exec from additional namespace tools through call and history replay', async () => {
+    const { writeResponsesStream } = await import('../src/codex-responses-adapter.js');
+    const code = 'text(await tools.exec_command({cmd:"pwd"}));';
+    const tools = [{ type: 'namespace' as const, name: 'functions', tools: [
+      { type: 'custom' as const, name: 'exec', description: 'Run JavaScript code' },
+      { type: 'function' as const, name: 'wait', parameters: { type: 'object', properties: {} } },
+    ] }];
+    const params = translateResponsesRequest({ model: 'm', input: [
+      { type: 'additional_tools', tools },
+      { role: 'user', content: 'Run pwd' },
+    ] }, '@ai-sdk/anthropic');
+    expect(Object.keys(params.tools ?? {})).toEqual(['exec', 'functions__wait']);
+    const chunks: string[] = [];
+    async function* stream() {
+      yield { type: 'tool-input-start', id: 'call_exec', toolName: 'exec' };
+      yield { type: 'tool-input-delta', delta: JSON.stringify({ input: code }) };
+      yield { type: 'finish', totalUsage: { inputTokens: 1, outputTokens: 2 } };
+    }
+    await writeResponsesStream(stream(), 'm', c => chunks.push(c), undefined, undefined, { toolContext: params.toolContext });
+    const completed = parseSseEvents(chunks.join('')).find(e => e.event === 'response.completed')!.data.response;
+    expect(completed.output[0]).toMatchObject({ type: 'custom_tool_call', name: 'exec', input: code });
+    expect(completed.output[0].id).toMatch(/^ctc_/);
+    const replay = translateResponsesRequest({ model: 'm', tools, input: [
+      completed.output[0],
+      { type: 'custom_tool_call_output', call_id: 'call_exec', output: '/workspace' },
+    ] }, '@ai-sdk/anthropic');
+    expect(replay.messages.filter(m => m.role === 'assistant' || m.role === 'tool').map(m => m.content)).toEqual([
+      [expect.objectContaining({ type: 'tool-call', toolName: 'exec', input: { input: code } })],
+      [expect.objectContaining({ type: 'tool-result', toolName: 'exec' })],
+    ]);
+  });
+
   const CUSTOM_TOOLS = [{ type: 'custom' as const, name: 'apply_patch', description: 'apply a patch' }];
 
   it('exposes a custom tool as a callable SDK tool', () => {

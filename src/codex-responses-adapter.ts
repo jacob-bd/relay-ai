@@ -154,7 +154,7 @@ export interface ResponsesNamespaceTool {
   type: 'namespace';
   name: string;
   description?: string;
-  tools: ResponsesFunctionTool[];
+  tools: Array<ResponsesFunctionTool | ResponsesCustomTool>;
 }
 
 /** Codex's freeform/custom tool definition — e.g. apply_patch. Takes a single opaque input, not a JSON schema. */
@@ -257,7 +257,10 @@ function ingestToolDefs(tools: ResponsesTool[] | undefined, ctx: CodexToolContex
     if (!t || typeof t !== 'object') continue;
     if (t.type === 'namespace') {
       for (const sub of t.tools ?? []) {
-        if (sub?.name) {
+        if (sub?.type === 'custom' && sub.name) {
+          // Codex dispatches custom calls by their bare name, even inside a namespace.
+          ctx.customToolNames.add(sub.name);
+        } else if (sub?.type === 'function' && sub.name) {
           ctx.namespaceByFlatName.set(flatNamespaceName(t.name, sub.name), {
             namespace: t.name,
             name: sub.name,
@@ -271,10 +274,10 @@ function ingestToolDefs(tools: ResponsesTool[] | undefined, ctx: CodexToolContex
   }
 }
 
-function flattenNamespaceTools(ns: ResponsesNamespaceTool): ResponsesFunctionTool[] {
+function flattenNamespaceTools(ns: ResponsesNamespaceTool): Array<ResponsesFunctionTool | ResponsesCustomTool> {
   return (ns.tools ?? [])
-    .filter((sub): sub is ResponsesFunctionTool => sub?.type === 'function' && !!sub.name)
-    .map(sub => ({ ...sub, name: flatNamespaceName(ns.name, sub.name) }));
+    .filter(sub => (sub?.type === 'function' || sub?.type === 'custom') && !!sub.name)
+    .map(sub => sub.type === 'custom' ? sub : { ...sub, name: flatNamespaceName(ns.name, sub.name) });
 }
 
 /**
@@ -536,7 +539,7 @@ export function translateResponsesInput(
       ingestToolDefs(surfacedTools, toolContext);
       for (const t of surfacedTools) {
         if (t.type === 'namespace') deferredTools.push(...flattenNamespaceTools(t));
-        else if (t.type === 'function') deferredTools.push(t);
+        else if (t.type === 'function' || t.type === 'custom') deferredTools.push(t);
       }
       messages.push({
         role: 'tool',
@@ -640,8 +643,12 @@ export function translateResponsesTools(
       // it back into {namespace, name} before handing the call to Codex — Codex's own MCP
       // dispatcher only recognizes the namespaced shape, not the flat joined name.
       for (const nested of t.tools ?? []) {
-        if (nested.type !== 'function' || !nested.name) continue;
-        addTool(flatNamespaceName(t.name, nested.name), nested.description, nested.parameters);
+        if (!nested.name) continue;
+        if (nested.type === 'custom') {
+          addTool(nested.name, nested.description, CUSTOM_TOOL_INPUT_SCHEMA);
+        } else if (nested.type === 'function') {
+          addTool(flatNamespaceName(t.name, nested.name), nested.description, nested.parameters);
+        }
       }
       continue;
     }

@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-XERCHG4V.js";
+} from "./chunk-L2UMQ67A.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -143,7 +143,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-I2RHIRGP.js";
+} from "./chunk-WQJTPIEH.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -229,7 +229,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-5ZIW73IZ.js";
+} from "./chunk-XCPTWOZX.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -2590,7 +2590,9 @@ function ingestToolDefs(tools, ctx) {
     if (!t || typeof t !== "object") continue;
     if (t.type === "namespace") {
       for (const sub of t.tools ?? []) {
-        if (sub?.name) {
+        if (sub?.type === "custom" && sub.name) {
+          ctx.customToolNames.add(sub.name);
+        } else if (sub?.type === "function" && sub.name) {
           ctx.namespaceByFlatName.set(flatNamespaceName(t.name, sub.name), {
             namespace: t.name,
             name: sub.name,
@@ -2604,7 +2606,7 @@ function ingestToolDefs(tools, ctx) {
   }
 }
 function flattenNamespaceTools(ns) {
-  return (ns.tools ?? []).filter((sub) => sub?.type === "function" && !!sub.name).map((sub) => ({ ...sub, name: flatNamespaceName(ns.name, sub.name) }));
+  return (ns.tools ?? []).filter((sub) => (sub?.type === "function" || sub?.type === "custom") && !!sub.name).map((sub) => sub.type === "custom" ? sub : { ...sub, name: flatNamespaceName(ns.name, sub.name) });
 }
 function liftAdditionalToolsInput(input, tools) {
   let lifted = [];
@@ -2818,7 +2820,7 @@ function translateResponsesInput(input, instructions, npm, toolContext = createC
       ingestToolDefs(surfacedTools, toolContext);
       for (const t of surfacedTools) {
         if (t.type === "namespace") deferredTools.push(...flattenNamespaceTools(t));
-        else if (t.type === "function") deferredTools.push(t);
+        else if (t.type === "function" || t.type === "custom") deferredTools.push(t);
       }
       messages.push({
         role: "tool",
@@ -2906,8 +2908,12 @@ function translateResponsesTools(tools, options = {}) {
     if (!t || typeof t !== "object") continue;
     if (t.type === "namespace") {
       for (const nested of t.tools ?? []) {
-        if (nested.type !== "function" || !nested.name) continue;
-        addTool(flatNamespaceName(t.name, nested.name), nested.description, nested.parameters);
+        if (!nested.name) continue;
+        if (nested.type === "custom") {
+          addTool(nested.name, nested.description, CUSTOM_TOOL_INPUT_SCHEMA);
+        } else if (nested.type === "function") {
+          addTool(flatNamespaceName(t.name, nested.name), nested.description, nested.parameters);
+        }
       }
       continue;
     }
@@ -16398,7 +16404,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-6WGFINWA.js");
+    const { runUiCommand } = await import("./ui-command-WJ5DOMYL.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.15.8] - 2026-10-04
+
+### Fixed
+
+- **Relay sub-agents retain shell access in Codex CLI and the ChatGPT desktop app.** Codex's code-mode tool set declares its custom `exec` tool inside the `functions` namespace. Relay previously dropped that tool when translating namespace definitions and could return attempted calls as ordinary function calls, causing immediate `aborted` results. Relay now preserves nested custom tools, returns the custom call format Codex expects, and retains their identity through conversation replay and deferred tool discovery. Verified with regression tests and a live Codex CLI parent/sub-agent probe routed to the configured Relay model, with both shell commands completing successfully.
+
 ## [0.15.7] - 2026-10-03
 
 ### Fixed

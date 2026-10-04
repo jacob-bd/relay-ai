@@ -50,7 +50,7 @@ import { join as join2 } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.15.7",
+  version: "0.15.8",
   publishConfig: {
     access: "public"
   },
