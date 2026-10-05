@@ -127,6 +127,37 @@ describe('translateResponsesRequest', () => {
     expect(assistant.content[1]).toMatchObject({ type: 'tool-call', toolCallId: 'call_1' });
   });
 
+  it('maps reasoning item before custom_tool_call for DeepSeek round-trip', () => {
+    const params = translateResponsesInput([
+      {
+        type: 'reasoning',
+        id: 'rs_1',
+        summary: [{ type: 'summary_text', text: 'planning the exec call' }],
+      },
+      { type: 'custom_tool_call', id: 'ctc_1', call_id: 'call_1', name: 'exec', input: 'console.log(1)' },
+      { type: 'custom_tool_call_output', call_id: 'call_1', output: 'ok' },
+    ], undefined, '@ai-sdk/openai-compatible');
+    const assistant = params.messages[1] as { role: string; content: unknown[] };
+    expect(assistant.role).toBe('assistant');
+    expect(assistant.content[0]).toMatchObject({ type: 'reasoning', text: 'planning the exec call' });
+    expect(assistant.content[1]).toMatchObject({ type: 'tool-call', toolCallId: 'call_1', toolName: 'exec' });
+  });
+
+  it('maps reasoning item before tool_search_call for DeepSeek round-trip', () => {
+    const params = translateResponsesInput([
+      {
+        type: 'reasoning',
+        id: 'rs_1',
+        summary: [{ type: 'summary_text', text: 'searching for a tool' }],
+      },
+      { type: 'tool_search_call', id: 'ts_1', call_id: 'call_1', arguments: '{"query":"docs"}' },
+    ], undefined, '@ai-sdk/openai-compatible');
+    const assistant = params.messages[1] as { role: string; content: unknown[] };
+    expect(assistant.role).toBe('assistant');
+    expect(assistant.content[0]).toMatchObject({ type: 'reasoning', text: 'searching for a tool' });
+    expect(assistant.content[1]).toMatchObject({ type: 'tool-call', toolCallId: 'call_1' });
+  });
+
   it('forwards max_output_tokens', () => {
     const params = translateResponsesRequest({
       model: 'm',

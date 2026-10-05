@@ -524,15 +524,18 @@ export function translateResponsesInput(
       }
     } else if (item.type === 'tool_search_call') {
       const { rawId } = splitToolUseId(item.call_id);
-      messages.push({
-        role: 'assistant',
-        content: [{
-          type: 'tool-call',
-          toolCallId: rawId,
-          toolName: TOOL_SEARCH_NAME,
-          input: parseToolArguments(item.arguments),
-        }],
-      } as ModelMessage);
+      const parts: Record<string, unknown>[] = [];
+      if (pendingReasoning.trim()) {
+        parts.push({ type: 'reasoning', text: pendingReasoning });
+        pendingReasoning = '';
+      }
+      parts.push({
+        type: 'tool-call',
+        toolCallId: rawId,
+        toolName: TOOL_SEARCH_NAME,
+        input: parseToolArguments(item.arguments),
+      });
+      messages.push({ role: 'assistant', content: parts } as ModelMessage);
     } else if (item.type === 'tool_search_output') {
       const { rawId } = splitToolUseId(item.call_id);
       const surfacedTools = item.tools ?? [];
@@ -552,15 +555,18 @@ export function translateResponsesInput(
       } as ModelMessage);
     } else if (item.type === 'custom_tool_call') {
       const { rawId } = splitToolUseId(item.call_id);
-      messages.push({
-        role: 'assistant',
-        content: [{
-          type: 'tool-call',
-          toolCallId: rawId,
-          toolName: item.name,
-          input: { input: typeof item.input === 'string' ? item.input : serializeToolResultContent(item.input) },
-        }],
-      } as ModelMessage);
+      const parts: Record<string, unknown>[] = [];
+      if (pendingReasoning.trim()) {
+        parts.push({ type: 'reasoning', text: pendingReasoning });
+        pendingReasoning = '';
+      }
+      parts.push({
+        type: 'tool-call',
+        toolCallId: rawId,
+        toolName: item.name,
+        input: { input: typeof item.input === 'string' ? item.input : serializeToolResultContent(item.input) },
+      });
+      messages.push({ role: 'assistant', content: parts } as ModelMessage);
     } else if (item.type === 'custom_tool_call_output') {
       const { rawId } = splitToolUseId(item.call_id);
       messages.push({
