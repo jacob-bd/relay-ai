@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.15.9] - 2026-10-05
+
+### Fixed
+
+- **Codex sub-agents on thinking-mode models no longer fail with `The reasoning_content in the thinking mode must be passed back to the API`.** Codex routes sub-agent freeform tools (`exec`, `apply_patch`) and deferred tool discovery through `custom_tool_call` and `tool_search_call` history items. Relay replayed those turns without the model's reasoning text, so upstreams that require prior thinking to be echoed back (e.g. DeepSeek V4.1 Flash on OpenCode Go) rejected every continued sub-agent turn with HTTP 400, and Codex retried in a burst. Relay now attaches pending reasoning to `custom_tool_call` and `tool_search_call` turns exactly as it already did for `function_call`. Covered by regression tests, and verified by replaying a failing 303-item sub-agent request offline: the upstream payload now carries `reasoning_content` on every tool-call turn where Codex replays reasoning text.
+
 ## [0.15.8] - 2026-10-04
 
 ### Fixed

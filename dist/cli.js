@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-L2UMQ67A.js";
+} from "./chunk-VWZ7VUT7.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -143,7 +143,7 @@ import {
   waitForCodexAppQuit,
   writeSecureLogLine,
   zenRegistryStub
-} from "./chunk-WQJTPIEH.js";
+} from "./chunk-BEOPXFS7.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -229,7 +229,7 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl
-} from "./chunk-XCPTWOZX.js";
+} from "./chunk-PMCC23MU.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -2805,15 +2805,18 @@ function translateResponsesInput(input, instructions, npm, toolContext = createC
       }
     } else if (item.type === "tool_search_call") {
       const { rawId } = splitToolUseId(item.call_id);
-      messages.push({
-        role: "assistant",
-        content: [{
-          type: "tool-call",
-          toolCallId: rawId,
-          toolName: TOOL_SEARCH_NAME,
-          input: parseToolArguments(item.arguments)
-        }]
+      const parts = [];
+      if (pendingReasoning.trim()) {
+        parts.push({ type: "reasoning", text: pendingReasoning });
+        pendingReasoning = "";
+      }
+      parts.push({
+        type: "tool-call",
+        toolCallId: rawId,
+        toolName: TOOL_SEARCH_NAME,
+        input: parseToolArguments(item.arguments)
       });
+      messages.push({ role: "assistant", content: parts });
     } else if (item.type === "tool_search_output") {
       const { rawId } = splitToolUseId(item.call_id);
       const surfacedTools = item.tools ?? [];
@@ -2833,15 +2836,18 @@ function translateResponsesInput(input, instructions, npm, toolContext = createC
       });
     } else if (item.type === "custom_tool_call") {
       const { rawId } = splitToolUseId(item.call_id);
-      messages.push({
-        role: "assistant",
-        content: [{
-          type: "tool-call",
-          toolCallId: rawId,
-          toolName: item.name,
-          input: { input: typeof item.input === "string" ? item.input : serializeToolResultContent(item.input) }
-        }]
+      const parts = [];
+      if (pendingReasoning.trim()) {
+        parts.push({ type: "reasoning", text: pendingReasoning });
+        pendingReasoning = "";
+      }
+      parts.push({
+        type: "tool-call",
+        toolCallId: rawId,
+        toolName: item.name,
+        input: { input: typeof item.input === "string" ? item.input : serializeToolResultContent(item.input) }
       });
+      messages.push({ role: "assistant", content: parts });
     } else if (item.type === "custom_tool_call_output") {
       const { rawId } = splitToolUseId(item.call_id);
       messages.push({
@@ -16404,7 +16410,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-WJ5DOMYL.js");
+    const { runUiCommand } = await import("./ui-command-DBBCHB5C.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {
