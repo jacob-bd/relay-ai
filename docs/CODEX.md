@@ -152,7 +152,8 @@ For unattended startup, specify every launch choice and add `--yes`:
 relay-ai codex-app --provider antigravity --model gemini-3.1-pro-high --with-native --yes
 ```
 
-`--yes` bypasses the launch and restart confirmations. To prevent an unattended
+`--yes` approves a fully specified launch without prompting (restart and
+close prompts are auto-approved too). To prevent an unattended
 launch from relying on saved or default choices, it requires `--provider`,
 `--model`, and either `--with-native` or `--relay-only`.
 

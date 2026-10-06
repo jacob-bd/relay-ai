@@ -2,11 +2,7 @@
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import type { LocalProvider, LocalProviderModel, UserPreferences } from '../types.js';
-import type { CodexRoute } from './routing.js';
-import {
-  confirmLaunchMessage,
-  providerSelectOption,
-} from '../ui.js';
+import { providerSelectOption } from '../ui.js';
 import { pickProviderModel } from '../prompts.js';
 
 export type CodexLaunchMode = 'mixed' | 'relay-only';
@@ -89,27 +85,6 @@ export async function pickCodexModel(
   refresh?: () => Promise<void>,
 ): Promise<LocalProviderModel | 'back' | null> {
   return pickProviderModel(provider, prefs, { message: `Model for ${provider.name}?`, maxRecent: 3, refresh });
-}
-
-export function confirmCodexLaunch(
-  providerName: string,
-  modelLabel: string,
-  modelId: string,
-  route: CodexRoute,
-): Promise<boolean> {
-  const via = route.tier === 'direct'
-    ? pc.green('direct')
-    : `${pc.dim('via')} ${pc.yellow('relay-ai proxy')}`;
-  return p.confirm({
-    message: `${confirmLaunchMessage('Codex', modelLabel, modelId, providerName)} ${pc.dim('(')}${via}${pc.dim(')')}`,
-    initialValue: true,
-  }).then(answer => {
-    if (p.isCancel(answer)) {
-      p.cancel('Cancelled.');
-      return false;
-    }
-    return answer;
-  });
 }
 
 export function rejectManagedFlags(codexArgs: string[]): string[] {

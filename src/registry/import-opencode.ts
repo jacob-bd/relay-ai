@@ -1,6 +1,7 @@
 // src/registry/import-opencode.ts — one-shot import from OpenCode serve API
 
 import { resolveProviderCredential, saveProviderCredential } from '../env.js';
+import { localIsoTimestamp } from '../trace-log.js';
 import { fetchRawOpencodeProviders } from '../opencode-serve.js';
 import type { LocalProvider } from '../types.js';
 import { localProviderToRegistry } from './convert.js';
@@ -216,7 +217,7 @@ export async function importFromOpencode(options: ImportOpencodeOptions = {}): P
     skipped.push({ id: provider.id, name: provider.name, reason: provider.reason });
   }
 
-  registry.importedAt = new Date().toISOString();
+  registry.importedAt = localIsoTimestamp();
   saveRegistry(registry);
 
   return {

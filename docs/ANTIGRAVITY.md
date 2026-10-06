@@ -18,6 +18,8 @@ Antigravity still requires Google sign-in before it runs. Relay routes generatio
 
 This use is probably not what Google intended, may violate Google's terms of service, and could lead to account restrictions or bans. Use a secondary account you can afford to lose — a free Google account is enough. Do not use your main Gmail, Workspace, YouTube, Drive, or business account.
 
+Relay also detects Gemini Enterprise (work) logins before launch and warns with a confirmation prompt (`Proceed with the enterprise account?`, default No) to prevent accidental usage policy violations on company accounts.
+
 ## What the model picker shows
 
 Every entry names the provider it comes from, e.g. `gemini-3.8-flash (Relay - Google Gemini)`, so the same model from two providers is easy to tell apart.

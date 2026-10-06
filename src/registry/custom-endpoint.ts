@@ -1,6 +1,7 @@
 // src/registry/custom-endpoint.ts — add custom OpenAI/Anthropic-compatible providers
 
 import { readStoredProviderCredential, saveProviderCredential } from '../env.js';
+import { localIsoTimestamp } from '../trace-log.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
 import { fetchAnthropicModels } from './fetch-anthropic-models.js';
 import { loadRegistry, saveRegistry } from './io.js';
@@ -180,7 +181,7 @@ export async function addCustomEndpointProvider(input: AddCustomEndpointInput): 
     }
   }
 
-  const now = new Date().toISOString();
+  const now = localIsoTimestamp();
   const entry: RegistryProvider = {
     id: providerId,
     templateId: input.kind === 'anthropic' ? 'custom-anthropic' : 'custom-openai',
@@ -339,7 +340,7 @@ export async function updateCustomEndpointProvider(
     }
   }
 
-  const now = new Date().toISOString();
+  const now = localIsoTimestamp();
   if (nameChanged) provider.name = nextName as string;
 
   // An Anthropic base URL must NOT keep a trailing /v1 — the Anthropic SDK

@@ -46,10 +46,12 @@ import {
   generateCliUserID,
   getAppHome,
   getEnvServerPassword,
-  getLogsPath,
+  getProviderDebugLogPath,
   getProviderModels,
+  getProxyDebugLogPath,
   getReasoningCapabilities,
   getSavedServerPassword,
+  getServerDebugLogPath,
   getServerExposedProviders,
   getServerFavoritesOnly,
   getServerFreeModelsOnly,
@@ -68,14 +70,20 @@ import {
   loadPreferences,
   loadPricingCache,
   loadRegistry,
+  localIsoTimestamp,
+  localTimestamp,
+  makeTraceLogger,
   maxToolsForNpm,
   modelPrefersResponsesApi,
   oauthCredentialToKeychainJson,
   parseAuthRef,
   parseToolArguments,
+  printTraceLog,
   readFromCredentialStore,
   readGlobalOpencodeCredential,
   readStoredProviderCredential,
+  redactTraceLine,
+  resetTraceLog,
   resolveApiKey,
   resolveCodexClientVersion,
   resolveContextWindow,
@@ -113,8 +121,9 @@ import {
   tokensToStoredCredential,
   translateRequest,
   upstreamHttpStatus,
-  validateCustomEndpointUrl
-} from "./chunk-PMCC23MU.js";
+  validateCustomEndpointUrl,
+  writeSecureLogLine
+} from "./chunk-KUPDV4YD.js";
 
 // src/registry/google-model-id.ts
 var GOOGLE_MODEL_PREFIX = "models/";
@@ -429,10 +438,6 @@ function fmtContextWindow(contextWindow2) {
 function navOption(value, label, hint = "") {
   return { value, label: pc.cyan(label), hint };
 }
-function confirmLaunchMessage(target, modelLabel, modelId, providerName, via) {
-  const viaSuffix = via ? ` ${pc.dim("(")}${via}${pc.dim(")")}` : "";
-  return `Launch ${pc.bold(target)} \xB7 ${fmtModel(modelLabel, modelId)} ${pc.dim("via")} ${fmtProvider(providerName)}?${viaSuffix}`;
-}
 function logActiveModel(modelLabel, modelId) {
   p.log.success(`${pc.bold("Active model:")} ${fmtModel(modelLabel, modelId)}`);
 }
@@ -534,190 +539,6 @@ function printFavoritesOnlyPanel() {
     `${pc.white("Registry models not in your favorites will not appear in the Desktop / Cowork picker.")}`,
     `${pc.white("Edit with ")}${pc.cyan("relay-ai models")}${pc.white(".")}`
   ]);
-}
-
-// src/trace-log.ts
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync as writeFileSync2
-} from "fs";
-import { join as join2 } from "path";
-import pc2 from "picocolors";
-
-// src/codex/trace-redaction.ts
-var SENSITIVE_KEYS = /* @__PURE__ */ new Set([
-  "authorization",
-  "api_key",
-  "apikey",
-  "access_token",
-  "refresh_token",
-  "chatgpt-account-id",
-  "encrypted_content",
-  "ciphertext",
-  "plaintext",
-  "payload",
-  "developer_instructions"
-]);
-function isSensitiveKey(key) {
-  return SENSITIVE_KEYS.has(key.toLowerCase()) || key.toLowerCase().includes("secret");
-}
-function redactCodexTraceValue(value, inCollaboration = false) {
-  if (typeof value === "string") return inCollaboration ? "[REDACTED]" : value;
-  if (Array.isArray(value)) return value.map((item) => redactCodexTraceValue(item, inCollaboration));
-  if (!value || typeof value !== "object") return value;
-  const record = value;
-  const collaboration = inCollaboration || record.type === "agent_message";
-  const out = {};
-  for (const [key, child] of Object.entries(record)) {
-    if (isSensitiveKey(key) || collaboration && (key === "text" || key === "content")) {
-      if (key === "content" && Array.isArray(child)) out[key] = { item_count: child.length, redacted: true };
-      else out[key] = "[REDACTED]";
-      continue;
-    }
-    out[key] = redactCodexTraceValue(child, collaboration);
-  }
-  return out;
-}
-
-// src/trace-log.ts
-var DIR_MODE = 448;
-var FILE_MODE = 384;
-var CLAUDE_DEBUG_LOG = "claude-debug.log";
-var PROXY_DEBUG_LOG = "proxy-debug.log";
-var CODEX_PROXY_DEBUG_LOG = "codex-proxy-debug.log";
-var CODEX_BODY_DUMP_LOG = "codex-body-dump.jsonl";
-var GEMINI_PROXY_DEBUG_LOG = "gemini-proxy-debug.log";
-var PROVIDER_DEBUG_LOG = "provider-debug.log";
-var UI_DEBUG_LOG = "ui-debug.log";
-var SERVER_DEBUG_LOG = "server-debug.log";
-function ensureLogsDir() {
-  const dir = getLogsPath();
-  mkdirSync(dir, { recursive: true, mode: DIR_MODE });
-  try {
-    chmodSync(dir, DIR_MODE);
-  } catch {
-  }
-  return dir;
-}
-function getClaudeDebugLogPath() {
-  return join2(ensureLogsDir(), CLAUDE_DEBUG_LOG);
-}
-function prepareClaudeTraceLog() {
-  const path = getClaudeDebugLogPath();
-  resetTraceLog(path);
-  return path;
-}
-function getProxyDebugLogPath() {
-  return join2(ensureLogsDir(), PROXY_DEBUG_LOG);
-}
-function getCodexProxyDebugLogPath() {
-  return join2(ensureLogsDir(), CODEX_PROXY_DEBUG_LOG);
-}
-function getCodexBodyDumpLogPath() {
-  return join2(ensureLogsDir(), CODEX_BODY_DUMP_LOG);
-}
-function resetCodexBodyDumpLog() {
-  resetTraceLog(getCodexBodyDumpLogPath());
-}
-function appendCodexBodyDump(entry) {
-  ensureLogsDir();
-  const path = getCodexBodyDumpLogPath();
-  const redacted = redactTraceLine(JSON.stringify(redactCodexTraceValue(entry)));
-  try {
-    writeFileSync2(path, `${redacted}
-`, { flag: "a", mode: FILE_MODE });
-    chmodSync(path, FILE_MODE);
-  } catch {
-  }
-}
-function getGeminiProxyDebugLogPath() {
-  return join2(ensureLogsDir(), GEMINI_PROXY_DEBUG_LOG);
-}
-function getProviderDebugLogPath() {
-  return join2(ensureLogsDir(), PROVIDER_DEBUG_LOG);
-}
-function getUiDebugLogPath() {
-  return join2(ensureLogsDir(), UI_DEBUG_LOG);
-}
-function getServerDebugLogPath() {
-  return join2(ensureLogsDir(), SERVER_DEBUG_LOG);
-}
-function getAntigravityDebugLogPath(tracePrefix) {
-  const surface = tracePrefix === "antigravity" ? "app" : tracePrefix;
-  return join2(ensureLogsDir(), `antigravity-${surface}-debug.log`);
-}
-function prepareProviderTraceLog() {
-  const path = getProviderDebugLogPath();
-  resetTraceLog(path);
-  try {
-    writeFileSync2(path, "", { mode: FILE_MODE });
-    chmodSync(path, FILE_MODE);
-  } catch {
-  }
-  return path;
-}
-function makeTraceLogger(logPath) {
-  resetTraceLog(logPath);
-  return (message) => writeSecureLogLine(logPath, `${(/* @__PURE__ */ new Date()).toISOString()} ${message}`);
-}
-function resetTraceLog(path) {
-  ensureLogsDir();
-  if (existsSync(path)) {
-    try {
-      unlinkSync(path);
-    } catch {
-    }
-  }
-}
-var REDACTION_PATTERNS = [
-  // Bearer / Authorization headers
-  (line) => line.replace(/Bearer\s+[A-Za-z0-9._\-+/=]+/gi, "Bearer [REDACTED]"),
-  (line) => line.replace(/("authorization"\s*:\s*")[^"]+/gi, "$1[REDACTED]"),
-  (line) => line.replace(/(x-api-key"\s*:\s*")[^"]+/gi, "$1[REDACTED]"),
-  // Common API key prefixes
-  (line) => line.replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "sk-[REDACTED]"),
-  (line) => line.replace(/\bsk-ant-[A-Za-z0-9_-]{8,}\b/g, "sk-ant-[REDACTED]"),
-  (line) => line.replace(/\bAIza[A-Za-z0-9_-]{20,}\b/g, "AIza[REDACTED]"),
-  (line) => line.replace(/\bgsk_[A-Za-z0-9]{20,}\b/g, "gsk_[REDACTED]")
-];
-function redactTraceLine(line) {
-  let out = line;
-  for (const apply of REDACTION_PATTERNS) {
-    out = apply(out);
-  }
-  return out;
-}
-function redactTraceLog(content) {
-  return content.split("\n").map(redactTraceLine).join("\n");
-}
-function writeSecureLogLine(path, line) {
-  ensureLogsDir();
-  const redacted = redactTraceLine(line);
-  try {
-    writeFileSync2(path, `${redacted}
-`, { flag: "a", mode: FILE_MODE });
-    chmodSync(path, FILE_MODE);
-  } catch {
-  }
-}
-function printTraceLog(debugLogPath) {
-  if (!existsSync(debugLogPath)) return;
-  const raw = readFileSync(debugLogPath, "utf8");
-  const log7 = redactTraceLog(raw);
-  const errorLines = log7.split("\n").filter(
-    (l) => l.includes("error") || l.includes("Error") || l.includes('"type":"error"') || l.includes("status") || l.includes("resolveModel failed") || l.includes("resolveModel fallback")
-  );
-  console.log("\n" + pc2.bold(pc2.cyan("\u2500\u2500 Debug trace \u2500\u2500")));
-  if (errorLines.length > 0) {
-    errorLines.slice(0, 30).forEach((l) => console.log(pc2.dim(l)));
-  } else {
-    console.log(pc2.dim("(no errors found in debug log)"));
-  }
-  console.log(pc2.dim(`Full log: ${debugLogPath}`));
 }
 
 // src/proxy.ts
@@ -1904,14 +1725,14 @@ function appendSecureLog(logPath, line) {
   try {
     const fd = openSync(logPath, "a", 384);
     try {
-      writeSync(fd, `${(/* @__PURE__ */ new Date()).toISOString()} ${redacted}
+      writeSync(fd, `${localTimestamp()} ${redacted}
 `);
     } finally {
       closeSync(fd);
     }
   } catch {
     try {
-      appendFileSync(logPath, `${(/* @__PURE__ */ new Date()).toISOString()} ${redacted}
+      appendFileSync(logPath, `${localTimestamp()} ${redacted}
 `);
     } catch {
     }
@@ -4381,7 +4202,7 @@ function zenRegistryStub(subscriptionFilter) {
     authRef: "keyring:global:opencode",
     api: {},
     ...subscriptionFilter ? { subscriptionFilter } : {},
-    addedAt: (/* @__PURE__ */ new Date()).toISOString()
+    addedAt: localIsoTimestamp()
   };
 }
 function goRegistryStub() {
@@ -4392,7 +4213,7 @@ function goRegistryStub() {
     enabled: true,
     authRef: "keyring:global:opencode",
     api: {},
-    addedAt: (/* @__PURE__ */ new Date()).toISOString()
+    addedAt: localIsoTimestamp()
   };
 }
 
@@ -4845,7 +4666,7 @@ async function addCustomEndpointProvider(input) {
       return { added: false, error: "Could not save API key to credential store.", hint: "Grant Keychain access, or ensure RELAY_AI_HOME is writable (file fallback)." };
     }
   }
-  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const now = localIsoTimestamp();
   const entry = {
     id: providerId,
     templateId: input.kind === "anthropic" ? "custom-anthropic" : "custom-openai",
@@ -4950,7 +4771,7 @@ async function updateCustomEndpointProvider(input) {
       };
     }
   }
-  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const now = localIsoTimestamp();
   if (nameChanged) provider.name = nextName;
   const storedBaseUrl = kind === "anthropic" ? nextBaseUrl.replace(/\/v1\/?$/, "").replace(/\/$/, "") : nextBaseUrl;
   provider.api.url = testFailed ? storedBaseUrl : fetched.baseUrl || storedBaseUrl;
@@ -5047,7 +4868,7 @@ function trace(message) {
   if (process.env.RELAY_AI_TRACE !== "1") return;
   writeSecureLogLine(
     getProviderDebugLogPath(),
-    `${(/* @__PURE__ */ new Date()).toISOString()} ${message}`
+    `${localTimestamp()} ${message}`
   );
 }
 async function responseBodyPreview(response) {
@@ -5821,7 +5642,7 @@ async function refreshApiListProvider(provider, apiKey) {
 function updateProviderCache(registry, providerId, models, baseUrl) {
   const idx = registry.providers.findIndex((p8) => p8.id === providerId);
   if (idx < 0) return;
-  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const now = localIsoTimestamp();
   const currentProviders = new Map(loadRegistry().providers.map((p8) => [p8.id, p8]));
   for (const entry of registry.providers) {
     const current = currentProviders.get(entry.id);
@@ -6033,7 +5854,7 @@ async function refreshAllProviderModels(resolveKey) {
         authType: "none",
         subscriptionFilter: "free",
         api: {},
-        addedAt: (/* @__PURE__ */ new Date()).toISOString()
+        addedAt: localIsoTimestamp()
       });
       changed = true;
     }
@@ -6047,7 +5868,7 @@ async function refreshAllProviderModels(resolveKey) {
         authType: "none",
         subscriptionFilter: "go",
         api: {},
-        addedAt: (/* @__PURE__ */ new Date()).toISOString()
+        addedAt: localIsoTimestamp()
       });
       changed = true;
     }
@@ -6170,7 +5991,7 @@ function toggleProviderEnabled(id) {
 }
 
 // src/server/index.ts
-import pc5 from "picocolors";
+import pc4 from "picocolors";
 import * as p4 from "@clack/prompts";
 
 // src/server/advertise-addrs.ts
@@ -6247,13 +6068,13 @@ function formatGatewayUrls(host, port) {
 
 // src/server/prompts.ts
 import * as p2 from "@clack/prompts";
-import pc3 from "picocolors";
+import pc2 from "picocolors";
 async function askServerStartMode() {
   const mode = await p2.select({
     message: "How do you want to start the server?",
     options: [
-      { value: "configure", label: pc3.cyan("Configure & start"), hint: "Providers, discovery masking, listen mode" },
-      { value: "quick", label: pc3.cyan("Start with saved settings"), hint: "Use last server configuration" }
+      { value: "configure", label: pc2.cyan("Configure & start"), hint: "Providers, discovery masking, listen mode" },
+      { value: "quick", label: pc2.cyan("Start with saved settings"), hint: "Use last server configuration" }
     ],
     initialValue: "configure"
   });
@@ -6301,8 +6122,8 @@ async function askListenMode() {
   const mode = await p2.select({
     message: "Where should the server listen?",
     options: [
-      { value: "local", label: pc3.cyan("Local only"), hint: "Only this computer can use it" },
-      { value: "network", label: pc3.cyan("Network"), hint: "Other computers on your network can use it" }
+      { value: "local", label: pc2.cyan("Local only"), hint: "Only this computer can use it" },
+      { value: "network", label: pc2.cyan("Network"), hint: "Other computers on your network can use it" }
     ],
     initialValue: "local"
   });
@@ -6328,8 +6149,8 @@ async function askUseSavedServerPassword() {
   const choice = await p2.select({
     message: "Use saved server password?",
     options: [
-      { value: "use-saved", label: pc3.cyan("Use saved password") },
-      { value: "new-password", label: pc3.cyan("Enter a new password") }
+      { value: "use-saved", label: pc2.cyan("Use saved password") },
+      { value: "new-password", label: pc2.cyan("Enter a new password") }
     ],
     initialValue: "use-saved"
   });
@@ -6993,7 +6814,7 @@ function summarizeServerProviders(models) {
 }
 
 // src/server/provider-select.ts
-import pc4 from "picocolors";
+import pc3 from "picocolors";
 import * as p3 from "@clack/prompts";
 function isSelected(list, id) {
   return list.includes(id);
@@ -7014,14 +6835,14 @@ async function selectServerProviders(available, initial) {
     for (let i = 0; i < selected.length; i++) {
       const id = selected[i];
       const provider = lookup.get(id);
-      const label = provider ? `\u2605 ${provider.name}` : pc4.dim(`\u2605 ${id} \u2014 provider gone`);
+      const label = provider ? `\u2605 ${provider.name}` : pc3.dim(`\u2605 ${id} \u2014 provider gone`);
       const hint = provider ? `${provider.modelCount} model${provider.modelCount !== 1 ? "s" : ""}` : "select to remove";
       options.push({ value: `prov-${i}`, label, hint: "select to remove" });
     }
     const unselected = available.filter((provider) => !isSelected(selected, provider.id));
     options.push({
       value: "__add__",
-      label: unselected.length === 0 ? pc4.dim("+ Add a provider \u2192 (all providers selected)") : "+ Add a provider \u2192",
+      label: unselected.length === 0 ? pc3.dim("+ Add a provider \u2192 (all providers selected)") : "+ Add a provider \u2192",
       hint: unselected.length === 0 ? "" : `${unselected.length} more available`
     });
     options.push({ value: "__all__", label: "Expose all providers", hint: `${available.length} total` });
@@ -7079,9 +6900,9 @@ async function selectServerProviders(available, initial) {
 }
 
 // src/server/vertex-config.ts
-import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
-import { join as join3 } from "path";
+import { join as join2 } from "path";
 var DEFAULT_VERTEX_MODELS = [
   { id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6" },
   { id: "claude-opus-4-6", display_name: "Claude Opus 4.6" },
@@ -7105,18 +6926,18 @@ function resolveVertexLocation(env = process.env) {
   return location.trim() || "global";
 }
 function defaultAdcCredentialsPath(home = homedir()) {
-  return join3(home, ".config", "gcloud", "application_default_credentials.json");
+  return join2(home, ".config", "gcloud", "application_default_credentials.json");
 }
 function hasApplicationDefaultCredentials(home = homedir(), adcPath = defaultAdcCredentialsPath(home), env = process.env) {
   const explicitPath = env["GOOGLE_APPLICATION_CREDENTIALS"]?.trim();
-  if (explicitPath && existsSync2(explicitPath)) return true;
-  return existsSync2(adcPath);
+  if (explicitPath && existsSync(explicitPath)) return true;
+  return existsSync(adcPath);
 }
 function loadVertexModelEntries(env = process.env) {
   const configPath = getVertexModelsPath(env);
-  if (!existsSync2(configPath)) return DEFAULT_VERTEX_MODELS;
+  if (!existsSync(configPath)) return DEFAULT_VERTEX_MODELS;
   try {
-    const parsed = JSON.parse(readFileSync2(configPath, "utf8"));
+    const parsed = JSON.parse(readFileSync(configPath, "utf8"));
     if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_VERTEX_MODELS;
     const models = parsed.filter(
       (entry) => !!entry && typeof entry === "object" && typeof entry.id === "string" && entry.id.length > 0 && typeof entry.display_name === "string" && entry.display_name.length > 0
@@ -7246,11 +7067,11 @@ function printModelCatalog(models, gateway) {
   if (models.length === 0) return;
   for (const line of formatModelCatalogLines(models, gateway)) {
     if (line === "Model catalog:") {
-      console.log(pc5.bold(line));
+      console.log(pc4.bold(line));
     } else if (/^  [^#\d\s].+\(\d+/.test(line)) {
-      console.log(pc5.bold(line));
+      console.log(pc4.bold(line));
     } else if (/^  \s*#\s+Model\s+Anthropic ID\s+OpenAI ID/.test(line)) {
-      console.log(pc5.dim(line));
+      console.log(pc4.dim(line));
     } else {
       console.log(line);
     }
@@ -7476,7 +7297,7 @@ async function runVertexServerCommand(options = {}) {
     debugLogPath
   });
   console.log("");
-  console.log(pc5.bold(pc5.green("Vertex gateway running")));
+  console.log(pc4.bold(pc4.green("Vertex gateway running")));
   console.log(`  Anthropic:  http://127.0.0.1:${server.port}/anthropic`);
   console.log(`  Models:     ${models.map((model) => model.id).join(", ")}`);
   if (mode === "network") {
@@ -7492,10 +7313,10 @@ async function runVertexServerCommand(options = {}) {
   } else {
     console.log("  API key:    any non-empty value");
   }
-  console.log(pc5.dim("  Auth:       gcloud Application Default Credentials"));
+  console.log(pc4.dim("  Auth:       gcloud Application Default Credentials"));
   console.log("");
   printModelCatalog(models);
-  console.log(pc5.dim("Press Ctrl+C to stop."));
+  console.log(pc4.dim("Press Ctrl+C to stop."));
   await waitForShutdown();
   await server.close();
   if (debugLogPath) printTraceLog(debugLogPath);
@@ -7553,13 +7374,13 @@ async function runServerCommand(options = {}) {
     if (runConfig.favoritesOnly) {
       const favorites = loadPreferences().favoriteModels ?? [];
       if (favorites.length === 0) {
-        spinner3.stop(pc5.red("No favorite models configured"));
+        spinner3.stop(pc4.red("No favorite models configured"));
         p4.log.error("Run `relay-ai models` to add favorites, or turn off favorites-only in the server wizard.");
         return 1;
       }
       models = filterServerModelsByFavorites(models, favorites).slice(0, MAX_MODEL_CATALOG);
       if (models.length === 0) {
-        spinner3.stop(pc5.red("No favorite models matched the current provider filter"));
+        spinner3.stop(pc4.red("No favorite models matched the current provider filter"));
         p4.log.error("Adjust favorites with `relay-ai models` or change exposed providers in the server wizard.");
         return 1;
       }
@@ -7567,7 +7388,7 @@ async function runServerCommand(options = {}) {
     if (runConfig.freeModelsOnly) {
       models = filterServerModelsByFreeStatus(models);
       if (models.length === 0) {
-        spinner3.stop(pc5.red("No free models matched the current server filters"));
+        spinner3.stop(pc4.red("No free models matched the current server filters"));
         p4.log.error("Turn off free-models-only mode or add a provider with free models.");
         return 1;
       }
@@ -7579,7 +7400,7 @@ async function runServerCommand(options = {}) {
       p4.log.info("Desktop/Cowork picker will only show these. Edit with `relay-ai models`.");
     }
     if (models.length === 0) {
-      spinner3.stop(pc5.red("No models to expose"));
+      spinner3.stop(pc4.red("No models to expose"));
       p4.log.error("Add providers with `relay-ai providers add` or configure exposed providers in the server wizard.");
       return 1;
     }
@@ -7592,8 +7413,8 @@ async function runServerCommand(options = {}) {
     spinner3.stop(`Loaded ${models.length} models (${localCount} from registry providers)${filterNote}${favoritesNote}${freeNote}${maskNote}`);
     if (summary) p4.log.info(summary);
   } catch (err) {
-    spinner3.stop(pc5.red("Failed to load models"));
-    console.error(pc5.red(String(err instanceof Error ? err.message : err)));
+    spinner3.stop(pc4.red("Failed to load models"));
+    console.error(pc4.red(String(err instanceof Error ? err.message : err)));
     return 1;
   }
   const gateway = runConfig.maskGatewayIds ? { maskGatewayIds: true } : void 0;
@@ -7610,7 +7431,7 @@ async function runServerCommand(options = {}) {
     debugLogPath
   });
   console.log("");
-  console.log(pc5.bold(pc5.green("Relay AI server running")));
+  console.log(pc4.bold(pc4.green("Relay AI server running")));
   const publicPort = resolveAdvertiseGatewayPort(server.port);
   console.log(`  Anthropic:  http://127.0.0.1:${publicPort}/anthropic`);
   console.log(`  OpenAI:     http://127.0.0.1:${publicPort}/openai/v1`);
@@ -7629,20 +7450,20 @@ async function runServerCommand(options = {}) {
     console.log("  API key:    any non-empty value");
   }
   if (runConfig.exposedProviders) {
-    console.log(pc5.dim(`  Providers:  ${runConfig.exposedProviders.join(", ")}`));
+    console.log(pc4.dim(`  Providers:  ${runConfig.exposedProviders.join(", ")}`));
   }
   if (runConfig.favoritesOnly) {
-    console.log(pc5.dim("  Catalog:    favorite models only"));
+    console.log(pc4.dim("  Catalog:    favorite models only"));
   }
   if (runConfig.freeModelsOnly) {
-    console.log(pc5.dim("  Pricing:    free/free-access models only"));
+    console.log(pc4.dim("  Pricing:    free/free-access models only"));
   }
   if (runConfig.maskGatewayIds) {
-    console.log(pc5.dim("  Discovery:  gateway ids masked for Claude Desktop / Cowork"));
+    console.log(pc4.dim("  Discovery:  gateway ids masked for Claude Desktop / Cowork"));
   }
   console.log("");
   printModelCatalog(models, gateway);
-  console.log(pc5.dim("Press Ctrl+C to stop."));
+  console.log(pc4.dim("Press Ctrl+C to stop."));
   await waitForShutdown();
   await server.close();
   if (debugLogPath) printTraceLog(debugLogPath);
@@ -7651,14 +7472,14 @@ async function runServerCommand(options = {}) {
 
 // src/update-check.ts
 import {
-  chmodSync as chmodSync2,
-  mkdirSync as mkdirSync2,
-  readFileSync as readFileSync3,
+  chmodSync,
+  mkdirSync,
+  readFileSync as readFileSync2,
   renameSync,
-  unlinkSync as unlinkSync2,
-  writeFileSync as writeFileSync3
+  unlinkSync,
+  writeFileSync as writeFileSync2
 } from "fs";
-import { join as join4 } from "path";
+import { join as join3 } from "path";
 var UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1e3;
 var UPDATE_CHECK_TIMEOUT_MS = 2e3;
 var UPDATE_COMMAND = "npm install -g @jacobbd/relay-ai@latest";
@@ -7704,11 +7525,11 @@ function isNewerVersion(currentVersion, latestVersion) {
   return comparePrerelease(current.prerelease, latest.prerelease) > 0;
 }
 function cachePath() {
-  return join4(getAppHome(), "update-check.json");
+  return join3(getAppHome(), "update-check.json");
 }
 function readFreshCache(now) {
   try {
-    const parsed = JSON.parse(readFileSync3(cachePath(), "utf8"));
+    const parsed = JSON.parse(readFileSync2(cachePath(), "utf8"));
     if (typeof parsed.latestVersion !== "string" || !parseVersion(parsed.latestVersion)) return null;
     if (typeof parsed.checkedAt !== "number" || !Number.isFinite(parsed.checkedAt)) return null;
     const age = now - parsed.checkedAt;
@@ -7723,17 +7544,17 @@ function writeCache(cache) {
   const path = cachePath();
   const temporaryPath = `${path}.${process.pid}.tmp`;
   try {
-    mkdirSync2(directory, { recursive: true, mode: 448 });
-    writeFileSync3(temporaryPath, `${JSON.stringify(cache)}
+    mkdirSync(directory, { recursive: true, mode: 448 });
+    writeFileSync2(temporaryPath, `${JSON.stringify(cache)}
 `, { mode: 384 });
     renameSync(temporaryPath, path);
     try {
-      chmodSync2(path, 384);
+      chmodSync(path, 384);
     } catch {
     }
   } catch {
     try {
-      unlinkSync2(temporaryPath);
+      unlinkSync(temporaryPath);
     } catch {
     }
   }
@@ -7872,10 +7693,10 @@ function buildHttpProxyRoutes(providers, favorites, selected, max = MAX_MODEL_CA
 
 // src/binary-lookup.ts
 import { execFileSync } from "child_process";
-import { existsSync as existsSync3 } from "fs";
+import { existsSync as existsSync2 } from "fs";
 function findBinaryOnPath(name, fallbackPaths, options = {}) {
   const isWindows = options.isWindows ?? process.platform === "win32";
-  const exists = options.exists ?? existsSync3;
+  const exists = options.exists ?? existsSync2;
   const runWhich = options.runWhich ?? ((binary, win) => execFileSync(win ? "where.exe" : "which", [binary], {
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"]
@@ -7988,7 +7809,7 @@ async function addProviderFromTemplate(template, apiKey, opts) {
       hint: "Grant Keychain access, or ensure RELAY_AI_HOME is writable (file fallback)."
     };
   }
-  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const now = localIsoTimestamp();
   const pricingCache = loadPricingCache();
   const pricedModels = enrichModelsForProviderPricing(
     usableModels.map((m) => ({ ...m, apiUrl: fetched.baseUrl })),
@@ -8031,7 +7852,7 @@ async function addProviderFromTemplate(template, apiKey, opts) {
 }
 
 // src/registry/provider-auth.ts
-import pc6 from "picocolors";
+import pc5 from "picocolors";
 import * as p5 from "@clack/prompts";
 import open from "open";
 init_provider_templates();
@@ -8059,44 +7880,44 @@ async function runNativeDeviceCode(providerId) {
     if (providerId === "xai" || providerId === "xai-oauth") {
       const tokens2 = await runXaiDeviceCodeFlow(({ url, userCode }) => {
         spinner3.stop("");
-        p5.log.info(`Visit: ${pc6.cyan(url)}`);
-        p5.log.info(`Enter code: ${pc6.bold(userCode)}`);
+        p5.log.info(`Visit: ${pc5.cyan(url)}`);
+        p5.log.info(`Enter code: ${pc5.bold(userCode)}`);
         openBrowser(url);
         spinner3.start("Waiting for authorization...");
       });
-      spinner3.stop(pc6.green("Signed in to xAI"));
+      spinner3.stop(pc5.green("Signed in to xAI"));
       return tokensToStoredCredential(tokens2);
     }
     if (providerId === "github-copilot") {
       const tokens2 = await runGithubDeviceCodeFlow(({ url, userCode }) => {
         spinner3.stop("");
-        p5.log.info(`Visit: ${pc6.cyan(url)}`);
-        p5.log.info(`Enter code: ${pc6.bold(userCode)}`);
+        p5.log.info(`Visit: ${pc5.cyan(url)}`);
+        p5.log.info(`Enter code: ${pc5.bold(userCode)}`);
         openBrowser(url);
         spinner3.start("Waiting for authorization...");
       });
-      spinner3.stop(pc6.green("Signed in to GitHub Copilot"));
+      spinner3.stop(pc5.green("Signed in to GitHub Copilot"));
       return tokensToStoredCredential(tokens2);
     }
     if (providerId === "cline-pass") {
       const result = await runClinePassDeviceCodeFlow(({ url, userCode }) => {
         spinner3.stop("");
-        p5.log.info(`Visit: ${pc6.cyan(url)}`);
-        p5.log.info(`Enter code: ${pc6.bold(userCode)}`);
+        p5.log.info(`Visit: ${pc5.cyan(url)}`);
+        p5.log.info(`Enter code: ${pc5.bold(userCode)}`);
         openBrowser(url);
         spinner3.start("Waiting for authorization...");
       });
-      spinner3.stop(pc6.green("Signed in to ClinePass"));
+      spinner3.stop(pc5.green("Signed in to ClinePass"));
       return tokensToStoredCredential(result.tokens, void 0, result.accountId, result.providerData);
     }
     const { tokens, accountId } = await runOpenAiDeviceCodeFlow(({ url, userCode }) => {
       spinner3.stop("");
-      p5.log.info(`Visit: ${pc6.cyan(url)}`);
-      p5.log.info(`Enter code: ${pc6.bold(userCode)}`);
+      p5.log.info(`Visit: ${pc5.cyan(url)}`);
+      p5.log.info(`Enter code: ${pc5.bold(userCode)}`);
       openBrowser(url);
       spinner3.start("Waiting for authorization...");
     });
-    spinner3.stop(pc6.green("Signed in to OpenAI ChatGPT"));
+    spinner3.stop(pc5.green("Signed in to OpenAI ChatGPT"));
     return tokensToStoredCredential(tokens, void 0, accountId);
   } catch (err) {
     spinner3.stop("");
@@ -8115,7 +7936,7 @@ async function runNativeBrowserOAuth(providerId) {
     try {
       const { tokens, bootstrap } = await runClaudeCodeOAuthFlow((url) => {
         spinner4.stop("");
-        p5.log.info(`Opening: ${pc6.cyan(url)}`);
+        p5.log.info(`Opening: ${pc5.cyan(url)}`);
       }, async () => {
         const code = await p5.text({
           message: "Paste the authorization code or callback URL from Anthropic",
@@ -8126,7 +7947,7 @@ async function runNativeBrowserOAuth(providerId) {
         spinner4.start("Exchanging authorization code\u2026");
         return code;
       });
-      spinner4.stop(pc6.green("Signed in to Claude Code"));
+      spinner4.stop(pc5.green("Signed in to Claude Code"));
       const providerData = { cliUserID: generateCliUserID() };
       if (bootstrap.accountId) providerData.accountUUID = bootstrap.accountId;
       if (bootstrap.organizationId) providerData.organizationUUID = bootstrap.organizationId;
@@ -8143,10 +7964,10 @@ async function runNativeBrowserOAuth(providerId) {
   try {
     const { tokens, userInfo, projectId, tierId } = await runAntigravityOAuthFlow((url) => {
       spinner3.stop("");
-      p5.log.info(`Opening: ${pc6.cyan(url)}`);
+      p5.log.info(`Opening: ${pc5.cyan(url)}`);
       spinner3.start("Waiting for authorization\u2026");
     });
-    spinner3.stop(pc6.green("Signed in to Cloud Code Assist"));
+    spinner3.stop(pc5.green("Signed in to Cloud Code Assist"));
     const providerData = {};
     if (projectId) providerData.projectId = projectId;
     if (tierId) providerData.tier = tierId;
@@ -8200,7 +8021,7 @@ async function upsertOAuthProvider(providerId, cred) {
         url: template.defaultBaseUrl ?? "",
         ...template.headers ? { headers: template.headers } : {}
       },
-      addedAt: (/* @__PURE__ */ new Date()).toISOString()
+      addedAt: localIsoTimestamp()
     };
   } else {
     entry = { ...entry, authType: "oauth", authRef, templateId: entry.templateId ?? templateId };
@@ -8250,9 +8071,9 @@ async function authenticateProvider(providerId, options = {}) {
   return { providerId: registryId, credential: cred, registryProvider };
 }
 function providerAuthHelpText() {
-  return `${pc6.bold("relay-ai providers auth")} \u2014 sign in with OAuth
+  return `${pc5.bold("relay-ai providers auth")} \u2014 sign in with OAuth
 
-${pc6.bold("Usage:")}
+${pc5.bold("Usage:")}
   relay-ai providers auth <id>
   relay-ai providers auth xai-oauth
   relay-ai providers auth openai-oauth
@@ -8260,23 +8081,23 @@ ${pc6.bold("Usage:")}
   relay-ai providers auth cline-pass
   relay-ai providers auth antigravity
 
-${pc6.bold("Device code (works on SSH/VPS):")}
+${pc5.bold("Device code (works on SSH/VPS):")}
   xai-oauth        SuperGrok / X Premium (device code at x.ai/device)
   openai-oauth     ChatGPT Plus/Pro (device code at auth.openai.com/codex/device)
   github-copilot   GitHub Copilot Free or paid (device code at github.com/login/device)
   cline-pass       ClinePass account (device code at app.cline.bot)
 
-${pc6.bold("Browser sign-in:")}
+${pc5.bold("Browser sign-in:")}
   antigravity      Google Cloud Code Assist OAuth (opens Google sign-in)
 
-${pc6.dim("OpenCode CLI configs: use")} relay-ai providers import${pc6.dim(" (optional one-time migration).")}`;
+${pc5.dim("OpenCode CLI configs: use")} relay-ai providers import${pc5.dim(" (optional one-time migration).")}`;
 }
 
 // src/codex/app-launch.ts
 import { execFileSync as execFileSync3, execSync, spawn } from "child_process";
-import { copyFileSync, existsSync as existsSync4, mkdirSync as mkdirSync3, readdirSync as readdirSync2, realpathSync, statSync } from "fs";
+import { copyFileSync, existsSync as existsSync3, mkdirSync as mkdirSync2, readdirSync as readdirSync2, realpathSync, statSync } from "fs";
 import { homedir as homedir2 } from "os";
-import { dirname, join as join5, win32 as winPath } from "path";
+import { dirname, join as join4, win32 as winPath } from "path";
 import * as p6 from "@clack/prompts";
 
 // src/linux-display.ts
@@ -8333,7 +8154,7 @@ function runPowerShell(script) {
 function darwinAppCandidates() {
   return DARWIN_APP_NAMES.flatMap((name) => [
     `/Applications/${name}.app`,
-    join5(homedir2(), "Applications", `${name}.app`)
+    join4(homedir2(), "Applications", `${name}.app`)
   ]);
 }
 function linuxCodexAppCandidates(home = homedir2()) {
@@ -8342,8 +8163,8 @@ function linuxCodexAppCandidates(home = homedir2()) {
     "/usr/lib/chatgpt/ChatGPT",
     "/opt/chatgpt/ChatGPT",
     "/usr/local/lib/chatgpt/ChatGPT",
-    join5(home, ".local", "bin", "chatgpt"),
-    join5(home, ".local", "share", "chatgpt", "ChatGPT")
+    join4(home, ".local", "bin", "chatgpt"),
+    join4(home, ".local", "share", "chatgpt", "ChatGPT")
   ];
 }
 function linuxEmbeddedCodexCandidates(appPath) {
@@ -8355,12 +8176,12 @@ function linuxEmbeddedCodexCandidates(appPath) {
     }
   })();
   return [.../* @__PURE__ */ new Set([
-    join5(dirname(resolvedPath), "resources", "codex"),
-    join5(dirname(appPath), "resources", "codex")
+    join4(dirname(resolvedPath), "resources", "codex"),
+    join4(dirname(appPath), "resources", "codex")
   ])];
 }
 function winLocalAppData() {
-  return process.env.LOCALAPPDATA ?? join5(homedir2(), "AppData", "Local");
+  return process.env.LOCALAPPDATA ?? join4(homedir2(), "AppData", "Local");
 }
 function windowsEmbeddedCodexCandidates(appPath, packageInstallLocations) {
   const candidates = [];
@@ -8392,8 +8213,8 @@ function executableWindowsEmbeddedCodexPath(sourcePath) {
   if (!cachePath2) return sourcePath;
   try {
     const sourceSize = statSync(sourcePath).size;
-    if (existsSync4(cachePath2) && statSync(cachePath2).size === sourceSize) return cachePath2;
-    mkdirSync3(winPath.dirname(cachePath2), { recursive: true });
+    if (existsSync3(cachePath2) && statSync(cachePath2).size === sourceSize) return cachePath2;
+    mkdirSync2(winPath.dirname(cachePath2), { recursive: true });
     copyFileSync(sourcePath, cachePath2);
     return statSync(cachePath2).size === sourceSize ? cachePath2 : null;
   } catch {
@@ -8413,24 +8234,24 @@ function winCodexPackageInstallLocations() {
 function winCodexExeCandidates() {
   const local = winLocalAppData();
   const bases = WIN_APP_NAMES.flatMap((name) => [
-    join5(local, "Programs", name),
-    join5(local, "Programs", `OpenAI ${name}`),
-    join5(local, name),
-    join5(local, `OpenAI ${name}`),
-    join5(local, "OpenAI", name)
+    join4(local, "Programs", name),
+    join4(local, "Programs", `OpenAI ${name}`),
+    join4(local, name),
+    join4(local, `OpenAI ${name}`),
+    join4(local, "OpenAI", name)
   ]);
-  bases.push(join5(local, "openai-codex-electron"), join5(local, "openai-chatgpt-electron"));
+  bases.push(join4(local, "openai-codex-electron"), join4(local, "openai-chatgpt-electron"));
   const out = [];
   for (const base of bases) {
     for (const name of WIN_APP_NAMES) {
-      out.push(join5(base, `${name}.exe`));
+      out.push(join4(base, `${name}.exe`));
     }
     try {
-      if (existsSync4(base)) {
+      if (existsSync3(base)) {
         for (const dir of readdirSync2(base)) {
           if (dir.startsWith("app-")) {
             for (const name of WIN_APP_NAMES) {
-              out.push(join5(base, dir, `${name}.exe`));
+              out.push(join4(base, dir, `${name}.exe`));
             }
           }
         }
@@ -8444,7 +8265,7 @@ function mdfindCodexApp() {
   try {
     const out = run(`mdfind "kMDItemCFBundleIdentifier == '${CODEX_BUNDLE_ID}'"`);
     const first = out.split("\n").map((l) => l.trim()).find(Boolean);
-    return first && existsSync4(first) ? first : null;
+    return first && existsSync3(first) ? first : null;
   } catch {
     return null;
   }
@@ -8452,14 +8273,14 @@ function mdfindCodexApp() {
 function findCodexApp(platform = process.platform) {
   if (platform === "darwin") {
     for (const path of darwinAppCandidates()) {
-      if (existsSync4(path)) return path;
+      if (existsSync3(path)) return path;
     }
     return mdfindCodexApp();
   }
   if (platform === "win32") {
     for (const path of winCodexExeCandidates()) {
       try {
-        if (existsSync4(path) && statSync(path).isFile()) return path;
+        if (existsSync3(path) && statSync(path).isFile()) return path;
       } catch {
       }
     }
@@ -8473,7 +8294,7 @@ function findCodexApp(platform = process.platform) {
     }
   }
   if (platform === "linux") {
-    return linuxCodexAppCandidates().find((path) => existsSync4(path)) ?? null;
+    return linuxCodexAppCandidates().find((path) => existsSync3(path)) ?? null;
   }
   return null;
 }
@@ -8481,18 +8302,18 @@ function findEmbeddedCodexBinary(platform = process.platform, appPath = findCode
   if (platform === "darwin") {
     if (!appPath) return null;
     return [
-      join5(appPath, "Contents", "Resources", "codex-cli", "bin", "codex"),
-      join5(appPath, "Contents", "Resources", "codex")
-    ].find((binary) => existsSync4(binary)) ?? null;
+      join4(appPath, "Contents", "Resources", "codex-cli", "bin", "codex"),
+      join4(appPath, "Contents", "Resources", "codex")
+    ].find((binary) => existsSync3(binary)) ?? null;
   }
   if (platform === "linux") {
     if (!appPath) return null;
-    return linuxEmbeddedCodexCandidates(appPath).find((path) => existsSync4(path)) ?? null;
+    return linuxEmbeddedCodexCandidates(appPath).find((path) => existsSync3(path)) ?? null;
   }
   if (platform === "win32") {
     const sourcePath = windowsEmbeddedCodexCandidates(appPath, winCodexPackageInstallLocations()).find((path) => {
       try {
-        return existsSync4(path) && statSync(path).isFile();
+        return existsSync3(path) && statSync(path).isFile();
       } catch {
         return false;
       }
@@ -8525,7 +8346,7 @@ function pgrepExact(names) {
   return [...pids];
 }
 function darwinMainExecutableCandidates(appPath) {
-  return DARWIN_APP_NAMES.map((name) => join5(appPath, "Contents", "MacOS", name));
+  return DARWIN_APP_NAMES.map((name) => join4(appPath, "Contents", "MacOS", name));
 }
 function darwinMainPidsFromProcessList(processList, commands, currentPid = process.pid) {
   const pids = /* @__PURE__ */ new Set();
@@ -8754,9 +8575,9 @@ function codexAppInstallHint() {
 
 // src/claude-desktop/app-launch.ts
 import { execSync as execSync2, spawn as spawn2 } from "child_process";
-import { existsSync as existsSync5, readdirSync as readdirSync3, readFileSync as readFileSync4, statSync as statSync2 } from "fs";
+import { existsSync as existsSync4, readdirSync as readdirSync3, readFileSync as readFileSync3, statSync as statSync2 } from "fs";
 import { homedir as homedir3 } from "os";
-import { join as join6 } from "path";
+import { join as join5 } from "path";
 import * as p7 from "@clack/prompts";
 var CLAUDE_BUNDLE_ID = "com.anthropic.claudefordesktop";
 function claudeAppSupported() {
@@ -8773,28 +8594,28 @@ function runPowerShell2(script) {
 function darwinAppCandidates2() {
   return [
     "/Applications/Claude.app",
-    join6(homedir3(), "Applications", "Claude.app")
+    join5(homedir3(), "Applications", "Claude.app")
   ];
 }
 function winLocalAppData2() {
-  return process.env.LOCALAPPDATA ?? join6(homedir3(), "AppData", "Local");
+  return process.env.LOCALAPPDATA ?? join5(homedir3(), "AppData", "Local");
 }
 function winClaudeExeCandidates() {
   const local = winLocalAppData2();
   const bases = [
     // Squirrel install folder used by the Anthropic Claude desktop installer.
-    join6(local, "AnthropicClaude"),
-    join6(local, "Programs", "Claude"),
-    join6(local, "Claude")
+    join5(local, "AnthropicClaude"),
+    join5(local, "Programs", "Claude"),
+    join5(local, "Claude")
   ];
   const out = [];
   for (const base of bases) {
-    out.push(join6(base, "Claude.exe"));
+    out.push(join5(base, "Claude.exe"));
     try {
-      if (existsSync5(base)) {
+      if (existsSync4(base)) {
         for (const name of readdirSync3(base)) {
           if (name.startsWith("app-")) {
-            out.push(join6(base, name, "Claude.exe"));
+            out.push(join5(base, name, "Claude.exe"));
           }
         }
       }
@@ -8809,13 +8630,13 @@ function linuxClaudeCandidates() {
     "/usr/bin/claude-desktop",
     "/usr/lib/claude-desktop/claude-desktop",
     "/opt/Claude/claude-desktop",
-    join6(homedir3(), ".local", "bin", "claude-desktop")
+    join5(homedir3(), ".local", "bin", "claude-desktop")
   ];
 }
 function linuxWhichClaude() {
   try {
     const out = run2("command -v claude-desktop");
-    return out && existsSync5(out) ? out : null;
+    return out && existsSync4(out) ? out : null;
   } catch {
     return null;
   }
@@ -8832,7 +8653,7 @@ function linuxMainPid() {
   const pids = linuxMatchingPids2();
   for (const pid of pids) {
     try {
-      const cmdline = readFileSync4(`/proc/${pid}/cmdline`, "utf8");
+      const cmdline = readFileSync3(`/proc/${pid}/cmdline`, "utf8");
       if (!cmdline.includes("--type=")) return pid;
     } catch {
     }
@@ -8859,7 +8680,7 @@ function mdfindClaudeApp() {
   try {
     const out = run2(`mdfind "kMDItemCFBundleIdentifier == '${CLAUDE_BUNDLE_ID}'"`);
     const first = out.split("\n").map((l) => l.trim()).find(Boolean);
-    return first && existsSync5(first) ? first : null;
+    return first && existsSync4(first) ? first : null;
   } catch {
     return null;
   }
@@ -8867,14 +8688,14 @@ function mdfindClaudeApp() {
 function findClaudeApp() {
   if (process.platform === "darwin") {
     for (const path of darwinAppCandidates2()) {
-      if (existsSync5(path)) return path;
+      if (existsSync4(path)) return path;
     }
     return mdfindClaudeApp();
   }
   if (process.platform === "win32") {
     for (const path of winClaudeExeCandidates()) {
       try {
-        if (existsSync5(path) && statSync2(path).isFile()) return path;
+        if (existsSync4(path) && statSync2(path).isFile()) return path;
       } catch {
       }
     }
@@ -8889,7 +8710,7 @@ function findClaudeApp() {
   if (process.platform === "linux") {
     for (const path of linuxClaudeCandidates()) {
       try {
-        if (existsSync5(path)) return path;
+        if (existsSync4(path)) return path;
       } catch {
       }
     }
@@ -9058,7 +8879,6 @@ export {
   providerSelectOption,
   modelSelectOption,
   navOption,
-  confirmLaunchMessage,
   logActiveModel,
   logProxy,
   logConnected,
@@ -9078,20 +8898,6 @@ export {
   buildImportProviderList,
   isOAuthImportProvider,
   listCredentialSkippedProviders,
-  getClaudeDebugLogPath,
-  prepareClaudeTraceLog,
-  getProxyDebugLogPath,
-  getCodexProxyDebugLogPath,
-  resetCodexBodyDumpLog,
-  appendCodexBodyDump,
-  getGeminiProxyDebugLogPath,
-  getUiDebugLogPath,
-  getServerDebugLogPath,
-  getAntigravityDebugLogPath,
-  prepareProviderTraceLog,
-  makeTraceLogger,
-  writeSecureLogLine,
-  printTraceLog,
   endpointModelTimeoutMs,
   fetchAnthropicModels,
   fetchTemplateModels,
@@ -9194,4 +9000,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-BEOPXFS7.js.map
+//# sourceMappingURL=chunk-YBBBBL5X.js.map

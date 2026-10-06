@@ -13,6 +13,7 @@ import {
 import { dirname, join } from 'node:path';
 import bundledCache from '../data/models-dev-cache.json';
 import { getAppHome } from '../paths.js';
+import { localIsoTimestamp } from '../trace-log.js';
 import { normalizeModelIdCandidates } from './pricing.js';
 
 export const MODELS_DEV_API_URL = 'https://models.dev/api.json';
@@ -184,7 +185,7 @@ function attachModelsDevCacheMeta(
   return {
     [META_KEY]: {
       schema_version: '1',
-      fetched_at: new Date().toISOString(),
+      fetched_at: localIsoTimestamp(),
       source: MODELS_DEV_API_URL,
       provider_count: providerCount,
     },

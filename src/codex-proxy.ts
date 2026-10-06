@@ -30,7 +30,7 @@ import {
 } from './codex-responses-adapter.js';
 import { silenceSdkWarnings } from './sdk-adapter.js';
 import { formatUpstreamError, upstreamHttpStatus } from './codex/upstream-error.js';
-import { getCodexProxyDebugLogPath, makeTraceLogger, resetCodexBodyDumpLog, appendCodexBodyDump } from './trace-log.js';
+import {getCodexProxyDebugLogPath, makeTraceLogger, resetCodexBodyDumpLog, appendCodexBodyDump, localIsoTimestamp } from './trace-log.js';
 import { classifyCodexMixedDispatch, parseMixedProxyPath } from './codex/routing.js';
 import { forwardNativeCodexHttp, allowlistedNativeHeaders, nativeResponsesWebSocketOptions, prepareNativeCodexBody, NATIVE_CODEX_RESPONSES_URL } from './codex/native-forward.js';
 import {
@@ -714,7 +714,7 @@ export async function startCodexProxy(
           const toolNames = tools.map((t: unknown) => (t && typeof t === 'object' && 'name' in t ? (t as { name: unknown }).name : '?')).join(',');
           log(`request: model=${String(body.model ?? '')} previous_response_id=${prevId ?? '(none)'} input_items=${inputItems} body_bytes=${rawBody.length} max_output_tokens=${String(body.max_output_tokens ?? '(none)')} tools=[${toolNames || 'none'}]`);
           appendCodexBodyDump({
-            ts: new Date().toISOString(),
+            ts: localIsoTimestamp(),
             transport: 'http',
             direction: 'request',
             model: String(body.model ?? ''),
@@ -876,7 +876,7 @@ export async function startCodexProxy(
                 const completed = captureCompletedResponse(chunk);
                 if (completed) {
                   appendCodexBodyDump({
-                    ts: new Date().toISOString(),
+                    ts: localIsoTimestamp(),
                     transport: 'http',
                     direction: 'response',
                     model: route.modelId,
@@ -930,7 +930,7 @@ export async function startCodexProxy(
                 : await generateResponsesResponse(languageModel, params, modelId);
               if (debug) {
                 appendCodexBodyDump({
-                  ts: new Date().toISOString(),
+                  ts: localIsoTimestamp(),
                   transport: 'http',
                   direction: 'response',
                   model: route.modelId,
@@ -1168,7 +1168,7 @@ export async function startCodexProxy(
           currentExternalCompletedResponse = completed;
           if (debug) {
             appendCodexBodyDump({
-              ts: new Date().toISOString(),
+              ts: localIsoTimestamp(),
               transport: 'ws',
               direction: 'response',
               model: currentRequestModel,
@@ -1267,7 +1267,7 @@ export async function startCodexProxy(
               : typeof body.client_metadata;
             log(`WS request shape: stream=${String(body.stream)} store=${String(body.store)} generate=${String(body.generate)} parallel_tool_calls=${String(body.parallel_tool_calls)} reasoning_keys=[${reasoning || 'none'}] include=${Array.isArray(body.include) ? body.include.join(',') : String(body.include)} client_metadata_keys=[${clientMetadata || 'none'}]`);
             appendCodexBodyDump({
-              ts: new Date().toISOString(),
+              ts: localIsoTimestamp(),
               transport: 'ws',
               direction: 'request',
               model: String(body.model ?? ''),

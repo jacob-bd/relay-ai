@@ -1,5 +1,6 @@
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { localIsoTimestamp } from '../trace-log.js';
 import { getLogsPath } from '../paths.js';
 
 const DIR_MODE = 0o700;
@@ -29,7 +30,7 @@ function safeIdentifier(value: string | undefined): string | undefined {
 
 export function sanitizeCodexRouteAuditEvent(event: CodexRouteAuditEvent): Record<string, unknown> {
   return {
-    ts: new Date().toISOString(),
+    ts: localIsoTimestamp(),
     transport: event.transport,
     requestedModel: safeIdentifier(event.requestedModel),
     dispatch: event.dispatch,

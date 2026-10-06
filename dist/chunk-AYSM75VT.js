@@ -4,13 +4,14 @@ import {
   createLanguageModel,
   getProviderModels,
   loadRegistry,
+  localIsoTimestamp,
   modelIdError,
   resolveProviderCredential,
   saveRegistry,
   supportsManualModels,
   translateRequest,
   validateCustomEndpointUrl
-} from "./chunk-PMCC23MU.js";
+} from "./chunk-KUPDV4YD.js";
 
 // src/registry/validate-manual-model.ts
 import { randomUUID } from "crypto";
@@ -124,7 +125,7 @@ async function addManualModel(input) {
       upstreamModelId: id,
       modelFormat: provider.api.npm === "@ai-sdk/anthropic" ? "anthropic" : "openai",
       source: "manual",
-      validatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      validatedAt: localIsoTimestamp(),
       ...input.contextWindow === void 0 ? {} : { contextWindow: input.contextWindow, contextWindowSource: "user" }
     };
     current.manualModels = [...current.manualModels ?? [], model];
@@ -149,4 +150,4 @@ export {
   addManualModel,
   removeManualModel
 };
-//# sourceMappingURL=chunk-VWZ7VUT7.js.map
+//# sourceMappingURL=chunk-AYSM75VT.js.map

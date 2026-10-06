@@ -4,10 +4,31 @@ import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   getAntigravityDebugLogPath,
+  localIsoTimestamp,
+  localTimestamp,
   makeTraceLogger,
   redactTraceLine,
   redactTraceLog,
 } from '../src/trace-log.js';
+
+describe('timestamps', () => {
+  it('formats localTimestamp as YYYY-MM-DD HH:MM:SS wall-clock', () => {
+    expect(localTimestamp()).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  });
+
+  it('formats localIsoTimestamp as ISO-8601 with the local UTC offset', () => {
+    expect(localIsoTimestamp()).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/);
+  });
+
+  it('localIsoTimestamp round-trips through Date.parse and carries the local wall-clock time', () => {
+    const utc = new Date('2026-10-05T14:23:11.204Z');
+    const parsed = new Date(Date.parse(localIsoTimestamp(utc)));
+    expect(parsed.getTime()).toBe(utc.getTime());
+    // Same wall-clock reading as localTimestamp() would print for that instant.
+    const local = new Date(utc.getTime() - utc.getTimezoneOffset() * 60_000);
+    expect(localIsoTimestamp(utc).slice(11, 19)).toBe(local.toISOString().slice(11, 19));
+  });
+});
 
 describe('trace log redaction', () => {
   it('redacts bearer tokens', () => {

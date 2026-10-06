@@ -9,10 +9,9 @@ import { findGeminiBinary, prepareGeminiChildEnv, launchGemini } from './gemini/
 import {
   pickGeminiProvider,
   pickGeminiModel,
-  pickGeminiFavoriteModel,
-  confirmGeminiLaunch,
   rejectGeminiManagedFlags,
 } from './gemini/prompts.js';
+import { pickFavoriteStartModel } from './codex/favorites-launch.js';
 import { startGeminiProxy } from './gemini-proxy.js';
 import { getGeminiProxyDebugLogPath, printTraceLog } from './trace-log.js';
 import type { ProxyRoute, ProxyHandle } from './proxy.js';
@@ -146,36 +145,48 @@ export async function runGeminiCommand(
       p.log.info(`Launching ${pc.bold('Gemini CLI')} with relay-ai`);
     }
 
-    const chosenProvider = await pickGeminiProvider(
-      compatible,
-      prefs,
-      (prefs.favoriteModels ?? []).length > 0,
-      launch.launchProvider,
-    );
-    if (!chosenProvider) return 0;
-
-    if (chosenProvider === '__favorites__') {
-      const favPick = await pickGeminiFavoriteModel(compatible, prefs.favoriteModels ?? []);
-      if (!favPick || favPick === 'back') return 0;
-      activeProvider = favPick.provider;
-      selectedModel = favPick.model;
-    } else {
-      activeProvider = chosenProvider;
-      const pickerProvider = activeProvider;
-      const chosenModel = await pickGeminiModel(activeProvider, prefs, pickerRefresh(pickerProvider, async () =>
-        providersForTarget(providersForPicker(await fetchProviderCatalog({ agent: 'gemini' })), 'gemini')
-          .find(lp => lp.id === pickerProvider.id)));
-      if (!chosenModel || chosenModel === 'back') return 0;
-      selectedModel = chosenModel;
-    }
-
-    if (!agentStdout) {
-      const ok = await confirmGeminiLaunch(
-        activeProvider.name,
-        selectedModel.name || selectedModel.id,
-        selectedModel.id,
+    providerPick: while (true) {
+      const chosenProvider = await pickGeminiProvider(
+        compatible,
+        prefs,
+        (prefs.favoriteModels ?? []).length > 0,
+        launch.launchProvider,
       );
-      if (!ok) return 0;
+      if (!chosenProvider) return 0;
+
+      if (chosenProvider === '__favorites__') {
+        const favPick = await pickFavoriteStartModel(
+          compatible,
+          prefs.favoriteModels ?? [],
+          'gemini',
+          prefs,
+          async () => {
+            const fresh = providersForTarget(providersForPicker(await fetchProviderCatalog({ agent: 'gemini' })), 'gemini');
+            for (const lp of compatible) {
+              const loaded = fresh.find(f => f.id === lp.id);
+              if (loaded) lp.models = loaded.models;
+            }
+          },
+        );
+        if (favPick === 'back') continue providerPick;
+        if (!favPick) {
+          p.log.warn('No saved Gemini favorites are currently available.');
+          return 0;
+        }
+        activeProvider = favPick.provider;
+        selectedModel = favPick.model;
+        break providerPick;
+      } else {
+        activeProvider = chosenProvider;
+        const pickerProvider = activeProvider;
+        const chosenModel = await pickGeminiModel(activeProvider, prefs, pickerRefresh(pickerProvider, async () =>
+          providersForTarget(providersForPicker(await fetchProviderCatalog({ agent: 'gemini' })), 'gemini')
+            .find(lp => lp.id === pickerProvider.id)));
+        if (chosenModel === 'back') continue providerPick;
+        if (!chosenModel) return 0;
+        selectedModel = chosenModel;
+        break providerPick;
+      }
     }
   }
 

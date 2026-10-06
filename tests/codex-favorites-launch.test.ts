@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildCodexProxyRoutesFromResolved,
-  pickFavoriteStartingModel,
+  listAvailableFavorites,
   resolveBootSelection,
   resolveCodexFavorites,
 } from '../src/codex/favorites-launch.js';
@@ -28,6 +28,21 @@ const anthropicProvider: LocalProvider = {
     modelFormat: 'anthropic',
     upstreamModelId: 'claude-sonnet-4-5-20250929',
     baseUrl: 'https://api.anthropic.com',
+    contextWindow: 200000,
+  }],
+};
+
+const secondaryProvider: LocalProvider = {
+  id: 'commandcode',
+  name: 'Command Code',
+  apiKey: 'cc-key',
+  models: [{
+    id: 'muse-spark-1.3',
+    name: 'Muse Spark 1.3',
+    family: 'muse',
+    brand: 'Command Code',
+    modelFormat: 'openai',
+    upstreamModelId: 'muse-spark-1.3',
     contextWindow: 200000,
   }],
 };
@@ -177,15 +192,32 @@ describe('codex launch selection helpers', () => {
     });
   });
 
-  it('returns a product-specific unavailable state for missing favorite choices', async () => {
-    const result = await pickFavoriteStartingModel(
+  it('returns an empty list when no saved favorite is currently available', () => {
+    const result = listAvailableFavorites(
       [],
       [{ providerId: 'missing', modelId: 'ghost' }],
       'codex',
-      'Codex',
     );
 
-    expect(result).toBe('unavailable');
+    expect(result).toEqual([]);
+  });
+
+  it('lists available favorites in saved order with their owning providers', () => {
+    const result = listAvailableFavorites(
+      [anthropicProvider, secondaryProvider],
+      [
+        { providerId: 'commandcode', modelId: 'muse-spark-1.3' },
+        { providerId: 'anthropic', modelId: 'claude-sonnet-4.5' },
+        { providerId: 'unknown', modelId: 'stale' },
+      ],
+      'codex',
+      provider => provider,
+    );
+
+    expect(result.map(entry => `${entry.provider.id}::${entry.model.id}`)).toEqual([
+      'commandcode::muse-spark-1.3',
+      'anthropic::claude-sonnet-4.5',
+    ]);
   });
 });
 

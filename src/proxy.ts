@@ -7,7 +7,7 @@ import { readBody, extractApiKey, sendJson } from './http-utils.js';
 import { formatAnthropicModelEntry, formatAnthropicModelList } from './server/models.js';
 import { estimateAnthropicInputTokens } from './anthropic-endpoints.js';
 import { claudeCodeClientModelId, routeLookupIds, stripOneMContextSuffix } from './context-model-id.js';
-import { getProxyDebugLogPath, redactTraceLine, resetTraceLog } from './trace-log.js';
+import {getProxyDebugLogPath, redactTraceLine, resetTraceLog, localTimestamp } from './trace-log.js';
 import { fetchWithOAuthRetry, relayAnthropicMessages, UpstreamUnreachableError } from './upstream-forward.js';
 import {
   CLAUDE_CODE_CLI_VERSION,
@@ -46,13 +46,13 @@ function appendSecureLog(logPath: string, line: string): void {
   try {
     const fd = openSync(logPath, 'a', 0o600);
     try {
-      writeSync(fd, `${new Date().toISOString()} ${redacted}\n`);
+      writeSync(fd, `${localTimestamp()} ${redacted}\n`);
     } finally {
       closeSync(fd);
     }
   } catch {
     try {
-      appendFileSync(logPath, `${new Date().toISOString()} ${redacted}\n`);
+      appendFileSync(logPath, `${localTimestamp()} ${redacted}\n`);
     } catch { /* ignore */ }
   }
 }

@@ -17,12 +17,12 @@ import {
   expandClaudeAppEffortVariants,
   resolveClaudeAppCatalog,
 } from './claude-desktop/model-catalog.js';
-import { getProxyDebugLogPath } from './trace-log.js';
+import {getProxyDebugLogPath, localIsoTimestamp } from './trace-log.js';
 import { recoverSession, hasStaleSession, writeSessionLock, setupExitCleanup, cleanupSession, backupMetaJson, isConcurrentLiveSession, waitForShutdown } from './claude-desktop/app-session.js';
 import { launchOrRestartClaudeApp, claudeAppSupported, isClaudeAppRunning, quitClaudeAppGracefully } from './claude-desktop/app-launch.js';
 import type { LocalProvider, LocalProviderModel } from './types.js';
 import type { CloudCodeBackend } from './cloud-code-backend.js';
-import { resolveFirstAvailableFavorite } from './favorites-resolver.js';
+import { pickFavoriteStartModel } from './codex/favorites-launch.js';
 import { pickerRefresh } from './picker-refresh.js';
 
 export { modelToServerModelInfo } from './claude-desktop/model-catalog.js';
@@ -147,28 +147,47 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
     activeProvider = bootSelection.provider;
     selectedModel = bootSelection.model;
   } else {
-    const pickedProvider = await pickCodexProvider(compatible, prefs, hasFavorites);
-    if (!pickedProvider) return 0;
+    providerPick: while (true) {
+      const pickedProvider = await pickCodexProvider(compatible, prefs, hasFavorites);
+      if (!pickedProvider) return 0;
 
-    if (pickedProvider === '__favorites__') {
-      useFavorites = true;
-      const firstFavorite = resolveFirstAvailableFavorite(favorites, compatible);
-      if (!firstFavorite) {
-        p.log.warn('No saved Claude App favorites are currently available.');
-        return 0;
+      if (pickedProvider === '__favorites__') {
+        const favoriteStart = await pickFavoriteStartModel(
+          compatible,
+          favorites,
+          'codex-app',
+          prefs,
+          async () => {
+            const fresh = codexCompatibleProviders(providersForPicker(await fetchProviderCatalog({ agent: 'codex-app' })), 'claude-app');
+            for (const lp of compatible) {
+              const loaded = fresh.find(f => f.id === lp.id);
+              if (loaded) lp.models = loaded.models;
+            }
+          },
+          providerForClaudePicker,
+        );
+        if (favoriteStart === 'back') continue providerPick;
+        if (!favoriteStart) {
+          p.log.warn('No saved Claude App favorites are currently available.');
+          return 0;
+        }
+        useFavorites = true;
+        activeProvider = favoriteStart.provider;
+        selectedModel = favoriteStart.model;
+        break providerPick;
+      } else {
+        activeProvider = providerForClaudePicker(pickedProvider);
+        const pickerProvider = activeProvider;
+        const pickedModel = await pickCodexModel(activeProvider, prefs, pickerRefresh(pickerProvider, async () => {
+          const fresh = codexCompatibleProviders(providersForPicker(await fetchProviderCatalog({ agent: 'codex-app' })), 'claude-app')
+            .find(lp => lp.id === pickerProvider.id);
+          return fresh && providerForClaudePicker(fresh);
+        }));
+        if (pickedModel === 'back') continue providerPick;
+        if (!pickedModel) return 0;
+        selectedModel = pickedModel;
+        break providerPick;
       }
-      activeProvider = firstFavorite.provider;
-      selectedModel = firstFavorite.model;
-    } else {
-      activeProvider = providerForClaudePicker(pickedProvider);
-      const pickerProvider = activeProvider;
-      const pickedModel = await pickCodexModel(activeProvider, prefs, pickerRefresh(pickerProvider, async () => {
-        const fresh = codexCompatibleProviders(providersForPicker(await fetchProviderCatalog({ agent: 'codex-app' })), 'claude-app')
-          .find(lp => lp.id === pickerProvider.id);
-        return fresh && providerForClaudePicker(fresh);
-      }));
-      if (!pickedModel || pickedModel === 'back') return 0;
-      selectedModel = pickedModel;
     }
   }
 
@@ -239,7 +258,7 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
 
     writeSessionLock({
       pid: process.pid,
-      startedAt: new Date().toISOString(),
+      startedAt: localIsoTimestamp(),
       uuid,
       proxyPort: proxyHandle.port,
       ...(deploymentModeChange ? { previousDeploymentMode: deploymentModeChange.previous } : {}),
@@ -247,15 +266,13 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
     sessionActive = true;
     setupExitCleanup(uuid);
 
-    if (!useFavorites) {
-      const prevRecent = prefs.recentModelsByProvider?.[activeProvider.id] ?? [];
-      const updatedRecent = [selectedModel.id, ...prevRecent.filter((id: string) => id !== selectedModel.id)].slice(0, 3);
-      savePreferences({
-        lastCodexProvider: activeProvider.id,
-        lastCodexModel: selectedModel.id,
-        recentModelsByProvider: { ...prefs.recentModelsByProvider, [activeProvider.id]: updatedRecent },
-      });
-    }
+    const prevRecent = prefs.recentModelsByProvider?.[activeProvider.id] ?? [];
+    const updatedRecent = [selectedModel.id, ...prevRecent.filter((id: string) => id !== selectedModel.id)].slice(0, 3);
+    savePreferences({
+      lastClaudeAppProvider: activeProvider.id,
+      lastClaudeAppModel: selectedModel.id,
+      recentModelsByProvider: { ...prefs.recentModelsByProvider, [activeProvider.id]: updatedRecent },
+    });
 
     console.log(`\n${pc.green('✔')} Proxy started on port ${proxyHandle.port}`);
     if (deploymentModeChange?.previous === '1p') {

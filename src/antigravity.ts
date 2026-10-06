@@ -28,6 +28,8 @@ import {
 } from './antigravity/launch-ide.js';
 import { pickLocalModel } from './prompts.js';
 import { pickerRefresh } from './picker-refresh.js';
+import { pickFavoriteStartModel } from './codex/favorites-launch.js';
+import { isEnterpriseAuthTier, readAgyOnboardingAuthMethod, type DetectedAuthTier } from './antigravity/account-guardrail.js';
 import { getAntigravityDebugLogPath, makeTraceLogger } from './trace-log.js';
 import { providerSelectOption, formatModelLabel, relayIntro, relayOutro } from './ui.js';
 import { homedir } from 'node:os';
@@ -36,7 +38,7 @@ import type { FavoriteModel, UserPreferences, LocalProvider, LocalProviderModel 
 import type { CatalogFixture } from './antigravity/types.js';
 
 const AGY_FAVORITES_PROVIDER_ID = '__relay_agy_favorites__';
-const AGY_FAVORITES_PROVIDER_LABEL = '★ Favorites';
+const AGY_FAVORITES_PROVIDER_LABEL = '⭐ Favorites';
 
 /** True when child args already select a model (--model or --model=). */
 export function agyArgsIncludeModelFlag(args: string[]): boolean {
@@ -71,15 +73,6 @@ export function formatAgyCapacityWarning(maxEntries: number, skippedFavoriteCoun
 
 function isInteractiveTerminal(): boolean {
   return !!process.stdin.isTTY && !!process.stdout.isTTY;
-}
-
-function resolveFavoriteModel(
-  favorite: FavoriteModel,
-  allProviders: LocalProvider[],
-): { provider: LocalProvider; model: LocalProviderModel } | null {
-  const provider = allProviders.find(candidate => candidate.id === favorite.providerId);
-  const model = provider?.models.find(candidate => candidate.id === favorite.modelId);
-  return provider && model ? { provider, model } : null;
 }
 
 function normalizeAgyModelSelector(value: string): string {
@@ -118,40 +111,6 @@ export function resolveAntigravityBootModel(
       ? `Model selector is ambiguous: ${modelSelector}.${candidateText}`
       : `Model not found: ${modelSelector} on provider ${provider.name}.${candidateText}`,
   };
-}
-
-async function pickAntigravityFavoriteLaunchModel(
-  favorites: FavoriteModel[],
-  allProviders: LocalProvider[],
-): Promise<{ provider: LocalProvider; model: LocalProviderModel } | null> {
-  const resolved = favorites
-    .map(favorite => resolveFavoriteModel(favorite, allProviders))
-    .filter((entry): entry is { provider: LocalProvider; model: LocalProviderModel } => entry !== null);
-
-  if (resolved.length === 0) {
-    p.log.warn('No favorites are available for Antigravity.');
-    p.log.info(pc.dim('Manage them with `relay-ai favorites`.'));
-    return null;
-  }
-
-  const picked = await p.select<string>({
-    message: 'Launch from favorites',
-    options: resolved.map(({ provider, model }) => ({
-      value: `${provider.id}:${model.id}`,
-      label: formatModelLabel(model),
-      hint: provider.name,
-    })),
-    initialValue: `${resolved[0]!.provider.id}:${resolved[0]!.model.id}`,
-  });
-
-  if (p.isCancel(picked)) {
-    p.cancel('Cancelled.');
-    return null;
-  }
-
-  const [providerId, ...modelParts] = picked.split(':');
-  const modelId = modelParts.join(':');
-  return resolved.find(entry => entry.provider.id === providerId && entry.model.id === modelId) ?? null;
 }
 
 async function resolveAntigravityLaunch(
@@ -224,11 +183,26 @@ async function resolveAntigravityLaunch(
     }
 
     if (chosen === AGY_FAVORITES_PROVIDER_ID) {
-      const favoriteSelection = await pickAntigravityFavoriteLaunchModel(
-        prefs.favoriteModels ?? [],
+      const favoriteSelection = await pickFavoriteStartModel(
         allProviders,
+        prefs.favoriteModels ?? [],
+        'antigravity',
+        prefs,
+        async () => {
+          const fresh = providersForTarget(providersForPicker(await fetchProviderCatalog()), 'antigravity');
+          for (const lp of allProviders) {
+            const loaded = fresh.find(f => f.id === lp.id);
+            if (loaded) lp.models = loaded.models;
+          }
+        },
       );
+      if (favoriteSelection === 'back') {
+        currentInitialProvider = AGY_FAVORITES_PROVIDER_ID;
+        continue;
+      }
       if (!favoriteSelection) {
+        p.log.warn('No favorites are available for Antigravity.');
+        p.log.info(pc.dim('Manage them with `relay-ai favorites`.'));
         currentInitialProvider = AGY_FAVORITES_PROVIDER_ID;
         continue;
       }
@@ -354,6 +328,77 @@ export function waitForShutdown(
 }
 
 
+interface EnterpriseAuthRisk {
+  /** Which signal flagged the account. */
+  source: 'onboarding' | 'last-session';
+  userTier?: string;
+  project?: string;
+}
+
+/**
+ * Decide whether this Antigravity surface is likely signed in with a work /
+ * Gemini Enterprise account, using the freshest available signal:
+ *  - `agy`: the CLI's own onboarding cache (before launch); a consumer sign-in
+ *    there is trusted over any stale cached tier.
+ *  - app/IDE and fallbacks: the last auth tier observed by the gateway.
+ */
+function assessEnterpriseAccountRisk(tracePrefix: string, prefs: UserPreferences): EnterpriseAuthRisk | null {
+  if (tracePrefix === 'agy') {
+    const method = readAgyOnboardingAuthMethod();
+    if (method === 'gcp') return { source: 'onboarding' };
+    if (method === 'consumer') return null;
+  }
+  if (isEnterpriseAuthTier(prefs.antigravityAuthTier)) {
+    return {
+      source: 'last-session',
+      userTier: prefs.antigravityAuthTier,
+      project: prefs.antigravityAuthProject,
+    };
+  }
+  return null;
+}
+
+/** Warn about — and ask to confirm — using relay with a work/enterprise account. */
+async function confirmEnterpriseAccountUse(risk: EnterpriseAuthRisk, providerName: string): Promise<boolean> {
+  p.log.warn('Antigravity is signed in with a Gemini Enterprise (work) account.');
+  if (risk.source === 'last-session') {
+    p.log.warn(
+      `Last session used tier ${pc.bold(risk.userTier ?? 'unknown')}`
+      + (risk.project ? ` on project ${pc.bold(risk.project)}` : '')
+      + '.',
+    );
+  }
+  p.log.warn(`Relay routes this session's model calls to ${pc.bold(providerName)}; using a company account with relay may violate your organization's usage policy.`);
+  p.log.warn('To avoid this, sign in with a personal account in the Antigravity client (or set AGY_ACCOUNT) and relaunch.');
+
+  if (!isInteractiveTerminal()) {
+    p.log.warn('Continuing without confirmation (non-interactive session).');
+    return true;
+  }
+  const proceed = await p.confirm({
+    message: 'Proceed with the enterprise account?',
+    initialValue: false,
+  });
+  if (p.isCancel(proceed)) {
+    p.cancel('Cancelled.');
+    return false;
+  }
+  return Boolean(proceed);
+}
+
+/** Gateway callback: persist the observed tier and warn once when it is a work seat. */
+function reportDetectedAuthTier(info: DetectedAuthTier): void {
+  savePreferences({ antigravityAuthTier: info.userTier, antigravityAuthProject: info.project });
+  if (!isEnterpriseAuthTier(info.userTier)) return;
+  p.log.warn(
+    `Enterprise Gemini account detected in this session (${pc.bold(info.userTier)}`
+    + (info.project ? ` · project ${pc.bold(info.project)}` : '')
+    + ').',
+  );
+  p.log.warn("If this is your work account, using relay with it may violate your organization's usage policy.");
+  p.log.warn('Sign in with a personal account (or set AGY_ACCOUNT) and relaunch to avoid this; the next launch will ask for confirmation.');
+}
+
 async function runAntigravityCommand(
   intro: string,
   tracePrefix: string,
@@ -377,6 +422,11 @@ async function runAntigravityCommand(
   if (!selection) return 1;
 
   const { provider, model, allProviders } = selection;
+
+  const accountRisk = assessEnterpriseAccountRisk(tracePrefix, prefs);
+  if (accountRisk && !(await confirmEnterpriseAccountUse(accountRisk, provider.name))) {
+    return 1;
+  }
 
   const versionResult = opts.versionGuard
     ? readAntigravityCliVersion()
@@ -410,7 +460,12 @@ async function runAntigravityCommand(
   let gatewayHandle: CloudCodeGatewayHandle;
   try {
     // Only the IDE ('rows') borrows native Google slots; agy/app list every route as a Relay-only entry.
-    gatewayHandle = await startCloudCodeGateway(routeResult.routes, { trace, logFn, nativeSlots: effortMode === 'rows' });
+    gatewayHandle = await startCloudCodeGateway(routeResult.routes, {
+      trace,
+      logFn,
+      nativeSlots: effortMode === 'rows',
+      onAuthTierDetected: reportDetectedAuthTier,
+    });
   } catch (err) {
     p.log.error(`Failed to start Cloud Code gateway: ${err}`);
     return 1;

@@ -100,6 +100,10 @@ export function loadPreferences(): UserPreferences {
     lastGeminiModel: config.lastGeminiModel,
     lastAntigravityProvider: config.lastAntigravityProvider,
     lastAntigravityModel: config.lastAntigravityModel,
+    antigravityAuthTier: config.antigravityAuthTier,
+    antigravityAuthProject: config.antigravityAuthProject,
+    lastClaudeAppProvider: config.lastClaudeAppProvider,
+    lastClaudeAppModel: config.lastClaudeAppModel,
     lastClaudeTransparentMode: config.lastClaudeTransparentMode,
     recentModelsByProvider: config.recentModelsByProvider,
     favoriteModels: config.favoriteModels,
@@ -112,7 +116,7 @@ export function loadPreferences(): UserPreferences {
   };
 }
 
-export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBackend' | 'lastModel' | 'lastProvider' | 'lastCodexProvider' | 'lastCodexModel' | 'lastGeminiProvider' | 'lastGeminiModel' | 'lastAntigravityProvider' | 'lastAntigravityModel' | 'lastClaudeTransparentMode' | 'recentModelsByProvider' | 'favoriteModels' | 'codexSubagentModels' | 'appPathOverrides' | 'recentLaunchFolders'>>): void {
+export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBackend' | 'lastModel' | 'lastProvider' | 'lastCodexProvider' | 'lastCodexModel' | 'lastGeminiProvider' | 'lastGeminiModel' | 'lastAntigravityProvider' | 'lastAntigravityModel' | 'antigravityAuthTier' | 'antigravityAuthProject' | 'lastClaudeAppProvider' | 'lastClaudeAppModel' | 'lastClaudeTransparentMode' | 'recentModelsByProvider' | 'favoriteModels' | 'codexSubagentModels' | 'appPathOverrides' | 'recentLaunchFolders'>>): void {
   const config = readConfig();
   if (prefs.lastBackend !== undefined) config.lastBackend = prefs.lastBackend;
   if (prefs.lastModel !== undefined) config.lastModel = prefs.lastModel;
@@ -123,6 +127,10 @@ export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBacken
   if (prefs.lastGeminiModel !== undefined) config.lastGeminiModel = prefs.lastGeminiModel;
   if (prefs.lastAntigravityProvider !== undefined) config.lastAntigravityProvider = prefs.lastAntigravityProvider;
   if (prefs.lastAntigravityModel !== undefined) config.lastAntigravityModel = prefs.lastAntigravityModel;
+  if (prefs.antigravityAuthTier !== undefined) config.antigravityAuthTier = prefs.antigravityAuthTier;
+  if (prefs.antigravityAuthProject !== undefined) config.antigravityAuthProject = prefs.antigravityAuthProject;
+  if (prefs.lastClaudeAppProvider !== undefined) config.lastClaudeAppProvider = prefs.lastClaudeAppProvider;
+  if (prefs.lastClaudeAppModel !== undefined) config.lastClaudeAppModel = prefs.lastClaudeAppModel;
   if (prefs.lastClaudeTransparentMode !== undefined) config.lastClaudeTransparentMode = prefs.lastClaudeTransparentMode;
   if (prefs.recentModelsByProvider !== undefined) config.recentModelsByProvider = prefs.recentModelsByProvider;
   if (prefs.favoriteModels !== undefined) config.favoriteModels = prefs.favoriteModels;

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.15.10] - 2026-10-06
+
+### Added
+
+- **Enterprise-account warning before Antigravity sessions.** Relay now detects when an Antigravity surface is signed in with a Gemini Enterprise (work) account — from the CLI's own onboarding cache before launch, and from the `entitlement.userTier` carried in gateway traffic once a session starts — and asks before proceeding: `Antigravity is signed in with a Gemini Enterprise (work) account. Relay routes this session's model calls to <provider>; using a company account with relay may violate your organization's usage policy. Proceed?` (default: No). The warning explains how to avoid it (sign in with a personal account in the client, or set `AGY_ACCOUNT`), the observed tier/project is remembered so the next launch gates up front even without the cache, and non-interactive launches log the warning and continue rather than blocking. The app and IDE surfaces use Relay-owned isolated profiles, but the same detection runs on their gateway traffic. Nothing here reads tokens or credentials.
+
+### Changed
+
+- **The redundant "Launch \uXXXX? Yes/No" confirmation is gone from every interactive launcher** — Claude Code, Codex CLI, ChatGPT desktop app, Claude Desktop app, Gemini CLI, Antigravity CLI, and Antigravity IDE. After picking a provider and model you're already committed; relay now launches immediately. This affects only the interactive wizard: non-interactive and flag-driven launches (`--provider`/`--model`, `--trace`, server quick-start, JSONL/NDJSON `-p` mode) behave exactly as before.
+- **Picking "⭐ Favorites Catalog" now opens the same "Which model?" picker you get for a provider — scoped to your favorites.** Recently used favorites appear first (marked `recent`), followed by `Browse all models →` (with search once the list is long), `↻ Refresh models`, and `← Go back` to the provider list. The model you launch becomes the starting model for the favorites switch catalog, and — per agent — the next Favorites launch preselects it: `lastCodexProvider`/`lastCodexModel` (Codex CLI and ChatGPT desktop app), `lastGeminiProvider`/`lastGeminiModel`, `lastAntigravityProvider`/`lastAntigravityModel`, `lastProvider`/`lastModel` (Claude Code), and dedicated `lastClaudeAppProvider`/`lastClaudeAppModel` keys for the Claude Desktop app. This also replaces the brief "launches straight on your last-used model" behavior from the unreleased 0.15.10 build. The favorites entry is now shown in Codex mixed mode ("Relay + native models") as well, so every interactive launcher offers it.
+- **All Relay timestamps now use the system's local time instead of UTC.** Terminal `[relay-ai] model: message` stream/error lines and every `--trace` debug log (`claude`/`proxy`/`codex-proxy`/`gemini`/`provider`/`ui`/`server`/`antigravity`) render as `YYYY-MM-DD HH:MM:SS`, so what you see matches the clock on your wall. Timestamped artifacts that are written to disk and parsed — session locks (`startedAt`), registry metadata (`fetched_at`, `pricingCacheAt`, `addedAt`, `validatedAt`, `importedAt`, `capturedAt`), the route audit JSONL, and Codex proxy event stream — use local ISO-8601 with an explicit offset (`2026-10-05T14:23:11.204-04:00`), keeping them unambiguous across timezones and DST while still parsing with `Date.parse`. Previously every timestamp was UTC ISO-8601 (`2026-10-05T14:23:11.204Z`), which made it impossible to tell when a live error actually happened without doing timezone math.
+
+### Fixed
+
+- **The Claude Desktop app's favorites picker now remembers its last-used model.** Claude Desktop previously wrote its selection to the shared Codex slots, so launches from the app could overwrite the Codex CLI / ChatGPT desktop app's remembered model, and its own favorites launches never recorded the last-used favorite. It now uses dedicated `lastClaudeAppProvider`/`lastClaudeAppModel` preferences, written on every launch including favorites, so the favorites picker preselects the model you actually used last in Claude Desktop.
+
 ## [0.15.9] - 2026-10-05
 
 ### Fixed

@@ -1,6 +1,7 @@
 // provider-auth.ts — relay-ai providers auth (native device-code / browser OAuth)
 
 import { printOAuthStepsPanel, confirmSubscriptionOAuthRisk } from '../ui.js';
+import { localIsoTimestamp } from '../trace-log.js';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import open from 'open';
@@ -237,7 +238,7 @@ async function upsertOAuthProvider(providerId: string, cred: OpencodeOAuthCreden
         url: template.defaultBaseUrl ?? '',
         ...(template.headers ? { headers: template.headers } : {}),
       },
-      addedAt: new Date().toISOString(),
+      addedAt: localIsoTimestamp(),
     };
   } else {
     entry = { ...entry, authType: 'oauth', authRef, templateId: entry.templateId ?? templateId };

@@ -3,7 +3,6 @@ import * as p from '@clack/prompts';
 import pc from 'picocolors';
 import type { UserPreferences, ConflictInfo, LocalProvider, LocalProviderModel } from './types.js';
 import {
-  confirmLaunchMessage,
   fmtModel,
   modelSelectOption,
   navOption,
@@ -392,16 +391,6 @@ export async function pickLocalModel(
   noteEnvConflicts(conflicts);
 
   const modelLabel = formatModelLabel(selectedModel);
-  const confirmed = await p.confirm({
-    message: confirmLaunchMessage('Claude Code', modelLabel, selectedModel.id, provider.name),
-    initialValue: true,
-  });
-
-  if (p.isCancel(confirmed) || !confirmed) {
-    p.cancel('Cancelled.');
-    return null;
-  }
-
   relayOutro('Launching', fmtModel(modelLabel, selectedModel.id));
   return selectedModel;
 }

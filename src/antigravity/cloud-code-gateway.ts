@@ -29,6 +29,7 @@ import {
   buildListExperimentsResponse,
 } from './catalog.js';
 import { extractConversationId, openCodeGoHeaders } from '../opencode-session.js';
+import { detectAuthTierInBody, type DetectedAuthTier } from './account-guardrail.js';
 import loadCodeAssistFixture from './fixtures/loadCodeAssist.json' with { type: 'json' };
 import catalogFixtureRaw from './fixtures/fetchAvailableModels.json' with { type: 'json' };
 
@@ -47,6 +48,11 @@ export interface GatewayOptions {
   logFn?: (msg: string) => void;
   /** Put the first routes on native slots (default true; agy passes false — see RelaySlotOptions). */
   nativeSlots?: boolean;
+  /**
+   * Called once, with the first request that carries a Gemini auth tier
+   * (`entitlement.userTier`), so launch surfaces can warn about work accounts.
+   */
+  onAuthTierDetected?: (info: DetectedAuthTier) => void;
 }
 
 type HelperRoutePolicy = 'launch' | 'launch-or-active';
@@ -127,6 +133,7 @@ export async function startCloudCodeGateway(
   }
 
   let activeRoute: AntigravityRoute | undefined;
+  let authTierReported = false;
   const launchRoute = selectedSlotRoutes[0]?.route ?? routes[0];
   const resolveRouteForModel = (model: string | undefined): AntigravityRoute | undefined => {
     if (!model) return undefined;
@@ -170,6 +177,22 @@ export async function startCloudCodeGateway(
       const contentType = (req.headers['content-type'] ?? '').toLowerCase();
       const lowerUrl = url.toLowerCase();
 
+      let parsed: Record<string, unknown> | undefined;
+      try { parsed = JSON.parse(bodyStr) as Record<string, unknown>; } catch {}
+
+      // Work-account guardrail: report the session's Gemini auth tier once.
+      if (!authTierReported && parsed) {
+        const authTier = detectAuthTierInBody(parsed);
+        if (authTier) {
+          authTierReported = true;
+          try {
+            opts.onAuthTierDetected?.(authTier);
+          } catch {
+            // A warning callback must never break the gateway.
+          }
+        }
+      }
+
       if (trace) {
         log(`[gateway] ${method} ${url}`);
         log(`[gateway]   content-type: ${contentType}`);
@@ -187,9 +210,6 @@ export async function startCloudCodeGateway(
         });
         return;
       }
-
-      let parsed: Record<string, unknown> | undefined;
-      try { parsed = JSON.parse(bodyStr) as Record<string, unknown>; } catch {}
 
       if (trace && parsed) {
         const preview = JSON.stringify(parsed, function (key, value) {

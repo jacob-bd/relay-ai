@@ -1,6 +1,7 @@
 // src/registry/add-template.ts — add a provider from a builtin template
 
 import { deleteProviderCredential, saveProviderCredential } from '../env.js';
+import { localIsoTimestamp } from '../trace-log.js';
 import { isSdkMigratedNpm } from '../provider-factory.js';
 import type { ProviderTemplate } from '../provider-templates.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
@@ -139,7 +140,7 @@ export async function addProviderFromTemplate(
     };
   }
 
-  const now = new Date().toISOString();
+  const now = localIsoTimestamp();
   const pricingCache = loadPricingCache();
   const pricedModels = enrichModelsForProviderPricing(
     usableModels.map(m => ({ ...m, apiUrl: fetched.baseUrl })),

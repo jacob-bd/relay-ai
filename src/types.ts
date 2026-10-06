@@ -96,8 +96,15 @@ export interface UserPreferences {
   lastCodexModel?: string;
   lastGeminiProvider?: string;
   lastGeminiModel?: string;
+  /** Last Antigravity provider/model launched, used to preselect pickers. */
   lastAntigravityProvider?: string;
   lastAntigravityModel?: string;
+  /** Last Gemini auth tier observed in Antigravity gateway traffic (policy guardrail). */
+  antigravityAuthTier?: string;
+  antigravityAuthProject?: string;
+  /** Last model used by the Claude Desktop app, kept separate from Codex tools. */
+  lastClaudeAppProvider?: string;
+  lastClaudeAppModel?: string;
   /** Last interactive answer for keeping native Anthropic models in Claude Code. */
   lastClaudeTransparentMode?: boolean;
   recentModelsByProvider?: Record<string, string[]>;

@@ -6,7 +6,7 @@ import {
   CLINE_PASS_VALIDATION_URL,
   formatClineRuntimeCredential,
 } from '../cline-pass.js';
-import { getProviderDebugLogPath, writeSecureLogLine } from '../trace-log.js';
+import {getProviderDebugLogPath, writeSecureLogLine, localTimestamp } from '../trace-log.js';
 import {
   filterModelsByAvailability,
   type ModelAvailabilityProbe,
@@ -39,7 +39,7 @@ function trace(message: string): void {
   if (process.env.RELAY_AI_TRACE !== '1') return;
   writeSecureLogLine(
     getProviderDebugLogPath(),
-    `${new Date().toISOString()} ${message}`,
+    `${localTimestamp()} ${message}`,
   );
 }
 

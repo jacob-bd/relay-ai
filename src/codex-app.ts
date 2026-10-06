@@ -8,14 +8,14 @@ import { resolveApiKey, readFromCredentialStore } from './env.js';
 import { resolveOrCollectApiKey } from './key-setup.js';
 import { startCodexProxy } from './codex-proxy.js';
 import type { CodexProxyHandle, CodexProxyRoute } from './codex-proxy.js';
-import { getCodexProxyDebugLogPath, printTraceLog } from './trace-log.js';
+import {getCodexProxyDebugLogPath, printTraceLog, localIsoTimestamp } from './trace-log.js';
 import { buildAppCatalogFile, formatCodexModelLabel, serializeCatalog } from './codex/catalog.js';
 import { captureNativeCodexCatalog } from './codex/native-catalog.js';
 import { runCodexCommandSync } from './codex/process.js';
 import { buildCodexMixedLaunchPlan, prepareCodexMixedRelayRoutes } from './codex/mixed-launch.js';
 import { supportsMultiAgentV2 } from './codex/multi-agent.js';
 import { mixedProxyBaseUrl } from './codex/routing.js';
-import { pickCodexProvider, pickCodexModel, pickCodexLaunchMode, confirmCodexLaunch } from './codex/prompts.js';
+import { pickCodexProvider, pickCodexModel, pickCodexLaunchMode } from './codex/prompts.js';
 import {
   codexCompatibleProviders,
   resolveCodexRoute,
@@ -70,7 +70,7 @@ import { resolveContextWindow } from './context-window.js';
 import {
   buildCodexProxyRoutesFromResolved,
   assertConfiguredCodexSubagentsResolved,
-  pickFavoriteStartingModel,
+  pickFavoriteStartModel,
   resolveBootSelection,
   resolveCodexFavorites,
   resolveCodexMixedModels,
@@ -182,7 +182,7 @@ ${pc.bold('Options:')}
   --vertex     Use Claude models through Google Vertex AI
   --with-native Load native Codex models beside Relay models for this launch
   --relay-only Keep the current Relay-only launch behavior
-  --yes, -y     Approve a fully specified launch/restart without prompting
+  --yes, -y     Approve a fully specified launch and skip restart prompts
   --restore    Restore Codex config after an interrupted app session
   --config     Preview the generated Codex app configuration without launching
   --trace      Write proxy debug logs to ~/.relay-ai/logs/ and show errors on exit
@@ -354,7 +354,7 @@ async function runCodexAppVertexLaunch(configOnly: boolean, trace = false): Prom
 
     writeAppSessionLock({
       pid: process.pid,
-      startedAt: new Date().toISOString(),
+      startedAt: localIsoTimestamp(),
       configPath: getCodexConfigPath(),
       catalogPaths: [catalogPath],
       restoreStatePath: getAppRestoreStatePath(),
@@ -501,6 +501,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
     mixedMode = selectedLaunchMode === 'mixed';
   }
   const favoritesActive = favorites.length > 0 && !mixedMode;
+  const favoritesPickable = favorites.length > 0;
 
   if (favoritesActive && !configOnly) {
     p.log.info(
@@ -536,20 +537,34 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
       ? prefs.lastCodexProvider
       : compatible[0]!.id;
     while (true) {
-      const pickedProvider = await pickCodexProvider(compatible, prefs, favoritesActive, currentInitialProvider);
+      const pickedProvider = await pickCodexProvider(compatible, prefs, favoritesPickable, currentInitialProvider);
       if (!pickedProvider) return 0;
       
       if (pickedProvider === '__favorites__') {
-        const favoritePick = await pickFavoriteStartingModel(
+        const favoriteStart = await pickFavoriteStartModel(
           compatible,
           favorites,
           'codex-app',
-          'Codex App',
+          prefs,
+          async () => {
+            const fresh = codexCompatibleProviders(providersForPicker(await fetchProviderCatalog({ agent: 'codex-app' })), 'codex-app');
+            for (const lp of compatible) {
+              const loaded = fresh.find(f => f.id === lp.id);
+              if (loaded) lp.models = loaded.models;
+            }
+          },
           providerForCodexPicker,
         );
-        if (favoritePick === 'cancelled' || favoritePick === 'unavailable') return 0;
-        activeProvider = favoritePick.provider;
-        selectedModel = favoritePick.model;
+        if (favoriteStart === 'back') {
+          currentInitialProvider = '__favorites__';
+          continue;
+        }
+        if (!favoriteStart) {
+          p.log.warn('No saved Codex App favorites are currently available.');
+          return 0;
+        }
+        activeProvider = favoriteStart.provider;
+        selectedModel = favoriteStart.model;
         break;
       } else {
         activeProvider = providerForCodexPicker(pickedProvider as LocalProvider);
@@ -642,20 +657,6 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
       console.error(pc.red(`\nMixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}`));
       console.error('Use relay-ai codex-app --relay-only to continue with Relay models.');
       return 1;
-    }
-  }
-
-  if (!configOnly && !opts.assumeYes) {
-    const modelLabel = formatCodexModelLabel(selectedModel);
-    const confirmed = await confirmCodexLaunch(
-      activeProvider.name,
-      modelLabel,
-      selectedModel.id,
-      appRoute,
-    );
-    if (!confirmed) {
-      cloudCodeBackend?.handle.close();
-      return 0;
     }
   }
 
@@ -854,7 +855,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
 
     writeAppSessionLock({
       pid: process.pid,
-      startedAt: new Date().toISOString(),
+      startedAt: localIsoTimestamp(),
       configPath: getCodexConfigPath(),
       catalogPaths: [catalogPath],
       restoreStatePath: getAppRestoreStatePath(),

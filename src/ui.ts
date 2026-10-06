@@ -172,17 +172,6 @@ export function navOption(value: string, label: string, hint = '') {
   return { value, label: pc.cyan(label), hint };
 }
 
-export function confirmLaunchMessage(
-  target: string,
-  modelLabel: string,
-  modelId: string,
-  providerName: string,
-  via?: string,
-): string {
-  const viaSuffix = via ? ` ${pc.dim('(')}${via}${pc.dim(')')}` : '';
-  return `Launch ${pc.bold(target)} · ${fmtModel(modelLabel, modelId)} ${pc.dim('via')} ${fmtProvider(providerName)}?${viaSuffix}`;
-}
-
 export function logActiveModel(modelLabel: string, modelId: string): void {
   p.log.success(`${pc.bold('Active model:')} ${fmtModel(modelLabel, modelId)}`);
 }

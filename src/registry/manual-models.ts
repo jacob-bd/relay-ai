@@ -1,5 +1,6 @@
 import { resolveProviderCredential } from '../env.js';
 import { loadRegistry, saveRegistry } from './io.js';
+import { localIsoTimestamp } from '../trace-log.js';
 import { contextWindowError, getProviderModels, modelIdError, supportsManualModels } from './provider-models.js';
 import { validateManualModel } from './validate-manual-model.js';
 import { validateCustomEndpointUrl } from './url-security.js';
@@ -51,7 +52,7 @@ export async function addManualModel(input: AddManualModelInput): Promise<Manual
     const model: ManualModel = {
       id, name: input.displayName?.trim() || id, upstreamModelId: id,
       modelFormat: provider.api.npm === '@ai-sdk/anthropic' ? 'anthropic' : 'openai',
-      source: 'manual', validatedAt: new Date().toISOString(),
+      source: 'manual', validatedAt: localIsoTimestamp(),
       ...(input.contextWindow === undefined ? {} : { contextWindow: input.contextWindow, contextWindowSource: 'user' }),
     };
     current.manualModels = [...(current.manualModels ?? []), model];

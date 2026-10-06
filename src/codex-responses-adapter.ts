@@ -1,5 +1,6 @@
 // OpenAI Responses API (/v1/responses) ↔ Vercel AI SDK. One turn per request; Codex owns the tool loop.
 import { createHash } from 'node:crypto';
+import { localTimestamp } from './trace-log.js';
 import { streamText, generateText, tool, jsonSchema } from 'ai';
 import type { LanguageModel, ModelMessage, ToolSet, UserContent } from 'ai';
 import {
@@ -1111,7 +1112,7 @@ export async function writeResponsesStream(
         // this case a timed-out request would finalize as status:"completed" and
         // Codex would treat dead-connection silence as a valid empty answer.
         const msg = `stream aborted: ${part.reason ?? 'no data received from provider'}`;
-        process.stderr.write(`[relay-ai] ${modelId}: ${msg}\n`);
+        process.stderr.write(`[relay-ai] ${localTimestamp()} ${modelId}: ${msg}\n`);
         onDone?.({
           reasoningChars: reasoningText.length,
           reasoningPreview: reasoningText.slice(0, 200),
@@ -1142,7 +1143,7 @@ export async function writeResponsesStream(
           (part.error && typeof part.error === 'object' &&
             ((part.error as { statusCode?: number }).statusCode === 429 ||
              (part.error as { lastError?: { statusCode?: number } }).lastError?.statusCode === 429));
-        process.stderr.write(`[relay-ai] ${modelId}: ${msg}\n`);
+        process.stderr.write(`[relay-ai] ${localTimestamp()} ${modelId}: ${msg}\n`);
         onDone?.({
           reasoningChars: reasoningText.length,
           reasoningPreview: reasoningText.slice(0, 200),

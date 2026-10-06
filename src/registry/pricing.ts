@@ -20,6 +20,7 @@ import {
 import { dirname, join } from 'node:path';
 import bundledPricing from '../data/pricing-cache.json';
 import { getAppHome } from '../paths.js';
+import { localIsoTimestamp } from '../trace-log.js';
 import type { CachedModel } from './types.js';
 import { loadRegistry, saveRegistry } from './io.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
@@ -271,7 +272,7 @@ export function applyPricingToRegistryProviders(
     }
   }
   if (changed) {
-    registry.pricingCacheAt = cache.generated_at ?? new Date().toISOString();
+    registry.pricingCacheAt = cache.generated_at ?? localIsoTimestamp();
   }
   return changed;
 }

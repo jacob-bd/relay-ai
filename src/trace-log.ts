@@ -16,6 +16,38 @@ import { redactCodexTraceValue } from './codex/trace-redaction.js';
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
 
+/**
+ * Wall-clock timestamp in the server's local timezone, formatted
+ * `YYYY-MM-DD HH:MM:SS` for human-facing log lines, so terminal and
+ * debug-log timestamps match the clock on your wall. Replaces
+ * `new Date().toISOString()` (UTC) in every text log line Relay writes.
+ * Machine-parsed artifacts use `localIsoTimestamp()` instead, which keeps
+ * the local time but stays ISO-8601-parseable.
+ */
+export function localTimestamp(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/**
+ * Local-time ISO-8601 timestamp with explicit UTC offset
+ * (`2026-10-05T14:23:11.204-04:00`). Use for timestamped artifacts that are
+ * written to disk and may be parsed (`Date.parse`), compared, or read by
+ * tools outside Relay: session locks, registry caches, audit JSONL. Carries
+ * the same local wall-clock time as `localTimestamp()` but stays unambiguous
+ * across timezones, DST transitions, and non-Node parsers.
+ */
+export function localIsoTimestamp(date: Date = new Date()): string {
+  const offsetMin = -date.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? '+' : '-';
+  const abs = Math.abs(offsetMin);
+  const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+  const mm = String(abs % 60).padStart(2, '0');
+  const local = new Date(date.getTime() + offsetMin * 60_000);
+  return `${local.toISOString().slice(0, 23)}${sign}${hh}:${mm}`;
+}
+
 export const CLAUDE_DEBUG_LOG = 'claude-debug.log';
 export const PROXY_DEBUG_LOG = 'proxy-debug.log';
 export const CODEX_PROXY_DEBUG_LOG = 'codex-proxy-debug.log';
@@ -119,7 +151,7 @@ export function prepareProviderTraceLog(): string {
 /** Reset log file and return a writer that redacts secrets. */
 export function makeTraceLogger(logPath: string): (message: string) => void {
   resetTraceLog(logPath);
-  return (message: string) => writeSecureLogLine(logPath, `${new Date().toISOString()} ${message}`);
+  return (message: string) => writeSecureLogLine(logPath, `${localTimestamp()} ${message}`);
 }
 
 /** Remove prior session log so --trace shows only the latest run. */

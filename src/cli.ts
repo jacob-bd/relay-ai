@@ -33,7 +33,7 @@ import {
   pickGlobalFavoriteModel,
 } from './favorites-picker.js';
 import { favoriteProviderDisplayName } from './favorite-provider-display.js';
-import { resolveFirstAvailableFavorite } from './favorites-resolver.js';
+import { pickFavoriteStartModel } from './codex/favorites-launch.js';
 import { runProvidersCommand, providersHelpText } from './providers-command.js';
 import { runCodexCommand, codexHelpText } from './codex.js';
 import { runGeminiCommand, geminiHelpText } from './gemini.js';
@@ -1363,30 +1363,29 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       const providerChoice = chosen as string;
 
       if (providerChoice === '__favorites__') {
-        const available: Array<{ provider: LocalProvider; model: LocalProviderModel }> = [];
-        for (const fav of favorites) {
-          const prov = allProviders.find(lp => lp.id === fav.providerId);
-          const mod = prov?.models.find(m => m.id === fav.modelId);
-          if (prov && mod) available.push({ provider: prov, model: mod });
+        const favStart = await pickFavoriteStartModel(
+          allProviders,
+          favorites,
+          'claude',
+          prefs,
+          async () => {
+            const fresh = providersForTarget(providersForPicker(await fetchProviderCatalog()), 'claude');
+            for (const lp of allProviders) {
+              const loaded = fresh.find(f => f.id === lp.id);
+              if (loaded) lp.models = loaded.models;
+            }
+          },
+        );
+        if (favStart === 'back') {
+          currentInitialProvider = '__favorites__';
+          continue;
         }
-        if (available.length === 0) {
+        if (!favStart) {
           p.log.warn('No saved favorites are currently available.');
           return 0;
         }
-        const favOptions = available.map((f, i) => ({
-          value: String(i),
-          label: `${f.model.name || f.model.id} — ${f.provider.name}`,
-          hint: f.model.id,
-        }));
-        const pickedIdx = await p.select<string>({
-          message: 'Starting model?',
-          options: favOptions,
-          initialValue: '0',
-        });
-        if (p.isCancel(pickedIdx)) { p.cancel('Cancelled.'); return 0; }
-        const sel = available[Number(pickedIdx)]!;
-        activeProvider = sel.provider;
-        selectedModel = sel.model;
+        activeProvider = favStart.provider;
+        selectedModel = favStart.model;
         if (!dryRun) recordLaunchSelection('claude', activeProvider.id, selectedModel.id, prefs);
         break;
       } else {

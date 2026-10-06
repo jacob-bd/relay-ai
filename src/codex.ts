@@ -11,7 +11,7 @@ import type { CodexProxyHandle } from './codex-proxy.js';
 import { buildCatalogFile, formatCodexModelLabel, serializeCatalog } from './codex/catalog.js';
 import { buildCodexMixedProfileToml, buildCodexProfileToml, getCatalogOutputPath, getProfileOutputPath } from './codex/profile.js';
 import { findCodexBinary, buildCodexChildEnv, launchCodex } from './codex/launch.js';
-import { pickCodexProvider, pickCodexModel, pickCodexLaunchMode, confirmCodexLaunch, rejectManagedFlags } from './codex/prompts.js';
+import { pickCodexProvider, pickCodexModel, pickCodexLaunchMode, rejectManagedFlags } from './codex/prompts.js';
 import {
   codexCliIntro,
   codexCliOutro,
@@ -52,7 +52,7 @@ import {
 import {
   buildCodexProxyRoutesFromResolved,
   assertConfiguredCodexSubagentsResolved,
-  pickFavoriteStartingModel,
+  pickFavoriteStartModel,
   resolveCodexMixedModels,
   resolveCodexFavorites,
 } from './codex/favorites-launch.js';
@@ -69,7 +69,7 @@ import {
   partitionAndStartCloudCodeBackend,
   type CloudCodeBackend,
 } from './cloud-code-backend.js';
-import { getCodexProxyDebugLogPath, printTraceLog } from './trace-log.js';
+import {getCodexProxyDebugLogPath, printTraceLog, localIsoTimestamp } from './trace-log.js';
 import { setAgentStdoutMode, isAgentStdoutMode } from './agent-io.js';
 import {
   findProviderAndModel,
@@ -315,7 +315,7 @@ async function runCodexVertexLaunch(
 
     writeSessionLock({
       pid: process.pid,
-      startedAt: new Date().toISOString(),
+      startedAt: localIsoTimestamp(),
       profilePath,
       catalogPaths: [catalogPath],
       proxyPort,
@@ -473,6 +473,7 @@ export async function runCodexCommand(
     mixedMode = selectedLaunchMode === 'mixed';
   }
   const favoritesActive = favorites.length > 0 && !launchPlan.skip && !mixedMode;
+  const favoritesPickable = favorites.length > 0 && !launchPlan.skip;
   if (favoritesActive && !configOnly) {
     p.log.info(
       `Favorites mode active — Codex picker will show ${favorites.length + 1} models (1 starting + ${favorites.length} favorites).`,
@@ -500,20 +501,34 @@ export async function runCodexCommand(
       ? prefs.lastCodexProvider
       : compatible[0]!.id;
     while (true) {
-      const pickedProvider = await pickCodexProvider(compatible, prefs, favoritesActive, currentInitialProvider);
+      const pickedProvider = await pickCodexProvider(compatible, prefs, favoritesPickable, currentInitialProvider);
       if (!pickedProvider) return 0;
       
       if (pickedProvider === '__favorites__') {
-        const favoritePick = await pickFavoriteStartingModel(
+        const favoriteStart = await pickFavoriteStartModel(
           compatible,
           favorites,
           'codex',
-          'Codex',
+          prefs,
+          async () => {
+            const fresh = codexCompatibleProviders(providersForPicker(await fetchProviderCatalog({ agent: 'codex' })), 'codex');
+            for (const lp of compatible) {
+              const loaded = fresh.find(f => f.id === lp.id);
+              if (loaded) lp.models = loaded.models;
+            }
+          },
           provider => ({ ...provider, models: routableModelsForProvider(provider, 'codex') }),
         );
-        if (favoritePick === 'cancelled' || favoritePick === 'unavailable') return 0;
-        activeProvider = favoritePick.provider;
-        selectedModel = favoritePick.model;
+        if (favoriteStart === 'back') {
+          currentInitialProvider = '__favorites__';
+          continue;
+        }
+        if (!favoriteStart) {
+          p.log.warn('No saved Codex favorites are currently available.');
+          return 0;
+        }
+        activeProvider = favoriteStart.provider;
+        selectedModel = favoriteStart.model;
         break;
       } else {
         activeProvider = pickedProvider as LocalProvider;
@@ -591,17 +606,6 @@ export async function runCodexCommand(
       console.error('Use relay-ai codex --relay-only to continue with Relay models.');
       return 1;
     }
-  }
-
-  if (!configOnly && !(launchPlan.skip && launchPlan.target)) {
-    const modelLabel = formatCodexModelLabel(selectedModel);
-    const confirmed = await confirmCodexLaunch(
-      activeProvider.name,
-      modelLabel,
-      selectedModel.id,
-      route,
-    );
-    if (!confirmed) return 0;
   }
 
   let proxyHandle: CodexProxyHandle | null = null;
@@ -755,7 +759,7 @@ export async function runCodexCommand(
 
     writeSessionLock({
       pid: process.pid,
-      startedAt: new Date().toISOString(),
+      startedAt: localIsoTimestamp(),
       profilePath,
       catalogPaths: [catalogPath],
       proxyPort,

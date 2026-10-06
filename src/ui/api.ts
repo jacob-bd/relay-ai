@@ -1,5 +1,6 @@
 import { getSupportedApps, getSupportedApp, getRelayLaunchCommand, detectApp } from '../native-launcher.js';
 import { exec } from 'node:child_process';
+import { localTimestamp } from '../trace-log.js';
 import { promisify } from 'node:util';
 
 const execAsync = promisify(exec);
@@ -123,7 +124,7 @@ function sendCors(req: IncomingMessage, res: ServerResponse): void {
 
 function traceUi(opts: UiApiOptions | undefined, message: string): void {
   if (!opts?.trace || !opts.traceLogPath) return;
-  writeSecureLogLine(opts.traceLogPath, `${new Date().toISOString()} ${message}`);
+  writeSecureLogLine(opts.traceLogPath, `${localTimestamp()} ${message}`);
 }
 
 function notifyServerLifecycle(opts: UiApiOptions, event: UiServerLifecycleEvent): void {

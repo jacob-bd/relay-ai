@@ -1,6 +1,7 @@
 // src/registry/builtins.ts — Zen/Go registry stub entries (models fetched live)
 
 import type { RegistryProvider, RegistrySubscriptionFilter } from './types.js';
+import { localIsoTimestamp } from '../trace-log.js';
 
 export function zenRegistryStub(subscriptionFilter?: RegistrySubscriptionFilter): RegistryProvider {
   return {
@@ -11,7 +12,7 @@ export function zenRegistryStub(subscriptionFilter?: RegistrySubscriptionFilter)
     authRef: 'keyring:global:opencode',
     api: {},
     ...(subscriptionFilter ? { subscriptionFilter } : {}),
-    addedAt: new Date().toISOString(),
+    addedAt: localIsoTimestamp(),
   };
 }
 
@@ -23,6 +24,6 @@ export function goRegistryStub(): RegistryProvider {
     enabled: true,
     authRef: 'keyring:global:opencode',
     api: {},
-    addedAt: new Date().toISOString(),
+    addedAt: localIsoTimestamp(),
   };
 }

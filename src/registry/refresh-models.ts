@@ -1,6 +1,7 @@
 // src/registry/refresh-models.ts — user-initiated model list refresh per modelSource
 
 import { BACKENDS } from '../constants.js';
+import { localIsoTimestamp } from '../trace-log.js';
 import { getModels } from '../models.js';
 import { fetchAnthropicModels } from './fetch-anthropic-models.js';
 import { customEndpointKind } from './custom-endpoint.js';
@@ -564,7 +565,7 @@ function updateProviderCache(
 ): void {
   const idx = registry.providers.findIndex(p => p.id === providerId);
   if (idx < 0) return;
-  const now = new Date().toISOString();
+  const now = localIsoTimestamp();
   // A UI add/remove may have completed while the catalog request was in flight.
   const currentProviders = new Map(loadRegistry().providers.map(p => [p.id, p]));
   for (const entry of registry.providers) {
@@ -821,7 +822,7 @@ export async function refreshAllProviderModels(
         authType: 'none',
         subscriptionFilter: 'free',
         api: {},
-        addedAt: new Date().toISOString(),
+        addedAt: localIsoTimestamp(),
       });
       changed = true;
     }
@@ -835,7 +836,7 @@ export async function refreshAllProviderModels(
         authType: 'none',
         subscriptionFilter: 'go',
         api: {},
-        addedAt: new Date().toISOString(),
+        addedAt: localIsoTimestamp(),
       });
       changed = true;
     }

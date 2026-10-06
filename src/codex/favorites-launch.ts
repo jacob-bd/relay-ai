@@ -4,13 +4,9 @@ import { buildFavoritesList, resolveFavorite } from '../favorites-resolver.js';
 import type { ResolveContext, ResolvedFavorite } from '../favorites-resolver.js';
 import { shouldHideModel, type CompatibilityAgent } from '../model-compatibility.js';
 import { resolveCodexRoute } from './routing.js';
-import type { LocalProvider, LocalProviderModel, FavoriteModel } from '../types.js';
+import type { LocalProvider, LocalProviderModel, FavoriteModel, UserPreferences } from '../types.js';
 import { codexCliFavoritesSlug } from './favorites-catalog.js';
-
-export type FavoriteStartingModelResult =
-  | { provider: LocalProvider; model: LocalProviderModel }
-  | 'cancelled'
-  | 'unavailable';
+import { pickProviderModel } from '../prompts.js';
 
 export type BootSelectionResult =
   | { provider: LocalProvider; model: LocalProviderModel }
@@ -20,16 +16,28 @@ type ProviderWrapper = (provider: LocalProvider) => LocalProvider;
 
 const identityProvider: ProviderWrapper = provider => provider;
 
-export async function pickFavoriteStartingModel(
+/** Synthetic provider id used by the favorites starting-model picker. */
+const FAVORITES_PICKER_PROVIDER_ID = '__favorites_catalog__';
+const FAVORITES_PICKER_RECENT_CAP = 3;
+
+export interface FavoriteStartChoice {
+  provider: LocalProvider;
+  model: LocalProviderModel;
+}
+
+/**
+ * Resolve the currently available favorites for `agent`, in saved order.
+ * Providers are passed through `wrapProvider` so agent-specific views (e.g.
+ * Codex routable-model filtering) are applied before matching.
+ */
+export function listAvailableFavorites(
   compatible: LocalProvider[],
   favorites: FavoriteModel[],
   agent: CompatibilityAgent,
-  productLabel: string,
   wrapProvider: ProviderWrapper = identityProvider,
-): Promise<FavoriteStartingModelResult> {
+): FavoriteStartChoice[] {
   const favoriteProviders = compatible.map(wrapProvider);
-  const available: Array<{ provider: LocalProvider; model: LocalProviderModel }> = [];
-
+  const available: FavoriteStartChoice[] = [];
   for (const fav of favorites) {
     if (shouldHideModel({ providerId: fav.providerId, modelId: fav.modelId, agent })) {
       continue;
@@ -38,28 +46,90 @@ export async function pickFavoriteStartingModel(
     const model = provider?.models.find(m => m.id === fav.modelId);
     if (provider && model) available.push({ provider, model });
   }
+  return available;
+}
 
-  if (available.length === 0) {
-    p.log.warn(`No saved ${productLabel} favorites are currently available.`);
-    return 'unavailable';
+/**
+ * Recently used favorites, newest first, as picker keys (`provider::model`).
+ * Built from the per-provider recent lists so a favorite used on any tool is
+ * pre-selected the next time Favorites Catalog is opened.
+ */
+function favoriteRecentKeys(available: FavoriteStartChoice[], prefs: UserPreferences): string[] {
+  const ranks = new Map<string, number>();
+  for (const [providerId, modelIds] of Object.entries(prefs.recentModelsByProvider ?? {})) {
+    modelIds.forEach((modelId, index) => {
+      ranks.set(`${providerId}::${modelId}`, index);
+    });
   }
+  return available
+    .map((entry, index) => ({ key: `${entry.provider.id}::${entry.model.id}`, index }))
+    .filter(entry => ranks.has(entry.key))
+    .sort((a, b) => (ranks.get(a.key)! - ranks.get(b.key)!) || a.index - b.index)
+    .slice(0, FAVORITES_PICKER_RECENT_CAP)
+    .map(entry => entry.key);
+}
 
-  const favOptions = available.map((f, i) => ({
-    value: String(i),
-    label: `${f.model.name || f.model.id} — ${f.provider.name}`,
-    hint: f.model.id,
-  }));
-  const pickedIdx = await p.select<string>({
-    message: 'Starting model?',
-    options: favOptions,
-    initialValue: '0',
-  });
-  if (p.isCancel(pickedIdx)) {
-    p.cancel('Cancelled.');
-    return 'cancelled';
+/**
+ * Interactive starting-model picker for the Favorites Catalog: the same
+ * "Which model?" experience as a provider (recently used first, browse all with
+ * search, refresh, go back), but scoped to saved favorites. Returns the chosen
+ * provider + model, 'back' when the user wants to pick another provider, or
+ * null when no favorite is currently available.
+ */
+export async function pickFavoriteStartModel(
+  compatible: LocalProvider[],
+  favorites: FavoriteModel[],
+  agent: CompatibilityAgent,
+  prefs: UserPreferences,
+  refresh?: () => Promise<void>,
+  wrapProvider: ProviderWrapper = identityProvider,
+): Promise<FavoriteStartChoice | 'back' | null> {
+  const byKey = new Map<string, FavoriteStartChoice>();
+
+  const buildProvider = (): LocalProvider | null => {
+    byKey.clear();
+    const available = listAvailableFavorites(compatible, favorites, agent, wrapProvider);
+    if (available.length === 0) return null;
+    const models: LocalProviderModel[] = [];
+    for (const entry of available) {
+      const key = `${entry.provider.id}::${entry.model.id}`;
+      byKey.set(key, entry);
+      models.push({ ...entry.model, id: key });
+    }
+    return { id: FAVORITES_PICKER_PROVIDER_ID, name: 'Favorites Catalog', apiKey: 'favorites-picker', models };
+  };
+
+  while (true) {
+    const provider = buildProvider();
+    if (!provider) return null;
+    const recents = favoriteRecentKeys(
+      Array.from(byKey.values()),
+      prefs,
+    );
+    const pickerPrefs: UserPreferences = {
+      ...prefs,
+      recentModelsByProvider: {
+        ...(prefs.recentModelsByProvider ?? {}),
+        [FAVORITES_PICKER_PROVIDER_ID]: recents,
+        // The synthetic provider is the only list shown, so a stale real-model
+        // lastModel must not preselect a different entry.
+      },
+      lastModel: undefined,
+    };
+    let didRefresh = false;
+    const picked = await pickProviderModel(provider, pickerPrefs, {
+      message: 'Which model?',
+      maxRecent: FAVORITES_PICKER_RECENT_CAP,
+      refresh: refresh && (async () => {
+        await refresh();
+        didRefresh = true;
+      }),
+    });
+    if (didRefresh) continue;
+    if (picked === 'back') return 'back';
+    if (!picked) return null;
+    return byKey.get(picked.id) ?? null;
   }
-
-  return available[Number(pickedIdx)] ?? 'unavailable';
 }
 
 export function resolveBootSelection(

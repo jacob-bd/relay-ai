@@ -1,6 +1,7 @@
 // src/registry/convert.ts — LocalProvider ↔ RegistryProvider conversion
 
 import type { LocalProvider, LocalProviderModel } from '../types.js';
+import { localIsoTimestamp } from '../trace-log.js';
 import type { CachedModel, RegistryProvider } from './types.js';
 import { isValidProviderId } from './validate.js';
 
@@ -48,9 +49,9 @@ export function localProviderToRegistry(
       npm: first.npm,
       ...(apiUrl ? { url: apiUrl } : {}),
     },
-    addedAt: new Date().toISOString(),
+    addedAt: localIsoTimestamp(),
     modelsCache: {
-      fetchedAt: new Date().toISOString(),
+      fetchedAt: localIsoTimestamp(),
       models: provider.models.map(modelToCached),
     },
   };

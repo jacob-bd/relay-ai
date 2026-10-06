@@ -1,5 +1,6 @@
 import type { CodexCatalogFile, CodexCatalogModel } from './catalog.js';
 import { runCodexCommand } from './process.js';
+import { localIsoTimestamp } from '../trace-log.js';
 
 export interface NativeCodexCatalogSnapshot {
   schemaVersion: 1;
@@ -62,7 +63,7 @@ export async function captureNativeCodexCatalog(
     target: options.target,
     binaryPath: options.binaryPath,
     codexVersion: options.codexVersion,
-    capturedAt: new Date().toISOString(),
+    capturedAt: localIsoTimestamp(),
     source: options.bundled ? 'bundled' : 'refreshed',
     models: catalog.models,
   };

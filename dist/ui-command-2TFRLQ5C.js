@@ -17,11 +17,8 @@ import {
   findCodexApp,
   formatGatewayUrls,
   gatewayProviderLabel,
-  getServerDebugLogPath,
-  getUiDebugLogPath,
   hostFromHeader,
   loadServerModels,
-  makeTraceLogger,
   normalizeFavoriteModels,
   openAiIdCollisions,
   providerOptionsFromCatalog,
@@ -39,9 +36,8 @@ import {
   startServer,
   summarizeServerProviders,
   supportsClaudeTransparentMode,
-  updateCustomEndpointProvider,
-  writeSecureLogLine
-} from "./chunk-BEOPXFS7.js";
+  updateCustomEndpointProvider
+} from "./chunk-YBBBBL5X.js";
 import {
   init_provider_templates,
   listAddableTemplates,
@@ -61,14 +57,18 @@ import {
   getEnvServerPassword,
   getProviderModels,
   getSavedServerPassword,
+  getServerDebugLogPath,
   getServerExposedProviders,
   getServerFavoritesOnly,
   getServerFreeModelsOnly,
   getServerListenMode,
   getServerMaskGatewayIds,
+  getUiDebugLogPath,
   guiCallbackRedirectUri,
   loadPreferences,
   loadRegistry,
+  localTimestamp,
+  makeTraceLogger,
   openAiDeviceCodeUrl,
   pollClinePassDeviceCode,
   pollGithubDeviceCodeToken,
@@ -94,8 +94,9 @@ import {
   setServerListenMode,
   setServerMaskGatewayIds,
   supportsManualModels,
-  validateCustomEndpointUrl
-} from "./chunk-PMCC23MU.js";
+  validateCustomEndpointUrl,
+  writeSecureLogLine
+} from "./chunk-KUPDV4YD.js";
 import {
   __toCommonJS
 } from "./chunk-JIDIH7DS.js";
@@ -637,7 +638,7 @@ function sendCors(req, res) {
 }
 function traceUi(opts, message) {
   if (!opts?.trace || !opts.traceLogPath) return;
-  writeSecureLogLine(opts.traceLogPath, `${(/* @__PURE__ */ new Date()).toISOString()} ${message}`);
+  writeSecureLogLine(opts.traceLogPath, `${localTimestamp()} ${message}`);
 }
 function notifyServerLifecycle(opts, event) {
   try {
@@ -867,7 +868,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-O7533RPZ.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-VAUHTQHJ.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1896,4 +1897,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-DBBCHB5C.js.map
+//# sourceMappingURL=ui-command-2TFRLQ5C.js.map
