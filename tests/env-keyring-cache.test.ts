@@ -1,9 +1,9 @@
-// tests/env-keyring-cache.test.ts — one keychain read per account per process.
+// tests/env-keyring-cache.test.ts — API-key caching and fresh OAuth credential resolutions.
 //
 // macOS prompts for every keychain read unless the calling binary holds an
 // "Always Allow" ACL on that item, and a single credential resolution reads
 // the same account up to three times (access token, account id, provider
-// data). These tests pin the memo and its invalidation on write and delete.
+// data). These tests pin the memo, local write/delete invalidation, and external OAuth refresh visibility.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
@@ -32,6 +32,7 @@ vi.mock('@napi-rs/keyring', () => ({
 
 import {
   deleteProviderCredential,
+  forceRefreshProviderCredential,
   invalidateKeyringReadCache,
   resolveProviderCredential,
   resolveProviderOAuthAccountId,
@@ -71,6 +72,40 @@ describe('keyring read cache', () => {
     expect(await resolveProviderOAuthAccountId(authRef)).toBe('acct');
     expect(await resolveProviderOAuthProviderData(authRef)).toEqual({ plan: 'x' });
     expect(state.gets).toBe(1);
+  });
+
+  it('picks up OAuth replaced by another process on the next resolution', async () => {
+    const authRef = 'keyring:oauth:provider:claude-code';
+    const credential = (access: string, accountId: string) => JSON.stringify({
+      type: 'oauth', access, refresh: 'ref', expires: Date.now() + 3_600_000,
+      accountId, providerData: { account: accountId },
+    });
+    state.store.set('oauth:provider:claude-code', credential('old-token', 'old-account'));
+    expect(await resolveProviderCredential('claude-code', authRef)).toBe('old-token');
+    // A CLI in another process cannot invalidate this process's cache.
+    state.store.set('oauth:provider:claude-code', credential('new-token', 'new-account'));
+    expect(await resolveProviderCredential('claude-code', authRef)).toBe('new-token');
+    expect(await resolveProviderOAuthAccountId(authRef)).toBe('new-account');
+    expect(await resolveProviderOAuthProviderData(authRef)).toEqual({ account: 'new-account' });
+    expect(state.gets).toBe(2);
+  });
+
+  it('picks up an OAuth credential added after a cached miss', async () => {
+    const authRef = 'keyring:oauth:provider:claude-code';
+    expect(await resolveProviderCredential('claude-code', authRef)).toBeNull();
+    state.store.set('oauth:provider:claude-code', JSON.stringify({
+      type: 'oauth', access: 'new-token', refresh: 'ref', expires: Date.now() + 3_600_000,
+    }));
+    expect(await resolveProviderCredential('claude-code', authRef)).toBe('new-token');
+  });
+
+  it('re-reads Keychain before a forced refresh instead of using the cached secret', async () => {
+    const authRef = 'keyring:oauth:provider:claude-code';
+    state.store.set('oauth:provider:claude-code', 'old-token');
+    await resolveProviderCredential('claude-code', authRef);
+    state.store.set('oauth:provider:claude-code', 'new-token');
+    expect(await forceRefreshProviderCredential('claude-code', authRef)).toBe('new-token');
+    expect(state.gets).toBe(2);
   });
 
   it('serves a newly saved key immediately (write invalidates)', async () => {

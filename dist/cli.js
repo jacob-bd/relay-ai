@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-AYSM75VT.js";
+} from "./chunk-63D7JVPF.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -130,7 +130,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-YBBBBL5X.js";
+} from "./chunk-NNGTCBWJ.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -230,7 +230,7 @@ import {
   upstreamHttpStatus,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-KUPDV4YD.js";
+} from "./chunk-2SBGTWL6.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -8636,6 +8636,16 @@ function normalizeSchemaType(value) {
   }
   return value;
 }
+var SCHEMA_SIZE_LIMITS = /* @__PURE__ */ new Set([
+  "minLength",
+  "maxLength",
+  "minItems",
+  "maxItems",
+  "minProperties",
+  "maxProperties"
+]);
+var SCHEMA_MAPS = /* @__PURE__ */ new Set(["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"]);
+var SCHEMA_LITERALS = /* @__PURE__ */ new Set(["default", "const", "enum", "examples"]);
 function normalizeJsonSchema(value) {
   if (Array.isArray(value)) {
     return value.map(normalizeJsonSchema);
@@ -8644,10 +8654,17 @@ function normalizeJsonSchema(value) {
     return value;
   }
   return Object.fromEntries(
-    Object.entries(value).map(([key, child]) => [
-      key,
-      key === "type" ? normalizeSchemaType(child) : normalizeJsonSchema(child)
-    ])
+    Object.entries(value).map(([key, child]) => {
+      if (SCHEMA_LITERALS.has(key)) return [key, child];
+      if (SCHEMA_MAPS.has(key) && child && typeof child === "object" && !Array.isArray(child)) {
+        return [key, Object.fromEntries(Object.entries(child).map(([name, schema]) => [name, normalizeJsonSchema(schema)]))];
+      }
+      if (SCHEMA_SIZE_LIMITS.has(key) && typeof child === "string" && /^\d+$/.test(child)) {
+        const limit = Number(child);
+        if (Number.isSafeInteger(limit)) return [key, limit];
+      }
+      return [key, key === "type" ? normalizeSchemaType(child) : normalizeJsonSchema(child)];
+    })
   );
 }
 function translateTools(ccTools, options = {}) {
@@ -8661,7 +8678,10 @@ function translateTools(ccTools, options = {}) {
         tools[fd.name] = tool3({
           description: fd.description || "",
           inputSchema: jsonSchema3(
-            normalizeJsonSchema(fd.parameters || { type: "object", properties: {} })
+            normalizeToolSchemaForNpm(
+              normalizeJsonSchema(fd.parameters || { type: "object", properties: {} }),
+              options.npm
+            )
           )
         });
         toolCount++;
@@ -10448,6 +10468,7 @@ function parsePseudoToolCall(text6, knownToolNames) {
 async function handleStreamingRequest(res, route, providerOptions, parsed, log14, options = {}) {
   const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
     ...options.requestOptions,
+    npm: route.npm,
     maxTools: maxToolsForNpm(route.npm)
   }));
   if (options.trace) {
@@ -10626,6 +10647,7 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
 async function handleUnaryRequest(res, route, providerOptions, parsed, log14, options = {}) {
   const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
     ...options.requestOptions,
+    npm: route.npm,
     maxTools: maxToolsForNpm(route.npm)
   }));
   if (options.trace) {
@@ -16493,7 +16515,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-2TFRLQ5C.js");
+    const { runUiCommand } = await import("./ui-command-FUTNAIED.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

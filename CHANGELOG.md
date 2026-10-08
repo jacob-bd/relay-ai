@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.11] - 2026-10-08
+
+### Fixed
+
+- **Antigravity CLI tool declarations no longer fail with invalid JSON Schema on Claude Code and Copilot routes.** Cloud Code encodes size limits such as `list_resources`'s `minLength` as strings. Relay converts these limits to numbers and applies the existing provider-specific schema normalization to both streaming and regular requests. Covered by the captured declaration and regression tests; confirmed live with Haiku 5.5.
+- **Embedded consumers pick up OAuth credentials refreshed from another process on the next model creation.** Relay previously cached Keychain reads for the process lifetime, so applications such as Alef could keep using an old token or a cached missing credential after a CLI sign-in or refresh. Each OAuth credential resolution now re-reads Keychain, while subsequent account-id and provider-data reads reuse that lookup. Forced refresh also re-reads the stored credential before attempting renewal. API-key caching is unchanged.
+
 ## [0.15.10] - 2026-10-06
 
 ### Added

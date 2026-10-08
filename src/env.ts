@@ -188,7 +188,9 @@ function readEnvCredential(varName: string): string | null {
  * file-based stores keep their exact semantics); every write or delete drops
  * the entry (at start and completion) so a rotated OAuth token or a freshly
  * saved key is never served stale, and a read that raced a write cannot leave
- * its old value cached.
+ * its old value cached. Each OAuth credential resolution also drops its entry
+ * so embedded consumers see credentials refreshed by a separate CLI process;
+ * the following account-id/provider-data reads still reuse that fresh lookup.
  */
 const osKeyringReadCache = new Map<string, Promise<string | null>>();
 
@@ -405,6 +407,7 @@ export async function resolveProviderCredential(
     return readGlobalOpencodeCredential(diag);
   }
 
+  if (oauthProviderIdFromAccount(parsed.account)) invalidateKeyringReadCache(parsed.account);
   return readProviderSecret(parsed.account, diag);
 }
 
@@ -432,6 +435,7 @@ export async function forceRefreshProviderCredential(
   if (namespaced) return namespaced;
 
   const oauthProviderId = oauthProviderIdFromAccount(parsed.account);
+  if (oauthProviderId) invalidateKeyringReadCache(parsed.account);
   const raw = await readKeyringAccount(parsed.account, diag);
   if (!raw || !oauthProviderId) return decodeProviderSecret(raw);
   return refreshOAuthKeyringAccount(parsed.account, oauthProviderId, raw, diag, true);

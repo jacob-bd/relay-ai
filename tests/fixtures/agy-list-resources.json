@@ -1,0 +1,27 @@
+{
+  "name": "list_resources",
+  "description": "Lists the available resources from an MCP server.",
+  "parameters": {
+    "type": "OBJECT",
+    "properties": {
+      "ServerName": {
+        "type": "STRING",
+        "description": "Name of the server to list available resources from.",
+        "minLength": "1"
+      },
+      "toolAction": {
+        "type": "STRING",
+        "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+      },
+      "toolSummary": {
+        "type": "STRING",
+        "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+      }
+    },
+    "required": [
+      "ServerName",
+      "toolSummary",
+      "toolAction"
+    ]
+  }
+}

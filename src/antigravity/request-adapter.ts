@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { tool, jsonSchema, type ModelMessage } from 'ai';
 import { serializeToolResultContent } from '../proxy-shared.js';
+import { normalizeToolSchemaForNpm } from '../tool-schema.js';
 
 export interface CloudCodePart {
   text?: string;
@@ -57,6 +58,7 @@ export interface SdkRequest {
 }
 
 export interface TranslateRequestOptions {
+  npm?: string;
   fallbackAssistantReasoning?: string[];
   maxTools?: number;
   /** Request-scoped transport headers (for example OpenCode Go conversation identity). */
@@ -209,6 +211,13 @@ function normalizeSchemaType(value: unknown): unknown {
   return value;
 }
 
+// Cloud Code's protobuf JSON encodes these int64 schema fields as strings.
+const SCHEMA_SIZE_LIMITS = new Set([
+  'minLength', 'maxLength', 'minItems', 'maxItems', 'minProperties', 'maxProperties',
+]);
+const SCHEMA_MAPS = new Set(['properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas']);
+const SCHEMA_LITERALS = new Set(['default', 'const', 'enum', 'examples']);
+
 export function normalizeJsonSchema(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(normalizeJsonSchema);
@@ -218,10 +227,17 @@ export function normalizeJsonSchema(value: unknown): unknown {
   }
 
   return Object.fromEntries(
-    Object.entries(value).map(([key, child]) => [
-      key,
-      key === 'type' ? normalizeSchemaType(child) : normalizeJsonSchema(child),
-    ]),
+    Object.entries(value).map(([key, child]) => {
+      if (SCHEMA_LITERALS.has(key)) return [key, child];
+      if (SCHEMA_MAPS.has(key) && child && typeof child === 'object' && !Array.isArray(child)) {
+        return [key, Object.fromEntries(Object.entries(child).map(([name, schema]) => [name, normalizeJsonSchema(schema)]))];
+      }
+      if (SCHEMA_SIZE_LIMITS.has(key) && typeof child === 'string' && /^\d+$/.test(child)) {
+        const limit = Number(child);
+        if (Number.isSafeInteger(limit)) return [key, limit];
+      }
+      return [key, key === 'type' ? normalizeSchemaType(child) : normalizeJsonSchema(child)];
+    }),
   );
 }
 
@@ -242,7 +258,10 @@ function translateTools(
         tools[fd.name] = tool({
           description: fd.description || '',
           inputSchema: jsonSchema(
-            normalizeJsonSchema(fd.parameters || { type: 'object', properties: {} }),
+            normalizeToolSchemaForNpm(
+              normalizeJsonSchema(fd.parameters || { type: 'object', properties: {} }),
+              options.npm,
+            ),
           ),
         });
         toolCount++;

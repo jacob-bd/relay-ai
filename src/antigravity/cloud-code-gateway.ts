@@ -794,6 +794,7 @@ async function handleStreamingRequest(
 ): Promise<void> {
   const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
     ...options.requestOptions,
+    npm: route.npm,
     maxTools: maxToolsForNpm(route.npm),
   }));
   if (options.trace) {
@@ -983,6 +984,7 @@ async function handleUnaryRequest(
 ): Promise<void> {
   const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
     ...options.requestOptions,
+    npm: route.npm,
     maxTools: maxToolsForNpm(route.npm),
   }));
   if (options.trace) {

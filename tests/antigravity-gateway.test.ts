@@ -116,6 +116,36 @@ describe('cloud-code-gateway', () => {
     expect(handle.url).toBe(`http://127.0.0.1:${handle.port}`);
   });
 
+  it.each([
+    ['generateContent', '@ai-sdk/google'],
+    ['streamGenerateContent', '@ai-sdk/google'],
+    ['generateContent', '@ai-sdk/openai'],
+    ['streamGenerateContent', '@ai-sdk/openai'],
+  ])('normalizes tool schemas using the route npm for %s on %s', async (endpoint, npm) => {
+    const route = { ...testRoutes[0]!, npm };
+    const handle = await start([route]);
+    const res = await postJson(handle, `/v1internal:${endpoint}`, {
+      model: route.catalogId,
+      request: {
+        contents: [{ role: 'user', parts: [{ text: 'hey' }] }],
+        tools: [{ functionDeclarations: [{ name: 'list_resources', parameters: {
+          type: 'OBJECT', properties: {
+            ServerName: { type: 'STRING', minLength: '1' },
+            values: { type: ['ARRAY', 'NULL'], items: { type: 'STRING' } },
+          },
+        } }] }],
+      },
+    });
+    expect(res.status).toBe(200);
+    await res.text();
+    const mock = endpoint === 'generateContent' ? vi.mocked(generateText) : vi.mocked(streamText);
+    const schema = (mock.mock.calls.at(-1)![0] as any).tools.list_resources.inputSchema;
+    expect(schema.properties.ServerName).toEqual({ type: 'string', minLength: 1 });
+    expect(schema.properties.values).toEqual(npm === '@ai-sdk/google'
+      ? { type: 'array', nullable: true, items: { type: 'string' } }
+      : { type: ['array', 'null'], items: { type: 'string' } });
+  });
+
   // --- loadCodeAssist ---
 
   it('serves loadCodeAssist from the local fixture (REST path)', async () => {

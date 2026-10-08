@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
+import listResources from './fixtures/agy-list-resources.json';
 import {
   summarizeSdkRequestForTrace,
   translateRequest,
   expandTextWithThinking,
+  normalizeJsonSchema,
   type CloudCodeGenerateRequest,
   type SdkRequest,
 } from '../src/antigravity/request-adapter.js';
@@ -69,6 +71,59 @@ describe('Antigravity request trace summary', () => {
 });
 
 describe('antigravity request-adapter', () => {
+  it.each(['@ai-sdk/anthropic', '@ai-sdk/openai', '@ai-sdk/openai-compatible', '@ai-sdk/google'])(
+    'converts the captured agy list_resources size limit for %s', npm => {
+      const original = JSON.stringify(listResources);
+      const result = translateRequest({ model: 'relay-model', request: {
+        tools: [{ functionDeclarations: [listResources] }],
+      } }, { npm });
+      const schema = (result.tools!.list_resources!.inputSchema as any).jsonSchema;
+      expect(schema.properties.ServerName).toEqual({
+        ...listResources.parameters.properties.ServerName, type: 'string', minLength: 1,
+      });
+      expect(JSON.stringify(listResources)).toBe(original);
+    },
+  );
+
+  it('converts size limits without changing literal data or schema property names', () => {
+    const literal = { type: 'STRING', minLength: '1' };
+    expect(normalizeJsonSchema({
+      type: 'OBJECT', minProperties: '1', maxProperties: '20',
+      properties: {
+        type: { type: 'STRING', minLength: '1', maxLength: '10' },
+        minLength: { type: 'ARRAY', minItems: '1', maxItems: '5', items: { type: 'STRING' } },
+      },
+      default: literal, const: literal, enum: [literal], examples: [literal],
+    })).toEqual({
+      type: 'object', minProperties: 1, maxProperties: 20,
+      properties: {
+        type: { type: 'string', minLength: 1, maxLength: 10 },
+        minLength: { type: 'array', minItems: 1, maxItems: 5, items: { type: 'string' } },
+      },
+      default: literal, const: literal, enum: [literal], examples: [literal],
+    });
+  });
+
+  it.each(['', 'abc', '-1', '1.5', '9007199254740993'])(
+    'does not reinterpret invalid or unsafe size limit %j', minLength => {
+      expect(normalizeJsonSchema({ type: 'STRING', minLength })).toEqual({ type: 'string', minLength });
+    },
+  );
+
+  it.each(['@ai-sdk/google', '@ai-sdk/openai'])(
+    'applies provider-specific normalization for %s', npm => {
+      const result = translateRequest({ model: 'relay-model', request: {
+        tools: [{ functionDeclarations: [{ name: 'test', parameters: {
+          type: 'OBJECT', properties: { values: { type: ['ARRAY', 'NULL'], items: { type: 'STRING' } } },
+        } }] }],
+      } }, { npm });
+      const schema = (result.tools!.test!.inputSchema as any).jsonSchema;
+      expect(schema.properties.values).toEqual(npm === '@ai-sdk/google'
+        ? { type: 'array', nullable: true, items: { type: 'string' } }
+        : { type: ['array', 'null'], items: { type: 'string' } });
+    },
+  );
+
   it('carries request-scoped headers into SDK params', () => {
     const sdkReq = translateRequest({
       model: 'relay-model',

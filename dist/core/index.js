@@ -50,7 +50,7 @@ import { join as join2 } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.15.10",
+  version: "0.15.11",
   publishConfig: {
     access: "public"
   },
@@ -4241,6 +4241,7 @@ async function resolveProviderCredential(providerId, authRef, diag) {
   if (parsed.account === GLOBAL_OPENCODE_KEYRING_ACCOUNT) {
     return readGlobalOpencodeCredential(diag);
   }
+  if (oauthProviderIdFromAccount(parsed.account)) invalidateKeyringReadCache(parsed.account);
   return readProviderSecret(parsed.account, diag);
 }
 async function forceRefreshProviderCredential(providerId, authRef, diag) {
@@ -4255,6 +4256,7 @@ async function forceRefreshProviderCredential(providerId, authRef, diag) {
   const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
   if (namespaced) return namespaced;
   const oauthProviderId = oauthProviderIdFromAccount(parsed.account);
+  if (oauthProviderId) invalidateKeyringReadCache(parsed.account);
   const raw = await readKeyringAccount(parsed.account, diag);
   if (!raw || !oauthProviderId) return decodeProviderSecret(raw);
   return refreshOAuthKeyringAccount(parsed.account, oauthProviderId, raw, diag, true);
