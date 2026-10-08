@@ -73,8 +73,13 @@ const EXCLUDED_MODELS: ModelExclusion[] = [
   },
   {
     provider: 'mistral',
-    match: /^zai-glm/,
+    match: /^(?:zai-)?glm-/,
     reason: "GLM hosted on Mistral declares low..max while Mistral's own wire is none/high — needs live verification",
+  },
+  {
+    provider: 'mistral',
+    match: /^labs-leanstral-1-5-1$/,
+    reason: 'New Labs Leanstral declares none/high but has no verified model-specific Mistral effort mapping yet',
   },
   {
     provider: 'kilo',

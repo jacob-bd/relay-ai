@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.15.12] - 2026-10-08
+## [0.15.13] - 2026-10-08
 
 ### Fixed
 
@@ -8,6 +8,11 @@
 - **Core shares provider request defaults with SDK-backed launchers.** OpenAI requests stateless encrypted reasoning for later turns, Google requests thought summaries (including native Cloud Code models), and Alibaba/DashScope receives a continuation after trailing tool results. Explicit caller options still override defaults. The Alibaba workaround moved from the Claude request translator to the shared model boundary.
 - **Anthropic SDK OAuth refreshes and retries once after HTTP 401.** The refreshed token is retained for subsequent calls on the model. Other HTTP failures do not trigger credential refresh, and a second 401 fails without a refresh loop.
 - **Request-level Core parity regressions are covered through real SDK models**, including text generation, streaming, tool turns, API-key isolation, caller overrides, cache controls and OAuth retry limits, with no production credentials or network calls in the tests.
+- **The refreshed catalog retains explicit coverage limitations for Mistral-hosted GLM and Labs Leanstral.** Their effort mappings remain unverified; the reasoning coverage check names these entries rather than claiming unsupported wire values work.
+
+## [0.15.12] - 2026-10-08
+
+This tag was not published: CI stopped on newly refreshed Mistral reasoning declarations. Its Core parity fixes are included in 0.15.13.
 
 ## [0.15.11] - 2026-10-08
 
