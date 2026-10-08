@@ -6,6 +6,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { LanguageModel } from 'ai';
+import { withProviderRequestDefaults } from '../provider-factory.js';
 import { observeCloudCodeBody, requestFingerprint } from './antigravity-diagnostics.js';
 import {
   ANTIGRAVITY_API_VERSION,
@@ -249,7 +250,9 @@ export async function createAntigravityCloudCodeModel(
     baseURL: SDK_BASE_URL,
     fetch: createCloudCodeFetch(options),
   });
-  return google(options.modelId);
+  return withProviderRequestDefaults(google(options.modelId), {
+    npm: '@ai-sdk/google', modelId: options.modelId, apiKey: options.accessToken,
+  });
 }
 
 /** Host only — the endpoint URLs are compile-time constants, never user data. */

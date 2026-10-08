@@ -170,16 +170,15 @@ describe('translateMessages', () => {
     expect(onDebug).not.toHaveBeenCalled();
   });
 
-  it('appends a continuation nudge for qwen/alibaba when the request ends on a tool result', () => {
+  it('preserves a trailing tool result for the shared model middleware', () => {
     const messages = [
       { role: 'assistant' as const, content: [{ type: 'tool_use', id: 'call_1', name: 'Read', input: {} }] },
       { role: 'user' as const, content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'file body' }] },
     ];
     annotateToolNames(messages);
     const out = translateMessages(messages, '@ai-sdk/alibaba') as any[];
-    expect(out).toHaveLength(3);
+    expect(out).toHaveLength(2);
     expect(out[1].role).toBe('tool');
-    expect(out[2]).toEqual({ role: 'user', content: [{ type: 'text', text: 'Continue.' }] });
   });
 
   it('does NOT append the nudge for non-alibaba providers ending on a tool result', () => {

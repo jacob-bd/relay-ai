@@ -9,9 +9,13 @@ import { resolveCodexClientVersion } from './codex/version.js';
 import { extractOpenAiAccountId } from './oauth/openai.js';
 import { createResponsesWebSocketFetch } from './oauth/responses-websocket.js';
 import {
+  CLAUDE_CODE_BILLING_HEADER_PREFIX,
   CLAUDE_CODE_USER_AGENT,
+  buildClaudeCodeBillingSystemLine,
   injectClaudeIdentity,
 } from './oauth/claude-identity.js';
+import { applyClaudeCodeOAuthIdentity, isClaudeCodeOAuthRoute, type ClaudeCodeOAuthSdkParams } from './oauth/claude-code-identity.js';
+import { createOAuthRetryFetch } from './upstream-forward.js';
 import {
   createClinePassOAuthFetch,
   formatClineRuntimeCredential,
@@ -296,6 +300,9 @@ async function createLanguageModelSingle(spec: ProviderModelSpec): Promise<Langu
       : { apiKey };
     if (spec.headers) {
       anthropicOptions.headers = { ...anthropicOptions.headers, ...spec.headers };
+    }
+    if (spec.authType === 'oauth' && spec.refreshToken) {
+      anthropicOptions.fetch = createOAuthRetryFetch(apiKey, spec.refreshToken, spec.onTokenRefreshed);
     }
     if (!root || root === 'https://api.anthropic.com') {
       return createAnthropic(anthropicOptions)(modelId);
@@ -616,11 +623,53 @@ function createProtocolFallbackMiddleware(
   };
 }
 
+/** Provider requirements belong on the model so Core and every SDK launcher share them. */
+export function withProviderRequestDefaults(model: LanguageModel, spec: ProviderModelSpec): LanguageModel {
+  const npm = resolveProviderNpm(spec.npm);
+  const defaults = thinkingProviderOptions(npm);
+  const claudeOAuth = isClaudeCodeOAuthRoute(spec);
+  if (!defaults && !claudeOAuth && npm !== '@ai-sdk/alibaba') return model;
+
+  return wrapLanguageModel({
+    model: model as Parameters<typeof wrapLanguageModel>[0]['model'],
+    middleware: {
+      specificationVersion: 'v4',
+      transformParams: async ({ params }) => {
+        let prompt = params.prompt;
+        let providerOptions = deepMergeProviderOptions(defaults, params.providerOptions);
+        if (claudeOAuth) {
+          const identity = applyClaudeCodeOAuthIdentity<ClaudeCodeOAuthSdkParams>({ ...spec, upstreamModelId: spec.modelId }, {
+            instructions: prompt.filter(p => p.role === 'system').map(p => p.content).join('\n\n'),
+            tools: params.tools?.length
+              ? Object.fromEntries(params.tools.map(t => [t.name, {}]))
+              : undefined,
+          });
+          if (!prompt.some(p => p.role === 'system' && p.content.startsWith(CLAUDE_CODE_BILLING_HEADER_PREFIX))) {
+            prompt = [{ role: 'system', content: buildClaudeCodeBillingSystemLine() }, ...prompt];
+          }
+          const extraBeta = providerOptions?.anthropic?.anthropicBeta;
+          providerOptions = deepMergeProviderOptions(providerOptions, identity.providerOptions);
+          if (Array.isArray(extraBeta)) {
+            providerOptions!.anthropic.anthropicBeta = [...new Set([
+              ...(identity.providerOptions!.anthropic.anthropicBeta as string[]), ...extraBeta,
+            ])];
+          }
+        }
+        // DashScope's chat template needs a user turn after tool results.
+        if (npm === '@ai-sdk/alibaba' && prompt.at(-1)?.role === 'tool') {
+          prompt = [...prompt, { role: 'user', content: [{ type: 'text', text: 'Continue.' }] }];
+        }
+        return { ...params, prompt, providerOptions: providerOptions as typeof params.providerOptions };
+      },
+    },
+  });
+}
+
 /** Create an SDK model and, for known dual-protocol gateways, arm one safe
  * alternate-protocol retry for both generate and stream calls. */
 export async function createLanguageModel(spec: ProviderModelSpec): Promise<LanguageModel> {
   const npm = resolveProviderNpm(spec.npm);
-  const primary = await createLanguageModelSingle(spec);
+  const primary = withProviderRequestDefaults(await createLanguageModelSingle(spec), spec);
 
   // OAuth backends often expose a gateway URL but require provider-specific
   // request signing. Retrying those through a second SDK would be unsafe.
@@ -647,11 +696,12 @@ export async function createLanguageModel(spec: ProviderModelSpec): Promise<Lang
 
   let alternate: LanguageModel;
   try {
-    alternate = await createLanguageModelSingle({
+    const alternateSpec = {
       ...spec,
       npm: alternative.npm,
       baseURL: alternative.baseURL,
-    });
+    };
+    alternate = withProviderRequestDefaults(await createLanguageModelSingle(alternateSpec), alternateSpec);
   } catch (error) {
     spec.onDebug?.(`[protocol-fallback] alternate SDK unavailable: ${error instanceof Error ? error.message : String(error)}`);
     return primary;

@@ -48,13 +48,6 @@ interface AnthropicBlock {
 }
 interface AnthropicMsg { role: 'user' | 'assistant' | 'system'; content: string | AnthropicBlock[]; }
 
-// Providers whose serving-side chat template mishandles a conversation that ends on a
-// tool/function result — it hallucinates an empty user turn (qwen: quotes a phantom
-// `<<HUMAN_CONVERSATION_START>>` marker and stops working) instead of summarizing the tool
-// output. Documented qwen/DashScope quirk; the standard mitigation is to append a neutral
-// user "continue" turn so the template gets a real human turn. See docs/CORE.md / plan.
-const NEEDS_TRAILING_TOOL_NUDGE = new Set(['@ai-sdk/alibaba']);
-const TRAILING_TOOL_NUDGE_TEXT = 'Continue.';
 interface AnthropicTool { name: string; description?: string; input_schema: Record<string, unknown>; }
 export interface AnthropicRequest {
   model: string;
@@ -235,15 +228,6 @@ export function translateMessages(
       }
       if (parts.length) out.push({ role: 'assistant', content: parts } as unknown as ModelMessage);
     }
-  }
-
-  // qwen/DashScope hallucinates an "empty message" when the request ends on a tool result
-  // (every agentic tool-loop step). Append a neutral user turn so its chat template gets a
-  // real human turn to respond to. Scoped to providers with the quirk; transparent to Claude
-  // Code (the nudge lives only in the upstream request, never echoed back).
-  if (NEEDS_TRAILING_TOOL_NUDGE.has(npm) && (out[out.length - 1] as { role?: string })?.role === 'tool') {
-    out.push({ role: 'user', content: [{ type: 'text', text: TRAILING_TOOL_NUDGE_TEXT }] } as unknown as ModelMessage);
-    onDebug?.('sdk: appended continuation nudge (request ended on tool result)');
   }
 
   return out;

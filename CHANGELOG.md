@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.15.12] - 2026-10-08
+
+### Fixed
+
+- **Claude subscription models work through embedded Core without caller workarounds.** The shared model factory now adds the Claude Code billing system line, account/device/session metadata and OAuth beta flags on every generated or streamed request. This fixes Haiku 5.5 returning HTTP 429 with the generic message `Error` in Alef while working through Relay's Codex transport. Existing instructions, cache controls and custom beta flags are preserved; pre-applied billing identity is not duplicated.
+- **Core shares provider request defaults with SDK-backed launchers.** OpenAI requests stateless encrypted reasoning for later turns, Google requests thought summaries (including native Cloud Code models), and Alibaba/DashScope receives a continuation after trailing tool results. Explicit caller options still override defaults. The Alibaba workaround moved from the Claude request translator to the shared model boundary.
+- **Anthropic SDK OAuth refreshes and retries once after HTTP 401.** The refreshed token is retained for subsequent calls on the model. Other HTTP failures do not trigger credential refresh, and a second 401 fails without a refresh loop.
+- **Request-level Core parity regressions are covered through real SDK models**, including text generation, streaming, tool turns, API-key isolation, caller overrides, cache controls and OAuth retry limits, with no production credentials or network calls in the tests.
+
 ## [0.15.11] - 2026-10-08
 
 ### Fixed

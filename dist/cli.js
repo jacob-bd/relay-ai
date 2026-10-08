@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-63D7JVPF.js";
+} from "./chunk-IX7CQRX6.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -130,7 +130,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-NNGTCBWJ.js";
+} from "./chunk-775QVYNB.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -153,9 +153,9 @@ import {
   VERSION,
   VERTEX_ANTHROPIC_NPM,
   appendCodexBodyDump,
+  applyClaudeCodeOAuthIdentity,
   buildAntigravityChildEnv,
   buildChildEnv,
-  buildClaudeCodeBillingSystemLine,
   claudeCodeClientModelId,
   contextWindowError,
   createLanguageModel,
@@ -178,7 +178,6 @@ import {
   getProxyDebugLogPath,
   getReasoningCapabilities,
   grabRoundTripSignature,
-  injectClaudeIdentity,
   isFreeStatus,
   isModelsDevCacheStale,
   isSecretServiceAvailable,
@@ -218,7 +217,6 @@ import {
   saveProviderCredential,
   saveRegistry,
   saveToCredentialStore,
-  selectBetaFlags,
   serializeToolResultContent,
   silenceSdkWarnings,
   splitToolUseId,
@@ -230,7 +228,7 @@ import {
   upstreamHttpStatus,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-2SBGTWL6.js";
+} from "./chunk-3SK7H5PM.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -2922,53 +2920,6 @@ import { join as join7 } from "path";
 import { createHash as createHash3 } from "crypto";
 import { createServer } from "http";
 import { WebSocket } from "ws";
-
-// src/oauth/claude-code-identity.ts
-function isClaudeCodeOAuthRoute(input) {
-  return input.providerId === "claude-code" && input.authType === "oauth";
-}
-function prependClaudeCodeBillingLine(system) {
-  const line = buildClaudeCodeBillingSystemLine();
-  if (!system?.trim()) return line;
-  if (system.startsWith(line)) return system;
-  return `${line}
-
-${system}`;
-}
-function mergeProviderOptions(a, b) {
-  if (!a && !b) return void 0;
-  if (!a) return b;
-  if (!b) return a;
-  const keys = /* @__PURE__ */ new Set([...Object.keys(a), ...Object.keys(b)]);
-  const out = {};
-  for (const key of keys) {
-    out[key] = { ...a[key] ?? {}, ...b[key] ?? {} };
-  }
-  return out;
-}
-function claudeCodeProviderOptions(input, sdkParams) {
-  const seed = input.oauthAccountId ?? input.apiKey;
-  const { userId } = injectClaudeIdentity({}, input.providerData, seed);
-  const betaBody = {
-    ...sdkParams.instructions ? { system: [{ type: "text", text: sdkParams.instructions }] } : {},
-    ...sdkParams.tools ? { tools: Object.keys(sdkParams.tools).map((name) => ({ name })) } : {}
-  };
-  return {
-    anthropic: {
-      metadata: { userId },
-      anthropicBeta: selectBetaFlags(betaBody, input.upstreamModelId).split(",").filter(Boolean)
-    }
-  };
-}
-function applyClaudeCodeOAuthIdentity(input, sdkParams) {
-  if (!isClaudeCodeOAuthRoute(input)) return sdkParams;
-  sdkParams.instructions = prependClaudeCodeBillingLine(sdkParams.instructions);
-  sdkParams.providerOptions = mergeProviderOptions(
-    sdkParams.providerOptions,
-    claudeCodeProviderOptions(input, sdkParams)
-  );
-  return sdkParams;
-}
 
 // src/codex-responses-adapter.ts
 import { createHash } from "crypto";
@@ -16515,7 +16466,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-FUTNAIED.js");
+    const { runUiCommand } = await import("./ui-command-Y5GCTYHX.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

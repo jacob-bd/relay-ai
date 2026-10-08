@@ -56,6 +56,29 @@ export async function fetchWithOAuthRetry<TResponse extends { status: number }>(
   return { response, apiKey: refreshed, refreshed: true };
 }
 
+/** Adapt the passthrough OAuth retry to SDK fetch, retaining a rotated token across calls. */
+export function createOAuthRetryFetch(
+  initialToken: string,
+  refreshToken: () => Promise<string | null>,
+  onTokenRefreshed?: (token: string) => void,
+  fetchImpl: typeof globalThis.fetch = globalThis.fetch,
+): typeof globalThis.fetch {
+  let token = initialToken;
+  return async (input, init) => {
+    const request = new Request(input, init);
+    const result = await fetchWithOAuthRetry(token, nextToken => {
+      const headers = new Headers(request.headers);
+      headers.set('Authorization', `Bearer ${nextToken}`);
+      return fetchImpl(request.clone(), { headers });
+    }, async () => request.signal.aborted ? null : refreshToken());
+    if (result.refreshed) {
+      token = result.apiKey;
+      onTokenRefreshed?.(token);
+    }
+    return result.response;
+  };
+}
+
 /** Relay an Anthropic /v1/messages response (JSON or SSE) to the client. */
 export async function relayAnthropicMessages(
   res: ServerResponse,

@@ -12,7 +12,7 @@ Core is a **read/compose layer** over relay-ai's existing provider registry, cre
 - Relay AI keeps **sole ownership** of provider registration, credentials, the OS keyring, and OAuth login/refresh.
 - Your application **never receives or stores** credential material — `createRelayModel()` resolves a credential internally and hands back only the finished SDK model.
 - Re-authentication always happens through relay-ai (`relay-ai ui` or `relay-ai providers auth`), never through the consumer.
-- Core never starts a server, opens a browser, prints CLI output, or writes to disk — importing it and calling its functions has no side effects beyond reading your existing config.
+- Core never starts a server, opens a browser, prints CLI output, or writes registry/preferences files. OAuth refresh can update Relay's credential store, including after a provider rejects an expired token during inference.
 - **"OAuth" is not one thing.** Each OAuth provider has its own transport — OpenAI ChatGPT (including the Responses-Lite WebSocket path), Cloud Code Assist, xAI, GitHub, ClinePass and the rest are independent code paths with independent failure modes. A fix to one says nothing about the others; treat them as separate integrations when you test.
 
 ## Prerequisites
@@ -96,6 +96,31 @@ Resolves the route to a provider + cached model, resolves the credential (transp
 | Cloud Code Assist models (`modelFormat: 'cloud-code'`) | A **specialized native transport**: `@ai-sdk/google` wrapped so requests are enveloped for Cloud Code Assist. Not the generic factory path. |
 
 Passing `reasoning` or `sessionId` additionally returns a *wrapped* model (see below), so the returned object is not guaranteed to be identical to what `createLanguageModel()` alone would build. Everything returned is a normal AI SDK `LanguageModel` and works with `streamText`/`generateText` the same way.
+
+### Shared provider request preparation
+
+Provider requirements are applied on the model itself through
+`provider-factory.ts::withProviderRequestDefaults`, so Core and the SDK-backed
+launchers use the same preparation on every generated or streamed request:
+
+- Claude Code OAuth receives the billing system line, account/device/session
+  metadata and request-shaped beta flags. Existing system blocks and cache
+  controls survive unchanged; a pre-applied billing line is not duplicated.
+- OpenAI receives `store: false` and `include: ['reasoning.encrypted_content']`
+  for reasoning round trips. Explicit per-call options override these defaults.
+- Google receives `thinkingConfig.includeThoughts: true`, including the native
+  Cloud Code transport. An explicit caller setting still wins.
+- Alibaba/DashScope receives a neutral user continuation after a trailing tool
+  result, at the upstream boundary rather than in stored conversation history.
+
+Anthropic SDK OAuth requests also use the same one-401-refresh-and-retry policy
+as Anthropic passthrough. A refreshed token is retained for later calls on that
+model. Other HTTP failures do not trigger credential refresh. ClinePass and
+Cloud Code retain their existing provider-specific refresh transports.
+
+This shares provider requirements, not client orchestration: each host still
+owns its tool execution, conversation history and session identity. Core's
+strict reasoning-level validation also remains distinct from picker substitution.
 
 ### `options.sessionId` — OpenCode Go conversation identity
 
@@ -266,7 +291,7 @@ Every error Core throws is a `RelayCoreError` — check with `isRelayCoreError(e
 ## Runtime behavior
 
 - **No server, no browser, no CLI output** — importing `@jacobbd/relay-ai/core` and calling its functions never launches anything.
-- **No disk writes** — even when the on-disk registry needs an internal format migration, Core performs it in memory only and never persists the result (unlike relay-ai's own CLI, which does persist migrations).
+- **No registry/preferences writes** — registry migrations stay in memory. Relay's existing credential machinery can persist an OAuth refresh; the consumer still never receives or stores credentials.
 - **Always current** — `createRelayModel()` re-reads the registry and credentials on every call, so changes made through `relay-ai ui` while your app is running take effect immediately.
 - **Schema compatibility** — Core supports registry schema v1. A registry written by a newer relay-ai fails fast with `UNSUPPORTED_REGISTRY_VERSION` instead of misreading it — upgrade relay-ai rather than downgrading the registry file.
 

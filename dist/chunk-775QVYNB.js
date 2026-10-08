@@ -7,7 +7,6 @@ import {
   ANTIGRAVITY_BASE_URLS,
   BACKENDS,
   CLAUDE_CODE_CLI_VERSION,
-  CLAUDE_CODE_USER_AGENT,
   CLINE_PASS_CATALOG_URL,
   CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW,
   CLINE_PASS_SDK_BASE_URL,
@@ -17,6 +16,7 @@ import {
   MAX_MODEL_CATALOG,
   MIN_CONTEXT_WINDOW,
   SubagentRouteRegistry,
+  UpstreamUnreachableError,
   VERSION,
   VERTEX_ANTHROPIC_NPM,
   anthropicEffortFromRequest,
@@ -38,6 +38,7 @@ import {
   extractClaudeSessionId,
   fetchClaudeCodeModels,
   fetchModelsDevCache,
+  fetchWithOAuthRetry,
   findModelsDevModel,
   forceRefreshProviderCredential,
   formatClineRuntimeCredential,
@@ -60,6 +61,7 @@ import {
   getVertexModelsPath,
   injectClaudeCodeBillingSystemLine,
   injectClaudeIdentity,
+  isAuthorized,
   isBrowserRedirectOAuth,
   isFreeStatus,
   isOpencodeApi,
@@ -83,6 +85,7 @@ import {
   readGlobalOpencodeCredential,
   readStoredProviderCredential,
   redactTraceLine,
+  relayAnthropicMessages,
   resetTraceLog,
   resolveApiKey,
   resolveCodexClientVersion,
@@ -100,6 +103,7 @@ import {
   runGithubDeviceCodeFlow,
   runOpenAiDeviceCodeFlow,
   runXaiDeviceCodeFlow,
+  sanitizeCredential,
   saveProviderCredential,
   saveRegistry,
   saveToCredentialStore,
@@ -114,7 +118,6 @@ import {
   silenceSdkWarnings,
   slugifyProviderId,
   splitToolUseId,
-  sseChunk,
   streamAnthropicResponse,
   stripOneMContextSuffix,
   supportsNativeOAuth,
@@ -123,7 +126,7 @@ import {
   upstreamHttpStatus,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-2SBGTWL6.js";
+} from "./chunk-3SK7H5PM.js";
 
 // src/registry/google-model-id.ts
 var GOOGLE_MODEL_PREFIX = "models/";
@@ -825,228 +828,6 @@ function estimateAnthropicInputTokens(body) {
   const serialized = JSON.stringify(contextBody);
   if (!serialized || serialized === "{}") return 0;
   return Math.max(1, Math.ceil(Buffer.byteLength(serialized, "utf8") / 4));
-}
-
-// src/upstream-forward.ts
-import { once } from "events";
-
-// src/server/auth.ts
-function sanitizeCredential(value) {
-  if (!value) return null;
-  const firstLine = value.trim().split(/\r?\n/)[0]?.trim();
-  return firstLine || null;
-}
-function isAuthorized(request, serverPassword) {
-  if (serverPassword === null) return true;
-  const bearerToken = extractBearerToken(request.headers.get("authorization"));
-  if (bearerToken === serverPassword) return true;
-  return sanitizeCredential(request.headers.get("x-api-key")) === serverPassword;
-}
-function extractBearerToken(value) {
-  if (!value) return null;
-  const normalized = value.replace(/\r?\n/g, " ").trim();
-  const match = /^Bearer\s+(\S+)/i.exec(normalized);
-  return sanitizeCredential(match?.[1]);
-}
-
-// src/upstream-forward.ts
-function anthropicUpstreamHeaders(apiKey, stream = false, inboundBeta, authType, claudeCodeSessionId, extraHeaders) {
-  const key = sanitizeCredential(apiKey) ?? apiKey.trim();
-  const isOAuth = authType === "oauth";
-  const headers = {
-    ...extraHeaders,
-    "Content-Type": "application/json",
-    "anthropic-version": "2023-06-01",
-    Authorization: `Bearer ${key}`,
-    ...isOAuth ? {} : { "x-api-key": key },
-    ...isOAuth ? { "User-Agent": CLAUDE_CODE_USER_AGENT, "x-app": "cli" } : {},
-    ...isOAuth && claudeCodeSessionId ? { "X-Claude-Code-Session-Id": claudeCodeSessionId } : {},
-    ...stream ? { Accept: "text/event-stream" } : {}
-  };
-  if (inboundBeta) {
-    headers["anthropic-beta"] = inboundBeta;
-  }
-  return headers;
-}
-var UpstreamUnreachableError = class extends Error {
-  constructor(cause) {
-    super(`Upstream unreachable: ${cause instanceof Error ? cause.message : String(cause)}`);
-    this.name = "UpstreamUnreachableError";
-  }
-};
-async function fetchWithOAuthRetry(apiKey, request, refreshToken) {
-  let response = await request(apiKey);
-  if (response.status !== 401 || !refreshToken) {
-    return { response, apiKey, refreshed: false };
-  }
-  const refreshed = await refreshToken().catch(() => null);
-  if (!refreshed || refreshed === apiKey) {
-    return { response, apiKey, refreshed: false };
-  }
-  response = await request(refreshed);
-  return { response, apiKey: refreshed, refreshed: true };
-}
-async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWantsStream, inboundBeta, authType, log7, claudeCodeSessionId, extraHeaders, refreshToken, onTokenRefreshed, retryEmptyStream = false) {
-  const doFetch = (key) => fetch(messagesUrl, {
-    method: "POST",
-    headers: anthropicUpstreamHeaders(key, clientWantsStream, inboundBeta, authType, claudeCodeSessionId, extraHeaders),
-    body: JSON.stringify(body)
-  });
-  let upstreamRes;
-  try {
-    const retryResult = await fetchWithOAuthRetry(apiKey, doFetch, refreshToken);
-    upstreamRes = retryResult.response;
-    if (retryResult.refreshed) onTokenRefreshed?.(retryResult.apiKey);
-  } catch (err) {
-    throw new UpstreamUnreachableError(err);
-  }
-  if (!upstreamRes.ok) {
-    const errBody = await upstreamRes.text();
-    log7?.(`anthropic upstream ${upstreamRes.status}: ${errBody}`);
-    res.writeHead(upstreamRes.status, { "Content-Type": upstreamRes.headers.get("content-type") || "application/json" });
-    res.end(errBody);
-    return;
-  }
-  if (clientWantsStream && upstreamRes.body) {
-    const reader = upstreamRes.body.getReader();
-    const first = await reader.read().catch(() => ({ done: true, value: void 0 }));
-    if (first.done) {
-      reader.releaseLock();
-      if (retryEmptyStream) {
-        log7?.("anthropic upstream returned an empty stream; retrying without streaming");
-        await replayWithoutStreaming(
-          res,
-          messagesUrl,
-          body,
-          apiKey,
-          inboundBeta,
-          authType,
-          claudeCodeSessionId,
-          extraHeaders,
-          log7
-        );
-        return;
-      }
-    }
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive"
-    });
-    if (first.done) {
-      res.end();
-      return;
-    }
-    res.write(Buffer.from(first.value));
-    try {
-      while (true) {
-        const next = await reader.read();
-        if (next.done) break;
-        if (!res.write(Buffer.from(next.value))) await once(res, "drain");
-      }
-      res.end();
-    } catch {
-      res.destroy();
-    }
-    return;
-  }
-  if (!upstreamRes.body) {
-    res.writeHead(502, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "Upstream returned empty response body" } }));
-    return;
-  }
-  const text4 = await upstreamRes.text();
-  try {
-    JSON.parse(text4);
-  } catch {
-    res.writeHead(502, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "Upstream response was not valid JSON" } }));
-    return;
-  }
-  res.writeHead(200, {
-    "Content-Type": "application/json",
-    "Content-Length": Buffer.byteLength(text4).toString()
-  });
-  res.end(text4);
-}
-async function replayWithoutStreaming(res, messagesUrl, body, apiKey, inboundBeta, authType, claudeCodeSessionId, extraHeaders, log7) {
-  let retryRes;
-  try {
-    retryRes = await fetch(messagesUrl, {
-      method: "POST",
-      headers: anthropicUpstreamHeaders(apiKey, false, inboundBeta, authType, claudeCodeSessionId, extraHeaders),
-      body: JSON.stringify({ ...body, stream: false })
-    });
-  } catch (err) {
-    throw new UpstreamUnreachableError(err);
-  }
-  const text4 = await retryRes.text();
-  if (!retryRes.ok) {
-    log7?.(`anthropic upstream ${retryRes.status} on empty-stream retry: ${text4}`);
-    res.writeHead(retryRes.status, { "Content-Type": retryRes.headers.get("content-type") || "application/json" });
-    res.end(text4);
-    return;
-  }
-  let message;
-  try {
-    message = JSON.parse(text4);
-  } catch {
-    res.writeHead(502, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "Upstream response was not valid JSON" } }));
-    return;
-  }
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    "Connection": "keep-alive"
-  });
-  writeMessageAsSse(res, message);
-}
-function writeMessageAsSse(res, message) {
-  const content = Array.isArray(message.content) ? message.content : [];
-  res.write(sseChunk("message_start", {
-    type: "message_start",
-    message: { ...message, content: [], stop_reason: null, stop_sequence: null }
-  }));
-  content.forEach((block, index) => {
-    const type = block.type;
-    const opening = type === "text" ? { type: "text", text: "" } : type === "thinking" ? { type: "thinking", thinking: "", signature: "" } : type === "tool_use" ? { type: "tool_use", id: block.id, name: block.name, input: {} } : block;
-    res.write(sseChunk("content_block_start", { type: "content_block_start", index, content_block: opening }));
-    if (type === "text") {
-      res.write(sseChunk("content_block_delta", {
-        type: "content_block_delta",
-        index,
-        delta: { type: "text_delta", text: block.text ?? "" }
-      }));
-    } else if (type === "thinking") {
-      res.write(sseChunk("content_block_delta", {
-        type: "content_block_delta",
-        index,
-        delta: { type: "thinking_delta", thinking: block.thinking ?? "" }
-      }));
-      if (typeof block.signature === "string") {
-        res.write(sseChunk("content_block_delta", {
-          type: "content_block_delta",
-          index,
-          delta: { type: "signature_delta", signature: block.signature }
-        }));
-      }
-    } else if (type === "tool_use") {
-      res.write(sseChunk("content_block_delta", {
-        type: "content_block_delta",
-        index,
-        delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input ?? {}) }
-      }));
-    }
-    res.write(sseChunk("content_block_stop", { type: "content_block_stop", index }));
-  });
-  res.write(sseChunk("message_delta", {
-    type: "message_delta",
-    delta: { stop_reason: message.stop_reason ?? "end_turn", stop_sequence: message.stop_sequence ?? null },
-    usage: message.usage ?? {}
-  }));
-  res.write(sseChunk("message_stop", { type: "message_stop" }));
-  res.end();
 }
 
 // src/antigravity/anthropic-to-cloudcode.ts
@@ -9000,4 +8781,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-NNGTCBWJ.js.map
+//# sourceMappingURL=chunk-775QVYNB.js.map
