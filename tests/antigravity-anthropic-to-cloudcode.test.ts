@@ -3,6 +3,28 @@ import { anthropicToCloudCode } from '../src/antigravity/anthropic-to-cloudcode.
 import { collectCloudCodeToAnthropic } from '../src/antigravity/cloudcode-to-anthropic.js';
 
 describe('anthropicToCloudCode', () => {
+  it('accepts inherited tool history without replacing genuine Gemini signatures', () => {
+    const envelope = anthropicToCloudCode({
+      messages: [
+        { role: 'user', content: 'continue the work' },
+        { role: 'assistant', content: [
+          { type: 'tool_use', id: 'inherited_exec', name: 'exec', input: { input: 'read()' } },
+          { type: 'tool_use', id: 'signed_exec::ts::original-signature', name: 'exec', input: { input: 'write()' } },
+        ] },
+        { role: 'user', content: [
+          { type: 'tool_result', tool_use_id: 'inherited_exec', content: 'read result' },
+          { type: 'tool_result', tool_use_id: 'signed_exec::ts::original-signature', content: 'write result' },
+        ] },
+      ],
+    }, 'gemini-3.8-flash-medium', 'project-id');
+    const contents = (envelope.request as any).contents;
+    expect(contents[1].parts).toEqual([
+      { functionCall: { name: 'exec', args: { input: 'read()' } }, thoughtSignature: 'skip_thought_signature_validator' },
+      { functionCall: { name: 'exec', args: { input: 'write()' } }, thoughtSignature: 'original-signature' },
+    ]);
+    expect(contents[2].parts.map((part: any) => part.functionResponse.name)).toEqual(['exec', 'exec']);
+  });
+
   it('preserves user and assistant perspective through the Google role mapping', () => {
     const envelope = anthropicToCloudCode({
       messages: [

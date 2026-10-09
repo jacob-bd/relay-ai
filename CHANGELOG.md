@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.14] - 2026-10-09
+
+### Fixed
+
+- Gemini workers launched through Codex's Antigravity bridge now receive a 65,536-token output budget when Codex omits its cap, avoiding the Anthropic SDK's 4,096-token fallback. Explicit caller limits are preserved.
+- Replayed Cloud Code tool history without a Gemini thought signature uses Google's documented history-migration marker; genuine signatures remain intact, including Codex custom and tool-search calls.
+- Responses stopped by an output limit or content filter report `response.incomplete` instead of successful completion. Tool batches from an incomplete generation are not executed. Traces and route audits record the incomplete outcome, and WebSocket continuations retain the partial response.
+
 ## [0.15.13] - 2026-10-08
 
 ### Fixed

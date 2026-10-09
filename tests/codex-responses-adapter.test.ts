@@ -13,6 +13,15 @@ import {
 describe('translateResponsesRequest max_output_tokens', () => {
   const body = { model: 'meta/muse-spark-1.3-contributor', input: 'whats ur name?', max_output_tokens: 65536 };
 
+  it('avoids the Anthropic SDK 4096-token fallback for bridged Gemini workers', () => {
+    const metadata = { providerId: 'antigravity', upstreamModelId: 'anthropic-antigravity__gemini-3.8-flash-medium[1m]' };
+    const request = { model: 'gpt-6-luna', input: 'implement the fix' };
+    expect(translateResponsesRequest(request, '@ai-sdk/anthropic', metadata).maxOutputTokens).toBe(65536);
+    expect(translateResponsesRequest({ ...request, max_output_tokens: 12000 }, '@ai-sdk/anthropic', metadata).maxOutputTokens).toBe(12000);
+    expect(translateResponsesRequest(request, '@ai-sdk/openai-compatible', { providerId: 'deepseek' }).maxOutputTokens).toBeUndefined();
+    expect(translateResponsesRequest(request, '@ai-sdk/anthropic', { providerId: 'claude-code' }).maxOutputTokens).toBeUndefined();
+  });
+
   it('drops the cap on OpenRouter, whose credit pre-check 402s on a blind 65536 (issue #72)', () => {
     expect(translateResponsesRequest(body, '@openrouter/ai-sdk-provider', {
       providerId: 'openrouter',
@@ -35,6 +44,14 @@ describe('translateResponsesRequest max_output_tokens', () => {
 });
 
 describe('translateResponsesRequest', () => {
+  it.each(['custom_tool_call', 'tool_search_call'] as const)('preserves a signed %s on Google replay', type => {
+    const params = translateResponsesInput([
+      { type, call_id: 'google_replay::ts::original-signature', name: 'exec', input: 'read()', arguments: { query: 'read' } } as any,
+    ], undefined, '@ai-sdk/google');
+    const part = (params.messages.find(message => message.role === 'assistant')!.content as any[])[0];
+    expect(part.toolCallId).toBe('google_replay');
+    expect(part.providerOptions).toEqual({ google: { thoughtSignature: 'original-signature' } });
+  });
   it('maps string input to user message', () => {
     const params = translateResponsesRequest({
       model: 'claude-sonnet-4-6',
@@ -1098,7 +1115,80 @@ describe('streamResponsesResponse idle timeout', () => {
   }, 10_000);
 });
 
+describe('Responses incomplete finishes', () => {
+  it.each(['function', 'custom'] as const)('does not execute a truncated %s tool call', async kind => {
+    const { writeResponsesStream, translateResponsesRequest } = await import('../src/codex-responses-adapter.js');
+    const params = translateResponsesRequest({
+      model: 'gemini-worker', input: 'implement', tools: kind === 'custom'
+        ? [{ type: 'custom', name: 'exec', format: { type: 'text' } }]
+        : [{ type: 'function', name: 'exec', parameters: { type: 'object' } }],
+    }, '@ai-sdk/anthropic');
+    const chunks: string[] = [];
+    async function* stream() {
+      yield { type: 'tool-input-start', id: 'call_cutoff', toolName: 'exec' };
+      yield { type: 'tool-input-delta', id: 'call_cutoff', delta: '{"input":"unfinished code' };
+      yield { type: 'finish', finishReason: 'length' };
+    }
+    await writeResponsesStream(stream(), 'gemini-worker', chunk => chunks.push(chunk), undefined, undefined, { toolContext: params.toolContext });
+    const events = parseSseEvents(chunks.join(''));
+    expect(events.some(event => event.event === 'response.function_call_arguments.done')).toBe(false);
+    expect(events.some(event => event.event === 'response.output_item.done')).toBe(false);
+    expect(events.at(-1)).toMatchObject({ event: 'response.incomplete', data: { response: { output: [] } } });
+  });
+  it.each([
+    ['length', 'max_output_tokens'],
+    ['content-filter', 'content_filter'],
+  ])('reports %s as incomplete instead of completing the worker', async (finishReason, reason) => {
+    const { writeResponsesStream } = await import('../src/codex-responses-adapter.js');
+    const chunks: string[] = [];
+    const summaries: any[] = [];
+    async function* stream() {
+      yield { type: 'text-delta', text: 'if (typeof' };
+      yield { type: 'finish', finishReason, totalUsage: { inputTokens: 10, outputTokens: 161 } };
+    }
+    await writeResponsesStream(stream(), 'gemini-worker', chunk => chunks.push(chunk), summary => summaries.push(summary));
+    const events = parseSseEvents(chunks.join(''));
+    expect(events.some(event => event.event === 'response.completed')).toBe(false);
+    const response = events.find(event => event.event === 'response.incomplete')?.data.response;
+    expect(response).toMatchObject({
+      status: 'incomplete', incomplete_details: { reason },
+      output: [expect.objectContaining({ status: 'incomplete', content: [{ type: 'output_text', text: 'if (typeof' }] })],
+      usage: { input_tokens: 10, output_tokens: 161, total_tokens: 171 },
+    });
+    expect(summaries[0]).toMatchObject({ finishReason, incompleteReason: reason });
+  });
+
+  it('preserves an empty token-limited response without fabricating a successful answer', async () => {
+    const { writeResponsesStream } = await import('../src/codex-responses-adapter.js');
+    const chunks: string[] = [];
+    async function* stream() { yield { type: 'finish', finishReason: 'length' }; }
+    await writeResponsesStream(stream(), 'gemini-worker', chunk => chunks.push(chunk));
+    const response = parseSseEvents(chunks.join('')).find(event => event.event === 'response.incomplete')?.data.response;
+    expect(response).toMatchObject({ status: 'incomplete', output: [], incomplete_details: { reason: 'max_output_tokens' } });
+  });
+});
+
 describe('generateResponsesResponse', () => {
+  it('preserves a unary token-limit finish', async () => {
+    vi.resetModules();
+    vi.doMock('ai', () => ({
+      generateText: async () => ({
+        text: 'partial answer',
+        toolCalls: [{ toolCallId: 'unfinished_batch', toolName: 'exec', input: { input: 'code' } }],
+        finishReason: 'length', usage: { inputTokens: 10, outputTokens: 20 },
+      }),
+      streamText: vi.fn(), tool: (spec: unknown) => spec, jsonSchema: (schema: unknown) => schema,
+    }));
+    try {
+      const { generateResponsesResponse } = await import('../src/codex-responses-adapter.js');
+      const response = await generateResponsesResponse({} as never, { messages: [] }, 'gemini-worker');
+      expect(response).toMatchObject({
+        status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' },
+        output: [expect.objectContaining({ status: 'incomplete', content: [{ type: 'output_text', text: 'partial answer' }] })],
+      });
+      expect(response.output).toHaveLength(1);
+    } finally { vi.doUnmock('ai'); vi.resetModules(); }
+  });
   it('keeps Responses item id and call_id native-safe while preserving Gemini signatures in memory', async () => {
     vi.resetModules();
     vi.doMock('ai', () => ({

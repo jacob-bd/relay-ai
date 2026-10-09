@@ -524,7 +524,7 @@ export function translateResponsesInput(
         } as ModelMessage);
       }
     } else if (item.type === 'tool_search_call') {
-      const { rawId } = splitToolUseId(item.call_id);
+      const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
       const parts: Record<string, unknown>[] = [];
       if (pendingReasoning.trim()) {
         parts.push({ type: 'reasoning', text: pendingReasoning });
@@ -535,6 +535,7 @@ export function translateResponsesInput(
         toolCallId: rawId,
         toolName: TOOL_SEARCH_NAME,
         input: parseToolArguments(item.arguments),
+        ...(thoughtSignature && npm === '@ai-sdk/google' ? { providerOptions: { google: { thoughtSignature } } } : {}),
       });
       messages.push({ role: 'assistant', content: parts } as ModelMessage);
     } else if (item.type === 'tool_search_output') {
@@ -555,7 +556,7 @@ export function translateResponsesInput(
         }],
       } as ModelMessage);
     } else if (item.type === 'custom_tool_call') {
-      const { rawId } = splitToolUseId(item.call_id);
+      const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
       const parts: Record<string, unknown>[] = [];
       if (pendingReasoning.trim()) {
         parts.push({ type: 'reasoning', text: pendingReasoning });
@@ -566,6 +567,7 @@ export function translateResponsesInput(
         toolCallId: rawId,
         toolName: item.name,
         input: { input: typeof item.input === 'string' ? item.input : serializeToolResultContent(item.input) },
+        ...(thoughtSignature && npm === '@ai-sdk/google' ? { providerOptions: { google: { thoughtSignature } } } : {}),
       });
       messages.push({ role: 'assistant', content: parts } as ModelMessage);
     } else if (item.type === 'custom_tool_call_output') {
@@ -714,12 +716,17 @@ export function translateResponsesRequest(
     effortProviderOptions(npm, effort, metadata?.upstreamModelId ?? body.model, metadata),
   );
   const tools = translateResponsesTools([...effectiveTools, ...deferredTools], { ...options, npm });
+  // The Cloud Code backend uses an Anthropic SDK hop. Its unknown-model default
+  // is only 4096 tokens (including Gemini's hidden thoughts), so Codex turns that
+  // omit a cap regularly end before the worker can produce code or a tool call.
+  const bridgedGemini = npm === '@ai-sdk/anthropic' && metadata?.providerId === 'antigravity'
+    && /(?:^|__)gemini-/.test(metadata.upstreamModelId ?? body.model);
   return {
     instructions: system,
     messages,
     tools,
     toolContext,
-    maxOutputTokens: omitsMaxOutputTokens(metadata) ? undefined : body.max_output_tokens,
+    maxOutputTokens: omitsMaxOutputTokens(metadata) ? undefined : body.max_output_tokens ?? (bridgedGemini ? 65536 : undefined),
     temperature: body.temperature,
     providerOptions,
     headers: options.requestHeaders,
@@ -861,6 +868,14 @@ export interface ResponsesStreamSummary {
   errorMessage?: string;
   /** Upstream HTTP status from that error part, when the SDK error carries one. */
   errorStatus?: number;
+  finishReason?: string;
+  incompleteReason?: 'max_output_tokens' | 'content_filter';
+}
+
+function incompleteReasonForFinish(finishReason?: string): ResponsesStreamSummary['incompleteReason'] {
+  if (finishReason === 'length') return 'max_output_tokens';
+  if (finishReason === 'content-filter') return 'content_filter';
+  return undefined;
 }
 
 export interface ResponsesStreamProgress {
@@ -956,6 +971,7 @@ export async function writeResponsesStream(
   let reasoningRepeat = INITIAL_REPEAT_TRACKER;
   let textRepeat = INITIAL_REPEAT_TRACKER;
   let loopDetected: 'reasoning' | 'text' | undefined;
+  let finishReason: string | undefined;
 
   const ensureTextItem = (): string => {
     if (!textItemId) {
@@ -1103,7 +1119,11 @@ export async function writeResponsesStream(
         break;
       }
 
+      case 'finish-step':
+        if (part.finishReason) finishReason = part.finishReason;
+        break;
       case 'finish':
+        if (part.finishReason) finishReason = part.finishReason;
         if (part.totalUsage) usage = usageFromPart(part);
         break;
 
@@ -1202,6 +1222,7 @@ export async function writeResponsesStream(
     }
   }
 
+  const incompleteReason = incompleteReasonForFinish(finishReason);
   if (loopDetected) {
     ensureTextItem();
     textFull += LOOP_NOTICE;
@@ -1214,7 +1235,7 @@ export async function writeResponsesStream(
     });
   }
 
-  const dsml = loopDetected ? null : parseDsmlToolCalls(textFull);
+  const dsml = loopDetected || incompleteReason ? null : parseDsmlToolCalls(textFull);
 
   if (dsml) {
     // The client already streamed the raw DSML markup live as ordinary text-delta events
@@ -1289,7 +1310,7 @@ export async function writeResponsesStream(
       id: textItemId,
       type: 'message',
       role: 'assistant',
-      status: 'completed',
+      status: incompleteReason ? 'incomplete' : 'completed',
       content: [{ type: 'output_text', text: textFull }],
     };
     emit('response.output_item.done', {
@@ -1310,7 +1331,10 @@ export async function writeResponsesStream(
     outputItems.unshift(reasoningItem);
   }
 
-  for (const tool of toolStates) {
+  // Codex executes output_item.done calls before the terminal response event.
+  // Never commit a tool batch from an incomplete generation: partial custom
+  // arguments otherwise parse as {} and become executable empty commands.
+  for (const tool of incompleteReason ? [] : toolStates) {
     const normalizedArgs = normalizeCodexSubagentArguments(tool.name, tool.args);
     emit('response.function_call_arguments.done', {
       type: 'response.function_call_arguments.done',
@@ -1327,7 +1351,7 @@ export async function writeResponsesStream(
     outputItems.push(fcItem);
   }
 
-  if (outputItems.length === 0) {
+  if (outputItems.length === 0 && !incompleteReason) {
     outputItems.push({ id: newItemId('msg'), type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: '(conversation context was too large to summarize)' }] });
   }
 
@@ -1339,16 +1363,20 @@ export async function writeResponsesStream(
     toolNames: toolStates.map(t => t.name),
     loopDetected,
     dsmlToolCallsRecovered: dsml?.calls.length,
+    finishReason,
+    incompleteReason,
   });
 
-  emit('response.completed', {
-    type: 'response.completed',
+  const terminalEvent = incompleteReason ? 'response.incomplete' : 'response.completed';
+  emit(terminalEvent, {
+    type: terminalEvent,
     response: {
       id: responseId,
       object: 'response',
       model: modelId,
       created_at: createdAt,
-      status: 'completed',
+      status: incompleteReason ? 'incomplete' : 'completed',
+      ...(incompleteReason ? { incomplete_details: { reason: incompleteReason } } : {}),
       output: outputItems,
       usage,
     },
@@ -1424,6 +1452,7 @@ export async function generateResponsesResponse(
 ): Promise<Record<string, unknown>> {
   const { toolContext, ...sdkParams } = params;
   const r = await generateText({ model, ...sdkParams } as Parameters<typeof generateText>[0]);
+  const incompleteReason = incompleteReasonForFinish(r.finishReason);
   const createdAt = Math.floor(Date.now() / 1000);
   const responseId = newResponseId();
   const output: unknown[] = [];
@@ -1437,12 +1466,12 @@ export async function generateResponsesResponse(
       id: newItemId('msg'),
       type: 'message',
       role: 'assistant',
-      status: 'completed',
+      status: incompleteReason ? 'incomplete' : 'completed',
       content: [{ type: 'output_text', text: r.text }],
     });
   }
 
-  for (const tc of r.toolCalls) {
+  for (const tc of incompleteReason ? [] : r.toolCalls) {
     const encodedId = encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc as FullStreamPart), false);
     const argsStr = JSON.stringify(tc.input ?? {});
     const kind = resolveOutputKind(tc.toolName, toolContext);
@@ -1455,7 +1484,7 @@ export async function generateResponsesResponse(
     ));
   }
 
-  if (output.length === 0) {
+  if (output.length === 0 && !incompleteReason) {
     output.push({ id: newItemId('msg'), type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: '(conversation context was too large to summarize)' }] });
   }
 
@@ -1467,7 +1496,8 @@ export async function generateResponsesResponse(
     object: 'response',
     model: modelId,
     created_at: createdAt,
-    status: 'completed',
+    status: incompleteReason ? 'incomplete' : 'completed',
+    ...(incompleteReason ? { incomplete_details: { reason: incompleteReason } } : {}),
     output,
     usage: {
       input_tokens: inputTokens,

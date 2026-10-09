@@ -43,18 +43,19 @@ import { extractConversationId, openCodeGoHeaders } from './opencode-session.js'
 
 /**
  * Pull the full `response` object out of a single SSE event chunk if it's the
- * terminal `response.completed` event. Each write()/sendWsEvent() call in the
+ * terminal `response.completed` or `response.incomplete` event. Each write()/
+ * sendWsEvent() call in the
  * streaming path carries exactly one complete "event: X\ndata: {...}\n\n" chunk
  * (see codex-responses-adapter.ts's `emit`/`sseChunk`), so no cross-call buffering
  * is needed here.
  */
 function captureCompletedResponse(sseText: string): Record<string, unknown> | undefined {
-  if (!sseText.includes('response.completed')) return undefined;
+  if (!sseText.includes('response.completed') && !sseText.includes('response.incomplete')) return undefined;
   const dataLine = sseText.split('\n').find(l => l.startsWith('data:'));
   if (!dataLine) return undefined;
   try {
     const obj = JSON.parse(dataLine.slice(5).trim()) as { type?: string; response?: unknown };
-    if (obj && obj.type === 'response.completed' && obj.response && typeof obj.response === 'object') {
+    if (obj && (obj.type === 'response.completed' || obj.type === 'response.incomplete') && obj.response && typeof obj.response === 'object') {
       return obj.response as Record<string, unknown>;
     }
   } catch {
@@ -300,6 +301,7 @@ export function streamOutcome(
   okStatus: number | string,
 ): { outcome: 'ok' | 'error'; status: number | string } {
   if (!failure) return { outcome: 'ok', status: okStatus };
+  if (failure.incompleteReason) return { outcome: 'error', status: 'response.incomplete' };
   return {
     outcome: 'error',
     status: failure.errorStatus
@@ -891,9 +893,9 @@ export async function startCodexProxy(
                 await streamCompactionResponse(languageModel, params, modelId, write);
               } else
               await streamResponsesResponse(languageModel, params, modelId, write, summary => {
-                if (summary.errorMessage || summary.aborted) streamFailure = summary;
+                if (summary.errorMessage || summary.aborted || summary.incompleteReason) streamFailure = summary;
                 if (debug) {
-                  const failure = `${summary.aborted ? ' aborted=yes' : ''}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ''}`;
+                  const failure = `${summary.aborted ? ' aborted=yes' : ''}${summary.incompleteReason ? ` incomplete=${summary.incompleteReason}` : ''}${summary.finishReason ? ` finish=${summary.finishReason}` : ''}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ''}`;
                   log(`response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(',')}] loopDetected=${summary.loopDetected ?? 'no'} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
                 }
               }, progress => {
@@ -941,7 +943,9 @@ export async function startCodexProxy(
               audit({
                 transport: 'http', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
                 provider: route.providerId ?? 'relay', routeModel: route.modelId,
-                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId, outcome: 'ok', status: 200,
+                upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
+                outcome: response.status === 'incomplete' ? 'error' : 'ok',
+                status: response.status === 'incomplete' ? 'response.incomplete' : 200,
               });
             } catch (err) {
               const msg = formatUpstreamError(err);
@@ -1527,9 +1531,9 @@ export async function startCodexProxy(
               await streamCompactionResponse(languageModel, params, modelId, sendWsEvent);
             } else
             await streamResponsesResponse(languageModel, params, modelId, sendWsEvent, summary => {
-              if (summary.errorMessage || summary.aborted) streamFailure = summary;
+              if (summary.errorMessage || summary.aborted || summary.incompleteReason) streamFailure = summary;
               if (debug) {
-                const failure = `${summary.aborted ? ' aborted=yes' : ''}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ''}`;
+                const failure = `${summary.aborted ? ' aborted=yes' : ''}${summary.incompleteReason ? ` incomplete=${summary.incompleteReason}` : ''}${summary.finishReason ? ` finish=${summary.finishReason}` : ''}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ''}`;
                 log(`WS response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(',')}] loopDetected=${summary.loopDetected ?? 'no'} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
               }
             }, progress => {

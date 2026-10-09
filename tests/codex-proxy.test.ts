@@ -59,6 +59,12 @@ describe('isExternalToolContinuation', () => {
 });
 
 describe('streamOutcome', () => {
+  it('records token-limit finishes as incomplete rather than successful in the route audit', () => {
+    expect(streamOutcome({
+      reasoningChars: 0, reasoningPreview: '', textChars: 613, toolCallCount: 0, toolNames: [],
+      incompleteReason: 'max_output_tokens',
+    } as any, 'response.completed')).toEqual({ outcome: 'error', status: 'response.incomplete' });
+  });
   it('reports ok when the stream finished cleanly', () => {
     expect(streamOutcome(undefined, 200)).toEqual({ outcome: 'ok', status: 200 });
     expect(streamOutcome(undefined, 'response.completed'))

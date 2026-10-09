@@ -186,7 +186,10 @@ function anthropicContentToParts(
       const { thoughtSignature } = id ? splitToolUseId(id) : { thoughtSignature: undefined };
       if (id && name) toolUseIdToName.set(id, name);
       const part: JsonRecord = { functionCall: { name, args: block.input ?? {} } };
-      if (thoughtSignature) part.thoughtSignature = thoughtSignature;
+      // Inherited/native-model history and sessions resumed after Relay restarts
+      // may have no Google signature. Google's documented migration marker keeps
+      // those calls replayable; always prefer the genuine signature when known.
+      part.thoughtSignature = thoughtSignature ?? 'skip_thought_signature_validator';
       parts.push(part);
     } else if (type === 'tool_result') {
       const toolUseId = block.tool_use_id as string;

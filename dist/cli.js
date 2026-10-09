@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-CHHIHXIK.js";
+} from "./chunk-CMWX2S4I.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -130,7 +130,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-FRBJFMIK.js";
+} from "./chunk-IGON3W5X.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -228,7 +228,7 @@ import {
   upstreamHttpStatus,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-JTEBRAI2.js";
+} from "./chunk-ZLLXP35M.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -3156,7 +3156,7 @@ function translateResponsesInput(input, instructions, npm, toolContext = createC
         });
       }
     } else if (item.type === "tool_search_call") {
-      const { rawId } = splitToolUseId(item.call_id);
+      const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
       const parts = [];
       if (pendingReasoning.trim()) {
         parts.push({ type: "reasoning", text: pendingReasoning });
@@ -3166,7 +3166,8 @@ function translateResponsesInput(input, instructions, npm, toolContext = createC
         type: "tool-call",
         toolCallId: rawId,
         toolName: TOOL_SEARCH_NAME,
-        input: parseToolArguments(item.arguments)
+        input: parseToolArguments(item.arguments),
+        ...thoughtSignature && npm === "@ai-sdk/google" ? { providerOptions: { google: { thoughtSignature } } } : {}
       });
       messages.push({ role: "assistant", content: parts });
     } else if (item.type === "tool_search_output") {
@@ -3187,7 +3188,7 @@ function translateResponsesInput(input, instructions, npm, toolContext = createC
         }]
       });
     } else if (item.type === "custom_tool_call") {
-      const { rawId } = splitToolUseId(item.call_id);
+      const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
       const parts = [];
       if (pendingReasoning.trim()) {
         parts.push({ type: "reasoning", text: pendingReasoning });
@@ -3197,7 +3198,8 @@ function translateResponsesInput(input, instructions, npm, toolContext = createC
         type: "tool-call",
         toolCallId: rawId,
         toolName: item.name,
-        input: { input: typeof item.input === "string" ? item.input : serializeToolResultContent(item.input) }
+        input: { input: typeof item.input === "string" ? item.input : serializeToolResultContent(item.input) },
+        ...thoughtSignature && npm === "@ai-sdk/google" ? { providerOptions: { google: { thoughtSignature } } } : {}
       });
       messages.push({ role: "assistant", content: parts });
     } else if (item.type === "custom_tool_call_output") {
@@ -3309,12 +3311,13 @@ function translateResponsesRequest(body, npm, metadata, options = {}) {
     effortProviderOptions(npm, effort, metadata?.upstreamModelId ?? body.model, metadata)
   );
   const tools = translateResponsesTools([...effectiveTools, ...deferredTools], { ...options, npm });
+  const bridgedGemini = npm === "@ai-sdk/anthropic" && metadata?.providerId === "antigravity" && /(?:^|__)gemini-/.test(metadata.upstreamModelId ?? body.model);
   return {
     instructions: system,
     messages,
     tools,
     toolContext,
-    maxOutputTokens: omitsMaxOutputTokens(metadata) ? void 0 : body.max_output_tokens,
+    maxOutputTokens: omitsMaxOutputTokens(metadata) ? void 0 : body.max_output_tokens ?? (bridgedGemini ? 65536 : void 0),
     temperature: body.temperature,
     providerOptions,
     headers: options.requestHeaders
@@ -3389,6 +3392,11 @@ function buildFinalToolItem(kind, flatName, callId, itemId, argsStr) {
       return { type: "function_call", id: itemId, call_id: callId, name: flatName, arguments: argsStr, status: "completed" };
   }
 }
+function incompleteReasonForFinish(finishReason) {
+  if (finishReason === "length") return "max_output_tokens";
+  if (finishReason === "content-filter") return "content_filter";
+  return void 0;
+}
 var PROGRESS_INTERVAL_MS = 3e3;
 var REPEAT_TAIL_CHARS = 200;
 var REPEAT_STREAK_LIMIT = 3;
@@ -3432,6 +3440,7 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
   let reasoningRepeat = INITIAL_REPEAT_TRACKER;
   let textRepeat = INITIAL_REPEAT_TRACKER;
   let loopDetected;
+  let finishReason;
   const ensureTextItem = () => {
     if (!textItemId) {
       textItemId = newItemId("msg");
@@ -3560,7 +3569,11 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
         }
         break;
       }
+      case "finish-step":
+        if (part.finishReason) finishReason = part.finishReason;
+        break;
       case "finish":
+        if (part.finishReason) finishReason = part.finishReason;
         if (part.totalUsage) usage = usageFromPart(part);
         break;
       case "abort": {
@@ -3648,6 +3661,7 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
       }
     }
   }
+  const incompleteReason = incompleteReasonForFinish(finishReason);
   if (loopDetected) {
     ensureTextItem();
     textFull += LOOP_NOTICE;
@@ -3659,7 +3673,7 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
       delta: LOOP_NOTICE
     });
   }
-  const dsml = loopDetected ? null : parseDsmlToolCalls(textFull);
+  const dsml = loopDetected || incompleteReason ? null : parseDsmlToolCalls(textFull);
   if (dsml) {
     if (dsml.leadingText && textItemId) {
       emit("response.output_text.done", {
@@ -3729,7 +3743,7 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
       id: textItemId,
       type: "message",
       role: "assistant",
-      status: "completed",
+      status: incompleteReason ? "incomplete" : "completed",
       content: [{ type: "output_text", text: textFull }]
     };
     emit("response.output_item.done", {
@@ -3748,7 +3762,7 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
     });
     outputItems.unshift(reasoningItem);
   }
-  for (const tool4 of toolStates) {
+  for (const tool4 of incompleteReason ? [] : toolStates) {
     const normalizedArgs = normalizeCodexSubagentArguments(tool4.name, tool4.args);
     emit("response.function_call_arguments.done", {
       type: "response.function_call_arguments.done",
@@ -3764,7 +3778,7 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
     });
     outputItems.push(fcItem);
   }
-  if (outputItems.length === 0) {
+  if (outputItems.length === 0 && !incompleteReason) {
     outputItems.push({ id: newItemId("msg"), type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "(conversation context was too large to summarize)" }] });
   }
   onDone?.({
@@ -3774,16 +3788,20 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
     toolCallCount: toolStates.length,
     toolNames: toolStates.map((t) => t.name),
     loopDetected,
-    dsmlToolCallsRecovered: dsml?.calls.length
+    dsmlToolCallsRecovered: dsml?.calls.length,
+    finishReason,
+    incompleteReason
   });
-  emit("response.completed", {
-    type: "response.completed",
+  const terminalEvent = incompleteReason ? "response.incomplete" : "response.completed";
+  emit(terminalEvent, {
+    type: terminalEvent,
     response: {
       id: responseId,
       object: "response",
       model: modelId,
       created_at: createdAt,
-      status: "completed",
+      status: incompleteReason ? "incomplete" : "completed",
+      ...incompleteReason ? { incomplete_details: { reason: incompleteReason } } : {},
       output: outputItems,
       usage
     }
@@ -3834,6 +3852,7 @@ async function streamResponsesResponse(model, params, modelId, write, onDone, on
 async function generateResponsesResponse(model, params, modelId) {
   const { toolContext, ...sdkParams } = params;
   const r = await generateText({ model, ...sdkParams });
+  const incompleteReason = incompleteReasonForFinish(r.finishReason);
   const createdAt = Math.floor(Date.now() / 1e3);
   const responseId = newResponseId();
   const output = [];
@@ -3845,11 +3864,11 @@ async function generateResponsesResponse(model, params, modelId) {
       id: newItemId("msg"),
       type: "message",
       role: "assistant",
-      status: "completed",
+      status: incompleteReason ? "incomplete" : "completed",
       content: [{ type: "output_text", text: r.text }]
     });
   }
-  for (const tc of r.toolCalls) {
+  for (const tc of incompleteReason ? [] : r.toolCalls) {
     const encodedId = encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc), false);
     const argsStr = JSON.stringify(tc.input ?? {});
     const kind = resolveOutputKind(tc.toolName, toolContext);
@@ -3861,7 +3880,7 @@ async function generateResponsesResponse(model, params, modelId) {
       argsStr
     ));
   }
-  if (output.length === 0) {
+  if (output.length === 0 && !incompleteReason) {
     output.push({ id: newItemId("msg"), type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "(conversation context was too large to summarize)" }] });
   }
   const inputTokens = r.usage?.inputTokens ?? 0;
@@ -3871,7 +3890,8 @@ async function generateResponsesResponse(model, params, modelId) {
     object: "response",
     model: modelId,
     created_at: createdAt,
-    status: "completed",
+    status: incompleteReason ? "incomplete" : "completed",
+    ...incompleteReason ? { incomplete_details: { reason: incompleteReason } } : {},
     output,
     usage: {
       input_tokens: inputTokens,
@@ -4449,12 +4469,12 @@ function appendCodexRouteAudit(path3, event) {
 
 // src/codex-proxy.ts
 function captureCompletedResponse(sseText) {
-  if (!sseText.includes("response.completed")) return void 0;
+  if (!sseText.includes("response.completed") && !sseText.includes("response.incomplete")) return void 0;
   const dataLine = sseText.split("\n").find((l) => l.startsWith("data:"));
   if (!dataLine) return void 0;
   try {
     const obj = JSON.parse(dataLine.slice(5).trim());
-    if (obj && obj.type === "response.completed" && obj.response && typeof obj.response === "object") {
+    if (obj && (obj.type === "response.completed" || obj.type === "response.incomplete") && obj.response && typeof obj.response === "object") {
       return obj.response;
     }
   } catch {
@@ -4599,6 +4619,7 @@ function isCodexV2CompactionRequest(body) {
 var COMPACTION_MAX_OUTPUT_TOKENS = 4e3;
 function streamOutcome(failure, okStatus) {
   if (!failure) return { outcome: "ok", status: okStatus };
+  if (failure.incompleteReason) return { outcome: "error", status: "response.incomplete" };
   return {
     outcome: "error",
     status: failure.errorStatus ?? (failure.errorMessage ? upstreamHttpStatus(void 0, failure.errorMessage) : "stream-aborted")
@@ -5072,9 +5093,9 @@ async function startCodexProxy(routes, options = {}) {
                 await streamCompactionResponse(languageModel, params, modelId, write);
               } else
                 await streamResponsesResponse(languageModel, params, modelId, write, (summary) => {
-                  if (summary.errorMessage || summary.aborted) streamFailure = summary;
+                  if (summary.errorMessage || summary.aborted || summary.incompleteReason) streamFailure = summary;
                   if (debug) {
-                    const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
+                    const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.incompleteReason ? ` incomplete=${summary.incompleteReason}` : ""}${summary.finishReason ? ` finish=${summary.finishReason}` : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
                     log14(`response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
                   }
                 }, (progress) => {
@@ -5135,8 +5156,8 @@ async function startCodexProxy(routes, options = {}) {
                 provider: route.providerId ?? "relay",
                 routeModel: route.modelId,
                 upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId,
-                outcome: "ok",
-                status: 200
+                outcome: response.status === "incomplete" ? "error" : "ok",
+                status: response.status === "incomplete" ? "response.incomplete" : 200
               });
             } catch (err) {
               const msg = formatUpstreamError(err);
@@ -5709,9 +5730,9 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
                 await streamCompactionResponse(languageModel, params, modelId, sendWsEvent);
               } else
                 await streamResponsesResponse(languageModel, params, modelId, sendWsEvent, (summary) => {
-                  if (summary.errorMessage || summary.aborted) streamFailure = summary;
+                  if (summary.errorMessage || summary.aborted || summary.incompleteReason) streamFailure = summary;
                   if (debug) {
-                    const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
+                    const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.incompleteReason ? ` incomplete=${summary.incompleteReason}` : ""}${summary.finishReason ? ` finish=${summary.finishReason}` : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
                     log14(`WS response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
                   }
                 }, (progress) => {
@@ -16466,7 +16487,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-QKISEYYF.js");
+    const { runUiCommand } = await import("./ui-command-CBAW5DDR.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

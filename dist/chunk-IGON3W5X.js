@@ -126,7 +126,7 @@ import {
   upstreamHttpStatus,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-JTEBRAI2.js";
+} from "./chunk-ZLLXP35M.js";
 
 // src/registry/google-model-id.ts
 var GOOGLE_MODEL_PREFIX = "models/";
@@ -1012,7 +1012,7 @@ function anthropicContentToParts(content, toolUseIdToName) {
       const { thoughtSignature } = id ? splitToolUseId(id) : { thoughtSignature: void 0 };
       if (id && name) toolUseIdToName.set(id, name);
       const part = { functionCall: { name, args: block.input ?? {} } };
-      if (thoughtSignature) part.thoughtSignature = thoughtSignature;
+      part.thoughtSignature = thoughtSignature ?? "skip_thought_signature_validator";
       parts.push(part);
     } else if (type === "tool_result") {
       const toolUseId = block.tool_use_id;
@@ -8781,4 +8781,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-FRBJFMIK.js.map
+//# sourceMappingURL=chunk-IGON3W5X.js.map
