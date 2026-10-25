@@ -7,7 +7,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.15.17",
+  version: "0.15.18",
   publishConfig: {
     access: "public"
   },
@@ -4480,10 +4480,10 @@ function createResponsesWebSocketFetch(wsUrl, log) {
     const encoder = new TextEncoder();
     let socket;
     let frameCount = 0;
+    let closed = false;
     const normalizeState = createResponsesLiteNormalizeState();
     const stream = new ReadableStream({
       start(controller) {
-        let closed = false;
         const close = () => {
           if (closed) return;
           closed = true;
@@ -4510,6 +4510,10 @@ function createResponsesWebSocketFetch(wsUrl, log) {
         };
         socket = new WebSocket(wsUrl, { headers });
         socket.on("open", () => {
+          if (closed) {
+            socket.close();
+            return;
+          }
           debug(`open \u2014 sending ${outgoing.length}B payload`);
           socket.send(outgoing);
         });
@@ -4517,6 +4521,7 @@ function createResponsesWebSocketFetch(wsUrl, log) {
           debug(`unexpected-response status=${res.statusCode}`);
         });
         socket.on("message", (data) => {
+          if (closed) return;
           const text = Array.isArray(data) ? Buffer.concat(data).toString("utf8") : data.toString("utf8");
           frameCount += 1;
           let event;
@@ -4561,6 +4566,7 @@ function createResponsesWebSocketFetch(wsUrl, log) {
         }
       },
       cancel() {
+        closed = true;
         try {
           socket?.close();
         } catch {
@@ -6863,6 +6869,25 @@ function imagePart(block) {
   }
   return null;
 }
+function toolResultOutput(content) {
+  if (!Array.isArray(content) || !content.some((block) => block?.type === "image")) {
+    return { type: "text", value: serializeToolResultContent(content) };
+  }
+  return {
+    type: "content",
+    value: content.map((block) => {
+      if (block?.type === "image") {
+        const image = imagePart(block);
+        if (image) return {
+          type: "file",
+          mediaType: image.mediaType,
+          data: image.data instanceof Uint8Array ? { type: "data", data: image.data } : image.data
+        };
+      }
+      return { type: "text", text: block?.type === "text" ? block.text ?? "" : serializeToolResultContent(block) };
+    })
+  };
+}
 function annotateToolNames(messages) {
   const nameById = /* @__PURE__ */ new Map();
   for (const msg of messages) {
@@ -6919,7 +6944,7 @@ function translateMessages(messages, npm, onDebug) {
             type: "tool-result",
             toolCallId: splitToolUseId(tr.tool_use_id ?? "").rawId,
             toolName: tr._name ?? "unknown",
-            output: { type: "text", value: serializeToolResultContent(tr.content) }
+            output: toolResultOutput(tr.content)
           }))
         });
       }
@@ -7483,4 +7508,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-5N5YX2JF.js.map
+//# sourceMappingURL=chunk-CVKR4XQR.js.map

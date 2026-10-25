@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.18] - 2026-10-25
+
+### Fixed
+
+- **OAuth Responses WebSocket no longer crashes after the stream closes.** Frames that arrived after a response finished, or after a cancel, abort, or failure, were written to an already-closed stream, causing `ERR_INVALID_STATE: Controller is already closed`; a socket that opened late could also send a cancelled request. Relay now discards late frames and closes a late-opening socket without sending. Thanks to @ariran5 ([#86](https://github.com/jacob-bd/relay-ai/pull/86)).
+- **Images returned by tools now reach vision models as images.** Relay used to serialize tool-result images as base64 text, so screenshots and rendered pages could not be read. Tool results now keep text, image bytes, MIME types, URL images, and tool-call identity. Thanks to @ariran5 ([#85](https://github.com/jacob-bd/relay-ai/pull/85)).
+
 ## [0.15.17] - 2026-10-19
 
 ### Fixed

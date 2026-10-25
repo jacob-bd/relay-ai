@@ -50,7 +50,7 @@ import { join as join2 } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.15.17",
+  version: "0.15.18",
   publishConfig: {
     access: "public"
   },
@@ -1359,10 +1359,10 @@ function createResponsesWebSocketFetch(wsUrl, log) {
     const encoder = new TextEncoder();
     let socket;
     let frameCount = 0;
+    let closed = false;
     const normalizeState = createResponsesLiteNormalizeState();
     const stream = new ReadableStream({
       start(controller) {
-        let closed = false;
         const close = () => {
           if (closed) return;
           closed = true;
@@ -1389,6 +1389,10 @@ function createResponsesWebSocketFetch(wsUrl, log) {
         };
         socket = new WebSocket(wsUrl, { headers });
         socket.on("open", () => {
+          if (closed) {
+            socket.close();
+            return;
+          }
           debug(`open \u2014 sending ${outgoing.length}B payload`);
           socket.send(outgoing);
         });
@@ -1396,6 +1400,7 @@ function createResponsesWebSocketFetch(wsUrl, log) {
           debug(`unexpected-response status=${res.statusCode}`);
         });
         socket.on("message", (data) => {
+          if (closed) return;
           const text = Array.isArray(data) ? Buffer.concat(data).toString("utf8") : data.toString("utf8");
           frameCount += 1;
           let event;
@@ -1440,6 +1445,7 @@ function createResponsesWebSocketFetch(wsUrl, log) {
         }
       },
       cancel() {
+        closed = true;
         try {
           socket?.close();
         } catch {
