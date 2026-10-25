@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import { generateText } from 'ai';
+import { createOpenAI } from '@ai-sdk/openai';
 import {
   annotateToolNames,
   anthropicEffortFromRequest,
@@ -82,6 +84,38 @@ describe('annotateToolNames', () => {
 });
 
 describe('translateMessages', () => {
+  it('sends tool-returned image bytes as native OpenAI Responses input', async () => {
+    let requestBody: any;
+    const provider = createOpenAI({
+      apiKey: 'test-key',
+      fetch: async (_url, init) => {
+        requestBody = JSON.parse(init!.body as string);
+        return Response.json({ error: { message: 'fixture stop', type: 'invalid_request_error' } }, { status: 400 });
+      },
+    });
+    const messages = [
+      { role: 'assistant' as const, content: [{ type: 'tool_use', id: 'call_image', name: 'Read', input: {} }] },
+      { role: 'user' as const, content: [{ type: 'tool_result', tool_use_id: 'call_image', content: [
+        { type: 'text', text: 'Rendered page' },
+        { type: 'image', source: { type: 'base64' as const, media_type: 'image/png', data: 'AAH+/w==' } },
+      ] }] },
+    ];
+    annotateToolNames(messages);
+    await expect(generateText({
+      model: provider.responses('gpt-5.5'),
+      messages: translateMessages(messages, '@ai-sdk/openai'),
+      maxRetries: 0,
+    })).rejects.toThrow('fixture stop');
+    expect(requestBody.input).toContainEqual({
+      type: 'function_call_output',
+      call_id: 'call_image',
+      output: [
+        { type: 'input_text', text: 'Rendered page' },
+        { type: 'input_image', image_url: 'data:image/png;base64,AAH+/w==' },
+      ],
+    });
+  });
+
   it('maps user text and assistant text', () => {
     const out = translateMessages([
       { role: 'user', content: 'hello' },
@@ -102,6 +136,40 @@ describe('translateMessages', () => {
     const out = translateMessages(messages, '@ai-sdk/xai') as any[];
     expect(out[0]).toEqual({ role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'call_1', toolName: 'Read', input: { path: 'a' } }] });
     expect(out[1]).toEqual({ role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call_1', toolName: 'Read', output: { type: 'text', value: 'file body' } }] });
+  });
+
+  it('preserves mixed text and image tool output with its original call identity and bytes', () => {
+    const messages = [
+      { role: 'assistant' as const, content: [{ type: 'tool_use', id: 'call_image', name: 'Read', input: {} }] },
+      { role: 'user' as const, content: [{ type: 'tool_result', tool_use_id: 'call_image', content: [
+        { type: 'text', text: 'Page 1' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAH+/w==' } },
+        { type: 'text', text: 'End of page' },
+      ] }] },
+    ];
+    annotateToolNames(messages);
+    const out = translateMessages(messages, '@ai-sdk/openai') as any[];
+    expect(out[1].content[0]).toMatchObject({ type: 'tool-result', toolCallId: 'call_image', toolName: 'Read' });
+    expect(out[1].content[0].output).toEqual({ type: 'content', value: [
+      { type: 'text', text: 'Page 1' },
+      { type: 'file', mediaType: 'image/png', data: { type: 'data', data: Buffer.from([0, 1, 254, 255]) } },
+      { type: 'text', text: 'End of page' },
+    ] });
+    expect(messages[1].content[0].content![1]).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAH+/w==' } });
+  });
+
+  it('preserves URL images returned by tools as native file parts', () => {
+    const out = translateMessages([{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_image', content: [
+      { type: 'image', source: { type: 'url', url: 'https://example.com/page.png', media_type: 'image/png' } },
+    ] }] }], '@ai-sdk/google') as any[];
+    expect(out[0].content[0].output).toEqual({ type: 'content', value: [
+      { type: 'file', mediaType: 'image/png', data: { type: 'url', url: new URL('https://example.com/page.png') } },
+    ] });
+  });
+
+  it.each(['plain text', undefined, [{ type: 'text', text: 'Only text' }]])('keeps text-only tool output unchanged: %j', content => {
+    const out = translateMessages([{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content }] }], '@ai-sdk/openai') as any[];
+    expect(out[0].content[0].output).toEqual({ type: 'text', value: content === undefined ? '' : typeof content === 'string' ? content : JSON.stringify(content) });
   });
 
   it('decodes thought_signature into providerOptions for Google only', () => {

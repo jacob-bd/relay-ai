@@ -1,6 +1,6 @@
 // Anthropic /v1/messages ↔ Vercel AI SDK. One turn per request; Claude Code owns the tool loop.
 import { streamText, generateText, tool, jsonSchema } from 'ai';
-import type { LanguageModel, ModelMessage } from 'ai';
+import type { LanguageModel, ModelMessage, ToolResultPart } from 'ai';
 import {
   sseChunk,
   encodeToolUseId,
@@ -135,6 +135,27 @@ function imagePart(block: AnthropicBlock): { type: 'file'; mediaType: string; da
   return null;
 }
 
+/** Preserve tool-returned images as native SDK content instead of JSON text. */
+function toolResultOutput(content: unknown): ToolResultPart['output'] {
+  if (!Array.isArray(content) || !content.some(block => block?.type === 'image')) {
+    return { type: 'text', value: serializeToolResultContent(content) };
+  }
+  return {
+    type: 'content',
+    value: content.map((block: AnthropicBlock | null) => {
+      if (block?.type === 'image') {
+        const image = imagePart(block);
+        if (image) return {
+          type: 'file' as const,
+          mediaType: image.mediaType,
+          data: image.data instanceof Uint8Array ? { type: 'data' as const, data: image.data } : image.data,
+        };
+      }
+      return { type: 'text' as const, text: block?.type === 'text' ? block.text ?? '' : serializeToolResultContent(block) };
+    }),
+  };
+}
+
 // ── tool_result name resolution (tool messages need the tool name) ────────────
 export function annotateToolNames(messages: AnthropicMsg[]): void {
   const nameById = new Map<string, string>();
@@ -204,7 +225,7 @@ export function translateMessages(
             type: 'tool-result',
             toolCallId: splitToolUseId(tr.tool_use_id ?? '').rawId,
             toolName: tr._name ?? 'unknown',
-            output: { type: 'text', value: serializeToolResultContent(tr.content) },
+            output: toolResultOutput(tr.content),
           })),
         } as unknown as ModelMessage);
       }
