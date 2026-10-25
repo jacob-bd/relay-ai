@@ -535,11 +535,11 @@ export function createResponsesWebSocketFetch(wsUrl: string, log?: (msg: string)
     const encoder = new TextEncoder();
     let socket: WsWebSocket;
     let frameCount = 0;
+    let closed = false;
     const normalizeState = createResponsesLiteNormalizeState();
 
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        let closed = false;
         const close = () => {
           if (closed) return;
           closed = true;
@@ -560,6 +560,7 @@ export function createResponsesWebSocketFetch(wsUrl: string, log?: (msg: string)
         socket = new WebSocket(wsUrl, { headers });
 
         socket.on('open', () => {
+          if (closed) { socket.close(); return; }
           debug(`open — sending ${outgoing.length}B payload`);
           socket.send(outgoing);
         });
@@ -568,6 +569,7 @@ export function createResponsesWebSocketFetch(wsUrl: string, log?: (msg: string)
         });
 
         socket.on('message', (data: RawData) => {
+          if (closed) return;
           const text = Array.isArray(data)
             ? Buffer.concat(data).toString('utf8')
             : data.toString('utf8');
@@ -606,6 +608,7 @@ export function createResponsesWebSocketFetch(wsUrl: string, log?: (msg: string)
         }
       },
       cancel() {
+        closed = true;
         try { socket?.close(); } catch { /* ignore */ }
       },
     });

@@ -156,6 +156,47 @@ describe('createResponsesWebSocketFetch', () => {
     expect(socket.close).toHaveBeenCalled();
   });
 
+
+  it.each(['cancel', 'abort', 'completed', 'error'] as const)('ignores late frames after %s', async terminal => {
+    const controller = new AbortController();
+    const wsFetch = createResponsesWebSocketFetch(WS_URL);
+    const res = await wsFetch('https://x', { method: 'POST', body: '{}', signal: controller.signal });
+    const socket = lastSocket();
+    socket.emit('open');
+    if (terminal === 'cancel') await res.body!.cancel();
+    else if (terminal === 'abort') controller.abort();
+    else if (terminal === 'completed') socket.emit('message', Buffer.from(JSON.stringify({ type: 'response.completed' })));
+    else socket.emit('error', new Error('boom'));
+
+    expect(() => socket.emit('message', Buffer.from(JSON.stringify({ type: 'response.output_text.delta', delta: 'late' })))).not.toThrow();
+    expect(() => socket.emit('message', Buffer.from('late non-JSON frame'))).not.toThrow();
+    expect(() => socket.emit('error', new Error('late error'))).not.toThrow();
+    expect(() => socket.emit('close', 1006, Buffer.from('late close'))).not.toThrow();
+    expect(socket.close).toHaveBeenCalled();
+    if (terminal === 'cancel') expect(res.body!.locked).toBe(false);
+    else {
+      const body = await readAll(res);
+      expect(body).not.toContain('late');
+      if (terminal === 'completed') expect(body).toContain('response.completed');
+      else if (terminal === 'error') expect(body).toContain('boom');
+      else expect(body).toBe('');
+    }
+  });
+
+  it.each(['cancel', 'abort', 'already-aborted'] as const)('does not send a request when the socket opens after %s', async terminal => {
+    const controller = new AbortController();
+    if (terminal === 'already-aborted') controller.abort();
+    const wsFetch = createResponsesWebSocketFetch(WS_URL);
+    const res = await wsFetch('https://x', { method: 'POST', body: '{}', signal: controller.signal });
+    const socket = lastSocket();
+    if (terminal === 'cancel') await res.body!.cancel();
+    else controller.abort();
+    expect(() => socket.emit('open')).not.toThrow();
+    expect(socket.send).not.toHaveBeenCalled();
+    expect(socket.close).toHaveBeenCalled();
+    if (terminal !== 'cancel') expect(await readAll(res)).toBe('');
+  });
+
   it('sanitizes debug logs so frame bodies and credentials never appear', async () => {
     const lines: string[] = [];
     const wsFetch = createResponsesWebSocketFetch(WS_URL, msg => lines.push(msg));
