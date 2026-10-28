@@ -62,19 +62,14 @@ interface ModelExclusion {
 
 const EXCLUDED_MODELS: ModelExclusion[] = [
   {
-    provider: 'openai',
-    match: /chat-latest$/,
-    reason: 'documented non-reasoning chat model; models.dev over-declares',
-  },
-  {
-    provider: 'openai-oauth',
-    match: /chat-latest$/,
-    reason: 'documented non-reasoning chat model; models.dev over-declares',
-  },
-  {
     provider: 'mistral',
     match: /^(?:zai-)?glm-/,
     reason: "GLM hosted on Mistral declares low..max while Mistral's own wire is none/high — needs live verification",
+  },
+  {
+    provider: 'mistral',
+    match: /^deepseek-/,
+    reason: "DeepSeek hosted on Mistral declares none/low/high/max; @ai-sdk/mistral's reasoningEffort wire for non-Mistral models is unverified — needs live verification",
   },
   {
     provider: 'mistral',
@@ -83,6 +78,11 @@ const EXCLUDED_MODELS: ModelExclusion[] = [
   },
   {
     provider: 'kilo',
+    match: /glm-5\.2/,
+    reason: 'GLM-5.2 mapping documents high/xhigh only — the declared none has no verified wire value',
+  },
+  {
+    provider: 'venice',
     match: /glm-5\.2/,
     reason: 'GLM-5.2 mapping documents high/xhigh only — the declared none has no verified wire value',
   },
