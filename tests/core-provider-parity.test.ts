@@ -151,6 +151,59 @@ describe('Core provider request parity', () => {
     expect(requests[0].headers.get('anthropic-beta')).toContain('oauth-2025-04-20');
   });
 
+  it.each([false, true])('marks Claude tools, system and latest turns for prompt caching (oauth=%s)', async oauth => {
+    capture(() => anthropicResponse());
+    await generateText({
+      model: await createRelayModel(configure(oauth ? 'claude-code' : 'anthropic', '@ai-sdk/anthropic', 'claude-haiku-5-5', oauth)),
+      instructions: 'Stable instruction.',
+      messages: [
+        { role: 'user', content: 'first' },
+        { role: 'assistant', content: 'reply' },
+        { role: 'user', content: 'second' },
+      ],
+      tools: {
+        alpha: tool({ inputSchema: jsonSchema({ type: 'object', properties: {} }) }),
+        beta: tool({ inputSchema: jsonSchema({ type: 'object', properties: {} }) }),
+      },
+      maxRetries: 0,
+    });
+    const { body } = requests[0];
+    const ephemeral = { type: 'ephemeral' };
+    expect(body.tools.at(-1).cache_control).toEqual(ephemeral);
+    expect(body.tools[0].cache_control).toBeUndefined();
+    expect(body.system.at(-1)).toMatchObject({ text: 'Stable instruction.', cache_control: ephemeral });
+    expect(body.messages.map((m: { content: Array<{ cache_control?: unknown }> }) => m.content.at(-1)?.cache_control))
+      .toEqual([ephemeral, undefined, ephemeral]);
+    expect(JSON.stringify(body).match(/"cache_control"/g)).toHaveLength(4);
+  });
+
+  it('keeps caller-placed cache breakpoints instead of adding its own', async () => {
+    capture(() => anthropicResponse());
+    await generateText({
+      model: await createRelayModel(configure('anthropic', '@ai-sdk/anthropic', 'claude-haiku-5-5')),
+      instructions: {
+        role: 'system', content: 'Cached instruction.',
+        providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+      },
+      prompt: 'hello', maxRetries: 0,
+    });
+    expect(JSON.stringify(requests[0].body).match(/"cache_control"/g)).toHaveLength(1);
+    expect(requests[0].body.messages[0].content.at(-1).cache_control).toBeUndefined();
+  });
+
+  it('does not add Anthropic cache markers to non-Anthropic providers', async () => {
+    capture(() => Response.json({
+      id: 'chatcmpl_test', object: 'chat.completion', created: 1, model: 'some-model',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 10, completion_tokens: 2 },
+    }));
+    await generateText({
+      model: await createRelayModel(configure('custom', '@ai-sdk/openai-compatible', 'some-model')),
+      instructions: 'Stable instruction.', prompt: 'hello', maxRetries: 0,
+    });
+    expect(JSON.stringify(requests[0].body)).not.toMatch(/cache_?control/i);
+  });
+
   it.each([false, true])('applies OpenAI stateless reasoning defaults and preserves explicit overrides=%s', async override => {
     const route = configure('openai-oauth', '@ai-sdk/openai', 'gpt-5.6-sol', true);
     capture(() => Response.json({

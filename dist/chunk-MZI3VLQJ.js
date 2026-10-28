@@ -5236,11 +5236,52 @@ function createProtocolFallbackMiddleware(primary, alternate, primaryProtocol, a
     }
   };
 }
+var ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4;
+var ANTHROPIC_CACHE_BREAKPOINT = { anthropic: { cacheControl: { type: "ephemeral" } } };
+function hasAnthropicCacheControl(options) {
+  const anthropic = options?.anthropic;
+  return anthropic?.cacheControl != null || anthropic?.cache_control != null;
+}
+function withCacheBreakpoint(item) {
+  const existing = item.providerOptions;
+  return { ...item, providerOptions: deepMergeProviderOptions(existing, ANTHROPIC_CACHE_BREAKPOINT) };
+}
+function lastIndexWhere(items, match) {
+  for (let i = items.length - 1; i >= 0; i--) if (match(items[i])) return i;
+  return -1;
+}
+function applyAnthropicPromptCaching(params) {
+  const callerMarked = params.prompt.some(
+    (message) => hasAnthropicCacheControl(message.providerOptions) || Array.isArray(message.content) && message.content.some((part) => hasAnthropicCacheControl(part.providerOptions))
+  ) || params.tools?.some((t) => hasAnthropicCacheControl(t.providerOptions));
+  if (callerMarked) return params;
+  let remaining = ANTHROPIC_MAX_CACHE_BREAKPOINTS;
+  let tools = params.tools;
+  const lastFunctionTool = tools ? lastIndexWhere(tools, (t) => t.type === "function") : -1;
+  if (tools && lastFunctionTool >= 0) {
+    tools = tools.map((t, i) => i === lastFunctionTool ? withCacheBreakpoint(t) : t);
+    remaining--;
+  }
+  const prompt = [...params.prompt];
+  const lastSystem = lastIndexWhere(prompt, (m) => m.role === "system");
+  if (lastSystem >= 0) {
+    prompt[lastSystem] = withCacheBreakpoint(prompt[lastSystem]);
+    remaining--;
+  }
+  for (let i = prompt.length - 1; i >= 0 && remaining > 0; i--) {
+    const message = prompt[i];
+    if (message.role !== "user" && message.role !== "tool") continue;
+    prompt[i] = withCacheBreakpoint(message);
+    remaining--;
+  }
+  return { ...params, prompt, ...tools ? { tools } : {} };
+}
 function withProviderRequestDefaults(model, spec) {
   const npm = resolveProviderNpm(spec.npm);
   const defaults = thinkingProviderOptions(npm);
   const claudeOAuth = isClaudeCodeOAuthRoute(spec);
-  if (!defaults && !claudeOAuth && npm !== "@ai-sdk/alibaba") return model;
+  const anthropicCaching = npm === "@ai-sdk/anthropic" || npm === VERTEX_ANTHROPIC_NPM;
+  if (!defaults && !claudeOAuth && !anthropicCaching && npm !== "@ai-sdk/alibaba") return model;
   return wrapLanguageModel({
     model,
     middleware: {
@@ -5268,7 +5309,8 @@ function withProviderRequestDefaults(model, spec) {
         if (npm === "@ai-sdk/alibaba" && prompt.at(-1)?.role === "tool") {
           prompt = [...prompt, { role: "user", content: [{ type: "text", text: "Continue." }] }];
         }
-        return { ...params, prompt, providerOptions };
+        const prepared = { ...params, prompt, providerOptions };
+        return anthropicCaching ? applyAnthropicPromptCaching(prepared) : prepared;
       }
     }
   });
@@ -7508,4 +7550,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-CVKR4XQR.js.map
+//# sourceMappingURL=chunk-MZI3VLQJ.js.map

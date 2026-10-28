@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { streamText } from 'ai';
+import { MockLanguageModelV4 } from 'ai/test';
 import {
+  applyAnthropicPromptCaching,
   createLanguageModel,
   createOpenRouterFetch,
   deepMergeProviderOptions,
@@ -12,6 +14,7 @@ import {
   resolveProviderNpm,
   shouldUseOpenAiResponsesEndpoint,
   thinkingProviderOptions,
+  withProviderRequestDefaults,
 } from '../src/provider-factory.js';
 import { VERTEX_ANTHROPIC_NPM } from '../src/constants.js';
 import { clearRememberedProtocols } from '../src/gateway-protocol.js';
@@ -944,5 +947,44 @@ describe('OpenAI effort for models newer than the built-in table', () => {
   it('keeps the hand-written table for models it covers', () => {
     const caps = getReasoningCapabilities('@ai-sdk/openai', 'gpt-5.5-pro', { ...meta, upstreamModelId: 'gpt-5.5-pro' });
     expect(caps.levels).toEqual(['medium', 'high', 'xhigh']);
+  });
+});
+
+describe('applyAnthropicPromptCaching', () => {
+  const marked = (item: { providerOptions?: Record<string, Record<string, unknown>> }) =>
+    item.providerOptions?.anthropic?.cacheControl !== undefined;
+  const text = (t: string) => [{ type: 'text' as const, text: t }];
+
+  it('skips assistant turns and stops at four breakpoints', () => {
+    const out = applyAnthropicPromptCaching({
+      prompt: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: text('u1') },
+        { role: 'assistant', content: text('a1') },
+        { role: 'user', content: text('u2') },
+        { role: 'assistant', content: text('a2') },
+        { role: 'tool', content: [] },
+        { role: 'assistant', content: text('a3') },
+      ],
+      tools: [{ type: 'function', name: 'alpha', inputSchema: { type: 'object' } }],
+    });
+    expect(out.tools!.map(marked)).toEqual([true]);
+    expect(out.prompt.map(marked)).toEqual([true, false, false, true, false, true, false]);
+  });
+
+  it('marks up to four user turns when there are no tools or system prompt', () => {
+    const out = applyAnthropicPromptCaching({
+      prompt: Array.from({ length: 6 }, (_, i) => ({ role: 'user' as const, content: text(`u${i}`) })),
+    });
+    expect(out.prompt.map(marked)).toEqual([false, false, true, true, true, true]);
+  });
+
+  it('applies to Vertex Claude routes through the shared request defaults', async () => {
+    const inner = new MockLanguageModelV4({ doGenerate: async () => { throw new Error('captured'); } });
+    const model = withProviderRequestDefaults(inner, { npm: VERTEX_ANTHROPIC_NPM, modelId: 'claude-sonnet-5-5', apiKey: '' });
+    await expect((model as unknown as MockLanguageModelV4).doGenerate({
+      prompt: [{ role: 'system', content: 'sys' }, { role: 'user', content: text('hi') }],
+    })).rejects.toThrow('captured');
+    expect(inner.doGenerateCalls[0]!.prompt.map(marked)).toEqual([true, true]);
   });
 });

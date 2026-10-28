@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Claude models now use prompt caching outside Claude Code.** Anthropic caches only the prompt prefixes a request marks, and Relay never marked any when it translated requests for the ChatGPT/Codex app, Codex CLI, Gemini CLI, Antigravity or the gateway. Every turn re-read the full tool list and history at full price and latency — the Codex app alone sends about 120k tokens of tool definitions per turn. Relay now marks the last tool, the system prompt and the latest user/tool turns (Anthropic's four-breakpoint cap) for Claude by API key, Claude subscription, Vertex AI and OpenCode Zen; breakpoints a client already placed are kept as-is. Verified live on Vertex AI: a repeated 6.8k-token prompt went from 6.5 s to 1.0 s, served from cache. Claude via OpenRouter or Bedrock is not covered yet.
+- **ChatGPT Desktop no longer fails Ctrl+C cleanup with "did not exit after graceful shutdown" on macOS.** Session shutdown waited only 5 seconds for the app to quit, while ChatGPT for macOS can take longer to settle an active Codex task; launch-time restarts already allowed 30 seconds. Every quit wait now uses the same per-platform window (30 s on macOS, unchanged elsewhere). macOS still never force-quits the app.
+
 ## [0.15.18] - 2026-10-25
 
 ### Fixed

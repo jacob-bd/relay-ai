@@ -367,7 +367,9 @@ export async function waitForOriginalCodexPids(
   return originalPids.every(pid => !alive(pid));
 }
 
-export async function waitForCodexAppQuit(timeoutMs = 5000): Promise<boolean> {
+// Shutdown waits as long as a restart does: a 5 s cap on macOS fails a normal
+// graceful quit while a Codex task is still settling.
+export async function waitForCodexAppQuit(timeoutMs = gracefulQuitTimeoutMs(process.platform)): Promise<boolean> {
   const originalPids = codexAppMainPids();
   if (originalPids.length > 0) {
     const exited = await waitForOriginalCodexPids(originalPids, timeoutMs);

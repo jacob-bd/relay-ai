@@ -623,12 +623,76 @@ function createProtocolFallbackMiddleware(
   };
 }
 
+type ModelCallParams = Parameters<NonNullable<LanguageModelMiddleware['transformParams']>>[0]['params'];
+type ProviderOptionsBag = Record<string, Record<string, unknown>>;
+
+/** Anthropic allows at most four cache breakpoints per request. */
+const ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4;
+const ANTHROPIC_CACHE_BREAKPOINT: ProviderOptionsBag = { anthropic: { cacheControl: { type: 'ephemeral' } } };
+
+function hasAnthropicCacheControl(options: unknown): boolean {
+  const anthropic = (options as ProviderOptionsBag | undefined)?.anthropic;
+  return anthropic?.cacheControl != null || anthropic?.cache_control != null;
+}
+
+function withCacheBreakpoint<T extends object>(item: T): T {
+  const existing = (item as { providerOptions?: ProviderOptionsBag }).providerOptions;
+  return { ...item, providerOptions: deepMergeProviderOptions(existing, ANTHROPIC_CACHE_BREAKPOINT) };
+}
+
+function lastIndexWhere<T>(items: readonly T[], match: (item: T) => boolean): number {
+  for (let i = items.length - 1; i >= 0; i--) if (match(items[i]!)) return i;
+  return -1;
+}
+
+/**
+ * Anthropic caches only the prompt prefixes a request marks; OpenAI, Gemini and
+ * DeepSeek cache automatically. Without marks every agent turn re-reads the
+ * whole tool list and history at full price and latency (the Codex app sends
+ * ~120k tokens of tools per turn). Marks the last tool, the last system message
+ * and the latest user/tool turns. Callers that place their own breakpoints
+ * (Claude Code does) are left untouched.
+ */
+export function applyAnthropicPromptCaching(params: ModelCallParams): ModelCallParams {
+  const callerMarked = params.prompt.some(message =>
+    hasAnthropicCacheControl(message.providerOptions)
+    || (Array.isArray(message.content)
+      && message.content.some(part => hasAnthropicCacheControl((part as { providerOptions?: unknown }).providerOptions))),
+  ) || params.tools?.some(t => hasAnthropicCacheControl((t as { providerOptions?: unknown }).providerOptions));
+  if (callerMarked) return params;
+
+  let remaining = ANTHROPIC_MAX_CACHE_BREAKPOINTS;
+  let tools = params.tools;
+  const lastFunctionTool = tools ? lastIndexWhere(tools, t => t.type === 'function') : -1;
+  if (tools && lastFunctionTool >= 0) {
+    tools = tools.map((t, i) => (i === lastFunctionTool ? withCacheBreakpoint(t) : t));
+    remaining--;
+  }
+
+  const prompt = [...params.prompt];
+  const lastSystem = lastIndexWhere(prompt, m => m.role === 'system');
+  if (lastSystem >= 0) {
+    prompt[lastSystem] = withCacheBreakpoint(prompt[lastSystem]!);
+    remaining--;
+  }
+  // Assistant turns can end in a thinking block, which Anthropic cannot cache.
+  for (let i = prompt.length - 1; i >= 0 && remaining > 0; i--) {
+    const message = prompt[i]!;
+    if (message.role !== 'user' && message.role !== 'tool') continue;
+    prompt[i] = withCacheBreakpoint(message);
+    remaining--;
+  }
+
+  return { ...params, prompt, ...(tools ? { tools } : {}) };
+}
+
 /** Provider requirements belong on the model so Core and every SDK launcher share them. */
 export function withProviderRequestDefaults(model: LanguageModel, spec: ProviderModelSpec): LanguageModel {
   const npm = resolveProviderNpm(spec.npm);
   const defaults = thinkingProviderOptions(npm);
   const claudeOAuth = isClaudeCodeOAuthRoute(spec);
-  if (!defaults && !claudeOAuth && npm !== '@ai-sdk/alibaba') return model;
+  const anthropicCaching = npm === '@ai-sdk/anthropic' || npm === VERTEX_ANTHROPIC_NPM;
+  if (!defaults && !claudeOAuth && !anthropicCaching && npm !== '@ai-sdk/alibaba') return model;
 
   return wrapLanguageModel({
     model: model as Parameters<typeof wrapLanguageModel>[0]['model'],
@@ -659,7 +723,8 @@ export function withProviderRequestDefaults(model: LanguageModel, spec: Provider
         if (npm === '@ai-sdk/alibaba' && prompt.at(-1)?.role === 'tool') {
           prompt = [...prompt, { role: 'user', content: [{ type: 'text', text: 'Continue.' }] }];
         }
-        return { ...params, prompt, providerOptions: providerOptions as typeof params.providerOptions };
+        const prepared = { ...params, prompt, providerOptions: providerOptions as typeof params.providerOptions };
+        return anthropicCaching ? applyAnthropicPromptCaching(prepared) : prepared;
       },
     },
   });

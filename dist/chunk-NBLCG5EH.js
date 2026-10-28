@@ -127,7 +127,7 @@ import {
   upstreamHttpStatus,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-CVKR4XQR.js";
+} from "./chunk-MZI3VLQJ.js";
 
 // src/registry/google-model-id.ts
 var GOOGLE_MODEL_PREFIX = "models/";
@@ -8232,7 +8232,7 @@ async function waitForOriginalCodexPids(originalPids, timeoutMs, alive = pidIsAl
   }
   return originalPids.every((pid) => !alive(pid));
 }
-async function waitForCodexAppQuit(timeoutMs = 5e3) {
+async function waitForCodexAppQuit(timeoutMs = gracefulQuitTimeoutMs(process.platform)) {
   const originalPids = codexAppMainPids();
   if (originalPids.length > 0) {
     const exited = await waitForOriginalCodexPids(originalPids, timeoutMs);
@@ -8790,4 +8790,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-SSGXIR6Z.js.map
+//# sourceMappingURL=chunk-NBLCG5EH.js.map
