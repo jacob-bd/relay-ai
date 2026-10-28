@@ -29,6 +29,7 @@ import {
   cachedModelToLocal,
   catalogEntryFromModel,
   checkForUpdates,
+  checkVertexModelAccess,
   claudeAppSupported,
   codexAppInstallHint,
   codexAppModelSlug,
@@ -47,6 +48,7 @@ import {
   fetchAnthropicModels,
   fetchProviderCatalog,
   fetchTemplateModels,
+  filterVertexModelsByAccess,
   findBinaryOnPath,
   findEmbeddedCodexBinary,
   fmtCommand,
@@ -129,7 +131,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-TLUGIOKQ.js";
+} from "./chunk-I7XLN27O.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -241,7 +243,9 @@ import {
   hasApplicationDefaultCredentials,
   hasCustomVertexModels,
   loadVertexModelEntries,
-  resetVertexModelEntries
+  resetVertexModelEntries,
+  resolveVertexProject,
+  saveVertexModelEntries
 } from "./chunk-KNCSTHR4.js";
 import "./chunk-JIDIH7DS.js";
 
@@ -1923,31 +1927,6 @@ async function runManualModelRemoveFlow(provider) {
 
 // src/vertex-models-wizard.ts
 import * as p7 from "@clack/prompts";
-
-// src/registry/vertex-model-check.ts
-import { generateText } from "ai";
-async function checkVertexModelAccess(modelId) {
-  try {
-    const model = await createLanguageModel({
-      npm: VERTEX_ANTHROPIC_NPM,
-      modelId,
-      apiKey: "",
-      providerId: VERTEX_ANTHROPIC_PROVIDER_ID
-    });
-    await generateText({
-      model,
-      prompt: "Reply with exactly OK.",
-      maxOutputTokens: 16,
-      maxRetries: 0,
-      abortSignal: AbortSignal.timeout(6e4)
-    });
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: formatUpstreamError(err) };
-  }
-}
-
-// src/vertex-models-wizard.ts
 async function runVertexModelAddFlow() {
   const current = loadVertexModelEntries();
   const modelId = await p7.text({
@@ -2004,6 +1983,49 @@ async function runVertexModelResetFlow() {
   if (p7.isCancel(confirmed) || !confirmed) return 0;
   resetVertexModelEntries();
   p7.log.success(`Using Relay's latest list: ${DEFAULT_VERTEX_MODELS.map((m) => m.display_name).join(", ")}.`);
+  return 0;
+}
+async function runVertexModelAccessFlow() {
+  const current = loadVertexModelEntries();
+  const extras = DEFAULT_VERTEX_MODELS.filter((d) => !current.some((c) => c.id === d.id));
+  const spinner11 = p7.spinner();
+  spinner11.start(`Checking ${current.length + extras.length} models on project ${resolveVertexProject() ?? "(not set)"}\u2026`);
+  const outcome = await filterVertexModelsByAccess([...current, ...extras]);
+  spinner11.stop(outcome.aborted ? "Check failed" : "Check complete");
+  if (outcome.aborted) {
+    p7.log.error(outcome.abortDetail ?? "Vertex AI rejected the request.");
+    p7.log.info("Nothing was changed. Check your gcloud login and that your account can use Vertex AI in this project.");
+    return 1;
+  }
+  const removed = outcome.removed.filter((r) => current.some((c) => c.id === r.entry.id));
+  let next = current.filter((c) => !removed.some((r) => r.entry.id === c.id));
+  const nowAvailable = extras.filter((e) => outcome.confirmedIds.includes(e.id));
+  if (nowAvailable.length > 0) {
+    const chosen = await p7.multiselect({
+      message: "These models are now available to your project. Add them?",
+      options: nowAvailable.map((m) => ({ value: m.id, label: m.display_name, hint: m.id })),
+      initialValues: nowAvailable.map((m) => m.id),
+      required: false
+    });
+    if (!p7.isCancel(chosen)) next = [...next, ...nowAvailable.filter((m) => chosen.includes(m.id))];
+  }
+  for (const r of removed) p7.log.warn(`Removed ${r.entry.display_name}: ${r.reason}.`);
+  const unchecked = next.filter((m) => current.some((c) => c.id === m.id) && !outcome.confirmedIds.includes(m.id));
+  if (unchecked.length > 0) {
+    p7.log.info(`Couldn't confirm ${unchecked.map((m) => m.display_name).join(", ")} right now (rate limit or outage) \u2014 kept in your list.`);
+  }
+  if (next.length === 0) {
+    p7.log.error("None of your models are available to this project, so the list was left unchanged.");
+    return 1;
+  }
+  const changed = next.length !== current.length || next.some((m, i) => m.id !== current[i]?.id);
+  if (!changed) {
+    if (unchecked.length === 0) p7.log.success(`All ${current.length} models in your list are available.`);
+    return 0;
+  }
+  saveVertexModelEntries(next);
+  const added = next.length - (current.length - removed.length);
+  p7.log.success(`Model list updated: ${next.length} models${added > 0 ? `, ${added} added` : ""}${removed.length ? `, ${removed.length} removed` : ""}.`);
   return 0;
 }
 
@@ -2410,7 +2432,7 @@ async function runTemplateAddFlow(templateId) {
   if (template.noApiKey) {
     if (template.setupNote) printPanel(fmtProvider(template.name), [pc4.white(template.setupNote)]);
     const spinner12 = p8.spinner();
-    spinner12.start(`Checking ${template.name} setup...`);
+    spinner12.start(`Checking ${template.name} setup and which models your project can use...`);
     const result2 = await addProviderFromTemplate(template, template.id);
     spinner12.stop("");
     if (!result2.added) {
@@ -2418,6 +2440,7 @@ async function runTemplateAddFlow(templateId) {
       return 1;
     }
     logConnected(template.name, result2.modelCount ?? 0);
+    if (result2.notice) p8.log.info(result2.notice);
     return 0;
   }
   let baseUrlOverride;
@@ -2790,7 +2813,8 @@ async function runProviderDetail(id) {
   if (vertex) {
     detailOptions.push(
       { value: "vertex-add", label: "Add a model", hint: "Test a model ID on your Vertex project, then save it" },
-      { value: "vertex-remove", label: "Remove models", hint: "From ~/.relay-ai/vertex-models.json" }
+      { value: "vertex-remove", label: "Remove models", hint: "From ~/.relay-ai/vertex-models.json" },
+      { value: "vertex-check", label: "Check model access", hint: "Drop models your project refuses; add newly allowed ones" }
     );
     if (hasCustomVertexModels()) {
       detailOptions.push({ value: "vertex-reset", label: "Reset to Relay's latest model list", hint: "Follows future Relay updates" });
@@ -2859,6 +2883,7 @@ async function runProviderDetail(id) {
   if (p8.isCancel(action) || action === "back") return "back";
   if (action === "vertex-add") return await runVertexModelAddFlow() === 0 ? "back" : "failed";
   if (action === "vertex-remove") return await runVertexModelRemoveFlow() === 0 ? "back" : "failed";
+  if (action === "vertex-check") return await runVertexModelAccessFlow() === 0 ? "back" : "failed";
   if (action === "vertex-reset") return await runVertexModelResetFlow() === 0 ? "back" : "failed";
   if (action === "add-model") return await runManualModelAddFlow(provider) === 0 ? "back" : "failed";
   if (action === "remove-model") return await runManualModelRemoveFlow(provider) === 0 ? "back" : "failed";
@@ -3059,7 +3084,7 @@ import { WebSocket } from "ws";
 
 // src/codex-responses-adapter.ts
 import { createHash } from "crypto";
-import { streamText, generateText as generateText2, tool, jsonSchema } from "ai";
+import { streamText, generateText, tool, jsonSchema } from "ai";
 function createCodexToolContext() {
   return { namespaceByFlatName: /* @__PURE__ */ new Map(), customToolNames: /* @__PURE__ */ new Set() };
 }
@@ -3994,7 +4019,7 @@ async function streamResponsesResponse(model, params, modelId, write, onDone, on
 }
 async function generateResponsesResponse(model, params, modelId) {
   const { toolContext, ...sdkParams } = params;
-  const r = await generateText2({ model, ...sdkParams });
+  const r = await generateText({ model, ...sdkParams });
   const incompleteReason = incompleteReasonForFinish(r.finishReason);
   const createdAt = Math.floor(Date.now() / 1e3);
   const responseId = newResponseId();
@@ -4098,13 +4123,13 @@ function writeCompactionSse(summary, modelId, write) {
 async function generateCompactionResponse(model, params, modelId) {
   const { toolContext: _toolContext, ...sdkParams } = params;
   void _toolContext;
-  const r = await generateText2({ model, ...sdkParams });
+  const r = await generateText({ model, ...sdkParams });
   return buildCompactionResponseBody((r.text ?? "").trim() || "(no summary produced)", modelId);
 }
 async function streamCompactionResponse(model, params, modelId, write) {
   const { toolContext: _toolContext, ...sdkParams } = params;
   void _toolContext;
-  const r = await generateText2({ model, ...sdkParams });
+  const r = await generateText({ model, ...sdkParams });
   writeCompactionSse((r.text ?? "").trim() || "(no summary produced)", modelId, write);
 }
 function responsesErrorBody(modelId, message, statusCode = 401) {
@@ -7705,7 +7730,7 @@ function rejectGeminiManagedFlags(geminiArgs) {
 // src/gemini-proxy.ts
 import { createServer as createServer2 } from "http";
 import { randomUUID } from "crypto";
-import { streamText as streamText2, generateText as generateText3, tool as tool2, jsonSchema as jsonSchema2 } from "ai";
+import { streamText as streamText2, generateText as generateText2, tool as tool2, jsonSchema as jsonSchema2 } from "ai";
 function mapFinishReason(reason) {
   if (reason === "stop" || reason === "tool-calls") return "STOP";
   if (reason === "length") return "MAX_TOKENS";
@@ -8125,7 +8150,7 @@ ${JSON.stringify(params, null, 2)}`);
           plog("Stream ended.");
         } else {
           plog("Starting generateText...");
-          const result = await generateText3({
+          const result = await generateText2({
             model: languageModel,
             ...params
           });
@@ -8664,7 +8689,7 @@ import * as p13 from "@clack/prompts";
 
 // src/antigravity/cloud-code-gateway.ts
 import http from "http";
-import { streamText as streamText3, generateText as generateText4 } from "ai";
+import { streamText as streamText3, generateText as generateText3 } from "ai";
 
 // src/antigravity/request-adapter.ts
 import { randomUUID as randomUUID2 } from "crypto";
@@ -10800,7 +10825,7 @@ async function handleUnaryRequest(res, route, providerOptions, parsed, log15, op
   );
   const langModel = await createRouteLanguageModel(route);
   const responseId = `relay-${Date.now()}`;
-  const result = await generateText4({
+  const result = await generateText3({
     model: langModel,
     instructions: sdkParams.instructions,
     messages: sdkParams.messages,
@@ -17438,7 +17463,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-SVYJU5U3.js");
+    const { runUiCommand } = await import("./ui-command-PDISQJ4I.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

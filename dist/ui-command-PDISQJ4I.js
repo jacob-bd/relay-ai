@@ -37,7 +37,7 @@ import {
   summarizeServerProviders,
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider
-} from "./chunk-TLUGIOKQ.js";
+} from "./chunk-I7XLN27O.js";
 import {
   init_provider_templates,
   listAddableTemplates,
@@ -1089,7 +1089,7 @@ async function handleAddProvider(req, res) {
       replaceExisting
     });
     if (result.added) {
-      sendJson(res, 200, { ok: true, name: template.name, count: result.modelCount ?? 0 });
+      sendJson(res, 200, { ok: true, name: template.name, count: result.modelCount ?? 0, ...result.notice ? { notice: result.notice } : {} });
     } else {
       sendJson(res, 200, { ok: false, error: result.error, hint: result.hint });
     }
@@ -1901,4 +1901,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-SVYJU5U3.js.map
+//# sourceMappingURL=ui-command-PDISQJ4I.js.map

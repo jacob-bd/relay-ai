@@ -320,7 +320,7 @@ async function refreshProvider(providerId, key) {
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 
-function showToast(msg, undoFn) {
+function showToast(msg, undoFn, durationMs = 2200) {
   const container = document.getElementById('toast-container');
   const toast = document.createElement('div');
   toast.className = 'toast';
@@ -348,7 +348,7 @@ function showToast(msg, undoFn) {
     setTimeout(() => { if (!dismissed) { const b = toast.querySelector('.btn-undo'); if (b) b.style.opacity = '0.3'; } }, 4000);
     setTimeout(dismiss, 5500);
   } else {
-    setTimeout(dismiss, 2200);
+    setTimeout(dismiss, durationMs);
   }
 
   container.appendChild(toast);
@@ -1418,21 +1418,22 @@ function buildTemplateBodyContent(template, card) {
     if (accountIdInput && !accountId) { feedback.textContent = 'Enter an Account ID.'; feedback.className = 'key-feedback error'; return; }
     if (urlInput && !baseUrl) { feedback.textContent = 'Enter a base URL.'; feedback.className = 'key-feedback error'; return; }
     addBtn.disabled = true;
-    feedback.textContent = template.noApiKey ? 'Checking setup…' : key ? 'Validating key and fetching models…' : 'Fetching models…';
+    feedback.textContent = template.noApiKey ? 'Checking setup and model access…' : key ? 'Validating key and fetching models…' : 'Fetching models…';
     feedback.className = 'key-feedback muted';
 
     const result = await api('POST', '/api/providers/add', { templateId: template.id, key, baseUrl, accountId });
 
     addBtn.disabled = false;
     if (result.ok) {
-      feedback.textContent = `✓ ${template.name} added · ${result.count} models available`;
+      feedback.textContent = `✓ ${template.name} added · ${result.count} models available${result.notice ? ` — ${result.notice}` : ''}`;
       feedback.className = 'key-feedback success';
       // Reload full catalog so the new provider appears in configured list
       state.modelsLoaded = false;
       await loadTemplates();
       await initModels();
       renderProviders();
-      showToast(`${template.name} added successfully`);
+      if (result.notice) showToast(`${template.name} added. ${result.notice}`, undefined, 10000);
+      else showToast(`${template.name} added successfully`);
     } else {
       feedback.textContent = result.error ?? 'Failed to add provider';
       if (result.hint) feedback.textContent += ` — ${result.hint}`;

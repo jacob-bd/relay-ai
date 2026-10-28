@@ -1,4 +1,4 @@
-import { writeFileSync, rmSync } from 'node:fs';
+import { existsSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VERTEX_ANTHROPIC_NPM } from '../src/constants.js';
@@ -26,6 +26,19 @@ vi.mock('../src/vertex-env.js', async importOriginal => ({
   hasApplicationDefaultCredentials: () => adc.present,
 }));
 
+// Fake Vertex: model id → simulated access result (default: allowed).
+const access = vi.hoisted(() => ({ results: new Map<string, { ok: boolean; status?: number; error?: string }>() }));
+vi.mock('../src/registry/vertex-model-check.js', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/registry/vertex-model-check.js')>();
+  return {
+    ...actual,
+    filterVertexModelsByAccess: (entries: Parameters<typeof actual.filterVertexModelsByAccess>[0]) =>
+      actual.filterVertexModelsByAccess(entries, async id => access.results.get(id) ?? { ok: true }),
+  };
+});
+
+const POLICY = { ok: false, status: 400, error: 'Organization Policy constraint constraints/vertexai.allowedModels violated' };
+
 const home = () => process.env.RELAY_AI_HOME!;
 const template = getTemplateById('vertex-anthropic')!;
 
@@ -33,6 +46,7 @@ describe('Vertex AI (Claude) registry provider', () => {
   const savedProject = process.env.ANTHROPIC_VERTEX_PROJECT_ID;
 
   beforeEach(() => {
+    access.results.clear();
     adc.present = true;
     process.env.ANTHROPIC_VERTEX_PROJECT_ID = 'test-project';
     saveRegistry({ schemaVersion: 1, providers: [] } as never);
@@ -132,5 +146,32 @@ describe('Vertex AI (Claude) registry provider', () => {
     expect(vertexModelDisplayName('claude-sonnet-5')).toBe('Claude Sonnet 5');
     expect(vertexModelDisplayName('claude-opus-4-5@20251101')).toBe('Claude Opus 4.5');
     expect(vertexModelDisplayName('gemini-3-pro')).toBe('gemini-3-pro');
+  });
+
+  it('keeps only the models the project can use when adding, and says why', async () => {
+    access.results.set('claude-sonnet-5-5', POLICY);
+    const result = await addProviderFromTemplate(template, template.id);
+    expect(result).toMatchObject({ added: true, modelCount: 1 });
+    expect(result.notice).toContain("Claude Sonnet 5.5 (blocked by your organization's model policy)");
+    expect(loadVertexModelEntries().map(m => m.id)).toEqual(['claude-opus-5-5']);
+  });
+
+  it('leaves the defaults untouched when every model is allowed', async () => {
+    rmSync(join(home(), 'vertex-models.json'), { force: true });
+    expect((await addProviderFromTemplate(template, template.id)).notice).toBeUndefined();
+    expect(existsSync(join(home(), 'vertex-models.json'))).toBe(false);
+  });
+
+  it('refuses to add when no model or the account is rejected', async () => {
+    access.results.set('claude-sonnet-5-5', POLICY);
+    access.results.set('claude-opus-5-5@default', { ok: false, status: 404, error: 'not found' });
+    expect((await addProviderFromTemplate(template, template.id)).error).toContain('None of the 2 Claude models');
+
+    access.results.clear();
+    access.results.set('claude-sonnet-5-5', { ok: false, status: 403, error: 'Permission denied on project' });
+    const denied = await addProviderFromTemplate(template, template.id);
+    expect(denied).toMatchObject({ added: false, error: 'Permission denied on project' });
+    expect(isVertexAnthropicRegistered()).toBe(false);
+    expect(loadVertexModelEntries()).toHaveLength(2);
   });
 });

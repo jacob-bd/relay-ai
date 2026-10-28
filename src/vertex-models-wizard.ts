@@ -1,12 +1,18 @@
 import * as p from '@clack/prompts';
 import { modelIdError } from './registry/provider-models.js';
-import { checkVertexModelAccess } from './registry/vertex-model-check.js';
+import { checkVertexModelAccess, filterVertexModelsByAccess } from './registry/vertex-model-check.js';
 import {
   addVertexModelEntry,
   removeVertexModelEntries,
   vertexModelDisplayName,
 } from './registry/vertex-anthropic.js';
-import { DEFAULT_VERTEX_MODELS, loadVertexModelEntries, resetVertexModelEntries } from './vertex-env.js';
+import {
+  DEFAULT_VERTEX_MODELS,
+  loadVertexModelEntries,
+  resetVertexModelEntries,
+  resolveVertexProject,
+  saveVertexModelEntries,
+} from './vertex-env.js';
 
 export async function runVertexModelAddFlow(): Promise<number> {
   const current = loadVertexModelEntries();
@@ -63,5 +69,56 @@ export async function runVertexModelResetFlow(): Promise<number> {
   if (p.isCancel(confirmed) || !confirmed) return 0;
   resetVertexModelEntries();
   p.log.success(`Using Relay's latest list: ${DEFAULT_VERTEX_MODELS.map(m => m.display_name).join(', ')}.`);
+  return 0;
+}
+
+/**
+ * Re-test the list against the project: drop models it now refuses, and offer
+ * defaults that became available (e.g. after an admin allowed them). Offered,
+ * not forced, so a model the user removed on purpose does not come back.
+ */
+export async function runVertexModelAccessFlow(): Promise<number> {
+  const current = loadVertexModelEntries();
+  const extras = DEFAULT_VERTEX_MODELS.filter(d => !current.some(c => c.id === d.id));
+  const spinner = p.spinner();
+  spinner.start(`Checking ${current.length + extras.length} models on project ${resolveVertexProject() ?? '(not set)'}…`);
+  const outcome = await filterVertexModelsByAccess([...current, ...extras]);
+  spinner.stop(outcome.aborted ? 'Check failed' : 'Check complete');
+  if (outcome.aborted) {
+    p.log.error(outcome.abortDetail ?? 'Vertex AI rejected the request.');
+    p.log.info('Nothing was changed. Check your gcloud login and that your account can use Vertex AI in this project.');
+    return 1;
+  }
+
+  const removed = outcome.removed.filter(r => current.some(c => c.id === r.entry.id));
+  let next = current.filter(c => !removed.some(r => r.entry.id === c.id));
+  const nowAvailable = extras.filter(e => outcome.confirmedIds.includes(e.id));
+  if (nowAvailable.length > 0) {
+    const chosen = await p.multiselect({
+      message: 'These models are now available to your project. Add them?',
+      options: nowAvailable.map(m => ({ value: m.id, label: m.display_name, hint: m.id })),
+      initialValues: nowAvailable.map(m => m.id),
+      required: false,
+    });
+    if (!p.isCancel(chosen)) next = [...next, ...nowAvailable.filter(m => (chosen as string[]).includes(m.id))];
+  }
+
+  for (const r of removed) p.log.warn(`Removed ${r.entry.display_name}: ${r.reason}.`);
+  const unchecked = next.filter(m => current.some(c => c.id === m.id) && !outcome.confirmedIds.includes(m.id));
+  if (unchecked.length > 0) {
+    p.log.info(`Couldn't confirm ${unchecked.map(m => m.display_name).join(', ')} right now (rate limit or outage) — kept in your list.`);
+  }
+  if (next.length === 0) {
+    p.log.error('None of your models are available to this project, so the list was left unchanged.');
+    return 1;
+  }
+  const changed = next.length !== current.length || next.some((m, i) => m.id !== current[i]?.id);
+  if (!changed) {
+    if (unchecked.length === 0) p.log.success(`All ${current.length} models in your list are available.`);
+    return 0;
+  }
+  saveVertexModelEntries(next);
+  const added = next.length - (current.length - removed.length);
+  p.log.success(`Model list updated: ${next.length} models${added > 0 ? `, ${added} added` : ''}${removed.length ? `, ${removed.length} removed` : ''}.`);
   return 0;
 }

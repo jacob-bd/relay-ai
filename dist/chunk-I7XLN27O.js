@@ -20,6 +20,7 @@ import {
   UpstreamUnreachableError,
   VERSION,
   VERTEX_ANTHROPIC_NPM,
+  VERTEX_ANTHROPIC_PROVIDER_ID,
   anthropicEffortFromRequest,
   anthropicErrorType,
   buildCodexReasoningLevels,
@@ -133,7 +134,8 @@ import {
   hasApplicationDefaultCredentials,
   loadVertexModelEntries,
   resolveVertexLocation,
-  resolveVertexProject
+  resolveVertexProject,
+  saveVertexModelEntries
 } from "./chunk-KNCSTHR4.js";
 
 // src/registry/google-model-id.ts
@@ -7469,6 +7471,73 @@ function findBinaryOnPath(name, fallbackPaths, options = {}) {
   return null;
 }
 
+// src/registry/vertex-model-check.ts
+import { generateText as generateText2 } from "ai";
+function errorStatus(err) {
+  const rec = err;
+  return rec?.statusCode ?? rec?.lastError?.statusCode ?? 0;
+}
+async function checkVertexModelAccess(modelId) {
+  try {
+    const model = await createLanguageModel({
+      npm: VERTEX_ANTHROPIC_NPM,
+      modelId,
+      apiKey: "",
+      providerId: VERTEX_ANTHROPIC_PROVIDER_ID
+    });
+    await generateText2({
+      model,
+      prompt: "Reply with exactly OK.",
+      maxOutputTokens: 16,
+      maxRetries: 0,
+      abortSignal: AbortSignal.timeout(6e4)
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, status: errorStatus(err), error: formatUpstreamError(err) };
+  }
+}
+function classifyVertexAccess(status, message) {
+  if (status === 200) return "available";
+  if (status === 404) return { verdict: "unavailable", detail: "not found or not enabled for your project" };
+  if (status === 400 && /allowedModels|Organization Policy/i.test(message)) {
+    return { verdict: "unavailable", detail: "blocked by your organization's model policy" };
+  }
+  if (status === 401 || status === 403) return { verdict: "abort", detail: message };
+  return "unknown";
+}
+async function filterVertexModelsByAccess(entries2, check = checkVertexModelAccess) {
+  const reasons = /* @__PURE__ */ new Map();
+  const confirmed = /* @__PURE__ */ new Set();
+  const candidates = entries2.map((entry) => ({
+    id: entry.id,
+    name: entry.display_name,
+    upstreamModelId: entry.upstream_id ?? entry.id,
+    modelFormat: "openai"
+  }));
+  const outcome = await filterModelsByAvailability(candidates, {
+    label: "vertex-access",
+    concurrency: 4,
+    probe: async (model) => {
+      const access = await check(model.upstreamModelId);
+      const status = access.ok ? 200 : access.status ?? 0;
+      if (access.ok) confirmed.add(model.id);
+      const verdict = classifyVertexAccess(status, access.error ?? "");
+      if (typeof verdict === "object" && verdict.verdict === "unavailable" && verdict.detail) reasons.set(model.id, verdict.detail);
+      return { status, body: access.error ?? "" };
+    },
+    classify: (status, body) => classifyVertexAccess(status, String(body))
+  });
+  if (outcome.aborted) return { allowed: entries2, removed: [], confirmedIds: [], aborted: true, abortDetail: outcome.abortDetail };
+  const removedIds = new Set(outcome.removedIds);
+  return {
+    allowed: entries2.filter((entry) => !removedIds.has(entry.id)),
+    removed: entries2.filter((entry) => removedIds.has(entry.id)).map((entry) => ({ entry, reason: reasons.get(entry.id) ?? "not available to your project" })),
+    confirmedIds: entries2.filter((entry) => confirmed.has(entry.id)).map((entry) => entry.id),
+    aborted: false
+  };
+}
+
 // src/registry/add-template.ts
 async function probeTemplatePackage(template) {
   if (!template.supported) return template.unsupportedReason ?? "Provider is not supported yet.";
@@ -7513,6 +7582,7 @@ async function addProviderFromTemplate(template, apiKey, opts) {
     };
   }
   let fetched;
+  let notice;
   if (template.modelSource === "cline-recommended") {
     try {
       await validateClinePassApiKey(trimmedKey);
@@ -7541,6 +7611,26 @@ async function addProviderFromTemplate(template, apiKey, opts) {
   } else if (template.modelSource === "vertex-models-file") {
     const setupError = vertexAnthropicSetupError();
     if (setupError) return { added: false, ...setupError };
+    const entries2 = loadVertexModelEntries();
+    const access = await filterVertexModelsByAccess(entries2);
+    if (access.aborted) {
+      return {
+        added: false,
+        error: access.abortDetail ?? "Vertex AI rejected the request.",
+        hint: `Check that Vertex AI is enabled for project ${resolveVertexProject()} and your account can use it (role: Vertex AI User).`
+      };
+    }
+    if (access.allowed.length === 0) {
+      return {
+        added: false,
+        error: `None of the ${entries2.length} Claude models are available to project ${resolveVertexProject()}.`,
+        hint: `${access.removed[0]?.entry.id}: ${access.removed[0]?.reason}. Ask your Google Cloud admin to enable Claude models in Vertex AI Model Garden.`
+      };
+    }
+    if (access.removed.length > 0) {
+      saveVertexModelEntries(access.allowed);
+      notice = `Skipped ${access.removed.length} model${access.removed.length === 1 ? "" : "s"} your project can't use: ` + access.removed.map((r) => `${r.entry.display_name} (${r.reason})`).join(", ") + ". Re-check later from relay-ai providers \u2192 Google Vertex AI (Claude) \u2192 Check model access.";
+    }
     fetched = { models: vertexAnthropicCachedModels(), baseUrl: "" };
   } else {
     fetched = await fetchTemplateModels(template, trimmedKey, opts?.baseUrl);
@@ -7608,7 +7698,7 @@ async function addProviderFromTemplate(template, apiKey, opts) {
     await deleteProviderCredential(existing.authRef);
   }
   enrichPricingAsync();
-  return { added: true, provider: entry, modelCount: pricedModels.length };
+  return { added: true, provider: entry, modelCount: pricedModels.length, ...notice ? { notice } : {} };
 }
 
 // src/registry/provider-auth.ts
@@ -8737,6 +8827,8 @@ export {
   addFavorite,
   removeFavorite,
   favoriteProviderDisplayName,
+  checkVertexModelAccess,
+  filterVertexModelsByAccess,
   addProviderFromTemplate,
   saveNativeOAuthCredential,
   authenticateProvider,
@@ -8759,4 +8851,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-TLUGIOKQ.js.map
+//# sourceMappingURL=chunk-I7XLN27O.js.map

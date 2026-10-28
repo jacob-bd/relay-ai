@@ -18,6 +18,8 @@ import {
 } from './pricing.js';
 import type { CachedModel, RegistryProvider } from './types.js';
 import { vertexAnthropicCachedModels, vertexAnthropicSetupError } from './vertex-anthropic.js';
+import { filterVertexModelsByAccess } from './vertex-model-check.js';
+import { loadVertexModelEntries, resolveVertexProject, saveVertexModelEntries } from '../vertex-env.js';
 
 export interface AddTemplateResult {
   added: boolean;
@@ -25,6 +27,8 @@ export interface AddTemplateResult {
   modelCount?: number;
   error?: string;
   hint?: string;
+  /** Non-fatal information about the added provider (e.g. models skipped). */
+  notice?: string;
 }
 
 async function probeTemplatePackage(template: ProviderTemplate): Promise<string | null> {
@@ -85,6 +89,7 @@ export async function addProviderFromTemplate(
   }
 
   let fetched: { models: CachedModel[]; baseUrl: string; error?: string; hint?: string };
+  let notice: string | undefined;
   if (template.modelSource === 'cline-recommended') {
     try {
       await validateClinePassApiKey(trimmedKey);
@@ -113,6 +118,29 @@ export async function addProviderFromTemplate(
   } else if (template.modelSource === 'vertex-models-file') {
     const setupError = vertexAnthropicSetupError();
     if (setupError) return { added: false, ...setupError };
+    // Projects enable different Claude models; keep only the ones this one can use.
+    const entries = loadVertexModelEntries();
+    const access = await filterVertexModelsByAccess(entries);
+    if (access.aborted) {
+      return {
+        added: false,
+        error: access.abortDetail ?? 'Vertex AI rejected the request.',
+        hint: `Check that Vertex AI is enabled for project ${resolveVertexProject()} and your account can use it (role: Vertex AI User).`,
+      };
+    }
+    if (access.allowed.length === 0) {
+      return {
+        added: false,
+        error: `None of the ${entries.length} Claude models are available to project ${resolveVertexProject()}.`,
+        hint: `${access.removed[0]?.entry.id}: ${access.removed[0]?.reason}. Ask your Google Cloud admin to enable Claude models in Vertex AI Model Garden.`,
+      };
+    }
+    if (access.removed.length > 0) {
+      saveVertexModelEntries(access.allowed);
+      notice = `Skipped ${access.removed.length} model${access.removed.length === 1 ? '' : 's'} your project can't use: `
+        + access.removed.map(r => `${r.entry.display_name} (${r.reason})`).join(', ')
+        + '. Re-check later from relay-ai providers → Google Vertex AI (Claude) → Check model access.';
+    }
     fetched = { models: vertexAnthropicCachedModels(), baseUrl: '' };
   } else {
     fetched = await fetchTemplateModels(template, trimmedKey, opts?.baseUrl);
@@ -186,5 +214,5 @@ export async function addProviderFromTemplate(
   }
   enrichPricingAsync();
 
-  return { added: true, provider: entry, modelCount: pricedModels.length };
+  return { added: true, provider: entry, modelCount: pricedModels.length, ...(notice ? { notice } : {}) };
 }

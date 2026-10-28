@@ -624,7 +624,7 @@ async function handleAddProvider(req: IncomingMessage, res: ServerResponse): Pro
       replaceExisting,
     });
     if (result.added) {
-      sendJson(res, 200, { ok: true, name: template.name, count: result.modelCount ?? 0 });
+      sendJson(res, 200, { ok: true, name: template.name, count: result.modelCount ?? 0, ...(result.notice ? { notice: result.notice } : {}) });
     } else {
       sendJson(res, 200, { ok: false, error: result.error, hint: result.hint });
     }

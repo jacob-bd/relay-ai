@@ -40,7 +40,7 @@ import {
 import { loadRegistry, saveRegistry } from './registry/io.js';
 import { getProviderModels, supportsManualModels } from './registry/provider-models.js';
 import { runManualModelAddFlow, runManualModelRemoveFlow } from './manual-model-wizard.js';
-import { runVertexModelAddFlow, runVertexModelRemoveFlow, runVertexModelResetFlow } from './vertex-models-wizard.js';
+import { runVertexModelAccessFlow, runVertexModelAddFlow, runVertexModelRemoveFlow, runVertexModelResetFlow } from './vertex-models-wizard.js';
 import { isVertexAnthropicProvider } from './registry/vertex-anthropic.js';
 import { hasCustomVertexModels } from './vertex-env.js';
 import { refreshAllProviderModels, refreshProviderModels, refreshProviderModelsBatch } from './registry/refresh-models.js';
@@ -550,7 +550,7 @@ async function runTemplateAddFlow(templateId?: string): Promise<number> {
   if (template.noApiKey) {
     if (template.setupNote) printPanel(fmtProvider(template.name), [pc.white(template.setupNote)]);
     const spinner = p.spinner();
-    spinner.start(`Checking ${template.name} setup...`);
+    spinner.start(`Checking ${template.name} setup and which models your project can use...`);
     const result = await addProviderFromTemplate(template, template.id);
     spinner.stop('');
     if (!result.added) {
@@ -558,6 +558,7 @@ async function runTemplateAddFlow(templateId?: string): Promise<number> {
       return 1;
     }
     logConnected(template.name, result.modelCount ?? 0);
+    if (result.notice) p.log.info(result.notice);
     return 0;
   }
 
@@ -972,6 +973,7 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
     detailOptions.push(
       { value: 'vertex-add', label: 'Add a model', hint: 'Test a model ID on your Vertex project, then save it' },
       { value: 'vertex-remove', label: 'Remove models', hint: 'From ~/.relay-ai/vertex-models.json' },
+      { value: 'vertex-check', label: 'Check model access', hint: 'Drop models your project refuses; add newly allowed ones' },
     );
     if (hasCustomVertexModels()) {
       detailOptions.push({ value: 'vertex-reset', label: "Reset to Relay's latest model list", hint: 'Follows future Relay updates' });
@@ -1043,6 +1045,7 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
 
   if (action === 'vertex-add') return (await runVertexModelAddFlow()) === 0 ? 'back' : 'failed';
   if (action === 'vertex-remove') return (await runVertexModelRemoveFlow()) === 0 ? 'back' : 'failed';
+  if (action === 'vertex-check') return (await runVertexModelAccessFlow()) === 0 ? 'back' : 'failed';
   if (action === 'vertex-reset') return (await runVertexModelResetFlow()) === 0 ? 'back' : 'failed';
   if (action === 'add-model') return (await runManualModelAddFlow(provider)) === 0 ? 'back' : 'failed';
   if (action === 'remove-model') return (await runManualModelRemoveFlow(provider)) === 0 ? 'back' : 'failed';
