@@ -1,4 +1,5 @@
 import type { CachedModel, ManualModel, RegistryProvider } from './types.js';
+import { isVertexAnthropicProvider, vertexAnthropicCachedModels } from './vertex-anthropic.js';
 
 const MANUAL_MODEL_PACKAGES = new Set([
   '@ai-sdk/openai-compatible', '@ai-sdk/openai', '@ai-sdk/anthropic', '@openrouter/ai-sdk-provider',
@@ -12,6 +13,7 @@ export function supportsManualModels(provider: RegistryProvider): boolean {
 
 /** Refresh owns modelsCache; the user's entries win collisions without duplicating IDs. */
 export function getProviderModels(provider: RegistryProvider): CachedModel[] {
+  if (isVertexAnthropicProvider(provider)) return vertexAnthropicCachedModels();
   const models = new Map((provider.modelsCache?.models ?? []).map(model => [model.id, model]));
   if (supportsManualModels(provider)) {
     for (const model of provider.manualModels ?? []) {

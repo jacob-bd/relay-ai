@@ -30,7 +30,7 @@ Pick your backend:
 - **Your providers** — configure once with `relay-ai providers` (Command Code, ClinePass, Groq, Mistral, Nvidia, DeepSeek, custom OpenAI/Anthropic endpoints, and more)
 - **OpenCode Zen / Go** — cloud models with your OpenCode API key (optional; add via `relay-ai providers`)
 - **One-time OpenCode import** — bring existing OpenCode provider settings into the registry (`relay-ai providers import`)
-- **Google Vertex AI** — Claude on Vertex via `relay-ai server --vertex` and local gcloud credentials (no OpenCode key required)
+- **Google Vertex AI** — Claude on Vertex as a regular provider (`relay-ai providers add vertex-anthropic`) or via `relay-ai server --vertex`, using local gcloud credentials (no API key)
 
 ## Prerequisites
 
@@ -400,6 +400,8 @@ relay-ai server --vertex
 **Shorthand aliases** (for Claude Code `/model` and `settings.json`): `sonnet`, `opus`, `haiku`. Append `[1m]` for 1M context on Sonnet and Opus only (Haiku stays 200k).
 
 **Custom catalog:** copy `assets/vertex-models.example.json` to `~/.relay-ai/vertex-models.json` and edit. Override the config directory with `RELAY_AI_HOME`.
+
+**Vertex as a provider (every launcher):** run `relay-ai providers add vertex-anthropic` once (or add **Google Vertex AI (Claude)** in `relay-ai ui`). It needs the same gcloud login and project variable as above, and no API key. Vertex then appears in every launch picker and in `relay-ai models` favorites, its model list is read live from `~/.relay-ai/vertex-models.json`, and `--vertex` preselects it — so `relay-ai codex-app --vertex --with-native` runs your Vertex Claude models beside native ChatGPT models. In Claude Code's `/model` picker, Vertex models are listed as `anthropic-vertex-anthropic__<model>` so they never collide with the same model from a Claude subscription.
 
 When the gateway is running:
 

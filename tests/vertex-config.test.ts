@@ -113,6 +113,19 @@ describe('vertex-config', () => {
     expect(catalog.get('claude-haiku-4-5-20251001')?.id).toBe('claude-haiku-4-5');
   });
 
+  it('resolves [1m] aliases for Claude 5.x models in a custom catalog', () => {
+    writeFileSync(join(tempHome, 'vertex-models.json'), JSON.stringify([
+      { id: 'claude-sonnet-5-5', display_name: 'Claude Sonnet 5.5' },
+      { id: 'claude-haiku-4-5', display_name: 'Claude Haiku 4.5' },
+    ]));
+    const config = buildVertexRuntimeConfig({ ANTHROPIC_VERTEX_PROJECT_ID: 'p', RELAY_AI_HOME: tempHome })!;
+    const models = vertexModelsToServerModels(config);
+    const catalog = createVertexModelCatalog(models);
+    expect(catalog.get('claude-sonnet-5-5[1m]')?.id).toBe('claude-sonnet-5-5');
+    expect(catalog.get('claude-haiku-4-5[1m]')).toBeUndefined();
+    expect(models.find(m => m.id === 'claude-sonnet-5-5')?.contextWindow).toBe(1_000_000);
+  });
+
   it('normalizes Claude Code dated model build ids', () => {
     expect(vertexClientModelLookupCandidates('claude-haiku-4-5-20251001')).toEqual([
       'claude-haiku-4-5-20251001',

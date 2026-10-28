@@ -988,3 +988,27 @@ describe('applyAnthropicPromptCaching', () => {
     expect(inner.doGenerateCalls[0]!.prompt.map(marked)).toEqual([true, true]);
   });
 });
+
+describe('Vertex Claude config fallback', () => {
+  it('reads project and location from the environment when the route carries none', async () => {
+    const keys = ['ANTHROPIC_VERTEX_PROJECT_ID', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_VERTEX_PROJECT', 'CLOUD_ML_REGION'] as const;
+    const saved = Object.fromEntries(keys.map(k => [k, process.env[k]]));
+    try {
+      process.env.ANTHROPIC_VERTEX_PROJECT_ID = 'env-project';
+      process.env.CLOUD_ML_REGION = 'us-east5';
+      const model = await createLanguageModel({ npm: VERTEX_ANTHROPIC_NPM, modelId: 'claude-sonnet-5-5', apiKey: '' });
+      expect(model).toBeTruthy();
+
+      delete process.env.ANTHROPIC_VERTEX_PROJECT_ID;
+      delete process.env.GOOGLE_CLOUD_PROJECT;
+      delete process.env.GOOGLE_VERTEX_PROJECT;
+      await expect(createLanguageModel({ npm: VERTEX_ANTHROPIC_NPM, modelId: 'claude-sonnet-5-5', apiKey: '' }))
+        .rejects.toThrow(/ANTHROPIC_VERTEX_PROJECT_ID/);
+    } finally {
+      for (const k of keys) {
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
+      }
+    }
+  });
+});

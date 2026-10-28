@@ -219,4 +219,4 @@ If you use the wrong provider template for your key, you will receive a `401 Inv
 
 - **Amazon Bedrock**: Not supported as a first-class API-key provider yet (needs AWS credentials). If you already configured Bedrock in OpenCode CLI, you can optionally run `relay-ai providers import`.
 - **Azure OpenAI**: Not supported as a first-class provider yet (needs per-model deployment URLs). Optional: `relay-ai providers import` if already set up in OpenCode CLI.
-- **Google Vertex AI**: Use `relay-ai server --vertex` with gcloud Application Default Credentials. No API key in the registry.
+- **Google Vertex AI (Claude)**: Add with `relay-ai providers add vertex-anthropic` (or in `relay-ai ui`). Uses gcloud Application Default Credentials and `ANTHROPIC_VERTEX_PROJECT_ID` — no API key — and reads models live from `~/.relay-ai/vertex-models.json`. `relay-ai server --vertex` remains available as a dedicated gateway. Gemini on Vertex is not supported yet.

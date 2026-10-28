@@ -85,6 +85,9 @@ export const REGISTRY_TO_MODELS_DEV: Record<string, string> = {
   'qwen-cloud-payg': 'alibaba',
   openrouter: 'openrouter',
   anthropic: 'anthropic',
+  // Same Claude models; the google-vertex-anthropic bucket keys them as
+  // `claude-…@default`, which never matches vertex-models.json ids.
+  'vertex-anthropic': 'anthropic',
   nvidia: 'nvidia',
   venice: 'openrouter',
   // Provider ids whose models.dev bucket carries a different name. Mapped by
@@ -434,6 +437,13 @@ export function resolveModelReasoningMetadata(
     result.reasoningEffortLevels = ownRanked;
     return result;
   }
+  // Anthropic's API rejects `effort` on models whose own entry lists reasoning
+  // controls without it (Claude Haiku 4.5 / Sonnet 4.5: budget_tokens only:
+  // "This model does not support the effort parameter"). Resellers exposing
+  // their own effort abstraction must not add those levels back. Scoped to the
+  // Anthropic bucket: elsewhere a toggle-only vendor entry is not a refusal.
+  if (REGISTRY_TO_MODELS_DEV[providerId] === 'anthropic'
+    && Array.isArray(entry?.reasoning_options) && entry.reasoning_options.length > 0) return result;
 
   const effort = resolveModelsDevEffort(modelId, cache);
   if (effort.kind === 'levels') result.reasoningEffortLevels = effort.levels;

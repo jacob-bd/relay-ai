@@ -219,13 +219,17 @@ async function createLanguageModelSingle(spec: ProviderModelSpec): Promise<Langu
   const { modelId, apiKey, baseURL } = spec;
 
   if (npm === VERTEX_ANTHROPIC_NPM) {
-    if (!spec.vertex?.project) {
-      throw new Error('Vertex project is required for @ai-sdk/google-vertex/anthropic');
+    // Registry routes carry no Vertex config; project/location come from the
+    // same environment variables `--vertex` launches read.
+    const { resolveVertexProject, resolveVertexLocation } = await import('./vertex-env.js');
+    const project = spec.vertex?.project || resolveVertexProject();
+    if (!project) {
+      throw new Error('Vertex project is required for @ai-sdk/google-vertex/anthropic: set ANTHROPIC_VERTEX_PROJECT_ID (or GOOGLE_CLOUD_PROJECT)');
     }
     const { createVertexAnthropic } = await import('@ai-sdk/google-vertex/anthropic');
     const vertex = createVertexAnthropic({
-      project: spec.vertex.project,
-      location: spec.vertex.location,
+      project,
+      location: spec.vertex?.location || resolveVertexLocation(),
     });
     return vertex(modelId);
   }

@@ -37,13 +37,13 @@ import {
   summarizeServerProviders,
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider
-} from "./chunk-NBLCG5EH.js";
+} from "./chunk-K7FHIBWG.js";
 import {
   init_provider_templates,
   listAddableTemplates,
   listVisibleOAuthTemplates,
   provider_templates_exports
-} from "./chunk-3R25QO5X.js";
+} from "./chunk-AUBFTFM5.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -52,7 +52,6 @@ import {
   buildAntigravityAuthUrl,
   completeAntigravityExchange,
   freeStatusLabel,
-  getAppHome,
   getAppPathOverride,
   getEnvServerPassword,
   getProviderModels,
@@ -96,7 +95,10 @@ import {
   supportsManualModels,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-MZI3VLQJ.js";
+} from "./chunk-AJXLA7WO.js";
+import {
+  getAppHome
+} from "./chunk-QQEVHBS3.js";
 import {
   __toCommonJS
 } from "./chunk-JIDIH7DS.js";
@@ -868,7 +870,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-HQY2FUUJ.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-TPEFFE6P.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -936,6 +938,8 @@ function handleGetTemplates(res) {
     accountIdPrompt: t.accountIdPrompt ?? null,
     defaultBaseUrl: t.defaultBaseUrl ?? null,
     apiKeyOptional: t.apiKeyOptional ?? false,
+    noApiKey: t.noApiKey ?? false,
+    setupNote: t.setupNote ?? null,
     authMethods: t.authMethods ?? [t.authType],
     custom: false
   }));
@@ -1046,7 +1050,7 @@ async function handleAddProvider(req, res) {
       sendJson(res, 400, { error: "templateId required" });
       return;
     }
-    const { listSupportedTemplates } = await import("./provider-templates-WXVGL4XE.js");
+    const { listSupportedTemplates } = await import("./provider-templates-RUGZQ6SD.js");
     const template = listSupportedTemplates().find((t) => t.id === templateId);
     if (!template) {
       sendJson(res, 404, { error: `Template '${templateId}' not found` });
@@ -1897,4 +1901,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-2OA6R5XV.js.map
+//# sourceMappingURL=ui-command-2DOQS6YP.js.map

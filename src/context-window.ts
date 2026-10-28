@@ -34,6 +34,8 @@ const HEURISTIC_RULES: Array<[RegExp, number]> = [
   [/claude-haiku-4-[567]/i, 200_000],
   [/claude.*\[1m\]/i, 1_000_000],
   [/claude-opus-4-[56]|claude-sonnet-4-[45]|claude-3/i, 200_000],
+  // Claude 5.x and later (incl. Haiku 5.5) and Fable: 1M per models.dev.
+  [/claude-(?:opus|sonnet|haiku)-(?:[5-9]|\d{2,})(?:\b|-)|claude-fable/i, 1_000_000],
   [/claude/i, 200_000],
   [/deepseek-v4|deepseek-r1|deepseek-reasoner/i, 1_000_000],
   [/deepseek/i, 64_000],

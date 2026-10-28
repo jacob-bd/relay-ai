@@ -66,6 +66,7 @@ import {
   type VertexModelEntry,
 } from './server/vertex-config.js';
 import { VERTEX_ANTHROPIC_NPM } from './constants.js';
+import { isVertexAnthropicRegistered, VERTEX_ANTHROPIC_PROVIDER_ID } from './registry/vertex-anthropic.js';
 import { resolveContextWindow } from './context-window.js';
 import {
   buildCodexProxyRoutesFromResolved,
@@ -179,7 +180,8 @@ ${pc.bold('Usage:')}
   relay-ai codex-app --version
 
 ${pc.bold('Options:')}
-  --vertex     Use Claude models through Google Vertex AI
+  --vertex     Use Claude on Google Vertex AI (with the Vertex provider added, works with
+               --with-native, favorites and --yes: relay-ai providers add vertex-anthropic)
   --with-native Load native Codex models beside Relay models for this launch
   --relay-only Keep the current Relay-only launch behavior
   --yes, -y     Approve a fully specified launch and skip restart prompts
@@ -425,8 +427,17 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
   }
 
   const configOnly = args.includes('--config');
+  // With the Vertex provider added, --vertex just preselects it so native
+  // models, favorites and --yes work; otherwise keep the dedicated Vertex launch.
+  const vertexProviderAdded = Boolean(opts.vertex) && isVertexAnthropicRegistered();
+  const legacyVertex = Boolean(opts.vertex) && !vertexProviderAdded;
+  const launchProvider = vertexProviderAdded ? opts.launchProvider ?? VERTEX_ANTHROPIC_PROVIDER_ID : opts.launchProvider;
+  if (legacyVertex && opts.codexLaunchMode === 'mixed') {
+    console.error(pc.red('--vertex --with-native needs the Vertex provider. Add it once with: relay-ai providers add vertex-anthropic'));
+    return 1;
+  }
   if (opts.assumeYes && !configOnly) {
-    if (opts.vertex || !opts.launchProvider || !opts.launchModel || !opts.codexLaunchMode) {
+    if (legacyVertex || !launchProvider || !opts.launchModel || !opts.codexLaunchMode) {
       console.error(pc.red('--yes requires --provider, --model, and either --with-native or --relay-only.'));
       return 1;
     }
@@ -467,7 +478,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
     }
   }
 
-  if (opts.vertex) {
+  if (legacyVertex) {
     return runCodexAppVertexLaunch(configOnly, trace);
   }
 
@@ -495,7 +506,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
   const prefs = loadPreferences();
   const favorites = prefs.favoriteModels ?? [];
   let mixedMode = opts.codexLaunchMode === 'mixed';
-  if (!configOnly && isTty && !(opts.launchProvider && opts.launchModel) && opts.codexLaunchMode === undefined) {
+  if (!configOnly && isTty && !(launchProvider && opts.launchModel) && opts.codexLaunchMode === undefined) {
     const selectedLaunchMode = await pickCodexLaunchMode();
     if (!selectedLaunchMode) return 0;
     mixedMode = selectedLaunchMode === 'mixed';
@@ -519,10 +530,10 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
   // --config must preview the exact unattended launch selection. Ignoring
   // explicit flags here made a safe preview silently show the previously saved
   // model instead of the requested provider/model pair.
-  if (codexAppUsesExplicitSelection(configOnly, opts.launchProvider, opts.launchModel)) {
+  if (codexAppUsesExplicitSelection(configOnly, launchProvider, opts.launchModel)) {
     const bootSelection = resolveBootSelection(
       compatible,
-      opts.launchProvider!,
+      launchProvider!,
       opts.launchModel!,
       providerForCodexPicker,
     );
@@ -532,6 +543,20 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
     }
     activeProvider = bootSelection.provider;
     selectedModel = bootSelection.model;
+  } else if (vertexProviderAdded) {
+    // --vertex without --model: skip the provider list, pick a Vertex model.
+    const vertexProvider = compatible.find(lp => lp.id === launchProvider);
+    if (!vertexProvider) {
+      p.log.error(`Provider '${launchProvider}' has no models available for the ChatGPT app.`);
+      return 1;
+    }
+    activeProvider = providerForCodexPicker(vertexProvider);
+    selectedModel = activeProvider.models[0]!;
+    if (!configOnly) {
+      const picked = await pickCodexModel(activeProvider, prefs);
+      if (!picked || picked === 'back') return 0;
+      selectedModel = picked;
+    }
   } else if (!configOnly) {
     let currentInitialProvider = prefs.lastCodexProvider && compatible.some(o => o.id === prefs.lastCodexProvider)
       ? prefs.lastCodexProvider

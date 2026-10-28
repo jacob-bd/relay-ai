@@ -132,8 +132,10 @@ export function aliasModelId(realId: string, providerId: string): string {
   // A custom backend can be added many times against one upstream (two accounts
   // on one gateway), so its claude-* ids are NOT unique across providers and must
   // be scoped like everything else. `anthropic-` still satisfies Claude Code's
-  // gateway model discovery filter, so the picker keeps working.
-  if (realId.startsWith('claude-') && !sanitized.startsWith('custom-')) return realId;
+  // gateway model discovery filter, so the picker keeps working. Vertex serves
+  // the same claude-* ids as Anthropic itself; bare ids would collide with a
+  // Claude subscription and route one account's requests through the other.
+  if (realId.startsWith('claude-') && !sanitized.startsWith('custom-') && sanitized !== 'vertex-anthropic') return realId;
   return `anthropic-${sanitized}__${realId}`;
 }
 

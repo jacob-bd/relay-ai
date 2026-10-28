@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-D3ERL6TF.js";
+} from "./chunk-OKQMW4ZD.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -62,7 +62,6 @@ import {
   formatCodexModelLabel,
   formatRegistryAuthLabel,
   formatUpdateNotification,
-  hasApplicationDefaultCredentials,
   httpProxyModelId,
   injectRelayModels,
   isClaudeAppRunning,
@@ -130,7 +129,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-NBLCG5EH.js";
+} from "./chunk-K7FHIBWG.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -138,7 +137,7 @@ import {
   listAddableTemplates,
   listSupportedTemplates,
   listVisibleOAuthTemplates
-} from "./chunk-3R25QO5X.js";
+} from "./chunk-AUBFTFM5.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -153,6 +152,7 @@ import {
   MAX_MODEL_CATALOG,
   VERSION,
   VERTEX_ANTHROPIC_NPM,
+  VERTEX_ANTHROPIC_PROVIDER_ID,
   appendCodexBodyDump,
   applyClaudeCodeOAuthIdentity,
   buildAntigravityChildEnv,
@@ -167,15 +167,11 @@ import {
   formatUpstreamError,
   formatUpstreamErrorTrace,
   getAntigravityDebugLogPath,
-  getAppHome,
   getAppPathOverride,
   getClaudeDebugLogPath,
   getCodexProxyDebugLogPath,
-  getConfigPath,
   getGeminiProxyDebugLogPath,
-  getLogsPath,
   getProviderModels,
-  getProvidersPath,
   getProxyDebugLogPath,
   getReasoningCapabilities,
   grabRoundTripSignature,
@@ -183,6 +179,7 @@ import {
   isModelsDevCacheStale,
   isSecretServiceAvailable,
   isValidProviderId,
+  isVertexAnthropicRegistered,
   loadModelsDevCache,
   loadPreferences,
   loadRegistry,
@@ -228,8 +225,16 @@ import {
   thinkingProviderOptions,
   upstreamHttpStatus,
   validateCustomEndpointUrl,
+  vertexAnthropicCachedModels,
   writeSecureLogLine
-} from "./chunk-MZI3VLQJ.js";
+} from "./chunk-AJXLA7WO.js";
+import {
+  getAppHome,
+  getConfigPath,
+  getLogsPath,
+  getProvidersPath,
+  hasApplicationDefaultCredentials
+} from "./chunk-QQEVHBS3.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -1914,7 +1919,8 @@ function parseProvidersArgs(args) {
   const [first, ...rest] = args;
   if (first === "--help" || first === "-h") return { subcommand: "help", showHelp: true };
   if (first === "add") {
-    if (rest.length > 0) return { subcommand: "add", showHelp: false, error: `Unknown add option: ${rest[0]}` };
+    if (rest.length > 1 || rest[0]?.startsWith("-")) return { subcommand: "add", showHelp: false, error: `Unknown add option: ${rest.find((a) => a.startsWith("-")) ?? rest[1]}` };
+    if (rest.length === 1) return { subcommand: "add", showHelp: false, addTemplateId: rest[0] };
     return { subcommand: "add", showHelp: false };
   }
   if (first === "import") {
@@ -1960,7 +1966,7 @@ function providersHelpText() {
 
 ${pc4.bold("Usage:")}
   relay-ai providers
-  relay-ai providers add
+  relay-ai providers add [id]
   relay-ai providers import
   relay-ai providers list
   relay-ai providers remove <id>
@@ -2254,12 +2260,18 @@ async function runDualAuthTemplateFlow(template, existing) {
   logConnected(template.name, result.modelCount ?? 0);
   return 0;
 }
-async function runTemplateAddFlow() {
-  if (listAddableTemplates(loadRegistry().providers.map((p16) => p16.id)).length === 0) {
+async function runTemplateAddFlow(templateId) {
+  const addable = listAddableTemplates(loadRegistry().providers.map((p16) => p16.id));
+  if (templateId && !addable.some((t) => t.id === templateId)) {
+    p7.log.error(`'${templateId}' is not an addable provider, or it is already configured.`);
+    p7.log.info("Run relay-ai providers list to see configured providers, or relay-ai providers add to browse.");
+    return 1;
+  }
+  if (addable.length === 0) {
     p7.log.info("All catalog providers are already configured.");
     return 0;
   }
-  const template = await pickTemplateFromCatalog();
+  const template = templateId ? addable.find((t) => t.id === templateId) : await pickTemplateFromCatalog();
   if (!template) return 0;
   if (hasApiAndOAuth(template)) {
     return runDualAuthTemplateFlow(template);
@@ -2300,6 +2312,19 @@ async function runTemplateAddFlow() {
     printPanel(fmtProvider(template.name), [
       `${pc4.white("Get an API key at:")} ${fmtUrl(template.signupUrl)}`
     ]);
+  }
+  if (template.noApiKey) {
+    if (template.setupNote) printPanel(fmtProvider(template.name), [pc4.white(template.setupNote)]);
+    const spinner11 = p7.spinner();
+    spinner11.start(`Checking ${template.name} setup...`);
+    const result2 = await addProviderFromTemplate(template, template.id);
+    spinner11.stop("");
+    if (!result2.added) {
+      showProviderAddFailure(result2.error, result2.hint, "Could not add provider.");
+      return 1;
+    }
+    logConnected(template.name, result2.modelCount ?? 0);
+    return 0;
   }
   let baseUrlOverride;
   if (template.accountIdPrompt) {
@@ -2566,7 +2591,8 @@ Headers: ${headerSummary}`);
   }
   return 0;
 }
-async function runProvidersAdd() {
+async function runProvidersAdd(templateId) {
+  if (templateId) return runTemplateAddFlow(templateId);
   const registry = loadRegistry();
   const hasOpencode = findOpencodeBinary() !== null;
   const options = [];
@@ -2898,7 +2924,7 @@ async function runProvidersCommand(args) {
   }
   if (parsed.subcommand === "import") return runProvidersImport();
   if (parsed.subcommand === "list") return runProvidersList();
-  if (parsed.subcommand === "add") return runProvidersAdd();
+  if (parsed.subcommand === "add") return runProvidersAdd(parsed.addTemplateId);
   if (parsed.subcommand === "remove" && parsed.removeId) return runProvidersRemove(parsed.removeId);
   if (parsed.subcommand === "refresh-models") return runProvidersRefreshModels(parsed.removeId);
   if (parsed.subcommand === "auth") {
@@ -6719,7 +6745,8 @@ ${pc6.bold("Options:")}
   --trace      Write proxy debug logs to ~/.relay-ai/logs/ and show errors on exit
   --provider   Boot provider id (skip wizard when paired with --model or non-interactive)
   --model      Boot model id (skip wizard when paired with --provider or non-interactive)
-  --vertex     Use Claude models through Google Vertex AI
+  --vertex     Use Claude on Google Vertex AI (with the Vertex provider added, works with
+               --with-native and favorites: relay-ai providers add vertex-anthropic)
   --with-native Load native Codex models beside Relay models for this launch
   --relay-only Keep the current Relay-only launch behavior
   --restore    Remove interrupted-session overlay files
@@ -6963,6 +6990,27 @@ async function runCodexCommand2(codexArgs, trace = false, launch = {}) {
     p9.log.info(`Debug log: ${debugLogPath}`);
   }
   const isTty = Boolean(process.stdin.isTTY);
+  if (launch.vertex && isVertexAnthropicRegistered()) {
+    launch = { ...launch, vertex: false, launchProvider: launch.launchProvider ?? VERTEX_ANTHROPIC_PROVIDER_ID };
+    if (!launch.launchModel) {
+      if (!isTty) {
+        console.error(pc6.red("relay-ai codex --vertex needs --model <id> outside an interactive terminal."));
+        return 1;
+      }
+      const choice = await p9.select({
+        message: "Select a Vertex AI model:",
+        options: vertexAnthropicCachedModels().map((m) => ({ value: m.id, label: m.name, hint: m.id }))
+      });
+      if (p9.isCancel(choice)) {
+        p9.cancel("Cancelled.");
+        return 0;
+      }
+      launch.launchModel = String(choice);
+    }
+  } else if (launch.vertex && launch.codexLaunchMode === "mixed") {
+    console.error(pc6.red("--vertex --with-native needs the Vertex provider. Add it once with: relay-ai providers add vertex-anthropic"));
+    return 1;
+  }
   if (launch.vertex) {
     if (!configOnly) {
       const sessionCheck = checkSessionLock(isTty);
@@ -12992,7 +13040,8 @@ ${pc9.bold("Usage:")}
   relay-ai codex-app --version
 
 ${pc9.bold("Options:")}
-  --vertex     Use Claude models through Google Vertex AI
+  --vertex     Use Claude on Google Vertex AI (with the Vertex provider added, works with
+               --with-native, favorites and --yes: relay-ai providers add vertex-anthropic)
   --with-native Load native Codex models beside Relay models for this launch
   --relay-only Keep the current Relay-only launch behavior
   --yes, -y     Approve a fully specified launch and skip restart prompts
@@ -13219,8 +13268,15 @@ async function runCodexAppCommand(args, opts = {}) {
     return result.liveSession ? 1 : 0;
   }
   const configOnly = args.includes("--config");
+  const vertexProviderAdded = Boolean(opts.vertex) && isVertexAnthropicRegistered();
+  const legacyVertex = Boolean(opts.vertex) && !vertexProviderAdded;
+  const launchProvider = vertexProviderAdded ? opts.launchProvider ?? VERTEX_ANTHROPIC_PROVIDER_ID : opts.launchProvider;
+  if (legacyVertex && opts.codexLaunchMode === "mixed") {
+    console.error(pc9.red("--vertex --with-native needs the Vertex provider. Add it once with: relay-ai providers add vertex-anthropic"));
+    return 1;
+  }
   if (opts.assumeYes && !configOnly) {
-    if (opts.vertex || !opts.launchProvider || !opts.launchModel || !opts.codexLaunchMode) {
+    if (legacyVertex || !launchProvider || !opts.launchModel || !opts.codexLaunchMode) {
       console.error(pc9.red("--yes requires --provider, --model, and either --with-native or --relay-only."));
       return 1;
     }
@@ -13256,7 +13312,7 @@ async function runCodexAppCommand(args, opts = {}) {
       p13.log.warn("Recovered from an interrupted codex-app session (restored Codex config).");
     }
   }
-  if (opts.vertex) {
+  if (legacyVertex) {
     return runCodexAppVertexLaunch(configOnly, trace);
   }
   const catalogSpinner = p13.spinner();
@@ -13281,7 +13337,7 @@ async function runCodexAppCommand(args, opts = {}) {
   const prefs = loadPreferences();
   const favorites = prefs.favoriteModels ?? [];
   let mixedMode = opts.codexLaunchMode === "mixed";
-  if (!configOnly && isTty && !(opts.launchProvider && opts.launchModel) && opts.codexLaunchMode === void 0) {
+  if (!configOnly && isTty && !(launchProvider && opts.launchModel) && opts.codexLaunchMode === void 0) {
     const selectedLaunchMode = await pickCodexLaunchMode();
     if (!selectedLaunchMode) return 0;
     mixedMode = selectedLaunchMode === "mixed";
@@ -13298,10 +13354,10 @@ async function runCodexAppCommand(args, opts = {}) {
     compatible.find((lp) => lp.id === prefs.lastCodexProvider) ?? compatible[0]
   );
   let selectedModel = activeProvider.models.find((m) => m.id === prefs.lastCodexModel) ?? activeProvider.models[0];
-  if (codexAppUsesExplicitSelection(configOnly, opts.launchProvider, opts.launchModel)) {
+  if (codexAppUsesExplicitSelection(configOnly, launchProvider, opts.launchModel)) {
     const bootSelection = resolveBootSelection(
       compatible,
-      opts.launchProvider,
+      launchProvider,
       opts.launchModel,
       providerForCodexPicker
     );
@@ -13311,6 +13367,19 @@ async function runCodexAppCommand(args, opts = {}) {
     }
     activeProvider = bootSelection.provider;
     selectedModel = bootSelection.model;
+  } else if (vertexProviderAdded) {
+    const vertexProvider = compatible.find((lp) => lp.id === launchProvider);
+    if (!vertexProvider) {
+      p13.log.error(`Provider '${launchProvider}' has no models available for the ChatGPT app.`);
+      return 1;
+    }
+    activeProvider = providerForCodexPicker(vertexProvider);
+    selectedModel = activeProvider.models[0];
+    if (!configOnly) {
+      const picked = await pickCodexModel(activeProvider, prefs);
+      if (!picked || picked === "back") return 0;
+      selectedModel = picked;
+    }
   } else if (!configOnly) {
     let currentInitialProvider = prefs.lastCodexProvider && compatible.some((o) => o.id === prefs.lastCodexProvider) ? prefs.lastCodexProvider : compatible[0].id;
     while (true) {
@@ -17249,7 +17318,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-2OA6R5XV.js");
+    const { runUiCommand } = await import("./ui-command-2DOQS6YP.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

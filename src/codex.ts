@@ -42,6 +42,7 @@ import {
   type VertexModelEntry,
 } from './server/vertex-config.js';
 import { VERTEX_ANTHROPIC_NPM } from './constants.js';
+import { isVertexAnthropicRegistered, vertexAnthropicCachedModels, VERTEX_ANTHROPIC_PROVIDER_ID } from './registry/vertex-anthropic.js';
 import { resolveContextWindow } from './context-window.js';
 import type { ResolvedFavorite } from './favorites-resolver.js';
 import {
@@ -96,7 +97,8 @@ ${pc.bold('Options:')}
   --trace      Write proxy debug logs to ~/.relay-ai/logs/ and show errors on exit
   --provider   Boot provider id (skip wizard when paired with --model or non-interactive)
   --model      Boot model id (skip wizard when paired with --provider or non-interactive)
-  --vertex     Use Claude models through Google Vertex AI
+  --vertex     Use Claude on Google Vertex AI (with the Vertex provider added, works with
+               --with-native and favorites: relay-ai providers add vertex-anthropic)
   --with-native Load native Codex models beside Relay models for this launch
   --relay-only Keep the current Relay-only launch behavior
   --restore    Remove interrupted-session overlay files
@@ -378,6 +380,26 @@ export async function runCodexCommand(
   }
 
   const isTty = Boolean(process.stdin.isTTY);
+  // With the Vertex provider added, --vertex preselects it in the normal
+  // registry launch (native mixing, favorites); otherwise keep the dedicated path.
+  if (launch.vertex && isVertexAnthropicRegistered()) {
+    launch = { ...launch, vertex: false, launchProvider: launch.launchProvider ?? VERTEX_ANTHROPIC_PROVIDER_ID };
+    if (!launch.launchModel) {
+      if (!isTty) {
+        console.error(pc.red('relay-ai codex --vertex needs --model <id> outside an interactive terminal.'));
+        return 1;
+      }
+      const choice = await p.select({
+        message: 'Select a Vertex AI model:',
+        options: vertexAnthropicCachedModels().map(m => ({ value: m.id, label: m.name, hint: m.id })),
+      });
+      if (p.isCancel(choice)) { p.cancel('Cancelled.'); return 0; }
+      launch.launchModel = String(choice);
+    }
+  } else if (launch.vertex && launch.codexLaunchMode === 'mixed') {
+    console.error(pc.red('--vertex --with-native needs the Vertex provider. Add it once with: relay-ai providers add vertex-anthropic'));
+    return 1;
+  }
   if (launch.vertex) {
     if (!configOnly) {
       const sessionCheck = checkSessionLock(isTty);

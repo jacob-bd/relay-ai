@@ -461,6 +461,8 @@ function handleGetTemplates(res: ServerResponse): void {
     accountIdPrompt: t.accountIdPrompt ?? null,
     defaultBaseUrl: t.defaultBaseUrl ?? null,
     apiKeyOptional: t.apiKeyOptional ?? false,
+    noApiKey: t.noApiKey ?? false,
+    setupNote: t.setupNote ?? null,
     authMethods: t.authMethods ?? [t.authType],
     custom: false,
   }));

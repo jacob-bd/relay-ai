@@ -69,6 +69,8 @@ export function parseProvidersArgs(args: string[]): {
   subcommand: ProvidersSubcommand;
   showHelp: boolean;
   removeId?: string;
+  /** `providers add <template-id>` skips the catalog picker. */
+  addTemplateId?: string;
   authMethod?: ProviderAuthMethod;
   error?: string;
 } {
@@ -76,7 +78,8 @@ export function parseProvidersArgs(args: string[]): {
   const [first, ...rest] = args;
   if (first === '--help' || first === '-h') return { subcommand: 'help', showHelp: true };
   if (first === 'add') {
-    if (rest.length > 0) return { subcommand: 'add', showHelp: false, error: `Unknown add option: ${rest[0]}` };
+    if (rest.length > 1 || rest[0]?.startsWith('-')) return { subcommand: 'add', showHelp: false, error: `Unknown add option: ${rest.find(a => a.startsWith('-')) ?? rest[1]}` };
+    if (rest.length === 1) return { subcommand: 'add', showHelp: false, addTemplateId: rest[0] };
     return { subcommand: 'add', showHelp: false };
   }
   if (first === 'import') {
@@ -123,7 +126,7 @@ export function providersHelpText(): string {
 
 ${pc.bold('Usage:')}
   relay-ai providers
-  relay-ai providers add
+  relay-ai providers add [id]
   relay-ai providers import
   relay-ai providers list
   relay-ai providers remove <id>
@@ -481,13 +484,19 @@ async function runDualAuthTemplateFlow(
   return 0;
 }
 
-async function runTemplateAddFlow(): Promise<number> {
-  if (listAddableTemplates(loadRegistry().providers.map(p => p.id)).length === 0) {
+async function runTemplateAddFlow(templateId?: string): Promise<number> {
+  const addable = listAddableTemplates(loadRegistry().providers.map(p => p.id));
+  if (templateId && !addable.some(t => t.id === templateId)) {
+    p.log.error(`'${templateId}' is not an addable provider, or it is already configured.`);
+    p.log.info('Run relay-ai providers list to see configured providers, or relay-ai providers add to browse.');
+    return 1;
+  }
+  if (addable.length === 0) {
     p.log.info('All catalog providers are already configured.');
     return 0;
   }
 
-  const template = await pickTemplateFromCatalog();
+  const template = templateId ? addable.find(t => t.id === templateId)! : await pickTemplateFromCatalog();
   if (!template) return 0;
 
   if (hasApiAndOAuth(template)) {
@@ -533,6 +542,20 @@ async function runTemplateAddFlow(): Promise<number> {
     printPanel(fmtProvider(template.name), [
       `${pc.white('Get an API key at:')} ${fmtUrl(template.signupUrl)}`,
     ]);
+  }
+
+  if (template.noApiKey) {
+    if (template.setupNote) printPanel(fmtProvider(template.name), [pc.white(template.setupNote)]);
+    const spinner = p.spinner();
+    spinner.start(`Checking ${template.name} setup...`);
+    const result = await addProviderFromTemplate(template, template.id);
+    spinner.stop('');
+    if (!result.added) {
+      showProviderAddFailure(result.error, result.hint, 'Could not add provider.');
+      return 1;
+    }
+    logConnected(template.name, result.modelCount ?? 0);
+    return 0;
   }
 
   let baseUrlOverride: string | undefined;
@@ -827,7 +850,8 @@ async function runCustomEndpointEditFlow(provider: RegistryProvider): Promise<nu
   return 0;
 }
 
-export async function runProvidersAdd(): Promise<number> {
+export async function runProvidersAdd(templateId?: string): Promise<number> {
+  if (templateId) return runTemplateAddFlow(templateId);
   const registry = loadRegistry();
   const hasOpencode = findOpencodeBinary() !== null;
 
@@ -1198,7 +1222,7 @@ export async function runProvidersCommand(args: string[]): Promise<number> {
 
   if (parsed.subcommand === 'import') return runProvidersImport();
   if (parsed.subcommand === 'list') return runProvidersList();
-  if (parsed.subcommand === 'add') return runProvidersAdd();
+  if (parsed.subcommand === 'add') return runProvidersAdd(parsed.addTemplateId);
   if (parsed.subcommand === 'remove' && parsed.removeId) return runProvidersRemove(parsed.removeId);
   if (parsed.subcommand === 'refresh-models') return runProvidersRefreshModels(parsed.removeId);
   if (parsed.subcommand === 'auth') {

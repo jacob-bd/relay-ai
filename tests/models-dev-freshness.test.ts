@@ -127,6 +127,20 @@ describe('resolveModelReasoningMetadata', () => {
     expect(r.reasoningEffortLevels).toBeUndefined();
   });
 
+  it("keeps reseller effort levels off Anthropic models whose own entry declares none", () => {
+    const cache = {
+      anthropic: { id: 'anthropic', models: { 'claude-haiku-4-5': { id: 'claude-haiku-4-5', reasoning: true, reasoning_options: [{ type: 'budget_tokens', min: 1024 }] } } },
+      reseller: { id: 'reseller', models: { 'claude-haiku-4-5': { id: 'claude-haiku-4-5', reasoning_options: [{ type: 'effort', values: ['low', 'medium', 'high'] }] } } },
+      xiaomi: { id: 'xiaomi', models: { 'mimo-x': { id: 'mimo-x', reasoning_options: [{ type: 'toggle' }] } } },
+      gateway: { id: 'gateway', models: { 'mimo-x': { id: 'mimo-x', reasoning_options: [{ type: 'effort', values: ['low', 'high'] }] } } },
+    } as unknown as ModelsDevCacheFile;
+    for (const provider of ['anthropic', 'claude-code', 'vertex-anthropic']) {
+      expect(resolveModelReasoningMetadata(provider, 'claude-haiku-4-5', {}, cache).reasoningEffortLevels).toBeUndefined();
+    }
+    // Outside the Anthropic bucket a toggle-only vendor entry is not a refusal.
+    expect(resolveModelReasoningMetadata('xiaomi', 'mimo-x', {}, cache).reasoningEffortLevels).toEqual(['low', 'high']);
+  });
+
   it("the serving provider's own levels beat a reseller that lists fewer", () => {
     const cache = {
       openai: { id: 'openai', models: { 'gpt-x': { id: 'gpt-x', reasoning: true, reasoning_options: [{ type: 'effort', values: ['none', 'low', 'medium', 'high', 'xhigh', 'max'] }] } } },

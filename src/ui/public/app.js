@@ -1395,8 +1395,17 @@ function buildTemplateBodyContent(template, card) {
   const feedback = document.createElement('div');
   feedback.className = 'key-feedback';
 
-  wrap.appendChild(input);
-  keyRow.appendChild(wrap);
+  if (template.setupNote) {
+    const note = document.createElement('div');
+    note.textContent = template.setupNote;
+    note.style.cssText = 'font-size:12px;color:var(--text-muted,#aaa);margin-bottom:8px';
+    content.appendChild(note);
+  }
+
+  if (!template.noApiKey) {
+    wrap.appendChild(input);
+    keyRow.appendChild(wrap);
+  }
   keyRow.appendChild(addBtn);
   content.appendChild(keyRow);
   content.appendChild(feedback);
@@ -1409,7 +1418,7 @@ function buildTemplateBodyContent(template, card) {
     if (accountIdInput && !accountId) { feedback.textContent = 'Enter an Account ID.'; feedback.className = 'key-feedback error'; return; }
     if (urlInput && !baseUrl) { feedback.textContent = 'Enter a base URL.'; feedback.className = 'key-feedback error'; return; }
     addBtn.disabled = true;
-    feedback.textContent = key ? 'Validating key and fetching models…' : 'Fetching models…';
+    feedback.textContent = template.noApiKey ? 'Checking setup…' : key ? 'Validating key and fetching models…' : 'Fetching models…';
     feedback.className = 'key-feedback muted';
 
     const result = await api('POST', '/api/providers/add', { templateId: template.id, key, baseUrl, accountId });

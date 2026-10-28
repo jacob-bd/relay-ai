@@ -231,7 +231,7 @@ The package version in `package.json` is the source of truth. The maintenance no
 - Cost display in Claude Code is always inaccurate for non-Anthropic models.
 - OAuth-authenticated providers (no stored key) are silently skipped.
 - `@ai-sdk/github-copilot` won't work — OpenCode loads it from internal `@opencode-ai/core`, not a public npm factory we can ship.
-- Bedrock/Azure are not first-class API-key providers yet (optional `providers import` if already configured in OpenCode CLI). Vertex uses `relay-ai server --vertex` + gcloud ADC.
+- Bedrock/Azure are not first-class API-key providers yet (optional `providers import` if already configured in OpenCode CLI). Claude on Vertex is the `vertex-anthropic` provider (gcloud ADC, no key; models read live from `vertex-models.json` by `registry/provider-models.ts`, project/location from env in `createLanguageModel`; helpers in the dependency-free `src/vertex-env.ts` because `server/vertex-config.ts` sits in the proxy ↔ server/models import cycle), plus `relay-ai server --vertex`.
 - Providers with custom auth mechanisms (e.g. Azure OpenAI with deployment URLs) are not fully supported.
 - The `::ts::` separator in tool_use ids encodes `thought_signature`; would break if a signature ever literally contained `::ts::`. Extremely unlikely.
 - In switch-menu (gateway-discovery) mode the displayed context window reflects the **launch** model and does NOT update on live `/model` switch. Claude Code's gateway model discovery only carries `id` + `display_name` (no `context_window`) and fetches `/v1/models` once at startup, so `CLAUDE_CODE_MAX_CONTEXT_TOKENS` (fixed at launch) is the only lever. Single-model launches show the correct window.

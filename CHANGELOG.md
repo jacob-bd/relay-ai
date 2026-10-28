@@ -2,7 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Claude on Google Vertex AI is now a regular provider.** Add it once with `relay-ai providers add vertex-anthropic` or as **Google Vertex AI (Claude)** in `relay-ai ui`; it uses your gcloud login and `ANTHROPIC_VERTEX_PROJECT_ID`, with no API key. Vertex then appears in every launch picker (ChatGPT/Codex app, Codex CLI, Claude Code, Gemini CLI, Antigravity, Claude desktop, the gateway) and can be saved as a favorite. Its models are read live from `~/.relay-ai/vertex-models.json`, so edits apply on the next launch without a refresh.
+- **`--vertex` works with native models.** With the provider added, `relay-ai codex-app --vertex` and `relay-ai codex --vertex` preselect it in the normal launch, so `--with-native` runs Vertex Claude beside native ChatGPT models and favorites and `--yes` work. Without the provider, `--vertex` keeps its dedicated Vertex-only launch.
+- **Vertex Claude models get their full effort ladder.** Claude 5.x on Vertex offers Low through Max (previously Low / Medium / High), read from Anthropic's models.dev entries.
+
 ### Fixed
+
+- **Claude 5.x models report a 1M context window.** Relay's built-in rules stopped at Claude 4.x, so Sonnet 5 / 5.5, Opus 5.5, Haiku 5.5 and Fable fell back to 200k wherever no catalog supplied a size (Vertex, for one), triggering early compaction. `relay-ai server --vertex` also accepts `[1m]` ids for every 1M model, not just Sonnet 4.6 and Opus 4.6.
+- **Claude Haiku 4.5 no longer offers effort levels Anthropic rejects.** Anthropic's own models.dev entry gives Haiku 4.5 (and Sonnet 4.5) a thinking budget but no `effort`, so Relay fell back to resellers that expose their own effort abstraction and then sent `effort`, which Anthropic refuses with "This model does not support the effort parameter". For Anthropic API-key, Claude subscription and Vertex routes, an own entry that lists reasoning controls without `effort` is now final. Other vendors are unchanged.
+- **Vertex Claude models no longer collide with the same model from a Claude subscription in Claude Code.** Both used the bare `claude-*` id, so one silently replaced the other in the `/model` picker and could route requests through the wrong account. Vertex models are now listed as `anthropic-vertex-anthropic__<model>`.
 
 - **Claude models now use prompt caching outside Claude Code.** Anthropic caches only the prompt prefixes a request marks, and Relay never marked any when it translated requests for the ChatGPT/Codex app, Codex CLI, Gemini CLI, Antigravity or the gateway. Every turn re-read the full tool list and history at full price and latency — the Codex app alone sends about 120k tokens of tool definitions per turn. Relay now marks the last tool, the system prompt and the latest user/tool turns (Anthropic's four-breakpoint cap) for Claude by API key, Claude subscription, Vertex AI and OpenCode Zen; breakpoints a client already placed are kept as-is. Verified live on Vertex AI: a repeated 6.8k-token prompt went from 6.5 s to 1.0 s, served from cache. Claude via OpenRouter or Bedrock is not covered yet.
 - **ChatGPT Desktop no longer fails Ctrl+C cleanup with "did not exit after graceful shutdown" on macOS.** Session shutdown waited only 5 seconds for the app to quit, while ChatGPT for macOS can take longer to settle an active Codex task; launch-time restarts already allowed 30 seconds. Every quit wait now uses the same per-platform window (30 s on macOS, unchanged elsewhere). macOS still never force-quits the app.

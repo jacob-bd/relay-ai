@@ -1,7 +1,7 @@
 // src/provider-templates.ts — builtin provider templates for relay-ai providers add
 
 export type ProviderAuthType = 'api' | 'oauth' | 'none';
-export type ProviderModelSource = 'api-list' | 'static-seed' | 'manual-only' | 'zen-go-api' | 'cline-recommended' | 'commandcode';
+export type ProviderModelSource = 'api-list' | 'static-seed' | 'manual-only' | 'zen-go-api' | 'cline-recommended' | 'commandcode' | 'vertex-models-file';
 
 export interface ProviderTemplate {
   id: string;
@@ -19,6 +19,10 @@ export interface ProviderTemplate {
   urlPrompt?: string;
   accountIdPrompt?: string;
   apiKeyOptional?: boolean;
+  /** Authenticates outside Relay (e.g. gcloud ADC): never prompt for a key. Implies apiKeyOptional. */
+  noApiKey?: boolean;
+  /** One-line setup requirement shown before adding (CLI panel, web UI form). */
+  setupNote?: string;
   anonymousFreeModels?: boolean;
   /** Static headers this provider requires on every request (model listing and runtime). */
   headers?: Record<string, string>;
@@ -345,6 +349,18 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     modelSource: 'manual-only',
     supported: false,
     unsupportedReason: 'Not supported yet (requires Azure deployment URLs). Optional: relay-ai providers import if already set up in OpenCode CLI.',
+  },
+  {
+    id: 'vertex-anthropic',
+    name: 'Google Vertex AI (Claude)',
+    shortName: 'Vertex',
+    authType: 'api',
+    npm: '@ai-sdk/google-vertex/anthropic',
+    apiKeyOptional: true,
+    noApiKey: true,
+    setupNote: 'Uses your gcloud login (gcloud auth application-default login) and ANTHROPIC_VERTEX_PROJECT_ID. Models come from ~/.relay-ai/vertex-models.json.',
+    modelSource: 'vertex-models-file',
+    supported: true,
   },
   {
     id: 'vertex',

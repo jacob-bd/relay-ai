@@ -187,7 +187,7 @@ The package version in `package.json` is the source of truth; do not hard-code a
 - OAuth-authenticated providers (no stored key) are silently skipped.
 - OpenCode Zen free-tier ids (`*-free`, `big-pickle`) are hidden for the `zen` and `go` providers — OpenCode returns 403 for them outside its own client (`model-compatibility.ts::isZenFreeTierModel()`).
 - `@ai-sdk/github-copilot` won't work — OpenCode loads it from internal `@opencode-ai/core`, not a public npm factory we can ship.
-- Bedrock/Azure are not first-class API-key providers yet (optional `providers import` if already configured in OpenCode CLI). Vertex uses `relay-ai server --vertex` + gcloud ADC.
+- Bedrock/Azure are not first-class API-key providers yet (optional `providers import` if already configured in OpenCode CLI). Claude on Vertex is the `vertex-anthropic` provider (gcloud ADC, no key; models read live from `vertex-models.json` by `registry/provider-models.ts`, project/location from env in `createLanguageModel`; helpers in the dependency-free `src/vertex-env.ts` because `server/vertex-config.ts` sits in the proxy ↔ server/models import cycle), plus `relay-ai server --vertex`.
 - Providers with custom auth mechanisms (e.g. Azure OpenAI with deployment URLs) are not fully supported.
 - The `::ts::` separator in tool_use ids encodes `thought_signature`; would break if a signature ever literally contained `::ts::`. Extremely unlikely.
 - In switch-menu (gateway-discovery) mode Relay leaves `CLAUDE_CODE_MAX_CONTEXT_TOKENS` unset so Claude Code can recalculate context on live `/model` switches. Native model metadata and Relay's `[1m]` model identity are preserved for the per-model window calculation. Single-model launches still set the exact window explicitly.

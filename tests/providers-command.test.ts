@@ -39,6 +39,9 @@ describe('parseProvidersArgs', () => {
 
   it('parses add, import, list, remove, refresh-models', () => {
     expect(parseProvidersArgs(['add'])).toEqual({ subcommand: 'add', showHelp: false });
+    expect(parseProvidersArgs(['add', 'vertex-anthropic'])).toEqual({ subcommand: 'add', showHelp: false, addTemplateId: 'vertex-anthropic' });
+    expect(parseProvidersArgs(['add', '--bogus']).error).toBe('Unknown add option: --bogus');
+    expect(parseProvidersArgs(['add', 'a', 'b']).error).toBe('Unknown add option: b');
     expect(parseProvidersArgs(['import'])).toEqual({ subcommand: 'import', showHelp: false });
     expect(parseProvidersArgs(['list'])).toEqual({ subcommand: 'list', showHelp: false });
     expect(parseProvidersArgs(['remove', 'groq'])).toEqual({

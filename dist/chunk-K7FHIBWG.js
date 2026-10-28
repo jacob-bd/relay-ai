@@ -2,7 +2,7 @@
 import {
   getTemplateById,
   init_provider_templates
-} from "./chunk-3R25QO5X.js";
+} from "./chunk-AUBFTFM5.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -46,7 +46,6 @@ import {
   formatUpstreamError,
   generateAnthropicResponse,
   generateCliUserID,
-  getAppHome,
   getEnvServerPassword,
   getProviderDebugLogPath,
   getProviderModels,
@@ -59,7 +58,6 @@ import {
   getServerFreeModelsOnly,
   getServerListenMode,
   getServerMaskGatewayIds,
-  getVertexModelsPath,
   injectClaudeCodeBillingSystemLine,
   injectClaudeIdentity,
   isAuthorized,
@@ -126,8 +124,17 @@ import {
   translateRequest,
   upstreamHttpStatus,
   validateCustomEndpointUrl,
+  vertexAnthropicCachedModels,
+  vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-MZI3VLQJ.js";
+} from "./chunk-AJXLA7WO.js";
+import {
+  getAppHome,
+  hasApplicationDefaultCredentials,
+  loadVertexModelEntries,
+  resolveVertexLocation,
+  resolveVertexProject
+} from "./chunk-QQEVHBS3.js";
 
 // src/registry/google-model-id.ts
 var GOOGLE_MODEL_PREFIX = "models/";
@@ -1539,7 +1546,7 @@ function anthropicError(res, status, message) {
 }
 function aliasModelId(realId, providerId) {
   const sanitized = providerId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  if (realId.startsWith("claude-") && !sanitized.startsWith("custom-")) return realId;
+  if (realId.startsWith("claude-") && !sanitized.startsWith("custom-") && sanitized !== "vertex-anthropic") return realId;
   return `anthropic-${sanitized}__${realId}`;
 }
 function buildProxySubagentModelRouting(routes, parentRoute) {
@@ -5480,6 +5487,8 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
     let oauthFallbackReason;
     if (source === "zen-go-api") {
       models = await refreshZenGoProvider(provider);
+    } else if (source === "vertex-models-file") {
+      models = vertexAnthropicCachedModels();
     } else if (source === "commandcode") {
       const ccBaseUrl = (provider.api.url ?? COMMANDCODE_BASE_URL).replace(/\/$/, "");
       try {
@@ -6690,56 +6699,13 @@ async function selectServerProviders(available, initial) {
 }
 
 // src/server/vertex-config.ts
-import { existsSync, readFileSync } from "fs";
-import { homedir } from "os";
-import { join as join2 } from "path";
-var DEFAULT_VERTEX_MODELS = [
-  { id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6" },
-  { id: "claude-opus-4-6", display_name: "Claude Opus 4.6" },
-  { id: "claude-haiku-4-5", display_name: "Claude Haiku 4.5" }
-];
 var VERTEX_MODEL_SHORT_ALIASES = {
   sonnet: "claude-sonnet-4-6",
   haiku: "claude-haiku-4-5",
   opus: "claude-opus-4-6"
 };
-var VERTEX_ONE_M_MODEL_IDS = /* @__PURE__ */ new Set([
-  "claude-sonnet-4-6",
-  "claude-opus-4-6"
-]);
-function resolveVertexProject(env = process.env) {
-  const project = env["ANTHROPIC_VERTEX_PROJECT_ID"] ?? env["GOOGLE_CLOUD_PROJECT"] ?? env["GOOGLE_VERTEX_PROJECT"];
-  return project?.trim() || void 0;
-}
-function resolveVertexLocation(env = process.env) {
-  const location = env["GOOGLE_CLOUD_LOCATION"] ?? env["CLOUD_ML_REGION"] ?? env["GOOGLE_VERTEX_LOCATION"] ?? "global";
-  return location.trim() || "global";
-}
-function defaultAdcCredentialsPath(home = homedir()) {
-  return join2(home, ".config", "gcloud", "application_default_credentials.json");
-}
-function hasApplicationDefaultCredentials(home = homedir(), adcPath = defaultAdcCredentialsPath(home), env = process.env) {
-  const explicitPath = env["GOOGLE_APPLICATION_CREDENTIALS"]?.trim();
-  if (explicitPath && existsSync(explicitPath)) return true;
-  return existsSync(adcPath);
-}
-function loadVertexModelEntries(env = process.env) {
-  const configPath = getVertexModelsPath(env);
-  if (!existsSync(configPath)) return DEFAULT_VERTEX_MODELS;
-  try {
-    const parsed = JSON.parse(readFileSync(configPath, "utf8"));
-    if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_VERTEX_MODELS;
-    const models = parsed.filter(
-      (entry) => !!entry && typeof entry === "object" && typeof entry.id === "string" && entry.id.length > 0 && typeof entry.display_name === "string" && entry.display_name.length > 0
-    ).map((entry) => ({
-      id: entry.id,
-      display_name: entry.display_name,
-      ...typeof entry.upstream_id === "string" && entry.upstream_id.length > 0 ? { upstream_id: entry.upstream_id } : {}
-    }));
-    return models.length > 0 ? models : DEFAULT_VERTEX_MODELS;
-  } catch {
-    return DEFAULT_VERTEX_MODELS;
-  }
+function isVertexOneMModel(modelId) {
+  return resolveContextWindow(modelId) >= 1e6;
 }
 function buildVertexRuntimeConfig(env = process.env) {
   const project = resolveVertexProject(env);
@@ -6792,12 +6758,12 @@ function createVertexModelCatalog(models) {
     for (const [alias, targetId] of Object.entries(VERTEX_MODEL_SHORT_ALIASES)) {
       if (model.id === targetId) {
         registerVertexCatalogAlias(byId, alias, model);
-        if (VERTEX_ONE_M_MODEL_IDS.has(targetId)) {
+        if (isVertexOneMModel(targetId)) {
           registerVertexCatalogAlias(byId, `${alias}[1m]`, model);
         }
       }
     }
-    if (VERTEX_ONE_M_MODEL_IDS.has(model.id)) {
+    if (isVertexOneMModel(model.id)) {
       registerVertexCatalogAlias(byId, `${model.id}[1m]`, model);
     }
   }
@@ -6807,7 +6773,7 @@ function createVertexModelCatalog(models) {
       for (const candidate of vertexClientModelLookupCandidates(id)) {
         const match = byId.get(candidate) ?? catalog.get(candidate);
         if (match) {
-          if (requested1m && !VERTEX_ONE_M_MODEL_IDS.has(match.id)) return void 0;
+          if (requested1m && !isVertexOneMModel(match.id)) return void 0;
           return match;
         }
       }
@@ -7264,12 +7230,12 @@ async function runServerCommand(options = {}) {
 import {
   chmodSync,
   mkdirSync,
-  readFileSync as readFileSync2,
+  readFileSync,
   renameSync,
   unlinkSync,
   writeFileSync as writeFileSync2
 } from "fs";
-import { join as join3 } from "path";
+import { join as join2 } from "path";
 var UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1e3;
 var UPDATE_CHECK_TIMEOUT_MS = 2e3;
 var UPDATE_COMMAND = "npm install -g @jacobbd/relay-ai@latest";
@@ -7315,11 +7281,11 @@ function isNewerVersion(currentVersion, latestVersion) {
   return comparePrerelease(current.prerelease, latest.prerelease) > 0;
 }
 function cachePath() {
-  return join3(getAppHome(), "update-check.json");
+  return join2(getAppHome(), "update-check.json");
 }
 function readFreshCache(now) {
   try {
-    const parsed = JSON.parse(readFileSync2(cachePath(), "utf8"));
+    const parsed = JSON.parse(readFileSync(cachePath(), "utf8"));
     if (typeof parsed.latestVersion !== "string" || !parseVersion(parsed.latestVersion)) return null;
     if (typeof parsed.checkedAt !== "number" || !Number.isFinite(parsed.checkedAt)) return null;
     const age = now - parsed.checkedAt;
@@ -7483,10 +7449,10 @@ function buildHttpProxyRoutes(providers, favorites, selected, max = MAX_MODEL_CA
 
 // src/binary-lookup.ts
 import { execFileSync } from "child_process";
-import { existsSync as existsSync2 } from "fs";
+import { existsSync } from "fs";
 function findBinaryOnPath(name, fallbackPaths, options = {}) {
   const isWindows = options.isWindows ?? process.platform === "win32";
-  const exists = options.exists ?? existsSync2;
+  const exists = options.exists ?? existsSync;
   const runWhich = options.runWhich ?? ((binary, win) => execFileSync(win ? "where.exe" : "which", [binary], {
     encoding: "utf8",
     stdio: ["pipe", "pipe", "pipe"]
@@ -7572,6 +7538,10 @@ async function addProviderFromTemplate(template, apiKey, opts) {
         hint: template.signupUrl ? `Verify your key at ${template.signupUrl}` : void 0
       };
     }
+  } else if (template.modelSource === "vertex-models-file") {
+    const setupError = vertexAnthropicSetupError();
+    if (setupError) return { added: false, ...setupError };
+    fetched = { models: vertexAnthropicCachedModels(), baseUrl: "" };
   } else {
     fetched = await fetchTemplateModels(template, trimmedKey, opts?.baseUrl);
   }
@@ -7885,9 +7855,9 @@ ${pc5.dim("OpenCode CLI configs: use")} relay-ai providers import${pc5.dim(" (op
 
 // src/codex/app-launch.ts
 import { execFileSync as execFileSync3, execSync, spawn } from "child_process";
-import { copyFileSync, existsSync as existsSync3, mkdirSync as mkdirSync2, readdirSync as readdirSync2, realpathSync, statSync } from "fs";
-import { homedir as homedir2 } from "os";
-import { dirname, join as join4, win32 as winPath } from "path";
+import { copyFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2, readdirSync as readdirSync2, realpathSync, statSync } from "fs";
+import { homedir } from "os";
+import { dirname, join as join3, win32 as winPath } from "path";
 import * as p6 from "@clack/prompts";
 
 // src/linux-display.ts
@@ -7944,17 +7914,17 @@ function runPowerShell(script) {
 function darwinAppCandidates() {
   return DARWIN_APP_NAMES.flatMap((name) => [
     `/Applications/${name}.app`,
-    join4(homedir2(), "Applications", `${name}.app`)
+    join3(homedir(), "Applications", `${name}.app`)
   ]);
 }
-function linuxCodexAppCandidates(home = homedir2()) {
+function linuxCodexAppCandidates(home = homedir()) {
   return [
     "/usr/bin/chatgpt",
     "/usr/lib/chatgpt/ChatGPT",
     "/opt/chatgpt/ChatGPT",
     "/usr/local/lib/chatgpt/ChatGPT",
-    join4(home, ".local", "bin", "chatgpt"),
-    join4(home, ".local", "share", "chatgpt", "ChatGPT")
+    join3(home, ".local", "bin", "chatgpt"),
+    join3(home, ".local", "share", "chatgpt", "ChatGPT")
   ];
 }
 function linuxEmbeddedCodexCandidates(appPath) {
@@ -7966,12 +7936,12 @@ function linuxEmbeddedCodexCandidates(appPath) {
     }
   })();
   return [.../* @__PURE__ */ new Set([
-    join4(dirname(resolvedPath), "resources", "codex"),
-    join4(dirname(appPath), "resources", "codex")
+    join3(dirname(resolvedPath), "resources", "codex"),
+    join3(dirname(appPath), "resources", "codex")
   ])];
 }
 function winLocalAppData() {
-  return process.env.LOCALAPPDATA ?? join4(homedir2(), "AppData", "Local");
+  return process.env.LOCALAPPDATA ?? join3(homedir(), "AppData", "Local");
 }
 function windowsEmbeddedCodexCandidates(appPath, packageInstallLocations) {
   const candidates = [];
@@ -7991,7 +7961,7 @@ function windowsEmbeddedCodexCandidates(appPath, packageInstallLocations) {
   }
   return [...new Set(candidates)];
 }
-function windowsEmbeddedCodexCachePath(sourcePath, home = homedir2()) {
+function windowsEmbeddedCodexCachePath(sourcePath, home = homedir()) {
   const normalized = sourcePath.replaceAll("/", "\\");
   const match = normalized.match(/\\WindowsApps\\([^\\]+)\\/i);
   if (!match) return null;
@@ -8003,7 +7973,7 @@ function executableWindowsEmbeddedCodexPath(sourcePath) {
   if (!cachePath2) return sourcePath;
   try {
     const sourceSize = statSync(sourcePath).size;
-    if (existsSync3(cachePath2) && statSync(cachePath2).size === sourceSize) return cachePath2;
+    if (existsSync2(cachePath2) && statSync(cachePath2).size === sourceSize) return cachePath2;
     mkdirSync2(winPath.dirname(cachePath2), { recursive: true });
     copyFileSync(sourcePath, cachePath2);
     return statSync(cachePath2).size === sourceSize ? cachePath2 : null;
@@ -8024,24 +7994,24 @@ function winCodexPackageInstallLocations() {
 function winCodexExeCandidates() {
   const local = winLocalAppData();
   const bases = WIN_APP_NAMES.flatMap((name) => [
-    join4(local, "Programs", name),
-    join4(local, "Programs", `OpenAI ${name}`),
-    join4(local, name),
-    join4(local, `OpenAI ${name}`),
-    join4(local, "OpenAI", name)
+    join3(local, "Programs", name),
+    join3(local, "Programs", `OpenAI ${name}`),
+    join3(local, name),
+    join3(local, `OpenAI ${name}`),
+    join3(local, "OpenAI", name)
   ]);
-  bases.push(join4(local, "openai-codex-electron"), join4(local, "openai-chatgpt-electron"));
+  bases.push(join3(local, "openai-codex-electron"), join3(local, "openai-chatgpt-electron"));
   const out = [];
   for (const base of bases) {
     for (const name of WIN_APP_NAMES) {
-      out.push(join4(base, `${name}.exe`));
+      out.push(join3(base, `${name}.exe`));
     }
     try {
-      if (existsSync3(base)) {
+      if (existsSync2(base)) {
         for (const dir of readdirSync2(base)) {
           if (dir.startsWith("app-")) {
             for (const name of WIN_APP_NAMES) {
-              out.push(join4(base, dir, `${name}.exe`));
+              out.push(join3(base, dir, `${name}.exe`));
             }
           }
         }
@@ -8055,7 +8025,7 @@ function mdfindCodexApp() {
   try {
     const out = run(`mdfind "kMDItemCFBundleIdentifier == '${CODEX_BUNDLE_ID}'"`);
     const first = out.split("\n").map((l) => l.trim()).find(Boolean);
-    return first && existsSync3(first) ? first : null;
+    return first && existsSync2(first) ? first : null;
   } catch {
     return null;
   }
@@ -8063,14 +8033,14 @@ function mdfindCodexApp() {
 function findCodexApp(platform = process.platform) {
   if (platform === "darwin") {
     for (const path of darwinAppCandidates()) {
-      if (existsSync3(path)) return path;
+      if (existsSync2(path)) return path;
     }
     return mdfindCodexApp();
   }
   if (platform === "win32") {
     for (const path of winCodexExeCandidates()) {
       try {
-        if (existsSync3(path) && statSync(path).isFile()) return path;
+        if (existsSync2(path) && statSync(path).isFile()) return path;
       } catch {
       }
     }
@@ -8084,7 +8054,7 @@ function findCodexApp(platform = process.platform) {
     }
   }
   if (platform === "linux") {
-    return linuxCodexAppCandidates().find((path) => existsSync3(path)) ?? null;
+    return linuxCodexAppCandidates().find((path) => existsSync2(path)) ?? null;
   }
   return null;
 }
@@ -8092,18 +8062,18 @@ function findEmbeddedCodexBinary(platform = process.platform, appPath = findCode
   if (platform === "darwin") {
     if (!appPath) return null;
     return [
-      join4(appPath, "Contents", "Resources", "codex-cli", "bin", "codex"),
-      join4(appPath, "Contents", "Resources", "codex")
-    ].find((binary) => existsSync3(binary)) ?? null;
+      join3(appPath, "Contents", "Resources", "codex-cli", "bin", "codex"),
+      join3(appPath, "Contents", "Resources", "codex")
+    ].find((binary) => existsSync2(binary)) ?? null;
   }
   if (platform === "linux") {
     if (!appPath) return null;
-    return linuxEmbeddedCodexCandidates(appPath).find((path) => existsSync3(path)) ?? null;
+    return linuxEmbeddedCodexCandidates(appPath).find((path) => existsSync2(path)) ?? null;
   }
   if (platform === "win32") {
     const sourcePath = windowsEmbeddedCodexCandidates(appPath, winCodexPackageInstallLocations()).find((path) => {
       try {
-        return existsSync3(path) && statSync(path).isFile();
+        return existsSync2(path) && statSync(path).isFile();
       } catch {
         return false;
       }
@@ -8136,7 +8106,7 @@ function pgrepExact(names) {
   return [...pids];
 }
 function darwinMainExecutableCandidates(appPath) {
-  return DARWIN_APP_NAMES.map((name) => join4(appPath, "Contents", "MacOS", name));
+  return DARWIN_APP_NAMES.map((name) => join3(appPath, "Contents", "MacOS", name));
 }
 function darwinMainPidsFromProcessList(processList, commands, currentPid = process.pid) {
   const pids = /* @__PURE__ */ new Set();
@@ -8365,9 +8335,9 @@ function codexAppInstallHint() {
 
 // src/claude-desktop/app-launch.ts
 import { execSync as execSync2, spawn as spawn2 } from "child_process";
-import { existsSync as existsSync4, readdirSync as readdirSync3, readFileSync as readFileSync3, statSync as statSync2 } from "fs";
-import { homedir as homedir3 } from "os";
-import { join as join5 } from "path";
+import { existsSync as existsSync3, readdirSync as readdirSync3, readFileSync as readFileSync2, statSync as statSync2 } from "fs";
+import { homedir as homedir2 } from "os";
+import { join as join4 } from "path";
 import * as p7 from "@clack/prompts";
 var CLAUDE_BUNDLE_ID = "com.anthropic.claudefordesktop";
 function claudeAppSupported() {
@@ -8384,28 +8354,28 @@ function runPowerShell2(script) {
 function darwinAppCandidates2() {
   return [
     "/Applications/Claude.app",
-    join5(homedir3(), "Applications", "Claude.app")
+    join4(homedir2(), "Applications", "Claude.app")
   ];
 }
 function winLocalAppData2() {
-  return process.env.LOCALAPPDATA ?? join5(homedir3(), "AppData", "Local");
+  return process.env.LOCALAPPDATA ?? join4(homedir2(), "AppData", "Local");
 }
 function winClaudeExeCandidates() {
   const local = winLocalAppData2();
   const bases = [
     // Squirrel install folder used by the Anthropic Claude desktop installer.
-    join5(local, "AnthropicClaude"),
-    join5(local, "Programs", "Claude"),
-    join5(local, "Claude")
+    join4(local, "AnthropicClaude"),
+    join4(local, "Programs", "Claude"),
+    join4(local, "Claude")
   ];
   const out = [];
   for (const base of bases) {
-    out.push(join5(base, "Claude.exe"));
+    out.push(join4(base, "Claude.exe"));
     try {
-      if (existsSync4(base)) {
+      if (existsSync3(base)) {
         for (const name of readdirSync3(base)) {
           if (name.startsWith("app-")) {
-            out.push(join5(base, name, "Claude.exe"));
+            out.push(join4(base, name, "Claude.exe"));
           }
         }
       }
@@ -8420,13 +8390,13 @@ function linuxClaudeCandidates() {
     "/usr/bin/claude-desktop",
     "/usr/lib/claude-desktop/claude-desktop",
     "/opt/Claude/claude-desktop",
-    join5(homedir3(), ".local", "bin", "claude-desktop")
+    join4(homedir2(), ".local", "bin", "claude-desktop")
   ];
 }
 function linuxWhichClaude() {
   try {
     const out = run2("command -v claude-desktop");
-    return out && existsSync4(out) ? out : null;
+    return out && existsSync3(out) ? out : null;
   } catch {
     return null;
   }
@@ -8443,7 +8413,7 @@ function linuxMainPid() {
   const pids = linuxMatchingPids2();
   for (const pid of pids) {
     try {
-      const cmdline = readFileSync3(`/proc/${pid}/cmdline`, "utf8");
+      const cmdline = readFileSync2(`/proc/${pid}/cmdline`, "utf8");
       if (!cmdline.includes("--type=")) return pid;
     } catch {
     }
@@ -8470,7 +8440,7 @@ function mdfindClaudeApp() {
   try {
     const out = run2(`mdfind "kMDItemCFBundleIdentifier == '${CLAUDE_BUNDLE_ID}'"`);
     const first = out.split("\n").map((l) => l.trim()).find(Boolean);
-    return first && existsSync4(first) ? first : null;
+    return first && existsSync3(first) ? first : null;
   } catch {
     return null;
   }
@@ -8478,14 +8448,14 @@ function mdfindClaudeApp() {
 function findClaudeApp() {
   if (process.platform === "darwin") {
     for (const path of darwinAppCandidates2()) {
-      if (existsSync4(path)) return path;
+      if (existsSync3(path)) return path;
     }
     return mdfindClaudeApp();
   }
   if (process.platform === "win32") {
     for (const path of winClaudeExeCandidates()) {
       try {
-        if (existsSync4(path) && statSync2(path).isFile()) return path;
+        if (existsSync3(path) && statSync2(path).isFile()) return path;
       } catch {
       }
     }
@@ -8500,7 +8470,7 @@ function findClaudeApp() {
   if (process.platform === "linux") {
     for (const path of linuxClaudeCandidates()) {
       try {
-        if (existsSync4(path)) return path;
+        if (existsSync3(path)) return path;
       } catch {
       }
     }
@@ -8755,7 +8725,6 @@ export {
   filterServerModelsByFavorites,
   filterServerModelsByFreeStatus,
   summarizeServerProviders,
-  hasApplicationDefaultCredentials,
   buildVertexRuntimeConfig,
   providerOptionsFromCatalog,
   loadServerModels,
@@ -8790,4 +8759,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-NBLCG5EH.js.map
+//# sourceMappingURL=chunk-K7FHIBWG.js.map

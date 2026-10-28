@@ -47,6 +47,7 @@ import {
   normalizeCopilotModels,
   type CopilotPlanTier,
 } from './copilot-models.js';
+import { vertexAnthropicCachedModels } from './vertex-anthropic.js';
 
 export interface RefreshProviderResult {
   id: string;
@@ -635,6 +636,9 @@ export async function refreshProviderModels(
 
     if (source === 'zen-go-api') {
       models = await refreshZenGoProvider(provider);
+    } else if (source === 'vertex-models-file') {
+      // Models are read live from vertex-models.json; nothing to fetch.
+      models = vertexAnthropicCachedModels();
     } else if (source === 'commandcode') {
       const ccBaseUrl = (provider.api.url ?? COMMANDCODE_BASE_URL).replace(/\/$/, '');
       try {

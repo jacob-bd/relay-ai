@@ -360,6 +360,18 @@ var init_provider_templates = __esm({
         unsupportedReason: "Not supported yet (requires Azure deployment URLs). Optional: relay-ai providers import if already set up in OpenCode CLI."
       },
       {
+        id: "vertex-anthropic",
+        name: "Google Vertex AI (Claude)",
+        shortName: "Vertex",
+        authType: "api",
+        npm: "@ai-sdk/google-vertex/anthropic",
+        apiKeyOptional: true,
+        noApiKey: true,
+        setupNote: "Uses your gcloud login (gcloud auth application-default login) and ANTHROPIC_VERTEX_PROJECT_ID. Models come from ~/.relay-ai/vertex-models.json.",
+        modelSource: "vertex-models-file",
+        supported: true
+      },
+      {
         id: "vertex",
         name: "Google Vertex AI",
         authType: "none",
@@ -473,4 +485,4 @@ export {
   provider_templates_exports,
   init_provider_templates
 };
-//# sourceMappingURL=chunk-3R25QO5X.js.map
+//# sourceMappingURL=chunk-AUBFTFM5.js.map

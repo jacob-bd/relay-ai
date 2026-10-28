@@ -17,6 +17,7 @@ import {
   loadPricingCache,
 } from './pricing.js';
 import type { CachedModel, RegistryProvider } from './types.js';
+import { vertexAnthropicCachedModels, vertexAnthropicSetupError } from './vertex-anthropic.js';
 
 export interface AddTemplateResult {
   added: boolean;
@@ -109,6 +110,10 @@ export async function addProviderFromTemplate(
         hint: template.signupUrl ? `Verify your key at ${template.signupUrl}` : undefined,
       };
     }
+  } else if (template.modelSource === 'vertex-models-file') {
+    const setupError = vertexAnthropicSetupError();
+    if (setupError) return { added: false, ...setupError };
+    fetched = { models: vertexAnthropicCachedModels(), baseUrl: '' };
   } else {
     fetched = await fetchTemplateModels(template, trimmedKey, opts?.baseUrl);
   }
