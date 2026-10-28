@@ -520,6 +520,20 @@ async function prepareExternalCodexBody(
  * selected Relay route explicitly at the final provider boundary so this stays
  * correct for Gemini, Claude, OSS, and future dynamically discovered models.
  */
+/**
+ * Terminal error label naming where a request actually went. Sub-agent turns
+ * arrive under a native model id (e.g. gpt-5.6-terra) but run on the configured
+ * Codex SubAgents route, so the requested id alone points at the wrong vendor.
+ */
+export function routeLogLabel(
+  requestedModel: string,
+  route: Pick<CodexProxyRoute, 'modelId' | 'providerId' | 'upstreamModelId' | 'auditUpstreamModelId'>,
+  dispatch: 'relay' | 'relay-subagent',
+): string {
+  const target = `${route.providerId ?? 'relay'}/${route.auditUpstreamModelId ?? route.upstreamModelId ?? route.modelId}`;
+  return dispatch === 'relay-subagent' ? `sub-agent (${requestedModel}) → ${target}` : target;
+}
+
 export function applyExternalCodexRuntimeIdentity(
   params: CodexSdkCallParams,
   route: Pick<CodexProxyRoute, 'modelId' | 'providerId' | 'upstreamModelId' | 'auditUpstreamModelId'>,
@@ -902,7 +916,7 @@ export async function startCodexProxy(
                 if (debug) {
                   log(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
                 }
-              });
+              }, { logLabel: routeLogLabel(modelId, route, relayDispatch) });
               audit({
                 transport: 'http', requestedModel: modelId, dispatch: relayDispatch, phase: 'complete',
                 provider: route.providerId ?? 'relay', routeModel: route.modelId,
@@ -1540,7 +1554,7 @@ export async function startCodexProxy(
               if (debug) {
                 log(`WS response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
               }
-            });
+            }, { logLabel: routeLogLabel(modelId, route, relayDispatch) });
             if (currentExternalCompletedResponse && currentExternalStateInput) {
               if (currentExternalConsumedResponseId) {
                 externalResponseStates.delete(currentExternalConsumedResponseId);

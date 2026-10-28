@@ -6507,7 +6507,23 @@ function anthropicErrorType(status) {
       return "api_error";
   }
 }
+function jsonErrorMessage(text) {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return void 0;
+  try {
+    const parsed = JSON.parse(trimmed);
+    const first = Array.isArray(parsed) ? parsed[0] : parsed;
+    const msg = first?.error?.message ?? first?.message;
+    if (typeof msg === "string" && msg.trim()) return joinProviderMessage(msg);
+  } catch {
+    const match = trimmed.match(/"message"\s*:\s*"((?:[^"\\]|\\.)+)"/);
+    if (match?.[1]) return joinProviderMessage(match[1].replace(/\\"/g, '"'));
+  }
+  return void 0;
+}
 function sanitizeMessage(message) {
+  const fromJson = jsonErrorMessage(message);
+  if (fromJson) return fromJson;
   const line = message.split("\n")[0]?.trim() ?? message;
   if (line.startsWith("RetryError") || line.includes("AI_RetryError")) {
     return "Upstream model request failed after retries.";
@@ -7555,4 +7571,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-AJXLA7WO.js.map
+//# sourceMappingURL=chunk-ZMIMO7RC.js.map

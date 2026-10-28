@@ -33,6 +33,16 @@ describe('formatUpstreamErrorTrace', () => {
 });
 
 describe('formatUpstreamError', () => {
+  it('extracts the reason from a raw multi-line JSON error body', () => {
+    const body = JSON.stringify({ error: { code: 429, message: 'Resource has been exhausted (e.g. check quota).', status: 'RESOURCE_EXHAUSTED' } }, null, 2);
+    expect(formatUpstreamError({ message: body, statusCode: 429 }))
+      .toBe('Resource has been exhausted (e.g. check quota). (HTTP 429)');
+    expect(formatUpstreamError({ lastError: { message: body, statusCode: 429 } }))
+      .toBe('Resource has been exhausted (e.g. check quota). (HTTP 429)');
+    expect(formatUpstreamError({ message: '{\n  "error": { "message": "Quota exceeded",\n truncated', statusCode: 429 }))
+      .toBe('Quota exceeded (HTTP 429)');
+  });
+
   it('uses lastError message and status without stack', () => {
     const msg = formatUpstreamError({
       message: 'RetryError [AI_RetryError]: Failed after 2 attempts',

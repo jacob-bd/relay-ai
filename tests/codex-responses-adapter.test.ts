@@ -1135,6 +1135,17 @@ describe('Responses incomplete finishes', () => {
     expect(events.some(event => event.event === 'response.output_item.done')).toBe(false);
     expect(events.at(-1)).toMatchObject({ event: 'response.incomplete', data: { response: { output: [] } } });
   });
+  it('reports prompt-cache hits as input_tokens_details.cached_tokens', async () => {
+    const { writeResponsesStream } = await import('../src/codex-responses-adapter.js');
+    const chunks: string[] = [];
+    async function* stream() {
+      yield { type: 'text-delta', text: 'OK' };
+      yield { type: 'finish', finishReason: 'stop', totalUsage: { inputTokens: 6813, outputTokens: 2, inputTokenDetails: { cacheReadTokens: 6809 } } };
+    }
+    await writeResponsesStream(stream(), 'claude-opus-5-5', chunk => chunks.push(chunk));
+    const usage = parseSseEvents(chunks.join('')).find(event => event.event === 'response.completed')?.data.response.usage;
+    expect(usage).toEqual({ input_tokens: 6813, output_tokens: 2, total_tokens: 6815, input_tokens_details: { cached_tokens: 6809 } });
+  });
   it.each([
     ['length', 'max_output_tokens'],
     ['content-filter', 'content_filter'],

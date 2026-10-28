@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-OKQMW4ZD.js";
+} from "./chunk-BCJDVWQX.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -129,7 +129,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-K7FHIBWG.js";
+} from "./chunk-QKWO6GTL.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -227,7 +227,7 @@ import {
   validateCustomEndpointUrl,
   vertexAnthropicCachedModels,
   writeSecureLogLine
-} from "./chunk-AJXLA7WO.js";
+} from "./chunk-ZMIMO7RC.js";
 import {
   getAppHome,
   getConfigPath,
@@ -3362,7 +3362,13 @@ function functionCallItemId(upstreamId) {
 function usageFromPart(part) {
   const input = part.totalUsage?.inputTokens ?? 0;
   const output = part.totalUsage?.outputTokens ?? 0;
-  return { input_tokens: input, output_tokens: output, total_tokens: input + output };
+  const cached = part.totalUsage?.inputTokenDetails?.cacheReadTokens ?? 0;
+  return {
+    input_tokens: input,
+    output_tokens: output,
+    total_tokens: input + output,
+    ...cached > 0 ? { input_tokens_details: { cached_tokens: cached } } : {}
+  };
 }
 var CODEX_SUBAGENT_TOOL_NAMES = /* @__PURE__ */ new Set(["spawn_agent", "multi_agent_v1__spawn_agent"]);
 function isCodexSubagentToolName(toolName) {
@@ -3605,7 +3611,7 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
         break;
       case "abort": {
         const msg = `stream aborted: ${part.reason ?? "no data received from provider"}`;
-        process.stderr.write(`[relay-ai] ${localTimestamp()} ${modelId}: ${msg}
+        process.stderr.write(`[relay-ai] ${localTimestamp()} ${options?.logLabel ?? modelId}: ${msg}
 `);
         onDone?.({
           reasoningChars: reasoningText.length,
@@ -3633,7 +3639,7 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
       case "error": {
         const msg = formatUpstreamError(part.error);
         const is429 = msg.includes("429") || part.error && typeof part.error === "object" && (part.error.statusCode === 429 || part.error.lastError?.statusCode === 429);
-        process.stderr.write(`[relay-ai] ${localTimestamp()} ${modelId}: ${msg}
+        process.stderr.write(`[relay-ai] ${localTimestamp()} ${options?.logLabel ?? modelId}: ${msg}
 `);
         onDone?.({
           reasoningChars: reasoningText.length,
@@ -3873,7 +3879,8 @@ async function streamResponsesResponse(model, params, modelId, write, onDone, on
   })();
   await writeResponsesStream(watchedStream, modelId, write, onDone, onProgress, {
     onForceStop: (reason) => abort.abort(new Error(reason)),
-    toolContext
+    toolContext,
+    logLabel: options?.logLabel
   });
 }
 async function generateResponsesResponse(model, params, modelId) {
@@ -4753,6 +4760,10 @@ async function prepareExternalCodexBody(body, context) {
   );
   return { ...externalBody, input: resolvedInput };
 }
+function routeLogLabel(requestedModel, route, dispatch) {
+  const target = `${route.providerId ?? "relay"}/${route.auditUpstreamModelId ?? route.upstreamModelId ?? route.modelId}`;
+  return dispatch === "relay-subagent" ? `sub-agent (${requestedModel}) \u2192 ${target}` : target;
+}
 function applyExternalCodexRuntimeIdentity(params, route) {
   const selectedModel = route.auditUpstreamModelId ?? route.upstreamModelId ?? route.modelId;
   const provider = route.providerId ?? "relay";
@@ -5129,7 +5140,7 @@ async function startCodexProxy(routes, options = {}) {
                   if (debug) {
                     log14(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
                   }
-                });
+                }, { logLabel: routeLogLabel(modelId, route, relayDispatch) });
               audit({
                 transport: "http",
                 requestedModel: modelId,
@@ -5766,7 +5777,7 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
                   if (debug) {
                     log14(`WS response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
                   }
-                });
+                }, { logLabel: routeLogLabel(modelId, route, relayDispatch) });
               if (currentExternalCompletedResponse && currentExternalStateInput) {
                 if (currentExternalConsumedResponseId) {
                   externalResponseStates.delete(currentExternalConsumedResponseId);
@@ -17318,7 +17329,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-2DOQS6YP.js");
+    const { runUiCommand } = await import("./ui-command-LILSFWNG.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

@@ -142,7 +142,28 @@ export function anthropicErrorType(status: number): string {
   }
 }
 
+/**
+ * Some providers (Google Cloud Code / Antigravity) put the raw multi-line JSON
+ * error body in the message; its first line is just `{`. Pull out the text.
+ */
+function jsonErrorMessage(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return undefined;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    const first = (Array.isArray(parsed) ? parsed[0] : parsed) as { error?: { message?: unknown }; message?: unknown } | undefined;
+    const msg = first?.error?.message ?? first?.message;
+    if (typeof msg === 'string' && msg.trim()) return joinProviderMessage(msg);
+  } catch {
+    const match = trimmed.match(/"message"\s*:\s*"((?:[^"\\]|\\.)+)"/);
+    if (match?.[1]) return joinProviderMessage(match[1].replace(/\\"/g, '"'));
+  }
+  return undefined;
+}
+
 function sanitizeMessage(message: string): string {
+  const fromJson = jsonErrorMessage(message);
+  if (fromJson) return fromJson;
   const line = message.split('\n')[0]?.trim() ?? message;
   if (line.startsWith('RetryError') || line.includes('AI_RetryError')) {
     return 'Upstream model request failed after retries.';

@@ -745,10 +745,24 @@ function functionCallItemId(upstreamId: string): string {
   return upstreamId.startsWith('fc_') ? upstreamId : newItemId('fc');
 }
 
-function usageFromPart(part: FullStreamPart): { input_tokens: number; output_tokens: number; total_tokens: number } {
+interface ResponsesUsage {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  /** OpenAI Responses shape; lets Codex and traces show prompt-cache hits. */
+  input_tokens_details?: { cached_tokens: number };
+}
+
+function usageFromPart(part: FullStreamPart): ResponsesUsage {
   const input = part.totalUsage?.inputTokens ?? 0;
   const output = part.totalUsage?.outputTokens ?? 0;
-  return { input_tokens: input, output_tokens: output, total_tokens: input + output };
+  const cached = part.totalUsage?.inputTokenDetails?.cacheReadTokens ?? 0;
+  return {
+    input_tokens: input,
+    output_tokens: output,
+    total_tokens: input + output,
+    ...(cached > 0 ? { input_tokens_details: { cached_tokens: cached } } : {}),
+  };
 }
 
 interface StreamingToolState {
@@ -928,6 +942,8 @@ export interface WriteResponsesStreamOptions {
   onForceStop?: (reason: string) => void;
   /** From translateResponsesRequest — resolves namespace/custom/tool_search tool calls back to Codex's shapes. */
   toolContext?: CodexToolContext;
+  /** Names the real route in terminal error lines; defaults to the requested model id. */
+  logLabel?: string;
 }
 
 export async function writeResponsesStream(
@@ -941,7 +957,7 @@ export async function writeResponsesStream(
   const emit = (type: string, data: unknown) => write(sseChunk(type, data));
   const responseId = newResponseId();
   const createdAt = Math.floor(Date.now() / 1000);
-  let usage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+  let usage: ResponsesUsage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
 
   emit('response.created', {
     type: 'response.created',
@@ -1132,7 +1148,7 @@ export async function writeResponsesStream(
         // this case a timed-out request would finalize as status:"completed" and
         // Codex would treat dead-connection silence as a valid empty answer.
         const msg = `stream aborted: ${part.reason ?? 'no data received from provider'}`;
-        process.stderr.write(`[relay-ai] ${localTimestamp()} ${modelId}: ${msg}\n`);
+        process.stderr.write(`[relay-ai] ${localTimestamp()} ${options?.logLabel ?? modelId}: ${msg}\n`);
         onDone?.({
           reasoningChars: reasoningText.length,
           reasoningPreview: reasoningText.slice(0, 200),
@@ -1163,7 +1179,7 @@ export async function writeResponsesStream(
           (part.error && typeof part.error === 'object' &&
             ((part.error as { statusCode?: number }).statusCode === 429 ||
              (part.error as { lastError?: { statusCode?: number } }).lastError?.statusCode === 429));
-        process.stderr.write(`[relay-ai] ${localTimestamp()} ${modelId}: ${msg}\n`);
+        process.stderr.write(`[relay-ai] ${localTimestamp()} ${options?.logLabel ?? modelId}: ${msg}\n`);
         onDone?.({
           reasoningChars: reasoningText.length,
           reasoningPreview: reasoningText.slice(0, 200),
@@ -1396,6 +1412,7 @@ const STREAM_IDLE_TIMEOUT_MS = 120_000;
 
 export interface StreamResponsesOptions {
   idleTimeoutMs?: number;
+  logLabel?: string;
 }
 
 export async function streamResponsesResponse(
@@ -1442,6 +1459,7 @@ export async function streamResponsesResponse(
   await writeResponsesStream(watchedStream, modelId, write, onDone, onProgress, {
     onForceStop: reason => abort.abort(new Error(reason)),
     toolContext,
+    logLabel: options?.logLabel,
   });
 }
 

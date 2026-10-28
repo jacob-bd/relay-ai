@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createLanguageModel } from '../src/provider-factory.js';
 import { generateResponsesResponse } from '../src/codex-responses-adapter.js';
-import { startCodexProxy, type CodexProxyHandle } from '../src/codex-proxy.js';
+import { routeLogLabel, startCodexProxy, type CodexProxyHandle } from '../src/codex-proxy.js';
 
 vi.mock('../src/provider-factory.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/provider-factory.js')>();
@@ -82,5 +82,15 @@ describe('Codex proxy Claude Code OAuth identity', () => {
     expect(params.providerOptions?.anthropic?.metadata?.userId).toContain(`"device_id":"${cliUserID}"`);
     expect(params.providerOptions?.anthropic?.metadata?.userId).toContain(`"account_uuid":"${accountUUID}"`);
     expect(params.providerOptions?.anthropic?.anthropicBeta).toContain('oauth-2025-04-20');
+  });
+});
+
+describe('routeLogLabel', () => {
+  const route = { modelId: 'antigravity__gemini-3.8-flash-medium', providerId: 'antigravity', upstreamModelId: 'gemini-3.8-flash-medium' };
+  it('names the real route, and the native id Codex asked for on sub-agent turns', () => {
+    expect(routeLogLabel('vertex-anthropic__claude-opus-5-5', { ...route, providerId: 'vertex-anthropic', upstreamModelId: 'claude-opus-5-5' }, 'relay'))
+      .toBe('vertex-anthropic/claude-opus-5-5');
+    expect(routeLogLabel('gpt-5.6-terra', route, 'relay-subagent'))
+      .toBe('sub-agent (gpt-5.6-terra) → antigravity/gemini-3.8-flash-medium');
   });
 });
