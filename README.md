@@ -399,7 +399,7 @@ relay-ai server --vertex
 
 **Shorthand aliases** (for Claude Code `/model` and `settings.json`): `sonnet`, `opus`, `haiku`. Append `[1m]` for 1M context on Sonnet and Opus only (Haiku stays 200k).
 
-**Custom catalog:** copy `assets/vertex-models.example.json` to `~/.relay-ai/vertex-models.json` and edit. Override the config directory with `RELAY_AI_HOME`.
+**Models:** by default Relay lists the current Claude lineup on Vertex (Opus 5.5, Sonnet 5.5, Haiku 5.5, Sonnet 5, Opus 4.6, Sonnet 4.6, Haiku 4.5). Not every project has every model enabled — manage your list from `relay-ai providers` → **Google Vertex AI (Claude)**: **Add a model** sends one small test request to your project before saving, **Remove models**, or **Reset to Relay's latest model list**. The list lives in `~/.relay-ai/vertex-models.json` (format: `assets/vertex-models.example.json`), which you can also edit by hand. Override the config directory with `RELAY_AI_HOME`.
 
 **Vertex as a provider (every launcher):** run `relay-ai providers add vertex-anthropic` once (or add **Google Vertex AI (Claude)** in `relay-ai ui`). It needs the same gcloud login and project variable as above, and no API key. Vertex then appears in every launch picker and in `relay-ai models` favorites, its model list is read live from `~/.relay-ai/vertex-models.json`, and `--vertex` preselects it — so `relay-ai codex-app --vertex --with-native` runs your Vertex Claude models beside native ChatGPT models. In Claude Code's `/model` picker, Vertex models are listed as `anthropic-vertex-anthropic__<model>` so they never collide with the same model from a Claude subscription.
 

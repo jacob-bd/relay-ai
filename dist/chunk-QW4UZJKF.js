@@ -9,8 +9,9 @@ import {
   getSecretsPath,
   hasApplicationDefaultCredentials,
   loadVertexModelEntries,
-  resolveVertexProject
-} from "./chunk-QQEVHBS3.js";
+  resolveVertexProject,
+  saveVertexModelEntries
+} from "./chunk-KNCSTHR4.js";
 
 // src/constants.ts
 import { homedir } from "os";
@@ -639,6 +640,28 @@ function vertexAnthropicSetupError() {
     };
   }
   return null;
+}
+function vertexModelDisplayName(id) {
+  const m = id.match(/^claude-([a-z]+)-(\d+)(?:-(\d+))?(?:@.*)?$/i);
+  if (!m) return id;
+  const tier = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+  return `Claude ${tier} ${m[2]}${m[3] !== void 0 ? `.${m[3]}` : ""}`;
+}
+function addVertexModelEntry(entry) {
+  const idError = modelIdError(entry.id);
+  if (idError) return { ok: false, error: idError };
+  const current = loadVertexModelEntries();
+  if (current.some((m) => m.id === entry.id)) return { ok: false, error: `${entry.id} is already in your Vertex model list.` };
+  saveVertexModelEntries([...current, entry]);
+  return { ok: true };
+}
+function removeVertexModelEntries(ids) {
+  const current = loadVertexModelEntries();
+  const remaining = current.filter((m) => !ids.includes(m.id));
+  if (remaining.length === current.length) return { ok: false, error: "None of those models are in your Vertex model list." };
+  if (remaining.length === 0) return { ok: false, error: "Keep at least one model. To start over, reset to the latest default list instead." };
+  saveVertexModelEntries(remaining);
+  return { ok: true };
 }
 
 // src/registry/provider-models.ts
@@ -4913,7 +4936,7 @@ async function createLanguageModelSingle(spec) {
   const npm = resolveProviderNpm(spec.npm);
   const { modelId, apiKey, baseURL } = spec;
   if (npm === VERTEX_ANTHROPIC_NPM) {
-    const { resolveVertexProject: resolveVertexProject2, resolveVertexLocation } = await import("./vertex-env-T46OLIMG.js");
+    const { resolveVertexProject: resolveVertexProject2, resolveVertexLocation } = await import("./vertex-env-UG3JGT32.js");
     const project = spec.vertex?.project || resolveVertexProject2();
     if (!project) {
       throw new Error("Vertex project is required for @ai-sdk/google-vertex/anthropic: set ANTHROPIC_VERTEX_PROJECT_ID (or GOOGLE_CLOUD_PROJECT)");
@@ -7422,8 +7445,12 @@ export {
   customProviderId,
   VERTEX_ANTHROPIC_PROVIDER_ID,
   isVertexAnthropicRegistered,
+  isVertexAnthropicProvider,
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
+  vertexModelDisplayName,
+  addVertexModelEntry,
+  removeVertexModelEntries,
   supportsManualModels,
   getProviderModels,
   modelIdError,
@@ -7571,4 +7598,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-ZMIMO7RC.js.map
+//# sourceMappingURL=chunk-QW4UZJKF.js.map

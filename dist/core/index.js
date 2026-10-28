@@ -6,7 +6,7 @@ import {
   getProvidersPath,
   getSecretsPath,
   loadVertexModelEntries
-} from "./chunk-IEUTVWGV.js";
+} from "./chunk-Y5TX3XDL.js";
 
 // src/config.ts
 import { dirname, join as join2 } from "path";
@@ -1937,7 +1937,7 @@ async function createLanguageModelSingle(spec) {
   const npm = resolveProviderNpm(spec.npm);
   const { modelId, apiKey, baseURL } = spec;
   if (npm === VERTEX_ANTHROPIC_NPM) {
-    const { resolveVertexProject: resolveVertexProject2, resolveVertexLocation } = await import("./vertex-env-WKIFMW7H.js");
+    const { resolveVertexProject: resolveVertexProject2, resolveVertexLocation } = await import("./vertex-env-SHN3NOXM.js");
     const project = spec.vertex?.project || resolveVertexProject2();
     if (!project) {
       throw new Error("Vertex project is required for @ai-sdk/google-vertex/anthropic: set ANTHROPIC_VERTEX_PROJECT_ID (or GOOGLE_CLOUD_PROJECT)");

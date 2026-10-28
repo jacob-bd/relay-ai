@@ -40,6 +40,9 @@ import {
 import { loadRegistry, saveRegistry } from './registry/io.js';
 import { getProviderModels, supportsManualModels } from './registry/provider-models.js';
 import { runManualModelAddFlow, runManualModelRemoveFlow } from './manual-model-wizard.js';
+import { runVertexModelAddFlow, runVertexModelRemoveFlow, runVertexModelResetFlow } from './vertex-models-wizard.js';
+import { isVertexAnthropicProvider } from './registry/vertex-anthropic.js';
+import { hasCustomVertexModels } from './vertex-env.js';
 import { refreshAllProviderModels, refreshProviderModels, refreshProviderModelsBatch } from './registry/refresh-models.js';
 import { resolveRefreshCredential } from './registry/refresh-credentials.js';
 import { resolveOrCollectApiKey } from './key-setup.js';
@@ -963,7 +966,17 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
   const template = getTemplateById(provider.templateId) ?? getTemplateById(id);
   const hasDualAuth = template ? hasApiAndOAuth(template) : false;
 
+  const vertex = isVertexAnthropicProvider(provider);
   const detailOptions: Array<{ value: string; label: string; hint?: string }> = [];
+  if (vertex) {
+    detailOptions.push(
+      { value: 'vertex-add', label: 'Add a model', hint: 'Test a model ID on your Vertex project, then save it' },
+      { value: 'vertex-remove', label: 'Remove models', hint: 'From ~/.relay-ai/vertex-models.json' },
+    );
+    if (hasCustomVertexModels()) {
+      detailOptions.push({ value: 'vertex-reset', label: "Reset to Relay's latest model list", hint: 'Follows future Relay updates' });
+    }
+  }
   if (supportsManualModels(provider) && provider.enabled) {
     detailOptions.push({ value: 'add-model', label: 'Add model manually', hint: 'Test an exact model ID, then save it' });
   }
@@ -977,11 +990,14 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
       hint: `Search or browse ${modelCount} model${modelCount === 1 ? '' : 's'}`,
     });
   }
-  detailOptions.push({
-    value: 'refresh',
-    label: 'Refresh model list',
-    hint: 'Fetch latest models from the provider API',
-  });
+  // Vertex reads its list live from vertex-models.json; there is nothing to fetch.
+  if (!vertex) {
+    detailOptions.push({
+      value: 'refresh',
+      label: 'Refresh model list',
+      hint: 'Fetch latest models from the provider API',
+    });
+  }
   if (hasDualAuth && template) {
     detailOptions.push({
       value: 'change-auth',
@@ -1002,7 +1018,7 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
       label: 'Edit backend settings',
       hint: 'Name, base URL, API key, headers',
     });
-  } else if (provider.authType !== 'oauth' && provider.authRef.startsWith('keyring:')) {
+  } else if (!template?.noApiKey && provider.authType !== 'oauth' && provider.authRef.startsWith('keyring:')) {
     detailOptions.push({
       value: 'change-key',
       label: 'Change API key',
@@ -1025,6 +1041,9 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
   });
   if (p.isCancel(action) || action === 'back') return 'back';
 
+  if (action === 'vertex-add') return (await runVertexModelAddFlow()) === 0 ? 'back' : 'failed';
+  if (action === 'vertex-remove') return (await runVertexModelRemoveFlow()) === 0 ? 'back' : 'failed';
+  if (action === 'vertex-reset') return (await runVertexModelResetFlow()) === 0 ? 'back' : 'failed';
   if (action === 'add-model') return (await runManualModelAddFlow(provider)) === 0 ? 'back' : 'failed';
   if (action === 'remove-model') return (await runManualModelRemoveFlow(provider)) === 0 ? 'back' : 'failed';
 

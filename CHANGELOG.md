@@ -5,6 +5,7 @@
 ### Added
 
 - **Claude on Google Vertex AI is now a regular provider.** Add it once with `relay-ai providers add vertex-anthropic` or as **Google Vertex AI (Claude)** in `relay-ai ui`; it uses your gcloud login and `ANTHROPIC_VERTEX_PROJECT_ID`, with no API key. Vertex then appears in every launch picker (ChatGPT/Codex app, Codex CLI, Claude Code, Gemini CLI, Antigravity, Claude desktop, the gateway) and can be saved as a favorite. Its models are read live from `~/.relay-ai/vertex-models.json`, so edits apply on the next launch without a refresh.
+- **Manage Vertex models from the CLI.** `relay-ai providers` → **Google Vertex AI (Claude)** now offers **Add a model** (one small test request confirms your project can use it before it is saved, with Google's reason if not), **Remove models**, and **Reset to Relay's latest model list**. The defaults are now the current Claude lineup — Opus 5.5, Sonnet 5.5, Haiku 5.5, Sonnet 5, Opus 4.6, Sonnet 4.6 and Haiku 4.5 — instead of Sonnet 4.6, Opus 4.6 and Haiku 4.5; a saved list is never overwritten.
 - **`--vertex` works with native models.** With the provider added, `relay-ai codex-app --vertex` and `relay-ai codex --vertex` preselect it in the normal launch, so `--with-native` runs Vertex Claude beside native ChatGPT models and favorites and `--yes` work. Without the provider, `--vertex` keeps its dedicated Vertex-only launch.
 - **Vertex Claude models get their full effort ladder.** Claude 5.x on Vertex offers Low through Max (previously Low / Medium / High), read from Anthropic's models.dev entries.
 

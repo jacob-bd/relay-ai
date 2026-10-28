@@ -9,7 +9,10 @@ import {
   hasApplicationDefaultCredentials,
   loadVertexModelEntries,
   resolveVertexProject,
+  saveVertexModelEntries,
+  type VertexModelEntry,
 } from '../vertex-env.js';
+import { modelIdError } from './provider-models.js';
 import { loadRegistry } from './io.js';
 import type { CachedModel, RegistryProvider } from './types.js';
 
@@ -48,4 +51,32 @@ export function vertexAnthropicSetupError(): { error: string; hint: string } | n
     };
   }
   return null;
+}
+
+/** `claude-haiku-5-5` → `Claude Haiku 5.5`; anything else is returned as-is. */
+export function vertexModelDisplayName(id: string): string {
+  const m = id.match(/^claude-([a-z]+)-(\d+)(?:-(\d+))?(?:@.*)?$/i);
+  if (!m) return id;
+  const tier = m[1]!.charAt(0).toUpperCase() + m[1]!.slice(1).toLowerCase();
+  return `Claude ${tier} ${m[2]}${m[3] !== undefined ? `.${m[3]}` : ''}`;
+}
+
+/** Appends to the current list (the defaults, until the user saves their own). */
+export function addVertexModelEntry(entry: VertexModelEntry): { ok: boolean; error?: string } {
+  const idError = modelIdError(entry.id);
+  if (idError) return { ok: false, error: idError };
+  const current = loadVertexModelEntries();
+  if (current.some(m => m.id === entry.id)) return { ok: false, error: `${entry.id} is already in your Vertex model list.` };
+  saveVertexModelEntries([...current, entry]);
+  return { ok: true };
+}
+
+/** An empty list would silently fall back to the defaults, so one model must remain. */
+export function removeVertexModelEntries(ids: string[]): { ok: boolean; error?: string } {
+  const current = loadVertexModelEntries();
+  const remaining = current.filter(m => !ids.includes(m.id));
+  if (remaining.length === current.length) return { ok: false, error: 'None of those models are in your Vertex model list.' };
+  if (remaining.length === 0) return { ok: false, error: 'Keep at least one model. To start over, reset to the latest default list instead.' };
+  saveVertexModelEntries(remaining);
+  return { ok: true };
 }

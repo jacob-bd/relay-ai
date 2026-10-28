@@ -2,16 +2,22 @@ import {
   DEFAULT_VERTEX_MODELS,
   defaultAdcCredentialsPath,
   hasApplicationDefaultCredentials,
+  hasCustomVertexModels,
   loadVertexModelEntries,
+  resetVertexModelEntries,
   resolveVertexLocation,
-  resolveVertexProject
-} from "./chunk-IEUTVWGV.js";
+  resolveVertexProject,
+  saveVertexModelEntries
+} from "./chunk-Y5TX3XDL.js";
 export {
   DEFAULT_VERTEX_MODELS,
   defaultAdcCredentialsPath,
   hasApplicationDefaultCredentials,
+  hasCustomVertexModels,
   loadVertexModelEntries,
+  resetVertexModelEntries,
   resolveVertexLocation,
-  resolveVertexProject
+  resolveVertexProject,
+  saveVertexModelEntries
 };
-//# sourceMappingURL=vertex-env-WKIFMW7H.js.map
+//# sourceMappingURL=vertex-env-SHN3NOXM.js.map

@@ -74,9 +74,9 @@ describe('vertex-config', () => {
     });
 
     const serverModels = vertexModelsToServerModels(config!);
-    expect(serverModels).toHaveLength(3);
+    expect(serverModels).toHaveLength(7);
     expect(serverModels[0]).toMatchObject({
-      id: 'claude-sonnet-4-6',
+      id: 'claude-opus-5-5',
       modelFormat: 'openai',
       npm: VERTEX_ANTHROPIC_NPM,
       sourceBackend: 'vertex',

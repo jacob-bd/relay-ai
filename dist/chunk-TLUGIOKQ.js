@@ -127,14 +127,14 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-ZMIMO7RC.js";
+} from "./chunk-QW4UZJKF.js";
 import {
   getAppHome,
   hasApplicationDefaultCredentials,
   loadVertexModelEntries,
   resolveVertexLocation,
   resolveVertexProject
-} from "./chunk-QQEVHBS3.js";
+} from "./chunk-KNCSTHR4.js";
 
 // src/registry/google-model-id.ts
 var GOOGLE_MODEL_PREFIX = "models/";
@@ -8759,4 +8759,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-QKWO6GTL.js.map
+//# sourceMappingURL=chunk-TLUGIOKQ.js.map

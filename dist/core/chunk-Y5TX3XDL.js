@@ -1,9 +1,7 @@
-#!/usr/bin/env node
-
 // src/vertex-env.ts
-import { existsSync, readFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { homedir as homedir2 } from "os";
-import { join as join2 } from "path";
+import { dirname, join as join2 } from "path";
 
 // src/paths.ts
 import { homedir } from "os";
@@ -34,9 +32,6 @@ function getProvidersPath(env = process.env) {
 function getSecretsPath(env = process.env) {
   return join(getAppHome(env), "secrets.json");
 }
-function getLogsPath(env = process.env) {
-  return join(getAppHome(env), "logs");
-}
 function getVertexModelsPath(env = process.env) {
   return join(getAppHome(env), "vertex-models.json");
 }
@@ -54,8 +49,12 @@ function getLegacyConfPath(env = process.env, platform = process.platform) {
 
 // src/vertex-env.ts
 var DEFAULT_VERTEX_MODELS = [
-  { id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6" },
+  { id: "claude-opus-5-5", display_name: "Claude Opus 5.5" },
+  { id: "claude-sonnet-5-5", display_name: "Claude Sonnet 5.5" },
+  { id: "claude-haiku-5-5", display_name: "Claude Haiku 5.5" },
+  { id: "claude-sonnet-5", display_name: "Claude Sonnet 5" },
   { id: "claude-opus-4-6", display_name: "Claude Opus 4.6" },
+  { id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6" },
   { id: "claude-haiku-4-5", display_name: "Claude Haiku 4.5" }
 ];
 function resolveVertexProject(env = process.env) {
@@ -92,6 +91,18 @@ function loadVertexModelEntries(env = process.env) {
     return DEFAULT_VERTEX_MODELS;
   }
 }
+function hasCustomVertexModels(env = process.env) {
+  return existsSync(getVertexModelsPath(env));
+}
+function saveVertexModelEntries(entries, env = process.env) {
+  const path = getVertexModelsPath(env);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(entries, null, 2)}
+`);
+}
+function resetVertexModelEntries(env = process.env) {
+  rmSync(getVertexModelsPath(env), { force: true });
+}
 
 export {
   getAppHome,
@@ -99,13 +110,15 @@ export {
   getConfigPath,
   getProvidersPath,
   getSecretsPath,
-  getLogsPath,
   getLegacyConfPath,
   DEFAULT_VERTEX_MODELS,
   resolveVertexProject,
   resolveVertexLocation,
   defaultAdcCredentialsPath,
   hasApplicationDefaultCredentials,
-  loadVertexModelEntries
+  loadVertexModelEntries,
+  hasCustomVertexModels,
+  saveVertexModelEntries,
+  resetVertexModelEntries
 };
-//# sourceMappingURL=chunk-QQEVHBS3.js.map
+//# sourceMappingURL=chunk-Y5TX3XDL.js.map

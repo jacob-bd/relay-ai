@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-BCJDVWQX.js";
+} from "./chunk-FJMKILKS.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -129,7 +129,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-QKWO6GTL.js";
+} from "./chunk-TLUGIOKQ.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -153,6 +153,7 @@ import {
   VERSION,
   VERTEX_ANTHROPIC_NPM,
   VERTEX_ANTHROPIC_PROVIDER_ID,
+  addVertexModelEntry,
   appendCodexBodyDump,
   applyClaudeCodeOAuthIdentity,
   buildAntigravityChildEnv,
@@ -179,6 +180,7 @@ import {
   isModelsDevCacheStale,
   isSecretServiceAvailable,
   isValidProviderId,
+  isVertexAnthropicProvider,
   isVertexAnthropicRegistered,
   loadModelsDevCache,
   loadPreferences,
@@ -204,6 +206,7 @@ import {
   readStoredProviderCredential,
   recordLaunchSelection,
   refreshModelsDevCacheAsync,
+  removeVertexModelEntries,
   resetCodexBodyDumpLog,
   resolveApiKey,
   resolveContextWindow,
@@ -226,20 +229,25 @@ import {
   upstreamHttpStatus,
   validateCustomEndpointUrl,
   vertexAnthropicCachedModels,
+  vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-ZMIMO7RC.js";
+} from "./chunk-QW4UZJKF.js";
 import {
+  DEFAULT_VERTEX_MODELS,
   getAppHome,
   getConfigPath,
   getLogsPath,
   getProvidersPath,
-  hasApplicationDefaultCredentials
-} from "./chunk-QQEVHBS3.js";
+  hasApplicationDefaultCredentials,
+  hasCustomVertexModels,
+  loadVertexModelEntries,
+  resetVertexModelEntries
+} from "./chunk-KNCSTHR4.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
 import pc11 from "picocolors";
-import * as p15 from "@clack/prompts";
+import * as p16 from "@clack/prompts";
 import { realpathSync } from "fs";
 import { fileURLToPath } from "url";
 
@@ -721,7 +729,7 @@ async function importFromOpencode(options = {}) {
       }
       continue;
     }
-    const existingIdx = registry.providers.findIndex((p16) => p16.id === entry.id);
+    const existingIdx = registry.providers.findIndex((p17) => p17.id === entry.id);
     const existing = existingIdx >= 0 ? registry.providers[existingIdx] : void 0;
     if (existing && options.resolveConflict) {
       const choice = await options.resolveConflict({
@@ -759,7 +767,7 @@ async function importFromOpencode(options = {}) {
     if (isOAuth) oauthImported += 1;
   }
   const alreadyReportedIds = new Set(skipped.map((s) => s.id));
-  const registryProviderIds = new Set(registry.providers.map((p16) => p16.id));
+  const registryProviderIds = new Set(registry.providers.map((p17) => p17.id));
   for (const provider of listCredentialSkippedProviders(
     raw,
     authEntries,
@@ -1014,10 +1022,10 @@ async function runFirstRunWizard(trace = false) {
       p2.log.error("OpenCode CLI not found. Install from https://opencode.ai \u2014 or use Quick start / providers add instead.");
       return runFirstRunWizard(trace);
     }
-    const spinner10 = p2.spinner();
-    spinner10.start("Importing from OpenCode CLI...");
+    const spinner11 = p2.spinner();
+    spinner11.start("Importing from OpenCode CLI...");
     const result = await importFromOpencode();
-    spinner10.stop("");
+    spinner11.stop("");
     if (result.error) {
       p2.log.error(result.error);
       return runFirstRunWizard(trace);
@@ -1858,7 +1866,7 @@ async function resolveCodexMixedModels(input) {
 
 // src/providers-command.ts
 import pc4 from "picocolors";
-import * as p7 from "@clack/prompts";
+import * as p8 from "@clack/prompts";
 init_provider_templates();
 
 // src/manual-model-wizard.ts
@@ -1880,15 +1888,15 @@ async function runManualModelAddFlow(provider) {
   const contextText = typeof context === "string" ? context.trim() : "";
   const confirmed = await p6.confirm({ message: "Test & add? Sends three small requests to this provider; API charges may apply.", initialValue: true });
   if (p6.isCancel(confirmed) || !confirmed) return 0;
-  const spinner10 = p6.spinner();
-  spinner10.start("Testing generation, streaming and tool round-trip (up to 90 seconds)\u2026");
+  const spinner11 = p6.spinner();
+  spinner11.start("Testing generation, streaming and tool round-trip (up to 90 seconds)\u2026");
   const result = await addManualModel({
     providerId: provider.id,
     modelId: String(modelId),
     displayName: String(displayName),
     ...contextText ? { contextWindow: Number(contextText) } : {}
   });
-  spinner10.stop(result.ok ? "Validation passed" : "Validation failed");
+  spinner11.stop(result.ok ? "Validation passed" : "Validation failed");
   if (!result.ok) {
     p6.log.error(result.error ?? "Model was not added.");
     return 1;
@@ -1910,6 +1918,92 @@ async function runManualModelRemoveFlow(provider) {
     return 1;
   }
   p6.log.success("Manual entry removed. If the provider now lists this ID, its discovered entry remains available.");
+  return 0;
+}
+
+// src/vertex-models-wizard.ts
+import * as p7 from "@clack/prompts";
+
+// src/registry/vertex-model-check.ts
+import { generateText } from "ai";
+async function checkVertexModelAccess(modelId) {
+  try {
+    const model = await createLanguageModel({
+      npm: VERTEX_ANTHROPIC_NPM,
+      modelId,
+      apiKey: "",
+      providerId: VERTEX_ANTHROPIC_PROVIDER_ID
+    });
+    await generateText({
+      model,
+      prompt: "Reply with exactly OK.",
+      maxOutputTokens: 16,
+      maxRetries: 0,
+      abortSignal: AbortSignal.timeout(6e4)
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: formatUpstreamError(err) };
+  }
+}
+
+// src/vertex-models-wizard.ts
+async function runVertexModelAddFlow() {
+  const current = loadVertexModelEntries();
+  const modelId = await p7.text({
+    message: "Vertex model ID",
+    placeholder: "e.g. claude-haiku-5-5",
+    validate: (value) => modelIdError(value) ?? (current.some((m) => m.id === value?.trim()) ? "Already in your list." : void 0)
+  });
+  if (p7.isCancel(modelId)) return 0;
+  const id = String(modelId).trim();
+  const displayName = await p7.text({
+    message: "Display name",
+    initialValue: vertexModelDisplayName(id),
+    validate: (value) => !value?.trim() || value.length > 200 || /[\u0000-\u001f\u007f]/u.test(value) ? "Use 1\u2013200 characters without control characters." : void 0
+  });
+  if (p7.isCancel(displayName)) return 0;
+  const spinner11 = p7.spinner();
+  spinner11.start(`Checking that your Vertex project can use ${id}\u2026`);
+  const access = await checkVertexModelAccess(id);
+  spinner11.stop(access.ok ? "Model is available" : "Model check failed");
+  if (!access.ok) {
+    p7.log.error(access.error ?? "Vertex rejected the test request.");
+    p7.log.info("Check the model ID, and that this Claude model is enabled for your project in Vertex AI Model Garden.");
+    return 1;
+  }
+  const result = addVertexModelEntry({ id, display_name: String(displayName).trim() });
+  if (!result.ok) {
+    p7.log.error(result.error ?? "Model was not added.");
+    return 1;
+  }
+  p7.log.success(`${String(displayName).trim()} added. It appears in launch pickers from the next launch.`);
+  return 0;
+}
+async function runVertexModelRemoveFlow() {
+  const current = loadVertexModelEntries();
+  const ids = await p7.multiselect({
+    message: "Remove which models? (space to select, enter to confirm)",
+    options: current.map((m) => ({ value: m.id, label: m.display_name, hint: m.id })),
+    required: false
+  });
+  if (p7.isCancel(ids) || ids.length === 0) return 0;
+  const result = removeVertexModelEntries(ids);
+  if (!result.ok) {
+    p7.log.error(result.error ?? "Could not remove models.");
+    return 1;
+  }
+  p7.log.success(`Removed ${ids.length} model${ids.length === 1 ? "" : "s"}.`);
+  return 0;
+}
+async function runVertexModelResetFlow() {
+  const confirmed = await p7.confirm({
+    message: `Replace your list with Relay's latest ${DEFAULT_VERTEX_MODELS.length} models? Future Relay updates will keep it current.`,
+    initialValue: false
+  });
+  if (p7.isCancel(confirmed) || !confirmed) return 0;
+  resetVertexModelEntries();
+  p7.log.success(`Using Relay's latest list: ${DEFAULT_VERTEX_MODELS.map((m) => m.display_name).join(", ")}.`);
   return 0;
 }
 
@@ -1990,7 +2084,7 @@ async function runProvidersImport() {
   const hasExisting = registry.providers.length > 0;
   const resolveConflict = hasExisting ? async (ctx) => {
     printImportConflictPanel(ctx.existing.name, ctx.existingKeyHint, ctx.incomingKeyHint);
-    const choice = await p7.select({
+    const choice = await p8.select({
       message: "Which configuration should we keep?",
       options: [
         { value: "keep", label: pc4.cyan("Keep mine"), hint: "Leave your current relay-ai config unchanged" },
@@ -1998,46 +2092,46 @@ async function runProvidersImport() {
         { value: "skip", label: pc4.dim("Skip this provider"), hint: "" }
       ]
     });
-    if (p7.isCancel(choice)) return "skip";
+    if (p8.isCancel(choice)) return "skip";
     return choice;
   } : void 0;
-  const spinner10 = p7.spinner();
-  spinner10.start("Importing from OpenCode...");
+  const spinner11 = p8.spinner();
+  spinner11.start("Importing from OpenCode...");
   const result = await importFromOpencode({ resolveConflict });
-  spinner10.stop("");
+  spinner11.stop("");
   if (result.error) {
-    p7.log.error(result.error);
+    p8.log.error(result.error);
     return 1;
   }
   if (result.imported.length === 0 && result.skipped.length === 0) {
-    p7.log.warn("No configured providers found in OpenCode.");
-    p7.log.info("Add providers in OpenCode first, or use relay-ai providers add.");
+    p8.log.warn("No configured providers found in OpenCode.");
+    p8.log.info("Add providers in OpenCode first, or use relay-ai providers add.");
     return 0;
   }
   if (result.authFileWarning) {
-    p7.log.warn(result.authFileWarning);
+    p8.log.warn(result.authFileWarning);
   }
   const importedNames = result.imported.map((pr) => pr.name).join(", ");
   const modelTotal = result.imported.reduce((n, pr) => n + (pr.modelsCache?.models.length ?? 0), 0);
   const credNote = result.oauthImported > 0 ? ` (${result.oauthImported} via OAuth)` : "";
-  p7.log.success(
+  p8.log.success(
     `Imported ${importedNames} \u2014 ${modelTotal} model${modelTotal === 1 ? "" : "s"}, ${result.keysSaved} credential${result.keysSaved === 1 ? "" : "s"} saved to Keychain${credNote}.`
   );
   if (result.skipped.length > 0) {
     for (const s of result.skipped) {
       const reason = s.reason === "user-skipped" ? "skipped by you" : s.reason === "conflict-kept" ? "kept your existing config" : s.reason === "oauth-no-token" ? "OAuth provider in OpenCode but not signed in \u2014 run relay-ai providers auth" : s.reason === "no-api-key" ? "API key is not available to import \u2014 use relay-ai providers add" : s.reason === "manual-only" ? "uses gcloud/AWS credentials \u2014 not importable via API key" : s.reason === "placeholder-key" ? "placeholder API key \u2014 provider not imported" : s.reason === "invalid-key" ? "API key failed verification \u2014 provider not imported" : s.reason === "credential-save-failed" ? "could not save credential \u2014 provider not imported" : s.reason;
-      p7.log.warn(`Skipped ${s.name} (${s.id}): ${reason}`);
+      p8.log.warn(`Skipped ${s.name} (${s.id}): ${reason}`);
     }
   }
   if (result.keysSkipped.length > 0) {
     for (const k of result.keysSkipped) {
       if (k.detail) {
-        p7.log.info(`${k.name} (${k.id}): ${k.detail}`);
+        p8.log.info(`${k.name} (${k.id}): ${k.detail}`);
       }
     }
   }
   if (result.imported.length > 0) {
-    const refreshSpinner = p7.spinner();
+    const refreshSpinner = p8.spinner();
     refreshSpinner.start("Fetching model capabilities from providers...");
     const registry2 = loadRegistry();
     await refreshProviderModelsBatch(
@@ -2052,14 +2146,14 @@ async function runProvidersImport() {
 async function runProvidersAuth(providerId, method) {
   try {
     const result = await authenticateProvider(providerId, { method });
-    p7.log.success(`Signed in to ${result.registryProvider.name} \u2014 credential saved to Keychain.`);
+    p8.log.success(`Signed in to ${result.registryProvider.name} \u2014 credential saved to Keychain.`);
     return 0;
   } catch (err) {
     if (err instanceof Error && err.message === "Cancelled") {
-      p7.cancel("Cancelled.");
+      p8.cancel("Cancelled.");
       return 0;
     }
-    p7.log.error(err instanceof Error ? err.message : String(err));
+    p8.log.error(err instanceof Error ? err.message : String(err));
     return 1;
   }
 }
@@ -2067,67 +2161,67 @@ async function runProvidersRefreshModels(providerId) {
   const resolveKey = async (provider) => resolveProviderCredential(provider.id, provider.authRef);
   if (providerId) {
     const registry = loadRegistry();
-    const provider = registry.providers.find((p16) => p16.id === providerId);
+    const provider = registry.providers.find((p17) => p17.id === providerId);
     if (!provider) {
-      p7.log.error(`Provider not found: ${providerId}`);
+      p8.log.error(`Provider not found: ${providerId}`);
       return 1;
     }
-    const spinner11 = p7.spinner();
-    spinner11.start(`Refreshing ${provider.name}...`);
+    const spinner12 = p8.spinner();
+    spinner12.start(`Refreshing ${provider.name}...`);
     const key = await resolveRefreshCredential(
       provider,
-      async (p16) => resolveProviderCredential(p16.id, p16.authRef)
+      async (p17) => resolveProviderCredential(p17.id, p17.authRef)
     );
     const result = await refreshProviderModels(providerId, key);
-    spinner11.stop("");
+    spinner12.stop("");
     if (result.skipped) {
       const countNote = result.modelCount ? ` (${result.modelCount} cached models kept)` : "";
-      p7.log.warn(`${result.name}: ${result.reason}${countNote}`);
+      p8.log.warn(`${result.name}: ${result.reason}${countNote}`);
       return 0;
     }
     if (!result.ok) {
-      p7.log.error(`${result.name}: ${result.reason ?? "Refresh failed."}`);
+      p8.log.error(`${result.name}: ${result.reason ?? "Refresh failed."}`);
       return 1;
     }
     const diff = result.previousModelCount === void 0 ? 0 : (result.modelCount ?? 0) - result.previousModelCount;
     const diffStr = result.previousModelCount === void 0 ? "" : diff > 0 ? ` (+${diff})` : diff < 0 ? ` (${diff})` : "";
-    p7.log.success(`${result.name}: ${result.modelCount} model${result.modelCount === 1 ? "" : "s"} updated${diffStr}.`);
+    p8.log.success(`${result.name}: ${result.modelCount} model${result.modelCount === 1 ? "" : "s"} updated${diffStr}.`);
     if (result.reason) {
-      p7.log.warn(result.reason);
+      p8.log.warn(result.reason);
     }
     return 0;
   }
-  const spinner10 = p7.spinner();
-  spinner10.start("Refreshing model lists...");
+  const spinner11 = p8.spinner();
+  spinner11.start("Refreshing model lists...");
   const { refreshed } = await refreshAllProviderModels(resolveKey);
-  spinner10.stop("");
+  spinner11.stop("");
   const ok = refreshed.filter((r) => r.ok && !r.skipped);
   const skipped = refreshed.filter((r) => r.skipped);
   const failed = refreshed.filter((r) => !r.ok);
   if (ok.length > 0) {
-    p7.log.success(`Updated ${ok.length} provider${ok.length === 1 ? "" : "s"}.`);
+    p8.log.success(`Updated ${ok.length} provider${ok.length === 1 ? "" : "s"}.`);
     for (const r of ok) {
       const diff = r.previousModelCount === void 0 ? 0 : (r.modelCount ?? 0) - r.previousModelCount;
       const diffStr = r.previousModelCount === void 0 ? "" : diff > 0 ? ` (+${diff})` : diff < 0 ? ` (${diff})` : "";
-      p7.log.info(`  ${r.name}: ${r.modelCount} model${r.modelCount === 1 ? "" : "s"}${diffStr}`);
+      p8.log.info(`  ${r.name}: ${r.modelCount} model${r.modelCount === 1 ? "" : "s"}${diffStr}`);
       if (r.reason) {
-        p7.log.warn(`  ${r.reason}`);
+        p8.log.warn(`  ${r.reason}`);
       }
     }
   }
   for (const r of skipped) {
     const countNote = r.modelCount ? ` (${r.modelCount} cached models kept)` : "";
-    p7.log.warn(`Skipped ${r.name}: ${r.reason}${countNote}`);
+    p8.log.warn(`Skipped ${r.name}: ${r.reason}${countNote}`);
   }
   for (const r of failed) {
-    p7.log.error(`${r.name}: ${r.reason ?? "Refresh failed."}`);
+    p8.log.error(`${r.name}: ${r.reason ?? "Refresh failed."}`);
   }
   return failed.length > 0 ? 1 : 0;
 }
 async function runProvidersList() {
   const entries = await resolveProvidersForDisplay();
   if (entries.length === 0) {
-    p7.log.info("No providers configured. Run relay-ai providers add or import.");
+    p8.log.info("No providers configured. Run relay-ai providers add or import.");
     return 0;
   }
   console.log("");
@@ -2143,10 +2237,10 @@ async function runProvidersList() {
 async function pickTemplateFromCatalog() {
   while (true) {
     const registry = loadRegistry();
-    const configuredIds = new Set(registry.providers.map((p16) => p16.id));
+    const configuredIds = new Set(registry.providers.map((p17) => p17.id));
     const templates = listAddableTemplates(configuredIds);
     if (templates.length === 0) return null;
-    const method = await p7.select({
+    const method = await p8.select({
       message: `Choose a provider (${templates.length} available)`,
       options: [
         { value: "search", label: "Search providers", hint: "e.g. gro, mistral, together" },
@@ -2154,32 +2248,32 @@ async function pickTemplateFromCatalog() {
         { value: "back", label: "Back", hint: "" }
       ]
     });
-    if (p7.isCancel(method) || method === "back") return null;
+    if (p8.isCancel(method) || method === "back") return null;
     if (method === "browse") {
       const options2 = templates.map((t) => ({
         value: t.id,
         label: t.name,
         hint: t.npm
       }));
-      const picked2 = await p7.select({ message: "Select a provider", options: options2 });
-      if (p7.isCancel(picked2)) continue;
+      const picked2 = await p8.select({ message: "Select a provider", options: options2 });
+      if (p8.isCancel(picked2)) continue;
       const template2 = templates.find((t) => t.id === picked2);
       if (template2) return template2;
       continue;
     }
-    const searchInput = await p7.text({
+    const searchInput = await p8.text({
       message: "Search providers:",
       placeholder: "e.g. groq, mistral, openrouter"
     });
-    if (p7.isCancel(searchInput)) continue;
+    if (p8.isCancel(searchInput)) continue;
     const query = String(searchInput);
     const matched = filterTemplates(templates, query);
     if (matched.length === 0) {
       const alreadyAdded = filterTemplates(listSupportedTemplates(), query).filter((t) => configuredIds.has(t.id));
       if (alreadyAdded.length > 0) {
-        p7.log.info(`Already configured: ${alreadyAdded.map((t) => t.name).join(", ")}`);
+        p8.log.info(`Already configured: ${alreadyAdded.map((t) => t.name).join(", ")}`);
       } else {
-        p7.log.warn("No providers match \u2014 try a different search");
+        p8.log.warn("No providers match \u2014 try a different search");
       }
       continue;
     }
@@ -2188,11 +2282,11 @@ async function pickTemplateFromCatalog() {
       label: t.name,
       hint: t.npm
     }));
-    const picked = await p7.select({
+    const picked = await p8.select({
       message: matched.length === 1 ? "Match found" : `Select provider (${matched.length} matches)`,
       options
     });
-    if (p7.isCancel(picked)) continue;
+    if (p8.isCancel(picked)) continue;
     const template = matched.find((t) => t.id === picked);
     if (template) return template;
   }
@@ -2209,7 +2303,7 @@ function showProviderAddFailure(error, hint, fallback) {
   ]);
 }
 async function runDualAuthTemplateFlow(template, existing) {
-  const method = await p7.select({
+  const method = await p8.select({
     message: existing ? `Change ${template.name} authentication` : `How would you like to connect to ${template.name}?`,
     options: [
       {
@@ -2225,7 +2319,7 @@ async function runDualAuthTemplateFlow(template, existing) {
       { value: "back", label: "Back", hint: "" }
     ]
   });
-  if (p7.isCancel(method) || method === "back") return 0;
+  if (p8.isCancel(method) || method === "back") return 0;
   if (method === "oauth") {
     return runProvidersAuth(template.id);
   }
@@ -2234,12 +2328,12 @@ async function runDualAuthTemplateFlow(template, existing) {
       `${pc4.white("Get an API key at:")} ${fmtUrl(template.signupUrl)}`
     ]);
   }
-  const apiKeyInput = await p7.password({
+  const apiKeyInput = await p8.password({
     message: `Paste your ${template.name} API key:`,
     validate: (value) => value.trim() ? void 0 : "Key cannot be empty"
   });
-  if (p7.isCancel(apiKeyInput)) {
-    p7.cancel("Cancelled.");
+  if (p8.isCancel(apiKeyInput)) {
+    p8.cancel("Cancelled.");
     return 0;
   }
   const apiKey = String(apiKeyInput).trim();
@@ -2247,12 +2341,12 @@ async function runDualAuthTemplateFlow(template, existing) {
     showProviderAddFailure("Key cannot be empty.", void 0, "Could not add provider.");
     return 1;
   }
-  const spinner10 = p7.spinner();
-  spinner10.start(`Testing connection to ${template.name}...`);
+  const spinner11 = p8.spinner();
+  spinner11.start(`Testing connection to ${template.name}...`);
   const result = await addProviderFromTemplate(template, apiKey, {
     replaceExisting: Boolean(existing)
   });
-  spinner10.stop("");
+  spinner11.stop("");
   if (!result.added) {
     showProviderAddFailure(result.error, result.hint, "Could not add provider.");
     return 1;
@@ -2261,14 +2355,14 @@ async function runDualAuthTemplateFlow(template, existing) {
   return 0;
 }
 async function runTemplateAddFlow(templateId) {
-  const addable = listAddableTemplates(loadRegistry().providers.map((p16) => p16.id));
+  const addable = listAddableTemplates(loadRegistry().providers.map((p17) => p17.id));
   if (templateId && !addable.some((t) => t.id === templateId)) {
-    p7.log.error(`'${templateId}' is not an addable provider, or it is already configured.`);
-    p7.log.info("Run relay-ai providers list to see configured providers, or relay-ai providers add to browse.");
+    p8.log.error(`'${templateId}' is not an addable provider, or it is already configured.`);
+    p8.log.info("Run relay-ai providers list to see configured providers, or relay-ai providers add to browse.");
     return 1;
   }
   if (addable.length === 0) {
-    p7.log.info("All catalog providers are already configured.");
+    p8.log.info("All catalog providers are already configured.");
     return 0;
   }
   const template = templateId ? addable.find((t) => t.id === templateId) : await pickTemplateFromCatalog();
@@ -2286,25 +2380,25 @@ async function runTemplateAddFlow(templateId) {
       ]);
       const collected = await resolveOrCollectApiKey(false, false);
       if (!collected) {
-        p7.cancel("Cancelled.");
+        p8.cancel("Cancelled.");
         return 0;
       }
       apiKey2 = collected;
     }
     await migrateGlobalOpencodeCredential();
-    const spinner11 = p7.spinner();
-    spinner11.start(`Adding ${template.name}...`);
+    const spinner12 = p8.spinner();
+    spinner12.start(`Adding ${template.name}...`);
     const result2 = await addOpencodeCloudFromApiKey(apiKey2);
-    spinner11.stop("");
+    spinner12.stop("");
     if (!result2.added) {
-      p7.log.warn(result2.error ?? "OpenCode Zen / Go is already configured.");
-      if (result2.hint) p7.log.info(result2.hint);
+      p8.log.warn(result2.error ?? "OpenCode Zen / Go is already configured.");
+      if (result2.hint) p8.log.info(result2.hint);
       return 0;
     }
     if (result2.hint) {
-      p7.log.warn(`Added ${template.name}. ${result2.hint}`);
+      p8.log.warn(`Added ${template.name}. ${result2.hint}`);
     } else {
-      p7.log.success(`Added ${template.name} \u2014 ${fmtCount(result2.modelCount ?? 0, "model")} updated.`);
+      p8.log.success(`Added ${template.name} \u2014 ${fmtCount(result2.modelCount ?? 0, "model")} updated.`);
     }
     return 0;
   }
@@ -2315,10 +2409,10 @@ async function runTemplateAddFlow(templateId) {
   }
   if (template.noApiKey) {
     if (template.setupNote) printPanel(fmtProvider(template.name), [pc4.white(template.setupNote)]);
-    const spinner11 = p7.spinner();
-    spinner11.start(`Checking ${template.name} setup...`);
+    const spinner12 = p8.spinner();
+    spinner12.start(`Checking ${template.name} setup...`);
     const result2 = await addProviderFromTemplate(template, template.id);
-    spinner11.stop("");
+    spinner12.stop("");
     if (!result2.added) {
       showProviderAddFailure(result2.error, result2.hint, "Could not add provider.");
       return 1;
@@ -2328,48 +2422,48 @@ async function runTemplateAddFlow(templateId) {
   }
   let baseUrlOverride;
   if (template.accountIdPrompt) {
-    const accountInput = await p7.text({
+    const accountInput = await p8.text({
       message: template.accountIdPrompt,
       placeholder: "e.g. 4ff191dac2d0bd7538cb1c9126594de3",
       validate: (v) => v.trim() ? void 0 : "Account ID is required"
     });
-    if (p7.isCancel(accountInput)) return 0;
+    if (p8.isCancel(accountInput)) return 0;
     const accountId = String(accountInput).trim();
     baseUrlOverride = template.defaultBaseUrl?.replace("{ACCOUNT_ID}", accountId);
   } else if (template.urlPrompt) {
-    const urlInput = await p7.text({
+    const urlInput = await p8.text({
       message: template.urlPrompt,
       initialValue: template.defaultBaseUrl,
       validate: (v) => v.trim() ? void 0 : "URL is required"
     });
-    if (p7.isCancel(urlInput)) return 0;
+    if (p8.isCancel(urlInput)) return 0;
     baseUrlOverride = String(urlInput).trim();
     const usesHttp = /^http:\/\//i.test(baseUrlOverride);
     if (usesHttp) {
-      p7.log.warn("HTTP is not encrypted. Use it only for trusted local or LAN servers, like Ollama on your own network.");
+      p8.log.warn("HTTP is not encrypted. Use it only for trusted local or LAN servers, like Ollama on your own network.");
     }
     const valid = await validateCustomEndpointUrl(baseUrlOverride, { allowInsecureLocal: usesHttp });
     if (!valid.ok) {
-      p7.log.error(valid.error ?? "Invalid URL");
-      if (valid.hint) p7.log.info(valid.hint);
+      p8.log.error(valid.error ?? "Invalid URL");
+      if (valid.hint) p8.log.info(valid.hint);
       return 1;
     }
   }
   const apiKeyMsg = template.anonymousFreeModels ? `API key (leave empty to use free models only):` : template.apiKeyOptional ? `API key (leave empty for local servers without auth):` : `Paste your ${template.name} API key:`;
-  const apiKeyInput = await p7.password({
+  const apiKeyInput = await p8.password({
     message: apiKeyMsg,
     validate: (val) => template.apiKeyOptional ? void 0 : val.trim() ? void 0 : "Key cannot be empty"
   });
-  if (p7.isCancel(apiKeyInput)) {
-    p7.cancel("Cancelled.");
+  if (p8.isCancel(apiKeyInput)) {
+    p8.cancel("Cancelled.");
     return 0;
   }
   const rawKey = String(apiKeyInput).trim();
   const apiKey = template.apiKeyOptional && !rawKey && !template.anonymousFreeModels ? template.id : rawKey;
-  const spinner10 = p7.spinner();
-  spinner10.start(`Testing connection to ${template.name}...`);
+  const spinner11 = p8.spinner();
+  spinner11.start(`Testing connection to ${template.name}...`);
   const result = await addProviderFromTemplate(template, apiKey, { baseUrl: baseUrlOverride });
-  spinner10.stop("");
+  spinner11.stop("");
   if (!result.added) {
     showProviderAddFailure(result.error, result.hint, "Could not add provider.");
     return 1;
@@ -2378,7 +2472,7 @@ async function runTemplateAddFlow(templateId) {
   return 0;
 }
 async function runCustomEndpointAddFlow() {
-  const kindChoice = await p7.select({
+  const kindChoice = await p8.select({
     message: "Custom server type",
     options: [
       {
@@ -2394,52 +2488,52 @@ async function runCustomEndpointAddFlow() {
       { value: "back", label: "Back", hint: "" }
     ]
   });
-  if (p7.isCancel(kindChoice) || kindChoice === "back") return 0;
-  const displayName = await p7.text({
+  if (p8.isCancel(kindChoice) || kindChoice === "back") return 0;
+  const displayName = await p8.text({
     message: "Display name:",
     placeholder: "My Work LLM",
     validate: (v) => v.trim() ? void 0 : "Name is required"
   });
-  if (p7.isCancel(displayName)) return 0;
-  const baseUrl = await p7.text({
+  if (p8.isCancel(displayName)) return 0;
+  const baseUrl = await p8.text({
     message: "Base URL:",
     placeholder: kindChoice === "openai" ? "https://api.together.xyz/v1" : "https://api.anthropic.com",
     validate: (v) => v.trim() ? void 0 : "URL is required"
   });
-  if (p7.isCancel(baseUrl)) return 0;
+  if (p8.isCancel(baseUrl)) return 0;
   const usesHttp = /^http:\/\//i.test(String(baseUrl).trim());
   let allowInsecureHttp = false;
   if (usesHttp) {
-    p7.log.warn("HTTP is not encrypted. Only use it for a trusted local or LAN server, like Ollama on your own network.");
-    const allowLocal = await p7.confirm({
+    p8.log.warn("HTTP is not encrypted. Only use it for a trusted local or LAN server, like Ollama on your own network.");
+    const allowLocal = await p8.confirm({
       message: "Allow insecure HTTP for this local/LAN server?",
       initialValue: true
     });
-    if (p7.isCancel(allowLocal)) return 0;
+    if (p8.isCancel(allowLocal)) return 0;
     allowInsecureHttp = allowLocal === true;
   }
-  const apiKey = await p7.password({
+  const apiKey = await p8.password({
     message: "API key (leave empty for local servers without auth):"
   });
-  if (p7.isCancel(apiKey)) return 0;
-  const wantsHeaders = await p7.confirm({
+  if (p8.isCancel(apiKey)) return 0;
+  const wantsHeaders = await p8.confirm({
     message: "Does this endpoint need extra custom headers? (e.g. a plan/auth-tracking header)",
     initialValue: false
   });
-  if (p7.isCancel(wantsHeaders)) return 0;
+  if (p8.isCancel(wantsHeaders)) return 0;
   const headers = {};
   if (wantsHeaders) {
     for (; ; ) {
-      const headerLine = await p7.text({
+      const headerLine = await p8.text({
         message: "Header (leave empty when done):",
         placeholder: "X-Plan: coding"
       });
-      if (p7.isCancel(headerLine)) return 0;
+      if (p8.isCancel(headerLine)) return 0;
       const trimmed = String(headerLine).trim();
       if (!trimmed) break;
       const idx = trimmed.indexOf(":");
       if (idx < 1) {
-        p7.log.warn('Use the format "Name: Value" \u2014 skipped.');
+        p8.log.warn('Use the format "Name: Value" \u2014 skipped.');
         continue;
       }
       const name = trimmed.slice(0, idx).trim();
@@ -2455,22 +2549,22 @@ async function runCustomEndpointAddFlow() {
     allowInsecureLocal: allowInsecureHttp,
     headers: Object.keys(headers).length > 0 ? headers : void 0
   };
-  const spinner10 = p7.spinner();
-  spinner10.start("Testing connection...");
+  const spinner11 = p8.spinner();
+  spinner11.start("Testing connection...");
   let result = await addCustomEndpointProvider(addInput);
-  spinner10.stop("");
+  spinner11.stop("");
   if (!result.added && result.duplicateOf) {
-    const addAnyway = await p7.confirm({
+    const addAnyway = await p8.confirm({
       message: `You already have a backend with the same URL, key and headers (${result.duplicateOf}). Add another?`,
       initialValue: false
     });
-    if (p7.isCancel(addAnyway) || !addAnyway) {
-      p7.cancel("Cancelled.");
+    if (p8.isCancel(addAnyway) || !addAnyway) {
+      p8.cancel("Cancelled.");
       return 0;
     }
-    spinner10.start("Testing connection...");
+    spinner11.start("Testing connection...");
     result = await addCustomEndpointProvider({ ...addInput, confirmDuplicate: true });
-    spinner10.stop("");
+    spinner11.stop("");
   }
   if (!result.added) {
     showProviderAddFailure(result.error, result.hint, "Could not add custom provider.");
@@ -2482,70 +2576,70 @@ async function runCustomEndpointAddFlow() {
 async function runCustomEndpointEditFlow(provider) {
   const currentHeaders = provider.api.headers ?? {};
   const headerSummary = Object.keys(currentHeaders).length > 0 ? Object.entries(currentHeaders).map(([k, v]) => `${k}: ${v}`).join(", ") : "none";
-  p7.log.info(`Base URL: ${provider.api.url ?? "(none)"}
+  p8.log.info(`Base URL: ${provider.api.url ?? "(none)"}
 Headers: ${headerSummary}`);
-  const displayName = await p7.text({
+  const displayName = await p8.text({
     message: "Display name:",
     initialValue: provider.name,
     validate: (v) => v.trim() ? void 0 : "Name is required"
   });
-  if (p7.isCancel(displayName)) {
-    p7.cancel("Cancelled.");
+  if (p8.isCancel(displayName)) {
+    p8.cancel("Cancelled.");
     return 0;
   }
-  const baseUrl = await p7.text({
+  const baseUrl = await p8.text({
     message: "Base URL:",
     initialValue: provider.api.url ?? "",
     validate: (v) => v.trim() ? void 0 : "URL is required"
   });
-  if (p7.isCancel(baseUrl)) {
-    p7.cancel("Cancelled.");
+  if (p8.isCancel(baseUrl)) {
+    p8.cancel("Cancelled.");
     return 0;
   }
   const usesHttp = /^http:\/\//i.test(String(baseUrl).trim());
   let allowInsecureHttp = false;
   if (usesHttp) {
-    p7.log.warn("HTTP is not encrypted. Only use it for a trusted local or LAN server, like Ollama on your own network.");
-    const allowLocal = await p7.confirm({
+    p8.log.warn("HTTP is not encrypted. Only use it for a trusted local or LAN server, like Ollama on your own network.");
+    const allowLocal = await p8.confirm({
       message: "Allow insecure HTTP for this local/LAN server?",
       initialValue: true
     });
-    if (p7.isCancel(allowLocal)) return 0;
+    if (p8.isCancel(allowLocal)) return 0;
     allowInsecureHttp = allowLocal === true;
   }
-  const apiKey = await p7.password({
+  const apiKey = await p8.password({
     message: "API key (leave empty to keep the current key):"
   });
-  if (p7.isCancel(apiKey)) {
-    p7.cancel("Cancelled.");
+  if (p8.isCancel(apiKey)) {
+    p8.cancel("Cancelled.");
     return 0;
   }
-  const editHeaders = await p7.confirm({
+  const editHeaders = await p8.confirm({
     message: `Replace custom headers? (current: ${headerSummary})`,
     initialValue: false
   });
-  if (p7.isCancel(editHeaders)) {
-    p7.cancel("Cancelled.");
+  if (p8.isCancel(editHeaders)) {
+    p8.cancel("Cancelled.");
     return 0;
   }
   let headers;
   if (editHeaders) {
     headers = {};
-    p7.log.info("Enter the full header set. Leave the first one empty to remove all headers.");
+    p8.log.info("Enter the full header set. Leave the first one empty to remove all headers.");
     for (; ; ) {
-      const headerLine = await p7.text({
+      const headerLine = await p8.text({
         message: "Header (leave empty when done):",
         placeholder: "X-Plan: coding"
       });
-      if (p7.isCancel(headerLine)) {
-        p7.cancel("Cancelled.");
+      if (p8.isCancel(headerLine)) {
+        p8.cancel("Cancelled.");
         return 0;
       }
       const trimmed = String(headerLine).trim();
       if (!trimmed) break;
       const idx = trimmed.indexOf(":");
       if (idx < 1) {
-        p7.log.warn('Use the format "Name: Value" \u2014 skipped.');
+        p8.log.warn('Use the format "Name: Value" \u2014 skipped.');
         continue;
       }
       const name = trimmed.slice(0, idx).trim();
@@ -2562,22 +2656,22 @@ Headers: ${headerSummary}`);
     allowInsecureLocal: allowInsecureHttp,
     saveAnyway
   });
-  const spinner10 = p7.spinner();
-  spinner10.start("Testing connection...");
+  const spinner11 = p8.spinner();
+  spinner11.start("Testing connection...");
   let result = await runUpdate(false);
-  spinner10.stop("");
+  spinner11.stop("");
   if (!result.updated && result.error === "Nothing to change.") {
-    p7.log.info("No changes made.");
+    p8.log.info("No changes made.");
     return 0;
   }
   if (!result.updated) {
     showProviderAddFailure(result.error, result.hint, "Could not update backend.");
     if (!result.canSaveAnyway) return 1;
-    const saveAnyway = await p7.confirm({
+    const saveAnyway = await p8.confirm({
       message: "Save these settings anyway? The model list will not be refreshed.",
       initialValue: false
     });
-    if (p7.isCancel(saveAnyway) || !saveAnyway) return 1;
+    if (p8.isCancel(saveAnyway) || !saveAnyway) return 1;
     result = await runUpdate(true);
     if (!result.updated) {
       showProviderAddFailure(result.error, result.hint, "Could not update backend.");
@@ -2585,7 +2679,7 @@ Headers: ${headerSummary}`);
     }
   }
   if (result.modelsStale) {
-    p7.log.warn(`${result.provider?.name ?? provider.name} saved, but the model list may be out of date.`);
+    p8.log.warn(`${result.provider?.name ?? provider.name} saved, but the model list may be out of date.`);
   } else {
     logConnected(result.provider?.name ?? provider.name, result.modelCount ?? 0);
   }
@@ -2596,7 +2690,7 @@ async function runProvidersAdd(templateId) {
   const registry = loadRegistry();
   const hasOpencode = findOpencodeBinary() !== null;
   const options = [];
-  const addableTemplates = listAddableTemplates(registry.providers.map((p16) => p16.id));
+  const addableTemplates = listAddableTemplates(registry.providers.map((p17) => p17.id));
   if (addableTemplates.length > 0) {
     options.push({
       value: "templates",
@@ -2614,14 +2708,14 @@ async function runProvidersAdd(templateId) {
     label: "Import providers from OpenCode CLI",
     hint: hasOpencode ? "Import Groq, OpenAI, etc. from your OpenCode config" : "Requires OpenCode CLI"
   });
-  const choice = await p7.select({ message: "Add a provider", options });
-  if (p7.isCancel(choice)) {
-    p7.cancel("Cancelled.");
+  const choice = await p8.select({ message: "Add a provider", options });
+  if (p8.isCancel(choice)) {
+    p8.cancel("Cancelled.");
     return 0;
   }
   if (choice === "import") {
     if (!hasOpencode) {
-      p7.log.error("OpenCode CLI not found. Install from https://opencode.ai");
+      p8.log.error("OpenCode CLI not found. Install from https://opencode.ai");
       return 1;
     }
     return runProvidersImport();
@@ -2634,27 +2728,27 @@ async function runProvidersRemove(id, interactive = false) {
   const registry = loadRegistry();
   const provider = registry.providers.find((pr) => pr.id === id);
   if (!provider) {
-    p7.log.error(`Provider not found: ${id}`);
+    p8.log.error(`Provider not found: ${id}`);
     return 1;
   }
   if (interactive) {
-    const confirm7 = await p7.confirm({
+    const confirm8 = await p8.confirm({
       message: `Remove ${provider.name} (${id})?`,
       initialValue: false
     });
-    if (p7.isCancel(confirm7) || !confirm7) {
-      p7.cancel("Cancelled.");
+    if (p8.isCancel(confirm8) || !confirm8) {
+      p8.cancel("Cancelled.");
       return 0;
     }
   }
   const result = await removeProviderFromRegistry(id);
   if (!result.removed) {
-    p7.log.error(result.error ?? `Could not remove ${id}`);
+    p8.log.error(result.error ?? `Could not remove ${id}`);
     return 1;
   }
-  p7.log.success(`Removed ${result.name ?? id}.`);
+  p8.log.success(`Removed ${result.name ?? id}.`);
   if (result.credentialDeleted) {
-    p7.log.info("Provider API key removed from Keychain.");
+    p8.log.info("Provider API key removed from Keychain.");
   }
   return 0;
 }
@@ -2663,7 +2757,7 @@ async function runOpenCodeCloudDetail() {
   const routes = registry.providers.filter((provider) => provider.id === "zen" || provider.id === "go");
   printCloudProviderPanel("OpenCode Zen / Go");
   if (routes.length === 0) return "back";
-  const choice = await p7.select({
+  const choice = await p8.select({
     message: "Manage an OpenCode catalog",
     options: [
       ...routes.map((provider) => ({
@@ -2674,7 +2768,7 @@ async function runOpenCodeCloudDetail() {
       { value: "back", label: "Back", hint: "" }
     ]
   });
-  if (!p7.isCancel(choice) && choice !== "back") {
+  if (!p8.isCancel(choice) && choice !== "back") {
     await runProviderDetail(String(choice));
   }
   return "back";
@@ -2691,7 +2785,17 @@ async function runProviderDetail(id) {
   printProviderDetailPanel(provider.name, modelCount, authLabel);
   const template = getTemplateById(provider.templateId) ?? getTemplateById(id);
   const hasDualAuth = template ? hasApiAndOAuth(template) : false;
+  const vertex = isVertexAnthropicProvider(provider);
   const detailOptions = [];
+  if (vertex) {
+    detailOptions.push(
+      { value: "vertex-add", label: "Add a model", hint: "Test a model ID on your Vertex project, then save it" },
+      { value: "vertex-remove", label: "Remove models", hint: "From ~/.relay-ai/vertex-models.json" }
+    );
+    if (hasCustomVertexModels()) {
+      detailOptions.push({ value: "vertex-reset", label: "Reset to Relay's latest model list", hint: "Follows future Relay updates" });
+    }
+  }
   if (supportsManualModels(provider) && provider.enabled) {
     detailOptions.push({ value: "add-model", label: "Add model manually", hint: "Test an exact model ID, then save it" });
   }
@@ -2705,11 +2809,13 @@ async function runProviderDetail(id) {
       hint: `Search or browse ${modelCount} model${modelCount === 1 ? "" : "s"}`
     });
   }
-  detailOptions.push({
-    value: "refresh",
-    label: "Refresh model list",
-    hint: "Fetch latest models from the provider API"
-  });
+  if (!vertex) {
+    detailOptions.push({
+      value: "refresh",
+      label: "Refresh model list",
+      hint: "Fetch latest models from the provider API"
+    });
+  }
   if (hasDualAuth && template) {
     detailOptions.push({
       value: "change-auth",
@@ -2730,7 +2836,7 @@ async function runProviderDetail(id) {
       label: "Edit backend settings",
       hint: "Name, base URL, API key, headers"
     });
-  } else if (provider.authType !== "oauth" && provider.authRef.startsWith("keyring:")) {
+  } else if (!template?.noApiKey && provider.authType !== "oauth" && provider.authRef.startsWith("keyring:")) {
     detailOptions.push({
       value: "change-key",
       label: "Change API key",
@@ -2746,11 +2852,14 @@ async function runProviderDetail(id) {
     { value: "remove", label: "Remove provider", hint: "Delete from registry and Keychain when safe" },
     { value: "back", label: "Back", hint: "" }
   );
-  const action = await p7.select({
+  const action = await p8.select({
     message: "What would you like to do?",
     options: detailOptions
   });
-  if (p7.isCancel(action) || action === "back") return "back";
+  if (p8.isCancel(action) || action === "back") return "back";
+  if (action === "vertex-add") return await runVertexModelAddFlow() === 0 ? "back" : "failed";
+  if (action === "vertex-remove") return await runVertexModelRemoveFlow() === 0 ? "back" : "failed";
+  if (action === "vertex-reset") return await runVertexModelResetFlow() === 0 ? "back" : "failed";
   if (action === "add-model") return await runManualModelAddFlow(provider) === 0 ? "back" : "failed";
   if (action === "remove-model") return await runManualModelRemoveFlow(provider) === 0 ? "back" : "failed";
   if (action === "browse") {
@@ -2783,7 +2892,7 @@ async function runProviderDetail(id) {
   if (action === "toggle") {
     const result = toggleProviderEnabled(id);
     if (result.toggled) {
-      p7.log.success(`${provider.name} ${result.enabled ? "enabled" : "disabled"}.`);
+      p8.log.success(`${provider.name} ${result.enabled ? "enabled" : "disabled"}.`);
     }
     return "back";
   }
@@ -2791,17 +2900,17 @@ async function runProviderDetail(id) {
   return code === 0 ? "removed" : "failed";
 }
 async function runProviderApiKeyChange(provider, registry) {
-  const entered = await p7.password({
+  const entered = await p8.password({
     message: `Enter the new API key for ${provider.name}`,
     mask: "\u2022"
   });
-  if (p7.isCancel(entered)) {
-    p7.cancel("Cancelled.");
+  if (p8.isCancel(entered)) {
+    p8.cancel("Cancelled.");
     return 0;
   }
   const key = String(entered).trim();
   if (!key) {
-    p7.log.warn("API key cannot be empty.");
+    p8.log.warn("API key cannot be empty.");
     return 1;
   }
   const targetAuthRef = preferredRelayCredentialAuthRef(provider.id, provider.authRef);
@@ -2810,29 +2919,29 @@ async function runProviderApiKeyChange(provider, registry) {
     existing = await readStoredProviderCredential(provider.authRef);
   }
   if (existing && existing !== key) {
-    const confirmed = await p7.confirm({
+    const confirmed = await p8.confirm({
       message: "A different key is already stored. Replace it?",
       initialValue: false
     });
-    if (p7.isCancel(confirmed) || !confirmed) {
-      p7.log.info("Kept the existing stored key.");
+    if (p8.isCancel(confirmed) || !confirmed) {
+      p8.log.info("Kept the existing stored key.");
       return 0;
     }
   }
-  const spinner10 = p7.spinner();
-  spinner10.start(`Testing ${provider.name} and refreshing models...`);
+  const spinner11 = p8.spinner();
+  spinner11.start(`Testing ${provider.name} and refreshing models...`);
   const result = await refreshProviderModels(provider.id, key, registry);
-  spinner10.stop("");
+  spinner11.stop("");
   if (!result.ok) {
-    p7.log.error(`${provider.name}: ${result.reason ?? "The new key was rejected."}`);
+    p8.log.error(`${provider.name}: ${result.reason ?? "The new key was rejected."}`);
     return 1;
   }
   const saved = await saveProviderCredential(targetAuthRef, key);
   if (!saved) {
-    p7.log.error("The new key works, but the credential store was unavailable \u2014 key was not saved.");
+    p8.log.error("The new key works, but the credential store was unavailable \u2014 key was not saved.");
     return 1;
   }
-  p7.log.success(`${provider.name}: key updated and ${result.modelCount ?? 0} model${result.modelCount === 1 ? "" : "s"} available.`);
+  p8.log.success(`${provider.name}: key updated and ${result.modelCount ?? 0} model${result.modelCount === 1 ? "" : "s"} available.`);
   return 0;
 }
 async function runProvidersHub() {
@@ -2860,11 +2969,11 @@ async function runProvidersHub() {
       options.push({ value: "import", label: "\u2192 Import providers from OpenCode CLI", hint: "One-time import" });
     }
     options.push({ value: "done", label: "Done", hint: "" });
-    const choice = await p7.select({
+    const choice = await p8.select({
       message: entries.length > 0 ? "Your AI providers" : "Get started",
       options
     });
-    if (p7.isCancel(choice) || choice === "done") {
+    if (p8.isCancel(choice) || choice === "done") {
       return lastOperationFailed ? 1 : 0;
     }
     if (choice === "add") {
@@ -2883,10 +2992,10 @@ async function runProvidersHub() {
       const configuredIds = loadRegistry().providers.map((provider) => provider.id);
       const oauthTemplates = listVisibleOAuthTemplates(configuredIds);
       if (oauthTemplates.length === 0) {
-        p7.log.info("All visible OAuth providers are already configured.");
+        p8.log.info("All visible OAuth providers are already configured.");
         continue;
       }
-      const providerId = await p7.select({
+      const providerId = await p8.select({
         message: "Which provider?",
         options: oauthTemplates.map((template) => ({
           value: template.id,
@@ -2894,7 +3003,7 @@ async function runProvidersHub() {
           hint: "device code"
         }))
       });
-      if (!p7.isCancel(providerId)) {
+      if (!p8.isCancel(providerId)) {
         lastOperationFailed = await runProvidersAuth(providerId) !== 0;
       }
       continue;
@@ -2915,7 +3024,7 @@ async function runProvidersHub() {
 async function runProvidersCommand(args) {
   const parsed = parseProvidersArgs(args);
   if (parsed.error) {
-    p7.log.error(parsed.error);
+    p8.log.error(parsed.error);
     return 1;
   }
   if (parsed.showHelp) {
@@ -2940,7 +3049,7 @@ async function runProvidersCommand(args) {
 
 // src/codex.ts
 import pc6 from "picocolors";
-import * as p9 from "@clack/prompts";
+import * as p10 from "@clack/prompts";
 import { join as join7 } from "path";
 
 // src/codex-proxy.ts
@@ -2950,7 +3059,7 @@ import { WebSocket } from "ws";
 
 // src/codex-responses-adapter.ts
 import { createHash } from "crypto";
-import { streamText, generateText, tool, jsonSchema } from "ai";
+import { streamText, generateText as generateText2, tool, jsonSchema } from "ai";
 function createCodexToolContext() {
   return { namespaceByFlatName: /* @__PURE__ */ new Map(), customToolNames: /* @__PURE__ */ new Set() };
 }
@@ -3007,7 +3116,7 @@ function liftAdditionalToolsInput(input, tools) {
 }
 function messageText(content) {
   if (typeof content === "string") return content;
-  return (content ?? []).map((p16) => p16.type === "output_text" || p16.type === "input_text" || p16.type === "text" ? p16.text ?? "" : "").join("");
+  return (content ?? []).map((p17) => p17.type === "output_text" || p17.type === "input_text" || p17.type === "text" ? p17.text ?? "" : "").join("");
 }
 function messageContent(content) {
   if (typeof content === "string") return content;
@@ -3043,8 +3152,8 @@ function extractDeveloperAndInstructions(items, instructions) {
   const remaining = [];
   for (const item of items) {
     if ("role" in item && item.role === "developer") {
-      const text6 = messageText(item.content);
-      if (text6.trim()) developerParts.push(text6.trim());
+      const text7 = messageText(item.content);
+      if (text7.trim()) developerParts.push(text7.trim());
     } else {
       remaining.push(item);
     }
@@ -3117,11 +3226,11 @@ function ensureUserFirst(messages) {
 function reasoningSummaryText(item) {
   return (item.summary ?? []).map((part) => part.type === "summary_text" ? part.text ?? "" : "").join("");
 }
-function makeReasoningOutputItem(id, text6) {
+function makeReasoningOutputItem(id, text7) {
   return {
     id,
     type: "reasoning",
-    summary: text6.trim() ? [{ type: "summary_text", text: text6 }] : []
+    summary: text7.trim() ? [{ type: "summary_text", text: text7 }] : []
   };
 }
 function translateResponsesInput(input, instructions, npm, toolContext = createCodexToolContext()) {
@@ -3241,9 +3350,9 @@ function translateResponsesInput(input, instructions, npm, toolContext = createC
         }]
       });
     } else if (item.type === "agent_message") {
-      const text6 = messageText(item.content);
-      if (text6.trim()) {
-        messages.push({ role: "user", content: [{ type: "text", text: text6 }] });
+      const text7 = messageText(item.content);
+      if (text7.trim()) {
+        messages.push({ role: "user", content: [{ type: "text", text: text7 }] });
       }
     } else if (item.type === "compaction" || item.type === "context_compaction") {
       const summary = decodeCompactionContent(item.encrypted_content) ?? "";
@@ -3885,7 +3994,7 @@ async function streamResponsesResponse(model, params, modelId, write, onDone, on
 }
 async function generateResponsesResponse(model, params, modelId) {
   const { toolContext, ...sdkParams } = params;
-  const r = await generateText({ model, ...sdkParams });
+  const r = await generateText2({ model, ...sdkParams });
   const incompleteReason = incompleteReasonForFinish(r.finishReason);
   const createdAt = Math.floor(Date.now() / 1e3);
   const responseId = newResponseId();
@@ -3989,13 +4098,13 @@ function writeCompactionSse(summary, modelId, write) {
 async function generateCompactionResponse(model, params, modelId) {
   const { toolContext: _toolContext, ...sdkParams } = params;
   void _toolContext;
-  const r = await generateText({ model, ...sdkParams });
+  const r = await generateText2({ model, ...sdkParams });
   return buildCompactionResponseBody((r.text ?? "").trim() || "(no summary produced)", modelId);
 }
 async function streamCompactionResponse(model, params, modelId, write) {
   const { toolContext: _toolContext, ...sdkParams } = params;
   void _toolContext;
-  const r = await generateText({ model, ...sdkParams });
+  const r = await generateText2({ model, ...sdkParams });
   writeCompactionSse((r.text ?? "").trim() || "(no summary produced)", modelId, write);
 }
 function responsesErrorBody(modelId, message, statusCode = 401) {
@@ -4170,9 +4279,9 @@ ${summary}`
   return changed ? { ...body, input } : body;
 }
 function prepareNativeHttpBody(body) {
-  const text6 = typeof body === "string" ? body : Buffer.from(body).toString("utf8");
+  const text7 = typeof body === "string" ? body : Buffer.from(body).toString("utf8");
   try {
-    const parsed = JSON.parse(text6);
+    const parsed = JSON.parse(text7);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return body;
     const prepared = prepareNativeCodexBody(parsed);
     return prepared === parsed ? body : JSON.stringify(prepared);
@@ -4329,11 +4438,11 @@ function parseFunctionCalls(value) {
     (v) => v && typeof v === "object" && v.type === "function_call"
   );
 }
-function parsePayloadResponse(text6) {
+function parsePayloadResponse(text7) {
   const relayIds = /* @__PURE__ */ new Set();
   const completedPayloads = [];
   let argumentDeltas = "";
-  for (const line of text6.split(/\r?\n/)) {
+  for (const line of text7.split(/\r?\n/)) {
     if (!line.startsWith("data:")) continue;
     const data = line.slice(5).trim();
     if (!data || data === "[DONE]") continue;
@@ -4359,7 +4468,7 @@ function parsePayloadResponse(text6) {
     }
   }
   try {
-    for (const call of parseFunctionCalls(JSON.parse(text6))) {
+    for (const call of parseFunctionCalls(JSON.parse(text7))) {
       if (call.name !== AGENT_PAYLOAD_RELAY_TOOL) continue;
       const payload = parsePayloadArguments(call.arguments);
       if (payload !== void 0) completedPayloads.push(payload);
@@ -4424,9 +4533,9 @@ function createNativePayloadRelay(options) {
       });
       const response = await fetchImpl(url, { method: "POST", headers: nativeHeaders(context.headers), body, redirect: "manual", signal: context.signal });
       if (!response.ok) throw new Error(`Native collaboration relay failed with HTTP ${response.status}`);
-      const text6 = await response.text();
-      if (Buffer.byteLength(text6, "utf8") > NATIVE_PAYLOAD_MAX_BYTES) throw new Error("Native collaboration relay response exceeded its size limit");
-      const payload = parsePayloadResponse(text6);
+      const text7 = await response.text();
+      if (Buffer.byteLength(text7, "utf8") > NATIVE_PAYLOAD_MAX_BYTES) throw new Error("Native collaboration relay response exceeded its size limit");
+      const payload = parsePayloadResponse(text7);
       cacheValue(key, payload, Date.now() + 15 * 6e4);
       return payload;
     },
@@ -4547,10 +4656,10 @@ function estimateCodexRequestChars(params) {
     if (Array.isArray(msg.content)) {
       for (const part of msg.content) {
         if (!part || typeof part !== "object") continue;
-        const p16 = part;
-        if (typeof p16["text"] === "string") {
-          chars += p16["text"].length;
-        } else if (isImageContentPart(p16)) {
+        const p17 = part;
+        if (typeof p17["text"] === "string") {
+          chars += p17["text"].length;
+        } else if (isImageContentPart(p17)) {
           chars += IMAGE_PART_CHAR_WEIGHT;
         } else {
           chars += JSON.stringify(part).length;
@@ -4562,15 +4671,15 @@ function estimateCodexRequestChars(params) {
   }
   return chars;
 }
-function clipTextForContext(text6, maxChars) {
-  if (text6.length <= maxChars) return text6;
+function clipTextForContext(text7, maxChars) {
+  if (text7.length <= maxChars) return text7;
   const marker = `
 
-[... ${text6.length} chars clipped from oversized context item ...]
+[... ${text7.length} chars clipped from oversized context item ...]
 
 `;
   const edge = Math.max(1, Math.floor((maxChars - marker.length) / 2));
-  return `${text6.slice(0, edge)}${marker}${text6.slice(-edge)}`;
+  return `${text7.slice(0, edge)}${marker}${text7.slice(-edge)}`;
 }
 function clipLargeTextParts(params, maxCharsPerPart) {
   const messages = params.messages.map((msg) => {
@@ -4582,20 +4691,20 @@ function clipLargeTextParts(params, maxCharsPerPart) {
       ...msg,
       content: msg.content.map((part) => {
         if (!part || typeof part !== "object") return part;
-        const p16 = part;
-        if (p16["type"] === "tool-result") {
-          const output = p16["output"];
+        const p17 = part;
+        if (p17["type"] === "tool-result") {
+          const output = p17["output"];
           if (!output) return part;
           if (typeof output["value"] === "string" && (output["type"] === "text" || output["type"] === "error-text")) {
-            return { ...p16, output: { ...output, value: clipTextForContext(output["value"], maxCharsPerPart) } };
+            return { ...p17, output: { ...output, value: clipTextForContext(output["value"], maxCharsPerPart) } };
           }
           if (output["type"] === "json") {
-            return { ...p16, output: { type: "text", value: clipTextForContext(JSON.stringify(output["value"]), maxCharsPerPart) } };
+            return { ...p17, output: { type: "text", value: clipTextForContext(JSON.stringify(output["value"]), maxCharsPerPart) } };
           }
           return part;
         }
-        if (typeof p16.text !== "string") return part;
-        return { ...p16, text: clipTextForContext(p16.text, maxCharsPerPart) };
+        if (typeof p17.text !== "string") return part;
+        return { ...p17, text: clipTextForContext(p17.text, maxCharsPerPart) };
       })
     };
   });
@@ -4629,7 +4738,7 @@ var COMPACTION_PROMPT_MARKER = "You are performing a CONTEXT CHECKPOINT COMPACTI
 function inputItemText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-  return content.map((p16) => p16 && typeof p16 === "object" && typeof p16.text === "string" ? p16.text : "").join("");
+  return content.map((p17) => p17 && typeof p17 === "object" && typeof p17.text === "string" ? p17.text : "").join("");
 }
 function isLikelyCodexCompactionRequest(body) {
   if (!Array.isArray(body.input)) return false;
@@ -4812,11 +4921,11 @@ async function startCodexProxy(routes, options = {}) {
     }));
   }
   return new Promise((resolve2, reject2) => {
-    const log14 = debug ? makeTraceLogger(getCodexProxyDebugLogPath()) : () => {
+    const log15 = debug ? makeTraceLogger(getCodexProxyDebugLogPath()) : () => {
     };
     if (debug) resetCodexBodyDumpLog();
     const onRejection = (reason) => {
-      if (debug) log14(`unhandled-rejection: ${formatUpstreamError(reason)}`);
+      if (debug) log15(`unhandled-rejection: ${formatUpstreamError(reason)}`);
     };
     process.on("unhandledRejection", onRejection);
     const server = createServer(async (req, res) => {
@@ -4833,7 +4942,7 @@ async function startCodexProxy(routes, options = {}) {
       }
       const effectivePath = mixedPath?.suffix ?? url;
       if (debug) {
-        log14(`-> ${req.method} ${url} content-type=${req.headers["content-type"] ?? "(none)"} content-encoding=${req.headers["content-encoding"] ?? "(none)"} content-length=${req.headers["content-length"] ?? "(none)"}`);
+        log15(`-> ${req.method} ${url} content-type=${req.headers["content-type"] ?? "(none)"} content-encoding=${req.headers["content-encoding"] ?? "(none)"} content-length=${req.headers["content-length"] ?? "(none)"}`);
       }
       if (!requireAuth && req.method === "POST") {
         const origin = req.headers.origin;
@@ -4918,7 +5027,7 @@ async function startCodexProxy(routes, options = {}) {
           rawBody = await readBody(req);
         } catch (err) {
           if (debug) {
-            log14(`Error: failed to read/decode request body on POST ${url}: ${formatUpstreamError(err)} content-encoding=${req.headers["content-encoding"] ?? "(none)"}`);
+            log15(`Error: failed to read/decode request body on POST ${url}: ${formatUpstreamError(err)} content-encoding=${req.headers["content-encoding"] ?? "(none)"}`);
           }
           sendJson(res, 400, { error: { message: "Invalid request body", type: "invalid_request_error" } });
           return;
@@ -4929,7 +5038,7 @@ async function startCodexProxy(routes, options = {}) {
         } catch (err) {
           if (debug) {
             const headers = JSON.stringify(req.headers);
-            log14(`Error: Invalid JSON body on POST ${url}: ${formatUpstreamError(err)} headers=${headers} rawBody=${JSON.stringify(rawBody.slice(0, 2e3))}`);
+            log15(`Error: Invalid JSON body on POST ${url}: ${formatUpstreamError(err)} headers=${headers} rawBody=${JSON.stringify(rawBody.slice(0, 2e3))}`);
           }
           sendJson(res, 400, { error: { message: "Invalid JSON body", type: "invalid_request_error" } });
           return;
@@ -4939,7 +5048,7 @@ async function startCodexProxy(routes, options = {}) {
           const inputItems = Array.isArray(body.input) ? body.input.length : typeof body.input === "string" ? 1 : 0;
           const tools = Array.isArray(body.tools) ? body.tools : [];
           const toolNames = tools.map((t) => t && typeof t === "object" && "name" in t ? t.name : "?").join(",");
-          log14(`request: model=${String(body.model ?? "")} previous_response_id=${prevId ?? "(none)"} input_items=${inputItems} body_bytes=${rawBody.length} max_output_tokens=${String(body.max_output_tokens ?? "(none)")} tools=[${toolNames || "none"}]`);
+          log15(`request: model=${String(body.model ?? "")} previous_response_id=${prevId ?? "(none)"} input_items=${inputItems} body_bytes=${rawBody.length} max_output_tokens=${String(body.max_output_tokens ?? "(none)")} tools=[${toolNames || "none"}]`);
           appendCodexBodyDump({
             ts: localIsoTimestamp(),
             transport: "http",
@@ -4954,14 +5063,14 @@ async function startCodexProxy(routes, options = {}) {
           for (const t of mcpTools) {
             const mt = t;
             const subTools = mt.type === "namespace" && Array.isArray(mt.tools) ? ` subTools=[${mt.tools.length}]` : "";
-            log14(`  mcp-tool: name=${mt.name} type=${mt.type} desc=${JSON.stringify(String(mt.description ?? "")).slice(0, 120)}${subTools}`);
+            log15(`  mcp-tool: name=${mt.name} type=${mt.type} desc=${JSON.stringify(String(mt.description ?? "")).slice(0, 120)}${subTools}`);
           }
         }
         const modelId = String(body.model ?? "");
         const markedSubagent = Boolean(mixedNative && isCodexSubagentRequest(body, req.headers));
         const subagentRoute = mixedNative && markedSubagent ? resolveCodexSubagentRoute(routes, mixedNative.subagentRouteModelId, body, req.headers) : void 0;
         if (debug && markedSubagent) {
-          log14(`subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? "(none)"}`);
+          log15(`subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? "(none)"}`);
         }
         if (mixedNative) {
           const dispatch = classifyCodexMixedDispatch({
@@ -5033,12 +5142,12 @@ async function startCodexProxy(routes, options = {}) {
           const fallbackLm = fallbackRoute ? models.get(fallbackRoute.modelId) : void 0;
           if (fallbackRoute && fallbackLm) {
             if (debug) {
-              log14(`resolveModel fallback: requested="${modelId}" \u2192 ${fallbackRoute.modelId}`);
+              log15(`resolveModel fallback: requested="${modelId}" \u2192 ${fallbackRoute.modelId}`);
             }
             resolved = { route: fallbackRoute, languageModel: fallbackLm };
           } else {
             if (debug) {
-              log14(`resolveModel failed: requested="${modelId}" known=[${routes.map((r) => r.modelId).join(", ")}]`);
+              log15(`resolveModel failed: requested="${modelId}" known=[${routes.map((r) => r.modelId).join(", ")}]`);
             }
             sendJson(res, 404, { error: { message: `Unknown model: ${modelId}`, type: "invalid_request_error" } });
             return;
@@ -5089,20 +5198,20 @@ async function startCodexProxy(routes, options = {}) {
             const before = params.messages.length;
             const estimatedChars = estimateCodexRequestChars(params);
             const compaction = isLikelyCodexCompactionRequest(body);
-            if (debug) log14(`context check: model=${route.modelId} window=${route.contextWindow} chars=${estimatedChars} compaction=${compaction ? "yes" : "no"} messages=${before}`);
+            if (debug) log15(`context check: model=${route.modelId} window=${route.contextWindow} chars=${estimatedChars} compaction=${compaction ? "yes" : "no"} messages=${before}`);
             params = protectCodexCompactionParams(body, params, route.contextWindow);
             if (debug && params.messages.length < before) {
-              log14(`context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages`);
+              log15(`context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages`);
             }
           }
           const v2Compaction = isCodexV2CompactionRequest(body);
           if (v2Compaction) {
             params = appendCompactionInstruction(params);
-            if (debug) log14(`compaction v2: synthesizing single compaction item for model=${route.modelId}`);
+            if (debug) log15(`compaction v2: synthesizing single compaction item for model=${route.modelId}`);
           }
           if (debug) {
             const effort = body.reasoning?.effort;
-            log14(`model=${route.modelId} effort=${effort ?? "(none)"} maxOutputTokens=${String(params.maxOutputTokens ?? "(omitted)")} providerOptions=${JSON.stringify(params.providerOptions)}`);
+            log15(`model=${route.modelId} effort=${effort ?? "(none)"} maxOutputTokens=${String(params.maxOutputTokens ?? "(omitted)")} providerOptions=${JSON.stringify(params.providerOptions)}`);
           }
           if (body.stream) {
             res.writeHead(200, {
@@ -5134,11 +5243,11 @@ async function startCodexProxy(routes, options = {}) {
                   if (summary.errorMessage || summary.aborted || summary.incompleteReason) streamFailure = summary;
                   if (debug) {
                     const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.incompleteReason ? ` incomplete=${summary.incompleteReason}` : ""}${summary.finishReason ? ` finish=${summary.finishReason}` : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
-                    log14(`response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
+                    log15(`response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
                   }
                 }, (progress) => {
                   if (debug) {
-                    log14(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
+                    log15(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
                   }
                 }, { logLabel: routeLogLabel(modelId, route, relayDispatch) });
               audit({
@@ -5165,7 +5274,7 @@ async function startCodexProxy(routes, options = {}) {
                 outcome: "error",
                 status
               });
-              if (debug) log14(`sdk error: ${route.modelId}: ${msg}`);
+              if (debug) log15(`sdk error: ${route.modelId}: ${msg}`);
               if (status === 429) {
                 writeResponsesRateLimitStream(modelId, msg, write);
               } else {
@@ -5211,7 +5320,7 @@ async function startCodexProxy(routes, options = {}) {
                 outcome: "error",
                 status
               });
-              if (debug) log14(`sdk error: ${route.modelId}: ${msg}`);
+              if (debug) log15(`sdk error: ${route.modelId}: ${msg}`);
               if (status === 429) {
                 sendJson(res, 200, responsesRateLimitBody(modelId, msg));
               } else {
@@ -5221,7 +5330,7 @@ async function startCodexProxy(routes, options = {}) {
           }
         } catch (err) {
           const msg = formatUpstreamError(err);
-          log14(`handler error: ${msg}`);
+          log15(`handler error: ${msg}`);
           sendJson(res, 500, { error: { message: msg, type: "api_error" } });
         }
         return;
@@ -5267,8 +5376,8 @@ async function startCodexProxy(routes, options = {}) {
       if (![0, 1, 8, 9, 10].includes(opcode)) return { payload: Buffer.alloc(0), complete: true, opcode: -1, fin, consumed: offset + payloadLen };
       return { payload, complete: true, opcode, fin, consumed: offset + payloadLen };
     }
-    function wsEncodeTextFrame(text6) {
-      const payload = Buffer.from(text6, "utf8");
+    function wsEncodeTextFrame(text7) {
+      const payload = Buffer.from(text7, "utf8");
       const len = payload.length;
       let header;
       if (len < 126) {
@@ -5460,7 +5569,7 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
             try {
               body = JSON.parse(frameText);
             } catch {
-              if (debug) log14(`WS Error: Invalid JSON body: rawBody=${JSON.stringify(frameText.slice(0, 2e3))}`);
+              if (debug) log15(`WS Error: Invalid JSON body: rawBody=${JSON.stringify(frameText.slice(0, 2e3))}`);
               sendWsEvent(`event: error
 data: ${JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_request_error" } })}
 
@@ -5473,10 +5582,10 @@ data: ${JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_reques
               const inputItems = Array.isArray(body.input) ? body.input.length : typeof body.input === "string" ? 1 : 0;
               const tools = Array.isArray(body.tools) ? body.tools : [];
               const toolNames = tools.map((t) => t && typeof t === "object" && "name" in t ? t.name : "?").join(",");
-              log14(`WS request: model=${String(body.model ?? "")} previous_response_id=${prevId ?? "(none)"} input_items=${inputItems} body_bytes=${frameText.length} max_output_tokens=${String(body.max_output_tokens ?? "(none)")} tools=[${toolNames || "none"}]`);
+              log15(`WS request: model=${String(body.model ?? "")} previous_response_id=${prevId ?? "(none)"} input_items=${inputItems} body_bytes=${frameText.length} max_output_tokens=${String(body.max_output_tokens ?? "(none)")} tools=[${toolNames || "none"}]`);
               const reasoning = body.reasoning && typeof body.reasoning === "object" ? Object.keys(body.reasoning).join(",") : typeof body.reasoning;
               const clientMetadata = body.client_metadata && typeof body.client_metadata === "object" ? Object.keys(body.client_metadata).join(",") : typeof body.client_metadata;
-              log14(`WS request shape: stream=${String(body.stream)} store=${String(body.store)} generate=${String(body.generate)} parallel_tool_calls=${String(body.parallel_tool_calls)} reasoning_keys=[${reasoning || "none"}] include=${Array.isArray(body.include) ? body.include.join(",") : String(body.include)} client_metadata_keys=[${clientMetadata || "none"}]`);
+              log15(`WS request shape: stream=${String(body.stream)} store=${String(body.store)} generate=${String(body.generate)} parallel_tool_calls=${String(body.parallel_tool_calls)} reasoning_keys=[${reasoning || "none"}] include=${Array.isArray(body.include) ? body.include.join(",") : String(body.include)} client_metadata_keys=[${clientMetadata || "none"}]`);
               appendCodexBodyDump({
                 ts: localIsoTimestamp(),
                 transport: "ws",
@@ -5493,7 +5602,7 @@ data: ${JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_reques
             const markedSubagent = Boolean(mixedNative && isCodexSubagentRequest(body, req.headers));
             const subagentRoute = mixedNative && markedSubagent ? resolveCodexSubagentRoute(routes, mixedNative.subagentRouteModelId, body, req.headers) : void 0;
             if (debug && markedSubagent) {
-              log14(`WS subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? "(none)"}`);
+              log15(`WS subagent dispatch: requested=${modelId} route=${subagentRoute?.modelId ?? "(none)"}`);
             }
             if (mixedNative) {
               const dispatch = classifyCodexMixedDispatch({
@@ -5524,14 +5633,14 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "i
                 });
                 const nativeBody = prepareNativeCodexBody(body);
                 if (debug && nativeBody !== body) {
-                  log14(`WS native history normalized: model=${modelId} converted Relay compaction for native verification`);
+                  log15(`WS native history normalized: model=${modelId} converted Relay compaction for native verification`);
                 }
                 if (nativeActive && nativeUpstream) {
                   if (nativeUpstream.readyState === WebSocket.OPEN) {
-                    if (debug) log14(`WS native forwarding next turn: model=${modelId}`);
+                    if (debug) log15(`WS native forwarding next turn: model=${modelId}`);
                     nativeSendTurn?.(nativeBody, modelId);
                   } else if (debug) {
-                    log14(`WS native cannot forward next turn: upstream_state=${nativeUpstream.readyState}`);
+                    log15(`WS native cannot forward next turn: upstream_state=${nativeUpstream.readyState}`);
                   }
                   return;
                 }
@@ -5564,7 +5673,7 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "i
                   if (nativeUpstream === upstream) nativeUpstream = void 0;
                   clearTimers();
                   if (debug && message) {
-                    log14(`WS native upstream failed: model=${nativeTurnModelId} opened=${nativeOpened} frames=${nativeFrameCount} message=${message}`);
+                    log15(`WS native upstream failed: model=${nativeTurnModelId} opened=${nativeOpened} frames=${nativeFrameCount} message=${message}`);
                   }
                   if (message && !nativeCompleted) {
                     audit({
@@ -5588,7 +5697,7 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "i
                 };
                 const sendNativeTurn = (turnBody, turnModelId) => {
                   if (!upstream || upstream.readyState !== WebSocket.OPEN) {
-                    if (debug) log14(`WS native cannot send turn: model=${turnModelId} upstream_state=${upstream?.readyState ?? "missing"}`);
+                    if (debug) log15(`WS native cannot send turn: model=${turnModelId} upstream_state=${upstream?.readyState ?? "missing"}`);
                     return;
                   }
                   nativeTurnModelId = turnModelId;
@@ -5599,7 +5708,7 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "i
                 };
                 try {
                   if (debug) {
-                    log14(`WS native connecting: model=${modelId} url=${target.url} headers=[${Object.keys(target.headers).join(",")}]`);
+                    log15(`WS native connecting: model=${modelId} url=${target.url} headers=[${Object.keys(target.headers).join(",")}]`);
                   }
                   upstream = new WebSocket(target.url, { headers: target.headers });
                   nativeUpstream = upstream;
@@ -5609,11 +5718,11 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "i
                   upstream.once("open", () => {
                     nativeOpened = true;
                     if (connectTimer) clearTimeout(connectTimer);
-                    if (debug) log14(`WS native upstream open: model=${modelId}`);
+                    if (debug) log15(`WS native upstream open: model=${modelId}`);
                     sendNativeTurn(nativeBody, modelId);
                   });
                   upstream.once("unexpected-response", (_request, response) => {
-                    if (debug) log14(`WS native upstream HTTP rejection: model=${modelId} status=${response.statusCode}`);
+                    if (debug) log15(`WS native upstream HTTP rejection: model=${modelId} status=${response.statusCode}`);
                     response.resume();
                     closeBoth(`Native Codex WebSocket rejected (${response.statusCode})`);
                   });
@@ -5621,10 +5730,10 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "i
                     if (socket.destroyed) return;
                     nativeFrameCount += 1;
                     if (firstFrameTimer) clearTimeout(firstFrameTimer);
-                    const text6 = Array.isArray(data) ? Buffer.concat(data).toString("utf8") : data.toString("utf8");
+                    const text7 = Array.isArray(data) ? Buffer.concat(data).toString("utf8") : data.toString("utf8");
                     let eventType = "non-json";
                     try {
-                      const parsed = JSON.parse(text6);
+                      const parsed = JSON.parse(text7);
                       if (typeof parsed.type === "string") eventType = parsed.type;
                       if (eventType === "response.completed" || eventType === "response.failed" || eventType === "response.incomplete") {
                         nativeCompleted = true;
@@ -5643,20 +5752,20 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "i
                     } catch {
                     }
                     if (debug && (nativeFrameCount <= 3 || nativeCompleted || eventType === "error" || nativeFrameCount % 25 === 0)) {
-                      log14(`WS native frame#${nativeFrameCount}: model=${modelId} type=${eventType} bytes=${text6.length}`);
+                      log15(`WS native frame#${nativeFrameCount}: model=${modelId} type=${eventType} bytes=${text7.length}`);
                     }
-                    socket.write(wsEncodeTextFrame(text6));
+                    socket.write(wsEncodeTextFrame(text7));
                   });
                   upstream.once("error", (err) => closeBoth(`Native Codex WebSocket error: ${err.message}`));
                   upstream.once("close", (code, reason) => {
                     const detail = reason?.length ? ` reason=${reason.toString("utf8").slice(0, 200)}` : "";
-                    if (debug) log14(`WS native upstream close: model=${modelId} code=${code}${detail} frames=${nativeFrameCount}`);
+                    if (debug) log15(`WS native upstream close: model=${modelId} code=${code}${detail} frames=${nativeFrameCount}`);
                     if (nativeUpstream === upstream) nativeUpstream = void 0;
                     nativeActive = false;
                     if (!finished) closeBoth(nativeCompleted ? void 0 : `Native Codex WebSocket closed before completion (${code})`);
                   });
                   socket.once("close", () => {
-                    if (debug) log14(`WS native downstream close: model=${modelId} frames=${nativeFrameCount} completed=${nativeCompleted}`);
+                    if (debug) log15(`WS native downstream close: model=${modelId} frames=${nativeFrameCount} completed=${nativeCompleted}`);
                     finished = true;
                     nativeActive = false;
                     nativeSendTurn = void 0;
@@ -5679,10 +5788,10 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "i
               const fb = routes[0];
               const fbLm = fb ? models.get(fb.modelId) : void 0;
               if (fb && fbLm) {
-                if (debug) log14(`WS resolveModel fallback: requested="${modelId}" \u2192 ${fb.modelId}`);
+                if (debug) log15(`WS resolveModel fallback: requested="${modelId}" \u2192 ${fb.modelId}`);
                 resolved = { route: fb, languageModel: fbLm };
               } else {
-                if (debug) log14(`WS resolveModel failed: requested="${modelId}" known=[${routes.map((r) => r.modelId).join(", ")}]`);
+                if (debug) log15(`WS resolveModel failed: requested="${modelId}" known=[${routes.map((r) => r.modelId).join(", ")}]`);
                 sendWsEvent(`event: error
 data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
 
@@ -5708,7 +5817,7 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
             let streamFailure;
             const continuation = resolveExternalContinuation(body);
             if (continuation.orphanedResponseId) {
-              if (debug) log14(`WS continuation rejected: unknown previous_response_id=${continuation.orphanedResponseId}`);
+              if (debug) log15(`WS continuation rejected: unknown previous_response_id=${continuation.orphanedResponseId}`);
               writeResponsesErrorStream(modelId, "Unknown or expired previous_response_id", sendWsEvent, 400);
               externalActive = false;
               return;
@@ -5749,20 +5858,20 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
                 const before = params.messages.length;
                 const estimatedChars = estimateCodexRequestChars(params);
                 const compaction = isLikelyCodexCompactionRequest(body);
-                if (debug) log14(`WS context check: model=${route.modelId} window=${route.contextWindow} chars=${estimatedChars} compaction=${compaction ? "yes" : "no"} messages=${before} tools=${params.tools ? Object.keys(params.tools).length : 0}`);
+                if (debug) log15(`WS context check: model=${route.modelId} window=${route.contextWindow} chars=${estimatedChars} compaction=${compaction ? "yes" : "no"} messages=${before} tools=${params.tools ? Object.keys(params.tools).length : 0}`);
                 params = protectCodexCompactionParams(body, params, route.contextWindow);
                 if (debug && params.messages.length < before) {
-                  log14(`WS context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages tools=${params.tools ? Object.keys(params.tools).length : 0}`);
+                  log15(`WS context trim: model=${route.modelId} window=${route.contextWindow} kept=${params.messages.length}/${before} messages tools=${params.tools ? Object.keys(params.tools).length : 0}`);
                 }
               }
               const v2Compaction = isCodexV2CompactionRequest(body);
               if (v2Compaction) {
                 params = appendCompactionInstruction(params);
-                if (debug) log14(`WS compaction v2: synthesizing single compaction item for model=${route.modelId}`);
+                if (debug) log15(`WS compaction v2: synthesizing single compaction item for model=${route.modelId}`);
               }
               if (debug) {
                 const effort = body.reasoning?.effort;
-                log14(`WS model=${route.modelId} effort=${effort ?? "(none)"} maxOutputTokens=${String(params.maxOutputTokens ?? "(omitted)")} providerOptions=${JSON.stringify(params.providerOptions)}`);
+                log15(`WS model=${route.modelId} effort=${effort ?? "(none)"} maxOutputTokens=${String(params.maxOutputTokens ?? "(omitted)")} providerOptions=${JSON.stringify(params.providerOptions)}`);
               }
               if (v2Compaction) {
                 await streamCompactionResponse(languageModel, params, modelId, sendWsEvent);
@@ -5771,11 +5880,11 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
                   if (summary.errorMessage || summary.aborted || summary.incompleteReason) streamFailure = summary;
                   if (debug) {
                     const failure = `${summary.aborted ? " aborted=yes" : ""}${summary.incompleteReason ? ` incomplete=${summary.incompleteReason}` : ""}${summary.finishReason ? ` finish=${summary.finishReason}` : ""}${summary.errorMessage ? ` error=${JSON.stringify(summary.errorMessage)}` : ""}`;
-                    log14(`WS response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
+                    log15(`WS response done: model=${route.modelId} reasoningChars=${summary.reasoningChars} textChars=${summary.textChars} toolCalls=${summary.toolCallCount} toolNames=[${summary.toolNames.join(",")}] loopDetected=${summary.loopDetected ?? "no"} dsmlRecovered=${summary.dsmlToolCallsRecovered ?? 0}${failure} reasoningPreview=${JSON.stringify(summary.reasoningPreview)}`);
                   }
                 }, (progress) => {
                   if (debug) {
-                    log14(`WS response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
+                    log15(`WS response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
                   }
                 }, { logLabel: routeLogLabel(modelId, route, relayDispatch) });
               if (currentExternalCompletedResponse && currentExternalStateInput) {
@@ -5808,7 +5917,7 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
                 outcome: "error",
                 status
               });
-              if (debug) log14(`WS sdk error: ${route.modelId}: ${msg}`);
+              if (debug) log15(`WS sdk error: ${route.modelId}: ${msg}`);
               if (status === 429) {
                 writeResponsesRateLimitStream(modelId, msg, sendWsEvent);
               } else {
@@ -5976,7 +6085,7 @@ function restoreCodexOverlay(env = process.env) {
   return removed;
 }
 function remainingOverlayPaths(env = process.env) {
-  return ownedOverlayPaths(env).filter((p16) => existsSync4(p16));
+  return ownedOverlayPaths(env).filter((p17) => existsSync4(p17));
 }
 function recoverInterruptedCodexSession(env = process.env) {
   const before = remainingOverlayPaths(env);
@@ -6194,7 +6303,7 @@ function launchCodex(modelId, env, extraArgs) {
 }
 
 // src/codex/prompts.ts
-import * as p8 from "@clack/prompts";
+import * as p9 from "@clack/prompts";
 function codexLaunchModeOptions() {
   return [
     {
@@ -6210,13 +6319,13 @@ function codexLaunchModeOptions() {
   ];
 }
 async function pickCodexLaunchMode() {
-  const choice = await p8.select({
+  const choice = await p9.select({
     message: "Load native Codex models alongside Relay models?",
     options: codexLaunchModeOptions(),
     initialValue: "relay-only"
   });
-  if (p8.isCancel(choice)) {
-    p8.cancel("Cancelled.");
+  if (p9.isCancel(choice)) {
+    p9.cancel("Cancelled.");
     return null;
   }
   return choice;
@@ -6232,13 +6341,13 @@ async function pickCodexProvider(providers, prefs, hasFavorites = false, initial
     });
   }
   const initial = initialProviderId && options.some((o) => o.value === initialProviderId) ? initialProviderId : prefs.lastCodexProvider && options.some((o) => o.value === prefs.lastCodexProvider) ? prefs.lastCodexProvider : options[0].value;
-  const chosen = await p8.select({
+  const chosen = await p9.select({
     message: "Which provider for Codex?",
     options,
     initialValue: initial
   });
-  if (p8.isCancel(chosen)) {
-    p8.cancel("Cancelled.");
+  if (p9.isCancel(chosen)) {
+    p9.cancel("Cancelled.");
     return null;
   }
   if (chosen === "__favorites__") return "__favorites__";
@@ -6665,7 +6774,7 @@ function resolveLaunchTarget(explicit, prefs, agent) {
 }
 function findProviderAndModel(providers, target) {
   if (!target.providerId || !target.modelId) return null;
-  const provider = providers.find((p16) => p16.id === target.providerId);
+  const provider = providers.find((p17) => p17.id === target.providerId);
   if (!provider) return null;
   const model = provider.models.find((m) => m.id === target.modelId);
   if (!model) return null;
@@ -6864,14 +6973,14 @@ function printCodexCleanupReminder(hadProxy) {
   if (isAgentStdoutMode()) return;
   const left = remainingOverlayPaths();
   if (left.length > 0) {
-    p9.log.warn("Temporary Codex overlay files may still be on disk.");
-    p9.log.info("Run: relay-ai codex --restore");
+    p10.log.warn("Temporary Codex overlay files may still be on disk.");
+    p10.log.info("Run: relay-ai codex --restore");
     return;
   }
   const parts = ["Temporary Codex profile removed."];
   if (hadProxy) parts.push("Local Responses proxy stopped.");
   parts.push("If a future session acts stuck: relay-ai codex --restore");
-  p9.log.info(parts.join(" "));
+  p10.log.info(parts.join(" "));
 }
 function vertexEntryToLocalModel(entry) {
   return {
@@ -6888,26 +6997,26 @@ function vertexEntryToLocalModel(entry) {
 }
 async function runCodexVertexLaunch(passthroughArgs, trace) {
   if (!hasApplicationDefaultCredentials()) {
-    p9.log.error("Google Application Default Credentials not found.");
-    p9.log.info("Run: gcloud auth application-default login");
+    p10.log.error("Google Application Default Credentials not found.");
+    p10.log.info("Run: gcloud auth application-default login");
     return 1;
   }
   const config = buildVertexRuntimeConfig();
   if (!config) {
-    p9.log.error("ANTHROPIC_VERTEX_PROJECT_ID (or GOOGLE_CLOUD_PROJECT) is not set.");
-    p9.log.info("Set your project: export ANTHROPIC_VERTEX_PROJECT_ID=your-project-id");
+    p10.log.error("ANTHROPIC_VERTEX_PROJECT_ID (or GOOGLE_CLOUD_PROJECT) is not set.");
+    p10.log.info("Set your project: export ANTHROPIC_VERTEX_PROJECT_ID=your-project-id");
     return 1;
   }
   let selectedEntry;
   if (config.models.length === 1) {
     selectedEntry = config.models[0];
   } else {
-    const choice = await p9.select({
+    const choice = await p10.select({
       message: "Select a Vertex AI model:",
       options: config.models.map((m) => ({ value: m, label: m.display_name, hint: m.id }))
     });
-    if (p9.isCancel(choice)) {
-      p9.cancel("Cancelled.");
+    if (p10.isCancel(choice)) {
+      p10.cancel("Cancelled.");
       return 0;
     }
     selectedEntry = choice;
@@ -6935,7 +7044,7 @@ async function runCodexVertexLaunch(passthroughArgs, trace) {
   const debugLogPath = getCodexProxyDebugLogPath();
   let proxyHandle = null;
   try {
-    p9.log.info(`Vertex AI \xB7 ${selectedEntry.display_name} \u2014 project: ${config.project} / location: ${config.location}`);
+    p10.log.info(`Vertex AI \xB7 ${selectedEntry.display_name} \u2014 project: ${config.project} / location: ${config.location}`);
     proxyHandle = await startCodexProxy(allRoutes, { debug: trace });
     const proxyPort = proxyHandle.port;
     const catalogPath = getCatalogOutputPath("vertex");
@@ -6998,7 +7107,7 @@ async function runCodexCommand2(codexArgs, trace = false, launch = {}) {
   setAgentStdoutMode(agentStdout);
   const debugLogPath = getCodexProxyDebugLogPath();
   if (trace && !configOnly) {
-    p9.log.info(`Debug log: ${debugLogPath}`);
+    p10.log.info(`Debug log: ${debugLogPath}`);
   }
   const isTty = Boolean(process.stdin.isTTY);
   if (launch.vertex && isVertexAnthropicRegistered()) {
@@ -7008,12 +7117,12 @@ async function runCodexCommand2(codexArgs, trace = false, launch = {}) {
         console.error(pc6.red("relay-ai codex --vertex needs --model <id> outside an interactive terminal."));
         return 1;
       }
-      const choice = await p9.select({
+      const choice = await p10.select({
         message: "Select a Vertex AI model:",
         options: vertexAnthropicCachedModels().map((m) => ({ value: m.id, label: m.name, hint: m.id }))
       });
-      if (p9.isCancel(choice)) {
-        p9.cancel("Cancelled.");
+      if (p10.isCancel(choice)) {
+        p10.cancel("Cancelled.");
         return 0;
       }
       launch.launchModel = String(choice);
@@ -7068,10 +7177,10 @@ Error: ${launchPlan.error}
   if (!configOnly) {
     if (!agentStdout) codexCliIntro();
     if (interrupted.recovered && !agentStdout) {
-      p9.log.warn(
+      p10.log.warn(
         "Found leftover Codex files from an interrupted session (closed terminal, crash, or force-quit)."
       );
-      p9.log.info(
+      p10.log.info(
         `Removed ${interrupted.removedCount ?? "those"} file(s) automatically. If anything still looks wrong: relay-ai codex --restore`
       );
     }
@@ -7085,7 +7194,7 @@ Error: ${launchPlan.error}
       return 1;
     }
   } else {
-    const catalogSpinner = p9.spinner();
+    const catalogSpinner = p10.spinner();
     catalogSpinner.start("Loading your providers...");
     try {
       catalog = await fetchProviderCatalog({ agent: "codex" });
@@ -7099,8 +7208,8 @@ Error: ${launchPlan.error}
   const compatible = codexCompatibleProviders(providersForPicker(catalog), "codex");
   if (compatible.length === 0) {
     if (!configOnly) {
-      p9.log.warn("No Codex-compatible providers in your registry.");
-      p9.log.info("Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai-oauth.");
+      p10.log.warn("No Codex-compatible providers in your registry.");
+      p10.log.info("Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai-oauth.");
     }
     return 0;
   }
@@ -7114,17 +7223,17 @@ Error: ${launchPlan.error}
   const favoritesActive = favorites.length > 0 && !launchPlan.skip && !mixedMode;
   const favoritesPickable = favorites.length > 0 && !launchPlan.skip;
   if (favoritesActive && !configOnly) {
-    p9.log.info(
+    p10.log.info(
       `Favorites mode active \u2014 Codex picker will show ${favorites.length + 1} models (1 starting + ${favorites.length} favorites).`
     );
-    p9.log.info("Edit with `relay-ai models`.");
+    p10.log.info("Edit with `relay-ai models`.");
   }
   let activeProvider = compatible.find((lp) => lp.id === prefs.lastCodexProvider) ?? compatible[0];
   let selectedModel = activeProvider.models.find((m) => m.id === prefs.lastCodexModel) ?? activeProvider.models[0];
   if (!configOnly && launchPlan.skip && launchPlan.target) {
     const resolved = findProviderAndModel(compatible, launchPlan.target);
     if (!resolved) {
-      p9.log.error(
+      p10.log.error(
         `Provider/model not found: ${launchPlan.target.providerId} / ${launchPlan.target.modelId}`
       );
       return 1;
@@ -7132,7 +7241,7 @@ Error: ${launchPlan.error}
     activeProvider = resolved.provider;
     selectedModel = resolved.model;
     if (!agentStdout) {
-      p9.log.step(`Using ${selectedModel.name || selectedModel.id} (${activeProvider.name})`);
+      p10.log.step(`Using ${selectedModel.name || selectedModel.id} (${activeProvider.name})`);
     }
   } else if (!configOnly) {
     let currentInitialProvider = prefs.lastCodexProvider && compatible.some((o) => o.id === prefs.lastCodexProvider) ? prefs.lastCodexProvider : compatible[0].id;
@@ -7159,7 +7268,7 @@ Error: ${launchPlan.error}
           continue;
         }
         if (!favoriteStart) {
-          p9.log.warn("No saved Codex favorites are currently available.");
+          p10.log.warn("No saved Codex favorites are currently available.");
           return 0;
         }
         activeProvider = favoriteStart.provider;
@@ -7195,7 +7304,7 @@ Error: ${launchPlan.error}
   const apiKey = await resolveLocalProviderApiKey(activeProvider);
   if (!apiKey) {
     if (!configOnly) {
-      p9.log.error(`No credential for ${activeProvider.name}. Run relay-ai providers auth ${activeProvider.id} or add an API key.`);
+      p10.log.error(`No credential for ${activeProvider.name}. Run relay-ai providers auth ${activeProvider.id} or add an API key.`);
     }
     return 1;
   }
@@ -7384,7 +7493,7 @@ Mixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
     });
     if (configOnly) {
       const home = process.env["HOME"] ?? "";
-      const shortenPath = (p16) => home ? p16.replace(home, "~") : p16;
+      const shortenPath = (p17) => home ? p17.replace(home, "~") : p17;
       console.log("");
       console.log(pc6.bold(pc6.cyan("  CONFIG PREVIEW \u2014 relay-ai codex")));
       console.log("");
@@ -7461,7 +7570,7 @@ Mixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
 
 // src/gemini.ts
 import pc7 from "picocolors";
-import * as p11 from "@clack/prompts";
+import * as p12 from "@clack/prompts";
 
 // src/gemini/launch.ts
 import { spawn as spawn4 } from "child_process";
@@ -7550,7 +7659,7 @@ function launchGemini(geminiPath, modelId, env, extraArgs) {
 }
 
 // src/gemini/prompts.ts
-import * as p10 from "@clack/prompts";
+import * as p11 from "@clack/prompts";
 async function pickGeminiProvider(providers, prefs, hasFavorites = false, initialProviderId) {
   if (providers.length === 0 && !hasFavorites) return null;
   const options = providers.map((lp) => providerSelectOption(lp));
@@ -7562,13 +7671,13 @@ async function pickGeminiProvider(providers, prefs, hasFavorites = false, initia
     });
   }
   const initial = initialProviderId && options.some((o) => o.value === initialProviderId) ? initialProviderId : prefs.lastGeminiProvider && options.some((o) => o.value === prefs.lastGeminiProvider) ? prefs.lastGeminiProvider : options[0].value;
-  const chosen = await p10.select({
+  const chosen = await p11.select({
     message: "Which provider for Gemini CLI?",
     options,
     initialValue: initial
   });
-  if (p10.isCancel(chosen)) {
-    p10.cancel("Cancelled.");
+  if (p11.isCancel(chosen)) {
+    p11.cancel("Cancelled.");
     return null;
   }
   if (chosen === "__favorites__") return "__favorites__";
@@ -7596,7 +7705,7 @@ function rejectGeminiManagedFlags(geminiArgs) {
 // src/gemini-proxy.ts
 import { createServer as createServer2 } from "http";
 import { randomUUID } from "crypto";
-import { streamText as streamText2, generateText as generateText2, tool as tool2, jsonSchema as jsonSchema2 } from "ai";
+import { streamText as streamText2, generateText as generateText3, tool as tool2, jsonSchema as jsonSchema2 } from "ai";
 function mapFinishReason(reason) {
   if (reason === "stop" || reason === "tool-calls") return "STOP";
   if (reason === "length") return "MAX_TOKENS";
@@ -7640,13 +7749,13 @@ function mergeConsecutiveMessages2(messages) {
   }
   return merged;
 }
-function stripGeminiIdentity(text6) {
-  return text6.replace(/You are Gemini CLI[\s\S]*?(?=\n\n|$)/gi, "").replace(/I'm Gemini CLI[\s\S]*?(?=\n\n|$)/gi, "").replace(/Gemini CLI/gi, "AI CLI");
+function stripGeminiIdentity(text7) {
+  return text7.replace(/You are Gemini CLI[\s\S]*?(?=\n\n|$)/gi, "").replace(/I'm Gemini CLI[\s\S]*?(?=\n\n|$)/gi, "").replace(/Gemini CLI/gi, "AI CLI");
 }
 function translateGeminiRequest(body, options = {}) {
   let system;
   if (body.systemInstruction?.parts) {
-    const rawSystem = body.systemInstruction.parts.map((p16) => p16.text || "").join("\n");
+    const rawSystem = body.systemInstruction.parts.map((p17) => p17.text || "").join("\n");
     system = stripGeminiIdentity(rawSystem).trim();
   }
   const messages = [];
@@ -7657,38 +7766,38 @@ function translateGeminiRequest(body, options = {}) {
     const parts = [];
     const toolResults = [];
     const turnParts = turn.parts || [];
-    for (const p16 of turnParts) {
-      if (p16.text !== void 0) {
-        const text6 = stripGeminiIdentity(p16.text);
-        if (text6.includes("<thinking>")) {
-          const tokens = text6.split(/<thinking>([\s\S]*?)<\/thinking>/);
+    for (const p17 of turnParts) {
+      if (p17.text !== void 0) {
+        const text7 = stripGeminiIdentity(p17.text);
+        if (text7.includes("<thinking>")) {
+          const tokens = text7.split(/<thinking>([\s\S]*?)<\/thinking>/);
           for (let i = 0; i < tokens.length; i++) {
             const token = tokens[i].trim();
             if (!token) continue;
             parts.push({ type: i % 2 === 1 ? "reasoning" : "text", text: token });
           }
         } else {
-          parts.push({ type: "text", text: text6 });
+          parts.push({ type: "text", text: text7 });
         }
-      } else if (p16.inlineData) {
+      } else if (p17.inlineData) {
         parts.push({
           type: "file",
-          data: Buffer.from(p16.inlineData.data, "base64"),
-          mediaType: p16.inlineData.mimeType
+          data: Buffer.from(p17.inlineData.data, "base64"),
+          mediaType: p17.inlineData.mimeType
         });
-      } else if (p16.functionCall) {
+      } else if (p17.functionCall) {
         const id = "call_" + randomUUID().replace(/-/g, "");
-        const name = p16.functionCall.name;
+        const name = p17.functionCall.name;
         if (!nameToIdList.has(name)) nameToIdList.set(name, []);
         nameToIdList.get(name).push(id);
         parts.push({
           type: "tool-call",
           toolCallId: id,
           toolName: name,
-          input: p16.functionCall.args || {}
+          input: p17.functionCall.args || {}
         });
-      } else if (p16.functionResponse) {
-        const name = p16.functionResponse.name;
+      } else if (p17.functionResponse) {
+        const name = p17.functionResponse.name;
         const idList = nameToIdList.get(name) || [];
         const id = idList.shift() || "call_" + randomUUID().replace(/-/g, "");
         toolResults.push({
@@ -7697,7 +7806,7 @@ function translateGeminiRequest(body, options = {}) {
           toolName: name,
           output: {
             type: "text",
-            value: typeof p16.functionResponse.response === "string" ? p16.functionResponse.response : JSON.stringify(p16.functionResponse.response || {})
+            value: typeof p17.functionResponse.response === "string" ? p17.functionResponse.response : JSON.stringify(p17.functionResponse.response || {})
           }
         });
       }
@@ -7856,14 +7965,14 @@ ${rawBody}`);
             const current = sessionRouteOverride ?? (lookupGeminiRoute(routes, requestedModel) ?? defaultRoute);
             const availableList = routes.map((r) => `  - ${r.aliasId} (${r.displayName})`).join("\n");
             const exampleId = routes.length > 1 ? routes[1].aliasId : routes[0]?.aliasId ?? "deepseek-v4";
-            const text6 = `Current model: ${current.displayName} (${current.aliasId})
+            const text7 = `Current model: ${current.displayName} (${current.aliasId})
 
 Available models:
 ${availableList}
 
 \u{1F4A1} To switch models, type: .model <id>
 Example: .model ${exampleId}`;
-            sendMockGeminiResponse(res, text6, isStream, current.aliasId);
+            sendMockGeminiResponse(res, text7, isStream, current.aliasId);
             return;
           }
           const targetRoute = lookupGeminiRoute(routes, modelCommand);
@@ -7919,9 +8028,9 @@ ${JSON.stringify(params, null, 2)}`);
           const toolCallBuffers = /* @__PURE__ */ new Map();
           let isThinking = false;
           for await (const part of stream) {
-            const p16 = part;
-            plog(`Stream chunk type: ${p16.type}`);
-            if (isThinking && (p16.type === "tool-input-start" || p16.type === "tool-call" || p16.type === "finish")) {
+            const p17 = part;
+            plog(`Stream chunk type: ${p17.type}`);
+            if (isThinking && (p17.type === "tool-input-start" || p17.type === "tool-call" || p17.type === "finish")) {
               isThinking = false;
               const chunk = {
                 candidates: [{ content: { role: "model", parts: [{ text: `
@@ -7934,34 +8043,34 @@ ${JSON.stringify(params, null, 2)}`);
 
 `);
             }
-            if (p16.type === "reasoning") {
-              let text6 = p16.textDelta ?? p16.text ?? "";
+            if (p17.type === "reasoning") {
+              let text7 = p17.textDelta ?? p17.text ?? "";
               if (!isThinking) {
                 isThinking = true;
-                text6 = `<thinking>
-` + text6;
+                text7 = `<thinking>
+` + text7;
               }
               const chunk = {
-                candidates: [{ content: { role: "model", parts: [{ text: text6 }] } }],
+                candidates: [{ content: { role: "model", parts: [{ text: text7 }] } }],
                 modelVersion: route.aliasId
               };
               res.write(`data: ${JSON.stringify(chunk)}
 
 `);
-            } else if (p16.type === "text-delta") {
-              let text6 = p16.textDelta ?? p16.text ?? "";
+            } else if (p17.type === "text-delta") {
+              let text7 = p17.textDelta ?? p17.text ?? "";
               if (isThinking) {
                 isThinking = false;
-                text6 = `
+                text7 = `
 </thinking>
 
-` + text6;
+` + text7;
               }
               const chunk = {
                 candidates: [{
                   content: {
                     role: "model",
-                    parts: [{ text: text6 }]
+                    parts: [{ text: text7 }]
                   }
                 }],
                 modelVersion: route.aliasId
@@ -7969,17 +8078,17 @@ ${JSON.stringify(params, null, 2)}`);
               const data = `data: ${JSON.stringify(chunk)}
 
 `;
-              plog(`Streaming text delta: ${p16.textDelta}`);
+              plog(`Streaming text delta: ${p17.textDelta}`);
               res.write(data);
-            } else if (p16.type === "tool-input-start") {
-              toolCallBuffers.set(p16.toolCallId, { name: p16.toolName, json: "" });
-            } else if (p16.type === "tool-input-delta") {
-              const buf = toolCallBuffers.get(p16.toolCallId);
-              if (buf) buf.json += p16.delta;
-            } else if (p16.type === "tool-call") {
-              const buf = toolCallBuffers.get(p16.toolCallId);
-              const args = buf ? JSON.parse(buf.json || "{}") : p16.input || {};
-              const name = buf ? buf.name : p16.toolName;
+            } else if (p17.type === "tool-input-start") {
+              toolCallBuffers.set(p17.toolCallId, { name: p17.toolName, json: "" });
+            } else if (p17.type === "tool-input-delta") {
+              const buf = toolCallBuffers.get(p17.toolCallId);
+              if (buf) buf.json += p17.delta;
+            } else if (p17.type === "tool-call") {
+              const buf = toolCallBuffers.get(p17.toolCallId);
+              const args = buf ? JSON.parse(buf.json || "{}") : p17.input || {};
+              const name = buf ? buf.name : p17.toolName;
               plog(`Streaming tool call: ${name} with args: ${JSON.stringify(args)}`);
               const chunk = {
                 candidates: [{
@@ -7995,18 +8104,18 @@ ${JSON.stringify(params, null, 2)}`);
               res.write(`data: ${JSON.stringify(chunk)}
 
 `);
-            } else if (p16.type === "finish") {
+            } else if (p17.type === "finish") {
               const chunk = {
                 candidates: [{
-                  finishReason: mapFinishReason(p16.finishReason ?? "")
+                  finishReason: mapFinishReason(p17.finishReason ?? "")
                 }],
                 usageMetadata: {
-                  promptTokenCount: p16.totalUsage?.inputTokens || 0,
-                  candidatesTokenCount: p16.totalUsage?.outputTokens || 0
+                  promptTokenCount: p17.totalUsage?.inputTokens || 0,
+                  candidatesTokenCount: p17.totalUsage?.outputTokens || 0
                 },
                 modelVersion: route.aliasId
               };
-              plog(`Stream finish. Reason: ${p16.finishReason}`);
+              plog(`Stream finish. Reason: ${p17.finishReason}`);
               res.write(`data: ${JSON.stringify(chunk)}
 
 `);
@@ -8016,7 +8125,7 @@ ${JSON.stringify(params, null, 2)}`);
           plog("Stream ended.");
         } else {
           plog("Starting generateText...");
-          const result = await generateText2({
+          const result = await generateText3({
             model: languageModel,
             ...params
           });
@@ -8144,28 +8253,28 @@ function parseModelCommand(turn) {
   if (!turn || turn.role !== "user") return null;
   const parts = turn.parts || [];
   if (parts.length !== 1) return null;
-  const text6 = parts[0]?.text;
-  if (typeof text6 !== "string") return null;
-  const trimmed = text6.trim();
+  const text7 = parts[0]?.text;
+  if (typeof text7 !== "string") return null;
+  const trimmed = text7.trim();
   if (!trimmed.startsWith(".model")) return null;
   if (trimmed === ".model") return "";
   if (trimmed.charAt(6) !== " ") return null;
   return trimmed.slice(7).trim();
 }
-function sendMockGeminiResponse(res, text6, isStream, modelVersion) {
+function sendMockGeminiResponse(res, text7, isStream, modelVersion) {
   if (isStream) {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       "Connection": "keep-alive"
     });
-    writeGeminiStreamText(res, text6, modelVersion);
+    writeGeminiStreamText(res, text7, modelVersion);
     res.end();
   } else {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
       candidates: [{
-        content: { role: "model", parts: [{ text: text6 }] },
+        content: { role: "model", parts: [{ text: text7 }] },
         finishReason: "STOP"
       }],
       usageMetadata: { promptTokenCount: 0, candidatesTokenCount: 0 },
@@ -8173,10 +8282,10 @@ function sendMockGeminiResponse(res, text6, isStream, modelVersion) {
     }));
   }
 }
-function writeGeminiStreamText(res, text6, modelVersion) {
+function writeGeminiStreamText(res, text7, modelVersion) {
   const chunk = {
     candidates: [{
-      content: { role: "model", parts: [{ text: text6 }] },
+      content: { role: "model", parts: [{ text: text7 }] },
       finishReason: "STOP"
     }],
     usageMetadata: { promptTokenCount: 0, candidatesTokenCount: 0 },
@@ -8335,7 +8444,7 @@ Error: ${launchPlan.error}
       return 1;
     }
   } else {
-    const catalogSpinner = p11.spinner();
+    const catalogSpinner = p12.spinner();
     catalogSpinner.start("Loading your providers...");
     try {
       catalog = await fetchProviderCatalog({ agent: "gemini" });
@@ -8348,21 +8457,21 @@ Error: ${launchPlan.error}
   }
   const compatible = providersForTarget(providersForPicker(catalog), "gemini");
   if (compatible.length === 0) {
-    p11.log.warn("No Gemini-compatible providers in your registry.");
-    p11.log.info("Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai-oauth.");
+    p12.log.warn("No Gemini-compatible providers in your registry.");
+    p12.log.info("Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai-oauth.");
     return 0;
   }
   let activeProvider = compatible.find((lp) => lp.id === prefs.lastGeminiProvider) ?? compatible[0];
   let selectedModel = activeProvider.models.find((m) => m.id === prefs.lastGeminiModel) ?? activeProvider.models[0];
   if (!selectedModel) {
-    p11.log.error(`Provider "${activeProvider.name}" has no models available.`);
+    p12.log.error(`Provider "${activeProvider.name}" has no models available.`);
     return 1;
   }
   ;
   if (launchPlan.skip && launchPlan.target) {
     const resolved = findProviderAndModel(compatible, launchPlan.target);
     if (!resolved) {
-      p11.log.error(
+      p12.log.error(
         `Provider/model not found: ${launchPlan.target.providerId} / ${launchPlan.target.modelId}`
       );
       return 1;
@@ -8370,12 +8479,12 @@ Error: ${launchPlan.error}
     activeProvider = resolved.provider;
     selectedModel = resolved.model;
     if (!agentStdout) {
-      p11.log.step(`Using ${selectedModel.name || selectedModel.id} (${activeProvider.name})`);
+      p12.log.step(`Using ${selectedModel.name || selectedModel.id} (${activeProvider.name})`);
     }
   } else {
     if (!agentStdout) {
       console.log("");
-      p11.log.info(`Launching ${pc7.bold("Gemini CLI")} with relay-ai`);
+      p12.log.info(`Launching ${pc7.bold("Gemini CLI")} with relay-ai`);
     }
     providerPick: while (true) {
       const chosenProvider = await pickGeminiProvider(
@@ -8401,7 +8510,7 @@ Error: ${launchPlan.error}
         );
         if (favPick === "back") continue providerPick;
         if (!favPick) {
-          p11.log.warn("No saved Gemini favorites are currently available.");
+          p12.log.warn("No saved Gemini favorites are currently available.");
           return 0;
         }
         activeProvider = favPick.provider;
@@ -8421,7 +8530,7 @@ Error: ${launchPlan.error}
   recordLaunchSelection("gemini", activeProvider.id, selectedModel.id, prefs);
   const launchApiKey = await resolveLocalProviderApiKey(activeProvider);
   if (!launchApiKey?.trim()) {
-    p11.log.error(
+    p12.log.error(
       `No API key found for ${activeProvider.name}. Set it with relay-ai providers add.`
     );
     return 1;
@@ -8523,14 +8632,14 @@ Error: ${launchPlan.error}
     oauthBackend = backendRoutes.backend;
     proxyHandle = await startGeminiProxy(finalRoutes, trace);
   } catch (err) {
-    p11.log.error(`Failed to start Gemini proxy: ${err instanceof Error ? err.message : String(err)}`);
+    p12.log.error(`Failed to start Gemini proxy: ${err instanceof Error ? err.message : String(err)}`);
     oauthBackend?.handle.close();
     return 1;
   }
   const childEnv = prepareGeminiChildEnv(proxyHandle.port, proxyHandle.token);
   if (!agentStdout) {
-    p11.log.info(`Gemini proxy started on port ${proxyHandle.port}`);
-    p11.log.info(`\u{1F4A1} Type ${pc7.bold(".model <id>")} in the chat to switch models mid-session.`);
+    p12.log.info(`Gemini proxy started on port ${proxyHandle.port}`);
+    p12.log.info(`\u{1F4A1} Type ${pc7.bold(".model <id>")} in the chat to switch models mid-session.`);
   }
   let exitCode = 1;
   try {
@@ -8541,7 +8650,7 @@ Error: ${launchPlan.error}
     oauthBackend?.handle.close();
   }
   if (!agentStdout) {
-    p11.log.info("Gemini proxy stopped.");
+    p12.log.info("Gemini proxy stopped.");
   }
   if (trace) {
     printTraceLog(getGeminiProxyDebugLogPath());
@@ -8551,11 +8660,11 @@ Error: ${launchPlan.error}
 
 // src/antigravity.ts
 import pc8 from "picocolors";
-import * as p12 from "@clack/prompts";
+import * as p13 from "@clack/prompts";
 
 // src/antigravity/cloud-code-gateway.ts
 import http from "http";
-import { streamText as streamText3, generateText as generateText3 } from "ai";
+import { streamText as streamText3, generateText as generateText4 } from "ai";
 
 // src/antigravity/request-adapter.ts
 import { randomUUID as randomUUID2 } from "crypto";
@@ -8646,18 +8755,18 @@ var JSON_SCHEMA_TYPES = /* @__PURE__ */ new Map([
   ["OBJECT", "object"],
   ["STRING", "string"]
 ]);
-function expandTextWithThinking(text6) {
-  if (!text6.includes("<thinking>")) {
-    return [{ type: "text", text: text6 }];
+function expandTextWithThinking(text7) {
+  if (!text7.includes("<thinking>")) {
+    return [{ type: "text", text: text7 }];
   }
   const out = [];
-  const tokens = text6.split(/<thinking>([\s\S]*?)<\/thinking>/);
+  const tokens = text7.split(/<thinking>([\s\S]*?)<\/thinking>/);
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i] ?? "";
     if (!token.trim()) continue;
     out.push({ type: i % 2 === 1 ? "reasoning" : "text", text: token });
   }
-  return out.length > 0 ? out : [{ type: "text", text: text6 }];
+  return out.length > 0 ? out : [{ type: "text", text: text7 }];
 }
 function normalizeSchemaType(value) {
   if (typeof value === "string") {
@@ -8747,9 +8856,9 @@ function translateRequest(ccReq, options = {}) {
       continue;
     }
     const sdkRole = role === "model" ? "assistant" : "user";
-    const hasFunctionCall = msg.parts.some((p16) => p16.functionCall);
-    const hasAssistantReasoning = role === "model" && msg.parts.some((p16) => p16.thought || p16.text?.includes("<thinking>"));
-    const hasComplexParts = msg.parts.some((p16) => p16.thought || p16.inlineData || p16.functionCall || p16.functionResponse);
+    const hasFunctionCall = msg.parts.some((p17) => p17.functionCall);
+    const hasAssistantReasoning = role === "model" && msg.parts.some((p17) => p17.thought || p17.text?.includes("<thinking>"));
+    const hasComplexParts = msg.parts.some((p17) => p17.thought || p17.inlineData || p17.functionCall || p17.functionResponse);
     const singleText = msg.parts.length === 1 ? msg.parts[0]?.text : void 0;
     if (!hasComplexParts && singleText !== void 0 && !singleText.includes("<thinking>")) {
       sdkMessages.push({
@@ -9932,7 +10041,7 @@ async function startCloudCodeGateway(routes, opts = {}) {
   const templateKey = opts.templateKey ?? "gemini-3.5-flash-low";
   const trace = opts.trace ?? false;
   const trackActiveRoute = opts.trackActiveRoute ?? false;
-  const log14 = opts.logFn ?? (() => {
+  const log15 = opts.logFn ?? (() => {
   });
   const catalogFixture = fetchAvailableModels_default;
   const slotOptions = { nativeSlots: opts.nativeSlots ?? true };
@@ -9999,12 +10108,12 @@ async function startCloudCodeGateway(routes, opts = {}) {
         }
       }
       if (trace) {
-        log14(`[gateway] ${method} ${url}`);
-        log14(`[gateway]   content-type: ${contentType}`);
-        log14(`[gateway]   body-size: ${bodyStr.length}`);
+        log15(`[gateway] ${method} ${url}`);
+        log15(`[gateway]   content-type: ${contentType}`);
+        log15(`[gateway]   body-size: ${bodyStr.length}`);
       }
       if (contentType.includes("proto") || contentType.includes("grpc") && !contentType.includes("json")) {
-        log14(`[gateway] UNSUPPORTED content-type: ${contentType}`);
+        log15(`[gateway] UNSUPPORTED content-type: ${contentType}`);
         respondJson(res, 415, {
           error: {
             code: 415,
@@ -10020,52 +10129,52 @@ async function startCloudCodeGateway(routes, opts = {}) {
           }
           return value;
         }).slice(0, 500);
-        log14(`[gateway]   body-preview: ${preview}`);
+        log15(`[gateway]   body-preview: ${preview}`);
         const request2 = parsed.request;
         if (request2 && typeof request2 === "object") {
           const { contents: _c, systemInstruction: _s, tools: _t, ...settings } = request2;
-          log14(`[gateway]   request-settings: ${JSON.stringify({ model: parsed.model, ...settings })}`);
+          log15(`[gateway]   request-settings: ${JSON.stringify({ model: parsed.model, ...settings })}`);
         }
       }
       if (lowerUrl.includes("loadcodeassist")) {
-        if (trace) log14("[gateway] \u2192 loadCodeAssist");
+        if (trace) log15("[gateway] \u2192 loadCodeAssist");
         respondJson(res, 200, loadCodeAssist_default);
         return;
       }
       if (lowerUrl.includes("fetchavailablemodels") || lowerUrl.includes("getavailablemodels")) {
-        if (trace) log14("[gateway] \u2192 fetchAvailableModels");
+        if (trace) log15("[gateway] \u2192 fetchAvailableModels");
         respondJson(res, 200, injectedCatalog);
         return;
       }
       if (lowerUrl.includes("modelconfigs")) {
-        if (trace) log14("[gateway] \u2192 listModelConfigs");
+        if (trace) log15("[gateway] \u2192 listModelConfigs");
         respondJson(res, 200, modelConfigsResponse);
         return;
       }
       if (lowerUrl.includes("generatecontent") || lowerUrl.includes("generatechat")) {
         const model = parsed?.model;
-        if (trace) log14(`[gateway]   extracted model: ${model ?? "N/A"}`);
+        if (trace) log15(`[gateway]   extracted model: ${model ?? "N/A"}`);
         const route = resolveRouteForModel(model);
         if (route) {
           if (trace) {
-            log14(
+            log15(
               `[gateway]   resolved route: ${route.catalogId} (${route.providerId}/${route.upstreamModelId} via ${model})`
             );
           }
           const media = sanitizeUnsupportedInlineData(parsed);
           parsed = media.request;
           if (media.latestUserTurnHasUnsupportedMedia) {
-            if (trace) log14("[gateway] unsupported media in current user turn; provider call skipped");
+            if (trace) log15("[gateway] unsupported media in current user turn; provider call skipped");
             respondUnsupportedMedia(res, route, lowerUrl.includes("stream"));
             return;
           }
           if (trackActiveRoute && selectedSlotIds.has(model ?? "") && isUserTurnRequest(parsed)) {
             activeRoute = route;
-            if (trace) log14(`[gateway]   active route: ${route.catalogId} via ${model}`);
+            if (trace) log15(`[gateway]   active route: ${route.catalogId} via ${model}`);
           }
           if (isCloudCodeOAuthRoute(route)) {
-            handleCloudCodeForwardRequest(res, route, parsed, lowerUrl, log14).catch((err) => {
-              log14(`[gateway] cloud-code forward error: ${err instanceof Error ? err.stack || err.message : String(err)}`);
+            handleCloudCodeForwardRequest(res, route, parsed, lowerUrl, log15).catch((err) => {
+              log15(`[gateway] cloud-code forward error: ${err instanceof Error ? err.stack || err.message : String(err)}`);
               if (!res.headersSent) {
                 respondJson(res, 500, { error: { code: 500, message: formatUpstreamError(err) } });
               } else if (!res.writableEnded) {
@@ -10075,7 +10184,7 @@ async function startCloudCodeGateway(routes, opts = {}) {
             return;
           }
           const baseProviderOptions = providerOptionsCache.get(route.catalogId);
-          if (trace) log14(`[gateway]   provider options: ${JSON.stringify(baseProviderOptions ?? {})}`);
+          if (trace) log15(`[gateway]   provider options: ${JSON.stringify(baseProviderOptions ?? {})}`);
           const isStream = lowerUrl.includes("stream");
           const conversationKey = conversationKeyFromRequest(parsed);
           const requestHeaders = openCodeGoHeaders(
@@ -10093,13 +10202,13 @@ async function startCloudCodeGateway(routes, opts = {}) {
             rememberReasoningEcho(reasoningEchoesByConversation, conversationKey, reasoning);
           };
           if (isStream) {
-            handleStreamingRequest(res, route, baseProviderOptions, parsed, log14, {
+            handleStreamingRequest(res, route, baseProviderOptions, parsed, log15, {
               requestOptions,
               onReasoningWithToolCall: rememberReasoning,
               trace
             }).catch((err) => {
-              log14(`[gateway] stream error: ${formatUpstreamError(err)}`);
-              if (trace) log14(`[gateway] stream error detail: ${formatUpstreamErrorTrace(err)}`);
+              log15(`[gateway] stream error: ${formatUpstreamError(err)}`);
+              if (trace) log15(`[gateway] stream error detail: ${formatUpstreamErrorTrace(err)}`);
               if (!res.headersSent) {
                 respondJson(res, 500, { error: { code: 500, message: formatUpstreamError(err) } });
               } else if (!res.writableEnded) {
@@ -10107,13 +10216,13 @@ async function startCloudCodeGateway(routes, opts = {}) {
               }
             });
           } else {
-            handleUnaryRequest(res, route, baseProviderOptions, parsed, log14, {
+            handleUnaryRequest(res, route, baseProviderOptions, parsed, log15, {
               requestOptions,
               onReasoningWithToolCall: rememberReasoning,
               trace
             }).catch((err) => {
-              log14(`[gateway] unary error: ${formatUpstreamError(err)}`);
-              if (trace) log14(`[gateway] unary error detail: ${formatUpstreamErrorTrace(err)}`);
+              log15(`[gateway] unary error: ${formatUpstreamError(err)}`);
+              if (trace) log15(`[gateway] unary error detail: ${formatUpstreamErrorTrace(err)}`);
               if (!res.headersSent) {
                 respondJson(res, 500, { error: { code: 500, message: formatUpstreamError(err) } });
               }
@@ -10209,7 +10318,7 @@ async function startCloudCodeGateway(routes, opts = {}) {
         return;
       }
       if (trace) {
-        log14(`[gateway] unknown endpoint: ${url}`);
+        log15(`[gateway] unknown endpoint: ${url}`);
       }
       respondJson(res, 200, {});
     }).catch((err) => {
@@ -10303,7 +10412,7 @@ function rememberReasoningEcho(cache, key, reasoning) {
   existing.push(normalized);
   cache.set(key, existing.slice(-MAX_REASONING_ECHOES_PER_CONVERSATION));
 }
-async function handleCloudCodeForwardRequest(res, route, parsed, lowerUrl, log14) {
+async function handleCloudCodeForwardRequest(res, route, parsed, lowerUrl, log15) {
   const projectId = typeof route.providerData?.projectId === "string" ? route.providerData.projectId : "";
   if (!projectId) {
     respondJson(res, 500, {
@@ -10332,7 +10441,7 @@ async function handleCloudCodeForwardRequest(res, route, parsed, lowerUrl, log14
   });
   if (!upstream.ok) {
     const errBody = await upstream.text();
-    log14(`[gateway] cloud-code upstream error ${upstream.status}: ${errBody}`);
+    log15(`[gateway] cloud-code upstream error ${upstream.status}: ${errBody}`);
     respondJson(res, upstream.status >= 500 ? 502 : upstream.status, {
       error: { code: upstream.status, message: errBody || upstream.statusText }
     });
@@ -10362,11 +10471,11 @@ async function handleCloudCodeForwardRequest(res, route, parsed, lowerUrl, log14
   });
   res.end(body);
 }
-function emitThinkingDelta(res, route, responseId, text6, startSse) {
-  if (!text6) return;
+function emitThinkingDelta(res, route, responseId, text7, startSse) {
+  if (!text7) return;
   startSse();
   const chunk = formatCloudCodeChunk({
-    thought: text6,
+    thought: text7,
     modelVersion: route.catalogId,
     responseId
   });
@@ -10374,9 +10483,9 @@ function emitThinkingDelta(res, route, responseId, text6, startSse) {
 
 `);
 }
-function trailingPartial(text6, tag) {
-  for (let len = Math.min(tag.length - 1, text6.length); len > 0; len--) {
-    if (text6.endsWith(tag.slice(0, len))) return len;
+function trailingPartial(text7, tag) {
+  for (let len = Math.min(tag.length - 1, text7.length); len > 0; len--) {
+    if (text7.endsWith(tag.slice(0, len))) return len;
   }
   return 0;
 }
@@ -10388,13 +10497,13 @@ function createThinkFilter() {
     let src = partial + chunk;
     partial = "";
     let thought = "";
-    let text6 = "";
+    let text7 = "";
     while (src.length > 0) {
       if (state === "scanning") {
         const idx = src.indexOf("<think>");
         if (idx === -1) {
           const len = trailingPartial(src, "<think>");
-          text6 += src.slice(0, src.length - len);
+          text7 += src.slice(0, src.length - len);
           if (len > 0) {
             partial = src.slice(src.length - len);
           } else {
@@ -10402,7 +10511,7 @@ function createThinkFilter() {
           }
           break;
         }
-        text6 += src.slice(0, idx);
+        text7 += src.slice(0, idx);
         src = src.slice(idx + 7);
         state = "inside";
       } else {
@@ -10419,7 +10528,7 @@ function createThinkFilter() {
         state = "passthrough";
       }
     }
-    return { thought, text: text6 };
+    return { thought, text: text7 };
   };
 }
 function emitStreamError(res, route, responseId, message, startSse) {
@@ -10481,8 +10590,8 @@ function respondUnsupportedMedia(res, route, streaming) {
     metadata: {}
   });
 }
-function parsePseudoToolCall(text6, knownToolNames) {
-  const trimmed = text6.trim();
+function parsePseudoToolCall(text7, knownToolNames) {
+  const trimmed = text7.trim();
   if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
   try {
     const obj = JSON.parse(trimmed);
@@ -10497,14 +10606,14 @@ function parsePseudoToolCall(text6, knownToolNames) {
   }
   return null;
 }
-async function handleStreamingRequest(res, route, providerOptions, parsed, log14, options = {}) {
+async function handleStreamingRequest(res, route, providerOptions, parsed, log15, options = {}) {
   const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
     ...options.requestOptions,
     npm: route.npm,
     maxTools: maxToolsForNpm(route.npm)
   }));
   if (options.trace) {
-    log14(`[gateway]   sdk request: ${JSON.stringify(summarizeSdkRequestForTrace(sdkParams))}`);
+    log15(`[gateway]   sdk request: ${JSON.stringify(summarizeSdkRequestForTrace(sdkParams))}`);
   }
   const effectiveProviderOptions = deepMergeProviderOptions(
     providerOptions,
@@ -10565,35 +10674,35 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
     bufferingJsonText = false;
   };
   for await (const part of stream) {
-    const p16 = part;
-    if (p16.type === "reasoning-delta" || p16.type === "reasoning") {
-      const reasoning = reasoningDeltaText(p16);
+    const p17 = part;
+    if (p17.type === "reasoning-delta" || p17.type === "reasoning") {
+      const reasoning = reasoningDeltaText(p17);
       responseReasoning += reasoning;
       emitThinkingDelta(res, route, responseId, reasoning, startSse);
       continue;
     }
-    if (p16.type === "text-delta") {
-      const { thought, text: text6 } = thinkFilter(reasoningDeltaText(p16));
+    if (p17.type === "text-delta") {
+      const { thought, text: text7 } = thinkFilter(reasoningDeltaText(p17));
       if (thought) {
         responseReasoning += thought;
         emitThinkingDelta(res, route, responseId, thought, startSse);
       }
-      if (text6) {
-        log14(`[gateway] text-delta: ${JSON.stringify(text6.slice(0, 500))}`);
-        if (!bufferingJsonText && (textBuffer + text6).trimStart().startsWith("{")) {
+      if (text7) {
+        log15(`[gateway] text-delta: ${JSON.stringify(text7.slice(0, 500))}`);
+        if (!bufferingJsonText && (textBuffer + text7).trimStart().startsWith("{")) {
           bufferingJsonText = true;
         }
         if (bufferingJsonText) {
-          textBuffer += text6;
+          textBuffer += text7;
           const pseudoTool = textBuffer.trimEnd().endsWith("}") ? parsePseudoToolCall(textBuffer, knownToolNames) : null;
           if (pseudoTool) {
-            log14(`[gateway] parsed pseudo tool-call from text: ${pseudoTool.name}`);
+            log15(`[gateway] parsed pseudo tool-call from text: ${pseudoTool.name}`);
             emitPseudoToolCall(pseudoTool);
           }
         } else {
           startSse();
           const chunk = formatCloudCodeChunk({
-            text: text6,
+            text: text7,
             modelVersion: route.catalogId,
             responseId
           });
@@ -10602,25 +10711,25 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
 `);
         }
       }
-    } else if (p16.type === "tool-input-start") {
-      const id = p16.id ?? p16.toolCallId;
-      toolCallBuffers.set(id, { name: p16.toolName, json: "" });
-    } else if (p16.type === "tool-input-delta") {
-      const id = p16.id ?? p16.toolCallId;
+    } else if (p17.type === "tool-input-start") {
+      const id = p17.id ?? p17.toolCallId;
+      toolCallBuffers.set(id, { name: p17.toolName, json: "" });
+    } else if (p17.type === "tool-input-delta") {
+      const id = p17.id ?? p17.toolCallId;
       const buf = toolCallBuffers.get(id);
-      if (buf) buf.json += p16.delta;
-    } else if (p16.type === "tool-call") {
+      if (buf) buf.json += p17.delta;
+    } else if (p17.type === "tool-call") {
       sawToolCall = true;
-      const id = p16.toolCallId ?? p16.id;
+      const id = p17.toolCallId ?? p17.id;
       const buf = toolCallBuffers.get(id);
       let args = {};
       try {
-        args = buf ? JSON.parse(buf.json || "{}") : p16.input || {};
+        args = buf ? JSON.parse(buf.json || "{}") : p17.input || {};
       } catch {
-        args = p16.input || {};
+        args = p17.input || {};
       }
-      const name = buf ? buf.name : p16.toolName;
-      log14(`[gateway] tool-call: ${name}`);
+      const name = buf ? buf.name : p17.toolName;
+      log15(`[gateway] tool-call: ${name}`);
       startSse();
       const chunk = formatCloudCodeChunk({
         functionCall: { name, args: normalizeFunctionCallArgs(args) },
@@ -10630,42 +10739,42 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
       res.write(`data: ${JSON.stringify(chunk)}
 
 `);
-    } else if (p16.type === "finish") {
-      log14(`[gateway] finish: ${p16.finishReason ?? "unknown"}`);
+    } else if (p17.type === "finish") {
+      log15(`[gateway] finish: ${p17.finishReason ?? "unknown"}`);
       if (textBuffer) {
         const pseudoTool = parsePseudoToolCall(textBuffer, knownToolNames);
         if (pseudoTool) {
-          log14(`[gateway] parsed pseudo tool-call on finish: ${pseudoTool.name}`);
+          log15(`[gateway] parsed pseudo tool-call on finish: ${pseudoTool.name}`);
           emitPseudoToolCall(pseudoTool);
         } else {
           flushBufferedText();
         }
       }
       startSse();
-      const reason = mapFinishReason2(p16.finishReason ?? "");
+      const reason = mapFinishReason2(p17.finishReason ?? "");
       const chunk = formatCloudCodeChunk({
         modelVersion: route.catalogId,
         responseId,
         finishReason: reason,
         usage: {
-          promptTokens: p16.totalUsage?.inputTokens || 0,
-          completionTokens: p16.totalUsage?.outputTokens || 0
+          promptTokens: p17.totalUsage?.inputTokens || 0,
+          completionTokens: p17.totalUsage?.outputTokens || 0
         }
       });
       res.write(`data: ${JSON.stringify(chunk)}
 
 `);
-    } else if (p16.type === "error") {
-      const message = formatUpstreamError(p16.error);
-      log14(`[gateway] stream provider error: ${message}`);
+    } else if (p17.type === "error") {
+      const message = formatUpstreamError(p17.error);
+      log15(`[gateway] stream provider error: ${message}`);
       if (options.trace) {
-        log14(`[gateway] stream provider error detail: ${formatUpstreamErrorTrace(p16.error)}`);
+        log15(`[gateway] stream provider error detail: ${formatUpstreamErrorTrace(p17.error)}`);
       }
       flushBufferedText();
       emitStreamError(res, route, responseId, message, startSse);
       break;
-    } else if (p16.type === "reasoning-start" || p16.type === "reasoning-end") {
-      log14(`[gateway] ${p16.type}`);
+    } else if (p17.type === "reasoning-start" || p17.type === "reasoning-end") {
+      log15(`[gateway] ${p17.type}`);
     }
   }
   if (!res.headersSent) {
@@ -10676,14 +10785,14 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log14
   }
   res.end();
 }
-async function handleUnaryRequest(res, route, providerOptions, parsed, log14, options = {}) {
+async function handleUnaryRequest(res, route, providerOptions, parsed, log15, options = {}) {
   const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
     ...options.requestOptions,
     npm: route.npm,
     maxTools: maxToolsForNpm(route.npm)
   }));
   if (options.trace) {
-    log14(`[gateway]   sdk request: ${JSON.stringify(summarizeSdkRequestForTrace(sdkParams))}`);
+    log15(`[gateway]   sdk request: ${JSON.stringify(summarizeSdkRequestForTrace(sdkParams))}`);
   }
   const effectiveProviderOptions = deepMergeProviderOptions(
     providerOptions,
@@ -10691,7 +10800,7 @@ async function handleUnaryRequest(res, route, providerOptions, parsed, log14, op
   );
   const langModel = await createRouteLanguageModel(route);
   const responseId = `relay-${Date.now()}`;
-  const result = await generateText3({
+  const result = await generateText4({
     model: langModel,
     instructions: sdkParams.instructions,
     messages: sdkParams.messages,
@@ -10886,8 +10995,8 @@ function clearSavedModelSelection(profileDir) {
   const originalEmitWarning = process.emitWarning;
   try {
     process.emitWarning = ((warning, ...rest) => {
-      const text6 = typeof warning === "string" ? warning : warning.message;
-      if (text6.includes("SQLite")) return;
+      const text7 = typeof warning === "string" ? warning : warning.message;
+      if (text7.includes("SQLite")) return;
       originalEmitWarning.call(process, warning, ...rest);
     });
     const { DatabaseSync } = require2("node:sqlite");
@@ -10905,10 +11014,10 @@ function clearSavedModelSelection(profileDir) {
 }
 function clearAppLastSelectedModel(statePath) {
   try {
-    const text6 = fs.readFileSync(statePath, "utf8");
-    const kept = text6.split("\n").filter((line) => !line.startsWith("last_selected_agent_model:"));
+    const text7 = fs.readFileSync(statePath, "utf8");
+    const kept = text7.split("\n").filter((line) => !line.startsWith("last_selected_agent_model:"));
     const next = kept.join("\n");
-    if (next === text6) return false;
+    if (next === text7) return false;
     fs.writeFileSync(statePath, next);
     return true;
   } catch {
@@ -11087,8 +11196,8 @@ function readExistingIdeLock(env = process.env) {
   return lock;
 }
 function clearExistingIdeLock(env = process.env) {
-  const p16 = getExistingIdeLockPath(env);
-  if (existsSync8(p16)) rmSync3(p16, { force: true });
+  const p17 = getExistingIdeLockPath(env);
+  if (existsSync8(p17)) rmSync3(p17, { force: true });
 }
 function readExistingIdeRecoveryRecord(env = process.env) {
   const recordPath = getExistingIdeRecoveryRecordPath(env);
@@ -11111,8 +11220,8 @@ function writeExistingIdeRecoveryRecord(record, env = process.env) {
 `);
 }
 function clearExistingIdeRecoveryRecord(env = process.env) {
-  const p16 = getExistingIdeRecoveryRecordPath(env);
-  if (existsSync8(p16)) rmSync3(p16, { force: true });
+  const p17 = getExistingIdeRecoveryRecordPath(env);
+  if (existsSync8(p17)) rmSync3(p17, { force: true });
 }
 function assertNoActiveExistingIdeSession(env = process.env) {
   const lock = readExistingIdeLock(env);
@@ -11173,8 +11282,8 @@ function checkNodeSqliteAvailable() {
   const originalEmitWarning = process.emitWarning;
   try {
     process.emitWarning = ((warning, ...rest) => {
-      const text6 = typeof warning === "string" ? warning : warning.message;
-      if (text6.includes("SQLite")) return;
+      const text7 = typeof warning === "string" ? warning : warning.message;
+      if (text7.includes("SQLite")) return;
       originalEmitWarning.call(process, warning, ...rest);
     });
     const sqlite = require3("node:sqlite");
@@ -11192,8 +11301,8 @@ function readSqliteModelPreferences(dbPath) {
   const originalEmitWarning = process.emitWarning;
   try {
     process.emitWarning = ((warning, ...rest) => {
-      const text6 = typeof warning === "string" ? warning : warning.message;
-      if (text6.includes("SQLite")) return;
+      const text7 = typeof warning === "string" ? warning : warning.message;
+      if (text7.includes("SQLite")) return;
       originalEmitWarning.call(process, warning, ...rest);
     });
     const { DatabaseSync } = require3("node:sqlite");
@@ -11229,8 +11338,8 @@ function clearSqliteModelPreferencesRow(dbPath) {
   const originalEmitWarning = process.emitWarning;
   try {
     process.emitWarning = ((warning, ...rest) => {
-      const text6 = typeof warning === "string" ? warning : warning.message;
-      if (text6.includes("SQLite")) return;
+      const text7 = typeof warning === "string" ? warning : warning.message;
+      if (text7.includes("SQLite")) return;
       originalEmitWarning.call(process, warning, ...rest);
     });
     const { DatabaseSync } = require3("node:sqlite");
@@ -11249,8 +11358,8 @@ function restoreSqliteModelPreferences(dbPath, saved) {
   const originalEmitWarning = process.emitWarning;
   try {
     process.emitWarning = ((warning, ...rest) => {
-      const text6 = typeof warning === "string" ? warning : warning.message;
-      if (text6.includes("SQLite")) return;
+      const text7 = typeof warning === "string" ? warning : warning.message;
+      if (text7.includes("SQLite")) return;
       originalEmitWarning.call(process, warning, ...rest);
     });
     const { DatabaseSync } = require3("node:sqlite");
@@ -11920,31 +12029,31 @@ function resolveAntigravityBootModel(provider, modelSelector) {
 }
 async function resolveAntigravityLaunch(prefs, boot) {
   let catalog;
-  const catalogSpinner = p12.spinner();
+  const catalogSpinner = p13.spinner();
   catalogSpinner.start("Loading providers...");
   try {
     catalog = await fetchProviderCatalog();
   } catch (err) {
     catalogSpinner.stop("");
-    p12.log.error(String(err instanceof Error ? err.message : err));
+    p13.log.error(String(err instanceof Error ? err.message : err));
     return null;
   }
   catalogSpinner.stop("");
   const allProviders = providersForTarget(providersForPicker(catalog), "antigravity");
   if (allProviders.length === 0) {
-    p12.log.warn("No providers available.");
-    p12.log.info(pc8.dim("Run relay-ai providers add or import to get started."));
+    p13.log.warn("No providers available.");
+    p13.log.info(pc8.dim("Run relay-ai providers add or import to get started."));
     return null;
   }
   if (boot?.launchProvider && boot?.launchModel) {
-    const provider = allProviders.find((p16) => p16.id === boot.launchProvider);
+    const provider = allProviders.find((p17) => p17.id === boot.launchProvider);
     if (!provider) {
-      p12.log.error(`Provider not found: ${boot.launchProvider}`);
+      p13.log.error(`Provider not found: ${boot.launchProvider}`);
       return null;
     }
     const { model, error } = resolveAntigravityBootModel(provider, boot.launchModel);
     if (!model) {
-      p12.log.error(error ?? `Model not found: ${boot.launchModel} on provider ${provider.name}`);
+      p13.log.error(error ?? `Model not found: ${boot.launchModel} on provider ${provider.name}`);
       return null;
     }
     return { provider, model, allProviders };
@@ -11961,13 +12070,13 @@ async function resolveAntigravityLaunch(prefs, boot) {
   const conflicts = detectConflicts();
   let currentInitialProvider = initialProvider;
   while (true) {
-    const chosen = await p12.select({
+    const chosen = await p13.select({
       message: "Which provider?",
       options: providerOptions,
       initialValue: currentInitialProvider
     });
-    if (p12.isCancel(chosen)) {
-      p12.cancel("Cancelled.");
+    if (p13.isCancel(chosen)) {
+      p13.cancel("Cancelled.");
       return null;
     }
     if (chosen === AGY_FAVORITES_PROVIDER_ID) {
@@ -11989,8 +12098,8 @@ async function resolveAntigravityLaunch(prefs, boot) {
         continue;
       }
       if (!favoriteSelection) {
-        p12.log.warn("No favorites are available for Antigravity.");
-        p12.log.info(pc8.dim("Manage them with `relay-ai favorites`."));
+        p13.log.warn("No favorites are available for Antigravity.");
+        p13.log.info(pc8.dim("Manage them with `relay-ai favorites`."));
         currentInitialProvider = AGY_FAVORITES_PROVIDER_ID;
         continue;
       }
@@ -12016,31 +12125,31 @@ async function resolveAndBuildRoutes(provider, model, allProviders, prefs, opts)
     effortMode: opts.effortMode
   });
   if (!result) {
-    p12.log.error(`No credential for ${provider.name}. Run: relay-ai providers auth ${provider.id} or add an API key.`);
+    p13.log.error(`No credential for ${provider.name}. Run: relay-ai providers auth ${provider.id} or add an API key.`);
     return null;
   }
   if (result.routes.length > 1) {
     const effortNote = opts.effortMode === "slider" ? `each model's low/medium/high/max share one row with an effort slider.` : opts.effortMode === "submenu" ? `each model's low/medium/high share one row with an effort submenu.` : `effort levels are listed separately.`;
-    p12.log.info(`Favorites mode active \u2014 ${result.routes.length} entries; ${effortNote}`);
-    p12.log.info("Edit with `relay-ai favorites`.");
+    p13.log.info(`Favorites mode active \u2014 ${result.routes.length} entries; ${effortNote}`);
+    p13.log.info("Edit with `relay-ai favorites`.");
   }
   if (result.droppedFavorites.length > 0) {
-    p12.log.warn(
+    p13.log.warn(
       `Skipped ${result.droppedFavorites.length} stale/unauthorized favorite(s): ` + result.droppedFavorites.map((fav) => `${fav.providerId}:${fav.modelId}`).join(", ")
     );
   }
   if (result.capacitySkippedFavorites.length > 0) {
-    p12.log.warn(formatAgyCapacityWarning(opts.maxRoutes, result.capacitySkippedFavorites.length));
-    p12.log.warn(
+    p13.log.warn(formatAgyCapacityWarning(opts.maxRoutes, result.capacitySkippedFavorites.length));
+    p13.log.warn(
       "Not exposed: " + result.capacitySkippedFavorites.map((fav) => `${fav.providerId}:${fav.modelId}`).join(", ")
     );
     if (opts.pauseForCapacityWarning && isInteractiveTerminal() && !agyArgsAreNonInteractive(opts.childArgs)) {
-      const proceed = await p12.confirm({
+      const proceed = await p13.confirm({
         message: "Continue with the validated AGY switch catalog?",
         initialValue: true
       });
-      if (p12.isCancel(proceed) || !proceed) {
-        p12.cancel("Cancelled.");
+      if (p13.isCancel(proceed) || !proceed) {
+        p13.cancel("Cancelled.");
         return null;
       }
     }
@@ -12104,24 +12213,24 @@ function assessEnterpriseAccountRisk(tracePrefix, prefs) {
   return null;
 }
 async function confirmEnterpriseAccountUse(risk, providerName) {
-  p12.log.warn("Antigravity is signed in with a Gemini Enterprise (work) account.");
+  p13.log.warn("Antigravity is signed in with a Gemini Enterprise (work) account.");
   if (risk.source === "last-session") {
-    p12.log.warn(
+    p13.log.warn(
       `Last session used tier ${pc8.bold(risk.userTier ?? "unknown")}` + (risk.project ? ` on project ${pc8.bold(risk.project)}` : "") + "."
     );
   }
-  p12.log.warn(`Relay routes this session's model calls to ${pc8.bold(providerName)}; using a company account with relay may violate your organization's usage policy.`);
-  p12.log.warn("To avoid this, sign in with a personal account in the Antigravity client (or set AGY_ACCOUNT) and relaunch.");
+  p13.log.warn(`Relay routes this session's model calls to ${pc8.bold(providerName)}; using a company account with relay may violate your organization's usage policy.`);
+  p13.log.warn("To avoid this, sign in with a personal account in the Antigravity client (or set AGY_ACCOUNT) and relaunch.");
   if (!isInteractiveTerminal()) {
-    p12.log.warn("Continuing without confirmation (non-interactive session).");
+    p13.log.warn("Continuing without confirmation (non-interactive session).");
     return true;
   }
-  const proceed = await p12.confirm({
+  const proceed = await p13.confirm({
     message: "Proceed with the enterprise account?",
     initialValue: false
   });
-  if (p12.isCancel(proceed)) {
-    p12.cancel("Cancelled.");
+  if (p13.isCancel(proceed)) {
+    p13.cancel("Cancelled.");
     return false;
   }
   return Boolean(proceed);
@@ -12129,11 +12238,11 @@ async function confirmEnterpriseAccountUse(risk, providerName) {
 function reportDetectedAuthTier(info) {
   savePreferences({ antigravityAuthTier: info.userTier, antigravityAuthProject: info.project });
   if (!isEnterpriseAuthTier(info.userTier)) return;
-  p12.log.warn(
+  p13.log.warn(
     `Enterprise Gemini account detected in this session (${pc8.bold(info.userTier)}` + (info.project ? ` \xB7 project ${pc8.bold(info.project)}` : "") + ")."
   );
-  p12.log.warn("If this is your work account, using relay with it may violate your organization's usage policy.");
-  p12.log.warn("Sign in with a personal account (or set AGY_ACCOUNT) and relaunch to avoid this; the next launch will ask for confirmation.");
+  p13.log.warn("If this is your work account, using relay with it may violate your organization's usage policy.");
+  p13.log.warn("Sign in with a personal account (or set AGY_ACCOUNT) and relaunch to avoid this; the next launch will ask for confirmation.");
 }
 async function runAntigravityCommand(intro, tracePrefix, trace, boot, launch, opts = {}) {
   const prefs = loadPreferences();
@@ -12153,7 +12262,7 @@ async function runAntigravityCommand(intro, tracePrefix, trace, boot, launch, op
     fixture: fetchAvailableModels_default
   });
   for (const warning of compatibility.warnings) {
-    p12.log.warn(warning);
+    p13.log.warn(warning);
   }
   const routeLimit = compatibility.mode === "multi-model" ? MAX_MODEL_CATALOG : 1;
   const routeResult = await resolveAndBuildRoutes(provider, model, allProviders, prefs, {
@@ -12178,12 +12287,12 @@ async function runAntigravityCommand(intro, tracePrefix, trace, boot, launch, op
       onAuthTierDetected: reportDetectedAuthTier
     });
   } catch (err) {
-    p12.log.error(`Failed to start Cloud Code gateway: ${err}`);
+    p13.log.error(`Failed to start Cloud Code gateway: ${err}`);
     return 1;
   }
-  p12.log.info(`Cloud Code gateway on ${pc8.cyan(`127.0.0.1:${gatewayHandle.port}`)}`);
-  p12.log.success(`Active model: ${formatCodexModelLabel(model)} ${pc8.dim("via")} ${provider.name}`);
-  if (traceLogPath) p12.log.info(`Gateway trace \u2192 ${pc8.dim(traceLogPath)}`);
+  p13.log.info(`Cloud Code gateway on ${pc8.cyan(`127.0.0.1:${gatewayHandle.port}`)}`);
+  p13.log.success(`Active model: ${formatCodexModelLabel(model)} ${pc8.dim("via")} ${provider.name}`);
+  if (traceLogPath) p13.log.info(`Gateway trace \u2192 ${pc8.dim(traceLogPath)}`);
   relayOutro("Launching", `${formatCodexModelLabel(model)} (${provider.name})`);
   try {
     const cleanEnv = buildAntigravityChildEnv(gatewayHandle.url);
@@ -12211,12 +12320,12 @@ async function runAntigravityAppCommand(childArgs, trace = false, boot) {
     async (env, _routes, gatewayHandle) => {
       const profileDir = join13(homedir10(), ".relay-ai", "antigravity", "app-profile");
       if (isAntigravityAppRunning(profileDir)) {
-        const restart = await p12.confirm({
+        const restart = await p13.confirm({
           message: "Restart Antigravity to apply this Relay gateway?",
           initialValue: true
         });
-        if (p12.isCancel(restart) || !restart) {
-          p12.log.info("Quit and reopen Antigravity when you are ready for the new gateway to take effect.");
+        if (p13.isCancel(restart) || !restart) {
+          p13.log.info("Quit and reopen Antigravity when you are ready for the new gateway to take effect.");
           return 0;
         }
         quitAntigravityAppGracefully();
@@ -12228,18 +12337,18 @@ async function runAntigravityAppCommand(childArgs, trace = false, boot) {
       clearAppLastSelectedModel(join13(homedir10(), ".gemini", "antigravity", "antigravity_state.pbtxt"));
       const launchCode = await launchAntigravityApp(env, profileDir, gatewayHandle.url, childArgs);
       if (launchCode !== 0) return launchCode;
-      p12.log.info("Antigravity is using the Relay Cloud Code gateway.");
-      p12.log.info(pc8.cyan("Press Ctrl+C to stop the gateway."));
+      p13.log.info("Antigravity is using the Relay Cloud Code gateway.");
+      p13.log.info(pc8.cyan("Press Ctrl+C to stop the gateway."));
       await waitForShutdown();
       await new Promise((r) => setTimeout(r, SHUTDOWN_DRAIN_MS));
       console.log("");
-      p12.log.step("Gateway stopped.");
-      const shouldClose = await p12.confirm({
+      p13.log.step("Gateway stopped.");
+      const shouldClose = await p13.confirm({
         message: "Close Antigravity?",
         initialValue: true
       });
-      if (!p12.isCancel(shouldClose) && shouldClose) {
-        p12.log.step("Stopping Antigravity...");
+      if (!p13.isCancel(shouldClose) && shouldClose) {
+        p13.log.step("Stopping Antigravity...");
         quitAntigravityAppGracefully();
         if (!await waitForAntigravityAppQuit(profileDir)) {
           forceQuitAntigravityApp(profileDir);
@@ -12262,8 +12371,8 @@ function existingIdeControl(profileDir) {
 function restoreExistingProfile() {
   const result = restoreExistingIdeSession(process.env, { allowOwnPid: true });
   if (!result.restored) throw new Error(result.message ?? "Could not restore the Antigravity IDE profile. Run relay-ai antigravity-ide --restore.");
-  for (const warning of result.warnings ?? []) p12.log.warn(warning);
-  p12.log.success("Restored your Antigravity IDE configuration. The IDE is closed.");
+  for (const warning of result.warnings ?? []) p13.log.warn(warning);
+  p13.log.success("Restored your Antigravity IDE configuration. The IDE is closed.");
 }
 async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
   let existingProfileDir;
@@ -12276,7 +12385,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
       acquireExistingIdeSession(pending.profileDir, process.env, { recovery: true });
       const latest = readExistingIdeRecoveryRecord();
       if (latest) {
-        p12.log.step("Recovering the previous Antigravity IDE profile...");
+        p13.log.step("Recovering the previous Antigravity IDE profile...");
         await stopExistingIde(existingIdeControl(latest.profileDir));
         restoreExistingProfile();
       } else {
@@ -12285,7 +12394,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
     } else if (boot?.restore) {
       if (lock) acquireExistingIdeSession(lock.profileDir);
       releaseEmptyExistingIdeSession();
-      p12.log.info("Nothing to restore.");
+      p13.log.info("Nothing to restore.");
     }
     if (boot?.restore) return 0;
     if (boot?.useExistingProfile) {
@@ -12293,7 +12402,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
       acquireExistingIdeSession(existingProfileDir);
     }
   } catch (error) {
-    p12.log.error(String(error));
+    p13.log.error(String(error));
     return 1;
   }
   try {
@@ -12310,8 +12419,8 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
           const shutdown = watchExistingIdeShutdown(control.isRunning);
           let started = false;
           try {
-            p12.log.warn("Using your existing Antigravity IDE profile and its signed-in Google account.");
-            p12.log.info("Relay will close the IDE, temporarily apply its model catalog, and restore the profile on exit.");
+            p13.log.warn("Using your existing Antigravity IDE profile and its signed-in Google account.");
+            p13.log.info("Relay will close the IDE, temporarily apply its model catalog, and restore the profile on exit.");
             await stopExistingIde(control);
             if (shutdown.interrupted) return 0;
             beginExistingIdeSession(profileDir2, gatewayHandle.url);
@@ -12320,16 +12429,16 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
             const launchCode2 = await launchAntigravityIde(env, profileDir2, gatewayHandle.url, childArgs, { existingProfile: true });
             if (launchCode2 !== 0) return launchCode2;
             shutdown.launched();
-            p12.log.info("Antigravity IDE is using Relay models. Close the IDE when you are done, or press Ctrl+C to restore your normal configuration.");
+            p13.log.info("Antigravity IDE is using Relay models. Close the IDE when you are done, or press Ctrl+C to restore your normal configuration.");
             await waitForExistingIdeShutdownWithConfirm(shutdown, async () => {
-              const choice = await p12.select({
+              const choice = await p13.select({
                 message: "Close Antigravity IDE and restore your normal configuration?",
                 options: [
                   { value: "yes", label: "Yes, close Antigravity IDE and restore config" },
                   { value: "no", label: "No, keep session running" }
                 ]
               });
-              return p12.isCancel(choice) || choice === "yes";
+              return p13.isCancel(choice) || choice === "yes";
             });
             return 0;
           } finally {
@@ -12347,12 +12456,12 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
         }
         const profileDir = join13(homedir10(), ".relay-ai", "antigravity", "profile");
         if (isAntigravityIdeRunning(profileDir)) {
-          const restart = await p12.confirm({
+          const restart = await p13.confirm({
             message: "Restart Antigravity IDE to apply this Relay gateway?",
             initialValue: true
           });
-          if (p12.isCancel(restart) || !restart) {
-            p12.log.info("Quit and reopen Antigravity IDE when you are ready for the new gateway to take effect.");
+          if (p13.isCancel(restart) || !restart) {
+            p13.log.info("Quit and reopen Antigravity IDE when you are ready for the new gateway to take effect.");
             return 0;
           }
           quitAntigravityIdeGracefully();
@@ -12363,18 +12472,18 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
         }
         const launchCode = await launchAntigravityIde(env, profileDir, gatewayHandle.url, childArgs);
         if (launchCode !== 0) return launchCode;
-        p12.log.info("Antigravity IDE is using the Relay Cloud Code gateway.");
-        p12.log.info(pc8.cyan("Press Ctrl+C to stop the gateway."));
+        p13.log.info("Antigravity IDE is using the Relay Cloud Code gateway.");
+        p13.log.info(pc8.cyan("Press Ctrl+C to stop the gateway."));
         await waitForShutdown();
         await new Promise((r) => setTimeout(r, SHUTDOWN_DRAIN_MS));
         console.log("");
-        p12.log.step("Gateway stopped.");
-        const shouldClose = await p12.confirm({
+        p13.log.step("Gateway stopped.");
+        const shouldClose = await p13.confirm({
           message: "Close Antigravity IDE?",
           initialValue: true
         });
-        if (!p12.isCancel(shouldClose) && shouldClose) {
-          p12.log.step("Stopping Antigravity IDE...");
+        if (!p13.isCancel(shouldClose) && shouldClose) {
+          p13.log.step("Stopping Antigravity IDE...");
           quitAntigravityIdeGracefully();
           if (!await waitForAntigravityIdeQuit(profileDir)) {
             forceQuitAntigravityIde(profileDir);
@@ -12392,7 +12501,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
 
 // src/codex-app.ts
 import pc9 from "picocolors";
-import * as p13 from "@clack/prompts";
+import * as p14 from "@clack/prompts";
 import { join as join16 } from "path";
 
 // src/codex/app-provider-routes.ts
@@ -12523,12 +12632,12 @@ function readCodexConfigText(path3 = getCodexConfigPath()) {
   if (!existsSync10(path3)) return "";
   return readFileSync6(path3, "utf8");
 }
-function parseCodexConfig(text6) {
-  if (!text6.trim()) return {};
-  return asRecord(parse2(text6));
+function parseCodexConfig(text7) {
+  if (!text7.trim()) return {};
+  return asRecord(parse2(text7));
 }
-function captureRestoreState(text6) {
-  const config = parseCodexConfig(text6);
+function captureRestoreState(text7) {
+  const config = parseCodexConfig(text7);
   const profile = rootString(config, "profile");
   const model = rootString(config, "model");
   const modelProvider = rootString(config, "model_provider");
@@ -12563,8 +12672,8 @@ function captureRestoreState(text6) {
     multiAgentV2: features.multi_agent_v2
   };
 }
-function isAppManagedConfig(text6) {
-  const config = parseCodexConfig(text6);
+function isAppManagedConfig(text7) {
+  const config = parseCodexConfig(text7);
   const mp = rootString(config, "model_provider");
   if (mp.had && mp.value === CODEX_APP_PROVIDER_ID) return true;
   const baseUrl = rootString(config, "openai_base_url");
@@ -12639,8 +12748,8 @@ function mergeAppConfig(existing, spec) {
   }
   return out;
 }
-function validateAppConfigText(text6, spec) {
-  const config = parseCodexConfig(text6);
+function validateAppConfigText(text7, spec) {
+  const config = parseCodexConfig(text7);
   if ("profile" in config) {
     throw new Error("Generated config still contains legacy root profile key");
   }
@@ -12674,17 +12783,17 @@ function applyAppConfigPatch(spec, configPath = getCodexConfigPath()) {
     throw new Error(`Invalid existing Codex config at ${configPath}: ${err instanceof Error ? err.message : err}`);
   }
   const merged = mergeAppConfig(existing, spec);
-  const text6 = `${stringify(merged)}
+  const text7 = `${stringify(merged)}
 `;
-  validateAppConfigText(text6, spec);
+  validateAppConfigText(text7, spec);
   mkdirSync5(dirname4(configPath), { recursive: true });
-  atomicWriteFile(configPath, text6);
+  atomicWriteFile(configPath, text7);
   const written = readCodexConfigText(configPath);
-  if (written !== text6) {
+  if (written !== text7) {
     throw new Error(`Codex config readback mismatch at ${configPath}`);
   }
   validateAppConfigText(written, spec);
-  return text6;
+  return text7;
 }
 function applyRestoreKey(config, key, had, value) {
   if (had && value !== void 0) {
@@ -12745,10 +12854,10 @@ function restoreConfigFromState(state, configPath = getCodexConfigPath()) {
   return true;
 }
 function previewAppConfigToml(spec) {
-  const text6 = `${stringify(buildCodexAppRootConfig(spec))}
+  const text7 = `${stringify(buildCodexAppRootConfig(spec))}
 `;
-  validateAppConfigText(text6, spec);
-  return text6;
+  validateAppConfigText(text7, spec);
+  return text7;
 }
 
 // src/codex/app-readiness.ts
@@ -12857,12 +12966,12 @@ function backupConfigToml(env = process.env) {
   return backupPath;
 }
 function saveAppRestoreStateBeforePatch(env = process.env) {
-  const text6 = readCodexConfigText();
+  const text7 = readCodexConfigText();
   const existing = readAppRestoreState(env);
-  if (existing && isAppManagedConfig(text6)) {
+  if (existing && isAppManagedConfig(text7)) {
     return existing;
   }
-  const state = captureRestoreState(text6);
+  const state = captureRestoreState(text7);
   writeAppRestoreState(state, env);
   return state;
 }
@@ -12905,8 +13014,8 @@ function restoreCodexAppOverlay(env = process.env) {
       message: `Another relay-ai codex-app session is running (pid ${lock.pid}). Ctrl+C it first, then run --restore.`
     };
   }
-  const text6 = readCodexConfigText();
-  const managed = isAppManagedConfig(text6);
+  const text7 = readCodexConfigText();
+  const managed = isAppManagedConfig(text7);
   const restoreState = readAppRestoreState(env);
   if (!managed && !restoreState && !lock) {
     removeAppCatalogs(env);
@@ -13027,14 +13136,14 @@ async function waitForShutdownWithConfirm(assumeYes = false) {
     if (signal !== "sigint") return signal;
     if (assumeYes) return signal;
     console.log("");
-    const choice = await p13.select({
+    const choice = await p14.select({
       message: "Close ChatGPT Desktop and restore your Codex config?",
       options: [
         { value: "yes", label: "Yes, close ChatGPT Desktop and restore config" },
         { value: "no", label: "No, keep session running" }
       ]
     });
-    if (p13.isCancel(choice) || choice === "yes") return signal;
+    if (p14.isCancel(choice) || choice === "yes") return signal;
   }
 }
 function codexAppHelpText() {
@@ -13109,26 +13218,26 @@ function vertexEntryToLocalModel2(entry) {
 }
 async function runCodexAppVertexLaunch(configOnly, trace = false) {
   if (!hasApplicationDefaultCredentials()) {
-    p13.log.error("Google Application Default Credentials not found.");
-    p13.log.info("Run: gcloud auth application-default login");
+    p14.log.error("Google Application Default Credentials not found.");
+    p14.log.info("Run: gcloud auth application-default login");
     return 1;
   }
   const config = buildVertexRuntimeConfig();
   if (!config) {
-    p13.log.error("ANTHROPIC_VERTEX_PROJECT_ID (or GOOGLE_CLOUD_PROJECT) is not set.");
-    p13.log.info("Set your project: export ANTHROPIC_VERTEX_PROJECT_ID=your-project-id");
+    p14.log.error("ANTHROPIC_VERTEX_PROJECT_ID (or GOOGLE_CLOUD_PROJECT) is not set.");
+    p14.log.info("Set your project: export ANTHROPIC_VERTEX_PROJECT_ID=your-project-id");
     return 1;
   }
   let selectedEntry;
   if (config.models.length === 1) {
     selectedEntry = config.models[0];
   } else {
-    const choice = await p13.select({
+    const choice = await p14.select({
       message: "Select a starting Vertex AI model:",
       options: config.models.map((m) => ({ value: m, label: m.display_name, hint: m.id }))
     });
-    if (p13.isCancel(choice)) {
-      p13.cancel("Cancelled.");
+    if (p14.isCancel(choice)) {
+      p14.cancel("Cancelled.");
       return 0;
     }
     selectedEntry = choice;
@@ -13185,7 +13294,7 @@ async function runCodexAppVertexLaunch(configOnly, trace = false) {
     try {
       restoreOverlay();
     } catch (err) {
-      p13.log.error(String(err instanceof Error ? err.message : err));
+      p14.log.error(String(err instanceof Error ? err.message : err));
     }
   };
   try {
@@ -13225,14 +13334,14 @@ async function runCodexAppVertexLaunch(configOnly, trace = false) {
       patchedConfigSha256: fileSha2562(getCodexConfigPath()),
       ...backupPath ? { originalConfigSha256: fileSha2562(backupPath) } : {}
     });
-    p13.log.info(`Vertex AI \xB7 ${selectedEntry.display_name} \u2014 project: ${config.project} / location: ${config.location}`);
+    p14.log.info(`Vertex AI \xB7 ${selectedEntry.display_name} \u2014 project: ${config.project} / location: ${config.location}`);
     logProxy(proxyPort);
     logActiveModel(selectedEntry.display_name, selectedEntry.id);
     try {
       await launchOrRestartCodexApp();
     } catch (err) {
-      p13.log.warn(String(err instanceof Error ? err.message : err));
-      p13.log.info(codexAppInstallHint());
+      p14.log.warn(String(err instanceof Error ? err.message : err));
+      p14.log.info(codexAppInstallHint());
       throw err;
     }
     printCodexAppSessionPanel({
@@ -13253,18 +13362,18 @@ async function runCodexAppVertexLaunch(configOnly, trace = false) {
         restoreOverlay,
         closeResources
       });
-      p13.log.success(result.message);
+      p14.log.success(result.message);
       return 0;
     } catch (err) {
       shutdownFailed = true;
-      p13.log.error(String(err instanceof Error ? err.message : err));
+      p14.log.error(String(err instanceof Error ? err.message : err));
       return 1;
     }
   } finally {
     if (sessionActive && !isCodexAppRunning()) restoreOverlaySafely();
     closeResources();
     if (sessionActive && !shutdownFailed) {
-      p13.log.error("ChatGPT Desktop is still running; config restoration was skipped. Close Desktop, then run relay-ai codex-app --restore.");
+      p14.log.error("ChatGPT Desktop is still running; config restoration was skipped. Close Desktop, then run relay-ai codex-app --restore.");
     }
   }
 }
@@ -13302,7 +13411,7 @@ async function runCodexAppCommand(args, opts = {}) {
   const trace = args.includes("--trace");
   const debugLogPath = getCodexProxyDebugLogPath();
   if (trace && !configOnly) {
-    p13.log.info(`Debug log: ${debugLogPath}`);
+    p14.log.info(`Debug log: ${debugLogPath}`);
   }
   const isTty = Boolean(process.stdin.isTTY);
   if (!configOnly) {
@@ -13320,13 +13429,13 @@ async function runCodexAppCommand(args, opts = {}) {
   if (!configOnly) {
     codexAppIntro();
     if (interrupted.recovered) {
-      p13.log.warn("Recovered from an interrupted codex-app session (restored Codex config).");
+      p14.log.warn("Recovered from an interrupted codex-app session (restored Codex config).");
     }
   }
   if (legacyVertex) {
     return runCodexAppVertexLaunch(configOnly, trace);
   }
-  const catalogSpinner = p13.spinner();
+  const catalogSpinner = p14.spinner();
   catalogSpinner.start("Loading your providers...");
   let catalog;
   try {
@@ -13340,8 +13449,8 @@ async function runCodexAppCommand(args, opts = {}) {
   const compatible = codexCompatibleProviders(providersForPicker(catalog), "codex-app");
   if (compatible.length === 0) {
     if (!configOnly) {
-      p13.log.warn("No Codex-compatible providers in your registry.");
-      p13.log.info("Add a provider with relay-ai providers add.");
+      p14.log.warn("No Codex-compatible providers in your registry.");
+      p14.log.info("Add a provider with relay-ai providers add.");
     }
     return 0;
   }
@@ -13356,10 +13465,10 @@ async function runCodexAppCommand(args, opts = {}) {
   const favoritesActive = favorites.length > 0 && !mixedMode;
   const favoritesPickable = favorites.length > 0;
   if (favoritesActive && !configOnly) {
-    p13.log.info(
+    p14.log.info(
       `Favorites mode active \u2014 Codex App picker will show ${favorites.length + 1} models (1 starting + ${favorites.length} favorites).`
     );
-    p13.log.info("Edit with `relay-ai models`.");
+    p14.log.info("Edit with `relay-ai models`.");
   }
   let activeProvider = providerForCodexPicker(
     compatible.find((lp) => lp.id === prefs.lastCodexProvider) ?? compatible[0]
@@ -13373,7 +13482,7 @@ async function runCodexAppCommand(args, opts = {}) {
       providerForCodexPicker
     );
     if ("error" in bootSelection) {
-      p13.log.error(bootSelection.error);
+      p14.log.error(bootSelection.error);
       return 1;
     }
     activeProvider = bootSelection.provider;
@@ -13381,7 +13490,7 @@ async function runCodexAppCommand(args, opts = {}) {
   } else if (vertexProviderAdded) {
     const vertexProvider = compatible.find((lp) => lp.id === launchProvider);
     if (!vertexProvider) {
-      p13.log.error(`Provider '${launchProvider}' has no models available for the ChatGPT app.`);
+      p14.log.error(`Provider '${launchProvider}' has no models available for the ChatGPT app.`);
       return 1;
     }
     activeProvider = providerForCodexPicker(vertexProvider);
@@ -13416,7 +13525,7 @@ async function runCodexAppCommand(args, opts = {}) {
           continue;
         }
         if (!favoriteStart) {
-          p13.log.warn("No saved Codex App favorites are currently available.");
+          p14.log.warn("No saved Codex App favorites are currently available.");
           return 0;
         }
         activeProvider = favoriteStart.provider;
@@ -13442,7 +13551,7 @@ async function runCodexAppCommand(args, opts = {}) {
   const apiKey = await resolveLocalProviderApiKey(activeProvider);
   if (!apiKey) {
     if (!configOnly) {
-      p13.log.error(`No credential for ${activeProvider.name}. Run relay-ai providers auth ${activeProvider.id}.`);
+      p14.log.error(`No credential for ${activeProvider.name}. Run relay-ai providers auth ${activeProvider.id}.`);
     }
     return 1;
   }
@@ -13476,7 +13585,7 @@ async function runCodexAppCommand(args, opts = {}) {
         subagentFavorites: prefs.codexSubagentModels ?? []
       });
       if (mixedModels.capacitySkipped.length > 0) {
-        p13.log.warn(
+        p14.log.warn(
           `Skipped ${mixedModels.capacitySkipped.length} favorite(s) because the mixed catalog is full: ` + mixedModels.capacitySkipped.map((f) => `${f.providerId}:${f.modelId}`).join(", ")
         );
       }
@@ -13523,7 +13632,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
     try {
       restoreOverlay();
     } catch (err) {
-      p13.log.error(String(err instanceof Error ? err.message : err));
+      p14.log.error(String(err instanceof Error ? err.message : err));
     }
   };
   try {
@@ -13604,7 +13713,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
         }
       });
       proxyPort = proxyHandle.port;
-      p13.log.info(`Route audit (metadata only): ${routeAuditPath}`);
+      p14.log.info(`Route audit (metadata only): ${routeAuditPath}`);
     } else if (favoritesActive && resolvedFavorites.length > 0) {
       const needsBackend = (r) => {
         const m = r.model;
@@ -13692,8 +13801,8 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
     try {
       await launchOrRestartCodexApp(void 0, opts.assumeYes);
     } catch (err) {
-      p13.log.warn(String(err instanceof Error ? err.message : err));
-      p13.log.info(codexAppInstallHint());
+      p14.log.warn(String(err instanceof Error ? err.message : err));
+      p14.log.info(codexAppInstallHint());
       throw err;
     }
     printCodexAppSessionPanel({
@@ -13715,25 +13824,25 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
         restoreOverlay,
         closeResources
       });
-      p13.log.success(result.message);
+      p14.log.success(result.message);
       return 0;
     } catch (err) {
       shutdownFailed = true;
-      p13.log.error(String(err instanceof Error ? err.message : err));
+      p14.log.error(String(err instanceof Error ? err.message : err));
       return 1;
     }
   } finally {
     if (sessionActive && !isCodexAppRunning()) restoreOverlaySafely();
     closeResources();
     if (sessionActive && !shutdownFailed) {
-      p13.log.error("ChatGPT Desktop is still running; config restoration was skipped. Close Desktop, then run relay-ai codex-app --restore.");
+      p14.log.error("ChatGPT Desktop is still running; config restoration was skipped. Close Desktop, then run relay-ai codex-app --restore.");
     }
   }
 }
 
 // src/claude-app.ts
 import pc10 from "picocolors";
-import * as p14 from "@clack/prompts";
+import * as p15 from "@clack/prompts";
 
 // src/claude-desktop/app-config.ts
 import { existsSync as existsSync12, readFileSync as readFileSync9, writeFileSync as writeFileSync6, mkdirSync as mkdirSync7 } from "fs";
@@ -14247,10 +14356,10 @@ async function runClaudeAppCommand(args, boot) {
     return 1;
   }
   if (hasStaleSession()) {
-    p14.log.warn("Recovered from an interrupted claude-app session.");
+    p15.log.warn("Recovered from an interrupted claude-app session.");
     recoverSession();
   }
-  const catalogSpinner = p14.spinner();
+  const catalogSpinner = p15.spinner();
   catalogSpinner.start("Loading your providers...");
   let catalog;
   try {
@@ -14263,7 +14372,7 @@ async function runClaudeAppCommand(args, boot) {
   catalogSpinner.stop("");
   const compatible = codexCompatibleProviders(providersForPicker(catalog), "claude-app");
   if (compatible.length === 0) {
-    p14.log.warn("No compatible providers in your registry.");
+    p15.log.warn("No compatible providers in your registry.");
     return 0;
   }
   const prefs = loadPreferences();
@@ -14280,7 +14389,7 @@ async function runClaudeAppCommand(args, boot) {
       providerForClaudePicker
     );
     if ("error" in bootSelection) {
-      p14.log.error(bootSelection.error);
+      p15.log.error(bootSelection.error);
       return 1;
     }
     activeProvider = bootSelection.provider;
@@ -14306,7 +14415,7 @@ async function runClaudeAppCommand(args, boot) {
         );
         if (favoriteStart === "back") continue providerPick;
         if (!favoriteStart) {
-          p14.log.warn("No saved Claude App favorites are currently available.");
+          p15.log.warn("No saved Claude App favorites are currently available.");
           return 0;
         }
         useFavorites = true;
@@ -14328,7 +14437,7 @@ async function runClaudeAppCommand(args, boot) {
     }
   }
   if (!activeProvider || !selectedModel) {
-    p14.log.error("No Claude App launch model was selected.");
+    p15.log.error("No Claude App launch model was selected.");
     return 1;
   }
   const catalogResolution = await resolveClaudeAppCatalog(
@@ -14338,16 +14447,16 @@ async function runClaudeAppCommand(args, boot) {
     favorites
   );
   if (!catalogResolution.ok) {
-    p14.log.error(catalogResolution.error);
+    p15.log.error(catalogResolution.error);
     return 1;
   }
   if (catalogResolution.droppedFavorites.length > 0) {
     const skipped = catalogResolution.droppedFavorites.map((favorite) => `${favorite.providerId}/${favorite.modelId}`).join(", ");
-    p14.log.warn(`Skipped unavailable or unauthorized favorite(s): ${skipped}`);
+    p15.log.warn(`Skipped unavailable or unauthorized favorite(s): ${skipped}`);
   }
   if (catalogResolution.capacitySkippedFavorites.length > 0) {
     const skipped = catalogResolution.capacitySkippedFavorites.map((favorite) => `${favorite.providerId}/${favorite.modelId}`).join(", ");
-    p14.log.warn(`Skipped favorite(s) beyond the ${MAX_MODEL_CATALOG}-model catalog limit: ${skipped}`);
+    p15.log.warn(`Skipped favorite(s) beyond the ${MAX_MODEL_CATALOG}-model catalog limit: ${skipped}`);
   }
   let cloudCodeBackend = null;
   let proxyHandle = null;
@@ -14394,12 +14503,12 @@ async function runClaudeAppCommand(args, boot) {
     console.log(`
 ${pc10.green("\u2714")} Proxy started on port ${proxyHandle.port}`);
     if (deploymentModeChange?.previous === "1p") {
-      p14.log.info("Claude Desktop was pinned to first-party mode; switched it to third-party for this session.");
+      p15.log.info("Claude Desktop was pinned to first-party mode; switched it to third-party for this session.");
     }
     try {
       await launchOrRestartClaudeApp();
     } catch (err) {
-      p14.log.warn(String(err instanceof Error ? err.message : err));
+      p15.log.warn(String(err instanceof Error ? err.message : err));
     }
     console.log(`
 ${pc10.bold("Claude Desktop 3P Mode Active")}`);
@@ -14415,8 +14524,8 @@ ${pc10.bold("Claude Desktop 3P Mode Active")}`);
     sessionActive = false;
     if (cloudCodeBackend) cloudCodeBackend.handle.close();
     if (isClaudeAppRunning()) {
-      const shouldClose = await p14.confirm({ message: "Claude Desktop is still running. Close it?" });
-      if (shouldClose && !p14.isCancel(shouldClose)) {
+      const shouldClose = await p15.confirm({ message: "Claude Desktop is still running. Close it?" });
+      if (shouldClose && !p15.isCancel(shouldClose)) {
         quitClaudeAppGracefully();
       }
     }
@@ -14427,7 +14536,7 @@ ${pc10.bold("Claude Desktop 3P Mode Active")}`);
       cleanupSession(uuid);
     }
     if (cloudCodeBackend) cloudCodeBackend.handle.close();
-    p14.log.error(String(err instanceof Error ? err.message : err));
+    p15.log.error(String(err instanceof Error ? err.message : err));
     return 1;
   }
 }
@@ -14484,7 +14593,7 @@ function formatProviderModels(provider) {
 function buildLiveStateSection() {
   const prefs = loadPreferences();
   const registry = loadRegistry();
-  const enabled = registry.providers.filter((p16) => p16.enabled);
+  const enabled = registry.providers.filter((p17) => p17.enabled);
   const prefLines = [];
   if (prefs.lastProvider || prefs.lastModel) {
     prefLines.push(`  Claude last launch: provider=${prefs.lastProvider ?? "(none)"} model=${prefs.lastModel ?? "(none)"}`);
@@ -14501,9 +14610,9 @@ function buildLiveStateSection() {
       prefLines.push(`    ${f.providerId} / ${f.modelId}`);
     }
   }
-  const providerBlocks = enabled.length === 0 ? ["  No registry providers configured. Built-in cloud: zen, go (OpenCode Zen/Go)."] : enabled.map((p16) => [
-    `  ${p16.name} (${p16.id}) \u2014 ${getProviderModels(p16).length} model(s)`,
-    formatProviderModels(p16)
+  const providerBlocks = enabled.length === 0 ? ["  No registry providers configured. Built-in cloud: zen, go (OpenCode Zen/Go)."] : enabled.map((p17) => [
+    `  ${p17.name} (${p17.id}) \u2014 ${getProviderModels(p17).length} model(s)`,
+    formatProviderModels(p17)
   ].join("\n"));
   return `
 ================================================================================
@@ -16600,20 +16709,20 @@ ${pc11.bold("Examples:")}
   relay-ai antigravity
   relay-ai antigravity --provider zen --model deepseek-v4-flash-free`;
 }
-function printHelp(text6) {
+function printHelp(text7) {
   console.log(`
-${text6}
+${text7}
 `);
 }
 async function launchClaudeViaCatalog(catalogRoutes, startingRoute, contextWindow, trace, claudeArgs) {
   let proxyHandle;
   try {
     proxyHandle = await startProxyCatalog(catalogRoutes, startingRoute.aliasId, trace);
-    p15.log.info(
+    p16.log.info(
       `Switch menu active \u2014 proxy on port ${proxyHandle.port} ` + pc11.dim(`(${catalogRoutes.length} model${catalogRoutes.length !== 1 ? "s" : ""} in /model)`)
     );
   } catch (err) {
-    p15.log.error(`Failed to start proxy: ${err instanceof Error ? err.message : String(err)}`);
+    p16.log.error(`Failed to start proxy: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
   }
   const childEnv = buildChildEnv(
@@ -16626,7 +16735,7 @@ async function launchClaudeViaCatalog(catalogRoutes, startingRoute, contextWindo
   );
   const debugLogPath = prepareClaudeTraceLog();
   const traceArgs = trace ? ["--debug-file", debugLogPath] : [];
-  if (trace) p15.log.info(`Debug log: ${debugLogPath}`);
+  if (trace) p16.log.info(`Debug log: ${debugLogPath}`);
   const exitCode = await launchClaude(
     childEnv,
     claudeCodeClientModelId(startingRoute.aliasId, contextWindow),
@@ -16645,10 +16754,10 @@ async function runModelsCommand(opts = {}) {
   const listItemLabel = subagentScope ? "Codex SubAgent model" : "favorite";
   const configKey = scope === "codex-subagents" ? "codexSubagentModels" : "favoriteModels";
   relayIntro(scopeName);
-  const spinner10 = p15.spinner();
-  spinner10.start("Loading providers...");
+  const spinner11 = p16.spinner();
+  spinner11.start("Loading providers...");
   const catalog = await fetchProviderCatalog();
-  spinner10.stop("");
+  spinner11.stop("");
   const pickedProviders = providersForPicker(catalog);
   const allProviders = scope === "codex-subagents" ? providersForCodexSubagents(pickedProviders) : pickedProviders;
   const favoriteProviders = allProviders.map((provider) => ({
@@ -16656,8 +16765,8 @@ async function runModelsCommand(opts = {}) {
     name: favoriteProviderDisplayName(provider)
   }));
   if (favoriteProviders.length === 0) {
-    p15.log.warn("No providers found.");
-    p15.log.info(`${pc11.dim("OpenCode Zen/Go is always available. Add providers with ")}${pc11.cyan("relay-ai providers")}${pc11.dim(".")}`);
+    p16.log.warn("No providers found.");
+    p16.log.info(`${pc11.dim("OpenCode Zen/Go is always available. Add providers with ")}${pc11.cyan("relay-ai providers")}${pc11.dim(".")}`);
     relayOutro("Done");
     return 0;
   }
@@ -16686,19 +16795,19 @@ async function runModelsCommand(opts = {}) {
     });
     options.push({ value: "__done__", label: "Done", hint: "" });
     const header = favorites.length === 0 ? `${scopeName} (0/${maxFavorites})` : `${scopeName} (${favorites.length}/${maxFavorites}) \u2014 select to remove`;
-    const choice = await p15.select({
+    const choice = await p16.select({
       message: header,
       options,
       initialValue: "__done__"
     });
-    if (p15.isCancel(choice) || choice === "__done__") break;
+    if (p16.isCancel(choice) || choice === "__done__") break;
     if (choice === "__add__") {
       if (atCap) {
-        p15.log.warn(`Limit of ${maxFavorites} ${subagentScope ? "Codex SubAgent" : "favorites"} reached \u2014 remove one first.`);
+        p16.log.warn(`Limit of ${maxFavorites} ${subagentScope ? "Codex SubAgent" : "favorites"} reached \u2014 remove one first.`);
         continue;
       }
       const globalCount = buildGlobalFavoriteIndex(favoriteProviders).length;
-      const addPath = await p15.select({
+      const addPath = await p16.select({
         message: subagentScope ? "Add a Codex SubAgent model" : "Add a favorite",
         options: [
           {
@@ -16718,7 +16827,7 @@ async function runModelsCommand(opts = {}) {
           }
         ]
       });
-      if (p15.isCancel(addPath)) continue;
+      if (p16.isCancel(addPath)) continue;
       let provider;
       let browsedMultiple = [];
       if (addPath === "global") {
@@ -16741,26 +16850,26 @@ async function runModelsCommand(opts = {}) {
         let currentInitialProvider = void 0;
         while (true) {
           const providerOptions = favoriteProviders.map((ap) => providerSelectOption(ap));
-          const pickedProviderId = await p15.select({
+          const pickedProviderId = await p16.select({
             message: "Which provider?",
             options: providerOptions,
             initialValue: currentInitialProvider
           });
-          if (p15.isCancel(pickedProviderId)) break;
+          if (p16.isCancel(pickedProviderId)) break;
           provider = favoriteProviders.find((ap) => ap.id === pickedProviderId);
           let modelsToPick = provider.models;
           if (provider.models.length > MODEL_SEARCH_THRESHOLD) {
-            const searchInput = await p15.text({
+            const searchInput = await p16.text({
               message: `Search ${provider.name} models (${provider.models.length} available):`,
               placeholder: "e.g. flash 3.6, claude, llama"
             });
-            if (p15.isCancel(searchInput)) {
+            if (p16.isCancel(searchInput)) {
               currentInitialProvider = provider.id;
               continue;
             }
             modelsToPick = filterModelsBySearch(provider.models, String(searchInput));
             if (modelsToPick.length === 0) {
-              p15.log.warn("No models match \u2014 try a different search");
+              p16.log.warn("No models match \u2014 try a different search");
               currentInitialProvider = provider.id;
               continue;
             }
@@ -16774,12 +16883,12 @@ async function runModelsCommand(opts = {}) {
               hint: favorited ? pc11.yellow(`\u2605 already in ${listLabel}`) : ""
             };
           });
-          const pickedModelIds = await p15.multiselect({
+          const pickedModelIds = await p16.multiselect({
             message: `Select models to add from ${provider.name} ${pc11.dim("(Space to select, Enter to confirm)")}`,
             options: options2,
             required: false
           });
-          if (p15.isCancel(pickedModelIds)) {
+          if (p16.isCancel(pickedModelIds)) {
             currentInitialProvider = provider.id;
             continue;
           }
@@ -16814,27 +16923,27 @@ async function runModelsCommand(opts = {}) {
       if (addedModels.length > 0) {
         if (addedModels.length === 1) {
           const modelName = addedModels[0].name || addedModels[0].id;
-          p15.log.success(`Added ${modelName} (${provider.name}) to ${listLabel}.`);
+          p16.log.success(`Added ${modelName} (${provider.name}) to ${listLabel}.`);
         } else {
-          p15.log.success(`Added ${addedModels.length} models from ${provider.name} to ${listLabel}.`);
+          p16.log.success(`Added ${addedModels.length} models from ${provider.name} to ${listLabel}.`);
         }
       }
       if (duplicateCount > 0) {
-        p15.log.warn(`${duplicateCount} selected model(s) were already in ${listLabel}.`);
+        p16.log.warn(`${duplicateCount} selected model(s) were already in ${listLabel}.`);
       }
       if (limitReached) {
-        p15.log.warn(`Limit of ${maxFavorites} ${subagentScope ? "Codex SubAgent" : "favorites"} reached \u2014 some selected models could not be added.`);
+        p16.log.warn(`Limit of ${maxFavorites} ${subagentScope ? "Codex SubAgent" : "favorites"} reached \u2014 some selected models could not be added.`);
       }
     } else if (choice.startsWith("fav-")) {
       const idx = parseInt(choice.slice(4), 10);
       const fav = favorites[idx];
       const entry = modelLookup.get(`${fav.providerId}:${fav.modelId}`);
       const label = entry ? `${entry.modelName} (${entry.providerName})` : fav.modelId;
-      const confirmed = await p15.confirm({ message: `Remove ${label} from ${listLabel}?` });
-      if (p15.isCancel(confirmed) || !confirmed) continue;
+      const confirmed = await p16.confirm({ message: `Remove ${label} from ${listLabel}?` });
+      if (p16.isCancel(confirmed) || !confirmed) continue;
       favorites = removeFavorite(favorites, fav);
       favoritesDirty = true;
-      p15.log.success(`Removed ${label} from ${listLabel}.`);
+      p16.log.success(`Removed ${label} from ${listLabel}.`);
     }
   }
   if (favoritesDirty) {
@@ -16886,7 +16995,7 @@ Error: ${launchPlan.error}
   }
   if (!agentStdout) relayIntro("Claude Code");
   if (setup && !dryRun && !agentStdout) {
-    p15.log.info("Provider setup now lives in relay-ai providers \u2014 opening that next is recommended.");
+    p16.log.info("Provider setup now lives in relay-ai providers \u2014 opening that next is recommended.");
   }
   if (!httpProxyOnly && !dryRun && await needsFirstRunSetup()) {
     const firstRun = await runFirstRunWizard(trace);
@@ -16901,7 +17010,7 @@ Error: ${launchPlan.error}
       return 1;
     }
   } else {
-    const catalogSpinner = p15.spinner();
+    const catalogSpinner = p16.spinner();
     catalogSpinner.start("Loading your providers...");
     try {
       catalog = await fetchProviderCatalog();
@@ -16914,8 +17023,8 @@ Error: ${launchPlan.error}
   }
   const allProviders = providersForTarget(providersForPicker(catalog), "claude");
   if (allProviders.length === 0 && !httpProxyOnly) {
-    p15.log.warn("No providers available.");
-    p15.log.info(pc11.dim("Run relay-ai providers add or import to get started."));
+    p16.log.warn("No providers available.");
+    p16.log.info(pc11.dim("Run relay-ai providers add or import to get started."));
     return 0;
   }
   const runTransparentProxy = async (selected) => {
@@ -16933,7 +17042,7 @@ Error: ${launchPlan.error}
     }
     const debugLogPath2 = prepareClaudeTraceLog();
     const traceArgs2 = trace ? ["--debug-file", debugLogPath2] : [];
-    if (trace && !agentStdout) p15.log.info(`Debug log: ${debugLogPath2}`);
+    if (trace && !agentStdout) p16.log.info(`Debug log: ${debugLogPath2}`);
     try {
       const result = await launchClaudeWithHttpProxy({
         providers: catalog,
@@ -16945,26 +17054,26 @@ Error: ${launchPlan.error}
         onProxyReady: (proxy) => {
           if (agentStdout) return;
           const count = proxy.handle.modelIds.length;
-          p15.log.info(
+          p16.log.info(
             count === 0 ? "Secure Anthropic passthrough ready; no compatible Relay models were added." : `Secure Anthropic passthrough ready with ${count} Relay model${count === 1 ? "" : "s"}.`
           );
-          for (const modelId of proxy.handle.modelIds) p15.log.message(pc11.dim(`  /model ${modelId}`));
+          for (const modelId of proxy.handle.modelIds) p16.log.message(pc11.dim(`  /model ${modelId}`));
         }
       });
       if (!agentStdout && result.proxy.loaded.unavailable.length > 0) {
-        p15.log.warn(
+        p16.log.warn(
           `${result.proxy.loaded.unavailable.length} favorite${result.proxy.loaded.unavailable.length === 1 ? "" : "s"} unavailable or missing credentials.`
         );
       }
       if (!agentStdout && result.proxy.loaded.unsupported.length > 0) {
-        p15.log.warn(
+        p16.log.warn(
           `${result.proxy.loaded.unsupported.length} incompatible favorite${result.proxy.loaded.unsupported.length === 1 ? "" : "s"} skipped.`
         );
       }
       if (trace) printTraceLog(debugLogPath2);
       return result.exitCode;
     } catch (error) {
-      p15.log.error(
+      p16.log.error(
         `Could not start secure Anthropic + Relay mode: ${error instanceof Error ? error.message : String(error)}`
       );
       return 1;
@@ -16985,7 +17094,7 @@ Error: ${launchPlan.error}
   if (launchPlan.skip && launchPlan.target) {
     const resolved = findProviderAndModel(allProviders, launchPlan.target);
     if (!resolved) {
-      p15.log.error(
+      p16.log.error(
         `Provider/model not found: ${launchPlan.target.providerId} / ${launchPlan.target.modelId}`
       );
       return 1;
@@ -16993,19 +17102,19 @@ Error: ${launchPlan.error}
     activeProvider = resolved.provider;
     selectedModel = resolved.model;
     if (!agentStdout) {
-      p15.log.step(`Using ${selectedModel.name || selectedModel.id} (${activeProvider.name})`);
+      p16.log.step(`Using ${selectedModel.name || selectedModel.id} (${activeProvider.name})`);
     }
     if (!dryRun) recordLaunchSelection("claude", activeProvider.id, selectedModel.id, prefs);
   } else {
     let currentInitialProvider = initialProvider;
     while (true) {
-      const chosen = await p15.select({
+      const chosen = await p16.select({
         message: "Which provider?",
         options: providerOptions,
         initialValue: currentInitialProvider
       });
-      if (p15.isCancel(chosen)) {
-        p15.cancel("Cancelled.");
+      if (p16.isCancel(chosen)) {
+        p16.cancel("Cancelled.");
         return 0;
       }
       const providerChoice = chosen;
@@ -17028,7 +17137,7 @@ Error: ${launchPlan.error}
           continue;
         }
         if (!favStart) {
-          p15.log.warn("No saved favorites are currently available.");
+          p16.log.warn("No saved favorites are currently available.");
           return 0;
         }
         activeProvider = favStart.provider;
@@ -17052,13 +17161,13 @@ Error: ${launchPlan.error}
   }
   let useHttpProxy = Boolean(httpProxy);
   if (!httpProxy && !launchPlan.skip && supportsClaudeTransparentMode(selectedModel)) {
-    const transparentChoice = await p15.select({
+    const transparentChoice = await p16.select({
       message: "Keep your normal Claude models available too?",
       options: claudeTransparentModeOptions(selectedModel.name || selectedModel.id),
       initialValue: prefs.lastClaudeTransparentMode ?? true
     });
-    if (p15.isCancel(transparentChoice)) {
-      p15.cancel("Cancelled.");
+    if (p16.isCancel(transparentChoice)) {
+      p16.cancel("Cancelled.");
       return 0;
     }
     useHttpProxy = transparentChoice;
@@ -17077,12 +17186,12 @@ Error: ${launchPlan.error}
     );
     const startingRoute = resolveRoute(activeProvider.id, selectedModel.id) ?? null;
     if (!startingRoute) {
-      p15.log.error("Could not resolve a proxy route for the selected model.");
+      p16.log.error("Could not resolve a proxy route for the selected model.");
       return 1;
     }
     const { routes: catalogRoutes, droppedFavorites } = buildCatalogRoutes(startingRoute, favorites, resolveRoute);
     if (droppedFavorites.length > 0) {
-      p15.log.warn(
+      p16.log.warn(
         `Skipping ${droppedFavorites.length} favorite${droppedFavorites.length === 1 ? "" : "s"} that are no longer available in /model`
       );
     }
@@ -17127,7 +17236,7 @@ Error: ${launchPlan.error}
   }
   const launchApiKey = await resolveLocalProviderApiKey(activeProvider);
   if (!launchApiKey?.trim()) {
-    p15.log.error(
+    p16.log.error(
       `No credential found for ${activeProvider.name}. Add a key with relay-ai providers or set OPENCODE_API_KEY.`
     );
     return 1;
@@ -17151,9 +17260,9 @@ Error: ${launchPlan.error}
         },
         launchApiKey
       );
-      if (!isAgentStdoutMode()) p15.log.info(`Cloud Code proxy started on port ${proxyHandle.port}`);
+      if (!isAgentStdoutMode()) p16.log.info(`Cloud Code proxy started on port ${proxyHandle.port}`);
     } catch (err) {
-      p15.log.error(`Failed to start Cloud Code proxy: ${err instanceof Error ? err.message : String(err)}`);
+      p16.log.error(`Failed to start Cloud Code proxy: ${err instanceof Error ? err.message : String(err)}`);
       return 1;
     }
     childEnv = buildChildEnv(
@@ -17179,9 +17288,9 @@ Error: ${launchPlan.error}
         },
         launchApiKey
       );
-      if (!isAgentStdoutMode()) p15.log.info(`OAuth proxy started on port ${proxyHandle.port}`);
+      if (!isAgentStdoutMode()) p16.log.info(`OAuth proxy started on port ${proxyHandle.port}`);
     } catch (err) {
-      p15.log.error(`Failed to start OAuth proxy: ${err instanceof Error ? err.message : String(err)}`);
+      p16.log.error(`Failed to start OAuth proxy: ${err instanceof Error ? err.message : String(err)}`);
       return 1;
     }
     childEnv = buildChildEnv(
@@ -17226,12 +17335,12 @@ Error: ${launchPlan.error}
         launchApiKey
       );
       if (!isAgentStdoutMode()) {
-        p15.log.info(
+        p16.log.info(
           `SDK adapter proxy started on port ${proxyHandle.port}` + (selectedModel.npm ? pc11.dim(` (${selectedModel.npm})`) : "")
         );
       }
     } catch (err) {
-      p15.log.error(`Failed to start SDK adapter proxy: ${err instanceof Error ? err.message : String(err)}`);
+      p16.log.error(`Failed to start SDK adapter proxy: ${err instanceof Error ? err.message : String(err)}`);
       return 1;
     }
     childEnv = buildChildEnv(
@@ -17247,7 +17356,7 @@ Error: ${launchPlan.error}
   }
   const debugLogPath = prepareClaudeTraceLog();
   const traceArgs = trace ? ["--debug-file", debugLogPath] : [];
-  if (trace) p15.log.info(`Debug log: ${debugLogPath}`);
+  if (trace) p16.log.info(`Debug log: ${debugLogPath}`);
   const exitCode = await launchClaude(
     childEnv,
     claudeCodeClientModelId(selectedModel.id, selectedModel.contextWindow),
@@ -17329,7 +17438,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-LILSFWNG.js");
+    const { runUiCommand } = await import("./ui-command-SVYJU5U3.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {
@@ -17342,7 +17451,7 @@ Options:
       return 0;
     }
     if (parsed.favoritesAgy) {
-      p15.log.info("Antigravity now uses your general favorites \u2014 `--agy` is no longer needed.");
+      p16.log.info("Antigravity now uses your general favorites \u2014 `--agy` is no longer needed.");
     }
     return runModelsCommand({ scope: parsed.modelCatalogScope ?? "global" });
   }

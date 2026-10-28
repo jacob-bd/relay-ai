@@ -3,9 +3,9 @@
 // Dependency-free on purpose: the registry provider, provider factory and the
 // `--vertex` launchers all read these, and server/vertex-config.ts sits inside
 // the proxy <-> server/models import cycle.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { getVertexModelsPath } from './paths.js';
 
 export interface VertexModelEntry {
@@ -15,10 +15,18 @@ export interface VertexModelEntry {
   upstream_id?: string;
 }
 
-/** Public-safe default catalog — generic Anthropic model ids on Vertex. */
+/**
+ * Public-safe default catalog: current Claude models by their generic Vertex
+ * ids, newest first. Used until the user saves their own list; keep
+ * assets/vertex-models.example.json in sync.
+ */
 export const DEFAULT_VERTEX_MODELS: VertexModelEntry[] = [
-  { id: 'claude-sonnet-4-6', display_name: 'Claude Sonnet 4.6' },
+  { id: 'claude-opus-5-5', display_name: 'Claude Opus 5.5' },
+  { id: 'claude-sonnet-5-5', display_name: 'Claude Sonnet 5.5' },
+  { id: 'claude-haiku-5-5', display_name: 'Claude Haiku 5.5' },
+  { id: 'claude-sonnet-5', display_name: 'Claude Sonnet 5' },
   { id: 'claude-opus-4-6', display_name: 'Claude Opus 4.6' },
+  { id: 'claude-sonnet-4-6', display_name: 'Claude Sonnet 4.6' },
   { id: 'claude-haiku-4-5', display_name: 'Claude Haiku 4.5' },
 ];
 
@@ -82,4 +90,20 @@ export function loadVertexModelEntries(env: EnvLike = process.env): VertexModelE
   } catch {
     return DEFAULT_VERTEX_MODELS;
   }
+}
+
+/** True when the user saved their own list (otherwise the defaults apply). */
+export function hasCustomVertexModels(env: EnvLike = process.env): boolean {
+  return existsSync(getVertexModelsPath(env));
+}
+
+export function saveVertexModelEntries(entries: VertexModelEntry[], env: EnvLike = process.env): void {
+  const path = getVertexModelsPath(env);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(entries, null, 2)}\n`);
+}
+
+/** Drop the saved list so the defaults (including future updates) apply again. */
+export function resetVertexModelEntries(env: EnvLike = process.env): void {
+  rmSync(getVertexModelsPath(env), { force: true });
 }

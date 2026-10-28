@@ -8,7 +8,13 @@ import { addProviderFromTemplate } from '../src/registry/add-template.js';
 import { loadRegistry, saveRegistry } from '../src/registry/io.js';
 import { loadRegistryProviders } from '../src/registry/load.js';
 import { getProviderModels } from '../src/registry/provider-models.js';
-import { isVertexAnthropicRegistered } from '../src/registry/vertex-anthropic.js';
+import {
+  addVertexModelEntry,
+  isVertexAnthropicRegistered,
+  removeVertexModelEntries,
+  vertexModelDisplayName,
+} from '../src/registry/vertex-anthropic.js';
+import { DEFAULT_VERTEX_MODELS, loadVertexModelEntries, resetVertexModelEntries } from '../src/vertex-env.js';
 
 vi.mock('@napi-rs/keyring', () => ({
   Entry: class { constructor() { throw new Error('isolated test keyring'); } },
@@ -87,5 +93,44 @@ describe('Vertex AI (Claude) registry provider', () => {
   it('scopes Vertex claude ids so they never collide with a Claude subscription', () => {
     expect(aliasModelId('claude-sonnet-5-5', 'vertex-anthropic')).toBe('anthropic-vertex-anthropic__claude-sonnet-5-5');
     expect(aliasModelId('claude-sonnet-5-5', 'claude-code')).toBe('claude-sonnet-5-5');
+  });
+
+  it('defaults to the current Claude lineup, newest first', () => {
+    rmSync(join(home(), 'vertex-models.json'), { force: true });
+    expect(loadVertexModelEntries().map(m => m.id)).toEqual([
+      'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-sonnet-5',
+      'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5',
+    ]);
+  });
+
+  it('adds to the default list on first edit instead of replacing it', () => {
+    rmSync(join(home(), 'vertex-models.json'), { force: true });
+    expect(addVertexModelEntry({ id: 'claude-fable-5-1', display_name: 'Claude Fable 5.1' })).toEqual({ ok: true });
+    const ids = loadVertexModelEntries().map(m => m.id);
+    expect(ids).toHaveLength(DEFAULT_VERTEX_MODELS.length + 1);
+    expect(ids.at(-1)).toBe('claude-fable-5-1');
+    expect(addVertexModelEntry({ id: 'claude-fable-5-1', display_name: 'dup' }).ok).toBe(false);
+    expect(addVertexModelEntry({ id: 'bad id', display_name: 'x' }).ok).toBe(false);
+  });
+
+  it('removes models but always keeps one, and preserves upstream ids', () => {
+    expect(removeVertexModelEntries(['claude-sonnet-5-5'])).toEqual({ ok: true });
+    expect(loadVertexModelEntries()).toEqual([
+      { id: 'claude-opus-5-5', display_name: 'Claude Opus 5.5', upstream_id: 'claude-opus-5-5@default' },
+    ]);
+    expect(removeVertexModelEntries(['claude-opus-5-5']).ok).toBe(false);
+    expect(removeVertexModelEntries(['not-there']).ok).toBe(false);
+  });
+
+  it('reset returns to the defaults', () => {
+    resetVertexModelEntries();
+    expect(loadVertexModelEntries()).toEqual(DEFAULT_VERTEX_MODELS);
+  });
+
+  it('derives display names from Vertex model ids', () => {
+    expect(vertexModelDisplayName('claude-haiku-5-5')).toBe('Claude Haiku 5.5');
+    expect(vertexModelDisplayName('claude-sonnet-5')).toBe('Claude Sonnet 5');
+    expect(vertexModelDisplayName('claude-opus-4-5@20251101')).toBe('Claude Opus 4.5');
+    expect(vertexModelDisplayName('gemini-3-pro')).toBe('gemini-3-pro');
   });
 });
