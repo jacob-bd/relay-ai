@@ -319,10 +319,13 @@ export async function runAntigravityOAuthFlow(
 ): Promise<AntigravityOAuthResult> {
   const server = await startCallbackServer();
   try {
-    const { authUrl, codeVerifier, redirectUri } = await buildAntigravityAuthUrl(server.redirectUri);
+    const { authUrl, codeVerifier, oauthState, redirectUri } = await buildAntigravityAuthUrl(server.redirectUri);
     onAuthUrl(authUrl);
     open(authUrl).catch(() => {});
-    const { code } = await server.waitForCallback();
+    const { code, state, error } = await server.waitForCallback();
+    if (error) throw new Error(`Google sign-in was not completed: ${error}`);
+    // The callback port is local and unauthenticated — only a response carrying our own state is ours.
+    if (state !== oauthState) throw new Error('Google sign-in returned an unexpected state — start the sign-in again');
     if (!code) throw new Error('No authorization code received from Google');
     const tokens = await exchangeAntigravityToken(code, codeVerifier, redirectUri);
     return runBootstrap(tokens);
