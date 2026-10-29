@@ -71,13 +71,40 @@ describe('registry/custom-endpoint add', () => {
     });
 
     const result = await addCustomEndpointProvider({
-      displayName: 'Acme Gateway',
+      displayName: 'Acme Gateway!',
       baseUrl: 'https://gw.example.com/v1',
       apiKey: 'sk-two',
       kind: 'openai',
     });
 
     expect(result.provider?.id).toBe('custom-acme-gateway-2');
+  });
+
+  it('refuses a display name another provider already uses (case-insensitive)', async () => {
+    vi.mocked(io.loadRegistry).mockReturnValue({
+      schemaVersion: 1,
+      providers: [{
+        id: 'custom-acme-gateway',
+        templateId: 'custom-openai',
+        name: 'Acme Gateway',
+        enabled: true,
+        authRef: 'keyring:provider:custom-acme-gateway',
+        api: { npm: '@ai-sdk/openai-compatible', url: 'https://other.example.com/v1' },
+        addedAt: '2026-01-01T00:00:00.000Z',
+      }],
+    });
+
+    const result = await addCustomEndpointProvider({
+      displayName: '  acme   gateway ',
+      baseUrl: 'https://gw.example.com/v1',
+      apiKey: 'sk-two',
+      kind: 'openai',
+    });
+
+    expect(result.added).toBe(false);
+    expect(result.error).toMatch(/already exists/i);
+    expect(io.saveRegistry).not.toHaveBeenCalled();
+    expect(env.saveProviderCredential).not.toHaveBeenCalled();
   });
 
   it('passes headers to the fetcher and stores them on the entry', async () => {

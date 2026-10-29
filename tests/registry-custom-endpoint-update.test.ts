@@ -58,6 +58,22 @@ describe('registry/custom-endpoint update', () => {
 
   afterEach(() => vi.unstubAllEnvs());
 
+  it('refuses to rename onto another provider\'s name', async () => {
+    const provider = customProvider();
+    const other = customProvider({ id: 'custom-other', name: 'Other Gateway', authRef: 'keyring:provider:custom-other' });
+    vi.mocked(io.loadRegistry).mockReturnValue({ schemaVersion: 1, providers: [provider, other] });
+
+    const result = await updateCustomEndpointProvider({
+      providerId: 'custom-acme',
+      displayName: ' other  gateway',
+    });
+
+    expect(result.updated).toBe(false);
+    expect(result.error).toMatch(/already exists/i);
+    expect(io.saveRegistry).not.toHaveBeenCalled();
+    expect(provider.name).toBe('Acme Gateway');
+  });
+
   it('renames without making any network call', async () => {
     const provider = customProvider();
     vi.mocked(io.loadRegistry).mockReturnValue(registryWith(provider));

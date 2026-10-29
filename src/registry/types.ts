@@ -48,6 +48,8 @@ export interface RegistryProvider {
   id: string;
   templateId: string;
   name: string;
+  /** True once the user renamed the provider — pickers then show `name` exactly as typed. */
+  nameCustomized?: boolean;
   enabled: boolean;
   authRef: string;
   authType?: 'api' | 'oauth' | 'none';

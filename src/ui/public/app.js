@@ -1324,6 +1324,7 @@ function buildClinePassBodyContent(template, card, provider) {
     },
   }));
 
+  if (provider) content.appendChild(buildRenameProviderRow(provider));
   if (provider) content.appendChild(buildDeleteProviderRow(provider));
   return content;
 }
@@ -1528,6 +1529,7 @@ function buildProviderBodyContent(provider) {
     content.appendChild(manualButton);
   }
   if (provider.customEndpoint) content.appendChild(buildEditCustomEndpointRow(provider));
+  content.appendChild(buildRenameProviderRow(provider));
   content.appendChild(buildDeleteProviderRow(provider));
   return content;
 }
@@ -1704,6 +1706,82 @@ function buildEditCustomEndpointRow(provider) {
   return wrapper;
 }
 
+function buildRenameProviderRow(provider) {
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'margin-top:12px;padding-top:12px;border-top:1px solid oklch(22% 0.015 265)';
+
+  const renameBtn = document.createElement('button');
+  renameBtn.className = 'btn btn-ghost';
+  renameBtn.textContent = 'Rename Provider';
+
+  const form = document.createElement('div');
+  form.style.cssText = 'display:none;align-items:center;gap:8px;flex-wrap:wrap';
+
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.className = 'key-input';
+  nameInput.maxLength = 60;
+  nameInput.value = provider.name ?? '';
+  nameInput.style.flex = '1';
+  nameInput.style.minWidth = '180px';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn btn-primary';
+  saveBtn.textContent = 'Save Name';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-ghost';
+  cancelBtn.textContent = 'Cancel';
+
+  const feedback = document.createElement('div');
+  feedback.className = 'key-feedback';
+
+  form.appendChild(nameInput);
+  form.appendChild(saveBtn);
+  form.appendChild(cancelBtn);
+  wrapper.appendChild(renameBtn);
+  wrapper.appendChild(form);
+  wrapper.appendChild(feedback);
+
+  renameBtn.addEventListener('click', () => {
+    renameBtn.style.display = 'none';
+    form.style.display = 'flex';
+    nameInput.focus();
+    nameInput.select();
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    form.style.display = 'none';
+    renameBtn.style.display = '';
+    feedback.textContent = '';
+    feedback.className = 'key-feedback';
+    nameInput.value = provider.name ?? '';
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    saveBtn.disabled = true;
+    const result = await api('POST', '/api/providers/rename', { providerId: provider.id, name: nameInput.value });
+    saveBtn.disabled = false;
+    if (result.ok) {
+      showToast(`Renamed to ${result.name}`);
+      state.modelsLoaded = false;
+      await loadTemplates();
+      await initModels();
+      renderProviders();
+    } else {
+      feedback.textContent = result.error ?? 'Rename failed';
+      feedback.className = result.error === 'Nothing to change.' ? 'key-feedback muted' : 'key-feedback error';
+    }
+  });
+
+  nameInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') saveBtn.click();
+    if (e.key === 'Escape') cancelBtn.click();
+  });
+
+  return wrapper;
+}
+
 function buildDeleteProviderRow(provider) {
   const wrapper = document.createElement('div');
   wrapper.style.cssText = 'margin-top:12px;padding-top:12px;border-top:1px solid oklch(22% 0.015 265)';
@@ -1800,6 +1878,7 @@ function buildOAuthProviderBodyContent(provider) {
   content.appendChild(status);
   content.appendChild(actionRow);
   content.appendChild(feedback);
+  content.appendChild(buildRenameProviderRow(provider));
   content.appendChild(buildDeleteProviderRow(provider));
 
   refreshBtn.addEventListener('click', async () => {

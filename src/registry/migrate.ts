@@ -1,3 +1,4 @@
+import { findProviderNameConflict, uniqueProviderName } from './provider-name.js';
 import type { ProviderRegistry } from './types.js';
 
 const LEGACY_CLOUD_PROVIDER_IDS = [
@@ -81,4 +82,21 @@ export function migrateAlibabaDashScopeChinaLabel(registry: ProviderRegistry): b
 
   provider.name = 'Alibaba DashScope (China)';
   return true;
+}
+
+/**
+ * Provider names must be unique. The first provider keeps a shared name; later
+ * ones get a number ("Groq 2"). Ids and credentials are untouched, and the
+ * result is marked customized so pickers show it as-is.
+ */
+export function migrateDuplicateProviderNames(registry: ProviderRegistry): boolean {
+  let changed = false;
+  registry.providers.forEach((provider, index) => {
+    const earlier = registry.providers.slice(0, index);
+    if (!findProviderNameConflict(earlier, provider.name, provider.id)) return;
+    provider.name = uniqueProviderName(registry.providers, provider.name, provider.id);
+    provider.nameCustomized = true;
+    changed = true;
+  });
+  return changed;
 }

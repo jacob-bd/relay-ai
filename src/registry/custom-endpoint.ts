@@ -5,6 +5,7 @@ import { localIsoTimestamp } from '../trace-log.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
 import { fetchAnthropicModels } from './fetch-anthropic-models.js';
 import { loadRegistry, saveRegistry } from './io.js';
+import { findProviderNameConflict } from './provider-name.js';
 import type { CachedModel, RegistryProvider } from './types.js';
 import { customProviderId, isValidProviderId, slugifyProviderId } from './validate.js';
 import { validateCustomEndpointUrl } from './url-security.js';
@@ -138,6 +139,14 @@ export async function addCustomEndpointProvider(input: AddCustomEndpointInput): 
   }
 
   const registry = loadRegistry();
+  const nameClash = findProviderNameConflict(registry.providers, input.displayName);
+  if (nameClash) {
+    return {
+      added: false,
+      error: `A provider named "${nameClash.name}" already exists.`,
+      hint: 'Pick a different name.',
+    };
+  }
   const apiKey = input.apiKey.trim() || 'local';
   const headers = input.headers && Object.keys(input.headers).length > 0 ? input.headers : undefined;
 
@@ -284,6 +293,14 @@ export async function updateCustomEndpointProvider(
     : provider.api.headers;
 
   const nameChanged = Boolean(nextName) && nextName !== provider.name;
+  const nameClash = nameChanged ? findProviderNameConflict(registry.providers, nextName as string, provider.id) : undefined;
+  if (nameClash) {
+    return {
+      updated: false,
+      error: `A provider named "${nameClash.name}" already exists.`,
+      hint: 'Pick a different name.',
+    };
+  }
   const needsTest = urlChanged || Boolean(newKey) || headersChanged;
 
   if (!needsTest) {

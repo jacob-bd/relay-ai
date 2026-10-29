@@ -310,6 +310,26 @@ import { dirname as dirname2 } from "path";
 // src/registry/types.ts
 var REGISTRY_SCHEMA_VERSION = 1;
 
+// src/registry/provider-name.ts
+function normalizeProviderName(name) {
+  return name.trim().replace(/\s+/g, " ");
+}
+function nameKey(name) {
+  return normalizeProviderName(name).toLowerCase();
+}
+function findProviderNameConflict(providers, name, exceptId) {
+  const key = nameKey(name);
+  return providers.find((p) => p.id !== exceptId && nameKey(p.name) === key);
+}
+function uniqueProviderName(providers, name, exceptId) {
+  const base = normalizeProviderName(name);
+  if (!findProviderNameConflict(providers, base, exceptId)) return base;
+  for (let i = 2; ; i++) {
+    const candidate = `${base} ${i}`;
+    if (!findProviderNameConflict(providers, candidate, exceptId)) return candidate;
+  }
+}
+
 // src/registry/migrate.ts
 var LEGACY_CLOUD_PROVIDER_IDS = [
   { legacyId: "opencode", id: "zen", name: "OpenCode Zen" },
@@ -372,6 +392,17 @@ function migrateAlibabaDashScopeChinaLabel(registry) {
   if (!provider) return false;
   provider.name = "Alibaba DashScope (China)";
   return true;
+}
+function migrateDuplicateProviderNames(registry) {
+  let changed = false;
+  registry.providers.forEach((provider, index) => {
+    const earlier = registry.providers.slice(0, index);
+    if (!findProviderNameConflict(earlier, provider.name, provider.id)) return;
+    provider.name = uniqueProviderName(registry.providers, provider.name, provider.id);
+    provider.nameCustomized = true;
+    changed = true;
+  });
+  return changed;
 }
 
 // src/registry/validate.ts
@@ -494,6 +525,7 @@ function parseProvider(raw) {
   if (p.authType === "api" || p.authType === "oauth" || p.authType === "none") {
     provider.authType = p.authType;
   }
+  if (p.nameCustomized === true) provider.nameCustomized = true;
   if (typeof p.refreshedAt === "string") provider.refreshedAt = p.refreshedAt;
   if (Array.isArray(p.manualModels)) {
     provider.manualModels = p.manualModels.flatMap((raw2) => {
@@ -542,6 +574,7 @@ function loadRegistry(path = getProvidersPath(), { persist = true } = {}) {
     if (migrateOAuthOpenAiProvider(registry)) migrated = true;
     if (migrateOAuthXaiProvider(registry)) migrated = true;
     if (migrateAlibabaDashScopeChinaLabel(registry)) migrated = true;
+    if (migrateDuplicateProviderNames(registry)) migrated = true;
     if (migrated && persist) {
       try {
         saveRegistry(registry, path);

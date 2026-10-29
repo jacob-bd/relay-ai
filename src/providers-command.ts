@@ -35,8 +35,10 @@ import { importFromOpencode, type ImportConflictChoice, type ImportConflictConte
 import {
   addOpencodeCloudFromApiKey,
   removeProviderFromRegistry,
+  renameProvider,
   toggleProviderEnabled,
 } from './registry/crud.js';
+import { validateProviderName } from './registry/provider-name.js';
 import { loadRegistry, saveRegistry } from './registry/io.js';
 import { getProviderModels, supportsManualModels } from './registry/provider-models.js';
 import { runManualModelAddFlow, runManualModelRemoveFlow } from './manual-model-wizard.js';
@@ -66,12 +68,14 @@ import {
   relayIntro,
 } from './ui.js';
 
-export type ProvidersSubcommand = 'hub' | 'add' | 'import' | 'list' | 'remove' | 'refresh-models' | 'auth' | 'help';
+export type ProvidersSubcommand = 'hub' | 'add' | 'import' | 'list' | 'remove' | 'rename' | 'refresh-models' | 'auth' | 'help';
 
 export function parseProvidersArgs(args: string[]): {
   subcommand: ProvidersSubcommand;
   showHelp: boolean;
   removeId?: string;
+  /** `providers rename <id> <new name…>` */
+  renameName?: string;
   /** `providers add <template-id>` skips the catalog picker. */
   addTemplateId?: string;
   authMethod?: ProviderAuthMethod;
@@ -116,6 +120,10 @@ export function parseProvidersArgs(args: string[]): {
     if (rest.length > 1) return { subcommand: 'remove', showHelp: false, error: `Unknown remove option: ${rest[1]}` };
     return { subcommand: 'remove', showHelp: false, removeId: rest[0] };
   }
+  if (first === 'rename') {
+    if (rest.length < 2) return { subcommand: 'rename', showHelp: false, error: 'Usage: relay-ai providers rename <id> <new name>' };
+    return { subcommand: 'rename', showHelp: false, removeId: rest[0], renameName: rest.slice(1).join(' ') };
+  }
   if (first === 'refresh-models') {
     if (rest.length === 0) return { subcommand: 'refresh-models', showHelp: false };
     if (rest.length > 1) return { subcommand: 'refresh-models', showHelp: false, error: `Unknown refresh-models option: ${rest[1]}` };
@@ -133,6 +141,7 @@ ${pc.bold('Usage:')}
   relay-ai providers import
   relay-ai providers list
   relay-ai providers remove <id>
+  relay-ai providers rename <id> <new name>
   relay-ai providers refresh-models [id]
   relay-ai providers auth <id>
 
@@ -143,6 +152,7 @@ ${pc.bold('Subcommands:')}
   auth        Sign in with OAuth (Antigravity, GitHub Copilot, xAI, OpenAI, ClinePass)
   list        Show configured providers ${pc.dim('[Phase 1.0]')}
   remove      Remove a provider by id ${pc.dim('[Phase 1.1]')}
+  rename      Change a provider's display name (id and keys stay the same)
   refresh-models  Update cached model lists ${pc.dim('[Phase 1.2]')}`;
 }
 
@@ -897,6 +907,26 @@ export async function runProvidersAdd(templateId?: string): Promise<number> {
   return 0;
 }
 
+export async function runProvidersRename(id: string, name: string): Promise<number> {
+  const result = renameProvider(id, name);
+  if (!result.renamed) {
+    p.log.error(result.error ?? `Could not rename ${id}`);
+    return 1;
+  }
+  p.log.success(`Renamed ${id} to "${result.name}".`);
+  return 0;
+}
+
+async function runProviderRenamePrompt(provider: RegistryProvider): Promise<number> {
+  const name = await p.text({
+    message: 'New display name',
+    initialValue: provider.name,
+    validate: value => validateProviderName(value ?? '') ?? undefined,
+  });
+  if (p.isCancel(name)) return 0;
+  return runProvidersRename(provider.id, String(name));
+}
+
 export async function runProvidersRemove(id: string, interactive = false): Promise<number> {
   const registry = loadRegistry();
   const provider = registry.providers.find(pr => pr.id === id);
@@ -1028,6 +1058,7 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
     });
   }
   detailOptions.push(
+    { value: 'rename', label: 'Rename provider', hint: 'Change the name shown in pickers (keys and favorites are unaffected)' },
     {
       value: 'toggle',
       label: provider.enabled ? 'Disable provider' : 'Enable provider',
@@ -1083,6 +1114,10 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
 
   if (action === 'auth') {
     return (await runProvidersAuth(id)) === 0 ? 'back' : 'failed';
+  }
+
+  if (action === 'rename') {
+    return (await runProviderRenamePrompt(provider)) === 0 ? 'back' : 'failed';
   }
 
   if (action === 'toggle') {
@@ -1246,6 +1281,9 @@ export async function runProvidersCommand(args: string[]): Promise<number> {
   if (parsed.subcommand === 'list') return runProvidersList();
   if (parsed.subcommand === 'add') return runProvidersAdd(parsed.addTemplateId);
   if (parsed.subcommand === 'remove' && parsed.removeId) return runProvidersRemove(parsed.removeId);
+  if (parsed.subcommand === 'rename' && parsed.removeId && parsed.renameName) {
+    return runProvidersRename(parsed.removeId, parsed.renameName);
+  }
   if (parsed.subcommand === 'refresh-models') return runProvidersRefreshModels(parsed.removeId);
   if (parsed.subcommand === 'auth') {
     if (parsed.showHelp || !parsed.removeId) {

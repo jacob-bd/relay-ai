@@ -42,6 +42,7 @@ import {
   fetchModelsDevCache,
   fetchWithOAuthRetry,
   findModelsDevModel,
+  findProviderNameConflict,
   forceRefreshProviderCredential,
   formatClineRuntimeCredential,
   formatUpstreamError,
@@ -77,6 +78,7 @@ import {
   makeTraceLogger,
   maxToolsForNpm,
   modelPrefersResponsesApi,
+  normalizeProviderName,
   oauthCredentialToKeychainJson,
   parseAuthRef,
   parseToolArguments,
@@ -123,12 +125,14 @@ import {
   supportsNativeOAuth,
   tokensToStoredCredential,
   translateRequest,
+  uniqueProviderName,
   upstreamHttpStatus,
   validateCustomEndpointUrl,
+  validateProviderName,
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-MPW6B3QF.js";
+} from "./chunk-Z7VY346J.js";
 import {
   getAppHome,
   hasApplicationDefaultCredentials,
@@ -2889,6 +2893,7 @@ function materializeOne(provider, resolveCredential, agent) {
   return {
     id: provider.id,
     name: provider.name,
+    ...provider.nameCustomized ? { nameCustomized: true } : {},
     apiKey,
     authRef: provider.authRef,
     authType: provider.authType,
@@ -4421,6 +4426,14 @@ async function addCustomEndpointProvider(input) {
     return { added: false, error: urlCheck.error, hint: urlCheck.hint };
   }
   const registry = loadRegistry();
+  const nameClash = findProviderNameConflict(registry.providers, input.displayName);
+  if (nameClash) {
+    return {
+      added: false,
+      error: `A provider named "${nameClash.name}" already exists.`,
+      hint: "Pick a different name."
+    };
+  }
   const apiKey = input.apiKey.trim() || "local";
   const headers = input.headers && Object.keys(input.headers).length > 0 ? input.headers : void 0;
   if (!input.confirmDuplicate) {
@@ -4517,6 +4530,14 @@ async function updateCustomEndpointProvider(input) {
   const headersChanged = input.headers !== void 0 && !sameHeaders(input.headers, provider.api.headers);
   const nextHeaders = input.headers !== void 0 ? Object.keys(input.headers).length > 0 ? input.headers : void 0 : provider.api.headers;
   const nameChanged = Boolean(nextName) && nextName !== provider.name;
+  const nameClash = nameChanged ? findProviderNameConflict(registry.providers, nextName, provider.id) : void 0;
+  if (nameClash) {
+    return {
+      updated: false,
+      error: `A provider named "${nameClash.name}" already exists.`,
+      hint: "Pick a different name."
+    };
+  }
   const needsTest = urlChanged || Boolean(newKey) || headersChanged;
   if (!needsTest) {
     if (!nameChanged) return { updated: false, error: "Nothing to change." };
@@ -5708,6 +5729,23 @@ async function removeProviderFromRegistry(id, opts) {
     name: removedProvider.name,
     credentialDeleted
   };
+}
+function renameProvider(id, newName) {
+  const registry = loadRegistry();
+  const provider = registry.providers.find((p8) => p8.id === id);
+  if (!provider) return { renamed: false, id, error: `Provider not found: ${id}` };
+  const invalid = validateProviderName(newName);
+  if (invalid) return { renamed: false, id, error: invalid };
+  const name = normalizeProviderName(newName);
+  if (name === provider.name) return { renamed: false, id, error: "Nothing to change." };
+  const clash = findProviderNameConflict(registry.providers, name, id);
+  if (clash) {
+    return { renamed: false, id, error: `The name "${clash.name}" is already used by another provider.` };
+  }
+  provider.name = name;
+  provider.nameCustomized = true;
+  saveRegistry(registry);
+  return { renamed: true, id, name };
 }
 function addZenRegistryStub(opts) {
   const registry = loadRegistry();
@@ -7389,6 +7427,7 @@ var OAUTH_FAVORITE_NAMES = {
   "xai-oauth": "xAI OAuth (SuperGrok)"
 };
 function favoriteProviderDisplayName(provider) {
+  if (provider.nameCustomized) return provider.name;
   const explicit = OAUTH_FAVORITE_NAMES[provider.id];
   if (explicit) return explicit;
   if (provider.authType === "oauth" && !/\boauth\b/i.test(provider.name)) {
@@ -7667,10 +7706,12 @@ async function addProviderFromTemplate(template, apiKey, opts) {
     template.id,
     template.id
   );
+  const providerName = existing?.nameCustomized ? existing.name : uniqueProviderName(registry.providers, template.name, existing?.id);
   const entry = {
     id: template.id,
     templateId: template.id,
-    name: template.name,
+    name: providerName,
+    ...existing?.nameCustomized || providerName !== template.name ? { nameCustomized: true } : {},
     enabled: true,
     authRef,
     authType: template.authType,
@@ -7858,11 +7899,13 @@ async function upsertOAuthProvider(providerId, cred) {
     if (!template) {
       throw new Error(`Provider "${providerId}" is not in your registry and has no template`);
     }
-    const displayName = oauthDisplayName(registryId, template.name);
+    const stockName = oauthDisplayName(registryId, template.name);
+    const displayName = uniqueProviderName(registry.providers, stockName);
     entry = {
       id: registryId,
       templateId: template.id,
       name: displayName,
+      ...displayName !== stockName ? { nameCustomized: true } : {},
       enabled: true,
       authRef,
       authType: "oauth",
@@ -8807,6 +8850,7 @@ export {
   refreshProviderModelsBatch,
   refreshAllProviderModels,
   removeProviderFromRegistry,
+  renameProvider,
   ensureOpencodeCloudProviders,
   addOpencodeCloudFromApiKey,
   toggleProviderEnabled,
@@ -8851,4 +8895,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-55UG4HX3.js.map
+//# sourceMappingURL=chunk-LXBV52KI.js.map

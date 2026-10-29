@@ -16,6 +16,7 @@ import {
   enrichPricingAsync,
   loadPricingCache,
 } from './pricing.js';
+import { uniqueProviderName } from './provider-name.js';
 import type { CachedModel, RegistryProvider } from './types.js';
 import { vertexAnthropicCachedModels, vertexAnthropicSetupError } from './vertex-anthropic.js';
 import { filterVertexModelsByAccess } from './vertex-model-check.js';
@@ -181,10 +182,16 @@ export async function addProviderFromTemplate(
     template.id,
     template.id,
   );
+  // A user rename survives replacing; otherwise the template name is used,
+  // numbered if another provider already has it.
+  const providerName = existing?.nameCustomized
+    ? existing.name
+    : uniqueProviderName(registry.providers, template.name, existing?.id);
   const entry: RegistryProvider = {
     id: template.id,
     templateId: template.id,
-    name: template.name,
+    name: providerName,
+    ...(existing?.nameCustomized || providerName !== template.name ? { nameCustomized: true } : {}),
     enabled: true,
     authRef,
     authType: template.authType,

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseProvidersArgs, providerHubChoiceValue, providersHelpText, runProvidersAdd, runProvidersHub } from '../src/providers-command.js';
+import { parseProvidersArgs, providerHubChoiceValue, providersHelpText, runProvidersAdd, runProvidersHub, runProvidersRename } from '../src/providers-command.js';
 import {
   addZenRegistryStub,
   removeProviderFromRegistry,
@@ -61,6 +61,24 @@ describe('parseProvidersArgs', () => {
       removeId: 'xai',
       authMethod: 'native',
     });
+  });
+
+  it('parses rename with a multi-word name', () => {
+    expect(parseProvidersArgs(['rename', 'openai-oauth', 'Personal', 'ChatGPT'])).toEqual({
+      subcommand: 'rename',
+      showHelp: false,
+      removeId: 'openai-oauth',
+      renameName: 'Personal ChatGPT',
+    });
+  });
+
+  it('reports rename without id or name', () => {
+    expect(parseProvidersArgs(['rename']).error).toContain('Usage');
+    expect(parseProvidersArgs(['rename', 'groq']).error).toContain('Usage');
+  });
+
+  it('lists rename in help text', () => {
+    expect(providersHelpText()).toContain('providers rename');
   });
 
   it('reports remove without id', () => {
@@ -319,5 +337,37 @@ describe('providers add menu', () => {
     await runProvidersHub();
 
     expect(providerAuth.authenticateProvider).toHaveBeenCalledWith('cline-pass', { method: undefined });
+  });
+});
+
+describe('runProvidersRename', () => {
+  let home: string;
+  const prevHome = process.env.RELAY_AI_HOME;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'relay-ai-rename-'));
+    process.env.RELAY_AI_HOME = home;
+    const registry = emptyRegistry();
+    const zen = zenRegistryStub();
+    registry.providers.push(zen, { ...zen, id: 'go', name: 'OpenCode Go', authRef: zen.authRef });
+    saveRegistry(registry);
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.RELAY_AI_HOME;
+    else process.env.RELAY_AI_HOME = prevHome;
+    rmSync(home, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  it('renames a provider and returns 0', async () => {
+    expect(await runProvidersRename('zen', 'Work Zen')).toBe(0);
+    expect(loadRegistry().providers.find(pr => pr.id === 'zen')?.name).toBe('Work Zen');
+  });
+
+  it('returns 1 for a taken name or unknown id and changes nothing', async () => {
+    expect(await runProvidersRename('zen', 'opencode go')).toBe(1);
+    expect(await runProvidersRename('nope', 'X')).toBe(1);
+    expect(loadRegistry().providers.find(pr => pr.id === 'zen')?.name).toBe('OpenCode Zen');
   });
 });

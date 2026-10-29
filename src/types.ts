@@ -72,6 +72,8 @@ export interface LocalProviderModel {
 export interface LocalProvider {
   id: string;
   name: string;
+  /** Set when the user renamed the provider; pickers must not decorate the name. */
+  nameCustomized?: boolean;
   apiKey: string;
   /** Registry credential reference used for OAuth refresh callbacks. */
   authRef?: string;

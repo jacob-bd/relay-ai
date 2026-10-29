@@ -10,6 +10,7 @@ import {
 } from '../env.js';
 import { goRegistryStub, zenRegistryStub } from './builtins.js';
 import { loadRegistry, saveRegistry } from './io.js';
+import { findProviderNameConflict, normalizeProviderName, validateProviderName } from './provider-name.js';
 import { refreshProviderModels } from './refresh-models.js';
 import type { RegistryProvider, RegistrySubscriptionFilter } from './types.js';
 
@@ -55,6 +56,36 @@ export async function removeProviderFromRegistry(
     name: removedProvider.name,
     credentialDeleted,
   };
+}
+
+export interface RenameProviderResult {
+  renamed: boolean;
+  id: string;
+  name?: string;
+  error?: string;
+}
+
+/** Change only the display name. The id, credential reference and models never change. */
+export function renameProvider(id: string, newName: string): RenameProviderResult {
+  const registry = loadRegistry();
+  const provider = registry.providers.find(p => p.id === id);
+  if (!provider) return { renamed: false, id, error: `Provider not found: ${id}` };
+
+  const invalid = validateProviderName(newName);
+  if (invalid) return { renamed: false, id, error: invalid };
+
+  const name = normalizeProviderName(newName);
+  if (name === provider.name) return { renamed: false, id, error: 'Nothing to change.' };
+
+  const clash = findProviderNameConflict(registry.providers, name, id);
+  if (clash) {
+    return { renamed: false, id, error: `The name "${clash.name}" is already used by another provider.` };
+  }
+
+  provider.name = name;
+  provider.nameCustomized = true;
+  saveRegistry(registry);
+  return { renamed: true, id, name };
 }
 
 export function addZenRegistryStub(opts?: {

@@ -33,7 +33,7 @@ import {
 } from '../registry/custom-endpoint.js';
 import { validateCustomEndpointUrl } from '../registry/url-security.js';
 import { saveNativeOAuthCredential } from '../registry/provider-auth.js';
-import { removeProviderFromRegistry } from '../registry/crud.js';
+import { removeProviderFromRegistry, renameProvider } from '../registry/crud.js';
 import { requestXaiDeviceCode, pollXaiDeviceCodeToken } from '../oauth/xai.js';
 import { requestOpenAiDeviceCode, pollOpenAiDeviceCodeToken, openAiDeviceCodeUrl } from '../oauth/openai.js';
 import { requestGithubDeviceCode, pollGithubDeviceCodeToken } from '../oauth/github.js';
@@ -165,6 +165,8 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
     handleAddCustomProvider(req, res);
   } else if (url === '/api/providers/edit-custom' && req.method === 'POST') {
     handleEditCustomProvider(req, res);
+  } else if (url === '/api/providers/rename' && req.method === 'POST') {
+    handleRenameProvider(req, res);
   } else if (url === '/api/providers/delete' && req.method === 'POST') {
     handleDeleteProvider(req, res);
   } else if (url === '/api/providers/models/add' && req.method === 'POST') {
@@ -313,7 +315,7 @@ async function handleGetModels(
       providers.push({
         id: rp.id,
         name: rp.name,
-        favoriteName: favoriteProviderDisplayName({ id: rp.id, name: rp.name, authType: rp.authType }),
+        favoriteName: favoriteProviderDisplayName({ id: rp.id, name: rp.name, authType: rp.authType, nameCustomized: rp.nameCustomized }),
         hasKey: true,
         freeAccess: false,
         authType: 'oauth',
@@ -334,7 +336,7 @@ async function handleGetModels(
         providers.push({
           id: rp.id,
           name: rp.name,
-          favoriteName: favoriteProviderDisplayName({ id: rp.id, name: rp.name, authType: rp.authType }),
+          favoriteName: favoriteProviderDisplayName({ id: rp.id, name: rp.name, authType: rp.authType, nameCustomized: rp.nameCustomized }),
           hasKey: Boolean(credential),
           freeAccess: false,
           authType: rp.authType ?? 'api',
@@ -685,6 +687,24 @@ async function handleProviderRefresh(req: IncomingMessage, res: ServerResponse):
     }
   } catch (err) {
     sendJson(res, 200, { ok: false, error: String(err) });
+  }
+}
+
+async function handleRenameProvider(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const body = JSON.parse(await readBody(req)) as { providerId?: string; name?: string };
+    const providerId = typeof body.providerId === 'string' ? body.providerId.trim() : '';
+    if (!providerId || typeof body.name !== 'string') {
+      sendJson(res, 400, { error: 'providerId and name required' }); return;
+    }
+    const result = renameProvider(providerId, body.name);
+    if (result.renamed) {
+      sendJson(res, 200, { ok: true, name: result.name });
+    } else {
+      sendJson(res, 200, { ok: false, error: result.error });
+    }
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
   }
 }
 

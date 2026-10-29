@@ -26,6 +26,7 @@ import { oauthAuthRef, toOAuthRegistryId } from './import-build.js';
 import { loadRegistry, saveRegistry } from './io.js';
 import { oauthCredentialToKeychainJson, type OpencodeOAuthCredential } from './opencode-auth.js';
 import { refreshProviderModels } from './refresh-models.js';
+import { uniqueProviderName } from './provider-name.js';
 import type { RegistryProvider } from './types.js';
 
 export type { OpencodeOAuthCredential } from './opencode-auth.js';
@@ -225,11 +226,13 @@ async function upsertOAuthProvider(providerId: string, cred: OpencodeOAuthCreden
     if (!template) {
       throw new Error(`Provider "${providerId}" is not in your registry and has no template`);
     }
-    const displayName = oauthDisplayName(registryId, template.name);
+    const stockName = oauthDisplayName(registryId, template.name);
+    const displayName = uniqueProviderName(registry.providers, stockName);
     entry = {
       id: registryId,
       templateId: template.id,
       name: displayName,
+      ...(displayName !== stockName ? { nameCustomized: true } : {}),
       enabled: true,
       authRef,
       authType: 'oauth',

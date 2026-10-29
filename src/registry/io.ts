@@ -17,6 +17,7 @@ import type { ProviderRegistry, RegistryProvider } from './types.js';
 import { REGISTRY_SCHEMA_VERSION } from './types.js';
 import {
   migrateAlibabaDashScopeChinaLabel,
+  migrateDuplicateProviderNames,
   migrateLegacyCloudProviders,
   migrateOAuthOpenAiProvider,
   migrateOAuthXaiProvider,
@@ -81,6 +82,7 @@ function parseProvider(raw: unknown): RegistryProvider | null {
   if (p.authType === 'api' || p.authType === 'oauth' || p.authType === 'none') {
     provider.authType = p.authType;
   }
+  if (p.nameCustomized === true) provider.nameCustomized = true;
   if (typeof p.refreshedAt === 'string') provider.refreshedAt = p.refreshedAt;
   if (Array.isArray(p.manualModels)) {
     provider.manualModels = p.manualModels.flatMap(raw => {
@@ -134,6 +136,7 @@ export function loadRegistry(path = getProvidersPath(), { persist = true }: { pe
     if (migrateOAuthOpenAiProvider(registry)) migrated = true;
     if (migrateOAuthXaiProvider(registry)) migrated = true;
     if (migrateAlibabaDashScopeChinaLabel(registry)) migrated = true;
+    if (migrateDuplicateProviderNames(registry)) migrated = true;
     // In-memory migrations always run (consumers like the embedded Core API
     // depend on them); persistence is gated so read-only callers never write.
     if (migrated && persist) {

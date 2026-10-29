@@ -361,6 +361,7 @@ PROVIDERS REGISTRY
   relay-ai providers import       optional one-time import from OpenCode CLI
   relay-ai providers list         show provider ids and model counts
   relay-ai providers remove <id>
+  relay-ai providers rename <id> <new name>   change the display name only (ids/keys unchanged)
   relay-ai providers refresh-models [id]
   relay-ai providers auth <id>    OAuth (OpenAI ChatGPT, xAI, …)
 

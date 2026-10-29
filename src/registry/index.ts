@@ -22,5 +22,6 @@ export {
   addZenRegistryStub,
   ensureOpencodeCloudProviders,
   removeProviderFromRegistry,
+  renameProvider,
   toggleProviderEnabled,
 } from './crud.js';

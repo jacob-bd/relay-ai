@@ -16,6 +16,7 @@ import {
 import { loadRegistry, saveRegistry } from './io.js';
 import { migrateLegacyCloudProviders } from './migrate.js';
 import { readOpencodeAuthFile, oauthCredentialToKeychainJson } from './opencode-auth.js';
+import { uniqueProviderName } from './provider-name.js';
 import type { RegistryProvider } from './types.js';
 import { isValidProviderId } from './validate.js';
 import {
@@ -192,6 +193,18 @@ export async function importFromOpencode(options: ImportOpencodeOptions = {}): P
     if (!saved) {
       skipped.push({ id: lp.id, name: lp.name, reason: 'credential-save-failed' });
       continue;
+    }
+
+    // A user rename survives re-import; otherwise the imported name is numbered if taken.
+    if (existing?.nameCustomized) {
+      entry.name = existing.name;
+      entry.nameCustomized = true;
+    } else {
+      const unique = uniqueProviderName(registry.providers, entry.name, entry.id);
+      if (unique !== entry.name) {
+        entry.name = unique;
+        entry.nameCustomized = true;
+      }
     }
 
     if (existingIdx >= 0) {

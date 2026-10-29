@@ -152,6 +152,7 @@ function materializeOne(
   return {
     id: provider.id,
     name: provider.name,
+    ...(provider.nameCustomized ? { nameCustomized: true } : {}),
     apiKey,
     authRef: provider.authRef,
     authType: provider.authType,

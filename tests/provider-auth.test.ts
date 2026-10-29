@@ -140,4 +140,45 @@ describe('authenticateProvider', () => {
 
     expect(deleteProviderCredential).toHaveBeenCalledWith('keyring:provider:cline-pass');
   });
+
+  const clineEntry = (over: Record<string, unknown> = {}) => ({
+    id: 'cline-pass',
+    templateId: 'cline-pass',
+    name: 'ClinePass',
+    enabled: true,
+    authType: 'oauth' as const,
+    authRef: 'keyring:oauth:provider:cline-pass',
+    api: { npm: '@ai-sdk/openai-compatible', url: 'https://api.cline.bot/api/v1' },
+    addedAt: '2026-08-06T00:00:00.000Z',
+    ...over,
+  });
+
+  it('keeps the user-chosen name when signing in again', async () => {
+    vi.mocked(saveProviderCredential).mockResolvedValue(true);
+    vi.mocked(loadRegistry).mockReturnValue({
+      version: 1,
+      providers: [clineEntry({ name: 'Work Cline', nameCustomized: true })],
+    });
+
+    await authenticateProvider('cline-pass');
+
+    const saved = vi.mocked(saveRegistry).mock.calls.at(-1)?.[0] as { providers: Array<{ name: string; nameCustomized?: boolean }> };
+    expect(saved.providers[0]?.name).toBe('Work Cline');
+    expect(saved.providers[0]?.nameCustomized).toBe(true);
+  });
+
+  it('numbers a new sign-in whose stock name is already taken by another provider', async () => {
+    vi.mocked(saveProviderCredential).mockResolvedValue(true);
+    vi.mocked(loadRegistry).mockReturnValue({
+      version: 1,
+      providers: [clineEntry({ id: 'custom-x', templateId: 'custom-openai', name: 'clinepass', authRef: 'keyring:provider:custom-x' })],
+    });
+
+    await authenticateProvider('cline-pass');
+
+    const saved = vi.mocked(saveRegistry).mock.calls.at(-1)?.[0] as { providers: Array<{ id: string; name: string; nameCustomized?: boolean }> };
+    const added = saved.providers.find(p => p.id === 'cline-pass');
+    expect(added?.name).toBe('ClinePass 2');
+    expect(added?.nameCustomized).toBe(true);
+  });
 });

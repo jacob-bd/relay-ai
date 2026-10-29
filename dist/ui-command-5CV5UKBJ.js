@@ -28,6 +28,7 @@ import {
   refreshAllProviderModels,
   refreshProviderModels,
   removeProviderFromRegistry,
+  renameProvider,
   resolveAdvertiseAddresses,
   resolveAdvertiseGatewayPort,
   resolveServerUpstreamApiKey,
@@ -37,7 +38,7 @@ import {
   summarizeServerProviders,
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider
-} from "./chunk-55UG4HX3.js";
+} from "./chunk-LXBV52KI.js";
 import {
   init_provider_templates,
   listAddableTemplates,
@@ -95,7 +96,7 @@ import {
   supportsManualModels,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-MPW6B3QF.js";
+} from "./chunk-Z7VY346J.js";
 import {
   getAppHome
 } from "./chunk-KNCSTHR4.js";
@@ -680,6 +681,8 @@ function handleUiApiRequest(req, res, opts = {}) {
     handleAddCustomProvider(req, res);
   } else if (url === "/api/providers/edit-custom" && req.method === "POST") {
     handleEditCustomProvider(req, res);
+  } else if (url === "/api/providers/rename" && req.method === "POST") {
+    handleRenameProvider(req, res);
   } else if (url === "/api/providers/delete" && req.method === "POST") {
     handleDeleteProvider(req, res);
   } else if (url === "/api/providers/models/add" && req.method === "POST") {
@@ -808,7 +811,7 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
       providers.push({
         id: rp.id,
         name: rp.name,
-        favoriteName: favoriteProviderDisplayName({ id: rp.id, name: rp.name, authType: rp.authType }),
+        favoriteName: favoriteProviderDisplayName({ id: rp.id, name: rp.name, authType: rp.authType, nameCustomized: rp.nameCustomized }),
         hasKey: true,
         freeAccess: false,
         authType: "oauth",
@@ -825,7 +828,7 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
         providers.push({
           id: rp.id,
           name: rp.name,
-          favoriteName: favoriteProviderDisplayName({ id: rp.id, name: rp.name, authType: rp.authType }),
+          favoriteName: favoriteProviderDisplayName({ id: rp.id, name: rp.name, authType: rp.authType, nameCustomized: rp.nameCustomized }),
           hasKey: Boolean(credential),
           freeAccess: false,
           authType: rp.authType ?? "api",
@@ -870,7 +873,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-ZWL2LECK.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-657DSCLF.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1144,6 +1147,24 @@ async function handleProviderRefresh(req, res) {
     }
   } catch (err) {
     sendJson(res, 200, { ok: false, error: String(err) });
+  }
+}
+async function handleRenameProvider(req, res) {
+  try {
+    const body = JSON.parse(await readBody(req));
+    const providerId = typeof body.providerId === "string" ? body.providerId.trim() : "";
+    if (!providerId || typeof body.name !== "string") {
+      sendJson(res, 400, { error: "providerId and name required" });
+      return;
+    }
+    const result = renameProvider(providerId, body.name);
+    if (result.renamed) {
+      sendJson(res, 200, { ok: true, name: result.name });
+    } else {
+      sendJson(res, 200, { ok: false, error: result.error });
+    }
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
   }
 }
 async function handleDeleteProvider(req, res) {
@@ -1901,4 +1922,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-T4JBTGBA.js.map
+//# sourceMappingURL=ui-command-5CV5UKBJ.js.map

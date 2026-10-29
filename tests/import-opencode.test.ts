@@ -102,6 +102,51 @@ describe('importFromOpencode', () => {
     }));
   });
 
+  it('keeps a user-renamed provider name when the import replaces it', async () => {
+    vi.mocked(validateImportKey).mockResolvedValue({ canImport: true });
+    vi.mocked(loadRegistry).mockReturnValue({
+      version: 1,
+      providers: [{
+        id: 'groq',
+        templateId: 'groq',
+        name: 'Work Groq',
+        nameCustomized: true,
+        enabled: true,
+        authRef: 'keyring:provider:groq',
+        api: { npm: '@ai-sdk/groq' },
+        addedAt: '2026-01-01T00:00:00.000Z',
+      }],
+    });
+
+    await importFromOpencode({ resolveConflict: async () => 'replace' });
+
+    const saved = vi.mocked(saveRegistry).mock.calls.at(-1)?.[0] as { providers: RegistryProvider[] };
+    expect(saved.providers).toHaveLength(1);
+    expect(saved.providers[0]?.name).toBe('Work Groq');
+    expect(saved.providers[0]?.nameCustomized).toBe(true);
+  });
+
+  it('numbers an imported name that another provider already uses', async () => {
+    vi.mocked(validateImportKey).mockResolvedValue({ canImport: true });
+    vi.mocked(loadRegistry).mockReturnValue({
+      version: 1,
+      providers: [{
+        id: 'custom-mine',
+        templateId: 'custom-openai',
+        name: 'groq',
+        enabled: true,
+        authRef: 'keyring:provider:custom-mine',
+        api: { npm: '@ai-sdk/openai-compatible', url: 'https://x.example.com/v1' },
+        addedAt: '2026-01-01T00:00:00.000Z',
+      }],
+    });
+
+    const result = await importFromOpencode();
+
+    expect(result.imported[0]?.name).toBe('Groq 2');
+    expect(result.imported[0]?.nameCustomized).toBe(true);
+  });
+
   it('does not add provider when credential persistence fails', async () => {
     vi.mocked(validateImportKey).mockResolvedValue({ canImport: true });
     vi.mocked(saveProviderCredential).mockResolvedValue(false);

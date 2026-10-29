@@ -206,4 +206,31 @@ describe('registry/add-template', () => {
     expect(savedRegistry.providers).toHaveLength(1); // Replaced, not duplicated
     expect(savedRegistry.providers[0]?.name).toBe('Test Provider');
   });
+
+  it('keeps a user-renamed name when replacing', async () => {
+    vi.mocked(io.loadRegistry).mockReturnValue({
+      version: 1,
+      providers: [{ id: 'test-template', templateId: 'test-template', name: 'Work Test', nameCustomized: true, enabled: true, authType: 'keyring', authRef: 'k', api: {} }],
+    });
+
+    await addProviderFromTemplate(dummyTemplate, 'key_123', { replaceExisting: true });
+
+    const saved = vi.mocked(io.saveRegistry).mock.calls[0]?.[0] as ProviderRegistry;
+    expect(saved.providers[0]?.name).toBe('Work Test');
+    expect(saved.providers[0]?.nameCustomized).toBe(true);
+  });
+
+  it('numbers the template name when another provider already uses it', async () => {
+    vi.mocked(io.loadRegistry).mockReturnValue({
+      version: 1,
+      providers: [{ id: 'custom-x', templateId: 'custom-openai', name: 'test provider', enabled: true, authType: 'keyring', authRef: 'k', api: {} }],
+    });
+
+    await addProviderFromTemplate(dummyTemplate, 'key_123');
+
+    const saved = vi.mocked(io.saveRegistry).mock.calls[0]?.[0] as ProviderRegistry;
+    const added = saved.providers.find(p => p.id === 'test-template');
+    expect(added?.name).toBe('Test Provider 2');
+    expect(added?.nameCustomized).toBe(true);
+  });
 });
