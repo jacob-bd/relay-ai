@@ -27,6 +27,8 @@ export interface AddTemplateResult {
   added: boolean;
   provider?: RegistryProvider;
   modelCount?: number;
+  /** Set when one key adds several providers (an OpenCode Zen + Go pair). */
+  addedNames?: string[];
   error?: string;
   hint?: string;
   /** Non-fatal information about the added provider (e.g. models skipped). */
@@ -97,7 +99,7 @@ export async function addProviderFromTemplate(
 
   // OpenCode Zen/Go use fixed backends + a global key — never ask for a base URL.
   if (template.modelSource === 'zen-go-api') {
-    return addOpencodeCloudFromApiKey(trimmedKey);
+    return addOpencodeCloudFromApiKey(trimmedKey, addAccount ? { addAccount: true } : undefined);
   }
 
   const packageError = await probeTemplatePackage(template);

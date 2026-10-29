@@ -470,6 +470,13 @@ export function listSupportedTemplates(): ProviderTemplate[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Templates a second account can be added for (includes OpenCode Zen/Go, which the plain add list hides). */
+export function listAccountTemplates(): ProviderTemplate[] {
+  return PROVIDER_TEMPLATES
+    .filter(t => !t.hidden && supportsAdditionalApiAccounts(t))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** Supported templates not yet present in the user's registry. */
 export function listAddableTemplates(configuredIds: Iterable<string> = []): ProviderTemplate[] {
   const configured = new Set(configuredIds);
@@ -502,8 +509,9 @@ export function listVisibleOAuthTemplates(configuredIds: Iterable<string> = []):
  */
 export function supportsAdditionalApiAccounts(template: ProviderTemplate): boolean {
   const methods = template.authMethods ?? [template.authType];
+  // OpenCode Zen/Go qualify too: a second key adds a numbered Zen + Go pair. The combined
+  // `opencode-cloud` add entry does not (the pair is added from the Zen or Go card).
   return template.supported
-    && template.modelSource !== 'zen-go-api'
     && template.id !== 'opencode-cloud'
     && !template.noApiKey
     && methods.includes('api')

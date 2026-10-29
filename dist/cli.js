@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-B5CD2EXN.js";
+} from "./chunk-HJEQWK2X.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -134,7 +134,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-MCBETPTI.js";
+} from "./chunk-QN47SR74.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -234,16 +234,17 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-7BOSRLYN.js";
+} from "./chunk-YNIDXM63.js";
 import {
   filterTemplates,
   getTemplateById,
   init_provider_templates,
+  listAccountTemplates,
   listAddableTemplates,
   listSupportedTemplates,
   listVisibleOAuthTemplates,
   supportsAdditionalApiAccounts
-} from "./chunk-6QOTT5I4.js";
+} from "./chunk-R34EP35U.js";
 import {
   DEFAULT_VERTEX_MODELS,
   getAppHome,
@@ -2433,7 +2434,7 @@ async function runDualAuthTemplateFlow(template, existing) {
 }
 async function runTemplateAddFlow(templateId, opts = {}) {
   const addAccount = opts.addAccount === true;
-  const addable = addAccount ? listSupportedTemplates().filter(supportsAdditionalApiAccounts) : listAddableTemplates(loadRegistry().providers.map((p17) => p17.id));
+  const addable = addAccount ? listAccountTemplates() : listAddableTemplates(loadRegistry().providers.map((p17) => p17.id));
   if (templateId && !addable.some((t) => t.id === templateId)) {
     if (addAccount) {
       p8.log.error(`'${templateId}' does not support a second account.`);
@@ -2453,7 +2454,7 @@ async function runTemplateAddFlow(templateId, opts = {}) {
   if (hasApiAndOAuth(template)) {
     return runDualAuthTemplateFlow(template);
   }
-  if (template.modelSource === "zen-go-api") {
+  if (template.modelSource === "zen-go-api" && !addAccount) {
     const existingKey = await readGlobalOpencodeCredential();
     let apiKey2 = existingKey;
     if (!apiKey2) {
@@ -2552,7 +2553,7 @@ async function runTemplateAddFlow(templateId, opts = {}) {
     showProviderAddFailure(result.error, result.hint, "Could not add provider.");
     return 1;
   }
-  logConnected(result.provider?.name ?? template.name, result.modelCount ?? 0);
+  logConnected(result.addedNames?.join(" + ") ?? result.provider?.name ?? template.name, result.modelCount ?? 0);
   return 0;
 }
 async function runCustomEndpointAddFlow() {
@@ -2856,7 +2857,7 @@ async function runProvidersRemove(id, interactive = false) {
 }
 async function runOpenCodeCloudDetail() {
   const registry = loadRegistry();
-  const routes = registry.providers.filter((provider) => provider.id === "zen" || provider.id === "go");
+  const routes = registry.providers.filter((provider) => ["zen", "go"].includes(providerKind(provider.id)));
   printCloudProviderPanel("OpenCode Zen / Go");
   if (routes.length === 0) return "back";
   const choice = await p8.select({
@@ -2945,7 +2946,7 @@ async function runProviderDetail(id) {
       detailOptions.push({
         value: "add-account",
         label: "Add another account",
-        hint: "Add a second API key; it appears as a separate provider you can rename"
+        hint: ["zen", "go"].includes(providerKind(id)) ? "Add a second OpenCode key; it adds a numbered Zen + Go pair you can rename" : "Add a second API key; it appears as a separate provider you can rename"
       });
     }
   }
@@ -17584,7 +17585,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-74XJ6W5L.js");
+    const { runUiCommand } = await import("./ui-command-AD6ROWHO.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

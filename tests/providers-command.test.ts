@@ -628,7 +628,6 @@ describe('provider menu: several API-key accounts', () => {
   });
 
   it.each([
-    ['zen', 'zen', 'OpenCode Zen'],
     ['custom-acme', 'custom-openai', 'Acme'],
     ['vertex-anthropic', 'vertex-anthropic', 'Google Vertex AI (Claude)'],
   ])('does not offer it for %s', async (id, templateId, name) => {
@@ -638,6 +637,23 @@ describe('provider menu: several API-key accounts', () => {
     await runProvidersHub();
 
     expect(detailOptions()).not.toContain('add-account');
+  });
+
+  it('offers "Add another account" on OpenCode Zen and asks for its own key (never reuses the global one)', async () => {
+    saveRegistry({ schemaVersion: 1, providers: [apiEntry('zen', 'zen', 'OpenCode Zen')] });
+    selectMock.mockResolvedValueOnce('provider:zen').mockResolvedValueOnce('add-account').mockResolvedValueOnce('done');
+    passwordMock.mockResolvedValue('second-opencode-key');
+    vi.mocked(addTemplate.addProviderFromTemplate).mockResolvedValue({ added: true, modelCount: 6, addedNames: ['OpenCode Zen 2', 'OpenCode Go 2'] });
+
+    await runProvidersHub();
+
+    expect(detailOptions()).toContain('add-account');
+    expect(passwordMock).toHaveBeenCalled();
+    expect(addTemplate.addProviderFromTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'zen' }),
+      'second-opencode-key',
+      { baseUrl: undefined, addAccount: true },
+    );
   });
 
   it('providers add <id> --new works even though that provider is already configured', async () => {
@@ -656,7 +672,7 @@ describe('provider menu: several API-key accounts', () => {
   });
 
   it('refuses --new for a provider that cannot have a second account', async () => {
-    expect(await runProvidersAdd('zen', { addAccount: true })).toBe(1);
+    expect(await runProvidersAdd('opencode-cloud', { addAccount: true })).toBe(1);
     expect(addTemplate.addProviderFromTemplate).not.toHaveBeenCalled();
   });
 });

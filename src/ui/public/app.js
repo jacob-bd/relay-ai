@@ -1833,7 +1833,9 @@ function buildAddKeyAccountRow(provider) {
   const keyInput = document.createElement('input');
   keyInput.type = 'password';
   keyInput.className = 'key-input';
-  keyInput.placeholder = 'Paste the other account\'s API key…';
+  keyInput.placeholder = provider.templateId === 'zen' || provider.templateId === 'go'
+    ? 'Paste the other OpenCode key (adds a Zen + Go pair)…'
+    : 'Paste the other account\'s API key…';
   keyInput.autocomplete = 'off';
   keyInput.style.flex = '1';
   keyInput.style.minWidth = '220px';

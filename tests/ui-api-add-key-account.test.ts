@@ -40,6 +40,14 @@ describe('UI: adding a second API-key account', () => {
     expect(state.add).toHaveBeenCalledWith(expect.objectContaining({ id: 'groq' }), 'second-key', expect.objectContaining({ addAccount: true }));
   });
 
+  it('adds a second OpenCode key as a Zen + Go pair and reports both names', async () => {
+    state.add.mockResolvedValue({ added: true, modelCount: 6, addedNames: ['OpenCode Zen 2', 'OpenCode Go 2'] });
+    const result = await call('POST', '/api/providers/add', { templateId: 'zen', key: 'second-opencode-key', addAccount: true });
+
+    expect(result.body).toMatchObject({ ok: true, name: 'OpenCode Zen 2 + OpenCode Go 2', count: 6 });
+    expect(state.add).toHaveBeenCalledWith(expect.objectContaining({ id: 'zen' }), 'second-opencode-key', expect.objectContaining({ addAccount: true }));
+  });
+
   it('a normal add does not ask for a second account', async () => {
     await call('POST', '/api/providers/add', { templateId: 'groq', key: 'k' });
     expect(state.add.mock.calls[0]?.[2]).not.toHaveProperty('addAccount');
@@ -70,7 +78,8 @@ describe('UI: adding a second API-key account', () => {
 
     expect(byId['groq']).toMatchObject({ canAddKeyAccount: true, templateId: 'groq' });
     expect(byId['groq-2']).toMatchObject({ canAddKeyAccount: true, templateId: 'groq' });
-    for (const id of ['zen', 'custom-acme', 'openai-oauth', 'cloudflare']) {
+    expect(byId['zen']).toMatchObject({ canAddKeyAccount: true, templateId: 'zen' });
+    for (const id of ['custom-acme', 'openai-oauth', 'cloudflare']) {
       expect(byId[id].canAddKeyAccount, id).toBeUndefined();   // cloudflare needs an account id: terminal only
     }
   });

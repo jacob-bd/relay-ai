@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { handleUiApiRequest } from '../src/ui/api.js';
 import { loadPreferences } from '../src/config.js';
 import * as env from '../src/env.js';
+import { saveRegistry } from '../src/registry/io.js';
 import { createMockRequest, createMockResponse } from './helpers/ui-api-test-utils.js';
 
 describe('Codex Sub-agents UI config contract', () => {
@@ -90,5 +91,21 @@ describe('Codex Sub-agents UI config contract', () => {
 
     expect(response.result.code).toBe(200);
     expect(save).toHaveBeenCalledWith('keyring:provider:opencode', 'new-key');
+  });
+
+  it('saves a numbered OpenCode account key in that account\'s own item, never the shared slot', async () => {
+    saveRegistry({ schemaVersion: 1, providers: [
+      { id: 'zen-2', templateId: 'zen', name: 'OpenCode Zen 2', enabled: true, authRef: 'keyring:provider:opencode-2', api: {}, addedAt: 'now' },
+    ] } as never);
+    const readStored = vi.spyOn(env, 'readStoredProviderCredential').mockResolvedValue(null);
+    const save = vi.spyOn(env, 'saveProviderCredential').mockResolvedValue(true);
+
+    const response = createMockResponse();
+    handleUiApiRequest(createMockRequest('POST', '/api/keys', JSON.stringify({ providerId: 'zen-2', key: 'new-key' })), response.res);
+    await vi.waitFor(() => expect(response.result.data).not.toBe(''));
+
+    expect(response.result.code).toBe(200);
+    expect(save).toHaveBeenCalledWith('keyring:provider:opencode-2', 'new-key');
+    expect(readStored).not.toHaveBeenCalledWith('keyring:global:opencode');
   });
 });

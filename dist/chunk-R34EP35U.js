@@ -10,6 +10,7 @@ __export(provider_templates_exports, {
   PROVIDER_TEMPLATES: () => PROVIDER_TEMPLATES,
   filterTemplates: () => filterTemplates,
   getTemplateById: () => getTemplateById,
+  listAccountTemplates: () => listAccountTemplates,
   listAddableTemplates: () => listAddableTemplates,
   listSupportedTemplates: () => listSupportedTemplates,
   listVisibleOAuthTemplates: () => listVisibleOAuthTemplates,
@@ -17,6 +18,9 @@ __export(provider_templates_exports, {
 });
 function listSupportedTemplates() {
   return PROVIDER_TEMPLATES.filter((t) => t.supported && (t.authMethods ?? [t.authType]).includes("api") && t.addable !== false && !t.hidden).sort((a, b) => a.name.localeCompare(b.name));
+}
+function listAccountTemplates() {
+  return PROVIDER_TEMPLATES.filter((t) => !t.hidden && supportsAdditionalApiAccounts(t)).sort((a, b) => a.name.localeCompare(b.name));
 }
 function listAddableTemplates(configuredIds = []) {
   const configured = new Set(configuredIds);
@@ -36,7 +40,7 @@ function listVisibleOAuthTemplates(configuredIds = []) {
 }
 function supportsAdditionalApiAccounts(template) {
   const methods = template.authMethods ?? [template.authType];
-  return template.supported && template.modelSource !== "zen-go-api" && template.id !== "opencode-cloud" && !template.noApiKey && methods.includes("api") && !methods.includes("oauth");
+  return template.supported && template.id !== "opencode-cloud" && !template.noApiKey && methods.includes("api") && !methods.includes("oauth");
 }
 function getTemplateById(id) {
   return PROVIDER_TEMPLATES.find((t) => t.id === id);
@@ -483,6 +487,7 @@ var init_provider_templates = __esm({
 export {
   PROVIDER_TEMPLATES,
   listSupportedTemplates,
+  listAccountTemplates,
   listAddableTemplates,
   listVisibleOAuthTemplates,
   supportsAdditionalApiAccounts,
@@ -491,4 +496,4 @@ export {
   provider_templates_exports,
   init_provider_templates
 };
-//# sourceMappingURL=chunk-6QOTT5I4.js.map
+//# sourceMappingURL=chunk-R34EP35U.js.map

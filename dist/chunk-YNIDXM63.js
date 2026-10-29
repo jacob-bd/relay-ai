@@ -2,7 +2,7 @@
 import {
   PROVIDER_TEMPLATES,
   init_provider_templates
-} from "./chunk-6QOTT5I4.js";
+} from "./chunk-R34EP35U.js";
 import {
   getAppHome,
   getConfigPath,
@@ -7929,4 +7929,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-7BOSRLYN.js.map
+//# sourceMappingURL=chunk-YNIDXM63.js.map

@@ -195,8 +195,12 @@ describe('supportsAdditionalApiAccounts', () => {
     }
   });
 
-  it('is false for OpenCode Zen/Go, gcloud-based, dual-auth and OAuth-only providers', () => {
-    for (const id of ['zen', 'go', 'opencode-cloud', 'vertex-anthropic', 'cline-pass', 'openai-oauth', 'github-copilot']) {
+  it('is true for OpenCode Zen and Go (a second key adds a numbered Zen + Go pair)', () => {
+    for (const id of ['zen', 'go']) expect(supportsAdditionalApiAccounts(byId(id)), id).toBe(true);
+  });
+
+  it('is false for the combined OpenCode add entry, gcloud-based, dual-auth and OAuth-only providers', () => {
+    for (const id of ['opencode-cloud', 'vertex-anthropic', 'cline-pass', 'openai-oauth', 'github-copilot']) {
       const template = getTemplateById(id);
       if (template) expect(supportsAdditionalApiAccounts(template), id).toBe(false);
     }

@@ -51,15 +51,14 @@ const ALLOWED: Record<string, string> = {
   'registry/provider-auth.ts::registryId === \'openai-oauth\'': 'kind slot, not an account id',
   'registry/provider-auth.ts::registryId === \'xai-oauth\'': 'kind slot, not an account id',
 
-  // Zen/Go credential location and listing — rebuilt with multi-account Zen/Go (step 6).
-  'env.ts::providerId === \'go\'': 'TODO step 6: shared OpenCode key',
-  'env.ts::providerId === \'zen\'': 'TODO step 6: shared OpenCode key',
-  'provider-catalog.ts::provider.id === \'zen\'': 'TODO step 6: shared OpenCode key',
-  'provider-catalog.ts::provider.id === \'go\'': 'TODO step 6: shared OpenCode key',
-  'providers-command.ts::provider.id === \'zen\'': 'TODO step 6: Zen/Go listing',
-  'providers-command.ts::provider.id === \'go\'': 'TODO step 6: Zen/Go listing',
-  'ui/api.ts::providerId === \'go\'': 'TODO step 6: shared OpenCode key',
-  'ui/api.ts::providerId === \'zen\'': 'TODO step 6: shared OpenCode key',
+  // Zen/Go: these compare the BASE accounts only (`zen` / `go`, which share the global OpenCode key).
+  // Numbered accounts (`zen-2`) keep their own authRef and must never reach the global-key fallback.
+  'env.ts::providerId === \'go\'': 'base account only: shared global OpenCode key',
+  'env.ts::providerId === \'zen\'': 'base account only: shared global OpenCode key',
+  'provider-catalog.ts::provider.id === \'zen\'': 'base account only: shared global OpenCode key (no registry entry)',
+  'provider-catalog.ts::provider.id === \'go\'': 'base account only: shared global OpenCode key (no registry entry)',
+  'ui/api.ts::providerId === \'go\'': 'base account only: shared global OpenCode key',
+  'ui/api.ts::providerId === \'zen\'': 'base account only: shared global OpenCode key',
 };
 
 function sourceFiles(dir: string): string[] {

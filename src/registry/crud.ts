@@ -1,16 +1,17 @@
 // src/registry/crud.ts — add/remove providers in the native registry
 
 import {
-  GLOBAL_OPENCODE_KEYRING_ACCOUNT,
   parseAuthRef,
   deleteProviderCredential,
   readGlobalOpencodeCredential,
   resolveProviderCredential,
+  saveProviderCredential,
   saveToCredentialStore,
 } from '../env.js';
 import { goRegistryStub, zenRegistryStub } from './builtins.js';
 import { loadRegistry, saveRegistry } from './io.js';
-import { findProviderNameConflict, normalizeProviderName, validateProviderName } from './provider-name.js';
+import { findProviderNameConflict, normalizeProviderName, uniqueProviderName, validateProviderName } from './provider-name.js';
+import { providerKind } from './provider-kind.js';
 import { refreshProviderModels } from './refresh-models.js';
 import type { RegistryProvider, RegistrySubscriptionFilter } from './types.js';
 
@@ -43,8 +44,8 @@ export async function removeProviderFromRegistry(
   let credentialDeleted = false;
   if (opts?.deleteCredential !== false) {
     const parsed = parseAuthRef(removedProvider.authRef);
-    const isGlobal = parsed?.kind === 'keyring' && parsed.account === GLOBAL_OPENCODE_KEYRING_ACCOUNT;
-    const shouldDelete = !isGlobal || !credentialStillReferenced(removedProvider.authRef, registry.providers);
+    // Zen + Go share one key (the global one, or `opencode-N` for a numbered pair): it goes with the last user.
+    const shouldDelete = !credentialStillReferenced(removedProvider.authRef, registry.providers);
     if (shouldDelete && parsed?.kind === 'keyring') {
       credentialDeleted = await deleteProviderCredential(removedProvider.authRef);
     }
@@ -143,9 +144,10 @@ export async function ensureOpencodeCloudProviders(
  * Add OpenCode Zen + Go from an API key (UI / CLI shared path).
  * Zen/Go use fixed OpenCode backends — not a user-supplied base URL.
  */
-export async function addOpencodeCloudFromApiKey(apiKey: string): Promise<{
+export async function addOpencodeCloudFromApiKey(apiKey: string, opts?: { addAccount?: boolean }): Promise<{
   added: boolean;
   modelCount?: number;
+  addedNames?: string[];
   error?: string;
   hint?: string;
 }> {
@@ -153,6 +155,7 @@ export async function addOpencodeCloudFromApiKey(apiKey: string): Promise<{
   if (!trimmed) {
     return { added: false, error: 'API key cannot be empty.' };
   }
+  if (opts?.addAccount) return addOpencodeCloudAccount(trimmed);
 
   const saved = await saveToCredentialStore(trimmed);
   if (!saved) {
@@ -188,6 +191,70 @@ export async function addOpencodeCloudFromApiKey(apiKey: string): Promise<{
     ...(failed.length > 0
       ? {
           hint: `Providers added, but ${failed.length} catalog refresh${failed.length === 1 ? '' : 'es'} failed — try Refresh on the provider card.`,
+        }
+      : {}),
+  };
+}
+
+/**
+ * A second (third, …) OpenCode key: a numbered Zen + Go pair (`zen-2` + `go-2`) that share their own
+ * keychain item. The first account and its global key are never touched, and a numbered account never
+ * reads the global key.
+ */
+async function addOpencodeCloudAccount(key: string): Promise<{
+  added: boolean;
+  modelCount?: number;
+  addedNames?: string[];
+  error?: string;
+  hint?: string;
+}> {
+  const registry = loadRegistry();
+  for (const other of registry.providers) {
+    const kind = providerKind(other.id);
+    if (kind !== 'zen' && kind !== 'go') continue;
+    if ((await resolveProviderCredential(other.id, other.authRef)) === key) {
+      return {
+        added: false,
+        error: `This key is already saved as "${other.name}".`,
+        hint: 'Use "Change API key" on that provider, or add a different key.',
+      };
+    }
+  }
+
+  const taken = new Set(registry.providers.map(p => p.id));
+  let n = 2;
+  while (taken.has(`zen-${n}`) || taken.has(`go-${n}`)) n++;
+  const authRef = `keyring:provider:opencode-${n}`;
+  const zenName = uniqueProviderName(registry.providers, 'OpenCode Zen');
+  const goName = uniqueProviderName(registry.providers, 'OpenCode Go');
+
+  if (!(await saveProviderCredential(authRef, key))) {
+    return {
+      added: false,
+      error: 'Could not save API key.',
+      hint: 'Ensure RELAY_AI_HOME is writable (Docker uses secrets.json when no OS keyring).',
+    };
+  }
+
+  registry.providers.push(
+    zenRegistryStub(undefined, { id: `zen-${n}`, name: zenName, authRef, nameCustomized: true }),
+    goRegistryStub({ id: `go-${n}`, name: goName, authRef, nameCustomized: true }),
+  );
+  saveRegistry(registry);
+
+  const fresh = loadRegistry();
+  const refreshResults = [
+    await refreshProviderModels(`zen-${n}`, key, fresh),
+    await refreshProviderModels(`go-${n}`, key, fresh),
+  ];
+  const failed = refreshResults.filter(result => !result.ok);
+  return {
+    added: true,
+    modelCount: refreshResults.reduce((total, result) => total + (result.modelCount ?? 0), 0),
+    addedNames: [zenName, goName],
+    ...(failed.length > 0
+      ? {
+          hint: `Accounts added, but ${failed.length} catalog refresh${failed.length === 1 ? '' : 'es'} failed — try Refresh on the provider card.`,
         }
       : {}),
   };

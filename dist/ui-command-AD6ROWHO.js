@@ -41,7 +41,7 @@ import {
   summarizeServerProviders,
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider
-} from "./chunk-MCBETPTI.js";
+} from "./chunk-QN47SR74.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -100,7 +100,7 @@ import {
   supportsManualModels,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-7BOSRLYN.js";
+} from "./chunk-YNIDXM63.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -108,7 +108,7 @@ import {
   listVisibleOAuthTemplates,
   provider_templates_exports,
   supportsAdditionalApiAccounts
-} from "./chunk-6QOTT5I4.js";
+} from "./chunk-R34EP35U.js";
 import {
   getAppHome
 } from "./chunk-KNCSTHR4.js";
@@ -923,7 +923,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-AAPHZTRQ.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-26NI2SUF.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -957,7 +957,9 @@ async function handlePostKeys(req, res) {
       sendJson(res, 400, { error: "key must be a non-empty string" });
       return;
     }
-    const authRef = preferredRelayCredentialAuthRef(providerId, `keyring:provider:${providerId}`);
+    const numberedOpencode = ["zen", "go"].includes(providerKind(providerId)) && providerKind(providerId) !== providerId;
+    const ownAuthRef = numberedOpencode ? loadRegistry().providers.find((p2) => p2.id === providerId)?.authRef : void 0;
+    const authRef = preferredRelayCredentialAuthRef(providerId, ownAuthRef ?? `keyring:provider:${providerId}`);
     const existing = await readStoredProviderCredential(authRef) ?? (providerId === "go" || providerId === "zen" ? await readStoredProviderCredential("keyring:global:opencode") : null);
     if (existing && existing !== key.trim() && confirmOverwrite !== true) {
       sendJson(res, 409, { ok: false, needsConfirmation: true, error: "A different key is already stored in Relay." });
@@ -1103,13 +1105,13 @@ async function handleAddProvider(req, res) {
       sendJson(res, 400, { error: "templateId required" });
       return;
     }
-    const { listSupportedTemplates } = await import("./provider-templates-E7GHPS72.js");
-    const template = listSupportedTemplates().find((t) => t.id === templateId);
+    const { listSupportedTemplates, listAccountTemplates } = await import("./provider-templates-YHSIDTFW.js");
+    const addAccount = body.addAccount === true;
+    const template = (addAccount ? listAccountTemplates() : listSupportedTemplates()).find((t) => t.id === templateId) ?? (addAccount ? listSupportedTemplates().find((t) => t.id === templateId) : void 0);
     if (!template) {
       sendJson(res, 404, { error: `Template '${templateId}' not found` });
       return;
     }
-    const addAccount = body.addAccount === true;
     if (addAccount && !supportsAdditionalApiAccounts(template)) {
       sendJson(res, 400, { error: `A second account is not available for ${template.name}.` });
       return;
@@ -1148,7 +1150,7 @@ async function handleAddProvider(req, res) {
       ...addAccount ? { addAccount: true } : {}
     });
     if (result.added) {
-      sendJson(res, 200, { ok: true, name: result.provider?.name ?? template.name, count: result.modelCount ?? 0, ...result.notice ? { notice: result.notice } : {} });
+      sendJson(res, 200, { ok: true, name: result.addedNames?.join(" + ") ?? result.provider?.name ?? template.name, count: result.modelCount ?? 0, ...result.notice ? { notice: result.notice } : {} });
     } else {
       sendJson(res, 200, { ok: false, error: result.error, hint: result.hint });
     }
@@ -2047,4 +2049,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-74XJ6W5L.js.map
+//# sourceMappingURL=ui-command-AD6ROWHO.js.map

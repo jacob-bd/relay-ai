@@ -298,9 +298,8 @@ describe('registry/add-template', () => {
       expect(res.added).toBe(true);
     });
 
-    it('does not apply to OpenCode Zen/Go, gcloud-based or dual-auth providers', async () => {
+    it('does not apply to gcloud-based or dual-auth providers', async () => {
       for (const tpl of [
-        { ...apiTemplate, modelSource: 'zen-go-api' as const },
         { ...apiTemplate, noApiKey: true },
         { ...apiTemplate, authMethods: ['api', 'oauth'] as ('api' | 'oauth')[] },
       ]) {

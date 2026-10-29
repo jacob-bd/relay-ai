@@ -3,26 +3,36 @@
 import type { RegistryProvider, RegistrySubscriptionFilter } from './types.js';
 import { localIsoTimestamp } from '../trace-log.js';
 
-export function zenRegistryStub(subscriptionFilter?: RegistrySubscriptionFilter): RegistryProvider {
+/** A numbered account (`zen-2`) has its own id, name and key; the first account uses the defaults. */
+export interface OpencodeAccountSlot {
+  id: string;
+  name: string;
+  authRef: string;
+  nameCustomized?: boolean;
+}
+
+export function zenRegistryStub(subscriptionFilter?: RegistrySubscriptionFilter, account?: OpencodeAccountSlot): RegistryProvider {
   return {
-    id: 'zen',
+    id: account?.id ?? 'zen',
     templateId: 'zen',
-    name: 'OpenCode Zen',
+    name: account?.name ?? 'OpenCode Zen',
+    ...(account?.nameCustomized ? { nameCustomized: true } : {}),
     enabled: true,
-    authRef: 'keyring:global:opencode',
+    authRef: account?.authRef ?? 'keyring:global:opencode',
     api: {},
     ...(subscriptionFilter ? { subscriptionFilter } : {}),
     addedAt: localIsoTimestamp(),
   };
 }
 
-export function goRegistryStub(): RegistryProvider {
+export function goRegistryStub(account?: OpencodeAccountSlot): RegistryProvider {
   return {
-    id: 'go',
+    id: account?.id ?? 'go',
     templateId: 'go',
-    name: 'OpenCode Go',
+    name: account?.name ?? 'OpenCode Go',
+    ...(account?.nameCustomized ? { nameCustomized: true } : {}),
     enabled: true,
-    authRef: 'keyring:global:opencode',
+    authRef: account?.authRef ?? 'keyring:global:opencode',
     api: {},
     addedAt: localIsoTimestamp(),
   };

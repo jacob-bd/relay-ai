@@ -496,7 +496,10 @@ async function handlePostKeys(req: IncomingMessage, res: ServerResponse): Promis
     if (!key || typeof key !== 'string' || key.trim().length === 0) {
       sendJson(res, 400, { error: 'key must be a non-empty string' }); return;
     }
-    const authRef = preferredRelayCredentialAuthRef(providerId, `keyring:provider:${providerId}`);
+    // A numbered OpenCode account (`zen-2`) keeps its key in the item its registry entry names.
+    const numberedOpencode = ['zen', 'go'].includes(providerKind(providerId)) && providerKind(providerId) !== providerId;
+    const ownAuthRef = numberedOpencode ? loadRegistry().providers.find(p => p.id === providerId)?.authRef : undefined;
+    const authRef = preferredRelayCredentialAuthRef(providerId, ownAuthRef ?? `keyring:provider:${providerId}`);
     const existing = await readStoredProviderCredential(authRef)
       ?? (providerId === 'go' || providerId === 'zen'
         ? await readStoredProviderCredential('keyring:global:opencode')
@@ -663,12 +666,13 @@ async function handleAddProvider(req: IncomingMessage, res: ServerResponse): Pro
     if (!templateId || typeof templateId !== 'string') {
       sendJson(res, 400, { error: 'templateId required' }); return;
     }
-    const { listSupportedTemplates } = await import('../provider-templates.js');
-    const template = listSupportedTemplates().find(t => t.id === templateId);
+    const { listSupportedTemplates, listAccountTemplates } = await import('../provider-templates.js');
+    const addAccount = body.addAccount === true;
+    const template = (addAccount ? listAccountTemplates() : listSupportedTemplates()).find(t => t.id === templateId)
+      ?? (addAccount ? listSupportedTemplates().find(t => t.id === templateId) : undefined);
     if (!template) {
       sendJson(res, 404, { error: `Template '${templateId}' not found` }); return;
     }
-    const addAccount = body.addAccount === true;
     if (addAccount && !supportsAdditionalApiAccounts(template)) {
       sendJson(res, 400, { error: `A second account is not available for ${template.name}.` }); return;
     }
@@ -704,7 +708,7 @@ async function handleAddProvider(req: IncomingMessage, res: ServerResponse): Pro
       ...(addAccount ? { addAccount: true } : {}),
     });
     if (result.added) {
-      sendJson(res, 200, { ok: true, name: result.provider?.name ?? template.name, count: result.modelCount ?? 0, ...(result.notice ? { notice: result.notice } : {}) });
+      sendJson(res, 200, { ok: true, name: result.addedNames?.join(' + ') ?? result.provider?.name ?? template.name, count: result.modelCount ?? 0, ...(result.notice ? { notice: result.notice } : {}) });
     } else {
       sendJson(res, 200, { ok: false, error: result.error, hint: result.hint });
     }

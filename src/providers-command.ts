@@ -24,6 +24,7 @@ import {
   filterTemplates,
   getTemplateById,
   listAddableTemplates,
+  listAccountTemplates,
   listSupportedTemplates,
   listVisibleOAuthTemplates,
   supportsAdditionalApiAccounts,
@@ -542,7 +543,7 @@ async function runTemplateAddFlow(templateId?: string, opts: { addAccount?: bool
   const addAccount = opts.addAccount === true;
   // A second account may be added for a provider that is already configured.
   const addable = addAccount
-    ? listSupportedTemplates().filter(supportsAdditionalApiAccounts)
+    ? listAccountTemplates()
     : listAddableTemplates(loadRegistry().providers.map(p => p.id));
   if (templateId && !addable.some(t => t.id === templateId)) {
     if (addAccount) {
@@ -566,7 +567,8 @@ async function runTemplateAddFlow(templateId?: string, opts: { addAccount?: bool
     return runDualAuthTemplateFlow(template);
   }
 
-  if (template.modelSource === 'zen-go-api') {
+  // A second account asks for its own key below; only the first account reuses the global one.
+  if (template.modelSource === 'zen-go-api' && !addAccount) {
     const existingKey = await readGlobalOpencodeCredential();
     let apiKey = existingKey;
     if (!apiKey) {
@@ -681,7 +683,7 @@ async function runTemplateAddFlow(templateId?: string, opts: { addAccount?: bool
     return 1;
   }
 
-  logConnected(result.provider?.name ?? template.name, result.modelCount ?? 0);
+  logConnected(result.addedNames?.join(' + ') ?? result.provider?.name ?? template.name, result.modelCount ?? 0);
   return 0;
 }
 
@@ -1011,7 +1013,7 @@ export async function runProvidersRemove(id: string, interactive = false): Promi
 
 async function runOpenCodeCloudDetail(): Promise<'back'> {
   const registry = loadRegistry();
-  const routes = registry.providers.filter(provider => provider.id === 'zen' || provider.id === 'go');
+  const routes = registry.providers.filter(provider => ['zen', 'go'].includes(providerKind(provider.id)));
   printCloudProviderPanel('OpenCode Zen / Go');
   if (routes.length === 0) return 'back';
 
@@ -1106,7 +1108,9 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
       detailOptions.push({
         value: 'add-account',
         label: 'Add another account',
-        hint: 'Add a second API key; it appears as a separate provider you can rename',
+        hint: ['zen', 'go'].includes(providerKind(id))
+          ? 'Add a second OpenCode key; it adds a numbered Zen + Go pair you can rename'
+          : 'Add a second API key; it appears as a separate provider you can rename',
       });
     }
   }

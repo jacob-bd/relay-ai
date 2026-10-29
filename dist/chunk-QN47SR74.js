@@ -9,7 +9,6 @@ import {
   CLINE_PASS_SDK_BASE_URL,
   CLINE_PASS_VALIDATION_URL,
   EFFORT_RANK,
-  GLOBAL_OPENCODE_KEYRING_ACCOUNT,
   MAX_MODEL_CATALOG,
   MIN_CONTEXT_WINDOW,
   SubagentRouteRegistry,
@@ -136,12 +135,12 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-7BOSRLYN.js";
+} from "./chunk-YNIDXM63.js";
 import {
   getTemplateById,
   init_provider_templates,
   supportsAdditionalApiAccounts
-} from "./chunk-6QOTT5I4.js";
+} from "./chunk-R34EP35U.js";
 import {
   getAppHome,
   hasApplicationDefaultCredentials,
@@ -4029,25 +4028,27 @@ function providersForCodexSubagents(providers) {
 }
 
 // src/registry/builtins.ts
-function zenRegistryStub(subscriptionFilter) {
+function zenRegistryStub(subscriptionFilter, account) {
   return {
-    id: "zen",
+    id: account?.id ?? "zen",
     templateId: "zen",
-    name: "OpenCode Zen",
+    name: account?.name ?? "OpenCode Zen",
+    ...account?.nameCustomized ? { nameCustomized: true } : {},
     enabled: true,
-    authRef: "keyring:global:opencode",
+    authRef: account?.authRef ?? "keyring:global:opencode",
     api: {},
     ...subscriptionFilter ? { subscriptionFilter } : {},
     addedAt: localIsoTimestamp()
   };
 }
-function goRegistryStub() {
+function goRegistryStub(account) {
   return {
-    id: "go",
+    id: account?.id ?? "go",
     templateId: "go",
-    name: "OpenCode Go",
+    name: account?.name ?? "OpenCode Go",
+    ...account?.nameCustomized ? { nameCustomized: true } : {},
     enabled: true,
-    authRef: "keyring:global:opencode",
+    authRef: account?.authRef ?? "keyring:global:opencode",
     api: {},
     addedAt: localIsoTimestamp()
   };
@@ -5757,8 +5758,7 @@ async function removeProviderFromRegistry(id, opts) {
   let credentialDeleted = false;
   if (opts?.deleteCredential !== false) {
     const parsed = parseAuthRef(removedProvider.authRef);
-    const isGlobal = parsed?.kind === "keyring" && parsed.account === GLOBAL_OPENCODE_KEYRING_ACCOUNT;
-    const shouldDelete = !isGlobal || !credentialStillReferenced(removedProvider.authRef, registry.providers);
+    const shouldDelete = !credentialStillReferenced(removedProvider.authRef, registry.providers);
     if (shouldDelete && parsed?.kind === "keyring") {
       credentialDeleted = await deleteProviderCredential(removedProvider.authRef);
     }
@@ -5822,11 +5822,12 @@ async function ensureOpencodeCloudProviders(hasOpencodeKey) {
   }
   return { seeded, refreshed };
 }
-async function addOpencodeCloudFromApiKey(apiKey) {
+async function addOpencodeCloudFromApiKey(apiKey, opts) {
   const trimmed = apiKey.trim();
   if (!trimmed) {
     return { added: false, error: "API key cannot be empty." };
   }
+  if (opts?.addAccount) return addOpencodeCloudAccount(trimmed);
   const saved = await saveToCredentialStore(trimmed);
   if (!saved) {
     return {
@@ -5857,6 +5858,52 @@ async function addOpencodeCloudFromApiKey(apiKey) {
     modelCount,
     ...failed.length > 0 ? {
       hint: `Providers added, but ${failed.length} catalog refresh${failed.length === 1 ? "" : "es"} failed \u2014 try Refresh on the provider card.`
+    } : {}
+  };
+}
+async function addOpencodeCloudAccount(key) {
+  const registry = loadRegistry();
+  for (const other of registry.providers) {
+    const kind = providerKind(other.id);
+    if (kind !== "zen" && kind !== "go") continue;
+    if (await resolveProviderCredential(other.id, other.authRef) === key) {
+      return {
+        added: false,
+        error: `This key is already saved as "${other.name}".`,
+        hint: 'Use "Change API key" on that provider, or add a different key.'
+      };
+    }
+  }
+  const taken = new Set(registry.providers.map((p8) => p8.id));
+  let n = 2;
+  while (taken.has(`zen-${n}`) || taken.has(`go-${n}`)) n++;
+  const authRef = `keyring:provider:opencode-${n}`;
+  const zenName = uniqueProviderName(registry.providers, "OpenCode Zen");
+  const goName = uniqueProviderName(registry.providers, "OpenCode Go");
+  if (!await saveProviderCredential(authRef, key)) {
+    return {
+      added: false,
+      error: "Could not save API key.",
+      hint: "Ensure RELAY_AI_HOME is writable (Docker uses secrets.json when no OS keyring)."
+    };
+  }
+  registry.providers.push(
+    zenRegistryStub(void 0, { id: `zen-${n}`, name: zenName, authRef, nameCustomized: true }),
+    goRegistryStub({ id: `go-${n}`, name: goName, authRef, nameCustomized: true })
+  );
+  saveRegistry(registry);
+  const fresh = loadRegistry();
+  const refreshResults = [
+    await refreshProviderModels(`zen-${n}`, key, fresh),
+    await refreshProviderModels(`go-${n}`, key, fresh)
+  ];
+  const failed = refreshResults.filter((result) => !result.ok);
+  return {
+    added: true,
+    modelCount: refreshResults.reduce((total, result) => total + (result.modelCount ?? 0), 0),
+    addedNames: [zenName, goName],
+    ...failed.length > 0 ? {
+      hint: `Accounts added, but ${failed.length} catalog refresh${failed.length === 1 ? "" : "es"} failed \u2014 try Refresh on the provider card.`
     } : {}
   };
 }
@@ -7681,7 +7728,7 @@ async function addProviderFromTemplate(template, apiKey, opts) {
     return { added: false, error: `A second account is not available for ${template.name}.` };
   }
   if (template.modelSource === "zen-go-api") {
-    return addOpencodeCloudFromApiKey(trimmedKey);
+    return addOpencodeCloudFromApiKey(trimmedKey, addAccount ? { addAccount: true } : void 0);
   }
   const packageError = await probeTemplatePackage(template);
   if (packageError) {
@@ -9040,4 +9087,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-MCBETPTI.js.map
+//# sourceMappingURL=chunk-QN47SR74.js.map
