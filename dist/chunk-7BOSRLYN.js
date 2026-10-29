@@ -2740,12 +2740,127 @@ async function runXaiDeviceCodeFlow(onDeviceCode, opts) {
 // src/oauth/claude-code.ts
 import { randomBytes } from "crypto";
 import open2 from "open";
+
+// src/oauth/claude-identity.ts
+import { createHash, randomUUID } from "crypto";
+var CLAUDE_CODE_CLI_VERSION = "2.1.312";
+var CLAUDE_CODE_USER_AGENT = `claude-cli/${CLAUDE_CODE_CLI_VERSION} (external, cli)`;
+var CLAUDE_CODE_ENTRYPOINT = process.env.CLAUDE_CODE_ENTRYPOINT ?? "cli";
+var CLAUDE_CODE_BILLING_HEADER_PREFIX = "x-anthropic-billing-header:";
+var sessionCache = /* @__PURE__ */ new Map();
+function getOrCreateSessionId(seed) {
+  let id = sessionCache.get(seed);
+  if (!id) {
+    id = randomUUID();
+    sessionCache.set(seed, id);
+  }
+  return id;
+}
+function uuidFromHash(input) {
+  const h = createHash("sha256").update(input).digest("hex");
+  return [
+    h.slice(0, 8),
+    h.slice(8, 12),
+    "4" + h.slice(13, 16),
+    (parseInt(h[16], 16) & 3 | 8).toString(16) + h.slice(17, 20),
+    h.slice(20, 32)
+  ].join("-");
+}
+var HEX64_RE = /^[a-f0-9]{64}$/i;
+var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function resolveCliUserID(providerData, seed) {
+  const v = providerData?.cliUserID;
+  if (typeof v === "string" && HEX64_RE.test(v)) return v;
+  return createHash("sha256").update(`cliUserID:${seed}`).digest("hex");
+}
+function resolveAccountUUID(providerData, seed) {
+  const v = providerData?.accountUUID;
+  if (typeof v === "string" && UUID_RE.test(v)) return v;
+  return uuidFromHash(`account:${seed}`);
+}
+function buildUserIdJson(deviceId, accountUUID, sessionId) {
+  return JSON.stringify({ device_id: deviceId, account_uuid: accountUUID, session_id: sessionId });
+}
+function buildClaudeCodeBillingSystemLine() {
+  return `${CLAUDE_CODE_BILLING_HEADER_PREFIX} cc_version=${CLAUDE_CODE_CLI_VERSION}.0; cc_entrypoint=${CLAUDE_CODE_ENTRYPOINT};`;
+}
+function systemBlockText(block) {
+  if (typeof block === "string") return block;
+  if (block && typeof block === "object" && "text" in block) {
+    const text2 = block.text;
+    return typeof text2 === "string" ? text2 : void 0;
+  }
+  return void 0;
+}
+function hasClaudeCodeBillingSystemLine(system) {
+  if (typeof system === "string") return system.startsWith(CLAUDE_CODE_BILLING_HEADER_PREFIX);
+  if (!Array.isArray(system)) return false;
+  return system.some((block) => systemBlockText(block)?.startsWith(CLAUDE_CODE_BILLING_HEADER_PREFIX));
+}
+function injectClaudeCodeBillingSystemLine(body) {
+  if (hasClaudeCodeBillingSystemLine(body.system)) return;
+  const billingBlock = { type: "text", text: buildClaudeCodeBillingSystemLine() };
+  if (body.system === void 0 || body.system === null) {
+    body.system = [billingBlock];
+  } else if (typeof body.system === "string") {
+    body.system = [billingBlock, { type: "text", text: body.system }];
+  } else if (Array.isArray(body.system)) {
+    body.system = [billingBlock, ...body.system];
+  } else {
+    body.system = [billingBlock];
+  }
+}
+var ALWAYS = [
+  "oauth-2025-04-20",
+  "context-management-2025-06-27",
+  "prompt-caching-scope-2026-01-05"
+];
+var AGENT = [
+  "claude-code-20250219",
+  "extended-cache-ttl-2025-04-11",
+  "cache-diagnosis-2026-04-07",
+  "advisor-tool-2026-03-01"
+];
+var THINKING = [
+  "interleaved-thinking-2025-05-14",
+  "redact-thinking-2026-02-12",
+  "thinking-token-count-2026-05-13"
+];
+var HEAVY = ["advanced-tool-use-2025-11-20", "effort-2025-11-24"];
+var OPUS_ONLY = ["context-1m-2025-08-07", "mid-conversation-system-2026-04-07"];
+function selectBetaFlags(body, model, clientBeta) {
+  const hasSystem = !!body.system && (typeof body.system === "string" || Array.isArray(body.system) && body.system.length > 0);
+  const tools = body.tools;
+  const isFullAgent = hasSystem && Array.isArray(tools) && tools.length > 0;
+  const m = (model ?? (typeof body.model === "string" ? body.model : "")).toLowerCase();
+  const isOpus = m.includes("opus");
+  const isSonnetOrOpus = isOpus || m.includes("sonnet");
+  const clientSet = clientBeta ? new Set(clientBeta.split(",").map((s) => s.trim()).filter(Boolean)) : null;
+  const allowThinking = !clientSet || clientSet.has("interleaved-thinking-2025-05-14");
+  const allowHeavy = !clientSet || clientSet.has("advanced-tool-use-2025-11-20") || clientSet.has("effort-2025-11-24");
+  const flags = [...ALWAYS];
+  if (isFullAgent) flags.push(...AGENT);
+  if (isOpus) flags.push(...OPUS_ONLY);
+  if (allowThinking) flags.push(...THINKING);
+  if (isFullAgent && isSonnetOrOpus && allowHeavy) flags.push(...HEAVY);
+  return flags.join(",");
+}
+function injectClaudeIdentity(body, providerData, seed) {
+  const deviceId = resolveCliUserID(providerData, seed);
+  const accountUUID = resolveAccountUUID(providerData, seed);
+  const sessionId = getOrCreateSessionId(seed);
+  const userId = buildUserIdJson(deviceId, accountUUID, sessionId);
+  const existing = body.metadata;
+  body.metadata = { ...existing ?? {}, user_id: userId };
+  return { sessionId, userId };
+}
+
+// src/oauth/claude-code.ts
 var CLAUDE_CODE_CLIENT_ID = process.env.CLAUDE_OAUTH_CLIENT_ID ?? "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-var AUTHORIZE_URL2 = "https://claude.ai/oauth/authorize";
-var TOKEN_URL4 = "https://api.anthropic.com/v1/oauth/token";
+var AUTHORIZE_URL2 = "https://claude.com/cai/oauth/authorize";
+var TOKEN_URL4 = "https://platform.claude.com/v1/oauth/token";
 var REDIRECT_URI = process.env.CLAUDE_CODE_REDIRECT_URI ?? "https://platform.claude.com/oauth/code/callback";
 var SCOPES2 = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers";
-var CLAUDE_CODE_CLI_VERSION = "2.1.195";
 async function buildClaudeCodeAuthUrl(redirectUri = REDIRECT_URI) {
   const { verifier, challenge } = await generatePkce();
   const state = generateOAuthState();
@@ -3121,7 +3236,7 @@ async function refreshStoredOAuthCredential(providerId, cred) {
 
 // src/oauth/refresh-lock.ts
 import { closeSync as closeSync2, mkdirSync as mkdirSync6, openSync as openSync2, readFileSync as readFileSync9, statSync as statSync3, unlinkSync as unlinkSync3, writeSync as writeSync2 } from "fs";
-import { createHash, randomUUID } from "crypto";
+import { createHash as createHash2, randomUUID as randomUUID2 } from "crypto";
 import { join as join7 } from "path";
 var POLL_MS = 100;
 function sleep(ms) {
@@ -3162,7 +3277,7 @@ function removeLock(path) {
   }
 }
 async function acquire(path, timeoutMs, staleMs) {
-  const token = randomUUID();
+  const token = randomUUID2();
   const deadline = Date.now() + timeoutMs;
   for (; ; ) {
     try {
@@ -3190,7 +3305,7 @@ async function withRefreshLock(key, work, options = {}) {
   let token = null;
   try {
     mkdirSync6(dir, { recursive: true, mode: 448 });
-    path = join7(dir, `oauth-${createHash("sha256").update(key).digest("hex").slice(0, 24)}.lock`);
+    path = join7(dir, `oauth-${createHash2("sha256").update(key).digest("hex").slice(0, 24)}.lock`);
     token = await acquire(path, options.timeoutMs ?? 2e4, options.staleMs ?? 12e4);
   } catch {
     token = null;
@@ -3860,120 +3975,6 @@ function runCodexCommand(binaryPath, args, options = {}) {
       resolve({ stdout, stderr });
     });
   });
-}
-
-// src/oauth/claude-identity.ts
-import { createHash as createHash2, randomUUID as randomUUID2 } from "crypto";
-var CLAUDE_CODE_CLI_VERSION2 = "2.1.195";
-var CLAUDE_CODE_USER_AGENT = `claude-cli/${CLAUDE_CODE_CLI_VERSION2} (external, cli)`;
-var CLAUDE_CODE_ENTRYPOINT = process.env.CLAUDE_CODE_ENTRYPOINT ?? "cli";
-var CLAUDE_CODE_BILLING_HEADER_PREFIX = "x-anthropic-billing-header:";
-var sessionCache = /* @__PURE__ */ new Map();
-function getOrCreateSessionId(seed) {
-  let id = sessionCache.get(seed);
-  if (!id) {
-    id = randomUUID2();
-    sessionCache.set(seed, id);
-  }
-  return id;
-}
-function uuidFromHash(input) {
-  const h = createHash2("sha256").update(input).digest("hex");
-  return [
-    h.slice(0, 8),
-    h.slice(8, 12),
-    "4" + h.slice(13, 16),
-    (parseInt(h[16], 16) & 3 | 8).toString(16) + h.slice(17, 20),
-    h.slice(20, 32)
-  ].join("-");
-}
-var HEX64_RE = /^[a-f0-9]{64}$/i;
-var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function resolveCliUserID(providerData, seed) {
-  const v = providerData?.cliUserID;
-  if (typeof v === "string" && HEX64_RE.test(v)) return v;
-  return createHash2("sha256").update(`cliUserID:${seed}`).digest("hex");
-}
-function resolveAccountUUID(providerData, seed) {
-  const v = providerData?.accountUUID;
-  if (typeof v === "string" && UUID_RE.test(v)) return v;
-  return uuidFromHash(`account:${seed}`);
-}
-function buildUserIdJson(deviceId, accountUUID, sessionId) {
-  return JSON.stringify({ device_id: deviceId, account_uuid: accountUUID, session_id: sessionId });
-}
-function buildClaudeCodeBillingSystemLine() {
-  return `${CLAUDE_CODE_BILLING_HEADER_PREFIX} cc_version=${CLAUDE_CODE_CLI_VERSION2}.0; cc_entrypoint=${CLAUDE_CODE_ENTRYPOINT};`;
-}
-function systemBlockText(block) {
-  if (typeof block === "string") return block;
-  if (block && typeof block === "object" && "text" in block) {
-    const text2 = block.text;
-    return typeof text2 === "string" ? text2 : void 0;
-  }
-  return void 0;
-}
-function hasClaudeCodeBillingSystemLine(system) {
-  if (typeof system === "string") return system.startsWith(CLAUDE_CODE_BILLING_HEADER_PREFIX);
-  if (!Array.isArray(system)) return false;
-  return system.some((block) => systemBlockText(block)?.startsWith(CLAUDE_CODE_BILLING_HEADER_PREFIX));
-}
-function injectClaudeCodeBillingSystemLine(body) {
-  if (hasClaudeCodeBillingSystemLine(body.system)) return;
-  const billingBlock = { type: "text", text: buildClaudeCodeBillingSystemLine() };
-  if (body.system === void 0 || body.system === null) {
-    body.system = [billingBlock];
-  } else if (typeof body.system === "string") {
-    body.system = [billingBlock, { type: "text", text: body.system }];
-  } else if (Array.isArray(body.system)) {
-    body.system = [billingBlock, ...body.system];
-  } else {
-    body.system = [billingBlock];
-  }
-}
-var ALWAYS = [
-  "oauth-2025-04-20",
-  "context-management-2025-06-27",
-  "prompt-caching-scope-2026-01-05"
-];
-var AGENT = [
-  "claude-code-20250219",
-  "extended-cache-ttl-2025-04-11",
-  "cache-diagnosis-2026-04-07",
-  "advisor-tool-2026-03-01"
-];
-var THINKING = [
-  "interleaved-thinking-2025-05-14",
-  "redact-thinking-2026-02-12",
-  "thinking-token-count-2026-05-13"
-];
-var HEAVY = ["advanced-tool-use-2025-11-20", "effort-2025-11-24"];
-var OPUS_ONLY = ["context-1m-2025-08-07", "mid-conversation-system-2026-04-07"];
-function selectBetaFlags(body, model, clientBeta) {
-  const hasSystem = !!body.system && (typeof body.system === "string" || Array.isArray(body.system) && body.system.length > 0);
-  const tools = body.tools;
-  const isFullAgent = hasSystem && Array.isArray(tools) && tools.length > 0;
-  const m = (model ?? (typeof body.model === "string" ? body.model : "")).toLowerCase();
-  const isOpus = m.includes("opus");
-  const isSonnetOrOpus = isOpus || m.includes("sonnet");
-  const clientSet = clientBeta ? new Set(clientBeta.split(",").map((s) => s.trim()).filter(Boolean)) : null;
-  const allowThinking = !clientSet || clientSet.has("interleaved-thinking-2025-05-14");
-  const allowHeavy = !clientSet || clientSet.has("advanced-tool-use-2025-11-20") || clientSet.has("effort-2025-11-24");
-  const flags = [...ALWAYS];
-  if (isFullAgent) flags.push(...AGENT);
-  if (isOpus) flags.push(...OPUS_ONLY);
-  if (allowThinking) flags.push(...THINKING);
-  if (isFullAgent && isSonnetOrOpus && allowHeavy) flags.push(...HEAVY);
-  return flags.join(",");
-}
-function injectClaudeIdentity(body, providerData, seed) {
-  const deviceId = resolveCliUserID(providerData, seed);
-  const accountUUID = resolveAccountUUID(providerData, seed);
-  const sessionId = getOrCreateSessionId(seed);
-  const userId = buildUserIdJson(deviceId, accountUUID, sessionId);
-  const existing = body.metadata;
-  body.metadata = { ...existing ?? {}, user_id: userId };
-  return { sessionId, userId };
 }
 
 // src/server/auth.ts
@@ -7824,7 +7825,7 @@ export {
   openAiDeviceCodeUrl,
   pollOpenAiDeviceCodeToken,
   runOpenAiDeviceCodeFlow,
-  CLAUDE_CODE_CLI_VERSION2 as CLAUDE_CODE_CLI_VERSION,
+  CLAUDE_CODE_CLI_VERSION,
   injectClaudeCodeBillingSystemLine,
   selectBetaFlags,
   injectClaudeIdentity,
@@ -7928,4 +7929,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-6LVWFAO6.js.map
+//# sourceMappingURL=chunk-7BOSRLYN.js.map

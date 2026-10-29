@@ -1960,7 +1960,7 @@ function createResponsesWebSocketFetch(wsUrl, log) {
 
 // src/oauth/claude-identity.ts
 import { createHash, randomUUID } from "crypto";
-var CLAUDE_CODE_CLI_VERSION = "2.1.195";
+var CLAUDE_CODE_CLI_VERSION = "2.1.312";
 var CLAUDE_CODE_USER_AGENT = `claude-cli/${CLAUDE_CODE_CLI_VERSION} (external, cli)`;
 var CLAUDE_CODE_ENTRYPOINT = process.env.CLAUDE_CODE_ENTRYPOINT ?? "cli";
 var CLAUDE_CODE_BILLING_HEADER_PREFIX = "x-anthropic-billing-header:";
@@ -4228,7 +4228,7 @@ async function refreshXaiAccessToken(refreshToken) {
 import { randomBytes } from "crypto";
 import open from "open";
 var CLAUDE_CODE_CLIENT_ID = process.env.CLAUDE_OAUTH_CLIENT_ID ?? "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-var TOKEN_URL2 = "https://api.anthropic.com/v1/oauth/token";
+var TOKEN_URL2 = "https://platform.claude.com/v1/oauth/token";
 var REDIRECT_URI = process.env.CLAUDE_CODE_REDIRECT_URI ?? "https://platform.claude.com/oauth/code/callback";
 async function refreshClaudeCodeToken(refreshToken) {
   return postOAuthRefresh(

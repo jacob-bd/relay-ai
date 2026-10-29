@@ -25,7 +25,7 @@ describe('anthropicUpstreamHeaders', () => {
       'session-123',
     )).toMatchObject({
       Authorization: 'Bearer oauth-token',
-      'User-Agent': 'claude-cli/2.1.195 (external, cli)',
+      'User-Agent': 'claude-cli/2.1.312 (external, cli)',
       'x-app': 'cli',
       'X-Claude-Code-Session-Id': 'session-123',
     });

@@ -10,15 +10,17 @@ import { postOAuthRefresh } from './refresh-http.js';
 export const CLAUDE_CODE_CLIENT_ID =
   process.env.CLAUDE_OAUTH_CLIENT_ID ?? '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 
-const AUTHORIZE_URL = 'https://claude.ai/oauth/authorize';
-const TOKEN_URL = 'https://api.anthropic.com/v1/oauth/token';
+// Same endpoints Claude Code itself uses (verified against 2.1.312).
+const AUTHORIZE_URL = 'https://claude.com/cai/oauth/authorize';
+const TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
 const REDIRECT_URI =
   process.env.CLAUDE_CODE_REDIRECT_URI ?? 'https://platform.claude.com/oauth/code/callback';
 const SCOPES =
   'org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers';
 
-// Pinned to a captured claude-cli release — bump when Anthropic updates.
-export const CLAUDE_CODE_CLI_VERSION = '2.1.195';
+// One pinned claude-cli version lives in claude-identity.ts.
+import { CLAUDE_CODE_CLI_VERSION } from './claude-identity.js';
+export { CLAUDE_CODE_CLI_VERSION };
 
 export interface ClaudeCodePkceParams {
   authUrl: string;

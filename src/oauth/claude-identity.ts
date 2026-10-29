@@ -3,7 +3,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 
-export const CLAUDE_CODE_CLI_VERSION = '2.1.195';
+export const CLAUDE_CODE_CLI_VERSION = '2.1.312';
 export const CLAUDE_CODE_USER_AGENT = `claude-cli/${CLAUDE_CODE_CLI_VERSION} (external, cli)`;
 export const CLAUDE_CODE_ENTRYPOINT = process.env.CLAUDE_CODE_ENTRYPOINT ?? 'cli';
 export const CLAUDE_CODE_BILLING_HEADER_PREFIX = 'x-anthropic-billing-header:';

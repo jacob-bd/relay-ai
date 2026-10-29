@@ -577,7 +577,7 @@ describe('anthropic passthrough debug logging', () => {
     handle.close();
     const [, init] = vi.mocked(fetch).mock.calls[0]!;
     const body = JSON.parse(String(init?.body)) as { system?: Array<{ type: string; text: string }> };
-    expect(body.system?.[0]?.text).toBe('x-anthropic-billing-header: cc_version=2.1.195.0; cc_entrypoint=cli;');
+    expect(body.system?.[0]?.text).toBe('x-anthropic-billing-header: cc_version=2.1.312.0; cc_entrypoint=cli;');
     expect(body.system?.[1]?.text).toBe('You are helpful.');
   });
 });

@@ -670,7 +670,7 @@ describe('cloud-code-gateway', () => {
     });
 
     const streamCall = vi.mocked(streamText).mock.calls.at(-1)![0] as any;
-    expect(streamCall.instructions).toContain('x-anthropic-billing-header: cc_version=2.1.195.0; cc_entrypoint=cli;');
+    expect(streamCall.instructions).toContain('x-anthropic-billing-header: cc_version=2.1.312.0; cc_entrypoint=cli;');
     expect(streamCall.instructions).toContain('You are helpful.');
     expect(streamCall.providerOptions?.anthropic?.metadata?.userId).toContain(`"device_id":"${cliUserID}"`);
     expect(streamCall.providerOptions?.anthropic?.metadata?.userId).toContain(`"account_uuid":"${accountUUID}"`);
