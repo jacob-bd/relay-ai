@@ -44,6 +44,39 @@ describe('oauth/claude-code', () => {
     expect(body.redirect_uri).toBe('https://platform.claude.com/oauth/code/callback');
   });
 
+  describe('pasted code and state', () => {
+    const ok = () => vi.mocked(global.fetch).mockResolvedValue({ ok: true, json: async () => ({ access_token: 't' }) } as Response);
+    const exchange = (pasted: string) => exchangeClaudeCodeToken(pasted, 'verifier', 'https://platform.claude.com/oauth/code/callback', 'our-state');
+    const sentBody = () => JSON.parse(String(vi.mocked(global.fetch).mock.calls[0]![1]!.body));
+
+    it('rejects a code#state whose state is not the one we sent, before any request', async () => {
+      ok();
+      await expect(exchange('the-code#attacker-state')).rejects.toThrow(/state/i);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('rejects a pasted URL whose state is not ours', async () => {
+      ok();
+      await expect(exchange('https://platform.claude.com/oauth/code/callback?code=abc&state=other')).rejects.toThrow(/state/i);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('accepts code#state and a URL when the state matches, and always sends our own state', async () => {
+      ok();
+      await exchange('the-code#our-state');
+      expect(sentBody()).toMatchObject({ code: 'the-code', state: 'our-state' });
+      vi.mocked(global.fetch).mockClear();
+      await exchange('https://platform.claude.com/oauth/code/callback?code=abc&state=our-state');
+      expect(sentBody()).toMatchObject({ code: 'abc', state: 'our-state' });
+    });
+
+    it('accepts a bare code (Anthropic may show just the code)', async () => {
+      ok();
+      await exchange('bare-code');
+      expect(sentBody()).toMatchObject({ code: 'bare-code', state: 'our-state' });
+    });
+  });
+
   it('extracts authorization codes from pasted callback URLs', () => {
     expect(extractClaudeAuthCode('https://platform.claude.com/oauth/code/callback?code=abc123&state=xyz'))
       .toBe('abc123');

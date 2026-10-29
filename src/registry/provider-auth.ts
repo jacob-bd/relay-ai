@@ -18,10 +18,8 @@ import {
 } from '../oauth/types.js';
 import { runXaiDeviceCodeFlow } from '../oauth/xai.js';
 import { runGithubDeviceCodeFlow } from '../oauth/github.js';
-import {
-  runClaudeCodeOAuthFlow,
-  generateCliUserID,
-} from '../oauth/claude-code.js';
+import { runClaudeCodeOAuthFlow } from '../oauth/claude-code.js';
+import { claudeCodeProviderData } from '../oauth/claude-code-account.js';
 import { runAntigravityOAuthFlow } from '../oauth/antigravity-oauth.js';
 import { runClinePassDeviceCodeFlow } from '../oauth/cline-pass.js';
 import { getTemplateById } from '../provider-templates.js';
@@ -153,14 +151,7 @@ async function runNativeBrowserOAuth(providerId: NativeOAuthProviderId): Promise
       });
       spinner.stop(pc.green('Signed in to Claude Code'));
 
-      const providerData: Record<string, unknown> = { cliUserID: generateCliUserID() };
-      if (bootstrap.accountId) providerData.accountUUID = bootstrap.accountId;
-      if (bootstrap.email) providerData.identity = { email: bootstrap.email };
-      if (bootstrap.organizationId) providerData.organizationUUID = bootstrap.organizationId;
-      if (bootstrap.organizationName) providerData.organizationName = bootstrap.organizationName;
-      if (bootstrap.plan) providerData.plan = bootstrap.plan;
-
-      return tokensToStoredCredential(tokens, undefined, bootstrap.accountId, providerData);
+      return tokensToStoredCredential(tokens, undefined, bootstrap.accountId, claudeCodeProviderData(bootstrap));
     } catch (err) {
       spinner.stop('');
       throw err;

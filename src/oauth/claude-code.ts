@@ -51,14 +51,13 @@ export async function exchangeClaudeCodeToken(
   redirectUri: string,
   state: string,
 ): Promise<OAuthTokenResponse> {
-  // Anthropic may return code as `authCode#stateValue` — split if needed.
-  let authCode = extractClaudeAuthCode(code);
-  let codeState = state;
-  if (authCode.includes('#')) {
-    const idx = authCode.indexOf('#');
-    codeState = authCode.slice(idx + 1) || state;
-    authCode = authCode.slice(0, idx);
+  // Anthropic may return the code as `authCode#stateValue`, or a full callback URL with `state=`.
+  // Whatever state came back must be the one this sign-in sent; the request always carries ours.
+  const { code: authCode, state: returnedState } = parseClaudeAuthInput(code);
+  if (returnedState && returnedState !== state) {
+    throw new Error('Anthropic returned an unexpected state — start the sign-in again');
   }
+  const codeState = state;
 
   const res = await fetch(TOKEN_URL, {
     method: 'POST',
@@ -74,6 +73,26 @@ export async function exchangeClaudeCodeToken(
   });
   if (!res.ok) throw new Error(`Claude Code token exchange failed: ${await res.text()}`);
   return res.json() as Promise<OAuthTokenResponse>;
+}
+
+/** Split what the user pasted into the code and, when present, the state that came with it. */
+export function parseClaudeAuthInput(input: string): { code: string; state?: string } {
+  let code = extractClaudeAuthCode(input);
+  let state: string | undefined;
+  try {
+    state = new URL(input.trim()).searchParams.get('state') ?? undefined;
+  } catch {
+    const trimmed = input.trim();
+    if (trimmed.startsWith('?') || trimmed.includes('code=')) {
+      state = new URLSearchParams(trimmed.startsWith('?') ? trimmed.slice(1) : trimmed).get('state') ?? undefined;
+    }
+  }
+  const hash = code.indexOf('#');
+  if (hash >= 0) {
+    state = code.slice(hash + 1) || state;
+    code = code.slice(0, hash);
+  }
+  return { code, ...(state ? { state } : {}) };
 }
 
 export function extractClaudeAuthCode(input: string): string {
