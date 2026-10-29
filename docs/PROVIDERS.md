@@ -1,5 +1,7 @@
 # Provider Configuration Guide
 
+> **Several accounts of one provider, and renaming:** see [Accounts and Provider Names](ACCOUNTS.md).
+
 `relay-ai` uses a Native Provider Registry to store configuration and API keys securely in your OS keychain. This guide outlines all available providers, what they do, and common gotchas (like multiple variants of the same provider).
 
 ## Refresh a provider's models
@@ -164,6 +166,8 @@ Counts come from Command Code's own plan pages and match what Relay discovers. C
 - **Description**: Cloud gateway backends provided by OpenCode using your OpenCode API key ([opencode.ai/auth](https://opencode.ai/auth)).
 - **OpenCode Go**: $10/month flat-rate subscription (`--provider go`). Fully supported for external coding agents and Relay AI.
 - **OpenCode Zen**: Pay-as-you-go curated model gateway (`--provider zen`). Metered models with billing or credit balance work normally.
+- **A second OpenCode key:** `relay-ai providers add zen --new` (or **Add another account** on the Zen or Go card) adds a numbered **OpenCode Zen 2 + OpenCode Go 2** pair that shares its own credential item; the first account and its key are untouched and a numbered account never falls back to it. See [Accounts](ACCOUNTS.md#opencode-zen--go).
+- **Expired key (`This API key has expired`)**: the key itself is dead, signing in again won't renew it. Create a new key in the OpenCode console and use **Change API key** on the provider (Go and Zen share the first account's key).
 - **Free-tier limitation (`403 OpenCode's free tier can only be used from within OpenCode`)**: As of September 2026, OpenCode blocks third-party clients and external agent harnesses from accessing zero-cost Zen free models (`*-free`, `big-pickle`). They cannot be called from outside the official OpenCode client, so **Relay hides them from the OpenCode Zen model list** instead of offering them. OpenCode Go free models are not affected and stay listed (verified live 2026-10-19). An OpenCode maintainer confirmed on GitHub that free-tier models cannot be called from other harnesses ([Issue #49621](https://github.com/anomalyco/opencode/issues/49621#issuecomment-5723383322), [Issue #49580](https://github.com/anomalyco/opencode/issues/49580#issuecomment-5723289721)). Paid Zen models and OpenCode Go are unaffected.
 
 ### Local Models (Ollama & LM Studio)
@@ -181,6 +185,10 @@ Relay AI can connect supported subscriptions with a one-time device code instead
 - **OpenAI ChatGPT**: `relay-ai providers auth openai-oauth`
 - **xAI SuperGrok**: `relay-ai providers auth xai-oauth`
 - **ClinePass**: `relay-ai providers auth cline-pass`
+- **Claude Code subscription**: `relay-ai providers auth claude-code` (browser sign-in; paste Anthropic's code back)
+- **Antigravity (Google)**: `relay-ai providers auth antigravity` (browser sign-in; use a throwaway Google account — see [Antigravity](ANTIGRAVITY.md))
+
+Every one of them can hold **several accounts** (`--new`), and any provider can be renamed — see [Accounts and Provider Names](ACCOUNTS.md).
 
 You can also connect them from **Providers & Keys** in `relay-ai ui`. Relay AI displays the device code, provides a **Copy code** button, and opens the provider's sign-in page only after you select **Open sign-in page**.
 

@@ -324,6 +324,18 @@ Use `--relay-only` to force the existing Relay-only behavior. Mixed mode fails c
 
 Relay does not decrypt native collaboration ciphertext. When a native parent delegates to a Codex SubAgent, Relay asks the authenticated native Codex backend to return the opaque envelope through a strict transport tool, validates the envelope boundary, and only then contacts the external provider. The same normalization runs before both HTTP and desktop WebSocket provider forwarding. This is transport validation, not independent cryptographic verification. Sensitive credentials, ciphertext, and collaboration content are redacted from Relay traces.
 
+### Example: work ChatGPT (native) + personal ChatGPT (Relay)
+
+Sign in to the ChatGPT/Codex app with your work account as usual (the native sign-in), then add your personal account to Relay and launch in mixed mode:
+
+```bash
+relay-ai providers auth openai-oauth                       # personal ChatGPT, added to Relay
+relay-ai providers rename openai-oauth "ChatGPT (personal)"
+relay-ai codex-app --with-native
+```
+
+Native (work) models and the personal account's models then appear in one picker, labelled by the name you chose. For a *second* Relay ChatGPT account use `--new` on the first command; two ChatGPT Plus accounts can be rotated the same way. More in [Accounts and Provider Names](ACCOUNTS.md#example-work-chatgpt-native--personal-chatgpt-relay).
+
 ### Slug policy
 
 - **CLI** (`relay-ai codex`): slugs are `${providerId}__${modelId}` so models from different providers never collide.

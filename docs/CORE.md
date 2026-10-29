@@ -108,6 +108,12 @@ launchers use the same preparation on every generated or streamed request:
   controls survive unchanged; a pre-applied billing line is not duplicated.
 - OpenAI receives `store: false` and `include: ['reasoning.encrypted_content']`
   for reasoning round trips. Explicit per-call options override these defaults.
+  When the host passes `sessionId`, OpenAI routes also receive a prompt-cache
+  key (and ChatGPT-login routes a `session_id` header) — see
+  [Prompt caching](#prompt-caching).
+- Claude routes (API key, Claude subscription, Vertex AI, OpenCode Zen/Go)
+  have prompt-cache breakpoints placed for them (unless the caller already
+  placed its own) — see [Prompt caching](#prompt-caching).
 - Google receives `thinkingConfig.includeThoughts: true`, including the native
   Cloud Code transport. An explicit caller setting still wins.
 - Alibaba/DashScope receives a neutral user continuation after a trailing tool
@@ -122,7 +128,11 @@ This shares provider requirements, not client orchestration: each host still
 owns its tool execution, conversation history and session identity. Core's
 strict reasoning-level validation also remains distinct from picker substitution.
 
-### `options.sessionId` — OpenCode Go conversation identity
+### `options.sessionId` — conversation identity (OpenCode Go and OpenAI caching)
+
+Pass the host's stable per-conversation id. Core uses it in two places: the
+OpenCode Go header below, and OpenAI [prompt caching](#prompt-caching). It is
+never sent upstream in raw form except as the OpenCode Go header.
 
 When the route is OpenCode Go, `sessionId` is sent as `x-opencode-session` on
 every upstream model call, including streamed, retried, and tool-loop calls.
@@ -132,7 +142,34 @@ call take precedence over this default. See
 [OpenCode Go conversation sessions](OPENCODE-GO-SESSIONS.md) for the client
 matrix and the Alef migration checklist.
 
-**Nothing is cached across calls.** Every call re-reads the registry from disk and re-resolves the credential, so a provider you disable, re-authenticate, or add after your app started takes effect on the very next call — no restart needed.
+### Prompt caching
+
+Repeated agent turns re-send a large, identical prefix (system prompt, tool
+definitions, earlier turns). Whether the provider serves that prefix from its
+cache — at a fraction of the price and latency — depends on the provider, and
+Core's job differs by route. Measured live through `createRelayModel` on
+2026-10-29 with a ~13–19k-token prefix (`npm run test:live:cache`):
+
+| Route | What Core does | Measured |
+|---|---|---|
+| **Claude** (API key, Claude subscription, Vertex AI, OpenCode Zen/Go) | Places cache breakpoints on the last tool, the last system message and the latest user/tool turns (Anthropic's four-breakpoint cap). Breakpoints the caller already placed are left untouched. | Hit: ~100% of the prefix read from cache on repeat and growing turns |
+| **OpenAI / ChatGPT login** | Needs your `sessionId`: sends a hashed `prompt_cache_key`, and on ChatGPT-login routes a UUID-shaped `session_id` header, so the backend keeps one conversation on one machine. Without a `sessionId` nothing is sent. | Hit with `sessionId`: ~96% of the prefix on every call after the first (8 of 8). Without the key: 0 reads |
+| **OpenCode Go** (GLM, Kimi) | Nothing needed — the provider caches automatically. | Hit (Kimi K3 missed once in five calls) |
+| **Gemini via Antigravity (Cloud Code)** | Nothing available — Cloud Code exposes no cache control. | Partial: an identical request hits (~87%), but a request that adds a new turn did not |
+
+Not yet measured: direct Gemini API key, DeepSeek/Kimi/GLM on their own APIs, Claude through OpenRouter, Qwen/Alibaba. Claude through OpenRouter or Bedrock does not get breakpoints placed (Core marks only Anthropic-format Claude).
+
+**Hosts should pass a stable `sessionId` for the life of a conversation** (not per request, and not shared between conversations). The hash means the id never leaves your machine in raw form. The ChatGPT backend can take several seconds to make a just-written prefix available, so the first one or two repeats of a brand-new prompt may still read 0.
+
+To check your own routes, run the opt-in harness against your real registry and credentials (it sends five requests per route and prints cache reads; excluded from `npm test`):
+
+```bash
+CACHE_LIVE_ROUTES=<provider>::<model>[,…] npm run test:live:cache
+```
+
+### Registry and credentials are never cached across calls
+
+Every call re-reads the registry from disk and re-resolves the credential, so a provider you disable, re-authenticate, or add after your app started takes effect on the very next call — no restart needed.
 
 ### `options.reasoning` — provider-neutral reasoning level
 

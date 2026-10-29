@@ -2131,7 +2131,7 @@ ${pc4.bold("Subcommands:")}
   (none)      Provider hub wizard ${pc4.dim("[Phase 1.1]")}
   add         Add a provider (Groq, Mistral, Together AI, \u2026); with --new, a second account of one ${pc4.dim("[Phase 1.1]")}
   import      Optional one-time import from OpenCode CLI ${pc4.dim("[Phase 1.0]")}
-  auth        Sign in with OAuth (Antigravity, GitHub Copilot, xAI, OpenAI, ClinePass)
+  auth        Sign in with OAuth (Antigravity, Claude Code, GitHub Copilot, xAI, OpenAI, ClinePass); --new adds a second account
   list        Show configured providers ${pc4.dim("[Phase 1.0]")}
   remove      Remove a provider by id ${pc4.dim("[Phase 1.1]")}
   rename      Change a provider's display name (id and keys stay the same)

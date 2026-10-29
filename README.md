@@ -110,7 +110,9 @@ To fully remove the tool and all its configuration data, you can delete the conf
 | `relay-ai agy` | Launch Antigravity CLI with Relay models ([warning + guide](docs/ANTIGRAVITY.md)) |
 | `relay-ai antigravity` | Launch Antigravity app with Relay models, macOS ([warning + guide](docs/ANTIGRAVITY.md)) |
 | `relay-ai antigravity-ide` | Launch Antigravity IDE with Relay models, macOS ([warning + guide](docs/ANTIGRAVITY.md)) |
-| `relay-ai providers auth <id>` | Authenticate an OAuth provider (GitHub Copilot, xAI, OpenAI, ClinePass) |
+| `relay-ai providers auth <id>` | Authenticate an OAuth provider (GitHub Copilot, xAI, OpenAI, ClinePass, Claude Code, Antigravity); add `--new` for a second account |
+| `relay-ai providers add <id> --new` | Add a second API-key account of a provider ([guide](docs/ACCOUNTS.md)) |
+| `relay-ai providers rename <id> <name>` | Rename any provider; names are unique ([guide](docs/ACCOUNTS.md)) |
 | `relay-ai --ai` | Full agent reference for scripts and alef-agent ([guide](docs/AI-AGENTS.md)) |
 | `@jacobbd/relay-ai/core` | Embed Relay AI in a Node app in-process — no CLI/UI/server ([guide](docs/CORE.md)) |
 
@@ -120,6 +122,7 @@ To fully remove the tool and all its configuration data, you can delete the conf
 - **Docker Server + Admin UI:** `docker compose up` (see **[docs/DOCKER.md](docs/DOCKER.md)**) runs an always-on admin UI + gateway for LAN/home-lab use — providers, favorites, and Start Server without a desktop keychain. Host CLI still launches Claude / Codex / Antigravity.
 - **Server tab in the UI:** Run the same API gateway as `relay-ai server` — favorites-only or specific providers, discovery id masking for Claude Desktop / Cowork, local or network listen mode — from a browser form instead of a terminal wizard. Shows live URLs, the API key, and the full model catalog once started, with a one-click Stop.
 - **Native provider registry:** `relay-ai providers` stores config in `~/.relay-ai/providers.json` and secrets in the OS keychain — no OpenCode binary required at launch. See **[docs/PROVIDERS.md](docs/PROVIDERS.md)** for a full list of providers and known issues.
+- **Multiple accounts and renaming:** Hold two (or more) ChatGPT, Claude, Antigravity, Copilot, xAI, ClinePass, API-key, or OpenCode Zen/Go accounts side by side — each with its own credential, unique name, and models in every picker — and rename any provider. Add one with `--new`, or **Add another account** in the menu or `relay-ai ui`. See **[docs/ACCOUNTS.md](docs/ACCOUNTS.md)**
 - **Provider templates:** Add Command Code, ClinePass, Groq, Mistral, Together, OpenRouter, and 15+ SDK-backed providers, plus custom OpenAI/Anthropic-compatible endpoints
 - **OpenCode import:** One-time migration from OpenCode (`providers import`); validates API keys and skips placeholders like `anything`
 - **OpenCode Zen / Go:** Optional cloud backends when you have an OpenCode API key
@@ -475,7 +478,18 @@ relay-ai providers auth github-copilot   # GitHub Copilot
 relay-ai providers auth openai-oauth     # ChatGPT Plus / Pro
 relay-ai providers auth xai-oauth        # xAI SuperGrok
 relay-ai providers auth cline-pass       # ClinePass account
+relay-ai providers auth claude-code      # Claude subscription (browser sign-in, paste the code back)
+relay-ai providers auth antigravity      # Antigravity (Google account — read the warning below)
 ```
+
+**More than one account.** Add `--new` to sign in a second account of the same provider (for example a work and a personal ChatGPT), then give each a name you will recognise:
+
+```bash
+relay-ai providers auth openai-oauth --new
+relay-ai providers rename openai-oauth-2 "ChatGPT (personal)"
+```
+
+The same person can't be added twice, expired sign-ins stay visible in `relay-ai ui` with a **Sign in again** button, and the web UI shows who each account is. Details, API-key and OpenCode accounts, and a work + personal ChatGPT walkthrough are in **[docs/ACCOUNTS.md](docs/ACCOUNTS.md)**.
 
 ### Codex CLI (`relay-ai codex`)
 

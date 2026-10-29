@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.17.0] - 2026-10-29
+
+### Added
+
+- **Multiple accounts of any provider.** Sign in two ChatGPT, Claude, Antigravity, GitHub Copilot, xAI or ClinePass accounts; add two keys for Groq, Mistral, OpenRouter, Anthropic, Google and the other key-only providers; or add a second OpenCode key. Every account is its own provider entry with its own credential-store item, its own unique name and its own models in every launch picker and in favorites — the first account is never touched. Use `relay-ai providers auth <id> --new` (sign-in providers), `relay-ai providers add <id> --new` (API keys), **Add another account** in the `relay-ai providers` menu, or the **Add another account** button on a card in `relay-ai ui`. Second accounts get ids like `groq-2` / `openai-oauth-2` and numbered default names ("Groq 2", "ChatGPT 2"); Relay never names an account after its email. See **[docs/ACCOUNTS.md](docs/ACCOUNTS.md)**.
+- **Second OpenCode Zen + Go accounts.** A second OpenCode key adds a numbered **OpenCode Zen 2 + OpenCode Go 2** pair that shares its own credential item (`opencode-2`, …). The first account keeps the global key and a numbered account never falls back to it; the same key twice is refused; removing the pair deletes the shared key with its last member; **Change API key** on a numbered account changes its own key (in the CLI and the web UI).
+- **Rename any provider.** `relay-ai providers rename <id> <name>`, **Rename provider** in the menu, or **Rename Provider** in `relay-ai ui`. A rename changes only the display name — ids, saved credentials and favorites keep working. Provider names are now **unique** (ignoring capitalization and spacing): renaming to a taken name, or adding/editing a custom endpoint with one, is refused, and adding a provider whose name is taken numbers it. Existing duplicate names are numbered once, the first time the registry loads. Names you chose survive signing in again, replacing a key and re-importing.
+- **See who is signed in.** Provider details and web-UI cards show an **Account** row (email or plan where the sign-in reveals it) so you can choose a name; GitHub Copilot's username is still never sent to the browser.
+- **The same account can't be added twice.** Matched by user id, then email, then GitHub login (Claude Code and ClinePass by account id); a ChatGPT workspace id alone never counts. The message explains how to add a different account (switch accounts in the browser or use a private window). An identical API key for the same server is refused too.
+- **Expired sign-ins stay visible in `relay-ai ui`.** An account whose stored sign-in can no longer be refreshed now appears as **Sign-in expired** with a **Sign in again** button (and can still be renamed or removed) instead of silently disappearing.
+- **Claude Code and Antigravity sign-in from `relay-ai ui`.** Both are behind an account-risk confirmation that the server enforces. Claude's sign-in page opens from a button and you paste Anthropic's code into the card; Antigravity returns to Relay on your own machine. A **Copy sign-in link** button lets you finish a sign-in in a private window or another browser.
+- **"Replace the sign-in?" confirmation.** `relay-ai providers auth <id>` and **Sign in again** now name the provider and account about to be overwritten and ask first (default no, interactive terminals only). Adding another account never asks.
+- **Live prompt-cache check.** `npm run test:live:cache` (opt-in, excluded from `npm test`) sends five requests per route through Core against your real registry and credentials and prints how many tokens were read from the provider's cache. The Responses WebSocket debug log also prints usage token counts (numbers only).
+
+### Changed
+
+- **Claude Code sign-in uses Claude Code's current endpoints.** Sign-in opens `claude.com/cai/oauth/authorize`, and code exchange and refresh use `platform.claude.com/v1/oauth/token`, as Claude Code 2.1.312 does (read from its binary and verified live: refresh and a full sign-in). Refresh deliberately sends no `scope` — Anthropic rejects it with `invalid_scope`. The pinned Claude Code version Relay presents moves from 2.1.195 to 2.1.312 and now lives in one place. Existing sign-ins keep working.
+- **Provider behavior is keyed on the provider kind, not the raw id.** OAuth refresh, Claude billing/identity, ClinePass, Antigravity, OpenRouter quirks, models.dev lookups, Zen/Go rules and picker names all follow the kind (`groq-2` behaves like `groq`), enforced by a guard test. Internal, with no behavior change for single-account setups.
+- **Provider menus.** The Zen/Go screen lists numbered accounts; the `auth` help text now names Claude Code and `--new`.
+
+### Fixed
+
+- **Core: OpenAI prompt caching.** Core never sent OpenAI a cache key, so a repeated agent prompt was paid at full price every turn on the ChatGPT-login and OpenAI routes. When a host passes `sessionId` to `createRelayModel` (Alef does), OpenAI routes now send a hashed `prompt_cache_key`, and ChatGPT-login routes also send a UUID-shaped `session_id` header so the backend keeps the conversation on one machine. Measured live on `gpt-5.6-terra`: about 96% of a 13.5k-token prefix is read from cache on every call after the first (8 of 8), versus no reads without them. The raw session id never leaves your machine, and nothing changes when no `sessionId` is given. The first repeat of a brand-new prompt can still read 0 because the backend takes a moment to make a new prefix available. Measured the same day through Core: Claude routes (already marked) ~100%; OpenCode Go GLM/Kimi hit on their own; Gemini through Antigravity caches identical repeats but not a growing conversation (Cloud Code has no cache control); Claude through OpenRouter or Bedrock, DeepSeek/Kimi/GLM on their own APIs and Qwen were not measured. See [Prompt caching](docs/CORE.md#prompt-caching).
+- **Numbered anonymous providers failed credential lookup, and the Zen free-tier rule missed numbered Zen accounts.** Both now follow the provider kind.
+- **Concurrent sign-in refreshes could spend a one-use refresh token twice.** Relay now takes a per-account lock, re-reads the credential store, and uses the result another process already produced; a stale or crashed lock is broken, and a wait that runs too long proceeds instead of blocking a launch. A permanently refused refresh (reused, expired or invalidated token) now says "Sign in again: relay-ai providers auth <id>".
+- **Antigravity's terminal sign-in and Claude's pasted code now verify `state`.** A response that does not carry the state the sign-in sent is rejected before any token exchange, and a Google authorization error is surfaced.
+- **Two Claude accounts no longer collide in the model list.** A numbered account's `claude-*` model ids are scoped to it; the first account keeps the plain ids. Antigravity routes carry their own provider id, so each account has its own alias and token refresh.
+
+### Upgrade notes
+
+- Nothing to migrate: saved credentials, provider ids and favorites keep working. The first load numbers any providers that already shared a display name ("Groq", "Groq 2").
+- Hosts that embed Core and want OpenAI prompt caching should pass a stable `sessionId` per conversation. A host that pins `@jacobbd/relay-ai` with a caret on a 0.x version stays on that minor series — bump the range to pick up 0.17.
+
 ## [0.16.1] - 2026-10-28
 
 ### Fixed
