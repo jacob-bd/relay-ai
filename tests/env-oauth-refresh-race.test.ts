@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   /** Swapped in right after the first read, simulating another process writing the keychain. */
   afterFirstRead: undefined as { account: string; value: string } | undefined,
   refreshCalls: [] as Array<{ providerId: string; refresh: string }>,
+  refreshError: undefined as Error | undefined,
 }));
 
 vi.mock('@napi-rs/keyring', () => ({
@@ -33,11 +34,13 @@ vi.mock('../src/oauth/refresh.js', async importOriginal => ({
   ...(await importOriginal<typeof import('../src/oauth/refresh.js')>()),
   refreshStoredOAuthCredential: vi.fn(async (providerId: string, cred: { refresh: string }) => {
     state.refreshCalls.push({ providerId, refresh: cred.refresh });
+    if (state.refreshError) throw state.refreshError;
     return { type: 'oauth', access: 'REFRESHED', refresh: 'R-NEXT', expires: Date.now() + 3_600_000 };
   }),
 }));
 
 import { forceRefreshProviderCredential, invalidateKeyringReadCache, resolveProviderCredential } from '../src/env.js';
+import { OAuthRefreshRevokedError } from '../src/oauth/refresh-http.js';
 
 const ACCOUNT = 'oauth:provider:openai-oauth';
 const AUTH_REF = `keyring:${ACCOUNT}`;
@@ -55,6 +58,7 @@ describe('OAuth refresh across processes', () => {
     state.gets = 0;
     state.afterFirstRead = undefined;
     state.refreshCalls = [];
+    state.refreshError = undefined;
     invalidateKeyringReadCache();
     delete process.env['RELAY_AI_KEY_OPENAI_OAUTH'];
   });
@@ -113,5 +117,27 @@ describe('OAuth refresh across processes', () => {
     state.store.set(account, cred('B1', 'S1', -10_000));
     expect(await resolveProviderCredential('openai-oauth-2', `keyring:${account}`)).toBe('REFRESHED');
     expect(state.refreshCalls).toEqual([{ providerId: 'openai-oauth-2', refresh: 'S1' }]);
+  });
+
+  it('tells the user how to sign in again when the provider says the sign-in is no longer valid', async () => {
+    state.store.set(ACCOUNT, cred('A1', 'R1', -10_000));
+    state.refreshError = new OAuthRefreshRevokedError('OpenAI token refresh failed (400)');
+
+    await expect(resolveProviderCredential('openai-oauth', AUTH_REF)).rejects.toThrow(/relay-ai providers auth openai-oauth/);
+  });
+
+  it('a numbered account is told to sign in again on itself', async () => {
+    const account = 'oauth:provider:openai-oauth-2';
+    state.store.set(account, cred('B1', 'S1', -10_000));
+    state.refreshError = new OAuthRefreshRevokedError('OpenAI token refresh failed (400)');
+
+    await expect(resolveProviderCredential('openai-oauth-2', `keyring:${account}`)).rejects.toThrow(/relay-ai providers auth openai-oauth-2/);
+  });
+
+  it('still uses the old token while it is valid, even if the refresh was revoked', async () => {
+    state.store.set(ACCOUNT, cred('A1', 'R1', 30_000));   // inside the refresh window, not yet expired
+    state.refreshError = new OAuthRefreshRevokedError('OpenAI token refresh failed (400)');
+
+    expect(await resolveProviderCredential('openai-oauth', AUTH_REF)).toBe('A1');
   });
 });

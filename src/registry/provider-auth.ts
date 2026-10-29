@@ -1,14 +1,17 @@
 // provider-auth.ts — relay-ai providers auth (native device-code / browser OAuth)
 
+import { describeOAuthAccount, formatOAuthAccount, sameOAuthAccount } from '../oauth/identity.js';
+import { providerKind, nextInstanceId } from './provider-kind.js';
 import { printOAuthStepsPanel, confirmSubscriptionOAuthRisk } from '../ui.js';
 import { localIsoTimestamp } from '../trace-log.js';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import open from 'open';
-import { deleteProviderCredential, saveProviderCredential } from '../env.js';
+import { deleteProviderCredential, readStoredOAuthCredential, saveProviderCredential } from '../env.js';
 import { runOpenAiDeviceCodeFlow } from '../oauth/openai.js';
 import {
   supportsNativeOAuth,
+  supportsAdditionalOAuthAccounts,
   isBrowserRedirectOAuth,
   tokensToStoredCredential,
   type NativeOAuthProviderId,
@@ -36,6 +39,8 @@ export type ProviderAuthMethod = 'native' | 'broker';
 
 export interface ProviderAuthOptions {
   method?: ProviderAuthMethod;
+  /** Sign in as an additional account instead of replacing an existing one. */
+  addAccount?: boolean;
   /** @deprecated Ignored — use `relay-ai providers import` for OpenCode CLI configs. */
   brokerMethod?: string;
 }
@@ -184,22 +189,84 @@ async function runNativeBrowserOAuth(providerId: NativeOAuthProviderId): Promise
   }
 }
 
+export class DuplicateOAuthAccountError extends Error {
+  constructor(public readonly accountLabel: string | undefined, public readonly existingName: string) {
+    super(
+      `${accountLabel ? `This account (${accountLabel})` : 'This account'} is already signed in as "${existingName}". `
+      + 'Use "Sign in again" on that provider instead of adding it twice.',
+    );
+    this.name = 'DuplicateOAuthAccountError';
+  }
+}
+
+/** Where a sign-in will be stored: which kind of provider, and which registry entry. */
+export interface OAuthAccountPlan {
+  kind: string;
+  registryId: string;
+}
+
+/**
+ * Decide the registry entry a sign-in belongs to. `providerId` is a kind ("openai-oauth", replaces the
+ * main account) or an existing numbered account ("openai-oauth-2"); `addAccount` always makes a new one.
+ */
+export function planOAuthAccount(
+  providerId: string,
+  addAccount = false,
+  registry = loadRegistry(),
+): OAuthAccountPlan {
+  const kind = providerKind(toOAuthRegistryId(providerId));
+  const base = toOAuthRegistryId(kind);
+  const ids = registry.providers.map(pr => pr.id);
+
+  if (addAccount) {
+    if (!supportsAdditionalOAuthAccounts(kind)) {
+      throw new Error(`A second ${kind} account is not available yet.`);
+    }
+    return { kind, registryId: ids.includes(base) ? nextInstanceId(base, ids) : base };
+  }
+
+  const registryId = toOAuthRegistryId(providerId);
+  if (registryId !== base && !ids.includes(registryId)) {
+    throw new Error(`Provider not found: ${providerId}`);
+  }
+  return { kind, registryId };
+}
+
+/** Refuse a sign-in that belongs to a person another account of this kind already holds. */
+export async function assertNewOAuthAccount(plan: OAuthAccountPlan, cred: OpencodeOAuthCredential): Promise<void> {
+  const registry = loadRegistry();
+  for (const other of registry.providers) {
+    if (other.id === plan.registryId || other.authType !== 'oauth' || providerKind(other.id) !== plan.kind) continue;
+    const stored = await readStoredOAuthCredential(other.authRef);
+    if (stored && sameOAuthAccount(plan.kind, cred, stored)) {
+      throw new DuplicateOAuthAccountError(
+        formatOAuthAccount(describeOAuthAccount({ kind: plan.kind, accountId: cred.accountId, providerData: cred.providerData, accessToken: cred.access })),
+        other.name,
+      );
+    }
+  }
+}
+
+/** Save a UI-completed sign-in; returns the registry id it was stored under. */
 export async function saveNativeOAuthCredential(
   providerId: string,
   tokens: import('../oauth/types.js').OAuthTokenResponse,
   accountId?: string,
   providerData?: Record<string, unknown>,
-): Promise<void> {
+  opts: { addAccount?: boolean } = {},
+): Promise<string> {
+  const plan = planOAuthAccount(providerId, opts.addAccount === true);
   const cred = tokensToStoredCredential(tokens, undefined, accountId, providerData);
-  const registryId = toOAuthRegistryId(providerId);
+  await assertNewOAuthAccount(plan, cred);
   let diagMsg = '';
   const saved = await saveProviderCredential(
-    oauthAuthRef(registryId),
+    oauthAuthRef(plan.registryId),
     oauthCredentialToKeychainJson(cred),
     (msg) => { diagMsg = msg; },
   );
   if (!saved) throw new Error(`Could not save OAuth tokens to credential store${diagMsg ? ` — ${diagMsg}` : ' — grant Keychain access or check RELAY_AI_HOME is writable'}`);
-  await upsertOAuthProvider(providerId, cred);
+  await upsertOAuthProvider(plan, cred);
+  return plan.registryId;
 }
 
 /**
@@ -213,9 +280,9 @@ function oauthDisplayName(registryId: string, fallbackName: string): string {
   return fallbackName;
 }
 
-async function upsertOAuthProvider(providerId: string, cred: OpencodeOAuthCredential): Promise<RegistryProvider> {
-  const registryId = toOAuthRegistryId(providerId);
-  const templateId = providerId.replace(/-oauth$/, '') || providerId;
+async function upsertOAuthProvider(plan: OAuthAccountPlan, cred: OpencodeOAuthCredential): Promise<RegistryProvider> {
+  const { kind, registryId } = plan;
+  const templateId = kind.replace(/-oauth$/, '') || kind;
 
   const registry = loadRegistry();
   const authRef = oauthAuthRef(registryId);
@@ -225,9 +292,9 @@ async function upsertOAuthProvider(providerId: string, cred: OpencodeOAuthCreden
 
   if (!entry) {
     if (!template) {
-      throw new Error(`Provider "${providerId}" is not in your registry and has no template`);
+      throw new Error(`Provider "${registryId}" is not in your registry and has no template`);
     }
-    const stockName = oauthDisplayName(registryId, template.name);
+    const stockName = oauthDisplayName(toOAuthRegistryId(kind), template.name);
     const displayName = uniqueProviderName(registry.providers, stockName);
     entry = {
       id: registryId,
@@ -262,9 +329,9 @@ export async function authenticateProvider(
   providerId: string,
   options: ProviderAuthOptions = {},
 ): Promise<ProviderAuthResult> {
-  const registryId = toOAuthRegistryId(providerId);
+  const kind = providerKind(toOAuthRegistryId(providerId));
 
-  if (!supportsNativeOAuth(providerId)) {
+  if (!supportsNativeOAuth(kind)) {
     throw new Error(
       `OAuth for "${providerId}" is not built into relay-ai. `
       + 'Add an API-key provider with relay-ai providers add, or run relay-ai providers import '
@@ -279,9 +346,16 @@ export async function authenticateProvider(
     );
   }
 
-  const cred = isBrowserRedirectOAuth(providerId)
-    ? await runNativeBrowserOAuth(providerId)
-    : await runNativeDeviceCode(providerId);
+  // Decide the target before asking the user to sign in, so a bad id or an unsupported
+  // second account fails immediately.
+  const plan = planOAuthAccount(providerId, options.addAccount === true);
+  const registryId = plan.registryId;
+
+  const cred = isBrowserRedirectOAuth(kind)
+    ? await runNativeBrowserOAuth(kind)
+    : await runNativeDeviceCode(kind);
+
+  await assertNewOAuthAccount(plan, cred);
 
   let nativeDiagMsg = '';
   const saved = await saveProviderCredential(
@@ -293,7 +367,7 @@ export async function authenticateProvider(
     p.log.warn(`Could not save OAuth tokens — ${nativeDiagMsg || 'session may not persist.'}`);
   }
 
-  const registryProvider = await upsertOAuthProvider(providerId, cred);
+  const registryProvider = await upsertOAuthProvider(plan, cred);
 
   const refreshSpinner = p.spinner();
   refreshSpinner.start('Refreshing model list...');
@@ -311,7 +385,8 @@ export function providerAuthHelpText(): string {
   return `${pc.bold('relay-ai providers auth')} — sign in with OAuth
 
 ${pc.bold('Usage:')}
-  relay-ai providers auth <id>
+  relay-ai providers auth <id>          sign in (replaces that account if it already exists)
+  relay-ai providers auth <id> --new    sign in an additional account (ChatGPT, xAI, Copilot, ClinePass)
   relay-ai providers auth xai-oauth
   relay-ai providers auth openai-oauth
   relay-ai providers auth github-copilot

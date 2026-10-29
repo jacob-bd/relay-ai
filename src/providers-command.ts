@@ -51,7 +51,7 @@ import { refreshAllProviderModels, refreshProviderModels, refreshProviderModelsB
 import { resolveRefreshCredential } from './registry/refresh-credentials.js';
 import { resolveOrCollectApiKey } from './key-setup.js';
 import { authenticateProvider, providerAuthHelpText, type ProviderAuthMethod } from './registry/provider-auth.js';
-import { supportsNativeOAuth } from './oauth/types.js';
+import { supportsAdditionalOAuthAccounts, supportsNativeOAuth } from './oauth/types.js';
 import { browseAllModels } from './prompts.js';
 import { cachedModelToLocal } from './registry/materialize.js';
 import { loadPreferences } from './config.js';
@@ -81,6 +81,8 @@ export function parseProvidersArgs(args: string[]): {
   /** `providers add <template-id>` skips the catalog picker. */
   addTemplateId?: string;
   authMethod?: ProviderAuthMethod;
+  /** `providers auth <kind> --new` signs in an additional account. */
+  addAccount?: boolean;
   error?: string;
 } {
   if (args.length === 0) return { subcommand: 'hub', showHelp: false };
@@ -102,10 +104,12 @@ export function parseProvidersArgs(args: string[]): {
   if (first === 'auth') {
     if (rest.length === 0) return { subcommand: 'auth', showHelp: true };
     let authMethod: ProviderAuthMethod | undefined;
+    let addAccount = false;
     const positional: string[] = [];
     for (const arg of rest) {
       if (arg === '--native') authMethod = 'native';
       else if (arg === '--broker') authMethod = 'broker';
+      else if (arg === '--new') addAccount = true;
       else if (arg.startsWith('-')) {
         return { subcommand: 'auth', showHelp: false, error: `Unknown auth option: ${arg}` };
       } else {
@@ -115,7 +119,7 @@ export function parseProvidersArgs(args: string[]): {
     if (positional.length !== 1) {
       return { subcommand: 'auth', showHelp: false, error: 'Usage: relay-ai providers auth <id>' };
     }
-    return { subcommand: 'auth', showHelp: false, removeId: positional[0], authMethod };
+    return { subcommand: 'auth', showHelp: false, removeId: positional[0], authMethod, ...(addAccount ? { addAccount } : {}) };
   }
   if (first === 'remove') {
     if (rest.length === 0) return { subcommand: 'remove', showHelp: false, error: 'Usage: relay-ai providers remove <id>' };
@@ -145,7 +149,7 @@ ${pc.bold('Usage:')}
   relay-ai providers remove <id>
   relay-ai providers rename <id> <new name>
   relay-ai providers refresh-models [id]
-  relay-ai providers auth <id>
+  relay-ai providers auth <id> [--new]
 
 ${pc.bold('Subcommands:')}
   (none)      Provider hub wizard ${pc.dim('[Phase 1.1]')}
@@ -249,9 +253,13 @@ export async function runProvidersImport(): Promise<number> {
   return 0;
 }
 
-export async function runProvidersAuth(providerId: string, method?: ProviderAuthMethod): Promise<number> {
+export async function runProvidersAuth(
+  providerId: string,
+  method?: ProviderAuthMethod,
+  opts: { addAccount?: boolean } = {},
+): Promise<number> {
   try {
-    const result = await authenticateProvider(providerId, { method });
+    const result = await authenticateProvider(providerId, { method, ...(opts.addAccount ? { addAccount: true } : {}) });
     p.log.success(`Signed in to ${result.registryProvider.name} — credential saved to Keychain.`);
     return 0;
   } catch (err) {
@@ -1045,6 +1053,13 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
       hint: 'Refresh OAuth tokens or switch accounts',
     });
   }
+  if (provider.authType === 'oauth' && supportsAdditionalOAuthAccounts(providerKind(id))) {
+    detailOptions.push({
+      value: 'add-account',
+      label: 'Add another account',
+      hint: 'Sign in with a different account; it appears as a separate provider you can rename',
+    });
+  }
   const editableCustomKind = customEndpointKind(provider);
   if (editableCustomKind) {
     detailOptions.push({
@@ -1116,6 +1131,10 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
 
   if (action === 'auth') {
     return (await runProvidersAuth(id)) === 0 ? 'back' : 'failed';
+  }
+
+  if (action === 'add-account') {
+    return (await runProvidersAuth(providerKind(id), undefined, { addAccount: true })) === 0 ? 'back' : 'failed';
   }
 
   if (action === 'rename') {
@@ -1236,21 +1255,37 @@ export async function runProvidersHub(): Promise<number> {
     }
     if (choice === 'auth-menu') {
       const configuredIds = loadRegistry().providers.map(provider => provider.id);
-      const oauthTemplates = listVisibleOAuthTemplates(configuredIds);
-      if (oauthTemplates.length === 0) {
+      // First sign-in for providers not set up yet, plus "another account" for the ones that are
+      // (and can hold a second account).
+      const firstSignIns = listVisibleOAuthTemplates(configuredIds);
+      const anotherAccount = listVisibleOAuthTemplates()
+        .filter(template => configuredIds.includes(template.id) && supportsAdditionalOAuthAccounts(providerKind(template.id)));
+      if (firstSignIns.length === 0 && anotherAccount.length === 0) {
         p.log.info('All visible OAuth providers are already configured.');
         continue;
       }
-      const providerId = await p.select({
+      const selection = await p.select({
         message: 'Which provider?',
-        options: oauthTemplates.map(template => ({
-          value: template.id,
-          label: template.name,
-          hint: 'device code',
-        })),
+        options: [
+          ...firstSignIns.map(template => ({
+            value: `new:${template.id}`,
+            label: template.name,
+            hint: 'device code',
+          })),
+          ...anotherAccount.map(template => ({
+            value: `add:${template.id}`,
+            label: `${template.name} — add another account`,
+            hint: 'device code',
+          })),
+        ],
       });
-      if (!p.isCancel(providerId)) {
-        lastOperationFailed = (await runProvidersAuth(providerId as string)) !== 0;
+      if (!p.isCancel(selection)) {
+        const [mode, templateId] = String(selection).split(/:(.*)/s);
+        lastOperationFailed = (await runProvidersAuth(
+          templateId as string,
+          undefined,
+          { addAccount: mode === 'add' },
+        )) !== 0;
       }
       continue;
     }
@@ -1292,7 +1327,7 @@ export async function runProvidersCommand(args: string[]): Promise<number> {
       console.log(providerAuthHelpText());
       return 0;
     }
-    return runProvidersAuth(parsed.removeId, parsed.authMethod);
+    return runProvidersAuth(parsed.removeId, parsed.authMethod, { addAccount: parsed.addAccount });
   }
 
   relayIntro('Your AI providers');

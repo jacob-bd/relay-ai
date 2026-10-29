@@ -40,7 +40,7 @@ import {
   summarizeServerProviders,
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider
-} from "./chunk-JCGPMYQP.js";
+} from "./chunk-N3HKN2SI.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -74,6 +74,7 @@ import {
   pollOpenAiDeviceCodeToken,
   pollXaiDeviceCodeToken,
   preferredRelayCredentialAuthRef,
+  providerKind,
   readStoredProviderCredential,
   recordLaunchFolder,
   requestClinePassDeviceCode,
@@ -92,10 +93,11 @@ import {
   setServerFreeModelsOnly,
   setServerListenMode,
   setServerMaskGatewayIds,
+  supportsAdditionalOAuthAccounts,
   supportsManualModels,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-J7KX7E5Z.js";
+} from "./chunk-OUEXTVIL.js";
 import {
   init_provider_templates,
   listAddableTemplates,
@@ -753,6 +755,9 @@ async function handlePostConfig(req, res) {
     sendJson(res, 400, { error: String(err) });
   }
 }
+function canAddAccountField(providerId, authType) {
+  return authType === "oauth" && supportsAdditionalOAuthAccounts(providerKind(providerId)) ? { canAddAccount: true } : {};
+}
 function accountFieldFrom(label) {
   return label ? { account: label } : {};
 }
@@ -803,6 +808,7 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
       })(),
       authType: p2.authType ?? "api",
       ...accountField(p2),
+      ...canAddAccountField(p2.id, p2.authType),
       ...manualMetadata(p2.id),
       // Copilot's runtime catalog is policy-filtered by account plan. Never replace
       // that safe count with the larger raw cache count.
@@ -834,6 +840,7 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
         freeAccess: false,
         authType: "oauth",
         ...isProviderKind(rp.id, "github-copilot") ? {} : accountFieldFrom(await readOAuthAccountLabel(rp)),
+        ...canAddAccountField(rp.id, "oauth"),
         ...manualMetadata(rp.id),
         modelCount: 0,
         ...isProviderKind(rp.id, "github-copilot") ? { subscription: copilotSubscription(void 0) } : {},
@@ -892,7 +899,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-DXIRDKKJ.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-JQVLCFUV.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1207,13 +1214,15 @@ async function handleDeleteProvider(req, res) {
 var DEVICE_CODE_PROVIDER_IDS = /* @__PURE__ */ new Set(["xai-oauth", "openai-oauth", "github-copilot", "cline-pass"]);
 var PKCE_PROVIDER_IDS = /* @__PURE__ */ new Set(["claude-code", "antigravity"]);
 function canStartOAuthFromUi(providerId, uiMode) {
-  if (DEVICE_CODE_PROVIDER_IDS.has(providerId)) return true;
-  return uiMode !== "server" && PKCE_PROVIDER_IDS.has(providerId);
+  const kind = providerKind(providerId);
+  if (DEVICE_CODE_PROVIDER_IDS.has(kind)) return true;
+  return uiMode !== "server" && PKCE_PROVIDER_IDS.has(kind);
 }
 function isUiCatalogOAuthProvider(providerId, uiMode) {
-  if (DEVICE_CODE_PROVIDER_IDS.has(providerId)) return true;
+  const kind = providerKind(providerId);
+  if (DEVICE_CODE_PROVIDER_IDS.has(kind)) return true;
   if (uiMode === "server") return false;
-  return PKCE_PROVIDER_IDS.has(providerId);
+  return PKCE_PROVIDER_IDS.has(kind);
 }
 async function refreshOAuthProviderModels(providerId) {
   const registry = loadRegistry();
@@ -1230,54 +1239,60 @@ async function handleOAuthStart(req, res, opts = {}) {
       sendJson(res, 400, { error: "Unsupported OAuth provider." });
       return;
     }
+    const kind = providerKind(providerId);
+    const addAccount = body.addAccount === true;
+    if (addAccount && !supportsAdditionalOAuthAccounts(kind)) {
+      sendJson(res, 400, { error: "A second account for this provider is not available yet." });
+      return;
+    }
     const sessionId = randomUUID();
-    if (providerId === "xai-oauth") {
+    if (kind === "xai-oauth") {
       const device2 = await requestXaiDeviceCode();
       const url2 = device2.verification_uri_complete ?? device2.verification_uri;
       const session2 = { status: "pending", url: url2, userCode: device2.user_code, providerId };
       oauthSessions.set(sessionId, session2);
       pollXaiDeviceCodeToken(device2).then(async (tokens) => {
-        await saveNativeOAuthCredential(providerId, tokens);
-        await refreshOAuthProviderModels(providerId);
+        const savedId = await saveNativeOAuthCredential(providerId, tokens, void 0, void 0, { addAccount });
+        await refreshOAuthProviderModels(typeof savedId === "string" ? savedId : providerId);
         oauthSessions.set(sessionId, { ...session2, status: "done" });
       }).catch((err) => {
-        oauthSessions.set(sessionId, { ...session2, status: "error", error: String(err) });
+        oauthSessions.set(sessionId, { ...session2, status: "error", error: err instanceof Error ? err.message : String(err) });
       });
       sendJson(res, 200, { sessionId, url: url2, userCode: device2.user_code });
       return;
     }
-    if (providerId === "github-copilot") {
+    if (kind === "github-copilot") {
       const device2 = await requestGithubDeviceCode();
       const url2 = device2.verification_uri;
       const session2 = { status: "pending", url: url2, userCode: device2.user_code, providerId };
       oauthSessions.set(sessionId, session2);
       pollGithubDeviceCodeToken(device2).then(async (tokens) => {
-        await saveNativeOAuthCredential(providerId, tokens);
-        await refreshOAuthProviderModels(providerId);
+        const savedId = await saveNativeOAuthCredential(providerId, tokens, void 0, void 0, { addAccount });
+        await refreshOAuthProviderModels(typeof savedId === "string" ? savedId : providerId);
         oauthSessions.set(sessionId, { ...session2, status: "done" });
       }).catch((err) => {
-        oauthSessions.set(sessionId, { ...session2, status: "error", error: String(err) });
+        oauthSessions.set(sessionId, { ...session2, status: "error", error: err instanceof Error ? err.message : String(err) });
       });
       sendJson(res, 200, { sessionId, url: url2, userCode: device2.user_code });
       return;
     }
-    if (providerId === "cline-pass") {
+    if (kind === "cline-pass") {
       const device2 = await requestClinePassDeviceCode();
       const url2 = device2.verification_uri_complete ?? device2.verification_uri;
       const session2 = { status: "pending", url: url2, userCode: device2.user_code, providerId };
       oauthSessions.set(sessionId, session2);
       pollClinePassDeviceCode(device2).then(async (result) => {
-        await saveNativeOAuthCredential(providerId, result.tokens, result.accountId, result.providerData);
-        await refreshOAuthProviderModels(providerId);
+        const savedId = await saveNativeOAuthCredential(providerId, result.tokens, result.accountId, result.providerData, { addAccount });
+        await refreshOAuthProviderModels(typeof savedId === "string" ? savedId : providerId);
         oauthSessions.set(sessionId, { ...session2, status: "done" });
       }).catch((err) => {
-        oauthSessions.set(sessionId, { ...session2, status: "error", error: String(err) });
+        oauthSessions.set(sessionId, { ...session2, status: "error", error: err instanceof Error ? err.message : String(err) });
       });
       sendJson(res, 200, { sessionId, url: url2, userCode: device2.user_code });
       return;
     }
-    if (PKCE_PROVIDER_IDS.has(providerId)) {
-      if (providerId === "claude-code") {
+    if (PKCE_PROVIDER_IDS.has(kind)) {
+      if (kind === "claude-code") {
         sendJson(res, 400, {
           error: "Claude Code OAuth must be completed in the terminal: relay-ai providers auth claude-code"
         });
@@ -1290,7 +1305,7 @@ async function handleOAuthStart(req, res, opts = {}) {
       const host = req.headers.host ?? "127.0.0.1";
       const redirectUri = guiCallbackRedirectUri(host);
       let pkce;
-      if (providerId === "antigravity") {
+      if (kind === "antigravity") {
         pkce = await buildAntigravityAuthUrl(redirectUri);
       } else {
         sendJson(res, 400, { error: `PKCE flow for "${providerId}" not yet implemented` });
@@ -1315,7 +1330,7 @@ async function handleOAuthStart(req, res, opts = {}) {
         let providerData = {};
         let accountId;
         let tokens;
-        if (providerId === "antigravity") {
+        if (kind === "antigravity") {
           const result = await completeAntigravityExchange(code, codeVerifier, redirectUri);
           tokens = result.tokens;
           accountId = result.userInfo.email;
@@ -1324,11 +1339,11 @@ async function handleOAuthStart(req, res, opts = {}) {
         } else {
           throw new Error(`Unknown PKCE provider: ${providerId}`);
         }
-        await saveNativeOAuthCredential(providerId, tokens, accountId, providerData);
-        await refreshOAuthProviderModels(providerId);
+        const savedId = await saveNativeOAuthCredential(providerId, tokens, accountId, providerData, { addAccount });
+        await refreshOAuthProviderModels(typeof savedId === "string" ? savedId : providerId);
         oauthSessions.set(sessionId, { ...session2, status: "done" });
       }).catch((err) => {
-        oauthSessions.set(sessionId, { ...session2, status: "error", error: String(err) });
+        oauthSessions.set(sessionId, { ...session2, status: "error", error: err instanceof Error ? err.message : String(err) });
       });
       sendJson(res, 200, { sessionId, authUrl, pkce: true });
       return;
@@ -1338,11 +1353,11 @@ async function handleOAuthStart(req, res, opts = {}) {
     const session = { status: "pending", url, userCode: device.user_code, providerId };
     oauthSessions.set(sessionId, session);
     pollOpenAiDeviceCodeToken(device).then(async ({ tokens, accountId }) => {
-      await saveNativeOAuthCredential(providerId, tokens, accountId);
-      await refreshOAuthProviderModels(providerId);
+      const savedId = await saveNativeOAuthCredential(providerId, tokens, accountId, void 0, { addAccount });
+      await refreshOAuthProviderModels(typeof savedId === "string" ? savedId : providerId);
       oauthSessions.set(sessionId, { ...session, status: "done" });
     }).catch((err) => {
-      oauthSessions.set(sessionId, { ...session, status: "error", error: String(err) });
+      oauthSessions.set(sessionId, { ...session, status: "error", error: err instanceof Error ? err.message : String(err) });
     });
     sendJson(res, 200, { sessionId, url, userCode: device.user_code });
   } catch (err) {
@@ -1948,4 +1963,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-KX7IO5E5.js.map
+//# sourceMappingURL=ui-command-3NM7KRR2.js.map

@@ -47,15 +47,9 @@ const ALLOWED: Record<string, string> = {
   'registry/provider-auth.ts::providerId === \'claude-code\'': 'kind parameter',
   'oauth/risk-notice.ts::providerId === \'antigravity\'': 'kind parameter',
 
-  // Sign-in plumbing that still names exact single-account ids — rebuilt when multiple
-  // OAuth accounts are added (step 4 of the multi-account work).
-  'registry/provider-auth.ts::registryId === \'openai-oauth\'': 'TODO step 4: sign-in naming',
-  'registry/provider-auth.ts::registryId === \'xai-oauth\'': 'TODO step 4: sign-in naming',
-  'ui/api.ts::providerId === \'xai-oauth\'': 'TODO step 4: UI sign-in',
-  'ui/api.ts::providerId === \'github-copilot\'': 'TODO step 4: UI sign-in',
-  'ui/api.ts::providerId === \'cline-pass\'': 'TODO step 4: UI sign-in',
-  'ui/api.ts::providerId === \'claude-code\'': 'TODO step 4: UI sign-in',
-  'ui/api.ts::providerId === \'antigravity\'': 'TODO step 4: UI sign-in',
+  // Sign-in naming: `registryId` here is already the provider KIND's registry slot (see planOAuthAccount).
+  'registry/provider-auth.ts::registryId === \'openai-oauth\'': 'kind slot, not an account id',
+  'registry/provider-auth.ts::registryId === \'xai-oauth\'': 'kind slot, not an account id',
 
   // Zen/Go credential location and listing — rebuilt with multi-account Zen/Go (step 6).
   'env.ts::providerId === \'go\'': 'TODO step 6: shared OpenCode key',

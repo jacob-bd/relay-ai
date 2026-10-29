@@ -1179,7 +1179,7 @@ function showBrowserSignInPrompt(feedback, authUrl) {
   feedback.className = 'key-feedback muted';
 }
 
-async function beginDeviceOAuthFlow({ providerId, signInButton, refreshButton, feedback, onDone }) {
+async function beginDeviceOAuthFlow({ providerId, addAccount = false, signInButton, refreshButton, feedback, onDone }) {
   const reenable = () => {
     signInButton.disabled = false;
     if (refreshButton) refreshButton.disabled = false;
@@ -1190,7 +1190,7 @@ async function beginDeviceOAuthFlow({ providerId, signInButton, refreshButton, f
 
   let startResult;
   try {
-    startResult = await api('POST', '/api/providers/oauth/start', { providerId });
+    startResult = await api('POST', '/api/providers/oauth/start', { providerId, ...(addAccount ? { addAccount: true } : {}) });
     // Subscription sign-ins (Antigravity) need an explicit risk acknowledgement, as in the terminal.
     if (startResult.needsConfirmation) {
       const { title, lines } = startResult.risk;
@@ -1200,7 +1200,7 @@ async function beginDeviceOAuthFlow({ providerId, signInButton, refreshButton, f
         reenable();
         return;
       }
-      startResult = await api('POST', '/api/providers/oauth/start', { providerId, acceptRisk: true });
+      startResult = await api('POST', '/api/providers/oauth/start', { providerId, acceptRisk: true, ...(addAccount ? { addAccount: true } : {}) });
     }
   } catch {
     setOAuthFeedback(feedback, 'Could not start sign-in. Check the connection and try again.', 'error');
@@ -1925,6 +1925,14 @@ function buildOAuthProviderBodyContent(provider) {
 
   actionRow.appendChild(signInBtn);
   actionRow.appendChild(refreshBtn);
+
+  // A second sign-in for the same provider shows up as its own card, which can then be renamed.
+  const addAccountBtn = document.createElement('button');
+  addAccountBtn.className = 'btn btn-ghost';
+  addAccountBtn.textContent = 'Add another account';
+  addAccountBtn.style.display = provider.hasKey && provider.canAddAccount ? '' : 'none';
+  actionRow.appendChild(addAccountBtn);
+
   content.appendChild(status);
   content.appendChild(accountNote);
   content.appendChild(actionRow);
@@ -1960,6 +1968,22 @@ function buildOAuthProviderBodyContent(provider) {
     onDone: async () => {
       showToast(`Signed in to ${provider.name ?? provider.id}`);
       state.modelsLoaded = false;
+      await initModels();
+      renderProviders();
+      renderFavList();
+    },
+  }));
+
+  addAccountBtn.addEventListener('click', () => beginDeviceOAuthFlow({
+    providerId: provider.id,
+    addAccount: true,
+    signInButton: addAccountBtn,
+    refreshButton: refreshBtn,
+    feedback,
+    onDone: async () => {
+      showToast('Account added — rename it from its card');
+      state.modelsLoaded = false;
+      await loadTemplates();
       await initModels();
       renderProviders();
       renderFavList();

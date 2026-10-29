@@ -1401,6 +1401,28 @@ async function resolveCodexClientVersion(opts = {}) {
 }
 
 // src/oauth/refresh-http.ts
+var REVOKED_REFRESH_CODES = /* @__PURE__ */ new Set([
+  "invalid_grant",
+  "refresh_token_reused",
+  "refresh_token_expired",
+  "refresh_token_invalidated"
+]);
+var OAuthRefreshRevokedError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "OAuthRefreshRevokedError";
+  }
+};
+function isRevokedRefreshResponse(status, body) {
+  if (status !== 400 && status !== 401) return false;
+  try {
+    const parsed = JSON.parse(body);
+    const code = typeof parsed.error === "string" ? parsed.error : parsed.error?.code;
+    return typeof code === "string" && REVOKED_REFRESH_CODES.has(code);
+  } catch {
+    return false;
+  }
+}
 async function postOAuthRefresh(url, body, options) {
   const isJson = options.contentType === "json";
   const response = await fetch(url, {
@@ -1413,8 +1435,12 @@ async function postOAuthRefresh(url, body, options) {
     body: isJson ? JSON.stringify(body) : body.toString()
   });
   if (!response.ok) {
-    const detail = options.includeBody ? await response.text().catch(() => "") : "";
+    const text2 = await response.text().catch(() => "");
+    const detail = options.includeBody ? text2 : "";
     const status = options.includeStatus ? ` (${response.status})` : "";
+    if (isRevokedRefreshResponse(response.status, text2)) {
+      throw new OAuthRefreshRevokedError(`${options.errorPrefix}${status}: this sign-in is no longer valid`);
+    }
     throw new Error(`${options.errorPrefix}${status}${detail ? `: ${detail}` : ""}`);
   }
   return response.json();
@@ -4728,6 +4754,9 @@ async function refreshOAuthKeyringAccount(account, providerId, raw, diag, force 
       } catch (err) {
         diag?.(err instanceof Error ? err.message : String(err));
         if (cred.access && cred.expires > Date.now()) return cred.access;
+        if (err instanceof OAuthRefreshRevokedError) {
+          throw new Error(`${err.message}. Sign in again: relay-ai providers auth ${providerId}`);
+        }
         throw err;
       }
     });

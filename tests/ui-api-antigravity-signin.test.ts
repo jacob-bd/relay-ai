@@ -118,6 +118,7 @@ describe('UI sign-in for Antigravity', () => {
       { access_token: 'a', refresh_token: 'r' },
       'g@example.com',
       { projectId: 'p1', tier: 'free-tier' },
+      { addAccount: false },
     );
   });
 });

@@ -34,6 +34,13 @@ function providerKind(providerId) {
 function isProviderKind(providerId, kind) {
   return providerKind(providerId) === kind;
 }
+function nextInstanceId(base, takenIds) {
+  const taken = new Set(takenIds);
+  for (let n = 2; ; n++) {
+    const candidate = `${base}-${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
 
 // src/constants.ts
 import { homedir } from "os";
@@ -1858,6 +1865,28 @@ function startCallbackServer() {
 }
 
 // src/oauth/refresh-http.ts
+var REVOKED_REFRESH_CODES = /* @__PURE__ */ new Set([
+  "invalid_grant",
+  "refresh_token_reused",
+  "refresh_token_expired",
+  "refresh_token_invalidated"
+]);
+var OAuthRefreshRevokedError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "OAuthRefreshRevokedError";
+  }
+};
+function isRevokedRefreshResponse(status, body) {
+  if (status !== 400 && status !== 401) return false;
+  try {
+    const parsed = JSON.parse(body);
+    const code = typeof parsed.error === "string" ? parsed.error : parsed.error?.code;
+    return typeof code === "string" && REVOKED_REFRESH_CODES.has(code);
+  } catch {
+    return false;
+  }
+}
 async function postOAuthRefresh(url, body, options) {
   const isJson = options.contentType === "json";
   const response = await fetch(url, {
@@ -1870,8 +1899,12 @@ async function postOAuthRefresh(url, body, options) {
     body: isJson ? JSON.stringify(body) : body.toString()
   });
   if (!response.ok) {
-    const detail = options.includeBody ? await response.text().catch(() => "") : "";
+    const text2 = await response.text().catch(() => "");
+    const detail = options.includeBody ? text2 : "";
     const status = options.includeStatus ? ` (${response.status})` : "";
+    if (isRevokedRefreshResponse(response.status, text2)) {
+      throw new OAuthRefreshRevokedError(`${options.errorPrefix}${status}: this sign-in is no longer valid`);
+    }
     throw new Error(`${options.errorPrefix}${status}${detail ? `: ${detail}` : ""}`);
   }
   return response.json();
@@ -2262,6 +2295,24 @@ function formatOAuthAccount(identity) {
   const parts = [who, identity.plan].filter((p) => Boolean(p));
   return parts.length > 0 ? parts.join(" \xB7 ") : void 0;
 }
+function accountKeys(kind, cred) {
+  const identity = describeOAuthAccount({
+    kind,
+    accountId: cred.accountId,
+    providerData: cred.providerData,
+    accessToken: cred.access
+  });
+  const keys = /* @__PURE__ */ new Set();
+  if (identity.userId) keys.add(`user:${identity.userId}`);
+  if (identity.email) keys.add(`email:${identity.email.toLowerCase()}`);
+  if (identity.login) keys.add(`login:${identity.login.toLowerCase()}`);
+  if (providerKind(kind) === "cline-pass" && cred.accountId) keys.add(`cline:${cred.accountId}`);
+  return keys;
+}
+function sameOAuthAccount(kind, a, b) {
+  const keysOfB = accountKeys(kind, b);
+  return [...accountKeys(kind, a)].some((key) => keysOfB.has(key));
+}
 
 // src/oauth/types.ts
 function tokensToStoredCredential(tokens, existingRefresh, accountId, providerData) {
@@ -2313,6 +2364,9 @@ function supportsNativeOAuth(providerId) {
 var BROWSER_REDIRECT_OAUTH_IDS = ["claude-code", "antigravity"];
 function isBrowserRedirectOAuth(id) {
   return BROWSER_REDIRECT_OAUTH_IDS.includes(id);
+}
+function supportsAdditionalOAuthAccounts(kind) {
+  return supportsNativeOAuth(kind) && !isBrowserRedirectOAuth(kind);
 }
 
 // src/oauth/openai.ts
@@ -3546,6 +3600,9 @@ async function refreshOAuthKeyringAccount(account, providerId, raw, diag, force 
       } catch (err) {
         diag?.(err instanceof Error ? err.message : String(err));
         if (cred.access && cred.expires > Date.now()) return cred.access;
+        if (err instanceof OAuthRefreshRevokedError) {
+          throw new Error(`${err.message}. Sign in again: relay-ai providers auth ${providerId}`);
+        }
         throw err;
       }
     });
@@ -7648,6 +7705,7 @@ async function generateAnthropicResponse(model, params, modelId, options) {
 export {
   providerKind,
   isProviderKind,
+  nextInstanceId,
   BACKENDS,
   CODEX_RESPONSES_LITE_WS_URL,
   CODEX_RESPONSES_LITE_VERSION,
@@ -7788,9 +7846,11 @@ export {
   oauthCredentialToKeychainJson,
   describeOAuthAccount,
   formatOAuthAccount,
+  sameOAuthAccount,
   tokensToStoredCredential,
   supportsNativeOAuth,
   isBrowserRedirectOAuth,
+  supportsAdditionalOAuthAccounts,
   requestGithubDeviceCode,
   pollGithubDeviceCodeToken,
   runGithubDeviceCodeFlow,
@@ -7844,4 +7904,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-J7KX7E5Z.js.map
+//# sourceMappingURL=chunk-OUEXTVIL.js.map

@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-PBKYFSHM.js";
+} from "./chunk-ZYSF5AU3.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -133,7 +133,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-JCGPMYQP.js";
+} from "./chunk-N3HKN2SI.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -221,6 +221,7 @@ import {
   splitToolUseId,
   sseChunk,
   stripToolUseIdSuffix,
+  supportsAdditionalOAuthAccounts,
   supportsManualModels,
   supportsNativeOAuth,
   thinkingProviderOptions,
@@ -231,7 +232,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-J7KX7E5Z.js";
+} from "./chunk-OUEXTVIL.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -2071,10 +2072,12 @@ function parseProvidersArgs(args) {
   if (first === "auth") {
     if (rest.length === 0) return { subcommand: "auth", showHelp: true };
     let authMethod;
+    let addAccount = false;
     const positional = [];
     for (const arg of rest) {
       if (arg === "--native") authMethod = "native";
       else if (arg === "--broker") authMethod = "broker";
+      else if (arg === "--new") addAccount = true;
       else if (arg.startsWith("-")) {
         return { subcommand: "auth", showHelp: false, error: `Unknown auth option: ${arg}` };
       } else {
@@ -2084,7 +2087,7 @@ function parseProvidersArgs(args) {
     if (positional.length !== 1) {
       return { subcommand: "auth", showHelp: false, error: "Usage: relay-ai providers auth <id>" };
     }
-    return { subcommand: "auth", showHelp: false, removeId: positional[0], authMethod };
+    return { subcommand: "auth", showHelp: false, removeId: positional[0], authMethod, ...addAccount ? { addAccount } : {} };
   }
   if (first === "remove") {
     if (rest.length === 0) return { subcommand: "remove", showHelp: false, error: "Usage: relay-ai providers remove <id>" };
@@ -2113,7 +2116,7 @@ ${pc4.bold("Usage:")}
   relay-ai providers remove <id>
   relay-ai providers rename <id> <new name>
   relay-ai providers refresh-models [id]
-  relay-ai providers auth <id>
+  relay-ai providers auth <id> [--new]
 
 ${pc4.bold("Subcommands:")}
   (none)      Provider hub wizard ${pc4.dim("[Phase 1.1]")}
@@ -2192,9 +2195,9 @@ async function runProvidersImport() {
   }
   return 0;
 }
-async function runProvidersAuth(providerId, method) {
+async function runProvidersAuth(providerId, method, opts = {}) {
   try {
-    const result = await authenticateProvider(providerId, { method });
+    const result = await authenticateProvider(providerId, { method, ...opts.addAccount ? { addAccount: true } : {} });
     p8.log.success(`Signed in to ${result.registryProvider.name} \u2014 credential saved to Keychain.`);
     return 0;
   } catch (err) {
@@ -2898,6 +2901,13 @@ async function runProviderDetail(id) {
       hint: "Refresh OAuth tokens or switch accounts"
     });
   }
+  if (provider.authType === "oauth" && supportsAdditionalOAuthAccounts(providerKind(id))) {
+    detailOptions.push({
+      value: "add-account",
+      label: "Add another account",
+      hint: "Sign in with a different account; it appears as a separate provider you can rename"
+    });
+  }
   const editableCustomKind = customEndpointKind(provider);
   if (editableCustomKind) {
     detailOptions.push({
@@ -2959,6 +2969,9 @@ async function runProviderDetail(id) {
   }
   if (action === "auth") {
     return await runProvidersAuth(id) === 0 ? "back" : "failed";
+  }
+  if (action === "add-account") {
+    return await runProvidersAuth(providerKind(id), void 0, { addAccount: true }) === 0 ? "back" : "failed";
   }
   if (action === "rename") {
     return await runProviderRenamePrompt(provider) === 0 ? "back" : "failed";
@@ -3064,21 +3077,34 @@ async function runProvidersHub() {
     }
     if (choice === "auth-menu") {
       const configuredIds = loadRegistry().providers.map((provider) => provider.id);
-      const oauthTemplates = listVisibleOAuthTemplates(configuredIds);
-      if (oauthTemplates.length === 0) {
+      const firstSignIns = listVisibleOAuthTemplates(configuredIds);
+      const anotherAccount = listVisibleOAuthTemplates().filter((template) => configuredIds.includes(template.id) && supportsAdditionalOAuthAccounts(providerKind(template.id)));
+      if (firstSignIns.length === 0 && anotherAccount.length === 0) {
         p8.log.info("All visible OAuth providers are already configured.");
         continue;
       }
-      const providerId = await p8.select({
+      const selection = await p8.select({
         message: "Which provider?",
-        options: oauthTemplates.map((template) => ({
-          value: template.id,
-          label: template.name,
-          hint: "device code"
-        }))
+        options: [
+          ...firstSignIns.map((template) => ({
+            value: `new:${template.id}`,
+            label: template.name,
+            hint: "device code"
+          })),
+          ...anotherAccount.map((template) => ({
+            value: `add:${template.id}`,
+            label: `${template.name} \u2014 add another account`,
+            hint: "device code"
+          }))
+        ]
       });
-      if (!p8.isCancel(providerId)) {
-        lastOperationFailed = await runProvidersAuth(providerId) !== 0;
+      if (!p8.isCancel(selection)) {
+        const [mode, templateId] = String(selection).split(/:(.*)/s);
+        lastOperationFailed = await runProvidersAuth(
+          templateId,
+          void 0,
+          { addAccount: mode === "add" }
+        ) !== 0;
       }
       continue;
     }
@@ -3118,7 +3144,7 @@ async function runProvidersCommand(args) {
       console.log(providerAuthHelpText());
       return 0;
     }
-    return runProvidersAuth(parsed.removeId, parsed.authMethod);
+    return runProvidersAuth(parsed.removeId, parsed.authMethod, { addAccount: parsed.addAccount });
   }
   relayIntro("Your AI providers");
   return runProvidersHub();
@@ -17516,7 +17542,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-KX7IO5E5.js");
+    const { runUiCommand } = await import("./ui-command-3NM7KRR2.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

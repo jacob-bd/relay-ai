@@ -81,6 +81,20 @@ describe('parseProvidersArgs', () => {
     expect(providersHelpText()).toContain('providers rename');
   });
 
+  it('parses auth --new as adding another account', () => {
+    expect(parseProvidersArgs(['auth', 'openai-oauth', '--new'])).toEqual({
+      subcommand: 'auth',
+      showHelp: false,
+      removeId: 'openai-oauth',
+      authMethod: undefined,
+      addAccount: true,
+    });
+  });
+
+  it('documents auth --new in the auth help', () => {
+    expect(providerAuthHelpText()).toContain('--new');
+  });
+
   it('reports remove without id', () => {
     expect(parseProvidersArgs(['remove']).error).toContain('Usage');
   });
@@ -369,5 +383,114 @@ describe('runProvidersRename', () => {
     expect(await runProvidersRename('zen', 'opencode go')).toBe(1);
     expect(await runProvidersRename('nope', 'X')).toBe(1);
     expect(loadRegistry().providers.find(pr => pr.id === 'zen')?.name).toBe('OpenCode Zen');
+  });
+});
+
+describe('provider menu: several OAuth accounts', () => {
+  let home: string;
+  const prevHome = process.env.RELAY_AI_HOME;
+
+  const oauthEntry = (id: string, templateId: string, name: string) => ({
+    id,
+    templateId,
+    name,
+    enabled: true,
+    authType: 'oauth' as const,
+    authRef: `keyring:oauth:provider:${id}`,
+    api: { npm: '@ai-sdk/openai', url: '' },
+    addedAt: '2026-01-01T00:00:00.000Z',
+    modelsCache: { fetchedAt: '2026-01-01T00:00:00.000Z', models: [{ id: 'm', name: 'M', upstreamModelId: 'm', modelFormat: 'openai' as const, npm: '@ai-sdk/openai' }] },
+  });
+  const detailOptions = () => selectMock.mock.calls.find(call => call[0].message === 'What would you like to do?')?.[0].options.map((o: { value: string }) => o.value) as string[];
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'relay-ai-multi-oauth-'));
+    process.env.RELAY_AI_HOME = home;
+    selectMock.mockReset();
+    textMock.mockReset();
+    spinnerMock.mockClear();
+    vi.spyOn(providerAuth, 'authenticateProvider').mockResolvedValue({ registryProvider: { name: 'ChatGPT' } } as never);
+  });
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.RELAY_AI_HOME;
+    else process.env.RELAY_AI_HOME = prevHome;
+    rmSync(home, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  it('offers "Add another account" for a ChatGPT sign-in and starts a new account', async () => {
+    saveRegistry({ schemaVersion: 1, providers: [oauthEntry('openai-oauth', 'openai', 'OpenAI (ChatGPT)')] });
+    selectMock.mockResolvedValueOnce('provider:openai-oauth').mockResolvedValueOnce('add-account').mockResolvedValueOnce('done');
+
+    await runProvidersHub();
+
+    expect(detailOptions()).toContain('add-account');
+    expect(providerAuth.authenticateProvider).toHaveBeenCalledWith('openai-oauth', { method: undefined, addAccount: true });
+  });
+
+  it('adding from a numbered account still adds under the provider kind', async () => {
+    saveRegistry({ schemaVersion: 1, providers: [oauthEntry('openai-oauth', 'openai', 'OpenAI (ChatGPT)'), oauthEntry('openai-oauth-2', 'openai', 'Personal')] });
+    selectMock.mockResolvedValueOnce('provider:openai-oauth-2').mockResolvedValueOnce('add-account').mockResolvedValueOnce('done');
+
+    await runProvidersHub();
+
+    expect(providerAuth.authenticateProvider).toHaveBeenCalledWith('openai-oauth', { method: undefined, addAccount: true });
+  });
+
+  it('"Sign in again" on a numbered account re-signs that account', async () => {
+    saveRegistry({ schemaVersion: 1, providers: [oauthEntry('openai-oauth', 'openai', 'OpenAI (ChatGPT)'), oauthEntry('openai-oauth-2', 'openai', 'Personal')] });
+    selectMock.mockResolvedValueOnce('provider:openai-oauth-2').mockResolvedValueOnce('auth').mockResolvedValueOnce('done');
+
+    await runProvidersHub();
+
+    expect(providerAuth.authenticateProvider).toHaveBeenCalledWith('openai-oauth-2', { method: undefined });
+  });
+
+  it('does not offer a second account for Claude Code or Antigravity yet', async () => {
+    saveRegistry({ schemaVersion: 1, providers: [oauthEntry('antigravity', 'antigravity', 'Antigravity')] });
+    selectMock.mockResolvedValueOnce('provider:antigravity').mockResolvedValueOnce('back').mockResolvedValueOnce('done');
+
+    await runProvidersHub();
+
+    expect(detailOptions()).not.toContain('add-account');
+  });
+
+  it('does not offer it for API-key providers', async () => {
+    saveRegistry({ schemaVersion: 1, providers: [{ ...oauthEntry('groq', 'groq', 'Groq'), authType: 'api' as never, authRef: 'keyring:provider:groq' }] });
+    selectMock.mockResolvedValueOnce('provider:groq').mockResolvedValueOnce('back').mockResolvedValueOnce('done');
+
+    await runProvidersHub();
+
+    expect(detailOptions()).not.toContain('add-account');
+  });
+
+  describe('"Sign in with OAuth" screen', () => {
+    const optionValues = () => selectMock.mock.calls.find(call => call[0].message === 'Which provider?')?.[0].options.map((o: { value: string }) => o.value) as string[] | undefined;
+    const allConfigured = () => saveRegistry({ schemaVersion: 1, providers: [
+      oauthEntry('github-copilot', 'github-copilot', 'GitHub Copilot'),
+      oauthEntry('openai-oauth', 'openai', 'OpenAI (ChatGPT)'),
+      oauthEntry('xai-oauth', 'xai', 'xAI (SuperGrok)'),
+    ] });
+
+    it('still offers another account when every OAuth provider is already configured', async () => {
+      allConfigured();
+      selectMock.mockResolvedValueOnce('auth-menu').mockResolvedValueOnce('add:openai-oauth').mockResolvedValueOnce('done');
+
+      await runProvidersHub();
+
+      expect(optionValues()).toEqual(expect.arrayContaining(['add:github-copilot', 'add:openai-oauth', 'add:xai-oauth']));
+      expect(providerAuth.authenticateProvider).toHaveBeenCalledWith('openai-oauth', { method: undefined, addAccount: true });
+    });
+
+    it('offers first sign-ins for providers that are not configured yet', async () => {
+      saveRegistry({ schemaVersion: 1, providers: [oauthEntry('openai-oauth', 'openai', 'OpenAI (ChatGPT)')] });
+      selectMock.mockResolvedValueOnce('auth-menu').mockResolvedValueOnce('new:xai-oauth').mockResolvedValueOnce('done');
+
+      await runProvidersHub();
+
+      expect(optionValues()).toEqual(expect.arrayContaining(['new:xai-oauth', 'new:github-copilot', 'add:openai-oauth']));
+      expect(optionValues()).not.toContain('new:openai-oauth');
+      expect(providerAuth.authenticateProvider).toHaveBeenCalledWith('xai-oauth', { method: undefined });
+    });
   });
 });

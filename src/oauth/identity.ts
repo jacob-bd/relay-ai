@@ -101,3 +101,32 @@ export function formatOAuthAccount(identity: OAuthIdentity): string | undefined 
   const parts = [who, identity.plan].filter((p): p is string => Boolean(p));
   return parts.length > 0 ? parts.join(' · ') : undefined;
 }
+
+/**
+ * Identifiers that name the *person* behind a sign-in. A ChatGPT account id is the workspace, shared by
+ * every member of a team, so it is deliberately not one of them; ClinePass's account id is the user.
+ */
+function accountKeys(kind: string, cred: { accountId?: string; providerData?: Record<string, unknown>; access?: string }): Set<string> {
+  const identity = describeOAuthAccount({
+    kind,
+    accountId: cred.accountId,
+    providerData: cred.providerData,
+    accessToken: cred.access,
+  });
+  const keys = new Set<string>();
+  if (identity.userId) keys.add(`user:${identity.userId}`);
+  if (identity.email) keys.add(`email:${identity.email.toLowerCase()}`);
+  if (identity.login) keys.add(`login:${identity.login.toLowerCase()}`);
+  if (providerKind(kind) === 'cline-pass' && cred.accountId) keys.add(`cline:${cred.accountId}`);
+  return keys;
+}
+
+/** True when two stored sign-ins of the same provider kind belong to the same person. */
+export function sameOAuthAccount(
+  kind: string,
+  a: { accountId?: string; providerData?: Record<string, unknown>; access?: string },
+  b: { accountId?: string; providerData?: Record<string, unknown>; access?: string },
+): boolean {
+  const keysOfB = accountKeys(kind, b);
+  return [...accountKeys(kind, a)].some(key => keysOfB.has(key));
+}

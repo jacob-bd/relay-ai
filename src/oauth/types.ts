@@ -87,3 +87,11 @@ export type BrowserRedirectOAuthId = typeof BROWSER_REDIRECT_OAUTH_IDS[number];
 export function isBrowserRedirectOAuth(id: string): id is BrowserRedirectOAuthId {
   return (BROWSER_REDIRECT_OAUTH_IDS as readonly string[]).includes(id);
 }
+
+/**
+ * Provider kinds that can hold more than one signed-in account. The browser sign-ins
+ * (Claude Code, Antigravity) keep a single account for now.
+ */
+export function supportsAdditionalOAuthAccounts(kind: string): boolean {
+  return supportsNativeOAuth(kind) && !isBrowserRedirectOAuth(kind);
+}

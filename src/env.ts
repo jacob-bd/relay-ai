@@ -9,6 +9,7 @@ import {
 } from './oauth/types.js';
 import { refreshStoredOAuthCredential, oauthCredentialShouldRefresh } from './oauth/refresh.js';
 import { withRefreshLock } from './oauth/refresh-lock.js';
+import { OAuthRefreshRevokedError } from './oauth/refresh-http.js';
 import { fetchCopilotAccount } from './oauth/github.js';
 import {
   deleteFileAccount,
@@ -552,6 +553,9 @@ async function refreshOAuthKeyringAccount(
       } catch (err) {
         diag?.(err instanceof Error ? err.message : String(err));
         if (cred.access && cred.expires > Date.now()) return cred.access;
+        if (err instanceof OAuthRefreshRevokedError) {
+          throw new Error(`${err.message}. Sign in again: relay-ai providers auth ${providerId}`);
+        }
         throw err;
       }
     });

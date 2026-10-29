@@ -4,6 +4,7 @@ import {
   formatOAuthAccount,
   identityFromJwt,
   mergeIdentity,
+  sameOAuthAccount,
 } from '../src/oauth/identity.js';
 import { tokensToStoredCredential } from '../src/oauth/types.js';
 
@@ -108,5 +109,55 @@ describe('describeOAuthAccount / formatOAuthAccount', () => {
 
   it('returns undefined when nothing is known', () => {
     expect(formatOAuthAccount(describeOAuthAccount({ kind: 'xai-oauth' }))).toBeUndefined();
+  });
+});
+
+describe('sameOAuthAccount', () => {
+  const cred = (extra: Record<string, unknown>) => ({ type: 'oauth' as const, access: 'opaque', refresh: 'r', expires: Date.now() + 1000, ...extra });
+
+  it('matches the same email regardless of case', () => {
+    const a = cred({ providerData: { identity: { email: 'Me@Example.com' } } });
+    const b = cred({ providerData: { identity: { email: 'me@example.com' } } });
+    expect(sameOAuthAccount('openai-oauth', a, b)).toBe(true);
+  });
+
+  it('matches the same user id even when the email differs', () => {
+    const a = cred({ providerData: { identity: { userId: 'user-1', email: 'old@example.com' } } });
+    const b = cred({ providerData: { identity: { userId: 'user-1', email: 'new@example.com' } } });
+    expect(sameOAuthAccount('openai-oauth', a, b)).toBe(true);
+  });
+
+  it('two people in one ChatGPT workspace are different accounts', () => {
+    const a = cred({ accountId: 'workspace-1', providerData: { identity: { email: 'a@corp.com', userId: 'u-a' } } });
+    const b = cred({ accountId: 'workspace-1', providerData: { identity: { email: 'b@corp.com', userId: 'u-b' } } });
+    expect(sameOAuthAccount('openai-oauth', a, b)).toBe(false);
+  });
+
+  it('reads the email from an older login that only has it in the access token', () => {
+    const old = cred({ access: jwt({ 'https://api.openai.com/profile': { email: 'me@example.com' } }) });
+    const fresh = cred({ providerData: { identity: { email: 'me@example.com' } } });
+    expect(sameOAuthAccount('openai-oauth', old, fresh)).toBe(true);
+  });
+
+  it('GitHub Copilot compares the login', () => {
+    const a = cred({ providerData: { copilot: { login: 'Octocat' } } });
+    const b = cred({ providerData: { copilot: { login: 'octocat' } } });
+    const c = cred({ providerData: { copilot: { login: 'someone-else' } } });
+    expect(sameOAuthAccount('github-copilot', a, b)).toBe(true);
+    expect(sameOAuthAccount('github-copilot', a, c)).toBe(false);
+  });
+
+  it('ClinePass compares the Cline user id', () => {
+    expect(sameOAuthAccount('cline-pass', cred({ accountId: 'u1' }), cred({ accountId: 'u1' }))).toBe(true);
+    expect(sameOAuthAccount('cline-pass', cred({ accountId: 'u1' }), cred({ accountId: 'u2' }))).toBe(false);
+  });
+
+  it('an account id alone never proves two ChatGPT logins are the same', () => {
+    expect(sameOAuthAccount('openai-oauth', cred({ accountId: 'workspace-1' }), cred({ accountId: 'workspace-1' }))).toBe(false);
+  });
+
+  it('with nothing in common (or nothing known) accounts are treated as different', () => {
+    expect(sameOAuthAccount('xai-oauth', cred({}), cred({}))).toBe(false);
+    expect(sameOAuthAccount('xai-oauth', cred({ providerData: { identity: { email: 'a@x.com' } } }), cred({ providerData: { identity: { email: 'b@x.com' } } }))).toBe(false);
   });
 });

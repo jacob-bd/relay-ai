@@ -66,6 +66,7 @@ describe('oauth/openai', () => {
       vi.mocked(global.fetch).mockResolvedValueOnce({
         ok: false,
         status: 401,
+        text: async () => '',
       } as Response);
 
       await expect(refreshOpenAiAccessToken('refresh_123')).rejects.toThrow(/OpenAI token refresh failed \(401\)/);

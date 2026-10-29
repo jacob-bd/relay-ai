@@ -89,11 +89,13 @@ describe('UI OAuth device helpers', () => {
     expect(flowSource).not.toContain('window.open');
   });
 
-  it('uses the same device flow for adding and re-authenticating providers', () => {
+  it('uses the same device flow for adding, re-authenticating and adding another account', () => {
     const app = readFileSync(
       fileURLToPath(new URL('../src/ui/public/app.js', import.meta.url)),
       'utf8',
     );
-    expect(app.match(/=> beginDeviceOAuthFlow\(\{/g)).toHaveLength(3);
+    // ClinePass add, ClinePass re-auth/provider card, OAuth provider card sign-in, and "Add another account".
+    expect(app.match(/=> beginDeviceOAuthFlow\(\{/g)).toHaveLength(4);
+    expect(app).toContain('addAccount: true');
   });
 });
