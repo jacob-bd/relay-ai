@@ -152,6 +152,16 @@ describe('sameOAuthAccount', () => {
     expect(sameOAuthAccount('cline-pass', cred({ accountId: 'u1' }), cred({ accountId: 'u2' }))).toBe(false);
   });
 
+  it('Claude Code compares the account UUID, even for logins saved before the email was kept', () => {
+    expect(sameOAuthAccount('claude-code', cred({ accountId: 'uuid-1' }), cred({ accountId: 'uuid-1' }))).toBe(true);
+    expect(sameOAuthAccount('claude-code', cred({ accountId: 'uuid-1' }), cred({ accountId: 'uuid-2' }))).toBe(false);
+  });
+
+  it('Antigravity compares the Google email (stored as the account id)', () => {
+    expect(sameOAuthAccount('antigravity', cred({ accountId: 'G@Example.com' }), cred({ accountId: 'g@example.com' }))).toBe(true);
+    expect(sameOAuthAccount('antigravity', cred({ accountId: 'a@example.com' }), cred({ accountId: 'b@example.com' }))).toBe(false);
+  });
+
   it('an account id alone never proves two ChatGPT logins are the same', () => {
     expect(sameOAuthAccount('openai-oauth', cred({ accountId: 'workspace-1' }), cred({ accountId: 'workspace-1' }))).toBe(false);
   });

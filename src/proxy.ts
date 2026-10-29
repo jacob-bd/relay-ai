@@ -39,7 +39,7 @@ import {
   extractConversationId,
   openCodeGoHeaders,
 } from './opencode-session.js';
-import { isProviderKind } from './registry/provider-kind.js';
+import { isProviderKind, providerKind } from './registry/provider-kind.js';
 
 type ProxyLog = (message: string | (() => string)) => void;
 
@@ -136,7 +136,10 @@ export function aliasModelId(realId: string, providerId: string): string {
   // gateway model discovery filter, so the picker keeps working. Vertex serves
   // the same claude-* ids as Anthropic itself; bare ids would collide with a
   // Claude subscription and route one account's requests through the other.
-  if (realId.startsWith('claude-') && !sanitized.startsWith('custom-') && sanitized !== 'vertex-anthropic') return realId;
+  // A numbered account (`claude-code-2`, `anthropic-2`) serves the same claude-* ids as the first
+  // one, so it must be scoped too; the first account keeps its bare ids.
+  const isNumberedAccount = providerKind(sanitized) !== sanitized;
+  if (realId.startsWith('claude-') && !sanitized.startsWith('custom-') && sanitized !== 'vertex-anthropic' && !isNumberedAccount) return realId;
   return `anthropic-${sanitized}__${realId}`;
 }
 

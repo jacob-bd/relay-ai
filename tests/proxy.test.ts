@@ -69,6 +69,12 @@ describe('aliasModelId', () => {
     expect(aliasModelId('deepseek-v4', 'go')).toBe('anthropic-go__deepseek-v4');
   });
 
+  it('scopes claude-* ids for a numbered account so two Claude accounts never collide', () => {
+    expect(aliasModelId('claude-sonnet-4', 'claude-code')).toBe('claude-sonnet-4');
+    expect(aliasModelId('claude-sonnet-4', 'claude-code-2')).toBe('anthropic-claude-code-2__claude-sonnet-4');
+    expect(aliasModelId('claude-sonnet-4', 'anthropic-2')).toBe('anthropic-anthropic-2__claude-sonnet-4');
+  });
+
   it('scopes claude-* ids for custom providers so two instances never collide', () => {
     expect(aliasModelId('claude-sonnet-4', 'custom-acme-work'))
       .toBe('anthropic-custom-acme-work__claude-sonnet-4');

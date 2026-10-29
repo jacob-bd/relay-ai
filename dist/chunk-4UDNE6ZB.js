@@ -2295,6 +2295,7 @@ function formatOAuthAccount(identity) {
   const parts = [who, identity.plan].filter((p) => Boolean(p));
   return parts.length > 0 ? parts.join(" \xB7 ") : void 0;
 }
+var USER_LEVEL_ACCOUNT_ID_KINDS = /* @__PURE__ */ new Set(["cline-pass", "claude-code"]);
 function accountKeys(kind, cred) {
   const identity = describeOAuthAccount({
     kind,
@@ -2306,7 +2307,7 @@ function accountKeys(kind, cred) {
   if (identity.userId) keys.add(`user:${identity.userId}`);
   if (identity.email) keys.add(`email:${identity.email.toLowerCase()}`);
   if (identity.login) keys.add(`login:${identity.login.toLowerCase()}`);
-  if (providerKind(kind) === "cline-pass" && cred.accountId) keys.add(`cline:${cred.accountId}`);
+  if (USER_LEVEL_ACCOUNT_ID_KINDS.has(providerKind(kind)) && cred.accountId) keys.add(`account:${cred.accountId}`);
   return keys;
 }
 function sameOAuthAccount(kind, a, b) {
@@ -2366,7 +2367,7 @@ function isBrowserRedirectOAuth(id) {
   return BROWSER_REDIRECT_OAUTH_IDS.includes(id);
 }
 function supportsAdditionalOAuthAccounts(kind) {
-  return supportsNativeOAuth(kind) && !isBrowserRedirectOAuth(kind);
+  return supportsNativeOAuth(kind);
 }
 
 // src/oauth/openai.ts
@@ -7904,4 +7905,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-OUEXTVIL.js.map
+//# sourceMappingURL=chunk-4UDNE6ZB.js.map

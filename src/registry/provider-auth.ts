@@ -386,7 +386,7 @@ export function providerAuthHelpText(): string {
 
 ${pc.bold('Usage:')}
   relay-ai providers auth <id>          sign in (replaces that account if it already exists)
-  relay-ai providers auth <id> --new    sign in an additional account (ChatGPT, xAI, Copilot, ClinePass)
+  relay-ai providers auth <id> --new    sign in an additional account (any provider below)
   relay-ai providers auth xai-oauth
   relay-ai providers auth openai-oauth
   relay-ai providers auth github-copilot

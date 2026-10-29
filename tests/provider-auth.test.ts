@@ -318,9 +318,44 @@ describe('authenticateProvider: several accounts of one provider', () => {
     expect(runOpenAiDeviceCodeFlow).not.toHaveBeenCalled();
   });
 
-  it('a second Claude Code or Antigravity account is not available yet', async () => {
-    await expect(authenticateProvider('antigravity', { addAccount: true })).rejects.toThrow(/not available yet/i);
-    await expect(authenticateProvider('claude-code', { addAccount: true })).rejects.toThrow(/not available yet/i);
-    expect(runAntigravityOAuthFlow).not.toHaveBeenCalled();
+  const browserEntry = (id: string, templateId: string, name: string, authRef = `keyring:oauth:provider:${id}`) => ({
+    id, templateId, name, enabled: true, authType: 'oauth' as const, authRef,
+    api: { npm: '@ai-sdk/anthropic', url: '' }, addedAt: '2026-01-01T00:00:00.000Z',
+  });
+
+  it('adds a second Antigravity account under its own id and keychain item', async () => {
+    vi.mocked(loadRegistry).mockReturnValue({ version: 1, providers: [browserEntry('antigravity', 'antigravity', 'Antigravity')] } as any);
+    stored.set('keyring:oauth:provider:antigravity', { type: 'oauth', access: 'x', refresh: 'r', expires: Date.now() + 1000, accountId: 'first@example.com' });
+
+    const result = await authenticateProvider('antigravity', { addAccount: true });
+
+    expect(result.providerId).toBe('antigravity-2');
+    expect(saveProviderCredential).toHaveBeenCalledWith('keyring:oauth:provider:antigravity-2', expect.any(String), expect.any(Function));
+    expect(savedRegistry().providers.find(p => p.id === 'antigravity-2')).toMatchObject({ templateId: 'antigravity', authRef: 'keyring:oauth:provider:antigravity-2' });
+  });
+
+  it('adds a second Claude Code account', async () => {
+    vi.mocked(loadRegistry).mockReturnValue({ version: 1, providers: [browserEntry('claude-code', 'claude-code', 'Claude Code (Anthropic subscription)')] } as any);
+    stored.set('keyring:oauth:provider:claude-code', { type: 'oauth', access: 'x', refresh: 'r', expires: Date.now() + 1000, accountId: 'other-uuid' });
+
+    const result = await authenticateProvider('claude-code', { addAccount: true });
+
+    expect(result.providerId).toBe('claude-code-2');
+    expect(savedRegistry().providers.find(p => p.id === 'claude-code-2')?.templateId).toBe('claude-code');
+  });
+
+  it('refuses the same Google account twice', async () => {
+    vi.mocked(loadRegistry).mockReturnValue({ version: 1, providers: [browserEntry('antigravity', 'antigravity', 'Antigravity')] } as any);
+    stored.set('keyring:oauth:provider:antigravity', { type: 'oauth', access: 'x', refresh: 'r', expires: Date.now() + 1000, accountId: 'JACOB@example.com' });
+
+    await expect(authenticateProvider('antigravity', { addAccount: true })).rejects.toThrow(/already signed in/i);
+    expect(saveProviderCredential).not.toHaveBeenCalled();
+  });
+
+  it('refuses the same Claude account twice', async () => {
+    vi.mocked(loadRegistry).mockReturnValue({ version: 1, providers: [browserEntry('claude-code', 'claude-code', 'Claude')] } as any);
+    stored.set('keyring:oauth:provider:claude-code', { type: 'oauth', access: 'x', refresh: 'r', expires: Date.now() + 1000, accountId: 'acct-123' });   // the mocked sign-in returns acct-123
+
+    await expect(authenticateProvider('claude-code', { addAccount: true })).rejects.toThrow(/already signed in/i);
   });
 });

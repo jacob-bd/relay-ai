@@ -40,7 +40,7 @@ import {
   summarizeServerProviders,
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider
-} from "./chunk-N3HKN2SI.js";
+} from "./chunk-LM57SV6Y.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -97,7 +97,7 @@ import {
   supportsManualModels,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-OUEXTVIL.js";
+} from "./chunk-4UDNE6ZB.js";
 import {
   init_provider_templates,
   listAddableTemplates,
@@ -755,8 +755,9 @@ async function handlePostConfig(req, res) {
     sendJson(res, 400, { error: String(err) });
   }
 }
-function canAddAccountField(providerId, authType) {
-  return authType === "oauth" && supportsAdditionalOAuthAccounts(providerKind(providerId)) ? { canAddAccount: true } : {};
+function canAddAccountField(providerId, authType, uiMode) {
+  const kind = providerKind(providerId);
+  return authType === "oauth" && supportsAdditionalOAuthAccounts(kind) && kind !== "claude-code" && canStartOAuthFromUi(providerId, uiMode) ? { canAddAccount: true } : {};
 }
 function accountFieldFrom(label) {
   return label ? { account: label } : {};
@@ -808,7 +809,7 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
       })(),
       authType: p2.authType ?? "api",
       ...accountField(p2),
-      ...canAddAccountField(p2.id, p2.authType),
+      ...canAddAccountField(p2.id, p2.authType, uiMode),
       ...manualMetadata(p2.id),
       // Copilot's runtime catalog is policy-filtered by account plan. Never replace
       // that safe count with the larger raw cache count.
@@ -840,7 +841,7 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
         freeAccess: false,
         authType: "oauth",
         ...isProviderKind(rp.id, "github-copilot") ? {} : accountFieldFrom(await readOAuthAccountLabel(rp)),
-        ...canAddAccountField(rp.id, "oauth"),
+        ...canAddAccountField(rp.id, "oauth", uiMode),
         ...manualMetadata(rp.id),
         modelCount: 0,
         ...isProviderKind(rp.id, "github-copilot") ? { subscription: copilotSubscription(void 0) } : {},
@@ -899,7 +900,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-JQVLCFUV.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-XORHPGC2.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1294,7 +1295,7 @@ async function handleOAuthStart(req, res, opts = {}) {
     if (PKCE_PROVIDER_IDS.has(kind)) {
       if (kind === "claude-code") {
         sendJson(res, 400, {
-          error: "Claude Code OAuth must be completed in the terminal: relay-ai providers auth claude-code"
+          error: `Claude Code OAuth must be completed in the terminal: relay-ai providers auth claude-code${addAccount ? " --new" : ""}`
         });
         return;
       }
@@ -1963,4 +1964,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-3NM7KRR2.js.map
+//# sourceMappingURL=ui-command-X3Z6M7SR.js.map

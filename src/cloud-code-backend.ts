@@ -35,9 +35,11 @@ export function buildCloudCodeProxyRoute(
   model: LocalProviderModel,
   apiKey: string,
   providerData: Record<string, unknown>,
+  /** The registry id of the account (`antigravity`, `antigravity-2`, …); names the alias and the token to refresh. */
+  providerId = 'antigravity',
 ): ProxyRoute {
   const aliasId = claudeCodeClientModelId(
-    aliasModelId(model.id, 'antigravity'),
+    aliasModelId(model.id, providerId),
     model.contextWindow,
   );
   return {
@@ -48,10 +50,10 @@ export function buildCloudCodeProxyRoute(
     apiKey,
     modelFormat: 'cloud-code',
     contextWindow: model.contextWindow,
-    providerId: 'antigravity',
+    providerId,
     authType: 'oauth',
     providerData,
-    refreshToken: () => resolveProviderCredential('antigravity', oauthAuthRef('antigravity')),
+    refreshToken: () => resolveProviderCredential(providerId, oauthAuthRef(providerId)),
   };
 }
 
@@ -97,7 +99,7 @@ export async function partitionAndStartCloudCodeBackend<
 
   const proxyRoutes = items.map(item =>
     item.model.modelFormat === 'cloud-code'
-      ? buildCloudCodeProxyRoute(item.model, item.apiKey, item.providerData ?? {})
+      ? buildCloudCodeProxyRoute(item.model, item.apiKey, item.providerData ?? {}, item.providerId)
       : buildOAuthAnthropicProxyRoute(item.model, item.apiKey, item.providerId, item.providerData ?? {}),
   );
   const backend = await startCloudCodeCatalogBackend(proxyRoutes, proxyRoutes[0]!.aliasId, trace);
@@ -116,7 +118,7 @@ export async function buildSingleModelCloudCodeRoute(
   trace?: boolean,
 ): Promise<{ proxyRoute: ProxyRoute; backend: CloudCodeBackend }> {
   const proxyRoute = model.modelFormat === 'cloud-code'
-    ? buildCloudCodeProxyRoute(model, apiKey, providerData)
+    ? buildCloudCodeProxyRoute(model, apiKey, providerData, providerId)
     : buildOAuthAnthropicProxyRoute(model, apiKey, providerId, providerData);
   const backend = await startCloudCodeCatalogBackend([proxyRoute], proxyRoute.aliasId, trace);
   return { proxyRoute, backend };

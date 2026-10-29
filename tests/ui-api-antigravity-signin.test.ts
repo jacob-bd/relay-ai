@@ -73,6 +73,21 @@ describe('UI sign-in for Antigravity', () => {
     expect(oauth.build).toHaveBeenCalledWith(expect.stringMatching(/\/oauth\/callback$/));
   });
 
+  it('adding a second Antigravity account needs the same risk confirmation, then saves it as a new account', async () => {
+    const first = await call('POST', '/api/providers/oauth/start', { providerId: 'antigravity', addAccount: true });
+    expect(first.body.needsConfirmation).toBe(true);
+    expect(oauth.build).not.toHaveBeenCalled();
+
+    oauth.build.mockResolvedValueOnce({ authUrl: 'https://accounts.google.com/auth?state=S-add', codeVerifier: 'v', oauthState: 'S-add', redirectUri: 'r' });
+    const start = await call('POST', '/api/providers/oauth/start', { providerId: 'antigravity', addAccount: true, acceptRisk: true });
+    expect(start.body.pkce).toBe(true);
+    await call('GET', '/oauth/callback?code=good&state=S-add');
+    await vi.waitFor(async () => {
+      expect((await call('GET', `/api/providers/oauth/status?sessionId=${start.body.sessionId}`)).body.status).toBe('done');
+    });
+    expect(oauth.save).toHaveBeenLastCalledWith('antigravity', expect.anything(), 'g@example.com', expect.anything(), { addAccount: true });
+  });
+
   it('is not available in the server admin UI (device code only)', async () => {
     const result = await call('POST', '/api/providers/oauth/start', { providerId: 'antigravity', acceptRisk: true }, { uiMode: 'server' });
 

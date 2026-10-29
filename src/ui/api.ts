@@ -242,8 +242,19 @@ async function handlePostConfig(req: IncomingMessage, res: ServerResponse): Prom
 }
 
 /** The card may offer "Add another account" (device-code sign-ins; browser ones keep a single account for now). */
-function canAddAccountField(providerId: string, authType: string | undefined): { canAddAccount?: true } {
-  return authType === 'oauth' && supportsAdditionalOAuthAccounts(providerKind(providerId)) ? { canAddAccount: true } : {};
+function canAddAccountField(
+  providerId: string,
+  authType: string | undefined,
+  uiMode?: 'full' | 'server',
+): { canAddAccount?: true } {
+  const kind = providerKind(providerId);
+  // Claude Code's pasted-code sign-in only runs in the terminal, so its card offers no button.
+  return authType === 'oauth'
+    && supportsAdditionalOAuthAccounts(kind)
+    && kind !== 'claude-code'
+    && canStartOAuthFromUi(providerId, uiMode)
+    ? { canAddAccount: true }
+    : {};
 }
 
 function accountFieldFrom(label: string | undefined): { account?: string } {
@@ -308,7 +319,7 @@ async function handleGetModels(
       })(),
       authType: p.authType ?? 'api',
       ...accountField(p),
-      ...canAddAccountField(p.id, p.authType),
+      ...canAddAccountField(p.id, p.authType, uiMode),
       ...manualMetadata(p.id),
       // Copilot's runtime catalog is policy-filtered by account plan. Never replace
       // that safe count with the larger raw cache count.
@@ -347,7 +358,7 @@ async function handleGetModels(
         freeAccess: false,
         authType: 'oauth',
         ...(isProviderKind(rp.id, 'github-copilot') ? {} : accountFieldFrom(await readOAuthAccountLabel(rp))),
-        ...canAddAccountField(rp.id, 'oauth'),
+        ...canAddAccountField(rp.id, 'oauth', uiMode),
         ...manualMetadata(rp.id),
         modelCount: 0,
         ...(isProviderKind(rp.id, 'github-copilot') ? { subscription: copilotSubscription(undefined) } : {}),
@@ -858,7 +869,7 @@ async function handleOAuthStart(
     if (PKCE_PROVIDER_IDS.has(kind)) {
       if (kind === 'claude-code') {
         sendJson(res, 400, {
-          error: 'Claude Code OAuth must be completed in the terminal: relay-ai providers auth claude-code',
+          error: `Claude Code OAuth must be completed in the terminal: relay-ai providers auth claude-code${addAccount ? ' --new' : ''}`,
         });
         return;
       }

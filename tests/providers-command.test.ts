@@ -446,13 +446,14 @@ describe('provider menu: several OAuth accounts', () => {
     expect(providerAuth.authenticateProvider).toHaveBeenCalledWith('openai-oauth-2', { method: undefined });
   });
 
-  it('does not offer a second account for Claude Code or Antigravity yet', async () => {
-    saveRegistry({ schemaVersion: 1, providers: [oauthEntry('antigravity', 'antigravity', 'Antigravity')] });
-    selectMock.mockResolvedValueOnce('provider:antigravity').mockResolvedValueOnce('back').mockResolvedValueOnce('done');
+  it.each([['antigravity', 'Antigravity'], ['claude-code', 'Claude Code (Anthropic subscription)']])('offers "Add another account" for %s too', async (id, name) => {
+    saveRegistry({ schemaVersion: 1, providers: [oauthEntry(id, id, name)] });
+    selectMock.mockResolvedValueOnce(`provider:${id}`).mockResolvedValueOnce('add-account').mockResolvedValueOnce('done');
 
     await runProvidersHub();
 
-    expect(detailOptions()).not.toContain('add-account');
+    expect(detailOptions()).toContain('add-account');
+    expect(providerAuth.authenticateProvider).toHaveBeenCalledWith(id, { method: undefined, addAccount: true });
   });
 
   it('does not offer it for API-key providers', async () => {

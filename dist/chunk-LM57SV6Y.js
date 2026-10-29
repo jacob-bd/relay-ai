@@ -136,7 +136,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-OUEXTVIL.js";
+} from "./chunk-4UDNE6ZB.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -1587,7 +1587,8 @@ function anthropicError(res, status, message) {
 }
 function aliasModelId(realId, providerId) {
   const sanitized = providerId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  if (realId.startsWith("claude-") && !sanitized.startsWith("custom-") && sanitized !== "vertex-anthropic") return realId;
+  const isNumberedAccount = providerKind(sanitized) !== sanitized;
+  if (realId.startsWith("claude-") && !sanitized.startsWith("custom-") && sanitized !== "vertex-anthropic" && !isNumberedAccount) return realId;
   return `anthropic-${sanitized}__${realId}`;
 }
 function buildProxySubagentModelRouting(routes, parentRoute) {
@@ -8070,7 +8071,7 @@ function providerAuthHelpText() {
 
 ${pc5.bold("Usage:")}
   relay-ai providers auth <id>          sign in (replaces that account if it already exists)
-  relay-ai providers auth <id> --new    sign in an additional account (ChatGPT, xAI, Copilot, ClinePass)
+  relay-ai providers auth <id> --new    sign in an additional account (any provider below)
   relay-ai providers auth xai-oauth
   relay-ai providers auth openai-oauth
   relay-ai providers auth github-copilot
@@ -9000,4 +9001,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-N3HKN2SI.js.map
+//# sourceMappingURL=chunk-LM57SV6Y.js.map

@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-ZYSF5AU3.js";
+} from "./chunk-FVPTOYBW.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -133,7 +133,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-N3HKN2SI.js";
+} from "./chunk-LM57SV6Y.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -232,7 +232,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-OUEXTVIL.js";
+} from "./chunk-4UDNE6ZB.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -6623,9 +6623,9 @@ function mixedRelaySlug(providerId, modelId) {
 function needsCloudCodeBackend(model, authType) {
   return model.modelFormat === "cloud-code" || model.modelFormat === "anthropic" && authType === "oauth";
 }
-function buildCloudCodeProxyRoute(model, apiKey, providerData) {
+function buildCloudCodeProxyRoute(model, apiKey, providerData, providerId = "antigravity") {
   const aliasId = claudeCodeClientModelId(
-    aliasModelId(model.id, "antigravity"),
+    aliasModelId(model.id, providerId),
     model.contextWindow
   );
   return {
@@ -6636,10 +6636,10 @@ function buildCloudCodeProxyRoute(model, apiKey, providerData) {
     apiKey,
     modelFormat: "cloud-code",
     contextWindow: model.contextWindow,
-    providerId: "antigravity",
+    providerId,
     authType: "oauth",
     providerData,
-    refreshToken: () => resolveProviderCredential("antigravity", oauthAuthRef("antigravity"))
+    refreshToken: () => resolveProviderCredential(providerId, oauthAuthRef(providerId))
   };
 }
 function buildOAuthAnthropicProxyRoute(model, apiKey, providerId, providerData) {
@@ -6664,7 +6664,7 @@ function buildOAuthAnthropicProxyRoute(model, apiKey, providerId, providerData) 
 async function partitionAndStartCloudCodeBackend(items, toOutput, trace) {
   if (items.length === 0) return { backendItems: [], backend: null };
   const proxyRoutes = items.map(
-    (item) => item.model.modelFormat === "cloud-code" ? buildCloudCodeProxyRoute(item.model, item.apiKey, item.providerData ?? {}) : buildOAuthAnthropicProxyRoute(item.model, item.apiKey, item.providerId, item.providerData ?? {})
+    (item) => item.model.modelFormat === "cloud-code" ? buildCloudCodeProxyRoute(item.model, item.apiKey, item.providerData ?? {}, item.providerId) : buildOAuthAnthropicProxyRoute(item.model, item.apiKey, item.providerId, item.providerData ?? {})
   );
   const backend = await startCloudCodeCatalogBackend(proxyRoutes, proxyRoutes[0].aliasId, trace);
   return {
@@ -6673,7 +6673,7 @@ async function partitionAndStartCloudCodeBackend(items, toOutput, trace) {
   };
 }
 async function buildSingleModelCloudCodeRoute(model, apiKey, providerId, providerData, trace) {
-  const proxyRoute = model.modelFormat === "cloud-code" ? buildCloudCodeProxyRoute(model, apiKey, providerData) : buildOAuthAnthropicProxyRoute(model, apiKey, providerId, providerData);
+  const proxyRoute = model.modelFormat === "cloud-code" ? buildCloudCodeProxyRoute(model, apiKey, providerData, providerId) : buildOAuthAnthropicProxyRoute(model, apiKey, providerId, providerData);
   const backend = await startCloudCodeCatalogBackend([proxyRoute], proxyRoute.aliasId, trace);
   return { proxyRoute, backend };
 }
@@ -7491,7 +7491,7 @@ Mixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
             apiKey: backend.token,
             baseURL: `http://127.0.0.1:${backend.port}`,
             upstreamModelId: cr.aliasId,
-            providerId: cr.providerId ?? "antigravity",
+            providerId: cr.providerId ?? original.providerId,
             authType: "oauth",
             oauthAccountId: original.oauthAccountId,
             providerData: original.providerData,
@@ -13831,7 +13831,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
           const provider = providersById.get(r.providerId);
           const providerData = provider?.providerData ?? {};
           const m = r.model;
-          const route2 = m.modelFormat === "cloud-code" ? buildCloudCodeProxyRoute(m, r.apiKey, providerData) : buildOAuthAnthropicProxyRoute(m, r.apiKey, r.providerId, providerData);
+          const route2 = m.modelFormat === "cloud-code" ? buildCloudCodeProxyRoute(m, r.apiKey, providerData, r.providerId) : buildOAuthAnthropicProxyRoute(m, r.apiKey, r.providerId, providerData);
           return { ...route2, oauthAccountId: provider?.oauthAccountId, providerData };
         });
         const startingAlias = backendRoutes[0].aliasId;
@@ -13843,7 +13843,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
           apiKey: cloudCodeBackendFav.token,
           baseURL: `http://127.0.0.1:${cloudCodeBackendFav.port}`,
           upstreamModelId: cr.aliasId,
-          providerId: cr.providerId ?? "antigravity",
+          providerId: cr.providerId ?? backendResolved[i].providerId,
           authType: "oauth",
           oauthAccountId: cr.oauthAccountId,
           providerData: cr.providerData,
@@ -17542,7 +17542,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-3NM7KRR2.js");
+    const { runUiCommand } = await import("./ui-command-X3Z6M7SR.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

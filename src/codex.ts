@@ -675,7 +675,7 @@ export async function runCodexCommand(
             apiKey: backend.token,
             baseURL: `http://127.0.0.1:${backend.port}`,
             upstreamModelId: cr.aliasId,
-            providerId: cr.providerId ?? 'antigravity',
+            providerId: cr.providerId ?? original.providerId,
             authType: 'oauth' as const,
             oauthAccountId: original.oauthAccountId,
             providerData: original.providerData,

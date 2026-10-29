@@ -162,3 +162,24 @@ describe('startCloudCodeCatalogBackend', () => {
     expect(startProxyCatalog).toHaveBeenCalledWith([route], route.aliasId, false);
   });
 });
+
+describe('numbered accounts in the Cloud Code / OAuth routes', () => {
+  it('a second Antigravity account gets its own alias, provider id and token refresh', async () => {
+    const { resolveProviderCredential } = await import('../src/env.js');
+    const first = buildCloudCodeProxyRoute(model, 'tok1', {});
+    const second = buildCloudCodeProxyRoute(model, 'tok2', { projectId: 'p2' }, 'antigravity-2');
+
+    expect(first.providerId).toBe('antigravity');
+    expect(second.providerId).toBe('antigravity-2');
+    expect(second.aliasId).not.toBe(first.aliasId);
+    expect(second.aliasId).toContain('antigravity-2');
+
+    vi.mocked(resolveProviderCredential).mockClear();
+    await second.refreshToken?.();
+    expect(resolveProviderCredential).toHaveBeenCalledWith('antigravity-2', 'keyring:oauth:provider:antigravity-2');
+  });
+
+  it('the first Antigravity account keeps exactly the alias it always had', () => {
+    expect(buildCloudCodeProxyRoute(model, 'tok', {}).aliasId).toContain('anthropic-antigravity__');
+  });
+});

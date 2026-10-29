@@ -102,6 +102,9 @@ export function formatOAuthAccount(identity: OAuthIdentity): string | undefined 
   return parts.length > 0 ? parts.join(' · ') : undefined;
 }
 
+/** Kinds whose stored account id identifies the person: ClinePass user id, Claude account UUID. */
+const USER_LEVEL_ACCOUNT_ID_KINDS: ReadonlySet<string> = new Set(['cline-pass', 'claude-code']);
+
 /**
  * Identifiers that name the *person* behind a sign-in. A ChatGPT account id is the workspace, shared by
  * every member of a team, so it is deliberately not one of them; ClinePass's account id is the user.
@@ -117,7 +120,7 @@ function accountKeys(kind: string, cred: { accountId?: string; providerData?: Re
   if (identity.userId) keys.add(`user:${identity.userId}`);
   if (identity.email) keys.add(`email:${identity.email.toLowerCase()}`);
   if (identity.login) keys.add(`login:${identity.login.toLowerCase()}`);
-  if (providerKind(kind) === 'cline-pass' && cred.accountId) keys.add(`cline:${cred.accountId}`);
+  if (USER_LEVEL_ACCOUNT_ID_KINDS.has(providerKind(kind)) && cred.accountId) keys.add(`account:${cred.accountId}`);
   return keys;
 }
 

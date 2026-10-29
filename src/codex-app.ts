@@ -817,7 +817,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
           const providerData = (provider?.providerData ?? {}) as Record<string, unknown>;
           const m = r.model as LocalProviderModel;
           const route = m.modelFormat === 'cloud-code'
-            ? buildCloudCodeProxyRoute(m, r.apiKey, providerData)
+            ? buildCloudCodeProxyRoute(m, r.apiKey, providerData, r.providerId)
             : buildOAuthAnthropicProxyRoute(m, r.apiKey, r.providerId, providerData);
           return { ...route, oauthAccountId: provider?.oauthAccountId, providerData };
         });
@@ -830,7 +830,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
           apiKey: cloudCodeBackendFav!.token,
           baseURL: `http://127.0.0.1:${cloudCodeBackendFav!.port}`,
           upstreamModelId: cr.aliasId,
-          providerId: cr.providerId ?? 'antigravity',
+          providerId: cr.providerId ?? backendResolved[i]!.providerId,
           authType: 'oauth' as const,
           oauthAccountId: cr.oauthAccountId,
           providerData: cr.providerData,
