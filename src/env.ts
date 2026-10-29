@@ -5,8 +5,10 @@ import { resolveContextWindow } from './context-window.js';
 import { oauthCredentialToKeychainJson } from './registry/opencode-auth.js';
 import {
   parseStoredOAuthCredential,
+  type StoredOAuthCredential,
 } from './oauth/types.js';
 import { refreshStoredOAuthCredential, oauthCredentialShouldRefresh } from './oauth/refresh.js';
+import { withRefreshLock } from './oauth/refresh-lock.js';
 import { fetchCopilotAccount } from './oauth/github.js';
 import {
   deleteFileAccount,
@@ -441,6 +443,19 @@ export async function forceRefreshProviderCredential(
   return refreshOAuthKeyringAccount(parsed.account, oauthProviderId, raw, diag, true);
 }
 
+/**
+ * The full stored OAuth record (tokens + metadata), read as-is: never refreshed, never rewritten.
+ * `readStoredProviderCredential` returns only the access token for OAuth accounts.
+ */
+export async function readStoredOAuthCredential(
+  authRef: string,
+  diag?: (msg: string) => void,
+): Promise<StoredOAuthCredential | undefined> {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== 'keyring' || !oauthProviderIdFromAccount(parsed.account)) return undefined;
+  return parseStoredOAuthCredential(await readKeyringAccount(parsed.account, diag)) ?? undefined;
+}
+
 /** Read OAuth metadata retained alongside the access token. */
 export async function resolveProviderOAuthAccountId(
   authRef: string,
@@ -516,20 +531,30 @@ async function refreshOAuthKeyringAccount(
   if (existing) return existing;
 
   const work = (async (): Promise<string | null> => {
-    const cred = parseStoredOAuthCredential(raw);
-    if (!cred || (!force && !oauthCredentialShouldRefresh(cred, providerId))) {
+    const seen = parseStoredOAuthCredential(raw);
+    if (!seen || (!force && !oauthCredentialShouldRefresh(seen, providerId))) {
       return decodeProviderSecret(raw);
     }
-    try {
-      const refreshed = await refreshStoredOAuthCredential(providerId, cred);
-      const json = oauthCredentialToKeychainJson(refreshed);
-      await writeKeyringAccount(account, json, diag);
-      return refreshed.access;
-    } catch (err) {
-      diag?.(err instanceof Error ? err.message : String(err));
-      if (cred.access && cred.expires > Date.now()) return cred.access;
-      throw err;
-    }
+    // Refresh tokens rotate and can be spent once. Hold the cross-process lock, then
+    // re-read: another process (the UI, a second terminal) may have refreshed while we
+    // waited, and its result — or its newer refresh token — is the one to use.
+    return withRefreshLock(account, async () => {
+      invalidateKeyringReadCache(account);
+      const cred = parseStoredOAuthCredential(await readKeyringAccount(account, diag)) ?? seen;
+      const replacedByOther = cred.access !== seen.access || cred.refresh !== seen.refresh;
+      if (replacedByOther && !oauthCredentialShouldRefresh(cred, providerId)) return cred.access;
+      if (!force && !oauthCredentialShouldRefresh(cred, providerId)) return cred.access;
+      try {
+        const refreshed = await refreshStoredOAuthCredential(providerId, cred);
+        const json = oauthCredentialToKeychainJson(refreshed);
+        await writeKeyringAccount(account, json, diag);
+        return refreshed.access;
+      } catch (err) {
+        diag?.(err instanceof Error ? err.message : String(err));
+        if (cred.access && cred.expires > Date.now()) return cred.access;
+        throw err;
+      }
+    });
   })();
 
   oauthRefreshInflight.set(account, work);
