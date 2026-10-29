@@ -3,6 +3,7 @@
 // endpoint selection, and provider quirks.
 import type { LanguageModel, LanguageModelMiddleware } from 'ai';
 import { wrapLanguageModel, extractReasoningMiddleware } from 'ai';
+import { createHash } from 'node:crypto';
 import { VERTEX_ANTHROPIC_NPM, CODEX_RESPONSES_LITE_WS_URL } from './constants.js';
 import { EFFORT_RANK } from './registry/models-dev.js';
 import { resolveCodexClientVersion } from './codex/version.js';
@@ -119,6 +120,8 @@ export interface ProviderModelSpec {
   refreshToken?: () => Promise<string | null>;
   /** Persist a newly refreshed raw token for future requests. */
   onTokenRefreshed?: (token: string) => void;
+  /** The host's conversation id. OpenAI routes send a hash of it as `prompt_cache_key` so repeat turns hit the cache. */
+  sessionId?: string;
   /** Backend capability: model requires the Responses-Lite request shape (x-openai-internal-codex-responses-lite). */
   useResponsesLite?: boolean;
   /** Backend capability: model must use the WebSocket Responses transport instead of HTTP. */
@@ -247,6 +250,7 @@ async function createLanguageModelSingle(spec: ProviderModelSpec): Promise<Langu
           headers: {
             ...(accountId ? { 'ChatGPT-Account-Id': accountId } : {}),
             originator: 'relay-ai',
+            ...(spec.sessionId ? { session_id: openAiSessionHeader(spec.sessionId) } : {}),
             // Responses-Lite models (backend prefer_websockets/use_responses_lite,
             // e.g. gpt-5.6-luna) require these on the request. The version is
             // resolved at runtime (npm latest → installed CLI → bundled
@@ -691,10 +695,30 @@ export function applyAnthropicPromptCaching(params: ModelCallParams): ModelCallP
   return { ...params, prompt, ...(tools ? { tools } : {}) };
 }
 
+/**
+ * OpenAI (API key and ChatGPT login) caches a prompt only when requests carry a stable
+ * `prompt_cache_key`; without one a repeated agent prompt is paid at full price every turn.
+ * Hashed so the host's raw conversation id never leaves the machine.
+ */
+function openAiSessionDigest(sessionId: string): string {
+  return createHash('sha256').update(`relay-ai:prompt-cache:${sessionId}`).digest('hex').slice(0, 32);
+}
+
+function openAiPromptCacheOptions(npm: string, sessionId: string | undefined): ProviderOptionsBag | undefined {
+  if (npm !== '@ai-sdk/openai' || !sessionId) return undefined;
+  return { openai: { promptCacheKey: openAiSessionDigest(sessionId) } };
+}
+
+/** The ChatGPT backend keeps a conversation on one machine by `session_id` (as the Codex CLI sends it); UUID-shaped. */
+function openAiSessionHeader(sessionId: string): string {
+  const h = openAiSessionDigest(sessionId);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
+
 /** Provider requirements belong on the model so Core and every SDK launcher share them. */
 export function withProviderRequestDefaults(model: LanguageModel, spec: ProviderModelSpec): LanguageModel {
   const npm = resolveProviderNpm(spec.npm);
-  const defaults = thinkingProviderOptions(npm);
+  const defaults = deepMergeProviderOptions(thinkingProviderOptions(npm), openAiPromptCacheOptions(npm, spec.sessionId));
   const claudeOAuth = isClaudeCodeOAuthRoute(spec);
   const anthropicCaching = npm === '@ai-sdk/anthropic' || npm === VERTEX_ANTHROPIC_NPM;
   if (!defaults && !claudeOAuth && !anthropicCaching && npm !== '@ai-sdk/alibaba') return model;

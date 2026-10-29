@@ -91,6 +91,7 @@ var package_default = {
     test: 'vitest run --exclude "tests/debug-*.test.ts"',
     "test:reasoning": "vitest run tests/reasoning-coverage.test.ts",
     "test:live:reasoning": "vitest run tests/debug-reasoning-live.test.ts",
+    "test:live:cache": "vitest run tests/debug-cache-live.test.ts",
     "test:live": "vitest run tests/debug-xai.test.ts tests/debug-openai-oauth.test.ts",
     "test:watch": "vitest",
     typecheck: "tsc --noEmit",
@@ -4324,6 +4325,7 @@ function writeMessageAsSse(res, message) {
 
 // src/provider-factory.ts
 import { wrapLanguageModel, extractReasoningMiddleware } from "ai";
+import { createHash as createHash4 } from "crypto";
 
 // src/codex/version.ts
 import { execSync } from "child_process";
@@ -4453,6 +4455,17 @@ function isRecord(value) {
 function recordKeys(value) {
   return isRecord(value) ? Object.keys(value).sort().join(",") : "";
 }
+function numericLeaves(value) {
+  const out = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === "number") out[key] = entry;
+    else if (isRecord(entry)) {
+      const nested = Object.fromEntries(Object.entries(entry).filter(([, v]) => typeof v === "number"));
+      if (Object.keys(nested).length > 0) out[key] = nested;
+    }
+  }
+  return out;
+}
 function summarizeResponsesLiteEvent(event) {
   if (!isRecord(event)) return `kind=${event == null ? "null" : typeof event}`;
   const parts = [`type=${typeof event.type === "string" ? event.type : "unknown"}`, `keys=${recordKeys(event)}`];
@@ -4470,7 +4483,10 @@ function summarizeResponsesLiteEvent(event) {
       parts.push(`outputCount=${event.response.output.length}`);
       parts.push(`outputTypes=${event.response.output.map((item) => isRecord(item) && typeof item.type === "string" ? item.type : "unknown").join(",")}`);
     }
-    if (isRecord(event.response.usage)) parts.push(`usageKeys=${recordKeys(event.response.usage)}`);
+    if (isRecord(event.response.usage)) {
+      parts.push(`usageKeys=${recordKeys(event.response.usage)}`);
+      parts.push(`usage=${JSON.stringify(numericLeaves(event.response.usage))}`);
+    }
     if (typeof event.response.status === "string") parts.push(`status=${event.response.status}`);
   }
   if (isRecord(event.error)) {
@@ -4878,7 +4894,8 @@ function createResponsesWebSocketFetch(wsUrl, log) {
 `));
             return;
           }
-          if (frameCount <= 8) debug(`frame#${frameCount} ${summarizeResponsesLiteEvent(event)}`);
+          const frameType = isRecord(event) && typeof event.type === "string" ? event.type : void 0;
+          if (frameCount <= 8 || frameType && TERMINAL_EVENT_TYPES.has(frameType)) debug(`frame#${frameCount} ${summarizeResponsesLiteEvent(event)}`);
           for (const next of normalizeResponsesLiteEvent(event, normalizeState)) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(next)}
 
@@ -5274,6 +5291,7 @@ async function createLanguageModelSingle(spec) {
       headers: {
         ...accountId ? { "ChatGPT-Account-Id": accountId } : {},
         originator: "relay-ai",
+        ...spec.sessionId ? { session_id: openAiSessionHeader(spec.sessionId) } : {},
         // Responses-Lite models (backend prefer_websockets/use_responses_lite,
         // e.g. gpt-5.6-luna) require these on the request. The version is
         // resolved at runtime (npm latest → installed CLI → bundled
@@ -5622,9 +5640,20 @@ function applyAnthropicPromptCaching(params) {
   }
   return { ...params, prompt, ...tools ? { tools } : {} };
 }
+function openAiSessionDigest(sessionId) {
+  return createHash4("sha256").update(`relay-ai:prompt-cache:${sessionId}`).digest("hex").slice(0, 32);
+}
+function openAiPromptCacheOptions(npm, sessionId) {
+  if (npm !== "@ai-sdk/openai" || !sessionId) return void 0;
+  return { openai: { promptCacheKey: openAiSessionDigest(sessionId) } };
+}
+function openAiSessionHeader(sessionId) {
+  const h = openAiSessionDigest(sessionId);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
 function withProviderRequestDefaults(model, spec) {
   const npm = resolveProviderNpm(spec.npm);
-  const defaults = thinkingProviderOptions(npm);
+  const defaults = deepMergeProviderOptions(thinkingProviderOptions(npm), openAiPromptCacheOptions(npm, spec.sessionId));
   const claudeOAuth = isClaudeCodeOAuthRoute(spec);
   const anthropicCaching = npm === "@ai-sdk/anthropic" || npm === VERTEX_ANTHROPIC_NPM;
   if (!defaults && !claudeOAuth && !anthropicCaching && npm !== "@ai-sdk/alibaba") return model;
@@ -7929,4 +7958,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-YNIDXM63.js.map
+//# sourceMappingURL=chunk-V5UTATOQ.js.map

@@ -737,6 +737,26 @@ describe('createLanguageModel', () => {
     vi.doUnmock('@ai-sdk/openai');
   });
 
+  it('ChatGPT-login routes send a stable UUID-shaped session_id header derived from the session id', async () => {
+    const createOpenAI = vi.fn(() => ({ responses: (m: string) => ({ m }), chat: (m: string) => ({ m }) }));
+    vi.doMock('@ai-sdk/openai', () => ({ createOpenAI }));
+    const { createLanguageModel: create } = await import('../src/provider-factory.js');
+    const spec = { npm: '@ai-sdk/openai', modelId: 'gpt-5.5', apiKey: 'tok', authType: 'oauth' as const, oauthAccountId: 'acct' };
+
+    await create({ ...spec, sessionId: 'chat-1' });
+    await create({ ...spec, sessionId: 'chat-1' });
+    await create({ ...spec, sessionId: 'chat-2' });
+    await create(spec);
+
+    const headersOf = (n: number) => (createOpenAI.mock.calls[n]![0] as { headers: Record<string, string> }).headers;
+    expect(headersOf(0)['session_id']).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(headersOf(0)['session_id']).toBe(headersOf(1)['session_id']);
+    expect(headersOf(0)['session_id']).not.toBe(headersOf(2)['session_id']);
+    expect(headersOf(0)['session_id']).not.toContain('chat-1');
+    expect(headersOf(3)).not.toHaveProperty('session_id');
+    vi.doUnmock('@ai-sdk/openai');
+  });
+
   it('ignores baseURL for @ai-sdk/google (discovery URL is OpenAI-compatible only)', async () => {
     const createGoogleGenerativeAI = vi.fn(() => {
       const provider = vi.fn((modelId: string) => ({ modelId, provider: 'google' }));
@@ -986,6 +1006,53 @@ describe('applyAnthropicPromptCaching', () => {
       prompt: [{ role: 'system', content: 'sys' }, { role: 'user', content: text('hi') }],
     })).rejects.toThrow('captured');
     expect(inner.doGenerateCalls[0]!.prompt.map(marked)).toEqual([true, true]);
+  });
+});
+
+describe('OpenAI prompt cache key from the session id', () => {
+  const text = (t: string) => [{ type: 'text' as const, text: t }];
+  const send = async (spec: Parameters<typeof withProviderRequestDefaults>[1], providerOptions?: Record<string, Record<string, unknown>>) => {
+    const inner = new MockLanguageModelV4({ doGenerate: async () => { throw new Error('captured'); } });
+    const model = withProviderRequestDefaults(inner, spec);
+    await expect((model as unknown as MockLanguageModelV4).doGenerate({
+      prompt: [{ role: 'user', content: text('hi') }],
+      ...(providerOptions ? { providerOptions } : {}),
+    } as never)).rejects.toThrow('captured');
+    return inner.doGenerateCalls[0]!.providerOptions as Record<string, Record<string, unknown>> | undefined;
+  };
+  const openai = { npm: '@ai-sdk/openai', modelId: 'gpt-5.6-terra', apiKey: 'k' };
+
+  it('sends a stable cache key derived from the session id, and keeps the existing OpenAI defaults', async () => {
+    const a = await send({ ...openai, sessionId: 'chat-1' });
+    const b = await send({ ...openai, sessionId: 'chat-1' });
+    const other = await send({ ...openai, sessionId: 'chat-2' });
+
+    expect(a?.openai?.promptCacheKey).toMatch(/^[0-9a-f]{32}$/);
+    expect(a?.openai?.promptCacheKey).toBe(b?.openai?.promptCacheKey);
+    expect(a?.openai?.promptCacheKey).not.toBe(other?.openai?.promptCacheKey);
+    expect(a?.openai?.promptCacheKey).not.toContain('chat-1');          // the raw session id is never sent upstream
+    expect(a?.openai).toMatchObject({ store: false, include: ['reasoning.encrypted_content'] });
+  });
+
+  it('works for ChatGPT-login routes too (same npm)', async () => {
+    const options = await send({ ...openai, authType: 'oauth', sessionId: 'chat-1' });
+    expect(options?.openai?.promptCacheKey).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it('sends no cache key without a session id', async () => {
+    expect((await send(openai))?.openai).not.toHaveProperty('promptCacheKey');
+  });
+
+  it('lets a caller-supplied cache key win', async () => {
+    const options = await send({ ...openai, sessionId: 'chat-1' }, { openai: { promptCacheKey: 'mine' } });
+    expect(options?.openai?.promptCacheKey).toBe('mine');
+  });
+
+  it('does not add an OpenAI key to other providers', async () => {
+    for (const npm of ['@ai-sdk/groq', '@ai-sdk/anthropic', '@ai-sdk/google', '@ai-sdk/openai-compatible']) {
+      const options = await send({ npm, modelId: 'm', apiKey: 'k', sessionId: 'chat-1' });
+      expect(options?.openai, npm).toBeUndefined();
+    }
   });
 });
 

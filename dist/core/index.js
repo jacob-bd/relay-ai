@@ -61,6 +61,7 @@ var package_default = {
     test: 'vitest run --exclude "tests/debug-*.test.ts"',
     "test:reasoning": "vitest run tests/reasoning-coverage.test.ts",
     "test:live:reasoning": "vitest run tests/debug-reasoning-live.test.ts",
+    "test:live:cache": "vitest run tests/debug-cache-live.test.ts",
     "test:live": "vitest run tests/debug-xai.test.ts tests/debug-openai-oauth.test.ts",
     "test:watch": "vitest",
     typecheck: "tsc --noEmit",
@@ -254,6 +255,7 @@ function getAppPathOverride(appId) {
 
 // src/provider-factory.ts
 import { wrapLanguageModel, extractReasoningMiddleware } from "ai";
+import { createHash as createHash3 } from "crypto";
 
 // src/provider-templates.ts
 var PROVIDER_TEMPLATES = [
@@ -1487,6 +1489,17 @@ function isRecord(value) {
 function recordKeys(value) {
   return isRecord(value) ? Object.keys(value).sort().join(",") : "";
 }
+function numericLeaves(value) {
+  const out = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === "number") out[key] = entry;
+    else if (isRecord(entry)) {
+      const nested = Object.fromEntries(Object.entries(entry).filter(([, v]) => typeof v === "number"));
+      if (Object.keys(nested).length > 0) out[key] = nested;
+    }
+  }
+  return out;
+}
 function summarizeResponsesLiteEvent(event) {
   if (!isRecord(event)) return `kind=${event == null ? "null" : typeof event}`;
   const parts = [`type=${typeof event.type === "string" ? event.type : "unknown"}`, `keys=${recordKeys(event)}`];
@@ -1504,7 +1517,10 @@ function summarizeResponsesLiteEvent(event) {
       parts.push(`outputCount=${event.response.output.length}`);
       parts.push(`outputTypes=${event.response.output.map((item) => isRecord(item) && typeof item.type === "string" ? item.type : "unknown").join(",")}`);
     }
-    if (isRecord(event.response.usage)) parts.push(`usageKeys=${recordKeys(event.response.usage)}`);
+    if (isRecord(event.response.usage)) {
+      parts.push(`usageKeys=${recordKeys(event.response.usage)}`);
+      parts.push(`usage=${JSON.stringify(numericLeaves(event.response.usage))}`);
+    }
     if (typeof event.response.status === "string") parts.push(`status=${event.response.status}`);
   }
   if (isRecord(event.error)) {
@@ -1912,7 +1928,8 @@ function createResponsesWebSocketFetch(wsUrl, log) {
 `));
             return;
           }
-          if (frameCount <= 8) debug(`frame#${frameCount} ${summarizeResponsesLiteEvent(event)}`);
+          const frameType = isRecord(event) && typeof event.type === "string" ? event.type : void 0;
+          if (frameCount <= 8 || frameType && TERMINAL_EVENT_TYPES.has(frameType)) debug(`frame#${frameCount} ${summarizeResponsesLiteEvent(event)}`);
           for (const next of normalizeResponsesLiteEvent(event, normalizeState)) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(next)}
 
@@ -2466,6 +2483,7 @@ async function createLanguageModelSingle(spec) {
       headers: {
         ...accountId ? { "ChatGPT-Account-Id": accountId } : {},
         originator: "relay-ai",
+        ...spec.sessionId ? { session_id: openAiSessionHeader(spec.sessionId) } : {},
         // Responses-Lite models (backend prefer_websockets/use_responses_lite,
         // e.g. gpt-5.6-luna) require these on the request. The version is
         // resolved at runtime (npm latest → installed CLI → bundled
@@ -2814,9 +2832,20 @@ function applyAnthropicPromptCaching(params) {
   }
   return { ...params, prompt, ...tools ? { tools } : {} };
 }
+function openAiSessionDigest(sessionId) {
+  return createHash3("sha256").update(`relay-ai:prompt-cache:${sessionId}`).digest("hex").slice(0, 32);
+}
+function openAiPromptCacheOptions(npm, sessionId) {
+  if (npm !== "@ai-sdk/openai" || !sessionId) return void 0;
+  return { openai: { promptCacheKey: openAiSessionDigest(sessionId) } };
+}
+function openAiSessionHeader(sessionId) {
+  const h = openAiSessionDigest(sessionId);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
 function withProviderRequestDefaults(model, spec) {
   const npm = resolveProviderNpm(spec.npm);
-  const defaults = thinkingProviderOptions(npm);
+  const defaults = deepMergeProviderOptions(thinkingProviderOptions(npm), openAiPromptCacheOptions(npm, spec.sessionId));
   const claudeOAuth = isClaudeCodeOAuthRoute(spec);
   const anthropicCaching = npm === "@ai-sdk/anthropic" || npm === VERTEX_ANTHROPIC_NPM;
   if (!defaults && !claudeOAuth && !anthropicCaching && npm !== "@ai-sdk/alibaba") return model;
@@ -4388,7 +4417,7 @@ async function refreshStoredOAuthCredential(providerId, cred) {
 
 // src/oauth/refresh-lock.ts
 import { closeSync as closeSync2, mkdirSync as mkdirSync7, openSync as openSync2, readFileSync as readFileSync10, statSync as statSync3, unlinkSync as unlinkSync4, writeSync as writeSync2 } from "fs";
-import { createHash as createHash3, randomUUID as randomUUID3 } from "crypto";
+import { createHash as createHash4, randomUUID as randomUUID3 } from "crypto";
 import { join as join9 } from "path";
 var POLL_MS = 100;
 function sleep(ms) {
@@ -4457,7 +4486,7 @@ async function withRefreshLock(key, work, options = {}) {
   let token = null;
   try {
     mkdirSync7(dir, { recursive: true, mode: 448 });
-    path = join9(dir, `oauth-${createHash3("sha256").update(key).digest("hex").slice(0, 24)}.lock`);
+    path = join9(dir, `oauth-${createHash4("sha256").update(key).digest("hex").slice(0, 24)}.lock`);
     token = await acquire(path, options.timeoutMs ?? 2e4, options.staleMs ?? 12e4);
   } catch {
     token = null;
@@ -5281,7 +5310,7 @@ function reconcileCachedModelProtocol(model, provider, metadata = loadModelsDevC
 import { randomUUID as randomUUID4 } from "crypto";
 
 // src/core/antigravity-diagnostics.ts
-import { createHash as createHash4 } from "crypto";
+import { createHash as createHash5 } from "crypto";
 var SECTION_NAMES = ["systemInstruction", "tools", "toolConfig", "generationConfig"];
 var USAGE_NAMES = ["promptTokenCount", "cachedContentTokenCount", "thoughtsTokenCount"];
 function record2(value) {
@@ -5294,10 +5323,10 @@ function requestFingerprint(value) {
     return [name, text2 === void 0 ? { present: false } : {
       present: true,
       bytes: Buffer.byteLength(text2),
-      hash: createHash4("sha256").update(text2).digest("hex").slice(0, 32)
+      hash: createHash5("sha256").update(text2).digest("hex").slice(0, 32)
     }];
   }));
-  const prefix = createHash4("sha256");
+  const prefix = createHash5("sha256");
   const contents = (Array.isArray(body.contents) ? body.contents : []).map((item) => {
     const text2 = JSON.stringify(item);
     const bytes = Buffer.byteLength(text2);
@@ -6116,6 +6145,7 @@ async function createRelayModel(routeId, options) {
     refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
     useResponsesLite: model.useResponsesLite,
     preferWebSockets: model.preferWebSockets,
+    ...options?.sessionId ? { sessionId: options.sessionId } : {},
     ...options?.onDebug ? { onDebug: options.onDebug } : {}
   };
   try {

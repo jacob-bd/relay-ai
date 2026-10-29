@@ -135,7 +135,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-YNIDXM63.js";
+} from "./chunk-V5UTATOQ.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -9087,4 +9087,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-QN47SR74.js.map
+//# sourceMappingURL=chunk-CUG3YY25.js.map

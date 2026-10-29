@@ -131,6 +131,13 @@ describe('createRelayModel', () => {
     });
   });
 
+  it('puts the host session id on the provider spec (it becomes the OpenAI cache key)', async () => {
+    writeRegistry([provider({})]);
+    writeSecrets({ 'provider:groq': 'gsk_test_key' });
+    await createRelayModel('groq::llama-3.3-70b', { sessionId: 'conversation-1' });
+    expect(createLanguageModelMock.mock.calls[0]![0].sessionId).toBe('conversation-1');
+  });
+
   it('forwards an optional onDebug hook on the provider spec', async () => {
     writeRegistry([provider({})]);
     writeSecrets({ 'provider:groq': 'gsk_test_key' });

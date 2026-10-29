@@ -193,6 +193,7 @@ export async function createRelayModel(routeId: RelayRouteId, options?: CreateRe
     refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
     useResponsesLite: model.useResponsesLite,
     preferWebSockets: model.preferWebSockets,
+    ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
     ...(options?.onDebug ? { onDebug: options.onDebug } : {}),
   };
 

@@ -29,6 +29,19 @@ function recordKeys(value: unknown): string {
 }
 
 /** Sanitized one-line summary: types, keys, counts, lengths — never field values. */
+/** Numbers only (one level of nesting) — token counts are safe to log, strings are not. */
+function numericLeaves(value: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === 'number') out[key] = entry;
+    else if (isRecord(entry)) {
+      const nested = Object.fromEntries(Object.entries(entry).filter(([, v]) => typeof v === 'number'));
+      if (Object.keys(nested).length > 0) out[key] = nested;
+    }
+  }
+  return out;
+}
+
 export function summarizeResponsesLiteEvent(event: unknown): string {
   if (!isRecord(event)) return `kind=${event == null ? 'null' : typeof event}`;
   const parts = [`type=${typeof event.type === 'string' ? event.type : 'unknown'}`, `keys=${recordKeys(event)}`];
@@ -46,7 +59,10 @@ export function summarizeResponsesLiteEvent(event: unknown): string {
       parts.push(`outputCount=${event.response.output.length}`);
       parts.push(`outputTypes=${event.response.output.map(item => (isRecord(item) && typeof item.type === 'string' ? item.type : 'unknown')).join(',')}`);
     }
-    if (isRecord(event.response.usage)) parts.push(`usageKeys=${recordKeys(event.response.usage)}`);
+    if (isRecord(event.response.usage)) {
+      parts.push(`usageKeys=${recordKeys(event.response.usage)}`);
+      parts.push(`usage=${JSON.stringify(numericLeaves(event.response.usage))}`);
+    }
     if (typeof event.response.status === 'string') parts.push(`status=${event.response.status}`);
   }
   if (isRecord(event.error)) {
@@ -582,7 +598,9 @@ export function createResponsesWebSocketFetch(wsUrl: string, log?: (msg: string)
             controller.enqueue(encoder.encode(`data: ${text.replace(/\r?\n/g, ' ')}\n\n`));
             return;
           }
-          if (frameCount <= 8) debug(`frame#${frameCount} ${summarizeResponsesLiteEvent(event)}`);
+          const frameType = isRecord(event) && typeof event.type === 'string' ? event.type : undefined;
+          // The closing frame carries the usage report, which is what cache diagnosis needs.
+          if (frameCount <= 8 || (frameType && TERMINAL_EVENT_TYPES.has(frameType))) debug(`frame#${frameCount} ${summarizeResponsesLiteEvent(event)}`);
           for (const next of normalizeResponsesLiteEvent(event, normalizeState)) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(next)}\n\n`));
           }

@@ -670,4 +670,22 @@ describe('normalizeResponsesLiteEvent', () => {
     expect(summary).not.toContain('classified-text');
     expect(summary).not.toContain('msg_secret');
   });
+
+  it('reports the usage token counts (numbers only) so cache reads can be diagnosed', () => {
+    const summary = summarizeResponsesLiteEvent({
+      type: 'response.completed',
+      response: {
+        status: 'completed',
+        usage: {
+          input_tokens: 13536,
+          input_tokens_details: { cached_tokens: 9216, note: 'secret-text' },
+          output_tokens: 2,
+          model: 'private-model-name',
+        },
+      },
+    });
+    expect(summary).toContain('usage={"input_tokens":13536,"input_tokens_details":{"cached_tokens":9216},"output_tokens":2}');
+    expect(summary).not.toContain('secret-text');
+    expect(summary).not.toContain('private-model-name');
+  });
 });
