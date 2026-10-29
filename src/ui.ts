@@ -1,5 +1,6 @@
 // Shared relay-ai CLI styling — @clack/prompts + picocolors.
 // Use printPanel for important callouts (p.note dims all body text).
+import { subscriptionOAuthRisk } from './oauth/risk-notice.js';
 import { providerKind } from './registry/provider-kind.js';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
@@ -231,10 +232,12 @@ export function printProviderDetailPanel(
   name: string,
   modelCount: number,
   authLabel: string,
+  account?: string,
 ): void {
   printPanel(fmtProvider(name), [
     `${pc.bold('Models')}  ${pc.cyan(String(modelCount))} cached`,
     `${pc.bold('Auth')}    ${pc.white(authLabel)}`,
+    ...(account ? [`${pc.bold('Account')} ${pc.white(account)}`] : []),
   ]);
 }
 
@@ -263,34 +266,23 @@ export function printGatewayMaskPanel(): void {
 export async function confirmSubscriptionOAuthRisk(
   providerId: 'claude-code' | 'antigravity',
 ): Promise<boolean> {
-  const isGoogle = providerId === 'antigravity';
-  const providerLabel = isGoogle ? 'Antigravity / Google' : 'Claude Code';
-  const service = isGoogle
-    ? 'Google account (Gmail, Drive, YouTube, Workspace, and all tied services)'
-    : 'Anthropic account (Claude Pro / Max subscription)';
-  const enforcementNote = isGoogle
-    ? 'Community reports: Google has issued account bans for this usage.'
-    : 'Anthropic actively enforces this — validating request shape and has taken legal action against other projects.';
-  const compatibilityNote = isGoogle
-    ? undefined
-    : 'For compatibility, relay-ai may reproduce Claude Code-style request metadata and attribution so Anthropic classifies traffic as Claude Code.';
+  const risk = subscriptionOAuthRisk(providerId);
 
-  printPanel(pc.red(`⚠  Account Risk — ${providerLabel} OAuth`), [
-    `${pc.white('This extracts OAuth tokens from your')} ${pc.bold(service)}.`,
+  printPanel(pc.red(`⚠  Account Risk — ${risk.providerLabel} OAuth`), [
+    `${pc.white('This extracts OAuth tokens from your')} ${pc.bold(risk.service)}.`,
     '',
     `${pc.white('Routing subscription tokens through relay-ai to power other tools')}`,
     `${pc.white('may violate the provider\'s Terms of Service.')}`,
     '',
-    `${pc.yellow(enforcementNote)}`,
-    ...(compatibilityNote ? [`${pc.yellow(compatibilityNote)}`] : []),
+    `${pc.yellow(risk.enforcementNote)}`,
+    ...(risk.compatibilityNote ? [`${pc.yellow(risk.compatibilityNote)}`] : []),
     '',
     `${pc.white('Possible consequences:')}`,
-    `  ${pc.dim('•')} ${pc.white('Token revocation')}`,
-    `  ${pc.dim('•')} ${pc.white('Account suspension or permanent ban')}`,
-    ...(isGoogle ? [`  ${pc.dim('•')} ${pc.red(pc.bold('Loss of ALL services tied to this Google account'))}`] : []),
+    ...risk.consequences.map(item => `  ${pc.dim('•')} ${pc.white(item)}`),
+    ...(risk.lossNote ? [`  ${pc.dim('•')} ${pc.red(pc.bold(risk.lossNote))}`] : []),
     '',
-    ...(isGoogle ? [`${pc.red(pc.bold('Do not use your primary Google account.'))} ${pc.white('Use a throwaway account.')}`] : []),
-    `${pc.dim(`relay-ai is not affiliated with ${isGoogle ? 'Google' : 'Anthropic'} and cannot protect you.`)}`,
+    ...(risk.advice ? [`${pc.red(pc.bold('Do not use your primary Google account.'))} ${pc.white('Use a throwaway account.')}`] : []),
+    `${pc.dim(risk.disclaimer)}`,
   ]);
 
   const answer = await p.text({

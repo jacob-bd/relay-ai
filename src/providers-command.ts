@@ -1,5 +1,6 @@
 // src/providers-command.ts — relay-ai providers command
 
+import { readOAuthAccountLabel } from './registry/oauth-account.js';
 import { providerKind } from './registry/provider-kind.js';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
@@ -994,7 +995,7 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
 
   const modelCount = getProviderModels(provider).length;
   const authLabel = formatRegistryAuthLabel(provider);
-  printProviderDetailPanel(provider.name, modelCount, authLabel);
+  printProviderDetailPanel(provider.name, modelCount, authLabel, await readOAuthAccountLabel(provider));
   const template = getTemplateById(provider.templateId) ?? getTemplateById(id);
   const hasDualAuth = template ? hasApiAndOAuth(template) : false;
 

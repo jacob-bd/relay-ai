@@ -150,6 +150,7 @@ async function runNativeBrowserOAuth(providerId: NativeOAuthProviderId): Promise
 
       const providerData: Record<string, unknown> = { cliUserID: generateCliUserID() };
       if (bootstrap.accountId) providerData.accountUUID = bootstrap.accountId;
+      if (bootstrap.email) providerData.identity = { email: bootstrap.email };
       if (bootstrap.organizationId) providerData.organizationUUID = bootstrap.organizationId;
       if (bootstrap.organizationName) providerData.organizationName = bootstrap.organizationName;
       if (bootstrap.plan) providerData.plan = bootstrap.plan;

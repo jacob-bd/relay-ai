@@ -124,6 +124,29 @@ describe('UI OAuth API', () => {
     expect(JSON.stringify(result.body)).not.toContain('free_limited_copilot');
   });
 
+  it('shows who is signed in for OAuth providers, but never the Copilot username', async () => {
+    const model = { id: 'm', name: 'M', brand: 'X', family: 'x', modelFormat: 'openai', upstreamModelId: 'm' };
+    state.catalog = [
+      {
+        id: 'openai-oauth', name: 'Personal ChatGPT', authType: 'oauth', apiKey: 'tok',
+        providerData: { identity: { email: 'me@example.com', plan: 'plus' } }, models: [model],
+      },
+      {
+        id: 'github-copilot', name: 'GitHub Copilot', authType: 'oauth', apiKey: 'tok',
+        providerData: { copilot: { lookup_status: 'known', login: 'private-login', copilot_plan: 'individual' } }, models: [model],
+      },
+      { id: 'groq', name: 'Groq', authType: 'api', apiKey: 'k', models: [model] },
+    ];
+
+    const result = await call('GET', '/api/models');
+    const byId = Object.fromEntries(result.body.providers.map((p: any) => [p.id, p]));
+
+    expect(byId['openai-oauth'].account).toBe('me@example.com · plus');
+    expect(byId['github-copilot'].account).toBeUndefined();
+    expect(byId['groq'].account).toBeUndefined();
+    expect(JSON.stringify(result.body)).not.toContain('private-login');
+  });
+
   it('starts a visible device-code flow without returning the private device secret', async () => {
     const result = await call('POST', '/api/providers/oauth/start', { providerId: 'github-copilot' });
 

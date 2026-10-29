@@ -1,6 +1,7 @@
 // oauth/types.ts — stored OAuth credential shape (matches OpenCode auth.json)
 
 import type { OpencodeOAuthCredential } from '../registry/opencode-auth.js';
+import { identityFromJwt, mergeIdentity, storedIdentity } from './identity.js';
 
 export type StoredOAuthCredential = OpencodeOAuthCredential;
 
@@ -19,9 +20,11 @@ export function tokensToStoredCredential(
   accountId?: string,
   providerData?: Record<string, unknown>,
 ): StoredOAuthCredential {
-  const mergedProviderData = providerData || tokens.providerData
+  const identity = mergeIdentity(storedIdentity(providerData), identityFromJwt(tokens.id_token));
+  const baseProviderData = providerData || tokens.providerData
     ? { ...providerData, ...tokens.providerData }
     : undefined;
+  const mergedProviderData = identity ? { ...baseProviderData, identity } : baseProviderData;
   return {
     type: 'oauth',
     access: tokens.access_token,

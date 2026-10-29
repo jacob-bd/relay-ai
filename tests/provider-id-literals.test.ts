@@ -45,7 +45,7 @@ const ALLOWED: Record<string, string> = {
   'registry/provider-auth.ts::providerId !== \'claude-code\'': 'kind parameter',
   'registry/provider-auth.ts::providerId !== \'antigravity\'': 'kind parameter',
   'registry/provider-auth.ts::providerId === \'claude-code\'': 'kind parameter',
-  'ui.ts::providerId === \'antigravity\'': 'kind parameter',
+  'oauth/risk-notice.ts::providerId === \'antigravity\'': 'kind parameter',
 
   // Sign-in plumbing that still names exact single-account ids — rebuilt when multiple
   // OAuth accounts are added (step 4 of the multi-account work).

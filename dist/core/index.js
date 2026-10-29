@@ -1616,8 +1616,8 @@ function messageText(item) {
   return out;
 }
 function synthesizeMessage(item, outputIndex, state) {
-  const text = messageText(item);
-  if (!text) return [];
+  const text2 = messageText(item);
+  if (!text2) return [];
   const id = asString(item.id) ?? nextId(state, "msg");
   state.lastMessageItemId = id;
   state.textDeltaForwarded = true;
@@ -1625,7 +1625,7 @@ function synthesizeMessage(item, outputIndex, state) {
   state.messageDoneIds.add(id);
   return [
     { type: "response.output_item.added", output_index: outputIndex, item: { type: "message", id } },
-    { type: "response.output_text.delta", item_id: id, delta: text },
+    { type: "response.output_text.delta", item_id: id, delta: text2 },
     { type: "response.output_item.done", output_index: outputIndex, item: { type: "message", id } }
   ];
 }
@@ -1874,14 +1874,14 @@ function createResponsesWebSocketFetch(wsUrl, log) {
         });
         socket.on("message", (data) => {
           if (closed) return;
-          const text = Array.isArray(data) ? Buffer.concat(data).toString("utf8") : data.toString("utf8");
+          const text2 = Array.isArray(data) ? Buffer.concat(data).toString("utf8") : data.toString("utf8");
           frameCount += 1;
           let event;
           try {
-            event = JSON.parse(text);
+            event = JSON.parse(text2);
           } catch {
-            debug(`frame#${frameCount} non-json chars=${text.length}`);
-            controller.enqueue(encoder.encode(`data: ${text.replace(/\r?\n/g, " ")}
+            debug(`frame#${frameCount} non-json chars=${text2.length}`);
+            controller.enqueue(encoder.encode(`data: ${text2.replace(/\r?\n/g, " ")}
 
 `));
             return;
@@ -2205,21 +2205,21 @@ function resolveProtocolAlternative(input) {
 function errorText(value) {
   if (typeof value === "string") return value;
   if (!value || typeof value !== "object") return "";
-  const record2 = value;
-  const pieces = [record2.message, record2.responseBody, record2.code].filter((item) => typeof item === "string");
+  const record3 = value;
+  const pieces = [record3.message, record3.responseBody, record3.code].filter((item) => typeof item === "string");
   return pieces.join(" ");
 }
 function findErrorField(error, field, depth = 0) {
   if (!error || typeof error !== "object" || depth > 3) return void 0;
-  const record2 = error;
-  if (record2[field] !== void 0) return record2[field];
-  return findErrorField(record2.cause, field, depth + 1) ?? findErrorField(record2.lastError, field, depth + 1);
+  const record3 = error;
+  if (record3[field] !== void 0) return record3[field];
+  return findErrorField(record3.cause, field, depth + 1) ?? findErrorField(record3.lastError, field, depth + 1);
 }
 function classifyProtocolFailure(error) {
   const statusValue = findErrorField(error, "statusCode") ?? findErrorField(error, "status");
   const status = typeof statusValue === "number" ? statusValue : void 0;
-  const text = errorText(error) + " " + errorText(findErrorField(error, "cause")) + " " + errorText(findErrorField(error, "responseBody"));
-  const lower = text.toLowerCase();
+  const text2 = errorText(error) + " " + errorText(findErrorField(error, "cause")) + " " + errorText(findErrorField(error, "responseBody"));
+  const lower = text2.toLowerCase();
   if (lower.includes("abort") || lower.includes("cancel")) {
     return { retryable: false, status, reason: "request cancelled" };
   }
@@ -3986,9 +3986,58 @@ function oauthCredentialToKeychainJson(cred) {
   return JSON.stringify(cred);
 }
 
+// src/oauth/identity.ts
+function text(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : void 0;
+}
+function record(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function jwtClaims(token) {
+  const parts = token?.split(".");
+  if (!parts || parts.length !== 3) return void 0;
+  try {
+    return record(JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")));
+  } catch {
+    return void 0;
+  }
+}
+function compact(identity) {
+  return Object.fromEntries(Object.entries(identity).filter(([, v]) => v !== void 0));
+}
+function identityFromJwt(token) {
+  const claims = jwtClaims(token);
+  if (!claims) return {};
+  const auth = record(claims["https://api.openai.com/auth"]);
+  const profile = record(claims["https://api.openai.com/profile"]);
+  return compact({
+    email: text(claims.email) ?? text(profile?.email),
+    name: text(claims.name),
+    plan: text(auth?.chatgpt_plan_type),
+    userId: text(auth?.chatgpt_user_id) ?? text(auth?.user_id) ?? text(claims.sub)
+  });
+}
+function mergeIdentity(...parts) {
+  const merged = {};
+  for (const part of parts) Object.assign(merged, compact(part ?? {}));
+  return Object.keys(merged).length > 0 ? merged : void 0;
+}
+function storedIdentity(providerData) {
+  const stored = record(providerData?.identity);
+  return compact({
+    email: text(stored?.email),
+    name: text(stored?.name),
+    plan: text(stored?.plan),
+    userId: text(stored?.userId),
+    login: text(stored?.login)
+  });
+}
+
 // src/oauth/types.ts
 function tokensToStoredCredential(tokens, existingRefresh, accountId, providerData) {
-  const mergedProviderData = providerData || tokens.providerData ? { ...providerData, ...tokens.providerData } : void 0;
+  const identity = mergeIdentity(storedIdentity(providerData), identityFromJwt(tokens.id_token));
+  const baseProviderData = providerData || tokens.providerData ? { ...providerData, ...tokens.providerData } : void 0;
+  const mergedProviderData = identity ? { ...baseProviderData, identity } : baseProviderData;
   return {
     type: "oauth",
     access: tokens.access_token,
@@ -4252,14 +4301,14 @@ function toOAuthResult(data) {
   };
 }
 async function readError(response) {
-  const text = await response.text().catch(() => "");
-  if (!text) return `HTTP ${response.status}`;
+  const text2 = await response.text().catch(() => "");
+  if (!text2) return `HTTP ${response.status}`;
   try {
-    const parsed = JSON.parse(text);
+    const parsed = JSON.parse(text2);
     const detail = typeof parsed.error === "string" ? parsed.error : typeof parsed.message === "string" ? parsed.message : "";
     return detail || `HTTP ${response.status}`;
   } catch {
-    return text.slice(0, 120);
+    return text2.slice(0, 120);
   }
 }
 async function refreshClinePassAccessToken(refreshToken) {
@@ -4311,8 +4360,91 @@ async function refreshStoredOAuthCredential(providerId, cred) {
   return tokensToStoredCredential(tokens, cred.refresh, accountId, cred.providerData);
 }
 
+// src/oauth/refresh-lock.ts
+import { closeSync as closeSync2, mkdirSync as mkdirSync7, openSync as openSync2, readFileSync as readFileSync10, statSync as statSync3, unlinkSync as unlinkSync4, writeSync as writeSync2 } from "fs";
+import { createHash as createHash3, randomUUID as randomUUID3 } from "crypto";
+import { join as join9 } from "path";
+var POLL_MS = 100;
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function readHolder(path) {
+  try {
+    const parsed = JSON.parse(readFileSync10(path, "utf8"));
+    return {
+      pid: typeof parsed.pid === "number" ? parsed.pid : void 0,
+      token: typeof parsed.token === "string" ? parsed.token : void 0
+    };
+  } catch {
+    return {};
+  }
+}
+function isStale(path, staleMs) {
+  try {
+    const { pid } = readHolder(path);
+    if (pid !== void 0 && !processAlive(pid)) return true;
+    return Date.now() - statSync3(path).mtimeMs > staleMs;
+  } catch {
+    return false;
+  }
+}
+function removeLock(path) {
+  try {
+    unlinkSync4(path);
+  } catch {
+  }
+}
+async function acquire(path, timeoutMs, staleMs) {
+  const token = randomUUID3();
+  const deadline = Date.now() + timeoutMs;
+  for (; ; ) {
+    try {
+      const fd = openSync2(path, "wx", 384);
+      try {
+        writeSync2(fd, JSON.stringify({ pid: process.pid, token }));
+      } finally {
+        closeSync2(fd);
+      }
+      return token;
+    } catch (err) {
+      if (err.code !== "EEXIST") return null;
+      if (isStale(path, staleMs)) {
+        removeLock(path);
+        continue;
+      }
+      if (Date.now() >= deadline) return null;
+      await sleep(POLL_MS);
+    }
+  }
+}
+async function withRefreshLock(key, work, options = {}) {
+  const dir = options.dir ?? join9(getAppHome(), "locks");
+  let path;
+  let token = null;
+  try {
+    mkdirSync7(dir, { recursive: true, mode: 448 });
+    path = join9(dir, `oauth-${createHash3("sha256").update(key).digest("hex").slice(0, 24)}.lock`);
+    token = await acquire(path, options.timeoutMs ?? 2e4, options.staleMs ?? 12e4);
+  } catch {
+    token = null;
+  }
+  try {
+    return await work();
+  } finally {
+    if (path && token && readHolder(path).token === token) removeLock(path);
+  }
+}
+
 // src/secrets-file.ts
-import { chmodSync as chmodSync5, existsSync as existsSync9, mkdirSync as mkdirSync7, readFileSync as readFileSync10, writeFileSync as writeFileSync6 } from "fs";
+import { chmodSync as chmodSync5, existsSync as existsSync9, mkdirSync as mkdirSync8, readFileSync as readFileSync11, writeFileSync as writeFileSync6 } from "fs";
 var DIR_MODE2 = 448;
 var FILE_MODE2 = 384;
 function emptySecrets() {
@@ -4322,7 +4454,7 @@ function readSecretsFile(env = process.env) {
   const path = getSecretsPath(env);
   if (!existsSync9(path)) return emptySecrets();
   try {
-    const raw = JSON.parse(readFileSync10(path, "utf8"));
+    const raw = JSON.parse(readFileSync11(path, "utf8"));
     if (raw?.version !== 1 || !raw.accounts || typeof raw.accounts !== "object") {
       return emptySecrets();
     }
@@ -4337,7 +4469,7 @@ function readSecretsFile(env = process.env) {
 }
 function writeSecretsFile(data, env = process.env) {
   const home = getAppHome(env);
-  mkdirSync7(home, { recursive: true, mode: DIR_MODE2 });
+  mkdirSync8(home, { recursive: true, mode: DIR_MODE2 });
   try {
     chmodSync5(home, DIR_MODE2);
   } catch {
@@ -4578,20 +4710,27 @@ async function refreshOAuthKeyringAccount(account, providerId, raw, diag, force 
   const existing = oauthRefreshInflight.get(account);
   if (existing) return existing;
   const work = (async () => {
-    const cred = parseStoredOAuthCredential(raw);
-    if (!cred || !force && !oauthCredentialShouldRefresh(cred, providerId)) {
+    const seen = parseStoredOAuthCredential(raw);
+    if (!seen || !force && !oauthCredentialShouldRefresh(seen, providerId)) {
       return decodeProviderSecret(raw);
     }
-    try {
-      const refreshed = await refreshStoredOAuthCredential(providerId, cred);
-      const json = oauthCredentialToKeychainJson(refreshed);
-      await writeKeyringAccount(account, json, diag);
-      return refreshed.access;
-    } catch (err) {
-      diag?.(err instanceof Error ? err.message : String(err));
-      if (cred.access && cred.expires > Date.now()) return cred.access;
-      throw err;
-    }
+    return withRefreshLock(account, async () => {
+      invalidateKeyringReadCache(account);
+      const cred = parseStoredOAuthCredential(await readKeyringAccount(account, diag)) ?? seen;
+      const replacedByOther = cred.access !== seen.access || cred.refresh !== seen.refresh;
+      if (replacedByOther && !oauthCredentialShouldRefresh(cred, providerId)) return cred.access;
+      if (!force && !oauthCredentialShouldRefresh(cred, providerId)) return cred.access;
+      try {
+        const refreshed = await refreshStoredOAuthCredential(providerId, cred);
+        const json = oauthCredentialToKeychainJson(refreshed);
+        await writeKeyringAccount(account, json, diag);
+        return refreshed.access;
+      } catch (err) {
+        diag?.(err instanceof Error ? err.message : String(err));
+        if (cred.access && cred.expires > Date.now()) return cred.access;
+        throw err;
+      }
+    });
   })();
   oauthRefreshInflight.set(account, work);
   try {
@@ -5110,30 +5249,30 @@ function reconcileCachedModelProtocol(model, provider, metadata = loadModelsDevC
 }
 
 // src/core/antigravity-model.ts
-import { randomUUID as randomUUID3 } from "crypto";
+import { randomUUID as randomUUID4 } from "crypto";
 
 // src/core/antigravity-diagnostics.ts
-import { createHash as createHash3 } from "crypto";
+import { createHash as createHash4 } from "crypto";
 var SECTION_NAMES = ["systemInstruction", "tools", "toolConfig", "generationConfig"];
 var USAGE_NAMES = ["promptTokenCount", "cachedContentTokenCount", "thoughtsTokenCount"];
-function record(value) {
+function record2(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 function requestFingerprint(value) {
-  const body = record(value);
+  const body = record2(value);
   const sections = Object.fromEntries(SECTION_NAMES.map((name) => {
-    const text = JSON.stringify(body[name]);
-    return [name, text === void 0 ? { present: false } : {
+    const text2 = JSON.stringify(body[name]);
+    return [name, text2 === void 0 ? { present: false } : {
       present: true,
-      bytes: Buffer.byteLength(text),
-      hash: createHash3("sha256").update(text).digest("hex").slice(0, 32)
+      bytes: Buffer.byteLength(text2),
+      hash: createHash4("sha256").update(text2).digest("hex").slice(0, 32)
     }];
   }));
-  const prefix = createHash3("sha256");
+  const prefix = createHash4("sha256");
   const contents = (Array.isArray(body.contents) ? body.contents : []).map((item) => {
-    const text = JSON.stringify(item);
-    const bytes = Buffer.byteLength(text);
-    prefix.update(`${bytes}:`).update(text);
+    const text2 = JSON.stringify(item);
+    const bytes = Buffer.byteLength(text2);
+    prefix.update(`${bytes}:`).update(text2);
     return { bytes, prefixHash: prefix.copy().digest("hex").slice(0, 32) };
   });
   const tools = Array.isArray(body.tools) ? body.tools : [];
@@ -5144,7 +5283,7 @@ function requestFingerprint(value) {
     contents,
     contentsCount: contents.length,
     toolCount: tools.reduce((count, tool) => {
-      const declarations = record(tool).functionDeclarations;
+      const declarations = record2(tool).functionDeclarations;
       return count + (Array.isArray(declarations) ? declarations.length : 0);
     }, 0)
   };
@@ -5155,12 +5294,12 @@ function observeCloudCodeBody(body, streaming, log, startedAt, signal) {
   let usage;
   let firstBodyByteMs = null;
   let finished = false;
-  const inspect = (text) => {
+  const inspect = (text2) => {
     try {
-      const parsed = record(JSON.parse(text));
-      const response = "response" in parsed ? record(parsed.response) : parsed;
+      const parsed = record2(JSON.parse(text2));
+      const response = "response" in parsed ? record2(parsed.response) : parsed;
       if (response.usageMetadata && typeof response.usageMetadata === "object") {
-        usage = record(response.usageMetadata);
+        usage = record2(response.usageMetadata);
       }
     } catch {
     }
@@ -5269,15 +5408,15 @@ function unwrapCloudCodeSsePayload(payload) {
   }
   return payload;
 }
-function unwrapCloudCodeJsonBody(text) {
+function unwrapCloudCodeJsonBody(text2) {
   try {
-    const parsed = JSON.parse(text);
+    const parsed = JSON.parse(text2);
     if (isWrappedCloudCodeBody(parsed)) {
       return JSON.stringify(parsed.response);
     }
   } catch {
   }
-  return text;
+  return text2;
 }
 function consumeCloudCodeSseBuffer(buffer) {
   const separator = /\r?\n\r?\n/;
@@ -5317,7 +5456,7 @@ function createCloudCodeFetch(options, fetchImpl) {
   let accessToken = options.accessToken;
   return async (input, init) => {
     const startedAt = options.onDebug ? performance.now() : 0;
-    const diagnosticId = options.onDebug ? randomUUID3() : "";
+    const diagnosticId = options.onDebug ? randomUUID4() : "";
     let attempt = 0;
     const debug = (msg) => {
       try {
@@ -5332,7 +5471,7 @@ function createCloudCodeFetch(options, fetchImpl) {
     if (options.onDebug) debug(`fingerprint ${JSON.stringify(requestFingerprint(geminiBody))}`);
     const envelope = {
       project: options.projectId,
-      requestId: randomUUID3(),
+      requestId: randomUUID4(),
       model: options.modelId,
       userAgent: ANTIGRAVITY_USER_AGENT,
       requestType: "agent",
@@ -5482,9 +5621,9 @@ async function adaptUpstreamResponse(upstream, streaming) {
       headers
     });
   }
-  const text = await upstream.text();
+  const text2 = await upstream.text();
   headers.set("Content-Type", "application/json");
-  return new Response(unwrapCloudCodeJsonBody(text), { status: 200, headers });
+  return new Response(unwrapCloudCodeJsonBody(text2), { status: 200, headers });
 }
 function isAbortError(err, signal) {
   if (signal?.aborted) return true;

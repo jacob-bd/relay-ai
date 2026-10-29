@@ -1126,38 +1126,8 @@ function createDeviceAuthorizationPanel(url, userCode) {
   return panel;
 }
 
-async function beginDeviceOAuthFlow({ providerId, signInButton, refreshButton, feedback, onDone }) {
-  signInButton.disabled = true;
-  if (refreshButton) refreshButton.disabled = true;
-  setOAuthFeedback(feedback, 'Preparing a secure one-time code…', 'muted');
-
-  let startResult;
-  try {
-    startResult = await api('POST', '/api/providers/oauth/start', { providerId });
-  } catch {
-    setOAuthFeedback(feedback, 'Could not start sign-in. Check the connection and try again.', 'error');
-    signInButton.disabled = false;
-    if (refreshButton) refreshButton.disabled = false;
-    return;
-  }
-  if (startResult.error) {
-    setOAuthFeedback(feedback, startResult.error, 'error');
-    signInButton.disabled = false;
-    if (refreshButton) refreshButton.disabled = false;
-    return;
-  }
-
-  const { sessionId, url, userCode } = startResult;
-  if (!sessionId || !url || !userCode) {
-    setOAuthFeedback(feedback, 'The provider did not return a usable device code. Please try again.', 'error');
-    signInButton.disabled = false;
-    if (refreshButton) refreshButton.disabled = false;
-    return;
-  }
-
-  feedback.replaceChildren(createDeviceAuthorizationPanel(url, userCode));
-  feedback.className = 'key-feedback oauth-device-host';
-
+// Polls the sign-in session until it finishes, then reports the outcome in `feedback`.
+function pollOAuthSession({ sessionId, signInButton, refreshButton, feedback, onDone }) {
   let pollInFlight = false;
   const pollInterval = setInterval(async () => {
     if (pollInFlight) return;
@@ -1190,6 +1160,80 @@ async function beginDeviceOAuthFlow({ providerId, signInButton, refreshButton, f
       pollInFlight = false;
     }
   }, 2000);
+}
+
+// Browser sign-in (Antigravity): the page opens only when the user clicks the button;
+// the callback then lands on this server and the poll below picks it up.
+function showBrowserSignInPrompt(feedback, authUrl) {
+  const note = document.createElement('div');
+  note.textContent = 'Open the Google sign-in page, finish signing in there, and this page updates by itself.';
+  const openButton = document.createElement('button');
+  openButton.type = 'button';
+  openButton.className = 'btn btn-primary';
+  openButton.textContent = 'Open Google sign-in';
+  openButton.style.marginTop = '8px';
+  openButton.addEventListener('click', () => {
+    window.open(authUrl, '_blank', 'noopener,noreferrer');
+  });
+  feedback.replaceChildren(note, openButton);
+  feedback.className = 'key-feedback muted';
+}
+
+async function beginDeviceOAuthFlow({ providerId, signInButton, refreshButton, feedback, onDone }) {
+  const reenable = () => {
+    signInButton.disabled = false;
+    if (refreshButton) refreshButton.disabled = false;
+  };
+  signInButton.disabled = true;
+  if (refreshButton) refreshButton.disabled = true;
+  setOAuthFeedback(feedback, 'Preparing a secure one-time code…', 'muted');
+
+  let startResult;
+  try {
+    startResult = await api('POST', '/api/providers/oauth/start', { providerId });
+    // Subscription sign-ins (Antigravity) need an explicit risk acknowledgement, as in the terminal.
+    if (startResult.needsConfirmation) {
+      const { title, lines } = startResult.risk;
+      if (!window.confirm(`${title}\n\n${lines.join('\n\n')}\n\nAccept the risk and continue?`)) {
+        feedback.textContent = '';
+        feedback.className = 'key-feedback';
+        reenable();
+        return;
+      }
+      startResult = await api('POST', '/api/providers/oauth/start', { providerId, acceptRisk: true });
+    }
+  } catch {
+    setOAuthFeedback(feedback, 'Could not start sign-in. Check the connection and try again.', 'error');
+    reenable();
+    return;
+  }
+  if (startResult.error) {
+    setOAuthFeedback(feedback, startResult.error, 'error');
+    reenable();
+    return;
+  }
+
+  if (startResult.pkce) {
+    if (!startResult.sessionId || !startResult.authUrl) {
+      setOAuthFeedback(feedback, 'The provider did not return a usable sign-in page. Please try again.', 'error');
+      reenable();
+      return;
+    }
+    showBrowserSignInPrompt(feedback, startResult.authUrl);
+    pollOAuthSession({ sessionId: startResult.sessionId, signInButton, refreshButton, feedback, onDone });
+    return;
+  }
+
+  const { sessionId, url, userCode } = startResult;
+  if (!sessionId || !url || !userCode) {
+    setOAuthFeedback(feedback, 'The provider did not return a usable device code. Please try again.', 'error');
+    reenable();
+    return;
+  }
+
+  feedback.replaceChildren(createDeviceAuthorizationPanel(url, userCode));
+  feedback.className = 'key-feedback oauth-device-host';
+  pollOAuthSession({ sessionId, signInButton, refreshButton, feedback, onDone });
 }
 
 function buildOAuthTemplateBodyContent(template) {
@@ -1296,7 +1340,7 @@ function buildClinePassBodyContent(template, card, provider) {
 
   const oauthLabel = document.createElement('div');
   oauthLabel.className = 'oauth-device-note';
-  oauthLabel.textContent = 'ClinePass account';
+  oauthLabel.textContent = provider?.account ? `ClinePass account · ${provider.account}` : 'ClinePass account';
   oauthLabel.style.marginTop = '12px';
   content.appendChild(oauthLabel);
 
@@ -1856,6 +1900,12 @@ function buildOAuthProviderBodyContent(provider) {
     ? `Signed in via OAuth${provider.subscription?.label ? ` · ${provider.subscription.label}` : ''}.`
     : 'Not signed in. Generate a one-time code to connect this provider.';
 
+  // Who is signed in — a read-only hint for choosing a name; never used as the label.
+  const accountNote = document.createElement('div');
+  accountNote.className = 'oauth-device-note';
+  accountNote.textContent = provider.account ? `Account: ${provider.account}` : '';
+  accountNote.style.display = provider.account ? '' : 'none';
+
   const actionRow = document.createElement('div');
   actionRow.className = 'key-row';
   actionRow.style.flexWrap = 'wrap';
@@ -1876,6 +1926,7 @@ function buildOAuthProviderBodyContent(provider) {
   actionRow.appendChild(signInBtn);
   actionRow.appendChild(refreshBtn);
   content.appendChild(status);
+  content.appendChild(accountNote);
   content.appendChild(actionRow);
   content.appendChild(feedback);
   content.appendChild(buildRenameProviderRow(provider));

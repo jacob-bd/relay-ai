@@ -1,3 +1,6 @@
+import { subscriptionOAuthRiskLines } from '../oauth/risk-notice.js';
+import { readOAuthAccountLabel } from '../registry/oauth-account.js';
+import { describeOAuthAccount, formatOAuthAccount } from '../oauth/identity.js';
 import { isProviderKind } from '../registry/provider-kind.js';
 import { getSupportedApps, getSupportedApp, getRelayLaunchCommand, detectApp } from '../native-launcher.js';
 import { exec } from 'node:child_process';
@@ -175,7 +178,7 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
   } else if (url === '/api/providers/models/remove' && req.method === 'POST') {
     handleManualModel(req, res, 'remove');
   } else if (url === '/api/providers/oauth/start' && req.method === 'POST') {
-    handleOAuthStart(req, res);
+    handleOAuthStart(req, res, opts);
   } else if (url.startsWith('/api/providers/oauth/status') && req.method === 'GET') {
     handleOAuthStatus(req, res);
   } else if (url.startsWith('/oauth/callback') && req.method === 'GET') {
@@ -237,6 +240,21 @@ async function handlePostConfig(req: IncomingMessage, res: ServerResponse): Prom
   }
 }
 
+function accountFieldFrom(label: string | undefined): { account?: string } {
+  return label ? { account: label } : {};
+}
+
+/** Who is signed in (e.g. email · plan). Copilot is skipped on purpose: its username is never sent to the browser. */
+function accountField(p: { id: string; authType?: string; oauthAccountId?: string; providerData?: Record<string, unknown>; apiKey?: string }): { account?: string } {
+  if (p.authType !== 'oauth' || isProviderKind(p.id, 'github-copilot')) return {};
+  return accountFieldFrom(formatOAuthAccount(describeOAuthAccount({
+    kind: p.id,
+    accountId: p.oauthAccountId,
+    providerData: p.providerData,
+    accessToken: p.apiKey,
+  })));
+}
+
 async function handleGetModels(
   res: ServerResponse,
   target?: RelayLaunchTarget,
@@ -283,6 +301,7 @@ async function handleGetModels(
         return getTemplateById(t)?.anonymousFreeModels === true;
       })(),
       authType: p.authType ?? 'api',
+      ...accountField(p),
       ...manualMetadata(p.id),
       // Copilot's runtime catalog is policy-filtered by account plan. Never replace
       // that safe count with the larger raw cache count.
@@ -320,6 +339,7 @@ async function handleGetModels(
         hasKey: true,
         freeAccess: false,
         authType: 'oauth',
+        ...(isProviderKind(rp.id, 'github-copilot') ? {} : accountFieldFrom(await readOAuthAccountLabel(rp))),
         ...manualMetadata(rp.id),
         modelCount: 0,
         ...(isProviderKind(rp.id, 'github-copilot') ? { subscription: copilotSubscription(undefined) } : {}),
@@ -729,10 +749,13 @@ async function handleDeleteProvider(req: IncomingMessage, res: ServerResponse): 
 
 const DEVICE_CODE_PROVIDER_IDS = new Set(['xai-oauth', 'openai-oauth', 'github-copilot', 'cline-pass']);
 const PKCE_PROVIDER_IDS = new Set(['claude-code', 'antigravity']);
-// Device-code OAuth can be started from the UI. PKCE (Claude Code / Antigravity)
-// stays CLI-secret for add/sign-in, but a provider already in the registry still
-// belongs on the local Providers page. Docker/server admin UI stays device-code only.
-const NATIVE_OAUTH_PROVIDER_IDS = DEVICE_CODE_PROVIDER_IDS;
+// Device-code OAuth can be started from any UI. The local (full) UI can also start
+// the Antigravity browser sign-in, after the account-risk confirmation; Claude Code's
+// pasted-code flow stays in the terminal. Docker/server admin UI stays device-code only.
+function canStartOAuthFromUi(providerId: string, uiMode?: 'full' | 'server'): boolean {
+  if (DEVICE_CODE_PROVIDER_IDS.has(providerId)) return true;
+  return uiMode !== 'server' && PKCE_PROVIDER_IDS.has(providerId);
+}
 
 function isUiCatalogOAuthProvider(providerId: string, uiMode?: 'full' | 'server'): boolean {
   if (DEVICE_CODE_PROVIDER_IDS.has(providerId)) return true;
@@ -748,11 +771,15 @@ async function refreshOAuthProviderModels(providerId: string): Promise<void> {
   await refreshProviderModels(providerId, apiKey, registry);
 }
 
-async function handleOAuthStart(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleOAuthStart(
+  req: IncomingMessage,
+  res: ServerResponse,
+  opts: { uiMode?: 'full' | 'server' } = {},
+): Promise<void> {
   try {
-    const body = JSON.parse(await readBody(req)) as { providerId?: string };
+    const body = JSON.parse(await readBody(req)) as { providerId?: string; acceptRisk?: unknown };
     const { providerId } = body;
-    if (!providerId || !NATIVE_OAUTH_PROVIDER_IDS.has(providerId)) {
+    if (!providerId || !canStartOAuthFromUi(providerId, opts.uiMode)) {
       sendJson(res, 400, { error: 'Unsupported OAuth provider.' }); return;
     }
 
@@ -820,7 +847,14 @@ async function handleOAuthStart(req: IncomingMessage, res: ServerResponse): Prom
         return;
       }
 
-      // PKCE / browser-redirect flow (claude-code, future: antigravity).
+      // The terminal asks for an explicit "yes" first; the UI must too, and the server
+      // enforces it so a hand-made request cannot skip the warning.
+      if (body.acceptRisk !== true) {
+        sendJson(res, 200, { needsConfirmation: true, risk: subscriptionOAuthRiskLines('antigravity') });
+        return;
+      }
+
+      // PKCE / browser-redirect flow (Antigravity).
       const host = (req.headers.host as string | undefined) ?? '127.0.0.1';
       const redirectUri = guiCallbackRedirectUri(host);
 

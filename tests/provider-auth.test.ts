@@ -22,7 +22,7 @@ vi.mock('../src/oauth/antigravity-oauth.js', () => ({
 vi.mock('../src/oauth/claude-code.js', () => ({
   runClaudeCodeOAuthFlow: vi.fn(async () => ({
     tokens: { access_token: 'claude-access', refresh_token: 'claude-refresh' },
-    bootstrap: { accountId: 'acct-123' },
+    bootstrap: { accountId: 'acct-123', email: 'claude@example.com' },
   })),
   generateCliUserID: vi.fn(() => 'cli-user-id'),
 }));
@@ -105,6 +105,13 @@ describe('authenticateProvider', () => {
     expect(runOpencodeAuthBroker).not.toHaveBeenCalled();
     expect(runClaudeCodeOAuthFlow).toHaveBeenCalled();
     expect(result.providerId).toBe('claude-code');
+  });
+
+  it('keeps the Claude account email so the account can be shown later', async () => {
+    vi.mocked(saveProviderCredential).mockResolvedValue(true);
+    const result = await authenticateProvider('claude-code');
+
+    expect(result.credential.providerData?.identity).toEqual({ email: 'claude@example.com' });
   });
 
   it('launches the ClinePass device flow instead of falling through to OpenAI', async () => {

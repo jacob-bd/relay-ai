@@ -25,6 +25,7 @@ import {
   providersForCodexSubagents,
   providersForTarget,
   readBody,
+  readOAuthAccountLabel,
   refreshAllProviderModels,
   refreshProviderModels,
   removeProviderFromRegistry,
@@ -35,10 +36,11 @@ import {
   saveNativeOAuthCredential,
   sendJson,
   startServer,
+  subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider
-} from "./chunk-J7SR6G6J.js";
+} from "./chunk-JCGPMYQP.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -46,6 +48,8 @@ import {
   VERSION,
   buildAntigravityAuthUrl,
   completeAntigravityExchange,
+  describeOAuthAccount,
+  formatOAuthAccount,
   freeStatusLabel,
   getAppPathOverride,
   getEnvServerPassword,
@@ -91,7 +95,7 @@ import {
   supportsManualModels,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-S2X5XUQ7.js";
+} from "./chunk-J7KX7E5Z.js";
 import {
   init_provider_templates,
   listAddableTemplates,
@@ -691,7 +695,7 @@ function handleUiApiRequest(req, res, opts = {}) {
   } else if (url === "/api/providers/models/remove" && req.method === "POST") {
     handleManualModel(req, res, "remove");
   } else if (url === "/api/providers/oauth/start" && req.method === "POST") {
-    handleOAuthStart(req, res);
+    handleOAuthStart(req, res, opts);
   } else if (url.startsWith("/api/providers/oauth/status") && req.method === "GET") {
     handleOAuthStatus(req, res);
   } else if (url.startsWith("/oauth/callback") && req.method === "GET") {
@@ -749,6 +753,18 @@ async function handlePostConfig(req, res) {
     sendJson(res, 400, { error: String(err) });
   }
 }
+function accountFieldFrom(label) {
+  return label ? { account: label } : {};
+}
+function accountField(p2) {
+  if (p2.authType !== "oauth" || isProviderKind(p2.id, "github-copilot")) return {};
+  return accountFieldFrom(formatOAuthAccount(describeOAuthAccount({
+    kind: p2.id,
+    accountId: p2.oauthAccountId,
+    providerData: p2.providerData,
+    accessToken: p2.apiKey
+  })));
+}
 async function handleGetModels(res, target, codexSubagents = false, uiMode) {
   try {
     let catalog = (await fetchModelsWithTimeout()).filter((provider) => provider.authType !== "oauth" || isUiCatalogOAuthProvider(provider.id, uiMode));
@@ -786,6 +802,7 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
         return getTemplateById(t)?.anonymousFreeModels === true;
       })(),
       authType: p2.authType ?? "api",
+      ...accountField(p2),
       ...manualMetadata(p2.id),
       // Copilot's runtime catalog is policy-filtered by account plan. Never replace
       // that safe count with the larger raw cache count.
@@ -816,6 +833,7 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
         hasKey: true,
         freeAccess: false,
         authType: "oauth",
+        ...isProviderKind(rp.id, "github-copilot") ? {} : accountFieldFrom(await readOAuthAccountLabel(rp)),
         ...manualMetadata(rp.id),
         modelCount: 0,
         ...isProviderKind(rp.id, "github-copilot") ? { subscription: copilotSubscription(void 0) } : {},
@@ -874,7 +892,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-D2OWLLPN.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-DXIRDKKJ.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1188,7 +1206,10 @@ async function handleDeleteProvider(req, res) {
 }
 var DEVICE_CODE_PROVIDER_IDS = /* @__PURE__ */ new Set(["xai-oauth", "openai-oauth", "github-copilot", "cline-pass"]);
 var PKCE_PROVIDER_IDS = /* @__PURE__ */ new Set(["claude-code", "antigravity"]);
-var NATIVE_OAUTH_PROVIDER_IDS = DEVICE_CODE_PROVIDER_IDS;
+function canStartOAuthFromUi(providerId, uiMode) {
+  if (DEVICE_CODE_PROVIDER_IDS.has(providerId)) return true;
+  return uiMode !== "server" && PKCE_PROVIDER_IDS.has(providerId);
+}
 function isUiCatalogOAuthProvider(providerId, uiMode) {
   if (DEVICE_CODE_PROVIDER_IDS.has(providerId)) return true;
   if (uiMode === "server") return false;
@@ -1201,11 +1222,11 @@ async function refreshOAuthProviderModels(providerId) {
   const apiKey = await resolveProviderCredential(providerId, entry.authRef);
   await refreshProviderModels(providerId, apiKey, registry);
 }
-async function handleOAuthStart(req, res) {
+async function handleOAuthStart(req, res, opts = {}) {
   try {
     const body = JSON.parse(await readBody(req));
     const { providerId } = body;
-    if (!providerId || !NATIVE_OAUTH_PROVIDER_IDS.has(providerId)) {
+    if (!providerId || !canStartOAuthFromUi(providerId, opts.uiMode)) {
       sendJson(res, 400, { error: "Unsupported OAuth provider." });
       return;
     }
@@ -1260,6 +1281,10 @@ async function handleOAuthStart(req, res) {
         sendJson(res, 400, {
           error: "Claude Code OAuth must be completed in the terminal: relay-ai providers auth claude-code"
         });
+        return;
+      }
+      if (body.acceptRisk !== true) {
+        sendJson(res, 200, { needsConfirmation: true, risk: subscriptionOAuthRiskLines("antigravity") });
         return;
       }
       const host = req.headers.host ?? "127.0.0.1";
@@ -1923,4 +1948,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-3JC6AAWF.js.map
+//# sourceMappingURL=ui-command-KX7IO5E5.js.map

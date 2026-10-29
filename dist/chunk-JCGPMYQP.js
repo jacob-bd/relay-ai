@@ -29,6 +29,7 @@ import {
   createLanguageModel,
   customProviderId,
   deleteProviderCredential,
+  describeOAuthAccount,
   encodeToolUseId,
   enrichGithubCopilotOAuthProviderData,
   enrichModelsForProviderPricing,
@@ -41,6 +42,7 @@ import {
   findProviderNameConflict,
   forceRefreshProviderCredential,
   formatClineRuntimeCredential,
+  formatOAuthAccount,
   formatUpstreamError,
   generateAnthropicResponse,
   generateCliUserID,
@@ -83,6 +85,7 @@ import {
   providerKind,
   readFromCredentialStore,
   readGlobalOpencodeCredential,
+  readStoredOAuthCredential,
   readStoredProviderCredential,
   redactTraceLine,
   relayAnthropicMessages,
@@ -130,7 +133,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-S2X5XUQ7.js";
+} from "./chunk-J7KX7E5Z.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -322,6 +325,37 @@ function serializeCatalog(catalog) {
 `;
 }
 
+// src/oauth/risk-notice.ts
+function subscriptionOAuthRisk(providerId) {
+  const isGoogle = providerId === "antigravity";
+  return {
+    providerLabel: isGoogle ? "Antigravity / Google" : "Claude Code",
+    isGoogle,
+    service: isGoogle ? "Google account (Gmail, Drive, YouTube, Workspace, and all tied services)" : "Anthropic account (Claude Pro / Max subscription)",
+    enforcementNote: isGoogle ? "Community reports: Google has issued account bans for this usage." : "Anthropic actively enforces this \u2014 validating request shape and has taken legal action against other projects.",
+    compatibilityNote: isGoogle ? void 0 : "For compatibility, relay-ai may reproduce Claude Code-style request metadata and attribution so Anthropic classifies traffic as Claude Code.",
+    consequences: ["Token revocation", "Account suspension or permanent ban"],
+    lossNote: isGoogle ? "Loss of ALL services tied to this Google account" : void 0,
+    advice: isGoogle ? "Do not use your primary Google account. Use a throwaway account." : void 0,
+    disclaimer: `relay-ai is not affiliated with ${isGoogle ? "Google" : "Anthropic"} and cannot protect you.`
+  };
+}
+function subscriptionOAuthRiskLines(providerId) {
+  const risk = subscriptionOAuthRisk(providerId);
+  return {
+    title: `Account risk \u2014 ${risk.providerLabel} OAuth`,
+    lines: [
+      `This extracts OAuth tokens from your ${risk.service}.`,
+      "Routing subscription tokens through relay-ai to power other tools may violate the provider's Terms of Service.",
+      risk.enforcementNote,
+      ...risk.compatibilityNote ? [risk.compatibilityNote] : [],
+      `Possible consequences: ${[...risk.consequences, ...risk.lossNote ? [risk.lossNote] : []].join("; ")}.`,
+      ...risk.advice ? [risk.advice] : [],
+      risk.disclaimer
+    ]
+  };
+}
+
 // src/ui.ts
 import pc from "picocolors";
 import * as p from "@clack/prompts";
@@ -501,10 +535,11 @@ function printImportConflictPanel(providerName, existingHint, incomingHint) {
     `${pc.bold("Imported")}  ${pc.white(incomingHint)}`
   ]);
 }
-function printProviderDetailPanel(name, modelCount, authLabel) {
+function printProviderDetailPanel(name, modelCount, authLabel, account) {
   printPanel(fmtProvider(name), [
     `${pc.bold("Models")}  ${pc.cyan(String(modelCount))} cached`,
-    `${pc.bold("Auth")}    ${pc.white(authLabel)}`
+    `${pc.bold("Auth")}    ${pc.white(authLabel)}`,
+    ...account ? [`${pc.bold("Account")} ${pc.white(account)}`] : []
   ]);
 }
 function printCloudProviderPanel(name) {
@@ -521,27 +556,22 @@ function printOAuthStepsPanel(title, providerLabel) {
   ]);
 }
 async function confirmSubscriptionOAuthRisk(providerId) {
-  const isGoogle = providerId === "antigravity";
-  const providerLabel = isGoogle ? "Antigravity / Google" : "Claude Code";
-  const service = isGoogle ? "Google account (Gmail, Drive, YouTube, Workspace, and all tied services)" : "Anthropic account (Claude Pro / Max subscription)";
-  const enforcementNote = isGoogle ? "Community reports: Google has issued account bans for this usage." : "Anthropic actively enforces this \u2014 validating request shape and has taken legal action against other projects.";
-  const compatibilityNote = isGoogle ? void 0 : "For compatibility, relay-ai may reproduce Claude Code-style request metadata and attribution so Anthropic classifies traffic as Claude Code.";
-  printPanel(pc.red(`\u26A0  Account Risk \u2014 ${providerLabel} OAuth`), [
-    `${pc.white("This extracts OAuth tokens from your")} ${pc.bold(service)}.`,
+  const risk = subscriptionOAuthRisk(providerId);
+  printPanel(pc.red(`\u26A0  Account Risk \u2014 ${risk.providerLabel} OAuth`), [
+    `${pc.white("This extracts OAuth tokens from your")} ${pc.bold(risk.service)}.`,
     "",
     `${pc.white("Routing subscription tokens through relay-ai to power other tools")}`,
     `${pc.white("may violate the provider's Terms of Service.")}`,
     "",
-    `${pc.yellow(enforcementNote)}`,
-    ...compatibilityNote ? [`${pc.yellow(compatibilityNote)}`] : [],
+    `${pc.yellow(risk.enforcementNote)}`,
+    ...risk.compatibilityNote ? [`${pc.yellow(risk.compatibilityNote)}`] : [],
     "",
     `${pc.white("Possible consequences:")}`,
-    `  ${pc.dim("\u2022")} ${pc.white("Token revocation")}`,
-    `  ${pc.dim("\u2022")} ${pc.white("Account suspension or permanent ban")}`,
-    ...isGoogle ? [`  ${pc.dim("\u2022")} ${pc.red(pc.bold("Loss of ALL services tied to this Google account"))}`] : [],
+    ...risk.consequences.map((item) => `  ${pc.dim("\u2022")} ${pc.white(item)}`),
+    ...risk.lossNote ? [`  ${pc.dim("\u2022")} ${pc.red(pc.bold(risk.lossNote))}`] : [],
     "",
-    ...isGoogle ? [`${pc.red(pc.bold("Do not use your primary Google account."))} ${pc.white("Use a throwaway account.")}`] : [],
-    `${pc.dim(`relay-ai is not affiliated with ${isGoogle ? "Google" : "Anthropic"} and cannot protect you.`)}`
+    ...risk.advice ? [`${pc.red(pc.bold("Do not use your primary Google account."))} ${pc.white("Use a throwaway account.")}`] : [],
+    `${pc.dim(risk.disclaimer)}`
   ]);
   const answer = await p.text({
     message: 'Type "yes" to accept the risk and proceed, or Ctrl+C to cancel:',
@@ -7515,6 +7545,23 @@ function findBinaryOnPath(name, fallbackPaths, options = {}) {
   return null;
 }
 
+// src/registry/oauth-account.ts
+async function readOAuthAccountLabel(provider) {
+  if (provider.authType !== "oauth") return void 0;
+  try {
+    const cred = await readStoredOAuthCredential(provider.authRef);
+    if (!cred) return void 0;
+    return formatOAuthAccount(describeOAuthAccount({
+      kind: provider.id,
+      accountId: cred.accountId,
+      providerData: cred.providerData,
+      accessToken: cred.access
+    }));
+  } catch {
+    return void 0;
+  }
+}
+
 // src/registry/vertex-model-check.ts
 import { generateText as generateText2 } from "ai";
 function errorStatus(err) {
@@ -7846,6 +7893,7 @@ async function runNativeBrowserOAuth(providerId) {
       spinner4.stop(pc5.green("Signed in to Claude Code"));
       const providerData = { cliUserID: generateCliUserID() };
       if (bootstrap.accountId) providerData.accountUUID = bootstrap.accountId;
+      if (bootstrap.email) providerData.identity = { email: bootstrap.email };
       if (bootstrap.organizationId) providerData.organizationUUID = bootstrap.organizationId;
       if (bootstrap.organizationName) providerData.organizationName = bootstrap.organizationName;
       if (bootstrap.plan) providerData.plan = bootstrap.plan;
@@ -8751,6 +8799,7 @@ async function launchOrRestartClaudeApp(prompt = "Restart Claude Desktop to appl
 }
 
 export {
+  subscriptionOAuthRiskLines,
   renderMultiAgentV2Feature,
   supportsMultiAgentV2,
   CODEX_APP_PROVIDER_ID,
@@ -8876,6 +8925,7 @@ export {
   addFavorite,
   removeFavorite,
   favoriteProviderDisplayName,
+  readOAuthAccountLabel,
   checkVertexModelAccess,
   filterVertexModelsByAccess,
   addProviderFromTemplate,
@@ -8900,4 +8950,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-J7SR6G6J.js.map
+//# sourceMappingURL=chunk-JCGPMYQP.js.map

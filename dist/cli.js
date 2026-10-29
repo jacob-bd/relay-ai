@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-JUQJJNA3.js";
+} from "./chunk-PBKYFSHM.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -101,6 +101,7 @@ import {
   quitClaudeAppGracefully,
   quitCodexAppGracefully,
   readBody,
+  readOAuthAccountLabel,
   refreshAllProviderModels,
   refreshProviderModels,
   refreshProviderModelsBatch,
@@ -132,7 +133,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-J7SR6G6J.js";
+} from "./chunk-JCGPMYQP.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -230,7 +231,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-S2X5XUQ7.js";
+} from "./chunk-J7KX7E5Z.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -2849,7 +2850,7 @@ async function runProviderDetail(id) {
   if (!provider) return "back";
   const modelCount = getProviderModels(provider).length;
   const authLabel = formatRegistryAuthLabel(provider);
-  printProviderDetailPanel(provider.name, modelCount, authLabel);
+  printProviderDetailPanel(provider.name, modelCount, authLabel, await readOAuthAccountLabel(provider));
   const template = getTemplateById(provider.templateId) ?? getTemplateById(id);
   const hasDualAuth = template ? hasApiAndOAuth(template) : false;
   const vertex = isVertexAnthropicProvider(provider);
@@ -17515,7 +17516,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-3JC6AAWF.js");
+    const { runUiCommand } = await import("./ui-command-KX7IO5E5.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

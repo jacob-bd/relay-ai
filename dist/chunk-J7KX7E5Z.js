@@ -244,10 +244,10 @@ function redactCodexTraceValue(value, inCollaboration = false) {
   if (typeof value === "string") return inCollaboration ? "[REDACTED]" : value;
   if (Array.isArray(value)) return value.map((item) => redactCodexTraceValue(item, inCollaboration));
   if (!value || typeof value !== "object") return value;
-  const record = value;
-  const collaboration = inCollaboration || record.type === "agent_message";
+  const record2 = value;
+  const collaboration = inCollaboration || record2.type === "agent_message";
   const out = {};
-  for (const [key, child] of Object.entries(record)) {
+  for (const [key, child] of Object.entries(record2)) {
     if (isSensitiveKey(key) || collaboration && (key === "text" || key === "content")) {
       if (key === "content" && Array.isArray(child)) out[key] = { item_count: child.length, redacted: true };
       else out[key] = "[REDACTED]";
@@ -2091,11 +2091,13 @@ async function runBootstrap(tokens) {
 async function runAntigravityOAuthFlow(onAuthUrl) {
   const server = await startCallbackServer();
   try {
-    const { authUrl, codeVerifier, redirectUri } = await buildAntigravityAuthUrl(server.redirectUri);
+    const { authUrl, codeVerifier, oauthState, redirectUri } = await buildAntigravityAuthUrl(server.redirectUri);
     onAuthUrl(authUrl);
     open(authUrl).catch(() => {
     });
-    const { code } = await server.waitForCallback();
+    const { code, state, error } = await server.waitForCallback();
+    if (error) throw new Error(`Google sign-in was not completed: ${error}`);
+    if (state !== oauthState) throw new Error("Google sign-in returned an unexpected state \u2014 start the sign-in again");
     if (!code) throw new Error("No authorization code received from Google");
     const tokens = await exchangeAntigravityToken(code, codeVerifier, redirectUri);
     return runBootstrap(tokens);
@@ -2122,27 +2124,27 @@ function resolveOpencodeAuthPath(env = process.env) {
 function decodeAuthEntry(value) {
   if (typeof value === "string" && value.trim()) return value.trim();
   if (!value || typeof value !== "object") return null;
-  const record = value;
-  if (record["type"] === "api" && typeof record["key"] === "string" && record["key"].trim()) {
+  const record2 = value;
+  if (record2["type"] === "api" && typeof record2["key"] === "string" && record2["key"].trim()) {
     return {
       type: "api",
-      key: record["key"],
-      metadata: record["metadata"] && typeof record["metadata"] === "object" && !Array.isArray(record["metadata"]) ? record["metadata"] : void 0
+      key: record2["key"],
+      metadata: record2["metadata"] && typeof record2["metadata"] === "object" && !Array.isArray(record2["metadata"]) ? record2["metadata"] : void 0
     };
   }
-  if (record["type"] === "oauth" && typeof record["access"] === "string" && typeof record["refresh"] === "string" && typeof record["expires"] === "number") {
+  if (record2["type"] === "oauth" && typeof record2["access"] === "string" && typeof record2["refresh"] === "string" && typeof record2["expires"] === "number") {
     return {
       type: "oauth",
-      access: record["access"],
-      refresh: record["refresh"],
-      expires: record["expires"],
-      accountId: typeof record["accountId"] === "string" ? record["accountId"] : void 0,
-      enterpriseUrl: typeof record["enterpriseUrl"] === "string" ? record["enterpriseUrl"] : void 0,
-      providerData: record["providerData"] && typeof record["providerData"] === "object" && !Array.isArray(record["providerData"]) ? record["providerData"] : void 0
+      access: record2["access"],
+      refresh: record2["refresh"],
+      expires: record2["expires"],
+      accountId: typeof record2["accountId"] === "string" ? record2["accountId"] : void 0,
+      enterpriseUrl: typeof record2["enterpriseUrl"] === "string" ? record2["enterpriseUrl"] : void 0,
+      providerData: record2["providerData"] && typeof record2["providerData"] === "object" && !Array.isArray(record2["providerData"]) ? record2["providerData"] : void 0
     };
   }
-  if (record["type"] === "wellknown" && typeof record["key"] === "string" && typeof record["token"] === "string") {
-    return { type: "wellknown", key: record["key"], token: record["token"] };
+  if (record2["type"] === "wellknown" && typeof record2["key"] === "string" && typeof record2["token"] === "string") {
+    return { type: "wellknown", key: record2["key"], token: record2["token"] };
   }
   return null;
 }
@@ -2190,9 +2192,82 @@ function oauthCredentialToKeychainJson(cred) {
   return JSON.stringify(cred);
 }
 
+// src/oauth/identity.ts
+function text(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : void 0;
+}
+function record(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function jwtClaims(token) {
+  const parts = token?.split(".");
+  if (!parts || parts.length !== 3) return void 0;
+  try {
+    return record(JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")));
+  } catch {
+    return void 0;
+  }
+}
+function compact(identity) {
+  return Object.fromEntries(Object.entries(identity).filter(([, v]) => v !== void 0));
+}
+function identityFromJwt(token) {
+  const claims = jwtClaims(token);
+  if (!claims) return {};
+  const auth = record(claims["https://api.openai.com/auth"]);
+  const profile = record(claims["https://api.openai.com/profile"]);
+  return compact({
+    email: text(claims.email) ?? text(profile?.email),
+    name: text(claims.name),
+    plan: text(auth?.chatgpt_plan_type),
+    userId: text(auth?.chatgpt_user_id) ?? text(auth?.user_id) ?? text(claims.sub)
+  });
+}
+function mergeIdentity(...parts) {
+  const merged = {};
+  for (const part of parts) Object.assign(merged, compact(part ?? {}));
+  return Object.keys(merged).length > 0 ? merged : void 0;
+}
+function storedIdentity(providerData) {
+  const stored = record(providerData?.identity);
+  return compact({
+    email: text(stored?.email),
+    name: text(stored?.name),
+    plan: text(stored?.plan),
+    userId: text(stored?.userId),
+    login: text(stored?.login)
+  });
+}
+function describeOAuthAccount(input) {
+  const data = input.providerData;
+  const kind = providerKind(input.kind);
+  let fromProvider = {};
+  if (kind === "antigravity") {
+    fromProvider = compact({
+      email: input.accountId?.includes("@") ? input.accountId : void 0,
+      plan: text(data?.tier)
+    });
+  } else if (kind === "cline-pass") {
+    fromProvider = compact({ email: text(data?.email), name: text(data?.name) });
+  } else if (kind === "github-copilot") {
+    const copilot = record(data?.copilot);
+    fromProvider = compact({ login: text(copilot?.login), plan: text(copilot?.copilot_plan) });
+  } else if (kind === "claude-code") {
+    fromProvider = compact({ plan: text(data?.plan), name: text(data?.organizationName) });
+  }
+  return mergeIdentity(identityFromJwt(input.accessToken), fromProvider, storedIdentity(data)) ?? {};
+}
+function formatOAuthAccount(identity) {
+  const who = identity.email ?? identity.login ?? identity.name;
+  const parts = [who, identity.plan].filter((p) => Boolean(p));
+  return parts.length > 0 ? parts.join(" \xB7 ") : void 0;
+}
+
 // src/oauth/types.ts
 function tokensToStoredCredential(tokens, existingRefresh, accountId, providerData) {
-  const mergedProviderData = providerData || tokens.providerData ? { ...providerData, ...tokens.providerData } : void 0;
+  const identity = mergeIdentity(storedIdentity(providerData), identityFromJwt(tokens.id_token));
+  const baseProviderData = providerData || tokens.providerData ? { ...providerData, ...tokens.providerData } : void 0;
+  const mergedProviderData = identity ? { ...baseProviderData, identity } : baseProviderData;
   return {
     type: "oauth",
     access: tokens.access_token,
@@ -2275,7 +2350,7 @@ function openAiDeviceCodeUrl() {
   return `${ISSUER}/codex/device`;
 }
 async function pollOpenAiDeviceCodeToken(deviceData, opts) {
-  const sleep = opts?.sleep ?? sleepMs;
+  const sleep2 = opts?.sleep ?? sleepMs;
   const now = opts?.now ?? (() => Date.now());
   const intervalMs = Math.max(parseInt(deviceData.interval, 10) || 5, 1) * 1e3;
   const deadline = now() + positiveSecondsToMs(deviceData.expires_in, DEVICE_CODE_DEFAULT_EXPIRES_MS);
@@ -2313,7 +2388,7 @@ async function pollOpenAiDeviceCodeToken(deviceData, opts) {
     if (response.status !== 403 && response.status !== 404) {
       throw new Error(`OpenAI device authorization failed (${response.status})`);
     }
-    await sleep(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS, Math.max(0, deadline - now())));
+    await sleep2(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS, Math.max(0, deadline - now())));
   }
   throw new Error("OpenAI device authorization timed out");
 }
@@ -2458,7 +2533,7 @@ async function refreshGithubCopilotToken(ghuToken) {
   };
 }
 async function pollGithubDeviceCodeToken(device, opts) {
-  const sleep = opts?.sleep ?? sleepMs;
+  const sleep2 = opts?.sleep ?? sleepMs;
   const now = opts?.now ?? (() => Date.now());
   const deadline = now() + positiveSecondsToMs(device.expires_in, DEVICE_CODE_DEFAULT_EXPIRES_MS2);
   let intervalMs = Math.max(
@@ -2489,12 +2564,12 @@ async function pollGithubDeviceCodeToken(device, opts) {
       };
     }
     if (error === "authorization_pending") {
-      await sleep(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS2, Math.max(0, deadline - now())));
+      await sleep2(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS2, Math.max(0, deadline - now())));
       continue;
     }
     if (error === "slow_down") {
       intervalMs += 5e3;
-      await sleep(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS2, Math.max(0, deadline - now())));
+      await sleep2(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS2, Math.max(0, deadline - now())));
       continue;
     }
     if (error === "expired_token") {
@@ -2548,7 +2623,7 @@ async function requestXaiDeviceCode() {
   return json;
 }
 async function pollXaiDeviceCodeToken(device, opts) {
-  const sleep = opts?.sleep ?? sleepMs;
+  const sleep2 = opts?.sleep ?? sleepMs;
   const now = opts?.now ?? (() => Date.now());
   const deadline = now() + positiveSecondsToMs(device.expires_in, DEVICE_CODE_DEFAULT_EXPIRES_MS3);
   let intervalMs = Math.max(
@@ -2569,12 +2644,12 @@ async function pollXaiDeviceCodeToken(device, opts) {
     const body = await response.json().catch(() => ({}));
     const remaining = Math.max(0, deadline - now());
     if (body.error === "authorization_pending") {
-      await sleep(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS3, remaining));
+      await sleep2(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS3, remaining));
       continue;
     }
     if (body.error === "slow_down") {
       intervalMs += DEVICE_CODE_SLOW_DOWN_INCREMENT_MS;
-      await sleep(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS3, remaining));
+      await sleep2(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS3, remaining));
       continue;
     }
     throw new Error(`xAI device authorization failed${body.error ? `: ${body.error}` : ""}`);
@@ -2837,14 +2912,14 @@ function toOAuthResult(data) {
   };
 }
 async function readError(response) {
-  const text = await response.text().catch(() => "");
-  if (!text) return `HTTP ${response.status}`;
+  const text2 = await response.text().catch(() => "");
+  if (!text2) return `HTTP ${response.status}`;
   try {
-    const parsed = JSON.parse(text);
+    const parsed = JSON.parse(text2);
     const detail = typeof parsed.error === "string" ? parsed.error : typeof parsed.message === "string" ? parsed.message : "";
     return detail || `HTTP ${response.status}`;
   } catch {
-    return text.slice(0, 120);
+    return text2.slice(0, 120);
   }
 }
 async function requestClinePassDeviceCode() {
@@ -2875,7 +2950,7 @@ async function registerClinePassTokens(accessToken, refreshToken) {
   return toOAuthResult(body.data);
 }
 async function pollClinePassDeviceCode(device, opts) {
-  const sleep = opts?.sleep ?? sleepMs;
+  const sleep2 = opts?.sleep ?? sleepMs;
   const now = opts?.now ?? (() => Date.now());
   const deadline = now() + positiveSecondsToMs(device.expires_in, DEFAULT_EXPIRES_MS);
   let intervalMs = Math.max(positiveSecondsToMs(device.interval, DEFAULT_INTERVAL_MS), 1e3);
@@ -2899,12 +2974,12 @@ async function pollClinePassDeviceCode(device, opts) {
     const body = await response.json().catch(() => ({}));
     const remaining = Math.max(0, deadline - now());
     if (body.error === "authorization_pending") {
-      await sleep(Math.min(intervalMs, remaining));
+      await sleep2(Math.min(intervalMs, remaining));
       continue;
     }
     if (body.error === "slow_down") {
       intervalMs += SLOW_DOWN_INCREMENT_MS;
-      await sleep(Math.min(intervalMs, remaining));
+      await sleep2(Math.min(intervalMs, remaining));
       continue;
     }
     throw new Error(`ClinePass device authorization failed${body.error ? `: ${body.error}` : ""}`);
@@ -2968,8 +3043,91 @@ async function refreshStoredOAuthCredential(providerId, cred) {
   return tokensToStoredCredential(tokens, cred.refresh, accountId, cred.providerData);
 }
 
+// src/oauth/refresh-lock.ts
+import { closeSync as closeSync2, mkdirSync as mkdirSync6, openSync as openSync2, readFileSync as readFileSync9, statSync as statSync3, unlinkSync as unlinkSync3, writeSync as writeSync2 } from "fs";
+import { createHash, randomUUID } from "crypto";
+import { join as join7 } from "path";
+var POLL_MS = 100;
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function readHolder(path) {
+  try {
+    const parsed = JSON.parse(readFileSync9(path, "utf8"));
+    return {
+      pid: typeof parsed.pid === "number" ? parsed.pid : void 0,
+      token: typeof parsed.token === "string" ? parsed.token : void 0
+    };
+  } catch {
+    return {};
+  }
+}
+function isStale(path, staleMs) {
+  try {
+    const { pid } = readHolder(path);
+    if (pid !== void 0 && !processAlive(pid)) return true;
+    return Date.now() - statSync3(path).mtimeMs > staleMs;
+  } catch {
+    return false;
+  }
+}
+function removeLock(path) {
+  try {
+    unlinkSync3(path);
+  } catch {
+  }
+}
+async function acquire(path, timeoutMs, staleMs) {
+  const token = randomUUID();
+  const deadline = Date.now() + timeoutMs;
+  for (; ; ) {
+    try {
+      const fd = openSync2(path, "wx", 384);
+      try {
+        writeSync2(fd, JSON.stringify({ pid: process.pid, token }));
+      } finally {
+        closeSync2(fd);
+      }
+      return token;
+    } catch (err) {
+      if (err.code !== "EEXIST") return null;
+      if (isStale(path, staleMs)) {
+        removeLock(path);
+        continue;
+      }
+      if (Date.now() >= deadline) return null;
+      await sleep(POLL_MS);
+    }
+  }
+}
+async function withRefreshLock(key, work, options = {}) {
+  const dir = options.dir ?? join7(getAppHome(), "locks");
+  let path;
+  let token = null;
+  try {
+    mkdirSync6(dir, { recursive: true, mode: 448 });
+    path = join7(dir, `oauth-${createHash("sha256").update(key).digest("hex").slice(0, 24)}.lock`);
+    token = await acquire(path, options.timeoutMs ?? 2e4, options.staleMs ?? 12e4);
+  } catch {
+    token = null;
+  }
+  try {
+    return await work();
+  } finally {
+    if (path && token && readHolder(path).token === token) removeLock(path);
+  }
+}
+
 // src/secrets-file.ts
-import { chmodSync as chmodSync5, existsSync as existsSync7, mkdirSync as mkdirSync6, readFileSync as readFileSync9, writeFileSync as writeFileSync5 } from "fs";
+import { chmodSync as chmodSync5, existsSync as existsSync7, mkdirSync as mkdirSync7, readFileSync as readFileSync10, writeFileSync as writeFileSync5 } from "fs";
 var DIR_MODE3 = 448;
 var FILE_MODE5 = 384;
 function emptySecrets() {
@@ -2979,7 +3137,7 @@ function readSecretsFile(env = process.env) {
   const path = getSecretsPath(env);
   if (!existsSync7(path)) return emptySecrets();
   try {
-    const raw = JSON.parse(readFileSync9(path, "utf8"));
+    const raw = JSON.parse(readFileSync10(path, "utf8"));
     if (raw?.version !== 1 || !raw.accounts || typeof raw.accounts !== "object") {
       return emptySecrets();
     }
@@ -2994,7 +3152,7 @@ function readSecretsFile(env = process.env) {
 }
 function writeSecretsFile(data, env = process.env) {
   const home = getAppHome(env);
-  mkdirSync6(home, { recursive: true, mode: DIR_MODE3 });
+  mkdirSync7(home, { recursive: true, mode: DIR_MODE3 });
   try {
     chmodSync5(home, DIR_MODE3);
   } catch {
@@ -3313,6 +3471,11 @@ async function forceRefreshProviderCredential(providerId, authRef, diag) {
   if (!raw || !oauthProviderId) return decodeProviderSecret(raw);
   return refreshOAuthKeyringAccount(parsed.account, oauthProviderId, raw, diag, true);
 }
+async function readStoredOAuthCredential(authRef, diag) {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== "keyring" || !oauthProviderIdFromAccount(parsed.account)) return void 0;
+  return parseStoredOAuthCredential(await readKeyringAccount(parsed.account, diag)) ?? void 0;
+}
 async function resolveProviderOAuthAccountId(authRef, diag) {
   const parsed = parseAuthRef(authRef);
   if (!parsed || parsed.kind !== "keyring" || !oauthProviderIdFromAccount(parsed.account)) return void 0;
@@ -3365,20 +3528,27 @@ async function refreshOAuthKeyringAccount(account, providerId, raw, diag, force 
   const existing = oauthRefreshInflight.get(account);
   if (existing) return existing;
   const work = (async () => {
-    const cred = parseStoredOAuthCredential(raw);
-    if (!cred || !force && !oauthCredentialShouldRefresh(cred, providerId)) {
+    const seen = parseStoredOAuthCredential(raw);
+    if (!seen || !force && !oauthCredentialShouldRefresh(seen, providerId)) {
       return decodeProviderSecret(raw);
     }
-    try {
-      const refreshed = await refreshStoredOAuthCredential(providerId, cred);
-      const json = oauthCredentialToKeychainJson(refreshed);
-      await writeKeyringAccount(account, json, diag);
-      return refreshed.access;
-    } catch (err) {
-      diag?.(err instanceof Error ? err.message : String(err));
-      if (cred.access && cred.expires > Date.now()) return cred.access;
-      throw err;
-    }
+    return withRefreshLock(account, async () => {
+      invalidateKeyringReadCache(account);
+      const cred = parseStoredOAuthCredential(await readKeyringAccount(account, diag)) ?? seen;
+      const replacedByOther = cred.access !== seen.access || cred.refresh !== seen.refresh;
+      if (replacedByOther && !oauthCredentialShouldRefresh(cred, providerId)) return cred.access;
+      if (!force && !oauthCredentialShouldRefresh(cred, providerId)) return cred.access;
+      try {
+        const refreshed = await refreshStoredOAuthCredential(providerId, cred);
+        const json = oauthCredentialToKeychainJson(refreshed);
+        await writeKeyringAccount(account, json, diag);
+        return refreshed.access;
+      } catch (err) {
+        diag?.(err instanceof Error ? err.message : String(err));
+        if (cred.access && cred.expires > Date.now()) return cred.access;
+        throw err;
+      }
+    });
   })();
   oauthRefreshInflight.set(account, work);
   try {
@@ -3614,7 +3784,7 @@ function runCodexCommand(binaryPath, args, options = {}) {
 }
 
 // src/oauth/claude-identity.ts
-import { createHash, randomUUID } from "crypto";
+import { createHash as createHash2, randomUUID as randomUUID2 } from "crypto";
 var CLAUDE_CODE_CLI_VERSION2 = "2.1.195";
 var CLAUDE_CODE_USER_AGENT = `claude-cli/${CLAUDE_CODE_CLI_VERSION2} (external, cli)`;
 var CLAUDE_CODE_ENTRYPOINT = process.env.CLAUDE_CODE_ENTRYPOINT ?? "cli";
@@ -3623,13 +3793,13 @@ var sessionCache = /* @__PURE__ */ new Map();
 function getOrCreateSessionId(seed) {
   let id = sessionCache.get(seed);
   if (!id) {
-    id = randomUUID();
+    id = randomUUID2();
     sessionCache.set(seed, id);
   }
   return id;
 }
 function uuidFromHash(input) {
-  const h = createHash("sha256").update(input).digest("hex");
+  const h = createHash2("sha256").update(input).digest("hex");
   return [
     h.slice(0, 8),
     h.slice(8, 12),
@@ -3643,7 +3813,7 @@ var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function resolveCliUserID(providerData, seed) {
   const v = providerData?.cliUserID;
   if (typeof v === "string" && HEX64_RE.test(v)) return v;
-  return createHash("sha256").update(`cliUserID:${seed}`).digest("hex");
+  return createHash2("sha256").update(`cliUserID:${seed}`).digest("hex");
 }
 function resolveAccountUUID(providerData, seed) {
   const v = providerData?.accountUUID;
@@ -3659,8 +3829,8 @@ function buildClaudeCodeBillingSystemLine() {
 function systemBlockText(block) {
   if (typeof block === "string") return block;
   if (block && typeof block === "object" && "text" in block) {
-    const text = block.text;
-    return typeof text === "string" ? text : void 0;
+    const text2 = block.text;
+    return typeof text2 === "string" ? text2 : void 0;
   }
   return void 0;
 }
@@ -3792,8 +3962,8 @@ var DSML_NOISE = "[|\uFF5C\\s]*";
 var DSML_BLOCK_RE = new RegExp(`<${DSML_NOISE}DSML${DSML_NOISE}tool_calls>([\\s\\S]*?)<\\/${DSML_NOISE}DSML${DSML_NOISE}tool_calls>`, "i");
 var DSML_INVOKE_RE = new RegExp(`<${DSML_NOISE}DSML${DSML_NOISE}invoke\\s+name="([^"]+)"[^>]*>([\\s\\S]*?)<\\/${DSML_NOISE}DSML${DSML_NOISE}invoke>`, "gi");
 var DSML_PARAM_RE = new RegExp(`<${DSML_NOISE}DSML${DSML_NOISE}parameter\\s+name="([^"]+)"(?:\\s+string="(true|false)")?[^>]*>([\\s\\S]*?)<\\/${DSML_NOISE}DSML${DSML_NOISE}parameter>`, "gi");
-function parseDsmlToolCalls(text) {
-  const outer = DSML_BLOCK_RE.exec(text);
+function parseDsmlToolCalls(text2) {
+  const outer = DSML_BLOCK_RE.exec(text2);
   if (!outer) return null;
   const calls = [];
   for (const invokeMatch of outer[1].matchAll(DSML_INVOKE_RE)) {
@@ -3817,7 +3987,7 @@ function parseDsmlToolCalls(text) {
     calls.push({ name, args });
   }
   if (!calls.length) return null;
-  return { leadingText: text.slice(0, outer.index).trim(), calls };
+  return { leadingText: text2.slice(0, outer.index).trim(), calls };
 }
 function splitToolUseId(id) {
   let sep = id.lastIndexOf(TOOL_USE_SIG_SEP);
@@ -3978,9 +4148,9 @@ async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWant
     res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "Upstream returned empty response body" } }));
     return;
   }
-  const text = await upstreamRes.text();
+  const text2 = await upstreamRes.text();
   try {
-    JSON.parse(text);
+    JSON.parse(text2);
   } catch {
     res.writeHead(502, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "Upstream response was not valid JSON" } }));
@@ -3988,9 +4158,9 @@ async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWant
   }
   res.writeHead(200, {
     "Content-Type": "application/json",
-    "Content-Length": Buffer.byteLength(text).toString()
+    "Content-Length": Buffer.byteLength(text2).toString()
   });
-  res.end(text);
+  res.end(text2);
 }
 async function replayWithoutStreaming(res, messagesUrl, body, apiKey, inboundBeta, authType, claudeCodeSessionId, extraHeaders, log) {
   let retryRes;
@@ -4003,16 +4173,16 @@ async function replayWithoutStreaming(res, messagesUrl, body, apiKey, inboundBet
   } catch (err) {
     throw new UpstreamUnreachableError(err);
   }
-  const text = await retryRes.text();
+  const text2 = await retryRes.text();
   if (!retryRes.ok) {
-    log?.(`anthropic upstream ${retryRes.status} on empty-stream retry: ${text}`);
+    log?.(`anthropic upstream ${retryRes.status} on empty-stream retry: ${text2}`);
     res.writeHead(retryRes.status, { "Content-Type": retryRes.headers.get("content-type") || "application/json" });
-    res.end(text);
+    res.end(text2);
     return;
   }
   let message;
   try {
-    message = JSON.parse(text);
+    message = JSON.parse(text2);
   } catch {
     res.writeHead(502, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "Upstream response was not valid JSON" } }));
@@ -4079,7 +4249,7 @@ import { wrapLanguageModel, extractReasoningMiddleware } from "ai";
 import { execSync } from "child_process";
 import { existsSync as existsSync8 } from "fs";
 import { homedir as homedir4 } from "os";
-import { join as join7 } from "path";
+import { join as join8 } from "path";
 var isWindows = process.platform === "win32";
 var CODEX_NPM_LATEST_URL = "https://registry.npmjs.org/@openai/codex/latest";
 var CODEX_VERSION_CACHE_TTL_MS = 24 * 60 * 60 * 1e3;
@@ -4130,11 +4300,11 @@ async function fetchNpmCodexVersion(fetchImpl = fetch, timeoutMs = NPM_FETCH_TIM
   }
 }
 var CODEX_VERSION_FALLBACK_PATHS = isWindows ? [
-  join7(process.env["APPDATA"] ?? homedir4(), "npm", "codex.cmd"),
-  join7(process.env["APPDATA"] ?? homedir4(), "npm", "codex")
+  join8(process.env["APPDATA"] ?? homedir4(), "npm", "codex.cmd"),
+  join8(process.env["APPDATA"] ?? homedir4(), "npm", "codex")
 ] : [
-  join7(homedir4(), ".local", "bin", "codex"),
-  join7(homedir4(), ".npm", "bin", "codex"),
+  join8(homedir4(), ".local", "bin", "codex"),
+  join8(homedir4(), ".npm", "bin", "codex"),
   "/usr/local/bin/codex",
   "/opt/homebrew/bin/codex"
 ];
@@ -4358,8 +4528,8 @@ function messageText(item) {
   return out;
 }
 function synthesizeMessage(item, outputIndex, state) {
-  const text = messageText(item);
-  if (!text) return [];
+  const text2 = messageText(item);
+  if (!text2) return [];
   const id = asString(item.id) ?? nextId(state, "msg");
   state.lastMessageItemId = id;
   state.textDeltaForwarded = true;
@@ -4367,7 +4537,7 @@ function synthesizeMessage(item, outputIndex, state) {
   state.messageDoneIds.add(id);
   return [
     { type: "response.output_item.added", output_index: outputIndex, item: { type: "message", id } },
-    { type: "response.output_text.delta", item_id: id, delta: text },
+    { type: "response.output_text.delta", item_id: id, delta: text2 },
     { type: "response.output_item.done", output_index: outputIndex, item: { type: "message", id } }
   ];
 }
@@ -4616,14 +4786,14 @@ function createResponsesWebSocketFetch(wsUrl, log) {
         });
         socket.on("message", (data) => {
           if (closed) return;
-          const text = Array.isArray(data) ? Buffer.concat(data).toString("utf8") : data.toString("utf8");
+          const text2 = Array.isArray(data) ? Buffer.concat(data).toString("utf8") : data.toString("utf8");
           frameCount += 1;
           let event;
           try {
-            event = JSON.parse(text);
+            event = JSON.parse(text2);
           } catch {
-            debug(`frame#${frameCount} non-json chars=${text.length}`);
-            controller.enqueue(encoder.encode(`data: ${text.replace(/\r?\n/g, " ")}
+            debug(`frame#${frameCount} non-json chars=${text2.length}`);
+            controller.enqueue(encoder.encode(`data: ${text2.replace(/\r?\n/g, " ")}
 
 `));
             return;
@@ -4722,9 +4892,9 @@ function applyClaudeCodeOAuthIdentity(input, sdkParams) {
 }
 
 // src/gateway-protocol.ts
-import { createHash as createHash2 } from "crypto";
-import { existsSync as existsSync9, mkdirSync as mkdirSync7, readFileSync as readFileSync10, renameSync as renameSync4, unlinkSync as unlinkSync3, writeFileSync as writeFileSync6 } from "fs";
-import { dirname as dirname5, join as join8 } from "path";
+import { createHash as createHash3 } from "crypto";
+import { existsSync as existsSync9, mkdirSync as mkdirSync8, readFileSync as readFileSync11, renameSync as renameSync4, unlinkSync as unlinkSync4, writeFileSync as writeFileSync6 } from "fs";
+import { dirname as dirname5, join as join9 } from "path";
 var DUAL_PROVIDER_IDS = /* @__PURE__ */ new Set([
   "zen",
   "go",
@@ -4783,21 +4953,21 @@ function resolveProtocolAlternative(input) {
 function errorText(value) {
   if (typeof value === "string") return value;
   if (!value || typeof value !== "object") return "";
-  const record = value;
-  const pieces = [record.message, record.responseBody, record.code].filter((item) => typeof item === "string");
+  const record2 = value;
+  const pieces = [record2.message, record2.responseBody, record2.code].filter((item) => typeof item === "string");
   return pieces.join(" ");
 }
 function findErrorField(error, field, depth = 0) {
   if (!error || typeof error !== "object" || depth > 3) return void 0;
-  const record = error;
-  if (record[field] !== void 0) return record[field];
-  return findErrorField(record.cause, field, depth + 1) ?? findErrorField(record.lastError, field, depth + 1);
+  const record2 = error;
+  if (record2[field] !== void 0) return record2[field];
+  return findErrorField(record2.cause, field, depth + 1) ?? findErrorField(record2.lastError, field, depth + 1);
 }
 function classifyProtocolFailure(error) {
   const statusValue = findErrorField(error, "statusCode") ?? findErrorField(error, "status");
   const status = typeof statusValue === "number" ? statusValue : void 0;
-  const text = errorText(error) + " " + errorText(findErrorField(error, "cause")) + " " + errorText(findErrorField(error, "responseBody"));
-  const lower = text.toLowerCase();
+  const text2 = errorText(error) + " " + errorText(findErrorField(error, "cause")) + " " + errorText(findErrorField(error, "responseBody"));
+  const lower = text2.toLowerCase();
   if (lower.includes("abort") || lower.includes("cancel")) {
     return { retryable: false, status, reason: "request cancelled" };
   }
@@ -4824,7 +4994,7 @@ var PREFERENCE_TTL_MS = 24 * 60 * 60 * 1e3;
 var FAILURE_COOLDOWN_MS = 5 * 60 * 1e3;
 var loadedPersistentPath = null;
 function persistentPath() {
-  return join8(getAppHome(), "protocol-cache.json");
+  return join9(getAppHome(), "protocol-cache.json");
 }
 function loadPersistent(now = Date.now()) {
   const path = persistentPath();
@@ -4833,7 +5003,7 @@ function loadPersistent(now = Date.now()) {
   loadedPersistentPath = path;
   try {
     if (!existsSync9(path)) return;
-    const raw = JSON.parse(readFileSync10(path, "utf8"));
+    const raw = JSON.parse(readFileSync11(path, "utf8"));
     for (const [key, entry] of Object.entries(raw)) {
       if (!entry || entry.protocol !== void 0 && entry.protocol !== "openai" && entry.protocol !== "anthropic") continue;
       if (typeof entry.expiresAt !== "number" || entry.expiresAt <= now) continue;
@@ -4846,7 +5016,7 @@ function loadPersistent(now = Date.now()) {
 function savePersistent() {
   const path = persistentPath();
   try {
-    mkdirSync7(dirname5(path), { recursive: true, mode: 448 });
+    mkdirSync8(dirname5(path), { recursive: true, mode: 448 });
     const live = {};
     const now = Date.now();
     for (const [key, entry] of remembered) {
@@ -4860,8 +5030,8 @@ function savePersistent() {
   }
 }
 function protocolCacheKey(parts) {
-  const credentialFingerprint = createHash2("sha256").update(parts.apiKey ?? "").update("\0").update(JSON.stringify(Object.entries(parts.headers ?? {}).sort(([a], [b]) => a.localeCompare(b)))).digest("hex");
-  return createHash2("sha256").update(JSON.stringify({
+  const credentialFingerprint = createHash3("sha256").update(parts.apiKey ?? "").update("\0").update(JSON.stringify(Object.entries(parts.headers ?? {}).sort(([a], [b]) => a.localeCompare(b)))).digest("hex");
+  return createHash3("sha256").update(JSON.stringify({
     providerId: parts.providerId ?? "",
     modelId: parts.modelId,
     protocol: parts.protocol ?? "",
@@ -6256,7 +6426,7 @@ function thinkingProviderOptions(npm) {
 }
 
 // src/subagent-route-registry.ts
-import { randomUUID as randomUUID2 } from "crypto";
+import { randomUUID as randomUUID3 } from "crypto";
 var DEFAULT_TTL_MS = 5 * 6e4;
 var DEFAULT_MAX_ENTRIES = 1024;
 var ROUTE_MARKER_PATTERN = /(?:\n\n)?<relay-ai-subagent-route token="([0-9a-f-]{36})"\s*\/>/gi;
@@ -6332,7 +6502,7 @@ var SubagentRouteRegistry = class {
       if (!oldest) break;
       this.entries.delete(oldest);
     }
-    const token = randomUUID2();
+    const token = randomUUID3();
     this.entries.set(token, { sessionId, modelId, createdAt: this.now() });
     return token;
   }
@@ -6597,8 +6767,8 @@ function anthropicErrorType(status) {
       return "api_error";
   }
 }
-function jsonErrorMessage(text) {
-  const trimmed = text.trim();
+function jsonErrorMessage(text2) {
+  const trimmed = text2.trim();
   if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return void 0;
   try {
     const parsed = JSON.parse(trimmed);
@@ -7007,8 +7177,8 @@ function inlineSystemText(messages) {
   const parts = [];
   for (const msg of messages) {
     if (msg.role !== "system") continue;
-    const text = typeof msg.content === "string" ? msg.content : msg.content.map((b) => b.text ?? "").join("\n");
-    if (text.trim()) parts.push(text.trim());
+    const text2 = typeof msg.content === "string" ? msg.content : msg.content.map((b) => b.text ?? "").join("\n");
+    if (text2.trim()) parts.push(text2.trim());
   }
   return parts;
 }
@@ -7060,9 +7230,9 @@ function annotateToolNames(messages) {
   }
 }
 function thinkingToSdkPart(block, npm) {
-  const text = block.thinking ?? "";
-  if (npm === "@ai-sdk/openai" && !block.signature && !text.trim()) return null;
-  const part = { type: "reasoning", text };
+  const text2 = block.thinking ?? "";
+  if (npm === "@ai-sdk/openai" && !block.signature && !text2.trim()) return null;
+  const part = { type: "reasoning", text: text2 };
   if (block.signature) {
     if (npm === "@ai-sdk/google") {
       part.providerOptions = { google: { thoughtSignature: block.signature } };
@@ -7424,7 +7594,7 @@ async function streamAnthropicResponse(model, params, modelId, write, log, estim
 }
 async function generateAnthropicResponse(model, params, modelId, options) {
   const { subagentRouting, ...providerParams } = params;
-  let text;
+  let text2;
   let toolCalls;
   let finishReason;
   let usage;
@@ -7440,13 +7610,13 @@ async function generateAnthropicResponse(model, params, modelId, options) {
     Promise.resolve(r.toolResults).catch(() => {
     });
     try {
-      [text, toolCalls, finishReason, usage] = await Promise.all([r.text, r.toolCalls, r.finishReason, r.usage]);
+      [text2, toolCalls, finishReason, usage] = await Promise.all([r.text, r.toolCalls, r.finishReason, r.usage]);
     } catch (error) {
       throw firstStreamError ? firstStreamError.error : error;
     }
   } else {
     const r = await generateText({ model, ...providerParams });
-    ({ text, toolCalls, finishReason, usage } = r);
+    ({ text: text2, toolCalls, finishReason, usage } = r);
   }
   return {
     id: "msg_" + Date.now(),
@@ -7454,7 +7624,7 @@ async function generateAnthropicResponse(model, params, modelId, options) {
     role: "assistant",
     model: modelId,
     content: [
-      ...text ? [{ type: "text", text }] : [],
+      ...text2 ? [{ type: "text", text: text2 }] : [],
       ...toolCalls.map((tc) => {
         let input = tc.input;
         if (subagentRouting && tc.toolName === "Agent") {
@@ -7616,6 +7786,8 @@ export {
   isOpencodeOAuth,
   isOpencodeApi,
   oauthCredentialToKeychainJson,
+  describeOAuthAccount,
+  formatOAuthAccount,
   tokensToStoredCredential,
   supportsNativeOAuth,
   isBrowserRedirectOAuth,
@@ -7649,6 +7821,7 @@ export {
   migrateGlobalOpencodeCredential,
   resolveProviderCredential,
   forceRefreshProviderCredential,
+  readStoredOAuthCredential,
   resolveProviderOAuthAccountId,
   resolveProviderOAuthProviderData,
   enrichGithubCopilotOAuthProviderData,
@@ -7671,4 +7844,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-S2X5XUQ7.js.map
+//# sourceMappingURL=chunk-J7KX7E5Z.js.map
