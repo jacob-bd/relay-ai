@@ -10,7 +10,7 @@ import { getTemplateById } from '../src/provider-templates.js';
 import type { ProviderTemplate } from '../src/provider-templates.js';
 import type { ProviderRegistry } from '../src/registry/types.js';
 
-vi.mock('../src/env.js', () => ({ saveProviderCredential: vi.fn(), deleteProviderCredential: vi.fn() }));
+vi.mock('../src/env.js', () => ({ saveProviderCredential: vi.fn(), deleteProviderCredential: vi.fn(), readStoredProviderCredential: vi.fn() }));
 vi.mock('../src/provider-factory.js', () => ({ isSdkMigratedNpm: vi.fn() }));
 vi.mock('../src/registry/fetch-template-models.js', () => ({ fetchTemplateModels: vi.fn() }));
 vi.mock('../src/registry/fetch-cline-pass-models.js', () => ({
@@ -232,5 +232,83 @@ describe('registry/add-template', () => {
     const added = saved.providers.find(p => p.id === 'test-template');
     expect(added?.name).toBe('Test Provider 2');
     expect(added?.nameCustomized).toBe(true);
+  });
+
+  describe('addAccount: a second account of the same provider', () => {
+    // Real templates always declare how they authenticate.
+    const apiTemplate: ProviderTemplate = { ...dummyTemplate, authType: 'api' };
+    const existingEntry = (over: Record<string, unknown> = {}) => ({
+      id: 'test-template', templateId: 'test-template', name: 'Test Provider', enabled: true, authType: 'api',
+      authRef: 'keyring:provider:test-template', api: { url: 'https://api.example.com' }, addedAt: '2026-01-01T00:00:00.000Z', ...over,
+    });
+    const savedProviders = () => (vi.mocked(io.saveRegistry).mock.calls.at(-1)?.[0] as ProviderRegistry).providers as any[];
+
+    beforeEach(() => {
+      vi.mocked(io.loadRegistry).mockReturnValue({ version: 1, providers: [existingEntry()] } as any);
+      vi.mocked(env.readStoredProviderCredential).mockResolvedValue('old_key');
+    });
+
+    it('adds it under its own id, keychain item and numbered name, leaving the first untouched', async () => {
+      const res = await addProviderFromTemplate(apiTemplate, 'new_key', { addAccount: true });
+
+      expect(res.added).toBe(true);
+      const added = savedProviders().find(p => p.id === 'test-template-2');
+      expect(added).toMatchObject({
+        templateId: 'test-template',
+        authRef: 'keyring:provider:test-template-2',
+        name: 'Test Provider 2',
+        nameCustomized: true,
+      });
+      expect(savedProviders().find(p => p.id === 'test-template')).toMatchObject({ name: 'Test Provider', authRef: 'keyring:provider:test-template' });
+      expect(env.saveProviderCredential).toHaveBeenCalledWith('keyring:provider:test-template-2', 'new_key');
+      expect(env.deleteProviderCredential).not.toHaveBeenCalled();
+    });
+
+    it('takes the next free number', async () => {
+      vi.mocked(io.loadRegistry).mockReturnValue({ version: 1, providers: [existingEntry(), existingEntry({ id: 'test-template-2', name: 'Test Provider 2', authRef: 'keyring:provider:test-template-2' })] } as any);
+      vi.mocked(env.readStoredProviderCredential).mockImplementation(async (authRef: string) => `key-of-${authRef}`);
+      const res = await addProviderFromTemplate(apiTemplate, 'new_key', { addAccount: true });
+      expect(res.provider?.id).toBe('test-template-3');
+    });
+
+    it('with nothing configured yet, adds the normal first account', async () => {
+      vi.mocked(io.loadRegistry).mockReturnValue({ version: 1, providers: [] } as any);
+      const res = await addProviderFromTemplate(apiTemplate, 'new_key', { addAccount: true });
+      expect(res.provider?.id).toBe('test-template');
+    });
+
+    it('refuses the same key on the same server and saves nothing', async () => {
+      vi.mocked(env.readStoredProviderCredential).mockResolvedValue('same_key');
+
+      const res = await addProviderFromTemplate(apiTemplate, 'same_key', { addAccount: true });
+
+      expect(res.added).toBe(false);
+      expect(res.error).toMatch(/already saved as "Test Provider"/);
+      expect(env.saveProviderCredential).not.toHaveBeenCalled();
+      expect(io.saveRegistry).not.toHaveBeenCalled();
+    });
+
+    it('allows the same key against a different server address', async () => {
+      vi.mocked(env.readStoredProviderCredential).mockResolvedValue('same_key');
+      vi.mocked(fetchTemplate.fetchTemplateModels).mockResolvedValue({
+        models: [{ id: 'm', name: 'M', upstreamModelId: 'm', family: 'f', brand: 'b', modelFormat: 'openai' }],
+        baseUrl: 'https://other.example.com',
+      });
+      const res = await addProviderFromTemplate(apiTemplate, 'same_key', { addAccount: true });
+      expect(res.added).toBe(true);
+    });
+
+    it('does not apply to OpenCode Zen/Go, gcloud-based or dual-auth providers', async () => {
+      for (const tpl of [
+        { ...apiTemplate, modelSource: 'zen-go-api' as const },
+        { ...apiTemplate, noApiKey: true },
+        { ...apiTemplate, authMethods: ['api', 'oauth'] as ('api' | 'oauth')[] },
+      ]) {
+        const res = await addProviderFromTemplate(tpl, 'new_key', { addAccount: true });
+        expect(res.added).toBe(false);
+        expect(res.error).toMatch(/second account/i);
+      }
+      expect(env.saveProviderCredential).not.toHaveBeenCalled();
+    });
   });
 });

@@ -26,6 +26,7 @@ import {
   listAddableTemplates,
   listSupportedTemplates,
   listVisibleOAuthTemplates,
+  supportsAdditionalApiAccounts,
   type ProviderTemplate,
 } from './provider-templates.js';
 import { addProviderFromTemplate } from './registry/add-template.js';
@@ -91,8 +92,13 @@ export function parseProvidersArgs(args: string[]): {
   const [first, ...rest] = args;
   if (first === '--help' || first === '-h') return { subcommand: 'help', showHelp: true };
   if (first === 'add') {
-    if (rest.length > 1 || rest[0]?.startsWith('-')) return { subcommand: 'add', showHelp: false, error: `Unknown add option: ${rest.find(a => a.startsWith('-')) ?? rest[1]}` };
-    if (rest.length === 1) return { subcommand: 'add', showHelp: false, addTemplateId: rest[0] };
+    const addAccount = rest.includes('--new');
+    const operands = rest.filter(arg => arg !== '--new');
+    const unknownOption = operands.find(arg => arg.startsWith('-'));
+    if (unknownOption) return { subcommand: 'add', showHelp: false, error: `Unknown add option: ${unknownOption}` };
+    if (operands.length > 1) return { subcommand: 'add', showHelp: false, error: `Unknown add option: ${operands[1]}` };
+    if (addAccount && operands.length === 0) return { subcommand: 'add', showHelp: false, error: 'Usage: relay-ai providers add <id> --new' };
+    if (operands.length === 1) return { subcommand: 'add', showHelp: false, addTemplateId: operands[0], ...(addAccount ? { addAccount } : {}) };
     return { subcommand: 'add', showHelp: false };
   }
   if (first === 'import') {
@@ -145,7 +151,7 @@ export function providersHelpText(): string {
 
 ${pc.bold('Usage:')}
   relay-ai providers
-  relay-ai providers add [id]
+  relay-ai providers add [id] [--new]
   relay-ai providers import
   relay-ai providers list
   relay-ai providers remove <id>
@@ -155,7 +161,7 @@ ${pc.bold('Usage:')}
 
 ${pc.bold('Subcommands:')}
   (none)      Provider hub wizard ${pc.dim('[Phase 1.1]')}
-  add         Add a provider (Groq, Mistral, Together AI, …) ${pc.dim('[Phase 1.1]')}
+  add         Add a provider (Groq, Mistral, Together AI, …); with --new, a second account of one ${pc.dim('[Phase 1.1]')}
   import      Optional one-time import from OpenCode CLI ${pc.dim('[Phase 1.0]')}
   auth        Sign in with OAuth (Antigravity, GitHub Copilot, xAI, OpenAI, ClinePass)
   list        Show configured providers ${pc.dim('[Phase 1.0]')}
@@ -532,11 +538,20 @@ async function runDualAuthTemplateFlow(
   return 0;
 }
 
-async function runTemplateAddFlow(templateId?: string): Promise<number> {
-  const addable = listAddableTemplates(loadRegistry().providers.map(p => p.id));
+async function runTemplateAddFlow(templateId?: string, opts: { addAccount?: boolean } = {}): Promise<number> {
+  const addAccount = opts.addAccount === true;
+  // A second account may be added for a provider that is already configured.
+  const addable = addAccount
+    ? listSupportedTemplates().filter(supportsAdditionalApiAccounts)
+    : listAddableTemplates(loadRegistry().providers.map(p => p.id));
   if (templateId && !addable.some(t => t.id === templateId)) {
-    p.log.error(`'${templateId}' is not an addable provider, or it is already configured.`);
-    p.log.info('Run relay-ai providers list to see configured providers, or relay-ai providers add to browse.');
+    if (addAccount) {
+      p.log.error(`'${templateId}' does not support a second account.`);
+      p.log.info('Run relay-ai providers add to browse providers.');
+    } else {
+      p.log.error(`'${templateId}' is not an addable provider, or it is already configured.`);
+      p.log.info('Run relay-ai providers list to see configured providers, or relay-ai providers add to browse.');
+    }
     return 1;
   }
   if (addable.length === 0) {
@@ -658,7 +673,7 @@ async function runTemplateAddFlow(templateId?: string): Promise<number> {
 
   const spinner = p.spinner();
   spinner.start(`Testing connection to ${template.name}...`);
-  const result = await addProviderFromTemplate(template, apiKey, { baseUrl: baseUrlOverride });
+  const result = await addProviderFromTemplate(template, apiKey, { baseUrl: baseUrlOverride, ...(addAccount ? { addAccount: true } : {}) });
   spinner.stop('');
 
   if (!result.added) {
@@ -666,7 +681,7 @@ async function runTemplateAddFlow(templateId?: string): Promise<number> {
     return 1;
   }
 
-  logConnected(template.name, result.modelCount ?? 0);
+  logConnected(result.provider?.name ?? template.name, result.modelCount ?? 0);
   return 0;
 }
 
@@ -899,8 +914,8 @@ async function runCustomEndpointEditFlow(provider: RegistryProvider): Promise<nu
   return 0;
 }
 
-export async function runProvidersAdd(templateId?: string): Promise<number> {
-  if (templateId) return runTemplateAddFlow(templateId);
+export async function runProvidersAdd(templateId?: string, opts: { addAccount?: boolean } = {}): Promise<number> {
+  if (templateId) return runTemplateAddFlow(templateId, opts);
   const registry = loadRegistry();
   const hasOpencode = findOpencodeBinary() !== null;
 
@@ -1085,6 +1100,16 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
       hint: 'Sign in with a different account; it appears as a separate provider you can rename',
     });
   }
+  if (provider.authType !== 'oauth' && !customEndpointKind(provider)) {
+    const keyTemplate = getTemplateById(provider.templateId);
+    if (keyTemplate && supportsAdditionalApiAccounts(keyTemplate)) {
+      detailOptions.push({
+        value: 'add-account',
+        label: 'Add another account',
+        hint: 'Add a second API key; it appears as a separate provider you can rename',
+      });
+    }
+  }
   const editableCustomKind = customEndpointKind(provider);
   if (editableCustomKind) {
     detailOptions.push({
@@ -1159,7 +1184,10 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
   }
 
   if (action === 'add-account') {
-    return (await runProvidersAuth(providerKind(id), undefined, { addAccount: true })) === 0 ? 'back' : 'failed';
+    const code = provider.authType === 'oauth'
+      ? await runProvidersAuth(providerKind(id), undefined, { addAccount: true })
+      : await runTemplateAddFlow(provider.templateId, { addAccount: true });
+    return code === 0 ? 'back' : 'failed';
   }
 
   if (action === 'rename') {
@@ -1341,7 +1369,7 @@ export async function runProvidersCommand(args: string[]): Promise<number> {
 
   if (parsed.subcommand === 'import') return runProvidersImport();
   if (parsed.subcommand === 'list') return runProvidersList();
-  if (parsed.subcommand === 'add') return runProvidersAdd(parsed.addTemplateId);
+  if (parsed.subcommand === 'add') return runProvidersAdd(parsed.addTemplateId, { addAccount: parsed.addAccount });
   if (parsed.subcommand === 'remove' && parsed.removeId) return runProvidersRemove(parsed.removeId);
   if (parsed.subcommand === 'rename' && parsed.removeId && parsed.renameName) {
     return runProvidersRename(parsed.removeId, parsed.renameName);

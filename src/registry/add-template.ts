@@ -1,9 +1,9 @@
 // src/registry/add-template.ts — add a provider from a builtin template
 
-import { deleteProviderCredential, saveProviderCredential } from '../env.js';
+import { deleteProviderCredential, readStoredProviderCredential, saveProviderCredential } from '../env.js';
 import { localIsoTimestamp } from '../trace-log.js';
 import { isSdkMigratedNpm } from '../provider-factory.js';
-import type { ProviderTemplate } from '../provider-templates.js';
+import { supportsAdditionalApiAccounts, type ProviderTemplate } from '../provider-templates.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import { addOpencodeCloudFromApiKey } from './crud.js';
 import { fetchTemplateModels } from './fetch-template-models.js';
@@ -17,6 +17,7 @@ import {
   loadPricingCache,
 } from './pricing.js';
 import { uniqueProviderName } from './provider-name.js';
+import { nextInstanceId, providerKind } from './provider-kind.js';
 import type { CachedModel, RegistryProvider } from './types.js';
 import { vertexAnthropicCachedModels, vertexAnthropicSetupError } from './vertex-anthropic.js';
 import { filterVertexModelsByAccess } from './vertex-model-check.js';
@@ -58,15 +59,40 @@ function filterAnonymousFreeModels<T extends { cost?: { input: number; output: n
   })));
 }
 
+function sameServer(a: string | undefined, b: string | undefined): boolean {
+  const normalize = (url: string | undefined) => (url ?? '').trim().replace(/\/+$/, '').toLowerCase();
+  return normalize(a) === normalize(b);
+}
+
+/** Another account of this provider that already holds this exact key for the same server. */
+async function findAccountWithSameKey(
+  providers: RegistryProvider[],
+  templateId: string,
+  key: string,
+  baseUrl: string,
+): Promise<RegistryProvider | undefined> {
+  for (const other of providers) {
+    if (providerKind(other.id) !== templateId || other.authType === 'oauth') continue;
+    if (!sameServer(other.api.url, baseUrl)) continue;
+    if ((await readStoredProviderCredential(other.authRef)) === key) return other;
+  }
+  return undefined;
+}
+
 /** Test API key, persist credential + registry entry. */
 export async function addProviderFromTemplate(
   template: ProviderTemplate,
   apiKey: string,
-  opts?: { replaceExisting?: boolean; baseUrl?: string },
+  opts?: { replaceExisting?: boolean; baseUrl?: string; addAccount?: boolean },
 ): Promise<AddTemplateResult> {
   const trimmedKey = apiKey.trim();
   if (!trimmedKey && !template.apiKeyOptional) {
     return { added: false, error: 'API key cannot be empty.' };
+  }
+
+  const addAccount = opts?.addAccount === true;
+  if (addAccount && !supportsAdditionalApiAccounts(template)) {
+    return { added: false, error: `A second account is not available for ${template.name}.` };
   }
 
   // OpenCode Zen/Go use fixed backends + a global key — never ask for a base URL.
@@ -80,7 +106,10 @@ export async function addProviderFromTemplate(
   }
 
   const registry = loadRegistry();
-  const existing = registry.providers.find(p => p.id === template.id);
+  // A second account gets its own id (`groq-2`) and keychain item; the first is never touched.
+  const takenIds = registry.providers.map(p => p.id);
+  const providerId = addAccount && takenIds.includes(template.id) ? nextInstanceId(template.id, takenIds) : template.id;
+  const existing = addAccount ? undefined : registry.providers.find(p => p.id === template.id);
   if (existing && !opts?.replaceExisting) {
     return {
       added: false,
@@ -164,7 +193,18 @@ export async function addProviderFromTemplate(
     };
   }
 
-  const authRef = `keyring:provider:${template.id}`;
+  if (addAccount && trimmedKey) {
+    const clash = await findAccountWithSameKey(registry.providers, template.id, trimmedKey, fetched.baseUrl);
+    if (clash) {
+      return {
+        added: false,
+        error: `This key is already saved as "${clash.name}" for the same server.`,
+        hint: 'Use "Change API key" on that provider, or add a different key.',
+      };
+    }
+  }
+
+  const authRef = `keyring:provider:${providerId}`;
   const saved = trimmedKey ? await saveProviderCredential(authRef, trimmedKey) : true;
   if (!saved) {
     return {
@@ -188,7 +228,7 @@ export async function addProviderFromTemplate(
     ? existing.name
     : uniqueProviderName(registry.providers, template.name, existing?.id);
   const entry: RegistryProvider = {
-    id: template.id,
+    id: providerId,
     templateId: template.id,
     name: providerName,
     ...(existing?.nameCustomized || providerName !== template.name ? { nameCustomized: true } : {}),

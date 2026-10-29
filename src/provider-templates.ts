@@ -496,6 +496,20 @@ export function listVisibleOAuthTemplates(configuredIds: Iterable<string> = []):
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/**
+ * Templates that can hold a second API-key account. Not Zen/Go (one shared OpenCode key), not the
+ * gcloud-based ones (no key), and not providers that also offer OAuth sign-in (separate flow).
+ */
+export function supportsAdditionalApiAccounts(template: ProviderTemplate): boolean {
+  const methods = template.authMethods ?? [template.authType];
+  return template.supported
+    && template.modelSource !== 'zen-go-api'
+    && template.id !== 'opencode-cloud'
+    && !template.noApiKey
+    && methods.includes('api')
+    && !methods.includes('oauth');
+}
+
 export function getTemplateById(id: string): ProviderTemplate | undefined {
   return PROVIDER_TEMPLATES.find(t => t.id === id);
 }

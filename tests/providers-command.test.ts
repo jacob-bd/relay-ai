@@ -84,6 +84,17 @@ describe('parseProvidersArgs', () => {
     expect(providersHelpText()).toContain('providers rename');
   });
 
+  it('parses add <id> --new as adding another account for that provider', () => {
+    expect(parseProvidersArgs(['add', 'groq', '--new'])).toEqual({ subcommand: 'add', showHelp: false, addTemplateId: 'groq', addAccount: true });
+    expect(parseProvidersArgs(['add', '--new', 'groq'])).toEqual({ subcommand: 'add', showHelp: false, addTemplateId: 'groq', addAccount: true });
+    expect(parseProvidersArgs(['add', '--new']).error).toMatch(/Usage/);
+    expect(parseProvidersArgs(['add', 'groq', '--bogus']).error).toBe('Unknown add option: --bogus');
+  });
+
+  it('documents add --new in the help', () => {
+    expect(providersHelpText()).toContain('providers add [id] [--new]');
+  });
+
   it('parses auth --new as adding another account', () => {
     expect(parseProvidersArgs(['auth', 'openai-oauth', '--new'])).toEqual({
       subcommand: 'auth',
@@ -459,14 +470,6 @@ describe('provider menu: several OAuth accounts', () => {
     expect(providerAuth.authenticateProvider).toHaveBeenCalledWith(id, { method: undefined, addAccount: true });
   });
 
-  it('does not offer it for API-key providers', async () => {
-    saveRegistry({ schemaVersion: 1, providers: [{ ...oauthEntry('groq', 'groq', 'Groq'), authType: 'api' as never, authRef: 'keyring:provider:groq' }] });
-    selectMock.mockResolvedValueOnce('provider:groq').mockResolvedValueOnce('back').mockResolvedValueOnce('done');
-
-    await runProvidersHub();
-
-    expect(detailOptions()).not.toContain('add-account');
-  });
 
   describe('"Sign in with OAuth" screen', () => {
     const optionValues = () => selectMock.mock.calls.find(call => call[0].message === 'Which provider?')?.[0].options.map((o: { value: string }) => o.value) as string[] | undefined;
@@ -569,5 +572,91 @@ describe('runProvidersAuth: confirm before replacing a sign-in', () => {
     await runProvidersAuth('claude-code');
     expect(confirmMock).not.toHaveBeenCalled();
     expect(providerAuth.authenticateProvider).toHaveBeenCalled();
+  });
+});
+
+describe('provider menu: several API-key accounts', () => {
+  let home: string;
+  const prevHome = process.env.RELAY_AI_HOME;
+  const apiEntry = (id: string, templateId: string, name: string, over: Record<string, unknown> = {}) => ({
+    id, templateId, name, enabled: true, authType: 'api' as const, authRef: `keyring:provider:${id}`,
+    api: { npm: '@ai-sdk/groq', url: 'https://api.groq.com/openai/v1' }, addedAt: '2026-01-01T00:00:00.000Z',
+    modelsCache: { fetchedAt: '2026-01-01T00:00:00.000Z', models: [{ id: 'm', name: 'M', upstreamModelId: 'm', modelFormat: 'openai' as const, npm: '@ai-sdk/groq' }] },
+    ...over,
+  });
+  const detailOptions = () => selectMock.mock.calls.find(call => call[0].message === 'What would you like to do?')?.[0].options.map((o: { value: string }) => o.value) as string[];
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'relay-ai-multi-key-'));
+    process.env.RELAY_AI_HOME = home;
+    selectMock.mockReset();
+    textMock.mockReset();
+    passwordMock.mockReset();
+    spinnerMock.mockClear();
+    vi.spyOn(addTemplate, 'addProviderFromTemplate').mockResolvedValue({ added: true, modelCount: 3, provider: { name: 'Groq 2' } as never });
+  });
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.RELAY_AI_HOME;
+    else process.env.RELAY_AI_HOME = prevHome;
+    rmSync(home, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  it('offers "Add another account" for an API-key provider and adds it as a new account', async () => {
+    saveRegistry({ schemaVersion: 1, providers: [apiEntry('groq', 'groq', 'Groq')] });
+    selectMock.mockResolvedValueOnce('provider:groq').mockResolvedValueOnce('add-account').mockResolvedValueOnce('done');
+    passwordMock.mockResolvedValue('second-key');
+
+    await runProvidersHub();
+
+    expect(detailOptions()).toContain('add-account');
+    expect(addTemplate.addProviderFromTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'groq' }),
+      'second-key',
+      { baseUrl: undefined, addAccount: true },
+    );
+  });
+
+  it('adding from a numbered account still adds under the provider template', async () => {
+    saveRegistry({ schemaVersion: 1, providers: [apiEntry('groq', 'groq', 'Groq'), apiEntry('groq-2', 'groq', 'Work Groq')] });
+    selectMock.mockResolvedValueOnce('provider:groq-2').mockResolvedValueOnce('add-account').mockResolvedValueOnce('done');
+    passwordMock.mockResolvedValue('third-key');
+
+    await runProvidersHub();
+
+    expect(addTemplate.addProviderFromTemplate).toHaveBeenCalledWith(expect.objectContaining({ id: 'groq' }), 'third-key', { baseUrl: undefined, addAccount: true });
+  });
+
+  it.each([
+    ['zen', 'zen', 'OpenCode Zen'],
+    ['custom-acme', 'custom-openai', 'Acme'],
+    ['vertex-anthropic', 'vertex-anthropic', 'Google Vertex AI (Claude)'],
+  ])('does not offer it for %s', async (id, templateId, name) => {
+    saveRegistry({ schemaVersion: 1, providers: [apiEntry(id, templateId, name)] });
+    selectMock.mockResolvedValueOnce(`provider:${id}`).mockResolvedValueOnce('back').mockResolvedValueOnce('done');
+
+    await runProvidersHub();
+
+    expect(detailOptions()).not.toContain('add-account');
+  });
+
+  it('providers add <id> --new works even though that provider is already configured', async () => {
+    saveRegistry({ schemaVersion: 1, providers: [apiEntry('groq', 'groq', 'Groq')] });
+    passwordMock.mockResolvedValue('another-key');
+
+    expect(await runProvidersAdd('groq', { addAccount: true })).toBe(0);
+
+    expect(addTemplate.addProviderFromTemplate).toHaveBeenCalledWith(expect.objectContaining({ id: 'groq' }), 'another-key', { baseUrl: undefined, addAccount: true });
+  });
+
+  it('providers add <id> without --new still refuses an already configured provider', async () => {
+    saveRegistry({ schemaVersion: 1, providers: [apiEntry('groq', 'groq', 'Groq')] });
+    expect(await runProvidersAdd('groq')).toBe(1);
+    expect(addTemplate.addProviderFromTemplate).not.toHaveBeenCalled();
+  });
+
+  it('refuses --new for a provider that cannot have a second account', async () => {
+    expect(await runProvidersAdd('zen', { addAccount: true })).toBe(1);
+    expect(addTemplate.addProviderFromTemplate).not.toHaveBeenCalled();
   });
 });

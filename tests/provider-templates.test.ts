@@ -5,6 +5,7 @@ import {
   listAddableTemplates,
   listSupportedTemplates,
   listVisibleOAuthTemplates,
+  supportsAdditionalApiAccounts,
   PROVIDER_TEMPLATES,
 } from '../src/provider-templates.js';
 import { fetchTemplateModels } from '../src/registry/fetch-template-models.js';
@@ -182,5 +183,22 @@ describe('fetchTemplateModels', () => {
     const result = await fetchTemplateModels(template, 'bad-key');
     expect(result.models).toHaveLength(0);
     expect(result.error).toContain('rejected');
+  });
+});
+
+describe('supportsAdditionalApiAccounts', () => {
+  const byId = (id: string) => getTemplateById(id)!;
+
+  it('is true for ordinary API-key providers', () => {
+    for (const id of ['groq', 'mistral', 'openrouter', 'deepseek', 'anthropic', 'google']) {
+      expect(supportsAdditionalApiAccounts(byId(id)), id).toBe(true);
+    }
+  });
+
+  it('is false for OpenCode Zen/Go, gcloud-based, dual-auth and OAuth-only providers', () => {
+    for (const id of ['zen', 'go', 'opencode-cloud', 'vertex-anthropic', 'cline-pass', 'openai-oauth', 'github-copilot']) {
+      const template = getTemplateById(id);
+      if (template) expect(supportsAdditionalApiAccounts(template), id).toBe(false);
+    }
   });
 });
