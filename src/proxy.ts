@@ -39,6 +39,7 @@ import {
   extractConversationId,
   openCodeGoHeaders,
 } from './opencode-session.js';
+import { isProviderKind } from './registry/provider-kind.js';
 
 type ProxyLog = (message: string | (() => string)) => void;
 
@@ -297,7 +298,7 @@ export function startProxyCatalog(
           // Identity injection and beta selection for Claude Code OAuth.
           const seed = route.providerId ?? route.realModelId;
           const identity = injectClaudeIdentity(forwardBody, route.providerData, seed);
-          if (route.providerId === 'claude-code') injectClaudeCodeBillingSystemLine(forwardBody);
+          if (route.providerId && isProviderKind(route.providerId, 'claude-code')) injectClaudeCodeBillingSystemLine(forwardBody);
           claudeCodeSessionId = identity.sessionId;
           effectiveBeta = selectBetaFlags(forwardBody, route.realModelId, inboundBeta);
           plog(() => `anthropic-oauth: model=${route.realModelId}, beta=${effectiveBeta}`);

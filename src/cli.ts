@@ -1,4 +1,5 @@
 // src/cli.ts
+import { isProviderKind } from './registry/provider-kind.js';
 import pc from 'picocolors';
 import { relayIntro, relayOutro, providerSelectOption, fmtModel, fmtEnabledStar, formatModelLabel } from './ui.js';
 import * as p from '@clack/prompts';
@@ -1527,7 +1528,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   let proxyHandle: ProxyHandle | null = null;
   let childEnv: NodeJS.ProcessEnv;
 
-  const isAntigravityOAuth = activeProvider.id === 'antigravity' && activeProvider.authType === 'oauth';
+  const isAntigravityOAuth = isProviderKind(activeProvider.id, 'antigravity') && activeProvider.authType === 'oauth';
   const isOAuthAnthropic = selectedModel.modelFormat === 'anthropic' && activeProvider.authType === 'oauth' && !isAntigravityOAuth;
 
   if (isAntigravityOAuth) {

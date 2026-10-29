@@ -1,5 +1,6 @@
 // src/model-compatibility.ts — curated blacklist + models.dev capability filtering
 
+import { isProviderKind, providerKind } from './registry/provider-kind.js';
 import blacklistData from './data/model-incompatible.json';
 import {
   findModelsDevModel,
@@ -57,7 +58,7 @@ export function isAntigravityCloudCodeHelperSlot(modelId: string): boolean {
 const ZEN_FREE_TIER_PROVIDERS = new Set(['zen']);
 
 export function isZenFreeTierModel(providerId: string, modelId: string): boolean {
-  if (!ZEN_FREE_TIER_PROVIDERS.has(providerId)) return false;
+  if (!ZEN_FREE_TIER_PROVIDERS.has(providerKind(providerId))) return false;
   const id = modelId.trim().toLowerCase();
   return id === 'big-pickle' || id.endsWith('-free');
 }
@@ -82,7 +83,7 @@ export function findBlacklistEntry(ctx: CompatibilityContext): IncompatibleModel
 }
 
 export function hideReason(ctx: CompatibilityContext): string | null {
-  if (ctx.providerId === 'antigravity' && isAntigravityCloudCodeHelperSlot(ctx.modelId)) {
+  if (isProviderKind(ctx.providerId, 'antigravity') && isAntigravityCloudCodeHelperSlot(ctx.modelId)) {
     return '[antigravity-oauth] Cloud Code helper/internal slot';
   }
 

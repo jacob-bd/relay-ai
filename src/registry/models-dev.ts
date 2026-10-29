@@ -1,5 +1,6 @@
 // src/registry/models-dev.ts — models.dev capability cache (bundled + optional user refresh)
 
+import { providerKind } from './provider-kind.js';
 import {
   chmodSync,
   existsSync,
@@ -282,7 +283,8 @@ export async function fetchModelsDevCache(): Promise<ModelsDevCacheFile | null> 
 }
 
 export function resolveModelsDevSlug(providerId: string): string {
-  return REGISTRY_TO_MODELS_DEV[providerId] ?? providerId;
+  const kind = providerKind(providerId);
+  return REGISTRY_TO_MODELS_DEV[kind] ?? kind;
 }
 
 /** Fetch latest models.dev catalog in the background; falls back to bundled snapshot offline. */
@@ -442,7 +444,7 @@ export function resolveModelReasoningMetadata(
   // "This model does not support the effort parameter"). Resellers exposing
   // their own effort abstraction must not add those levels back. Scoped to the
   // Anthropic bucket: elsewhere a toggle-only vendor entry is not a refusal.
-  if (REGISTRY_TO_MODELS_DEV[providerId] === 'anthropic'
+  if (REGISTRY_TO_MODELS_DEV[providerKind(providerId)] === 'anthropic'
     && Array.isArray(entry?.reasoning_options) && entry.reasoning_options.length > 0) return result;
 
   const effort = resolveModelsDevEffort(modelId, cache);

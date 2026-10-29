@@ -1,5 +1,6 @@
 // src/registry/model-source.ts — resolve how a registry provider refreshes its model list
 
+import { providerKind } from './provider-kind.js';
 import { getTemplateById, type ProviderModelSource } from '../provider-templates.js';
 import { resolveProviderTemplate } from './resolve-template.js';
 import type { RegistryProvider } from './types.js';
@@ -13,11 +14,12 @@ const MANUAL_ONLY_NPMS = new Set([
 ]);
 
 export function resolveModelSource(provider: RegistryProvider): ProviderModelSource {
-  if (provider.id === 'zen' || provider.id === 'go' || provider.templateId === 'zen' || provider.templateId === 'go') {
+  const kind = providerKind(provider.id);
+  if (kind === 'zen' || kind === 'go' || provider.templateId === 'zen' || provider.templateId === 'go') {
     return 'zen-go-api';
   }
   if (
-    MANUAL_ONLY_PROVIDER_IDS.has(provider.id) ||
+    MANUAL_ONLY_PROVIDER_IDS.has(kind) ||
     MANUAL_ONLY_PROVIDER_IDS.has(provider.templateId) ||
     MANUAL_ONLY_TEMPLATE_IDS.has(provider.templateId) ||
     (provider.api.npm && MANUAL_ONLY_NPMS.has(provider.api.npm))

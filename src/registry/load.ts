@@ -1,5 +1,6 @@
 // src/registry/load.ts — materialize registry into runtime LocalProvider[]
 
+import { providerKind } from './provider-kind.js';
 import { resolveProviderCredential, resolveProviderOAuthAccountId, resolveProviderOAuthProviderData } from '../env.js';
 import type { CompatibilityAgent } from '../model-compatibility.js';
 import type { LocalProvider } from '../types.js';
@@ -37,7 +38,7 @@ export async function loadRegistryProviders(
   const runtimeRegistry = {
     ...registry,
     providers: registry.providers.map(provider => {
-      if (provider.id !== 'github-copilot' || !provider.modelsCache) return provider;
+      if (providerKind(provider.id) !== 'github-copilot' || !provider.modelsCache) return provider;
       return {
         ...provider,
         modelsCache: {

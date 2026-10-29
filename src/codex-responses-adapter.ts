@@ -1,4 +1,5 @@
 // OpenAI Responses API (/v1/responses) ↔ Vercel AI SDK. One turn per request; Codex owns the tool loop.
+import { isProviderKind } from './registry/provider-kind.js';
 import { createHash } from 'node:crypto';
 import { localTimestamp } from './trace-log.js';
 import { streamText, generateText, tool, jsonSchema } from 'ai';
@@ -686,7 +687,7 @@ export function translateResponsesTools(
  * default.
  */
 function omitsMaxOutputTokens(metadata?: ReasoningMetadata): boolean {
-  return metadata?.providerId === 'openrouter'
+  return (metadata?.providerId !== undefined && isProviderKind(metadata.providerId, 'openrouter'))
     || (metadata?.apiBaseUrl?.includes('openrouter.ai') ?? false);
 }
 
@@ -719,7 +720,7 @@ export function translateResponsesRequest(
   // The Cloud Code backend uses an Anthropic SDK hop. Its unknown-model default
   // is only 4096 tokens (including Gemini's hidden thoughts), so Codex turns that
   // omit a cap regularly end before the worker can produce code or a tool call.
-  const bridgedGemini = npm === '@ai-sdk/anthropic' && metadata?.providerId === 'antigravity'
+  const bridgedGemini = npm === '@ai-sdk/anthropic' && metadata?.providerId !== undefined && isProviderKind(metadata.providerId, 'antigravity')
     && /(?:^|__)gemini-/.test(metadata.upstreamModelId ?? body.model);
   return {
     instructions: system,

@@ -1,3 +1,4 @@
+import { providerKind } from './provider-kind.js';
 import { BACKENDS, classifyModelFormat } from '../constants.js';
 import { findModelsDevModel, loadModelsDevCache, type ModelsDevCacheFile } from './models-dev.js';
 import type { CachedModel, RegistryProvider } from './types.js';
@@ -15,7 +16,8 @@ export function reconcileCachedModelProtocol(
   metadata: ModelsDevCacheFile = loadModelsDevCache(),
 ): CachedModel {
   if (model.source === 'manual') return model;
-  const isZenGo = provider.id === 'zen' || provider.id === 'go'
+  const kind = providerKind(provider.id);
+  const isZenGo = kind === 'zen' || kind === 'go'
     || provider.templateId === 'zen' || provider.templateId === 'go';
   if (!isZenGo) return model;
 
@@ -24,7 +26,7 @@ export function reconcileCachedModelProtocol(
   const format = classifyModelFormat(model.id, metadataNpm);
   if (format === 'unsupported') return model;
 
-  const backendId = provider.id === 'go' || provider.templateId === 'go' ? 'go' : 'zen';
+  const backendId = kind === 'go' || provider.templateId === 'go' ? 'go' : 'zen';
   const apiUrl = model.apiUrl ?? provider.api.url ?? BACKENDS[backendId].baseUrl;
   return {
     ...model,

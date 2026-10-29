@@ -1,3 +1,4 @@
+import { isProviderKind } from '../registry/provider-kind.js';
 import http from 'node:http';
 import { streamText, generateText } from 'ai';
 import {
@@ -67,7 +68,7 @@ const HELPER_ROUTE_POLICIES = new Map<string, HelperRoutePolicy>([
 const MAX_REASONING_ECHOES_PER_CONVERSATION = 20;
 
 function isCloudCodeOAuthRoute(route: AntigravityRoute): boolean {
-  return route.providerId === 'antigravity' && route.authType === 'oauth' && route.modelFormat === 'cloud-code';
+  return isProviderKind(route.providerId, 'antigravity') && route.authType === 'oauth' && route.modelFormat === 'cloud-code';
 }
 
 async function createRouteLanguageModel(route: AntigravityRoute) {

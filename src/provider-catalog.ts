@@ -1,3 +1,4 @@
+import { providerKind } from './registry/provider-kind.js';
 import { resolveProviderCredential } from './env.js';
 import type { CompatibilityAgent } from './model-compatibility.js';
 import { oauthAuthRef } from './registry/import-build.js';
@@ -33,7 +34,7 @@ export async function resolveLocalProviderApiKey(provider: LocalProvider): Promi
   
   if (provider.authType === 'none') return 'anonymous';
 
-  const template = getTemplateById(provider.id);
+  const template = getTemplateById(providerKind(provider.id));
   if (template?.apiKeyOptional || template?.anonymousFreeModels) {
     return 'anonymous';
   }

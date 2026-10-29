@@ -1,9 +1,5 @@
 #!/usr/bin/env node
 import {
-  getTemplateById,
-  init_provider_templates
-} from "./chunk-AUBFTFM5.js";
-import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
   BACKENDS,
@@ -67,6 +63,7 @@ import {
   isFreeStatus,
   isOpencodeApi,
   isOpencodeOAuth,
+  isProviderKind,
   isSdkMigratedNpm,
   isValidProviderId,
   loadModelsDevCache,
@@ -83,6 +80,7 @@ import {
   parseAuthRef,
   parseToolArguments,
   printTraceLog,
+  providerKind,
   readFromCredentialStore,
   readGlobalOpencodeCredential,
   readStoredProviderCredential,
@@ -132,7 +130,11 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-Z7VY346J.js";
+} from "./chunk-S2X5XUQ7.js";
+import {
+  getTemplateById,
+  init_provider_templates
+} from "./chunk-AUBFTFM5.js";
 import {
   getAppHome,
   hasApplicationDefaultCredentials,
@@ -370,7 +372,7 @@ function fmtProviderBracket(providerId, providerName, isFree) {
   return color(pc.bold(`(${text4})`));
 }
 function providerTagColor(providerId) {
-  switch (providerId) {
+  switch (providerKind(providerId)) {
     case "zen":
       return pc.yellow;
     case "go":
@@ -1480,7 +1482,7 @@ function extractConversationId(headers, body) {
 }
 function isOpenCodeGoEndpoint(providerId, endpoint) {
   const id = providerId?.trim().toLowerCase();
-  if (id === "go" || id === "opencode-go") return true;
+  if (id !== void 0 && (isProviderKind(id, "go") || id === "opencode-go")) return true;
   if (!endpoint) return false;
   try {
     const url = new URL(endpoint);
@@ -1672,7 +1674,7 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
         if (isOAuth) {
           const seed = route.providerId ?? route.realModelId;
           const identity = injectClaudeIdentity(forwardBody, route.providerData, seed);
-          if (route.providerId === "claude-code") injectClaudeCodeBillingSystemLine(forwardBody);
+          if (route.providerId && isProviderKind(route.providerId, "claude-code")) injectClaudeCodeBillingSystemLine(forwardBody);
           claudeCodeSessionId = identity.sessionId;
           effectiveBeta = selectBetaFlags(forwardBody, route.realModelId, inboundBeta);
           plog(() => `anthropic-oauth: model=${route.realModelId}, beta=${effectiveBeta}`);
@@ -2375,7 +2377,7 @@ function isAntigravityCloudCodeHelperSlot(modelId) {
 }
 var ZEN_FREE_TIER_PROVIDERS = /* @__PURE__ */ new Set(["zen"]);
 function isZenFreeTierModel(providerId, modelId) {
-  if (!ZEN_FREE_TIER_PROVIDERS.has(providerId)) return false;
+  if (!ZEN_FREE_TIER_PROVIDERS.has(providerKind(providerId))) return false;
   const id = modelId.trim().toLowerCase();
   return id === "big-pickle" || id.endsWith("-free");
 }
@@ -2396,7 +2398,7 @@ function findBlacklistEntry(ctx) {
   return null;
 }
 function hideReason(ctx) {
-  if (ctx.providerId === "antigravity" && isAntigravityCloudCodeHelperSlot(ctx.modelId)) {
+  if (isProviderKind(ctx.providerId, "antigravity") && isAntigravityCloudCodeHelperSlot(ctx.modelId)) {
     return "[antigravity-oauth] Cloud Code helper/internal slot";
   }
   if (isZenFreeTierModel(ctx.providerId, ctx.modelId)) {
@@ -2776,13 +2778,14 @@ init_provider_templates();
 // src/registry/model-protocol.ts
 function reconcileCachedModelProtocol(model, provider, metadata = loadModelsDevCache()) {
   if (model.source === "manual") return model;
-  const isZenGo = provider.id === "zen" || provider.id === "go" || provider.templateId === "zen" || provider.templateId === "go";
+  const kind = providerKind(provider.id);
+  const isZenGo = kind === "zen" || kind === "go" || provider.templateId === "zen" || provider.templateId === "go";
   if (!isZenGo) return model;
   const metadataNpm = findModelsDevModel(provider.id, model.id, metadata)?.provider?.npm;
   if (!metadataNpm) return model;
   const format = classifyModelFormat(model.id, metadataNpm);
   if (format === "unsupported") return model;
-  const backendId = provider.id === "go" || provider.templateId === "go" ? "go" : "zen";
+  const backendId = kind === "go" || provider.templateId === "go" ? "go" : "zen";
   const apiUrl = model.apiUrl ?? provider.api.url ?? BACKENDS[backendId].baseUrl;
   return {
     ...model,
@@ -2818,10 +2821,11 @@ function cachedModelToLocal(cached, provider, metadata = loadModelsDevCache()) {
     };
   }
   const modelsDev = findModelsDevModel(provider.id, cached.id, metadata);
-  const isZenGo = provider.id === "zen" || provider.id === "go" || provider.templateId === "zen" || provider.templateId === "go";
+  const kind = providerKind(provider.id);
+  const isZenGo = kind === "zen" || kind === "go" || provider.templateId === "zen" || provider.templateId === "go";
   const metadataNpm = !cached.source && isZenGo ? modelsDev?.provider?.npm : void 0;
   const npm = cached.npm ?? provider.api.npm ?? "";
-  const apiUrl = cached.apiUrl ?? provider.api.url ?? (isZenGo ? BACKENDS[provider.id === "go" || provider.templateId === "go" ? "go" : "zen"].baseUrl : "");
+  const apiUrl = cached.apiUrl ?? provider.api.url ?? (isZenGo ? BACKENDS[kind === "go" || provider.templateId === "go" ? "go" : "zen"].baseUrl : "");
   const endpoint = resolveEndpoint(npm, apiUrl);
   if (endpoint === null) return null;
   const { id, upstreamModelId: upstreamModelId2 } = normalizeGoogleModelId(cached.id, npm);
@@ -2848,7 +2852,7 @@ function cachedModelToLocal(cached, provider, metadata = loadModelsDevCache()) {
     // a heuristic as if it were provider metadata. Launch-time callers still
     // resolve their required safety fallback when they build the child env or
     // proxy catalog.
-    contextWindow: cached.source === "manual" ? cached.contextWindow : provider.id === "cline-pass" && cached.contextWindow === CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW && cached.contextWindowSource !== "provider" ? void 0 : cached.contextWindow ?? (provider.id === "cline-pass" ? void 0 : resolveContextWindow(id)),
+    contextWindow: cached.source === "manual" ? cached.contextWindow : kind === "cline-pass" && cached.contextWindow === CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW && cached.contextWindowSource !== "provider" ? void 0 : cached.contextWindow ?? (kind === "cline-pass" ? void 0 : resolveContextWindow(id)),
     supportedParameters: cached.supportedParameters,
     ...resolveModelReasoningMetadata(
       provider.id,
@@ -2856,7 +2860,7 @@ function cachedModelToLocal(cached, provider, metadata = loadModelsDevCache()) {
       {
         // ChatGPT-login models that aren't in the seed list were saved with a name-based
         // reasoning guess; models.dev (OpenAI's own entry) is the better source.
-        reasoning: provider.id === "openai-oauth" ? findModelsDevModel(provider.id, cached.id, metadata)?.reasoning ?? cached.reasoning : cached.reasoning,
+        reasoning: kind === "openai-oauth" ? findModelsDevModel(provider.id, cached.id, metadata)?.reasoning ?? cached.reasoning : cached.reasoning,
         interleavedField: cached.interleavedReasoningField
       },
       metadata
@@ -3037,7 +3041,7 @@ async function loadRegistryProviders(diag, opts) {
   const runtimeRegistry = {
     ...registry,
     providers: registry.providers.map((provider) => {
-      if (provider.id !== "github-copilot" || !provider.modelsCache) return provider;
+      if (providerKind(provider.id) !== "github-copilot" || !provider.modelsCache) return provider;
       return {
         ...provider,
         modelsCache: {
@@ -3076,7 +3080,7 @@ async function resolveLocalProviderApiKey(provider) {
   const direct = provider.apiKey?.trim();
   if (direct) return direct;
   if (provider.authType === "none") return "anonymous";
-  const template = getTemplateById(provider.id);
+  const template = getTemplateById(providerKind(provider.id));
   if (template?.apiKeyOptional || template?.anonymousFreeModels) {
     return "anonymous";
   }
@@ -3953,7 +3957,7 @@ function isTargetCompatibleModel(ctx) {
     return { compatible: true };
   }
   if (ctx.model.modelFormat === "openai") {
-    if (ctx.providerId === "zen" || ctx.providerId === "go") return { compatible: true };
+    if (isProviderKind(ctx.providerId, "zen") || isProviderKind(ctx.providerId, "go")) return { compatible: true };
     if (ctx.model.npm) return { compatible: true };
     return { compatible: false, reason: "OpenAI-format model is missing an SDK provider package" };
   }
@@ -5044,10 +5048,11 @@ var MANUAL_ONLY_NPMS = /* @__PURE__ */ new Set([
   "@ai-sdk/azure"
 ]);
 function resolveModelSource(provider) {
-  if (provider.id === "zen" || provider.id === "go" || provider.templateId === "zen" || provider.templateId === "go") {
+  const kind = providerKind(provider.id);
+  if (kind === "zen" || kind === "go" || provider.templateId === "zen" || provider.templateId === "go") {
     return "zen-go-api";
   }
-  if (MANUAL_ONLY_PROVIDER_IDS.has(provider.id) || MANUAL_ONLY_PROVIDER_IDS.has(provider.templateId) || MANUAL_ONLY_TEMPLATE_IDS.has(provider.templateId) || provider.api.npm && MANUAL_ONLY_NPMS.has(provider.api.npm)) {
+  if (MANUAL_ONLY_PROVIDER_IDS.has(kind) || MANUAL_ONLY_PROVIDER_IDS.has(provider.templateId) || MANUAL_ONLY_TEMPLATE_IDS.has(provider.templateId) || provider.api.npm && MANUAL_ONLY_NPMS.has(provider.api.npm)) {
     return "manual-only";
   }
   const template = resolveProviderTemplate(provider) ?? getTemplateById(provider.templateId);
@@ -5149,7 +5154,7 @@ function modelInfoToCached(m, npm, apiUrl) {
   };
 }
 async function refreshZenGoProvider(provider) {
-  const backendId = provider.id === "go" || provider.templateId === "go" ? "go" : "zen";
+  const backendId = providerKind(provider.id) === "go" || provider.templateId === "go" ? "go" : "zen";
   await fetchModelsDevCache();
   const result = await getModels(BACKENDS[backendId]);
   return result.models.filter((m) => m.modelFormat !== "unsupported").map((m) => {
@@ -5480,7 +5485,7 @@ function updateProviderCache(registry, providerId, models, baseUrl) {
   };
 }
 function compatibleCachedModels(provider, models) {
-  if (provider.id !== "antigravity") return models;
+  if (providerKind(provider.id) !== "antigravity") return models;
   return models.filter((model) => !shouldHideModel({
     providerId: provider.id,
     modelId: model.id,
@@ -5541,7 +5546,7 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
         }
         throw err;
       }
-    } else if (provider.authType === "oauth" && (["openai", "xai", "xai-oauth", "github-copilot", "claude-code", "antigravity"].includes(provider.templateId ?? provider.id) || provider.id === "openai-oauth" || provider.id === "xai-oauth")) {
+    } else if (provider.authType === "oauth" && (["openai", "xai", "xai-oauth", "github-copilot", "claude-code", "antigravity"].includes(provider.templateId ?? provider.id) || providerKind(provider.id) === "openai-oauth" || providerKind(provider.id) === "xai-oauth")) {
       if (!apiKey) {
         return {
           id: provider.id,
@@ -5619,7 +5624,7 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
         provider.id
       )
     );
-    if (provider.id === "antigravity" && enriched.length === 0) {
+    if (providerKind(provider.id) === "antigravity" && enriched.length === 0) {
       return {
         id: provider.id,
         name: provider.name,
@@ -6328,7 +6333,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog, suba
     if (isOAuth) {
       const seed = model.providerId ?? upstreamModelId(model);
       const identity = injectClaudeIdentity(forwardBody, model.providerData, seed);
-      if (model.providerId === "claude-code") injectClaudeCodeBillingSystemLine(forwardBody);
+      if (model.providerId && isProviderKind(model.providerId, "claude-code")) injectClaudeCodeBillingSystemLine(forwardBody);
       claudeCodeSessionId = identity.sessionId;
       effectiveBeta = selectBetaFlags(forwardBody, upstreamModelId(model), inboundBeta);
     }
@@ -7428,7 +7433,7 @@ var OAUTH_FAVORITE_NAMES = {
 };
 function favoriteProviderDisplayName(provider) {
   if (provider.nameCustomized) return provider.name;
-  const explicit = OAUTH_FAVORITE_NAMES[provider.id];
+  const explicit = OAUTH_FAVORITE_NAMES[providerKind(provider.id)];
   if (explicit) return explicit;
   if (provider.authType === "oauth" && !/\boauth\b/i.test(provider.name)) {
     return `${provider.name} OAuth`;
@@ -8895,4 +8900,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-LXBV52KI.js.map
+//# sourceMappingURL=chunk-J7SR6G6J.js.map

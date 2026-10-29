@@ -1,5 +1,6 @@
 // src/registry/materialize.ts — registry entries → LocalProvider runtime shape
 
+import { providerKind } from './provider-kind.js';
 import { shouldHideModel, type CompatibilityAgent } from '../model-compatibility.js';
 import { CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW } from '../cline-pass.js';
 import { deriveBrand } from '../models.js';
@@ -55,7 +56,8 @@ export function cachedModelToLocal(
   }
 
   const modelsDev = findModelsDevModel(provider.id, cached.id, metadata);
-  const isZenGo = provider.id === 'zen' || provider.id === 'go'
+  const kind = providerKind(provider.id);
+  const isZenGo = kind === 'zen' || kind === 'go'
     || provider.templateId === 'zen' || provider.templateId === 'go';
   // A registry cache can outlive the metadata snapshot that originally
   // classified it. Prefer the current models.dev provider package for the
@@ -63,7 +65,7 @@ export function cachedModelToLocal(
   const metadataNpm = !cached.source && isZenGo ? modelsDev?.provider?.npm : undefined;
   const npm = cached.npm ?? provider.api.npm ?? '';
   const apiUrl = cached.apiUrl ?? provider.api.url
-    ?? (isZenGo ? BACKENDS[provider.id === 'go' || provider.templateId === 'go' ? 'go' : 'zen'].baseUrl : '');
+    ?? (isZenGo ? BACKENDS[kind === 'go' || provider.templateId === 'go' ? 'go' : 'zen'].baseUrl : '');
   const endpoint = resolveEndpoint(npm, apiUrl);
   if (endpoint === null) return null;
 
@@ -92,11 +94,11 @@ export function cachedModelToLocal(
     // a heuristic as if it were provider metadata. Launch-time callers still
     // resolve their required safety fallback when they build the child env or
     // proxy catalog.
-    contextWindow: cached.source === 'manual' ? cached.contextWindow : provider.id === 'cline-pass' &&
+    contextWindow: cached.source === 'manual' ? cached.contextWindow : kind === 'cline-pass' &&
       cached.contextWindow === CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW &&
       cached.contextWindowSource !== 'provider'
       ? undefined
-      : cached.contextWindow ?? (provider.id === 'cline-pass' ? undefined : resolveContextWindow(id)),
+      : cached.contextWindow ?? (kind === 'cline-pass' ? undefined : resolveContextWindow(id)),
     supportedParameters: cached.supportedParameters,
     ...resolveModelReasoningMetadata(
       provider.id,
@@ -104,7 +106,7 @@ export function cachedModelToLocal(
       {
         // ChatGPT-login models that aren't in the seed list were saved with a name-based
         // reasoning guess; models.dev (OpenAI's own entry) is the better source.
-        reasoning: provider.id === 'openai-oauth'
+        reasoning: kind === 'openai-oauth'
           ? findModelsDevModel(provider.id, cached.id, metadata)?.reasoning ?? cached.reasoning
           : cached.reasoning,
         interleavedField: cached.interleavedReasoningField,

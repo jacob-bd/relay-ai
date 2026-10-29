@@ -49,6 +49,7 @@ import {
   extractConversationId,
   openCodeGoHeaders,
 } from '../opencode-session.js';
+import { isProviderKind } from '../registry/provider-kind.js';
 
 export interface ServerBackend {
   baseUrl: string;
@@ -228,7 +229,7 @@ async function handleAnthropicMessages(
     if (isOAuth) {
       const seed = model.providerId ?? upstreamModelId(model);
       const identity = injectClaudeIdentity(forwardBody, model.providerData, seed);
-      if (model.providerId === 'claude-code') injectClaudeCodeBillingSystemLine(forwardBody);
+      if (model.providerId && isProviderKind(model.providerId, 'claude-code')) injectClaudeCodeBillingSystemLine(forwardBody);
       claudeCodeSessionId = identity.sessionId;
       effectiveBeta = selectBetaFlags(forwardBody, upstreamModelId(model), inboundBeta);
     }

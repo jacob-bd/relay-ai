@@ -38,13 +38,7 @@ import {
   summarizeServerProviders,
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider
-} from "./chunk-LXBV52KI.js";
-import {
-  init_provider_templates,
-  listAddableTemplates,
-  listVisibleOAuthTemplates,
-  provider_templates_exports
-} from "./chunk-AUBFTFM5.js";
+} from "./chunk-J7SR6G6J.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -65,6 +59,7 @@ import {
   getServerMaskGatewayIds,
   getUiDebugLogPath,
   guiCallbackRedirectUri,
+  isProviderKind,
   loadPreferences,
   loadRegistry,
   localTimestamp,
@@ -96,7 +91,13 @@ import {
   supportsManualModels,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-Z7VY346J.js";
+} from "./chunk-S2X5XUQ7.js";
+import {
+  init_provider_templates,
+  listAddableTemplates,
+  listVisibleOAuthTemplates,
+  provider_templates_exports
+} from "./chunk-AUBFTFM5.js";
 import {
   getAppHome
 } from "./chunk-KNCSTHR4.js";
@@ -788,8 +789,8 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
       ...manualMetadata(p2.id),
       // Copilot's runtime catalog is policy-filtered by account plan. Never replace
       // that safe count with the larger raw cache count.
-      modelCount: p2.id === "github-copilot" ? p2.models.length : rawCountById.get(p2.id) ?? p2.models.length,
-      ...p2.id === "github-copilot" ? { subscription: copilotSubscription(p2.providerData) } : {},
+      modelCount: isProviderKind(p2.id, "github-copilot") ? p2.models.length : rawCountById.get(p2.id) ?? p2.models.length,
+      ...isProviderKind(p2.id, "github-copilot") ? { subscription: copilotSubscription(p2.providerData) } : {},
       ...customById.has(p2.id) ? { customEndpoint: customById.get(p2.id) } : {},
       models: p2.models.map((m) => ({
         id: m.id,
@@ -817,7 +818,7 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
         authType: "oauth",
         ...manualMetadata(rp.id),
         modelCount: 0,
-        ...rp.id === "github-copilot" ? { subscription: copilotSubscription(void 0) } : {},
+        ...isProviderKind(rp.id, "github-copilot") ? { subscription: copilotSubscription(void 0) } : {},
         models: []
       });
     }
@@ -873,7 +874,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-657DSCLF.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-D2OWLLPN.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1922,4 +1923,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-5CV5UKBJ.js.map
+//# sourceMappingURL=ui-command-3JC6AAWF.js.map

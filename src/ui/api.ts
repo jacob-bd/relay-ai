@@ -1,3 +1,4 @@
+import { isProviderKind } from '../registry/provider-kind.js';
 import { getSupportedApps, getSupportedApp, getRelayLaunchCommand, detectApp } from '../native-launcher.js';
 import { exec } from 'node:child_process';
 import { localTimestamp } from '../trace-log.js';
@@ -285,8 +286,8 @@ async function handleGetModels(
       ...manualMetadata(p.id),
       // Copilot's runtime catalog is policy-filtered by account plan. Never replace
       // that safe count with the larger raw cache count.
-      modelCount: p.id === 'github-copilot' ? p.models.length : (rawCountById.get(p.id) ?? p.models.length),
-      ...(p.id === 'github-copilot' ? { subscription: copilotSubscription(p.providerData) } : {}),
+      modelCount: isProviderKind(p.id, 'github-copilot') ? p.models.length : (rawCountById.get(p.id) ?? p.models.length),
+      ...(isProviderKind(p.id, 'github-copilot') ? { subscription: copilotSubscription(p.providerData) } : {}),
       ...(customById.has(p.id) ? { customEndpoint: customById.get(p.id) } : {}),
       models: p.models.map(m => ({
         id: m.id,
@@ -321,7 +322,7 @@ async function handleGetModels(
         authType: 'oauth',
         ...manualMetadata(rp.id),
         modelCount: 0,
-        ...(rp.id === 'github-copilot' ? { subscription: copilotSubscription(undefined) } : {}),
+        ...(isProviderKind(rp.id, 'github-copilot') ? { subscription: copilotSubscription(undefined) } : {}),
         models: [],
       });
     }

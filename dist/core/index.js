@@ -255,6 +255,454 @@ function getAppPathOverride(appId) {
 // src/provider-factory.ts
 import { wrapLanguageModel, extractReasoningMiddleware } from "ai";
 
+// src/provider-templates.ts
+var PROVIDER_TEMPLATES = [
+  {
+    id: "cline-pass",
+    name: "ClinePass",
+    authType: "api",
+    authMethods: ["api", "oauth"],
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.cline.bot/api/v1",
+    signupUrl: "https://app.cline.bot",
+    modelSource: "cline-recommended",
+    headers: { "HTTP-Referer": "https://cline.bot", "X-Title": "Cline" },
+    supported: true,
+    subscriptionRisk: true
+  },
+  {
+    id: "commandcode",
+    name: "Command Code",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.commandcode.ai/provider/v1",
+    signupUrl: "https://commandcode.ai/settings",
+    modelSource: "commandcode",
+    supported: true
+  },
+  {
+    id: "groq",
+    name: "Groq",
+    authType: "api",
+    npm: "@ai-sdk/groq",
+    defaultBaseUrl: "https://api.groq.com/openai/v1",
+    signupUrl: "https://console.groq.com/keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "nvidia",
+    name: "Nvidia",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://integrate.api.nvidia.com/v1",
+    signupUrl: "https://build.nvidia.com",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "mistral",
+    name: "Mistral",
+    authType: "api",
+    npm: "@ai-sdk/mistral",
+    defaultBaseUrl: "https://api.mistral.ai/v1",
+    signupUrl: "https://console.mistral.ai/api-keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "togetherai",
+    name: "Together AI",
+    authType: "api",
+    npm: "@ai-sdk/togetherai",
+    defaultBaseUrl: "https://api.together.xyz/v1",
+    signupUrl: "https://api.together.xyz/settings/api-keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "cerebras",
+    name: "Cerebras",
+    authType: "api",
+    npm: "@ai-sdk/cerebras",
+    defaultBaseUrl: "https://api.cerebras.ai/v1",
+    signupUrl: "https://cloud.cerebras.ai",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "deepinfra",
+    name: "DeepInfra",
+    authType: "api",
+    npm: "@ai-sdk/deepinfra",
+    defaultBaseUrl: "https://api.deepinfra.com/v1/openai",
+    signupUrl: "https://deepinfra.com/dash/api_keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.deepseek.com/v1",
+    signupUrl: "https://platform.deepseek.com",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "zhipu",
+    name: "Zhipu AI (GLM)",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://open.bigmodel.cn/api/paas/v4",
+    signupUrl: "https://open.bigmodel.cn",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "moonshot",
+    name: "Moonshot (Kimi)",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.moonshot.cn/v1",
+    signupUrl: "https://platform.moonshot.cn",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "moonshot-global",
+    name: "Moonshot Global (kimi.ai)",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.moonshot.ai/v1",
+    signupUrl: "https://platform.kimi.ai",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "kimi-code",
+    name: "Kimi Code (Subscription Required)",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.kimi.com/coding/v1",
+    modelSource: "static-seed",
+    staticModels: [
+      { id: "kimi-for-coding", name: "Kimi Code K2.7 (Unified)" }
+    ],
+    supported: true
+  },
+  {
+    id: "xai",
+    name: "xAI",
+    authType: "api",
+    npm: "@ai-sdk/xai",
+    defaultBaseUrl: "https://api.x.ai/v1",
+    signupUrl: "https://console.x.ai",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "perplexity",
+    name: "Perplexity",
+    authType: "api",
+    npm: "@ai-sdk/perplexity",
+    defaultBaseUrl: "https://api.perplexity.ai",
+    signupUrl: "https://www.perplexity.ai/settings/api",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "cohere",
+    name: "Cohere",
+    authType: "api",
+    npm: "@ai-sdk/cohere",
+    defaultBaseUrl: "https://api.cohere.com/compatibility/v1",
+    signupUrl: "https://dashboard.cohere.com/api-keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "openai",
+    name: "OpenAI",
+    authType: "api",
+    npm: "@ai-sdk/openai",
+    defaultBaseUrl: "https://api.openai.com/v1",
+    signupUrl: "https://platform.openai.com/api-keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "google",
+    name: "Google Gemini",
+    authType: "api",
+    npm: "@ai-sdk/google",
+    defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    signupUrl: "https://aistudio.google.com/apikey",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "alibaba",
+    name: "Alibaba DashScope (China)",
+    authType: "api",
+    npm: "@ai-sdk/alibaba",
+    defaultBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    signupUrl: "https://dashscope.console.aliyun.com/apiKey",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "qwen-cloud-token-plan",
+    name: "Qwen Cloud (Token Plan)",
+    shortName: "Qwen Cloud",
+    authType: "api",
+    npm: "@ai-sdk/alibaba",
+    defaultBaseUrl: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+    signupUrl: "https://home.qwencloud.com/api-keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "qwen-cloud-payg",
+    name: "Qwen Cloud (Pay-As-You-Go)",
+    shortName: "Qwen Cloud",
+    authType: "api",
+    npm: "@ai-sdk/alibaba",
+    defaultBaseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    signupUrl: "https://home.qwencloud.com/api-keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    authType: "api",
+    npm: "@openrouter/ai-sdk-provider",
+    defaultBaseUrl: "https://openrouter.ai/api/v1",
+    signupUrl: "https://openrouter.ai/keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "kilo",
+    name: "Kilo Code",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.kilo.ai/api/gateway",
+    modelsPath: "/models",
+    signupUrl: "https://app.kilo.ai",
+    apiKeyOptional: true,
+    anonymousFreeModels: true,
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "ollama",
+    name: "Ollama",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "http://127.0.0.1:11434/v1",
+    urlPrompt: "Ollama API Base URL:",
+    apiKeyOptional: true,
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "lmstudio",
+    name: "LM Studio",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "http://127.0.0.1:1234/v1",
+    urlPrompt: "LM Studio API Base URL:",
+    apiKeyOptional: true,
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "venice",
+    name: "Venice AI",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.venice.ai/api/v1",
+    signupUrl: "https://venice.ai/settings/api",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "cloudflare",
+    name: "Cloudflare Workers AI",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/v1",
+    modelsPath: "/models/search?task=Text%20Generation",
+    signupUrl: "https://dash.cloudflare.com",
+    accountIdPrompt: "Cloudflare Account ID:",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    authType: "api",
+    npm: "@ai-sdk/anthropic",
+    defaultBaseUrl: "https://api.anthropic.com",
+    signupUrl: "https://console.anthropic.com/settings/keys",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "bedrock",
+    name: "Amazon Bedrock",
+    authType: "api",
+    npm: "@ai-sdk/amazon-bedrock",
+    modelSource: "manual-only",
+    supported: false,
+    unsupportedReason: "Not supported yet (requires AWS credentials). Optional: relay-ai providers import if already set up in OpenCode CLI."
+  },
+  {
+    id: "azure",
+    name: "Azure OpenAI",
+    authType: "api",
+    npm: "@ai-sdk/azure",
+    modelSource: "manual-only",
+    supported: false,
+    unsupportedReason: "Not supported yet (requires Azure deployment URLs). Optional: relay-ai providers import if already set up in OpenCode CLI."
+  },
+  {
+    id: "vertex-anthropic",
+    name: "Google Vertex AI (Claude)",
+    shortName: "Vertex",
+    authType: "api",
+    npm: "@ai-sdk/google-vertex/anthropic",
+    apiKeyOptional: true,
+    noApiKey: true,
+    setupNote: "Uses your gcloud login (gcloud auth application-default login) and ANTHROPIC_VERTEX_PROJECT_ID. Models come from ~/.relay-ai/vertex-models.json.",
+    modelSource: "vertex-models-file",
+    supported: true
+  },
+  {
+    id: "vertex",
+    name: "Google Vertex AI",
+    authType: "none",
+    npm: "@ai-sdk/google-vertex",
+    modelSource: "manual-only",
+    supported: false,
+    unsupportedReason: "Uses gcloud Application Default Credentials \u2014 use relay-ai server --vertex, not an API key."
+  },
+  {
+    id: "opencode-cloud",
+    name: "OpenCode Zen / Go",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    signupUrl: "https://opencode.ai/auth",
+    modelSource: "zen-go-api",
+    supported: true
+  },
+  {
+    id: "zen",
+    name: "OpenCode Zen",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    signupUrl: "https://opencode.ai/auth",
+    modelSource: "zen-go-api",
+    supported: true,
+    addable: false
+  },
+  {
+    id: "go",
+    name: "OpenCode Go",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    signupUrl: "https://opencode.ai/auth",
+    modelSource: "zen-go-api",
+    supported: true,
+    addable: false
+  },
+  // Subscription OAuth providers — Authorization Code + PKCE (browser redirect)
+  // ⚠️  These extract tokens from paid subscriptions. Account risk — see plan docs.
+  {
+    id: "claude-code",
+    name: "Claude Code (Anthropic subscription)",
+    shortName: "Claude Code",
+    authType: "oauth",
+    npm: "@ai-sdk/anthropic",
+    defaultBaseUrl: "https://api.anthropic.com",
+    signupUrl: "https://claude.ai",
+    modelSource: "api-list",
+    supported: true,
+    hidden: true,
+    subscriptionRisk: true
+  },
+  {
+    id: "antigravity",
+    name: "Cloud Code Assist OAuth (Google)",
+    // Compact label users actually recognise: every surface that shows this
+    // provider calls it Antigravity, and it is also the shortest of the two.
+    shortName: "Antigravity",
+    authType: "oauth",
+    npm: "@ai-sdk/openai-compatible",
+    signupUrl: "https://antigravity.google",
+    modelSource: "api-list",
+    supported: true,
+    hidden: true,
+    subscriptionRisk: true
+  },
+  // OAuth-gated subscription providers — device code or broker sign-in
+  {
+    id: "xai-oauth",
+    name: "xAI Grok (SuperGrok)",
+    shortName: "xAI Grok",
+    authType: "oauth",
+    npm: "@ai-sdk/xai",
+    signupUrl: "https://x.ai",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "openai-oauth",
+    name: "OpenAI (ChatGPT)",
+    shortName: "OpenAI",
+    authType: "oauth",
+    npm: "@ai-sdk/openai",
+    signupUrl: "https://chatgpt.com",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
+    id: "github-copilot",
+    name: "GitHub Copilot",
+    authType: "oauth",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.githubcopilot.com",
+    modelsPath: "/models",
+    signupUrl: "https://github.com/features/copilot",
+    modelSource: "api-list",
+    headers: { "Editor-Version": "vscode/1.85.1" },
+    supported: true
+  }
+];
+function getTemplateById(id) {
+  return PROVIDER_TEMPLATES.find((t) => t.id === id);
+}
+
+// src/registry/provider-kind.ts
+var KIND_IDS_WITHOUT_TEMPLATE = ["openai-oauth", "xai-oauth", "zen", "go"];
+var knownKinds;
+function kinds() {
+  knownKinds ??= /* @__PURE__ */ new Set([...PROVIDER_TEMPLATES.map((t) => t.id), ...KIND_IDS_WITHOUT_TEMPLATE]);
+  return knownKinds;
+}
+function providerKind(providerId) {
+  const match = /^(.+)-(\d+)$/.exec(providerId);
+  if (!match || kinds().has(providerId)) return providerId;
+  const base = match[1];
+  return Number(match[2]) >= 2 && kinds().has(base) ? base : providerId;
+}
+function isProviderKind(providerId, kind) {
+  return providerKind(providerId) === kind;
+}
+
 // src/registry/models-dev.ts
 import {
   chmodSync as chmodSync4,
@@ -726,7 +1174,8 @@ function loadModelsDevCache() {
   return rememberModelsDevCache("bundled", loadBundledModelsDevCache());
 }
 function resolveModelsDevSlug(providerId) {
-  return REGISTRY_TO_MODELS_DEV[providerId] ?? providerId;
+  const kind = providerKind(providerId);
+  return REGISTRY_TO_MODELS_DEV[kind] ?? kind;
 }
 function findModelsDevModel(providerId, modelId, cache = loadModelsDevCache()) {
   const slug = resolveModelsDevSlug(providerId);
@@ -798,7 +1247,7 @@ function resolveModelReasoningMetadata(providerId, modelId, overrides = {}, cach
     result.reasoningEffortLevels = ownRanked;
     return result;
   }
-  if (REGISTRY_TO_MODELS_DEV[providerId] === "anthropic" && Array.isArray(entry?.reasoning_options) && entry.reasoning_options.length > 0) return result;
+  if (REGISTRY_TO_MODELS_DEV[providerKind(providerId)] === "anthropic" && Array.isArray(entry?.reasoning_options) && entry.reasoning_options.length > 0) return result;
   const effort = resolveModelsDevEffort(modelId, cache);
   if (effort.kind === "levels") result.reasoningEffortLevels = effort.levels;
   else if (effort.kind === "conflict") result.reasoningEffortConflict = true;
@@ -1573,7 +2022,7 @@ function injectClaudeIdentity(body, providerData, seed) {
 
 // src/oauth/claude-code-identity.ts
 function isClaudeCodeOAuthRoute(input) {
-  return input.providerId === "claude-code" && input.authType === "oauth";
+  return input.providerId !== void 0 && isProviderKind(input.providerId, "claude-code") && input.authType === "oauth";
 }
 function prependClaudeCodeBillingLine(system) {
   const line = buildClaudeCodeBillingSystemLine();
@@ -1666,7 +2115,7 @@ var CLINE_PASS_REGISTER_URL = `${CLINE_PASS_HOST}/api/v1/auth/register`;
 var CLINE_PASS_REFRESH_URL = `${CLINE_PASS_HOST}/api/v1/auth/refresh`;
 var CLINE_PASS_WORKOS_PREFIX = "workos:";
 function isClinePassOAuth(providerId, authType) {
-  return providerId === "cline-pass" && authType === "oauth";
+  return providerId !== void 0 && isProviderKind(providerId, "cline-pass") && authType === "oauth";
 }
 function formatClineRuntimeCredential(providerId, authType, key) {
   if (!isClinePassOAuth(providerId, authType)) return key;
@@ -1727,7 +2176,7 @@ function isKnownDualHost(providerId, baseURL) {
   if (host === "commandcode.ai" || host.endsWith(".commandcode.ai")) {
     if (path.includes("/provider")) return true;
   }
-  return id !== void 0 && DUAL_PROVIDER_IDS.has(id) && (host === "opencode.ai" || host === "openrouter.ai" || host === "commandcode.ai");
+  return id !== void 0 && DUAL_PROVIDER_IDS.has(providerKind(id)) && (host === "opencode.ai" || host === "openrouter.ai" || host === "commandcode.ai");
 }
 function isDualProtocolGateway(providerId, baseURL) {
   return isKnownDualHost(providerId, baseURL);
@@ -2017,10 +2466,10 @@ async function createLanguageModelSingle(spec) {
   if (npm === "@ai-sdk/anthropic") {
     const { createAnthropic } = await import("@ai-sdk/anthropic");
     const root = baseURL?.replace(/\/v1\/?$/, "").replace(/\/$/, "");
-    const openRouterBearer = spec.providerId?.trim().toLowerCase() === "openrouter" || root?.includes("openrouter.ai") === true;
+    const openRouterBearer = providerKind(spec.providerId?.trim().toLowerCase() ?? "") === "openrouter" || root?.includes("openrouter.ai") === true;
     const anthropicOptions = spec.authType === "oauth" || openRouterBearer ? {
       authToken: apiKey,
-      ...spec.providerId === "claude-code" ? {
+      ...spec.providerId && isProviderKind(spec.providerId, "claude-code") ? {
         headers: {
           "User-Agent": CLAUDE_CODE_USER_AGENT,
           "x-app": "cli",
@@ -2605,7 +3054,7 @@ function hasSupportedParameter(metadata, param) {
   return (metadata?.supportedParameters ?? []).some((p) => p === param);
 }
 function isOpenRouterRoute(npm, metadata) {
-  return npm === "@openrouter/ai-sdk-provider" || metadata?.providerId === "openrouter" || metadata?.apiBaseUrl?.includes("openrouter.ai") === true;
+  return npm === "@openrouter/ai-sdk-provider" || metadata?.providerId !== void 0 && isProviderKind(metadata.providerId, "openrouter") || metadata?.apiBaseUrl?.includes("openrouter.ai") === true;
 }
 function openRouterReasoningCapabilities(metadata) {
   if (metadata?.supportedParameters && !hasSupportedParameter(metadata, "reasoning")) {
@@ -2637,8 +3086,8 @@ function openRouterReasoningCapabilities(metadata) {
   return EMPTY_REASONING;
 }
 function deepSeekAcceptsNativeEfforts(metadata) {
-  const providerId = metadata?.providerId?.toLowerCase();
-  if (providerId === "go" || providerId === "zen" || providerId === "opencode-go" || providerId === "opencode" || providerId === "commandcode") {
+  const kind = providerKind(metadata?.providerId?.toLowerCase() ?? "");
+  if (kind === "go" || kind === "zen" || kind === "opencode-go" || kind === "opencode" || kind === "commandcode") {
     return true;
   }
   const baseUrl = metadata?.apiBaseUrl;
@@ -3206,437 +3655,6 @@ function thinkingProviderOptions(npm) {
   return void 0;
 }
 
-// src/provider-templates.ts
-var PROVIDER_TEMPLATES = [
-  {
-    id: "cline-pass",
-    name: "ClinePass",
-    authType: "api",
-    authMethods: ["api", "oauth"],
-    npm: "@ai-sdk/openai-compatible",
-    defaultBaseUrl: "https://api.cline.bot/api/v1",
-    signupUrl: "https://app.cline.bot",
-    modelSource: "cline-recommended",
-    headers: { "HTTP-Referer": "https://cline.bot", "X-Title": "Cline" },
-    supported: true,
-    subscriptionRisk: true
-  },
-  {
-    id: "commandcode",
-    name: "Command Code",
-    authType: "api",
-    npm: "@ai-sdk/openai-compatible",
-    defaultBaseUrl: "https://api.commandcode.ai/provider/v1",
-    signupUrl: "https://commandcode.ai/settings",
-    modelSource: "commandcode",
-    supported: true
-  },
-  {
-    id: "groq",
-    name: "Groq",
-    authType: "api",
-    npm: "@ai-sdk/groq",
-    defaultBaseUrl: "https://api.groq.com/openai/v1",
-    signupUrl: "https://console.groq.com/keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "nvidia",
-    name: "Nvidia",
-    authType: "api",
-    npm: "@ai-sdk/openai-compatible",
-    defaultBaseUrl: "https://integrate.api.nvidia.com/v1",
-    signupUrl: "https://build.nvidia.com",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "mistral",
-    name: "Mistral",
-    authType: "api",
-    npm: "@ai-sdk/mistral",
-    defaultBaseUrl: "https://api.mistral.ai/v1",
-    signupUrl: "https://console.mistral.ai/api-keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "togetherai",
-    name: "Together AI",
-    authType: "api",
-    npm: "@ai-sdk/togetherai",
-    defaultBaseUrl: "https://api.together.xyz/v1",
-    signupUrl: "https://api.together.xyz/settings/api-keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "cerebras",
-    name: "Cerebras",
-    authType: "api",
-    npm: "@ai-sdk/cerebras",
-    defaultBaseUrl: "https://api.cerebras.ai/v1",
-    signupUrl: "https://cloud.cerebras.ai",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "deepinfra",
-    name: "DeepInfra",
-    authType: "api",
-    npm: "@ai-sdk/deepinfra",
-    defaultBaseUrl: "https://api.deepinfra.com/v1/openai",
-    signupUrl: "https://deepinfra.com/dash/api_keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "deepseek",
-    name: "DeepSeek",
-    authType: "api",
-    npm: "@ai-sdk/openai-compatible",
-    defaultBaseUrl: "https://api.deepseek.com/v1",
-    signupUrl: "https://platform.deepseek.com",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "zhipu",
-    name: "Zhipu AI (GLM)",
-    authType: "api",
-    npm: "@ai-sdk/openai-compatible",
-    defaultBaseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    signupUrl: "https://open.bigmodel.cn",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "moonshot",
-    name: "Moonshot (Kimi)",
-    authType: "api",
-    npm: "@ai-sdk/openai-compatible",
-    defaultBaseUrl: "https://api.moonshot.cn/v1",
-    signupUrl: "https://platform.moonshot.cn",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "moonshot-global",
-    name: "Moonshot Global (kimi.ai)",
-    authType: "api",
-    npm: "@ai-sdk/openai-compatible",
-    defaultBaseUrl: "https://api.moonshot.ai/v1",
-    signupUrl: "https://platform.kimi.ai",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "kimi-code",
-    name: "Kimi Code (Subscription Required)",
-    authType: "api",
-    npm: "@ai-sdk/openai-compatible",
-    defaultBaseUrl: "https://api.kimi.com/coding/v1",
-    modelSource: "static-seed",
-    staticModels: [
-      { id: "kimi-for-coding", name: "Kimi Code K2.7 (Unified)" }
-    ],
-    supported: true
-  },
-  {
-    id: "xai",
-    name: "xAI",
-    authType: "api",
-    npm: "@ai-sdk/xai",
-    defaultBaseUrl: "https://api.x.ai/v1",
-    signupUrl: "https://console.x.ai",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "perplexity",
-    name: "Perplexity",
-    authType: "api",
-    npm: "@ai-sdk/perplexity",
-    defaultBaseUrl: "https://api.perplexity.ai",
-    signupUrl: "https://www.perplexity.ai/settings/api",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "cohere",
-    name: "Cohere",
-    authType: "api",
-    npm: "@ai-sdk/cohere",
-    defaultBaseUrl: "https://api.cohere.com/compatibility/v1",
-    signupUrl: "https://dashboard.cohere.com/api-keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "openai",
-    name: "OpenAI",
-    authType: "api",
-    npm: "@ai-sdk/openai",
-    defaultBaseUrl: "https://api.openai.com/v1",
-    signupUrl: "https://platform.openai.com/api-keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "google",
-    name: "Google Gemini",
-    authType: "api",
-    npm: "@ai-sdk/google",
-    defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    signupUrl: "https://aistudio.google.com/apikey",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "alibaba",
-    name: "Alibaba DashScope (China)",
-    authType: "api",
-    npm: "@ai-sdk/alibaba",
-    defaultBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    signupUrl: "https://dashscope.console.aliyun.com/apiKey",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "qwen-cloud-token-plan",
-    name: "Qwen Cloud (Token Plan)",
-    shortName: "Qwen Cloud",
-    authType: "api",
-    npm: "@ai-sdk/alibaba",
-    defaultBaseUrl: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
-    signupUrl: "https://home.qwencloud.com/api-keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "qwen-cloud-payg",
-    name: "Qwen Cloud (Pay-As-You-Go)",
-    shortName: "Qwen Cloud",
-    authType: "api",
-    npm: "@ai-sdk/alibaba",
-    defaultBaseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-    signupUrl: "https://home.qwencloud.com/api-keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "openrouter",
-    name: "OpenRouter",
-    authType: "api",
-    npm: "@openrouter/ai-sdk-provider",
-    defaultBaseUrl: "https://openrouter.ai/api/v1",
-    signupUrl: "https://openrouter.ai/keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "kilo",
-    name: "Kilo Code",
-    authType: "api",
-    npm: "@ai-sdk/openai-compatible",
-    defaultBaseUrl: "https://api.kilo.ai/api/gateway",
-    modelsPath: "/models",
-    signupUrl: "https://app.kilo.ai",
-    apiKeyOptional: true,
-    anonymousFreeModels: true,
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "ollama",
-    name: "Ollama",
-    authType: "api",
-    npm: "@ai-sdk/openai-compatible",
-    defaultBaseUrl: "http://127.0.0.1:11434/v1",
-    urlPrompt: "Ollama API Base URL:",
-    apiKeyOptional: true,
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "lmstudio",
-    name: "LM Studio",
-    authType: "api",
-    npm: "@ai-sdk/openai-compatible",
-    defaultBaseUrl: "http://127.0.0.1:1234/v1",
-    urlPrompt: "LM Studio API Base URL:",
-    apiKeyOptional: true,
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "venice",
-    name: "Venice AI",
-    authType: "api",
-    npm: "@ai-sdk/openai-compatible",
-    defaultBaseUrl: "https://api.venice.ai/api/v1",
-    signupUrl: "https://venice.ai/settings/api",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "cloudflare",
-    name: "Cloudflare Workers AI",
-    authType: "api",
-    npm: "@ai-sdk/openai-compatible",
-    defaultBaseUrl: "https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/v1",
-    modelsPath: "/models/search?task=Text%20Generation",
-    signupUrl: "https://dash.cloudflare.com",
-    accountIdPrompt: "Cloudflare Account ID:",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "anthropic",
-    name: "Anthropic",
-    authType: "api",
-    npm: "@ai-sdk/anthropic",
-    defaultBaseUrl: "https://api.anthropic.com",
-    signupUrl: "https://console.anthropic.com/settings/keys",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "bedrock",
-    name: "Amazon Bedrock",
-    authType: "api",
-    npm: "@ai-sdk/amazon-bedrock",
-    modelSource: "manual-only",
-    supported: false,
-    unsupportedReason: "Not supported yet (requires AWS credentials). Optional: relay-ai providers import if already set up in OpenCode CLI."
-  },
-  {
-    id: "azure",
-    name: "Azure OpenAI",
-    authType: "api",
-    npm: "@ai-sdk/azure",
-    modelSource: "manual-only",
-    supported: false,
-    unsupportedReason: "Not supported yet (requires Azure deployment URLs). Optional: relay-ai providers import if already set up in OpenCode CLI."
-  },
-  {
-    id: "vertex-anthropic",
-    name: "Google Vertex AI (Claude)",
-    shortName: "Vertex",
-    authType: "api",
-    npm: "@ai-sdk/google-vertex/anthropic",
-    apiKeyOptional: true,
-    noApiKey: true,
-    setupNote: "Uses your gcloud login (gcloud auth application-default login) and ANTHROPIC_VERTEX_PROJECT_ID. Models come from ~/.relay-ai/vertex-models.json.",
-    modelSource: "vertex-models-file",
-    supported: true
-  },
-  {
-    id: "vertex",
-    name: "Google Vertex AI",
-    authType: "none",
-    npm: "@ai-sdk/google-vertex",
-    modelSource: "manual-only",
-    supported: false,
-    unsupportedReason: "Uses gcloud Application Default Credentials \u2014 use relay-ai server --vertex, not an API key."
-  },
-  {
-    id: "opencode-cloud",
-    name: "OpenCode Zen / Go",
-    authType: "api",
-    npm: "@ai-sdk/openai-compatible",
-    signupUrl: "https://opencode.ai/auth",
-    modelSource: "zen-go-api",
-    supported: true
-  },
-  {
-    id: "zen",
-    name: "OpenCode Zen",
-    authType: "api",
-    npm: "@ai-sdk/openai-compatible",
-    signupUrl: "https://opencode.ai/auth",
-    modelSource: "zen-go-api",
-    supported: true,
-    addable: false
-  },
-  {
-    id: "go",
-    name: "OpenCode Go",
-    authType: "api",
-    npm: "@ai-sdk/openai-compatible",
-    signupUrl: "https://opencode.ai/auth",
-    modelSource: "zen-go-api",
-    supported: true,
-    addable: false
-  },
-  // Subscription OAuth providers — Authorization Code + PKCE (browser redirect)
-  // ⚠️  These extract tokens from paid subscriptions. Account risk — see plan docs.
-  {
-    id: "claude-code",
-    name: "Claude Code (Anthropic subscription)",
-    shortName: "Claude Code",
-    authType: "oauth",
-    npm: "@ai-sdk/anthropic",
-    defaultBaseUrl: "https://api.anthropic.com",
-    signupUrl: "https://claude.ai",
-    modelSource: "api-list",
-    supported: true,
-    hidden: true,
-    subscriptionRisk: true
-  },
-  {
-    id: "antigravity",
-    name: "Cloud Code Assist OAuth (Google)",
-    // Compact label users actually recognise: every surface that shows this
-    // provider calls it Antigravity, and it is also the shortest of the two.
-    shortName: "Antigravity",
-    authType: "oauth",
-    npm: "@ai-sdk/openai-compatible",
-    signupUrl: "https://antigravity.google",
-    modelSource: "api-list",
-    supported: true,
-    hidden: true,
-    subscriptionRisk: true
-  },
-  // OAuth-gated subscription providers — device code or broker sign-in
-  {
-    id: "xai-oauth",
-    name: "xAI Grok (SuperGrok)",
-    shortName: "xAI Grok",
-    authType: "oauth",
-    npm: "@ai-sdk/xai",
-    signupUrl: "https://x.ai",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "openai-oauth",
-    name: "OpenAI (ChatGPT)",
-    shortName: "OpenAI",
-    authType: "oauth",
-    npm: "@ai-sdk/openai",
-    signupUrl: "https://chatgpt.com",
-    modelSource: "api-list",
-    supported: true
-  },
-  {
-    id: "github-copilot",
-    name: "GitHub Copilot",
-    authType: "oauth",
-    npm: "@ai-sdk/openai-compatible",
-    defaultBaseUrl: "https://api.githubcopilot.com",
-    modelsPath: "/models",
-    signupUrl: "https://github.com/features/copilot",
-    modelSource: "api-list",
-    headers: { "Editor-Version": "vscode/1.85.1" },
-    supported: true
-  }
-];
-function getTemplateById(id) {
-  return PROVIDER_TEMPLATES.find((t) => t.id === id);
-}
-
 // src/registry/resolve-template.ts
 var TEMPLATE_ID_ALIASES = {
   "google-vertex": "vertex"
@@ -3709,7 +3727,7 @@ function sanitizeSessionId(value) {
 }
 function isOpenCodeGoEndpoint(providerId, endpoint) {
   const id = providerId?.trim().toLowerCase();
-  if (id === "go" || id === "opencode-go") return true;
+  if (id !== void 0 && (isProviderKind(id, "go") || id === "opencode-go")) return true;
   if (!endpoint) return false;
   try {
     const url = new URL(endpoint);
@@ -4265,30 +4283,31 @@ async function refreshClinePassAccessToken(refreshToken) {
 // src/oauth/refresh.ts
 function oauthCredentialShouldRefresh(cred, providerId) {
   if (oauthCredentialNeedsRefresh(cred)) return true;
-  if (NATIVE_OAUTH_PROVIDER_IDS.includes(providerId) && accessTokenIsExpiring(cred.access)) return true;
+  if (NATIVE_OAUTH_PROVIDER_IDS.includes(providerKind(providerId)) && accessTokenIsExpiring(cred.access)) return true;
   return false;
 }
 async function refreshStoredOAuthCredential(providerId, cred) {
   if (!cred.refresh) {
     throw new Error(`${providerId}: OAuth refresh token missing \u2014 run relay-ai providers auth ${providerId}`);
   }
+  const kind = providerKind(providerId);
   let tokens;
-  if (providerId === "openai" || providerId === "openai-oauth") {
+  if (kind === "openai" || kind === "openai-oauth") {
     tokens = await refreshOpenAiAccessToken(cred.refresh);
-  } else if (providerId === "xai" || providerId === "xai-oauth") {
+  } else if (kind === "xai" || kind === "xai-oauth") {
     tokens = await refreshXaiAccessToken(cred.refresh);
-  } else if (providerId === "github-copilot") {
+  } else if (kind === "github-copilot") {
     tokens = await refreshGithubCopilotToken(cred.refresh);
-  } else if (providerId === "claude-code") {
+  } else if (kind === "claude-code") {
     tokens = await refreshClaudeCodeToken(cred.refresh);
-  } else if (providerId === "antigravity") {
+  } else if (kind === "antigravity") {
     tokens = await refreshAntigravityToken(cred.refresh);
-  } else if (providerId === "cline-pass") {
+  } else if (kind === "cline-pass") {
     tokens = await refreshClinePassAccessToken(cred.refresh);
   } else {
     throw new Error(`OAuth refresh not implemented for provider "${providerId}"`);
   }
-  const accountId = providerId === "cline-pass" && typeof tokens.providerData?.clineUserId === "string" ? tokens.providerData.clineUserId : cred.accountId;
+  const accountId = kind === "cline-pass" && typeof tokens.providerData?.clineUserId === "string" ? tokens.providerData.clineUserId : cred.accountId;
   return tokensToStoredCredential(tokens, cred.refresh, accountId, cred.providerData);
 }
 
@@ -5073,13 +5092,14 @@ function providerRefreshToken(providerId, authType, authRef) {
 // src/registry/model-protocol.ts
 function reconcileCachedModelProtocol(model, provider, metadata = loadModelsDevCache()) {
   if (model.source === "manual") return model;
-  const isZenGo = provider.id === "zen" || provider.id === "go" || provider.templateId === "zen" || provider.templateId === "go";
+  const kind = providerKind(provider.id);
+  const isZenGo = kind === "zen" || kind === "go" || provider.templateId === "zen" || provider.templateId === "go";
   if (!isZenGo) return model;
   const metadataNpm = findModelsDevModel(provider.id, model.id, metadata)?.provider?.npm;
   if (!metadataNpm) return model;
   const format = classifyModelFormat(model.id, metadataNpm);
   if (format === "unsupported") return model;
-  const backendId = provider.id === "go" || provider.templateId === "go" ? "go" : "zen";
+  const backendId = kind === "go" || provider.templateId === "go" ? "go" : "zen";
   const apiUrl = model.apiUrl ?? provider.api.url ?? BACKENDS[backendId].baseUrl;
   return {
     ...model,
@@ -5811,7 +5831,7 @@ async function withPortableToolSchemas(model, npm) {
   });
 }
 function isAntigravityCloudCodeRoute(provider, model) {
-  return provider.id === "antigravity" && provider.authType === "oauth" && model.modelFormat === "cloud-code";
+  return isProviderKind(provider.id, "antigravity") && provider.authType === "oauth" && model.modelFormat === "cloud-code";
 }
 function findRoute(registry, providerId, modelId, routeId) {
   const provider = registry.providers.find((p) => p.id === providerId);

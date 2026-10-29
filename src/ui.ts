@@ -1,5 +1,6 @@
 // Shared relay-ai CLI styling — @clack/prompts + picocolors.
 // Use printPanel for important callouts (p.note dims all body text).
+import { providerKind } from './registry/provider-kind.js';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import type { ConflictInfo, LocalProvider, LocalProviderModel } from './types.js';
@@ -64,7 +65,7 @@ export function fmtProviderBracket(providerId: string, providerName: string, isF
 }
 
 function providerTagColor(providerId: string): (text: string) => string {
-  switch (providerId) {
+  switch (providerKind(providerId)) {
     case 'zen':
       return pc.yellow;
     case 'go':

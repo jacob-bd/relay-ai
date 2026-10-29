@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-LZBVA45E.js";
+} from "./chunk-JUQJJNA3.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -132,15 +132,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-LXBV52KI.js";
-import {
-  filterTemplates,
-  getTemplateById,
-  init_provider_templates,
-  listAddableTemplates,
-  listSupportedTemplates,
-  listVisibleOAuthTemplates
-} from "./chunk-AUBFTFM5.js";
+} from "./chunk-J7SR6G6J.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -181,6 +173,7 @@ import {
   grabRoundTripSignature,
   isFreeStatus,
   isModelsDevCacheStale,
+  isProviderKind,
   isSecretServiceAvailable,
   isValidProviderId,
   isVertexAnthropicProvider,
@@ -203,6 +196,7 @@ import {
   prepareClaudeTraceLog,
   prepareProviderTraceLog,
   printTraceLog,
+  providerKind,
   readFromCredentialStore,
   readGlobalOpencodeCredential,
   readOpencodeAuthFile,
@@ -236,7 +230,15 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-Z7VY346J.js";
+} from "./chunk-S2X5XUQ7.js";
+import {
+  filterTemplates,
+  getTemplateById,
+  init_provider_templates,
+  listAddableTemplates,
+  listSupportedTemplates,
+  listVisibleOAuthTemplates
+} from "./chunk-AUBFTFM5.js";
 import {
   DEFAULT_VERTEX_MODELS,
   getAppHome,
@@ -1562,9 +1564,10 @@ function codexCompatibleProviders(providers, agent = "codex") {
   return providersForTarget(providers, agent);
 }
 function resolveBaseURL(model, provider) {
-  if (provider.id === "zen" || provider.id === "go") {
+  const kind = providerKind(provider.id);
+  if (kind === "zen" || kind === "go") {
     const isAnthropic = model.modelFormat === "anthropic";
-    const baseUrl = BACKENDS[provider.id].baseUrl;
+    const baseUrl = BACKENDS[kind].baseUrl;
     return isAnthropic ? baseUrl : `${baseUrl}/v1`;
   }
   return model.apiBaseUrl ?? model.completionsUrl?.replace(/\/chat\/completions$/, "") ?? model.baseUrl;
@@ -1572,7 +1575,7 @@ function resolveBaseURL(model, provider) {
 function resolveCodexRoute(provider, model, apiKey) {
   const upstreamModelId2 = model.upstreamModelId || model.id;
   const inferredNpm = model.modelFormat === "anthropic" ? "@ai-sdk/anthropic" : "@ai-sdk/openai-compatible";
-  const isZenGo = provider.id === "zen" || provider.id === "go";
+  const isZenGo = isProviderKind(provider.id, "zen") || isProviderKind(provider.id, "go");
   const base = {
     npm: isZenGo ? inferredNpm : model.npm ?? inferredNpm,
     baseURL: resolveBaseURL(model, provider),
@@ -2887,7 +2890,7 @@ async function runProviderDetail(id) {
       label: "Change authentication (API/OAuth)",
       hint: "Switch between a ClinePass API key and account sign-in"
     });
-  } else if (supportsNativeOAuth(id) || provider.authType === "oauth") {
+  } else if (supportsNativeOAuth(providerKind(id)) || provider.authType === "oauth") {
     detailOptions.push({
       value: "auth",
       label: "Sign in again (OAuth)",
@@ -3501,7 +3504,7 @@ function translateResponsesTools(tools, options = {}) {
   return Object.keys(out).length ? out : void 0;
 }
 function omitsMaxOutputTokens(metadata) {
-  return metadata?.providerId === "openrouter" || (metadata?.apiBaseUrl?.includes("openrouter.ai") ?? false);
+  return metadata?.providerId !== void 0 && isProviderKind(metadata.providerId, "openrouter") || (metadata?.apiBaseUrl?.includes("openrouter.ai") ?? false);
 }
 function translateResponsesRequest(body, npm, metadata, options = {}) {
   const toolContext = createCodexToolContext();
@@ -3520,7 +3523,7 @@ function translateResponsesRequest(body, npm, metadata, options = {}) {
     effortProviderOptions(npm, effort, metadata?.upstreamModelId ?? body.model, metadata)
   );
   const tools = translateResponsesTools([...effectiveTools, ...deferredTools], { ...options, npm });
-  const bridgedGemini = npm === "@ai-sdk/anthropic" && metadata?.providerId === "antigravity" && /(?:^|__)gemini-/.test(metadata.upstreamModelId ?? body.model);
+  const bridgedGemini = npm === "@ai-sdk/anthropic" && metadata?.providerId !== void 0 && isProviderKind(metadata.providerId, "antigravity") && /(?:^|__)gemini-/.test(metadata.upstreamModelId ?? body.model);
   return {
     instructions: system,
     messages,
@@ -10084,7 +10087,7 @@ var HELPER_ROUTE_POLICIES = /* @__PURE__ */ new Map([
 ]);
 var MAX_REASONING_ECHOES_PER_CONVERSATION = 20;
 function isCloudCodeOAuthRoute(route) {
-  return route.providerId === "antigravity" && route.authType === "oauth" && route.modelFormat === "cloud-code";
+  return isProviderKind(route.providerId, "antigravity") && route.authType === "oauth" && route.modelFormat === "cloud-code";
 }
 async function createRouteLanguageModel(route) {
   const spec = {
@@ -17317,7 +17320,7 @@ Error: ${launchPlan.error}
   }
   let proxyHandle = null;
   let childEnv;
-  const isAntigravityOAuth = activeProvider.id === "antigravity" && activeProvider.authType === "oauth";
+  const isAntigravityOAuth = isProviderKind(activeProvider.id, "antigravity") && activeProvider.authType === "oauth";
   const isOAuthAnthropic = selectedModel.modelFormat === "anthropic" && activeProvider.authType === "oauth" && !isAntigravityOAuth;
   if (isAntigravityOAuth) {
     try {
@@ -17512,7 +17515,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-5CV5UKBJ.js");
+    const { runUiCommand } = await import("./ui-command-3JC6AAWF.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

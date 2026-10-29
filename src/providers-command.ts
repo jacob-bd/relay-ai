@@ -1,5 +1,6 @@
 // src/providers-command.ts — relay-ai providers command
 
+import { providerKind } from './registry/provider-kind.js';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import {
@@ -1036,7 +1037,7 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
       label: 'Change authentication (API/OAuth)',
       hint: 'Switch between a ClinePass API key and account sign-in',
     });
-  } else if (supportsNativeOAuth(id) || provider.authType === 'oauth') {
+  } else if (supportsNativeOAuth(providerKind(id)) || provider.authType === 'oauth') {
     detailOptions.push({
       value: 'auth',
       label: 'Sign in again (OAuth)',

@@ -1,3 +1,4 @@
+import { isProviderKind } from './registry/provider-kind.js';
 import { shouldHideModel, type CompatibilityAgent } from './model-compatibility.js';
 import { MIN_CONTEXT_WINDOW } from './constants.js';
 import { ANTIGRAVITY_MIN_CONTEXT_WINDOW } from './antigravity/catalog.js';
@@ -67,7 +68,7 @@ export function isTargetCompatibleModel(ctx: TargetCompatibilityContext): Target
   }
 
   if (ctx.model.modelFormat === 'openai') {
-    if (ctx.providerId === 'zen' || ctx.providerId === 'go') return { compatible: true };
+    if (isProviderKind(ctx.providerId, 'zen') || isProviderKind(ctx.providerId, 'go')) return { compatible: true };
     if (ctx.model.npm) return { compatible: true };
     return { compatible: false, reason: 'OpenAI-format model is missing an SDK provider package' };
   }

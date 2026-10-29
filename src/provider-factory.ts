@@ -32,6 +32,7 @@ import {
   resolveProtocolAlternative,
   type GatewayProtocol,
 } from './gateway-protocol.js';
+import { isProviderKind, providerKind } from './registry/provider-kind.js';
 
 /** Models that must use /v1/responses instead of /v1/chat/completions. */
 const RESPONSES_ONLY_PREFIXES = [
@@ -282,12 +283,12 @@ async function createLanguageModelSingle(spec: ProviderModelSpec): Promise<Langu
   if (npm === '@ai-sdk/anthropic') {
     const { createAnthropic } = await import('@ai-sdk/anthropic');
     const root = baseURL?.replace(/\/v1\/?$/, '').replace(/\/$/, '');
-    const openRouterBearer = spec.providerId?.trim().toLowerCase() === 'openrouter'
+    const openRouterBearer = providerKind(spec.providerId?.trim().toLowerCase() ?? '') === 'openrouter'
       || root?.includes('openrouter.ai') === true;
     const anthropicOptions: Parameters<typeof createAnthropic>[0] = spec.authType === 'oauth' || openRouterBearer
       ? {
           authToken: apiKey,
-          ...(spec.providerId === 'claude-code'
+          ...(spec.providerId && isProviderKind(spec.providerId, 'claude-code')
             ? {
                 headers: {
                   'User-Agent': CLAUDE_CODE_USER_AGENT,
@@ -1216,7 +1217,7 @@ function hasSupportedParameter(metadata: ReasoningMetadata | undefined, param: s
 
 function isOpenRouterRoute(npm: string, metadata?: ReasoningMetadata): boolean {
   return npm === '@openrouter/ai-sdk-provider'
-    || metadata?.providerId === 'openrouter'
+    || (metadata?.providerId !== undefined && isProviderKind(metadata.providerId, 'openrouter'))
     || metadata?.apiBaseUrl?.includes('openrouter.ai') === true;
 }
 
@@ -1260,13 +1261,13 @@ function openRouterReasoningCapabilities(metadata?: ReasoningMetadata): Reasonin
  * host check is what actually puts the slider on a Command Code model.
  */
 function deepSeekAcceptsNativeEfforts(metadata?: ReasoningMetadata): boolean {
-  const providerId = metadata?.providerId?.toLowerCase();
+  const kind = providerKind(metadata?.providerId?.toLowerCase() ?? '');
   if (
-    providerId === 'go'
-    || providerId === 'zen'
-    || providerId === 'opencode-go'
-    || providerId === 'opencode'
-    || providerId === 'commandcode'
+    kind === 'go'
+    || kind === 'zen'
+    || kind === 'opencode-go'
+    || kind === 'opencode'
+    || kind === 'commandcode'
   ) {
     return true;
   }

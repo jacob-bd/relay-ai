@@ -7,6 +7,7 @@
 // Relay cannot offer fails the check with its own row, instead of surfacing in
 // the field as a missing slider.
 
+import { isProviderKind, providerKind } from './registry/provider-kind.js';
 import {
   getReasoningCapabilities,
   type ReasoningMode,
@@ -62,10 +63,10 @@ const COVERAGE_NPM: Record<string, string> = {
 
 /** Zen/Go serve Claude through the Anthropic package, everything else generically. */
 function npmForModel(providerId: string, modelId: string): string {
-  if ((providerId === 'zen' || providerId === 'go') && modelId.toLowerCase().startsWith('claude-')) {
+  if ((isProviderKind(providerId, 'zen') || isProviderKind(providerId, 'go')) && modelId.toLowerCase().startsWith('claude-')) {
     return '@ai-sdk/anthropic';
   }
-  return COVERAGE_NPM[providerId] ?? '@ai-sdk/openai-compatible';
+  return COVERAGE_NPM[providerKind(providerId)] ?? '@ai-sdk/openai-compatible';
 }
 
 export interface ReasoningCoverageRow {

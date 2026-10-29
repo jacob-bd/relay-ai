@@ -1,3 +1,4 @@
+import { isProviderKind } from './registry/provider-kind.js';
 import { randomUUID } from 'node:crypto';
 import { VERSION } from './constants.js';
 
@@ -102,7 +103,7 @@ export function extractConversationId(headers: HeaderMap, body: unknown): string
  */
 export function isOpenCodeGoEndpoint(providerId?: string, endpoint?: string): boolean {
   const id = providerId?.trim().toLowerCase();
-  if (id === 'go' || id === 'opencode-go') return true;
+  if (id !== undefined && (isProviderKind(id, 'go') || id === 'opencode-go')) return true;
   if (!endpoint) return false;
 
   try {

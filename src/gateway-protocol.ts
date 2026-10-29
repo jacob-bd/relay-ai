@@ -1,3 +1,4 @@
+import { providerKind } from './registry/provider-kind.js';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -51,7 +52,7 @@ function isKnownDualHost(providerId: string | undefined, baseURL: string | undef
   if (host === 'commandcode.ai' || host.endsWith('.commandcode.ai')) {
     if (path.includes('/provider')) return true;
   }
-  return id !== undefined && DUAL_PROVIDER_IDS.has(id) && (
+  return id !== undefined && DUAL_PROVIDER_IDS.has(providerKind(id)) && (
     host === 'opencode.ai' || host === 'openrouter.ai' || host === 'commandcode.ai'
   );
 }

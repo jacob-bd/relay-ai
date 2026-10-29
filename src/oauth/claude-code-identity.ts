@@ -3,6 +3,7 @@ import {
   injectClaudeIdentity,
   selectBetaFlags,
 } from './claude-identity.js';
+import { isProviderKind } from '../registry/provider-kind.js';
 
 export interface ClaudeCodeOAuthIdentityInput {
   providerId?: string;
@@ -20,7 +21,7 @@ export interface ClaudeCodeOAuthSdkParams {
 }
 
 export function isClaudeCodeOAuthRoute(input: ClaudeCodeOAuthIdentityInput): boolean {
-  return input.providerId === 'claude-code' && input.authType === 'oauth';
+  return input.providerId !== undefined && isProviderKind(input.providerId, 'claude-code') && input.authType === 'oauth';
 }
 
 function prependClaudeCodeBillingLine(system: string | undefined): string {

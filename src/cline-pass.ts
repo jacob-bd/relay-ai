@@ -1,3 +1,4 @@
+import { isProviderKind } from './registry/provider-kind.js';
 /** Shared ClinePass endpoint and runtime credential rules. */
 
 export const CLINE_PASS_HOST = 'https://api.cline.bot';
@@ -12,7 +13,7 @@ export const CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW = 131_072;
 export const CLINE_PASS_WORKOS_PREFIX = 'workos:';
 
 export function isClinePassOAuth(providerId?: string, authType?: string): boolean {
-  return providerId === 'cline-pass' && authType === 'oauth';
+  return providerId !== undefined && isProviderKind(providerId, 'cline-pass') && authType === 'oauth';
 }
 
 /** Format only ClinePass OAuth access tokens; API keys remain raw. */

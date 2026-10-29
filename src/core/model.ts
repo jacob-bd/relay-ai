@@ -1,5 +1,6 @@
 // src/core/model.ts — construct a ready Vercel AI SDK LanguageModel from a route id.
 
+import { isProviderKind } from '../registry/provider-kind.js';
 import type { LanguageModel } from 'ai';
 import {
   resolveProviderCredential,
@@ -51,7 +52,7 @@ export async function withPortableToolSchemas(model: LanguageModel, npm: string 
 }
 
 function isAntigravityCloudCodeRoute(provider: RegistryProvider, model: CachedModel): boolean {
-  return provider.id === 'antigravity'
+  return isProviderKind(provider.id, 'antigravity')
     && provider.authType === 'oauth'
     && model.modelFormat === 'cloud-code';
 }

@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 import {
+  PROVIDER_TEMPLATES,
+  init_provider_templates
+} from "./chunk-AUBFTFM5.js";
+import {
   getAppHome,
   getConfigPath,
   getLegacyAppHome,
@@ -12,6 +16,24 @@ import {
   resolveVertexProject,
   saveVertexModelEntries
 } from "./chunk-KNCSTHR4.js";
+
+// src/registry/provider-kind.ts
+init_provider_templates();
+var KIND_IDS_WITHOUT_TEMPLATE = ["openai-oauth", "xai-oauth", "zen", "go"];
+var knownKinds;
+function kinds() {
+  knownKinds ??= /* @__PURE__ */ new Set([...PROVIDER_TEMPLATES.map((t) => t.id), ...KIND_IDS_WITHOUT_TEMPLATE]);
+  return knownKinds;
+}
+function providerKind(providerId) {
+  const match = /^(.+)-(\d+)$/.exec(providerId);
+  if (!match || kinds().has(providerId)) return providerId;
+  const base = match[1];
+  return Number(match[2]) >= 2 && kinds().has(base) ? base : providerId;
+}
+function isProviderKind(providerId, kind) {
+  return providerKind(providerId) === kind;
+}
 
 // src/constants.ts
 import { homedir } from "os";
@@ -1250,7 +1272,8 @@ async function fetchModelsDevCache() {
   }
 }
 function resolveModelsDevSlug(providerId) {
-  return REGISTRY_TO_MODELS_DEV[providerId] ?? providerId;
+  const kind = providerKind(providerId);
+  return REGISTRY_TO_MODELS_DEV[kind] ?? kind;
 }
 function refreshModelsDevCacheAsync(onComplete) {
   void (async () => {
@@ -1335,7 +1358,7 @@ function resolveModelReasoningMetadata(providerId, modelId, overrides = {}, cach
     result.reasoningEffortLevels = ownRanked;
     return result;
   }
-  if (REGISTRY_TO_MODELS_DEV[providerId] === "anthropic" && Array.isArray(entry?.reasoning_options) && entry.reasoning_options.length > 0) return result;
+  if (REGISTRY_TO_MODELS_DEV[providerKind(providerId)] === "anthropic" && Array.isArray(entry?.reasoning_options) && entry.reasoning_options.length > 0) return result;
   const effort = resolveModelsDevEffort(modelId, cache);
   if (effort.kind === "levels") result.reasoningEffortLevels = effort.levels;
   else if (effort.kind === "conflict") result.reasoningEffortConflict = true;
@@ -2742,7 +2765,7 @@ var CLINE_PASS_REFRESH_URL = `${CLINE_PASS_HOST}/api/v1/auth/refresh`;
 var CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW = 131072;
 var CLINE_PASS_WORKOS_PREFIX = "workos:";
 function isClinePassOAuth(providerId, authType) {
-  return providerId === "cline-pass" && authType === "oauth";
+  return providerId !== void 0 && isProviderKind(providerId, "cline-pass") && authType === "oauth";
 }
 function formatClineRuntimeCredential(providerId, authType, key) {
   if (!isClinePassOAuth(providerId, authType)) return key;
@@ -2917,30 +2940,31 @@ async function refreshClinePassAccessToken(refreshToken) {
 // src/oauth/refresh.ts
 function oauthCredentialShouldRefresh(cred, providerId) {
   if (oauthCredentialNeedsRefresh(cred)) return true;
-  if (NATIVE_OAUTH_PROVIDER_IDS.includes(providerId) && accessTokenIsExpiring(cred.access)) return true;
+  if (NATIVE_OAUTH_PROVIDER_IDS.includes(providerKind(providerId)) && accessTokenIsExpiring(cred.access)) return true;
   return false;
 }
 async function refreshStoredOAuthCredential(providerId, cred) {
   if (!cred.refresh) {
     throw new Error(`${providerId}: OAuth refresh token missing \u2014 run relay-ai providers auth ${providerId}`);
   }
+  const kind = providerKind(providerId);
   let tokens;
-  if (providerId === "openai" || providerId === "openai-oauth") {
+  if (kind === "openai" || kind === "openai-oauth") {
     tokens = await refreshOpenAiAccessToken(cred.refresh);
-  } else if (providerId === "xai" || providerId === "xai-oauth") {
+  } else if (kind === "xai" || kind === "xai-oauth") {
     tokens = await refreshXaiAccessToken(cred.refresh);
-  } else if (providerId === "github-copilot") {
+  } else if (kind === "github-copilot") {
     tokens = await refreshGithubCopilotToken(cred.refresh);
-  } else if (providerId === "claude-code") {
+  } else if (kind === "claude-code") {
     tokens = await refreshClaudeCodeToken(cred.refresh);
-  } else if (providerId === "antigravity") {
+  } else if (kind === "antigravity") {
     tokens = await refreshAntigravityToken(cred.refresh);
-  } else if (providerId === "cline-pass") {
+  } else if (kind === "cline-pass") {
     tokens = await refreshClinePassAccessToken(cred.refresh);
   } else {
     throw new Error(`OAuth refresh not implemented for provider "${providerId}"`);
   }
-  const accountId = providerId === "cline-pass" && typeof tokens.providerData?.clineUserId === "string" ? tokens.providerData.clineUserId : cred.accountId;
+  const accountId = kind === "cline-pass" && typeof tokens.providerData?.clineUserId === "string" ? tokens.providerData.clineUserId : cred.accountId;
   return tokensToStoredCredential(tokens, cred.refresh, accountId, cred.providerData);
 }
 
@@ -4652,7 +4676,7 @@ function createResponsesWebSocketFetch(wsUrl, log) {
 
 // src/oauth/claude-code-identity.ts
 function isClaudeCodeOAuthRoute(input) {
-  return input.providerId === "claude-code" && input.authType === "oauth";
+  return input.providerId !== void 0 && isProviderKind(input.providerId, "claude-code") && input.authType === "oauth";
 }
 function prependClaudeCodeBillingLine(system) {
   const line = buildClaudeCodeBillingSystemLine();
@@ -4730,7 +4754,7 @@ function isKnownDualHost(providerId, baseURL) {
   if (host === "commandcode.ai" || host.endsWith(".commandcode.ai")) {
     if (path.includes("/provider")) return true;
   }
-  return id !== void 0 && DUAL_PROVIDER_IDS.has(id) && (host === "opencode.ai" || host === "openrouter.ai" || host === "commandcode.ai");
+  return id !== void 0 && DUAL_PROVIDER_IDS.has(providerKind(id)) && (host === "opencode.ai" || host === "openrouter.ai" || host === "commandcode.ai");
 }
 function isDualProtocolGateway(providerId, baseURL) {
   return isKnownDualHost(providerId, baseURL);
@@ -5026,10 +5050,10 @@ async function createLanguageModelSingle(spec) {
   if (npm === "@ai-sdk/anthropic") {
     const { createAnthropic } = await import("@ai-sdk/anthropic");
     const root = baseURL?.replace(/\/v1\/?$/, "").replace(/\/$/, "");
-    const openRouterBearer = spec.providerId?.trim().toLowerCase() === "openrouter" || root?.includes("openrouter.ai") === true;
+    const openRouterBearer = providerKind(spec.providerId?.trim().toLowerCase() ?? "") === "openrouter" || root?.includes("openrouter.ai") === true;
     const anthropicOptions = spec.authType === "oauth" || openRouterBearer ? {
       authToken: apiKey,
-      ...spec.providerId === "claude-code" ? {
+      ...spec.providerId && isProviderKind(spec.providerId, "claude-code") ? {
         headers: {
           "User-Agent": CLAUDE_CODE_USER_AGENT,
           "x-app": "cli",
@@ -5624,7 +5648,7 @@ function hasSupportedParameter(metadata, param) {
   return (metadata?.supportedParameters ?? []).some((p) => p === param);
 }
 function isOpenRouterRoute(npm, metadata) {
-  return npm === "@openrouter/ai-sdk-provider" || metadata?.providerId === "openrouter" || metadata?.apiBaseUrl?.includes("openrouter.ai") === true;
+  return npm === "@openrouter/ai-sdk-provider" || metadata?.providerId !== void 0 && isProviderKind(metadata.providerId, "openrouter") || metadata?.apiBaseUrl?.includes("openrouter.ai") === true;
 }
 function openRouterReasoningCapabilities(metadata) {
   if (metadata?.supportedParameters && !hasSupportedParameter(metadata, "reasoning")) {
@@ -5656,8 +5680,8 @@ function openRouterReasoningCapabilities(metadata) {
   return EMPTY_REASONING;
 }
 function deepSeekAcceptsNativeEfforts(metadata) {
-  const providerId = metadata?.providerId?.toLowerCase();
-  if (providerId === "go" || providerId === "zen" || providerId === "opencode-go" || providerId === "opencode" || providerId === "commandcode") {
+  const kind = providerKind(metadata?.providerId?.toLowerCase() ?? "");
+  if (kind === "go" || kind === "zen" || kind === "opencode-go" || kind === "opencode" || kind === "commandcode") {
     return true;
   }
   const baseUrl = metadata?.apiBaseUrl;
@@ -7452,6 +7476,8 @@ async function generateAnthropicResponse(model, params, modelId, options) {
 }
 
 export {
+  providerKind,
+  isProviderKind,
   BACKENDS,
   CODEX_RESPONSES_LITE_WS_URL,
   CODEX_RESPONSES_LITE_VERSION,
@@ -7645,4 +7671,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-Z7VY346J.js.map
+//# sourceMappingURL=chunk-S2X5XUQ7.js.map

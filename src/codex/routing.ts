@@ -1,4 +1,5 @@
 // Codex routing: tier 1 (direct OpenAI) vs tier 2 (Responses proxy).
+import { isProviderKind, providerKind } from '../registry/provider-kind.js';
 import { randomBytes } from 'node:crypto';
 import type { CodexProxyRoute } from '../codex-proxy.js';
 import { BACKENDS } from '../constants.js';
@@ -113,9 +114,10 @@ export function codexCompatibleProviders(
 }
 
 function resolveBaseURL(model: LocalProviderModel, provider: LocalProvider): string | undefined {
-  if (provider.id === 'zen' || provider.id === 'go') {
+  const kind = providerKind(provider.id);
+  if (kind === 'zen' || kind === 'go') {
     const isAnthropic = model.modelFormat === 'anthropic';
-    const baseUrl = BACKENDS[provider.id].baseUrl;
+    const baseUrl = BACKENDS[kind].baseUrl;
     return isAnthropic ? baseUrl : `${baseUrl}/v1`;
   }
   return model.apiBaseUrl
@@ -133,7 +135,7 @@ export function resolveCodexRoute(
   const inferredNpm = model.modelFormat === 'anthropic' ? '@ai-sdk/anthropic' : '@ai-sdk/openai-compatible';
   // For zen/go cloud backends the registry modelsCache npm is unreliable — the
   // OpenCode models cache (via modelFormat) is authoritative for endpoint format.
-  const isZenGo = provider.id === 'zen' || provider.id === 'go';
+  const isZenGo = isProviderKind(provider.id, 'zen') || isProviderKind(provider.id, 'go');
   const base = {
     npm: isZenGo ? inferredNpm : (model.npm ?? inferredNpm),
     baseURL: resolveBaseURL(model, provider),

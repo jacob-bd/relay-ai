@@ -1,5 +1,6 @@
 // src/registry/refresh-models.ts — user-initiated model list refresh per modelSource
 
+import { providerKind } from './provider-kind.js';
 import { BACKENDS } from '../constants.js';
 import { localIsoTimestamp } from '../trace-log.js';
 import { getModels } from '../models.js';
@@ -97,7 +98,7 @@ function modelInfoToCached(
 }
 
 async function refreshZenGoProvider(provider: RegistryProvider): Promise<CachedModel[]> {
-  const backendId = provider.id === 'go' || provider.templateId === 'go' ? 'go' : 'zen';
+  const backendId = providerKind(provider.id) === 'go' || provider.templateId === 'go' ? 'go' : 'zen';
   await fetchModelsDevCache();
   const result = await getModels(BACKENDS[backendId]);
   return result.models
@@ -595,7 +596,7 @@ function updateProviderCache(
 }
 
 function compatibleCachedModels(provider: RegistryProvider, models: CachedModel[]): CachedModel[] {
-  if (provider.id !== 'antigravity') return models;
+  if (providerKind(provider.id) !== 'antigravity') return models;
   return models.filter(model => !shouldHideModel({
     providerId: provider.id,
     modelId: model.id,
@@ -672,7 +673,7 @@ export async function refreshProviderModels(
         }
         throw err;
       }
-    } else if (provider.authType === 'oauth' && (['openai', 'xai', 'xai-oauth', 'github-copilot', 'claude-code', 'antigravity'].includes(provider.templateId ?? provider.id) || provider.id === 'openai-oauth' || provider.id === 'xai-oauth')) {
+    } else if (provider.authType === 'oauth' && (['openai', 'xai', 'xai-oauth', 'github-copilot', 'claude-code', 'antigravity'].includes(provider.templateId ?? provider.id) || providerKind(provider.id) === 'openai-oauth' || providerKind(provider.id) === 'xai-oauth')) {
       // OAuth tokens are not valid API keys for the developer endpoints.
       // OpenAI: ChatGPT JWT rejected by api.openai.com; no /v1/models on ChatGPT backend.
       // xAI: SuperGrok JWT rejected by api.x.ai; falls back to static seed.
@@ -763,7 +764,7 @@ export async function refreshProviderModels(
         provider.id,
       ),
     );
-    if (provider.id === 'antigravity' && enriched.length === 0) {
+    if (providerKind(provider.id) === 'antigravity' && enriched.length === 0) {
       return {
         id: provider.id,
         name: provider.name,
