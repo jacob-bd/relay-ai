@@ -1,5 +1,6 @@
 // src/providers-command.ts — relay-ai providers command
 
+import { toOAuthRegistryId } from './registry/import-build.js';
 import { readOAuthAccountLabel } from './registry/oauth-account.js';
 import { providerKind } from './registry/provider-kind.js';
 import pc from 'picocolors';
@@ -8,6 +9,7 @@ import {
   migrateGlobalOpencodeCredential,
   preferredRelayCredentialAuthRef,
   readGlobalOpencodeCredential,
+  readStoredOAuthCredential,
   readStoredProviderCredential,
   resolveProviderCredential,
   saveProviderCredential,
@@ -253,12 +255,35 @@ export async function runProvidersImport(): Promise<number> {
   return 0;
 }
 
+/**
+ * Signing in again overwrites that account's stored login, so say which one before doing it.
+ * Only in an interactive terminal (scripts must never hang), and only when a login exists.
+ */
+async function confirmReplaceSignIn(providerId: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return true;
+  const target = loadRegistry().providers.find(
+    pr => pr.id === toOAuthRegistryId(providerId) && pr.authType === 'oauth',
+  );
+  if (!target || !(await readStoredOAuthCredential(target.authRef))) return true;
+  const account = await readOAuthAccountLabel(target);
+  const answer = await p.confirm({
+    message: `Replace the sign-in for "${target.name}"${account ? ` (${account})` : ''}? `
+      + 'The current login will be overwritten. Choose "Add another account" instead to keep it.',
+    initialValue: false,
+  });
+  return !p.isCancel(answer) && answer === true;
+}
+
 export async function runProvidersAuth(
   providerId: string,
   method?: ProviderAuthMethod,
   opts: { addAccount?: boolean } = {},
 ): Promise<number> {
   try {
+    if (!opts.addAccount && !(await confirmReplaceSignIn(providerId))) {
+      p.cancel('Cancelled.');
+      return 0;
+    }
     const result = await authenticateProvider(providerId, { method, ...(opts.addAccount ? { addAccount: true } : {}) });
     p.log.success(`Signed in to ${result.registryProvider.name} — credential saved to Keychain.`);
     return 0;

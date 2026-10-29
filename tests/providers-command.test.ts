@@ -15,10 +15,12 @@ import { PROVIDER_TEMPLATES } from '../src/provider-templates.js';
 import * as env from '../src/env.js';
 import * as addTemplate from '../src/registry/add-template.js';
 import * as providerAuth from '../src/registry/provider-auth.js';
+import { runProvidersAuth } from '../src/providers-command.js';
 
 const selectMock = vi.hoisted(() => vi.fn());
 const textMock = vi.hoisted(() => vi.fn());
 const passwordMock = vi.hoisted(() => vi.fn());
+const confirmMock = vi.hoisted(() => vi.fn());
 const spinnerMock = vi.hoisted(() => vi.fn(() => ({ start: vi.fn(), stop: vi.fn() })));
 
 vi.mock('@clack/prompts', async importOriginal => {
@@ -28,6 +30,7 @@ vi.mock('@clack/prompts', async importOriginal => {
     select: selectMock,
     text: textMock,
     password: passwordMock,
+    confirm: confirmMock,
     spinner: spinnerMock,
   };
 });
@@ -493,5 +496,78 @@ describe('provider menu: several OAuth accounts', () => {
       expect(optionValues()).not.toContain('new:openai-oauth');
       expect(providerAuth.authenticateProvider).toHaveBeenCalledWith('xai-oauth', { method: undefined });
     });
+  });
+});
+
+describe('runProvidersAuth: confirm before replacing a sign-in', () => {
+  let home: string;
+  const prevHome = process.env.RELAY_AI_HOME;
+  const prevTty = process.stdin.isTTY;
+  const entry = {
+    id: 'claude-code', templateId: 'claude-code', name: 'Claude Work', enabled: true, authType: 'oauth' as const,
+    authRef: 'keyring:oauth:provider:claude-code', api: { npm: '@ai-sdk/anthropic', url: '' }, addedAt: '2026-01-01T00:00:00.000Z',
+  };
+  const storedCredential = { type: 'oauth' as const, access: 'a', refresh: 'r', expires: Date.now() + 1000, accountId: 'work@example.com', providerData: { identity: { email: 'work@example.com' } } };
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'relay-ai-replace-'));
+    process.env.RELAY_AI_HOME = home;
+    confirmMock.mockReset();
+    saveRegistry({ schemaVersion: 1, providers: [entry] });
+    vi.spyOn(providerAuth, 'authenticateProvider').mockResolvedValue({ registryProvider: { name: 'Claude Work' } } as never);
+    vi.spyOn(env, 'readStoredOAuthCredential').mockResolvedValue(storedCredential);
+    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+  });
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.RELAY_AI_HOME;
+    else process.env.RELAY_AI_HOME = prevHome;
+    Object.defineProperty(process.stdin, 'isTTY', { value: prevTty, configurable: true });
+    rmSync(home, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  it('asks first, naming the provider and the account it would overwrite, and stops on "no"', async () => {
+    confirmMock.mockResolvedValue(false);
+
+    expect(await runProvidersAuth('claude-code')).toBe(0);
+
+    const message = confirmMock.mock.calls[0]?.[0].message as string;
+    expect(message).toContain('Claude Work');
+    expect(message).toContain('work@example.com');
+    expect(message).toMatch(/Add another account/);
+    expect(confirmMock.mock.calls[0]?.[0].initialValue).toBe(false);
+    expect(providerAuth.authenticateProvider).not.toHaveBeenCalled();
+  });
+
+  it('signs in again after "yes"', async () => {
+    confirmMock.mockResolvedValue(true);
+    await runProvidersAuth('claude-code');
+    expect(providerAuth.authenticateProvider).toHaveBeenCalledWith('claude-code', { method: undefined });
+  });
+
+  it('does not ask when adding another account', async () => {
+    await runProvidersAuth('claude-code', undefined, { addAccount: true });
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(providerAuth.authenticateProvider).toHaveBeenCalled();
+  });
+
+  it('does not ask when nothing is stored to overwrite', async () => {
+    vi.spyOn(env, 'readStoredOAuthCredential').mockResolvedValue(undefined);
+    await runProvidersAuth('claude-code');
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(providerAuth.authenticateProvider).toHaveBeenCalled();
+  });
+
+  it('does not ask for a provider that is not set up yet', async () => {
+    saveRegistry({ schemaVersion: 1, providers: [] });
+    await runProvidersAuth('claude-code');
+    expect(confirmMock).not.toHaveBeenCalled();
+  });
+
+  it('never prompts without a terminal (scripts must not hang)', async () => {
+    Object.defineProperty(process.stdin, 'isTTY', { value: undefined, configurable: true });
+    await runProvidersAuth('claude-code');
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(providerAuth.authenticateProvider).toHaveBeenCalled();
   });
 });

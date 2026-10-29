@@ -7928,7 +7928,7 @@ async function runNativeBrowserOAuth(providerId) {
 var DuplicateOAuthAccountError = class extends Error {
   constructor(accountLabel, existingName) {
     super(
-      `${accountLabel ? `This account (${accountLabel})` : "This account"} is already signed in as "${existingName}". Use "Sign in again" on that provider instead of adding it twice.`
+      `${accountLabel ? `This account (${accountLabel})` : "This account"} is already signed in as "${existingName}". Use "Sign in again" on that provider instead of adding it twice. If you meant to add a different account, switch accounts in your browser first (or use a private window) and try again.`
     );
     this.accountLabel = accountLabel;
     this.existingName = existingName;
@@ -8893,6 +8893,7 @@ export {
   isLikelyPlaceholderKey,
   resolveRefreshCredential,
   oauthAuthRef,
+  toOAuthRegistryId,
   buildImportProviderList,
   isOAuthImportProvider,
   listCredentialSkippedProviders,
@@ -9001,4 +9002,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-LM57SV6Y.js.map
+//# sourceMappingURL=chunk-4TGAAXO4.js.map

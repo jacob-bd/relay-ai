@@ -40,7 +40,7 @@ import {
   summarizeServerProviders,
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider
-} from "./chunk-LM57SV6Y.js";
+} from "./chunk-4TGAAXO4.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -1964,4 +1964,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-X3Z6M7SR.js.map
+//# sourceMappingURL=ui-command-CHMZZUQ3.js.map

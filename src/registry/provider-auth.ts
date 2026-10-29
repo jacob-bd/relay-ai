@@ -193,7 +193,8 @@ export class DuplicateOAuthAccountError extends Error {
   constructor(public readonly accountLabel: string | undefined, public readonly existingName: string) {
     super(
       `${accountLabel ? `This account (${accountLabel})` : 'This account'} is already signed in as "${existingName}". `
-      + 'Use "Sign in again" on that provider instead of adding it twice.',
+      + 'Use "Sign in again" on that provider instead of adding it twice. '
+      + 'If you meant to add a different account, switch accounts in your browser first (or use a private window) and try again.',
     );
     this.name = 'DuplicateOAuthAccountError';
   }

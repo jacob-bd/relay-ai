@@ -275,6 +275,12 @@ describe('authenticateProvider: several accounts of one provider', () => {
     expect(saveRegistry).not.toHaveBeenCalled();
   });
 
+  it('tells the user how to add a different account when the browser reused the old one', async () => {
+    withRegistry(chatgpt('openai-oauth'));
+    storedLogin('openai-oauth', 'personal@example.com');
+    await expect(authenticateProvider('openai-oauth', { addAccount: true })).rejects.toThrow(/private window/i);
+  });
+
   it('names the provider that already holds the account', async () => {
     withRegistry(chatgpt('openai-oauth', { name: 'Work ChatGPT' }));
     storedLogin('openai-oauth', 'personal@example.com');

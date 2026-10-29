@@ -128,12 +128,13 @@ import {
   supportsClaudeTransparentMode,
   supportsMultiAgentV2,
   syntheticTemplate,
+  toOAuthRegistryId,
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-LM57SV6Y.js";
+} from "./chunk-4TGAAXO4.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -201,6 +202,7 @@ import {
   readFromCredentialStore,
   readGlobalOpencodeCredential,
   readOpencodeAuthFile,
+  readStoredOAuthCredential,
   readStoredProviderCredential,
   recordLaunchSelection,
   refreshModelsDevCacheAsync,
@@ -2195,8 +2197,25 @@ async function runProvidersImport() {
   }
   return 0;
 }
+async function confirmReplaceSignIn(providerId) {
+  if (!process.stdin.isTTY) return true;
+  const target = loadRegistry().providers.find(
+    (pr) => pr.id === toOAuthRegistryId(providerId) && pr.authType === "oauth"
+  );
+  if (!target || !await readStoredOAuthCredential(target.authRef)) return true;
+  const account = await readOAuthAccountLabel(target);
+  const answer = await p8.confirm({
+    message: `Replace the sign-in for "${target.name}"${account ? ` (${account})` : ""}? The current login will be overwritten. Choose "Add another account" instead to keep it.`,
+    initialValue: false
+  });
+  return !p8.isCancel(answer) && answer === true;
+}
 async function runProvidersAuth(providerId, method, opts = {}) {
   try {
+    if (!opts.addAccount && !await confirmReplaceSignIn(providerId)) {
+      p8.cancel("Cancelled.");
+      return 0;
+    }
     const result = await authenticateProvider(providerId, { method, ...opts.addAccount ? { addAccount: true } : {} });
     p8.log.success(`Signed in to ${result.registryProvider.name} \u2014 credential saved to Keychain.`);
     return 0;
@@ -17542,7 +17561,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-X3Z6M7SR.js");
+    const { runUiCommand } = await import("./ui-command-CHMZZUQ3.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {
