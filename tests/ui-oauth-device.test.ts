@@ -10,6 +10,10 @@ describe('UI OAuth device helpers', () => {
     expect(oauthConnectionLabel({ authType: 'oauth', hasKey: false })).toBe('Not configured');
   });
 
+  it('says so when an account\'s sign-in has expired', () => {
+    expect(oauthConnectionLabel({ authType: 'oauth', hasKey: false, needsSignIn: true })).toBe('Sign-in expired');
+  });
+
   it('includes a sanitized subscription label when one is available', () => {
     expect(oauthConnectionLabel({
       authType: 'oauth',
@@ -97,5 +101,13 @@ describe('UI OAuth device helpers', () => {
     // ClinePass add, ClinePass re-auth/provider card, OAuth provider card sign-in, and "Add another account".
     expect(app.match(/=> beginDeviceOAuthFlow\(\{/g)).toHaveLength(4);
     expect(app).toContain('addAccount: true');
+  });
+
+  it('lets the user copy the browser sign-in link (to use a private window or another browser)', () => {
+    const app = readFileSync(fileURLToPath(new URL('../src/ui/public/app.js', import.meta.url)), 'utf8');
+    const prompt = app.slice(app.indexOf('function showBrowserSignInPrompt'), app.indexOf('async function beginDeviceOAuthFlow'));
+    expect(prompt).toContain('Copy sign-in link');
+    expect(prompt).toContain('copyTextToClipboard(authUrl)');
+    expect(prompt).toContain('private window');
   });
 });

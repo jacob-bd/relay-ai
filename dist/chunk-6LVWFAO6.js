@@ -2,7 +2,7 @@
 import {
   PROVIDER_TEMPLATES,
   init_provider_templates
-} from "./chunk-AUBFTFM5.js";
+} from "./chunk-6QOTT5I4.js";
 import {
   getAppHome,
   getConfigPath,
@@ -2764,13 +2764,11 @@ async function buildClaudeCodeAuthUrl(redirectUri = REDIRECT_URI) {
   return { authUrl: `${AUTHORIZE_URL2}?${params}`, codeVerifier: verifier, oauthState: state, redirectUri };
 }
 async function exchangeClaudeCodeToken(code, codeVerifier, redirectUri, state) {
-  let authCode = extractClaudeAuthCode(code);
-  let codeState = state;
-  if (authCode.includes("#")) {
-    const idx = authCode.indexOf("#");
-    codeState = authCode.slice(idx + 1) || state;
-    authCode = authCode.slice(0, idx);
+  const { code: authCode, state: returnedState } = parseClaudeAuthInput(code);
+  if (returnedState && returnedState !== state) {
+    throw new Error("Anthropic returned an unexpected state \u2014 start the sign-in again");
   }
+  const codeState = state;
   const res = await fetch(TOKEN_URL4, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -2785,6 +2783,24 @@ async function exchangeClaudeCodeToken(code, codeVerifier, redirectUri, state) {
   });
   if (!res.ok) throw new Error(`Claude Code token exchange failed: ${await res.text()}`);
   return res.json();
+}
+function parseClaudeAuthInput(input) {
+  let code = extractClaudeAuthCode(input);
+  let state;
+  try {
+    state = new URL(input.trim()).searchParams.get("state") ?? void 0;
+  } catch {
+    const trimmed = input.trim();
+    if (trimmed.startsWith("?") || trimmed.includes("code=")) {
+      state = new URLSearchParams(trimmed.startsWith("?") ? trimmed.slice(1) : trimmed).get("state") ?? void 0;
+    }
+  }
+  const hash = code.indexOf("#");
+  if (hash >= 0) {
+    state = code.slice(hash + 1) || state;
+    code = code.slice(0, hash);
+  }
+  return { code, ...state ? { state } : {} };
 }
 function extractClaudeAuthCode(input) {
   const trimmed = input.trim();
@@ -2880,6 +2896,11 @@ async function fetchClaudeCodeModels(accessToken) {
     throw new Error("Claude Code model discovery returned no models");
   }
   return entries;
+}
+async function completeClaudeCodeExchange(code, codeVerifier, oauthState, redirectUri) {
+  const tokens = await exchangeClaudeCodeToken(code, codeVerifier, redirectUri, oauthState);
+  const bootstrap = await fetchClaudeBootstrap(tokens.access_token);
+  return { tokens, bootstrap };
 }
 function guiCallbackRedirectUri(host) {
   return `http://${host}/oauth/callback`;
@@ -7858,9 +7879,11 @@ export {
   requestXaiDeviceCode,
   pollXaiDeviceCodeToken,
   runXaiDeviceCodeFlow,
+  buildClaudeCodeAuthUrl,
   generateCliUserID,
   runClaudeCodeOAuthFlow,
   fetchClaudeCodeModels,
+  completeClaudeCodeExchange,
   guiCallbackRedirectUri,
   ANTIGRAVITY_USER_AGENT,
   ANTIGRAVITY_BASE_URLS,
@@ -7905,4 +7928,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-4UDNE6ZB.js.map
+//# sourceMappingURL=chunk-6LVWFAO6.js.map

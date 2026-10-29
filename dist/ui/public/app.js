@@ -1162,20 +1162,87 @@ function pollOAuthSession({ sessionId, signInButton, refreshButton, feedback, on
   }, 2000);
 }
 
-// Browser sign-in (Antigravity): the page opens only when the user clicks the button;
-// the callback then lands on this server and the poll below picks it up.
-function showBrowserSignInPrompt(feedback, authUrl) {
+// Browser sign-in: the page opens only when the user clicks the button. Antigravity returns to this
+// server by itself; Claude Code shows a code on Anthropic's page that the user pastes into the box
+// (`codeSessionId` is set for that case).
+function showBrowserSignInPrompt(feedback, authUrl, codeSessionId = null) {
   const note = document.createElement('div');
-  note.textContent = 'Open the Google sign-in page, finish signing in there, and this page updates by itself.';
+  note.textContent = codeSessionId
+    ? 'Open the sign-in page, sign in with the account you want, then copy the code Anthropic shows and paste it below.'
+    : 'Open the Google sign-in page, finish signing in there, and this page updates by itself.';
   const openButton = document.createElement('button');
   openButton.type = 'button';
   openButton.className = 'btn btn-primary';
-  openButton.textContent = 'Open Google sign-in';
+  openButton.textContent = codeSessionId ? 'Open Claude sign-in' : 'Open Google sign-in';
   openButton.style.marginTop = '8px';
   openButton.addEventListener('click', () => {
     window.open(authUrl, '_blank', 'noopener,noreferrer');
   });
-  feedback.replaceChildren(note, openButton);
+
+  // Sign-in pages reuse whichever account the browser is already logged into. To add a different
+  // account, the link can be copied into a private window or another browser.
+  const copyLinkButton = document.createElement('button');
+  copyLinkButton.type = 'button';
+  copyLinkButton.className = 'btn btn-ghost';
+  copyLinkButton.textContent = 'Copy sign-in link';
+  copyLinkButton.style.cssText = 'margin-top:8px;margin-left:8px';
+  copyLinkButton.addEventListener('click', async () => {
+    try {
+      await copyTextToClipboard(authUrl);
+      copyLinkButton.textContent = 'Copied ✓';
+    } catch {
+      copyLinkButton.textContent = 'Copy failed';
+    }
+    setTimeout(() => { copyLinkButton.textContent = 'Copy sign-in link'; }, 1800);
+  });
+  const privateHint = document.createElement('div');
+  privateHint.className = 'oauth-device-note';
+  privateHint.style.marginTop = '6px';
+  privateHint.textContent = 'Signing in as a different account than your browser\'s? Paste the link into a private window.';
+  const parts = [note, openButton, copyLinkButton, privateHint];
+
+  if (codeSessionId) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px';
+    const codeInput = document.createElement('input');
+    codeInput.type = 'text';
+    codeInput.className = 'key-input';
+    codeInput.placeholder = 'Paste the code from Anthropic…';
+    codeInput.autocomplete = 'off';
+    codeInput.style.flex = '1';
+    codeInput.style.minWidth = '220px';
+    const submitButton = document.createElement('button');
+    submitButton.type = 'button';
+    submitButton.className = 'btn btn-ghost';
+    submitButton.textContent = 'Submit code';
+    const codeFeedback = document.createElement('div');
+    codeFeedback.className = 'key-feedback';
+    const submit = async () => {
+      const code = codeInput.value.trim();
+      if (!code) {
+        codeFeedback.textContent = 'Paste the code first.';
+        codeFeedback.className = 'key-feedback error';
+        return;
+      }
+      submitButton.disabled = true;
+      const result = await api('POST', '/api/providers/oauth/code', { sessionId: codeSessionId, code });
+      if (result.ok) {
+        codeInput.disabled = true;
+        codeFeedback.textContent = 'Checking the code…';
+        codeFeedback.className = 'key-feedback muted';
+      } else {
+        submitButton.disabled = false;
+        codeFeedback.textContent = result.error ?? 'Could not submit the code';
+        codeFeedback.className = 'key-feedback error';
+      }
+    };
+    submitButton.addEventListener('click', submit);
+    codeInput.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+    row.append(codeInput, submitButton);
+    parts.push(row, codeFeedback);
+  }
+
+  feedback.replaceChildren(...parts);
   feedback.className = 'key-feedback muted';
 }
 
@@ -1219,7 +1286,7 @@ async function beginDeviceOAuthFlow({ providerId, addAccount = false, signInButt
       reenable();
       return;
     }
-    showBrowserSignInPrompt(feedback, startResult.authUrl);
+    showBrowserSignInPrompt(feedback, startResult.authUrl, startResult.needsCode ? startResult.sessionId : null);
     pollOAuthSession({ sessionId: startResult.sessionId, signInButton, refreshButton, feedback, onDone });
     return;
   }
@@ -1573,6 +1640,7 @@ function buildProviderBodyContent(provider) {
     content.appendChild(manualButton);
   }
   if (provider.customEndpoint) content.appendChild(buildEditCustomEndpointRow(provider));
+  if (provider.canAddKeyAccount) content.appendChild(buildAddKeyAccountRow(provider));
   content.appendChild(buildRenameProviderRow(provider));
   content.appendChild(buildDeleteProviderRow(provider));
   return content;
@@ -1750,6 +1818,87 @@ function buildEditCustomEndpointRow(provider) {
   return wrapper;
 }
 
+// A second API key for the same provider becomes its own provider card, numbered and renameable.
+function buildAddKeyAccountRow(provider) {
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'margin-top:12px;padding-top:12px;border-top:1px solid oklch(22% 0.015 265)';
+
+  const addBtn = document.createElement('button');
+  addBtn.className = 'btn btn-ghost';
+  addBtn.textContent = 'Add another account';
+
+  const form = document.createElement('div');
+  form.style.cssText = 'display:none;align-items:center;gap:8px;flex-wrap:wrap';
+
+  const keyInput = document.createElement('input');
+  keyInput.type = 'password';
+  keyInput.className = 'key-input';
+  keyInput.placeholder = 'Paste the other account\'s API key…';
+  keyInput.autocomplete = 'off';
+  keyInput.style.flex = '1';
+  keyInput.style.minWidth = '220px';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn btn-primary';
+  saveBtn.textContent = 'Add account';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-ghost';
+  cancelBtn.textContent = 'Cancel';
+
+  const feedback = document.createElement('div');
+  feedback.className = 'key-feedback';
+
+  form.append(keyInput, saveBtn, cancelBtn);
+  wrapper.append(addBtn, form, feedback);
+
+  addBtn.addEventListener('click', () => {
+    addBtn.style.display = 'none';
+    form.style.display = 'flex';
+    keyInput.focus();
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    form.style.display = 'none';
+    addBtn.style.display = '';
+    keyInput.value = '';
+    feedback.textContent = '';
+    feedback.className = 'key-feedback';
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    const key = keyInput.value.trim();
+    if (!key) {
+      feedback.textContent = 'Paste an API key first.';
+      feedback.className = 'key-feedback error';
+      return;
+    }
+    saveBtn.disabled = true;
+    feedback.textContent = 'Testing the key and fetching models…';
+    feedback.className = 'key-feedback muted';
+    const result = await api('POST', '/api/providers/add', { templateId: provider.templateId, key, addAccount: true });
+    saveBtn.disabled = false;
+    if (result.ok) {
+      keyInput.value = '';
+      showToast(`${result.name} added — rename it from its card`);
+      state.modelsLoaded = false;
+      await loadTemplates();
+      await initModels();
+      renderProviders();
+    } else {
+      feedback.textContent = [result.error ?? 'Could not add the account', result.hint].filter(Boolean).join(' — ');
+      feedback.className = 'key-feedback error';
+    }
+  });
+
+  keyInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') saveBtn.click();
+    if (e.key === 'Escape') cancelBtn.click();
+  });
+
+  return wrapper;
+}
+
 function buildRenameProviderRow(provider) {
   const wrapper = document.createElement('div');
   wrapper.style.cssText = 'margin-top:12px;padding-top:12px;border-top:1px solid oklch(22% 0.015 265)';
@@ -1898,7 +2047,9 @@ function buildOAuthProviderBodyContent(provider) {
   status.className = 'oauth-device-note';
   status.textContent = provider.hasKey
     ? `Signed in via OAuth${provider.subscription?.label ? ` · ${provider.subscription.label}` : ''}.`
-    : 'Not signed in. Generate a one-time code to connect this provider.';
+    : provider.needsSignIn
+      ? `Sign-in expired${provider.signInIssue ? ` — ${provider.signInIssue}` : ''}. Sign in again to keep using this account.`
+      : 'Not signed in. Generate a one-time code to connect this provider.';
 
   // Who is signed in — a read-only hint for choosing a name; never used as the label.
   const accountNote = document.createElement('div');
@@ -1913,7 +2064,7 @@ function buildOAuthProviderBodyContent(provider) {
 
   const signInBtn = document.createElement('button');
   signInBtn.className = 'btn btn-primary';
-  signInBtn.textContent = provider.hasKey ? 'Re-authenticate' : 'Get sign-in code';
+  signInBtn.textContent = provider.hasKey ? 'Re-authenticate' : provider.needsSignIn ? 'Sign in again' : 'Get sign-in code';
 
   const refreshBtn = document.createElement('button');
   refreshBtn.className = 'btn btn-ghost';

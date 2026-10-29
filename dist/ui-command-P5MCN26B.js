@@ -4,6 +4,7 @@ import {
   addProviderFromTemplate,
   buildDedupedModelRows,
   checkForUpdates,
+  claudeCodeProviderData,
   copilotPlanTier,
   createGatewayModelCatalog,
   ensureOpencodeCloudProviders,
@@ -40,14 +41,16 @@ import {
   summarizeServerProviders,
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider
-} from "./chunk-4TGAAXO4.js";
+} from "./chunk-JHE5LSBF.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
   MAX_MODEL_CATALOG,
   VERSION,
   buildAntigravityAuthUrl,
+  buildClaudeCodeAuthUrl,
   completeAntigravityExchange,
+  completeClaudeCodeExchange,
   describeOAuthAccount,
   formatOAuthAccount,
   freeStatusLabel,
@@ -97,13 +100,15 @@ import {
   supportsManualModels,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-4UDNE6ZB.js";
+} from "./chunk-6LVWFAO6.js";
 import {
+  getTemplateById,
   init_provider_templates,
   listAddableTemplates,
   listVisibleOAuthTemplates,
-  provider_templates_exports
-} from "./chunk-AUBFTFM5.js";
+  provider_templates_exports,
+  supportsAdditionalApiAccounts
+} from "./chunk-6QOTT5I4.js";
 import {
   getAppHome
 } from "./chunk-KNCSTHR4.js";
@@ -698,6 +703,8 @@ function handleUiApiRequest(req, res, opts = {}) {
     handleManualModel(req, res, "remove");
   } else if (url === "/api/providers/oauth/start" && req.method === "POST") {
     handleOAuthStart(req, res, opts);
+  } else if (url === "/api/providers/oauth/code" && req.method === "POST") {
+    handleOAuthCode(req, res);
   } else if (url.startsWith("/api/providers/oauth/status") && req.method === "GET") {
     handleOAuthStatus(req, res);
   } else if (url.startsWith("/oauth/callback") && req.method === "GET") {
@@ -755,9 +762,15 @@ async function handlePostConfig(req, res) {
     sendJson(res, 400, { error: String(err) });
   }
 }
+function keyAccountFields(entry) {
+  if (!entry || entry.authType === "oauth") return {};
+  const template = getTemplateById(entry.templateId);
+  if (!template || !supportsAdditionalApiAccounts(template) || template.accountIdPrompt || template.urlPrompt) return {};
+  return { canAddKeyAccount: true, templateId: template.id };
+}
 function canAddAccountField(providerId, authType, uiMode) {
   const kind = providerKind(providerId);
-  return authType === "oauth" && supportsAdditionalOAuthAccounts(kind) && kind !== "claude-code" && canStartOAuthFromUi(providerId, uiMode) ? { canAddAccount: true } : {};
+  return authType === "oauth" && supportsAdditionalOAuthAccounts(kind) && canStartOAuthFromUi(providerId, uiMode) ? { canAddAccount: true } : {};
 }
 function accountFieldFrom(label) {
   return label ? { account: label } : {};
@@ -804,12 +817,13 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
       hasKey: Boolean(p2.apiKey),
       freeAccess: !p2.apiKey && (() => {
         const t = registry.providers.find((rp) => rp.id === p2.id)?.templateId ?? p2.id;
-        const { getTemplateById } = (init_provider_templates(), __toCommonJS(provider_templates_exports));
-        return getTemplateById(t)?.anonymousFreeModels === true;
+        const { getTemplateById: getTemplateById2 } = (init_provider_templates(), __toCommonJS(provider_templates_exports));
+        return getTemplateById2(t)?.anonymousFreeModels === true;
       })(),
       authType: p2.authType ?? "api",
       ...accountField(p2),
       ...canAddAccountField(p2.id, p2.authType, uiMode),
+      ...keyAccountFields(registry.providers.find((rp) => rp.id === p2.id)),
       ...manualMetadata(p2.id),
       // Copilot's runtime catalog is policy-filtered by account plan. Never replace
       // that safe count with the larger raw cache count.
@@ -831,20 +845,29 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
     const materializedIds = new Set(catalog.map((p2) => p2.id));
     for (const rp of registry.providers) {
       if (rp.authType !== "oauth" || !isUiCatalogOAuthProvider(rp.id, uiMode) || !rp.enabled || materializedIds.has(rp.id)) continue;
-      const credential = await resolveProviderCredential(rp.id, rp.authRef).catch(() => null);
-      if (!credential) continue;
+      let credential = null;
+      let signInIssue;
+      try {
+        credential = await resolveProviderCredential(rp.id, rp.authRef);
+      } catch (err) {
+        signInIssue = (err instanceof Error ? err.message : String(err)).replace(/\.?\s*Sign in again: relay-ai providers auth \S+/, "").slice(0, 200);
+      }
+      if (!credential && signInIssue === void 0) continue;
+      const needsSignIn = !credential;
       providers.push({
         id: rp.id,
         name: rp.name,
         favoriteName: favoriteProviderDisplayName({ id: rp.id, name: rp.name, authType: rp.authType, nameCustomized: rp.nameCustomized }),
-        hasKey: true,
+        hasKey: !needsSignIn,
+        // Keep an expired account on the page so it can be signed in again, renamed or removed.
+        ...needsSignIn ? { needsSignIn: true, signInIssue } : {},
         freeAccess: false,
         authType: "oauth",
         ...isProviderKind(rp.id, "github-copilot") ? {} : accountFieldFrom(await readOAuthAccountLabel(rp)),
         ...canAddAccountField(rp.id, "oauth", uiMode),
         ...manualMetadata(rp.id),
-        modelCount: 0,
-        ...isProviderKind(rp.id, "github-copilot") ? { subscription: copilotSubscription(void 0) } : {},
+        modelCount: needsSignIn ? getProviderModels(rp).length : 0,
+        ...isProviderKind(rp.id, "github-copilot") && !needsSignIn ? { subscription: copilotSubscription(void 0) } : {},
         models: []
       });
     }
@@ -900,7 +923,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-XORHPGC2.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-ZOYJK2BQ.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1080,10 +1103,15 @@ async function handleAddProvider(req, res) {
       sendJson(res, 400, { error: "templateId required" });
       return;
     }
-    const { listSupportedTemplates } = await import("./provider-templates-RUGZQ6SD.js");
+    const { listSupportedTemplates } = await import("./provider-templates-E7GHPS72.js");
     const template = listSupportedTemplates().find((t) => t.id === templateId);
     if (!template) {
       sendJson(res, 404, { error: `Template '${templateId}' not found` });
+      return;
+    }
+    const addAccount = body.addAccount === true;
+    if (addAccount && !supportsAdditionalApiAccounts(template)) {
+      sendJson(res, 400, { error: `A second account is not available for ${template.name}.` });
       return;
     }
     const rawKey = typeof key === "string" ? key.trim() : "";
@@ -1116,10 +1144,11 @@ async function handleAddProvider(req, res) {
     const replaceExisting = template.id === "cline-pass" && body.replaceExisting === true;
     const result = await addProviderFromTemplate(template, keyText, {
       baseUrl: baseUrlOverride,
-      replaceExisting
+      replaceExisting,
+      ...addAccount ? { addAccount: true } : {}
     });
     if (result.added) {
-      sendJson(res, 200, { ok: true, name: template.name, count: result.modelCount ?? 0, ...result.notice ? { notice: result.notice } : {} });
+      sendJson(res, 200, { ok: true, name: result.provider?.name ?? template.name, count: result.modelCount ?? 0, ...result.notice ? { notice: result.notice } : {} });
     } else {
       sendJson(res, 200, { ok: false, error: result.error, hint: result.hint });
     }
@@ -1293,14 +1322,42 @@ async function handleOAuthStart(req, res, opts = {}) {
       return;
     }
     if (PKCE_PROVIDER_IDS.has(kind)) {
-      if (kind === "claude-code") {
-        sendJson(res, 400, {
-          error: `Claude Code OAuth must be completed in the terminal: relay-ai providers auth claude-code${addAccount ? " --new" : ""}`
-        });
+      if (body.acceptRisk !== true) {
+        sendJson(res, 200, { needsConfirmation: true, risk: subscriptionOAuthRiskLines(kind) });
         return;
       }
-      if (body.acceptRisk !== true) {
-        sendJson(res, 200, { needsConfirmation: true, risk: subscriptionOAuthRiskLines("antigravity") });
+      if (kind === "claude-code") {
+        const { authUrl: authUrl2, codeVerifier: codeVerifier2, oauthState: oauthState2, redirectUri: redirectUri2 } = await buildClaudeCodeAuthUrl();
+        const session3 = {
+          status: "pending",
+          url: authUrl2,
+          providerId,
+          codeVerifier: codeVerifier2,
+          oauthState: oauthState2,
+          redirectUri: redirectUri2,
+          awaitsCode: true
+        };
+        oauthSessions.set(sessionId, session3);
+        const codePromise2 = new Promise((resolve, reject) => {
+          session3.codeResolver = resolve;
+          session3.errorRejecter = (err) => reject(new Error(err));
+          setTimeout(() => reject(new Error("OAuth timeout \u2014 sign-in not completed")), 10 * 60 * 1e3);
+        });
+        codePromise2.then(async (code) => {
+          const { tokens, bootstrap } = await completeClaudeCodeExchange(code, codeVerifier2, oauthState2, redirectUri2);
+          const savedId = await saveNativeOAuthCredential(
+            providerId,
+            tokens,
+            bootstrap.accountId,
+            claudeCodeProviderData(bootstrap),
+            { addAccount }
+          );
+          await refreshOAuthProviderModels(typeof savedId === "string" ? savedId : providerId);
+          oauthSessions.set(sessionId, { ...session3, status: "done" });
+        }).catch((err) => {
+          oauthSessions.set(sessionId, { ...session3, status: "error", error: err instanceof Error ? err.message : String(err) });
+        });
+        sendJson(res, 200, { sessionId, authUrl: authUrl2, pkce: true, needsCode: true });
         return;
       }
       const host = req.headers.host ?? "127.0.0.1";
@@ -1361,6 +1418,32 @@ async function handleOAuthStart(req, res, opts = {}) {
       oauthSessions.set(sessionId, { ...session, status: "error", error: err instanceof Error ? err.message : String(err) });
     });
     sendJson(res, 200, { sessionId, url, userCode: device.user_code });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+var MAX_PASTED_CODE_LENGTH = 4e3;
+async function handleOAuthCode(req, res) {
+  try {
+    const body = JSON.parse(await readBody(req));
+    const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+    const code = typeof body.code === "string" ? body.code.trim() : "";
+    if (!sessionId || !code || code.length > MAX_PASTED_CODE_LENGTH) {
+      sendJson(res, 400, { error: "sessionId and a code are required." });
+      return;
+    }
+    const session = oauthSessions.get(sessionId);
+    if (!session) {
+      sendJson(res, 404, { error: "Session not found or expired" });
+      return;
+    }
+    if (!session.awaitsCode || session.status !== "pending" || !session.codeResolver) {
+      sendJson(res, 400, { error: "This sign-in is not waiting for a code." });
+      return;
+    }
+    session.awaitsCode = false;
+    session.codeResolver(code);
+    sendJson(res, 200, { ok: true });
   } catch (err) {
     sendJson(res, 500, { error: String(err) });
   }
@@ -1964,4 +2047,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-CHMZZUQ3.js.map
+//# sourceMappingURL=ui-command-P5MCN26B.js.map

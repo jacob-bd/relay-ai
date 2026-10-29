@@ -95,13 +95,6 @@ describe('UI sign-in for Antigravity', () => {
     expect(oauth.build).not.toHaveBeenCalled();
   });
 
-  it('tells Claude Code users to sign in from the terminal', async () => {
-    const result = await call('POST', '/api/providers/oauth/start', { providerId: 'claude-code', acceptRisk: true });
-
-    expect(result.code).toBe(400);
-    expect(result.body.error).toContain('relay-ai providers auth claude-code');
-  });
-
   it('still rejects unknown providers', async () => {
     const result = await call('POST', '/api/providers/oauth/start', { providerId: 'mystery' });
     expect(result.code).toBe(400);

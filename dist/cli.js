@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-FVPTOYBW.js";
+} from "./chunk-MC3KTVAQ.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -134,7 +134,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-4TGAAXO4.js";
+} from "./chunk-JHE5LSBF.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -234,15 +234,16 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-4UDNE6ZB.js";
+} from "./chunk-6LVWFAO6.js";
 import {
   filterTemplates,
   getTemplateById,
   init_provider_templates,
   listAddableTemplates,
   listSupportedTemplates,
-  listVisibleOAuthTemplates
-} from "./chunk-AUBFTFM5.js";
+  listVisibleOAuthTemplates,
+  supportsAdditionalApiAccounts
+} from "./chunk-6QOTT5I4.js";
 import {
   DEFAULT_VERTEX_MODELS,
   getAppHome,
@@ -2059,8 +2060,13 @@ function parseProvidersArgs(args) {
   const [first, ...rest] = args;
   if (first === "--help" || first === "-h") return { subcommand: "help", showHelp: true };
   if (first === "add") {
-    if (rest.length > 1 || rest[0]?.startsWith("-")) return { subcommand: "add", showHelp: false, error: `Unknown add option: ${rest.find((a) => a.startsWith("-")) ?? rest[1]}` };
-    if (rest.length === 1) return { subcommand: "add", showHelp: false, addTemplateId: rest[0] };
+    const addAccount = rest.includes("--new");
+    const operands = rest.filter((arg) => arg !== "--new");
+    const unknownOption = operands.find((arg) => arg.startsWith("-"));
+    if (unknownOption) return { subcommand: "add", showHelp: false, error: `Unknown add option: ${unknownOption}` };
+    if (operands.length > 1) return { subcommand: "add", showHelp: false, error: `Unknown add option: ${operands[1]}` };
+    if (addAccount && operands.length === 0) return { subcommand: "add", showHelp: false, error: "Usage: relay-ai providers add <id> --new" };
+    if (operands.length === 1) return { subcommand: "add", showHelp: false, addTemplateId: operands[0], ...addAccount ? { addAccount } : {} };
     return { subcommand: "add", showHelp: false };
   }
   if (first === "import") {
@@ -2112,7 +2118,7 @@ function providersHelpText() {
 
 ${pc4.bold("Usage:")}
   relay-ai providers
-  relay-ai providers add [id]
+  relay-ai providers add [id] [--new]
   relay-ai providers import
   relay-ai providers list
   relay-ai providers remove <id>
@@ -2122,7 +2128,7 @@ ${pc4.bold("Usage:")}
 
 ${pc4.bold("Subcommands:")}
   (none)      Provider hub wizard ${pc4.dim("[Phase 1.1]")}
-  add         Add a provider (Groq, Mistral, Together AI, \u2026) ${pc4.dim("[Phase 1.1]")}
+  add         Add a provider (Groq, Mistral, Together AI, \u2026); with --new, a second account of one ${pc4.dim("[Phase 1.1]")}
   import      Optional one-time import from OpenCode CLI ${pc4.dim("[Phase 1.0]")}
   auth        Sign in with OAuth (Antigravity, GitHub Copilot, xAI, OpenAI, ClinePass)
   list        Show configured providers ${pc4.dim("[Phase 1.0]")}
@@ -2425,11 +2431,17 @@ async function runDualAuthTemplateFlow(template, existing) {
   logConnected(template.name, result.modelCount ?? 0);
   return 0;
 }
-async function runTemplateAddFlow(templateId) {
-  const addable = listAddableTemplates(loadRegistry().providers.map((p17) => p17.id));
+async function runTemplateAddFlow(templateId, opts = {}) {
+  const addAccount = opts.addAccount === true;
+  const addable = addAccount ? listSupportedTemplates().filter(supportsAdditionalApiAccounts) : listAddableTemplates(loadRegistry().providers.map((p17) => p17.id));
   if (templateId && !addable.some((t) => t.id === templateId)) {
-    p8.log.error(`'${templateId}' is not an addable provider, or it is already configured.`);
-    p8.log.info("Run relay-ai providers list to see configured providers, or relay-ai providers add to browse.");
+    if (addAccount) {
+      p8.log.error(`'${templateId}' does not support a second account.`);
+      p8.log.info("Run relay-ai providers add to browse providers.");
+    } else {
+      p8.log.error(`'${templateId}' is not an addable provider, or it is already configured.`);
+      p8.log.info("Run relay-ai providers list to see configured providers, or relay-ai providers add to browse.");
+    }
     return 1;
   }
   if (addable.length === 0) {
@@ -2534,13 +2546,13 @@ async function runTemplateAddFlow(templateId) {
   const apiKey = template.apiKeyOptional && !rawKey && !template.anonymousFreeModels ? template.id : rawKey;
   const spinner11 = p8.spinner();
   spinner11.start(`Testing connection to ${template.name}...`);
-  const result = await addProviderFromTemplate(template, apiKey, { baseUrl: baseUrlOverride });
+  const result = await addProviderFromTemplate(template, apiKey, { baseUrl: baseUrlOverride, ...addAccount ? { addAccount: true } : {} });
   spinner11.stop("");
   if (!result.added) {
     showProviderAddFailure(result.error, result.hint, "Could not add provider.");
     return 1;
   }
-  logConnected(template.name, result.modelCount ?? 0);
+  logConnected(result.provider?.name ?? template.name, result.modelCount ?? 0);
   return 0;
 }
 async function runCustomEndpointAddFlow() {
@@ -2757,8 +2769,8 @@ Headers: ${headerSummary}`);
   }
   return 0;
 }
-async function runProvidersAdd(templateId) {
-  if (templateId) return runTemplateAddFlow(templateId);
+async function runProvidersAdd(templateId, opts = {}) {
+  if (templateId) return runTemplateAddFlow(templateId, opts);
   const registry = loadRegistry();
   const hasOpencode = findOpencodeBinary() !== null;
   const options = [];
@@ -2927,6 +2939,16 @@ async function runProviderDetail(id) {
       hint: "Sign in with a different account; it appears as a separate provider you can rename"
     });
   }
+  if (provider.authType !== "oauth" && !customEndpointKind(provider)) {
+    const keyTemplate = getTemplateById(provider.templateId);
+    if (keyTemplate && supportsAdditionalApiAccounts(keyTemplate)) {
+      detailOptions.push({
+        value: "add-account",
+        label: "Add another account",
+        hint: "Add a second API key; it appears as a separate provider you can rename"
+      });
+    }
+  }
   const editableCustomKind = customEndpointKind(provider);
   if (editableCustomKind) {
     detailOptions.push({
@@ -2990,7 +3012,8 @@ async function runProviderDetail(id) {
     return await runProvidersAuth(id) === 0 ? "back" : "failed";
   }
   if (action === "add-account") {
-    return await runProvidersAuth(providerKind(id), void 0, { addAccount: true }) === 0 ? "back" : "failed";
+    const code2 = provider.authType === "oauth" ? await runProvidersAuth(providerKind(id), void 0, { addAccount: true }) : await runTemplateAddFlow(provider.templateId, { addAccount: true });
+    return code2 === 0 ? "back" : "failed";
   }
   if (action === "rename") {
     return await runProviderRenamePrompt(provider) === 0 ? "back" : "failed";
@@ -3152,7 +3175,7 @@ async function runProvidersCommand(args) {
   }
   if (parsed.subcommand === "import") return runProvidersImport();
   if (parsed.subcommand === "list") return runProvidersList();
-  if (parsed.subcommand === "add") return runProvidersAdd(parsed.addTemplateId);
+  if (parsed.subcommand === "add") return runProvidersAdd(parsed.addTemplateId, { addAccount: parsed.addAccount });
   if (parsed.subcommand === "remove" && parsed.removeId) return runProvidersRemove(parsed.removeId);
   if (parsed.subcommand === "rename" && parsed.removeId && parsed.renameName) {
     return runProvidersRename(parsed.removeId, parsed.renameName);
@@ -17561,7 +17584,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-CHMZZUQ3.js");
+    const { runUiCommand } = await import("./ui-command-P5MCN26B.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

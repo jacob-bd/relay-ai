@@ -92,10 +92,9 @@ describe('UI: several OAuth accounts', () => {
     expect(result.error).toContain('already signed in');
   });
 
-  it('Claude Code accounts are added from the terminal, with a clear message', async () => {
-    const result = await call('POST', '/api/providers/oauth/start', { providerId: 'claude-code', addAccount: true, acceptRisk: true });
-    expect(result.code).toBe(400);
-    expect(result.body.error).toContain('relay-ai providers auth claude-code --new');
+  it('Claude Code accounts can be added from the UI too (after the risk confirmation)', async () => {
+    const first = await call('POST', '/api/providers/oauth/start', { providerId: 'claude-code', addAccount: true });
+    expect(first.body.needsConfirmation).toBe(true);
   });
 
   it('flags which OAuth cards can add another account, including numbered ones', async () => {
@@ -112,7 +111,7 @@ describe('UI: several OAuth accounts', () => {
     expect(byId['openai-oauth'].canAddAccount).toBe(true);
     expect(byId['openai-oauth-2'].canAddAccount).toBe(true);
     expect(byId['antigravity'].canAddAccount).toBe(true);
-    expect(byId['claude-code'].canAddAccount).toBeUndefined();   // its sign-in is terminal-only
+    expect(byId['claude-code'].canAddAccount).toBe(true);
     expect(byId['groq'].canAddAccount).toBeUndefined();
   });
 

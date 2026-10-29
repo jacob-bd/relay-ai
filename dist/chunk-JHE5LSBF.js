@@ -136,11 +136,12 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-4UDNE6ZB.js";
+} from "./chunk-6LVWFAO6.js";
 import {
   getTemplateById,
-  init_provider_templates
-} from "./chunk-AUBFTFM5.js";
+  init_provider_templates,
+  supportsAdditionalApiAccounts
+} from "./chunk-6QOTT5I4.js";
 import {
   getAppHome,
   hasApplicationDefaultCredentials,
@@ -7566,6 +7567,9 @@ async function readOAuthAccountLabel(provider) {
   }
 }
 
+// src/registry/add-template.ts
+init_provider_templates();
+
 // src/registry/vertex-model-check.ts
 import { generateText as generateText2 } from "ai";
 function errorStatus(err) {
@@ -7655,10 +7659,26 @@ function filterAnonymousFreeModels(models, template) {
     templateId: template.id
   })));
 }
+function sameServer(a, b) {
+  const normalize = (url) => (url ?? "").trim().replace(/\/+$/, "").toLowerCase();
+  return normalize(a) === normalize(b);
+}
+async function findAccountWithSameKey(providers, templateId, key, baseUrl) {
+  for (const other of providers) {
+    if (providerKind(other.id) !== templateId || other.authType === "oauth") continue;
+    if (!sameServer(other.api.url, baseUrl)) continue;
+    if (await readStoredProviderCredential(other.authRef) === key) return other;
+  }
+  return void 0;
+}
 async function addProviderFromTemplate(template, apiKey, opts) {
   const trimmedKey = apiKey.trim();
   if (!trimmedKey && !template.apiKeyOptional) {
     return { added: false, error: "API key cannot be empty." };
+  }
+  const addAccount = opts?.addAccount === true;
+  if (addAccount && !supportsAdditionalApiAccounts(template)) {
+    return { added: false, error: `A second account is not available for ${template.name}.` };
   }
   if (template.modelSource === "zen-go-api") {
     return addOpencodeCloudFromApiKey(trimmedKey);
@@ -7668,7 +7688,9 @@ async function addProviderFromTemplate(template, apiKey, opts) {
     return { added: false, error: packageError };
   }
   const registry = loadRegistry();
-  const existing = registry.providers.find((p8) => p8.id === template.id);
+  const takenIds = registry.providers.map((p8) => p8.id);
+  const providerId = addAccount && takenIds.includes(template.id) ? nextInstanceId(template.id, takenIds) : template.id;
+  const existing = addAccount ? void 0 : registry.providers.find((p8) => p8.id === template.id);
   if (existing && !opts?.replaceExisting) {
     return {
       added: false,
@@ -7745,7 +7767,17 @@ async function addProviderFromTemplate(template, apiKey, opts) {
       hint: template.signupUrl ? `Add a ${template.name} API key from ${template.signupUrl} to use paid models.` : void 0
     };
   }
-  const authRef = `keyring:provider:${template.id}`;
+  if (addAccount && trimmedKey) {
+    const clash = await findAccountWithSameKey(registry.providers, template.id, trimmedKey, fetched.baseUrl);
+    if (clash) {
+      return {
+        added: false,
+        error: `This key is already saved as "${clash.name}" for the same server.`,
+        hint: 'Use "Change API key" on that provider, or add a different key.'
+      };
+    }
+  }
+  const authRef = `keyring:provider:${providerId}`;
   const saved = trimmedKey ? await saveProviderCredential(authRef, trimmedKey) : true;
   if (!saved) {
     return {
@@ -7764,7 +7796,7 @@ async function addProviderFromTemplate(template, apiKey, opts) {
   );
   const providerName = existing?.nameCustomized ? existing.name : uniqueProviderName(registry.providers, template.name, existing?.id);
   const entry = {
-    id: template.id,
+    id: providerId,
     templateId: template.id,
     name: providerName,
     ...existing?.nameCustomized || providerName !== template.name ? { nameCustomized: true } : {},
@@ -7796,6 +7828,17 @@ async function addProviderFromTemplate(template, apiKey, opts) {
   }
   enrichPricingAsync();
   return { added: true, provider: entry, modelCount: pricedModels.length, ...notice ? { notice } : {} };
+}
+
+// src/oauth/claude-code-account.ts
+function claudeCodeProviderData(bootstrap) {
+  const data = { cliUserID: generateCliUserID() };
+  if (bootstrap.accountId) data.accountUUID = bootstrap.accountId;
+  if (bootstrap.organizationId) data.organizationUUID = bootstrap.organizationId;
+  if (bootstrap.organizationName) data.organizationName = bootstrap.organizationName;
+  if (bootstrap.plan) data.plan = bootstrap.plan;
+  if (bootstrap.email) data.identity = { email: bootstrap.email };
+  return data;
 }
 
 // src/registry/provider-auth.ts
@@ -7895,13 +7938,7 @@ async function runNativeBrowserOAuth(providerId) {
         return code;
       });
       spinner4.stop(pc5.green("Signed in to Claude Code"));
-      const providerData = { cliUserID: generateCliUserID() };
-      if (bootstrap.accountId) providerData.accountUUID = bootstrap.accountId;
-      if (bootstrap.email) providerData.identity = { email: bootstrap.email };
-      if (bootstrap.organizationId) providerData.organizationUUID = bootstrap.organizationId;
-      if (bootstrap.organizationName) providerData.organizationName = bootstrap.organizationName;
-      if (bootstrap.plan) providerData.plan = bootstrap.plan;
-      return tokensToStoredCredential(tokens, void 0, bootstrap.accountId, providerData);
+      return tokensToStoredCredential(tokens, void 0, bootstrap.accountId, claudeCodeProviderData(bootstrap));
     } catch (err) {
       spinner4.stop("");
       throw err;
@@ -8981,6 +9018,7 @@ export {
   checkVertexModelAccess,
   filterVertexModelsByAccess,
   addProviderFromTemplate,
+  claudeCodeProviderData,
   saveNativeOAuthCredential,
   authenticateProvider,
   providerAuthHelpText,
@@ -9002,4 +9040,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-4TGAAXO4.js.map
+//# sourceMappingURL=chunk-JHE5LSBF.js.map

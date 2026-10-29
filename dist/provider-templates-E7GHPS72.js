@@ -6,8 +6,9 @@ import {
   init_provider_templates,
   listAddableTemplates,
   listSupportedTemplates,
-  listVisibleOAuthTemplates
-} from "./chunk-AUBFTFM5.js";
+  listVisibleOAuthTemplates,
+  supportsAdditionalApiAccounts
+} from "./chunk-6QOTT5I4.js";
 import "./chunk-JIDIH7DS.js";
 init_provider_templates();
 export {
@@ -16,6 +17,7 @@ export {
   getTemplateById,
   listAddableTemplates,
   listSupportedTemplates,
-  listVisibleOAuthTemplates
+  listVisibleOAuthTemplates,
+  supportsAdditionalApiAccounts
 };
-//# sourceMappingURL=provider-templates-RUGZQ6SD.js.map
+//# sourceMappingURL=provider-templates-E7GHPS72.js.map

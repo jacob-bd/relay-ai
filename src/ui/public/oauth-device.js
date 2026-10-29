@@ -46,7 +46,10 @@ export async function copyDeviceCode(code, clipboard = globalThis.navigator?.cli
 
 /** Return the short credential label used on a provider card. */
 export function oauthConnectionLabel(provider) {
-  if (!provider?.hasKey) return provider?.freeAccess ? 'Free models' : 'Not configured';
+  if (!provider?.hasKey) {
+    if (provider?.needsSignIn) return 'Sign-in expired';
+    return provider?.freeAccess ? 'Free models' : 'Not configured';
+  }
   if (provider.authType !== 'oauth') return 'Key stored';
   const planLabel = provider.subscription?.label;
   return typeof planLabel === 'string' && planLabel.trim()

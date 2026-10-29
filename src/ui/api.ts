@@ -29,7 +29,7 @@ import { loadRegistry } from '../registry/io.js';
 import { getProviderModels, supportsManualModels } from '../registry/provider-models.js';
 import type { ManualModel } from '../registry/types.js';
 import { refreshProviderModels, refreshAllProviderModels } from '../registry/refresh-models.js';
-import { listAddableTemplates, listVisibleOAuthTemplates, PROVIDER_TEMPLATES } from '../provider-templates.js';
+import { getTemplateById, listAddableTemplates, listVisibleOAuthTemplates, PROVIDER_TEMPLATES, supportsAdditionalApiAccounts } from '../provider-templates.js';
 import { addProviderFromTemplate, type AddTemplateResult } from '../registry/add-template.js';
 import {
   addCustomEndpointProvider,
@@ -44,8 +44,11 @@ import { requestOpenAiDeviceCode, pollOpenAiDeviceCodeToken, openAiDeviceCodeUrl
 import { requestGithubDeviceCode, pollGithubDeviceCodeToken } from '../oauth/github.js';
 import { requestClinePassDeviceCode, pollClinePassDeviceCode } from '../oauth/cline-pass.js';
 import {
+  buildClaudeCodeAuthUrl,
+  completeClaudeCodeExchange,
   guiCallbackRedirectUri,
 } from '../oauth/claude-code.js';
+import { claudeCodeProviderData } from '../oauth/claude-code-account.js';
 import {
   buildAntigravityAuthUrl,
   completeAntigravityExchange,
@@ -88,6 +91,9 @@ interface OAuthSession {
   // PKCE flows only — never sent to client:
   codeVerifier?: string;
   oauthState?: string;
+  /** Claude Code: Anthropic shows a code the user pastes back, so the session waits for POST .../oauth/code. */
+  awaitsCode?: boolean;
+  redirectUri?: string;
   codeResolver?: (code: string) => void;
   errorRejecter?: (err: string) => void;
 }
@@ -180,6 +186,8 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
     handleManualModel(req, res, 'remove');
   } else if (url === '/api/providers/oauth/start' && req.method === 'POST') {
     handleOAuthStart(req, res, opts);
+  } else if (url === '/api/providers/oauth/code' && req.method === 'POST') {
+    handleOAuthCode(req, res);
   } else if (url.startsWith('/api/providers/oauth/status') && req.method === 'GET') {
     handleOAuthStatus(req, res);
   } else if (url.startsWith('/oauth/callback') && req.method === 'GET') {
@@ -241,6 +249,19 @@ async function handlePostConfig(req: IncomingMessage, res: ServerResponse): Prom
   }
 }
 
+/**
+ * API-key cards may offer "Add another account" when the provider takes just a key. Providers that also
+ * need an account id or server URL (Cloudflare, Ollama, …) are added from the terminal instead.
+ */
+function keyAccountFields(
+  entry: { templateId: string; authType?: string } | undefined,
+): { canAddKeyAccount?: true; templateId?: string } {
+  if (!entry || entry.authType === 'oauth') return {};
+  const template = getTemplateById(entry.templateId);
+  if (!template || !supportsAdditionalApiAccounts(template) || template.accountIdPrompt || template.urlPrompt) return {};
+  return { canAddKeyAccount: true, templateId: template.id };
+}
+
 /** The card may offer "Add another account" (device-code sign-ins; browser ones keep a single account for now). */
 function canAddAccountField(
   providerId: string,
@@ -248,10 +269,8 @@ function canAddAccountField(
   uiMode?: 'full' | 'server',
 ): { canAddAccount?: true } {
   const kind = providerKind(providerId);
-  // Claude Code's pasted-code sign-in only runs in the terminal, so its card offers no button.
   return authType === 'oauth'
     && supportsAdditionalOAuthAccounts(kind)
-    && kind !== 'claude-code'
     && canStartOAuthFromUi(providerId, uiMode)
     ? { canAddAccount: true }
     : {};
@@ -320,6 +339,7 @@ async function handleGetModels(
       authType: p.authType ?? 'api',
       ...accountField(p),
       ...canAddAccountField(p.id, p.authType, uiMode),
+      ...keyAccountFields(registry.providers.find(rp => rp.id === p.id)),
       ...manualMetadata(p.id),
       // Copilot's runtime catalog is policy-filtered by account plan. Never replace
       // that safe count with the larger raw cache count.
@@ -348,20 +368,33 @@ async function handleGetModels(
         || !isUiCatalogOAuthProvider(rp.id, uiMode)
         || !rp.enabled
         || materializedIds.has(rp.id)) continue;
-      const credential = await resolveProviderCredential(rp.id, rp.authRef).catch(() => null);
-      if (!credential) continue;
+      let credential: string | null = null;
+      let signInIssue: string | undefined;
+      try {
+        credential = await resolveProviderCredential(rp.id, rp.authRef);
+      } catch (err) {
+        // A stored sign-in that can no longer be used (expired or revoked refresh token).
+        signInIssue = (err instanceof Error ? err.message : String(err))
+          .replace(/\.?\s*Sign in again: relay-ai providers auth \S+/, '')   // the card has its own button
+          .slice(0, 200);
+      }
+      // Nothing stored and nothing wrong: not a signed-in account, as before.
+      if (!credential && signInIssue === undefined) continue;
+      const needsSignIn = !credential;
       providers.push({
         id: rp.id,
         name: rp.name,
         favoriteName: favoriteProviderDisplayName({ id: rp.id, name: rp.name, authType: rp.authType, nameCustomized: rp.nameCustomized }),
-        hasKey: true,
+        hasKey: !needsSignIn,
+        // Keep an expired account on the page so it can be signed in again, renamed or removed.
+        ...(needsSignIn ? { needsSignIn: true, signInIssue } : {}),
         freeAccess: false,
         authType: 'oauth',
         ...(isProviderKind(rp.id, 'github-copilot') ? {} : accountFieldFrom(await readOAuthAccountLabel(rp))),
         ...canAddAccountField(rp.id, 'oauth', uiMode),
         ...manualMetadata(rp.id),
-        modelCount: 0,
-        ...(isProviderKind(rp.id, 'github-copilot') ? { subscription: copilotSubscription(undefined) } : {}),
+        modelCount: needsSignIn ? getProviderModels(rp).length : 0,
+        ...(isProviderKind(rp.id, 'github-copilot') && !needsSignIn ? { subscription: copilotSubscription(undefined) } : {}),
         models: [],
       });
     }
@@ -635,6 +668,10 @@ async function handleAddProvider(req: IncomingMessage, res: ServerResponse): Pro
     if (!template) {
       sendJson(res, 404, { error: `Template '${templateId}' not found` }); return;
     }
+    const addAccount = body.addAccount === true;
+    if (addAccount && !supportsAdditionalApiAccounts(template)) {
+      sendJson(res, 400, { error: `A second account is not available for ${template.name}.` }); return;
+    }
     const rawKey = typeof key === 'string' ? key.trim() : '';
     if (!rawKey && !template.anonymousFreeModels && !template.apiKeyOptional) {
       sendJson(res, 400, { error: 'key must be a non-empty string' }); return;
@@ -664,9 +701,10 @@ async function handleAddProvider(req: IncomingMessage, res: ServerResponse): Pro
     const result: AddTemplateResult = await addProviderFromTemplate(template, keyText, {
       baseUrl: baseUrlOverride,
       replaceExisting,
+      ...(addAccount ? { addAccount: true } : {}),
     });
     if (result.added) {
-      sendJson(res, 200, { ok: true, name: template.name, count: result.modelCount ?? 0, ...(result.notice ? { notice: result.notice } : {}) });
+      sendJson(res, 200, { ok: true, name: result.provider?.name ?? template.name, count: result.modelCount ?? 0, ...(result.notice ? { notice: result.notice } : {}) });
     } else {
       sendJson(res, 200, { ok: false, error: result.error, hint: result.hint });
     }
@@ -867,17 +905,39 @@ async function handleOAuthStart(
     }
 
     if (PKCE_PROVIDER_IDS.has(kind)) {
-      if (kind === 'claude-code') {
-        sendJson(res, 400, {
-          error: `Claude Code OAuth must be completed in the terminal: relay-ai providers auth claude-code${addAccount ? ' --new' : ''}`,
-        });
-        return;
-      }
-
       // The terminal asks for an explicit "yes" first; the UI must too, and the server
       // enforces it so a hand-made request cannot skip the warning.
       if (body.acceptRisk !== true) {
-        sendJson(res, 200, { needsConfirmation: true, risk: subscriptionOAuthRiskLines('antigravity') });
+        sendJson(res, 200, { needsConfirmation: true, risk: subscriptionOAuthRiskLines(kind as 'claude-code' | 'antigravity') });
+        return;
+      }
+
+      // Claude Code: Anthropic's page shows a code; the user pastes it into the UI (POST .../oauth/code).
+      if (kind === 'claude-code') {
+        const { authUrl, codeVerifier, oauthState, redirectUri } = await buildClaudeCodeAuthUrl();
+        const session: OAuthSession = {
+          status: 'pending', url: authUrl, providerId, codeVerifier, oauthState, redirectUri, awaitsCode: true,
+        };
+        oauthSessions.set(sessionId, session);
+
+        const codePromise = new Promise<string>((resolve, reject) => {
+          session.codeResolver = resolve;
+          session.errorRejecter = (err: string) => reject(new Error(err));
+          setTimeout(() => reject(new Error('OAuth timeout — sign-in not completed')), 10 * 60 * 1000);
+        });
+
+        codePromise.then(async code => {
+          const { tokens, bootstrap } = await completeClaudeCodeExchange(code, codeVerifier, oauthState, redirectUri);
+          const savedId = await saveNativeOAuthCredential(
+            providerId, tokens, bootstrap.accountId, claudeCodeProviderData(bootstrap), { addAccount },
+          );
+          await refreshOAuthProviderModels(typeof savedId === 'string' ? savedId : providerId);
+          oauthSessions.set(sessionId, { ...session, status: 'done' });
+        }).catch(err => {
+          oauthSessions.set(sessionId, { ...session, status: 'error', error: err instanceof Error ? err.message : String(err) });
+        });
+
+        sendJson(res, 200, { sessionId, authUrl, pkce: true, needsCode: true });
         return;
       }
 
@@ -952,6 +1012,30 @@ async function handleOAuthStart(
     });
 
     sendJson(res, 200, { sessionId, url, userCode: device.user_code });
+  } catch (err) {
+    sendJson(res, 500, { error: String(err) });
+  }
+}
+
+const MAX_PASTED_CODE_LENGTH = 4000;
+
+/** Claude Code: hand the code the user pasted to the sign-in session that is waiting for it. */
+async function handleOAuthCode(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const body = JSON.parse(await readBody(req)) as { sessionId?: unknown; code?: unknown };
+    const sessionId = typeof body.sessionId === 'string' ? body.sessionId : '';
+    const code = typeof body.code === 'string' ? body.code.trim() : '';
+    if (!sessionId || !code || code.length > MAX_PASTED_CODE_LENGTH) {
+      sendJson(res, 400, { error: 'sessionId and a code are required.' }); return;
+    }
+    const session = oauthSessions.get(sessionId);
+    if (!session) { sendJson(res, 404, { error: 'Session not found or expired' }); return; }
+    if (!session.awaitsCode || session.status !== 'pending' || !session.codeResolver) {
+      sendJson(res, 400, { error: 'This sign-in is not waiting for a code.' }); return;
+    }
+    session.awaitsCode = false;   // a code is accepted once
+    session.codeResolver(code);
+    sendJson(res, 200, { ok: true });
   } catch (err) {
     sendJson(res, 500, { error: String(err) });
   }
