@@ -128,7 +128,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-ZLDEQIAQ.js";
+} from "./chunk-MPW6B3QF.js";
 import {
   getAppHome,
   hasApplicationDefaultCredentials,
@@ -8851,4 +8851,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-WWUJWVEZ.js.map
+//# sourceMappingURL=chunk-55UG4HX3.js.map
