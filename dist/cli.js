@@ -1851,15 +1851,19 @@ async function resolveCodexMixedModels(input) {
   );
   if (!selected) throw new Error("Selected Codex model is no longer available");
   const visibleResult = await buildFavoritesList(selected, input.generalFavorites, ctx, 20, { trackCapacitySkipped: true });
+  const listed = new Set(visibleResult.resolved.map((entry) => `${entry.providerId}\0${entry.model.id}`));
+  const siblings = input.activeProvider.models.filter((model) => !listed.has(`${input.activeProvider.id}\0${model.id}`)).map((model) => ({ providerId: input.activeProvider.id, modelId: model.id }));
+  const siblingResult = await buildFavoritesList(void 0, siblings, ctx, Math.max(0, 20 - visibleResult.resolved.length));
+  const visible = [...visibleResult.resolved, ...siblingResult.resolved];
   const subagentResult = await buildFavoritesList(void 0, input.subagentFavorites, ctx, 20, { trackCapacitySkipped: true });
-  const all = [...visibleResult.resolved];
+  const all = [...visible];
   for (const entry of subagentResult.resolved) {
     const key = `${entry.providerId}\0${entry.model.id}`;
     if (!all.some((existing) => `${existing.providerId}\0${existing.model.id}` === key)) all.push(entry);
   }
   return {
     selected,
-    visible: visibleResult.resolved,
+    visible,
     subagents: subagentResult.resolved,
     all,
     providersById: new Map(input.compatible.map((provider) => [provider.id, provider])),

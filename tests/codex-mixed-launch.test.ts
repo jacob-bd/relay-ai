@@ -47,6 +47,30 @@ describe('Codex mixed launch planning', () => {
     ]);
   });
 
+  it("lists the starting provider's other models after favorites, within the cap", async () => {
+    const model = (id: string) => ({ id, name: id, modelFormat: 'openai' as const, npm: '@ai-sdk/openai-compatible', upstreamModelId: id, contextWindow: 200_000 });
+    const vertex = { id: 'vertex-anthropic', name: 'Vertex', authType: 'none' as const, models: ['opus', 'sonnet', 'haiku'].map(model) };
+    const other = { id: 'other', name: 'Other', authType: 'none' as const, models: [model('fav')] };
+
+    const result = await resolveCodexMixedModels({
+      activeProvider: vertex,
+      selectedModel: vertex.models[1]!,
+      compatible: [vertex, other],
+      generalFavorites: [{ providerId: 'other', modelId: 'fav' }, { providerId: 'vertex-anthropic', modelId: 'haiku' }],
+      subagentFavorites: [],
+    });
+    expect(result.visible.map(entry => `${entry.providerId}:${entry.model.id}`)).toEqual([
+      'vertex-anthropic:sonnet', 'other:fav', 'vertex-anthropic:haiku', 'vertex-anthropic:opus',
+    ]);
+
+    const big = { id: 'big', name: 'Big', authType: 'none' as const, models: Array.from({ length: 30 }, (_, i) => model(`m${i}`)) };
+    const capped = await resolveCodexMixedModels({
+      activeProvider: big, selectedModel: big.models[0]!, compatible: [big], generalFavorites: [], subagentFavorites: [],
+    });
+    expect(capped.visible).toHaveLength(20);
+    expect(capped.capacitySkipped).toEqual([]);
+  });
+
   it('rejects a mixed launch when configured Codex Sub-agents disappear during resolution', () => {
     expect(() => assertConfiguredCodexSubagentsResolved(
       [{ providerId: 'google', modelId: 'gemini-3.5-flash' }],

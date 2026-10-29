@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **`--with-native` lists all of the starting provider's models.** Mixed native + Relay mode showed only the model you launched with plus your favorites, while the Relay-only launch lists the provider's whole catalog — so `relay-ai codex-app --vertex --with-native` offered one Vertex model instead of all of them. Mixed mode now adds the starting provider's other models after your favorites, within the existing 20-model Relay limit; favorites always keep their slots and the extra models never produce "skipped favorite" warnings. Applies to the ChatGPT/Codex app and Codex CLI.
+
 ## [0.16.0] - 2026-10-28
 
 ### Added
