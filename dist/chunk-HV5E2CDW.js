@@ -135,7 +135,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-VHDLZ6LN.js";
+} from "./chunk-K36OU6EP.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -4077,6 +4077,14 @@ function endpointModelTimeoutMs(templateId, baseUrl) {
 }
 
 // src/registry/fetch-anthropic-models.ts
+var MAX_MODEL_PAGES = 50;
+function parsePage(rawBodyText) {
+  try {
+    if (rawBodyText.trim()) return JSON.parse(rawBodyText);
+  } catch {
+  }
+  return {};
+}
 async function fetchAnthropicModels(baseUrl, apiKey, extraHeaders, timeoutMs) {
   const root = baseUrl.replace(/\/v1\/?$/, "").replace(/\/$/, "");
   const modelsUrl2 = `${root}/v1/models`;
@@ -4084,39 +4092,44 @@ async function fetchAnthropicModels(baseUrl, apiKey, extraHeaders, timeoutMs) {
   const effectiveTimeoutMs = clampModelTimeoutMs(timeoutMs ?? defaultTimeoutMs, defaultTimeoutMs);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), effectiveTimeoutMs);
+  let logTrace;
+  if (process.env.RELAY_AI_TRACE === "1") {
+    logTrace = makeTraceLogger(getProviderDebugLogPath());
+  }
+  const requestPage = (url) => fetch(url, {
+    method: "GET",
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      Accept: "application/json",
+      ...extraHeaders
+    },
+    redirect: "manual",
+    signal: controller.signal
+  });
   try {
-    const response = await fetch(modelsUrl2, {
-      method: "GET",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        Accept: "application/json",
-        ...extraHeaders
-      },
-      redirect: "manual",
-      signal: controller.signal
-    });
-    let logTrace;
-    if (process.env.RELAY_AI_TRACE === "1") {
-      logTrace = makeTraceLogger(getProviderDebugLogPath());
-    }
-    const rawBodyText = response.ok ? await response.text() : await response.text().catch(() => "");
-    if (logTrace) {
-      logTrace(`[fetchAnthropicModels] HTTP ${response.status} from ${modelsUrl2}`);
-      logTrace(`[fetchAnthropicModels] Body: ${rawBodyText}`);
-    }
-    if (response.ok) {
-      let json = {};
-      try {
-        if (rawBodyText.trim()) {
-          json = JSON.parse(rawBodyText);
-        }
-      } catch {
+    let url = modelsUrl2;
+    let response = await requestPage(url);
+    const models = [];
+    const seenIds = /* @__PURE__ */ new Set();
+    const seenCursors = /* @__PURE__ */ new Set();
+    let incomplete;
+    for (let page = 1; ; page++) {
+      const rawBodyText = response.ok ? await response.text() : await response.text().catch(() => "");
+      if (logTrace) {
+        logTrace(`[fetchAnthropicModels] HTTP ${response.status} from ${url} (page ${page})`);
+        logTrace(`[fetchAnthropicModels] Body: ${rawBodyText}`);
       }
-      const models = [];
+      if (!response.ok) {
+        if (page === 1) break;
+        incomplete = `Page ${page} failed (HTTP ${response.status}); the model list may be missing later models.`;
+        break;
+      }
+      const json = parsePage(rawBodyText);
       for (const row of json.data ?? []) {
         const id = row.id?.trim();
-        if (!id) continue;
+        if (!id || seenIds.has(id)) continue;
+        seenIds.add(id);
         models.push({
           id,
           name: row.name?.trim() || id,
@@ -4129,7 +4142,32 @@ async function fetchAnthropicModels(baseUrl, apiKey, extraHeaders, timeoutMs) {
           apiUrl: root
         });
       }
-      if (models.length > 0) return { models, baseUrl: root };
+      const cursor = typeof json.last_id === "string" ? json.last_id.trim() : "";
+      if (json.has_more !== true) break;
+      if (!cursor) {
+        incomplete = "Server reported more models but gave no cursor; the model list may be incomplete.";
+        break;
+      }
+      if (seenCursors.has(cursor)) {
+        incomplete = "Server repeated a pagination cursor; the model list may be incomplete.";
+        break;
+      }
+      if (page >= MAX_MODEL_PAGES) {
+        incomplete = `Stopped after ${MAX_MODEL_PAGES} pages; the model list may be incomplete.`;
+        break;
+      }
+      seenCursors.add(cursor);
+      url = `${modelsUrl2}?after_id=${encodeURIComponent(cursor)}`;
+      try {
+        response = await requestPage(url);
+      } catch {
+        incomplete = `Page ${page + 1} could not be fetched${controller.signal.aborted ? " (timed out)" : ""}; the model list may be missing later models.`;
+        break;
+      }
+    }
+    if (models.length > 0) {
+      if (incomplete && logTrace) logTrace(`[fetchAnthropicModels] incomplete: ${incomplete}`);
+      return { models, baseUrl: root, ...incomplete ? { incomplete } : {} };
     }
     if (response.status === 401 || response.status === 403) {
       return { models: [], baseUrl: root, error: "API key was rejected.", hint: "Check your Anthropic-compatible API key." };
@@ -4536,7 +4574,12 @@ async function addCustomEndpointProvider(input) {
   }
   registry.providers.push(entry);
   saveRegistry(registry);
-  return { added: true, provider: entry, modelCount: fetched.models.length };
+  return {
+    added: true,
+    provider: entry,
+    modelCount: fetched.models.length,
+    ...fetched.incomplete ? { incomplete: fetched.incomplete } : {}
+  };
 }
 async function updateCustomEndpointProvider(input) {
   const registry = loadRegistry();
@@ -4652,7 +4695,8 @@ async function updateCustomEndpointProvider(input) {
     updated: true,
     provider,
     modelCount: provider.modelsCache?.models.length ?? 0,
-    ...testFailed ? { modelsStale: true } : {}
+    ...testFailed ? { modelsStale: true } : {},
+    ...!testFailed && fetched.incomplete ? { incomplete: fetched.incomplete } : {}
   };
 }
 
@@ -5477,7 +5521,8 @@ async function refreshApiListProvider(provider, apiKey) {
     }
     return {
       models: fetched2.models.map((m) => ({ ...m, apiUrl: fetched2.baseUrl })),
-      baseUrl: fetched2.baseUrl
+      baseUrl: fetched2.baseUrl,
+      ...fetched2.incomplete ? { incomplete: fetched2.incomplete } : {}
     };
   }
   const fetched = await fetchTemplateModels(template, apiKey, safeBaseUrl, extraHeaders, timeoutMs);
@@ -5549,6 +5594,7 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
     let models = [];
     let baseUrl;
     let oauthFallbackReason;
+    let incompleteReason;
     if (source === "zen-go-api") {
       models = await refreshZenGoProvider(provider);
     } else if (source === "vertex-models-file") {
@@ -5649,6 +5695,7 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
       }
       models = fetched.models;
       baseUrl = fetched.baseUrl;
+      incompleteReason = fetched.incomplete;
     }
     const pricingCache = loadPricingCache();
     const enriched = compatibleCachedModels(
@@ -5677,7 +5724,7 @@ async function refreshProviderModels(providerId, apiKey, registry = loadRegistry
       ok: true,
       modelCount: getProviderModels(registry.providers.find((p8) => p8.id === providerId)).length,
       previousModelCount: provider.refreshedAt ? previousModelCount : void 0,
-      reason: oauthFallbackReason
+      reason: [oauthFallbackReason, incompleteReason].filter(Boolean).join(" ") || void 0
     };
   } catch (err) {
     return {
@@ -9087,4 +9134,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-GS4AUABK.js.map
+//# sourceMappingURL=chunk-HV5E2CDW.js.map

@@ -41,7 +41,7 @@ import {
   summarizeServerProviders,
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider
-} from "./chunk-GS4AUABK.js";
+} from "./chunk-HV5E2CDW.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -100,7 +100,7 @@ import {
   supportsManualModels,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-VHDLZ6LN.js";
+} from "./chunk-K36OU6EP.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -923,7 +923,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-LXP5A3VX.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-UICRDYMJ.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1049,7 +1049,12 @@ async function handleAddCustomProvider(req, res) {
       confirmDuplicate: confirmDuplicate === true
     });
     if (result.added) {
-      sendJson(res, 200, { ok: true, name: displayName.trim(), count: result.modelCount ?? 0 });
+      sendJson(res, 200, {
+        ok: true,
+        name: displayName.trim(),
+        count: result.modelCount ?? 0,
+        ...result.incomplete ? { incomplete: result.incomplete } : {}
+      });
     } else {
       sendJson(res, 200, {
         ok: false,
@@ -1083,7 +1088,8 @@ async function handleEditCustomProvider(req, res) {
         ok: true,
         name: result.provider?.name ?? body.providerId,
         count: result.modelCount ?? 0,
-        ...result.modelsStale ? { modelsStale: true } : {}
+        ...result.modelsStale ? { modelsStale: true } : {},
+        ...result.incomplete ? { incomplete: result.incomplete } : {}
       });
     } else {
       sendJson(res, 200, {
@@ -2049,4 +2055,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-2QLL5NTP.js.map
+//# sourceMappingURL=ui-command-NSHGPOI6.js.map

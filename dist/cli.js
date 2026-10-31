@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-BH3WV5BE.js";
+} from "./chunk-NBB7EUP6.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -134,7 +134,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-GS4AUABK.js";
+} from "./chunk-HV5E2CDW.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -222,6 +222,7 @@ import {
   silenceSdkWarnings,
   splitToolUseId,
   sseChunk,
+  streamActivity,
   stripToolUseIdSuffix,
   supportsAdditionalOAuthAccounts,
   supportsManualModels,
@@ -234,7 +235,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-VHDLZ6LN.js";
+} from "./chunk-K36OU6EP.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -2656,6 +2657,7 @@ async function runCustomEndpointAddFlow() {
     return 1;
   }
   logConnected(result.provider?.name ?? "Provider", result.modelCount ?? 0);
+  if (result.incomplete) p8.log.warn(result.incomplete);
   return 0;
 }
 async function runCustomEndpointEditFlow(provider) {
@@ -2767,6 +2769,7 @@ Headers: ${headerSummary}`);
     p8.log.warn(`${result.provider?.name ?? provider.name} saved, but the model list may be out of date.`);
   } else {
     logConnected(result.provider?.name ?? provider.name, result.modelCount ?? 0);
+    if (result.incomplete) p8.log.warn(result.incomplete);
   }
   return 0;
 }
@@ -3721,6 +3724,7 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
   let currentToolState = null;
   const streamStartedAt = Date.now();
   let lastProgressAt = streamStartedAt;
+  const recentPartCounts = /* @__PURE__ */ new Map();
   let reasoningItemId = null;
   let reasoningText = "";
   let reasoningOutputIndex = 0;
@@ -3798,6 +3802,7 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
     });
   };
   for await (const part of fullStream) {
+    recentPartCounts.set(part.type, (recentPartCounts.get(part.type) ?? 0) + 1);
     switch (part.type) {
       case "reasoning-start":
         reasoningText = "";
@@ -3940,9 +3945,11 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
           reasoningTail: reasoningText.slice(-200),
           textChars: textFull.length,
           toolCallCount: toolStates.length,
-          elapsedMs: now - streamStartedAt
+          elapsedMs: now - streamStartedAt,
+          recentPartTypes: [...recentPartCounts].map(([type, n]) => `${type}:${n}`).join(",")
         });
       }
+      recentPartCounts.clear();
       if (loopDetected) {
         options?.onForceStop?.(`repetition loop detected (${loopDetected})`);
         break;
@@ -4097,45 +4104,71 @@ async function writeResponsesStream(fullStream, modelId, write, onDone, onProgre
 }
 var STREAM_IDLE_TIMEOUT_MS = 12e4;
 async function streamResponsesResponse(model, params, modelId, write, onDone, onProgress, options) {
-  const idleTimeoutMs = options?.idleTimeoutMs ?? STREAM_IDLE_TIMEOUT_MS;
+  const configuredTimeout = (name, fallback) => {
+    const value = Number(process.env[name]);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  };
+  const idleTimeoutMs = options?.idleTimeoutMs ?? configuredTimeout("RELAY_AI_STREAM_IDLE_TIMEOUT_MS", STREAM_IDLE_TIMEOUT_MS);
+  const progressTimeoutMs = options?.progressTimeoutMs ?? configuredTimeout("RELAY_AI_STREAM_PROGRESS_TIMEOUT_MS", 6e5);
   const abort = new AbortController();
   let idleTimer = setTimeout(
     () => abort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1e3)}s`)),
     idleTimeoutMs
   );
-  const { toolContext, ...sdkParams } = params;
-  const result = streamText({ model, ...sdkParams, abortSignal: abort.signal, onError: () => {
-  } });
-  Promise.resolve(result.text).catch(() => {
-  });
-  Promise.resolve(result.toolCalls).catch(() => {
-  });
-  Promise.resolve(result.toolResults).catch(() => {
-  });
-  Promise.resolve(result.finishReason).catch(() => {
-  });
-  Promise.resolve(result.usage).catch(() => {
-  });
-  Promise.resolve(result.response).catch(() => {
-  });
-  const watchedStream = (async function* () {
+  let active = true;
+  const resetLiveness = () => {
+    if (!active) return;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => abort.abort(new Error("no data received from provider for " + idleTimeoutMs / 1e3 + "s")), idleTimeoutMs);
+  };
+  const resetProgress = () => {
+    clearTimeout(progressTimer);
+    progressTimer = setTimeout(() => abort.abort(new Error("no content progress from provider for " + progressTimeoutMs / 1e3 + "s")), progressTimeoutMs);
+  };
+  let progressTimer;
+  resetProgress();
+  return streamActivity.run(resetLiveness, async () => {
     try {
-      for await (const part of result.stream) {
-        clearTimeout(idleTimer);
-        idleTimer = setTimeout(
-          () => abort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1e3)}s`)),
-          idleTimeoutMs
-        );
-        yield part;
-      }
+      const { toolContext, ...sdkParams } = params;
+      const result = streamText({ model, ...sdkParams, abortSignal: abort.signal, onError: () => {
+      } });
+      Promise.resolve(result.text).catch(() => {
+      });
+      Promise.resolve(result.toolCalls).catch(() => {
+      });
+      Promise.resolve(result.toolResults).catch(() => {
+      });
+      Promise.resolve(result.finishReason).catch(() => {
+      });
+      Promise.resolve(result.usage).catch(() => {
+      });
+      Promise.resolve(result.response).catch(() => {
+      });
+      const watchedStream = (async function* () {
+        try {
+          for await (const part of result.stream) {
+            resetLiveness();
+            if (["text-delta", "reasoning-delta"].includes(part.type) && Boolean(part.text) || part.type === "tool-input-delta" && Boolean(part.delta) || ["tool-call", "finish", "finish-step"].includes(part.type)) resetProgress();
+            yield part;
+          }
+        } catch (error) {
+          if (!abort.signal.aborted) throw error;
+          yield { type: "abort", reason: String(abort.signal.reason) };
+        } finally {
+          clearTimeout(idleTimer);
+          clearTimeout(progressTimer);
+        }
+      })();
+      await writeResponsesStream(watchedStream, modelId, write, onDone, onProgress, {
+        onForceStop: (reason) => abort.abort(new Error(reason)),
+        toolContext,
+        logLabel: options?.logLabel
+      });
     } finally {
+      active = false;
       clearTimeout(idleTimer);
+      clearTimeout(progressTimer);
     }
-  })();
-  await writeResponsesStream(watchedStream, modelId, write, onDone, onProgress, {
-    onForceStop: (reason) => abort.abort(new Error(reason)),
-    toolContext,
-    logLabel: options?.logLabel
   });
 }
 async function generateResponsesResponse(model, params, modelId) {
@@ -5067,7 +5100,7 @@ async function startCodexProxy(routes, options = {}) {
     }));
   }
   return new Promise((resolve2, reject2) => {
-    const log15 = debug ? makeTraceLogger(getCodexProxyDebugLogPath()) : () => {
+    const log15 = debug ? makeTraceLogger(getCodexProxyDebugLogPath(), { keepPrevious: true }) : () => {
     };
     if (debug) resetCodexBodyDumpLog();
     const onRejection = (reason) => {
@@ -5393,7 +5426,7 @@ async function startCodexProxy(routes, options = {}) {
                   }
                 }, (progress) => {
                   if (debug) {
-                    log15(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
+                    log15(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)} parts=[${progress.recentPartTypes ?? ""}]`);
                   }
                 }, { logLabel: routeLogLabel(modelId, route, relayDispatch) });
               audit({
@@ -17585,7 +17618,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-2QLL5NTP.js");
+    const { runUiCommand } = await import("./ui-command-NSHGPOI6.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {
