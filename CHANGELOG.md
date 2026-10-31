@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.18.0] - 2026-10-31
 
 ### Added
 
@@ -12,20 +12,12 @@
 - **Provider model counts and browsing exclude blocked and non-chat entries consistently.** Provider cards, CLI provider lists and browsing, and refresh summaries now count the usable coding-model catalog rather than mixing it with the raw discovery cache. This fixes cases such as Groq showing 12 entries on its card while only five appeared in the usable list. The full provider response remains cached.
 - **UI key replacement verifies the stored and effective credential.** After confirming a replacement, Relay reads the saved key back and checks that its credential resolver selects it before reporting success. A failed read-back or another setting overriding the saved key now produces an explicit error instead of a misleading success message. Regression coverage verifies that refreshing with an entered key leaves the old key intact until replacement is confirmed, then model tests use the new key immediately.
 - **Core accepts API-key-optional providers without a stored key.** Anonymous providers, including numbered Kilo accounts, follow their provider template's optional-key setting rather than failing credential lookup before inference.
-
-### Changed
-
-- **Provider refresh feedback explicitly describes catalog discovery.** **Test & Refresh** continues to use the entered key and offers to save/replace it after confirmation. Its feedback now says the catalog was refreshed, and its tooltip directs users to a model's **Test** action to verify inference access. A successful model-list request alone does not establish that a model can answer.
-
-## [0.17.1] - 2026-10-31
-
-### Fixed
-
 - **Codex streams that stay connected but never finish no longer hang forever.** The stall watchdog used one timer that any stream part reset, so a provider that kept delivering contentless parts could hold a turn open indefinitely (seen live: 740 seconds on a ChatGPT-login model, ended only by restarting). There are now two limits: **120 seconds without any upstream activity** (any byte on the connection counts, not only a parsed stream part, so a quiet-but-alive provider is no longer mistaken for a dead one), and **10 minutes without content progress** (text, reasoning, tool-call input or a finish). Each fails with its own message. Both are configurable with `RELAY_AI_STREAM_IDLE_TIMEOUT_MS` and `RELAY_AI_STREAM_PROGRESS_TIMEOUT_MS` (milliseconds); see [docs/CODEX.md](docs/CODEX.md). A provider that sends no bytes at all while it reasons still needs a larger idle limit.
 - **Anthropic-compatible model discovery follows pagination (#87).** Discovery made a single request and read only the first page, so a gateway with a paginated catalog silently left later models out of the picker. It now follows `has_more` / `last_id` with `after_id`, drops repeated ids, shares one timeout across all pages, and stops on a repeated cursor or after 50 pages. If a later page fails or the server's pagination is inconsistent, the models already found are kept and Relay warns that the list may be incomplete (in `providers add`, `providers edit`, `providers refresh` and `relay-ai ui`) instead of presenting it as complete. The first request is unchanged, so servers that do not paginate behave exactly as before. Applies to custom Anthropic endpoints, registry refresh and key validation on import. Checked live against the Anthropic API with a forced small page size.
 
 ### Changed
 
+- **Provider refresh feedback explicitly describes catalog discovery.** **Test & Refresh** continues to use the entered key and offers to save/replace it after confirmation. Its feedback now says the catalog was refreshed, and its tooltip directs users to a model's **Test** action to verify inference access. A successful model-list request alone does not establish that a model can answer.
 - **`--trace` keeps the previous Codex proxy log.** Relaunching used to delete `codex-proxy-debug.log`, which erased the evidence of a hang when you restarted to recover. The log is now moved to `codex-proxy-debug.prev.log` (one previous copy; a near-empty launch stub never replaces it).
 - **Codex proxy progress lines show stream part types.** Each `response progress` line ends with `parts=[type:count,...]` for the parts received since the last report, which distinguishes a silent stream from one that keeps sending contentless parts.
 

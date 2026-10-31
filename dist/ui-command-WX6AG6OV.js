@@ -41,11 +41,11 @@ import {
   summarizeServerProviders,
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider
-} from "./chunk-K67NCN3C.js";
+} from "./chunk-N6BM2QES.js";
 import {
   validateCustomEndpointUrl
-} from "./chunk-E6UE6BOG.js";
-import "./chunk-DWF4F24A.js";
+} from "./chunk-HM6YSVSA.js";
+import "./chunk-VBSCGMT5.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -104,7 +104,7 @@ import {
   supportsAdditionalOAuthAccounts,
   supportsManualModels,
   writeSecureLogLine
-} from "./chunk-X47N5A4I.js";
+} from "./chunk-NAXLYXCF.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -927,7 +927,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-BGNMGQGA.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-C44ORJ3P.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1222,7 +1222,7 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-HMBY6J6Z.js");
+    const { testModel } = await import("./test-model-MSSOKILX.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
     if (!res.destroyed) sendJson(res, 200, result);
   } catch {
@@ -2099,4 +2099,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-F2ES3WF4.js.map
+//# sourceMappingURL=ui-command-WX6AG6OV.js.map

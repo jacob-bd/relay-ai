@@ -4,7 +4,7 @@ import {
   openCodeGoHeaders,
   providerRefreshToken,
   reconcileCachedModelProtocol
-} from "./chunk-DWF4F24A.js";
+} from "./chunk-VBSCGMT5.js";
 import {
   ANTIGRAVITY_API_VERSION,
   ANTIGRAVITY_BASE_URLS,
@@ -26,7 +26,7 @@ import {
   resolveProviderOAuthProviderData,
   upstreamHttpStatus,
   withProviderRequestDefaults
-} from "./chunk-X47N5A4I.js";
+} from "./chunk-NAXLYXCF.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -788,4 +788,4 @@ async function testModel(providerId, modelId, signal) {
 export {
   testModel
 };
-//# sourceMappingURL=test-model-HMBY6J6Z.js.map
+//# sourceMappingURL=test-model-MSSOKILX.js.map
