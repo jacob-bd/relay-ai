@@ -1,3 +1,4 @@
+import { streamActivity } from '../stream-activity.js';
 // responses-websocket.ts — outbound WebSocket transport for OpenAI's Codex
 // "Responses-Lite" protocol (wss://chatgpt.com/backend-api/codex/responses).
 //
@@ -550,6 +551,7 @@ export function createResponsesWebSocketFetch(wsUrl: string, log?: (msg: string)
 
     const encoder = new TextEncoder();
     let socket: WsWebSocket;
+    const activity = streamActivity.getStore();
     let frameCount = 0;
     let closed = false;
     const normalizeState = createResponsesLiteNormalizeState();
@@ -586,6 +588,7 @@ export function createResponsesWebSocketFetch(wsUrl: string, log?: (msg: string)
 
         socket.on('message', (data: RawData) => {
           if (closed) return;
+          activity?.();
           const text = Array.isArray(data)
             ? Buffer.concat(data).toString('utf8')
             : data.toString('utf8');

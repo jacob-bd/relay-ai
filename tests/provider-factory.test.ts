@@ -726,6 +726,7 @@ describe('createLanguageModel', () => {
     });
 
     expect(createOpenAI).toHaveBeenCalledWith({
+      fetch: expect.any(Function),
       apiKey: accessToken,
       baseURL: 'https://chatgpt.com/backend-api/codex',
       headers: {
@@ -772,7 +773,10 @@ describe('createLanguageModel', () => {
       baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
     });
 
-    expect(createGoogleGenerativeAI).toHaveBeenCalledWith({ apiKey: 'test-key' });
+    expect(createGoogleGenerativeAI).toHaveBeenCalledWith({
+      fetch: expect.any(Function),
+      apiKey: 'test-key',
+    });
     vi.doUnmock('@ai-sdk/google');
   });
 
@@ -789,7 +793,10 @@ describe('createLanguageModel', () => {
       baseURL: 'https://api.anthropic.com',
     });
 
-    expect(createAnthropic).toHaveBeenCalledWith({ apiKey: 'test-key' });
+    expect(createAnthropic).toHaveBeenCalledWith({
+      fetch: expect.any(Function),
+      apiKey: 'test-key',
+    });
     expect(createAnthropic).not.toHaveBeenCalledWith(
       expect.objectContaining({ baseURL: 'https://api.anthropic.com' }),
     );
@@ -810,6 +817,7 @@ describe('createLanguageModel', () => {
     });
 
     expect(createAnthropic).toHaveBeenCalledWith({
+      fetch: expect.any(Function),
       apiKey: 'test-key',
       baseURL: 'https://proxy.example.com/v1',
     });
@@ -832,6 +840,7 @@ describe('createLanguageModel', () => {
     });
 
     expect(createAnthropic).toHaveBeenCalledWith({
+      fetch: expect.any(Function),
       authToken: 'oauth-token',
       headers: expect.objectContaining({
         'User-Agent': 'claude-cli/2.1.312 (external, cli)',
@@ -862,6 +871,7 @@ describe('createLanguageModel', () => {
     });
 
     expect(createOpenAICompatible).toHaveBeenCalledWith({
+      fetch: expect.any(Function),
       name: 'custom-zai',
       apiKey: 'sk-test',
       baseURL: 'https://api.z.ai/api/coding/paas/v4',
@@ -912,6 +922,7 @@ describe('createLanguageModel', () => {
     });
 
     expect(createOpenAICompatible).toHaveBeenCalledWith({
+      fetch: expect.any(Function),
       name: 'kilo',
       baseURL: 'https://api.kilo.ai/api/gateway',
     });
@@ -933,6 +944,7 @@ describe('createLanguageModel', () => {
     });
 
     expect(createAnthropic).toHaveBeenCalledWith({
+      fetch: expect.any(Function),
       apiKey: 'sk-test',
       baseURL: 'https://api.z.ai/api/anthropic/v1',
       headers: { 'X-Plan': 'coding' },

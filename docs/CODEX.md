@@ -523,3 +523,9 @@ Codex App has an internal agent subsystem that periodically sends background req
 - [Codex agent approvals & security](https://developers.openai.com/codex/agent-approvals-security)
 - [README — Codex sections](../README.md)
 - `relay-ai codex --help` · `relay-ai codex-app --help`
+
+### Stream watchdogs
+
+Relay watches upstream liveness separately from useful output. The liveness timer starts immediately and defaults to 120 seconds; upstream HTTP body bytes or Responses WebSocket messages reset it, including heartbeats the SDK does not expose. A separate 10-minute progress timer resets on nonempty text, reasoning or tool argument deltas, complete tool calls, and finish events. Contentless traffic cannot keep a stalled generation open forever.
+
+Set RELAY_AI_STREAM_IDLE_TIMEOUT_MS or RELAY_AI_STREAM_PROGRESS_TIMEOUT_MS to a positive number of milliseconds to override the defaults. Invalid values use the defaults. Providers that send no bytes while thinking may need a longer liveness limit. Timeout failures distinguish “no data received” from “no content progress”. These limits apply to SDK-translated Codex streams, not native passthrough routes.

@@ -1,3 +1,4 @@
+import { streamActivity } from './stream-activity.js';
 // OpenAI Responses API (/v1/responses) ↔ Vercel AI SDK. One turn per request; Codex owns the tool loop.
 import { isProviderKind } from './registry/provider-kind.js';
 import { createHash } from 'node:crypto';
@@ -1407,19 +1408,12 @@ export async function writeResponsesStream(
   });
 }
 
-/**
- * Observed live: OpenCode Zen silently dropped an upstream connection before sending a
- * single byte — no HTTP error, no stream error, no TCP reset our fetch could see. With
- * no timeout anywhere in this path, the `for await` over fullStream waited forever and
- * every safety mechanism (progress logging, repetition detector) was invisible because
- * they only run when a part arrives. This watchdog is armed immediately (unlike the
- * SDK's `timeout.chunkMs`, which only arms after the first chunk) and reset on every
- * part, so it bounds both zero-byte hangs and mid-stream connection death.
- */
+/** Byte liveness catches silent Zen drops; content progress bounds connected stalls. */
 const STREAM_IDLE_TIMEOUT_MS = 120_000;
 
 export interface StreamResponsesOptions {
   idleTimeoutMs?: number;
+  progressTimeoutMs?: number;
   logLabel?: string;
 }
 
@@ -1432,42 +1426,71 @@ export async function streamResponsesResponse(
   onProgress?: (progress: ResponsesStreamProgress) => void,
   options?: StreamResponsesOptions,
 ): Promise<void> {
-  const idleTimeoutMs = options?.idleTimeoutMs ?? STREAM_IDLE_TIMEOUT_MS;
+  const configuredTimeout = (name: string, fallback: number): number => {
+    const value = Number(process.env[name]);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  };
+  const idleTimeoutMs = options?.idleTimeoutMs ?? configuredTimeout('RELAY_AI_STREAM_IDLE_TIMEOUT_MS', STREAM_IDLE_TIMEOUT_MS);
+  const progressTimeoutMs = options?.progressTimeoutMs ?? configuredTimeout('RELAY_AI_STREAM_PROGRESS_TIMEOUT_MS', 600_000);
   const abort = new AbortController();
   let idleTimer = setTimeout(
     () => abort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1000)}s`)),
     idleTimeoutMs,
   );
 
-  const { toolContext, ...sdkParams } = params;
-  const result = streamText({ model, ...sdkParams, abortSignal: abort.signal, onError: () => {} } as Parameters<typeof streamText>[0]);
-  // Prevent unhandled promise rejections on stream properties:
-  Promise.resolve(result.text).catch(() => {});
-  Promise.resolve(result.toolCalls).catch(() => {});
-  Promise.resolve(result.toolResults).catch(() => {});
-  Promise.resolve(result.finishReason).catch(() => {});
-  Promise.resolve(result.usage).catch(() => {});
-  Promise.resolve(result.response).catch(() => {});
-
-  const watchedStream = (async function* () {
+  let active = true;
+  const resetLiveness = () => {
+    if (!active) return;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => abort.abort(new Error('no data received from provider for ' + idleTimeoutMs / 1000 + 's')), idleTimeoutMs);
+  };
+  const resetProgress = () => {
+    clearTimeout(progressTimer);
+    progressTimer = setTimeout(() => abort.abort(new Error('no content progress from provider for ' + progressTimeoutMs / 1000 + 's')), progressTimeoutMs);
+  };
+  let progressTimer: ReturnType<typeof setTimeout>;
+  resetProgress();
+  return streamActivity.run(resetLiveness, async () => {
     try {
-      for await (const part of result.stream as AsyncIterable<FullStreamPart>) {
-        clearTimeout(idleTimer);
-        idleTimer = setTimeout(
-          () => abort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1000)}s`)),
-          idleTimeoutMs,
-        );
-        yield part;
-      }
-    } finally {
-      clearTimeout(idleTimer);
-    }
-  })();
+      const { toolContext, ...sdkParams } = params;
+      const result = streamText({ model, ...sdkParams, abortSignal: abort.signal, onError: () => {} } as Parameters<typeof streamText>[0]);
+      // Prevent unhandled promise rejections on stream properties:
+      Promise.resolve(result.text).catch(() => {});
+      Promise.resolve(result.toolCalls).catch(() => {});
+      Promise.resolve(result.toolResults).catch(() => {});
+      Promise.resolve(result.finishReason).catch(() => {});
+      Promise.resolve(result.usage).catch(() => {});
+      Promise.resolve(result.response).catch(() => {});
 
-  await writeResponsesStream(watchedStream, modelId, write, onDone, onProgress, {
-    onForceStop: reason => abort.abort(new Error(reason)),
-    toolContext,
-    logLabel: options?.logLabel,
+      const watchedStream = (async function* () {
+        try {
+          for await (const part of result.stream as AsyncIterable<FullStreamPart>) {
+            // SDK parts also count as activity for embedded models without a Relay fetch.
+            resetLiveness();
+            if ((['text-delta', 'reasoning-delta'].includes(part.type) && Boolean(part.text))
+              || (part.type === 'tool-input-delta' && Boolean(part.delta))
+              || ['tool-call', 'finish', 'finish-step'].includes(part.type)) resetProgress();
+            yield part;
+          }
+        } catch (error) {
+          if (!abort.signal.aborted) throw error;
+          yield { type: 'abort', reason: String(abort.signal.reason) };
+        } finally {
+          clearTimeout(idleTimer);
+          clearTimeout(progressTimer);
+        }
+      })();
+
+      await writeResponsesStream(watchedStream, modelId, write, onDone, onProgress, {
+        onForceStop: reason => abort.abort(new Error(reason)),
+        toolContext,
+        logLabel: options?.logLabel,
+      });
+    } finally {
+      active = false;
+      clearTimeout(idleTimer);
+      clearTimeout(progressTimer);
+    }
   });
 }
 

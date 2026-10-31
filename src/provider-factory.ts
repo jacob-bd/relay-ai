@@ -1,3 +1,4 @@
+import { activityFetch } from './stream-activity.js';
 // Maps an OpenCode provider's `npm` package (the field providers.ts already
 // reads) to a Vercel AI SDK LanguageModel instance. The SDK owns wire format,
 // endpoint selection, and provider quirks.
@@ -232,6 +233,7 @@ async function createLanguageModelSingle(spec: ProviderModelSpec): Promise<Langu
     }
     const { createVertexAnthropic } = await import('@ai-sdk/google-vertex/anthropic');
     const vertex = createVertexAnthropic({
+      fetch: activityFetch(),
       project,
       location: spec.vertex?.location || resolveVertexLocation(),
     });
@@ -266,12 +268,12 @@ async function createLanguageModelSingle(spec: ProviderModelSpec): Promise<Langu
             : {}),
         }
       : { apiKey };
-    const openai = createOpenAI(oauthOptions);
+    const openai = createOpenAI({ ...oauthOptions, fetch: activityFetch('fetch' in oauthOptions ? oauthOptions.fetch : undefined) });
     return shouldUseOpenAiResponsesEndpoint(modelId) ? openai.responses(modelId) : openai.chat(modelId);
   }
   if (npm === '@ai-sdk/xai') {
     const { createXai } = await import('@ai-sdk/xai');
-    const xai = createXai({ apiKey });
+    const xai = createXai({ apiKey, fetch: activityFetch() });
     return modelPrefersResponsesApi(modelId) ? xai.responses(modelId) : xai(modelId);
   }
   // @ai-sdk/google owns its native v1beta endpoint. Registry templates store the
@@ -279,7 +281,7 @@ async function createLanguageModelSingle(spec: ProviderModelSpec): Promise<Langu
   // produces .../v1beta/openai/models/...:streamGenerateContent → 404.
   if (npm === '@ai-sdk/google') {
     const { createGoogleGenerativeAI } = await import('@ai-sdk/google');
-    const google = createGoogleGenerativeAI({ apiKey });
+    const google = createGoogleGenerativeAI({ apiKey, fetch: activityFetch() });
     return google(modelId);
   }
   // Registry stores root URL (no /v1) for GET /v1/models discovery — passing it here
@@ -313,6 +315,7 @@ async function createLanguageModelSingle(spec: ProviderModelSpec): Promise<Langu
     if (spec.authType === 'oauth' && spec.refreshToken) {
       anthropicOptions.fetch = createOAuthRetryFetch(apiKey, spec.refreshToken, spec.onTokenRefreshed);
     }
+    anthropicOptions.fetch = activityFetch(anthropicOptions.fetch);
     if (!root || root === 'https://api.anthropic.com') {
       return createAnthropic(anthropicOptions)(modelId);
     }
@@ -341,18 +344,20 @@ async function createLanguageModelSingle(spec: ProviderModelSpec): Promise<Langu
     };
     model = createOpenAICompatible({
       ...options,
+      fetch: activityFetch('fetch' in options ? options.fetch : undefined),
     })(modelId);
   } else if (npm === '@openrouter/ai-sdk-provider') {
     const { createOpenRouter } = await import('@openrouter/ai-sdk-provider');
     model = createOpenRouter({
       apiKey,
       baseURL,
-      fetch: createOpenRouterFetch(),
+      fetch: activityFetch(createOpenRouterFetch()),
       ...(spec.headers ? { headers: spec.headers } : {}),
     })(modelId);
   } else {
     const create = await loadSdkProviderFactory(npm);
     const provider = create({
+      fetch: activityFetch(),
       apiKey,
       ...(baseURL ? { baseURL } : {}),
       ...(spec.headers ? { headers: spec.headers } : {}),
