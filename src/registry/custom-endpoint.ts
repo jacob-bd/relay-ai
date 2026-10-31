@@ -33,6 +33,8 @@ export interface AddCustomEndpointResult {
   hint?: string;
   /** Set when an existing provider has the same url + key + headers. */
   duplicateOf?: string;
+  /** Set when paginated discovery stopped early: the saved model list may be missing models. */
+  incomplete?: string;
 }
 
 function npmForKind(kind: CustomEndpointKind): string {
@@ -108,7 +110,7 @@ export interface FetchCustomEndpointModelsInput {
 
 export async function fetchCustomEndpointModels(
   input: FetchCustomEndpointModelsInput,
-): Promise<{ models: CachedModel[]; baseUrl: string; error?: string; hint?: string }> {
+): Promise<{ models: CachedModel[]; baseUrl: string; error?: string; hint?: string; incomplete?: string }> {
   const timeoutMs = endpointModelTimeoutMs(`custom-${input.kind}`, input.normalizedBaseUrl);
   if (input.kind === 'anthropic') {
     return fetchAnthropicModels(input.normalizedBaseUrl, input.apiKey, input.headers, timeoutMs);
@@ -218,7 +220,12 @@ export async function addCustomEndpointProvider(input: AddCustomEndpointInput): 
   registry.providers.push(entry);
   saveRegistry(registry);
 
-  return { added: true, provider: entry, modelCount: fetched.models.length };
+  return {
+    added: true,
+    provider: entry,
+    modelCount: fetched.models.length,
+    ...(fetched.incomplete ? { incomplete: fetched.incomplete } : {}),
+  };
 }
 
 export interface UpdateCustomEndpointInput {
@@ -240,6 +247,8 @@ export interface UpdateCustomEndpointResult {
   modelCount?: number;
   /** True when saved via saveAnyway — the model list was not refreshed. */
   modelsStale?: boolean;
+  /** Set when paginated discovery stopped early: the saved model list may be missing models. */
+  incomplete?: string;
   /**
    * Only set when the failure was a connection test, i.e. the settings are
    * storable but unverified. Refusals (unknown id, non-custom provider, blocked
@@ -401,5 +410,6 @@ export async function updateCustomEndpointProvider(
     provider,
     modelCount: provider.modelsCache?.models.length ?? 0,
     ...(testFailed ? { modelsStale: true } : {}),
+    ...(!testFailed && fetched.incomplete ? { incomplete: fetched.incomplete } : {}),
   };
 }

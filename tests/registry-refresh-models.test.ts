@@ -76,6 +76,37 @@ describe('registry/refresh-models', () => {
     );
   });
 
+  it('warns when Anthropic-format discovery stops before the full catalog', async () => {
+    const registry: ProviderRegistry = {
+      schemaVersion: 1,
+      providers: [{
+        id: 'custom-claude-gw',
+        templateId: 'custom-anthropic',
+        name: 'Claude GW',
+        enabled: true,
+        authRef: 'keyring:provider:custom-claude-gw',
+        authType: 'api',
+        api: { npm: '@ai-sdk/anthropic', url: 'http://127.0.0.1:9' },
+        addedAt: '2026-10-31T00:00:00.000Z',
+      }],
+    };
+    vi.mocked(global.fetch).mockImplementation((async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('after_id=')) return new Response('boom', { status: 500 });
+      return new Response(JSON.stringify({
+        data: [{ id: 'claude-a' }, { id: 'claude-b' }],
+        has_more: true,
+        last_id: 'claude-b',
+      }), { status: 200 });
+    }) as typeof fetch);
+
+    const result = await refreshProviderModels('custom-claude-gw', 'test-key', registry);
+
+    expect(result.ok).toBe(true);
+    expect(result.modelCount).toBe(2);
+    expect(result.reason).toMatch(/Page 2 failed \(HTTP 500\)/);
+  });
+
   it('refreshes ClinePass from the public catalog for API-key providers', async () => {
     vi.mocked(clinePassModels.fetchClinePassModels).mockResolvedValue([
       { id: 'cline-pass/qwen3.8-max', name: 'Qwen 3.8 Max', upstreamModelId: 'cline-pass/qwen3.8-max', modelFormat: 'openai' },

@@ -799,6 +799,7 @@ async function runCustomEndpointAddFlow(): Promise<number> {
   }
 
   logConnected(result.provider?.name ?? 'Provider', result.modelCount ?? 0);
+  if (result.incomplete) p.log.warn(result.incomplete);
   return 0;
 }
 
@@ -912,6 +913,7 @@ async function runCustomEndpointEditFlow(provider: RegistryProvider): Promise<nu
     p.log.warn(`${result.provider?.name ?? provider.name} saved, but the model list may be out of date.`);
   } else {
     logConnected(result.provider?.name ?? provider.name, result.modelCount ?? 0);
+    if (result.incomplete) p.log.warn(result.incomplete);
   }
   return 0;
 }

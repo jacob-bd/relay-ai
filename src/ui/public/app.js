@@ -1030,8 +1030,8 @@ function buildCustomEndpointBodyContent(template, card) {
 
     addBtn.disabled = false;
     if (result.ok) {
-      feedback.textContent = `✓ ${displayName} added · ${result.count} models available`;
-      feedback.className = 'key-feedback success';
+      feedback.textContent = `✓ ${displayName} added · ${result.count} models available${result.incomplete ? ` · ⚠ ${result.incomplete}` : ''}`;
+      feedback.className = result.incomplete ? 'key-feedback muted' : 'key-feedback success';
       nameInput.value = '';
       urlInput.value = '';
       keyInput.value = '';
@@ -1805,8 +1805,8 @@ function buildEditCustomEndpointRow(provider) {
 
     feedback.textContent = result.modelsStale
       ? `✓ Saved · model list may be out of date`
-      : `✓ ${result.name} updated · ${result.count} models available`;
-    feedback.className = result.modelsStale ? 'key-feedback muted' : 'key-feedback success';
+      : `✓ ${result.name} updated · ${result.count} models available${result.incomplete ? ` · ⚠ ${result.incomplete}` : ''}`;
+    feedback.className = (result.modelsStale || result.incomplete) ? 'key-feedback muted' : 'key-feedback success';
     keyInput.value = '';
     showToast(`${result.name} updated`);
     state.modelsLoaded = false;

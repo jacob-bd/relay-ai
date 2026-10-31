@@ -167,6 +167,49 @@ describe('registry/custom-endpoint add', () => {
     expect(result.provider?.api.npm).toBe('@ai-sdk/anthropic');
   });
 
+  it('carries the incomplete-catalog warning from paginated discovery and still saves', async () => {
+    vi.mocked(fetchAnthropic.fetchAnthropicModels).mockResolvedValue({
+      models: [{ id: 'claude-x', name: 'claude-x', upstreamModelId: 'claude-x', modelFormat: 'anthropic' }],
+      baseUrl: 'https://claude-gw.example.com',
+      incomplete: 'Page 2 failed (HTTP 500); the model list may be missing later models.',
+    });
+    vi.mocked(urlSecurity.validateCustomEndpointUrl).mockResolvedValue({
+      ok: true,
+      normalizedUrl: 'https://claude-gw.example.com',
+    });
+
+    const result = await addCustomEndpointProvider({
+      displayName: 'Claude GW',
+      baseUrl: 'https://claude-gw.example.com',
+      apiKey: 'sk-c',
+      kind: 'anthropic',
+    });
+
+    expect(result.added).toBe(true);
+    expect(result.modelCount).toBe(1);
+    expect(result.incomplete).toMatch(/Page 2 failed/);
+    expect(io.saveRegistry).toHaveBeenCalled();
+  });
+
+  it('omits the incomplete field for a complete catalog', async () => {
+    vi.mocked(fetchAnthropic.fetchAnthropicModels).mockResolvedValue({
+      models: [{ id: 'claude-x', name: 'claude-x', upstreamModelId: 'claude-x', modelFormat: 'anthropic' }],
+      baseUrl: 'https://claude-gw.example.com',
+    });
+    vi.mocked(urlSecurity.validateCustomEndpointUrl).mockResolvedValue({
+      ok: true,
+      normalizedUrl: 'https://claude-gw.example.com',
+    });
+    const result = await addCustomEndpointProvider({
+      displayName: 'Claude GW',
+      baseUrl: 'https://claude-gw.example.com',
+      apiKey: 'sk-c',
+      kind: 'anthropic',
+    });
+    expect(result.added).toBe(true);
+    expect('incomplete' in result).toBe(false);
+  });
+
   it('writes nothing when the fetch returns no models', async () => {
     vi.mocked(fetchTemplate.fetchTemplateModels).mockResolvedValue({
       models: [],

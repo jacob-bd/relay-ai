@@ -599,7 +599,12 @@ async function handleAddCustomProvider(req: IncomingMessage, res: ServerResponse
       confirmDuplicate: confirmDuplicate === true,
     });
     if (result.added) {
-      sendJson(res, 200, { ok: true, name: displayName.trim(), count: result.modelCount ?? 0 });
+      sendJson(res, 200, {
+        ok: true,
+        name: displayName.trim(),
+        count: result.modelCount ?? 0,
+        ...(result.incomplete ? { incomplete: result.incomplete } : {}),
+      });
     } else {
       sendJson(res, 200, {
         ok: false,
@@ -645,6 +650,7 @@ async function handleEditCustomProvider(
         name: result.provider?.name ?? body.providerId,
         count: result.modelCount ?? 0,
         ...(result.modelsStale ? { modelsStale: true } : {}),
+        ...(result.incomplete ? { incomplete: result.incomplete } : {}),
       });
     } else {
       sendJson(res, 200, {

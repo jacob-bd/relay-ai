@@ -497,7 +497,7 @@ async function refreshXaiOAuthModels(
 async function refreshApiListProvider(
   provider: RegistryProvider,
   apiKey: string,
-): Promise<{ models: CachedModel[]; baseUrl?: string; error?: string }> {
+): Promise<{ models: CachedModel[]; baseUrl?: string; error?: string; incomplete?: string }> {
   const npm = provider.api.npm ?? '@ai-sdk/openai-compatible';
   const catalogTemplate = resolveProviderTemplate(provider);
   const baseUrl = effectiveProviderBaseUrl(provider, catalogTemplate);
@@ -541,6 +541,7 @@ async function refreshApiListProvider(
     return {
       models: fetched.models.map(m => ({ ...m, apiUrl: fetched.baseUrl })),
       baseUrl: fetched.baseUrl,
+      ...(fetched.incomplete ? { incomplete: fetched.incomplete } : {}),
     };
   }
 
@@ -634,6 +635,7 @@ export async function refreshProviderModels(
     let models: CachedModel[] = [];
     let baseUrl: string | undefined;
     let oauthFallbackReason: string | undefined;
+    let incompleteReason: string | undefined;
 
     if (source === 'zen-go-api') {
       models = await refreshZenGoProvider(provider);
@@ -752,6 +754,7 @@ export async function refreshProviderModels(
       }
       models = fetched.models;
       baseUrl = fetched.baseUrl;
+      incompleteReason = fetched.incomplete;
     }
 
     const pricingCache = loadPricingCache();
@@ -783,7 +786,7 @@ export async function refreshProviderModels(
       ok: true,
       modelCount: getProviderModels(registry.providers.find(p => p.id === providerId)!).length,
       previousModelCount: provider.refreshedAt ? previousModelCount : undefined,
-      reason: oauthFallbackReason,
+      reason: [oauthFallbackReason, incompleteReason].filter(Boolean).join(' ') || undefined,
     };
   } catch (err) {
     return {
