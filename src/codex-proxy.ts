@@ -588,7 +588,7 @@ export async function startCodexProxy(
 
   return new Promise((resolve, reject) => {
     const log = debug
-      ? makeTraceLogger(getCodexProxyDebugLogPath())
+      ? makeTraceLogger(getCodexProxyDebugLogPath(), { keepPrevious: true })
       : () => {};
     if (debug) resetCodexBodyDumpLog();
     const onRejection = (reason: unknown) => {
@@ -914,7 +914,7 @@ export async function startCodexProxy(
                 }
               }, progress => {
                 if (debug) {
-                  log(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)}`);
+                  log(`response progress: model=${route.modelId} elapsedMs=${progress.elapsedMs} reasoningChars=${progress.reasoningChars} textChars=${progress.textChars} toolCalls=${progress.toolCallCount} reasoningTail=${JSON.stringify(progress.reasoningTail)} parts=[${progress.recentPartTypes ?? ''}]`);
                 }
               }, { logLabel: routeLogLabel(modelId, route, relayDispatch) });
               audit({

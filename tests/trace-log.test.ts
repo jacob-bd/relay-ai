@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
@@ -7,6 +7,7 @@ import {
   localIsoTimestamp,
   localTimestamp,
   makeTraceLogger,
+  previousLogPath,
   redactTraceLine,
   redactTraceLog,
 } from '../src/trace-log.js';
@@ -72,5 +73,55 @@ describe('Antigravity trace logging', () => {
       }
       rmSync(relayHome, { recursive: true, force: true });
     }
+  });
+});
+
+describe('makeTraceLogger keepPrevious', () => {
+  const withHome = (run: (logPath: string) => void) => {
+    const previousHome = process.env.RELAY_AI_HOME;
+    const relayHome = mkdtempSync(join(tmpdir(), 'relay-trace-rotate-'));
+    process.env.RELAY_AI_HOME = relayHome;
+    try {
+      run(join(relayHome, 'logs', 'codex-proxy-debug.log'));
+    } finally {
+      if (previousHome === undefined) delete process.env.RELAY_AI_HOME;
+      else process.env.RELAY_AI_HOME = previousHome;
+      rmSync(relayHome, { recursive: true, force: true });
+    }
+  };
+
+  it('moves a real prior session to .prev.log and keeps only one previous copy', () => {
+    withHome(path => {
+      makeTraceLogger(path)('seed');
+      const session1 = `session one ${'x'.repeat(2000)}`;
+      writeFileSync(path, session1);
+      makeTraceLogger(path, { keepPrevious: true })('session two start');
+      expect(previousLogPath(path)).toBe(path.replace(/\.log$/, '.prev.log'));
+      expect(readFileSync(previousLogPath(path), 'utf8')).toBe(session1);
+      expect(readFileSync(path, 'utf8')).not.toContain('session one');
+
+      writeFileSync(path, `session two ${'y'.repeat(2000)}`);
+      makeTraceLogger(path, { keepPrevious: true })('session three start');
+      expect(readFileSync(previousLogPath(path), 'utf8')).toContain('session two');
+    });
+  });
+
+  it('does not let a near-empty launch stub overwrite the real previous session', () => {
+    withHome(path => {
+      makeTraceLogger(path)('seed');
+      writeFileSync(path, `real session ${'x'.repeat(2000)}`);
+      makeTraceLogger(path, { keepPrevious: true })('stub launch');
+      makeTraceLogger(path, { keepPrevious: true })('second quick launch');
+      expect(readFileSync(previousLogPath(path), 'utf8')).toContain('real session');
+    });
+  });
+
+  it('default behavior still deletes without keeping a previous copy', () => {
+    withHome(path => {
+      makeTraceLogger(path)('seed');
+      writeFileSync(path, 'x'.repeat(2000));
+      makeTraceLogger(path)('fresh');
+      expect(existsSync(previousLogPath(path))).toBe(false);
+    });
   });
 });

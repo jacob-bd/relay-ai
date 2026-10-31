@@ -899,6 +899,9 @@ export interface ResponsesStreamProgress {
   textChars: number;
   toolCallCount: number;
   elapsedMs: number;
+  /** Stream part types received since the previous progress report, e.g. `raw:41,text-delta:2`.
+   *  Distinguishes a silent stream from one that keeps delivering contentless parts. */
+  recentPartTypes?: string;
 }
 
 /** Minimum time between onProgress calls, so a genuinely runaway/looping generation is
@@ -981,6 +984,7 @@ export async function writeResponsesStream(
   let currentToolState: StreamingToolState | null = null;
   const streamStartedAt = Date.now();
   let lastProgressAt = streamStartedAt;
+  const recentPartCounts = new Map<string, number>();
   let reasoningItemId: string | null = null;
   let reasoningText = '';
   let reasoningOutputIndex = 0;
@@ -1068,6 +1072,7 @@ export async function writeResponsesStream(
   };
 
   for await (const part of fullStream) {
+    recentPartCounts.set(part.type, (recentPartCounts.get(part.type) ?? 0) + 1);
     switch (part.type) {
       case 'reasoning-start':
         reasoningText = '';
@@ -1229,8 +1234,10 @@ export async function writeResponsesStream(
           textChars: textFull.length,
           toolCallCount: toolStates.length,
           elapsedMs: now - streamStartedAt,
+          recentPartTypes: [...recentPartCounts].map(([type, n]) => `${type}:${n}`).join(','),
         });
       }
+      recentPartCounts.clear();
 
       if (loopDetected) {
         options?.onForceStop?.(`repetition loop detected (${loopDetected})`);

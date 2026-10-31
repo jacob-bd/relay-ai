@@ -5,6 +5,8 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -148,9 +150,41 @@ export function prepareProviderTraceLog(): string {
   return path;
 }
 
-/** Reset log file and return a writer that redacts secrets. */
-export function makeTraceLogger(logPath: string): (message: string) => void {
-  resetTraceLog(logPath);
+/** A prior log smaller than this is a launch stub, not a session worth keeping. */
+const MIN_ROTATED_LOG_BYTES = 1024;
+
+/** `foo.log` → `foo.prev.log`. */
+export function previousLogPath(path: string): string {
+  return path.endsWith('.log') ? `${path.slice(0, -4)}.prev.log` : `${path}.prev`;
+}
+
+/**
+ * Move the prior session log aside as `<name>.prev.log`, replacing any older
+ * copy, so a relaunch after a hang does not erase the evidence. At most one
+ * previous file exists. A near-empty prior log is dropped instead of rotated so
+ * a quick second launch cannot overwrite the real previous session.
+ */
+export function rotateTraceLog(path: string): void {
+  ensureLogsDir();
+  if (!existsSync(path)) return;
+  try {
+    if (statSync(path).size >= MIN_ROTATED_LOG_BYTES) {
+      renameSync(path, previousLogPath(path));
+      return;
+    }
+  } catch {
+    // fall through to plain removal
+  }
+  resetTraceLog(path);
+}
+
+/**
+ * Reset log file and return a writer that redacts secrets.
+ * `keepPrevious` rotates the old log to `.prev.log` instead of deleting it.
+ */
+export function makeTraceLogger(logPath: string, options?: { keepPrevious?: boolean }): (message: string) => void {
+  if (options?.keepPrevious) rotateTraceLog(logPath);
+  else resetTraceLog(logPath);
   return (message: string) => writeSecureLogLine(logPath, `${localTimestamp()} ${message}`);
 }
 
