@@ -41,7 +41,11 @@ import {
   summarizeServerProviders,
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider
-} from "./chunk-HV5E2CDW.js";
+} from "./chunk-K67NCN3C.js";
+import {
+  validateCustomEndpointUrl
+} from "./chunk-E6UE6BOG.js";
+import "./chunk-DWF4F24A.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -54,6 +58,7 @@ import {
   describeOAuthAccount,
   formatOAuthAccount,
   freeStatusLabel,
+  getAgentProviderModels,
   getAppPathOverride,
   getEnvServerPassword,
   getProviderModels,
@@ -98,9 +103,8 @@ import {
   setServerMaskGatewayIds,
   supportsAdditionalOAuthAccounts,
   supportsManualModels,
-  validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-K36OU6EP.js";
+} from "./chunk-X47N5A4I.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -683,6 +687,8 @@ function handleUiApiRequest(req, res, opts = {}) {
     handlePostKeys(req, res);
   } else if (url === "/api/providers/refresh" && req.method === "POST") {
     handleProviderRefresh(req, res);
+  } else if (url === "/api/providers/models/test" && req.method === "POST") {
+    handleTestModel(req, res);
   } else if (url === "/api/providers/refresh-all" && req.method === "POST") {
     handleRefreshAll(res);
   } else if (url === "/api/providers/templates" && req.method === "GET") {
@@ -791,7 +797,6 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
     else if (target) catalog = providersForTarget(catalog, target);
     const registry = loadRegistry();
     const registryById = new Map(registry.providers.map((p2) => [p2.id, p2]));
-    const rawCountById = new Map(registry.providers.map((p2) => [p2.id, getProviderModels(p2).length]));
     const manualIdsByProvider = new Map(registry.providers.map((p2) => [
       p2.id,
       new Set(getProviderModels(p2).filter((m) => m.source === "manual").map((m) => m.id))
@@ -825,9 +830,8 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
       ...canAddAccountField(p2.id, p2.authType, uiMode),
       ...keyAccountFields(registry.providers.find((rp) => rp.id === p2.id)),
       ...manualMetadata(p2.id),
-      // Copilot's runtime catalog is policy-filtered by account plan. Never replace
-      // that safe count with the larger raw cache count.
-      modelCount: isProviderKind(p2.id, "github-copilot") ? p2.models.length : rawCountById.get(p2.id) ?? p2.models.length,
+      // Count the same usable models shown below, not raw speech/guard/blocked entries.
+      modelCount: p2.models.length,
       ...isProviderKind(p2.id, "github-copilot") ? { subscription: copilotSubscription(p2.providerData) } : {},
       ...customById.has(p2.id) ? { customEndpoint: customById.get(p2.id) } : {},
       models: p2.models.map((m) => ({
@@ -866,7 +870,7 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
         ...isProviderKind(rp.id, "github-copilot") ? {} : accountFieldFrom(await readOAuthAccountLabel(rp)),
         ...canAddAccountField(rp.id, "oauth", uiMode),
         ...manualMetadata(rp.id),
-        modelCount: needsSignIn ? getProviderModels(rp).length : 0,
+        modelCount: needsSignIn ? getAgentProviderModels(rp).length : 0,
         ...isProviderKind(rp.id, "github-copilot") && !needsSignIn ? { subscription: copilotSubscription(void 0) } : {},
         models: []
       });
@@ -923,7 +927,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-UICRDYMJ.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-BGNMGQGA.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -967,12 +971,25 @@ async function handlePostKeys(req, res) {
     }
     const saved = await saveProviderCredential(authRef, key.trim());
     if (saved) {
+      const stored = await readStoredProviderCredential(authRef);
+      if (stored !== key.trim()) {
+        sendJson(res, 500, { ok: false, error: "The replacement key could not be read back. It has not been verified as saved." });
+        return;
+      }
+      const registryProvider = loadRegistry().providers.find((p2) => p2.id === providerId);
+      if (registryProvider) {
+        const effective = await resolveProviderCredential(providerId, registryProvider.authRef);
+        if (effective !== key.trim()) {
+          sendJson(res, 409, { ok: false, error: "Key saved, but another credential setting overrides it. Tests and launches would still use that other credential." });
+          return;
+        }
+      }
       sendJson(res, 200, { ok: true });
     } else {
       sendJson(res, 500, { error: "Credential store unavailable \u2014 key not saved" });
     }
   } catch (err) {
-    sendJson(res, 400, { error: String(err) });
+    sendJson(res, 400, { error: "Could not save and verify the provider key." });
   }
 }
 var CUSTOM_TEMPLATES = [
@@ -1185,6 +1202,33 @@ async function handleRefreshAll(res) {
     sendJson(res, 200, { ok: true, providers: summary, total: summary.reduce((n, p2) => n + p2.count, 0) });
   } catch (err) {
     sendJson(res, 500, { ok: false, error: String(err) });
+  }
+}
+async function handleTestModel(req, res) {
+  let body;
+  try {
+    body = JSON.parse(await readBody(req));
+  } catch {
+    sendJson(res, 400, { ok: false, error: "Invalid request." });
+    return;
+  }
+  if (!body || typeof body.providerId !== "string" || !body.providerId.trim() || typeof body.modelId !== "string" || !body.modelId.trim()) {
+    sendJson(res, 400, { ok: false, error: "providerId and modelId required" });
+    return;
+  }
+  const controller = new AbortController();
+  const cancel = () => {
+    if (!res.writableEnded) controller.abort();
+  };
+  res.on("close", cancel);
+  try {
+    const { testModel } = await import("./test-model-HMBY6J6Z.js");
+    const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
+    if (!res.destroyed) sendJson(res, 200, result);
+  } catch {
+    if (!res.destroyed) sendJson(res, 500, { ok: false, error: "Model test failed. Try again." });
+  } finally {
+    res.removeListener("close", cancel);
   }
 }
 async function handleProviderRefresh(req, res) {
@@ -2055,4 +2099,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-NSHGPOI6.js.map
+//# sourceMappingURL=ui-command-F2ES3WF4.js.map

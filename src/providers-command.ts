@@ -46,7 +46,7 @@ import {
 } from './registry/crud.js';
 import { validateProviderName } from './registry/provider-name.js';
 import { loadRegistry, saveRegistry } from './registry/io.js';
-import { getProviderModels, supportsManualModels } from './registry/provider-models.js';
+import { getAgentProviderModels, getProviderModels, supportsManualModels } from './registry/provider-models.js';
 import { runManualModelAddFlow, runManualModelRemoveFlow } from './manual-model-wizard.js';
 import { runVertexModelAccessFlow, runVertexModelAddFlow, runVertexModelRemoveFlow, runVertexModelResetFlow } from './vertex-models-wizard.js';
 import { isVertexAnthropicProvider } from './registry/vertex-anthropic.js';
@@ -1045,7 +1045,7 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
   const provider = registry.providers.find(pr => pr.id === id);
   if (!provider) return 'back';
 
-  const modelCount = getProviderModels(provider).length;
+  const modelCount = getAgentProviderModels(provider).length;
   const authLabel = formatRegistryAuthLabel(provider);
   printProviderDetailPanel(provider.name, modelCount, authLabel, await readOAuthAccountLabel(provider));
   const template = getTemplateById(provider.templateId) ?? getTemplateById(id);
@@ -1155,7 +1155,7 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
   if (action === 'remove-model') return (await runManualModelRemoveFlow(provider)) === 0 ? 'back' : 'failed';
 
   if (action === 'browse') {
-    const cachedModels = getProviderModels(provider);
+    const cachedModels = getAgentProviderModels(provider);
     const localModels = cachedModels
       .map(m => cachedModelToLocal(m, provider))
       .filter((m): m is NonNullable<typeof m> => m !== null);

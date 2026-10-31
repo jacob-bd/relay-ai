@@ -58,6 +58,14 @@ describe('GET /api/models appId filtering', () => {
     expect(result.body.providers[0].models).toHaveLength(2);
   });
 
+  it('counts usable models rather than the larger raw discovery cache', async () => {
+    state.registry.providers = [{ id: 'cloudflare-workers-ai', api: {},
+      modelsCache: { models: Array.from({ length: 12 }, (_, i) => ({ id: `raw-${i}` })) } }];
+    const result = await call('GET', '/api/models');
+    expect(result.body.providers[0].modelCount).toBe(2);
+    expect(result.body.providers[0].models).toHaveLength(2);
+  });
+
   it('drops models below the context floor for a known app id', async () => {
     const result = await call('GET', '/api/models?appId=claude');
     const ids = result.body.providers[0].models.map((m: any) => m.id);

@@ -911,6 +911,474 @@ function vertexAnthropicCachedModels() {
   }));
 }
 
+// src/data/model-incompatible.json
+var model_incompatible_default = {
+  schema_version: "1",
+  entries: [
+    {
+      provider: "google",
+      modelId: "antigravity-preview-05-2026",
+      category: "managed_agent",
+      reason: "Interactions API only; coding agents send multiturn chat via @ai-sdk/google streamGenerateContent",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "manual UAT 2026-06-10"
+      ],
+      verifiedAt: "2026-06-10"
+    },
+    {
+      provider: "*",
+      modelId: "z-ai/glm4.7",
+      category: "gated_access",
+      reason: "NVIDIA NIM requires separate access approval (HTTP 410)",
+      sources: [
+        "manual probe 2026-06"
+      ],
+      verifiedAt: "2026-06-10"
+    },
+    {
+      provider: "*",
+      modelId: "qwen3.6-plus-free",
+      category: "stale_promotion",
+      reason: "Free promotion ended; API returns 401",
+      sources: [
+        "OpenCode Zen catalog"
+      ],
+      verifiedAt: "2026-06-10"
+    },
+    {
+      provider: "*",
+      modelId: "mimo-v2-pro",
+      category: "deprecated",
+      reason: "Deprecated; API returns 400 \u2014 use mimo-v2.5-pro",
+      sources: [
+        "OpenCode Zen catalog"
+      ],
+      verifiedAt: "2026-06-10"
+    },
+    {
+      provider: "*",
+      modelId: "mimo-v2-omni",
+      category: "deprecated",
+      reason: "Deprecated; API returns 400 \u2014 use mimo-v2.5",
+      sources: [
+        "OpenCode Zen catalog"
+      ],
+      verifiedAt: "2026-06-10"
+    },
+    {
+      provider: "google",
+      modelId: "aqa",
+      category: "managed_agent",
+      reason: "Attributed QA model \u2014 not for coding agents",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "deep-research-max-preview-04-2026",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "deep-research-preview-04-2026",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "deep-research-pro-preview-12-2025",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-computer-use-preview-10-2025",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-flash-image",
+      category: "image_generation",
+      reason: "Image-output model \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-flash-native-audio-latest",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-flash-native-audio-preview-09-2025",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-flash-native-audio-preview-12-2025",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-flash-preview-tts",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-pro-preview-tts",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3-pro-preview",
+      category: "deprecated",
+      reason: "Retired preview; API returns 404 \u2014 use gemini-3.1-pro-preview or newer",
+      sources: [
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview",
+        "manual UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3-pro-image",
+      category: "image_generation",
+      reason: "Image-output model \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3-pro-image-preview",
+      category: "image_generation",
+      reason: "Image-output model \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3.1-flash-image",
+      category: "image_generation",
+      reason: "Image-output model \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3.1-flash-image-preview",
+      category: "image_generation",
+      reason: "Image-output model \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3.1-flash-live-preview",
+      category: "managed_agent",
+      reason: "Live/session API \u2014 not for Codex multiturn chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3.1-flash-tts-preview",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3.5-live-translate-preview",
+      category: "managed_agent",
+      reason: "Live/session API \u2014 not for Codex multiturn chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-embedding-001",
+      category: "embedding",
+      reason: "Embedding model \u2014 not for chat or tools",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-embedding-2",
+      category: "embedding",
+      reason: "Embedding model \u2014 not for chat or tools",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-embedding-2-preview",
+      category: "embedding",
+      reason: "Embedding model \u2014 not for chat or tools",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-robotics-er-1.5-preview",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-robotics-er-1.6-preview",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "imagen-4.0-fast-generate-001",
+      category: "image_generation",
+      reason: "Image generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "imagen-4.0-generate-001",
+      category: "image_generation",
+      reason: "Image generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "imagen-4.0-ultra-generate-001",
+      category: "image_generation",
+      reason: "Image generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "lyria-3-clip-preview",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "lyria-3-pro-preview",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "lyria-realtime-exp",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "nano-banana-pro-preview",
+      category: "image_generation",
+      reason: "Image generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-2.0-generate-001",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-3.0-fast-generate-001",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-3.0-generate-001",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-3.1-fast-generate-preview",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-3.1-generate-preview",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-3.1-lite-generate-preview",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    }
+  ]
+};
+
+// src/model-compatibility.ts
+var BLACKLIST_ENTRIES = model_incompatible_default.entries ?? [];
+
 // src/registry/provider-models.ts
 var MANUAL_MODEL_PACKAGES = /* @__PURE__ */ new Set([
   "@ai-sdk/openai-compatible",
@@ -4846,474 +5314,6 @@ async function readProviderSecret(account, diag) {
   return decodeProviderSecret(raw);
 }
 
-// src/data/model-incompatible.json
-var model_incompatible_default = {
-  schema_version: "1",
-  entries: [
-    {
-      provider: "google",
-      modelId: "antigravity-preview-05-2026",
-      category: "managed_agent",
-      reason: "Interactions API only; coding agents send multiturn chat via @ai-sdk/google streamGenerateContent",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "manual UAT 2026-06-10"
-      ],
-      verifiedAt: "2026-06-10"
-    },
-    {
-      provider: "*",
-      modelId: "z-ai/glm4.7",
-      category: "gated_access",
-      reason: "NVIDIA NIM requires separate access approval (HTTP 410)",
-      sources: [
-        "manual probe 2026-06"
-      ],
-      verifiedAt: "2026-06-10"
-    },
-    {
-      provider: "*",
-      modelId: "qwen3.6-plus-free",
-      category: "stale_promotion",
-      reason: "Free promotion ended; API returns 401",
-      sources: [
-        "OpenCode Zen catalog"
-      ],
-      verifiedAt: "2026-06-10"
-    },
-    {
-      provider: "*",
-      modelId: "mimo-v2-pro",
-      category: "deprecated",
-      reason: "Deprecated; API returns 400 \u2014 use mimo-v2.5-pro",
-      sources: [
-        "OpenCode Zen catalog"
-      ],
-      verifiedAt: "2026-06-10"
-    },
-    {
-      provider: "*",
-      modelId: "mimo-v2-omni",
-      category: "deprecated",
-      reason: "Deprecated; API returns 400 \u2014 use mimo-v2.5",
-      sources: [
-        "OpenCode Zen catalog"
-      ],
-      verifiedAt: "2026-06-10"
-    },
-    {
-      provider: "google",
-      modelId: "aqa",
-      category: "managed_agent",
-      reason: "Attributed QA model \u2014 not for coding agents",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "deep-research-max-preview-04-2026",
-      category: "managed_agent",
-      reason: "Specialized agent API \u2014 not standard coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "deep-research-preview-04-2026",
-      category: "managed_agent",
-      reason: "Specialized agent API \u2014 not standard coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "deep-research-pro-preview-12-2025",
-      category: "managed_agent",
-      reason: "Specialized agent API \u2014 not standard coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-2.5-computer-use-preview-10-2025",
-      category: "managed_agent",
-      reason: "Specialized agent API \u2014 not standard coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-2.5-flash-image",
-      category: "image_generation",
-      reason: "Image-output model \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-2.5-flash-native-audio-latest",
-      category: "audio_only",
-      reason: "Audio/music output \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-2.5-flash-native-audio-preview-09-2025",
-      category: "audio_only",
-      reason: "Audio/music output \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-2.5-flash-native-audio-preview-12-2025",
-      category: "audio_only",
-      reason: "Audio/music output \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-2.5-flash-preview-tts",
-      category: "audio_only",
-      reason: "Audio/music output \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-2.5-pro-preview-tts",
-      category: "audio_only",
-      reason: "Audio/music output \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-3-pro-preview",
-      category: "deprecated",
-      reason: "Retired preview; API returns 404 \u2014 use gemini-3.1-pro-preview or newer",
-      sources: [
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview",
-        "manual UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-3-pro-image",
-      category: "image_generation",
-      reason: "Image-output model \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-3-pro-image-preview",
-      category: "image_generation",
-      reason: "Image-output model \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-3.1-flash-image",
-      category: "image_generation",
-      reason: "Image-output model \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-3.1-flash-image-preview",
-      category: "image_generation",
-      reason: "Image-output model \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-3.1-flash-live-preview",
-      category: "managed_agent",
-      reason: "Live/session API \u2014 not for Codex multiturn chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-3.1-flash-tts-preview",
-      category: "audio_only",
-      reason: "Audio/music output \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-3.5-live-translate-preview",
-      category: "managed_agent",
-      reason: "Live/session API \u2014 not for Codex multiturn chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-embedding-001",
-      category: "embedding",
-      reason: "Embedding model \u2014 not for chat or tools",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-embedding-2",
-      category: "embedding",
-      reason: "Embedding model \u2014 not for chat or tools",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-embedding-2-preview",
-      category: "embedding",
-      reason: "Embedding model \u2014 not for chat or tools",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-robotics-er-1.5-preview",
-      category: "managed_agent",
-      reason: "Specialized agent API \u2014 not standard coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "gemini-robotics-er-1.6-preview",
-      category: "managed_agent",
-      reason: "Specialized agent API \u2014 not standard coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "imagen-4.0-fast-generate-001",
-      category: "image_generation",
-      reason: "Image generation \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "imagen-4.0-generate-001",
-      category: "image_generation",
-      reason: "Image generation \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "imagen-4.0-ultra-generate-001",
-      category: "image_generation",
-      reason: "Image generation \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "lyria-3-clip-preview",
-      category: "audio_only",
-      reason: "Audio/music output \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "lyria-3-pro-preview",
-      category: "audio_only",
-      reason: "Audio/music output \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "lyria-realtime-exp",
-      category: "audio_only",
-      reason: "Audio/music output \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "nano-banana-pro-preview",
-      category: "image_generation",
-      reason: "Image generation \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "veo-2.0-generate-001",
-      category: "video_generation",
-      reason: "Video generation \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "veo-3.0-fast-generate-001",
-      category: "video_generation",
-      reason: "Video generation \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "veo-3.0-generate-001",
-      category: "video_generation",
-      reason: "Video generation \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "veo-3.1-fast-generate-preview",
-      category: "video_generation",
-      reason: "Video generation \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "veo-3.1-generate-preview",
-      category: "video_generation",
-      reason: "Video generation \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    },
-    {
-      provider: "google",
-      modelId: "veo-3.1-lite-generate-preview",
-      category: "video_generation",
-      reason: "Video generation \u2014 not for coding chat",
-      sources: [
-        "https://ai.google.dev/gemini-api/docs/models",
-        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
-      ],
-      verifiedAt: "2026-06-11"
-    }
-  ]
-};
-
-// src/model-compatibility.ts
-var BLACKLIST_ENTRIES = model_incompatible_default.entries ?? [];
-
 // src/registry/import-build.ts
 function oauthAuthRef(providerId) {
   return `keyring:oauth:provider:${providerId}`;
@@ -6088,6 +6088,8 @@ async function resolveCredential(provider, routeId) {
     const credential = await resolveProviderCredential(provider.id, provider.authRef);
     if (credential) return credential;
     if (provider.authType === "none") return "";
+    const template = getTemplateById(providerKind(provider.id));
+    if (template?.apiKeyOptional) return "";
     throw new RelayCoreError(
       "CREDENTIAL_UNAVAILABLE",
       `No credential available for provider "${provider.name}" \u2014 re-authenticate in relay-ai ui.`,

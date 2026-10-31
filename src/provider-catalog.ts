@@ -3,7 +3,7 @@ import { resolveProviderCredential } from './env.js';
 import type { CompatibilityAgent } from './model-compatibility.js';
 import { oauthAuthRef } from './registry/import-build.js';
 import { loadRegistry } from './registry/io.js';
-import { getProviderModels } from './registry/provider-models.js';
+import { getAgentProviderModels } from './registry/provider-models.js';
 import { loadRegistryProviders } from './registry/load.js';
 import { getTemplateById } from './provider-templates.js';
 import type { LocalProvider } from './types.js';
@@ -85,7 +85,7 @@ export async function resolveProvidersForDisplay(): Promise<ProviderDisplayEntry
     entries.push({
       id: provider.id,
       name: provider.name,
-      modelCount: getProviderModels(provider).length,
+      modelCount: getAgentProviderModels(provider).length,
       enabled: provider.enabled,
       authLabel: formatRegistryAuthLabel(provider),
       inRegistry: true,

@@ -13,7 +13,7 @@ import { fetchCommandCodeModels, COMMANDCODE_BASE_URL } from './fetch-commandcod
 import { fetchClaudeCodeModels } from '../oauth/claude-code.js';
 import { loadRegistry, saveRegistry } from './io.js';
 import { resolveModelSource } from './model-source.js';
-import { getProviderModels } from './provider-models.js';
+import { getAgentProviderModels, getProviderModels } from './provider-models.js';
 import { validateCustomEndpointUrl } from './url-security.js';
 import {
   effectiveProviderBaseUrl,
@@ -631,7 +631,7 @@ export async function refreshProviderModels(
   }
 
   try {
-    const previousModelCount = getProviderModels(provider).length;
+    const previousModelCount = getAgentProviderModels(provider).length;
     let models: CachedModel[] = [];
     let baseUrl: string | undefined;
     let oauthFallbackReason: string | undefined;
@@ -784,7 +784,7 @@ export async function refreshProviderModels(
       id: provider.id,
       name: provider.name,
       ok: true,
-      modelCount: getProviderModels(registry.providers.find(p => p.id === providerId)!).length,
+      modelCount: getAgentProviderModels(registry.providers.find(p => p.id === providerId)!).length,
       previousModelCount: provider.refreshedAt ? previousModelCount : undefined,
       reason: [oauthFallbackReason, incompleteReason].filter(Boolean).join(' ') || undefined,
     };

@@ -226,6 +226,13 @@ describe('createRelayModel', () => {
     expect((err as Error).message).toContain('relay-ai ui');
   });
 
+  it('permits an anonymous numbered Kilo account when no key is stored', async () => {
+    writeRegistry([provider({ id: 'kilo-2', templateId: 'kilo', authRef: 'keyring:provider:kilo-2',
+      api: { npm: '@ai-sdk/openai-compatible', url: 'https://api.kilo.ai/api/gateway' } })]);
+    await createRelayModel('kilo-2::llama-3.3-70b');
+    expect(createLanguageModelMock).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'kilo-2', apiKey: '' }));
+  });
+
   it('expiring OpenAI OAuth credential travels through the refresh path before construction', async () => {
     writeRegistry([provider({
       id: 'openai-oauth', templateId: 'openai', name: 'OpenAI (ChatGPT)',

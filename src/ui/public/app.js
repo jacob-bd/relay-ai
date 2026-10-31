@@ -651,20 +651,21 @@ function renderProviderModelBrowser() {
     </div>
     <div class="provider-model-table-wrap">
       <table class="provider-model-table">
-        <thead><tr><th>Model</th><th>Context</th><th>Price in / out</th>${showActions ? '<th class="th-actions">Actions</th>' : ''}</tr></thead>
+        <thead><tr><th>Model</th><th>Context</th><th>Price in / out</th><th class="th-actions">Actions</th></tr></thead>
         <tbody>
           ${result.items.map(model => `
             <tr>
               <td><strong>${escapeHtml(model.name || model.id)}</strong>${model.source === 'manual' ? ' <span class="manual-model-badge">Manual</span>' : ''}<code>${escapeHtml(model.id)}</code></td>
               <td>${fmtCtx(model.contextWindow) || '—'}</td>
               <td>${formatModelPrice(model.cost, isFreeModel(model), freeBadgeLabel(model))}</td>
-              ${showActions ? `
                 <td class="td-actions">
+                  <button class="btn btn-ghost btn-model-test" type="button" data-model-id="${escapeHtml(model.id)}" title="Send a short query to check this model responds. Uses a small amount of provider quota.">Test</button>
+                  ${showActions ? `
                   <button class="btn-model-add" type="button" data-model-id="${escapeHtml(model.id)}" title="Add to favorites">+</button>
+                  ` : ''}
                 </td>
-              ` : ''}
             </tr>
-          `).join('') || `<tr><td colspan="${showActions ? 4 : 3}" class="provider-model-empty">No models match your search and filters.</td></tr>`}
+          `).join('') || `<tr><td colspan="4" class="provider-model-empty">No models match your search and filters.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -709,6 +710,9 @@ function renderProviderModelBrowser() {
       });
     });
   }
+  container.querySelectorAll('.btn-model-test').forEach(button => {
+    button.addEventListener('click', () => testModelResponse(button, provider.id, button.dataset.modelId));
+  });
   document.getElementById('provider-model-prev').addEventListener('click', () => {
     state.providerModelPage -= 1;
     renderProviderModelBrowser();
@@ -734,6 +738,28 @@ function renderProviderModelBrowser() {
     renderProviderModelBrowser();
     showToast(`${refreshed.count} models refreshed`);
   });
+}
+
+async function testModelResponse(button, providerId, modelId) {
+  button.disabled = true;
+  button.textContent = 'Testing…';
+  button.setAttribute('aria-busy', 'true');
+  try {
+    const response = await fetch('/api/providers/models/test', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providerId, modelId }),
+    });
+    const result = await response.json();
+    button.textContent = result.ok ? 'Responded' : 'Retry test';
+    button.title = result.ok ? `Responded in ${(result.latencyMs / 1000).toFixed(1)}s` : result.error;
+    showToast(result.ok ? `${modelId} responded in ${(result.latencyMs / 1000).toFixed(1)}s` : `${modelId}: ${result.error || 'Test failed'}`);
+  } catch {
+    button.textContent = 'Retry test';
+    showToast('Could not complete the model test. Check the connection and try again.');
+  } finally {
+    button.disabled = false;
+    button.removeAttribute('aria-busy');
+  }
 }
 
 function buildManualModelPanel(provider) {
@@ -1580,6 +1606,7 @@ function buildProviderBodyContent(provider) {
   const testBtn = document.createElement('button');
   testBtn.className = 'btn btn-primary';
   testBtn.textContent = 'Test & Refresh';
+  testBtn.title = 'Refresh the catalog using the entered key, then optionally save it. Use Test beside a model to verify inference access.';
 
   const feedback = document.createElement('div');
   feedback.className = 'key-feedback';
@@ -1617,7 +1644,7 @@ function buildProviderBodyContent(provider) {
           return;
         }
       }
-      feedback.textContent = `✓ ${result.count} models available${savedMessage}`;
+      feedback.textContent = `✓ Catalog refreshed: ${result.count} models${savedMessage}`;
       feedback.className = 'key-feedback success';
       const countEl = document.querySelector(`[data-id="${CSS.escape(provider.id)}"] .provider-models-count`);
       if (countEl) countEl.textContent = `${result.count} models`;
@@ -2368,6 +2395,17 @@ function buildFavItem(fav, index, listType) {
   item.appendChild(rank);
   item.appendChild(idEl);
   item.appendChild(provBadge);
+  const testBtn = document.createElement('button');
+  testBtn.className = 'btn btn-ghost';
+  testBtn.textContent = 'Test';
+  testBtn.draggable = false;
+  testBtn.title = 'Send a short query to check this model responds. Uses provider quota.';
+  testBtn.setAttribute('aria-label', `Test ${fav.modelId}`);
+  testBtn.addEventListener('click', event => {
+    event.stopPropagation();
+    testModelResponse(testBtn, fav.providerId, fav.modelId);
+  });
+  item.appendChild(testBtn);
   item.appendChild(removeBtn);
 
   // Drag-and-drop
@@ -2470,33 +2508,54 @@ function isServerAdminUi() {
 }
 
 function initNav() {
-  // Host-only sections stay in the DOM but are CSS-hidden in server admin mode.
-  const sectionIds = isServerAdminUi()
-    ? ['providers', 'favorites', 'server']
-    : ['providers', 'favorites', 'section-codex-subagents', 'antigravity', 'apps', 'server'];
-  const navItems = document.querySelectorAll('.nav-item');
+  const navItems = [...document.querySelectorAll('.nav-item')];
   const content = document.getElementById('content');
+  const sections = [...content.querySelectorAll(':scope > .section:not(.provider-model-browser)')];
+  const available = navItems.filter(item => !isServerAdminUi()
+    || !['apps', 'antigravity'].includes(item.dataset.section));
+  content.classList.add('section-navigation');
 
-  // Always start on Providers & Keys — hardcoded, no computed check at mount.
-  // The scroll listener updates this as the user scrolls.
-  function setActive(id) {
-    navItems.forEach(n => n.classList.toggle('active', n.dataset.section === id));
-  }
-  setActive('providers');
-
-  content.addEventListener('scroll', () => {
-    if (content.classList.contains('provider-browser-open')) return;
-    const contentTop = content.getBoundingClientRect().top;
-    const threshold = content.clientHeight * 0.4;
-    let activeId = 'providers';
-    for (const id of sectionIds) {
-      const el = document.getElementById(id);
-      if (!el) continue;
-      const elTop = el.getBoundingClientRect().top - contentTop;
-      if (elTop < threshold) activeId = id;
+  function applyRoute(focus = false) {
+    const providerId = providerIdFromHash();
+    const requested = window.location.hash.slice(1);
+    const selected = providerId ? 'providers'
+      : available.find(item => item.dataset.section === requested)?.dataset.section ?? 'providers';
+    if (!providerId && requested && requested !== selected) {
+      window.history.replaceState(null, '', `#${selected}`);
     }
-    setActive(activeId);
-  }, { passive: true });
+    sections.forEach(section => {
+      section.classList.toggle('section-active', section.id === selected);
+    });
+    navItems.forEach(item => {
+      const active = item.dataset.section === selected;
+      item.classList.toggle('active', active);
+      if (active) item.setAttribute('aria-current', 'page');
+      else item.removeAttribute('aria-current');
+    });
+    closeModelFavPopover();
+    syncProviderModelBrowserFromHash();
+    content.scrollTop = 0;
+    if (focus) {
+      const heading = document.querySelector(providerId
+        ? '#provider-model-browser h1' : `#${selected} h1`);
+      if (heading) {
+        heading.setAttribute('tabindex', '-1');
+        heading.focus({ preventScroll: true });
+      }
+    }
+  }
+
+  navItems.forEach(item => item.addEventListener('click', event => {
+    // Keep modified clicks usable as ordinary links in another tab.
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    const hash = item.getAttribute('href');
+    if (window.location.hash !== hash) window.location.hash = hash;
+    // Same-hash clicks have no hashchange event, but must still align the view.
+    applyRoute(true);
+  }));
+  window.addEventListener('hashchange', () => applyRoute(true));
+  applyRoute();
 }
 
 // ─── Provider stats ──────────────────────────────────────────────────────────
@@ -2606,7 +2665,6 @@ async function init() {
     syncProviderModelBrowserFromHash();
   });
 
-  window.addEventListener('hashchange', syncProviderModelBrowserFromHash);
   syncProviderModelBrowserFromHash();
 
   document.getElementById('provider-search').addEventListener('input', e => {

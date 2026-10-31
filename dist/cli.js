@@ -2,11 +2,10 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-NBB7EUP6.js";
+} from "./chunk-F6PJA74B.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
-  OPENCODE_SESSION_HEADER,
   PREVIEW_PROXY_PORT,
   addCustomEndpointProvider,
   addFavorite,
@@ -22,7 +21,6 @@ import {
   buildCatalogRoutes,
   buildCodexAppRootConfig,
   buildHttpProxyRoutes,
-  buildImportProviderList,
   buildListExperimentsResponse,
   buildListModelConfigsResponse,
   buildVertexRuntimeConfig,
@@ -36,13 +34,11 @@ import {
   codexAppSupported,
   createGatewayModelCatalog,
   customEndpointKind,
-  effectiveProviderBaseUrl,
   effortLabel,
   endpointModelTimeoutMs,
   estimateAnthropicInputTokens,
   evaluateAgySwitchCompatibility,
   extractApiKey,
-  extractConversationId,
   favoriteEffortLevels,
   favoriteProviderDisplayName,
   fetchAnthropicModels,
@@ -69,11 +65,8 @@ import {
   isClaudeAppRunning,
   isCodexAppRunning,
   isFavorite,
-  isLikelyPlaceholderKey,
-  isOAuthImportProvider,
   launchOrRestartClaudeApp,
   launchOrRestartCodexApp,
-  listCredentialSkippedProviders,
   logActiveModel,
   logConnected,
   logProxy,
@@ -81,8 +74,6 @@ import {
   meetsContextFloor,
   modelSelectOption,
   navOption,
-  oauthAuthRef,
-  openCodeGoHeaders,
   parseCodexAppModelSlug,
   printApiKeyPanel,
   printCloudProviderPanel,
@@ -93,7 +84,6 @@ import {
   printProviderDetailPanel,
   printWelcomePanel,
   providerAuthHelpText,
-  providerRefreshToken,
   providerSelectOption,
   providersForCodexSubagents,
   providersForPicker,
@@ -113,28 +103,42 @@ import {
   renderMultiAgentV2Feature,
   resolveLocalProviderApiKey,
   resolveModelSource,
-  resolveProviderTemplate,
   resolveProvidersForDisplay,
-  resolveRefreshCredential,
   resolveRelayCatalogSlots,
   routableModelsForTarget,
   runServerCommand,
   sendJson,
   serializeCatalog,
-  shouldHideModel,
   startProxy,
   startProxyCatalog,
   startServer,
   supportsClaudeTransparentMode,
   supportsMultiAgentV2,
-  syntheticTemplate,
-  toOAuthRegistryId,
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-HV5E2CDW.js";
+} from "./chunk-K67NCN3C.js";
+import {
+  validateCustomEndpointUrl
+} from "./chunk-E6UE6BOG.js";
+import {
+  OPENCODE_SESSION_HEADER,
+  buildImportProviderList,
+  effectiveProviderBaseUrl,
+  extractConversationId,
+  isLikelyPlaceholderKey,
+  isOAuthImportProvider,
+  listCredentialSkippedProviders,
+  oauthAuthRef,
+  openCodeGoHeaders,
+  providerRefreshToken,
+  resolveProviderTemplate,
+  resolveRefreshCredential,
+  syntheticTemplate,
+  toOAuthRegistryId
+} from "./chunk-DWF4F24A.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -164,6 +168,7 @@ import {
   encodeToolUseId,
   formatUpstreamError,
   formatUpstreamErrorTrace,
+  getAgentProviderModels,
   getAntigravityDebugLogPath,
   getAppPathOverride,
   getClaudeDebugLogPath,
@@ -219,6 +224,7 @@ import {
   saveRegistry,
   saveToCredentialStore,
   serializeToolResultContent,
+  shouldHideModel,
   silenceSdkWarnings,
   splitToolUseId,
   sseChunk,
@@ -230,12 +236,11 @@ import {
   thinkingProviderOptions,
   uniqueProviderName,
   upstreamHttpStatus,
-  validateCustomEndpointUrl,
   validateProviderName,
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-K36OU6EP.js";
+} from "./chunk-X47N5A4I.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -2886,7 +2891,7 @@ async function runProviderDetail(id) {
   const registry = loadRegistry();
   const provider = registry.providers.find((pr) => pr.id === id);
   if (!provider) return "back";
-  const modelCount = getProviderModels(provider).length;
+  const modelCount = getAgentProviderModels(provider).length;
   const authLabel = formatRegistryAuthLabel(provider);
   printProviderDetailPanel(provider.name, modelCount, authLabel, await readOAuthAccountLabel(provider));
   const template = getTemplateById(provider.templateId) ?? getTemplateById(id);
@@ -2989,7 +2994,7 @@ async function runProviderDetail(id) {
   if (action === "add-model") return await runManualModelAddFlow(provider) === 0 ? "back" : "failed";
   if (action === "remove-model") return await runManualModelRemoveFlow(provider) === 0 ? "back" : "failed";
   if (action === "browse") {
-    const cachedModels = getProviderModels(provider);
+    const cachedModels = getAgentProviderModels(provider);
     const localModels = cachedModels.map((m) => cachedModelToLocal(m, provider)).filter((m) => m !== null);
     const localProvider = {
       id: provider.id,
@@ -17618,7 +17623,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-NSHGPOI6.js");
+    const { runUiCommand } = await import("./ui-command-F2ES3WF4.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

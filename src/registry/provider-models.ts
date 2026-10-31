@@ -1,5 +1,6 @@
 import type { CachedModel, ManualModel, RegistryProvider } from './types.js';
 import { isVertexAnthropicProvider, vertexAnthropicCachedModels } from './vertex-anthropic.js';
+import { shouldHideModel } from '../model-compatibility.js';
 
 const MANUAL_MODEL_PACKAGES = new Set([
   '@ai-sdk/openai-compatible', '@ai-sdk/openai', '@ai-sdk/anthropic', '@openrouter/ai-sdk-provider',
@@ -21,6 +22,13 @@ export function getProviderModels(provider: RegistryProvider): CachedModel[] {
     }
   }
   return [...models.values()];
+}
+
+/** Keep the raw discovery cache; agent browsing/counts exclude non-chat and blocked models. */
+export function getAgentProviderModels(provider: RegistryProvider): CachedModel[] {
+  return getProviderModels(provider).filter(model => !shouldHideModel({
+    providerId: provider.id, modelId: model.id, agent: 'claude',
+  }));
 }
 
 export function modelIdError(value: unknown): string | undefined {

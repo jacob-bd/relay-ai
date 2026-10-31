@@ -756,51 +756,470 @@ function removeVertexModelEntries(ids) {
   return { ok: true };
 }
 
-// src/registry/provider-models.ts
-var MANUAL_MODEL_PACKAGES = /* @__PURE__ */ new Set([
-  "@ai-sdk/openai-compatible",
-  "@ai-sdk/openai",
-  "@ai-sdk/anthropic",
-  "@openrouter/ai-sdk-provider"
-]);
-function supportsManualModels(provider) {
-  return provider.authType !== "oauth" && !["zen", "go", "antigravity"].includes(provider.templateId) && MANUAL_MODEL_PACKAGES.has(provider.api.npm ?? "");
-}
-function getProviderModels(provider) {
-  if (isVertexAnthropicProvider(provider)) return vertexAnthropicCachedModels();
-  const models = new Map((provider.modelsCache?.models ?? []).map((model) => [model.id, model]));
-  if (supportsManualModels(provider)) {
-    for (const model of provider.manualModels ?? []) {
-      models.set(model.id, { ...model, modelFormat: provider.api.npm === "@ai-sdk/anthropic" ? "anthropic" : "openai" });
+// src/data/model-incompatible.json
+var model_incompatible_default = {
+  schema_version: "1",
+  entries: [
+    {
+      provider: "google",
+      modelId: "antigravity-preview-05-2026",
+      category: "managed_agent",
+      reason: "Interactions API only; coding agents send multiturn chat via @ai-sdk/google streamGenerateContent",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "manual UAT 2026-06-10"
+      ],
+      verifiedAt: "2026-06-10"
+    },
+    {
+      provider: "*",
+      modelId: "z-ai/glm4.7",
+      category: "gated_access",
+      reason: "NVIDIA NIM requires separate access approval (HTTP 410)",
+      sources: [
+        "manual probe 2026-06"
+      ],
+      verifiedAt: "2026-06-10"
+    },
+    {
+      provider: "*",
+      modelId: "qwen3.6-plus-free",
+      category: "stale_promotion",
+      reason: "Free promotion ended; API returns 401",
+      sources: [
+        "OpenCode Zen catalog"
+      ],
+      verifiedAt: "2026-06-10"
+    },
+    {
+      provider: "*",
+      modelId: "mimo-v2-pro",
+      category: "deprecated",
+      reason: "Deprecated; API returns 400 \u2014 use mimo-v2.5-pro",
+      sources: [
+        "OpenCode Zen catalog"
+      ],
+      verifiedAt: "2026-06-10"
+    },
+    {
+      provider: "*",
+      modelId: "mimo-v2-omni",
+      category: "deprecated",
+      reason: "Deprecated; API returns 400 \u2014 use mimo-v2.5",
+      sources: [
+        "OpenCode Zen catalog"
+      ],
+      verifiedAt: "2026-06-10"
+    },
+    {
+      provider: "google",
+      modelId: "aqa",
+      category: "managed_agent",
+      reason: "Attributed QA model \u2014 not for coding agents",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "deep-research-max-preview-04-2026",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "deep-research-preview-04-2026",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "deep-research-pro-preview-12-2025",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-computer-use-preview-10-2025",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-flash-image",
+      category: "image_generation",
+      reason: "Image-output model \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-flash-native-audio-latest",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-flash-native-audio-preview-09-2025",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-flash-native-audio-preview-12-2025",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-flash-preview-tts",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-2.5-pro-preview-tts",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3-pro-preview",
+      category: "deprecated",
+      reason: "Retired preview; API returns 404 \u2014 use gemini-3.1-pro-preview or newer",
+      sources: [
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview",
+        "manual UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3-pro-image",
+      category: "image_generation",
+      reason: "Image-output model \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3-pro-image-preview",
+      category: "image_generation",
+      reason: "Image-output model \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3.1-flash-image",
+      category: "image_generation",
+      reason: "Image-output model \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3.1-flash-image-preview",
+      category: "image_generation",
+      reason: "Image-output model \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3.1-flash-live-preview",
+      category: "managed_agent",
+      reason: "Live/session API \u2014 not for Codex multiturn chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3.1-flash-tts-preview",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-3.5-live-translate-preview",
+      category: "managed_agent",
+      reason: "Live/session API \u2014 not for Codex multiturn chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-embedding-001",
+      category: "embedding",
+      reason: "Embedding model \u2014 not for chat or tools",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-embedding-2",
+      category: "embedding",
+      reason: "Embedding model \u2014 not for chat or tools",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-embedding-2-preview",
+      category: "embedding",
+      reason: "Embedding model \u2014 not for chat or tools",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-robotics-er-1.5-preview",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "gemini-robotics-er-1.6-preview",
+      category: "managed_agent",
+      reason: "Specialized agent API \u2014 not standard coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "imagen-4.0-fast-generate-001",
+      category: "image_generation",
+      reason: "Image generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "imagen-4.0-generate-001",
+      category: "image_generation",
+      reason: "Image generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "imagen-4.0-ultra-generate-001",
+      category: "image_generation",
+      reason: "Image generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "lyria-3-clip-preview",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "lyria-3-pro-preview",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "lyria-realtime-exp",
+      category: "audio_only",
+      reason: "Audio/music output \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "nano-banana-pro-preview",
+      category: "image_generation",
+      reason: "Image generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-2.0-generate-001",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-3.0-fast-generate-001",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-3.0-generate-001",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-3.1-fast-generate-preview",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-3.1-generate-preview",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
+    },
+    {
+      provider: "google",
+      modelId: "veo-3.1-lite-generate-preview",
+      category: "video_generation",
+      reason: "Video generation \u2014 not for coding chat",
+      sources: [
+        "https://ai.google.dev/gemini-api/docs/models",
+        "Google GET /v1/models vs models.dev gap \u2014 UAT 2026-06-11"
+      ],
+      verifiedAt: "2026-06-11"
     }
-  }
-  return [...models.values()];
-}
-function modelIdError(value) {
-  if (typeof value !== "string" || !value.trim()) return "Model ID is required.";
-  if (value.trim().length > 512 || /[\s\u0000-\u001f\u007f]/u.test(value.trim())) {
-    return "Model ID must be at most 512 characters with no whitespace or control characters.";
-  }
-}
-function contextWindowError(value) {
-  if (value !== void 0 && (!Number.isSafeInteger(value) || Number(value) <= 0)) {
-    return "Context size must be a positive whole number of tokens, or left blank.";
-  }
-}
-function parseManualModel(raw) {
-  if (!raw || typeof raw !== "object") return void 0;
-  const m = raw;
-  if (modelIdError(m.id) || typeof m.name !== "string" || !m.name.trim() || m.name.length > 200 || m.source !== "manual" || typeof m.validatedAt !== "string" || !Number.isFinite(Date.parse(m.validatedAt)) || contextWindowError(m.contextWindow) || m.modelFormat !== "openai" && m.modelFormat !== "anthropic") return void 0;
-  return {
-    id: m.id.trim(),
-    name: m.name.trim(),
-    upstreamModelId: m.id.trim(),
-    modelFormat: m.modelFormat,
-    source: "manual",
-    validatedAt: m.validatedAt,
-    ...m.contextWindow === void 0 ? {} : { contextWindow: m.contextWindow, contextWindowSource: "user" }
-  };
-}
+  ]
+};
 
 // src/registry/models-dev.ts
 import {
@@ -1390,6 +1809,106 @@ function resolveModelReasoningMetadata(providerId, modelId, overrides = {}, cach
   if (effort.kind === "levels") result.reasoningEffortLevels = effort.levels;
   else if (effort.kind === "conflict") result.reasoningEffortConflict = true;
   return result;
+}
+
+// src/model-compatibility.ts
+var BLACKLIST_ENTRIES = model_incompatible_default.entries ?? [];
+var ANTIGRAVITY_HELPER_SLOT = /^(tab_|chat_|models\/)|image/i;
+function isAntigravityCloudCodeHelperSlot(modelId) {
+  return ANTIGRAVITY_HELPER_SLOT.test(modelId);
+}
+var ZEN_FREE_TIER_PROVIDERS = /* @__PURE__ */ new Set(["zen"]);
+function isZenFreeTierModel(providerId, modelId) {
+  if (!ZEN_FREE_TIER_PROVIDERS.has(providerKind(providerId))) return false;
+  const id = modelId.trim().toLowerCase();
+  return id === "big-pickle" || id.endsWith("-free");
+}
+function matchesAgent(entryAgents, agent) {
+  if (!entryAgents || entryAgents.length === 0) return true;
+  return entryAgents.includes(agent);
+}
+function matchesProvider(entryProvider, providerId) {
+  return entryProvider === providerId || entryProvider === "*";
+}
+function findBlacklistEntry(ctx) {
+  for (const entry of BLACKLIST_ENTRIES) {
+    if (entry.modelId !== ctx.modelId) continue;
+    if (!matchesProvider(entry.provider, ctx.providerId)) continue;
+    if (!matchesAgent(entry.agents, ctx.agent)) continue;
+    return entry;
+  }
+  return null;
+}
+function hideReason(ctx) {
+  if (isProviderKind(ctx.providerId, "antigravity") && isAntigravityCloudCodeHelperSlot(ctx.modelId)) {
+    return "[antigravity-oauth] Cloud Code helper/internal slot";
+  }
+  if (isZenFreeTierModel(ctx.providerId, ctx.modelId)) {
+    return "[zen-free-tier] restricted to the OpenCode client (403 outside)";
+  }
+  const blacklist = findBlacklistEntry(ctx);
+  if (blacklist) return `[blacklist:${blacklist.category}] ${blacklist.reason}`;
+  const modelsDev = findModelsDevModel(ctx.providerId, ctx.modelId, loadModelsDevCache());
+  if (modelsDev && shouldHideByModelsDevCapabilities(modelsDev)) {
+    return "[models.dev] incompatible capabilities for coding agents";
+  }
+  return null;
+}
+function shouldHideModel(ctx) {
+  return hideReason(ctx) !== null;
+}
+
+// src/registry/provider-models.ts
+var MANUAL_MODEL_PACKAGES = /* @__PURE__ */ new Set([
+  "@ai-sdk/openai-compatible",
+  "@ai-sdk/openai",
+  "@ai-sdk/anthropic",
+  "@openrouter/ai-sdk-provider"
+]);
+function supportsManualModels(provider) {
+  return provider.authType !== "oauth" && !["zen", "go", "antigravity"].includes(provider.templateId) && MANUAL_MODEL_PACKAGES.has(provider.api.npm ?? "");
+}
+function getProviderModels(provider) {
+  if (isVertexAnthropicProvider(provider)) return vertexAnthropicCachedModels();
+  const models = new Map((provider.modelsCache?.models ?? []).map((model) => [model.id, model]));
+  if (supportsManualModels(provider)) {
+    for (const model of provider.manualModels ?? []) {
+      models.set(model.id, { ...model, modelFormat: provider.api.npm === "@ai-sdk/anthropic" ? "anthropic" : "openai" });
+    }
+  }
+  return [...models.values()];
+}
+function getAgentProviderModels(provider) {
+  return getProviderModels(provider).filter((model) => !shouldHideModel({
+    providerId: provider.id,
+    modelId: model.id,
+    agent: "claude"
+  }));
+}
+function modelIdError(value) {
+  if (typeof value !== "string" || !value.trim()) return "Model ID is required.";
+  if (value.trim().length > 512 || /[\s\u0000-\u001f\u007f]/u.test(value.trim())) {
+    return "Model ID must be at most 512 characters with no whitespace or control characters.";
+  }
+}
+function contextWindowError(value) {
+  if (value !== void 0 && (!Number.isSafeInteger(value) || Number(value) <= 0)) {
+    return "Context size must be a positive whole number of tokens, or left blank.";
+  }
+}
+function parseManualModel(raw) {
+  if (!raw || typeof raw !== "object") return void 0;
+  const m = raw;
+  if (modelIdError(m.id) || typeof m.name !== "string" || !m.name.trim() || m.name.length > 200 || m.source !== "manual" || typeof m.validatedAt !== "string" || !Number.isFinite(Date.parse(m.validatedAt)) || contextWindowError(m.contextWindow) || m.modelFormat !== "openai" && m.modelFormat !== "anthropic") return void 0;
+  return {
+    id: m.id.trim(),
+    name: m.name.trim(),
+    upstreamModelId: m.id.trim(),
+    modelFormat: m.modelFormat,
+    source: "manual",
+    validatedAt: m.validatedAt,
+    ...m.contextWindow === void 0 ? {} : { contextWindow: m.contextWindow, contextWindowSource: "user" }
+  };
 }
 
 // src/config.ts
@@ -3810,116 +4329,136 @@ async function isSecretServiceAvailable() {
   }
 }
 
-// src/registry/url-security.ts
-import { lookup } from "dns/promises";
-import ipaddr from "ipaddr.js";
-var BLOCKED_HOSTNAMES = /* @__PURE__ */ new Set([
-  "169.254.169.254",
-  "metadata.google.internal",
-  "169.254.170.2",
-  "fd00:ec2::254"
-]);
-function isBlockedIp(ipStr, allowInsecureLocal) {
-  try {
-    const ip = ipaddr.process(ipStr);
-    const range = ip.range();
-    if (allowInsecureLocal && (range === "loopback" || range === "private")) {
-      return false;
-    }
-    if (range === "loopback") return true;
-    if (range === "private") return true;
-    if (range === "linkLocal") return true;
-    if (range === "uniqueLocal") return true;
-    if (range === "carrierGradeNat") return true;
-    return false;
-  } catch {
-    return true;
-  }
+// src/codex/upstream-error.ts
+var TRACE_FIELD_LIMIT = 4e3;
+var MAX_ERROR_MESSAGE_CHARS = 2e3;
+function clipTraceField(value) {
+  return value.length <= TRACE_FIELD_LIMIT ? value : `${value.slice(0, TRACE_FIELD_LIMIT)}\u2026`;
 }
-async function resolveHostAddresses(hostname) {
-  try {
-    ipaddr.parse(hostname);
-    return [hostname];
-  } catch {
+function safeUpstreamErrorFields(err, includeCause) {
+  if (!err || typeof err !== "object") {
+    return { message: clipTraceField(String(err)) };
   }
-  try {
-    const records = await lookup(hostname, { all: true, verbatim: true });
-    return records.map((r) => r.address);
-  } catch {
-    return [];
-  }
-}
-async function validateCustomEndpointUrl(rawUrl, opts = {}) {
-  const trimmed = rawUrl.trim();
-  if (!trimmed) {
-    return { ok: false, error: "Base URL is required.", hint: "Example: https://api.example.com/v1" };
-  }
-  let parsed;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    return { ok: false, error: "Invalid URL.", hint: "Include https:// and the full base path." };
-  }
-  const allowLocal = opts.allowInsecureLocal === true;
-  if (parsed.protocol === "http:" && !allowLocal) {
-    return {
-      ok: false,
-      error: "Only HTTPS URLs are allowed.",
-      hint: "For local or LAN servers (Ollama, LM Studio, vLLM), allow insecure HTTP when prompted."
-    };
-  } else if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return { ok: false, error: "URL must use https:// or user-approved http:// for local/LAN servers." };
-  }
-  const rawHostname = parsed.hostname.toLowerCase();
-  const hostname = rawHostname.replace(/^\[(.*)\]$/, "$1");
-  if (BLOCKED_HOSTNAMES.has(hostname)) {
-    return {
-      ok: false,
-      error: "This URL points to a blocked internal/metadata host.",
-      hint: "Use a public API endpoint for your provider."
-    };
-  }
-  const addresses = await resolveHostAddresses(hostname);
-  if (addresses.length === 0) {
-    return {
-      ok: false,
-      error: `Could not resolve hostname: ${hostname}`,
-      hint: "Check the URL spelling and your network connection."
-    };
-  }
-  for (const addr of addresses) {
-    try {
-      ipaddr.process(addr);
-    } catch {
-      continue;
-    }
-    if (isBlockedIp(addr, allowLocal)) {
-      return {
-        ok: false,
-        error: "URL resolves to a private or restricted network address.",
-        hint: "Use a public HTTPS endpoint, or explicitly allow insecure HTTP for a trusted local/LAN server."
-      };
-    }
-  }
-  if (parsed.protocol === "http:") {
-    const allResolvedAddressesAreLocal = addresses.every((addr) => {
-      try {
-        const range = ipaddr.process(addr).range();
-        return range === "loopback" || range === "private" || range === "uniqueLocal";
-      } catch {
-        return false;
+  const rec = err;
+  const result = {};
+  if (rec.name) result.name = rec.name;
+  if (rec.message) result.message = clipTraceField(rec.message);
+  if (rec.statusCode !== void 0) result.statusCode = rec.statusCode;
+  if (rec.responseBody) result.responseBody = clipTraceField(rec.responseBody);
+  if (rec.data?.error) {
+    result.data = {
+      error: {
+        ...rec.data.error.type ? { type: rec.data.error.type } : {},
+        ...rec.data.error.message ? { message: clipTraceField(rec.data.error.message) } : {}
       }
-    });
-    if (!allowLocal || !allResolvedAddressesAreLocal) {
-      return {
-        ok: false,
-        error: "HTTP is only allowed for local loopback or private-network addresses.",
-        hint: "Use https://, or allow insecure HTTP for a trusted local/LAN server."
-      };
+    };
+  }
+  if (rec.lastError) {
+    result.lastError = {
+      ...rec.lastError.message ? { message: clipTraceField(rec.lastError.message) } : {},
+      ...rec.lastError.statusCode !== void 0 ? { statusCode: rec.lastError.statusCode } : {}
+    };
+  }
+  if (rec.errors?.length) {
+    result.errors = rec.errors.map((item) => ({
+      ...item.message ? { message: clipTraceField(item.message) } : {},
+      ...item.statusCode !== void 0 ? { statusCode: item.statusCode } : {}
+    }));
+  }
+  if (includeCause && rec.cause !== void 0) {
+    result.cause = safeUpstreamErrorFields(rec.cause, false);
+  }
+  return result;
+}
+function formatUpstreamErrorTrace(err) {
+  return JSON.stringify(safeUpstreamErrorFields(err, true));
+}
+function joinProviderMessage(message) {
+  return message.split("\n").map((line) => line.trim()).filter(Boolean).join(" ");
+}
+function formatUpstreamError(err) {
+  if (!err || typeof err !== "object") return "Upstream model request failed.";
+  const rec = err;
+  if (rec.data?.error?.message) {
+    const short = joinProviderMessage(rec.data.error.message);
+    return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
+  }
+  if (rec.responseBody) {
+    try {
+      const parsed = JSON.parse(rec.responseBody);
+      if (parsed.error?.message) {
+        const short = joinProviderMessage(parsed.error.message);
+        return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
+      }
+    } catch {
     }
   }
-  const normalizedUrl = `${parsed.protocol}//${parsed.host}${parsed.pathname}`.replace(/\/$/, "");
-  return { ok: true, normalizedUrl };
+  const last = rec.lastError;
+  if (last?.message) {
+    const code = last.statusCode;
+    const short = sanitizeMessage(last.message);
+    return code ? `${short} (HTTP ${code})` : short;
+  }
+  const fromList = rec.errors?.[rec.errors.length - 1];
+  if (fromList?.message) {
+    const short = sanitizeMessage(fromList.message);
+    return fromList.statusCode ? `${short} (HTTP ${fromList.statusCode})` : short;
+  }
+  if (rec.message) {
+    const short = sanitizeMessage(rec.message);
+    if (short && !short.includes("file://") && !short.includes("APICallError") && short.length < MAX_ERROR_MESSAGE_CHARS) {
+      return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
+    }
+  }
+  return "Upstream model request failed.";
+}
+function upstreamHttpStatus(err, message) {
+  if (err && typeof err === "object" && "statusCode" in err) {
+    const code = err.statusCode;
+    if (code === 400 || code === 401 || code === 403 || code === 404 || code === 429) return code;
+  }
+  if (message.includes("HTTP 429") || message.includes("429")) return 429;
+  if (message.includes("HTTP 400")) return 400;
+  return 500;
+}
+function anthropicErrorType(status) {
+  switch (status) {
+    case 400:
+      return "invalid_request_error";
+    case 401:
+      return "authentication_error";
+    case 403:
+      return "permission_error";
+    case 404:
+      return "not_found_error";
+    case 429:
+      return "rate_limit_error";
+    default:
+      return "api_error";
+  }
+}
+function jsonErrorMessage(text2) {
+  const trimmed = text2.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return void 0;
+  try {
+    const parsed = JSON.parse(trimmed);
+    const first = Array.isArray(parsed) ? parsed[0] : parsed;
+    const msg = first?.error?.message ?? first?.message;
+    if (typeof msg === "string" && msg.trim()) return joinProviderMessage(msg);
+  } catch {
+    const match = trimmed.match(/"message"\s*:\s*"((?:[^"\\]|\\.)+)"/);
+    if (match?.[1]) return joinProviderMessage(match[1].replace(/\\"/g, '"'));
+  }
+  return void 0;
+}
+function sanitizeMessage(message) {
+  const fromJson = jsonErrorMessage(message);
+  if (fromJson) return fromJson;
+  const line = message.split("\n")[0]?.trim() ?? message;
+  if (line.startsWith("RetryError") || line.includes("AI_RetryError")) {
+    return "Upstream model request failed after retries.";
+  }
+  return line;
 }
 
 // src/codex/process.ts
@@ -6590,432 +7129,6 @@ function thinkingProviderOptions(npm) {
   return void 0;
 }
 
-// src/subagent-route-registry.ts
-import { randomUUID as randomUUID3 } from "crypto";
-var DEFAULT_TTL_MS = 5 * 6e4;
-var DEFAULT_MAX_ENTRIES = 1024;
-var ROUTE_MARKER_PATTERN = /(?:\n\n)?<relay-ai-subagent-route token="([0-9a-f-]{36})"\s*\/>/gi;
-function firstHeader(value) {
-  const first = Array.isArray(value) ? value[0] : value;
-  return typeof first === "string" && first.trim() ? first.trim() : void 0;
-}
-function extractClaudeSessionId(headers, body) {
-  const headerSession = firstHeader(headers["x-claude-code-session-id"]);
-  if (headerSession) return headerSession;
-  const userId = body?.metadata?.user_id;
-  if (typeof userId !== "string") return void 0;
-  try {
-    const parsed = JSON.parse(userId);
-    return typeof parsed.session_id === "string" && parsed.session_id.trim() ? parsed.session_id.trim() : void 0;
-  } catch {
-    return void 0;
-  }
-}
-function appendSubagentRouteMarker(prompt, token) {
-  return `${prompt}
-
-<relay-ai-subagent-route token="${token}"/>`;
-}
-function findMarkersInUserMessages(body) {
-  if (!Array.isArray(body.messages)) return void 0;
-  const tokens = [];
-  const messages = [...body.messages];
-  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
-    const message = body.messages[messageIndex];
-    if (!message || message.role !== "user") continue;
-    if (typeof message.content === "string") {
-      const matches = [...message.content.matchAll(ROUTE_MARKER_PATTERN)];
-      if (matches.length === 0) continue;
-      tokens.push(...matches.flatMap((match) => match[1] ? [match[1]] : []));
-      messages[messageIndex] = {
-        ...message,
-        content: message.content.replace(ROUTE_MARKER_PATTERN, "").trimEnd()
-      };
-      continue;
-    }
-    if (!Array.isArray(message.content)) continue;
-    const content = [...message.content];
-    for (let partIndex = 0; partIndex < message.content.length; partIndex++) {
-      const part = message.content[partIndex];
-      if (!part || part.type !== "text" || typeof part.text !== "string") continue;
-      const matches = [...part.text.matchAll(ROUTE_MARKER_PATTERN)];
-      if (matches.length === 0) continue;
-      tokens.push(...matches.flatMap((match) => match[1] ? [match[1]] : []));
-      content[partIndex] = {
-        ...part,
-        text: part.text.replace(ROUTE_MARKER_PATTERN, "").trimEnd()
-      };
-    }
-    messages[messageIndex] = { ...message, content };
-  }
-  return tokens.length > 0 ? { tokens, body: { ...body, messages } } : void 0;
-}
-var SubagentRouteRegistry = class {
-  entries = /* @__PURE__ */ new Map();
-  ttlMs;
-  maxEntries;
-  now;
-  constructor(options = {}) {
-    this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
-    this.maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
-    this.now = options.now ?? Date.now;
-  }
-  register(sessionId, modelId) {
-    this.cleanup();
-    while (this.entries.size >= this.maxEntries) {
-      const oldest = this.entries.keys().next().value;
-      if (!oldest) break;
-      this.entries.delete(oldest);
-    }
-    const token = randomUUID3();
-    this.entries.set(token, { sessionId, modelId, createdAt: this.now() });
-    return token;
-  }
-  consume(headers, body) {
-    this.cleanup();
-    if (!firstHeader(headers["x-claude-code-agent-id"])) return void 0;
-    const sessionId = extractClaudeSessionId(headers, body);
-    if (!sessionId) return void 0;
-    const marked = findMarkersInUserMessages(body);
-    if (!marked) return void 0;
-    const token = [...marked.tokens].reverse().find((candidate) => this.entries.get(candidate)?.sessionId === sessionId);
-    if (!token) return void 0;
-    const entry = this.entries.get(token);
-    this.entries.delete(token);
-    return { modelId: entry.modelId, body: marked.body };
-  }
-  cleanup() {
-    const cutoff = this.now() - this.ttlMs;
-    for (const [token, entry] of this.entries) {
-      if (entry.createdAt < cutoff) this.entries.delete(token);
-    }
-  }
-};
-
-// src/subagent-model-routing.ts
-var CLAUDE_MODEL_FAMILIES = ["sonnet", "opus", "haiku", "fable"];
-var CLAUDE_MODEL_FAMILY_SET = new Set(CLAUDE_MODEL_FAMILIES);
-function isRecord2(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function claudeModelFamily(modelId) {
-  const normalized = modelId.toLowerCase();
-  if (!normalized.startsWith("claude-")) return void 0;
-  return CLAUDE_MODEL_FAMILIES.find((family) => normalized.includes(family));
-}
-function isClaudeAgentTool(tool2) {
-  if (tool2.name !== "Agent" || !isRecord2(tool2.input_schema)) return false;
-  const properties = tool2.input_schema.properties;
-  if (!isRecord2(properties)) return false;
-  return ["description", "prompt", "subagent_type"].every((name) => isRecord2(properties[name]));
-}
-var UnavailableSubagentModelError = class extends Error {
-  constructor(selector, routing) {
-    const visible = routing.models.slice(0, MAX_MODEL_CATALOG).map((model) => model.id);
-    const omitted = routing.models.length - visible.length;
-    const suffix = omitted > 0 ? `, and ${omitted} more` : "";
-    super(
-      `Subagent model "${selector}" is unavailable in this Relay AI session. Available model ids: ${visible.join(", ")}${suffix}.`
-    );
-    this.selector = selector;
-    this.name = "UnavailableSubagentModelError";
-  }
-  selector;
-  statusCode = 400;
-};
-function normalizeClaudeAgentInput(input, routing) {
-  const source = isRecord2(input) ? input : {};
-  const normalized = { ...source };
-  if (source.subagent_type === "fork") {
-    return { input: normalized, decision: { kind: "fork" } };
-  }
-  const rawModel = source.model;
-  if (rawModel == null) {
-    normalized.model = routing.parentModelId;
-    return {
-      input: normalized,
-      decision: { kind: "inherit", resolvedModelId: routing.parentModelId }
-    };
-  }
-  if (typeof rawModel !== "string") {
-    throw new UnavailableSubagentModelError(String(rawModel), routing);
-  }
-  const selector = rawModel.trim();
-  if (selector === "" || selector === "inherit") {
-    normalized.model = routing.parentModelId;
-    return {
-      input: normalized,
-      decision: { kind: "inherit", resolvedModelId: routing.parentModelId }
-    };
-  }
-  const exposed = routing.models.find((model) => model.id === selector);
-  if (exposed) {
-    normalized.model = exposed.id;
-    return {
-      input: normalized,
-      decision: { kind: "explicit", resolvedModelId: exposed.id }
-    };
-  }
-  const compatible = routing.models.find((model) => model.compatibilityIds.includes(selector));
-  if (compatible) {
-    normalized.model = compatible.id;
-    return {
-      input: normalized,
-      decision: {
-        kind: "compatibility",
-        requestedModelId: selector,
-        resolvedModelId: compatible.id
-      }
-    };
-  }
-  if (CLAUDE_MODEL_FAMILY_SET.has(selector)) {
-    const family = selector;
-    const nativeModel = routing.models.find((model) => model.family === family);
-    const resolvedModelId = nativeModel?.id ?? routing.parentModelId;
-    normalized.model = resolvedModelId;
-    return {
-      input: normalized,
-      decision: nativeModel ? { kind: "family", requestedModelId: family, resolvedModelId } : { kind: "family-fallback", requestedModelId: family, resolvedModelId }
-    };
-  }
-  throw new UnavailableSubagentModelError(selector, routing);
-}
-function prepareClaudeAgentInput(input, routing) {
-  const normalized = normalizeClaudeAgentInput(input, routing);
-  const decision = normalized.decision;
-  if (decision.kind === "fork") return normalized;
-  if (!routing.registerSubagentRoute) return normalized;
-  const prompt = normalized.input.prompt;
-  if (typeof prompt !== "string") return normalized;
-  const token = routing.registerSubagentRoute(decision.resolvedModelId);
-  const clientInput = { ...normalized.input };
-  const target = routing.models.find((model) => model.id === decision.resolvedModelId);
-  if (target?.family) clientInput.model = target.family;
-  else delete clientInput.model;
-  clientInput.prompt = appendSubagentRouteMarker(prompt, token);
-  return { input: clientInput, decision };
-}
-function augmentClaudeAgentTool(tool2, routing) {
-  const inputSchema = isRecord2(tool2.input_schema) ? tool2.input_schema : {};
-  const properties = isRecord2(inputSchema.properties) ? inputSchema.properties : {};
-  const originalModel = isRecord2(properties.model) ? properties.model : {};
-  const smallCatalog = routing.models.length <= MAX_MODEL_CATALOG;
-  const modelProperty = {
-    ...originalModel,
-    type: "string"
-  };
-  if (smallCatalog) {
-    const originalEnum = Array.isArray(originalModel.enum) ? originalModel.enum.filter((value) => typeof value === "string") : CLAUDE_MODEL_FAMILIES;
-    modelProperty.enum = [.../* @__PURE__ */ new Set([...originalEnum, ...routing.models.map((model) => model.id)])];
-  } else {
-    delete modelProperty.enum;
-  }
-  const guidance = smallCatalog ? `Relay AI subagent model routing (default: ${routing.parentModelId}). ` + routing.models.map((model) => `${model.displayName}: ${model.id}`).join("; ") : `Relay AI subagent model routing (default: ${routing.parentModelId}). Other explicit model values must be exact ids from the current session catalog.`;
-  return {
-    ...tool2,
-    description: [tool2.description?.trim(), guidance].filter(Boolean).join("\n\n"),
-    input_schema: {
-      ...inputSchema,
-      properties: {
-        ...properties,
-        model: modelProperty
-      }
-    }
-  };
-}
-
-// src/codex/upstream-error.ts
-var TRACE_FIELD_LIMIT = 4e3;
-var MAX_ERROR_MESSAGE_CHARS = 2e3;
-function clipTraceField(value) {
-  return value.length <= TRACE_FIELD_LIMIT ? value : `${value.slice(0, TRACE_FIELD_LIMIT)}\u2026`;
-}
-function safeUpstreamErrorFields(err, includeCause) {
-  if (!err || typeof err !== "object") {
-    return { message: clipTraceField(String(err)) };
-  }
-  const rec = err;
-  const result = {};
-  if (rec.name) result.name = rec.name;
-  if (rec.message) result.message = clipTraceField(rec.message);
-  if (rec.statusCode !== void 0) result.statusCode = rec.statusCode;
-  if (rec.responseBody) result.responseBody = clipTraceField(rec.responseBody);
-  if (rec.data?.error) {
-    result.data = {
-      error: {
-        ...rec.data.error.type ? { type: rec.data.error.type } : {},
-        ...rec.data.error.message ? { message: clipTraceField(rec.data.error.message) } : {}
-      }
-    };
-  }
-  if (rec.lastError) {
-    result.lastError = {
-      ...rec.lastError.message ? { message: clipTraceField(rec.lastError.message) } : {},
-      ...rec.lastError.statusCode !== void 0 ? { statusCode: rec.lastError.statusCode } : {}
-    };
-  }
-  if (rec.errors?.length) {
-    result.errors = rec.errors.map((item) => ({
-      ...item.message ? { message: clipTraceField(item.message) } : {},
-      ...item.statusCode !== void 0 ? { statusCode: item.statusCode } : {}
-    }));
-  }
-  if (includeCause && rec.cause !== void 0) {
-    result.cause = safeUpstreamErrorFields(rec.cause, false);
-  }
-  return result;
-}
-function formatUpstreamErrorTrace(err) {
-  return JSON.stringify(safeUpstreamErrorFields(err, true));
-}
-function joinProviderMessage(message) {
-  return message.split("\n").map((line) => line.trim()).filter(Boolean).join(" ");
-}
-function formatUpstreamError(err) {
-  if (!err || typeof err !== "object") return "Upstream model request failed.";
-  const rec = err;
-  if (rec.data?.error?.message) {
-    const short = joinProviderMessage(rec.data.error.message);
-    return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
-  }
-  if (rec.responseBody) {
-    try {
-      const parsed = JSON.parse(rec.responseBody);
-      if (parsed.error?.message) {
-        const short = joinProviderMessage(parsed.error.message);
-        return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
-      }
-    } catch {
-    }
-  }
-  const last = rec.lastError;
-  if (last?.message) {
-    const code = last.statusCode;
-    const short = sanitizeMessage(last.message);
-    return code ? `${short} (HTTP ${code})` : short;
-  }
-  const fromList = rec.errors?.[rec.errors.length - 1];
-  if (fromList?.message) {
-    const short = sanitizeMessage(fromList.message);
-    return fromList.statusCode ? `${short} (HTTP ${fromList.statusCode})` : short;
-  }
-  if (rec.message) {
-    const short = sanitizeMessage(rec.message);
-    if (short && !short.includes("file://") && !short.includes("APICallError") && short.length < MAX_ERROR_MESSAGE_CHARS) {
-      return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
-    }
-  }
-  return "Upstream model request failed.";
-}
-function upstreamHttpStatus(err, message) {
-  if (err && typeof err === "object" && "statusCode" in err) {
-    const code = err.statusCode;
-    if (code === 400 || code === 401 || code === 403 || code === 404 || code === 429) return code;
-  }
-  if (message.includes("HTTP 429") || message.includes("429")) return 429;
-  if (message.includes("HTTP 400")) return 400;
-  return 500;
-}
-function anthropicErrorType(status) {
-  switch (status) {
-    case 400:
-      return "invalid_request_error";
-    case 401:
-      return "authentication_error";
-    case 403:
-      return "permission_error";
-    case 404:
-      return "not_found_error";
-    case 429:
-      return "rate_limit_error";
-    default:
-      return "api_error";
-  }
-}
-function jsonErrorMessage(text2) {
-  const trimmed = text2.trim();
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return void 0;
-  try {
-    const parsed = JSON.parse(trimmed);
-    const first = Array.isArray(parsed) ? parsed[0] : parsed;
-    const msg = first?.error?.message ?? first?.message;
-    if (typeof msg === "string" && msg.trim()) return joinProviderMessage(msg);
-  } catch {
-    const match = trimmed.match(/"message"\s*:\s*"((?:[^"\\]|\\.)+)"/);
-    if (match?.[1]) return joinProviderMessage(match[1].replace(/\\"/g, '"'));
-  }
-  return void 0;
-}
-function sanitizeMessage(message) {
-  const fromJson = jsonErrorMessage(message);
-  if (fromJson) return fromJson;
-  const line = message.split("\n")[0]?.trim() ?? message;
-  if (line.startsWith("RetryError") || line.includes("AI_RetryError")) {
-    return "Upstream model request failed after retries.";
-  }
-  return line;
-}
-
-// src/sdk-adapter.ts
-import { streamText, generateText, tool, jsonSchema } from "ai";
-
-// src/tool-search.ts
-var TOOL_SEARCH_TYPE_PREFIX = "tool_search_tool";
-function isToolSearchTool(tool2) {
-  if (typeof tool2.type === "string" && tool2.type.startsWith(TOOL_SEARCH_TYPE_PREFIX)) return true;
-  const name = tool2.name ?? "";
-  return name.includes("tool_search") || name === "ToolSearch";
-}
-function extractReferencedToolNames(messages) {
-  const names = /* @__PURE__ */ new Set();
-  const visitContent = (content) => {
-    if (typeof content === "string") return;
-    if (!Array.isArray(content)) return;
-    for (const block of content) {
-      if (!block || typeof block !== "object") continue;
-      const part = block;
-      if (part.type === "tool_reference" && typeof part.tool_name === "string") {
-        names.add(part.tool_name);
-      }
-      if (part.type === "tool_search_tool_result") {
-        const inner = part.content;
-        const refs = inner?.tool_references;
-        if (Array.isArray(refs)) {
-          for (const ref of refs) {
-            if (ref && typeof ref === "object" && typeof ref.tool_name === "string") {
-              names.add(ref.tool_name);
-            }
-          }
-        }
-      }
-      if (part.type === "tool_result" && part.content) {
-        visitContent(part.content);
-      }
-    }
-  };
-  for (const msg of messages ?? []) {
-    visitContent(msg.content);
-  }
-  return names;
-}
-function resolveUpstreamTools(tools, messages) {
-  if (!tools?.length) return [];
-  const referenced = extractReferencedToolNames(messages);
-  const upstream = [];
-  for (const tool2 of tools) {
-    if (isToolSearchTool(tool2)) {
-      upstream.push(tool2);
-      continue;
-    }
-    if (tool2.defer_loading === true) {
-      if (referenced.has(tool2.name)) upstream.push(tool2);
-      continue;
-    }
-    upstream.push(tool2);
-  }
-  return upstream;
-}
-
 // src/tool-schema.ts
 var GOOGLE_NPM = /* @__PURE__ */ new Set(["@ai-sdk/google", "@ai-sdk/google-vertex"]);
 function collapseSchemaUnionTypes(value) {
@@ -7327,489 +7440,6 @@ function normalizeToolSchemaForNpm(schema, npm) {
   return portable;
 }
 
-// src/sdk-adapter.ts
-function anthropicEffortFromRequest(body) {
-  const effort = body.output_config?.effort;
-  if (typeof effort === "string" && effort.trim()) return effort.trim();
-  return void 0;
-}
-function systemToString(system) {
-  if (!system) return void 0;
-  if (typeof system === "string") return system;
-  return system.map((b) => typeof b === "string" ? b : b.text ?? "").join("\n");
-}
-function inlineSystemText(messages) {
-  const parts = [];
-  for (const msg of messages) {
-    if (msg.role !== "system") continue;
-    const text2 = typeof msg.content === "string" ? msg.content : msg.content.map((b) => b.text ?? "").join("\n");
-    if (text2.trim()) parts.push(text2.trim());
-  }
-  return parts;
-}
-function imagePart(block) {
-  const src = block.source;
-  if (!src) return null;
-  if (src.type === "base64" && src.data) {
-    return { type: "file", mediaType: src.media_type ?? "image", data: Buffer.from(src.data, "base64") };
-  }
-  if (src.type === "url" && src.url) {
-    return { type: "file", mediaType: src.media_type ?? "image", data: { type: "url", url: new URL(src.url) } };
-  }
-  return null;
-}
-function toolResultOutput(content) {
-  if (!Array.isArray(content) || !content.some((block) => block?.type === "image")) {
-    return { type: "text", value: serializeToolResultContent(content) };
-  }
-  return {
-    type: "content",
-    value: content.map((block) => {
-      if (block?.type === "image") {
-        const image = imagePart(block);
-        if (image) return {
-          type: "file",
-          mediaType: image.mediaType,
-          data: image.data instanceof Uint8Array ? { type: "data", data: image.data } : image.data
-        };
-      }
-      return { type: "text", text: block?.type === "text" ? block.text ?? "" : serializeToolResultContent(block) };
-    })
-  };
-}
-function annotateToolNames(messages) {
-  const nameById = /* @__PURE__ */ new Map();
-  for (const msg of messages) {
-    if (!Array.isArray(msg.content)) continue;
-    for (const b of msg.content) {
-      if (b.type === "tool_use" && b.id && b.name) nameById.set(splitToolUseId(b.id).rawId, b.name);
-    }
-  }
-  for (const msg of messages) {
-    if (!Array.isArray(msg.content)) continue;
-    for (const b of msg.content) {
-      if (b.type === "tool_result" && b.tool_use_id) {
-        b._name = nameById.get(splitToolUseId(b.tool_use_id).rawId);
-      }
-    }
-  }
-}
-function thinkingToSdkPart(block, npm) {
-  const text2 = block.thinking ?? "";
-  if (npm === "@ai-sdk/openai" && !block.signature && !text2.trim()) return null;
-  const part = { type: "reasoning", text: text2 };
-  if (block.signature) {
-    if (npm === "@ai-sdk/google") {
-      part.providerOptions = { google: { thoughtSignature: block.signature } };
-    } else if (npm === "@ai-sdk/openai" || npm === "@ai-sdk/openai-compatible") {
-      part.providerOptions = { openai: { reasoningEncryptedContent: block.signature } };
-    }
-  }
-  return part;
-}
-function translateMessages(messages, npm, onDebug) {
-  const isGoogle = npm === "@ai-sdk/google";
-  const out = [];
-  for (const msg of messages) {
-    const blocks = typeof msg.content === "string" ? [{ type: "text", text: msg.content }] : msg.content ?? [];
-    if (msg.role === "user") {
-      const toolResults = blocks.filter((b) => b.type === "tool_result");
-      const parts = [];
-      for (const b of blocks) {
-        if (b.type === "text") parts.push({ type: "text", text: b.text ?? "" });
-        else if (b.type === "image") {
-          const p = imagePart(b);
-          if (p) parts.push(p);
-        }
-      }
-      if (blocks.length && !toolResults.length && !parts.length) {
-        const types = blocks.map((b) => b.type).join(", ");
-        onDebug?.(`sdk: dropped user turn with unrecognized block types: [${types}]`);
-      }
-      if (toolResults.length) {
-        out.push({
-          role: "tool",
-          content: toolResults.map((tr) => ({
-            type: "tool-result",
-            toolCallId: splitToolUseId(tr.tool_use_id ?? "").rawId,
-            toolName: tr._name ?? "unknown",
-            output: toolResultOutput(tr.content)
-          }))
-        });
-      }
-      if (parts.length) out.push({ role: "user", content: parts });
-    } else if (msg.role === "assistant") {
-      const parts = [];
-      for (const b of blocks) {
-        if (b.type === "text") {
-          parts.push({ type: "text", text: b.text ?? "" });
-        } else if (b.type === "thinking") {
-          const part = thinkingToSdkPart(b, npm);
-          if (part) parts.push(part);
-        } else if (b.type === "tool_use" && b.id) {
-          const { rawId, thoughtSignature } = splitToolUseId(b.id);
-          const part = {
-            type: "tool-call",
-            toolCallId: rawId,
-            toolName: b.name,
-            input: b.input ?? {}
-          };
-          if (thoughtSignature && isGoogle) part.providerOptions = { google: { thoughtSignature } };
-          parts.push(part);
-        }
-      }
-      if (parts.length) out.push({ role: "assistant", content: parts });
-    }
-  }
-  return out;
-}
-function stripNullInputs(input) {
-  const out = {};
-  for (const [k, v] of Object.entries(input)) {
-    if (v !== null) out[k] = v;
-  }
-  return out;
-}
-function translateTools(anthropicTools, npm) {
-  if (!anthropicTools?.length) return void 0;
-  const tools = {};
-  for (const t of anthropicTools) {
-    if (!t.name || !t.input_schema) continue;
-    tools[t.name] = tool({
-      description: t.description ?? "",
-      inputSchema: jsonSchema(normalizeToolSchemaForNpm(t.input_schema, npm))
-    });
-  }
-  return Object.keys(tools).length ? tools : void 0;
-}
-function translateToolChoice(tc) {
-  if (!tc) return void 0;
-  if (tc.type === "auto") return "auto";
-  if (tc.type === "any") return "required";
-  if (tc.type === "tool" && tc.name) return { type: "tool", toolName: tc.name };
-  return void 0;
-}
-function translateRequest(body, npm, options) {
-  const messages = body.messages ?? [];
-  annotateToolNames(messages);
-  const baseSystem = systemToString(body.system);
-  const inlineParts = inlineSystemText(messages);
-  const systemText = [baseSystem, ...inlineParts].filter((s) => s && s.trim()).join("\n\n") || (options?.openAiOAuth ? "You are a coding assistant." : void 0);
-  let upstreamTools = resolveUpstreamTools(
-    body.tools,
-    messages
-  );
-  if (options?.maxTools !== void 0 && upstreamTools.length > options.maxTools) {
-    upstreamTools = upstreamTools.slice(0, options.maxTools);
-  }
-  let responseSubagentRouting;
-  if (options?.subagentRouting) {
-    const agentIndex = upstreamTools.findIndex((toolDefinition) => isClaudeAgentTool(toolDefinition));
-    if (agentIndex >= 0) {
-      upstreamTools = upstreamTools.map((toolDefinition, index) => index === agentIndex ? augmentClaudeAgentTool(
-        toolDefinition,
-        options.subagentRouting
-      ) : toolDefinition);
-      responseSubagentRouting = options.subagentRouting;
-    }
-  }
-  const effort = options?.fixedEffort ?? anthropicEffortFromRequest(body) ?? options?.defaultEffort;
-  let providerOptions = deepMergeProviderOptions(
-    thinkingProviderOptions(npm),
-    effortProviderOptions(npm, effort, options?.reasoningMetadata?.upstreamModelId ?? body.model, options?.reasoningMetadata)
-  );
-  if (options?.openAiOAuth && systemText) {
-    providerOptions = deepMergeProviderOptions(providerOptions, {
-      openai: { instructions: systemText }
-    });
-  }
-  return {
-    instructions: options?.openAiOAuth ? void 0 : systemText,
-    messages: translateMessages(messages, npm, options?.onDebug),
-    tools: translateTools(upstreamTools.length ? upstreamTools : void 0, npm),
-    toolChoice: translateToolChoice(body.tool_choice),
-    maxOutputTokens: options?.openAiOAuth ? void 0 : body.max_tokens,
-    temperature: body.temperature,
-    providerOptions,
-    headers: options?.requestHeaders,
-    subagentRouting: responseSubagentRouting
-  };
-}
-function logSubagentDecision(log, decision) {
-  if (!log || decision.kind === "fork" || decision.kind === "explicit") return;
-  log(() => decision.kind === "family-fallback" ? `sdk Agent model "${decision.requestedModelId}" unavailable; using parent ${decision.resolvedModelId}` : `sdk Agent model ${decision.kind}: ${"requestedModelId" in decision ? `${decision.requestedModelId} -> ` : ""}${decision.resolvedModelId}`);
-}
-async function writeAnthropicStream(fullStream, modelId, write, log, estimatedInputTokens = 0, subagentRouting) {
-  const messageId = "msg_" + Date.now();
-  let blockIndex = -1;
-  let started = false;
-  let openType = null;
-  let pendingThinkingSig;
-  const idToBlock = /* @__PURE__ */ new Map();
-  const bufferedAgentCalls = /* @__PURE__ */ new Map();
-  let finishReason = "end_turn";
-  let usage = { input_tokens: estimatedInputTokens, output_tokens: 0 };
-  const emit = (event, data) => write(sseChunk(event, data));
-  const ensureStart = () => {
-    if (started) return;
-    emit("message_start", {
-      type: "message_start",
-      message: {
-        id: messageId,
-        type: "message",
-        role: "assistant",
-        content: [],
-        model: modelId,
-        stop_reason: null,
-        stop_sequence: null,
-        usage: { input_tokens: estimatedInputTokens, output_tokens: 0 }
-      }
-    });
-    started = true;
-  };
-  const closeOpen = () => {
-    if (openType === "thinking") {
-      emit("content_block_delta", {
-        type: "content_block_delta",
-        index: blockIndex,
-        delta: { type: "signature_delta", signature: pendingThinkingSig ?? "" }
-      });
-      pendingThinkingSig = void 0;
-    }
-    if (openType) emit("content_block_stop", { type: "content_block_stop", index: blockIndex });
-    openType = null;
-  };
-  const openBlock = (type, contentBlock) => {
-    ensureStart();
-    closeOpen();
-    blockIndex++;
-    openType = type;
-    emit("content_block_start", { type: "content_block_start", index: blockIndex, content_block: contentBlock });
-  };
-  for await (const part of fullStream) {
-    switch (part.type) {
-      case "start":
-        ensureStart();
-        break;
-      case "reasoning-start":
-        openBlock("thinking", { type: "thinking", thinking: "", signature: "" });
-        break;
-      case "reasoning-delta":
-        if (openType !== "thinking") openBlock("thinking", { type: "thinking", thinking: "", signature: "" });
-        emit("content_block_delta", {
-          type: "content_block_delta",
-          index: blockIndex,
-          delta: { type: "thinking_delta", thinking: part.text ?? "" }
-        });
-        break;
-      case "reasoning-end": {
-        const sig = grabRoundTripSignature(part);
-        if (sig) pendingThinkingSig = sig;
-        break;
-      }
-      case "text-start":
-        openBlock("text", { type: "text", text: "" });
-        break;
-      case "text-delta":
-        if (openType !== "text") openBlock("text", { type: "text", text: "" });
-        emit("content_block_delta", {
-          type: "content_block_delta",
-          index: blockIndex,
-          delta: { type: "text_delta", text: part.text ?? "" }
-        });
-        break;
-      case "text-end":
-        break;
-      case "tool-input-start": {
-        const sig = grabRoundTripSignature(part);
-        openBlock("tool", {
-          type: "tool_use",
-          id: encodeToolUseId(part.id ?? "", sig),
-          name: part.toolName,
-          input: {}
-        });
-        idToBlock.set(part.id ?? "", blockIndex);
-        if (subagentRouting && part.toolName === "Agent") {
-          bufferedAgentCalls.set(part.id ?? "", { blockIndex });
-        }
-        break;
-      }
-      case "tool-input-delta":
-        if (bufferedAgentCalls.has(part.id ?? "")) break;
-        emit("content_block_delta", {
-          type: "content_block_delta",
-          index: idToBlock.get(part.id ?? "") ?? blockIndex,
-          delta: { type: "input_json_delta", partial_json: part.delta ?? part.text ?? "" }
-        });
-        break;
-      case "tool-input-end":
-        break;
-      case "tool-call": {
-        finishReason = "tool_use";
-        const toolCallId = part.toolCallId ?? "";
-        if (subagentRouting && part.toolName === "Agent") {
-          try {
-            const normalized = prepareClaudeAgentInput(part.input, subagentRouting);
-            logSubagentDecision(log, normalized.decision);
-            const buffered = bufferedAgentCalls.get(toolCallId);
-            if (!buffered && !idToBlock.has(toolCallId)) {
-              const sig = grabRoundTripSignature(part);
-              openBlock("tool", {
-                type: "tool_use",
-                id: encodeToolUseId(toolCallId, sig),
-                name: part.toolName,
-                input: {}
-              });
-              idToBlock.set(toolCallId, blockIndex);
-            }
-            emit("content_block_delta", {
-              type: "content_block_delta",
-              index: buffered?.blockIndex ?? idToBlock.get(toolCallId) ?? blockIndex,
-              delta: {
-                type: "input_json_delta",
-                partial_json: JSON.stringify(stripNullInputs(normalized.input))
-              }
-            });
-            bufferedAgentCalls.delete(toolCallId);
-          } catch (error) {
-            if (error instanceof UnavailableSubagentModelError) {
-              bufferedAgentCalls.delete(toolCallId);
-              closeOpen();
-              emit("error", {
-                type: "error",
-                error: {
-                  type: anthropicErrorType(error.statusCode),
-                  message: error.message
-                }
-              });
-              return;
-            }
-            throw error;
-          }
-          break;
-        }
-        if (!idToBlock.has(toolCallId) && openType !== "tool") {
-          const sig = grabRoundTripSignature(part);
-          openBlock("tool", {
-            type: "tool_use",
-            id: encodeToolUseId(toolCallId, sig),
-            name: part.toolName,
-            input: {}
-          });
-          emit("content_block_delta", {
-            type: "content_block_delta",
-            index: blockIndex,
-            delta: { type: "input_json_delta", partial_json: JSON.stringify(stripNullInputs(part.input ?? {})) }
-          });
-        }
-        break;
-      }
-      case "finish":
-        if (part.totalUsage) {
-          usage = {
-            input_tokens: part.totalUsage.inputTokens ?? estimatedInputTokens,
-            output_tokens: part.totalUsage.outputTokens ?? 0
-          };
-        }
-        if (part.finishReason === "tool-calls") finishReason = "tool_use";
-        else if (part.finishReason === "length") finishReason = "max_tokens";
-        else if (part.finishReason === "stop" && finishReason !== "tool_use") finishReason = "end_turn";
-        break;
-      case "error": {
-        const e = part.error;
-        const errMsg = e?.message || (typeof part.error === "string" ? part.error : JSON.stringify(e?.data ?? part.error));
-        const errorType = anthropicErrorType(upstreamHttpStatus(part.error, errMsg));
-        log?.(() => `sdk stream error (${errorType}): ${errMsg}`);
-        bufferedAgentCalls.clear();
-        closeOpen();
-        emit("error", { type: "error", error: { type: errorType, message: errMsg } });
-        return;
-      }
-      default:
-        break;
-    }
-  }
-  closeOpen();
-  ensureStart();
-  emit("message_delta", { type: "message_delta", delta: { stop_reason: finishReason, stop_sequence: null }, usage });
-  emit("message_stop", { type: "message_stop" });
-}
-async function streamAnthropicResponse(model, params, modelId, write, log, estimatedInputTokens = 0) {
-  const { subagentRouting, ...providerParams } = params;
-  const result = streamText({ model, ...providerParams, onError: () => {
-  } });
-  Promise.resolve(result.text).catch(() => {
-  });
-  Promise.resolve(result.toolCalls).catch(() => {
-  });
-  Promise.resolve(result.toolResults).catch(() => {
-  });
-  Promise.resolve(result.finishReason).catch(() => {
-  });
-  Promise.resolve(result.usage).catch(() => {
-  });
-  await writeAnthropicStream(
-    result.stream,
-    modelId,
-    write,
-    log,
-    estimatedInputTokens,
-    subagentRouting
-  );
-}
-async function generateAnthropicResponse(model, params, modelId, options) {
-  const { subagentRouting, ...providerParams } = params;
-  let text2;
-  let toolCalls;
-  let finishReason;
-  let usage;
-  if (options?.forceStream) {
-    let firstStreamError;
-    const r = streamText({
-      model,
-      ...providerParams,
-      onError: (event) => {
-        firstStreamError ??= event;
-      }
-    });
-    Promise.resolve(r.toolResults).catch(() => {
-    });
-    try {
-      [text2, toolCalls, finishReason, usage] = await Promise.all([r.text, r.toolCalls, r.finishReason, r.usage]);
-    } catch (error) {
-      throw firstStreamError ? firstStreamError.error : error;
-    }
-  } else {
-    const r = await generateText({ model, ...providerParams });
-    ({ text: text2, toolCalls, finishReason, usage } = r);
-  }
-  return {
-    id: "msg_" + Date.now(),
-    type: "message",
-    role: "assistant",
-    model: modelId,
-    content: [
-      ...text2 ? [{ type: "text", text: text2 }] : [],
-      ...toolCalls.map((tc) => {
-        let input = tc.input;
-        if (subagentRouting && tc.toolName === "Agent") {
-          const normalized = prepareClaudeAgentInput(tc.input, subagentRouting);
-          logSubagentDecision(options?.log, normalized.decision);
-          input = normalized.input;
-        }
-        return {
-          type: "tool_use",
-          id: encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc)),
-          name: tc.toolName,
-          input: stripNullInputs(input)
-        };
-      })
-    ],
-    stop_reason: finishReason === "tool-calls" ? "tool_use" : "end_turn",
-    usage: { input_tokens: usage?.inputTokens ?? 0, output_tokens: usage?.outputTokens ?? 0 }
-  };
-}
-
 export {
   providerKind,
   isProviderKind,
@@ -7845,6 +7475,7 @@ export {
   redactTraceLine,
   writeSecureLogLine,
   printTraceLog,
+  REGISTRY_SCHEMA_VERSION,
   normalizeProviderName,
   validateProviderName,
   findProviderNameConflict,
@@ -7861,8 +7492,11 @@ export {
   vertexModelDisplayName,
   addVertexModelEntry,
   removeVertexModelEntries,
+  isAntigravityCloudCodeHelperSlot,
+  shouldHideModel,
   supportsManualModels,
   getProviderModels,
+  getAgentProviderModels,
   modelIdError,
   contextWindowError,
   loadRegistry,
@@ -7880,7 +7514,6 @@ export {
   resolveModelsDevSlug,
   refreshModelsDevCacheAsync,
   findModelsDevModel,
-  shouldHideByModelsDevCapabilities,
   EFFORT_RANK,
   resolveModelReasoningMetadata,
   loadPreferences,
@@ -7938,6 +7571,7 @@ export {
   modelPrefersResponsesApi,
   isSdkMigratedNpm,
   maxToolsForNpm,
+  withProviderRequestDefaults,
   createLanguageModel,
   getReasoningCapabilities,
   buildCodexReasoningLevels,
@@ -7974,6 +7608,7 @@ export {
   guiCallbackRedirectUri,
   ANTIGRAVITY_USER_AGENT,
   ANTIGRAVITY_BASE_URLS,
+  ANTIGRAVITY_API_VERSION,
   buildAntigravityAuthUrl,
   runAntigravityOAuthFlow,
   completeAntigravityExchange,
@@ -8001,18 +7636,10 @@ export {
   readFromCredentialStore,
   saveToCredentialStore,
   isSecretServiceAvailable,
-  validateCustomEndpointUrl,
-  extractClaudeSessionId,
-  SubagentRouteRegistry,
-  claudeModelFamily,
   normalizeToolSchemaForNpm,
   formatUpstreamErrorTrace,
   formatUpstreamError,
   upstreamHttpStatus,
-  anthropicErrorType,
-  anthropicEffortFromRequest,
-  translateRequest,
-  streamAnthropicResponse,
-  generateAnthropicResponse
+  anthropicErrorType
 };
-//# sourceMappingURL=chunk-K36OU6EP.js.map
+//# sourceMappingURL=chunk-X47N5A4I.js.map

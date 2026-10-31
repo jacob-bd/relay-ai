@@ -26,7 +26,7 @@ import {
 } from '../env.js';
 import { readBody, sendJson } from '../http-utils.js';
 import { loadRegistry } from '../registry/io.js';
-import { getProviderModels, supportsManualModels } from '../registry/provider-models.js';
+import { getAgentProviderModels, getProviderModels, supportsManualModels } from '../registry/provider-models.js';
 import type { ManualModel } from '../registry/types.js';
 import { refreshProviderModels, refreshAllProviderModels } from '../registry/refresh-models.js';
 import { getTemplateById, listAddableTemplates, listVisibleOAuthTemplates, PROVIDER_TEMPLATES, supportsAdditionalApiAccounts } from '../provider-templates.js';
@@ -166,6 +166,8 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
     handlePostKeys(req, res);
   } else if (url === '/api/providers/refresh' && req.method === 'POST') {
     handleProviderRefresh(req, res);
+  } else if (url === '/api/providers/models/test' && req.method === 'POST') {
+    handleTestModel(req, res);
   } else if (url === '/api/providers/refresh-all' && req.method === 'POST') {
     handleRefreshAll(res);
   } else if (url === '/api/providers/templates' && req.method === 'GET') {
@@ -306,7 +308,6 @@ async function handleGetModels(
     else if (target) catalog = providersForTarget(catalog, target);
     const registry = loadRegistry();
     const registryById = new Map(registry.providers.map(p => [p.id, p]));
-    const rawCountById = new Map(registry.providers.map(p => [p.id, getProviderModels(p).length]));
     const manualIdsByProvider = new Map(registry.providers.map(p => [p.id,
       new Set(getProviderModels(p).filter(m => m.source === 'manual').map(m => m.id)),
     ]));
@@ -341,9 +342,8 @@ async function handleGetModels(
       ...canAddAccountField(p.id, p.authType, uiMode),
       ...keyAccountFields(registry.providers.find(rp => rp.id === p.id)),
       ...manualMetadata(p.id),
-      // Copilot's runtime catalog is policy-filtered by account plan. Never replace
-      // that safe count with the larger raw cache count.
-      modelCount: isProviderKind(p.id, 'github-copilot') ? p.models.length : (rawCountById.get(p.id) ?? p.models.length),
+      // Count the same usable models shown below, not raw speech/guard/blocked entries.
+      modelCount: p.models.length,
       ...(isProviderKind(p.id, 'github-copilot') ? { subscription: copilotSubscription(p.providerData) } : {}),
       ...(customById.has(p.id) ? { customEndpoint: customById.get(p.id) } : {}),
       models: p.models.map(m => ({
@@ -393,7 +393,7 @@ async function handleGetModels(
         ...(isProviderKind(rp.id, 'github-copilot') ? {} : accountFieldFrom(await readOAuthAccountLabel(rp))),
         ...canAddAccountField(rp.id, 'oauth', uiMode),
         ...manualMetadata(rp.id),
-        modelCount: needsSignIn ? getProviderModels(rp).length : 0,
+        modelCount: needsSignIn ? getAgentProviderModels(rp).length : 0,
         ...(isProviderKind(rp.id, 'github-copilot') && !needsSignIn ? { subscription: copilotSubscription(undefined) } : {}),
         models: [],
       });
@@ -510,12 +510,26 @@ async function handlePostKeys(req: IncomingMessage, res: ServerResponse): Promis
     }
     const saved = await saveProviderCredential(authRef, key.trim());
     if (saved) {
+      // A successful storage call alone does not prove that later launches use this key.
+      const stored = await readStoredProviderCredential(authRef);
+      if (stored !== key.trim()) {
+        sendJson(res, 500, { ok: false, error: 'The replacement key could not be read back. It has not been verified as saved.' });
+        return;
+      }
+      const registryProvider = loadRegistry().providers.find(p => p.id === providerId);
+      if (registryProvider) {
+        const effective = await resolveProviderCredential(providerId, registryProvider.authRef);
+        if (effective !== key.trim()) {
+          sendJson(res, 409, { ok: false, error: 'Key saved, but another credential setting overrides it. Tests and launches would still use that other credential.' });
+          return;
+        }
+      }
       sendJson(res, 200, { ok: true });
     } else {
       sendJson(res, 500, { error: 'Credential store unavailable — key not saved' });
     }
   } catch (err) {
-    sendJson(res, 400, { error: String(err) });
+    sendJson(res, 400, { error: 'Could not save and verify the provider key.' });
   }
 }
 
@@ -748,6 +762,27 @@ async function handleRefreshAll(res: ServerResponse): Promise<void> {
   } catch (err) {
     sendJson(res, 500, { ok: false, error: String(err) });
   }
+}
+
+async function handleTestModel(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let body;
+  try { body = JSON.parse(await readBody(req)); } catch {
+    sendJson(res, 400, { ok: false, error: 'Invalid request.' }); return;
+  }
+  if (!body || typeof body.providerId !== 'string' || !body.providerId.trim()
+    || typeof body.modelId !== 'string' || !body.modelId.trim()) {
+    sendJson(res, 400, { ok: false, error: 'providerId and modelId required' }); return;
+  }
+  const controller = new AbortController();
+  const cancel = () => { if (!res.writableEnded) controller.abort(); };
+  res.on('close', cancel);
+  try {
+    const { testModel } = await import('../test-model.js');
+    const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
+    if (!res.destroyed) sendJson(res, 200, result);
+  } catch {
+    if (!res.destroyed) sendJson(res, 500, { ok: false, error: 'Model test failed. Try again.' });
+  } finally { res.removeListener('close', cancel); }
 }
 
 async function handleProviderRefresh(req: IncomingMessage, res: ServerResponse): Promise<void> {

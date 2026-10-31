@@ -419,6 +419,17 @@ input { font-family: inherit; }
   border-top: 1px solid var(--border);
 }
 
+/* Sidebar links select a panel; asynchronous content cannot move another panel's anchor. */
+.content.section-navigation > .section:not(.section-active):not(.provider-model-browser) {
+  display: none;
+}
+
+.content.section-navigation > .section.section-active {
+  padding-top: 52px;
+  margin-top: 0;
+  border-top: 0;
+}
+
 /* Section hero */
 .section-hero {
   margin-bottom: 32px;

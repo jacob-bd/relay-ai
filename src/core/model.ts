@@ -1,6 +1,7 @@
 // src/core/model.ts — construct a ready Vercel AI SDK LanguageModel from a route id.
 
-import { isProviderKind } from '../registry/provider-kind.js';
+import { isProviderKind, providerKind } from '../registry/provider-kind.js';
+import { getTemplateById } from '../provider-templates.js';
 import type { LanguageModel } from 'ai';
 import {
   resolveProviderCredential,
@@ -77,6 +78,8 @@ async function resolveCredential(provider: RegistryProvider, routeId: RelayRoute
     const credential = await resolveProviderCredential(provider.id, provider.authRef);
     if (credential) return credential;
     if (provider.authType === 'none') return '';
+    const template = getTemplateById(providerKind(provider.id));
+    if (template?.apiKeyOptional) return '';
     throw new RelayCoreError(
       'CREDENTIAL_UNAVAILABLE',
       `No credential available for provider "${provider.name}" — re-authenticate in relay-ai ui.`,

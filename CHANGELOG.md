@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Test a model before launching an agent.** The UI now offers **Test** beside models in provider catalogs, General Favorites and Codex SubAgent. It sends a short inference request through Relay's runtime using that provider account's credential, reports response time, and distinguishes access errors, rate limits, exhausted credits and connection failures. Tests have a 30-second request deadline, no automatic SDK retries, and cancel when the browser disconnects. An empty or incomplete text response does not pass. This checks basic responsiveness, not tool use or coding quality, and consumes provider quota.
+
+### Fixed
+
+- **Sidebar navigation works on the first click.** Favorites, Apps & Launch and the other sidebar destinations now select a single panel instead of combining browser anchor scrolling with a separate scroll-based highlight. The selected link, visible section and keyboard focus stay aligned, including when leaving a provider's model browser. Direct links, repeated clicks, Back/Forward and delayed catalog loading use the same navigation state.
+- **Provider model counts and browsing exclude blocked and non-chat entries consistently.** Provider cards, CLI provider lists and browsing, and refresh summaries now count the usable coding-model catalog rather than mixing it with the raw discovery cache. This fixes cases such as Groq showing 12 entries on its card while only five appeared in the usable list. The full provider response remains cached.
+- **UI key replacement verifies the stored and effective credential.** After confirming a replacement, Relay reads the saved key back and checks that its credential resolver selects it before reporting success. A failed read-back or another setting overriding the saved key now produces an explicit error instead of a misleading success message. Regression coverage verifies that refreshing with an entered key leaves the old key intact until replacement is confirmed, then model tests use the new key immediately.
+- **Core accepts API-key-optional providers without a stored key.** Anonymous providers, including numbered Kilo accounts, follow their provider template's optional-key setting rather than failing credential lookup before inference.
+
+### Changed
+
+- **Provider refresh feedback explicitly describes catalog discovery.** **Test & Refresh** continues to use the entered key and offers to save/replace it after confirmation. Its feedback now says the catalog was refreshed, and its tooltip directs users to a model's **Test** action to verify inference access. A successful model-list request alone does not establish that a model can answer.
+
 ## [0.17.1] - 2026-10-31
 
 ### Fixed

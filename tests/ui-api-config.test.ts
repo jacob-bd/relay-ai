@@ -19,6 +19,7 @@ describe('Codex Sub-agents UI config contract', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     rmSync(tempHome, { recursive: true, force: true });
     if (previousRelayHome === undefined) delete process.env['RELAY_AI_HOME'];
     else process.env['RELAY_AI_HOME'] = previousRelayHome;
@@ -78,7 +79,7 @@ describe('Codex Sub-agents UI config contract', () => {
   });
 
   it('saves a confirmed OpenCode Go/Zen key in the shared Relay override slot', async () => {
-    vi.spyOn(env, 'readStoredProviderCredential').mockResolvedValue('old-key');
+    vi.spyOn(env, 'readStoredProviderCredential').mockResolvedValueOnce('old-key').mockResolvedValue('new-key');
     const save = vi.spyOn(env, 'saveProviderCredential').mockResolvedValue(true);
 
     const response = createMockResponse();
@@ -97,8 +98,9 @@ describe('Codex Sub-agents UI config contract', () => {
     saveRegistry({ schemaVersion: 1, providers: [
       { id: 'zen-2', templateId: 'zen', name: 'OpenCode Zen 2', enabled: true, authRef: 'keyring:provider:opencode-2', api: {}, addedAt: 'now' },
     ] } as never);
-    const readStored = vi.spyOn(env, 'readStoredProviderCredential').mockResolvedValue(null);
+    const readStored = vi.spyOn(env, 'readStoredProviderCredential').mockResolvedValueOnce(null).mockResolvedValue('new-key');
     const save = vi.spyOn(env, 'saveProviderCredential').mockResolvedValue(true);
+    vi.spyOn(env, 'resolveProviderCredential').mockResolvedValue('new-key');
 
     const response = createMockResponse();
     handleUiApiRequest(createMockRequest('POST', '/api/keys', JSON.stringify({ providerId: 'zen-2', key: 'new-key' })), response.res);
