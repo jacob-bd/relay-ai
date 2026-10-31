@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.17.1] - 2026-10-31
+
+### Fixed
+
+- **Codex streams that stay connected but never finish no longer hang forever.** The stall watchdog used one timer that any stream part reset, so a provider that kept delivering contentless parts could hold a turn open indefinitely (seen live: 740 seconds on a ChatGPT-login model, ended only by restarting). There are now two limits: **120 seconds without any upstream activity** (any byte on the connection counts, not only a parsed stream part, so a quiet-but-alive provider is no longer mistaken for a dead one), and **10 minutes without content progress** (text, reasoning, tool-call input or a finish). Each fails with its own message. Both are configurable with `RELAY_AI_STREAM_IDLE_TIMEOUT_MS` and `RELAY_AI_STREAM_PROGRESS_TIMEOUT_MS` (milliseconds); see [docs/CODEX.md](docs/CODEX.md). A provider that sends no bytes at all while it reasons still needs a larger idle limit.
+- **Anthropic-compatible model discovery follows pagination (#87).** Discovery made a single request and read only the first page, so a gateway with a paginated catalog silently left later models out of the picker. It now follows `has_more` / `last_id` with `after_id`, drops repeated ids, shares one timeout across all pages, and stops on a repeated cursor or after 50 pages. If a later page fails or the server's pagination is inconsistent, the models already found are kept and Relay warns that the list may be incomplete (in `providers add`, `providers edit`, `providers refresh` and `relay-ai ui`) instead of presenting it as complete. The first request is unchanged, so servers that do not paginate behave exactly as before. Applies to custom Anthropic endpoints, registry refresh and key validation on import. Checked live against the Anthropic API with a forced small page size.
+
+### Changed
+
+- **`--trace` keeps the previous Codex proxy log.** Relaunching used to delete `codex-proxy-debug.log`, which erased the evidence of a hang when you restarted to recover. The log is now moved to `codex-proxy-debug.prev.log` (one previous copy; a near-empty launch stub never replaces it).
+- **Codex proxy progress lines show stream part types.** Each `response progress` line ends with `parts=[type:count,...]` for the parts received since the last report, which distinguishes a silent stream from one that keeps sending contentless parts.
+
 ## [0.17.0] - 2026-10-29
 
 ### Added
