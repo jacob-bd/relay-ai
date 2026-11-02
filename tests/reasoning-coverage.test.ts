@@ -73,6 +73,11 @@ const EXCLUDED_MODELS: ModelExclusion[] = [
   },
   {
     provider: 'mistral',
+    match: /^mistral-large-4(?:-|$)/,
+    reason: "models.dev declares low/medium/high, but Mistral's reasoningEffort wire is none/high only — Relay offers exactly those and invents no low/medium mapping until verified live",
+  },
+  {
+    provider: 'mistral',
     match: /^labs-leanstral-1-5-1$/,
     reason: 'New Labs Leanstral declares none/high but has no verified model-specific Mistral effort mapping yet',
   },

@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getAppPathOverride } from './config.js';
 import { findBinaryOnPath } from './binary-lookup.js';
+import { restoreClaudeModel, snapshotClaudeModel } from './claude-settings-cleanup.js';
 
 const isWindows = process.platform === 'win32';
 
@@ -88,6 +89,7 @@ export function launchClaude(
       process.stderr.write = originalStderrWrite;
     };
 
+    const modelSnapshot = snapshotClaudeModel(env);
     const child = spawn(claudePath, args, {
       stdio: 'inherit',
       env,
@@ -103,6 +105,8 @@ export function launchClaude(
     const onSighup = () => forward('SIGHUP');
     const cleanup = () => {
       restore();
+      // Claude Code persists the launch model to settings.json; undo a Relay alias.
+      restoreClaudeModel(modelSnapshot);
       process.off('SIGINT', onSigint);
       process.off('SIGTERM', onSigterm);
       process.off('SIGHUP', onSighup);

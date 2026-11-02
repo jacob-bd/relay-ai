@@ -275,23 +275,70 @@ import { fileURLToPath } from "url";
 // src/launch.ts
 import { execSync } from "child_process";
 import spawn from "cross-spawn";
-import { existsSync, appendFileSync } from "fs";
+import { existsSync as existsSync2, appendFileSync } from "fs";
+import { homedir as homedir2 } from "os";
+import { join as join2 } from "path";
+
+// src/claude-settings-cleanup.ts
+import { existsSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+function isRelayAliasModel(value) {
+  return typeof value === "string" && /^anthropic-[^_\s]+__/.test(value);
+}
+function claudeSettingsPath(env = process.env) {
+  const dir = env["CLAUDE_CONFIG_DIR"] || join(homedir(), ".claude");
+  return join(dir, "settings.json");
+}
+function readSettings(path3) {
+  try {
+    if (!existsSync(path3)) return void 0;
+    const parsed = JSON.parse(readFileSync(path3, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function snapshotClaudeModel(env = process.env) {
+  const path3 = claudeSettingsPath(env);
+  const settings = readSettings(path3);
+  const hadModel = !!settings && "model" in settings;
+  return { path: path3, hadModel, ...hadModel ? { model: settings["model"] } : {} };
+}
+function restoreClaudeModel(snapshot) {
+  try {
+    const settings = readSettings(snapshot.path);
+    if (!settings || !isRelayAliasModel(settings["model"])) return false;
+    if (snapshot.hadModel && !isRelayAliasModel(snapshot.model)) {
+      settings["model"] = snapshot.model;
+    } else {
+      delete settings["model"];
+    }
+    const tmp = `${snapshot.path}.relay-tmp`;
+    writeFileSync(tmp, `${JSON.stringify(settings, null, 2)}
+`, { mode: 384 });
+    renameSync(tmp, snapshot.path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// src/launch.ts
 var isWindows = process.platform === "win32";
 var FALLBACK_PATHS = isWindows ? [
-  join(process.env["APPDATA"] ?? homedir(), "npm", "claude.cmd"),
-  join(process.env["APPDATA"] ?? homedir(), "npm", "claude"),
-  join(homedir(), "AppData", "Roaming", "npm", "claude.cmd")
+  join2(process.env["APPDATA"] ?? homedir2(), "npm", "claude.cmd"),
+  join2(process.env["APPDATA"] ?? homedir2(), "npm", "claude"),
+  join2(homedir2(), "AppData", "Roaming", "npm", "claude.cmd")
 ] : [
-  join(homedir(), ".local", "bin", "claude"),
-  join(homedir(), ".npm", "bin", "claude"),
+  join2(homedir2(), ".local", "bin", "claude"),
+  join2(homedir2(), ".npm", "bin", "claude"),
   "/usr/local/bin/claude",
   "/opt/homebrew/bin/claude"
 ];
 function findClaudeBinary() {
   const override = getAppPathOverride("claude");
-  if (override) return existsSync(override) ? override : null;
+  if (override) return existsSync2(override) ? override : null;
   return findBinaryOnPath("claude", FALLBACK_PATHS);
 }
 function buildClaudeArgs(model, extraArgs) {
@@ -325,6 +372,7 @@ function launchClaude(env, model, extraArgs) {
       process.stdout.write = originalStdoutWrite;
       process.stderr.write = originalStderrWrite;
     };
+    const modelSnapshot = snapshotClaudeModel(env);
     const child = spawn(claudePath, args, {
       stdio: "inherit",
       env
@@ -337,6 +385,7 @@ function launchClaude(env, model, extraArgs) {
     const onSighup = () => forward("SIGHUP");
     const cleanup = () => {
       restore();
+      restoreClaudeModel(modelSnapshot);
       process.off("SIGINT", onSigint);
       process.off("SIGTERM", onSigterm);
       process.off("SIGHUP", onSighup);
@@ -362,18 +411,18 @@ import * as p2 from "@clack/prompts";
 // src/opencode-serve.ts
 import { execSync as execSync2, spawn as spawn2 } from "child_process";
 import { randomBytes } from "crypto";
-import { existsSync as existsSync2 } from "fs";
-import { homedir as homedir2 } from "os";
-import { join as join2 } from "path";
+import { existsSync as existsSync3 } from "fs";
+import { homedir as homedir3 } from "os";
+import { join as join3 } from "path";
 var isWindows2 = process.platform === "win32";
 var OPENCODE_FALLBACK_PATHS = isWindows2 ? [
-  join2(process.env["APPDATA"] ?? homedir2(), "npm", "opencode.cmd"),
-  join2(process.env["APPDATA"] ?? homedir2(), "npm", "opencode"),
-  join2(homedir2(), "AppData", "Roaming", "npm", "opencode.cmd")
+  join3(process.env["APPDATA"] ?? homedir3(), "npm", "opencode.cmd"),
+  join3(process.env["APPDATA"] ?? homedir3(), "npm", "opencode"),
+  join3(homedir3(), "AppData", "Roaming", "npm", "opencode.cmd")
 ] : [
-  join2(homedir2(), ".opencode", "bin", "opencode"),
-  join2(homedir2(), ".local", "bin", "opencode"),
-  join2(homedir2(), ".npm", "bin", "opencode"),
+  join3(homedir3(), ".opencode", "bin", "opencode"),
+  join3(homedir3(), ".local", "bin", "opencode"),
+  join3(homedir3(), ".npm", "bin", "opencode"),
   "/usr/local/bin/opencode",
   "/opt/homebrew/bin/opencode"
 ];
@@ -389,7 +438,7 @@ function findOpencodeBinary() {
   } catch {
   }
   for (const path3 of OPENCODE_FALLBACK_PATHS) {
-    if (existsSync2(path3)) return path3;
+    if (existsSync3(path3)) return path3;
   }
   return null;
 }
@@ -822,23 +871,23 @@ async function importFromOpencode(options = {}) {
 
 // src/key-setup.ts
 import * as p from "@clack/prompts";
-import { appendFileSync as appendFileSync2, readFileSync, existsSync as existsSync3 } from "fs";
-import { homedir as homedir3 } from "os";
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync2, existsSync as existsSync4 } from "fs";
+import { homedir as homedir4 } from "os";
 import { spawnSync } from "child_process";
 function detectShellProfile() {
   const shell = process.env["SHELL"] ?? "";
   if (process.platform === "darwin") {
-    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir3()}/.zshrc` };
-    if (shell.includes("bash")) return { display: "~/.bash_profile", path: `${homedir3()}/.bash_profile` };
-    return { display: "~/.profile", path: `${homedir3()}/.profile` };
+    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir4()}/.zshrc` };
+    if (shell.includes("bash")) return { display: "~/.bash_profile", path: `${homedir4()}/.bash_profile` };
+    return { display: "~/.profile", path: `${homedir4()}/.profile` };
   }
   if (process.platform === "linux") {
-    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir3()}/.zshrc` };
-    if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir3()}/.bashrc` };
-    return { display: "~/.profile", path: `${homedir3()}/.profile` };
+    if (shell.includes("zsh")) return { display: "~/.zshrc", path: `${homedir4()}/.zshrc` };
+    if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir4()}/.bashrc` };
+    return { display: "~/.profile", path: `${homedir4()}/.profile` };
   }
-  if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir3()}/.bashrc` };
-  return { display: "~/.profile", path: `${homedir3()}/.profile` };
+  if (shell.includes("bash")) return { display: "~/.bashrc", path: `${homedir4()}/.bashrc` };
+  return { display: "~/.profile", path: `${homedir4()}/.profile` };
 }
 async function resolveOrCollectApiKey(simulate = false, trace = false) {
   if (!simulate) {
@@ -939,7 +988,7 @@ async function resolveOrCollectApiKey(simulate = false, trace = false) {
     if (await saveToCredentialStore(trimmedKey)) {
       try {
         const autoLoadLine = `export OPENCODE_API_KEY="$(security find-generic-password -s relay-ai -a ${GLOBAL_OPENCODE_KEYRING_ACCOUNT} -w 2>/dev/null)"`;
-        const existing = existsSync3(path3) ? readFileSync(path3, "utf8") : "";
+        const existing = existsSync4(path3) ? readFileSync2(path3, "utf8") : "";
         if (!existing.includes(autoLoadLine)) {
           appendFileSync2(path3, `
 # relay-ai: load API key from macOS Keychain
@@ -976,7 +1025,7 @@ ${autoLoadLine}
     }
   } else if (saveChoice === "profile") {
     try {
-      if (!existsSync3(path3)) appendFileSync2(path3, "");
+      if (!existsSync4(path3)) appendFileSync2(path3, "");
       const escapedKey = trimmedKey.replace(/'/g, "'\\''");
       appendFileSync2(path3, `
 export OPENCODE_API_KEY='${escapedKey}'
@@ -3222,7 +3271,7 @@ async function runProvidersCommand(args) {
 // src/codex.ts
 import pc6 from "picocolors";
 import * as p10 from "@clack/prompts";
-import { join as join7 } from "path";
+import { join as join8 } from "path";
 
 // src/codex-proxy.ts
 import { createHash as createHash3 } from "crypto";
@@ -4766,8 +4815,8 @@ async function resolveRoutedCollaborationInput(input, context) {
 }
 
 // src/codex/route-audit.ts
-import { chmodSync, mkdirSync, writeFileSync } from "fs";
-import { join as join3 } from "path";
+import { chmodSync, mkdirSync, writeFileSync as writeFileSync2 } from "fs";
+import { join as join4 } from "path";
 var DIR_MODE = 448;
 var FILE_MODE = 384;
 var CODEX_ROUTE_AUDIT_LOG = "codex-route-audit.jsonl";
@@ -4796,16 +4845,16 @@ function getCodexRouteAuditLogPath() {
     chmodSync(dir, DIR_MODE);
   } catch {
   }
-  return join3(dir, CODEX_ROUTE_AUDIT_LOG);
+  return join4(dir, CODEX_ROUTE_AUDIT_LOG);
 }
 function prepareCodexRouteAuditLog(path3 = getCodexRouteAuditLogPath()) {
-  writeFileSync(path3, "", { mode: FILE_MODE });
+  writeFileSync2(path3, "", { mode: FILE_MODE });
   chmodSync(path3, FILE_MODE);
   return path3;
 }
 function appendCodexRouteAudit(path3, event) {
   try {
-    writeFileSync(path3, `${JSON.stringify(sanitizeCodexRouteAuditEvent(event))}
+    writeFileSync2(path3, `${JSON.stringify(sanitizeCodexRouteAuditEvent(event))}
 `, { flag: "a", mode: FILE_MODE });
     chmodSync(path3, FILE_MODE);
   } catch {
@@ -6185,60 +6234,60 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
 }
 
 // src/codex/profile.ts
-import { join as join5 } from "path";
+import { join as join6 } from "path";
 
 // src/codex/session.ts
 import {
   copyFileSync,
   chmodSync as chmodSync2,
-  existsSync as existsSync4,
+  existsSync as existsSync5,
   mkdirSync as mkdirSync2,
   readdirSync,
-  readFileSync as readFileSync2,
-  renameSync,
+  readFileSync as readFileSync3,
+  renameSync as renameSync2,
   rmSync,
   statSync,
   unlinkSync,
-  writeFileSync as writeFileSync2
+  writeFileSync as writeFileSync3
 } from "fs";
-import { homedir as homedir4 } from "os";
-import { basename, dirname, join as join4 } from "path";
+import { homedir as homedir5 } from "os";
+import { basename, dirname, join as join5 } from "path";
 var CODEX_PROFILE_NAME = "relay-ai-launch";
 var STALE_SESSION_MS = 5 * 60 * 1e3;
 var MAX_BACKUPS = 5;
 function getCodexHome(env = process.env) {
-  return env["CODEX_HOME"] || join4(homedir4(), ".codex");
+  return env["CODEX_HOME"] || join5(homedir5(), ".codex");
 }
 function getCodexProfilePath() {
-  return join4(getCodexHome(), `${CODEX_PROFILE_NAME}.config.toml`);
+  return join5(getCodexHome(), `${CODEX_PROFILE_NAME}.config.toml`);
 }
 function getRelayAiCodexDir(env = process.env) {
-  return join4(getAppHome(env), "codex");
+  return join5(getAppHome(env), "codex");
 }
 function getSessionLockPath(env = process.env) {
-  return join4(getRelayAiCodexDir(env), "session.json");
+  return join5(getRelayAiCodexDir(env), "session.json");
 }
 function getBackupsDir(env = process.env) {
-  return join4(getRelayAiCodexDir(env), "backups");
+  return join5(getRelayAiCodexDir(env), "backups");
 }
 function getCatalogPath(providerId, env = process.env) {
-  return join4(getRelayAiCodexDir(env), `models-${providerId}.json`);
+  return join5(getRelayAiCodexDir(env), `models-${providerId}.json`);
 }
 function ownedOverlayPaths(env = process.env) {
   const paths = [getCodexProfilePath()];
   const codexDir = getRelayAiCodexDir(env);
-  if (existsSync4(codexDir)) {
+  if (existsSync5(codexDir)) {
     for (const name of readdirSync(codexDir)) {
       if (name.startsWith("models-") && name.endsWith(".json")) {
-        paths.push(join4(codexDir, name));
+        paths.push(join5(codexDir, name));
       }
     }
   }
-  const agentsDir = join4(getCodexHome(env), "agents");
-  if (existsSync4(agentsDir)) {
+  const agentsDir = join5(getCodexHome(env), "agents");
+  if (existsSync5(agentsDir)) {
     for (const name of readdirSync(agentsDir)) {
       if (/^relay-model-[a-z0-9-]+\.toml$/i.test(name)) {
-        paths.push(join4(agentsDir, name));
+        paths.push(join5(agentsDir, name));
       }
     }
   }
@@ -6248,25 +6297,25 @@ function ownedOverlayPaths(env = process.env) {
 function atomicWriteFile(path3, content) {
   mkdirSync2(dirname(path3), { recursive: true });
   const tmp = `${path3}.tmp.${process.pid}`;
-  writeFileSync2(tmp, content, { encoding: "utf8", mode: 384 });
-  renameSync(tmp, path3);
+  writeFileSync3(tmp, content, { encoding: "utf8", mode: 384 });
+  renameSync2(tmp, path3);
   try {
     chmodSync2(path3, 384);
   } catch {
   }
 }
 function rotateBackups(filePath, env = process.env) {
-  if (!existsSync4(filePath)) return;
+  if (!existsSync5(filePath)) return;
   const backupsDir = getBackupsDir(env);
   mkdirSync2(backupsDir, { recursive: true });
   const base = basename(filePath);
   const stamp = Date.now();
-  const backupPath = join4(backupsDir, `${base}.${stamp}.bak`);
+  const backupPath = join5(backupsDir, `${base}.${stamp}.bak`);
   copyFileSync(filePath, backupPath);
-  const backups = readdirSync(backupsDir).filter((n) => n.startsWith(`${base}.`) && n.endsWith(".bak")).map((n) => ({ name: n, mtime: statSync(join4(backupsDir, n)).mtimeMs })).sort((a, b) => b.mtime - a.mtime);
+  const backups = readdirSync(backupsDir).filter((n) => n.startsWith(`${base}.`) && n.endsWith(".bak")).map((n) => ({ name: n, mtime: statSync(join5(backupsDir, n)).mtimeMs })).sort((a, b) => b.mtime - a.mtime);
   for (const old of backups.slice(MAX_BACKUPS)) {
     try {
-      unlinkSync(join4(backupsDir, old.name));
+      unlinkSync(join5(backupsDir, old.name));
     } catch {
     }
   }
@@ -6277,9 +6326,9 @@ function writeOverlayFile(path3, content, env = process.env) {
 }
 function readSessionLock(env = process.env) {
   const path3 = getSessionLockPath(env);
-  if (!existsSync4(path3)) return null;
+  if (!existsSync5(path3)) return null;
   try {
-    const parsed = JSON.parse(readFileSync2(path3, "utf8"));
+    const parsed = JSON.parse(readFileSync3(path3, "utf8"));
     if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string") return parsed;
   } catch {
   }
@@ -6306,7 +6355,7 @@ function isConcurrentSession(lock) {
 function restoreCodexOverlay(env = process.env) {
   const removed = [];
   for (const path3 of ownedOverlayPaths(env)) {
-    if (!existsSync4(path3)) continue;
+    if (!existsSync5(path3)) continue;
     try {
       rmSync(path3, { force: true });
       removed.push(path3);
@@ -6316,7 +6365,7 @@ function restoreCodexOverlay(env = process.env) {
   return removed;
 }
 function remainingOverlayPaths(env = process.env) {
-  return ownedOverlayPaths(env).filter((p17) => existsSync4(p17));
+  return ownedOverlayPaths(env).filter((p17) => existsSync5(p17));
 }
 function recoverInterruptedCodexSession(env = process.env) {
   const before = remainingOverlayPaths(env);
@@ -6410,10 +6459,10 @@ function getCatalogOutputPath(providerId) {
   return getCatalogPath(providerId);
 }
 function getFavoritesCatalogPath() {
-  return join5(getRelayAiCodexDir(), "models-favorites.json");
+  return join6(getRelayAiCodexDir(), "models-favorites.json");
 }
 function getFavoritesAppCatalogPath() {
-  return join5(getRelayAiCodexDir(), "app-models-favorites.json");
+  return join6(getRelayAiCodexDir(), "app-models-favorites.json");
 }
 function profileName() {
   return CODEX_PROFILE_NAME;
@@ -6422,9 +6471,9 @@ function profileName() {
 // src/codex/launch.ts
 import { execSync as execSync3 } from "child_process";
 import spawn3 from "cross-spawn";
-import { existsSync as existsSync5 } from "fs";
-import { homedir as homedir5 } from "os";
-import { join as join6 } from "path";
+import { existsSync as existsSync6 } from "fs";
+import { homedir as homedir6 } from "os";
+import { join as join7 } from "path";
 var isWindows3 = process.platform === "win32";
 var CODEX_CI_ENV_VARS = [
   "CI",
@@ -6445,17 +6494,17 @@ function stripCodexInheritedEnv(env) {
   return out;
 }
 var CODEX_FALLBACK_PATHS = isWindows3 ? [
-  join6(process.env["APPDATA"] ?? homedir5(), "npm", "codex.cmd"),
-  join6(process.env["APPDATA"] ?? homedir5(), "npm", "codex")
+  join7(process.env["APPDATA"] ?? homedir6(), "npm", "codex.cmd"),
+  join7(process.env["APPDATA"] ?? homedir6(), "npm", "codex")
 ] : [
-  join6(homedir5(), ".local", "bin", "codex"),
-  join6(homedir5(), ".npm", "bin", "codex"),
+  join7(homedir6(), ".local", "bin", "codex"),
+  join7(homedir6(), ".npm", "bin", "codex"),
   "/usr/local/bin/codex",
   "/opt/homebrew/bin/codex"
 ];
 function findCodexBinary() {
   const override = getAppPathOverride("codex");
-  if (override) return selectCodexBinary([override], existsSync5, canRunCodexBinary);
+  if (override) return selectCodexBinary([override], existsSync6, canRunCodexBinary);
   const candidates = [];
   try {
     const result = execSync3(isWindows3 ? "where.exe codex" : "which codex", {
@@ -6470,7 +6519,7 @@ function findCodexBinary() {
   } catch {
   }
   candidates.push(...CODEX_FALLBACK_PATHS);
-  return selectCodexBinary(candidates, existsSync5, canRunCodexBinary);
+  return selectCodexBinary(candidates, existsSync6, canRunCodexBinary);
 }
 function selectCodexBinary(candidates, exists, canRun) {
   const seen = /* @__PURE__ */ new Set();
@@ -7186,7 +7235,7 @@ async function writeFavoritesLaunchArtifacts(resolved, starting, proxyPort) {
   return { profilePath, catalogPath };
 }
 async function writeMixedLaunchArtifacts(plan, proxyPort) {
-  const catalogPath = join7(getRelayAiCodexDir(), "models-mixed.json");
+  const catalogPath = join8(getRelayAiCodexDir(), "models-mixed.json");
   writeOverlayFile(catalogPath, serializeCatalog(plan.catalog));
   const profilePath = getProfileOutputPath();
   writeOverlayFile(profilePath, buildCodexMixedProfileToml({
@@ -7811,23 +7860,23 @@ import * as p12 from "@clack/prompts";
 
 // src/gemini/launch.ts
 import { spawn as spawn4 } from "child_process";
-import { existsSync as existsSync6, mkdirSync as mkdirSync3, mkdtempSync, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "fs";
-import { homedir as homedir6, tmpdir } from "os";
-import { join as join8 } from "path";
+import { existsSync as existsSync7, mkdirSync as mkdirSync3, mkdtempSync, rmSync as rmSync2, writeFileSync as writeFileSync4 } from "fs";
+import { homedir as homedir7, tmpdir } from "os";
+import { join as join9 } from "path";
 var isWindows4 = process.platform === "win32";
 var GEMINI_API_KEY_AUTH_TYPE = "gemini-api-key";
 var GEMINI_FALLBACK_PATHS = isWindows4 ? [
-  join8(process.env["APPDATA"] ?? homedir6(), "npm", "gemini.cmd"),
-  join8(process.env["APPDATA"] ?? homedir6(), "npm", "gemini")
+  join9(process.env["APPDATA"] ?? homedir7(), "npm", "gemini.cmd"),
+  join9(process.env["APPDATA"] ?? homedir7(), "npm", "gemini")
 ] : [
-  join8(homedir6(), ".local", "bin", "gemini"),
-  join8(homedir6(), ".npm", "bin", "gemini"),
+  join9(homedir7(), ".local", "bin", "gemini"),
+  join9(homedir7(), ".npm", "bin", "gemini"),
   "/usr/local/bin/gemini",
   "/opt/homebrew/bin/gemini"
 ];
 function findGeminiBinary() {
   const override = getAppPathOverride("gemini");
-  if (override) return existsSync6(override) ? override : null;
+  if (override) return existsSync7(override) ? override : null;
   return findBinaryOnPath("gemini", GEMINI_FALLBACK_PATHS);
 }
 function buildGeminiChildEnv(proxyPort, proxyToken) {
@@ -7842,7 +7891,7 @@ function buildGeminiChildEnv(proxyPort, proxyToken) {
   return env;
 }
 function createGeminiCliHomeOverlay() {
-  const cliHome = mkdtempSync(join8(tmpdir(), "relay-ai-gemini-"));
+  const cliHome = mkdtempSync(join9(tmpdir(), "relay-ai-gemini-"));
   const settings = {
     security: {
       auth: {
@@ -7850,9 +7899,9 @@ function createGeminiCliHomeOverlay() {
       }
     }
   };
-  const geminiDir = join8(cliHome, ".gemini");
+  const geminiDir = join9(cliHome, ".gemini");
   mkdirSync3(geminiDir);
-  writeFileSync3(join8(geminiDir, "settings.json"), `${JSON.stringify(settings, null, 2)}
+  writeFileSync4(join9(geminiDir, "settings.json"), `${JSON.stringify(settings, null, 2)}
 `, {
     encoding: "utf8",
     mode: 384
@@ -9256,9 +9305,9 @@ function formatCloudCodeChunk(opts) {
 }
 
 // src/antigravity/account-guardrail.ts
-import { readFileSync as readFileSync3 } from "fs";
-import { homedir as homedir7 } from "os";
-import { join as join9 } from "path";
+import { readFileSync as readFileSync4 } from "fs";
+import { homedir as homedir8 } from "os";
+import { join as join10 } from "path";
 var ENTERPRISE_TIER_PATTERN = /gcp-ge|enterprise/i;
 function isEnterpriseAuthTier(tier) {
   return typeof tier === "string" && ENTERPRISE_TIER_PATTERN.test(tier);
@@ -9272,9 +9321,9 @@ function detectAuthTierInBody(parsed) {
   const project = typeof body["project"] === "string" && body["project"].length > 0 ? body["project"] : void 0;
   return project ? { userTier, project } : { userTier };
 }
-function readAgyOnboardingAuthMethod(cliDir = join9(homedir7(), ".gemini", "antigravity-cli")) {
+function readAgyOnboardingAuthMethod(cliDir = join10(homedir8(), ".gemini", "antigravity-cli")) {
   try {
-    const raw = readFileSync3(join9(cliDir, "cache", "onboarding.json"), "utf8");
+    const raw = readFileSync4(join10(cliDir, "cache", "onboarding.json"), "utf8");
     const parsed = JSON.parse(raw);
     const method = parsed["previousAuthMethod"];
     if (method === "gcp") return "gcp";
@@ -11148,23 +11197,23 @@ async function resolveAntigravityLaunchRoutes(opts) {
 // src/antigravity/launch-cli.ts
 import { execFileSync, execSync as execSync4 } from "child_process";
 import spawn5 from "cross-spawn";
-import { existsSync as existsSync7 } from "fs";
-import { homedir as homedir8 } from "os";
-import { join as join10 } from "path";
+import { existsSync as existsSync8 } from "fs";
+import { homedir as homedir9 } from "os";
+import { join as join11 } from "path";
 var isWindows5 = process.platform === "win32";
 var FALLBACK_PATHS2 = isWindows5 ? [
-  join10(process.env["APPDATA"] ?? homedir8(), "npm", "agy.cmd"),
-  join10(process.env["APPDATA"] ?? homedir8(), "npm", "agy"),
-  join10(homedir8(), "AppData", "Roaming", "npm", "agy.cmd")
+  join11(process.env["APPDATA"] ?? homedir9(), "npm", "agy.cmd"),
+  join11(process.env["APPDATA"] ?? homedir9(), "npm", "agy"),
+  join11(homedir9(), "AppData", "Roaming", "npm", "agy.cmd")
 ] : [
-  join10(homedir8(), ".local", "bin", "agy"),
-  join10(homedir8(), ".npm", "bin", "agy"),
+  join11(homedir9(), ".local", "bin", "agy"),
+  join11(homedir9(), ".npm", "bin", "agy"),
   "/usr/local/bin/agy",
   "/opt/homebrew/bin/agy"
 ];
 function findAntigravityCliBinary() {
   const override = getAppPathOverride("agy");
-  if (override) return existsSync7(override) ? override : null;
+  if (override) return existsSync8(override) ? override : null;
   try {
     const result = execSync4(isWindows5 ? "where.exe agy" : "which agy", {
       encoding: "utf8",
@@ -11175,7 +11224,7 @@ function findAntigravityCliBinary() {
   } catch {
   }
   for (const path3 of FALLBACK_PATHS2) {
-    if (existsSync7(path3)) return path3;
+    if (existsSync8(path3)) return path3;
   }
   return null;
 }
@@ -11398,37 +11447,37 @@ async function waitForExistingIdeShutdownWithConfirm(watcher, confirmClose) {
 import {
   closeSync,
   linkSync,
-  existsSync as existsSync8,
+  existsSync as existsSync9,
   mkdirSync as mkdirSync4,
   openSync,
-  readFileSync as readFileSync4,
+  readFileSync as readFileSync5,
   rmSync as rmSync3,
   unlinkSync as unlinkSync2,
-  writeFileSync as writeFileSync4
+  writeFileSync as writeFileSync5
 } from "fs";
 import { createRequire as createRequire2 } from "module";
-import { dirname as dirname2, join as join11 } from "path";
+import { dirname as dirname2, join as join12 } from "path";
 import { createHash as createHash4, randomUUID as randomUUID3 } from "crypto";
 import { parse, modify, applyEdits } from "jsonc-parser";
 var require3 = createRequire2(import.meta.url);
 var MODEL_PREFERENCES_KEY2 = "antigravityUnifiedStateSync.modelPreferences";
 var JETSKI_CLOUD_CODE_URL_KEY = "jetski.cloudCodeUrl";
 function getAntigravityHome(env = process.env) {
-  return join11(getAppHome(env), "antigravity");
+  return join12(getAppHome(env), "antigravity");
 }
 function getExistingIdeLockPath(env = process.env) {
-  return join11(getAntigravityHome(env), "existing-ide-session.json");
+  return join12(getAntigravityHome(env), "existing-ide-session.json");
 }
 function getExistingIdeRecoveryRecordPath(env = process.env) {
-  return join11(getAntigravityHome(env), "existing-ide-recovery.json");
+  return join12(getAntigravityHome(env), "existing-ide-recovery.json");
 }
 function fileSha256(filePath) {
-  return createHash4("sha256").update(readFileSync4(filePath)).digest("hex");
+  return createHash4("sha256").update(readFileSync5(filePath)).digest("hex");
 }
 function readExistingIdeLock(env = process.env) {
   const lockPath = getExistingIdeLockPath(env);
-  if (!existsSync8(lockPath)) return null;
-  const rawText = readFileSync4(lockPath, "utf8");
+  if (!existsSync9(lockPath)) return null;
+  const rawText = readFileSync5(lockPath, "utf8");
   if (rawText.trim().length === 0) {
     throw new Error(`Lock file at ${lockPath} is currently empty or in the process of being created.`);
   }
@@ -11446,12 +11495,12 @@ function readExistingIdeLock(env = process.env) {
 }
 function clearExistingIdeLock(env = process.env) {
   const p17 = getExistingIdeLockPath(env);
-  if (existsSync8(p17)) rmSync3(p17, { force: true });
+  if (existsSync9(p17)) rmSync3(p17, { force: true });
 }
 function readExistingIdeRecoveryRecord(env = process.env) {
   const recordPath = getExistingIdeRecoveryRecordPath(env);
-  if (!existsSync8(recordPath)) return null;
-  const rawText = readFileSync4(recordPath, "utf8");
+  if (!existsSync9(recordPath)) return null;
+  const rawText = readFileSync5(recordPath, "utf8");
   let parsed;
   try {
     parsed = JSON.parse(rawText);
@@ -11470,7 +11519,7 @@ function writeExistingIdeRecoveryRecord(record, env = process.env) {
 }
 function clearExistingIdeRecoveryRecord(env = process.env) {
   const p17 = getExistingIdeRecoveryRecordPath(env);
-  if (existsSync8(p17)) rmSync3(p17, { force: true });
+  if (existsSync9(p17)) rmSync3(p17, { force: true });
 }
 function assertNoActiveExistingIdeSession(env = process.env) {
   const lock = readExistingIdeLock(env);
@@ -11483,7 +11532,7 @@ function acquireExistingIdeSession(profileDir, env = process.env, options = {}) 
   mkdirSync4(dirname2(lockPath), { recursive: true, mode: 448 });
   const lock = { pid: process.pid, profileDir, startedAt: (/* @__PURE__ */ new Date()).toISOString() };
   const tempPath = `${lockPath}.${process.pid}.${randomUUID3()}.tmp`;
-  writeFileSync4(tempPath, JSON.stringify(lock), { mode: 384, flag: "wx" });
+  writeFileSync5(tempPath, JSON.stringify(lock), { mode: 384, flag: "wx" });
   const publish = () => linkSync(tempPath, lockPath);
   try {
     try {
@@ -11518,7 +11567,7 @@ function acquireExistingIdeSession(profileDir, env = process.env, options = {}) 
   return { lock, release: () => releaseEmptyExistingIdeSession(env) };
 }
 function releaseEmptyExistingIdeSession(env = process.env) {
-  if (existsSync8(getExistingIdeRecoveryRecordPath(env))) return;
+  if (existsSync9(getExistingIdeRecoveryRecordPath(env))) return;
   try {
     const lock = readExistingIdeLock(env);
     if (lock && lock.pid === process.pid) {
@@ -11546,7 +11595,7 @@ function checkNodeSqliteAvailable() {
   }
 }
 function readSqliteModelPreferences(dbPath) {
-  if (!existsSync8(dbPath)) return void 0;
+  if (!existsSync9(dbPath)) return void 0;
   const originalEmitWarning = process.emitWarning;
   try {
     process.emitWarning = ((warning, ...rest) => {
@@ -11583,7 +11632,7 @@ function readSqliteModelPreferences(dbPath) {
   }
 }
 function clearSqliteModelPreferencesRow(dbPath) {
-  if (!existsSync8(dbPath)) return;
+  if (!existsSync9(dbPath)) return;
   const originalEmitWarning = process.emitWarning;
   try {
     process.emitWarning = ((warning, ...rest) => {
@@ -11603,7 +11652,7 @@ function clearSqliteModelPreferencesRow(dbPath) {
   }
 }
 function restoreSqliteModelPreferences(dbPath, saved) {
-  if (!existsSync8(dbPath)) return;
+  if (!existsSync9(dbPath)) return;
   const originalEmitWarning = process.emitWarning;
   try {
     process.emitWarning = ((warning, ...rest) => {
@@ -11638,18 +11687,18 @@ function beginExistingIdeSession(profileDir, gatewayUrl, env = process.env) {
   if (readExistingIdeRecoveryRecord(env)) throw new Error("An IDE session needs restoration before another overlay can be applied.");
   checkNodeSqliteAvailable();
   acquireExistingIdeSession(profileDir, env);
-  const userDir = join11(profileDir, "User");
+  const userDir = join12(profileDir, "User");
   mkdirSync4(userDir, { recursive: true });
-  const settingsPath = join11(userDir, "settings.json");
+  const settingsPath = join12(userDir, "settings.json");
   let originalSettingsSha256;
   let backupSettingsPath;
   let originalContent = "";
   let hadSettingsFile = false;
   let originalGatewayUrl = null;
   let hadGatewayUrl = false;
-  if (existsSync8(settingsPath)) {
+  if (existsSync9(settingsPath)) {
     hadSettingsFile = true;
-    originalContent = readFileSync4(settingsPath, "utf8");
+    originalContent = readFileSync5(settingsPath, "utf8");
     const errors = [];
     const parsedObj = parse(originalContent, errors, { allowTrailingComma: true });
     if (errors.length > 0 || originalContent.trim().length > 0 && (!parsedObj || typeof parsedObj !== "object" || Array.isArray(parsedObj))) {
@@ -11660,14 +11709,14 @@ function beginExistingIdeSession(profileDir, gatewayUrl, env = process.env) {
       originalGatewayUrl = parsedObj[JETSKI_CLOUD_CODE_URL_KEY] ?? null;
     }
     originalSettingsSha256 = fileSha256(settingsPath);
-    const backupsDir = join11(getAntigravityHome(env), "backups");
+    const backupsDir = join12(getAntigravityHome(env), "backups");
     mkdirSync4(backupsDir, { recursive: true });
-    backupSettingsPath = join11(backupsDir, `settings.${Date.now()}.bak`);
+    backupSettingsPath = join12(backupsDir, `settings.${Date.now()}.bak`);
     atomicWriteFile(backupSettingsPath, originalContent);
   }
-  const dbPath = join11(userDir, "globalStorage", "state.vscdb");
+  const dbPath = join12(userDir, "globalStorage", "state.vscdb");
   let savedModelPref;
-  if (existsSync8(dbPath)) {
+  if (existsSync9(dbPath)) {
     savedModelPref = readSqliteModelPreferences(dbPath);
   }
   const record = {
@@ -11681,10 +11730,10 @@ function beginExistingIdeSession(profileDir, gatewayUrl, env = process.env) {
     originalGatewayUrl,
     hadGatewayUrl,
     savedModelPreferencesRow: savedModelPref,
-    sqliteDbPath: existsSync8(dbPath) ? dbPath : void 0
+    sqliteDbPath: existsSync9(dbPath) ? dbPath : void 0
   };
   writeExistingIdeRecoveryRecord(record, env);
-  if (existsSync8(dbPath) && savedModelPref?.existed) {
+  if (existsSync9(dbPath) && savedModelPref?.existed) {
     clearSqliteModelPreferencesRow(dbPath);
   }
   let newContent = "";
@@ -11734,19 +11783,19 @@ function restoreExistingIdeSession(env = process.env, options = {}) {
   }
   if (record) {
     const { settingsPath, backupSettingsPath, originalSettingsSha256, patchedSettingsSha256, hadGatewayUrl, originalGatewayUrl, gatewayUrl } = record;
-    if (existsSync8(settingsPath)) {
+    if (existsSync9(settingsPath)) {
       const currentSha = fileSha256(settingsPath);
       const backupValid = Boolean(
-        backupSettingsPath && existsSync8(backupSettingsPath) && originalSettingsSha256 && fileSha256(backupSettingsPath) === originalSettingsSha256
+        backupSettingsPath && existsSync9(backupSettingsPath) && originalSettingsSha256 && fileSha256(backupSettingsPath) === originalSettingsSha256
       );
       if (patchedSettingsSha256 && currentSha === patchedSettingsSha256 && backupValid) {
-        const backupContent = readFileSync4(backupSettingsPath, "utf8");
+        const backupContent = readFileSync5(backupSettingsPath, "utf8");
         atomicWriteFile(settingsPath, backupContent);
       } else if (!record.originalSettingsSha256 && currentSha === patchedSettingsSha256) {
         rmSync3(settingsPath, { force: true });
       } else {
         try {
-          const currentContent = readFileSync4(settingsPath, "utf8");
+          const currentContent = readFileSync5(settingsPath, "utf8");
           const errors = [];
           const parsed = parse(currentContent, errors, { allowTrailingComma: true });
           if (errors.length > 0 || currentContent.trim().length > 0 && (!parsed || typeof parsed !== "object" || Array.isArray(parsed))) {
@@ -11775,7 +11824,7 @@ function restoreExistingIdeSession(env = process.env, options = {}) {
         }
       }
     }
-    if (record.sqliteDbPath && record.savedModelPreferencesRow && existsSync8(record.sqliteDbPath)) {
+    if (record.sqliteDbPath && record.savedModelPreferencesRow && existsSync9(record.sqliteDbPath)) {
       try {
         restoreSqliteModelPreferences(record.sqliteDbPath, record.savedModelPreferencesRow);
       } catch (err) {
@@ -11797,11 +11846,11 @@ function restoreExistingIdeSession(env = process.env, options = {}) {
 
 // src/antigravity/launch-ide.ts
 import { execFileSync as execFileSync2, execSync as execSync5, spawn as spawn6 } from "child_process";
-import { existsSync as existsSync9, readFileSync as readFileSync5 } from "fs";
-import { homedir as homedir9 } from "os";
-import { dirname as dirname3, join as join12, normalize } from "path";
-var LINUX_APP_PROFILE_DIR = join12(homedir9(), ".relay-ai", "antigravity", "app-profile");
-var LINUX_IDE_PROFILE_DIR = join12(homedir9(), ".relay-ai", "antigravity", "profile");
+import { existsSync as existsSync10, readFileSync as readFileSync6 } from "fs";
+import { homedir as homedir10 } from "os";
+import { dirname as dirname3, join as join13, normalize } from "path";
+var LINUX_APP_PROFILE_DIR = join13(homedir10(), ".relay-ai", "antigravity", "app-profile");
+var LINUX_IDE_PROFILE_DIR = join13(homedir10(), ".relay-ai", "antigravity", "profile");
 function sleep(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
@@ -11809,10 +11858,10 @@ function linuxAntigravityBinary() {
   const candidates = [
     "/usr/share/antigravity/antigravity",
     "/opt/antigravity/antigravity",
-    join12(homedir9(), ".local", "share", "antigravity", "antigravity")
+    join13(homedir10(), ".local", "share", "antigravity", "antigravity")
   ];
   for (const candidate of candidates) {
-    if (existsSync9(candidate)) return candidate;
+    if (existsSync10(candidate)) return candidate;
   }
   return null;
 }
@@ -11974,15 +12023,15 @@ function quitAntigravityAppGracefully() {
 function getDefaultAntigravityIdeProfileDir() {
   const binary = findAntigravityIdeBinary();
   if (!binary) throw new Error("Antigravity IDE not found.");
-  const appDir = process.platform === "darwin" ? join12(binary.slice(0, binary.indexOf(".app/") + 4), "Contents", "Resources", "app") : join12(dirname3(binary), "resources", "app");
-  const product = JSON.parse(readFileSync5(join12(appDir, "product.json"), "utf8"));
+  const appDir = process.platform === "darwin" ? join13(binary.slice(0, binary.indexOf(".app/") + 4), "Contents", "Resources", "app") : join13(dirname3(binary), "resources", "app");
+  const product = JSON.parse(readFileSync6(join13(appDir, "product.json"), "utf8"));
   const name = product.nameShort;
   if (!name || /[\\/]/.test(name) || name === "." || name === "..") {
     throw new Error("Cannot identify the installed Antigravity IDE profile.");
   }
-  const base = process.platform === "darwin" ? join12(homedir9(), "Library", "Application Support") : process.platform === "win32" ? process.env["APPDATA"] ?? join12(homedir9(), "AppData", "Roaming") : process.env["XDG_CONFIG_HOME"] ?? join12(homedir9(), ".config");
-  const profile = join12(base, name);
-  if (!existsSync9(join12(profile, "User"))) {
+  const base = process.platform === "darwin" ? join13(homedir10(), "Library", "Application Support") : process.platform === "win32" ? process.env["APPDATA"] ?? join13(homedir10(), "AppData", "Roaming") : process.env["XDG_CONFIG_HOME"] ?? join13(homedir10(), ".config");
+  const profile = join13(base, name);
+  if (!existsSync10(join13(profile, "User"))) {
     throw new Error("The normal Antigravity IDE profile was not found. Open the IDE normally first.");
   }
   return profile;
@@ -12088,34 +12137,34 @@ function forceQuitExistingAntigravityIde(profileDir) {
 }
 function findAntigravityAppBinary() {
   const override = getAppPathOverride("antigravity");
-  if (override) return existsSync9(override) ? override : null;
+  if (override) return existsSync10(override) ? override : null;
   if (process.platform === "win32") {
-    const localAppData = process.env["LOCALAPPDATA"] ?? join12(homedir9(), "AppData", "Local");
-    const winPath = join12(localAppData, "Programs", "Antigravity", "Antigravity.exe");
-    return existsSync9(winPath) ? winPath : null;
+    const localAppData = process.env["LOCALAPPDATA"] ?? join13(homedir10(), "AppData", "Local");
+    const winPath = join13(localAppData, "Programs", "Antigravity", "Antigravity.exe");
+    return existsSync10(winPath) ? winPath : null;
   }
   if (process.platform === "linux") return linuxAntigravityBinary();
   if (process.platform !== "darwin") return null;
   const defaultPath = "/Applications/Antigravity.app/Contents/MacOS/Antigravity";
-  if (existsSync9(defaultPath)) return defaultPath;
-  const homePath = join12(homedir9(), "Applications", "Antigravity.app", "Contents", "MacOS", "Antigravity");
-  if (existsSync9(homePath)) return homePath;
+  if (existsSync10(defaultPath)) return defaultPath;
+  const homePath = join13(homedir10(), "Applications", "Antigravity.app", "Contents", "MacOS", "Antigravity");
+  if (existsSync10(homePath)) return homePath;
   return null;
 }
 function findAntigravityIdeBinary() {
   const override = getAppPathOverride("antigravity-ide");
-  if (override) return existsSync9(override) ? override : null;
+  if (override) return existsSync10(override) ? override : null;
   if (process.platform === "win32") {
-    const localAppData = process.env["LOCALAPPDATA"] ?? join12(homedir9(), "AppData", "Local");
-    const winPath = join12(localAppData, "Programs", "Antigravity IDE", "Antigravity IDE.exe");
-    return existsSync9(winPath) ? winPath : null;
+    const localAppData = process.env["LOCALAPPDATA"] ?? join13(homedir10(), "AppData", "Local");
+    const winPath = join13(localAppData, "Programs", "Antigravity IDE", "Antigravity IDE.exe");
+    return existsSync10(winPath) ? winPath : null;
   }
   if (process.platform === "linux") return linuxAntigravityBinary();
   if (process.platform !== "darwin") return null;
   const defaultPath = "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide";
-  if (existsSync9(defaultPath)) return defaultPath;
-  const homePath = join12(homedir9(), "Applications", "Antigravity IDE.app", "Contents", "Resources", "app", "bin", "antigravity-ide");
-  if (existsSync9(homePath)) return homePath;
+  if (existsSync10(defaultPath)) return defaultPath;
+  const homePath = join13(homedir10(), "Applications", "Antigravity IDE.app", "Contents", "Resources", "app", "bin", "antigravity-ide");
+  if (existsSync10(homePath)) return homePath;
   return null;
 }
 function launchAntigravityApp(env, profileDir, gatewayUrl, extraArgs) {
@@ -12181,7 +12230,7 @@ function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs, options = 
     }
     const args = [];
     if (!options.existingProfile) {
-      const relayExtensionsDir = join12(homedir9(), ".relay-ai", "antigravity", "extensions");
+      const relayExtensionsDir = join13(homedir10(), ".relay-ai", "antigravity", "extensions");
       args.push(`--user-data-dir=${profileDir}`, `--extensions-dir=${relayExtensionsDir}`);
     } else {
       args.push(`--user-data-dir=${profileDir}`);
@@ -12228,8 +12277,8 @@ function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs, options = 
 }
 
 // src/antigravity.ts
-import { homedir as homedir10 } from "os";
-import { join as join13 } from "path";
+import { homedir as homedir11 } from "os";
+import { join as join14 } from "path";
 var SHUTDOWN_DRAIN_MS = 500;
 var AGY_FAVORITES_PROVIDER_ID = "__relay_agy_favorites__";
 var AGY_FAVORITES_PROVIDER_LABEL = "\u2B50 Favorites";
@@ -12574,7 +12623,7 @@ async function runAntigravityAppCommand(childArgs, trace = false, boot) {
     trace,
     boot,
     async (env, _routes, gatewayHandle) => {
-      const profileDir = join13(homedir10(), ".relay-ai", "antigravity", "app-profile");
+      const profileDir = join14(homedir11(), ".relay-ai", "antigravity", "app-profile");
       if (isAntigravityAppRunning(profileDir)) {
         const restart = await p13.confirm({
           message: "Restart Antigravity to apply this Relay gateway?",
@@ -12590,7 +12639,7 @@ async function runAntigravityAppCommand(childArgs, trace = false, boot) {
           await waitForAntigravityAppQuit(profileDir);
         }
       }
-      clearAppLastSelectedModel(join13(homedir10(), ".gemini", "antigravity", "antigravity_state.pbtxt"));
+      clearAppLastSelectedModel(join14(homedir11(), ".gemini", "antigravity", "antigravity_state.pbtxt"));
       const launchCode = await launchAntigravityApp(env, profileDir, gatewayHandle.url, childArgs);
       if (launchCode !== 0) return launchCode;
       p13.log.info("Antigravity is using the Relay Cloud Code gateway.");
@@ -12710,7 +12759,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
             }
           }
         }
-        const profileDir = join13(homedir10(), ".relay-ai", "antigravity", "profile");
+        const profileDir = join14(homedir11(), ".relay-ai", "antigravity", "profile");
         if (isAntigravityIdeRunning(profileDir)) {
           const restart = await p13.confirm({
             message: "Restart Antigravity IDE to apply this Relay gateway?",
@@ -12758,7 +12807,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
 // src/codex-app.ts
 import pc9 from "picocolors";
 import * as p14 from "@clack/prompts";
-import { join as join16 } from "path";
+import { join as join17 } from "path";
 
 // src/codex/app-provider-routes.ts
 function codexRouteToProxyRoute(provider, model, apiKey) {
@@ -12851,14 +12900,14 @@ async function buildCodexAppProviderCatalogRoutes(provider, apiKey, selectedMode
 }
 
 // src/codex/app-config.ts
-import { existsSync as existsSync10, readFileSync as readFileSync6, rmSync as rmSync4, writeFileSync as writeFileSync5, mkdirSync as mkdirSync5 } from "fs";
-import { dirname as dirname4, join as join14 } from "path";
+import { existsSync as existsSync11, readFileSync as readFileSync7, rmSync as rmSync4, writeFileSync as writeFileSync6, mkdirSync as mkdirSync5 } from "fs";
+import { dirname as dirname4, join as join15 } from "path";
 import { parse as parse2, stringify } from "smol-toml";
 function getCodexConfigPath() {
-  return join14(getCodexHome(), "config.toml");
+  return join15(getCodexHome(), "config.toml");
 }
 function getCodexAppSidecarProfilePath() {
-  return join14(getCodexHome(), `${CODEX_APP_PROVIDER_ID}.config.toml`);
+  return join15(getCodexHome(), `${CODEX_APP_PROVIDER_ID}.config.toml`);
 }
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -12885,8 +12934,8 @@ function isMultiAgentV2Enabled(value) {
   return asRecord(value).enabled === true;
 }
 function readCodexConfigText(path3 = getCodexConfigPath()) {
-  if (!existsSync10(path3)) return "";
-  return readFileSync6(path3, "utf8");
+  if (!existsSync11(path3)) return "";
+  return readFileSync7(path3, "utf8");
 }
 function parseCodexConfig(text7) {
   if (!text7.trim()) return {};
@@ -13085,20 +13134,20 @@ function restoreConfigFromState(state, configPath = getCodexConfigPath()) {
   }
   applyRestoreNumber(config, "thread_unload_delay_secs", state.hadThreadUnloadDelaySecs ?? false, state.threadUnloadDelaySecs);
   const sidecar = getCodexAppSidecarProfilePath();
-  if (existsSync10(sidecar)) {
+  if (existsSync11(sidecar)) {
     try {
       rmSync4(sidecar, { force: true });
     } catch {
     }
   }
-  const hadFile = existsSync10(configPath);
+  const hadFile = existsSync11(configPath);
   const empty = Object.keys(config).length === 0 || Object.keys(config).length === 1 && "model_providers" in config && Object.keys(asRecord(config.model_providers)).length === 0;
   if (!hadFile && empty) return false;
   if (empty) {
     rmSync4(configPath, { force: true });
     return true;
   }
-  writeFileSync5(configPath, `${stringify(config)}
+  writeFileSync6(configPath, `${stringify(config)}
 `, "utf8");
   return true;
 }
@@ -13110,7 +13159,7 @@ function previewAppConfigToml(spec) {
 }
 
 // src/codex/app-readiness.ts
-import { readFileSync as readFileSync7 } from "fs";
+import { readFileSync as readFileSync8 } from "fs";
 function proxyRoot(spec) {
   const base = spec.proxyBaseUrl ?? `http://127.0.0.1:${spec.proxyPort}/v1`;
   if (!base.endsWith("/v1")) throw new Error("Codex App proxy base URL must end in /v1");
@@ -13126,7 +13175,7 @@ async function verifyCodexAppReadiness(spec, options = {}) {
   const root = proxyRoot(spec);
   const health = await checkedJson(`${root}/health`, fetchImpl);
   if (health.ok !== true) throw new Error("Relay proxy health check did not report ready");
-  const catalog = JSON.parse(readFileSync7(spec.catalogPath, "utf8"));
+  const catalog = JSON.parse(readFileSync8(spec.catalogPath, "utf8"));
   if (!Array.isArray(catalog.models) || catalog.models.length === 0) {
     throw new Error("Relay Codex model catalog is empty or invalid");
   }
@@ -13146,32 +13195,32 @@ async function verifyCodexAppReadiness(spec, options = {}) {
 // src/codex/app-session.ts
 import {
   copyFileSync as copyFileSync3,
-  existsSync as existsSync11,
+  existsSync as existsSync12,
   mkdirSync as mkdirSync6,
   readdirSync as readdirSync2,
-  readFileSync as readFileSync8,
+  readFileSync as readFileSync9,
   rmSync as rmSync5,
   statSync as statSync2
 } from "fs";
-import { basename as basename2, join as join15 } from "path";
+import { basename as basename2, join as join16 } from "path";
 import { createHash as createHash5 } from "crypto";
 function getAppSessionLockPath(env = process.env) {
-  return join15(getRelayAiCodexDir(env), "session-app.json");
+  return join16(getRelayAiCodexDir(env), "session-app.json");
 }
 function getAppRestoreStatePath(env = process.env) {
-  return join15(getRelayAiCodexDir(env), "app-restore-state.json");
+  return join16(getRelayAiCodexDir(env), "app-restore-state.json");
 }
 function getAppCatalogPath(providerId, env = process.env) {
-  return join15(getRelayAiCodexDir(env), `app-models-${providerId}.json`);
+  return join16(getRelayAiCodexDir(env), `app-models-${providerId}.json`);
 }
 function fileSha2562(path3) {
-  return createHash5("sha256").update(readFileSync8(path3)).digest("hex");
+  return createHash5("sha256").update(readFileSync9(path3)).digest("hex");
 }
 function readAppSessionLock(env = process.env) {
   const path3 = getAppSessionLockPath(env);
-  if (!existsSync11(path3)) return null;
+  if (!existsSync12(path3)) return null;
   try {
-    const parsed = JSON.parse(readFileSync8(path3, "utf8"));
+    const parsed = JSON.parse(readFileSync9(path3, "utf8"));
     if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string") return parsed;
   } catch {
   }
@@ -13183,13 +13232,13 @@ function writeAppSessionLock(lock, env = process.env) {
 }
 function clearAppSessionLock(env = process.env) {
   const path3 = getAppSessionLockPath(env);
-  if (existsSync11(path3)) rmSync5(path3, { force: true });
+  if (existsSync12(path3)) rmSync5(path3, { force: true });
 }
 function readAppRestoreState(env = process.env) {
   const path3 = getAppRestoreStatePath(env);
-  if (!existsSync11(path3)) return null;
+  if (!existsSync12(path3)) return null;
   try {
-    return JSON.parse(readFileSync8(path3, "utf8"));
+    return JSON.parse(readFileSync9(path3, "utf8"));
   } catch {
     return null;
   }
@@ -13201,16 +13250,16 @@ function writeAppRestoreState(state, env = process.env) {
 }
 function clearAppRestoreState(env = process.env) {
   const path3 = getAppRestoreStatePath(env);
-  if (existsSync11(path3)) rmSync5(path3, { force: true });
+  if (existsSync12(path3)) rmSync5(path3, { force: true });
 }
 function backupConfigToml(env = process.env) {
   const configPath = getCodexConfigPath();
-  if (!existsSync11(configPath)) return void 0;
+  if (!existsSync12(configPath)) return void 0;
   rotateBackups(configPath, env);
   const backupsDir = getBackupsDir(env);
   mkdirSync6(backupsDir, { recursive: true });
   const base = basename2(configPath);
-  const backupPath = join15(backupsDir, `${base}.${Date.now()}.bak`);
+  const backupPath = join16(backupsDir, `${base}.${Date.now()}.bak`);
   copyFileSync3(configPath, backupPath);
   return backupPath;
 }
@@ -13226,8 +13275,8 @@ function saveAppRestoreStateBeforePatch(env = process.env) {
 }
 function ownedAppCatalogPaths(env = process.env) {
   const codexDir = getRelayAiCodexDir(env);
-  if (!existsSync11(codexDir)) return [];
-  return readdirSync2(codexDir).filter((n) => n.startsWith("app-models-") && n.endsWith(".json")).map((n) => join15(codexDir, n));
+  if (!existsSync12(codexDir)) return [];
+  return readdirSync2(codexDir).filter((n) => n.startsWith("app-models-") && n.endsWith(".json")).map((n) => join16(codexDir, n));
 }
 function removeAppCatalogs(env = process.env) {
   const removed = [];
@@ -13242,10 +13291,10 @@ function removeAppCatalogs(env = process.env) {
 }
 function newestConfigBackup(env = process.env) {
   const backupDir = getBackupsDir(env);
-  if (!existsSync11(backupDir)) return null;
+  if (!existsSync12(backupDir)) return null;
   const configBase = basename2(getCodexConfigPath());
   const candidates = readdirSync2(backupDir).filter((name) => name.startsWith(`${configBase}.`) && name.endsWith(".bak")).map((name) => {
-    const path3 = join15(backupDir, name);
+    const path3 = join16(backupDir, name);
     try {
       return { path: path3, mtimeMs: statSync2(path3).mtimeMs };
     } catch {
@@ -13272,13 +13321,13 @@ function restoreCodexAppOverlay(env = process.env) {
     return { restored: false, message: "Nothing to restore." };
   }
   const exactBackupIsSafe = Boolean(
-    managed && lock?.backupPath && existsSync11(lock.backupPath) && lock.patchedConfigSha256 && lock.originalConfigSha256 && fileSha2562(getCodexConfigPath()) === lock.patchedConfigSha256 && fileSha2562(lock.backupPath) === lock.originalConfigSha256
+    managed && lock?.backupPath && existsSync12(lock.backupPath) && lock.patchedConfigSha256 && lock.originalConfigSha256 && fileSha2562(getCodexConfigPath()) === lock.patchedConfigSha256 && fileSha2562(lock.backupPath) === lock.originalConfigSha256
   );
   if (exactBackupIsSafe) {
     copyFileSync3(lock.backupPath, getCodexConfigPath());
   } else if (restoreState) {
     restoreConfigFromState(restoreState);
-  } else if (lock?.backupPath && existsSync11(lock.backupPath)) {
+  } else if (lock?.backupPath && existsSync12(lock.backupPath)) {
     copyFileSync3(lock.backupPath, getCodexConfigPath());
   } else if (managed) {
     const backupPath = newestConfigBackup(env);
@@ -13896,7 +13945,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
     }
   };
   try {
-    const catalogPath = mixedPlan ? join16(getRelayAiCodexDir(), "app-models-mixed.json") : favoritesActive && resolvedFavorites.length > 0 ? getFavoritesAppCatalogPath() : getAppCatalogPath(route.providerId);
+    const catalogPath = mixedPlan ? join17(getRelayAiCodexDir(), "app-models-mixed.json") : favoritesActive && resolvedFavorites.length > 0 ? getFavoritesAppCatalogPath() : getAppCatalogPath(route.providerId);
     const activeRoute = mixedPlan ? {
       tier: "proxy",
       modelId: mixedPlan.selectedSlug,
@@ -14105,33 +14154,33 @@ import pc10 from "picocolors";
 import * as p15 from "@clack/prompts";
 
 // src/claude-desktop/app-config.ts
-import { existsSync as existsSync12, readFileSync as readFileSync9, writeFileSync as writeFileSync6, mkdirSync as mkdirSync7 } from "fs";
-import { homedir as homedir11 } from "os";
-import { join as join17, dirname as dirname5 } from "path";
+import { existsSync as existsSync13, readFileSync as readFileSync10, writeFileSync as writeFileSync7, mkdirSync as mkdirSync7 } from "fs";
+import { homedir as homedir12 } from "os";
+import { join as join18, dirname as dirname5 } from "path";
 import { randomUUID as randomUUID4 } from "crypto";
 function getClaudeDesktopHome() {
   if (process.platform === "win32") {
-    return join17(process.env.LOCALAPPDATA || join17(homedir11(), "AppData", "Local"), "Claude-3p");
+    return join18(process.env.LOCALAPPDATA || join18(homedir12(), "AppData", "Local"), "Claude-3p");
   }
   if (process.platform === "linux") {
-    return join17(process.env.XDG_CONFIG_HOME || join17(homedir11(), ".config"), "Claude-3p");
+    return join18(process.env.XDG_CONFIG_HOME || join18(homedir12(), ".config"), "Claude-3p");
   }
-  return join17(homedir11(), "Library", "Application Support", "Claude-3p");
+  return join18(homedir12(), "Library", "Application Support", "Claude-3p");
 }
 function getConfigLibraryPath() {
-  return join17(getClaudeDesktopHome(), "configLibrary");
+  return join18(getClaudeDesktopHome(), "configLibrary");
 }
 function getMetaJsonPath() {
-  return join17(getConfigLibraryPath(), "_meta.json");
+  return join18(getConfigLibraryPath(), "_meta.json");
 }
 function getClaudeDesktopConfigJsonPath() {
-  return join17(getClaudeDesktopHome(), "claude_desktop_config.json");
+  return join18(getClaudeDesktopHome(), "claude_desktop_config.json");
 }
 function readDesktopConfigJson() {
   const path3 = getClaudeDesktopConfigJsonPath();
-  if (!existsSync12(path3)) return {};
+  if (!existsSync13(path3)) return {};
   try {
-    const parsed = JSON.parse(readFileSync9(path3, "utf8"));
+    const parsed = JSON.parse(readFileSync10(path3, "utf8"));
     return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
@@ -14140,7 +14189,7 @@ function readDesktopConfigJson() {
 function writeDesktopConfigJson(config) {
   const path3 = getClaudeDesktopConfigJsonPath();
   mkdirSync7(dirname5(path3), { recursive: true });
-  writeFileSync6(path3, `${JSON.stringify(config, null, 2)}
+  writeFileSync7(path3, `${JSON.stringify(config, null, 2)}
 `, "utf8");
 }
 function readDeploymentMode() {
@@ -14163,9 +14212,9 @@ function restoreDeploymentMode(previous) {
 }
 function readMetaJson() {
   const metaPath = getMetaJsonPath();
-  if (!existsSync12(metaPath)) return null;
+  if (!existsSync13(metaPath)) return null;
   try {
-    return JSON.parse(readFileSync9(metaPath, "utf8"));
+    return JSON.parse(readFileSync10(metaPath, "utf8"));
   } catch {
     return null;
   }
@@ -14173,7 +14222,7 @@ function readMetaJson() {
 function writeMetaJson(meta) {
   const metaPath = getMetaJsonPath();
   mkdirSync7(dirname5(metaPath), { recursive: true });
-  writeFileSync6(metaPath, `${JSON.stringify(meta, null, 2)}
+  writeFileSync7(metaPath, `${JSON.stringify(meta, null, 2)}
 `, "utf8");
 }
 function buildRelayAiConfig(proxyPort) {
@@ -14187,10 +14236,10 @@ function buildRelayAiConfig(proxyPort) {
 }
 function writeRelayAiConfig(proxyPort) {
   const uuid = randomUUID4();
-  const configPath = join17(getConfigLibraryPath(), `${uuid}.json`);
+  const configPath = join18(getConfigLibraryPath(), `${uuid}.json`);
   const config = buildRelayAiConfig(proxyPort);
   mkdirSync7(dirname5(configPath), { recursive: true });
-  writeFileSync6(configPath, `${JSON.stringify(config, null, 2)}
+  writeFileSync7(configPath, `${JSON.stringify(config, null, 2)}
 `, "utf8");
   const meta = readMetaJson() || { appliedId: "", entries: [] };
   meta.appliedId = uuid;
@@ -14375,23 +14424,23 @@ function expandClaudeAppEffortVariants(models, max = MAX_MODEL_CATALOG) {
 // src/claude-desktop/app-session.ts
 import {
   copyFileSync as copyFileSync4,
-  existsSync as existsSync13,
+  existsSync as existsSync14,
   mkdirSync as mkdirSync8,
-  readFileSync as readFileSync10,
-  renameSync as renameSync2,
+  readFileSync as readFileSync11,
+  renameSync as renameSync3,
   rmSync as rmSync6,
   unlinkSync as unlinkSync3,
-  writeFileSync as writeFileSync7
+  writeFileSync as writeFileSync8
 } from "fs";
-import { dirname as dirname6, join as join18 } from "path";
+import { dirname as dirname6, join as join19 } from "path";
 function getSessionLockPath2() {
-  return join18(getClaudeDesktopHome(), ".relay-ai.lock");
+  return join19(getClaudeDesktopHome(), ".relay-ai.lock");
 }
 function inspectSessionLock() {
   const path3 = getSessionLockPath2();
-  if (!existsSync13(path3)) return { status: "missing" };
+  if (!existsSync14(path3)) return { status: "missing" };
   try {
-    const parsed = JSON.parse(readFileSync10(path3, "utf8"));
+    const parsed = JSON.parse(readFileSync11(path3, "utf8"));
     if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string" && typeof parsed.uuid === "string" && typeof parsed.proxyPort === "number") {
       return { status: "valid", lock: parsed };
     }
@@ -14404,9 +14453,9 @@ function writeSessionLock2(lock) {
   const tempPath = `${path3}.tmp.${process.pid}`;
   mkdirSync8(dirname6(path3), { recursive: true });
   try {
-    writeFileSync7(tempPath, `${JSON.stringify(lock, null, 2)}
+    writeFileSync8(tempPath, `${JSON.stringify(lock, null, 2)}
 `, "utf8");
-    renameSync2(tempPath, path3);
+    renameSync3(tempPath, path3);
   } finally {
     try {
       rmSync6(tempPath, { force: true });
@@ -14426,14 +14475,14 @@ function isProcessAlive3(pid) {
 function backupMetaJson() {
   const metaPath = getMetaJsonPath();
   const backupPath = `${metaPath}.bak`;
-  if (existsSync13(metaPath) && !existsSync13(backupPath)) {
+  if (existsSync14(metaPath) && !existsSync14(backupPath)) {
     copyFileSync4(metaPath, backupPath);
   }
 }
 function restoreMetaJson() {
   const metaPath = getMetaJsonPath();
   const backupPath = `${metaPath}.bak`;
-  if (existsSync13(backupPath)) {
+  if (existsSync14(backupPath)) {
     copyFileSync4(backupPath, metaPath);
     unlinkSync3(backupPath);
   }
@@ -14450,8 +14499,8 @@ function safeCleanupStep(label, fn) {
   }
 }
 function removeRelayAiConfig(uuid) {
-  const configPath = join18(getConfigLibraryPath(), `${uuid}.json`);
-  if (existsSync13(configPath)) {
+  const configPath = join19(getConfigLibraryPath(), `${uuid}.json`);
+  if (existsSync14(configPath)) {
     try {
       rmSync6(configPath, { force: true });
     } catch {
@@ -14533,7 +14582,7 @@ function cleanupSession(uuid) {
     }
   }
   const meta = readMetaJson();
-  const configIsReferenced = meta === null ? existsSync13(getMetaJsonPath()) : meta.appliedId === uuid || meta.entries.some((entry) => entry.id === uuid);
+  const configIsReferenced = meta === null ? existsSync14(getMetaJsonPath()) : meta.appliedId === uuid || meta.entries.some((entry) => entry.id === uuid);
   if (!sharedStateIsOwnedElsewhere || !configIsReferenced) {
     removeRelayAiConfig(uuid);
   }
@@ -14802,17 +14851,17 @@ ${pc10.bold("Claude Desktop 3P Mode Active")}`);
 }
 
 // src/ai-doc.ts
-import { existsSync as existsSync14, mkdirSync as mkdirSync9, readFileSync as readFileSync11, writeFileSync as writeFileSync8 } from "fs";
-import { homedir as homedir12 } from "os";
-import { join as join19 } from "path";
+import { existsSync as existsSync15, mkdirSync as mkdirSync9, readFileSync as readFileSync12, writeFileSync as writeFileSync9 } from "fs";
+import { homedir as homedir13 } from "os";
+import { join as join20 } from "path";
 var SKILL_DIR_NAME = "relay-ai-cli";
 var SKILL_INSTALL_DIRS = [
-  join19(getAppHome(), "skills"),
-  join19(homedir12(), ".claude", "skills"),
-  join19(homedir12(), ".agents", "skills"),
-  join19(homedir12(), ".codex", "skills"),
-  join19(homedir12(), ".cursor", "skills"),
-  join19(homedir12(), ".cursor", "skills-cursor")
+  join20(getAppHome(), "skills"),
+  join20(homedir13(), ".claude", "skills"),
+  join20(homedir13(), ".agents", "skills"),
+  join20(homedir13(), ".codex", "skills"),
+  join20(homedir13(), ".cursor", "skills"),
+  join20(homedir13(), ".cursor", "skills-cursor")
 ];
 function parseSkillVersion(content) {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -14826,10 +14875,10 @@ function parseSkillVersion(content) {
   return null;
 }
 function readInstalledSkillVersion(skillDir) {
-  const skillPath = join19(skillDir, "SKILL.md");
-  if (!existsSync14(skillPath)) return null;
+  const skillPath = join20(skillDir, "SKILL.md");
+  if (!existsSync15(skillPath)) return null;
   try {
-    const head = readFileSync11(skillPath, "utf-8").slice(0, 1024);
+    const head = readFileSync12(skillPath, "utf-8").slice(0, 1024);
     return parseSkillVersion(head.includes("---", 4) ? head : `${head}
 ---
 `);
@@ -14839,8 +14888,8 @@ function readInstalledSkillVersion(skillDir) {
 }
 function skillInstallTargets() {
   return SKILL_INSTALL_DIRS.map((dir) => {
-    const skillDir = join19(dir, SKILL_DIR_NAME);
-    return { skillDir, skillPath: join19(skillDir, "SKILL.md") };
+    const skillDir = join20(dir, SKILL_DIR_NAME);
+    return { skillDir, skillPath: join20(skillDir, "SKILL.md") };
   });
 }
 function formatProviderModels(provider) {
@@ -15348,7 +15397,7 @@ function installAiDoc(opts = {}) {
         continue;
       }
       mkdirSync9(skillDir, { recursive: true });
-      writeFileSync8(skillPath, doc, "utf-8");
+      writeFileSync9(skillPath, doc, "utf-8");
       if (previous) {
         result.updated.push({ path: skillPath, fromVersion: previous });
       } else {
@@ -15509,15 +15558,15 @@ function buildHttpProxyChildEnv(baseEnv, proxyUrl, caCertPath) {
 import { randomBytes as randomBytes3, randomUUID as randomUUID5 } from "crypto";
 import {
   chmodSync as chmodSync3,
-  existsSync as existsSync15,
+  existsSync as existsSync16,
   mkdirSync as mkdirSync11,
-  readFileSync as readFileSync12,
+  readFileSync as readFileSync13,
   readdirSync as readdirSync3,
   rmSync as rmSync7,
   statSync as statSync3,
-  writeFileSync as writeFileSync10
+  writeFileSync as writeFileSync11
 } from "fs";
-import { dirname as dirname8, join as join21, resolve } from "path";
+import { dirname as dirname8, join as join22, resolve } from "path";
 import forge from "node-forge";
 var SESSION_ROOT = "http-proxy-sessions";
 var OWNER_FILE = "owner.pid";
@@ -15537,22 +15586,22 @@ function processIsRunning(pid) {
   }
 }
 function cleanupStaleHttpProxySessions(appHome = getAppHome()) {
-  const root = join21(appHome, SESSION_ROOT);
-  if (!existsSync15(root)) return;
+  const root = join22(appHome, SESSION_ROOT);
+  if (!existsSync16(root)) return;
   const now = Date.now();
   for (const name of readdirSync3(root)) {
-    const sessionDir = join21(root, name);
+    const sessionDir = join22(root, name);
     try {
       const stat = statSync3(sessionDir);
       if (!stat.isDirectory()) continue;
-      const ownerPath = join21(sessionDir, OWNER_FILE);
-      if (!existsSync15(ownerPath)) {
+      const ownerPath = join22(sessionDir, OWNER_FILE);
+      if (!existsSync16(ownerPath)) {
         if (now - stat.mtimeMs > MID_CREATION_GRACE_MS) {
           rmSync7(sessionDir, { recursive: true, force: true });
         }
         continue;
       }
-      const pid = Number(readFileSync12(ownerPath, "utf8").trim());
+      const pid = Number(readFileSync13(ownerPath, "utf8").trim());
       if (!Number.isSafeInteger(pid) || pid <= 0) {
         const ownerStat = statSync3(ownerPath);
         const newestMtimeMs = Math.max(stat.mtimeMs, ownerStat.mtimeMs);
@@ -15568,13 +15617,13 @@ function cleanupStaleHttpProxySessions(appHome = getAppHome()) {
 }
 function createHttpProxyCertificates(appHome = getAppHome()) {
   cleanupStaleHttpProxySessions(appHome);
-  const root = join21(appHome, SESSION_ROOT);
+  const root = join22(appHome, SESSION_ROOT);
   mkdirSync11(root, { recursive: true, mode: 448 });
   chmodSync3(root, 448);
-  const sessionDir = join21(root, randomUUID5());
+  const sessionDir = join22(root, randomUUID5());
   mkdirSync11(sessionDir, { mode: 448 });
   chmodSync3(sessionDir, 448);
-  writeFileSync10(join21(sessionDir, OWNER_FILE), `${process.pid}
+  writeFileSync11(join22(sessionDir, OWNER_FILE), `${process.pid}
 `, { mode: 384 });
   try {
     const caKeys = forge.pki.rsa.generateKeyPair(2048);
@@ -15609,8 +15658,8 @@ function createHttpProxyCertificates(appHome = getAppHome()) {
     ]);
     server.sign(caKeys.privateKey, forge.md.sha256.create());
     const caCert = forge.pki.certificateToPem(ca);
-    const caCertPath = join21(sessionDir, "relay-ai-ca.pem");
-    writeFileSync10(caCertPath, caCert, { encoding: "utf8", mode: 384 });
+    const caCertPath = join22(sessionDir, "relay-ai-ca.pem");
+    writeFileSync11(caCertPath, caCert, { encoding: "utf8", mode: 384 });
     chmodSync3(caCertPath, 384);
     let cleaned = false;
     const cleanupOnExit = () => {
@@ -15652,11 +15701,11 @@ function createHttpProxyCaBundle(relayCaCertPath, additionalCaCertPath) {
   if (resolve(additionalCaCertPath) === resolve(relayCaCertPath)) {
     return relayCaCertPath;
   }
-  const relayCa = readFileSync12(relayCaCertPath, "utf8").trimEnd();
-  const additionalCa = readFileSync12(additionalCaCertPath, "utf8").trim();
+  const relayCa = readFileSync13(relayCaCertPath, "utf8").trimEnd();
+  const additionalCa = readFileSync13(additionalCaCertPath, "utf8").trim();
   if (!additionalCa) return relayCaCertPath;
-  const combinedPath = join21(dirname8(relayCaCertPath), "combined-ca.pem");
-  writeFileSync10(
+  const combinedPath = join22(dirname8(relayCaCertPath), "combined-ca.pem");
+  writeFileSync11(
     combinedPath,
     `${relayCa}
 ${additionalCa}
