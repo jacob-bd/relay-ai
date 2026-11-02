@@ -65,7 +65,7 @@ import {
   hasApplicationDefaultCredentials,
   type VertexModelEntry,
 } from './server/vertex-config.js';
-import { VERTEX_ANTHROPIC_NPM } from './constants.js';
+import { MAX_MODEL_CATALOG, VERTEX_ANTHROPIC_NPM } from './constants.js';
 import { isVertexAnthropicRegistered, VERTEX_ANTHROPIC_PROVIDER_ID } from './registry/vertex-anthropic.js';
 import { resolveContextWindow } from './context-window.js';
 import {
@@ -504,22 +504,15 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
   }
 
   const prefs = loadPreferences();
-  const favorites = prefs.favoriteModels ?? [];
+  let favorites = prefs.favoriteModels ?? [];
   let mixedMode = opts.codexLaunchMode === 'mixed';
   if (!configOnly && isTty && !(launchProvider && opts.launchModel) && opts.codexLaunchMode === undefined) {
     const selectedLaunchMode = await pickCodexLaunchMode();
     if (!selectedLaunchMode) return 0;
     mixedMode = selectedLaunchMode === 'mixed';
   }
-  const favoritesActive = favorites.length > 0 && !mixedMode;
+  let favoritesActive = favorites.length > 0 && !mixedMode;
   const favoritesPickable = favorites.length > 0;
-
-  if (favoritesActive && !configOnly) {
-    p.log.info(
-      `Favorites mode active — Codex App picker will show ${favorites.length + 1} models (1 starting + ${favorites.length} favorites).`,
-    );
-    p.log.info('Edit with `relay-ai models`.');
-  }
 
   let activeProvider = providerForCodexPicker(
     compatible.find(lp => lp.id === prefs.lastCodexProvider) ?? compatible[0]!,
@@ -610,6 +603,27 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
     }
   }
 
+  // "All provider models" is a launch-scoped replacement for saved favorites.
+  // The Codex CLI already expands it here; the App flow used to ignore the
+  // flag and silently fall back to the saved favorites catalog.
+  if (activeProvider.launchAllModels) {
+    favorites = activeProvider.models.map(model => ({ providerId: activeProvider.id, modelId: model.id }));
+    favoritesActive = !mixedMode;
+  }
+
+  if (favoritesActive && !configOnly) {
+    if (activeProvider.launchAllModels) {
+      p.log.info(
+        `All provider models mode active — Codex App picker will show up to ${Math.min(favorites.length, MAX_MODEL_CATALOG)} models; saved favorites are not used.`,
+      );
+    } else {
+      p.log.info(
+        `Favorites mode active — Codex App picker will show ${favorites.length + 1} models (1 starting + ${favorites.length} favorites).`,
+      );
+      p.log.info('Edit with `relay-ai models`.');
+    }
+  }
+
   const apiKey = await resolveLocalProviderApiKey(activeProvider);
   if (!apiKey) {
     if (!configOnly) {
@@ -638,7 +652,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
   let providersById: Map<string, LocalProvider> = new Map();
 
   if (favoritesActive) {
-    const res = await resolveCodexFavorites(activeProvider, selectedModel, compatible, favorites, 'codex-app');
+    const res = await resolveCodexFavorites(activeProvider, selectedModel, compatible, favorites, 'codex-app', activeProvider.launchAllModels ? MAX_MODEL_CATALOG : undefined);
     resolvedFavorites = res.resolvedFavorites;
     providersById = res.providersById;
   }
@@ -654,6 +668,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
         selectedModel,
         compatible,
         generalFavorites: favorites,
+        allProviderModels: activeProvider.launchAllModels,
         subagentFavorites: prefs.codexSubagentModels ?? [],
       });
       if (mixedModels.capacitySkipped.length > 0) {

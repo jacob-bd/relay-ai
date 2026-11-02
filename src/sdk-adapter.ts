@@ -48,6 +48,41 @@ interface AnthropicBlock {
 }
 interface AnthropicMsg { role: 'user' | 'assistant' | 'system'; content: string | AnthropicBlock[]; }
 
+interface SdkUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  inputTokenDetails?: {
+    noCacheTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+  };
+}
+
+interface AnthropicUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}
+
+/**
+ * Anthropic clients expect input_tokens to exclude cache reads, with cache
+ * counts reported separately. AI SDK usage reports total prompt tokens plus
+ * cached-token details, so preserve both through the translation boundary.
+ */
+function toAnthropicUsage(usage: SdkUsage | undefined, fallbackInputTokens = 0): AnthropicUsage {
+  const totalInput = usage?.inputTokens ?? fallbackInputTokens;
+  const cacheRead = usage?.inputTokenDetails?.cacheReadTokens;
+  const cacheWrite = usage?.inputTokenDetails?.cacheWriteTokens;
+  const noCache = usage?.inputTokenDetails?.noCacheTokens;
+  return {
+    input_tokens: noCache ?? (cacheRead !== undefined ? Math.max(0, totalInput - cacheRead) : totalInput),
+    output_tokens: usage?.outputTokens ?? 0,
+    ...(cacheRead !== undefined && cacheRead > 0 ? { cache_read_input_tokens: cacheRead } : {}),
+    ...(cacheWrite !== undefined && cacheWrite > 0 ? { cache_creation_input_tokens: cacheWrite } : {}),
+  };
+}
+
 interface AnthropicTool { name: string; description?: string; input_schema: Record<string, unknown>; }
 export interface AnthropicRequest {
   model: string;
@@ -380,7 +415,7 @@ export async function writeAnthropicStream(
   const idToBlock = new Map<string, number>();
   const bufferedAgentCalls = new Map<string, { blockIndex: number }>();
   let finishReason = 'end_turn';
-  let usage = { input_tokens: estimatedInputTokens, output_tokens: 0 };
+  let usage: AnthropicUsage = { input_tokens: estimatedInputTokens, output_tokens: 0 };
 
   const emit = (event: string, data: unknown) => write(sseChunk(event, data));
   const ensureStart = () => {
@@ -523,10 +558,7 @@ export async function writeAnthropicStream(
 
       case 'finish':
         if (part.totalUsage) {
-          usage = {
-            input_tokens: part.totalUsage.inputTokens ?? estimatedInputTokens,
-            output_tokens: part.totalUsage.outputTokens ?? 0,
-          };
+          usage = toAnthropicUsage(part.totalUsage, estimatedInputTokens);
         }
         if (part.finishReason === 'tool-calls') finishReason = 'tool_use';
         else if (part.finishReason === 'length') finishReason = 'max_tokens';
@@ -592,7 +624,7 @@ export async function generateAnthropicResponse(
   let text: string;
   let toolCalls: Array<{ toolCallId: string; toolName: string; input: unknown }>;
   let finishReason: string;
-  let usage: { inputTokens?: number; outputTokens?: number } | undefined;
+  let usage: SdkUsage | undefined;
 
   if (options?.forceStream) {
     // Some upstreams (e.g. ChatGPT's Codex backend) reject non-streaming requests
@@ -637,6 +669,6 @@ export async function generateAnthropicResponse(
       }),
     ],
     stop_reason: finishReason === 'tool-calls' ? 'tool_use' : 'end_turn',
-    usage: { input_tokens: usage?.inputTokens ?? 0, output_tokens: usage?.outputTokens ?? 0 },
+    usage: toAnthropicUsage(usage),
   };
 }

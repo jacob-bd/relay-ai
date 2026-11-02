@@ -74,6 +74,12 @@ The list holds up to 50 entries, and effort levels count toward that. If your fa
 
 Effort levels come from [models.dev](https://models.dev), so new models get the right levels without a Relay update.
 
+## MCP servers
+
+Antigravity loads your configured MCP servers itself. Relay has no MCP endpoint and does not start or terminate them. Relay does tell Antigravity to keep that loading off the turn path, so a message is not held while tool schemas are prepared. Before 0.18.0 every turn waited a fixed ~18 seconds on the "Initializing MCP servers" step, even when nothing had changed; that wait is gone.
+
+If the first response after launch still feels slow, it is usually a server process starting or a remote transport timing out. Antigravity's own log at `~/Library/Logs/Antigravity/language_server.log` names the server involved. Every tool from every connected server is sent to the model on each request, so removing servers you do not use also reduces prompt size.
+
 ## Requirements
 
 - Models need at least a 136K context window. Antigravity refuses to start a smaller model, so Relay hides them from the picker.

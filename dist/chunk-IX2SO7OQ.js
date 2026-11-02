@@ -8,7 +8,7 @@ import {
   streamAnthropicResponse,
   translateRequest,
   validateCustomEndpointUrl
-} from "./chunk-HM6YSVSA.js";
+} from "./chunk-VAF7IDKG.js";
 import {
   cachedModelCount,
   deriveBrand,
@@ -26,7 +26,7 @@ import {
   skipWithCachedModels,
   syntheticTemplate,
   toOAuthRegistryId
-} from "./chunk-VBSCGMT5.js";
+} from "./chunk-KPIOODCG.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -152,12 +152,12 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-NAXLYXCF.js";
+} from "./chunk-JY2OMGE2.js";
 import {
   getTemplateById,
   init_provider_templates,
   supportsAdditionalApiAccounts
-} from "./chunk-R34EP35U.js";
+} from "./chunk-RKRPDZVV.js";
 import {
   getAppHome,
   hasApplicationDefaultCredentials,
@@ -489,6 +489,9 @@ function modelSelectOption(model, hint) {
       const inputStr = `$${model.cost.input}`;
       const outputStr = `$${model.cost.output}`;
       defaultHint = pc.dim(isCloudflare ? `Paid plan req (${inputStr}/${outputStr} 1M)` : `${inputStr}/${outputStr} 1M`);
+    } else if (model.referencePrice) {
+      const { cost, provider } = model.referencePrice;
+      defaultHint = pc.dim(`Reference estimate $${cost.input}/$${cost.output} 1M (${provider})`);
     } else {
       defaultHint = model.name !== model.id ? model.id : model.brand || model.family || "";
     }
@@ -1697,6 +1700,7 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
             oauthAccountId: route.oauthAccountId,
             providerData: route.providerData,
             headers: route.headers,
+            sessionId,
             refreshToken: route.refreshToken,
             onTokenRefreshed: (refreshed) => {
               route.apiKey = refreshed;
@@ -1903,7 +1907,7 @@ function buildCatalogRoutes(startingRoute, favorites, resolveRoute, max = MAX_MO
 
 // src/registry/materialize.ts
 init_provider_templates();
-function cachedModelToLocal(cached, provider, metadata = loadModelsDevCache()) {
+function cachedModelToLocal(cached, provider, metadata = loadModelsDevCache(), agent = "claude") {
   const reconciled = reconcileCachedModelProtocol(cached, provider, metadata);
   cached = reconciled;
   const freeStatus = classifyFreeStatus({
@@ -1931,7 +1935,8 @@ function cachedModelToLocal(cached, provider, metadata = loadModelsDevCache()) {
   const kind = providerKind(provider.id);
   const isZenGo = kind === "zen" || kind === "go" || provider.templateId === "zen" || provider.templateId === "go";
   const metadataNpm = !cached.source && isZenGo ? modelsDev?.provider?.npm : void 0;
-  const npm = cached.npm ?? provider.api.npm ?? "";
+  const preferAnthropic = kind === "a2agent" && agent === "claude";
+  const npm = preferAnthropic ? "@ai-sdk/anthropic" : cached.npm ?? provider.api.npm ?? "";
   const apiUrl = cached.apiUrl ?? provider.api.url ?? (isZenGo ? BACKENDS[kind === "go" || provider.templateId === "go" ? "go" : "zen"].baseUrl : "");
   const endpoint = resolveEndpoint(npm, apiUrl);
   if (endpoint === null) return null;
@@ -1945,13 +1950,14 @@ function cachedModelToLocal(cached, provider, metadata = loadModelsDevCache()) {
     name: npm === "@ai-sdk/google" ? normalizeGoogleDisplayName(cached.name, id) : cached.name,
     family,
     brand: npm === "@ai-sdk/google" ? deriveBrand(family) : cached.brand ?? deriveBrand(cached.family ?? ""),
-    modelFormat: metadataNpm ? resolvedFormat : cached.modelFormat ?? endpoint.format,
+    modelFormat: preferAnthropic ? "anthropic" : metadataNpm ? resolvedFormat : cached.modelFormat ?? endpoint.format,
     upstreamModelId: normalizedUpstream,
     baseUrl: endpoint.baseUrl,
     completionsUrl: endpoint.completionsUrl,
     npm: npm || void 0,
     apiBaseUrl: apiUrl || void 0,
     cost: cached.cost,
+    referencePrice: cached.referencePrice,
     isFree: isFreeStatus(freeStatus),
     freeStatus,
     // ClinePass's public catalog does not currently report per-model context
@@ -1980,21 +1986,21 @@ function providerAllowsAnonymousFreeModels(provider) {
   const template = getTemplateById(provider.templateId) ?? getTemplateById(provider.id);
   return template?.anonymousFreeModels === true;
 }
-function materializeOne(provider, resolveCredential, agent) {
+function materializeOne(provider, resolveCredential, agent, pricingIndex, metadata) {
   if (!provider.enabled) return null;
   if (!isValidProviderId(provider.id)) return null;
   const freeOnly = provider.subscriptionFilter === "free";
   const apiKey = resolveCredential(provider) ?? "";
   const anonymousFreeOnly = !apiKey.trim() && providerAllowsAnonymousFreeModels(provider);
   const models = [];
-  for (const cached of getProviderModels(provider)) {
+  for (const cached of enrichModelsForProviderPricing(getProviderModels(provider), pricingIndex, provider.templateId, provider.id, metadata)) {
     const freeStatus = classifyFreeStatus({
       model: cached,
       providerId: provider.id,
       templateId: provider.templateId
     });
     if ((freeOnly || anonymousFreeOnly) && !isFreeStatus(freeStatus)) continue;
-    const model = cachedModelToLocal(cached, provider);
+    const model = cachedModelToLocal(cached, provider, metadata, agent);
     if (!model) continue;
     if (shouldHideModel({ providerId: provider.id, modelId: model.id, agent })) continue;
     models.push(model);
@@ -2014,9 +2020,11 @@ function materializeOne(provider, resolveCredential, agent) {
 }
 function materializeRegistry(registry, resolveCredential, opts) {
   const agent = opts?.agent ?? "claude";
+  const pricingIndex = buildPricingIndex(loadPricingCache());
+  const metadata = loadModelsDevCache();
   const result = [];
   for (const provider of registry.providers) {
-    const local = materializeOne(provider, resolveCredential, agent);
+    const local = materializeOne(provider, resolveCredential, agent, pricingIndex, metadata);
     if (local) result.push(local);
   }
   return result;
@@ -2742,10 +2750,10 @@ function injectRelayModels(fixture, routes, templateKey, opts = {}) {
 }
 function buildAntigravityRoutes(resolvedFavorites, maxRoutes = MAX_MODEL_CATALOG, opts = {}) {
   const effortMode = opts.effortMode ?? "rows";
-  const routes = [];
+  const groups = [];
   const seen = /* @__PURE__ */ new Set();
   for (const fav of resolvedFavorites) {
-    if (routes.length >= maxRoutes) break;
+    if (groups.length >= maxRoutes) break;
     const favModel = fav.model;
     const modelId = favModel.id;
     const safeModelSlug = modelId.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -2757,7 +2765,7 @@ function buildAntigravityRoutes(resolvedFavorites, maxRoutes = MAX_MODEL_CATALOG
     const baseURL = favModel.apiBaseUrl || favModel.completionsUrl || void 0;
     const contextWindow2 = favModel.contextWindow;
     const modelFormat = favModel.modelFormat;
-    routes.push({
+    const baseRoute = {
       catalogId,
       providerId: fav.providerId,
       providerName: fav.providerName,
@@ -2774,11 +2782,33 @@ function buildAntigravityRoutes(resolvedFavorites, maxRoutes = MAX_MODEL_CATALOG
       ...fav.refreshToken ? { refreshToken: fav.refreshToken } : {},
       baseURL,
       contextWindow: contextWindow2
-    });
-    const route = routes.pop();
-    routes.push(...effortVariants(route, favModel, routes.length === 0, effortMode));
+    };
+    groups.push({ routes: effortVariants(baseRoute, favModel, groups.length === 0, effortMode) });
   }
-  const labeled = applyUniqueAntigravityRouteLabels(routes.slice(0, maxRoutes));
+  const included = groups.slice(0, maxRoutes);
+  const extrasByGroup = included.map(() => 0);
+  let remaining = Math.max(0, maxRoutes - included.length);
+  if (remaining > 0 && included.length > 0) {
+    const launchExtra = Math.min(included[0].routes.length - 1, remaining);
+    extrasByGroup[0] = launchExtra;
+    remaining -= launchExtra;
+  }
+  while (remaining > 0) {
+    let progressed = false;
+    for (let index = 1; index < included.length && remaining > 0; index += 1) {
+      const extraCount = included[index].routes.length - 1;
+      if (extrasByGroup[index] >= extraCount) continue;
+      extrasByGroup[index] += 1;
+      remaining -= 1;
+      progressed = true;
+    }
+    if (!progressed) break;
+  }
+  const routes = included.flatMap((group, index) => [
+    group.routes[0],
+    ...group.routes.slice(1, 1 + extrasByGroup[index])
+  ]);
+  const labeled = applyUniqueAntigravityRouteLabels(routes);
   if (effortMode !== "submenu") return labeled;
   return labeled.map((route) => {
     if (!route.reasoningEffort || !["low", "medium", "high"].includes(route.reasoningEffort)) return route;
@@ -3023,9 +3053,21 @@ var CURRENT_EXPERIMENT_IDS = [
   106113877,
   106121604
 ];
+var ANTIGRAVITY_FEATURE_FLAGS = [
+  { name: "Chat__enable_mcp_server_ij", boolValue: true },
+  { name: "DatacloudMcp__enable_stdio_mcp_proxy", boolValue: true },
+  { name: "enable-customization-kind-mcp", boolValue: true },
+  // Without this AGY loads MCP tools inline during the turn and blocks for a
+  // fixed ~18 s (UI shows "Initializing MCP servers") before the first model
+  // request, on every turn. The key is a compile-time literal in the AGY Go
+  // binary; the old `mcp-lazy-load-tools` name never existed there, so the
+  // deferral it promised never engaged.
+  { name: "enable-mcp-non-blocking-turn-load", boolValue: true }
+];
 function buildListExperimentsResponse() {
   return {
-    experimentIds: [...CURRENT_EXPERIMENT_IDS]
+    experimentIds: [...CURRENT_EXPERIMENT_IDS],
+    flags: ANTIGRAVITY_FEATURE_FLAGS.map((flag) => ({ ...flag }))
   };
 }
 
@@ -3376,6 +3418,7 @@ function parseModelList(body, npm) {
       brand: deriveBrand(family),
       contextWindow: contextWindow2,
       cost,
+      ...cost ? { costSource: "provider" } : {},
       isFree: isFreeStatus(freeStatus),
       freeStatus,
       modelFormat: format,
@@ -5262,6 +5305,16 @@ function translateOpenAiRequest(body, requestHeaders) {
     headers: requestHeaders
   };
 }
+function toOpenAiUsage(usage) {
+  const prompt = usage?.inputTokens ?? usage?.promptTokens ?? 0;
+  const completion = usage?.outputTokens ?? usage?.completionTokens ?? 0;
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: usage?.totalTokens ?? prompt + completion,
+    ...usage?.inputTokenDetails?.cacheReadTokens ? { prompt_tokens_details: { cached_tokens: usage.inputTokenDetails.cacheReadTokens } } : {}
+  };
+}
 function toOpenAiFinishReason(reason) {
   switch (reason) {
     case "tool-calls":
@@ -5295,11 +5348,7 @@ async function generateOpenAiResponse(model, params, responseModelId) {
     created: Math.floor(Date.now() / 1e3),
     model: responseModelId,
     choices: [{ index: 0, message, finish_reason: toOpenAiFinishReason(result.finishReason) }],
-    usage: {
-      prompt_tokens: result.usage?.promptTokens ?? 0,
-      completion_tokens: result.usage?.completionTokens ?? 0,
-      total_tokens: result.usage?.totalTokens ?? 0
-    }
+    usage: toOpenAiUsage(result.usage)
   };
 }
 async function streamOpenAiResponse(model, params, responseModelId, onChunk, log7) {
@@ -5317,6 +5366,7 @@ async function streamOpenAiResponse(model, params, responseModelId, onChunk, log
   let nextToolIndex = 0;
   const seenPartTypes = /* @__PURE__ */ new Set();
   let toolCallChunksEmitted = 0;
+  let finishUsage;
   for await (const part of stream) {
     const p8 = part;
     seenPartTypes.add(p8.type);
@@ -5355,6 +5405,7 @@ async function streamOpenAiResponse(model, params, responseModelId, onChunk, log
         break;
       }
       case "finish":
+        finishUsage = p8.totalUsage;
         log7?.(() => `openai stream parts=[${[...seenPartTypes].join(",")}] toolCallChunks=${toolCallChunksEmitted} finishReason=${p8.finishReason}`);
         send({}, toOpenAiFinishReason(p8.finishReason));
         break;
@@ -5376,6 +5427,11 @@ async function streamOpenAiResponse(model, params, responseModelId, onChunk, log
         return;
       }
     }
+  }
+  if (finishUsage) {
+    onChunk(`data: ${JSON.stringify({ ...baseData, choices: [], usage: toOpenAiUsage(finishUsage) })}
+
+`);
   }
   onChunk("data: [DONE]\n\n");
 }
@@ -5521,6 +5577,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog, suba
       return;
     }
     const apiKey = model.apiKey ?? options.apiKey;
+    const sessionId = extractClaudeSessionId(req.headers, body);
     const languageModel = await getOrInitLanguageModel(
       modelCache,
       model,
@@ -5528,7 +5585,8 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog, suba
       model.apiBaseUrl,
       apiKey,
       options.vertex,
-      providerRefreshToken(model.providerId, model.authType)
+      providerRefreshToken(model.providerId, model.authType),
+      sessionId
     );
     const npmMaxTools = maxToolsForNpm(model.npm);
     const toolCount = Array.isArray(body.tools) ? body.tools.length : 0;
@@ -5540,7 +5598,6 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog, suba
       model,
       options.gateway
     );
-    const sessionId = extractClaudeSessionId(req.headers, body);
     if (sessionId) {
       subagentRouting.registerSubagentRoute = (modelId) => subagentRouteRegistry.register(sessionId, modelId);
     }
@@ -5674,6 +5731,7 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
   }
   const apiKey = model.apiKey ?? options.apiKey;
   const baseURL = model.modelFormat === "anthropic" ? model.baseUrl : model.apiBaseUrl;
+  const conversationId = extractConversationId(req.headers, body);
   const languageModel = await getOrInitLanguageModel(
     modelCache,
     model,
@@ -5681,12 +5739,13 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
     baseURL,
     apiKey,
     options.vertex,
-    providerRefreshToken(model.providerId, model.authType)
+    providerRefreshToken(model.providerId, model.authType),
+    conversationId
   );
   const requestHeaders = openCodeGoHeaders(
     model.providerId ?? model.sourceBackend,
     baseURL,
-    extractConversationId(req.headers, body),
+    conversationId,
     model.headers
   );
   const params = translateOpenAiRequest(body, requestHeaders);
@@ -5735,13 +5794,14 @@ function backendFor(options, model) {
   if (model.sourceBackend === "go") return options.backends.go;
   throw new Error(`Provider ${model.sourceBackend} is not a cloud backend \u2014 model must set baseUrl/completionsUrl`);
 }
-async function getOrInitLanguageModel(modelCache, model, npm, baseURL, apiKey, vertex, refreshToken) {
+async function getOrInitLanguageModel(modelCache, model, npm, baseURL, apiKey, vertex, refreshToken, sessionId) {
   const cacheKey = [
     model.providerId ?? model.sourceBackend,
     model.id,
     upstreamModelId(model),
     npm,
-    baseURL ?? ""
+    baseURL ?? "",
+    sessionId ?? ""
   ].join("");
   let languageModel = modelCache.get(cacheKey);
   if (!languageModel) {
@@ -5755,6 +5815,7 @@ async function getOrInitLanguageModel(modelCache, model, npm, baseURL, apiKey, v
       oauthAccountId: model.oauthAccountId,
       vertex,
       headers: model.headers,
+      ...sessionId ? { sessionId } : {},
       refreshToken,
       onTokenRefreshed: (refreshed) => {
         model.apiKey = refreshed;
@@ -8148,4 +8209,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-N6BM2QES.js.map
+//# sourceMappingURL=chunk-IX2SO7OQ.js.map

@@ -291,6 +291,16 @@ import { createHash as createHash3 } from "crypto";
 // src/provider-templates.ts
 var PROVIDER_TEMPLATES = [
   {
+    id: "a2agent",
+    name: "A2Agent",
+    authType: "api",
+    npm: "@ai-sdk/openai-compatible",
+    defaultBaseUrl: "https://api.a2agent.me/v1",
+    signupUrl: "https://a2agent.me/login",
+    modelSource: "api-list",
+    supported: true
+  },
+  {
     id: "cline-pass",
     name: "ClinePass",
     authType: "api",
@@ -2717,6 +2727,7 @@ function isKnownDualHost(providerId, baseURL) {
   const host = parsed.hostname.toLowerCase();
   const path = parsed.pathname.toLowerCase();
   const id = providerId?.trim().toLowerCase();
+  if (host === "api.a2agent.me" && (path === "/" || path === "/v1" || path === "/v1/")) return true;
   if (host === "opencode.ai" && path.includes("/zen")) return true;
   if (host === "openrouter.ai" && path.includes("/api")) return true;
   if (host === "commandcode.ai" || host.endsWith(".commandcode.ai")) {
@@ -2768,6 +2779,9 @@ function classifyProtocolFailure(error) {
   const lower = text2.toLowerCase();
   if (lower.includes("abort") || lower.includes("cancel")) {
     return { retryable: false, status, reason: "request cancelled" };
+  }
+  if (lower.includes("type validation failed") && lower.includes("content_block")) {
+    return { retryable: true, status, reason: "provider sent a malformed stream for the selected API format" };
   }
   if (lower.includes("not supported for format")) {
     return { retryable: true, status, reason: "provider rejected the selected API format" };
@@ -3014,8 +3028,8 @@ async function createLanguageModelSingle(spec) {
   if (npm === "@ai-sdk/anthropic") {
     const { createAnthropic } = await import("@ai-sdk/anthropic");
     const root = baseURL?.replace(/\/v1\/?$/, "").replace(/\/$/, "");
-    const openRouterBearer = providerKind(spec.providerId?.trim().toLowerCase() ?? "") === "openrouter" || root?.includes("openrouter.ai") === true;
-    const anthropicOptions = spec.authType === "oauth" || openRouterBearer ? {
+    const bearerGateway = ["openrouter", "a2agent"].includes(providerKind(spec.providerId?.trim().toLowerCase() ?? "")) || root?.includes("openrouter.ai") === true || root === "https://api.a2agent.me";
+    const anthropicOptions = spec.authType === "oauth" || bearerGateway ? {
       authToken: apiKey,
       ...spec.providerId && isProviderKind(spec.providerId, "claude-code") ? {
         headers: {
@@ -3049,6 +3063,9 @@ async function createLanguageModelSingle(spec) {
     const options = {
       name: spec.providerId ?? "openai-compatible",
       baseURL: baseURL ?? "",
+      // A2Agent only returns token/cache usage on streaming requests when asked.
+      // Without this, Claude/Gemini/Core display zero cache reads even on a hit.
+      ...providerKind(spec.providerId?.trim().toLowerCase() ?? "") === "a2agent" ? { includeUsage: true } : {},
       ...runtimeApiKey.trim() ? { apiKey: runtimeApiKey } : {},
       ...spec.headers ? { headers: spec.headers } : {},
       ...isClinePassOAuth(spec.providerId, spec.authType) && spec.refreshToken ? {

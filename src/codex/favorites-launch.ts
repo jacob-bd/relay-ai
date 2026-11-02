@@ -210,6 +210,7 @@ export async function resolveCodexFavorites(
   compatible: LocalProvider[],
   favorites: FavoriteModel[],
   agent: CompatibilityAgent,
+  max = 20,
 ): Promise<{
   resolvedFavorites: ResolvedFavorite[];
   providersById: Map<string, LocalProvider>;
@@ -231,6 +232,7 @@ export async function resolveCodexFavorites(
     startingResolved,
     favorites,
     ctx,
+    max,
   );
   if (droppedFavorites.length > 0) {
     p.log.warn(
@@ -280,6 +282,7 @@ export async function resolveCodexMixedModels(input: {
   compatible: LocalProvider[];
   generalFavorites: FavoriteModel[];
   subagentFavorites: FavoriteModel[];
+  allProviderModels?: boolean;
 }): Promise<ResolvedCodexMixedModels> {
   const ctx: ResolveContext = {
     agent: 'codex',
@@ -295,7 +298,10 @@ export async function resolveCodexMixedModels(input: {
     ctx,
   );
   if (!selected) throw new Error('Selected Codex model is no longer available');
-  const visibleResult = await buildFavoritesList(selected, input.generalFavorites, ctx, 20, { trackCapacitySkipped: true });
+  const catalogModels = input.allProviderModels
+    ? input.activeProvider.models.map(model => ({ providerId: input.activeProvider.id, modelId: model.id }))
+    : input.generalFavorites;
+  const visibleResult = await buildFavoritesList(selected, catalogModels, ctx, input.allProviderModels ? 50 : 20, { trackCapacitySkipped: true });
   // Like the Relay-only launch, list the starting provider's other models too,
   // in whatever room favorites leave: favorites win the cap, and these siblings
   // never count as skipped favorites.
@@ -303,7 +309,7 @@ export async function resolveCodexMixedModels(input: {
   const siblings = input.activeProvider.models
     .filter(model => !listed.has(`${input.activeProvider.id}\0${model.id}`))
     .map(model => ({ providerId: input.activeProvider.id, modelId: model.id }));
-  const siblingResult = await buildFavoritesList(undefined, siblings, ctx, Math.max(0, 20 - visibleResult.resolved.length));
+  const siblingResult = await buildFavoritesList(undefined, siblings, ctx, Math.max(0, (input.allProviderModels ? 50 : 20) - visibleResult.resolved.length));
   const visible = [...visibleResult.resolved, ...siblingResult.resolved];
   const subagentResult = await buildFavoritesList(undefined, input.subagentFavorites, ctx, 20, { trackCapacitySkipped: true });
   const all: ResolvedFavorite[] = [...visible];

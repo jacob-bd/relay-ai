@@ -155,11 +155,14 @@ Core's job differs by route. Measured live through `createRelayModel` on
 | **Claude** (API key, Claude subscription, Vertex AI, OpenCode Zen/Go) | Places cache breakpoints on the last tool, the last system message and the latest user/tool turns (Anthropic's four-breakpoint cap). Breakpoints the caller already placed are left untouched. | Hit: ~100% of the prefix read from cache on repeat and growing turns |
 | **OpenAI / ChatGPT login** | Needs your `sessionId`: sends a hashed `prompt_cache_key`, and on ChatGPT-login routes a UUID-shaped `session_id` header, so the backend keeps one conversation on one machine. Without a `sessionId` nothing is sent. | Hit with `sessionId`: ~96% of the prefix on every call after the first (8 of 8). Without the key: 0 reads |
 | **OpenCode Go** (GLM, Kimi) | Nothing needed — the provider caches automatically. | Hit (Kimi K3 missed once in five calls) |
+| **A2Agent** (OpenAI Chat Completions) | Nothing needed — A2Agent caches stable prefixes automatically. Relay preserves `cached_tokens` in Anthropic and OpenAI usage shapes. | Hit on repeat: DeepSeek, Kimi K2.7 and Qwen3.8; GLM warmed after two calls; MiniMax reported only a short cache read |
 | **Gemini via Antigravity (Cloud Code)** | Nothing available — Cloud Code exposes no cache control. | Partial: an identical request hits (~87%), but a request that adds a new turn did not |
 
 Not yet measured: direct Gemini API key, DeepSeek/Kimi/GLM on their own APIs, Claude through OpenRouter, Qwen/Alibaba. Claude through OpenRouter or Bedrock does not get breakpoints placed (Core marks only Anthropic-format Claude).
 
 **Hosts should pass a stable `sessionId` for the life of a conversation** (not per request, and not shared between conversations). The hash means the id never leaves your machine in raw form. The ChatGPT backend can take several seconds to make a just-written prefix available, so the first one or two repeats of a brand-new prompt may still read 0.
+
+Relay's own launches now pass that conversation id for you. The Claude proxy, Gemini proxy, Antigravity gateway and server gateway derive a stable id from the client's conversation or session header (or the request body when there is none) and reuse one language model per conversation, so ChatGPT-login and OpenAI routes get a prompt-cache key outside Core as well. Relay also keeps cache-read and cache-write counts in the Anthropic and OpenAI usage it returns; before this they were dropped and clients showed zero cache reads on a hit.
 
 To check your own routes, run the opt-in harness against your real registry and credentials (it sends five requests per route and prints cache reads; excluded from `npm test`):
 

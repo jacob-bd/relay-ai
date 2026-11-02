@@ -55,6 +55,7 @@ const PREFERRED_MODEL: Record<string, RegExp> = {
   google: /flash/i,
   go: /deepseek|kimi|glm|qwen/i,
   zen: /deepseek|kimi|glm|qwen/i,
+  a2agent: /deepseek-v4-flash/i,
 };
 
 function csv(name: string): string[] {

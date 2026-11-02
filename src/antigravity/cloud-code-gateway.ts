@@ -71,7 +71,7 @@ function isCloudCodeOAuthRoute(route: AntigravityRoute): boolean {
   return isProviderKind(route.providerId, 'antigravity') && route.authType === 'oauth' && route.modelFormat === 'cloud-code';
 }
 
-async function createRouteLanguageModel(route: AntigravityRoute) {
+async function createRouteLanguageModel(route: AntigravityRoute, sessionId?: string) {
   const spec: Parameters<typeof createLanguageModel>[0] = {
     npm: route.npm,
     modelId: route.upstreamModelId,
@@ -81,6 +81,7 @@ async function createRouteLanguageModel(route: AntigravityRoute) {
     authType: route.authType,
     oauthAccountId: route.oauthAccountId,
     providerData: route.providerData,
+    ...(sessionId ? { sessionId } : {}),
   };
   if (route.headers !== undefined) spec.headers = route.headers;
   if (route.refreshToken) {
@@ -226,6 +227,16 @@ export async function startCloudCodeGateway(
           return value;
         }).slice(0, 500);
         log(`[gateway]   body-preview: ${preview}`);
+        const declaredTools = (parsed as {
+          request?: { tools?: Array<{ functionDeclarations?: Array<{ name?: string }> }> };
+        }).request?.tools;
+        if (declaredTools) {
+          const toolNames = declaredTools
+            .flatMap(group => group.functionDeclarations ?? [])
+            .map(decl => decl.name)
+            .filter((name): name is string => typeof name === 'string');
+          log(`[gateway]   declared tools (${toolNames.length}): ${toolNames.join(', ')}`);
+        }
         // Everything but the conversation, system prompt and tools — where the
         // client's own settings (e.g. generationConfig) live, cut off by the preview.
         const request = (parsed as { request?: unknown }).request;
@@ -297,10 +308,11 @@ export async function startCloudCodeGateway(
           if (trace) log(`[gateway]   provider options: ${JSON.stringify(baseProviderOptions ?? {})}`);
           const isStream = lowerUrl.includes('stream');
           const conversationKey = conversationKeyFromRequest(parsed);
+          const conversationSessionId = antigravityConversationId(parsed, req.headers);
           const requestHeaders = openCodeGoHeaders(
             route.providerId,
             route.baseURL,
-            antigravityConversationId(parsed, req.headers),
+            conversationSessionId,
             route.headers,
           );
           const requestOptions = {
@@ -315,6 +327,7 @@ export async function startCloudCodeGateway(
           if (isStream) {
             handleStreamingRequest(res, route, baseProviderOptions, parsed as any, log, {
               requestOptions,
+              sessionId: conversationSessionId,
               onReasoningWithToolCall: rememberReasoning,
               trace,
             }).catch(err => {
@@ -329,6 +342,7 @@ export async function startCloudCodeGateway(
           } else {
             handleUnaryRequest(res, route, baseProviderOptions, parsed as any, log, {
               requestOptions,
+              sessionId: conversationSessionId,
               onReasoningWithToolCall: rememberReasoning,
               trace,
             }).catch(err => {
@@ -353,6 +367,10 @@ export async function startCloudCodeGateway(
 
       // --- Known endpoints with minimal local responses ---
       if (lowerUrl.includes('fetchadmincontrols')) {
+        // Google returns an empty object for a normal consumer account. AGY's
+        // "admin controls not applicable" log line also appears on native
+        // sessions, so it is benign: MCP availability comes from the
+        // listExperiments feature flags, not from this response.
         respondJson(res, 200, {});
         return;
       }
@@ -618,6 +636,7 @@ async function handleCloudCodeForwardRequest(
 
 interface RequestHandlerOptions {
   requestOptions?: TranslateRequestOptions;
+  sessionId?: string;
   onReasoningWithToolCall?: (reasoning: string) => void;
   trace?: boolean;
 }
@@ -805,7 +824,7 @@ async function handleStreamingRequest(
     providerOptions,
     sdkParams.providerOptions,
   );
-  const langModel = await createRouteLanguageModel(route);
+  const langModel = await createRouteLanguageModel(route, options.sessionId);
   const responseId = `relay-${Date.now()}`;
 
   const { stream } = streamText({
@@ -995,7 +1014,7 @@ async function handleUnaryRequest(
     providerOptions,
     sdkParams.providerOptions,
   );
-  const langModel = await createRouteLanguageModel(route);
+  const langModel = await createRouteLanguageModel(route, options.sessionId);
   const responseId = `relay-${Date.now()}`;
 
   const result = await generateText({

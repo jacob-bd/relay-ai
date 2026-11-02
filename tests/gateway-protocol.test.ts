@@ -80,6 +80,13 @@ describe('classifyProtocolFailure', () => {
     })).toMatchObject({ retryable: true, status: 405 });
   });
 
+  it('allows a retry when the SDK cannot parse the selected stream dialect', () => {
+    expect(classifyProtocolFailure({
+      name: 'AI_TypeValidationError',
+      message: 'Type validation failed: Value: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}.',
+    })).toMatchObject({ retryable: true });
+  });
+
   it('allows a retry for OpenCode Go\'s wrong-format 401', () => {
     expect(classifyProtocolFailure({
       statusCode: 401,

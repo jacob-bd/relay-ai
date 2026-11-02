@@ -141,6 +141,9 @@ export function modelSelectOption(model: LocalProviderModel, hint?: string) {
       const inputStr = `$${model.cost.input}`;
       const outputStr = `$${model.cost.output}`;
       defaultHint = pc.dim(isCloudflare ? `Paid plan req (${inputStr}/${outputStr} 1M)` : `${inputStr}/${outputStr} 1M`);
+    } else if (model.referencePrice) {
+      const { cost, provider } = model.referencePrice;
+      defaultHint = pc.dim(`Reference estimate $${cost.input}/$${cost.output} 1M (${provider})`);
     } else {
       defaultHint = model.name !== model.id ? model.id : model.brand || model.family || '';
     }

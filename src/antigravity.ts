@@ -138,7 +138,7 @@ async function resolveAntigravityLaunch(
   const catalogSpinner = p.spinner();
   catalogSpinner.start('Loading providers...');
   try {
-    catalog = await fetchProviderCatalog();
+    catalog = await fetchProviderCatalog({ agent: 'antigravity' });
   } catch (err) {
     catalogSpinner.stop('');
     p.log.error(String(err instanceof Error ? err.message : err));
@@ -205,7 +205,7 @@ async function resolveAntigravityLaunch(
         'antigravity',
         prefs,
         async () => {
-          const fresh = providersForTarget(providersForPicker(await fetchProviderCatalog()), 'antigravity');
+          const fresh = providersForTarget(providersForPicker(await fetchProviderCatalog({ agent: 'antigravity' })), 'antigravity');
           for (const lp of allProviders) {
             const loaded = fresh.find(f => f.id === lp.id);
             if (loaded) lp.models = loaded.models;
@@ -227,7 +227,7 @@ async function resolveAntigravityLaunch(
 
     const activeProvider = allProviders.find(lp => lp.id === chosen)!;
     const pickedModelResult = await pickLocalModel(activeProvider, conflicts, prefs, pickerRefresh(activeProvider, async () =>
-      providersForTarget(providersForPicker(await fetchProviderCatalog()), 'antigravity').find(lp => lp.id === activeProvider.id)));
+      providersForTarget(providersForPicker(await fetchProviderCatalog({ agent: 'antigravity' })), 'antigravity').find(lp => lp.id === activeProvider.id)));
     if (pickedModelResult === 'back') {
       currentInitialProvider = activeProvider.id;
       continue;
@@ -254,7 +254,9 @@ async function resolveAndBuildRoutes(
     provider,
     model,
     allProviders,
-    favorites: prefs.favoriteModels ?? [],
+    favorites: provider.launchAllModels
+      ? provider.models.map(model => ({ providerId: provider.id, modelId: model.id }))
+      : prefs.favoriteModels ?? [],
     maxRoutes: opts.maxRoutes,
     effortMode: opts.effortMode,
   });
@@ -270,8 +272,15 @@ async function resolveAndBuildRoutes(
         : opts.effortMode === 'submenu'
           ? `each model's low/medium/high share one row with an effort submenu.`
           : `effort levels are listed separately.`;
-    p.log.info(`Favorites mode active — ${result.routes.length} entries; ${effortNote}`);
-    p.log.info('Edit with `relay-ai favorites`.');
+    if (provider.launchAllModels) {
+      const modelCount = new Set(result.routes.map(route => `${route.providerId}:${route.modelId}`)).size;
+      p.log.info(
+        `All provider models mode active — ${modelCount} models, ${result.routes.length} entries; favorites will not be used. ${effortNote}`,
+      );
+    } else {
+      p.log.info(`Favorites mode active — ${result.routes.length} entries; ${effortNote}`);
+      p.log.info('Edit with `relay-ai favorites`.');
+    }
   }
   if (result.droppedFavorites.length > 0) {
     p.log.warn(

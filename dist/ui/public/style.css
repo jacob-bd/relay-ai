@@ -2276,3 +2276,9 @@ input { font-family: inherit; }
 .server-id-empty {
   color: var(--text-3);
 }
+
+.price-reference { display: block; font-size: 11px; color: var(--text-3); margin-top: 4px; }
+.price-help { position: relative; cursor: help; display: inline-block; text-transform: none; }
+.price-help [role="tooltip"] { display: none; position: absolute; right: 0; top: 100%; width: 260px; padding: 12px; background: var(--surface-2, var(--surface)); color: var(--text-1); border: 1px solid var(--border); border-radius: 8px; font-size: 12px; font-weight: 400; letter-spacing: normal; line-height: 1.5; z-index: 10; }
+.price-help:hover [role="tooltip"], .price-help:focus [role="tooltip"] { display: block; }
+.provider-model-table th.th-actions { width: 175px; }

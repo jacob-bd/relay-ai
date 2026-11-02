@@ -47,6 +47,7 @@ function isKnownDualHost(providerId: string | undefined, baseURL: string | undef
   const path = parsed.pathname.toLowerCase();
   const id = providerId?.trim().toLowerCase();
 
+  if (host === 'api.a2agent.me' && (path === '/' || path === '/v1' || path === '/v1/')) return true;
   if (host === 'opencode.ai' && path.includes('/zen')) return true;
   if (host === 'openrouter.ai' && path.includes('/api')) return true;
   if (host === 'commandcode.ai' || host.endsWith('.commandcode.ai')) {
@@ -126,6 +127,13 @@ export function classifyProtocolFailure(error: unknown): ProtocolFailure {
 
   if (lower.includes('abort') || lower.includes('cancel')) {
     return { retryable: false, status, reason: 'request cancelled' };
+  }
+  // A dual-protocol provider can send an SSE stream in the selected dialect
+  // that its SDK cannot parse (for example an Anthropic content_block_start
+  // without the required `text` field). The parser fails before emitting any
+  // semantic part, so trying the other protocol is still safe.
+  if (lower.includes('type validation failed') && lower.includes('content_block')) {
+    return { retryable: true, status, reason: 'provider sent a malformed stream for the selected API format' };
   }
   // OpenCode Go reports a wrong-format request as a 401 ModelError
   // ("... is not supported for format oa-compat"), not an auth failure.

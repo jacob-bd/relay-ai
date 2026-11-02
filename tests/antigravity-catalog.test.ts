@@ -326,6 +326,32 @@ describe('antigravity catalog', () => {
     expect(experimentIds.every(id => Number.isInteger(id))).toBe(true);
     expect(experimentIds).toContain(105979552);
     expect(experimentIds).toContain(106121604);
+    const flags = response.flags as Array<{ name: string; boolValue: boolean }>;
+    expect(flags).toEqual(expect.arrayContaining([
+      { name: 'Chat__enable_mcp_server_ij', boolValue: true },
+      { name: 'DatacloudMcp__enable_stdio_mcp_proxy', boolValue: true },
+      { name: 'enable-customization-kind-mcp', boolValue: true },
+      { name: 'enable-mcp-non-blocking-turn-load', boolValue: true },
+    ]));
+  });
+
+  it('keeps MCP enablement flags alongside the non-blocking turn-load flag', () => {
+    // Contract: the enablement flags must never be dropped to chase latency
+    // (without them agy hides every MCP server), and turn-load must stay
+    // non-blocking or every turn waits ~18 s on "Initializing MCP servers".
+    const flags = buildListExperimentsResponse().flags as Array<{ name: string; boolValue: boolean }>;
+    const enabled = flags.filter(flag => flag.boolValue).map(flag => flag.name);
+    expect(enabled).toEqual(expect.arrayContaining([
+      'Chat__enable_mcp_server_ij',
+      'DatacloudMcp__enable_stdio_mcp_proxy',
+      'enable-customization-kind-mcp',
+      'enable-mcp-non-blocking-turn-load',
+    ]));
+  });
+
+  it('does not advertise mcp-lazy-load-tools, which AGY never defined', () => {
+    const flags = buildListExperimentsResponse().flags as Array<{ name: string }>;
+    expect(flags.map(flag => flag.name)).not.toContain('mcp-lazy-load-tools');
   });
 
   it('builds listModelConfigs for every selectable relay route', () => {
@@ -740,12 +766,23 @@ describe('antigravity effort variants', () => {
     expect(routes[0]!.reasoningEffort).toBeUndefined();
   });
 
-  it('counts effort variants against the catalog cap', () => {
+  it('reserves one route per model before spending the cap on effort variants', () => {
     const routes = buildAntigravityRoutes([
       fav('openai-oauth', gpt('gpt-6-sol', 'GPT-6 Sol')),
       fav('openai', gpt('gpt-6-luna', 'GPT-6 Luna')),
     ] as any[], 7);
     expect(routes).toHaveLength(7);
+    expect(routes.filter(route => route.modelId === 'gpt-6-sol')).toHaveLength(6);
+    expect(routes.filter(route => route.modelId === 'gpt-6-luna')).toHaveLength(1);
     expect(routes.at(-1)!.displayName).toBe('GPT-6 Luna Medium (Relay - openai)');
+  });
+
+  it('lists every model when effort variants would otherwise fill the catalog', () => {
+    const favorites = Array.from({ length: 22 }, (_, index) =>
+      fav('a2agent', gpt(`model-${index}`, `Model ${index}`)),
+    );
+    const routes = buildAntigravityRoutes(favorites as any[], 50, { effortMode: 'slider' });
+    expect(routes).toHaveLength(50);
+    expect(new Set(routes.map(route => route.modelId)).size).toBe(22);
   });
 });

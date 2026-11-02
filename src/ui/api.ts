@@ -354,6 +354,7 @@ async function handleGetModels(
         freeLabel: freeStatusLabel(m.freeStatus),
         contextWindow: m.contextWindow,
         cost: m.cost,
+        referencePrice: m.referencePrice,
         claudeTransparentCompatible: supportsClaudeTransparentMode(m),
         ...(manualIdsByProvider.get(p.id)?.has(m.id)
           ? { source: 'manual' as const } : {}),

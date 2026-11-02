@@ -98,6 +98,60 @@ describe('generateOpenAiResponse finish_reason mapping', () => {
   });
 });
 
+describe('cache usage reporting', () => {
+  it('maps SDK cache reads into OpenAI prompt_tokens_details', async () => {
+    vi.doMock('ai', () => ({
+      generateText: vi.fn(async () => ({
+        text: 'ok',
+        toolCalls: [],
+        finishReason: 'stop',
+        usage: {
+          inputTokens: 17007,
+          outputTokens: 8,
+          totalTokens: 17015,
+          inputTokenDetails: { noCacheTokens: 111, cacheReadTokens: 16896, cacheWriteTokens: 0 },
+        },
+      })),
+      streamText: vi.fn(),
+    }));
+    const { generateOpenAiResponse } = await import('../src/openai-adapter.js');
+    const response = await generateOpenAiResponse({} as never, { messages: [] } as never, 'a2agent-model');
+    expect(response.usage).toEqual({
+      prompt_tokens: 17007,
+      completion_tokens: 8,
+      total_tokens: 17015,
+      prompt_tokens_details: { cached_tokens: 16896 },
+    });
+  });
+
+  it('emits cache usage as a final streaming usage chunk', async () => {
+    vi.doMock('ai', () => ({
+      generateText: vi.fn(),
+      streamText: vi.fn(() => ({
+        stream: (async function* () {
+          yield { type: 'text-delta', textDelta: 'hi' };
+          yield {
+            type: 'finish',
+            finishReason: 'stop',
+            totalUsage: {
+              inputTokens: 17007,
+              outputTokens: 8,
+              inputTokenDetails: { noCacheTokens: 111, cacheReadTokens: 16896, cacheWriteTokens: 0 },
+            },
+          };
+        })(),
+      })),
+    }));
+    const { streamOpenAiResponse } = await import('../src/openai-adapter.js');
+    const chunks: string[] = [];
+    await streamOpenAiResponse({} as never, { messages: [] } as never, 'model', chunk => chunks.push(chunk));
+    const usageChunk = chunks.find(chunk => chunk.includes('"usage"') && chunk.includes('"cached_tokens"'));
+    expect(usageChunk).toBeDefined();
+    expect(usageChunk).toContain('"choices":[]');
+    expect(usageChunk).toContain('"cached_tokens":16896');
+  });
+});
+
 describe('streamOpenAiResponse finish_reason mapping', () => {
   it('emits tool_calls (not tool-calls) in the final SSE chunk', async () => {
     vi.doMock('ai', () => ({

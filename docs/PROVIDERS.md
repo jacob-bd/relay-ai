@@ -134,6 +134,14 @@ Relay's API Server because it is commonly used as a coding/agent bridge.
 - **Credential isolation**: API keys and OAuth tokens use separate keychain entries. Switching methods replaces the old credential only after the new one is saved.
 - **Troubleshooting**: If validation fails, the wizard shows the provider's error and confirms that no registry entry was saved. Add `--trace` to write a redacted diagnostic log under `~/.relay-ai/logs/`.
 
+### A2Agent
+
+- **Setup**: In `relay-ai providers` or the UI's **Add provider** screen, choose **A2Agent** and paste the key from your [A2Agent dashboard](https://a2agent.me/login).
+- **Catalog**: Relay discovers model IDs from `https://api.a2agent.me/v1/models` when adding or refreshing the provider. IDs keep their exact casing, including `MiniMax-M3`. Run `relay-ai providers refresh-models a2agent` after catalog changes.
+- **Protocols**: Claude Code launches use A2Agent’s Anthropic Messages `/v1/messages` endpoint. Antigravity, Codex, Gemini, Server, and Relay Core use OpenAI Chat Completions `/v1/chat/completions`; A2Agent’s Anthropic streaming omits a field that strict SDK clients reject, so SDK-driven launches stay on Chat Completions. Relay uses Bearer authentication for both, and every catalog model was verified against both endpoints. No separate Anthropic account is needed.
+- **Billing**: Requests use your A2Agent balance. Adding or refreshing the provider only lists models and does not generate completions. See the official [model listing](https://docs.a2agent.me/api-reference/models-list) and [Anthropic Messages](https://docs.a2agent.me/api-reference/anthropic-messages) documentation.
+- **Prompt caching**: A2Agent caches stable prompt prefixes automatically on its OpenAI Chat Completions endpoint. Relay asks streaming requests to include usage and preserves cache-read tokens through Claude, Gemini, Antigravity, the Server gateway, and Relay Core. No cache key or extra provider setting is required.
+
 ### Command Code
 - **Description**: A subscription gateway to Anthropic, OpenAI, Google, and open-source models through one key.
 - **Setup**: Run `relay-ai providers`, choose **+ Add a provider** → **Command Code**, then paste the API key from your [Command Code settings](https://commandcode.ai/settings).

@@ -13,6 +13,7 @@ const PROVIDER_INLINE_SVGS = {
 };
 
 const PROVIDER_LOGO_URLS = {
+  a2agent: 'icon-a2agent.png', // Official asset: https://a2agent.me/logo.png
   zen: 'https://opencode.ai/favicon.ico',
   go: 'https://opencode.ai/favicon.ico',
   anthropic: 'https://cdn.simpleicons.org/anthropic/ffffff',
@@ -40,6 +41,10 @@ function escapeHtml(value) {
 }
 
 function getProviderLogoContent(providerId) {
+  // Additional A2Agent accounts share the same official mark.
+  if (/^a2agent(?:-\d+)?$/.test(providerId)) {
+    return { type: 'img', content: PROVIDER_LOGO_URLS.a2agent };
+  }
   const base = providerId.replace(/-oauth$/, '').replace(/-api$/, '');
   const svg = PROVIDER_INLINE_SVGS[providerId] ?? PROVIDER_INLINE_SVGS[base];
   if (svg) return { type: 'svg', content: svg };

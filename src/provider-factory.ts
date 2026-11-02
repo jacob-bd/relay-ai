@@ -289,9 +289,10 @@ async function createLanguageModelSingle(spec: ProviderModelSpec): Promise<Langu
   if (npm === '@ai-sdk/anthropic') {
     const { createAnthropic } = await import('@ai-sdk/anthropic');
     const root = baseURL?.replace(/\/v1\/?$/, '').replace(/\/$/, '');
-    const openRouterBearer = providerKind(spec.providerId?.trim().toLowerCase() ?? '') === 'openrouter'
-      || root?.includes('openrouter.ai') === true;
-    const anthropicOptions: Parameters<typeof createAnthropic>[0] = spec.authType === 'oauth' || openRouterBearer
+    const bearerGateway = ['openrouter', 'a2agent'].includes(providerKind(spec.providerId?.trim().toLowerCase() ?? ''))
+      || root?.includes('openrouter.ai') === true
+      || root === 'https://api.a2agent.me';
+    const anthropicOptions: Parameters<typeof createAnthropic>[0] = spec.authType === 'oauth' || bearerGateway
       ? {
           authToken: apiKey,
           ...(spec.providerId && isProviderKind(spec.providerId, 'claude-code')
@@ -330,6 +331,10 @@ async function createLanguageModelSingle(spec: ProviderModelSpec): Promise<Langu
     const options = {
       name: spec.providerId ?? 'openai-compatible',
       baseURL: baseURL ?? '',
+      // A2Agent only returns token/cache usage on streaming requests when asked.
+      // Without this, Claude/Gemini/Core display zero cache reads even on a hit.
+      ...(providerKind(spec.providerId?.trim().toLowerCase() ?? '') === 'a2agent'
+        ? { includeUsage: true } : {}),
       ...(runtimeApiKey.trim() ? { apiKey: runtimeApiKey } : {}),
       ...(spec.headers ? { headers: spec.headers } : {}),
       ...(isClinePassOAuth(spec.providerId, spec.authType) && spec.refreshToken

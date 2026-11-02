@@ -57,11 +57,22 @@ export function getProviderModelPage(models, query, requestedPage, opts = {}) {
   };
 }
 
-export function formatModelPrice(cost, isFree = false, label = 'FREE') {
+export function formatModelPrice(cost, isFree = false, label = 'FREE', referencePrice) {
+  if (!cost && !isFree && referencePrice?.cost) {
+    const price = formatModelPrice(referencePrice.cost);
+    const provider = String(referencePrice.provider).replace(/[&<>"']/g, '');
+    return `${price}<small class="price-reference">Reference estimate · ${provider}</small>`;
+  }
   if (isFree || (cost && cost.input === 0 && cost.output === 0)) {
     return `<span class="free-badge">${label}</span>`;
   }
   if (!cost || !Number.isFinite(cost.input) || !Number.isFinite(cost.output)) return '—';
   const format = value => `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
   return `${format(cost.input)} / ${format(cost.output)}`;
+}
+
+export function formatModelTestLabel(result) {
+  if (!result.ok) return 'Retry test';
+  return Number.isFinite(result.latencyMs) && result.latencyMs >= 0
+    ? `Responded (${(result.latencyMs / 1000).toFixed(1)} sec)` : 'Responded';
 }

@@ -573,6 +573,36 @@ describe('generateAnthropicResponse', () => {
     vi.resetModules();
   });
 
+  it('reports cached prompt tokens using Anthropic usage fields', async () => {
+    vi.resetModules();
+    vi.doMock('ai', () => ({
+      generateText: vi.fn(async () => ({
+        text: 'hello',
+        toolCalls: [],
+        finishReason: 'stop',
+        usage: {
+          inputTokens: 17007,
+          outputTokens: 8,
+          inputTokenDetails: { noCacheTokens: 111, cacheReadTokens: 16896, cacheWriteTokens: 0 },
+        },
+      })),
+      streamText: vi.fn(),
+      tool: vi.fn((spec: unknown) => spec),
+      jsonSchema: vi.fn((schema: unknown) => schema),
+    }));
+
+    const { generateAnthropicResponse } = await import('../src/sdk-adapter.js');
+    const body = await generateAnthropicResponse({} as never, { messages: [] }, 'a2agent-model');
+
+    expect(body.usage).toEqual({
+      input_tokens: 111,
+      output_tokens: 8,
+      cache_read_input_tokens: 16896,
+    });
+    vi.doUnmock('ai');
+    vi.resetModules();
+  });
+
   it('forceStream collects a real stream into one response instead of calling generateText', async () => {
     vi.resetModules();
     const generateText = vi.fn();
@@ -674,6 +704,30 @@ describe('writeAnthropicStream', () => {
     const delta = events.find(e => e.event === 'message_delta')!;
     expect(delta.data.delta.stop_reason).toBe('end_turn');
     expect(delta.data.usage).toEqual({ input_tokens: 5, output_tokens: 2 });
+  });
+
+  it('reports streaming cache reads without overstating uncached input', async () => {
+    const { events } = await collect([
+      { type: 'start' },
+      { type: 'text-start', id: 't1' },
+      { type: 'text-delta', id: 't1', text: 'Hello' },
+      { type: 'text-end', id: 't1' },
+      {
+        type: 'finish',
+        finishReason: 'stop',
+        totalUsage: {
+          inputTokens: 17007,
+          outputTokens: 8,
+          inputTokenDetails: { noCacheTokens: 111, cacheReadTokens: 16896, cacheWriteTokens: 0 },
+        },
+      },
+    ]);
+    const delta = events.find(e => e.event === 'message_delta')!;
+    expect(delta.data.usage).toEqual({
+      input_tokens: 111,
+      output_tokens: 8,
+      cache_read_input_tokens: 16896,
+    });
   });
 
   it('maps a mid-stream 401 to a non-retryable authentication_error instead of a generic api_error', async () => {

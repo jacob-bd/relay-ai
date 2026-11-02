@@ -9,7 +9,15 @@ export type FullStreamPart = {
   toolCallId?: string;
   input?: unknown;
   finishReason?: string;
-  totalUsage?: { inputTokens?: number; outputTokens?: number; inputTokenDetails?: { cacheReadTokens?: number } };
+  totalUsage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    inputTokenDetails?: {
+      noCacheTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+    };
+  };
   providerMetadata?: {
     google?: { thoughtSignature?: string; thought_signature?: string };
     openai?: { reasoningEncryptedContent?: string | null };

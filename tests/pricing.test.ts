@@ -143,7 +143,7 @@ describe('pricing enrich', () => {
     expect(registry.providers[1]?.modelsCache?.models[0]).not.toHaveProperty('freeStatus');
   });
 
-  it('keeps generic pricing fallback for other unmapped providers', () => {
+  it('labels generic pricing as a reference for unmapped providers', () => {
     const index = buildPricingIndex({
       models: [{
         model_id: 'custom-model',
@@ -163,6 +163,44 @@ describe('pricing enrich', () => {
       modelFormat: 'openai',
     }], index, 'custom-provider', 'custom-provider');
 
-    expect(enriched[0]?.cost).toEqual({ input: 0.5, output: 1 });
+    expect(enriched[0]?.cost).toBeUndefined();
+    expect(enriched[0]?.referencePrice?.cost).toEqual({ input: 0.5, output: 1 });
+  });
+});
+
+describe('provider-aware combined pricing', () => {
+  const model: CachedModel = { id: 'Example-1017', name: 'Example', upstreamModelId: 'Example-1017', modelFormat: 'openai' };
+  const index = buildPricingIndex({ models: [{ model_id: 'example-1017', pricing: [
+    { platform: 'other', input_per_1m_tokens: 8, output_per_1m_tokens: 16 },
+    { platform: 'a2agent', input_per_1m_tokens: 2, output_per_1m_tokens: 4 },
+  ] }] });
+  const metadata = { a2agent: { models: { 'example-1017': { cost: { input: 1, output: 3 } } } } };
+  it('preserves provider-reported prices above both catalogs', () => {
+    const [result] = enrichModelsForProviderPricing([{ ...model, cost: { input: 0.5, output: 1 }, costSource: 'provider' }], index, 'a2agent', 'a2agent-2', metadata);
+    expect(result.cost).toEqual({ input: 0.5, output: 1 });
+    expect(result.costSource).toBe('provider');
+  });
+  it('uses models.dev for the serving provider ahead of the matching feed', () => {
+    expect(enrichModelsForProviderPricing([model], index, 'a2agent', 'a2agent-2', metadata)[0]).toMatchObject({ cost: { input: 1, output: 3 }, costSource: 'models.dev' });
+  });
+  it('uses only the serving provider feed row when models.dev is missing', () => {
+    expect(enrichModelsForProviderPricing([model], index, 'a2agent', 'a2agent', {})[0].cost).toEqual({ input: 2, output: 4 });
+  });
+  it('demotes legacy generic prices and never uses a subscription zero as a reference', () => {
+    const feed = buildPricingIndex({ models: [{ model_id: 'example-1017', pricing: [{ platform: 'other', input_per_1m_tokens: 8, output_per_1m_tokens: 16 }] }] });
+    const [result] = enrichModelsForProviderPricing([{ ...model, cost: { input: 8, output: 16 } }], feed, 'a2agent', 'a2agent', {
+      'subscription-plan': { models: { 'example-1017': { cost: { input: 0, output: 0 } } } },
+      vendor: { models: { 'example-1017': { cost: { input: 1, output: 2 } } } },
+    });
+    expect(result.cost).toBeUndefined();
+    expect(result.referencePrice).toMatchObject({ cost: { input: 1, output: 2 }, provider: 'vendor' });
+    expect(result.isFree).toBe(false);
+    expect(result.freeStatus).toBe('unknown');
+  });
+  it('does not collapse dated or variant IDs', () => {
+    const [result] = enrichModelsForProviderPricing([model], buildPricingIndex({}), 'a2agent', 'a2agent', {
+      vendor: { models: { example: { cost: { input: 1, output: 2 } }, 'example-1017-uncensored': { cost: { input: 2, output: 3 } } } },
+    });
+    expect(result.referencePrice).toBeUndefined();
   });
 });

@@ -244,8 +244,9 @@ export async function startGeminiProxy(
   };
 
   // Helper to lazily resolve language model when needed
-  const getOrInitModel = async (route: ProxyRoute): Promise<LanguageModel> => {
-    let m = models.get(route.aliasId);
+  const getOrInitModel = async (route: ProxyRoute, sessionId?: string): Promise<LanguageModel> => {
+    const cacheKey = `${route.aliasId}\0${sessionId ?? ''}`;
+    let m = models.get(cacheKey);
     if (!m) {
       m = await createLanguageModel({
         npm: route.npm || '@ai-sdk/openai-compatible',
@@ -257,10 +258,11 @@ export async function startGeminiProxy(
         oauthAccountId: route.oauthAccountId,
         providerData: route.providerData,
         headers: route.headers,
+        ...(sessionId ? { sessionId } : {}),
         refreshToken: route.refreshToken,
         onTokenRefreshed: refreshed => { route.apiKey = refreshed; },
       });
-      models.set(route.aliasId, m);
+      models.set(cacheKey, m);
     }
     return m;
   };
@@ -359,11 +361,12 @@ export async function startGeminiProxy(
 
         body.contents = sanitizeModelSwitchTurns(body.contents || []);
 
-        const languageModel = await getOrInitModel(route);
+        const conversationId = extractConversationId(req.headers, body);
+        const languageModel = await getOrInitModel(route, conversationId);
         const requestHeaders = openCodeGoHeaders(
           route.providerId,
           route.baseURL,
-          extractConversationId(req.headers, body),
+          conversationId,
           route.headers,
         );
         const params = applyClaudeCodeOAuthIdentity(

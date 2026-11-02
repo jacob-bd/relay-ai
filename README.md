@@ -27,7 +27,7 @@
 
 Pick your backend:
 
-- **Your providers** — configure once with `relay-ai providers` (Command Code, ClinePass, Groq, Mistral, Nvidia, DeepSeek, custom OpenAI/Anthropic endpoints, and more)
+- **Your providers** — configure once with `relay-ai providers` (A2Agent, Command Code, ClinePass, Groq, Mistral, Nvidia, DeepSeek, custom OpenAI/Anthropic endpoints, and more)
 - **OpenCode Zen / Go** — cloud models with your OpenCode API key (optional; add via `relay-ai providers`)
 - **One-time OpenCode import** — bring existing OpenCode provider settings into the registry (`relay-ai providers import`)
 - **Google Vertex AI** — Claude on Vertex as a regular provider (`relay-ai providers add vertex-anthropic`) or via `relay-ai server --vertex`, using local gcloud credentials (no API key)
@@ -123,11 +123,13 @@ To fully remove the tool and all its configuration data, you can delete the conf
 - **Server tab in the UI:** Run the same API gateway as `relay-ai server` — favorites-only or specific providers, discovery id masking for Claude Desktop / Cowork, local or network listen mode — from a browser form instead of a terminal wizard. Shows live URLs, the API key, and the full model catalog once started, with a one-click Stop.
 - **Native provider registry:** `relay-ai providers` stores config in `~/.relay-ai/providers.json` and secrets in the OS keychain — no OpenCode binary required at launch. See **[docs/PROVIDERS.md](docs/PROVIDERS.md)** for a full list of providers and known issues.
 - **Multiple accounts and renaming:** Hold two (or more) ChatGPT, Claude, Antigravity, Copilot, xAI, ClinePass, API-key, or OpenCode Zen/Go accounts side by side — each with its own credential, unique name, and models in every picker — and rename any provider. Add one with `--new`, or **Add another account** in the menu or `relay-ai ui`. See **[docs/ACCOUNTS.md](docs/ACCOUNTS.md)**
-- **Provider templates:** Add Command Code, ClinePass, Groq, Mistral, Together, OpenRouter, and 15+ SDK-backed providers, plus custom OpenAI/Anthropic-compatible endpoints
+- **Provider templates:** Add A2Agent, Command Code, ClinePass, Groq, Mistral, Together, OpenRouter, and 15+ SDK-backed providers, plus custom OpenAI/Anthropic-compatible endpoints
 - **OpenCode import:** One-time migration from OpenCode (`providers import`); validates API keys and skips placeholders like `anything`
 - **OpenCode Zen / Go:** Optional cloud backends when you have an OpenCode API key
 - **SDK adapter proxy:** Non-Anthropic providers route through the Vercel AI SDK (same packages OpenCode uses), so Claude Code still speaks Anthropic format. Labeled `(via proxy)` in the picker
-- **Favorite models:** Save up to 50 and switch mid-session with Claude Code's `/model` command
+- **Favorite models:** Save up to 50 and switch mid-session with Claude Code's `/model` command. Or choose **All provider models** at launch to put one provider's whole catalog in the switcher without saving favorites
+- **Test a model before you launch:** A **Test** button sends one short request through Relay and reports the response time, so an access problem shows up before your agent session does
+- **Honest prices:** Prices come from the provider when it publishes them, otherwise from models.dev or the pricing feed; a cross-provider estimate is labelled as one
 - **Codex SubAgent:** Build a separate, initially empty one-model catalog for Codex delegation; it never imports or synchronizes with General Favorites
 - **Smart model pickers:** Recent models per provider, search for large lists (>25), paginated browse (15 per page)
 - **Refresh model lists:** `relay-ai providers refresh-models` updates cached catalogs per provider

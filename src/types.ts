@@ -19,6 +19,12 @@ export interface ModelCost {
   cache_write?: number;
 }
 
+export interface ReferencePrice {
+  cost: ModelCost;
+  provider: string;
+  source: 'models.dev' | 'pricing-feed';
+}
+
 export interface ModelInfo {
   id: string;
   name: string;
@@ -28,6 +34,7 @@ export interface ModelInfo {
   sourceBackend: 'zen' | 'go';
   modelFormat: ModelFormat;
   cost?: ModelCost;
+  referencePrice?: ReferencePrice;
   contextWindow?: number;
   /** Broad model metadata: model can produce reasoning/thinking output. */
   reasoning?: boolean;
@@ -48,6 +55,7 @@ export interface LocalProviderModel {
   npm?: string;            // OpenCode api.npm package, e.g. @ai-sdk/xai (SDK routing)
   apiBaseUrl?: string;     // raw api.url, for openai-compatible/openrouter SDK base URL
   cost?: ModelCost;
+  referencePrice?: ReferencePrice;
   contextWindow?: number;
   /** Provider-reported request parameters, e.g. OpenRouter supported_parameters. */
   supportedParameters?: string[];
@@ -70,6 +78,8 @@ export interface LocalProviderModel {
 }
 
 export interface LocalProvider {
+  /** Transient CLI choice; never persisted in preferences. */
+  launchAllModels?: boolean;
   id: string;
   name: string;
   /** Set when the user renamed the provider; pickers must not decorate the name. */

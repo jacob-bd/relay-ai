@@ -57,6 +57,16 @@ var init_provider_templates = __esm({
   "src/provider-templates.ts"() {
     PROVIDER_TEMPLATES = [
       {
+        id: "a2agent",
+        name: "A2Agent",
+        authType: "api",
+        npm: "@ai-sdk/openai-compatible",
+        defaultBaseUrl: "https://api.a2agent.me/v1",
+        signupUrl: "https://a2agent.me/login",
+        modelSource: "api-list",
+        supported: true
+      },
+      {
         id: "cline-pass",
         name: "ClinePass",
         authType: "api",
@@ -496,4 +506,4 @@ export {
   provider_templates_exports,
   init_provider_templates
 };
-//# sourceMappingURL=chunk-R34EP35U.js.map
+//# sourceMappingURL=chunk-RKRPDZVV.js.map

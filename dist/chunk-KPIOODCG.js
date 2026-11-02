@@ -16,11 +16,11 @@ import {
   resolveContextWindow,
   resolveModelsDevSlug,
   shouldHideModel
-} from "./chunk-NAXLYXCF.js";
+} from "./chunk-JY2OMGE2.js";
 import {
   getTemplateById,
   init_provider_templates
-} from "./chunk-R34EP35U.js";
+} from "./chunk-RKRPDZVV.js";
 
 // src/models.ts
 var BRAND_MAP = [
@@ -515,4 +515,4 @@ export {
   providerRefreshToken,
   reconcileCachedModelProtocol
 };
-//# sourceMappingURL=chunk-VBSCGMT5.js.map
+//# sourceMappingURL=chunk-KPIOODCG.js.map

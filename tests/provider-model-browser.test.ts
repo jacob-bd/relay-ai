@@ -84,6 +84,15 @@ describe('provider model browser', () => {
     expect(providerLogoHtml('unknown-provider', 'Unknown Provider')).toBe('U');
   });
 
+  it('uses the bundled A2Agent website logo for every account', async () => {
+    const { providerLogoHtml } = await loadProviderLogoHelpers();
+    for (const id of ['a2agent', 'a2agent-2', 'a2agent-10']) {
+      expect(providerLogoHtml(id, 'A2Agent')).toContain('src="icon-a2agent.png"');
+    }
+    const logo = readFileSync(new URL('../src/ui/public/icon-a2agent.png', import.meta.url));
+    expect(logo.subarray(1, 4).toString()).toBe('PNG');
+  });
+
   it('uses the official Qwen mark for both Qwen Cloud billing providers', async () => {
     const { providerLogoHtml } = await loadProviderLogoHelpers();
 
@@ -110,4 +119,13 @@ describe('provider model browser', () => {
     expect(html).toContain('href="https://github.com/jacob-bd/relay-ai"');
     expect(html).toContain('aria-label="Open the relay-ai GitHub repository"');
   });
+});
+
+it('shows reference estimates separately and response time in seconds', async () => {
+  const { formatModelPrice, formatModelTestLabel, isFreeModel } = await loadBrowserHelpers();
+  const referencePrice = { cost: { input: 0.15, output: 0.6 }, provider: 'minimax', source: 'models.dev' };
+  expect(formatModelPrice(undefined, false, 'FREE', referencePrice)).toContain('Reference estimate · minimax');
+  expect(isFreeModel({ referencePrice: { cost: { input: 0, output: 0 } } })).toBe(false);
+  expect(formatModelTestLabel({ ok: true, latencyMs: 4230 })).toBe('Responded (4.2 sec)');
+  expect(formatModelTestLabel({ ok: false, latencyMs: 4230 })).toBe('Retry test');
 });

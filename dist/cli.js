@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-JE2TUN77.js";
+} from "./chunk-TFFFXRHI.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -119,10 +119,10 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-N6BM2QES.js";
+} from "./chunk-IX2SO7OQ.js";
 import {
   validateCustomEndpointUrl
-} from "./chunk-HM6YSVSA.js";
+} from "./chunk-VAF7IDKG.js";
 import {
   OPENCODE_SESSION_HEADER,
   buildImportProviderList,
@@ -138,7 +138,7 @@ import {
   resolveRefreshCredential,
   syntheticTemplate,
   toOAuthRegistryId
-} from "./chunk-VBSCGMT5.js";
+} from "./chunk-KPIOODCG.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -240,7 +240,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-NAXLYXCF.js";
+} from "./chunk-JY2OMGE2.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -250,7 +250,7 @@ import {
   listSupportedTemplates,
   listVisibleOAuthTemplates,
   supportsAdditionalApiAccounts
-} from "./chunk-R34EP35U.js";
+} from "./chunk-RKRPDZVV.js";
 import {
   DEFAULT_VERTEX_MODELS,
   getAppHome,
@@ -1118,6 +1118,10 @@ function claudeTransparentModeOptions(modelLabel) {
 }
 var BROWSE_ALL = "__browse_all__";
 var REFRESH = "__refresh__";
+var ALL_PROVIDER_MODELS = "__all_provider_models__";
+function allProviderModelsOption(provider) {
+  return provider.models.length > 0 && provider.models.length < 50 ? [{ value: ALL_PROVIDER_MODELS, label: "\u{1F4DA} All provider models (favorites will not be used)", hint: String(provider.models.length) + " models" }] : [];
+}
 function refreshOption() {
   return navOption(REFRESH, "\u21BB Refresh models", "Fetch the latest list from the provider");
 }
@@ -1290,16 +1294,17 @@ async function selectLargeCatalog(models, browseList, toOption, message, initial
     if (isSelectedModel(result)) return result;
   }
 }
-async function selectModelWithSearch(models, toOption, message, initialModelId, browseList, refreshable = false) {
+async function selectModelWithSearch(models, toOption, message, initialModelId, browseList, refreshable = false, allModelsOption = []) {
   if (models.length === 0) return null;
   const orderedBrowse = browseList ?? sortModelsByBrand(models);
-  if (models.length <= MODEL_SEARCH_THRESHOLD) {
+  if (models.length <= MODEL_SEARCH_THRESHOLD || allModelsOption.length > 0) {
     const options = [
+      ...allModelsOption,
       ...models.map(toOption),
       ...refreshable ? [refreshOption()] : [],
       navOption("__back__", "\u2190 Go back", "")
     ];
-    const initialValue = initialModelId && options.some((o) => o.value === initialModelId) ? initialModelId : options[0]?.value;
+    const initialValue = initialModelId && options.some((o) => o.value === initialModelId) ? initialModelId : models[0]?.id;
     const picked = await p3.select({
       message,
       options,
@@ -1309,6 +1314,7 @@ async function selectModelWithSearch(models, toOption, message, initialModelId, 
       return "back";
     }
     if (String(picked) === REFRESH) return "refresh";
+    if (String(picked) === ALL_PROVIDER_MODELS) return "all";
     const selected = models.find((m) => m.id === String(picked));
     if (!selected) return null;
     return selected;
@@ -1321,18 +1327,20 @@ function noteEnvConflicts(conflicts) {
 function modelToOption(model, hint) {
   return modelSelectOption(model, hint);
 }
-async function browseAllModels(provider, prefs, refreshable = false) {
+async function browseAllModels(provider, prefs, refreshable = false, allowAllModels = false) {
   return selectModelWithSearch(
     provider.models,
     (m) => modelToOption(m),
     "Which model?",
     prefs.lastModel,
     void 0,
-    refreshable
+    refreshable,
+    allowAllModels ? allProviderModelsOption(provider) : []
   );
 }
 async function pickProviderModel(provider, prefs, opts) {
   const refreshable = Boolean(opts.refresh);
+  provider.launchAllModels = false;
   while (true) {
     const recentModels = (prefs.recentModelsByProvider?.[provider.id] ?? []).slice(0, opts.maxRecent).map((id) => provider.models.find((m) => m.id === id)).filter((m) => m !== void 0);
     let picked;
@@ -1340,6 +1348,7 @@ async function pickProviderModel(provider, prefs, opts) {
       const choice = await p3.select({
         message: opts.message,
         options: [
+          ...opts.allowAllModels ? allProviderModelsOption(provider) : [],
           ...recentModels.map((m) => modelToOption(m, "recent")),
           navOption(BROWSE_ALL, "Browse all models \u2192", `${provider.models.length} available`),
           ...refreshable ? [refreshOption()] : [],
@@ -1348,17 +1357,24 @@ async function pickProviderModel(provider, prefs, opts) {
         initialValue: recentModels[0].id
       });
       if (p3.isCancel(choice) || String(choice) === "__back__") return "back";
-      if (String(choice) === REFRESH) {
+      if (String(choice) === ALL_PROVIDER_MODELS) {
+        picked = "all";
+      } else if (String(choice) === REFRESH) {
         picked = "refresh";
       } else if (String(choice) === BROWSE_ALL) {
-        picked = await browseAllModels(provider, prefs, refreshable);
+        picked = await browseAllModels(provider, prefs, refreshable, opts.allowAllModels);
         if (picked === "back") continue;
       } else {
         picked = recentModels.find((m) => m.id === String(choice));
       }
     } else {
-      picked = await browseAllModels(provider, prefs, refreshable);
+      picked = await browseAllModels(provider, prefs, refreshable, opts.allowAllModels);
       if (picked === "back") return "back";
+    }
+    if (picked === "all") {
+      provider.launchAllModels = true;
+      p3.log.info("\u{1F4DA} All provider models selected (favorites will not be used).");
+      return recentModels[0] ?? provider.models.find((model) => model.id === prefs.lastModel) ?? provider.models[0] ?? null;
     }
     if (picked === "refresh") {
       await opts.refresh();
@@ -1368,7 +1384,7 @@ async function pickProviderModel(provider, prefs, opts) {
   }
 }
 async function pickLocalModel(provider, conflicts, prefs, refresh) {
-  const selectedModel = await pickProviderModel(provider, prefs, { message: "Which model?", maxRecent: MAX_RECENT, refresh });
+  const selectedModel = await pickProviderModel(provider, prefs, { message: "Which model?", maxRecent: MAX_RECENT, refresh, allowAllModels: true });
   if (selectedModel === "back" || !selectedModel) return selectedModel;
   noteEnvConflicts(conflicts);
   const modelLabel = formatCodexModelLabel(selectedModel);
@@ -1824,7 +1840,7 @@ function buildCodexProxyRoutesFromResolved(resolved, providersById) {
   }
   return routes;
 }
-async function resolveCodexFavorites(activeProvider, selectedModel, compatible, favorites, agent) {
+async function resolveCodexFavorites(activeProvider, selectedModel, compatible, favorites, agent, max = 20) {
   const ctx = {
     agent,
     localProviders: compatible,
@@ -1841,7 +1857,8 @@ async function resolveCodexFavorites(activeProvider, selectedModel, compatible, 
   const { resolved, droppedFavorites } = await buildFavoritesList(
     startingResolved,
     favorites,
-    ctx
+    ctx,
+    max
   );
   if (droppedFavorites.length > 0) {
     p5.log.warn(
@@ -1878,10 +1895,11 @@ async function resolveCodexMixedModels(input) {
     ctx
   );
   if (!selected) throw new Error("Selected Codex model is no longer available");
-  const visibleResult = await buildFavoritesList(selected, input.generalFavorites, ctx, 20, { trackCapacitySkipped: true });
+  const catalogModels = input.allProviderModels ? input.activeProvider.models.map((model) => ({ providerId: input.activeProvider.id, modelId: model.id })) : input.generalFavorites;
+  const visibleResult = await buildFavoritesList(selected, catalogModels, ctx, input.allProviderModels ? 50 : 20, { trackCapacitySkipped: true });
   const listed = new Set(visibleResult.resolved.map((entry) => `${entry.providerId}\0${entry.model.id}`));
   const siblings = input.activeProvider.models.filter((model) => !listed.has(`${input.activeProvider.id}\0${model.id}`)).map((model) => ({ providerId: input.activeProvider.id, modelId: model.id }));
-  const siblingResult = await buildFavoritesList(void 0, siblings, ctx, Math.max(0, 20 - visibleResult.resolved.length));
+  const siblingResult = await buildFavoritesList(void 0, siblings, ctx, Math.max(0, (input.allProviderModels ? 50 : 20) - visibleResult.resolved.length));
   const visible = [...visibleResult.resolved, ...siblingResult.resolved];
   const subagentResult = await buildFavoritesList(void 0, input.subagentFavorites, ctx, 20, { trackCapacitySkipped: true });
   const all = [...visible];
@@ -6538,7 +6556,7 @@ async function pickCodexProvider(providers, prefs, hasFavorites = false, initial
   return providers.find((lp) => lp.id === chosen) ?? null;
 }
 async function pickCodexModel(provider, prefs, refresh) {
-  return pickProviderModel(provider, prefs, { message: `Model for ${provider.name}?`, maxRecent: 3, refresh });
+  return pickProviderModel(provider, prefs, { message: `Model for ${provider.name}?`, maxRecent: 3, refresh, allowAllModels: true });
 }
 function rejectManagedFlags(codexArgs) {
   const blocked = /* @__PURE__ */ new Set(["--profile", "-m", "--model", "--provider", "--trace", "-p"]);
@@ -7397,14 +7415,14 @@ Error: ${launchPlan.error}
     }
     return 0;
   }
-  const favorites = prefs.favoriteModels ?? [];
+  let favorites = prefs.favoriteModels ?? [];
   let mixedMode = launch.codexLaunchMode === "mixed";
   if (!configOnly && isTty && !launchPlan.skip && launch.codexLaunchMode === void 0) {
     const selectedLaunchMode = await pickCodexLaunchMode();
     if (!selectedLaunchMode) return 0;
     mixedMode = selectedLaunchMode === "mixed";
   }
-  const favoritesActive = favorites.length > 0 && !launchPlan.skip && !mixedMode;
+  let favoritesActive = favorites.length > 0 && !launchPlan.skip && !mixedMode;
   const favoritesPickable = favorites.length > 0 && !launchPlan.skip;
   if (favoritesActive && !configOnly) {
     p10.log.info(
@@ -7472,6 +7490,10 @@ Error: ${launchPlan.error}
       }
     }
   }
+  if (activeProvider.launchAllModels) {
+    favorites = activeProvider.models.map((model) => ({ providerId: activeProvider.id, modelId: model.id }));
+    favoritesActive = !mixedMode;
+  }
   let resolvedFavorites = [];
   let providersById = /* @__PURE__ */ new Map();
   if (favoritesActive) {
@@ -7480,7 +7502,8 @@ Error: ${launchPlan.error}
       selectedModel,
       compatible,
       favorites,
-      "codex"
+      "codex",
+      activeProvider.launchAllModels ? MAX_MODEL_CATALOG : void 0
     );
     resolvedFavorites = res.resolvedFavorites;
     providersById = res.providersById;
@@ -7504,6 +7527,7 @@ Error: ${launchPlan.error}
         selectedModel,
         compatible,
         generalFavorites: favorites,
+        allProviderModels: activeProvider.launchAllModels,
         subagentFavorites: prefs.codexSubagentModels ?? []
       });
       assertConfiguredCodexSubagentsResolved(prefs.codexSubagentModels ?? [], mixedModels);
@@ -7868,7 +7892,7 @@ async function pickGeminiProvider(providers, prefs, hasFavorites = false, initia
   return providers.find((lp) => lp.id === chosen) ?? null;
 }
 async function pickGeminiModel(provider, prefs, refresh) {
-  return pickProviderModel(provider, prefs, { message: `Model for ${provider.name}?`, maxRecent: 3, refresh });
+  return pickProviderModel(provider, prefs, { message: `Model for ${provider.name}?`, maxRecent: 3, refresh, allowAllModels: true });
 }
 function rejectGeminiManagedFlags(geminiArgs) {
   const blocked = /* @__PURE__ */ new Set(["--provider", "--model", "-m", "--trace"]);
@@ -8067,8 +8091,9 @@ async function startGeminiProxy(routes, debug = false) {
   const onException = (error) => {
     plog(`Uncaught Exception: ${error.stack || error.message}`);
   };
-  const getOrInitModel = async (route) => {
-    let m = models.get(route.aliasId);
+  const getOrInitModel = async (route, sessionId) => {
+    const cacheKey = `${route.aliasId}\0${sessionId ?? ""}`;
+    let m = models.get(cacheKey);
     if (!m) {
       m = await createLanguageModel({
         npm: route.npm || "@ai-sdk/openai-compatible",
@@ -8080,12 +8105,13 @@ async function startGeminiProxy(routes, debug = false) {
         oauthAccountId: route.oauthAccountId,
         providerData: route.providerData,
         headers: route.headers,
+        ...sessionId ? { sessionId } : {},
         refreshToken: route.refreshToken,
         onTokenRefreshed: (refreshed) => {
           route.apiKey = refreshed;
         }
       });
-      models.set(route.aliasId, m);
+      models.set(cacheKey, m);
     }
     return m;
   };
@@ -8175,11 +8201,12 @@ Available: ${available}`, isStream);
         const route = sessionRouteOverride ?? (lookupGeminiRoute(routes, requestedModel) ?? defaultRoute);
         plog(`Route selected: ${route.aliasId} (upstream model: ${route.realModelId})`);
         body.contents = sanitizeModelSwitchTurns(body.contents || []);
-        const languageModel = await getOrInitModel(route);
+        const conversationId = extractConversationId(req.headers, body);
+        const languageModel = await getOrInitModel(route, conversationId);
         const requestHeaders = openCodeGoHeaders(
           route.providerId,
           route.baseURL,
-          extractConversationId(req.headers, body),
+          conversationId,
           route.headers
         );
         const params = applyClaudeCodeOAuthIdentity(
@@ -8741,7 +8768,7 @@ Error: ${launchPlan.error}
     reasoningEffortConflict: m.reasoningEffortConflict
   }));
   const resolvedFavs = [];
-  const favorites = prefs.favoriteModels ?? [];
+  const favorites = activeProvider.launchAllModels ? [] : prefs.favoriteModels ?? [];
   for (const fav of favorites) {
     const provider = compatible.find((lp) => lp.id === fav.providerId);
     const model = provider?.models.find((m) => m.id === fav.modelId);
@@ -10197,7 +10224,7 @@ var MAX_REASONING_ECHOES_PER_CONVERSATION = 20;
 function isCloudCodeOAuthRoute(route) {
   return isProviderKind(route.providerId, "antigravity") && route.authType === "oauth" && route.modelFormat === "cloud-code";
 }
-async function createRouteLanguageModel(route) {
+async function createRouteLanguageModel(route, sessionId) {
   const spec = {
     npm: route.npm,
     modelId: route.upstreamModelId,
@@ -10206,7 +10233,8 @@ async function createRouteLanguageModel(route) {
     providerId: route.providerId,
     authType: route.authType,
     oauthAccountId: route.oauthAccountId,
-    providerData: route.providerData
+    providerData: route.providerData,
+    ...sessionId ? { sessionId } : {}
   };
   if (route.headers !== void 0) spec.headers = route.headers;
   if (route.refreshToken) {
@@ -10314,6 +10342,11 @@ async function startCloudCodeGateway(routes, opts = {}) {
           return value;
         }).slice(0, 500);
         log15(`[gateway]   body-preview: ${preview}`);
+        const declaredTools = parsed.request?.tools;
+        if (declaredTools) {
+          const toolNames = declaredTools.flatMap((group) => group.functionDeclarations ?? []).map((decl) => decl.name).filter((name) => typeof name === "string");
+          log15(`[gateway]   declared tools (${toolNames.length}): ${toolNames.join(", ")}`);
+        }
         const request2 = parsed.request;
         if (request2 && typeof request2 === "object") {
           const { contents: _c, systemInstruction: _s, tools: _t, ...settings } = request2;
@@ -10371,10 +10404,11 @@ async function startCloudCodeGateway(routes, opts = {}) {
           if (trace) log15(`[gateway]   provider options: ${JSON.stringify(baseProviderOptions ?? {})}`);
           const isStream = lowerUrl.includes("stream");
           const conversationKey = conversationKeyFromRequest(parsed);
+          const conversationSessionId = antigravityConversationId(parsed, req.headers);
           const requestHeaders = openCodeGoHeaders(
             route.providerId,
             route.baseURL,
-            antigravityConversationId(parsed, req.headers),
+            conversationSessionId,
             route.headers
           );
           const requestOptions = {
@@ -10388,6 +10422,7 @@ async function startCloudCodeGateway(routes, opts = {}) {
           if (isStream) {
             handleStreamingRequest(res, route, baseProviderOptions, parsed, log15, {
               requestOptions,
+              sessionId: conversationSessionId,
               onReasoningWithToolCall: rememberReasoning,
               trace
             }).catch((err) => {
@@ -10402,6 +10437,7 @@ async function startCloudCodeGateway(routes, opts = {}) {
           } else {
             handleUnaryRequest(res, route, baseProviderOptions, parsed, log15, {
               requestOptions,
+              sessionId: conversationSessionId,
               onReasoningWithToolCall: rememberReasoning,
               trace
             }).catch((err) => {
@@ -10803,7 +10839,7 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log15
     providerOptions,
     sdkParams.providerOptions
   );
-  const langModel = await createRouteLanguageModel(route);
+  const langModel = await createRouteLanguageModel(route, options.sessionId);
   const responseId = `relay-${Date.now()}`;
   const { stream } = streamText3({
     model: langModel,
@@ -10982,7 +11018,7 @@ async function handleUnaryRequest(res, route, providerOptions, parsed, log15, op
     providerOptions,
     sdkParams.providerOptions
   );
-  const langModel = await createRouteLanguageModel(route);
+  const langModel = await createRouteLanguageModel(route, options.sessionId);
   const responseId = `relay-${Date.now()}`;
   const result = await generateText3({
     model: langModel,
@@ -12216,7 +12252,7 @@ async function resolveAntigravityLaunch(prefs, boot) {
   const catalogSpinner = p13.spinner();
   catalogSpinner.start("Loading providers...");
   try {
-    catalog = await fetchProviderCatalog();
+    catalog = await fetchProviderCatalog({ agent: "antigravity" });
   } catch (err) {
     catalogSpinner.stop("");
     p13.log.error(String(err instanceof Error ? err.message : err));
@@ -12270,7 +12306,7 @@ async function resolveAntigravityLaunch(prefs, boot) {
         "antigravity",
         prefs,
         async () => {
-          const fresh = providersForTarget(providersForPicker(await fetchProviderCatalog()), "antigravity");
+          const fresh = providersForTarget(providersForPicker(await fetchProviderCatalog({ agent: "antigravity" })), "antigravity");
           for (const lp of allProviders) {
             const loaded = fresh.find((f) => f.id === lp.id);
             if (loaded) lp.models = loaded.models;
@@ -12290,7 +12326,7 @@ async function resolveAntigravityLaunch(prefs, boot) {
       return { ...favoriteSelection, allProviders };
     }
     const activeProvider = allProviders.find((lp) => lp.id === chosen);
-    const pickedModelResult = await pickLocalModel(activeProvider, conflicts, prefs, pickerRefresh(activeProvider, async () => providersForTarget(providersForPicker(await fetchProviderCatalog()), "antigravity").find((lp) => lp.id === activeProvider.id)));
+    const pickedModelResult = await pickLocalModel(activeProvider, conflicts, prefs, pickerRefresh(activeProvider, async () => providersForTarget(providersForPicker(await fetchProviderCatalog({ agent: "antigravity" })), "antigravity").find((lp) => lp.id === activeProvider.id)));
     if (pickedModelResult === "back") {
       currentInitialProvider = activeProvider.id;
       continue;
@@ -12304,7 +12340,7 @@ async function resolveAndBuildRoutes(provider, model, allProviders, prefs, opts)
     provider,
     model,
     allProviders,
-    favorites: prefs.favoriteModels ?? [],
+    favorites: provider.launchAllModels ? provider.models.map((model2) => ({ providerId: provider.id, modelId: model2.id })) : prefs.favoriteModels ?? [],
     maxRoutes: opts.maxRoutes,
     effortMode: opts.effortMode
   });
@@ -12314,8 +12350,15 @@ async function resolveAndBuildRoutes(provider, model, allProviders, prefs, opts)
   }
   if (result.routes.length > 1) {
     const effortNote = opts.effortMode === "slider" ? `each model's low/medium/high/max share one row with an effort slider.` : opts.effortMode === "submenu" ? `each model's low/medium/high share one row with an effort submenu.` : `effort levels are listed separately.`;
-    p13.log.info(`Favorites mode active \u2014 ${result.routes.length} entries; ${effortNote}`);
-    p13.log.info("Edit with `relay-ai favorites`.");
+    if (provider.launchAllModels) {
+      const modelCount = new Set(result.routes.map((route) => `${route.providerId}:${route.modelId}`)).size;
+      p13.log.info(
+        `All provider models mode active \u2014 ${modelCount} models, ${result.routes.length} entries; favorites will not be used. ${effortNote}`
+      );
+    } else {
+      p13.log.info(`Favorites mode active \u2014 ${result.routes.length} entries; ${effortNote}`);
+      p13.log.info("Edit with `relay-ai favorites`.");
+    }
   }
   if (result.droppedFavorites.length > 0) {
     p13.log.warn(
@@ -13639,21 +13682,15 @@ async function runCodexAppCommand(args, opts = {}) {
     return 0;
   }
   const prefs = loadPreferences();
-  const favorites = prefs.favoriteModels ?? [];
+  let favorites = prefs.favoriteModels ?? [];
   let mixedMode = opts.codexLaunchMode === "mixed";
   if (!configOnly && isTty && !(launchProvider && opts.launchModel) && opts.codexLaunchMode === void 0) {
     const selectedLaunchMode = await pickCodexLaunchMode();
     if (!selectedLaunchMode) return 0;
     mixedMode = selectedLaunchMode === "mixed";
   }
-  const favoritesActive = favorites.length > 0 && !mixedMode;
+  let favoritesActive = favorites.length > 0 && !mixedMode;
   const favoritesPickable = favorites.length > 0;
-  if (favoritesActive && !configOnly) {
-    p14.log.info(
-      `Favorites mode active \u2014 Codex App picker will show ${favorites.length + 1} models (1 starting + ${favorites.length} favorites).`
-    );
-    p14.log.info("Edit with `relay-ai models`.");
-  }
   let activeProvider = providerForCodexPicker(
     compatible.find((lp) => lp.id === prefs.lastCodexProvider) ?? compatible[0]
   );
@@ -13732,6 +13769,22 @@ async function runCodexAppCommand(args, opts = {}) {
       }
     }
   }
+  if (activeProvider.launchAllModels) {
+    favorites = activeProvider.models.map((model) => ({ providerId: activeProvider.id, modelId: model.id }));
+    favoritesActive = !mixedMode;
+  }
+  if (favoritesActive && !configOnly) {
+    if (activeProvider.launchAllModels) {
+      p14.log.info(
+        `All provider models mode active \u2014 Codex App picker will show up to ${Math.min(favorites.length, MAX_MODEL_CATALOG)} models; saved favorites are not used.`
+      );
+    } else {
+      p14.log.info(
+        `Favorites mode active \u2014 Codex App picker will show ${favorites.length + 1} models (1 starting + ${favorites.length} favorites).`
+      );
+      p14.log.info("Edit with `relay-ai models`.");
+    }
+  }
   const apiKey = await resolveLocalProviderApiKey(activeProvider);
   if (!apiKey) {
     if (!configOnly) {
@@ -13751,7 +13804,7 @@ async function runCodexAppCommand(args, opts = {}) {
   let resolvedFavorites = [];
   let providersById = /* @__PURE__ */ new Map();
   if (favoritesActive) {
-    const res = await resolveCodexFavorites(activeProvider, selectedModel, compatible, favorites, "codex-app");
+    const res = await resolveCodexFavorites(activeProvider, selectedModel, compatible, favorites, "codex-app", activeProvider.launchAllModels ? MAX_MODEL_CATALOG : void 0);
     resolvedFavorites = res.resolvedFavorites;
     providersById = res.providersById;
   }
@@ -13766,6 +13819,7 @@ async function runCodexAppCommand(args, opts = {}) {
         selectedModel,
         compatible,
         generalFavorites: favorites,
+        allProviderModels: activeProvider.launchAllModels,
         subagentFavorites: prefs.codexSubagentModels ?? []
       });
       if (mixedModels.capacitySkipped.length > 0) {
@@ -17155,7 +17209,7 @@ async function runClaudeCommand(parsed) {
   }
   const prefs = dryRun ? {} : loadPreferences();
   const conflicts = detectConflicts();
-  const favorites = dryRun ? [] : prefs.favoriteModels ?? [];
+  let favorites = dryRun ? [] : prefs.favoriteModels ?? [];
   const httpProxyOnly = Boolean(httpProxy && !launchProvider && !launchModel);
   const launchPlan = httpProxyOnly ? { skip: true, target: null } : planLaunchWizard({
     explicit: { providerId: launchProvider, modelId: launchModel },
@@ -17169,7 +17223,7 @@ Error: ${launchPlan.error}
 `));
     return 1;
   }
-  const switchMenuActive = favorites.length > 0 && !launchPlan.skip;
+  let switchMenuActive = favorites.length > 0 && !launchPlan.skip;
   if (!launchAllowsNonTty(launchPlan, httpProxyOnly) && !process.stdin.isTTY) {
     console.error(
       pc11.red(
@@ -17343,6 +17397,10 @@ Error: ${launchPlan.error}
         break;
       }
     }
+  }
+  if (activeProvider.launchAllModels) {
+    favorites = activeProvider.models.map((model) => ({ providerId: activeProvider.id, modelId: model.id }));
+    switchMenuActive = true;
   }
   let useHttpProxy = Boolean(httpProxy);
   if (!httpProxy && !launchPlan.skip && supportsClaudeTransparentMode(selectedModel)) {
@@ -17623,7 +17681,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-WX6AG6OV.js");
+    const { runUiCommand } = await import("./ui-command-Q6BBSKEH.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

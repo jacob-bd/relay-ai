@@ -379,6 +379,7 @@ export function startProxyCatalog(
             oauthAccountId: route.oauthAccountId,
             providerData: route.providerData,
             headers: route.headers,
+            sessionId,
             refreshToken: route.refreshToken,
             onTokenRefreshed: refreshed => { route.apiKey = refreshed; },
             useResponsesLite: route.useResponsesLite,

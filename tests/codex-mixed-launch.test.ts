@@ -13,6 +13,17 @@ const nativeCatalog: NativeCodexCatalogSnapshot = {
 const relay = (providerId: string, id: string) => ({ providerId, providerName: providerId, apiKey: 'key', model: { id, name: id, modelFormat: 'openai', npm: '@ai-sdk/openai-compatible', upstreamModelId: id } }) as never;
 
 describe('Codex mixed launch planning', () => {
+
+  it('includes all 49 provider models without saved favorites in all-models mode', async () => {
+    const model = (id: string) => ({ id, name: id, modelFormat: 'openai' as const, npm: '@ai-sdk/openai-compatible', upstreamModelId: id, contextWindow: 200_000 });
+    const provider = { id: 'small', name: 'Small', authType: 'none' as const, models: Array.from({ length: 49 }, (_, i) => model('m' + i)) };
+    const other = { id: 'other', name: 'Other', authType: 'none' as const, models: [model('favorite')] };
+    const result = await resolveCodexMixedModels({ activeProvider: provider, selectedModel: provider.models[5]!, compatible: [provider, other], generalFavorites: [{ providerId: other.id, modelId: 'favorite' }], subagentFavorites: [], allProviderModels: true });
+    expect(result.visible).toHaveLength(49);
+    expect(result.visible[0]?.model.id).toBe('m5');
+    expect(result.visible.every(entry => entry.providerId === 'small')).toBe(true);
+    expect(result.capacitySkipped).toEqual([]);
+  });
   it('reports a favorite excluded because the selected model consumes a catalog slot', async () => {
     const models = Array.from({ length: 21 }, (_, index) => ({
       id: `test-model-${index}`,

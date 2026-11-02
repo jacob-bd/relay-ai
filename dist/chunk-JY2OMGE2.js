@@ -2,7 +2,7 @@
 import {
   PROVIDER_TEMPLATES,
   init_provider_templates
-} from "./chunk-R34EP35U.js";
+} from "./chunk-RKRPDZVV.js";
 import {
   getAppHome,
   getConfigPath,
@@ -1475,28 +1475,97 @@ function lookupModelCost(index, modelId, platform) {
   }
   return void 0;
 }
-function enrichModelsWithPricing(models, index, platform) {
-  return models.map((model) => {
-    const cost = lookupModelCost(index, model.id, platform) ?? lookupModelCost(index, model.upstreamModelId, platform);
-    if (!cost) return model;
-    const freeStatus = classifyFreeStatus({
-      model: { ...model, cost },
-      // Keep provider-granted free access (e.g. Cloudflare's daily allowance) when
-      // real pricing resolves later.
+function enrichModelsForProviderPricing(models, index, templateId, providerId, metadata = loadModelsDevCache()) {
+  if (PRICING_OPT_OUT_TEMPLATE_IDS.has(templateId) || PRICING_OPT_OUT_TEMPLATE_IDS.has(providerId)) {
+    return models.map(({ cost: _cost, costSource: _source, referencePrice: _reference, isFree: _isFree, freeStatus: _freeStatus, ...model }) => model);
+  }
+  return models.map((model) => resolveProviderPrice(model, index, templateId, providerId, metadata));
+}
+function priceKey(id) {
+  return id.trim().toLowerCase().split("/").pop();
+}
+function validCost(cost) {
+  return !!cost && Number.isFinite(cost.input) && Number.isFinite(cost.output) && cost.input >= 0 && cost.output >= 0;
+}
+var metadataPriceIndexes = /* @__PURE__ */ new WeakMap();
+function metadataPriceIndex(metadata) {
+  let index = metadataPriceIndexes.get(metadata);
+  if (index) return index;
+  index = /* @__PURE__ */ new Map();
+  for (const [bucket, provider] of Object.entries(metadata)) {
+    const models = /* @__PURE__ */ new Map();
+    for (const [id, row] of Object.entries(provider.models ?? {})) {
+      if (validCost(row.cost)) models.set(priceKey(id), row.cost);
+    }
+    index.set(bucket, models);
+  }
+  metadataPriceIndexes.set(metadata, index);
+  return index;
+}
+function resolveProviderPrice(model, index, templateId, providerId, metadata) {
+  const keys = /* @__PURE__ */ new Set([priceKey(model.id), priceKey(model.upstreamModelId ?? model.id)]);
+  const slug = resolveModelsDevSlug(templateId || providerId);
+  const prices = metadataPriceIndex(metadata);
+  const matches = (bucket) => [...keys].flatMap((key) => {
+    const cost2 = prices.get(bucket)?.get(key);
+    return cost2 ? [cost2] : [];
+  });
+  const own = matches(slug)[0];
+  const platform = pricingPlatformForProvider(templateId, providerId) ?? providerKind(templateId || providerId);
+  let feedCost;
+  for (const id of [model.id, model.upstreamModelId ?? model.id]) {
+    for (const key of normalizeModelIdCandidates(id)) {
+      const rows = index.byId.get(key)?.pricing ?? [];
+      const row = rows.find((r) => r.platform === platform && r.tier === "standard" && (!r.modality || r.modality === "text")) ?? rows.find((r) => r.platform === platform && (!r.modality || r.modality === "text"));
+      const cost2 = row && rowToCost(row);
+      if (validCost(cost2)) {
+        feedCost = cost2;
+        break;
+      }
+    }
+    if (feedCost) break;
+  }
+  const legacy = lookupModelCost(index, model.id, platform) ?? lookupModelCost(index, model.upstreamModelId ?? model.id, platform);
+  const legacyGeneric = !model.costSource && model.cost && legacy && model.cost.input === legacy.input && model.cost.output === legacy.output;
+  const providerCost = model.costSource === "provider" || model.cost && !model.costSource && !legacyGeneric ? model.cost : void 0;
+  const cost = providerCost ?? own ?? feedCost;
+  const { cost: _old, costSource: _source, referencePrice: _reference, ...base } = model;
+  if (validCost(cost)) {
+    const freeStatus2 = classifyFreeStatus({
+      model: { cost },
+      providerId,
+      templateId,
       freeAccess: model.freeStatus === "free_provider"
     });
-    return { ...model, cost, isFree: isFreeStatus(freeStatus), freeStatus };
-  });
-}
-function enrichModelsForProviderPricing(models, index, templateId, providerId) {
-  if (PRICING_OPT_OUT_TEMPLATE_IDS.has(templateId) || PRICING_OPT_OUT_TEMPLATE_IDS.has(providerId)) {
-    return models.map(({ cost: _cost, isFree: _isFree, freeStatus: _freeStatus, ...model }) => model);
+    return {
+      ...base,
+      cost,
+      costSource: providerCost ? "provider" : own ? "models.dev" : "pricing-feed",
+      isFree: isFreeStatus(freeStatus2),
+      freeStatus: freeStatus2
+    };
   }
-  return enrichModelsWithPricing(
-    models,
-    index,
-    pricingPlatformForProvider(templateId, providerId)
-  );
+  const vendor = /^minimax/i.test(model.id) ? "minimax" : /^qwen/i.test(model.id) ? "alibaba" : /^deepseek/i.test(model.id) ? "deepseek" : /^glm/i.test(model.id) ? "zhipuai" : /^kimi/i.test(model.id) ? "moonshotai" : "";
+  const buckets = [.../* @__PURE__ */ new Set([vendor, "openrouter", ...Object.keys(metadata).sort()])];
+  let referencePrice;
+  for (const bucket of buckets) {
+    if (!bucket || bucket === slug || /plan/.test(bucket)) continue;
+    const cost2 = matches(bucket).find((cost3) => cost3.input > 0 || cost3.output > 0);
+    if (cost2) {
+      referencePrice = { cost: cost2, provider: bucket, source: "models.dev" };
+      break;
+    }
+  }
+  if (!referencePrice && validCost(legacy) && (legacy.input > 0 || legacy.output > 0)) {
+    referencePrice = { cost: legacy, provider: "other provider", source: "pricing-feed" };
+  }
+  const freeStatus = classifyFreeStatus({
+    model: legacyGeneric || model.costSource ? {} : base,
+    providerId,
+    templateId,
+    freeAccess: model.freeStatus === "free_provider"
+  });
+  return { ...base, ...referencePrice ? { referencePrice } : {}, freeStatus, isFree: isFreeStatus(freeStatus) };
 }
 function applyPricingToRegistryProviders(registry, cache) {
   const index = buildPricingIndex(cache);
@@ -5607,6 +5676,7 @@ function isKnownDualHost(providerId, baseURL) {
   const host = parsed.hostname.toLowerCase();
   const path = parsed.pathname.toLowerCase();
   const id = providerId?.trim().toLowerCase();
+  if (host === "api.a2agent.me" && (path === "/" || path === "/v1" || path === "/v1/")) return true;
   if (host === "opencode.ai" && path.includes("/zen")) return true;
   if (host === "openrouter.ai" && path.includes("/api")) return true;
   if (host === "commandcode.ai" || host.endsWith(".commandcode.ai")) {
@@ -5658,6 +5728,9 @@ function classifyProtocolFailure(error) {
   const lower = text2.toLowerCase();
   if (lower.includes("abort") || lower.includes("cancel")) {
     return { retryable: false, status, reason: "request cancelled" };
+  }
+  if (lower.includes("type validation failed") && lower.includes("content_block")) {
+    return { retryable: true, status, reason: "provider sent a malformed stream for the selected API format" };
   }
   if (lower.includes("not supported for format")) {
     return { retryable: true, status, reason: "provider rejected the selected API format" };
@@ -5910,8 +5983,8 @@ async function createLanguageModelSingle(spec) {
   if (npm === "@ai-sdk/anthropic") {
     const { createAnthropic } = await import("@ai-sdk/anthropic");
     const root = baseURL?.replace(/\/v1\/?$/, "").replace(/\/$/, "");
-    const openRouterBearer = providerKind(spec.providerId?.trim().toLowerCase() ?? "") === "openrouter" || root?.includes("openrouter.ai") === true;
-    const anthropicOptions = spec.authType === "oauth" || openRouterBearer ? {
+    const bearerGateway = ["openrouter", "a2agent"].includes(providerKind(spec.providerId?.trim().toLowerCase() ?? "")) || root?.includes("openrouter.ai") === true || root === "https://api.a2agent.me";
+    const anthropicOptions = spec.authType === "oauth" || bearerGateway ? {
       authToken: apiKey,
       ...spec.providerId && isProviderKind(spec.providerId, "claude-code") ? {
         headers: {
@@ -5945,6 +6018,9 @@ async function createLanguageModelSingle(spec) {
     const options = {
       name: spec.providerId ?? "openai-compatible",
       baseURL: baseURL ?? "",
+      // A2Agent only returns token/cache usage on streaming requests when asked.
+      // Without this, Claude/Gemini/Core display zero cache reads even on a hit.
+      ...providerKind(spec.providerId?.trim().toLowerCase() ?? "") === "a2agent" ? { includeUsage: true } : {},
       ...runtimeApiKey.trim() ? { apiKey: runtimeApiKey } : {},
       ...spec.headers ? { headers: spec.headers } : {},
       ...isClinePassOAuth(spec.providerId, spec.authType) && spec.refreshToken ? {
@@ -7642,4 +7718,4 @@ export {
   upstreamHttpStatus,
   anthropicErrorType
 };
-//# sourceMappingURL=chunk-NAXLYXCF.js.map
+//# sourceMappingURL=chunk-JY2OMGE2.js.map

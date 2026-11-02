@@ -148,6 +148,28 @@ export function translateOpenAiRequest(
  * 'content_filter' | 'function_call') can reject or mishandle the response otherwise —
  * this reproduced as Cursor's "Empty provider response" on every tool-calling turn.
  */
+interface SdkUsage {
+  inputTokens?: number;
+  promptTokens?: number;
+  outputTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
+}
+
+function toOpenAiUsage(usage: SdkUsage | undefined) {
+  const prompt = usage?.inputTokens ?? usage?.promptTokens ?? 0;
+  const completion = usage?.outputTokens ?? usage?.completionTokens ?? 0;
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: usage?.totalTokens ?? prompt + completion,
+    ...(usage?.inputTokenDetails?.cacheReadTokens
+      ? { prompt_tokens_details: { cached_tokens: usage.inputTokenDetails.cacheReadTokens } }
+      : {}),
+  };
+}
+
 function toOpenAiFinishReason(reason: string | undefined | null): string {
   switch (reason) {
     case 'tool-calls': return 'tool_calls';
@@ -188,11 +210,7 @@ export async function generateOpenAiResponse(
     created: Math.floor(Date.now() / 1000),
     model: responseModelId,
     choices: [{ index: 0, message, finish_reason: toOpenAiFinishReason(result.finishReason) }],
-    usage: {
-      prompt_tokens: result.usage?.promptTokens ?? 0,
-      completion_tokens: result.usage?.completionTokens ?? 0,
-      total_tokens: result.usage?.totalTokens ?? 0,
-    },
+    usage: toOpenAiUsage(result.usage),
   };
 }
 
@@ -221,6 +239,7 @@ export async function streamOpenAiResponse(
   let nextToolIndex = 0;
   const seenPartTypes = new Set<string>();
   let toolCallChunksEmitted = 0;
+  let finishUsage: SdkUsage | undefined;
 
   for await (const part of stream) {
     const p = part as any;
@@ -267,6 +286,7 @@ export async function streamOpenAiResponse(
         break;
       }
       case 'finish':
+        finishUsage = p.totalUsage;
         log?.(() => `openai stream parts=[${[...seenPartTypes].join(',')}] toolCallChunks=${toolCallChunksEmitted} finishReason=${p.finishReason}`);
         send({}, toOpenAiFinishReason(p.finishReason));
         break;
@@ -296,5 +316,8 @@ export async function streamOpenAiResponse(
     }
   }
 
+  if (finishUsage) {
+    onChunk(`data: ${JSON.stringify({ ...baseData, choices: [], usage: toOpenAiUsage(finishUsage) })}\n\n`);
+  }
   onChunk('data: [DONE]\n\n');
 }

@@ -84,7 +84,7 @@ export async function pickCodexModel(
   prefs: UserPreferences,
   refresh?: () => Promise<void>,
 ): Promise<LocalProviderModel | 'back' | null> {
-  return pickProviderModel(provider, prefs, { message: `Model for ${provider.name}?`, maxRecent: 3, refresh });
+  return pickProviderModel(provider, prefs, { message: `Model for ${provider.name}?`, maxRecent: 3, refresh, allowAllModels: true });
 }
 
 export function rejectManagedFlags(codexArgs: string[]): string[] {

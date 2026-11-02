@@ -26,6 +26,11 @@ export function claudeTransparentModeOptions(modelLabel: string): Array<{
 
 const BROWSE_ALL = '__browse_all__';
 const REFRESH = '__refresh__';
+export const ALL_PROVIDER_MODELS = '__all_provider_models__';
+export function allProviderModelsOption(provider: LocalProvider) {
+  return provider.models.length > 0 && provider.models.length < 50
+    ? [{ value: ALL_PROVIDER_MODELS, label: '📚 All provider models (favorites will not be used)', hint: String(provider.models.length) + ' models' }] : [];
+}
 
 function refreshOption() {
   return navOption(REFRESH, '↻ Refresh models', 'Fetch the latest list from the provider');
@@ -269,13 +274,15 @@ async function selectModelWithSearch<T extends ModelSearchable & { id: string }>
   initialModelId?: string,
   browseList?: T[],
   refreshable = false,
-): Promise<T | 'back' | 'refresh' | null> {
+  allModelsOption: ModelSelectOption[] = [],
+): Promise<T | 'back' | 'refresh' | 'all' | null> {
   if (models.length === 0) return null;
 
   const orderedBrowse = browseList ?? sortModelsByBrand(models);
 
-  if (models.length <= MODEL_SEARCH_THRESHOLD) {
+  if (models.length <= MODEL_SEARCH_THRESHOLD || allModelsOption.length > 0) {
     const options = [
+      ...allModelsOption,
       ...models.map(toOption),
       ...(refreshable ? [refreshOption()] : []),
       navOption('__back__', '← Go back', ''),
@@ -283,7 +290,7 @@ async function selectModelWithSearch<T extends ModelSearchable & { id: string }>
     const initialValue =
       initialModelId && options.some(o => o.value === initialModelId)
         ? initialModelId
-        : options[0]?.value;
+        : models[0]?.id;
 
     const picked = await p.select({
       message,
@@ -295,6 +302,7 @@ async function selectModelWithSearch<T extends ModelSearchable & { id: string }>
       return 'back';
     }
     if (String(picked) === REFRESH) return 'refresh';
+    if (String(picked) === ALL_PROVIDER_MODELS) return 'all';
 
     const selected = models.find(m => m.id === String(picked));
     if (!selected) return null;
@@ -316,7 +324,8 @@ export async function browseAllModels(
   provider: LocalProvider,
   prefs: UserPreferences,
   refreshable = false,
-): Promise<LocalProviderModel | 'back' | 'refresh' | null> {
+  allowAllModels = false,
+): Promise<LocalProviderModel | 'back' | 'refresh' | 'all' | null> {
   return selectModelWithSearch(
     provider.models,
     m => modelToOption(m),
@@ -324,6 +333,7 @@ export async function browseAllModels(
     prefs.lastModel,
     undefined,
     refreshable,
+    allowAllModels ? allProviderModelsOption(provider) : [],
   );
 }
 
@@ -335,20 +345,22 @@ export async function browseAllModels(
 export async function pickProviderModel(
   provider: LocalProvider,
   prefs: UserPreferences,
-  opts: { message: string; maxRecent: number; refresh?: () => Promise<void> },
+  opts: { message: string; maxRecent: number; refresh?: () => Promise<void>; allowAllModels?: boolean },
 ): Promise<LocalProviderModel | 'back' | null> {
   const refreshable = Boolean(opts.refresh);
+  provider.launchAllModels = false;
   while (true) {
     const recentModels = (prefs.recentModelsByProvider?.[provider.id] ?? [])
       .slice(0, opts.maxRecent)
       .map(id => provider.models.find(m => m.id === id))
       .filter((m): m is LocalProviderModel => m !== undefined);
 
-    let picked: LocalProviderModel | 'back' | 'refresh' | null;
+    let picked: LocalProviderModel | 'back' | 'refresh' | 'all' | null;
     if (recentModels.length > 0) {
       const choice = await p.select({
         message: opts.message,
         options: [
+          ...(opts.allowAllModels ? allProviderModelsOption(provider) : []),
           ...recentModels.map(m => modelToOption(m, 'recent')),
           navOption(BROWSE_ALL, 'Browse all models →', `${provider.models.length} available`),
           ...(refreshable ? [refreshOption()] : []),
@@ -358,19 +370,26 @@ export async function pickProviderModel(
       });
 
       if (p.isCancel(choice) || String(choice) === '__back__') return 'back';
-      if (String(choice) === REFRESH) {
+      if (String(choice) === ALL_PROVIDER_MODELS) {
+        picked = 'all';
+      } else if (String(choice) === REFRESH) {
         picked = 'refresh';
       } else if (String(choice) === BROWSE_ALL) {
-        picked = await browseAllModels(provider, prefs, refreshable);
+        picked = await browseAllModels(provider, prefs, refreshable, opts.allowAllModels);
         if (picked === 'back') continue;
       } else {
         picked = recentModels.find(m => m.id === String(choice))!;
       }
     } else {
-      picked = await browseAllModels(provider, prefs, refreshable);
+      picked = await browseAllModels(provider, prefs, refreshable, opts.allowAllModels);
       if (picked === 'back') return 'back';
     }
 
+    if (picked === 'all') {
+      provider.launchAllModels = true;
+      p.log.info('📚 All provider models selected (favorites will not be used).');
+      return recentModels[0] ?? provider.models.find(model => model.id === prefs.lastModel) ?? provider.models[0] ?? null;
+    }
     if (picked === 'refresh') {
       await opts.refresh!();
       continue;
@@ -385,7 +404,7 @@ export async function pickLocalModel(
   prefs: UserPreferences,
   refresh?: () => Promise<void>,
 ): Promise<LocalProviderModel | 'back' | null> {
-  const selectedModel = await pickProviderModel(provider, prefs, { message: 'Which model?', maxRecent: MAX_RECENT, refresh });
+  const selectedModel = await pickProviderModel(provider, prefs, { message: 'Which model?', maxRecent: MAX_RECENT, refresh, allowAllModels: true });
   if (selectedModel === 'back' || !selectedModel) return selectedModel;
 
   noteEnvConflicts(conflicts);

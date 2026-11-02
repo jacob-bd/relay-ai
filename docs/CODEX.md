@@ -293,6 +293,8 @@ operation.
 
 When you have saved favorites via `relay-ai models`, both `relay-ai codex` and `relay-ai codex-app` will show your starting model + favorites in the mid-session model picker. Zen/Go favorites are included when an OpenCode API key is available.
 
+Every provider model picker also offers **All provider models (favorites will not be used)**. That launch lists every model from the selected provider in the mid-session picker, up to the 50-entry catalog cap, and skips saved favorites for that session only. The choice is not persisted: the next launch returns to your saved favorites. In mixed native + Relay mode the option fills the Relay rows first (up to 50) and then adds the starting provider's other models. Zen/Go favorites are skipped in Relay mode; use Claude or the Desktop gateway for those.
+
 ## Mixed native + Relay mode
 
 Build the independent Codex SubAgents catalog before launch:
@@ -363,6 +365,7 @@ With many favorites (up to 50) spanning many providers, the first request after 
 | **ChatGPT OAuth** | Tier 2 proxy | Local proxy | `relay-ai providers auth openai-oauth` |
 | **GitHub Copilot** | Tier 2 proxy | Local proxy | `relay-ai providers auth github-copilot`; plan-aware model catalog |
 | **ClinePass** | Tier 2 proxy | Local proxy | API key via `relay-ai providers add` or OAuth via `relay-ai providers auth cline-pass` |
+| **A2Agent** | Tier 2 proxy | Local proxy | API key; OpenAI Chat Completions on both routes (see [PROVIDERS](PROVIDERS.md)) |
 | **Anthropic, xAI, Gemini, Nvidia, DeepSeek, …** | Tier 2 proxy | Local proxy | SDK translation path |
 | **OpenCode Zen / Go** | Tier 2 proxy | Local proxy | Requires an OpenCode API key |
 

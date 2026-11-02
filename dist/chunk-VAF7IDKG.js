@@ -12,7 +12,7 @@ import {
   sseChunk,
   thinkingProviderOptions,
   upstreamHttpStatus
-} from "./chunk-NAXLYXCF.js";
+} from "./chunk-JY2OMGE2.js";
 
 // src/registry/url-security.ts
 import { lookup } from "dns/promises";
@@ -421,6 +421,18 @@ function resolveUpstreamTools(tools, messages) {
 }
 
 // src/sdk-adapter.ts
+function toAnthropicUsage(usage, fallbackInputTokens = 0) {
+  const totalInput = usage?.inputTokens ?? fallbackInputTokens;
+  const cacheRead = usage?.inputTokenDetails?.cacheReadTokens;
+  const cacheWrite = usage?.inputTokenDetails?.cacheWriteTokens;
+  const noCache = usage?.inputTokenDetails?.noCacheTokens;
+  return {
+    input_tokens: noCache ?? (cacheRead !== void 0 ? Math.max(0, totalInput - cacheRead) : totalInput),
+    output_tokens: usage?.outputTokens ?? 0,
+    ...cacheRead !== void 0 && cacheRead > 0 ? { cache_read_input_tokens: cacheRead } : {},
+    ...cacheWrite !== void 0 && cacheWrite > 0 ? { cache_creation_input_tokens: cacheWrite } : {}
+  };
+}
 function anthropicEffortFromRequest(body) {
   const effort = body.output_config?.effort;
   if (typeof effort === "string" && effort.trim()) return effort.trim();
@@ -799,10 +811,7 @@ async function writeAnthropicStream(fullStream, modelId, write, log, estimatedIn
       }
       case "finish":
         if (part.totalUsage) {
-          usage = {
-            input_tokens: part.totalUsage.inputTokens ?? estimatedInputTokens,
-            output_tokens: part.totalUsage.outputTokens ?? 0
-          };
+          usage = toAnthropicUsage(part.totalUsage, estimatedInputTokens);
         }
         if (part.finishReason === "tool-calls") finishReason = "tool_use";
         else if (part.finishReason === "length") finishReason = "max_tokens";
@@ -899,7 +908,7 @@ async function generateAnthropicResponse(model, params, modelId, options) {
       })
     ],
     stop_reason: finishReason === "tool-calls" ? "tool_use" : "end_turn",
-    usage: { input_tokens: usage?.inputTokens ?? 0, output_tokens: usage?.outputTokens ?? 0 }
+    usage: toAnthropicUsage(usage)
   };
 }
 
@@ -913,4 +922,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-HM6YSVSA.js.map
+//# sourceMappingURL=chunk-VAF7IDKG.js.map

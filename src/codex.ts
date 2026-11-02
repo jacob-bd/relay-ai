@@ -41,7 +41,7 @@ import {
   hasApplicationDefaultCredentials,
   type VertexModelEntry,
 } from './server/vertex-config.js';
-import { VERTEX_ANTHROPIC_NPM } from './constants.js';
+import { MAX_MODEL_CATALOG, VERTEX_ANTHROPIC_NPM } from './constants.js';
 import { isVertexAnthropicRegistered, vertexAnthropicCachedModels, VERTEX_ANTHROPIC_PROVIDER_ID } from './registry/vertex-anthropic.js';
 import { resolveContextWindow } from './context-window.js';
 import type { ResolvedFavorite } from './favorites-resolver.js';
@@ -487,14 +487,14 @@ export async function runCodexCommand(
     return 0;
   }
 
-  const favorites = prefs.favoriteModels ?? [];
+  let favorites = prefs.favoriteModels ?? [];
   let mixedMode = launch.codexLaunchMode === 'mixed';
   if (!configOnly && isTty && !launchPlan.skip && launch.codexLaunchMode === undefined) {
     const selectedLaunchMode = await pickCodexLaunchMode();
     if (!selectedLaunchMode) return 0;
     mixedMode = selectedLaunchMode === 'mixed';
   }
-  const favoritesActive = favorites.length > 0 && !launchPlan.skip && !mixedMode;
+  let favoritesActive = favorites.length > 0 && !launchPlan.skip && !mixedMode;
   const favoritesPickable = favorites.length > 0 && !launchPlan.skip;
   if (favoritesActive && !configOnly) {
     p.log.info(
@@ -569,6 +569,11 @@ export async function runCodexCommand(
     }
   }
 
+  if (activeProvider.launchAllModels) {
+    favorites = activeProvider.models.map(model => ({ providerId: activeProvider.id, modelId: model.id }));
+    favoritesActive = !mixedMode;
+  }
+
   let resolvedFavorites: ResolvedFavorite[] = [];
   let providersById: Map<string, LocalProvider> = new Map();
 
@@ -579,6 +584,7 @@ export async function runCodexCommand(
       compatible,
       favorites,
       'codex',
+      activeProvider.launchAllModels ? MAX_MODEL_CATALOG : undefined,
     );
     resolvedFavorites = res.resolvedFavorites;
     providersById = res.providersById;
@@ -605,6 +611,7 @@ export async function runCodexCommand(
         selectedModel,
         compatible,
         generalFavorites: favorites,
+        allProviderModels: activeProvider.launchAllModels,
         subagentFavorites: prefs.codexSubagentModels ?? [],
       });
       assertConfiguredCodexSubagentsResolved(prefs.codexSubagentModels ?? [], mixedModels);

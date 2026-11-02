@@ -245,14 +245,22 @@ describe('cloud-code-gateway', () => {
     expect(data.experimentIds.every((id: unknown) => Number.isInteger(id))).toBe(true);
     expect(data.experimentIds).toContain(105979552);
     expect(data.experimentIds).toContain(106121604);
+    const flags = data.flags as Array<{ name: string; boolValue: boolean }>;
+    expect(flags).toEqual(expect.arrayContaining([
+      { name: 'Chat__enable_mcp_server_ij', boolValue: true },
+      { name: 'DatacloudMcp__enable_stdio_mcp_proxy', boolValue: true },
+      { name: 'enable-customization-kind-mcp', boolValue: true },
+      { name: 'enable-mcp-non-blocking-turn-load', boolValue: true },
+    ]));
   });
 
   // --- Other endpoints ---
 
-  it('returns 200 for fetchAdminControls (empty)', async () => {
+  it('returns 200 for fetchAdminControls (empty, matching Google)', async () => {
     const handle = await start();
     const res = await postJson(handle, '/v1internal:fetchAdminControls', {});
     expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({});
   });
 
   it('returns 200 for retrieveUserQuotaSummary (unlimited)', async () => {

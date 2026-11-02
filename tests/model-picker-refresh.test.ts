@@ -12,6 +12,7 @@ vi.mock('@clack/prompts', () => ({
     return ui.answers.shift();
   }),
   isCancel: () => false,
+  log: { info: vi.fn() },
 }));
 
 const refreshState = vi.hoisted(() => ({ refreshed: [] as string[] }));
@@ -86,5 +87,31 @@ describe('model picker refresh', () => {
     ui.answers = ['gpt-6-sol'];
     await pickProviderModel(provider, {} as UserPreferences, { message: 'Which model?', maxRecent: 3 });
     expect(ui.shown[0]!.map(option => option.value)).toEqual(['gpt-6-sol', '__back__']);
+  });
+
+  it.each([1, 25, 49])('offers all models with an explicit warning for %s models', async count => {
+    provider.models = Array.from({ length: count }, (_, i) => model('m-' + i));
+    ui.answers = ['__all_provider_models__'];
+    const prefs = { favoriteModels: [{ providerId: 'other', modelId: 'fav' }] };
+    const selected = await pickProviderModel(provider, prefs, { message: 'Which model?', maxRecent: 3, allowAllModels: true });
+    expect(selected?.id).toBe('m-0');
+    expect(provider.launchAllModels).toBe(true);
+    expect(ui.shown[0]).toContainEqual(expect.objectContaining({ label: '📚 All provider models (favorites will not be used)' }));
+    expect(prefs.favoriteModels).toEqual([{ providerId: 'other', modelId: 'fav' }]);
+  });
+  it('does not offer all models at 50 and never retains the choice for individual picks', async () => {
+    provider.models = Array.from({ length: 50 }, (_, i) => model('m-' + i));
+    provider.launchAllModels = true;
+    ui.answers = ['__back__'];
+    await pickProviderModel(provider, {}, { message: 'Which model?', maxRecent: 3, allowAllModels: true });
+    expect(provider.launchAllModels).toBe(false);
+    expect(ui.shown[0].some(option => option.value === '__all_provider_models__')).toBe(false);
+  });
+  it('offers all models next to recents and starts with the remembered model', async () => {
+    provider.models = [model('a'), model('b')];
+    ui.answers = ['__all_provider_models__'];
+    const selected = await pickProviderModel(provider, { recentModelsByProvider: { openai: ['b'] } }, { message: 'Which model?', maxRecent: 3, allowAllModels: true });
+    expect(selected?.id).toBe('b');
+    expect(provider.launchAllModels).toBe(true);
   });
 });

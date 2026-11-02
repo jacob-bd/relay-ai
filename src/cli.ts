@@ -1211,7 +1211,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   const prefs = dryRun ? {} as ReturnType<typeof loadPreferences> : loadPreferences();
   const conflicts = detectConflicts();
 
-  const favorites = dryRun ? [] : (prefs.favoriteModels ?? []);
+  let favorites = dryRun ? [] : (prefs.favoriteModels ?? []);
   const httpProxyOnly = Boolean(httpProxy && !launchProvider && !launchModel);
   const launchPlan = httpProxyOnly
     ? { skip: true, target: null }
@@ -1225,7 +1225,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     console.error(pc.red(`\nError: ${launchPlan.error}\n`));
     return 1;
   }
-  const switchMenuActive = favorites.length > 0 && !launchPlan.skip;
+  let switchMenuActive = favorites.length > 0 && !launchPlan.skip;
 
   // Without a resolved target (boot flags / print-mode prefs) or the http-proxy
   // bypass, the launch would open the interactive wizard. Bail early with a
@@ -1427,6 +1427,11 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
         break;
       }
     }
+  }
+
+  if (activeProvider.launchAllModels) {
+    favorites = activeProvider.models.map(model => ({ providerId: activeProvider.id, modelId: model.id }));
+    switchMenuActive = true;
   }
 
   let useHttpProxy = Boolean(httpProxy);

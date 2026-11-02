@@ -1,5 +1,6 @@
 import {
   formatModelPrice,
+  formatModelTestLabel,
   getProviderModelPage,
   isFreeModel,
   matchesModelSearch,
@@ -651,13 +652,13 @@ function renderProviderModelBrowser() {
     </div>
     <div class="provider-model-table-wrap">
       <table class="provider-model-table">
-        <thead><tr><th>Model</th><th>Context</th><th>Price in / out</th><th class="th-actions">Actions</th></tr></thead>
+        <thead><tr><th>Model</th><th>Context</th><th>Price in / out <span tabindex="0" class="price-help" aria-label="About price estimates">ⓘ<span role="tooltip">Prices are estimates per 1M tokens and may not reflect the provider’s actual pricing or promotions. Check the provider’s pricing page. Reference estimates use another provider’s published rates.</span></span></th><th class="th-actions">Actions</th></tr></thead>
         <tbody>
           ${result.items.map(model => `
             <tr>
               <td><strong>${escapeHtml(model.name || model.id)}</strong>${model.source === 'manual' ? ' <span class="manual-model-badge">Manual</span>' : ''}<code>${escapeHtml(model.id)}</code></td>
               <td>${fmtCtx(model.contextWindow) || '—'}</td>
-              <td>${formatModelPrice(model.cost, isFreeModel(model), freeBadgeLabel(model))}</td>
+              <td>${formatModelPrice(model.cost, isFreeModel(model), freeBadgeLabel(model), model.referencePrice)}</td>
                 <td class="td-actions">
                   <button class="btn btn-ghost btn-model-test" type="button" data-model-id="${escapeHtml(model.id)}" title="Send a short query to check this model responds. Uses a small amount of provider quota.">Test</button>
                   ${showActions ? `
@@ -750,7 +751,7 @@ async function testModelResponse(button, providerId, modelId) {
       body: JSON.stringify({ providerId, modelId }),
     });
     const result = await response.json();
-    button.textContent = result.ok ? 'Responded' : 'Retry test';
+    button.textContent = formatModelTestLabel(result);
     button.title = result.ok ? `Responded in ${(result.latencyMs / 1000).toFixed(1)}s` : result.error;
     showToast(result.ok ? `${modelId} responded in ${(result.latencyMs / 1000).toFixed(1)}s` : `${modelId}: ${result.error || 'Test failed'}`);
   } catch {

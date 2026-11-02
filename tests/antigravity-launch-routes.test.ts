@@ -319,7 +319,7 @@ describe('antigravity launch routes', () => {
     ]);
   });
 
-  it('reports favorites that effort variants push past the cap', async () => {
+  it('keeps every favorite visible by trimming effort variants at the cap', async () => {
     const gpt = (id: string) => ({
       id,
       name: id,
@@ -346,10 +346,13 @@ describe('antigravity launch routes', () => {
       maxRoutes: 10,
     });
 
-    // 6 levels for the launch model + 3 for gpt-b + 1 of gpt-c's 3 = 10; gpt-d never fits.
+    // Six launch-model levels, one extra favorite level, then one row each for
+    // the remaining models so none disappear from the picker.
     expect(result!.routes).toHaveLength(10);
-    expect(result!.routes.map(route => route.modelId)).not.toContain('gpt-d');
-    expect(result!.capacitySkippedFavorites).toEqual([{ providerId: 'openai', modelId: 'gpt-d' }]);
+    expect(new Set(result!.routes.map(route => route.modelId))).toEqual(
+      new Set(['gpt-a', 'gpt-b', 'gpt-c', 'gpt-d']),
+    );
+    expect(result!.capacitySkippedFavorites).toEqual([]);
   });
 
   it('preserves Cloud Code Assist Cloud Code route metadata', async () => {

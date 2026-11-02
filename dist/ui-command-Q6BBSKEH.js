@@ -41,11 +41,11 @@ import {
   summarizeServerProviders,
   supportsClaudeTransparentMode,
   updateCustomEndpointProvider
-} from "./chunk-N6BM2QES.js";
+} from "./chunk-IX2SO7OQ.js";
 import {
   validateCustomEndpointUrl
-} from "./chunk-HM6YSVSA.js";
-import "./chunk-VBSCGMT5.js";
+} from "./chunk-VAF7IDKG.js";
+import "./chunk-KPIOODCG.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -104,7 +104,7 @@ import {
   supportsAdditionalOAuthAccounts,
   supportsManualModels,
   writeSecureLogLine
-} from "./chunk-NAXLYXCF.js";
+} from "./chunk-JY2OMGE2.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -112,7 +112,7 @@ import {
   listVisibleOAuthTemplates,
   provider_templates_exports,
   supportsAdditionalApiAccounts
-} from "./chunk-R34EP35U.js";
+} from "./chunk-RKRPDZVV.js";
 import {
   getAppHome
 } from "./chunk-KNCSTHR4.js";
@@ -842,6 +842,7 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
         freeLabel: freeStatusLabel(m.freeStatus),
         contextWindow: m.contextWindow,
         cost: m.cost,
+        referencePrice: m.referencePrice,
         claudeTransparentCompatible: supportsClaudeTransparentMode(m),
         ...manualIdsByProvider.get(p2.id)?.has(m.id) ? { source: "manual" } : {}
       }))
@@ -927,7 +928,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-C44ORJ3P.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-ZNCEWRER.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1128,7 +1129,7 @@ async function handleAddProvider(req, res) {
       sendJson(res, 400, { error: "templateId required" });
       return;
     }
-    const { listSupportedTemplates, listAccountTemplates } = await import("./provider-templates-YHSIDTFW.js");
+    const { listSupportedTemplates, listAccountTemplates } = await import("./provider-templates-Y7HWIRRP.js");
     const addAccount = body.addAccount === true;
     const template = (addAccount ? listAccountTemplates() : listSupportedTemplates()).find((t) => t.id === templateId) ?? (addAccount ? listSupportedTemplates().find((t) => t.id === templateId) : void 0);
     if (!template) {
@@ -1222,7 +1223,7 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-MSSOKILX.js");
+    const { testModel } = await import("./test-model-ZG4SUCMF.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
     if (!res.destroyed) sendJson(res, 200, result);
   } catch {
@@ -2099,4 +2100,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-WX6AG6OV.js.map
+//# sourceMappingURL=ui-command-Q6BBSKEH.js.map

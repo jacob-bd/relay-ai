@@ -175,6 +175,23 @@ describe('resolveCodexFavorites', () => {
     expect(providersById.get('anthropic')).toEqual(anthropicProvider);
   });
 
+  it('keeps every provider model when launched with the all-models cap', async () => {
+    const models = Array.from({ length: 25 }, (_, i) => ({
+      ...anthropicProvider.models[0]!,
+      id: `model-${i}`,
+      name: `Model ${i}`,
+      upstreamModelId: `model-${i}`,
+    }));
+    const provider: LocalProvider = { ...anthropicProvider, models };
+    const favorites: FavoriteModel[] = models.map(model => ({ providerId: 'anthropic', modelId: model.id }));
+
+    const capped = await resolveCodexFavorites(provider, models[0]!, [provider], favorites, 'codex');
+    expect(capped.resolvedFavorites).toHaveLength(20);
+
+    const all = await resolveCodexFavorites(provider, models[0]!, [provider], favorites, 'codex', 50);
+    expect(all.resolvedFavorites).toHaveLength(25);
+  });
+
 });
 
 describe('codex launch selection helpers', () => {

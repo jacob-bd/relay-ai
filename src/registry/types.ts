@@ -1,5 +1,6 @@
 // src/registry/types.ts — native provider registry schema (no secrets)
 
+import type { ReferencePrice } from '../types.js';
 import type { FreeStatus } from '../free-models.js';
 
 export const REGISTRY_SCHEMA_VERSION = 1;
@@ -18,6 +19,8 @@ export interface CachedModel {
   /** Distinguishes provider-reported context from legacy Relay guesses. */
   contextWindowSource?: 'provider' | 'user';
   cost?: { input: number; output: number; cache_read?: number; cache_write?: number };
+  costSource?: 'provider' | 'models.dev' | 'pricing-feed';
+  referencePrice?: ReferencePrice;
   isFree?: boolean;
   freeStatus?: FreeStatus;
   modelFormat: 'anthropic' | 'openai' | 'cloud-code';

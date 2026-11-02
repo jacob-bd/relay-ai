@@ -226,7 +226,7 @@ export async function runGeminiCommand(
 
   // Resolve and append favorites to proxy routes
   const resolvedFavs: ProxyRoute[] = [];
-  const favorites = prefs.favoriteModels ?? [];
+  const favorites = activeProvider.launchAllModels ? [] : (prefs.favoriteModels ?? []);
   for (const fav of favorites) {
     const provider = compatible.find(lp => lp.id === fav.providerId);
     const model = provider?.models.find(m => m.id === fav.modelId);

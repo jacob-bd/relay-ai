@@ -16,6 +16,7 @@ import { isValidProviderId } from './validate.js';
 import { getTemplateById } from '../provider-templates.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import { getProviderModels } from './provider-models.js';
+import { enrichModelsForProviderPricing, buildPricingIndex, loadPricingCache } from './pricing.js';
 import { reconcileCachedModelProtocol } from './model-protocol.js';
 
 export type CredentialResolver = (provider: RegistryProvider) => string | null;
@@ -28,6 +29,7 @@ export function cachedModelToLocal(
   cached: CachedModel,
   provider: RegistryProvider,
   metadata: ModelsDevCacheFile = loadModelsDevCache(),
+  agent: CompatibilityAgent = 'claude',
 ): LocalProviderModel | null {
   const reconciled = reconcileCachedModelProtocol(cached, provider, metadata);
   cached = reconciled;
@@ -63,7 +65,13 @@ export function cachedModelToLocal(
   // classified it. Prefer the current models.dev provider package for the
   // built-in OpenCode backends, while retaining manual/custom overrides.
   const metadataNpm = !cached.source && isZenGo ? modelsDev?.provider?.npm : undefined;
-  const npm = cached.npm ?? provider.api.npm ?? '';
+  // A2Agent exposes the same catalog on both protocols. Claude Code uses the
+  // Anthropic Messages endpoint through the raw proxy. SDK-driven launches
+  // (Antigravity, Codex, Gemini, Server, Core) keep Chat Completions because
+  // A2Agent's Anthropic SSE omits the `text` field on text blocks, which
+  // @ai-sdk/anthropic rejects before any content reaches the client.
+  const preferAnthropic = kind === 'a2agent' && agent === 'claude';
+  const npm = preferAnthropic ? '@ai-sdk/anthropic' : (cached.npm ?? provider.api.npm ?? '');
   const apiUrl = cached.apiUrl ?? provider.api.url
     ?? (isZenGo ? BACKENDS[kind === 'go' || provider.templateId === 'go' ? 'go' : 'zen'].baseUrl : '');
   const endpoint = resolveEndpoint(npm, apiUrl);
@@ -80,13 +88,14 @@ export function cachedModelToLocal(
     name: npm === '@ai-sdk/google' ? normalizeGoogleDisplayName(cached.name, id) : cached.name,
     family,
     brand: npm === '@ai-sdk/google' ? deriveBrand(family) : (cached.brand ?? deriveBrand(cached.family ?? '')),
-    modelFormat: metadataNpm ? resolvedFormat : cached.modelFormat ?? endpoint.format,
+    modelFormat: preferAnthropic ? 'anthropic' : (metadataNpm ? resolvedFormat : cached.modelFormat ?? endpoint.format),
     upstreamModelId: normalizedUpstream,
     baseUrl: endpoint.baseUrl,
     completionsUrl: endpoint.completionsUrl,
     npm: npm || undefined,
     apiBaseUrl: apiUrl || undefined,
     cost: cached.cost,
+    referencePrice: cached.referencePrice,
     isFree: isFreeStatus(freeStatus),
     freeStatus,
     // ClinePass's public catalog does not currently report per-model context
@@ -127,6 +136,8 @@ function materializeOne(
   provider: RegistryProvider,
   resolveCredential: CredentialResolver,
   agent: CompatibilityAgent,
+  pricingIndex: ReturnType<typeof buildPricingIndex>,
+  metadata: ModelsDevCacheFile,
 ): LocalProvider | null {
   if (!provider.enabled) return null;
   if (!isValidProviderId(provider.id)) return null;
@@ -135,14 +146,14 @@ function materializeOne(
   const apiKey = resolveCredential(provider) ?? '';
   const anonymousFreeOnly = !apiKey.trim() && providerAllowsAnonymousFreeModels(provider);
   const models: LocalProviderModel[] = [];
-  for (const cached of getProviderModels(provider)) {
+  for (const cached of enrichModelsForProviderPricing(getProviderModels(provider), pricingIndex, provider.templateId, provider.id, metadata)) {
     const freeStatus = classifyFreeStatus({
       model: cached,
       providerId: provider.id,
       templateId: provider.templateId,
     });
     if ((freeOnly || anonymousFreeOnly) && !isFreeStatus(freeStatus)) continue;
-    const model = cachedModelToLocal(cached, provider);
+    const model = cachedModelToLocal(cached, provider, metadata, agent);
     if (!model) continue;
     if (shouldHideModel({ providerId: provider.id, modelId: model.id, agent })) continue;
     models.push(model);
@@ -170,9 +181,11 @@ export function materializeRegistry(
   opts?: MaterializeOptions,
 ): LocalProvider[] {
   const agent = opts?.agent ?? 'claude';
+  const pricingIndex = buildPricingIndex(loadPricingCache());
+  const metadata = loadModelsDevCache();
   const result: LocalProvider[] = [];
   for (const provider of registry.providers) {
-    const local = materializeOne(provider, resolveCredential, agent);
+    const local = materializeOne(provider, resolveCredential, agent, pricingIndex, metadata);
     if (local) result.push(local);
   }
   return result;

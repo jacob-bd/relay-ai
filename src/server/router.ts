@@ -257,6 +257,7 @@ async function handleAnthropicMessages(
       return;
     }
     const apiKey = model.apiKey ?? options.apiKey;
+    const sessionId = extractClaudeSessionId(req.headers, body);
     const languageModel = await getOrInitLanguageModel(
       modelCache,
       model,
@@ -265,6 +266,7 @@ async function handleAnthropicMessages(
       apiKey,
       options.vertex,
       providerRefreshToken(model.providerId, model.authType),
+      sessionId,
     );
     const npmMaxTools = maxToolsForNpm(model.npm);
     const toolCount = Array.isArray((body as Record<string, unknown>).tools) ? ((body as Record<string, unknown>).tools as unknown[]).length : 0;
@@ -276,7 +278,6 @@ async function handleAnthropicMessages(
       model,
       options.gateway,
     );
-    const sessionId = extractClaudeSessionId(req.headers, body);
     if (sessionId) {
       subagentRouting.registerSubagentRoute = modelId => (
         subagentRouteRegistry.register(sessionId, modelId)
@@ -430,6 +431,7 @@ async function handleOpenAIChatCompletions(
 
   const apiKey = model.apiKey ?? options.apiKey;
   const baseURL = model.modelFormat === 'anthropic' ? model.baseUrl : model.apiBaseUrl;
+  const conversationId = extractConversationId(req.headers, body);
   const languageModel = await getOrInitLanguageModel(
     modelCache,
     model,
@@ -438,11 +440,12 @@ async function handleOpenAIChatCompletions(
     apiKey,
     options.vertex,
     providerRefreshToken(model.providerId, model.authType),
+    conversationId,
   );
   const requestHeaders = openCodeGoHeaders(
     model.providerId ?? model.sourceBackend,
     baseURL,
-    extractConversationId(req.headers, body),
+    conversationId,
     model.headers,
   );
   const params = translateOpenAiRequest(body as unknown as OpenAiRequest, requestHeaders);
@@ -506,6 +509,7 @@ async function getOrInitLanguageModel(
   apiKey: string,
   vertex: VertexServerConfig | undefined,
   refreshToken?: () => Promise<string | null>,
+  sessionId?: string,
 ): Promise<LanguageModel> {
   const cacheKey = [
     model.providerId ?? model.sourceBackend,
@@ -513,6 +517,7 @@ async function getOrInitLanguageModel(
     upstreamModelId(model),
     npm,
     baseURL ?? '',
+    sessionId ?? '',
   ].join('\x1f');
   let languageModel = modelCache.get(cacheKey);
   if (!languageModel) {
@@ -526,6 +531,7 @@ async function getOrInitLanguageModel(
       oauthAccountId: model.oauthAccountId,
       vertex,
       headers: model.headers,
+      ...(sessionId ? { sessionId } : {}),
       refreshToken,
       onTokenRefreshed: refreshed => { model.apiKey = refreshed; },
       useResponsesLite: model.useResponsesLite,

@@ -370,11 +370,11 @@ export function buildAntigravityRoutes(
   opts: { effortMode?: AntigravityEffortMode } = {},
 ): AntigravityRoute[] {
   const effortMode = opts.effortMode ?? 'rows';
-  const routes: AntigravityRoute[] = [];
+  const groups: Array<{ routes: AntigravityRoute[] }> = [];
   const seen = new Set<string>();
 
   for (const fav of resolvedFavorites) {
-    if (routes.length >= maxRoutes) break;
+    if (groups.length >= maxRoutes) break;
 
     const favModel = fav.model;
     const modelId = favModel.id;
@@ -392,7 +392,7 @@ export function buildAntigravityRoutes(
     const contextWindow = (favModel as any).contextWindow;
     const modelFormat = (favModel as any).modelFormat;
 
-    routes.push({
+    const baseRoute: AntigravityRoute = {
       catalogId,
       providerId: fav.providerId,
       providerName: fav.providerName,
@@ -409,12 +409,42 @@ export function buildAntigravityRoutes(
       ...(fav.refreshToken ? { refreshToken: fav.refreshToken } : {}),
       baseURL,
       contextWindow,
-    });
-    const route = routes.pop()!;
-    routes.push(...effortVariants(route, favModel, routes.length === 0, effortMode));
+    };
+    groups.push({ routes: effortVariants(baseRoute, favModel, groups.length === 0, effortMode) });
   }
 
-  const labeled = applyUniqueAntigravityRouteLabels(routes.slice(0, maxRoutes));
+  // Reserve one picker row for every model before spending slots on effort
+  // variants. Otherwise a few reasoning-heavy models can fill the catalog and
+  // make later models disappear entirely from "All provider models".
+  const included = groups.slice(0, maxRoutes);
+  const extrasByGroup = included.map(() => 0);
+  let remaining = Math.max(0, maxRoutes - included.length);
+  if (remaining > 0 && included.length > 0) {
+    // The launch model keeps its complete ladder first; it is the one the user
+    // is actively working with.
+    const launchExtra = Math.min(included[0]!.routes.length - 1, remaining);
+    extrasByGroup[0] = launchExtra;
+    remaining -= launchExtra;
+  }
+  // Share what is left one level at a time, so every other model gets a second
+  // slider position before any model receives a third.
+  while (remaining > 0) {
+    let progressed = false;
+    for (let index = 1; index < included.length && remaining > 0; index += 1) {
+      const extraCount = included[index]!.routes.length - 1;
+      if (extrasByGroup[index]! >= extraCount) continue;
+      extrasByGroup[index]! += 1;
+      remaining -= 1;
+      progressed = true;
+    }
+    if (!progressed) break;
+  }
+  const routes = included.flatMap((group, index) => [
+    group.routes[0]!,
+    ...group.routes.slice(1, 1 + extrasByGroup[index]!),
+  ]);
+
+  const labeled = applyUniqueAntigravityRouteLabels(routes);
   if (effortMode !== 'submenu') return labeled;
   // The app folds labels ending "(Low)"/"(Medium)"/"(High)" into one submenu row (native's name rule).
   // applyUnique appends " (Relay - Provider)", so move the level after that suffix for the fold to match.
@@ -664,9 +694,30 @@ const CURRENT_EXPERIMENT_IDS = [
   105887311, 106032301, 106113877, 106121604,
 ] as const;
 
+/**
+ * Experiment flags AGY needs before it exposes MCP servers to the agent.
+ *
+ * The Cloud Code backend returns several hundred per-account flags; omitting
+ * these made agy start its MCP manager but never advertise `call_mcp_tool`, so
+ * every configured server was invisible to the model. Values mirror what a
+ * live consumer account reports today.
+ */
+const ANTIGRAVITY_FEATURE_FLAGS = [
+  { name: 'Chat__enable_mcp_server_ij', boolValue: true },
+  { name: 'DatacloudMcp__enable_stdio_mcp_proxy', boolValue: true },
+  { name: 'enable-customization-kind-mcp', boolValue: true },
+  // Without this AGY loads MCP tools inline during the turn and blocks for a
+  // fixed ~18 s (UI shows "Initializing MCP servers") before the first model
+  // request, on every turn. The key is a compile-time literal in the AGY Go
+  // binary; the old `mcp-lazy-load-tools` name never existed there, so the
+  // deferral it promised never engaged.
+  { name: 'enable-mcp-non-blocking-turn-load', boolValue: true },
+] as const;
+
 /** Current Antigravity IDE listExperiments response shape. */
 export function buildListExperimentsResponse(): Record<string, unknown> {
   return {
     experimentIds: [...CURRENT_EXPERIMENT_IDS],
+    flags: ANTIGRAVITY_FEATURE_FLAGS.map(flag => ({ ...flag })),
   };
 }

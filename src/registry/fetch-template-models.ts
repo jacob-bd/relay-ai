@@ -185,6 +185,7 @@ function parseModelList(body: OpenAiModelListResponse, npm: string): CachedModel
       brand: deriveBrand(family),
       contextWindow,
       cost,
+      ...(cost ? { costSource: 'provider' as const } : {}),
       isFree: isFreeStatus(freeStatus),
       freeStatus,
       modelFormat: format,
