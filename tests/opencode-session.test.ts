@@ -42,6 +42,15 @@ describe('OpenCode Go session helpers', () => {
     })).toBe('session_456');
   });
 
+  it('reads Codex client_metadata session IDs when no header exists', () => {
+    expect(extractConversationId(undefined, {
+      client_metadata: { session_id: 'codex-thread-1', turn_id: 'turn-1' },
+    })).toBe('codex-thread-1');
+    expect(extractConversationId(undefined, {
+      client_metadata: { thread_id: 'codex-thread-2' },
+    })).toBe('codex-thread-2');
+  });
+
   it('detects OpenCode Go by provider identity or endpoint path', () => {
     expect(isOpenCodeGoEndpoint('go', undefined)).toBe(true);
     expect(isOpenCodeGoEndpoint('custom-openai', 'https://opencode.ai/zen/go/v1/chat/completions')).toBe(true);

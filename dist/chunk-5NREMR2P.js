@@ -8,7 +8,7 @@ import {
   streamAnthropicResponse,
   translateRequest,
   validateCustomEndpointUrl
-} from "./chunk-VAF7IDKG.js";
+} from "./chunk-XOHKP5N2.js";
 import {
   cachedModelCount,
   deriveBrand,
@@ -26,7 +26,7 @@ import {
   skipWithCachedModels,
   syntheticTemplate,
   toOAuthRegistryId
-} from "./chunk-KPIOODCG.js";
+} from "./chunk-XU2SFFN2.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -152,7 +152,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-JY2OMGE2.js";
+} from "./chunk-VW5YTYE2.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -234,7 +234,6 @@ function parseCodexAppModelSlug(modelKey) {
   return modelKey.startsWith(prefix) ? modelKey.slice(prefix.length) : modelKey;
 }
 function buildCodexAppRootConfig(spec) {
-  const ctxWindow = spec.route.contextWindow;
   return {
     model: codexAppModelSlug(spec.route.modelId),
     model_provider: "openai",
@@ -243,10 +242,6 @@ function buildCodexAppRootConfig(spec) {
     thread_unload_delay_secs: CODEX_APP_THREAD_UNLOAD_DELAY_SECS,
     ...spec.multiAgentV2Enabled ? {
       features: { multi_agent_v2: CODEX_MULTI_AGENT_V2 }
-    } : {},
-    ...ctxWindow && ctxWindow > 0 ? {
-      model_context_window: ctxWindow,
-      model_auto_compact_token_limit: Math.floor(ctxWindow * CODEX_APP_AUTO_COMPACT_RATIO)
     } : {}
   };
 }
@@ -8209,4 +8204,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-IX2SO7OQ.js.map
+//# sourceMappingURL=chunk-5NREMR2P.js.map

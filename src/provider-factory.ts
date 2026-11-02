@@ -710,7 +710,7 @@ export function applyAnthropicPromptCaching(params: ModelCallParams): ModelCallP
  * `prompt_cache_key`; without one a repeated agent prompt is paid at full price every turn.
  * Hashed so the host's raw conversation id never leaves the machine.
  */
-function openAiSessionDigest(sessionId: string): string {
+export function openAiSessionDigest(sessionId: string): string {
   return createHash('sha256').update(`relay-ai:prompt-cache:${sessionId}`).digest('hex').slice(0, 32);
 }
 
@@ -720,7 +720,7 @@ function openAiPromptCacheOptions(npm: string, sessionId: string | undefined): P
 }
 
 /** The ChatGPT backend keeps a conversation on one machine by `session_id` (as the Codex CLI sends it); UUID-shaped. */
-function openAiSessionHeader(sessionId: string): string {
+export function openAiSessionHeader(sessionId: string): string {
   const h = openAiSessionDigest(sessionId);
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
 }

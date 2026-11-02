@@ -74,6 +74,15 @@ function metadataSessionId(body: unknown): string | undefined {
     }
   }
 
+  // Codex sends its conversation identity in `client_metadata` on the local
+  // Responses transport, where an explicit header may be absent.
+  const clientMetadata = record.client_metadata;
+  if (clientMetadata && typeof clientMetadata === 'object') {
+    const client = clientMetadata as Record<string, unknown>;
+    const id = sanitizeSessionId(client.session_id ?? client.sessionId
+      ?? client.thread_id ?? client.threadId);
+    if (id) return id;
+  }
   return sanitizeSessionId(record.session_id ?? record.sessionId ?? record.thread_id ?? record.threadId);
 }
 

@@ -38,6 +38,12 @@ export interface CodexAppRestoreState {
   modelContextWindow?: number;
   hadModelAutoCompactTokenLimit?: boolean;
   modelAutoCompactTokenLimit?: number;
+  /**
+   * False when this session left the user's context/compaction values untouched
+   * (0.18.0 and later use the per-model catalog instead). Absent in older
+   * restore files, which did write those keys and must still be reverted.
+   */
+  managedModelContext?: boolean;
   /** Optional for restore files written before the thread-unload fix. */
   hadThreadUnloadDelaySecs?: boolean;
   threadUnloadDelaySecs?: number;
@@ -117,6 +123,7 @@ export function captureRestoreState(text: string): CodexAppRestoreState {
     modelContextWindow: contextWindow.value,
     hadModelAutoCompactTokenLimit: autoCompact.had,
     modelAutoCompactTokenLimit: autoCompact.value,
+    managedModelContext: false,
     hadThreadUnloadDelaySecs: unloadDelay.had,
     threadUnloadDelaySecs: unloadDelay.value,
     hadMultiAgentV2: multiAgentV2,
@@ -144,16 +151,10 @@ function mergeAppConfig(existing: TomlRecord, spec: CodexAppConfigSpec): TomlRec
   out.model_provider = patch.model_provider;
   out.openai_base_url = patch.openai_base_url;
   out.model_catalog_json = patch.model_catalog_json;
-  if (patch.model_context_window !== undefined) {
-    out.model_context_window = patch.model_context_window;
-  } else {
-    delete out.model_context_window;
-  }
-  if (patch.model_auto_compact_token_limit !== undefined) {
-    out.model_auto_compact_token_limit = patch.model_auto_compact_token_limit;
-  } else {
-    delete out.model_auto_compact_token_limit;
-  }
+  // Codex reads each model's window from model_catalog_json. Pinning a launch
+  // model's window here would follow that model only, so an in-app model switch
+  // would keep the old value (a 200K model once compacted a 500K one at 180K).
+  // Leave any user-set values alone; the catalog is the per-model source.
   // Keep a longer delay the user set themselves; otherwise raise it.
   const existingDelay = out.thread_unload_delay_secs;
   if (typeof existingDelay !== 'number' || existingDelay < patch.thread_unload_delay_secs) {
@@ -301,8 +302,10 @@ export function restoreConfigFromState(state: CodexAppRestoreState, configPath =
     applyRestoreKey(config, 'openai_base_url', Boolean(state.hadOpenAIBaseUrl), state.openAIBaseUrl);
   }
   applyRestoreKey(config, 'model_reasoning_effort', state.hadModelReasoningEffort, state.modelReasoningEffort);
-  applyRestoreNumber(config, 'model_context_window', state.hadModelContextWindow ?? false, state.modelContextWindow);
-  applyRestoreNumber(config, 'model_auto_compact_token_limit', state.hadModelAutoCompactTokenLimit ?? false, state.modelAutoCompactTokenLimit);
+  if (state.managedModelContext !== false) {
+    applyRestoreNumber(config, 'model_context_window', state.hadModelContextWindow ?? false, state.modelContextWindow);
+    applyRestoreNumber(config, 'model_auto_compact_token_limit', state.hadModelAutoCompactTokenLimit ?? false, state.modelAutoCompactTokenLimit);
+  }
   applyRestoreNumber(config, 'thread_unload_delay_secs', state.hadThreadUnloadDelaySecs ?? false, state.threadUnloadDelaySecs);
 
   const sidecar = getCodexAppSidecarProfilePath();

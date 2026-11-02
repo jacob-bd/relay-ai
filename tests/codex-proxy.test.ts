@@ -12,6 +12,8 @@ import {
   isCodexSubagentRequest,
   isExternalToolContinuation,
   protectCodexCompactionParams,
+  modelCacheKey,
+  resolveModel,
   resolveCodexSubagentRoute,
   startCodexProxy,
   streamOutcome,
@@ -126,6 +128,46 @@ describe('external Codex runtime identity', () => {
 
     expect(params.instructions).toContain('"claude-sonnet-4-6" through provider "antigravity"');
     expect(params.instructions).not.toContain('gemini-3.1-pro-high');
+  });
+});
+
+describe('session-scoped language models', () => {
+  const routes = [{
+    modelId: 'openai-oauth__gpt-6.1-sol',
+    npm: '@ai-sdk/openai',
+    apiKey: 'sk-test',
+    upstreamModelId: 'gpt-6.1-sol',
+  }] as any;
+
+  it('reuses one model per conversation and creates another for a new one', async () => {
+    const created: Array<{ modelId: string; sessionId: string }> = [];
+    const models = new Map<string, any>();
+    const create = async (route: { modelId: string }, sessionId: string) => {
+      created.push({ modelId: route.modelId, sessionId });
+      return { sessionId } as any;
+    };
+
+    const first = await resolveModel(routes, models, routes[0].modelId, { sessionId: 'thread-a', create });
+    const again = await resolveModel(routes, models, routes[0].modelId, { sessionId: 'thread-a', create });
+    expect(created).toHaveLength(1);
+    expect(again!.languageModel).toBe(first!.languageModel);
+
+    const other = await resolveModel(routes, models, routes[0].modelId, { sessionId: 'thread-b', create });
+    expect(created).toHaveLength(2);
+    expect(other!.languageModel).not.toBe(first!.languageModel);
+    expect(created.map(entry => entry.sessionId)).toEqual(['thread-a', 'thread-b']);
+    expect(modelCacheKey('m', 'a')).not.toBe(modelCacheKey('m', 'b'));
+  });
+
+  it('uses the launch-time model when a request has no conversation id', async () => {
+    const launchModel = { launch: true };
+    const models = new Map<string, any>([['m', launchModel]]);
+    const resolved = await resolveModel(
+      [{ modelId: 'm', npm: '@ai-sdk/openai', apiKey: 'sk-test', upstreamModelId: 'm' }] as any,
+      models,
+      'm',
+    );
+    expect(resolved!.languageModel).toBe(launchModel);
   });
 });
 

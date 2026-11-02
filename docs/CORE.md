@@ -162,7 +162,7 @@ Not yet measured: direct Gemini API key, DeepSeek/Kimi/GLM on their own APIs, Cl
 
 **Hosts should pass a stable `sessionId` for the life of a conversation** (not per request, and not shared between conversations). The hash means the id never leaves your machine in raw form. The ChatGPT backend can take several seconds to make a just-written prefix available, so the first one or two repeats of a brand-new prompt may still read 0.
 
-Relay's own launches now pass that conversation id for you. The Claude proxy, Gemini proxy, Antigravity gateway and server gateway derive a stable id from the client's conversation or session header (or the request body when there is none) and reuse one language model per conversation, so ChatGPT-login and OpenAI routes get a prompt-cache key outside Core as well. Relay also keeps cache-read and cache-write counts in the Anthropic and OpenAI usage it returns; before this they were dropped and clients showed zero cache reads on a hit.
+Relay's own launches now pass that conversation id for you. The Claude proxy, Gemini proxy, Antigravity gateway, server gateway and Codex proxy derive a stable id from the client's conversation or session header (or the request body when there is none) and reuse one language model per conversation, so ChatGPT-login and OpenAI routes get a prompt-cache key outside Core as well. Relay also keeps cache-read and cache-write counts in the Anthropic and OpenAI usage it returns; before this they were dropped and clients showed zero cache reads on a hit.
 
 To check your own routes, run the opt-in harness against your real registry and credentials (it sends five requests per route and prints cache reads; excluded from `npm test`):
 

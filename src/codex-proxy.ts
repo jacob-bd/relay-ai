@@ -457,15 +457,40 @@ export function resolveCodexSubagentRoute(
   return routes.find(route => route.modelId === configuredModelId);
 }
 
-function resolveModel(
+const MAX_SESSION_MODEL_CACHE = 64;
+
+/**
+ * Cache key for a route's language model. Session-scoped keys keep each
+ * conversation's OpenAI prompt-cache key and ChatGPT `session_id` header
+ * stable: the same model reached from two conversations must not share one.
+ * A request without a conversation id keeps using the launch-time model.
+ */
+export function modelCacheKey(modelId: string, sessionId?: string): string {
+  return sessionId ? `${modelId}\u0000session:${sessionId}` : modelId;
+}
+
+export async function resolveModel(
   routes: CodexProxyRoute[],
   models: Map<string, LanguageModel>,
   requestedModel: string,
-): { route: CodexProxyRoute; languageModel: LanguageModel } | undefined {
+  options: {
+    sessionId?: string;
+    create?: (route: CodexProxyRoute, sessionId: string) => Promise<LanguageModel>;
+  } = {},
+): Promise<{ route: CodexProxyRoute; languageModel: LanguageModel } | undefined> {
   const route = findCodexProxyRoute(routes, requestedModel);
   if (!route) return undefined;
-  const languageModel = models.get(route.modelId);
-  if (!languageModel) return undefined;
+  const key = modelCacheKey(route.modelId, options.sessionId);
+  let languageModel = models.get(key);
+  if (!languageModel) {
+    if (!options.sessionId || !options.create) return undefined;
+    languageModel = await options.create(route, options.sessionId);
+    models.set(key, languageModel);
+    const sessionKeys = [...models.keys()].filter(cached => cached.includes('\u0000session:'));
+    while (sessionKeys.length > MAX_SESSION_MODEL_CACHE) {
+      models.delete(sessionKeys.shift()!);
+    }
+  }
   return { route, languageModel };
 }
 
@@ -569,22 +594,24 @@ export async function startCodexProxy(
   silenceSdkWarnings();
 
   const models = new Map<string, LanguageModel>();
-  for (const route of routes) {
-    models.set(route.modelId, await createLanguageModel({
-      npm: route.npm,
-      modelId: route.upstreamModelId,
-      apiKey: route.apiKey,
-      baseURL: route.baseURL,
-      providerId: route.providerId ?? route.modelId,
-      authType: route.authType,
-      oauthAccountId: route.oauthAccountId,
-      providerData: route.providerData,
-      vertex: route.vertex,
-      headers: route.headers,
-      refreshToken: route.refreshToken,
-      onTokenRefreshed: refreshed => { route.apiKey = refreshed; },
-    }));
-  }
+  const createModel = (route: CodexProxyRoute, sessionId?: string) => createLanguageModel({
+    npm: route.npm,
+    modelId: route.upstreamModelId,
+    apiKey: route.apiKey,
+    baseURL: route.baseURL,
+    providerId: route.providerId ?? route.modelId,
+    authType: route.authType,
+    oauthAccountId: route.oauthAccountId,
+    providerData: route.providerData,
+    vertex: route.vertex,
+    headers: route.headers,
+    ...(sessionId ? { sessionId } : {}),
+    refreshToken: route.refreshToken,
+    onTokenRefreshed: refreshed => { route.apiKey = refreshed; },
+  });
+  // Launch-time models serve requests that carry no conversation id. Session
+  // models are created on demand so OpenAI prompt-cache keys follow the thread.
+  for (const route of routes) models.set(route.modelId, await createModel(route));
 
   return new Promise((resolve, reject) => {
     const log = debug
@@ -800,17 +827,23 @@ export async function startCodexProxy(
             return;
           }
         }
-        let resolved = subagentRoute
-          ? resolveModel(routes, models, subagentRoute.modelId)
-          : resolveModel(routes, models, modelId);
+        const sessionId = extractConversationId(req.headers, body);
+        if (debug) log(`HTTP session identity: model=${modelId} session=${sessionId ? 'yes' : 'none'}`);
+        const resolveRoute = (requested: string) => resolveModel(
+          routes,
+          models,
+          requested,
+          { ...(sessionId ? { sessionId } : {}), create: createModel },
+        );
+        let resolved = await resolveRoute(subagentRoute ? subagentRoute.modelId : modelId);
         if (!resolved) {
           const fallbackRoute = routes[0];
-          const fallbackLm = fallbackRoute ? models.get(fallbackRoute.modelId) : undefined;
-          if (fallbackRoute && fallbackLm) {
+          const fallback = fallbackRoute ? await resolveRoute(fallbackRoute.modelId) : undefined;
+          if (fallback) {
             if (debug) {
               log(`resolveModel fallback: requested="${modelId}" → ${fallbackRoute.modelId}`);
             }
-            resolved = { route: fallbackRoute, languageModel: fallbackLm };
+            resolved = fallback;
           } else {
             if (debug) {
               log(`resolveModel failed: requested="${modelId}" known=[${routes.map(r => r.modelId).join(', ')}]`);
@@ -1457,15 +1490,21 @@ export async function startCodexProxy(
             }
           }
           externalActive = true;
-          let resolved = subagentRoute
-            ? resolveModel(routes, models, subagentRoute.modelId)
-            : resolveModel(routes, models, modelId);
+          const sessionId = extractConversationId(req.headers, body);
+          if (debug) log(`WS session identity: model=${modelId} session=${sessionId ? 'yes' : 'none'}`);
+          const resolveRoute = (requested: string) => resolveModel(
+            routes,
+            models,
+            requested,
+            { ...(sessionId ? { sessionId } : {}), create: createModel },
+          );
+          let resolved = await resolveRoute(subagentRoute ? subagentRoute.modelId : modelId);
           if (!resolved) {
             const fb = routes[0];
-            const fbLm = fb ? models.get(fb.modelId) : undefined;
-            if (fb && fbLm) {
+            const fallback = fb ? await resolveRoute(fb.modelId) : undefined;
+            if (fb && fallback) {
               if (debug) log(`WS resolveModel fallback: requested="${modelId}" → ${fb.modelId}`);
-              resolved = { route: fb, languageModel: fbLm };
+              resolved = fallback;
             } else {
               if (debug) log(`WS resolveModel failed: requested="${modelId}" known=[${routes.map(r => r.modelId).join(', ')}]`);
               sendWsEvent(`event: error\ndata: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}\n\n`); closeSocket(); return;

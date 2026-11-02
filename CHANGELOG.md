@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Codex app and CLI: OpenAI prompt-cache identity now survives Relay routing.** Selecting a ChatGPT-login or OpenAI model as a Relay route (for example `openai-oauth__gpt-6.1-sol`) used to create one language model per route when the proxy started, with no conversation id. Every request then went out without a `prompt_cache_key` or the ChatGPT `session_id` header, so the backend lost conversation affinity and served cold prompts. In the 2026-11-02 session the natively forwarded model reused about 99.8% of input from cache; after switching to the Relay alias, 39 of 56 requests reported zero cached tokens and uncached input rose from roughly 0.5M over 105 minutes to 5.9M in 10 minutes. Relay now resolves the conversation id from request headers or Codex's `client_metadata` and keeps one model per route and conversation, so the cache key and session header stay stable across turns and reconnects. A request without a conversation id still uses the launch-time model.
+- **Context and compaction follow the selected model again.** Relay no longer writes the launch model's `model_context_window` and `model_auto_compact_token_limit` into `~/.codex/config.toml`. Those values pinned whichever model was selected at launch, so an in-app model switch kept the old window: a 500K GPT-6.1 Sol thread was observed running with a 190K window (left over from a 200K model) and auto-compacting at about 180K, which reset the conversation twice and discarded cache continuity. Codex now uses each model's own window from `model_catalog_json`. Restore leaves values you set yourself untouched, while recovery files written by earlier sessions still revert the values they added.
+
+### Changed
+
+- **Cache reads are visible without being treated as free.** Relay reports prompt-cache hits as `input_tokens_details.cached_tokens`, with `input_tokens` still the full prompt. Cached input lowers the price of a turn but still counts toward the provider's usage window, so a long tool loop can exhaust a ChatGPT allowance even at high cache reuse. Diagnostics now show the split so this is visible before the window is gone.
+
+### Upgrade notes
+
+- No migration. Existing `config.toml` values from earlier Relay sessions are reverted by their restore files; remove `model_context_window` or `model_auto_compact_token_limit` yourself only if an old session was interrupted and left one behind.
+
 ## [0.18.0] - 2026-11-02
 
 ### Added

@@ -58,12 +58,9 @@ export function buildCodexAppRootConfig(spec: CodexAppConfigSpec): {
   model_provider: string;
   openai_base_url: string;
   model_catalog_json: string;
-  model_context_window?: number;
-  model_auto_compact_token_limit?: number;
   thread_unload_delay_secs: number;
   features?: Record<string, unknown>;
 } {
-  const ctxWindow = spec.route.contextWindow;
   return {
     model: codexAppModelSlug(spec.route.modelId),
     model_provider: 'openai',
@@ -72,10 +69,6 @@ export function buildCodexAppRootConfig(spec: CodexAppConfigSpec): {
     thread_unload_delay_secs: CODEX_APP_THREAD_UNLOAD_DELAY_SECS,
     ...(spec.multiAgentV2Enabled ? {
       features: { multi_agent_v2: CODEX_MULTI_AGENT_V2 },
-    } : {}),
-    ...(ctxWindow && ctxWindow > 0 ? {
-      model_context_window: ctxWindow,
-      model_auto_compact_token_limit: Math.floor(ctxWindow * CODEX_APP_AUTO_COMPACT_RATIO),
     } : {}),
   };
 }

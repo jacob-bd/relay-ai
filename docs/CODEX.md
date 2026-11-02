@@ -351,6 +351,14 @@ For CLI favorites, the launched Codex child gets `OPENAI_API_KEY=proxy-local`, n
 
 The reasoning-effort slider in the Codex picker is shown only for models with a resolver-backed controllable reasoning profile. Resolution is declared-first: a family's verified ladder is combined with the levels the model declares on models.dev, then filtered down to levels that map to distinct wire values — a level that would be silently downgraded is dropped rather than sent as something weaker. OpenRouter additionally requires `reasoning` in the model's `supported_parameters`; generic `@ai-sdk/openai-compatible` routes offer the model's declared levels verbatim (that covers OpenCode Go/Zen, Nvidia, Venice, Command Code, and similar).
 
+### Usage, prompt caching and context
+
+A Relay route carries a stable conversation id so OpenAI and ChatGPT-login models keep their prompt cache. The id comes from the client's session or thread header (Codex also sends it in `client_metadata`), is hashed before it reaches the provider, and stays fixed for the life of the thread, including after proxy reconnects and app restarts; a new conversation gets its own id. Switching to a different route starts that route's own cache, so the first turn after a switch pays full price for the prefix. Natively forwarded ChatGPT models keep Codex's own `session_id` and account headers, which is why their cache reuse is usually higher.
+
+`input_tokens` in a Codex usage record is the whole prompt; `input_tokens_details.cached_tokens` is the portion the provider served from cache. Cached tokens cost less but still count toward the ChatGPT allowance, so a long tool loop can use up a 5-hour window even at 98% cache reuse. Relay reports the split rather than subtracting cached tokens from the prompt, because that is what the provider meters.
+
+Context windows come from each model's entry in `model_catalog_json`. Relay no longer pins `model_context_window` or `model_auto_compact_token_limit` in `config.toml`: a pinned value followed the launch model only, so switching models in the app could keep a smaller window and compact early. If you set either value yourself it is left alone; Relay's restore step only reverts values that an earlier Relay session wrote.
+
 ### Proxy warm-up
 
 With many favorites (up to 50) spanning many providers, the first request after launch may be slow as the proxy initializes one `LanguageModel` per favorite. This is a known characteristic; subsequent requests are fast.

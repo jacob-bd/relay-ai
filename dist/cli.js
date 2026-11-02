@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-TFFFXRHI.js";
+} from "./chunk-VI7NYLXE.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -119,10 +119,10 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   zenRegistryStub
-} from "./chunk-IX2SO7OQ.js";
+} from "./chunk-5NREMR2P.js";
 import {
   validateCustomEndpointUrl
-} from "./chunk-VAF7IDKG.js";
+} from "./chunk-XOHKP5N2.js";
 import {
   OPENCODE_SESSION_HEADER,
   buildImportProviderList,
@@ -138,7 +138,7 @@ import {
   resolveRefreshCredential,
   syntheticTemplate,
   toOAuthRegistryId
-} from "./chunk-KPIOODCG.js";
+} from "./chunk-XU2SFFN2.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -240,7 +240,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-JY2OMGE2.js";
+} from "./chunk-VW5YTYE2.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -5046,11 +5046,24 @@ function resolveCodexSubagentRoute(routes, configuredModelId, body, headers) {
   if (!configuredModelId) return void 0;
   return routes.find((route) => route.modelId === configuredModelId);
 }
-function resolveModel(routes, models, requestedModel) {
+var MAX_SESSION_MODEL_CACHE = 64;
+function modelCacheKey(modelId, sessionId) {
+  return sessionId ? `${modelId}\0session:${sessionId}` : modelId;
+}
+async function resolveModel(routes, models, requestedModel, options = {}) {
   const route = findCodexProxyRoute(routes, requestedModel);
   if (!route) return void 0;
-  const languageModel = models.get(route.modelId);
-  if (!languageModel) return void 0;
+  const key = modelCacheKey(route.modelId, options.sessionId);
+  let languageModel = models.get(key);
+  if (!languageModel) {
+    if (!options.sessionId || !options.create) return void 0;
+    languageModel = await options.create(route, options.sessionId);
+    models.set(key, languageModel);
+    const sessionKeys = [...models.keys()].filter((cached) => cached.includes("\0session:"));
+    while (sessionKeys.length > MAX_SESSION_MODEL_CACHE) {
+      models.delete(sessionKeys.shift());
+    }
+  }
   return { route, languageModel };
 }
 async function prepareExternalCodexBody(body, context) {
@@ -5104,24 +5117,24 @@ async function startCodexProxy(routes, options = {}) {
   const nativePayloadRelay = mixedNative ? createNativePayloadRelay({}) : void 0;
   silenceSdkWarnings();
   const models = /* @__PURE__ */ new Map();
-  for (const route of routes) {
-    models.set(route.modelId, await createLanguageModel({
-      npm: route.npm,
-      modelId: route.upstreamModelId,
-      apiKey: route.apiKey,
-      baseURL: route.baseURL,
-      providerId: route.providerId ?? route.modelId,
-      authType: route.authType,
-      oauthAccountId: route.oauthAccountId,
-      providerData: route.providerData,
-      vertex: route.vertex,
-      headers: route.headers,
-      refreshToken: route.refreshToken,
-      onTokenRefreshed: (refreshed) => {
-        route.apiKey = refreshed;
-      }
-    }));
-  }
+  const createModel = (route, sessionId) => createLanguageModel({
+    npm: route.npm,
+    modelId: route.upstreamModelId,
+    apiKey: route.apiKey,
+    baseURL: route.baseURL,
+    providerId: route.providerId ?? route.modelId,
+    authType: route.authType,
+    oauthAccountId: route.oauthAccountId,
+    providerData: route.providerData,
+    vertex: route.vertex,
+    headers: route.headers,
+    ...sessionId ? { sessionId } : {},
+    refreshToken: route.refreshToken,
+    onTokenRefreshed: (refreshed) => {
+      route.apiKey = refreshed;
+    }
+  });
+  for (const route of routes) models.set(route.modelId, await createModel(route));
   return new Promise((resolve2, reject2) => {
     const log15 = debug ? makeTraceLogger(getCodexProxyDebugLogPath(), { keepPrevious: true }) : () => {
     };
@@ -5338,15 +5351,23 @@ async function startCodexProxy(routes, options = {}) {
             return;
           }
         }
-        let resolved = subagentRoute ? resolveModel(routes, models, subagentRoute.modelId) : resolveModel(routes, models, modelId);
+        const sessionId = extractConversationId(req.headers, body);
+        if (debug) log15(`HTTP session identity: model=${modelId} session=${sessionId ? "yes" : "none"}`);
+        const resolveRoute = (requested) => resolveModel(
+          routes,
+          models,
+          requested,
+          { ...sessionId ? { sessionId } : {}, create: createModel }
+        );
+        let resolved = await resolveRoute(subagentRoute ? subagentRoute.modelId : modelId);
         if (!resolved) {
           const fallbackRoute = routes[0];
-          const fallbackLm = fallbackRoute ? models.get(fallbackRoute.modelId) : void 0;
-          if (fallbackRoute && fallbackLm) {
+          const fallback = fallbackRoute ? await resolveRoute(fallbackRoute.modelId) : void 0;
+          if (fallback) {
             if (debug) {
               log15(`resolveModel fallback: requested="${modelId}" \u2192 ${fallbackRoute.modelId}`);
             }
-            resolved = { route: fallbackRoute, languageModel: fallbackLm };
+            resolved = fallback;
           } else {
             if (debug) {
               log15(`resolveModel failed: requested="${modelId}" known=[${routes.map((r) => r.modelId).join(", ")}]`);
@@ -5985,13 +6006,21 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}`, type: "i
               }
             }
             externalActive = true;
-            let resolved = subagentRoute ? resolveModel(routes, models, subagentRoute.modelId) : resolveModel(routes, models, modelId);
+            const sessionId = extractConversationId(req.headers, body);
+            if (debug) log15(`WS session identity: model=${modelId} session=${sessionId ? "yes" : "none"}`);
+            const resolveRoute = (requested) => resolveModel(
+              routes,
+              models,
+              requested,
+              { ...sessionId ? { sessionId } : {}, create: createModel }
+            );
+            let resolved = await resolveRoute(subagentRoute ? subagentRoute.modelId : modelId);
             if (!resolved) {
               const fb = routes[0];
-              const fbLm = fb ? models.get(fb.modelId) : void 0;
-              if (fb && fbLm) {
+              const fallback = fb ? await resolveRoute(fb.modelId) : void 0;
+              if (fb && fallback) {
                 if (debug) log15(`WS resolveModel fallback: requested="${modelId}" \u2192 ${fb.modelId}`);
-                resolved = { route: fb, languageModel: fbLm };
+                resolved = fallback;
               } else {
                 if (debug) log15(`WS resolveModel failed: requested="${modelId}" known=[${routes.map((r) => r.modelId).join(", ")}]`);
                 sendWsEvent(`event: error
@@ -12893,6 +12922,7 @@ function captureRestoreState(text7) {
     modelContextWindow: contextWindow.value,
     hadModelAutoCompactTokenLimit: autoCompact.had,
     modelAutoCompactTokenLimit: autoCompact.value,
+    managedModelContext: false,
     hadThreadUnloadDelaySecs: unloadDelay.had,
     threadUnloadDelaySecs: unloadDelay.value,
     hadMultiAgentV2: multiAgentV2,
@@ -12915,16 +12945,6 @@ function mergeAppConfig(existing, spec) {
   out.model_provider = patch.model_provider;
   out.openai_base_url = patch.openai_base_url;
   out.model_catalog_json = patch.model_catalog_json;
-  if (patch.model_context_window !== void 0) {
-    out.model_context_window = patch.model_context_window;
-  } else {
-    delete out.model_context_window;
-  }
-  if (patch.model_auto_compact_token_limit !== void 0) {
-    out.model_auto_compact_token_limit = patch.model_auto_compact_token_limit;
-  } else {
-    delete out.model_auto_compact_token_limit;
-  }
   const existingDelay = out.thread_unload_delay_secs;
   if (typeof existingDelay !== "number" || existingDelay < patch.thread_unload_delay_secs) {
     out.thread_unload_delay_secs = patch.thread_unload_delay_secs;
@@ -13059,8 +13079,10 @@ function restoreConfigFromState(state, configPath = getCodexConfigPath()) {
     applyRestoreKey(config, "openai_base_url", Boolean(state.hadOpenAIBaseUrl), state.openAIBaseUrl);
   }
   applyRestoreKey(config, "model_reasoning_effort", state.hadModelReasoningEffort, state.modelReasoningEffort);
-  applyRestoreNumber(config, "model_context_window", state.hadModelContextWindow ?? false, state.modelContextWindow);
-  applyRestoreNumber(config, "model_auto_compact_token_limit", state.hadModelAutoCompactTokenLimit ?? false, state.modelAutoCompactTokenLimit);
+  if (state.managedModelContext !== false) {
+    applyRestoreNumber(config, "model_context_window", state.hadModelContextWindow ?? false, state.modelContextWindow);
+    applyRestoreNumber(config, "model_auto_compact_token_limit", state.hadModelAutoCompactTokenLimit ?? false, state.modelAutoCompactTokenLimit);
+  }
   applyRestoreNumber(config, "thread_unload_delay_secs", state.hadThreadUnloadDelaySecs ?? false, state.threadUnloadDelaySecs);
   const sidecar = getCodexAppSidecarProfilePath();
   if (existsSync10(sidecar)) {
@@ -17681,7 +17703,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-Q6BBSKEH.js");
+    const { runUiCommand } = await import("./ui-command-LCW7XQVG.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

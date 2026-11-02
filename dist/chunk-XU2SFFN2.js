@@ -16,7 +16,7 @@ import {
   resolveContextWindow,
   resolveModelsDevSlug,
   shouldHideModel
-} from "./chunk-JY2OMGE2.js";
+} from "./chunk-VW5YTYE2.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -382,6 +382,12 @@ function metadataSessionId(body) {
       }
     }
   }
+  const clientMetadata = record.client_metadata;
+  if (clientMetadata && typeof clientMetadata === "object") {
+    const client = clientMetadata;
+    const id = sanitizeSessionId(client.session_id ?? client.sessionId ?? client.thread_id ?? client.threadId);
+    if (id) return id;
+  }
   return sanitizeSessionId(record.session_id ?? record.sessionId ?? record.thread_id ?? record.threadId);
 }
 function extractConversationId(headers, body) {
@@ -515,4 +521,4 @@ export {
   providerRefreshToken,
   reconcileCachedModelProtocol
 };
-//# sourceMappingURL=chunk-KPIOODCG.js.map
+//# sourceMappingURL=chunk-XU2SFFN2.js.map

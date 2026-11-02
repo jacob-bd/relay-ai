@@ -11,7 +11,7 @@ import {
 } from '../src/codex/app-config.js';
 import { restoreCodexAppOverlay } from '../src/codex/app-session.js';
 import { getBackupsDir } from '../src/codex/session.js';
-import { CODEX_APP_PROVIDER_ID, CODEX_APP_AUTO_COMPACT_RATIO, CODEX_APP_THREAD_UNLOAD_DELAY_SECS } from '../src/codex/app-profile.js';
+import { CODEX_APP_PROVIDER_ID, CODEX_APP_THREAD_UNLOAD_DELAY_SECS } from '../src/codex/app-profile.js';
 import type { CodexAppConfigSpec } from '../src/codex/app-profile.js';
 
 describe('app-config', () => {
@@ -92,7 +92,23 @@ describe('app-config', () => {
     expect(readFileSync(configPath, 'utf8')).toContain('model_reasoning_effort = "high"');
   });
 
-  it('sets the auto-compact threshold from the context window and ratio', () => {
+  it('leaves context and auto-compaction to the per-model catalog', () => {
+    const configPath = join(home, '.codex', 'config.toml');
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    writeFileSync(configPath, 'model_context_window = 500000\nmodel_auto_compact_token_limit = 450000\n', 'utf8');
+    const spec = proxySpec(join(home, '.relay-ai', 'codex', 'app-models-anthropic.json'));
+    spec.route.contextWindow = 200_000;
+
+    applyAppConfigPatch(spec, configPath);
+
+    const text = readFileSync(configPath, 'utf8');
+    // A pin here would follow the launch model only; switching models in the app
+    // used to leave a smaller window in place.
+    expect(text).toContain('model_context_window = 500000');
+    expect(text).toContain('model_auto_compact_token_limit = 450000');
+  });
+
+  it('does not pin a context window when the user had none', () => {
     const configPath = join(home, '.codex', 'config.toml');
     mkdirSync(join(home, '.codex'), { recursive: true });
     const spec = proxySpec(join(home, '.relay-ai', 'codex', 'app-models-anthropic.json'));
@@ -101,8 +117,8 @@ describe('app-config', () => {
     applyAppConfigPatch(spec, configPath);
 
     const text = readFileSync(configPath, 'utf8');
-    expect(text).toContain('model_context_window = 200000');
-    expect(text).toContain(`model_auto_compact_token_limit = ${Math.floor(200_000 * CODEX_APP_AUTO_COMPACT_RATIO)}`);
+    expect(text).not.toContain('model_context_window');
+    expect(text).not.toContain('model_auto_compact_token_limit');
   });
 
   it('raises thread_unload_delay_secs so idle threads are not unloaded under the app', () => {
@@ -138,6 +154,25 @@ describe('app-config', () => {
     applyAppConfigPatch(proxySpec('/tmp/catalog.json'), configPath);
     restoreConfigFromState(state2, configPath);
     expect(readFileSync(configPath, 'utf8')).not.toContain('thread_unload_delay_secs');
+  });
+
+  it('restore leaves context settings alone, but reverts a legacy session that changed them', () => {
+    const configPath = join(home, '.codex', 'config.toml');
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    const userConfig = 'model = "gpt-5"\nmodel_context_window = 500000\n';
+    writeFileSync(configPath, userConfig, 'utf8');
+
+    const current = captureRestoreState(userConfig);
+    restoreConfigFromState(current, configPath);
+    expect(readFileSync(configPath, 'utf8')).toContain('model_context_window = 500000');
+
+    const legacy = { ...current };
+    delete (legacy as { managedModelContext?: boolean }).managedModelContext;
+    legacy.hadModelContextWindow = false;
+    legacy.modelContextWindow = undefined;
+    writeFileSync(configPath, 'model = "gpt-5"\nmodel_context_window = 200000\n', 'utf8');
+    restoreConfigFromState(legacy, configPath);
+    expect(readFileSync(configPath, 'utf8')).not.toContain('model_context_window');
   });
 
   it('restore state round-trips model_reasoning_effort', () => {

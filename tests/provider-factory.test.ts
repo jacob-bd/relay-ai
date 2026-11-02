@@ -11,6 +11,8 @@ import {
   isSdkMigratedNpm,
   maxToolsForNpm,
   modelPrefersResponsesApi,
+  openAiSessionDigest,
+  openAiSessionHeader,
   resolveProviderNpm,
   shouldUseOpenAiResponsesEndpoint,
   thinkingProviderOptions,
@@ -1091,3 +1093,20 @@ describe('Vertex Claude config fallback', () => {
     }
   });
 });
+
+describe('OpenAI conversation identity', () => {
+  it('keeps a prompt-cache key stable per conversation and distinct between them', () => {
+    expect(openAiSessionDigest('thread-a')).toBe(openAiSessionDigest('thread-a'));
+    expect(openAiSessionDigest('thread-a')).not.toBe(openAiSessionDigest('thread-b'));
+    // Hashed: the raw conversation id never reaches the provider.
+    expect(openAiSessionDigest('thread-a')).not.toContain('thread-a');
+  });
+
+  it('sends a UUID-shaped ChatGPT session header derived from that key', () => {
+    const header = openAiSessionHeader('thread-a');
+    expect(header).toBe(openAiSessionHeader('thread-a'));
+    expect(header).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(header).not.toBe(openAiSessionHeader('thread-b'));
+  });
+});
+
