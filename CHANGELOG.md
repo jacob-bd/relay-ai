@@ -2,20 +2,6 @@
 
 ## [Unreleased]
 
-### Fixed
-
-- **Codex app and CLI: OpenAI prompt-cache identity now survives Relay routing.** Selecting a ChatGPT-login or OpenAI model as a Relay route (for example `openai-oauth__gpt-6.1-sol`) used to create one language model per route when the proxy started, with no conversation id. Every request then went out without a `prompt_cache_key` or the ChatGPT `session_id` header, so the backend lost conversation affinity and served cold prompts. In the 2026-11-02 session the natively forwarded model reused about 99.8% of input from cache; after switching to the Relay alias, 39 of 56 requests reported zero cached tokens and uncached input rose from roughly 0.5M over 105 minutes to 5.9M in 10 minutes. Relay now resolves the conversation id from request headers or Codex's `client_metadata` and keeps one model per route and conversation, so the cache key and session header stay stable across turns and reconnects. A request without a conversation id still uses the launch-time model.
-- **Claude Code no longer leaves a Relay model as your default.** Claude Code saves the model it launched with to `~/.claude/settings.json`, so a later bare `claude` started on an alias such as `anthropic-a2agent__DeepSeek-V4.1-Flash-1017[1m]` and failed (for example `--advisor opus`: the model does not support the advisor tool). Relay now records the `model` setting before launching and, when the session ends, restores it if it was left as a Relay alias. Nothing else in the file is changed, and a non-Relay model you chose during the session is respected.
-- **Context and compaction follow the selected model again.** Relay no longer writes the launch model's `model_context_window` and `model_auto_compact_token_limit` into `~/.codex/config.toml`. Those values pinned whichever model was selected at launch, so an in-app model switch kept the old window: a 500K GPT-6.1 Sol thread was observed running with a 190K window (left over from a 200K model) and auto-compacting at about 180K, which reset the conversation twice and discarded cache continuity. Codex now uses each model's own window from `model_catalog_json`. Restore leaves values you set yourself untouched, while recovery files written by earlier sessions still revert the values they added.
-
-### Changed
-
-- **Cache reads are visible without being treated as free.** Relay reports prompt-cache hits as `input_tokens_details.cached_tokens`, with `input_tokens` still the full prompt. Cached input lowers the price of a turn but still counts toward the provider's usage window, so a long tool loop can exhaust a ChatGPT allowance even at high cache reuse. Diagnostics now show the split so this is visible before the window is gone.
-
-### Upgrade notes
-
-- No migration. Existing `config.toml` values from earlier Relay sessions are reverted by their restore files; remove `model_context_window` or `model_auto_compact_token_limit` yourself only if an old session was interrupted and left one behind.
-
 ## [0.18.0] - 2026-11-02
 
 ### Added
@@ -37,6 +23,10 @@
 - **Codex streams that stay connected but never finish no longer hang forever.** The stall watchdog used one timer that any stream part reset, so a provider that kept delivering contentless parts could hold a turn open indefinitely (seen live: 740 seconds on a ChatGPT-login model, ended only by restarting). There are now two limits: **120 seconds without any upstream activity** (any byte on the connection counts, not only a parsed stream part, so a quiet-but-alive provider is no longer mistaken for a dead one), and **10 minutes without content progress** (text, reasoning, tool-call input or a finish). Each fails with its own message. Both are configurable with `RELAY_AI_STREAM_IDLE_TIMEOUT_MS` and `RELAY_AI_STREAM_PROGRESS_TIMEOUT_MS` (milliseconds); see [docs/CODEX.md](docs/CODEX.md). A provider that sends no bytes at all while it reasons still needs a larger idle limit.
 - **Anthropic-compatible model discovery follows pagination (#87).** Discovery made a single request and read only the first page, so a gateway with a paginated catalog silently left later models out of the picker. It now follows `has_more` / `last_id` with `after_id`, drops repeated ids, shares one timeout across all pages, and stops on a repeated cursor or after 50 pages. If a later page fails or the server's pagination is inconsistent, the models already found are kept and Relay warns that the list may be incomplete (in `providers add`, `providers edit`, `providers refresh` and `relay-ai ui`) instead of presenting it as complete. The first request is unchanged, so servers that do not paginate behave exactly as before. Applies to custom Anthropic endpoints, registry refresh and key validation on import. Checked live against the Anthropic API with a forced small page size.
 
+- **Codex app and CLI: OpenAI prompt-cache identity now survives Relay routing.** Selecting a ChatGPT-login or OpenAI model as a Relay route (for example `openai-oauth__gpt-6.1-sol`) used to create one language model per route when the proxy started, with no conversation id. Every request then went out without a `prompt_cache_key` or the ChatGPT `session_id` header, so the backend lost conversation affinity and served cold prompts. In the 2026-11-02 session the natively forwarded model reused about 99.8% of input from cache; after switching to the Relay alias, 39 of 56 requests reported zero cached tokens and uncached input rose from roughly 0.5M over 105 minutes to 5.9M in 10 minutes. Relay now resolves the conversation id from request headers or Codex's `client_metadata` and keeps one model per route and conversation, so the cache key and session header stay stable across turns and reconnects. A request without a conversation id still uses the launch-time model.
+- **Claude Code no longer leaves a Relay model as your default.** Claude Code saves the model it launched with to `~/.claude/settings.json`, so a later bare `claude` started on an alias such as `anthropic-a2agent__DeepSeek-V4.1-Flash-1017[1m]` and failed (for example `--advisor opus`: the model does not support the advisor tool). Relay now records the `model` setting before launching and, when the session ends, restores it if it was left as a Relay alias. Nothing else in the file is changed, and a non-Relay model you chose during the session is respected.
+- **Context and compaction follow the selected model again.** Relay no longer writes the launch model's `model_context_window` and `model_auto_compact_token_limit` into `~/.codex/config.toml`. Those values pinned whichever model was selected at launch, so an in-app model switch kept the old window: a 500K GPT-6.1 Sol thread was observed running with a 190K window (left over from a 200K model) and auto-compacting at about 180K, which reset the conversation twice and discarded cache continuity. Codex now uses each model's own window from `model_catalog_json`. Restore leaves values you set yourself untouched, while recovery files written by earlier sessions still revert the values they added.
+
 ### Changed
 
 - **Provider refresh feedback explicitly describes catalog discovery.** **Test & Refresh** continues to use the entered key and offers to save/replace it after confirmation. Its feedback now says the catalog was refreshed, and its tooltip directs users to a model's **Test** action to verify inference access. A successful model-list request alone does not establish that a model can answer.
@@ -44,11 +34,16 @@
 - **Codex proxy progress lines show stream part types.** Each `response progress` line ends with `parts=[type:count,...]` for the parts received since the last report, which distinguishes a silent stream from one that keeps sending contentless parts.
 - **Antigravity tracing names the tools the model was given.** `--trace` now logs the declared tool names for each request (not their schemas or arguments), which makes it possible to tell a missing tool from a model that chose not to call one. The trace also records that an empty `fetchAdminControls` response is expected on a consumer account, so the "admin controls not applicable" line is no longer mistaken for a fault.
 
+- **Cache reads are visible without being treated as free.** Relay reports prompt-cache hits as `input_tokens_details.cached_tokens`, with `input_tokens` still the full prompt. Cached input lowers the price of a turn but still counts toward the provider's usage window, so a long tool loop can exhaust a ChatGPT allowance even at high cache reuse. Diagnostics now show the split so this is visible before the window is gone.
+
 ### Upgrade notes
 
 - Nothing to migrate: saved credentials, provider ids, favorites and pricing caches keep working. The 0.17.1 tag was never published; its fixes (Codex stall timers and Anthropic catalog pagination) ship here.
 - **All provider models** is a launch-time choice. It does not edit your favorites and is not saved; pick a single model next time to return to the saved favorites catalog.
 - Hosts embedding Core still need to pass a stable `sessionId` per conversation for OpenAI prompt caching. Relay's own launches now do this automatically.
+
+- No migration. Existing `config.toml` values from earlier Relay sessions are reverted by their restore files; remove `model_context_window` or `model_auto_compact_token_limit` yourself only if an old session was interrupted and left one behind.
+
 
 ## [0.17.0] - 2026-10-29
 
