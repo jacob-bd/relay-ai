@@ -12,7 +12,7 @@ import {
   sseChunk,
   thinkingProviderOptions,
   upstreamHttpStatus
-} from "./chunk-O5RS74BQ.js";
+} from "./chunk-HQHRYYRR.js";
 
 // src/registry/url-security.ts
 import { lookup } from "dns/promises";
@@ -650,8 +650,7 @@ async function writeAnthropicStream(fullStream, modelId, write, log, estimatedIn
   let started = false;
   let openType = null;
   let pendingThinkingSig;
-  const idToBlock = /* @__PURE__ */ new Map();
-  const bufferedAgentCalls = /* @__PURE__ */ new Map();
+  const pendingToolStarts = /* @__PURE__ */ new Map();
   let finishReason = "end_turn";
   let usage = { input_tokens: estimatedInputTokens, output_tokens: 0 };
   const emit = (event, data) => write(sseChunk(event, data));
@@ -725,88 +724,49 @@ async function writeAnthropicStream(fullStream, modelId, write, log, estimatedIn
         break;
       case "text-end":
         break;
-      case "tool-input-start": {
-        const sig = grabRoundTripSignature(part);
-        openBlock("tool", {
-          type: "tool_use",
-          id: encodeToolUseId(part.id ?? "", sig),
-          name: part.toolName,
-          input: {}
-        });
-        idToBlock.set(part.id ?? "", blockIndex);
-        if (subagentRouting && part.toolName === "Agent") {
-          bufferedAgentCalls.set(part.id ?? "", { blockIndex });
-        }
+      // Complete tool arguments before opening a block: calls may interleave.
+      case "tool-input-start":
+        pendingToolStarts.set(part.id ?? "", part);
         break;
-      }
       case "tool-input-delta":
-        if (bufferedAgentCalls.has(part.id ?? "")) break;
-        emit("content_block_delta", {
-          type: "content_block_delta",
-          index: idToBlock.get(part.id ?? "") ?? blockIndex,
-          delta: { type: "input_json_delta", partial_json: part.delta ?? part.text ?? "" }
-        });
-        break;
       case "tool-input-end":
         break;
       case "tool-call": {
         finishReason = "tool_use";
         const toolCallId = part.toolCallId ?? "";
+        const pendingStart = pendingToolStarts.get(toolCallId);
+        pendingToolStarts.delete(toolCallId);
+        closeOpen();
+        let input = part.input ?? {};
         if (subagentRouting && part.toolName === "Agent") {
           try {
             const normalized = prepareClaudeAgentInput(part.input, subagentRouting);
             logSubagentDecision(log, normalized.decision);
-            const buffered = bufferedAgentCalls.get(toolCallId);
-            if (!buffered && !idToBlock.has(toolCallId)) {
-              const sig = grabRoundTripSignature(part);
-              openBlock("tool", {
-                type: "tool_use",
-                id: encodeToolUseId(toolCallId, sig),
-                name: part.toolName,
-                input: {}
-              });
-              idToBlock.set(toolCallId, blockIndex);
-            }
-            emit("content_block_delta", {
-              type: "content_block_delta",
-              index: buffered?.blockIndex ?? idToBlock.get(toolCallId) ?? blockIndex,
-              delta: {
-                type: "input_json_delta",
-                partial_json: JSON.stringify(stripNullInputs(normalized.input))
-              }
-            });
-            bufferedAgentCalls.delete(toolCallId);
+            input = normalized.input;
           } catch (error) {
             if (error instanceof UnavailableSubagentModelError) {
-              bufferedAgentCalls.delete(toolCallId);
-              closeOpen();
               emit("error", {
                 type: "error",
-                error: {
-                  type: anthropicErrorType(error.statusCode),
-                  message: error.message
-                }
+                error: { type: anthropicErrorType(error.statusCode), message: error.message }
               });
               return;
             }
             throw error;
           }
-          break;
         }
-        if (!idToBlock.has(toolCallId) && openType !== "tool") {
-          const sig = grabRoundTripSignature(part);
-          openBlock("tool", {
-            type: "tool_use",
-            id: encodeToolUseId(toolCallId, sig),
-            name: part.toolName,
-            input: {}
-          });
-          emit("content_block_delta", {
-            type: "content_block_delta",
-            index: blockIndex,
-            delta: { type: "input_json_delta", partial_json: JSON.stringify(stripNullInputs(part.input ?? {})) }
-          });
-        }
+        const sig = grabRoundTripSignature(pendingStart ?? part) ?? grabRoundTripSignature(part);
+        openBlock("tool", {
+          type: "tool_use",
+          id: encodeToolUseId(toolCallId, sig),
+          name: part.toolName,
+          input: {}
+        });
+        emit("content_block_delta", {
+          type: "content_block_delta",
+          index: blockIndex,
+          delta: { type: "input_json_delta", partial_json: JSON.stringify(stripNullInputs(input)) }
+        });
+        closeOpen();
         break;
       }
       case "finish":
@@ -822,7 +782,7 @@ async function writeAnthropicStream(fullStream, modelId, write, log, estimatedIn
         const errMsg = e?.message || (typeof part.error === "string" ? part.error : JSON.stringify(e?.data ?? part.error));
         const errorType = anthropicErrorType(upstreamHttpStatus(part.error, errMsg));
         log?.(() => `sdk stream error (${errorType}): ${errMsg}`);
-        bufferedAgentCalls.clear();
+        pendingToolStarts.clear();
         closeOpen();
         emit("error", { type: "error", error: { type: errorType, message: errMsg } });
         return;
@@ -922,4 +882,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-S4JFGJHY.js.map
+//# sourceMappingURL=chunk-7JEIN2RQ.js.map

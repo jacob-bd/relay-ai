@@ -75,6 +75,10 @@ export function buildChildEnv(
     delete env['CLAUDE_CODE_MAX_CONTEXT_TOKENS'];
     env['CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY'] = '1';
   }
+  // This builder is used only by Relay-exclusive Claude Code launches.
+  // Native/mixed launches use the transparent HTTP proxy's environment builder.
+  // Keep auto mode, but use client-side classification unless explicitly overridden.
+  env['CLAUDE_CODE_AUTO_MODE_SERVER'] ??= '0';
   applyClaudeCodeThirdPartyCompat(env);
   return env;
 }

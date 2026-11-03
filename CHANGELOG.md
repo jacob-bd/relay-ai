@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-11-03
+
+### Fixed
+
+- **Overlapping tool calls no longer produce malformed streams in Claude Code.** The shared SDK-to-Anthropic converter now waits for each tool call's complete arguments before emitting its response block. Previously, a second tool call could close the first block before its arguments arrived, causing empty tool inputs and an "already-closed content block" stream error. Observed with OpenRouter's Crouton Alpha; the fix applies to every provider using this converter, including the server gateway. Text and reasoning still stream normally; tool previews appear once their arguments are complete. Native Anthropic pass-through and other protocol converters are unchanged.
+
+- **Relay-exclusive Claude Code launches use client-side auto checks by default.** Relay stops requesting unavailable server-side classification, avoiding the gateway classifier-billing notice. Auto mode remains enabled and separate classifier calls still consume provider usage. Explicit server-check overrides are respected; native and mixed launches keep their existing behavior.
+
+### Upgrade notes
+
+- No migration or manual configuration needed. Restart Relay-exclusive Claude Code sessions to use the new default.
+
 ## [0.18.0] - 2026-11-02
 
 ### Added

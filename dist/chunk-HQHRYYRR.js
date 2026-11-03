@@ -49,7 +49,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.18.0",
+  version: "0.18.1",
   publishConfig: {
     access: "public"
   },
@@ -4023,6 +4023,7 @@ function buildChildEnv(baseUrl, model, apiKey, proxyPort, contextWindow, enableG
     delete env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"];
     env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1";
   }
+  env["CLAUDE_CODE_AUTO_MODE_SERVER"] ??= "0";
   applyClaudeCodeThirdPartyCompat(env);
   return env;
 }
@@ -7718,4 +7719,4 @@ export {
   upstreamHttpStatus,
   anthropicErrorType
 };
-//# sourceMappingURL=chunk-O5RS74BQ.js.map
+//# sourceMappingURL=chunk-HQHRYYRR.js.map

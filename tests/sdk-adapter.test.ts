@@ -763,6 +763,26 @@ describe('writeAnthropicStream', () => {
     expect(events.find(e => e.event === 'message_delta')!.data.delta.stop_reason).toBe('tool_use');
   });
 
+  it('keeps interleaved tool arguments inside their own open blocks', async () => {
+    const { events } = await collect([
+      { type: 'tool-input-start', id: 'a', toolName: 'Read' },
+      { type: 'tool-input-start', id: 'b', toolName: 'Read' },
+      { type: 'tool-input-delta', id: 'a', delta: '{"file_path":"a"}' },
+      { type: 'tool-input-delta', id: 'b', delta: '{"file_path":"b"}' },
+      { type: 'tool-call', toolCallId: 'a', toolName: 'Read', input: { file_path: 'a' } },
+      { type: 'tool-call', toolCallId: 'b', toolName: 'Read', input: { file_path: 'b' } },
+      { type: 'finish', finishReason: 'tool-calls' },
+    ]);
+    const blocks = events.filter(e => e.event.startsWith('content_block_'));
+    expect(blocks.map(e => e.event)).toEqual([
+      'content_block_start', 'content_block_delta', 'content_block_stop',
+      'content_block_start', 'content_block_delta', 'content_block_stop',
+    ]);
+    expect(blocks.map(e => e.data.index)).toEqual([0, 0, 0, 1, 1, 1]);
+    expect(JSON.parse(blocks[1].data.delta.partial_json)).toEqual({ file_path: 'a' });
+    expect(JSON.parse(blocks[4].data.delta.partial_json)).toEqual({ file_path: 'b' });
+  });
+
   it('buffers Claude Agent input and emits one normalized JSON delta', async () => {
     const { events, raw } = await collect([
       { type: 'start' },
@@ -821,11 +841,11 @@ describe('writeAnthropicStream', () => {
     ], 'qwen-3', subagentRouting);
 
     expect(events.filter(event => event.data?.delta?.type === 'input_json_delta')).toHaveLength(0);
-    expect(events.filter(event => event.event === 'content_block_stop')).toHaveLength(1);
+    expect(events.filter(event => event.event === 'content_block_start')).toHaveLength(0);
     expect(events.at(-1)?.event).toBe('error');
   });
 
-  it('closes the Agent block before reporting an invalid explicit selector', async () => {
+  it('reports an invalid explicit selector without opening an Agent block', async () => {
     const { events } = await collect([
       { type: 'start' },
       { type: 'tool-input-start', id: 'call_agent', toolName: 'Agent' },
@@ -838,7 +858,8 @@ describe('writeAnthropicStream', () => {
       },
     ], 'qwen-3', subagentRouting);
 
-    expect(events.map(event => event.event).slice(-2)).toEqual(['content_block_stop', 'error']);
+    expect(events.filter(event => event.event === 'content_block_start')).toHaveLength(0);
+    expect(events.at(-1)?.event).toBe('error');
     expect(events.at(-1)?.data.error.type).toBe('invalid_request_error');
     expect(events.at(-1)?.data.error.message).toContain('claude-sonnet-5');
   });

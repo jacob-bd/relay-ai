@@ -412,8 +412,7 @@ export async function writeAnthropicStream(
   let started = false;
   let openType: 'text' | 'thinking' | 'tool' | null = null;
   let pendingThinkingSig: string | undefined;
-  const idToBlock = new Map<string, number>();
-  const bufferedAgentCalls = new Map<string, { blockIndex: number }>();
+  const pendingToolStarts = new Map<string, FullStreamPart>();
   let finishReason = 'end_turn';
   let usage: AnthropicUsage = { input_tokens: estimatedInputTokens, output_tokens: 0 };
 
@@ -478,81 +477,46 @@ export async function writeAnthropicStream(
         break;
       case 'text-end': break;
 
-      case 'tool-input-start': {
-        const sig = grabRoundTripSignature(part);
-        openBlock('tool', {
-          type: 'tool_use', id: encodeToolUseId(part.id ?? '', sig), name: part.toolName, input: {},
-        });
-        idToBlock.set(part.id ?? '', blockIndex);
-        if (subagentRouting && part.toolName === 'Agent') {
-          bufferedAgentCalls.set(part.id ?? '', { blockIndex });
-        }
+      // Complete tool arguments before opening a block: calls may interleave.
+      case 'tool-input-start':
+        pendingToolStarts.set(part.id ?? '', part);
         break;
-      }
       case 'tool-input-delta':
-        if (bufferedAgentCalls.has(part.id ?? '')) break;
-        emit('content_block_delta', {
-          type: 'content_block_delta', index: idToBlock.get(part.id ?? '') ?? blockIndex,
-          delta: { type: 'input_json_delta', partial_json: part.delta ?? part.text ?? '' },
-        });
+      case 'tool-input-end':
         break;
-      case 'tool-input-end': break;
 
       case 'tool-call': {
         finishReason = 'tool_use';
         const toolCallId = part.toolCallId ?? '';
+        const pendingStart = pendingToolStarts.get(toolCallId);
+        pendingToolStarts.delete(toolCallId);
+        closeOpen();
+        let input = part.input as Record<string, unknown> ?? {};
         if (subagentRouting && part.toolName === 'Agent') {
           try {
             const normalized = prepareClaudeAgentInput(part.input, subagentRouting);
             logSubagentDecision(log, normalized.decision);
-            const buffered = bufferedAgentCalls.get(toolCallId);
-            if (!buffered && !idToBlock.has(toolCallId)) {
-              const sig = grabRoundTripSignature(part);
-              openBlock('tool', {
-                type: 'tool_use',
-                id: encodeToolUseId(toolCallId, sig),
-                name: part.toolName,
-                input: {},
-              });
-              idToBlock.set(toolCallId, blockIndex);
-            }
-            emit('content_block_delta', {
-              type: 'content_block_delta',
-              index: buffered?.blockIndex ?? idToBlock.get(toolCallId) ?? blockIndex,
-              delta: {
-                type: 'input_json_delta',
-                partial_json: JSON.stringify(stripNullInputs(normalized.input)),
-              },
-            });
-            bufferedAgentCalls.delete(toolCallId);
+            input = normalized.input;
           } catch (error) {
             if (error instanceof UnavailableSubagentModelError) {
-              bufferedAgentCalls.delete(toolCallId);
-              closeOpen();
               emit('error', {
                 type: 'error',
-                error: {
-                  type: anthropicErrorType(error.statusCode),
-                  message: error.message,
-                },
+                error: { type: anthropicErrorType(error.statusCode), message: error.message },
               });
               return;
             }
             throw error;
           }
-          break;
         }
-        // Non-streamed tool call (no input-start/delta arrived): emit a full block.
-        if (!idToBlock.has(toolCallId) && openType !== 'tool') {
-          const sig = grabRoundTripSignature(part);
-          openBlock('tool', {
-            type: 'tool_use', id: encodeToolUseId(toolCallId, sig), name: part.toolName, input: {},
-          });
-          emit('content_block_delta', {
-            type: 'content_block_delta', index: blockIndex,
-            delta: { type: 'input_json_delta', partial_json: JSON.stringify(stripNullInputs(part.input as Record<string, unknown> ?? {})) },
-          });
-        }
+        const sig = grabRoundTripSignature(pendingStart ?? part) ?? grabRoundTripSignature(part);
+        openBlock('tool', {
+          type: 'tool_use', id: encodeToolUseId(toolCallId, sig), name: part.toolName, input: {},
+        });
+        emit('content_block_delta', {
+          type: 'content_block_delta', index: blockIndex,
+          delta: { type: 'input_json_delta', partial_json: JSON.stringify(stripNullInputs(input)) },
+        });
+        closeOpen();
         break;
       }
 
@@ -570,7 +534,7 @@ export async function writeAnthropicStream(
         const errMsg = e?.message || (typeof part.error === 'string' ? part.error : JSON.stringify(e?.data ?? part.error));
         const errorType = anthropicErrorType(upstreamHttpStatus(part.error, errMsg));
         log?.(() => `sdk stream error (${errorType}): ${errMsg}`);
-        bufferedAgentCalls.clear();
+        pendingToolStarts.clear();
         closeOpen();
         emit('error', { type: 'error', error: { type: errorType, message: errMsg } });
         return;

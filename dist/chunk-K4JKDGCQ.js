@@ -8,7 +8,7 @@ import {
   streamAnthropicResponse,
   translateRequest,
   validateCustomEndpointUrl
-} from "./chunk-S4JFGJHY.js";
+} from "./chunk-7JEIN2RQ.js";
 import {
   cachedModelCount,
   deriveBrand,
@@ -26,7 +26,7 @@ import {
   skipWithCachedModels,
   syntheticTemplate,
   toOAuthRegistryId
-} from "./chunk-2MUVZKX7.js";
+} from "./chunk-S6JEMLTR.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -152,7 +152,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-O5RS74BQ.js";
+} from "./chunk-HQHRYYRR.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -8204,4 +8204,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-T3QS72WB.js.map
+//# sourceMappingURL=chunk-K4JKDGCQ.js.map

@@ -16,7 +16,7 @@ import {
   resolveContextWindow,
   resolveModelsDevSlug,
   shouldHideModel
-} from "./chunk-O5RS74BQ.js";
+} from "./chunk-HQHRYYRR.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -521,4 +521,4 @@ export {
   providerRefreshToken,
   reconcileCachedModelProtocol
 };
-//# sourceMappingURL=chunk-2MUVZKX7.js.map
+//# sourceMappingURL=chunk-S6JEMLTR.js.map

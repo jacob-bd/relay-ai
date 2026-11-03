@@ -151,6 +151,31 @@ describe('buildChildEnv', () => {
     delete process.env['ANTHROPIC_DEFAULT_OPUS_MODEL'];
   });
 
+  it('defaults exclusive launches to client-side auto checks without changing the parent', () => {
+    const previous = process.env['CLAUDE_CODE_AUTO_MODE_SERVER'];
+    delete process.env['CLAUDE_CODE_AUTO_MODE_SERVER'];
+    try {
+      const env = buildChildEnv(BACKENDS.zen.baseUrl, 'crouton-alpha', 'key');
+      expect(env['CLAUDE_CODE_AUTO_MODE_SERVER']).toBe('0');
+      expect(process.env['CLAUDE_CODE_AUTO_MODE_SERVER']).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env['CLAUDE_CODE_AUTO_MODE_SERVER'];
+      else process.env['CLAUDE_CODE_AUTO_MODE_SERVER'] = previous;
+    }
+  });
+
+  it.each(['0', '1'])('preserves an explicit server-check override of %s', value => {
+    const previous = process.env['CLAUDE_CODE_AUTO_MODE_SERVER'];
+    process.env['CLAUDE_CODE_AUTO_MODE_SERVER'] = value;
+    try {
+      expect(buildChildEnv(BACKENDS.zen.baseUrl, 'crouton-alpha', 'key')
+        ['CLAUDE_CODE_AUTO_MODE_SERVER']).toBe(value);
+    } finally {
+      if (previous === undefined) delete process.env['CLAUDE_CODE_AUTO_MODE_SERVER'];
+      else process.env['CLAUDE_CODE_AUTO_MODE_SERVER'] = previous;
+    }
+  });
+
   it('removes all conflicting vars from child env', () => {
     const env = buildChildEnv(BACKENDS.zen.baseUrl, 'claude-sonnet-4-6', 'my-key');
     expect(env['CLAUDE_CODE_USE_VERTEX']).toBeUndefined();
