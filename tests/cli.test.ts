@@ -155,6 +155,17 @@ describe('parseArgs', () => {
     expect(parseArgs(['codex-app', '--with-native']).codexLaunchMode).toBe('mixed');
   });
 
+  it('accepts --pool only for the Codex CLI', () => {
+    expect(parseArgs(['codex', '--pool'])).toMatchObject({ command: 'codex', codexPool: true, claudeArgs: [] });
+    for (const command of ['codex-app', 'chatgpt']) {
+      expect(parseArgs([command, '--pool'])).toMatchObject({
+        command: 'codex-app',
+        error: '--pool is only supported by relay-ai codex',
+        claudeArgs: [],
+      });
+    }
+  });
+
   it('consumes relay launch flags for claude and codex', () => {
     expect(parseArgs(['claude', '--provider', 'groq', '--model', 'llama-3.3-70b', '-p', 'hi'])).toMatchObject({
       command: 'claude',
@@ -598,6 +609,13 @@ describe('main routing', () => {
     expect(error.mock.calls.flat().join('\n')).toContain(
       '--yes requires --provider, --model, and either --with-native or --relay-only',
     );
+  });
+
+  it('rejects --pool for the desktop app before dispatch', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(main(['chatgpt', '--pool'])).resolves.toBe(1);
+    expect(error.mock.calls.flat().join('\n')).toContain('--pool is only supported by relay-ai codex');
   });
 
   it('resets and prints the provider trace for providers --trace', async () => {

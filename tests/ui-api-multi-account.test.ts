@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockRequest, createMockResponse } from './helpers/ui-api-test-utils.js';
+import { handleUiApiRequest } from '../src/ui/api.js';
 
 const state = vi.hoisted(() => ({
   catalog: [] as any[],
@@ -27,7 +28,6 @@ vi.mock('../src/oauth/openai.js', () => ({
 }));
 
 async function call(method: string, url: string, body?: unknown) {
-  const { handleUiApiRequest } = await import('../src/ui/api.js');
   const req = createMockRequest(method, url, body === undefined ? undefined : JSON.stringify(body));
   const response = createMockResponse();
   handleUiApiRequest(req, response.res);

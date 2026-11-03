@@ -6,28 +6,37 @@ import {
   extractClaudeSessionId,
   generateAnthropicResponse,
   streamAnthropicResponse,
-  translateRequest
-} from "./chunk-PFR4ZYI4.js";
+  translateRequest,
+  writeAnthropicStream
+} from "./chunk-SUH7UMIR.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
-  copilotPlanTier,
   ensureOpencodeCloudProviders,
   extractConversationId,
   fetchClinePassModels,
   fetchCommandCodeModels,
   fetchTemplateModels,
-  filterCachedCopilotModels,
   filterModelsByAvailability,
-  materializeRegistry,
-  oauthAuthRef,
   openCodeGoHeaders,
-  providerRefreshToken,
   refreshProviderModels,
-  stripGoogleModelPrefix,
-  toOAuthRegistryId,
   validateClinePassApiKey
-} from "./chunk-GCRYZID3.js";
+} from "./chunk-KJTWVNON.js";
+import {
+  anthropicErrorType,
+  formatUpstreamError,
+  upstreamHttpStatus
+} from "./chunk-XWM4ELUX.js";
+import {
+  fetchProviderCatalog,
+  localProvidersToServerModels
+} from "./chunk-KOGVCPNK.js";
+import {
+  oauthAuthRef,
+  providerRefreshToken,
+  stripGoogleModelPrefix,
+  toOAuthRegistryId
+} from "./chunk-LXTF7TOF.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -40,7 +49,6 @@ import {
   VERSION,
   VERTEX_ANTHROPIC_NPM,
   VERTEX_ANTHROPIC_PROVIDER_ID,
-  anthropicErrorType,
   buildCodexReasoningLevels,
   buildPricingIndex,
   classifyFreeStatus,
@@ -54,9 +62,7 @@ import {
   enrichPricingAsync,
   fetchWithOAuthRetry,
   formatOAuthAccount,
-  formatUpstreamError,
   generateCliUserID,
-  getAgentProviderModels,
   getEnvServerPassword,
   getProxyDebugLogPath,
   getReasoningCapabilities,
@@ -94,8 +100,6 @@ import {
   resolveApiKey,
   resolveContextWindow,
   resolveProviderCredential,
-  resolveProviderOAuthAccountId,
-  resolveProviderOAuthProviderData,
   routeLookupIds,
   runAntigravityOAuthFlow,
   runClaudeCodeOAuthFlow,
@@ -123,11 +127,10 @@ import {
   supportsNativeOAuth,
   tokensToStoredCredential,
   uniqueProviderName,
-  upstreamHttpStatus,
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-JSEUUZCZ.js";
+} from "./chunk-IBEBOL44.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -566,6 +569,1718 @@ function printFavoritesOnlyPanel() {
     `${pc.white("Edit with ")}${pc.cyan("relay-ai models")}${pc.white(".")}`
   ]);
 }
+
+// ../relay-ai/node_modules/@anthropic-ai/sdk/internal/tslib.mjs
+function __classPrivateFieldSet(receiver, state, value, kind, f) {
+  if (kind === "m")
+    throw new TypeError("Private method is not writable");
+  if (kind === "a" && !f)
+    throw new TypeError("Private accessor was defined without a setter");
+  if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver))
+    throw new TypeError("Cannot write private member to an object whose class did not declare it");
+  return kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value), value;
+}
+function __classPrivateFieldGet(receiver, state, kind, f) {
+  if (kind === "a" && !f)
+    throw new TypeError("Private accessor was defined without a getter");
+  if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver))
+    throw new TypeError("Cannot read private member from an object whose class did not declare it");
+  return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+}
+
+// ../relay-ai/node_modules/@anthropic-ai/sdk/internal/errors.mjs
+function isAbortError(err) {
+  return typeof err === "object" && err !== null && // Spec-compliant fetch implementations
+  ("name" in err && err.name === "AbortError" || // Expo fetch
+  "message" in err && String(err.message).includes("FetchRequestCanceledException"));
+}
+var castToError = (err) => {
+  if (err instanceof Error)
+    return err;
+  if (typeof err === "object" && err !== null) {
+    try {
+      if (Object.prototype.toString.call(err) === "[object Error]") {
+        const error = new Error(err.message, err.cause ? { cause: err.cause } : {});
+        if (err.stack)
+          error.stack = err.stack;
+        if (err.cause && !error.cause)
+          error.cause = err.cause;
+        if (err.name)
+          error.name = err.name;
+        return error;
+      }
+    } catch {
+    }
+    try {
+      return new Error(JSON.stringify(err));
+    } catch {
+    }
+  }
+  return new Error(err);
+};
+
+// ../relay-ai/node_modules/@anthropic-ai/sdk/core/error.mjs
+var AnthropicError = class extends Error {
+};
+var APIError = class _APIError extends AnthropicError {
+  constructor(status, error, message, headers) {
+    super(`${_APIError.makeMessage(status, error, message)}`);
+    this.status = status;
+    this.headers = headers;
+    this.requestID = headers?.get("request-id");
+    this.error = error;
+  }
+  static makeMessage(status, error, message) {
+    const msg = error?.message ? typeof error.message === "string" ? error.message : JSON.stringify(error.message) : error ? JSON.stringify(error) : message;
+    if (status && msg) {
+      return `${status} ${msg}`;
+    }
+    if (status) {
+      return `${status} status code (no body)`;
+    }
+    if (msg) {
+      return msg;
+    }
+    return "(no status code or body)";
+  }
+  static generate(status, errorResponse, message, headers) {
+    if (!status || !headers) {
+      return new APIConnectionError({ message, cause: castToError(errorResponse) });
+    }
+    const error = errorResponse;
+    if (status === 400) {
+      return new BadRequestError(status, error, message, headers);
+    }
+    if (status === 401) {
+      return new AuthenticationError(status, error, message, headers);
+    }
+    if (status === 403) {
+      return new PermissionDeniedError(status, error, message, headers);
+    }
+    if (status === 404) {
+      return new NotFoundError(status, error, message, headers);
+    }
+    if (status === 409) {
+      return new ConflictError(status, error, message, headers);
+    }
+    if (status === 422) {
+      return new UnprocessableEntityError(status, error, message, headers);
+    }
+    if (status === 429) {
+      return new RateLimitError(status, error, message, headers);
+    }
+    if (status >= 500) {
+      return new InternalServerError(status, error, message, headers);
+    }
+    return new _APIError(status, error, message, headers);
+  }
+};
+var APIUserAbortError = class extends APIError {
+  constructor({ message } = {}) {
+    super(void 0, void 0, message || "Request was aborted.", void 0);
+  }
+};
+var APIConnectionError = class extends APIError {
+  constructor({ message, cause }) {
+    super(void 0, void 0, message || "Connection error.", void 0);
+    if (cause)
+      this.cause = cause;
+  }
+};
+var BadRequestError = class extends APIError {
+};
+var AuthenticationError = class extends APIError {
+};
+var PermissionDeniedError = class extends APIError {
+};
+var NotFoundError = class extends APIError {
+};
+var ConflictError = class extends APIError {
+};
+var UnprocessableEntityError = class extends APIError {
+};
+var RateLimitError = class extends APIError {
+};
+var InternalServerError = class extends APIError {
+};
+
+// ../relay-ai/node_modules/@anthropic-ai/sdk/internal/shims.mjs
+function makeReadableStream(...args) {
+  const ReadableStream2 = globalThis.ReadableStream;
+  if (typeof ReadableStream2 === "undefined") {
+    throw new Error("`ReadableStream` is not defined as a global; You will need to polyfill it, `globalThis.ReadableStream = ReadableStream`");
+  }
+  return new ReadableStream2(...args);
+}
+function ReadableStreamToAsyncIterable(stream) {
+  if (stream[Symbol.asyncIterator])
+    return stream;
+  const reader = stream.getReader();
+  return {
+    async next() {
+      try {
+        const result = await reader.read();
+        if (result?.done)
+          reader.releaseLock();
+        return result;
+      } catch (e) {
+        reader.releaseLock();
+        throw e;
+      }
+    },
+    async return() {
+      const cancelPromise = reader.cancel();
+      reader.releaseLock();
+      await cancelPromise;
+      return { done: true, value: void 0 };
+    },
+    [Symbol.asyncIterator]() {
+      return this;
+    }
+  };
+}
+
+// ../relay-ai/node_modules/@anthropic-ai/sdk/internal/utils/bytes.mjs
+function concatBytes(buffers) {
+  let length = 0;
+  for (const buffer of buffers) {
+    length += buffer.length;
+  }
+  const output = new Uint8Array(length);
+  let index = 0;
+  for (const buffer of buffers) {
+    output.set(buffer, index);
+    index += buffer.length;
+  }
+  return output;
+}
+var encodeUTF8_;
+function encodeUTF8(str) {
+  let encoder;
+  return (encodeUTF8_ ?? (encoder = new globalThis.TextEncoder(), encodeUTF8_ = encoder.encode.bind(encoder)))(str);
+}
+var decodeUTF8_;
+function decodeUTF8(bytes) {
+  let decoder;
+  return (decodeUTF8_ ?? (decoder = new globalThis.TextDecoder(), decodeUTF8_ = decoder.decode.bind(decoder)))(bytes);
+}
+
+// ../relay-ai/node_modules/@anthropic-ai/sdk/internal/decoders/line.mjs
+var _LineDecoder_buffer;
+var _LineDecoder_carriageReturnIndex;
+var LineDecoder = class {
+  constructor() {
+    _LineDecoder_buffer.set(this, void 0);
+    _LineDecoder_carriageReturnIndex.set(this, void 0);
+    __classPrivateFieldSet(this, _LineDecoder_buffer, new Uint8Array(), "f");
+    __classPrivateFieldSet(this, _LineDecoder_carriageReturnIndex, null, "f");
+  }
+  decode(chunk) {
+    if (chunk == null) {
+      return [];
+    }
+    const binaryChunk = chunk instanceof ArrayBuffer ? new Uint8Array(chunk) : typeof chunk === "string" ? encodeUTF8(chunk) : chunk;
+    __classPrivateFieldSet(this, _LineDecoder_buffer, concatBytes([__classPrivateFieldGet(this, _LineDecoder_buffer, "f"), binaryChunk]), "f");
+    const lines = [];
+    let patternIndex;
+    while ((patternIndex = findNewlineIndex(__classPrivateFieldGet(this, _LineDecoder_buffer, "f"), __classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f"))) != null) {
+      if (patternIndex.carriage && __classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f") == null) {
+        __classPrivateFieldSet(this, _LineDecoder_carriageReturnIndex, patternIndex.index, "f");
+        continue;
+      }
+      if (__classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f") != null && (patternIndex.index !== __classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f") + 1 || patternIndex.carriage)) {
+        lines.push(decodeUTF8(__classPrivateFieldGet(this, _LineDecoder_buffer, "f").subarray(0, __classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f") - 1)));
+        __classPrivateFieldSet(this, _LineDecoder_buffer, __classPrivateFieldGet(this, _LineDecoder_buffer, "f").subarray(__classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f")), "f");
+        __classPrivateFieldSet(this, _LineDecoder_carriageReturnIndex, null, "f");
+        continue;
+      }
+      const endIndex = __classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f") !== null ? patternIndex.preceding - 1 : patternIndex.preceding;
+      const line = decodeUTF8(__classPrivateFieldGet(this, _LineDecoder_buffer, "f").subarray(0, endIndex));
+      lines.push(line);
+      __classPrivateFieldSet(this, _LineDecoder_buffer, __classPrivateFieldGet(this, _LineDecoder_buffer, "f").subarray(patternIndex.index), "f");
+      __classPrivateFieldSet(this, _LineDecoder_carriageReturnIndex, null, "f");
+    }
+    return lines;
+  }
+  flush() {
+    if (!__classPrivateFieldGet(this, _LineDecoder_buffer, "f").length) {
+      return [];
+    }
+    return this.decode("\n");
+  }
+};
+_LineDecoder_buffer = /* @__PURE__ */ new WeakMap(), _LineDecoder_carriageReturnIndex = /* @__PURE__ */ new WeakMap();
+LineDecoder.NEWLINE_CHARS = /* @__PURE__ */ new Set(["\n", "\r"]);
+LineDecoder.NEWLINE_REGEXP = /\r\n|[\n\r]/g;
+function findNewlineIndex(buffer, startIndex) {
+  const newline = 10;
+  const carriage = 13;
+  for (let i = startIndex ?? 0; i < buffer.length; i++) {
+    if (buffer[i] === newline) {
+      return { preceding: i, index: i + 1, carriage: false };
+    }
+    if (buffer[i] === carriage) {
+      return { preceding: i, index: i + 1, carriage: true };
+    }
+  }
+  return null;
+}
+function findDoubleNewlineIndex(buffer) {
+  const newline = 10;
+  const carriage = 13;
+  for (let i = 0; i < buffer.length - 1; i++) {
+    if (buffer[i] === newline && buffer[i + 1] === newline) {
+      return i + 2;
+    }
+    if (buffer[i] === carriage && buffer[i + 1] === carriage) {
+      return i + 2;
+    }
+    if (buffer[i] === carriage && buffer[i + 1] === newline && i + 3 < buffer.length && buffer[i + 2] === carriage && buffer[i + 3] === newline) {
+      return i + 4;
+    }
+  }
+  return -1;
+}
+
+// ../relay-ai/node_modules/@anthropic-ai/sdk/internal/utils/values.mjs
+var safeJSON = (text4) => {
+  try {
+    return JSON.parse(text4);
+  } catch (err) {
+    return void 0;
+  }
+};
+
+// ../relay-ai/node_modules/@anthropic-ai/sdk/internal/utils/log.mjs
+var levelNumbers = {
+  off: 0,
+  error: 200,
+  warn: 300,
+  info: 400,
+  debug: 500
+};
+function noop() {
+}
+function makeLogFn(fnLevel, logger, logLevel) {
+  if (!logger || levelNumbers[fnLevel] > levelNumbers[logLevel]) {
+    return noop;
+  } else {
+    return logger[fnLevel].bind(logger);
+  }
+}
+var noopLogger = {
+  error: noop,
+  warn: noop,
+  info: noop,
+  debug: noop
+};
+var cachedLoggers = /* @__PURE__ */ new WeakMap();
+function loggerFor(client) {
+  const logger = client.logger;
+  const logLevel = client.logLevel ?? "off";
+  if (!logger) {
+    return noopLogger;
+  }
+  const cachedLogger = cachedLoggers.get(logger);
+  if (cachedLogger && cachedLogger[0] === logLevel) {
+    return cachedLogger[1];
+  }
+  const levelLogger = {
+    error: makeLogFn("error", logger, logLevel),
+    warn: makeLogFn("warn", logger, logLevel),
+    info: makeLogFn("info", logger, logLevel),
+    debug: makeLogFn("debug", logger, logLevel)
+  };
+  cachedLoggers.set(logger, [logLevel, levelLogger]);
+  return levelLogger;
+}
+
+// ../relay-ai/node_modules/@anthropic-ai/sdk/core/streaming.mjs
+var _Stream_client;
+var Stream = class _Stream {
+  constructor(iterator, controller, client) {
+    this.iterator = iterator;
+    _Stream_client.set(this, void 0);
+    this.controller = controller;
+    __classPrivateFieldSet(this, _Stream_client, client, "f");
+  }
+  static fromSSEResponse(response, controller, client) {
+    let consumed = false;
+    const logger = client ? loggerFor(client) : console;
+    async function* iterator() {
+      if (consumed) {
+        throw new AnthropicError("Cannot iterate over a consumed stream, use `.tee()` to split the stream.");
+      }
+      consumed = true;
+      let done = false;
+      try {
+        for await (const sse of _iterSSEMessages(response, controller)) {
+          if (sse.event === "completion") {
+            try {
+              yield JSON.parse(sse.data);
+            } catch (e) {
+              logger.error(`Could not parse message into JSON:`, sse.data);
+              logger.error(`From chunk:`, sse.raw);
+              throw e;
+            }
+          }
+          if (sse.event === "message_start" || sse.event === "message_delta" || sse.event === "message_stop" || sse.event === "content_block_start" || sse.event === "content_block_delta" || sse.event === "content_block_stop") {
+            try {
+              yield JSON.parse(sse.data);
+            } catch (e) {
+              logger.error(`Could not parse message into JSON:`, sse.data);
+              logger.error(`From chunk:`, sse.raw);
+              throw e;
+            }
+          }
+          if (sse.event === "ping") {
+            continue;
+          }
+          if (sse.event === "error") {
+            throw new APIError(void 0, safeJSON(sse.data) ?? sse.data, void 0, response.headers);
+          }
+        }
+        done = true;
+      } catch (e) {
+        if (isAbortError(e))
+          return;
+        throw e;
+      } finally {
+        if (!done)
+          controller.abort();
+      }
+    }
+    return new _Stream(iterator, controller, client);
+  }
+  /**
+   * Generates a Stream from a newline-separated ReadableStream
+   * where each item is a JSON value.
+   */
+  static fromReadableStream(readableStream, controller, client) {
+    let consumed = false;
+    async function* iterLines() {
+      const lineDecoder = new LineDecoder();
+      const iter = ReadableStreamToAsyncIterable(readableStream);
+      for await (const chunk of iter) {
+        for (const line of lineDecoder.decode(chunk)) {
+          yield line;
+        }
+      }
+      for (const line of lineDecoder.flush()) {
+        yield line;
+      }
+    }
+    async function* iterator() {
+      if (consumed) {
+        throw new AnthropicError("Cannot iterate over a consumed stream, use `.tee()` to split the stream.");
+      }
+      consumed = true;
+      let done = false;
+      try {
+        for await (const line of iterLines()) {
+          if (done)
+            continue;
+          if (line)
+            yield JSON.parse(line);
+        }
+        done = true;
+      } catch (e) {
+        if (isAbortError(e))
+          return;
+        throw e;
+      } finally {
+        if (!done)
+          controller.abort();
+      }
+    }
+    return new _Stream(iterator, controller, client);
+  }
+  [(_Stream_client = /* @__PURE__ */ new WeakMap(), Symbol.asyncIterator)]() {
+    return this.iterator();
+  }
+  /**
+   * Splits the stream into two streams which can be
+   * independently read from at different speeds.
+   */
+  tee() {
+    const left = [];
+    const right = [];
+    const iterator = this.iterator();
+    const teeIterator = (queue) => {
+      return {
+        next: () => {
+          if (queue.length === 0) {
+            const result = iterator.next();
+            left.push(result);
+            right.push(result);
+          }
+          return queue.shift();
+        }
+      };
+    };
+    return [
+      new _Stream(() => teeIterator(left), this.controller, __classPrivateFieldGet(this, _Stream_client, "f")),
+      new _Stream(() => teeIterator(right), this.controller, __classPrivateFieldGet(this, _Stream_client, "f"))
+    ];
+  }
+  /**
+   * Converts this stream to a newline-separated ReadableStream of
+   * JSON stringified values in the stream
+   * which can be turned back into a Stream with `Stream.fromReadableStream()`.
+   */
+  toReadableStream() {
+    const self = this;
+    let iter;
+    return makeReadableStream({
+      async start() {
+        iter = self[Symbol.asyncIterator]();
+      },
+      async pull(ctrl) {
+        try {
+          const { value, done } = await iter.next();
+          if (done)
+            return ctrl.close();
+          const bytes = encodeUTF8(JSON.stringify(value) + "\n");
+          ctrl.enqueue(bytes);
+        } catch (err) {
+          ctrl.error(err);
+        }
+      },
+      async cancel() {
+        await iter.return?.();
+      }
+    });
+  }
+};
+async function* _iterSSEMessages(response, controller) {
+  if (!response.body) {
+    controller.abort();
+    if (typeof globalThis.navigator !== "undefined" && globalThis.navigator.product === "ReactNative") {
+      throw new AnthropicError(`The default react-native fetch implementation does not support streaming. Please use expo/fetch: https://docs.expo.dev/versions/latest/sdk/expo/#expofetch-api`);
+    }
+    throw new AnthropicError(`Attempted to iterate over a response with no body`);
+  }
+  const sseDecoder = new SSEDecoder();
+  const lineDecoder = new LineDecoder();
+  const iter = ReadableStreamToAsyncIterable(response.body);
+  for await (const sseChunk of iterSSEChunks(iter)) {
+    for (const line of lineDecoder.decode(sseChunk)) {
+      const sse = sseDecoder.decode(line);
+      if (sse)
+        yield sse;
+    }
+  }
+  for (const line of lineDecoder.flush()) {
+    const sse = sseDecoder.decode(line);
+    if (sse)
+      yield sse;
+  }
+}
+async function* iterSSEChunks(iterator) {
+  let data = new Uint8Array();
+  for await (const chunk of iterator) {
+    if (chunk == null) {
+      continue;
+    }
+    const binaryChunk = chunk instanceof ArrayBuffer ? new Uint8Array(chunk) : typeof chunk === "string" ? encodeUTF8(chunk) : chunk;
+    let newData = new Uint8Array(data.length + binaryChunk.length);
+    newData.set(data);
+    newData.set(binaryChunk, data.length);
+    data = newData;
+    let patternIndex;
+    while ((patternIndex = findDoubleNewlineIndex(data)) !== -1) {
+      yield data.slice(0, patternIndex);
+      data = data.slice(patternIndex);
+    }
+  }
+  if (data.length > 0) {
+    yield data;
+  }
+}
+var SSEDecoder = class {
+  constructor() {
+    this.event = null;
+    this.data = [];
+    this.chunks = [];
+  }
+  decode(line) {
+    if (line.endsWith("\r")) {
+      line = line.substring(0, line.length - 1);
+    }
+    if (!line) {
+      if (!this.event && !this.data.length)
+        return null;
+      const sse = {
+        event: this.event,
+        data: this.data.join("\n"),
+        raw: this.chunks
+      };
+      this.event = null;
+      this.data = [];
+      this.chunks = [];
+      return sse;
+    }
+    this.chunks.push(line);
+    if (line.startsWith(":")) {
+      return null;
+    }
+    let [fieldname, _, value] = partition(line, ":");
+    if (value.startsWith(" ")) {
+      value = value.substring(1);
+    }
+    if (fieldname === "event") {
+      this.event = value;
+    } else if (fieldname === "data") {
+      this.data.push(value);
+    }
+    return null;
+  }
+};
+function partition(str, delimiter) {
+  const index = str.indexOf(delimiter);
+  if (index !== -1) {
+    return [str.substring(0, index), delimiter, str.substring(index + delimiter.length)];
+  }
+  return [str, "", ""];
+}
+
+// ../relay-ai/node_modules/@anthropic-ai/sdk/_vendor/partial-json-parser/parser.mjs
+var tokenize = (input) => {
+  let current = 0;
+  let tokens = [];
+  while (current < input.length) {
+    let char = input[current];
+    if (char === "\\") {
+      current++;
+      continue;
+    }
+    if (char === "{") {
+      tokens.push({
+        type: "brace",
+        value: "{"
+      });
+      current++;
+      continue;
+    }
+    if (char === "}") {
+      tokens.push({
+        type: "brace",
+        value: "}"
+      });
+      current++;
+      continue;
+    }
+    if (char === "[") {
+      tokens.push({
+        type: "paren",
+        value: "["
+      });
+      current++;
+      continue;
+    }
+    if (char === "]") {
+      tokens.push({
+        type: "paren",
+        value: "]"
+      });
+      current++;
+      continue;
+    }
+    if (char === ":") {
+      tokens.push({
+        type: "separator",
+        value: ":"
+      });
+      current++;
+      continue;
+    }
+    if (char === ",") {
+      tokens.push({
+        type: "delimiter",
+        value: ","
+      });
+      current++;
+      continue;
+    }
+    if (char === '"') {
+      let value = "";
+      let danglingQuote = false;
+      char = input[++current];
+      while (char !== '"') {
+        if (current === input.length) {
+          danglingQuote = true;
+          break;
+        }
+        if (char === "\\") {
+          current++;
+          if (current === input.length) {
+            danglingQuote = true;
+            break;
+          }
+          value += char + input[current];
+          char = input[++current];
+        } else {
+          value += char;
+          char = input[++current];
+        }
+      }
+      char = input[++current];
+      if (!danglingQuote) {
+        tokens.push({
+          type: "string",
+          value
+        });
+      }
+      continue;
+    }
+    let WHITESPACE = /\s/;
+    if (char && WHITESPACE.test(char)) {
+      current++;
+      continue;
+    }
+    let NUMBERS = /[0-9]/;
+    if (char && NUMBERS.test(char) || char === "-" || char === ".") {
+      let value = "";
+      if (char === "-") {
+        value += char;
+        char = input[++current];
+      }
+      while (char && NUMBERS.test(char) || char === ".") {
+        value += char;
+        char = input[++current];
+      }
+      tokens.push({
+        type: "number",
+        value
+      });
+      continue;
+    }
+    let LETTERS = /[a-z]/i;
+    if (char && LETTERS.test(char)) {
+      let value = "";
+      while (char && LETTERS.test(char)) {
+        if (current === input.length) {
+          break;
+        }
+        value += char;
+        char = input[++current];
+      }
+      if (value == "true" || value == "false" || value === "null") {
+        tokens.push({
+          type: "name",
+          value
+        });
+      } else {
+        current++;
+        continue;
+      }
+      continue;
+    }
+    current++;
+  }
+  return tokens;
+};
+var strip = (tokens) => {
+  if (tokens.length === 0) {
+    return tokens;
+  }
+  let lastToken = tokens[tokens.length - 1];
+  switch (lastToken.type) {
+    case "separator":
+      tokens = tokens.slice(0, tokens.length - 1);
+      return strip(tokens);
+      break;
+    case "number":
+      let lastCharacterOfLastToken = lastToken.value[lastToken.value.length - 1];
+      if (lastCharacterOfLastToken === "." || lastCharacterOfLastToken === "-") {
+        tokens = tokens.slice(0, tokens.length - 1);
+        return strip(tokens);
+      }
+    case "string":
+      let tokenBeforeTheLastToken = tokens[tokens.length - 2];
+      if (tokenBeforeTheLastToken?.type === "delimiter") {
+        tokens = tokens.slice(0, tokens.length - 1);
+        return strip(tokens);
+      } else if (tokenBeforeTheLastToken?.type === "brace" && tokenBeforeTheLastToken.value === "{") {
+        tokens = tokens.slice(0, tokens.length - 1);
+        return strip(tokens);
+      }
+      break;
+    case "delimiter":
+      tokens = tokens.slice(0, tokens.length - 1);
+      return strip(tokens);
+      break;
+  }
+  return tokens;
+};
+var unstrip = (tokens) => {
+  let tail = [];
+  tokens.map((token) => {
+    if (token.type === "brace") {
+      if (token.value === "{") {
+        tail.push("}");
+      } else {
+        tail.splice(tail.lastIndexOf("}"), 1);
+      }
+    }
+    if (token.type === "paren") {
+      if (token.value === "[") {
+        tail.push("]");
+      } else {
+        tail.splice(tail.lastIndexOf("]"), 1);
+      }
+    }
+  });
+  if (tail.length > 0) {
+    tail.reverse().map((item) => {
+      if (item === "}") {
+        tokens.push({
+          type: "brace",
+          value: "}"
+        });
+      } else if (item === "]") {
+        tokens.push({
+          type: "paren",
+          value: "]"
+        });
+      }
+    });
+  }
+  return tokens;
+};
+var generate = (tokens) => {
+  let output = "";
+  tokens.map((token) => {
+    switch (token.type) {
+      case "string":
+        output += '"' + token.value + '"';
+        break;
+      default:
+        output += token.value;
+        break;
+    }
+  });
+  return output;
+};
+var partialParse = (input) => JSON.parse(generate(unstrip(strip(tokenize(input)))));
+
+// ../relay-ai/node_modules/@anthropic-ai/sdk/lib/MessageStream.mjs
+var _MessageStream_instances;
+var _MessageStream_currentMessageSnapshot;
+var _MessageStream_connectedPromise;
+var _MessageStream_resolveConnectedPromise;
+var _MessageStream_rejectConnectedPromise;
+var _MessageStream_endPromise;
+var _MessageStream_resolveEndPromise;
+var _MessageStream_rejectEndPromise;
+var _MessageStream_listeners;
+var _MessageStream_ended;
+var _MessageStream_errored;
+var _MessageStream_aborted;
+var _MessageStream_catchingPromiseCreated;
+var _MessageStream_response;
+var _MessageStream_request_id;
+var _MessageStream_getFinalMessage;
+var _MessageStream_getFinalText;
+var _MessageStream_handleError;
+var _MessageStream_beginRequest;
+var _MessageStream_addStreamEvent;
+var _MessageStream_endRequest;
+var _MessageStream_accumulateMessage;
+var JSON_BUF_PROPERTY = "__json_buf";
+function tracksToolInput(content) {
+  return content.type === "tool_use" || content.type === "server_tool_use";
+}
+var MessageStream = class _MessageStream {
+  constructor() {
+    _MessageStream_instances.add(this);
+    this.messages = [];
+    this.receivedMessages = [];
+    _MessageStream_currentMessageSnapshot.set(this, void 0);
+    this.controller = new AbortController();
+    _MessageStream_connectedPromise.set(this, void 0);
+    _MessageStream_resolveConnectedPromise.set(this, () => {
+    });
+    _MessageStream_rejectConnectedPromise.set(this, () => {
+    });
+    _MessageStream_endPromise.set(this, void 0);
+    _MessageStream_resolveEndPromise.set(this, () => {
+    });
+    _MessageStream_rejectEndPromise.set(this, () => {
+    });
+    _MessageStream_listeners.set(this, {});
+    _MessageStream_ended.set(this, false);
+    _MessageStream_errored.set(this, false);
+    _MessageStream_aborted.set(this, false);
+    _MessageStream_catchingPromiseCreated.set(this, false);
+    _MessageStream_response.set(this, void 0);
+    _MessageStream_request_id.set(this, void 0);
+    _MessageStream_handleError.set(this, (error) => {
+      __classPrivateFieldSet(this, _MessageStream_errored, true, "f");
+      if (isAbortError(error)) {
+        error = new APIUserAbortError();
+      }
+      if (error instanceof APIUserAbortError) {
+        __classPrivateFieldSet(this, _MessageStream_aborted, true, "f");
+        return this._emit("abort", error);
+      }
+      if (error instanceof AnthropicError) {
+        return this._emit("error", error);
+      }
+      if (error instanceof Error) {
+        const anthropicError2 = new AnthropicError(error.message);
+        anthropicError2.cause = error;
+        return this._emit("error", anthropicError2);
+      }
+      return this._emit("error", new AnthropicError(String(error)));
+    });
+    __classPrivateFieldSet(this, _MessageStream_connectedPromise, new Promise((resolve, reject) => {
+      __classPrivateFieldSet(this, _MessageStream_resolveConnectedPromise, resolve, "f");
+      __classPrivateFieldSet(this, _MessageStream_rejectConnectedPromise, reject, "f");
+    }), "f");
+    __classPrivateFieldSet(this, _MessageStream_endPromise, new Promise((resolve, reject) => {
+      __classPrivateFieldSet(this, _MessageStream_resolveEndPromise, resolve, "f");
+      __classPrivateFieldSet(this, _MessageStream_rejectEndPromise, reject, "f");
+    }), "f");
+    __classPrivateFieldGet(this, _MessageStream_connectedPromise, "f").catch(() => {
+    });
+    __classPrivateFieldGet(this, _MessageStream_endPromise, "f").catch(() => {
+    });
+  }
+  get response() {
+    return __classPrivateFieldGet(this, _MessageStream_response, "f");
+  }
+  get request_id() {
+    return __classPrivateFieldGet(this, _MessageStream_request_id, "f");
+  }
+  /**
+   * Returns the `MessageStream` data, the raw `Response` instance and the ID of the request,
+   * returned vie the `request-id` header which is useful for debugging requests and resporting
+   * issues to Anthropic.
+   *
+   * This is the same as the `APIPromise.withResponse()` method.
+   *
+   * This method will raise an error if you created the stream using `MessageStream.fromReadableStream`
+   * as no `Response` is available.
+   */
+  async withResponse() {
+    __classPrivateFieldSet(this, _MessageStream_catchingPromiseCreated, true, "f");
+    const response = await __classPrivateFieldGet(this, _MessageStream_connectedPromise, "f");
+    if (!response) {
+      throw new Error("Could not resolve a `Response` object");
+    }
+    return {
+      data: this,
+      response,
+      request_id: response.headers.get("request-id")
+    };
+  }
+  /**
+   * Intended for use on the frontend, consuming a stream produced with
+   * `.toReadableStream()` on the backend.
+   *
+   * Note that messages sent to the model do not appear in `.on('message')`
+   * in this context.
+   */
+  static fromReadableStream(stream) {
+    const runner = new _MessageStream();
+    runner._run(() => runner._fromReadableStream(stream));
+    return runner;
+  }
+  static createMessage(messages, params, options) {
+    const runner = new _MessageStream();
+    for (const message of params.messages) {
+      runner._addMessageParam(message);
+    }
+    runner._run(() => runner._createMessage(messages, { ...params, stream: true }, { ...options, headers: { ...options?.headers, "X-Stainless-Helper-Method": "stream" } }));
+    return runner;
+  }
+  _run(executor) {
+    executor().then(() => {
+      this._emitFinal();
+      this._emit("end");
+    }, __classPrivateFieldGet(this, _MessageStream_handleError, "f"));
+  }
+  _addMessageParam(message) {
+    this.messages.push(message);
+  }
+  _addMessage(message, emit = true) {
+    this.receivedMessages.push(message);
+    if (emit) {
+      this._emit("message", message);
+    }
+  }
+  async _createMessage(messages, params, options) {
+    const signal = options?.signal;
+    let abortHandler;
+    if (signal) {
+      if (signal.aborted)
+        this.controller.abort();
+      abortHandler = this.controller.abort.bind(this.controller);
+      signal.addEventListener("abort", abortHandler);
+    }
+    try {
+      __classPrivateFieldGet(this, _MessageStream_instances, "m", _MessageStream_beginRequest).call(this);
+      const { response, data: stream } = await messages.create({ ...params, stream: true }, { ...options, signal: this.controller.signal }).withResponse();
+      this._connected(response);
+      for await (const event of stream) {
+        __classPrivateFieldGet(this, _MessageStream_instances, "m", _MessageStream_addStreamEvent).call(this, event);
+      }
+      if (stream.controller.signal?.aborted) {
+        throw new APIUserAbortError();
+      }
+      __classPrivateFieldGet(this, _MessageStream_instances, "m", _MessageStream_endRequest).call(this);
+    } finally {
+      if (signal && abortHandler) {
+        signal.removeEventListener("abort", abortHandler);
+      }
+    }
+  }
+  _connected(response) {
+    if (this.ended)
+      return;
+    __classPrivateFieldSet(this, _MessageStream_response, response, "f");
+    __classPrivateFieldSet(this, _MessageStream_request_id, response?.headers.get("request-id"), "f");
+    __classPrivateFieldGet(this, _MessageStream_resolveConnectedPromise, "f").call(this, response);
+    this._emit("connect");
+  }
+  get ended() {
+    return __classPrivateFieldGet(this, _MessageStream_ended, "f");
+  }
+  get errored() {
+    return __classPrivateFieldGet(this, _MessageStream_errored, "f");
+  }
+  get aborted() {
+    return __classPrivateFieldGet(this, _MessageStream_aborted, "f");
+  }
+  abort() {
+    this.controller.abort();
+  }
+  /**
+   * Adds the listener function to the end of the listeners array for the event.
+   * No checks are made to see if the listener has already been added. Multiple calls passing
+   * the same combination of event and listener will result in the listener being added, and
+   * called, multiple times.
+   * @returns this MessageStream, so that calls can be chained
+   */
+  on(event, listener) {
+    const listeners = __classPrivateFieldGet(this, _MessageStream_listeners, "f")[event] || (__classPrivateFieldGet(this, _MessageStream_listeners, "f")[event] = []);
+    listeners.push({ listener });
+    return this;
+  }
+  /**
+   * Removes the specified listener from the listener array for the event.
+   * off() will remove, at most, one instance of a listener from the listener array. If any single
+   * listener has been added multiple times to the listener array for the specified event, then
+   * off() must be called multiple times to remove each instance.
+   * @returns this MessageStream, so that calls can be chained
+   */
+  off(event, listener) {
+    const listeners = __classPrivateFieldGet(this, _MessageStream_listeners, "f")[event];
+    if (!listeners)
+      return this;
+    const index = listeners.findIndex((l) => l.listener === listener);
+    if (index >= 0)
+      listeners.splice(index, 1);
+    return this;
+  }
+  /**
+   * Adds a one-time listener function for the event. The next time the event is triggered,
+   * this listener is removed and then invoked.
+   * @returns this MessageStream, so that calls can be chained
+   */
+  once(event, listener) {
+    const listeners = __classPrivateFieldGet(this, _MessageStream_listeners, "f")[event] || (__classPrivateFieldGet(this, _MessageStream_listeners, "f")[event] = []);
+    listeners.push({ listener, once: true });
+    return this;
+  }
+  /**
+   * This is similar to `.once()`, but returns a Promise that resolves the next time
+   * the event is triggered, instead of calling a listener callback.
+   * @returns a Promise that resolves the next time given event is triggered,
+   * or rejects if an error is emitted.  (If you request the 'error' event,
+   * returns a promise that resolves with the error).
+   *
+   * Example:
+   *
+   *   const message = await stream.emitted('message') // rejects if the stream errors
+   */
+  emitted(event) {
+    return new Promise((resolve, reject) => {
+      __classPrivateFieldSet(this, _MessageStream_catchingPromiseCreated, true, "f");
+      if (event !== "error")
+        this.once("error", reject);
+      this.once(event, resolve);
+    });
+  }
+  async done() {
+    __classPrivateFieldSet(this, _MessageStream_catchingPromiseCreated, true, "f");
+    await __classPrivateFieldGet(this, _MessageStream_endPromise, "f");
+  }
+  get currentMessage() {
+    return __classPrivateFieldGet(this, _MessageStream_currentMessageSnapshot, "f");
+  }
+  /**
+   * @returns a promise that resolves with the the final assistant Message response,
+   * or rejects if an error occurred or the stream ended prematurely without producing a Message.
+   */
+  async finalMessage() {
+    await this.done();
+    return __classPrivateFieldGet(this, _MessageStream_instances, "m", _MessageStream_getFinalMessage).call(this);
+  }
+  /**
+   * @returns a promise that resolves with the the final assistant Message's text response, concatenated
+   * together if there are more than one text blocks.
+   * Rejects if an error occurred or the stream ended prematurely without producing a Message.
+   */
+  async finalText() {
+    await this.done();
+    return __classPrivateFieldGet(this, _MessageStream_instances, "m", _MessageStream_getFinalText).call(this);
+  }
+  _emit(event, ...args) {
+    if (__classPrivateFieldGet(this, _MessageStream_ended, "f"))
+      return;
+    if (event === "end") {
+      __classPrivateFieldSet(this, _MessageStream_ended, true, "f");
+      __classPrivateFieldGet(this, _MessageStream_resolveEndPromise, "f").call(this);
+    }
+    const listeners = __classPrivateFieldGet(this, _MessageStream_listeners, "f")[event];
+    if (listeners) {
+      __classPrivateFieldGet(this, _MessageStream_listeners, "f")[event] = listeners.filter((l) => !l.once);
+      listeners.forEach(({ listener }) => listener(...args));
+    }
+    if (event === "abort") {
+      const error = args[0];
+      if (!__classPrivateFieldGet(this, _MessageStream_catchingPromiseCreated, "f") && !listeners?.length) {
+        Promise.reject(error);
+      }
+      __classPrivateFieldGet(this, _MessageStream_rejectConnectedPromise, "f").call(this, error);
+      __classPrivateFieldGet(this, _MessageStream_rejectEndPromise, "f").call(this, error);
+      this._emit("end");
+      return;
+    }
+    if (event === "error") {
+      const error = args[0];
+      if (!__classPrivateFieldGet(this, _MessageStream_catchingPromiseCreated, "f") && !listeners?.length) {
+        Promise.reject(error);
+      }
+      __classPrivateFieldGet(this, _MessageStream_rejectConnectedPromise, "f").call(this, error);
+      __classPrivateFieldGet(this, _MessageStream_rejectEndPromise, "f").call(this, error);
+      this._emit("end");
+    }
+  }
+  _emitFinal() {
+    const finalMessage = this.receivedMessages.at(-1);
+    if (finalMessage) {
+      this._emit("finalMessage", __classPrivateFieldGet(this, _MessageStream_instances, "m", _MessageStream_getFinalMessage).call(this));
+    }
+  }
+  async _fromReadableStream(readableStream, options) {
+    const signal = options?.signal;
+    let abortHandler;
+    if (signal) {
+      if (signal.aborted)
+        this.controller.abort();
+      abortHandler = this.controller.abort.bind(this.controller);
+      signal.addEventListener("abort", abortHandler);
+    }
+    try {
+      __classPrivateFieldGet(this, _MessageStream_instances, "m", _MessageStream_beginRequest).call(this);
+      this._connected(null);
+      const stream = Stream.fromReadableStream(readableStream, this.controller);
+      for await (const event of stream) {
+        __classPrivateFieldGet(this, _MessageStream_instances, "m", _MessageStream_addStreamEvent).call(this, event);
+      }
+      if (stream.controller.signal?.aborted) {
+        throw new APIUserAbortError();
+      }
+      __classPrivateFieldGet(this, _MessageStream_instances, "m", _MessageStream_endRequest).call(this);
+    } finally {
+      if (signal && abortHandler) {
+        signal.removeEventListener("abort", abortHandler);
+      }
+    }
+  }
+  [(_MessageStream_currentMessageSnapshot = /* @__PURE__ */ new WeakMap(), _MessageStream_connectedPromise = /* @__PURE__ */ new WeakMap(), _MessageStream_resolveConnectedPromise = /* @__PURE__ */ new WeakMap(), _MessageStream_rejectConnectedPromise = /* @__PURE__ */ new WeakMap(), _MessageStream_endPromise = /* @__PURE__ */ new WeakMap(), _MessageStream_resolveEndPromise = /* @__PURE__ */ new WeakMap(), _MessageStream_rejectEndPromise = /* @__PURE__ */ new WeakMap(), _MessageStream_listeners = /* @__PURE__ */ new WeakMap(), _MessageStream_ended = /* @__PURE__ */ new WeakMap(), _MessageStream_errored = /* @__PURE__ */ new WeakMap(), _MessageStream_aborted = /* @__PURE__ */ new WeakMap(), _MessageStream_catchingPromiseCreated = /* @__PURE__ */ new WeakMap(), _MessageStream_response = /* @__PURE__ */ new WeakMap(), _MessageStream_request_id = /* @__PURE__ */ new WeakMap(), _MessageStream_handleError = /* @__PURE__ */ new WeakMap(), _MessageStream_instances = /* @__PURE__ */ new WeakSet(), _MessageStream_getFinalMessage = function _MessageStream_getFinalMessage2() {
+    if (this.receivedMessages.length === 0) {
+      throw new AnthropicError("stream ended without producing a Message with role=assistant");
+    }
+    return this.receivedMessages.at(-1);
+  }, _MessageStream_getFinalText = function _MessageStream_getFinalText2() {
+    if (this.receivedMessages.length === 0) {
+      throw new AnthropicError("stream ended without producing a Message with role=assistant");
+    }
+    const textBlocks = this.receivedMessages.at(-1).content.filter((block) => block.type === "text").map((block) => block.text);
+    if (textBlocks.length === 0) {
+      throw new AnthropicError("stream ended without producing a content block with type=text");
+    }
+    return textBlocks.join(" ");
+  }, _MessageStream_beginRequest = function _MessageStream_beginRequest2() {
+    if (this.ended)
+      return;
+    __classPrivateFieldSet(this, _MessageStream_currentMessageSnapshot, void 0, "f");
+  }, _MessageStream_addStreamEvent = function _MessageStream_addStreamEvent2(event) {
+    if (this.ended)
+      return;
+    const messageSnapshot = __classPrivateFieldGet(this, _MessageStream_instances, "m", _MessageStream_accumulateMessage).call(this, event);
+    this._emit("streamEvent", event, messageSnapshot);
+    switch (event.type) {
+      case "content_block_delta": {
+        const content = messageSnapshot.content.at(-1);
+        switch (event.delta.type) {
+          case "text_delta": {
+            if (content.type === "text") {
+              this._emit("text", event.delta.text, content.text || "");
+            }
+            break;
+          }
+          case "citations_delta": {
+            if (content.type === "text") {
+              this._emit("citation", event.delta.citation, content.citations ?? []);
+            }
+            break;
+          }
+          case "input_json_delta": {
+            if (tracksToolInput(content) && content.input) {
+              this._emit("inputJson", event.delta.partial_json, content.input);
+            }
+            break;
+          }
+          case "thinking_delta": {
+            if (content.type === "thinking") {
+              this._emit("thinking", event.delta.thinking, content.thinking);
+            }
+            break;
+          }
+          case "signature_delta": {
+            if (content.type === "thinking") {
+              this._emit("signature", content.signature);
+            }
+            break;
+          }
+          default:
+            checkNever(event.delta);
+        }
+        break;
+      }
+      case "message_stop": {
+        this._addMessageParam(messageSnapshot);
+        this._addMessage(messageSnapshot, true);
+        break;
+      }
+      case "content_block_stop": {
+        this._emit("contentBlock", messageSnapshot.content.at(-1));
+        break;
+      }
+      case "message_start": {
+        __classPrivateFieldSet(this, _MessageStream_currentMessageSnapshot, messageSnapshot, "f");
+        break;
+      }
+      case "content_block_start":
+      case "message_delta":
+        break;
+    }
+  }, _MessageStream_endRequest = function _MessageStream_endRequest2() {
+    if (this.ended) {
+      throw new AnthropicError(`stream has ended, this shouldn't happen`);
+    }
+    const snapshot = __classPrivateFieldGet(this, _MessageStream_currentMessageSnapshot, "f");
+    if (!snapshot) {
+      throw new AnthropicError(`request ended without sending any chunks`);
+    }
+    __classPrivateFieldSet(this, _MessageStream_currentMessageSnapshot, void 0, "f");
+    return snapshot;
+  }, _MessageStream_accumulateMessage = function _MessageStream_accumulateMessage2(event) {
+    let snapshot = __classPrivateFieldGet(this, _MessageStream_currentMessageSnapshot, "f");
+    if (event.type === "message_start") {
+      if (snapshot) {
+        throw new AnthropicError(`Unexpected event order, got ${event.type} before receiving "message_stop"`);
+      }
+      return event.message;
+    }
+    if (!snapshot) {
+      throw new AnthropicError(`Unexpected event order, got ${event.type} before "message_start"`);
+    }
+    switch (event.type) {
+      case "message_stop":
+        return snapshot;
+      case "message_delta":
+        snapshot.stop_reason = event.delta.stop_reason;
+        snapshot.stop_sequence = event.delta.stop_sequence;
+        snapshot.usage.output_tokens = event.usage.output_tokens;
+        if (event.usage.input_tokens != null) {
+          snapshot.usage.input_tokens = event.usage.input_tokens;
+        }
+        if (event.usage.cache_creation_input_tokens != null) {
+          snapshot.usage.cache_creation_input_tokens = event.usage.cache_creation_input_tokens;
+        }
+        if (event.usage.cache_read_input_tokens != null) {
+          snapshot.usage.cache_read_input_tokens = event.usage.cache_read_input_tokens;
+        }
+        if (event.usage.server_tool_use != null) {
+          snapshot.usage.server_tool_use = event.usage.server_tool_use;
+        }
+        return snapshot;
+      case "content_block_start":
+        snapshot.content.push({ ...event.content_block });
+        return snapshot;
+      case "content_block_delta": {
+        const snapshotContent = snapshot.content.at(event.index);
+        switch (event.delta.type) {
+          case "text_delta": {
+            if (snapshotContent?.type === "text") {
+              snapshot.content[event.index] = {
+                ...snapshotContent,
+                text: (snapshotContent.text || "") + event.delta.text
+              };
+            }
+            break;
+          }
+          case "citations_delta": {
+            if (snapshotContent?.type === "text") {
+              snapshot.content[event.index] = {
+                ...snapshotContent,
+                citations: [...snapshotContent.citations ?? [], event.delta.citation]
+              };
+            }
+            break;
+          }
+          case "input_json_delta": {
+            if (snapshotContent && tracksToolInput(snapshotContent)) {
+              let jsonBuf = snapshotContent[JSON_BUF_PROPERTY] || "";
+              jsonBuf += event.delta.partial_json;
+              const newContent = { ...snapshotContent };
+              Object.defineProperty(newContent, JSON_BUF_PROPERTY, {
+                value: jsonBuf,
+                enumerable: false,
+                writable: true
+              });
+              if (jsonBuf) {
+                newContent.input = partialParse(jsonBuf);
+              }
+              snapshot.content[event.index] = newContent;
+            }
+            break;
+          }
+          case "thinking_delta": {
+            if (snapshotContent?.type === "thinking") {
+              snapshot.content[event.index] = {
+                ...snapshotContent,
+                thinking: snapshotContent.thinking + event.delta.thinking
+              };
+            }
+            break;
+          }
+          case "signature_delta": {
+            if (snapshotContent?.type === "thinking") {
+              snapshot.content[event.index] = {
+                ...snapshotContent,
+                signature: event.delta.signature
+              };
+            }
+            break;
+          }
+          default:
+            checkNever(event.delta);
+        }
+        return snapshot;
+      }
+      case "content_block_stop":
+        return snapshot;
+    }
+  }, Symbol.asyncIterator)]() {
+    const pushQueue = [];
+    const readQueue = [];
+    let done = false;
+    this.on("streamEvent", (event) => {
+      const reader = readQueue.shift();
+      if (reader) {
+        reader.resolve(event);
+      } else {
+        pushQueue.push(event);
+      }
+    });
+    this.on("end", () => {
+      done = true;
+      for (const reader of readQueue) {
+        reader.resolve(void 0);
+      }
+      readQueue.length = 0;
+    });
+    this.on("abort", (err) => {
+      done = true;
+      for (const reader of readQueue) {
+        reader.reject(err);
+      }
+      readQueue.length = 0;
+    });
+    this.on("error", (err) => {
+      done = true;
+      for (const reader of readQueue) {
+        reader.reject(err);
+      }
+      readQueue.length = 0;
+    });
+    return {
+      next: async () => {
+        if (!pushQueue.length) {
+          if (done) {
+            return { value: void 0, done: true };
+          }
+          return new Promise((resolve, reject) => readQueue.push({ resolve, reject })).then((chunk2) => chunk2 ? { value: chunk2, done: false } : { value: void 0, done: true });
+        }
+        const chunk = pushQueue.shift();
+        return { value: chunk, done: false };
+      },
+      return: async () => {
+        this.abort();
+        return { value: void 0, done: true };
+      }
+    };
+  }
+  toReadableStream() {
+    const stream = new Stream(this[Symbol.asyncIterator].bind(this), this.controller);
+    return stream.toReadableStream();
+  }
+};
+function checkNever(x) {
+}
+
+// src/pool/errors.ts
+function poolFailure(error, now = Date.now()) {
+  const value = error;
+  if (value?.name === "AbortError" || value?.code === "ABORT_ERR") return { kind: "canceled" };
+  const status = value?.statusCode;
+  if (status === 429) {
+    const raw = Object.entries(value?.responseHeaders ?? {}).find(([key]) => key.toLowerCase() === "retry-after")?.[1];
+    let retryAt;
+    if (raw?.trim()) {
+      const seconds = Number(raw);
+      if (Number.isFinite(seconds) && seconds >= 0) retryAt = now + Math.ceil(seconds * 1e3);
+      else {
+        const parsed = Date.parse(raw);
+        if (Number.isFinite(parsed)) retryAt = Math.max(now, parsed);
+      }
+    }
+    return { kind: "rate-limit", status, retryAt };
+  }
+  if ([401, 403, 404].includes(status ?? 0)) return { kind: "access", status };
+  if (status === 400 && /context.{0,20}(length|window|exceed)|prompt.{0,20}too long/i.test(value?.message ?? "")) return { kind: "context", status };
+  if (status === 400 || status === 422) return { kind: "invalid", status };
+  if (status !== void 0 && status >= 500 || /ECONNRESET|ETIMEDOUT|ENOTFOUND|first-content-timeout|missing-valid-finish|invalid-finish|stream-error/.test(value?.message ?? "")) return { kind: "transient", status };
+  return { kind: "unknown", status };
+}
+function retryPoolFailure(error) {
+  return ["rate-limit", "access", "context", "transient"].includes(poolFailure(error).kind);
+}
+
+// src/pool/eligibility.ts
+function poolRouteIdentity(route) {
+  return JSON.stringify([route.member.providerId, route.revision, route.member.modelId]);
+}
+function evaluatePoolMembers(pool, evidence, request) {
+  return pool.members.map((member) => {
+    const matches = evidence.filter((route2) => route2.member.providerId === member.providerId && route2.member.modelId === member.modelId);
+    if (matches.length !== 1) return { member, reason: matches.length ? "ambiguous-route" : "unavailable" };
+    const route = matches[0];
+    const effort = request.effort ?? pool.effort;
+    let reason;
+    if (!route.revision) reason = "unverified-endpoint";
+    else if (!route.catalogVerified) reason = "unverified-catalog";
+    else if (route.freeStatus !== "verified_free") reason = "not-free";
+    else if (!route.billingSafe) reason = "billing-risk";
+    else if (!route.accessVerified) reason = "unverified-access";
+    else if (!route.targets.includes(request.target)) reason = "unsupported-target";
+    else if (request.tools && !route.toolsVerified) reason = "unverified-tools";
+    else if (effort === "auto" ? !route.defaultEffortVerified : !route.effortLevels.includes(effort)) reason = "unsupported-effort";
+    else if (!route.contextVerified) reason = "unverified-context";
+    else if (!route.contextFits) reason = "context-limit";
+    else if (route.unavailableUntil !== void 0 && (!Number.isFinite(route.unavailableUntil) || route.unavailableUntil > request.now)) reason = "cooldown";
+    return { member, route, ...reason ? { reason } : {} };
+  });
+}
+
+// src/pool/attempt.ts
+var PoolAttemptError = class extends Error {
+  constructor(code, committed, cause) {
+    super(code);
+    this.code = code;
+    this.committed = committed;
+    this.cause = cause;
+  }
+  code;
+  committed;
+  cause;
+};
+function meaningful(part) {
+  return ["text-delta", "reasoning-delta"].includes(part.type) && Boolean(part.text) || part.type === "tool-input-delta" && Boolean(part.delta) || part.type === "tool-input-start" || part.type === "tool-call";
+}
+async function bounded(work, ms, signal, code) {
+  signal.throwIfAborted();
+  if (ms <= 0) throw new Error(code);
+  let timer;
+  let onAbort = () => {
+  };
+  const interrupted = new Promise((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    timer = setTimeout(() => reject(new Error(code)), Math.max(0, ms));
+  });
+  try {
+    return await Promise.race([work, interrupted]);
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+async function* runPoolAttempts(routes, signal, limits, retryable, onAttempt = () => {
+}, onFailure = () => {
+}) {
+  for (const [name, value] of Object.entries(limits)) {
+    if (!Number.isSafeInteger(value) || value <= 0) throw new Error("Invalid pool limit: " + name);
+  }
+  const deadline = Date.now() + limits.totalMs;
+  let committed = false;
+  let lastError;
+  for (const route of routes.slice(0, limits.attempts)) {
+    signal.throwIfAborted();
+    if (Date.now() >= deadline) throw new PoolAttemptError("total-deadline", committed);
+    const controller = new AbortController();
+    const attemptSignal = AbortSignal.any([signal, controller.signal]);
+    const firstDeadline = Math.min(deadline, Date.now() + limits.firstContentMs);
+    let iterator;
+    const buffered = [];
+    let bytes = 0;
+    let completed = false;
+    let consumerThrew = false;
+    let consumerError;
+    let terminalThrown = false;
+    onAttempt(route.id);
+    try {
+      const stream = await bounded(route.open(attemptSignal), firstDeadline - Date.now(), attemptSignal, "first-content-timeout");
+      iterator = stream[Symbol.asyncIterator]();
+      while (true) {
+        const remaining = (committed ? Math.min(deadline, Date.now() + limits.idleMs) : firstDeadline) - Date.now();
+        const next = await bounded(iterator.next(), remaining, attemptSignal, committed ? "idle-or-total-timeout" : "first-content-timeout");
+        signal.throwIfAborted();
+        if (next.done) throw new Error("missing-valid-finish");
+        const part = next.value;
+        if (part.type === "error") throw part.error ?? new Error("stream-error");
+        const terminal = part.type === "finish";
+        if (terminal && !["stop", "tool-calls", "length"].includes(part.finishReason ?? "")) throw new Error("invalid-finish");
+        if (!committed) {
+          bytes += Buffer.byteLength(JSON.stringify(part));
+          if (bytes > limits.bufferBytes) throw new Error("provisional-buffer-limit");
+          buffered.push(part);
+          if (!meaningful(part) && !terminal) continue;
+          committed = true;
+          for (const pending of buffered) {
+            signal.throwIfAborted();
+            try {
+              yield pending;
+            } catch (error) {
+              consumerThrew = true;
+              consumerError = error;
+              throw error;
+            }
+          }
+          buffered.length = 0;
+        } else {
+          try {
+            yield part;
+          } catch (error) {
+            consumerThrew = true;
+            consumerError = error;
+            throw error;
+          }
+        }
+        if (terminal) {
+          completed = true;
+          return;
+        }
+      }
+    } catch (error) {
+      if (consumerThrew) {
+        terminalThrown = true;
+        throw consumerError;
+      }
+      lastError = error;
+      if (!signal.aborted) await onFailure(route.id, error, committed);
+      if (signal.aborted) {
+        terminalThrown = true;
+        throw signal.reason;
+      }
+      if (committed || !retryable(error)) {
+        terminalThrown = true;
+        throw new PoolAttemptError("attempt-failed", committed, error);
+      }
+    } finally {
+      controller.abort();
+      if (iterator?.return) {
+        try {
+          await bounded(iterator.return(), limits.cleanupMs, new AbortController().signal, "cleanup-timeout");
+        } catch {
+          if (!completed && !consumerThrew && !terminalThrown && !signal.aborted) {
+            throw new PoolAttemptError("cleanup-failed", committed, lastError);
+          }
+        }
+      }
+    }
+  }
+  throw new PoolAttemptError("attempt-budget-exhausted", committed, lastError);
+}
+
+// src/pool/dispatch.ts
+async function* dispatchFreePool(pool, routes, request, policy) {
+  const candidates = evaluatePoolMembers(pool, routes, { ...request, now: Date.now() });
+  const eligible = candidates.filter((candidate) => !candidate.reason && candidate.route);
+  if (!eligible.length) {
+    throw new Error("No eligible free pool members: " + candidates.map((candidate) => candidate.member.providerId + "/" + candidate.member.modelId + ": " + candidate.reason).join("; "));
+  }
+  const attempts = eligible.map((candidate) => {
+    const route = routes.find((item) => candidate.route && poolRouteIdentity(item) === poolRouteIdentity(candidate.route));
+    if (!route) throw new Error("Pool route changed during admission");
+    return { id: poolRouteIdentity(route), open: route.open };
+  });
+  const session = policy.sessions?.begin(request.conversationScope, attempts);
+  let activeRoute;
+  yield* runPoolAttempts(session?.routes ?? attempts, request.signal, policy.limits, policy.retryable, (id) => {
+    activeRoute = id;
+    policy.onAttempt?.(id);
+  }, policy.onFailure);
+  if (activeRoute) session?.succeed(activeRoute);
+}
+
+// src/pool/claude-runtime.ts
+var CLAUDE_POOL_MODEL_ID = "claude-pool";
+function defaultRetryable(error) {
+  const raw = error instanceof Error ? error.message : "";
+  const message = formatUpstreamError(error) + " " + raw;
+  const status = upstreamHttpStatus(error, message);
+  return status === 429 || status >= 500 || /ECONNRESET|ETIMEDOUT|ENOTFOUND|fetch failed/i.test(message);
+}
+function protocolStatus(error) {
+  const message = formatUpstreamError(error);
+  const status = upstreamHttpStatus(error, message);
+  return { status, error: { type: anthropicErrorType(status), message } };
+}
+function sseError(error) {
+  return "event: error\ndata: " + JSON.stringify({ type: "error", error }) + "\n\n";
+}
+async function collectMessage(parts, model, maxBytes) {
+  const lines = [];
+  let bytes = 0;
+  let sawError = false;
+  await writeAnthropicStream(parts, model, (chunk) => {
+    if (chunk.includes("event: error")) sawError = true;
+    bytes += Buffer.byteLength(chunk, "utf8");
+    if (bytes > maxBytes) throw new Error("nonstream-output-limit");
+    for (const line of chunk.split("\n")) if (line.startsWith("data: {")) lines.push(line.slice(6));
+  });
+  if (sawError) throw new Error("provider error during nonstream aggregation");
+  const encoded = new TextEncoder().encode(lines.join("\n") + "\n");
+  const stream = MessageStream.fromReadableStream(new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoded);
+      controller.close();
+    }
+  }));
+  return await stream.finalMessage();
+}
+async function serveClaudePool(options) {
+  const { pool, routes, request, limits, write, embargo, scope } = options;
+  let owner;
+  if (embargo && scope) {
+    const claim = embargo.claim(scope.value, scope.historyFingerprint);
+    if (claim.kind !== "owner") {
+      return {
+        ok: false,
+        status: 429,
+        committed: false,
+        error: { type: "rate_limit_error", message: claim.kind === "busy" ? "A matching request is already in flight" : "A matching request recently failed" }
+      };
+    }
+    owner = claim;
+  }
+  const parts = dispatchFreePool(pool, routes, {
+    target: "claude",
+    tools: true,
+    effort: request.effort,
+    signal: request.signal
+  }, {
+    limits,
+    retryable: options.retryable ?? defaultRetryable
+  });
+  try {
+    if (!request.stream) {
+      const message = await collectMessage(parts, request.modelId, request.maxOutputBytes ?? 65536);
+      owner?.kind === "owner" && owner.release();
+      return { ok: true, message };
+    }
+    if (!write) throw new Error("stream-write-sink-required");
+    let committed = false;
+    let sawError = false;
+    try {
+      await writeAnthropicStream(parts, request.modelId, (chunk) => {
+        if (chunk.includes("event: error")) sawError = true;
+        if (chunk.startsWith("event: message_start") || chunk.startsWith("event: content_block")) committed = true;
+        write(chunk);
+      }, void 0, request.estimatedInputTokens ?? 0);
+    } catch (error) {
+      const mapped = protocolStatus(error);
+      if (!committed) {
+        owner?.kind === "owner" && owner.fail();
+        return { ok: false, ...mapped, committed: false };
+      }
+      if (!sawError) write(sseError(mapped.error));
+      owner?.kind === "owner" && owner.fail();
+      return { ok: false, ...mapped, committed: true };
+    }
+    if (sawError) {
+      owner?.kind === "owner" && owner.fail();
+      return { ok: false, status: 502, committed, error: { type: "api_error", message: "Provider failed after response commitment" } };
+    }
+    owner?.kind === "owner" && owner.release();
+    return { ok: true };
+  } catch (error) {
+    owner?.kind === "owner" && owner.fail();
+    return { ok: false, ...protocolStatus(error), committed: false };
+  }
+}
+var ClaudePoolRuntime = class {
+  constructor(pool, prepare, limits = {
+    attempts: 3,
+    firstContentMs: 2e4,
+    idleMs: 2e4,
+    totalMs: 6e4,
+    bufferBytes: 65536,
+    cleanupMs: 1e3
+  }) {
+    this.pool = pool;
+    this.prepare = prepare;
+    this.limits = limits;
+  }
+  pool;
+  prepare;
+  limits;
+  async serve(body, write, signal, sessionId) {
+    const routes = await this.prepare(body, signal, sessionId);
+    const effort = body.output_config?.effort ?? this.pool.effort;
+    return serveClaudePool({
+      pool: this.pool,
+      routes,
+      request: {
+        modelId: String(body.model ?? CLAUDE_POOL_MODEL_ID),
+        stream: body.stream === true,
+        signal,
+        effort
+      },
+      limits: this.limits,
+      write,
+      retryable: retryPoolFailure
+    });
+  }
+};
 
 // src/proxy.ts
 import { createServer } from "http";
@@ -1480,10 +3195,10 @@ function lookupRoute(byAlias, id) {
   }
   return void 0;
 }
-function startProxyCatalog(routes, defaultAliasId, debug = false) {
+function startProxyCatalog(routes, defaultAliasId, debug = false, options = {}) {
   const proxyToken = randomUUID3();
   silenceSdkWarnings();
-  if (routes.length === 0) {
+  if (routes.length === 0 && !options.pool) {
     return Promise.reject(new Error("Proxy catalog requires at least one route"));
   }
   const byAlias = new Map(routes.map((r) => [r.aliasId, r]));
@@ -1498,11 +3213,13 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
   };
   process.on("unhandledRejection", onRejection);
   process.on("uncaughtException", onException);
-  const modelsPayload = JSON.stringify(
-    formatAnthropicModelList(
-      routes.map((r) => ({ id: r.aliasId, name: r.displayName, contextWindow: r.contextWindow }))
-    )
-  );
+  const catalogEntries = routes.map((r) => ({ id: r.aliasId, name: r.displayName, contextWindow: r.contextWindow }));
+  if (options.pool) catalogEntries.push({
+    id: CLAUDE_POOL_MODEL_ID,
+    name: options.pool.displayName,
+    contextWindow: options.pool.contextWindow
+  });
+  const modelsPayload = JSON.stringify(formatAnthropicModelList(catalogEntries));
   const server = createServer(async (req, res) => {
     plog(() => `${req.method} ${req.url}`);
     if (req.method === "HEAD") {
@@ -1514,6 +3231,11 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
       const modelPathMatch = req.url.match(/^\/v1\/models\/([^?]+)/);
       if (modelPathMatch) {
         const id = decodeURIComponent(modelPathMatch[1]);
+        if (options.pool && id === CLAUDE_POOL_MODEL_ID) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(formatAnthropicModelEntry(id, options.pool.displayName, options.pool.contextWindow)));
+          return;
+        }
         const route = lookupRoute(byAlias, id);
         if (route) {
           res.writeHead(200, { "Content-Type": "application/json" });
@@ -1546,8 +3268,45 @@ function startProxyCatalog(routes, defaultAliasId, debug = false) {
       if (correlatedSubagent) anthropicBody = correlatedSubagent.body;
       const originalModel = anthropicBody.model;
       const clientWantsStream = Boolean(anthropicBody.stream);
+      if (options.pool && (originalModel === CLAUDE_POOL_MODEL_ID || routeLookupIds(String(originalModel)).includes(CLAUDE_POOL_MODEL_ID))) {
+        const abort = new AbortController();
+        res.once("close", () => {
+          if (!res.writableFinished) abort.abort();
+        });
+        try {
+          const sessionId = extractConversationId(req.headers, anthropicBody);
+          const result = await options.pool.runtime.serve(anthropicBody, (chunk) => {
+            if (res.destroyed) throw new Error("Client disconnected");
+            if (!res.headersSent) {
+              res.writeHead(200, {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                Connection: "keep-alive"
+              });
+            }
+            res.write(chunk);
+          }, abort.signal, sessionId);
+          if (result.ok) {
+            if (result.message) sendJson(res, 200, result.message);
+            else res.end();
+          } else if (result.committed) {
+            res.end();
+          } else {
+            anthropicError(res, result.status, result.error.message);
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (!res.headersSent) anthropicError(res, 502, message);
+          else if (!res.writableEnded) res.end();
+        }
+        return;
+      }
       const correlatedRoute = correlatedSubagent ? routes.find((candidate) => (candidate.gatewayAliasId ?? candidate.aliasId) === correlatedSubagent.modelId) : void 0;
       const route = correlatedRoute ?? lookupRoute(byAlias, originalModel) ?? defaultRoute;
+      if (!route) {
+        anthropicError(res, 404, "Model not found");
+        return;
+      }
       const apiKey = route.apiKey;
       const upstreamUrl = route.upstreamUrl;
       plog(
@@ -1856,150 +3615,6 @@ function buildCatalogRoutes(startingRoute, favorites, resolveRoute, max = MAX_MO
     ...tail.filter((route) => route.aliasId !== startingRoute.aliasId)
   ].slice(0, max);
   return { routes, droppedFavorites };
-}
-
-// src/registry/load.ts
-async function loadRegistryProviders(diag, opts) {
-  const registry = loadRegistry();
-  const keys = /* @__PURE__ */ new Map();
-  const oauthAccountIds = /* @__PURE__ */ new Map();
-  const oauthProviderData = /* @__PURE__ */ new Map();
-  await Promise.all(registry.providers.map(async (provider) => {
-    try {
-      const key = await resolveProviderCredential(provider.id, provider.authRef, diag);
-      if (key) keys.set(provider.id, key);
-    } catch (err) {
-      diag?.(`${provider.id}: credential unavailable \u2014 ${err instanceof Error ? err.message : String(err)}`);
-    }
-    if (provider.authType === "oauth") {
-      try {
-        const accountId = await resolveProviderOAuthAccountId(provider.authRef, diag);
-        if (accountId) oauthAccountIds.set(provider.id, accountId);
-        const pd = await resolveProviderOAuthProviderData(provider.authRef, diag);
-        if (pd) oauthProviderData.set(provider.id, pd);
-      } catch {
-      }
-    }
-  }));
-  const runtimeRegistry = {
-    ...registry,
-    providers: registry.providers.map((provider) => {
-      if (providerKind(provider.id) !== "github-copilot" || !provider.modelsCache) return provider;
-      return {
-        ...provider,
-        modelsCache: {
-          ...provider.modelsCache,
-          models: filterCachedCopilotModels(
-            provider.modelsCache.models,
-            copilotPlanTier(oauthProviderData.get(provider.id))
-          )
-        }
-      };
-    })
-  };
-  return materializeRegistry(runtimeRegistry, (provider) => keys.get(provider.id) ?? null, opts).map((provider) => ({
-    ...provider,
-    oauthAccountId: oauthAccountIds.get(provider.id),
-    providerData: oauthProviderData.get(provider.id)
-  }));
-}
-
-// src/provider-catalog.ts
-init_provider_templates();
-async function fetchProviderCatalog(opts) {
-  return loadRegistryProviders(void 0, opts);
-}
-function launchModelsForProvider(provider, selectedModel) {
-  return provider.launchAllModels ? provider.models : [selectedModel];
-}
-function providersForPicker(providers) {
-  for (const p8 of providers) {
-    p8.models.sort((a, b) => {
-      const nameA = a.name || a.id;
-      const nameB = b.name || b.id;
-      return nameA.localeCompare(nameB, void 0, { sensitivity: "base", numeric: true });
-    });
-  }
-  return providers.sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base", numeric: true }));
-}
-async function resolveLocalProviderApiKey(provider) {
-  const direct = provider.apiKey?.trim();
-  if (direct) return direct;
-  if (provider.authType === "none") return "anonymous";
-  const template = getTemplateById(providerKind(provider.id));
-  if (template?.apiKeyOptional || template?.anonymousFreeModels) {
-    return "anonymous";
-  }
-  const reg = loadRegistry().providers.find((p8) => p8.id === provider.id);
-  const authRef = reg?.authRef ?? (provider.id === "zen" || provider.id === "go" ? "keyring:global:opencode" : oauthAuthRef(provider.id));
-  return resolveProviderCredential(provider.id, authRef);
-}
-function formatRegistryAuthLabel(provider) {
-  if (provider.authType === "oauth" || provider.authRef.includes("oauth:provider:")) {
-    return "keychain (OAuth)";
-  }
-  if (provider.authRef.startsWith("keyring:global:opencode")) {
-    return "keychain (OpenCode API key)";
-  }
-  if (provider.authType === "none") {
-    return "gcloud / manual credentials";
-  }
-  if (provider.authRef.startsWith("keyring:")) {
-    return "keychain (API key)";
-  }
-  if (provider.authRef.startsWith("env:")) {
-    return provider.authRef;
-  }
-  return provider.authRef;
-}
-async function resolveProvidersForDisplay() {
-  const reg = loadRegistry();
-  const entries = [];
-  for (const provider of reg.providers) {
-    entries.push({
-      id: provider.id,
-      name: provider.name,
-      modelCount: getAgentProviderModels(provider).length,
-      enabled: provider.enabled,
-      authLabel: formatRegistryAuthLabel(provider),
-      inRegistry: true
-    });
-  }
-  return entries.sort((a, b) => a.name.localeCompare(b.name));
-}
-function localProvidersToServerModels(localProviders) {
-  return localProviders.flatMap(
-    (provider) => provider.models.map((model) => ({
-      id: model.id,
-      name: model.name,
-      isFree: model.isFree ?? false,
-      freeStatus: model.freeStatus,
-      brand: model.brand,
-      providerLabel: provider.name,
-      providerId: provider.id,
-      sourceBackend: provider.id,
-      modelFormat: model.modelFormat,
-      upstreamModelId: model.upstreamModelId,
-      cost: model.cost,
-      baseUrl: model.baseUrl,
-      completionsUrl: model.completionsUrl,
-      npm: model.modelFormat === "openai" ? model.npm || "@ai-sdk/openai-compatible" : model.npm,
-      apiBaseUrl: model.apiBaseUrl,
-      apiKey: provider.apiKey,
-      authType: provider.authType,
-      oauthAccountId: provider.oauthAccountId,
-      contextWindow: model.contextWindow,
-      supportedParameters: model.supportedParameters,
-      reasoning: model.reasoning,
-      interleavedReasoningField: model.interleavedReasoningField,
-      reasoningEffortLevels: model.reasoningEffortLevels,
-      reasoningEffortConflict: model.reasoningEffortConflict,
-      useResponsesLite: model.useResponsesLite,
-      preferWebSockets: model.preferWebSockets,
-      headers: provider.headers,
-      providerData: provider.providerData
-    }))
-  );
 }
 
 // src/antigravity/slot-registry.ts
@@ -5950,6 +7565,11 @@ export {
   printProviderDetailPanel,
   printCloudProviderPanel,
   findBinaryOnPath,
+  poolFailure,
+  retryPoolFailure,
+  dispatchFreePool,
+  CLAUDE_POOL_MODEL_ID,
+  ClaudePoolRuntime,
   readBody,
   extractApiKey,
   sendJson,
@@ -5972,12 +7592,6 @@ export {
   resolveAdvertiseAddresses,
   resolveAdvertiseGatewayPort,
   formatGatewayUrls,
-  fetchProviderCatalog,
-  launchModelsForProvider,
-  providersForPicker,
-  resolveLocalProviderApiKey,
-  formatRegistryAuthLabel,
-  resolveProvidersForDisplay,
   evaluateAgySwitchCompatibility,
   resolveRelayCatalogSlots,
   injectRelayModels,
@@ -6033,4 +7647,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-7FAYEN3G.js.map
+//# sourceMappingURL=chunk-SA3QV4WY.js.map

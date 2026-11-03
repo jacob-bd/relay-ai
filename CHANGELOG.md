@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Experimental shared free-model pool.** Use `relay-ai pool add <provider-account> <model>`, then `relay-ai pool verify` to enroll zero-price models with bounded text and inert tool probes. Fresh capability receipts last 24 hours. `relay-ai claude --pool` and `relay-ai codex --pool` opt into bounded failover before output is committed; verified Antigravity members add pool effort rows. Membership and priority are independent of favorites. Paid, unknown-price, provider-granted free access without billing safeguards, expired, incompatible and undersized routes are refused. OpenCode Zen free models are excluded.
+- **Pool routing safeguards.** Persistent cooldowns preserve recovery ownership across processes. Claude carries conversation cache identity and cleans up its saved pool model after exit. Codex pool launches use HTTP Responses; desktop pool launches and WebSocket pool requests are rejected. Unknown model ids in a pool-only proxy return 404; existing default-route fallback remains available for concrete catalogs. Context admission uses a conservative estimate with an output reserve and margin, not a verified tokenizer. Live Antigravity validation remains outstanding.
+
 ### Fixed
 
 - **Codex usage limits terminate the request.** Relay now returns a failed Responses event or HTTP 429 when an upstream reports a usage limit, rather than rendering the error as a successful assistant message. Codex SDK calls, including compaction, make one upstream attempt per client request; automatic SDK retries are disabled. A client can still issue a separate retry.

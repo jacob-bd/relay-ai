@@ -4,7 +4,7 @@ import type { FreeStatus } from './free-models.js';
 
 export type ModelFormat = 'anthropic' | 'openai' | 'unsupported';
 
-export type StarterCommand = 'root' | 'claude' | 'claude-app' | 'codex' | 'codex-app' | 'server' | 'models' | 'providers' | 'gemini' | 'agy' | 'antigravity' | 'antigravity-ide' | 'ui';
+export type StarterCommand = 'root' | 'claude' | 'claude-app' | 'codex' | 'codex-app' | 'server' | 'models' | 'pool' | 'providers' | 'gemini' | 'agy' | 'antigravity' | 'antigravity-ide' | 'ui';
 
 export interface BackendConfig {
   id: 'zen' | 'go';
@@ -104,6 +104,31 @@ export interface FavoriteModel {
   modelId: string;
 }
 
+export interface PoolCapabilityReceipt {
+  member: FavoriteModel;
+  /** Hash of account + endpoint + model; stale receipts never match a new config. */
+  endpointRevision: string;
+  verifiedAt: number;
+  expiresAt: number;
+  targets: ('codex' | 'claude' | 'antigravity')[];
+  tools: boolean;
+  maxOutputTokens: number;
+  contextWindow: number;
+  /** Where the window came from: measured, probed, or provider-reported. */
+  contextSource: 'attested' | 'observed' | 'provider';
+  reasoningAccounting: 'inside-output' | 'separate';
+  /** Diagnostic only. Auto never depends on a named default rung. */
+  defaultEffort?: string;
+  effortLevels: string[];
+  billingSafe: boolean;
+}
+
+export interface FreePoolPreferences {
+  members: FavoriteModel[];
+  effort: 'auto' | 'low' | 'medium' | 'high';
+  receipts: PoolCapabilityReceipt[];
+}
+
 export interface UserPreferences {
   lastBackend?: 'zen' | 'go';
   lastModel?: string;
@@ -125,6 +150,7 @@ export interface UserPreferences {
   lastClaudeTransparentMode?: boolean;
   recentModelsByProvider?: Record<string, string[]>;
   favoriteModels?: FavoriteModel[];
+  freePool?: FreePoolPreferences;
   /** Independent, initially empty list containing at most one Codex Sub-agent model. */
   codexSubagentModels?: FavoriteModel[];
   appPathOverrides?: Record<string, string>;
@@ -177,6 +203,10 @@ export interface ParsedArgs {
   modelCatalogScope?: 'global' | 'codex-subagents';
   /** Whether Codex should expose native models beside Relay routes for this launch. */
   codexLaunchMode?: 'mixed' | 'relay-only';
+  /** Launch the shared free-model pool instead of a concrete model. */
+  codexPool?: boolean;
+  /** Launch the shared free-model pool through Claude Code. */
+  claudePool?: boolean;
   /** Start `relay-ai server` from saved/default settings without prompts. */
   serverQuick?: boolean;
   /** One-run listen override for `relay-ai server`. */

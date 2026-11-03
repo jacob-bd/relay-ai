@@ -6,7 +6,6 @@ import {
   claudeCodeProviderData,
   createGatewayModelCatalog,
   favoriteProviderDisplayName,
-  fetchProviderCatalog,
   filterServerModelsByFavorites,
   filterServerModelsByFreeStatus,
   filterServerModelsByProviders,
@@ -33,13 +32,12 @@ import {
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode
-} from "./chunk-7FAYEN3G.js";
-import "./chunk-PFR4ZYI4.js";
+} from "./chunk-SA3QV4WY.js";
+import "./chunk-SUH7UMIR.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   addCustomEndpointProvider,
   applySystemCaTrust,
-  copilotPlanTier,
   customEndpointKind,
   ensureOpencodeCloudProviders,
   isSystemCaActive,
@@ -54,7 +52,16 @@ import {
   setModelKindOverride,
   setModelsHidden,
   updateCustomEndpointProvider
-} from "./chunk-GCRYZID3.js";
+} from "./chunk-KJTWVNON.js";
+import {
+  validateCustomEndpointUrl
+} from "./chunk-XWM4ELUX.js";
+import {
+  fetchProviderCatalog
+} from "./chunk-KOGVCPNK.js";
+import {
+  copilotPlanTier
+} from "./chunk-LXTF7TOF.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -118,9 +125,8 @@ import {
   setTrustSystemCertificates,
   supportsAdditionalOAuthAccounts,
   supportsManualModels,
-  validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-JSEUUZCZ.js";
+} from "./chunk-IBEBOL44.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -1042,7 +1048,7 @@ async function handleMeasureContextWindow(req, res) {
     if (!res.writableEnded) controller.abort();
   });
   try {
-    const { checkContextWindow } = await import("./test-model-LZOXBKP5.js");
+    const { checkContextWindow } = await import("./test-model-WJRYCTFS.js");
     const context = await checkContextWindow(provider.id, body.modelId, controller.signal);
     if (!res.destroyed) sendJson(res, 200, { ok: true, context });
   } catch {
@@ -1069,7 +1075,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-FV5XLMID.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-D2ARPTQO.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1366,7 +1372,7 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-LZOXBKP5.js");
+    const { testModel } = await import("./test-model-WJRYCTFS.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
     if (!res.destroyed) sendJson(res, 200, result);
   } catch {
@@ -2243,4 +2249,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-KVCVGTBB.js.map
+//# sourceMappingURL=ui-command-JORJUI6E.js.map

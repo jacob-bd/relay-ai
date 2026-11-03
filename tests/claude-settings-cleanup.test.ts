@@ -16,6 +16,8 @@ describe('claude settings model cleanup', () => {
   it('recognises relay aliases only', () => {
     expect(isRelayAliasModel('anthropic-a2agent__DeepSeek-V4.1-Flash-1017[1m]')).toBe(true);
     expect(isRelayAliasModel('anthropic-opencode-go__deepseek-v4-flash')).toBe(true);
+    expect(isRelayAliasModel('claude-pool')).toBe(true);
+    expect(isRelayAliasModel('claude-pool[1m]')).toBe(true);
     expect(isRelayAliasModel('sonnet')).toBe(false);
     expect(isRelayAliasModel('claude-sonnet-5-5')).toBe(false);
     expect(isRelayAliasModel(undefined)).toBe(false);
@@ -35,6 +37,14 @@ describe('claude settings model cleanup', () => {
     writeFileSync(file(), JSON.stringify({ model: 'anthropic-go__y', theme: 'dark' }));
     restoreClaudeModel(snap);
     expect(read()).toEqual({ theme: 'dark' });
+  });
+
+  it('cleans up the pool model Claude Code persists', () => {
+    writeFileSync(file(), JSON.stringify({ model: 'sonnet', theme: 'dark' }));
+    const snap = snapshotClaudeModel(env);
+    writeFileSync(file(), JSON.stringify({ model: 'claude-pool[1m]', theme: 'light' }));
+    expect(restoreClaudeModel(snap)).toBe(true);
+    expect(read()).toEqual({ model: 'sonnet', theme: 'light' });
   });
 
   it('drops a stale alias that was already present at launch', () => {

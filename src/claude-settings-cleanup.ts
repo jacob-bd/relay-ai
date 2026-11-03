@@ -10,9 +10,10 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-/** Relay alias ids: `anthropic-{provider}__{model}`, optionally with a `[1m]` suffix. */
+/** Relay-owned Claude model ids: prefixed aliases or the single pool model. */
 export function isRelayAliasModel(value: unknown): boolean {
-  return typeof value === 'string' && /^anthropic-[^_\s]+__/.test(value);
+  return typeof value === 'string'
+    && (/^anthropic-[^_\s]+__/.test(value) || /^claude-pool(?:\[1m\])?$/i.test(value));
 }
 
 export interface ClaudeModelSnapshot {

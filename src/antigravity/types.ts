@@ -27,6 +27,8 @@ export interface AntigravityRoute {
   reasoningEffort?: string;
   /** Reasoning metadata used to map `reasoningEffort` to provider options. */
   reasoningMetadata?: ReasoningMetadata;
+  /** Concrete same-effort routes for this pool row; the gateway fails over between them. */
+  poolMembers?: AntigravityRoute[];
 }
 
 /** A minimal model entry from the Cloud Code fetchAvailableModels response. */

@@ -1,3 +1,4 @@
+import { parseFreePool } from './pool/membership.js';
 import type { UserPreferences, FavoriteModel } from './types.js';
 import { dirname, join } from 'node:path';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -86,6 +87,18 @@ function writeConfig(config: UserPreferences): void {
   writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
 }
 
+/** The pool is an opt-in cache. A corrupt value must not prevent unrelated preferences loading. */
+function parseStoredFreePool(value: unknown) {
+  if (value === undefined) return undefined;
+  try {
+    return parseFreePool(value);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : 'invalid value';
+    console.warn(`Ignoring invalid saved free pool configuration: ${detail}`);
+    return { members: [], effort: 'auto' as const, receipts: [] };
+  }
+}
+
 export function loadPreferences(): UserPreferences {
   const config = readConfig();
   const lastProvider =
@@ -107,6 +120,7 @@ export function loadPreferences(): UserPreferences {
     lastClaudeTransparentMode: config.lastClaudeTransparentMode,
     recentModelsByProvider: config.recentModelsByProvider,
     favoriteModels: config.favoriteModels,
+    freePool: parseStoredFreePool(config.freePool),
     codexSubagentModels: Array.isArray(config.codexSubagentModels)
       ? config.codexSubagentModels.slice(0, CODEX_SUBAGENT_MODEL_CAP)
       : undefined,
@@ -116,7 +130,7 @@ export function loadPreferences(): UserPreferences {
   };
 }
 
-export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBackend' | 'lastModel' | 'lastProvider' | 'lastCodexProvider' | 'lastCodexModel' | 'lastGeminiProvider' | 'lastGeminiModel' | 'lastAntigravityProvider' | 'lastAntigravityModel' | 'antigravityAuthTier' | 'antigravityAuthProject' | 'lastClaudeAppProvider' | 'lastClaudeAppModel' | 'lastClaudeTransparentMode' | 'recentModelsByProvider' | 'favoriteModels' | 'codexSubagentModels' | 'appPathOverrides' | 'recentLaunchFolders'>>): void {
+export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBackend' | 'lastModel' | 'lastProvider' | 'lastCodexProvider' | 'lastCodexModel' | 'lastGeminiProvider' | 'lastGeminiModel' | 'lastAntigravityProvider' | 'lastAntigravityModel' | 'antigravityAuthTier' | 'antigravityAuthProject' | 'lastClaudeAppProvider' | 'lastClaudeAppModel' | 'lastClaudeTransparentMode' | 'recentModelsByProvider' | 'favoriteModels' | 'freePool' | 'codexSubagentModels' | 'appPathOverrides' | 'recentLaunchFolders'>>): void {
   const config = readConfig();
   if (prefs.lastBackend !== undefined) config.lastBackend = prefs.lastBackend;
   if (prefs.lastModel !== undefined) config.lastModel = prefs.lastModel;
@@ -134,6 +148,7 @@ export function savePreferences(prefs: Partial<Pick<UserPreferences, 'lastBacken
   if (prefs.lastClaudeTransparentMode !== undefined) config.lastClaudeTransparentMode = prefs.lastClaudeTransparentMode;
   if (prefs.recentModelsByProvider !== undefined) config.recentModelsByProvider = prefs.recentModelsByProvider;
   if (prefs.favoriteModels !== undefined) config.favoriteModels = prefs.favoriteModels;
+  if (prefs.freePool !== undefined) config.freePool = parseFreePool(prefs.freePool);
   if (prefs.codexSubagentModels !== undefined) {
     config.codexSubagentModels = prefs.codexSubagentModels.slice(0, CODEX_SUBAGENT_MODEL_CAP);
   }

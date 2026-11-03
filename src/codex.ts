@@ -7,6 +7,12 @@ import { loadPreferences, recordLaunchSelection } from './config.js';
 import { resolveApiKey, readFromCredentialStore } from './env.js';
 import { resolveOrCollectApiKey } from './key-setup.js';
 import { startCodexProxy } from './codex-proxy.js';
+import { FREE_POOL_MODEL_ID, CodexPoolRuntime } from './pool/codex-runtime.js';
+import { prepareCodexPoolRoutes } from './pool/codex-prepare.js';
+import { parseFreePool } from './pool/membership.js';
+import { codexPoolCatalogEntry } from './pool/catalog.js';
+import { PoolHealthStore } from './pool/health.js';
+
 import type { CodexProxyHandle } from './codex-proxy.js';
 import { buildCatalogFile, formatCodexModelLabel, serializeCatalog } from './codex/catalog.js';
 import { buildCodexMixedProfileToml, buildCodexProfileToml, getCatalogOutputPath, getProfileOutputPath } from './codex/profile.js';
@@ -101,6 +107,7 @@ ${pc.bold('Options:')}
                --with-native and favorites: relay-ai providers add vertex-anthropic)
   --with-native Load native Codex models beside Relay models for this launch
   --relay-only Keep the current Relay-only launch behavior
+  --pool       Launch the shared free-model pool (requires relay-ai pool verify)
   --restore    Remove interrupted-session overlay files
   --config     Preview/write launch configuration without starting Codex
   --help       Show this command help
@@ -148,6 +155,7 @@ async function writeLaunchArtifacts(
   selectedModel: import('./types.js').LocalProviderModel,
   providerName: string,
   proxyPort?: number,
+  supportsWebSockets?: boolean,
 ): Promise<{ profilePath: string; catalogPath: string }> {
   const catalogPath = getCatalogOutputPath(route.providerId);
   const catalog = buildCatalogFile([selectedModel], providerName);
@@ -167,6 +175,7 @@ async function writeLaunchArtifacts(
     proxyPort,
     catalogPath,
     modelReasoningEffort: caps.defaultLevel || undefined,
+    ...(supportsWebSockets === undefined ? {} : { supportsWebSockets }),
   }));
   return { profilePath, catalogPath };
 }
@@ -343,7 +352,7 @@ async function runCodexVertexLaunch(
 export async function runCodexCommand(
   codexArgs: string[],
   trace = false,
-  launch: { launchProvider?: string; launchModel?: string; vertex?: boolean; codexLaunchMode?: 'mixed' | 'relay-only' } = {},
+  launch: { launchProvider?: string; launchModel?: string; vertex?: boolean; codexLaunchMode?: 'mixed' | 'relay-only'; pool?: boolean } = {},
 ): Promise<number> {
   if (codexArgs.includes('--help') || codexArgs.includes('-h')) {
     console.log(codexHelpText());
@@ -417,6 +426,84 @@ export async function runCodexCommand(
   }
 
   const prefs = loadPreferences();
+
+  if (launch.pool) {
+    const pool = parseFreePool(prefs.freePool);
+    if (pool.members.length === 0) {
+      console.error(pc.red('No free pool members. Add one with: relay-ai pool add <provider-account> <model>'));
+      return 1;
+    }
+    const fresh = pool.receipts.filter(receipt => receipt.verifiedAt <= Date.now() && receipt.expiresAt > Date.now());
+    if (fresh.length === 0) {
+      console.error(pc.red('No verified free pool members. Run: relay-ai pool verify'));
+      return 1;
+    }
+    if (configOnly) {
+      console.log('Free pool mode: ' + pool.members.length + ' member(s), ' + fresh.length + ' verified receipt(s).');
+      return 0;
+    }
+    const poolSession = checkSessionLock(isTty);
+    if (!poolSession.ok) {
+      if (poolSession.reason === 'non_tty') {
+        console.error(pc.red('relay-ai codex --pool requires an interactive terminal.'));
+        return 1;
+      }
+      console.error(pc.yellow('Another relay-ai codex session may be running (pid ' + poolSession.lock.pid + ').'));
+      console.error('Run relay-ai codex --restore to clean up, or wait for it to finish.');
+      return 1;
+    }
+    if (!agentStdout) codexCliIntro();
+    let poolProxy: CodexProxyHandle | null = null;
+    try {
+      const providers = await fetchProviderCatalog();
+      const health = new PoolHealthStore();
+      const runtime = new CodexPoolRuntime(pool, (body, source, signal, sessionId) => prepareCodexPoolRoutes({
+        pool, providers, receipts: pool.receipts, body, source, signal, sessionId, health,
+      }));
+      poolProxy = await startCodexProxy([], { requireAuth: true, debug: trace, pool: runtime });
+      const entry = codexPoolCatalogEntry(pool, pool.receipts);
+      if (!entry) {
+        console.error(pc.red('No verified free pool member can be advertised yet. Run: relay-ai pool verify'));
+        return 1;
+      }
+      const poolModel: import('./types.js').LocalProviderModel = {
+        id: FREE_POOL_MODEL_ID, name: entry.display_name, family: '', brand: '',
+        modelFormat: 'openai', upstreamModelId: FREE_POOL_MODEL_ID,
+        npm: '@ai-sdk/openai-compatible', contextWindow: entry.context_window,
+      };
+      const poolRoute: CodexRoute = {
+        tier: 'proxy', modelId: FREE_POOL_MODEL_ID, providerId: 'relay-free-pool',
+        npm: '@ai-sdk/openai-compatible', upstreamModelId: FREE_POOL_MODEL_ID, apiKey: '',
+      };
+      const { profilePath, catalogPath } = await writeLaunchArtifacts(poolRoute, poolModel, entry.display_name, poolProxy.port, false);
+      writeSessionLock({
+        pid: process.pid,
+        startedAt: localIsoTimestamp(),
+        profilePath,
+        catalogPaths: [catalogPath],
+        proxyPort: poolProxy.port,
+      });
+      if (!agentStdout) {
+        logCodexProxy(poolProxy.port);
+        logCodexActiveModel(entry.display_name, FREE_POOL_MODEL_ID);
+        printCodexCliCleanupPanel('relay-ai codex --restore');
+        codexCliOutro(entry.display_name, entry.display_name, FREE_POOL_MODEL_ID);
+      }
+      const childEnv = buildCodexChildEnv(poolRoute, poolProxy.port, {});
+      const exitCode = await launchCodex(FREE_POOL_MODEL_ID, childEnv, passthroughArgs);
+      if (trace) printTraceLog(debugLogPath);
+      printCodexCleanupReminder(true);
+      return exitCode;
+    } catch (err) {
+      console.error(pc.red('Free pool launch failed: ' + (err instanceof Error ? err.message : String(err))));
+      return 1;
+    } finally {
+      poolProxy?.close();
+      restoreCodexOverlay();
+    }
+  }
+
+
   const launchPlan = planLaunchWizard({
     explicit: { providerId: launch.launchProvider, modelId: launch.launchModel },
     childArgs: passthroughArgs,

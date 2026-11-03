@@ -8,6 +8,84 @@ import {
   loadVertexModelEntries
 } from "./chunk-Y5TX3XDL.js";
 
+// src/pool/capabilities.ts
+import { createHash } from "crypto";
+function parsePoolReceipt(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return void 0;
+  const r = value;
+  const member = r.member;
+  if (!member || typeof member.providerId !== "string" || !member.providerId || typeof member.modelId !== "string" || !member.modelId) return void 0;
+  const revision = r.endpointRevision;
+  if (typeof revision !== "string" || !/^[0-9a-f]{64}$/.test(revision)) return void 0;
+  const int = (v) => typeof v === "number" && Number.isSafeInteger(v);
+  if (!int(r.verifiedAt) || !int(r.expiresAt) || r.expiresAt <= r.verifiedAt) return void 0;
+  if (!Array.isArray(r.targets) || r.targets.length === 0) return void 0;
+  const targets = r.targets.filter((t) => t === "codex" || t === "claude" || t === "antigravity");
+  if (targets.length !== r.targets.length || new Set(targets).size !== targets.length) return void 0;
+  if (typeof r.tools !== "boolean") return void 0;
+  if (!int(r.maxOutputTokens) || r.maxOutputTokens <= 0) return void 0;
+  if (!int(r.contextWindow) || r.contextWindow <= 0) return void 0;
+  if (r.contextSource !== "attested" && r.contextSource !== "observed" && r.contextSource !== "provider") return void 0;
+  if (r.reasoningAccounting !== "inside-output" && r.reasoningAccounting !== "separate") return void 0;
+  if (r.defaultEffort !== void 0 && (typeof r.defaultEffort !== "string" || !r.defaultEffort.trim())) return void 0;
+  if (!Array.isArray(r.effortLevels)) return void 0;
+  const levels = r.effortLevels.filter((l) => typeof l === "string" && l.length > 0 && l === l.trim());
+  if (levels.length !== r.effortLevels.length || new Set(levels).size !== levels.length) return void 0;
+  if (typeof r.billingSafe !== "boolean") return void 0;
+  return {
+    member: { providerId: member.providerId, modelId: member.modelId },
+    endpointRevision: revision,
+    verifiedAt: r.verifiedAt,
+    expiresAt: r.expiresAt,
+    targets,
+    tools: r.tools,
+    maxOutputTokens: r.maxOutputTokens,
+    contextWindow: r.contextWindow,
+    contextSource: r.contextSource,
+    reasoningAccounting: r.reasoningAccounting,
+    ...r.defaultEffort === void 0 ? {} : { defaultEffort: r.defaultEffort },
+    effortLevels: levels,
+    billingSafe: r.billingSafe
+  };
+}
+
+// src/pool/membership.ts
+function parseFreePool(value) {
+  if (value === void 0) return { members: [], effort: "auto", receipts: [] };
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid free pool configuration");
+  const { members, effort, receipts } = value;
+  if (!Array.isArray(members) || !["auto", "low", "medium", "high"].includes(String(effort))) {
+    throw new Error("Invalid free pool members or effort");
+  }
+  const result = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const member of members) {
+    if (!member || typeof member !== "object" || Array.isArray(member)) throw new Error("Invalid free pool member");
+    const { providerId, modelId } = member;
+    if (typeof providerId !== "string" || !providerId.trim() || providerId !== providerId.trim() || typeof modelId !== "string" || !modelId.trim() || modelId !== modelId.trim()) {
+      throw new Error("Free pool members require a provider account and model");
+    }
+    const key = JSON.stringify([providerId, modelId]);
+    if (seen.has(key)) throw new Error("Duplicate free pool member");
+    seen.add(key);
+    result.push({ providerId, modelId });
+  }
+  const parsedReceipts = [];
+  if (receipts !== void 0) {
+    if (!Array.isArray(receipts)) throw new Error("Invalid free pool receipts");
+    const seenReceipts = /* @__PURE__ */ new Set();
+    for (const raw of receipts) {
+      const receipt = parsePoolReceipt(raw);
+      if (!receipt) throw new Error("Invalid free pool receipt");
+      const key = JSON.stringify([receipt.member.providerId, receipt.member.modelId, receipt.endpointRevision]);
+      if (seenReceipts.has(key)) throw new Error("Duplicate free pool receipt");
+      seenReceipts.add(key);
+      parsedReceipts.push(receipt);
+    }
+  }
+  return { members: result, effort, receipts: parsedReceipts };
+}
+
 // src/config.ts
 import { dirname, join as join2 } from "path";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
@@ -222,6 +300,16 @@ function writeConfig(config) {
   writeFileSync(configPath, `${JSON.stringify(config, null, 2)}
 `, { encoding: "utf8", mode: 384 });
 }
+function parseStoredFreePool(value) {
+  if (value === void 0) return void 0;
+  try {
+    return parseFreePool(value);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "invalid value";
+    console.warn(`Ignoring invalid saved free pool configuration: ${detail}`);
+    return { members: [], effort: "auto", receipts: [] };
+  }
+}
 function loadPreferences() {
   const config = readConfig();
   const lastProvider = config.lastProvider === "opencode" ? "zen" : config.lastProvider;
@@ -242,6 +330,7 @@ function loadPreferences() {
     lastClaudeTransparentMode: config.lastClaudeTransparentMode,
     recentModelsByProvider: config.recentModelsByProvider,
     favoriteModels: config.favoriteModels,
+    freePool: parseStoredFreePool(config.freePool),
     codexSubagentModels: Array.isArray(config.codexSubagentModels) ? config.codexSubagentModels.slice(0, CODEX_SUBAGENT_MODEL_CAP) : void 0,
     appPathOverrides: config.appPathOverrides,
     recentLaunchFolders: config.recentLaunchFolders,
@@ -286,7 +375,7 @@ function activityFetch(upstream = (...args) => globalThis.fetch(...args)) {
 
 // src/provider-factory.ts
 import { wrapLanguageModel, extractReasoningMiddleware } from "ai";
-import { createHash as createHash3 } from "crypto";
+import { createHash as createHash4 } from "crypto";
 
 // src/provider-templates.ts
 var PROVIDER_TEMPLATES = [
@@ -2539,7 +2628,7 @@ function createResponsesWebSocketFetch(wsUrl, log) {
 }
 
 // src/oauth/claude-identity.ts
-import { createHash, randomUUID } from "crypto";
+import { createHash as createHash2, randomUUID } from "crypto";
 var CLAUDE_CODE_CLI_VERSION = "2.1.312";
 var CLAUDE_CODE_USER_AGENT = `claude-cli/${CLAUDE_CODE_CLI_VERSION} (external, cli)`;
 var CLAUDE_CODE_ENTRYPOINT = process.env.CLAUDE_CODE_ENTRYPOINT ?? "cli";
@@ -2554,7 +2643,7 @@ function getOrCreateSessionId(seed) {
   return id;
 }
 function uuidFromHash(input) {
-  const h = createHash("sha256").update(input).digest("hex");
+  const h = createHash2("sha256").update(input).digest("hex");
   return [
     h.slice(0, 8),
     h.slice(8, 12),
@@ -2568,7 +2657,7 @@ var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function resolveCliUserID(providerData, seed) {
   const v = providerData?.cliUserID;
   if (typeof v === "string" && HEX64_RE.test(v)) return v;
-  return createHash("sha256").update(`cliUserID:${seed}`).digest("hex");
+  return createHash2("sha256").update(`cliUserID:${seed}`).digest("hex");
 }
 function resolveAccountUUID(providerData, seed) {
   const v = providerData?.accountUUID;
@@ -2750,7 +2839,7 @@ function createClinePassOAuthFetch(initialRuntimeCredential, refreshToken, onTok
 }
 
 // src/gateway-protocol.ts
-import { createHash as createHash2 } from "crypto";
+import { createHash as createHash3 } from "crypto";
 import { existsSync as existsSync7, mkdirSync as mkdirSync6, readFileSync as readFileSync6, renameSync as renameSync5, unlinkSync as unlinkSync3, writeFileSync as writeFileSync5 } from "fs";
 import { dirname as dirname5, join as join7 } from "path";
 var DUAL_PROVIDER_IDS = /* @__PURE__ */ new Set([
@@ -2892,8 +2981,8 @@ function savePersistent() {
   }
 }
 function protocolCacheKey(parts) {
-  const credentialFingerprint = createHash2("sha256").update(parts.apiKey ?? "").update("\0").update(JSON.stringify(Object.entries(parts.headers ?? {}).sort(([a], [b]) => a.localeCompare(b)))).digest("hex");
-  return createHash2("sha256").update(JSON.stringify({
+  const credentialFingerprint = createHash3("sha256").update(parts.apiKey ?? "").update("\0").update(JSON.stringify(Object.entries(parts.headers ?? {}).sort(([a], [b]) => a.localeCompare(b)))).digest("hex");
+  return createHash3("sha256").update(JSON.stringify({
     providerId: parts.providerId ?? "",
     modelId: parts.modelId,
     protocol: parts.protocol ?? "",
@@ -3407,7 +3496,7 @@ function applyAnthropicPromptCaching(params) {
   return { ...params, prompt, ...tools ? { tools } : {} };
 }
 function openAiSessionDigest(sessionId) {
-  return createHash3("sha256").update(`relay-ai:prompt-cache:${sessionId}`).digest("hex").slice(0, 32);
+  return createHash4("sha256").update(`relay-ai:prompt-cache:${sessionId}`).digest("hex").slice(0, 32);
 }
 function openAiPromptCacheOptions(npm, sessionId) {
   if (npm !== "@ai-sdk/openai" || !sessionId) return void 0;
@@ -4993,7 +5082,7 @@ async function refreshStoredOAuthCredential(providerId, cred) {
 
 // src/oauth/refresh-lock.ts
 import { closeSync as closeSync2, mkdirSync as mkdirSync7, openSync as openSync2, readFileSync as readFileSync10, statSync as statSync4, unlinkSync as unlinkSync4, writeSync as writeSync2 } from "fs";
-import { createHash as createHash4, randomUUID as randomUUID3 } from "crypto";
+import { createHash as createHash5, randomUUID as randomUUID3 } from "crypto";
 import { join as join9 } from "path";
 var POLL_MS = 100;
 function sleep(ms) {
@@ -5062,7 +5151,7 @@ async function withRefreshLock(key, work, options = {}) {
   let token = null;
   try {
     mkdirSync7(dir, { recursive: true, mode: 448 });
-    path = join9(dir, `oauth-${createHash4("sha256").update(key).digest("hex").slice(0, 24)}.lock`);
+    path = join9(dir, `oauth-${createHash5("sha256").update(key).digest("hex").slice(0, 24)}.lock`);
     token = await acquire(path, options.timeoutMs ?? 2e4, options.staleMs ?? 12e4);
   } catch {
     token = null;
@@ -5418,7 +5507,7 @@ function reconcileCachedModelProtocol(model, provider, metadata = loadModelsDevC
 import { randomUUID as randomUUID4 } from "crypto";
 
 // src/core/antigravity-diagnostics.ts
-import { createHash as createHash5 } from "crypto";
+import { createHash as createHash6 } from "crypto";
 var SECTION_NAMES = ["systemInstruction", "tools", "toolConfig", "generationConfig"];
 var USAGE_NAMES = ["promptTokenCount", "cachedContentTokenCount", "thoughtsTokenCount"];
 function record2(value) {
@@ -5431,10 +5520,10 @@ function requestFingerprint(value) {
     return [name, text2 === void 0 ? { present: false } : {
       present: true,
       bytes: Buffer.byteLength(text2),
-      hash: createHash5("sha256").update(text2).digest("hex").slice(0, 32)
+      hash: createHash6("sha256").update(text2).digest("hex").slice(0, 32)
     }];
   }));
-  const prefix = createHash5("sha256");
+  const prefix = createHash6("sha256");
   const contents = (Array.isArray(body.contents) ? body.contents : []).map((item) => {
     const text2 = JSON.stringify(item);
     const bytes = Buffer.byteLength(text2);

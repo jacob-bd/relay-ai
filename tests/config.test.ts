@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -64,6 +64,18 @@ describe('app paths', () => {
 });
 
 describe('dotfolder config', () => {
+  it('ignores a corrupt saved free pool without losing other preferences', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mkdirSync(dirname(getConfigPath()), { recursive: true });
+    writeFileSync(getConfigPath(), JSON.stringify({ lastModel: 'keep-me', freePool: { members: 'broken' } }));
+
+    expect(loadPreferences()).toMatchObject({
+      lastModel: 'keep-me',
+      freePool: { members: [], effort: 'auto', receipts: [] },
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Ignoring invalid saved free pool configuration'));
+  });
+
   it('writes preferences to config.json in the app home', () => {
     savePreferences({ lastBackend: 'zen', lastModel: 'claude-sonnet-4-6' });
 
@@ -260,5 +272,18 @@ describe('dotfolder config', () => {
     expect(JSON.parse(readFileSync(migratedPath, 'utf8'))).toMatchObject({
       lastModel: 'claude',
     });
+  });
+});
+
+describe('free pool preferences', () => {
+  it('round trips independently from favorites and retains unavailable members', () => {
+    const favoriteModels = [{ providerId: 'paid-account', modelId: 'paid-model' }];
+    const freePool = { members: [{ providerId: 'removed-account-2', modelId: 'removed-model' }], effort: 'high' as const, receipts: [] };
+    savePreferences({ favoriteModels, freePool });
+    savePreferences({ lastCodexModel: 'concrete-model' });
+    expect(loadPreferences()).toMatchObject({ favoriteModels, freePool });
+    savePreferences({ freePool: { members: [], effort: 'auto', receipts: [] } });
+    expect(loadPreferences().favoriteModels).toEqual(favoriteModels);
+    expect(loadPreferences().freePool?.members).toEqual([]);
   });
 });

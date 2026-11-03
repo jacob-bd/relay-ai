@@ -2,10 +2,12 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-IDS356U3.js";
+} from "./chunk-5RZUIXRC.js";
 import {
+  CLAUDE_POOL_MODEL_ID,
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
+  ClaudePoolRuntime,
   PREVIEW_PROXY_PORT,
   addFavorite,
   addProviderFromTemplate,
@@ -30,13 +32,13 @@ import {
   codexAppModelSlug,
   codexAppSupported,
   createGatewayModelCatalog,
+  dispatchFreePool,
   effortLabel,
   estimateAnthropicInputTokens,
   evaluateAgySwitchCompatibility,
   extractApiKey,
   favoriteEffortLevels,
   favoriteProviderDisplayName,
-  fetchProviderCatalog,
   filterVertexModelsByAccess,
   findBinaryOnPath,
   findEmbeddedCodexBinary,
@@ -52,14 +54,12 @@ import {
   formatAnthropicModelEntry,
   formatAnthropicModelList,
   formatCodexModelLabel,
-  formatRegistryAuthLabel,
   formatUpdateNotification,
   httpProxyModelId,
   injectRelayModels,
   isClaudeAppRunning,
   isCodexAppRunning,
   isFavorite,
-  launchModelsForProvider,
   launchOrRestartClaudeApp,
   launchOrRestartCodexApp,
   logActiveModel,
@@ -70,6 +70,7 @@ import {
   modelSelectOption,
   navOption,
   parseCodexAppModelSlug,
+  poolFailure,
   printApiKeyPanel,
   printCloudProviderPanel,
   printDryRunPanel,
@@ -81,7 +82,6 @@ import {
   providerAuthHelpText,
   providerSelectOption,
   providersForCodexSubagents,
-  providersForPicker,
   providersForTarget,
   quitClaudeAppGracefully,
   quitCodexAppGracefully,
@@ -91,9 +91,8 @@ import {
   relayOutro,
   removeFavorite,
   renderMultiAgentV2Feature,
-  resolveLocalProviderApiKey,
-  resolveProvidersForDisplay,
   resolveRelayCatalogSlots,
+  retryPoolFailure,
   routableModelsForTarget,
   runServerCommand,
   sendJson,
@@ -105,8 +104,10 @@ import {
   supportsMultiAgentV2,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-7FAYEN3G.js";
-import "./chunk-PFR4ZYI4.js";
+} from "./chunk-SA3QV4WY.js";
+import {
+  translateRequest
+} from "./chunk-SUH7UMIR.js";
 import {
   OPENCODE_SESSION_HEADER,
   TRUST_SYSTEM_CERTS_NOTICE,
@@ -114,22 +115,15 @@ import {
   addCustomEndpointProvider,
   addOpencodeCloudFromApiKey,
   applySystemCaTrust,
-  buildImportProviderList,
-  cachedModelToLocal,
   customEndpointKind,
   effectiveProviderBaseUrl,
   endpointModelTimeoutMs,
   extractConversationId,
   fetchAnthropicModels,
   fetchTemplateModels,
-  isLikelyPlaceholderKey,
-  isOAuthImportProvider,
   isSystemCaActive,
   isSystemCaSupported,
-  listCredentialSkippedProviders,
-  oauthAuthRef,
   openCodeGoHeaders,
-  providerRefreshToken,
   refreshAllProviderModels,
   refreshProviderModels,
   refreshProviderModelsBatch,
@@ -137,15 +131,39 @@ import {
   renameProvider,
   resolveModelSource,
   resolveProviderTemplate,
-  resolveRefreshCredential,
   revertSystemCaTrust,
   setContextWindowOverride,
   syntheticTemplate,
-  toOAuthRegistryId,
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-GCRYZID3.js";
+} from "./chunk-KJTWVNON.js";
+import {
+  formatUpstreamError,
+  formatUpstreamErrorTrace,
+  normalizeToolSchemaForNpm,
+  upstreamHttpStatus,
+  validateCustomEndpointUrl
+} from "./chunk-XWM4ELUX.js";
+import {
+  fetchProviderCatalog,
+  formatRegistryAuthLabel,
+  launchModelsForProvider,
+  providersForPicker,
+  resolveLocalProviderApiKey,
+  resolveProvidersForDisplay
+} from "./chunk-KOGVCPNK.js";
+import {
+  buildImportProviderList,
+  cachedModelToLocal,
+  isLikelyPlaceholderKey,
+  isOAuthImportProvider,
+  listCredentialSkippedProviders,
+  oauthAuthRef,
+  providerRefreshToken,
+  resolveRefreshCredential,
+  toOAuthRegistryId
+} from "./chunk-LXTF7TOF.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -166,16 +184,16 @@ import {
   applyClaudeCodeOAuthIdentity,
   buildAntigravityChildEnv,
   buildChildEnv,
+  classifyFreeStatus,
   claudeCodeClientModelId,
   claudeCodeContextWindow,
   contextWindowError,
   createLanguageModel,
+  currentPoolReceipt,
   deepMergeProviderOptions,
   detectConflicts,
   effortProviderOptions,
   encodeToolUseId,
-  formatUpstreamError,
-  formatUpstreamErrorTrace,
   getAgentProviderModels,
   getAntigravityDebugLogPath,
   getAppPathOverride,
@@ -204,10 +222,11 @@ import {
   migrateGlobalOpencodeCredential,
   migrateLegacyCloudProviders,
   modelIdError,
-  normalizeToolSchemaForNpm,
   oauthCredentialToKeychainJson,
   parseDsmlToolCalls,
+  parseFreePool,
   parseToolArguments,
+  poolEndpointRevision,
   preferredRelayCredentialAuthRef,
   prepareClaudeTraceLog,
   prepareProviderTraceLog,
@@ -245,13 +264,11 @@ import {
   supportsNativeOAuth,
   thinkingProviderOptions,
   uniqueProviderName,
-  upstreamHttpStatus,
-  validateCustomEndpointUrl,
   validateProviderName,
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-JSEUUZCZ.js";
+} from "./chunk-IBEBOL44.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -295,7 +312,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 function isRelayAliasModel(value) {
-  return typeof value === "string" && /^anthropic-[^_\s]+__/.test(value);
+  return typeof value === "string" && (/^anthropic-[^_\s]+__/.test(value) || /^claude-pool(?:\[1m\])?$/i.test(value));
 }
 function claudeSettingsPath(env = process.env) {
   const dir = env["CLAUDE_CONFIG_DIR"] || join(homedir(), ".claude");
@@ -1133,6 +1150,2319 @@ async function runFirstRunWizard(trace = false) {
   return "continue";
 }
 
+// src/pool/sdk-route.ts
+import { streamText } from "ai";
+function sdkPoolRoute(evidence, model, request2, health) {
+  if (!Number.isSafeInteger(request2.maxOutputTokens) || request2.maxOutputTokens <= 0) {
+    throw new Error("Pool requests require a bounded output reservation");
+  }
+  for (const definition of Object.values(request2.tools ?? {})) {
+    if (definition.execute) throw new Error("Pool tools must not execute inside Relay");
+  }
+  return {
+    ...evidence,
+    async open(abortSignal) {
+      const decision = health ? await health.store.acquire({ id: evidence.revision, scopes: health.scopes }) : void 0;
+      if (decision && !decision.ok) throw new Error("Pool route entered cooldown");
+      return (async function* () {
+        let success = false;
+        let recorded = false;
+        try {
+          const result = streamText({
+            model,
+            ...request2,
+            maxRetries: 0,
+            abortSignal,
+            onError: () => {
+            }
+          });
+          for (const promise of [result.text, result.toolCalls, result.toolResults, result.finishReason, result.usage, result.response]) {
+            Promise.resolve(promise).catch(() => {
+            });
+          }
+          const source = result.stream;
+          for await (const part of source) {
+            if (part.type === "error" && !abortSignal.aborted) {
+              const failure = poolFailure(part.error);
+              if (health && failure.kind === "rate-limit") {
+                await health.store.record(health.scopes, failure);
+                recorded = true;
+              }
+            }
+            if (part.type === "finish") success = true;
+            yield part;
+          }
+        } catch (error) {
+          if (health && decision && decision.ok && !abortSignal.aborted) {
+            const failure = poolFailure(error);
+            if (failure.kind === "rate-limit") {
+              await health.store.record(health.scopes, failure);
+              recorded = true;
+            }
+          }
+          throw error;
+        } finally {
+          if (health && decision && decision.ok) {
+            if (success && !recorded && !abortSignal.aborted) await decision.settle(true);
+            else await decision.release();
+          }
+        }
+      })();
+    }
+  };
+}
+
+// src/pool/health.ts
+import { createHash, randomUUID } from "crypto";
+import { mkdir, open, readFile, rename, unlink, writeFile } from "fs/promises";
+import { join as join4 } from "path";
+var PoolHealthLockTimeoutError = class extends Error {
+  ownerPid;
+  ownerSince;
+  constructor(lockPath, owner) {
+    const holder = owner?.pid ? "pid " + owner.pid + (owner.createdAt ? " since " + new Date(owner.createdAt).toISOString() : "") : "an unreadable owner file";
+    super("Pool health lock is held by " + holder + " (" + lockPath + "); it is not taken over automatically. If that process is gone, a human can clear it with PoolHealthStore.clear(scopes, { forceUnlock: true }).");
+    this.name = "PoolHealthLockTimeoutError";
+    this.ownerPid = owner?.pid;
+    this.ownerSince = owner?.createdAt;
+  }
+};
+var PoolHealthStateCorruptError = class extends Error {
+  constructor(path3) {
+    super("Pool health state is unreadable (" + path3 + "); refusing to route without cooldown knowledge");
+    this.name = "PoolHealthStateCorruptError";
+  }
+};
+var PoolHealthForceUnlockRefusedError = class extends Error {
+  ownerPid;
+  constructor(lockPath, reason, ownerPid) {
+    super("Refusing to force-unlock the pool health lock (" + lockPath + "): " + reason);
+    this.name = "PoolHealthForceUnlockRefusedError";
+    this.ownerPid = ownerPid;
+  }
+};
+var UNKNOWN_RATE_LIMIT_LADDER_MS = [12e4, 6e5, 36e5, 216e5, 864e5];
+var MAX_ENTRIES = 512;
+var MAX_LABEL_CHARS = 200;
+var RETENTION_MS = 864e5;
+var LOCK_POLL_MS = 10;
+var DEFAULT_LOCK_TIMEOUT_MS = 5e3;
+function poolEndpointScope(providerId, endpointRevision, modelId) {
+  return "endpoint:" + providerId + "/" + endpointRevision + "/" + modelId;
+}
+function hashScope(scope) {
+  return createHash("sha256").update(scope).digest("hex");
+}
+var SECRET_PART = /^(?:sk|gsk|xai|nvapi|AIza|hf|ghp)[-_A-Za-z0-9]*$/;
+function sanitizePoolScopeLabel(scope) {
+  const label = scope.split(/([:/])/).map((part) => {
+    if (part === ":" || part === "/") return part;
+    if (SECRET_PART.test(part) || part.length >= 32) return "<redacted:" + hashScope(part).slice(0, 10) + ">";
+    return part.replace(/[^A-Za-z0-9._-]/g, "_");
+  }).join("");
+  return label.length > MAX_LABEL_CHARS ? label.slice(0, MAX_LABEL_CHARS) + "~" : label;
+}
+function emptyStore() {
+  return { version: 1, entries: {} };
+}
+function processAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+function delay(ms) {
+  return new Promise((resolve2) => setTimeout(resolve2, ms));
+}
+function normalizeEntry(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("invalid entry");
+  const value = raw;
+  const label = value["label"];
+  const failures = value["failures"];
+  const until = value["until"];
+  const reason = value["reason"];
+  const updatedAt = value["updatedAt"];
+  if (typeof label !== "string" || !label || label.length > MAX_LABEL_CHARS + 1) throw new Error("invalid label");
+  if (typeof failures !== "number" || !Number.isSafeInteger(failures) || failures < 1 || failures > 100) throw new Error("invalid failures");
+  if (typeof until !== "number" || !Number.isFinite(until)) throw new Error("invalid until");
+  if (reason !== "rate-limit") throw new Error("unsupported reason");
+  if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) throw new Error("invalid updatedAt");
+  let recovery;
+  const rawClaim = value["recovery"];
+  if (rawClaim !== void 0) {
+    if (!rawClaim || typeof rawClaim !== "object" || Array.isArray(rawClaim)) throw new Error("invalid claim");
+    const claim = rawClaim;
+    if (typeof claim["token"] !== "string" || claim["token"].length < 16) throw new Error("invalid claim token");
+    if (typeof claim["pid"] !== "number" || !Number.isSafeInteger(claim["pid"])) throw new Error("invalid claim pid");
+    if (typeof claim["startedAt"] !== "number" || !Number.isFinite(claim["startedAt"])) throw new Error("invalid claim start");
+    recovery = { token: claim["token"], pid: claim["pid"], startedAt: claim["startedAt"] };
+  }
+  return {
+    label,
+    failures,
+    until,
+    reason,
+    updatedAt,
+    ...recovery ? { recovery } : {}
+  };
+}
+function normalizeStore(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("invalid root");
+  const value = raw;
+  if (value["version"] !== 1) throw new Error("unsupported version");
+  const entries = value["entries"];
+  if (!entries || typeof entries !== "object" || Array.isArray(entries)) throw new Error("invalid entries");
+  const state = emptyStore();
+  for (const [key, entry] of Object.entries(entries)) {
+    if (!/^[0-9a-f]{64}$/.test(key)) throw new Error("invalid scope key");
+    state.entries[key] = normalizeEntry(entry);
+  }
+  return state;
+}
+function parseOwner(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return void 0;
+    const value = parsed;
+    const token = value["token"];
+    const pid = value["pid"];
+    const createdAt = value["createdAt"];
+    if (typeof token !== "string" || !token) return void 0;
+    if (typeof pid !== "number" || !Number.isSafeInteger(pid)) return void 0;
+    return { token, pid, createdAt: typeof createdAt === "number" ? createdAt : 0 };
+  } catch {
+    return void 0;
+  }
+}
+async function readOwner(lockPath) {
+  try {
+    return parseOwner(await readFile(lockPath, "utf8"));
+  } catch {
+    return void 0;
+  }
+}
+async function removeOwnerIfContentMatches(lockPath, expected) {
+  let handle;
+  try {
+    handle = await open(lockPath, "r");
+    const content = await handle.readFile("utf8");
+    if (content !== expected) return false;
+    await unlink(lockPath);
+    return true;
+  } catch {
+    return true;
+  } finally {
+    await handle?.close().catch(() => {
+    });
+  }
+}
+async function acquireLock(lockPath, timeoutMs) {
+  const token = randomUUID();
+  const payload = JSON.stringify({ token, pid: process.pid, createdAt: Date.now() });
+  await mkdir(join4(lockPath, ".."), { recursive: true, mode: 448 });
+  const deadline = Date.now() + Math.max(1, timeoutMs);
+  for (; ; ) {
+    try {
+      await writeFile(lockPath, payload, { flag: "wx", mode: 384 });
+      return { token, payload };
+    } catch (error) {
+      const code = error.code;
+      if (code !== "EEXIST") throw error;
+    }
+    if (Date.now() >= deadline) throw await lockTimeout(lockPath);
+    await delay(LOCK_POLL_MS + Math.floor(Math.random() * LOCK_POLL_MS));
+  }
+}
+async function releaseLock(lockPath, payload) {
+  await removeOwnerIfContentMatches(lockPath, payload);
+}
+async function lockTimeout(lockPath) {
+  const owner = await readOwner(lockPath).catch(() => void 0);
+  return new PoolHealthLockTimeoutError(lockPath, owner);
+}
+function prune(state, now) {
+  for (const [key, entry] of Object.entries(state.entries)) {
+    if (!entry.recovery && entry.until <= now - RETENTION_MS) delete state.entries[key];
+  }
+  const keys = Object.keys(state.entries);
+  if (keys.length <= MAX_ENTRIES) return;
+  keys.sort((a, b) => (state.entries[a]?.until ?? 0) - (state.entries[b]?.until ?? 0));
+  for (const key of keys) {
+    if (Object.keys(state.entries).length <= MAX_ENTRIES) break;
+    if (!state.entries[key]?.recovery) delete state.entries[key];
+  }
+}
+var PoolHealthStore = class {
+  root;
+  now;
+  ladder;
+  lockTimeoutMs;
+  constructor(options = {}) {
+    this.root = options.root ?? join4(getAppHome(), "pool");
+    this.now = options.now ?? Date.now;
+    this.ladder = options.ladderMs ?? UNKNOWN_RATE_LIMIT_LADDER_MS;
+    this.lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
+    if (!this.ladder.length || this.ladder.some((step) => !Number.isSafeInteger(step) || step <= 0)) {
+      throw new Error("Invalid rate-limit ladder");
+    }
+  }
+  get statePath() {
+    return join4(this.root, "health.json");
+  }
+  get lockPath() {
+    return join4(this.root, "health.lock");
+  }
+  /** Throws PoolHealthStateCorruptError; the file is left exactly as found. */
+  async readState() {
+    let raw;
+    try {
+      raw = await readFile(this.statePath, "utf8");
+    } catch (error) {
+      if (error.code === "ENOENT") return emptyStore();
+      throw new PoolHealthStateCorruptError(this.statePath);
+    }
+    try {
+      return normalizeStore(JSON.parse(raw));
+    } catch {
+      throw new PoolHealthStateCorruptError(this.statePath);
+    }
+  }
+  async writeState(state) {
+    await mkdir(this.root, { recursive: true, mode: 448 });
+    const temp = this.statePath + ".tmp-" + randomUUID();
+    await writeFile(temp, JSON.stringify(state), { mode: 384 });
+    await rename(temp, this.statePath);
+  }
+  async mutate(work) {
+    await mkdir(this.root, { recursive: true, mode: 448 });
+    const { payload } = await acquireLock(this.lockPath, this.lockTimeoutMs);
+    try {
+      const state = await this.readState();
+      let dirty = false;
+      const result = await work(state, () => {
+        dirty = true;
+      });
+      if (dirty) await this.writeState(state);
+      return result;
+    } finally {
+      await releaseLock(this.lockPath, payload);
+    }
+  }
+  /** A claim is live while its owner pid exists. Age alone never releases it. */
+  claimLive(claim) {
+    if (!claim) return false;
+    return claim.pid === process.pid || processAlive(claim.pid);
+  }
+  /**
+   * Persist a provider failure. Cancellation, access, context, invalid and transient
+   * failures have no certified persistent policy yet and are never written.
+   * Throws PoolHealthLockTimeoutError when a live process holds the lock.
+   */
+  async record(scopes, failure) {
+    if (failure.kind !== "rate-limit") return { recorded: false, reason: failure.kind };
+    const unique = [...new Set(scopes.filter((scope) => typeof scope === "string" && scope.trim().length > 0))];
+    if (!unique.length) return { recorded: false, reason: "no-scopes" };
+    const now = this.now();
+    return this.mutate((state, touch) => {
+      let until = 0;
+      for (const scope of unique) {
+        const key = hashScope(scope);
+        const previous = state.entries[key];
+        const failures = Math.min((previous?.failures ?? 0) + 1, 100);
+        const step = this.ladder[Math.min(failures - 1, this.ladder.length - 1)];
+        const entryUntil = failure.retryAt !== void 0 ? Math.max(failure.retryAt, now) : now + step;
+        state.entries[key] = {
+          // A rate-limit can arrive while this process's recovery is in flight.
+          // Keep the claim so another process cannot start a second provider call.
+          ...previous?.recovery ? { recovery: previous.recovery } : {},
+          label: sanitizePoolScopeLabel(scope),
+          failures,
+          until: entryUntil,
+          reason: failure.kind,
+          updatedAt: now
+        };
+        until = Math.max(until, entryUntil);
+      }
+      prune(state, now);
+      touch();
+      return { recorded: true, until };
+    });
+  }
+  /** Forget a route's failure history after a genuine success (resets the ladder). */
+  async markHealthy(scopes) {
+    const unique = [...new Set(scopes.filter((scope) => typeof scope === "string" && scope.trim().length > 0))];
+    if (!unique.length) return;
+    await this.mutate((state, touch) => {
+      for (const scope of unique) {
+        const key = hashScope(scope);
+        if (state.entries[key]) {
+          delete state.entries[key];
+          touch();
+        }
+      }
+    });
+  }
+  /**
+   * Explicit human escape hatch. forceUnlock removes the lock only when its owner pid
+   * is provably dead. A live or unreadable owner is refused so a live process's lock
+   * is never taken over. Nothing in this module reaps locks on its own.
+   */
+  async clear(scopes, options = {}) {
+    const unique = [...new Set(scopes.filter((scope) => typeof scope === "string" && scope.trim().length > 0))];
+    if (options.forceUnlock) {
+      let raw;
+      try {
+        raw = await readFile(this.lockPath, "utf8");
+      } catch (error) {
+        if (error.code !== "ENOENT") {
+          throw new PoolHealthForceUnlockRefusedError(this.lockPath, "the owner file is unreadable");
+        }
+      }
+      if (raw !== void 0) {
+        const owner = parseOwner(raw);
+        if (!owner) throw new PoolHealthForceUnlockRefusedError(this.lockPath, "the owner file is unreadable");
+        if (processAlive(owner.pid)) {
+          throw new PoolHealthForceUnlockRefusedError(this.lockPath, "owner pid " + owner.pid + " is still alive", owner.pid);
+        }
+        if (!await removeOwnerIfContentMatches(this.lockPath, raw)) {
+          throw new PoolHealthForceUnlockRefusedError(this.lockPath, "the lock changed while it was being cleared", owner.pid);
+        }
+      }
+    }
+    if (!unique.length) return 0;
+    return this.mutate((state, touch) => {
+      let removed = 0;
+      for (const scope of unique) {
+        const key = hashScope(scope);
+        if (state.entries[key]) {
+          delete state.entries[key];
+          removed += 1;
+          touch();
+        }
+      }
+      return removed;
+    });
+  }
+  /** Highest active cooldown for a route, if any (does not claim recovery). */
+  async cooldownFor(route) {
+    const now = this.now();
+    const state = await this.readState();
+    const active = route.scopes.map((scope) => state.entries[hashScope(scope)]).filter((entry) => Boolean(entry) && entry.until > now);
+    return active.length ? Math.max(...active.map((entry) => entry.until)) : void 0;
+  }
+  /**
+   * Decide whether this route may be attempted. A cooled-down or already-recovering
+   * route is blocked; an expired cooldown grants exactly one cross-process recovery.
+   */
+  async acquire(route) {
+    const now = this.now();
+    const scopes = [...new Set(route.scopes.filter((scope) => typeof scope === "string" && scope.trim().length > 0))];
+    const outcome = await this.mutate((state, touch) => {
+      const relevant = scopes.map((scope) => [scope, state.entries[hashScope(scope)]]).filter((entry) => Boolean(entry[1]));
+      const active = relevant.filter(([, entry]) => entry.until > now);
+      if (active.length) {
+        return {
+          blocked: {
+            ok: false,
+            reason: "cooldown",
+            retryAt: Math.max(...active.map(([, entry]) => entry.until)),
+            details: active.map(([, entry]) => entry.label + ": " + entry.reason)
+          }
+        };
+      }
+      const inFlight = relevant.filter(([, entry]) => this.claimLive(entry.recovery));
+      if (inFlight.length) {
+        return {
+          blocked: {
+            ok: false,
+            reason: "recovery-in-flight",
+            details: inFlight.map(([, entry]) => entry.label + ": recovery-in-flight (pid " + entry.recovery.pid + ")")
+          }
+        };
+      }
+      const stale = relevant.filter(([, entry]) => entry.recovery);
+      const expiredCooldown = relevant.filter(([, entry]) => entry.until <= now);
+      if (!stale.length && !expiredCooldown.length) return {};
+      const token2 = randomUUID();
+      for (const [scope] of relevant) {
+        const entry = state.entries[hashScope(scope)];
+        if (!entry) continue;
+        entry.recovery = { token: token2, pid: process.pid, startedAt: now };
+        touch();
+      }
+      return { token: token2 };
+    });
+    if (outcome.blocked) return outcome.blocked;
+    if (!outcome.token) {
+      return { ok: true, mode: "normal", settle: async () => {
+      }, release: async () => {
+      } };
+    }
+    const token = outcome.token;
+    let settled = false;
+    const settleClaim = async (success) => {
+      const at = this.now();
+      await this.mutate((state, touch) => {
+        for (const scope of scopes) {
+          const key = hashScope(scope);
+          const entry = state.entries[key];
+          if (!entry?.recovery || entry.recovery.token !== token) continue;
+          if (success) {
+            delete state.entries[key];
+          } else {
+            const failures = Math.min(entry.failures + 1, 100);
+            const step = this.ladder[Math.min(failures - 1, this.ladder.length - 1)];
+            const { recovery: _consumed, ...rest } = entry;
+            state.entries[key] = { ...rest, failures, until: at + step, updatedAt: at };
+          }
+          touch();
+        }
+      });
+    };
+    return {
+      ok: true,
+      mode: "recovery",
+      settle: async (success) => {
+        if (settled) return;
+        settled = true;
+        await settleClaim(success);
+      },
+      release: async () => {
+        if (settled) return;
+        settled = true;
+        await this.mutate((state, touch) => {
+          for (const scope of scopes) {
+            const key = hashScope(scope);
+            const entry = state.entries[key];
+            if (!entry?.recovery || entry.recovery.token !== token) continue;
+            delete entry.recovery;
+            touch();
+          }
+        });
+      }
+    };
+  }
+  /** Sanitized view for diagnostics and the UI; contains no prompts or credentials. */
+  async inspect(route) {
+    const state = await this.readState();
+    return route.scopes.flatMap((scope) => {
+      const entry = state.entries[hashScope(scope)];
+      if (!entry) return [];
+      return [{
+        scope: entry.label,
+        reason: entry.reason,
+        until: entry.until,
+        failures: entry.failures,
+        recovering: this.claimLive(entry.recovery),
+        ...entry.recovery ? { claimPid: entry.recovery.pid } : {}
+      }];
+    });
+  }
+  /** Retained entry count; bounded by MAX_ENTRIES. */
+  async size() {
+    return Object.keys((await this.readState()).entries).length;
+  }
+};
+
+// src/pool/context.ts
+function estimatePoolRequestTokens(value) {
+  const json = JSON.stringify(value) ?? "";
+  return Math.ceil(Buffer.byteLength(json, "utf8") / 2);
+}
+function poolRequestFitsWindow(value, contextWindow, outputReserve) {
+  if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) return { fits: false, required: Infinity };
+  if (!Number.isSafeInteger(outputReserve) || outputReserve <= 0) return { fits: false, required: Infinity };
+  const margin = Math.max(4096, Math.ceil(contextWindow * 0.1));
+  const required = estimatePoolRequestTokens(value) + outputReserve + margin;
+  return { fits: required <= contextWindow, required };
+}
+
+// src/codex-responses-adapter.ts
+import { createHash as createHash2 } from "crypto";
+import { streamText as streamText2, generateText, tool, jsonSchema } from "ai";
+function createCodexToolContext() {
+  return { namespaceByFlatName: /* @__PURE__ */ new Map(), customToolNames: /* @__PURE__ */ new Set() };
+}
+var TOOL_SEARCH_NAME = "tool_search";
+var MAX_MODEL_TOOL_NAME_LENGTH = 64;
+var TOOL_NAME_DIGEST_LENGTH = 10;
+function flatNamespaceName(namespace, name) {
+  const flat = `${namespace}__${name}`;
+  if (flat.length <= MAX_MODEL_TOOL_NAME_LENGTH) return flat;
+  const digest = createHash2("sha256").update(flat).digest("hex").slice(0, TOOL_NAME_DIGEST_LENGTH);
+  const prefixLength = MAX_MODEL_TOOL_NAME_LENGTH - digest.length - 2;
+  return `${flat.slice(0, prefixLength)}__${digest}`;
+}
+function ingestToolDefs(tools, ctx) {
+  for (const t of tools ?? []) {
+    if (!t || typeof t !== "object") continue;
+    if (t.type === "namespace") {
+      for (const sub of t.tools ?? []) {
+        if (sub?.type === "custom" && sub.name) {
+          ctx.customToolNames.add(sub.name);
+        } else if (sub?.type === "function" && sub.name) {
+          ctx.namespaceByFlatName.set(flatNamespaceName(t.name, sub.name), {
+            namespace: t.name,
+            name: sub.name,
+            parameters: sub.parameters
+          });
+        }
+      }
+    } else if (t.type === "custom" && t.name) {
+      ctx.customToolNames.add(t.name);
+    }
+  }
+}
+function flattenNamespaceTools(ns) {
+  return (ns.tools ?? []).filter((sub) => (sub?.type === "function" || sub?.type === "custom") && !!sub.name).map((sub) => sub.type === "custom" ? sub : { ...sub, name: flatNamespaceName(ns.name, sub.name) });
+}
+function liftAdditionalToolsInput(input, tools) {
+  let lifted = [];
+  const keptInput = [];
+  let changed = false;
+  for (const item of input) {
+    if (item && item.type === "additional_tools") {
+      changed = true;
+      if (Array.isArray(item.tools)) lifted = lifted.concat(item.tools);
+      if (item.content !== void 0) {
+        keptInput.push({ role: item.role ?? "developer", content: item.content });
+      }
+      continue;
+    }
+    keptInput.push(item);
+  }
+  if (!changed) return { input, tools };
+  return { input: keptInput, tools: lifted.length ? [...tools, ...lifted] : tools };
+}
+function messageText(content) {
+  if (typeof content === "string") return content;
+  return (content ?? []).map((p17) => p17.type === "output_text" || p17.type === "input_text" || p17.type === "text" ? p17.text ?? "" : "").join("");
+}
+function messageContent(content) {
+  if (typeof content === "string") return content;
+  const parts = (content ?? []).flatMap((part) => {
+    if (part.type === "output_text" || part.type === "input_text" || part.type === "text") {
+      return typeof part.text === "string" ? [{ type: "text", text: part.text }] : [];
+    }
+    if (part.type === "input_image" && typeof part.image_url === "string" && part.image_url.trim()) {
+      return [{ type: "image", image: part.image_url }];
+    }
+    return [];
+  });
+  return parts.length > 0 ? parts : [{ type: "text", text: "" }];
+}
+function splitToolOutputImages(output) {
+  if (!Array.isArray(output)) return { content: serializeToolResultContent(output), images: [] };
+  const images = [];
+  const rest = [];
+  for (const part of output) {
+    const record = part && typeof part === "object" ? part : void 0;
+    const imageUrl = record?.["type"] === "input_image" ? record["image_url"] : void 0;
+    if (typeof imageUrl === "string" && imageUrl.trim()) images.push(imageUrl);
+    else rest.push(part);
+  }
+  if (images.length === 0) return { content: serializeToolResultContent(output), images };
+  return {
+    content: rest.length > 0 ? serializeToolResultContent(rest) : "[image attached in the following message]",
+    images
+  };
+}
+function extractDeveloperAndInstructions(items2, instructions) {
+  const developerParts = [];
+  const remaining = [];
+  for (const item of items2) {
+    if ("role" in item && item.role === "developer") {
+      const text7 = messageText(item.content);
+      if (text7.trim()) developerParts.push(text7.trim());
+    } else {
+      remaining.push(item);
+    }
+  }
+  const parts = [...developerParts];
+  if (instructions?.trim()) parts.push(instructions.trim());
+  const system = parts.length ? parts.join("\n") : void 0;
+  return { system, remaining };
+}
+function annotateToolNamesFromCalls(items2) {
+  const nameByCallId = /* @__PURE__ */ new Map();
+  for (const item of items2) {
+    if (item.type === "function_call") {
+      const { rawId } = splitToolUseId(item.call_id);
+      nameByCallId.set(rawId, item.namespace ? flatNamespaceName(item.namespace, item.name) : item.name);
+    } else if (item.type === "tool_search_call") {
+      const { rawId } = splitToolUseId(item.call_id);
+      nameByCallId.set(rawId, TOOL_SEARCH_NAME);
+    } else if (item.type === "custom_tool_call") {
+      const { rawId } = splitToolUseId(item.call_id);
+      nameByCallId.set(rawId, item.name);
+    }
+  }
+  return nameByCallId;
+}
+function customToolInputFromArgs(name, args) {
+  if (typeof args === "string") {
+    const trimmed = args.trim();
+    if (name === "apply_patch" && trimmed.startsWith("*** Begin Patch")) return args;
+    try {
+      return customToolInputFromArgs(name, JSON.parse(trimmed));
+    } catch {
+      return args;
+    }
+  }
+  if (args && typeof args === "object") {
+    const obj = args;
+    if (Array.isArray(obj.command) && obj.command[0] === "apply_patch" && typeof obj.command[1] === "string") {
+      return obj.command[1];
+    }
+    if (typeof obj.input === "string") return obj.input;
+    for (const v of Object.values(obj)) {
+      if (typeof v === "string") return v;
+    }
+  }
+  return serializeToolResultContent(args);
+}
+function mergeConsecutiveMessages(messages) {
+  if (messages.length <= 1) return messages;
+  const out = [];
+  for (const msg of messages) {
+    const prev = out[out.length - 1];
+    if (prev && prev.role === msg.role) {
+      const prevContent = Array.isArray(prev.content) ? prev.content : [{ type: "text", text: String(prev.content ?? "") }];
+      const msgContent = Array.isArray(msg.content) ? msg.content : [{ type: "text", text: String(msg.content ?? "") }];
+      prev.content = [...prevContent, ...msgContent];
+    } else {
+      out.push(msg);
+    }
+  }
+  return out;
+}
+function ensureUserFirst(messages) {
+  if (messages.length === 0) return [{ role: "user", content: [{ type: "text", text: "(empty input)" }] }];
+  if (messages[0].role === "assistant") {
+    return [{ role: "user", content: [{ type: "text", text: "(conversation continued)" }] }, ...messages];
+  }
+  return messages;
+}
+function reasoningSummaryText(item) {
+  return (item.summary ?? []).map((part) => part.type === "summary_text" ? part.text ?? "" : "").join("");
+}
+function makeReasoningOutputItem(id, text7) {
+  return {
+    id,
+    type: "reasoning",
+    summary: text7.trim() ? [{ type: "summary_text", text: text7 }] : []
+  };
+}
+function translateResponsesInput(input, instructions, npm, toolContext = createCodexToolContext()) {
+  if (typeof input === "string") {
+    return {
+      instructions: instructions?.trim() || void 0,
+      messages: [{ role: "user", content: [{ type: "text", text: input }] }],
+      deferredTools: []
+    };
+  }
+  const { system, remaining } = extractDeveloperAndInstructions(input, instructions);
+  const toolNames = annotateToolNamesFromCalls(remaining);
+  const messages = [];
+  const deferredTools = [];
+  let pendingReasoning = "";
+  for (const item of remaining) {
+    if (item.type === "reasoning") {
+      pendingReasoning += reasoningSummaryText(item);
+      continue;
+    }
+    if (item.type === "function_call") {
+      const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
+      const parts = [];
+      if (pendingReasoning.trim()) {
+        parts.push({ type: "reasoning", text: pendingReasoning });
+        pendingReasoning = "";
+      }
+      const toolPart = {
+        type: "tool-call",
+        toolCallId: rawId,
+        toolName: item.namespace ? flatNamespaceName(item.namespace, item.name) : item.name,
+        input: parseToolArguments(item.arguments)
+      };
+      if (thoughtSignature && npm === "@ai-sdk/google") {
+        toolPart.providerOptions = { google: { thoughtSignature } };
+      }
+      parts.push(toolPart);
+      messages.push({ role: "assistant", content: parts });
+    } else if (item.type === "function_call_output") {
+      const { rawId } = splitToolUseId(item.call_id);
+      const toolName = toolNames.get(rawId) ?? "unknown";
+      const { content, images } = splitToolOutputImages(item.output);
+      messages.push({
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: rawId,
+          toolName,
+          output: { type: "text", value: content }
+        }]
+      });
+      if (images.length > 0) {
+        messages.push({
+          role: "user",
+          content: [
+            { type: "text", text: `Image${images.length > 1 ? "s" : ""} returned by ${toolName} (${rawId}):` },
+            ...images.map((image) => ({ type: "image", image }))
+          ]
+        });
+      }
+    } else if (item.type === "tool_search_call") {
+      const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
+      const parts = [];
+      if (pendingReasoning.trim()) {
+        parts.push({ type: "reasoning", text: pendingReasoning });
+        pendingReasoning = "";
+      }
+      parts.push({
+        type: "tool-call",
+        toolCallId: rawId,
+        toolName: TOOL_SEARCH_NAME,
+        input: parseToolArguments(item.arguments),
+        ...thoughtSignature && npm === "@ai-sdk/google" ? { providerOptions: { google: { thoughtSignature } } } : {}
+      });
+      messages.push({ role: "assistant", content: parts });
+    } else if (item.type === "tool_search_output") {
+      const { rawId } = splitToolUseId(item.call_id);
+      const surfacedTools = item.tools ?? [];
+      ingestToolDefs(surfacedTools, toolContext);
+      for (const t of surfacedTools) {
+        if (t.type === "namespace") deferredTools.push(...flattenNamespaceTools(t));
+        else if (t.type === "function" || t.type === "custom") deferredTools.push(t);
+      }
+      messages.push({
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: rawId,
+          toolName: TOOL_SEARCH_NAME,
+          output: { type: "text", value: serializeToolResultContent(surfacedTools) }
+        }]
+      });
+    } else if (item.type === "custom_tool_call") {
+      const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
+      const parts = [];
+      if (pendingReasoning.trim()) {
+        parts.push({ type: "reasoning", text: pendingReasoning });
+        pendingReasoning = "";
+      }
+      parts.push({
+        type: "tool-call",
+        toolCallId: rawId,
+        toolName: item.name,
+        input: { input: typeof item.input === "string" ? item.input : serializeToolResultContent(item.input) },
+        ...thoughtSignature && npm === "@ai-sdk/google" ? { providerOptions: { google: { thoughtSignature } } } : {}
+      });
+      messages.push({ role: "assistant", content: parts });
+    } else if (item.type === "custom_tool_call_output") {
+      const { rawId } = splitToolUseId(item.call_id);
+      messages.push({
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: rawId,
+          toolName: toolNames.get(rawId) ?? "unknown",
+          output: { type: "text", value: serializeToolResultContent(item.output) }
+        }]
+      });
+    } else if (item.type === "agent_message") {
+      const text7 = messageText(item.content);
+      if (text7.trim()) {
+        messages.push({ role: "user", content: [{ type: "text", text: text7 }] });
+      }
+    } else if (item.type === "compaction" || item.type === "context_compaction") {
+      const summary = decodeCompactionContent(item.encrypted_content) ?? "";
+      if (summary.trim()) {
+        messages.push({ role: "user", content: [{ type: "text", text: `[Summary of earlier conversation]
+${summary}` }] });
+      }
+    } else if ("role" in item) {
+      const role = item.role === "assistant" ? "assistant" : "user";
+      const content = messageContent(item.content);
+      messages.push({ role, content });
+    }
+  }
+  return {
+    instructions: system,
+    messages: ensureUserFirst(mergeConsecutiveMessages(messages)),
+    deferredTools
+  };
+}
+var TOOL_SEARCH_DESCRIPTION = "Search the available deferred Codex tools, plugin tools, MCP namespaces, and connectors by query. Use this when a needed tool is not already present in the current tool list. Returns matching tool definitions for a follow-up call.";
+var TOOL_SEARCH_PARAMETERS = {
+  type: "object",
+  properties: {
+    query: { type: "string", description: "Search query describing the tool or capability needed." },
+    limit: { type: "number", description: "Maximum number of matching tools to return. Defaults to 8." }
+  },
+  required: ["query"],
+  additionalProperties: false
+};
+var CUSTOM_TOOL_INPUT_SCHEMA = {
+  type: "object",
+  properties: { input: { type: "string", description: "Freeform input for this custom tool (e.g. a patch body)." } },
+  required: ["input"],
+  additionalProperties: false
+};
+function translateResponsesTools(tools, options = {}) {
+  if (!tools?.length) return void 0;
+  const out = {};
+  let toolCount = 0;
+  const addTool = (name, description, parameters) => {
+    if (options.maxTools !== void 0 && toolCount >= options.maxTools) return;
+    out[name] = tool({
+      description: description ?? "",
+      inputSchema: jsonSchema(normalizeToolSchemaForNpm(parameters ?? { type: "object", properties: {} }, options.npm))
+    });
+    toolCount++;
+  };
+  for (const t of tools) {
+    if (!t || typeof t !== "object") continue;
+    if (t.type === "namespace") {
+      for (const nested of t.tools ?? []) {
+        if (!nested.name) continue;
+        if (nested.type === "custom") {
+          addTool(nested.name, nested.description, CUSTOM_TOOL_INPUT_SCHEMA);
+        } else if (nested.type === "function") {
+          addTool(flatNamespaceName(t.name, nested.name), nested.description, nested.parameters);
+        }
+      }
+      continue;
+    }
+    if (t.type === "custom") {
+      if (!t.name) continue;
+      addTool(t.name, t.description, CUSTOM_TOOL_INPUT_SCHEMA);
+      continue;
+    }
+    if (t.type === "tool_search") {
+      addTool(TOOL_SEARCH_NAME, TOOL_SEARCH_DESCRIPTION, TOOL_SEARCH_PARAMETERS);
+      continue;
+    }
+    if (t.type !== "function" || !t.name) continue;
+    addTool(t.name, t.description, t.parameters);
+  }
+  return Object.keys(out).length ? out : void 0;
+}
+function omitsMaxOutputTokens(metadata) {
+  return metadata?.providerId !== void 0 && isProviderKind(metadata.providerId, "openrouter") || (metadata?.apiBaseUrl?.includes("openrouter.ai") ?? false);
+}
+function translateResponsesRequest(body, npm, metadata, options = {}) {
+  const toolContext = createCodexToolContext();
+  let effectiveTools = body.tools ?? [];
+  let effectiveInput = body.input;
+  if (Array.isArray(effectiveInput)) {
+    const lifted = liftAdditionalToolsInput(effectiveInput, effectiveTools);
+    effectiveInput = lifted.input;
+    effectiveTools = lifted.tools;
+  }
+  ingestToolDefs(effectiveTools, toolContext);
+  const { instructions: system, messages, deferredTools } = translateResponsesInput(effectiveInput, body.instructions, npm, toolContext);
+  const effort = body.reasoning?.effort;
+  const providerOptions = deepMergeProviderOptions(
+    thinkingProviderOptions(npm),
+    effortProviderOptions(npm, effort, metadata?.upstreamModelId ?? body.model, metadata)
+  );
+  const tools = translateResponsesTools([...effectiveTools, ...deferredTools], { ...options, npm });
+  const bridgedGemini = npm === "@ai-sdk/anthropic" && metadata?.providerId !== void 0 && isProviderKind(metadata.providerId, "antigravity") && /(?:^|__)gemini-/.test(metadata.upstreamModelId ?? body.model);
+  return {
+    instructions: system,
+    messages,
+    tools,
+    toolContext,
+    maxOutputTokens: omitsMaxOutputTokens(metadata) ? void 0 : body.max_output_tokens ?? (bridgedGemini ? 65536 : void 0),
+    temperature: body.temperature,
+    providerOptions,
+    headers: options.requestHeaders
+  };
+}
+function newResponseId() {
+  return `resp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+function newItemId(prefix) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+function functionCallItemId(upstreamId) {
+  return upstreamId.startsWith("fc_") ? upstreamId : newItemId("fc");
+}
+function usageFromPart(part) {
+  const input = part.totalUsage?.inputTokens ?? 0;
+  const output = part.totalUsage?.outputTokens ?? 0;
+  const cached = part.totalUsage?.inputTokenDetails?.cacheReadTokens ?? 0;
+  return {
+    input_tokens: input,
+    output_tokens: output,
+    total_tokens: input + output,
+    ...cached > 0 ? { input_tokens_details: { cached_tokens: cached } } : {}
+  };
+}
+var CODEX_SUBAGENT_TOOL_NAMES = /* @__PURE__ */ new Set(["spawn_agent", "multi_agent_v1__spawn_agent"]);
+function isCodexSubagentToolName(toolName) {
+  return CODEX_SUBAGENT_TOOL_NAMES.has(toolName) || toolName.endsWith("__spawn_agent");
+}
+function normalizeCodexSubagentArguments(toolName, argsStr) {
+  if (!isCodexSubagentToolName(toolName)) return argsStr;
+  const args = parseToolArguments(argsStr);
+  for (const key of ["model", "reasoning_effort", "service_tier"]) {
+    if (args[key] === "") delete args[key];
+  }
+  const items2 = args.items;
+  const message = args.message;
+  if (Array.isArray(items2) && items2.length > 0) {
+    delete args.message;
+  } else if (typeof message === "string" && message.trim()) {
+    delete args.items;
+  } else if (Array.isArray(items2) && items2.length === 0) {
+    delete args.items;
+  }
+  return JSON.stringify(args);
+}
+function resolveOutputKind(flatName, ctx) {
+  if (!ctx) return { kind: "plain" };
+  if (flatName === TOOL_SEARCH_NAME) return { kind: "tool_search" };
+  if (ctx.customToolNames.has(flatName)) return { kind: "custom" };
+  const ns = ctx.namespaceByFlatName.get(flatName);
+  if (ns) return { kind: "namespace", namespace: ns.namespace, name: ns.name };
+  return { kind: "plain" };
+}
+function toolItemId(kind, upstreamId) {
+  switch (kind.kind) {
+    case "tool_search":
+      return upstreamId.startsWith("tsc_") ? upstreamId : newItemId("tsc");
+    case "custom":
+      return upstreamId.startsWith("ctc_") ? upstreamId : newItemId("ctc");
+    default:
+      return functionCallItemId(upstreamId);
+  }
+}
+function buildFinalToolItem(kind, flatName, callId, itemId, argsStr) {
+  argsStr = normalizeCodexSubagentArguments(flatName, argsStr);
+  switch (kind.kind) {
+    case "namespace":
+      return { type: "function_call", id: itemId, call_id: callId, namespace: kind.namespace, name: kind.name, arguments: argsStr, status: "completed" };
+    case "tool_search": {
+      const args = parseToolArguments(argsStr);
+      if (typeof args.limit === "string" && /^-?\d+$/.test(args.limit)) args.limit = Number(args.limit);
+      return { type: "tool_search_call", id: itemId, call_id: callId, execution: "client", arguments: args, status: "completed" };
+    }
+    case "custom":
+      return { type: "custom_tool_call", id: itemId, call_id: callId, name: flatName, input: customToolInputFromArgs(flatName, parseToolArguments(argsStr)), status: "completed" };
+    default:
+      return { type: "function_call", id: itemId, call_id: callId, name: flatName, arguments: argsStr, status: "completed" };
+  }
+}
+function incompleteReasonForFinish(finishReason) {
+  if (finishReason === "length") return "max_output_tokens";
+  if (finishReason === "content-filter") return "content_filter";
+  return void 0;
+}
+var PROGRESS_INTERVAL_MS = 3e3;
+var REPEAT_TAIL_CHARS = 200;
+var REPEAT_STREAK_LIMIT = 3;
+var LOOP_NOTICE = "\n\n[relay-ai: generation stopped after detecting a repetition loop]";
+var INITIAL_REPEAT_TRACKER = { tail: "", len: 0, streak: 0 };
+function trackRepetition(current, prev) {
+  const tail = current.length >= REPEAT_TAIL_CHARS ? current.slice(-REPEAT_TAIL_CHARS) : current;
+  const grew = current.length - prev.len >= REPEAT_TAIL_CHARS;
+  const stale = tail.length === REPEAT_TAIL_CHARS && tail === prev.tail && grew;
+  return { tail, len: current.length, streak: stale ? prev.streak + 1 : 0 };
+}
+async function writeResponsesStream(fullStream, modelId, write, onDone, onProgress, options) {
+  const emit = (type, data) => write(sseChunk(type, data));
+  const responseId = newResponseId();
+  const createdAt = Math.floor(Date.now() / 1e3);
+  let usage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+  emit("response.created", {
+    type: "response.created",
+    response: {
+      id: responseId,
+      object: "response",
+      model: modelId,
+      created_at: createdAt,
+      status: "in_progress",
+      output: []
+    }
+  });
+  let outputIndex = 0;
+  let textItemId = null;
+  let textOutputIndex = 0;
+  let textFull = "";
+  const toolStates = [];
+  const toolStatesById = /* @__PURE__ */ new Map();
+  let currentToolState = null;
+  const streamStartedAt = Date.now();
+  let lastProgressAt = streamStartedAt;
+  const recentPartCounts = /* @__PURE__ */ new Map();
+  let reasoningItemId = null;
+  let reasoningText = "";
+  let reasoningOutputIndex = 0;
+  const outputItems = [];
+  let reasoningRepeat = INITIAL_REPEAT_TRACKER;
+  let textRepeat = INITIAL_REPEAT_TRACKER;
+  let loopDetected;
+  let finishReason;
+  const ensureTextItem = () => {
+    if (!textItemId) {
+      textItemId = newItemId("msg");
+      textOutputIndex = outputIndex;
+      outputIndex++;
+      emit("response.output_item.added", {
+        type: "response.output_item.added",
+        output_index: textOutputIndex,
+        item: { id: textItemId, type: "message", role: "assistant", status: "in_progress", content: [] }
+      });
+      emit("response.content_part.added", {
+        type: "response.content_part.added",
+        item_id: textItemId,
+        output_index: textOutputIndex,
+        content_index: 0,
+        part: { type: "output_text", text: "" }
+      });
+    }
+    return textItemId;
+  };
+  const rememberToolState = (state) => {
+    toolStates.push(state);
+    toolStatesById.set(state.itemId, state);
+    toolStatesById.set(state.callId, state);
+    currentToolState = state;
+    return state;
+  };
+  const createToolState = (rawId, name, signature) => {
+    const kind = resolveOutputKind(name ?? "", options?.toolContext);
+    const upstreamId = rawId ?? newItemId("call");
+    const itemId = toolItemId(kind, upstreamId);
+    const state = rememberToolState({
+      itemId,
+      callId: encodeToolUseId(upstreamId, signature, false),
+      name: name ?? "unknown",
+      outputIndex: outputIndex++,
+      args: "",
+      kind
+    });
+    emit("response.output_item.added", {
+      type: "response.output_item.added",
+      output_index: state.outputIndex,
+      item: {
+        type: "function_call",
+        id: state.itemId,
+        call_id: state.callId,
+        name: state.name,
+        arguments: "",
+        status: "in_progress"
+      }
+    });
+    return state;
+  };
+  const findToolState = (part) => {
+    const key = part.id ?? part.toolCallId;
+    if (key) return toolStatesById.get(key) ?? currentToolState;
+    return currentToolState;
+  };
+  const appendToolArgs = (state, delta) => {
+    if (!delta) return;
+    state.args += delta;
+    emit("response.function_call_arguments.delta", {
+      type: "response.function_call_arguments.delta",
+      item_id: state.itemId,
+      output_index: state.outputIndex,
+      delta
+    });
+  };
+  for await (const part of fullStream) {
+    recentPartCounts.set(part.type, (recentPartCounts.get(part.type) ?? 0) + 1);
+    switch (part.type) {
+      case "reasoning-start":
+        reasoningText = "";
+        reasoningItemId = newItemId("rs");
+        reasoningOutputIndex = outputIndex++;
+        emit("response.output_item.added", {
+          type: "response.output_item.added",
+          output_index: reasoningOutputIndex,
+          item: { id: reasoningItemId, type: "reasoning", summary: [] }
+        });
+        break;
+      case "reasoning-delta":
+        if (!reasoningItemId) {
+          reasoningItemId = newItemId("rs");
+          reasoningOutputIndex = outputIndex++;
+          emit("response.output_item.added", {
+            type: "response.output_item.added",
+            output_index: reasoningOutputIndex,
+            item: { id: reasoningItemId, type: "reasoning", summary: [] }
+          });
+        }
+        reasoningText += part.text ?? "";
+        break;
+      case "reasoning-end":
+        break;
+      case "text-start":
+        textFull = "";
+        ensureTextItem();
+        break;
+      case "text-delta":
+        ensureTextItem();
+        textFull += part.text ?? "";
+        emit("response.output_text.delta", {
+          type: "response.output_text.delta",
+          item_id: textItemId,
+          output_index: textOutputIndex,
+          content_index: 0,
+          delta: part.text ?? ""
+        });
+        break;
+      case "tool-input-start": {
+        const sig = grabRoundTripSignature(part);
+        createToolState(part.id ?? part.toolCallId, part.toolName, sig);
+        break;
+      }
+      case "tool-input-delta": {
+        const state = findToolState(part);
+        if (state) appendToolArgs(state, part.delta ?? part.text ?? "");
+        break;
+      }
+      case "tool-call": {
+        const sig = grabRoundTripSignature(part);
+        const key = part.toolCallId ?? part.id;
+        const state = (key ? toolStatesById.get(key) : void 0) ?? createToolState(key, part.toolName, sig);
+        if (!state.args) {
+          appendToolArgs(state, JSON.stringify(part.input ?? {}));
+        }
+        break;
+      }
+      case "finish-step":
+        if (part.finishReason) finishReason = part.finishReason;
+        break;
+      case "finish":
+        if (part.finishReason) finishReason = part.finishReason;
+        if (part.totalUsage) usage = usageFromPart(part);
+        break;
+      case "abort": {
+        const msg = `stream aborted: ${part.reason ?? "no data received from provider"}`;
+        process.stderr.write(`[relay-ai] ${localTimestamp()} ${options?.logLabel ?? modelId}: ${msg}
+`);
+        onDone?.({
+          reasoningChars: reasoningText.length,
+          reasoningPreview: reasoningText.slice(0, 200),
+          textChars: textFull.length,
+          toolCallCount: toolStates.length,
+          toolNames: toolStates.map((t) => t.name),
+          loopDetected,
+          aborted: true
+        });
+        emit("response.failed", {
+          type: "response.failed",
+          response: {
+            id: responseId,
+            object: "response",
+            model: modelId,
+            created_at: createdAt,
+            status: "failed",
+            output: [],
+            error: { message: msg, type: "api_error" }
+          }
+        });
+        return;
+      }
+      case "error": {
+        const msg = formatUpstreamError(part.error);
+        const is429 = msg.includes("429") || part.error && typeof part.error === "object" && (part.error.statusCode === 429 || part.error.lastError?.statusCode === 429);
+        process.stderr.write(`[relay-ai] ${localTimestamp()} ${options?.logLabel ?? modelId}: ${msg}
+`);
+        onDone?.({
+          reasoningChars: reasoningText.length,
+          reasoningPreview: reasoningText.slice(0, 200),
+          textChars: textFull.length,
+          toolCallCount: toolStates.length,
+          toolNames: toolStates.map((t) => t.name),
+          loopDetected,
+          errorMessage: msg,
+          errorStatus: part.error?.statusCode
+        });
+        emit("response.failed", {
+          type: "response.failed",
+          response: {
+            id: responseId,
+            object: "response",
+            model: modelId,
+            created_at: createdAt,
+            status: "failed",
+            output: [],
+            error: { message: msg, type: is429 ? "rate_limit_error" : "api_error", ...is429 ? { code: "429" } : {} }
+          }
+        });
+        return;
+      }
+      default:
+        break;
+    }
+    const now = Date.now();
+    if (now - lastProgressAt >= PROGRESS_INTERVAL_MS) {
+      lastProgressAt = now;
+      reasoningRepeat = trackRepetition(reasoningText, reasoningRepeat);
+      textRepeat = trackRepetition(textFull, textRepeat);
+      if (reasoningRepeat.streak >= REPEAT_STREAK_LIMIT) loopDetected = "reasoning";
+      else if (textRepeat.streak >= REPEAT_STREAK_LIMIT) loopDetected = "text";
+      if (onProgress) {
+        onProgress({
+          reasoningChars: reasoningText.length,
+          reasoningTail: reasoningText.slice(-200),
+          textChars: textFull.length,
+          toolCallCount: toolStates.length,
+          elapsedMs: now - streamStartedAt,
+          recentPartTypes: [...recentPartCounts].map(([type, n]) => `${type}:${n}`).join(",")
+        });
+      }
+      recentPartCounts.clear();
+      if (loopDetected) {
+        options?.onForceStop?.(`repetition loop detected (${loopDetected})`);
+        break;
+      }
+    }
+  }
+  const incompleteReason = incompleteReasonForFinish(finishReason);
+  if (loopDetected) {
+    ensureTextItem();
+    textFull += LOOP_NOTICE;
+    emit("response.output_text.delta", {
+      type: "response.output_text.delta",
+      item_id: textItemId,
+      output_index: textOutputIndex,
+      content_index: 0,
+      delta: LOOP_NOTICE
+    });
+  }
+  const dsml = loopDetected || incompleteReason ? null : parseDsmlToolCalls(textFull);
+  if (dsml) {
+    if (dsml.leadingText && textItemId) {
+      emit("response.output_text.done", {
+        type: "response.output_text.done",
+        item_id: textItemId,
+        output_index: textOutputIndex,
+        content_index: 0,
+        text: dsml.leadingText
+      });
+      emit("response.content_part.done", {
+        type: "response.content_part.done",
+        item_id: textItemId,
+        output_index: textOutputIndex,
+        content_index: 0,
+        part: { type: "output_text", text: dsml.leadingText }
+      });
+      const textItem = {
+        id: textItemId,
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text: dsml.leadingText }]
+      };
+      emit("response.output_item.done", {
+        type: "response.output_item.done",
+        output_index: textOutputIndex,
+        item: textItem
+      });
+      outputItems.push(textItem);
+    }
+    for (const call of dsml.calls) {
+      const itemId = newItemId("fc");
+      const callId = encodeToolUseId(itemId, void 0, false);
+      const idx = outputIndex++;
+      const args = JSON.stringify(call.args);
+      emit("response.output_item.added", {
+        type: "response.output_item.added",
+        output_index: idx,
+        item: { type: "function_call", id: itemId, call_id: callId, name: call.name, arguments: "", status: "in_progress" }
+      });
+      emit("response.function_call_arguments.done", {
+        type: "response.function_call_arguments.done",
+        item_id: itemId,
+        output_index: idx,
+        arguments: args
+      });
+      const fcItem = { type: "function_call", id: itemId, call_id: callId, name: call.name, arguments: args, status: "completed" };
+      emit("response.output_item.done", { type: "response.output_item.done", output_index: idx, item: fcItem });
+      outputItems.push(fcItem);
+    }
+  } else if (textItemId) {
+    emit("response.output_text.done", {
+      type: "response.output_text.done",
+      item_id: textItemId,
+      output_index: textOutputIndex,
+      content_index: 0,
+      text: textFull
+    });
+    emit("response.content_part.done", {
+      type: "response.content_part.done",
+      item_id: textItemId,
+      output_index: textOutputIndex,
+      content_index: 0,
+      part: { type: "output_text", text: textFull }
+    });
+    const textItem = {
+      id: textItemId,
+      type: "message",
+      role: "assistant",
+      status: incompleteReason ? "incomplete" : "completed",
+      content: [{ type: "output_text", text: textFull }]
+    };
+    emit("response.output_item.done", {
+      type: "response.output_item.done",
+      output_index: textOutputIndex,
+      item: textItem
+    });
+    outputItems.push(textItem);
+  }
+  if (reasoningItemId) {
+    const reasoningItem = makeReasoningOutputItem(reasoningItemId, reasoningText);
+    emit("response.output_item.done", {
+      type: "response.output_item.done",
+      output_index: reasoningOutputIndex,
+      item: reasoningItem
+    });
+    outputItems.unshift(reasoningItem);
+  }
+  for (const tool4 of incompleteReason ? [] : toolStates) {
+    const normalizedArgs = normalizeCodexSubagentArguments(tool4.name, tool4.args);
+    emit("response.function_call_arguments.done", {
+      type: "response.function_call_arguments.done",
+      item_id: tool4.itemId,
+      output_index: tool4.outputIndex,
+      arguments: normalizedArgs
+    });
+    const fcItem = buildFinalToolItem(tool4.kind, tool4.name, tool4.callId, tool4.itemId, normalizedArgs);
+    emit("response.output_item.done", {
+      type: "response.output_item.done",
+      output_index: tool4.outputIndex,
+      item: fcItem
+    });
+    outputItems.push(fcItem);
+  }
+  if (outputItems.length === 0 && !incompleteReason) {
+    outputItems.push({ id: newItemId("msg"), type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "(conversation context was too large to summarize)" }] });
+  }
+  onDone?.({
+    reasoningChars: reasoningText.length,
+    reasoningPreview: reasoningText.slice(0, 200),
+    textChars: textFull.length,
+    toolCallCount: toolStates.length,
+    toolNames: toolStates.map((t) => t.name),
+    loopDetected,
+    dsmlToolCallsRecovered: dsml?.calls.length,
+    finishReason,
+    incompleteReason
+  });
+  const terminalEvent = incompleteReason ? "response.incomplete" : "response.completed";
+  emit(terminalEvent, {
+    type: terminalEvent,
+    response: {
+      id: responseId,
+      object: "response",
+      model: modelId,
+      created_at: createdAt,
+      status: incompleteReason ? "incomplete" : "completed",
+      ...incompleteReason ? { incomplete_details: { reason: incompleteReason } } : {},
+      output: outputItems,
+      usage
+    }
+  });
+}
+var STREAM_IDLE_TIMEOUT_MS = 12e4;
+async function streamResponsesResponse(model, params, modelId, write, onDone, onProgress, options) {
+  const configuredTimeout = (name, fallback) => {
+    const value = Number(process.env[name]);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  };
+  const idleTimeoutMs = options?.idleTimeoutMs ?? configuredTimeout("RELAY_AI_STREAM_IDLE_TIMEOUT_MS", STREAM_IDLE_TIMEOUT_MS);
+  const progressTimeoutMs = options?.progressTimeoutMs ?? configuredTimeout("RELAY_AI_STREAM_PROGRESS_TIMEOUT_MS", 6e5);
+  const abort = new AbortController();
+  let idleTimer = setTimeout(
+    () => abort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1e3)}s`)),
+    idleTimeoutMs
+  );
+  let active = true;
+  const resetLiveness = () => {
+    if (!active) return;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => abort.abort(new Error("no data received from provider for " + idleTimeoutMs / 1e3 + "s")), idleTimeoutMs);
+  };
+  const resetProgress = () => {
+    clearTimeout(progressTimer);
+    progressTimer = setTimeout(() => abort.abort(new Error("no content progress from provider for " + progressTimeoutMs / 1e3 + "s")), progressTimeoutMs);
+  };
+  let progressTimer;
+  resetProgress();
+  return streamActivity.run(resetLiveness, async () => {
+    try {
+      const { toolContext, ...sdkParams } = params;
+      const result = streamText2({ model, ...sdkParams, maxRetries: 0, abortSignal: abort.signal, onError: () => {
+      } });
+      Promise.resolve(result.text).catch(() => {
+      });
+      Promise.resolve(result.toolCalls).catch(() => {
+      });
+      Promise.resolve(result.toolResults).catch(() => {
+      });
+      Promise.resolve(result.finishReason).catch(() => {
+      });
+      Promise.resolve(result.usage).catch(() => {
+      });
+      Promise.resolve(result.response).catch(() => {
+      });
+      const watchedStream = (async function* () {
+        try {
+          for await (const part of result.stream) {
+            resetLiveness();
+            if (["text-delta", "reasoning-delta"].includes(part.type) && Boolean(part.text) || part.type === "tool-input-delta" && Boolean(part.delta) || ["tool-call", "finish", "finish-step"].includes(part.type)) resetProgress();
+            yield part;
+          }
+        } catch (error) {
+          if (!abort.signal.aborted) throw error;
+          yield { type: "abort", reason: String(abort.signal.reason) };
+        } finally {
+          clearTimeout(idleTimer);
+          clearTimeout(progressTimer);
+        }
+      })();
+      await writeResponsesStream(watchedStream, modelId, write, onDone, onProgress, {
+        onForceStop: (reason) => abort.abort(new Error(reason)),
+        toolContext,
+        logLabel: options?.logLabel
+      });
+    } finally {
+      active = false;
+      clearTimeout(idleTimer);
+      clearTimeout(progressTimer);
+    }
+  });
+}
+async function generateResponsesResponse(model, params, modelId) {
+  const { toolContext, ...sdkParams } = params;
+  const r = await generateText({ model, ...sdkParams, maxRetries: 0 });
+  const incompleteReason = incompleteReasonForFinish(r.finishReason);
+  const createdAt = Math.floor(Date.now() / 1e3);
+  const responseId = newResponseId();
+  const output = [];
+  if (r.reasoningText?.trim()) {
+    output.push(makeReasoningOutputItem(newItemId("rs"), r.reasoningText));
+  }
+  if (r.text !== null && r.text !== void 0) {
+    output.push({
+      id: newItemId("msg"),
+      type: "message",
+      role: "assistant",
+      status: incompleteReason ? "incomplete" : "completed",
+      content: [{ type: "output_text", text: r.text }]
+    });
+  }
+  for (const tc of incompleteReason ? [] : r.toolCalls) {
+    const encodedId = encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc), false);
+    const argsStr = JSON.stringify(tc.input ?? {});
+    const kind = resolveOutputKind(tc.toolName, toolContext);
+    output.push(buildFinalToolItem(
+      kind,
+      tc.toolName,
+      encodedId,
+      toolItemId(kind, tc.toolCallId),
+      argsStr
+    ));
+  }
+  if (output.length === 0 && !incompleteReason) {
+    output.push({ id: newItemId("msg"), type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "(conversation context was too large to summarize)" }] });
+  }
+  const inputTokens = r.usage?.inputTokens ?? 0;
+  const outputTokens = r.usage?.outputTokens ?? 0;
+  return {
+    id: responseId,
+    object: "response",
+    model: modelId,
+    created_at: createdAt,
+    status: incompleteReason ? "incomplete" : "completed",
+    ...incompleteReason ? { incomplete_details: { reason: incompleteReason } } : {},
+    output,
+    usage: {
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      total_tokens: inputTokens + outputTokens
+    }
+  };
+}
+var COMPACTION_SUMMARY_INSTRUCTION = "You are performing a CONTEXT CHECKPOINT COMPACTION. Summarize the conversation so far into a concise but complete summary that preserves the user's goals, key decisions and facts, the current state of the work, and any pending or in-progress tasks. Output only the summary text.";
+function encodeCompactionContent(summary) {
+  return Buffer.from(JSON.stringify({ v: 1, summary }), "utf8").toString("base64");
+}
+function decodeCompactionContent(encrypted) {
+  if (!encrypted) return null;
+  try {
+    const obj = JSON.parse(Buffer.from(encrypted, "base64").toString("utf8"));
+    return obj?.v === 1 && typeof obj.summary === "string" ? obj.summary : null;
+  } catch {
+    return null;
+  }
+}
+function makeCompactionItem(summary) {
+  return { type: "compaction", id: newItemId("cmp"), encrypted_content: encodeCompactionContent(summary) };
+}
+function appendCompactionInstruction(params) {
+  return {
+    ...params,
+    tools: void 0,
+    messages: [
+      ...params.messages,
+      { role: "user", content: [{ type: "text", text: COMPACTION_SUMMARY_INSTRUCTION }] }
+    ]
+  };
+}
+function buildCompactionResponseBody(summary, modelId) {
+  return {
+    id: newResponseId(),
+    object: "response",
+    model: modelId,
+    created_at: Math.floor(Date.now() / 1e3),
+    status: "completed",
+    output: [makeCompactionItem(summary)]
+  };
+}
+function writeCompactionSse(summary, modelId, write) {
+  const emit = (type, data) => write(sseChunk(type, data));
+  const responseId = newResponseId();
+  const createdAt = Math.floor(Date.now() / 1e3);
+  const item = makeCompactionItem(summary);
+  emit("response.created", {
+    type: "response.created",
+    response: { id: responseId, object: "response", model: modelId, created_at: createdAt, status: "in_progress", output: [] }
+  });
+  emit("response.output_item.added", { type: "response.output_item.added", output_index: 0, item });
+  emit("response.output_item.done", { type: "response.output_item.done", output_index: 0, item });
+  emit("response.completed", {
+    type: "response.completed",
+    response: { id: responseId, object: "response", model: modelId, created_at: createdAt, status: "completed", output: [item] }
+  });
+}
+async function generateCompactionResponse(model, params, modelId) {
+  const { toolContext: _toolContext, ...sdkParams } = params;
+  void _toolContext;
+  const r = await generateText({ model, ...sdkParams, maxRetries: 0 });
+  return buildCompactionResponseBody((r.text ?? "").trim() || "(no summary produced)", modelId);
+}
+async function streamCompactionResponse(model, params, modelId, write) {
+  const { toolContext: _toolContext, ...sdkParams } = params;
+  void _toolContext;
+  const r = await generateText({ model, ...sdkParams, maxRetries: 0 });
+  writeCompactionSse((r.text ?? "").trim() || "(no summary produced)", modelId, write);
+}
+function responsesErrorBody(modelId, message, statusCode = 401) {
+  return {
+    id: newResponseId(),
+    object: "response",
+    model: modelId,
+    created_at: Math.floor(Date.now() / 1e3),
+    status: "failed",
+    output: [],
+    error: { message, type: statusCode === 429 ? "rate_limit_error" : "api_error", code: String(statusCode) }
+  };
+}
+function writeResponsesErrorStream(modelId, message, write, statusCode = 401) {
+  write(sseChunk("response.failed", {
+    type: "response.failed",
+    response: responsesErrorBody(modelId, message, statusCode)
+  }));
+}
+
+// src/pool/continuation.ts
+function poolRouteKey(route) {
+  return JSON.stringify([route.account, route.endpointRevision, route.model]);
+}
+var DEFAULT_LIMITS = {
+  ttlMs: 6e4,
+  maxEntries: 32,
+  maxBytes: 4 * 1024 * 1024,
+  maxItems: 2e3
+};
+function items(input) {
+  if (typeof input === "string") return [{ type: "message", role: "user", content: input }];
+  if (!Array.isArray(input)) throw new Error("unsupported-input");
+  return structuredClone(input);
+}
+function checkLimit(name, value) {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error("Invalid continuation limit: " + name);
+}
+var PoolContinuationStore = class {
+  constructor(limits = {}, now = Date.now) {
+    this.now = now;
+    this.limits = { ...DEFAULT_LIMITS, ...limits };
+    for (const [name, value] of Object.entries(this.limits)) checkLimit(name, value);
+  }
+  now;
+  states = /* @__PURE__ */ new Map();
+  limits;
+  remember(responseId, scope, request2, output, source) {
+    if (!responseId) throw new Error("response-id-required");
+    if (!scope) throw new Error("real-session-and-branch-required");
+    const storedInput = items(request2.input);
+    const storedOutput = structuredClone(output);
+    if (storedInput.length + storedOutput.length > this.limits.maxItems) {
+      throw new Error("continuation-history-too-large");
+    }
+    const state = {
+      scope,
+      input: storedInput,
+      output: storedOutput,
+      ...typeof request2.instructions === "string" ? { instructions: request2.instructions } : {},
+      source: poolRouteKey(source),
+      expires: this.now() + this.limits.ttlMs,
+      bytes: 0
+    };
+    state.bytes = Buffer.byteLength(JSON.stringify(state), "utf8");
+    if (state.bytes > this.limits.maxBytes) throw new Error("continuation-history-too-large");
+    this.prune();
+    this.states.set(JSON.stringify([scope, responseId]), state);
+    while (this.states.size > this.limits.maxEntries) {
+      this.states.delete(this.states.keys().next().value);
+    }
+  }
+  resolve(scope, request2) {
+    const body = structuredClone(request2);
+    const previous = body.previous_response_id;
+    if (previous === void 0 || previous === null) return { body };
+    if (typeof previous !== "string" || !previous) throw new Error("unsupported-continuation: invalid response id");
+    const state = this.states.get(JSON.stringify([scope, previous]));
+    if (!scope || !state || state.expires <= this.now()) {
+      throw new Error("unsupported-continuation: missing Relay-owned history");
+    }
+    body.input = [...structuredClone(state.input), ...structuredClone(state.output), ...items(body.input)];
+    body.instructions ??= state.instructions;
+    delete body.previous_response_id;
+    return { body, source: state.source };
+  }
+  prune() {
+    const now = this.now();
+    for (const [key, state] of this.states) {
+      if (state.expires <= now) this.states.delete(key);
+    }
+  }
+};
+function stripRouteParts(part) {
+  if (part.type !== "tool-call" && part.type !== "tool-result") return part;
+  const { providerOptions: _options, toolCallId, ...rest } = part;
+  return {
+    ...rest,
+    ...typeof toolCallId === "string" ? { toolCallId: splitToolUseId(toolCallId).rawId } : {}
+  };
+}
+function preparePoolHistory(body, source, target, npm, metadata) {
+  const fresh = structuredClone(body);
+  const input = items(fresh.input);
+  if (input.some(
+    (item) => (item.type === "compaction" || item.type === "context_compaction") && decodeCompactionContent(item.encrypted_content) === null || item.type === "reasoning" && typeof item.encrypted_content === "string"
+  )) throw new Error("unsupported-continuation: opaque provider state requires original route");
+  fresh.input = input;
+  const params = translateResponsesRequest(fresh, npm, metadata);
+  if (source !== poolRouteKey(target)) {
+    params.messages = params.messages.map((message) => ({
+      ...message,
+      content: Array.isArray(message.content) ? message.content.filter((part) => part.type !== "reasoning").map((part) => stripRouteParts(part)) : message.content
+    }));
+  }
+  return params;
+}
+
+// src/pool/codex-prepare.ts
+var EFFORT_CLAIM_KEYS = /* @__PURE__ */ new Set([
+  "effort",
+  "reasoningEffort",
+  "reasoning_effort",
+  "thinkingLevel",
+  "thinkingBudget",
+  "thinking_budget",
+  "effortLevel",
+  "budget_tokens"
+]);
+function omitPoolEffort(body, level) {
+  const reasoning = { ...body.reasoning };
+  delete reasoning.effort;
+  if (level !== null) reasoning.effort = level;
+  const next = { ...body };
+  if (Object.keys(reasoning).length > 0) next.reasoning = reasoning;
+  else delete next.reasoning;
+  return next;
+}
+function translatedEffortClaim(providerOptions) {
+  for (const [provider, value] of Object.entries(providerOptions ?? {})) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    for (const [key, nested] of Object.entries(value)) {
+      if (EFFORT_CLAIM_KEYS.has(key)) return provider + "." + key;
+      if (!nested || typeof nested !== "object" || Array.isArray(nested)) continue;
+      for (const inner of Object.keys(nested)) {
+        if (EFFORT_CLAIM_KEYS.has(inner)) return provider + "." + key + "." + inner;
+      }
+    }
+  }
+  return void 0;
+}
+async function prepareCodexPoolRoutes(options) {
+  const routes = [];
+  for (const member of options.pool.members) {
+    options.signal.throwIfAborted();
+    const provider = options.providers.find((item) => item.id === member.providerId);
+    const model = provider?.models.find((item) => item.id === member.modelId);
+    if (!provider || !model || !model.npm || model.modelFormat === "cloud-code") continue;
+    const revision = poolEndpointRevision({
+      providerId: provider.id,
+      authRef: provider.authRef,
+      npm: model.npm,
+      baseURL: model.apiBaseUrl,
+      upstreamModelId: model.upstreamModelId,
+      headers: provider.headers
+    });
+    const receipt = currentPoolReceipt(options.receipts, member, revision, Date.now());
+    if (!receipt) continue;
+    const freeStatus = classifyFreeStatus({ model, providerId: provider.id });
+    if (freeStatus !== "verified_free") continue;
+    if (!receipt.billingSafe || !receipt.targets.includes("codex")) continue;
+    const identity = { account: provider.id, endpointRevision: revision, model: model.id };
+    const requested = options.body.reasoning?.effort ?? options.pool.effort;
+    const auto = requested === "auto";
+    if (!auto && !receipt.effortLevels.includes(requested)) continue;
+    const body = omitPoolEffort(options.body, auto ? null : requested);
+    const translate = options.translate ?? preparePoolHistory;
+    const params = translate(body, options.source, identity, model.npm, {
+      ...model,
+      providerId: provider.id,
+      apiBaseUrl: model.apiBaseUrl
+    });
+    if (auto && translatedEffortClaim(params.providerOptions)) continue;
+    params.maxOutputTokens = typeof body.max_output_tokens === "number" ? body.max_output_tokens : receipt.maxOutputTokens;
+    if (!Number.isSafeInteger(params.maxOutputTokens) || params.maxOutputTokens <= 0 || params.maxOutputTokens > receipt.maxOutputTokens) continue;
+    const context = await (options.checkContext ?? defaultContextCheck)(params, receipt);
+    if (!context.verified || !context.fits) continue;
+    const scopes = [poolEndpointScope(provider.id, revision, model.id)];
+    const unavailableUntil = await options.health.cooldownFor({ id: revision, scopes });
+    if (unavailableUntil !== void 0 && unavailableUntil > Date.now()) continue;
+    const apiKey = await resolveLocalProviderApiKey(provider);
+    if (apiKey === null || apiKey === void 0) continue;
+    const languageModel = await createLanguageModel({
+      npm: model.npm,
+      modelId: model.upstreamModelId,
+      apiKey,
+      baseURL: model.apiBaseUrl,
+      providerId: provider.id,
+      authType: provider.authType,
+      oauthAccountId: provider.oauthAccountId,
+      providerData: provider.providerData,
+      headers: provider.headers,
+      sessionId: options.sessionId,
+      refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
+    });
+    const { toolContext: _toolContext, instructions, ...sdkParams } = params;
+    const dispatch = sdkPoolRoute({
+      member,
+      revision,
+      freeStatus,
+      catalogVerified: true,
+      accessVerified: true,
+      billingSafe: receipt.billingSafe,
+      targets: receipt.targets,
+      toolsVerified: receipt.tools,
+      // Auto is constructively verified: Relay omits the field and any translator
+      // claim is refused above, so no named default rung is required.
+      defaultEffortVerified: true,
+      effortLevels: receipt.effortLevels,
+      contextFits: context.fits,
+      contextVerified: context.verified
+    }, languageModel, { ...sdkParams, system: instructions, maxOutputTokens: params.maxOutputTokens }, { store: options.health, scopes });
+    routes.push({ ...dispatch, identity, toolContext: params.toolContext });
+  }
+  return routes;
+}
+async function defaultContextCheck(params, receipt) {
+  const { fits } = poolRequestFitsWindow({
+    messages: params.messages,
+    instructions: params.instructions,
+    tools: params.tools
+  }, receipt.contextWindow, params.maxOutputTokens ?? receipt.maxOutputTokens);
+  return { verified: receipt.contextSource === "provider" || receipt.contextSource === "observed" || receipt.contextSource === "attested", fits };
+}
+
+// src/pool/claude-prepare.ts
+function omitClaudeEffort(body, level) {
+  const output = { ...body.output_config };
+  delete output.effort;
+  if (level !== null) output.effort = level;
+  const next = { ...body };
+  if (Object.keys(output).length > 0) next.output_config = output;
+  else delete next.output_config;
+  return next;
+}
+async function prepareClaudePoolRoutes(options) {
+  const routes = [];
+  if (options.body.thinking && typeof options.body.thinking === "object") {
+    const budget = options.body.thinking.budget_tokens;
+    if (typeof budget === "number" && budget > 0) return routes;
+  }
+  const clientEffort = options.body.output_config?.effort;
+  const requested = clientEffort ?? options.pool.effort;
+  const auto = requested === "auto";
+  for (const member of options.pool.members) {
+    options.signal.throwIfAborted();
+    const provider = options.providers.find((item) => item.id === member.providerId);
+    const model = provider?.models.find((item) => item.id === member.modelId);
+    if (!provider || !model || !model.npm || model.modelFormat === "cloud-code") continue;
+    const revision = poolEndpointRevision({
+      providerId: provider.id,
+      authRef: provider.authRef,
+      npm: model.npm,
+      baseURL: model.apiBaseUrl,
+      upstreamModelId: model.upstreamModelId,
+      headers: provider.headers
+    });
+    const receipt = currentPoolReceipt(options.receipts, member, revision, Date.now());
+    if (!receipt || !receipt.billingSafe || !receipt.targets.includes("claude")) continue;
+    const freeStatus = classifyFreeStatus({ model, providerId: provider.id });
+    if (freeStatus !== "verified_free") continue;
+    if (!auto && !receipt.effortLevels.includes(requested)) continue;
+    const body = omitClaudeEffort(options.body, auto ? null : requested);
+    const params = translateRequest(body, model.npm, {
+      reasoningMetadata: {
+        ...model,
+        providerId: provider.id,
+        apiBaseUrl: model.apiBaseUrl
+      }
+    });
+    if (auto && translatedEffortClaim(params.providerOptions)) continue;
+    const requestedOutput = typeof body.max_tokens === "number" ? body.max_tokens : receipt.maxOutputTokens;
+    if (!Number.isSafeInteger(requestedOutput) || requestedOutput <= 0 || requestedOutput > receipt.maxOutputTokens) continue;
+    params.maxOutputTokens = requestedOutput;
+    const fits = poolRequestFitsWindow({
+      messages: params.messages,
+      instructions: params.instructions,
+      tools: params.tools
+    }, receipt.contextWindow, requestedOutput).fits;
+    if (!fits) continue;
+    const scopes = [poolEndpointScope(provider.id, revision, model.id)];
+    const until = await options.health.cooldownFor({ id: revision, scopes });
+    if (until !== void 0 && until > Date.now()) continue;
+    const apiKey = await resolveLocalProviderApiKey(provider);
+    if (!apiKey) continue;
+    const languageModel = await createLanguageModel({
+      npm: model.npm,
+      modelId: model.upstreamModelId,
+      apiKey,
+      baseURL: model.apiBaseUrl,
+      providerId: provider.id,
+      authType: provider.authType,
+      oauthAccountId: provider.oauthAccountId,
+      providerData: provider.providerData,
+      headers: provider.headers,
+      sessionId: options.sessionId,
+      refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
+    });
+    routes.push(sdkPoolRoute({
+      member,
+      revision,
+      freeStatus,
+      catalogVerified: true,
+      accessVerified: true,
+      billingSafe: true,
+      targets: receipt.targets,
+      toolsVerified: receipt.tools,
+      defaultEffortVerified: true,
+      effortLevels: receipt.effortLevels,
+      contextFits: true,
+      contextVerified: true
+    }, languageModel, {
+      messages: params.messages,
+      tools: params.tools,
+      system: params.instructions,
+      maxOutputTokens: requestedOutput,
+      temperature: params.temperature,
+      providerOptions: params.providerOptions,
+      headers: params.headers
+    }, { store: options.health, scopes }));
+  }
+  return routes;
+}
+
+// src/pool/codex-retry.ts
+import { createHash as createHash3 } from "crypto";
+var DEFAULT_LIMITS2 = {
+  ttlMs: 6e4,
+  maxEntries: 128,
+  maxResponseBytes: 2 * 1024 * 1024
+};
+function canonical(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+  const record = value;
+  return "{" + Object.keys(record).sort().map((key) => JSON.stringify(key) + ":" + canonical(record[key])).join(",") + "}";
+}
+function requestFingerprint(request2) {
+  return createHash3("sha256").update(canonical(request2)).digest("hex");
+}
+function checkLimit2(name, value) {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error("Invalid retry limit: " + name);
+}
+var CodexRetryGuard = class {
+  constructor(limits = {}, now = Date.now) {
+    this.now = now;
+    this.limits = { ...DEFAULT_LIMITS2, ...limits };
+    for (const [name, value] of Object.entries(this.limits)) checkLimit2(name, value);
+  }
+  now;
+  entries = /* @__PURE__ */ new Map();
+  limits;
+  /**
+   * Claims one request operation. turnId must be the observed client turn;
+   * fingerprint must hash the full translated request.
+   */
+  acquire(turnId, fingerprint) {
+    if (!turnId || !fingerprint) throw new Error("turn-id-and-fingerprint-required");
+    this.prune();
+    const key = JSON.stringify([turnId, fingerprint]);
+    const existing = this.entries.get(key);
+    if (existing) {
+      if (existing.status === "active") return { kind: "busy" };
+      if (existing.status === "failed") return { kind: "blocked", reason: existing.reason ?? "previous-attempt-failed" };
+      return { kind: "replay", response: existing.response };
+    }
+    if (this.entries.size >= this.limits.maxEntries) {
+      return { kind: "blocked", reason: "retry-guard-capacity" };
+    }
+    const entry = { status: "active", token: /* @__PURE__ */ Symbol(), expires: this.now() + this.limits.ttlMs };
+    this.entries.set(key, entry);
+    const settle = (token) => this.entries.get(key)?.token === token;
+    return {
+      kind: "owner",
+      complete: (response) => {
+        if (!settle(entry.token)) return;
+        if (typeof response !== "string" || Buffer.byteLength(response, "utf8") > this.limits.maxResponseBytes) {
+          this.entries.set(key, { status: "failed", token: entry.token, expires: this.now() + this.limits.ttlMs, reason: "response-too-large" });
+          return;
+        }
+        this.entries.set(key, { status: "succeeded", token: entry.token, expires: this.now() + this.limits.ttlMs, response });
+      },
+      fail: (reason, postcommit = false) => {
+        if (!settle(entry.token)) return;
+        this.entries.set(key, {
+          status: "failed",
+          token: entry.token,
+          expires: this.now() + this.limits.ttlMs,
+          reason: reason || "previous-attempt-failed",
+          postcommit
+        });
+      },
+      release: () => {
+        if (settle(entry.token)) this.entries.delete(key);
+      }
+    };
+  }
+  prune() {
+    const now = this.now();
+    for (const [key, entry] of this.entries) {
+      if (entry.status !== "active" && entry.expires <= now) this.entries.delete(key);
+    }
+  }
+};
+
+// src/pool/codex-identity.ts
+function codexPoolIdentity(headers) {
+  const raw = headers["x-codex-turn-metadata"];
+  if (typeof raw !== "string" || Buffer.byteLength(raw) > 8192) return void 0;
+  let metadata;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return void 0;
+    metadata = parsed;
+  } catch {
+    return void 0;
+  }
+  const valid = (value) => typeof value === "string" && value.length > 0 && value.length <= 256;
+  if (!valid(metadata.session_id) || !valid(metadata.thread_id) || !valid(metadata.turn_id)) return void 0;
+  const agent = metadata.agent_name;
+  if (agent !== void 0 && !valid(agent)) return void 0;
+  const conversation = JSON.stringify([metadata.session_id, metadata.thread_id, agent ?? ""]);
+  return { conversation, turn: JSON.stringify([conversation, metadata.turn_id]) };
+}
+
+// src/pool/session.ts
+var PoolSessionRoutes = class {
+  constructor(ttlMs = 36e5, capacity = 256, now = Date.now) {
+    this.ttlMs = ttlMs;
+    this.capacity = capacity;
+    this.now = now;
+  }
+  ttlMs;
+  capacity;
+  now;
+  states = /* @__PURE__ */ new Map();
+  begin(scope, eligible) {
+    const routes = [...eligible];
+    if (!scope) return { routes, succeed: (_id) => {
+    } };
+    const previous = this.states.get(scope);
+    const pinned = previous && previous.expires > this.now() ? previous.pinned : void 0;
+    const state = { token: /* @__PURE__ */ Symbol(), pinned, expires: this.now() + this.ttlMs };
+    this.states.delete(scope);
+    this.states.set(scope, state);
+    while (this.states.size > this.capacity) this.states.delete(this.states.keys().next().value);
+    const index = routes.findIndex((route) => route.id === pinned);
+    if (index > 0) routes.unshift(...routes.splice(index, 1));
+    return {
+      routes,
+      succeed: (id) => {
+        if (this.states.get(scope)?.token !== state.token || !routes.some((route) => route.id === id)) return;
+        this.states.set(scope, { ...state, pinned: id, expires: this.now() + this.ttlMs });
+      }
+    };
+  }
+};
+
+// src/pool/codex-response.ts
+async function writeCodexPoolResponse(stream, modelId, write, options = {}) {
+  let completed;
+  let bytes = 0;
+  const context = options.toolContext ?? { namespaceByFlatName: /* @__PURE__ */ new Map(), customToolNames: /* @__PURE__ */ new Set() };
+  const contextualStream = (async function* () {
+    for await (const part of stream) {
+      const selected = options.getToolContext?.();
+      if (selected) {
+        context.namespaceByFlatName = selected.namespaceByFlatName;
+        context.customToolNames = selected.customToolNames;
+      }
+      yield part;
+    }
+  })();
+  await writeResponsesStream(contextualStream, modelId, (chunk) => {
+    if (options.nonstream) {
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > (options.maxResponseBytes ?? 4 * 1024 * 1024)) throw new Error("Pool response buffer exceeded");
+    } else write(chunk);
+    for (const line of chunk.split(String.fromCharCode(10))) {
+      if (!line.startsWith("data:")) continue;
+      const event = JSON.parse(line.slice(5));
+      if (event.type === "response.completed" || event.type === "response.incomplete") completed = event.response;
+      if (event.type === "response.failed") throw new Error("Pool response failed");
+    }
+  }, void 0, void 0, { toolContext: context });
+  if (!completed) throw new Error("Pool response missing terminal result");
+  return completed;
+}
+
+// src/pool/codex-runtime.ts
+var FREE_POOL_MODEL_ID = "relay-free-pool";
+var DEFAULT_POOL_LIMITS = {
+  attempts: 3,
+  firstContentMs: 2e4,
+  idleMs: 2e4,
+  totalMs: 6e4,
+  bufferBytes: 65536,
+  cleanupMs: 1e3
+};
+var CodexPoolRuntime = class {
+  constructor(pool, prepare, limits = DEFAULT_POOL_LIMITS) {
+    this.pool = pool;
+    this.prepare = prepare;
+    this.limits = limits;
+  }
+  pool;
+  prepare;
+  limits;
+  history = new PoolContinuationStore({ ttlMs: 36e5 });
+  sessions = new PoolSessionRoutes();
+  retries = new CodexRetryGuard();
+  async respond(headers, request2, signal, write) {
+    if (request2.model !== FREE_POOL_MODEL_ID) throw new Error("Pool runtime requires an explicit pool model");
+    const identity = codexPoolIdentity(headers);
+    if (!identity) throw new Error("Pool requires verified Codex conversation and turn metadata");
+    const { body, source } = this.history.resolve(identity.conversation, request2);
+    const lease = this.retries.acquire(identity.turn, requestFingerprint(body));
+    if (lease.kind === "replay") {
+      const cached = JSON.parse(lease.response);
+      if (body.stream === true) for (const chunk of cached.chunks) write(chunk);
+      return cached.response;
+    }
+    if (lease.kind !== "owner") throw new Error("Pool retry " + lease.kind);
+    const chunks = [];
+    let committed = false;
+    try {
+      const routes = await this.prepare(body, source, signal, identity.conversation);
+      let served;
+      const stream = dispatchFreePool(this.pool, routes, {
+        target: "codex",
+        effort: body.reasoning?.effort,
+        tools: Array.isArray(body.tools) && body.tools.length > 0,
+        signal,
+        conversationScope: identity.conversation
+      }, {
+        limits: this.limits,
+        sessions: this.sessions,
+        retryable: retryPoolFailure,
+        onAttempt: (id) => {
+          served = routes.find((route) => JSON.stringify([route.member.providerId, route.revision, route.member.modelId]) === id);
+        }
+      });
+      const response = await writeCodexPoolResponse(stream, FREE_POOL_MODEL_ID, (chunk) => {
+        committed = true;
+        chunks.push(chunk);
+        write(chunk);
+      }, { nonstream: body.stream !== true, getToolContext: () => served?.toolContext });
+      if (!served || typeof response.id !== "string" || !Array.isArray(response.output)) throw new Error("Pool response missing route or history");
+      this.history.remember(response.id, identity.conversation, body, response.output, served.identity);
+      lease.complete(JSON.stringify({ response, chunks }));
+      return response;
+    } catch (error) {
+      if (signal.aborted) lease.release();
+      else lease.fail("Pool request failed", committed);
+      throw error;
+    }
+  }
+};
+
+// src/pool/catalog.ts
+var ALIASES = {
+  codex: FREE_POOL_MODEL_ID,
+  claude: "claude-pool",
+  antigravity: "free-pool"
+};
+function servable(receipt, target, now) {
+  return Boolean(receipt && Number.isFinite(receipt.verifiedAt) && receipt.verifiedAt <= now && Number.isFinite(receipt.expiresAt) && receipt.expiresAt > now && receipt.targets.includes(target) && receipt.billingSafe && Number.isSafeInteger(receipt.contextWindow) && receipt.contextWindow > 0);
+}
+function poolCatalogEntry(pool, receipts, target, now = Date.now()) {
+  const verified = pool.members.map((member) => receipts.find((receipt) => receipt.member.providerId === member.providerId && receipt.member.modelId === member.modelId)).filter((receipt) => servable(receipt, target, now));
+  if (!verified.length) return void 0;
+  const window = Math.min(...verified.map((receipt) => receipt.contextWindow));
+  const reserve = Math.max(4096, Math.ceil(window * 0.1));
+  const levels = verified[0].effortLevels.filter((level) => verified.every((receipt) => receipt.effortLevels.includes(level)));
+  return {
+    id: ALIASES[target],
+    display_name: "Free model pool",
+    context_window: Math.max(1024, window - reserve),
+    supported_reasoning_levels: levels.map((level) => ({ effort: level, description: level }))
+  };
+}
+function codexPoolCatalogEntry(pool, receipts, now = Date.now()) {
+  return poolCatalogEntry(pool, receipts, "codex", now);
+}
+
+// src/pool/claude-session.ts
+import { randomUUID as randomUUID2 } from "crypto";
+import {
+  closeSync,
+  linkSync,
+  mkdirSync,
+  openSync,
+  readFileSync as readFileSync3,
+  rmSync,
+  unlinkSync,
+  writeFileSync as writeFileSync2
+} from "fs";
+import { dirname, join as join5 } from "path";
+function getClaudePoolSessionLockPath(env = process.env) {
+  return join5(getAppHome(env), "claude", "pool-session.json");
+}
+function processAlive2(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+function readLock(path3) {
+  let raw;
+  try {
+    raw = readFileSync3(path3, "utf8");
+  } catch (error) {
+    return error.code === "ENOENT" ? { status: "missing" } : { status: "unreadable" };
+  }
+  try {
+    const value = JSON.parse(raw);
+    if (Number.isSafeInteger(value.pid) && value.pid > 0 && typeof value.token === "string" && typeof value.startedAt === "string") {
+      return { status: "valid", lock: value };
+    }
+  } catch {
+  }
+  return { status: "unreadable" };
+}
+function acquireClaudePoolSessionLock(env = process.env) {
+  const path3 = getClaudePoolSessionLockPath(env);
+  const lock = {
+    pid: process.pid,
+    token: randomUUID2(),
+    startedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  const tempPath = `${path3}.${process.pid}.${lock.token}.tmp`;
+  mkdirSync(dirname(path3), { recursive: true, mode: 448 });
+  writeFileSync2(tempPath, `${JSON.stringify(lock)}
+`, { mode: 384, flag: "wx" });
+  const publish = () => {
+    linkSync(tempPath, path3);
+  };
+  try {
+    let published = false;
+    for (let attempt = 0; attempt < 3 && !published; attempt++) {
+      try {
+        publish();
+        published = true;
+        break;
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+      }
+      const existing = readLock(path3);
+      if (existing.status === "missing") continue;
+      if (existing.status === "unreadable") return { ok: false, reason: "unreadable" };
+      if (processAlive2(existing.lock.pid)) {
+        return { ok: false, reason: "concurrent", pid: existing.lock.pid };
+      }
+      const guardPath = `${path3}.reclaim`;
+      let guard;
+      try {
+        guard = openSync(guardPath, "wx", 384);
+      } catch (guardError) {
+        const current = readLock(path3);
+        if (current.status === "unreadable") return { ok: false, reason: "unreadable" };
+        if (current.status === "valid" && processAlive2(current.lock.pid)) {
+          return { ok: false, reason: "concurrent", pid: current.lock.pid };
+        }
+        throw new Error("Another Claude pool launch is reclaiming a stale lock.", { cause: guardError });
+      }
+      try {
+        const current = readLock(path3);
+        if (current.status === "unreadable") return { ok: false, reason: "unreadable" };
+        if (current.status === "valid" && processAlive2(current.lock.pid)) {
+          return { ok: false, reason: "concurrent", pid: current.lock.pid };
+        }
+        rmSync(path3, { force: true });
+        publish();
+        published = true;
+      } finally {
+        closeSync(guard);
+        rmSync(guardPath, { force: true });
+      }
+    }
+    if (!published) throw new Error("Claude pool lock kept changing during acquisition.");
+  } finally {
+    rmSync(tempPath, { force: true });
+  }
+  return {
+    ok: true,
+    release: () => {
+      const current = readLock(path3);
+      if (current.status !== "valid" || current.lock.token !== lock.token) return;
+      try {
+        unlinkSync(path3);
+      } catch {
+      }
+    }
+  };
+}
+
 // src/prompts.ts
 import * as p3 from "@clack/prompts";
 import pc2 from "picocolors";
@@ -1230,12 +3560,12 @@ function filterModelsBySearch(models, query) {
     return a.index - b.index;
   }).map((result) => result.model);
 }
-function sliceModelPage(items, page, pageSize = MODEL_PAGE_SIZE) {
-  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+function sliceModelPage(items2, page, pageSize = MODEL_PAGE_SIZE) {
+  const totalPages = Math.max(1, Math.ceil(items2.length / pageSize));
   const clampedPage = Math.min(Math.max(0, page), totalPages - 1);
   const start = clampedPage * pageSize;
   return {
-    items: items.slice(start, start + pageSize),
+    items: items2.slice(start, start + pageSize),
     page: clampedPage,
     totalPages
   };
@@ -3241,7 +5571,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-LZOXBKP5.js");
+      const { testModel } = await import("./test-model-WJRYCTFS.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -3444,1188 +5774,12 @@ async function runProvidersCommand(args) {
 // src/codex.ts
 import pc6 from "picocolors";
 import * as p10 from "@clack/prompts";
-import { join as join8 } from "path";
+import { join as join10 } from "path";
 
 // src/codex-proxy.ts
-import { createHash as createHash3 } from "crypto";
+import { createHash as createHash5 } from "crypto";
 import { createServer } from "http";
 import { WebSocket } from "ws";
-
-// src/codex-responses-adapter.ts
-import { createHash } from "crypto";
-import { streamText, generateText, tool, jsonSchema } from "ai";
-function createCodexToolContext() {
-  return { namespaceByFlatName: /* @__PURE__ */ new Map(), customToolNames: /* @__PURE__ */ new Set() };
-}
-var TOOL_SEARCH_NAME = "tool_search";
-var MAX_MODEL_TOOL_NAME_LENGTH = 64;
-var TOOL_NAME_DIGEST_LENGTH = 10;
-function flatNamespaceName(namespace, name) {
-  const flat = `${namespace}__${name}`;
-  if (flat.length <= MAX_MODEL_TOOL_NAME_LENGTH) return flat;
-  const digest = createHash("sha256").update(flat).digest("hex").slice(0, TOOL_NAME_DIGEST_LENGTH);
-  const prefixLength = MAX_MODEL_TOOL_NAME_LENGTH - digest.length - 2;
-  return `${flat.slice(0, prefixLength)}__${digest}`;
-}
-function ingestToolDefs(tools, ctx) {
-  for (const t of tools ?? []) {
-    if (!t || typeof t !== "object") continue;
-    if (t.type === "namespace") {
-      for (const sub of t.tools ?? []) {
-        if (sub?.type === "custom" && sub.name) {
-          ctx.customToolNames.add(sub.name);
-        } else if (sub?.type === "function" && sub.name) {
-          ctx.namespaceByFlatName.set(flatNamespaceName(t.name, sub.name), {
-            namespace: t.name,
-            name: sub.name,
-            parameters: sub.parameters
-          });
-        }
-      }
-    } else if (t.type === "custom" && t.name) {
-      ctx.customToolNames.add(t.name);
-    }
-  }
-}
-function flattenNamespaceTools(ns) {
-  return (ns.tools ?? []).filter((sub) => (sub?.type === "function" || sub?.type === "custom") && !!sub.name).map((sub) => sub.type === "custom" ? sub : { ...sub, name: flatNamespaceName(ns.name, sub.name) });
-}
-function liftAdditionalToolsInput(input, tools) {
-  let lifted = [];
-  const keptInput = [];
-  let changed = false;
-  for (const item of input) {
-    if (item && item.type === "additional_tools") {
-      changed = true;
-      if (Array.isArray(item.tools)) lifted = lifted.concat(item.tools);
-      if (item.content !== void 0) {
-        keptInput.push({ role: item.role ?? "developer", content: item.content });
-      }
-      continue;
-    }
-    keptInput.push(item);
-  }
-  if (!changed) return { input, tools };
-  return { input: keptInput, tools: lifted.length ? [...tools, ...lifted] : tools };
-}
-function messageText(content) {
-  if (typeof content === "string") return content;
-  return (content ?? []).map((p17) => p17.type === "output_text" || p17.type === "input_text" || p17.type === "text" ? p17.text ?? "" : "").join("");
-}
-function messageContent(content) {
-  if (typeof content === "string") return content;
-  const parts = (content ?? []).flatMap((part) => {
-    if (part.type === "output_text" || part.type === "input_text" || part.type === "text") {
-      return typeof part.text === "string" ? [{ type: "text", text: part.text }] : [];
-    }
-    if (part.type === "input_image" && typeof part.image_url === "string" && part.image_url.trim()) {
-      return [{ type: "image", image: part.image_url }];
-    }
-    return [];
-  });
-  return parts.length > 0 ? parts : [{ type: "text", text: "" }];
-}
-function splitToolOutputImages(output) {
-  if (!Array.isArray(output)) return { content: serializeToolResultContent(output), images: [] };
-  const images = [];
-  const rest = [];
-  for (const part of output) {
-    const record = part && typeof part === "object" ? part : void 0;
-    const imageUrl = record?.["type"] === "input_image" ? record["image_url"] : void 0;
-    if (typeof imageUrl === "string" && imageUrl.trim()) images.push(imageUrl);
-    else rest.push(part);
-  }
-  if (images.length === 0) return { content: serializeToolResultContent(output), images };
-  return {
-    content: rest.length > 0 ? serializeToolResultContent(rest) : "[image attached in the following message]",
-    images
-  };
-}
-function extractDeveloperAndInstructions(items, instructions) {
-  const developerParts = [];
-  const remaining = [];
-  for (const item of items) {
-    if ("role" in item && item.role === "developer") {
-      const text7 = messageText(item.content);
-      if (text7.trim()) developerParts.push(text7.trim());
-    } else {
-      remaining.push(item);
-    }
-  }
-  const parts = [...developerParts];
-  if (instructions?.trim()) parts.push(instructions.trim());
-  const system = parts.length ? parts.join("\n") : void 0;
-  return { system, remaining };
-}
-function annotateToolNamesFromCalls(items) {
-  const nameByCallId = /* @__PURE__ */ new Map();
-  for (const item of items) {
-    if (item.type === "function_call") {
-      const { rawId } = splitToolUseId(item.call_id);
-      nameByCallId.set(rawId, item.namespace ? flatNamespaceName(item.namespace, item.name) : item.name);
-    } else if (item.type === "tool_search_call") {
-      const { rawId } = splitToolUseId(item.call_id);
-      nameByCallId.set(rawId, TOOL_SEARCH_NAME);
-    } else if (item.type === "custom_tool_call") {
-      const { rawId } = splitToolUseId(item.call_id);
-      nameByCallId.set(rawId, item.name);
-    }
-  }
-  return nameByCallId;
-}
-function customToolInputFromArgs(name, args) {
-  if (typeof args === "string") {
-    const trimmed = args.trim();
-    if (name === "apply_patch" && trimmed.startsWith("*** Begin Patch")) return args;
-    try {
-      return customToolInputFromArgs(name, JSON.parse(trimmed));
-    } catch {
-      return args;
-    }
-  }
-  if (args && typeof args === "object") {
-    const obj = args;
-    if (Array.isArray(obj.command) && obj.command[0] === "apply_patch" && typeof obj.command[1] === "string") {
-      return obj.command[1];
-    }
-    if (typeof obj.input === "string") return obj.input;
-    for (const v of Object.values(obj)) {
-      if (typeof v === "string") return v;
-    }
-  }
-  return serializeToolResultContent(args);
-}
-function mergeConsecutiveMessages(messages) {
-  if (messages.length <= 1) return messages;
-  const out = [];
-  for (const msg of messages) {
-    const prev = out[out.length - 1];
-    if (prev && prev.role === msg.role) {
-      const prevContent = Array.isArray(prev.content) ? prev.content : [{ type: "text", text: String(prev.content ?? "") }];
-      const msgContent = Array.isArray(msg.content) ? msg.content : [{ type: "text", text: String(msg.content ?? "") }];
-      prev.content = [...prevContent, ...msgContent];
-    } else {
-      out.push(msg);
-    }
-  }
-  return out;
-}
-function ensureUserFirst(messages) {
-  if (messages.length === 0) return [{ role: "user", content: [{ type: "text", text: "(empty input)" }] }];
-  if (messages[0].role === "assistant") {
-    return [{ role: "user", content: [{ type: "text", text: "(conversation continued)" }] }, ...messages];
-  }
-  return messages;
-}
-function reasoningSummaryText(item) {
-  return (item.summary ?? []).map((part) => part.type === "summary_text" ? part.text ?? "" : "").join("");
-}
-function makeReasoningOutputItem(id, text7) {
-  return {
-    id,
-    type: "reasoning",
-    summary: text7.trim() ? [{ type: "summary_text", text: text7 }] : []
-  };
-}
-function translateResponsesInput(input, instructions, npm, toolContext = createCodexToolContext()) {
-  if (typeof input === "string") {
-    return {
-      instructions: instructions?.trim() || void 0,
-      messages: [{ role: "user", content: [{ type: "text", text: input }] }],
-      deferredTools: []
-    };
-  }
-  const { system, remaining } = extractDeveloperAndInstructions(input, instructions);
-  const toolNames = annotateToolNamesFromCalls(remaining);
-  const messages = [];
-  const deferredTools = [];
-  let pendingReasoning = "";
-  for (const item of remaining) {
-    if (item.type === "reasoning") {
-      pendingReasoning += reasoningSummaryText(item);
-      continue;
-    }
-    if (item.type === "function_call") {
-      const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
-      const parts = [];
-      if (pendingReasoning.trim()) {
-        parts.push({ type: "reasoning", text: pendingReasoning });
-        pendingReasoning = "";
-      }
-      const toolPart = {
-        type: "tool-call",
-        toolCallId: rawId,
-        toolName: item.namespace ? flatNamespaceName(item.namespace, item.name) : item.name,
-        input: parseToolArguments(item.arguments)
-      };
-      if (thoughtSignature && npm === "@ai-sdk/google") {
-        toolPart.providerOptions = { google: { thoughtSignature } };
-      }
-      parts.push(toolPart);
-      messages.push({ role: "assistant", content: parts });
-    } else if (item.type === "function_call_output") {
-      const { rawId } = splitToolUseId(item.call_id);
-      const toolName = toolNames.get(rawId) ?? "unknown";
-      const { content, images } = splitToolOutputImages(item.output);
-      messages.push({
-        role: "tool",
-        content: [{
-          type: "tool-result",
-          toolCallId: rawId,
-          toolName,
-          output: { type: "text", value: content }
-        }]
-      });
-      if (images.length > 0) {
-        messages.push({
-          role: "user",
-          content: [
-            { type: "text", text: `Image${images.length > 1 ? "s" : ""} returned by ${toolName} (${rawId}):` },
-            ...images.map((image) => ({ type: "image", image }))
-          ]
-        });
-      }
-    } else if (item.type === "tool_search_call") {
-      const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
-      const parts = [];
-      if (pendingReasoning.trim()) {
-        parts.push({ type: "reasoning", text: pendingReasoning });
-        pendingReasoning = "";
-      }
-      parts.push({
-        type: "tool-call",
-        toolCallId: rawId,
-        toolName: TOOL_SEARCH_NAME,
-        input: parseToolArguments(item.arguments),
-        ...thoughtSignature && npm === "@ai-sdk/google" ? { providerOptions: { google: { thoughtSignature } } } : {}
-      });
-      messages.push({ role: "assistant", content: parts });
-    } else if (item.type === "tool_search_output") {
-      const { rawId } = splitToolUseId(item.call_id);
-      const surfacedTools = item.tools ?? [];
-      ingestToolDefs(surfacedTools, toolContext);
-      for (const t of surfacedTools) {
-        if (t.type === "namespace") deferredTools.push(...flattenNamespaceTools(t));
-        else if (t.type === "function" || t.type === "custom") deferredTools.push(t);
-      }
-      messages.push({
-        role: "tool",
-        content: [{
-          type: "tool-result",
-          toolCallId: rawId,
-          toolName: TOOL_SEARCH_NAME,
-          output: { type: "text", value: serializeToolResultContent(surfacedTools) }
-        }]
-      });
-    } else if (item.type === "custom_tool_call") {
-      const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
-      const parts = [];
-      if (pendingReasoning.trim()) {
-        parts.push({ type: "reasoning", text: pendingReasoning });
-        pendingReasoning = "";
-      }
-      parts.push({
-        type: "tool-call",
-        toolCallId: rawId,
-        toolName: item.name,
-        input: { input: typeof item.input === "string" ? item.input : serializeToolResultContent(item.input) },
-        ...thoughtSignature && npm === "@ai-sdk/google" ? { providerOptions: { google: { thoughtSignature } } } : {}
-      });
-      messages.push({ role: "assistant", content: parts });
-    } else if (item.type === "custom_tool_call_output") {
-      const { rawId } = splitToolUseId(item.call_id);
-      messages.push({
-        role: "tool",
-        content: [{
-          type: "tool-result",
-          toolCallId: rawId,
-          toolName: toolNames.get(rawId) ?? "unknown",
-          output: { type: "text", value: serializeToolResultContent(item.output) }
-        }]
-      });
-    } else if (item.type === "agent_message") {
-      const text7 = messageText(item.content);
-      if (text7.trim()) {
-        messages.push({ role: "user", content: [{ type: "text", text: text7 }] });
-      }
-    } else if (item.type === "compaction" || item.type === "context_compaction") {
-      const summary = decodeCompactionContent(item.encrypted_content) ?? "";
-      if (summary.trim()) {
-        messages.push({ role: "user", content: [{ type: "text", text: `[Summary of earlier conversation]
-${summary}` }] });
-      }
-    } else if ("role" in item) {
-      const role = item.role === "assistant" ? "assistant" : "user";
-      const content = messageContent(item.content);
-      messages.push({ role, content });
-    }
-  }
-  return {
-    instructions: system,
-    messages: ensureUserFirst(mergeConsecutiveMessages(messages)),
-    deferredTools
-  };
-}
-var TOOL_SEARCH_DESCRIPTION = "Search the available deferred Codex tools, plugin tools, MCP namespaces, and connectors by query. Use this when a needed tool is not already present in the current tool list. Returns matching tool definitions for a follow-up call.";
-var TOOL_SEARCH_PARAMETERS = {
-  type: "object",
-  properties: {
-    query: { type: "string", description: "Search query describing the tool or capability needed." },
-    limit: { type: "number", description: "Maximum number of matching tools to return. Defaults to 8." }
-  },
-  required: ["query"],
-  additionalProperties: false
-};
-var CUSTOM_TOOL_INPUT_SCHEMA = {
-  type: "object",
-  properties: { input: { type: "string", description: "Freeform input for this custom tool (e.g. a patch body)." } },
-  required: ["input"],
-  additionalProperties: false
-};
-function translateResponsesTools(tools, options = {}) {
-  if (!tools?.length) return void 0;
-  const out = {};
-  let toolCount = 0;
-  const addTool = (name, description, parameters) => {
-    if (options.maxTools !== void 0 && toolCount >= options.maxTools) return;
-    out[name] = tool({
-      description: description ?? "",
-      inputSchema: jsonSchema(normalizeToolSchemaForNpm(parameters ?? { type: "object", properties: {} }, options.npm))
-    });
-    toolCount++;
-  };
-  for (const t of tools) {
-    if (!t || typeof t !== "object") continue;
-    if (t.type === "namespace") {
-      for (const nested of t.tools ?? []) {
-        if (!nested.name) continue;
-        if (nested.type === "custom") {
-          addTool(nested.name, nested.description, CUSTOM_TOOL_INPUT_SCHEMA);
-        } else if (nested.type === "function") {
-          addTool(flatNamespaceName(t.name, nested.name), nested.description, nested.parameters);
-        }
-      }
-      continue;
-    }
-    if (t.type === "custom") {
-      if (!t.name) continue;
-      addTool(t.name, t.description, CUSTOM_TOOL_INPUT_SCHEMA);
-      continue;
-    }
-    if (t.type === "tool_search") {
-      addTool(TOOL_SEARCH_NAME, TOOL_SEARCH_DESCRIPTION, TOOL_SEARCH_PARAMETERS);
-      continue;
-    }
-    if (t.type !== "function" || !t.name) continue;
-    addTool(t.name, t.description, t.parameters);
-  }
-  return Object.keys(out).length ? out : void 0;
-}
-function omitsMaxOutputTokens(metadata) {
-  return metadata?.providerId !== void 0 && isProviderKind(metadata.providerId, "openrouter") || (metadata?.apiBaseUrl?.includes("openrouter.ai") ?? false);
-}
-function translateResponsesRequest(body, npm, metadata, options = {}) {
-  const toolContext = createCodexToolContext();
-  let effectiveTools = body.tools ?? [];
-  let effectiveInput = body.input;
-  if (Array.isArray(effectiveInput)) {
-    const lifted = liftAdditionalToolsInput(effectiveInput, effectiveTools);
-    effectiveInput = lifted.input;
-    effectiveTools = lifted.tools;
-  }
-  ingestToolDefs(effectiveTools, toolContext);
-  const { instructions: system, messages, deferredTools } = translateResponsesInput(effectiveInput, body.instructions, npm, toolContext);
-  const effort = body.reasoning?.effort;
-  const providerOptions = deepMergeProviderOptions(
-    thinkingProviderOptions(npm),
-    effortProviderOptions(npm, effort, metadata?.upstreamModelId ?? body.model, metadata)
-  );
-  const tools = translateResponsesTools([...effectiveTools, ...deferredTools], { ...options, npm });
-  const bridgedGemini = npm === "@ai-sdk/anthropic" && metadata?.providerId !== void 0 && isProviderKind(metadata.providerId, "antigravity") && /(?:^|__)gemini-/.test(metadata.upstreamModelId ?? body.model);
-  return {
-    instructions: system,
-    messages,
-    tools,
-    toolContext,
-    maxOutputTokens: omitsMaxOutputTokens(metadata) ? void 0 : body.max_output_tokens ?? (bridgedGemini ? 65536 : void 0),
-    temperature: body.temperature,
-    providerOptions,
-    headers: options.requestHeaders
-  };
-}
-function newResponseId() {
-  return `resp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-}
-function newItemId(prefix) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-}
-function functionCallItemId(upstreamId) {
-  return upstreamId.startsWith("fc_") ? upstreamId : newItemId("fc");
-}
-function usageFromPart(part) {
-  const input = part.totalUsage?.inputTokens ?? 0;
-  const output = part.totalUsage?.outputTokens ?? 0;
-  const cached = part.totalUsage?.inputTokenDetails?.cacheReadTokens ?? 0;
-  return {
-    input_tokens: input,
-    output_tokens: output,
-    total_tokens: input + output,
-    ...cached > 0 ? { input_tokens_details: { cached_tokens: cached } } : {}
-  };
-}
-var CODEX_SUBAGENT_TOOL_NAMES = /* @__PURE__ */ new Set(["spawn_agent", "multi_agent_v1__spawn_agent"]);
-function isCodexSubagentToolName(toolName) {
-  return CODEX_SUBAGENT_TOOL_NAMES.has(toolName) || toolName.endsWith("__spawn_agent");
-}
-function normalizeCodexSubagentArguments(toolName, argsStr) {
-  if (!isCodexSubagentToolName(toolName)) return argsStr;
-  const args = parseToolArguments(argsStr);
-  for (const key of ["model", "reasoning_effort", "service_tier"]) {
-    if (args[key] === "") delete args[key];
-  }
-  const items = args.items;
-  const message = args.message;
-  if (Array.isArray(items) && items.length > 0) {
-    delete args.message;
-  } else if (typeof message === "string" && message.trim()) {
-    delete args.items;
-  } else if (Array.isArray(items) && items.length === 0) {
-    delete args.items;
-  }
-  return JSON.stringify(args);
-}
-function resolveOutputKind(flatName, ctx) {
-  if (!ctx) return { kind: "plain" };
-  if (flatName === TOOL_SEARCH_NAME) return { kind: "tool_search" };
-  if (ctx.customToolNames.has(flatName)) return { kind: "custom" };
-  const ns = ctx.namespaceByFlatName.get(flatName);
-  if (ns) return { kind: "namespace", namespace: ns.namespace, name: ns.name };
-  return { kind: "plain" };
-}
-function toolItemId(kind, upstreamId) {
-  switch (kind.kind) {
-    case "tool_search":
-      return upstreamId.startsWith("tsc_") ? upstreamId : newItemId("tsc");
-    case "custom":
-      return upstreamId.startsWith("ctc_") ? upstreamId : newItemId("ctc");
-    default:
-      return functionCallItemId(upstreamId);
-  }
-}
-function buildFinalToolItem(kind, flatName, callId, itemId, argsStr) {
-  argsStr = normalizeCodexSubagentArguments(flatName, argsStr);
-  switch (kind.kind) {
-    case "namespace":
-      return { type: "function_call", id: itemId, call_id: callId, namespace: kind.namespace, name: kind.name, arguments: argsStr, status: "completed" };
-    case "tool_search": {
-      const args = parseToolArguments(argsStr);
-      if (typeof args.limit === "string" && /^-?\d+$/.test(args.limit)) args.limit = Number(args.limit);
-      return { type: "tool_search_call", id: itemId, call_id: callId, execution: "client", arguments: args, status: "completed" };
-    }
-    case "custom":
-      return { type: "custom_tool_call", id: itemId, call_id: callId, name: flatName, input: customToolInputFromArgs(flatName, parseToolArguments(argsStr)), status: "completed" };
-    default:
-      return { type: "function_call", id: itemId, call_id: callId, name: flatName, arguments: argsStr, status: "completed" };
-  }
-}
-function incompleteReasonForFinish(finishReason) {
-  if (finishReason === "length") return "max_output_tokens";
-  if (finishReason === "content-filter") return "content_filter";
-  return void 0;
-}
-var PROGRESS_INTERVAL_MS = 3e3;
-var REPEAT_TAIL_CHARS = 200;
-var REPEAT_STREAK_LIMIT = 3;
-var LOOP_NOTICE = "\n\n[relay-ai: generation stopped after detecting a repetition loop]";
-var INITIAL_REPEAT_TRACKER = { tail: "", len: 0, streak: 0 };
-function trackRepetition(current, prev) {
-  const tail = current.length >= REPEAT_TAIL_CHARS ? current.slice(-REPEAT_TAIL_CHARS) : current;
-  const grew = current.length - prev.len >= REPEAT_TAIL_CHARS;
-  const stale = tail.length === REPEAT_TAIL_CHARS && tail === prev.tail && grew;
-  return { tail, len: current.length, streak: stale ? prev.streak + 1 : 0 };
-}
-async function writeResponsesStream(fullStream, modelId, write, onDone, onProgress, options) {
-  const emit = (type, data) => write(sseChunk(type, data));
-  const responseId = newResponseId();
-  const createdAt = Math.floor(Date.now() / 1e3);
-  let usage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
-  emit("response.created", {
-    type: "response.created",
-    response: {
-      id: responseId,
-      object: "response",
-      model: modelId,
-      created_at: createdAt,
-      status: "in_progress",
-      output: []
-    }
-  });
-  let outputIndex = 0;
-  let textItemId = null;
-  let textOutputIndex = 0;
-  let textFull = "";
-  const toolStates = [];
-  const toolStatesById = /* @__PURE__ */ new Map();
-  let currentToolState = null;
-  const streamStartedAt = Date.now();
-  let lastProgressAt = streamStartedAt;
-  const recentPartCounts = /* @__PURE__ */ new Map();
-  let reasoningItemId = null;
-  let reasoningText = "";
-  let reasoningOutputIndex = 0;
-  const outputItems = [];
-  let reasoningRepeat = INITIAL_REPEAT_TRACKER;
-  let textRepeat = INITIAL_REPEAT_TRACKER;
-  let loopDetected;
-  let finishReason;
-  const ensureTextItem = () => {
-    if (!textItemId) {
-      textItemId = newItemId("msg");
-      textOutputIndex = outputIndex;
-      outputIndex++;
-      emit("response.output_item.added", {
-        type: "response.output_item.added",
-        output_index: textOutputIndex,
-        item: { id: textItemId, type: "message", role: "assistant", status: "in_progress", content: [] }
-      });
-      emit("response.content_part.added", {
-        type: "response.content_part.added",
-        item_id: textItemId,
-        output_index: textOutputIndex,
-        content_index: 0,
-        part: { type: "output_text", text: "" }
-      });
-    }
-    return textItemId;
-  };
-  const rememberToolState = (state) => {
-    toolStates.push(state);
-    toolStatesById.set(state.itemId, state);
-    toolStatesById.set(state.callId, state);
-    currentToolState = state;
-    return state;
-  };
-  const createToolState = (rawId, name, signature) => {
-    const kind = resolveOutputKind(name ?? "", options?.toolContext);
-    const upstreamId = rawId ?? newItemId("call");
-    const itemId = toolItemId(kind, upstreamId);
-    const state = rememberToolState({
-      itemId,
-      callId: encodeToolUseId(upstreamId, signature, false),
-      name: name ?? "unknown",
-      outputIndex: outputIndex++,
-      args: "",
-      kind
-    });
-    emit("response.output_item.added", {
-      type: "response.output_item.added",
-      output_index: state.outputIndex,
-      item: {
-        type: "function_call",
-        id: state.itemId,
-        call_id: state.callId,
-        name: state.name,
-        arguments: "",
-        status: "in_progress"
-      }
-    });
-    return state;
-  };
-  const findToolState = (part) => {
-    const key = part.id ?? part.toolCallId;
-    if (key) return toolStatesById.get(key) ?? currentToolState;
-    return currentToolState;
-  };
-  const appendToolArgs = (state, delta) => {
-    if (!delta) return;
-    state.args += delta;
-    emit("response.function_call_arguments.delta", {
-      type: "response.function_call_arguments.delta",
-      item_id: state.itemId,
-      output_index: state.outputIndex,
-      delta
-    });
-  };
-  for await (const part of fullStream) {
-    recentPartCounts.set(part.type, (recentPartCounts.get(part.type) ?? 0) + 1);
-    switch (part.type) {
-      case "reasoning-start":
-        reasoningText = "";
-        reasoningItemId = newItemId("rs");
-        reasoningOutputIndex = outputIndex++;
-        emit("response.output_item.added", {
-          type: "response.output_item.added",
-          output_index: reasoningOutputIndex,
-          item: { id: reasoningItemId, type: "reasoning", summary: [] }
-        });
-        break;
-      case "reasoning-delta":
-        if (!reasoningItemId) {
-          reasoningItemId = newItemId("rs");
-          reasoningOutputIndex = outputIndex++;
-          emit("response.output_item.added", {
-            type: "response.output_item.added",
-            output_index: reasoningOutputIndex,
-            item: { id: reasoningItemId, type: "reasoning", summary: [] }
-          });
-        }
-        reasoningText += part.text ?? "";
-        break;
-      case "reasoning-end":
-        break;
-      case "text-start":
-        textFull = "";
-        ensureTextItem();
-        break;
-      case "text-delta":
-        ensureTextItem();
-        textFull += part.text ?? "";
-        emit("response.output_text.delta", {
-          type: "response.output_text.delta",
-          item_id: textItemId,
-          output_index: textOutputIndex,
-          content_index: 0,
-          delta: part.text ?? ""
-        });
-        break;
-      case "tool-input-start": {
-        const sig = grabRoundTripSignature(part);
-        createToolState(part.id ?? part.toolCallId, part.toolName, sig);
-        break;
-      }
-      case "tool-input-delta": {
-        const state = findToolState(part);
-        if (state) appendToolArgs(state, part.delta ?? part.text ?? "");
-        break;
-      }
-      case "tool-call": {
-        const sig = grabRoundTripSignature(part);
-        const key = part.toolCallId ?? part.id;
-        const state = (key ? toolStatesById.get(key) : void 0) ?? createToolState(key, part.toolName, sig);
-        if (!state.args) {
-          appendToolArgs(state, JSON.stringify(part.input ?? {}));
-        }
-        break;
-      }
-      case "finish-step":
-        if (part.finishReason) finishReason = part.finishReason;
-        break;
-      case "finish":
-        if (part.finishReason) finishReason = part.finishReason;
-        if (part.totalUsage) usage = usageFromPart(part);
-        break;
-      case "abort": {
-        const msg = `stream aborted: ${part.reason ?? "no data received from provider"}`;
-        process.stderr.write(`[relay-ai] ${localTimestamp()} ${options?.logLabel ?? modelId}: ${msg}
-`);
-        onDone?.({
-          reasoningChars: reasoningText.length,
-          reasoningPreview: reasoningText.slice(0, 200),
-          textChars: textFull.length,
-          toolCallCount: toolStates.length,
-          toolNames: toolStates.map((t) => t.name),
-          loopDetected,
-          aborted: true
-        });
-        emit("response.failed", {
-          type: "response.failed",
-          response: {
-            id: responseId,
-            object: "response",
-            model: modelId,
-            created_at: createdAt,
-            status: "failed",
-            output: [],
-            error: { message: msg, type: "api_error" }
-          }
-        });
-        return;
-      }
-      case "error": {
-        const msg = formatUpstreamError(part.error);
-        const is429 = msg.includes("429") || part.error && typeof part.error === "object" && (part.error.statusCode === 429 || part.error.lastError?.statusCode === 429);
-        process.stderr.write(`[relay-ai] ${localTimestamp()} ${options?.logLabel ?? modelId}: ${msg}
-`);
-        onDone?.({
-          reasoningChars: reasoningText.length,
-          reasoningPreview: reasoningText.slice(0, 200),
-          textChars: textFull.length,
-          toolCallCount: toolStates.length,
-          toolNames: toolStates.map((t) => t.name),
-          loopDetected,
-          errorMessage: msg,
-          errorStatus: part.error?.statusCode
-        });
-        if (is429) {
-          writeResponsesRateLimitStream(modelId, msg, write);
-        } else {
-          emit("response.failed", {
-            type: "response.failed",
-            response: {
-              id: responseId,
-              object: "response",
-              model: modelId,
-              created_at: createdAt,
-              status: "failed",
-              output: [],
-              error: { message: msg, type: "api_error" }
-            }
-          });
-        }
-        return;
-      }
-      default:
-        break;
-    }
-    const now = Date.now();
-    if (now - lastProgressAt >= PROGRESS_INTERVAL_MS) {
-      lastProgressAt = now;
-      reasoningRepeat = trackRepetition(reasoningText, reasoningRepeat);
-      textRepeat = trackRepetition(textFull, textRepeat);
-      if (reasoningRepeat.streak >= REPEAT_STREAK_LIMIT) loopDetected = "reasoning";
-      else if (textRepeat.streak >= REPEAT_STREAK_LIMIT) loopDetected = "text";
-      if (onProgress) {
-        onProgress({
-          reasoningChars: reasoningText.length,
-          reasoningTail: reasoningText.slice(-200),
-          textChars: textFull.length,
-          toolCallCount: toolStates.length,
-          elapsedMs: now - streamStartedAt,
-          recentPartTypes: [...recentPartCounts].map(([type, n]) => `${type}:${n}`).join(",")
-        });
-      }
-      recentPartCounts.clear();
-      if (loopDetected) {
-        options?.onForceStop?.(`repetition loop detected (${loopDetected})`);
-        break;
-      }
-    }
-  }
-  const incompleteReason = incompleteReasonForFinish(finishReason);
-  if (loopDetected) {
-    ensureTextItem();
-    textFull += LOOP_NOTICE;
-    emit("response.output_text.delta", {
-      type: "response.output_text.delta",
-      item_id: textItemId,
-      output_index: textOutputIndex,
-      content_index: 0,
-      delta: LOOP_NOTICE
-    });
-  }
-  const dsml = loopDetected || incompleteReason ? null : parseDsmlToolCalls(textFull);
-  if (dsml) {
-    if (dsml.leadingText && textItemId) {
-      emit("response.output_text.done", {
-        type: "response.output_text.done",
-        item_id: textItemId,
-        output_index: textOutputIndex,
-        content_index: 0,
-        text: dsml.leadingText
-      });
-      emit("response.content_part.done", {
-        type: "response.content_part.done",
-        item_id: textItemId,
-        output_index: textOutputIndex,
-        content_index: 0,
-        part: { type: "output_text", text: dsml.leadingText }
-      });
-      const textItem = {
-        id: textItemId,
-        type: "message",
-        role: "assistant",
-        status: "completed",
-        content: [{ type: "output_text", text: dsml.leadingText }]
-      };
-      emit("response.output_item.done", {
-        type: "response.output_item.done",
-        output_index: textOutputIndex,
-        item: textItem
-      });
-      outputItems.push(textItem);
-    }
-    for (const call of dsml.calls) {
-      const itemId = newItemId("fc");
-      const callId = encodeToolUseId(itemId, void 0, false);
-      const idx = outputIndex++;
-      const args = JSON.stringify(call.args);
-      emit("response.output_item.added", {
-        type: "response.output_item.added",
-        output_index: idx,
-        item: { type: "function_call", id: itemId, call_id: callId, name: call.name, arguments: "", status: "in_progress" }
-      });
-      emit("response.function_call_arguments.done", {
-        type: "response.function_call_arguments.done",
-        item_id: itemId,
-        output_index: idx,
-        arguments: args
-      });
-      const fcItem = { type: "function_call", id: itemId, call_id: callId, name: call.name, arguments: args, status: "completed" };
-      emit("response.output_item.done", { type: "response.output_item.done", output_index: idx, item: fcItem });
-      outputItems.push(fcItem);
-    }
-  } else if (textItemId) {
-    emit("response.output_text.done", {
-      type: "response.output_text.done",
-      item_id: textItemId,
-      output_index: textOutputIndex,
-      content_index: 0,
-      text: textFull
-    });
-    emit("response.content_part.done", {
-      type: "response.content_part.done",
-      item_id: textItemId,
-      output_index: textOutputIndex,
-      content_index: 0,
-      part: { type: "output_text", text: textFull }
-    });
-    const textItem = {
-      id: textItemId,
-      type: "message",
-      role: "assistant",
-      status: incompleteReason ? "incomplete" : "completed",
-      content: [{ type: "output_text", text: textFull }]
-    };
-    emit("response.output_item.done", {
-      type: "response.output_item.done",
-      output_index: textOutputIndex,
-      item: textItem
-    });
-    outputItems.push(textItem);
-  }
-  if (reasoningItemId) {
-    const reasoningItem = makeReasoningOutputItem(reasoningItemId, reasoningText);
-    emit("response.output_item.done", {
-      type: "response.output_item.done",
-      output_index: reasoningOutputIndex,
-      item: reasoningItem
-    });
-    outputItems.unshift(reasoningItem);
-  }
-  for (const tool4 of incompleteReason ? [] : toolStates) {
-    const normalizedArgs = normalizeCodexSubagentArguments(tool4.name, tool4.args);
-    emit("response.function_call_arguments.done", {
-      type: "response.function_call_arguments.done",
-      item_id: tool4.itemId,
-      output_index: tool4.outputIndex,
-      arguments: normalizedArgs
-    });
-    const fcItem = buildFinalToolItem(tool4.kind, tool4.name, tool4.callId, tool4.itemId, normalizedArgs);
-    emit("response.output_item.done", {
-      type: "response.output_item.done",
-      output_index: tool4.outputIndex,
-      item: fcItem
-    });
-    outputItems.push(fcItem);
-  }
-  if (outputItems.length === 0 && !incompleteReason) {
-    outputItems.push({ id: newItemId("msg"), type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "(conversation context was too large to summarize)" }] });
-  }
-  onDone?.({
-    reasoningChars: reasoningText.length,
-    reasoningPreview: reasoningText.slice(0, 200),
-    textChars: textFull.length,
-    toolCallCount: toolStates.length,
-    toolNames: toolStates.map((t) => t.name),
-    loopDetected,
-    dsmlToolCallsRecovered: dsml?.calls.length,
-    finishReason,
-    incompleteReason
-  });
-  const terminalEvent = incompleteReason ? "response.incomplete" : "response.completed";
-  emit(terminalEvent, {
-    type: terminalEvent,
-    response: {
-      id: responseId,
-      object: "response",
-      model: modelId,
-      created_at: createdAt,
-      status: incompleteReason ? "incomplete" : "completed",
-      ...incompleteReason ? { incomplete_details: { reason: incompleteReason } } : {},
-      output: outputItems,
-      usage
-    }
-  });
-}
-var STREAM_IDLE_TIMEOUT_MS = 12e4;
-async function streamResponsesResponse(model, params, modelId, write, onDone, onProgress, options) {
-  const configuredTimeout = (name, fallback) => {
-    const value = Number(process.env[name]);
-    return Number.isFinite(value) && value > 0 ? value : fallback;
-  };
-  const idleTimeoutMs = options?.idleTimeoutMs ?? configuredTimeout("RELAY_AI_STREAM_IDLE_TIMEOUT_MS", STREAM_IDLE_TIMEOUT_MS);
-  const progressTimeoutMs = options?.progressTimeoutMs ?? configuredTimeout("RELAY_AI_STREAM_PROGRESS_TIMEOUT_MS", 6e5);
-  const abort = new AbortController();
-  let idleTimer = setTimeout(
-    () => abort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1e3)}s`)),
-    idleTimeoutMs
-  );
-  let active = true;
-  const resetLiveness = () => {
-    if (!active) return;
-    clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => abort.abort(new Error("no data received from provider for " + idleTimeoutMs / 1e3 + "s")), idleTimeoutMs);
-  };
-  const resetProgress = () => {
-    clearTimeout(progressTimer);
-    progressTimer = setTimeout(() => abort.abort(new Error("no content progress from provider for " + progressTimeoutMs / 1e3 + "s")), progressTimeoutMs);
-  };
-  let progressTimer;
-  resetProgress();
-  return streamActivity.run(resetLiveness, async () => {
-    try {
-      const { toolContext, ...sdkParams } = params;
-      const result = streamText({ model, ...sdkParams, abortSignal: abort.signal, onError: () => {
-      } });
-      Promise.resolve(result.text).catch(() => {
-      });
-      Promise.resolve(result.toolCalls).catch(() => {
-      });
-      Promise.resolve(result.toolResults).catch(() => {
-      });
-      Promise.resolve(result.finishReason).catch(() => {
-      });
-      Promise.resolve(result.usage).catch(() => {
-      });
-      Promise.resolve(result.response).catch(() => {
-      });
-      const watchedStream = (async function* () {
-        try {
-          for await (const part of result.stream) {
-            resetLiveness();
-            if (["text-delta", "reasoning-delta"].includes(part.type) && Boolean(part.text) || part.type === "tool-input-delta" && Boolean(part.delta) || ["tool-call", "finish", "finish-step"].includes(part.type)) resetProgress();
-            yield part;
-          }
-        } catch (error) {
-          if (!abort.signal.aborted) throw error;
-          yield { type: "abort", reason: String(abort.signal.reason) };
-        } finally {
-          clearTimeout(idleTimer);
-          clearTimeout(progressTimer);
-        }
-      })();
-      await writeResponsesStream(watchedStream, modelId, write, onDone, onProgress, {
-        onForceStop: (reason) => abort.abort(new Error(reason)),
-        toolContext,
-        logLabel: options?.logLabel
-      });
-    } finally {
-      active = false;
-      clearTimeout(idleTimer);
-      clearTimeout(progressTimer);
-    }
-  });
-}
-async function generateResponsesResponse(model, params, modelId) {
-  const { toolContext, ...sdkParams } = params;
-  const r = await generateText({ model, ...sdkParams });
-  const incompleteReason = incompleteReasonForFinish(r.finishReason);
-  const createdAt = Math.floor(Date.now() / 1e3);
-  const responseId = newResponseId();
-  const output = [];
-  if (r.reasoningText?.trim()) {
-    output.push(makeReasoningOutputItem(newItemId("rs"), r.reasoningText));
-  }
-  if (r.text !== null && r.text !== void 0) {
-    output.push({
-      id: newItemId("msg"),
-      type: "message",
-      role: "assistant",
-      status: incompleteReason ? "incomplete" : "completed",
-      content: [{ type: "output_text", text: r.text }]
-    });
-  }
-  for (const tc of incompleteReason ? [] : r.toolCalls) {
-    const encodedId = encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc), false);
-    const argsStr = JSON.stringify(tc.input ?? {});
-    const kind = resolveOutputKind(tc.toolName, toolContext);
-    output.push(buildFinalToolItem(
-      kind,
-      tc.toolName,
-      encodedId,
-      toolItemId(kind, tc.toolCallId),
-      argsStr
-    ));
-  }
-  if (output.length === 0 && !incompleteReason) {
-    output.push({ id: newItemId("msg"), type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "(conversation context was too large to summarize)" }] });
-  }
-  const inputTokens = r.usage?.inputTokens ?? 0;
-  const outputTokens = r.usage?.outputTokens ?? 0;
-  return {
-    id: responseId,
-    object: "response",
-    model: modelId,
-    created_at: createdAt,
-    status: incompleteReason ? "incomplete" : "completed",
-    ...incompleteReason ? { incomplete_details: { reason: incompleteReason } } : {},
-    output,
-    usage: {
-      input_tokens: inputTokens,
-      output_tokens: outputTokens,
-      total_tokens: inputTokens + outputTokens
-    }
-  };
-}
-var COMPACTION_SUMMARY_INSTRUCTION = "You are performing a CONTEXT CHECKPOINT COMPACTION. Summarize the conversation so far into a concise but complete summary that preserves the user's goals, key decisions and facts, the current state of the work, and any pending or in-progress tasks. Output only the summary text.";
-function encodeCompactionContent(summary) {
-  return Buffer.from(JSON.stringify({ v: 1, summary }), "utf8").toString("base64");
-}
-function decodeCompactionContent(encrypted) {
-  if (!encrypted) return null;
-  try {
-    const obj = JSON.parse(Buffer.from(encrypted, "base64").toString("utf8"));
-    return obj?.v === 1 && typeof obj.summary === "string" ? obj.summary : null;
-  } catch {
-    return null;
-  }
-}
-function makeCompactionItem(summary) {
-  return { type: "compaction", id: newItemId("cmp"), encrypted_content: encodeCompactionContent(summary) };
-}
-function appendCompactionInstruction(params) {
-  return {
-    ...params,
-    tools: void 0,
-    messages: [
-      ...params.messages,
-      { role: "user", content: [{ type: "text", text: COMPACTION_SUMMARY_INSTRUCTION }] }
-    ]
-  };
-}
-function buildCompactionResponseBody(summary, modelId) {
-  return {
-    id: newResponseId(),
-    object: "response",
-    model: modelId,
-    created_at: Math.floor(Date.now() / 1e3),
-    status: "completed",
-    output: [makeCompactionItem(summary)]
-  };
-}
-function writeCompactionSse(summary, modelId, write) {
-  const emit = (type, data) => write(sseChunk(type, data));
-  const responseId = newResponseId();
-  const createdAt = Math.floor(Date.now() / 1e3);
-  const item = makeCompactionItem(summary);
-  emit("response.created", {
-    type: "response.created",
-    response: { id: responseId, object: "response", model: modelId, created_at: createdAt, status: "in_progress", output: [] }
-  });
-  emit("response.output_item.added", { type: "response.output_item.added", output_index: 0, item });
-  emit("response.output_item.done", { type: "response.output_item.done", output_index: 0, item });
-  emit("response.completed", {
-    type: "response.completed",
-    response: { id: responseId, object: "response", model: modelId, created_at: createdAt, status: "completed", output: [item] }
-  });
-}
-async function generateCompactionResponse(model, params, modelId) {
-  const { toolContext: _toolContext, ...sdkParams } = params;
-  void _toolContext;
-  const r = await generateText({ model, ...sdkParams });
-  return buildCompactionResponseBody((r.text ?? "").trim() || "(no summary produced)", modelId);
-}
-async function streamCompactionResponse(model, params, modelId, write) {
-  const { toolContext: _toolContext, ...sdkParams } = params;
-  void _toolContext;
-  const r = await generateText({ model, ...sdkParams });
-  writeCompactionSse((r.text ?? "").trim() || "(no summary produced)", modelId, write);
-}
-function responsesErrorBody(modelId, message, statusCode = 401) {
-  return {
-    id: newResponseId(),
-    object: "response",
-    model: modelId,
-    created_at: Math.floor(Date.now() / 1e3),
-    status: "failed",
-    output: [],
-    error: { message, type: statusCode === 429 ? "rate_limit_error" : "api_error", code: String(statusCode) }
-  };
-}
-function writeResponsesErrorStream(modelId, message, write, statusCode = 401) {
-  write(sseChunk("response.failed", {
-    type: "response.failed",
-    response: responsesErrorBody(modelId, message, statusCode)
-  }));
-}
-function writeResponsesRateLimitStream(modelId, message, write) {
-  const responseId = newResponseId();
-  const itemId = newItemId("msg");
-  const createdAt = Math.floor(Date.now() / 1e3);
-  const content = [{ type: "output_text", text: message }];
-  write(sseChunk("response.created", {
-    type: "response.created",
-    response: {
-      id: responseId,
-      object: "response",
-      model: modelId,
-      created_at: createdAt,
-      status: "in_progress",
-      output: []
-    }
-  }));
-  write(sseChunk("response.output_item.added", {
-    type: "response.output_item.added",
-    output_index: 0,
-    item: { id: itemId, type: "message", role: "assistant", status: "in_progress", content: [] }
-  }));
-  write(sseChunk("response.content_part.added", {
-    type: "response.content_part.added",
-    item_id: itemId,
-    output_index: 0,
-    content_index: 0,
-    part: { type: "output_text", text: "" }
-  }));
-  write(sseChunk("response.output_text.delta", {
-    type: "response.output_text.delta",
-    item_id: itemId,
-    output_index: 0,
-    content_index: 0,
-    delta: message
-  }));
-  write(sseChunk("response.output_text.done", {
-    type: "response.output_text.done",
-    item_id: itemId,
-    output_index: 0,
-    content_index: 0,
-    text: message
-  }));
-  write(sseChunk("response.content_part.done", {
-    type: "response.content_part.done",
-    item_id: itemId,
-    output_index: 0,
-    content_index: 0,
-    part: { type: "output_text", text: message }
-  }));
-  write(sseChunk("response.output_item.done", {
-    type: "response.output_item.done",
-    output_index: 0,
-    item: { id: itemId, type: "message", role: "assistant", status: "completed", content }
-  }));
-  write(sseChunk("response.completed", {
-    type: "response.completed",
-    response: {
-      id: responseId,
-      object: "response",
-      model: modelId,
-      created_at: createdAt,
-      status: "completed",
-      output: [{ id: itemId, type: "message", role: "assistant", status: "completed", content }]
-    }
-  }));
-}
-function responsesRateLimitBody(modelId, message) {
-  const itemId = newItemId("msg");
-  const content = [{ type: "output_text", text: message }];
-  return {
-    id: newResponseId(),
-    object: "response",
-    model: modelId,
-    created_at: Math.floor(Date.now() / 1e3),
-    status: "completed",
-    output: [{ id: itemId, type: "message", role: "assistant", status: "completed", content }]
-  };
-}
 
 // src/codex/native-forward.ts
 var NATIVE_CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
@@ -4737,7 +5891,7 @@ function nativeResponsesWebSocketOptions(options) {
 }
 
 // src/codex/collaboration-payload.ts
-import { createHash as createHash2 } from "crypto";
+import { createHash as createHash4 } from "crypto";
 var NATIVE_ENCRYPTED_TOKEN = /^gAAAAA[A-Za-z0-9_-]+={0,2}$/;
 var COLLABORATION_HEADER = /Message Type:\s*(?:NEW_TASK|MESSAGE|FOLLOWUP_TASK|FINAL_ANSWER)\b[\s\S]*\nPayload:\s*/i;
 var PAYLOAD_BOUNDARY = /^Payload:\s*$/m;
@@ -4941,7 +6095,7 @@ function createNativePayloadRelay(options) {
       if (ciphertext.kind !== "native-encrypted") throw new Error("Expected a native encrypted collaboration item");
       const accountId = context.headers["chatgpt-account-id"] ?? context.headers["ChatGPT-Account-Id"];
       if (!accountId) throw new Error("Native collaboration relay requires ChatGPT-Account-Id");
-      const key = `${accountId}\0${createHash2("sha256").update(ciphertext.ciphertext).digest("hex")}`;
+      const key = `${accountId}\0${createHash4("sha256").update(ciphertext.ciphertext).digest("hex")}`;
       pruneCache();
       const cached = cache.get(key);
       if (cached && cached.expiresAt > Date.now()) return cached.value;
@@ -4988,8 +6142,8 @@ async function resolveRoutedCollaborationInput(input, context) {
 }
 
 // src/codex/route-audit.ts
-import { chmodSync, mkdirSync, writeFileSync as writeFileSync2 } from "fs";
-import { join as join4 } from "path";
+import { chmodSync, mkdirSync as mkdirSync2, writeFileSync as writeFileSync3 } from "fs";
+import { join as join6 } from "path";
 var DIR_MODE = 448;
 var FILE_MODE = 384;
 var CODEX_ROUTE_AUDIT_LOG = "codex-route-audit.jsonl";
@@ -5013,21 +6167,21 @@ function sanitizeCodexRouteAuditEvent(event) {
 }
 function getCodexRouteAuditLogPath() {
   const dir = getLogsPath();
-  mkdirSync(dir, { recursive: true, mode: DIR_MODE });
+  mkdirSync2(dir, { recursive: true, mode: DIR_MODE });
   try {
     chmodSync(dir, DIR_MODE);
   } catch {
   }
-  return join4(dir, CODEX_ROUTE_AUDIT_LOG);
+  return join6(dir, CODEX_ROUTE_AUDIT_LOG);
 }
 function prepareCodexRouteAuditLog(path3 = getCodexRouteAuditLogPath()) {
-  writeFileSync2(path3, "", { mode: FILE_MODE });
+  writeFileSync3(path3, "", { mode: FILE_MODE });
   chmodSync(path3, FILE_MODE);
   return path3;
 }
 function appendCodexRouteAudit(path3, event) {
   try {
-    writeFileSync2(path3, `${JSON.stringify(sanitizeCodexRouteAuditEvent(event))}
+    writeFileSync3(path3, `${JSON.stringify(sanitizeCodexRouteAuditEvent(event))}
 `, { flag: "a", mode: FILE_MODE });
     chmodSync(path3, FILE_MODE);
   } catch {
@@ -5166,12 +6320,12 @@ function inputItemText(content) {
 }
 function isLikelyCodexCompactionRequest(body) {
   if (!Array.isArray(body.input)) return false;
-  const items = body.input;
-  if (items.some((item) => item && typeof item === "object" && item.type === "compaction_trigger")) {
+  const items2 = body.input;
+  if (items2.some((item) => item && typeof item === "object" && item.type === "compaction_trigger")) {
     return true;
   }
-  for (let i = items.length - 1; i >= 0; i--) {
-    const item = items[i];
+  for (let i = items2.length - 1; i >= 0; i--) {
+    const item = items2[i];
     if (!item || typeof item !== "object" || !("role" in item)) continue;
     return inputItemText(item.content).trimStart().startsWith(COMPACTION_PROMPT_MARKER);
   }
@@ -5426,6 +6580,7 @@ async function startCodexProxy(routes, options = {}) {
         if (mixedNative) {
           for (const nativeModelId of mixedNative.nativeModelIds) addModel(nativeModelId, "openai");
         }
+        if (opts.pool) addModel(FREE_POOL_MODEL_ID, "relay-free-pool");
         sendJson(res, 200, {
           object: "list",
           data
@@ -5434,6 +6589,10 @@ async function startCodexProxy(routes, options = {}) {
       }
       if (req.method === "GET" && effectivePath.startsWith("/v1/models/")) {
         const id = effectivePath.slice("/v1/models/".length);
+        if (id === FREE_POOL_MODEL_ID && opts.pool) {
+          sendJson(res, 200, { id, object: "model", created: Math.floor(Date.now() / 1e3), owned_by: "relay-free-pool" });
+          return;
+        }
         if (mixedNative && mixedNative.nativeModelIds.has(id)) {
           sendJson(res, 200, { id, object: "model", created: Math.floor(Date.now() / 1e3), owned_by: "openai" });
           return;
@@ -5504,6 +6663,32 @@ async function startCodexProxy(routes, options = {}) {
           }
         }
         const modelId = String(body.model ?? "");
+        if (modelId === FREE_POOL_MODEL_ID) {
+          if (!opts.pool || !requireAuth) {
+            sendJson(res, 400, { error: { message: "Free pool requires an explicitly configured authenticated runtime", type: "invalid_request_error" } });
+            return;
+          }
+          const abort = new AbortController();
+          res.once("close", () => {
+            if (!res.writableFinished) abort.abort();
+          });
+          try {
+            const response = await opts.pool.respond(req.headers, body, abort.signal, (chunk) => {
+              if (res.destroyed) throw new Error("Client disconnected");
+              if (!res.headersSent) res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+              res.write(chunk);
+            });
+            if (body.stream) res.end();
+            else sendJson(res, 200, response);
+          } catch {
+            if (!res.headersSent) sendJson(res, 503, { error: { message: "Free pool could not complete this request safely", type: "api_error" } });
+            else if (!res.writableEnded) {
+              writeResponsesErrorStream(modelId, "Free pool request failed", (chunk) => res.write(chunk), 503);
+              res.end();
+            }
+          }
+          return;
+        }
         const markedSubagent = Boolean(mixedNative && isCodexSubagentRequest(body, req.headers));
         const subagentRoute = mixedNative && markedSubagent ? resolveCodexSubagentRoute(routes, mixedNative.subagentRouteModelId, body, req.headers) : void 0;
         if (debug && markedSubagent) {
@@ -5720,11 +6905,7 @@ async function startCodexProxy(routes, options = {}) {
                 status
               });
               if (debug) log15(`sdk error: ${route.modelId}: ${msg}`);
-              if (status === 429) {
-                writeResponsesRateLimitStream(modelId, msg, write);
-              } else {
-                writeResponsesErrorStream(modelId, msg, write, status);
-              }
+              writeResponsesErrorStream(modelId, msg, write, status);
             }
             res.end();
           } else {
@@ -5766,11 +6947,13 @@ async function startCodexProxy(routes, options = {}) {
                 status
               });
               if (debug) log15(`sdk error: ${route.modelId}: ${msg}`);
-              if (status === 429) {
-                sendJson(res, 200, responsesRateLimitBody(modelId, msg));
-              } else {
-                sendJson(res, status, { error: { message: msg, type: "api_error" } });
-              }
+              sendJson(res, status, {
+                error: {
+                  message: msg,
+                  type: status === 429 ? "rate_limit_error" : "api_error",
+                  code: String(status)
+                }
+              });
             }
           }
         } catch (err) {
@@ -5787,7 +6970,7 @@ async function startCodexProxy(routes, options = {}) {
       sendJson(res, 404, { error: { message: "Not found", type: "invalid_request_error" } });
     });
     function wsAcceptKey(clientKey) {
-      return createHash3("sha1").update(clientKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+      return createHash5("sha1").update(clientKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
     }
     function wsDecodeFrame(buf) {
       if (buf.length < 2) return null;
@@ -6043,6 +7226,10 @@ data: ${JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_reques
               });
             }
             const modelId = String(body.model ?? "");
+            if (modelId === FREE_POOL_MODEL_ID) {
+              writeResponsesErrorStream(modelId, "Free pool WebSocket dispatch is not enabled", sendWsEvent, 400);
+              return;
+            }
             currentRequestModel = modelId;
             const markedSubagent = Boolean(mixedNative && isCodexSubagentRequest(body, req.headers));
             const subagentRoute = mixedNative && markedSubagent ? resolveCodexSubagentRoute(routes, mixedNative.subagentRouteModelId, body, req.headers) : void 0;
@@ -6371,11 +7558,7 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
                 status
               });
               if (debug) log15(`WS sdk error: ${route.modelId}: ${msg}`);
-              if (status === 429) {
-                writeResponsesRateLimitStream(modelId, msg, sendWsEvent);
-              } else {
-                writeResponsesErrorStream(modelId, msg, sendWsEvent, status);
-              }
+              writeResponsesErrorStream(modelId, msg, sendWsEvent, status);
             }
             externalActive = false;
           })();
@@ -6407,44 +7590,44 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
 }
 
 // src/codex/profile.ts
-import { join as join6 } from "path";
+import { join as join8 } from "path";
 
 // src/codex/session.ts
 import {
   copyFileSync,
   chmodSync as chmodSync2,
   existsSync as existsSync5,
-  mkdirSync as mkdirSync2,
+  mkdirSync as mkdirSync3,
   readdirSync,
-  readFileSync as readFileSync3,
+  readFileSync as readFileSync4,
   renameSync as renameSync2,
-  rmSync,
+  rmSync as rmSync2,
   statSync,
-  unlinkSync,
-  writeFileSync as writeFileSync3
+  unlinkSync as unlinkSync2,
+  writeFileSync as writeFileSync4
 } from "fs";
 import { homedir as homedir5 } from "os";
-import { basename, dirname, join as join5 } from "path";
+import { basename, dirname as dirname2, join as join7 } from "path";
 var CODEX_PROFILE_NAME = "relay-ai-launch";
 var STALE_SESSION_MS = 5 * 60 * 1e3;
 var MAX_BACKUPS = 5;
 function getCodexHome(env = process.env) {
-  return env["CODEX_HOME"] || join5(homedir5(), ".codex");
+  return env["CODEX_HOME"] || join7(homedir5(), ".codex");
 }
 function getCodexProfilePath() {
-  return join5(getCodexHome(), `${CODEX_PROFILE_NAME}.config.toml`);
+  return join7(getCodexHome(), `${CODEX_PROFILE_NAME}.config.toml`);
 }
 function getRelayAiCodexDir(env = process.env) {
-  return join5(getAppHome(env), "codex");
+  return join7(getAppHome(env), "codex");
 }
 function getSessionLockPath(env = process.env) {
-  return join5(getRelayAiCodexDir(env), "session.json");
+  return join7(getRelayAiCodexDir(env), "session.json");
 }
 function getBackupsDir(env = process.env) {
-  return join5(getRelayAiCodexDir(env), "backups");
+  return join7(getRelayAiCodexDir(env), "backups");
 }
 function getCatalogPath(providerId, env = process.env) {
-  return join5(getRelayAiCodexDir(env), `models-${providerId}.json`);
+  return join7(getRelayAiCodexDir(env), `models-${providerId}.json`);
 }
 function ownedOverlayPaths(env = process.env) {
   const paths = [getCodexProfilePath()];
@@ -6452,15 +7635,15 @@ function ownedOverlayPaths(env = process.env) {
   if (existsSync5(codexDir)) {
     for (const name of readdirSync(codexDir)) {
       if (name.startsWith("models-") && name.endsWith(".json")) {
-        paths.push(join5(codexDir, name));
+        paths.push(join7(codexDir, name));
       }
     }
   }
-  const agentsDir = join5(getCodexHome(env), "agents");
+  const agentsDir = join7(getCodexHome(env), "agents");
   if (existsSync5(agentsDir)) {
     for (const name of readdirSync(agentsDir)) {
       if (/^relay-model-[a-z0-9-]+\.toml$/i.test(name)) {
-        paths.push(join5(agentsDir, name));
+        paths.push(join7(agentsDir, name));
       }
     }
   }
@@ -6468,9 +7651,9 @@ function ownedOverlayPaths(env = process.env) {
   return paths;
 }
 function atomicWriteFile(path3, content) {
-  mkdirSync2(dirname(path3), { recursive: true });
+  mkdirSync3(dirname2(path3), { recursive: true });
   const tmp = `${path3}.tmp.${process.pid}`;
-  writeFileSync3(tmp, content, { encoding: "utf8", mode: 384 });
+  writeFileSync4(tmp, content, { encoding: "utf8", mode: 384 });
   renameSync2(tmp, path3);
   try {
     chmodSync2(path3, 384);
@@ -6480,15 +7663,15 @@ function atomicWriteFile(path3, content) {
 function rotateBackups(filePath, env = process.env) {
   if (!existsSync5(filePath)) return;
   const backupsDir = getBackupsDir(env);
-  mkdirSync2(backupsDir, { recursive: true });
+  mkdirSync3(backupsDir, { recursive: true });
   const base = basename(filePath);
   const stamp = Date.now();
-  const backupPath = join5(backupsDir, `${base}.${stamp}.bak`);
+  const backupPath = join7(backupsDir, `${base}.${stamp}.bak`);
   copyFileSync(filePath, backupPath);
-  const backups = readdirSync(backupsDir).filter((n) => n.startsWith(`${base}.`) && n.endsWith(".bak")).map((n) => ({ name: n, mtime: statSync(join5(backupsDir, n)).mtimeMs })).sort((a, b) => b.mtime - a.mtime);
+  const backups = readdirSync(backupsDir).filter((n) => n.startsWith(`${base}.`) && n.endsWith(".bak")).map((n) => ({ name: n, mtime: statSync(join7(backupsDir, n)).mtimeMs })).sort((a, b) => b.mtime - a.mtime);
   for (const old of backups.slice(MAX_BACKUPS)) {
     try {
-      unlinkSync(join5(backupsDir, old.name));
+      unlinkSync2(join7(backupsDir, old.name));
     } catch {
     }
   }
@@ -6501,7 +7684,7 @@ function readSessionLock(env = process.env) {
   const path3 = getSessionLockPath(env);
   if (!existsSync5(path3)) return null;
   try {
-    const parsed = JSON.parse(readFileSync3(path3, "utf8"));
+    const parsed = JSON.parse(readFileSync4(path3, "utf8"));
     if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string") return parsed;
   } catch {
   }
@@ -6509,7 +7692,7 @@ function readSessionLock(env = process.env) {
 }
 function writeSessionLock(lock, env = process.env) {
   const path3 = getSessionLockPath(env);
-  mkdirSync2(getRelayAiCodexDir(env), { recursive: true });
+  mkdirSync3(getRelayAiCodexDir(env), { recursive: true });
   atomicWriteFile(path3, `${JSON.stringify(lock, null, 2)}
 `);
 }
@@ -6530,7 +7713,7 @@ function restoreCodexOverlay(env = process.env) {
   for (const path3 of ownedOverlayPaths(env)) {
     if (!existsSync5(path3)) continue;
     try {
-      rmSync(path3, { force: true });
+      rmSync2(path3, { force: true });
       removed.push(path3);
     } catch {
     }
@@ -6577,7 +7760,7 @@ function tomlString(value) {
   return JSON.stringify(value);
 }
 function buildCodexProfileToml(spec) {
-  const { route, proxyPort, catalogPath, modelReasoningEffort } = spec;
+  const { route, proxyPort, catalogPath, modelReasoningEffort, supportsWebSockets } = spec;
   const model = route.modelId;
   const reasoning = profileReasoningLine(modelReasoningEffort);
   if (route.tier === "direct") {
@@ -6596,6 +7779,8 @@ wire_api = "responses"
 `;
   }
   const proxyBase = `http://127.0.0.1:${proxyPort}/v1`;
+  const websockets = supportsWebSockets === void 0 ? "" : `supports_websockets = ${supportsWebSockets}
+`;
   return `# Generated by relay-ai \u2014 do not edit
 ${profileSandboxLine()}model = ${tomlString(model)}
 model_provider = "relay-ai-proxy"
@@ -6606,7 +7791,7 @@ name = "relay-ai"
 base_url = ${tomlString(proxyBase)}
 env_key = "RELAY_AI_CODEX_KEY"
 wire_api = "responses"
-`;
+${websockets}`;
 }
 function buildCodexMixedProfileToml(spec) {
   const multiAgentV2 = spec.multiAgentV2Enabled ? `${renderMultiAgentV2Feature()}
@@ -6632,10 +7817,10 @@ function getCatalogOutputPath(providerId) {
   return getCatalogPath(providerId);
 }
 function getFavoritesCatalogPath() {
-  return join6(getRelayAiCodexDir(), "models-favorites.json");
+  return join8(getRelayAiCodexDir(), "models-favorites.json");
 }
 function getFavoritesAppCatalogPath() {
-  return join6(getRelayAiCodexDir(), "app-models-favorites.json");
+  return join8(getRelayAiCodexDir(), "app-models-favorites.json");
 }
 function profileName() {
   return CODEX_PROFILE_NAME;
@@ -6646,7 +7831,7 @@ import { execSync as execSync3 } from "child_process";
 import spawn3 from "cross-spawn";
 import { existsSync as existsSync6 } from "fs";
 import { homedir as homedir6 } from "os";
-import { join as join7 } from "path";
+import { join as join9 } from "path";
 var isWindows3 = process.platform === "win32";
 var CODEX_CI_ENV_VARS = [
   "CI",
@@ -6667,11 +7852,11 @@ function stripCodexInheritedEnv(env) {
   return out;
 }
 var CODEX_FALLBACK_PATHS = isWindows3 ? [
-  join7(process.env["APPDATA"] ?? homedir6(), "npm", "codex.cmd"),
-  join7(process.env["APPDATA"] ?? homedir6(), "npm", "codex")
+  join9(process.env["APPDATA"] ?? homedir6(), "npm", "codex.cmd"),
+  join9(process.env["APPDATA"] ?? homedir6(), "npm", "codex")
 ] : [
-  join7(homedir6(), ".local", "bin", "codex"),
-  join7(homedir6(), ".npm", "bin", "codex"),
+  join9(homedir6(), ".local", "bin", "codex"),
+  join9(homedir6(), ".npm", "bin", "codex"),
   "/usr/local/bin/codex",
   "/opt/homebrew/bin/codex"
 ];
@@ -6988,15 +8173,15 @@ function buildOAuthAnthropicProxyRoute(model, apiKey, providerId, providerData) 
     refreshToken: () => resolveProviderCredential(providerId, oauthAuthRef(providerId))
   };
 }
-async function partitionAndStartCloudCodeBackend(items, toOutput, trace) {
-  if (items.length === 0) return { backendItems: [], backend: null };
-  const proxyRoutes = items.map(
+async function partitionAndStartCloudCodeBackend(items2, toOutput, trace) {
+  if (items2.length === 0) return { backendItems: [], backend: null };
+  const proxyRoutes = items2.map(
     (item) => item.model.modelFormat === "cloud-code" ? buildCloudCodeProxyRoute(item.model, item.apiKey, item.providerData ?? {}, item.providerId) : buildOAuthAnthropicProxyRoute(item.model, item.apiKey, item.providerId, item.providerData ?? {})
   );
   const backend = await startCloudCodeCatalogBackend(proxyRoutes, proxyRoutes[0].aliasId, trace);
   return {
     backend,
-    backendItems: proxyRoutes.map((proxyRoute, index) => toOutput(proxyRoute, backend, items[index]))
+    backendItems: proxyRoutes.map((proxyRoute, index) => toOutput(proxyRoute, backend, items2[index]))
   };
 }
 async function buildSingleModelCloudCodeRoute(model, apiKey, providerId, providerData, trace) {
@@ -7299,6 +8484,7 @@ ${pc6.bold("Options:")}
                --with-native and favorites: relay-ai providers add vertex-anthropic)
   --with-native Load native Codex models beside Relay models for this launch
   --relay-only Keep the current Relay-only launch behavior
+  --pool       Launch the shared free-model pool (requires relay-ai pool verify)
   --restore    Remove interrupted-session overlay files
   --config     Preview/write launch configuration without starting Codex
   --help       Show this command help
@@ -7340,7 +8526,7 @@ ${pc6.bold("Favorites:")}
   picker will show your starting model + favorites for mid-session switching.
   Zen/Go favorites are included when an OpenCode API key is available.`;
 }
-async function writeLaunchArtifacts(route, selectedModel, providerName, proxyPort) {
+async function writeLaunchArtifacts(route, selectedModel, providerName, proxyPort, supportsWebSockets) {
   const catalogPath = getCatalogOutputPath(route.providerId);
   const catalog = buildCatalogFile([selectedModel], providerName);
   writeOverlayFile(catalogPath, serializeCatalog(catalog));
@@ -7358,7 +8544,8 @@ async function writeLaunchArtifacts(route, selectedModel, providerName, proxyPor
     route,
     proxyPort,
     catalogPath,
-    modelReasoningEffort: caps.defaultLevel || void 0
+    modelReasoningEffort: caps.defaultLevel || void 0,
+    ...supportsWebSockets === void 0 ? {} : { supportsWebSockets }
   }));
   return { profilePath, catalogPath };
 }
@@ -7385,7 +8572,7 @@ async function writeFavoritesLaunchArtifacts(resolved, starting, proxyPort) {
   return { profilePath, catalogPath };
 }
 async function writeMixedLaunchArtifacts(plan, proxyPort) {
-  const catalogPath = join8(getRelayAiCodexDir(), "models-mixed.json");
+  const catalogPath = join10(getRelayAiCodexDir(), "models-mixed.json");
   writeOverlayFile(catalogPath, serializeCatalog(plan.catalog));
   const profilePath = getProfileOutputPath();
   writeOverlayFile(profilePath, buildCodexMixedProfileToml({
@@ -7577,6 +8764,97 @@ async function runCodexCommand2(codexArgs, trace = false, launch = {}) {
     return runCodexVertexLaunch(passthroughArgs, trace);
   }
   const prefs = loadPreferences();
+  if (launch.pool) {
+    const pool = parseFreePool(prefs.freePool);
+    if (pool.members.length === 0) {
+      console.error(pc6.red("No free pool members. Add one with: relay-ai pool add <provider-account> <model>"));
+      return 1;
+    }
+    const fresh = pool.receipts.filter((receipt) => receipt.verifiedAt <= Date.now() && receipt.expiresAt > Date.now());
+    if (fresh.length === 0) {
+      console.error(pc6.red("No verified free pool members. Run: relay-ai pool verify"));
+      return 1;
+    }
+    if (configOnly) {
+      console.log("Free pool mode: " + pool.members.length + " member(s), " + fresh.length + " verified receipt(s).");
+      return 0;
+    }
+    const poolSession = checkSessionLock(isTty);
+    if (!poolSession.ok) {
+      if (poolSession.reason === "non_tty") {
+        console.error(pc6.red("relay-ai codex --pool requires an interactive terminal."));
+        return 1;
+      }
+      console.error(pc6.yellow("Another relay-ai codex session may be running (pid " + poolSession.lock.pid + ")."));
+      console.error("Run relay-ai codex --restore to clean up, or wait for it to finish.");
+      return 1;
+    }
+    if (!agentStdout) codexCliIntro();
+    let poolProxy = null;
+    try {
+      const providers = await fetchProviderCatalog();
+      const health = new PoolHealthStore();
+      const runtime = new CodexPoolRuntime(pool, (body, source, signal, sessionId) => prepareCodexPoolRoutes({
+        pool,
+        providers,
+        receipts: pool.receipts,
+        body,
+        source,
+        signal,
+        sessionId,
+        health
+      }));
+      poolProxy = await startCodexProxy([], { requireAuth: true, debug: trace, pool: runtime });
+      const entry = codexPoolCatalogEntry(pool, pool.receipts);
+      if (!entry) {
+        console.error(pc6.red("No verified free pool member can be advertised yet. Run: relay-ai pool verify"));
+        return 1;
+      }
+      const poolModel = {
+        id: FREE_POOL_MODEL_ID,
+        name: entry.display_name,
+        family: "",
+        brand: "",
+        modelFormat: "openai",
+        upstreamModelId: FREE_POOL_MODEL_ID,
+        npm: "@ai-sdk/openai-compatible",
+        contextWindow: entry.context_window
+      };
+      const poolRoute = {
+        tier: "proxy",
+        modelId: FREE_POOL_MODEL_ID,
+        providerId: "relay-free-pool",
+        npm: "@ai-sdk/openai-compatible",
+        upstreamModelId: FREE_POOL_MODEL_ID,
+        apiKey: ""
+      };
+      const { profilePath, catalogPath } = await writeLaunchArtifacts(poolRoute, poolModel, entry.display_name, poolProxy.port, false);
+      writeSessionLock({
+        pid: process.pid,
+        startedAt: localIsoTimestamp(),
+        profilePath,
+        catalogPaths: [catalogPath],
+        proxyPort: poolProxy.port
+      });
+      if (!agentStdout) {
+        logProxy(poolProxy.port);
+        logActiveModel(entry.display_name, FREE_POOL_MODEL_ID);
+        printCodexCliCleanupPanel("relay-ai codex --restore");
+        codexCliOutro(entry.display_name, entry.display_name, FREE_POOL_MODEL_ID);
+      }
+      const childEnv = buildCodexChildEnv(poolRoute, poolProxy.port, {});
+      const exitCode = await launchCodex(FREE_POOL_MODEL_ID, childEnv, passthroughArgs);
+      if (trace) printTraceLog(debugLogPath);
+      printCodexCleanupReminder(true);
+      return exitCode;
+    } catch (err) {
+      console.error(pc6.red("Free pool launch failed: " + (err instanceof Error ? err.message : String(err))));
+      return 1;
+    } finally {
+      poolProxy?.close();
+      restoreCodexOverlay();
+    }
+  }
   const launchPlan = planLaunchWizard({
     explicit: { providerId: launch.launchProvider, modelId: launch.launchModel },
     childArgs: passthroughArgs,
@@ -8010,17 +9288,17 @@ import * as p12 from "@clack/prompts";
 
 // src/gemini/launch.ts
 import { spawn as spawn4 } from "child_process";
-import { existsSync as existsSync7, mkdirSync as mkdirSync3, mkdtempSync, rmSync as rmSync2, writeFileSync as writeFileSync4 } from "fs";
+import { existsSync as existsSync7, mkdirSync as mkdirSync4, mkdtempSync, rmSync as rmSync3, writeFileSync as writeFileSync5 } from "fs";
 import { homedir as homedir7, tmpdir } from "os";
-import { join as join9 } from "path";
+import { join as join11 } from "path";
 var isWindows4 = process.platform === "win32";
 var GEMINI_API_KEY_AUTH_TYPE = "gemini-api-key";
 var GEMINI_FALLBACK_PATHS = isWindows4 ? [
-  join9(process.env["APPDATA"] ?? homedir7(), "npm", "gemini.cmd"),
-  join9(process.env["APPDATA"] ?? homedir7(), "npm", "gemini")
+  join11(process.env["APPDATA"] ?? homedir7(), "npm", "gemini.cmd"),
+  join11(process.env["APPDATA"] ?? homedir7(), "npm", "gemini")
 ] : [
-  join9(homedir7(), ".local", "bin", "gemini"),
-  join9(homedir7(), ".npm", "bin", "gemini"),
+  join11(homedir7(), ".local", "bin", "gemini"),
+  join11(homedir7(), ".npm", "bin", "gemini"),
   "/usr/local/bin/gemini",
   "/opt/homebrew/bin/gemini"
 ];
@@ -8041,7 +9319,7 @@ function buildGeminiChildEnv(proxyPort, proxyToken) {
   return env;
 }
 function createGeminiCliHomeOverlay() {
-  const cliHome = mkdtempSync(join9(tmpdir(), "relay-ai-gemini-"));
+  const cliHome = mkdtempSync(join11(tmpdir(), "relay-ai-gemini-"));
   const settings = {
     security: {
       auth: {
@@ -8049,9 +9327,9 @@ function createGeminiCliHomeOverlay() {
       }
     }
   };
-  const geminiDir = join9(cliHome, ".gemini");
-  mkdirSync3(geminiDir);
-  writeFileSync4(join9(geminiDir, "settings.json"), `${JSON.stringify(settings, null, 2)}
+  const geminiDir = join11(cliHome, ".gemini");
+  mkdirSync4(geminiDir);
+  writeFileSync5(join11(geminiDir, "settings.json"), `${JSON.stringify(settings, null, 2)}
 `, {
     encoding: "utf8",
     mode: 384
@@ -8066,7 +9344,7 @@ function prepareGeminiChildEnv(proxyPort, proxyToken) {
     env,
     cleanup: () => {
       try {
-        rmSync2(cliHome, { recursive: true, force: true });
+        rmSync3(cliHome, { recursive: true, force: true });
       } catch {
       }
     }
@@ -8140,8 +9418,8 @@ function rejectGeminiManagedFlags(geminiArgs) {
 
 // src/gemini-proxy.ts
 import { createServer as createServer2 } from "http";
-import { randomUUID } from "crypto";
-import { streamText as streamText2, generateText as generateText2, tool as tool2, jsonSchema as jsonSchema2 } from "ai";
+import { randomUUID as randomUUID3 } from "crypto";
+import { streamText as streamText3, generateText as generateText2, tool as tool2, jsonSchema as jsonSchema2 } from "ai";
 function mapFinishReason(reason) {
   if (reason === "stop" || reason === "tool-calls") return "STOP";
   if (reason === "length") return "MAX_TOKENS";
@@ -8222,7 +9500,7 @@ function translateGeminiRequest(body, options = {}) {
           mediaType: p17.inlineData.mimeType
         });
       } else if (p17.functionCall) {
-        const id = "call_" + randomUUID().replace(/-/g, "");
+        const id = "call_" + randomUUID3().replace(/-/g, "");
         const name = p17.functionCall.name;
         if (!nameToIdList.has(name)) nameToIdList.set(name, []);
         nameToIdList.get(name).push(id);
@@ -8235,7 +9513,7 @@ function translateGeminiRequest(body, options = {}) {
       } else if (p17.functionResponse) {
         const name = p17.functionResponse.name;
         const idList = nameToIdList.get(name) || [];
-        const id = idList.shift() || "call_" + randomUUID().replace(/-/g, "");
+        const id = idList.shift() || "call_" + randomUUID3().replace(/-/g, "");
         toolResults.push({
           type: "tool-result",
           toolCallId: id,
@@ -8304,7 +9582,7 @@ function translateGeminiRequest(body, options = {}) {
   };
 }
 async function startGeminiProxy(routes, debug = false) {
-  const proxyToken = randomUUID();
+  const proxyToken = randomUUID3();
   silenceSdkWarnings();
   if (routes.length === 0) {
     return Promise.reject(new Error("Gemini proxy requires at least one route"));
@@ -8460,7 +9738,7 @@ ${JSON.stringify(params, null, 2)}`);
             "Connection": "keep-alive"
           });
           plog("Starting streamText...");
-          const { stream } = streamText2({
+          const { stream } = streamText3({
             model: languageModel,
             ...params
           });
@@ -9102,12 +10380,149 @@ Error: ${launchPlan.error}
 import pc8 from "picocolors";
 import * as p13 from "@clack/prompts";
 
+// src/antigravity/pool-failover.ts
+function isMeaningfulCloudCodeChunk(chunk) {
+  const newline = String.fromCharCode(10);
+  const line = chunk.split(newline).find((part) => part.startsWith("data:"));
+  if (!line) return false;
+  let parsed;
+  try {
+    parsed = JSON.parse(line.slice(5).trim());
+  } catch {
+    return false;
+  }
+  const value = parsed;
+  const candidates = value.candidates ?? value.response?.candidates;
+  const parts = candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return false;
+  return parts.some((part) => {
+    if (!part || typeof part !== "object") return false;
+    const value2 = part;
+    if (value2.functionCall && typeof value2.functionCall === "object") return true;
+    return typeof value2.text === "string" && value2.text.length > 0;
+  });
+}
+var POOL_CAPTURE_MAX_BYTES = 1048576;
+function createStreamCapture(real, maxBytes = POOL_CAPTURE_MAX_BYTES) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) throw new Error("Invalid pool capture byte limit");
+  let committed = false;
+  let headers;
+  const held = [];
+  let heldBytes = 0;
+  const commit = () => {
+    committed = true;
+    if (!real.headersSent) real.writeHead(headers?.status ?? 200, headers?.values);
+    for (const chunk of held.splice(0)) real.write(chunk);
+  };
+  const sink = {
+    response: {
+      get headersSent() {
+        return committed;
+      },
+      get destroyed() {
+        return real.destroyed;
+      },
+      get writableEnded() {
+        return real.writableEnded;
+      },
+      writeHead(status, values) {
+        headers = { status, values: values ?? {} };
+        return sink.response;
+      },
+      write(chunk) {
+        const text7 = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+        if (!committed) {
+          heldBytes += Buffer.byteLength(text7);
+          if (heldBytes > maxBytes) throw new Error("Pool capture byte limit exceeded");
+          held.push(text7);
+          if (isMeaningfulCloudCodeChunk(text7)) commit();
+        } else {
+          real.write(text7);
+        }
+        return true;
+      },
+      end() {
+        if (committed) real.end();
+        return sink.response;
+      },
+      once() {
+        return sink.response;
+      },
+      on() {
+        return sink.response;
+      },
+      setHeader() {
+      },
+      getHeader() {
+        return void 0;
+      },
+      removeHeader() {
+      }
+    },
+    get committed() {
+      return committed;
+    }
+  };
+  return sink;
+}
+function createJsonCapture() {
+  const capture = { status: 200, body: "", headers: {} };
+  const sink = {
+    get headersSent() {
+      return true;
+    },
+    get destroyed() {
+      return false;
+    },
+    get writableEnded() {
+      return false;
+    },
+    writeHead(status, values) {
+      capture.status = status;
+      capture.headers = values ?? {};
+      return sink;
+    },
+    write(chunk) {
+      capture.body += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+      return true;
+    },
+    end() {
+      return sink;
+    },
+    once() {
+      return sink;
+    },
+    on() {
+      return sink;
+    },
+    setHeader() {
+    },
+    getHeader() {
+      return void 0;
+    },
+    removeHeader() {
+    }
+  };
+  return {
+    response: sink,
+    get status() {
+      return capture.status;
+    },
+    get body() {
+      return capture.body;
+    },
+    get headers() {
+      return capture.headers;
+    }
+  };
+}
+
 // src/antigravity/cloud-code-gateway.ts
 import http from "http";
-import { streamText as streamText3, generateText as generateText3 } from "ai";
+import { streamText as streamText4, generateText as generateText3 } from "ai";
 
 // src/antigravity/request-adapter.ts
-import { randomUUID as randomUUID2 } from "crypto";
+import { randomUUID as randomUUID4 } from "crypto";
 import { tool as tool3, jsonSchema as jsonSchema3 } from "ai";
 var UNSUPPORTED_VOICE_MESSAGE = "Voice transcription isn\u2019t supported by Relay AI yet. Please type your message. Your coding session remains active.";
 var OMITTED_VOICE_TEXT = "[Voice recording omitted because transcription is not supported by Relay AI.]";
@@ -9271,7 +10686,7 @@ function translateTools(ccTools, options = {}) {
   }
   return Object.keys(tools).length > 0 ? tools : void 0;
 }
-function translateRequest(ccReq, options = {}) {
+function translateRequest2(ccReq, options = {}) {
   const systemInstructions = [];
   const sdkMessages = [];
   const nameToIdList = /* @__PURE__ */ new Map();
@@ -9335,7 +10750,7 @@ function translateRequest(ccReq, options = {}) {
           contentParts.push({ type: "text", text: OMITTED_VOICE_TEXT });
         }
       } else if (part.functionCall) {
-        const id = "call_" + randomUUID2().replace(/-/g, "");
+        const id = "call_" + randomUUID4().replace(/-/g, "");
         const name = part.functionCall.name;
         if (!nameToIdList.has(name)) nameToIdList.set(name, []);
         nameToIdList.get(name).push(id);
@@ -9348,7 +10763,7 @@ function translateRequest(ccReq, options = {}) {
       } else if (part.functionResponse) {
         const name = part.functionResponse.name;
         const idList = nameToIdList.get(name) || [];
-        const id = idList.shift() || "call_" + randomUUID2().replace(/-/g, "");
+        const id = idList.shift() || "call_" + randomUUID4().replace(/-/g, "");
         toolResults.push({
           type: "tool-result",
           toolCallId: id,
@@ -9456,9 +10871,9 @@ function formatCloudCodeChunk(opts) {
 }
 
 // src/antigravity/account-guardrail.ts
-import { readFileSync as readFileSync4 } from "fs";
+import { readFileSync as readFileSync5 } from "fs";
 import { homedir as homedir8 } from "os";
-import { join as join10 } from "path";
+import { join as join12 } from "path";
 var ENTERPRISE_TIER_PATTERN = /gcp-ge|enterprise/i;
 function isEnterpriseAuthTier(tier) {
   return typeof tier === "string" && ENTERPRISE_TIER_PATTERN.test(tier);
@@ -9472,9 +10887,9 @@ function detectAuthTierInBody(parsed) {
   const project = typeof body["project"] === "string" && body["project"].length > 0 ? body["project"] : void 0;
   return project ? { userTier, project } : { userTier };
 }
-function readAgyOnboardingAuthMethod(cliDir = join10(homedir8(), ".gemini", "antigravity-cli")) {
+function readAgyOnboardingAuthMethod(cliDir = join12(homedir8(), ".gemini", "antigravity-cli")) {
   try {
-    const raw = readFileSync4(join10(cliDir, "cache", "onboarding.json"), "utf8");
+    const raw = readFileSync5(join12(cliDir, "cache", "onboarding.json"), "utf8");
     const parsed = JSON.parse(raw);
     const method = parsed["previousAuthMethod"];
     if (method === "gcp") return "gcp";
@@ -11055,8 +12470,40 @@ function parsePseudoToolCall(text7, knownToolNames) {
   }
   return null;
 }
+function providerOptionsForRoute(route) {
+  return deepMergeProviderOptions(
+    thinkingProviderOptions(route.npm),
+    effortProviderOptions(route.npm, route.reasoningEffort ?? "high", route.upstreamModelId, route.reasoningMetadata)
+  );
+}
 async function handleStreamingRequest(res, route, providerOptions, parsed, log15, options = {}) {
-  const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
+  if (route.poolMembers?.length) {
+    for (const member of route.poolMembers) {
+      const capture = createStreamCapture(res);
+      try {
+        await handleStreamingRequest(capture.response, member, providerOptionsForRoute(member), parsed, log15, {
+          ...options,
+          disableSdkRetries: true
+        });
+      } catch (error) {
+        if (capture.committed) {
+          if (!res.writableEnded) res.end();
+          return;
+        }
+        log15("[gateway] pool member failed: " + member.providerId + "/" + member.modelId + ": " + formatUpstreamError(error));
+        continue;
+      }
+      if (capture.committed) {
+        if (!res.writableEnded) res.end();
+        return;
+      }
+    }
+    if (!res.headersSent) {
+      respondJson(res, 502, { error: { code: 502, message: "All free pool members failed" } });
+    }
+    return;
+  }
+  const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest2(parsed, {
     ...options.requestOptions,
     npm: route.npm,
     maxTools: maxToolsForNpm(route.npm)
@@ -11070,14 +12517,15 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log15
   );
   const langModel = await createRouteLanguageModel(route, options.sessionId);
   const responseId = `relay-${Date.now()}`;
-  const { stream } = streamText3({
+  const { stream } = streamText4({
     model: langModel,
     instructions: sdkParams.instructions,
     messages: sdkParams.messages,
     tools: sdkParams.tools,
     toolChoice: sdkParams.toolChoice,
     providerOptions: effectiveProviderOptions,
-    headers: sdkParams.headers
+    headers: sdkParams.headers,
+    ...options.disableSdkRetries ? { maxRetries: 0 } : {}
   });
   const startSse = () => {
     if (res.headersSent) return;
@@ -11235,7 +12683,28 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log15
   res.end();
 }
 async function handleUnaryRequest(res, route, providerOptions, parsed, log15, options = {}) {
-  const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
+  if (route.poolMembers?.length) {
+    for (const member of route.poolMembers) {
+      const capture = createJsonCapture();
+      try {
+        await handleUnaryRequest(capture.response, member, providerOptionsForRoute(member), parsed, log15, {
+          ...options,
+          disableSdkRetries: true
+        });
+      } catch (error) {
+        log15("[gateway] pool member failed: " + member.providerId + "/" + member.modelId + ": " + formatUpstreamError(error));
+        continue;
+      }
+      if (capture.status < 400 && capture.body) {
+        res.writeHead(capture.status, capture.headers);
+        res.end(capture.body);
+        return;
+      }
+    }
+    respondJson(res, 502, { error: { code: 502, message: "All free pool members failed" } });
+    return;
+  }
+  const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest2(parsed, {
     ...options.requestOptions,
     npm: route.npm,
     maxTools: maxToolsForNpm(route.npm)
@@ -11256,7 +12725,8 @@ async function handleUnaryRequest(res, route, providerOptions, parsed, log15, op
     tools: sdkParams.tools,
     toolChoice: sdkParams.toolChoice,
     providerOptions: effectiveProviderOptions,
-    headers: sdkParams.headers
+    headers: sdkParams.headers,
+    ...options.disableSdkRetries ? { maxRetries: 0 } : {}
   });
   const parts = [];
   const reasoning = reasoningOutputText(result.reasoning);
@@ -11293,6 +12763,74 @@ async function handleUnaryRequest(res, route, providerOptions, parsed, log15, op
     responseId
   };
   respondJson(res, 200, { response, traceId: "relay-trace", metadata: {} });
+}
+
+// src/pool/antigravity.ts
+var POOL_EFFORT_ANCHOR = "medium";
+function buildAntigravityPoolRoutes(opts) {
+  const now = opts.now ?? Date.now();
+  const routesByMember = /* @__PURE__ */ new Map();
+  for (const member of opts.pool.members) {
+    const provider = opts.providers.find((item) => item.id === member.providerId);
+    const model = provider?.models.find((item) => item.id === member.modelId);
+    if (!provider || !model || !model.npm || model.modelFormat === "cloud-code") continue;
+    const apiKey = opts.apiKeys.get(provider.id);
+    if (!apiKey) continue;
+    const freeStatus = classifyFreeStatus({ model, providerId: provider.id });
+    if (freeStatus !== "verified_free") continue;
+    if (!Number.isSafeInteger(model.contextWindow) || !meetsContextFloor("antigravity", model.contextWindow)) continue;
+    const revision = poolEndpointRevision({
+      providerId: provider.id,
+      authRef: provider.authRef,
+      npm: model.npm,
+      baseURL: model.apiBaseUrl,
+      upstreamModelId: model.upstreamModelId,
+      headers: provider.headers
+    });
+    const receipt = currentPoolReceipt(opts.receipts, member, revision, now);
+    if (!receipt || !receipt.billingSafe || !receipt.targets.includes("antigravity")) continue;
+    const concrete = buildAntigravityRoutes([{
+      providerId: provider.id,
+      providerName: provider.name,
+      model,
+      apiKey,
+      authType: provider.authType,
+      oauthAccountId: provider.oauthAccountId,
+      providerData: provider.providerData,
+      headers: provider.headers
+    }], 10, { effortMode: opts.effortMode });
+    const byLevel = /* @__PURE__ */ new Map();
+    for (const route of concrete) {
+      if (!route.reasoningEffort || !receipt.effortLevels.includes(route.reasoningEffort)) continue;
+      if (!byLevel.has(route.reasoningEffort)) {
+        byLevel.set(route.reasoningEffort, { ...route, contextWindow: model.contextWindow });
+      }
+    }
+    if (byLevel.size > 0) routesByMember.set(provider.id + ":" + model.id, byLevel);
+  }
+  if (routesByMember.size === 0) return [];
+  const common = [...routesByMember.values()][0].keys();
+  const levels = [...common].filter((level) => [...routesByMember.values()].every((map) => map.has(level))).sort((a, b) => EFFORT_RANK.indexOf(a) - EFFORT_RANK.indexOf(b));
+  if (levels.length === 0) return [];
+  const offered = favoriteEffortLevels(levels, POOL_EFFORT_ANCHOR).slice(0, Math.max(0, opts.maxRows));
+  return offered.map((level) => {
+    const members = [...routesByMember.values()].map((map) => map.get(level));
+    const representative = members[0];
+    return {
+      ...representative,
+      catalogId: "relay-free-pool-" + level,
+      providerId: "relay-free-pool",
+      providerName: "Free pool",
+      modelId: "free-pool-" + level,
+      displayName: "Free Pool " + effortLabel(level),
+      apiKey: "",
+      reasoningEffort: level,
+      contextWindow: Math.min(...members.map((member) => member.contextWindow).filter(
+        (window) => Number.isSafeInteger(window) && window > 0
+      )),
+      poolMembers: members
+    };
+  });
 }
 
 // src/antigravity/launch-routes.ts
@@ -11332,6 +12870,25 @@ async function resolveAntigravityLaunchRoutes(opts) {
   );
   const launchable = resolved.filter((entry) => !tooSmall.includes(entry));
   const routes = buildAntigravityRoutes(launchable, maxRoutes, { effortMode: opts.effortMode });
+  const freePool = parseFreePool(loadPreferences().freePool);
+  const hasPoolEvidence = freePool.receipts.some((receipt) => receipt.targets.includes("antigravity") && receipt.billingSafe && receipt.verifiedAt <= Date.now() && receipt.expiresAt > Date.now());
+  if (hasPoolEvidence && routes.length < maxRoutes) {
+    const apiKeys = /* @__PURE__ */ new Map();
+    for (const member of freePool.members) {
+      const provider = opts.allProviders.find((candidate) => candidate.id === member.providerId);
+      if (!provider) continue;
+      const key = await resolveLocalProviderApiKey(provider);
+      if (key) apiKeys.set(provider.id, key);
+    }
+    routes.push(...buildAntigravityPoolRoutes({
+      pool: freePool,
+      providers: opts.allProviders,
+      receipts: freePool.receipts,
+      apiKeys,
+      effortMode: opts.effortMode ?? "rows",
+      maxRows: maxRoutes - routes.length
+    }));
+  }
   const routed = new Set(routes.map((route) => `${route.providerId}:${route.modelId}`));
   const cutByVariants = launchable.filter((entry) => !routed.has(`${entry.providerId}:${entry.model.id}`)).map((entry) => ({ providerId: entry.providerId, modelId: entry.model.id }));
   return {
@@ -11350,15 +12907,15 @@ import { execFileSync, execSync as execSync4 } from "child_process";
 import spawn5 from "cross-spawn";
 import { existsSync as existsSync8 } from "fs";
 import { homedir as homedir9 } from "os";
-import { join as join11 } from "path";
+import { join as join13 } from "path";
 var isWindows5 = process.platform === "win32";
 var FALLBACK_PATHS2 = isWindows5 ? [
-  join11(process.env["APPDATA"] ?? homedir9(), "npm", "agy.cmd"),
-  join11(process.env["APPDATA"] ?? homedir9(), "npm", "agy"),
-  join11(homedir9(), "AppData", "Roaming", "npm", "agy.cmd")
+  join13(process.env["APPDATA"] ?? homedir9(), "npm", "agy.cmd"),
+  join13(process.env["APPDATA"] ?? homedir9(), "npm", "agy"),
+  join13(homedir9(), "AppData", "Roaming", "npm", "agy.cmd")
 ] : [
-  join11(homedir9(), ".local", "bin", "agy"),
-  join11(homedir9(), ".npm", "bin", "agy"),
+  join13(homedir9(), ".local", "bin", "agy"),
+  join13(homedir9(), ".npm", "bin", "agy"),
   "/usr/local/bin/agy",
   "/opt/homebrew/bin/agy"
 ];
@@ -11596,39 +13153,39 @@ async function waitForExistingIdeShutdownWithConfirm(watcher, confirmClose) {
 
 // src/antigravity/ide-session.ts
 import {
-  closeSync,
-  linkSync,
+  closeSync as closeSync2,
+  linkSync as linkSync2,
   existsSync as existsSync9,
-  mkdirSync as mkdirSync4,
-  openSync,
-  readFileSync as readFileSync5,
-  rmSync as rmSync3,
-  unlinkSync as unlinkSync2,
-  writeFileSync as writeFileSync5
+  mkdirSync as mkdirSync5,
+  openSync as openSync2,
+  readFileSync as readFileSync6,
+  rmSync as rmSync4,
+  unlinkSync as unlinkSync3,
+  writeFileSync as writeFileSync6
 } from "fs";
 import { createRequire as createRequire2 } from "module";
-import { dirname as dirname2, join as join12 } from "path";
-import { createHash as createHash4, randomUUID as randomUUID3 } from "crypto";
+import { dirname as dirname3, join as join14 } from "path";
+import { createHash as createHash6, randomUUID as randomUUID5 } from "crypto";
 import { parse, modify, applyEdits } from "jsonc-parser";
 var require3 = createRequire2(import.meta.url);
 var MODEL_PREFERENCES_KEY2 = "antigravityUnifiedStateSync.modelPreferences";
 var JETSKI_CLOUD_CODE_URL_KEY = "jetski.cloudCodeUrl";
 function getAntigravityHome(env = process.env) {
-  return join12(getAppHome(env), "antigravity");
+  return join14(getAppHome(env), "antigravity");
 }
 function getExistingIdeLockPath(env = process.env) {
-  return join12(getAntigravityHome(env), "existing-ide-session.json");
+  return join14(getAntigravityHome(env), "existing-ide-session.json");
 }
 function getExistingIdeRecoveryRecordPath(env = process.env) {
-  return join12(getAntigravityHome(env), "existing-ide-recovery.json");
+  return join14(getAntigravityHome(env), "existing-ide-recovery.json");
 }
 function fileSha256(filePath) {
-  return createHash4("sha256").update(readFileSync5(filePath)).digest("hex");
+  return createHash6("sha256").update(readFileSync6(filePath)).digest("hex");
 }
 function readExistingIdeLock(env = process.env) {
   const lockPath = getExistingIdeLockPath(env);
   if (!existsSync9(lockPath)) return null;
-  const rawText = readFileSync5(lockPath, "utf8");
+  const rawText = readFileSync6(lockPath, "utf8");
   if (rawText.trim().length === 0) {
     throw new Error(`Lock file at ${lockPath} is currently empty or in the process of being created.`);
   }
@@ -11646,12 +13203,12 @@ function readExistingIdeLock(env = process.env) {
 }
 function clearExistingIdeLock(env = process.env) {
   const p17 = getExistingIdeLockPath(env);
-  if (existsSync9(p17)) rmSync3(p17, { force: true });
+  if (existsSync9(p17)) rmSync4(p17, { force: true });
 }
 function readExistingIdeRecoveryRecord(env = process.env) {
   const recordPath = getExistingIdeRecoveryRecordPath(env);
   if (!existsSync9(recordPath)) return null;
-  const rawText = readFileSync5(recordPath, "utf8");
+  const rawText = readFileSync6(recordPath, "utf8");
   let parsed;
   try {
     parsed = JSON.parse(rawText);
@@ -11670,7 +13227,7 @@ function writeExistingIdeRecoveryRecord(record, env = process.env) {
 }
 function clearExistingIdeRecoveryRecord(env = process.env) {
   const p17 = getExistingIdeRecoveryRecordPath(env);
-  if (existsSync9(p17)) rmSync3(p17, { force: true });
+  if (existsSync9(p17)) rmSync4(p17, { force: true });
 }
 function assertNoActiveExistingIdeSession(env = process.env) {
   const lock = readExistingIdeLock(env);
@@ -11680,11 +13237,11 @@ function assertNoActiveExistingIdeSession(env = process.env) {
 }
 function acquireExistingIdeSession(profileDir, env = process.env, options = {}) {
   const lockPath = getExistingIdeLockPath(env);
-  mkdirSync4(dirname2(lockPath), { recursive: true, mode: 448 });
+  mkdirSync5(dirname3(lockPath), { recursive: true, mode: 448 });
   const lock = { pid: process.pid, profileDir, startedAt: (/* @__PURE__ */ new Date()).toISOString() };
-  const tempPath = `${lockPath}.${process.pid}.${randomUUID3()}.tmp`;
-  writeFileSync5(tempPath, JSON.stringify(lock), { mode: 384, flag: "wx" });
-  const publish = () => linkSync(tempPath, lockPath);
+  const tempPath = `${lockPath}.${process.pid}.${randomUUID5()}.tmp`;
+  writeFileSync6(tempPath, JSON.stringify(lock), { mode: 384, flag: "wx" });
+  const publish = () => linkSync2(tempPath, lockPath);
   try {
     try {
       publish();
@@ -11693,7 +13250,7 @@ function acquireExistingIdeSession(profileDir, env = process.env, options = {}) 
       const guardPath = `${lockPath}.reclaim`;
       let guard;
       try {
-        guard = openSync(guardPath, "wx", 384);
+        guard = openSync2(guardPath, "wx", 384);
       } catch (error2) {
         throw new Error(`Cannot acquire the recovery guard at ${guardPath}. Another recovery may be running. If that process has exited, remove this guard file and retry --restore.`, { cause: error2 });
       }
@@ -11704,16 +13261,16 @@ function acquireExistingIdeSession(profileDir, env = process.env, options = {}) 
         } else {
           if (existing && isProcessAlive(existing.pid)) throw new Error(`Another relay-ai antigravity-ide session is running (pid ${existing.pid}). Close it first.`);
           if (readExistingIdeRecoveryRecord(env) && !options.recovery) throw new Error("An interrupted IDE session needs recovery. Run relay-ai antigravity-ide --restore.");
-          if (existing) unlinkSync2(lockPath);
+          if (existing) unlinkSync3(lockPath);
           publish();
         }
       } finally {
-        closeSync(guard);
-        rmSync3(guardPath, { force: true });
+        closeSync2(guard);
+        rmSync4(guardPath, { force: true });
       }
     }
   } finally {
-    rmSync3(tempPath, { force: true });
+    rmSync4(tempPath, { force: true });
   }
   return { lock, release: () => releaseEmptyExistingIdeSession(env) };
 }
@@ -11838,9 +13395,9 @@ function beginExistingIdeSession(profileDir, gatewayUrl, env = process.env) {
   if (readExistingIdeRecoveryRecord(env)) throw new Error("An IDE session needs restoration before another overlay can be applied.");
   checkNodeSqliteAvailable();
   acquireExistingIdeSession(profileDir, env);
-  const userDir = join12(profileDir, "User");
-  mkdirSync4(userDir, { recursive: true });
-  const settingsPath = join12(userDir, "settings.json");
+  const userDir = join14(profileDir, "User");
+  mkdirSync5(userDir, { recursive: true });
+  const settingsPath = join14(userDir, "settings.json");
   let originalSettingsSha256;
   let backupSettingsPath;
   let originalContent = "";
@@ -11849,7 +13406,7 @@ function beginExistingIdeSession(profileDir, gatewayUrl, env = process.env) {
   let hadGatewayUrl = false;
   if (existsSync9(settingsPath)) {
     hadSettingsFile = true;
-    originalContent = readFileSync5(settingsPath, "utf8");
+    originalContent = readFileSync6(settingsPath, "utf8");
     const errors = [];
     const parsedObj = parse(originalContent, errors, { allowTrailingComma: true });
     if (errors.length > 0 || originalContent.trim().length > 0 && (!parsedObj || typeof parsedObj !== "object" || Array.isArray(parsedObj))) {
@@ -11860,12 +13417,12 @@ function beginExistingIdeSession(profileDir, gatewayUrl, env = process.env) {
       originalGatewayUrl = parsedObj[JETSKI_CLOUD_CODE_URL_KEY] ?? null;
     }
     originalSettingsSha256 = fileSha256(settingsPath);
-    const backupsDir = join12(getAntigravityHome(env), "backups");
-    mkdirSync4(backupsDir, { recursive: true });
-    backupSettingsPath = join12(backupsDir, `settings.${Date.now()}.bak`);
+    const backupsDir = join14(getAntigravityHome(env), "backups");
+    mkdirSync5(backupsDir, { recursive: true });
+    backupSettingsPath = join14(backupsDir, `settings.${Date.now()}.bak`);
     atomicWriteFile(backupSettingsPath, originalContent);
   }
-  const dbPath = join12(userDir, "globalStorage", "state.vscdb");
+  const dbPath = join14(userDir, "globalStorage", "state.vscdb");
   let savedModelPref;
   if (existsSync9(dbPath)) {
     savedModelPref = readSqliteModelPreferences(dbPath);
@@ -11940,13 +13497,13 @@ function restoreExistingIdeSession(env = process.env, options = {}) {
         backupSettingsPath && existsSync9(backupSettingsPath) && originalSettingsSha256 && fileSha256(backupSettingsPath) === originalSettingsSha256
       );
       if (patchedSettingsSha256 && currentSha === patchedSettingsSha256 && backupValid) {
-        const backupContent = readFileSync5(backupSettingsPath, "utf8");
+        const backupContent = readFileSync6(backupSettingsPath, "utf8");
         atomicWriteFile(settingsPath, backupContent);
       } else if (!record.originalSettingsSha256 && currentSha === patchedSettingsSha256) {
-        rmSync3(settingsPath, { force: true });
+        rmSync4(settingsPath, { force: true });
       } else {
         try {
-          const currentContent = readFileSync5(settingsPath, "utf8");
+          const currentContent = readFileSync6(settingsPath, "utf8");
           const errors = [];
           const parsed = parse(currentContent, errors, { allowTrailingComma: true });
           if (errors.length > 0 || currentContent.trim().length > 0 && (!parsed || typeof parsed !== "object" || Array.isArray(parsed))) {
@@ -11958,7 +13515,7 @@ function restoreExistingIdeSession(env = process.env, options = {}) {
           if (parsed && typeof parsed === "object") {
             const currentGw = parsed[JETSKI_CLOUD_CODE_URL_KEY];
             if (!record.originalSettingsSha256 && Object.keys(parsed).length === 1 && currentGw === gatewayUrl) {
-              rmSync3(settingsPath, { force: true });
+              rmSync4(settingsPath, { force: true });
             } else if (currentGw !== void 0 && currentGw !== gatewayUrl) {
               warnings.push(`jetski.cloudCodeUrl was modified to "${currentGw}" during the session; preserved user change.`);
             } else if (currentGw !== void 0) {
@@ -11997,11 +13554,11 @@ function restoreExistingIdeSession(env = process.env, options = {}) {
 
 // src/antigravity/launch-ide.ts
 import { execFileSync as execFileSync2, execSync as execSync5, spawn as spawn6 } from "child_process";
-import { existsSync as existsSync10, readFileSync as readFileSync6 } from "fs";
+import { existsSync as existsSync10, readFileSync as readFileSync7 } from "fs";
 import { homedir as homedir10 } from "os";
-import { dirname as dirname3, join as join13, normalize } from "path";
-var LINUX_APP_PROFILE_DIR = join13(homedir10(), ".relay-ai", "antigravity", "app-profile");
-var LINUX_IDE_PROFILE_DIR = join13(homedir10(), ".relay-ai", "antigravity", "profile");
+import { dirname as dirname4, join as join15, normalize } from "path";
+var LINUX_APP_PROFILE_DIR = join15(homedir10(), ".relay-ai", "antigravity", "app-profile");
+var LINUX_IDE_PROFILE_DIR = join15(homedir10(), ".relay-ai", "antigravity", "profile");
 function sleep(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
@@ -12009,7 +13566,7 @@ function linuxAntigravityBinary() {
   const candidates = [
     "/usr/share/antigravity/antigravity",
     "/opt/antigravity/antigravity",
-    join13(homedir10(), ".local", "share", "antigravity", "antigravity")
+    join15(homedir10(), ".local", "share", "antigravity", "antigravity")
   ];
   for (const candidate of candidates) {
     if (existsSync10(candidate)) return candidate;
@@ -12174,15 +13731,15 @@ function quitAntigravityAppGracefully() {
 function getDefaultAntigravityIdeProfileDir() {
   const binary = findAntigravityIdeBinary();
   if (!binary) throw new Error("Antigravity IDE not found.");
-  const appDir = process.platform === "darwin" ? join13(binary.slice(0, binary.indexOf(".app/") + 4), "Contents", "Resources", "app") : join13(dirname3(binary), "resources", "app");
-  const product = JSON.parse(readFileSync6(join13(appDir, "product.json"), "utf8"));
+  const appDir = process.platform === "darwin" ? join15(binary.slice(0, binary.indexOf(".app/") + 4), "Contents", "Resources", "app") : join15(dirname4(binary), "resources", "app");
+  const product = JSON.parse(readFileSync7(join15(appDir, "product.json"), "utf8"));
   const name = product.nameShort;
   if (!name || /[\\/]/.test(name) || name === "." || name === "..") {
     throw new Error("Cannot identify the installed Antigravity IDE profile.");
   }
-  const base = process.platform === "darwin" ? join13(homedir10(), "Library", "Application Support") : process.platform === "win32" ? process.env["APPDATA"] ?? join13(homedir10(), "AppData", "Roaming") : process.env["XDG_CONFIG_HOME"] ?? join13(homedir10(), ".config");
-  const profile = join13(base, name);
-  if (!existsSync10(join13(profile, "User"))) {
+  const base = process.platform === "darwin" ? join15(homedir10(), "Library", "Application Support") : process.platform === "win32" ? process.env["APPDATA"] ?? join15(homedir10(), "AppData", "Roaming") : process.env["XDG_CONFIG_HOME"] ?? join15(homedir10(), ".config");
+  const profile = join15(base, name);
+  if (!existsSync10(join15(profile, "User"))) {
     throw new Error("The normal Antigravity IDE profile was not found. Open the IDE normally first.");
   }
   return profile;
@@ -12290,15 +13847,15 @@ function findAntigravityAppBinary() {
   const override = getAppPathOverride("antigravity");
   if (override) return existsSync10(override) ? override : null;
   if (process.platform === "win32") {
-    const localAppData = process.env["LOCALAPPDATA"] ?? join13(homedir10(), "AppData", "Local");
-    const winPath = join13(localAppData, "Programs", "Antigravity", "Antigravity.exe");
+    const localAppData = process.env["LOCALAPPDATA"] ?? join15(homedir10(), "AppData", "Local");
+    const winPath = join15(localAppData, "Programs", "Antigravity", "Antigravity.exe");
     return existsSync10(winPath) ? winPath : null;
   }
   if (process.platform === "linux") return linuxAntigravityBinary();
   if (process.platform !== "darwin") return null;
   const defaultPath = "/Applications/Antigravity.app/Contents/MacOS/Antigravity";
   if (existsSync10(defaultPath)) return defaultPath;
-  const homePath = join13(homedir10(), "Applications", "Antigravity.app", "Contents", "MacOS", "Antigravity");
+  const homePath = join15(homedir10(), "Applications", "Antigravity.app", "Contents", "MacOS", "Antigravity");
   if (existsSync10(homePath)) return homePath;
   return null;
 }
@@ -12306,15 +13863,15 @@ function findAntigravityIdeBinary() {
   const override = getAppPathOverride("antigravity-ide");
   if (override) return existsSync10(override) ? override : null;
   if (process.platform === "win32") {
-    const localAppData = process.env["LOCALAPPDATA"] ?? join13(homedir10(), "AppData", "Local");
-    const winPath = join13(localAppData, "Programs", "Antigravity IDE", "Antigravity IDE.exe");
+    const localAppData = process.env["LOCALAPPDATA"] ?? join15(homedir10(), "AppData", "Local");
+    const winPath = join15(localAppData, "Programs", "Antigravity IDE", "Antigravity IDE.exe");
     return existsSync10(winPath) ? winPath : null;
   }
   if (process.platform === "linux") return linuxAntigravityBinary();
   if (process.platform !== "darwin") return null;
   const defaultPath = "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide";
   if (existsSync10(defaultPath)) return defaultPath;
-  const homePath = join13(homedir10(), "Applications", "Antigravity IDE.app", "Contents", "Resources", "app", "bin", "antigravity-ide");
+  const homePath = join15(homedir10(), "Applications", "Antigravity IDE.app", "Contents", "Resources", "app", "bin", "antigravity-ide");
   if (existsSync10(homePath)) return homePath;
   return null;
 }
@@ -12381,7 +13938,7 @@ function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs, options = 
     }
     const args = [];
     if (!options.existingProfile) {
-      const relayExtensionsDir = join13(homedir10(), ".relay-ai", "antigravity", "extensions");
+      const relayExtensionsDir = join15(homedir10(), ".relay-ai", "antigravity", "extensions");
       args.push(`--user-data-dir=${profileDir}`, `--extensions-dir=${relayExtensionsDir}`);
     } else {
       args.push(`--user-data-dir=${profileDir}`);
@@ -12429,7 +13986,7 @@ function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs, options = 
 
 // src/antigravity.ts
 import { homedir as homedir11 } from "os";
-import { join as join14 } from "path";
+import { join as join16 } from "path";
 var SHUTDOWN_DRAIN_MS = 500;
 var AGY_FAVORITES_PROVIDER_ID = "__relay_agy_favorites__";
 var AGY_FAVORITES_PROVIDER_LABEL = "\u2B50 Favorites Catalog";
@@ -12774,7 +14331,7 @@ async function runAntigravityAppCommand(childArgs, trace = false, boot) {
     trace,
     boot,
     async (env, _routes, gatewayHandle) => {
-      const profileDir = join14(homedir11(), ".relay-ai", "antigravity", "app-profile");
+      const profileDir = join16(homedir11(), ".relay-ai", "antigravity", "app-profile");
       if (isAntigravityAppRunning(profileDir)) {
         const restart = await p13.confirm({
           message: "Restart Antigravity to apply this Relay gateway?",
@@ -12790,7 +14347,7 @@ async function runAntigravityAppCommand(childArgs, trace = false, boot) {
           await waitForAntigravityAppQuit(profileDir);
         }
       }
-      clearAppLastSelectedModel(join14(homedir11(), ".gemini", "antigravity", "antigravity_state.pbtxt"));
+      clearAppLastSelectedModel(join16(homedir11(), ".gemini", "antigravity", "antigravity_state.pbtxt"));
       const launchCode = await launchAntigravityApp(env, profileDir, gatewayHandle.url, childArgs);
       if (launchCode !== 0) return launchCode;
       p13.log.info("Antigravity is using the Relay Cloud Code gateway.");
@@ -12910,7 +14467,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
             }
           }
         }
-        const profileDir = join14(homedir11(), ".relay-ai", "antigravity", "profile");
+        const profileDir = join16(homedir11(), ".relay-ai", "antigravity", "profile");
         if (isAntigravityIdeRunning(profileDir)) {
           const restart = await p13.confirm({
             message: "Restart Antigravity IDE to apply this Relay gateway?",
@@ -12958,7 +14515,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
 // src/codex-app.ts
 import pc9 from "picocolors";
 import * as p14 from "@clack/prompts";
-import { join as join17 } from "path";
+import { join as join19 } from "path";
 
 // src/codex/app-provider-routes.ts
 function codexRouteToProxyRoute(provider, model, apiKey) {
@@ -13051,14 +14608,14 @@ async function buildCodexAppProviderCatalogRoutes(provider, apiKey, selectedMode
 }
 
 // src/codex/app-config.ts
-import { existsSync as existsSync11, readFileSync as readFileSync7, rmSync as rmSync4, writeFileSync as writeFileSync6, mkdirSync as mkdirSync5 } from "fs";
-import { dirname as dirname4, join as join15 } from "path";
+import { existsSync as existsSync11, readFileSync as readFileSync8, rmSync as rmSync5, writeFileSync as writeFileSync7, mkdirSync as mkdirSync6 } from "fs";
+import { dirname as dirname5, join as join17 } from "path";
 import { parse as parse2, stringify } from "smol-toml";
 function getCodexConfigPath() {
-  return join15(getCodexHome(), "config.toml");
+  return join17(getCodexHome(), "config.toml");
 }
 function getCodexAppSidecarProfilePath() {
-  return join15(getCodexHome(), `${CODEX_APP_PROVIDER_ID}.config.toml`);
+  return join17(getCodexHome(), `${CODEX_APP_PROVIDER_ID}.config.toml`);
 }
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -13086,7 +14643,7 @@ function isMultiAgentV2Enabled(value) {
 }
 function readCodexConfigText(path3 = getCodexConfigPath()) {
   if (!existsSync11(path3)) return "";
-  return readFileSync7(path3, "utf8");
+  return readFileSync8(path3, "utf8");
 }
 function parseCodexConfig(text7) {
   if (!text7.trim()) return {};
@@ -13233,7 +14790,7 @@ function applyAppConfigPatch(spec, configPath = getCodexConfigPath()) {
   const text7 = `${stringify(merged)}
 `;
   validateAppConfigText(text7, spec);
-  mkdirSync5(dirname4(configPath), { recursive: true });
+  mkdirSync6(dirname5(configPath), { recursive: true });
   atomicWriteFile(configPath, text7);
   const written = readCodexConfigText(configPath);
   if (written !== text7) {
@@ -13287,7 +14844,7 @@ function restoreConfigFromState(state, configPath = getCodexConfigPath()) {
   const sidecar = getCodexAppSidecarProfilePath();
   if (existsSync11(sidecar)) {
     try {
-      rmSync4(sidecar, { force: true });
+      rmSync5(sidecar, { force: true });
     } catch {
     }
   }
@@ -13295,10 +14852,10 @@ function restoreConfigFromState(state, configPath = getCodexConfigPath()) {
   const empty = Object.keys(config).length === 0 || Object.keys(config).length === 1 && "model_providers" in config && Object.keys(asRecord(config.model_providers)).length === 0;
   if (!hadFile && empty) return false;
   if (empty) {
-    rmSync4(configPath, { force: true });
+    rmSync5(configPath, { force: true });
     return true;
   }
-  writeFileSync6(configPath, `${stringify(config)}
+  writeFileSync7(configPath, `${stringify(config)}
 `, "utf8");
   return true;
 }
@@ -13310,7 +14867,7 @@ function previewAppConfigToml(spec) {
 }
 
 // src/codex/app-readiness.ts
-import { readFileSync as readFileSync8 } from "fs";
+import { readFileSync as readFileSync9 } from "fs";
 function proxyRoot(spec) {
   const base = spec.proxyBaseUrl ?? `http://127.0.0.1:${spec.proxyPort}/v1`;
   if (!base.endsWith("/v1")) throw new Error("Codex App proxy base URL must end in /v1");
@@ -13326,7 +14883,7 @@ async function verifyCodexAppReadiness(spec, options = {}) {
   const root = proxyRoot(spec);
   const health = await checkedJson(`${root}/health`, fetchImpl);
   if (health.ok !== true) throw new Error("Relay proxy health check did not report ready");
-  const catalog = JSON.parse(readFileSync8(spec.catalogPath, "utf8"));
+  const catalog = JSON.parse(readFileSync9(spec.catalogPath, "utf8"));
   if (!Array.isArray(catalog.models) || catalog.models.length === 0) {
     throw new Error("Relay Codex model catalog is empty or invalid");
   }
@@ -13347,31 +14904,31 @@ async function verifyCodexAppReadiness(spec, options = {}) {
 import {
   copyFileSync as copyFileSync3,
   existsSync as existsSync12,
-  mkdirSync as mkdirSync6,
+  mkdirSync as mkdirSync7,
   readdirSync as readdirSync2,
-  readFileSync as readFileSync9,
-  rmSync as rmSync5,
+  readFileSync as readFileSync10,
+  rmSync as rmSync6,
   statSync as statSync2
 } from "fs";
-import { basename as basename2, join as join16 } from "path";
-import { createHash as createHash5 } from "crypto";
+import { basename as basename2, join as join18 } from "path";
+import { createHash as createHash7 } from "crypto";
 function getAppSessionLockPath(env = process.env) {
-  return join16(getRelayAiCodexDir(env), "session-app.json");
+  return join18(getRelayAiCodexDir(env), "session-app.json");
 }
 function getAppRestoreStatePath(env = process.env) {
-  return join16(getRelayAiCodexDir(env), "app-restore-state.json");
+  return join18(getRelayAiCodexDir(env), "app-restore-state.json");
 }
 function getAppCatalogPath(providerId, env = process.env) {
-  return join16(getRelayAiCodexDir(env), `app-models-${providerId}.json`);
+  return join18(getRelayAiCodexDir(env), `app-models-${providerId}.json`);
 }
 function fileSha2562(path3) {
-  return createHash5("sha256").update(readFileSync9(path3)).digest("hex");
+  return createHash7("sha256").update(readFileSync10(path3)).digest("hex");
 }
 function readAppSessionLock(env = process.env) {
   const path3 = getAppSessionLockPath(env);
   if (!existsSync12(path3)) return null;
   try {
-    const parsed = JSON.parse(readFileSync9(path3, "utf8"));
+    const parsed = JSON.parse(readFileSync10(path3, "utf8"));
     if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string") return parsed;
   } catch {
   }
@@ -13383,13 +14940,13 @@ function writeAppSessionLock(lock, env = process.env) {
 }
 function clearAppSessionLock(env = process.env) {
   const path3 = getAppSessionLockPath(env);
-  if (existsSync12(path3)) rmSync5(path3, { force: true });
+  if (existsSync12(path3)) rmSync6(path3, { force: true });
 }
 function readAppRestoreState(env = process.env) {
   const path3 = getAppRestoreStatePath(env);
   if (!existsSync12(path3)) return null;
   try {
-    return JSON.parse(readFileSync9(path3, "utf8"));
+    return JSON.parse(readFileSync10(path3, "utf8"));
   } catch {
     return null;
   }
@@ -13401,16 +14958,16 @@ function writeAppRestoreState(state, env = process.env) {
 }
 function clearAppRestoreState(env = process.env) {
   const path3 = getAppRestoreStatePath(env);
-  if (existsSync12(path3)) rmSync5(path3, { force: true });
+  if (existsSync12(path3)) rmSync6(path3, { force: true });
 }
 function backupConfigToml(env = process.env) {
   const configPath = getCodexConfigPath();
   if (!existsSync12(configPath)) return void 0;
   rotateBackups(configPath, env);
   const backupsDir = getBackupsDir(env);
-  mkdirSync6(backupsDir, { recursive: true });
+  mkdirSync7(backupsDir, { recursive: true });
   const base = basename2(configPath);
-  const backupPath = join16(backupsDir, `${base}.${Date.now()}.bak`);
+  const backupPath = join18(backupsDir, `${base}.${Date.now()}.bak`);
   copyFileSync3(configPath, backupPath);
   return backupPath;
 }
@@ -13427,13 +14984,13 @@ function saveAppRestoreStateBeforePatch(env = process.env) {
 function ownedAppCatalogPaths(env = process.env) {
   const codexDir = getRelayAiCodexDir(env);
   if (!existsSync12(codexDir)) return [];
-  return readdirSync2(codexDir).filter((n) => n.startsWith("app-models-") && n.endsWith(".json")).map((n) => join16(codexDir, n));
+  return readdirSync2(codexDir).filter((n) => n.startsWith("app-models-") && n.endsWith(".json")).map((n) => join18(codexDir, n));
 }
 function removeAppCatalogs(env = process.env) {
   const removed = [];
   for (const path3 of ownedAppCatalogPaths(env)) {
     try {
-      rmSync5(path3, { force: true });
+      rmSync6(path3, { force: true });
       removed.push(path3);
     } catch {
     }
@@ -13445,7 +15002,7 @@ function newestConfigBackup(env = process.env) {
   if (!existsSync12(backupDir)) return null;
   const configBase = basename2(getCodexConfigPath());
   const candidates = readdirSync2(backupDir).filter((name) => name.startsWith(`${configBase}.`) && name.endsWith(".bak")).map((name) => {
-    const path3 = join16(backupDir, name);
+    const path3 = join18(backupDir, name);
     try {
       return { path: path3, mtimeMs: statSync2(path3).mtimeMs };
     } catch {
@@ -14096,7 +15653,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
     }
   };
   try {
-    const catalogPath = mixedPlan ? join17(getRelayAiCodexDir(), "app-models-mixed.json") : favoritesActive && resolvedFavorites.length > 0 ? getFavoritesAppCatalogPath() : getAppCatalogPath(route.providerId);
+    const catalogPath = mixedPlan ? join19(getRelayAiCodexDir(), "app-models-mixed.json") : favoritesActive && resolvedFavorites.length > 0 ? getFavoritesAppCatalogPath() : getAppCatalogPath(route.providerId);
     const activeRoute = mixedPlan ? {
       tier: "proxy",
       modelId: mixedPlan.selectedSlug,
@@ -14305,33 +15862,33 @@ import pc10 from "picocolors";
 import * as p15 from "@clack/prompts";
 
 // src/claude-desktop/app-config.ts
-import { existsSync as existsSync13, readFileSync as readFileSync10, writeFileSync as writeFileSync7, mkdirSync as mkdirSync7 } from "fs";
+import { existsSync as existsSync13, readFileSync as readFileSync11, writeFileSync as writeFileSync8, mkdirSync as mkdirSync8 } from "fs";
 import { homedir as homedir12 } from "os";
-import { join as join18, dirname as dirname5 } from "path";
-import { randomUUID as randomUUID4 } from "crypto";
+import { join as join20, dirname as dirname6 } from "path";
+import { randomUUID as randomUUID6 } from "crypto";
 function getClaudeDesktopHome() {
   if (process.platform === "win32") {
-    return join18(process.env.LOCALAPPDATA || join18(homedir12(), "AppData", "Local"), "Claude-3p");
+    return join20(process.env.LOCALAPPDATA || join20(homedir12(), "AppData", "Local"), "Claude-3p");
   }
   if (process.platform === "linux") {
-    return join18(process.env.XDG_CONFIG_HOME || join18(homedir12(), ".config"), "Claude-3p");
+    return join20(process.env.XDG_CONFIG_HOME || join20(homedir12(), ".config"), "Claude-3p");
   }
-  return join18(homedir12(), "Library", "Application Support", "Claude-3p");
+  return join20(homedir12(), "Library", "Application Support", "Claude-3p");
 }
 function getConfigLibraryPath() {
-  return join18(getClaudeDesktopHome(), "configLibrary");
+  return join20(getClaudeDesktopHome(), "configLibrary");
 }
 function getMetaJsonPath() {
-  return join18(getConfigLibraryPath(), "_meta.json");
+  return join20(getConfigLibraryPath(), "_meta.json");
 }
 function getClaudeDesktopConfigJsonPath() {
-  return join18(getClaudeDesktopHome(), "claude_desktop_config.json");
+  return join20(getClaudeDesktopHome(), "claude_desktop_config.json");
 }
 function readDesktopConfigJson() {
   const path3 = getClaudeDesktopConfigJsonPath();
   if (!existsSync13(path3)) return {};
   try {
-    const parsed = JSON.parse(readFileSync10(path3, "utf8"));
+    const parsed = JSON.parse(readFileSync11(path3, "utf8"));
     return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
@@ -14339,8 +15896,8 @@ function readDesktopConfigJson() {
 }
 function writeDesktopConfigJson(config) {
   const path3 = getClaudeDesktopConfigJsonPath();
-  mkdirSync7(dirname5(path3), { recursive: true });
-  writeFileSync7(path3, `${JSON.stringify(config, null, 2)}
+  mkdirSync8(dirname6(path3), { recursive: true });
+  writeFileSync8(path3, `${JSON.stringify(config, null, 2)}
 `, "utf8");
 }
 function readDeploymentMode() {
@@ -14365,15 +15922,15 @@ function readMetaJson() {
   const metaPath = getMetaJsonPath();
   if (!existsSync13(metaPath)) return null;
   try {
-    return JSON.parse(readFileSync10(metaPath, "utf8"));
+    return JSON.parse(readFileSync11(metaPath, "utf8"));
   } catch {
     return null;
   }
 }
 function writeMetaJson(meta) {
   const metaPath = getMetaJsonPath();
-  mkdirSync7(dirname5(metaPath), { recursive: true });
-  writeFileSync7(metaPath, `${JSON.stringify(meta, null, 2)}
+  mkdirSync8(dirname6(metaPath), { recursive: true });
+  writeFileSync8(metaPath, `${JSON.stringify(meta, null, 2)}
 `, "utf8");
 }
 function buildRelayAiConfig(proxyPort) {
@@ -14386,11 +15943,11 @@ function buildRelayAiConfig(proxyPort) {
   };
 }
 function writeRelayAiConfig(proxyPort) {
-  const uuid = randomUUID4();
-  const configPath = join18(getConfigLibraryPath(), `${uuid}.json`);
+  const uuid = randomUUID6();
+  const configPath = join20(getConfigLibraryPath(), `${uuid}.json`);
   const config = buildRelayAiConfig(proxyPort);
-  mkdirSync7(dirname5(configPath), { recursive: true });
-  writeFileSync7(configPath, `${JSON.stringify(config, null, 2)}
+  mkdirSync8(dirname6(configPath), { recursive: true });
+  writeFileSync8(configPath, `${JSON.stringify(config, null, 2)}
 `, "utf8");
   const meta = readMetaJson() || { appliedId: "", entries: [] };
   meta.appliedId = uuid;
@@ -14576,22 +16133,22 @@ function expandClaudeAppEffortVariants(models, max = MAX_MODEL_CATALOG) {
 import {
   copyFileSync as copyFileSync4,
   existsSync as existsSync14,
-  mkdirSync as mkdirSync8,
-  readFileSync as readFileSync11,
+  mkdirSync as mkdirSync9,
+  readFileSync as readFileSync12,
   renameSync as renameSync3,
-  rmSync as rmSync6,
-  unlinkSync as unlinkSync3,
-  writeFileSync as writeFileSync8
+  rmSync as rmSync7,
+  unlinkSync as unlinkSync4,
+  writeFileSync as writeFileSync9
 } from "fs";
-import { dirname as dirname6, join as join19 } from "path";
+import { dirname as dirname7, join as join21 } from "path";
 function getSessionLockPath2() {
-  return join19(getClaudeDesktopHome(), ".relay-ai.lock");
+  return join21(getClaudeDesktopHome(), ".relay-ai.lock");
 }
 function inspectSessionLock() {
   const path3 = getSessionLockPath2();
   if (!existsSync14(path3)) return { status: "missing" };
   try {
-    const parsed = JSON.parse(readFileSync11(path3, "utf8"));
+    const parsed = JSON.parse(readFileSync12(path3, "utf8"));
     if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string" && typeof parsed.uuid === "string" && typeof parsed.proxyPort === "number") {
       return { status: "valid", lock: parsed };
     }
@@ -14602,14 +16159,14 @@ function inspectSessionLock() {
 function writeSessionLock2(lock) {
   const path3 = getSessionLockPath2();
   const tempPath = `${path3}.tmp.${process.pid}`;
-  mkdirSync8(dirname6(path3), { recursive: true });
+  mkdirSync9(dirname7(path3), { recursive: true });
   try {
-    writeFileSync8(tempPath, `${JSON.stringify(lock, null, 2)}
+    writeFileSync9(tempPath, `${JSON.stringify(lock, null, 2)}
 `, "utf8");
     renameSync3(tempPath, path3);
   } finally {
     try {
-      rmSync6(tempPath, { force: true });
+      rmSync7(tempPath, { force: true });
     } catch {
     }
   }
@@ -14635,7 +16192,7 @@ function restoreMetaJson() {
   const backupPath = `${metaPath}.bak`;
   if (existsSync14(backupPath)) {
     copyFileSync4(backupPath, metaPath);
-    unlinkSync3(backupPath);
+    unlinkSync4(backupPath);
   }
 }
 function restoreDeploymentModeFromLock(lock) {
@@ -14650,10 +16207,10 @@ function safeCleanupStep(label, fn) {
   }
 }
 function removeRelayAiConfig(uuid) {
-  const configPath = join19(getConfigLibraryPath(), `${uuid}.json`);
+  const configPath = join21(getConfigLibraryPath(), `${uuid}.json`);
   if (existsSync14(configPath)) {
     try {
-      rmSync6(configPath, { force: true });
+      rmSync7(configPath, { force: true });
     } catch {
     }
   }
@@ -14675,7 +16232,7 @@ function recoverSession() {
   if (state.status === "unreadable") {
     safeCleanupStep("restore _meta.json", restoreMetaJson);
     try {
-      rmSync6(getSessionLockPath2(), { force: true });
+      rmSync7(getSessionLockPath2(), { force: true });
     } catch {
     }
     return { recovered: true, message: "Cleared a corrupt claude-app session lock and restored shared config." };
@@ -14694,7 +16251,7 @@ function recoverSession() {
     safeCleanupStep("restore deploymentMode", () => restoreDeploymentModeFromLock(lock));
     removeRelayAiConfig(lock.uuid);
     try {
-      rmSync6(getSessionLockPath2(), { force: true });
+      rmSync7(getSessionLockPath2(), { force: true });
     } catch {
     }
   } else {
@@ -14728,7 +16285,7 @@ function cleanupSession(uuid) {
     safeCleanupStep("restore _meta.json", restoreMetaJson);
     safeCleanupStep("restore deploymentMode", () => restoreDeploymentModeFromLock(lock));
     try {
-      rmSync6(getSessionLockPath2(), { force: true });
+      rmSync7(getSessionLockPath2(), { force: true });
     } catch {
     }
   }
@@ -15002,17 +16559,17 @@ ${pc10.bold("Claude Desktop 3P Mode Active")}`);
 }
 
 // src/ai-doc.ts
-import { existsSync as existsSync15, mkdirSync as mkdirSync9, readFileSync as readFileSync12, writeFileSync as writeFileSync9 } from "fs";
+import { existsSync as existsSync15, mkdirSync as mkdirSync10, readFileSync as readFileSync13, writeFileSync as writeFileSync10 } from "fs";
 import { homedir as homedir13 } from "os";
-import { join as join20 } from "path";
+import { join as join22 } from "path";
 var SKILL_DIR_NAME = "relay-ai-cli";
 var SKILL_INSTALL_DIRS = [
-  join20(getAppHome(), "skills"),
-  join20(homedir13(), ".claude", "skills"),
-  join20(homedir13(), ".agents", "skills"),
-  join20(homedir13(), ".codex", "skills"),
-  join20(homedir13(), ".cursor", "skills"),
-  join20(homedir13(), ".cursor", "skills-cursor")
+  join22(getAppHome(), "skills"),
+  join22(homedir13(), ".claude", "skills"),
+  join22(homedir13(), ".agents", "skills"),
+  join22(homedir13(), ".codex", "skills"),
+  join22(homedir13(), ".cursor", "skills"),
+  join22(homedir13(), ".cursor", "skills-cursor")
 ];
 function parseSkillVersion(content) {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -15026,10 +16583,10 @@ function parseSkillVersion(content) {
   return null;
 }
 function readInstalledSkillVersion(skillDir) {
-  const skillPath = join20(skillDir, "SKILL.md");
+  const skillPath = join22(skillDir, "SKILL.md");
   if (!existsSync15(skillPath)) return null;
   try {
-    const head = readFileSync12(skillPath, "utf-8").slice(0, 1024);
+    const head = readFileSync13(skillPath, "utf-8").slice(0, 1024);
     return parseSkillVersion(head.includes("---", 4) ? head : `${head}
 ---
 `);
@@ -15039,8 +16596,8 @@ function readInstalledSkillVersion(skillDir) {
 }
 function skillInstallTargets() {
   return SKILL_INSTALL_DIRS.map((dir) => {
-    const skillDir = join20(dir, SKILL_DIR_NAME);
-    return { skillDir, skillPath: join20(skillDir, "SKILL.md") };
+    const skillDir = join22(dir, SKILL_DIR_NAME);
+    return { skillDir, skillPath: join22(skillDir, "SKILL.md") };
   });
 }
 function formatProviderModels(provider) {
@@ -15547,8 +17104,8 @@ function installAiDoc(opts = {}) {
         result.skipped.push(skillPath);
         continue;
       }
-      mkdirSync9(skillDir, { recursive: true });
-      writeFileSync9(skillPath, doc, "utf-8");
+      mkdirSync10(skillDir, { recursive: true });
+      writeFileSync10(skillPath, doc, "utf-8");
       if (previous) {
         result.updated.push({ path: skillPath, fromVersion: previous });
       } else {
@@ -15706,18 +17263,18 @@ function buildHttpProxyChildEnv(baseEnv, proxyUrl, caCertPath) {
 }
 
 // src/http-proxy/ca.ts
-import { randomBytes as randomBytes3, randomUUID as randomUUID5 } from "crypto";
+import { randomBytes as randomBytes3, randomUUID as randomUUID7 } from "crypto";
 import {
   chmodSync as chmodSync3,
   existsSync as existsSync16,
-  mkdirSync as mkdirSync11,
-  readFileSync as readFileSync13,
+  mkdirSync as mkdirSync12,
+  readFileSync as readFileSync14,
   readdirSync as readdirSync3,
-  rmSync as rmSync7,
+  rmSync as rmSync8,
   statSync as statSync3,
-  writeFileSync as writeFileSync11
+  writeFileSync as writeFileSync12
 } from "fs";
-import { dirname as dirname8, join as join22, resolve } from "path";
+import { dirname as dirname9, join as join24, resolve } from "path";
 import forge from "node-forge";
 var SESSION_ROOT = "http-proxy-sessions";
 var OWNER_FILE = "owner.pid";
@@ -15737,44 +17294,44 @@ function processIsRunning(pid) {
   }
 }
 function cleanupStaleHttpProxySessions(appHome = getAppHome()) {
-  const root = join22(appHome, SESSION_ROOT);
+  const root = join24(appHome, SESSION_ROOT);
   if (!existsSync16(root)) return;
   const now = Date.now();
   for (const name of readdirSync3(root)) {
-    const sessionDir = join22(root, name);
+    const sessionDir = join24(root, name);
     try {
       const stat = statSync3(sessionDir);
       if (!stat.isDirectory()) continue;
-      const ownerPath = join22(sessionDir, OWNER_FILE);
+      const ownerPath = join24(sessionDir, OWNER_FILE);
       if (!existsSync16(ownerPath)) {
         if (now - stat.mtimeMs > MID_CREATION_GRACE_MS) {
-          rmSync7(sessionDir, { recursive: true, force: true });
+          rmSync8(sessionDir, { recursive: true, force: true });
         }
         continue;
       }
-      const pid = Number(readFileSync13(ownerPath, "utf8").trim());
+      const pid = Number(readFileSync14(ownerPath, "utf8").trim());
       if (!Number.isSafeInteger(pid) || pid <= 0) {
         const ownerStat = statSync3(ownerPath);
         const newestMtimeMs = Math.max(stat.mtimeMs, ownerStat.mtimeMs);
         if (now - newestMtimeMs > MID_CREATION_GRACE_MS) {
-          rmSync7(sessionDir, { recursive: true, force: true });
+          rmSync8(sessionDir, { recursive: true, force: true });
         }
         continue;
       }
-      if (!processIsRunning(pid)) rmSync7(sessionDir, { recursive: true, force: true });
+      if (!processIsRunning(pid)) rmSync8(sessionDir, { recursive: true, force: true });
     } catch {
     }
   }
 }
 function createHttpProxyCertificates(appHome = getAppHome()) {
   cleanupStaleHttpProxySessions(appHome);
-  const root = join22(appHome, SESSION_ROOT);
-  mkdirSync11(root, { recursive: true, mode: 448 });
+  const root = join24(appHome, SESSION_ROOT);
+  mkdirSync12(root, { recursive: true, mode: 448 });
   chmodSync3(root, 448);
-  const sessionDir = join22(root, randomUUID5());
-  mkdirSync11(sessionDir, { mode: 448 });
+  const sessionDir = join24(root, randomUUID7());
+  mkdirSync12(sessionDir, { mode: 448 });
   chmodSync3(sessionDir, 448);
-  writeFileSync11(join22(sessionDir, OWNER_FILE), `${process.pid}
+  writeFileSync12(join24(sessionDir, OWNER_FILE), `${process.pid}
 `, { mode: 384 });
   try {
     const caKeys = forge.pki.rsa.generateKeyPair(2048);
@@ -15809,14 +17366,14 @@ function createHttpProxyCertificates(appHome = getAppHome()) {
     ]);
     server.sign(caKeys.privateKey, forge.md.sha256.create());
     const caCert = forge.pki.certificateToPem(ca);
-    const caCertPath = join22(sessionDir, "relay-ai-ca.pem");
-    writeFileSync11(caCertPath, caCert, { encoding: "utf8", mode: 384 });
+    const caCertPath = join24(sessionDir, "relay-ai-ca.pem");
+    writeFileSync12(caCertPath, caCert, { encoding: "utf8", mode: 384 });
     chmodSync3(caCertPath, 384);
     let cleaned = false;
     const cleanupOnExit = () => {
       if (cleaned) return;
       cleaned = true;
-      rmSync7(sessionDir, { recursive: true, force: true });
+      rmSync8(sessionDir, { recursive: true, force: true });
     };
     const cleanupOnSighup = () => {
       cleanupOnExit();
@@ -15843,7 +17400,7 @@ function createHttpProxyCertificates(appHome = getAppHome()) {
       cleanup
     };
   } catch (error) {
-    rmSync7(sessionDir, { recursive: true, force: true });
+    rmSync8(sessionDir, { recursive: true, force: true });
     throw error;
   }
 }
@@ -15852,11 +17409,11 @@ function createHttpProxyCaBundle(relayCaCertPath, additionalCaCertPath) {
   if (resolve(additionalCaCertPath) === resolve(relayCaCertPath)) {
     return relayCaCertPath;
   }
-  const relayCa = readFileSync13(relayCaCertPath, "utf8").trimEnd();
-  const additionalCa = readFileSync13(additionalCaCertPath, "utf8").trim();
+  const relayCa = readFileSync14(relayCaCertPath, "utf8").trimEnd();
+  const additionalCa = readFileSync14(additionalCaCertPath, "utf8").trim();
   if (!additionalCa) return relayCaCertPath;
-  const combinedPath = join22(dirname8(relayCaCertPath), "combined-ca.pem");
-  writeFileSync11(
+  const combinedPath = join24(dirname9(relayCaCertPath), "combined-ca.pem");
+  writeFileSync12(
     combinedPath,
     `${relayCa}
 ${additionalCa}
@@ -16440,7 +17997,7 @@ async function launchClaudeWithHttpProxy(options, dependencies = defaultDependen
 }
 
 // src/cli.ts
-var STARTER_CLAUDE_FLAGS = /* @__PURE__ */ new Set(["--dry-run", "--setup", "--trace", "--http-proxy", "--with-native", "--relay-only", "--help", "-h", "--version", "-v"]);
+var STARTER_CLAUDE_FLAGS = /* @__PURE__ */ new Set(["--dry-run", "--setup", "--trace", "--http-proxy", "--pool", "--with-native", "--relay-only", "--help", "-h", "--version", "-v"]);
 var RELAY_LAUNCH_FLAGS = /* @__PURE__ */ new Set(["--provider", "--model"]);
 function parseRelayLaunchFlag(arg, rest, index, parsed) {
   if (arg === "--provider" || arg === "--model") {
@@ -16579,6 +18136,12 @@ function parseArgs(args) {
     }
     return parsed2;
   }
+  if (first === "pool") {
+    const parsed2 = emptyParsed("pool");
+    parsed2.showHelp = rest.includes("--help") || rest.includes("-h");
+    parsed2.claudeArgs = rest;
+    return parsed2;
+  }
   if (first === "models" || first === "favorites") {
     const parsed2 = emptyParsed("models");
     parsed2.modelCatalogScope = "global";
@@ -16635,6 +18198,10 @@ function parseArgs(args) {
       if (arg === "--with-native") {
         if (parsed2.codexLaunchMode === "relay-only") parsed2.error = "--with-native and --relay-only cannot be used together";
         parsed2.codexLaunchMode = "mixed";
+        continue;
+      }
+      if (arg === "--pool") {
+        parsed2.error = "--pool is only supported by relay-ai codex";
         continue;
       }
       if (arg === "--relay-only") {
@@ -16698,6 +18265,10 @@ function parseArgs(args) {
       if (arg === "--relay-only") {
         if (parsed2.codexLaunchMode === "mixed") parsed2.error = "--with-native and --relay-only cannot be used together";
         parsed2.codexLaunchMode = "relay-only";
+        continue;
+      }
+      if (arg === "--pool") {
+        parsed2.codexPool = true;
         continue;
       }
       if (arg === "--help" || arg === "-h") {
@@ -16853,6 +18424,7 @@ function parseArgs(args) {
       if (parsed.codexLaunchMode && parsed.codexLaunchMode !== mode) parsed.error = "--with-native and --relay-only cannot be used together";
       parsed.codexLaunchMode = mode;
     }
+    if (arg === "--pool") parsed.claudePool = true;
     if (arg === "--help" || arg === "-h") parsed.showHelp = true;
     if (arg === "--version" || arg === "-v") parsed.showVersion = true;
   }
@@ -16895,6 +18467,7 @@ ${pc11.bold("Root options:")}
 ${pc11.bold("Commands:")}
   claude      Launch Claude Code \u2014 pick a provider from your registry
   models      Manage favorite models for mid-session /model switching (max ${MAX_MODEL_CATALOG})
+  pool        Manage shared free-model pool membership (experimental)
   favorites   Alias for models
   subagents   Manage the independent Codex SubAgent model catalog (starts empty)
   providers   Add, import, and manage your AI providers
@@ -16955,6 +18528,7 @@ ${pc11.bold("Options:")}
   --http-proxy Keep your normal Anthropic login and add selected/favorite Relay models
   --with-native  Native + Relay models (skips the first question)
   --relay-only   Relay models only (skips the first question)
+  --pool       Launch the shared free-model pool (requires relay-ai pool verify)
   --help       Show this command help
   --version    Show version
 
@@ -17435,6 +19009,99 @@ async function runClaudeCommand(parsed) {
     console.error("Install Claude Code:");
     console.error("  npm install -g @anthropic-ai/claude-code\n");
     return 1;
+  }
+  if (parsed.claudePool) {
+    const pool = parseFreePool(loadPreferences().freePool);
+    if (pool.members.length === 0) {
+      console.error(pc11.red("No free pool members. Add one with: relay-ai pool add <provider-account> <model>"));
+      return 1;
+    }
+    const fresh = pool.receipts.filter((receipt) => receipt.verifiedAt <= Date.now() && receipt.expiresAt > Date.now());
+    if (fresh.length === 0) {
+      console.error(pc11.red("No verified free pool members. Run: relay-ai pool verify"));
+      return 1;
+    }
+    const entry = poolCatalogEntry(pool, pool.receipts, "claude");
+    if (!entry) {
+      console.error(pc11.red("No verified free pool member is currently Claude-compatible. Run: relay-ai pool verify"));
+      return 1;
+    }
+    if (dryRun) {
+      console.log("Free pool mode: " + pool.members.length + " member(s), " + fresh.length + " verified receipt(s).");
+      console.log("Would launch Claude Code against " + entry.id + " with a " + entry.context_window + "-token window.");
+      return 0;
+    }
+    let poolSession;
+    try {
+      poolSession = acquireClaudePoolSessionLock();
+    } catch (err) {
+      console.error(pc11.red("Could not reserve this Claude pool session: " + (err instanceof Error ? err.message : String(err))));
+      return 1;
+    }
+    if (!poolSession.ok) {
+      if (poolSession.reason === "unreadable") {
+        console.error(pc11.red("The Claude pool session lock is unreadable. Remove " + getClaudePoolSessionLockPath() + " and retry."));
+      } else {
+        console.error(pc11.yellow("Another relay-ai claude --pool session is running (pid " + poolSession.pid + ")."));
+      }
+      return 1;
+    }
+    try {
+      let providers;
+      try {
+        providers = await fetchProviderCatalog();
+      } catch (err) {
+        console.error(pc11.red(String(err instanceof Error ? err.message : err)));
+        return 1;
+      }
+      const health = new PoolHealthStore();
+      const runtime = new ClaudePoolRuntime(pool, (body, signal, sessionId) => prepareClaudePoolRoutes({
+        pool,
+        providers,
+        receipts: pool.receipts,
+        body,
+        signal,
+        sessionId,
+        health
+      }));
+      let handle;
+      try {
+        handle = await startProxyCatalog([], CLAUDE_POOL_MODEL_ID, trace, {
+          pool: { runtime, displayName: entry.display_name, contextWindow: entry.context_window }
+        });
+      } catch (err) {
+        p16.log.error("Failed to start free pool proxy: " + (err instanceof Error ? err.message : String(err)));
+        return 1;
+      }
+      try {
+        const childEnv2 = buildChildEnv(
+          "http://127.0.0.1:" + handle.port,
+          CLAUDE_POOL_MODEL_ID,
+          handle.token,
+          handle.port,
+          entry.context_window,
+          true
+        );
+        const debugLogPath2 = prepareClaudeTraceLog();
+        const traceArgs2 = trace ? ["--debug-file", debugLogPath2] : [];
+        if (trace) p16.log.info("Debug log: " + debugLogPath2);
+        if (!agentStdout) {
+          p16.log.info("Free pool mode - " + pool.members.length + " member(s), " + fresh.length + " verified receipt(s).");
+          p16.log.info("Proxy on port " + handle.port);
+        }
+        const exitCode2 = await launchClaude(
+          childEnv2,
+          claudeCodeClientModelId(CLAUDE_POOL_MODEL_ID, entry.context_window),
+          [...traceArgs2, ...claudeArgs]
+        );
+        if (trace) printTraceLog(debugLogPath2);
+        return exitCode2;
+      } finally {
+        handle.close();
+      }
+    } finally {
+      poolSession.release();
+    }
   }
   const prefs = dryRun ? {} : loadPreferences();
   const conflicts = detectConflicts();
@@ -17941,8 +19608,16 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-KVCVGTBB.js");
+    const { runUiCommand } = await import("./ui-command-JORJUI6E.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
+  }
+  if (parsed.command === "pool") {
+    const { poolHelpText, runPoolCommand } = await import("./command-N42AEJZY.js");
+    if (parsed.showHelp) {
+      printHelp(poolHelpText);
+      return 0;
+    }
+    return await runPoolCommand(parsed.claudeArgs);
   }
   if (parsed.command === "models") {
     if (parsed.showVersion) {
@@ -18013,7 +19688,8 @@ Options:
       launchProvider: parsed.launchProvider,
       launchModel: parsed.launchModel,
       vertex: parsed.vertex,
-      codexLaunchMode: parsed.codexLaunchMode
+      codexLaunchMode: parsed.codexLaunchMode,
+      pool: parsed.codexPool
     });
   }
   if (parsed.command === "gemini") {

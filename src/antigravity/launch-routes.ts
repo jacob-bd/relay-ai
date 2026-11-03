@@ -4,6 +4,9 @@ import { providerRefreshToken } from '../provider-runtime.js';
 import { buildFavoritesList, type ResolveContext } from '../favorites-resolver.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from '../types.js';
 import { buildAntigravityRoutes, type AntigravityEffortMode } from './catalog.js';
+import { loadPreferences } from '../config.js';
+import { parseFreePool } from '../pool/membership.js';
+import { buildAntigravityPoolRoutes } from '../pool/antigravity.js';
 import { meetsContextFloor } from '../target-compatibility.js';
 import type { AntigravityRoute } from './types.js';
 
@@ -68,6 +71,27 @@ export async function resolveAntigravityLaunchRoutes(
 
   // Effort variants can push later favorites past the cap; report those too.
   const routes = buildAntigravityRoutes(launchable, maxRoutes, { effortMode: opts.effortMode });
+  const freePool = parseFreePool(loadPreferences().freePool);
+  const hasPoolEvidence = freePool.receipts.some(receipt =>
+    receipt.targets.includes('antigravity') && receipt.billingSafe
+    && receipt.verifiedAt <= Date.now() && receipt.expiresAt > Date.now());
+  if (hasPoolEvidence && routes.length < maxRoutes) {
+    const apiKeys = new Map<string, string>();
+    for (const member of freePool.members) {
+      const provider = opts.allProviders.find(candidate => candidate.id === member.providerId);
+      if (!provider) continue;
+      const key = await resolveLocalProviderApiKey(provider);
+      if (key) apiKeys.set(provider.id, key);
+    }
+    routes.push(...buildAntigravityPoolRoutes({
+      pool: freePool,
+      providers: opts.allProviders,
+      receipts: freePool.receipts,
+      apiKeys,
+      effortMode: opts.effortMode ?? 'rows',
+      maxRows: maxRoutes - routes.length,
+    }));
+  }
   const routed = new Set(routes.map(route => `${route.providerId}:${route.modelId}`));
   const cutByVariants = launchable
     .filter(entry => !routed.has(`${entry.providerId}:${entry.model.id}`))

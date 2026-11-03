@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockRequest, createMockResponse } from './helpers/ui-api-test-utils.js';
+import { handleUiApiRequest } from '../src/ui/api.js';
 
 const state = vi.hoisted(() => ({
   catalog: [] as any[],
@@ -16,7 +17,6 @@ vi.mock('../src/env.js', () => ({
 }));
 
 async function models() {
-  const { handleUiApiRequest } = await import('../src/ui/api.js');
   const response = createMockResponse();
   handleUiApiRequest(createMockRequest('GET', '/api/models'), response.res);
   await vi.waitFor(() => expect(response.result.data).not.toBe(''));

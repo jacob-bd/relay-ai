@@ -1,3 +1,4 @@
+import { FREE_POOL_MODEL_ID, type CodexPoolRuntime } from './pool/codex-runtime.js';
 // Local Responses API proxy for Codex (Tier 2 registry models).
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -493,6 +494,8 @@ export async function resolveModel(
 }
 
 export interface CodexProxyOptions {
+  /** Explicit experimental pool runtime. Concrete routes never enter it. */
+  pool?: CodexPoolRuntime;
   debug?: boolean;
   /** Default true. App mode passes false — GUI cannot inherit RELAY_AI_CODEX_KEY. */
   requireAuth?: boolean;
@@ -688,6 +691,7 @@ export async function startCodexProxy(
         if (mixedNative) {
           for (const nativeModelId of mixedNative.nativeModelIds) addModel(nativeModelId, 'openai');
         }
+        if (opts.pool) addModel(FREE_POOL_MODEL_ID, 'relay-free-pool');
 
         sendJson(res, 200, {
           object: 'list',
@@ -698,6 +702,10 @@ export async function startCodexProxy(
 
       if (req.method === 'GET' && effectivePath.startsWith('/v1/models/')) {
         const id = effectivePath.slice('/v1/models/'.length);
+        if (id === FREE_POOL_MODEL_ID && opts.pool) {
+          sendJson(res, 200, { id, object: 'model', created: Math.floor(Date.now() / 1000), owned_by: 'relay-free-pool' });
+          return;
+        }
         if (mixedNative && mixedNative.nativeModelIds.has(id)) {
           sendJson(res, 200, { id, object: 'model', created: Math.floor(Date.now() / 1000), owned_by: 'openai' });
           return;
@@ -773,6 +781,28 @@ export async function startCodexProxy(
         }
 
         const modelId = String(body.model ?? '');
+        if (modelId === FREE_POOL_MODEL_ID) {
+          if (!opts.pool || !requireAuth) {
+            sendJson(res, 400, { error: { message: 'Free pool requires an explicitly configured authenticated runtime', type: 'invalid_request_error' } });
+            return;
+          }
+          const abort = new AbortController();
+          res.once('close', () => { if (!res.writableFinished) abort.abort(); });
+          try {
+            const response = await opts.pool.respond(req.headers, body, abort.signal, chunk => {
+              if (res.destroyed) throw new Error('Client disconnected');
+              if (!res.headersSent) res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+              res.write(chunk);
+            });
+            if (body.stream) res.end();
+            else sendJson(res, 200, response);
+          } catch {
+            if (!res.headersSent) sendJson(res, 503, { error: { message: 'Free pool could not complete this request safely', type: 'api_error' } });
+            else if (!res.writableEnded) { writeResponsesErrorStream(modelId, 'Free pool request failed', chunk => res.write(chunk), 503); res.end(); }
+          }
+          return;
+        }
+
         const markedSubagent = Boolean(mixedNative && isCodexSubagentRequest(body, req.headers));
         const subagentRoute = mixedNative && markedSubagent
           ? resolveCodexSubagentRoute(routes, mixedNative.subagentRouteModelId, body, req.headers)
@@ -1326,6 +1356,11 @@ export async function startCodexProxy(
           }
 
           const modelId = String(body.model ?? '');
+          if (modelId === FREE_POOL_MODEL_ID) {
+            writeResponsesErrorStream(modelId, 'Free pool WebSocket dispatch is not enabled', sendWsEvent, 400);
+            return;
+          }
+
           currentRequestModel = modelId;
           const markedSubagent = Boolean(mixedNative && isCodexSubagentRequest(body, req.headers));
           const subagentRoute = mixedNative && markedSubagent

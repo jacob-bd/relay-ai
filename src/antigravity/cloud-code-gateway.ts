@@ -1,3 +1,4 @@
+import { createJsonCapture, createStreamCapture } from './pool-failover.js';
 import { isProviderKind } from '../registry/provider-kind.js';
 import http from 'node:http';
 import { streamText, generateText } from 'ai';
@@ -639,6 +640,8 @@ interface RequestHandlerOptions {
   sessionId?: string;
   onReasoningWithToolCall?: (reasoning: string) => void;
   trace?: boolean;
+  /** Pool attempts are already bounded by Relay; the SDK must not spend extra calls. */
+  disableSdkRetries?: boolean;
 }
 
 function emitThinkingDelta(
@@ -804,6 +807,13 @@ export function parsePseudoToolCall(
  * Handle a streaming GenerateContent request.
  * Uses the SDK event stream to support text deltas, tool call events, and finish.
  */
+function providerOptionsForRoute(route: AntigravityRoute) {
+  return deepMergeProviderOptions(
+    thinkingProviderOptions(route.npm),
+    effortProviderOptions(route.npm, route.reasoningEffort ?? 'high', route.upstreamModelId, route.reasoningMetadata),
+  );
+}
+
 async function handleStreamingRequest(
   res: http.ServerResponse,
   route: AntigravityRoute,
@@ -812,6 +822,32 @@ async function handleStreamingRequest(
   log: (msg: string) => void,
   options: RequestHandlerOptions = {},
 ): Promise<void> {
+  if (route.poolMembers?.length) {
+    for (const member of route.poolMembers) {
+      const capture = createStreamCapture(res);
+      try {
+        await handleStreamingRequest(capture.response, member, providerOptionsForRoute(member), parsed, log, {
+          ...options,
+          disableSdkRetries: true,
+        });
+      } catch (error) {
+        if (capture.committed) {
+          if (!res.writableEnded) res.end();
+          return;
+        }
+        log('[gateway] pool member failed: ' + member.providerId + '/' + member.modelId + ': ' + formatUpstreamError(error));
+        continue;
+      }
+      if (capture.committed) {
+        if (!res.writableEnded) res.end();
+        return;
+      }
+    }
+    if (!res.headersSent) {
+      respondJson(res, 502, { error: { code: 502, message: 'All free pool members failed' } });
+    }
+    return;
+  }
   const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
     ...options.requestOptions,
     npm: route.npm,
@@ -835,6 +871,7 @@ async function handleStreamingRequest(
     toolChoice: sdkParams.toolChoice,
     providerOptions: effectiveProviderOptions as any,
     headers: sdkParams.headers,
+    ...(options.disableSdkRetries ? { maxRetries: 0 } : {}),
   });
 
   const startSse = () => {
@@ -1002,6 +1039,27 @@ async function handleUnaryRequest(
   log: (msg: string) => void,
   options: RequestHandlerOptions = {},
 ): Promise<void> {
+  if (route.poolMembers?.length) {
+    for (const member of route.poolMembers) {
+      const capture = createJsonCapture();
+      try {
+        await handleUnaryRequest(capture.response, member, providerOptionsForRoute(member), parsed, log, {
+          ...options,
+          disableSdkRetries: true,
+        });
+      } catch (error) {
+        log('[gateway] pool member failed: ' + member.providerId + '/' + member.modelId + ': ' + formatUpstreamError(error));
+        continue;
+      }
+      if (capture.status < 400 && capture.body) {
+        res.writeHead(capture.status, capture.headers);
+        res.end(capture.body);
+        return;
+      }
+    }
+    respondJson(res, 502, { error: { code: 502, message: 'All free pool members failed' } });
+    return;
+  }
   const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
     ...options.requestOptions,
     npm: route.npm,
@@ -1025,6 +1083,7 @@ async function handleUnaryRequest(
     toolChoice: sdkParams.toolChoice,
     providerOptions: effectiveProviderOptions as any,
     headers: sdkParams.headers,
+    ...(options.disableSdkRetries ? { maxRetries: 0 } : {}),
   });
 
   const parts: any[] = [];

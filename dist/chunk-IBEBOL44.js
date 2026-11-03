@@ -2116,6 +2116,114 @@ function parseManualModel(raw) {
   };
 }
 
+// src/pool/capabilities.ts
+import { createHash } from "crypto";
+function poolEndpointRevision(config) {
+  const headers = Object.entries(config.headers ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  return createHash("sha256").update(JSON.stringify([
+    config.providerId,
+    config.authRef,
+    config.npm,
+    config.baseURL,
+    config.upstreamModelId,
+    headers
+  ])).digest("hex");
+}
+function currentPoolReceipt(receipts, member, revision, now) {
+  const matching = receipts.filter((receipt2) => receipt2.member.providerId === member.providerId && receipt2.member.modelId === member.modelId && receipt2.endpointRevision === revision && Number.isFinite(receipt2.verifiedAt) && receipt2.verifiedAt <= now && Number.isFinite(receipt2.expiresAt) && receipt2.expiresAt > now);
+  if (matching.length !== 1) return void 0;
+  const receipt = matching[0];
+  if (!Number.isSafeInteger(receipt.maxOutputTokens) || receipt.maxOutputTokens <= 0 || !Number.isSafeInteger(receipt.contextWindow) || receipt.contextWindow <= 0 || !Array.isArray(receipt.effortLevels) || receipt.contextSource !== "attested" && receipt.contextSource !== "observed" && receipt.contextSource !== "provider") return void 0;
+  if (new Set(receipt.effortLevels).size !== receipt.effortLevels.length || receipt.effortLevels.some((level) => typeof level !== "string" || !level || level !== level.trim())) return void 0;
+  if (receipt.defaultEffort !== void 0 && (typeof receipt.defaultEffort !== "string" || !receipt.defaultEffort.trim() || receipt.defaultEffort !== receipt.defaultEffort.trim())) return void 0;
+  return receipt;
+}
+function parsePoolReceipt(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return void 0;
+  const r = value;
+  const member = r.member;
+  if (!member || typeof member.providerId !== "string" || !member.providerId || typeof member.modelId !== "string" || !member.modelId) return void 0;
+  const revision = r.endpointRevision;
+  if (typeof revision !== "string" || !/^[0-9a-f]{64}$/.test(revision)) return void 0;
+  const int = (v) => typeof v === "number" && Number.isSafeInteger(v);
+  if (!int(r.verifiedAt) || !int(r.expiresAt) || r.expiresAt <= r.verifiedAt) return void 0;
+  if (!Array.isArray(r.targets) || r.targets.length === 0) return void 0;
+  const targets = r.targets.filter((t) => t === "codex" || t === "claude" || t === "antigravity");
+  if (targets.length !== r.targets.length || new Set(targets).size !== targets.length) return void 0;
+  if (typeof r.tools !== "boolean") return void 0;
+  if (!int(r.maxOutputTokens) || r.maxOutputTokens <= 0) return void 0;
+  if (!int(r.contextWindow) || r.contextWindow <= 0) return void 0;
+  if (r.contextSource !== "attested" && r.contextSource !== "observed" && r.contextSource !== "provider") return void 0;
+  if (r.reasoningAccounting !== "inside-output" && r.reasoningAccounting !== "separate") return void 0;
+  if (r.defaultEffort !== void 0 && (typeof r.defaultEffort !== "string" || !r.defaultEffort.trim())) return void 0;
+  if (!Array.isArray(r.effortLevels)) return void 0;
+  const levels = r.effortLevels.filter((l) => typeof l === "string" && l.length > 0 && l === l.trim());
+  if (levels.length !== r.effortLevels.length || new Set(levels).size !== levels.length) return void 0;
+  if (typeof r.billingSafe !== "boolean") return void 0;
+  return {
+    member: { providerId: member.providerId, modelId: member.modelId },
+    endpointRevision: revision,
+    verifiedAt: r.verifiedAt,
+    expiresAt: r.expiresAt,
+    targets,
+    tools: r.tools,
+    maxOutputTokens: r.maxOutputTokens,
+    contextWindow: r.contextWindow,
+    contextSource: r.contextSource,
+    reasoningAccounting: r.reasoningAccounting,
+    ...r.defaultEffort === void 0 ? {} : { defaultEffort: r.defaultEffort },
+    effortLevels: levels,
+    billingSafe: r.billingSafe
+  };
+}
+
+// src/pool/membership.ts
+function parseFreePool(value) {
+  if (value === void 0) return { members: [], effort: "auto", receipts: [] };
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid free pool configuration");
+  const { members, effort, receipts } = value;
+  if (!Array.isArray(members) || !["auto", "low", "medium", "high"].includes(String(effort))) {
+    throw new Error("Invalid free pool members or effort");
+  }
+  const result = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const member of members) {
+    if (!member || typeof member !== "object" || Array.isArray(member)) throw new Error("Invalid free pool member");
+    const { providerId, modelId } = member;
+    if (typeof providerId !== "string" || !providerId.trim() || providerId !== providerId.trim() || typeof modelId !== "string" || !modelId.trim() || modelId !== modelId.trim()) {
+      throw new Error("Free pool members require a provider account and model");
+    }
+    const key = JSON.stringify([providerId, modelId]);
+    if (seen.has(key)) throw new Error("Duplicate free pool member");
+    seen.add(key);
+    result.push({ providerId, modelId });
+  }
+  const parsedReceipts = [];
+  if (receipts !== void 0) {
+    if (!Array.isArray(receipts)) throw new Error("Invalid free pool receipts");
+    const seenReceipts = /* @__PURE__ */ new Set();
+    for (const raw of receipts) {
+      const receipt = parsePoolReceipt(raw);
+      if (!receipt) throw new Error("Invalid free pool receipt");
+      const key = JSON.stringify([receipt.member.providerId, receipt.member.modelId, receipt.endpointRevision]);
+      if (seenReceipts.has(key)) throw new Error("Duplicate free pool receipt");
+      seenReceipts.add(key);
+      parsedReceipts.push(receipt);
+    }
+  }
+  return { members: result, effort, receipts: parsedReceipts };
+}
+function addFreePoolMember(pool, member) {
+  return parseFreePool({ ...pool, members: [...pool.members, member] });
+}
+function removeFreePoolMember(pool, member) {
+  return parseFreePool({
+    ...pool,
+    members: pool.members.filter((item) => item.providerId !== member.providerId || item.modelId !== member.modelId),
+    receipts: pool.receipts.filter((item) => item.member.providerId !== member.providerId || item.member.modelId !== member.modelId)
+  });
+}
+
 // src/config.ts
 import { dirname as dirname4, join as join5 } from "path";
 import { copyFileSync as copyFileSync2, existsSync as existsSync5, mkdirSync as mkdirSync5, readFileSync as readFileSync5, renameSync as renameSync4, writeFileSync as writeFileSync4 } from "fs";
@@ -2179,6 +2287,16 @@ function writeConfig(config) {
   writeFileSync4(configPath, `${JSON.stringify(config, null, 2)}
 `, { encoding: "utf8", mode: 384 });
 }
+function parseStoredFreePool(value) {
+  if (value === void 0) return void 0;
+  try {
+    return parseFreePool(value);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "invalid value";
+    console.warn(`Ignoring invalid saved free pool configuration: ${detail}`);
+    return { members: [], effort: "auto", receipts: [] };
+  }
+}
 function loadPreferences() {
   const config = readConfig();
   const lastProvider = config.lastProvider === "opencode" ? "zen" : config.lastProvider;
@@ -2199,6 +2317,7 @@ function loadPreferences() {
     lastClaudeTransparentMode: config.lastClaudeTransparentMode,
     recentModelsByProvider: config.recentModelsByProvider,
     favoriteModels: config.favoriteModels,
+    freePool: parseStoredFreePool(config.freePool),
     codexSubagentModels: Array.isArray(config.codexSubagentModels) ? config.codexSubagentModels.slice(0, CODEX_SUBAGENT_MODEL_CAP) : void 0,
     appPathOverrides: config.appPathOverrides,
     recentLaunchFolders: config.recentLaunchFolders,
@@ -2223,6 +2342,7 @@ function savePreferences(prefs) {
   if (prefs.lastClaudeTransparentMode !== void 0) config.lastClaudeTransparentMode = prefs.lastClaudeTransparentMode;
   if (prefs.recentModelsByProvider !== void 0) config.recentModelsByProvider = prefs.recentModelsByProvider;
   if (prefs.favoriteModels !== void 0) config.favoriteModels = prefs.favoriteModels;
+  if (prefs.freePool !== void 0) config.freePool = parseFreePool(prefs.freePool);
   if (prefs.codexSubagentModels !== void 0) {
     config.codexSubagentModels = prefs.codexSubagentModels.slice(0, CODEX_SUBAGENT_MODEL_CAP);
   }
@@ -2404,142 +2524,236 @@ function resolveServerAutostart(env = process.env) {
   return getServerAutostart();
 }
 
-// src/context-window.ts
-import { readFileSync as readFileSync6 } from "fs";
-var DEFAULT_CONTEXT_WINDOW = 2e5;
-var CACHE_PROVIDER_PRIORITY = /* @__PURE__ */ new Set(["opencode", "opencode-go"]);
-var HEURISTIC_RULES = [
-  [/gemini-2\.5-pro|gemini-1\.5-pro|gemini-3-pro/i, 2e6],
-  [/gemini/i, 1e6],
-  [/claude-opus-4-[678]|claude-sonnet-4-[678]/i, 1e6],
-  [/claude-haiku-4-[567]/i, 2e5],
-  [/claude.*\[1m\]/i, 1e6],
-  [/claude-opus-4-[56]|claude-sonnet-4-[45]|claude-3/i, 2e5],
-  // Claude 5.x and later (incl. Haiku 5.5) and Fable: 1M per models.dev.
-  [/claude-(?:opus|sonnet|haiku)-(?:[5-9]|\d{2,})(?:\b|-)|claude-fable/i, 1e6],
-  [/claude/i, 2e5],
-  [/deepseek-v4|deepseek-r1|deepseek-reasoner/i, 1e6],
-  [/deepseek/i, 64e3],
-  [/gpt-5|gpt-4\.1|o3-|o4-/i, 1e6],
-  [/gpt-4o|gpt-4-turbo|gpt-4/i, 128e3],
-  [/gpt-oss/i, 131072],
-  [/qwen3|qwen-3|qwen2\.5-72b|qwen2\.5-32b|qwen-coder/i, 262144],
-  [/qwen/i, 131072],
-  [/kimi-k2|kimi-k2\.5|moonshot/i, 262144],
-  [/minimax-m2/i, 204800],
-  [/minimax/i, 128e3],
-  [/mistral-large|ministral|mistral/i, 262144],
-  [/llama-3\.[23]|llama3/i, 131072],
-  [/grok-4\.20/i, 1e6],
-  [/grok-4\.5/i, 5e5],
-  [/grok-3|grok-4/i, 131072],
-  [/nemotron/i, 131072],
-  [/glm-4/i, 128e3],
-  [/solar-pro3/i, 131072],
-  [/solar-pro2/i, 65536],
-  [/solar/i, 32768]
-];
-var parsedCache;
-var cacheIndex;
-var heuristicCache = /* @__PURE__ */ new Map();
-function loadOpencodeCache() {
-  if (parsedCache === void 0) {
-    try {
-      parsedCache = JSON.parse(readFileSync6(OPENCODE_CACHE_PATH, "utf8"));
-    } catch {
-      parsedCache = null;
-    }
-  }
-  return parsedCache;
-}
-function buildContextWindowIndex(cache) {
-  const index = /* @__PURE__ */ new Map();
-  const allLimits = /* @__PURE__ */ new Map();
-  for (const [providerKey, providerData] of Object.entries(cache)) {
-    const models = providerData?.models;
-    if (!models) continue;
-    for (const [modelId, entry] of Object.entries(models)) {
-      const ctx = entry.limit?.context;
-      if (typeof ctx !== "number" || ctx <= 0) continue;
-      const limits = allLimits.get(modelId) ?? [];
-      limits.push(ctx);
-      allLimits.set(modelId, limits);
-      if (CACHE_PROVIDER_PRIORITY.has(providerKey)) {
-        index.set(modelId, ctx);
+// src/stream-activity.ts
+import { AsyncLocalStorage } from "async_hooks";
+var streamActivity = new AsyncLocalStorage();
+function activityFetch(upstream = (...args) => globalThis.fetch(...args)) {
+  return async (input, init) => {
+    const activity = streamActivity.getStore();
+    const response = await upstream(input, init);
+    if (!activity || !response.body) return response;
+    const reader = response.body.getReader();
+    const body = new ReadableStream({
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read();
+          if (done) {
+            controller.close();
+            return;
+          }
+          if (value.byteLength) activity();
+          controller.enqueue(value);
+        } catch (error) {
+          controller.error(error);
+        }
+      },
+      cancel(reason) {
+        return reader.cancel(reason);
       }
-    }
-  }
-  for (const [modelId, limits] of allLimits) {
-    if (!index.has(modelId)) {
-      index.set(modelId, Math.max(...limits));
-    }
-  }
-  return index;
-}
-function getCacheIndex() {
-  if (cacheIndex === void 0) {
-    const cache = loadOpencodeCache();
-    cacheIndex = cache ? buildContextWindowIndex(cache) : /* @__PURE__ */ new Map();
-  }
-  return cacheIndex;
-}
-function contextWindowFromHeuristics(modelId) {
-  const cached2 = heuristicCache.get(modelId);
-  if (cached2 !== void 0) return cached2;
-  for (const [pattern, size] of HEURISTIC_RULES) {
-    if (pattern.test(modelId)) {
-      heuristicCache.set(modelId, size);
-      return size;
-    }
-  }
-  heuristicCache.set(modelId, DEFAULT_CONTEXT_WINDOW);
-  return DEFAULT_CONTEXT_WINDOW;
-}
-function lookupContextWindow(modelId) {
-  return getCacheIndex().get(modelId) ?? contextWindowFromHeuristics(modelId);
-}
-function resolveContextWindow(modelId, explicit) {
-  if (typeof explicit === "number" && explicit > 0) return explicit;
-  return lookupContextWindow(modelId);
+    });
+    return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+  };
 }
 
-// src/context-model-id.ts
-var ONE_M_CONTEXT_SUFFIX = "[1m]";
-var ONE_M_CONTEXT_WINDOW = 1e6;
-function claudeCodeContextWindow(model) {
-  const window = resolveContextWindow(stripOneMContextSuffix(model.id), model.contextWindow);
-  return model.contextWindowEstimated ? Math.min(window, DEFAULT_CONTEXT_WINDOW) : window;
-}
-function stripOneMContextSuffix(modelId) {
-  return modelId.replace(/\[1m\]$/i, "");
-}
-function claudeCodeClientModelId(modelId, contextWindow) {
-  const bare = stripOneMContextSuffix(modelId);
-  const window = resolveContextWindow(bare, contextWindow);
-  if (window >= ONE_M_CONTEXT_WINDOW) {
-    return `${bare}${ONE_M_CONTEXT_SUFFIX}`;
-  }
-  return bare;
-}
-function routeLookupIds(id) {
-  const bare = stripOneMContextSuffix(id);
-  const googleBare = bare.startsWith("models/") ? bare.slice("models/".length) : bare;
-  return [.../* @__PURE__ */ new Set([
-    id,
-    bare,
-    `${bare}${ONE_M_CONTEXT_SUFFIX}`,
-    googleBare,
-    `${googleBare}${ONE_M_CONTEXT_SUFFIX}`,
-    `models/${googleBare}`,
-    `models/${bare}`
-  ])];
-}
+// src/provider-factory.ts
+import { wrapLanguageModel, extractReasoningMiddleware } from "ai";
+import { createHash as createHash4 } from "crypto";
 
-// src/oauth/antigravity-oauth.ts
-import open from "open";
-import { readFileSync as readFileSync7 } from "fs";
+// src/codex/version.ts
+import { execSync } from "child_process";
+import { existsSync as existsSync6 } from "fs";
 import { homedir as homedir2 } from "os";
-import { join as pathJoin } from "path";
+import { join as join6 } from "path";
+
+// src/codex/process.ts
+import spawn from "cross-spawn";
+function commandError(binaryPath, args, stdout, stderr, detail) {
+  const error = new Error(`Command failed: ${binaryPath} ${args.join(" ")} (${detail})`);
+  return Object.assign(error, { stdout, stderr });
+}
+function runCodexCommandSync(binaryPath, args, options = {}) {
+  const result = spawn.sync(binaryPath, args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: options.env,
+    timeout: options.timeout,
+    maxBuffer: options.maxBuffer
+  });
+  const stdout = result.stdout ?? "";
+  const stderr = result.stderr ?? "";
+  if (result.error) {
+    throw Object.assign(result.error, { stdout, stderr });
+  }
+  if (result.status !== 0) {
+    throw commandError(binaryPath, args, stdout, stderr, `exit ${result.status ?? result.signal ?? "unknown"}`);
+  }
+  return { stdout, stderr };
+}
+function runCodexCommand(binaryPath, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(binaryPath, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: options.env
+    });
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    let outputBytes = 0;
+    let settled = false;
+    const finishError = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(Object.assign(error, {
+        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+        stderr: Buffer.concat(stderrChunks).toString("utf8")
+      }));
+    };
+    const collect = (target, chunk) => {
+      target.push(chunk);
+      outputBytes += chunk.length;
+      if (options.maxBuffer !== void 0 && outputBytes > options.maxBuffer) {
+        child.kill();
+        finishError(commandError(binaryPath, args, "", "", `output exceeded ${options.maxBuffer} bytes`));
+      }
+    };
+    child.stdout?.on("data", (chunk) => collect(stdoutChunks, chunk));
+    child.stderr?.on("data", (chunk) => collect(stderrChunks, chunk));
+    child.on("error", finishError);
+    let timer;
+    if (options.timeout !== void 0) {
+      timer = setTimeout(() => {
+        child.kill();
+        finishError(commandError(binaryPath, args, "", "", `timed out after ${options.timeout}ms`));
+      }, options.timeout);
+    }
+    child.on("close", (code, signal) => {
+      if (timer) clearTimeout(timer);
+      if (settled) return;
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      if (code !== 0) {
+        finishError(commandError(binaryPath, args, stdout, stderr, `exit ${code ?? signal ?? "unknown"}`));
+        return;
+      }
+      settled = true;
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+// src/codex/version.ts
+var isWindows = process.platform === "win32";
+var CODEX_NPM_LATEST_URL = "https://registry.npmjs.org/@openai/codex/latest";
+var CODEX_VERSION_CACHE_TTL_MS = 24 * 60 * 60 * 1e3;
+var NPM_FETCH_TIMEOUT_MS = 3e3;
+var cached = null;
+var inflight = null;
+function parseCodexVersion(input) {
+  const match = input.match(/(\d+)\.(\d+)\.(\d+)/);
+  return match ? `${match[1]}.${match[2]}.${match[3]}` : null;
+}
+function versionTuple(version) {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+function maxCodexVersion(candidates) {
+  let best = null;
+  let bestTuple = null;
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const tuple = versionTuple(candidate);
+    if (!tuple) continue;
+    const greater = !bestTuple || (tuple[0] !== bestTuple[0] ? tuple[0] > bestTuple[0] : tuple[1] !== bestTuple[1] ? tuple[1] > bestTuple[1] : tuple[2] > bestTuple[2]);
+    if (greater) {
+      best = candidate;
+      bestTuple = tuple;
+    }
+  }
+  return best ?? candidates.find((c) => !!c) ?? CODEX_RESPONSES_LITE_VERSION;
+}
+async function fetchNpmCodexVersion(fetchImpl = fetch, timeoutMs = NPM_FETCH_TIMEOUT_MS) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetchImpl(CODEX_NPM_LATEST_URL, {
+        headers: { Accept: "application/json" },
+        signal: controller.signal
+      });
+      if (!res.ok) return null;
+      const body = await res.json();
+      return typeof body.version === "string" ? parseCodexVersion(body.version) : null;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return null;
+  }
+}
+var CODEX_VERSION_FALLBACK_PATHS = isWindows ? [
+  join6(process.env["APPDATA"] ?? homedir2(), "npm", "codex.cmd"),
+  join6(process.env["APPDATA"] ?? homedir2(), "npm", "codex")
+] : [
+  join6(homedir2(), ".local", "bin", "codex"),
+  join6(homedir2(), ".npm", "bin", "codex"),
+  "/usr/local/bin/codex",
+  "/opt/homebrew/bin/codex"
+];
+function codexBinaryCandidates() {
+  const override = getAppPathOverride("codex");
+  if (override) return [override];
+  const candidates = [];
+  try {
+    const result = execSync(isWindows ? "where.exe codex" : "which codex", {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    candidates.push(...result.trim().split("\n").map((l) => l.trim()).filter(Boolean));
+  } catch {
+  }
+  candidates.push(...CODEX_VERSION_FALLBACK_PATHS);
+  return [...new Set(candidates)];
+}
+function installedCodexVersion() {
+  for (const binary of codexBinaryCandidates()) {
+    try {
+      if (!existsSync6(binary)) continue;
+      const { stdout } = runCodexCommandSync(binary, ["--version"], { timeout: 5e3 });
+      const parsed = parseCodexVersion(stdout);
+      if (parsed) return parsed;
+    } catch {
+    }
+  }
+  return null;
+}
+async function resolveCodexClientVersion(opts = {}) {
+  const override = process.env["RELAY_AI_CODEX_VERSION"]?.trim();
+  if (override) return parseCodexVersion(override) ?? CODEX_RESPONSES_LITE_VERSION;
+  if (process.env["VITEST"] || process.env["VITEST_WORKER_ID"]) {
+    return cached?.version ?? CODEX_RESPONSES_LITE_VERSION;
+  }
+  const now = Date.now();
+  if (!opts.forceRefresh && cached && now - cached.fetchedAt < CODEX_VERSION_CACHE_TTL_MS) {
+    return cached.version;
+  }
+  if (inflight && !opts.forceRefresh) return inflight;
+  inflight = (async () => {
+    try {
+      const [npm, local] = await Promise.all([
+        fetchNpmCodexVersion(opts.fetchImpl),
+        Promise.resolve().then(() => installedCodexVersion())
+      ]);
+      const best = maxCodexVersion([npm, local, CODEX_RESPONSES_LITE_VERSION]);
+      cached = { version: best, fetchedAt: Date.now() };
+      return best;
+    } catch {
+      return cached?.version ?? CODEX_RESPONSES_LITE_VERSION;
+    } finally {
+      inflight = null;
+    }
+  })();
+  return inflight;
+}
 
 // src/oauth/pkce.ts
 function generateRandomString(length) {
@@ -2566,59 +2780,6 @@ function positiveSecondsToMs(value, defaultMs) {
 }
 async function sleepMs(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// src/oauth/callback-server.ts
-import http from "http";
-var SUCCESS_HTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Authorized</title></head>
-<body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0">
-<div style="text-align:center;padding:2rem;background:#fff;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.1)">
-<div style="color:#22c55e;font-size:2.5rem">&#10003;</div>
-<h1 style="margin:.5rem 0">Authentication successful</h1>
-<p style="color:#666">You can close this tab and return to the terminal.</p>
-</div></body></html>`;
-function startCallbackServer() {
-  return new Promise((resolve, reject) => {
-    let codeResolve;
-    let codeReject;
-    const server = http.createServer((req, res) => {
-      const u = new URL(req.url ?? "/", "http://localhost");
-      if (u.pathname !== "/callback" && u.pathname !== "/oauth/callback") {
-        res.writeHead(404);
-        res.end();
-        return;
-      }
-      const code = u.searchParams.get("code") ?? "";
-      const state = u.searchParams.get("state") ?? "";
-      const error = u.searchParams.get("error") ?? "";
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(SUCCESS_HTML);
-      codeResolve?.({ code, state, error: error || void 0 });
-    });
-    server.listen(0, "127.0.0.1", () => {
-      const addr = server.address();
-      const port = addr.port;
-      resolve({
-        port,
-        redirectUri: `http://127.0.0.1:${port}/callback`,
-        waitForCallback(timeoutMs = 3e5) {
-          return new Promise((res, rej) => {
-            codeResolve = res;
-            codeReject = rej;
-            setTimeout(
-              () => rej(new Error("OAuth timeout \u2014 browser closed without completing sign-in")),
-              timeoutMs
-            );
-          });
-        },
-        close() {
-          server.close();
-          codeReject?.(new Error("Server closed"));
-        }
-      });
-    });
-    server.on("error", reject);
-  });
 }
 
 // src/oauth/refresh-http.ts
@@ -2665,466 +2826,6 @@ async function postOAuthRefresh(url, body, options) {
     throw new Error(`${options.errorPrefix}${status}${detail ? `: ${detail}` : ""}`);
   }
   return response.json();
-}
-
-// src/oauth/antigravity-oauth.ts
-var DEFAULT_ANTIGRAVITY_CLIENT_ID = ["107100606059", "1-tmhssin2h2", "1lcre235vtol", "ojh4g403ep.a", "pps.googleus", "ercontent.co", "m"].join("");
-var DEFAULT_ANTIGRAVITY_CLIENT_SECRET = ["GOCS", "PX-K", "58FW", "R486", "LdLJ", "1mLB", "8sXC", "4z6q", "DAf"].join("");
-var ANTIGRAVITY_CLIENT_ID = process.env.ANTIGRAVITY_OAUTH_CLIENT_ID ?? DEFAULT_ANTIGRAVITY_CLIENT_ID;
-var ANTIGRAVITY_CLIENT_SECRET = process.env.ANTIGRAVITY_OAUTH_CLIENT_SECRET ?? DEFAULT_ANTIGRAVITY_CLIENT_SECRET;
-var AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
-var TOKEN_URL = "https://oauth2.googleapis.com/token";
-var USER_INFO_URL = "https://www.googleapis.com/oauth2/v1/userinfo";
-var SCOPES = [
-  "openid",
-  "https://www.googleapis.com/auth/cloud-platform",
-  "https://www.googleapis.com/auth/userinfo.email",
-  "https://www.googleapis.com/auth/userinfo.profile",
-  "https://www.googleapis.com/auth/cclog",
-  "https://www.googleapis.com/auth/experimentsandconfigs"
-].join(" ");
-var osType = process.platform === "darwin" ? "darwin" : process.platform === "win32" ? "windows" : "linux";
-var archType = process.arch === "arm64" ? "arm64" : "x64";
-var ANTIGRAVITY_USER_AGENT = `antigravity/2.22.0 (aidev_client; os_type=${osType}; arch=${archType}; cl=997489728; auth_method=oauth)`;
-var ANTIGRAVITY_METADATA = { ideType: "ANTIGRAVITY" };
-var ANTIGRAVITY_BASE_URLS = [
-  "https://daily-cloudcode-pa.googleapis.com",
-  "https://cloudcode-pa.googleapis.com",
-  "https://daily-cloudcode-pa.sandbox.googleapis.com"
-];
-var ANTIGRAVITY_API_VERSION = "v1internal";
-async function buildAntigravityAuthUrl(redirectUri) {
-  const { verifier, challenge } = await generatePkce();
-  const state = generateOAuthState();
-  const params = new URLSearchParams({
-    client_id: ANTIGRAVITY_CLIENT_ID,
-    response_type: "code",
-    redirect_uri: redirectUri,
-    scope: SCOPES,
-    state,
-    access_type: "offline",
-    prompt: "consent",
-    code_challenge: challenge,
-    code_challenge_method: "S256"
-  });
-  return { authUrl: `${AUTHORIZE_URL}?${params}`, codeVerifier: verifier, oauthState: state, redirectUri };
-}
-async function exchangeAntigravityToken(code, codeVerifier, redirectUri) {
-  const body = new URLSearchParams({
-    grant_type: "authorization_code",
-    client_id: ANTIGRAVITY_CLIENT_ID,
-    client_secret: ANTIGRAVITY_CLIENT_SECRET,
-    code,
-    redirect_uri: redirectUri,
-    code_verifier: codeVerifier
-  });
-  const res = await fetch(TOKEN_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-      "User-Agent": ANTIGRAVITY_USER_AGENT
-    },
-    body
-  });
-  if (!res.ok) throw new Error(`Antigravity token exchange failed: ${await res.text()}`);
-  return res.json();
-}
-async function refreshAntigravityToken(refreshToken) {
-  return postOAuthRefresh(
-    TOKEN_URL,
-    new URLSearchParams({
-      grant_type: "refresh_token",
-      client_id: ANTIGRAVITY_CLIENT_ID,
-      client_secret: ANTIGRAVITY_CLIENT_SECRET,
-      refresh_token: refreshToken
-    }),
-    {
-      contentType: "form",
-      errorPrefix: "Antigravity token refresh failed",
-      includeBody: true
-    }
-  );
-}
-async function fetchUserInfo(accessToken) {
-  try {
-    const res = await fetch(`${USER_INFO_URL}?alt=json`, {
-      headers: { Authorization: `Bearer ${accessToken}` }
-    });
-    if (!res.ok) return {};
-    const data = await res.json();
-    return {
-      email: typeof data.email === "string" ? data.email : void 0,
-      name: typeof data.name === "string" ? data.name : void 0
-    };
-  } catch {
-    return {};
-  }
-}
-function apiHeaders(accessToken) {
-  return {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    Authorization: `Bearer ${accessToken}`,
-    "User-Agent": ANTIGRAVITY_USER_AGENT
-  };
-}
-async function fetchFirstOk(paths, init) {
-  let lastErr;
-  for (const url of paths) {
-    try {
-      const res = await fetch(url, init);
-      if (res.ok) return res;
-      lastErr = new Error(`${res.status} ${await res.text()}`);
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-  throw lastErr ?? new Error("All Antigravity endpoints failed");
-}
-function toRecord(v) {
-  return v && typeof v === "object" && !Array.isArray(v) ? v : {};
-}
-function pickTierId(tier) {
-  const v = toRecord(tier).id;
-  return typeof v === "string" && v.trim() ? v.trim() : null;
-}
-function findDefaultAllowedTier(sub) {
-  if (!Array.isArray(sub.allowedTiers)) return null;
-  for (const t of sub.allowedTiers) {
-    const tier = toRecord(t);
-    if (tier.isDefault) return tier;
-  }
-  return null;
-}
-function resolveAntigravityOnboardTierId(data) {
-  const sub = toRecord(data);
-  const hasIneligible = Array.isArray(sub.ineligibleTiers) && sub.ineligibleTiers.length > 0;
-  if (!hasIneligible) {
-    const current = pickTierId(sub.currentTier);
-    if (current) return current;
-  }
-  const def = findDefaultAllowedTier(sub);
-  if (def) {
-    const defId = pickTierId(def);
-    if (defId) return defId;
-  }
-  const paid = pickTierId(sub.paidTier);
-  if (paid) return paid;
-  return pickTierId(sub.currentTier) ?? "legacy-tier";
-}
-async function loadCodeAssist(accessToken) {
-  const endpoints = ANTIGRAVITY_BASE_URLS.map((b) => `${b}/${ANTIGRAVITY_API_VERSION}:loadCodeAssist`);
-  const res = await fetchFirstOk(endpoints, {
-    method: "POST",
-    headers: apiHeaders(accessToken),
-    body: JSON.stringify({ metadata: ANTIGRAVITY_METADATA })
-  });
-  const data = await res.json();
-  let projectId = data.cloudaicompanionProject;
-  if (typeof projectId === "object" && projectId !== null) {
-    projectId = projectId.id ?? "";
-  }
-  return {
-    projectId: typeof projectId === "string" ? projectId : "",
-    tierId: resolveAntigravityOnboardTierId(data)
-  };
-}
-async function onboardUser(accessToken, tierId, maxAttempts = 10) {
-  const endpoints = ANTIGRAVITY_BASE_URLS.map((b) => `${b}/${ANTIGRAVITY_API_VERSION}:onboardUser`);
-  let finalProjectId = "";
-  for (let i = 0; i < maxAttempts; i++) {
-    const res = await fetchFirstOk(endpoints, {
-      method: "POST",
-      headers: apiHeaders(accessToken),
-      body: JSON.stringify({ tier_id: tierId, metadata: ANTIGRAVITY_METADATA })
-    });
-    const result = await res.json();
-    if (result.done === true) {
-      const p = result.response ? result.response.cloudaicompanionProject : void 0;
-      if (typeof p === "string") finalProjectId = p.trim();
-      else if (p && typeof p === "object") finalProjectId = String(p.id ?? "") || finalProjectId;
-      break;
-    }
-    if (i < maxAttempts - 1) await new Promise((r) => setTimeout(r, 5e3));
-  }
-  return finalProjectId;
-}
-function readAgyProjectId() {
-  try {
-    const cache = pathJoin(homedir2(), ".gemini", "antigravity-cli", "cache", "projects.json");
-    const data = JSON.parse(readFileSync7(cache, "utf8"));
-    return data[homedir2()] ?? Object.values(data)[0] ?? "";
-  } catch {
-    return "";
-  }
-}
-async function runBootstrap(tokens) {
-  const [userInfoResult, bootstrapResult] = await Promise.allSettled([
-    fetchUserInfo(tokens.access_token),
-    loadCodeAssist(tokens.access_token)
-  ]);
-  const userInfo = userInfoResult.status === "fulfilled" ? userInfoResult.value : {};
-  let projectId = bootstrapResult.status === "fulfilled" ? bootstrapResult.value.projectId : "";
-  const tierId = bootstrapResult.status === "fulfilled" ? bootstrapResult.value.tierId : "free-tier";
-  const finalProjectId = await onboardUser(tokens.access_token, tierId, 3).catch(() => "");
-  if (finalProjectId) projectId = finalProjectId;
-  if (!projectId && tierId !== "free-tier") {
-    const freeTierProjectId = await onboardUser(tokens.access_token, "free-tier", 3).catch(() => "");
-    if (freeTierProjectId) projectId = freeTierProjectId;
-  }
-  if (!projectId) {
-    projectId = readAgyProjectId();
-  }
-  return { tokens, userInfo, projectId, tierId };
-}
-async function runAntigravityOAuthFlow(onAuthUrl) {
-  const server = await startCallbackServer();
-  try {
-    const { authUrl, codeVerifier, oauthState, redirectUri } = await buildAntigravityAuthUrl(server.redirectUri);
-    onAuthUrl(authUrl);
-    open(authUrl).catch(() => {
-    });
-    const { code, state, error } = await server.waitForCallback();
-    if (error) throw new Error(`Google sign-in was not completed: ${error}`);
-    if (state !== oauthState) throw new Error("Google sign-in returned an unexpected state \u2014 start the sign-in again");
-    if (!code) throw new Error("No authorization code received from Google");
-    const tokens = await exchangeAntigravityToken(code, codeVerifier, redirectUri);
-    return runBootstrap(tokens);
-  } finally {
-    server.close();
-  }
-}
-async function completeAntigravityExchange(code, codeVerifier, redirectUri) {
-  const tokens = await exchangeAntigravityToken(code, codeVerifier, redirectUri);
-  return runBootstrap(tokens);
-}
-
-// src/registry/opencode-auth.ts
-import { existsSync as existsSync6, readFileSync as readFileSync8, statSync as statSync3 } from "fs";
-import { homedir as homedir3 } from "os";
-import { join as join6 } from "path";
-function resolveOpencodeAuthPath(env = process.env) {
-  const dataHome = env["XDG_DATA_HOME"] ?? join6(homedir3(), ".local", "share");
-  if (process.platform === "win32") {
-    return join6(env["APPDATA"] ?? join6(homedir3(), "AppData", "Roaming"), "opencode", "auth.json");
-  }
-  return join6(dataHome, "opencode", "auth.json");
-}
-function decodeAuthEntry(value) {
-  if (typeof value === "string" && value.trim()) return value.trim();
-  if (!value || typeof value !== "object") return null;
-  const record2 = value;
-  if (record2["type"] === "api" && typeof record2["key"] === "string" && record2["key"].trim()) {
-    return {
-      type: "api",
-      key: record2["key"],
-      metadata: record2["metadata"] && typeof record2["metadata"] === "object" && !Array.isArray(record2["metadata"]) ? record2["metadata"] : void 0
-    };
-  }
-  if (record2["type"] === "oauth" && typeof record2["access"] === "string" && typeof record2["refresh"] === "string" && typeof record2["expires"] === "number") {
-    return {
-      type: "oauth",
-      access: record2["access"],
-      refresh: record2["refresh"],
-      expires: record2["expires"],
-      accountId: typeof record2["accountId"] === "string" ? record2["accountId"] : void 0,
-      enterpriseUrl: typeof record2["enterpriseUrl"] === "string" ? record2["enterpriseUrl"] : void 0,
-      providerData: record2["providerData"] && typeof record2["providerData"] === "object" && !Array.isArray(record2["providerData"]) ? record2["providerData"] : void 0
-    };
-  }
-  if (record2["type"] === "wellknown" && typeof record2["key"] === "string" && typeof record2["token"] === "string") {
-    return { type: "wellknown", key: record2["key"], token: record2["token"] };
-  }
-  return null;
-}
-function authFilePermissionWarning(path) {
-  if (!existsSync6(path)) return void 0;
-  if (process.platform === "win32") return void 0;
-  try {
-    const mode = statSync3(path).mode & 511;
-    if (mode & 63) {
-      return `OpenCode auth file ${path} is readable by others (mode ${mode.toString(8)}). Consider chmod 600.`;
-    }
-  } catch {
-  }
-  return void 0;
-}
-function readOpencodeAuthFile(env = process.env) {
-  const path = resolveOpencodeAuthPath(env);
-  if (!existsSync6(path)) return null;
-  let parsed;
-  try {
-    parsed = JSON.parse(readFileSync8(path, "utf8"));
-  } catch {
-    return { path, entries: {}, permissionWarning: authFilePermissionWarning(path) };
-  }
-  const entries = {};
-  if (parsed && typeof parsed === "object") {
-    for (const [providerId, value] of Object.entries(parsed)) {
-      const entry = decodeAuthEntry(value);
-      if (entry) entries[providerId] = entry;
-    }
-  }
-  return {
-    path,
-    entries,
-    permissionWarning: authFilePermissionWarning(path)
-  };
-}
-function isOpencodeOAuth(entry) {
-  return !!entry && typeof entry === "object" && entry.type === "oauth";
-}
-function isOpencodeApi(entry) {
-  return !!entry && typeof entry === "object" && entry.type === "api";
-}
-function oauthCredentialToKeychainJson(cred) {
-  return JSON.stringify(cred);
-}
-
-// src/oauth/identity.ts
-function text(value) {
-  return typeof value === "string" && value.trim() ? value.trim() : void 0;
-}
-function record(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
-}
-function jwtClaims(token) {
-  const parts = token?.split(".");
-  if (!parts || parts.length !== 3) return void 0;
-  try {
-    return record(JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")));
-  } catch {
-    return void 0;
-  }
-}
-function compact(identity) {
-  return Object.fromEntries(Object.entries(identity).filter(([, v]) => v !== void 0));
-}
-function identityFromJwt(token) {
-  const claims = jwtClaims(token);
-  if (!claims) return {};
-  const auth = record(claims["https://api.openai.com/auth"]);
-  const profile = record(claims["https://api.openai.com/profile"]);
-  return compact({
-    email: text(claims.email) ?? text(profile?.email),
-    name: text(claims.name),
-    plan: text(auth?.chatgpt_plan_type),
-    userId: text(auth?.chatgpt_user_id) ?? text(auth?.user_id) ?? text(claims.sub)
-  });
-}
-function mergeIdentity(...parts) {
-  const merged = {};
-  for (const part of parts) Object.assign(merged, compact(part ?? {}));
-  return Object.keys(merged).length > 0 ? merged : void 0;
-}
-function storedIdentity(providerData) {
-  const stored = record(providerData?.identity);
-  return compact({
-    email: text(stored?.email),
-    name: text(stored?.name),
-    plan: text(stored?.plan),
-    userId: text(stored?.userId),
-    login: text(stored?.login)
-  });
-}
-function describeOAuthAccount(input) {
-  const data = input.providerData;
-  const kind = providerKind(input.kind);
-  let fromProvider = {};
-  if (kind === "antigravity") {
-    fromProvider = compact({
-      email: input.accountId?.includes("@") ? input.accountId : void 0,
-      plan: text(data?.tier)
-    });
-  } else if (kind === "cline-pass") {
-    fromProvider = compact({ email: text(data?.email), name: text(data?.name) });
-  } else if (kind === "github-copilot") {
-    const copilot = record(data?.copilot);
-    fromProvider = compact({ login: text(copilot?.login), plan: text(copilot?.copilot_plan) });
-  } else if (kind === "claude-code") {
-    fromProvider = compact({ plan: text(data?.plan), name: text(data?.organizationName) });
-  }
-  return mergeIdentity(identityFromJwt(input.accessToken), fromProvider, storedIdentity(data)) ?? {};
-}
-function formatOAuthAccount(identity) {
-  const who = identity.email ?? identity.login ?? identity.name;
-  const parts = [who, identity.plan].filter((p) => Boolean(p));
-  return parts.length > 0 ? parts.join(" \xB7 ") : void 0;
-}
-var USER_LEVEL_ACCOUNT_ID_KINDS = /* @__PURE__ */ new Set(["cline-pass", "claude-code"]);
-function accountKeys(kind, cred) {
-  const identity = describeOAuthAccount({
-    kind,
-    accountId: cred.accountId,
-    providerData: cred.providerData,
-    accessToken: cred.access
-  });
-  const keys = /* @__PURE__ */ new Set();
-  if (identity.userId) keys.add(`user:${identity.userId}`);
-  if (identity.email) keys.add(`email:${identity.email.toLowerCase()}`);
-  if (identity.login) keys.add(`login:${identity.login.toLowerCase()}`);
-  if (USER_LEVEL_ACCOUNT_ID_KINDS.has(providerKind(kind)) && cred.accountId) keys.add(`account:${cred.accountId}`);
-  return keys;
-}
-function sameOAuthAccount(kind, a, b) {
-  const keysOfB = accountKeys(kind, b);
-  return [...accountKeys(kind, a)].some((key) => keysOfB.has(key));
-}
-
-// src/oauth/types.ts
-function tokensToStoredCredential(tokens, existingRefresh, accountId, providerData) {
-  const identity = mergeIdentity(storedIdentity(providerData), identityFromJwt(tokens.id_token));
-  const baseProviderData = providerData || tokens.providerData ? { ...providerData, ...tokens.providerData } : void 0;
-  const mergedProviderData = identity ? { ...baseProviderData, identity } : baseProviderData;
-  return {
-    type: "oauth",
-    access: tokens.access_token,
-    refresh: tokens.refresh_token ?? existingRefresh ?? "",
-    expires: Date.now() + (tokens.expires_in ?? 3600) * 1e3,
-    ...accountId ? { accountId } : {},
-    ...mergedProviderData ? { providerData: mergedProviderData } : {}
-  };
-}
-function parseStoredOAuthCredential(raw) {
-  if (!raw?.trim().startsWith("{")) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed.type === "oauth" && typeof parsed.access === "string" && typeof parsed.refresh === "string" && typeof parsed.expires === "number") {
-      return parsed;
-    }
-  } catch {
-  }
-  return null;
-}
-var OAUTH_REFRESH_SKEW_MS = 12e4;
-function oauthCredentialNeedsRefresh(cred, skewMs = OAUTH_REFRESH_SKEW_MS) {
-  return cred.expires <= Date.now() + Math.max(0, skewMs);
-}
-function accessTokenIsExpiring(token, skewMs = OAUTH_REFRESH_SKEW_MS) {
-  if (!token) return false;
-  const parts = token.split(".");
-  if (parts.length < 2) return false;
-  try {
-    let payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    while (payload.length % 4 !== 0) payload += "=";
-    const claims = JSON.parse(Buffer.from(payload, "base64").toString("utf8"));
-    if (typeof claims.exp !== "number") return false;
-    return claims.exp * 1e3 <= Date.now() + Math.max(0, skewMs);
-  } catch {
-    return false;
-  }
-}
-var NATIVE_OAUTH_PROVIDER_IDS = ["xai", "xai-oauth", "openai", "openai-oauth", "github-copilot", "claude-code", "antigravity", "cline-pass"];
-function supportsNativeOAuth(providerId) {
-  return NATIVE_OAUTH_PROVIDER_IDS.includes(providerId);
-}
-var BROWSER_REDIRECT_OAUTH_IDS = ["claude-code", "antigravity"];
-function isBrowserRedirectOAuth(id) {
-  return BROWSER_REDIRECT_OAUTH_IDS.includes(id);
-}
-function supportsAdditionalOAuthAccounts(kind) {
-  return supportsNativeOAuth(kind);
 }
 
 // src/oauth/openai.ts
@@ -3223,2147 +2924,6 @@ async function runOpenAiDeviceCodeFlow(onDeviceCode, opts) {
   const deviceData = await requestOpenAiDeviceCode();
   onDeviceCode({ url: openAiDeviceCodeUrl(), userCode: deviceData.user_code });
   return pollOpenAiDeviceCodeToken(deviceData, opts);
-}
-
-// src/oauth/github.ts
-var CLIENT_ID2 = "Iv1.b507a08c87ecfe98";
-var DEVICE_CODE_URL = "https://github.com/login/device/code";
-var TOKEN_URL2 = "https://github.com/login/oauth/access_token";
-var COPILOT_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token";
-var COPILOT_USER_URL = "https://api.github.com/copilot_internal/user";
-var SCOPE = "copilot";
-var DEVICE_CODE_DEFAULT_INTERVAL_MS = 5e3;
-var DEVICE_CODE_DEFAULT_EXPIRES_MS2 = 15 * 60 * 1e3;
-var OAUTH_POLLING_SAFETY_MARGIN_MS2 = 1e3;
-var FREE_COPILOT_SKUS = /* @__PURE__ */ new Set([
-  "free_limited_copilot",
-  "free_educational_quota",
-  "no_auth_limited_copilot"
-]);
-function commonHeaders() {
-  return {
-    Accept: "application/json",
-    "Content-Type": "application/x-www-form-urlencoded",
-    "User-Agent": `relay-ai/${VERSION}`
-  };
-}
-function classifyCopilotAccount(user) {
-  const login = typeof user["login"] === "string" && user["login"].trim() ? user["login"].trim() : void 0;
-  const sku = typeof user["access_type_sku"] === "string" && user["access_type_sku"].trim() ? user["access_type_sku"].trim() : void 0;
-  const plan = typeof user["copilot_plan"] === "string" && user["copilot_plan"].trim() ? user["copilot_plan"].trim() : void 0;
-  if (!sku && !plan) {
-    return {
-      ...login ? { login } : {},
-      lookup_status: "unknown"
-    };
-  }
-  const isFree = FREE_COPILOT_SKUS.has(sku?.toLowerCase() ?? "") || plan?.toLowerCase() === "free";
-  return {
-    ...login ? { login } : {},
-    ...sku ? { access_type_sku: sku } : {},
-    ...plan ? { copilot_plan: plan } : {},
-    is_free_plan: isFree,
-    lookup_status: "known"
-  };
-}
-async function fetchCopilotAccount(ghuToken) {
-  const response = await fetch(COPILOT_USER_URL, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${ghuToken}`,
-      Accept: "application/json",
-      "User-Agent": `relay-ai/${VERSION}`,
-      "Editor-Version": "vscode/1.85.1",
-      "X-GitHub-Api-Version": "2025-04-01"
-    }
-  });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`GitHub Copilot account lookup failed (${response.status})${detail ? `: ${detail}` : ""}`);
-  }
-  const json = await response.json();
-  if (!json || typeof json !== "object" || Array.isArray(json)) {
-    throw new Error("GitHub Copilot account lookup returned invalid JSON");
-  }
-  return classifyCopilotAccount(json);
-}
-async function requestGithubDeviceCode() {
-  const response = await fetch(DEVICE_CODE_URL, {
-    method: "POST",
-    headers: commonHeaders(),
-    body: new URLSearchParams({ client_id: CLIENT_ID2, scope: SCOPE }).toString()
-  });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`GitHub device code request failed (${response.status})${detail ? `: ${detail}` : ""}`);
-  }
-  const json = await response.json();
-  if (!json.device_code || !json.user_code || !json.verification_uri) {
-    throw new Error("GitHub device code response is missing required fields");
-  }
-  return json;
-}
-async function exchangeForCopilotToken(ghuToken) {
-  const response = await fetch(COPILOT_TOKEN_URL, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${ghuToken}`,
-      "User-Agent": `relay-ai/${VERSION}`,
-      Accept: "application/json"
-    }
-  });
-  if (!response.ok) {
-    const msg = await response.text().catch(() => "");
-    throw new Error(`GitHub Copilot token exchange failed (${response.status})${msg ? `: ${msg}` : ""}`);
-  }
-  const json = await response.json();
-  if (!json.token) {
-    throw new Error("GitHub Copilot token exchange response missing token field \u2014 is Copilot subscription active?");
-  }
-  let expiresIn = 1800;
-  if (json.expires_at) {
-    const expiresMs = new Date(json.expires_at).getTime() - Date.now();
-    if (expiresMs > 0) expiresIn = Math.floor(expiresMs / 1e3);
-  }
-  let account = { lookup_status: "unknown" };
-  try {
-    account = await fetchCopilotAccount(ghuToken);
-  } catch {
-  }
-  return {
-    access_token: json.token,
-    expires_in: expiresIn,
-    providerData: { copilot: account }
-  };
-}
-async function refreshGithubCopilotToken(ghuToken) {
-  const copilot = await exchangeForCopilotToken(ghuToken);
-  return {
-    ...copilot,
-    refresh_token: ghuToken
-    // keep the same ghu_ token as refresh
-  };
-}
-async function pollGithubDeviceCodeToken(device, opts) {
-  const sleep2 = opts?.sleep ?? sleepMs;
-  const now = opts?.now ?? (() => Date.now());
-  const deadline = now() + positiveSecondsToMs(device.expires_in, DEVICE_CODE_DEFAULT_EXPIRES_MS2);
-  let intervalMs = Math.max(
-    positiveSecondsToMs(device.interval, DEVICE_CODE_DEFAULT_INTERVAL_MS),
-    1e3
-  );
-  while (now() < deadline) {
-    const response = await fetch(TOKEN_URL2, {
-      method: "POST",
-      headers: commonHeaders(),
-      body: new URLSearchParams({
-        client_id: CLIENT_ID2,
-        device_code: device.device_code,
-        grant_type: "urn:ietf:params:oauth:grant-type:device_code"
-      }).toString()
-    });
-    const body = await response.json().catch(() => ({}));
-    const error = body["error"];
-    if (!error && body["access_token"]) {
-      const ghuToken = body["access_token"];
-      const copilot = await exchangeForCopilotToken(ghuToken);
-      return {
-        access_token: copilot.access_token,
-        refresh_token: ghuToken,
-        // store ghu_ as refresh for re-exchange later
-        expires_in: copilot.expires_in,
-        providerData: copilot.providerData
-      };
-    }
-    if (error === "authorization_pending") {
-      await sleep2(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS2, Math.max(0, deadline - now())));
-      continue;
-    }
-    if (error === "slow_down") {
-      intervalMs += 5e3;
-      await sleep2(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS2, Math.max(0, deadline - now())));
-      continue;
-    }
-    if (error === "expired_token") {
-      throw new Error("GitHub device code expired \u2014 please run relay-ai providers auth github-copilot again");
-    }
-    throw new Error(`GitHub device authorization failed${error ? `: ${error}` : ""}`);
-  }
-  throw new Error("GitHub device authorization timed out");
-}
-async function runGithubDeviceCodeFlow(onDeviceCode, opts) {
-  const device = await requestGithubDeviceCode();
-  onDeviceCode({ url: device.verification_uri, userCode: device.user_code });
-  return pollGithubDeviceCodeToken(device, opts);
-}
-
-// src/oauth/xai.ts
-var CLIENT_ID3 = "b1a00492-073a-47ea-816f-4c329264a828";
-var TOKEN_URL3 = "https://auth.x.ai/oauth2/token";
-var DEVICE_AUTHORIZATION_URL = "https://auth.x.ai/oauth2/device/code";
-var DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
-var SCOPE2 = "openid profile email offline_access grok-cli:access api:access";
-var DEVICE_CODE_DEFAULT_INTERVAL_MS2 = 5e3;
-var DEVICE_CODE_MIN_INTERVAL_MS = 1e3;
-var DEVICE_CODE_SLOW_DOWN_INCREMENT_MS = 5e3;
-var DEVICE_CODE_DEFAULT_EXPIRES_MS3 = 5 * 60 * 1e3;
-var OAUTH_POLLING_SAFETY_MARGIN_MS3 = 3e3;
-function authHeaders() {
-  return {
-    "Content-Type": "application/x-www-form-urlencoded",
-    Accept: "application/json",
-    "User-Agent": `relay-ai/${VERSION}`
-  };
-}
-async function requestXaiDeviceCode() {
-  const response = await fetch(DEVICE_AUTHORIZATION_URL, {
-    method: "POST",
-    headers: authHeaders(),
-    body: new URLSearchParams({
-      client_id: CLIENT_ID3,
-      scope: SCOPE2
-    }).toString()
-  });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`xAI device code request failed (${response.status})${detail ? `: ${detail}` : ""}`);
-  }
-  const json = await response.json();
-  if (!json.device_code || !json.user_code || !json.verification_uri) {
-    throw new Error("xAI device code response is missing required fields");
-  }
-  return json;
-}
-async function pollXaiDeviceCodeToken(device, opts) {
-  const sleep2 = opts?.sleep ?? sleepMs;
-  const now = opts?.now ?? (() => Date.now());
-  const deadline = now() + positiveSecondsToMs(device.expires_in, DEVICE_CODE_DEFAULT_EXPIRES_MS3);
-  let intervalMs = Math.max(
-    positiveSecondsToMs(device.interval, DEVICE_CODE_DEFAULT_INTERVAL_MS2),
-    DEVICE_CODE_MIN_INTERVAL_MS
-  );
-  while (now() < deadline) {
-    const response = await fetch(TOKEN_URL3, {
-      method: "POST",
-      headers: authHeaders(),
-      body: new URLSearchParams({
-        grant_type: DEVICE_CODE_GRANT_TYPE,
-        client_id: CLIENT_ID3,
-        device_code: device.device_code
-      }).toString()
-    });
-    if (response.ok) return response.json();
-    const body = await response.json().catch(() => ({}));
-    const remaining = Math.max(0, deadline - now());
-    if (body.error === "authorization_pending") {
-      await sleep2(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS3, remaining));
-      continue;
-    }
-    if (body.error === "slow_down") {
-      intervalMs += DEVICE_CODE_SLOW_DOWN_INCREMENT_MS;
-      await sleep2(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS3, remaining));
-      continue;
-    }
-    throw new Error(`xAI device authorization failed${body.error ? `: ${body.error}` : ""}`);
-  }
-  throw new Error("xAI device authorization timed out");
-}
-async function refreshXaiAccessToken(refreshToken) {
-  return postOAuthRefresh(
-    TOKEN_URL3,
-    new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: refreshToken,
-      client_id: CLIENT_ID3
-    }),
-    {
-      contentType: "form",
-      errorPrefix: "xAI token refresh failed",
-      includeStatus: true,
-      includeBody: true,
-      headers: authHeaders()
-    }
-  );
-}
-async function runXaiDeviceCodeFlow(onDeviceCode, opts) {
-  const device = await requestXaiDeviceCode();
-  onDeviceCode({
-    url: device.verification_uri_complete ?? device.verification_uri,
-    userCode: device.user_code
-  });
-  return pollXaiDeviceCodeToken(device, opts);
-}
-
-// src/oauth/claude-code.ts
-import { randomBytes } from "crypto";
-import open2 from "open";
-
-// src/oauth/claude-identity.ts
-import { createHash, randomUUID } from "crypto";
-var CLAUDE_CODE_CLI_VERSION = "2.1.312";
-var CLAUDE_CODE_USER_AGENT = `claude-cli/${CLAUDE_CODE_CLI_VERSION} (external, cli)`;
-var CLAUDE_CODE_ENTRYPOINT = process.env.CLAUDE_CODE_ENTRYPOINT ?? "cli";
-var CLAUDE_CODE_BILLING_HEADER_PREFIX = "x-anthropic-billing-header:";
-var sessionCache = /* @__PURE__ */ new Map();
-function getOrCreateSessionId(seed) {
-  let id = sessionCache.get(seed);
-  if (!id) {
-    id = randomUUID();
-    sessionCache.set(seed, id);
-  }
-  return id;
-}
-function uuidFromHash(input) {
-  const h = createHash("sha256").update(input).digest("hex");
-  return [
-    h.slice(0, 8),
-    h.slice(8, 12),
-    "4" + h.slice(13, 16),
-    (parseInt(h[16], 16) & 3 | 8).toString(16) + h.slice(17, 20),
-    h.slice(20, 32)
-  ].join("-");
-}
-var HEX64_RE = /^[a-f0-9]{64}$/i;
-var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function resolveCliUserID(providerData, seed) {
-  const v = providerData?.cliUserID;
-  if (typeof v === "string" && HEX64_RE.test(v)) return v;
-  return createHash("sha256").update(`cliUserID:${seed}`).digest("hex");
-}
-function resolveAccountUUID(providerData, seed) {
-  const v = providerData?.accountUUID;
-  if (typeof v === "string" && UUID_RE.test(v)) return v;
-  return uuidFromHash(`account:${seed}`);
-}
-function buildUserIdJson(deviceId, accountUUID, sessionId) {
-  return JSON.stringify({ device_id: deviceId, account_uuid: accountUUID, session_id: sessionId });
-}
-function buildClaudeCodeBillingSystemLine() {
-  return `${CLAUDE_CODE_BILLING_HEADER_PREFIX} cc_version=${CLAUDE_CODE_CLI_VERSION}.0; cc_entrypoint=${CLAUDE_CODE_ENTRYPOINT};`;
-}
-function systemBlockText(block) {
-  if (typeof block === "string") return block;
-  if (block && typeof block === "object" && "text" in block) {
-    const text2 = block.text;
-    return typeof text2 === "string" ? text2 : void 0;
-  }
-  return void 0;
-}
-function hasClaudeCodeBillingSystemLine(system) {
-  if (typeof system === "string") return system.startsWith(CLAUDE_CODE_BILLING_HEADER_PREFIX);
-  if (!Array.isArray(system)) return false;
-  return system.some((block) => systemBlockText(block)?.startsWith(CLAUDE_CODE_BILLING_HEADER_PREFIX));
-}
-function injectClaudeCodeBillingSystemLine(body) {
-  if (hasClaudeCodeBillingSystemLine(body.system)) return;
-  const billingBlock = { type: "text", text: buildClaudeCodeBillingSystemLine() };
-  if (body.system === void 0 || body.system === null) {
-    body.system = [billingBlock];
-  } else if (typeof body.system === "string") {
-    body.system = [billingBlock, { type: "text", text: body.system }];
-  } else if (Array.isArray(body.system)) {
-    body.system = [billingBlock, ...body.system];
-  } else {
-    body.system = [billingBlock];
-  }
-}
-var ALWAYS = [
-  "oauth-2025-04-20",
-  "context-management-2025-06-27",
-  "prompt-caching-scope-2026-01-05"
-];
-var AGENT = [
-  "claude-code-20250219",
-  "extended-cache-ttl-2025-04-11",
-  "cache-diagnosis-2026-04-07",
-  "advisor-tool-2026-03-01"
-];
-var THINKING = [
-  "interleaved-thinking-2025-05-14",
-  "redact-thinking-2026-02-12",
-  "thinking-token-count-2026-05-13"
-];
-var HEAVY = ["advanced-tool-use-2025-11-20", "effort-2025-11-24"];
-var OPUS_ONLY = ["context-1m-2025-08-07", "mid-conversation-system-2026-04-07"];
-function selectBetaFlags(body, model, clientBeta) {
-  const hasSystem = !!body.system && (typeof body.system === "string" || Array.isArray(body.system) && body.system.length > 0);
-  const tools = body.tools;
-  const isFullAgent = hasSystem && Array.isArray(tools) && tools.length > 0;
-  const m = (model ?? (typeof body.model === "string" ? body.model : "")).toLowerCase();
-  const isOpus = m.includes("opus");
-  const isSonnetOrOpus = isOpus || m.includes("sonnet");
-  const clientSet = clientBeta ? new Set(clientBeta.split(",").map((s) => s.trim()).filter(Boolean)) : null;
-  const allowThinking = !clientSet || clientSet.has("interleaved-thinking-2025-05-14");
-  const allowHeavy = !clientSet || clientSet.has("advanced-tool-use-2025-11-20") || clientSet.has("effort-2025-11-24");
-  const flags = [...ALWAYS];
-  if (isFullAgent) flags.push(...AGENT);
-  if (isOpus) flags.push(...OPUS_ONLY);
-  if (allowThinking) flags.push(...THINKING);
-  if (isFullAgent && isSonnetOrOpus && allowHeavy) flags.push(...HEAVY);
-  return flags.join(",");
-}
-function injectClaudeIdentity(body, providerData, seed) {
-  const deviceId = resolveCliUserID(providerData, seed);
-  const accountUUID = resolveAccountUUID(providerData, seed);
-  const sessionId = getOrCreateSessionId(seed);
-  const userId = buildUserIdJson(deviceId, accountUUID, sessionId);
-  const existing = body.metadata;
-  body.metadata = { ...existing ?? {}, user_id: userId };
-  return { sessionId, userId };
-}
-
-// src/oauth/claude-code.ts
-var CLAUDE_CODE_CLIENT_ID = process.env.CLAUDE_OAUTH_CLIENT_ID ?? "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-var AUTHORIZE_URL2 = "https://claude.com/cai/oauth/authorize";
-var TOKEN_URL4 = "https://platform.claude.com/v1/oauth/token";
-var REDIRECT_URI = process.env.CLAUDE_CODE_REDIRECT_URI ?? "https://platform.claude.com/oauth/code/callback";
-var SCOPES2 = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers";
-async function buildClaudeCodeAuthUrl(redirectUri = REDIRECT_URI) {
-  const { verifier, challenge } = await generatePkce();
-  const state = generateOAuthState();
-  const params = new URLSearchParams({
-    code: "true",
-    client_id: CLAUDE_CODE_CLIENT_ID,
-    response_type: "code",
-    redirect_uri: redirectUri,
-    scope: SCOPES2,
-    code_challenge: challenge,
-    code_challenge_method: "S256",
-    state,
-    // Forces fresh auth — prevents session takeover that invalidates previous refresh tokens.
-    prompt: "login"
-  });
-  return { authUrl: `${AUTHORIZE_URL2}?${params}`, codeVerifier: verifier, oauthState: state, redirectUri };
-}
-async function exchangeClaudeCodeToken(code, codeVerifier, redirectUri, state) {
-  const { code: authCode, state: returnedState } = parseClaudeAuthInput(code);
-  if (returnedState && returnedState !== state) {
-    throw new Error("Anthropic returned an unexpected state \u2014 start the sign-in again");
-  }
-  const codeState = state;
-  const res = await fetch(TOKEN_URL4, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({
-      code: authCode,
-      state: codeState,
-      grant_type: "authorization_code",
-      client_id: CLAUDE_CODE_CLIENT_ID,
-      redirect_uri: redirectUri,
-      code_verifier: codeVerifier
-    })
-  });
-  if (!res.ok) throw new Error(`Claude Code token exchange failed: ${await res.text()}`);
-  return res.json();
-}
-function parseClaudeAuthInput(input) {
-  let code = extractClaudeAuthCode(input);
-  let state;
-  try {
-    state = new URL(input.trim()).searchParams.get("state") ?? void 0;
-  } catch {
-    const trimmed = input.trim();
-    if (trimmed.startsWith("?") || trimmed.includes("code=")) {
-      state = new URLSearchParams(trimmed.startsWith("?") ? trimmed.slice(1) : trimmed).get("state") ?? void 0;
-    }
-  }
-  const hash = code.indexOf("#");
-  if (hash >= 0) {
-    state = code.slice(hash + 1) || state;
-    code = code.slice(0, hash);
-  }
-  return { code, ...state ? { state } : {} };
-}
-function extractClaudeAuthCode(input) {
-  const trimmed = input.trim();
-  try {
-    const parsed = new URL(trimmed);
-    return parsed.searchParams.get("code") ?? trimmed;
-  } catch {
-    if (trimmed.startsWith("?") || trimmed.includes("code=")) {
-      const query = trimmed.startsWith("?") ? trimmed.slice(1) : trimmed;
-      return new URLSearchParams(query).get("code") ?? trimmed;
-    }
-    return trimmed;
-  }
-}
-async function refreshClaudeCodeToken(refreshToken) {
-  return postOAuthRefresh(
-    TOKEN_URL4,
-    {
-      grant_type: "refresh_token",
-      client_id: CLAUDE_CODE_CLIENT_ID,
-      refresh_token: refreshToken
-    },
-    {
-      contentType: "json",
-      errorPrefix: "Claude Code token refresh failed",
-      includeBody: true
-    }
-  );
-}
-async function fetchClaudeBootstrap(accessToken) {
-  try {
-    const res = await fetch("https://api.anthropic.com/api/claude_cli/bootstrap", {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/json",
-        "User-Agent": `claude-cli/${CLAUDE_CODE_CLI_VERSION} (external, cli)`,
-        "anthropic-beta": "oauth-2025-04-20"
-      },
-      signal: AbortSignal.timeout(1e4)
-    });
-    if (!res.ok) return {};
-    const data = await res.json();
-    const acct = data.oauth_account;
-    if (!acct) return {};
-    return {
-      accountId: typeof acct.account_uuid === "string" ? acct.account_uuid : void 0,
-      email: typeof acct.account_email === "string" ? acct.account_email : void 0,
-      organizationId: typeof acct.organization_uuid === "string" ? acct.organization_uuid : void 0,
-      organizationName: typeof acct.organization_name === "string" ? acct.organization_name : void 0,
-      plan: typeof acct.organization_rate_limit_tier === "string" ? acct.organization_rate_limit_tier : void 0
-    };
-  } catch {
-    return {};
-  }
-}
-function generateCliUserID() {
-  return randomBytes(32).toString("hex");
-}
-async function runClaudeCodeOAuthFlow(onAuthUrl, readAuthCode) {
-  const { authUrl, codeVerifier, oauthState, redirectUri } = await buildClaudeCodeAuthUrl();
-  onAuthUrl(authUrl);
-  open2(authUrl).catch(() => {
-  });
-  const code = (await readAuthCode()).trim();
-  if (!code) throw new Error("No authorization code received from Anthropic");
-  const tokens = await exchangeClaudeCodeToken(code, codeVerifier, redirectUri, oauthState);
-  const bootstrap = await fetchClaudeBootstrap(tokens.access_token);
-  return { tokens, bootstrap };
-}
-async function fetchClaudeCodeModels(accessToken) {
-  const res = await fetch("https://api.anthropic.com/v1/models", {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "anthropic-version": "2023-06-01",
-      Accept: "application/json",
-      "User-Agent": `claude-cli/${CLAUDE_CODE_CLI_VERSION} (external, cli)`
-    },
-    signal: AbortSignal.timeout(1e4)
-  });
-  if (!res.ok) {
-    throw new Error(`Claude Code model discovery failed (HTTP ${res.status}): ${await res.text().catch(() => "")}`);
-  }
-  const body = await res.json();
-  const entries = (body.data ?? []).filter((m) => typeof m.id === "string" && m.id.length > 0).map((m) => ({
-    id: m.id,
-    displayName: typeof m.display_name === "string" ? m.display_name : m.id,
-    maxInputTokens: typeof m.max_input_tokens === "number" ? m.max_input_tokens : void 0,
-    maxTokens: typeof m.max_tokens === "number" ? m.max_tokens : void 0
-  }));
-  if (entries.length === 0) {
-    throw new Error("Claude Code model discovery returned no models");
-  }
-  return entries;
-}
-async function completeClaudeCodeExchange(code, codeVerifier, oauthState, redirectUri) {
-  const tokens = await exchangeClaudeCodeToken(code, codeVerifier, redirectUri, oauthState);
-  const bootstrap = await fetchClaudeBootstrap(tokens.access_token);
-  return { tokens, bootstrap };
-}
-function guiCallbackRedirectUri(host) {
-  return `http://${host}/oauth/callback`;
-}
-
-// src/cline-pass.ts
-var CLINE_PASS_HOST = "https://api.cline.bot";
-var CLINE_PASS_SDK_BASE_URL = `${CLINE_PASS_HOST}/api/v1`;
-var CLINE_PASS_CATALOG_URL = `${CLINE_PASS_HOST}/api/v1/ai/cline/recommended-models`;
-var CLINE_PASS_VALIDATION_URL = `${CLINE_PASS_HOST}/api/v1/users/me`;
-var CLINE_PASS_REGISTER_URL = `${CLINE_PASS_HOST}/api/v1/auth/register`;
-var CLINE_PASS_REFRESH_URL = `${CLINE_PASS_HOST}/api/v1/auth/refresh`;
-var CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW = 131072;
-var CLINE_PASS_WORKOS_PREFIX = "workos:";
-function isClinePassOAuth(providerId, authType) {
-  return providerId !== void 0 && isProviderKind(providerId, "cline-pass") && authType === "oauth";
-}
-function formatClineRuntimeCredential(providerId, authType, key) {
-  if (!isClinePassOAuth(providerId, authType)) return key;
-  return key.toLowerCase().startsWith(CLINE_PASS_WORKOS_PREFIX) ? key : `${CLINE_PASS_WORKOS_PREFIX}${key}`;
-}
-function createClinePassOAuthFetch(initialRuntimeCredential, refreshToken, onTokenRefreshed, fetchImpl = globalThis.fetch) {
-  let currentRuntimeCredential = initialRuntimeCredential;
-  return async (input, init) => {
-    const request = new Request(input, init);
-    const send = (runtimeCredential) => {
-      const headers = new Headers(request.headers);
-      headers.set("Authorization", `Bearer ${runtimeCredential}`);
-      return fetchImpl(request.clone(), { headers });
-    };
-    const response = await send(currentRuntimeCredential);
-    if (response.status !== 401) return response;
-    const refreshedRawToken = await refreshToken().catch(() => null);
-    const refreshedRuntimeCredential = refreshedRawToken ? formatClineRuntimeCredential("cline-pass", "oauth", refreshedRawToken) : null;
-    if (!refreshedRawToken || !refreshedRuntimeCredential || refreshedRuntimeCredential === currentRuntimeCredential) {
-      return response;
-    }
-    currentRuntimeCredential = refreshedRuntimeCredential;
-    onTokenRefreshed?.(refreshedRawToken);
-    return send(currentRuntimeCredential);
-  };
-}
-
-// src/oauth/cline-pass.ts
-var WORKOS_CLIENT_ID = "client_01K3A541FN8TA3EPPHTD2325AR";
-var WORKOS_DEVICE_URL = "https://api.workos.com/user_management/authorize/device";
-var WORKOS_TOKEN_URL = "https://api.workos.com/user_management/authenticate";
-var DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
-var DEFAULT_INTERVAL_MS = 5e3;
-var SLOW_DOWN_INCREMENT_MS = 1e3;
-var DEFAULT_EXPIRES_MS = 10 * 60 * 1e3;
-function formHeaders() {
-  return {
-    Accept: "application/json",
-    "Content-Type": "application/x-www-form-urlencoded"
-  };
-}
-function jsonHeaders() {
-  return {
-    Accept: "application/json",
-    "Content-Type": "application/json"
-  };
-}
-function expiresInFromIso(expiresAt) {
-  if (typeof expiresAt !== "string") throw new Error("ClinePass response is missing a valid expiresAt");
-  const timestamp = Date.parse(expiresAt);
-  if (!Number.isFinite(timestamp)) throw new Error("ClinePass response is missing a valid expiresAt");
-  return Math.max(1, Math.floor((timestamp - Date.now()) / 1e3));
-}
-function toOAuthResult(data) {
-  if (typeof data.accessToken !== "string" || !data.accessToken) {
-    throw new Error("ClinePass response is missing accessToken");
-  }
-  const userInfo = data.userInfo && typeof data.userInfo === "object" && !Array.isArray(data.userInfo) ? data.userInfo : void 0;
-  const accountId = typeof userInfo?.clineUserId === "string" ? userInfo.clineUserId : void 0;
-  return {
-    tokens: {
-      access_token: data.accessToken,
-      ...typeof data.refreshToken === "string" ? { refresh_token: data.refreshToken } : {},
-      expires_in: expiresInFromIso(data.expiresAt),
-      ...userInfo ? { providerData: userInfo } : {}
-    },
-    ...accountId ? { accountId } : {},
-    ...userInfo ? { providerData: userInfo } : {}
-  };
-}
-async function readError(response) {
-  const text2 = await response.text().catch(() => "");
-  if (!text2) return `HTTP ${response.status}`;
-  try {
-    const parsed = JSON.parse(text2);
-    const detail = typeof parsed.error === "string" ? parsed.error : typeof parsed.message === "string" ? parsed.message : "";
-    return detail || `HTTP ${response.status}`;
-  } catch {
-    return text2.slice(0, 120);
-  }
-}
-async function requestClinePassDeviceCode() {
-  const response = await fetch(WORKOS_DEVICE_URL, {
-    method: "POST",
-    headers: formHeaders(),
-    body: new URLSearchParams({ client_id: WORKOS_CLIENT_ID }).toString()
-  });
-  if (!response.ok) throw new Error(`ClinePass device code request failed (${response.status})`);
-  const json = await response.json();
-  if (!json.device_code || !json.user_code || !json.verification_uri) {
-    throw new Error("ClinePass device code response is missing required fields");
-  }
-  return json;
-}
-async function registerClinePassTokens(accessToken, refreshToken) {
-  const response = await fetch(CLINE_PASS_REGISTER_URL, {
-    method: "POST",
-    headers: jsonHeaders(),
-    body: JSON.stringify({ accessToken, refreshToken })
-  });
-  if (!response.ok) throw new Error(`ClinePass registration failed (${response.status})`);
-  const body = await response.json();
-  if (body.success !== true || !body.data) {
-    const detail = typeof body.error === "string" ? body.error : typeof body.message === "string" ? body.message : "unsuccessful response";
-    throw new Error(`ClinePass registration failed: ${detail}`);
-  }
-  return toOAuthResult(body.data);
-}
-async function pollClinePassDeviceCode(device, opts) {
-  const sleep2 = opts?.sleep ?? sleepMs;
-  const now = opts?.now ?? (() => Date.now());
-  const deadline = now() + positiveSecondsToMs(device.expires_in, DEFAULT_EXPIRES_MS);
-  let intervalMs = Math.max(positiveSecondsToMs(device.interval, DEFAULT_INTERVAL_MS), 1e3);
-  while (now() < deadline) {
-    const response = await fetch(WORKOS_TOKEN_URL, {
-      method: "POST",
-      headers: formHeaders(),
-      body: new URLSearchParams({
-        grant_type: DEVICE_GRANT_TYPE,
-        client_id: WORKOS_CLIENT_ID,
-        device_code: device.device_code
-      }).toString()
-    });
-    if (response.ok) {
-      const workos = await response.json();
-      if (!workos.access_token || !workos.refresh_token) {
-        throw new Error("ClinePass WorkOS response is missing required tokens");
-      }
-      return registerClinePassTokens(workos.access_token, workos.refresh_token);
-    }
-    const body = await response.json().catch(() => ({}));
-    const remaining = Math.max(0, deadline - now());
-    if (body.error === "authorization_pending") {
-      await sleep2(Math.min(intervalMs, remaining));
-      continue;
-    }
-    if (body.error === "slow_down") {
-      intervalMs += SLOW_DOWN_INCREMENT_MS;
-      await sleep2(Math.min(intervalMs, remaining));
-      continue;
-    }
-    throw new Error(`ClinePass device authorization failed${body.error ? `: ${body.error}` : ""}`);
-  }
-  throw new Error("ClinePass device authorization timed out");
-}
-async function runClinePassDeviceCodeFlow(onDeviceCode, opts) {
-  const device = await requestClinePassDeviceCode();
-  onDeviceCode({
-    url: device.verification_uri_complete ?? device.verification_uri,
-    userCode: device.user_code
-  });
-  return pollClinePassDeviceCode(device, opts);
-}
-async function refreshClinePassAccessToken(refreshToken) {
-  const response = await fetch(CLINE_PASS_REFRESH_URL, {
-    method: "POST",
-    headers: jsonHeaders(),
-    body: JSON.stringify({ refreshToken, grantType: "refresh_token" })
-  });
-  if (!response.ok) {
-    const detail = await readError(response);
-    throw new Error(`ClinePass token refresh failed (${response.status}): ${detail}`);
-  }
-  const body = await response.json();
-  if (body.success !== true || !body.data) {
-    const detail = typeof body.error === "string" ? body.error : typeof body.message === "string" ? body.message : "unsuccessful response";
-    throw new Error(`ClinePass token refresh failed: ${detail}`);
-  }
-  return toOAuthResult(body.data).tokens;
-}
-
-// src/oauth/refresh.ts
-function oauthCredentialShouldRefresh(cred, providerId) {
-  if (oauthCredentialNeedsRefresh(cred)) return true;
-  if (NATIVE_OAUTH_PROVIDER_IDS.includes(providerKind(providerId)) && accessTokenIsExpiring(cred.access)) return true;
-  return false;
-}
-async function refreshStoredOAuthCredential(providerId, cred) {
-  if (!cred.refresh) {
-    throw new Error(`${providerId}: OAuth refresh token missing \u2014 run relay-ai providers auth ${providerId}`);
-  }
-  const kind = providerKind(providerId);
-  let tokens;
-  if (kind === "openai" || kind === "openai-oauth") {
-    tokens = await refreshOpenAiAccessToken(cred.refresh);
-  } else if (kind === "xai" || kind === "xai-oauth") {
-    tokens = await refreshXaiAccessToken(cred.refresh);
-  } else if (kind === "github-copilot") {
-    tokens = await refreshGithubCopilotToken(cred.refresh);
-  } else if (kind === "claude-code") {
-    tokens = await refreshClaudeCodeToken(cred.refresh);
-  } else if (kind === "antigravity") {
-    tokens = await refreshAntigravityToken(cred.refresh);
-  } else if (kind === "cline-pass") {
-    tokens = await refreshClinePassAccessToken(cred.refresh);
-  } else {
-    throw new Error(`OAuth refresh not implemented for provider "${providerId}"`);
-  }
-  const accountId = kind === "cline-pass" && typeof tokens.providerData?.clineUserId === "string" ? tokens.providerData.clineUserId : cred.accountId;
-  return tokensToStoredCredential(tokens, cred.refresh, accountId, cred.providerData);
-}
-
-// src/oauth/refresh-lock.ts
-import { closeSync as closeSync2, mkdirSync as mkdirSync6, openSync as openSync2, readFileSync as readFileSync9, statSync as statSync4, unlinkSync as unlinkSync3, writeSync as writeSync2 } from "fs";
-import { createHash as createHash2, randomUUID as randomUUID2 } from "crypto";
-import { join as join7 } from "path";
-var POLL_MS = 100;
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-function processAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err.code === "EPERM";
-  }
-}
-function readHolder(path) {
-  try {
-    const parsed = JSON.parse(readFileSync9(path, "utf8"));
-    return {
-      pid: typeof parsed.pid === "number" ? parsed.pid : void 0,
-      token: typeof parsed.token === "string" ? parsed.token : void 0
-    };
-  } catch {
-    return {};
-  }
-}
-function isStale(path, staleMs) {
-  try {
-    const { pid } = readHolder(path);
-    if (pid !== void 0 && !processAlive(pid)) return true;
-    return Date.now() - statSync4(path).mtimeMs > staleMs;
-  } catch {
-    return false;
-  }
-}
-function removeLock(path) {
-  try {
-    unlinkSync3(path);
-  } catch {
-  }
-}
-async function acquire(path, timeoutMs, staleMs) {
-  const token = randomUUID2();
-  const deadline = Date.now() + timeoutMs;
-  for (; ; ) {
-    try {
-      const fd = openSync2(path, "wx", 384);
-      try {
-        writeSync2(fd, JSON.stringify({ pid: process.pid, token }));
-      } finally {
-        closeSync2(fd);
-      }
-      return token;
-    } catch (err) {
-      if (err.code !== "EEXIST") return null;
-      if (isStale(path, staleMs)) {
-        removeLock(path);
-        continue;
-      }
-      if (Date.now() >= deadline) return null;
-      await sleep(POLL_MS);
-    }
-  }
-}
-async function withRefreshLock(key, work, options = {}) {
-  const dir = options.dir ?? join7(getAppHome(), "locks");
-  let path;
-  let token = null;
-  try {
-    mkdirSync6(dir, { recursive: true, mode: 448 });
-    path = join7(dir, `oauth-${createHash2("sha256").update(key).digest("hex").slice(0, 24)}.lock`);
-    token = await acquire(path, options.timeoutMs ?? 2e4, options.staleMs ?? 12e4);
-  } catch {
-    token = null;
-  }
-  try {
-    return await work();
-  } finally {
-    if (path && token && readHolder(path).token === token) removeLock(path);
-  }
-}
-
-// src/secrets-file.ts
-import { chmodSync as chmodSync5, existsSync as existsSync7, mkdirSync as mkdirSync7, readFileSync as readFileSync10, writeFileSync as writeFileSync5 } from "fs";
-var DIR_MODE3 = 448;
-var FILE_MODE5 = 384;
-function emptySecrets() {
-  return { version: 1, accounts: {} };
-}
-function readSecretsFile(env = process.env) {
-  const path = getSecretsPath(env);
-  if (!existsSync7(path)) return emptySecrets();
-  try {
-    const raw = JSON.parse(readFileSync10(path, "utf8"));
-    if (raw?.version !== 1 || !raw.accounts || typeof raw.accounts !== "object") {
-      return emptySecrets();
-    }
-    const accounts = {};
-    for (const [k, v] of Object.entries(raw.accounts)) {
-      if (typeof v === "string" && v.length > 0) accounts[k] = v;
-    }
-    return { version: 1, accounts };
-  } catch {
-    return emptySecrets();
-  }
-}
-function writeSecretsFile(data, env = process.env) {
-  const home = getAppHome(env);
-  mkdirSync7(home, { recursive: true, mode: DIR_MODE3 });
-  try {
-    chmodSync5(home, DIR_MODE3);
-  } catch {
-  }
-  const path = getSecretsPath(env);
-  writeFileSync5(path, `${JSON.stringify(data, null, 2)}
-`, { encoding: "utf8", mode: FILE_MODE5 });
-  try {
-    chmodSync5(path, FILE_MODE5);
-  } catch {
-  }
-}
-function readFileAccount(account, env = process.env) {
-  const value = readSecretsFile(env).accounts[account];
-  return value?.length ? value : null;
-}
-function writeFileAccount(account, value, env = process.env) {
-  if (!account || !value) return false;
-  try {
-    const data = readSecretsFile(env);
-    data.accounts[account] = value;
-    writeSecretsFile(data, env);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function deleteFileAccount(account, env = process.env) {
-  try {
-    const data = readSecretsFile(env);
-    if (!(account in data.accounts)) return true;
-    delete data.accounts[account];
-    writeSecretsFile(data, env);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// src/env.ts
-function detectConflicts() {
-  return CONFLICTING_ENV_VARS.filter((name) => process.env[name] !== void 0).map((name) => ({ name, value: process.env[name] }));
-}
-function resolveApiKey() {
-  const key = process.env["OPENCODE_API_KEY"];
-  if (!key?.trim()) return null;
-  return key.trim().split(/\r?\n/)[0]?.trim() || null;
-}
-function applyClaudeCodeThirdPartyCompat(env) {
-  env["ENABLE_TOOL_SEARCH"] = "true";
-  env["CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT"] = "0";
-}
-function buildChildEnv(baseUrl, model, apiKey, proxyPort, contextWindow, enableGatewayDiscovery) {
-  const env = { ...process.env };
-  for (const name of CONFLICTING_ENV_VARS) {
-    delete env[name];
-  }
-  for (const name of PARENT_SESSION_ENV_VARS) {
-    delete env[name];
-  }
-  env["ANTHROPIC_BASE_URL"] = proxyPort ? `http://127.0.0.1:${proxyPort}` : baseUrl;
-  env["ANTHROPIC_API_KEY"] = apiKey;
-  const bareModel = stripOneMContextSuffix(model);
-  env["ANTHROPIC_MODEL"] = claudeCodeClientModelId(model, contextWindow);
-  if (!enableGatewayDiscovery) {
-    env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = String(resolveContextWindow(bareModel, contextWindow));
-  }
-  if (enableGatewayDiscovery) {
-    delete env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"];
-    env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1";
-  }
-  env["CLAUDE_CODE_AUTO_MODE_SERVER"] ??= "0";
-  applyClaudeCodeThirdPartyCompat(env);
-  return env;
-}
-function buildAntigravityChildEnv(gatewayUrl) {
-  const env = { ...process.env };
-  for (const name of CONFLICTING_ENV_VARS) {
-    delete env[name];
-  }
-  env["CLOUD_CODE_URL"] = gatewayUrl;
-  env["ANTIGRAVITY_API_KEY"] = "relay-dummy-key";
-  env["GEMINI_API_KEY"] = "relay-dummy-key";
-  env["GOOGLE_API_KEY"] = "relay-dummy-key";
-  env["GOOGLE_GEMINI_API_KEY"] = "relay-dummy-key";
-  return env;
-}
-function classifyKeyringError(err) {
-  const msg = err instanceof Error ? err.message : String(err);
-  const lower = msg.toLowerCase();
-  if (lower.includes("cannot find module") || lower.includes("module not found") || lower.includes("failed to load")) {
-    return "native keyring module not available on this system";
-  }
-  if (lower.includes("secret service") || lower.includes("dbus") || lower.includes("daemon")) {
-    return "Secret Service daemon is not running (start GNOME Keyring or KWallet)";
-  }
-  if (lower.includes("denied") || lower.includes("locked") || lower.includes("cancelled") || lower.includes("user refused")) {
-    return "keychain access was denied or the keychain is locked";
-  }
-  return `keyring error: ${msg}`;
-}
-var KEYRING_SERVICE = "relay-ai";
-var KEYRING_ACCOUNT = "relay-ai";
-var KEYRING_CHUNK_PREFIX = "__relay_chunked__:";
-var KEYRING_CHUNK_SIZE = 1200;
-var LEGACY_KEYRING_SERVICE = "opencode-starter";
-var LEGACY_KEYRING_ACCOUNT = "opencode-starter";
-var GLOBAL_OPENCODE_KEYRING_ACCOUNT = "global:opencode";
-function providerKeyringAccount(providerId) {
-  return `provider:${providerId}`;
-}
-function preferredRelayCredentialAuthRef(providerId, fallbackAuthRef) {
-  return providerId === "go" || providerId === "zen" ? `keyring:${providerKeyringAccount("opencode")}` : fallbackAuthRef;
-}
-function oauthProviderIdFromAccount(account) {
-  const prefix = "oauth:provider:";
-  return account.startsWith(prefix) ? account.slice(prefix.length) : null;
-}
-var oauthRefreshInflight = /* @__PURE__ */ new Map();
-function parseAuthRef(authRef) {
-  if (authRef.startsWith("keyring:")) {
-    const account = authRef.slice("keyring:".length);
-    return account ? { kind: "keyring", account } : null;
-  }
-  if (authRef.startsWith("env:")) {
-    const varName = authRef.slice("env:".length);
-    return varName ? { kind: "env", varName } : null;
-  }
-  return null;
-}
-function relayAiKeyEnvVar(providerId) {
-  return `RELAY_AI_KEY_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
-}
-function readEnvCredential(varName) {
-  const raw = process.env[varName];
-  if (!raw?.trim()) return null;
-  return raw.trim().split(/\r?\n/)[0]?.trim() || null;
-}
-var osKeyringReadCache = /* @__PURE__ */ new Map();
-function invalidateKeyringReadCache(account) {
-  if (account === void 0) osKeyringReadCache.clear();
-  else osKeyringReadCache.delete(account);
-}
-async function readOsKeyringAccount(account, diag) {
-  const cached2 = osKeyringReadCache.get(account);
-  if (cached2) return cached2;
-  const read = (async () => {
-    try {
-      const { Entry } = await import("@napi-rs/keyring");
-      const value = new Entry(KEYRING_SERVICE, account).getPassword() ?? null;
-      if (!value?.startsWith(KEYRING_CHUNK_PREFIX)) return value;
-      const chunkCount = Number(value.slice(KEYRING_CHUNK_PREFIX.length));
-      let combined = "";
-      for (let i = 0; i < chunkCount; i++) {
-        combined += new Entry(KEYRING_SERVICE, `${account}::chunk::${i}`).getPassword() ?? "";
-      }
-      return combined;
-    } catch (err) {
-      diag?.(classifyKeyringError(err));
-      return null;
-    }
-  })();
-  osKeyringReadCache.set(account, read);
-  return read;
-}
-async function writeOsKeyringAccount(account, key, diag) {
-  try {
-    const { Entry } = await import("@napi-rs/keyring");
-    if (key.length <= KEYRING_CHUNK_SIZE) {
-      new Entry(KEYRING_SERVICE, account).setPassword(key);
-      return true;
-    }
-    const chunkCount = Math.ceil(key.length / KEYRING_CHUNK_SIZE);
-    for (let i = 0; i < chunkCount; i++) {
-      const chunk = key.slice(i * KEYRING_CHUNK_SIZE, (i + 1) * KEYRING_CHUNK_SIZE);
-      new Entry(KEYRING_SERVICE, `${account}::chunk::${i}`).setPassword(chunk);
-    }
-    new Entry(KEYRING_SERVICE, account).setPassword(`${KEYRING_CHUNK_PREFIX}${chunkCount}`);
-    return true;
-  } catch (err) {
-    diag?.(classifyKeyringError(err));
-    return false;
-  }
-}
-async function deleteOsKeyringAccount(account, diag) {
-  try {
-    const { Entry } = await import("@napi-rs/keyring");
-    const value = new Entry(KEYRING_SERVICE, account).getPassword();
-    if (value?.startsWith(KEYRING_CHUNK_PREFIX)) {
-      const chunkCount = Number(value.slice(KEYRING_CHUNK_PREFIX.length));
-      for (let i = 0; i < chunkCount; i++) {
-        new Entry(KEYRING_SERVICE, `${account}::chunk::${i}`).deletePassword();
-      }
-    }
-    new Entry(KEYRING_SERVICE, account).deletePassword();
-    return true;
-  } catch (err) {
-    diag?.(classifyKeyringError(err));
-    return false;
-  }
-}
-async function readKeyringAccount(account, diag) {
-  const fromOs = await readOsKeyringAccount(account, diag);
-  if (fromOs) return fromOs;
-  return readFileAccount(account);
-}
-async function writeKeyringAccount(account, key, diag) {
-  invalidateKeyringReadCache(account);
-  try {
-    if (await writeOsKeyringAccount(account, key, diag)) {
-      deleteFileAccount(account);
-      return true;
-    }
-    if (writeFileAccount(account, key)) {
-      diag?.("OS keyring unavailable \u2014 saved to secrets.json under RELAY_AI_HOME");
-      return true;
-    }
-    return false;
-  } finally {
-    invalidateKeyringReadCache(account);
-  }
-}
-async function deleteKeyringAccount(account, diag) {
-  invalidateKeyringReadCache(account);
-  try {
-    const osOk = await deleteOsKeyringAccount(account, diag);
-    const fileOk = deleteFileAccount(account);
-    return osOk || fileOk;
-  } finally {
-    invalidateKeyringReadCache(account);
-  }
-}
-async function readGlobalOpencodeCredential(diag) {
-  const fromEnv = resolveApiKey();
-  if (fromEnv) return fromEnv;
-  const global = await readKeyringAccount(GLOBAL_OPENCODE_KEYRING_ACCOUNT, diag);
-  if (global) return global;
-  const current = await readKeyringAccount(KEYRING_ACCOUNT, diag);
-  if (current) return current;
-  try {
-    const { Entry } = await import("@napi-rs/keyring");
-    return new Entry(LEGACY_KEYRING_SERVICE, LEGACY_KEYRING_ACCOUNT).getPassword() ?? null;
-  } catch (err) {
-    diag?.(classifyKeyringError(err));
-    return null;
-  }
-}
-async function readStoredProviderCredential(authRef, diag) {
-  const parsed = parseAuthRef(authRef);
-  if (!parsed || parsed.kind !== "keyring") return null;
-  return readProviderSecret(parsed.account, diag);
-}
-async function migrateGlobalOpencodeCredential(diag) {
-  const existing = await readKeyringAccount(GLOBAL_OPENCODE_KEYRING_ACCOUNT, diag);
-  if (existing) return true;
-  const legacy = await readKeyringAccount(KEYRING_ACCOUNT, diag) ?? await (async () => {
-    try {
-      const { Entry } = await import("@napi-rs/keyring");
-      return new Entry(LEGACY_KEYRING_SERVICE, LEGACY_KEYRING_ACCOUNT).getPassword() ?? null;
-    } catch (err) {
-      diag?.(classifyKeyringError(err));
-      return null;
-    }
-  })();
-  if (!legacy) return false;
-  const wrote = await writeKeyringAccount(GLOBAL_OPENCODE_KEYRING_ACCOUNT, legacy, diag);
-  if (!wrote) return false;
-  const verified = await readKeyringAccount(GLOBAL_OPENCODE_KEYRING_ACCOUNT, diag);
-  if (verified !== legacy) {
-    diag?.("credential migration verification failed \u2014 keeping legacy keychain entries");
-    return false;
-  }
-  if (await readKeyringAccount(KEYRING_ACCOUNT, diag)) {
-    await deleteKeyringAccount(KEYRING_ACCOUNT, diag);
-  }
-  try {
-    const { Entry } = await import("@napi-rs/keyring");
-    if (new Entry(LEGACY_KEYRING_SERVICE, LEGACY_KEYRING_ACCOUNT).getPassword()) {
-      new Entry(LEGACY_KEYRING_SERVICE, LEGACY_KEYRING_ACCOUNT).deletePassword();
-    }
-  } catch {
-  }
-  return true;
-}
-async function resolveProviderCredential(providerId, authRef, diag) {
-  const parsed = parseAuthRef(authRef);
-  if (!parsed) return null;
-  if (parsed.kind === "keyring" && parsed.account === GLOBAL_OPENCODE_KEYRING_ACCOUNT) {
-    const relayOverride = await readProviderSecret(providerKeyringAccount("opencode"), diag);
-    if (relayOverride) return relayOverride;
-  }
-  const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
-  if (namespaced) return namespaced;
-  if (parsed.kind === "env") {
-    return readEnvCredential(parsed.varName);
-  }
-  if (parsed.account === GLOBAL_OPENCODE_KEYRING_ACCOUNT) {
-    return readGlobalOpencodeCredential(diag);
-  }
-  if (oauthProviderIdFromAccount(parsed.account)) invalidateKeyringReadCache(parsed.account);
-  return readProviderSecret(parsed.account, diag);
-}
-async function forceRefreshProviderCredential(providerId, authRef, diag) {
-  const parsed = parseAuthRef(authRef);
-  if (!parsed || parsed.kind !== "keyring") {
-    return resolveProviderCredential(providerId, authRef, diag);
-  }
-  if (parsed.account === GLOBAL_OPENCODE_KEYRING_ACCOUNT) {
-    const relayOverride = await readProviderSecret(providerKeyringAccount("opencode"), diag);
-    if (relayOverride) return relayOverride;
-  }
-  const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
-  if (namespaced) return namespaced;
-  const oauthProviderId = oauthProviderIdFromAccount(parsed.account);
-  if (oauthProviderId) invalidateKeyringReadCache(parsed.account);
-  const raw = await readKeyringAccount(parsed.account, diag);
-  if (!raw || !oauthProviderId) return decodeProviderSecret(raw);
-  return refreshOAuthKeyringAccount(parsed.account, oauthProviderId, raw, diag, true);
-}
-async function readStoredOAuthCredential(authRef, diag) {
-  const parsed = parseAuthRef(authRef);
-  if (!parsed || parsed.kind !== "keyring" || !oauthProviderIdFromAccount(parsed.account)) return void 0;
-  return parseStoredOAuthCredential(await readKeyringAccount(parsed.account, diag)) ?? void 0;
-}
-async function resolveProviderOAuthAccountId(authRef, diag) {
-  const parsed = parseAuthRef(authRef);
-  if (!parsed || parsed.kind !== "keyring" || !oauthProviderIdFromAccount(parsed.account)) return void 0;
-  const raw = await readKeyringAccount(parsed.account, diag);
-  return parseStoredOAuthCredential(raw)?.accountId;
-}
-async function resolveProviderOAuthProviderData(authRef, diag) {
-  const parsed = parseAuthRef(authRef);
-  if (!parsed || parsed.kind !== "keyring" || !oauthProviderIdFromAccount(parsed.account)) return void 0;
-  const raw = await readKeyringAccount(parsed.account, diag);
-  return parseStoredOAuthCredential(raw)?.providerData;
-}
-async function enrichGithubCopilotOAuthProviderData(authRef, diag) {
-  const parsed = parseAuthRef(authRef);
-  if (!parsed || parsed.kind !== "keyring" || oauthProviderIdFromAccount(parsed.account) !== "github-copilot") {
-    return void 0;
-  }
-  const raw = await readKeyringAccount(parsed.account, diag);
-  const credential = parseStoredOAuthCredential(raw);
-  if (!credential?.refresh) return credential?.providerData;
-  try {
-    const summary = await fetchCopilotAccount(credential.refresh);
-    const providerData = { ...credential.providerData, copilot: summary };
-    await writeKeyringAccount(
-      parsed.account,
-      oauthCredentialToKeychainJson({ ...credential, providerData }),
-      diag
-    );
-    return providerData;
-  } catch (err) {
-    diag?.(`GitHub Copilot plan lookup unavailable \u2014 ${err instanceof Error ? err.message : String(err)}`);
-    return credential.providerData;
-  }
-}
-function decodeProviderSecret(raw) {
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (!trimmed.startsWith("{")) return trimmed;
-  const oauth = parseStoredOAuthCredential(trimmed);
-  if (oauth) return oauth.access;
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (parsed.type === "oauth" && typeof parsed.access === "string") return parsed.access;
-    if (parsed.type === "wellknown" && typeof parsed.token === "string") return parsed.token;
-  } catch {
-  }
-  return trimmed;
-}
-async function refreshOAuthKeyringAccount(account, providerId, raw, diag, force = false) {
-  const existing = oauthRefreshInflight.get(account);
-  if (existing) return existing;
-  const work = (async () => {
-    const seen = parseStoredOAuthCredential(raw);
-    if (!seen || !force && !oauthCredentialShouldRefresh(seen, providerId)) {
-      return decodeProviderSecret(raw);
-    }
-    return withRefreshLock(account, async () => {
-      invalidateKeyringReadCache(account);
-      const cred = parseStoredOAuthCredential(await readKeyringAccount(account, diag)) ?? seen;
-      const replacedByOther = cred.access !== seen.access || cred.refresh !== seen.refresh;
-      if (replacedByOther && !oauthCredentialShouldRefresh(cred, providerId)) return cred.access;
-      if (!force && !oauthCredentialShouldRefresh(cred, providerId)) return cred.access;
-      try {
-        const refreshed = await refreshStoredOAuthCredential(providerId, cred);
-        const json = oauthCredentialToKeychainJson(refreshed);
-        await writeKeyringAccount(account, json, diag);
-        return refreshed.access;
-      } catch (err) {
-        diag?.(err instanceof Error ? err.message : String(err));
-        if (cred.access && cred.expires > Date.now()) return cred.access;
-        if (err instanceof OAuthRefreshRevokedError) {
-          throw new Error(`${err.message}. Sign in again: relay-ai providers auth ${providerId}`);
-        }
-        throw err;
-      }
-    });
-  })();
-  oauthRefreshInflight.set(account, work);
-  try {
-    return await work;
-  } finally {
-    oauthRefreshInflight.delete(account);
-  }
-}
-async function readProviderSecret(account, diag) {
-  const raw = await readKeyringAccount(account, diag);
-  if (!raw) return null;
-  const oauthProviderId = oauthProviderIdFromAccount(account);
-  if (oauthProviderId && raw.trim().startsWith("{")) {
-    return refreshOAuthKeyringAccount(account, oauthProviderId, raw, diag);
-  }
-  return decodeProviderSecret(raw);
-}
-async function saveProviderCredential(authRef, key, diag) {
-  const parsed = parseAuthRef(authRef);
-  if (!parsed || parsed.kind !== "keyring") return false;
-  return writeKeyringAccount(parsed.account, key, diag);
-}
-async function deleteProviderCredential(authRef, diag) {
-  const parsed = parseAuthRef(authRef);
-  if (!parsed || parsed.kind !== "keyring") return false;
-  return deleteKeyringAccount(parsed.account, diag);
-}
-async function readFromCredentialStore(diag) {
-  return readGlobalOpencodeCredential(diag);
-}
-async function saveToCredentialStore(key, diag) {
-  const wrote = await writeKeyringAccount(GLOBAL_OPENCODE_KEYRING_ACCOUNT, key, diag);
-  if (wrote) {
-    await deleteKeyringAccount(KEYRING_ACCOUNT, diag);
-  }
-  return wrote;
-}
-async function isSecretServiceAvailable() {
-  try {
-    const { Entry } = await import("@napi-rs/keyring");
-    new Entry(`${KEYRING_SERVICE}-probe`, "probe").getPassword();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// src/registry/url-security.ts
-import { lookup } from "dns/promises";
-import ipaddr from "ipaddr.js";
-var BLOCKED_HOSTNAMES = /* @__PURE__ */ new Set([
-  "169.254.169.254",
-  "metadata.google.internal",
-  "169.254.170.2",
-  "fd00:ec2::254"
-]);
-function isBlockedIp(ipStr, allowInsecureLocal) {
-  try {
-    const ip = ipaddr.process(ipStr);
-    const range = ip.range();
-    if (allowInsecureLocal && (range === "loopback" || range === "private")) {
-      return false;
-    }
-    if (range === "loopback") return true;
-    if (range === "private") return true;
-    if (range === "linkLocal") return true;
-    if (range === "uniqueLocal") return true;
-    if (range === "carrierGradeNat") return true;
-    return false;
-  } catch {
-    return true;
-  }
-}
-async function resolveHostAddresses(hostname) {
-  try {
-    ipaddr.parse(hostname);
-    return [hostname];
-  } catch {
-  }
-  try {
-    const records = await lookup(hostname, { all: true, verbatim: true });
-    return records.map((r) => r.address);
-  } catch {
-    return [];
-  }
-}
-async function validateCustomEndpointUrl(rawUrl, opts = {}) {
-  const trimmed = rawUrl.trim();
-  if (!trimmed) {
-    return { ok: false, error: "Base URL is required.", hint: "Example: https://api.example.com/v1" };
-  }
-  let parsed;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    return { ok: false, error: "Invalid URL.", hint: "Include https:// and the full base path." };
-  }
-  const allowLocal = opts.allowInsecureLocal === true;
-  if (parsed.protocol === "http:" && !allowLocal) {
-    return {
-      ok: false,
-      error: "Only HTTPS URLs are allowed.",
-      hint: "For local or LAN servers (Ollama, LM Studio, vLLM), allow insecure HTTP when prompted."
-    };
-  } else if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return { ok: false, error: "URL must use https:// or user-approved http:// for local/LAN servers." };
-  }
-  const rawHostname = parsed.hostname.toLowerCase();
-  const hostname = rawHostname.replace(/^\[(.*)\]$/, "$1");
-  if (BLOCKED_HOSTNAMES.has(hostname)) {
-    return {
-      ok: false,
-      error: "This URL points to a blocked internal/metadata host.",
-      hint: "Use a public API endpoint for your provider."
-    };
-  }
-  const addresses = await resolveHostAddresses(hostname);
-  if (addresses.length === 0) {
-    return {
-      ok: false,
-      error: `Could not resolve hostname: ${hostname}`,
-      hint: "Check the URL spelling and your network connection."
-    };
-  }
-  for (const addr of addresses) {
-    try {
-      ipaddr.process(addr);
-    } catch {
-      continue;
-    }
-    if (isBlockedIp(addr, allowLocal)) {
-      return {
-        ok: false,
-        error: "URL resolves to a private or restricted network address.",
-        hint: "Use a public HTTPS endpoint, or explicitly allow insecure HTTP for a trusted local/LAN server."
-      };
-    }
-  }
-  if (parsed.protocol === "http:") {
-    const allResolvedAddressesAreLocal = addresses.every((addr) => {
-      try {
-        const range = ipaddr.process(addr).range();
-        return range === "loopback" || range === "private" || range === "uniqueLocal";
-      } catch {
-        return false;
-      }
-    });
-    if (!allowLocal || !allResolvedAddressesAreLocal) {
-      return {
-        ok: false,
-        error: "HTTP is only allowed for local loopback or private-network addresses.",
-        hint: "Use https://, or allow insecure HTTP for a trusted local/LAN server."
-      };
-    }
-  }
-  const normalizedUrl = `${parsed.protocol}//${parsed.host}${parsed.pathname}`.replace(/\/$/, "");
-  return { ok: true, normalizedUrl };
-}
-
-// src/codex/upstream-error.ts
-var TRACE_FIELD_LIMIT = 4e3;
-var MAX_ERROR_MESSAGE_CHARS = 2e3;
-function clipTraceField(value) {
-  return value.length <= TRACE_FIELD_LIMIT ? value : `${value.slice(0, TRACE_FIELD_LIMIT)}\u2026`;
-}
-function safeUpstreamErrorFields(err, includeCause) {
-  if (!err || typeof err !== "object") {
-    return { message: clipTraceField(String(err)) };
-  }
-  const rec = err;
-  const result = {};
-  if (rec.name) result.name = rec.name;
-  if (rec.message) result.message = clipTraceField(rec.message);
-  if (rec.statusCode !== void 0) result.statusCode = rec.statusCode;
-  if (rec.responseBody) result.responseBody = clipTraceField(rec.responseBody);
-  if (rec.data?.error) {
-    result.data = {
-      error: {
-        ...rec.data.error.type ? { type: rec.data.error.type } : {},
-        ...rec.data.error.message ? { message: clipTraceField(rec.data.error.message) } : {}
-      }
-    };
-  }
-  if (rec.lastError) {
-    result.lastError = {
-      ...rec.lastError.message ? { message: clipTraceField(rec.lastError.message) } : {},
-      ...rec.lastError.statusCode !== void 0 ? { statusCode: rec.lastError.statusCode } : {}
-    };
-  }
-  if (rec.errors?.length) {
-    result.errors = rec.errors.map((item) => ({
-      ...item.message ? { message: clipTraceField(item.message) } : {},
-      ...item.statusCode !== void 0 ? { statusCode: item.statusCode } : {}
-    }));
-  }
-  if (includeCause && rec.cause !== void 0) {
-    result.cause = safeUpstreamErrorFields(rec.cause, false);
-  }
-  return result;
-}
-function formatUpstreamErrorTrace(err) {
-  return JSON.stringify(safeUpstreamErrorFields(err, true));
-}
-function joinProviderMessage(message) {
-  return message.split("\n").map((line) => line.trim()).filter(Boolean).join(" ");
-}
-function formatUpstreamError(err) {
-  if (!err || typeof err !== "object") return "Upstream model request failed.";
-  const rec = err;
-  if (rec.data?.error?.message) {
-    const short = joinProviderMessage(rec.data.error.message);
-    return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
-  }
-  if (rec.responseBody) {
-    try {
-      const parsed = JSON.parse(rec.responseBody);
-      if (parsed.error?.message) {
-        const short = joinProviderMessage(parsed.error.message);
-        return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
-      }
-    } catch {
-    }
-  }
-  const last = rec.lastError;
-  if (last?.message) {
-    const code = last.statusCode;
-    const short = sanitizeMessage(last.message);
-    return code ? `${short} (HTTP ${code})` : short;
-  }
-  const fromList = rec.errors?.[rec.errors.length - 1];
-  if (fromList?.message) {
-    const short = sanitizeMessage(fromList.message);
-    return fromList.statusCode ? `${short} (HTTP ${fromList.statusCode})` : short;
-  }
-  if (rec.message) {
-    const short = sanitizeMessage(rec.message);
-    if (short && !short.includes("file://") && !short.includes("APICallError") && short.length < MAX_ERROR_MESSAGE_CHARS) {
-      return rec.statusCode ? `${short} (HTTP ${rec.statusCode})` : short;
-    }
-  }
-  return "Upstream model request failed.";
-}
-function upstreamHttpStatus(err, message) {
-  if (err && typeof err === "object" && "statusCode" in err) {
-    const code = err.statusCode;
-    if (code === 400 || code === 401 || code === 403 || code === 404 || code === 429) return code;
-  }
-  if (message.includes("HTTP 429") || message.includes("429")) return 429;
-  if (message.includes("HTTP 400")) return 400;
-  return 500;
-}
-function anthropicErrorType(status) {
-  switch (status) {
-    case 400:
-      return "invalid_request_error";
-    case 401:
-      return "authentication_error";
-    case 403:
-      return "permission_error";
-    case 404:
-      return "not_found_error";
-    case 429:
-      return "rate_limit_error";
-    default:
-      return "api_error";
-  }
-}
-function jsonErrorMessage(text2) {
-  const trimmed = text2.trim();
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return void 0;
-  try {
-    const parsed = JSON.parse(trimmed);
-    const first = Array.isArray(parsed) ? parsed[0] : parsed;
-    const msg = first?.error?.message ?? first?.message;
-    if (typeof msg === "string" && msg.trim()) return joinProviderMessage(msg);
-  } catch {
-    const match = trimmed.match(/"message"\s*:\s*"((?:[^"\\]|\\.)+)"/);
-    if (match?.[1]) return joinProviderMessage(match[1].replace(/\\"/g, '"'));
-  }
-  return void 0;
-}
-function sanitizeMessage(message) {
-  const fromJson = jsonErrorMessage(message);
-  if (fromJson) return fromJson;
-  const line = message.split("\n")[0]?.trim() ?? message;
-  if (line.startsWith("RetryError") || line.includes("AI_RetryError")) {
-    return "Upstream model request failed after retries.";
-  }
-  return line;
-}
-
-// src/codex/process.ts
-import spawn from "cross-spawn";
-function commandError(binaryPath, args, stdout, stderr, detail) {
-  const error = new Error(`Command failed: ${binaryPath} ${args.join(" ")} (${detail})`);
-  return Object.assign(error, { stdout, stderr });
-}
-function runCodexCommandSync(binaryPath, args, options = {}) {
-  const result = spawn.sync(binaryPath, args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    env: options.env,
-    timeout: options.timeout,
-    maxBuffer: options.maxBuffer
-  });
-  const stdout = result.stdout ?? "";
-  const stderr = result.stderr ?? "";
-  if (result.error) {
-    throw Object.assign(result.error, { stdout, stderr });
-  }
-  if (result.status !== 0) {
-    throw commandError(binaryPath, args, stdout, stderr, `exit ${result.status ?? result.signal ?? "unknown"}`);
-  }
-  return { stdout, stderr };
-}
-function runCodexCommand(binaryPath, args, options = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(binaryPath, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: options.env
-    });
-    const stdoutChunks = [];
-    const stderrChunks = [];
-    let outputBytes = 0;
-    let settled = false;
-    const finishError = (error) => {
-      if (settled) return;
-      settled = true;
-      reject(Object.assign(error, {
-        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
-        stderr: Buffer.concat(stderrChunks).toString("utf8")
-      }));
-    };
-    const collect = (target, chunk) => {
-      target.push(chunk);
-      outputBytes += chunk.length;
-      if (options.maxBuffer !== void 0 && outputBytes > options.maxBuffer) {
-        child.kill();
-        finishError(commandError(binaryPath, args, "", "", `output exceeded ${options.maxBuffer} bytes`));
-      }
-    };
-    child.stdout?.on("data", (chunk) => collect(stdoutChunks, chunk));
-    child.stderr?.on("data", (chunk) => collect(stderrChunks, chunk));
-    child.on("error", finishError);
-    let timer;
-    if (options.timeout !== void 0) {
-      timer = setTimeout(() => {
-        child.kill();
-        finishError(commandError(binaryPath, args, "", "", `timed out after ${options.timeout}ms`));
-      }, options.timeout);
-    }
-    child.on("close", (code, signal) => {
-      if (timer) clearTimeout(timer);
-      if (settled) return;
-      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
-      const stderr = Buffer.concat(stderrChunks).toString("utf8");
-      if (code !== 0) {
-        finishError(commandError(binaryPath, args, stdout, stderr, `exit ${code ?? signal ?? "unknown"}`));
-        return;
-      }
-      settled = true;
-      resolve({ stdout, stderr });
-    });
-  });
-}
-
-// src/server/auth.ts
-function sanitizeCredential(value) {
-  if (!value) return null;
-  const firstLine = value.trim().split(/\r?\n/)[0]?.trim();
-  return firstLine || null;
-}
-function isAuthorized(request, serverPassword) {
-  if (serverPassword === null) return true;
-  const bearerToken = extractBearerToken(request.headers.get("authorization"));
-  if (bearerToken === serverPassword) return true;
-  return sanitizeCredential(request.headers.get("x-api-key")) === serverPassword;
-}
-function extractBearerToken(value) {
-  if (!value) return null;
-  const normalized = value.replace(/\r?\n/g, " ").trim();
-  const match = /^Bearer\s+(\S+)/i.exec(normalized);
-  return sanitizeCredential(match?.[1]);
-}
-
-// src/proxy-shared.ts
-function grabRoundTripSignature(part) {
-  const md = part.providerMetadata;
-  return md?.google?.thoughtSignature ?? md?.google?.thought_signature ?? md?.openai?.reasoningEncryptedContent ?? void 0;
-}
-var sdkWarningsSilenced = false;
-function silenceSdkWarnings() {
-  if (sdkWarningsSilenced) return;
-  sdkWarningsSilenced = true;
-  globalThis.AI_SDK_LOG_WARNINGS = false;
-}
-var TOOL_USE_SIG_SEP = "__ts__";
-var MAX_INLINE_TOOL_SIGNATURE_BYTES = 256;
-var MAX_STORED_TOOL_SIGNATURES = 1e3;
-var toolSignatureRegistry = /* @__PURE__ */ new Map();
-function rememberToolSignature(rawId, thoughtSignature) {
-  toolSignatureRegistry.set(rawId, thoughtSignature);
-  if (toolSignatureRegistry.size <= MAX_STORED_TOOL_SIGNATURES) return;
-  const oldest = toolSignatureRegistry.keys().next().value;
-  if (oldest) toolSignatureRegistry.delete(oldest);
-}
-function parseToolArguments(value) {
-  if (value === null || value === void 0) return {};
-  if (typeof value === "object" && !Array.isArray(value)) return value;
-  if (typeof value === "string") {
-    if (!value) return {};
-    try {
-      const parsed = JSON.parse(value);
-      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-        return parsed;
-      }
-    } catch {
-    }
-  }
-  return {};
-}
-function sseChunk(eventType, data) {
-  return `event: ${eventType}
-data: ${JSON.stringify(data)}
-
-`;
-}
-var DSML_NOISE = "[|\uFF5C\\s]*";
-var DSML_BLOCK_RE = new RegExp(`<${DSML_NOISE}DSML${DSML_NOISE}tool_calls>([\\s\\S]*?)<\\/${DSML_NOISE}DSML${DSML_NOISE}tool_calls>`, "i");
-var DSML_INVOKE_RE = new RegExp(`<${DSML_NOISE}DSML${DSML_NOISE}invoke\\s+name="([^"]+)"[^>]*>([\\s\\S]*?)<\\/${DSML_NOISE}DSML${DSML_NOISE}invoke>`, "gi");
-var DSML_PARAM_RE = new RegExp(`<${DSML_NOISE}DSML${DSML_NOISE}parameter\\s+name="([^"]+)"(?:\\s+string="(true|false)")?[^>]*>([\\s\\S]*?)<\\/${DSML_NOISE}DSML${DSML_NOISE}parameter>`, "gi");
-function parseDsmlToolCalls(text2) {
-  const outer = DSML_BLOCK_RE.exec(text2);
-  if (!outer) return null;
-  const calls = [];
-  for (const invokeMatch of outer[1].matchAll(DSML_INVOKE_RE)) {
-    const name = invokeMatch[1];
-    const body = invokeMatch[2];
-    const args = {};
-    for (const paramMatch of body.matchAll(DSML_PARAM_RE)) {
-      const paramName = paramMatch[1];
-      const isJson = paramMatch[2] === "false";
-      const rawValue = paramMatch[3] ?? "";
-      if (isJson) {
-        try {
-          args[paramName] = JSON.parse(rawValue.trim());
-        } catch {
-          args[paramName] = rawValue;
-        }
-      } else {
-        args[paramName] = rawValue;
-      }
-    }
-    calls.push({ name, args });
-  }
-  if (!calls.length) return null;
-  return { leadingText: text2.slice(0, outer.index).trim(), calls };
-}
-function splitToolUseId(id) {
-  let sep = id.lastIndexOf(TOOL_USE_SIG_SEP);
-  if (sep !== -1) {
-    return {
-      rawId: id.slice(0, sep),
-      thoughtSignature: Buffer.from(id.slice(sep + TOOL_USE_SIG_SEP.length), "base64url").toString("utf8")
-    };
-  }
-  sep = id.lastIndexOf("::ts::");
-  if (sep !== -1) {
-    return {
-      rawId: id.slice(0, sep),
-      thoughtSignature: id.slice(sep + 6)
-    };
-  }
-  return { rawId: id, thoughtSignature: toolSignatureRegistry.get(id) };
-}
-function encodeToolUseId(rawId, thoughtSignature, inline = true) {
-  if (!thoughtSignature) return rawId;
-  rememberToolSignature(rawId, thoughtSignature);
-  if (!inline) return rawId;
-  if (Buffer.byteLength(thoughtSignature, "utf8") > MAX_INLINE_TOOL_SIGNATURE_BYTES) {
-    return rawId;
-  }
-  const encoded = Buffer.from(thoughtSignature, "utf8").toString("base64url");
-  return `${rawId}${TOOL_USE_SIG_SEP}${encoded}`;
-}
-function stripToolUseIdSuffix(toolUseId) {
-  return splitToolUseId(toolUseId).rawId;
-}
-function serializeToolResultContent(content) {
-  if (typeof content === "string") return content;
-  if (content === void 0) return "";
-  return JSON.stringify(content);
-}
-
-// src/upstream-forward.ts
-import { once } from "events";
-function anthropicUpstreamHeaders(apiKey, stream = false, inboundBeta, authType, claudeCodeSessionId, extraHeaders) {
-  const key = sanitizeCredential(apiKey) ?? apiKey.trim();
-  const isOAuth = authType === "oauth";
-  const headers = {
-    ...extraHeaders,
-    "Content-Type": "application/json",
-    "anthropic-version": "2023-06-01",
-    Authorization: `Bearer ${key}`,
-    ...isOAuth ? {} : { "x-api-key": key },
-    ...isOAuth ? { "User-Agent": CLAUDE_CODE_USER_AGENT, "x-app": "cli" } : {},
-    ...isOAuth && claudeCodeSessionId ? { "X-Claude-Code-Session-Id": claudeCodeSessionId } : {},
-    ...stream ? { Accept: "text/event-stream" } : {}
-  };
-  if (inboundBeta) {
-    headers["anthropic-beta"] = inboundBeta;
-  }
-  return headers;
-}
-var UpstreamUnreachableError = class extends Error {
-  constructor(cause) {
-    super(`Upstream unreachable: ${cause instanceof Error ? cause.message : String(cause)}`);
-    this.name = "UpstreamUnreachableError";
-  }
-};
-async function fetchWithOAuthRetry(apiKey, request, refreshToken) {
-  let response = await request(apiKey);
-  if (response.status !== 401 || !refreshToken) {
-    return { response, apiKey, refreshed: false };
-  }
-  const refreshed = await refreshToken().catch(() => null);
-  if (!refreshed || refreshed === apiKey) {
-    return { response, apiKey, refreshed: false };
-  }
-  response = await request(refreshed);
-  return { response, apiKey: refreshed, refreshed: true };
-}
-function createOAuthRetryFetch(initialToken, refreshToken, onTokenRefreshed, fetchImpl = globalThis.fetch) {
-  let token = initialToken;
-  return async (input, init) => {
-    const request = new Request(input, init);
-    const result = await fetchWithOAuthRetry(token, (nextToken) => {
-      const headers = new Headers(request.headers);
-      headers.set("Authorization", `Bearer ${nextToken}`);
-      return fetchImpl(request.clone(), { headers });
-    }, async () => request.signal.aborted ? null : refreshToken());
-    if (result.refreshed) {
-      token = result.apiKey;
-      onTokenRefreshed?.(token);
-    }
-    return result.response;
-  };
-}
-async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWantsStream, inboundBeta, authType, log, claudeCodeSessionId, extraHeaders, refreshToken, onTokenRefreshed, retryEmptyStream = false) {
-  const doFetch = (key) => fetch(messagesUrl, {
-    method: "POST",
-    headers: anthropicUpstreamHeaders(key, clientWantsStream, inboundBeta, authType, claudeCodeSessionId, extraHeaders),
-    body: JSON.stringify(body)
-  });
-  let upstreamRes;
-  try {
-    const retryResult = await fetchWithOAuthRetry(apiKey, doFetch, refreshToken);
-    upstreamRes = retryResult.response;
-    if (retryResult.refreshed) onTokenRefreshed?.(retryResult.apiKey);
-  } catch (err) {
-    throw new UpstreamUnreachableError(err);
-  }
-  if (!upstreamRes.ok) {
-    const errBody = await upstreamRes.text();
-    log?.(`anthropic upstream ${upstreamRes.status}: ${errBody}`);
-    res.writeHead(upstreamRes.status, { "Content-Type": upstreamRes.headers.get("content-type") || "application/json" });
-    res.end(errBody);
-    return;
-  }
-  if (clientWantsStream && upstreamRes.body) {
-    const reader = upstreamRes.body.getReader();
-    const first = await reader.read().catch(() => ({ done: true, value: void 0 }));
-    if (first.done) {
-      reader.releaseLock();
-      if (retryEmptyStream) {
-        log?.("anthropic upstream returned an empty stream; retrying without streaming");
-        await replayWithoutStreaming(
-          res,
-          messagesUrl,
-          body,
-          apiKey,
-          inboundBeta,
-          authType,
-          claudeCodeSessionId,
-          extraHeaders,
-          log
-        );
-        return;
-      }
-    }
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive"
-    });
-    if (first.done) {
-      res.end();
-      return;
-    }
-    res.write(Buffer.from(first.value));
-    try {
-      while (true) {
-        const next = await reader.read();
-        if (next.done) break;
-        if (!res.write(Buffer.from(next.value))) await once(res, "drain");
-      }
-      res.end();
-    } catch {
-      res.destroy();
-    }
-    return;
-  }
-  if (!upstreamRes.body) {
-    res.writeHead(502, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "Upstream returned empty response body" } }));
-    return;
-  }
-  const text2 = await upstreamRes.text();
-  try {
-    JSON.parse(text2);
-  } catch {
-    res.writeHead(502, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "Upstream response was not valid JSON" } }));
-    return;
-  }
-  res.writeHead(200, {
-    "Content-Type": "application/json",
-    "Content-Length": Buffer.byteLength(text2).toString()
-  });
-  res.end(text2);
-}
-async function replayWithoutStreaming(res, messagesUrl, body, apiKey, inboundBeta, authType, claudeCodeSessionId, extraHeaders, log) {
-  let retryRes;
-  try {
-    retryRes = await fetch(messagesUrl, {
-      method: "POST",
-      headers: anthropicUpstreamHeaders(apiKey, false, inboundBeta, authType, claudeCodeSessionId, extraHeaders),
-      body: JSON.stringify({ ...body, stream: false })
-    });
-  } catch (err) {
-    throw new UpstreamUnreachableError(err);
-  }
-  const text2 = await retryRes.text();
-  if (!retryRes.ok) {
-    log?.(`anthropic upstream ${retryRes.status} on empty-stream retry: ${text2}`);
-    res.writeHead(retryRes.status, { "Content-Type": retryRes.headers.get("content-type") || "application/json" });
-    res.end(text2);
-    return;
-  }
-  let message;
-  try {
-    message = JSON.parse(text2);
-  } catch {
-    res.writeHead(502, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "Upstream response was not valid JSON" } }));
-    return;
-  }
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    "Connection": "keep-alive"
-  });
-  writeMessageAsSse(res, message);
-}
-function writeMessageAsSse(res, message) {
-  const content = Array.isArray(message.content) ? message.content : [];
-  res.write(sseChunk("message_start", {
-    type: "message_start",
-    message: { ...message, content: [], stop_reason: null, stop_sequence: null }
-  }));
-  content.forEach((block, index) => {
-    const type = block.type;
-    const opening = type === "text" ? { type: "text", text: "" } : type === "thinking" ? { type: "thinking", thinking: "", signature: "" } : type === "tool_use" ? { type: "tool_use", id: block.id, name: block.name, input: {} } : block;
-    res.write(sseChunk("content_block_start", { type: "content_block_start", index, content_block: opening }));
-    if (type === "text") {
-      res.write(sseChunk("content_block_delta", {
-        type: "content_block_delta",
-        index,
-        delta: { type: "text_delta", text: block.text ?? "" }
-      }));
-    } else if (type === "thinking") {
-      res.write(sseChunk("content_block_delta", {
-        type: "content_block_delta",
-        index,
-        delta: { type: "thinking_delta", thinking: block.thinking ?? "" }
-      }));
-      if (typeof block.signature === "string") {
-        res.write(sseChunk("content_block_delta", {
-          type: "content_block_delta",
-          index,
-          delta: { type: "signature_delta", signature: block.signature }
-        }));
-      }
-    } else if (type === "tool_use") {
-      res.write(sseChunk("content_block_delta", {
-        type: "content_block_delta",
-        index,
-        delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input ?? {}) }
-      }));
-    }
-    res.write(sseChunk("content_block_stop", { type: "content_block_stop", index }));
-  });
-  res.write(sseChunk("message_delta", {
-    type: "message_delta",
-    delta: { stop_reason: message.stop_reason ?? "end_turn", stop_sequence: message.stop_sequence ?? null },
-    usage: message.usage ?? {}
-  }));
-  res.write(sseChunk("message_stop", { type: "message_stop" }));
-  res.end();
-}
-
-// src/stream-activity.ts
-import { AsyncLocalStorage } from "async_hooks";
-var streamActivity = new AsyncLocalStorage();
-function activityFetch(upstream = (...args) => globalThis.fetch(...args)) {
-  return async (input, init) => {
-    const activity = streamActivity.getStore();
-    const response = await upstream(input, init);
-    if (!activity || !response.body) return response;
-    const reader = response.body.getReader();
-    const body = new ReadableStream({
-      async pull(controller) {
-        try {
-          const { done, value } = await reader.read();
-          if (done) {
-            controller.close();
-            return;
-          }
-          if (value.byteLength) activity();
-          controller.enqueue(value);
-        } catch (error) {
-          controller.error(error);
-        }
-      },
-      cancel(reason) {
-        return reader.cancel(reason);
-      }
-    });
-    return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
-  };
-}
-
-// src/provider-factory.ts
-import { wrapLanguageModel, extractReasoningMiddleware } from "ai";
-import { createHash as createHash4 } from "crypto";
-
-// src/codex/version.ts
-import { execSync } from "child_process";
-import { existsSync as existsSync8 } from "fs";
-import { homedir as homedir4 } from "os";
-import { join as join8 } from "path";
-var isWindows = process.platform === "win32";
-var CODEX_NPM_LATEST_URL = "https://registry.npmjs.org/@openai/codex/latest";
-var CODEX_VERSION_CACHE_TTL_MS = 24 * 60 * 60 * 1e3;
-var NPM_FETCH_TIMEOUT_MS = 3e3;
-var cached = null;
-var inflight = null;
-function parseCodexVersion(input) {
-  const match = input.match(/(\d+)\.(\d+)\.(\d+)/);
-  return match ? `${match[1]}.${match[2]}.${match[3]}` : null;
-}
-function versionTuple(version) {
-  const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/);
-  if (!match) return null;
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-function maxCodexVersion(candidates) {
-  let best = null;
-  let bestTuple = null;
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    const tuple = versionTuple(candidate);
-    if (!tuple) continue;
-    const greater = !bestTuple || (tuple[0] !== bestTuple[0] ? tuple[0] > bestTuple[0] : tuple[1] !== bestTuple[1] ? tuple[1] > bestTuple[1] : tuple[2] > bestTuple[2]);
-    if (greater) {
-      best = candidate;
-      bestTuple = tuple;
-    }
-  }
-  return best ?? candidates.find((c) => !!c) ?? CODEX_RESPONSES_LITE_VERSION;
-}
-async function fetchNpmCodexVersion(fetchImpl = fetch, timeoutMs = NPM_FETCH_TIMEOUT_MS) {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetchImpl(CODEX_NPM_LATEST_URL, {
-        headers: { Accept: "application/json" },
-        signal: controller.signal
-      });
-      if (!res.ok) return null;
-      const body = await res.json();
-      return typeof body.version === "string" ? parseCodexVersion(body.version) : null;
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch {
-    return null;
-  }
-}
-var CODEX_VERSION_FALLBACK_PATHS = isWindows ? [
-  join8(process.env["APPDATA"] ?? homedir4(), "npm", "codex.cmd"),
-  join8(process.env["APPDATA"] ?? homedir4(), "npm", "codex")
-] : [
-  join8(homedir4(), ".local", "bin", "codex"),
-  join8(homedir4(), ".npm", "bin", "codex"),
-  "/usr/local/bin/codex",
-  "/opt/homebrew/bin/codex"
-];
-function codexBinaryCandidates() {
-  const override = getAppPathOverride("codex");
-  if (override) return [override];
-  const candidates = [];
-  try {
-    const result = execSync(isWindows ? "where.exe codex" : "which codex", {
-      encoding: "utf8",
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-    candidates.push(...result.trim().split("\n").map((l) => l.trim()).filter(Boolean));
-  } catch {
-  }
-  candidates.push(...CODEX_VERSION_FALLBACK_PATHS);
-  return [...new Set(candidates)];
-}
-function installedCodexVersion() {
-  for (const binary of codexBinaryCandidates()) {
-    try {
-      if (!existsSync8(binary)) continue;
-      const { stdout } = runCodexCommandSync(binary, ["--version"], { timeout: 5e3 });
-      const parsed = parseCodexVersion(stdout);
-      if (parsed) return parsed;
-    } catch {
-    }
-  }
-  return null;
-}
-async function resolveCodexClientVersion(opts = {}) {
-  const override = process.env["RELAY_AI_CODEX_VERSION"]?.trim();
-  if (override) return parseCodexVersion(override) ?? CODEX_RESPONSES_LITE_VERSION;
-  if (process.env["VITEST"] || process.env["VITEST_WORKER_ID"]) {
-    return cached?.version ?? CODEX_RESPONSES_LITE_VERSION;
-  }
-  const now = Date.now();
-  if (!opts.forceRefresh && cached && now - cached.fetchedAt < CODEX_VERSION_CACHE_TTL_MS) {
-    return cached.version;
-  }
-  if (inflight && !opts.forceRefresh) return inflight;
-  inflight = (async () => {
-    try {
-      const [npm, local] = await Promise.all([
-        fetchNpmCodexVersion(opts.fetchImpl),
-        Promise.resolve().then(() => installedCodexVersion())
-      ]);
-      const best = maxCodexVersion([npm, local, CODEX_RESPONSES_LITE_VERSION]);
-      cached = { version: best, fetchedAt: Date.now() };
-      return best;
-    } catch {
-      return cached?.version ?? CODEX_RESPONSES_LITE_VERSION;
-    } finally {
-      inflight = null;
-    }
-  })();
-  return inflight;
 }
 
 // src/oauth/responses-websocket.ts
@@ -5863,6 +3423,120 @@ function createResponsesWebSocketFetch(wsUrl, log) {
   };
 }
 
+// src/oauth/claude-identity.ts
+import { createHash as createHash2, randomUUID } from "crypto";
+var CLAUDE_CODE_CLI_VERSION = "2.1.312";
+var CLAUDE_CODE_USER_AGENT = `claude-cli/${CLAUDE_CODE_CLI_VERSION} (external, cli)`;
+var CLAUDE_CODE_ENTRYPOINT = process.env.CLAUDE_CODE_ENTRYPOINT ?? "cli";
+var CLAUDE_CODE_BILLING_HEADER_PREFIX = "x-anthropic-billing-header:";
+var sessionCache = /* @__PURE__ */ new Map();
+function getOrCreateSessionId(seed) {
+  let id = sessionCache.get(seed);
+  if (!id) {
+    id = randomUUID();
+    sessionCache.set(seed, id);
+  }
+  return id;
+}
+function uuidFromHash(input) {
+  const h = createHash2("sha256").update(input).digest("hex");
+  return [
+    h.slice(0, 8),
+    h.slice(8, 12),
+    "4" + h.slice(13, 16),
+    (parseInt(h[16], 16) & 3 | 8).toString(16) + h.slice(17, 20),
+    h.slice(20, 32)
+  ].join("-");
+}
+var HEX64_RE = /^[a-f0-9]{64}$/i;
+var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function resolveCliUserID(providerData, seed) {
+  const v = providerData?.cliUserID;
+  if (typeof v === "string" && HEX64_RE.test(v)) return v;
+  return createHash2("sha256").update(`cliUserID:${seed}`).digest("hex");
+}
+function resolveAccountUUID(providerData, seed) {
+  const v = providerData?.accountUUID;
+  if (typeof v === "string" && UUID_RE.test(v)) return v;
+  return uuidFromHash(`account:${seed}`);
+}
+function buildUserIdJson(deviceId, accountUUID, sessionId) {
+  return JSON.stringify({ device_id: deviceId, account_uuid: accountUUID, session_id: sessionId });
+}
+function buildClaudeCodeBillingSystemLine() {
+  return `${CLAUDE_CODE_BILLING_HEADER_PREFIX} cc_version=${CLAUDE_CODE_CLI_VERSION}.0; cc_entrypoint=${CLAUDE_CODE_ENTRYPOINT};`;
+}
+function systemBlockText(block) {
+  if (typeof block === "string") return block;
+  if (block && typeof block === "object" && "text" in block) {
+    const text2 = block.text;
+    return typeof text2 === "string" ? text2 : void 0;
+  }
+  return void 0;
+}
+function hasClaudeCodeBillingSystemLine(system) {
+  if (typeof system === "string") return system.startsWith(CLAUDE_CODE_BILLING_HEADER_PREFIX);
+  if (!Array.isArray(system)) return false;
+  return system.some((block) => systemBlockText(block)?.startsWith(CLAUDE_CODE_BILLING_HEADER_PREFIX));
+}
+function injectClaudeCodeBillingSystemLine(body) {
+  if (hasClaudeCodeBillingSystemLine(body.system)) return;
+  const billingBlock = { type: "text", text: buildClaudeCodeBillingSystemLine() };
+  if (body.system === void 0 || body.system === null) {
+    body.system = [billingBlock];
+  } else if (typeof body.system === "string") {
+    body.system = [billingBlock, { type: "text", text: body.system }];
+  } else if (Array.isArray(body.system)) {
+    body.system = [billingBlock, ...body.system];
+  } else {
+    body.system = [billingBlock];
+  }
+}
+var ALWAYS = [
+  "oauth-2025-04-20",
+  "context-management-2025-06-27",
+  "prompt-caching-scope-2026-01-05"
+];
+var AGENT = [
+  "claude-code-20250219",
+  "extended-cache-ttl-2025-04-11",
+  "cache-diagnosis-2026-04-07",
+  "advisor-tool-2026-03-01"
+];
+var THINKING = [
+  "interleaved-thinking-2025-05-14",
+  "redact-thinking-2026-02-12",
+  "thinking-token-count-2026-05-13"
+];
+var HEAVY = ["advanced-tool-use-2025-11-20", "effort-2025-11-24"];
+var OPUS_ONLY = ["context-1m-2025-08-07", "mid-conversation-system-2026-04-07"];
+function selectBetaFlags(body, model, clientBeta) {
+  const hasSystem = !!body.system && (typeof body.system === "string" || Array.isArray(body.system) && body.system.length > 0);
+  const tools = body.tools;
+  const isFullAgent = hasSystem && Array.isArray(tools) && tools.length > 0;
+  const m = (model ?? (typeof body.model === "string" ? body.model : "")).toLowerCase();
+  const isOpus = m.includes("opus");
+  const isSonnetOrOpus = isOpus || m.includes("sonnet");
+  const clientSet = clientBeta ? new Set(clientBeta.split(",").map((s) => s.trim()).filter(Boolean)) : null;
+  const allowThinking = !clientSet || clientSet.has("interleaved-thinking-2025-05-14");
+  const allowHeavy = !clientSet || clientSet.has("advanced-tool-use-2025-11-20") || clientSet.has("effort-2025-11-24");
+  const flags = [...ALWAYS];
+  if (isFullAgent) flags.push(...AGENT);
+  if (isOpus) flags.push(...OPUS_ONLY);
+  if (allowThinking) flags.push(...THINKING);
+  if (isFullAgent && isSonnetOrOpus && allowHeavy) flags.push(...HEAVY);
+  return flags.join(",");
+}
+function injectClaudeIdentity(body, providerData, seed) {
+  const deviceId = resolveCliUserID(providerData, seed);
+  const accountUUID = resolveAccountUUID(providerData, seed);
+  const sessionId = getOrCreateSessionId(seed);
+  const userId = buildUserIdJson(deviceId, accountUUID, sessionId);
+  const existing = body.metadata;
+  body.metadata = { ...existing ?? {}, user_id: userId };
+  return { sessionId, userId };
+}
+
 // src/oauth/claude-code-identity.ts
 function isClaudeCodeOAuthRoute(input) {
   return input.providerId !== void 0 && isProviderKind(input.providerId, "claude-code") && input.authType === "oauth";
@@ -5910,10 +3584,395 @@ function applyClaudeCodeOAuthIdentity(input, sdkParams) {
   return sdkParams;
 }
 
+// src/upstream-forward.ts
+import { once } from "events";
+
+// src/server/auth.ts
+function sanitizeCredential(value) {
+  if (!value) return null;
+  const firstLine = value.trim().split(/\r?\n/)[0]?.trim();
+  return firstLine || null;
+}
+function isAuthorized(request, serverPassword) {
+  if (serverPassword === null) return true;
+  const bearerToken = extractBearerToken(request.headers.get("authorization"));
+  if (bearerToken === serverPassword) return true;
+  return sanitizeCredential(request.headers.get("x-api-key")) === serverPassword;
+}
+function extractBearerToken(value) {
+  if (!value) return null;
+  const normalized = value.replace(/\r?\n/g, " ").trim();
+  const match = /^Bearer\s+(\S+)/i.exec(normalized);
+  return sanitizeCredential(match?.[1]);
+}
+
+// src/proxy-shared.ts
+function grabRoundTripSignature(part) {
+  const md = part.providerMetadata;
+  return md?.google?.thoughtSignature ?? md?.google?.thought_signature ?? md?.openai?.reasoningEncryptedContent ?? void 0;
+}
+var sdkWarningsSilenced = false;
+function silenceSdkWarnings() {
+  if (sdkWarningsSilenced) return;
+  sdkWarningsSilenced = true;
+  globalThis.AI_SDK_LOG_WARNINGS = false;
+}
+var TOOL_USE_SIG_SEP = "__ts__";
+var MAX_INLINE_TOOL_SIGNATURE_BYTES = 256;
+var MAX_STORED_TOOL_SIGNATURES = 1e3;
+var toolSignatureRegistry = /* @__PURE__ */ new Map();
+function rememberToolSignature(rawId, thoughtSignature) {
+  toolSignatureRegistry.set(rawId, thoughtSignature);
+  if (toolSignatureRegistry.size <= MAX_STORED_TOOL_SIGNATURES) return;
+  const oldest = toolSignatureRegistry.keys().next().value;
+  if (oldest) toolSignatureRegistry.delete(oldest);
+}
+function parseToolArguments(value) {
+  if (value === null || value === void 0) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    if (!value) return {};
+    try {
+      const parsed = JSON.parse(value);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+    }
+  }
+  return {};
+}
+function sseChunk(eventType, data) {
+  return `event: ${eventType}
+data: ${JSON.stringify(data)}
+
+`;
+}
+var DSML_NOISE = "[|\uFF5C\\s]*";
+var DSML_BLOCK_RE = new RegExp(`<${DSML_NOISE}DSML${DSML_NOISE}tool_calls>([\\s\\S]*?)<\\/${DSML_NOISE}DSML${DSML_NOISE}tool_calls>`, "i");
+var DSML_INVOKE_RE = new RegExp(`<${DSML_NOISE}DSML${DSML_NOISE}invoke\\s+name="([^"]+)"[^>]*>([\\s\\S]*?)<\\/${DSML_NOISE}DSML${DSML_NOISE}invoke>`, "gi");
+var DSML_PARAM_RE = new RegExp(`<${DSML_NOISE}DSML${DSML_NOISE}parameter\\s+name="([^"]+)"(?:\\s+string="(true|false)")?[^>]*>([\\s\\S]*?)<\\/${DSML_NOISE}DSML${DSML_NOISE}parameter>`, "gi");
+function parseDsmlToolCalls(text2) {
+  const outer = DSML_BLOCK_RE.exec(text2);
+  if (!outer) return null;
+  const calls = [];
+  for (const invokeMatch of outer[1].matchAll(DSML_INVOKE_RE)) {
+    const name = invokeMatch[1];
+    const body = invokeMatch[2];
+    const args = {};
+    for (const paramMatch of body.matchAll(DSML_PARAM_RE)) {
+      const paramName = paramMatch[1];
+      const isJson = paramMatch[2] === "false";
+      const rawValue = paramMatch[3] ?? "";
+      if (isJson) {
+        try {
+          args[paramName] = JSON.parse(rawValue.trim());
+        } catch {
+          args[paramName] = rawValue;
+        }
+      } else {
+        args[paramName] = rawValue;
+      }
+    }
+    calls.push({ name, args });
+  }
+  if (!calls.length) return null;
+  return { leadingText: text2.slice(0, outer.index).trim(), calls };
+}
+function splitToolUseId(id) {
+  let sep = id.lastIndexOf(TOOL_USE_SIG_SEP);
+  if (sep !== -1) {
+    return {
+      rawId: id.slice(0, sep),
+      thoughtSignature: Buffer.from(id.slice(sep + TOOL_USE_SIG_SEP.length), "base64url").toString("utf8")
+    };
+  }
+  sep = id.lastIndexOf("::ts::");
+  if (sep !== -1) {
+    return {
+      rawId: id.slice(0, sep),
+      thoughtSignature: id.slice(sep + 6)
+    };
+  }
+  return { rawId: id, thoughtSignature: toolSignatureRegistry.get(id) };
+}
+function encodeToolUseId(rawId, thoughtSignature, inline = true) {
+  if (!thoughtSignature) return rawId;
+  rememberToolSignature(rawId, thoughtSignature);
+  if (!inline) return rawId;
+  if (Buffer.byteLength(thoughtSignature, "utf8") > MAX_INLINE_TOOL_SIGNATURE_BYTES) {
+    return rawId;
+  }
+  const encoded = Buffer.from(thoughtSignature, "utf8").toString("base64url");
+  return `${rawId}${TOOL_USE_SIG_SEP}${encoded}`;
+}
+function stripToolUseIdSuffix(toolUseId) {
+  return splitToolUseId(toolUseId).rawId;
+}
+function serializeToolResultContent(content) {
+  if (typeof content === "string") return content;
+  if (content === void 0) return "";
+  return JSON.stringify(content);
+}
+
+// src/upstream-forward.ts
+function anthropicUpstreamHeaders(apiKey, stream = false, inboundBeta, authType, claudeCodeSessionId, extraHeaders) {
+  const key = sanitizeCredential(apiKey) ?? apiKey.trim();
+  const isOAuth = authType === "oauth";
+  const headers = {
+    ...extraHeaders,
+    "Content-Type": "application/json",
+    "anthropic-version": "2023-06-01",
+    Authorization: `Bearer ${key}`,
+    ...isOAuth ? {} : { "x-api-key": key },
+    ...isOAuth ? { "User-Agent": CLAUDE_CODE_USER_AGENT, "x-app": "cli" } : {},
+    ...isOAuth && claudeCodeSessionId ? { "X-Claude-Code-Session-Id": claudeCodeSessionId } : {},
+    ...stream ? { Accept: "text/event-stream" } : {}
+  };
+  if (inboundBeta) {
+    headers["anthropic-beta"] = inboundBeta;
+  }
+  return headers;
+}
+var UpstreamUnreachableError = class extends Error {
+  constructor(cause) {
+    super(`Upstream unreachable: ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = "UpstreamUnreachableError";
+  }
+};
+async function fetchWithOAuthRetry(apiKey, request, refreshToken) {
+  let response = await request(apiKey);
+  if (response.status !== 401 || !refreshToken) {
+    return { response, apiKey, refreshed: false };
+  }
+  const refreshed = await refreshToken().catch(() => null);
+  if (!refreshed || refreshed === apiKey) {
+    return { response, apiKey, refreshed: false };
+  }
+  response = await request(refreshed);
+  return { response, apiKey: refreshed, refreshed: true };
+}
+function createOAuthRetryFetch(initialToken, refreshToken, onTokenRefreshed, fetchImpl = globalThis.fetch) {
+  let token = initialToken;
+  return async (input, init) => {
+    const request = new Request(input, init);
+    const result = await fetchWithOAuthRetry(token, (nextToken) => {
+      const headers = new Headers(request.headers);
+      headers.set("Authorization", `Bearer ${nextToken}`);
+      return fetchImpl(request.clone(), { headers });
+    }, async () => request.signal.aborted ? null : refreshToken());
+    if (result.refreshed) {
+      token = result.apiKey;
+      onTokenRefreshed?.(token);
+    }
+    return result.response;
+  };
+}
+async function relayAnthropicMessages(res, messagesUrl, body, apiKey, clientWantsStream, inboundBeta, authType, log, claudeCodeSessionId, extraHeaders, refreshToken, onTokenRefreshed, retryEmptyStream = false) {
+  const doFetch = (key) => fetch(messagesUrl, {
+    method: "POST",
+    headers: anthropicUpstreamHeaders(key, clientWantsStream, inboundBeta, authType, claudeCodeSessionId, extraHeaders),
+    body: JSON.stringify(body)
+  });
+  let upstreamRes;
+  try {
+    const retryResult = await fetchWithOAuthRetry(apiKey, doFetch, refreshToken);
+    upstreamRes = retryResult.response;
+    if (retryResult.refreshed) onTokenRefreshed?.(retryResult.apiKey);
+  } catch (err) {
+    throw new UpstreamUnreachableError(err);
+  }
+  if (!upstreamRes.ok) {
+    const errBody = await upstreamRes.text();
+    log?.(`anthropic upstream ${upstreamRes.status}: ${errBody}`);
+    res.writeHead(upstreamRes.status, { "Content-Type": upstreamRes.headers.get("content-type") || "application/json" });
+    res.end(errBody);
+    return;
+  }
+  if (clientWantsStream && upstreamRes.body) {
+    const reader = upstreamRes.body.getReader();
+    const first = await reader.read().catch(() => ({ done: true, value: void 0 }));
+    if (first.done) {
+      reader.releaseLock();
+      if (retryEmptyStream) {
+        log?.("anthropic upstream returned an empty stream; retrying without streaming");
+        await replayWithoutStreaming(
+          res,
+          messagesUrl,
+          body,
+          apiKey,
+          inboundBeta,
+          authType,
+          claudeCodeSessionId,
+          extraHeaders,
+          log
+        );
+        return;
+      }
+    }
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive"
+    });
+    if (first.done) {
+      res.end();
+      return;
+    }
+    res.write(Buffer.from(first.value));
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        if (!res.write(Buffer.from(next.value))) await once(res, "drain");
+      }
+      res.end();
+    } catch {
+      res.destroy();
+    }
+    return;
+  }
+  if (!upstreamRes.body) {
+    res.writeHead(502, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "Upstream returned empty response body" } }));
+    return;
+  }
+  const text2 = await upstreamRes.text();
+  try {
+    JSON.parse(text2);
+  } catch {
+    res.writeHead(502, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "Upstream response was not valid JSON" } }));
+    return;
+  }
+  res.writeHead(200, {
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(text2).toString()
+  });
+  res.end(text2);
+}
+async function replayWithoutStreaming(res, messagesUrl, body, apiKey, inboundBeta, authType, claudeCodeSessionId, extraHeaders, log) {
+  let retryRes;
+  try {
+    retryRes = await fetch(messagesUrl, {
+      method: "POST",
+      headers: anthropicUpstreamHeaders(apiKey, false, inboundBeta, authType, claudeCodeSessionId, extraHeaders),
+      body: JSON.stringify({ ...body, stream: false })
+    });
+  } catch (err) {
+    throw new UpstreamUnreachableError(err);
+  }
+  const text2 = await retryRes.text();
+  if (!retryRes.ok) {
+    log?.(`anthropic upstream ${retryRes.status} on empty-stream retry: ${text2}`);
+    res.writeHead(retryRes.status, { "Content-Type": retryRes.headers.get("content-type") || "application/json" });
+    res.end(text2);
+    return;
+  }
+  let message;
+  try {
+    message = JSON.parse(text2);
+  } catch {
+    res.writeHead(502, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: "Upstream response was not valid JSON" } }));
+    return;
+  }
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive"
+  });
+  writeMessageAsSse(res, message);
+}
+function writeMessageAsSse(res, message) {
+  const content = Array.isArray(message.content) ? message.content : [];
+  res.write(sseChunk("message_start", {
+    type: "message_start",
+    message: { ...message, content: [], stop_reason: null, stop_sequence: null }
+  }));
+  content.forEach((block, index) => {
+    const type = block.type;
+    const opening = type === "text" ? { type: "text", text: "" } : type === "thinking" ? { type: "thinking", thinking: "", signature: "" } : type === "tool_use" ? { type: "tool_use", id: block.id, name: block.name, input: {} } : block;
+    res.write(sseChunk("content_block_start", { type: "content_block_start", index, content_block: opening }));
+    if (type === "text") {
+      res.write(sseChunk("content_block_delta", {
+        type: "content_block_delta",
+        index,
+        delta: { type: "text_delta", text: block.text ?? "" }
+      }));
+    } else if (type === "thinking") {
+      res.write(sseChunk("content_block_delta", {
+        type: "content_block_delta",
+        index,
+        delta: { type: "thinking_delta", thinking: block.thinking ?? "" }
+      }));
+      if (typeof block.signature === "string") {
+        res.write(sseChunk("content_block_delta", {
+          type: "content_block_delta",
+          index,
+          delta: { type: "signature_delta", signature: block.signature }
+        }));
+      }
+    } else if (type === "tool_use") {
+      res.write(sseChunk("content_block_delta", {
+        type: "content_block_delta",
+        index,
+        delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input ?? {}) }
+      }));
+    }
+    res.write(sseChunk("content_block_stop", { type: "content_block_stop", index }));
+  });
+  res.write(sseChunk("message_delta", {
+    type: "message_delta",
+    delta: { stop_reason: message.stop_reason ?? "end_turn", stop_sequence: message.stop_sequence ?? null },
+    usage: message.usage ?? {}
+  }));
+  res.write(sseChunk("message_stop", { type: "message_stop" }));
+  res.end();
+}
+
+// src/cline-pass.ts
+var CLINE_PASS_HOST = "https://api.cline.bot";
+var CLINE_PASS_SDK_BASE_URL = `${CLINE_PASS_HOST}/api/v1`;
+var CLINE_PASS_CATALOG_URL = `${CLINE_PASS_HOST}/api/v1/ai/cline/recommended-models`;
+var CLINE_PASS_VALIDATION_URL = `${CLINE_PASS_HOST}/api/v1/users/me`;
+var CLINE_PASS_REGISTER_URL = `${CLINE_PASS_HOST}/api/v1/auth/register`;
+var CLINE_PASS_REFRESH_URL = `${CLINE_PASS_HOST}/api/v1/auth/refresh`;
+var CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW = 131072;
+var CLINE_PASS_WORKOS_PREFIX = "workos:";
+function isClinePassOAuth(providerId, authType) {
+  return providerId !== void 0 && isProviderKind(providerId, "cline-pass") && authType === "oauth";
+}
+function formatClineRuntimeCredential(providerId, authType, key) {
+  if (!isClinePassOAuth(providerId, authType)) return key;
+  return key.toLowerCase().startsWith(CLINE_PASS_WORKOS_PREFIX) ? key : `${CLINE_PASS_WORKOS_PREFIX}${key}`;
+}
+function createClinePassOAuthFetch(initialRuntimeCredential, refreshToken, onTokenRefreshed, fetchImpl = globalThis.fetch) {
+  let currentRuntimeCredential = initialRuntimeCredential;
+  return async (input, init) => {
+    const request = new Request(input, init);
+    const send = (runtimeCredential) => {
+      const headers = new Headers(request.headers);
+      headers.set("Authorization", `Bearer ${runtimeCredential}`);
+      return fetchImpl(request.clone(), { headers });
+    };
+    const response = await send(currentRuntimeCredential);
+    if (response.status !== 401) return response;
+    const refreshedRawToken = await refreshToken().catch(() => null);
+    const refreshedRuntimeCredential = refreshedRawToken ? formatClineRuntimeCredential("cline-pass", "oauth", refreshedRawToken) : null;
+    if (!refreshedRawToken || !refreshedRuntimeCredential || refreshedRuntimeCredential === currentRuntimeCredential) {
+      return response;
+    }
+    currentRuntimeCredential = refreshedRuntimeCredential;
+    onTokenRefreshed?.(refreshedRawToken);
+    return send(currentRuntimeCredential);
+  };
+}
+
 // src/gateway-protocol.ts
 import { createHash as createHash3 } from "crypto";
-import { existsSync as existsSync9, mkdirSync as mkdirSync8, readFileSync as readFileSync11, renameSync as renameSync5, unlinkSync as unlinkSync4, writeFileSync as writeFileSync6 } from "fs";
-import { dirname as dirname5, join as join9 } from "path";
+import { existsSync as existsSync7, mkdirSync as mkdirSync6, readFileSync as readFileSync6, renameSync as renameSync5, unlinkSync as unlinkSync3, writeFileSync as writeFileSync5 } from "fs";
+import { dirname as dirname5, join as join7 } from "path";
 var DUAL_PROVIDER_IDS = /* @__PURE__ */ new Set([
   "zen",
   "go",
@@ -6017,7 +4076,7 @@ var PREFERENCE_TTL_MS = 24 * 60 * 60 * 1e3;
 var FAILURE_COOLDOWN_MS = 5 * 60 * 1e3;
 var loadedPersistentPath = null;
 function persistentPath() {
-  return join9(getAppHome(), "protocol-cache.json");
+  return join7(getAppHome(), "protocol-cache.json");
 }
 function loadPersistent(now = Date.now()) {
   const path = persistentPath();
@@ -6025,8 +4084,8 @@ function loadPersistent(now = Date.now()) {
   remembered.clear();
   loadedPersistentPath = path;
   try {
-    if (!existsSync9(path)) return;
-    const raw = JSON.parse(readFileSync11(path, "utf8"));
+    if (!existsSync7(path)) return;
+    const raw = JSON.parse(readFileSync6(path, "utf8"));
     for (const [key, entry] of Object.entries(raw)) {
       if (!entry || entry.protocol !== void 0 && entry.protocol !== "openai" && entry.protocol !== "anthropic") continue;
       if (typeof entry.expiresAt !== "number" || entry.expiresAt <= now) continue;
@@ -6039,14 +4098,14 @@ function loadPersistent(now = Date.now()) {
 function savePersistent() {
   const path = persistentPath();
   try {
-    mkdirSync8(dirname5(path), { recursive: true, mode: 448 });
+    mkdirSync6(dirname5(path), { recursive: true, mode: 448 });
     const live = {};
     const now = Date.now();
     for (const [key, entry] of remembered) {
       if (entry.expiresAt > now) live[key] = entry;
     }
     const tempPath = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
-    writeFileSync6(tempPath, `${JSON.stringify(live)}
+    writeFileSync5(tempPath, `${JSON.stringify(live)}
 `, { mode: 384 });
     renameSync5(tempPath, path);
   } catch {
@@ -7467,315 +5526,1823 @@ function thinkingProviderOptions(npm) {
   return void 0;
 }
 
-// src/tool-schema.ts
-var GOOGLE_NPM = /* @__PURE__ */ new Set(["@ai-sdk/google", "@ai-sdk/google-vertex"]);
-function collapseSchemaUnionTypes(value) {
-  if (Array.isArray(value)) return value.map(collapseSchemaUnionTypes);
-  if (!value || typeof value !== "object") return value;
-  const out = {};
-  for (const [key, child] of Object.entries(value)) {
-    if (key === "type" && Array.isArray(child)) {
-      const nonNull = child.filter((entry) => entry !== "null");
-      if (nonNull.length === 1) {
-        out.type = nonNull[0];
-        if (nonNull.length < child.length) out.nullable = true;
-        continue;
+// src/context-window.ts
+import { readFileSync as readFileSync7 } from "fs";
+var DEFAULT_CONTEXT_WINDOW = 2e5;
+var CACHE_PROVIDER_PRIORITY = /* @__PURE__ */ new Set(["opencode", "opencode-go"]);
+var HEURISTIC_RULES = [
+  [/gemini-2\.5-pro|gemini-1\.5-pro|gemini-3-pro/i, 2e6],
+  [/gemini/i, 1e6],
+  [/claude-opus-4-[678]|claude-sonnet-4-[678]/i, 1e6],
+  [/claude-haiku-4-[567]/i, 2e5],
+  [/claude.*\[1m\]/i, 1e6],
+  [/claude-opus-4-[56]|claude-sonnet-4-[45]|claude-3/i, 2e5],
+  // Claude 5.x and later (incl. Haiku 5.5) and Fable: 1M per models.dev.
+  [/claude-(?:opus|sonnet|haiku)-(?:[5-9]|\d{2,})(?:\b|-)|claude-fable/i, 1e6],
+  [/claude/i, 2e5],
+  [/deepseek-v4|deepseek-r1|deepseek-reasoner/i, 1e6],
+  [/deepseek/i, 64e3],
+  [/gpt-5|gpt-4\.1|o3-|o4-/i, 1e6],
+  [/gpt-4o|gpt-4-turbo|gpt-4/i, 128e3],
+  [/gpt-oss/i, 131072],
+  [/qwen3|qwen-3|qwen2\.5-72b|qwen2\.5-32b|qwen-coder/i, 262144],
+  [/qwen/i, 131072],
+  [/kimi-k2|kimi-k2\.5|moonshot/i, 262144],
+  [/minimax-m2/i, 204800],
+  [/minimax/i, 128e3],
+  [/mistral-large|ministral|mistral/i, 262144],
+  [/llama-3\.[23]|llama3/i, 131072],
+  [/grok-4\.20/i, 1e6],
+  [/grok-4\.5/i, 5e5],
+  [/grok-3|grok-4/i, 131072],
+  [/nemotron/i, 131072],
+  [/glm-4/i, 128e3],
+  [/solar-pro3/i, 131072],
+  [/solar-pro2/i, 65536],
+  [/solar/i, 32768]
+];
+var parsedCache;
+var cacheIndex;
+var heuristicCache = /* @__PURE__ */ new Map();
+function loadOpencodeCache() {
+  if (parsedCache === void 0) {
+    try {
+      parsedCache = JSON.parse(readFileSync7(OPENCODE_CACHE_PATH, "utf8"));
+    } catch {
+      parsedCache = null;
+    }
+  }
+  return parsedCache;
+}
+function buildContextWindowIndex(cache) {
+  const index = /* @__PURE__ */ new Map();
+  const allLimits = /* @__PURE__ */ new Map();
+  for (const [providerKey, providerData] of Object.entries(cache)) {
+    const models = providerData?.models;
+    if (!models) continue;
+    for (const [modelId, entry] of Object.entries(models)) {
+      const ctx = entry.limit?.context;
+      if (typeof ctx !== "number" || ctx <= 0) continue;
+      const limits = allLimits.get(modelId) ?? [];
+      limits.push(ctx);
+      allLimits.set(modelId, limits);
+      if (CACHE_PROVIDER_PRIORITY.has(providerKey)) {
+        index.set(modelId, ctx);
       }
     }
-    out[key] = collapseSchemaUnionTypes(child);
   }
-  return out;
-}
-function isDigit(ch) {
-  return ch !== void 0 && ch >= "0" && ch <= "9";
-}
-function rewriteNulEscapesInPattern(pattern) {
-  let out = "";
-  let escaped = false;
-  let changed = false;
-  for (let i = 0; i < pattern.length; i += 1) {
-    const ch = pattern[i];
-    if (escaped) {
-      escaped = false;
-      if (ch === "0" && !isDigit(pattern[i + 1])) {
-        out += "x00";
-        changed = true;
-      } else {
-        out += ch;
-      }
-      continue;
+  for (const [modelId, limits] of allLimits) {
+    if (!index.has(modelId)) {
+      index.set(modelId, Math.max(...limits));
     }
-    if (ch === "\\") escaped = true;
-    out += ch;
   }
-  return changed ? out : null;
+  return index;
 }
-function rewriteNulPatternEscapes(value) {
-  if (Array.isArray(value)) {
-    let changed2 = false;
-    const out2 = value.map((entry) => {
-      const next = rewriteNulPatternEscapes(entry);
-      if (next !== entry) changed2 = true;
-      return next;
+function getCacheIndex() {
+  if (cacheIndex === void 0) {
+    const cache = loadOpencodeCache();
+    cacheIndex = cache ? buildContextWindowIndex(cache) : /* @__PURE__ */ new Map();
+  }
+  return cacheIndex;
+}
+function contextWindowFromHeuristics(modelId) {
+  const cached2 = heuristicCache.get(modelId);
+  if (cached2 !== void 0) return cached2;
+  for (const [pattern, size] of HEURISTIC_RULES) {
+    if (pattern.test(modelId)) {
+      heuristicCache.set(modelId, size);
+      return size;
+    }
+  }
+  heuristicCache.set(modelId, DEFAULT_CONTEXT_WINDOW);
+  return DEFAULT_CONTEXT_WINDOW;
+}
+function lookupContextWindow(modelId) {
+  return getCacheIndex().get(modelId) ?? contextWindowFromHeuristics(modelId);
+}
+function resolveContextWindow(modelId, explicit) {
+  if (typeof explicit === "number" && explicit > 0) return explicit;
+  return lookupContextWindow(modelId);
+}
+
+// src/context-model-id.ts
+var ONE_M_CONTEXT_SUFFIX = "[1m]";
+var ONE_M_CONTEXT_WINDOW = 1e6;
+function claudeCodeContextWindow(model) {
+  const window = resolveContextWindow(stripOneMContextSuffix(model.id), model.contextWindow);
+  return model.contextWindowEstimated ? Math.min(window, DEFAULT_CONTEXT_WINDOW) : window;
+}
+function stripOneMContextSuffix(modelId) {
+  return modelId.replace(/\[1m\]$/i, "");
+}
+function claudeCodeClientModelId(modelId, contextWindow) {
+  const bare = stripOneMContextSuffix(modelId);
+  const window = resolveContextWindow(bare, contextWindow);
+  if (window >= ONE_M_CONTEXT_WINDOW) {
+    return `${bare}${ONE_M_CONTEXT_SUFFIX}`;
+  }
+  return bare;
+}
+function routeLookupIds(id) {
+  const bare = stripOneMContextSuffix(id);
+  const googleBare = bare.startsWith("models/") ? bare.slice("models/".length) : bare;
+  return [.../* @__PURE__ */ new Set([
+    id,
+    bare,
+    `${bare}${ONE_M_CONTEXT_SUFFIX}`,
+    googleBare,
+    `${googleBare}${ONE_M_CONTEXT_SUFFIX}`,
+    `models/${googleBare}`,
+    `models/${bare}`
+  ])];
+}
+
+// src/oauth/antigravity-oauth.ts
+import open from "open";
+import { readFileSync as readFileSync8 } from "fs";
+import { homedir as homedir3 } from "os";
+import { join as pathJoin } from "path";
+
+// src/oauth/callback-server.ts
+import http from "http";
+var SUCCESS_HTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Authorized</title></head>
+<body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0">
+<div style="text-align:center;padding:2rem;background:#fff;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.1)">
+<div style="color:#22c55e;font-size:2.5rem">&#10003;</div>
+<h1 style="margin:.5rem 0">Authentication successful</h1>
+<p style="color:#666">You can close this tab and return to the terminal.</p>
+</div></body></html>`;
+function startCallbackServer() {
+  return new Promise((resolve, reject) => {
+    let codeResolve;
+    let codeReject;
+    const server = http.createServer((req, res) => {
+      const u = new URL(req.url ?? "/", "http://localhost");
+      if (u.pathname !== "/callback" && u.pathname !== "/oauth/callback") {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      const code = u.searchParams.get("code") ?? "";
+      const state = u.searchParams.get("state") ?? "";
+      const error = u.searchParams.get("error") ?? "";
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(SUCCESS_HTML);
+      codeResolve?.({ code, state, error: error || void 0 });
     });
-    return changed2 ? out2 : value;
-  }
-  if (!value || typeof value !== "object") return value;
-  let changed = false;
-  const out = {};
-  for (const [key, child] of Object.entries(value)) {
-    const next = key === "pattern" && typeof child === "string" ? rewriteNulEscapesInPattern(child) ?? child : rewriteNulPatternEscapes(child);
-    if (next !== child) changed = true;
-    out[key] = next;
-  }
-  return changed ? out : value;
-}
-function synthesizeGoogleItems(prefixItems) {
-  if (Array.isArray(prefixItems) && prefixItems.length > 0) {
-    const types = new Set(
-      prefixItems.map((entry) => entry && typeof entry === "object" ? entry.type : void 0).filter((t) => typeof t === "string")
-    );
-    if (types.size === 1) return { type: [...types][0] };
-  }
-  return { type: "string" };
-}
-function fixGoogleArraySchemas(value) {
-  if (Array.isArray(value)) return value.map(fixGoogleArraySchemas);
-  if (!value || typeof value !== "object") return value;
-  const out = {};
-  for (const [key, child] of Object.entries(value)) {
-    out[key] = fixGoogleArraySchemas(child);
-  }
-  if (out.type === "array") {
-    if (out.items === void 0) out.items = synthesizeGoogleItems(out.prefixItems);
-    delete out.prefixItems;
-  }
-  return out;
-}
-var RECURSION_SAFE_NPM = /* @__PURE__ */ new Set(["@ai-sdk/openai", "@ai-sdk/azure"]);
-function breakRecursiveSchemaRefs(schema) {
-  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return schema;
-  const defs = schema.$defs;
-  if (!defs || typeof defs !== "object" || Array.isArray(defs)) return schema;
-  const definitions = defs;
-  let looped = false;
-  const walk = (node, resolving) => {
-    if (Array.isArray(node)) return node.map((child) => walk(child, resolving));
-    if (!node || typeof node !== "object") return node;
-    const { $ref, ...rest } = node;
-    if (typeof $ref === "string" && $ref.startsWith("#/$defs/")) {
-      const name = $ref.slice("#/$defs/".length);
-      if (name in definitions) {
-        if (resolving.has(name)) {
-          looped = true;
-          return {};
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      const port = addr.port;
+      resolve({
+        port,
+        redirectUri: `http://127.0.0.1:${port}/callback`,
+        waitForCallback(timeoutMs = 3e5) {
+          return new Promise((res, rej) => {
+            codeResolve = res;
+            codeReject = rej;
+            setTimeout(
+              () => rej(new Error("OAuth timeout \u2014 browser closed without completing sign-in")),
+              timeoutMs
+            );
+          });
+        },
+        close() {
+          server.close();
+          codeReject?.(new Error("Server closed"));
         }
-        const target = walk(definitions[name], /* @__PURE__ */ new Set([...resolving, name]));
-        return { ...target, ...walk(rest, resolving) };
-      }
+      });
+    });
+    server.on("error", reject);
+  });
+}
+
+// src/oauth/antigravity-oauth.ts
+var DEFAULT_ANTIGRAVITY_CLIENT_ID = ["107100606059", "1-tmhssin2h2", "1lcre235vtol", "ojh4g403ep.a", "pps.googleus", "ercontent.co", "m"].join("");
+var DEFAULT_ANTIGRAVITY_CLIENT_SECRET = ["GOCS", "PX-K", "58FW", "R486", "LdLJ", "1mLB", "8sXC", "4z6q", "DAf"].join("");
+var ANTIGRAVITY_CLIENT_ID = process.env.ANTIGRAVITY_OAUTH_CLIENT_ID ?? DEFAULT_ANTIGRAVITY_CLIENT_ID;
+var ANTIGRAVITY_CLIENT_SECRET = process.env.ANTIGRAVITY_OAUTH_CLIENT_SECRET ?? DEFAULT_ANTIGRAVITY_CLIENT_SECRET;
+var AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+var TOKEN_URL = "https://oauth2.googleapis.com/token";
+var USER_INFO_URL = "https://www.googleapis.com/oauth2/v1/userinfo";
+var SCOPES = [
+  "openid",
+  "https://www.googleapis.com/auth/cloud-platform",
+  "https://www.googleapis.com/auth/userinfo.email",
+  "https://www.googleapis.com/auth/userinfo.profile",
+  "https://www.googleapis.com/auth/cclog",
+  "https://www.googleapis.com/auth/experimentsandconfigs"
+].join(" ");
+var osType = process.platform === "darwin" ? "darwin" : process.platform === "win32" ? "windows" : "linux";
+var archType = process.arch === "arm64" ? "arm64" : "x64";
+var ANTIGRAVITY_USER_AGENT = `antigravity/2.22.0 (aidev_client; os_type=${osType}; arch=${archType}; cl=997489728; auth_method=oauth)`;
+var ANTIGRAVITY_METADATA = { ideType: "ANTIGRAVITY" };
+var ANTIGRAVITY_BASE_URLS = [
+  "https://daily-cloudcode-pa.googleapis.com",
+  "https://cloudcode-pa.googleapis.com",
+  "https://daily-cloudcode-pa.sandbox.googleapis.com"
+];
+var ANTIGRAVITY_API_VERSION = "v1internal";
+async function buildAntigravityAuthUrl(redirectUri) {
+  const { verifier, challenge } = await generatePkce();
+  const state = generateOAuthState();
+  const params = new URLSearchParams({
+    client_id: ANTIGRAVITY_CLIENT_ID,
+    response_type: "code",
+    redirect_uri: redirectUri,
+    scope: SCOPES,
+    state,
+    access_type: "offline",
+    prompt: "consent",
+    code_challenge: challenge,
+    code_challenge_method: "S256"
+  });
+  return { authUrl: `${AUTHORIZE_URL}?${params}`, codeVerifier: verifier, oauthState: state, redirectUri };
+}
+async function exchangeAntigravityToken(code, codeVerifier, redirectUri) {
+  const body = new URLSearchParams({
+    grant_type: "authorization_code",
+    client_id: ANTIGRAVITY_CLIENT_ID,
+    client_secret: ANTIGRAVITY_CLIENT_SECRET,
+    code,
+    redirect_uri: redirectUri,
+    code_verifier: codeVerifier
+  });
+  const res = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+      "User-Agent": ANTIGRAVITY_USER_AGENT
+    },
+    body
+  });
+  if (!res.ok) throw new Error(`Antigravity token exchange failed: ${await res.text()}`);
+  return res.json();
+}
+async function refreshAntigravityToken(refreshToken) {
+  return postOAuthRefresh(
+    TOKEN_URL,
+    new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: ANTIGRAVITY_CLIENT_ID,
+      client_secret: ANTIGRAVITY_CLIENT_SECRET,
+      refresh_token: refreshToken
+    }),
+    {
+      contentType: "form",
+      errorPrefix: "Antigravity token refresh failed",
+      includeBody: true
     }
-    const out = {};
-    for (const [key, child] of Object.entries(node)) {
-      if (key === "$defs" && resolving.size === 0 && node === schema) continue;
-      out[key] = walk(child, resolving);
-    }
-    return out;
+  );
+}
+async function fetchUserInfo(accessToken) {
+  try {
+    const res = await fetch(`${USER_INFO_URL}?alt=json`, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    if (!res.ok) return {};
+    const data = await res.json();
+    return {
+      email: typeof data.email === "string" ? data.email : void 0,
+      name: typeof data.name === "string" ? data.name : void 0
+    };
+  } catch {
+    return {};
+  }
+}
+function apiHeaders(accessToken) {
+  return {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    Authorization: `Bearer ${accessToken}`,
+    "User-Agent": ANTIGRAVITY_USER_AGENT
   };
-  const inlined = walk(schema, /* @__PURE__ */ new Set());
-  return looped ? inlined : schema;
 }
-function isPlainObject(value) {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-function resolveLocalDefRef(value, defs) {
-  let current = value;
-  const seen = /* @__PURE__ */ new Set();
-  while (isPlainObject(current) && typeof current.$ref === "string" && current.$ref.startsWith("#/$defs/")) {
-    const name = current.$ref.slice("#/$defs/".length);
-    const target = defs?.[name];
-    if (!isPlainObject(target) || seen.has(name)) return void 0;
-    seen.add(name);
-    const sibling = { ...current };
-    delete sibling.$ref;
-    current = { ...target, ...sibling };
-  }
-  return isPlainObject(current) ? current : void 0;
-}
-function allowedEnumValues(schema, defs) {
-  const resolved = resolveLocalDefRef(schema, defs);
-  if (!resolved) return void 0;
-  if (Array.isArray(resolved.enum) && resolved.enum.length > 0) return resolved.enum;
-  if (resolved.const !== void 0) return [resolved.const];
-  return void 0;
-}
-function mergePropertySchemas(first, second, defs) {
-  const firstValues = allowedEnumValues(first, defs);
-  const secondValues = allowedEnumValues(second, defs);
-  if (firstValues && secondValues) {
-    const seen = /* @__PURE__ */ new Set();
-    const union = [];
-    for (const val of [...firstValues, ...secondValues]) {
-      const key = JSON.stringify(val);
-      if (!seen.has(key)) {
-        seen.add(key);
-        union.push(val);
-      }
-    }
-    const base = { ...resolveLocalDefRef(first, defs) ?? {} };
-    delete base.const;
-    return { ...base, enum: union };
-  }
-  if (JSON.stringify(first) === JSON.stringify(second)) return first;
-  const firstResolved = resolveLocalDefRef(first, defs) ?? first;
-  const secondResolved = resolveLocalDefRef(second, defs) ?? second;
-  const existingBranches = isPlainObject(firstResolved) && Array.isArray(firstResolved.anyOf) ? firstResolved.anyOf : [firstResolved];
-  return { anyOf: [...existingBranches, secondResolved] };
-}
-function mergeBranchProperties(target, source, defs) {
-  for (const [key, value] of Object.entries(source)) {
-    target[key] = key in target ? mergePropertySchemas(target[key], value, defs) : value;
-  }
-}
-function collectBranchInfo(branches, mode, defs) {
-  const properties = {};
-  let sawObjectBranch = false;
-  let allBranchesFalseAdditionalProps = true;
-  let hasExplicitFalseAdditionalProps = false;
-  const branchRequiredSets = [];
-  const allOfRequiredSets = [];
-  for (const branch of branches) {
-    const resolved = resolveLocalDefRef(branch, defs);
-    if (!resolved) continue;
-    const nestedUnion = Array.isArray(resolved.oneOf) ? resolved.oneOf : Array.isArray(resolved.anyOf) ? resolved.anyOf : void 0;
-    const nestedAll = Array.isArray(resolved.allOf) ? resolved.allOf : void 0;
-    let branchIsObject = resolved.type === "object" || isPlainObject(resolved.properties);
-    const branchRequired = /* @__PURE__ */ new Set();
-    if (isPlainObject(resolved.properties)) {
-      mergeBranchProperties(properties, resolved.properties, defs);
-      sawObjectBranch = true;
-    }
-    if (resolved.additionalProperties === false) {
-      hasExplicitFalseAdditionalProps = true;
-    } else if (isPlainObject(resolved.properties) || !nestedUnion && !nestedAll) {
-      if (branchIsObject) allBranchesFalseAdditionalProps = false;
-    }
-    if (Array.isArray(resolved.required)) {
-      for (const k of resolved.required) {
-        if (typeof k === "string") branchRequired.add(k);
-      }
-    }
-    if (nestedUnion) {
-      const inner = collectBranchInfo(nestedUnion, "union", defs);
-      if (inner.sawObjectBranch) {
-        mergeBranchProperties(properties, inner.properties, defs);
-        sawObjectBranch = true;
-        branchIsObject = true;
-        if (inner.hasExplicitFalseAdditionalProps) hasExplicitFalseAdditionalProps = true;
-        if (!inner.allBranchesFalseAdditionalProps) allBranchesFalseAdditionalProps = false;
-        for (const r of inner.required) branchRequired.add(r);
-      }
-    }
-    if (nestedAll) {
-      const inner = collectBranchInfo(nestedAll, "all", defs);
-      if (inner.sawObjectBranch) {
-        mergeBranchProperties(properties, inner.properties, defs);
-        sawObjectBranch = true;
-        branchIsObject = true;
-        if (inner.hasExplicitFalseAdditionalProps) hasExplicitFalseAdditionalProps = true;
-        if (!inner.allBranchesFalseAdditionalProps) allBranchesFalseAdditionalProps = false;
-        for (const r of inner.required) branchRequired.add(r);
-      }
-    }
-    if (branchIsObject) {
-      if (mode === "all") allOfRequiredSets.push(branchRequired);
-      else branchRequiredSets.push(branchRequired);
+async function fetchFirstOk(paths, init) {
+  let lastErr;
+  for (const url of paths) {
+    try {
+      const res = await fetch(url, init);
+      if (res.ok) return res;
+      lastErr = new Error(`${res.status} ${await res.text()}`);
+    } catch (err) {
+      lastErr = err;
     }
   }
-  let finalRequired = [];
-  if (mode === "union") {
-    if (branchRequiredSets.length > 0) {
-      const [first, ...rest] = branchRequiredSets;
-      finalRequired = [...first].filter((key) => rest.every((s) => s.has(key)));
-    }
-  } else {
-    const union = /* @__PURE__ */ new Set();
-    for (const set of allOfRequiredSets) {
-      for (const k of set) union.add(k);
-    }
-    finalRequired = [...union];
+  throw lastErr ?? new Error("All Antigravity endpoints failed");
+}
+function toRecord(v) {
+  return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+}
+function pickTierId(tier) {
+  const v = toRecord(tier).id;
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+function findDefaultAllowedTier(sub) {
+  if (!Array.isArray(sub.allowedTiers)) return null;
+  for (const t of sub.allowedTiers) {
+    const tier = toRecord(t);
+    if (tier.isDefault) return tier;
+  }
+  return null;
+}
+function resolveAntigravityOnboardTierId(data) {
+  const sub = toRecord(data);
+  const hasIneligible = Array.isArray(sub.ineligibleTiers) && sub.ineligibleTiers.length > 0;
+  if (!hasIneligible) {
+    const current = pickTierId(sub.currentTier);
+    if (current) return current;
+  }
+  const def = findDefaultAllowedTier(sub);
+  if (def) {
+    const defId = pickTierId(def);
+    if (defId) return defId;
+  }
+  const paid = pickTierId(sub.paidTier);
+  if (paid) return paid;
+  return pickTierId(sub.currentTier) ?? "legacy-tier";
+}
+async function loadCodeAssist(accessToken) {
+  const endpoints = ANTIGRAVITY_BASE_URLS.map((b) => `${b}/${ANTIGRAVITY_API_VERSION}:loadCodeAssist`);
+  const res = await fetchFirstOk(endpoints, {
+    method: "POST",
+    headers: apiHeaders(accessToken),
+    body: JSON.stringify({ metadata: ANTIGRAVITY_METADATA })
+  });
+  const data = await res.json();
+  let projectId = data.cloudaicompanionProject;
+  if (typeof projectId === "object" && projectId !== null) {
+    projectId = projectId.id ?? "";
   }
   return {
-    properties,
-    required: finalRequired,
-    allBranchesFalseAdditionalProps: sawObjectBranch ? allBranchesFalseAdditionalProps : false,
-    hasExplicitFalseAdditionalProps,
-    sawObjectBranch
+    projectId: typeof projectId === "string" ? projectId : "",
+    tierId: resolveAntigravityOnboardTierId(data)
   };
 }
-function flattenRootUnionSchema(schema) {
-  if (!isPlainObject(schema)) return schema;
-  const defs = isPlainObject(schema.$defs) ? schema.$defs : void 0;
-  let root = schema;
-  if (typeof root.$ref === "string" && root.$ref.startsWith("#/$defs/")) {
-    const resolved = resolveLocalDefRef(root, defs);
-    if (resolved) root = { ...resolved, ...defs ? { $defs: defs } : {} };
-  }
-  const unionBranches = [
-    ...Array.isArray(root.oneOf) ? root.oneOf : [],
-    ...Array.isArray(root.anyOf) ? root.anyOf : []
-  ];
-  const allBranches = Array.isArray(root.allOf) ? root.allOf : [];
-  if (unionBranches.length === 0 && allBranches.length === 0) return schema;
-  const mergedProperties = isPlainObject(root.properties) ? { ...root.properties } : {};
-  const requiredSet = /* @__PURE__ */ new Set();
-  if (Array.isArray(root.required)) {
-    for (const r of root.required) if (typeof r === "string") requiredSet.add(r);
-  }
-  let sawObject = isPlainObject(root.properties);
-  const allowsAdditional = root.additionalProperties === true;
-  let hasExplicitFalse = root.additionalProperties === false;
-  let allBranchesClosed = root.additionalProperties === false || root.additionalProperties === void 0;
-  if (unionBranches.length > 0) {
-    const res = collectBranchInfo(unionBranches, "union", defs);
-    if (res.sawObjectBranch) {
-      mergeBranchProperties(mergedProperties, res.properties, defs);
-      for (const r of res.required) requiredSet.add(r);
-      sawObject = true;
-      if (res.hasExplicitFalseAdditionalProps) hasExplicitFalse = true;
-      if (!res.allBranchesFalseAdditionalProps) allBranchesClosed = false;
+async function onboardUser(accessToken, tierId, maxAttempts = 10) {
+  const endpoints = ANTIGRAVITY_BASE_URLS.map((b) => `${b}/${ANTIGRAVITY_API_VERSION}:onboardUser`);
+  let finalProjectId = "";
+  for (let i = 0; i < maxAttempts; i++) {
+    const res = await fetchFirstOk(endpoints, {
+      method: "POST",
+      headers: apiHeaders(accessToken),
+      body: JSON.stringify({ tier_id: tierId, metadata: ANTIGRAVITY_METADATA })
+    });
+    const result = await res.json();
+    if (result.done === true) {
+      const p = result.response ? result.response.cloudaicompanionProject : void 0;
+      if (typeof p === "string") finalProjectId = p.trim();
+      else if (p && typeof p === "object") finalProjectId = String(p.id ?? "") || finalProjectId;
+      break;
     }
+    if (i < maxAttempts - 1) await new Promise((r) => setTimeout(r, 5e3));
   }
-  if (allBranches.length > 0) {
-    const res = collectBranchInfo(allBranches, "all", defs);
-    if (res.sawObjectBranch) {
-      mergeBranchProperties(mergedProperties, res.properties, defs);
-      for (const r of res.required) requiredSet.add(r);
-      sawObject = true;
-      if (res.hasExplicitFalseAdditionalProps) hasExplicitFalse = true;
-      if (!res.allBranchesFalseAdditionalProps) allBranchesClosed = false;
-    }
-  }
-  if (!sawObject) return schema;
-  const isClosed = hasExplicitFalse && allBranchesClosed && !allowsAdditional;
-  const out = {
-    type: "object",
-    properties: mergedProperties,
-    additionalProperties: isClosed ? false : true
-  };
-  if (requiredSet.size > 0) out.required = [...requiredSet];
-  if (defs) out.$defs = defs;
-  if (typeof root.description === "string") out.description = root.description;
-  return out;
+  return finalProjectId;
 }
-function normalizeToolSchemaForNpm(schema, npm) {
-  const acyclic = npm && RECURSION_SAFE_NPM.has(npm) ? schema : breakRecursiveSchemaRefs(schema);
-  const portable = rewriteNulPatternEscapes(acyclic);
-  if (!npm || !RECURSION_SAFE_NPM.has(npm)) {
-    const flattened = flattenRootUnionSchema(portable);
-    if (!npm || !GOOGLE_NPM.has(npm)) return flattened;
-    return fixGoogleArraySchemas(collapseSchemaUnionTypes(flattened));
+function readAgyProjectId() {
+  try {
+    const cache = pathJoin(homedir3(), ".gemini", "antigravity-cli", "cache", "projects.json");
+    const data = JSON.parse(readFileSync8(cache, "utf8"));
+    return data[homedir3()] ?? Object.values(data)[0] ?? "";
+  } catch {
+    return "";
   }
-  return portable;
+}
+async function runBootstrap(tokens) {
+  const [userInfoResult, bootstrapResult] = await Promise.allSettled([
+    fetchUserInfo(tokens.access_token),
+    loadCodeAssist(tokens.access_token)
+  ]);
+  const userInfo = userInfoResult.status === "fulfilled" ? userInfoResult.value : {};
+  let projectId = bootstrapResult.status === "fulfilled" ? bootstrapResult.value.projectId : "";
+  const tierId = bootstrapResult.status === "fulfilled" ? bootstrapResult.value.tierId : "free-tier";
+  const finalProjectId = await onboardUser(tokens.access_token, tierId, 3).catch(() => "");
+  if (finalProjectId) projectId = finalProjectId;
+  if (!projectId && tierId !== "free-tier") {
+    const freeTierProjectId = await onboardUser(tokens.access_token, "free-tier", 3).catch(() => "");
+    if (freeTierProjectId) projectId = freeTierProjectId;
+  }
+  if (!projectId) {
+    projectId = readAgyProjectId();
+  }
+  return { tokens, userInfo, projectId, tierId };
+}
+async function runAntigravityOAuthFlow(onAuthUrl) {
+  const server = await startCallbackServer();
+  try {
+    const { authUrl, codeVerifier, oauthState, redirectUri } = await buildAntigravityAuthUrl(server.redirectUri);
+    onAuthUrl(authUrl);
+    open(authUrl).catch(() => {
+    });
+    const { code, state, error } = await server.waitForCallback();
+    if (error) throw new Error(`Google sign-in was not completed: ${error}`);
+    if (state !== oauthState) throw new Error("Google sign-in returned an unexpected state \u2014 start the sign-in again");
+    if (!code) throw new Error("No authorization code received from Google");
+    const tokens = await exchangeAntigravityToken(code, codeVerifier, redirectUri);
+    return runBootstrap(tokens);
+  } finally {
+    server.close();
+  }
+}
+async function completeAntigravityExchange(code, codeVerifier, redirectUri) {
+  const tokens = await exchangeAntigravityToken(code, codeVerifier, redirectUri);
+  return runBootstrap(tokens);
+}
+
+// src/registry/opencode-auth.ts
+import { existsSync as existsSync8, readFileSync as readFileSync9, statSync as statSync3 } from "fs";
+import { homedir as homedir4 } from "os";
+import { join as join8 } from "path";
+function resolveOpencodeAuthPath(env = process.env) {
+  const dataHome = env["XDG_DATA_HOME"] ?? join8(homedir4(), ".local", "share");
+  if (process.platform === "win32") {
+    return join8(env["APPDATA"] ?? join8(homedir4(), "AppData", "Roaming"), "opencode", "auth.json");
+  }
+  return join8(dataHome, "opencode", "auth.json");
+}
+function decodeAuthEntry(value) {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (!value || typeof value !== "object") return null;
+  const record2 = value;
+  if (record2["type"] === "api" && typeof record2["key"] === "string" && record2["key"].trim()) {
+    return {
+      type: "api",
+      key: record2["key"],
+      metadata: record2["metadata"] && typeof record2["metadata"] === "object" && !Array.isArray(record2["metadata"]) ? record2["metadata"] : void 0
+    };
+  }
+  if (record2["type"] === "oauth" && typeof record2["access"] === "string" && typeof record2["refresh"] === "string" && typeof record2["expires"] === "number") {
+    return {
+      type: "oauth",
+      access: record2["access"],
+      refresh: record2["refresh"],
+      expires: record2["expires"],
+      accountId: typeof record2["accountId"] === "string" ? record2["accountId"] : void 0,
+      enterpriseUrl: typeof record2["enterpriseUrl"] === "string" ? record2["enterpriseUrl"] : void 0,
+      providerData: record2["providerData"] && typeof record2["providerData"] === "object" && !Array.isArray(record2["providerData"]) ? record2["providerData"] : void 0
+    };
+  }
+  if (record2["type"] === "wellknown" && typeof record2["key"] === "string" && typeof record2["token"] === "string") {
+    return { type: "wellknown", key: record2["key"], token: record2["token"] };
+  }
+  return null;
+}
+function authFilePermissionWarning(path) {
+  if (!existsSync8(path)) return void 0;
+  if (process.platform === "win32") return void 0;
+  try {
+    const mode = statSync3(path).mode & 511;
+    if (mode & 63) {
+      return `OpenCode auth file ${path} is readable by others (mode ${mode.toString(8)}). Consider chmod 600.`;
+    }
+  } catch {
+  }
+  return void 0;
+}
+function readOpencodeAuthFile(env = process.env) {
+  const path = resolveOpencodeAuthPath(env);
+  if (!existsSync8(path)) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync9(path, "utf8"));
+  } catch {
+    return { path, entries: {}, permissionWarning: authFilePermissionWarning(path) };
+  }
+  const entries = {};
+  if (parsed && typeof parsed === "object") {
+    for (const [providerId, value] of Object.entries(parsed)) {
+      const entry = decodeAuthEntry(value);
+      if (entry) entries[providerId] = entry;
+    }
+  }
+  return {
+    path,
+    entries,
+    permissionWarning: authFilePermissionWarning(path)
+  };
+}
+function isOpencodeOAuth(entry) {
+  return !!entry && typeof entry === "object" && entry.type === "oauth";
+}
+function isOpencodeApi(entry) {
+  return !!entry && typeof entry === "object" && entry.type === "api";
+}
+function oauthCredentialToKeychainJson(cred) {
+  return JSON.stringify(cred);
+}
+
+// src/oauth/identity.ts
+function text(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : void 0;
+}
+function record(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function jwtClaims(token) {
+  const parts = token?.split(".");
+  if (!parts || parts.length !== 3) return void 0;
+  try {
+    return record(JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")));
+  } catch {
+    return void 0;
+  }
+}
+function compact(identity) {
+  return Object.fromEntries(Object.entries(identity).filter(([, v]) => v !== void 0));
+}
+function identityFromJwt(token) {
+  const claims = jwtClaims(token);
+  if (!claims) return {};
+  const auth = record(claims["https://api.openai.com/auth"]);
+  const profile = record(claims["https://api.openai.com/profile"]);
+  return compact({
+    email: text(claims.email) ?? text(profile?.email),
+    name: text(claims.name),
+    plan: text(auth?.chatgpt_plan_type),
+    userId: text(auth?.chatgpt_user_id) ?? text(auth?.user_id) ?? text(claims.sub)
+  });
+}
+function mergeIdentity(...parts) {
+  const merged = {};
+  for (const part of parts) Object.assign(merged, compact(part ?? {}));
+  return Object.keys(merged).length > 0 ? merged : void 0;
+}
+function storedIdentity(providerData) {
+  const stored = record(providerData?.identity);
+  return compact({
+    email: text(stored?.email),
+    name: text(stored?.name),
+    plan: text(stored?.plan),
+    userId: text(stored?.userId),
+    login: text(stored?.login)
+  });
+}
+function describeOAuthAccount(input) {
+  const data = input.providerData;
+  const kind = providerKind(input.kind);
+  let fromProvider = {};
+  if (kind === "antigravity") {
+    fromProvider = compact({
+      email: input.accountId?.includes("@") ? input.accountId : void 0,
+      plan: text(data?.tier)
+    });
+  } else if (kind === "cline-pass") {
+    fromProvider = compact({ email: text(data?.email), name: text(data?.name) });
+  } else if (kind === "github-copilot") {
+    const copilot = record(data?.copilot);
+    fromProvider = compact({ login: text(copilot?.login), plan: text(copilot?.copilot_plan) });
+  } else if (kind === "claude-code") {
+    fromProvider = compact({ plan: text(data?.plan), name: text(data?.organizationName) });
+  }
+  return mergeIdentity(identityFromJwt(input.accessToken), fromProvider, storedIdentity(data)) ?? {};
+}
+function formatOAuthAccount(identity) {
+  const who = identity.email ?? identity.login ?? identity.name;
+  const parts = [who, identity.plan].filter((p) => Boolean(p));
+  return parts.length > 0 ? parts.join(" \xB7 ") : void 0;
+}
+var USER_LEVEL_ACCOUNT_ID_KINDS = /* @__PURE__ */ new Set(["cline-pass", "claude-code"]);
+function accountKeys(kind, cred) {
+  const identity = describeOAuthAccount({
+    kind,
+    accountId: cred.accountId,
+    providerData: cred.providerData,
+    accessToken: cred.access
+  });
+  const keys = /* @__PURE__ */ new Set();
+  if (identity.userId) keys.add(`user:${identity.userId}`);
+  if (identity.email) keys.add(`email:${identity.email.toLowerCase()}`);
+  if (identity.login) keys.add(`login:${identity.login.toLowerCase()}`);
+  if (USER_LEVEL_ACCOUNT_ID_KINDS.has(providerKind(kind)) && cred.accountId) keys.add(`account:${cred.accountId}`);
+  return keys;
+}
+function sameOAuthAccount(kind, a, b) {
+  const keysOfB = accountKeys(kind, b);
+  return [...accountKeys(kind, a)].some((key) => keysOfB.has(key));
+}
+
+// src/oauth/types.ts
+function tokensToStoredCredential(tokens, existingRefresh, accountId, providerData) {
+  const identity = mergeIdentity(storedIdentity(providerData), identityFromJwt(tokens.id_token));
+  const baseProviderData = providerData || tokens.providerData ? { ...providerData, ...tokens.providerData } : void 0;
+  const mergedProviderData = identity ? { ...baseProviderData, identity } : baseProviderData;
+  return {
+    type: "oauth",
+    access: tokens.access_token,
+    refresh: tokens.refresh_token ?? existingRefresh ?? "",
+    expires: Date.now() + (tokens.expires_in ?? 3600) * 1e3,
+    ...accountId ? { accountId } : {},
+    ...mergedProviderData ? { providerData: mergedProviderData } : {}
+  };
+}
+function parseStoredOAuthCredential(raw) {
+  if (!raw?.trim().startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed.type === "oauth" && typeof parsed.access === "string" && typeof parsed.refresh === "string" && typeof parsed.expires === "number") {
+      return parsed;
+    }
+  } catch {
+  }
+  return null;
+}
+var OAUTH_REFRESH_SKEW_MS = 12e4;
+function oauthCredentialNeedsRefresh(cred, skewMs = OAUTH_REFRESH_SKEW_MS) {
+  return cred.expires <= Date.now() + Math.max(0, skewMs);
+}
+function accessTokenIsExpiring(token, skewMs = OAUTH_REFRESH_SKEW_MS) {
+  if (!token) return false;
+  const parts = token.split(".");
+  if (parts.length < 2) return false;
+  try {
+    let payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    while (payload.length % 4 !== 0) payload += "=";
+    const claims = JSON.parse(Buffer.from(payload, "base64").toString("utf8"));
+    if (typeof claims.exp !== "number") return false;
+    return claims.exp * 1e3 <= Date.now() + Math.max(0, skewMs);
+  } catch {
+    return false;
+  }
+}
+var NATIVE_OAUTH_PROVIDER_IDS = ["xai", "xai-oauth", "openai", "openai-oauth", "github-copilot", "claude-code", "antigravity", "cline-pass"];
+function supportsNativeOAuth(providerId) {
+  return NATIVE_OAUTH_PROVIDER_IDS.includes(providerId);
+}
+var BROWSER_REDIRECT_OAUTH_IDS = ["claude-code", "antigravity"];
+function isBrowserRedirectOAuth(id) {
+  return BROWSER_REDIRECT_OAUTH_IDS.includes(id);
+}
+function supportsAdditionalOAuthAccounts(kind) {
+  return supportsNativeOAuth(kind);
+}
+
+// src/oauth/github.ts
+var CLIENT_ID2 = "Iv1.b507a08c87ecfe98";
+var DEVICE_CODE_URL = "https://github.com/login/device/code";
+var TOKEN_URL2 = "https://github.com/login/oauth/access_token";
+var COPILOT_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token";
+var COPILOT_USER_URL = "https://api.github.com/copilot_internal/user";
+var SCOPE = "copilot";
+var DEVICE_CODE_DEFAULT_INTERVAL_MS = 5e3;
+var DEVICE_CODE_DEFAULT_EXPIRES_MS2 = 15 * 60 * 1e3;
+var OAUTH_POLLING_SAFETY_MARGIN_MS2 = 1e3;
+var FREE_COPILOT_SKUS = /* @__PURE__ */ new Set([
+  "free_limited_copilot",
+  "free_educational_quota",
+  "no_auth_limited_copilot"
+]);
+function commonHeaders() {
+  return {
+    Accept: "application/json",
+    "Content-Type": "application/x-www-form-urlencoded",
+    "User-Agent": `relay-ai/${VERSION}`
+  };
+}
+function classifyCopilotAccount(user) {
+  const login = typeof user["login"] === "string" && user["login"].trim() ? user["login"].trim() : void 0;
+  const sku = typeof user["access_type_sku"] === "string" && user["access_type_sku"].trim() ? user["access_type_sku"].trim() : void 0;
+  const plan = typeof user["copilot_plan"] === "string" && user["copilot_plan"].trim() ? user["copilot_plan"].trim() : void 0;
+  if (!sku && !plan) {
+    return {
+      ...login ? { login } : {},
+      lookup_status: "unknown"
+    };
+  }
+  const isFree = FREE_COPILOT_SKUS.has(sku?.toLowerCase() ?? "") || plan?.toLowerCase() === "free";
+  return {
+    ...login ? { login } : {},
+    ...sku ? { access_type_sku: sku } : {},
+    ...plan ? { copilot_plan: plan } : {},
+    is_free_plan: isFree,
+    lookup_status: "known"
+  };
+}
+async function fetchCopilotAccount(ghuToken) {
+  const response = await fetch(COPILOT_USER_URL, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${ghuToken}`,
+      Accept: "application/json",
+      "User-Agent": `relay-ai/${VERSION}`,
+      "Editor-Version": "vscode/1.85.1",
+      "X-GitHub-Api-Version": "2025-04-01"
+    }
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`GitHub Copilot account lookup failed (${response.status})${detail ? `: ${detail}` : ""}`);
+  }
+  const json = await response.json();
+  if (!json || typeof json !== "object" || Array.isArray(json)) {
+    throw new Error("GitHub Copilot account lookup returned invalid JSON");
+  }
+  return classifyCopilotAccount(json);
+}
+async function requestGithubDeviceCode() {
+  const response = await fetch(DEVICE_CODE_URL, {
+    method: "POST",
+    headers: commonHeaders(),
+    body: new URLSearchParams({ client_id: CLIENT_ID2, scope: SCOPE }).toString()
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`GitHub device code request failed (${response.status})${detail ? `: ${detail}` : ""}`);
+  }
+  const json = await response.json();
+  if (!json.device_code || !json.user_code || !json.verification_uri) {
+    throw new Error("GitHub device code response is missing required fields");
+  }
+  return json;
+}
+async function exchangeForCopilotToken(ghuToken) {
+  const response = await fetch(COPILOT_TOKEN_URL, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${ghuToken}`,
+      "User-Agent": `relay-ai/${VERSION}`,
+      Accept: "application/json"
+    }
+  });
+  if (!response.ok) {
+    const msg = await response.text().catch(() => "");
+    throw new Error(`GitHub Copilot token exchange failed (${response.status})${msg ? `: ${msg}` : ""}`);
+  }
+  const json = await response.json();
+  if (!json.token) {
+    throw new Error("GitHub Copilot token exchange response missing token field \u2014 is Copilot subscription active?");
+  }
+  let expiresIn = 1800;
+  if (json.expires_at) {
+    const expiresMs = new Date(json.expires_at).getTime() - Date.now();
+    if (expiresMs > 0) expiresIn = Math.floor(expiresMs / 1e3);
+  }
+  let account = { lookup_status: "unknown" };
+  try {
+    account = await fetchCopilotAccount(ghuToken);
+  } catch {
+  }
+  return {
+    access_token: json.token,
+    expires_in: expiresIn,
+    providerData: { copilot: account }
+  };
+}
+async function refreshGithubCopilotToken(ghuToken) {
+  const copilot = await exchangeForCopilotToken(ghuToken);
+  return {
+    ...copilot,
+    refresh_token: ghuToken
+    // keep the same ghu_ token as refresh
+  };
+}
+async function pollGithubDeviceCodeToken(device, opts) {
+  const sleep2 = opts?.sleep ?? sleepMs;
+  const now = opts?.now ?? (() => Date.now());
+  const deadline = now() + positiveSecondsToMs(device.expires_in, DEVICE_CODE_DEFAULT_EXPIRES_MS2);
+  let intervalMs = Math.max(
+    positiveSecondsToMs(device.interval, DEVICE_CODE_DEFAULT_INTERVAL_MS),
+    1e3
+  );
+  while (now() < deadline) {
+    const response = await fetch(TOKEN_URL2, {
+      method: "POST",
+      headers: commonHeaders(),
+      body: new URLSearchParams({
+        client_id: CLIENT_ID2,
+        device_code: device.device_code,
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code"
+      }).toString()
+    });
+    const body = await response.json().catch(() => ({}));
+    const error = body["error"];
+    if (!error && body["access_token"]) {
+      const ghuToken = body["access_token"];
+      const copilot = await exchangeForCopilotToken(ghuToken);
+      return {
+        access_token: copilot.access_token,
+        refresh_token: ghuToken,
+        // store ghu_ as refresh for re-exchange later
+        expires_in: copilot.expires_in,
+        providerData: copilot.providerData
+      };
+    }
+    if (error === "authorization_pending") {
+      await sleep2(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS2, Math.max(0, deadline - now())));
+      continue;
+    }
+    if (error === "slow_down") {
+      intervalMs += 5e3;
+      await sleep2(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS2, Math.max(0, deadline - now())));
+      continue;
+    }
+    if (error === "expired_token") {
+      throw new Error("GitHub device code expired \u2014 please run relay-ai providers auth github-copilot again");
+    }
+    throw new Error(`GitHub device authorization failed${error ? `: ${error}` : ""}`);
+  }
+  throw new Error("GitHub device authorization timed out");
+}
+async function runGithubDeviceCodeFlow(onDeviceCode, opts) {
+  const device = await requestGithubDeviceCode();
+  onDeviceCode({ url: device.verification_uri, userCode: device.user_code });
+  return pollGithubDeviceCodeToken(device, opts);
+}
+
+// src/oauth/xai.ts
+var CLIENT_ID3 = "b1a00492-073a-47ea-816f-4c329264a828";
+var TOKEN_URL3 = "https://auth.x.ai/oauth2/token";
+var DEVICE_AUTHORIZATION_URL = "https://auth.x.ai/oauth2/device/code";
+var DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
+var SCOPE2 = "openid profile email offline_access grok-cli:access api:access";
+var DEVICE_CODE_DEFAULT_INTERVAL_MS2 = 5e3;
+var DEVICE_CODE_MIN_INTERVAL_MS = 1e3;
+var DEVICE_CODE_SLOW_DOWN_INCREMENT_MS = 5e3;
+var DEVICE_CODE_DEFAULT_EXPIRES_MS3 = 5 * 60 * 1e3;
+var OAUTH_POLLING_SAFETY_MARGIN_MS3 = 3e3;
+function authHeaders() {
+  return {
+    "Content-Type": "application/x-www-form-urlencoded",
+    Accept: "application/json",
+    "User-Agent": `relay-ai/${VERSION}`
+  };
+}
+async function requestXaiDeviceCode() {
+  const response = await fetch(DEVICE_AUTHORIZATION_URL, {
+    method: "POST",
+    headers: authHeaders(),
+    body: new URLSearchParams({
+      client_id: CLIENT_ID3,
+      scope: SCOPE2
+    }).toString()
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`xAI device code request failed (${response.status})${detail ? `: ${detail}` : ""}`);
+  }
+  const json = await response.json();
+  if (!json.device_code || !json.user_code || !json.verification_uri) {
+    throw new Error("xAI device code response is missing required fields");
+  }
+  return json;
+}
+async function pollXaiDeviceCodeToken(device, opts) {
+  const sleep2 = opts?.sleep ?? sleepMs;
+  const now = opts?.now ?? (() => Date.now());
+  const deadline = now() + positiveSecondsToMs(device.expires_in, DEVICE_CODE_DEFAULT_EXPIRES_MS3);
+  let intervalMs = Math.max(
+    positiveSecondsToMs(device.interval, DEVICE_CODE_DEFAULT_INTERVAL_MS2),
+    DEVICE_CODE_MIN_INTERVAL_MS
+  );
+  while (now() < deadline) {
+    const response = await fetch(TOKEN_URL3, {
+      method: "POST",
+      headers: authHeaders(),
+      body: new URLSearchParams({
+        grant_type: DEVICE_CODE_GRANT_TYPE,
+        client_id: CLIENT_ID3,
+        device_code: device.device_code
+      }).toString()
+    });
+    if (response.ok) return response.json();
+    const body = await response.json().catch(() => ({}));
+    const remaining = Math.max(0, deadline - now());
+    if (body.error === "authorization_pending") {
+      await sleep2(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS3, remaining));
+      continue;
+    }
+    if (body.error === "slow_down") {
+      intervalMs += DEVICE_CODE_SLOW_DOWN_INCREMENT_MS;
+      await sleep2(Math.min(intervalMs + OAUTH_POLLING_SAFETY_MARGIN_MS3, remaining));
+      continue;
+    }
+    throw new Error(`xAI device authorization failed${body.error ? `: ${body.error}` : ""}`);
+  }
+  throw new Error("xAI device authorization timed out");
+}
+async function refreshXaiAccessToken(refreshToken) {
+  return postOAuthRefresh(
+    TOKEN_URL3,
+    new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: CLIENT_ID3
+    }),
+    {
+      contentType: "form",
+      errorPrefix: "xAI token refresh failed",
+      includeStatus: true,
+      includeBody: true,
+      headers: authHeaders()
+    }
+  );
+}
+async function runXaiDeviceCodeFlow(onDeviceCode, opts) {
+  const device = await requestXaiDeviceCode();
+  onDeviceCode({
+    url: device.verification_uri_complete ?? device.verification_uri,
+    userCode: device.user_code
+  });
+  return pollXaiDeviceCodeToken(device, opts);
+}
+
+// src/oauth/claude-code.ts
+import { randomBytes } from "crypto";
+import open2 from "open";
+var CLAUDE_CODE_CLIENT_ID = process.env.CLAUDE_OAUTH_CLIENT_ID ?? "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+var AUTHORIZE_URL2 = "https://claude.com/cai/oauth/authorize";
+var TOKEN_URL4 = "https://platform.claude.com/v1/oauth/token";
+var REDIRECT_URI = process.env.CLAUDE_CODE_REDIRECT_URI ?? "https://platform.claude.com/oauth/code/callback";
+var SCOPES2 = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers";
+async function buildClaudeCodeAuthUrl(redirectUri = REDIRECT_URI) {
+  const { verifier, challenge } = await generatePkce();
+  const state = generateOAuthState();
+  const params = new URLSearchParams({
+    code: "true",
+    client_id: CLAUDE_CODE_CLIENT_ID,
+    response_type: "code",
+    redirect_uri: redirectUri,
+    scope: SCOPES2,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    state,
+    // Forces fresh auth — prevents session takeover that invalidates previous refresh tokens.
+    prompt: "login"
+  });
+  return { authUrl: `${AUTHORIZE_URL2}?${params}`, codeVerifier: verifier, oauthState: state, redirectUri };
+}
+async function exchangeClaudeCodeToken(code, codeVerifier, redirectUri, state) {
+  const { code: authCode, state: returnedState } = parseClaudeAuthInput(code);
+  if (returnedState && returnedState !== state) {
+    throw new Error("Anthropic returned an unexpected state \u2014 start the sign-in again");
+  }
+  const codeState = state;
+  const res = await fetch(TOKEN_URL4, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      code: authCode,
+      state: codeState,
+      grant_type: "authorization_code",
+      client_id: CLAUDE_CODE_CLIENT_ID,
+      redirect_uri: redirectUri,
+      code_verifier: codeVerifier
+    })
+  });
+  if (!res.ok) throw new Error(`Claude Code token exchange failed: ${await res.text()}`);
+  return res.json();
+}
+function parseClaudeAuthInput(input) {
+  let code = extractClaudeAuthCode(input);
+  let state;
+  try {
+    state = new URL(input.trim()).searchParams.get("state") ?? void 0;
+  } catch {
+    const trimmed = input.trim();
+    if (trimmed.startsWith("?") || trimmed.includes("code=")) {
+      state = new URLSearchParams(trimmed.startsWith("?") ? trimmed.slice(1) : trimmed).get("state") ?? void 0;
+    }
+  }
+  const hash = code.indexOf("#");
+  if (hash >= 0) {
+    state = code.slice(hash + 1) || state;
+    code = code.slice(0, hash);
+  }
+  return { code, ...state ? { state } : {} };
+}
+function extractClaudeAuthCode(input) {
+  const trimmed = input.trim();
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.searchParams.get("code") ?? trimmed;
+  } catch {
+    if (trimmed.startsWith("?") || trimmed.includes("code=")) {
+      const query = trimmed.startsWith("?") ? trimmed.slice(1) : trimmed;
+      return new URLSearchParams(query).get("code") ?? trimmed;
+    }
+    return trimmed;
+  }
+}
+async function refreshClaudeCodeToken(refreshToken) {
+  return postOAuthRefresh(
+    TOKEN_URL4,
+    {
+      grant_type: "refresh_token",
+      client_id: CLAUDE_CODE_CLIENT_ID,
+      refresh_token: refreshToken
+    },
+    {
+      contentType: "json",
+      errorPrefix: "Claude Code token refresh failed",
+      includeBody: true
+    }
+  );
+}
+async function fetchClaudeBootstrap(accessToken) {
+  try {
+    const res = await fetch("https://api.anthropic.com/api/claude_cli/bootstrap", {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+        "User-Agent": `claude-cli/${CLAUDE_CODE_CLI_VERSION} (external, cli)`,
+        "anthropic-beta": "oauth-2025-04-20"
+      },
+      signal: AbortSignal.timeout(1e4)
+    });
+    if (!res.ok) return {};
+    const data = await res.json();
+    const acct = data.oauth_account;
+    if (!acct) return {};
+    return {
+      accountId: typeof acct.account_uuid === "string" ? acct.account_uuid : void 0,
+      email: typeof acct.account_email === "string" ? acct.account_email : void 0,
+      organizationId: typeof acct.organization_uuid === "string" ? acct.organization_uuid : void 0,
+      organizationName: typeof acct.organization_name === "string" ? acct.organization_name : void 0,
+      plan: typeof acct.organization_rate_limit_tier === "string" ? acct.organization_rate_limit_tier : void 0
+    };
+  } catch {
+    return {};
+  }
+}
+function generateCliUserID() {
+  return randomBytes(32).toString("hex");
+}
+async function runClaudeCodeOAuthFlow(onAuthUrl, readAuthCode) {
+  const { authUrl, codeVerifier, oauthState, redirectUri } = await buildClaudeCodeAuthUrl();
+  onAuthUrl(authUrl);
+  open2(authUrl).catch(() => {
+  });
+  const code = (await readAuthCode()).trim();
+  if (!code) throw new Error("No authorization code received from Anthropic");
+  const tokens = await exchangeClaudeCodeToken(code, codeVerifier, redirectUri, oauthState);
+  const bootstrap = await fetchClaudeBootstrap(tokens.access_token);
+  return { tokens, bootstrap };
+}
+async function fetchClaudeCodeModels(accessToken) {
+  const res = await fetch("https://api.anthropic.com/v1/models", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "anthropic-version": "2023-06-01",
+      Accept: "application/json",
+      "User-Agent": `claude-cli/${CLAUDE_CODE_CLI_VERSION} (external, cli)`
+    },
+    signal: AbortSignal.timeout(1e4)
+  });
+  if (!res.ok) {
+    throw new Error(`Claude Code model discovery failed (HTTP ${res.status}): ${await res.text().catch(() => "")}`);
+  }
+  const body = await res.json();
+  const entries = (body.data ?? []).filter((m) => typeof m.id === "string" && m.id.length > 0).map((m) => ({
+    id: m.id,
+    displayName: typeof m.display_name === "string" ? m.display_name : m.id,
+    maxInputTokens: typeof m.max_input_tokens === "number" ? m.max_input_tokens : void 0,
+    maxTokens: typeof m.max_tokens === "number" ? m.max_tokens : void 0
+  }));
+  if (entries.length === 0) {
+    throw new Error("Claude Code model discovery returned no models");
+  }
+  return entries;
+}
+async function completeClaudeCodeExchange(code, codeVerifier, oauthState, redirectUri) {
+  const tokens = await exchangeClaudeCodeToken(code, codeVerifier, redirectUri, oauthState);
+  const bootstrap = await fetchClaudeBootstrap(tokens.access_token);
+  return { tokens, bootstrap };
+}
+function guiCallbackRedirectUri(host) {
+  return `http://${host}/oauth/callback`;
+}
+
+// src/oauth/cline-pass.ts
+var WORKOS_CLIENT_ID = "client_01K3A541FN8TA3EPPHTD2325AR";
+var WORKOS_DEVICE_URL = "https://api.workos.com/user_management/authorize/device";
+var WORKOS_TOKEN_URL = "https://api.workos.com/user_management/authenticate";
+var DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
+var DEFAULT_INTERVAL_MS = 5e3;
+var SLOW_DOWN_INCREMENT_MS = 1e3;
+var DEFAULT_EXPIRES_MS = 10 * 60 * 1e3;
+function formHeaders() {
+  return {
+    Accept: "application/json",
+    "Content-Type": "application/x-www-form-urlencoded"
+  };
+}
+function jsonHeaders() {
+  return {
+    Accept: "application/json",
+    "Content-Type": "application/json"
+  };
+}
+function expiresInFromIso(expiresAt) {
+  if (typeof expiresAt !== "string") throw new Error("ClinePass response is missing a valid expiresAt");
+  const timestamp = Date.parse(expiresAt);
+  if (!Number.isFinite(timestamp)) throw new Error("ClinePass response is missing a valid expiresAt");
+  return Math.max(1, Math.floor((timestamp - Date.now()) / 1e3));
+}
+function toOAuthResult(data) {
+  if (typeof data.accessToken !== "string" || !data.accessToken) {
+    throw new Error("ClinePass response is missing accessToken");
+  }
+  const userInfo = data.userInfo && typeof data.userInfo === "object" && !Array.isArray(data.userInfo) ? data.userInfo : void 0;
+  const accountId = typeof userInfo?.clineUserId === "string" ? userInfo.clineUserId : void 0;
+  return {
+    tokens: {
+      access_token: data.accessToken,
+      ...typeof data.refreshToken === "string" ? { refresh_token: data.refreshToken } : {},
+      expires_in: expiresInFromIso(data.expiresAt),
+      ...userInfo ? { providerData: userInfo } : {}
+    },
+    ...accountId ? { accountId } : {},
+    ...userInfo ? { providerData: userInfo } : {}
+  };
+}
+async function readError(response) {
+  const text2 = await response.text().catch(() => "");
+  if (!text2) return `HTTP ${response.status}`;
+  try {
+    const parsed = JSON.parse(text2);
+    const detail = typeof parsed.error === "string" ? parsed.error : typeof parsed.message === "string" ? parsed.message : "";
+    return detail || `HTTP ${response.status}`;
+  } catch {
+    return text2.slice(0, 120);
+  }
+}
+async function requestClinePassDeviceCode() {
+  const response = await fetch(WORKOS_DEVICE_URL, {
+    method: "POST",
+    headers: formHeaders(),
+    body: new URLSearchParams({ client_id: WORKOS_CLIENT_ID }).toString()
+  });
+  if (!response.ok) throw new Error(`ClinePass device code request failed (${response.status})`);
+  const json = await response.json();
+  if (!json.device_code || !json.user_code || !json.verification_uri) {
+    throw new Error("ClinePass device code response is missing required fields");
+  }
+  return json;
+}
+async function registerClinePassTokens(accessToken, refreshToken) {
+  const response = await fetch(CLINE_PASS_REGISTER_URL, {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({ accessToken, refreshToken })
+  });
+  if (!response.ok) throw new Error(`ClinePass registration failed (${response.status})`);
+  const body = await response.json();
+  if (body.success !== true || !body.data) {
+    const detail = typeof body.error === "string" ? body.error : typeof body.message === "string" ? body.message : "unsuccessful response";
+    throw new Error(`ClinePass registration failed: ${detail}`);
+  }
+  return toOAuthResult(body.data);
+}
+async function pollClinePassDeviceCode(device, opts) {
+  const sleep2 = opts?.sleep ?? sleepMs;
+  const now = opts?.now ?? (() => Date.now());
+  const deadline = now() + positiveSecondsToMs(device.expires_in, DEFAULT_EXPIRES_MS);
+  let intervalMs = Math.max(positiveSecondsToMs(device.interval, DEFAULT_INTERVAL_MS), 1e3);
+  while (now() < deadline) {
+    const response = await fetch(WORKOS_TOKEN_URL, {
+      method: "POST",
+      headers: formHeaders(),
+      body: new URLSearchParams({
+        grant_type: DEVICE_GRANT_TYPE,
+        client_id: WORKOS_CLIENT_ID,
+        device_code: device.device_code
+      }).toString()
+    });
+    if (response.ok) {
+      const workos = await response.json();
+      if (!workos.access_token || !workos.refresh_token) {
+        throw new Error("ClinePass WorkOS response is missing required tokens");
+      }
+      return registerClinePassTokens(workos.access_token, workos.refresh_token);
+    }
+    const body = await response.json().catch(() => ({}));
+    const remaining = Math.max(0, deadline - now());
+    if (body.error === "authorization_pending") {
+      await sleep2(Math.min(intervalMs, remaining));
+      continue;
+    }
+    if (body.error === "slow_down") {
+      intervalMs += SLOW_DOWN_INCREMENT_MS;
+      await sleep2(Math.min(intervalMs, remaining));
+      continue;
+    }
+    throw new Error(`ClinePass device authorization failed${body.error ? `: ${body.error}` : ""}`);
+  }
+  throw new Error("ClinePass device authorization timed out");
+}
+async function runClinePassDeviceCodeFlow(onDeviceCode, opts) {
+  const device = await requestClinePassDeviceCode();
+  onDeviceCode({
+    url: device.verification_uri_complete ?? device.verification_uri,
+    userCode: device.user_code
+  });
+  return pollClinePassDeviceCode(device, opts);
+}
+async function refreshClinePassAccessToken(refreshToken) {
+  const response = await fetch(CLINE_PASS_REFRESH_URL, {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({ refreshToken, grantType: "refresh_token" })
+  });
+  if (!response.ok) {
+    const detail = await readError(response);
+    throw new Error(`ClinePass token refresh failed (${response.status}): ${detail}`);
+  }
+  const body = await response.json();
+  if (body.success !== true || !body.data) {
+    const detail = typeof body.error === "string" ? body.error : typeof body.message === "string" ? body.message : "unsuccessful response";
+    throw new Error(`ClinePass token refresh failed: ${detail}`);
+  }
+  return toOAuthResult(body.data).tokens;
+}
+
+// src/oauth/refresh.ts
+function oauthCredentialShouldRefresh(cred, providerId) {
+  if (oauthCredentialNeedsRefresh(cred)) return true;
+  if (NATIVE_OAUTH_PROVIDER_IDS.includes(providerKind(providerId)) && accessTokenIsExpiring(cred.access)) return true;
+  return false;
+}
+async function refreshStoredOAuthCredential(providerId, cred) {
+  if (!cred.refresh) {
+    throw new Error(`${providerId}: OAuth refresh token missing \u2014 run relay-ai providers auth ${providerId}`);
+  }
+  const kind = providerKind(providerId);
+  let tokens;
+  if (kind === "openai" || kind === "openai-oauth") {
+    tokens = await refreshOpenAiAccessToken(cred.refresh);
+  } else if (kind === "xai" || kind === "xai-oauth") {
+    tokens = await refreshXaiAccessToken(cred.refresh);
+  } else if (kind === "github-copilot") {
+    tokens = await refreshGithubCopilotToken(cred.refresh);
+  } else if (kind === "claude-code") {
+    tokens = await refreshClaudeCodeToken(cred.refresh);
+  } else if (kind === "antigravity") {
+    tokens = await refreshAntigravityToken(cred.refresh);
+  } else if (kind === "cline-pass") {
+    tokens = await refreshClinePassAccessToken(cred.refresh);
+  } else {
+    throw new Error(`OAuth refresh not implemented for provider "${providerId}"`);
+  }
+  const accountId = kind === "cline-pass" && typeof tokens.providerData?.clineUserId === "string" ? tokens.providerData.clineUserId : cred.accountId;
+  return tokensToStoredCredential(tokens, cred.refresh, accountId, cred.providerData);
+}
+
+// src/oauth/refresh-lock.ts
+import { closeSync as closeSync2, mkdirSync as mkdirSync7, openSync as openSync2, readFileSync as readFileSync10, statSync as statSync4, unlinkSync as unlinkSync4, writeSync as writeSync2 } from "fs";
+import { createHash as createHash5, randomUUID as randomUUID2 } from "crypto";
+import { join as join9 } from "path";
+var POLL_MS = 100;
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function readHolder(path) {
+  try {
+    const parsed = JSON.parse(readFileSync10(path, "utf8"));
+    return {
+      pid: typeof parsed.pid === "number" ? parsed.pid : void 0,
+      token: typeof parsed.token === "string" ? parsed.token : void 0
+    };
+  } catch {
+    return {};
+  }
+}
+function isStale(path, staleMs) {
+  try {
+    const { pid } = readHolder(path);
+    if (pid !== void 0 && !processAlive(pid)) return true;
+    return Date.now() - statSync4(path).mtimeMs > staleMs;
+  } catch {
+    return false;
+  }
+}
+function removeLock(path) {
+  try {
+    unlinkSync4(path);
+  } catch {
+  }
+}
+async function acquire(path, timeoutMs, staleMs) {
+  const token = randomUUID2();
+  const deadline = Date.now() + timeoutMs;
+  for (; ; ) {
+    try {
+      const fd = openSync2(path, "wx", 384);
+      try {
+        writeSync2(fd, JSON.stringify({ pid: process.pid, token }));
+      } finally {
+        closeSync2(fd);
+      }
+      return token;
+    } catch (err) {
+      if (err.code !== "EEXIST") return null;
+      if (isStale(path, staleMs)) {
+        removeLock(path);
+        continue;
+      }
+      if (Date.now() >= deadline) return null;
+      await sleep(POLL_MS);
+    }
+  }
+}
+async function withRefreshLock(key, work, options = {}) {
+  const dir = options.dir ?? join9(getAppHome(), "locks");
+  let path;
+  let token = null;
+  try {
+    mkdirSync7(dir, { recursive: true, mode: 448 });
+    path = join9(dir, `oauth-${createHash5("sha256").update(key).digest("hex").slice(0, 24)}.lock`);
+    token = await acquire(path, options.timeoutMs ?? 2e4, options.staleMs ?? 12e4);
+  } catch {
+    token = null;
+  }
+  try {
+    return await work();
+  } finally {
+    if (path && token && readHolder(path).token === token) removeLock(path);
+  }
+}
+
+// src/secrets-file.ts
+import { chmodSync as chmodSync5, existsSync as existsSync9, mkdirSync as mkdirSync8, readFileSync as readFileSync11, writeFileSync as writeFileSync6 } from "fs";
+var DIR_MODE3 = 448;
+var FILE_MODE5 = 384;
+function emptySecrets() {
+  return { version: 1, accounts: {} };
+}
+function readSecretsFile(env = process.env) {
+  const path = getSecretsPath(env);
+  if (!existsSync9(path)) return emptySecrets();
+  try {
+    const raw = JSON.parse(readFileSync11(path, "utf8"));
+    if (raw?.version !== 1 || !raw.accounts || typeof raw.accounts !== "object") {
+      return emptySecrets();
+    }
+    const accounts = {};
+    for (const [k, v] of Object.entries(raw.accounts)) {
+      if (typeof v === "string" && v.length > 0) accounts[k] = v;
+    }
+    return { version: 1, accounts };
+  } catch {
+    return emptySecrets();
+  }
+}
+function writeSecretsFile(data, env = process.env) {
+  const home = getAppHome(env);
+  mkdirSync8(home, { recursive: true, mode: DIR_MODE3 });
+  try {
+    chmodSync5(home, DIR_MODE3);
+  } catch {
+  }
+  const path = getSecretsPath(env);
+  writeFileSync6(path, `${JSON.stringify(data, null, 2)}
+`, { encoding: "utf8", mode: FILE_MODE5 });
+  try {
+    chmodSync5(path, FILE_MODE5);
+  } catch {
+  }
+}
+function readFileAccount(account, env = process.env) {
+  const value = readSecretsFile(env).accounts[account];
+  return value?.length ? value : null;
+}
+function writeFileAccount(account, value, env = process.env) {
+  if (!account || !value) return false;
+  try {
+    const data = readSecretsFile(env);
+    data.accounts[account] = value;
+    writeSecretsFile(data, env);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function deleteFileAccount(account, env = process.env) {
+  try {
+    const data = readSecretsFile(env);
+    if (!(account in data.accounts)) return true;
+    delete data.accounts[account];
+    writeSecretsFile(data, env);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// src/env.ts
+function detectConflicts() {
+  return CONFLICTING_ENV_VARS.filter((name) => process.env[name] !== void 0).map((name) => ({ name, value: process.env[name] }));
+}
+function resolveApiKey() {
+  const key = process.env["OPENCODE_API_KEY"];
+  if (!key?.trim()) return null;
+  return key.trim().split(/\r?\n/)[0]?.trim() || null;
+}
+function applyClaudeCodeThirdPartyCompat(env) {
+  env["ENABLE_TOOL_SEARCH"] = "true";
+  env["CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT"] = "0";
+}
+function buildChildEnv(baseUrl, model, apiKey, proxyPort, contextWindow, enableGatewayDiscovery) {
+  const env = { ...process.env };
+  for (const name of CONFLICTING_ENV_VARS) {
+    delete env[name];
+  }
+  for (const name of PARENT_SESSION_ENV_VARS) {
+    delete env[name];
+  }
+  env["ANTHROPIC_BASE_URL"] = proxyPort ? `http://127.0.0.1:${proxyPort}` : baseUrl;
+  env["ANTHROPIC_API_KEY"] = apiKey;
+  const bareModel = stripOneMContextSuffix(model);
+  env["ANTHROPIC_MODEL"] = claudeCodeClientModelId(model, contextWindow);
+  if (!enableGatewayDiscovery) {
+    env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = String(resolveContextWindow(bareModel, contextWindow));
+  }
+  if (enableGatewayDiscovery) {
+    delete env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"];
+    env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1";
+  }
+  env["CLAUDE_CODE_AUTO_MODE_SERVER"] ??= "0";
+  applyClaudeCodeThirdPartyCompat(env);
+  return env;
+}
+function buildAntigravityChildEnv(gatewayUrl) {
+  const env = { ...process.env };
+  for (const name of CONFLICTING_ENV_VARS) {
+    delete env[name];
+  }
+  env["CLOUD_CODE_URL"] = gatewayUrl;
+  env["ANTIGRAVITY_API_KEY"] = "relay-dummy-key";
+  env["GEMINI_API_KEY"] = "relay-dummy-key";
+  env["GOOGLE_API_KEY"] = "relay-dummy-key";
+  env["GOOGLE_GEMINI_API_KEY"] = "relay-dummy-key";
+  return env;
+}
+function classifyKeyringError(err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  const lower = msg.toLowerCase();
+  if (lower.includes("cannot find module") || lower.includes("module not found") || lower.includes("failed to load")) {
+    return "native keyring module not available on this system";
+  }
+  if (lower.includes("secret service") || lower.includes("dbus") || lower.includes("daemon")) {
+    return "Secret Service daemon is not running (start GNOME Keyring or KWallet)";
+  }
+  if (lower.includes("denied") || lower.includes("locked") || lower.includes("cancelled") || lower.includes("user refused")) {
+    return "keychain access was denied or the keychain is locked";
+  }
+  return `keyring error: ${msg}`;
+}
+var KEYRING_SERVICE = "relay-ai";
+var KEYRING_ACCOUNT = "relay-ai";
+var KEYRING_CHUNK_PREFIX = "__relay_chunked__:";
+var KEYRING_CHUNK_SIZE = 1200;
+var LEGACY_KEYRING_SERVICE = "opencode-starter";
+var LEGACY_KEYRING_ACCOUNT = "opencode-starter";
+var GLOBAL_OPENCODE_KEYRING_ACCOUNT = "global:opencode";
+function providerKeyringAccount(providerId) {
+  return `provider:${providerId}`;
+}
+function preferredRelayCredentialAuthRef(providerId, fallbackAuthRef) {
+  return providerId === "go" || providerId === "zen" ? `keyring:${providerKeyringAccount("opencode")}` : fallbackAuthRef;
+}
+function oauthProviderIdFromAccount(account) {
+  const prefix = "oauth:provider:";
+  return account.startsWith(prefix) ? account.slice(prefix.length) : null;
+}
+var oauthRefreshInflight = /* @__PURE__ */ new Map();
+function parseAuthRef(authRef) {
+  if (authRef.startsWith("keyring:")) {
+    const account = authRef.slice("keyring:".length);
+    return account ? { kind: "keyring", account } : null;
+  }
+  if (authRef.startsWith("env:")) {
+    const varName = authRef.slice("env:".length);
+    return varName ? { kind: "env", varName } : null;
+  }
+  return null;
+}
+function relayAiKeyEnvVar(providerId) {
+  return `RELAY_AI_KEY_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
+}
+function readEnvCredential(varName) {
+  const raw = process.env[varName];
+  if (!raw?.trim()) return null;
+  return raw.trim().split(/\r?\n/)[0]?.trim() || null;
+}
+var osKeyringReadCache = /* @__PURE__ */ new Map();
+function invalidateKeyringReadCache(account) {
+  if (account === void 0) osKeyringReadCache.clear();
+  else osKeyringReadCache.delete(account);
+}
+async function readOsKeyringAccount(account, diag) {
+  const cached2 = osKeyringReadCache.get(account);
+  if (cached2) return cached2;
+  const read = (async () => {
+    try {
+      const { Entry } = await import("@napi-rs/keyring");
+      const value = new Entry(KEYRING_SERVICE, account).getPassword() ?? null;
+      if (!value?.startsWith(KEYRING_CHUNK_PREFIX)) return value;
+      const chunkCount = Number(value.slice(KEYRING_CHUNK_PREFIX.length));
+      let combined = "";
+      for (let i = 0; i < chunkCount; i++) {
+        combined += new Entry(KEYRING_SERVICE, `${account}::chunk::${i}`).getPassword() ?? "";
+      }
+      return combined;
+    } catch (err) {
+      diag?.(classifyKeyringError(err));
+      return null;
+    }
+  })();
+  osKeyringReadCache.set(account, read);
+  return read;
+}
+async function writeOsKeyringAccount(account, key, diag) {
+  try {
+    const { Entry } = await import("@napi-rs/keyring");
+    if (key.length <= KEYRING_CHUNK_SIZE) {
+      new Entry(KEYRING_SERVICE, account).setPassword(key);
+      return true;
+    }
+    const chunkCount = Math.ceil(key.length / KEYRING_CHUNK_SIZE);
+    for (let i = 0; i < chunkCount; i++) {
+      const chunk = key.slice(i * KEYRING_CHUNK_SIZE, (i + 1) * KEYRING_CHUNK_SIZE);
+      new Entry(KEYRING_SERVICE, `${account}::chunk::${i}`).setPassword(chunk);
+    }
+    new Entry(KEYRING_SERVICE, account).setPassword(`${KEYRING_CHUNK_PREFIX}${chunkCount}`);
+    return true;
+  } catch (err) {
+    diag?.(classifyKeyringError(err));
+    return false;
+  }
+}
+async function deleteOsKeyringAccount(account, diag) {
+  try {
+    const { Entry } = await import("@napi-rs/keyring");
+    const value = new Entry(KEYRING_SERVICE, account).getPassword();
+    if (value?.startsWith(KEYRING_CHUNK_PREFIX)) {
+      const chunkCount = Number(value.slice(KEYRING_CHUNK_PREFIX.length));
+      for (let i = 0; i < chunkCount; i++) {
+        new Entry(KEYRING_SERVICE, `${account}::chunk::${i}`).deletePassword();
+      }
+    }
+    new Entry(KEYRING_SERVICE, account).deletePassword();
+    return true;
+  } catch (err) {
+    diag?.(classifyKeyringError(err));
+    return false;
+  }
+}
+async function readKeyringAccount(account, diag) {
+  const fromOs = await readOsKeyringAccount(account, diag);
+  if (fromOs) return fromOs;
+  return readFileAccount(account);
+}
+async function writeKeyringAccount(account, key, diag) {
+  invalidateKeyringReadCache(account);
+  try {
+    if (await writeOsKeyringAccount(account, key, diag)) {
+      deleteFileAccount(account);
+      return true;
+    }
+    if (writeFileAccount(account, key)) {
+      diag?.("OS keyring unavailable \u2014 saved to secrets.json under RELAY_AI_HOME");
+      return true;
+    }
+    return false;
+  } finally {
+    invalidateKeyringReadCache(account);
+  }
+}
+async function deleteKeyringAccount(account, diag) {
+  invalidateKeyringReadCache(account);
+  try {
+    const osOk = await deleteOsKeyringAccount(account, diag);
+    const fileOk = deleteFileAccount(account);
+    return osOk || fileOk;
+  } finally {
+    invalidateKeyringReadCache(account);
+  }
+}
+async function readGlobalOpencodeCredential(diag) {
+  const fromEnv = resolveApiKey();
+  if (fromEnv) return fromEnv;
+  const global = await readKeyringAccount(GLOBAL_OPENCODE_KEYRING_ACCOUNT, diag);
+  if (global) return global;
+  const current = await readKeyringAccount(KEYRING_ACCOUNT, diag);
+  if (current) return current;
+  try {
+    const { Entry } = await import("@napi-rs/keyring");
+    return new Entry(LEGACY_KEYRING_SERVICE, LEGACY_KEYRING_ACCOUNT).getPassword() ?? null;
+  } catch (err) {
+    diag?.(classifyKeyringError(err));
+    return null;
+  }
+}
+async function readStoredProviderCredential(authRef, diag) {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== "keyring") return null;
+  return readProviderSecret(parsed.account, diag);
+}
+async function migrateGlobalOpencodeCredential(diag) {
+  const existing = await readKeyringAccount(GLOBAL_OPENCODE_KEYRING_ACCOUNT, diag);
+  if (existing) return true;
+  const legacy = await readKeyringAccount(KEYRING_ACCOUNT, diag) ?? await (async () => {
+    try {
+      const { Entry } = await import("@napi-rs/keyring");
+      return new Entry(LEGACY_KEYRING_SERVICE, LEGACY_KEYRING_ACCOUNT).getPassword() ?? null;
+    } catch (err) {
+      diag?.(classifyKeyringError(err));
+      return null;
+    }
+  })();
+  if (!legacy) return false;
+  const wrote = await writeKeyringAccount(GLOBAL_OPENCODE_KEYRING_ACCOUNT, legacy, diag);
+  if (!wrote) return false;
+  const verified = await readKeyringAccount(GLOBAL_OPENCODE_KEYRING_ACCOUNT, diag);
+  if (verified !== legacy) {
+    diag?.("credential migration verification failed \u2014 keeping legacy keychain entries");
+    return false;
+  }
+  if (await readKeyringAccount(KEYRING_ACCOUNT, diag)) {
+    await deleteKeyringAccount(KEYRING_ACCOUNT, diag);
+  }
+  try {
+    const { Entry } = await import("@napi-rs/keyring");
+    if (new Entry(LEGACY_KEYRING_SERVICE, LEGACY_KEYRING_ACCOUNT).getPassword()) {
+      new Entry(LEGACY_KEYRING_SERVICE, LEGACY_KEYRING_ACCOUNT).deletePassword();
+    }
+  } catch {
+  }
+  return true;
+}
+async function resolveProviderCredential(providerId, authRef, diag) {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed) return null;
+  if (parsed.kind === "keyring" && parsed.account === GLOBAL_OPENCODE_KEYRING_ACCOUNT) {
+    const relayOverride = await readProviderSecret(providerKeyringAccount("opencode"), diag);
+    if (relayOverride) return relayOverride;
+  }
+  const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
+  if (namespaced) return namespaced;
+  if (parsed.kind === "env") {
+    return readEnvCredential(parsed.varName);
+  }
+  if (parsed.account === GLOBAL_OPENCODE_KEYRING_ACCOUNT) {
+    return readGlobalOpencodeCredential(diag);
+  }
+  if (oauthProviderIdFromAccount(parsed.account)) invalidateKeyringReadCache(parsed.account);
+  return readProviderSecret(parsed.account, diag);
+}
+async function forceRefreshProviderCredential(providerId, authRef, diag) {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== "keyring") {
+    return resolveProviderCredential(providerId, authRef, diag);
+  }
+  if (parsed.account === GLOBAL_OPENCODE_KEYRING_ACCOUNT) {
+    const relayOverride = await readProviderSecret(providerKeyringAccount("opencode"), diag);
+    if (relayOverride) return relayOverride;
+  }
+  const namespaced = readEnvCredential(relayAiKeyEnvVar(providerId));
+  if (namespaced) return namespaced;
+  const oauthProviderId = oauthProviderIdFromAccount(parsed.account);
+  if (oauthProviderId) invalidateKeyringReadCache(parsed.account);
+  const raw = await readKeyringAccount(parsed.account, diag);
+  if (!raw || !oauthProviderId) return decodeProviderSecret(raw);
+  return refreshOAuthKeyringAccount(parsed.account, oauthProviderId, raw, diag, true);
+}
+async function readStoredOAuthCredential(authRef, diag) {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== "keyring" || !oauthProviderIdFromAccount(parsed.account)) return void 0;
+  return parseStoredOAuthCredential(await readKeyringAccount(parsed.account, diag)) ?? void 0;
+}
+async function resolveProviderOAuthAccountId(authRef, diag) {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== "keyring" || !oauthProviderIdFromAccount(parsed.account)) return void 0;
+  const raw = await readKeyringAccount(parsed.account, diag);
+  return parseStoredOAuthCredential(raw)?.accountId;
+}
+async function resolveProviderOAuthProviderData(authRef, diag) {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== "keyring" || !oauthProviderIdFromAccount(parsed.account)) return void 0;
+  const raw = await readKeyringAccount(parsed.account, diag);
+  return parseStoredOAuthCredential(raw)?.providerData;
+}
+async function enrichGithubCopilotOAuthProviderData(authRef, diag) {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== "keyring" || oauthProviderIdFromAccount(parsed.account) !== "github-copilot") {
+    return void 0;
+  }
+  const raw = await readKeyringAccount(parsed.account, diag);
+  const credential = parseStoredOAuthCredential(raw);
+  if (!credential?.refresh) return credential?.providerData;
+  try {
+    const summary = await fetchCopilotAccount(credential.refresh);
+    const providerData = { ...credential.providerData, copilot: summary };
+    await writeKeyringAccount(
+      parsed.account,
+      oauthCredentialToKeychainJson({ ...credential, providerData }),
+      diag
+    );
+    return providerData;
+  } catch (err) {
+    diag?.(`GitHub Copilot plan lookup unavailable \u2014 ${err instanceof Error ? err.message : String(err)}`);
+    return credential.providerData;
+  }
+}
+function decodeProviderSecret(raw) {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{")) return trimmed;
+  const oauth = parseStoredOAuthCredential(trimmed);
+  if (oauth) return oauth.access;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed.type === "oauth" && typeof parsed.access === "string") return parsed.access;
+    if (parsed.type === "wellknown" && typeof parsed.token === "string") return parsed.token;
+  } catch {
+  }
+  return trimmed;
+}
+async function refreshOAuthKeyringAccount(account, providerId, raw, diag, force = false) {
+  const existing = oauthRefreshInflight.get(account);
+  if (existing) return existing;
+  const work = (async () => {
+    const seen = parseStoredOAuthCredential(raw);
+    if (!seen || !force && !oauthCredentialShouldRefresh(seen, providerId)) {
+      return decodeProviderSecret(raw);
+    }
+    return withRefreshLock(account, async () => {
+      invalidateKeyringReadCache(account);
+      const cred = parseStoredOAuthCredential(await readKeyringAccount(account, diag)) ?? seen;
+      const replacedByOther = cred.access !== seen.access || cred.refresh !== seen.refresh;
+      if (replacedByOther && !oauthCredentialShouldRefresh(cred, providerId)) return cred.access;
+      if (!force && !oauthCredentialShouldRefresh(cred, providerId)) return cred.access;
+      try {
+        const refreshed = await refreshStoredOAuthCredential(providerId, cred);
+        const json = oauthCredentialToKeychainJson(refreshed);
+        await writeKeyringAccount(account, json, diag);
+        return refreshed.access;
+      } catch (err) {
+        diag?.(err instanceof Error ? err.message : String(err));
+        if (cred.access && cred.expires > Date.now()) return cred.access;
+        if (err instanceof OAuthRefreshRevokedError) {
+          throw new Error(`${err.message}. Sign in again: relay-ai providers auth ${providerId}`);
+        }
+        throw err;
+      }
+    });
+  })();
+  oauthRefreshInflight.set(account, work);
+  try {
+    return await work;
+  } finally {
+    oauthRefreshInflight.delete(account);
+  }
+}
+async function readProviderSecret(account, diag) {
+  const raw = await readKeyringAccount(account, diag);
+  if (!raw) return null;
+  const oauthProviderId = oauthProviderIdFromAccount(account);
+  if (oauthProviderId && raw.trim().startsWith("{")) {
+    return refreshOAuthKeyringAccount(account, oauthProviderId, raw, diag);
+  }
+  return decodeProviderSecret(raw);
+}
+async function saveProviderCredential(authRef, key, diag) {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== "keyring") return false;
+  return writeKeyringAccount(parsed.account, key, diag);
+}
+async function deleteProviderCredential(authRef, diag) {
+  const parsed = parseAuthRef(authRef);
+  if (!parsed || parsed.kind !== "keyring") return false;
+  return deleteKeyringAccount(parsed.account, diag);
+}
+async function readFromCredentialStore(diag) {
+  return readGlobalOpencodeCredential(diag);
+}
+async function saveToCredentialStore(key, diag) {
+  const wrote = await writeKeyringAccount(GLOBAL_OPENCODE_KEYRING_ACCOUNT, key, diag);
+  if (wrote) {
+    await deleteKeyringAccount(KEYRING_ACCOUNT, diag);
+  }
+  return wrote;
+}
+async function isSecretServiceAvailable() {
+  try {
+    const { Entry } = await import("@napi-rs/keyring");
+    new Entry(`${KEYRING_SERVICE}-probe`, "probe").getPassword();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export {
@@ -7862,6 +7429,12 @@ export {
   modelsDevModelKind,
   EFFORT_RANK,
   resolveModelReasoningMetadata,
+  poolEndpointRevision,
+  currentPoolReceipt,
+  parsePoolReceipt,
+  parseFreePool,
+  addFreePoolMember,
+  removeFreePoolMember,
   loadPreferences,
   savePreferences,
   getAppPathOverride,
@@ -7984,12 +7557,6 @@ export {
   deleteProviderCredential,
   readFromCredentialStore,
   saveToCredentialStore,
-  isSecretServiceAvailable,
-  validateCustomEndpointUrl,
-  normalizeToolSchemaForNpm,
-  formatUpstreamErrorTrace,
-  formatUpstreamError,
-  upstreamHttpStatus,
-  anthropicErrorType
+  isSecretServiceAvailable
 };
-//# sourceMappingURL=chunk-JSEUUZCZ.js.map
+//# sourceMappingURL=chunk-IBEBOL44.js.map

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockRequest, createMockResponse } from './helpers/ui-api-test-utils.js';
+import { handleUiApiRequest } from '../src/ui/api.js';
 
 const claude = vi.hoisted(() => ({ build: vi.fn(), exchange: vi.fn(), save: vi.fn() }));
 
@@ -21,7 +22,6 @@ vi.mock('../src/env.js', () => ({
 }));
 
 async function call(method: string, url: string, body?: unknown, opts?: { uiMode?: 'full' | 'server' }) {
-  const { handleUiApiRequest } = await import('../src/ui/api.js');
   const req = createMockRequest(method, url, body === undefined ? undefined : JSON.stringify(body));
   const response = createMockResponse();
   handleUiApiRequest(req, response.res, opts);

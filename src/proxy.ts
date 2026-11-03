@@ -1,3 +1,4 @@
+import { CLAUDE_POOL_MODEL_ID, type ClaudePoolRuntime } from './pool/claude-runtime.js';
 // src/proxy.ts — Local Anthropic-to-OpenAI translation proxy
 // Adapted from cucoleadan/opencode-cowork-proxy (MIT)
 import { createServer } from 'node:http';
@@ -178,11 +179,12 @@ export function startProxyCatalog(
   routes: ProxyRoute[],
   defaultAliasId: string,
   debug = false,
+  options: { pool?: { runtime: ClaudePoolRuntime; displayName: string; contextWindow: number } } = {},
 ): Promise<ProxyHandle> {
   const proxyToken = randomUUID();
   silenceSdkWarnings();
 
-  if (routes.length === 0) {
+  if (routes.length === 0 && !options.pool) {
     return Promise.reject(new Error('Proxy catalog requires at least one route'));
   }
 
@@ -201,11 +203,11 @@ export function startProxyCatalog(
   process.on('unhandledRejection', onRejection);
   process.on('uncaughtException', onException);
 
-  const modelsPayload = JSON.stringify(
-    formatAnthropicModelList(
-      routes.map(r => ({ id: r.aliasId, name: r.displayName, contextWindow: r.contextWindow })),
-    ),
-  );
+  const catalogEntries = routes.map(r => ({ id: r.aliasId, name: r.displayName, contextWindow: r.contextWindow }));
+  if (options.pool) catalogEntries.push({
+    id: CLAUDE_POOL_MODEL_ID, name: options.pool.displayName, contextWindow: options.pool.contextWindow,
+  });
+  const modelsPayload = JSON.stringify(formatAnthropicModelList(catalogEntries));
 
   const server = createServer(async (req, res) => {
     plog(() => `${req.method} ${req.url}`);
@@ -222,6 +224,11 @@ export function startProxyCatalog(
       const modelPathMatch = req.url.match(/^\/v1\/models\/([^?]+)/);
       if (modelPathMatch) {
         const id = decodeURIComponent(modelPathMatch[1]);
+        if (options.pool && id === CLAUDE_POOL_MODEL_ID) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(formatAnthropicModelEntry(id, options.pool.displayName, options.pool.contextWindow)));
+          return;
+        }
         const route = lookupRoute(byAlias, id);
         if (route) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -260,12 +267,49 @@ export function startProxyCatalog(
       const clientWantsStream = Boolean(anthropicBody.stream);
 
       // Per-request route resolution: look up the alias, fall back to default
+      if (options.pool && (originalModel === CLAUDE_POOL_MODEL_ID
+        || routeLookupIds(String(originalModel)).includes(CLAUDE_POOL_MODEL_ID))) {
+        const abort = new AbortController();
+        res.once('close', () => { if (!res.writableFinished) abort.abort(); });
+        try {
+          const sessionId = extractConversationId(req.headers, anthropicBody);
+          const result = await options.pool.runtime.serve(anthropicBody, chunk => {
+            if (res.destroyed) throw new Error('Client disconnected');
+            if (!res.headersSent) {
+              res.writeHead(200, {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                Connection: 'keep-alive',
+              });
+            }
+            res.write(chunk);
+          }, abort.signal, sessionId);
+          if (result.ok) {
+            if (result.message) sendJson(res, 200, result.message);
+            else res.end();
+          } else if (result.committed) {
+            res.end();
+          } else {
+            anthropicError(res, result.status, result.error.message);
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (!res.headersSent) anthropicError(res, 502, message);
+          else if (!res.writableEnded) res.end();
+        }
+        return;
+      }
+
       const correlatedRoute = correlatedSubagent
         ? routes.find(candidate => (
           (candidate.gatewayAliasId ?? candidate.aliasId) === correlatedSubagent.modelId
         ))
         : undefined;
       const route = correlatedRoute ?? lookupRoute(byAlias, originalModel) ?? defaultRoute;
+      if (!route) {
+        anthropicError(res, 404, 'Model not found');
+        return;
+      }
       const apiKey = route.apiKey;
       const upstreamUrl = route.upstreamUrl;
 

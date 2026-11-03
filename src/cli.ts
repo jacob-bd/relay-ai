@@ -13,6 +13,13 @@ import { resolveOrCollectApiKey } from './key-setup.js';
 import { needsFirstRunSetup, runFirstRunWizard } from './first-run.js';
 import { CODEX_SUBAGENT_MODEL_CAP, MAX_MODEL_CATALOG } from './constants.js';
 import { startProxy, startProxyCatalog } from './proxy.js';
+import { parseFreePool } from './pool/membership.js';
+import { CLAUDE_POOL_MODEL_ID, ClaudePoolRuntime } from './pool/claude-runtime.js';
+import { prepareClaudePoolRoutes } from './pool/claude-prepare.js';
+import { PoolHealthStore } from './pool/health.js';
+import { poolCatalogEntry } from './pool/catalog.js';
+import { acquireClaudePoolSessionLock, getClaudePoolSessionLockPath } from './pool/claude-session.js';
+
 import type { ProxyHandle, ProxyRoute } from './proxy.js';
 import {
   buildCatalogRoutes,
@@ -58,7 +65,7 @@ import { generateAiDoc, installAiDoc, printAiInstallResult } from './ai-doc.js';
 import { launchClaudeWithHttpProxy } from './http-proxy/launch.js';
 import { supportsClaudeTransparentMode } from './http-proxy/routes.js';
 import { pickerRefresh } from './picker-refresh.js';
-const STARTER_CLAUDE_FLAGS = new Set(['--dry-run', '--setup', '--trace', '--http-proxy', '--with-native', '--relay-only', '--help', '-h', '--version', '-v']);
+const STARTER_CLAUDE_FLAGS = new Set(['--dry-run', '--setup', '--trace', '--http-proxy', '--pool', '--with-native', '--relay-only', '--help', '-h', '--version', '-v']);
 const RELAY_LAUNCH_FLAGS = new Set(['--provider', '--model']);
 
 function parseRelayLaunchFlag(
@@ -229,6 +236,13 @@ export function parseArgs(args: string[]): ParsedArgs {
     return parsed;
   }
 
+  if (first === 'pool') {
+    const parsed = emptyParsed('pool');
+    parsed.showHelp = rest.includes('--help') || rest.includes('-h');
+    parsed.claudeArgs = rest;
+    return parsed;
+  }
+
   if (first === 'models' || first === 'favorites') {
     const parsed = emptyParsed('models');
     parsed.modelCatalogScope = 'global';
@@ -276,6 +290,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (arg === '--with-native') {
         if (parsed.codexLaunchMode === 'relay-only') parsed.error = '--with-native and --relay-only cannot be used together';
         parsed.codexLaunchMode = 'mixed';
+        continue;
+      }
+      if (arg === '--pool') {
+        parsed.error = '--pool is only supported by relay-ai codex';
         continue;
       }
       if (arg === '--relay-only') {
@@ -335,6 +353,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (arg === '--relay-only') {
         if (parsed.codexLaunchMode === 'mixed') parsed.error = '--with-native and --relay-only cannot be used together';
         parsed.codexLaunchMode = 'relay-only';
+        continue;
+      }
+      if (arg === '--pool') {
+        parsed.codexPool = true;
         continue;
       }
       if (arg === '--help' || arg === '-h') {
@@ -501,6 +523,7 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (parsed.codexLaunchMode && parsed.codexLaunchMode !== mode) parsed.error = '--with-native and --relay-only cannot be used together';
       parsed.codexLaunchMode = mode;
     }
+    if (arg === '--pool') parsed.claudePool = true;
     if (arg === '--help' || arg === '-h') parsed.showHelp = true;
     if (arg === '--version' || arg === '-v') parsed.showVersion = true;
   }
@@ -545,6 +568,7 @@ ${pc.bold('Root options:')}
 ${pc.bold('Commands:')}
   claude      Launch Claude Code — pick a provider from your registry
   models      Manage favorite models for mid-session /model switching (max ${MAX_MODEL_CATALOG})
+  pool        Manage shared free-model pool membership (experimental)
   favorites   Alias for models
   subagents   Manage the independent Codex SubAgent model catalog (starts empty)
   providers   Add, import, and manage your AI providers
@@ -606,6 +630,7 @@ ${pc.bold('Options:')}
   --http-proxy Keep your normal Anthropic login and add selected/favorite Relay models
   --with-native  Native + Relay models (skips the first question)
   --relay-only   Relay models only (skips the first question)
+  --pool       Launch the shared free-model pool (requires relay-ai pool verify)
   --help       Show this command help
   --version    Show version
 
@@ -1217,6 +1242,90 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     return 1;
   }
 
+  if (parsed.claudePool) {
+    const pool = parseFreePool(loadPreferences().freePool);
+    if (pool.members.length === 0) {
+      console.error(pc.red('No free pool members. Add one with: relay-ai pool add <provider-account> <model>'));
+      return 1;
+    }
+    const fresh = pool.receipts.filter(receipt => receipt.verifiedAt <= Date.now() && receipt.expiresAt > Date.now());
+    if (fresh.length === 0) {
+      console.error(pc.red('No verified free pool members. Run: relay-ai pool verify'));
+      return 1;
+    }
+    const entry = poolCatalogEntry(pool, pool.receipts, 'claude');
+    if (!entry) {
+      console.error(pc.red('No verified free pool member is currently Claude-compatible. Run: relay-ai pool verify'));
+      return 1;
+    }
+    if (dryRun) {
+      console.log('Free pool mode: ' + pool.members.length + ' member(s), ' + fresh.length + ' verified receipt(s).');
+      console.log('Would launch Claude Code against ' + entry.id + ' with a ' + entry.context_window + '-token window.');
+      return 0;
+    }
+    let poolSession: ReturnType<typeof acquireClaudePoolSessionLock>;
+    try {
+      poolSession = acquireClaudePoolSessionLock();
+    } catch (err) {
+      console.error(pc.red('Could not reserve this Claude pool session: ' + (err instanceof Error ? err.message : String(err))));
+      return 1;
+    }
+    if (!poolSession.ok) {
+      if (poolSession.reason === 'unreadable') {
+        console.error(pc.red('The Claude pool session lock is unreadable. Remove ' + getClaudePoolSessionLockPath() + ' and retry.'));
+      } else {
+        console.error(pc.yellow('Another relay-ai claude --pool session is running (pid ' + poolSession.pid + ').'));
+      }
+      return 1;
+    }
+    try {
+      let providers: Awaited<ReturnType<typeof fetchProviderCatalog>>;
+      try {
+        providers = await fetchProviderCatalog();
+      } catch (err) {
+        console.error(pc.red(String(err instanceof Error ? err.message : err)));
+        return 1;
+      }
+      const health = new PoolHealthStore();
+      const runtime = new ClaudePoolRuntime(pool, (body, signal, sessionId) => prepareClaudePoolRoutes({
+        pool, providers, receipts: pool.receipts, body, signal, sessionId, health,
+      }));
+      let handle: ProxyHandle;
+      try {
+        handle = await startProxyCatalog([], CLAUDE_POOL_MODEL_ID, trace, {
+          pool: { runtime, displayName: entry.display_name, contextWindow: entry.context_window },
+        });
+      } catch (err) {
+        p.log.error('Failed to start free pool proxy: ' + (err instanceof Error ? err.message : String(err)));
+        return 1;
+      }
+      try {
+        const childEnv = buildChildEnv(
+          'http://127.0.0.1:' + handle.port, CLAUDE_POOL_MODEL_ID, handle.token,
+          handle.port, entry.context_window, true,
+        );
+        const debugLogPath = prepareClaudeTraceLog();
+        const traceArgs = trace ? ['--debug-file', debugLogPath] : [];
+        if (trace) p.log.info('Debug log: ' + debugLogPath);
+        if (!agentStdout) {
+          p.log.info('Free pool mode - ' + pool.members.length + ' member(s), ' + fresh.length + ' verified receipt(s).');
+          p.log.info('Proxy on port ' + handle.port);
+        }
+        const exitCode = await launchClaude(
+          childEnv,
+          claudeCodeClientModelId(CLAUDE_POOL_MODEL_ID, entry.context_window),
+          [...traceArgs, ...claudeArgs],
+        );
+        if (trace) printTraceLog(debugLogPath);
+        return exitCode;
+      } finally {
+        handle.close();
+      }
+    } finally {
+      poolSession.release();
+    }
+  }
+
   const prefs = dryRun ? {} as ReturnType<typeof loadPreferences> : loadPreferences();
   const conflicts = detectConflicts();
 
@@ -1793,6 +1902,12 @@ Options:
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
 
+  if (parsed.command === 'pool') {
+    const { poolHelpText, runPoolCommand } = await import('./pool/command.js');
+    if (parsed.showHelp) { printHelp(poolHelpText); return 0; }
+    return await runPoolCommand(parsed.claudeArgs);
+  }
+
   if (parsed.command === 'models') {
     if (parsed.showVersion) {
       console.log(VERSION);
@@ -1867,6 +1982,7 @@ Options:
       launchModel: parsed.launchModel,
       vertex: parsed.vertex,
       codexLaunchMode: parsed.codexLaunchMode,
+      pool: parsed.codexPool,
     });
   }
 
