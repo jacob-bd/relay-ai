@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Codex usage limits terminate the request.** Relay now returns a failed Responses event or HTTP 429 when an upstream reports a usage limit, rather than rendering the error as a successful assistant message. Codex SDK calls, including compaction, make one upstream attempt per client request; automatic SDK retries are disabled. A client can still issue a separate retry.
+
 ## [0.19.0] - 2026-11-03
 
 ### Added

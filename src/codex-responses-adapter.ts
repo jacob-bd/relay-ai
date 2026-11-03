@@ -1197,22 +1197,18 @@ export async function writeResponsesStream(
           errorMessage: msg,
           errorStatus: (part.error as { statusCode?: number } | undefined)?.statusCode,
         });
-        if (is429) {
-          writeResponsesRateLimitStream(modelId, msg, write);
-        } else {
-          emit('response.failed', {
-            type: 'response.failed',
-            response: {
-              id: responseId,
-              object: 'response',
-              model: modelId,
-              created_at: createdAt,
-              status: 'failed',
-              output: [],
-              error: { message: msg, type: 'api_error' },
-            },
-          });
-        }
+        emit('response.failed', {
+          type: 'response.failed',
+          response: {
+            id: responseId,
+            object: 'response',
+            model: modelId,
+            created_at: createdAt,
+            status: 'failed',
+            output: [],
+            error: { message: msg, type: is429 ? 'rate_limit_error' : 'api_error', ...(is429 ? { code: '429' } : {}) },
+          },
+        });
         return;
       }
 
@@ -1453,7 +1449,7 @@ export async function streamResponsesResponse(
   return streamActivity.run(resetLiveness, async () => {
     try {
       const { toolContext, ...sdkParams } = params;
-      const result = streamText({ model, ...sdkParams, abortSignal: abort.signal, onError: () => {} } as Parameters<typeof streamText>[0]);
+      const result = streamText({ model, ...sdkParams, maxRetries: 0, abortSignal: abort.signal, onError: () => {} } as Parameters<typeof streamText>[0]);
       // Prevent unhandled promise rejections on stream properties:
       Promise.resolve(result.text).catch(() => {});
       Promise.resolve(result.toolCalls).catch(() => {});
@@ -1500,7 +1496,7 @@ export async function generateResponsesResponse(
   modelId: string,
 ): Promise<Record<string, unknown>> {
   const { toolContext, ...sdkParams } = params;
-  const r = await generateText({ model, ...sdkParams } as Parameters<typeof generateText>[0]);
+  const r = await generateText({ model, ...sdkParams, maxRetries: 0 } as Parameters<typeof generateText>[0]);
   const incompleteReason = incompleteReasonForFinish(r.finishReason);
   const createdAt = Math.floor(Date.now() / 1000);
   const responseId = newResponseId();
@@ -1643,7 +1639,7 @@ export async function generateCompactionResponse(
 ): Promise<Record<string, unknown>> {
   const { toolContext: _toolContext, ...sdkParams } = params;
   void _toolContext;
-  const r = await generateText({ model, ...sdkParams } as Parameters<typeof generateText>[0]);
+  const r = await generateText({ model, ...sdkParams, maxRetries: 0 } as Parameters<typeof generateText>[0]);
   return buildCompactionResponseBody((r.text ?? '').trim() || '(no summary produced)', modelId);
 }
 
@@ -1656,7 +1652,7 @@ export async function streamCompactionResponse(
 ): Promise<void> {
   const { toolContext: _toolContext, ...sdkParams } = params;
   void _toolContext;
-  const r = await generateText({ model, ...sdkParams } as Parameters<typeof generateText>[0]);
+  const r = await generateText({ model, ...sdkParams, maxRetries: 0 } as Parameters<typeof generateText>[0]);
   writeCompactionSse((r.text ?? '').trim() || '(no summary produced)', modelId, write);
 }
 
@@ -1681,73 +1677,4 @@ export function writeResponsesErrorStream(modelId: string, message: string, writ
     type: 'response.failed',
     response: responsesErrorBody(modelId, message, statusCode),
   }));
-}
-
-export function writeResponsesRateLimitStream(modelId: string, message: string, write: WriteFn): void {
-  const responseId = newResponseId();
-  const itemId = newItemId('msg');
-  const createdAt = Math.floor(Date.now() / 1000);
-  const content = [{ type: 'output_text', text: message }];
-  write(sseChunk('response.created', {
-    type: 'response.created',
-    response: {
-      id: responseId,
-      object: 'response',
-      model: modelId,
-      created_at: createdAt,
-      status: 'in_progress',
-      output: [],
-    },
-  }));
-  write(sseChunk('response.output_item.added', {
-    type: 'response.output_item.added',
-    output_index: 0,
-    item: { id: itemId, type: 'message', role: 'assistant', status: 'in_progress', content: [] },
-  }));
-  write(sseChunk('response.content_part.added', {
-    type: 'response.content_part.added',
-    item_id: itemId, output_index: 0, content_index: 0,
-    part: { type: 'output_text', text: '' },
-  }));
-  write(sseChunk('response.output_text.delta', {
-    type: 'response.output_text.delta',
-    item_id: itemId, output_index: 0, content_index: 0,
-    delta: message,
-  }));
-  write(sseChunk('response.output_text.done', {
-    type: 'response.output_text.done',
-    item_id: itemId, output_index: 0, content_index: 0,
-    text: message,
-  }));
-  write(sseChunk('response.content_part.done', {
-    type: 'response.content_part.done',
-    item_id: itemId, output_index: 0, content_index: 0,
-    part: { type: 'output_text', text: message },
-  }));
-  write(sseChunk('response.output_item.done', {
-    type: 'response.output_item.done',
-    output_index: 0,
-    item: { id: itemId, type: 'message', role: 'assistant', status: 'completed', content },
-  }));
-  write(sseChunk('response.completed', {
-    type: 'response.completed',
-    response: {
-      id: responseId, object: 'response', model: modelId, created_at: createdAt,
-      status: 'completed',
-      output: [{ id: itemId, type: 'message', role: 'assistant', status: 'completed', content }],
-    },
-  }));
-}
-
-export function responsesRateLimitBody(modelId: string, message: string): Record<string, unknown> {
-  const itemId = newItemId('msg');
-  const content = [{ type: 'output_text', text: message }];
-  return {
-    id: newResponseId(),
-    object: 'response',
-    model: modelId,
-    created_at: Math.floor(Date.now() / 1000),
-    status: 'completed',
-    output: [{ id: itemId, type: 'message', role: 'assistant', status: 'completed', content }],
-  };
 }

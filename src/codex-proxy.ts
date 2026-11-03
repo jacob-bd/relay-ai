@@ -19,8 +19,6 @@ import {
   streamResponsesResponse,
   generateResponsesResponse,
   writeResponsesErrorStream,
-  writeResponsesRateLimitStream,
-  responsesRateLimitBody,
   appendCompactionInstruction,
   streamCompactionResponse,
   generateCompactionResponse,
@@ -965,11 +963,7 @@ export async function startCodexProxy(
                 upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId, outcome: 'error', status,
               });
               if (debug) log(`sdk error: ${route.modelId}: ${msg}`);
-              if (status === 429) {
-                writeResponsesRateLimitStream(modelId, msg, write);
-              } else {
-                writeResponsesErrorStream(modelId, msg, write, status);
-              }
+              writeResponsesErrorStream(modelId, msg, write, status);
             }
             res.end();
           } else {
@@ -1003,11 +997,13 @@ export async function startCodexProxy(
                 upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId, outcome: 'error', status,
               });
               if (debug) log(`sdk error: ${route.modelId}: ${msg}`);
-              if (status === 429) {
-                sendJson(res, 200, responsesRateLimitBody(modelId, msg));
-              } else {
-                sendJson(res, status, { error: { message: msg, type: 'api_error' } });
-              }
+              sendJson(res, status, {
+                error: {
+                  message: msg,
+                  type: status === 429 ? 'rate_limit_error' : 'api_error',
+                  code: String(status),
+                },
+              });
             }
           }
         } catch (err) {
@@ -1616,11 +1612,7 @@ export async function startCodexProxy(
               upstreamModel: route.auditUpstreamModelId ?? route.upstreamModelId, outcome: 'error', status,
             });
             if (debug) log(`WS sdk error: ${route.modelId}: ${msg}`);
-            if (status === 429) {
-              writeResponsesRateLimitStream(modelId, msg, sendWsEvent);
-            } else {
-              writeResponsesErrorStream(modelId, msg, sendWsEvent, status);
-            }
+            writeResponsesErrorStream(modelId, msg, sendWsEvent, status);
           }
           externalActive = false;
           })();
