@@ -26,7 +26,7 @@ import {
   readBody,
   recordPoolActivity,
   sendJson
-} from "./chunk-3JAGKARJ.js";
+} from "./chunk-OTMOCQB6.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -2145,6 +2145,11 @@ async function* runPoolAttempts(routes, signal, limits, retryable, onAttempt = (
 }
 
 // src/pool/dispatch.ts
+var FORCE_FAIL_ENV = "RELAY_POOL_FORCE_FAIL";
+var SIMULATED_FAILURE_MESSAGE = "Simulated failure (RELAY_POOL_FORCE_FAIL)";
+function forcedFailures(env = process.env) {
+  return new Set((env[FORCE_FAIL_ENV] ?? "").split(",").map((item) => item.trim()).filter(Boolean));
+}
 async function* dispatchFreePool(pool, routes, request, policy) {
   const candidates = evaluatePoolMembers(pool, routes, { ...request, now: Date.now() });
   const eligible = candidates.filter((candidate) => !candidate.reason && candidate.route);
@@ -2154,7 +2159,11 @@ async function* dispatchFreePool(pool, routes, request, policy) {
   const attempts = eligible.map((candidate) => {
     const route = routes.find((item) => candidate.route && poolRouteIdentity(item) === poolRouteIdentity(candidate.route));
     if (!route) throw new Error("Pool route changed during admission");
-    return { id: poolRouteIdentity(route), open: route.open };
+    const forced = forcedFailures().has(route.member.providerId + "/" + route.member.modelId);
+    const open2 = forced ? async () => {
+      throw Object.assign(new Error(SIMULATED_FAILURE_MESSAGE), { statusCode: 429 });
+    } : route.open;
+    return { id: poolRouteIdentity(route), open: open2 };
   });
   const session = policy.sessions?.begin(request.conversationScope, attempts);
   let activeRoute;
@@ -8335,4 +8344,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-RF7K5XMO.js.map
+//# sourceMappingURL=chunk-WEP3GBSA.js.map

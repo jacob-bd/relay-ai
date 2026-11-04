@@ -55,6 +55,7 @@ function poolRouteMember(routeId) {
 }
 function describePoolFailure(error) {
   const raw = error instanceof Error ? error.message : "";
+  if (raw.includes("Simulated failure (RELAY_POOL_FORCE_FAIL)")) return "simulated failure (test switch)";
   const carried = error;
   const explicit = [carried?.statusCode, carried?.status, carried?.response?.status].find((value) => typeof value === "number");
   const status = explicit ?? (/\b(4\d\d|5\d\d)\b/.test(raw) ? upstreamHttpStatus(error, raw) : void 0);
@@ -1395,4 +1396,4 @@ export {
   poolDiagnostic,
   verifyConfiguredPoolMember
 };
-//# sourceMappingURL=chunk-3JAGKARJ.js.map
+//# sourceMappingURL=chunk-OTMOCQB6.js.map

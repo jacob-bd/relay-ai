@@ -29,7 +29,7 @@ import {
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode
-} from "./chunk-RF7K5XMO.js";
+} from "./chunk-WEP3GBSA.js";
 import "./chunk-E7FSS5M2.js";
 import "./chunk-GGECJSV6.js";
 import "./chunk-UR4QFFSQ.js";
@@ -37,14 +37,14 @@ import {
   handlePoolApi,
   invalidateUiPoolMember,
   verifyUiPoolMember
-} from "./chunk-ZRNIEZ65.js";
+} from "./chunk-SUBSHSQS.js";
 import {
   fetchProviderCatalog,
   providersForCodexSubagents,
   providersForTarget,
   readBody,
   sendJson
-} from "./chunk-3JAGKARJ.js";
+} from "./chunk-OTMOCQB6.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   addCustomEndpointProvider,
@@ -2329,4 +2329,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-ITFTVDIG.js.map
+//# sourceMappingURL=ui-command-5X6R3WDP.js.map

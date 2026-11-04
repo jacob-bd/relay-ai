@@ -68,3 +68,16 @@ models you trust:
 - [Free-LLM](https://github.com/nejib1/Free-LLM)
 - [FreeLLMAPI](https://github.com/tashfeenahmed/freellmapi), a router that sells a paid catalog;
   Relay borrows its routing ideas only, not its provider or quota claims.
+
+## Seeing which model answered, and checking failover
+
+- `relay-ai pool log` lists recent requests (which member answered, which failed first and why);
+  `relay-ai pool log -f` keeps printing new ones. The Free Pool page shows the same under **Recent
+  activity**, and `relay claude --trace` adds the same lines to the proxy debug log.
+- The pool only moves to the next member when one fails, and a conversation stays with the member
+  that last answered it. Seeing the same model reply across a long session is therefore normal.
+- To prove failover works with your real members, force one to fail. Start the tool with
+  `RELAY_POOL_FORCE_FAIL="kilo/reflection/beam-free"` (comma-separate several `provider/model` ids),
+  send a message, and watch `relay-ai pool log -f`: the forced member shows as a failed
+  "simulated failure (test switch)" and the next member answers. Nothing is sent to the forced
+  member and no cooldown is saved, so removing the variable restores normal behavior immediately.

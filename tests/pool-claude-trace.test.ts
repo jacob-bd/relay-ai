@@ -52,3 +52,28 @@ describe('pool attempts in the trace log and activity log', () => {
     expect(activity.map(e => `${e.event}:${e.providerId}`)).toEqual(['served:nvidia', 'failed:kilo']);
   });
 });
+
+describe('RELAY_POOL_FORCE_FAIL test switch', () => {
+  it('fails the named member without calling it and lets the next member answer', async () => {
+    process.env['RELAY_POOL_FORCE_FAIL'] = 'nvidia/second';
+    let calls = 0;
+    const counting: DispatchRoute = { ...working, open: async (...args) => { calls++; return working.open(...args); } };
+    const pool = { members: [counting.member, failing.member], effort: 'auto' as const, receipts: [] };
+    const okFirst: DispatchRoute = { ...base, member: { providerId: 'kilo', modelId: 'fine' },
+      async open() { return (async function* () {
+        yield { type: 'text-start', id: 't' }; yield { type: 'text-delta', id: 't', text: 'FALLBACK_OK' };
+        yield { type: 'text-end', id: 't' }; yield { type: 'finish', finishReason: 'stop' };
+      })(); } };
+    const runtime = new ClaudePoolRuntime({ ...pool, members: [counting.member, okFirst.member] }, async () => [counting, okFirst]);
+    const out: string[] = [];
+    const result = await runtime.serve({ model: CLAUDE_POOL_MODEL_ID, max_tokens: 64, stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      chunk => { out.push(chunk); }, new AbortController().signal);
+    delete process.env['RELAY_POOL_FORCE_FAIL'];
+    expect(result.ok).toBe(true);
+    expect(out.join('')).toContain('FALLBACK_OK');
+    expect(calls).toBe(0);
+    const [served, failed] = readPoolActivity(2);
+    expect(served).toMatchObject({ event: 'served', providerId: 'kilo' });
+    expect(failed).toMatchObject({ event: 'failed', providerId: 'nvidia', reason: 'simulated failure (test switch)' });
+  });
+});
