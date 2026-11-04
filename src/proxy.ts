@@ -283,7 +283,7 @@ export function startProxyCatalog(
               });
             }
             res.write(chunk);
-          }, abort.signal, sessionId);
+          }, abort.signal, sessionId, line => plog(() => line));
           if (result.ok) {
             if (result.message) sendJson(res, 200, result.message);
             else res.end();
@@ -542,7 +542,7 @@ export function startProxyCatalog(
         reject(new Error('Failed to bind proxy'));
         return;
       }
-      plog(() => `started on port ${addr.port}, catalog=${routes.length} model(s), default=${defaultRoute.aliasId}`);
+      plog(() => `started on port ${addr.port}, catalog=${routes.length} model(s), default=${defaultRoute?.aliasId ?? defaultAliasId}`);
       resolve({
         port: addr.port,
         token: proxyToken,

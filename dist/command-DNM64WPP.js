@@ -3,13 +3,15 @@ import {
   invalidateUiPoolMember,
   poolView,
   verifyUiPoolMember
-} from "./chunk-HACXJZIB.js";
+} from "./chunk-ZRNIEZ65.js";
 import {
   fetchProviderCatalog,
+  followPoolActivity,
+  formatPoolActivityLine,
   readPoolActivity,
   resolveLocalProviderApiKey,
   verifyPoolMember
-} from "./chunk-JSJV4YBZ.js";
+} from "./chunk-3JAGKARJ.js";
 import {
   probePoolEffort,
   probePoolModel,
@@ -37,7 +39,7 @@ import pc from "picocolors";
 var poolHelpText = [
   "Usage: relay-ai pool <command>   (experimental: tested with Claude Code first)",
   "  list                         Saved membership and receipts (no tests)",
-  "  log [count]                  Which pool model answered recent requests, and which failed first",
+  "  log [count] [-f|--follow]    Which pool model answered recent requests, and which failed first; -f keeps printing new ones (Ctrl+C to stop)",
   "  candidates [--search text] [--min-context tokens]  Free models, providers and total (no tests)",
   "  status                       Readiness, context, provider names and effort settings (no tests)",
   "  enable | disable             Add/remove Relay Free Pool in launched tool catalogs",
@@ -145,17 +147,27 @@ async function runPoolCommand(args) {
       console.log(JSON.stringify({ ...result, ...readiness ? { pool: readiness } : {} }));
       return result.ok ? 0 : 1;
     }
-    if (action === "log" && args.length <= 2) {
-      const count = first === void 0 ? 20 : Math.min(200, Math.max(1, Number(first) || 20));
+    if (action === "log" && args.length <= 3) {
+      const rest = args.slice(1);
+      const follow = rest.includes("-f") || rest.includes("--follow");
+      const countArg = rest.find((arg) => !arg.startsWith("-"));
+      if (rest.some((arg) => arg.startsWith("-") && arg !== "-f" && arg !== "--follow")) throw new Error(poolHelpText);
+      const count = countArg === void 0 ? 20 : Math.min(200, Math.max(1, Number(countArg) || 20));
       const entries = readPoolActivity(count);
-      if (entries.length === 0) {
-        console.log("No pool requests recorded yet.");
+      if (!follow) {
+        if (entries.length === 0) {
+          console.log("No pool requests recorded yet.");
+          return 0;
+        }
+        for (const e of entries) console.log(formatPoolActivityLine(e));
         return 0;
       }
-      for (const e of entries) {
-        const secs = typeof e.ms === "number" ? " " + (e.ms / 1e3).toFixed(1) + "s" : "";
-        console.log(`${e.at}  ${e.event === "served" ? "answered" : "FAILED  "}  ${e.providerId}/${e.modelId}${e.reason ? "  " + e.reason : ""}${secs}`);
-      }
+      for (const e of [...entries].reverse()) console.log(formatPoolActivityLine(e));
+      console.log(pc.dim("Watching for new pool requests. Press Ctrl+C to stop."));
+      const controller = new AbortController();
+      process.once("SIGINT", () => controller.abort());
+      process.once("SIGTERM", () => controller.abort());
+      await followPoolActivity((e) => console.log(formatPoolActivityLine(e)), controller.signal);
       return 0;
     }
     if (action === "list" && args.length <= 1) {
@@ -255,4 +267,4 @@ export {
   runPoolCommand,
   validPoolReceipts
 };
-//# sourceMappingURL=command-QHVCNC3S.js.map
+//# sourceMappingURL=command-DNM64WPP.js.map

@@ -26,7 +26,7 @@ import {
   readBody,
   recordPoolActivity,
   sendJson
-} from "./chunk-JSJV4YBZ.js";
+} from "./chunk-3JAGKARJ.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -2220,8 +2220,11 @@ async function serveClaudePool(options) {
   let attemptStarted = Date.now();
   const logServed = () => {
     const member = attemptedId ? poolRouteMember(attemptedId) : void 0;
-    if (member) recordPoolActivity({ target: "claude", event: "served", ...member, ms: Date.now() - attemptStarted });
+    if (!member) return;
+    recordPoolActivity({ target: "claude", event: "served", ...member, ms: Date.now() - attemptStarted });
+    options.trace?.(`pool answered: ${member.providerId}/${member.modelId} in ${((Date.now() - attemptStarted) / 1e3).toFixed(1)}s`);
   };
+  options.trace?.(`pool request: ${routes.length} eligible member(s): ${routes.map((route) => `${route.member.providerId}/${route.member.modelId}`).join(", ") || "none"}`);
   const parts = dispatchFreePool(pool, routes, {
     target: "claude",
     tools: true,
@@ -2233,10 +2236,15 @@ async function serveClaudePool(options) {
     onAttempt: (id) => {
       attemptedId = id;
       attemptStarted = Date.now();
+      const member = poolRouteMember(id);
+      if (member) options.trace?.(`pool attempt: ${member.providerId}/${member.modelId}`);
     },
     onFailure: (id, error) => {
       const member = poolRouteMember(id);
-      if (member) recordPoolActivity({ target: "claude", event: "failed", ...member, reason: describePoolFailure(error), ms: Date.now() - attemptStarted });
+      if (!member) return;
+      const reason = describePoolFailure(error);
+      recordPoolActivity({ target: "claude", event: "failed", ...member, reason, ms: Date.now() - attemptStarted });
+      options.trace?.(`pool failed: ${member.providerId}/${member.modelId} (${reason}) after ${((Date.now() - attemptStarted) / 1e3).toFixed(1)}s`);
     }
   });
   try {
@@ -2293,7 +2301,7 @@ var ClaudePoolRuntime = class {
   pool;
   prepare;
   limits;
-  async serve(body, write, signal, sessionId) {
+  async serve(body, write, signal, sessionId, trace) {
     const routes = await this.prepare(body, signal, sessionId);
     const effort = "auto";
     return serveClaudePool({
@@ -2307,6 +2315,7 @@ var ClaudePoolRuntime = class {
       },
       limits: this.limits,
       write,
+      trace,
       retryable: retryPoolFailure
     });
   }
@@ -3257,7 +3266,7 @@ function startProxyCatalog(routes, defaultAliasId, debug = false, options = {}) 
               });
             }
             res.write(chunk);
-          }, abort.signal, sessionId);
+          }, abort.signal, sessionId, (line) => plog(() => line));
           if (result.ok) {
             if (result.message) sendJson(res, 200, result.message);
             else res.end();
@@ -3495,7 +3504,7 @@ data: ${JSON.stringify({ type: "error", error: { type: errorType, message } })}
         reject(new Error("Failed to bind proxy"));
         return;
       }
-      plog(() => `started on port ${addr.port}, catalog=${routes.length} model(s), default=${defaultRoute.aliasId}`);
+      plog(() => `started on port ${addr.port}, catalog=${routes.length} model(s), default=${defaultRoute?.aliasId ?? defaultAliasId}`);
       resolve({
         port: addr.port,
         token: proxyToken,
@@ -8326,4 +8335,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-SSQLRDIO.js.map
+//# sourceMappingURL=chunk-RF7K5XMO.js.map

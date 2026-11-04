@@ -25,3 +25,21 @@ describe('pool activity log', () => {
     expect(describePoolFailure(new Error('Bearer sk-12345678 exploded'))).toBe('failed');
   });
 });
+
+describe('following the log', () => {
+  beforeEach(() => { process.env['RELAY_AI_HOME'] = mkdtempSync(join(tmpdir(), 'relay-activity-follow-')); });
+  it('delivers new entries as they are appended and ignores older ones', async () => {
+    const { followPoolActivity } = await import('../src/pool/activity.js');
+    recordPoolActivity({ target: 'claude', event: 'served', providerId: 'old', modelId: 'old' });
+    const seen: string[] = [];
+    const controller = new AbortController();
+    const done = followPoolActivity(e => seen.push(e.modelId), controller.signal, 20);
+    await new Promise(r => setTimeout(r, 60));
+    recordPoolActivity({ target: 'claude', event: 'failed', providerId: 'kilo', modelId: 'one', reason: 'timeout' });
+    recordPoolActivity({ target: 'claude', event: 'served', providerId: 'nvidia', modelId: 'two' });
+    await new Promise(r => setTimeout(r, 120));
+    controller.abort();
+    await done;
+    expect(seen).toEqual(['one', 'two']);
+  });
+});

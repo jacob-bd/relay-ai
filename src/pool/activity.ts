@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { upstreamHttpStatus } from '../codex/upstream-error.js';
 import { getLogsPath } from '../paths.js';
@@ -80,5 +80,57 @@ export function readPoolActivity(limit = 50): PoolActivity[] {
     return entries.slice(-limit).reverse();
   } catch {
     return [];
+  }
+}
+
+/** One terminal line: local time, outcome, member, short reason, duration. */
+export function formatPoolActivityLine(e: PoolActivity): string {
+  const when = new Date(e.at);
+  const time = Number.isNaN(when.getTime()) ? e.at
+    : `${when.toLocaleDateString()} ${when.toLocaleTimeString([], { hour12: false })}`;
+  const secs = typeof e.ms === 'number' ? ` ${(e.ms / 1000).toFixed(1)}s` : '';
+  return `${time}  ${e.event === 'served' ? 'answered' : 'FAILED  '}  ${e.providerId}/${e.modelId}${e.reason ? '  ' + e.reason : ''}${secs}`;
+}
+
+function parseActivityLine(line: string): PoolActivity | undefined {
+  try {
+    const e = JSON.parse(line) as PoolActivity;
+    return e && typeof e.at === 'string' && typeof e.providerId === 'string' && typeof e.modelId === 'string'
+      && (e.event === 'served' || e.event === 'failed') ? e : undefined;
+  } catch { return undefined; }
+}
+
+/**
+ * Calls onEntry for every line appended from now on, until the signal aborts. The log is trimmed in
+ * place when it grows past its cap, so a shrinking file restarts the read from the top.
+ */
+export async function followPoolActivity(onEntry: (entry: PoolActivity) => void, signal: AbortSignal, pollMs = 400): Promise<void> {
+  const path = poolActivityPath();
+  let offset = existsSync(path) ? statSync(path).size : 0;
+  let partial = '';
+  while (!signal.aborted) {
+    await new Promise<void>(resolve => {
+      const timer = setTimeout(resolve, pollMs);
+      signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+    });
+    if (signal.aborted) return;
+    try {
+      if (!existsSync(path)) { offset = 0; partial = ''; continue; }
+      const size = statSync(path).size;
+      if (size < offset) { offset = 0; partial = ''; }
+      if (size === offset) continue;
+      const fd = openSync(path, 'r');
+      try {
+        const buffer = Buffer.alloc(size - offset);
+        readSync(fd, buffer, 0, buffer.length, offset);
+        offset = size;
+        const lines = (partial + buffer.toString('utf8')).split('\n');
+        partial = lines.pop() ?? '';
+        for (const line of lines) {
+          const entry = line ? parseActivityLine(line) : undefined;
+          if (entry) onEntry(entry);
+        }
+      } finally { closeSync(fd); }
+    } catch { /* try again on the next tick */ }
   }
 }

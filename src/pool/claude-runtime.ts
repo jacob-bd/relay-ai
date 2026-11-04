@@ -70,6 +70,8 @@ export interface ClaudePoolOptions {
   retryable?: (error: unknown) => boolean;
   embargo?: ClaudeHistoryEmbargo;
   scope?: { value: string; historyFingerprint: string };
+  /** Optional trace sink (the proxy's --trace log): one short line per attempt, failure and answer. */
+  trace?: (line: string) => void;
 }
 
 function defaultRetryable(error: unknown): boolean {
@@ -128,16 +130,27 @@ export async function serveClaudePool(options: ClaudePoolOptions): Promise<Claud
   let attemptStarted = Date.now();
   const logServed = () => {
     const member = attemptedId ? poolRouteMember(attemptedId) : undefined;
-    if (member) recordPoolActivity({ target: 'claude', event: 'served', ...member, ms: Date.now() - attemptStarted });
+    if (!member) return;
+    recordPoolActivity({ target: 'claude', event: 'served', ...member, ms: Date.now() - attemptStarted });
+    options.trace?.(`pool answered: ${member.providerId}/${member.modelId} in ${((Date.now() - attemptStarted) / 1000).toFixed(1)}s`);
   };
+  options.trace?.(`pool request: ${routes.length} eligible member(s): ${routes.map(route => `${route.member.providerId}/${route.member.modelId}`).join(', ') || 'none'}`);
   const parts = dispatchFreePool(pool, routes, {
     target: 'claude', tools: true, effort: request.effort, signal: request.signal,
   }, {
     limits, retryable: options.retryable ?? defaultRetryable,
-    onAttempt: id => { attemptedId = id; attemptStarted = Date.now(); },
+    onAttempt: id => {
+      attemptedId = id;
+      attemptStarted = Date.now();
+      const member = poolRouteMember(id);
+      if (member) options.trace?.(`pool attempt: ${member.providerId}/${member.modelId}`);
+    },
     onFailure: (id, error) => {
       const member = poolRouteMember(id);
-      if (member) recordPoolActivity({ target: 'claude', event: 'failed', ...member, reason: describePoolFailure(error), ms: Date.now() - attemptStarted });
+      if (!member) return;
+      const reason = describePoolFailure(error);
+      recordPoolActivity({ target: 'claude', event: 'failed', ...member, reason, ms: Date.now() - attemptStarted });
+      options.trace?.(`pool failed: ${member.providerId}/${member.modelId} (${reason}) after ${((Date.now() - attemptStarted) / 1000).toFixed(1)}s`);
     },
   });
   try {
@@ -202,6 +215,7 @@ export class ClaudePoolRuntime {
     write: (chunk: string) => void,
     signal: AbortSignal,
     sessionId?: string,
+    trace?: (line: string) => void,
   ): Promise<ClaudeServeResult> {
     const routes = await this.prepare(body, signal, sessionId);
     // Effort was resolved per member while preparing routes (verified level sent, otherwise omitted),
@@ -218,6 +232,7 @@ export class ClaudePoolRuntime {
       },
       limits: this.limits,
       write,
+      trace,
       retryable: retryPoolFailure,
     });
   }

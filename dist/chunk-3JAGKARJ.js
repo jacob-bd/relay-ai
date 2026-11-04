@@ -36,7 +36,7 @@ import {
 } from "./chunk-KNCSTHR4.js";
 
 // src/pool/activity.ts
-import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
 var MAX_BYTES = 256 * 1024;
 var KEEP_LINES = 500;
@@ -94,6 +94,63 @@ function readPoolActivity(limit = 50) {
     return entries.slice(-limit).reverse();
   } catch {
     return [];
+  }
+}
+function formatPoolActivityLine(e) {
+  const when = new Date(e.at);
+  const time = Number.isNaN(when.getTime()) ? e.at : `${when.toLocaleDateString()} ${when.toLocaleTimeString([], { hour12: false })}`;
+  const secs = typeof e.ms === "number" ? ` ${(e.ms / 1e3).toFixed(1)}s` : "";
+  return `${time}  ${e.event === "served" ? "answered" : "FAILED  "}  ${e.providerId}/${e.modelId}${e.reason ? "  " + e.reason : ""}${secs}`;
+}
+function parseActivityLine(line) {
+  try {
+    const e = JSON.parse(line);
+    return e && typeof e.at === "string" && typeof e.providerId === "string" && typeof e.modelId === "string" && (e.event === "served" || e.event === "failed") ? e : void 0;
+  } catch {
+    return void 0;
+  }
+}
+async function followPoolActivity(onEntry, signal, pollMs = 400) {
+  const path = poolActivityPath();
+  let offset = existsSync(path) ? statSync(path).size : 0;
+  let partial = "";
+  while (!signal.aborted) {
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, pollMs);
+      signal.addEventListener("abort", () => {
+        clearTimeout(timer);
+        resolve();
+      }, { once: true });
+    });
+    if (signal.aborted) return;
+    try {
+      if (!existsSync(path)) {
+        offset = 0;
+        partial = "";
+        continue;
+      }
+      const size = statSync(path).size;
+      if (size < offset) {
+        offset = 0;
+        partial = "";
+      }
+      if (size === offset) continue;
+      const fd = openSync(path, "r");
+      try {
+        const buffer = Buffer.alloc(size - offset);
+        readSync(fd, buffer, 0, buffer.length, offset);
+        offset = size;
+        const lines = (partial + buffer.toString("utf8")).split("\n");
+        partial = lines.pop() ?? "";
+        for (const line of lines) {
+          const entry = line ? parseActivityLine(line) : void 0;
+          if (entry) onEntry(entry);
+        }
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+    }
   }
 }
 
@@ -1308,6 +1365,8 @@ export {
   describePoolFailure,
   recordPoolActivity,
   readPoolActivity,
+  formatPoolActivityLine,
+  followPoolActivity,
   readBody,
   extractApiKey,
   sendJson,
@@ -1336,4 +1395,4 @@ export {
   poolDiagnostic,
   verifyConfiguredPoolMember
 };
-//# sourceMappingURL=chunk-JSJV4YBZ.js.map
+//# sourceMappingURL=chunk-3JAGKARJ.js.map
