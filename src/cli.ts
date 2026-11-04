@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findClaudeBinary, launchClaude } from './launch.js';
 import { resolveApiKey, detectConflicts, buildChildEnv, readGlobalOpencodeCredential } from './env.js';
-import { claudeCodeClientModelId } from './context-model-id.js';
+import { claudeCodeClientModelId, claudeCodeContextWindow } from './context-model-id.js';
 import { resolveOrCollectApiKey } from './key-setup.js';
 import { needsFirstRunSetup, runFirstRunWizard } from './first-run.js';
 import { CODEX_SUBAGENT_MODEL_CAP, MAX_MODEL_CATALOG } from './constants.js';
@@ -20,8 +20,9 @@ import {
 } from './catalog.js';
 import { runServerCommand } from './server/index.js';
 import type { ModelFormat } from './types.js';
-import { loadPreferences, savePreferences, recordLaunchSelection } from './config.js';
-import { claudeTransparentModeOptions, pickLocalModel, browseAllModels, filterModelsBySearch, MODEL_SEARCH_THRESHOLD } from './prompts.js';
+import { loadPreferences, savePreferences, recordLaunchSelection, getTrustSystemCertificates } from './config.js';
+import { applySystemCaTrust } from './tls-trust.js';
+import { pickLaunchMode, pickLocalModel, browseAllModels, filterModelsBySearch, MODEL_SEARCH_THRESHOLD } from './prompts.js';
 import { fetchProviderCatalog, providersForPicker, resolveLocalProviderApiKey } from './provider-catalog.js';
 import { providerRefreshToken } from './provider-runtime.js';
 import { BACKENDS, VERSION } from './constants.js';
@@ -57,7 +58,7 @@ import { generateAiDoc, installAiDoc, printAiInstallResult } from './ai-doc.js';
 import { launchClaudeWithHttpProxy } from './http-proxy/launch.js';
 import { supportsClaudeTransparentMode } from './http-proxy/routes.js';
 import { pickerRefresh } from './picker-refresh.js';
-const STARTER_CLAUDE_FLAGS = new Set(['--dry-run', '--setup', '--trace', '--http-proxy', '--help', '-h', '--version', '-v']);
+const STARTER_CLAUDE_FLAGS = new Set(['--dry-run', '--setup', '--trace', '--http-proxy', '--with-native', '--relay-only', '--help', '-h', '--version', '-v']);
 const RELAY_LAUNCH_FLAGS = new Set(['--provider', '--model']);
 
 function parseRelayLaunchFlag(
@@ -494,6 +495,12 @@ export function parseArgs(args: string[]): ParsedArgs {
     if (arg === '--setup') parsed.setup = true;
     if (arg === '--trace') parsed.trace = true;
     if (arg === '--http-proxy') parsed.httpProxy = true;
+    // Same flags as Codex: pre-answer the "Native + Relay / Relay only" question.
+    if (arg === '--with-native' || arg === '--relay-only') {
+      const mode = arg === '--with-native' ? 'mixed' : 'relay-only';
+      if (parsed.codexLaunchMode && parsed.codexLaunchMode !== mode) parsed.error = '--with-native and --relay-only cannot be used together';
+      parsed.codexLaunchMode = mode;
+    }
     if (arg === '--help' || arg === '-h') parsed.showHelp = true;
     if (arg === '--version' || arg === '-v') parsed.showVersion = true;
   }
@@ -597,6 +604,8 @@ ${pc.bold('Options:')}
   --provider   Boot provider id (skip wizard when paired with --model or in print mode)
   --model      Boot model id (skip wizard when paired with --provider or in print mode)
   --http-proxy Keep your normal Anthropic login and add selected/favorite Relay models
+  --with-native  Native + Relay models (skips the first question)
+  --relay-only   Relay models only (skips the first question)
   --help       Show this command help
   --version    Show version
 
@@ -1194,7 +1203,7 @@ export async function runModelsCommand(opts: FavoritesCommandOptions = {}): Prom
 }
 
 export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
-  const { dryRun, setup, trace, httpProxy, launchProvider, launchModel } = parsed;
+  const { dryRun, setup, trace, httpProxy, launchProvider, launchModel, codexLaunchMode } = parsed;
   const claudeArgs = normalizeClaudeAgentArgs(parsed.claudeArgs);
   const agentStdout = wantsCleanAgentStdout('claude', claudeArgs);
   setAgentStdoutMode(agentStdout);
@@ -1337,6 +1346,15 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
 
   if (httpProxyOnly) return runTransparentProxy();
 
+  // Same first question as Codex/ChatGPT. Skipped for --http-proxy, --with-native/--relay-only, or an explicit provider/model.
+  let launchMode: 'mixed' | 'relay-only' = httpProxy ? 'mixed' : codexLaunchMode ?? 'relay-only';
+  if (!httpProxy && !launchPlan.skip && codexLaunchMode === undefined) {
+    const picked = await pickLaunchMode('Claude');
+    if (!picked) return 0;
+    launchMode = picked;
+    if (!dryRun) savePreferences({ lastClaudeTransparentMode: picked === 'mixed' });
+  }
+
   const providerOptions = allProviders.map(lp => providerSelectOption(lp));
 
   if (switchMenuActive) {
@@ -1435,18 +1453,12 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   }
 
   let useHttpProxy = Boolean(httpProxy);
-  if (!httpProxy && !launchPlan.skip && supportsClaudeTransparentMode(selectedModel)) {
-    const transparentChoice = await p.select<boolean>({
-      message: 'Keep your normal Claude models available too?',
-      options: claudeTransparentModeOptions(selectedModel.name || selectedModel.id),
-      initialValue: prefs.lastClaudeTransparentMode ?? true,
-    });
-    if (p.isCancel(transparentChoice)) {
-      p.cancel('Cancelled.');
-      return 0;
+  if (!httpProxy && launchMode === 'mixed') {
+    if (supportsClaudeTransparentMode(selectedModel)) {
+      useHttpProxy = true;
+    } else {
+      p.log.info(`${selectedModel.name || selectedModel.id} can't run alongside your normal Claude models, so this launch uses Relay models only.`);
     }
-    useHttpProxy = transparentChoice as boolean;
-    if (!dryRun) savePreferences({ lastClaudeTransparentMode: useHttpProxy });
   }
 
   if (useHttpProxy) {
@@ -1456,6 +1468,8 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     });
   }
 
+  // Claude Code only gets 1M for confirmed 1M+ windows; estimated sizes are capped at 200K.
+  const claudeContextWindow = claudeCodeContextWindow(selectedModel);
   const localProviders = catalog.length > 0 ? catalog : null;
   if (switchMenuActive) {
     const resolveRoute = makeRouteResolver(
@@ -1493,7 +1507,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     return launchClaudeViaCatalog(
       catalogRoutes,
       startingRoute,
-      selectedModel.contextWindow,
+      claudeContextWindow,
       trace,
       claudeArgs,
     );
@@ -1543,7 +1557,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
         ANTIGRAVITY_BASE_URLS[0],
         selectedModel.id,
         trace,
-        selectedModel.contextWindow,
+        claudeContextWindow,
         {
           providerId: activeProvider.id,
           authType: 'oauth',
@@ -1562,7 +1576,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       selectedModel.id,
       proxyHandle.token,
       proxyHandle.port,
-      selectedModel.contextWindow,
+      claudeContextWindow,
     );
   } else if (isOAuthAnthropic) {
     // Claude Code OAuth — proxy injects compatibility metadata and Bearer auth.
@@ -1571,7 +1585,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
         selectedModel.baseUrl ?? 'https://api.anthropic.com',
         selectedModel.id,
         trace,
-        selectedModel.contextWindow,
+        claudeContextWindow,
         {
           providerId: activeProvider.id,
           authType: 'oauth',
@@ -1591,7 +1605,38 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       selectedModel.id,
       proxyHandle.token,
       proxyHandle.port,
-      selectedModel.contextWindow,
+      claudeContextWindow,
+    );
+  } else if (selectedModel.modelFormat === 'anthropic' && activeProvider.id.startsWith('custom-')) {
+    // Custom Claude-style gateways: go through Relay's pass-through, which sends the key both as
+    // x-api-key and Bearer (some gateways accept only Bearer) plus the
+    // endpoint's custom headers. A direct launch would send x-api-key only and drop those headers.
+    try {
+      proxyHandle = await startProxy(
+        selectedModel.baseUrl!,
+        selectedModel.id,
+        trace,
+        claudeContextWindow,
+        {
+          providerId: activeProvider.id,
+          authType: 'api',
+          modelFormat: 'anthropic',
+          upstreamModelId: selectedModel.upstreamModelId,
+          headers: activeProvider.headers,
+        },
+        launchApiKey,
+      );
+      if (!isAgentStdoutMode()) p.log.info(`Relay proxy started on port ${proxyHandle.port}`);
+    } catch (err) {
+      p.log.error(`Failed to start proxy: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+    childEnv = buildChildEnv(
+      `http://127.0.0.1:${proxyHandle.port}`,
+      selectedModel.id,
+      proxyHandle.token,
+      proxyHandle.port,
+      claudeContextWindow,
     );
   } else if (selectedModel.modelFormat === 'anthropic') {
     childEnv = buildChildEnv(
@@ -1599,7 +1644,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       selectedModel.id,
       launchApiKey,
       undefined,
-      selectedModel.contextWindow,
+      claudeContextWindow,
     );
   } else {
     try {
@@ -1607,7 +1652,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
         selectedModel.completionsUrl ?? '',
         selectedModel.id,
         trace,
-        selectedModel.contextWindow,
+        claudeContextWindow,
         {
           npm: selectedModel.npm,
           baseURL: selectedModel.apiBaseUrl,
@@ -1642,7 +1687,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       selectedModel.id,
       proxyHandle.token,
       proxyHandle.port,
-      selectedModel.contextWindow,
+      claudeContextWindow,
     );
   }
 
@@ -1656,7 +1701,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
 
   const exitCode = await launchClaude(
     childEnv,
-    claudeCodeClientModelId(selectedModel.id, selectedModel.contextWindow),
+    claudeCodeClientModelId(selectedModel.id, claudeContextWindow),
     [...traceArgs, ...claudeArgs],
   );
   proxyHandle?.close();
@@ -1666,6 +1711,10 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
 
 export async function main(args: string[] = process.argv.slice(2)): Promise<number> {
   const parsed = parseArgs(args);
+
+  // Opt-in (providers trust-certs / UI checkbox): trust the OS certificate store
+  // before anything connects. A failure here must never block launching.
+  if (getTrustSystemCertificates() && !parsed.dryRun) applySystemCaTrust();
 
   if (process.stdout.isTTY) {
     const update = await checkForUpdates();

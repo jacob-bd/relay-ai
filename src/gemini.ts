@@ -1,7 +1,7 @@
 // src/gemini.ts — relay-ai gemini: launch Google Gemini CLI with registry providers
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
-import { fetchProviderCatalog, providersForPicker, resolveLocalProviderApiKey } from './provider-catalog.js';
+import { fetchProviderCatalog, launchModelsForProvider, providersForPicker, resolveLocalProviderApiKey } from './provider-catalog.js';
 import { loadPreferences, recordLaunchSelection } from './config.js';
 import { findProviderAndModel, planLaunchWizard, wantsCleanAgentStdout } from './launch-target.js';
 import { setAgentStdoutMode, isAgentStdoutMode } from './agent-io.js';
@@ -201,8 +201,9 @@ export async function runGeminiCommand(
     return 1;
   }
 
-  // Build route mapping for proxy catalog
-  const providerRoutes: ProxyRoute[] = activeProvider.models.map(m => ({
+  // Build route mapping for proxy catalog: the picked model, or the whole provider for "All provider models".
+  const launchModels = launchModelsForProvider(activeProvider, selectedModel);
+  const providerRoutes: ProxyRoute[] = launchModels.map(m => ({
     aliasId: m.id,
     realModelId: m.upstreamModelId || m.id,
     displayName: m.name || m.id,

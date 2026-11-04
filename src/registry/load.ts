@@ -11,7 +11,7 @@ import { copilotPlanTier, filterCachedCopilotModels } from './copilot-models.js'
 /** Load enabled providers from ~/.relay-ai/providers.json with resolved credentials. */
 export async function loadRegistryProviders(
   diag?: (msg: string) => void,
-  opts?: { agent?: CompatibilityAgent },
+  opts?: { agent?: CompatibilityAgent; includeHidden?: boolean },
 ): Promise<LocalProvider[]> {
   const registry = loadRegistry();
   const keys = new Map<string, string>();
@@ -62,7 +62,7 @@ export async function loadRegistryProviders(
 /** Sync variant when credentials are already resolved (tests). */
 export function loadRegistryProvidersSync(
   resolveKey: (providerId: string, authRef: string) => string | null,
-  opts?: { agent?: CompatibilityAgent },
+  opts?: { agent?: CompatibilityAgent; includeHidden?: boolean },
 ): LocalProvider[] {
   const registry = loadRegistry();
   return materializeRegistry(registry, provider => resolveKey(provider.id, provider.authRef), opts);

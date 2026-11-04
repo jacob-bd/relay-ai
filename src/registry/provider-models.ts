@@ -12,16 +12,40 @@ export function supportsManualModels(provider: RegistryProvider): boolean {
     && MANUAL_MODEL_PACKAGES.has(provider.api.npm ?? '');
 }
 
+/** Smallest and largest context size Relay accepts from a user or a server. */
+export const MIN_CONTEXT_WINDOW_OVERRIDE = 1_000;
+export const MAX_CONTEXT_WINDOW_OVERRIDE = 100_000_000;
+
+export function isValidContextWindow(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value)
+    && value >= MIN_CONTEXT_WINDOW_OVERRIDE && value <= MAX_CONTEXT_WINDOW_OVERRIDE;
+}
+
+/** A typed or measured size replaces the catalog's size everywhere the model is read. */
+function applyContextWindowOverrides(provider: RegistryProvider, models: CachedModel[]): CachedModel[] {
+  const overrides = provider.contextWindowOverrides;
+  if (!overrides) return models;
+  return models.map(model => {
+    const override = overrides[model.id];
+    if (!override) return model;
+    return {
+      ...model,
+      contextWindow: override.contextWindow,
+      contextWindowSource: override.source === 'user' ? 'user' : 'provider',
+    };
+  });
+}
+
 /** Refresh owns modelsCache; the user's entries win collisions without duplicating IDs. */
 export function getProviderModels(provider: RegistryProvider): CachedModel[] {
-  if (isVertexAnthropicProvider(provider)) return vertexAnthropicCachedModels();
+  if (isVertexAnthropicProvider(provider)) return applyContextWindowOverrides(provider, vertexAnthropicCachedModels());
   const models = new Map((provider.modelsCache?.models ?? []).map(model => [model.id, model]));
   if (supportsManualModels(provider)) {
     for (const model of provider.manualModels ?? []) {
       models.set(model.id, { ...model, modelFormat: provider.api.npm === '@ai-sdk/anthropic' ? 'anthropic' : 'openai' });
     }
   }
-  return [...models.values()];
+  return applyContextWindowOverrides(provider, [...models.values()]);
 }
 
 /** Keep the raw discovery cache; agent browsing/counts exclude non-chat and blocked models. */

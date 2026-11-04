@@ -57,6 +57,8 @@ export interface LocalProviderModel {
   cost?: ModelCost;
   referencePrice?: ReferencePrice;
   contextWindow?: number;
+  /** True when contextWindow is a guess (custom endpoint, not reported/typed/measured); Claude Code caps it at 200K. */
+  contextWindowEstimated?: boolean;
   /** Provider-reported request parameters, e.g. OpenRouter supported_parameters. */
   supportedParameters?: string[];
   /** Broad model metadata: model can produce reasoning/thinking output. */
@@ -71,6 +73,8 @@ export interface LocalProviderModel {
   useResponsesLite?: boolean;
   /** Backend capability: model must use the WebSocket Responses transport instead of HTTP. */
   preferWebSockets?: boolean;
+  /** Set only when a caller asked for hidden models too (the Providers page); never set on launch catalogs. */
+  hidden?: boolean;
   /** OpenCode Zen free-tier models only. */
   isFree?: boolean;
   freeStatus?: FreeStatus;
@@ -125,6 +129,8 @@ export interface UserPreferences {
   codexSubagentModels?: FavoriteModel[];
   appPathOverrides?: Record<string, string>;
   recentLaunchFolders?: string[];
+  /** Opt-in: also trust the operating system's certificate store (corporate/VPN endpoints). */
+  trustSystemCertificates?: boolean;
   server?: {
     savedPassword?: string;
     /** Provider ids exposed by `relay-ai server` (zen, go, or local OpenCode provider ids). */

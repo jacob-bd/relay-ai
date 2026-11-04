@@ -304,6 +304,16 @@ export function setServerMaskGatewayIds(mask: boolean): void {
   writeConfig(config);
 }
 
+export function getTrustSystemCertificates(): boolean {
+  return readConfig().trustSystemCertificates === true;
+}
+
+export function setTrustSystemCertificates(trust: boolean): void {
+  const config = readConfig();
+  config.trustSystemCertificates = trust;
+  writeConfig(config);
+}
+
 export function getServerFavoritesOnly(): boolean {
   return readConfig().server?.favoritesOnly ?? false;
 }

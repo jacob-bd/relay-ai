@@ -42,7 +42,7 @@ import { resolveContextWindow } from '../context-window.js';
 import { resolveCodexClientVersion } from '../codex/version.js';
 import { isAntigravityCloudCodeHelperSlot, shouldHideModel } from '../model-compatibility.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
-import { fetchModelsDevCache, findModelsDevModel } from './models-dev.js';
+import { applyModelsDevContextWindows, fetchModelsDevCache, findModelsDevModel } from './models-dev.js';
 import {
   copilotPlanTier,
   normalizeCopilotModels,
@@ -538,8 +538,9 @@ async function refreshApiListProvider(
     if (fetched.error || fetched.models.length === 0) {
       return { models: [], error: fetched.error ?? 'No models returned.', baseUrl: fetched.baseUrl };
     }
+    const anthropicModels = customEndpointKind(provider) ? applyModelsDevContextWindows(fetched.models) : fetched.models;
     return {
-      models: fetched.models.map(m => ({ ...m, apiUrl: fetched.baseUrl })),
+      models: anthropicModels.map(m => ({ ...m, apiUrl: fetched.baseUrl })),
       baseUrl: fetched.baseUrl,
       ...(fetched.incomplete ? { incomplete: fetched.incomplete } : {}),
     };
@@ -560,8 +561,9 @@ async function refreshApiListProvider(
     return { models: [], error: 'No free models were returned for anonymous access.' };
   }
 
+  const referencedModels = customEndpointKind(provider) ? applyModelsDevContextWindows(usableModels) : usableModels;
   return {
-    models: usableModels.map(m => ({
+    models: referencedModels.map(m => ({
       ...m,
       apiUrl: fetched.baseUrl,
     })),

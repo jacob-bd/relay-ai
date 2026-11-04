@@ -1,4 +1,4 @@
-import { claudeCodeClientModelId } from '../context-model-id.js';
+import { claudeCodeClientModelId, claudeCodeContextWindow } from '../context-model-id.js';
 import { resolveLocalProviderApiKey } from '../provider-catalog.js';
 import type { FavoriteModel, LocalProvider } from '../types.js';
 import { createHttpProxyCaBundle } from './ca.js';
@@ -71,7 +71,7 @@ export async function startConfiguredHttpProxy(options: {
     const expectedId = selectedModel
       ? claudeCodeClientModelId(
           httpProxyModelId(options.selected.providerId, options.selected.modelId),
-          selectedModel.contextWindow,
+          claudeCodeContextWindow(selectedModel),
         )
       : undefined;
     startingModel = loaded.routes.find(route => route.aliasId === expectedId)?.aliasId;

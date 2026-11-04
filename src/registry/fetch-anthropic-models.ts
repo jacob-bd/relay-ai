@@ -4,6 +4,7 @@ import { deriveBrand } from '../models.js';
 import { resolveContextWindow } from '../context-window.js';
 import { makeTraceLogger, getProviderDebugLogPath } from '../trace-log.js';
 import type { CachedModel } from './types.js';
+import { isUntrustedCertificateError, untrustedCertificateMessage, UNTRUSTED_CERTIFICATE_CODE } from '../tls-trust.js';
 import { clampModelTimeoutMs, endpointModelTimeoutMs } from './endpoint-timeout.js';
 
 /** Upper bound on follow-up pages (Anthropic pages hold 20 models by default). */
@@ -30,7 +31,7 @@ export async function fetchAnthropicModels(
   apiKey: string,
   extraHeaders?: Record<string, string>,
   timeoutMs?: number,
-): Promise<{ models: CachedModel[]; baseUrl: string; error?: string; hint?: string; incomplete?: string }> {
+): Promise<{ models: CachedModel[]; baseUrl: string; error?: string; hint?: string; code?: string; incomplete?: string }> {
   const root = baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '');
   const modelsUrl = `${root}/v1/models`;
   const defaultTimeoutMs = endpointModelTimeoutMs('anthropic', root);
@@ -141,7 +142,10 @@ export async function fetchAnthropicModels(
       error: `Could not list models (HTTP ${response.status}).`,
       hint: 'Verify the base URL supports Anthropic-compatible /v1/models or try the OpenAI-compatible option instead.',
     };
-  } catch {
+  } catch (err) {
+    if (isUntrustedCertificateError(err)) {
+      return { models: [], baseUrl: root, ...untrustedCertificateMessage(), code: UNTRUSTED_CERTIFICATE_CODE };
+    }
     const timedOut = controller.signal.aborted;
     return {
       models: [],

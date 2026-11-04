@@ -16,6 +16,7 @@ import bundledCache from '../data/models-dev-cache.json';
 import { getAppHome } from '../paths.js';
 import { localIsoTimestamp } from '../trace-log.js';
 import { normalizeModelIdCandidates } from './pricing.js';
+import type { ModelKind } from './model-kind.js';
 
 export const MODELS_DEV_API_URL = 'https://models.dev/api.json';
 const FETCH_TIMEOUT_MS = 15_000;
@@ -41,6 +42,8 @@ export interface ModelsDevModel {
   reasoning_options?: Array<{ type?: string; values?: unknown[] }>;
   interleaved?: { field?: string };
   modalities?: ModelsDevModalities;
+  /** models.dev's model category, e.g. 'embedding', 'reranking', 'image'; absent for chat models. */
+  type?: string;
 }
 
 export interface ModelsDevProvider {
@@ -309,6 +312,86 @@ export function findModelsDevModel(
     if (entry) return entry;
   }
   return null;
+}
+
+/** Id spellings worth trying across vendors: prefixes stripped, and dotted versions as models.dev's dashed form. */
+function crossVendorIdCandidates(modelId: string): string[] {
+  const out = new Set<string>();
+  for (const candidate of normalizeModelIdCandidates(modelId)) {
+    const lower = candidate.toLowerCase();
+    out.add(lower);
+    out.add(lower.replace(/\./g, '-'));
+  }
+  return [...out];
+}
+
+/**
+ * The context size models.dev lists for this model id across all vendors: the most common
+ * value, the smaller one on a tie (a too-large size makes sessions overflow). Undefined if unlisted.
+ */
+export function modelsDevCrossVendorContextWindow(
+  modelId: string,
+  cache: ModelsDevCacheFile = loadModelsDevCache(),
+): number | undefined {
+  const index = getEffortIndex(cache);
+  for (const candidate of crossVendorIdCandidates(modelId)) {
+    const counts = new Map<number, number>();
+    for (const row of index.get(candidate) ?? []) {
+      const size = row.limit?.context;
+      if (typeof size === 'number' && Number.isSafeInteger(size) && size > 0) counts.set(size, (counts.get(size) ?? 0) + 1);
+    }
+    if (counts.size > 0) return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]![0];
+  }
+  return undefined;
+}
+
+/** For custom endpoints: replace name-guessed sizes with models.dev's when it knows the model. Reported sizes are kept. */
+export function applyModelsDevContextWindows<T extends { id: string; contextWindow?: number; contextWindowSource?: string }>(
+  models: T[],
+  cache: ModelsDevCacheFile = loadModelsDevCache(),
+): T[] {
+  return models.map(model => {
+    if (model.contextWindowSource !== undefined) return model;
+    const size = modelsDevCrossVendorContextWindow(model.id, cache);
+    return size === undefined ? model : { ...model, contextWindow: size, contextWindowSource: 'models.dev' };
+  });
+}
+
+
+function modelKindOf(entry: ModelsDevModel): ModelKind {
+  switch (entry.type) {
+    case 'embedding': return 'embedding';
+    case 'reranking': return 'reranking';
+    case 'image': return 'image';
+    case 'video': return 'video';
+    case 'speech': case 'transcription': case 'realtime': return 'audio';
+  }
+  const output = entry.modalities?.output ?? [];
+  if (output.length > 0 && !output.includes('text')) {
+    if (output.includes('image')) return 'image';
+    if (output.includes('video')) return 'video';
+    if (output.includes('audio')) return 'audio';
+  }
+  return 'chat';
+}
+
+/** What kind of model models.dev says this is (the provider's own entry first, then any vendor); undefined if unlisted. */
+export function modelsDevModelKind(
+  providerId: string,
+  modelId: string,
+  cache: ModelsDevCacheFile = loadModelsDevCache(),
+): ModelKind | undefined {
+  const own = findModelsDevModel(providerId, modelId, cache);
+  if (own) return modelKindOf(own);
+  const index = getEffortIndex(cache);
+  for (const candidate of crossVendorIdCandidates(modelId)) {
+    const rows = index.get(candidate);
+    if (!rows?.length) continue;
+    const counts = new Map<ModelKind, number>();
+    for (const row of rows) counts.set(modelKindOf(row), (counts.get(modelKindOf(row)) ?? 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]![0];
+  }
+  return undefined;
 }
 
 /** Conservative auto-hide rules — only when models.dev row exists and fields are explicit. */

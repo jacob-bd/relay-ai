@@ -31,6 +31,8 @@ export interface AddTemplateResult {
   addedNames?: string[];
   error?: string;
   hint?: string;
+  /** Machine-readable failure kind (e.g. 'untrusted-certificate'). */
+  code?: string;
   /** Non-fatal information about the added provider (e.g. models skipped). */
   notice?: string;
 }
@@ -120,7 +122,7 @@ export async function addProviderFromTemplate(
     };
   }
 
-  let fetched: { models: CachedModel[]; baseUrl: string; error?: string; hint?: string };
+  let fetched: { models: CachedModel[]; baseUrl: string; error?: string; hint?: string; code?: string };
   let notice: string | undefined;
   if (template.modelSource === 'cline-recommended') {
     try {
@@ -182,6 +184,7 @@ export async function addProviderFromTemplate(
       added: false,
       error: fetched.error ?? 'No models returned.',
       hint: fetched.hint,
+      ...(fetched.code ? { code: fetched.code } : {}),
     };
   }
   const usableModels = !trimmedKey && template.anonymousFreeModels

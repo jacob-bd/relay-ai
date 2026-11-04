@@ -9,9 +9,17 @@ beforeEach(() => { vi.clearAllMocks(); mocks.create.mockResolvedValue({}); });
 describe('model reachability test', () => {
  it('uses the exact account/model through the runtime and requires text and completion', async () => {
   mocks.stream.mockReturnValue(parts({ type: 'text-delta', text: 'OK' }, { type: 'finish' }));
-  expect(await testModel('groq-2', 'test')).toEqual({ ok: true, latencyMs: expect.any(Number) });
+  expect(await testModel('groq-2', 'test')).toMatchObject({ ok: true, latencyMs: expect.any(Number), notChat: false });
   expect(mocks.create).toHaveBeenCalledWith('groq-2::test');
   expect(mocks.stream).toHaveBeenCalledWith(expect.objectContaining({ maxRetries: 0, abortSignal: expect.any(AbortSignal), prompt: 'Reply with OK.' }));
+ });
+ it('reports only numbers from the context-size check, never raw upstream text', async () => {
+  mocks.stream
+   .mockReturnValueOnce(parts({ type: 'text-delta', text: 'OK' }, { type: 'finish' }))
+   .mockReturnValueOnce(parts({ type: 'error', error: { statusCode: 400, message: 'secret-key', responseBody: 'secret-key max_model_len=40960' } }));
+  const r = await testModel('groq-2', 'test');
+  expect(r).toMatchObject({ ok: true, context: { measured: 40960 } });
+  expect(JSON.stringify(r)).not.toContain('secret-key');
  });
  it.each([{events:[]}, {events:[{ type: 'finish' }]}, {events:[{ type: 'text-delta', text: 'partial' }]}])('does not pass an incomplete/empty stream', async ({events}) => {
   mocks.stream.mockReturnValue(parts(...events));
@@ -20,6 +28,32 @@ describe('model reachability test', () => {
  it.each([401,403,429,402,500])('sanitizes upstream error %s including in-stream errors', async statusCode => {
   mocks.stream.mockReturnValue(parts({ type: 'error', error: { statusCode, message: 'secret-key', responseBody: 'secret-key' } }));
   const r=await testModel('groq-2', 'test'); expect(r.ok).toBe(false); expect(JSON.stringify(r)).not.toContain('secret-key');
+ });
+ it('explains a non-chat model instead of a generic failure', async () => {
+  mocks.stream.mockReturnValue(parts({ type: 'error', error: { statusCode: 404, responseBody: '{"detail":"Not Found"}' } }));
+  const r = await testModel('groq-2', 'test');
+  expect(r).toMatchObject({ ok: false, notChat: true });
+  expect(r.error).toMatch(/not a chat model/);
+ });
+ it('explains an endpoint that does not serve the model (gateway unsupported_path)', async () => {
+  mocks.stream.mockReturnValue(parts({ type: 'error', error: { statusCode: 404, message: 'secret-key',
+   responseBody: '{"error": "unsupported_path", "message": "/m/v1/messages is not an OpenAI surface this broker proxies"}' } }));
+  const r = await testModel('groq-2', 'test');
+  expect(r).toMatchObject({ ok: false });
+  expect(r).not.toHaveProperty('notChat');
+  expect(r.error).toMatch(/endpoint doesn't serve this model/);
+  expect(JSON.stringify(r)).not.toContain('secret-key');
+ });
+ it('says the plan excludes the model instead of a generic access error', async () => {
+  mocks.stream.mockReturnValue(parts({ type: 'error', error: { statusCode: 403, message: 'secret-key',
+   responseBody: 'subscription personal does not include model tenant/claude' } }));
+  const r = await testModel('groq-2', 'test');
+  expect(r.error).toBe("Your plan doesn't include this model.");
+  expect(JSON.stringify(r)).not.toContain('secret-key');
+ });
+ it('keeps the generic access message for other 403s', async () => {
+  mocks.stream.mockReturnValue(parts({ type: 'error', error: { statusCode: 403, responseBody: 'forbidden' } }));
+  expect((await testModel('groq-2', 'test')).error).toMatch(/Access denied/);
  });
  it('does not call a missing/disabled provider or missing model', async () => {
   expect((await testModel('missing', 'test')).ok).toBe(false);

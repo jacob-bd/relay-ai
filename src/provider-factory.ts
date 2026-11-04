@@ -309,7 +309,11 @@ async function createLanguageModelSingle(spec: ProviderModelSpec): Promise<Langu
               }
             : {}),
         }
-      : { apiKey };
+      // Custom Claude-style gateways differ on which header carries the key (some accept only
+      // Bearer), so send both, exactly like the pass-through path in upstream-forward.ts already does.
+      : spec.providerId?.startsWith('custom-')
+        ? { apiKey, headers: { Authorization: `Bearer ${apiKey}` } }
+        : { apiKey };
     if (spec.headers) {
       anthropicOptions.headers = { ...anthropicOptions.headers, ...spec.headers };
     }

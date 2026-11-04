@@ -26,6 +26,53 @@ Entries are stored in `providers.json` under `manualModels`, separate from the d
 
 “Validated” records a successful small test at a point in time. It does not establish pricing, maximum context, image support, or availability after a beta expires. Context sizes you enter are user-supplied; Relay still applies target context requirements and runtime safety defaults.
 
+## Model list tools (every provider)
+
+Open a provider in `relay-ai ui` (**Providers & Keys** → provider) to see its models with **Type**, **Context** and **Price** columns.
+
+- **Test** sends one short request and reports the response time. On success it also asks the server for the model's real context size (see below) and marks the model as tested Chat. A clear refusal (for example "not a chat model") marks it **Not chat**. Each Test uses a little provider quota.
+- **Type** shows what a model is for: 💬 Chat, 🔢 Embedding, 🔀 Reranking, 🛡️ Classifier (safety), 🖼️ Image, 🎬 Video, 🔊 Audio, or ⛔ Not chat. The label under it says where it came from, in priority order:
+
+  | Label | Source |
+  |---|---|
+  | **manual** | You set it with the pencil. Always wins; ↺ resets it. |
+  | **tested** | A Test got a chat reply, or the server refused chat. |
+  | **models.dev** | The model's entry on models.dev. |
+  | **name guess** | The model's name, e.g. `embed` → Embedding, `rerank` → Reranking, `guardian` → Classifier, `instruct` / `-it` or a known chat family (Qwen, Llama, Gemma, Mistral, DeepSeek, GLM, Granite, Nemotron, GPT, Claude, Gemini…) → Chat. Document parsers stay Unknown. |
+
+  Safety, image, video and audio names keep their type even after a passing Test, because those models also answer chat requests.
+- **Hide** (eye icon) removes a model from every launch picker, **All provider models**, favorites, the server gateway and Core. It stays on this page, dimmed, so you can unhide it. Refreshes never un-hide a model.
+- **Bulk select**: tick rows, or use **Select non-chat** to tick every visible model whose type is known and is not Chat, then **Hide**, **Unhide** or **Clear**. Nothing is hidden until you click Hide.
+- **Context size pencil**: type a size such as `128K` or `1M` and save. A size you type is labelled **manual**, wins over everything else, and survives refreshes. ↺ resets it. In the terminal: `relay-ai providers` → provider → **Test a model / set context size**.
+
+## Custom endpoints
+
+Custom OpenAI-compatible and Anthropic-compatible endpoints (self-hosted vLLM, company gateways, LiteLLM and similar) often list models without context sizes. Relay fills the gap in three ways, and labels each size so you know how much to trust it:
+
+| Label | Meaning |
+|---|---|
+| **manual** | You typed it. Always wins. |
+| **measured** | The server stated its limit during a Test or **Measure context sizes**. |
+| **estimate** | No size from the server. Relay uses the size models.dev lists for that model across vendors (the most common value, the smaller one on a tie), or a default. The server may run a smaller limit. |
+
+**How measuring works.** Relay sends one tiny request asking for an impossibly long answer. Servers that refuse it usually state their real maximum (vLLM, for example, replies `max_tokens=… cannot be greater than max_model_len=40960`). Nothing large is sent, so a measurement costs about the same as a normal Test. Servers that don't state a limit leave the size unchanged.
+
+**Measure context sizes** (custom endpoints only, in `relay-ai ui`) measures every visible model, three at a time, after you confirm. The button shows progress and doubles as Cancel; a summary lists how many sizes were updated, confirmed, or not reported. Relay never measures on its own, and never across a built-in provider's whole catalog.
+
+**What Claude Code sees.** Claude Code knows only two windows for these models: 200K, or 1M. Relay gives a model 1M only when its size is 1,000,000 or more and not an estimate. One-model launches pass the exact size (a 262K model shows 262K); model-switching sessions show 200K for anything under 1M. An *estimate* counts as at most 200K, so Test or measure a model to unlock its full size in Claude Code.
+
+**Claude-style custom endpoints** receive the API key both as `x-api-key` and as `Authorization: Bearer`, because gateways differ on which one they accept. Your custom headers are sent too, including on single-model Claude Code launches.
+
+**One gateway, two endpoints.** Some gateways publish one model list but serve only some models on their Claude-style endpoint. Adding the gateway twice (once OpenAI-compatible, once Anthropic-compatible) is supported. If a Test on the Claude-style entry says *"This provider's endpoint doesn't serve this model"*, use that model from the OpenAI-compatible entry and hide it on the other. Relay converts protocols for every tool, so the OpenAI-compatible entry works in Claude Code too.
+
+**Internal certificates.** A server signed by a company certificate authority can work in your browser but fail in Relay, because Node only trusts its own bundled list. Tick **Trust this computer's certificates (advanced)** on the custom-provider form, or run:
+
+```bash
+relay-ai providers trust-certs on      # also: off, status
+```
+
+Relay then also trusts the certificates installed on your computer, for the whole Relay process. It is off by default and saved in `~/.relay-ai/config.json`. When adding a provider fails on an untrusted certificate, Relay explains this and offers to turn it on and retry. It needs Node 22.19 or newer; on older Node, start Relay with `NODE_USE_SYSTEM_CA=1`. Expired certificates and hostname mismatches are not affected and still fail.
+
 ## Native Providers
 
 When you run `relay-ai providers add`, you can select from the following templates. The CLI automatically configures the correct endpoint format (`@ai-sdk/openai-compatible` vs specific SDKs) and fetches available models.

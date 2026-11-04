@@ -23,6 +23,8 @@ export type CredentialResolver = (provider: RegistryProvider) => string | null;
 
 export interface MaterializeOptions {
   agent?: CompatibilityAgent;
+  /** Keep models the user hid, flagged `hidden`. Only the Providers page needs them (to unhide). */
+  includeHidden?: boolean;
 }
 
 export function cachedModelToLocal(
@@ -105,9 +107,13 @@ export function cachedModelToLocal(
     // proxy catalog.
     contextWindow: cached.source === 'manual' ? cached.contextWindow : kind === 'cline-pass' &&
       cached.contextWindow === CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW &&
-      cached.contextWindowSource !== 'provider'
+      cached.contextWindowSource === undefined
       ? undefined
       : cached.contextWindow ?? (kind === 'cline-pass' ? undefined : resolveContextWindow(id)),
+    // Custom endpoints: a size that was not reported, typed or measured is a guess (the UI's "estimate").
+    ...((provider.templateId === 'custom-openai' || provider.templateId === 'custom-anthropic')
+      && (cached.contextWindowSource === undefined || cached.contextWindowSource === 'models.dev')
+      ? { contextWindowEstimated: true } : {}),
     supportedParameters: cached.supportedParameters,
     ...resolveModelReasoningMetadata(
       provider.id,
@@ -138,6 +144,7 @@ function materializeOne(
   agent: CompatibilityAgent,
   pricingIndex: ReturnType<typeof buildPricingIndex>,
   metadata: ModelsDevCacheFile,
+  includeHidden = false,
 ): LocalProvider | null {
   if (!provider.enabled) return null;
   if (!isValidProviderId(provider.id)) return null;
@@ -146,6 +153,7 @@ function materializeOne(
   const apiKey = resolveCredential(provider) ?? '';
   const anonymousFreeOnly = !apiKey.trim() && providerAllowsAnonymousFreeModels(provider);
   const models: LocalProviderModel[] = [];
+  const hiddenIds = new Set(provider.hiddenModelIds ?? []);
   for (const cached of enrichModelsForProviderPricing(getProviderModels(provider), pricingIndex, provider.templateId, provider.id, metadata)) {
     const freeStatus = classifyFreeStatus({
       model: cached,
@@ -153,10 +161,12 @@ function materializeOne(
       templateId: provider.templateId,
     });
     if ((freeOnly || anonymousFreeOnly) && !isFreeStatus(freeStatus)) continue;
+    const userHidden = hiddenIds.has(cached.id);
+    if (userHidden && !includeHidden) continue;
     const model = cachedModelToLocal(cached, provider, metadata, agent);
     if (!model) continue;
     if (shouldHideModel({ providerId: provider.id, modelId: model.id, agent })) continue;
-    models.push(model);
+    models.push(userHidden ? { ...model, hidden: true } : model);
   }
   if (models.length === 0) return null;
 
@@ -185,7 +195,7 @@ export function materializeRegistry(
   const metadata = loadModelsDevCache();
   const result: LocalProvider[] = [];
   for (const provider of registry.providers) {
-    const local = materializeOne(provider, resolveCredential, agent, pricingIndex, metadata);
+    const local = materializeOne(provider, resolveCredential, agent, pricingIndex, metadata, opts?.includeHidden === true);
     if (local) result.push(local);
   }
   return result;

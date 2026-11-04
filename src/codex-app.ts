@@ -2,7 +2,7 @@
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { join } from 'node:path';
-import { fetchProviderCatalog, providersForPicker, resolveLocalProviderApiKey } from './provider-catalog.js';
+import { fetchProviderCatalog, launchModelsForProvider, providersForPicker, resolveLocalProviderApiKey } from './provider-catalog.js';
 import { loadPreferences, savePreferences } from './config.js';
 import { resolveApiKey, readFromCredentialStore } from './env.js';
 import { resolveOrCollectApiKey } from './key-setup.js';
@@ -507,7 +507,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
   let favorites = prefs.favoriteModels ?? [];
   let mixedMode = opts.codexLaunchMode === 'mixed';
   if (!configOnly && isTty && !(launchProvider && opts.launchModel) && opts.codexLaunchMode === undefined) {
-    const selectedLaunchMode = await pickCodexLaunchMode();
+    const selectedLaunchMode = await pickCodexLaunchMode('ChatGPT');
     if (!selectedLaunchMode) return 0;
     mixedMode = selectedLaunchMode === 'mixed';
   }
@@ -636,9 +636,10 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
 
   let cloudCodeBackend: CloudCodeBackend | null = null;
   let cloudCodeBackendFav: CloudCodeBackend | null = null;
+  // No favorites and not "All provider models": the picked model only, not the provider's whole list.
   const appProviderRoutes = mixedMode || favoritesActive
     ? null
-    : await buildCodexAppProviderCatalogRoutes(activeProvider, apiKey, selectedModel.id, trace);
+    : await buildCodexAppProviderCatalogRoutes({ ...activeProvider, models: launchModelsForProvider(activeProvider, selectedModel) }, apiKey, selectedModel.id, trace);
   cloudCodeBackend = appProviderRoutes?.backend ?? null;
 
   const route = appProviderRoutes

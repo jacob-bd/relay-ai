@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-03
+
+### Added
+
+- **Real context sizes for custom endpoints.** Many self-hosted and company gateways report no context window, so Relay used to guess. A model **Test** now also asks the server for its real limit: Relay sends one extra request with an impossibly large output length, and servers that refuse it usually state their actual maximum (for example vLLM's `max_model_len=40960`). That size is saved and labelled **measured**. Nothing large is ever sent, and the check never runs on its own. Custom endpoints also get a **Measure context sizes** button on their model list: it checks every visible model three at a time, after a confirmation, with a running count, Cancel, and a summary at the end.
+- **Set a context size by hand.** The pencil beside any model's context size accepts a number with K or M (for example `128K` or `1M`), with save, cancel and reset. A size you type is labelled **manual** and always wins: a later measurement never replaces it, and it survives model refreshes. In the terminal: `relay-ai providers` → provider → **Test a model / set context size**.
+- **Better size guesses for custom endpoints.** When a custom endpoint reports no size, Relay uses the size models.dev lists for that model across vendors (the most common value, the smaller one on a tie) instead of a generic default. These guesses are labelled **estimate**, with a tooltip saying the server may run a smaller limit. Built-in providers keep their existing behavior.
+- **Hide models you don't use.** An eye icon on each model in the Providers page hides it from every launch picker, **All provider models**, favorites, the server gateway and Core. Hidden models stay listed (dimmed) on the Providers page so you can bring them back, and a refresh never un-hides them.
+- **Model Type column.** Every provider's model list now shows what each model is for: Chat, Embedding, Reranking, Classifier (safety), Image, Video or Audio. The type comes from, in order: your own choice (pencil), a Test result, models.dev, or the model's name (for example `embed`, `rerank`, `guardian`, `instruct`, or a known chat family such as Qwen, Llama, Gemma or DeepSeek). Each type shows where it came from: **manual**, **tested**, **models.dev** or **name guess**. A passing Test marks a model as tested Chat, and a server that refuses chat marks it Not chat. Safety, image, video and audio names keep their type even when the model answers a chat request.
+- **Select and hide in bulk.** Checkboxes on each row, a **Select non-chat** button that ticks every visible model whose type is known and is not Chat, and a bar to **Hide**, **Unhide** or **Clear** the selection. Nothing is hidden until you confirm with Hide.
+- **Trust this computer's certificates (opt-in).** Company servers signed by an internal certificate authority failed in Relay even though the browser trusted them, because Node only trusts its own bundled list. Turn on **Trust this computer's certificates** on the custom-provider form in `relay-ai ui`, or run `relay-ai providers trust-certs on`, and Relay also trusts the certificates installed on your computer. It is off by default, saved in `~/.relay-ai/config.json`, and can be turned off with `relay-ai providers trust-certs off`. When adding a provider fails on an untrusted certificate, Relay says so plainly and offers to turn it on and retry. Requires Node 22.19 or newer (or start Relay with `NODE_USE_SYSTEM_CA=1`).
+- **Claude Code accepts `--with-native` and `--relay-only`**, matching Codex and the ChatGPT app, so the launch-mode question can be skipped.
+
+### Changed
+
+- **One launch question, asked first, in every tool that can mix in its own models.** Claude Code, Codex CLI and the ChatGPT app now all ask **"Which models do you want in this session?"** before anything else, with **Native + Relay models** (the default) or **Relay models only**. Claude Code used to ask this after the model was picked; if the model you pick cannot run alongside your normal Claude models, Relay now says so and launches it Relay-only. The UI launch cards use the same **Native + Relay models** label (the defaults are unchanged).
+- **A launch lists only what you asked for.** Picking one model now puts exactly that model, plus your favorites, in the session (plus your normal models in Native + Relay mode). **All provider models** puts the whole provider in. Codex mixed mode, the ChatGPT app without favorites, and Gemini CLI used to also add the starting provider's other models on their own, which filled the switcher with models you did not choose.
+- **Custom Claude-style endpoints send the key two ways.** Some gateways accept only `Authorization: Bearer` and reject `x-api-key`, others the reverse. Relay now sends both for custom Anthropic endpoints, everywhere, so either kind works on the first try. A single-model Claude Code launch to a custom Claude-style endpoint now goes through Relay's local pass-through, so the endpoint's custom headers are sent too.
+- **Clearer model Test errors.** A Test that fails because the endpoint does not serve that model (a 404 such as `unsupported_path`) now says so and suggests trying the same model through the provider's other endpoint, instead of the generic "could not respond". A 403 saying the subscription does not include the model now reads "Your plan doesn't include this model." instead of a key or sign-in hint. Raw server text is still never shown, because it can contain keys.
+- The Antigravity favorites option is now named **⭐ Favorites Catalog**.
+
+### Fixed
+
+- **Claude Code no longer treats a mid-size model as 1M.** Claude Code knows only two windows for outside models: 200K, or 1M when the model name ends in `[1m]`. Relay used to add `[1m]` to every model above 200K, so a 262K model showed "930k left", would not compact until near 1M, and could overflow the server long before that. A model now gets `[1m]` only when its window is 1,000,000 or more and the size is confirmed (reported by the provider, measured, typed by you, or from a built-in provider). One-model launches still pass the exact size, so a 262K model shows 262K; in a model-switching session it shows 200K, which compacts early but never overflows. A custom-endpoint size that is only an estimate is treated as at most 200K until a Test confirms it.
+- **ChatGPT desktop app: a second launch no longer loses your original settings.** Relay checked whether ChatGPT was running by asking macOS for a process named "ChatGPT", which also matched an unrelated system helper. Relay could then believe the app was still open, skip restoring your configuration, and save the temporary Relay configuration as your "original". Relay now checks the ChatGPT app's own executable.
+
+### Upgrade notes
+
+- No migration needed. Hidden models, measured and manual sizes, and model types are stored per provider in `~/.relay-ai/providers.json` and survive refreshes.
+- Certificate trust stays off unless you turn it on.
+
 ## [0.18.1] - 2026-11-03
 
 ### Fixed

@@ -1,6 +1,6 @@
 // Route map + catalog assembly for the mid-session /model switch menu.
 import { BACKENDS, MAX_MODEL_CATALOG } from './constants.js';
-import { claudeCodeClientModelId } from './context-model-id.js';
+import { claudeCodeClientModelId, claudeCodeContextWindow } from './context-model-id.js';
 import { ANTIGRAVITY_BASE_URLS } from './oauth/antigravity-oauth.js';
 import { isSdkMigratedNpm } from './provider-factory.js';
 import { aliasModelId } from './proxy.js';
@@ -14,14 +14,15 @@ export function localModelToRoute(lp: LocalProvider, model: LocalProviderModel):
   const upstreamUrl = model.modelFormat === 'cloud-code'
     ? (model.baseUrl ?? ANTIGRAVITY_BASE_URLS[0])
     : (model.modelFormat === 'anthropic' ? model.baseUrl : model.completionsUrl);
+  const contextWindow = claudeCodeContextWindow(model);
   return {
-    aliasId: claudeCodeClientModelId(aliasModelId(model.id, lp.id), model.contextWindow),
+    aliasId: claudeCodeClientModelId(aliasModelId(model.id, lp.id), contextWindow),
     realModelId: model.upstreamModelId,
     displayName: `${model.name || model.id} (${lp.name})`,
     upstreamUrl: upstreamUrl ?? '',
     apiKey: lp.apiKey,
     modelFormat: model.modelFormat,
-    contextWindow: model.contextWindow,
+    contextWindow: model.contextWindowEstimated ? contextWindow : model.contextWindow,
     npm: model.npm,
     baseURL: model.apiBaseUrl,
     providerId: lp.id,

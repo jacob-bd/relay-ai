@@ -6,13 +6,22 @@ import { loadRegistry } from './registry/io.js';
 import { getAgentProviderModels } from './registry/provider-models.js';
 import { loadRegistryProviders } from './registry/load.js';
 import { getTemplateById } from './provider-templates.js';
-import type { LocalProvider } from './types.js';
+import type { LocalProvider, LocalProviderModel } from './types.js';
 import type { ServerModelInfo } from './server/models.js';
 
 export async function fetchProviderCatalog(
-  opts?: { agent?: CompatibilityAgent },
+  opts?: { agent?: CompatibilityAgent; includeHidden?: boolean },
 ): Promise<LocalProvider[]> {
   return loadRegistryProviders(undefined, opts);
+}
+
+/**
+ * Models a launch lists from the picked provider: just the picked model, or the provider's whole
+ * list when the user chose "All provider models". Favorites (and native models) are added separately;
+ * the provider's other models are never added on their own.
+ */
+export function launchModelsForProvider(provider: LocalProvider, selectedModel: LocalProviderModel): LocalProviderModel[] {
+  return provider.launchAllModels ? provider.models : [selectedModel];
 }
 
 export function providersForPicker(providers: LocalProvider[]): LocalProvider[] {

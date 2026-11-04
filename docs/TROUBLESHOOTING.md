@@ -102,6 +102,26 @@ Cline's documentation states that free model usage is **not supported through th
 
 ---
 
+## Custom endpoint: certificate error when adding or testing
+
+### What you see
+
+Adding a custom provider, refreshing it or testing a model fails with a certificate message (for example `unable to get local issuer certificate`), although the same URL opens fine in your browser.
+
+### Cause
+
+The server uses a certificate from a company or internal certificate authority. Your computer trusts it; Node, which Relay runs on, only trusts its own bundled list.
+
+### Fix
+
+Run `relay-ai providers trust-certs on`, or tick **Trust this computer's certificates (advanced)** on the custom-provider form in `relay-ai ui`, then retry. Turn it off with `relay-ai providers trust-certs off`. It needs Node 22.19 or newer; on older Node, start Relay with `NODE_USE_SYSTEM_CA=1`. Expired certificates and hostname mismatches are different problems and are not fixed by this. Details: [Custom endpoints](PROVIDERS.md#custom-endpoints).
+
+## Model Test: "This provider's endpoint doesn't serve this model"
+
+The gateway lists the model but does not serve it on this endpoint. This is common when one gateway is added twice, once as an OpenAI-compatible and once as an Anthropic-compatible provider, and its Claude-style endpoint only carries some models. Use the model from the other entry and hide it on this one (eye icon). Relay converts protocols for every tool, so the OpenAI-compatible entry also works in Claude Code.
+
+"Your plan doesn't include this model." means the server refused it for your subscription. Use a model your plan includes, or hide this one.
+
 ## Provider works in `relay-ai models` but not in `providers list`
 
 Zen and Go are **cloud builtins**: they appear when you have an OpenCode API key, even if they aren’t saved in `~/.relay-ai/providers.json`. `relay-ai providers list` shows them with `· cloud builtin`. Imported BYOK providers (Anthropic, Nvidia, Groq, …) come from the registry file.

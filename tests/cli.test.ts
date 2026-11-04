@@ -65,6 +65,12 @@ describe('parseArgs', () => {
     });
   });
 
+  it('claude takes the same --with-native / --relay-only flags as codex', () => {
+    expect(parseArgs(['claude', '--with-native'])).toMatchObject({ command: 'claude', codexLaunchMode: 'mixed', claudeArgs: [] });
+    expect(parseArgs(['claude', '--relay-only'])).toMatchObject({ command: 'claude', codexLaunchMode: 'relay-only', claudeArgs: [] });
+    expect(parseArgs(['claude', '--with-native', '--relay-only']).error).toMatch(/cannot be used together/);
+  });
+
   it('passes claude -c through unchanged', () => {
     expect(parseArgs(['claude', '-c']).claudeArgs).toEqual(['-c']);
   });

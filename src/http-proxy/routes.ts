@@ -1,6 +1,6 @@
 import { localModelToRoute } from '../catalog.js';
 import { MAX_MODEL_CATALOG } from '../constants.js';
-import { claudeCodeClientModelId } from '../context-model-id.js';
+import { claudeCodeClientModelId, claudeCodeContextWindow } from '../context-model-id.js';
 import { isSdkMigratedNpm } from '../provider-factory.js';
 import { aliasModelId, type ProxyRoute } from '../proxy.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from '../types.js';
@@ -62,13 +62,13 @@ export function buildHttpProxyRoutes(
     }
     const gatewayAliasId = claudeCodeClientModelId(
       aliasModelId(model.id, provider.id),
-      model.contextWindow,
+      claudeCodeContextWindow(model),
     );
     routes.push({
       ...route,
       aliasId: claudeCodeClientModelId(
         httpProxyModelId(provider.id, model.id),
-        model.contextWindow,
+        claudeCodeContextWindow(model),
       ),
       gatewayAliasId,
       displayName: `${model.name || model.id} (${provider.name})`,

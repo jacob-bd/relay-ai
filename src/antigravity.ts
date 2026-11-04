@@ -54,7 +54,7 @@ import type { FavoriteModel, UserPreferences, LocalProvider, LocalProviderModel 
 import type { CatalogFixture } from './antigravity/types.js';
 
 const AGY_FAVORITES_PROVIDER_ID = '__relay_agy_favorites__';
-const AGY_FAVORITES_PROVIDER_LABEL = '⭐ Favorites';
+const AGY_FAVORITES_PROVIDER_LABEL = '⭐ Favorites Catalog';
 
 /** True when child args already select a model (--model or --model=). */
 export function agyArgsIncludeModelFlag(args: string[]): boolean {

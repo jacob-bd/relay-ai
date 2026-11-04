@@ -8,6 +8,7 @@ import type { CachedModel } from './types.js';
 import { makeTraceLogger, getProviderDebugLogPath } from '../trace-log.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import { clampModelTimeoutMs, endpointModelTimeoutMs } from './endpoint-timeout.js';
+import { isUntrustedCertificateError, untrustedCertificateMessage, UNTRUSTED_CERTIFICATE_CODE } from '../tls-trust.js';
 
 interface OpenAiModelListResponse {
   data?: ProviderModelListRow[];
@@ -171,12 +172,12 @@ function parseModelList(body: OpenAiModelListResponse, npm: string): CachedModel
       // daily Neuron allowance, so free access is a provider rule, not a price.
       freeAccess: isFreeFromProps === true,
     });
-    const contextWindow =
+    const reportedWindow =
       contextWindowFromProps ??
       row.context_length ??
       row.contextWindow ??
-      row.context_window ??
-      resolveContextWindow(id);
+      row.context_window;
+    const contextWindow = reportedWindow ?? resolveContextWindow(id);
     models.push({
       id,
       name: normalizeGoogleDisplayName(row.name, id),
@@ -184,6 +185,8 @@ function parseModelList(body: OpenAiModelListResponse, npm: string): CachedModel
       family,
       brand: deriveBrand(family),
       contextWindow,
+      // Marks a size the provider stated, so a guessed one can be labelled as an estimate.
+      ...(reportedWindow !== undefined ? { contextWindowSource: 'provider' as const } : {}),
       cost,
       ...(cost ? { costSource: 'provider' as const } : {}),
       isFree: isFreeStatus(freeStatus),
@@ -204,6 +207,8 @@ export interface FetchTemplateModelsResult {
   baseUrl: string;
   error?: string;
   hint?: string;
+  /** Machine-readable failure kind (e.g. 'untrusted-certificate') so UIs can offer a fix. */
+  code?: string;
 }
 
 /** Probe provider API with API key; returns models on success. */
@@ -336,7 +341,10 @@ export async function fetchTemplateModels(
     }
 
     return { models, baseUrl };
-  } catch {
+  } catch (err) {
+    if (isUntrustedCertificateError(err)) {
+      return { models: [], baseUrl, ...untrustedCertificateMessage(), code: UNTRUSTED_CERTIFICATE_CODE };
+    }
     const timedOut = controller.signal.aborted;
     return {
       models: [],

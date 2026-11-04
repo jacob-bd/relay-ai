@@ -23,7 +23,8 @@ import {
   migrateOAuthXaiProvider,
 } from './migrate.js';
 import { isValidProviderId } from './validate.js';
-import { parseManualModel } from './provider-models.js';
+import { isValidContextWindow, parseManualModel } from './provider-models.js';
+import { MODEL_KINDS, type ModelKind } from './model-kind.js';
 
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -84,6 +85,35 @@ function parseProvider(raw: unknown): RegistryProvider | null {
   }
   if (p.nameCustomized === true) provider.nameCustomized = true;
   if (typeof p.refreshedAt === 'string') provider.refreshedAt = p.refreshedAt;
+  if (p.modelKindOverrides && typeof p.modelKindOverrides === 'object' && !Array.isArray(p.modelKindOverrides)) {
+    const kinds: NonNullable<RegistryProvider['modelKindOverrides']> = {};
+    for (const [modelId, kind] of Object.entries(p.modelKindOverrides as Record<string, unknown>)) {
+      if (typeof kind === 'string' && (MODEL_KINDS as readonly string[]).includes(kind)) kinds[modelId] = kind as ModelKind;
+    }
+    if (Object.keys(kinds).length > 0) provider.modelKindOverrides = kinds;
+  }
+  if (Array.isArray(p.nonChatModelIds)) {
+    const ids = p.nonChatModelIds.filter((id): id is string => typeof id === 'string' && id.length > 0);
+    if (ids.length > 0) provider.nonChatModelIds = [...new Set(ids)];
+  }
+  if (Array.isArray(p.chatModelIds)) {
+    const ids = p.chatModelIds.filter((id): id is string => typeof id === 'string' && id.length > 0);
+    if (ids.length > 0) provider.chatModelIds = [...new Set(ids)];
+  }
+  if (Array.isArray(p.hiddenModelIds)) {
+    const hidden = p.hiddenModelIds.filter((id): id is string => typeof id === 'string' && id.length > 0);
+    if (hidden.length > 0) provider.hiddenModelIds = [...new Set(hidden)];
+  }
+  if (p.contextWindowOverrides && typeof p.contextWindowOverrides === 'object' && !Array.isArray(p.contextWindowOverrides)) {
+    const overrides: NonNullable<RegistryProvider['contextWindowOverrides']> = {};
+    for (const [modelId, raw] of Object.entries(p.contextWindowOverrides as Record<string, unknown>)) {
+      const entry = raw as { contextWindow?: unknown; source?: unknown } | null;
+      if (!entry || !isValidContextWindow(entry.contextWindow)) continue;
+      if (entry.source !== 'user' && entry.source !== 'measured') continue;
+      overrides[modelId] = { contextWindow: entry.contextWindow, source: entry.source };
+    }
+    if (Object.keys(overrides).length > 0) provider.contextWindowOverrides = overrides;
+  }
   if (Array.isArray(p.manualModels)) {
     provider.manualModels = p.manualModels.flatMap(raw => {
       const model = parseManualModel(raw);

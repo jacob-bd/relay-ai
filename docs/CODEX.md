@@ -293,7 +293,7 @@ operation.
 
 When you have saved favorites via `relay-ai models`, both `relay-ai codex` and `relay-ai codex-app` will show your starting model + favorites in the mid-session model picker. Zen/Go favorites are included when an OpenCode API key is available.
 
-Every provider model picker also offers **All provider models (favorites will not be used)**. That launch lists every model from the selected provider in the mid-session picker, up to the 50-entry catalog cap, and skips saved favorites for that session only. The choice is not persisted: the next launch returns to your saved favorites. In mixed native + Relay mode the option fills the Relay rows first (up to 50) and then adds the starting provider's other models. Zen/Go favorites are skipped in Relay mode; use Claude or the Desktop gateway for those.
+Every provider model picker also offers **All provider models (favorites will not be used)**. That launch lists every model from the selected provider in the mid-session picker, up to the 50-entry catalog cap, and skips saved favorites for that session only. The choice is not persisted: the next launch returns to your saved favorites. In mixed native + Relay mode the option fills the Relay rows (up to 50). Picking a single model lists just that model plus your favorites; the provider's other models are never added on their own. Zen/Go favorites are skipped in Relay mode; use Claude or the Desktop gateway for those.
 
 ## Mixed native + Relay mode
 
@@ -312,7 +312,7 @@ relay-ai codex --with-native
 relay-ai codex-app --with-native
 ```
 
-In the Relay web UI, enable **Load native Codex models alongside Relay models** on the Codex CLI or ChatGPT Desktop launch card. The choice applies to that launch only; the independent Codex SubAgents catalog remains saved separately.
+In the terminal, `relay-ai codex` and `relay-ai codex-app` ask **Which models do you want in this session?** first: **Native + Relay models** (default) or **Relay models only**; the flags skip that question. In the Relay web UI, enable **Native + Relay models** on the Codex CLI or ChatGPT Desktop launch card. The choice applies to that launch only; the independent Codex SubAgents catalog remains saved separately.
 
 The selected Relay model remains the initial model. Native Codex models, General Favorites, and the configured Codex SubAgents model are entries in the mixed catalog. Codex decides when to launch a sub-agent; every child request marked by Codex is routed to the one configured Relay model regardless of the native model id inherited by the child. Because Codex's orchestration eligibility is tied to catalog metadata, the Codex SubAgents model may also be visible in the normal model picker. Relay starts one local capability-protected proxy for the session. Native HTTP and Responses-Lite WebSocket requests are forwarded to the authenticated Codex backend; Relay routes use the existing SDK translation path.
 

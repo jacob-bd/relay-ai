@@ -14,14 +14,27 @@ import {
 } from './ui.js';
 import { scoreModelSearch } from './model-search.js';
 
-export function claudeTransparentModeOptions(modelLabel: string): Array<{
-  value: boolean;
-  label: string;
-}> {
+export type LaunchMode = 'mixed' | 'relay-only';
+
+/** Same first question in every tool that can mix in its own models: Native + Relay first (default), then Relay only. */
+export function launchModeOptions(nativeName: string): Array<{ value: LaunchMode; label: string; hint: string }> {
   return [
-    { value: true, label: `Yes — Use ${modelLabel} alongside Anthropic models` },
-    { value: false, label: `No — Use only ${modelLabel} through Relay AI` },
+    { value: 'mixed', label: 'Native + Relay models', hint: `Your normal ${nativeName} models plus your Relay models` },
+    { value: 'relay-only', label: 'Relay models only', hint: `Hide your ${nativeName} models for this launch` },
   ];
+}
+
+export async function pickLaunchMode(nativeName: string): Promise<LaunchMode | null> {
+  const choice = await p.select<LaunchMode>({
+    message: 'Which models do you want in this session?',
+    options: launchModeOptions(nativeName),
+    initialValue: 'mixed',
+  });
+  if (p.isCancel(choice)) {
+    p.cancel('Cancelled.');
+    return null;
+  }
+  return choice;
 }
 
 const BROWSE_ALL = '__browse_all__';

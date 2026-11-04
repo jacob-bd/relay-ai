@@ -1,13 +1,10 @@
 #!/usr/bin/env node
 import {
-  addCustomEndpointProvider,
   addProviderFromTemplate,
   buildDedupedModelRows,
   checkForUpdates,
   claudeCodeProviderData,
-  copilotPlanTier,
   createGatewayModelCatalog,
-  ensureOpencodeCloudProviders,
   favoriteProviderDisplayName,
   fetchProviderCatalog,
   filterServerModelsByFavorites,
@@ -27,10 +24,6 @@ import {
   providersForTarget,
   readBody,
   readOAuthAccountLabel,
-  refreshAllProviderModels,
-  refreshProviderModels,
-  removeProviderFromRegistry,
-  renameProvider,
   resolveAdvertiseAddresses,
   resolveAdvertiseGatewayPort,
   resolveServerUpstreamApiKey,
@@ -39,17 +32,34 @@ import {
   startServer,
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
-  supportsClaudeTransparentMode,
-  updateCustomEndpointProvider
-} from "./chunk-K4JKDGCQ.js";
+  supportsClaudeTransparentMode
+} from "./chunk-7FAYEN3G.js";
+import "./chunk-PFR4ZYI4.js";
 import {
-  validateCustomEndpointUrl
-} from "./chunk-7JEIN2RQ.js";
-import "./chunk-S6JEMLTR.js";
+  TRUST_SYSTEM_CERTS_NOTICE,
+  addCustomEndpointProvider,
+  applySystemCaTrust,
+  copilotPlanTier,
+  customEndpointKind,
+  ensureOpencodeCloudProviders,
+  isSystemCaActive,
+  isSystemCaSupported,
+  refreshAllProviderModels,
+  refreshProviderModels,
+  removeProviderFromRegistry,
+  renameProvider,
+  revertSystemCaTrust,
+  setContextWindowOverride,
+  setModelHidden,
+  setModelKindOverride,
+  setModelsHidden,
+  updateCustomEndpointProvider
+} from "./chunk-GCRYZID3.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
   MAX_MODEL_CATALOG,
+  MODEL_KINDS,
   VERSION,
   buildAntigravityAuthUrl,
   buildClaudeCodeAuthUrl,
@@ -69,13 +79,17 @@ import {
   getServerFreeModelsOnly,
   getServerListenMode,
   getServerMaskGatewayIds,
+  getTrustSystemCertificates,
   getUiDebugLogPath,
+  guessModelKindFromName,
   guiCallbackRedirectUri,
   isProviderKind,
   loadPreferences,
   loadRegistry,
   localTimestamp,
   makeTraceLogger,
+  modelsDevModelKind,
+  nameKindOutranksChatTest,
   openAiDeviceCodeUrl,
   pollClinePassDeviceCode,
   pollGithubDeviceCodeToken,
@@ -101,10 +115,12 @@ import {
   setServerFreeModelsOnly,
   setServerListenMode,
   setServerMaskGatewayIds,
+  setTrustSystemCertificates,
   supportsAdditionalOAuthAccounts,
   supportsManualModels,
+  validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-HQHRYYRR.js";
+} from "./chunk-JSEUUZCZ.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -707,6 +723,16 @@ function handleUiApiRequest(req, res, opts = {}) {
     handleManualModel(req, res, "add");
   } else if (url === "/api/providers/models/remove" && req.method === "POST") {
     handleManualModel(req, res, "remove");
+  } else if (url === "/api/providers/models/hide" && req.method === "POST") {
+    handleHideModel(req, res);
+  } else if (url === "/api/providers/models/context" && req.method === "POST") {
+    handleSetContextWindow(req, res);
+  } else if (url === "/api/providers/models/kind" && req.method === "POST") {
+    handleSetModelKind(req, res);
+  } else if (url === "/api/providers/models/hide-many" && req.method === "POST") {
+    handleHideManyModels(req, res);
+  } else if (url === "/api/providers/models/measure-context" && req.method === "POST") {
+    handleMeasureContextWindow(req, res);
   } else if (url === "/api/providers/oauth/start" && req.method === "POST") {
     handleOAuthStart(req, res, opts);
   } else if (url === "/api/providers/oauth/code" && req.method === "POST") {
@@ -746,7 +772,10 @@ function handleGetConfig(res) {
   const prefs = loadPreferences();
   sendJson(res, 200, {
     favoriteModels: prefs.favoriteModels ?? [],
-    codexSubagentModels: prefs.codexSubagentModels ?? []
+    codexSubagentModels: prefs.codexSubagentModels ?? [],
+    trustSystemCertificates: getTrustSystemCertificates(),
+    systemCertificatesSupported: isSystemCaSupported() || isSystemCaActive(),
+    trustSystemCertificatesNotice: TRUST_SYSTEM_CERTS_NOTICE
   });
 }
 async function handlePostConfig(req, res) {
@@ -763,6 +792,18 @@ async function handlePostConfig(req, res) {
       update.codexSubagentModels = normalized;
     }
     if (Object.keys(update).length > 0) savePreferences(update);
+    if (typeof body.trustSystemCertificates === "boolean") {
+      if (body.trustSystemCertificates) {
+        const applied = applySystemCaTrust();
+        if (!applied.ok) {
+          sendJson(res, 400, { error: applied.reason ?? "Could not trust system certificates." });
+          return;
+        }
+      } else {
+        revertSystemCaTrust();
+      }
+      setTrustSystemCertificates(body.trustSystemCertificates);
+    }
     sendJson(res, 200, { ok: true });
   } catch (err) {
     sendJson(res, 400, { error: String(err) });
@@ -792,7 +833,8 @@ function accountField(p2) {
 }
 async function handleGetModels(res, target, codexSubagents = false, uiMode) {
   try {
-    let catalog = (await fetchModelsWithTimeout()).filter((provider) => provider.authType !== "oauth" || isUiCatalogOAuthProvider(provider.id, uiMode));
+    const includeHidden = !target && !codexSubagents;
+    let catalog = (await fetchModelsWithTimeout(includeHidden ? { includeHidden: true } : void 0)).filter((provider) => provider.authType !== "oauth" || isUiCatalogOAuthProvider(provider.id, uiMode));
     if (codexSubagents) catalog = providersForCodexSubagents(catalog);
     else if (target) catalog = providersForTarget(catalog, target);
     const registry = loadRegistry();
@@ -801,6 +843,7 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
       p2.id,
       new Set(getProviderModels(p2).filter((m) => m.source === "manual").map((m) => m.id))
     ]));
+    const estimatedIdsByProvider = new Map(registry.providers.filter((rp) => customEndpointKind(rp)).map((rp) => [rp.id, new Map(getProviderModels(rp).filter((m) => m.contextWindowSource === void 0 || m.contextWindowSource === "models.dev").map((m) => [m.id, m.contextWindowSource === "models.dev" ? "models.dev" : "name"]))]));
     const manualMetadata = (id) => {
       const provider = registryById.get(id);
       return {
@@ -831,7 +874,7 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
       ...keyAccountFields(registry.providers.find((rp) => rp.id === p2.id)),
       ...manualMetadata(p2.id),
       // Count the same usable models shown below, not raw speech/guard/blocked entries.
-      modelCount: p2.models.length,
+      modelCount: p2.models.filter((m) => !m.hidden).length,
       ...isProviderKind(p2.id, "github-copilot") ? { subscription: copilotSubscription(p2.providerData) } : {},
       ...customById.has(p2.id) ? { customEndpoint: customById.get(p2.id) } : {},
       models: p2.models.map((m) => ({
@@ -844,6 +887,10 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
         cost: m.cost,
         referencePrice: m.referencePrice,
         claudeTransparentCompatible: supportsClaudeTransparentMode(m),
+        ...m.hidden ? { hidden: true } : {},
+        ...modelKindFields(registryById.get(p2.id), m.id),
+        ...m.contextWindow !== void 0 && estimatedIdsByProvider.get(p2.id)?.has(m.id) ? { contextWindowEstimate: estimatedIdsByProvider.get(p2.id).get(m.id) } : {},
+        ...registryById.get(p2.id)?.contextWindowOverrides?.[m.id] ? { contextWindowOverride: registryById.get(p2.id).contextWindowOverrides[m.id].source } : {},
         ...manualIdsByProvider.get(p2.id)?.has(m.id) ? { source: "manual" } : {}
       }))
     }));
@@ -908,6 +955,100 @@ function publicManualModel(model) {
     source: "manual"
   };
 }
+async function handleHideModel(req, res) {
+  try {
+    const body = JSON.parse(await readBody(req));
+    if (typeof body.providerId !== "string" || !body.providerId.trim() || typeof body.modelId !== "string" || !body.modelId.trim() || typeof body.hidden !== "boolean") {
+      sendJson(res, 400, { ok: false, error: "providerId, modelId and hidden (true/false) are required" });
+      return;
+    }
+    const result = setModelHidden(body.providerId.trim(), body.modelId.trim(), body.hidden);
+    sendJson(res, result.ok ? 200 : 404, result);
+  } catch {
+    sendJson(res, 400, { ok: false, error: "Request body must be valid JSON" });
+  }
+}
+function modelKindFields(provider, modelId) {
+  if (!provider) return {};
+  const manual = provider.modelKindOverrides?.[modelId];
+  if (manual) return { kind: manual, kindSource: "manual" };
+  if (provider.nonChatModelIds?.includes(modelId)) return { kind: "not-chat", kindSource: "test" };
+  const guessed = guessModelKindFromName(modelId);
+  if (provider.chatModelIds?.includes(modelId)) {
+    return nameKindOutranksChatTest(guessed) ? { kind: guessed, kindSource: "name" } : { kind: "chat", kindSource: "test" };
+  }
+  const known = modelsDevModelKind(provider.id, modelId);
+  if (known) return { kind: known, kindSource: "models.dev" };
+  return guessed ? { kind: guessed, kindSource: "name" } : {};
+}
+async function handleSetModelKind(req, res) {
+  try {
+    const body = JSON.parse(await readBody(req));
+    if (typeof body.providerId !== "string" || typeof body.modelId !== "string" || body.kind !== null && (typeof body.kind !== "string" || !MODEL_KINDS.includes(body.kind))) {
+      sendJson(res, 400, { ok: false, error: `providerId, modelId and kind (${MODEL_KINDS.join(", ")}, or null to reset) are required` });
+      return;
+    }
+    const result = setModelKindOverride(body.providerId, body.modelId, body.kind);
+    sendJson(res, result.ok ? 200 : 400, result);
+  } catch {
+    sendJson(res, 400, { ok: false, error: "Request body must be valid JSON" });
+  }
+}
+async function handleHideManyModels(req, res) {
+  try {
+    const body = JSON.parse(await readBody(req));
+    if (typeof body.providerId !== "string" || typeof body.hidden !== "boolean" || !Array.isArray(body.modelIds) || !body.modelIds.every((id) => typeof id === "string")) {
+      sendJson(res, 400, { ok: false, error: "providerId, modelIds (list) and hidden (true/false) are required" });
+      return;
+    }
+    const result = setModelsHidden(body.providerId, body.modelIds, body.hidden);
+    sendJson(res, result.ok ? 200 : 404, result);
+  } catch {
+    sendJson(res, 400, { ok: false, error: "Request body must be valid JSON" });
+  }
+}
+async function handleSetContextWindow(req, res) {
+  try {
+    const body = JSON.parse(await readBody(req));
+    if (typeof body.providerId !== "string" || !body.providerId.trim() || typeof body.modelId !== "string" || !body.modelId.trim() || body.contextWindow !== null && typeof body.contextWindow !== "number") {
+      sendJson(res, 400, { ok: false, error: "providerId, modelId and contextWindow (a number, or null to reset) are required" });
+      return;
+    }
+    const result = setContextWindowOverride(body.providerId.trim(), body.modelId.trim(), body.contextWindow, "user");
+    sendJson(res, result.ok ? 200 : 400, result);
+  } catch {
+    sendJson(res, 400, { ok: false, error: "Request body must be valid JSON" });
+  }
+}
+async function handleMeasureContextWindow(req, res) {
+  let body;
+  try {
+    body = JSON.parse(await readBody(req));
+  } catch {
+    sendJson(res, 400, { ok: false, error: "Request body must be valid JSON" });
+    return;
+  }
+  if (typeof body.providerId !== "string" || typeof body.modelId !== "string") {
+    sendJson(res, 400, { ok: false, error: "providerId and modelId required" });
+    return;
+  }
+  const provider = loadRegistry().providers.find((p2) => p2.id === body.providerId);
+  if (!provider || !customEndpointKind(provider)) {
+    sendJson(res, 400, { ok: false, error: "Measuring all context sizes is only available for custom endpoints." });
+    return;
+  }
+  const controller = new AbortController();
+  res.on("close", () => {
+    if (!res.writableEnded) controller.abort();
+  });
+  try {
+    const { checkContextWindow } = await import("./test-model-LZOXBKP5.js");
+    const context = await checkContextWindow(provider.id, body.modelId, controller.signal);
+    if (!res.destroyed) sendJson(res, 200, { ok: true, context });
+  } catch {
+    if (!res.destroyed) sendJson(res, 200, { ok: false, error: "Could not check this model." });
+  }
+}
 async function handleManualModel(req, res, action) {
   let body;
   try {
@@ -928,7 +1069,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-GZL2LLZN.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-FV5XLMID.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1078,6 +1219,7 @@ async function handleAddCustomProvider(req, res) {
         ok: false,
         error: result.error,
         hint: result.hint,
+        ...result.code ? { code: result.code } : {},
         ...result.duplicateOf ? { duplicateOf: result.duplicateOf } : {}
       });
     }
@@ -1114,6 +1256,7 @@ async function handleEditCustomProvider(req, res) {
         ok: false,
         error: result.error,
         hint: result.hint,
+        ...result.code ? { code: result.code } : {},
         ...result.canSaveAnyway ? { canSaveAnyway: true } : {}
       });
     }
@@ -1176,7 +1319,7 @@ async function handleAddProvider(req, res) {
     if (result.added) {
       sendJson(res, 200, { ok: true, name: result.addedNames?.join(" + ") ?? result.provider?.name ?? template.name, count: result.modelCount ?? 0, ...result.notice ? { notice: result.notice } : {} });
     } else {
-      sendJson(res, 200, { ok: false, error: result.error, hint: result.hint });
+      sendJson(res, 200, { ok: false, error: result.error, hint: result.hint, ...result.code ? { code: result.code } : {} });
     }
   } catch (err) {
     sendJson(res, 500, { error: String(err) });
@@ -1223,7 +1366,7 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-XHMIJC5A.js");
+    const { testModel } = await import("./test-model-LZOXBKP5.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
     if (!res.destroyed) sendJson(res, 200, result);
   } catch {
@@ -2100,4 +2243,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-YEIFOQ6E.js.map
+//# sourceMappingURL=ui-command-KVCVGTBB.js.map

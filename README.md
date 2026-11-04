@@ -128,7 +128,9 @@ To fully remove the tool and all its configuration data, you can delete the conf
 - **OpenCode Zen / Go:** Optional cloud backends when you have an OpenCode API key
 - **SDK adapter proxy:** Non-Anthropic providers route through the Vercel AI SDK (same packages OpenCode uses), so Claude Code still speaks Anthropic format. Labeled `(via proxy)` in the picker
 - **Favorite models:** Save up to 50 and switch mid-session with Claude Code's `/model` command. Or choose **All provider models** at launch to put one provider's whole catalog in the switcher without saving favorites
-- **Test a model before you launch:** A **Test** button sends one short request through Relay and reports the response time, so an access problem shows up before your agent session does
+- **Test a model before you launch:** A **Test** button sends one short request through Relay and reports the response time, so an access problem shows up before your agent session does. The same Test reads the model's real context size from the server when it states one
+- **Custom endpoint tools:** Measure every model's real context size in one click, set sizes by hand, see each model's type (chat, embedding, reranking, safety…), and hide the models you don't use, one at a time or in bulk. See **[docs/PROVIDERS.md](docs/PROVIDERS.md#custom-endpoints)**
+- **Company servers with internal certificates:** Opt in to trusting the certificates installed on your computer (`relay-ai providers trust-certs on`)
 - **Honest prices:** Prices come from the provider when it publishes them, otherwise from models.dev or the pricing feed; a cross-provider estimate is labelled as one
 - **Codex SubAgent:** Build a separate, initially empty one-model catalog for Codex delegation; it never imports or synchronizes with General Favorites
 - **Smart model pickers:** Recent models per provider, search for large lists (>25), paginated browse (15 per page)
@@ -177,6 +179,8 @@ relay-ai providers add      # pick a template or custom endpoint
 relay-ai providers import   # one-time migration from OpenCode (optional)
 ```
 
+Behind a company VPN with an internal certificate authority? Run `relay-ai providers trust-certs on` (or tick **Trust this computer's certificates** on the custom-provider form in `relay-ai ui`) so Relay trusts the certificates your computer already trusts. It is off by default. See [Custom endpoints](docs/PROVIDERS.md#custom-endpoints).
+
 Custom endpoints, Ollama/LM Studio templates, and endpoints at loopback or private IP addresses get a 30-second model discovery timeout across add, edit, import, and refresh. Set `RELAY_AI_CUSTOM_ENDPOINT_MODEL_TIMEOUT_MS` to override this window (1,000–120,000 ms); empty, whitespace-only, or non-finite values use the default. Other cloud templates keep their 10-second timeout. Bulk refresh runs at most three providers at a time, with credentials resolved one at a time.
 
 On first `relay-ai claude` run with an empty registry, an inline wizard walks you through Quick start (Zen), import, or opening `relay-ai providers`.
@@ -205,8 +209,9 @@ relay-ai ui
 Opens a browser-based dashboard on a random local port. From the UI you can:
 
 - **Launch any supported tool** — app cards for Claude Code CLI, Codex CLI, Gemini CLI, Antigravity CLI, Antigravity App, Antigravity IDE, Claude Code Desktop, and the ChatGPT Desktop app (Codex mode). Select a provider and model in the card, then click **Launch** — a native terminal opens with the selection pre-wired. No second picker in the terminal.
-- **Keep Claude Code's Anthropic login** — on the Claude Code CLI card, check **Keep my Anthropic login and add Relay models** to keep your normal Claude models while adding the selected Relay model and compatible favorites. This option is not shown for Claude Desktop.
+- **Keep your normal models** — on the Claude Code CLI, Codex CLI and ChatGPT Desktop cards, check **Native + Relay models** to keep your normal Claude or Codex models alongside the selected Relay model and compatible favorites. This option is not shown for Claude Desktop.
 - **Manage General Favorites** — the sidebar shows your saved favorite models with a slot indicator (Slots used X/50). Favorites launch through all supported agents, including Antigravity.
+- **Manage models** — open a provider to Test models, see each model's type and context size (with where each came from: manual, tested/measured, models.dev, estimate or name guess), set sizes or types by hand, and hide models from every picker. Custom endpoints also get **Measure context sizes**. See [Custom endpoints](docs/PROVIDERS.md#custom-endpoints).
 - **Manage providers** — add providers from templates, delete providers, and refresh model lists inline, all without leaving the browser. For GitHub Copilot, ChatGPT, xAI, and ClinePass OAuth, the UI displays a one-time device code with **Copy code** and **Open sign-in page** buttons so you can complete sign-in without using the terminal. ClinePass can also be configured with an API key from the same provider card.
 - **Run the Server tab** — configure and start the same gateway as `relay-ai server` (favorites-only or specific providers, discovery id masking, local/network listen mode) and see the resulting URLs, API key, and model catalog right in the browser. Runs in the same process as the UI, so it stops when you close the dashboard. See [Registry gateway (`relay-ai server`)](#registry-gateway-relay-ai-server) below for what each option does.
 
@@ -218,11 +223,13 @@ Press `Ctrl+C` in the terminal where `relay-ai ui` is running to shut down the d
 relay-ai claude
 ```
 
-First run: pick a provider from your registry (or complete the inline setup wizard). If you've added OpenCode Zen/Go, those appear alongside registry providers like Groq, Nvidia, or DeepSeek.
+First, Relay asks **Which models do you want in this session?** Choose **Native + Relay models** (the default) to keep your normal Claude models alongside Relay models on your existing Anthropic login, or **Relay models only**. Codex CLI and the ChatGPT app ask the same question. Skip it with `--with-native` or `--relay-only`.
 
-After you choose a compatible Relay model, the wizard asks whether you want to keep your normal Claude models available too. Choose **Yes** to use the Relay model alongside your existing Anthropic login, or **No** for the existing Relay-only launch.
+Then pick a provider from your registry (or complete the inline setup wizard). If you've added OpenCode Zen/Go, those appear alongside registry providers like Groq, Nvidia, or DeepSeek. If the model you pick cannot run alongside your normal Claude models, Relay says so and launches it Relay-only.
 
-To skip that question, use `--http-proxy`. A selected model does not need to be a favorite:
+A session contains exactly what you choose: the picked model plus your favorites, or one provider's whole list with **All provider models**.
+
+`--http-proxy` also selects Native + Relay mode. A selected model does not need to be a favorite:
 
 ```bash
 relay-ai claude --http-proxy --provider moonshot --model kimi-k3
@@ -244,7 +251,7 @@ Add up to 50 favorites from Zen, Go, or any OpenCode-configured provider. When y
 
 No favorites? Launch works like before: single model, no switch menu. `--dry-run` ignores saved favorites so you can preview a single-model launch.
 
-That built-in favorites catalog applies to **Relay-only mode** (choose **No** when asked whether to keep your normal Claude models). In mixed Anthropic + Relay mode (`--http-proxy` / choose **Yes**), compatible favorites also show up in Claude Code's normal `/model` picker next to your Anthropic models.
+That built-in favorites catalog applies to **Relay models only** mode. In **Native + Relay models** mode (`--with-native` / `--http-proxy`), compatible favorites also show up in Claude Code's normal `/model` picker next to your Anthropic models.
 
 #### `relay-ai claude` options
 
@@ -254,6 +261,8 @@ That built-in favorites catalog applies to **Relay-only mode** (choose **No** wh
 | `--setup` | Reminder to use `relay-ai providers` for provider setup |
 | `--trace` | Write debug logs to `~/.relay-ai/logs/` and show errors on exit |
 | `--http-proxy` | Keep the normal Anthropic login/models and add the selected model plus compatible favorites |
+| `--with-native` | Answer **Native + Relay models** to the launch question |
+| `--relay-only` | Answer **Relay models only** to the launch question |
 | `--help` | Show command help |
 | `--version` | Show version |
 
@@ -556,7 +565,7 @@ To configure the model Codex uses when it launches a sub-agent, build the indepe
 relay-ai subagents
 ```
 
-The catalog starts empty and has one slot. In mixed native/Relay mode, Codex decides when to launch a sub-agent and Relay routes that child to the configured Codex SubAgent model. Enable **Load native Codex models alongside Relay models** in the UI, or pass `--with-native` from the CLI. General Favorites and Codex SubAgent are separate lists.
+The catalog starts empty and has one slot. In mixed native/Relay mode, Codex decides when to launch a sub-agent and Relay routes that child to the configured Codex SubAgent model. Enable **Native + Relay models** in the UI, or pass `--with-native` from the CLI. General Favorites and Codex SubAgent are separate lists.
 
 See **[docs/CODEX.md](docs/CODEX.md)** for CLI vs app differences, file ownership, and troubleshooting.
 

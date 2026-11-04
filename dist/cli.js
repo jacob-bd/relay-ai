@@ -2,14 +2,12 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-AZLMAVK2.js";
+} from "./chunk-IDS356U3.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
   PREVIEW_PROXY_PORT,
-  addCustomEndpointProvider,
   addFavorite,
-  addOpencodeCloudFromApiKey,
   addProviderFromTemplate,
   aliasModelId,
   anthropicMessagesEndpoint,
@@ -24,7 +22,6 @@ import {
   buildListExperimentsResponse,
   buildListModelConfigsResponse,
   buildVertexRuntimeConfig,
-  cachedModelToLocal,
   catalogEntryFromModel,
   checkForUpdates,
   checkVertexModelAccess,
@@ -33,21 +30,18 @@ import {
   codexAppModelSlug,
   codexAppSupported,
   createGatewayModelCatalog,
-  customEndpointKind,
   effortLabel,
-  endpointModelTimeoutMs,
   estimateAnthropicInputTokens,
   evaluateAgySwitchCompatibility,
   extractApiKey,
   favoriteEffortLevels,
   favoriteProviderDisplayName,
-  fetchAnthropicModels,
   fetchProviderCatalog,
-  fetchTemplateModels,
   filterVertexModelsByAccess,
   findBinaryOnPath,
   findEmbeddedCodexBinary,
   fmtCommand,
+  fmtContextWindow,
   fmtCount,
   fmtEnabledStar,
   fmtModel,
@@ -65,6 +59,7 @@ import {
   isClaudeAppRunning,
   isCodexAppRunning,
   isFavorite,
+  launchModelsForProvider,
   launchOrRestartClaudeApp,
   launchOrRestartCodexApp,
   logActiveModel,
@@ -92,17 +87,11 @@ import {
   quitCodexAppGracefully,
   readBody,
   readOAuthAccountLabel,
-  refreshAllProviderModels,
-  refreshProviderModels,
-  refreshProviderModelsBatch,
   relayIntro,
   relayOutro,
   removeFavorite,
-  removeProviderFromRegistry,
-  renameProvider,
   renderMultiAgentV2Feature,
   resolveLocalProviderApiKey,
-  resolveModelSource,
   resolveProvidersForDisplay,
   resolveRelayCatalogSlots,
   routableModelsForTarget,
@@ -114,31 +103,49 @@ import {
   startServer,
   supportsClaudeTransparentMode,
   supportsMultiAgentV2,
-  toggleProviderEnabled,
-  updateCustomEndpointProvider,
   upstreamModelId,
-  waitForCodexAppQuit,
-  zenRegistryStub
-} from "./chunk-K4JKDGCQ.js";
-import {
-  validateCustomEndpointUrl
-} from "./chunk-7JEIN2RQ.js";
+  waitForCodexAppQuit
+} from "./chunk-7FAYEN3G.js";
+import "./chunk-PFR4ZYI4.js";
 import {
   OPENCODE_SESSION_HEADER,
+  TRUST_SYSTEM_CERTS_NOTICE,
+  UNTRUSTED_CERTIFICATE_CODE,
+  addCustomEndpointProvider,
+  addOpencodeCloudFromApiKey,
+  applySystemCaTrust,
   buildImportProviderList,
+  cachedModelToLocal,
+  customEndpointKind,
   effectiveProviderBaseUrl,
+  endpointModelTimeoutMs,
   extractConversationId,
+  fetchAnthropicModels,
+  fetchTemplateModels,
   isLikelyPlaceholderKey,
   isOAuthImportProvider,
+  isSystemCaActive,
+  isSystemCaSupported,
   listCredentialSkippedProviders,
   oauthAuthRef,
   openCodeGoHeaders,
   providerRefreshToken,
+  refreshAllProviderModels,
+  refreshProviderModels,
+  refreshProviderModelsBatch,
+  removeProviderFromRegistry,
+  renameProvider,
+  resolveModelSource,
   resolveProviderTemplate,
   resolveRefreshCredential,
+  revertSystemCaTrust,
+  setContextWindowOverride,
   syntheticTemplate,
-  toOAuthRegistryId
-} from "./chunk-S6JEMLTR.js";
+  toOAuthRegistryId,
+  toggleProviderEnabled,
+  updateCustomEndpointProvider,
+  zenRegistryStub
+} from "./chunk-GCRYZID3.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -160,6 +167,7 @@ import {
   buildAntigravityChildEnv,
   buildChildEnv,
   claudeCodeClientModelId,
+  claudeCodeContextWindow,
   contextWindowError,
   createLanguageModel,
   deepMergeProviderOptions,
@@ -177,6 +185,7 @@ import {
   getProviderModels,
   getProxyDebugLogPath,
   getReasoningCapabilities,
+  getTrustSystemCertificates,
   grabRoundTripSignature,
   isFreeStatus,
   isModelsDevCacheStale,
@@ -224,6 +233,7 @@ import {
   saveRegistry,
   saveToCredentialStore,
   serializeToolResultContent,
+  setTrustSystemCertificates,
   shouldHideModel,
   silenceSdkWarnings,
   splitToolUseId,
@@ -236,11 +246,12 @@ import {
   thinkingProviderOptions,
   uniqueProviderName,
   upstreamHttpStatus,
+  validateCustomEndpointUrl,
   validateProviderName,
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-HQHRYYRR.js";
+} from "./chunk-JSEUUZCZ.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -1159,11 +1170,23 @@ function scoreModelSearch(query, fields) {
 }
 
 // src/prompts.ts
-function claudeTransparentModeOptions(modelLabel) {
+function launchModeOptions(nativeName) {
   return [
-    { value: true, label: `Yes \u2014 Use ${modelLabel} alongside Anthropic models` },
-    { value: false, label: `No \u2014 Use only ${modelLabel} through Relay AI` }
+    { value: "mixed", label: "Native + Relay models", hint: `Your normal ${nativeName} models plus your Relay models` },
+    { value: "relay-only", label: "Relay models only", hint: `Hide your ${nativeName} models for this launch` }
   ];
+}
+async function pickLaunchMode(nativeName) {
+  const choice = await p3.select({
+    message: "Which models do you want in this session?",
+    options: launchModeOptions(nativeName),
+    initialValue: "mixed"
+  });
+  if (p3.isCancel(choice)) {
+    p3.cancel("Cancelled.");
+    return null;
+  }
+  return choice;
 }
 var BROWSE_ALL = "__browse_all__";
 var REFRESH = "__refresh__";
@@ -1946,10 +1969,7 @@ async function resolveCodexMixedModels(input) {
   if (!selected) throw new Error("Selected Codex model is no longer available");
   const catalogModels = input.allProviderModels ? input.activeProvider.models.map((model) => ({ providerId: input.activeProvider.id, modelId: model.id })) : input.generalFavorites;
   const visibleResult = await buildFavoritesList(selected, catalogModels, ctx, input.allProviderModels ? 50 : 20, { trackCapacitySkipped: true });
-  const listed = new Set(visibleResult.resolved.map((entry) => `${entry.providerId}\0${entry.model.id}`));
-  const siblings = input.activeProvider.models.filter((model) => !listed.has(`${input.activeProvider.id}\0${model.id}`)).map((model) => ({ providerId: input.activeProvider.id, modelId: model.id }));
-  const siblingResult = await buildFavoritesList(void 0, siblings, ctx, Math.max(0, (input.allProviderModels ? 50 : 20) - visibleResult.resolved.length));
-  const visible = [...visibleResult.resolved, ...siblingResult.resolved];
+  const visible = visibleResult.resolved;
   const subagentResult = await buildFavoritesList(void 0, input.subagentFavorites, ctx, 20, { trackCapacitySkipped: true });
   const all = [...visible];
   for (const entry of subagentResult.resolved) {
@@ -2180,6 +2200,13 @@ function parseProvidersArgs(args) {
     if (rest.length < 2) return { subcommand: "rename", showHelp: false, error: "Usage: relay-ai providers rename <id> <new name>" };
     return { subcommand: "rename", showHelp: false, removeId: rest[0], renameName: rest.slice(1).join(" ") };
   }
+  if (first === "trust-certs") {
+    const mode = rest[0] ?? "status";
+    if (rest.length > 1 || mode !== "on" && mode !== "off" && mode !== "status") {
+      return { subcommand: "trust-certs", showHelp: false, error: "Usage: relay-ai providers trust-certs [on|off|status]" };
+    }
+    return { subcommand: "trust-certs", showHelp: false, trustMode: mode };
+  }
   if (first === "refresh-models") {
     if (rest.length === 0) return { subcommand: "refresh-models", showHelp: false };
     if (rest.length > 1) return { subcommand: "refresh-models", showHelp: false, error: `Unknown refresh-models option: ${rest[1]}` };
@@ -2199,6 +2226,7 @@ ${pc4.bold("Usage:")}
   relay-ai providers rename <id> <new name>
   relay-ai providers refresh-models [id]
   relay-ai providers auth <id> [--new]
+  relay-ai providers trust-certs [on|off|status]
 
 ${pc4.bold("Subcommands:")}
   (none)      Provider hub wizard ${pc4.dim("[Phase 1.1]")}
@@ -2208,7 +2236,8 @@ ${pc4.bold("Subcommands:")}
   list        Show configured providers ${pc4.dim("[Phase 1.0]")}
   remove      Remove a provider by id ${pc4.dim("[Phase 1.1]")}
   rename      Change a provider's display name (id and keys stay the same)
-  refresh-models  Update cached model lists ${pc4.dim("[Phase 1.2]")}`;
+  refresh-models  Update cached model lists ${pc4.dim("[Phase 1.2]")}
+  trust-certs Trust this computer's certificates, for company servers behind a VPN (off by default)`;
 }
 function providerLabel(name, modelCount, enabled) {
   return `${fmtEnabledStar(enabled)} ${fmtProvider(name)} ${pc4.dim(`(${modelCount} model${modelCount === 1 ? "" : "s"})`)}`;
@@ -2446,6 +2475,54 @@ function hasApiAndOAuth(template) {
   const methods = template.authMethods ?? [template.authType];
   return methods.includes("api") && methods.includes("oauth");
 }
+async function offerTrustSystemCerts() {
+  if (!isSystemCaSupported() || isSystemCaActive()) return false;
+  p8.log.warn(TRUST_SYSTEM_CERTS_NOTICE);
+  const yes = await p8.confirm({
+    message: "Trust this computer's certificates and try again?",
+    initialValue: false
+  });
+  if (p8.isCancel(yes) || !yes) return false;
+  const applied = applySystemCaTrust();
+  if (!applied.ok) {
+    p8.log.error(applied.reason ?? "Could not trust system certificates.");
+    return false;
+  }
+  setTrustSystemCertificates(true);
+  p8.log.info("Saved. Turn it off any time: relay-ai providers trust-certs off");
+  return true;
+}
+async function runProvidersTrustCerts(mode) {
+  if (mode === "status") {
+    const saved = getTrustSystemCertificates();
+    p8.log.info(`Trust this computer's certificates: ${saved ? "ON" : "OFF"}${!saved && isSystemCaActive() ? " (active for this run via NODE_USE_SYSTEM_CA)" : ""}`);
+    return 0;
+  }
+  if (mode === "off") {
+    revertSystemCaTrust();
+    setTrustSystemCertificates(false);
+    p8.log.success("Certificate trust is OFF. Relay trusts only its built-in certificate list.");
+    return 0;
+  }
+  if (!isSystemCaSupported()) {
+    p8.log.error(`This Node version (${process.version}) cannot do this at runtime. Update Node to 22.19 or newer, or start Relay with NODE_USE_SYSTEM_CA=1.`);
+    return 1;
+  }
+  p8.log.warn(TRUST_SYSTEM_CERTS_NOTICE);
+  const yes = await p8.confirm({ message: "Turn it on?", initialValue: false });
+  if (p8.isCancel(yes) || !yes) {
+    p8.cancel("Cancelled. Nothing changed.");
+    return 0;
+  }
+  const applied = applySystemCaTrust();
+  if (!applied.ok) {
+    p8.log.error(applied.reason ?? "Could not trust system certificates.");
+    return 1;
+  }
+  setTrustSystemCertificates(true);
+  p8.log.success("Certificate trust is ON. Turn it off any time: relay-ai providers trust-certs off");
+  return 0;
+}
 function showProviderAddFailure(error, hint, fallback) {
   printPanel(pc4.red("Provider was not added"), [
     pc4.white(error ?? fallback),
@@ -2620,8 +2697,17 @@ async function runTemplateAddFlow(templateId, opts = {}) {
   const apiKey = template.apiKeyOptional && !rawKey && !template.anonymousFreeModels ? template.id : rawKey;
   const spinner11 = p8.spinner();
   spinner11.start(`Testing connection to ${template.name}...`);
-  const result = await addProviderFromTemplate(template, apiKey, { baseUrl: baseUrlOverride, ...addAccount ? { addAccount: true } : {} });
+  const addOptions = { baseUrl: baseUrlOverride, ...addAccount ? { addAccount: true } : {} };
+  let result = await addProviderFromTemplate(template, apiKey, addOptions);
   spinner11.stop("");
+  if (!result.added && result.code === UNTRUSTED_CERTIFICATE_CODE) {
+    p8.log.error(result.error ?? "Certificate not trusted.");
+    if (await offerTrustSystemCerts()) {
+      spinner11.start(`Testing connection to ${template.name}...`);
+      result = await addProviderFromTemplate(template, apiKey, addOptions);
+      spinner11.stop("");
+    }
+  }
   if (!result.added) {
     showProviderAddFailure(result.error, result.hint, "Could not add provider.");
     return 1;
@@ -2709,7 +2795,8 @@ async function runCustomEndpointAddFlow() {
   };
   const spinner11 = p8.spinner();
   spinner11.start("Testing connection...");
-  let result = await addCustomEndpointProvider(addInput);
+  let attempt = addInput;
+  let result = await addCustomEndpointProvider(attempt);
   spinner11.stop("");
   if (!result.added && result.duplicateOf) {
     const addAnyway = await p8.confirm({
@@ -2721,8 +2808,17 @@ async function runCustomEndpointAddFlow() {
       return 0;
     }
     spinner11.start("Testing connection...");
-    result = await addCustomEndpointProvider({ ...addInput, confirmDuplicate: true });
+    attempt = { ...addInput, confirmDuplicate: true };
+    result = await addCustomEndpointProvider(attempt);
     spinner11.stop("");
+  }
+  if (!result.added && result.code === UNTRUSTED_CERTIFICATE_CODE) {
+    p8.log.error(result.error ?? "Certificate not trusted.");
+    if (await offerTrustSystemCerts()) {
+      spinner11.start("Testing connection...");
+      result = await addCustomEndpointProvider(attempt);
+      spinner11.stop("");
+    }
   }
   if (!result.added) {
     showProviderAddFailure(result.error, result.hint, "Could not add custom provider.");
@@ -2987,6 +3083,11 @@ async function runProviderDetail(id) {
       label: "Browse models",
       hint: `Search or browse ${modelCount} model${modelCount === 1 ? "" : "s"}`
     });
+    detailOptions.push({
+      value: "model-context",
+      label: "Test a model / set context size",
+      hint: "A test also checks the context size; or type one yourself"
+    });
   }
   if (!vertex) {
     detailOptions.push({
@@ -3060,6 +3161,13 @@ async function runProviderDetail(id) {
   if (action === "vertex-reset") return await runVertexModelResetFlow() === 0 ? "back" : "failed";
   if (action === "add-model") return await runManualModelAddFlow(provider) === 0 ? "back" : "failed";
   if (action === "remove-model") return await runManualModelRemoveFlow(provider) === 0 ? "back" : "failed";
+  if (action === "model-context") {
+    const cachedModels = getAgentProviderModels(provider);
+    const localModels = cachedModels.map((m) => cachedModelToLocal(m, provider)).filter((m) => m !== null);
+    const picked = await browseAllModels({ id: provider.id, name: provider.name, apiKey: "", models: localModels }, loadPreferences());
+    if (picked && typeof picked === "object") await runModelContextMenu(provider.id, picked);
+    return "back";
+  }
   if (action === "browse") {
     const cachedModels = getAgentProviderModels(provider);
     const localModels = cachedModels.map((m) => cachedModelToLocal(m, provider)).filter((m) => m !== null);
@@ -3103,6 +3211,70 @@ async function runProviderDetail(id) {
   }
   const code = await runProvidersRemove(id, true);
   return code === 0 ? "removed" : "failed";
+}
+function parseContextSizeInput(text7) {
+  const match = /^\s*(\d+(?:\.\d+)?)\s*([km])?\s*$/i.exec(text7);
+  if (!match) return void 0;
+  const unit = match[2]?.toLowerCase();
+  const value = Math.round(Number(match[1]) * (unit === "m" ? 1e6 : unit === "k" ? 1e3 : 1));
+  return Number.isSafeInteger(value) && value > 0 ? value : void 0;
+}
+function contextLabel(providerId, model) {
+  const source = loadRegistry().providers.find((p17) => p17.id === providerId)?.contextWindowOverrides?.[model.id]?.source;
+  const size = model.contextWindow ? fmtContextWindow(model.contextWindow) : pc4.dim("unknown");
+  return source ? `${size} ${pc4.dim(`(${source === "user" ? "manual" : "measured"})`)}` : size;
+}
+async function runModelContextMenu(providerId, model) {
+  let current = model;
+  for (; ; ) {
+    const hasOverride = Boolean(loadRegistry().providers.find((p17) => p17.id === providerId)?.contextWindowOverrides?.[current.id]);
+    const choice = await p8.select({
+      message: `${current.name || current.id} \xB7 context ${contextLabel(providerId, current)}`,
+      options: [
+        { value: "test", label: "Test model", hint: "One short request, plus a free check of the context size" },
+        { value: "set", label: "Set context size", hint: "e.g. 128K or 1M" },
+        ...hasOverride ? [{ value: "reset", label: "Reset context size", hint: "Go back to the provider's size" }] : [],
+        { value: "back", label: "Back", hint: "" }
+      ]
+    });
+    if (p8.isCancel(choice) || choice === "back") return;
+    if (choice === "test") {
+      const spinner11 = p8.spinner();
+      spinner11.start(`Testing ${current.id}...`);
+      const { testModel } = await import("./test-model-LZOXBKP5.js");
+      const result = await testModel(providerId, current.id);
+      spinner11.stop("");
+      if (!result.ok) {
+        p8.log.error(`${current.id}: ${result.error}`);
+      } else {
+        p8.log.success(`${current.id} responded in ${(("latencyMs" in result ? result.latencyMs ?? 0 : 0) / 1e3).toFixed(1)}s`);
+        const context = "context" in result ? result.context : void 0;
+        if (!context || context.measured === void 0) p8.log.info("The server did not report a context size.");
+        else if (context.updated) p8.log.success(`Context size updated: ${context.previous ? fmtContextWindow(context.previous) : "unknown"} \u2192 ${fmtContextWindow(context.measured)} (measured, saved)`);
+        else if (context.keptManual) p8.log.info(`The server reports ${fmtContextWindow(context.measured)}; your manual size was kept.`);
+        else if (context.saved) p8.log.success(`Context size ${fmtContextWindow(context.measured)} confirmed and saved as measured.`);
+        else p8.log.info(`Context size ${fmtContextWindow(context.measured)} confirmed.`);
+      }
+    } else if (choice === "set") {
+      const entered = await p8.text({
+        message: "Context size (K = thousand, M = million)",
+        placeholder: "128K",
+        validate: (value) => parseContextSizeInput(String(value ?? "")) === void 0 ? "Enter a size like 128K, 1M or 40960" : void 0
+      });
+      if (p8.isCancel(entered)) continue;
+      const saved = setContextWindowOverride(providerId, current.id, parseContextSizeInput(String(entered)), "user");
+      if (!saved.ok) p8.log.error(saved.error);
+      else p8.log.success(`Context size set to ${fmtContextWindow(saved.contextWindow ?? void 0)}.`);
+    } else if (choice === "reset") {
+      const saved = setContextWindowOverride(providerId, current.id, null);
+      if (!saved.ok) p8.log.error(saved.error);
+      else p8.log.success("Context size reset.");
+    }
+    const provider = loadRegistry().providers.find((p17) => p17.id === providerId);
+    const cached = provider ? getProviderModels(provider).find((m) => m.id === current.id) : void 0;
+    const refreshed = provider && cached ? cachedModelToLocal(cached, provider) : null;
+    if (refreshed) current = refreshed;
+  }
 }
 async function runProviderApiKeyChange(provider, registry) {
   const entered = await p8.password({
@@ -3257,6 +3429,7 @@ async function runProvidersCommand(args) {
     return runProvidersRename(parsed.removeId, parsed.renameName);
   }
   if (parsed.subcommand === "refresh-models") return runProvidersRefreshModels(parsed.removeId);
+  if (parsed.subcommand === "trust-certs") return runProvidersTrustCerts(parsed.trustMode ?? "status");
   if (parsed.subcommand === "auth") {
     if (parsed.showHelp || !parsed.removeId) {
       console.log(providerAuthHelpText());
@@ -6584,31 +6757,8 @@ function launchCodex(modelId, env, extraArgs) {
 
 // src/codex/prompts.ts
 import * as p9 from "@clack/prompts";
-function codexLaunchModeOptions() {
-  return [
-    {
-      value: "relay-only",
-      label: "Relay models only",
-      hint: "Keep native Codex models hidden for this launch"
-    },
-    {
-      value: "mixed",
-      label: "Relay + native Codex models",
-      hint: "Expose native Codex models alongside your Relay catalog"
-    }
-  ];
-}
-async function pickCodexLaunchMode() {
-  const choice = await p9.select({
-    message: "Load native Codex models alongside Relay models?",
-    options: codexLaunchModeOptions(),
-    initialValue: "relay-only"
-  });
-  if (p9.isCancel(choice)) {
-    p9.cancel("Cancelled.");
-    return null;
-  }
-  return choice;
+async function pickCodexLaunchMode(nativeName = "Codex") {
+  return pickLaunchMode(nativeName);
 }
 async function pickCodexProvider(providers, prefs, hasFavorites = false, initialProviderId) {
   if (providers.length === 0 && !hasFavorites) return null;
@@ -8824,7 +8974,8 @@ Error: ${launchPlan.error}
     );
     return 1;
   }
-  const providerRoutes = activeProvider.models.map((m) => ({
+  const launchModels = launchModelsForProvider(activeProvider, selectedModel);
+  const providerRoutes = launchModels.map((m) => ({
     aliasId: m.id,
     realModelId: m.upstreamModelId || m.id,
     displayName: m.name || m.id,
@@ -12281,7 +12432,7 @@ import { homedir as homedir11 } from "os";
 import { join as join14 } from "path";
 var SHUTDOWN_DRAIN_MS = 500;
 var AGY_FAVORITES_PROVIDER_ID = "__relay_agy_favorites__";
-var AGY_FAVORITES_PROVIDER_LABEL = "\u2B50 Favorites";
+var AGY_FAVORITES_PROVIDER_LABEL = "\u2B50 Favorites Catalog";
 function agyArgsIncludeModelFlag(args) {
   return args.some((arg) => arg === "--model" || arg.startsWith("--model="));
 }
@@ -13756,7 +13907,7 @@ async function runCodexAppCommand(args, opts = {}) {
   let favorites = prefs.favoriteModels ?? [];
   let mixedMode = opts.codexLaunchMode === "mixed";
   if (!configOnly && isTty && !(launchProvider && opts.launchModel) && opts.codexLaunchMode === void 0) {
-    const selectedLaunchMode = await pickCodexLaunchMode();
+    const selectedLaunchMode = await pickCodexLaunchMode("ChatGPT");
     if (!selectedLaunchMode) return 0;
     mixedMode = selectedLaunchMode === "mixed";
   }
@@ -13866,7 +14017,7 @@ async function runCodexAppCommand(args, opts = {}) {
   activeProvider.apiKey = apiKey;
   let cloudCodeBackend = null;
   let cloudCodeBackendFav = null;
-  const appProviderRoutes = mixedMode || favoritesActive ? null : await buildCodexAppProviderCatalogRoutes(activeProvider, apiKey, selectedModel.id, trace);
+  const appProviderRoutes = mixedMode || favoritesActive ? null : await buildCodexAppProviderCatalogRoutes({ ...activeProvider, models: launchModelsForProvider(activeProvider, selectedModel) }, apiKey, selectedModel.id, trace);
   cloudCodeBackend = appProviderRoutes?.backend ?? null;
   const route = appProviderRoutes ? codexProxyRouteToCodexRoute(appProviderRoutes.selectedRoute, activeProvider.id) : resolveCodexRoute(activeProvider, selectedModel, apiKey);
   const appRoute = { ...route, tier: "proxy" };
@@ -16240,7 +16391,7 @@ async function startConfiguredHttpProxy(options) {
     const selectedModel = options.providers.find((provider) => provider.id === options.selected.providerId)?.models.find((model) => model.id === options.selected.modelId);
     const expectedId = selectedModel ? claudeCodeClientModelId(
       httpProxyModelId(options.selected.providerId, options.selected.modelId),
-      selectedModel.contextWindow
+      claudeCodeContextWindow(selectedModel)
     ) : void 0;
     startingModel = loaded.routes.find((route) => route.aliasId === expectedId)?.aliasId;
   }
@@ -16289,7 +16440,7 @@ async function launchClaudeWithHttpProxy(options, dependencies = defaultDependen
 }
 
 // src/cli.ts
-var STARTER_CLAUDE_FLAGS = /* @__PURE__ */ new Set(["--dry-run", "--setup", "--trace", "--http-proxy", "--help", "-h", "--version", "-v"]);
+var STARTER_CLAUDE_FLAGS = /* @__PURE__ */ new Set(["--dry-run", "--setup", "--trace", "--http-proxy", "--with-native", "--relay-only", "--help", "-h", "--version", "-v"]);
 var RELAY_LAUNCH_FLAGS = /* @__PURE__ */ new Set(["--provider", "--model"]);
 function parseRelayLaunchFlag(arg, rest, index, parsed) {
   if (arg === "--provider" || arg === "--model") {
@@ -16697,6 +16848,11 @@ function parseArgs(args) {
     if (arg === "--setup") parsed.setup = true;
     if (arg === "--trace") parsed.trace = true;
     if (arg === "--http-proxy") parsed.httpProxy = true;
+    if (arg === "--with-native" || arg === "--relay-only") {
+      const mode = arg === "--with-native" ? "mixed" : "relay-only";
+      if (parsed.codexLaunchMode && parsed.codexLaunchMode !== mode) parsed.error = "--with-native and --relay-only cannot be used together";
+      parsed.codexLaunchMode = mode;
+    }
     if (arg === "--help" || arg === "-h") parsed.showHelp = true;
     if (arg === "--version" || arg === "-v") parsed.showVersion = true;
   }
@@ -16797,6 +16953,8 @@ ${pc11.bold("Options:")}
   --provider   Boot provider id (skip wizard when paired with --model or in print mode)
   --model      Boot model id (skip wizard when paired with --provider or in print mode)
   --http-proxy Keep your normal Anthropic login and add selected/favorite Relay models
+  --with-native  Native + Relay models (skips the first question)
+  --relay-only   Relay models only (skips the first question)
   --help       Show this command help
   --version    Show version
 
@@ -17267,7 +17425,7 @@ async function runModelsCommand(opts = {}) {
   return 0;
 }
 async function runClaudeCommand(parsed) {
-  const { dryRun, setup, trace, httpProxy, launchProvider, launchModel } = parsed;
+  const { dryRun, setup, trace, httpProxy, launchProvider, launchModel, codexLaunchMode } = parsed;
   const claudeArgs = normalizeClaudeAgentArgs(parsed.claudeArgs);
   const agentStdout = wantsCleanAgentStdout("claude", claudeArgs);
   setAgentStdoutMode(agentStdout);
@@ -17390,6 +17548,13 @@ Error: ${launchPlan.error}
     }
   };
   if (httpProxyOnly) return runTransparentProxy();
+  let launchMode = httpProxy ? "mixed" : codexLaunchMode ?? "relay-only";
+  if (!httpProxy && !launchPlan.skip && codexLaunchMode === void 0) {
+    const picked = await pickLaunchMode("Claude");
+    if (!picked) return 0;
+    launchMode = picked;
+    if (!dryRun) savePreferences({ lastClaudeTransparentMode: picked === "mixed" });
+  }
   const providerOptions = allProviders.map((lp) => providerSelectOption(lp));
   if (switchMenuActive) {
     providerOptions.unshift({
@@ -17474,18 +17639,12 @@ Error: ${launchPlan.error}
     switchMenuActive = true;
   }
   let useHttpProxy = Boolean(httpProxy);
-  if (!httpProxy && !launchPlan.skip && supportsClaudeTransparentMode(selectedModel)) {
-    const transparentChoice = await p16.select({
-      message: "Keep your normal Claude models available too?",
-      options: claudeTransparentModeOptions(selectedModel.name || selectedModel.id),
-      initialValue: prefs.lastClaudeTransparentMode ?? true
-    });
-    if (p16.isCancel(transparentChoice)) {
-      p16.cancel("Cancelled.");
-      return 0;
+  if (!httpProxy && launchMode === "mixed") {
+    if (supportsClaudeTransparentMode(selectedModel)) {
+      useHttpProxy = true;
+    } else {
+      p16.log.info(`${selectedModel.name || selectedModel.id} can't run alongside your normal Claude models, so this launch uses Relay models only.`);
     }
-    useHttpProxy = transparentChoice;
-    if (!dryRun) savePreferences({ lastClaudeTransparentMode: useHttpProxy });
   }
   if (useHttpProxy) {
     return runTransparentProxy({
@@ -17493,6 +17652,7 @@ Error: ${launchPlan.error}
       modelId: selectedModel.id
     });
   }
+  const claudeContextWindow = claudeCodeContextWindow(selectedModel);
   const localProviders = catalog.length > 0 ? catalog : null;
   if (switchMenuActive) {
     const resolveRoute = makeRouteResolver(
@@ -17527,7 +17687,7 @@ Error: ${launchPlan.error}
     return launchClaudeViaCatalog(
       catalogRoutes,
       startingRoute,
-      selectedModel.contextWindow,
+      claudeContextWindow,
       trace,
       claudeArgs
     );
@@ -17565,7 +17725,7 @@ Error: ${launchPlan.error}
         ANTIGRAVITY_BASE_URLS[0],
         selectedModel.id,
         trace,
-        selectedModel.contextWindow,
+        claudeContextWindow,
         {
           providerId: activeProvider.id,
           authType: "oauth",
@@ -17584,7 +17744,7 @@ Error: ${launchPlan.error}
       selectedModel.id,
       proxyHandle.token,
       proxyHandle.port,
-      selectedModel.contextWindow
+      claudeContextWindow
     );
   } else if (isOAuthAnthropic) {
     try {
@@ -17592,7 +17752,7 @@ Error: ${launchPlan.error}
         selectedModel.baseUrl ?? "https://api.anthropic.com",
         selectedModel.id,
         trace,
-        selectedModel.contextWindow,
+        claudeContextWindow,
         {
           providerId: activeProvider.id,
           authType: "oauth",
@@ -17612,7 +17772,35 @@ Error: ${launchPlan.error}
       selectedModel.id,
       proxyHandle.token,
       proxyHandle.port,
-      selectedModel.contextWindow
+      claudeContextWindow
+    );
+  } else if (selectedModel.modelFormat === "anthropic" && activeProvider.id.startsWith("custom-")) {
+    try {
+      proxyHandle = await startProxy(
+        selectedModel.baseUrl,
+        selectedModel.id,
+        trace,
+        claudeContextWindow,
+        {
+          providerId: activeProvider.id,
+          authType: "api",
+          modelFormat: "anthropic",
+          upstreamModelId: selectedModel.upstreamModelId,
+          headers: activeProvider.headers
+        },
+        launchApiKey
+      );
+      if (!isAgentStdoutMode()) p16.log.info(`Relay proxy started on port ${proxyHandle.port}`);
+    } catch (err) {
+      p16.log.error(`Failed to start proxy: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+    childEnv = buildChildEnv(
+      `http://127.0.0.1:${proxyHandle.port}`,
+      selectedModel.id,
+      proxyHandle.token,
+      proxyHandle.port,
+      claudeContextWindow
     );
   } else if (selectedModel.modelFormat === "anthropic") {
     childEnv = buildChildEnv(
@@ -17620,7 +17808,7 @@ Error: ${launchPlan.error}
       selectedModel.id,
       launchApiKey,
       void 0,
-      selectedModel.contextWindow
+      claudeContextWindow
     );
   } else {
     try {
@@ -17628,7 +17816,7 @@ Error: ${launchPlan.error}
         selectedModel.completionsUrl ?? "",
         selectedModel.id,
         trace,
-        selectedModel.contextWindow,
+        claudeContextWindow,
         {
           npm: selectedModel.npm,
           baseURL: selectedModel.apiBaseUrl,
@@ -17662,7 +17850,7 @@ Error: ${launchPlan.error}
       selectedModel.id,
       proxyHandle.token,
       proxyHandle.port,
-      selectedModel.contextWindow
+      claudeContextWindow
     );
   }
   if (selectedModel.modelFormat === "anthropic" && !isOAuthAnthropic) {
@@ -17673,7 +17861,7 @@ Error: ${launchPlan.error}
   if (trace) p16.log.info(`Debug log: ${debugLogPath}`);
   const exitCode = await launchClaude(
     childEnv,
-    claudeCodeClientModelId(selectedModel.id, selectedModel.contextWindow),
+    claudeCodeClientModelId(selectedModel.id, claudeContextWindow),
     [...traceArgs, ...claudeArgs]
   );
   proxyHandle?.close();
@@ -17682,6 +17870,7 @@ Error: ${launchPlan.error}
 }
 async function main(args = process.argv.slice(2)) {
   const parsed = parseArgs(args);
+  if (getTrustSystemCertificates() && !parsed.dryRun) applySystemCaTrust();
   if (process.stdout.isTTY) {
     const update = await checkForUpdates();
     if (update.updateAvailable && update.latestVersion) {
@@ -17752,7 +17941,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-YEIFOQ6E.js");
+    const { runUiCommand } = await import("./ui-command-KVCVGTBB.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "models") {

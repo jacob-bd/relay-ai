@@ -1,18 +1,18 @@
 // tests/prompts.test.ts
 import { describe, it, expect } from 'vitest';
 import {
-  claudeTransparentModeOptions,
+  launchModeOptions,
   filterModelsBySearch,
   sliceModelPage,
   MODEL_SEARCH_THRESHOLD,
   MODEL_PAGE_SIZE,
 } from '../src/prompts.js';
 
-describe('Claude transparent mode prompt', () => {
-  it('explains the practical effect in plain English', () => {
-    expect(claudeTransparentModeOptions('Kimi K3')).toEqual([
-      { value: true, label: 'Yes — Use Kimi K3 alongside Anthropic models' },
-      { value: false, label: 'No — Use only Kimi K3 through Relay AI' },
+describe('launch mode question (same in every tool)', () => {
+  it('lists Native + Relay first, then Relay only', () => {
+    expect(launchModeOptions('Claude')).toEqual([
+      { value: 'mixed', label: 'Native + Relay models', hint: 'Your normal Claude models plus your Relay models' },
+      { value: 'relay-only', label: 'Relay models only', hint: 'Hide your Claude models for this launch' },
     ]);
   });
 });

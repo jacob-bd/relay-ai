@@ -2,7 +2,7 @@
 
 `@jacobbd/relay-ai/core` is a side-effect-free library surface that lets any Node.js application use relay-ai **in-process** — no CLI, no UI, no server, no child process. Two functions cover the whole surface:
 
-1. **`listRelayModels()`** — a credential-free catalog of every model your enabled providers expose.
+1. **`listRelayModels()`** — a credential-free catalog of every model your enabled providers expose (models you hid in `relay-ai ui` are left out). Context sizes include any you measured or set by hand.
 2. **`createRelayModel(routeId)`** — a ready [Vercel AI SDK](https://sdk.vercel.ai) `LanguageModel` for one of those models, with credentials (including OAuth refresh) resolved behind the scenes.
 
 ## What Core is — and isn't

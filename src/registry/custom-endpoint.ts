@@ -10,6 +10,7 @@ import type { CachedModel, RegistryProvider } from './types.js';
 import { customProviderId, isValidProviderId, slugifyProviderId } from './validate.js';
 import { validateCustomEndpointUrl } from './url-security.js';
 import { endpointModelTimeoutMs } from './endpoint-timeout.js';
+import { applyModelsDevContextWindows } from './models-dev.js';
 
 export type CustomEndpointKind = 'openai' | 'anthropic';
 
@@ -31,6 +32,8 @@ export interface AddCustomEndpointResult {
   modelCount?: number;
   error?: string;
   hint?: string;
+  /** Machine-readable failure kind (e.g. 'untrusted-certificate'). */
+  code?: string;
   /** Set when an existing provider has the same url + key + headers. */
   duplicateOf?: string;
   /** Set when paginated discovery stopped early: the saved model list may be missing models. */
@@ -110,12 +113,15 @@ export interface FetchCustomEndpointModelsInput {
 
 export async function fetchCustomEndpointModels(
   input: FetchCustomEndpointModelsInput,
-): Promise<{ models: CachedModel[]; baseUrl: string; error?: string; hint?: string; incomplete?: string }> {
+): Promise<{ models: CachedModel[]; baseUrl: string; error?: string; hint?: string; code?: string; incomplete?: string }> {
   const timeoutMs = endpointModelTimeoutMs(`custom-${input.kind}`, input.normalizedBaseUrl);
+  // Gateways rarely list sizes; use models.dev's figure instead of a name guess where it knows the model.
+  const withReference = <R extends { models: CachedModel[] }>(fetched: R): R =>
+    ({ ...fetched, models: applyModelsDevContextWindows(fetched.models) });
   if (input.kind === 'anthropic') {
-    return fetchAnthropicModels(input.normalizedBaseUrl, input.apiKey, input.headers, timeoutMs);
+    return withReference(await fetchAnthropicModels(input.normalizedBaseUrl, input.apiKey, input.headers, timeoutMs));
   }
-  return fetchTemplateModels(
+  return withReference(await fetchTemplateModels(
     {
       id: input.providerId,
       name: input.displayName,
@@ -129,7 +135,7 @@ export async function fetchCustomEndpointModels(
     input.normalizedBaseUrl,
     input.headers,
     timeoutMs,
-  );
+  ));
 }
 
 export async function addCustomEndpointProvider(input: AddCustomEndpointInput): Promise<AddCustomEndpointResult> {
@@ -182,7 +188,12 @@ export async function addCustomEndpointProvider(input: AddCustomEndpointInput): 
   });
 
   if (fetched.error || fetched.models.length === 0) {
-    return { added: false, error: fetched.error ?? 'No models returned.', hint: fetched.hint };
+    return {
+      added: false,
+      error: fetched.error ?? 'No models returned.',
+      hint: fetched.hint,
+      ...(fetched.code ? { code: fetched.code } : {}),
+    };
   }
 
   if (apiKey !== 'local') {
@@ -256,6 +267,8 @@ export interface UpdateCustomEndpointResult {
    * never offer "save anyway" for something that can never be saved.
    */
   canSaveAnyway?: boolean;
+  /** Machine-readable failure kind (e.g. 'untrusted-certificate'). */
+  code?: string;
   error?: string;
   hint?: string;
 }
@@ -349,6 +362,7 @@ export async function updateCustomEndpointProvider(
       updated: false,
       error: fetched.error ?? 'No models returned.',
       hint: fetched.hint,
+      ...(fetched.code ? { code: fetched.code } : {}),
       canSaveAnyway: true,
     };
   }

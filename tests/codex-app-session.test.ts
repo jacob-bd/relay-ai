@@ -55,6 +55,35 @@ describe('codex app session', () => {
     };
   }
 
+  it('a second launch over an unrestored session keeps the original config as the restore target', () => {
+    const configPath = getCodexConfigPath();
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    const original = 'model = "gpt-5"\nmodel_provider = "openai"\n';
+    writeFileSync(configPath, original, 'utf8');
+    const catalogPath = join(home, '.relay-ai', 'codex', 'app-models-anthropic.json');
+
+    // First launch, then the user quits without restoring.
+    saveAppRestoreStateBeforePatch();
+    applyAppConfigPatch(proxySpec(catalogPath), configPath);
+    // Second launch: Relay's leftover config must not become the "original".
+    saveAppRestoreStateBeforePatch();
+    applyAppConfigPatch(proxySpec(catalogPath), configPath);
+    writeAppSessionLock({
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      configPath,
+      catalogPaths: [catalogPath],
+      restoreStatePath: getAppRestoreStatePath(),
+      proxyPort: 54321,
+    });
+
+    expect(restoreCodexAppOverlay().restored).toBe(true);
+    const restored = readFileSync(configPath, 'utf8');
+    expect(restored).toContain('model = "gpt-5"');
+    expect(restored).toContain('model_provider = "openai"');
+    expect(restored).not.toContain('relay');
+  });
+
   it('allows the owning relay-ai process to restore its own app session', () => {
     const configPath = getCodexConfigPath();
     mkdirSync(join(home, '.codex'), { recursive: true });

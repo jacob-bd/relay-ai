@@ -1,3 +1,4 @@
+import type { ModelKind } from './model-kind.js';
 // src/registry/types.ts — native provider registry schema (no secrets)
 
 import type { ReferencePrice } from '../types.js';
@@ -16,8 +17,8 @@ export interface CachedModel {
   family?: string;
   brand?: string;
   contextWindow?: number;
-  /** Distinguishes provider-reported context from legacy Relay guesses. */
-  contextWindowSource?: 'provider' | 'user';
+  /** Distinguishes provider-reported context from legacy Relay guesses; 'models.dev' = looked up there for a custom endpoint (still an estimate). */
+  contextWindowSource?: 'provider' | 'user' | 'models.dev';
   cost?: { input: number; output: number; cache_read?: number; cache_write?: number };
   costSource?: 'provider' | 'models.dev' | 'pricing-feed';
   referencePrice?: ReferencePrice;
@@ -69,8 +70,24 @@ export interface RegistryProvider {
     models: CachedModel[];
   };
   manualModels?: ManualModel[];
+  /** Model ids the user hid; kept apart from modelsCache so a refresh never un-hides them. */
+  hiddenModelIds?: string[];
+  /** Context sizes the user typed or a model Test measured; kept apart from modelsCache so a refresh never drops them. */
+  contextWindowOverrides?: Record<string, ContextWindowOverride>;
+  /** Model ids a Test/Measure found are not chat models (the server refused the chat request). */
+  nonChatModelIds?: string[];
+  /** Model ids a Test/Measure got a chat reply from. */
+  chatModelIds?: string[];
+  /** Model types the user picked by hand; they win over models.dev and test results. */
+  modelKindOverrides?: Record<string, ModelKind>;
   addedAt: string;
   refreshedAt?: string;
+}
+
+export interface ContextWindowOverride {
+  contextWindow: number;
+  /** 'user' = typed by hand (a later Test never replaces it); 'measured' = stated by the server during a Test. */
+  source: 'user' | 'measured';
 }
 
 export interface ProviderRegistry {

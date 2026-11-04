@@ -121,7 +121,9 @@ export function listRelayModels(registryPath?: string): RelayModelDescriptor[] {
   const descriptors: RelayModelDescriptor[] = [];
   for (const provider of registry.providers) {
     if (!provider.enabled) continue;
+    const hiddenIds = new Set(provider.hiddenModelIds ?? []);
     for (const model of getProviderModels(provider)) {
+      if (hiddenIds.has(model.id)) continue;
       descriptors.push(toDescriptor(provider, model, favorites));
     }
   }

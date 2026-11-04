@@ -58,28 +58,36 @@ describe('Codex mixed launch planning', () => {
     ]);
   });
 
-  it("lists the starting provider's other models after favorites, within the cap", async () => {
+  it('lists only the picked model plus favorites; never the provider\'s other models', async () => {
     const model = (id: string) => ({ id, name: id, modelFormat: 'openai' as const, npm: '@ai-sdk/openai-compatible', upstreamModelId: id, contextWindow: 200_000 });
     const vertex = { id: 'vertex-anthropic', name: 'Vertex', authType: 'none' as const, models: ['opus', 'sonnet', 'haiku'].map(model) };
     const other = { id: 'other', name: 'Other', authType: 'none' as const, models: [model('fav')] };
 
-    const result = await resolveCodexMixedModels({
+    const withFavorites = await resolveCodexMixedModels({
       activeProvider: vertex,
       selectedModel: vertex.models[1]!,
       compatible: [vertex, other],
       generalFavorites: [{ providerId: 'other', modelId: 'fav' }, { providerId: 'vertex-anthropic', modelId: 'haiku' }],
       subagentFavorites: [],
     });
-    expect(result.visible.map(entry => `${entry.providerId}:${entry.model.id}`)).toEqual([
-      'vertex-anthropic:sonnet', 'other:fav', 'vertex-anthropic:haiku', 'vertex-anthropic:opus',
+    expect(withFavorites.visible.map(entry => `${entry.providerId}:${entry.model.id}`)).toEqual([
+      'vertex-anthropic:sonnet', 'other:fav', 'vertex-anthropic:haiku',
     ]);
 
     const big = { id: 'big', name: 'Big', authType: 'none' as const, models: Array.from({ length: 30 }, (_, i) => model(`m${i}`)) };
-    const capped = await resolveCodexMixedModels({
-      activeProvider: big, selectedModel: big.models[0]!, compatible: [big], generalFavorites: [], subagentFavorites: [],
+    const single = await resolveCodexMixedModels({
+      activeProvider: big, selectedModel: big.models[3]!, compatible: [big], generalFavorites: [], subagentFavorites: [],
     });
-    expect(capped.visible).toHaveLength(20);
-    expect(capped.capacitySkipped).toEqual([]);
+    expect(single.visible.map(entry => entry.model.id)).toEqual(['m3']);
+  });
+
+  it('"All provider models" lists the whole provider, within the cap', async () => {
+    const model = (id: string) => ({ id, name: id, modelFormat: 'openai' as const, npm: '@ai-sdk/openai-compatible', upstreamModelId: id, contextWindow: 200_000 });
+    const big = { id: 'big', name: 'Big', authType: 'none' as const, models: Array.from({ length: 30 }, (_, i) => model(`m${i}`)) };
+    const all = await resolveCodexMixedModels({
+      activeProvider: big, selectedModel: big.models[0]!, compatible: [big], generalFavorites: [], subagentFavorites: [], allProviderModels: true,
+    });
+    expect(all.visible).toHaveLength(30);
   });
 
   it('rejects a mixed launch when configured Codex Sub-agents disappear during resolution', () => {
@@ -98,10 +106,10 @@ describe('Codex mixed launch planning', () => {
     )).not.toThrow();
   });
 
-  it('offers an explicit Relay-only default before enabling native models', () => {
+  it('asks the same question as every other tool: Native + Relay first, then Relay only', () => {
     expect(codexLaunchModeOptions()).toEqual([
-      expect.objectContaining({ value: 'relay-only', label: expect.stringContaining('Relay models only') }),
-      expect.objectContaining({ value: 'mixed', label: expect.stringContaining('native Codex models') }),
+      expect.objectContaining({ value: 'mixed', label: 'Native + Relay models' }),
+      expect.objectContaining({ value: 'relay-only', label: 'Relay models only' }),
     ]);
   });
 
@@ -158,5 +166,15 @@ describe('Codex mixed launch planning', () => {
 
     expect(() => buildCodexMixedLaunchPlan({ nativeCatalog, models, multiAgentV2Supported: true }))
       .toThrowError('Codex mixed mode supports exactly one Relay Sub-agent model');
+  });
+});
+
+describe('launchModelsForProvider (Gemini and ChatGPT app launches)', () => {
+  it('lists only the picked model, or the whole provider for "All provider models"', async () => {
+    const { launchModelsForProvider } = await import('../src/provider-catalog.js');
+    const model = (id: string) => ({ id, name: id, family: '', brand: '', modelFormat: 'openai' as const, upstreamModelId: id });
+    const provider = { id: 'p', name: 'P', apiKey: 'k', models: ['a', 'b', 'c'].map(model) };
+    expect(launchModelsForProvider(provider, provider.models[1]!).map(m => m.id)).toEqual(['b']);
+    expect(launchModelsForProvider({ ...provider, launchAllModels: true }, provider.models[1]!).map(m => m.id)).toEqual(['a', 'b', 'c']);
   });
 });

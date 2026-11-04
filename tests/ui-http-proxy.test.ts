@@ -6,7 +6,8 @@ const appSource = readFileSync(new URL('../src/ui/public/app.js', import.meta.ur
 describe('Claude Code transparent proxy UI', () => {
   it('shows the approved checkbox and tooltip only on the Claude Code card', () => {
     expect(appSource).toContain("app.id === 'claude'");
-    expect(appSource).toContain('Keep my Anthropic login and add Relay models');
+    // Same wording as the Codex cards and the terminal question.
+    expect(appSource).toContain('Native + Relay models');
     expect(appSource).toContain(
       'Launches Claude Code through a temporary local connection. Your normal Anthropic login and models continue to work, while compatible Relay AI favorites become available for model switching. The connection closes automatically when Claude Code exits.',
     );

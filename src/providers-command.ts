@@ -43,6 +43,7 @@ import {
   removeProviderFromRegistry,
   renameProvider,
   toggleProviderEnabled,
+  setContextWindowOverride,
 } from './registry/crud.js';
 import { validateProviderName } from './registry/provider-name.js';
 import { loadRegistry, saveRegistry } from './registry/io.js';
@@ -58,10 +59,15 @@ import { authenticateProvider, providerAuthHelpText, type ProviderAuthMethod } f
 import { supportsAdditionalOAuthAccounts, supportsNativeOAuth } from './oauth/types.js';
 import { browseAllModels } from './prompts.js';
 import { cachedModelToLocal } from './registry/materialize.js';
-import { loadPreferences } from './config.js';
-import type { LocalProvider } from './types.js';
+import { loadPreferences, getTrustSystemCertificates, setTrustSystemCertificates } from './config.js';
+import {
+  applySystemCaTrust, revertSystemCaTrust, isSystemCaActive, isSystemCaSupported,
+  TRUST_SYSTEM_CERTS_NOTICE, UNTRUSTED_CERTIFICATE_CODE,
+} from './tls-trust.js';
+import type { LocalProvider, LocalProviderModel } from './types.js';
 import type { RegistryProvider } from './registry/types.js';
 import {
+  fmtContextWindow,
   fmtCount,
   fmtEnabledStar,
   fmtProvider,
@@ -74,7 +80,7 @@ import {
   relayIntro,
 } from './ui.js';
 
-export type ProvidersSubcommand = 'hub' | 'add' | 'import' | 'list' | 'remove' | 'rename' | 'refresh-models' | 'auth' | 'help';
+export type ProvidersSubcommand = 'hub' | 'add' | 'import' | 'list' | 'remove' | 'rename' | 'refresh-models' | 'auth' | 'trust-certs' | 'help';
 
 export function parseProvidersArgs(args: string[]): {
   subcommand: ProvidersSubcommand;
@@ -85,6 +91,8 @@ export function parseProvidersArgs(args: string[]): {
   /** `providers add <template-id>` skips the catalog picker. */
   addTemplateId?: string;
   authMethod?: ProviderAuthMethod;
+  /** `providers trust-certs [on|off|status]` */
+  trustMode?: 'on' | 'off' | 'status';
   /** `providers auth <kind> --new` signs in an additional account. */
   addAccount?: boolean;
   error?: string;
@@ -139,6 +147,13 @@ export function parseProvidersArgs(args: string[]): {
     if (rest.length < 2) return { subcommand: 'rename', showHelp: false, error: 'Usage: relay-ai providers rename <id> <new name>' };
     return { subcommand: 'rename', showHelp: false, removeId: rest[0], renameName: rest.slice(1).join(' ') };
   }
+  if (first === 'trust-certs') {
+    const mode = rest[0] ?? 'status';
+    if (rest.length > 1 || (mode !== 'on' && mode !== 'off' && mode !== 'status')) {
+      return { subcommand: 'trust-certs', showHelp: false, error: 'Usage: relay-ai providers trust-certs [on|off|status]' };
+    }
+    return { subcommand: 'trust-certs', showHelp: false, trustMode: mode };
+  }
   if (first === 'refresh-models') {
     if (rest.length === 0) return { subcommand: 'refresh-models', showHelp: false };
     if (rest.length > 1) return { subcommand: 'refresh-models', showHelp: false, error: `Unknown refresh-models option: ${rest[1]}` };
@@ -159,6 +174,7 @@ ${pc.bold('Usage:')}
   relay-ai providers rename <id> <new name>
   relay-ai providers refresh-models [id]
   relay-ai providers auth <id> [--new]
+  relay-ai providers trust-certs [on|off|status]
 
 ${pc.bold('Subcommands:')}
   (none)      Provider hub wizard ${pc.dim('[Phase 1.1]')}
@@ -168,7 +184,8 @@ ${pc.bold('Subcommands:')}
   list        Show configured providers ${pc.dim('[Phase 1.0]')}
   remove      Remove a provider by id ${pc.dim('[Phase 1.1]')}
   rename      Change a provider's display name (id and keys stay the same)
-  refresh-models  Update cached model lists ${pc.dim('[Phase 1.2]')}`;
+  refresh-models  Update cached model lists ${pc.dim('[Phase 1.2]')}
+  trust-certs Trust this computer's certificates, for company servers behind a VPN (off by default)`;
 }
 
 
@@ -466,6 +483,57 @@ function hasApiAndOAuth(template: ProviderTemplate): boolean {
   return methods.includes('api') && methods.includes('oauth');
 }
 
+/** Ask before turning on OS-certificate trust; applies it for this run and saves the choice. */
+async function offerTrustSystemCerts(): Promise<boolean> {
+  if (!isSystemCaSupported() || isSystemCaActive()) return false;
+  p.log.warn(TRUST_SYSTEM_CERTS_NOTICE);
+  const yes = await p.confirm({
+    message: "Trust this computer's certificates and try again?",
+    initialValue: false,
+  });
+  if (p.isCancel(yes) || !yes) return false;
+  const applied = applySystemCaTrust();
+  if (!applied.ok) {
+    p.log.error(applied.reason ?? 'Could not trust system certificates.');
+    return false;
+  }
+  setTrustSystemCertificates(true);
+  p.log.info('Saved. Turn it off any time: relay-ai providers trust-certs off');
+  return true;
+}
+
+async function runProvidersTrustCerts(mode: 'on' | 'off' | 'status'): Promise<number> {
+  if (mode === 'status') {
+    const saved = getTrustSystemCertificates();
+    p.log.info(`Trust this computer's certificates: ${saved ? 'ON' : 'OFF'}${!saved && isSystemCaActive() ? ' (active for this run via NODE_USE_SYSTEM_CA)' : ''}`);
+    return 0;
+  }
+  if (mode === 'off') {
+    revertSystemCaTrust();
+    setTrustSystemCertificates(false);
+    p.log.success("Certificate trust is OFF. Relay trusts only its built-in certificate list.");
+    return 0;
+  }
+  if (!isSystemCaSupported()) {
+    p.log.error(`This Node version (${process.version}) cannot do this at runtime. Update Node to 22.19 or newer, or start Relay with NODE_USE_SYSTEM_CA=1.`);
+    return 1;
+  }
+  p.log.warn(TRUST_SYSTEM_CERTS_NOTICE);
+  const yes = await p.confirm({ message: 'Turn it on?', initialValue: false });
+  if (p.isCancel(yes) || !yes) {
+    p.cancel('Cancelled. Nothing changed.');
+    return 0;
+  }
+  const applied = applySystemCaTrust();
+  if (!applied.ok) {
+    p.log.error(applied.reason ?? 'Could not trust system certificates.');
+    return 1;
+  }
+  setTrustSystemCertificates(true);
+  p.log.success("Certificate trust is ON. Turn it off any time: relay-ai providers trust-certs off");
+  return 0;
+}
+
 function showProviderAddFailure(error: string | undefined, hint: string | undefined, fallback: string): void {
   printPanel(pc.red('Provider was not added'), [
     pc.white(error ?? fallback),
@@ -675,8 +743,17 @@ async function runTemplateAddFlow(templateId?: string, opts: { addAccount?: bool
 
   const spinner = p.spinner();
   spinner.start(`Testing connection to ${template.name}...`);
-  const result = await addProviderFromTemplate(template, apiKey, { baseUrl: baseUrlOverride, ...(addAccount ? { addAccount: true } : {}) });
+  const addOptions = { baseUrl: baseUrlOverride, ...(addAccount ? { addAccount: true } : {}) };
+  let result = await addProviderFromTemplate(template, apiKey, addOptions);
   spinner.stop('');
+  if (!result.added && result.code === UNTRUSTED_CERTIFICATE_CODE) {
+    p.log.error(result.error ?? 'Certificate not trusted.');
+    if (await offerTrustSystemCerts()) {
+      spinner.start(`Testing connection to ${template.name}...`);
+      result = await addProviderFromTemplate(template, apiKey, addOptions);
+      spinner.stop('');
+    }
+  }
 
   if (!result.added) {
     showProviderAddFailure(result.error, result.hint, 'Could not add provider.');
@@ -776,7 +853,8 @@ async function runCustomEndpointAddFlow(): Promise<number> {
 
   const spinner = p.spinner();
   spinner.start('Testing connection...');
-  let result = await addCustomEndpointProvider(addInput);
+  let attempt: Parameters<typeof addCustomEndpointProvider>[0] = addInput;
+  let result = await addCustomEndpointProvider(attempt);
   spinner.stop('');
 
   if (!result.added && result.duplicateOf) {
@@ -789,8 +867,18 @@ async function runCustomEndpointAddFlow(): Promise<number> {
       return 0;
     }
     spinner.start('Testing connection...');
-    result = await addCustomEndpointProvider({ ...addInput, confirmDuplicate: true });
+    attempt = { ...addInput, confirmDuplicate: true };
+    result = await addCustomEndpointProvider(attempt);
     spinner.stop('');
+  }
+
+  if (!result.added && result.code === UNTRUSTED_CERTIFICATE_CODE) {
+    p.log.error(result.error ?? 'Certificate not trusted.');
+    if (await offerTrustSystemCerts()) {
+      spinner.start('Testing connection...');
+      result = await addCustomEndpointProvider(attempt);
+      spinner.stop('');
+    }
   }
 
   if (!result.added) {
@@ -1075,6 +1163,11 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
       label: 'Browse models',
       hint: `Search or browse ${modelCount} model${modelCount === 1 ? '' : 's'}`,
     });
+    detailOptions.push({
+      value: 'model-context',
+      label: 'Test a model / set context size',
+      hint: 'A test also checks the context size; or type one yourself',
+    });
   }
   // Vertex reads its list live from vertex-models.json; there is nothing to fetch.
   if (!vertex) {
@@ -1154,6 +1247,16 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
   if (action === 'add-model') return (await runManualModelAddFlow(provider)) === 0 ? 'back' : 'failed';
   if (action === 'remove-model') return (await runManualModelRemoveFlow(provider)) === 0 ? 'back' : 'failed';
 
+  if (action === 'model-context') {
+    const cachedModels = getAgentProviderModels(provider);
+    const localModels = cachedModels
+      .map(m => cachedModelToLocal(m, provider))
+      .filter((m): m is NonNullable<typeof m> => m !== null);
+    const picked = await browseAllModels({ id: provider.id, name: provider.name, apiKey: '', models: localModels }, loadPreferences());
+    if (picked && typeof picked === 'object') await runModelContextMenu(provider.id, picked);
+    return 'back';
+  }
+
   if (action === 'browse') {
     const cachedModels = getAgentProviderModels(provider);
     const localModels = cachedModels
@@ -1210,6 +1313,76 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
 
   const code = await runProvidersRemove(id, true);
   return code === 0 ? 'removed' : 'failed';
+}
+
+/** "128K", "1.5M", "40960" → tokens; undefined when it is not a size. */
+export function parseContextSizeInput(text: string): number | undefined {
+  const match = /^\s*(\d+(?:\.\d+)?)\s*([km])?\s*$/i.exec(text);
+  if (!match) return undefined;
+  const unit = match[2]?.toLowerCase();
+  const value = Math.round(Number(match[1]) * (unit === 'm' ? 1_000_000 : unit === 'k' ? 1_000 : 1));
+  return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+function contextLabel(providerId: string, model: { id: string; contextWindow?: number }): string {
+  const source = loadRegistry().providers.find(p => p.id === providerId)?.contextWindowOverrides?.[model.id]?.source;
+  const size = model.contextWindow ? fmtContextWindow(model.contextWindow) : pc.dim('unknown');
+  return source ? `${size} ${pc.dim(`(${source === 'user' ? 'manual' : 'measured'})`)}` : size;
+}
+
+async function runModelContextMenu(providerId: string, model: LocalProviderModel): Promise<void> {
+  let current = model;
+  for (;;) {
+    const hasOverride = Boolean(loadRegistry().providers.find(p => p.id === providerId)?.contextWindowOverrides?.[current.id]);
+    const choice = await p.select({
+      message: `${current.name || current.id} · context ${contextLabel(providerId, current)}`,
+      options: [
+        { value: 'test', label: 'Test model', hint: 'One short request, plus a free check of the context size' },
+        { value: 'set', label: 'Set context size', hint: 'e.g. 128K or 1M' },
+        ...(hasOverride ? [{ value: 'reset', label: 'Reset context size', hint: "Go back to the provider's size" }] : []),
+        { value: 'back', label: 'Back', hint: '' },
+      ],
+    });
+    if (p.isCancel(choice) || choice === 'back') return;
+
+    if (choice === 'test') {
+      const spinner = p.spinner();
+      spinner.start(`Testing ${current.id}...`);
+      const { testModel } = await import('./test-model.js');
+      const result = await testModel(providerId, current.id);
+      spinner.stop('');
+      if (!result.ok) {
+        p.log.error(`${current.id}: ${result.error}`);
+      } else {
+        p.log.success(`${current.id} responded in ${(('latencyMs' in result ? result.latencyMs ?? 0 : 0) / 1000).toFixed(1)}s`);
+        const context = 'context' in result ? result.context : undefined;
+        if (!context || context.measured === undefined) p.log.info('The server did not report a context size.');
+        else if (context.updated) p.log.success(`Context size updated: ${context.previous ? fmtContextWindow(context.previous) : 'unknown'} → ${fmtContextWindow(context.measured)} (measured, saved)`);
+        else if (context.keptManual) p.log.info(`The server reports ${fmtContextWindow(context.measured)}; your manual size was kept.`);
+        else if (context.saved) p.log.success(`Context size ${fmtContextWindow(context.measured)} confirmed and saved as measured.`);
+        else p.log.info(`Context size ${fmtContextWindow(context.measured)} confirmed.`);
+      }
+    } else if (choice === 'set') {
+      const entered = await p.text({
+        message: 'Context size (K = thousand, M = million)',
+        placeholder: '128K',
+        validate: value => parseContextSizeInput(String(value ?? '')) === undefined ? 'Enter a size like 128K, 1M or 40960' : undefined,
+      });
+      if (p.isCancel(entered)) continue;
+      const saved = setContextWindowOverride(providerId, current.id, parseContextSizeInput(String(entered))!, 'user');
+      if (!saved.ok) p.log.error(saved.error);
+      else p.log.success(`Context size set to ${fmtContextWindow(saved.contextWindow ?? undefined)}.`);
+    } else if (choice === 'reset') {
+      const saved = setContextWindowOverride(providerId, current.id, null);
+      if (!saved.ok) p.log.error(saved.error);
+      else p.log.success('Context size reset.');
+    }
+
+    const provider = loadRegistry().providers.find(p => p.id === providerId);
+    const cached = provider ? getProviderModels(provider).find(m => m.id === current.id) : undefined;
+    const refreshed = provider && cached ? cachedModelToLocal(cached, provider) : null;
+    if (refreshed) current = refreshed;
+  }
 }
 
 async function runProviderApiKeyChange(
@@ -1381,6 +1554,7 @@ export async function runProvidersCommand(args: string[]): Promise<number> {
     return runProvidersRename(parsed.removeId, parsed.renameName);
   }
   if (parsed.subcommand === 'refresh-models') return runProvidersRefreshModels(parsed.removeId);
+  if (parsed.subcommand === 'trust-certs') return runProvidersTrustCerts(parsed.trustMode ?? 'status');
   if (parsed.subcommand === 'auth') {
     if (parsed.showHelp || !parsed.removeId) {
       console.log(providerAuthHelpText());

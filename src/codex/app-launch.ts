@@ -218,6 +218,10 @@ export function findEmbeddedCodexBinary(
 }
 
 function darwinIsRunning(): boolean {
+  // Match the app's own executable. Asking System Events for a process named "ChatGPT" also
+  // matches macOS helpers labelled "… (ChatGPT)" (e.g. ThemeWidgetControlViewService) that
+  // outlive the app, which made Relay refuse to restore config after a clean quit.
+  if (findCodexApp('darwin')) return darwinMatchingPids().length > 0;
   return DARWIN_APP_NAMES.some(name => {
     try {
       const out = run(`osascript -e 'tell application "System Events" to exists process "${name}"'`);

@@ -12,6 +12,8 @@ import { goRegistryStub, zenRegistryStub } from './builtins.js';
 import { loadRegistry, saveRegistry } from './io.js';
 import { findProviderNameConflict, normalizeProviderName, uniqueProviderName, validateProviderName } from './provider-name.js';
 import { providerKind } from './provider-kind.js';
+import { MODEL_KINDS, type ModelKind } from './model-kind.js';
+import { getProviderModels, isValidContextWindow, MAX_CONTEXT_WINDOW_OVERRIDE, MIN_CONTEXT_WINDOW_OVERRIDE } from './provider-models.js';
 import { refreshProviderModels } from './refresh-models.js';
 import type { RegistryProvider, RegistrySubscriptionFilter } from './types.js';
 
@@ -87,6 +89,117 @@ export function renameProvider(id: string, newName: string): RenameProviderResul
   provider.nameCustomized = true;
   saveRegistry(registry);
   return { renamed: true, id, name };
+}
+
+export type SetModelHiddenResult = { ok: true; hidden: boolean } | { ok: false; error: string };
+
+/** Hide or show one model of a provider everywhere Relay lists models. Survives model refreshes. */
+export function setModelHidden(providerId: string, modelId: string, hidden: boolean): SetModelHiddenResult {
+  const registry = loadRegistry();
+  const provider = registry.providers.find(p => p.id === providerId);
+  if (!provider) return { ok: false, error: `Provider not found: ${providerId}` };
+  if (!getProviderModels(provider).some(m => m.id === modelId)) {
+    return { ok: false, error: `Model not found: ${modelId}` };
+  }
+  const ids = new Set(provider.hiddenModelIds ?? []);
+  if (hidden) ids.add(modelId);
+  else ids.delete(modelId);
+  if (ids.size > 0) provider.hiddenModelIds = [...ids];
+  else delete provider.hiddenModelIds;
+  saveRegistry(registry);
+  return { ok: true, hidden };
+}
+
+/** Hide or show several models of one provider in a single save. Unknown ids are skipped. */
+export function setModelsHidden(providerId: string, modelIds: string[], hidden: boolean): { ok: true; changed: number } | { ok: false; error: string } {
+  const registry = loadRegistry();
+  const provider = registry.providers.find(p => p.id === providerId);
+  if (!provider) return { ok: false, error: `Provider not found: ${providerId}` };
+  const known = new Set(getProviderModels(provider).map(m => m.id));
+  const ids = new Set(provider.hiddenModelIds ?? []);
+  let changed = 0;
+  for (const id of modelIds) {
+    if (!known.has(id) || ids.has(id) === hidden) continue;
+    if (hidden) ids.add(id);
+    else ids.delete(id);
+    changed++;
+  }
+  if (changed === 0) return { ok: true, changed };
+  if (ids.size > 0) provider.hiddenModelIds = [...ids];
+  else delete provider.hiddenModelIds;
+  saveRegistry(registry);
+  return { ok: true, changed };
+}
+
+/** Remember what a Test found: the server refused chat (notChat) or replied to it. Writes only when it changes. */
+export function setModelNotChat(providerId: string, modelId: string, notChat: boolean): void {
+  const registry = loadRegistry();
+  const provider = registry.providers.find(p => p.id === providerId);
+  if (!provider) return;
+  const nonChat = new Set(provider.nonChatModelIds ?? []);
+  const chat = new Set(provider.chatModelIds ?? []);
+  if (nonChat.has(modelId) === notChat && chat.has(modelId) === !notChat) return;
+  if (notChat) { nonChat.add(modelId); chat.delete(modelId); }
+  else { nonChat.delete(modelId); chat.add(modelId); }
+  if (nonChat.size > 0) provider.nonChatModelIds = [...nonChat];
+  else delete provider.nonChatModelIds;
+  if (chat.size > 0) provider.chatModelIds = [...chat];
+  else delete provider.chatModelIds;
+  saveRegistry(registry);
+}
+
+/** Save (or, with null, remove) the type the user picked for a model. */
+export function setModelKindOverride(providerId: string, modelId: string, kind: ModelKind | null): { ok: true } | { ok: false; error: string } {
+  const registry = loadRegistry();
+  const provider = registry.providers.find(p => p.id === providerId);
+  if (!provider) return { ok: false, error: `Provider not found: ${providerId}` };
+  if (!getProviderModels(provider).some(m => m.id === modelId)) return { ok: false, error: `Model not found: ${modelId}` };
+  if (kind !== null && !MODEL_KINDS.includes(kind)) return { ok: false, error: `Unknown model type: ${kind}` };
+  const kinds = { ...(provider.modelKindOverrides ?? {}) };
+  if (kind === null) delete kinds[modelId];
+  else kinds[modelId] = kind;
+  if (Object.keys(kinds).length > 0) provider.modelKindOverrides = kinds;
+  else delete provider.modelKindOverrides;
+  saveRegistry(registry);
+  return { ok: true };
+}
+
+export type SetContextWindowResult =
+  | { ok: true; contextWindow: number | null; source?: 'user' | 'measured' }
+  | { ok: false; error: string };
+
+/**
+ * Save (or, with null, remove) a model's context size. A measured size never replaces
+ * one the user typed. Survives model refreshes because it lives outside modelsCache.
+ */
+export function setContextWindowOverride(
+  providerId: string,
+  modelId: string,
+  contextWindow: number | null,
+  source: 'user' | 'measured' = 'user',
+): SetContextWindowResult {
+  const registry = loadRegistry();
+  const provider = registry.providers.find(p => p.id === providerId);
+  if (!provider) return { ok: false, error: `Provider not found: ${providerId}` };
+  if (!getProviderModels(provider).some(m => m.id === modelId)) {
+    return { ok: false, error: `Model not found: ${modelId}` };
+  }
+  const overrides = { ...(provider.contextWindowOverrides ?? {}) };
+  if (contextWindow === null) {
+    delete overrides[modelId];
+  } else {
+    if (!isValidContextWindow(contextWindow)) {
+      return { ok: false, error: `Context size must be a whole number between ${MIN_CONTEXT_WINDOW_OVERRIDE.toLocaleString('en-US')} and ${MAX_CONTEXT_WINDOW_OVERRIDE.toLocaleString('en-US')} tokens.` };
+    }
+    if (source === 'measured' && overrides[modelId]?.source === 'user') {
+      return { ok: true, contextWindow: overrides[modelId]!.contextWindow, source: 'user' };
+    }
+    overrides[modelId] = { contextWindow, source };
+  }
+  if (Object.keys(overrides).length > 0) provider.contextWindowOverrides = overrides;
+  else delete provider.contextWindowOverrides;
+  saveRegistry(registry);
+  return contextWindow === null ? { ok: true, contextWindow: null } : { ok: true, contextWindow, source };
 }
 
 export function addZenRegistryStub(opts?: {

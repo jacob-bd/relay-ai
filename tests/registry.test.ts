@@ -233,6 +233,25 @@ describe('materializeRegistry', () => {
     expect(local?.contextWindow).toBeUndefined();
   });
 
+  it('flags only guessed custom-endpoint sizes as estimates', () => {
+    const custom = {
+      id: 'custom-gw', templateId: 'custom-openai', name: 'GW', enabled: true,
+      authRef: 'keyring:provider:custom-gw',
+      api: { npm: '@ai-sdk/openai-compatible', url: 'https://gw.example.com/v1' },
+      addedAt: '2026-11-03T00:00:00.000Z',
+    };
+    const model = (contextWindowSource?: 'provider' | 'user' | 'models.dev') => ({
+      id: 'qwen3-14b', name: 'Qwen3 14B', upstreamModelId: 'qwen3-14b', modelFormat: 'openai' as const,
+      contextWindow: 1_000_000, ...(contextWindowSource ? { contextWindowSource } : {}),
+    });
+    expect(cachedModelToLocal(model(), custom)?.contextWindowEstimated).toBe(true);
+    expect(cachedModelToLocal(model('models.dev'), custom)?.contextWindowEstimated).toBe(true);
+    expect(cachedModelToLocal(model('provider'), custom)?.contextWindowEstimated).toBeUndefined();
+    expect(cachedModelToLocal(model('user'), custom)?.contextWindowEstimated).toBeUndefined();
+    const builtIn = { ...custom, id: 'groq', templateId: 'groq', api: { npm: '@ai-sdk/groq' } };
+    expect(cachedModelToLocal(model(), builtIn)?.contextWindowEstimated).toBeUndefined();
+  });
+
   it('ignores the legacy synthetic ClinePass context value in existing caches', () => {
     const provider = {
       id: 'cline-pass',

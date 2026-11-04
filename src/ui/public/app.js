@@ -31,6 +31,10 @@ const state = {
   providerModelFreeOnly: false,
   providerModelPage: 1,
   manualModelForms: new Map(), // provider ID → draft and in-flight action, survives browser re-renders
+  contextEdit: null, // { providerId, modelId, value, unit } while a context size is being edited
+  contextMeasure: null, // { providerId, done, total, cancelled, controllers } while measuring all sizes
+  kindEdit: null, // { providerId, modelId, kind } while a model type is being edited
+  modelSelection: new Map(), // provider ID → Set of model IDs ticked for bulk hide
   modelFilter: '',
   modelFreeOnly: false,
   codexSubagentFilter: '',
@@ -249,7 +253,7 @@ function flattenModelProviders(providers) {
   const flat = [];
   for (const p of providers) {
     const favoriteProviderName = p.favoriteName ?? p.name;
-    for (const m of p.models ?? []) flat.push({
+    for (const m of (p.models ?? []).filter(model => !model.hidden)) flat.push({
       id: m.id,
       name: m.name,
       providerId: p.id,
@@ -626,7 +630,7 @@ function renderProviderModelBrowser() {
       <div>
         <div class="section-eyebrow">Provider catalog</div>
         <h1 class="section-heading">${escapeHtml(displayName)} <span class="heading-accent">models</span></h1>
-        <p class="section-sub">${provider.models?.length ?? 0} models available · prices shown per 1M tokens</p>
+        <p class="section-sub">${(provider.models ?? []).filter(model => !model.hidden).length} models available${(provider.models ?? []).some(model => model.hidden) ? ` · ${(provider.models ?? []).filter(model => model.hidden).length} hidden` : ''} · prices shown per 1M tokens</p>
       </div>
     </div>
     ${provider.supportsManualModels ? '<div id="manual-model-panel"></div>' : ''}
@@ -648,25 +652,30 @@ function renderProviderModelBrowser() {
           <span>Free models only</span>
         </label>
       </div>
+      ${provider.customEndpoint && showActions ? `<button class="btn btn-ghost" id="provider-model-measure" type="button" title="Check every model's real context size with the server (one small request per model)">${measureButtonLabel(provider.id)}</button>` : ''}
       <button class="btn btn-ghost" id="provider-model-refresh" type="button" ${state.manualModelForms.get(provider.id)?.pending ? 'disabled' : ''}>Refresh</button>
     </div>
+    <div class="model-bulk-bar" id="model-bulk-bar">${bulkBarHtml(provider)}</div>
     <div class="provider-model-table-wrap">
       <table class="provider-model-table">
-        <thead><tr><th>Model</th><th>Context</th><th>Price in / out <span tabindex="0" class="price-help" aria-label="About price estimates">ⓘ<span role="tooltip">Prices are estimates per 1M tokens and may not reflect the provider’s actual pricing or promotions. Check the provider’s pricing page. Reference estimates use another provider’s published rates.</span></span></th><th class="th-actions">Actions</th></tr></thead>
+        <thead><tr><th class="th-select"><input type="checkbox" id="provider-model-select-page" aria-label="Select all models on this page" ${result.items.length > 0 && result.items.every(model => selectionFor(provider.id).has(model.id)) ? 'checked' : ''}></th><th>Model</th><th>Type</th><th>Context</th><th>Price in / out <span tabindex="0" class="price-help" aria-label="About price estimates">ⓘ<span role="tooltip">Prices are estimates per 1M tokens and may not reflect the provider’s actual pricing or promotions. Check the provider’s pricing page. Reference estimates use another provider’s published rates.</span></span></th><th class="th-actions">Actions</th></tr></thead>
         <tbody>
           ${result.items.map(model => `
-            <tr>
+            <tr class="${model.hidden ? 'model-hidden' : ''}">
+              <td class="td-select"><input type="checkbox" class="model-select" data-model-id="${escapeHtml(model.id)}" aria-label="Select ${escapeHtml(model.name || model.id)}" ${selectionFor(provider.id).has(model.id) ? 'checked' : ''}></td>
               <td><strong>${escapeHtml(model.name || model.id)}</strong>${model.source === 'manual' ? ' <span class="manual-model-badge">Manual</span>' : ''}<code>${escapeHtml(model.id)}</code></td>
-              <td>${fmtCtx(model.contextWindow) || '—'}</td>
+              <td class="kind-cell" data-model-id="${escapeHtml(model.id)}">${kindCellHtml(provider.id, model, showActions)}</td>
+              <td class="ctx-cell" data-model-id="${escapeHtml(model.id)}">${contextCellHtml(provider.id, model, showActions)}</td>
               <td>${formatModelPrice(model.cost, isFreeModel(model), freeBadgeLabel(model), model.referencePrice)}</td>
                 <td class="td-actions">
                   <button class="btn btn-ghost btn-model-test" type="button" data-model-id="${escapeHtml(model.id)}" title="Send a short query to check this model responds. Uses a small amount of provider quota.">Test</button>
+                  <button class="btn-model-hide${model.hidden ? ' is-hidden' : ''}" type="button" data-model-id="${escapeHtml(model.id)}" aria-pressed="${model.hidden ? 'true' : 'false'}" title="${model.hidden ? 'Unhide' : 'Hide'}" aria-label="${model.hidden ? 'Unhide' : 'Hide'} ${escapeHtml(model.name || model.id)}">${model.hidden ? EYE_OFF_ICON : EYE_ICON}</button>
                   ${showActions ? `
                   <button class="btn-model-add" type="button" data-model-id="${escapeHtml(model.id)}" title="Add to favorites">+</button>
                   ` : ''}
                 </td>
             </tr>
-          `).join('') || `<tr><td colspan="4" class="provider-model-empty">No models match your search and filters.</td></tr>`}
+          `).join('') || `<tr><td colspan="6" class="provider-model-empty">No models match your search and filters.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -714,6 +723,13 @@ function renderProviderModelBrowser() {
   container.querySelectorAll('.btn-model-test').forEach(button => {
     button.addEventListener('click', () => testModelResponse(button, provider.id, button.dataset.modelId));
   });
+  container.querySelectorAll('.btn-model-hide').forEach(button => {
+    button.addEventListener('click', () => toggleModelHidden(provider.id, button.dataset.modelId));
+  });
+  container.querySelectorAll('.ctx-cell').forEach(cell => bindContextCell(cell, provider.id));
+  container.querySelectorAll('.kind-cell').forEach(cell => bindKindCell(cell, provider.id));
+  bindModelSelection(container, provider, result.items);
+  document.getElementById('provider-model-measure')?.addEventListener('click', () => measureAllContextSizes(provider));
   document.getElementById('provider-model-prev').addEventListener('click', () => {
     state.providerModelPage -= 1;
     renderProviderModelBrowser();
@@ -741,6 +757,372 @@ function renderProviderModelBrowser() {
   });
 }
 
+const EYE_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path d="M3 3l18 18"/></svg>';
+
+// Hide/unhide one model. Hidden models drop out of every picker, "All provider models" and the server.
+async function toggleModelHidden(providerId, modelId) {
+  const provider = state.providers.find(item => item.id === providerId);
+  const model = provider?.models?.find(item => item.id === modelId);
+  if (!model) return;
+  const hidden = !model.hidden;
+  const result = await api('POST', '/api/providers/models/hide', { providerId, modelId, hidden });
+  if (!result.ok) {
+    showToast(result.error ?? 'Could not change this model');
+    return;
+  }
+  if (hidden) model.hidden = true;
+  else delete model.hidden;
+  provider.modelCount = provider.models.filter(item => !item.hidden).length;
+  state.allModels = flattenModelProviders(state.providers);
+  state.appModelsByTarget = {};
+  renderProviders();
+  renderProviderModelBrowser();
+  showToast(hidden ? `${model.name || modelId} hidden` : `${model.name || modelId} is visible again`);
+}
+
+const SAVE_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>';
+const CANCEL_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+const PENCIL_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+
+function contextEditFor(providerId, modelId) {
+  const edit = state.contextEdit;
+  return edit && edit.providerId === providerId && edit.modelId === modelId ? edit : null;
+}
+
+// Context column: the size, a tag when it was typed or measured, and a pencil to edit it.
+function contextCellHtml(providerId, model, showActions) {
+  const edit = contextEditFor(providerId, model.id);
+  if (edit) {
+    return `<span class="ctx-edit">
+        <input class="ctx-input" type="number" min="0" step="any" value="${escapeHtml(String(edit.value))}" aria-label="Context size for ${escapeHtml(model.name || model.id)}">
+        <select class="ctx-unit" aria-label="Unit"><option value="K" ${edit.unit === 'K' ? 'selected' : ''}>K</option><option value="M" ${edit.unit === 'M' ? 'selected' : ''}>M</option></select>
+        <button class="btn-ctx-icon btn-ctx-save" type="button" title="Save" aria-label="Save">${SAVE_ICON}</button>
+        <button class="btn-ctx-icon btn-ctx-cancel" type="button" title="Cancel" aria-label="Cancel">${CANCEL_ICON}</button>
+        ${model.contextWindowOverride ? '<button class="btn-ctx-icon btn-ctx-reset" type="button" title="Reset to the provider\'s size" aria-label="Reset">↺</button>' : ''}
+      </span>`;
+  }
+  const pencil = showActions ? `<button class="btn-ctx-edit" type="button" title="Edit context size" aria-label="Edit context size">${PENCIL_ICON}</button>` : '';
+  const [label, tip] = model.contextWindowOverride === 'user' ? ['manual', 'Set by you. Tests won\'t change it.']
+    : model.contextWindowOverride === 'measured' ? ['measured', 'Measured from the server by a model test.']
+    : model.contextWindowEstimate === 'models.dev' ? ['estimate', 'From models.dev (the model\'s usual size); this server may run a smaller limit. Click Test or the pencil to confirm.']
+    : model.contextWindowEstimate ? ['estimate', 'Relay\'s guess from the model name. Click Test or the pencil to confirm.']
+    : [null, null];
+  const labelHtml = label ? `<span class="ctx-label ctx-label-${label}" title="${tip}">${label}</span>` : '';
+  return `${fmtCtx(model.contextWindow) || '—'}${pencil}${labelHtml}`;
+}
+
+function bindContextCell(cell, providerId) {
+  const modelId = cell.dataset.modelId;
+  const provider = state.providers.find(item => item.id === providerId);
+  const model = provider?.models?.find(item => item.id === modelId);
+  if (!model) return;
+  const rerender = () => {
+    cell.innerHTML = contextCellHtml(providerId, model, !isServerAdminUi());
+    bindContextCell(cell, providerId);
+  };
+  cell.querySelector('.btn-ctx-edit')?.addEventListener('click', () => {
+    const size = model.contextWindow ?? 0;
+    const unit = size >= 1_000_000 ? 'M' : 'K';
+    const value = size ? Number((size / (unit === 'M' ? 1_000_000 : 1_000)).toFixed(3)) : '';
+    state.contextEdit = { providerId, modelId, value, unit };
+    rerender();
+    cell.querySelector('.ctx-input')?.focus();
+  });
+  const input = cell.querySelector('.ctx-input');
+  const unitSelect = cell.querySelector('.ctx-unit');
+  const save = async () => {
+    const amount = Number(input.value);
+    const contextWindow = Math.round(amount * (unitSelect.value === 'M' ? 1_000_000 : 1_000));
+    if (!Number.isFinite(amount) || amount <= 0) { showToast('Enter a size greater than zero'); input.focus(); return; }
+    const result = await api('POST', '/api/providers/models/context', { providerId, modelId, contextWindow });
+    if (!result.ok) { showToast(result.error ?? 'Could not save the context size'); return; }
+    model.contextWindow = result.contextWindow;
+    model.contextWindowOverride = 'user';
+    delete model.contextWindowEstimate;
+    state.contextEdit = null;
+    state.appModelsByTarget = {};
+    rerender();
+    showToast(`${model.name || modelId}: context set to ${fmtCtx(result.contextWindow)}`);
+  };
+  input?.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); save(); }
+    if (event.key === 'Escape') { state.contextEdit = null; rerender(); }
+  });
+  cell.querySelector('.btn-ctx-save')?.addEventListener('click', save);
+  cell.querySelector('.btn-ctx-cancel')?.addEventListener('click', () => { state.contextEdit = null; rerender(); });
+  cell.querySelector('.btn-ctx-reset')?.addEventListener('click', async () => {
+    const result = await api('POST', '/api/providers/models/context', { providerId, modelId, contextWindow: null });
+    if (!result.ok) { showToast(result.error ?? 'Could not reset the context size'); return; }
+    state.contextEdit = null;
+    state.appModelsByTarget = {};
+    await initModels();
+    renderProviderModelBrowser();
+    showToast(`${model.name || modelId}: context size reset`);
+  });
+}
+
+// After a Test: reflect a measured context size in the row without redrawing the whole table.
+function applyTestContextResult(providerId, modelId, context) {
+  if (!context?.updated && !context?.saved) return;
+  const provider = state.providers.find(item => item.id === providerId);
+  const model = provider?.models?.find(item => item.id === modelId);
+  if (!model) return;
+  model.contextWindow = context.measured;
+  model.contextWindowOverride = 'measured';
+  delete model.contextWindowEstimate;
+  state.appModelsByTarget = {};
+  const cell = document.querySelector(`.ctx-cell[data-model-id="${CSS.escape(modelId)}"]`);
+  if (cell && !contextEditFor(providerId, modelId)) {
+    cell.innerHTML = contextCellHtml(providerId, model, !isServerAdminUi());
+    bindContextCell(cell, providerId);
+  }
+}
+
+const KIND_INFO = {
+  chat: ['💬', 'Chat'],
+  embedding: ['🔢', 'Embedding'],
+  reranking: ['🔀', 'Reranking'],
+  classifier: ['🛡️', 'Classifier'],
+  image: ['🖼️', 'Image'],
+  video: ['🎬', 'Video'],
+  audio: ['🔊', 'Audio'],
+  'not-chat': ['⛔', 'Not chat'],
+};
+const KIND_CHOICES = ['chat', 'embedding', 'reranking', 'classifier', 'image', 'video', 'audio'];
+
+function kindEditFor(providerId, modelId) {
+  const edit = state.kindEdit;
+  return edit && edit.providerId === providerId && edit.modelId === modelId ? edit : null;
+}
+
+// Type column: icon + name, where it came from, and a pencil to set it by hand.
+function kindCellHtml(providerId, model, showActions) {
+  const edit = kindEditFor(providerId, model.id);
+  if (edit) {
+    return `<span class="ctx-edit">
+        <select class="ctx-unit kind-select" aria-label="Model type for ${escapeHtml(model.name || model.id)}">
+          ${KIND_CHOICES.map(kind => `<option value="${kind}" ${edit.kind === kind ? 'selected' : ''}>${KIND_INFO[kind][0]} ${KIND_INFO[kind][1]}</option>`).join('')}
+        </select>
+        <button class="btn-ctx-icon btn-kind-save" type="button" title="Save" aria-label="Save">${SAVE_ICON}</button>
+        <button class="btn-ctx-icon btn-kind-cancel" type="button" title="Cancel" aria-label="Cancel">${CANCEL_ICON}</button>
+        ${model.kindSource === 'manual' ? '<button class="btn-ctx-icon btn-kind-reset" type="button" title="Reset to the detected type" aria-label="Reset">↺</button>' : ''}
+      </span>`;
+  }
+  const info = KIND_INFO[model.kind];
+  const shown = info ? `<span class="kind-icon" aria-hidden="true">${info[0]}</span>${info[1]}` : '<span class="kind-unknown">❔ Unknown</span>';
+  const pencil = showActions ? `<button class="btn-ctx-edit btn-kind-edit" type="button" title="Set model type" aria-label="Set model type">${PENCIL_ICON}</button>` : '';
+  const [label, tip] = model.kindSource === 'manual' ? ['manual', 'Set by you.']
+    : model.kindSource === 'test' ? ['tested', model.kind === 'chat' ? 'A Test got a chat reply from this model.' : 'A Test found the server refuses chat requests for this model.']
+    : model.kindSource === 'models.dev' ? ['models.dev', 'Type listed on models.dev for this model.']
+    : model.kindSource === 'name' ? ['name guess', 'Guessed from the model name. Run Test, or set it with the pencil.']
+    : [null, 'Unknown type. Run Test, or set it with the pencil.'];
+  const labelHtml = label ? `<span class="ctx-label" title="${tip}">${label}</span>` : '';
+  return `<span title="${tip}">${shown}</span>${pencil}${labelHtml}`;
+}
+
+function bindKindCell(cell, providerId) {
+  const modelId = cell.dataset.modelId;
+  const provider = state.providers.find(item => item.id === providerId);
+  const model = provider?.models?.find(item => item.id === modelId);
+  if (!model) return;
+  const rerender = () => {
+    cell.innerHTML = kindCellHtml(providerId, model, !isServerAdminUi());
+    bindKindCell(cell, providerId);
+  };
+  cell.querySelector('.btn-kind-edit')?.addEventListener('click', () => {
+    state.kindEdit = { providerId, modelId, kind: KIND_CHOICES.includes(model.kind) ? model.kind : 'chat' };
+    rerender();
+    cell.querySelector('.kind-select')?.focus();
+  });
+  const select = cell.querySelector('.kind-select');
+  const save = async () => {
+    const kind = select.value;
+    const result = await api('POST', '/api/providers/models/kind', { providerId, modelId, kind });
+    if (!result.ok) { showToast(result.error ?? 'Could not save the model type'); return; }
+    model.kind = kind;
+    model.kindSource = 'manual';
+    state.kindEdit = null;
+    rerender();
+    showToast(`${model.name || modelId}: type set to ${KIND_INFO[kind][1]}`);
+  };
+  select?.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); save(); }
+    if (event.key === 'Escape') { state.kindEdit = null; rerender(); }
+  });
+  cell.querySelector('.btn-kind-save')?.addEventListener('click', save);
+  cell.querySelector('.btn-kind-cancel')?.addEventListener('click', () => { state.kindEdit = null; rerender(); });
+  cell.querySelector('.btn-kind-reset')?.addEventListener('click', async () => {
+    const result = await api('POST', '/api/providers/models/kind', { providerId, modelId, kind: null });
+    if (!result.ok) { showToast(result.error ?? 'Could not reset the model type'); return; }
+    state.kindEdit = null;
+    await initModels();
+    renderProviderModelBrowser();
+    showToast(`${model.name || modelId}: type reset`);
+  });
+}
+
+// Name-guessed kinds that still reply to chat (safety, media) keep their type after a passing Test.
+const NAME_KINDS_OVER_CHAT_TEST = ['classifier', 'image', 'video', 'audio'];
+
+// After a Test/Measure: a refusal marks the model "not chat", a chat reply marks it chat (a manual type is kept).
+function applyTestKindResult(providerId, modelId, notChat) {
+  if (typeof notChat !== 'boolean') return;
+  const provider = state.providers.find(item => item.id === providerId);
+  const model = provider?.models?.find(item => item.id === modelId);
+  if (!model || model.kindSource === 'manual') return;
+  if (!notChat && model.kindSource === 'name' && NAME_KINDS_OVER_CHAT_TEST.includes(model.kind)) return;
+  model.kind = notChat ? 'not-chat' : 'chat';
+  model.kindSource = 'test';
+  const cell = document.querySelector(`.kind-cell[data-model-id="${CSS.escape(modelId)}"]`);
+  if (cell && !kindEditFor(providerId, modelId)) {
+    cell.innerHTML = kindCellHtml(providerId, model, !isServerAdminUi());
+    bindKindCell(cell, providerId);
+  }
+}
+
+function selectionFor(providerId) {
+  if (!state.modelSelection.has(providerId)) state.modelSelection.set(providerId, new Set());
+  return state.modelSelection.get(providerId);
+}
+
+const isKnownNonChat = model => Boolean(model.kind) && model.kind !== 'chat';
+
+function bulkBarHtml(provider) {
+  const selected = selectionFor(provider.id);
+  const nonChat = (provider.models ?? []).filter(model => isKnownNonChat(model) && !model.hidden).length;
+  const select = `<button class="btn btn-ghost" id="model-select-non-chat" type="button" ${nonChat ? '' : 'disabled'} title="Tick every visible model whose type is known and is not chat, so you can review before hiding">Select non-chat (${nonChat})</button>`;
+  if (selected.size === 0) return select;
+  return `${select}
+    <span class="model-bulk-count">${selected.size} selected</span>
+    <button class="btn btn-ghost" id="model-bulk-hide" type="button">Hide</button>
+    <button class="btn btn-ghost" id="model-bulk-unhide" type="button">Unhide</button>
+    <button class="btn btn-ghost" id="model-bulk-clear" type="button">Clear</button>`;
+}
+
+function bindModelSelection(container, provider, pageItems) {
+  const selected = selectionFor(provider.id);
+  container.querySelectorAll('.model-select').forEach(box => {
+    box.addEventListener('change', () => {
+      if (box.checked) selected.add(box.dataset.modelId);
+      else selected.delete(box.dataset.modelId);
+      renderProviderModelBrowser();
+    });
+  });
+  document.getElementById('provider-model-select-page')?.addEventListener('change', event => {
+    for (const model of pageItems) {
+      if (event.target.checked) selected.add(model.id);
+      else selected.delete(model.id);
+    }
+    renderProviderModelBrowser();
+  });
+  document.getElementById('model-select-non-chat')?.addEventListener('click', () => {
+    for (const model of provider.models ?? []) if (isKnownNonChat(model) && !model.hidden) selected.add(model.id);
+    renderProviderModelBrowser();
+  });
+  document.getElementById('model-bulk-clear')?.addEventListener('click', () => { selected.clear(); renderProviderModelBrowser(); });
+  const bulk = async hidden => {
+    const modelIds = [...selected];
+    const result = await api('POST', '/api/providers/models/hide-many', { providerId: provider.id, modelIds, hidden });
+    if (!result.ok) { showToast(result.error ?? 'Could not change these models'); return; }
+    for (const model of provider.models ?? []) {
+      if (!selected.has(model.id)) continue;
+      if (hidden) model.hidden = true;
+      else delete model.hidden;
+    }
+    selected.clear();
+    provider.modelCount = provider.models.filter(item => !item.hidden).length;
+    state.allModels = flattenModelProviders(state.providers);
+    state.appModelsByTarget = {};
+    renderProviders();
+    renderProviderModelBrowser();
+    showToast(`${modelIds.length} model${modelIds.length === 1 ? '' : 's'} ${hidden ? 'hidden' : 'visible again'}`);
+  };
+  document.getElementById('model-bulk-hide')?.addEventListener('click', () => bulk(true));
+  document.getElementById('model-bulk-unhide')?.addEventListener('click', () => bulk(false));
+}
+
+const MEASURE_CONCURRENCY = 3;
+
+function measureButtonLabel(providerId) {
+  const run = state.contextMeasure;
+  return run && run.providerId === providerId ? `Measuring ${run.done}/${run.total}… Cancel` : 'Measure context sizes';
+}
+
+function updateMeasureButton(providerId) {
+  const button = document.getElementById('provider-model-measure');
+  if (button) button.textContent = measureButtonLabel(providerId);
+}
+
+// Free size check for every visible model of a custom endpoint, a few at a time, after the user confirms.
+async function measureAllContextSizes(provider) {
+  const running = state.contextMeasure;
+  if (running) {
+    if (running.providerId === provider.id) {
+      running.cancelled = true;
+      running.controllers.forEach(controller => controller.abort());
+    } else {
+      showToast(`Already measuring ${getProviderName(running.providerId)}. Wait for it to finish or cancel it there.`);
+    }
+    return;
+  }
+  const models = (provider.models ?? []).filter(model => !model.hidden);
+  if (models.length === 0) return;
+  const confirmed = window.confirm(
+    `This sends ${models.length} small request${models.length === 1 ? '' : 's'} to ${getProviderName(provider.id)}, one per model, `
+    + 'asking each server for its real context size. Hidden models are skipped and manual sizes are kept.\n\nContinue?',
+  );
+  if (!confirmed) return;
+
+  const run = { providerId: provider.id, done: 0, total: models.length, cancelled: false, controllers: new Set() };
+  state.contextMeasure = run;
+  updateMeasureButton(provider.id);
+  const tally = { updated: 0, confirmed: 0, kept: 0, unknown: 0, notChat: 0 };
+  let next = 0;
+  const worker = async () => {
+    while (!run.cancelled && next < models.length) {
+      const model = models[next++];
+      const controller = new AbortController();
+      run.controllers.add(controller);
+      try {
+        const response = await fetch('/api/providers/models/measure-context', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ providerId: provider.id, modelId: model.id }),
+          signal: controller.signal,
+        });
+        const result = await response.json();
+        const context = result.ok ? result.context : undefined;
+        applyTestKindResult(provider.id, model.id, context?.notChat);
+        if (context?.notChat) tally.notChat++;
+        if (context?.updated) { tally.updated++; applyTestContextResult(provider.id, model.id, context); }
+        else if (context?.saved) { tally.confirmed++; applyTestContextResult(provider.id, model.id, context); }
+        else if (context?.keptManual) tally.kept++;
+        else if (context?.measured !== undefined) tally.confirmed++;
+        else tally.unknown++;
+      } catch {
+        if (!run.cancelled) tally.unknown++;
+      } finally {
+        run.controllers.delete(controller);
+        if (!run.cancelled) run.done++;
+        updateMeasureButton(provider.id);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(MEASURE_CONCURRENCY, models.length) }, worker));
+  state.contextMeasure = null;
+  updateMeasureButton(provider.id);
+  const summary = `${tally.updated} updated · ${tally.confirmed} confirmed · ${tally.unknown} not reported${tally.kept ? ` · ${tally.kept} manual kept` : ''}${tally.notChat ? ` · ${tally.notChat} not chat` : ''}`;
+  showToast(run.cancelled ? `Measuring stopped (${run.done}/${run.total}) · ${summary}` : `Context sizes: ${summary}`);
+}
+
+function contextTestNote(context) {
+  if (!context || context.measured === undefined) return '';
+  if (context.updated) return ` · context ${fmtCtx(context.previous) || 'unknown'} → ${fmtCtx(context.measured)} (saved)`;
+  if (context.keptManual) return ` · server reports ${fmtCtx(context.measured)} context; kept your manual size`;
+  if (context.saved) return ` · context ${fmtCtx(context.measured)} confirmed (now measured)`;
+  return ` · context ${fmtCtx(context.measured)} confirmed`;
+}
+
 async function testModelResponse(button, providerId, modelId) {
   button.disabled = true;
   button.textContent = 'Testing…';
@@ -753,7 +1135,9 @@ async function testModelResponse(button, providerId, modelId) {
     const result = await response.json();
     button.textContent = formatModelTestLabel(result);
     button.title = result.ok ? `Responded in ${(result.latencyMs / 1000).toFixed(1)}s` : result.error;
-    showToast(result.ok ? `${modelId} responded in ${(result.latencyMs / 1000).toFixed(1)}s` : `${modelId}: ${result.error || 'Test failed'}`);
+    if (result.ok) applyTestContextResult(providerId, modelId, result.context);
+    applyTestKindResult(providerId, modelId, result.notChat ?? result.context?.notChat);
+    showToast(result.ok ? `${modelId} responded in ${(result.latencyMs / 1000).toFixed(1)}s${contextTestNote(result.context)}` : `${modelId}: ${result.error || 'Test failed'}`);
   } catch {
     button.textContent = 'Retry test';
     showToast('Could not complete the model test. Check the connection and try again.');
@@ -950,6 +1334,59 @@ function buildTemplateCard(template) {
   return card;
 }
 
+// Opt-in "trust this computer's certificates" (corporate/VPN endpoints signed by an
+// internal CA). Saved globally; applies at once without restarting Relay.
+function buildTrustCertsToggle(feedback) {
+  const wrap = document.createElement('div');
+  wrap.className = 'trust-certs-row';
+  wrap.style.cssText = 'display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--text-muted,#aaa)';
+
+  const label = document.createElement('label');
+  label.style.cssText = 'display:flex;gap:8px;align-items:center;cursor:pointer';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.disabled = true;
+  const text = document.createElement('span');
+  text.textContent = "Trust this computer's certificates (advanced)";
+  label.appendChild(box);
+  label.appendChild(text);
+
+  const note = document.createElement('div');
+  note.style.cssText = 'margin-left:24px';
+  note.textContent = 'Needed for company servers behind a VPN that your browser trusts but Relay does not. Only turn on if you trust this computer.';
+
+  wrap.appendChild(label);
+  wrap.appendChild(note);
+
+  let notice = '';
+  api('GET', '/api/config').then(cfg => {
+    box.checked = cfg.trustSystemCertificates === true;
+    box.disabled = cfg.systemCertificatesSupported === false;
+    notice = cfg.trustSystemCertificatesNotice ?? '';
+    if (box.disabled) note.textContent = 'Not available on this Node version. Update Node to 22.19 or newer.';
+  }).catch(() => {});
+
+  box.addEventListener('change', async () => {
+    const enable = box.checked;
+    if (enable && !window.confirm(`${notice}\n\nTurn it on?`)) { box.checked = false; return; }
+    box.disabled = true;
+    const result = await api('POST', '/api/config', { trustSystemCertificates: enable });
+    box.disabled = false;
+    if (result.error) {
+      box.checked = !enable;
+      feedback.textContent = result.error;
+      feedback.className = 'key-feedback error';
+      return;
+    }
+    feedback.textContent = enable
+      ? "✓ Trusting this computer's certificates. Click Add Provider to try again."
+      : 'Certificate trust turned off.';
+    feedback.className = 'key-feedback success';
+  });
+
+  return wrap;
+}
+
 function buildCustomEndpointBodyContent(template, card) {
   const kind = template.id === '__custom_anthropic__' ? 'anthropic' : 'openai';
   const isAnthropicKind = kind === 'anthropic';
@@ -1006,6 +1443,7 @@ function buildCustomEndpointBodyContent(template, card) {
   content.appendChild(row('Base URL', urlInput));
   content.appendChild(row('API key', keyInput));
   content.appendChild(row('Custom headers (optional)', headersInput));
+  content.appendChild(buildTrustCertsToggle(feedback));
   content.appendChild(addBtn);
   content.appendChild(feedback);
 
@@ -2961,7 +3399,7 @@ function renderApps() {
             <label class="claude-proxy-option${httpProxyAvailable ? '' : ' is-disabled'}">
               <input type="checkbox" ${state.appHttpProxy[app.id] && httpProxyAvailable ? 'checked' : ''} ${httpProxyAvailable ? '' : 'disabled'} onchange="setClaudeHttpProxy('${app.id}', this.checked)">
               <span class="claude-proxy-label">
-                Keep my Anthropic login and add Relay models
+                Native + Relay models
                 <span class="claude-proxy-tooltip" tabindex="0" role="img" aria-label="Launches Claude Code through a temporary local connection. Your normal Anthropic login and models continue to work, while compatible Relay AI favorites become available for model switching. The connection closes automatically when Claude Code exits." data-tooltip="Launches Claude Code through a temporary local connection. Your normal Anthropic login and models continue to work, while compatible Relay AI favorites become available for model switching. The connection closes automatically when Claude Code exits.">?</span>
                 ${httpProxyAvailable ? '' : '<span class="claude-proxy-unavailable">This selected model cannot be combined with your Anthropic login.</span>'}
               </span>
@@ -2971,8 +3409,8 @@ function renderApps() {
             <label class="claude-proxy-option">
               <input type="checkbox" ${state.appWithNative[app.id] ? 'checked' : ''} onchange="setCodexNativeMode('${app.id}', this.checked)">
               <span class="claude-proxy-label">
-                Load native Codex models alongside Relay models
-                <span class="claude-proxy-tooltip" tabindex="0" role="img" aria-label="Keeps native Codex models available while exposing your Relay models and Codex SubAgent for this launch only." data-tooltip="Keeps native Codex models available while exposing your Relay models and Codex SubAgent for this launch only.">?</span>
+                Native + Relay models
+                <span class="claude-proxy-tooltip" tabindex="0" role="img" aria-label="Your normal Codex models plus your Relay models (and Codex SubAgent), for this launch only." data-tooltip="Your normal Codex models plus your Relay models (and Codex SubAgent), for this launch only.">?</span>
               </span>
             </label>
             ` : ''}
