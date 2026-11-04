@@ -22,6 +22,7 @@ export interface AppInfo {
 }
 
 export interface RelayLaunchOptions {
+  pool?: boolean;
   providerId?: string;
   modelId?: string;
   favorites?: boolean;
@@ -329,6 +330,10 @@ export function getRelayLaunchCommand(appId: string, options: RelayLaunchOptions
   if (!app) throw new Error(`Unsupported app: ${appId}`);
 
   const args = [app.relayCommand];
+  if (options.pool) {
+    if (!['claude', 'codex'].includes(app.id) || options.httpProxy || options.withNative || options.providerId || options.modelId) throw new Error('Free pool launches require Claude Code CLI or Codex CLI without another model selection.');
+    args.push('--pool');
+  }
   if (options.trace) {
     args.push('--trace');
   }

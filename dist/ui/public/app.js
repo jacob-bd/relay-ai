@@ -16,6 +16,9 @@ const CODEX_SUBAGENT_MAX = 1;
 const UPDATE_COMMAND = 'npm install -g @jacobbd/relay-ai@latest';
 
 const state = {
+  pool: null,
+  poolBusy: false,
+  poolSearch: '',
   providers: [],
   templates: [],   // unconfigured available templates
   allModels: [],
@@ -3078,6 +3081,7 @@ async function init() {
   document.getElementById('theme-toggle')?.addEventListener('click', toggleTheme);
 
   await loadConfig();
+  void loadFreePool();
   renderFavList();
   renderCodexSubagentList();
   updateGeneralCounter();
@@ -4240,3 +4244,103 @@ window.stopServerGateway = stopServerGateway;
 window.copyServerValue = copyServerValue;
 window.copyPlainText = copyPlainText;
 window.toggleServerApiKeyVisibility = toggleServerApiKeyVisibility;
+
+// Shared free-model pool. Membership edits never modify Favorites.
+async function loadFreePool() {
+  const panel = document.getElementById('free-pool-panel');
+  try {
+    const data = await api('GET', '/api/pool');
+    if (data.error) throw new Error(data.error);
+    state.pool = data;
+    renderFreePool();
+  } catch (error) {
+    panel.textContent = 'Could not load the free pool. ' + error.message;
+    const retry = document.createElement('button');
+    retry.className = 'btn btn-ghost'; retry.textContent = 'Retry'; retry.onclick = loadFreePool;
+    panel.appendChild(retry);
+  }
+}
+function renderFreePool() {
+  const panel = document.getElementById('free-pool-panel');
+  const pool = state.pool;
+  if (!pool) return;
+  panel.replaceChildren();
+  const button = (label, action, disabled = false) => {
+    const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'btn btn-ghost';
+    btn.textContent = label; btn.disabled = state.poolBusy || disabled; btn.onclick = action; return btn;
+  };
+  const note = document.createElement('p'); note.className = 'section-sub';
+  note.textContent = 'Add a model, then Verify it. Verification sends small text and tool requests using your provider account. It consumes quota and stays valid for 24 hours. Tools are never executed.';
+  panel.appendChild(note);
+  const controls = document.createElement('div'); controls.className = 'pool-controls';
+  const label = document.createElement('label'); label.textContent = 'Reasoning effort ';
+  const effort = document.createElement('select'); effort.className = 'search-input'; effort.disabled = state.poolBusy;
+  for (const value of ['auto', 'low', 'medium', 'high']) effort.add(new Option(value === 'auto' ? 'Auto (provider default)' : value, value));
+  effort.value = pool.effort; effort.onchange = () => updateFreePool({ action: 'effort', effort: effort.value });
+  label.appendChild(effort); controls.appendChild(label);
+  if (!isServerAdminUi()) for (const [appId, name] of [['claude', 'Claude Code'], ['codex', 'Codex CLI']]) {
+    const ready = pool.members.some(member => member.status === 'Verified' && member.targets.includes(appId)
+      && (pool.effort === 'auto' || member.effortLevels.includes(pool.effort)));
+    controls.appendChild(button('Launch ' + name, () => launchFreePool(appId), !ready));
+  }
+  controls.appendChild(button('Refresh models', loadFreePool));
+  panel.appendChild(controls);
+  const list = document.createElement('ol'); list.className = 'pool-members';
+  pool.members.forEach((member, index) => {
+    const row = document.createElement('li'); row.className = 'pool-member';
+    const info = document.createElement('div'); info.className = 'pool-member-info';
+    const name = document.createElement('strong'); name.textContent = (index + 1) + '. ' + member.name;
+    const detail = document.createElement('div'); detail.className = 'section-sub';
+    detail.textContent = member.providerName + ' · ' + member.status
+      + (member.reason ? ': ' + member.reason : '')
+      + (member.status === 'Verified' ? ' · ' + member.targets.join(', ') + ' · expires ' + new Date(member.expiresAt).toLocaleString() : '');
+    info.append(name, detail); row.appendChild(info);
+    const action = type => updateFreePool({ action: type, providerId: member.providerId, modelId: member.modelId });
+    const up = button('↑', () => updateFreePool({ action: 'move', providerId: member.providerId, modelId: member.modelId, direction: -1 }), index === 0);
+    const down = button('↓', () => updateFreePool({ action: 'move', providerId: member.providerId, modelId: member.modelId, direction: 1 }), index === pool.members.length - 1);
+    up.setAttribute('aria-label', 'Move ' + member.name + ' up'); down.setAttribute('aria-label', 'Move ' + member.name + ' down');
+    row.append(up, down, button(state.poolBusy ? 'Working…' : 'Verify', () => action('verify'), member.status === 'Unavailable'), button('Remove', () => action('remove')));
+    list.appendChild(row);
+  });
+  if (!pool.members.length) {
+    const empty = document.createElement('p'); empty.className = 'fav-empty'; empty.textContent = 'Your pool is empty. Add a free model below to get started.'; panel.appendChild(empty);
+  } else panel.appendChild(list);
+  const heading = document.createElement('h2'); heading.textContent = 'Add free models'; panel.appendChild(heading);
+  const input = document.createElement('input'); input.type = 'search'; input.className = 'search-input';
+  input.placeholder = 'Search free models or provider accounts'; input.setAttribute('aria-label', 'Search models to add to the free pool'); input.value = state.poolSearch;
+  panel.appendChild(input);
+  const results = document.createElement('div'); results.className = 'pool-candidates'; panel.appendChild(results);
+  const renderCandidates = () => {
+    results.replaceChildren();
+    const query = state.poolSearch.toLowerCase();
+    const candidates = pool.candidates.filter(model => (model.name + ' ' + model.modelId + ' ' + model.providerName).toLowerCase().includes(query));
+    for (const model of candidates.slice(0, 50)) {
+      const row = document.createElement('div'); row.className = 'pool-member';
+      const name = document.createElement('span'); name.className = 'pool-member-info'; name.textContent = model.name + ' · ' + model.providerName;
+      const added = pool.members.some(member => member.providerId === model.providerId && member.modelId === model.modelId);
+      row.append(name, button(added ? 'Added' : 'Add to pool', () => updateFreePool({ action: 'add', providerId: model.providerId, modelId: model.modelId }), added)); results.appendChild(row);
+    }
+    if (!candidates.length) results.textContent = 'No eligible free models found. Add a provider, or set or measure a missing context size in Providers. Models with unknown pricing and Zen free models are excluded.';
+    else if (candidates.length > 50) { const hint = document.createElement('p'); hint.textContent = 'Showing 50 results. Search to narrow the list.'; results.appendChild(hint); }
+  };
+  input.oninput = () => { state.poolSearch = input.value; renderCandidates(); }; renderCandidates();
+  const limits = document.createElement('p'); limits.className = 'section-sub';
+  limits.textContent = 'Antigravity includes verified effort variants on its next launch. Codex Desktop and Gemini CLI do not support the pool.'; panel.appendChild(limits);
+}
+async function updateFreePool(body) {
+  if (state.poolBusy) return;
+  state.poolBusy = true; renderFreePool();
+  try {
+    const result = await api('POST', '/api/pool', body);
+    if (result.error || result.ok === false) throw new Error(result.error || result.reason || 'Verification failed');
+    showToast(body.action === 'verify' ? 'Model verified for the free pool' : 'Free pool saved');
+  } catch (error) { showToast(error.message, undefined, 6000); }
+  finally { state.poolBusy = false; await loadFreePool(); }
+}
+async function launchFreePool(appId) {
+  try {
+    const result = await api('POST', '/api/apps/launch', { appId, pool: true });
+    if (result.error) throw new Error(result.error);
+    showToast('Opening ' + (appId === 'claude' ? 'Claude Code' : 'Codex CLI') + ' with the free pool');
+  } catch (error) { showToast(error.message, undefined, 6000); }
+}

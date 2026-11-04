@@ -2374,3 +2374,12 @@ input { font-family: inherit; }
 .price-help [role="tooltip"] { display: none; position: absolute; right: 0; top: 100%; width: 260px; padding: 12px; background: var(--surface-2, var(--surface)); color: var(--text-1); border: 1px solid var(--border); border-radius: 8px; font-size: 12px; font-weight: 400; letter-spacing: normal; line-height: 1.5; z-index: 10; }
 .price-help:hover [role="tooltip"], .price-help:focus [role="tooltip"] { display: block; }
 .provider-model-table th.th-actions { width: 175px; }
+
+/* Free pool follows the existing compact model-list vocabulary. */
+.pool-controls { display:flex; flex-wrap:wrap; align-items:end; gap:12px; margin:24px 0; }
+.pool-controls label { display:grid; gap:8px; }
+.pool-members { padding-left:0; margin:24px 0; list-style:none; }
+.pool-member { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:12px 0; border-bottom:1px solid var(--border); }
+.pool-member-info { flex:1; min-width:200px; overflow-wrap:anywhere; }
+.pool-member .section-sub { margin:4px 0 0; }
+.pool-candidates { max-height:420px; overflow:auto; margin:12px 0 24px; }

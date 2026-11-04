@@ -1,3 +1,4 @@
+import { handlePoolApi } from './pool-api.js';
 import { supportsAdditionalOAuthAccounts } from '../oauth/types.js';
 import { subscriptionOAuthRiskLines } from '../oauth/risk-notice.js';
 import { readOAuthAccountLabel } from '../registry/oauth-account.js';
@@ -160,7 +161,9 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
   const url = req.url ?? '';
   traceUi(opts, `${req.method ?? 'GET'} ${url}`);
 
-  if (url === '/api/config' && req.method === 'GET') {
+  if (url === '/api/pool' && (req.method === 'GET' || req.method === 'POST')) {
+    void handlePoolApi(req, res);
+  } else if (url === '/api/config' && req.method === 'GET') {
     handleGetConfig(res);
   } else if (url === '/api/update-status' && req.method === 'GET') {
     handleGetUpdateStatus(res);
@@ -1328,6 +1331,11 @@ async function handleLaunchApp(req: IncomingMessage, res: ServerResponse, opts: 
     const { appId, favorites, cwd } = body;
     const httpProxy = body.httpProxy === true;
     const withNative = body.withNative === true;
+    const pool = body.pool === true;
+    if (body.pool !== undefined && typeof body.pool !== 'boolean') { sendJson(res, 400, { error: 'pool must be a boolean' }); return; }
+    if (pool && (!['claude', 'codex'].includes(body.appId) || body.favorites || body.providerId || body.modelId || body.httpProxy || body.withNative)) {
+      sendJson(res, 400, { error: 'Choose the free pool alone for Claude Code CLI or Codex CLI.' }); return;
+    }
     let { providerId, modelId } = body as { providerId?: string; modelId?: string };
     if (!appId) {
       sendJson(res, 400, { error: 'Missing appId' });
@@ -1410,6 +1418,7 @@ async function handleLaunchApp(req: IncomingMessage, res: ServerResponse, opts: 
     }
 
     const launchCmd = getRelayLaunchCommand(appId, {
+      pool,
       providerId,
       modelId,
       cwd: launchFolder,

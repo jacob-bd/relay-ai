@@ -8,7 +8,7 @@ import {
   streamAnthropicResponse,
   translateRequest,
   writeAnthropicStream
-} from "./chunk-GHKI4SWR.js";
+} from "./chunk-UJTFOIOM.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -21,7 +21,7 @@ import {
   openCodeGoHeaders,
   refreshProviderModels,
   validateClinePassApiKey
-} from "./chunk-42QGKQ3H.js";
+} from "./chunk-INBTEX36.js";
 import {
   anthropicErrorType,
   formatUpstreamError,
@@ -30,13 +30,13 @@ import {
 import {
   fetchProviderCatalog,
   localProvidersToServerModels
-} from "./chunk-ESUTYQLE.js";
+} from "./chunk-4FWLRJ2U.js";
 import {
   oauthAuthRef,
   providerRefreshToken,
   stripGoogleModelPrefix,
   toOAuthRegistryId
-} from "./chunk-RLXYEMQD.js";
+} from "./chunk-RNHGBUKM.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -130,7 +130,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-TNKSBY36.js";
+} from "./chunk-IBAUEWWV.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -570,7 +570,7 @@ function printFavoritesOnlyPanel() {
   ]);
 }
 
-// ../relay-ai/node_modules/@anthropic-ai/sdk/internal/tslib.mjs
+// node_modules/@anthropic-ai/sdk/internal/tslib.mjs
 function __classPrivateFieldSet(receiver, state, value, kind, f) {
   if (kind === "m")
     throw new TypeError("Private method is not writable");
@@ -588,7 +588,7 @@ function __classPrivateFieldGet(receiver, state, kind, f) {
   return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 }
 
-// ../relay-ai/node_modules/@anthropic-ai/sdk/internal/errors.mjs
+// node_modules/@anthropic-ai/sdk/internal/errors.mjs
 function isAbortError(err) {
   return typeof err === "object" && err !== null && // Spec-compliant fetch implementations
   ("name" in err && err.name === "AbortError" || // Expo fetch
@@ -619,7 +619,7 @@ var castToError = (err) => {
   return new Error(err);
 };
 
-// ../relay-ai/node_modules/@anthropic-ai/sdk/core/error.mjs
+// node_modules/@anthropic-ai/sdk/core/error.mjs
 var AnthropicError = class extends Error {
 };
 var APIError = class _APIError extends AnthropicError {
@@ -704,7 +704,7 @@ var RateLimitError = class extends APIError {
 var InternalServerError = class extends APIError {
 };
 
-// ../relay-ai/node_modules/@anthropic-ai/sdk/internal/shims.mjs
+// node_modules/@anthropic-ai/sdk/internal/shims.mjs
 function makeReadableStream(...args) {
   const ReadableStream2 = globalThis.ReadableStream;
   if (typeof ReadableStream2 === "undefined") {
@@ -740,7 +740,7 @@ function ReadableStreamToAsyncIterable(stream) {
   };
 }
 
-// ../relay-ai/node_modules/@anthropic-ai/sdk/internal/utils/bytes.mjs
+// node_modules/@anthropic-ai/sdk/internal/utils/bytes.mjs
 function concatBytes(buffers) {
   let length = 0;
   for (const buffer of buffers) {
@@ -765,7 +765,7 @@ function decodeUTF8(bytes) {
   return (decodeUTF8_ ?? (decoder = new globalThis.TextDecoder(), decodeUTF8_ = decoder.decode.bind(decoder)))(bytes);
 }
 
-// ../relay-ai/node_modules/@anthropic-ai/sdk/internal/decoders/line.mjs
+// node_modules/@anthropic-ai/sdk/internal/decoders/line.mjs
 var _LineDecoder_buffer;
 var _LineDecoder_carriageReturnIndex;
 var LineDecoder = class {
@@ -842,7 +842,7 @@ function findDoubleNewlineIndex(buffer) {
   return -1;
 }
 
-// ../relay-ai/node_modules/@anthropic-ai/sdk/internal/utils/values.mjs
+// node_modules/@anthropic-ai/sdk/internal/utils/values.mjs
 var safeJSON = (text4) => {
   try {
     return JSON.parse(text4);
@@ -851,7 +851,7 @@ var safeJSON = (text4) => {
   }
 };
 
-// ../relay-ai/node_modules/@anthropic-ai/sdk/internal/utils/log.mjs
+// node_modules/@anthropic-ai/sdk/internal/utils/log.mjs
 var levelNumbers = {
   off: 0,
   error: 200,
@@ -895,7 +895,7 @@ function loggerFor(client) {
   return levelLogger;
 }
 
-// ../relay-ai/node_modules/@anthropic-ai/sdk/core/streaming.mjs
+// node_modules/@anthropic-ai/sdk/core/streaming.mjs
 var _Stream_client;
 var Stream = class _Stream {
   constructor(iterator, controller, client) {
@@ -1144,7 +1144,7 @@ function partition(str, delimiter) {
   return [str, "", ""];
 }
 
-// ../relay-ai/node_modules/@anthropic-ai/sdk/_vendor/partial-json-parser/parser.mjs
+// node_modules/@anthropic-ai/sdk/_vendor/partial-json-parser/parser.mjs
 var tokenize = (input) => {
   let current = 0;
   let tokens = [];
@@ -1364,7 +1364,7 @@ var generate = (tokens) => {
 };
 var partialParse = (input) => JSON.parse(generate(unstrip(strip(tokenize(input)))));
 
-// ../relay-ai/node_modules/@anthropic-ai/sdk/lib/MessageStream.mjs
+// node_modules/@anthropic-ai/sdk/lib/MessageStream.mjs
 var _MessageStream_instances;
 var _MessageStream_currentMessageSnapshot;
 var _MessageStream_connectedPromise;
@@ -7647,4 +7647,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-XADADY3I.js.map
+//# sourceMappingURL=chunk-TBHYMMQO.js.map

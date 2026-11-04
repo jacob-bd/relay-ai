@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-B6PE5JMS.js";
+} from "./chunk-VVYLOZUY.js";
 import {
   CLAUDE_POOL_MODEL_ID,
   CODEX_APP_AUTO_COMPACT_RATIO,
@@ -104,10 +104,10 @@ import {
   supportsMultiAgentV2,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-XADADY3I.js";
+} from "./chunk-TBHYMMQO.js";
 import {
   translateRequest
-} from "./chunk-GHKI4SWR.js";
+} from "./chunk-UJTFOIOM.js";
 import {
   OPENCODE_SESSION_HEADER,
   TRUST_SYSTEM_CERTS_NOTICE,
@@ -137,7 +137,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-42QGKQ3H.js";
+} from "./chunk-INBTEX36.js";
 import {
   formatUpstreamError,
   formatUpstreamErrorTrace,
@@ -152,7 +152,7 @@ import {
   providersForPicker,
   resolveLocalProviderApiKey,
   resolveProvidersForDisplay
-} from "./chunk-ESUTYQLE.js";
+} from "./chunk-4FWLRJ2U.js";
 import {
   buildImportProviderList,
   cachedModelToLocal,
@@ -163,7 +163,7 @@ import {
   providerRefreshToken,
   resolveRefreshCredential,
   toOAuthRegistryId
-} from "./chunk-RLXYEMQD.js";
+} from "./chunk-RNHGBUKM.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -268,7 +268,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-TNKSBY36.js";
+} from "./chunk-IBAUEWWV.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -5571,7 +5571,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-LN4YSYJ2.js");
+      const { testModel } = await import("./test-model-HHR4O5AX.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -19608,11 +19608,11 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-P27JGYQ7.js");
+    const { runUiCommand } = await import("./ui-command-HC57GG4H.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-ATFWHBXD.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-CAAXMHOU.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

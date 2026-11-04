@@ -82,6 +82,7 @@
           </span>
           Favorites
         </a>
+        <a href="#free-pool" class="nav-item" data-section="free-pool"><span class="nav-icon">⇄</span><span>Free Pool</span></a>
         <a href="#section-codex-subagents" class="nav-item" data-section="section-codex-subagents" id="nav-codex-subagents">
           <span class="nav-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg>
@@ -169,6 +170,15 @@
         </div>
         <div id="model-results" class="model-results" hidden></div>
         <div id="favorites-list" class="fav-list" role="list" aria-label="General favorites" data-list="general"></div>
+      </section>
+
+      <section id="free-pool" class="section">
+        <div class="section-hero">
+          <div class="section-eyebrow">Model Routing · Experimental</div>
+          <h1 class="section-heading">Free <span class="heading-accent">Pool</span></h1>
+          <p class="section-sub">Choose free models in priority order. Relay tries the next compatible model when a request fails before output starts. This list is separate from Favorites.</p>
+        </div>
+        <div id="free-pool-panel" aria-live="polite">Loading free models…</div>
       </section>
 
       <!-- Codex SubAgent section -->

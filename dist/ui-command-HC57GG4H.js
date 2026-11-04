@@ -32,8 +32,8 @@ import {
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode
-} from "./chunk-XADADY3I.js";
-import "./chunk-GHKI4SWR.js";
+} from "./chunk-TBHYMMQO.js";
+import "./chunk-UJTFOIOM.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   addCustomEndpointProvider,
@@ -52,27 +52,39 @@ import {
   setModelKindOverride,
   setModelsHidden,
   updateCustomEndpointProvider
-} from "./chunk-42QGKQ3H.js";
+} from "./chunk-INBTEX36.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-XWM4ELUX.js";
 import {
-  fetchProviderCatalog
-} from "./chunk-ESUTYQLE.js";
+  probePoolEffort,
+  probePoolModel,
+  verifyPoolMember
+} from "./chunk-PHD4X47E.js";
 import {
-  copilotPlanTier
-} from "./chunk-RLXYEMQD.js";
+  fetchProviderCatalog,
+  resolveLocalProviderApiKey
+} from "./chunk-4FWLRJ2U.js";
+import {
+  copilotPlanTier,
+  providerRefreshToken
+} from "./chunk-RNHGBUKM.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
   MAX_MODEL_CATALOG,
   MODEL_KINDS,
   VERSION,
+  addFreePoolMember,
   buildAntigravityAuthUrl,
   buildClaudeCodeAuthUrl,
+  classifyFreeStatus,
   completeAntigravityExchange,
   completeClaudeCodeExchange,
+  createLanguageModel,
+  currentPoolReceipt,
   describeOAuthAccount,
+  effortProviderOptions,
   formatOAuthAccount,
   freeStatusLabel,
   getAgentProviderModels,
@@ -98,14 +110,17 @@ import {
   modelsDevModelKind,
   nameKindOutranksChatTest,
   openAiDeviceCodeUrl,
+  parseFreePool,
   pollClinePassDeviceCode,
   pollGithubDeviceCodeToken,
   pollOpenAiDeviceCodeToken,
   pollXaiDeviceCodeToken,
+  poolEndpointRevision,
   preferredRelayCredentialAuthRef,
   providerKind,
   readStoredProviderCredential,
   recordLaunchFolder,
+  removeFreePoolMember,
   requestClinePassDeviceCode,
   requestGithubDeviceCode,
   requestOpenAiDeviceCode,
@@ -126,7 +141,7 @@ import {
   supportsAdditionalOAuthAccounts,
   supportsManualModels,
   writeSecureLogLine
-} from "./chunk-TNKSBY36.js";
+} from "./chunk-IBAUEWWV.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -150,6 +165,139 @@ import { fileURLToPath } from "url";
 import { dirname } from "path";
 import pc from "picocolors";
 import * as p from "@clack/prompts";
+
+// src/pool/verify.ts
+function verifyConfiguredPoolMember(member, providers, signal) {
+  const provider = providers.find((item) => item.id === member.providerId);
+  const model = provider?.models.find((item) => item.id === member.modelId);
+  return verifyPoolMember(member, providers, signal, {
+    resolveKey: resolveLocalProviderApiKey,
+    createModel: (provider2, model2, apiKey) => createLanguageModel({
+      npm: model2.npm,
+      modelId: model2.upstreamModelId,
+      apiKey,
+      baseURL: model2.apiBaseUrl,
+      providerId: provider2.id,
+      authType: provider2.authType,
+      oauthAccountId: provider2.oauthAccountId,
+      providerData: provider2.providerData,
+      headers: provider2.headers,
+      refreshToken: providerRefreshToken(provider2.id, provider2.authType, provider2.authRef)
+    }),
+    probe: probePoolModel,
+    probeEffort: provider && model ? (languageModel, level) => probePoolEffort(
+      languageModel,
+      effortProviderOptions(model.npm, level, model.upstreamModelId, {
+        ...model,
+        providerId: provider.id,
+        apiBaseUrl: model.apiBaseUrl
+      }),
+      signal
+    ) : void 0
+  });
+}
+
+// src/ui/pool-api.ts
+var verifying = /* @__PURE__ */ new Set();
+function revision(provider, model) {
+  return poolEndpointRevision({
+    providerId: provider.id,
+    authRef: provider.authRef,
+    npm: model.npm,
+    baseURL: model.apiBaseUrl,
+    upstreamModelId: model.upstreamModelId,
+    headers: provider.headers
+  });
+}
+function admission(provider, model) {
+  if (classifyFreeStatus({ model, providerId: provider.id }) !== "verified_free") return "Requires verified zero pricing";
+  if (!model.npm || model.modelFormat === "cloud-code") return "Unsupported pool transport";
+  if (model.contextWindowEstimated || !Number.isSafeInteger(model.contextWindow) || !model.contextWindow || model.contextWindow <= 0) return "Set or measure a context size first";
+  return void 0;
+}
+async function handlePoolApi(req, res) {
+  try {
+    const providers = await fetchProviderCatalog();
+    let pool = parseFreePool(loadPreferences().freePool);
+    if (req.method === "POST") {
+      const body = JSON.parse(await readBody(req));
+      if ("receipts" in body) throw new Error("Capability receipts are created only by verification");
+      if (body.action === "effort") pool = parseFreePool({ ...pool, effort: body.effort });
+      else {
+        const member = { providerId: body.providerId, modelId: body.modelId };
+        if (typeof member.providerId !== "string" || typeof member.modelId !== "string") throw new Error("Choose a provider account and model");
+        const index = pool.members.findIndex((item) => item.providerId === member.providerId && item.modelId === member.modelId);
+        if (body.action === "add") {
+          const provider = providers.find((item) => item.id === member.providerId);
+          const model = provider?.models.find((item) => item.id === member.modelId);
+          if (!provider || !model) throw new Error("Model is unavailable or hidden");
+          const reason = admission(provider, model);
+          if (reason) throw new Error(reason);
+          pool = addFreePoolMember(pool, member);
+        } else if (body.action === "remove") pool = removeFreePoolMember(pool, member);
+        else if (body.action === "move") {
+          if (index < 0 || ![-1, 1].includes(body.direction)) throw new Error("Invalid priority change");
+          const next = index + body.direction;
+          if (next >= 0 && next < pool.members.length) [pool.members[index], pool.members[next]] = [pool.members[next], pool.members[index]];
+        } else if (body.action === "verify") {
+          if (index < 0) throw new Error("Add the model to the pool first");
+          const provider = providers.find((item) => item.id === member.providerId);
+          const model = provider?.models.find((item) => item.id === member.modelId);
+          if (!provider || !model) throw new Error("Model is unavailable or hidden");
+          const reason = admission(provider, model);
+          if (reason) throw new Error(reason);
+          const key = JSON.stringify(member);
+          if (verifying.has(key)) {
+            sendJson(res, 409, { error: "This model is already being verified" });
+            return;
+          }
+          verifying.add(key);
+          const abort = new AbortController();
+          const cancel = () => {
+            if (!res.writableFinished) abort.abort();
+          };
+          res.once("close", cancel);
+          try {
+            const result = await verifyConfiguredPoolMember(member, providers, abort.signal);
+            pool = parseFreePool(loadPreferences().freePool);
+            if (!pool.members.some((item) => item.providerId === member.providerId && item.modelId === member.modelId)) throw new Error("Model was removed during verification");
+            pool.receipts = pool.receipts.filter((item) => item.member.providerId !== member.providerId || item.member.modelId !== member.modelId);
+            if (result.status === "verified") pool.receipts.push(result.receipt);
+            savePreferences({ freePool: pool });
+            sendJson(res, 200, { ok: result.status === "verified", reason: result.status === "skipped" ? result.reason : void 0 });
+            return;
+          } finally {
+            verifying.delete(key);
+            res.removeListener("close", cancel);
+          }
+        } else throw new Error("Unknown pool action");
+      }
+      savePreferences({ freePool: pool });
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    const members = pool.members.map((member) => {
+      const provider = providers.find((item) => item.id === member.providerId);
+      const model = provider?.models.find((item) => item.id === member.modelId);
+      const receipt = provider && model?.npm ? currentPoolReceipt(pool.receipts, member, revision(provider, model), Date.now()) : void 0;
+      const reason = provider && model ? admission(provider, model) : "Model is unavailable or hidden";
+      return {
+        ...member,
+        name: model?.name ?? member.modelId,
+        providerName: provider?.name ?? member.providerId,
+        status: reason ? "Unavailable" : receipt ? "Verified" : "Needs verification",
+        reason,
+        targets: reason ? [] : receipt?.targets ?? [],
+        expiresAt: receipt?.expiresAt,
+        effortLevels: receipt?.effortLevels ?? []
+      };
+    });
+    const candidates = providers.flatMap((provider) => provider.models.filter((model) => !admission(provider, model)).map((model) => ({ providerId: provider.id, modelId: model.id, name: model.name, providerName: provider.name })));
+    sendJson(res, 200, { members, candidates, effort: pool.effort });
+  } catch (error) {
+    sendJson(res, 400, { error: error instanceof Error ? error.message : "Unable to update the free pool" });
+  }
+}
 
 // src/native-launcher.ts
 import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "fs";
@@ -385,6 +533,10 @@ function getRelayLaunchCommand(appId, options = {}) {
   const app = getSupportedApp(appId);
   if (!app) throw new Error(`Unsupported app: ${appId}`);
   const args = [app.relayCommand];
+  if (options.pool) {
+    if (!["claude", "codex"].includes(app.id) || options.httpProxy || options.withNative || options.providerId || options.modelId) throw new Error("Free pool launches require Claude Code CLI or Codex CLI without another model selection.");
+    args.push("--pool");
+  }
   if (options.trace) {
     args.push("--trace");
   }
@@ -696,7 +848,9 @@ function handleUiApiRequest(req, res, opts = {}) {
   }
   const url = req.url ?? "";
   traceUi(opts, `${req.method ?? "GET"} ${url}`);
-  if (url === "/api/config" && req.method === "GET") {
+  if (url === "/api/pool" && (req.method === "GET" || req.method === "POST")) {
+    void handlePoolApi(req, res);
+  } else if (url === "/api/config" && req.method === "GET") {
     handleGetConfig(res);
   } else if (url === "/api/update-status" && req.method === "GET") {
     handleGetUpdateStatus(res);
@@ -1048,7 +1202,7 @@ async function handleMeasureContextWindow(req, res) {
     if (!res.writableEnded) controller.abort();
   });
   try {
-    const { checkContextWindow } = await import("./test-model-LN4YSYJ2.js");
+    const { checkContextWindow } = await import("./test-model-HHR4O5AX.js");
     const context = await checkContextWindow(provider.id, body.modelId, controller.signal);
     if (!res.destroyed) sendJson(res, 200, { ok: true, context });
   } catch {
@@ -1075,7 +1229,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-FLRJDDE7.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-2B2Z7NPD.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1372,7 +1526,7 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-LN4YSYJ2.js");
+    const { testModel } = await import("./test-model-HHR4O5AX.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
     if (!res.destroyed) sendJson(res, 200, result);
   } catch {
@@ -1733,6 +1887,15 @@ async function handleLaunchApp(req, res, opts) {
     const { appId, favorites, cwd } = body;
     const httpProxy = body.httpProxy === true;
     const withNative = body.withNative === true;
+    const pool = body.pool === true;
+    if (body.pool !== void 0 && typeof body.pool !== "boolean") {
+      sendJson(res, 400, { error: "pool must be a boolean" });
+      return;
+    }
+    if (pool && (!["claude", "codex"].includes(body.appId) || body.favorites || body.providerId || body.modelId || body.httpProxy || body.withNative)) {
+      sendJson(res, 400, { error: "Choose the free pool alone for Claude Code CLI or Codex CLI." });
+      return;
+    }
     let { providerId, modelId } = body;
     if (!appId) {
       sendJson(res, 400, { error: "Missing appId" });
@@ -1805,6 +1968,7 @@ async function handleLaunchApp(req, res, opts) {
       recordLaunchFolder(launchFolder);
     }
     const launchCmd = getRelayLaunchCommand(appId, {
+      pool,
       providerId,
       modelId,
       cwd: launchFolder,
@@ -2249,4 +2413,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-P27JGYQ7.js.map
+//# sourceMappingURL=ui-command-HC57GG4H.js.map

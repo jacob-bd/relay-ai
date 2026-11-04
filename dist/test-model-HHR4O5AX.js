@@ -4,7 +4,7 @@ import {
   openCodeGoHeaders,
   setContextWindowOverride,
   setModelNotChat
-} from "./chunk-42QGKQ3H.js";
+} from "./chunk-INBTEX36.js";
 import {
   normalizeToolSchemaForNpm,
   upstreamHttpStatus
@@ -13,7 +13,7 @@ import {
   cachedModelToLocal,
   providerRefreshToken,
   reconcileCachedModelProtocol
-} from "./chunk-RLXYEMQD.js";
+} from "./chunk-RNHGBUKM.js";
 import {
   ANTIGRAVITY_API_VERSION,
   ANTIGRAVITY_BASE_URLS,
@@ -33,7 +33,7 @@ import {
   resolveProviderOAuthAccountId,
   resolveProviderOAuthProviderData,
   withProviderRequestDefaults
-} from "./chunk-TNKSBY36.js";
+} from "./chunk-IBAUEWWV.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -894,4 +894,4 @@ export {
   probeModel,
   testModel
 };
-//# sourceMappingURL=test-model-LN4YSYJ2.js.map
+//# sourceMappingURL=test-model-HHR4O5AX.js.map
