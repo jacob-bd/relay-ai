@@ -51,4 +51,17 @@ describe('Claude pool route preparation', () => {
       apiKey: 'fake',
     }));
   });
+
+  it('keeps a member when the client asks for more output than the receipt reserved', async () => {
+    // Claude Code sends max_tokens in the tens of thousands; this used to drop every member.
+    const routes = await prepareClaudePoolRoutes({
+      pool: { members: [member], effort: 'auto', receipts: [] },
+      providers: [provider],
+      receipts: [receipt],
+      body: { model: 'claude-pool', max_tokens: 32000, messages: [{ role: 'user', content: 'hello' }] },
+      signal: new AbortController().signal,
+      health: { cooldownFor: async () => undefined } as unknown as PoolHealthStore,
+    });
+    expect(routes).toHaveLength(1);
+  });
 });

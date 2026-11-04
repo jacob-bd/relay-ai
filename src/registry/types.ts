@@ -8,6 +8,18 @@ export const REGISTRY_SCHEMA_VERSION = 1;
 
 export type RegistrySubscriptionFilter = 'free' | 'zen' | 'go';
 
+export interface ModelTestResult {
+  ok: boolean;
+  /** ISO time of the test. */
+  at: string;
+  latencyMs?: number;
+  toolsPassed?: boolean;
+  /** Relay's own fixed message (never raw upstream text). */
+  error?: string;
+  /** Failure caused by limits, timeouts or the network, not by the model; never blocks adding it. */
+  transient?: boolean;
+}
+
 export interface CachedModel {
   /** User-owned addition, kept separately from the downloaded catalog. */
   source?: 'manual';
@@ -24,6 +36,10 @@ export interface CachedModel {
   referencePrice?: ReferencePrice;
   isFree?: boolean;
   freeStatus?: FreeStatus;
+  /** Set only from the provider's `freeModelIds` (the user declared it free); never from catalog data. */
+  userMarkedFree?: boolean;
+  /** Derived from a local/private endpoint URL in getProviderModels; never stored. */
+  localEndpoint?: boolean;
   modelFormat: 'anthropic' | 'openai' | 'cloud-code';
   /** Per-model override — wins over provider-level api.npm */
   npm?: string;
@@ -72,6 +88,10 @@ export interface RegistryProvider {
   manualModels?: ManualModel[];
   /** Model ids the user hid; kept apart from modelsCache so a refresh never un-hides them. */
   hiddenModelIds?: string[];
+  /** Model ids the user declared free (their own risk); kept apart from modelsCache so a refresh never drops them. */
+  freeModelIds?: string[];
+  /** Latest explicit Test per model (local log); kept apart from modelsCache so a refresh never drops it. */
+  modelTestResults?: Record<string, ModelTestResult>;
   /** Context sizes the user typed or a model Test measured; kept apart from modelsCache so a refresh never drops them. */
   contextWindowOverrides?: Record<string, ContextWindowOverride>;
   /** Model ids a Test/Measure found are not chat models (the server refused the chat request). */

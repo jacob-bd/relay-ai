@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 import {
   fetchProviderCatalog,
+  meetsContextFloor,
   poolDiagnostic,
   poolMembershipProblem,
   poolRoutingProblem,
   readBody,
   sendJson,
   verifyConfiguredPoolMember
-} from "./chunk-UNCELUH4.js";
+} from "./chunk-BNKZAQMT.js";
 import {
   addFreePoolMember,
   classifyFreeStatus,
@@ -21,7 +22,7 @@ import {
   poolEndpointRevision,
   removeFreePoolMember,
   savePreferences
-} from "./chunk-W7B52E2T.js";
+} from "./chunk-IKGOSD5H.js";
 
 // src/ui/pool-api.ts
 var verifying = /* @__PURE__ */ new Set();
@@ -69,6 +70,13 @@ function modelMetadata(provider, model) {
     freeStatus,
     ...candidateKind(provider.id, model.id)
   };
+}
+function failedTestProblem(providerId, modelId) {
+  const result = loadRegistry().providers.find((item) => item.id === providerId)?.modelTestResults?.[modelId];
+  return result && !result.ok && !result.transient ? "Failed its last test. Run Test again; it can be added once a test passes." : void 0;
+}
+function testResultFor(providerId, modelId) {
+  return loadRegistry().providers.find((item) => item.id === providerId)?.modelTestResults?.[modelId];
 }
 function poolMember(pool, member) {
   return pool.members.some((item) => item.providerId === member.providerId && item.modelId === member.modelId);
@@ -154,7 +162,7 @@ async function handlePoolApi(req, res) {
           const provider = providers.find((item) => item.id === member.providerId);
           const model = provider?.models.find((item) => item.id === member.modelId);
           if (!provider || !model) throw new Error("Model is unavailable or hidden");
-          const reason = poolMembershipProblem(provider, model);
+          const reason = poolMembershipProblem(provider, model) ?? failedTestProblem(member.providerId, member.modelId);
           if (reason) throw new Error(reason);
           pool = addFreePoolMember(pool, member);
         } else if (body.action === "remove") pool = removeFreePoolMember(pool, member);
@@ -208,11 +216,14 @@ function poolView(providers, pool) {
       effortLevels: receipt?.effortLevels ?? []
     };
   });
-  const candidates = providers.flatMap((provider) => provider.models.filter((model) => !model.hidden && isFreeListEntry(model)).map((model) => {
-    const membershipProblem = poolMembershipProblem(provider, model);
+  const candidates = providers.flatMap((provider) => provider.models.filter((model) => !model.hidden && isFreeListEntry(model) && meetsContextFloor("claude", model.contextWindow)).map((model) => {
+    const alreadyAdded = poolMember(pool, { providerId: provider.id, modelId: model.id });
+    const membershipProblem = poolMembershipProblem(provider, model) ?? (alreadyAdded ? void 0 : failedTestProblem(provider.id, model.id));
+    const testResult = testResultFor(provider.id, model.id);
     return {
       ...modelMetadata(provider, model),
-      alreadyAdded: poolMember(pool, { providerId: provider.id, modelId: model.id }),
+      alreadyAdded,
+      ...testResult ? { testResult } : {},
       canAdd: !membershipProblem,
       addReason: membershipProblem,
       canRouteUntilTested: poolRoutingProblem(provider, model) === void 0
@@ -227,4 +238,4 @@ export {
   handlePoolApi,
   poolView
 };
-//# sourceMappingURL=chunk-ERETBOIF.js.map
+//# sourceMappingURL=chunk-COB3DCQE.js.map

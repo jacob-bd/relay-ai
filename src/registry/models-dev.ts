@@ -34,7 +34,7 @@ export interface ModelsDevModel {
   family?: string;
   provider?: { npm?: string };
   cost?: { input: number; output: number; cache_read?: number; cache_write?: number };
-  limit?: { context?: number };
+  limit?: { context?: number; output?: number };
   tool_call?: boolean;
   chat?: boolean;
   interactions?: boolean;
@@ -338,6 +338,23 @@ export function modelsDevCrossVendorContextWindow(
     const counts = new Map<number, number>();
     for (const row of index.get(candidate) ?? []) {
       const size = row.limit?.context;
+      if (typeof size === 'number' && Number.isSafeInteger(size) && size > 0) counts.set(size, (counts.get(size) ?? 0) + 1);
+    }
+    if (counts.size > 0) return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]![0];
+  }
+  return undefined;
+}
+
+/** Output-token limit other vendors list for this model id (most common value, smaller on a tie). Undefined if unlisted. */
+export function modelsDevCrossVendorOutputLimit(
+  modelId: string,
+  cache: ModelsDevCacheFile = loadModelsDevCache(),
+): number | undefined {
+  const index = getEffortIndex(cache);
+  for (const candidate of crossVendorIdCandidates(modelId)) {
+    const counts = new Map<number, number>();
+    for (const row of index.get(candidate) ?? []) {
+      const size = row.limit?.output;
       if (typeof size === 'number' && Number.isSafeInteger(size) && size > 0) counts.set(size, (counts.get(size) ?? 0) + 1);
     }
     if (counts.size > 0) return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]![0];

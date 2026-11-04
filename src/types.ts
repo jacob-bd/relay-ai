@@ -59,6 +59,10 @@ export interface LocalProviderModel {
   contextWindow?: number;
   /** True when contextWindow is a guess (custom endpoint, not reported/typed/measured); Claude Code caps it at 200K. */
   contextWindowEstimated?: boolean;
+  /** The user declared this model free; outranks a listed price. */
+  userMarkedFree?: boolean;
+  /** Served from the user's own machine or network (not a hosted cloud model). */
+  localEndpoint?: boolean;
   /** Provider-reported request parameters, e.g. OpenRouter supported_parameters. */
   supportedParameters?: string[];
   /** Broad model metadata: model can produce reasoning/thinking output. */

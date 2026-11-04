@@ -3,19 +3,19 @@ import {
   invalidateUiPoolMember,
   poolView,
   verifyUiPoolMember
-} from "./chunk-ERETBOIF.js";
+} from "./chunk-COB3DCQE.js";
 import {
   fetchProviderCatalog,
-  probePoolEffort,
-  probePoolModel,
   resolveLocalProviderApiKey,
   verifyPoolMember
-} from "./chunk-UNCELUH4.js";
+} from "./chunk-BNKZAQMT.js";
 import {
+  probePoolEffort,
+  probePoolModel,
   providerRefreshToken,
   setContextWindowOverride,
   setModelHidden
-} from "./chunk-4NL6K57P.js";
+} from "./chunk-6IT5C4N6.js";
 import {
   addFreePoolMember,
   createLanguageModel,
@@ -25,15 +25,16 @@ import {
   parsePoolReceipt,
   removeFreePoolMember,
   savePreferences
-} from "./chunk-W7B52E2T.js";
+} from "./chunk-IKGOSD5H.js";
 import "./chunk-RKRPDZVV.js";
 import "./chunk-KNCSTHR4.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/pool/command.ts
+import { randomUUID } from "crypto";
 import pc from "picocolors";
 var poolHelpText = [
-  "Usage: relay-ai pool <command>",
+  "Usage: relay-ai pool <command>   (experimental: tested with Claude Code first)",
   "  list                         Saved membership and receipts (no tests)",
   "  candidates [--search text] [--min-context tokens]  Free models, providers and total (no tests)",
   "  status                       Readiness, context, provider names and effort settings (no tests)",
@@ -41,7 +42,7 @@ var poolHelpText = [
   "  add <provider> <model>        Save a member without testing; independent of favorites",
   "  remove <provider> <model>     Remove a member",
   "  move <provider> <model> <up|down>  Change routing priority",
-  "  test <provider> <model>       1 request, max 256 output tokens, no retries; response + tools",
+  "  test <provider> <model>       1 request, max 1024 output tokens, no retries; response + tools",
   "  context <provider> <model>    Optional context measurement: 1 extra request",
   "  context <provider> <model> <tokens|reset>  Set/reset context without inference",
   "  reasoning <provider> <model>  Optional: up to 5 requests, no retries",
@@ -112,7 +113,7 @@ async function runPoolCommand(args) {
         console.log(JSON.stringify(result2));
         return 0;
       }
-      const { testModel, checkContextWindow } = await import("./test-model-XJVPLHCH.js");
+      const { testModel, checkContextWindow } = await import("./test-model-GPZ4Y7ST.js");
       if (action === "context") {
         if (args.length === 4) {
           const value = args[3] === "reset" ? null : Number(args[3]);
@@ -133,7 +134,7 @@ async function runPoolCommand(args) {
         console.log(JSON.stringify(result2 ?? { ok: false, reason: "not-eligible" }));
         return result2?.ok ? 0 : 1;
       }
-      console.log("Test: 1 request, up to 256 output tokens, no retries.");
+      console.log("Test: 1 request, up to 1024 output tokens, no retries.");
       const result = await testModel(first, second, signal);
       if (!result.ok) invalidateUiPoolMember(first, second);
       const readiness = result.ok ? await verifyUiPoolMember(first, second, signal, {
@@ -169,6 +170,7 @@ async function runPoolCommand(args) {
             oauthAccountId: provider.oauthAccountId,
             providerData: provider.providerData,
             headers: provider.headers,
+            sessionId: `relay-pool-verify-${randomUUID()}`,
             refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
           }),
           probe: (languageModel, signal2) => probePoolModel(
@@ -238,4 +240,4 @@ export {
   runPoolCommand,
   validPoolReceipts
 };
-//# sourceMappingURL=command-7UCSCPT2.js.map
+//# sourceMappingURL=command-PSHOTNMN.js.map

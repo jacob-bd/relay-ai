@@ -100,6 +100,8 @@ export function cachedModelToLocal(
     referencePrice: cached.referencePrice,
     isFree: isFreeStatus(freeStatus),
     freeStatus,
+    ...(cached.userMarkedFree ? { userMarkedFree: true } : {}),
+    ...(cached.localEndpoint ? { localEndpoint: true } : {}),
     // ClinePass's public catalog does not currently report per-model context
     // limits. Preserve that unknown state for the picker instead of displaying
     // a heuristic as if it were provider metadata. Launch-time callers still

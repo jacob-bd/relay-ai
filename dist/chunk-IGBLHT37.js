@@ -2,7 +2,7 @@
 import {
   VERSION,
   isProviderKind
-} from "./chunk-W7B52E2T.js";
+} from "./chunk-IKGOSD5H.js";
 
 // src/opencode-session.ts
 import { randomUUID } from "crypto";
@@ -119,4 +119,4 @@ export {
   mergeHeaders,
   openCodeGoHeaders
 };
-//# sourceMappingURL=chunk-2RC456ES.js.map
+//# sourceMappingURL=chunk-IGBLHT37.js.map

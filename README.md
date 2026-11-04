@@ -735,6 +735,6 @@ If something makes you cringe, open an issue or PR. Human expertise is irreplace
 
 MIT
 
-### Relay Free Pool
+### Relay Free Pool (experimental)
 
-Manage free models with Test and **+ Add to Pool** in the UI, or run `relay-ai pool --help`. Test uses one small request; context and reasoning checks are optional. See the [Free Pool guide](docs/FREE_POOL.md) for UI/CLI equivalents, request costs, readiness and expiry.
+Experimental: tested with Claude Code first; other tools are not yet verified. Manage free models with Test and **+ Add to Pool** in the UI, or run `relay-ai pool --help`. Test uses one small request; context and reasoning checks are optional. See the [Free Pool guide](docs/FREE_POOL.md) for UI/CLI equivalents, request costs, readiness and expiry.

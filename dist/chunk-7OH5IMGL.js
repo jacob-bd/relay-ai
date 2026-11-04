@@ -14,7 +14,7 @@ import {
   splitToolUseId,
   sseChunk,
   thinkingProviderOptions
-} from "./chunk-W7B52E2T.js";
+} from "./chunk-IKGOSD5H.js";
 
 // src/subagent-route-registry.ts
 import { randomUUID } from "crypto";
@@ -772,4 +772,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-U3YG5C5I.js.map
+//# sourceMappingURL=chunk-7OH5IMGL.js.map

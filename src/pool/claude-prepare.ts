@@ -1,7 +1,7 @@
 import { createLanguageModel } from '../provider-factory.js';
 import { resolveLocalProviderApiKey } from '../provider-catalog.js';
 import { providerRefreshToken } from '../provider-runtime.js';
-import { classifyFreeStatus } from '../free-models.js';
+import { poolFreeStatus } from '../free-models.js';
 import type { FreePoolPreferences, LocalProvider } from '../types.js';
 import { translateRequest, type AnthropicRequest, type SdkCallParams } from '../sdk-adapter.js';
 import { currentPoolReceipt, poolEndpointRevision, type PoolCapabilityReceipt } from './capabilities.js';
@@ -11,6 +11,8 @@ import type { PoolHealthStore } from './health.js';
 import { poolEndpointScope } from './health.js';
 import { poolRequestFitsWindow } from './context.js';
 import { translatedEffortClaim } from './codex-prepare.js';
+import { poolOutputCap } from './output-limit.js';
+import { poolSessionId } from './session-id.js';
 
 export function omitClaudeEffort(
   body: Record<string, unknown>, level: string | null,
@@ -56,18 +58,25 @@ export async function prepareClaudePoolRoutes(options: ClaudeRouteOptions): Prom
     });
     const receipt = currentPoolReceipt(options.receipts, member, revision, Date.now());
     if (!receipt || !receipt.billingSafe || !receipt.targets.includes('claude')) continue;
-    const freeStatus = classifyFreeStatus({ model, providerId: provider.id });
+    const freeStatus = poolFreeStatus({ model, providerId: provider.id });
     if (freeStatus !== 'verified_free') continue;
-    if (!auto && !receipt.effortLevels.includes(requested)) continue;
-    const body = omitClaudeEffort(options.body, auto ? null : requested);
+    // An effort level this member has not verified is not sent (never claimed); the member runs on the
+    // provider's default instead of being dropped. Claude Code always sends an effort (e.g. medium), and
+    // dropping unverified members emptied the whole pool.
+    const memberAuto = auto || !receipt.effortLevels.includes(requested);
+    const body = omitClaudeEffort(options.body, memberAuto ? null : requested);
     const params: SdkCallParams = translateRequest(body as unknown as AnthropicRequest, model.npm, {
       reasoningMetadata: {
         ...model, providerId: provider.id, apiBaseUrl: model.apiBaseUrl,
       },
     });
-    if (auto && translatedEffortClaim(params.providerOptions)) continue;
-    const requestedOutput = typeof body.max_tokens === 'number' ? body.max_tokens : receipt.maxOutputTokens;
-    if (!Number.isSafeInteger(requestedOutput) || requestedOutput <= 0 || requestedOutput > receipt.maxOutputTokens) continue;
+    if (memberAuto && translatedEffortClaim(params.providerOptions)) continue;
+    // Coding turns need long outputs. Clamp to the model's own limit (never drop the member, never
+    // use the receipt's chat-sized reservation).
+    const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
+    const askedOutput = typeof body.max_tokens === 'number' ? body.max_tokens : outputCap;
+    if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) continue;
+    const requestedOutput = Math.min(askedOutput, outputCap);
     params.maxOutputTokens = requestedOutput;
     const fits = poolRequestFitsWindow({
       messages: params.messages, instructions: params.instructions, tools: params.tools,
@@ -82,7 +91,7 @@ export async function prepareClaudePoolRoutes(options: ClaudeRouteOptions): Prom
       npm: model.npm, modelId: model.upstreamModelId, apiKey,
       baseURL: model.apiBaseUrl, providerId: provider.id, authType: provider.authType,
       oauthAccountId: provider.oauthAccountId, providerData: provider.providerData,
-      headers: provider.headers, sessionId: options.sessionId,
+      headers: provider.headers, sessionId: poolSessionId(provider.id, options.sessionId),
       refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
     });
     routes.push(sdkPoolRoute({

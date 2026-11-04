@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { loadPreferences, savePreferences } from '../config.js';
 import { fetchProviderCatalog } from '../provider-catalog.js';
 import { classifyFreeStatus } from '../free-models.js';
+import { meetsContextFloor } from '../target-compatibility.js';
 import { readBody, sendJson } from '../http-utils.js';
 import { loadRegistry } from '../registry/io.js';
 import { guessModelKindFromName, nameKindOutranksChatTest, type ModelKind } from '../registry/model-kind.js';
@@ -51,6 +52,16 @@ function modelMetadata(provider: LocalProvider, model: LocalProviderModel) {
     contextWindow: model.contextWindow, contextWindowEstimated: model.contextWindowEstimated === true,
     cost: model.cost, freeStatus, ...candidateKind(provider.id, model.id),
   };
+}
+
+/** A model whose latest Test failed cannot join the pool until a Test passes. */
+function failedTestProblem(providerId: string, modelId: string): string | undefined {
+  const result = loadRegistry().providers.find(item => item.id === providerId)?.modelTestResults?.[modelId];
+  return result && !result.ok && !result.transient ? 'Failed its last test. Run Test again; it can be added once a test passes.' : undefined;
+}
+
+function testResultFor(providerId: string, modelId: string) {
+  return loadRegistry().providers.find(item => item.id === providerId)?.modelTestResults?.[modelId];
 }
 
 function poolMember(pool: FreePoolPreferences, member: FavoriteModel) {
@@ -166,7 +177,7 @@ export async function handlePoolApi(req: IncomingMessage, res: ServerResponse): 
           const provider = providers.find(item => item.id === member.providerId);
           const model = provider?.models.find(item => item.id === member.modelId);
           if (!provider || !model) throw new Error('Model is unavailable or hidden');
-          const reason = poolMembershipProblem(provider, model);
+          const reason = poolMembershipProblem(provider, model) ?? failedTestProblem(member.providerId, member.modelId);
           if (reason) throw new Error(reason);
           pool = addFreePoolMember(pool, member);
         } else if (body.action === 'remove') pool = removeFreePoolMember(pool, member);
@@ -215,11 +226,15 @@ export function poolView(providers: LocalProvider[], pool: FreePoolPreferences) 
   // that the pool cannot transport stay visible with an explanation so the
   // Free Pool total never silently differs from the free catalog.
   const candidates = providers.flatMap(provider => provider.models
-    .filter(model => !model.hidden && isFreeListEntry(model))
+    .filter(model => !model.hidden && isFreeListEntry(model) && meetsContextFloor('claude', model.contextWindow))
     .map(model => {
-      const membershipProblem = poolMembershipProblem(provider, model);
+      const alreadyAdded = poolMember(pool, { providerId: provider.id, modelId: model.id });
+      const membershipProblem = poolMembershipProblem(provider, model)
+        ?? (alreadyAdded ? undefined : failedTestProblem(provider.id, model.id));
+      const testResult = testResultFor(provider.id, model.id);
       return { ...modelMetadata(provider, model),
-        alreadyAdded: poolMember(pool, { providerId: provider.id, modelId: model.id }),
+        alreadyAdded,
+        ...(testResult ? { testResult } : {}),
         canAdd: !membershipProblem, addReason: membershipProblem,
         canRouteUntilTested: poolRoutingProblem(provider, model) === undefined };
     }));

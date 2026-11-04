@@ -20,8 +20,6 @@ import {
   openAiIdCollisions,
   poolCatalogEntry,
   providerOptionsFromCatalog,
-  providersForCodexSubagents,
-  providersForTarget,
   readOAuthAccountLabel,
   resolveAdvertiseAddresses,
   resolveAdvertiseGatewayPort,
@@ -31,20 +29,22 @@ import {
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode
-} from "./chunk-UPP4JOL4.js";
-import "./chunk-U3YG5C5I.js";
-import "./chunk-2RC456ES.js";
+} from "./chunk-SFQRHUSA.js";
+import "./chunk-7OH5IMGL.js";
+import "./chunk-IGBLHT37.js";
 import "./chunk-FKGBGJZK.js";
 import {
   handlePoolApi,
   invalidateUiPoolMember,
   verifyUiPoolMember
-} from "./chunk-ERETBOIF.js";
+} from "./chunk-COB3DCQE.js";
 import {
   fetchProviderCatalog,
+  providersForCodexSubagents,
+  providersForTarget,
   readBody,
   sendJson
-} from "./chunk-UNCELUH4.js";
+} from "./chunk-BNKZAQMT.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   addCustomEndpointProvider,
@@ -54,6 +54,7 @@ import {
   ensureOpencodeCloudProviders,
   isSystemCaActive,
   isSystemCaSupported,
+  recordModelTestResult,
   refreshAllProviderModels,
   refreshProviderModels,
   removeProviderFromRegistry,
@@ -62,9 +63,10 @@ import {
   setContextWindowOverride,
   setModelHidden,
   setModelKindOverride,
+  setModelMarkedFree,
   setModelsHidden,
   updateCustomEndpointProvider
-} from "./chunk-4NL6K57P.js";
+} from "./chunk-6IT5C4N6.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -131,7 +133,7 @@ import {
   supportsManualModels,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-W7B52E2T.js";
+} from "./chunk-IKGOSD5H.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -745,6 +747,8 @@ function handleUiApiRequest(req, res, opts = {}) {
     handleManualModel(req, res, "remove");
   } else if (url === "/api/providers/models/hide" && req.method === "POST") {
     handleHideModel(req, res);
+  } else if (url === "/api/providers/models/mark-free" && req.method === "POST") {
+    handleMarkModelFree(req, res);
   } else if (url === "/api/providers/models/context" && req.method === "POST") {
     handleSetContextWindow(req, res);
   } else if (url === "/api/providers/models/kind" && req.method === "POST") {
@@ -904,7 +908,8 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
         name: m.name,
         isFree: m.isFree ?? false,
         freeStatus: m.freeStatus,
-        freeLabel: freeStatusLabel(m.freeStatus),
+        freeLabel: m.userMarkedFree ? "Free (marked by you)" : m.localEndpoint ? "Free (local)" : freeStatusLabel(m.freeStatus),
+        ...m.userMarkedFree ? { userMarkedFree: true } : {},
         contextWindow: m.contextWindow,
         cost: m.cost,
         referencePrice: m.referencePrice,
@@ -913,6 +918,7 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
         ...modelKindFields(registryById.get(p2.id), m.id),
         ...m.contextWindow !== void 0 && estimatedIdsByProvider.get(p2.id)?.has(m.id) ? { contextWindowEstimate: estimatedIdsByProvider.get(p2.id).get(m.id) } : {},
         ...registryById.get(p2.id)?.contextWindowOverrides?.[m.id] ? { contextWindowOverride: registryById.get(p2.id).contextWindowOverrides[m.id].source } : {},
+        ...registryById.get(p2.id)?.modelTestResults?.[m.id] ? { testResult: registryById.get(p2.id).modelTestResults[m.id] } : {},
         ...manualIdsByProvider.get(p2.id)?.has(m.id) ? { source: "manual" } : {}
       }))
     }));
@@ -1010,6 +1016,19 @@ async function handleHideModel(req, res) {
     sendJson(res, 400, { ok: false, error: "Request body must be valid JSON" });
   }
 }
+async function handleMarkModelFree(req, res) {
+  try {
+    const body = JSON.parse(await readBody(req));
+    if (typeof body.providerId !== "string" || !body.providerId.trim() || typeof body.modelId !== "string" || !body.modelId.trim() || typeof body.free !== "boolean") {
+      sendJson(res, 400, { ok: false, error: "providerId, modelId and free (true/false) are required" });
+      return;
+    }
+    const result = setModelMarkedFree(body.providerId.trim(), body.modelId.trim(), body.free);
+    sendJson(res, result.ok ? 200 : 404, result);
+  } catch {
+    sendJson(res, 400, { ok: false, error: "Request body must be valid JSON" });
+  }
+}
 function modelKindFields(provider, modelId) {
   if (!provider) return {};
   const manual = provider.modelKindOverrides?.[modelId];
@@ -1084,7 +1103,7 @@ async function handleMeasureContextWindow(req, res) {
     if (!res.writableEnded) controller.abort();
   });
   try {
-    const { checkContextWindow } = await import("./test-model-XJVPLHCH.js");
+    const { checkContextWindow } = await import("./test-model-GPZ4Y7ST.js");
     const context = await checkContextWindow(provider.id, body.modelId, controller.signal);
     if (!res.destroyed) sendJson(res, 200, { ok: true, context });
   } catch {
@@ -1111,7 +1130,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-KPP2JFW3.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-HUWQD5NY.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1408,8 +1427,14 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-XJVPLHCH.js");
+    const { testModel } = await import("./test-model-GPZ4Y7ST.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
+    if (!controller.signal.aborted) {
+      try {
+        recordModelTestResult(body.providerId.trim(), body.modelId.trim(), result.ok ? { ok: true, latencyMs: result.latencyMs, toolsPassed: result.toolsPassed } : { ok: false, ...result.error ? { error: result.error } : {}, ..."transient" in result && result.transient ? { transient: true } : {} });
+      } catch {
+      }
+    }
     if (!result.ok) invalidateUiPoolMember(body.providerId.trim(), body.modelId.trim());
     const poolResult = result.ok ? await verifyUiPoolMember(body.providerId.trim(), body.modelId.trim(), controller.signal, { evidence: { text: "passed", tools: result.toolsPassed ? "passed" : "failed" } }) : void 0;
     if (!res.destroyed) sendJson(res, 200, { ...result, ...poolResult ? { pool: poolResult } : {} });
@@ -2297,4 +2322,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-NIFSTLFZ.js.map
+//# sourceMappingURL=ui-command-YSB6PF2Q.js.map

@@ -8,7 +8,7 @@
 // and the launch is the ordinary one.
 
 import type { FreePoolPreferences, LocalProvider, PoolCapabilityReceipt, UserPreferences } from '../types.js';
-import { classifyFreeStatus } from '../free-models.js';
+import { poolFreeStatus } from '../free-models.js';
 import { poolEndpointRevision, currentPoolReceipt } from './capabilities.js';
 import { poolCatalogEntry } from './catalog.js';
 import { prepareClaudePoolRoutes } from './claude-prepare.js';
@@ -34,7 +34,7 @@ function servableClaudeMember(
   const provider = providers.find(item => item.id === member.providerId);
   const model = provider?.models.find(item => item.id === member.modelId);
   if (!provider || !model || !model.npm || model.modelFormat === 'cloud-code') return undefined;
-  if (classifyFreeStatus({ model, providerId: provider.id }) !== 'verified_free') return undefined;
+  if (poolFreeStatus({ model, providerId: provider.id }) !== 'verified_free') return undefined;
   if (poolRoutingProblem(provider, model)) return undefined;
   const revision = poolEndpointRevision({
     providerId: provider.id, authRef: provider.authRef, npm: model.npm,

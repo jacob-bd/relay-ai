@@ -63,7 +63,7 @@ import {
   validateProviderName,
   vertexAnthropicCachedModels,
   writeSecureLogLine
-} from "./chunk-W7B52E2T.js";
+} from "./chunk-IKGOSD5H.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -387,6 +387,8 @@ function cachedModelToLocal(cached, provider, metadata = loadModelsDevCache(), a
     referencePrice: cached.referencePrice,
     isFree: isFreeStatus(freeStatus),
     freeStatus,
+    ...cached.userMarkedFree ? { userMarkedFree: true } : {},
+    ...cached.localEndpoint ? { localEndpoint: true } : {},
     // ClinePass's public catalog does not currently report per-model context
     // limits. Preserve that unknown state for the picker instead of displaying
     // a heuristic as if it were provider metadata. Launch-time callers still
@@ -611,6 +613,88 @@ function listCredentialSkippedProviders(raw, authEntries, importedIds, alreadyRe
 function providerRefreshToken(providerId, authType, authRef) {
   if (authType !== "oauth" || !providerId) return void 0;
   return () => forceRefreshProviderCredential(providerId, authRef ?? oauthAuthRef(providerId));
+}
+
+// src/pool/probe.ts
+import { streamText, tool, jsonSchema } from "ai";
+var TEST_MAX_OUTPUT_TOKENS = 1024;
+async function probePoolModel(model, signal, timeoutMs = 2e4, onError) {
+  const result = { text: "failed", tools: "failed" };
+  const call = async () => {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const abortSignal = AbortSignal.any([signal, timeout]);
+    const response = streamText({
+      model,
+      abortSignal,
+      maxRetries: 0,
+      maxOutputTokens: TEST_MAX_OUTPUT_TOKENS,
+      prompt: 'Call relay_pool_probe with value "ok". Do not perform any other action.',
+      toolChoice: { type: "tool", toolName: "relay_pool_probe" },
+      tools: {
+        relay_pool_probe: tool({
+          description: "Harmless enrollment capability probe; it is never executed.",
+          inputSchema: jsonSchema({ type: "object", properties: { value: { type: "string", enum: ["ok"] } }, required: ["value"], additionalProperties: false })
+        })
+      },
+      onError: () => {
+      }
+    });
+    for (const promise of [response.text, response.toolCalls, response.finishReason, response.usage, response.response]) Promise.resolve(promise).catch(() => {
+    });
+    let validTool = false;
+    let finish = "";
+    for await (const part of response.stream) {
+      if (part.type === "error") throw part.error;
+      if (part.type === "tool-call") validTool = part.toolName === "relay_pool_probe" && part.input?.value === "ok";
+      if (part.type === "finish") finish = part.finishReason;
+    }
+    if (finish === "length") return "truncated";
+    return validTool && finish === "tool-calls";
+  };
+  try {
+    const outcome = await call();
+    if (outcome !== true) return { ...result, failure: outcome === "truncated" ? "truncated" : "invalid-output" };
+    result.text = "passed";
+    result.tools = "passed";
+    return result;
+  } catch (error) {
+    if (signal.aborted) throw signal.reason;
+    onError?.(error);
+    return { ...result, failure: error?.name === "TimeoutError" ? "timeout" : "provider" };
+  }
+}
+async function probePoolEffort(model, providerOptions, signal, timeoutMs = 2e4, onError) {
+  try {
+    const abortSignal = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
+    const response = streamText({
+      model,
+      abortSignal,
+      maxRetries: 0,
+      maxOutputTokens: 32,
+      prompt: "Reply with exactly OK.",
+      providerOptions,
+      onError: () => {
+      }
+    });
+    for (const promise of [response.text, response.toolCalls, response.finishReason, response.usage, response.response]) {
+      Promise.resolve(promise).catch(() => {
+      });
+    }
+    let text = "";
+    let finish = "";
+    for await (const part of response.stream) {
+      if (part.type === "error") {
+        onError?.(part.error);
+        return false;
+      }
+      if (part.type === "text-delta") text += part.text;
+      if (part.type === "finish") finish = part.finishReason;
+    }
+    return finish === "stop" && text.trim().length > 0;
+  } catch (error) {
+    onError?.(error);
+    return false;
+  }
 }
 
 // src/registry/builtins.ts
@@ -2554,6 +2638,34 @@ function setModelHidden(providerId, modelId, hidden) {
   saveRegistry(registry);
   return { ok: true, hidden };
 }
+var MAX_TEST_RESULTS_PER_PROVIDER = 500;
+function recordModelTestResult(providerId, modelId, result) {
+  const registry = loadRegistry();
+  const provider = registry.providers.find((p) => p.id === providerId);
+  if (!provider) return;
+  const results = { ...provider.modelTestResults ?? {}, [modelId]: { ...result, at: result.at ?? (/* @__PURE__ */ new Date()).toISOString() } };
+  const entries2 = Object.entries(results);
+  if (entries2.length > MAX_TEST_RESULTS_PER_PROVIDER) {
+    entries2.sort((a, b) => b[1].at.localeCompare(a[1].at));
+    provider.modelTestResults = Object.fromEntries(entries2.slice(0, MAX_TEST_RESULTS_PER_PROVIDER));
+  } else provider.modelTestResults = results;
+  saveRegistry(registry);
+}
+function setModelMarkedFree(providerId, modelId, free) {
+  const registry = loadRegistry();
+  const provider = registry.providers.find((p) => p.id === providerId);
+  if (!provider) return { ok: false, error: `Provider not found: ${providerId}` };
+  if (!getProviderModels(provider).some((m) => m.id === modelId)) {
+    return { ok: false, error: `Model not found: ${modelId}` };
+  }
+  const ids = new Set(provider.freeModelIds ?? []);
+  if (free) ids.add(modelId);
+  else ids.delete(modelId);
+  if (ids.size > 0) provider.freeModelIds = [...ids];
+  else delete provider.freeModelIds;
+  saveRegistry(registry);
+  return { ok: true, free };
+}
 function setModelsHidden(providerId, modelIds, hidden) {
   const registry = loadRegistry();
   const provider = registry.providers.find((p) => p.id === providerId);
@@ -2789,6 +2901,9 @@ export {
   copilotPlanTier,
   filterCachedCopilotModels,
   providerRefreshToken,
+  TEST_MAX_OUTPUT_TOKENS,
+  probePoolModel,
+  probePoolEffort,
   customEndpointKind,
   addCustomEndpointProvider,
   updateCustomEndpointProvider,
@@ -2803,6 +2918,8 @@ export {
   removeProviderFromRegistry,
   renameProvider,
   setModelHidden,
+  recordModelTestResult,
+  setModelMarkedFree,
   setModelsHidden,
   setModelNotChat,
   setModelKindOverride,
@@ -2811,4 +2928,4 @@ export {
   addOpencodeCloudFromApiKey,
   toggleProviderEnabled
 };
-//# sourceMappingURL=chunk-4NL6K57P.js.map
+//# sourceMappingURL=chunk-6IT5C4N6.js.map

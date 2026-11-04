@@ -1,5 +1,7 @@
 # Relay Free Pool
 
+> **Experimental.** The pool is being tested with Claude Code first. Codex CLI, the ChatGPT/Codex app, the Claude desktop app and Antigravity are not yet verified, and behavior, limits and settings may change between releases. Expect rough edges; please report problems.
+
 Relay Free Pool combines selected free models into one model in the normal tool switcher. Enable it once and Relay includes it in supported Claude, Codex and Antigravity launches. Favorites remain independent. Pool requests fall back only to eligible members. There are no separate pool launch buttons.
 
 ## UI and CLI equivalents
@@ -29,9 +31,9 @@ Use exact account and model IDs from `candidates`. `relay-ai pool --help` lists 
 
 ## Quota costs and readiness
 
-**Test sends one small inference request**, at most 256 output tokens, zero retries, no tool execution or follow-up tool loop. It asks for a short reply and a harmless structured tool call together. A valid tool call proves responsiveness even without introductory text. Results report response time and tool support. Text-only responses can pass responsiveness while remaining unverified for pool routing. Providers may count input tokens, reasoning or minimum charges too; even a short test can consume message allowance.
+**Test sends one small inference request**, at most 1024 output tokens, zero retries, no tool execution or follow-up tool loop. It asks for a short reply and a harmless structured tool call together. A valid tool call proves responsiveness even without introductory text. Results report response time and tool support. Text-only responses can pass responsiveness while remaining unverified for pool routing. Providers may count input tokens, reasoning or minimum charges too; even a short test can consume message allowance.
 
-The same response supplies pool evidence without another verification request. Readiness also requires verified zero pricing, supported transport, and a known context size. Unknown or estimated context needs measurement or a trusted manual value. Basic Test does not discover context or check reasoning levels.
+The same response supplies pool evidence without another verification request. Readiness also requires verified zero pricing (Nvidia's free developer access counts, because an account with no payment method can only be rate-limited, never charged; other provider-granted free access without a billing rule does not), supported transport, and a known context size. Unknown or estimated context needs measurement or a trusted manual value. Basic Test does not discover context or check reasoning levels.
 
 **Advanced checks are optional** and display costs before running:
 
@@ -42,3 +44,27 @@ The same response supplies pool evidence without another verification request. R
 Adding/removing models, changing priority or effort, enabling, refreshing the list, and launching never run tests. Results are cached for 24 hours and reused when a tested model is added later. Expiry stops routing that member until an explicit Test; there is no background retest. Failed explicit tests clear old readiness evidence.
 
 `relay-ai pool verify` explicitly checks saved members and skips ready receipts. It prints the upper request count. `relay-ai pool verify --reasoning` explicitly adds reasoning checks. Prefer single-model Test when allowances are tight.
+
+## Marking a model free yourself
+
+Relay only pools models whose catalog reports a price of zero, so a gateway that lists no price
+(or lists full prices but does not charge your key) is shown as "Unknown price" or "Paid".
+On the Providers page, **Mark free** on a model row declares it free yourself. The model is then
+eligible for the pool like any other free model: it still needs a successful **Test** before it
+routes, and it can be unmarked at any time.
+
+This is your own risk call. Relay cannot verify it, and nothing in an import or a refresh sets it.
+If the provider bills you, that is on your account. The mark is stored beside the provider
+(`freeModelIds`), so refreshing the model list never drops it.
+
+### Where to look for free providers
+
+These community lists are leads, not guarantees. Entries go stale, some need a card or phone
+verification, and headline token totals add up per-provider caps nobody can use in full. Check
+each provider's own terms before relying on it, then add it as a custom endpoint and mark the
+models you trust:
+
+- [awesome-freellm-apis](https://github.com/open-free-llm-api/awesome-freellm-apis)
+- [Free-LLM](https://github.com/nejib1/Free-LLM)
+- [FreeLLMAPI](https://github.com/tashfeenahmed/freellmapi), a router that sells a paid catalog;
+  Relay borrows its routing ideas only, not its provider or quota claims.

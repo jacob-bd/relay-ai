@@ -1,15 +1,21 @@
+import { randomUUID } from 'node:crypto';
 import { createLanguageModel, effortProviderOptions } from '../provider-factory.js';
 import { resolveLocalProviderApiKey } from '../provider-catalog.js';
 import { providerRefreshToken } from '../provider-runtime.js';
-import { classifyFreeStatus } from '../free-models.js';
+import { poolFreeStatus } from '../free-models.js';
+import { contextFloorForTarget, meetsContextFloor } from '../target-compatibility.js';
 import type { FavoriteModel, LocalProvider, LocalProviderModel } from '../types.js';
 import { verifyPoolMember, type EnrollResult } from './enroll.js';
 import { probePoolModel, probePoolEffort, type PoolProbeResult } from './probe.js';
 
 /** Membership may be saved before its context size has been measured. */
 export function poolMembershipProblem(provider: LocalProvider, model: LocalProviderModel): string | undefined {
-  if (classifyFreeStatus({ model, providerId: provider.id }) !== 'verified_free') return 'Requires verified zero pricing';
+  if (poolFreeStatus({ model, providerId: provider.id }) !== 'verified_free') return 'Requires verified zero pricing';
   if (!model.npm || model.modelFormat === 'cloud-code') return 'Unsupported pool transport';
+  // Claude Code and Codex both refuse models below this window, so the pool could never route them.
+  if (!meetsContextFloor('claude', model.contextWindow)) {
+    return `Context window is below ${Math.round(contextFloorForTarget('claude') / 1000)}K, the minimum for Claude Code and Codex`;
+  }
   return undefined;
 }
 
@@ -64,6 +70,8 @@ export async function verifyConfiguredPoolMember(
         npm: model.npm!, modelId: model.upstreamModelId, apiKey, baseURL: model.apiBaseUrl,
         providerId: provider.id, authType: provider.authType, oauthAccountId: provider.oauthAccountId,
         providerData: provider.providerData, headers: provider.headers,
+        // Some gateways (OpenCode Go) reject requests that carry no session id.
+        sessionId: `relay-pool-verify-${randomUUID()}`,
         refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
       }),
       probe: options.evidence ? async () => options.evidence! : probePoolModel,

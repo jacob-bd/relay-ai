@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-AHNA5WRM.js";
+} from "./chunk-RSB4R5IO.js";
 import {
   CLAUDE_POOL_MODEL_ID,
   CODEX_APP_AUTO_COMPACT_RATIO,
@@ -19,14 +19,11 @@ import {
   anthropicModelsEndpoint,
   appendCompactionInstruction,
   authenticateProvider,
-  buildAntigravityRoutes,
   buildAppCatalogFile,
   buildCatalogFile,
   buildCatalogRoutes,
   buildCodexAppRootConfig,
   buildHttpProxyRoutes,
-  buildListExperimentsResponse,
-  buildListModelConfigsResponse,
   buildVertexRuntimeConfig,
   catalogEntryFromModel,
   checkForUpdates,
@@ -39,10 +36,7 @@ import {
   codexPoolCatalogModel,
   createGatewayModelCatalog,
   decodeCompactionContent,
-  effortLabel,
   estimateAnthropicInputTokens,
-  evaluateAgySwitchCompatibility,
-  favoriteEffortLevels,
   favoriteProviderDisplayName,
   filterVertexModelsByAccess,
   findBinaryOnPath,
@@ -63,7 +57,6 @@ import {
   generateCompactionResponse,
   generateResponsesResponse,
   httpProxyModelId,
-  injectRelayModels,
   isClaudeAppRunning,
   isCodexAppRunning,
   isFavorite,
@@ -74,7 +67,6 @@ import {
   logConnected,
   logProxy,
   makeRouteResolver,
-  meetsContextFloor,
   modelSelectOption,
   navOption,
   parseCodexAppModelSlug,
@@ -91,8 +83,6 @@ import {
   printWelcomePanel,
   providerAuthHelpText,
   providerSelectOption,
-  providersForCodexSubagents,
-  providersForTarget,
   quitClaudeAppGracefully,
   quitCodexAppGracefully,
   readOAuthAccountLabel,
@@ -100,8 +90,6 @@ import {
   relayOutro,
   removeFavorite,
   renderMultiAgentV2Feature,
-  resolveRelayCatalogSlots,
-  routableModelsForTarget,
   runServerCommand,
   serializeCatalog,
   startProxy,
@@ -115,15 +103,15 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   writeResponsesErrorStream
-} from "./chunk-UPP4JOL4.js";
+} from "./chunk-SFQRHUSA.js";
 import {
   translateRequest
-} from "./chunk-U3YG5C5I.js";
+} from "./chunk-7OH5IMGL.js";
 import {
   OPENCODE_SESSION_HEADER,
   extractConversationId,
   openCodeGoHeaders
-} from "./chunk-2RC456ES.js";
+} from "./chunk-IGBLHT37.js";
 import {
   formatUpstreamError,
   formatUpstreamErrorTrace,
@@ -131,17 +119,29 @@ import {
   upstreamHttpStatus
 } from "./chunk-FKGBGJZK.js";
 import {
+  buildAntigravityRoutes,
+  buildListExperimentsResponse,
+  buildListModelConfigsResponse,
+  effortLabel,
+  evaluateAgySwitchCompatibility,
   extractApiKey,
+  favoriteEffortLevels,
   fetchProviderCatalog,
   formatRegistryAuthLabel,
+  injectRelayModels,
   launchModelsForProvider,
+  meetsContextFloor,
   poolRoutingProblem,
+  providersForCodexSubagents,
   providersForPicker,
+  providersForTarget,
   readBody,
   resolveLocalProviderApiKey,
   resolveProvidersForDisplay,
+  resolveRelayCatalogSlots,
+  routableModelsForTarget,
   sendJson
-} from "./chunk-UNCELUH4.js";
+} from "./chunk-BNKZAQMT.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   UNTRUSTED_CERTIFICATE_CODE,
@@ -177,7 +177,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-4NL6K57P.js";
+} from "./chunk-6IT5C4N6.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -198,7 +198,6 @@ import {
   applyClaudeCodeOAuthIdentity,
   buildAntigravityChildEnv,
   buildChildEnv,
-  classifyFreeStatus,
   claudeCodeClientModelId,
   claudeCodeContextWindow,
   contextWindowError,
@@ -207,6 +206,7 @@ import {
   deepMergeProviderOptions,
   detectConflicts,
   effortProviderOptions,
+  findModelsDevModel,
   generateTextStreamingIfRequired,
   getAgentProviderModels,
   getAntigravityDebugLogPath,
@@ -234,9 +234,11 @@ import {
   migrateGlobalOpencodeCredential,
   migrateLegacyCloudProviders,
   modelIdError,
+  modelsDevCrossVendorOutputLimit,
   oauthCredentialToKeychainJson,
   parseFreePool,
   poolEndpointRevision,
+  poolFreeStatus,
   preferredRelayCredentialAuthRef,
   prepareClaudeTraceLog,
   prepareProviderTraceLog,
@@ -276,7 +278,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-W7B52E2T.js";
+} from "./chunk-IKGOSD5H.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -1688,6 +1690,25 @@ function poolRequestFitsWindow(value, contextWindow, outputReserve) {
   return { fits: required <= contextWindow, required };
 }
 
+// src/pool/output-limit.ts
+var POOL_DEFAULT_OUTPUT_TOKENS = 32768;
+var MAX_OUTPUT_WINDOW_SHARE = 4;
+var MIN_OUTPUT_TOKENS = 1024;
+function poolOutputCap(providerId, modelId, contextWindow) {
+  const published = findModelsDevModel(providerId, modelId)?.limit?.output ?? modelsDevCrossVendorOutputLimit(modelId);
+  const base = typeof published === "number" && Number.isSafeInteger(published) && published > 0 ? published : POOL_DEFAULT_OUTPUT_TOKENS;
+  const windowCap = Math.floor(contextWindow / MAX_OUTPUT_WINDOW_SHARE);
+  return Math.max(MIN_OUTPUT_TOKENS, Math.min(base, windowCap));
+}
+
+// src/pool/session-id.ts
+import { randomUUID as randomUUID2 } from "crypto";
+function poolSessionId(providerId, sessionId) {
+  if (sessionId) return sessionId;
+  const kind = providerKind(providerId);
+  return kind === "go" || kind === "zen" ? `relay-pool-${randomUUID2()}` : void 0;
+}
+
 // src/pool/codex-prepare.ts
 var EFFORT_CLAIM_KEYS = /* @__PURE__ */ new Set([
   "effort",
@@ -1738,7 +1759,7 @@ async function prepareCodexPoolRoutes(options) {
     });
     const receipt = currentPoolReceipt(options.receipts, member, revision, Date.now());
     if (!receipt) continue;
-    const freeStatus = classifyFreeStatus({ model, providerId: provider.id });
+    const freeStatus = poolFreeStatus({ model, providerId: provider.id });
     if (freeStatus !== "verified_free") continue;
     if (!receipt.billingSafe || !receipt.targets.includes("codex")) continue;
     const identity = { account: provider.id, endpointRevision: revision, model: model.id };
@@ -1753,8 +1774,10 @@ async function prepareCodexPoolRoutes(options) {
       apiBaseUrl: model.apiBaseUrl
     });
     if (auto && translatedEffortClaim(params.providerOptions)) continue;
-    params.maxOutputTokens = typeof body.max_output_tokens === "number" ? body.max_output_tokens : receipt.maxOutputTokens;
-    if (!Number.isSafeInteger(params.maxOutputTokens) || params.maxOutputTokens <= 0 || params.maxOutputTokens > receipt.maxOutputTokens) continue;
+    const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
+    const askedOutput = typeof body.max_output_tokens === "number" ? body.max_output_tokens : outputCap;
+    if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) continue;
+    params.maxOutputTokens = Math.min(askedOutput, outputCap);
     const context = await (options.checkContext ?? defaultContextCheck)(params, receipt);
     if (!context.verified || !context.fits) continue;
     const scopes = [poolEndpointScope(provider.id, revision, model.id)];
@@ -1772,7 +1795,7 @@ async function prepareCodexPoolRoutes(options) {
       oauthAccountId: provider.oauthAccountId,
       providerData: provider.providerData,
       headers: provider.headers,
-      sessionId: options.sessionId,
+      sessionId: poolSessionId(provider.id, options.sessionId),
       refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
     });
     const { toolContext: _toolContext, instructions, ...sdkParams } = params;
@@ -1839,10 +1862,10 @@ async function prepareClaudePoolRoutes(options) {
     });
     const receipt = currentPoolReceipt(options.receipts, member, revision, Date.now());
     if (!receipt || !receipt.billingSafe || !receipt.targets.includes("claude")) continue;
-    const freeStatus = classifyFreeStatus({ model, providerId: provider.id });
+    const freeStatus = poolFreeStatus({ model, providerId: provider.id });
     if (freeStatus !== "verified_free") continue;
-    if (!auto && !receipt.effortLevels.includes(requested)) continue;
-    const body = omitClaudeEffort(options.body, auto ? null : requested);
+    const memberAuto = auto || !receipt.effortLevels.includes(requested);
+    const body = omitClaudeEffort(options.body, memberAuto ? null : requested);
     const params = translateRequest(body, model.npm, {
       reasoningMetadata: {
         ...model,
@@ -1850,9 +1873,11 @@ async function prepareClaudePoolRoutes(options) {
         apiBaseUrl: model.apiBaseUrl
       }
     });
-    if (auto && translatedEffortClaim(params.providerOptions)) continue;
-    const requestedOutput = typeof body.max_tokens === "number" ? body.max_tokens : receipt.maxOutputTokens;
-    if (!Number.isSafeInteger(requestedOutput) || requestedOutput <= 0 || requestedOutput > receipt.maxOutputTokens) continue;
+    if (memberAuto && translatedEffortClaim(params.providerOptions)) continue;
+    const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
+    const askedOutput = typeof body.max_tokens === "number" ? body.max_tokens : outputCap;
+    if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) continue;
+    const requestedOutput = Math.min(askedOutput, outputCap);
     params.maxOutputTokens = requestedOutput;
     const fits = poolRequestFitsWindow({
       messages: params.messages,
@@ -1875,7 +1900,7 @@ async function prepareClaudePoolRoutes(options) {
       oauthAccountId: provider.oauthAccountId,
       providerData: provider.providerData,
       headers: provider.headers,
-      sessionId: options.sessionId,
+      sessionId: poolSessionId(provider.id, options.sessionId),
       refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
     });
     routes.push(sdkPoolRoute({
@@ -1909,7 +1934,7 @@ function servableClaudeMember(pool, providers, member, now) {
   const provider = providers.find((item) => item.id === member.providerId);
   const model = provider?.models.find((item) => item.id === member.modelId);
   if (!provider || !model || !model.npm || model.modelFormat === "cloud-code") return void 0;
-  if (classifyFreeStatus({ model, providerId: provider.id }) !== "verified_free") return void 0;
+  if (poolFreeStatus({ model, providerId: provider.id }) !== "verified_free") return void 0;
   if (poolRoutingProblem(provider, model)) return void 0;
   const revision = poolEndpointRevision({
     providerId: provider.id,
@@ -1948,7 +1973,7 @@ function prepareClaudeAutoPool(prefs, providers, now = Date.now()) {
 }
 
 // src/pool/claude-session.ts
-import { randomUUID as randomUUID2 } from "crypto";
+import { randomUUID as randomUUID3 } from "crypto";
 import {
   closeSync,
   linkSync,
@@ -1992,7 +2017,7 @@ function acquireClaudePoolSessionLock(env = process.env) {
   const path3 = getClaudePoolSessionLockPath(env);
   const lock = {
     pid: process.pid,
-    token: randomUUID2(),
+    token: randomUUID3(),
     startedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   const tempPath = `${path3}.${process.pid}.${lock.token}.tmp`;
@@ -4169,7 +4194,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-XJVPLHCH.js");
+      const { testModel } = await import("./test-model-GPZ4Y7ST.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -8104,7 +8129,7 @@ function rejectGeminiManagedFlags(geminiArgs) {
 
 // src/gemini-proxy.ts
 import { createServer as createServer2 } from "http";
-import { randomUUID as randomUUID3 } from "crypto";
+import { randomUUID as randomUUID4 } from "crypto";
 import { streamText as streamText2, tool, jsonSchema } from "ai";
 function mapFinishReason(reason) {
   if (reason === "stop" || reason === "tool-calls") return "STOP";
@@ -8186,7 +8211,7 @@ function translateGeminiRequest(body, options = {}) {
           mediaType: p17.inlineData.mimeType
         });
       } else if (p17.functionCall) {
-        const id = "call_" + randomUUID3().replace(/-/g, "");
+        const id = "call_" + randomUUID4().replace(/-/g, "");
         const name = p17.functionCall.name;
         if (!nameToIdList.has(name)) nameToIdList.set(name, []);
         nameToIdList.get(name).push(id);
@@ -8199,7 +8224,7 @@ function translateGeminiRequest(body, options = {}) {
       } else if (p17.functionResponse) {
         const name = p17.functionResponse.name;
         const idList = nameToIdList.get(name) || [];
-        const id = idList.shift() || "call_" + randomUUID3().replace(/-/g, "");
+        const id = idList.shift() || "call_" + randomUUID4().replace(/-/g, "");
         toolResults.push({
           type: "tool-result",
           toolCallId: id,
@@ -8268,7 +8293,7 @@ function translateGeminiRequest(body, options = {}) {
   };
 }
 async function startGeminiProxy(routes, debug = false) {
-  const proxyToken = randomUUID3();
+  const proxyToken = randomUUID4();
   silenceSdkWarnings();
   if (routes.length === 0) {
     return Promise.reject(new Error("Gemini proxy requires at least one route"));
@@ -9208,7 +9233,7 @@ import http from "http";
 import { streamText as streamText3 } from "ai";
 
 // src/antigravity/request-adapter.ts
-import { randomUUID as randomUUID4 } from "crypto";
+import { randomUUID as randomUUID5 } from "crypto";
 import { tool as tool2, jsonSchema as jsonSchema2 } from "ai";
 var UNSUPPORTED_VOICE_MESSAGE = "Voice transcription isn\u2019t supported by Relay AI yet. Please type your message. Your coding session remains active.";
 var OMITTED_VOICE_TEXT = "[Voice recording omitted because transcription is not supported by Relay AI.]";
@@ -9436,7 +9461,7 @@ function translateRequest2(ccReq, options = {}) {
           contentParts.push({ type: "text", text: OMITTED_VOICE_TEXT });
         }
       } else if (part.functionCall) {
-        const id = "call_" + randomUUID4().replace(/-/g, "");
+        const id = "call_" + randomUUID5().replace(/-/g, "");
         const name = part.functionCall.name;
         if (!nameToIdList.has(name)) nameToIdList.set(name, []);
         nameToIdList.get(name).push(id);
@@ -9449,7 +9474,7 @@ function translateRequest2(ccReq, options = {}) {
       } else if (part.functionResponse) {
         const name = part.functionResponse.name;
         const idList = nameToIdList.get(name) || [];
-        const id = idList.shift() || "call_" + randomUUID4().replace(/-/g, "");
+        const id = idList.shift() || "call_" + randomUUID5().replace(/-/g, "");
         toolResults.push({
           type: "tool-result",
           toolCallId: id,
@@ -11462,7 +11487,7 @@ function buildAntigravityPoolRoutes(opts) {
     if (!provider || !model || !model.npm || model.modelFormat === "cloud-code") continue;
     const apiKey = opts.apiKeys.get(provider.id);
     if (!apiKey) continue;
-    const freeStatus = classifyFreeStatus({ model, providerId: provider.id });
+    const freeStatus = poolFreeStatus({ model, providerId: provider.id });
     if (freeStatus !== "verified_free") continue;
     if (!Number.isSafeInteger(model.contextWindow) || !meetsContextFloor("antigravity", model.contextWindow)) continue;
     const revision = poolEndpointRevision({
@@ -11851,7 +11876,7 @@ import {
 } from "fs";
 import { createRequire as createRequire2 } from "module";
 import { dirname as dirname3, join as join14 } from "path";
-import { createHash as createHash4, randomUUID as randomUUID5 } from "crypto";
+import { createHash as createHash4, randomUUID as randomUUID6 } from "crypto";
 import { parse, modify, applyEdits } from "jsonc-parser";
 var require3 = createRequire2(import.meta.url);
 var MODEL_PREFERENCES_KEY2 = "antigravityUnifiedStateSync.modelPreferences";
@@ -11925,7 +11950,7 @@ function acquireExistingIdeSession(profileDir, env = process.env, options = {}) 
   const lockPath = getExistingIdeLockPath(env);
   mkdirSync5(dirname3(lockPath), { recursive: true, mode: 448 });
   const lock = { pid: process.pid, profileDir, startedAt: (/* @__PURE__ */ new Date()).toISOString() };
-  const tempPath = `${lockPath}.${process.pid}.${randomUUID5()}.tmp`;
+  const tempPath = `${lockPath}.${process.pid}.${randomUUID6()}.tmp`;
   writeFileSync6(tempPath, JSON.stringify(lock), { mode: 384, flag: "wx" });
   const publish = () => linkSync2(tempPath, lockPath);
   try {
@@ -14560,7 +14585,7 @@ import * as p15 from "@clack/prompts";
 import { existsSync as existsSync13, readFileSync as readFileSync11, writeFileSync as writeFileSync8, mkdirSync as mkdirSync8 } from "fs";
 import { homedir as homedir12 } from "os";
 import { join as join20, dirname as dirname6 } from "path";
-import { randomUUID as randomUUID6 } from "crypto";
+import { randomUUID as randomUUID7 } from "crypto";
 function getClaudeDesktopHome() {
   if (process.platform === "win32") {
     return join20(process.env.LOCALAPPDATA || join20(homedir12(), "AppData", "Local"), "Claude-3p");
@@ -14638,7 +14663,7 @@ function buildRelayAiConfig(proxyPort) {
   };
 }
 function writeRelayAiConfig(proxyPort) {
-  const uuid = randomUUID6();
+  const uuid = randomUUID7();
   const configPath = join20(getConfigLibraryPath(), `${uuid}.json`);
   const config = buildRelayAiConfig(proxyPort);
   mkdirSync8(dirname6(configPath), { recursive: true });
@@ -15987,7 +16012,7 @@ function buildHttpProxyChildEnv(baseEnv, proxyUrl, caCertPath) {
 }
 
 // src/http-proxy/ca.ts
-import { randomBytes as randomBytes3, randomUUID as randomUUID7 } from "crypto";
+import { randomBytes as randomBytes3, randomUUID as randomUUID8 } from "crypto";
 import {
   chmodSync as chmodSync3,
   existsSync as existsSync16,
@@ -16052,7 +16077,7 @@ function createHttpProxyCertificates(appHome = getAppHome()) {
   const root = join24(appHome, SESSION_ROOT);
   mkdirSync12(root, { recursive: true, mode: 448 });
   chmodSync3(root, 448);
-  const sessionDir = join24(root, randomUUID7());
+  const sessionDir = join24(root, randomUUID8());
   mkdirSync12(sessionDir, { mode: 448 });
   chmodSync3(sessionDir, 448);
   writeFileSync12(join24(sessionDir, OWNER_FILE), `${process.pid}
@@ -17235,7 +17260,7 @@ ${pc11.bold("Root options:")}
 ${pc11.bold("Commands:")}
   claude      Launch Claude Code \u2014 pick a provider from your registry
   models      Manage favorite models for mid-session /model switching (max ${MAX_MODEL_CATALOG})
-  pool        Manage Relay Free Pool; pool --help lists actions and test costs
+  pool        Manage Relay Free Pool (experimental); pool --help lists actions and test costs
   favorites   Alias for models
   subagents   Manage the independent Codex SubAgent model catalog (starts empty)
   providers   Add, import, and manage your AI providers
@@ -18412,11 +18437,11 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-NIFSTLFZ.js");
+    const { runUiCommand } = await import("./ui-command-YSB6PF2Q.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-7UCSCPT2.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-PSHOTNMN.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

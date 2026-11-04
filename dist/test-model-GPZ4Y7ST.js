@@ -2,18 +2,19 @@
 import {
   mergeHeaders,
   openCodeGoHeaders
-} from "./chunk-2RC456ES.js";
+} from "./chunk-IGBLHT37.js";
 import {
   normalizeToolSchemaForNpm,
   upstreamHttpStatus
 } from "./chunk-FKGBGJZK.js";
 import {
+  TEST_MAX_OUTPUT_TOKENS,
   cachedModelToLocal,
   providerRefreshToken,
   reconcileCachedModelProtocol,
   setContextWindowOverride,
   setModelNotChat
-} from "./chunk-4NL6K57P.js";
+} from "./chunk-6IT5C4N6.js";
 import {
   ANTIGRAVITY_API_VERSION,
   ANTIGRAVITY_BASE_URLS,
@@ -33,7 +34,7 @@ import {
   resolveProviderOAuthAccountId,
   resolveProviderOAuthProviderData,
   withProviderRequestDefaults
-} from "./chunk-W7B52E2T.js";
+} from "./chunk-IKGOSD5H.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -42,6 +43,7 @@ import "./chunk-KNCSTHR4.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/test-model.ts
+import { randomUUID as randomUUID2 } from "crypto";
 import { streamText, tool, jsonSchema } from "ai";
 
 // src/core/model.ts
@@ -790,7 +792,7 @@ async function probeModel(providerId, modelId, signal) {
   };
   const controller = new AbortController();
   try {
-    const model = await createRelayModel(`${providerId}::${modelId}`);
+    const model = await createRelayModel(`${providerId}::${modelId}`, { sessionId: `relay-test-${randomUUID2()}` });
     const result = streamText({
       model,
       prompt: "Reply with OK.",
@@ -853,12 +855,12 @@ async function testModel(providerId, modelId, signal) {
   const timeout = AbortSignal.timeout(3e4);
   const abortSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   try {
-    const model = await createRelayModel(`${providerId}::${modelId}`);
+    const model = await createRelayModel(`${providerId}::${modelId}`, { sessionId: `relay-test-${randomUUID2()}` });
     abortSignal.throwIfAborted();
     const result = streamText({
       model,
       prompt: 'Say OK, then call relay_pool_probe with value "ok".',
-      maxOutputTokens: 256,
+      maxOutputTokens: TEST_MAX_OUTPUT_TOKENS,
       tools: { relay_pool_probe: tool({
         description: "Harmless capability check; never executed.",
         inputSchema: jsonSchema({ type: "object", properties: { value: { type: "string", enum: ["ok"] } }, required: ["value"], additionalProperties: false })
@@ -870,15 +872,22 @@ async function testModel(providerId, modelId, signal) {
     });
     let text = "";
     let finished = false;
+    let hitLimit = false;
     let toolsPassed = false;
     for await (const part of result.stream) {
       if (part.type === "error") throw part.error;
       if (part.type === "text-delta") text += part.text;
       if (part.type === "tool-call") toolsPassed = part.toolName === "relay_pool_probe" && part.input?.value === "ok";
-      if (part.type === "finish") finished = part.finishReason !== "length";
+      if (part.type === "finish") {
+        finished = part.finishReason !== "length";
+        hitLimit = part.finishReason === "length";
+      }
     }
     abortSignal.throwIfAborted();
     if (!finished || !text.trim() && !toolsPassed) {
+      if (hitLimit && !text.trim()) {
+        return { ok: false, error: "The model used its whole 1024-token test budget before answering (likely hidden reasoning). It may still work in a real session; try the test again." };
+      }
       return { ok: false, error: "The model returned no complete text response. Try again or choose another model." };
     }
     const latencyMs = Date.now() - started;
@@ -892,7 +901,8 @@ async function testModel(providerId, modelId, signal) {
     const status = upstreamHttpStatus(error, "");
     const text = errorText(error);
     const message = abortSignal.aborted ? "No response within 30 seconds, or the test was cancelled." : status === 404 && /unsupported_path|not an? (?:\w+ )?surface/i.test(text) ? "This provider's endpoint doesn't serve this model. Try the same model on your other provider for this gateway (e.g. the OpenAI-style one)." : status === 403 && /subscription .* does not include model/i.test(text) ? "Your plan doesn't include this model." : status === 401 || status === 403 ? "Access denied. Check the provider key or sign in again." : status === 429 ? "Provider rate limit reached. Try again later." : status === 402 ? "Provider quota or credits exhausted." : "The model could not respond. Check the provider credentials and connection, then try again.";
-    return { ok: false, error: message };
+    const transient = abortSignal.aborted || status === 429 || status === 402 || status === void 0 || typeof status === "number" && status >= 500;
+    return { ok: false, error: message, ...transient ? { transient: true } : {} };
   }
 }
 export {
@@ -903,4 +913,4 @@ export {
   probeModel,
   testModel
 };
-//# sourceMappingURL=test-model-XJVPLHCH.js.map
+//# sourceMappingURL=test-model-GPZ4Y7ST.js.map

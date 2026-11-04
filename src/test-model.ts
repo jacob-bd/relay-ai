@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { TEST_MAX_OUTPUT_TOKENS } from './pool/probe.js';
 import { streamText, tool, jsonSchema } from 'ai';
 import { createRelayModel } from './core/model.js';
 import { loadRegistry } from './registry/io.js';
@@ -62,7 +64,7 @@ export async function probeModel(providerId: string, modelId: string, signal: Ab
   };
   const controller = new AbortController();
   try {
-    const model = await createRelayModel(`${providerId}::${modelId}`);
+    const model = await createRelayModel(`${providerId}::${modelId}`, { sessionId: `relay-test-${randomUUID()}` });
     const result = streamText({ model, prompt: 'Reply with OK.', maxOutputTokens: CONTEXT_PROBE_MAX_TOKENS,
       maxRetries: 0, abortSignal: AbortSignal.any([signal, controller.signal]), onError: () => {} });
     for await (const part of result.stream) {
@@ -139,24 +141,28 @@ export async function testModel(providerId: string, modelId: string, signal?: Ab
   const timeout = AbortSignal.timeout(30_000);
   const abortSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   try {
-    const model = await createRelayModel(`${providerId}::${modelId}`);
+    const model = await createRelayModel(`${providerId}::${modelId}`, { sessionId: `relay-test-${randomUUID()}` });
     abortSignal.throwIfAborted();
-    const result = streamText({ model, prompt: 'Say OK, then call relay_pool_probe with value "ok".', maxOutputTokens: 256,
+    const result = streamText({ model, prompt: 'Say OK, then call relay_pool_probe with value "ok".', maxOutputTokens: TEST_MAX_OUTPUT_TOKENS,
       tools: { relay_pool_probe: tool({ description: 'Harmless capability check; never executed.',
         inputSchema: jsonSchema<{ value: string }>({ type: 'object', properties: { value: { type: 'string', enum: ['ok'] } }, required: ['value'], additionalProperties: false }),
       }) },
       maxRetries: 0, abortSignal, onError: () => {} });
     let text = '';
     let finished = false;
+    let hitLimit = false;
     let toolsPassed = false;
     for await (const part of result.stream) {
       if (part.type === 'error') throw part.error;
       if (part.type === 'text-delta') text += part.text;
       if (part.type === 'tool-call') toolsPassed = part.toolName === 'relay_pool_probe' && (part.input as { value?: string })?.value === 'ok';
-      if (part.type === 'finish') finished = part.finishReason !== 'length';
+      if (part.type === 'finish') { finished = part.finishReason !== 'length'; hitLimit = part.finishReason === 'length'; }
     }
     abortSignal.throwIfAborted();
     if (!finished || (!text.trim() && !toolsPassed)) {
+      if (hitLimit && !text.trim()) {
+        return { ok: false, error: 'The model used its whole 1024-token test budget before answering (likely hidden reasoning). It may still work in a real session; try the test again.' };
+      }
       return { ok: false, error: 'The model returned no complete text response. Try again or choose another model.' };
     }
     const latencyMs = Date.now() - started;
@@ -178,6 +184,9 @@ export async function testModel(providerId: string, modelId: string, signal?: Ab
       : status === 429 ? 'Provider rate limit reached. Try again later.'
       : status === 402 ? 'Provider quota or credits exhausted.'
       : 'The model could not respond. Check the provider credentials and connection, then try again.';
-    return { ok: false, error: message };
+    // Rate limits, quota, timeouts and server/network errors say nothing about the model itself.
+    const transient = abortSignal.aborted || status === 429 || status === 402
+      || status === undefined || (typeof status === 'number' && status >= 500);
+    return { ok: false, error: message, ...(transient ? { transient: true } : {}) };
   }
 }

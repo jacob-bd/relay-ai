@@ -10,8 +10,9 @@ describe('model reachability test', () => {
  it('uses the exact account/model through the runtime and requires text and completion', async () => {
   mocks.stream.mockReturnValue(parts({ type: 'text-delta', text: 'OK' }, { type: 'finish' }));
   expect(await testModel('groq-2', 'test')).toMatchObject({ ok: true, latencyMs: expect.any(Number), notChat: false });
-  expect(mocks.create).toHaveBeenCalledWith('groq-2::test');
-  expect(mocks.stream).toHaveBeenCalledWith(expect.objectContaining({ maxRetries: 0, abortSignal: expect.any(AbortSignal), maxOutputTokens: 256, tools: expect.any(Object) }));
+  // A session id is always sent: OpenCode Go rejects requests without one (MissingSessionID).
+  expect(mocks.create).toHaveBeenCalledWith('groq-2::test', { sessionId: expect.stringMatching(/^relay-test-/) });
+  expect(mocks.stream).toHaveBeenCalledWith(expect.objectContaining({ maxRetries: 0, abortSignal: expect.any(AbortSignal), maxOutputTokens: 1024, tools: expect.any(Object) }));
  });
  it('uses one request without an implicit context probe and reports tool evidence', async () => {
   mocks.stream.mockReturnValue(parts({ type: 'tool-call', toolName: 'relay_pool_probe', input: { value: 'ok' } }, { type: 'finish', finishReason: 'tool-calls' }));

@@ -1,5 +1,8 @@
 import { streamText, tool, jsonSchema, type LanguageModel } from 'ai';
 
+/** Test and pool-verify output budget. Reasoning models spend part of it before answering; 256 failed them. */
+export const TEST_MAX_OUTPUT_TOKENS = 1024;
+
 export interface PoolProbeResult {
   text: 'passed' | 'failed';
   tools: 'passed' | 'failed';
@@ -16,7 +19,7 @@ export async function probePoolModel(
   const call = async () => {
     const timeout = AbortSignal.timeout(timeoutMs);
     const abortSignal = AbortSignal.any([signal, timeout]);
-    const response = streamText({ model, abortSignal, maxRetries: 0, maxOutputTokens: 256,
+    const response = streamText({ model, abortSignal, maxRetries: 0, maxOutputTokens: TEST_MAX_OUTPUT_TOKENS,
       prompt: 'Call relay_pool_probe with value "ok". Do not perform any other action.',
       toolChoice: { type: 'tool' as const, toolName: 'relay_pool_probe' }, tools: {
         relay_pool_probe: tool({ description: 'Harmless enrollment capability probe; it is never executed.',

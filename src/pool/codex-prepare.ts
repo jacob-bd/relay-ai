@@ -2,12 +2,14 @@ import { createLanguageModel } from '../provider-factory.js';
 import { poolRequestFitsWindow } from './context.js';
 import { resolveLocalProviderApiKey } from '../provider-catalog.js';
 import { providerRefreshToken } from '../provider-runtime.js';
-import { classifyFreeStatus } from '../free-models.js';
+import { poolFreeStatus } from '../free-models.js';
 import type { FreePoolPreferences, LocalProvider } from '../types.js';
 import type { CodexSdkCallParams } from '../codex-responses-adapter.js';
 import { preparePoolHistory } from './continuation.js';
 import { currentPoolReceipt, poolEndpointRevision, type PoolCapabilityReceipt } from './capabilities.js';
 import { sdkPoolRoute } from './sdk-route.js';
+import { poolOutputCap } from './output-limit.js';
+import { poolSessionId } from './session-id.js';
 import type { CodexPoolRoute } from './codex-runtime.js';
 import { PoolHealthStore, poolEndpointScope } from './health.js';
 
@@ -86,7 +88,7 @@ export async function prepareCodexPoolRoutes(options: {
       npm: model.npm, baseURL: model.apiBaseUrl, upstreamModelId: model.upstreamModelId, headers: provider.headers });
     const receipt = currentPoolReceipt(options.receipts, member, revision, Date.now());
     if (!receipt) continue;
-    const freeStatus = classifyFreeStatus({ model, providerId: provider.id });
+    const freeStatus = poolFreeStatus({ model, providerId: provider.id });
     if (freeStatus !== 'verified_free') continue;
     if (!receipt.billingSafe || !receipt.targets.includes('codex')) continue;
     const identity = { account: provider.id, endpointRevision: revision, model: model.id };
@@ -101,8 +103,11 @@ export async function prepareCodexPoolRoutes(options: {
     });
     // Omission is only verified when translation claimed no level of its own.
     if (auto && translatedEffortClaim(params.providerOptions)) continue;
-    params.maxOutputTokens = typeof body.max_output_tokens === 'number' ? body.max_output_tokens : receipt.maxOutputTokens;
-    if (!Number.isSafeInteger(params.maxOutputTokens) || params.maxOutputTokens! <= 0 || params.maxOutputTokens! > receipt.maxOutputTokens) continue;
+    const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
+    const askedOutput = typeof body.max_output_tokens === 'number' ? body.max_output_tokens : outputCap;
+    if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) continue;
+    // Clamp to the model's own limit rather than dropping the member or using the receipt's chat-sized value.
+    params.maxOutputTokens = Math.min(askedOutput, outputCap);
     const context = await (options.checkContext ?? defaultContextCheck)(params, receipt);
     if (!context.verified || !context.fits) continue;
     const scopes = [poolEndpointScope(provider.id, revision, model.id)];
@@ -114,7 +119,7 @@ export async function prepareCodexPoolRoutes(options: {
       npm: model.npm, modelId: model.upstreamModelId, apiKey,
       baseURL: model.apiBaseUrl, providerId: provider.id, authType: provider.authType,
       oauthAccountId: provider.oauthAccountId, providerData: provider.providerData,
-      headers: provider.headers, sessionId: options.sessionId,
+      headers: provider.headers, sessionId: poolSessionId(provider.id, options.sessionId),
       refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
     });
     const { toolContext: _toolContext, instructions, ...sdkParams } = params;

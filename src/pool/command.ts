@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { poolView, verifyUiPoolMember, invalidateUiPoolMember } from '../ui/pool-api.js';
 import { setModelHidden, setContextWindowOverride } from '../registry/crud.js';
 import pc from 'picocolors';
@@ -12,7 +13,7 @@ import { probePoolModel, probePoolEffort } from './probe.js';
 import { verifyPoolMember } from './enroll.js';
 
 export const poolHelpText = [
-  'Usage: relay-ai pool <command>',
+  'Usage: relay-ai pool <command>   (experimental: tested with Claude Code first)',
   '  list                         Saved membership and receipts (no tests)',
   '  candidates [--search text] [--min-context tokens]  Free models, providers and total (no tests)',
   '  status                       Readiness, context, provider names and effort settings (no tests)',
@@ -20,7 +21,7 @@ export const poolHelpText = [
   '  add <provider> <model>        Save a member without testing; independent of favorites',
   '  remove <provider> <model>     Remove a member',
   '  move <provider> <model> <up|down>  Change routing priority',
-  '  test <provider> <model>       1 request, max 256 output tokens, no retries; response + tools',
+  '  test <provider> <model>       1 request, max 1024 output tokens, no retries; response + tools',
   '  context <provider> <model>    Optional context measurement: 1 extra request',
   '  context <provider> <model> <tokens|reset>  Set/reset context without inference',
   '  reasoning <provider> <model>  Optional: up to 5 requests, no retries',
@@ -112,7 +113,7 @@ export async function runPoolCommand(args: string[]): Promise<number> {
         console.log(JSON.stringify(result ?? { ok: false, reason: 'not-eligible' }));
         return result?.ok ? 0 : 1;
       }
-      console.log('Test: 1 request, up to 256 output tokens, no retries.');
+      console.log('Test: 1 request, up to 1024 output tokens, no retries.');
       const result = await testModel(first, second, signal);
       if (!result.ok) invalidateUiPoolMember(first, second);
       const readiness = result.ok ? await verifyUiPoolMember(first, second, signal, {
@@ -143,6 +144,7 @@ export async function runPoolCommand(args: string[]): Promise<number> {
             apiKey, baseURL: model.apiBaseUrl, providerId: provider.id,
             authType: provider.authType, oauthAccountId: provider.oauthAccountId,
             providerData: provider.providerData, headers: provider.headers,
+            sessionId: `relay-pool-verify-${randomUUID()}`,
             refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
           }),
           probe: (languageModel, signal) => probePoolModel(

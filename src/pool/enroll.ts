@@ -1,5 +1,5 @@
 import type { LanguageModel } from 'ai';
-import { classifyFreeStatus } from '../free-models.js';
+import { poolFreeStatus } from '../free-models.js';
 import type { FavoriteModel, LocalProvider, PoolCapabilityReceipt } from '../types.js';
 import { poolEndpointRevision } from './capabilities.js';
 import { type PoolProbeResult } from './probe.js';
@@ -37,7 +37,7 @@ export async function verifyPoolMember(
     || !Number.isSafeInteger(model.contextWindow) || !model.contextWindow || model.contextWindow <= 0) {
     return { member, status: 'skipped', reason: 'unverified-context-window' };
   }
-  const freeStatus = classifyFreeStatus({ model, providerId: provider.id });
+  const freeStatus = poolFreeStatus({ model, providerId: provider.id });
   if (freeStatus !== 'verified_free' && freeStatus !== 'free_provider') {
     return { member, status: 'skipped', reason: 'not-free' };
   }

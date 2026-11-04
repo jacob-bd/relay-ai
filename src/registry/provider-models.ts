@@ -1,5 +1,7 @@
 import type { CachedModel, ManualModel, RegistryProvider } from './types.js';
 import { isVertexAnthropicProvider, vertexAnthropicCachedModels } from './vertex-anthropic.js';
+import { isLocalEndpointUrl, isOllamaCloudModelId } from '../free-models.js';
+import { providerKind } from './provider-kind.js';
 import { shouldHideModel } from '../model-compatibility.js';
 
 const MANUAL_MODEL_PACKAGES = new Set([
@@ -36,16 +38,27 @@ function applyContextWindowOverrides(provider: RegistryProvider, models: CachedM
   });
 }
 
+/** The user's own free declaration; set here so every reader of provider models sees it. */
+function applyFreeMarks(provider: RegistryProvider, models: CachedModel[]): CachedModel[] {
+  const ids = new Set(provider.freeModelIds ?? []);
+  return models.map(model => {
+    const local = isLocalEndpointUrl(model.apiUrl ?? provider.api.url)
+      && !(providerKind(provider.id) === 'ollama' && isOllamaCloudModelId(model.id));
+    if (!local && !ids.has(model.id)) return model;
+    return { ...model, ...(ids.has(model.id) ? { userMarkedFree: true } : {}), ...(local ? { localEndpoint: true } : {}) };
+  });
+}
+
 /** Refresh owns modelsCache; the user's entries win collisions without duplicating IDs. */
 export function getProviderModels(provider: RegistryProvider): CachedModel[] {
-  if (isVertexAnthropicProvider(provider)) return applyContextWindowOverrides(provider, vertexAnthropicCachedModels());
+  if (isVertexAnthropicProvider(provider)) return applyFreeMarks(provider, applyContextWindowOverrides(provider, vertexAnthropicCachedModels()));
   const models = new Map((provider.modelsCache?.models ?? []).map(model => [model.id, model]));
   if (supportsManualModels(provider)) {
     for (const model of provider.manualModels ?? []) {
       models.set(model.id, { ...model, modelFormat: provider.api.npm === '@ai-sdk/anthropic' ? 'anthropic' : 'openai' });
     }
   }
-  return applyContextWindowOverrides(provider, [...models.values()]);
+  return applyFreeMarks(provider, applyContextWindowOverrides(provider, [...models.values()]));
 }
 
 /** Keep the raw discovery cache; agent browsing/counts exclude non-chat and blocked models. */

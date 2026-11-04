@@ -45,7 +45,7 @@ import {
   applySystemCaTrust, revertSystemCaTrust, isSystemCaSupported, isSystemCaActive, TRUST_SYSTEM_CERTS_NOTICE,
 } from '../tls-trust.js';
 import { saveNativeOAuthCredential } from '../registry/provider-auth.js';
-import { removeProviderFromRegistry, renameProvider, setContextWindowOverride, setModelHidden, setModelKindOverride, setModelsHidden } from '../registry/crud.js';
+import { removeProviderFromRegistry, renameProvider, setContextWindowOverride, setModelHidden, setModelKindOverride, recordModelTestResult, setModelMarkedFree, setModelsHidden } from '../registry/crud.js';
 import { guessModelKindFromName, MODEL_KINDS, nameKindOutranksChatTest, type ModelKind } from '../registry/model-kind.js';
 import type { RegistryProvider } from '../registry/types.js';
 import { modelsDevModelKind } from '../registry/models-dev.js';
@@ -200,6 +200,8 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
     handleManualModel(req, res, 'remove');
   } else if (url === '/api/providers/models/hide' && req.method === 'POST') {
     handleHideModel(req, res);
+  } else if (url === '/api/providers/models/mark-free' && req.method === 'POST') {
+    handleMarkModelFree(req, res);
   } else if (url === '/api/providers/models/context' && req.method === 'POST') {
     handleSetContextWindow(req, res);
   } else if (url === '/api/providers/models/kind' && req.method === 'POST') {
@@ -399,7 +401,8 @@ async function handleGetModels(
         name: m.name,
         isFree: m.isFree ?? false,
         freeStatus: m.freeStatus,
-        freeLabel: freeStatusLabel(m.freeStatus),
+        freeLabel: m.userMarkedFree ? 'Free (marked by you)' : m.localEndpoint ? 'Free (local)' : freeStatusLabel(m.freeStatus),
+        ...(m.userMarkedFree ? { userMarkedFree: true } : {}),
         contextWindow: m.contextWindow,
         cost: m.cost,
         referencePrice: m.referencePrice,
@@ -410,6 +413,8 @@ async function handleGetModels(
           ? { contextWindowEstimate: estimatedIdsByProvider.get(p.id)!.get(m.id) } : {}),
         ...(registryById.get(p.id)?.contextWindowOverrides?.[m.id]
           ? { contextWindowOverride: registryById.get(p.id)!.contextWindowOverrides![m.id]!.source } : {}),
+        ...(registryById.get(p.id)?.modelTestResults?.[m.id]
+          ? { testResult: registryById.get(p.id)!.modelTestResults![m.id]! } : {}),
         ...(manualIdsByProvider.get(p.id)?.has(m.id)
           ? { source: 'manual' as const } : {}),
       })),
@@ -511,6 +516,22 @@ async function handleHideModel(req: IncomingMessage, res: ServerResponse): Promi
       return;
     }
     const result = setModelHidden(body.providerId.trim(), body.modelId.trim(), body.hidden);
+    sendJson(res, result.ok ? 200 : 404, result);
+  } catch {
+    sendJson(res, 400, { ok: false, error: 'Request body must be valid JSON' });
+  }
+}
+
+async function handleMarkModelFree(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const body = JSON.parse(await readBody(req)) as { providerId?: unknown; modelId?: unknown; free?: unknown };
+    if (typeof body.providerId !== 'string' || !body.providerId.trim()
+      || typeof body.modelId !== 'string' || !body.modelId.trim()
+      || typeof body.free !== 'boolean') {
+      sendJson(res, 400, { ok: false, error: 'providerId, modelId and free (true/false) are required' });
+      return;
+    }
+    const result = setModelMarkedFree(body.providerId.trim(), body.modelId.trim(), body.free);
     sendJson(res, result.ok ? 200 : 404, result);
   } catch {
     sendJson(res, 400, { ok: false, error: 'Request body must be valid JSON' });
@@ -947,6 +968,14 @@ async function handleTestModel(req: IncomingMessage, res: ServerResponse): Promi
   try {
     const { testModel } = await import('../test-model.js');
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
+    // Local log of the latest Test (skipped when the user cancelled it).
+    if (!controller.signal.aborted) {
+      try {
+        recordModelTestResult(body.providerId.trim(), body.modelId.trim(), result.ok
+          ? { ok: true, latencyMs: result.latencyMs, toolsPassed: result.toolsPassed }
+          : { ok: false, ...(result.error ? { error: result.error } : {}), ...('transient' in result && result.transient ? { transient: true } : {}) });
+      } catch { /* a logging failure must never fail the Test */ }
+    }
     if (!result.ok) invalidateUiPoolMember(body.providerId.trim(), body.modelId.trim());
     const poolResult = result.ok
       ? await verifyUiPoolMember(body.providerId.trim(), body.modelId.trim(), controller.signal, { evidence: { text: 'passed', tools: result.toolsPassed ? 'passed' : 'failed' } })

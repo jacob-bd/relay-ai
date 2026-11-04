@@ -189,7 +189,9 @@ export class ClaudePoolRuntime {
     sessionId?: string,
   ): Promise<ClaudeServeResult> {
     const routes = await this.prepare(body, signal, sessionId);
-    const effort = (body.output_config as { effort?: string } | undefined)?.effort ?? this.pool.effort;
+    // Effort was resolved per member while preparing routes (verified level sent, otherwise omitted),
+    // so admission must not re-reject members for an effort that was deliberately not sent.
+    const effort = 'auto';
     return serveClaudePool({
       pool: this.pool,
       routes,

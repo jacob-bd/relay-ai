@@ -18,7 +18,7 @@ import { EFFORT_RANK } from '../registry/models-dev.js';
 import { getReasoningCapabilities, type ReasoningMetadata } from '../provider-factory.js';
 import { buildAntigravityRoutes, type AntigravityEffortMode } from '../antigravity/catalog.js';
 import { meetsContextFloor } from '../target-compatibility.js';
-import { classifyFreeStatus } from '../free-models.js';
+import { poolFreeStatus } from '../free-models.js';
 import type { FreePoolPreferences, LocalProvider, PoolCapabilityReceipt } from '../types.js';
 import { currentPoolReceipt, poolEndpointRevision } from './capabilities.js';
 
@@ -230,7 +230,7 @@ export function buildAntigravityPoolRoutes(opts: AntigravityPoolLaunchOptions): 
     if (!provider || !model || !model.npm || model.modelFormat === 'cloud-code') continue;
     const apiKey = opts.apiKeys.get(provider.id);
     if (!apiKey) continue;
-    const freeStatus = classifyFreeStatus({ model, providerId: provider.id });
+    const freeStatus = poolFreeStatus({ model, providerId: provider.id });
     if (freeStatus !== 'verified_free') continue;
     // Enrollment only mints a receipt for a known provider-declared window.
     // Never substitute a presumed floor for an unknown one.

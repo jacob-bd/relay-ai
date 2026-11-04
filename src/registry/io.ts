@@ -104,6 +104,25 @@ function parseProvider(raw: unknown): RegistryProvider | null {
     const hidden = p.hiddenModelIds.filter((id): id is string => typeof id === 'string' && id.length > 0);
     if (hidden.length > 0) provider.hiddenModelIds = [...new Set(hidden)];
   }
+  if (p.modelTestResults && typeof p.modelTestResults === 'object' && !Array.isArray(p.modelTestResults)) {
+    const results: NonNullable<RegistryProvider['modelTestResults']> = {};
+    for (const [modelId, raw] of Object.entries(p.modelTestResults as Record<string, unknown>)) {
+      const r = raw as { ok?: unknown; at?: unknown; latencyMs?: unknown; toolsPassed?: unknown; error?: unknown; transient?: unknown } | null;
+      if (!r || typeof r.ok !== 'boolean' || typeof r.at !== 'string' || !modelId) continue;
+      results[modelId] = {
+        ok: r.ok, at: r.at,
+        ...(typeof r.latencyMs === 'number' ? { latencyMs: r.latencyMs } : {}),
+        ...(typeof r.toolsPassed === 'boolean' ? { toolsPassed: r.toolsPassed } : {}),
+        ...(typeof r.error === 'string' ? { error: r.error.slice(0, 300) } : {}),
+        ...(r.transient === true ? { transient: true } : {}),
+      };
+    }
+    if (Object.keys(results).length > 0) provider.modelTestResults = results;
+  }
+  if (Array.isArray(p.freeModelIds)) {
+    const free = p.freeModelIds.filter((id): id is string => typeof id === 'string' && id.length > 0);
+    if (free.length > 0) provider.freeModelIds = [...new Set(free)];
+  }
   if (p.contextWindowOverrides && typeof p.contextWindowOverrides === 'object' && !Array.isArray(p.contextWindowOverrides)) {
     const overrides: NonNullable<RegistryProvider['contextWindowOverrides']> = {};
     for (const [modelId, raw] of Object.entries(p.contextWindowOverrides as Record<string, unknown>)) {

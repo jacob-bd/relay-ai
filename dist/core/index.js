@@ -1011,6 +1011,25 @@ function vertexAnthropicCachedModels() {
   }));
 }
 
+// src/free-models.ts
+function isLocalEndpointUrl(url) {
+  if (!url) return false;
+  let host;
+  try {
+    host = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  } catch {
+    return false;
+  }
+  if (host === "localhost" || host.endsWith(".localhost") || host === "::1" || host === "0.0.0.0") return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
+  if (!m) return false;
+  const a = Number(m[1]), b = Number(m[2]);
+  return a === 127 || a === 10 || a === 192 && b === 168 || a === 172 && b >= 16 && b <= 31;
+}
+function isOllamaCloudModelId(modelId) {
+  return /(^|[:-])cloud$/i.test(modelId);
+}
+
 // src/data/model-incompatible.json
 var model_incompatible_default = {
   schema_version: "1",
@@ -1507,15 +1526,23 @@ function applyContextWindowOverrides(provider, models) {
     };
   });
 }
+function applyFreeMarks(provider, models) {
+  const ids = new Set(provider.freeModelIds ?? []);
+  return models.map((model) => {
+    const local = isLocalEndpointUrl(model.apiUrl ?? provider.api.url) && !(providerKind(provider.id) === "ollama" && isOllamaCloudModelId(model.id));
+    if (!local && !ids.has(model.id)) return model;
+    return { ...model, ...ids.has(model.id) ? { userMarkedFree: true } : {}, ...local ? { localEndpoint: true } : {} };
+  });
+}
 function getProviderModels(provider) {
-  if (isVertexAnthropicProvider(provider)) return applyContextWindowOverrides(provider, vertexAnthropicCachedModels());
+  if (isVertexAnthropicProvider(provider)) return applyFreeMarks(provider, applyContextWindowOverrides(provider, vertexAnthropicCachedModels()));
   const models = new Map((provider.modelsCache?.models ?? []).map((model) => [model.id, model]));
   if (supportsManualModels(provider)) {
     for (const model of provider.manualModels ?? []) {
       models.set(model.id, { ...model, modelFormat: provider.api.npm === "@ai-sdk/anthropic" ? "anthropic" : "openai" });
     }
   }
-  return applyContextWindowOverrides(provider, [...models.values()]);
+  return applyFreeMarks(provider, applyContextWindowOverrides(provider, [...models.values()]));
 }
 function modelIdError(value) {
   if (typeof value !== "string" || !value.trim()) return "Model ID is required.";
@@ -1617,6 +1644,26 @@ function parseProvider(raw) {
   if (Array.isArray(p.hiddenModelIds)) {
     const hidden = p.hiddenModelIds.filter((id) => typeof id === "string" && id.length > 0);
     if (hidden.length > 0) provider.hiddenModelIds = [...new Set(hidden)];
+  }
+  if (p.modelTestResults && typeof p.modelTestResults === "object" && !Array.isArray(p.modelTestResults)) {
+    const results = {};
+    for (const [modelId, raw2] of Object.entries(p.modelTestResults)) {
+      const r = raw2;
+      if (!r || typeof r.ok !== "boolean" || typeof r.at !== "string" || !modelId) continue;
+      results[modelId] = {
+        ok: r.ok,
+        at: r.at,
+        ...typeof r.latencyMs === "number" ? { latencyMs: r.latencyMs } : {},
+        ...typeof r.toolsPassed === "boolean" ? { toolsPassed: r.toolsPassed } : {},
+        ...typeof r.error === "string" ? { error: r.error.slice(0, 300) } : {},
+        ...r.transient === true ? { transient: true } : {}
+      };
+    }
+    if (Object.keys(results).length > 0) provider.modelTestResults = results;
+  }
+  if (Array.isArray(p.freeModelIds)) {
+    const free = p.freeModelIds.filter((id) => typeof id === "string" && id.length > 0);
+    if (free.length > 0) provider.freeModelIds = [...new Set(free)];
   }
   if (p.contextWindowOverrides && typeof p.contextWindowOverrides === "object" && !Array.isArray(p.contextWindowOverrides)) {
     const overrides = {};

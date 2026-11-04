@@ -21,6 +21,7 @@ const state = {
   pool: null,          // { data, error } from GET /api/pool
   poolSearch: '',
   poolMinCtx: 0,
+  poolProviders: [],   // selected provider ids for the free-model filter; empty = all
   poolPage: 1,
   poolBusy: false,
 
@@ -188,6 +189,21 @@ function providerPalette(id) {
   let hash = 0;
   for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
   return PALETTES[Math.abs(hash) % PALETTES.length];
+}
+
+// Inline style for a provider pill, matching the Favorites badge colors.
+// The Free Pool page lists many accounts at once, so it gives each one its own hue,
+// spaced evenly around the wheel (hashing into 8 palettes made accounts collide).
+let poolHueColors = new Map();
+function assignPoolProviderColors(ids) {
+  const sorted = [...new Set(ids)].sort();
+  const step = 360 / Math.max(sorted.length, 1);
+  poolHueColors = new Map(sorted.map((id, i) => [id, `oklch(72% 0.17 ${Math.round((i * step + 200) % 360)})`]));
+}
+
+function providerPillStyle(id, strength = 1) {
+  const c1 = poolHueColors.get(id) ?? providerPalette(id)[0];
+  return `color:${c1};background:${c1.replace(')', ` / ${0.1 * strength})`)};border-color:${c1.replace(')', ` / ${0.3 * strength})`)}`;
 }
 
 // ─── API ─────────────────────────────────────────────────────────────────────
@@ -363,7 +379,11 @@ function showToast(msg, undoFn, durationMs = 2200) {
     setTimeout(() => { if (!dismissed) { const b = toast.querySelector('.btn-undo'); if (b) b.style.opacity = '0.3'; } }, 4000);
     setTimeout(dismiss, 5500);
   } else {
-    setTimeout(dismiss, durationMs);
+    // Long messages (e.g. test results with a pool reason) need time to read; hovering holds the toast.
+    const readMs = Math.max(durationMs, Math.min(15000, 3000 + msg.length * 50));
+    let timer = setTimeout(dismiss, readMs);
+    toast.addEventListener('mouseenter', () => clearTimeout(timer));
+    toast.addEventListener('mouseleave', () => { timer = setTimeout(dismiss, 2500); });
   }
 
   container.appendChild(toast);
@@ -376,6 +396,22 @@ function fmtCtx(n) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(0)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
   return String(n);
+}
+
+// Latest Test outcome (stored locally in the registry): a small badge next to the Test button.
+function testBadgeHtml(result) {
+  if (!result) return '<span class="model-test-badge is-untested" title="Not tested yet">Untested</span>';
+  const when = new Date(result.at);
+  const day = Number.isNaN(when.getTime()) ? '' : when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const stamp = Number.isNaN(when.getTime()) ? '' : when.toLocaleString();
+  if (result.ok) {
+    const tools = result.toolsPassed === false ? ' · tool calling not confirmed' : '';
+    return `<span class="model-test-badge is-pass" title="Passed ${escapeHtml(stamp)}${tools}">✓ Passed${day ? ' · ' + escapeHtml(day) : ''}</span>`;
+  }
+  if (result.transient) {
+    return `<span class="model-test-badge is-retry" title="${escapeHtml((result.error || 'Temporary problem') + ' This does not mean the model is broken; run Test again.')}">⏱ Try again${day ? ' · ' + escapeHtml(day) : ''}</span>`;
+  }
+  return `<span class="model-test-badge is-fail" title="${escapeHtml((result.error || 'Test failed') + (stamp ? ' (' + stamp + ')' : ''))}">✗ Failed${day ? ' · ' + escapeHtml(day) : ''}</span>`;
 }
 
 function freeBadgeLabel(model) {
@@ -697,8 +733,10 @@ function renderProviderModelBrowser() {
               <td class="ctx-cell" data-model-id="${escapeHtml(model.id)}">${contextCellHtml(provider.id, model, showActions)}</td>
               <td>${formatModelPrice(model.cost, isFreeModel(model), freeBadgeLabel(model), model.referencePrice)}</td>
                 <td class="td-actions">
-                  <button class="btn btn-ghost btn-model-test" type="button" data-model-id="${escapeHtml(model.id)}" title="One small request, up to 256 output tokens. Checks response and tool calling. No retries.">Test</button>
+                  <span class="test-badge-slot" data-model-id="${escapeHtml(model.id)}">${testBadgeHtml(model.testResult)}</span>
+                  <button class="btn btn-ghost btn-model-test" type="button" data-model-id="${escapeHtml(model.id)}" title="One small request, up to 1024 output tokens. Checks response and tool calling. No retries.">Test</button>
                   <button class="btn-model-hide${model.hidden ? ' is-hidden' : ''}" type="button" data-model-id="${escapeHtml(model.id)}" aria-pressed="${model.hidden ? 'true' : 'false'}" title="${model.hidden ? 'Unhide' : 'Hide'}" aria-label="${model.hidden ? 'Unhide' : 'Hide'} ${escapeHtml(model.name || model.id)}">${model.hidden ? EYE_OFF_ICON : EYE_ICON}</button>
+                  <button class="btn btn-ghost btn-model-mark-free${model.userMarkedFree ? ' is-marked' : ''}" type="button" data-model-id="${escapeHtml(model.id)}" aria-pressed="${model.userMarkedFree ? 'true' : 'false'}" title="${model.userMarkedFree ? 'Remove your free mark' : 'Treat this model as free, even if its listed price says otherwise. Relay cannot check this: if the provider bills you, that is on your account.'}">${model.userMarkedFree ? 'Unmark free' : 'Mark free'}</button>
                   ${showActions ? `
                   <button class="btn-model-add" type="button" data-model-id="${escapeHtml(model.id)}" title="Add to favorites">+</button>
                   ${poolRowButton(provider.id, model)}
@@ -760,6 +798,9 @@ function renderProviderModelBrowser() {
   container.querySelectorAll('.btn-model-hide').forEach(button => {
     button.addEventListener('click', () => toggleModelHidden(provider.id, button.dataset.modelId));
   });
+  container.querySelectorAll('.btn-model-mark-free').forEach(button => {
+    button.addEventListener('click', () => toggleModelMarkedFree(provider.id, button.dataset.modelId));
+  });
   container.querySelectorAll('.ctx-cell').forEach(cell => bindContextCell(cell, provider.id));
   container.querySelectorAll('.kind-cell').forEach(cell => bindKindCell(cell, provider.id));
   bindModelSelection(container, provider, result.items);
@@ -813,6 +854,26 @@ async function toggleModelHidden(providerId, modelId) {
   renderProviders();
   renderProviderModelBrowser();
   showToast(hidden ? `${model.name || modelId} hidden` : `${model.name || modelId} is visible again`);
+}
+
+// "Mark free": the user declares a model free (their own risk). Lets it join the Free Pool after a Test.
+async function toggleModelMarkedFree(providerId, modelId) {
+  const provider = state.providers.find(item => item.id === providerId);
+  const model = provider?.models?.find(item => item.id === modelId);
+  if (!model) return;
+  const free = !model.userMarkedFree;
+  const result = await api('POST', '/api/providers/models/mark-free', { providerId, modelId, free });
+  if (!result.ok) {
+    showToast(result.error ?? 'Could not change this model');
+    return;
+  }
+  await initModels();
+  renderProviders();
+  renderProviderStats();
+  renderProviderModelBrowser();
+  showToast(free
+    ? `${model.name || modelId} is now treated as free. Relay cannot verify this; if the provider bills you, that is on your account. Run Test before the pool uses it.`
+    : `${model.name || modelId} is no longer marked free`);
 }
 
 const SAVE_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>';
@@ -1167,6 +1228,10 @@ async function testModelResponse(button, providerId, modelId, options = {}) {
       body: JSON.stringify({ providerId, modelId }),
     });
     const result = await response.json();
+    const testResult = { ok: Boolean(result.ok), at: new Date().toISOString(), ...(result.ok ? { latencyMs: result.latencyMs, toolsPassed: result.toolsPassed } : { error: result.error, ...(result.transient ? { transient: true } : {}) }) };
+    const testedModel = state.providers.find(item => item.id === providerId)?.models?.find(item => item.id === modelId);
+    if (testedModel) testedModel.testResult = testResult;
+    document.querySelectorAll(`.test-badge-slot[data-model-id="${CSS.escape(modelId)}"]`).forEach(slot => { slot.innerHTML = testBadgeHtml(testResult); });
     button.textContent = formatModelTestLabel(result);
     button.title = result.ok ? `Responded in ${(result.latencyMs / 1000).toFixed(1)}s` : result.error;
     if (result.ok) applyTestContextResult(providerId, modelId, result.context);
@@ -2789,6 +2854,7 @@ function poolRowState(providerId, model) {
     return { state: 'blocked', reason: candidate.addReason || 'This model cannot join the free pool' };
   }
   if (model.hidden) return { state: 'hidden' };
+  if (model.testResult && !model.testResult.ok && !model.testResult.transient) return { state: 'blocked', reason: 'Failed its last test. Run Test again; it can be added once a test passes.' };
   if (model.freeStatus === 'verified_free' || (model.cost && model.cost.input === 0 && model.cost.output === 0)) return { state: 'add' };
   if (model.freeStatus === 'free_provider') return { state: 'blocked', reason: 'Requires verified zero pricing' };
   return { state: 'hidden' };
@@ -2897,7 +2963,7 @@ function poolMemberRowHtml(member, index, manageable) {
   const reason = member.reason ? `<div class="pool-member-reason">${escapeHtml(member.reason)}</div>` : '';
   const actions = manageable ? `
     <div class="pool-member-actions">
-      <button class="btn btn-ghost pool-test" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" title="One small request, up to 256 output tokens. No retries or context/reasoning probes.">Test</button>
+      <button class="btn btn-ghost pool-test" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" title="One small request, up to 1024 output tokens. No retries or context/reasoning probes.">Test</button>
       <button class="btn btn-ghost pool-move" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" data-direction="-1" ${index === 0 ? 'disabled' : ''} title="Move earlier in routing priority" aria-label="Move ${escapeHtml(member.name)} up">↑</button>
       <button class="btn btn-ghost pool-move" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" data-direction="1" ${index === poolData().members.length - 1 ? 'disabled' : ''} title="Move later in routing priority" aria-label="Move ${escapeHtml(member.name)} down">↓</button>
       <details class="pool-advanced-menu">
@@ -2915,7 +2981,7 @@ function poolMemberRowHtml(member, index, manageable) {
     <div class="pool-member-main">
       <div class="pool-member-title">
         <strong>${escapeHtml(member.name)}</strong>
-        <span class="provider-pill">${escapeHtml(member.providerName)}</span>
+        <span class="provider-pill" style="${providerPillStyle(member.providerId)}">${escapeHtml(member.providerName)}</span>
         <span class="pool-status ${status[0]}">${status[1]}</span>
       </div>
       <div class="pool-member-meta">${escapeHtml(member.modelId)}${facts.length ? ' · ' + escapeHtml(facts.join(' · ')) : ''}</div>
@@ -2932,14 +2998,14 @@ function poolCandidateRowHtml(candidate, manageable) {
     ? `<button class="btn-model-hide pool-hide" type="button" data-provider-id="${escapeHtml(candidate.providerId)}" data-model-id="${escapeHtml(candidate.modelId)}" title="Hide this model" aria-label="Hide ${escapeHtml(name)}">${EYE_ICON}</button>`
     : '';
   const test = manageable
-    ? `<button class="btn btn-ghost pool-test" type="button" data-provider-id="${escapeHtml(candidate.providerId)}" data-model-id="${escapeHtml(candidate.modelId)}" title="One small request, up to 256 output tokens. Checks response and tool calling. No retries.">Test</button>`
+    ? `<button class="btn btn-ghost pool-test" type="button" data-provider-id="${escapeHtml(candidate.providerId)}" data-model-id="${escapeHtml(candidate.modelId)}" title="One small request, up to 1024 output tokens. Checks response and tool calling. No retries.">Test</button>`
     : '';
   return `<tr>
-    <td><strong>${escapeHtml(name)}</strong><span class="provider-pill">${escapeHtml(candidate.providerName)}</span><code title="${escapeHtml(candidate.modelId)}">${escapeHtml(candidate.modelId)}</code></td>
+    <td><strong>${escapeHtml(name)}</strong><span class="provider-pill" style="${providerPillStyle(candidate.providerId)}">${escapeHtml(candidate.providerName)}</span><code title="${escapeHtml(candidate.modelId)}">${escapeHtml(candidate.modelId)}</code></td>
     <td>${poolKindHtml(candidate)}</td>
     <td>${fmtCtx(candidate.contextWindow) || '—'}${estimate}</td>
     <td>${formatModelPrice(candidate.cost, true, 'FREE')}</td>
-    <td class="td-actions">${test}${eye}${poolAddCellHtml(candidate, manageable)}</td>
+    <td class="td-actions"><span class="test-badge-slot" data-model-id="${escapeHtml(candidate.modelId)}">${testBadgeHtml(candidate.testResult)}</span>${test}${eye}${poolAddCellHtml(candidate, manageable)}</td>
   </tr>`;
 }
 
@@ -2959,9 +3025,26 @@ function renderFreePool() {
   renderFreePoolStats(pool);
   const manageable = !isServerAdminUi();
   const tasks = pool.candidates ?? [];
-  const filtered = tasks.filter(candidate =>
+  assignPoolProviderColors([...tasks, ...(pool.members ?? [])].map(item => item.providerId));
+  // Provider accounts present in the list, in first-seen order.
+  const poolProviders = [];
+  const providerNames = new Map();
+  for (const candidate of tasks) {
+    if (providerNames.has(candidate.providerId)) continue;
+    providerNames.set(candidate.providerId, candidate.providerName || candidate.providerId);
+    poolProviders.push(candidate.providerId);
+  }
+  state.poolProviders = state.poolProviders.filter(id => providerNames.has(id));
+  const selectedProviders = new Set(state.poolProviders);
+  // Search + context narrow the list first; chip counts reflect that.
+  const searched = tasks.filter(candidate =>
     matchesModelSearch(`${candidate.name} ${candidate.modelId} ${candidate.providerName}`, state.poolSearch)
     && (!state.poolMinCtx || (candidate.contextWindow ?? 0) >= state.poolMinCtx));
+  const providerCounts = new Map();
+  for (const candidate of searched) providerCounts.set(candidate.providerId, (providerCounts.get(candidate.providerId) ?? 0) + 1);
+  const filtered = selectedProviders.size
+    ? searched.filter(candidate => selectedProviders.has(candidate.providerId))
+    : searched;
   const totalPages = Math.max(1, Math.ceil(filtered.length / PROVIDER_MODEL_PAGE_SIZE));
   state.poolPage = Math.min(Math.max(1, state.poolPage), totalPages);
   const start = (state.poolPage - 1) * PROVIDER_MODEL_PAGE_SIZE;
@@ -2979,19 +3062,31 @@ function renderFreePool() {
   const notice = state.pool?.error
     ? `<div class="pool-notice">Could not refresh the list. ${escapeHtml(state.pool.error)} <button class="btn btn-ghost" type="button" id="free-pool-retry">Retry</button></div>`
     : '';
+  const readyCount = members.filter(member => member.status === 'Ready').length;
+  const enabledStatus = !enabled
+    ? 'Off. Relay Free Pool is not added to any launch.'
+    : members.length === 0
+      ? 'On, but the pool is empty, so nothing is added yet. Add a model below.'
+      : readyCount === 0
+        ? 'On, but no pool model is tested and ready yet, so nothing is added yet. Test a model below.'
+        : `On. Relay Free Pool is added to your launches (${readyCount} of ${members.length} model${members.length === 1 ? '' : 's'} ready).`;
   const controls = manageable ? `
-    <div class="pool-controls">
+    <div class="pool-controls pool-feature">
       <label class="pool-toggle">
         <input type="checkbox" id="free-pool-enabled" ${enabled ? 'checked' : ''}>
-        <span>Enabled</span>
+        <span>Add Relay Free Pool to my launches</span>
       </label>
+      <p class="pool-feature-status ${enabled && readyCount > 0 ? 'is-on' : ''}">${escapeHtml(enabledStatus)}</p>
+      <p class="pool-feature-help">When on, every Claude, Codex, ChatGPT app and Antigravity launch also lists <strong>Relay Free Pool</strong> as one extra model in the model switcher, next to the model you picked and your favorites. It is never chosen for you: pick it to use it. When you do, Relay sends each request to the first ready model in the list above and moves to the next if one fails or runs out. It never uses a model outside this pool. A model is only used while its Test result is valid (24 hours). Turning this off just removes the extra entry.</p>
+    </div>
+    <div class="pool-controls pool-effort-card">
       <label class="pool-effort">
-        <span>Reasoning effort</span>
-        <select class="filter-select" id="free-pool-effort" ${enabled ? '' : 'disabled'}>${effortOptions}</select>
+        <span><strong>Reasoning effort for pool requests</strong></span>
+        <select class="filter-select" id="free-pool-effort">${effortOptions}</select>
       </label>
-      <p class="pool-hint">${enabled ? 'Relay Free Pool is one model in your switcher; requests fall back only inside this pool.' : 'Turn this on to add Relay Free Pool to your tool’s model switcher.'}</p>
+      <p class="pool-hint">How hard pool models think when Relay Free Pool is selected. Auto lets each provider decide. Applies whether or not the pool is turned on above.</p>
     </div>` : `
-    <p class="pool-hint">${enabled ? 'Enabled. Relay Free Pool is one model in the switcher.' : 'Disabled.'}</p>`;
+    <p class="pool-hint">${escapeHtml(enabledStatus)}</p>`;
 
   const countLabel = filtered.length === tasks.length ? String(tasks.length) : filtered.length + ' of ' + tasks.length;
   const rangeLabel = filtered.length === tasks.length ? String(tasks.length) : filtered.length + ' of ' + tasks.length;
@@ -3016,22 +3111,29 @@ function renderFreePool() {
       <h2 class="pool-heading">Free models <span class="pool-count">${countLabel}</span></h2>
       <p class="section-sub">Every free model Relay can see, across ${new Set(tasks.map(item => item.providerId)).size} provider accounts. Models without verified zero pricing stay listed so this total matches your free catalog.</p>
     </div>
-    <p class="pool-hint">Test uses 1 request with up to 256 output tokens and no retries. Context and reasoning checks are optional under Advanced after adding a model. Adding models and launching tools never run tests.</p>
+    <p class="pool-hint">Test uses 1 request with up to 1024 output tokens and no retries. Context and reasoning checks are optional under Advanced after adding a model. Adding models and launching tools never run tests.</p>
     <div class="provider-browser-tools pool-tools">
       <div class="search-field">
         <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         <input class="search-input" id="free-pool-search" type="search" value="${escapeHtml(state.poolSearch)}" placeholder="Search free models or provider accounts…" aria-label="Search free models">
       </div>
-      <div class="provider-model-filters">
-        <select class="filter-select" id="free-pool-ctx" aria-label="Filter by context window size">
+      <button class="btn btn-ghost" id="free-pool-refresh" type="button" title="Reload the free model list">Refresh</button>
+    </div>
+    <div class="pool-filter-row">
+      <div class="pool-provider-chips" role="group" aria-label="Filter by provider account">
+        <button class="pool-chip${selectedProviders.size ? '' : ' is-active'}" type="button" data-pool-provider="" aria-pressed="${selectedProviders.size ? 'false' : 'true'}">All providers <span class="pool-chip-count">${searched.length}</span></button>
+        ${poolProviders.map(id => {
+          const active = selectedProviders.has(id);
+          return `<button class="pool-chip pool-chip-provider${active ? ' is-active' : ''}" type="button" data-pool-provider="${escapeHtml(id)}" aria-pressed="${active}" style="${providerPillStyle(id, active ? 2 : 0.6)}">${escapeHtml(providerNames.get(id))} <span class="pool-chip-count">${providerCounts.get(id) ?? 0}</span></button>`;
+        }).join('')}
+      </div>
+      <select class="filter-select" id="free-pool-ctx" aria-label="Filter by context window size">
           <option value="0" ${state.poolMinCtx === 0 ? 'selected' : ''}>All context sizes</option>
           <option value="128000" ${state.poolMinCtx === 128000 ? 'selected' : ''}>≥ 128k</option>
           <option value="200000" ${state.poolMinCtx === 200000 ? 'selected' : ''}>≥ 200k</option>
           <option value="500000" ${state.poolMinCtx === 500000 ? 'selected' : ''}>≥ 500k</option>
           <option value="1000000" ${state.poolMinCtx === 1000000 ? 'selected' : ''}>≥ 1M</option>
-        </select>
-      </div>
-      <button class="btn btn-ghost" id="free-pool-refresh" type="button" title="Reload the free model list">Refresh</button>
+      </select>
     </div>
     <div class="provider-model-table-wrap">
       <table class="provider-model-table">
@@ -3054,6 +3156,22 @@ function renderFreePool() {
     const next = document.getElementById('free-pool-search');
     next?.focus();
     next?.setSelectionRange(next.value.length, next.value.length);
+  });
+  panel.querySelectorAll('[data-pool-provider]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const id = chip.dataset.poolProvider;
+      if (!id) {
+        state.poolProviders = [];
+      } else if (state.poolProviders.includes(id)) {
+        state.poolProviders = state.poolProviders.filter(item => item !== id);
+      } else {
+        state.poolProviders = [...state.poolProviders, id];
+        // Every provider picked is the same as no filter.
+        if (state.poolProviders.length === poolProviders.length) state.poolProviders = [];
+      }
+      state.poolPage = 1;
+      rerender();
+    });
   });
   document.getElementById('free-pool-ctx')?.addEventListener('change', event => {
     state.poolMinCtx = parseInt(event.target.value, 10) || 0;

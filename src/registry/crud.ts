@@ -15,7 +15,7 @@ import { providerKind } from './provider-kind.js';
 import { MODEL_KINDS, type ModelKind } from './model-kind.js';
 import { getProviderModels, isValidContextWindow, MAX_CONTEXT_WINDOW_OVERRIDE, MIN_CONTEXT_WINDOW_OVERRIDE } from './provider-models.js';
 import { refreshProviderModels } from './refresh-models.js';
-import type { RegistryProvider, RegistrySubscriptionFilter } from './types.js';
+import type { ModelTestResult, RegistryProvider, RegistrySubscriptionFilter } from './types.js';
 
 export interface RemoveProviderResult {
   removed: boolean;
@@ -108,6 +108,41 @@ export function setModelHidden(providerId: string, modelId: string, hidden: bool
   else delete provider.hiddenModelIds;
   saveRegistry(registry);
   return { ok: true, hidden };
+}
+
+const MAX_TEST_RESULTS_PER_PROVIDER = 500;
+
+/** Local log of the latest Test per model. Newest wins; the oldest entries are dropped past the cap. */
+export function recordModelTestResult(providerId: string, modelId: string, result: Omit<ModelTestResult, 'at'> & { at?: string }): void {
+  const registry = loadRegistry();
+  const provider = registry.providers.find(p => p.id === providerId);
+  if (!provider) return;
+  const results = { ...(provider.modelTestResults ?? {}), [modelId]: { ...result, at: result.at ?? new Date().toISOString() } };
+  const entries = Object.entries(results);
+  if (entries.length > MAX_TEST_RESULTS_PER_PROVIDER) {
+    entries.sort((a, b) => b[1].at.localeCompare(a[1].at));
+    provider.modelTestResults = Object.fromEntries(entries.slice(0, MAX_TEST_RESULTS_PER_PROVIDER));
+  } else provider.modelTestResults = results;
+  saveRegistry(registry);
+}
+
+export type SetModelFreeResult = { ok: true; free: boolean } | { ok: false; error: string };
+
+/** Declare a model free (or undo it). The user's own risk call; nothing else may set it. */
+export function setModelMarkedFree(providerId: string, modelId: string, free: boolean): SetModelFreeResult {
+  const registry = loadRegistry();
+  const provider = registry.providers.find(p => p.id === providerId);
+  if (!provider) return { ok: false, error: `Provider not found: ${providerId}` };
+  if (!getProviderModels(provider).some(m => m.id === modelId)) {
+    return { ok: false, error: `Model not found: ${modelId}` };
+  }
+  const ids = new Set(provider.freeModelIds ?? []);
+  if (free) ids.add(modelId);
+  else ids.delete(modelId);
+  if (ids.size > 0) provider.freeModelIds = [...ids];
+  else delete provider.freeModelIds;
+  saveRegistry(registry);
+  return { ok: true, free };
 }
 
 /** Hide or show several models of one provider in a single save. Unknown ids are skipped. */

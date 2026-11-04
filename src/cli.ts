@@ -570,7 +570,7 @@ ${pc.bold('Root options:')}
 ${pc.bold('Commands:')}
   claude      Launch Claude Code — pick a provider from your registry
   models      Manage favorite models for mid-session /model switching (max ${MAX_MODEL_CATALOG})
-  pool        Manage Relay Free Pool; pool --help lists actions and test costs
+  pool        Manage Relay Free Pool (experimental); pool --help lists actions and test costs
   favorites   Alias for models
   subagents   Manage the independent Codex SubAgent model catalog (starts empty)
   providers   Add, import, and manage your AI providers
