@@ -212,6 +212,8 @@ export interface PoolEventBlock {
   request: PoolRequestSummary;
   /** Requests that went smoothly since the previous event. */
   quietBefore: number;
+  /** The answering model is now a different one than before this event. */
+  changed: boolean;
 }
 
 /**
@@ -232,7 +234,7 @@ export class PoolEventFilter {
       Boolean(a && b && a.providerId === b.providerId && a.modelId === b.modelId);
     if (request.outcome !== 'answered' || !request.answeredBy) {
       this.quiet = 0;
-      return { kind: 'failed', request, quietBefore };
+      return { kind: 'failed', request, quietBefore, changed: false };
     }
     const wasFirst = !this.current;
     const changed = !same(this.current, request.answeredBy);
@@ -240,7 +242,7 @@ export class PoolEventFilter {
     if (changed) { this.current = request.answeredBy; this.since = request.at; }
     if (hadTrouble || changed) {
       this.quiet = 0;
-      return { kind: hadTrouble ? 'failover' : (wasFirst ? 'now-answering' : 'switched'), request, quietBefore };
+      return { kind: hadTrouble ? 'failover' : (wasFirst ? 'now-answering' : 'switched'), request, quietBefore, changed };
     }
     this.quiet++;
     return undefined;
@@ -254,8 +256,11 @@ export function formatPoolEventLines(block: PoolEventBlock): string {
   const secs = typeof r.ms === 'number' ? ` ${(r.ms / 1000).toFixed(1)}s` : '';
   const who = r.answeredBy ? `${r.answeredBy.providerId}/${r.answeredBy.modelId}` : '';
   const head = block.kind === 'failed' ? `${time}  ✗ NO MODEL ANSWERED`
-    : block.kind === 'failover' ? `${time}  ↪ FAILOVER: ${who} answered${secs}`
-    : block.kind === 'switched' ? `${time}  ● SWITCHED to ${who}`
+    : block.kind === 'failover'
+      ? (block.changed
+        ? `${time}  ↪ FAILOVER → now answering: ${who}${secs}`
+        : `${time}  ↪ FAILOVER → answered by ${who}${secs} (still the current model)`)
+    : block.kind === 'switched' ? `${time}  ● SWITCHED → now answering: ${who}`
     : `${time}  ● ANSWERING: ${who}`;
   const lines = [head];
   for (const t of r.tried) {

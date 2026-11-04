@@ -211,7 +211,7 @@ var PoolEventFilter = class {
     const same = (a, b) => Boolean(a && b && a.providerId === b.providerId && a.modelId === b.modelId);
     if (request.outcome !== "answered" || !request.answeredBy) {
       this.quiet = 0;
-      return { kind: "failed", request, quietBefore };
+      return { kind: "failed", request, quietBefore, changed: false };
     }
     const wasFirst = !this.current;
     const changed = !same(this.current, request.answeredBy);
@@ -222,7 +222,7 @@ var PoolEventFilter = class {
     }
     if (hadTrouble || changed) {
       this.quiet = 0;
-      return { kind: hadTrouble ? "failover" : wasFirst ? "now-answering" : "switched", request, quietBefore };
+      return { kind: hadTrouble ? "failover" : wasFirst ? "now-answering" : "switched", request, quietBefore, changed };
     }
     this.quiet++;
     return void 0;
@@ -234,7 +234,7 @@ function formatPoolEventLines(block) {
   const time = Number.isNaN(when.getTime()) ? r.at : when.toLocaleTimeString([], { hour12: false });
   const secs = typeof r.ms === "number" ? ` ${(r.ms / 1e3).toFixed(1)}s` : "";
   const who = r.answeredBy ? `${r.answeredBy.providerId}/${r.answeredBy.modelId}` : "";
-  const head = block.kind === "failed" ? `${time}  \u2717 NO MODEL ANSWERED` : block.kind === "failover" ? `${time}  \u21AA FAILOVER: ${who} answered${secs}` : block.kind === "switched" ? `${time}  \u25CF SWITCHED to ${who}` : `${time}  \u25CF ANSWERING: ${who}`;
+  const head = block.kind === "failed" ? `${time}  \u2717 NO MODEL ANSWERED` : block.kind === "failover" ? block.changed ? `${time}  \u21AA FAILOVER \u2192 now answering: ${who}${secs}` : `${time}  \u21AA FAILOVER \u2192 answered by ${who}${secs} (still the current model)` : block.kind === "switched" ? `${time}  \u25CF SWITCHED \u2192 now answering: ${who}` : `${time}  \u25CF ANSWERING: ${who}`;
   const lines = [head];
   for (const t of r.tried) {
     lines.push(`      \u2717 ${t.providerId}/${t.modelId} - ${t.reason ?? "failed"}`);
@@ -1575,4 +1575,4 @@ export {
   poolDiagnostic,
   verifyConfiguredPoolMember
 };
-//# sourceMappingURL=chunk-P4KVRRWU.js.map
+//# sourceMappingURL=chunk-PKCIEFHG.js.map
