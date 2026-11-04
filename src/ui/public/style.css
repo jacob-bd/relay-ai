@@ -1409,6 +1409,15 @@ input { font-family: inherit; }
   opacity: 0.4;
 }
 
+.pool-activity { list-style: none; margin: 0 0 24px; padding: 0; display: grid; gap: 6px; }
+.pool-activity-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; font-size: 13px; }
+.pool-activity-row.is-served .pool-activity-event { color: #3fb950; }
+.pool-activity-row.is-failed .pool-activity-event { color: #f85149; }
+.pool-activity-time { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.pool-activity-event { font-weight: 600; white-space: nowrap; }
+.pool-activity-reason { color: var(--text-3); }
+.pool-activity-empty { color: var(--text-3); font-size: 13px; padding: 8px 2px; }
+
 .model-test-badge {
   display: inline-block;
   margin-right: 8px;

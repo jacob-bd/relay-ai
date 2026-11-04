@@ -8,25 +8,25 @@ import {
   streamAnthropicResponse,
   translateRequest,
   writeAnthropicStream
-} from "./chunk-7OH5IMGL.js";
+} from "./chunk-E7FSS5M2.js";
 import {
   extractConversationId,
   openCodeGoHeaders
-} from "./chunk-IGBLHT37.js";
+} from "./chunk-GGECJSV6.js";
 import {
-  anthropicErrorType,
-  formatUpstreamError,
-  normalizeToolSchemaForNpm,
-  upstreamHttpStatus
-} from "./chunk-FKGBGJZK.js";
+  normalizeToolSchemaForNpm
+} from "./chunk-UR4QFFSQ.js";
 import {
+  describePoolFailure,
   extractApiKey,
   fetchProviderCatalog,
   localProvidersToServerModels,
+  poolRouteMember,
   providersForTarget,
   readBody,
+  recordPoolActivity,
   sendJson
-} from "./chunk-BNKZAQMT.js";
+} from "./chunk-JSJV4YBZ.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -41,7 +41,7 @@ import {
   stripGoogleModelPrefix,
   toOAuthRegistryId,
   validateClinePassApiKey
-} from "./chunk-6IT5C4N6.js";
+} from "./chunk-P2ZUUHDQ.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -52,6 +52,7 @@ import {
   VERSION,
   VERTEX_ANTHROPIC_NPM,
   VERTEX_ANTHROPIC_PROVIDER_ID,
+  anthropicErrorType,
   buildCodexReasoningLevels,
   buildPricingIndex,
   classifyFreeStatus,
@@ -67,6 +68,7 @@ import {
   enrichPricingAsync,
   fetchWithOAuthRetry,
   formatOAuthAccount,
+  formatUpstreamError,
   generateCliUserID,
   generateTextStreamingIfRequired,
   getEnvServerPassword,
@@ -138,10 +140,11 @@ import {
   thinkingProviderOptions,
   tokensToStoredCredential,
   uniqueProviderName,
+  upstreamHttpStatus,
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-IKGOSD5H.js";
+} from "./chunk-MNN6GZ3I.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -2213,6 +2216,12 @@ async function serveClaudePool(options) {
     }
     owner = claim;
   }
+  let attemptedId;
+  let attemptStarted = Date.now();
+  const logServed = () => {
+    const member = attemptedId ? poolRouteMember(attemptedId) : void 0;
+    if (member) recordPoolActivity({ target: "claude", event: "served", ...member, ms: Date.now() - attemptStarted });
+  };
   const parts = dispatchFreePool(pool, routes, {
     target: "claude",
     tools: true,
@@ -2220,11 +2229,20 @@ async function serveClaudePool(options) {
     signal: request.signal
   }, {
     limits,
-    retryable: options.retryable ?? defaultRetryable
+    retryable: options.retryable ?? defaultRetryable,
+    onAttempt: (id) => {
+      attemptedId = id;
+      attemptStarted = Date.now();
+    },
+    onFailure: (id, error) => {
+      const member = poolRouteMember(id);
+      if (member) recordPoolActivity({ target: "claude", event: "failed", ...member, reason: describePoolFailure(error), ms: Date.now() - attemptStarted });
+    }
   });
   try {
     if (!request.stream) {
       const message = await collectMessage(parts, request.modelId, request.maxOutputBytes ?? 65536);
+      logServed();
       owner?.kind === "owner" && owner.release();
       return { ok: true, message };
     }
@@ -2251,6 +2269,7 @@ async function serveClaudePool(options) {
       owner?.kind === "owner" && owner.fail();
       return { ok: false, status: 502, committed, error: { type: "api_error", message: "Provider failed after response commitment" } };
     }
+    logServed();
     owner?.kind === "owner" && owner.release();
     return { ok: true };
   } catch (error) {
@@ -8307,4 +8326,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-SFQRHUSA.js.map
+//# sourceMappingURL=chunk-SSQLRDIO.js.map

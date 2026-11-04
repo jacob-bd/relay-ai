@@ -3,19 +3,20 @@ import {
   invalidateUiPoolMember,
   poolView,
   verifyUiPoolMember
-} from "./chunk-COB3DCQE.js";
+} from "./chunk-HACXJZIB.js";
 import {
   fetchProviderCatalog,
+  readPoolActivity,
   resolveLocalProviderApiKey,
   verifyPoolMember
-} from "./chunk-BNKZAQMT.js";
+} from "./chunk-JSJV4YBZ.js";
 import {
   probePoolEffort,
   probePoolModel,
   providerRefreshToken,
   setContextWindowOverride,
   setModelHidden
-} from "./chunk-6IT5C4N6.js";
+} from "./chunk-P2ZUUHDQ.js";
 import {
   addFreePoolMember,
   createLanguageModel,
@@ -25,7 +26,7 @@ import {
   parsePoolReceipt,
   removeFreePoolMember,
   savePreferences
-} from "./chunk-IKGOSD5H.js";
+} from "./chunk-MNN6GZ3I.js";
 import "./chunk-RKRPDZVV.js";
 import "./chunk-KNCSTHR4.js";
 import "./chunk-JIDIH7DS.js";
@@ -36,6 +37,7 @@ import pc from "picocolors";
 var poolHelpText = [
   "Usage: relay-ai pool <command>   (experimental: tested with Claude Code first)",
   "  list                         Saved membership and receipts (no tests)",
+  "  log [count]                  Which pool model answered recent requests, and which failed first",
   "  candidates [--search text] [--min-context tokens]  Free models, providers and total (no tests)",
   "  status                       Readiness, context, provider names and effort settings (no tests)",
   "  enable | disable             Add/remove Relay Free Pool in launched tool catalogs",
@@ -113,7 +115,7 @@ async function runPoolCommand(args) {
         console.log(JSON.stringify(result2));
         return 0;
       }
-      const { testModel, checkContextWindow } = await import("./test-model-GPZ4Y7ST.js");
+      const { testModel, checkContextWindow } = await import("./test-model-ZLAG5I3A.js");
       if (action === "context") {
         if (args.length === 4) {
           const value = args[3] === "reset" ? null : Number(args[3]);
@@ -142,6 +144,19 @@ async function runPoolCommand(args) {
       }) : void 0;
       console.log(JSON.stringify({ ...result, ...readiness ? { pool: readiness } : {} }));
       return result.ok ? 0 : 1;
+    }
+    if (action === "log" && args.length <= 2) {
+      const count = first === void 0 ? 20 : Math.min(200, Math.max(1, Number(first) || 20));
+      const entries = readPoolActivity(count);
+      if (entries.length === 0) {
+        console.log("No pool requests recorded yet.");
+        return 0;
+      }
+      for (const e of entries) {
+        const secs = typeof e.ms === "number" ? " " + (e.ms / 1e3).toFixed(1) + "s" : "";
+        console.log(`${e.at}  ${e.event === "served" ? "answered" : "FAILED  "}  ${e.providerId}/${e.modelId}${e.reason ? "  " + e.reason : ""}${secs}`);
+      }
+      return 0;
     }
     if (action === "list" && args.length <= 1) {
       console.log(JSON.stringify(pool, null, 2));
@@ -240,4 +255,4 @@ export {
   runPoolCommand,
   validPoolReceipts
 };
-//# sourceMappingURL=command-PSHOTNMN.js.map
+//# sourceMappingURL=command-QHVCNC3S.js.map

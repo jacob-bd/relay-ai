@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import {
   translateRequest
-} from "./chunk-7OH5IMGL.js";
+} from "./chunk-E7FSS5M2.js";
 import {
   contextWindowError,
   createLanguageModel,
@@ -13,7 +13,7 @@ import {
   saveRegistry,
   supportsManualModels,
   validateCustomEndpointUrl
-} from "./chunk-IKGOSD5H.js";
+} from "./chunk-MNN6GZ3I.js";
 
 // src/registry/validate-manual-model.ts
 import { randomUUID } from "crypto";
@@ -152,4 +152,4 @@ export {
   addManualModel,
   removeManualModel
 };
-//# sourceMappingURL=chunk-RSB4R5IO.js.map
+//# sourceMappingURL=chunk-HGZALZYJ.js.map

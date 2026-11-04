@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 import {
-  anthropicErrorType,
-  normalizeToolSchemaForNpm,
-  upstreamHttpStatus
-} from "./chunk-FKGBGJZK.js";
+  normalizeToolSchemaForNpm
+} from "./chunk-UR4QFFSQ.js";
 import {
   MAX_MODEL_CATALOG,
+  anthropicErrorType,
   deepMergeProviderOptions,
   effortProviderOptions,
   encodeToolUseId,
@@ -13,8 +12,9 @@ import {
   serializeToolResultContent,
   splitToolUseId,
   sseChunk,
-  thinkingProviderOptions
-} from "./chunk-IKGOSD5H.js";
+  thinkingProviderOptions,
+  upstreamHttpStatus
+} from "./chunk-MNN6GZ3I.js";
 
 // src/subagent-route-registry.ts
 import { randomUUID } from "crypto";
@@ -772,4 +772,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-7OH5IMGL.js.map
+//# sourceMappingURL=chunk-E7FSS5M2.js.map

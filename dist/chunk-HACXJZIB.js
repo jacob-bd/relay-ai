@@ -6,9 +6,10 @@ import {
   poolMembershipProblem,
   poolRoutingProblem,
   readBody,
+  readPoolActivity,
   sendJson,
   verifyConfiguredPoolMember
-} from "./chunk-BNKZAQMT.js";
+} from "./chunk-JSJV4YBZ.js";
 import {
   addFreePoolMember,
   classifyFreeStatus,
@@ -22,7 +23,7 @@ import {
   poolEndpointRevision,
   removeFreePoolMember,
   savePreferences
-} from "./chunk-IKGOSD5H.js";
+} from "./chunk-MNN6GZ3I.js";
 
 // src/ui/pool-api.ts
 var verifying = /* @__PURE__ */ new Set();
@@ -185,7 +186,7 @@ async function handlePoolApi(req, res) {
       sendJson(res, 200, { ok: true });
       return;
     }
-    sendJson(res, 200, poolView(providers, pool));
+    sendJson(res, 200, { ...poolView(providers, pool), activity: readPoolActivity(25) });
   } catch (error) {
     sendJson(res, 400, { error: error instanceof Error ? error.message : "Unable to update the free pool" });
   }
@@ -238,4 +239,4 @@ export {
   handlePoolApi,
   poolView
 };
-//# sourceMappingURL=chunk-COB3DCQE.js.map
+//# sourceMappingURL=chunk-HACXJZIB.js.map

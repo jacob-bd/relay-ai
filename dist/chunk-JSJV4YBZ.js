@@ -7,7 +7,7 @@ import {
   probePoolEffort,
   probePoolModel,
   providerRefreshToken
-} from "./chunk-6IT5C4N6.js";
+} from "./chunk-P2ZUUHDQ.js";
 import {
   EFFORT_RANK,
   MAX_MODEL_CATALOG,
@@ -24,12 +24,78 @@ import {
   resolveProviderCredential,
   resolveProviderOAuthAccountId,
   resolveProviderOAuthProviderData,
-  shouldHideModel
-} from "./chunk-IKGOSD5H.js";
+  shouldHideModel,
+  upstreamHttpStatus
+} from "./chunk-MNN6GZ3I.js";
 import {
   getTemplateById,
   init_provider_templates
 } from "./chunk-RKRPDZVV.js";
+import {
+  getLogsPath
+} from "./chunk-KNCSTHR4.js";
+
+// src/pool/activity.ts
+import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
+import { join } from "path";
+var MAX_BYTES = 256 * 1024;
+var KEEP_LINES = 500;
+function poolActivityPath() {
+  return join(getLogsPath(), "pool-activity.jsonl");
+}
+function poolRouteMember(routeId) {
+  try {
+    const parsed = JSON.parse(routeId);
+    if (Array.isArray(parsed) && typeof parsed[0] === "string" && typeof parsed[2] === "string") {
+      return { providerId: parsed[0], modelId: parsed[2] };
+    }
+  } catch {
+  }
+  return void 0;
+}
+function describePoolFailure(error) {
+  const raw = error instanceof Error ? error.message : "";
+  const carried = error;
+  const explicit = [carried?.statusCode, carried?.status, carried?.response?.status].find((value) => typeof value === "number");
+  const status = explicit ?? (/\b(4\d\d|5\d\d)\b/.test(raw) ? upstreamHttpStatus(error, raw) : void 0);
+  if (status === 429) return "rate limit (429)";
+  if (status === 401 || status === 403) return `access denied (${status})`;
+  if (status === 402) return "quota or credits exhausted (402)";
+  if (status === 404) return "model not found (404)";
+  if (status === 400) return "request rejected (400)";
+  if (typeof status === "number" && status >= 500) return `provider error (${status})`;
+  if (/timeout|timed out|ETIMEDOUT|abort/i.test(raw)) return "timeout";
+  if (/ECONNRESET|ENOTFOUND|fetch failed/i.test(raw)) return "network error";
+  return "failed";
+}
+function recordPoolActivity(entry) {
+  try {
+    const path = poolActivityPath();
+    mkdirSync(getLogsPath(), { recursive: true });
+    appendFileSync(path, JSON.stringify({ at: (/* @__PURE__ */ new Date()).toISOString(), ...entry }) + "\n");
+    if (statSync(path).size > MAX_BYTES) {
+      const lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
+      writeFileSync(path, lines.slice(-KEEP_LINES).join("\n") + "\n");
+    }
+  } catch {
+  }
+}
+function readPoolActivity(limit = 50) {
+  try {
+    const lines = readFileSync(poolActivityPath(), "utf8").split("\n").filter(Boolean);
+    const entries = [];
+    for (const line of lines.slice(-Math.max(limit, 1) * 2)) {
+      try {
+        const e = JSON.parse(line);
+        if (e && typeof e.at === "string" && typeof e.providerId === "string" && typeof e.modelId === "string" && (e.event === "served" || e.event === "failed")) entries.push(e);
+      } catch {
+      }
+    }
+    return entries.slice(-limit).reverse();
+  } catch {
+    return [];
+  }
+}
 
 // src/registry/load.ts
 async function loadRegistryProviders(diag, opts) {
@@ -1238,6 +1304,10 @@ async function verifyConfiguredPoolMember(member, providers, signal, options = {
 }
 
 export {
+  poolRouteMember,
+  describePoolFailure,
+  recordPoolActivity,
+  readPoolActivity,
   readBody,
   extractApiKey,
   sendJson,
@@ -1266,4 +1336,4 @@ export {
   poolDiagnostic,
   verifyConfiguredPoolMember
 };
-//# sourceMappingURL=chunk-BNKZAQMT.js.map
+//# sourceMappingURL=chunk-JSJV4YBZ.js.map

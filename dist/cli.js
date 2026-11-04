@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-RSB4R5IO.js";
+} from "./chunk-HGZALZYJ.js";
 import {
   CLAUDE_POOL_MODEL_ID,
   CODEX_APP_AUTO_COMPACT_RATIO,
@@ -103,21 +103,18 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   writeResponsesErrorStream
-} from "./chunk-SFQRHUSA.js";
+} from "./chunk-SSQLRDIO.js";
 import {
   translateRequest
-} from "./chunk-7OH5IMGL.js";
+} from "./chunk-E7FSS5M2.js";
 import {
   OPENCODE_SESSION_HEADER,
   extractConversationId,
   openCodeGoHeaders
-} from "./chunk-IGBLHT37.js";
+} from "./chunk-GGECJSV6.js";
 import {
-  formatUpstreamError,
-  formatUpstreamErrorTrace,
-  normalizeToolSchemaForNpm,
-  upstreamHttpStatus
-} from "./chunk-FKGBGJZK.js";
+  normalizeToolSchemaForNpm
+} from "./chunk-UR4QFFSQ.js";
 import {
   buildAntigravityRoutes,
   buildListExperimentsResponse,
@@ -141,7 +138,7 @@ import {
   resolveRelayCatalogSlots,
   routableModelsForTarget,
   sendJson
-} from "./chunk-BNKZAQMT.js";
+} from "./chunk-JSJV4YBZ.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   UNTRUSTED_CERTIFICATE_CODE,
@@ -177,7 +174,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-6IT5C4N6.js";
+} from "./chunk-P2ZUUHDQ.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -207,6 +204,8 @@ import {
   detectConflicts,
   effortProviderOptions,
   findModelsDevModel,
+  formatUpstreamError,
+  formatUpstreamErrorTrace,
   generateTextStreamingIfRequired,
   getAgentProviderModels,
   getAntigravityDebugLogPath,
@@ -273,12 +272,13 @@ import {
   supportsNativeOAuth,
   thinkingProviderOptions,
   uniqueProviderName,
+  upstreamHttpStatus,
   validateCustomEndpointUrl,
   validateProviderName,
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-IKGOSD5H.js";
+} from "./chunk-MNN6GZ3I.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -4194,7 +4194,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-GPZ4Y7ST.js");
+      const { testModel } = await import("./test-model-ZLAG5I3A.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -18470,11 +18470,11 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-OCMRLTSJ.js");
+    const { runUiCommand } = await import("./ui-command-XZE6F466.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-PSHOTNMN.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-QHVCNC3S.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

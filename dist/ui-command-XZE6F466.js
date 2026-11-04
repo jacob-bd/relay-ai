@@ -29,22 +29,22 @@ import {
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode
-} from "./chunk-SFQRHUSA.js";
-import "./chunk-7OH5IMGL.js";
-import "./chunk-IGBLHT37.js";
-import "./chunk-FKGBGJZK.js";
+} from "./chunk-SSQLRDIO.js";
+import "./chunk-E7FSS5M2.js";
+import "./chunk-GGECJSV6.js";
+import "./chunk-UR4QFFSQ.js";
 import {
   handlePoolApi,
   invalidateUiPoolMember,
   verifyUiPoolMember
-} from "./chunk-COB3DCQE.js";
+} from "./chunk-HACXJZIB.js";
 import {
   fetchProviderCatalog,
   providersForCodexSubagents,
   providersForTarget,
   readBody,
   sendJson
-} from "./chunk-BNKZAQMT.js";
+} from "./chunk-JSJV4YBZ.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   addCustomEndpointProvider,
@@ -66,7 +66,7 @@ import {
   setModelMarkedFree,
   setModelsHidden,
   updateCustomEndpointProvider
-} from "./chunk-6IT5C4N6.js";
+} from "./chunk-P2ZUUHDQ.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -135,7 +135,7 @@ import {
   supportsManualModels,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-IKGOSD5H.js";
+} from "./chunk-MNN6GZ3I.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -1110,7 +1110,7 @@ async function handleMeasureContextWindow(req, res) {
     if (!res.writableEnded) controller.abort();
   });
   try {
-    const { checkContextWindow } = await import("./test-model-GPZ4Y7ST.js");
+    const { checkContextWindow } = await import("./test-model-ZLAG5I3A.js");
     const context = await checkContextWindow(provider.id, body.modelId, controller.signal);
     if (!res.destroyed) sendJson(res, 200, { ok: true, context });
   } catch {
@@ -1137,7 +1137,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-HUWQD5NY.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-SIFPBKB4.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1434,7 +1434,7 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-GPZ4Y7ST.js");
+    const { testModel } = await import("./test-model-ZLAG5I3A.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
     if (!controller.signal.aborted) {
       try {
@@ -2329,4 +2329,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-OCMRLTSJ.js.map
+//# sourceMappingURL=ui-command-XZE6F466.js.map

@@ -63,7 +63,7 @@ import {
   validateProviderName,
   vertexAnthropicCachedModels,
   writeSecureLogLine
-} from "./chunk-IKGOSD5H.js";
+} from "./chunk-MNN6GZ3I.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -2928,4 +2928,4 @@ export {
   addOpencodeCloudFromApiKey,
   toggleProviderEnabled
 };
-//# sourceMappingURL=chunk-6IT5C4N6.js.map
+//# sourceMappingURL=chunk-P2ZUUHDQ.js.map

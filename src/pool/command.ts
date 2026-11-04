@@ -11,10 +11,12 @@ import { addFreePoolMember, parseFreePool, removeFreePoolMember } from './member
 import { parsePoolReceipt } from './capabilities.js';
 import { probePoolModel, probePoolEffort } from './probe.js';
 import { verifyPoolMember } from './enroll.js';
+import { readPoolActivity } from './activity.js';
 
 export const poolHelpText = [
   'Usage: relay-ai pool <command>   (experimental: tested with Claude Code first)',
   '  list                         Saved membership and receipts (no tests)',
+  '  log [count]                  Which pool model answered recent requests, and which failed first',
   '  candidates [--search text] [--min-context tokens]  Free models, providers and total (no tests)',
   '  status                       Readiness, context, provider names and effort settings (no tests)',
   '  enable | disable             Add/remove Relay Free Pool in launched tool catalogs',
@@ -121,6 +123,16 @@ export async function runPoolCommand(args: string[]): Promise<number> {
       }) : undefined;
       console.log(JSON.stringify({ ...result, ...(readiness ? { pool: readiness } : {}) }));
       return result.ok ? 0 : 1;
+    }
+    if (action === 'log' && args.length <= 2) {
+      const count = first === undefined ? 20 : Math.min(200, Math.max(1, Number(first) || 20));
+      const entries = readPoolActivity(count);
+      if (entries.length === 0) { console.log('No pool requests recorded yet.'); return 0; }
+      for (const e of entries) {
+        const secs = typeof e.ms === 'number' ? ' ' + (e.ms / 1000).toFixed(1) + 's' : '';
+        console.log(`${e.at}  ${e.event === 'served' ? 'answered' : 'FAILED  '}  ${e.providerId}/${e.modelId}${e.reason ? '  ' + e.reason : ''}${secs}`);
+      }
+      return 0;
     }
     if (action === 'list' && args.length <= 1) {
       console.log(JSON.stringify(pool, null, 2));

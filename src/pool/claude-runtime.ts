@@ -3,6 +3,7 @@ import { writeAnthropicStream } from '../sdk-adapter.js';
 import type { FreePoolPreferences } from '../types.js';
 import type { PoolLimits } from './attempt.js';
 import { retryPoolFailure } from './errors.js';
+import { describePoolFailure, poolRouteMember, recordPoolActivity } from './activity.js';
 import { dispatchFreePool, type DispatchRoute } from './dispatch.js';
 import { anthropicErrorType, formatUpstreamError, upstreamHttpStatus } from '../codex/upstream-error.js';
 
@@ -122,14 +123,27 @@ export async function serveClaudePool(options: ClaudePoolOptions): Promise<Claud
     }
     owner = claim;
   }
+  // Which member answers is otherwise invisible: log each failed attempt and the member that served.
+  let attemptedId: string | undefined;
+  let attemptStarted = Date.now();
+  const logServed = () => {
+    const member = attemptedId ? poolRouteMember(attemptedId) : undefined;
+    if (member) recordPoolActivity({ target: 'claude', event: 'served', ...member, ms: Date.now() - attemptStarted });
+  };
   const parts = dispatchFreePool(pool, routes, {
     target: 'claude', tools: true, effort: request.effort, signal: request.signal,
   }, {
     limits, retryable: options.retryable ?? defaultRetryable,
+    onAttempt: id => { attemptedId = id; attemptStarted = Date.now(); },
+    onFailure: (id, error) => {
+      const member = poolRouteMember(id);
+      if (member) recordPoolActivity({ target: 'claude', event: 'failed', ...member, reason: describePoolFailure(error), ms: Date.now() - attemptStarted });
+    },
   });
   try {
     if (!request.stream) {
       const message = await collectMessage(parts, request.modelId, request.maxOutputBytes ?? 65536);
+      logServed();
       owner?.kind === 'owner' && owner.release();
       return { ok: true, message };
     }
@@ -156,6 +170,7 @@ export async function serveClaudePool(options: ClaudePoolOptions): Promise<Claud
       owner?.kind === 'owner' && owner.fail();
       return { ok: false, status: 502, committed, error: { type: 'api_error', message: 'Provider failed after response commitment' } };
     }
+    logServed();
     owner?.kind === 'owner' && owner.release();
     return { ok: true };
   } catch (error) {

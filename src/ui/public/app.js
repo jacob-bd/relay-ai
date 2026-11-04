@@ -2918,6 +2918,21 @@ async function loadFreePool() {
 }
 
 
+// Which pool member answered each request (local log written by the pool runtime).
+function poolActivityHtml(activity) {
+  const rows = (activity ?? []).slice(0, 12);
+  const body = rows.length
+    ? rows.map(item => {
+      const when = new Date(item.at);
+      const time = Number.isNaN(when.getTime()) ? '' : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const served = item.event === 'served';
+      const ms = typeof item.ms === 'number' ? ` · ${(item.ms / 1000).toFixed(1)}s` : '';
+      return `<li class="pool-activity-row ${served ? 'is-served' : 'is-failed'}"><span class="pool-activity-time">${escapeHtml(time)}</span><span class="pool-activity-event">${served ? '✓ answered' : '✗ failed'}</span><span class="provider-pill" style="${providerPillStyle(item.providerId)}">${escapeHtml(item.providerId)}</span><code>${escapeHtml(item.modelId)}</code><span class="pool-activity-reason">${escapeHtml(item.reason ?? '')}${ms}</span></li>`;
+    }).join('')
+    : '<li class="pool-activity-empty">No pool requests yet. When you use Relay Free Pool in a tool, each answer and each fallback shows up here.</li>';
+  return `<div class="pool-section-head"><h2 class="pool-heading">Recent activity</h2><p class="section-sub">Which pool model answered, and which ones failed first. Stored on this computer only (model names and short reasons, never prompts).</p></div><ul class="pool-activity">${body}</ul>`;
+}
+
 function renderFreePoolStats(pool) {
   const el = document.getElementById('free-pool-stats');
   if (!el) return;
@@ -3107,6 +3122,7 @@ function renderFreePool() {
     </div>
     ${memberHtml}
     ${controls}
+    ${poolActivityHtml(pool.activity)}
     <div class="pool-section-head">
       <h2 class="pool-heading">Free models <span class="pool-count">${countLabel}</span></h2>
       <p class="section-sub">Every free model Relay can see, across ${new Set(tasks.map(item => item.providerId)).size} provider accounts. Models without verified zero pricing stay listed so this total matches your free catalog.</p>
