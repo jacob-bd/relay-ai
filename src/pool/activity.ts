@@ -2,6 +2,7 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { join } from 'node:path';
 import { upstreamHttpStatus } from '../codex/upstream-error.js';
 import { getLogsPath } from '../paths.js';
+import pc from 'picocolors';
 
 /** One line per pool attempt outcome. Local only; holds model names and fixed reasons, never prompts or keys. */
 export interface PoolActivity {
@@ -190,20 +191,35 @@ export function groupPoolActivity(entriesOldestFirst: readonly PoolActivity[]): 
   return out;
 }
 
-/** "who answered" first, then what was skipped or failed before it. */
-export function formatPoolRequestLines(r: PoolRequestSummary): string {
-  const when = new Date(r.at);
-  const time = Number.isNaN(when.getTime()) ? r.at : when.toLocaleTimeString([], { hour12: false });
-  const secs = typeof r.ms === 'number' ? ` ${(r.ms / 1000).toFixed(1)}s` : '';
-  const head = r.outcome === 'answered' && r.answeredBy
-    ? `${time}  ✓ ${r.answeredBy.providerId}/${r.answeredBy.modelId}${secs}`
-    : `${time}  ✗ NO MODEL ANSWERED`;
-  const lines = [head];
-  for (const t of r.tried) {
-    lines.push(`      ✗ ${t.providerId}/${t.modelId} - ${t.reason ?? 'failed'}`);
-    if (t.detail) lines.push(`          ↳ ${t.detail}`);
+function clockTime(at: string): string {
+  const when = new Date(at);
+  return Number.isNaN(when.getTime()) ? at : when.toLocaleTimeString([], { hour12: false });
+}
+
+function durationText(ms?: number): string {
+  return typeof ms === 'number' ? ` in ${(ms / 1000).toFixed(1)}s` : '';
+}
+
+/** What was passed over or failed before the answer: red for a failure, yellow for a member that was skipped. */
+function attemptLines(tried: PoolRequestSummary['tried']): string[] {
+  const lines: string[] = [];
+  for (const t of tried) {
+    const name = `${t.providerId}/${t.modelId}`;
+    const reason = t.reason ?? 'failed';
+    if (reason.startsWith('skipped')) lines.push(pc.yellow(`      – ${name} skipped: ${reason.replace(/^skipped:\s*/, '')}`));
+    else lines.push(pc.red(`      ✗ ${name} failed: ${reason}`));
+    if (t.detail) lines.push(pc.dim(`          ${t.detail}`));
   }
-  return lines.join('\n');
+  return lines;
+}
+
+/** One request: green when a model answered, red when none did, then what failed or was skipped first. */
+export function formatPoolRequestLines(r: PoolRequestSummary): string {
+  const time = pc.dim(clockTime(r.at));
+  const head = r.outcome === 'answered' && r.answeredBy
+    ? `${time}  ${pc.green(`✓ ${r.answeredBy.providerId}/${r.answeredBy.modelId} answered${durationText(r.ms)}`)}`
+    : `${time}  ${pc.bold(pc.red('✗ nobody answered'))}`;
+  return [head, ...attemptLines(r.tried)].join('\n');
 }
 
 /** What the default log shows: only the moments something changed. */
@@ -214,6 +230,8 @@ export interface PoolEventBlock {
   quietBefore: number;
   /** The answering model is now a different one than before this event. */
   changed: boolean;
+  /** The model that was answering before a change. */
+  previous?: { providerId: string; modelId: string };
 }
 
 /**
@@ -237,12 +255,13 @@ export class PoolEventFilter {
       return { kind: 'failed', request, quietBefore, changed: false };
     }
     const wasFirst = !this.current;
+    const previous = this.current;
     const changed = !same(this.current, request.answeredBy);
     const hadTrouble = request.tried.length > 0;
     if (changed) { this.current = request.answeredBy; this.since = request.at; }
     if (hadTrouble || changed) {
       this.quiet = 0;
-      return { kind: hadTrouble ? 'failover' : (wasFirst ? 'now-answering' : 'switched'), request, quietBefore, changed };
+      return { kind: hadTrouble ? 'failover' : (wasFirst ? 'now-answering' : 'switched'), request, quietBefore, changed, ...(previous ? { previous } : {}) };
     }
     this.quiet++;
     return undefined;
@@ -251,24 +270,18 @@ export class PoolEventFilter {
 
 export function formatPoolEventLines(block: PoolEventBlock): string {
   const r = block.request;
-  const when = new Date(r.at);
-  const time = Number.isNaN(when.getTime()) ? r.at : when.toLocaleTimeString([], { hour12: false });
-  const secs = typeof r.ms === 'number' ? ` ${(r.ms / 1000).toFixed(1)}s` : '';
-  const who = r.answeredBy ? `${r.answeredBy.providerId}/${r.answeredBy.modelId}` : '';
-  const head = block.kind === 'failed' ? `${time}  ✗ NO MODEL ANSWERED`
-    : block.kind === 'failover'
-      ? (block.changed
-        ? `${time}  ↪ FAILOVER → now answering: ${who}${secs}`
-        : `${time}  ↪ FAILOVER → answered by ${who}${secs} (still the current model)`)
-    : block.kind === 'switched' ? `${time}  ● SWITCHED → now answering: ${who}`
-    : `${time}  ● ANSWERING: ${who}`;
-  const lines = [head];
-  for (const t of r.tried) {
-    lines.push(`      ✗ ${t.providerId}/${t.modelId} - ${t.reason ?? 'failed'}`);
-    if (t.detail) lines.push(`          ↳ ${t.detail}`);
+  const time = pc.dim(clockTime(r.at));
+  if (block.kind === 'failed' || !r.answeredBy) {
+    const lines = [`${time}  ${pc.bold(pc.red('✗ nobody answered'))}`, ...attemptLines(r.tried)];
+    if (block.quietBefore > 0) lines.push(pc.dim(`      (${block.quietBefore} earlier request${block.quietBefore === 1 ? '' : 's'} answered normally)`));
+    return lines.join('\n');
   }
+  const who = `${r.answeredBy.providerId}/${r.answeredBy.modelId}`;
+  const from = block.previous ? `${block.previous.providerId}/${block.previous.modelId}` : undefined;
+  const note = block.changed ? pc.dim(from ? `  · switched from ${from}` : '  · first model seen') : '';
+  const lines = [`${time}  ${pc.green(`✓ ${who} answered${durationText(r.ms)}`)}${note}`, ...attemptLines(r.tried)];
   if (block.quietBefore > 0 && block.kind !== 'now-answering') {
-    lines.push(`      (${block.quietBefore} request${block.quietBefore === 1 ? '' : 's'} went smoothly before this)`);
+    lines.push(pc.dim(`      (${block.quietBefore} earlier request${block.quietBefore === 1 ? '' : 's'} answered normally)`));
   }
   return lines.join('\n');
 }
@@ -288,6 +301,6 @@ export function formatPoolCurrentLine(state: { current?: { providerId: string; m
   if (!state.current) return 'No pool requests recorded yet.';
   const when = state.since ? new Date(state.since) : undefined;
   const since = when && !Number.isNaN(when.getTime()) ? ` since ${when.toLocaleTimeString([], { hour12: false })}` : '';
-  const smooth = state.quiet > 0 ? `, ${state.quiet} request${state.quiet === 1 ? '' : 's'} answered smoothly since the last event` : '';
-  return `Current model: ${state.current.providerId}/${state.current.modelId}${since}${smooth}`;
+  const smooth = state.quiet > 0 ? `, ${state.quiet} request${state.quiet === 1 ? '' : 's'} answered normally since` : '';
+  return `Current model: ${pc.green(`${state.current.providerId}/${state.current.modelId}`)}${pc.dim(since + smooth)}`;
 }

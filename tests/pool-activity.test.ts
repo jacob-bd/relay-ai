@@ -84,9 +84,9 @@ describe('one line per request', () => {
     expect(groups.map(g => g.outcome)).toEqual(['answered', 'answered', 'failed']);
     expect(groups[0]).toMatchObject({ answeredBy: { providerId: 'go' }, tried: [{ providerId: 'nvidia', reason: 'skipped: recovering from an earlier failure' }] });
     expect(groups[1]).toMatchObject({ answeredBy: { providerId: 'nvidia' }, tried: [{ providerId: 'kilo' }] });
-    expect(formatPoolRequestLines(groups[2]!)).toContain('NO MODEL ANSWERED');
-    expect(formatPoolRequestLines(groups[0]!)).toContain('✓ go/g');
-    expect(formatPoolRequestLines(groups[0]!)).toContain('✗ nvidia/n - skipped: recovering from an earlier failure');
+    expect(formatPoolRequestLines(groups[2]!)).toContain('nobody answered');
+    expect(formatPoolRequestLines(groups[0]!)).toContain('✓ go/g answered');
+    expect(formatPoolRequestLines(groups[0]!)).toContain('– nvidia/n skipped: recovering from an earlier failure');
   });
 });
 
@@ -106,8 +106,10 @@ describe('event-only view (default)', () => {
     ]);
     expect(state.events.map(e => e.kind)).toEqual(['now-answering', 'failover', 'failed']);
     expect(state.events[1]!.quietBefore).toBe(3);
-    expect(formatPoolEventLines(state.events[1]!)).toContain('FAILOVER');
-    expect(formatPoolEventLines(state.events[1]!)).toContain('3 requests went smoothly before this');
+    expect(formatPoolEventLines(state.events[1]!)).toContain('✓ nvidia/m answered');
+    expect(formatPoolEventLines(state.events[1]!)).toContain('✗ kilo/m failed: rate limit (429)');
+    expect(formatPoolEventLines(state.events[1]!)).toContain('switched from kilo/m');
+    expect(formatPoolEventLines(state.events[1]!)).toContain('3 earlier requests answered normally');
     expect(state.current).toEqual({ providerId: 'nvidia', modelId: 'm' });
     expect(formatPoolCurrentLine(state)).toContain('Current model: nvidia/m');
   });

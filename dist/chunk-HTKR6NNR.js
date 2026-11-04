@@ -41,6 +41,7 @@ import {
 // src/pool/activity.ts
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
+import pc from "picocolors";
 var MAX_BYTES = 256 * 1024;
 var KEEP_LINES = 500;
 function poolActivityPath() {
@@ -188,17 +189,28 @@ function groupPoolActivity(entriesOldestFirst) {
   }
   return out;
 }
-function formatPoolRequestLines(r) {
-  const when = new Date(r.at);
-  const time = Number.isNaN(when.getTime()) ? r.at : when.toLocaleTimeString([], { hour12: false });
-  const secs = typeof r.ms === "number" ? ` ${(r.ms / 1e3).toFixed(1)}s` : "";
-  const head = r.outcome === "answered" && r.answeredBy ? `${time}  \u2713 ${r.answeredBy.providerId}/${r.answeredBy.modelId}${secs}` : `${time}  \u2717 NO MODEL ANSWERED`;
-  const lines = [head];
-  for (const t of r.tried) {
-    lines.push(`      \u2717 ${t.providerId}/${t.modelId} - ${t.reason ?? "failed"}`);
-    if (t.detail) lines.push(`          \u21B3 ${t.detail}`);
+function clockTime(at) {
+  const when = new Date(at);
+  return Number.isNaN(when.getTime()) ? at : when.toLocaleTimeString([], { hour12: false });
+}
+function durationText(ms) {
+  return typeof ms === "number" ? ` in ${(ms / 1e3).toFixed(1)}s` : "";
+}
+function attemptLines(tried) {
+  const lines = [];
+  for (const t of tried) {
+    const name = `${t.providerId}/${t.modelId}`;
+    const reason = t.reason ?? "failed";
+    if (reason.startsWith("skipped")) lines.push(pc.yellow(`      \u2013 ${name} skipped: ${reason.replace(/^skipped:\s*/, "")}`));
+    else lines.push(pc.red(`      \u2717 ${name} failed: ${reason}`));
+    if (t.detail) lines.push(pc.dim(`          ${t.detail}`));
   }
-  return lines.join("\n");
+  return lines;
+}
+function formatPoolRequestLines(r) {
+  const time = pc.dim(clockTime(r.at));
+  const head = r.outcome === "answered" && r.answeredBy ? `${time}  ${pc.green(`\u2713 ${r.answeredBy.providerId}/${r.answeredBy.modelId} answered${durationText(r.ms)}`)}` : `${time}  ${pc.bold(pc.red("\u2717 nobody answered"))}`;
+  return [head, ...attemptLines(r.tried)].join("\n");
 }
 var PoolEventFilter = class {
   current;
@@ -214,6 +226,7 @@ var PoolEventFilter = class {
       return { kind: "failed", request, quietBefore, changed: false };
     }
     const wasFirst = !this.current;
+    const previous = this.current;
     const changed = !same(this.current, request.answeredBy);
     const hadTrouble = request.tried.length > 0;
     if (changed) {
@@ -222,7 +235,7 @@ var PoolEventFilter = class {
     }
     if (hadTrouble || changed) {
       this.quiet = 0;
-      return { kind: hadTrouble ? "failover" : wasFirst ? "now-answering" : "switched", request, quietBefore, changed };
+      return { kind: hadTrouble ? "failover" : wasFirst ? "now-answering" : "switched", request, quietBefore, changed, ...previous ? { previous } : {} };
     }
     this.quiet++;
     return void 0;
@@ -230,18 +243,18 @@ var PoolEventFilter = class {
 };
 function formatPoolEventLines(block) {
   const r = block.request;
-  const when = new Date(r.at);
-  const time = Number.isNaN(when.getTime()) ? r.at : when.toLocaleTimeString([], { hour12: false });
-  const secs = typeof r.ms === "number" ? ` ${(r.ms / 1e3).toFixed(1)}s` : "";
-  const who = r.answeredBy ? `${r.answeredBy.providerId}/${r.answeredBy.modelId}` : "";
-  const head = block.kind === "failed" ? `${time}  \u2717 NO MODEL ANSWERED` : block.kind === "failover" ? block.changed ? `${time}  \u21AA FAILOVER \u2192 now answering: ${who}${secs}` : `${time}  \u21AA FAILOVER \u2192 answered by ${who}${secs} (still the current model)` : block.kind === "switched" ? `${time}  \u25CF SWITCHED \u2192 now answering: ${who}` : `${time}  \u25CF ANSWERING: ${who}`;
-  const lines = [head];
-  for (const t of r.tried) {
-    lines.push(`      \u2717 ${t.providerId}/${t.modelId} - ${t.reason ?? "failed"}`);
-    if (t.detail) lines.push(`          \u21B3 ${t.detail}`);
+  const time = pc.dim(clockTime(r.at));
+  if (block.kind === "failed" || !r.answeredBy) {
+    const lines2 = [`${time}  ${pc.bold(pc.red("\u2717 nobody answered"))}`, ...attemptLines(r.tried)];
+    if (block.quietBefore > 0) lines2.push(pc.dim(`      (${block.quietBefore} earlier request${block.quietBefore === 1 ? "" : "s"} answered normally)`));
+    return lines2.join("\n");
   }
+  const who = `${r.answeredBy.providerId}/${r.answeredBy.modelId}`;
+  const from = block.previous ? `${block.previous.providerId}/${block.previous.modelId}` : void 0;
+  const note = block.changed ? pc.dim(from ? `  \xB7 switched from ${from}` : "  \xB7 first model seen") : "";
+  const lines = [`${time}  ${pc.green(`\u2713 ${who} answered${durationText(r.ms)}`)}${note}`, ...attemptLines(r.tried)];
   if (block.quietBefore > 0 && block.kind !== "now-answering") {
-    lines.push(`      (${block.quietBefore} request${block.quietBefore === 1 ? "" : "s"} went smoothly before this)`);
+    lines.push(pc.dim(`      (${block.quietBefore} earlier request${block.quietBefore === 1 ? "" : "s"} answered normally)`));
   }
   return lines.join("\n");
 }
@@ -258,8 +271,8 @@ function formatPoolCurrentLine(state) {
   if (!state.current) return "No pool requests recorded yet.";
   const when = state.since ? new Date(state.since) : void 0;
   const since = when && !Number.isNaN(when.getTime()) ? ` since ${when.toLocaleTimeString([], { hour12: false })}` : "";
-  const smooth = state.quiet > 0 ? `, ${state.quiet} request${state.quiet === 1 ? "" : "s"} answered smoothly since the last event` : "";
-  return `Current model: ${state.current.providerId}/${state.current.modelId}${since}${smooth}`;
+  const smooth = state.quiet > 0 ? `, ${state.quiet} request${state.quiet === 1 ? "" : "s"} answered normally since` : "";
+  return `Current model: ${pc.green(`${state.current.providerId}/${state.current.modelId}`)}${pc.dim(since + smooth)}`;
 }
 
 // src/pool/force-fail.ts
@@ -1575,4 +1588,4 @@ export {
   poolDiagnostic,
   verifyConfiguredPoolMember
 };
-//# sourceMappingURL=chunk-PKCIEFHG.js.map
+//# sourceMappingURL=chunk-HTKR6NNR.js.map
