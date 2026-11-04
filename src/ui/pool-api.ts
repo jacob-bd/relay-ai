@@ -8,7 +8,7 @@ import { readBody, sendJson } from '../http-utils.js';
 import { loadRegistry } from '../registry/io.js';
 import { guessModelKindFromName, nameKindOutranksChatTest, type ModelKind } from '../registry/model-kind.js';
 import { modelsDevModelKind } from '../registry/models-dev.js';
-import { readPoolActivity } from '../pool/activity.js';
+import { groupPoolActivity, readPoolActivity, summarizePoolEvents } from '../pool/activity.js';
 import { addFreePoolMember, parseFreePool, removeFreePoolMember } from '../pool/membership.js';
 import { currentPoolReceipt, poolEndpointRevision } from '../pool/capabilities.js';
 import { poolDiagnostic, poolMembershipProblem, poolRoutingProblem, verifyConfiguredPoolMember } from '../pool/verify.js';
@@ -203,10 +203,21 @@ export async function handlePoolApi(req: IncomingMessage, res: ServerResponse): 
       sendJson(res, 200, { ok: true });
       return;
     }
-    sendJson(res, 200, { ...poolView(providers, pool), activity: readPoolActivity(25) });
+    sendJson(res, 200, { ...poolView(providers, pool), activity: poolActivityView() });
   } catch (error) {
     sendJson(res, 400, { error: error instanceof Error ? error.message : 'Unable to update the free pool' });
   }
+}
+
+/** Current model plus only the moments something happened; `recent` holds every request for the verbose view. */
+function poolActivityView() {
+  const requests = groupPoolActivity([...readPoolActivity(400)].reverse());
+  const state = summarizePoolEvents(requests);
+  return {
+    current: state.current, since: state.since, quiet: state.quiet,
+    events: state.events.slice(-12).reverse(),
+    recent: requests.slice(-30).reverse(),
+  };
 }
 
 export function poolView(providers: LocalProvider[], pool: FreePoolPreferences) {

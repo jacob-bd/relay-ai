@@ -24,7 +24,7 @@ import {
   readBody,
   recordPoolActivity,
   sendJson
-} from "./chunk-Q7H4LVAL.js";
+} from "./chunk-P4KVRRWU.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -583,6 +583,9 @@ function printFavoritesOnlyPanel() {
     `${pc.white("Edit with ")}${pc.cyan("relay-ai models")}${pc.white(".")}`
   ]);
 }
+
+// src/pool/claude-runtime.ts
+import { randomUUID } from "crypto";
 
 // node_modules/@anthropic-ai/sdk/internal/tslib.mjs
 function __classPrivateFieldSet(receiver, state, value, kind, f) {
@@ -2210,6 +2213,14 @@ async function collectMessage(parts, model, maxBytes) {
   return await stream.finalMessage();
 }
 async function serveClaudePool(options) {
+  const state = { requestId: randomUUID().slice(0, 8), served: false, started: Date.now() };
+  const result = await serveClaudePoolRequest(options, state);
+  if (!result.ok && !state.served) {
+    recordPoolActivity({ target: "claude", event: "gave-up", providerId: "pool", modelId: "none", requestId: state.requestId, ms: Date.now() - state.started });
+  }
+  return result;
+}
+async function serveClaudePoolRequest(options, state) {
   const { pool, routes, request, limits, write, embargo, scope } = options;
   let owner;
   if (embargo && scope) {
@@ -2229,7 +2240,8 @@ async function serveClaudePool(options) {
   const logServed = () => {
     const member = attemptedId ? poolRouteMember(attemptedId) : void 0;
     if (!member) return;
-    recordPoolActivity({ target: "claude", event: "served", ...member, ms: Date.now() - attemptStarted });
+    state.served = true;
+    recordPoolActivity({ target: "claude", event: "served", ...member, requestId: state.requestId, ms: Date.now() - attemptStarted });
     options.trace?.(`pool answered: ${member.providerId}/${member.modelId} in ${((Date.now() - attemptStarted) / 1e3).toFixed(1)}s`);
   };
   options.trace?.(`pool request: ${routes.length} eligible member(s): ${routes.map((route) => `${route.member.providerId}/${route.member.modelId}`).join(", ") || "none"}`);
@@ -2252,7 +2264,7 @@ async function serveClaudePool(options) {
       if (!member) return;
       const reason = describePoolFailure(error);
       const detail = reason.startsWith("simulated") ? void 0 : poolErrorDetail(error);
-      recordPoolActivity({ target: "claude", event: "failed", ...member, reason, ...detail ? { detail } : {}, ms: Date.now() - attemptStarted });
+      recordPoolActivity({ target: "claude", event: "failed", ...member, requestId: state.requestId, reason, ...detail ? { detail } : {}, ms: Date.now() - attemptStarted });
       options.trace?.(`pool failed: ${member.providerId}/${member.modelId} (${reason}) after ${((Date.now() - attemptStarted) / 1e3).toFixed(1)}s${detail ? ": " + detail : ""}`);
     }
   });
@@ -2559,7 +2571,7 @@ function estimateAnthropicInputTokens(body) {
 }
 
 // src/antigravity/anthropic-to-cloudcode.ts
-import { randomUUID } from "crypto";
+import { randomUUID as randomUUID2 } from "crypto";
 var DEFAULT_SAFETY_SETTINGS = [
   { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "OFF" },
   { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "OFF" },
@@ -2820,7 +2832,7 @@ function anthropicToCloudCode(body, realModelId, projectId) {
   }
   return {
     project: projectId,
-    requestId: randomUUID(),
+    requestId: randomUUID2(),
     model: realModelId,
     userAgent: ANTIGRAVITY_USER_AGENT,
     requestType: "agent",
@@ -2830,7 +2842,7 @@ function anthropicToCloudCode(body, realModelId, projectId) {
 }
 
 // src/antigravity/cloudcode-to-anthropic.ts
-import { randomUUID as randomUUID2 } from "crypto";
+import { randomUUID as randomUUID3 } from "crypto";
 function writeEvent(res, event, data) {
   res.write(`event: ${event}
 data: ${JSON.stringify(data)}
@@ -2920,7 +2932,7 @@ function closeBlock(res, state) {
 }
 async function streamCloudCodeToAnthropic(res, upstreamRes, model, log7) {
   const state = {
-    messageId: `msg_${randomUUID2().replace(/-/g, "").slice(0, 24)}`,
+    messageId: `msg_${randomUUID3().replace(/-/g, "").slice(0, 24)}`,
     model,
     blockIdx: 0,
     textBlockOpen: false,
@@ -3009,7 +3021,7 @@ async function streamCloudCodeToAnthropic(res, upstreamRes, model, log7) {
             closeBlock(res, state);
           }
           for (const tc of state.toolCalls) {
-            const rawToolId = `toolu_${randomUUID2().replace(/-/g, "").slice(0, 16)}`;
+            const rawToolId = `toolu_${randomUUID3().replace(/-/g, "").slice(0, 16)}`;
             const toolId = encodeToolUseId(rawToolId, tc.signature);
             writeEvent(res, "content_block_start", {
               type: "content_block_start",
@@ -3060,7 +3072,7 @@ async function streamCloudCodeToAnthropic(res, upstreamRes, model, log7) {
 }
 async function collectCloudCodeToAnthropic(upstreamRes, model, log7) {
   const text4 = await upstreamRes.text();
-  const messageId = `msg_${randomUUID2().replace(/-/g, "").slice(0, 24)}`;
+  const messageId = `msg_${randomUUID3().replace(/-/g, "").slice(0, 24)}`;
   const content = [];
   let stopReason = "end_turn";
   let inputTokens = 0;
@@ -3089,7 +3101,7 @@ async function collectCloudCodeToAnthropic(upstreamRes, model, log7) {
         else content.push({ type: "text", text: part.text });
       } else if (part.functionCall && typeof part.functionCall === "object") {
         const fc = part.functionCall;
-        const rawToolId = `toolu_${randomUUID2().replace(/-/g, "").slice(0, 16)}`;
+        const rawToolId = `toolu_${randomUUID3().replace(/-/g, "").slice(0, 16)}`;
         content.push({
           type: "tool_use",
           id: encodeToolUseId(rawToolId, signature ?? pendingThoughtSignature),
@@ -3122,7 +3134,7 @@ async function collectCloudCodeToAnthropic(upstreamRes, model, log7) {
 }
 
 // src/proxy.ts
-import { randomUUID as randomUUID3 } from "crypto";
+import { randomUUID as randomUUID4 } from "crypto";
 function appendSecureLog(logPath, line) {
   const redacted = redactTraceLine(line);
   try {
@@ -3186,7 +3198,7 @@ function lookupRoute(byAlias, id) {
   return void 0;
 }
 function startProxyCatalog(routes, defaultAliasId, debug = false, options = {}) {
-  const proxyToken = randomUUID3();
+  const proxyToken = randomUUID4();
   silenceSdkWarnings();
   if (routes.length === 0 && !options.pool) {
     return Promise.reject(new Error("Proxy catalog requires at least one route"));
@@ -8344,4 +8356,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-DEK6TQDZ.js.map
+//# sourceMappingURL=chunk-4RZRJRHO.js.map

@@ -71,9 +71,13 @@ models you trust:
 
 ## Seeing which model answered, and checking failover
 
-- `relay-ai pool log` lists recent requests (which member answered, which failed first and why);
-  `relay-ai pool log -f` keeps printing new ones. The Free Pool page shows the same under **Recent
-  activity**, and `relay claude --trace` adds the same lines to the proxy debug log.
+- `relay-ai pool log` shows the current model and a line only when something happens: a failover (a
+  model failed before another answered), a switch of the answering model, or a request nobody could
+  answer. Requests answered normally by the usual model print nothing; they are only counted.
+  `relay-ai pool log -f` keeps watching; `-v` shows every request, one line each. Claude Code sends
+  several requests at once, so lines are grouped per request. The Free Pool page shows the same under
+  **Recent activity** (tick *Show every request* for all of them), and `relay claude --trace` adds
+  detailed lines to the proxy debug log.
 - The pool only moves to the next member when one fails, and a conversation stays with the member
   that last answered it. Seeing the same model reply across a long session is therefore normal.
 - Quickest check: with a session running, run `relay-ai pool fail`. It forces whichever member answered

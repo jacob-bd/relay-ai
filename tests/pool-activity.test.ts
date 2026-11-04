@@ -66,3 +66,55 @@ describe('backend error detail', () => {
     expect(line).toContain('↳ free-models-per-day exceeded (HTTP 429)');
   });
 });
+
+describe('one line per request', () => {
+  it('groups overlapping requests by id so a skipped member and an answer are not confused', async () => {
+    const { groupPoolActivity, formatPoolRequestLines } = await import('../src/pool/activity.js');
+    const at = (n: number) => new Date(1_800_000_000_000 + n * 1000).toISOString();
+    const base = { target: 'claude' as const };
+    // Request A answers on nvidia; request B (overlapping) finds nvidia busy and is answered by go.
+    const groups = groupPoolActivity([
+      { ...base, at: at(0), event: 'failed', requestId: 'A', providerId: 'kilo', modelId: 'k', reason: 'simulated failure (test switch)' },
+      { ...base, at: at(1), event: 'failed', requestId: 'B', providerId: 'nvidia', modelId: 'n', reason: 'skipped: recovering from an earlier failure' },
+      { ...base, at: at(2), event: 'served', requestId: 'B', providerId: 'go', modelId: 'g', ms: 2800 },
+      { ...base, at: at(3), event: 'served', requestId: 'A', providerId: 'nvidia', modelId: 'n', ms: 8400 },
+      { ...base, at: at(4), event: 'failed', requestId: 'C', providerId: 'kilo', modelId: 'k', reason: 'rate limit (429)' },
+      { ...base, at: at(5), event: 'gave-up', requestId: 'C', providerId: 'pool', modelId: 'none' },
+    ]);
+    expect(groups.map(g => g.outcome)).toEqual(['answered', 'answered', 'failed']);
+    expect(groups[0]).toMatchObject({ answeredBy: { providerId: 'go' }, tried: [{ providerId: 'nvidia', reason: 'skipped: recovering from an earlier failure' }] });
+    expect(groups[1]).toMatchObject({ answeredBy: { providerId: 'nvidia' }, tried: [{ providerId: 'kilo' }] });
+    expect(formatPoolRequestLines(groups[2]!)).toContain('NO MODEL ANSWERED');
+    expect(formatPoolRequestLines(groups[0]!)).toContain('✓ go/g');
+    expect(formatPoolRequestLines(groups[0]!)).toContain('✗ nvidia/n - skipped: recovering from an earlier failure');
+  });
+});
+
+describe('event-only view (default)', () => {
+  const answered = (n: number, who: string, tried: Array<{ providerId: string; modelId: string; reason?: string }> = []) => ({
+    at: new Date(1_800_000_000_000 + n * 1000).toISOString(), outcome: 'answered' as const, ms: 3000,
+    answeredBy: { providerId: who, modelId: 'm' }, tried,
+  });
+
+  it('shows the current model and a line only for a switch, a failover or a failure', async () => {
+    const { summarizePoolEvents, formatPoolCurrentLine, formatPoolEventLines } = await import('../src/pool/activity.js');
+    const state = summarizePoolEvents([
+      answered(0, 'kilo'), answered(1, 'kilo'), answered(2, 'kilo'), answered(3, 'kilo'),          // smooth: no lines
+      answered(4, 'nvidia', [{ providerId: 'kilo', modelId: 'm', reason: 'rate limit (429)' }]),   // failover
+      answered(5, 'nvidia'), answered(6, 'nvidia'),                                               // smooth
+      { at: new Date(1_800_000_007_000).toISOString(), outcome: 'failed' as const, tried: [{ providerId: 'nvidia', modelId: 'm', reason: 'timeout' }] },
+    ]);
+    expect(state.events.map(e => e.kind)).toEqual(['now-answering', 'failover', 'failed']);
+    expect(state.events[1]!.quietBefore).toBe(3);
+    expect(formatPoolEventLines(state.events[1]!)).toContain('FAILOVER');
+    expect(formatPoolEventLines(state.events[1]!)).toContain('3 requests went smoothly before this');
+    expect(state.current).toEqual({ providerId: 'nvidia', modelId: 'm' });
+    expect(formatPoolCurrentLine(state)).toContain('Current model: nvidia/m');
+  });
+
+  it('reports a plain switch of the answering model without any failure', async () => {
+    const { summarizePoolEvents } = await import('../src/pool/activity.js');
+    const state = summarizePoolEvents([answered(0, 'kilo'), answered(1, 'kilo'), answered(2, 'go')]);
+    expect(state.events.map(e => e.kind)).toEqual(['now-answering', 'switched']);
+  });
+});

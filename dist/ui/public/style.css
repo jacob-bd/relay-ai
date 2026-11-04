@@ -1416,6 +1416,11 @@ input { font-family: inherit; }
 .pool-activity-time { color: var(--text-3); font-variant-numeric: tabular-nums; }
 .pool-activity-event { font-weight: 600; white-space: nowrap; }
 .pool-activity-reason { color: var(--text-3); }
+.pool-activity-current { margin: 0 0 10px; font-size: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pool-activity-toggle { margin: 0 0 10px; font-size: 13px; }
+.pool-activity-row.is-failover .pool-activity-event { color: #d29922; }
+.pool-activity-tried { flex-basis: 100%; list-style: none; margin: 2px 0 0; padding: 0 0 0 4px; display: grid; gap: 2px; color: var(--text-3); font-size: 12px; }
+.pool-activity-failed { color: #f85149; font-weight: 600; }
 .pool-activity-detail { flex-basis: 100%; color: var(--text-3); font-size: 12px; padding-left: 4px; overflow-wrap: anywhere; }
 .pool-activity-empty { color: var(--text-3); font-size: 13px; padding: 8px 2px; }
 

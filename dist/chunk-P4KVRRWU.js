@@ -92,7 +92,7 @@ function readPoolActivity(limit = 50) {
     for (const line of lines.slice(-Math.max(limit, 1) * 2)) {
       try {
         const e = JSON.parse(line);
-        if (e && typeof e.at === "string" && typeof e.providerId === "string" && typeof e.modelId === "string" && (e.event === "served" || e.event === "failed")) entries.push(e);
+        if (e && typeof e.at === "string" && typeof e.providerId === "string" && typeof e.modelId === "string" && (e.event === "served" || e.event === "failed" || e.event === "gave-up")) entries.push(e);
       } catch {
       }
     }
@@ -101,18 +101,10 @@ function readPoolActivity(limit = 50) {
     return [];
   }
 }
-function formatPoolActivityLine(e) {
-  const when = new Date(e.at);
-  const time = Number.isNaN(when.getTime()) ? e.at : `${when.toLocaleDateString()} ${when.toLocaleTimeString([], { hour12: false })}`;
-  const secs = typeof e.ms === "number" ? ` ${(e.ms / 1e3).toFixed(1)}s` : "";
-  const detail = e.detail ? `
-    \u21B3 ${e.detail}` : "";
-  return `${time}  ${e.event === "served" ? "answered" : "FAILED  "}  ${e.providerId}/${e.modelId}${e.reason ? "  " + e.reason : ""}${secs}${detail}`;
-}
 function parseActivityLine(line) {
   try {
     const e = JSON.parse(line);
-    return e && typeof e.at === "string" && typeof e.providerId === "string" && typeof e.modelId === "string" && (e.event === "served" || e.event === "failed") ? e : void 0;
+    return e && typeof e.at === "string" && typeof e.providerId === "string" && typeof e.modelId === "string" && (e.event === "served" || e.event === "failed" || e.event === "gave-up") ? e : void 0;
   } catch {
     return void 0;
   }
@@ -159,6 +151,115 @@ async function followPoolActivity(onEntry, signal, pollMs = 400) {
     } catch {
     }
   }
+}
+function attemptOf(e) {
+  return { providerId: e.providerId, modelId: e.modelId, ...e.reason ? { reason: e.reason } : {}, ...e.detail ? { detail: e.detail } : {} };
+}
+var PoolRequestGrouper = class {
+  open = /* @__PURE__ */ new Map();
+  /** Returns the finished request this entry completes, if any. */
+  add(e) {
+    if (!e.requestId) {
+      if (e.event === "served") return { at: e.at, outcome: "answered", answeredBy: { providerId: e.providerId, modelId: e.modelId }, ms: e.ms, tried: [] };
+      return void 0;
+    }
+    const summary = this.open.get(e.requestId) ?? { at: e.at, outcome: "failed", tried: [] };
+    this.open.set(e.requestId, summary);
+    if (e.event === "failed") {
+      summary.tried.push(attemptOf(e));
+      return void 0;
+    }
+    this.open.delete(e.requestId);
+    summary.at = e.at;
+    summary.ms = e.ms;
+    if (e.event === "served") {
+      summary.outcome = "answered";
+      summary.answeredBy = { providerId: e.providerId, modelId: e.modelId };
+    }
+    return summary;
+  }
+};
+function groupPoolActivity(entriesOldestFirst) {
+  const grouper = new PoolRequestGrouper();
+  const out = [];
+  for (const e of entriesOldestFirst) {
+    const done = grouper.add(e);
+    if (done) out.push(done);
+  }
+  return out;
+}
+function formatPoolRequestLines(r) {
+  const when = new Date(r.at);
+  const time = Number.isNaN(when.getTime()) ? r.at : when.toLocaleTimeString([], { hour12: false });
+  const secs = typeof r.ms === "number" ? ` ${(r.ms / 1e3).toFixed(1)}s` : "";
+  const head = r.outcome === "answered" && r.answeredBy ? `${time}  \u2713 ${r.answeredBy.providerId}/${r.answeredBy.modelId}${secs}` : `${time}  \u2717 NO MODEL ANSWERED`;
+  const lines = [head];
+  for (const t of r.tried) {
+    lines.push(`      \u2717 ${t.providerId}/${t.modelId} - ${t.reason ?? "failed"}`);
+    if (t.detail) lines.push(`          \u21B3 ${t.detail}`);
+  }
+  return lines.join("\n");
+}
+var PoolEventFilter = class {
+  current;
+  /** Time of the first request the current model answered smoothly. */
+  since;
+  /** Smooth requests since the last event. */
+  quiet = 0;
+  push(request) {
+    const quietBefore = this.quiet;
+    const same = (a, b) => Boolean(a && b && a.providerId === b.providerId && a.modelId === b.modelId);
+    if (request.outcome !== "answered" || !request.answeredBy) {
+      this.quiet = 0;
+      return { kind: "failed", request, quietBefore };
+    }
+    const wasFirst = !this.current;
+    const changed = !same(this.current, request.answeredBy);
+    const hadTrouble = request.tried.length > 0;
+    if (changed) {
+      this.current = request.answeredBy;
+      this.since = request.at;
+    }
+    if (hadTrouble || changed) {
+      this.quiet = 0;
+      return { kind: hadTrouble ? "failover" : wasFirst ? "now-answering" : "switched", request, quietBefore };
+    }
+    this.quiet++;
+    return void 0;
+  }
+};
+function formatPoolEventLines(block) {
+  const r = block.request;
+  const when = new Date(r.at);
+  const time = Number.isNaN(when.getTime()) ? r.at : when.toLocaleTimeString([], { hour12: false });
+  const secs = typeof r.ms === "number" ? ` ${(r.ms / 1e3).toFixed(1)}s` : "";
+  const who = r.answeredBy ? `${r.answeredBy.providerId}/${r.answeredBy.modelId}` : "";
+  const head = block.kind === "failed" ? `${time}  \u2717 NO MODEL ANSWERED` : block.kind === "failover" ? `${time}  \u21AA FAILOVER: ${who} answered${secs}` : block.kind === "switched" ? `${time}  \u25CF SWITCHED to ${who}` : `${time}  \u25CF ANSWERING: ${who}`;
+  const lines = [head];
+  for (const t of r.tried) {
+    lines.push(`      \u2717 ${t.providerId}/${t.modelId} - ${t.reason ?? "failed"}`);
+    if (t.detail) lines.push(`          \u21B3 ${t.detail}`);
+  }
+  if (block.quietBefore > 0 && block.kind !== "now-answering") {
+    lines.push(`      (${block.quietBefore} request${block.quietBefore === 1 ? "" : "s"} went smoothly before this)`);
+  }
+  return lines.join("\n");
+}
+function summarizePoolEvents(requests) {
+  const filter = new PoolEventFilter();
+  const events = [];
+  for (const r of requests) {
+    const block = filter.push(r);
+    if (block) events.push(block);
+  }
+  return { events, current: filter.current, since: filter.since, quiet: filter.quiet };
+}
+function formatPoolCurrentLine(state) {
+  if (!state.current) return "No pool requests recorded yet.";
+  const when = state.since ? new Date(state.since) : void 0;
+  const since = when && !Number.isNaN(when.getTime()) ? ` since ${when.toLocaleTimeString([], { hour12: false })}` : "";
+  const smooth = state.quiet > 0 ? `, ${state.quiet} request${state.quiet === 1 ? "" : "s"} answered smoothly since the last event` : "";
+  return `Current model: ${state.current.providerId}/${state.current.modelId}${since}${smooth}`;
 }
 
 // src/pool/force-fail.ts
@@ -1431,8 +1532,14 @@ export {
   describePoolFailure,
   recordPoolActivity,
   readPoolActivity,
-  formatPoolActivityLine,
   followPoolActivity,
+  PoolRequestGrouper,
+  groupPoolActivity,
+  formatPoolRequestLines,
+  PoolEventFilter,
+  formatPoolEventLines,
+  summarizePoolEvents,
+  formatPoolCurrentLine,
   poolErrorDetail,
   DEFAULT_FORCE_FAIL_MINUTES,
   readForceFailState,
@@ -1468,4 +1575,4 @@ export {
   poolDiagnostic,
   verifyConfiguredPoolMember
 };
-//# sourceMappingURL=chunk-Q7H4LVAL.js.map
+//# sourceMappingURL=chunk-P4KVRRWU.js.map

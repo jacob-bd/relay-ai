@@ -3,20 +3,26 @@ import {
   invalidateUiPoolMember,
   poolView,
   verifyUiPoolMember
-} from "./chunk-RGJDIQMT.js";
+} from "./chunk-HAX4Q2U5.js";
 import {
   DEFAULT_FORCE_FAIL_MINUTES,
+  PoolEventFilter,
+  PoolRequestGrouper,
   clearForceFail,
   fetchProviderCatalog,
   followPoolActivity,
-  formatPoolActivityLine,
+  formatPoolCurrentLine,
+  formatPoolEventLines,
+  formatPoolRequestLines,
+  groupPoolActivity,
   poolProviderHeaders,
   readForceFailState,
   readPoolActivity,
   resolveLocalProviderApiKey,
   setForceFail,
+  summarizePoolEvents,
   verifyPoolMember
-} from "./chunk-Q7H4LVAL.js";
+} from "./chunk-P4KVRRWU.js";
 import {
   probePoolEffort,
   probePoolModel,
@@ -46,7 +52,7 @@ var poolHelpText = [
   "  list                         Saved membership and receipts (no tests)",
   "  fail [--minutes N]           Test failover: fail whichever model answered last (repeat to fail the next one too)",
   "  force-fail <provider/model>... [--minutes N] | off   Test failover: make members fail (default 10 min), no request is sent to them",
-  "  log [count] [-f|--follow]    Which pool model answered recent requests, and which failed first; -f keeps printing new ones (Ctrl+C to stop)",
+  "  log [count] [-f|--follow] [-v|--verbose]   Current model, plus a line only when something happens (failure, failover, switch); -f keeps watching; -v shows every request",
   "  candidates [--search text] [--min-context tokens]  Free models, providers and total (no tests)",
   "  status                       Readiness, context, provider names and effort settings (no tests)",
   "  enable | disable             Add/remove Relay Free Pool in launched tool catalogs",
@@ -204,27 +210,47 @@ async function runPoolCommand(args) {
       console.log("Send a message in a session started on the latest build and watch: relay-ai pool log -f");
       return 0;
     }
-    if (action === "log" && args.length <= 3) {
+    if (action === "log" && args.length <= 4) {
       const rest = args.slice(1);
       const follow = rest.includes("-f") || rest.includes("--follow");
+      const verbose = rest.includes("-v") || rest.includes("--verbose");
       const countArg = rest.find((arg) => !arg.startsWith("-"));
-      if (rest.some((arg) => arg.startsWith("-") && arg !== "-f" && arg !== "--follow")) throw new Error(poolHelpText);
+      if (rest.some((arg) => arg.startsWith("-") && !["-f", "--follow", "-v", "--verbose"].includes(arg))) throw new Error(poolHelpText);
       const count = countArg === void 0 ? 20 : Math.min(200, Math.max(1, Number(countArg) || 20));
-      const entries = readPoolActivity(count);
+      const all = groupPoolActivity([...readPoolActivity(Math.max(count * 40, 400))].reverse());
       if (!follow) {
-        if (entries.length === 0) {
+        if (all.length === 0) {
           console.log("No pool requests recorded yet.");
           return 0;
         }
-        for (const e of entries) console.log(formatPoolActivityLine(e));
+        if (verbose) {
+          for (const r of all.slice(-count).reverse()) console.log(formatPoolRequestLines(r));
+          return 0;
+        }
+        const state = summarizePoolEvents(all);
+        console.log(formatPoolCurrentLine(state));
+        if (state.events.length === 0) console.log(pc.dim("No failures or failovers recorded. Use -v to see every request."));
+        for (const block of state.events.slice(-count).reverse()) console.log(formatPoolEventLines(block));
         return 0;
       }
-      for (const e of [...entries].reverse()) console.log(formatPoolActivityLine(e));
-      console.log(pc.dim("Watching for new pool requests. Press Ctrl+C to stop."));
+      const filter = new PoolEventFilter();
+      for (const r of all) filter.push(r);
+      console.log(formatPoolCurrentLine({ current: filter.current, since: filter.since, quiet: filter.quiet }));
+      console.log(pc.dim(verbose ? "Watching: one line per request. Ctrl+C to stop." : "Watching: a line appears only when something happens (failure, failover, switch). Use -v for every request. Ctrl+C to stop."));
       const controller = new AbortController();
       process.once("SIGINT", () => controller.abort());
       process.once("SIGTERM", () => controller.abort());
-      await followPoolActivity((e) => console.log(formatPoolActivityLine(e)), controller.signal);
+      const grouper = new PoolRequestGrouper();
+      await followPoolActivity((e) => {
+        const done = grouper.add(e);
+        if (!done) return;
+        if (verbose) {
+          console.log(formatPoolRequestLines(done));
+          return;
+        }
+        const block = filter.push(done);
+        if (block) console.log(formatPoolEventLines(block));
+      }, controller.signal);
       return 0;
     }
     if (action === "list" && args.length <= 1) {
@@ -324,4 +350,4 @@ export {
   runPoolCommand,
   validPoolReceipts
 };
-//# sourceMappingURL=command-AYYCRFXU.js.map
+//# sourceMappingURL=command-SKFRJTDO.js.map

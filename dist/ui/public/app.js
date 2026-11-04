@@ -2918,19 +2918,38 @@ async function loadFreePool() {
 }
 
 
-// Which pool member answered each request (local log written by the pool runtime).
+// Which pool member is answering, and only the moments something happened (failure, failover, switch).
+function poolActivityRowHtml(request, label) {
+  const when = new Date(request.at);
+  const time = Number.isNaN(when.getTime()) ? '' : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const answered = request.outcome === 'answered' && request.answeredBy;
+  const secs = typeof request.ms === 'number' ? `${(request.ms / 1000).toFixed(1)}s` : '';
+  const head = answered
+    ? `<span class="pool-activity-event">${escapeHtml(label)}</span><span class="provider-pill" style="${providerPillStyle(request.answeredBy.providerId)}">${escapeHtml(request.answeredBy.providerId)}</span><code>${escapeHtml(request.answeredBy.modelId)}</code><span class="pool-activity-reason">${escapeHtml(secs)}</span>`
+    : '<span class="pool-activity-event">✗ no model answered</span>';
+  const tried = (request.tried ?? []).map(t => `<li><span class="pool-activity-failed">✗ ${escapeHtml(t.providerId)}/${escapeHtml(t.modelId)}</span> ${escapeHtml(t.reason ?? 'failed')}${t.detail ? `<span class="pool-activity-detail">${escapeHtml(t.detail)}</span>` : ''}</li>`).join('');
+  return `<li class="pool-activity-row ${answered && !tried ? 'is-served' : (answered ? 'is-failover' : 'is-failed')}"><span class="pool-activity-time">${escapeHtml(time)}</span>${head}${tried ? `<ul class="pool-activity-tried">${tried}</ul>` : ''}</li>`;
+}
+
+const POOL_EVENT_LABELS = { 'now-answering': '● answering', switched: '● switched to', failover: '↪ failover, answered by', failed: '✗' };
+
 function poolActivityHtml(activity) {
-  const rows = (activity ?? []).slice(0, 12);
-  const body = rows.length
-    ? rows.map(item => {
-      const when = new Date(item.at);
-      const time = Number.isNaN(when.getTime()) ? '' : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      const served = item.event === 'served';
-      const ms = typeof item.ms === 'number' ? ` · ${(item.ms / 1000).toFixed(1)}s` : '';
-      return `<li class="pool-activity-row ${served ? 'is-served' : 'is-failed'}"><span class="pool-activity-time">${escapeHtml(time)}</span><span class="pool-activity-event">${served ? '✓ answered' : '✗ failed'}</span><span class="provider-pill" style="${providerPillStyle(item.providerId)}">${escapeHtml(item.providerId)}</span><code>${escapeHtml(item.modelId)}</code><span class="pool-activity-reason">${escapeHtml(item.reason ?? '')}${ms}</span>${item.detail ? `<span class="pool-activity-detail">${escapeHtml(item.detail)}</span>` : ''}</li>`;
-    }).join('')
-    : '<li class="pool-activity-empty">No pool requests yet. When you use Relay Free Pool in a tool, each answer and each fallback shows up here.</li>';
-  return `<div class="pool-section-head"><h2 class="pool-heading">Recent activity</h2><p class="section-sub">Which pool model answered, and which ones failed first. Stored on this computer only (model names and short reasons, never prompts).</p></div><ul class="pool-activity">${body}</ul>`;
+  const verbose = state.poolActivityVerbose === true;
+  const current = activity?.current;
+  const quiet = activity?.quiet ?? 0;
+  const currentLine = current
+    ? `<p class="pool-activity-current"><strong>Current model:</strong> <span class="provider-pill" style="${providerPillStyle(current.providerId)}">${escapeHtml(current.providerId)}</span> <code>${escapeHtml(current.modelId)}</code>${quiet > 0 ? ` <span class="pool-activity-reason">${quiet} request${quiet === 1 ? '' : 's'} answered smoothly since the last event</span>` : ''}</p>`
+    : '';
+  const rows = verbose
+    ? (activity?.recent ?? []).map(request => poolActivityRowHtml(request, '✓ answered'))
+    : (activity?.events ?? []).map(block => poolActivityRowHtml(block.request, POOL_EVENT_LABELS[block.kind] ?? '●'));
+  const empty = verbose
+    ? 'No pool requests yet. When you use Relay Free Pool in a tool, each request shows up here.'
+    : 'Nothing to report. Failures, failovers and model switches show up here; turn on "Show every request" to see all of them.';
+  return `<div class="pool-section-head"><h2 class="pool-heading">Recent activity</h2><p class="section-sub">${verbose ? 'Every request.' : 'Only when something happens.'} Stored on this computer only (model names and short reasons, never prompts).</p></div>
+    ${currentLine}
+    <label class="pool-toggle pool-activity-toggle"><input type="checkbox" id="pool-activity-verbose" ${verbose ? 'checked' : ''}><span>Show every request</span></label>
+    <ul class="pool-activity">${rows.join('') || `<li class="pool-activity-empty">${escapeHtml(empty)}</li>`}</ul>`;
 }
 
 function renderFreePoolStats(pool) {
@@ -3207,6 +3226,10 @@ function renderFreePool() {
   document.getElementById('free-pool-next')?.addEventListener('click', () => {
     state.poolPage += 1;
     rerender();
+  });
+  document.getElementById('pool-activity-verbose')?.addEventListener('change', event => {
+    state.poolActivityVerbose = event.currentTarget.checked;
+    renderFreePool();
   });
   document.getElementById('free-pool-enabled')?.addEventListener('change', async event => {
     const input = event.currentTarget;

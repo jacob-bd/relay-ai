@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import {
   fetchProviderCatalog,
+  groupPoolActivity,
   meetsContextFloor,
   poolDiagnostic,
   poolMembershipProblem,
@@ -8,8 +9,9 @@ import {
   readBody,
   readPoolActivity,
   sendJson,
+  summarizePoolEvents,
   verifyConfiguredPoolMember
-} from "./chunk-Q7H4LVAL.js";
+} from "./chunk-P4KVRRWU.js";
 import {
   addFreePoolMember,
   classifyFreeStatus,
@@ -186,10 +188,21 @@ async function handlePoolApi(req, res) {
       sendJson(res, 200, { ok: true });
       return;
     }
-    sendJson(res, 200, { ...poolView(providers, pool), activity: readPoolActivity(25) });
+    sendJson(res, 200, { ...poolView(providers, pool), activity: poolActivityView() });
   } catch (error) {
     sendJson(res, 400, { error: error instanceof Error ? error.message : "Unable to update the free pool" });
   }
+}
+function poolActivityView() {
+  const requests = groupPoolActivity([...readPoolActivity(400)].reverse());
+  const state = summarizePoolEvents(requests);
+  return {
+    current: state.current,
+    since: state.since,
+    quiet: state.quiet,
+    events: state.events.slice(-12).reverse(),
+    recent: requests.slice(-30).reverse()
+  };
 }
 function poolView(providers, pool) {
   const members = pool.members.map((raw) => {
@@ -239,4 +252,4 @@ export {
   handlePoolApi,
   poolView
 };
-//# sourceMappingURL=chunk-RGJDIQMT.js.map
+//# sourceMappingURL=chunk-HAX4Q2U5.js.map

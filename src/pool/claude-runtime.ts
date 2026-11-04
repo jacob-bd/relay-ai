@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { MessageStream } from '@anthropic-ai/sdk/lib/MessageStream';
 import { writeAnthropicStream } from '../sdk-adapter.js';
 import type { FreePoolPreferences } from '../types.js';
@@ -116,6 +117,19 @@ async function collectMessage(parts: AsyncIterable<{ type: string; [key: string]
  * sessions or branch identity. Tools are formatted for the client and never run.
  */
 export async function serveClaudePool(options: ClaudePoolOptions): Promise<ClaudeServeResult> {
+  const state = { requestId: randomUUID().slice(0, 8), served: false, started: Date.now() };
+  const result = await serveClaudePoolRequest(options, state);
+  if (!result.ok && !state.served) {
+    // Closes the request in the log so a request where every member failed still reads as one line.
+    recordPoolActivity({ target: 'claude', event: 'gave-up', providerId: 'pool', modelId: 'none', requestId: state.requestId, ms: Date.now() - state.started });
+  }
+  return result;
+}
+
+async function serveClaudePoolRequest(
+  options: ClaudePoolOptions,
+  state: { requestId: string; served: boolean; started: number },
+): Promise<ClaudeServeResult> {
   const { pool, routes, request, limits, write, embargo, scope } = options;
   let owner: ReturnType<ClaudeHistoryEmbargo['claim']> | undefined;
   if (embargo && scope) {
@@ -132,7 +146,8 @@ export async function serveClaudePool(options: ClaudePoolOptions): Promise<Claud
   const logServed = () => {
     const member = attemptedId ? poolRouteMember(attemptedId) : undefined;
     if (!member) return;
-    recordPoolActivity({ target: 'claude', event: 'served', ...member, ms: Date.now() - attemptStarted });
+    state.served = true;
+    recordPoolActivity({ target: 'claude', event: 'served', ...member, requestId: state.requestId, ms: Date.now() - attemptStarted });
     options.trace?.(`pool answered: ${member.providerId}/${member.modelId} in ${((Date.now() - attemptStarted) / 1000).toFixed(1)}s`);
   };
   options.trace?.(`pool request: ${routes.length} eligible member(s): ${routes.map(route => `${route.member.providerId}/${route.member.modelId}`).join(', ') || 'none'}`);
@@ -151,7 +166,7 @@ export async function serveClaudePool(options: ClaudePoolOptions): Promise<Claud
       if (!member) return;
       const reason = describePoolFailure(error);
       const detail = reason.startsWith('simulated') ? undefined : poolErrorDetail(error);
-      recordPoolActivity({ target: 'claude', event: 'failed', ...member, reason, ...(detail ? { detail } : {}), ms: Date.now() - attemptStarted });
+      recordPoolActivity({ target: 'claude', event: 'failed', ...member, requestId: state.requestId, reason, ...(detail ? { detail } : {}), ms: Date.now() - attemptStarted });
       options.trace?.(`pool failed: ${member.providerId}/${member.modelId} (${reason}) after ${((Date.now() - attemptStarted) / 1000).toFixed(1)}s${detail ? ': ' + detail : ''}`);
     },
   });
