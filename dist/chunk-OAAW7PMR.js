@@ -16,13 +16,14 @@ import {
   describePoolFailure,
   extractApiKey,
   fetchProviderCatalog,
+  forcedFailures,
   localProvidersToServerModels,
   poolRouteMember,
   providersForTarget,
   readBody,
   recordPoolActivity,
   sendJson
-} from "./chunk-JZUQYQVD.js";
+} from "./chunk-ITTRV5SZ.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -2144,11 +2145,7 @@ function evaluatePoolMembers(pool, evidence, request) {
 }
 
 // src/pool/dispatch.ts
-var FORCE_FAIL_ENV = "RELAY_POOL_FORCE_FAIL";
 var SIMULATED_FAILURE_MESSAGE = "Simulated failure (RELAY_POOL_FORCE_FAIL)";
-function forcedFailures(env = process.env) {
-  return new Set((env[FORCE_FAIL_ENV] ?? "").split(",").map((item) => item.trim()).filter(Boolean));
-}
 async function* dispatchFreePool(pool, routes, request, policy) {
   const candidates = evaluatePoolMembers(pool, routes, { ...request, now: Date.now() });
   const eligible = candidates.filter((candidate) => !candidate.reason && candidate.route);
@@ -8343,4 +8340,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-NMJ7SPOE.js.map
+//# sourceMappingURL=chunk-OAAW7PMR.js.map

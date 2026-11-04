@@ -76,8 +76,11 @@ models you trust:
   activity**, and `relay claude --trace` adds the same lines to the proxy debug log.
 - The pool only moves to the next member when one fails, and a conversation stays with the member
   that last answered it. Seeing the same model reply across a long session is therefore normal.
-- To prove failover works with your real members, force one to fail. Start the tool with
-  `RELAY_POOL_FORCE_FAIL="kilo/reflection/beam-free"` (comma-separate several `provider/model` ids),
-  send a message, and watch `relay-ai pool log -f`: the forced member shows as a failed
-  "simulated failure (test switch)" and the next member answers. Nothing is sent to the forced
-  member and no cooldown is saved, so removing the variable restores normal behavior immediately.
+- To prove failover works with your real members, force one to fail while a session is running:
+  `relay-ai pool force-fail kilo/reflection/beam-free` (several ids allowed; `--minutes N` up to 60).
+  It expires after 10 minutes by default, `relay-ai pool force-fail` shows what is active and
+  `relay-ai pool force-fail off` clears it. Send a message and watch `relay-ai pool log -f`: the forced
+  member shows as a failed "simulated failure (test switch)" and the next member answers. A session
+  started with the same build reads the switch on every request. You can also fix the list when a tool
+  starts with `RELAY_POOL_FORCE_FAIL="kilo/reflection/beam-free"`. Nothing is sent to a forced member and
+  no cooldown is saved, so clearing the switch restores normal behavior immediately.

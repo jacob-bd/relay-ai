@@ -33,6 +33,7 @@ import {
   init_provider_templates
 } from "./chunk-RKRPDZVV.js";
 import {
+  getAppHome,
   getLogsPath
 } from "./chunk-KNCSTHR4.js";
 
@@ -154,6 +155,46 @@ async function followPoolActivity(onEntry, signal, pollMs = 400) {
     } catch {
     }
   }
+}
+
+// src/pool/force-fail.ts
+import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, rmSync, writeFileSync as writeFileSync2 } from "fs";
+import { dirname, join as join2 } from "path";
+var FORCE_FAIL_ENV = "RELAY_POOL_FORCE_FAIL";
+var DEFAULT_FORCE_FAIL_MINUTES = 10;
+var MAX_FORCE_FAIL_MINUTES = 60;
+function forceFailPath() {
+  return join2(getAppHome(), "pool-force-fail.json");
+}
+function readForceFailState(now = Date.now()) {
+  try {
+    const path = forceFailPath();
+    if (!existsSync2(path)) return void 0;
+    const raw = JSON.parse(readFileSync2(path, "utf8"));
+    if (!Array.isArray(raw.members) || typeof raw.expiresAt !== "number" || raw.expiresAt <= now) return void 0;
+    const members = raw.members.filter((item) => typeof item === "string" && item.length > 0);
+    return members.length > 0 ? { members, expiresAt: raw.expiresAt } : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function setForceFail(members, minutes = DEFAULT_FORCE_FAIL_MINUTES, now = Date.now()) {
+  const clamped = Math.min(MAX_FORCE_FAIL_MINUTES, Math.max(1, Math.round(minutes) || DEFAULT_FORCE_FAIL_MINUTES));
+  const state = { members: [...new Set(members.map((item) => item.trim()).filter(Boolean))], expiresAt: now + clamped * 6e4 };
+  const path = forceFailPath();
+  mkdirSync2(dirname(path), { recursive: true });
+  writeFileSync2(path, JSON.stringify(state) + "\n");
+  return state;
+}
+function clearForceFail() {
+  try {
+    rmSync(forceFailPath(), { force: true });
+  } catch {
+  }
+}
+function forcedFailures(env = process.env, now = Date.now()) {
+  const fromEnv = (env[FORCE_FAIL_ENV] ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+  return /* @__PURE__ */ new Set([...fromEnv, ...readForceFailState(now)?.members ?? []]);
 }
 
 // src/registry/load.ts
@@ -1374,6 +1415,11 @@ export {
   readPoolActivity,
   formatPoolActivityLine,
   followPoolActivity,
+  DEFAULT_FORCE_FAIL_MINUTES,
+  readForceFailState,
+  setForceFail,
+  clearForceFail,
+  forcedFailures,
   readBody,
   extractApiKey,
   sendJson,
@@ -1403,4 +1449,4 @@ export {
   poolDiagnostic,
   verifyConfiguredPoolMember
 };
-//# sourceMappingURL=chunk-JZUQYQVD.js.map
+//# sourceMappingURL=chunk-ITTRV5SZ.js.map

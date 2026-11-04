@@ -1,19 +1,10 @@
 import { PoolSessionRoutes } from './session.js';
+import { forcedFailures } from './force-fail.js';
 import type { FreePoolPreferences } from '../types.js';
 import { evaluatePoolMembers, poolRouteIdentity, type PoolRouteEvidence, type PoolTarget } from './eligibility.js';
 import { runPoolAttempts, type PoolEvent, type PoolLimits, type PoolRoute } from './attempt.js';
 
-/**
- * Test switch for validating failover with real models: RELAY_POOL_FORCE_FAIL="provider/model,provider/model"
- * makes those members fail before any request leaves the machine (no cooldown is recorded, nothing is
- * sent to the provider), so the next member must take over. Unset in normal use.
- */
-export const FORCE_FAIL_ENV = 'RELAY_POOL_FORCE_FAIL';
 export const SIMULATED_FAILURE_MESSAGE = 'Simulated failure (RELAY_POOL_FORCE_FAIL)';
-
-function forcedFailures(env: NodeJS.ProcessEnv = process.env): Set<string> {
-  return new Set((env[FORCE_FAIL_ENV] ?? '').split(',').map(item => item.trim()).filter(Boolean));
-}
 
 export interface DispatchRoute extends PoolRouteEvidence {
   open: PoolRoute['open'];

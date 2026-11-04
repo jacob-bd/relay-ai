@@ -3,16 +3,20 @@ import {
   invalidateUiPoolMember,
   poolView,
   verifyUiPoolMember
-} from "./chunk-ILOW3WIN.js";
+} from "./chunk-YLO7ZT3J.js";
 import {
+  DEFAULT_FORCE_FAIL_MINUTES,
+  clearForceFail,
   fetchProviderCatalog,
   followPoolActivity,
   formatPoolActivityLine,
   poolProviderHeaders,
+  readForceFailState,
   readPoolActivity,
   resolveLocalProviderApiKey,
+  setForceFail,
   verifyPoolMember
-} from "./chunk-JZUQYQVD.js";
+} from "./chunk-ITTRV5SZ.js";
 import {
   probePoolEffort,
   probePoolModel,
@@ -40,6 +44,7 @@ import pc from "picocolors";
 var poolHelpText = [
   "Usage: relay-ai pool <command>   (experimental: tested with Claude Code first)",
   "  list                         Saved membership and receipts (no tests)",
+  "  force-fail <provider/model>... [--minutes N] | off   Test failover: make members fail (default 10 min), no request is sent to them",
   "  log [count] [-f|--follow]    Which pool model answered recent requests, and which failed first; -f keeps printing new ones (Ctrl+C to stop)",
   "  candidates [--search text] [--min-context tokens]  Free models, providers and total (no tests)",
   "  status                       Readiness, context, provider names and effort settings (no tests)",
@@ -147,6 +152,35 @@ async function runPoolCommand(args) {
       }) : void 0;
       console.log(JSON.stringify({ ...result, ...readiness ? { pool: readiness } : {} }));
       return result.ok ? 0 : 1;
+    }
+    if (action === "force-fail") {
+      const rest = args.slice(1);
+      if (rest.length === 0) {
+        const state2 = readForceFailState();
+        console.log(state2 ? `Forcing failures on: ${state2.members.join(", ")} (until ${new Date(state2.expiresAt).toLocaleTimeString()})` : "No forced failures active.");
+        return 0;
+      }
+      if (rest.length === 1 && ["off", "clear", "stop"].includes(rest[0])) {
+        clearForceFail();
+        console.log("Forced failures cleared. The pool behaves normally again.");
+        return 0;
+      }
+      let minutes = DEFAULT_FORCE_FAIL_MINUTES;
+      const members = [];
+      for (let i = 0; i < rest.length; i++) {
+        if (rest[i] === "--minutes") {
+          minutes = Number(rest[++i]);
+          continue;
+        }
+        if (!rest[i].includes("/")) throw new Error("Use provider/model, for example: kilo/reflection/beam-free");
+        members.push(rest[i]);
+      }
+      if (members.length === 0) throw new Error(poolHelpText);
+      const state = setForceFail(members, minutes);
+      console.log(`Forcing failures on: ${state.members.join(", ")}`);
+      console.log(`They fail before any request is sent, until ${new Date(state.expiresAt).toLocaleTimeString()} (or run: relay-ai pool force-fail off).`);
+      console.log("Send a message in a session started on the latest build and watch: relay-ai pool log -f");
+      return 0;
     }
     if (action === "log" && args.length <= 3) {
       const rest = args.slice(1);
@@ -268,4 +302,4 @@ export {
   runPoolCommand,
   validPoolReceipts
 };
-//# sourceMappingURL=command-IE74PN5R.js.map
+//# sourceMappingURL=command-ZDA6GZNM.js.map

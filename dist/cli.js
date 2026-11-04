@@ -103,7 +103,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   writeResponsesErrorStream
-} from "./chunk-NMJ7SPOE.js";
+} from "./chunk-OAAW7PMR.js";
 import {
   translateRequest
 } from "./chunk-E7FSS5M2.js";
@@ -134,7 +134,7 @@ import {
   resolveRelayCatalogSlots,
   routableModelsForTarget,
   sendJson
-} from "./chunk-JZUQYQVD.js";
+} from "./chunk-ITTRV5SZ.js";
 import {
   OPENCODE_SESSION_HEADER,
   TRUST_SYSTEM_CERTS_NOTICE,
@@ -18461,11 +18461,11 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-FG53W2P7.js");
+    const { runUiCommand } = await import("./ui-command-JKVZQBDG.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-IE74PN5R.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-ZDA6GZNM.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;
