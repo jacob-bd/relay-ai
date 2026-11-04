@@ -4,7 +4,7 @@ import {
   filterCachedCopilotModels,
   materializeRegistry,
   oauthAuthRef
-} from "./chunk-LXTF7TOF.js";
+} from "./chunk-RLXYEMQD.js";
 import {
   getAgentProviderModels,
   loadRegistry,
@@ -12,7 +12,7 @@ import {
   resolveProviderCredential,
   resolveProviderOAuthAccountId,
   resolveProviderOAuthProviderData
-} from "./chunk-IBEBOL44.js";
+} from "./chunk-TNKSBY36.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -171,4 +171,4 @@ export {
   resolveProvidersForDisplay,
   localProvidersToServerModels
 };
-//# sourceMappingURL=chunk-KOGVCPNK.js.map
+//# sourceMappingURL=chunk-ESUTYQLE.js.map

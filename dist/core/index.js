@@ -97,7 +97,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.19.0",
+  version: "0.20.0",
   publishConfig: {
     access: "public"
   },

@@ -22,7 +22,7 @@ import {
   resolveModelReasoningMetadata,
   resolveModelsDevSlug,
   shouldHideModel
-} from "./chunk-IBEBOL44.js";
+} from "./chunk-TNKSBY36.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -626,4 +626,4 @@ export {
   filterCachedCopilotModels,
   providerRefreshToken
 };
-//# sourceMappingURL=chunk-LXTF7TOF.js.map
+//# sourceMappingURL=chunk-RLXYEMQD.js.map

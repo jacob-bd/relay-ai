@@ -13,7 +13,7 @@ import {
   normalizeGoogleModelId,
   resolveRefreshCredential,
   skipWithCachedModels
-} from "./chunk-LXTF7TOF.js";
+} from "./chunk-RLXYEMQD.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -70,7 +70,7 @@ import {
   validateProviderName,
   vertexAnthropicCachedModels,
   writeSecureLogLine
-} from "./chunk-IBEBOL44.js";
+} from "./chunk-TNKSBY36.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -2342,4 +2342,4 @@ export {
   addOpencodeCloudFromApiKey,
   toggleProviderEnabled
 };
-//# sourceMappingURL=chunk-KJTWVNON.js.map
+//# sourceMappingURL=chunk-42QGKQ3H.js.map

@@ -8,7 +8,7 @@ import {
   streamAnthropicResponse,
   translateRequest,
   writeAnthropicStream
-} from "./chunk-SUH7UMIR.js";
+} from "./chunk-GHKI4SWR.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -21,7 +21,7 @@ import {
   openCodeGoHeaders,
   refreshProviderModels,
   validateClinePassApiKey
-} from "./chunk-KJTWVNON.js";
+} from "./chunk-42QGKQ3H.js";
 import {
   anthropicErrorType,
   formatUpstreamError,
@@ -30,13 +30,13 @@ import {
 import {
   fetchProviderCatalog,
   localProvidersToServerModels
-} from "./chunk-KOGVCPNK.js";
+} from "./chunk-ESUTYQLE.js";
 import {
   oauthAuthRef,
   providerRefreshToken,
   stripGoogleModelPrefix,
   toOAuthRegistryId
-} from "./chunk-LXTF7TOF.js";
+} from "./chunk-RLXYEMQD.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -130,7 +130,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-IBEBOL44.js";
+} from "./chunk-TNKSBY36.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -7647,4 +7647,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-SA3QV4WY.js.map
+//# sourceMappingURL=chunk-XADADY3I.js.map
