@@ -103,7 +103,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   writeResponsesErrorStream
-} from "./chunk-NIZNC4S7.js";
+} from "./chunk-3QIYEBP6.js";
 import {
   translateRequest
 } from "./chunk-E7FSS5M2.js";
@@ -134,7 +134,7 @@ import {
   resolveRelayCatalogSlots,
   routableModelsForTarget,
   sendJson
-} from "./chunk-3BD4FGX2.js";
+} from "./chunk-RGYLXHT3.js";
 import {
   OPENCODE_SESSION_HEADER,
   TRUST_SYSTEM_CERTS_NOTICE,
@@ -1168,13 +1168,14 @@ function sdkPoolRoute(evidence, model, request2, health) {
   for (const definition of Object.values(request2.tools ?? {})) {
     if (definition.execute) throw new Error("Pool tools must not execute inside Relay");
   }
+  const scopesFor = (failure) => health ? failure.kind === "rate-limit" ? [...health.scopes, ...health.accountScopes ?? []] : health.scopes : [];
   return {
     ...evidence,
     recordFailure: health ? async (failure) => {
-      await health.store.record(health.scopes, failure);
+      await health.store.record(scopesFor(failure), failure);
     } : void 0,
     async open(abortSignal) {
-      const decision = health ? await health.store.acquire({ id: evidence.revision, scopes: health.scopes }) : void 0;
+      const decision = health ? await health.store.acquire({ id: evidence.revision, scopes: [...health.scopes, ...health.accountScopes ?? []] }) : void 0;
       if (decision && !decision.ok) throw new Error("Pool route entered cooldown");
       return (async function* () {
         let success = false;
@@ -1197,7 +1198,7 @@ function sdkPoolRoute(evidence, model, request2, health) {
             if (part.type === "error" && !abortSignal.aborted) {
               const failure = poolFailure(part.error);
               if (health && failure.kind !== "canceled") {
-                const result2 = await health.store.record(health.scopes, failure);
+                const result2 = await health.store.record(scopesFor(failure), failure);
                 recorded = recorded || result2.recorded;
               }
             }
@@ -1208,7 +1209,7 @@ function sdkPoolRoute(evidence, model, request2, health) {
           if (health && decision && decision.ok && !abortSignal.aborted) {
             const failure = poolFailure(error);
             if (failure.kind !== "canceled") {
-              const result = await health.store.record(health.scopes, failure);
+              const result = await health.store.record(scopesFor(failure), failure);
               recorded = recorded || result.recorded;
             }
           }
@@ -1261,6 +1262,9 @@ var MAX_LABEL_CHARS = 200;
 var RETENTION_MS = 864e5;
 var LOCK_POLL_MS = 10;
 var DEFAULT_LOCK_TIMEOUT_MS = 5e3;
+function poolAccountScope(providerId) {
+  return "account:" + providerId;
+}
 function poolEndpointScope(providerId, endpointRevision, modelId) {
   return "endpoint:" + providerId + "/" + endpointRevision + "/" + modelId;
 }
@@ -1778,7 +1782,8 @@ async function prepareCodexPoolRoutes(options) {
     const context = await (options.checkContext ?? defaultContextCheck)(params, receipt);
     if (!context.verified || !context.fits) continue;
     const scopes = [poolEndpointScope(provider.id, revision, model.id)];
-    const unavailableUntil = await options.health.cooldownFor({ id: revision, scopes });
+    const accountScopes = [poolAccountScope(provider.id)];
+    const unavailableUntil = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
     if (unavailableUntil !== void 0 && unavailableUntil > Date.now()) continue;
     const apiKey = await resolveLocalProviderApiKey(provider);
     if (apiKey === null || apiKey === void 0) continue;
@@ -1811,7 +1816,7 @@ async function prepareCodexPoolRoutes(options) {
       effortLevels: receipt.effortLevels,
       contextFits: context.fits,
       contextVerified: context.verified
-    }, languageModel, { ...sdkParams, system: instructions, maxOutputTokens: params.maxOutputTokens }, { store: options.health, scopes });
+    }, languageModel, { ...sdkParams, system: instructions, maxOutputTokens: params.maxOutputTokens }, { store: options.health, scopes, accountScopes });
     routes.push({ ...dispatch, identity, toolContext: params.toolContext });
   }
   return routes;
@@ -1883,7 +1888,8 @@ async function prepareClaudePoolRoutes(options) {
     }, receipt.contextWindow, requestedOutput).fits;
     if (!fits) continue;
     const scopes = [poolEndpointScope(provider.id, revision, model.id)];
-    const until = await options.health.cooldownFor({ id: revision, scopes });
+    const accountScopes = [poolAccountScope(provider.id)];
+    const until = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
     if (until !== void 0 && until > Date.now()) continue;
     const apiKey = await resolveLocalProviderApiKey(provider);
     if (!apiKey) continue;
@@ -1921,7 +1927,7 @@ async function prepareClaudePoolRoutes(options) {
       temperature: params.temperature,
       providerOptions: params.providerOptions,
       headers: params.headers
-    }, { store: options.health, scopes }));
+    }, { store: options.health, scopes, accountScopes }));
   }
   return routes;
 }
@@ -18467,11 +18473,11 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-YJSFP4DE.js");
+    const { runUiCommand } = await import("./ui-command-NSIY5JL2.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-VFECHWLO.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-QQUKV27N.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

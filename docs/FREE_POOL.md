@@ -87,3 +87,17 @@ models you trust:
   started with the same build reads the switch on every request. You can also fix the list when a tool
   starts with `RELAY_POOL_FORCE_FAIL="kilo/reflection/beam-free"`. Nothing is sent to a forced member and
   no cooldown is saved, so clearing the switch restores normal behavior immediately.
+
+## What happens when a model fails
+
+- Any failure before the model has written output moves the request to the next member (up to 8 per
+  request, within a one-minute budget). A cancelled request stops.
+- The failed member is demoted so it is not first in line next time: server errors and timeouts 60 s,
+  access errors (401/403/404) 5 min, unknown errors 30 s, doubling on repeats up to 10 min. A rate
+  limit uses the longer ladder (2 min, 10 min, 1 h, ...) or the provider's Retry-After.
+- A rate limit applies to the whole provider account (free-tier limits are per account), so the other
+  pool models on that account are skipped too. Other failures only demote the model that failed.
+- A rejected request (400/422) or an oversized one never demotes anything; it just moves on.
+- `relay-ai pool log`, the Free Pool page and the `--trace` log show every failure with its reason and
+  the provider's own message (for example "free-models-per-day exceeded (HTTP 429)"), with credentials
+  redacted and the text capped at 200 characters. They stay on this computer.

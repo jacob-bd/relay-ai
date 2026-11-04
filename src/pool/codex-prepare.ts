@@ -11,7 +11,7 @@ import { sdkPoolRoute } from './sdk-route.js';
 import { poolOutputCap } from './output-limit.js';
 import { poolProviderHeaders } from './session-id.js';
 import type { CodexPoolRoute } from './codex-runtime.js';
-import { PoolHealthStore, poolEndpointScope } from './health.js';
+import { PoolHealthStore, poolAccountScope, poolEndpointScope } from './health.js';
 
 export interface PoolContextCheck {
   verified: boolean;
@@ -111,7 +111,8 @@ export async function prepareCodexPoolRoutes(options: {
     const context = await (options.checkContext ?? defaultContextCheck)(params, receipt);
     if (!context.verified || !context.fits) continue;
     const scopes = [poolEndpointScope(provider.id, revision, model.id)];
-    const unavailableUntil = await options.health.cooldownFor({ id: revision, scopes });
+    const accountScopes = [poolAccountScope(provider.id)];
+    const unavailableUntil = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
     if (unavailableUntil !== undefined && unavailableUntil > Date.now()) continue;
     const apiKey = await resolveLocalProviderApiKey(provider);
     if (apiKey === null || apiKey === undefined) continue;
@@ -130,7 +131,7 @@ export async function prepareCodexPoolRoutes(options: {
       // claim is refused above, so no named default rung is required.
       defaultEffortVerified: true,
       effortLevels: receipt.effortLevels, contextFits: context.fits, contextVerified: context.verified,
-    }, languageModel, { ...sdkParams, system: instructions, maxOutputTokens: params.maxOutputTokens! }, { store: options.health, scopes });
+    }, languageModel, { ...sdkParams, system: instructions, maxOutputTokens: params.maxOutputTokens! }, { store: options.health, scopes, accountScopes });
     routes.push({ ...dispatch, identity, toolContext: params.toolContext });
   }
   return routes;

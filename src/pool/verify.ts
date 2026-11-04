@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { poolProviderHeaders } from './session-id.js';
+import { redactDiagnostic } from './diagnostic.js';
 import { createLanguageModel, effortProviderOptions } from '../provider-factory.js';
 import { resolveLocalProviderApiKey } from '../provider-catalog.js';
 import { providerRefreshToken } from '../provider-runtime.js';
@@ -39,16 +40,7 @@ function enrollmentContextProblem(model: LocalProviderModel): boolean {
 
 /** Error text for pool diagnostics; strips anything that looks like a credential. */
 export function poolDiagnostic(error: unknown): string | undefined {
-  const text = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
-  const redacted = text
-    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 [redacted]')
-    .replace(/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{6,}/gi, '[redacted]')
-    .replace(/\b(?:sk|pk|rk|api[-_]?key|token|secret|authorization)[-_A-Za-z0-9]*\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{6,}/gi,
-      '[redacted]')
-    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '[redacted]')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return redacted ? redacted.slice(0, 160) : undefined;
+  return redactDiagnostic(error instanceof Error ? error.message : typeof error === 'string' ? error : '');
 }
 
 /** One canonical enrollment path shared by CLI and the UI Test action. */

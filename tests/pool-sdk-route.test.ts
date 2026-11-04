@@ -8,7 +8,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { sdkPoolRoute } from '../src/pool/sdk-route.js';
 import type { PoolRouteEvidence } from '../src/pool/eligibility.js';
 import { runPoolAttempts, type PoolEvent, type PoolLimits } from '../src/pool/attempt.js';
-import { PoolHealthStore, poolModelScope } from '../src/pool/health.js';
+import { PoolHealthStore, poolAccountScope, poolModelScope } from '../src/pool/health.js';
 import { poolFailure, retryPoolFailure } from '../src/pool/errors.js';
 const evidence: PoolRouteEvidence = {
   member: { providerId: 'account-2', modelId: 'm' }, revision: '1', freeStatus: 'verified_free',
@@ -107,5 +107,33 @@ describe('pool SDK transport', () => {
       server.closeAllConnections();
       await new Promise<void>(resolve => server.close(() => resolve()));
     }
+  });
+
+  const failingRoute = (error: Error, store: PoolHealthStore) => {
+    const model = new Proxy({}, { get() { throw error; } }) as LanguageModel;
+    const scopes = [poolModelScope('account-2', 'm')];
+    const accountScopes = [poolAccountScope('account-2')];
+    return sdkPoolRoute(evidence, model, { messages: [], maxOutputTokens: 128 }, { store, scopes, accountScopes });
+  };
+  const drain = async (route: ReturnType<typeof sdkPoolRoute>) => {
+    const limits: PoolLimits = { attempts: 1, firstContentMs: 100, idleMs: 100, totalMs: 500, bufferBytes: 4096, cleanupMs: 100 };
+    await (async () => { for await (const _part of runPoolAttempts([route], new AbortController().signal, limits, () => false)) { /* drain */ } })().catch(() => {});
+  };
+
+  it('a rate limit cools the whole provider account, so sibling models wait too', async () => {
+    const store = new PoolHealthStore({ root, now });
+    await drain(failingRoute(Object.assign(new Error('quota'), { statusCode: 429 }), store));
+    const sibling = { id: 'other-revision', scopes: [poolModelScope('account-2', 'sibling'), poolAccountScope('account-2')] };
+    expect(await store.cooldownFor(sibling)).toBeGreaterThan(clock);
+    // A different provider account is unaffected.
+    expect(await store.cooldownFor({ id: 'x', scopes: [poolModelScope('account-3', 'm'), poolAccountScope('account-3')] })).toBeUndefined();
+  });
+
+  it('a server error cools only the failing model, not its siblings', async () => {
+    const store = new PoolHealthStore({ root, now });
+    await drain(failingRoute(Object.assign(new Error('boom'), { statusCode: 500 }), store));
+    expect(await store.cooldownFor({ id: evidence.revision, scopes: [poolModelScope('account-2', 'm')] })).toBeGreaterThan(clock);
+    const sibling = { id: 'other-revision', scopes: [poolModelScope('account-2', 'sibling'), poolAccountScope('account-2')] };
+    expect(await store.cooldownFor(sibling)).toBeUndefined();
   });
 });

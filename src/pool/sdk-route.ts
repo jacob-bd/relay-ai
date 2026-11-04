@@ -1,5 +1,5 @@
 import type { PoolHealthStore } from './health.js';
-import { poolFailure } from './errors.js';
+import { poolFailure, type PoolFailure } from './errors.js';
 import { streamText, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 import type { PoolEvent } from './attempt.js';
 import type { DispatchRoute } from './dispatch.js';
@@ -20,7 +20,8 @@ export function sdkPoolRoute(
   evidence: PoolRouteEvidence,
   model: LanguageModel,
   request: PoolSdkRequest,
-  health?: { store: PoolHealthStore; scopes: readonly string[] },
+  /** `scopes` = this model; `accountScopes` = the whole provider account, cooled only by a rate limit. */
+  health?: { store: PoolHealthStore; scopes: readonly string[]; accountScopes?: readonly string[] },
 ): DispatchRoute {
   if (!Number.isSafeInteger(request.maxOutputTokens) || request.maxOutputTokens <= 0) {
     throw new Error('Pool requests require a bounded output reservation');
@@ -28,11 +29,16 @@ export function sdkPoolRoute(
   for (const definition of Object.values(request.tools ?? {})) {
     if (definition.execute) throw new Error('Pool tools must not execute inside Relay');
   }
+  // Free-tier rate limits apply to the provider account, so every model on it must wait; any other
+  // failure (a bad model, a server error) says nothing about its siblings.
+  const scopesFor = (failure: PoolFailure): readonly string[] => health
+    ? (failure.kind === 'rate-limit' ? [...health.scopes, ...(health.accountScopes ?? [])] : health.scopes)
+    : [];
   return {
     ...evidence,
-    recordFailure: health ? async failure => { await health.store.record(health.scopes, failure); } : undefined,
+    recordFailure: health ? async failure => { await health.store.record(scopesFor(failure), failure); } : undefined,
     async open(abortSignal) {
-      const decision = health ? await health.store.acquire({ id: evidence.revision, scopes: health.scopes }) : undefined;
+      const decision = health ? await health.store.acquire({ id: evidence.revision, scopes: [...health.scopes, ...(health.accountScopes ?? [])] }) : undefined;
       if (decision && !decision.ok) throw new Error('Pool route entered cooldown');
       return (async function* () {
         let success = false;
@@ -53,7 +59,7 @@ export function sdkPoolRoute(
             if (part.type === 'error' && !abortSignal.aborted) {
               const failure = poolFailure(part.error);
               if (health && failure.kind !== 'canceled') {
-                const result = await health.store.record(health.scopes, failure);
+                const result = await health.store.record(scopesFor(failure), failure);
                 recorded = recorded || result.recorded;
               }
             }
@@ -64,7 +70,7 @@ export function sdkPoolRoute(
           if (health && decision && decision.ok && !abortSignal.aborted) {
             const failure = poolFailure(error);
             if (failure.kind !== 'canceled') {
-              const result = await health.store.record(health.scopes, failure);
+              const result = await health.store.record(scopesFor(failure), failure);
               recorded = recorded || result.recorded;
             }
           }

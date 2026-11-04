@@ -15,6 +15,7 @@ import {
   MIN_CONTEXT_WINDOW,
   createLanguageModel,
   effortProviderOptions,
+  formatUpstreamError,
   getAgentProviderModels,
   getReasoningCapabilities,
   isProviderKind,
@@ -104,7 +105,9 @@ function formatPoolActivityLine(e) {
   const when = new Date(e.at);
   const time = Number.isNaN(when.getTime()) ? e.at : `${when.toLocaleDateString()} ${when.toLocaleTimeString([], { hour12: false })}`;
   const secs = typeof e.ms === "number" ? ` ${(e.ms / 1e3).toFixed(1)}s` : "";
-  return `${time}  ${e.event === "served" ? "answered" : "FAILED  "}  ${e.providerId}/${e.modelId}${e.reason ? "  " + e.reason : ""}${secs}`;
+  const detail = e.detail ? `
+    \u21B3 ${e.detail}` : "";
+  return `${time}  ${e.event === "served" ? "answered" : "FAILED  "}  ${e.providerId}/${e.modelId}${e.reason ? "  " + e.reason : ""}${secs}${detail}`;
 }
 function parseActivityLine(line) {
   try {
@@ -1281,6 +1284,25 @@ async function verifyPoolMember(member, providers, signal, deps, now = Date.now(
   };
 }
 
+// src/pool/diagnostic.ts
+function redactDiagnostic(text, max = 160) {
+  const redacted = text.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]").replace(/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{6,}/gi, "[redacted]").replace(
+    /\b(?:sk|pk|rk|api[-_]?key|token|secret|authorization)[-_A-Za-z0-9]*\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{6,}/gi,
+    "[redacted]"
+  ).replace(/\b[A-Za-z0-9_-]{32,}\b/g, "[redacted]").replace(/\s+/g, " ").trim();
+  return redacted ? redacted.slice(0, max) : void 0;
+}
+function poolErrorDetail(error) {
+  try {
+    const formatted = formatUpstreamError(error);
+    const raw = error instanceof Error ? error.message : "";
+    const text = formatted && formatted !== "Upstream model request failed." ? formatted : raw;
+    return redactDiagnostic(text, 200);
+  } catch {
+    return void 0;
+  }
+}
+
 // src/http-utils.ts
 import * as zlib from "zlib";
 function decodeRequestBody(raw, encoding) {
@@ -1362,12 +1384,7 @@ function enrollmentContextProblem(model) {
   return Boolean(model.contextWindowEstimated) || !Number.isSafeInteger(model.contextWindow) || !model.contextWindow || model.contextWindow <= 0;
 }
 function poolDiagnostic(error) {
-  const text = error instanceof Error ? error.message : typeof error === "string" ? error : "";
-  const redacted = text.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]").replace(/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{6,}/gi, "[redacted]").replace(
-    /\b(?:sk|pk|rk|api[-_]?key|token|secret|authorization)[-_A-Za-z0-9]*\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{6,}/gi,
-    "[redacted]"
-  ).replace(/\b[A-Za-z0-9_-]{32,}\b/g, "[redacted]").replace(/\s+/g, " ").trim();
-  return redacted ? redacted.slice(0, 160) : void 0;
+  return redactDiagnostic(error instanceof Error ? error.message : typeof error === "string" ? error : "");
 }
 async function verifyConfiguredPoolMember(member, providers, signal, options = {}) {
   const provider = providers.find((item) => item.id === member.providerId);
@@ -1416,6 +1433,7 @@ export {
   readPoolActivity,
   formatPoolActivityLine,
   followPoolActivity,
+  poolErrorDetail,
   DEFAULT_FORCE_FAIL_MINUTES,
   readForceFailState,
   setForceFail,
@@ -1450,4 +1468,4 @@ export {
   poolDiagnostic,
   verifyConfiguredPoolMember
 };
-//# sourceMappingURL=chunk-3BD4FGX2.js.map
+//# sourceMappingURL=chunk-RGYLXHT3.js.map

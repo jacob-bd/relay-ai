@@ -2,7 +2,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { describePoolFailure, poolRouteMember, readPoolActivity, recordPoolActivity } from '../src/pool/activity.js';
+import { poolErrorDetail } from '../src/pool/diagnostic.js';
+import { formatPoolActivityLine, describePoolFailure, poolRouteMember, readPoolActivity, recordPoolActivity } from '../src/pool/activity.js';
 
 describe('pool activity log', () => {
   beforeEach(() => { process.env['RELAY_AI_HOME'] = mkdtempSync(join(tmpdir(), 'relay-activity-')); });
@@ -42,5 +43,26 @@ describe('following the log', () => {
     controller.abort();
     await done;
     expect(seen).toEqual(['one', 'two']);
+  });
+});
+
+describe('backend error detail', () => {
+  it('keeps what the provider said, redacts credentials and caps the length', () => {
+    const error = Object.assign(new Error('Too Many Requests'), {
+      statusCode: 429,
+      responseBody: JSON.stringify({ error: { message: 'Rate limit exceeded: free-models-per-day. Authorization: Bearer sk-live-abcdef123456 retry later' } }),
+    });
+    const detail = poolErrorDetail(error)!;
+    expect(detail).toContain('Rate limit exceeded: free-models-per-day');
+    expect(detail).toContain('HTTP 429');
+    expect(detail).not.toContain('sk-live');
+    expect(poolErrorDetail(new Error('x'.repeat(400)))!.length).toBeLessThanOrEqual(200);
+  });
+
+  it('shows the detail under the line in pool log output', () => {
+    const line = formatPoolActivityLine({ at: '2026-11-04T20:00:00Z', target: 'claude', event: 'failed', providerId: 'kilo', modelId: 'm',
+      reason: 'rate limit (429)', detail: 'free-models-per-day exceeded (HTTP 429)', ms: 400 });
+    expect(line).toContain('rate limit (429)');
+    expect(line).toContain('↳ free-models-per-day exceeded (HTTP 429)');
   });
 });

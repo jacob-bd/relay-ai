@@ -8,7 +8,7 @@ import { currentPoolReceipt, poolEndpointRevision, type PoolCapabilityReceipt } 
 import { sdkPoolRoute } from './sdk-route.js';
 import type { DispatchRoute } from './dispatch.js';
 import type { PoolHealthStore } from './health.js';
-import { poolEndpointScope } from './health.js';
+import { poolAccountScope, poolEndpointScope } from './health.js';
 import { poolRequestFitsWindow } from './context.js';
 import { translatedEffortClaim } from './codex-prepare.js';
 import { poolOutputCap } from './output-limit.js';
@@ -83,7 +83,9 @@ export async function prepareClaudePoolRoutes(options: ClaudeRouteOptions): Prom
     }, receipt.contextWindow, requestedOutput).fits;
     if (!fits) continue;
     const scopes = [poolEndpointScope(provider.id, revision, model.id)];
-    const until = await options.health.cooldownFor({ id: revision, scopes });
+    // A rate limit cools the whole provider account (free-tier limits are per account), so sibling models wait too.
+    const accountScopes = [poolAccountScope(provider.id)];
+    const until = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
     if (until !== undefined && until > Date.now()) continue;
     const apiKey = await resolveLocalProviderApiKey(provider);
     if (!apiKey) continue;
@@ -103,7 +105,7 @@ export async function prepareClaudePoolRoutes(options: ClaudeRouteOptions): Prom
       messages: params.messages, tools: params.tools, system: params.instructions,
       maxOutputTokens: requestedOutput, temperature: params.temperature,
       providerOptions: params.providerOptions, headers: params.headers,
-    }, { store: options.health, scopes }));
+    }, { store: options.health, scopes, accountScopes }));
   }
   return routes;
 }

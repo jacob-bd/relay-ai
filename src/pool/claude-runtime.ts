@@ -4,6 +4,7 @@ import type { FreePoolPreferences } from '../types.js';
 import { MAX_POOL_ATTEMPTS, type PoolLimits } from './attempt.js';
 import { retryPoolFailure } from './errors.js';
 import { describePoolFailure, poolRouteMember, recordPoolActivity } from './activity.js';
+import { poolErrorDetail } from './diagnostic.js';
 import { dispatchFreePool, type DispatchRoute } from './dispatch.js';
 import { anthropicErrorType, formatUpstreamError, upstreamHttpStatus } from '../codex/upstream-error.js';
 
@@ -149,8 +150,9 @@ export async function serveClaudePool(options: ClaudePoolOptions): Promise<Claud
       const member = poolRouteMember(id);
       if (!member) return;
       const reason = describePoolFailure(error);
-      recordPoolActivity({ target: 'claude', event: 'failed', ...member, reason, ms: Date.now() - attemptStarted });
-      options.trace?.(`pool failed: ${member.providerId}/${member.modelId} (${reason}) after ${((Date.now() - attemptStarted) / 1000).toFixed(1)}s`);
+      const detail = reason.startsWith('simulated') ? undefined : poolErrorDetail(error);
+      recordPoolActivity({ target: 'claude', event: 'failed', ...member, reason, ...(detail ? { detail } : {}), ms: Date.now() - attemptStarted });
+      options.trace?.(`pool failed: ${member.providerId}/${member.modelId} (${reason}) after ${((Date.now() - attemptStarted) / 1000).toFixed(1)}s${detail ? ': ' + detail : ''}`);
     },
   });
   try {

@@ -1416,6 +1416,7 @@ input { font-family: inherit; }
 .pool-activity-time { color: var(--text-3); font-variant-numeric: tabular-nums; }
 .pool-activity-event { font-weight: 600; white-space: nowrap; }
 .pool-activity-reason { color: var(--text-3); }
+.pool-activity-detail { flex-basis: 100%; color: var(--text-3); font-size: 12px; padding-left: 4px; overflow-wrap: anywhere; }
 .pool-activity-empty { color: var(--text-3); font-size: 13px; padding: 8px 2px; }
 
 .model-test-badge {

@@ -18,12 +18,13 @@ import {
   fetchProviderCatalog,
   forcedFailures,
   localProvidersToServerModels,
+  poolErrorDetail,
   poolRouteMember,
   providersForTarget,
   readBody,
   recordPoolActivity,
   sendJson
-} from "./chunk-3BD4FGX2.js";
+} from "./chunk-RGYLXHT3.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -2250,8 +2251,9 @@ async function serveClaudePool(options) {
       const member = poolRouteMember(id);
       if (!member) return;
       const reason = describePoolFailure(error);
-      recordPoolActivity({ target: "claude", event: "failed", ...member, reason, ms: Date.now() - attemptStarted });
-      options.trace?.(`pool failed: ${member.providerId}/${member.modelId} (${reason}) after ${((Date.now() - attemptStarted) / 1e3).toFixed(1)}s`);
+      const detail = reason.startsWith("simulated") ? void 0 : poolErrorDetail(error);
+      recordPoolActivity({ target: "claude", event: "failed", ...member, reason, ...detail ? { detail } : {}, ms: Date.now() - attemptStarted });
+      options.trace?.(`pool failed: ${member.providerId}/${member.modelId} (${reason}) after ${((Date.now() - attemptStarted) / 1e3).toFixed(1)}s${detail ? ": " + detail : ""}`);
     }
   });
   try {
@@ -8342,4 +8344,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-NIZNC4S7.js.map
+//# sourceMappingURL=chunk-3QIYEBP6.js.map

@@ -10,8 +10,10 @@ export interface PoolActivity {
   event: 'served' | 'failed';
   providerId: string;
   modelId: string;
-  /** Fixed wording (see describePoolFailure); never raw upstream text. */
+  /** Short fixed label (see describePoolFailure). */
   reason?: string;
+  /** What the backend said, credentials redacted and capped (see poolErrorDetail). */
+  detail?: string;
   ms?: number;
 }
 
@@ -91,7 +93,8 @@ export function formatPoolActivityLine(e: PoolActivity): string {
   const time = Number.isNaN(when.getTime()) ? e.at
     : `${when.toLocaleDateString()} ${when.toLocaleTimeString([], { hour12: false })}`;
   const secs = typeof e.ms === 'number' ? ` ${(e.ms / 1000).toFixed(1)}s` : '';
-  return `${time}  ${e.event === 'served' ? 'answered' : 'FAILED  '}  ${e.providerId}/${e.modelId}${e.reason ? '  ' + e.reason : ''}${secs}`;
+  const detail = e.detail ? `\n    ↳ ${e.detail}` : '';
+  return `${time}  ${e.event === 'served' ? 'answered' : 'FAILED  '}  ${e.providerId}/${e.modelId}${e.reason ? '  ' + e.reason : ''}${secs}${detail}`;
 }
 
 function parseActivityLine(line: string): PoolActivity | undefined {
