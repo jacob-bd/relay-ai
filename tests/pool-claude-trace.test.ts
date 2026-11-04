@@ -91,7 +91,7 @@ describe('a member that is cooling down is skipped, not fatal', () => {
     expect(out.join('')).toContain('OK');
     const [served, failed] = readPoolActivity(2);
     expect(served).toMatchObject({ event: 'served', providerId: 'go' });
-    expect(failed).toMatchObject({ event: 'failed', providerId: 'nvidia', reason: 'skipped: cooling down after a recent failure' });
+    expect(failed).toMatchObject({ event: 'failed', providerId: 'nvidia', reason: 'skipped: recovering from an earlier failure' });
   });
 });
 

@@ -103,7 +103,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   writeResponsesErrorStream
-} from "./chunk-3QIYEBP6.js";
+} from "./chunk-DEK6TQDZ.js";
 import {
   translateRequest
 } from "./chunk-E7FSS5M2.js";
@@ -134,7 +134,7 @@ import {
   resolveRelayCatalogSlots,
   routableModelsForTarget,
   sendJson
-} from "./chunk-RGYLXHT3.js";
+} from "./chunk-Q7H4LVAL.js";
 import {
   OPENCODE_SESSION_HEADER,
   TRUST_SYSTEM_CERTS_NOTICE,
@@ -1216,7 +1216,7 @@ function sdkPoolRoute(evidence, model, request2, health) {
           throw error;
         } finally {
           if (health && decision && decision.ok) {
-            if (success && !recorded && !abortSignal.aborted) await decision.settle(true);
+            if (success && !recorded) await decision.settle(true);
             else await decision.release();
           }
         }
@@ -18473,11 +18473,11 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-NSIY5JL2.js");
+    const { runUiCommand } = await import("./ui-command-SWHEHIEH.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-QQUKV27N.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-AYYCRFXU.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

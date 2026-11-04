@@ -77,7 +77,10 @@ export function sdkPoolRoute(
           throw error;
         } finally {
           if (health && decision && decision.ok) {
-            if (success && !recorded && !abortSignal.aborted) await decision.settle(true);
+            // The finish event is the proof of success. The attempt loop aborts its own signal as it cleans up
+            // right after, so checking `aborted` here made every successful probe look cancelled and the
+            // member stayed half-open forever (concurrent requests were then turned away as "cooling down").
+            if (success && !recorded) await decision.settle(true);
             else await decision.release();
           }
         }

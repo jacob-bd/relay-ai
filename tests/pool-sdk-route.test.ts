@@ -136,4 +136,38 @@ describe('pool SDK transport', () => {
     const sibling = { id: 'other-revision', scopes: [poolModelScope('account-2', 'sibling'), poolAccountScope('account-2')] };
     expect(await store.cooldownFor(sibling)).toBeUndefined();
   });
+
+  it('a successful answer after a cooldown clears the member\'s failure entry', async () => {
+    const server = createServer((req, res) => {
+      req.resume();
+      req.once('end', () => {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.write('data: ' + JSON.stringify({ id: 'f', object: 'chat.completion.chunk',
+          choices: [{ index: 0, delta: { role: 'assistant', content: 'OK' }, finish_reason: null }] }) + '\n\n');
+        res.write('data: ' + JSON.stringify({ id: 'f', object: 'chat.completion.chunk',
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }) + '\n\n');
+        res.end('data: [DONE]\n\n');
+      });
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const baseURL = 'http://127.0.0.1:' + (server.address() as { port: number }).port;
+    try {
+      const store = new PoolHealthStore({ root, now });
+      const scopes = [poolModelScope('account-2', 'm')];
+      await store.record(scopes, poolFailure(Object.assign(new Error('quota'), { statusCode: 429 }), clock));
+      clock += 3 * 60_000; // the cooldown has expired: the next request is the recovery probe
+      expect(await store.size()).toBe(1);
+      const model = createOpenAICompatible({ name: 'a', apiKey: 'fixture', baseURL: baseURL + '/v1' }).chatModel('m');
+      const route = sdkPoolRoute(evidence, model, { messages: [{ role: 'user', content: 'hello' }], maxOutputTokens: 32 }, { store, scopes });
+      const limits: PoolLimits = { attempts: 1, firstContentMs: 1000, idleMs: 1000, totalMs: 3000, bufferBytes: 8192, cleanupMs: 100 };
+      const out: PoolEvent[] = [];
+      for await (const part of runPoolAttempts([route], new AbortController().signal, limits, retryPoolFailure)) out.push(part);
+      expect(out.some(part => part.type === 'text-delta' && part.text === 'OK')).toBe(true);
+      // A healthy member must not stay half-open: the entry is gone and a second request may probe freely.
+      expect(await store.size()).toBe(0);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
 });

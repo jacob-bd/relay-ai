@@ -24,7 +24,7 @@ import {
   readBody,
   recordPoolActivity,
   sendJson
-} from "./chunk-RGYLXHT3.js";
+} from "./chunk-Q7H4LVAL.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -8344,4 +8344,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-3QIYEBP6.js.map
+//# sourceMappingURL=chunk-DEK6TQDZ.js.map
