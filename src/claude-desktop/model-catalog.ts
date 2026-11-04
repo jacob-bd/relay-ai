@@ -26,8 +26,9 @@ export type ClaudeAppCatalogResolution =
   | { ok: false; error: string };
 
 export async function resolveClaudeAppCatalog(
-  selectedProvider: LocalProvider,
-  selectedModel: LocalProviderModel,
+  // Both undefined when the session starts on the Relay Free Pool: the catalog is then just the favorites.
+  selectedProvider: LocalProvider | undefined,
+  selectedModel: LocalProviderModel | undefined,
   compatibleProviders: LocalProvider[],
   favorites: FavoriteModel[],
   max = MAX_MODEL_CATALOG,
@@ -44,18 +45,17 @@ export async function resolveClaudeAppCatalog(
       return provider && model ? { provider, model } : undefined;
     },
   };
-  const starting = await resolveFavorite(
-    { providerId: selectedProvider.id, modelId: selectedModel.id },
-    context,
-  );
+  const starting = selectedProvider && selectedModel
+    ? await resolveFavorite({ providerId: selectedProvider.id, modelId: selectedModel.id }, context)
+    : undefined;
 
-  if (!starting) {
+  if (selectedProvider && selectedModel && !starting) {
     return {
       ok: false,
       error: `Model ${selectedModel.id} is no longer available on ${selectedProvider.name}.`,
     };
   }
-  if (!starting.apiKey.trim()) {
+  if (selectedProvider && starting && !starting.apiKey.trim()) {
     return {
       ok: false,
       error: `No credential for ${selectedProvider.name}. Run relay-ai providers auth ${selectedProvider.id}.`,

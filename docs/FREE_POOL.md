@@ -76,6 +76,9 @@ models you trust:
   your normal Codex models and favorites sit beside it in `/model`, with *Relay models only* just your
   favorites do. With no favorites that mode is the pool alone. Codex requests are not yet written to
   `relay-ai pool log`.
+- **Claude Desktop** (`relay claude-app`) and the **ChatGPT app** (`relay chatgpt`): both list the same entry.
+  Claude Desktop shows the pool first in its model list, then your favorites. The ChatGPT app opens on the
+  pool, with native models and favorites beside it in *Native + Relay*, or just favorites in *Relay only*.
 - Other launchers do not offer the pool until each is confirmed working.
 
 ## Seeing which model answered, and checking failover

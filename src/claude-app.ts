@@ -157,6 +157,22 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
   let activeProvider: LocalProvider | null = null;
   let selectedModel: LocalProviderModel | null = null;
   let useFavorites = false;
+  // True when the Relay Free Pool is what the session starts on: no Relay starting model, just the pool plus favorites.
+  let startOnPool = false;
+
+  // Relay Free Pool joins every Claude Desktop launch when the opt-in pool is
+  // enabled and at least one member has fresh, servable Claude evidence. The
+  // pool shares the Claude Code eligibility gates, but it is fed the default
+  // registry catalog that verification used (not the Claude-Desktop-filtered
+  // catalog), so endpoint receipts match.
+  let autoPool: ClaudeAutoPool | undefined;
+  if (prefs.freePool?.enabled === true) {
+    try {
+      autoPool = prepareClaudeAutoPool(prefs, await fetchProviderCatalog());
+    } catch (err) {
+      p.log.warn(`Relay Free Pool is enabled but could not be prepared: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   if (boot?.launchProvider && boot?.launchModel) {
     const bootSelection = resolveBootSelection(
@@ -173,9 +189,12 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
     selectedModel = bootSelection.model;
   } else {
     providerPick: while (true) {
-      const pickedProvider = await pickCodexProvider(compatible, prefs, hasFavorites);
+      const pickedProvider = await pickCodexProvider(compatible, prefs, hasFavorites, undefined, Boolean(autoPool));
       if (!pickedProvider) return 0;
-      if (pickedProvider === '__pool__') continue; // never offered here (hasPool not set)
+      if (pickedProvider === '__pool__') {
+        startOnPool = true;
+        break providerPick;
+      }
 
       if (pickedProvider === '__favorites__') {
         const favoriteStart = await pickFavoriteStartModel(
@@ -217,31 +236,17 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
     }
   }
 
-  if (!activeProvider || !selectedModel) {
+  if (!startOnPool && (!activeProvider || !selectedModel)) {
     p.log.error('No Claude App launch model was selected.');
     return 1;
-  }
-
-  // Relay Free Pool joins every Claude Desktop launch when the opt-in pool is
-  // enabled and at least one member has fresh, servable Claude evidence. The
-  // pool shares the Claude Code eligibility gates, but it is fed the default
-  // registry catalog that verification used (not the Claude-Desktop-filtered
-  // catalog), so endpoint receipts match.
-  let autoPool: ClaudeAutoPool | undefined;
-  if (prefs.freePool?.enabled === true) {
-    try {
-      autoPool = prepareClaudeAutoPool(prefs, await fetchProviderCatalog());
-    } catch (err) {
-      p.log.warn(`Relay Free Pool is enabled but could not be prepared: ${err instanceof Error ? err.message : String(err)}`);
-    }
   }
   // Reserve one catalog slot for the synthetic pool entry so the cap still
   // holds and capacity-skipped favorites are reported normally.
   const catalogLimit = MAX_MODEL_CATALOG - (autoPool ? 1 : 0);
 
   const catalogResolution = await resolveClaudeAppCatalog(
-    activeProvider,
-    selectedModel,
+    startOnPool ? undefined : activeProvider ?? undefined,
+    startOnPool ? undefined : selectedModel ?? undefined,
     compatible,
     favorites,
     catalogLimit,
@@ -277,7 +282,11 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
       trace,
     );
     const serverModels = expandClaudeAppEffortVariants(builtCatalog.serverModels, catalogLimit);
-    if (autoPool) serverModels.push(claudePoolServerModel(autoPool));
+    if (autoPool) {
+      // Started on the pool: list it first. Otherwise it follows the chosen model and favorites.
+      if (startOnPool) serverModels.unshift(claudePoolServerModel(autoPool));
+      else serverModels.push(claudePoolServerModel(autoPool));
+    }
     cloudCodeBackend = builtCatalog.backend;
 
     backupMetaJson();
@@ -314,13 +323,15 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
     sessionActive = true;
     setupExitCleanup(uuid);
 
-    const prevRecent = prefs.recentModelsByProvider?.[activeProvider.id] ?? [];
-    const updatedRecent = [selectedModel.id, ...prevRecent.filter((id: string) => id !== selectedModel.id)].slice(0, 3);
-    savePreferences({
-      lastClaudeAppProvider: activeProvider.id,
-      lastClaudeAppModel: selectedModel.id,
-      recentModelsByProvider: { ...prefs.recentModelsByProvider, [activeProvider.id]: updatedRecent },
-    });
+    if (!startOnPool && activeProvider && selectedModel) {
+      const prevRecent = prefs.recentModelsByProvider?.[activeProvider.id] ?? [];
+      const updatedRecent = [selectedModel.id, ...prevRecent.filter((id: string) => id !== selectedModel.id)].slice(0, 3);
+      savePreferences({
+        lastClaudeAppProvider: activeProvider.id,
+        lastClaudeAppModel: selectedModel.id,
+        recentModelsByProvider: { ...prefs.recentModelsByProvider, [activeProvider.id]: updatedRecent },
+      });
+    }
 
     console.log(`\n${pc.green('✔')} Proxy started on port ${proxyHandle.port}`);
     if (deploymentModeChange?.previous === '1p') {
@@ -334,8 +345,13 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
     }
 
     console.log(`\n${pc.bold('Claude Desktop 3P Mode Active')}`);
-    console.log(`${pc.dim('Model:')}    ${selectedModel.id}`);
-    console.log(`${pc.dim('Provider:')} ${activeProvider.name}`);
+    if (startOnPool && autoPool) {
+      console.log(`${pc.dim('Model:')}    ${autoPool.displayName}`);
+      console.log(`${pc.dim('Provider:')} Relay Free Pool`);
+    } else if (activeProvider && selectedModel) {
+      console.log(`${pc.dim('Model:')}    ${selectedModel.id}`);
+      console.log(`${pc.dim('Provider:')} ${activeProvider.name}`);
+    }
     if (serverModels.length > 1) {
       const parts = ['selected'];
       if (hasFavorites) parts.push('favorites');

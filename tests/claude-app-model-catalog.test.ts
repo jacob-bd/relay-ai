@@ -92,6 +92,28 @@ describe('resolveClaudeAppCatalog', () => {
     ]);
   });
 
+  it('lists only the favorites when the session starts on the Relay Free Pool (no starting model)', async () => {
+    const other = provider('other', [model('other-model')]);
+    const fav = provider('favorite-a', [model('favorite-a-model')]);
+
+    const result = await resolveClaudeAppCatalog(
+      undefined,
+      undefined,
+      [other, fav],
+      [{ providerId: fav.id, modelId: fav.models[0]!.id }],
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error);
+    expect(result.entries.map(entry => `${entry.providerId}/${entry.model.id}`)).toEqual(['favorite-a/favorite-a-model']);
+  });
+
+  it('returns an empty catalog, not an error, when there is no starting model and no favorites', async () => {
+    const other = provider('other', [model('other-model')]);
+    const result = await resolveClaudeAppCatalog(undefined, undefined, [other], []);
+    expect(result).toMatchObject({ ok: true, entries: [] });
+  });
+
   it('deduplicates the selected model when it is also a favorite', async () => {
     const selected = provider('selected', [model('selected-model')]);
 
