@@ -103,7 +103,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   writeResponsesErrorStream
-} from "./chunk-YVSFXOS4.js";
+} from "./chunk-Q4JOACTQ.js";
 import {
   translateRequest
 } from "./chunk-E7FSS5M2.js";
@@ -1718,6 +1718,7 @@ function poolOutputCap(providerId, modelId, contextWindow) {
 }
 
 // src/pool/codex-prepare.ts
+var POOL_MAX_TOOLS = 128;
 var EFFORT_CLAIM_KEYS = /* @__PURE__ */ new Set([
   "effort",
   "reasoningEffort",
@@ -1794,7 +1795,7 @@ async function prepareCodexPoolRoutes(options) {
       ...model,
       providerId: provider.id,
       apiBaseUrl: model.apiBaseUrl
-    });
+    }, { maxTools: POOL_MAX_TOOLS, npm: model.npm });
     if (memberAuto && translatedEffortClaim(params.providerOptions)) {
       skip("translation would set an effort");
       continue;
@@ -18545,7 +18546,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-MUAK65LH.js");
+    const { runUiCommand } = await import("./ui-command-VX6CEEJU.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {

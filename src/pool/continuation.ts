@@ -4,6 +4,7 @@ import {
   translateResponsesRequest,
   type CodexSdkCallParams,
   type ResponsesRequest,
+  type TranslateToolOptions,
 } from '../codex-responses-adapter.js';
 import { splitToolUseId } from '../proxy-shared.js';
 
@@ -141,6 +142,7 @@ export function preparePoolHistory(
   target: PoolRouteIdentity,
   npm: string,
   metadata?: ReasoningMetadata,
+  options?: TranslateToolOptions,
 ): CodexSdkCallParams {
   const fresh = structuredClone(body);
   const input = items(fresh.input);
@@ -150,7 +152,7 @@ export function preparePoolHistory(
     || (item.type === 'reasoning' && typeof item.encrypted_content === 'string'),
   )) throw new Error('unsupported-continuation: opaque provider state requires original route');
   fresh.input = input;
-  const params = translateResponsesRequest(fresh as unknown as ResponsesRequest, npm, metadata);
+  const params = translateResponsesRequest(fresh as unknown as ResponsesRequest, npm, metadata, options);
   if (source !== poolRouteKey(target)) {
     params.messages = params.messages.map(message => ({ ...message,
       content: Array.isArray(message.content)

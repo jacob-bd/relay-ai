@@ -4876,14 +4876,14 @@ function stripRouteParts(part) {
     ...typeof toolCallId === "string" ? { toolCallId: splitToolUseId(toolCallId).rawId } : {}
   };
 }
-function preparePoolHistory(body, source, target, npm, metadata) {
+function preparePoolHistory(body, source, target, npm, metadata, options) {
   const fresh = structuredClone(body);
   const input = items(fresh.input);
   if (input.some(
     (item) => (item.type === "compaction" || item.type === "context_compaction") && decodeCompactionContent(item.encrypted_content) === null || item.type === "reasoning" && typeof item.encrypted_content === "string"
   )) throw new Error("unsupported-continuation: opaque provider state requires original route");
   fresh.input = input;
-  const params = translateResponsesRequest(fresh, npm, metadata);
+  const params = translateResponsesRequest(fresh, npm, metadata, options);
   if (source !== poolRouteKey(target)) {
     params.messages = params.messages.map((message) => ({
       ...message,
@@ -8391,4 +8391,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-YVSFXOS4.js.map
+//# sourceMappingURL=chunk-Q4JOACTQ.js.map

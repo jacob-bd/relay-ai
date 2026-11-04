@@ -14,6 +14,13 @@ import { poolProviderHeaders } from './session-id.js';
 import type { CodexPoolRoute } from './codex-runtime.js';
 import { PoolHealthStore, poolAccountScope, poolEndpointScope } from './health.js';
 
+/**
+ * Codex sends every connected MCP tool (often well over 128). OpenAI-style APIs, and most free providers behind
+ * them, reject more than 128 with HTTP 400, which used to fail those members on every request. Codex lists its
+ * own tools first, so keeping the first 128 keeps the core tools and drops MCP tools last.
+ */
+export const POOL_MAX_TOOLS = 128;
+
 export interface PoolContextCheck {
   verified: boolean;
   fits: boolean;
@@ -107,7 +114,7 @@ export async function prepareCodexPoolRoutes(options: {
     const translate = options.translate ?? preparePoolHistory;
     const params = translate(body, options.source, identity, model.npm, {
       ...model, providerId: provider.id, apiBaseUrl: model.apiBaseUrl,
-    });
+    }, { maxTools: POOL_MAX_TOOLS, npm: model.npm });
     // Omission is only verified when translation claimed no level of its own.
     if (memberAuto && translatedEffortClaim(params.providerOptions)) { skip('translation would set an effort'); continue; }
     const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);

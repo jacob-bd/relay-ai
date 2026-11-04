@@ -136,3 +136,26 @@ describe('Whatever effort the tool sends, the member is kept', () => {
     },
   );
 });
+
+describe('Tool limit', () => {
+  it('asks the translator to keep at most 128 tools for every member', async () => {
+    const calls: unknown[] = [];
+    const translate = ((_b: unknown, _s: unknown, _i: unknown, _n: unknown, _m: unknown, options: unknown) => {
+      calls.push(options);
+      return { messages: [], providerOptions: undefined } as never;
+    }) as never;
+    await prepareCodexPoolRoutes({ ...base(), translate });
+    expect(calls).toEqual([expect.objectContaining({ maxTools: 128 })]);
+  });
+
+  it('keeps the first 128 of 300 tools, so the tools Codex lists first survive', async () => {
+    const { preparePoolHistory } = await import('../src/pool/continuation.js');
+    const tools = Array.from({ length: 300 }, (_, i) => ({ type: 'function', name: 'tool_' + i, description: '', parameters: { type: 'object', properties: {} } }));
+    const params = preparePoolHistory({ model: 'relay-free-pool', input: 'hi', tools }, undefined,
+      { account: 'a', endpointRevision: 'r', model: 'm' }, '@ai-sdk/openai-compatible', undefined, { maxTools: 128 });
+    const names = Object.keys(params.tools ?? {});
+    expect(names).toHaveLength(128);
+    expect(names[0]).toBe('tool_0');
+    expect(names).not.toContain('tool_200');
+  });
+});
