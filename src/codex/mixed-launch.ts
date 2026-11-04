@@ -106,6 +106,8 @@ export function buildCodexMixedLaunchPlan(input: {
   models: ResolvedCodexMixedModels;
   relayRoutes?: CodexProxyRoute[];
   multiAgentV2Supported?: boolean;
+  /** Slug to open the session on when there is no Relay starting model (Relay Free Pool). */
+  startSlug?: string;
 }): CodexMixedLaunchPlan {
   const relayRoutes = input.relayRoutes ?? buildCodexProxyRoutesFromResolved(input.models.all, input.models.providersById);
   const routeByKey = new Set(relayRoutes.map(route => route.modelId));
@@ -115,7 +117,10 @@ export function buildCodexMixedLaunchPlan(input: {
   const subagentRelay = input.models.subagents
     .map(resolved => ({ resolved, slug: mixedRelaySlug(resolved.providerId, resolved.model.id) }))
     .filter(entry => routeByKey.has(entry.slug));
-  const selectedSlug = codexCliFavoritesSlug(input.models.selected.providerId, input.models.selected.model.id);
+  const selected = input.models.selected;
+  const selectedSlug = input.startSlug
+    ?? (selected ? codexCliFavoritesSlug(selected.providerId, selected.model.id) : undefined);
+  if (!selectedSlug) throw new Error('Mixed Codex mode needs a starting model');
   const hasSubagents = input.models.subagents.length > 0;
   if (input.models.subagents.length > 1) {
     throw new Error('Codex mixed mode supports exactly one Relay Sub-agent model');

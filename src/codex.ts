@@ -191,6 +191,8 @@ async function writeFavoritesLaunchArtifacts(
   starting: ResolvedFavorite,
   proxyPort: number,
   extraCatalogModels: CodexCatalogModel[] = [],
+  /** Open the session on this (Relay Free Pool) row instead of `starting`. */
+  startOnModel?: CodexCatalogModel,
 ): Promise<{ profilePath: string; catalogPath: string }> {
   const catalogPath = getFavoritesCatalogPath();
   const catalog = buildFavoritesCodexCatalog(undefined, resolved);
@@ -200,17 +202,19 @@ async function writeFavoritesLaunchArtifacts(
   const model = starting.model as import('./types.js').LocalProviderModel;
   const dummyRoute: CodexRoute = {
     tier: 'proxy',
-    modelId: codexCliFavoritesSlug(starting.providerId, model.id),
+    modelId: startOnModel ? startOnModel.slug : codexCliFavoritesSlug(starting.providerId, model.id),
     providerId: 'relay-ai-proxy',
     npm: model.npm ?? '@ai-sdk/openai-compatible',
-    upstreamModelId: model.upstreamModelId || model.id,
+    upstreamModelId: startOnModel ? startOnModel.slug : model.upstreamModelId || model.id,
     apiKey: '',
   };
   writeOverlayFile(profilePath, buildCodexProfileToml({
     route: dummyRoute,
     proxyPort,
     catalogPath,
-    modelReasoningEffort: defaultReasoningEffortForFavorite(starting),
+    modelReasoningEffort: startOnModel
+      ? startOnModel.default_reasoning_level ?? undefined
+      : defaultReasoningEffortForFavorite(starting),
     ...(extraCatalogModels.length > 0 ? { supportsWebSockets: false } : {}),
   }));
   return { profilePath, catalogPath };
@@ -625,6 +629,9 @@ export async function runCodexCommand(
     );
     p.log.info('Edit with `relay-ai models`.');
   }
+  // True when the Relay Free Pool is the model the session opens on, with the native models (mixed) or the
+  // favorites around it. activeProvider/selectedModel are then placeholders and must not be launched or recorded.
+  let startOnPool = false;
   let activeProvider = compatible.find(lp => lp.id === prefs.lastCodexProvider) ?? compatible[0]!;
   let selectedModel = activeProvider.models.find(m => m.id === prefs.lastCodexModel) ?? activeProvider.models[0]!;
 
@@ -650,10 +657,13 @@ export async function runCodexCommand(
       if (!pickedProvider) return 0;
 
       if (pickedProvider === '__pool__') {
-        if (mixedMode && !agentStdout) {
-          p.log.info('Starting on Relay Free Pool uses Relay models only for now (your normal Codex models are not added).');
+        // With native models or favorites around it, the pool opens the session inside that catalog.
+        // Alone, it is the standalone pool launch.
+        if (!mixedMode && !favoritesActive) {
+          return runCodexCommand(codexArgs, trace, { ...launch, pool: true });
         }
-        return runCodexCommand(codexArgs, trace, { ...launch, pool: true });
+        startOnPool = true;
+        break;
       }
       
       if (pickedProvider === '__favorites__') {
@@ -699,7 +709,7 @@ export async function runCodexCommand(
     }
   }
 
-  if (activeProvider.launchAllModels) {
+  if (!startOnPool && activeProvider.launchAllModels) {
     favorites = activeProvider.models.map(model => ({ providerId: activeProvider.id, modelId: model.id }));
     favoritesActive = !mixedMode;
   }
@@ -709,26 +719,44 @@ export async function runCodexCommand(
 
   if (favoritesActive) {
     const res = await resolveCodexFavorites(
-      activeProvider,
-      selectedModel,
+      startOnPool ? undefined : activeProvider,
+      startOnPool ? undefined : selectedModel,
       compatible,
       favorites,
       'codex',
-      activeProvider.launchAllModels ? MAX_MODEL_CATALOG : undefined,
+      !startOnPool && activeProvider.launchAllModels ? MAX_MODEL_CATALOG : undefined,
     );
     resolvedFavorites = res.resolvedFavorites;
     providersById = res.providersById;
   }
 
-  const apiKey = await resolveLocalProviderApiKey(activeProvider);
-  if (!apiKey) {
+  // Favorites that no longer resolve leave only the pool: launch it on its own.
+  if (startOnPool && !mixedMode && resolvedFavorites.length === 0) {
+    if (!agentStdout) p.log.warn('None of your Codex favorites are available right now. Starting on the Relay Free Pool alone.');
+    return runCodexCommand(codexArgs, trace, { ...launch, pool: true });
+  }
+
+  const poolStart = startOnPool ? additivePoolModel : undefined;
+  if (startOnPool && !poolStart) {
+    console.error(pc.red('No verified free pool member can be advertised yet. Run: relay-ai pool verify'));
+    return 1;
+  }
+
+  const apiKey: string = startOnPool ? '' : (await resolveLocalProviderApiKey(activeProvider)) ?? '';
+  if (!apiKey && !startOnPool) {
     if (!configOnly) {
       p.log.error(`No credential for ${activeProvider.name}. Run relay-ai providers auth ${activeProvider.id} or add an API key.`);
     }
     return 1;
   }
 
-  const route = resolveCodexRoute(activeProvider, selectedModel, apiKey);
+  // The pool has no upstream of its own; this route only names the proxy tier for the launch env.
+  const route: CodexRoute = startOnPool
+    ? {
+      tier: 'proxy', modelId: FREE_POOL_MODEL_ID, providerId: FREE_POOL_PROVIDER_ID,
+      npm: '@ai-sdk/openai-compatible', upstreamModelId: FREE_POOL_MODEL_ID, apiKey: '',
+    }
+    : resolveCodexRoute(activeProvider, selectedModel, apiKey);
 
   let cloudCodeBackend: CloudCodeBackend | null = null;
   let cloudCodeBackendFav: CloudCodeBackend | null = null;
@@ -738,10 +766,10 @@ export async function runCodexCommand(
       const version = runCodexCommandSync(codexPath, ['--version']).stdout.trim();
       const mixedModels = await resolveCodexMixedModels({
         activeProvider,
-        selectedModel,
+        selectedModel: startOnPool ? undefined : selectedModel,
         compatible,
         generalFavorites: favorites,
-        allProviderModels: activeProvider.launchAllModels,
+        allProviderModels: !startOnPool && activeProvider.launchAllModels,
         subagentFavorites: prefs.codexSubagentModels ?? [],
       });
       assertConfiguredCodexSubagentsResolved(prefs.codexSubagentModels ?? [], mixedModels);
@@ -757,6 +785,7 @@ export async function runCodexCommand(
         models: mixedModels,
         relayRoutes: preparedRoutes.routes,
         multiAgentV2Supported,
+        startSlug: startOnPool ? FREE_POOL_MODEL_ID : undefined,
       });
     } catch (err) {
       cloudCodeBackend?.handle.close();
@@ -919,7 +948,7 @@ export async function runCodexCommand(
     const { profilePath, catalogPath } = mixedPlan && proxyPort
       ? await writeMixedLaunchArtifacts(mixedPlan, proxyPort, poolCatalogModels)
       : favoritesActive && resolvedFavorites.length > 0 && proxyPort && startingFavorite
-      ? await writeFavoritesLaunchArtifacts(resolvedFavorites, startingFavorite, proxyPort, poolCatalogModels)
+      ? await writeFavoritesLaunchArtifacts(resolvedFavorites, startingFavorite, proxyPort, poolCatalogModels, poolStart)
       : await writeLaunchArtifacts(
         route, selectedModel, activeProvider.name, proxyPort,
         servedPoolModel ? false : undefined, poolCatalogModels,
@@ -974,9 +1003,10 @@ export async function runCodexCommand(
       return 0;
     }
 
-    recordLaunchSelection('codex', activeProvider.id, selectedModel.id, prefs);
+    if (!startOnPool) recordLaunchSelection('codex', activeProvider.id, selectedModel.id, prefs);
 
-    const modelLabel = formatCodexModelLabel(selectedModel);
+    const modelLabel = poolStart ? poolStart.display_name : formatCodexModelLabel(selectedModel);
+    const launchProviderName = poolStart ? 'Relay Free Pool' : activeProvider.name;
 
     if (!agentStdout) {
       if ((route.tier === 'proxy' || route.tier === 'cloud-code') && proxyPort) {
@@ -985,13 +1015,15 @@ export async function runCodexCommand(
     }
 
     const favoritesLaunch = favoritesActive && resolvedFavorites.length > 0;
-    const launchModelId = favoritesLaunch
+    const launchModelId = poolStart
+      ? FREE_POOL_MODEL_ID
+      : favoritesLaunch
       ? codexCliFavoritesSlug(activeProvider.id, selectedModel.id)
       : mixedPlan?.selectedSlug ?? selectedModel.id;
     if (!agentStdout) {
       logCodexActiveModel(modelLabel, launchModelId);
       printCodexCliCleanupPanel('relay-ai codex --restore');
-      codexCliOutro(activeProvider.name, modelLabel, launchModelId);
+      codexCliOutro(launchProviderName, modelLabel, launchModelId);
     }
     const dummyRoute: CodexRoute = {
       tier: 'proxy',

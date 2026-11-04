@@ -205,8 +205,9 @@ export function buildCodexProxyRoutesFromResolved(
 
 
 export async function resolveCodexFavorites(
-  activeProvider: LocalProvider,
-  selectedModel: LocalProviderModel,
+  // Both undefined when the session starts on the Relay Free Pool: the catalog is then just the favorites.
+  activeProvider: LocalProvider | undefined,
+  selectedModel: LocalProviderModel | undefined,
   compatible: LocalProvider[],
   favorites: FavoriteModel[],
   agent: CompatibilityAgent,
@@ -224,10 +225,9 @@ export async function resolveCodexFavorites(
       return provider && model ? { provider, model } : undefined;
     },
   };
-  const startingResolved = await resolveFavorite(
-    { providerId: activeProvider.id, modelId: selectedModel.id },
-    ctx,
-  );
+  const startingResolved = activeProvider && selectedModel
+    ? await resolveFavorite({ providerId: activeProvider.id, modelId: selectedModel.id }, ctx)
+    : undefined;
   const { resolved, droppedFavorites } = await buildFavoritesList(
     startingResolved,
     favorites,
@@ -246,7 +246,8 @@ export async function resolveCodexFavorites(
 }
 
 export interface ResolvedCodexMixedModels {
-  selected: ResolvedFavorite;
+  /** Undefined when the session starts on the Relay Free Pool (no Relay starting model). */
+  selected?: ResolvedFavorite;
   visible: ResolvedFavorite[];
   subagents: ResolvedFavorite[];
   all: ResolvedFavorite[];
@@ -278,7 +279,8 @@ export function assertConfiguredCodexSubagentsResolved(
 
 export async function resolveCodexMixedModels(input: {
   activeProvider: LocalProvider;
-  selectedModel: LocalProviderModel;
+  /** Omit to start without a Relay starting model (the Relay Free Pool starts the session). */
+  selectedModel?: LocalProviderModel;
   compatible: LocalProvider[];
   generalFavorites: FavoriteModel[];
   subagentFavorites: FavoriteModel[];
@@ -293,11 +295,10 @@ export async function resolveCodexMixedModels(input: {
       return provider && model ? { provider, model } : undefined;
     },
   };
-  const selected = await resolveFavorite(
-    { providerId: input.activeProvider.id, modelId: input.selectedModel.id },
-    ctx,
-  );
-  if (!selected) throw new Error('Selected Codex model is no longer available');
+  const selected = input.selectedModel
+    ? await resolveFavorite({ providerId: input.activeProvider.id, modelId: input.selectedModel.id }, ctx)
+    : undefined;
+  if (input.selectedModel && !selected) throw new Error('Selected Codex model is no longer available');
   const catalogModels = input.allProviderModels
     ? input.activeProvider.models.map(model => ({ providerId: input.activeProvider.id, modelId: model.id }))
     : input.generalFavorites;

@@ -69,6 +69,15 @@ models you trust:
 - [FreeLLMAPI](https://github.com/tashfeenahmed/freellmapi), a router that sells a paid catalog;
   Relay borrows its routing ideas only, not its provider or quota claims.
 
+## Starting a session on the pool
+
+- **Claude Code:** `relay claude` lists "🏊 Relay Free Pool" under *Favorites Catalog*.
+- **Codex CLI:** `relay codex` lists the same entry. The session opens on the pool; with *Native + Relay*
+  your normal Codex models and favorites sit beside it in `/model`, with *Relay models only* just your
+  favorites do. With no favorites that mode is the pool alone. Codex requests are not yet written to
+  `relay-ai pool log`.
+- Other launchers do not offer the pool until each is confirmed working.
+
 ## Seeing which model answered, and checking failover
 
 - `relay-ai pool log` shows the current model and a line only when something happens: a failover (a
