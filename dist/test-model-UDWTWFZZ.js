@@ -1,19 +1,17 @@
 #!/usr/bin/env node
 import {
-  mergeHeaders,
-  openCodeGoHeaders
-} from "./chunk-GGECJSV6.js";
-import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
 import {
   TEST_MAX_OUTPUT_TOKENS,
   cachedModelToLocal,
+  mergeHeaders,
+  openCodeGoHeaders,
   providerRefreshToken,
   reconcileCachedModelProtocol,
   setContextWindowOverride,
   setModelNotChat
-} from "./chunk-P2ZUUHDQ.js";
+} from "./chunk-4QAQ4MVE.js";
 import {
   ANTIGRAVITY_API_VERSION,
   ANTIGRAVITY_BASE_URLS,
@@ -913,4 +911,4 @@ export {
   probeModel,
   testModel
 };
-//# sourceMappingURL=test-model-ZLAG5I3A.js.map
+//# sourceMappingURL=test-model-UDWTWFZZ.js.map

@@ -9,7 +9,7 @@ import { preparePoolHistory } from './continuation.js';
 import { currentPoolReceipt, poolEndpointRevision, type PoolCapabilityReceipt } from './capabilities.js';
 import { sdkPoolRoute } from './sdk-route.js';
 import { poolOutputCap } from './output-limit.js';
-import { poolSessionId } from './session-id.js';
+import { poolProviderHeaders } from './session-id.js';
 import type { CodexPoolRoute } from './codex-runtime.js';
 import { PoolHealthStore, poolEndpointScope } from './health.js';
 
@@ -119,7 +119,7 @@ export async function prepareCodexPoolRoutes(options: {
       npm: model.npm, modelId: model.upstreamModelId, apiKey,
       baseURL: model.apiBaseUrl, providerId: provider.id, authType: provider.authType,
       oauthAccountId: provider.oauthAccountId, providerData: provider.providerData,
-      headers: provider.headers, sessionId: poolSessionId(provider.id, options.sessionId),
+      headers: poolProviderHeaders(provider, model, options.sessionId), sessionId: options.sessionId,
       refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
     });
     const { toolContext: _toolContext, instructions, ...sdkParams } = params;

@@ -12,6 +12,9 @@ export interface PoolRoute {
   id: string;
   open(signal: AbortSignal): Promise<AsyncIterable<PoolEvent>>;
 }
+/** Members tried per request, in priority order. Failures are usually fast; the total time limit still bounds slow ones. */
+export const MAX_POOL_ATTEMPTS = 8;
+
 export interface PoolLimits {
   attempts: number;
   firstContentMs: number;

@@ -11,6 +11,7 @@ import { addFreePoolMember, parseFreePool, removeFreePoolMember } from './member
 import { parsePoolReceipt } from './capabilities.js';
 import { probePoolModel, probePoolEffort } from './probe.js';
 import { verifyPoolMember } from './enroll.js';
+import { poolProviderHeaders } from './session-id.js';
 import { followPoolActivity, formatPoolActivityLine, readPoolActivity } from './activity.js';
 
 export const poolHelpText = [
@@ -166,7 +167,8 @@ export async function runPoolCommand(args: string[]): Promise<number> {
             npm: model.npm!, modelId: model.upstreamModelId,
             apiKey, baseURL: model.apiBaseUrl, providerId: provider.id,
             authType: provider.authType, oauthAccountId: provider.oauthAccountId,
-            providerData: provider.providerData, headers: provider.headers,
+            providerData: provider.providerData,
+            headers: poolProviderHeaders(provider, model, `relay-pool-verify-${randomUUID()}`),
             sessionId: `relay-pool-verify-${randomUUID()}`,
             refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
           }),

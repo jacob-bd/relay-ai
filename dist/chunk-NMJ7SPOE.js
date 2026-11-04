@@ -10,10 +10,6 @@ import {
   writeAnthropicStream
 } from "./chunk-E7FSS5M2.js";
 import {
-  extractConversationId,
-  openCodeGoHeaders
-} from "./chunk-GGECJSV6.js";
-import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
 import {
@@ -26,22 +22,24 @@ import {
   readBody,
   recordPoolActivity,
   sendJson
-} from "./chunk-OTMOCQB6.js";
+} from "./chunk-JZUQYQVD.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
   ensureOpencodeCloudProviders,
+  extractConversationId,
   fetchClinePassModels,
   fetchCommandCodeModels,
   fetchTemplateModels,
   filterModelsByAvailability,
   oauthAuthRef,
+  openCodeGoHeaders,
   providerRefreshToken,
   refreshProviderModels,
   stripGoogleModelPrefix,
   toOAuthRegistryId,
   validateClinePassApiKey
-} from "./chunk-P2ZUUHDQ.js";
+} from "./chunk-4QAQ4MVE.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -1960,61 +1958,8 @@ var MessageStream = class _MessageStream {
 function checkNever(x) {
 }
 
-// src/pool/errors.ts
-function poolFailure(error, now = Date.now()) {
-  const value = error;
-  if (value?.name === "AbortError" || value?.code === "ABORT_ERR") return { kind: "canceled" };
-  const status = value?.statusCode;
-  if (status === 429) {
-    const raw = Object.entries(value?.responseHeaders ?? {}).find(([key]) => key.toLowerCase() === "retry-after")?.[1];
-    let retryAt;
-    if (raw?.trim()) {
-      const seconds = Number(raw);
-      if (Number.isFinite(seconds) && seconds >= 0) retryAt = now + Math.ceil(seconds * 1e3);
-      else {
-        const parsed = Date.parse(raw);
-        if (Number.isFinite(parsed)) retryAt = Math.max(now, parsed);
-      }
-    }
-    return { kind: "rate-limit", status, retryAt };
-  }
-  if ([401, 403, 404].includes(status ?? 0)) return { kind: "access", status };
-  if (status === 400 && /context.{0,20}(length|window|exceed)|prompt.{0,20}too long/i.test(value?.message ?? "")) return { kind: "context", status };
-  if (status === 400 || status === 422) return { kind: "invalid", status };
-  if (status !== void 0 && status >= 500 || /ECONNRESET|ETIMEDOUT|ENOTFOUND|first-content-timeout|missing-valid-finish|invalid-finish|stream-error/.test(value?.message ?? "")) return { kind: "transient", status };
-  return { kind: "unknown", status };
-}
-function retryPoolFailure(error) {
-  return ["rate-limit", "access", "context", "transient"].includes(poolFailure(error).kind);
-}
-
-// src/pool/eligibility.ts
-function poolRouteIdentity(route) {
-  return JSON.stringify([route.member.providerId, route.revision, route.member.modelId]);
-}
-function evaluatePoolMembers(pool, evidence, request) {
-  return pool.members.map((member) => {
-    const matches = evidence.filter((route2) => route2.member.providerId === member.providerId && route2.member.modelId === member.modelId);
-    if (matches.length !== 1) return { member, reason: matches.length ? "ambiguous-route" : "unavailable" };
-    const route = matches[0];
-    const effort = request.effort ?? pool.effort;
-    let reason;
-    if (!route.revision) reason = "unverified-endpoint";
-    else if (!route.catalogVerified) reason = "unverified-catalog";
-    else if (route.freeStatus !== "verified_free") reason = "not-free";
-    else if (!route.billingSafe) reason = "billing-risk";
-    else if (!route.accessVerified) reason = "unverified-access";
-    else if (!route.targets.includes(request.target)) reason = "unsupported-target";
-    else if (request.tools && !route.toolsVerified) reason = "unverified-tools";
-    else if (effort === "auto" ? !route.defaultEffortVerified : !route.effortLevels.includes(effort)) reason = "unsupported-effort";
-    else if (!route.contextVerified) reason = "unverified-context";
-    else if (!route.contextFits) reason = "context-limit";
-    else if (route.unavailableUntil !== void 0 && (!Number.isFinite(route.unavailableUntil) || route.unavailableUntil > request.now)) reason = "cooldown";
-    return { member, route, ...reason ? { reason } : {} };
-  });
-}
-
 // src/pool/attempt.ts
+var MAX_POOL_ATTEMPTS = 8;
 var PoolAttemptError = class extends Error {
   constructor(code, committed, cause) {
     super(code);
@@ -2142,6 +2087,60 @@ async function* runPoolAttempts(routes, signal, limits, retryable, onAttempt = (
     }
   }
   throw new PoolAttemptError("attempt-budget-exhausted", committed, lastError);
+}
+
+// src/pool/errors.ts
+function poolFailure(error, now = Date.now()) {
+  const value = error;
+  if (value?.name === "AbortError" || value?.code === "ABORT_ERR") return { kind: "canceled" };
+  const status = value?.statusCode;
+  if (status === 429) {
+    const raw = Object.entries(value?.responseHeaders ?? {}).find(([key]) => key.toLowerCase() === "retry-after")?.[1];
+    let retryAt;
+    if (raw?.trim()) {
+      const seconds = Number(raw);
+      if (Number.isFinite(seconds) && seconds >= 0) retryAt = now + Math.ceil(seconds * 1e3);
+      else {
+        const parsed = Date.parse(raw);
+        if (Number.isFinite(parsed)) retryAt = Math.max(now, parsed);
+      }
+    }
+    return { kind: "rate-limit", status, retryAt };
+  }
+  if ([401, 403, 404].includes(status ?? 0)) return { kind: "access", status };
+  if (status === 400 && /context.{0,20}(length|window|exceed)|prompt.{0,20}too long/i.test(value?.message ?? "")) return { kind: "context", status };
+  if (status === 400 || status === 422) return { kind: "invalid", status };
+  if (status !== void 0 && status >= 500 || /ECONNRESET|ETIMEDOUT|ENOTFOUND|first-content-timeout|missing-valid-finish|invalid-finish|stream-error/.test(value?.message ?? "")) return { kind: "transient", status };
+  return { kind: "unknown", status };
+}
+function retryPoolFailure(error) {
+  return ["rate-limit", "access", "context", "transient"].includes(poolFailure(error).kind);
+}
+
+// src/pool/eligibility.ts
+function poolRouteIdentity(route) {
+  return JSON.stringify([route.member.providerId, route.revision, route.member.modelId]);
+}
+function evaluatePoolMembers(pool, evidence, request) {
+  return pool.members.map((member) => {
+    const matches = evidence.filter((route2) => route2.member.providerId === member.providerId && route2.member.modelId === member.modelId);
+    if (matches.length !== 1) return { member, reason: matches.length ? "ambiguous-route" : "unavailable" };
+    const route = matches[0];
+    const effort = request.effort ?? pool.effort;
+    let reason;
+    if (!route.revision) reason = "unverified-endpoint";
+    else if (!route.catalogVerified) reason = "unverified-catalog";
+    else if (route.freeStatus !== "verified_free") reason = "not-free";
+    else if (!route.billingSafe) reason = "billing-risk";
+    else if (!route.accessVerified) reason = "unverified-access";
+    else if (!route.targets.includes(request.target)) reason = "unsupported-target";
+    else if (request.tools && !route.toolsVerified) reason = "unverified-tools";
+    else if (effort === "auto" ? !route.defaultEffortVerified : !route.effortLevels.includes(effort)) reason = "unsupported-effort";
+    else if (!route.contextVerified) reason = "unverified-context";
+    else if (!route.contextFits) reason = "context-limit";
+    else if (route.unavailableUntil !== void 0 && (!Number.isFinite(route.unavailableUntil) || route.unavailableUntil > request.now)) reason = "cooldown";
+    return { member, route, ...reason ? { reason } : {} };
+  });
 }
 
 // src/pool/dispatch.ts
@@ -2296,7 +2295,7 @@ async function serveClaudePool(options) {
 }
 var ClaudePoolRuntime = class {
   constructor(pool, prepare, limits = {
-    attempts: 3,
+    attempts: MAX_POOL_ATTEMPTS,
     firstContentMs: 2e4,
     idleMs: 2e4,
     totalMs: 6e4,
@@ -4949,7 +4948,7 @@ async function writeCodexPoolResponse(stream, modelId, write, options = {}) {
 var FREE_POOL_MODEL_ID = "relay-free-pool";
 var FREE_POOL_PROVIDER_ID = "relay-free-pool";
 var DEFAULT_POOL_LIMITS = {
-  attempts: 3,
+  attempts: MAX_POOL_ATTEMPTS,
   firstContentMs: 2e4,
   idleMs: 2e4,
   totalMs: 6e4,
@@ -8344,4 +8343,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-WEP3GBSA.js.map
+//# sourceMappingURL=chunk-NMJ7SPOE.js.map

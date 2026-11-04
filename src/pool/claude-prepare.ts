@@ -12,7 +12,7 @@ import { poolEndpointScope } from './health.js';
 import { poolRequestFitsWindow } from './context.js';
 import { translatedEffortClaim } from './codex-prepare.js';
 import { poolOutputCap } from './output-limit.js';
-import { poolSessionId } from './session-id.js';
+import { poolProviderHeaders } from './session-id.js';
 
 export function omitClaudeEffort(
   body: Record<string, unknown>, level: string | null,
@@ -91,7 +91,7 @@ export async function prepareClaudePoolRoutes(options: ClaudeRouteOptions): Prom
       npm: model.npm, modelId: model.upstreamModelId, apiKey,
       baseURL: model.apiBaseUrl, providerId: provider.id, authType: provider.authType,
       oauthAccountId: provider.oauthAccountId, providerData: provider.providerData,
-      headers: provider.headers, sessionId: poolSessionId(provider.id, options.sessionId),
+      headers: poolProviderHeaders(provider, model, options.sessionId), sessionId: options.sessionId,
       refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
     });
     routes.push(sdkPoolRoute({

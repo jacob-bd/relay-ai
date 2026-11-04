@@ -1,7 +1,7 @@
 import { MessageStream } from '@anthropic-ai/sdk/lib/MessageStream';
 import { writeAnthropicStream } from '../sdk-adapter.js';
 import type { FreePoolPreferences } from '../types.js';
-import type { PoolLimits } from './attempt.js';
+import { MAX_POOL_ATTEMPTS, type PoolLimits } from './attempt.js';
 import { retryPoolFailure } from './errors.js';
 import { describePoolFailure, poolRouteMember, recordPoolActivity } from './activity.js';
 import { dispatchFreePool, type DispatchRoute } from './dispatch.js';
@@ -205,7 +205,7 @@ export class ClaudePoolRuntime {
       sessionId?: string,
     ) => Promise<DispatchRoute[]>,
     private readonly limits: PoolLimits = {
-      attempts: 3, firstContentMs: 20_000, idleMs: 20_000,
+      attempts: MAX_POOL_ATTEMPTS, firstContentMs: 20_000, idleMs: 20_000,
       totalMs: 60_000, bufferBytes: 65_536, cleanupMs: 1000,
     },
   ) {}

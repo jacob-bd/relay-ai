@@ -3,22 +3,23 @@ import {
   invalidateUiPoolMember,
   poolView,
   verifyUiPoolMember
-} from "./chunk-SUBSHSQS.js";
+} from "./chunk-ILOW3WIN.js";
 import {
   fetchProviderCatalog,
   followPoolActivity,
   formatPoolActivityLine,
+  poolProviderHeaders,
   readPoolActivity,
   resolveLocalProviderApiKey,
   verifyPoolMember
-} from "./chunk-OTMOCQB6.js";
+} from "./chunk-JZUQYQVD.js";
 import {
   probePoolEffort,
   probePoolModel,
   providerRefreshToken,
   setContextWindowOverride,
   setModelHidden
-} from "./chunk-P2ZUUHDQ.js";
+} from "./chunk-4QAQ4MVE.js";
 import {
   addFreePoolMember,
   createLanguageModel,
@@ -117,7 +118,7 @@ async function runPoolCommand(args) {
         console.log(JSON.stringify(result2));
         return 0;
       }
-      const { testModel, checkContextWindow } = await import("./test-model-ZLAG5I3A.js");
+      const { testModel, checkContextWindow } = await import("./test-model-UDWTWFZZ.js");
       if (action === "context") {
         if (args.length === 4) {
           const value = args[3] === "reset" ? null : Number(args[3]);
@@ -196,7 +197,7 @@ async function runPoolCommand(args) {
             authType: provider.authType,
             oauthAccountId: provider.oauthAccountId,
             providerData: provider.providerData,
-            headers: provider.headers,
+            headers: poolProviderHeaders(provider, model, `relay-pool-verify-${randomUUID()}`),
             sessionId: `relay-pool-verify-${randomUUID()}`,
             refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
           }),
@@ -267,4 +268,4 @@ export {
   runPoolCommand,
   validPoolReceipts
 };
-//# sourceMappingURL=command-UYFCUPQI.js.map
+//# sourceMappingURL=command-IE74PN5R.js.map

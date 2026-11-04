@@ -29,22 +29,21 @@ import {
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode
-} from "./chunk-WEP3GBSA.js";
+} from "./chunk-NMJ7SPOE.js";
 import "./chunk-E7FSS5M2.js";
-import "./chunk-GGECJSV6.js";
 import "./chunk-UR4QFFSQ.js";
 import {
   handlePoolApi,
   invalidateUiPoolMember,
   verifyUiPoolMember
-} from "./chunk-SUBSHSQS.js";
+} from "./chunk-ILOW3WIN.js";
 import {
   fetchProviderCatalog,
   providersForCodexSubagents,
   providersForTarget,
   readBody,
   sendJson
-} from "./chunk-OTMOCQB6.js";
+} from "./chunk-JZUQYQVD.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   addCustomEndpointProvider,
@@ -66,7 +65,7 @@ import {
   setModelMarkedFree,
   setModelsHidden,
   updateCustomEndpointProvider
-} from "./chunk-P2ZUUHDQ.js";
+} from "./chunk-4QAQ4MVE.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -1110,7 +1109,7 @@ async function handleMeasureContextWindow(req, res) {
     if (!res.writableEnded) controller.abort();
   });
   try {
-    const { checkContextWindow } = await import("./test-model-ZLAG5I3A.js");
+    const { checkContextWindow } = await import("./test-model-UDWTWFZZ.js");
     const context = await checkContextWindow(provider.id, body.modelId, controller.signal);
     if (!res.destroyed) sendJson(res, 200, { ok: true, context });
   } catch {
@@ -1434,7 +1433,7 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-ZLAG5I3A.js");
+    const { testModel } = await import("./test-model-UDWTWFZZ.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
     if (!controller.signal.aborted) {
       try {
@@ -2329,4 +2328,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-5X6R3WDP.js.map
+//# sourceMappingURL=ui-command-FG53W2P7.js.map

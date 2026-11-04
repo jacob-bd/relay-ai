@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { poolProviderHeaders } from './session-id.js';
 import { createLanguageModel, effortProviderOptions } from '../provider-factory.js';
 import { resolveLocalProviderApiKey } from '../provider-catalog.js';
 import { providerRefreshToken } from '../provider-runtime.js';
@@ -69,9 +70,10 @@ export async function verifyConfiguredPoolMember(
       createModel: (provider, model, apiKey) => createLanguageModel({
         npm: model.npm!, modelId: model.upstreamModelId, apiKey, baseURL: model.apiBaseUrl,
         providerId: provider.id, authType: provider.authType, oauthAccountId: provider.oauthAccountId,
-        providerData: provider.providerData, headers: provider.headers,
-        // Some gateways (OpenCode Go) reject requests that carry no session id.
+        providerData: provider.providerData,
+        // Some gateways (OpenCode Go) reject requests that carry no session id header.
         sessionId: `relay-pool-verify-${randomUUID()}`,
+        headers: poolProviderHeaders(provider, model, `relay-pool-verify-${randomUUID()}`),
         refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef),
       }),
       probe: options.evidence ? async () => options.evidence! : probePoolModel,

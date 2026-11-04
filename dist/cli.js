@@ -103,15 +103,10 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   writeResponsesErrorStream
-} from "./chunk-WEP3GBSA.js";
+} from "./chunk-NMJ7SPOE.js";
 import {
   translateRequest
 } from "./chunk-E7FSS5M2.js";
-import {
-  OPENCODE_SESSION_HEADER,
-  extractConversationId,
-  openCodeGoHeaders
-} from "./chunk-GGECJSV6.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
@@ -128,6 +123,7 @@ import {
   injectRelayModels,
   launchModelsForProvider,
   meetsContextFloor,
+  poolProviderHeaders,
   poolRoutingProblem,
   providersForCodexSubagents,
   providersForPicker,
@@ -138,8 +134,9 @@ import {
   resolveRelayCatalogSlots,
   routableModelsForTarget,
   sendJson
-} from "./chunk-OTMOCQB6.js";
+} from "./chunk-JZUQYQVD.js";
 import {
+  OPENCODE_SESSION_HEADER,
   TRUST_SYSTEM_CERTS_NOTICE,
   UNTRUSTED_CERTIFICATE_CODE,
   addCustomEndpointProvider,
@@ -150,6 +147,7 @@ import {
   customEndpointKind,
   effectiveProviderBaseUrl,
   endpointModelTimeoutMs,
+  extractConversationId,
   fetchAnthropicModels,
   fetchTemplateModels,
   isLikelyPlaceholderKey,
@@ -158,6 +156,7 @@ import {
   isSystemCaSupported,
   listCredentialSkippedProviders,
   oauthAuthRef,
+  openCodeGoHeaders,
   providerRefreshToken,
   refreshAllProviderModels,
   refreshProviderModels,
@@ -174,7 +173,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-P2ZUUHDQ.js";
+} from "./chunk-4QAQ4MVE.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -1701,14 +1700,6 @@ function poolOutputCap(providerId, modelId, contextWindow) {
   return Math.max(MIN_OUTPUT_TOKENS, Math.min(base, windowCap));
 }
 
-// src/pool/session-id.ts
-import { randomUUID as randomUUID2 } from "crypto";
-function poolSessionId(providerId, sessionId) {
-  if (sessionId) return sessionId;
-  const kind = providerKind(providerId);
-  return kind === "go" || kind === "zen" ? `relay-pool-${randomUUID2()}` : void 0;
-}
-
 // src/pool/codex-prepare.ts
 var EFFORT_CLAIM_KEYS = /* @__PURE__ */ new Set([
   "effort",
@@ -1794,8 +1785,8 @@ async function prepareCodexPoolRoutes(options) {
       authType: provider.authType,
       oauthAccountId: provider.oauthAccountId,
       providerData: provider.providerData,
-      headers: provider.headers,
-      sessionId: poolSessionId(provider.id, options.sessionId),
+      headers: poolProviderHeaders(provider, model, options.sessionId),
+      sessionId: options.sessionId,
       refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
     });
     const { toolContext: _toolContext, instructions, ...sdkParams } = params;
@@ -1899,8 +1890,8 @@ async function prepareClaudePoolRoutes(options) {
       authType: provider.authType,
       oauthAccountId: provider.oauthAccountId,
       providerData: provider.providerData,
-      headers: provider.headers,
-      sessionId: poolSessionId(provider.id, options.sessionId),
+      headers: poolProviderHeaders(provider, model, options.sessionId),
+      sessionId: options.sessionId,
       refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
     });
     routes.push(sdkPoolRoute({
@@ -1973,7 +1964,7 @@ function prepareClaudeAutoPool(prefs, providers, now = Date.now()) {
 }
 
 // src/pool/claude-session.ts
-import { randomUUID as randomUUID3 } from "crypto";
+import { randomUUID as randomUUID2 } from "crypto";
 import {
   closeSync,
   linkSync,
@@ -2017,7 +2008,7 @@ function acquireClaudePoolSessionLock(env = process.env) {
   const path3 = getClaudePoolSessionLockPath(env);
   const lock = {
     pid: process.pid,
-    token: randomUUID3(),
+    token: randomUUID2(),
     startedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   const tempPath = `${path3}.${process.pid}.${lock.token}.tmp`;
@@ -4194,7 +4185,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-ZLAG5I3A.js");
+      const { testModel } = await import("./test-model-UDWTWFZZ.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -8129,7 +8120,7 @@ function rejectGeminiManagedFlags(geminiArgs) {
 
 // src/gemini-proxy.ts
 import { createServer as createServer2 } from "http";
-import { randomUUID as randomUUID4 } from "crypto";
+import { randomUUID as randomUUID3 } from "crypto";
 import { streamText as streamText2, tool, jsonSchema } from "ai";
 function mapFinishReason(reason) {
   if (reason === "stop" || reason === "tool-calls") return "STOP";
@@ -8211,7 +8202,7 @@ function translateGeminiRequest(body, options = {}) {
           mediaType: p17.inlineData.mimeType
         });
       } else if (p17.functionCall) {
-        const id = "call_" + randomUUID4().replace(/-/g, "");
+        const id = "call_" + randomUUID3().replace(/-/g, "");
         const name = p17.functionCall.name;
         if (!nameToIdList.has(name)) nameToIdList.set(name, []);
         nameToIdList.get(name).push(id);
@@ -8224,7 +8215,7 @@ function translateGeminiRequest(body, options = {}) {
       } else if (p17.functionResponse) {
         const name = p17.functionResponse.name;
         const idList = nameToIdList.get(name) || [];
-        const id = idList.shift() || "call_" + randomUUID4().replace(/-/g, "");
+        const id = idList.shift() || "call_" + randomUUID3().replace(/-/g, "");
         toolResults.push({
           type: "tool-result",
           toolCallId: id,
@@ -8293,7 +8284,7 @@ function translateGeminiRequest(body, options = {}) {
   };
 }
 async function startGeminiProxy(routes, debug = false) {
-  const proxyToken = randomUUID4();
+  const proxyToken = randomUUID3();
   silenceSdkWarnings();
   if (routes.length === 0) {
     return Promise.reject(new Error("Gemini proxy requires at least one route"));
@@ -9233,7 +9224,7 @@ import http from "http";
 import { streamText as streamText3 } from "ai";
 
 // src/antigravity/request-adapter.ts
-import { randomUUID as randomUUID5 } from "crypto";
+import { randomUUID as randomUUID4 } from "crypto";
 import { tool as tool2, jsonSchema as jsonSchema2 } from "ai";
 var UNSUPPORTED_VOICE_MESSAGE = "Voice transcription isn\u2019t supported by Relay AI yet. Please type your message. Your coding session remains active.";
 var OMITTED_VOICE_TEXT = "[Voice recording omitted because transcription is not supported by Relay AI.]";
@@ -9461,7 +9452,7 @@ function translateRequest2(ccReq, options = {}) {
           contentParts.push({ type: "text", text: OMITTED_VOICE_TEXT });
         }
       } else if (part.functionCall) {
-        const id = "call_" + randomUUID5().replace(/-/g, "");
+        const id = "call_" + randomUUID4().replace(/-/g, "");
         const name = part.functionCall.name;
         if (!nameToIdList.has(name)) nameToIdList.set(name, []);
         nameToIdList.get(name).push(id);
@@ -9474,7 +9465,7 @@ function translateRequest2(ccReq, options = {}) {
       } else if (part.functionResponse) {
         const name = part.functionResponse.name;
         const idList = nameToIdList.get(name) || [];
-        const id = idList.shift() || "call_" + randomUUID5().replace(/-/g, "");
+        const id = idList.shift() || "call_" + randomUUID4().replace(/-/g, "");
         toolResults.push({
           type: "tool-result",
           toolCallId: id,
@@ -11876,7 +11867,7 @@ import {
 } from "fs";
 import { createRequire as createRequire2 } from "module";
 import { dirname as dirname3, join as join14 } from "path";
-import { createHash as createHash4, randomUUID as randomUUID6 } from "crypto";
+import { createHash as createHash4, randomUUID as randomUUID5 } from "crypto";
 import { parse, modify, applyEdits } from "jsonc-parser";
 var require3 = createRequire2(import.meta.url);
 var MODEL_PREFERENCES_KEY2 = "antigravityUnifiedStateSync.modelPreferences";
@@ -11950,7 +11941,7 @@ function acquireExistingIdeSession(profileDir, env = process.env, options = {}) 
   const lockPath = getExistingIdeLockPath(env);
   mkdirSync5(dirname3(lockPath), { recursive: true, mode: 448 });
   const lock = { pid: process.pid, profileDir, startedAt: (/* @__PURE__ */ new Date()).toISOString() };
-  const tempPath = `${lockPath}.${process.pid}.${randomUUID6()}.tmp`;
+  const tempPath = `${lockPath}.${process.pid}.${randomUUID5()}.tmp`;
   writeFileSync6(tempPath, JSON.stringify(lock), { mode: 384, flag: "wx" });
   const publish = () => linkSync2(tempPath, lockPath);
   try {
@@ -14585,7 +14576,7 @@ import * as p15 from "@clack/prompts";
 import { existsSync as existsSync13, readFileSync as readFileSync11, writeFileSync as writeFileSync8, mkdirSync as mkdirSync8 } from "fs";
 import { homedir as homedir12 } from "os";
 import { join as join20, dirname as dirname6 } from "path";
-import { randomUUID as randomUUID7 } from "crypto";
+import { randomUUID as randomUUID6 } from "crypto";
 function getClaudeDesktopHome() {
   if (process.platform === "win32") {
     return join20(process.env.LOCALAPPDATA || join20(homedir12(), "AppData", "Local"), "Claude-3p");
@@ -14663,7 +14654,7 @@ function buildRelayAiConfig(proxyPort) {
   };
 }
 function writeRelayAiConfig(proxyPort) {
-  const uuid = randomUUID7();
+  const uuid = randomUUID6();
   const configPath = join20(getConfigLibraryPath(), `${uuid}.json`);
   const config = buildRelayAiConfig(proxyPort);
   mkdirSync8(dirname6(configPath), { recursive: true });
@@ -16012,7 +16003,7 @@ function buildHttpProxyChildEnv(baseEnv, proxyUrl, caCertPath) {
 }
 
 // src/http-proxy/ca.ts
-import { randomBytes as randomBytes3, randomUUID as randomUUID8 } from "crypto";
+import { randomBytes as randomBytes3, randomUUID as randomUUID7 } from "crypto";
 import {
   chmodSync as chmodSync3,
   existsSync as existsSync16,
@@ -16077,7 +16068,7 @@ function createHttpProxyCertificates(appHome = getAppHome()) {
   const root = join24(appHome, SESSION_ROOT);
   mkdirSync12(root, { recursive: true, mode: 448 });
   chmodSync3(root, 448);
-  const sessionDir = join24(root, randomUUID8());
+  const sessionDir = join24(root, randomUUID7());
   mkdirSync12(sessionDir, { mode: 448 });
   chmodSync3(sessionDir, 448);
   writeFileSync12(join24(sessionDir, OWNER_FILE), `${process.pid}
@@ -18470,11 +18461,11 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-5X6R3WDP.js");
+    const { runUiCommand } = await import("./ui-command-FG53W2P7.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-UYFCUPQI.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-IE74PN5R.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

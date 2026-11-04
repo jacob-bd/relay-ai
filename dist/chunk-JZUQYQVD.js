@@ -4,10 +4,11 @@ import {
   filterCachedCopilotModels,
   materializeRegistry,
   oauthAuthRef,
+  openCodeGoHeaders,
   probePoolEffort,
   probePoolModel,
   providerRefreshToken
-} from "./chunk-P2ZUUHDQ.js";
+} from "./chunk-4QAQ4MVE.js";
 import {
   EFFORT_RANK,
   MAX_MODEL_CATALOG,
@@ -297,6 +298,11 @@ function localProvidersToServerModels(localProviders) {
       providerData: provider.providerData
     }))
   );
+}
+
+// src/pool/session-id.ts
+function poolProviderHeaders(provider, model, sessionId) {
+  return openCodeGoHeaders(provider.id, model.apiBaseUrl, sessionId, provider.headers) ?? provider.headers;
 }
 
 // src/antigravity/slot-registry.ts
@@ -1340,9 +1346,9 @@ async function verifyConfiguredPoolMember(member, providers, signal, options = {
         authType: provider2.authType,
         oauthAccountId: provider2.oauthAccountId,
         providerData: provider2.providerData,
-        headers: provider2.headers,
-        // Some gateways (OpenCode Go) reject requests that carry no session id.
+        // Some gateways (OpenCode Go) reject requests that carry no session id header.
         sessionId: `relay-pool-verify-${randomUUID()}`,
+        headers: poolProviderHeaders(provider2, model2, `relay-pool-verify-${randomUUID()}`),
         refreshToken: providerRefreshToken(provider2.id, provider2.authType, provider2.authRef)
       }),
       probe: options.evidence ? async () => options.evidence : probePoolModel,
@@ -1378,6 +1384,7 @@ export {
   formatRegistryAuthLabel,
   resolveProvidersForDisplay,
   localProvidersToServerModels,
+  poolProviderHeaders,
   evaluateAgySwitchCompatibility,
   resolveRelayCatalogSlots,
   injectRelayModels,
@@ -1396,4 +1403,4 @@ export {
   poolDiagnostic,
   verifyConfiguredPoolMember
 };
-//# sourceMappingURL=chunk-OTMOCQB6.js.map
+//# sourceMappingURL=chunk-JZUQYQVD.js.map

@@ -2,7 +2,7 @@ import { CodexRetryGuard, requestFingerprint } from './codex-retry.js';
 import type { CodexToolContext } from '../codex-responses-adapter.js';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { FreePoolPreferences } from '../types.js';
-import type { PoolLimits } from './attempt.js';
+import { MAX_POOL_ATTEMPTS, type PoolLimits } from './attempt.js';
 import { codexPoolIdentity } from './codex-identity.js';
 import { PoolContinuationStore, type PoolRouteIdentity } from './continuation.js';
 import { dispatchFreePool, type DispatchRoute } from './dispatch.js';
@@ -13,7 +13,7 @@ import { writeCodexPoolResponse } from './codex-response.js';
 export const FREE_POOL_MODEL_ID = 'relay-free-pool';
 export const FREE_POOL_PROVIDER_ID = 'relay-free-pool';
 export const DEFAULT_POOL_LIMITS: PoolLimits = {
-  attempts: 3, firstContentMs: 20_000, idleMs: 20_000,
+  attempts: MAX_POOL_ATTEMPTS, firstContentMs: 20_000, idleMs: 20_000,
   totalMs: 60_000, bufferBytes: 65_536, cleanupMs: 1000,
 };
 export interface CodexPoolRoute extends DispatchRoute { identity: PoolRouteIdentity; toolContext?: CodexToolContext; }
