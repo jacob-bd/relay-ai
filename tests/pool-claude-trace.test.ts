@@ -77,3 +77,20 @@ describe('RELAY_POOL_FORCE_FAIL test switch', () => {
     expect(failed).toMatchObject({ event: 'failed', providerId: 'nvidia', reason: 'simulated failure (test switch)' });
   });
 });
+
+describe('a member that is cooling down is skipped, not fatal', () => {
+  it('moves on to the next member when the first is cooling down', async () => {
+    const cooling: DispatchRoute = { ...base, member: { providerId: 'nvidia', modelId: 'cooling' },
+      async open() { throw new Error('Pool route entered cooldown'); } };
+    const fine: DispatchRoute = { ...working, member: { providerId: 'go', modelId: 'fine' } };
+    const runtime = new ClaudePoolRuntime({ members: [cooling.member, fine.member], effort: 'auto', receipts: [] }, async () => [cooling, fine]);
+    const out: string[] = [];
+    const result = await runtime.serve({ model: CLAUDE_POOL_MODEL_ID, max_tokens: 64, stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      chunk => { out.push(chunk); }, new AbortController().signal);
+    expect(result.ok).toBe(true);
+    expect(out.join('')).toContain('OK');
+    const [served, failed] = readPoolActivity(2);
+    expect(served).toMatchObject({ event: 'served', providerId: 'go' });
+    expect(failed).toMatchObject({ event: 'failed', providerId: 'nvidia', reason: 'skipped: cooling down after a recent failure' });
+  });
+});

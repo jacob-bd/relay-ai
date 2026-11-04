@@ -10,7 +10,7 @@ describe('pool failure classification', () => {
   });
   it('does not retry invalid requests, cancellation or unknown failures', () => {
     for (const error of [{ statusCode: 400 }, { name: 'AbortError' }, new Error('unknown')]) expect(retryPoolFailure(error)).toBe(false);
-    for (const error of [{ statusCode: 429 }, { statusCode: 503 }, new Error('first-content-timeout')]) expect(retryPoolFailure(error)).toBe(true);
+    for (const error of [{ statusCode: 429 }, { statusCode: 503 }, new Error('first-content-timeout'), new Error('Pool route entered cooldown')]) expect(retryPoolFailure(error)).toBe(true);
   });
 });
 

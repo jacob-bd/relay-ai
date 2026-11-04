@@ -23,7 +23,7 @@ import {
   readBody,
   recordPoolActivity,
   sendJson
-} from "./chunk-ITTRV5SZ.js";
+} from "./chunk-3BD4FGX2.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -2111,7 +2111,7 @@ function poolFailure(error, now = Date.now()) {
   if ([401, 403, 404].includes(status ?? 0)) return { kind: "access", status };
   if (status === 400 && /context.{0,20}(length|window|exceed)|prompt.{0,20}too long/i.test(value?.message ?? "")) return { kind: "context", status };
   if (status === 400 || status === 422) return { kind: "invalid", status };
-  if (status !== void 0 && status >= 500 || /ECONNRESET|ETIMEDOUT|ENOTFOUND|first-content-timeout|missing-valid-finish|invalid-finish|stream-error/.test(value?.message ?? "")) return { kind: "transient", status };
+  if (status !== void 0 && status >= 500 || /ECONNRESET|ETIMEDOUT|ENOTFOUND|first-content-timeout|missing-valid-finish|invalid-finish|stream-error|Pool route entered cooldown/.test(value?.message ?? "")) return { kind: "transient", status };
   return { kind: "unknown", status };
 }
 function retryPoolFailure(error) {
@@ -8340,4 +8340,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-OAAW7PMR.js.map
+//# sourceMappingURL=chunk-MQX4LD54.js.map

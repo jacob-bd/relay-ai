@@ -37,6 +37,7 @@ export function poolRouteMember(routeId: string): { providerId: string; modelId:
 export function describePoolFailure(error: unknown): string {
   const raw = error instanceof Error ? error.message : '';
   if (raw.includes('Simulated failure (RELAY_POOL_FORCE_FAIL)')) return 'simulated failure (test switch)';
+  if (raw.includes('Pool route entered cooldown')) return 'skipped: cooling down after a recent failure';
   // upstreamHttpStatus defaults to 500 for anything unrecognised; only trust a status the error carries.
   const carried = error as { statusCode?: unknown; status?: unknown; response?: { status?: unknown } } | null;
   const explicit = [carried?.statusCode, carried?.status, carried?.response?.status]

@@ -58,6 +58,7 @@ function poolRouteMember(routeId) {
 function describePoolFailure(error) {
   const raw = error instanceof Error ? error.message : "";
   if (raw.includes("Simulated failure (RELAY_POOL_FORCE_FAIL)")) return "simulated failure (test switch)";
+  if (raw.includes("Pool route entered cooldown")) return "skipped: cooling down after a recent failure";
   const carried = error;
   const explicit = [carried?.statusCode, carried?.status, carried?.response?.status].find((value) => typeof value === "number");
   const status = explicit ?? (/\b(4\d\d|5\d\d)\b/.test(raw) ? upstreamHttpStatus(error, raw) : void 0);
@@ -1449,4 +1450,4 @@ export {
   poolDiagnostic,
   verifyConfiguredPoolMember
 };
-//# sourceMappingURL=chunk-ITTRV5SZ.js.map
+//# sourceMappingURL=chunk-3BD4FGX2.js.map

@@ -23,6 +23,7 @@ describe('pool activity log', () => {
     expect(poolRouteMember('nope')).toBeUndefined();
     expect(describePoolFailure({ statusCode: 429, message: 'secret-key-abc rate limited' })).toBe('rate limit (429)');
     expect(describePoolFailure(new Error('Bearer sk-12345678 exploded'))).toBe('failed');
+    expect(describePoolFailure(new Error('Pool route entered cooldown'))).toBe('skipped: cooling down after a recent failure');
   });
 });
 

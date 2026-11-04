@@ -17,7 +17,7 @@ export function poolFailure(error: unknown, now = Date.now()): PoolFailure {
   if ([401, 403, 404].includes(status ?? 0)) return { kind: 'access', status };
   if (status === 400 && /context.{0,20}(length|window|exceed)|prompt.{0,20}too long/i.test(value?.message ?? '')) return { kind: 'context', status };
   if (status === 400 || status === 422) return { kind: 'invalid', status };
-  if ((status !== undefined && status >= 500) || /ECONNRESET|ETIMEDOUT|ENOTFOUND|first-content-timeout|missing-valid-finish|invalid-finish|stream-error/.test(value?.message ?? '')) return { kind: 'transient', status };
+  if ((status !== undefined && status >= 500) || /ECONNRESET|ETIMEDOUT|ENOTFOUND|first-content-timeout|missing-valid-finish|invalid-finish|stream-error|Pool route entered cooldown/.test(value?.message ?? '')) return { kind: 'transient', status };
   return { kind: 'unknown', status };
 }
 export function retryPoolFailure(error: unknown): boolean {
