@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startProxyCatalog } from '../src/proxy.js';
+import type { ProxyRoute } from '../src/proxy.js';
 import { CLAUDE_POOL_MODEL_ID, ClaudePoolRuntime } from '../src/pool/claude-runtime.js';
 import type { DispatchRoute } from '../src/pool/dispatch.js';
 const member = { providerId: 'account', modelId: 'm' };
@@ -63,5 +64,27 @@ describe('Claude pool proxy integration', () => {
     });
     expect(res.status).toBe(200);
     expect(preparedSessionId).toBe('claude-conversation-1');
+  });
+  it('is advertised beside an ordinary Relay route without replacing it', async () => {
+    const chat: ProxyRoute = {
+      aliasId: 'anthropic-account__m2', realModelId: 'm2', displayName: 'M2 (account)',
+      upstreamUrl: '', apiKey: 'key', modelFormat: 'openai', npm: '@ai-sdk/openai-compatible',
+    };
+    const runtime = new ClaudePoolRuntime(pool, async () => [route]);
+    const combined = await startProxyCatalog([chat], chat.aliasId, false, {
+      pool: { runtime, displayName: 'Relay Free Pool', contextWindow: 128000 },
+    });
+    try {
+      const body = await (await fetch('http://127.0.0.1:' + combined.port + '/v1/models')).json() as {
+        data: Array<{ id: string; display_name: string }>;
+      };
+      expect(body.data.map(model => model.id)).toEqual([chat.aliasId, CLAUDE_POOL_MODEL_ID]);
+      expect(body.data[1]!.display_name).toBe('Relay Free Pool');
+      const one = await fetch('http://127.0.0.1:' + combined.port + '/v1/models/claude-pool%5B1m%5D');
+      expect(one.status).toBe(200);
+      expect((await one.json() as { id: string }).id).toBe(CLAUDE_POOL_MODEL_ID);
+    } finally {
+      combined.close();
+    }
   });
 });

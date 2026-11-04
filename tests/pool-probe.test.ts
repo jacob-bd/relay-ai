@@ -26,10 +26,10 @@ let baseURL: string;
 beforeAll(async () => { await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); baseURL = 'http://127.0.0.1:' + (server.address() as { port: number }).port + '/v1'; });
 afterAll(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
 describe('bounded pool enrollment probes', () => {
-  it('performs two one-shot calls and never executes a tool loop', async () => {
+  it('performs one one-shot call and never executes a tool loop', async () => {
     const model = createOpenAICompatible({ name: 'fake', apiKey: 'fake', baseURL }).chatModel('probe');
     expect(await probePoolModel(model, new AbortController().signal)).toEqual({ text: 'passed', tools: 'passed' });
-    expect(calls).toBe(2);
+    expect(calls).toBe(1);
     expect(executed).toBe(false);
   });
   it('reports the underlying provider failure when debug tracing is requested', async () => {

@@ -13,6 +13,7 @@ import {
 import { routeLookupIds } from '../context-model-id.js';
 import { formatAnthropicModelEntry, formatAnthropicModelList } from '../server/models.js';
 import { startProxyCatalog, type ProxyHandle, type ProxyRoute } from '../proxy.js';
+import { CLAUDE_POOL_MODEL_ID, type ClaudePoolRuntime } from '../pool/claude-runtime.js';
 import { createHttpProxyCertificates } from './ca.js';
 import { ANTHROPIC_UPSTREAM_HOST, RELAY_SENTINEL_HOST } from './anthropic-host.js';
 import { OPENCODE_SESSION_HEADER } from '../opencode-session.js';
@@ -23,6 +24,8 @@ const PROXY_USERNAME = 'relay-ai';
 
 export interface HttpProxyOptions {
   routes: ProxyRoute[];
+  /** Opt-in Relay Free Pool exposed beside the native and Relay models. */
+  pool?: { runtime: ClaudePoolRuntime; displayName: string; contextWindow: number };
   debug?: boolean;
   /** Test hook; production always uses https://api.anthropic.com. */
   anthropicOrigin?: string;
@@ -348,11 +351,12 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
 
   let adapter = options.adapterHandle ?? null;
   try {
-    if (options.routes.length > 0 && !adapter) {
+    if ((options.routes.length > 0 || options.pool) && !adapter) {
       adapter = await startProxyCatalog(
         options.routes,
-        options.routes[0]!.aliasId,
+        options.routes[0]?.aliasId ?? CLAUDE_POOL_MODEL_ID,
         options.debug,
+        options.pool ? { pool: options.pool } : {},
       );
     }
   } catch (error) {
@@ -377,7 +381,8 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
     }
 
     const modelsEndpoint = anthropicModelsEndpoint(req.url);
-    if (req.method === 'GET' && modelsEndpoint && options.routes.length > 0) {
+    const hasCatalog = options.routes.length > 0 || Boolean(options.pool);
+    if (req.method === 'GET' && modelsEndpoint && hasCatalog) {
       if (modelsEndpoint === 'list') {
         const upstreamResult = await fetchUpstreamModelsList(
           req,
@@ -391,6 +396,13 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
             r.displayName,
             r.contextWindow,
           ));
+        const poolDisplay = options.pool
+          ? { id: CLAUDE_POOL_MODEL_ID, name: options.pool.displayName, contextWindow: options.pool.contextWindow }
+          : undefined;
+        const poolEntry = poolDisplay
+          ? formatAnthropicModelEntry(poolDisplay.id, poolDisplay.name, poolDisplay.contextWindow)
+          : undefined;
+        if (poolEntry) relayEntries.push(poolEntry);
 
         if (upstreamResult && upstreamResult.statusCode === 200) {
           try {
@@ -418,11 +430,14 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
         }
 
         const fallbackList = formatAnthropicModelList(
-          options.routes.map(r => ({
-            id: r.gatewayAliasId ?? r.aliasId,
-            name: r.displayName,
-            contextWindow: r.contextWindow,
-          })),
+          [
+            ...options.routes.map(r => ({
+              id: r.gatewayAliasId ?? r.aliasId,
+              name: r.displayName,
+              contextWindow: r.contextWindow,
+            })),
+            ...(poolDisplay ? [poolDisplay] : []),
+          ],
         );
         const buffer = Buffer.from(JSON.stringify(fallbackList));
         res.writeHead(200, {
@@ -449,6 +464,20 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
           res.end(buffer);
           return;
         }
+        if (options.pool && routeLookupIds(modelsEndpoint.id).includes(CLAUDE_POOL_MODEL_ID)) {
+          const entry = formatAnthropicModelEntry(
+            CLAUDE_POOL_MODEL_ID,
+            options.pool.displayName,
+            options.pool.contextWindow,
+          );
+          const buffer = Buffer.from(JSON.stringify(entry));
+          res.writeHead(200, {
+            'content-type': 'application/json',
+            'content-length': String(buffer.length),
+          });
+          res.end(buffer);
+          return;
+        }
       }
     }
 
@@ -461,6 +490,26 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
         if (typeof parsed.model === 'string') route = routesById.get(parsed.model);
       } catch {
         // Fail closed to Anthropic passthrough when a body cannot be inspected.
+      }
+
+      const poolModel = Boolean(options.pool && parsed && typeof parsed.model === 'string'
+        && routeLookupIds(parsed.model).includes(CLAUDE_POOL_MODEL_ID));
+      if (poolModel && adapter && parsed) {
+        if (endpoint === 'count_tokens') {
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'x-relay-token-count-source': 'local-estimate',
+          });
+          res.end(JSON.stringify({ input_tokens: estimateAnthropicInputTokens(parsed) }));
+          return;
+        }
+        await forwardToAdapter(
+          req,
+          res,
+          Buffer.from(JSON.stringify({ ...parsed, model: CLAUDE_POOL_MODEL_ID })),
+          adapter,
+        );
+        return;
       }
 
       if (route && adapter && parsed) {
@@ -576,7 +625,10 @@ export async function startHttpProxy(options: HttpProxyOptions): Promise<HttpPro
     port: address.port,
     proxyUrl: `http://${PROXY_USERNAME}:${encodeURIComponent(password)}@${host}:${address.port}`,
     caCertPath: certificates.caCertPath,
-    modelIds: options.routes.map(route => route.aliasId),
+    modelIds: [
+      ...options.routes.map(route => route.aliasId),
+      ...(options.pool ? [CLAUDE_POOL_MODEL_ID] : []),
+    ],
     close: async () => {
       if (closed) return;
       closed = true;

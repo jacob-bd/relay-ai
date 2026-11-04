@@ -30,7 +30,7 @@ Entries are stored in `providers.json` under `manualModels`, separate from the d
 
 Open a provider in `relay-ai ui` (**Providers & Keys** → provider) to see its models with **Type**, **Context** and **Price** columns.
 
-- **Test** sends one short request and reports the response time. On success it also asks the server for the model's real context size (see below) and marks the model as tested Chat. A clear refusal (for example "not a chat model") marks it **Not chat**. Each Test uses a little provider quota.
+- **Test** sends one request capped at 256 output tokens, checks response and tool calling, and reports response time. It does not measure context or test reasoning settings. Successful responses mark the model as tested Chat. A clear refusal (for example "not a chat model") marks it **Not chat**. Each Test uses a little provider quota.
 - **Type** shows what a model is for: 💬 Chat, 🔢 Embedding, 🔀 Reranking, 🛡️ Classifier (safety), 🖼️ Image, 🎬 Video, 🔊 Audio, or ⛔ Not chat. The label under it says where it came from, in priority order:
 
   | Label | Source |
@@ -52,14 +52,14 @@ Custom OpenAI-compatible and Anthropic-compatible endpoints (self-hosted vLLM, c
 | Label | Meaning |
 |---|---|
 | **manual** | You typed it. Always wins. |
-| **measured** | The server stated its limit during a Test or **Measure context sizes**. |
+| **measured** | The server stated its limit during explicit context measurement. |
 | **estimate** | No size from the server. Relay uses the size models.dev lists for that model across vendors (the most common value, the smaller one on a tie), or a default. The server may run a smaller limit. |
 
 **How measuring works.** Relay sends one tiny request asking for an impossibly long answer. Servers that refuse it usually state their real maximum (vLLM, for example, replies `max_tokens=… cannot be greater than max_model_len=40960`). Nothing large is sent, so a measurement costs about the same as a normal Test. Servers that don't state a limit leave the size unchanged.
 
 **Measure context sizes** (custom endpoints only, in `relay-ai ui`) measures every visible model, three at a time, after you confirm. The button shows progress and doubles as Cancel; a summary lists how many sizes were updated, confirmed, or not reported. Relay never measures on its own, and never across a built-in provider's whole catalog.
 
-**What Claude Code sees.** Claude Code knows only two windows for these models: 200K, or 1M. Relay gives a model 1M only when its size is 1,000,000 or more and not an estimate. One-model launches pass the exact size (a 262K model shows 262K); model-switching sessions show 200K for anything under 1M. An *estimate* counts as at most 200K, so Test or measure a model to unlock its full size in Claude Code.
+**What Claude Code sees.** Claude Code knows only two windows for these models: 200K, or 1M. Relay gives a model 1M only when its size is 1,000,000 or more and not an estimate. One-model launches pass the exact size (a 262K model shows 262K); model-switching sessions show 200K for anything under 1M. An *estimate* counts as at most 200K, so measure or set the context size to unlock its full size in Claude Code.
 
 **Claude-style custom endpoints** receive the API key both as `x-api-key` and as `Authorization: Bearer`, because gateways differ on which one they accept. Your custom headers are sent too, including on single-model Claude Code launches.
 
@@ -283,3 +283,7 @@ If you use the wrong provider template for your key, you will receive a `401 Inv
 - **Amazon Bedrock**: Not supported as a first-class API-key provider yet (needs AWS credentials). If you already configured Bedrock in OpenCode CLI, you can optionally run `relay-ai providers import`.
 - **Azure OpenAI**: Not supported as a first-class provider yet (needs per-model deployment URLs). Optional: `relay-ai providers import` if already set up in OpenCode CLI.
 - **Google Vertex AI (Claude)**: Add with `relay-ai providers add vertex-anthropic` (or in `relay-ai ui`). Uses gcloud Application Default Credentials and `ANTHROPIC_VERTEX_PROJECT_ID` — no API key — and reads models live from `~/.relay-ai/vertex-models.json` (defaults to the current Claude lineup; add, remove or reset models from the provider's menu in `relay-ai providers`). `relay-ai server --vertex` remains available as a dedicated gateway. Gemini on Vertex is not supported yet.
+
+## Free model pool
+
+See [Relay Free Pool](FREE_POOL.md) for the shared pool UI, matching CLI commands, test request costs, and optional context/reasoning checks.

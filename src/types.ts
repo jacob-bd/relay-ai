@@ -124,6 +124,8 @@ export interface PoolCapabilityReceipt {
 }
 
 export interface FreePoolPreferences {
+  /** Opt in to adding Relay Free Pool alongside normal launch models. */
+  enabled?: boolean;
   members: FavoriteModel[];
   effort: 'auto' | 'low' | 'medium' | 'high';
   receipts: PoolCapabilityReceipt[];

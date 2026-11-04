@@ -75,7 +75,7 @@ export async function resolveAntigravityLaunchRoutes(
   const hasPoolEvidence = freePool.receipts.some(receipt =>
     receipt.targets.includes('antigravity') && receipt.billingSafe
     && receipt.verifiedAt <= Date.now() && receipt.expiresAt > Date.now());
-  if (hasPoolEvidence && routes.length < maxRoutes) {
+  if (freePool.enabled && hasPoolEvidence && routes.length < maxRoutes) {
     const apiKeys = new Map<string, string>();
     for (const member of freePool.members) {
       const provider = opts.allProviders.find(candidate => candidate.id === member.providerId);

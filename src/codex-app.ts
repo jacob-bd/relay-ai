@@ -7,6 +7,7 @@ import { loadPreferences, savePreferences } from './config.js';
 import { resolveApiKey, readFromCredentialStore } from './env.js';
 import { resolveOrCollectApiKey } from './key-setup.js';
 import { startCodexProxy } from './codex-proxy.js';
+import { additivePoolPreferences, createAdditivePoolRuntime } from './pool/additive.js';
 import type { CodexProxyHandle, CodexProxyRoute } from './codex-proxy.js';
 import {getCodexProxyDebugLogPath, printTraceLog, localIsoTimestamp } from './trace-log.js';
 import { buildAppCatalogFile, formatCodexModelLabel, serializeCatalog } from './codex/catalog.js';
@@ -504,6 +505,16 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
   }
 
   const prefs = loadPreferences();
+  const additivePool = additivePoolPreferences(prefs);
+  const appAdditive = additivePool
+    ? createAdditivePoolRuntime(additivePool, providersForPicker(catalog), { appCatalog: true })
+    : undefined;
+  const additivePoolRuntime = appAdditive?.runtime;
+  const additivePoolModel = appAdditive?.catalog;
+  if (additivePool && !appAdditive && !configOnly) {
+    p.log.warn('Relay Free Pool is enabled but has no verified member. Run: relay-ai pool verify');
+  }
+
   let favorites = prefs.favoriteModels ?? [];
   let mixedMode = opts.codexLaunchMode === 'mixed';
   if (!configOnly && isTty && !(launchProvider && opts.launchModel) && opts.codexLaunchMode === undefined) {
@@ -806,6 +817,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
       proxyHandle = await startCodexProxy(mixedPlan.relayRoutes, {
         requireAuth: false,
         debug: trace,
+        pool: additivePoolRuntime,
         routeAuditPath,
         mixedNative: {
           nativeModelIds: mixedPlan.nativeModelIds,
@@ -857,7 +869,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
       const regularRoutes = buildCodexProxyRoutesFromResolved(regularResolved, providersById);
       proxyHandle = await startCodexProxy(
         [...backendCodexRoutes, ...regularRoutes],
-        { requireAuth: false, debug: trace },
+        { requireAuth: false, debug: trace, pool: additivePoolRuntime },
       );
       proxyPort = proxyHandle.port;
     } else {
@@ -866,7 +878,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
       }
       proxyHandle = await startCodexProxy(
         appProviderRoutes.routes,
-        { requireAuth: false, debug: trace },
+        { requireAuth: false, debug: trace, pool: additivePoolRuntime },
       );
       proxyPort = proxyHandle.port;
     }
@@ -877,6 +889,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
       : favoritesActive && resolvedFavorites.length > 0
         ? buildFavoritesAppCatalog(resolvedFavorites)
         : buildAppCatalogFile(catalogModels, activeProvider.name, appRoute.modelId);
+    if (additivePoolModel) catalogFile.models.push(additivePoolModel);
 
     writeOverlayFile(catalogPath, serializeCatalog(catalogFile));
 

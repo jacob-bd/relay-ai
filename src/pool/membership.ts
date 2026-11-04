@@ -4,7 +4,8 @@ import { parsePoolReceipt } from './capabilities.js';
 export function parseFreePool(value: unknown): FreePoolPreferences {
   if (value === undefined) return { members: [], effort: 'auto', receipts: [] };
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid free pool configuration');
-  const { members, effort, receipts } = value as Record<string, unknown>;
+  const { members, effort, receipts, enabled } = value as Record<string, unknown>;
+  if (enabled !== undefined && typeof enabled !== 'boolean') throw new Error('Invalid free pool enabled setting');
   if (!Array.isArray(members) || !['auto', 'low', 'medium', 'high'].includes(String(effort))) {
     throw new Error('Invalid free pool members or effort');
   }
@@ -35,7 +36,7 @@ export function parseFreePool(value: unknown): FreePoolPreferences {
       parsedReceipts.push(receipt);
     }
   }
-  return { members: result, effort: effort as FreePoolPreferences['effort'], receipts: parsedReceipts };
+  return { ...(enabled === undefined ? {} : { enabled: enabled as boolean }), members: result, effort: effort as FreePoolPreferences['effort'], receipts: parsedReceipts };
 }
 
 export function addFreePoolMember(pool: FreePoolPreferences, member: FavoriteModel): FreePoolPreferences {

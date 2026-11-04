@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ create: vi.fn(), stream: vi.fn() }));
 vi.mock('../src/core/model.js', () => ({ createRelayModel: mocks.create }));
-vi.mock('ai', () => ({ streamText: mocks.stream }));
+vi.mock('ai', async original => ({ ...await original<typeof import('ai')>(), streamText: mocks.stream }));
 vi.mock('../src/registry/io.js', () => ({ loadRegistry: () => ({ providers: [{ id: 'groq-2', enabled: true, api: {}, modelsCache: { models: [{ id: 'test' }] } }] }) }));
 import { testModel } from '../src/test-model.js';
 const parts = (...events: any[]) => ({ stream: (async function* () { yield* events; })() });
@@ -11,15 +11,18 @@ describe('model reachability test', () => {
   mocks.stream.mockReturnValue(parts({ type: 'text-delta', text: 'OK' }, { type: 'finish' }));
   expect(await testModel('groq-2', 'test')).toMatchObject({ ok: true, latencyMs: expect.any(Number), notChat: false });
   expect(mocks.create).toHaveBeenCalledWith('groq-2::test');
-  expect(mocks.stream).toHaveBeenCalledWith(expect.objectContaining({ maxRetries: 0, abortSignal: expect.any(AbortSignal), prompt: 'Reply with OK.' }));
+  expect(mocks.stream).toHaveBeenCalledWith(expect.objectContaining({ maxRetries: 0, abortSignal: expect.any(AbortSignal), maxOutputTokens: 256, tools: expect.any(Object) }));
  });
- it('reports only numbers from the context-size check, never raw upstream text', async () => {
-  mocks.stream
-   .mockReturnValueOnce(parts({ type: 'text-delta', text: 'OK' }, { type: 'finish' }))
-   .mockReturnValueOnce(parts({ type: 'error', error: { statusCode: 400, message: 'secret-key', responseBody: 'secret-key max_model_len=40960' } }));
-  const r = await testModel('groq-2', 'test');
-  expect(r).toMatchObject({ ok: true, context: { measured: 40960 } });
-  expect(JSON.stringify(r)).not.toContain('secret-key');
+ it('uses one request without an implicit context probe and reports tool evidence', async () => {
+  mocks.stream.mockReturnValue(parts({ type: 'tool-call', toolName: 'relay_pool_probe', input: { value: 'ok' } }, { type: 'finish', finishReason: 'tool-calls' }));
+  expect(await testModel('groq-2', 'test')).toMatchObject({ ok: true, toolsPassed: true });
+  expect(mocks.stream).toHaveBeenCalledTimes(1);
+ });
+ it('does not pass truncated output or malformed tool arguments', async () => {
+  mocks.stream.mockReturnValue(parts({ type: 'text-delta', text: 'OK' }, { type: 'finish', finishReason: 'length' }));
+  expect((await testModel('groq-2', 'test')).ok).toBe(false);
+  mocks.stream.mockReturnValue(parts({ type: 'tool-call', toolName: 'relay_pool_probe', input: { value: 'wrong' } }, { type: 'finish', finishReason: 'tool-calls' }));
+  expect((await testModel('groq-2', 'test')).ok).toBe(false);
  });
  it.each([{events:[]}, {events:[{ type: 'finish' }]}, {events:[{ type: 'text-delta', text: 'partial' }]}])('does not pass an incomplete/empty stream', async ({events}) => {
   mocks.stream.mockReturnValue(parts(...events));

@@ -1,4 +1,4 @@
-import { streamText } from 'ai';
+import { streamText, tool, jsonSchema } from 'ai';
 import { createRelayModel } from './core/model.js';
 import { loadRegistry } from './registry/io.js';
 import { getProviderModels } from './registry/provider-models.js';
@@ -60,12 +60,14 @@ export async function probeModel(providerId: string, modelId: string, signal: Ab
     if (limit !== undefined) return { limit, chat: true };
     return isNotChatRefusal(error) ? { chat: false } : {};
   };
+  const controller = new AbortController();
   try {
     const model = await createRelayModel(`${providerId}::${modelId}`);
     const result = streamText({ model, prompt: 'Reply with OK.', maxOutputTokens: CONTEXT_PROBE_MAX_TOKENS,
-      maxRetries: 0, abortSignal: signal, onError: () => {} });
+      maxRetries: 0, abortSignal: AbortSignal.any([signal, controller.signal]), onError: () => {} });
     for await (const part of result.stream) {
       if (part.type === 'error') return inspect(part.error);
+      if (part.type === 'text-delta') { controller.abort(); return { chat: true }; }
       if (part.type === 'finish') return { chat: true };
     }
     return {};
@@ -139,25 +141,27 @@ export async function testModel(providerId: string, modelId: string, signal?: Ab
   try {
     const model = await createRelayModel(`${providerId}::${modelId}`);
     abortSignal.throwIfAborted();
-    const result = streamText({ model, prompt: 'Reply with OK.', maxOutputTokens: 1024,
+    const result = streamText({ model, prompt: 'Say OK, then call relay_pool_probe with value "ok".', maxOutputTokens: 256,
+      tools: { relay_pool_probe: tool({ description: 'Harmless capability check; never executed.',
+        inputSchema: jsonSchema<{ value: string }>({ type: 'object', properties: { value: { type: 'string', enum: ['ok'] } }, required: ['value'], additionalProperties: false }),
+      }) },
       maxRetries: 0, abortSignal, onError: () => {} });
     let text = '';
     let finished = false;
+    let toolsPassed = false;
     for await (const part of result.stream) {
       if (part.type === 'error') throw part.error;
       if (part.type === 'text-delta') text += part.text;
-      if (part.type === 'finish') finished = true;
+      if (part.type === 'tool-call') toolsPassed = part.toolName === 'relay_pool_probe' && (part.input as { value?: string })?.value === 'ok';
+      if (part.type === 'finish') finished = part.finishReason !== 'length';
     }
     abortSignal.throwIfAborted();
-    if (!finished || !text.trim()) {
+    if (!finished || (!text.trim() && !toolsPassed)) {
       return { ok: false, error: 'The model returned no complete text response. Try again or choose another model.' };
     }
     const latencyMs = Date.now() - started;
-    const context = await checkContextWindow(providerId, modelId, signal).catch(() => undefined);
-    // A text reply proves the model takes chat requests, whatever the follow-up size check showed.
     rememberChatResult(providerId, modelId, true);
-    if (context) context.notChat = false;
-    return { ok: true, latencyMs, notChat: false, ...(context ? { context } : {}) };
+    return { ok: true, latencyMs, notChat: false, toolsPassed };
   } catch (error) {
     if (!abortSignal.aborted && isNotChatRefusal(error)) {
       rememberChatResult(providerId, modelId, false);

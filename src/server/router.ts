@@ -4,6 +4,7 @@ import {
   formatGatewayAnthropicModels,
   formatOpenAIModels,
   buildServerSubagentModelRouting,
+  exposedGatewayAliasId,
   gatewayDisplayName,
   supportsDirectOpenAIChatCompletions,
   type GatewayModelOptions,
@@ -31,7 +32,7 @@ import {
 import { writeSecureLogLine, resetTraceLog } from '../trace-log.js';
 import type { LanguageModel } from 'ai';
 import { createLanguageModel, isSdkMigratedNpm, maxToolsForNpm } from '../provider-factory.js';
-import { formatUpstreamError, upstreamHttpStatus } from '../codex/upstream-error.js';
+import { anthropicErrorType, formatUpstreamError, upstreamHttpStatus } from '../codex/upstream-error.js';
 import { estimateAnthropicInputTokens } from '../anthropic-endpoints.js';
 import {
   translateRequest as sdkTranslateRequest,
@@ -50,6 +51,7 @@ import {
   openCodeGoHeaders,
 } from '../opencode-session.js';
 import { isProviderKind } from '../registry/provider-kind.js';
+import { CLAUDE_POOL_MODEL_ID, type ClaudePoolRuntime } from '../pool/claude-runtime.js';
 
 export interface ServerBackend {
   baseUrl: string;
@@ -68,9 +70,20 @@ export interface ServerOptions {
   catalog: ModelCatalog;
   backends: Record<ServerBackendId, ServerBackend>;
   gateway?: GatewayModelOptions;
+  /**
+   * Opt-in shared free pool. Only Claude Desktop sets this; `relay-ai server`
+   * leaves it undefined so the synthetic pool model never appears there.
+   */
+  pool?: ServerPoolOptions;
   vertex?: VertexServerConfig;
   /** When set, append structured debug lines to this file path. */
   debugLogPath?: string;
+}
+
+export interface ServerPoolOptions {
+  runtime: ClaudePoolRuntime;
+  /** Discovery label for the synthetic pool entry. */
+  displayName: string;
 }
 
 export interface ServerHandle {
@@ -153,7 +166,20 @@ async function routeRequest(
     }
 
     if (req.method === 'GET' && pathname === '/anthropic/v1/models') {
-      sendJson(res, 200, formatGatewayAnthropicModels(options.catalog.list(), options.gateway));
+      const models = options.catalog.list();
+      const payload = formatGatewayAnthropicModels(models, options.gateway);
+      // The masked-discovery display name appends the provider label; the pool is
+      // a product name, so keep it exactly as configured.
+      const poolModel = options.pool
+        ? models.find(model => model.id === CLAUDE_POOL_MODEL_ID)
+        : undefined;
+      if (poolModel && options.pool) {
+        const publicId = exposedGatewayAliasId(poolModel, options.gateway);
+        for (const entry of payload.data) {
+          if (entry.id === publicId) entry.display_name = options.pool.displayName;
+        }
+      }
+      sendJson(res, 200, payload);
       return;
     }
 
@@ -198,6 +224,15 @@ async function handleAnthropicMessages(
   const model = lookupModel(res, options.catalog, requestedModelId);
   if (!model) {
     plog(`model not found: ${body.model}`);
+    return;
+  }
+
+  if (options.pool && model.id === CLAUDE_POOL_MODEL_ID) {
+    // Resolve through the catalog first: Claude Desktop may send the masked,
+    // scoped, or bare id. Only the resolved synthetic entry reaches the pool,
+    // and a pool failure never falls through to a provider route.
+    plog(`anthropic-messages pool=${model.id} stream=${body.stream === true}`);
+    await serveAnthropicPool(req, res, options, body, plog);
     return;
   }
 
@@ -353,6 +388,64 @@ async function handleAnthropicMessages(
   }
 
   sendJson(res, 400, { error: { message: `Unsupported model format: ${model.modelFormat}` } });
+}
+
+/**
+ * Streams or collects one Relay Free Pool request. Dispatch, retries, cooldowns
+ * and Anthropic SSE formatting all live in the shared Claude pool runtime; this
+ * adapter only owns the HTTP response and the client-disconnect abort.
+ */
+async function serveAnthropicPool(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: ServerOptions,
+  body: JsonBody,
+  plog: PLog,
+): Promise<void> {
+  const pool = options.pool;
+  if (!pool) return;
+
+  const abort = new AbortController();
+  res.once('close', () => { if (!res.writableFinished) abort.abort(); });
+
+  try {
+    const sessionId = extractConversationId(req.headers, body);
+    const result = await pool.runtime.serve(body, chunk => {
+      if (res.destroyed) throw new Error('Client disconnected');
+      if (!res.headersSent) {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        });
+      }
+      res.write(chunk);
+    }, abort.signal, sessionId);
+
+    if (result.ok) {
+      if (result.message) sendJson(res, 200, result.message);
+      else res.end();
+      return;
+    }
+
+    plog(`pool error status=${result.status} committed=${result.committed}: ${result.error.message}`);
+    if (result.committed || res.headersSent) {
+      if (!res.writableEnded) res.end();
+      return;
+    }
+    if (!res.destroyed) {
+      sendJson(res, result.status, { type: 'error', error: result.error });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    plog(`pool failure: ${message}`);
+    if (res.destroyed || res.writableEnded) return;
+    if (!res.headersSent) {
+      sendJson(res, 502, { type: 'error', error: { type: anthropicErrorType(502), message } });
+    } else {
+      res.end();
+    }
+  }
 }
 
 async function handleOpenAIChatCompletions(

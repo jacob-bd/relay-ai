@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { formatAnthropicModelEntry } from '../server/models.js';
 import type { ProxyRoute } from '../proxy.js';
+import { CLAUDE_POOL_MODEL_ID } from '../pool/claude-runtime.js';
 import { RELAY_BASE_URL } from './anthropic-host.js';
 
 // Must equal the ANTHROPIC_BASE_URL pinned in http-proxy/env.ts — Claude Code only
@@ -26,6 +27,7 @@ function cachePath(baseEnv: NodeJS.ProcessEnv): string {
 export function writeGatewayDiscoveryCache(
   baseEnv: NodeJS.ProcessEnv,
   routes: ProxyRoute[],
+  pool?: { displayName: string; contextWindow: number },
 ): void {
   try {
     const models = routes
@@ -35,6 +37,7 @@ export function writeGatewayDiscoveryCache(
         route.displayName,
         route.contextWindow,
       ));
+    if (pool) models.push(formatAnthropicModelEntry(CLAUDE_POOL_MODEL_ID, pool.displayName, pool.contextWindow));
     const file = cachePath(baseEnv);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(

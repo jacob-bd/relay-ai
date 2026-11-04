@@ -3,7 +3,7 @@ import {
   anthropicErrorType,
   normalizeToolSchemaForNpm,
   upstreamHttpStatus
-} from "./chunk-XWM4ELUX.js";
+} from "./chunk-FKGBGJZK.js";
 import {
   MAX_MODEL_CATALOG,
   deepMergeProviderOptions,
@@ -14,7 +14,7 @@ import {
   splitToolUseId,
   sseChunk,
   thinkingProviderOptions
-} from "./chunk-IBAUEWWV.js";
+} from "./chunk-W7B52E2T.js";
 
 // src/subagent-route-registry.ts
 import { randomUUID } from "crypto";
@@ -772,4 +772,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-UJTFOIOM.js.map
+//# sourceMappingURL=chunk-U3YG5C5I.js.map

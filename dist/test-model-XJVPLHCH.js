@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 import {
   mergeHeaders,
-  openCodeGoHeaders,
-  setContextWindowOverride,
-  setModelNotChat
-} from "./chunk-INBTEX36.js";
+  openCodeGoHeaders
+} from "./chunk-2RC456ES.js";
 import {
   normalizeToolSchemaForNpm,
   upstreamHttpStatus
-} from "./chunk-XWM4ELUX.js";
+} from "./chunk-FKGBGJZK.js";
 import {
   cachedModelToLocal,
   providerRefreshToken,
-  reconcileCachedModelProtocol
-} from "./chunk-RNHGBUKM.js";
+  reconcileCachedModelProtocol,
+  setContextWindowOverride,
+  setModelNotChat
+} from "./chunk-4NL6K57P.js";
 import {
   ANTIGRAVITY_API_VERSION,
   ANTIGRAVITY_BASE_URLS,
@@ -33,7 +33,7 @@ import {
   resolveProviderOAuthAccountId,
   resolveProviderOAuthProviderData,
   withProviderRequestDefaults
-} from "./chunk-IBAUEWWV.js";
+} from "./chunk-W7B52E2T.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -42,7 +42,7 @@ import "./chunk-KNCSTHR4.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/test-model.ts
-import { streamText } from "ai";
+import { streamText, tool, jsonSchema } from "ai";
 
 // src/core/model.ts
 init_provider_templates();
@@ -81,8 +81,8 @@ function requestFingerprint(value) {
     sections,
     contents,
     contentsCount: contents.length,
-    toolCount: tools.reduce((count, tool) => {
-      const declarations = record(tool).functionDeclarations;
+    toolCount: tools.reduce((count, tool2) => {
+      const declarations = record(tool2).functionDeclarations;
       return count + (Array.isArray(declarations) ? declarations.length : 0);
     }, 0)
   };
@@ -788,6 +788,7 @@ async function probeModel(providerId, modelId, signal) {
     if (limit !== void 0) return { limit, chat: true };
     return isNotChatRefusal(error) ? { chat: false } : {};
   };
+  const controller = new AbortController();
   try {
     const model = await createRelayModel(`${providerId}::${modelId}`);
     const result = streamText({
@@ -795,12 +796,16 @@ async function probeModel(providerId, modelId, signal) {
       prompt: "Reply with OK.",
       maxOutputTokens: CONTEXT_PROBE_MAX_TOKENS,
       maxRetries: 0,
-      abortSignal: signal,
+      abortSignal: AbortSignal.any([signal, controller.signal]),
       onError: () => {
       }
     });
     for await (const part of result.stream) {
       if (part.type === "error") return inspect(part.error);
+      if (part.type === "text-delta") {
+        controller.abort();
+        return { chat: true };
+      }
       if (part.type === "finish") return { chat: true };
     }
     return {};
@@ -852,8 +857,12 @@ async function testModel(providerId, modelId, signal) {
     abortSignal.throwIfAborted();
     const result = streamText({
       model,
-      prompt: "Reply with OK.",
-      maxOutputTokens: 1024,
+      prompt: 'Say OK, then call relay_pool_probe with value "ok".',
+      maxOutputTokens: 256,
+      tools: { relay_pool_probe: tool({
+        description: "Harmless capability check; never executed.",
+        inputSchema: jsonSchema({ type: "object", properties: { value: { type: "string", enum: ["ok"] } }, required: ["value"], additionalProperties: false })
+      }) },
       maxRetries: 0,
       abortSignal,
       onError: () => {
@@ -861,20 +870,20 @@ async function testModel(providerId, modelId, signal) {
     });
     let text = "";
     let finished = false;
+    let toolsPassed = false;
     for await (const part of result.stream) {
       if (part.type === "error") throw part.error;
       if (part.type === "text-delta") text += part.text;
-      if (part.type === "finish") finished = true;
+      if (part.type === "tool-call") toolsPassed = part.toolName === "relay_pool_probe" && part.input?.value === "ok";
+      if (part.type === "finish") finished = part.finishReason !== "length";
     }
     abortSignal.throwIfAborted();
-    if (!finished || !text.trim()) {
+    if (!finished || !text.trim() && !toolsPassed) {
       return { ok: false, error: "The model returned no complete text response. Try again or choose another model." };
     }
     const latencyMs = Date.now() - started;
-    const context = await checkContextWindow(providerId, modelId, signal).catch(() => void 0);
     rememberChatResult(providerId, modelId, true);
-    if (context) context.notChat = false;
-    return { ok: true, latencyMs, notChat: false, ...context ? { context } : {} };
+    return { ok: true, latencyMs, notChat: false, toolsPassed };
   } catch (error) {
     if (!abortSignal.aborted && isNotChatRefusal(error)) {
       rememberChatResult(providerId, modelId, false);
@@ -894,4 +903,4 @@ export {
   probeModel,
   testModel
 };
-//# sourceMappingURL=test-model-HHR4O5AX.js.map
+//# sourceMappingURL=test-model-XJVPLHCH.js.map

@@ -82,7 +82,12 @@
           </span>
           Favorites
         </a>
-        <a href="#free-pool" class="nav-item" data-section="free-pool"><span class="nav-icon">⇄</span><span>Free Pool</span></a>
+        <a href="#free-pool" class="nav-item" data-section="free-pool">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 9 5-9 5-9-5 9-5z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg>
+          </span>
+          Relay Free Pool
+        </a>
         <a href="#section-codex-subagents" class="nav-item" data-section="section-codex-subagents" id="nav-codex-subagents">
           <span class="nav-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg>
@@ -172,13 +177,15 @@
         <div id="favorites-list" class="fav-list" role="list" aria-label="General favorites" data-list="general"></div>
       </section>
 
+      <!-- Relay Free Pool section -->
       <section id="free-pool" class="section">
         <div class="section-hero">
-          <div class="section-eyebrow">Model Routing · Experimental</div>
-          <h1 class="section-heading">Free <span class="heading-accent">Pool</span></h1>
-          <p class="section-sub">Choose free models in priority order. Relay tries the next compatible model when a request fails before output starts. This list is separate from Favorites.</p>
+          <div class="section-eyebrow">Model Routing</div>
+          <h1 class="section-heading">Relay <span class="heading-accent">Free Pool</span></h1>
+          <p class="section-sub">One model in your tool’s model switcher, backed by free models you choose. The pool is separate from Favorites. Tests send small text and tool requests using your provider account and never execute a tool.</p>
+          <div class="provider-stats" id="free-pool-stats"></div>
         </div>
-        <div id="free-pool-panel" aria-live="polite">Loading free models…</div>
+        <div id="free-pool-panel" aria-live="polite"></div>
       </section>
 
       <!-- Codex SubAgent section -->

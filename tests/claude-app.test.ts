@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { formatGatewayAnthropicModels, type ServerModelInfo } from '../src/server/models.js';
+import { poolEndpointRevision, type PoolCapabilityReceipt } from '../src/pool/capabilities.js';
 import type { LocalProvider, LocalProviderModel, UserPreferences } from '../src/types.js';
 
 const state = vi.hoisted(() => ({
@@ -121,6 +122,48 @@ function appProvider(id: string, models: LocalProviderModel[]): LocalProvider {
     apiKey: `${id}-key`,
     authType: 'api',
     models,
+  };
+}
+
+const poolMember = { providerId: 'free-account', modelId: 'free-model' };
+
+function freePoolProvider(): LocalProvider {
+  return {
+    id: poolMember.providerId,
+    name: 'Free Account',
+    apiKey: 'free-key',
+    authType: 'api',
+    models: [{
+      ...appModel(poolMember.modelId),
+      name: 'Free Model',
+      isFree: true,
+      contextWindow: 128_000,
+    }],
+  };
+}
+
+function poolReceipt(provider: LocalProvider): PoolCapabilityReceipt {
+  const model = provider.models[0]!;
+  return {
+    member: poolMember,
+    endpointRevision: poolEndpointRevision({
+      providerId: provider.id,
+      authRef: provider.authRef,
+      npm: model.npm,
+      baseURL: model.apiBaseUrl,
+      upstreamModelId: model.upstreamModelId,
+      headers: provider.headers,
+    }),
+    verifiedAt: Date.now() - 1_000,
+    expiresAt: Date.now() + 60_000,
+    targets: ['claude'],
+    tools: true,
+    maxOutputTokens: 8_192,
+    contextWindow: 128_000,
+    contextSource: 'provider',
+    reasoningAccounting: 'separate',
+    effortLevels: [],
+    billingSafe: true,
   };
 }
 
@@ -366,5 +409,96 @@ describe('runClaudeAppCommand', () => {
     expect(catalog).toHaveLength(50);
     expect(catalog[0]?.id).toBe(selectedModel.id);
     expect(catalog.at(-1)?.id).toBe('favorite-48');
+  });
+
+  it('adds Relay Free Pool to the Claude Desktop catalog when the pool is enabled', async () => {
+    const selected = appProvider('selected', [appModel('selected-model')]);
+    const poolProvider = freePoolProvider();
+    state.providers = [selected, poolProvider];
+    state.preferences = {
+      favoriteModels: [],
+      freePool: {
+        enabled: true,
+        members: [poolMember],
+        effort: 'auto',
+        receipts: [poolReceipt(poolProvider)],
+      },
+    };
+
+    const code = await runClaudeAppCommand([], {
+      launchProvider: selected.id,
+      launchModel: selected.models[0]!.id,
+    });
+
+    expect(code).toBe(0);
+    const catalog = state.startServerOptions.catalog.list() as ServerModelInfo[];
+    expect(catalog.map(model => model.id)).toEqual(['selected-model', 'claude-pool']);
+    expect(catalog.at(-1)).toMatchObject({
+      name: 'Relay Free Pool',
+      providerId: 'relay-pool',
+      modelFormat: 'unsupported',
+      contextWindow: 115_200,
+    });
+    // Claude Desktop sends this exact id back; masking only rewrites anthropic-* aliases.
+    expect(state.startServerOptions.catalog.get('claude-pool')).toBeDefined();
+    expect(state.startServerOptions.pool).toBeDefined();
+    expect(state.startServerOptions.pool.displayName).toBe('Relay Free Pool');
+  });
+
+  it('leaves the Claude Desktop launch unchanged when the pool is disabled', async () => {
+    const selected = appProvider('selected', [appModel('selected-model')]);
+    const poolProvider = freePoolProvider();
+    state.providers = [selected, poolProvider];
+    state.preferences = {
+      favoriteModels: [],
+      freePool: {
+        enabled: false,
+        members: [poolMember],
+        effort: 'auto',
+        receipts: [poolReceipt(poolProvider)],
+      },
+    };
+
+    const code = await runClaudeAppCommand([], {
+      launchProvider: selected.id,
+      launchModel: selected.models[0]!.id,
+    });
+
+    expect(code).toBe(0);
+    expect(state.startServerOptions.catalog.list().map((model: ServerModelInfo) => model.id)).toEqual([
+      'selected-model',
+    ]);
+    expect(state.startServerOptions.pool).toBeUndefined();
+  });
+
+  it('reserves a catalog slot for the pool without exceeding 50 models', async () => {
+    const selectedModel = appModel('selected-model');
+    const favoriteModels = Array.from({ length: 50 }, (_, index) => appModel(`favorite-${index}`));
+    const selected = appProvider('selected', [selectedModel, ...favoriteModels]);
+    const poolProvider = freePoolProvider();
+    state.providers = [selected, poolProvider];
+    state.preferences = {
+      favoriteModels: favoriteModels.map(model => ({
+        providerId: selected.id,
+        modelId: model.id,
+      })),
+      freePool: {
+        enabled: true,
+        members: [poolMember],
+        effort: 'auto',
+        receipts: [poolReceipt(poolProvider)],
+      },
+    };
+
+    const code = await runClaudeAppCommand([], {
+      launchProvider: selected.id,
+      launchModel: selectedModel.id,
+    });
+
+    expect(code).toBe(0);
+    const catalog = state.startServerOptions.catalog.list() as ServerModelInfo[];
+    expect(catalog).toHaveLength(50);
+    expect(catalog.at(-1)?.id).toBe('claude-pool');
+    expect(catalog.some(model => model.id === 'favorite-48')).toBe(false);
   });
 });

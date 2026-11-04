@@ -273,9 +273,9 @@ export function buildAntigravityPoolRoutes(opts: AntigravityPoolLaunchOptions): 
       ...representative,
       catalogId: 'relay-free-pool-' + level,
       providerId: 'relay-free-pool',
-      providerName: 'Free pool',
+      providerName: 'Relay Free Pool',
       modelId: 'free-pool-' + level,
-      displayName: 'Free Pool ' + effortLabel(level),
+      displayName: 'Relay Free Pool ' + effortLabel(level),
       apiKey: '',
       reasoningEffort: level,
       contextWindow: Math.min(...members.map(member => member.contextWindow!).filter(

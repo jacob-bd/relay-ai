@@ -18,11 +18,13 @@ import { CLAUDE_POOL_MODEL_ID, ClaudePoolRuntime } from './pool/claude-runtime.j
 import { prepareClaudePoolRoutes } from './pool/claude-prepare.js';
 import { PoolHealthStore } from './pool/health.js';
 import { poolCatalogEntry } from './pool/catalog.js';
+import { prepareClaudeAutoPool, type ClaudeAutoPool } from './pool/claude-launch.js';
 import { acquireClaudePoolSessionLock, getClaudePoolSessionLockPath } from './pool/claude-session.js';
 
 import type { ProxyHandle, ProxyRoute } from './proxy.js';
 import {
   buildCatalogRoutes,
+  localModelToRoute,
   makeRouteResolver,
 } from './catalog.js';
 import { runServerCommand } from './server/index.js';
@@ -568,7 +570,7 @@ ${pc.bold('Root options:')}
 ${pc.bold('Commands:')}
   claude      Launch Claude Code — pick a provider from your registry
   models      Manage favorite models for mid-session /model switching (max ${MAX_MODEL_CATALOG})
-  pool        Manage shared free-model pool membership (experimental)
+  pool        Manage Relay Free Pool; pool --help lists actions and test costs
   favorites   Alias for models
   subagents   Manage the independent Codex SubAgent model catalog (starts empty)
   providers   Add, import, and manage your AI providers
@@ -870,13 +872,22 @@ async function launchClaudeViaCatalog(
   contextWindow: number | undefined,
   trace: boolean,
   claudeArgs: string[],
+  autoPool?: ClaudeAutoPool,
 ): Promise<number> {
   let proxyHandle: ProxyHandle;
   try {
-    proxyHandle = await startProxyCatalog(catalogRoutes, startingRoute.aliasId, trace);
+    proxyHandle = await startProxyCatalog(
+      catalogRoutes,
+      startingRoute.aliasId,
+      trace,
+      autoPool
+        ? { pool: { runtime: autoPool.runtime, displayName: autoPool.displayName, contextWindow: autoPool.contextWindow } }
+        : {},
+    );
+    const catalogSize = catalogRoutes.length + (autoPool ? 1 : 0);
     p.log.info(
       `Switch menu active — proxy on port ${proxyHandle.port} ` +
-      pc.dim(`(${catalogRoutes.length} model${catalogRoutes.length !== 1 ? 's' : ''} in /model)`),
+      pc.dim(`(${catalogSize} model${catalogSize !== 1 ? 's' : ''} in /model)`),
     );
   } catch (err) {
     p.log.error(`Failed to start proxy: ${err instanceof Error ? err.message : String(err)}`);
@@ -1397,6 +1408,14 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     return 0;
   }
 
+  // Relay Free Pool joins every supported Claude launch when the pool is
+  // enabled and at least one member has fresh, servable Claude evidence. With
+  // no such member this is undefined and the launch path is unchanged.
+  const autoPool = dryRun || parsed.claudePool
+    ? undefined
+    : prepareClaudeAutoPool(prefs, catalog);
+  if (autoPool) switchMenuActive = true;
+
   const runTransparentProxy = async (selected?: FavoriteModel): Promise<number> => {
     if (dryRun) {
       console.log('');
@@ -1422,6 +1441,9 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
         baseEnv: process.env,
         claudeArgs: [...traceArgs, ...claudeArgs],
         debug: trace,
+        pool: autoPool
+          ? { runtime: autoPool.runtime, displayName: autoPool.displayName, contextWindow: autoPool.contextWindow }
+          : undefined,
         onProxyReady: proxy => {
           if (agentStdout) return;
           const count = proxy.handle.modelIds.length;
@@ -1466,7 +1488,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
 
   const providerOptions = allProviders.map(lp => providerSelectOption(lp));
 
-  if (switchMenuActive) {
+  if (favorites.length > 0) {
     providerOptions.unshift({
       value: '__favorites__',
       label: '⭐ Favorites Catalog',
@@ -1619,6 +1641,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       claudeContextWindow,
       trace,
       claudeArgs,
+      autoPool,
     );
   }
 
@@ -1655,11 +1678,40 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
 
   let proxyHandle: ProxyHandle | null = null;
   let childEnv: NodeJS.ProcessEnv;
+  let launchClaudeModelId = claudeCodeClientModelId(selectedModel.id, claudeContextWindow);
 
   const isAntigravityOAuth = isProviderKind(activeProvider.id, 'antigravity') && activeProvider.authType === 'oauth';
   const isOAuthAnthropic = selectedModel.modelFormat === 'anthropic' && activeProvider.authType === 'oauth' && !isAntigravityOAuth;
 
-  if (isAntigravityOAuth) {
+  // Free Pool present: any single-model launch becomes a two-model catalog so
+  // /model offers both the launched model and Relay Free Pool. The route is the
+  // same one the ordinary single-model launch would have built.
+  const poolStartRoute = autoPool ? localModelToRoute(activeProvider, selectedModel) : null;
+  if (autoPool && !poolStartRoute) {
+    p.log.warn('Relay Free Pool skipped for this launch: the selected model has no proxy route.');
+  }
+  if (autoPool && poolStartRoute) {
+    try {
+      proxyHandle = await startProxyCatalog([poolStartRoute], poolStartRoute.aliasId, trace, {
+        pool: { runtime: autoPool.runtime, displayName: autoPool.displayName, contextWindow: autoPool.contextWindow },
+      });
+      if (!isAgentStdoutMode()) {
+        p.log.info(`Relay Free Pool added to the catalog (proxy port ${proxyHandle.port}).`);
+      }
+    } catch (err) {
+      p.log.error(`Failed to start catalog proxy: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+    launchClaudeModelId = poolStartRoute.aliasId;
+    childEnv = buildChildEnv(
+      `http://127.0.0.1:${proxyHandle.port}`,
+      poolStartRoute.aliasId,
+      proxyHandle.token,
+      proxyHandle.port,
+      claudeContextWindow,
+      true,
+    );
+  } else if (isAntigravityOAuth) {
     // Cloud Code Assist — proxy translates Anthropic → Assist format.
     try {
       proxyHandle = await startProxy(
@@ -1810,7 +1862,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
 
   const exitCode = await launchClaude(
     childEnv,
-    claudeCodeClientModelId(selectedModel.id, claudeContextWindow),
+    launchClaudeModelId,
     [...traceArgs, ...claudeArgs],
   );
   proxyHandle?.close();

@@ -24,8 +24,33 @@ import type { LocalProvider, LocalProviderModel } from './types.js';
 import type { CloudCodeBackend } from './cloud-code-backend.js';
 import { pickFavoriteStartModel } from './codex/favorites-launch.js';
 import { pickerRefresh } from './picker-refresh.js';
+import { prepareClaudeAutoPool, type ClaudeAutoPool } from './pool/claude-launch.js';
+import { CLAUDE_POOL_MODEL_ID } from './pool/claude-runtime.js';
+import type { ServerModelInfo } from './server/models.js';
 
 export { modelToServerModelInfo } from './claude-desktop/model-catalog.js';
+
+/**
+ * Synthetic catalog entry for the opt-in free pool. Its id is the shared
+ * `claude-pool` alias, so a request carrying that id reaches the server's pool
+ * interception instead of any provider route. The gateway never masks it:
+ * masking only rewrites `anthropic-*` aliases.
+ */
+export function claudePoolServerModel(
+  pool: Pick<ClaudeAutoPool, 'displayName' | 'contextWindow'>,
+): ServerModelInfo {
+  return {
+    id: CLAUDE_POOL_MODEL_ID,
+    name: pool.displayName,
+    isFree: true,
+    brand: 'Relay',
+    providerLabel: 'Relay',
+    providerId: 'relay-pool',
+    sourceBackend: 'relay-pool',
+    modelFormat: 'unsupported',
+    contextWindow: pool.contextWindow,
+  };
+}
 
 const CLAUDE_APP_GATEWAY_OPTIONS: GatewayModelOptions = {
   maskGatewayIds: true,
@@ -196,11 +221,29 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
     return 1;
   }
 
+  // Relay Free Pool joins every Claude Desktop launch when the opt-in pool is
+  // enabled and at least one member has fresh, servable Claude evidence. The
+  // pool shares the Claude Code eligibility gates, but it is fed the default
+  // registry catalog that verification used (not the Claude-Desktop-filtered
+  // catalog), so endpoint receipts match.
+  let autoPool: ClaudeAutoPool | undefined;
+  if (prefs.freePool?.enabled === true) {
+    try {
+      autoPool = prepareClaudeAutoPool(prefs, await fetchProviderCatalog());
+    } catch (err) {
+      p.log.warn(`Relay Free Pool is enabled but could not be prepared: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  // Reserve one catalog slot for the synthetic pool entry so the cap still
+  // holds and capacity-skipped favorites are reported normally.
+  const catalogLimit = MAX_MODEL_CATALOG - (autoPool ? 1 : 0);
+
   const catalogResolution = await resolveClaudeAppCatalog(
     activeProvider,
     selectedModel,
     compatible,
     favorites,
+    catalogLimit,
   );
   if (!catalogResolution.ok) {
     p.log.error(catalogResolution.error);
@@ -232,7 +275,8 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
       catalogResolution.providersById,
       trace,
     );
-    const serverModels = expandClaudeAppEffortVariants(builtCatalog.serverModels);
+    const serverModels = expandClaudeAppEffortVariants(builtCatalog.serverModels, catalogLimit);
+    if (autoPool) serverModels.push(claudePoolServerModel(autoPool));
     cloudCodeBackend = builtCatalog.backend;
 
     backupMetaJson();
@@ -245,6 +289,9 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
       catalog: createGatewayModelCatalog(serverModels, CLAUDE_APP_GATEWAY_OPTIONS),
       backends: BACKENDS,
       gateway: CLAUDE_APP_GATEWAY_OPTIONS,
+      pool: autoPool
+        ? { runtime: autoPool.runtime, displayName: autoPool.displayName }
+        : undefined,
       debugLogPath,
     });
 
@@ -289,7 +336,10 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
     console.log(`${pc.dim('Model:')}    ${selectedModel.id}`);
     console.log(`${pc.dim('Provider:')} ${activeProvider.name}`);
     if (serverModels.length > 1) {
-      console.log(`${pc.dim('Catalog:')}  ${serverModels.length} models (selected + favorites)`);
+      const parts = ['selected'];
+      if (hasFavorites) parts.push('favorites');
+      if (autoPool) parts.push(autoPool.displayName);
+      console.log(`${pc.dim('Catalog:')}  ${serverModels.length} models (${parts.join(' + ')})`);
     }
     console.log(`${pc.cyan('Press Ctrl+C to stop and restore config.')}`);
 

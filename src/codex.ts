@@ -7,14 +7,15 @@ import { loadPreferences, recordLaunchSelection } from './config.js';
 import { resolveApiKey, readFromCredentialStore } from './env.js';
 import { resolveOrCollectApiKey } from './key-setup.js';
 import { startCodexProxy } from './codex-proxy.js';
-import { FREE_POOL_MODEL_ID, CodexPoolRuntime } from './pool/codex-runtime.js';
+import { FREE_POOL_MODEL_ID, FREE_POOL_PROVIDER_ID, CodexPoolRuntime } from './pool/codex-runtime.js';
 import { prepareCodexPoolRoutes } from './pool/codex-prepare.js';
 import { parseFreePool } from './pool/membership.js';
-import { codexPoolCatalogEntry } from './pool/catalog.js';
+import { codexPoolCatalogEntry, codexPoolCatalogModel } from './pool/catalog.js';
 import { PoolHealthStore } from './pool/health.js';
+import { additivePoolPreferences, createAdditivePoolRuntime } from './pool/additive.js';
 
 import type { CodexProxyHandle } from './codex-proxy.js';
-import { buildCatalogFile, formatCodexModelLabel, serializeCatalog } from './codex/catalog.js';
+import { buildCatalogFile, formatCodexModelLabel, serializeCatalog, type CodexCatalogModel } from './codex/catalog.js';
 import { buildCodexMixedProfileToml, buildCodexProfileToml, getCatalogOutputPath, getProfileOutputPath } from './codex/profile.js';
 import { findCodexBinary, buildCodexChildEnv, launchCodex } from './codex/launch.js';
 import { pickCodexProvider, pickCodexModel, pickCodexLaunchMode, rejectManagedFlags } from './codex/prompts.js';
@@ -156,9 +157,14 @@ async function writeLaunchArtifacts(
   providerName: string,
   proxyPort?: number,
   supportsWebSockets?: boolean,
+  extraCatalogModels: CodexCatalogModel[] = [],
+  catalogOverride?: CodexCatalogModel,
 ): Promise<{ profilePath: string; catalogPath: string }> {
   const catalogPath = getCatalogOutputPath(route.providerId);
-  const catalog = buildCatalogFile([selectedModel], providerName);
+  const catalog = catalogOverride
+    ? { models: [catalogOverride] }
+    : buildCatalogFile([selectedModel], providerName);
+  if (!catalogOverride && extraCatalogModels.length > 0) catalog.models.push(...extraCatalogModels);
   writeOverlayFile(catalogPath, serializeCatalog(catalog));
   const profilePath = getProfileOutputPath();
   const caps = getReasoningCapabilities(route.npm, route.upstreamModelId, {
@@ -184,9 +190,11 @@ async function writeFavoritesLaunchArtifacts(
   resolved: ResolvedFavorite[],
   starting: ResolvedFavorite,
   proxyPort: number,
+  extraCatalogModels: CodexCatalogModel[] = [],
 ): Promise<{ profilePath: string; catalogPath: string }> {
   const catalogPath = getFavoritesCatalogPath();
   const catalog = buildFavoritesCodexCatalog(undefined, resolved);
+  if (extraCatalogModels.length > 0) catalog.models.push(...extraCatalogModels);
   writeOverlayFile(catalogPath, serializeCatalog(catalog));
   const profilePath = getProfileOutputPath();
   const model = starting.model as import('./types.js').LocalProviderModel;
@@ -203,6 +211,7 @@ async function writeFavoritesLaunchArtifacts(
     proxyPort,
     catalogPath,
     modelReasoningEffort: defaultReasoningEffortForFavorite(starting),
+    ...(extraCatalogModels.length > 0 ? { supportsWebSockets: false } : {}),
   }));
   return { profilePath, catalogPath };
 }
@@ -210,9 +219,13 @@ async function writeFavoritesLaunchArtifacts(
 async function writeMixedLaunchArtifacts(
   plan: ReturnType<typeof buildCodexMixedLaunchPlan>,
   proxyPort: number,
+  extraCatalogModels: CodexCatalogModel[] = [],
 ): Promise<{ profilePath: string; catalogPath: string }> {
   const catalogPath = join(getRelayAiCodexDir(), 'models-mixed.json');
-  writeOverlayFile(catalogPath, serializeCatalog(plan.catalog));
+  const catalog = extraCatalogModels.length > 0
+    ? { models: [...plan.catalog.models, ...extraCatalogModels] }
+    : plan.catalog;
+  writeOverlayFile(catalogPath, serializeCatalog(catalog));
   const profilePath = getProfileOutputPath();
   writeOverlayFile(profilePath, buildCodexMixedProfileToml({
     model: plan.selectedSlug,
@@ -427,6 +440,16 @@ export async function runCodexCommand(
 
   const prefs = loadPreferences();
 
+  // The UI/native launcher selects the pool as a regular catalog pair. Normalize
+  // it here so every entry point reaches the one standalone pool branch.
+  if (!launch.pool) {
+    const pickedPoolProvider = launch.launchProvider === FREE_POOL_PROVIDER_ID;
+    const pickedPoolModel = launch.launchModel === FREE_POOL_MODEL_ID;
+    if (pickedPoolProvider || (pickedPoolModel && launch.launchProvider === undefined)) {
+      launch = { ...launch, pool: true, launchProvider: undefined, launchModel: undefined };
+    }
+  }
+
   if (launch.pool) {
     const pool = parseFreePool(prefs.freePool);
     if (pool.members.length === 0) {
@@ -462,7 +485,8 @@ export async function runCodexCommand(
       }));
       poolProxy = await startCodexProxy([], { requireAuth: true, debug: trace, pool: runtime });
       const entry = codexPoolCatalogEntry(pool, pool.receipts);
-      if (!entry) {
+      const poolCatalogModel = codexPoolCatalogModel(pool, pool.receipts);
+      if (!entry || !poolCatalogModel) {
         console.error(pc.red('No verified free pool member can be advertised yet. Run: relay-ai pool verify'));
         return 1;
       }
@@ -472,10 +496,12 @@ export async function runCodexCommand(
         npm: '@ai-sdk/openai-compatible', contextWindow: entry.context_window,
       };
       const poolRoute: CodexRoute = {
-        tier: 'proxy', modelId: FREE_POOL_MODEL_ID, providerId: 'relay-free-pool',
+        tier: 'proxy', modelId: FREE_POOL_MODEL_ID, providerId: FREE_POOL_PROVIDER_ID,
         npm: '@ai-sdk/openai-compatible', upstreamModelId: FREE_POOL_MODEL_ID, apiKey: '',
       };
-      const { profilePath, catalogPath } = await writeLaunchArtifacts(poolRoute, poolModel, entry.display_name, poolProxy.port, false);
+      const { profilePath, catalogPath } = await writeLaunchArtifacts(
+        poolRoute, poolModel, entry.display_name, poolProxy.port, false, [], poolCatalogModel,
+      );
       writeSessionLock({
         pid: process.pid,
         startedAt: localIsoTimestamp(),
@@ -572,6 +598,16 @@ export async function runCodexCommand(
       p.log.info('Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai-oauth.');
     }
     return 0;
+  }
+
+  const additivePool = additivePoolPreferences(prefs);
+  const additive = additivePool
+    ? createAdditivePoolRuntime(additivePool, providersForPicker(catalog))
+    : undefined;
+  const additivePoolRuntime = additive?.runtime;
+  const additivePoolModel = additive?.catalog;
+  if (additivePool && !additive && !agentStdout) {
+    p.log.warn('Relay Free Pool is enabled but has no verified member in this catalog. Run: relay-ai pool verify');
   }
 
   let favorites = prefs.favoriteModels ?? [];
@@ -731,6 +767,7 @@ export async function runCodexCommand(
       proxyHandle = await startCodexProxy(mixedPlan.relayRoutes, {
         requireAuth: false,
         debug: trace,
+        pool: additivePoolRuntime,
         mixedNative: {
           nativeModelIds: mixedPlan.nativeModelIds,
           subagentRouteModelId: mixedPlan.subagentRouteModelId,
@@ -784,7 +821,7 @@ export async function runCodexCommand(
       const regularRoutes = buildCodexProxyRoutesFromResolved(regularResolved, providersById);
       const allRoutes = [...backendCodexRoutes, ...regularRoutes];
 
-      proxyHandle = await startCodexProxy(allRoutes, { requireAuth: true, debug: trace });
+      proxyHandle = await startCodexProxy(allRoutes, { requireAuth: true, debug: trace, pool: additivePoolRuntime });
       proxyPort = proxyHandle.port;
     } else if (route.tier === 'cloud-code') {
       const providerData = (activeProvider.providerData ?? {}) as Record<string, unknown>;
@@ -812,7 +849,7 @@ export async function runCodexCommand(
         interleavedReasoningField: route.interleavedReasoningField,
         reasoningEffortLevels: route.reasoningEffortLevels,
         reasoningEffortConflict: route.reasoningEffortConflict,
-      }], { debug: trace });
+      }], { debug: trace, pool: additivePoolRuntime });
       proxyPort = proxyHandle.port;
     } else if (route.authType === 'oauth' && selectedModel.modelFormat === 'anthropic') {
       const providerData = (activeProvider.providerData ?? {}) as Record<string, unknown>;
@@ -840,7 +877,7 @@ export async function runCodexCommand(
         interleavedReasoningField: route.interleavedReasoningField,
         reasoningEffortLevels: route.reasoningEffortLevels,
         reasoningEffortConflict: route.reasoningEffortConflict,
-      }], { debug: trace });
+      }], { debug: trace, pool: additivePoolRuntime });
       proxyPort = proxyHandle.port;
     } else if (route.tier === 'proxy') {
       proxyHandle = await startCodexProxy([{
@@ -860,18 +897,26 @@ export async function runCodexCommand(
         reasoningEffortConflict: route.reasoningEffortConflict,
         headers: route.headers,
         refreshToken: route.refreshToken,
-      }], { debug: trace });
+      }], { debug: trace, pool: additivePoolRuntime });
       proxyPort = proxyHandle.port;
     }
 
     const startingFavorite = resolvedFavorites.find(
       r => r.providerId === activeProvider.id && r.model.id === selectedModel.id,
     ) ?? resolvedFavorites[0];
+    // Only advertise the pool when this launch actually runs a proxy for it.
+    // A direct OpenAI route has no Relay process to dispatch to, so adding the
+    // row would point Codex at a model nobody serves.
+    const servedPoolModel = additivePoolModel && proxyPort ? additivePoolModel : undefined;
+    const poolCatalogModels = servedPoolModel ? [servedPoolModel] : [];
     const { profilePath, catalogPath } = mixedPlan && proxyPort
-      ? await writeMixedLaunchArtifacts(mixedPlan, proxyPort)
+      ? await writeMixedLaunchArtifacts(mixedPlan, proxyPort, poolCatalogModels)
       : favoritesActive && resolvedFavorites.length > 0 && proxyPort && startingFavorite
-      ? await writeFavoritesLaunchArtifacts(resolvedFavorites, startingFavorite, proxyPort)
-      : await writeLaunchArtifacts(route, selectedModel, activeProvider.name, proxyPort);
+      ? await writeFavoritesLaunchArtifacts(resolvedFavorites, startingFavorite, proxyPort, poolCatalogModels)
+      : await writeLaunchArtifacts(
+        route, selectedModel, activeProvider.name, proxyPort,
+        servedPoolModel ? false : undefined, poolCatalogModels,
+      );
 
     writeSessionLock({
       pid: process.pid,
@@ -904,6 +949,9 @@ export async function runCodexCommand(
         console.log(`  ${pc.bold('Mode:')}     Single model`);
         console.log(`  ${pc.bold('Provider:')} ${activeProvider.name}`);
         console.log(`  ${pc.bold('Model:')}    ${selectedModel.id}`);
+      }
+      if (servedPoolModel) {
+        console.log(`  ${pc.bold('Pool:')}     ${servedPoolModel.display_name} (${servedPoolModel.slug}, ${servedPoolModel.context_window} ctx)`);
       }
 
       console.log('');

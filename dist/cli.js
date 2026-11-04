@@ -2,18 +2,22 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-VVYLOZUY.js";
+} from "./chunk-AHNA5WRM.js";
 import {
   CLAUDE_POOL_MODEL_ID,
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
   ClaudePoolRuntime,
+  CodexPoolRuntime,
+  FREE_POOL_MODEL_ID,
+  FREE_POOL_PROVIDER_ID,
   PREVIEW_PROXY_PORT,
   addFavorite,
   addProviderFromTemplate,
   aliasModelId,
   anthropicMessagesEndpoint,
   anthropicModelsEndpoint,
+  appendCompactionInstruction,
   authenticateProvider,
   buildAntigravityRoutes,
   buildAppCatalogFile,
@@ -31,12 +35,13 @@ import {
   codexAppInstallHint,
   codexAppModelSlug,
   codexAppSupported,
+  codexPoolCatalogEntry,
+  codexPoolCatalogModel,
   createGatewayModelCatalog,
-  dispatchFreePool,
+  decodeCompactionContent,
   effortLabel,
   estimateAnthropicInputTokens,
   evaluateAgySwitchCompatibility,
-  extractApiKey,
   favoriteEffortLevels,
   favoriteProviderDisplayName,
   filterVertexModelsByAccess,
@@ -55,6 +60,8 @@ import {
   formatAnthropicModelList,
   formatCodexModelLabel,
   formatUpdateNotification,
+  generateCompactionResponse,
+  generateResponsesResponse,
   httpProxyModelId,
   injectRelayModels,
   isClaudeAppRunning,
@@ -62,6 +69,7 @@ import {
   isFavorite,
   launchOrRestartClaudeApp,
   launchOrRestartCodexApp,
+  localModelToRoute,
   logActiveModel,
   logConnected,
   logProxy,
@@ -70,7 +78,9 @@ import {
   modelSelectOption,
   navOption,
   parseCodexAppModelSlug,
+  poolCatalogEntry,
   poolFailure,
+  preparePoolHistory,
   printApiKeyPanel,
   printCloudProviderPanel,
   printDryRunPanel,
@@ -85,45 +95,73 @@ import {
   providersForTarget,
   quitClaudeAppGracefully,
   quitCodexAppGracefully,
-  readBody,
   readOAuthAccountLabel,
   relayIntro,
   relayOutro,
   removeFavorite,
   renderMultiAgentV2Feature,
   resolveRelayCatalogSlots,
-  retryPoolFailure,
   routableModelsForTarget,
   runServerCommand,
-  sendJson,
   serializeCatalog,
   startProxy,
   startProxyCatalog,
   startServer,
+  streamCompactionResponse,
+  streamResponsesResponse,
   supportsClaudeTransparentMode,
   supportsMultiAgentV2,
+  translateResponsesRequest,
   upstreamModelId,
-  waitForCodexAppQuit
-} from "./chunk-TBHYMMQO.js";
+  waitForCodexAppQuit,
+  writeResponsesErrorStream
+} from "./chunk-UPP4JOL4.js";
 import {
   translateRequest
-} from "./chunk-UJTFOIOM.js";
+} from "./chunk-U3YG5C5I.js";
 import {
   OPENCODE_SESSION_HEADER,
+  extractConversationId,
+  openCodeGoHeaders
+} from "./chunk-2RC456ES.js";
+import {
+  formatUpstreamError,
+  formatUpstreamErrorTrace,
+  normalizeToolSchemaForNpm,
+  upstreamHttpStatus
+} from "./chunk-FKGBGJZK.js";
+import {
+  extractApiKey,
+  fetchProviderCatalog,
+  formatRegistryAuthLabel,
+  launchModelsForProvider,
+  poolRoutingProblem,
+  providersForPicker,
+  readBody,
+  resolveLocalProviderApiKey,
+  resolveProvidersForDisplay,
+  sendJson
+} from "./chunk-UNCELUH4.js";
+import {
   TRUST_SYSTEM_CERTS_NOTICE,
   UNTRUSTED_CERTIFICATE_CODE,
   addCustomEndpointProvider,
   addOpencodeCloudFromApiKey,
   applySystemCaTrust,
+  buildImportProviderList,
+  cachedModelToLocal,
   customEndpointKind,
   effectiveProviderBaseUrl,
   endpointModelTimeoutMs,
-  extractConversationId,
   fetchAnthropicModels,
   fetchTemplateModels,
+  isLikelyPlaceholderKey,
+  isOAuthImportProvider,
   isSystemCaActive,
   isSystemCaSupported,
-  openCodeGoHeaders,
+  listCredentialSkippedProviders,
+  oauthAuthRef,
+  providerRefreshToken,
   refreshAllProviderModels,
   refreshProviderModels,
   refreshProviderModelsBatch,
@@ -131,39 +169,15 @@ import {
   renameProvider,
   resolveModelSource,
   resolveProviderTemplate,
+  resolveRefreshCredential,
   revertSystemCaTrust,
   setContextWindowOverride,
   syntheticTemplate,
+  toOAuthRegistryId,
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-INBTEX36.js";
-import {
-  formatUpstreamError,
-  formatUpstreamErrorTrace,
-  normalizeToolSchemaForNpm,
-  upstreamHttpStatus,
-  validateCustomEndpointUrl
-} from "./chunk-XWM4ELUX.js";
-import {
-  fetchProviderCatalog,
-  formatRegistryAuthLabel,
-  launchModelsForProvider,
-  providersForPicker,
-  resolveLocalProviderApiKey,
-  resolveProvidersForDisplay
-} from "./chunk-4FWLRJ2U.js";
-import {
-  buildImportProviderList,
-  cachedModelToLocal,
-  isLikelyPlaceholderKey,
-  isOAuthImportProvider,
-  listCredentialSkippedProviders,
-  oauthAuthRef,
-  providerRefreshToken,
-  resolveRefreshCredential,
-  toOAuthRegistryId
-} from "./chunk-RNHGBUKM.js";
+} from "./chunk-4NL6K57P.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -193,7 +207,7 @@ import {
   deepMergeProviderOptions,
   detectConflicts,
   effortProviderOptions,
-  encodeToolUseId,
+  generateTextStreamingIfRequired,
   getAgentProviderModels,
   getAntigravityDebugLogPath,
   getAppPathOverride,
@@ -204,7 +218,6 @@ import {
   getProxyDebugLogPath,
   getReasoningCapabilities,
   getTrustSystemCertificates,
-  grabRoundTripSignature,
   isFreeStatus,
   isModelsDevCacheStale,
   isProviderKind,
@@ -216,16 +229,13 @@ import {
   loadPreferences,
   loadRegistry,
   localIsoTimestamp,
-  localTimestamp,
   makeTraceLogger,
   maxToolsForNpm,
   migrateGlobalOpencodeCredential,
   migrateLegacyCloudProviders,
   modelIdError,
   oauthCredentialToKeychainJson,
-  parseDsmlToolCalls,
   parseFreePool,
-  parseToolArguments,
   poolEndpointRevision,
   preferredRelayCredentialAuthRef,
   prepareClaudeTraceLog,
@@ -255,20 +265,18 @@ import {
   setTrustSystemCertificates,
   shouldHideModel,
   silenceSdkWarnings,
-  splitToolUseId,
-  sseChunk,
-  streamActivity,
   stripToolUseIdSuffix,
   supportsAdditionalOAuthAccounts,
   supportsManualModels,
   supportsNativeOAuth,
   thinkingProviderOptions,
   uniqueProviderName,
+  validateCustomEndpointUrl,
   validateProviderName,
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-IBAUEWWV.js";
+} from "./chunk-W7B52E2T.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -1680,1198 +1688,6 @@ function poolRequestFitsWindow(value, contextWindow, outputReserve) {
   return { fits: required <= contextWindow, required };
 }
 
-// src/codex-responses-adapter.ts
-import { createHash as createHash2 } from "crypto";
-import { streamText as streamText2, generateText, tool, jsonSchema } from "ai";
-function createCodexToolContext() {
-  return { namespaceByFlatName: /* @__PURE__ */ new Map(), customToolNames: /* @__PURE__ */ new Set() };
-}
-var TOOL_SEARCH_NAME = "tool_search";
-var MAX_MODEL_TOOL_NAME_LENGTH = 64;
-var TOOL_NAME_DIGEST_LENGTH = 10;
-function flatNamespaceName(namespace, name) {
-  const flat = `${namespace}__${name}`;
-  if (flat.length <= MAX_MODEL_TOOL_NAME_LENGTH) return flat;
-  const digest = createHash2("sha256").update(flat).digest("hex").slice(0, TOOL_NAME_DIGEST_LENGTH);
-  const prefixLength = MAX_MODEL_TOOL_NAME_LENGTH - digest.length - 2;
-  return `${flat.slice(0, prefixLength)}__${digest}`;
-}
-function ingestToolDefs(tools, ctx) {
-  for (const t of tools ?? []) {
-    if (!t || typeof t !== "object") continue;
-    if (t.type === "namespace") {
-      for (const sub of t.tools ?? []) {
-        if (sub?.type === "custom" && sub.name) {
-          ctx.customToolNames.add(sub.name);
-        } else if (sub?.type === "function" && sub.name) {
-          ctx.namespaceByFlatName.set(flatNamespaceName(t.name, sub.name), {
-            namespace: t.name,
-            name: sub.name,
-            parameters: sub.parameters
-          });
-        }
-      }
-    } else if (t.type === "custom" && t.name) {
-      ctx.customToolNames.add(t.name);
-    }
-  }
-}
-function flattenNamespaceTools(ns) {
-  return (ns.tools ?? []).filter((sub) => (sub?.type === "function" || sub?.type === "custom") && !!sub.name).map((sub) => sub.type === "custom" ? sub : { ...sub, name: flatNamespaceName(ns.name, sub.name) });
-}
-function liftAdditionalToolsInput(input, tools) {
-  let lifted = [];
-  const keptInput = [];
-  let changed = false;
-  for (const item of input) {
-    if (item && item.type === "additional_tools") {
-      changed = true;
-      if (Array.isArray(item.tools)) lifted = lifted.concat(item.tools);
-      if (item.content !== void 0) {
-        keptInput.push({ role: item.role ?? "developer", content: item.content });
-      }
-      continue;
-    }
-    keptInput.push(item);
-  }
-  if (!changed) return { input, tools };
-  return { input: keptInput, tools: lifted.length ? [...tools, ...lifted] : tools };
-}
-function messageText(content) {
-  if (typeof content === "string") return content;
-  return (content ?? []).map((p17) => p17.type === "output_text" || p17.type === "input_text" || p17.type === "text" ? p17.text ?? "" : "").join("");
-}
-function messageContent(content) {
-  if (typeof content === "string") return content;
-  const parts = (content ?? []).flatMap((part) => {
-    if (part.type === "output_text" || part.type === "input_text" || part.type === "text") {
-      return typeof part.text === "string" ? [{ type: "text", text: part.text }] : [];
-    }
-    if (part.type === "input_image" && typeof part.image_url === "string" && part.image_url.trim()) {
-      return [{ type: "image", image: part.image_url }];
-    }
-    return [];
-  });
-  return parts.length > 0 ? parts : [{ type: "text", text: "" }];
-}
-function splitToolOutputImages(output) {
-  if (!Array.isArray(output)) return { content: serializeToolResultContent(output), images: [] };
-  const images = [];
-  const rest = [];
-  for (const part of output) {
-    const record = part && typeof part === "object" ? part : void 0;
-    const imageUrl = record?.["type"] === "input_image" ? record["image_url"] : void 0;
-    if (typeof imageUrl === "string" && imageUrl.trim()) images.push(imageUrl);
-    else rest.push(part);
-  }
-  if (images.length === 0) return { content: serializeToolResultContent(output), images };
-  return {
-    content: rest.length > 0 ? serializeToolResultContent(rest) : "[image attached in the following message]",
-    images
-  };
-}
-function extractDeveloperAndInstructions(items2, instructions) {
-  const developerParts = [];
-  const remaining = [];
-  for (const item of items2) {
-    if ("role" in item && item.role === "developer") {
-      const text7 = messageText(item.content);
-      if (text7.trim()) developerParts.push(text7.trim());
-    } else {
-      remaining.push(item);
-    }
-  }
-  const parts = [...developerParts];
-  if (instructions?.trim()) parts.push(instructions.trim());
-  const system = parts.length ? parts.join("\n") : void 0;
-  return { system, remaining };
-}
-function annotateToolNamesFromCalls(items2) {
-  const nameByCallId = /* @__PURE__ */ new Map();
-  for (const item of items2) {
-    if (item.type === "function_call") {
-      const { rawId } = splitToolUseId(item.call_id);
-      nameByCallId.set(rawId, item.namespace ? flatNamespaceName(item.namespace, item.name) : item.name);
-    } else if (item.type === "tool_search_call") {
-      const { rawId } = splitToolUseId(item.call_id);
-      nameByCallId.set(rawId, TOOL_SEARCH_NAME);
-    } else if (item.type === "custom_tool_call") {
-      const { rawId } = splitToolUseId(item.call_id);
-      nameByCallId.set(rawId, item.name);
-    }
-  }
-  return nameByCallId;
-}
-function customToolInputFromArgs(name, args) {
-  if (typeof args === "string") {
-    const trimmed = args.trim();
-    if (name === "apply_patch" && trimmed.startsWith("*** Begin Patch")) return args;
-    try {
-      return customToolInputFromArgs(name, JSON.parse(trimmed));
-    } catch {
-      return args;
-    }
-  }
-  if (args && typeof args === "object") {
-    const obj = args;
-    if (Array.isArray(obj.command) && obj.command[0] === "apply_patch" && typeof obj.command[1] === "string") {
-      return obj.command[1];
-    }
-    if (typeof obj.input === "string") return obj.input;
-    for (const v of Object.values(obj)) {
-      if (typeof v === "string") return v;
-    }
-  }
-  return serializeToolResultContent(args);
-}
-function mergeConsecutiveMessages(messages) {
-  if (messages.length <= 1) return messages;
-  const out = [];
-  for (const msg of messages) {
-    const prev = out[out.length - 1];
-    if (prev && prev.role === msg.role) {
-      const prevContent = Array.isArray(prev.content) ? prev.content : [{ type: "text", text: String(prev.content ?? "") }];
-      const msgContent = Array.isArray(msg.content) ? msg.content : [{ type: "text", text: String(msg.content ?? "") }];
-      prev.content = [...prevContent, ...msgContent];
-    } else {
-      out.push(msg);
-    }
-  }
-  return out;
-}
-function ensureUserFirst(messages) {
-  if (messages.length === 0) return [{ role: "user", content: [{ type: "text", text: "(empty input)" }] }];
-  if (messages[0].role === "assistant") {
-    return [{ role: "user", content: [{ type: "text", text: "(conversation continued)" }] }, ...messages];
-  }
-  return messages;
-}
-function reasoningSummaryText(item) {
-  return (item.summary ?? []).map((part) => part.type === "summary_text" ? part.text ?? "" : "").join("");
-}
-function makeReasoningOutputItem(id, text7) {
-  return {
-    id,
-    type: "reasoning",
-    summary: text7.trim() ? [{ type: "summary_text", text: text7 }] : []
-  };
-}
-function translateResponsesInput(input, instructions, npm, toolContext = createCodexToolContext()) {
-  if (typeof input === "string") {
-    return {
-      instructions: instructions?.trim() || void 0,
-      messages: [{ role: "user", content: [{ type: "text", text: input }] }],
-      deferredTools: []
-    };
-  }
-  const { system, remaining } = extractDeveloperAndInstructions(input, instructions);
-  const toolNames = annotateToolNamesFromCalls(remaining);
-  const messages = [];
-  const deferredTools = [];
-  let pendingReasoning = "";
-  for (const item of remaining) {
-    if (item.type === "reasoning") {
-      pendingReasoning += reasoningSummaryText(item);
-      continue;
-    }
-    if (item.type === "function_call") {
-      const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
-      const parts = [];
-      if (pendingReasoning.trim()) {
-        parts.push({ type: "reasoning", text: pendingReasoning });
-        pendingReasoning = "";
-      }
-      const toolPart = {
-        type: "tool-call",
-        toolCallId: rawId,
-        toolName: item.namespace ? flatNamespaceName(item.namespace, item.name) : item.name,
-        input: parseToolArguments(item.arguments)
-      };
-      if (thoughtSignature && npm === "@ai-sdk/google") {
-        toolPart.providerOptions = { google: { thoughtSignature } };
-      }
-      parts.push(toolPart);
-      messages.push({ role: "assistant", content: parts });
-    } else if (item.type === "function_call_output") {
-      const { rawId } = splitToolUseId(item.call_id);
-      const toolName = toolNames.get(rawId) ?? "unknown";
-      const { content, images } = splitToolOutputImages(item.output);
-      messages.push({
-        role: "tool",
-        content: [{
-          type: "tool-result",
-          toolCallId: rawId,
-          toolName,
-          output: { type: "text", value: content }
-        }]
-      });
-      if (images.length > 0) {
-        messages.push({
-          role: "user",
-          content: [
-            { type: "text", text: `Image${images.length > 1 ? "s" : ""} returned by ${toolName} (${rawId}):` },
-            ...images.map((image) => ({ type: "image", image }))
-          ]
-        });
-      }
-    } else if (item.type === "tool_search_call") {
-      const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
-      const parts = [];
-      if (pendingReasoning.trim()) {
-        parts.push({ type: "reasoning", text: pendingReasoning });
-        pendingReasoning = "";
-      }
-      parts.push({
-        type: "tool-call",
-        toolCallId: rawId,
-        toolName: TOOL_SEARCH_NAME,
-        input: parseToolArguments(item.arguments),
-        ...thoughtSignature && npm === "@ai-sdk/google" ? { providerOptions: { google: { thoughtSignature } } } : {}
-      });
-      messages.push({ role: "assistant", content: parts });
-    } else if (item.type === "tool_search_output") {
-      const { rawId } = splitToolUseId(item.call_id);
-      const surfacedTools = item.tools ?? [];
-      ingestToolDefs(surfacedTools, toolContext);
-      for (const t of surfacedTools) {
-        if (t.type === "namespace") deferredTools.push(...flattenNamespaceTools(t));
-        else if (t.type === "function" || t.type === "custom") deferredTools.push(t);
-      }
-      messages.push({
-        role: "tool",
-        content: [{
-          type: "tool-result",
-          toolCallId: rawId,
-          toolName: TOOL_SEARCH_NAME,
-          output: { type: "text", value: serializeToolResultContent(surfacedTools) }
-        }]
-      });
-    } else if (item.type === "custom_tool_call") {
-      const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
-      const parts = [];
-      if (pendingReasoning.trim()) {
-        parts.push({ type: "reasoning", text: pendingReasoning });
-        pendingReasoning = "";
-      }
-      parts.push({
-        type: "tool-call",
-        toolCallId: rawId,
-        toolName: item.name,
-        input: { input: typeof item.input === "string" ? item.input : serializeToolResultContent(item.input) },
-        ...thoughtSignature && npm === "@ai-sdk/google" ? { providerOptions: { google: { thoughtSignature } } } : {}
-      });
-      messages.push({ role: "assistant", content: parts });
-    } else if (item.type === "custom_tool_call_output") {
-      const { rawId } = splitToolUseId(item.call_id);
-      messages.push({
-        role: "tool",
-        content: [{
-          type: "tool-result",
-          toolCallId: rawId,
-          toolName: toolNames.get(rawId) ?? "unknown",
-          output: { type: "text", value: serializeToolResultContent(item.output) }
-        }]
-      });
-    } else if (item.type === "agent_message") {
-      const text7 = messageText(item.content);
-      if (text7.trim()) {
-        messages.push({ role: "user", content: [{ type: "text", text: text7 }] });
-      }
-    } else if (item.type === "compaction" || item.type === "context_compaction") {
-      const summary = decodeCompactionContent(item.encrypted_content) ?? "";
-      if (summary.trim()) {
-        messages.push({ role: "user", content: [{ type: "text", text: `[Summary of earlier conversation]
-${summary}` }] });
-      }
-    } else if ("role" in item) {
-      const role = item.role === "assistant" ? "assistant" : "user";
-      const content = messageContent(item.content);
-      messages.push({ role, content });
-    }
-  }
-  return {
-    instructions: system,
-    messages: ensureUserFirst(mergeConsecutiveMessages(messages)),
-    deferredTools
-  };
-}
-var TOOL_SEARCH_DESCRIPTION = "Search the available deferred Codex tools, plugin tools, MCP namespaces, and connectors by query. Use this when a needed tool is not already present in the current tool list. Returns matching tool definitions for a follow-up call.";
-var TOOL_SEARCH_PARAMETERS = {
-  type: "object",
-  properties: {
-    query: { type: "string", description: "Search query describing the tool or capability needed." },
-    limit: { type: "number", description: "Maximum number of matching tools to return. Defaults to 8." }
-  },
-  required: ["query"],
-  additionalProperties: false
-};
-var CUSTOM_TOOL_INPUT_SCHEMA = {
-  type: "object",
-  properties: { input: { type: "string", description: "Freeform input for this custom tool (e.g. a patch body)." } },
-  required: ["input"],
-  additionalProperties: false
-};
-function translateResponsesTools(tools, options = {}) {
-  if (!tools?.length) return void 0;
-  const out = {};
-  let toolCount = 0;
-  const addTool = (name, description, parameters) => {
-    if (options.maxTools !== void 0 && toolCount >= options.maxTools) return;
-    out[name] = tool({
-      description: description ?? "",
-      inputSchema: jsonSchema(normalizeToolSchemaForNpm(parameters ?? { type: "object", properties: {} }, options.npm))
-    });
-    toolCount++;
-  };
-  for (const t of tools) {
-    if (!t || typeof t !== "object") continue;
-    if (t.type === "namespace") {
-      for (const nested of t.tools ?? []) {
-        if (!nested.name) continue;
-        if (nested.type === "custom") {
-          addTool(nested.name, nested.description, CUSTOM_TOOL_INPUT_SCHEMA);
-        } else if (nested.type === "function") {
-          addTool(flatNamespaceName(t.name, nested.name), nested.description, nested.parameters);
-        }
-      }
-      continue;
-    }
-    if (t.type === "custom") {
-      if (!t.name) continue;
-      addTool(t.name, t.description, CUSTOM_TOOL_INPUT_SCHEMA);
-      continue;
-    }
-    if (t.type === "tool_search") {
-      addTool(TOOL_SEARCH_NAME, TOOL_SEARCH_DESCRIPTION, TOOL_SEARCH_PARAMETERS);
-      continue;
-    }
-    if (t.type !== "function" || !t.name) continue;
-    addTool(t.name, t.description, t.parameters);
-  }
-  return Object.keys(out).length ? out : void 0;
-}
-function omitsMaxOutputTokens(metadata) {
-  return metadata?.providerId !== void 0 && isProviderKind(metadata.providerId, "openrouter") || (metadata?.apiBaseUrl?.includes("openrouter.ai") ?? false);
-}
-function translateResponsesRequest(body, npm, metadata, options = {}) {
-  const toolContext = createCodexToolContext();
-  let effectiveTools = body.tools ?? [];
-  let effectiveInput = body.input;
-  if (Array.isArray(effectiveInput)) {
-    const lifted = liftAdditionalToolsInput(effectiveInput, effectiveTools);
-    effectiveInput = lifted.input;
-    effectiveTools = lifted.tools;
-  }
-  ingestToolDefs(effectiveTools, toolContext);
-  const { instructions: system, messages, deferredTools } = translateResponsesInput(effectiveInput, body.instructions, npm, toolContext);
-  const effort = body.reasoning?.effort;
-  const providerOptions = deepMergeProviderOptions(
-    thinkingProviderOptions(npm),
-    effortProviderOptions(npm, effort, metadata?.upstreamModelId ?? body.model, metadata)
-  );
-  const tools = translateResponsesTools([...effectiveTools, ...deferredTools], { ...options, npm });
-  const bridgedGemini = npm === "@ai-sdk/anthropic" && metadata?.providerId !== void 0 && isProviderKind(metadata.providerId, "antigravity") && /(?:^|__)gemini-/.test(metadata.upstreamModelId ?? body.model);
-  return {
-    instructions: system,
-    messages,
-    tools,
-    toolContext,
-    maxOutputTokens: omitsMaxOutputTokens(metadata) ? void 0 : body.max_output_tokens ?? (bridgedGemini ? 65536 : void 0),
-    temperature: body.temperature,
-    providerOptions,
-    headers: options.requestHeaders
-  };
-}
-function newResponseId() {
-  return `resp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-}
-function newItemId(prefix) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-}
-function functionCallItemId(upstreamId) {
-  return upstreamId.startsWith("fc_") ? upstreamId : newItemId("fc");
-}
-function usageFromPart(part) {
-  const input = part.totalUsage?.inputTokens ?? 0;
-  const output = part.totalUsage?.outputTokens ?? 0;
-  const cached = part.totalUsage?.inputTokenDetails?.cacheReadTokens ?? 0;
-  return {
-    input_tokens: input,
-    output_tokens: output,
-    total_tokens: input + output,
-    ...cached > 0 ? { input_tokens_details: { cached_tokens: cached } } : {}
-  };
-}
-var CODEX_SUBAGENT_TOOL_NAMES = /* @__PURE__ */ new Set(["spawn_agent", "multi_agent_v1__spawn_agent"]);
-function isCodexSubagentToolName(toolName) {
-  return CODEX_SUBAGENT_TOOL_NAMES.has(toolName) || toolName.endsWith("__spawn_agent");
-}
-function normalizeCodexSubagentArguments(toolName, argsStr) {
-  if (!isCodexSubagentToolName(toolName)) return argsStr;
-  const args = parseToolArguments(argsStr);
-  for (const key of ["model", "reasoning_effort", "service_tier"]) {
-    if (args[key] === "") delete args[key];
-  }
-  const items2 = args.items;
-  const message = args.message;
-  if (Array.isArray(items2) && items2.length > 0) {
-    delete args.message;
-  } else if (typeof message === "string" && message.trim()) {
-    delete args.items;
-  } else if (Array.isArray(items2) && items2.length === 0) {
-    delete args.items;
-  }
-  return JSON.stringify(args);
-}
-function resolveOutputKind(flatName, ctx) {
-  if (!ctx) return { kind: "plain" };
-  if (flatName === TOOL_SEARCH_NAME) return { kind: "tool_search" };
-  if (ctx.customToolNames.has(flatName)) return { kind: "custom" };
-  const ns = ctx.namespaceByFlatName.get(flatName);
-  if (ns) return { kind: "namespace", namespace: ns.namespace, name: ns.name };
-  return { kind: "plain" };
-}
-function toolItemId(kind, upstreamId) {
-  switch (kind.kind) {
-    case "tool_search":
-      return upstreamId.startsWith("tsc_") ? upstreamId : newItemId("tsc");
-    case "custom":
-      return upstreamId.startsWith("ctc_") ? upstreamId : newItemId("ctc");
-    default:
-      return functionCallItemId(upstreamId);
-  }
-}
-function buildFinalToolItem(kind, flatName, callId, itemId, argsStr) {
-  argsStr = normalizeCodexSubagentArguments(flatName, argsStr);
-  switch (kind.kind) {
-    case "namespace":
-      return { type: "function_call", id: itemId, call_id: callId, namespace: kind.namespace, name: kind.name, arguments: argsStr, status: "completed" };
-    case "tool_search": {
-      const args = parseToolArguments(argsStr);
-      if (typeof args.limit === "string" && /^-?\d+$/.test(args.limit)) args.limit = Number(args.limit);
-      return { type: "tool_search_call", id: itemId, call_id: callId, execution: "client", arguments: args, status: "completed" };
-    }
-    case "custom":
-      return { type: "custom_tool_call", id: itemId, call_id: callId, name: flatName, input: customToolInputFromArgs(flatName, parseToolArguments(argsStr)), status: "completed" };
-    default:
-      return { type: "function_call", id: itemId, call_id: callId, name: flatName, arguments: argsStr, status: "completed" };
-  }
-}
-function incompleteReasonForFinish(finishReason) {
-  if (finishReason === "length") return "max_output_tokens";
-  if (finishReason === "content-filter") return "content_filter";
-  return void 0;
-}
-var PROGRESS_INTERVAL_MS = 3e3;
-var REPEAT_TAIL_CHARS = 200;
-var REPEAT_STREAK_LIMIT = 3;
-var LOOP_NOTICE = "\n\n[relay-ai: generation stopped after detecting a repetition loop]";
-var INITIAL_REPEAT_TRACKER = { tail: "", len: 0, streak: 0 };
-function trackRepetition(current, prev) {
-  const tail = current.length >= REPEAT_TAIL_CHARS ? current.slice(-REPEAT_TAIL_CHARS) : current;
-  const grew = current.length - prev.len >= REPEAT_TAIL_CHARS;
-  const stale = tail.length === REPEAT_TAIL_CHARS && tail === prev.tail && grew;
-  return { tail, len: current.length, streak: stale ? prev.streak + 1 : 0 };
-}
-async function writeResponsesStream(fullStream, modelId, write, onDone, onProgress, options) {
-  const emit = (type, data) => write(sseChunk(type, data));
-  const responseId = newResponseId();
-  const createdAt = Math.floor(Date.now() / 1e3);
-  let usage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
-  emit("response.created", {
-    type: "response.created",
-    response: {
-      id: responseId,
-      object: "response",
-      model: modelId,
-      created_at: createdAt,
-      status: "in_progress",
-      output: []
-    }
-  });
-  let outputIndex = 0;
-  let textItemId = null;
-  let textOutputIndex = 0;
-  let textFull = "";
-  const toolStates = [];
-  const toolStatesById = /* @__PURE__ */ new Map();
-  let currentToolState = null;
-  const streamStartedAt = Date.now();
-  let lastProgressAt = streamStartedAt;
-  const recentPartCounts = /* @__PURE__ */ new Map();
-  let reasoningItemId = null;
-  let reasoningText = "";
-  let reasoningOutputIndex = 0;
-  const outputItems = [];
-  let reasoningRepeat = INITIAL_REPEAT_TRACKER;
-  let textRepeat = INITIAL_REPEAT_TRACKER;
-  let loopDetected;
-  let finishReason;
-  const ensureTextItem = () => {
-    if (!textItemId) {
-      textItemId = newItemId("msg");
-      textOutputIndex = outputIndex;
-      outputIndex++;
-      emit("response.output_item.added", {
-        type: "response.output_item.added",
-        output_index: textOutputIndex,
-        item: { id: textItemId, type: "message", role: "assistant", status: "in_progress", content: [] }
-      });
-      emit("response.content_part.added", {
-        type: "response.content_part.added",
-        item_id: textItemId,
-        output_index: textOutputIndex,
-        content_index: 0,
-        part: { type: "output_text", text: "" }
-      });
-    }
-    return textItemId;
-  };
-  const rememberToolState = (state) => {
-    toolStates.push(state);
-    toolStatesById.set(state.itemId, state);
-    toolStatesById.set(state.callId, state);
-    currentToolState = state;
-    return state;
-  };
-  const createToolState = (rawId, name, signature) => {
-    const kind = resolveOutputKind(name ?? "", options?.toolContext);
-    const upstreamId = rawId ?? newItemId("call");
-    const itemId = toolItemId(kind, upstreamId);
-    const state = rememberToolState({
-      itemId,
-      callId: encodeToolUseId(upstreamId, signature, false),
-      name: name ?? "unknown",
-      outputIndex: outputIndex++,
-      args: "",
-      kind
-    });
-    emit("response.output_item.added", {
-      type: "response.output_item.added",
-      output_index: state.outputIndex,
-      item: {
-        type: "function_call",
-        id: state.itemId,
-        call_id: state.callId,
-        name: state.name,
-        arguments: "",
-        status: "in_progress"
-      }
-    });
-    return state;
-  };
-  const findToolState = (part) => {
-    const key = part.id ?? part.toolCallId;
-    if (key) return toolStatesById.get(key) ?? currentToolState;
-    return currentToolState;
-  };
-  const appendToolArgs = (state, delta) => {
-    if (!delta) return;
-    state.args += delta;
-    emit("response.function_call_arguments.delta", {
-      type: "response.function_call_arguments.delta",
-      item_id: state.itemId,
-      output_index: state.outputIndex,
-      delta
-    });
-  };
-  for await (const part of fullStream) {
-    recentPartCounts.set(part.type, (recentPartCounts.get(part.type) ?? 0) + 1);
-    switch (part.type) {
-      case "reasoning-start":
-        reasoningText = "";
-        reasoningItemId = newItemId("rs");
-        reasoningOutputIndex = outputIndex++;
-        emit("response.output_item.added", {
-          type: "response.output_item.added",
-          output_index: reasoningOutputIndex,
-          item: { id: reasoningItemId, type: "reasoning", summary: [] }
-        });
-        break;
-      case "reasoning-delta":
-        if (!reasoningItemId) {
-          reasoningItemId = newItemId("rs");
-          reasoningOutputIndex = outputIndex++;
-          emit("response.output_item.added", {
-            type: "response.output_item.added",
-            output_index: reasoningOutputIndex,
-            item: { id: reasoningItemId, type: "reasoning", summary: [] }
-          });
-        }
-        reasoningText += part.text ?? "";
-        break;
-      case "reasoning-end":
-        break;
-      case "text-start":
-        textFull = "";
-        ensureTextItem();
-        break;
-      case "text-delta":
-        ensureTextItem();
-        textFull += part.text ?? "";
-        emit("response.output_text.delta", {
-          type: "response.output_text.delta",
-          item_id: textItemId,
-          output_index: textOutputIndex,
-          content_index: 0,
-          delta: part.text ?? ""
-        });
-        break;
-      case "tool-input-start": {
-        const sig = grabRoundTripSignature(part);
-        createToolState(part.id ?? part.toolCallId, part.toolName, sig);
-        break;
-      }
-      case "tool-input-delta": {
-        const state = findToolState(part);
-        if (state) appendToolArgs(state, part.delta ?? part.text ?? "");
-        break;
-      }
-      case "tool-call": {
-        const sig = grabRoundTripSignature(part);
-        const key = part.toolCallId ?? part.id;
-        const state = (key ? toolStatesById.get(key) : void 0) ?? createToolState(key, part.toolName, sig);
-        if (!state.args) {
-          appendToolArgs(state, JSON.stringify(part.input ?? {}));
-        }
-        break;
-      }
-      case "finish-step":
-        if (part.finishReason) finishReason = part.finishReason;
-        break;
-      case "finish":
-        if (part.finishReason) finishReason = part.finishReason;
-        if (part.totalUsage) usage = usageFromPart(part);
-        break;
-      case "abort": {
-        const msg = `stream aborted: ${part.reason ?? "no data received from provider"}`;
-        process.stderr.write(`[relay-ai] ${localTimestamp()} ${options?.logLabel ?? modelId}: ${msg}
-`);
-        onDone?.({
-          reasoningChars: reasoningText.length,
-          reasoningPreview: reasoningText.slice(0, 200),
-          textChars: textFull.length,
-          toolCallCount: toolStates.length,
-          toolNames: toolStates.map((t) => t.name),
-          loopDetected,
-          aborted: true
-        });
-        emit("response.failed", {
-          type: "response.failed",
-          response: {
-            id: responseId,
-            object: "response",
-            model: modelId,
-            created_at: createdAt,
-            status: "failed",
-            output: [],
-            error: { message: msg, type: "api_error" }
-          }
-        });
-        return;
-      }
-      case "error": {
-        const msg = formatUpstreamError(part.error);
-        const is429 = msg.includes("429") || part.error && typeof part.error === "object" && (part.error.statusCode === 429 || part.error.lastError?.statusCode === 429);
-        process.stderr.write(`[relay-ai] ${localTimestamp()} ${options?.logLabel ?? modelId}: ${msg}
-`);
-        onDone?.({
-          reasoningChars: reasoningText.length,
-          reasoningPreview: reasoningText.slice(0, 200),
-          textChars: textFull.length,
-          toolCallCount: toolStates.length,
-          toolNames: toolStates.map((t) => t.name),
-          loopDetected,
-          errorMessage: msg,
-          errorStatus: part.error?.statusCode
-        });
-        emit("response.failed", {
-          type: "response.failed",
-          response: {
-            id: responseId,
-            object: "response",
-            model: modelId,
-            created_at: createdAt,
-            status: "failed",
-            output: [],
-            error: { message: msg, type: is429 ? "rate_limit_error" : "api_error", ...is429 ? { code: "429" } : {} }
-          }
-        });
-        return;
-      }
-      default:
-        break;
-    }
-    const now = Date.now();
-    if (now - lastProgressAt >= PROGRESS_INTERVAL_MS) {
-      lastProgressAt = now;
-      reasoningRepeat = trackRepetition(reasoningText, reasoningRepeat);
-      textRepeat = trackRepetition(textFull, textRepeat);
-      if (reasoningRepeat.streak >= REPEAT_STREAK_LIMIT) loopDetected = "reasoning";
-      else if (textRepeat.streak >= REPEAT_STREAK_LIMIT) loopDetected = "text";
-      if (onProgress) {
-        onProgress({
-          reasoningChars: reasoningText.length,
-          reasoningTail: reasoningText.slice(-200),
-          textChars: textFull.length,
-          toolCallCount: toolStates.length,
-          elapsedMs: now - streamStartedAt,
-          recentPartTypes: [...recentPartCounts].map(([type, n]) => `${type}:${n}`).join(",")
-        });
-      }
-      recentPartCounts.clear();
-      if (loopDetected) {
-        options?.onForceStop?.(`repetition loop detected (${loopDetected})`);
-        break;
-      }
-    }
-  }
-  const incompleteReason = incompleteReasonForFinish(finishReason);
-  if (loopDetected) {
-    ensureTextItem();
-    textFull += LOOP_NOTICE;
-    emit("response.output_text.delta", {
-      type: "response.output_text.delta",
-      item_id: textItemId,
-      output_index: textOutputIndex,
-      content_index: 0,
-      delta: LOOP_NOTICE
-    });
-  }
-  const dsml = loopDetected || incompleteReason ? null : parseDsmlToolCalls(textFull);
-  if (dsml) {
-    if (dsml.leadingText && textItemId) {
-      emit("response.output_text.done", {
-        type: "response.output_text.done",
-        item_id: textItemId,
-        output_index: textOutputIndex,
-        content_index: 0,
-        text: dsml.leadingText
-      });
-      emit("response.content_part.done", {
-        type: "response.content_part.done",
-        item_id: textItemId,
-        output_index: textOutputIndex,
-        content_index: 0,
-        part: { type: "output_text", text: dsml.leadingText }
-      });
-      const textItem = {
-        id: textItemId,
-        type: "message",
-        role: "assistant",
-        status: "completed",
-        content: [{ type: "output_text", text: dsml.leadingText }]
-      };
-      emit("response.output_item.done", {
-        type: "response.output_item.done",
-        output_index: textOutputIndex,
-        item: textItem
-      });
-      outputItems.push(textItem);
-    }
-    for (const call of dsml.calls) {
-      const itemId = newItemId("fc");
-      const callId = encodeToolUseId(itemId, void 0, false);
-      const idx = outputIndex++;
-      const args = JSON.stringify(call.args);
-      emit("response.output_item.added", {
-        type: "response.output_item.added",
-        output_index: idx,
-        item: { type: "function_call", id: itemId, call_id: callId, name: call.name, arguments: "", status: "in_progress" }
-      });
-      emit("response.function_call_arguments.done", {
-        type: "response.function_call_arguments.done",
-        item_id: itemId,
-        output_index: idx,
-        arguments: args
-      });
-      const fcItem = { type: "function_call", id: itemId, call_id: callId, name: call.name, arguments: args, status: "completed" };
-      emit("response.output_item.done", { type: "response.output_item.done", output_index: idx, item: fcItem });
-      outputItems.push(fcItem);
-    }
-  } else if (textItemId) {
-    emit("response.output_text.done", {
-      type: "response.output_text.done",
-      item_id: textItemId,
-      output_index: textOutputIndex,
-      content_index: 0,
-      text: textFull
-    });
-    emit("response.content_part.done", {
-      type: "response.content_part.done",
-      item_id: textItemId,
-      output_index: textOutputIndex,
-      content_index: 0,
-      part: { type: "output_text", text: textFull }
-    });
-    const textItem = {
-      id: textItemId,
-      type: "message",
-      role: "assistant",
-      status: incompleteReason ? "incomplete" : "completed",
-      content: [{ type: "output_text", text: textFull }]
-    };
-    emit("response.output_item.done", {
-      type: "response.output_item.done",
-      output_index: textOutputIndex,
-      item: textItem
-    });
-    outputItems.push(textItem);
-  }
-  if (reasoningItemId) {
-    const reasoningItem = makeReasoningOutputItem(reasoningItemId, reasoningText);
-    emit("response.output_item.done", {
-      type: "response.output_item.done",
-      output_index: reasoningOutputIndex,
-      item: reasoningItem
-    });
-    outputItems.unshift(reasoningItem);
-  }
-  for (const tool4 of incompleteReason ? [] : toolStates) {
-    const normalizedArgs = normalizeCodexSubagentArguments(tool4.name, tool4.args);
-    emit("response.function_call_arguments.done", {
-      type: "response.function_call_arguments.done",
-      item_id: tool4.itemId,
-      output_index: tool4.outputIndex,
-      arguments: normalizedArgs
-    });
-    const fcItem = buildFinalToolItem(tool4.kind, tool4.name, tool4.callId, tool4.itemId, normalizedArgs);
-    emit("response.output_item.done", {
-      type: "response.output_item.done",
-      output_index: tool4.outputIndex,
-      item: fcItem
-    });
-    outputItems.push(fcItem);
-  }
-  if (outputItems.length === 0 && !incompleteReason) {
-    outputItems.push({ id: newItemId("msg"), type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "(conversation context was too large to summarize)" }] });
-  }
-  onDone?.({
-    reasoningChars: reasoningText.length,
-    reasoningPreview: reasoningText.slice(0, 200),
-    textChars: textFull.length,
-    toolCallCount: toolStates.length,
-    toolNames: toolStates.map((t) => t.name),
-    loopDetected,
-    dsmlToolCallsRecovered: dsml?.calls.length,
-    finishReason,
-    incompleteReason
-  });
-  const terminalEvent = incompleteReason ? "response.incomplete" : "response.completed";
-  emit(terminalEvent, {
-    type: terminalEvent,
-    response: {
-      id: responseId,
-      object: "response",
-      model: modelId,
-      created_at: createdAt,
-      status: incompleteReason ? "incomplete" : "completed",
-      ...incompleteReason ? { incomplete_details: { reason: incompleteReason } } : {},
-      output: outputItems,
-      usage
-    }
-  });
-}
-var STREAM_IDLE_TIMEOUT_MS = 12e4;
-async function streamResponsesResponse(model, params, modelId, write, onDone, onProgress, options) {
-  const configuredTimeout = (name, fallback) => {
-    const value = Number(process.env[name]);
-    return Number.isFinite(value) && value > 0 ? value : fallback;
-  };
-  const idleTimeoutMs = options?.idleTimeoutMs ?? configuredTimeout("RELAY_AI_STREAM_IDLE_TIMEOUT_MS", STREAM_IDLE_TIMEOUT_MS);
-  const progressTimeoutMs = options?.progressTimeoutMs ?? configuredTimeout("RELAY_AI_STREAM_PROGRESS_TIMEOUT_MS", 6e5);
-  const abort = new AbortController();
-  let idleTimer = setTimeout(
-    () => abort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1e3)}s`)),
-    idleTimeoutMs
-  );
-  let active = true;
-  const resetLiveness = () => {
-    if (!active) return;
-    clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => abort.abort(new Error("no data received from provider for " + idleTimeoutMs / 1e3 + "s")), idleTimeoutMs);
-  };
-  const resetProgress = () => {
-    clearTimeout(progressTimer);
-    progressTimer = setTimeout(() => abort.abort(new Error("no content progress from provider for " + progressTimeoutMs / 1e3 + "s")), progressTimeoutMs);
-  };
-  let progressTimer;
-  resetProgress();
-  return streamActivity.run(resetLiveness, async () => {
-    try {
-      const { toolContext, ...sdkParams } = params;
-      const result = streamText2({ model, ...sdkParams, maxRetries: 0, abortSignal: abort.signal, onError: () => {
-      } });
-      Promise.resolve(result.text).catch(() => {
-      });
-      Promise.resolve(result.toolCalls).catch(() => {
-      });
-      Promise.resolve(result.toolResults).catch(() => {
-      });
-      Promise.resolve(result.finishReason).catch(() => {
-      });
-      Promise.resolve(result.usage).catch(() => {
-      });
-      Promise.resolve(result.response).catch(() => {
-      });
-      const watchedStream = (async function* () {
-        try {
-          for await (const part of result.stream) {
-            resetLiveness();
-            if (["text-delta", "reasoning-delta"].includes(part.type) && Boolean(part.text) || part.type === "tool-input-delta" && Boolean(part.delta) || ["tool-call", "finish", "finish-step"].includes(part.type)) resetProgress();
-            yield part;
-          }
-        } catch (error) {
-          if (!abort.signal.aborted) throw error;
-          yield { type: "abort", reason: String(abort.signal.reason) };
-        } finally {
-          clearTimeout(idleTimer);
-          clearTimeout(progressTimer);
-        }
-      })();
-      await writeResponsesStream(watchedStream, modelId, write, onDone, onProgress, {
-        onForceStop: (reason) => abort.abort(new Error(reason)),
-        toolContext,
-        logLabel: options?.logLabel
-      });
-    } finally {
-      active = false;
-      clearTimeout(idleTimer);
-      clearTimeout(progressTimer);
-    }
-  });
-}
-async function generateResponsesResponse(model, params, modelId) {
-  const { toolContext, ...sdkParams } = params;
-  const r = await generateText({ model, ...sdkParams, maxRetries: 0 });
-  const incompleteReason = incompleteReasonForFinish(r.finishReason);
-  const createdAt = Math.floor(Date.now() / 1e3);
-  const responseId = newResponseId();
-  const output = [];
-  if (r.reasoningText?.trim()) {
-    output.push(makeReasoningOutputItem(newItemId("rs"), r.reasoningText));
-  }
-  if (r.text !== null && r.text !== void 0) {
-    output.push({
-      id: newItemId("msg"),
-      type: "message",
-      role: "assistant",
-      status: incompleteReason ? "incomplete" : "completed",
-      content: [{ type: "output_text", text: r.text }]
-    });
-  }
-  for (const tc of incompleteReason ? [] : r.toolCalls) {
-    const encodedId = encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc), false);
-    const argsStr = JSON.stringify(tc.input ?? {});
-    const kind = resolveOutputKind(tc.toolName, toolContext);
-    output.push(buildFinalToolItem(
-      kind,
-      tc.toolName,
-      encodedId,
-      toolItemId(kind, tc.toolCallId),
-      argsStr
-    ));
-  }
-  if (output.length === 0 && !incompleteReason) {
-    output.push({ id: newItemId("msg"), type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "(conversation context was too large to summarize)" }] });
-  }
-  const inputTokens = r.usage?.inputTokens ?? 0;
-  const outputTokens = r.usage?.outputTokens ?? 0;
-  return {
-    id: responseId,
-    object: "response",
-    model: modelId,
-    created_at: createdAt,
-    status: incompleteReason ? "incomplete" : "completed",
-    ...incompleteReason ? { incomplete_details: { reason: incompleteReason } } : {},
-    output,
-    usage: {
-      input_tokens: inputTokens,
-      output_tokens: outputTokens,
-      total_tokens: inputTokens + outputTokens
-    }
-  };
-}
-var COMPACTION_SUMMARY_INSTRUCTION = "You are performing a CONTEXT CHECKPOINT COMPACTION. Summarize the conversation so far into a concise but complete summary that preserves the user's goals, key decisions and facts, the current state of the work, and any pending or in-progress tasks. Output only the summary text.";
-function encodeCompactionContent(summary) {
-  return Buffer.from(JSON.stringify({ v: 1, summary }), "utf8").toString("base64");
-}
-function decodeCompactionContent(encrypted) {
-  if (!encrypted) return null;
-  try {
-    const obj = JSON.parse(Buffer.from(encrypted, "base64").toString("utf8"));
-    return obj?.v === 1 && typeof obj.summary === "string" ? obj.summary : null;
-  } catch {
-    return null;
-  }
-}
-function makeCompactionItem(summary) {
-  return { type: "compaction", id: newItemId("cmp"), encrypted_content: encodeCompactionContent(summary) };
-}
-function appendCompactionInstruction(params) {
-  return {
-    ...params,
-    tools: void 0,
-    messages: [
-      ...params.messages,
-      { role: "user", content: [{ type: "text", text: COMPACTION_SUMMARY_INSTRUCTION }] }
-    ]
-  };
-}
-function buildCompactionResponseBody(summary, modelId) {
-  return {
-    id: newResponseId(),
-    object: "response",
-    model: modelId,
-    created_at: Math.floor(Date.now() / 1e3),
-    status: "completed",
-    output: [makeCompactionItem(summary)]
-  };
-}
-function writeCompactionSse(summary, modelId, write) {
-  const emit = (type, data) => write(sseChunk(type, data));
-  const responseId = newResponseId();
-  const createdAt = Math.floor(Date.now() / 1e3);
-  const item = makeCompactionItem(summary);
-  emit("response.created", {
-    type: "response.created",
-    response: { id: responseId, object: "response", model: modelId, created_at: createdAt, status: "in_progress", output: [] }
-  });
-  emit("response.output_item.added", { type: "response.output_item.added", output_index: 0, item });
-  emit("response.output_item.done", { type: "response.output_item.done", output_index: 0, item });
-  emit("response.completed", {
-    type: "response.completed",
-    response: { id: responseId, object: "response", model: modelId, created_at: createdAt, status: "completed", output: [item] }
-  });
-}
-async function generateCompactionResponse(model, params, modelId) {
-  const { toolContext: _toolContext, ...sdkParams } = params;
-  void _toolContext;
-  const r = await generateText({ model, ...sdkParams, maxRetries: 0 });
-  return buildCompactionResponseBody((r.text ?? "").trim() || "(no summary produced)", modelId);
-}
-async function streamCompactionResponse(model, params, modelId, write) {
-  const { toolContext: _toolContext, ...sdkParams } = params;
-  void _toolContext;
-  const r = await generateText({ model, ...sdkParams, maxRetries: 0 });
-  writeCompactionSse((r.text ?? "").trim() || "(no summary produced)", modelId, write);
-}
-function responsesErrorBody(modelId, message, statusCode = 401) {
-  return {
-    id: newResponseId(),
-    object: "response",
-    model: modelId,
-    created_at: Math.floor(Date.now() / 1e3),
-    status: "failed",
-    output: [],
-    error: { message, type: statusCode === 429 ? "rate_limit_error" : "api_error", code: String(statusCode) }
-  };
-}
-function writeResponsesErrorStream(modelId, message, write, statusCode = 401) {
-  write(sseChunk("response.failed", {
-    type: "response.failed",
-    response: responsesErrorBody(modelId, message, statusCode)
-  }));
-}
-
-// src/pool/continuation.ts
-function poolRouteKey(route) {
-  return JSON.stringify([route.account, route.endpointRevision, route.model]);
-}
-var DEFAULT_LIMITS = {
-  ttlMs: 6e4,
-  maxEntries: 32,
-  maxBytes: 4 * 1024 * 1024,
-  maxItems: 2e3
-};
-function items(input) {
-  if (typeof input === "string") return [{ type: "message", role: "user", content: input }];
-  if (!Array.isArray(input)) throw new Error("unsupported-input");
-  return structuredClone(input);
-}
-function checkLimit(name, value) {
-  if (!Number.isSafeInteger(value) || value <= 0) throw new Error("Invalid continuation limit: " + name);
-}
-var PoolContinuationStore = class {
-  constructor(limits = {}, now = Date.now) {
-    this.now = now;
-    this.limits = { ...DEFAULT_LIMITS, ...limits };
-    for (const [name, value] of Object.entries(this.limits)) checkLimit(name, value);
-  }
-  now;
-  states = /* @__PURE__ */ new Map();
-  limits;
-  remember(responseId, scope, request2, output, source) {
-    if (!responseId) throw new Error("response-id-required");
-    if (!scope) throw new Error("real-session-and-branch-required");
-    const storedInput = items(request2.input);
-    const storedOutput = structuredClone(output);
-    if (storedInput.length + storedOutput.length > this.limits.maxItems) {
-      throw new Error("continuation-history-too-large");
-    }
-    const state = {
-      scope,
-      input: storedInput,
-      output: storedOutput,
-      ...typeof request2.instructions === "string" ? { instructions: request2.instructions } : {},
-      source: poolRouteKey(source),
-      expires: this.now() + this.limits.ttlMs,
-      bytes: 0
-    };
-    state.bytes = Buffer.byteLength(JSON.stringify(state), "utf8");
-    if (state.bytes > this.limits.maxBytes) throw new Error("continuation-history-too-large");
-    this.prune();
-    this.states.set(JSON.stringify([scope, responseId]), state);
-    while (this.states.size > this.limits.maxEntries) {
-      this.states.delete(this.states.keys().next().value);
-    }
-  }
-  resolve(scope, request2) {
-    const body = structuredClone(request2);
-    const previous = body.previous_response_id;
-    if (previous === void 0 || previous === null) return { body };
-    if (typeof previous !== "string" || !previous) throw new Error("unsupported-continuation: invalid response id");
-    const state = this.states.get(JSON.stringify([scope, previous]));
-    if (!scope || !state || state.expires <= this.now()) {
-      throw new Error("unsupported-continuation: missing Relay-owned history");
-    }
-    body.input = [...structuredClone(state.input), ...structuredClone(state.output), ...items(body.input)];
-    body.instructions ??= state.instructions;
-    delete body.previous_response_id;
-    return { body, source: state.source };
-  }
-  prune() {
-    const now = this.now();
-    for (const [key, state] of this.states) {
-      if (state.expires <= now) this.states.delete(key);
-    }
-  }
-};
-function stripRouteParts(part) {
-  if (part.type !== "tool-call" && part.type !== "tool-result") return part;
-  const { providerOptions: _options, toolCallId, ...rest } = part;
-  return {
-    ...rest,
-    ...typeof toolCallId === "string" ? { toolCallId: splitToolUseId(toolCallId).rawId } : {}
-  };
-}
-function preparePoolHistory(body, source, target, npm, metadata) {
-  const fresh = structuredClone(body);
-  const input = items(fresh.input);
-  if (input.some(
-    (item) => (item.type === "compaction" || item.type === "context_compaction") && decodeCompactionContent(item.encrypted_content) === null || item.type === "reasoning" && typeof item.encrypted_content === "string"
-  )) throw new Error("unsupported-continuation: opaque provider state requires original route");
-  fresh.input = input;
-  const params = translateResponsesRequest(fresh, npm, metadata);
-  if (source !== poolRouteKey(target)) {
-    params.messages = params.messages.map((message) => ({
-      ...message,
-      content: Array.isArray(message.content) ? message.content.filter((part) => part.type !== "reasoning").map((part) => stripRouteParts(part)) : message.content
-    }));
-  }
-  return params;
-}
-
 // src/pool/codex-prepare.ts
 var EFFORT_CLAIM_KEYS = /* @__PURE__ */ new Set([
   "effort",
@@ -3088,265 +1904,47 @@ async function prepareClaudePoolRoutes(options) {
   return routes;
 }
 
-// src/pool/codex-retry.ts
-import { createHash as createHash3 } from "crypto";
-var DEFAULT_LIMITS2 = {
-  ttlMs: 6e4,
-  maxEntries: 128,
-  maxResponseBytes: 2 * 1024 * 1024
-};
-function canonical(value) {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
-  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
-  const record = value;
-  return "{" + Object.keys(record).sort().map((key) => JSON.stringify(key) + ":" + canonical(record[key])).join(",") + "}";
+// src/pool/claude-launch.ts
+function servableClaudeMember(pool, providers, member, now) {
+  const provider = providers.find((item) => item.id === member.providerId);
+  const model = provider?.models.find((item) => item.id === member.modelId);
+  if (!provider || !model || !model.npm || model.modelFormat === "cloud-code") return void 0;
+  if (classifyFreeStatus({ model, providerId: provider.id }) !== "verified_free") return void 0;
+  if (poolRoutingProblem(provider, model)) return void 0;
+  const revision = poolEndpointRevision({
+    providerId: provider.id,
+    authRef: provider.authRef,
+    npm: model.npm,
+    baseURL: model.apiBaseUrl,
+    upstreamModelId: model.upstreamModelId,
+    headers: provider.headers
+  });
+  const receipt = currentPoolReceipt(pool.receipts, member, revision, now);
+  if (!receipt || !receipt.billingSafe || !receipt.tools || !receipt.targets.includes("claude")) return void 0;
+  return receipt;
 }
-function requestFingerprint(request2) {
-  return createHash3("sha256").update(canonical(request2)).digest("hex");
-}
-function checkLimit2(name, value) {
-  if (!Number.isSafeInteger(value) || value <= 0) throw new Error("Invalid retry limit: " + name);
-}
-var CodexRetryGuard = class {
-  constructor(limits = {}, now = Date.now) {
-    this.now = now;
-    this.limits = { ...DEFAULT_LIMITS2, ...limits };
-    for (const [name, value] of Object.entries(this.limits)) checkLimit2(name, value);
-  }
-  now;
-  entries = /* @__PURE__ */ new Map();
-  limits;
-  /**
-   * Claims one request operation. turnId must be the observed client turn;
-   * fingerprint must hash the full translated request.
-   */
-  acquire(turnId, fingerprint) {
-    if (!turnId || !fingerprint) throw new Error("turn-id-and-fingerprint-required");
-    this.prune();
-    const key = JSON.stringify([turnId, fingerprint]);
-    const existing = this.entries.get(key);
-    if (existing) {
-      if (existing.status === "active") return { kind: "busy" };
-      if (existing.status === "failed") return { kind: "blocked", reason: existing.reason ?? "previous-attempt-failed" };
-      return { kind: "replay", response: existing.response };
-    }
-    if (this.entries.size >= this.limits.maxEntries) {
-      return { kind: "blocked", reason: "retry-guard-capacity" };
-    }
-    const entry = { status: "active", token: /* @__PURE__ */ Symbol(), expires: this.now() + this.limits.ttlMs };
-    this.entries.set(key, entry);
-    const settle = (token) => this.entries.get(key)?.token === token;
-    return {
-      kind: "owner",
-      complete: (response) => {
-        if (!settle(entry.token)) return;
-        if (typeof response !== "string" || Buffer.byteLength(response, "utf8") > this.limits.maxResponseBytes) {
-          this.entries.set(key, { status: "failed", token: entry.token, expires: this.now() + this.limits.ttlMs, reason: "response-too-large" });
-          return;
-        }
-        this.entries.set(key, { status: "succeeded", token: entry.token, expires: this.now() + this.limits.ttlMs, response });
-      },
-      fail: (reason, postcommit = false) => {
-        if (!settle(entry.token)) return;
-        this.entries.set(key, {
-          status: "failed",
-          token: entry.token,
-          expires: this.now() + this.limits.ttlMs,
-          reason: reason || "previous-attempt-failed",
-          postcommit
-        });
-      },
-      release: () => {
-        if (settle(entry.token)) this.entries.delete(key);
-      }
-    };
-  }
-  prune() {
-    const now = this.now();
-    for (const [key, entry] of this.entries) {
-      if (entry.status !== "active" && entry.expires <= now) this.entries.delete(key);
-    }
-  }
-};
-
-// src/pool/codex-identity.ts
-function codexPoolIdentity(headers) {
-  const raw = headers["x-codex-turn-metadata"];
-  if (typeof raw !== "string" || Buffer.byteLength(raw) > 8192) return void 0;
-  let metadata;
+function prepareClaudeAutoPool(prefs, providers, now = Date.now()) {
+  let pool;
   try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return void 0;
-    metadata = parsed;
+    pool = parseFreePool(prefs?.freePool);
   } catch {
     return void 0;
   }
-  const valid = (value) => typeof value === "string" && value.length > 0 && value.length <= 256;
-  if (!valid(metadata.session_id) || !valid(metadata.thread_id) || !valid(metadata.turn_id)) return void 0;
-  const agent = metadata.agent_name;
-  if (agent !== void 0 && !valid(agent)) return void 0;
-  const conversation = JSON.stringify([metadata.session_id, metadata.thread_id, agent ?? ""]);
-  return { conversation, turn: JSON.stringify([conversation, metadata.turn_id]) };
-}
-
-// src/pool/session.ts
-var PoolSessionRoutes = class {
-  constructor(ttlMs = 36e5, capacity = 256, now = Date.now) {
-    this.ttlMs = ttlMs;
-    this.capacity = capacity;
-    this.now = now;
-  }
-  ttlMs;
-  capacity;
-  now;
-  states = /* @__PURE__ */ new Map();
-  begin(scope, eligible) {
-    const routes = [...eligible];
-    if (!scope) return { routes, succeed: (_id) => {
-    } };
-    const previous = this.states.get(scope);
-    const pinned = previous && previous.expires > this.now() ? previous.pinned : void 0;
-    const state = { token: /* @__PURE__ */ Symbol(), pinned, expires: this.now() + this.ttlMs };
-    this.states.delete(scope);
-    this.states.set(scope, state);
-    while (this.states.size > this.capacity) this.states.delete(this.states.keys().next().value);
-    const index = routes.findIndex((route) => route.id === pinned);
-    if (index > 0) routes.unshift(...routes.splice(index, 1));
-    return {
-      routes,
-      succeed: (id) => {
-        if (this.states.get(scope)?.token !== state.token || !routes.some((route) => route.id === id)) return;
-        this.states.set(scope, { ...state, pinned: id, expires: this.now() + this.ttlMs });
-      }
-    };
-  }
-};
-
-// src/pool/codex-response.ts
-async function writeCodexPoolResponse(stream, modelId, write, options = {}) {
-  let completed;
-  let bytes = 0;
-  const context = options.toolContext ?? { namespaceByFlatName: /* @__PURE__ */ new Map(), customToolNames: /* @__PURE__ */ new Set() };
-  const contextualStream = (async function* () {
-    for await (const part of stream) {
-      const selected = options.getToolContext?.();
-      if (selected) {
-        context.namespaceByFlatName = selected.namespaceByFlatName;
-        context.customToolNames = selected.customToolNames;
-      }
-      yield part;
-    }
-  })();
-  await writeResponsesStream(contextualStream, modelId, (chunk) => {
-    if (options.nonstream) {
-      bytes += Buffer.byteLength(chunk);
-      if (bytes > (options.maxResponseBytes ?? 4 * 1024 * 1024)) throw new Error("Pool response buffer exceeded");
-    } else write(chunk);
-    for (const line of chunk.split(String.fromCharCode(10))) {
-      if (!line.startsWith("data:")) continue;
-      const event = JSON.parse(line.slice(5));
-      if (event.type === "response.completed" || event.type === "response.incomplete") completed = event.response;
-      if (event.type === "response.failed") throw new Error("Pool response failed");
-    }
-  }, void 0, void 0, { toolContext: context });
-  if (!completed) throw new Error("Pool response missing terminal result");
-  return completed;
-}
-
-// src/pool/codex-runtime.ts
-var FREE_POOL_MODEL_ID = "relay-free-pool";
-var DEFAULT_POOL_LIMITS = {
-  attempts: 3,
-  firstContentMs: 2e4,
-  idleMs: 2e4,
-  totalMs: 6e4,
-  bufferBytes: 65536,
-  cleanupMs: 1e3
-};
-var CodexPoolRuntime = class {
-  constructor(pool, prepare, limits = DEFAULT_POOL_LIMITS) {
-    this.pool = pool;
-    this.prepare = prepare;
-    this.limits = limits;
-  }
-  pool;
-  prepare;
-  limits;
-  history = new PoolContinuationStore({ ttlMs: 36e5 });
-  sessions = new PoolSessionRoutes();
-  retries = new CodexRetryGuard();
-  async respond(headers, request2, signal, write) {
-    if (request2.model !== FREE_POOL_MODEL_ID) throw new Error("Pool runtime requires an explicit pool model");
-    const identity = codexPoolIdentity(headers);
-    if (!identity) throw new Error("Pool requires verified Codex conversation and turn metadata");
-    const { body, source } = this.history.resolve(identity.conversation, request2);
-    const lease = this.retries.acquire(identity.turn, requestFingerprint(body));
-    if (lease.kind === "replay") {
-      const cached = JSON.parse(lease.response);
-      if (body.stream === true) for (const chunk of cached.chunks) write(chunk);
-      return cached.response;
-    }
-    if (lease.kind !== "owner") throw new Error("Pool retry " + lease.kind);
-    const chunks = [];
-    let committed = false;
-    try {
-      const routes = await this.prepare(body, source, signal, identity.conversation);
-      let served;
-      const stream = dispatchFreePool(this.pool, routes, {
-        target: "codex",
-        effort: body.reasoning?.effort,
-        tools: Array.isArray(body.tools) && body.tools.length > 0,
-        signal,
-        conversationScope: identity.conversation
-      }, {
-        limits: this.limits,
-        sessions: this.sessions,
-        retryable: retryPoolFailure,
-        onAttempt: (id) => {
-          served = routes.find((route) => JSON.stringify([route.member.providerId, route.revision, route.member.modelId]) === id);
-        }
-      });
-      const response = await writeCodexPoolResponse(stream, FREE_POOL_MODEL_ID, (chunk) => {
-        committed = true;
-        chunks.push(chunk);
-        write(chunk);
-      }, { nonstream: body.stream !== true, getToolContext: () => served?.toolContext });
-      if (!served || typeof response.id !== "string" || !Array.isArray(response.output)) throw new Error("Pool response missing route or history");
-      this.history.remember(response.id, identity.conversation, body, response.output, served.identity);
-      lease.complete(JSON.stringify({ response, chunks }));
-      return response;
-    } catch (error) {
-      if (signal.aborted) lease.release();
-      else lease.fail("Pool request failed", committed);
-      throw error;
-    }
-  }
-};
-
-// src/pool/catalog.ts
-var ALIASES = {
-  codex: FREE_POOL_MODEL_ID,
-  claude: "claude-pool",
-  antigravity: "free-pool"
-};
-function servable(receipt, target, now) {
-  return Boolean(receipt && Number.isFinite(receipt.verifiedAt) && receipt.verifiedAt <= now && Number.isFinite(receipt.expiresAt) && receipt.expiresAt > now && receipt.targets.includes(target) && receipt.billingSafe && Number.isSafeInteger(receipt.contextWindow) && receipt.contextWindow > 0);
-}
-function poolCatalogEntry(pool, receipts, target, now = Date.now()) {
-  const verified = pool.members.map((member) => receipts.find((receipt) => receipt.member.providerId === member.providerId && receipt.member.modelId === member.modelId)).filter((receipt) => servable(receipt, target, now));
-  if (!verified.length) return void 0;
-  const window = Math.min(...verified.map((receipt) => receipt.contextWindow));
-  const reserve = Math.max(4096, Math.ceil(window * 0.1));
-  const levels = verified[0].effortLevels.filter((level) => verified.every((receipt) => receipt.effortLevels.includes(level)));
-  return {
-    id: ALIASES[target],
-    display_name: "Free model pool",
-    context_window: Math.max(1024, window - reserve),
-    supported_reasoning_levels: levels.map((level) => ({ effort: level, description: level }))
-  };
-}
-function codexPoolCatalogEntry(pool, receipts, now = Date.now()) {
-  return poolCatalogEntry(pool, receipts, "codex", now);
+  if (pool.enabled !== true || pool.members.length === 0) return void 0;
+  const entry = poolCatalogEntry(pool, pool.receipts, "claude", now);
+  if (!entry) return void 0;
+  if (!pool.members.some((member) => servableClaudeMember(pool, providers, member, now))) return void 0;
+  const health = new PoolHealthStore();
+  const runtime = new ClaudePoolRuntime(pool, (body, signal, sessionId) => prepareClaudePoolRoutes({
+    pool,
+    providers,
+    receipts: pool.receipts,
+    body,
+    signal,
+    sessionId,
+    health
+  }));
+  return { pool, displayName: entry.display_name, contextWindow: entry.context_window, runtime };
 }
 
 // src/pool/claude-session.ts
@@ -3560,12 +2158,12 @@ function filterModelsBySearch(models, query) {
     return a.index - b.index;
   }).map((result) => result.model);
 }
-function sliceModelPage(items2, page, pageSize = MODEL_PAGE_SIZE) {
-  const totalPages = Math.max(1, Math.ceil(items2.length / pageSize));
+function sliceModelPage(items, page, pageSize = MODEL_PAGE_SIZE) {
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
   const clampedPage = Math.min(Math.max(0, page), totalPages - 1);
   const start = clampedPage * pageSize;
   return {
-    items: items2.slice(start, start + pageSize),
+    items: items.slice(start, start + pageSize),
     page: clampedPage,
     totalPages
   };
@@ -5416,7 +4014,7 @@ async function runProviderDetail(id) {
     detailOptions.push({
       value: "model-context",
       label: "Test a model / set context size",
-      hint: "A test also checks the context size; or type one yourself"
+      hint: "Measure the context separately, or type a size yourself"
     });
   }
   if (!vertex) {
@@ -5561,7 +4159,7 @@ async function runModelContextMenu(providerId, model) {
     const choice = await p8.select({
       message: `${current.name || current.id} \xB7 context ${contextLabel(providerId, current)}`,
       options: [
-        { value: "test", label: "Test model", hint: "One short request, plus a free check of the context size" },
+        { value: "test", label: "Test model", hint: "1 small request; response + tool check, no retries" },
         { value: "set", label: "Set context size", hint: "e.g. 128K or 1M" },
         ...hasOverride ? [{ value: "reset", label: "Reset context size", hint: "Go back to the provider's size" }] : [],
         { value: "back", label: "Back", hint: "" }
@@ -5571,19 +4169,14 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-HHR4O5AX.js");
+      const { testModel } = await import("./test-model-XJVPLHCH.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
         p8.log.error(`${current.id}: ${result.error}`);
       } else {
         p8.log.success(`${current.id} responded in ${(("latencyMs" in result ? result.latencyMs ?? 0 : 0) / 1e3).toFixed(1)}s`);
-        const context = "context" in result ? result.context : void 0;
-        if (!context || context.measured === void 0) p8.log.info("The server did not report a context size.");
-        else if (context.updated) p8.log.success(`Context size updated: ${context.previous ? fmtContextWindow(context.previous) : "unknown"} \u2192 ${fmtContextWindow(context.measured)} (measured, saved)`);
-        else if (context.keptManual) p8.log.info(`The server reports ${fmtContextWindow(context.measured)}; your manual size was kept.`);
-        else if (context.saved) p8.log.success(`Context size ${fmtContextWindow(context.measured)} confirmed and saved as measured.`);
-        else p8.log.info(`Context size ${fmtContextWindow(context.measured)} confirmed.`);
+        p8.log.info(result.toolsPassed ? "Tool calling passed." : "Tool calling was not confirmed.");
       }
     } else if (choice === "set") {
       const entered = await p8.text({
@@ -5777,7 +4370,7 @@ import * as p10 from "@clack/prompts";
 import { join as join10 } from "path";
 
 // src/codex-proxy.ts
-import { createHash as createHash5 } from "crypto";
+import { createHash as createHash3 } from "crypto";
 import { createServer } from "http";
 import { WebSocket } from "ws";
 
@@ -5891,7 +4484,7 @@ function nativeResponsesWebSocketOptions(options) {
 }
 
 // src/codex/collaboration-payload.ts
-import { createHash as createHash4 } from "crypto";
+import { createHash as createHash2 } from "crypto";
 var NATIVE_ENCRYPTED_TOKEN = /^gAAAAA[A-Za-z0-9_-]+={0,2}$/;
 var COLLABORATION_HEADER = /Message Type:\s*(?:NEW_TASK|MESSAGE|FOLLOWUP_TASK|FINAL_ANSWER)\b[\s\S]*\nPayload:\s*/i;
 var PAYLOAD_BOUNDARY = /^Payload:\s*$/m;
@@ -5952,17 +4545,17 @@ var COLLABORATION_TOOL_NAMES = /* @__PURE__ */ new Set([
 ]);
 function isCollaborationTool(value) {
   if (!value || typeof value !== "object") return false;
-  const tool4 = value;
-  const name = typeof tool4.name === "string" ? tool4.name : "";
-  if (tool4.type === "namespace") return name === "collaboration" || name === "multi_agent_v1";
+  const tool3 = value;
+  const name = typeof tool3.name === "string" ? tool3.name : "";
+  if (tool3.type === "namespace") return name === "collaboration" || name === "multi_agent_v1";
   return COLLABORATION_TOOL_NAMES.has(name) || name.startsWith("collaboration__") || name.startsWith("multi_agent_v1__");
 }
 function stripCollaborationToolList(value) {
   if (!Array.isArray(value)) return value;
-  return value.filter((tool4) => !isCollaborationTool(tool4)).map((tool4) => {
-    if (!tool4 || typeof tool4 !== "object") return tool4;
-    const record = tool4;
-    if (!Array.isArray(record.tools)) return tool4;
+  return value.filter((tool3) => !isCollaborationTool(tool3)).map((tool3) => {
+    if (!tool3 || typeof tool3 !== "object") return tool3;
+    const record = tool3;
+    if (!Array.isArray(record.tools)) return tool3;
     return { ...record, tools: stripCollaborationToolList(record.tools) };
   });
 }
@@ -6095,7 +4688,7 @@ function createNativePayloadRelay(options) {
       if (ciphertext.kind !== "native-encrypted") throw new Error("Expected a native encrypted collaboration item");
       const accountId = context.headers["chatgpt-account-id"] ?? context.headers["ChatGPT-Account-Id"];
       if (!accountId) throw new Error("Native collaboration relay requires ChatGPT-Account-Id");
-      const key = `${accountId}\0${createHash4("sha256").update(ciphertext.ciphertext).digest("hex")}`;
+      const key = `${accountId}\0${createHash2("sha256").update(ciphertext.ciphertext).digest("hex")}`;
       pruneCache();
       const cached = cache.get(key);
       if (cached && cached.expiresAt > Date.now()) return cached.value;
@@ -6320,12 +4913,12 @@ function inputItemText(content) {
 }
 function isLikelyCodexCompactionRequest(body) {
   if (!Array.isArray(body.input)) return false;
-  const items2 = body.input;
-  if (items2.some((item) => item && typeof item === "object" && item.type === "compaction_trigger")) {
+  const items = body.input;
+  if (items.some((item) => item && typeof item === "object" && item.type === "compaction_trigger")) {
     return true;
   }
-  for (let i = items2.length - 1; i >= 0; i--) {
-    const item = items2[i];
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
     if (!item || typeof item !== "object" || !("role" in item)) continue;
     return inputItemText(item.content).trimStart().startsWith(COMPACTION_PROMPT_MARKER);
   }
@@ -6664,8 +5257,8 @@ async function startCodexProxy(routes, options = {}) {
         }
         const modelId = String(body.model ?? "");
         if (modelId === FREE_POOL_MODEL_ID) {
-          if (!opts.pool || !requireAuth) {
-            sendJson(res, 400, { error: { message: "Free pool requires an explicitly configured authenticated runtime", type: "invalid_request_error" } });
+          if (!opts.pool) {
+            sendJson(res, 400, { error: { message: "Free pool is not configured for this proxy", type: "invalid_request_error" } });
             return;
           }
           const abort = new AbortController();
@@ -6970,7 +5563,7 @@ async function startCodexProxy(routes, options = {}) {
       sendJson(res, 404, { error: { message: "Not found", type: "invalid_request_error" } });
     });
     function wsAcceptKey(clientKey) {
-      return createHash5("sha1").update(clientKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+      return createHash3("sha1").update(clientKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
     }
     function wsDecodeFrame(buf) {
       if (buf.length < 2) return null;
@@ -7075,6 +5668,7 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
       let frameBuf = Buffer.alloc(0);
       let fragmentedText;
       let externalActive = false;
+      let poolActive = false;
       let nativeActive = false;
       let nativeUpstream;
       let nativeSendTurn;
@@ -7117,9 +5711,9 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
         socket.write(wsCloseFrame(code));
         socket.end();
       };
-      const sendWsEvent = (sseChunk2) => {
+      const sendWsEvent = (sseChunk) => {
         if (socketClosing || socket.destroyed) return;
-        const completed = captureCompletedResponse(sseChunk2);
+        const completed = captureCompletedResponse(sseChunk);
         if (completed) {
           currentExternalCompletedResponse = completed;
           if (debug) {
@@ -7132,7 +5726,7 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
             });
           }
         }
-        for (const line of sseChunk2.split("\n")) {
+        for (const line of sseChunk.split("\n")) {
           if (line.startsWith("data: ")) {
             socket.write(wsEncodeTextFrame(line.slice(6)));
           }
@@ -7188,7 +5782,7 @@ Sec-WebSocket-Accept: ${wsAcceptKey(clientKey)}\r
           }
           const frameText = frame.opcode === 0 ? Buffer.concat(fragmentedText ?? []).toString("utf8") : frame.payload.toString("utf8");
           fragmentedText = void 0;
-          if (externalActive) {
+          if (externalActive || poolActive) {
             closeSocket(1008);
             return;
           }
@@ -7227,7 +5821,29 @@ data: ${JSON.stringify({ error: { message: "Invalid JSON", type: "invalid_reques
             }
             const modelId = String(body.model ?? "");
             if (modelId === FREE_POOL_MODEL_ID) {
-              writeResponsesErrorStream(modelId, "Free pool WebSocket dispatch is not enabled", sendWsEvent, 400);
+              if (!opts.pool) {
+                writeResponsesErrorStream(modelId, "Free pool is not configured for this proxy", sendWsEvent, 400);
+                return;
+              }
+              poolActive = true;
+              currentRequestModel = modelId;
+              const poolAbort = new AbortController();
+              const abortPool = () => poolAbort.abort();
+              socket.once("close", abortPool);
+              try {
+                const response = await opts.pool.respond(req.headers, body, poolAbort.signal, sendWsEvent);
+                if (body.stream !== true && !socketClosing && !socket.destroyed) {
+                  sendWsEvent("event: response.completed\ndata: " + JSON.stringify({ type: "response.completed", response }) + "\n\n");
+                }
+              } catch (err) {
+                if (debug) log15("WS pool error: " + (err instanceof Error ? err.message : String(err)));
+                if (!socketClosing && !socket.destroyed) {
+                  writeResponsesErrorStream(modelId, "Free pool request failed", sendWsEvent, 503);
+                }
+              } finally {
+                poolActive = false;
+                socket.off("close", abortPool);
+              }
               return;
             }
             currentRequestModel = modelId;
@@ -7587,6 +6203,36 @@ data: ${JSON.stringify({ error: { message: `Unknown model: ${modelId}` } })}
       });
     });
   });
+}
+
+// src/pool/additive.ts
+function additivePoolPreferences(prefs) {
+  if (prefs.freePool?.enabled !== true) return void 0;
+  try {
+    const pool = parseFreePool(prefs.freePool);
+    return pool.members.length > 0 && pool.receipts.length > 0 ? pool : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function createAdditivePoolRuntime(pool, providers, options = {}) {
+  const catalog = codexPoolCatalogModel(pool, pool.receipts, {
+    appCatalog: options.appCatalog,
+    priority: options.priority ?? 1
+  });
+  if (!catalog) return void 0;
+  const health = new PoolHealthStore();
+  const runtime = new CodexPoolRuntime(pool, (body, source, signal, sessionId) => prepareCodexPoolRoutes({
+    pool,
+    providers,
+    receipts: pool.receipts,
+    body,
+    source,
+    signal,
+    sessionId,
+    health
+  }));
+  return { runtime, catalog };
 }
 
 // src/codex/profile.ts
@@ -8173,15 +6819,15 @@ function buildOAuthAnthropicProxyRoute(model, apiKey, providerId, providerData) 
     refreshToken: () => resolveProviderCredential(providerId, oauthAuthRef(providerId))
   };
 }
-async function partitionAndStartCloudCodeBackend(items2, toOutput, trace) {
-  if (items2.length === 0) return { backendItems: [], backend: null };
-  const proxyRoutes = items2.map(
+async function partitionAndStartCloudCodeBackend(items, toOutput, trace) {
+  if (items.length === 0) return { backendItems: [], backend: null };
+  const proxyRoutes = items.map(
     (item) => item.model.modelFormat === "cloud-code" ? buildCloudCodeProxyRoute(item.model, item.apiKey, item.providerData ?? {}, item.providerId) : buildOAuthAnthropicProxyRoute(item.model, item.apiKey, item.providerId, item.providerData ?? {})
   );
   const backend = await startCloudCodeCatalogBackend(proxyRoutes, proxyRoutes[0].aliasId, trace);
   return {
     backend,
-    backendItems: proxyRoutes.map((proxyRoute, index) => toOutput(proxyRoute, backend, items2[index]))
+    backendItems: proxyRoutes.map((proxyRoute, index) => toOutput(proxyRoute, backend, items[index]))
   };
 }
 async function buildSingleModelCloudCodeRoute(model, apiKey, providerId, providerData, trace) {
@@ -8526,9 +7172,10 @@ ${pc6.bold("Favorites:")}
   picker will show your starting model + favorites for mid-session switching.
   Zen/Go favorites are included when an OpenCode API key is available.`;
 }
-async function writeLaunchArtifacts(route, selectedModel, providerName, proxyPort, supportsWebSockets) {
+async function writeLaunchArtifacts(route, selectedModel, providerName, proxyPort, supportsWebSockets, extraCatalogModels = [], catalogOverride) {
   const catalogPath = getCatalogOutputPath(route.providerId);
-  const catalog = buildCatalogFile([selectedModel], providerName);
+  const catalog = catalogOverride ? { models: [catalogOverride] } : buildCatalogFile([selectedModel], providerName);
+  if (!catalogOverride && extraCatalogModels.length > 0) catalog.models.push(...extraCatalogModels);
   writeOverlayFile(catalogPath, serializeCatalog(catalog));
   const profilePath = getProfileOutputPath();
   const caps = getReasoningCapabilities(route.npm, route.upstreamModelId, {
@@ -8549,9 +7196,10 @@ async function writeLaunchArtifacts(route, selectedModel, providerName, proxyPor
   }));
   return { profilePath, catalogPath };
 }
-async function writeFavoritesLaunchArtifacts(resolved, starting, proxyPort) {
+async function writeFavoritesLaunchArtifacts(resolved, starting, proxyPort, extraCatalogModels = []) {
   const catalogPath = getFavoritesCatalogPath();
   const catalog = buildFavoritesCodexCatalog(void 0, resolved);
+  if (extraCatalogModels.length > 0) catalog.models.push(...extraCatalogModels);
   writeOverlayFile(catalogPath, serializeCatalog(catalog));
   const profilePath = getProfileOutputPath();
   const model = starting.model;
@@ -8567,13 +7215,15 @@ async function writeFavoritesLaunchArtifacts(resolved, starting, proxyPort) {
     route: dummyRoute,
     proxyPort,
     catalogPath,
-    modelReasoningEffort: defaultReasoningEffortForFavorite(starting)
+    modelReasoningEffort: defaultReasoningEffortForFavorite(starting),
+    ...extraCatalogModels.length > 0 ? { supportsWebSockets: false } : {}
   }));
   return { profilePath, catalogPath };
 }
-async function writeMixedLaunchArtifacts(plan, proxyPort) {
+async function writeMixedLaunchArtifacts(plan, proxyPort, extraCatalogModels = []) {
   const catalogPath = join10(getRelayAiCodexDir(), "models-mixed.json");
-  writeOverlayFile(catalogPath, serializeCatalog(plan.catalog));
+  const catalog = extraCatalogModels.length > 0 ? { models: [...plan.catalog.models, ...extraCatalogModels] } : plan.catalog;
+  writeOverlayFile(catalogPath, serializeCatalog(catalog));
   const profilePath = getProfileOutputPath();
   writeOverlayFile(profilePath, buildCodexMixedProfileToml({
     model: plan.selectedSlug,
@@ -8764,6 +7414,13 @@ async function runCodexCommand2(codexArgs, trace = false, launch = {}) {
     return runCodexVertexLaunch(passthroughArgs, trace);
   }
   const prefs = loadPreferences();
+  if (!launch.pool) {
+    const pickedPoolProvider = launch.launchProvider === FREE_POOL_PROVIDER_ID;
+    const pickedPoolModel = launch.launchModel === FREE_POOL_MODEL_ID;
+    if (pickedPoolProvider || pickedPoolModel && launch.launchProvider === void 0) {
+      launch = { ...launch, pool: true, launchProvider: void 0, launchModel: void 0 };
+    }
+  }
   if (launch.pool) {
     const pool = parseFreePool(prefs.freePool);
     if (pool.members.length === 0) {
@@ -8806,7 +7463,8 @@ async function runCodexCommand2(codexArgs, trace = false, launch = {}) {
       }));
       poolProxy = await startCodexProxy([], { requireAuth: true, debug: trace, pool: runtime });
       const entry = codexPoolCatalogEntry(pool, pool.receipts);
-      if (!entry) {
+      const poolCatalogModel = codexPoolCatalogModel(pool, pool.receipts);
+      if (!entry || !poolCatalogModel) {
         console.error(pc6.red("No verified free pool member can be advertised yet. Run: relay-ai pool verify"));
         return 1;
       }
@@ -8823,12 +7481,20 @@ async function runCodexCommand2(codexArgs, trace = false, launch = {}) {
       const poolRoute = {
         tier: "proxy",
         modelId: FREE_POOL_MODEL_ID,
-        providerId: "relay-free-pool",
+        providerId: FREE_POOL_PROVIDER_ID,
         npm: "@ai-sdk/openai-compatible",
         upstreamModelId: FREE_POOL_MODEL_ID,
         apiKey: ""
       };
-      const { profilePath, catalogPath } = await writeLaunchArtifacts(poolRoute, poolModel, entry.display_name, poolProxy.port, false);
+      const { profilePath, catalogPath } = await writeLaunchArtifacts(
+        poolRoute,
+        poolModel,
+        entry.display_name,
+        poolProxy.port,
+        false,
+        [],
+        poolCatalogModel
+      );
       writeSessionLock({
         pid: process.pid,
         startedAt: localIsoTimestamp(),
@@ -8920,6 +7586,13 @@ Error: ${launchPlan.error}
       p10.log.info("Add a provider with relay-ai providers add, or sign in with relay-ai providers auth openai-oauth.");
     }
     return 0;
+  }
+  const additivePool = additivePoolPreferences(prefs);
+  const additive = additivePool ? createAdditivePoolRuntime(additivePool, providersForPicker(catalog)) : void 0;
+  const additivePoolRuntime = additive?.runtime;
+  const additivePoolModel = additive?.catalog;
+  if (additivePool && !additive && !agentStdout) {
+    p10.log.warn("Relay Free Pool is enabled but has no verified member in this catalog. Run: relay-ai pool verify");
   }
   let favorites = prefs.favoriteModels ?? [];
   let mixedMode = launch.codexLaunchMode === "mixed";
@@ -9066,6 +7739,7 @@ Mixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
       proxyHandle = await startCodexProxy(mixedPlan.relayRoutes, {
         requireAuth: false,
         debug: trace,
+        pool: additivePoolRuntime,
         mixedNative: {
           nativeModelIds: mixedPlan.nativeModelIds,
           subagentRouteModelId: mixedPlan.subagentRouteModelId,
@@ -9115,7 +7789,7 @@ Mixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
       }
       const regularRoutes = buildCodexProxyRoutesFromResolved(regularResolved, providersById);
       const allRoutes = [...backendCodexRoutes, ...regularRoutes];
-      proxyHandle = await startCodexProxy(allRoutes, { requireAuth: true, debug: trace });
+      proxyHandle = await startCodexProxy(allRoutes, { requireAuth: true, debug: trace, pool: additivePoolRuntime });
       proxyPort = proxyHandle.port;
     } else if (route.tier === "cloud-code") {
       const providerData = activeProvider.providerData ?? {};
@@ -9143,7 +7817,7 @@ Mixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
         interleavedReasoningField: route.interleavedReasoningField,
         reasoningEffortLevels: route.reasoningEffortLevels,
         reasoningEffortConflict: route.reasoningEffortConflict
-      }], { debug: trace });
+      }], { debug: trace, pool: additivePoolRuntime });
       proxyPort = proxyHandle.port;
     } else if (route.authType === "oauth" && selectedModel.modelFormat === "anthropic") {
       const providerData = activeProvider.providerData ?? {};
@@ -9171,7 +7845,7 @@ Mixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
         interleavedReasoningField: route.interleavedReasoningField,
         reasoningEffortLevels: route.reasoningEffortLevels,
         reasoningEffortConflict: route.reasoningEffortConflict
-      }], { debug: trace });
+      }], { debug: trace, pool: additivePoolRuntime });
       proxyPort = proxyHandle.port;
     } else if (route.tier === "proxy") {
       proxyHandle = await startCodexProxy([{
@@ -9191,13 +7865,22 @@ Mixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
         reasoningEffortConflict: route.reasoningEffortConflict,
         headers: route.headers,
         refreshToken: route.refreshToken
-      }], { debug: trace });
+      }], { debug: trace, pool: additivePoolRuntime });
       proxyPort = proxyHandle.port;
     }
     const startingFavorite = resolvedFavorites.find(
       (r) => r.providerId === activeProvider.id && r.model.id === selectedModel.id
     ) ?? resolvedFavorites[0];
-    const { profilePath, catalogPath } = mixedPlan && proxyPort ? await writeMixedLaunchArtifacts(mixedPlan, proxyPort) : favoritesActive && resolvedFavorites.length > 0 && proxyPort && startingFavorite ? await writeFavoritesLaunchArtifacts(resolvedFavorites, startingFavorite, proxyPort) : await writeLaunchArtifacts(route, selectedModel, activeProvider.name, proxyPort);
+    const servedPoolModel = additivePoolModel && proxyPort ? additivePoolModel : void 0;
+    const poolCatalogModels = servedPoolModel ? [servedPoolModel] : [];
+    const { profilePath, catalogPath } = mixedPlan && proxyPort ? await writeMixedLaunchArtifacts(mixedPlan, proxyPort, poolCatalogModels) : favoritesActive && resolvedFavorites.length > 0 && proxyPort && startingFavorite ? await writeFavoritesLaunchArtifacts(resolvedFavorites, startingFavorite, proxyPort, poolCatalogModels) : await writeLaunchArtifacts(
+      route,
+      selectedModel,
+      activeProvider.name,
+      proxyPort,
+      servedPoolModel ? false : void 0,
+      poolCatalogModels
+    );
     writeSessionLock({
       pid: process.pid,
       startedAt: localIsoTimestamp(),
@@ -9226,6 +7909,9 @@ Mixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
         console.log(`  ${pc6.bold("Mode:")}     Single model`);
         console.log(`  ${pc6.bold("Provider:")} ${activeProvider.name}`);
         console.log(`  ${pc6.bold("Model:")}    ${selectedModel.id}`);
+      }
+      if (servedPoolModel) {
+        console.log(`  ${pc6.bold("Pool:")}     ${servedPoolModel.display_name} (${servedPoolModel.slug}, ${servedPoolModel.context_window} ctx)`);
       }
       console.log("");
       console.log(`  ${pc6.bold("Files written:")}`);
@@ -9419,7 +8105,7 @@ function rejectGeminiManagedFlags(geminiArgs) {
 // src/gemini-proxy.ts
 import { createServer as createServer2 } from "http";
 import { randomUUID as randomUUID3 } from "crypto";
-import { streamText as streamText3, generateText as generateText2, tool as tool2, jsonSchema as jsonSchema2 } from "ai";
+import { streamText as streamText2, tool, jsonSchema } from "ai";
 function mapFinishReason(reason) {
   if (reason === "stop" || reason === "tool-calls") return "STOP";
   if (reason === "length") return "MAX_TOKENS";
@@ -9445,7 +8131,7 @@ function lookupGeminiRoute(routes, requestedModel) {
   }
   return void 0;
 }
-function mergeConsecutiveMessages2(messages) {
+function mergeConsecutiveMessages(messages) {
   const merged = [];
   for (const msg of messages) {
     if (merged.length === 0) {
@@ -9538,7 +8224,7 @@ function translateGeminiRequest(body, options = {}) {
       });
     }
   }
-  const mergedMessages = mergeConsecutiveMessages2(messages);
+  const mergedMessages = mergeConsecutiveMessages(messages);
   let tools;
   if (body.tools) {
     tools = {};
@@ -9547,9 +8233,9 @@ function translateGeminiRequest(body, options = {}) {
       if (t.functionDeclarations) {
         for (const fd of t.functionDeclarations) {
           if (options.maxTools !== void 0 && toolCount >= options.maxTools) break;
-          tools[fd.name] = tool2({
+          tools[fd.name] = tool({
             description: fd.description || "",
-            inputSchema: jsonSchema2(
+            inputSchema: jsonSchema(
               normalizeToolSchemaForNpm(fd.parameters || { type: "object", properties: {} }, "@ai-sdk/google")
             )
           });
@@ -9738,7 +8424,7 @@ ${JSON.stringify(params, null, 2)}`);
             "Connection": "keep-alive"
           });
           plog("Starting streamText...");
-          const { stream } = streamText3({
+          const { stream } = streamText2({
             model: languageModel,
             ...params
           });
@@ -9842,7 +8528,7 @@ ${JSON.stringify(params, null, 2)}`);
           plog("Stream ended.");
         } else {
           plog("Starting generateText...");
-          const result = await generateText2({
+          const result = await generateTextStreamingIfRequired({
             model: languageModel,
             ...params
           });
@@ -10519,11 +9205,11 @@ function createJsonCapture() {
 
 // src/antigravity/cloud-code-gateway.ts
 import http from "http";
-import { streamText as streamText4, generateText as generateText3 } from "ai";
+import { streamText as streamText3 } from "ai";
 
 // src/antigravity/request-adapter.ts
 import { randomUUID as randomUUID4 } from "crypto";
-import { tool as tool3, jsonSchema as jsonSchema3 } from "ai";
+import { tool as tool2, jsonSchema as jsonSchema2 } from "ai";
 var UNSUPPORTED_VOICE_MESSAGE = "Voice transcription isn\u2019t supported by Relay AI yet. Please type your message. Your coding session remains active.";
 var OMITTED_VOICE_TEXT = "[Voice recording omitted because transcription is not supported by Relay AI.]";
 function isSupportedImage(part) {
@@ -10671,9 +9357,9 @@ function translateTools(ccTools, options = {}) {
     if (t.functionDeclarations) {
       for (const fd of t.functionDeclarations) {
         if (options.maxTools !== void 0 && toolCount >= options.maxTools) break;
-        tools[fd.name] = tool3({
+        tools[fd.name] = tool2({
           description: fd.description || "",
-          inputSchema: jsonSchema3(
+          inputSchema: jsonSchema2(
             normalizeToolSchemaForNpm(
               normalizeJsonSchema(fd.parameters || { type: "object", properties: {} }),
               options.npm
@@ -12517,7 +11203,7 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log15
   );
   const langModel = await createRouteLanguageModel(route, options.sessionId);
   const responseId = `relay-${Date.now()}`;
-  const { stream } = streamText4({
+  const { stream } = streamText3({
     model: langModel,
     instructions: sdkParams.instructions,
     messages: sdkParams.messages,
@@ -12718,7 +11404,7 @@ async function handleUnaryRequest(res, route, providerOptions, parsed, log15, op
   );
   const langModel = await createRouteLanguageModel(route, options.sessionId);
   const responseId = `relay-${Date.now()}`;
-  const result = await generateText3({
+  const result = await generateTextStreamingIfRequired({
     model: langModel,
     instructions: sdkParams.instructions,
     messages: sdkParams.messages,
@@ -12820,9 +11506,9 @@ function buildAntigravityPoolRoutes(opts) {
       ...representative,
       catalogId: "relay-free-pool-" + level,
       providerId: "relay-free-pool",
-      providerName: "Free pool",
+      providerName: "Relay Free Pool",
       modelId: "free-pool-" + level,
-      displayName: "Free Pool " + effortLabel(level),
+      displayName: "Relay Free Pool " + effortLabel(level),
       apiKey: "",
       reasoningEffort: level,
       contextWindow: Math.min(...members.map((member) => member.contextWindow).filter(
@@ -12872,7 +11558,7 @@ async function resolveAntigravityLaunchRoutes(opts) {
   const routes = buildAntigravityRoutes(launchable, maxRoutes, { effortMode: opts.effortMode });
   const freePool = parseFreePool(loadPreferences().freePool);
   const hasPoolEvidence = freePool.receipts.some((receipt) => receipt.targets.includes("antigravity") && receipt.billingSafe && receipt.verifiedAt <= Date.now() && receipt.expiresAt > Date.now());
-  if (hasPoolEvidence && routes.length < maxRoutes) {
+  if (freePool.enabled && hasPoolEvidence && routes.length < maxRoutes) {
     const apiKeys = /* @__PURE__ */ new Map();
     for (const member of freePool.members) {
       const provider = opts.allProviders.find((candidate) => candidate.id === member.providerId);
@@ -13165,7 +11851,7 @@ import {
 } from "fs";
 import { createRequire as createRequire2 } from "module";
 import { dirname as dirname3, join as join14 } from "path";
-import { createHash as createHash6, randomUUID as randomUUID5 } from "crypto";
+import { createHash as createHash4, randomUUID as randomUUID5 } from "crypto";
 import { parse, modify, applyEdits } from "jsonc-parser";
 var require3 = createRequire2(import.meta.url);
 var MODEL_PREFERENCES_KEY2 = "antigravityUnifiedStateSync.modelPreferences";
@@ -13180,7 +11866,7 @@ function getExistingIdeRecoveryRecordPath(env = process.env) {
   return join14(getAntigravityHome(env), "existing-ide-recovery.json");
 }
 function fileSha256(filePath) {
-  return createHash6("sha256").update(readFileSync6(filePath)).digest("hex");
+  return createHash4("sha256").update(readFileSync6(filePath)).digest("hex");
 }
 function readExistingIdeLock(env = process.env) {
   const lockPath = getExistingIdeLockPath(env);
@@ -14911,7 +13597,7 @@ import {
   statSync as statSync2
 } from "fs";
 import { basename as basename2, join as join18 } from "path";
-import { createHash as createHash7 } from "crypto";
+import { createHash as createHash5 } from "crypto";
 function getAppSessionLockPath(env = process.env) {
   return join18(getRelayAiCodexDir(env), "session-app.json");
 }
@@ -14922,7 +13608,7 @@ function getAppCatalogPath(providerId, env = process.env) {
   return join18(getRelayAiCodexDir(env), `app-models-${providerId}.json`);
 }
 function fileSha2562(path3) {
-  return createHash7("sha256").update(readFileSync10(path3)).digest("hex");
+  return createHash5("sha256").update(readFileSync10(path3)).digest("hex");
 }
 function readAppSessionLock(env = process.env) {
   const path3 = getAppSessionLockPath(env);
@@ -15461,6 +14147,13 @@ async function runCodexAppCommand(args, opts = {}) {
     return 0;
   }
   const prefs = loadPreferences();
+  const additivePool = additivePoolPreferences(prefs);
+  const appAdditive = additivePool ? createAdditivePoolRuntime(additivePool, providersForPicker(catalog), { appCatalog: true }) : void 0;
+  const additivePoolRuntime = appAdditive?.runtime;
+  const additivePoolModel = appAdditive?.catalog;
+  if (additivePool && !appAdditive && !configOnly) {
+    p14.log.warn("Relay Free Pool is enabled but has no verified member. Run: relay-ai pool verify");
+  }
   let favorites = prefs.favoriteModels ?? [];
   let mixedMode = opts.codexLaunchMode === "mixed";
   if (!configOnly && isTty && !(launchProvider && opts.launchModel) && opts.codexLaunchMode === void 0) {
@@ -15721,6 +14414,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
       proxyHandle = await startCodexProxy(mixedPlan.relayRoutes, {
         requireAuth: false,
         debug: trace,
+        pool: additivePoolRuntime,
         routeAuditPath,
         mixedNative: {
           nativeModelIds: mixedPlan.nativeModelIds,
@@ -15767,7 +14461,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
       const regularRoutes = buildCodexProxyRoutesFromResolved(regularResolved, providersById);
       proxyHandle = await startCodexProxy(
         [...backendCodexRoutes, ...regularRoutes],
-        { requireAuth: false, debug: trace }
+        { requireAuth: false, debug: trace, pool: additivePoolRuntime }
       );
       proxyPort = proxyHandle.port;
     } else {
@@ -15776,12 +14470,13 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
       }
       proxyHandle = await startCodexProxy(
         appProviderRoutes.routes,
-        { requireAuth: false, debug: trace }
+        { requireAuth: false, debug: trace, pool: additivePoolRuntime }
       );
       proxyPort = proxyHandle.port;
     }
     const modelLabel = formatCodexModelLabel(selectedModel);
     const catalogFile = mixedPlan ? mixedPlan.catalog : favoritesActive && resolvedFavorites.length > 0 ? buildFavoritesAppCatalog(resolvedFavorites) : buildAppCatalogFile(catalogModels, activeProvider.name, appRoute.modelId);
+    if (additivePoolModel) catalogFile.models.push(additivePoolModel);
     writeOverlayFile(catalogPath, serializeCatalog(catalogFile));
     const spec = {
       route: activeRoute,
@@ -16306,6 +15001,19 @@ function setupExitCleanup(uuid) {
 }
 
 // src/claude-app.ts
+function claudePoolServerModel(pool) {
+  return {
+    id: CLAUDE_POOL_MODEL_ID,
+    name: pool.displayName,
+    isFree: true,
+    brand: "Relay",
+    providerLabel: "Relay",
+    providerId: "relay-pool",
+    sourceBackend: "relay-pool",
+    modelFormat: "unsupported",
+    contextWindow: pool.contextWindow
+  };
+}
 var CLAUDE_APP_GATEWAY_OPTIONS = {
   maskGatewayIds: true,
   longContextDisplay: "single-1m"
@@ -16457,11 +15165,21 @@ async function runClaudeAppCommand(args, boot) {
     p15.log.error("No Claude App launch model was selected.");
     return 1;
   }
+  let autoPool;
+  if (prefs.freePool?.enabled === true) {
+    try {
+      autoPool = prepareClaudeAutoPool(prefs, await fetchProviderCatalog());
+    } catch (err) {
+      p15.log.warn(`Relay Free Pool is enabled but could not be prepared: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  const catalogLimit = MAX_MODEL_CATALOG - (autoPool ? 1 : 0);
   const catalogResolution = await resolveClaudeAppCatalog(
     activeProvider,
     selectedModel,
     compatible,
-    favorites
+    favorites,
+    catalogLimit
   );
   if (!catalogResolution.ok) {
     p15.log.error(catalogResolution.error);
@@ -16485,7 +15203,8 @@ async function runClaudeAppCommand(args, boot) {
       catalogResolution.providersById,
       trace
     );
-    const serverModels = expandClaudeAppEffortVariants(builtCatalog.serverModels);
+    const serverModels = expandClaudeAppEffortVariants(builtCatalog.serverModels, catalogLimit);
+    if (autoPool) serverModels.push(claudePoolServerModel(autoPool));
     cloudCodeBackend = builtCatalog.backend;
     backupMetaJson();
     proxyHandle = await startServer({
@@ -16497,6 +15216,7 @@ async function runClaudeAppCommand(args, boot) {
       catalog: createGatewayModelCatalog(serverModels, CLAUDE_APP_GATEWAY_OPTIONS),
       backends: BACKENDS,
       gateway: CLAUDE_APP_GATEWAY_OPTIONS,
+      pool: autoPool ? { runtime: autoPool.runtime, displayName: autoPool.displayName } : void 0,
       debugLogPath
     });
     uuid = writeRelayAiConfig(proxyHandle.port);
@@ -16532,7 +15252,10 @@ ${pc10.bold("Claude Desktop 3P Mode Active")}`);
     console.log(`${pc10.dim("Model:")}    ${selectedModel.id}`);
     console.log(`${pc10.dim("Provider:")} ${activeProvider.name}`);
     if (serverModels.length > 1) {
-      console.log(`${pc10.dim("Catalog:")}  ${serverModels.length} models (selected + favorites)`);
+      const parts = ["selected"];
+      if (hasFavorites) parts.push("favorites");
+      if (autoPool) parts.push(autoPool.displayName);
+      console.log(`${pc10.dim("Catalog:")}  ${serverModels.length} models (${parts.join(" + ")})`);
     }
     console.log(`${pc10.cyan("Press Ctrl+C to stop and restore config.")}`);
     await waitForShutdown3();
@@ -17158,13 +15881,14 @@ function cachePath(baseEnv) {
   const claudeDir = baseEnv["CLAUDE_CONFIG_DIR"]?.trim() || path2.join(os.homedir(), ".claude");
   return path2.join(claudeDir, "cache", CACHE_FILE);
 }
-function writeGatewayDiscoveryCache(baseEnv, routes) {
+function writeGatewayDiscoveryCache(baseEnv, routes, pool) {
   try {
     const models = routes.filter((route) => Boolean(route.gatewayAliasId)).map((route) => formatAnthropicModelEntry(
       route.gatewayAliasId,
       route.displayName,
       route.contextWindow
     ));
+    if (pool) models.push(formatAnthropicModelEntry(CLAUDE_POOL_MODEL_ID, pool.displayName, pool.contextWindow));
     const file = cachePath(baseEnv);
     fs2.mkdirSync(path2.dirname(file), { recursive: true });
     fs2.writeFileSync(
@@ -17688,11 +16412,12 @@ async function startHttpProxy(options) {
   }
   let adapter = options.adapterHandle ?? null;
   try {
-    if (options.routes.length > 0 && !adapter) {
+    if ((options.routes.length > 0 || options.pool) && !adapter) {
       adapter = await startProxyCatalog(
         options.routes,
-        options.routes[0].aliasId,
-        options.debug
+        options.routes[0]?.aliasId ?? CLAUDE_POOL_MODEL_ID,
+        options.debug,
+        options.pool ? { pool: options.pool } : {}
       );
     }
   } catch (error) {
@@ -17715,7 +16440,8 @@ async function startHttpProxy(options) {
       return;
     }
     const modelsEndpoint = anthropicModelsEndpoint(req.url);
-    if (req.method === "GET" && modelsEndpoint && options.routes.length > 0) {
+    const hasCatalog = options.routes.length > 0 || Boolean(options.pool);
+    if (req.method === "GET" && modelsEndpoint && hasCatalog) {
       if (modelsEndpoint === "list") {
         const upstreamResult = await fetchUpstreamModelsList(
           req,
@@ -17727,6 +16453,9 @@ async function startHttpProxy(options) {
           r.displayName,
           r.contextWindow
         ));
+        const poolDisplay = options.pool ? { id: CLAUDE_POOL_MODEL_ID, name: options.pool.displayName, contextWindow: options.pool.contextWindow } : void 0;
+        const poolEntry = poolDisplay ? formatAnthropicModelEntry(poolDisplay.id, poolDisplay.name, poolDisplay.contextWindow) : void 0;
+        if (poolEntry) relayEntries.push(poolEntry);
         if (upstreamResult && upstreamResult.statusCode === 200) {
           try {
             const parsed = JSON.parse(upstreamResult.body.toString("utf8"));
@@ -17751,11 +16480,14 @@ async function startHttpProxy(options) {
           }
         }
         const fallbackList = formatAnthropicModelList(
-          options.routes.map((r) => ({
-            id: r.gatewayAliasId ?? r.aliasId,
-            name: r.displayName,
-            contextWindow: r.contextWindow
-          }))
+          [
+            ...options.routes.map((r) => ({
+              id: r.gatewayAliasId ?? r.aliasId,
+              name: r.displayName,
+              contextWindow: r.contextWindow
+            })),
+            ...poolDisplay ? [poolDisplay] : []
+          ]
         );
         const buffer = Buffer.from(JSON.stringify(fallbackList));
         res.writeHead(200, {
@@ -17781,6 +16513,20 @@ async function startHttpProxy(options) {
           res.end(buffer);
           return;
         }
+        if (options.pool && routeLookupIds(modelsEndpoint.id).includes(CLAUDE_POOL_MODEL_ID)) {
+          const entry = formatAnthropicModelEntry(
+            CLAUDE_POOL_MODEL_ID,
+            options.pool.displayName,
+            options.pool.contextWindow
+          );
+          const buffer = Buffer.from(JSON.stringify(entry));
+          res.writeHead(200, {
+            "content-type": "application/json",
+            "content-length": String(buffer.length)
+          });
+          res.end(buffer);
+          return;
+        }
       }
     }
     const endpoint = anthropicMessagesEndpoint(req.url);
@@ -17791,6 +16537,24 @@ async function startHttpProxy(options) {
         parsed = JSON.parse(rawBody.toString("utf8"));
         if (typeof parsed.model === "string") route = routesById.get(parsed.model);
       } catch {
+      }
+      const poolModel = Boolean(options.pool && parsed && typeof parsed.model === "string" && routeLookupIds(parsed.model).includes(CLAUDE_POOL_MODEL_ID));
+      if (poolModel && adapter && parsed) {
+        if (endpoint === "count_tokens") {
+          res.writeHead(200, {
+            "Content-Type": "application/json",
+            "x-relay-token-count-source": "local-estimate"
+          });
+          res.end(JSON.stringify({ input_tokens: estimateAnthropicInputTokens(parsed) }));
+          return;
+        }
+        await forwardToAdapter(
+          req,
+          res,
+          Buffer.from(JSON.stringify({ ...parsed, model: CLAUDE_POOL_MODEL_ID })),
+          adapter
+        );
+        return;
       }
       if (route && adapter && parsed) {
         if (endpoint === "count_tokens") {
@@ -17895,7 +16659,10 @@ async function startHttpProxy(options) {
     port: address.port,
     proxyUrl: `http://${PROXY_USERNAME}:${encodeURIComponent(password3)}@${host}:${address.port}`,
     caCertPath: certificates.caCertPath,
-    modelIds: options.routes.map((route) => route.aliasId),
+    modelIds: [
+      ...options.routes.map((route) => route.aliasId),
+      ...options.pool ? [CLAUDE_POOL_MODEL_ID] : []
+    ],
     close: async () => {
       if (closed) return;
       closed = true;
@@ -17933,7 +16700,7 @@ async function startConfiguredHttpProxy(options) {
     options.favorites,
     options.selected
   );
-  const handle = await startHttpProxy({ routes: loaded.routes, debug: options.debug });
+  const handle = await startHttpProxy({ routes: loaded.routes, debug: options.debug, pool: options.pool });
   try {
     handle.caCertPath = createHttpProxyCaBundle(
       handle.caCertPath,
@@ -17970,7 +16737,8 @@ async function launchClaudeWithHttpProxy(options, dependencies = defaultDependen
     favorites: options.favorites,
     selected: options.selected,
     debug: options.debug,
-    additionalCaCertPath: options.baseEnv["NODE_EXTRA_CA_CERTS"]
+    additionalCaCertPath: options.baseEnv["NODE_EXTRA_CA_CERTS"],
+    pool: options.pool
   });
   try {
     if (options.selected && !proxy.startingModel) {
@@ -17984,7 +16752,7 @@ async function launchClaudeWithHttpProxy(options, dependencies = defaultDependen
       proxy.handle.proxyUrl,
       proxy.handle.caCertPath
     );
-    writeGatewayDiscoveryCache(options.baseEnv, proxy.loaded.routes);
+    writeGatewayDiscoveryCache(options.baseEnv, proxy.loaded.routes, options.pool);
     const exitCode = await dependencies.launch(
       childEnv,
       proxy.startingModel,
@@ -18467,7 +17235,7 @@ ${pc11.bold("Root options:")}
 ${pc11.bold("Commands:")}
   claude      Launch Claude Code \u2014 pick a provider from your registry
   models      Manage favorite models for mid-session /model switching (max ${MAX_MODEL_CATALOG})
-  pool        Manage shared free-model pool membership (experimental)
+  pool        Manage Relay Free Pool; pool --help lists actions and test costs
   favorites   Alias for models
   subagents   Manage the independent Codex SubAgent model catalog (starts empty)
   providers   Add, import, and manage your AI providers
@@ -18756,12 +17524,18 @@ function printHelp(text7) {
 ${text7}
 `);
 }
-async function launchClaudeViaCatalog(catalogRoutes, startingRoute, contextWindow, trace, claudeArgs) {
+async function launchClaudeViaCatalog(catalogRoutes, startingRoute, contextWindow, trace, claudeArgs, autoPool) {
   let proxyHandle;
   try {
-    proxyHandle = await startProxyCatalog(catalogRoutes, startingRoute.aliasId, trace);
+    proxyHandle = await startProxyCatalog(
+      catalogRoutes,
+      startingRoute.aliasId,
+      trace,
+      autoPool ? { pool: { runtime: autoPool.runtime, displayName: autoPool.displayName, contextWindow: autoPool.contextWindow } } : {}
+    );
+    const catalogSize = catalogRoutes.length + (autoPool ? 1 : 0);
     p16.log.info(
-      `Switch menu active \u2014 proxy on port ${proxyHandle.port} ` + pc11.dim(`(${catalogRoutes.length} model${catalogRoutes.length !== 1 ? "s" : ""} in /model)`)
+      `Switch menu active \u2014 proxy on port ${proxyHandle.port} ` + pc11.dim(`(${catalogSize} model${catalogSize !== 1 ? "s" : ""} in /model)`)
     );
   } catch (err) {
     p16.log.error(`Failed to start proxy: ${err instanceof Error ? err.message : String(err)}`);
@@ -19162,6 +17936,8 @@ Error: ${launchPlan.error}
     p16.log.info(pc11.dim("Run relay-ai providers add or import to get started."));
     return 0;
   }
+  const autoPool = dryRun || parsed.claudePool ? void 0 : prepareClaudeAutoPool(prefs, catalog);
+  if (autoPool) switchMenuActive = true;
   const runTransparentProxy = async (selected) => {
     if (dryRun) {
       console.log("");
@@ -19186,6 +17962,7 @@ Error: ${launchPlan.error}
         baseEnv: process.env,
         claudeArgs: [...traceArgs2, ...claudeArgs],
         debug: trace,
+        pool: autoPool ? { runtime: autoPool.runtime, displayName: autoPool.displayName, contextWindow: autoPool.contextWindow } : void 0,
         onProxyReady: (proxy) => {
           if (agentStdout) return;
           const count = proxy.handle.modelIds.length;
@@ -19223,7 +18000,7 @@ Error: ${launchPlan.error}
     if (!dryRun) savePreferences({ lastClaudeTransparentMode: picked === "mixed" });
   }
   const providerOptions = allProviders.map((lp) => providerSelectOption(lp));
-  if (switchMenuActive) {
+  if (favorites.length > 0) {
     providerOptions.unshift({
       value: "__favorites__",
       label: "\u2B50 Favorites Catalog",
@@ -19356,7 +18133,8 @@ Error: ${launchPlan.error}
       startingRoute,
       claudeContextWindow,
       trace,
-      claudeArgs
+      claudeArgs,
+      autoPool
     );
   }
   if (dryRun) {
@@ -19384,9 +18162,35 @@ Error: ${launchPlan.error}
   }
   let proxyHandle = null;
   let childEnv;
+  let launchClaudeModelId = claudeCodeClientModelId(selectedModel.id, claudeContextWindow);
   const isAntigravityOAuth = isProviderKind(activeProvider.id, "antigravity") && activeProvider.authType === "oauth";
   const isOAuthAnthropic = selectedModel.modelFormat === "anthropic" && activeProvider.authType === "oauth" && !isAntigravityOAuth;
-  if (isAntigravityOAuth) {
+  const poolStartRoute = autoPool ? localModelToRoute(activeProvider, selectedModel) : null;
+  if (autoPool && !poolStartRoute) {
+    p16.log.warn("Relay Free Pool skipped for this launch: the selected model has no proxy route.");
+  }
+  if (autoPool && poolStartRoute) {
+    try {
+      proxyHandle = await startProxyCatalog([poolStartRoute], poolStartRoute.aliasId, trace, {
+        pool: { runtime: autoPool.runtime, displayName: autoPool.displayName, contextWindow: autoPool.contextWindow }
+      });
+      if (!isAgentStdoutMode()) {
+        p16.log.info(`Relay Free Pool added to the catalog (proxy port ${proxyHandle.port}).`);
+      }
+    } catch (err) {
+      p16.log.error(`Failed to start catalog proxy: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+    launchClaudeModelId = poolStartRoute.aliasId;
+    childEnv = buildChildEnv(
+      `http://127.0.0.1:${proxyHandle.port}`,
+      poolStartRoute.aliasId,
+      proxyHandle.token,
+      proxyHandle.port,
+      claudeContextWindow,
+      true
+    );
+  } else if (isAntigravityOAuth) {
     try {
       proxyHandle = await startProxy(
         ANTIGRAVITY_BASE_URLS[0],
@@ -19528,7 +18332,7 @@ Error: ${launchPlan.error}
   if (trace) p16.log.info(`Debug log: ${debugLogPath}`);
   const exitCode = await launchClaude(
     childEnv,
-    claudeCodeClientModelId(selectedModel.id, claudeContextWindow),
+    launchClaudeModelId,
     [...traceArgs, ...claudeArgs]
   );
   proxyHandle?.close();
@@ -19608,11 +18412,11 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-HC57GG4H.js");
+    const { runUiCommand } = await import("./ui-command-NIFSTLFZ.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-CAAXMHOU.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-7UCSCPT2.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

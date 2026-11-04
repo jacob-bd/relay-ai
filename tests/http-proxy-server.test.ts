@@ -124,6 +124,62 @@ describe('transparent HTTP proxy server', () => {
     }
   });
 
+  it('exposes Relay Free Pool beside native models and routes it to the pool adapter', async () => {
+    let seenModel: string | undefined;
+    const adapter = http.createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      await once(req, 'end');
+      seenModel = (JSON.parse(Buffer.concat(chunks).toString('utf8')) as { model?: string }).model;
+      res.writeHead(200, { 'Content-Type': 'application/json', Connection: 'close' });
+      res.end(JSON.stringify({ type: 'message', role: 'assistant', content: [{ type: 'text', text: 'POOL_OK' }] }));
+    });
+    const adapterPort = await listen(adapter);
+    const proxy = await startHttpProxy({
+      routes: [],
+      pool: { runtime: {} as never, displayName: 'Relay Free Pool', contextWindow: 128000 },
+      adapterHandle: { port: adapterPort, token: 'adapter-local-token', close: () => adapter.close() },
+      anthropicOrigin: 'http://127.0.0.1:1',
+    });
+    try {
+      expect(proxy.modelIds).toEqual(['claude-pool']);
+      const listSocket = await connectMitm(proxy);
+      let list = '';
+      listSocket.on('data', chunk => { list += chunk.toString(); });
+      listSocket.write([
+        'GET /v1/models HTTP/1.1',
+        `Host: ${RELAY_SENTINEL_HOST}`,
+        'Authorization: Bearer native-anthropic-login',
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n'));
+      await once(listSocket, 'close');
+      expect(list).toContain('claude-pool');
+      expect(list).toContain('Relay Free Pool');
+
+      const body = JSON.stringify({ model: 'claude-pool', max_tokens: 64, messages: [{ role: 'user', content: 'hi' }] });
+      const messageSocket = await connectMitm(proxy);
+      let response = '';
+      messageSocket.on('data', chunk => { response += chunk.toString(); });
+      messageSocket.write([
+        'POST /v1/messages HTTP/1.1',
+        `Host: ${RELAY_SENTINEL_HOST}`,
+        'Authorization: Bearer native-anthropic-login',
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(body)}`,
+        'Connection: close',
+        '',
+        '',
+      ].join('\r\n') + body);
+      await once(messageSocket, 'close');
+      expect(seenModel).toBe('claude-pool');
+      expect(response).toContain('POOL_OK');
+    } finally {
+      await proxy.close();
+    }
+  });
+
   it('forwards native Anthropic request bytes and auth unchanged', async () => {
     let receivedBody = Buffer.alloc(0);
     let receivedAuth: string | undefined;

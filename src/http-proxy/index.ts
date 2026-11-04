@@ -1,6 +1,7 @@
 import { claudeCodeClientModelId, claudeCodeContextWindow } from '../context-model-id.js';
 import { resolveLocalProviderApiKey } from '../provider-catalog.js';
 import type { FavoriteModel, LocalProvider } from '../types.js';
+import type { ClaudePoolRuntime } from '../pool/claude-runtime.js';
 import { createHttpProxyCaBundle } from './ca.js';
 import {
   buildHttpProxyRoutes,
@@ -46,13 +47,14 @@ export async function startConfiguredHttpProxy(options: {
   selected?: FavoriteModel;
   debug?: boolean;
   additionalCaCertPath?: string;
+  pool?: { runtime: ClaudePoolRuntime; displayName: string; contextWindow: number };
 }): Promise<ConfiguredHttpProxy> {
   const loaded = await resolveHttpProxyRoutes(
     options.providers,
     options.favorites,
     options.selected,
   );
-  const handle = await startHttpProxy({ routes: loaded.routes, debug: options.debug });
+  const handle = await startHttpProxy({ routes: loaded.routes, debug: options.debug, pool: options.pool });
   try {
     handle.caCertPath = createHttpProxyCaBundle(
       handle.caCertPath,

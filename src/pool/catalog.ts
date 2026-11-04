@@ -1,6 +1,8 @@
-import type { FreePoolPreferences, PoolCapabilityReceipt } from '../types.js';
+
+import type { FreePoolPreferences, LocalProviderModel, PoolCapabilityReceipt } from '../types.js';
 import type { PoolTarget } from './eligibility.js';
 import { FREE_POOL_MODEL_ID } from './codex-runtime.js';
+import { catalogEntryFromModel, type CodexCatalogModel } from '../codex/catalog.js';
 
 const ALIASES: Record<PoolTarget, string> = {
   codex: FREE_POOL_MODEL_ID,
@@ -40,7 +42,7 @@ export function poolCatalogEntry(
     verified.every(receipt => receipt.effortLevels.includes(level)));
   return {
     id: ALIASES[target],
-    display_name: 'Free model pool',
+    display_name: 'Relay Free Pool',
     context_window: Math.max(1024, window - reserve),
     supported_reasoning_levels: levels.map(level => ({ effort: level, description: level })),
   };
@@ -52,4 +54,48 @@ export function codexPoolCatalogEntry(
   now = Date.now(),
 ) {
   return poolCatalogEntry(pool, receipts, 'codex', now);
+}
+
+/**
+ * Full model_catalog_json entry for the pool. The lightweight catalog row is
+ * not enough: Codex reads the window and effort ladder from this file, and a
+ * missing level makes the picker lie about what the pool can honor.
+ */
+export function codexPoolCatalogModel(
+  pool: FreePoolPreferences,
+  receipts: readonly PoolCapabilityReceipt[],
+  options: { appCatalog?: boolean; priority?: number; now?: number } = {},
+): CodexCatalogModel | undefined {
+  const entry = poolCatalogEntry(pool, receipts, 'codex', options.now);
+  if (!entry) return undefined;
+  const model: LocalProviderModel = {
+    id: FREE_POOL_MODEL_ID,
+    name: entry.display_name,
+    family: '',
+    brand: '',
+    modelFormat: 'openai',
+    npm: '@ai-sdk/openai-compatible',
+    upstreamModelId: FREE_POOL_MODEL_ID,
+    contextWindow: entry.context_window,
+  };
+  const base = catalogEntryFromModel(
+    model, entry.display_name, options.priority ?? 1, options.appCatalog === true, FREE_POOL_MODEL_ID,
+  );
+  const levels = entry.supported_reasoning_levels.length > 0
+    ? entry.supported_reasoning_levels
+    : [{ effort: 'none', description: 'none' }];
+  return {
+    ...base,
+    supported_reasoning_levels: levels,
+    default_reasoning_level: levels[0]!.effort,
+    default_reasoning_summary: 'none',
+    supports_reasoning_summaries: false,
+    support_verbosity: false,
+    default_verbosity: null,
+    context_window: entry.context_window,
+    max_context_window: entry.context_window,
+    truncation_policy: options.appCatalog === true
+      ? base.truncation_policy
+      : { mode: 'tokens', limit: entry.context_window },
+  };
 }

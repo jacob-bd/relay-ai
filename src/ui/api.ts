@@ -1,4 +1,6 @@
-import { handlePoolApi } from './pool-api.js';
+import { parseFreePool } from '../pool/membership.js';
+import { poolCatalogEntry } from '../pool/catalog.js';
+import { handlePoolApi, verifyUiPoolMember, invalidateUiPoolMember } from './pool-api.js';
 import { supportsAdditionalOAuthAccounts } from '../oauth/types.js';
 import { subscriptionOAuthRiskLines } from '../oauth/risk-notice.js';
 import { readOAuthAccountLabel } from '../registry/oauth-account.js';
@@ -247,6 +249,8 @@ function handleGetConfig(res: ServerResponse): void {
   const prefs = loadPreferences();
   sendJson(res, 200, {
     favoriteModels: prefs.favoriteModels ?? [],
+    freePoolMembers: prefs.freePool?.members ?? [],
+    freePoolEnabled: prefs.freePool?.enabled === true,
     codexSubagentModels: prefs.codexSubagentModels ?? [],
     trustSystemCertificates: getTrustSystemCertificates(),
     systemCertificatesSupported: isSystemCaSupported() || isSystemCaActive(),
@@ -472,6 +476,15 @@ async function handleGetModels(
       }
     }
 
+    // The virtual model is a launch choice, not a provider to configure.
+    if (target === 'claude' || target === 'codex') {
+      const pool = parseFreePool(loadPreferences().freePool);
+      const entry = pool.enabled ? poolCatalogEntry(pool, pool.receipts, target) : undefined;
+      if (entry) (providers as any[]).push({ id: 'relay-free-pool', name: 'Relay Free Pool',
+        favoriteName: 'Relay Free Pool', hasKey: true, authType: 'none', modelCount: 1,
+        models: [{ id: 'relay-free-pool', name: 'Relay Free Pool', contextWindow: entry.context_window,
+          freeStatus: 'verified_free', isFree: true, cost: { input: 0, output: 0 } }] });
+    }
     sendJson(res, 200, { providers });
   } catch (err) {
     sendCatalogFetchError(res, err, 'Model fetch');
@@ -576,8 +589,8 @@ async function handleMeasureContextWindow(req: IncomingMessage, res: ServerRespo
     sendJson(res, 400, { ok: false, error: 'providerId and modelId required' }); return;
   }
   const provider = loadRegistry().providers.find(p => p.id === body.providerId);
-  if (!provider || !customEndpointKind(provider)) {
-    sendJson(res, 400, { ok: false, error: 'Measuring all context sizes is only available for custom endpoints.' }); return;
+  if (!provider?.enabled || !getProviderModels(provider).some(model => model.id === body.modelId)) {
+    sendJson(res, 400, { ok: false, error: 'Model is unavailable.' }); return;
   }
   const controller = new AbortController();
   res.on('close', () => { if (!res.writableEnded) controller.abort(); });
@@ -934,7 +947,11 @@ async function handleTestModel(req: IncomingMessage, res: ServerResponse): Promi
   try {
     const { testModel } = await import('../test-model.js');
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
-    if (!res.destroyed) sendJson(res, 200, result);
+    if (!result.ok) invalidateUiPoolMember(body.providerId.trim(), body.modelId.trim());
+    const poolResult = result.ok
+      ? await verifyUiPoolMember(body.providerId.trim(), body.modelId.trim(), controller.signal, { evidence: { text: 'passed', tools: result.toolsPassed ? 'passed' : 'failed' } })
+      : undefined;
+    if (!res.destroyed) sendJson(res, 200, { ...result, ...(poolResult ? { pool: poolResult } : {}) });
   } catch {
     if (!res.destroyed) sendJson(res, 500, { ok: false, error: 'Model test failed. Try again.' });
   } finally { res.removeListener('close', cancel); }

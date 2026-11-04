@@ -2,7 +2,7 @@ import type { LanguageModel } from 'ai';
 import { classifyFreeStatus } from '../free-models.js';
 import type { FavoriteModel, LocalProvider, PoolCapabilityReceipt } from '../types.js';
 import { poolEndpointRevision } from './capabilities.js';
-import { probePoolModel, type PoolProbeResult } from './probe.js';
+import { type PoolProbeResult } from './probe.js';
 
 export const RECEIPT_TTL_MS = 24 * 60 * 60 * 1000;
 /** Conservative reservation; a provider that accepts less fails pre-commit and falls back. */
@@ -18,14 +18,9 @@ export interface EnrollDeps {
 
 export type EnrollResult =
   | { member: FavoriteModel; status: 'verified'; receipt: PoolCapabilityReceipt }
-  | { member: FavoriteModel; status: 'skipped'; reason: string };
+  | { member: FavoriteModel; status: 'skipped'; reason: string; diagnostic?: string };
 
-/**
- * One opt-in enrollment call per member: text plus a synthetic tool call, never a
- * tool loop. Only observed evidence is recorded. Effort levels stay empty, so
- * Auto's omission contract is the only reasoning behavior admitted until a real
- * effort probe is added.
- */
+/** One explicit capability request; optional effort probes run only when supplied. */
 export async function verifyPoolMember(
   member: FavoriteModel,
   providers: readonly LocalProvider[],
@@ -37,7 +32,9 @@ export async function verifyPoolMember(
   const model = provider?.models.find(item => item.id === member.modelId);
   if (!provider || !model) return { member, status: 'skipped', reason: 'unavailable' };
   if (!model.npm || model.modelFormat === 'cloud-code') return { member, status: 'skipped', reason: 'unsupported-transport' };
-  if (!Number.isSafeInteger(model.contextWindow) || !model.contextWindow || model.contextWindow <= 0) {
+  // A guessed size (0.19 custom endpoints estimate one) is not routing evidence.
+  if (model.contextWindowEstimated
+    || !Number.isSafeInteger(model.contextWindow) || !model.contextWindow || model.contextWindow <= 0) {
     return { member, status: 'skipped', reason: 'unverified-context-window' };
   }
   const freeStatus = classifyFreeStatus({ model, providerId: provider.id });

@@ -1166,7 +1166,7 @@ async function runProviderDetail(id: string): Promise<'back' | 'removed' | 'fail
     detailOptions.push({
       value: 'model-context',
       label: 'Test a model / set context size',
-      hint: 'A test also checks the context size; or type one yourself',
+      hint: 'Measure the context separately, or type a size yourself',
     });
   }
   // Vertex reads its list live from vertex-models.json; there is nothing to fetch.
@@ -1337,7 +1337,7 @@ async function runModelContextMenu(providerId: string, model: LocalProviderModel
     const choice = await p.select({
       message: `${current.name || current.id} · context ${contextLabel(providerId, current)}`,
       options: [
-        { value: 'test', label: 'Test model', hint: 'One short request, plus a free check of the context size' },
+        { value: 'test', label: 'Test model', hint: '1 small request; response + tool check, no retries' },
         { value: 'set', label: 'Set context size', hint: 'e.g. 128K or 1M' },
         ...(hasOverride ? [{ value: 'reset', label: 'Reset context size', hint: "Go back to the provider's size" }] : []),
         { value: 'back', label: 'Back', hint: '' },
@@ -1355,12 +1355,7 @@ async function runModelContextMenu(providerId: string, model: LocalProviderModel
         p.log.error(`${current.id}: ${result.error}`);
       } else {
         p.log.success(`${current.id} responded in ${(('latencyMs' in result ? result.latencyMs ?? 0 : 0) / 1000).toFixed(1)}s`);
-        const context = 'context' in result ? result.context : undefined;
-        if (!context || context.measured === undefined) p.log.info('The server did not report a context size.');
-        else if (context.updated) p.log.success(`Context size updated: ${context.previous ? fmtContextWindow(context.previous) : 'unknown'} → ${fmtContextWindow(context.measured)} (measured, saved)`);
-        else if (context.keptManual) p.log.info(`The server reports ${fmtContextWindow(context.measured)}; your manual size was kept.`);
-        else if (context.saved) p.log.success(`Context size ${fmtContextWindow(context.measured)} confirmed and saved as measured.`);
-        else p.log.info(`Context size ${fmtContextWindow(context.measured)} confirmed.`);
+        p.log.info(result.toolsPassed ? 'Tool calling passed.' : 'Tool calling was not confirmed.');
       }
     } else if (choice === 'set') {
       const entered = await p.text({

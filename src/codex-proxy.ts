@@ -782,8 +782,8 @@ export async function startCodexProxy(
 
         const modelId = String(body.model ?? '');
         if (modelId === FREE_POOL_MODEL_ID) {
-          if (!opts.pool || !requireAuth) {
-            sendJson(res, 400, { error: { message: 'Free pool requires an explicitly configured authenticated runtime', type: 'invalid_request_error' } });
+          if (!opts.pool) {
+            sendJson(res, 400, { error: { message: 'Free pool is not configured for this proxy', type: 'invalid_request_error' } });
             return;
           }
           const abort = new AbortController();
@@ -1183,6 +1183,7 @@ export async function startCodexProxy(
       let frameBuf = Buffer.alloc(0);
       let fragmentedText: Buffer[] | undefined;
       let externalActive = false;
+      let poolActive = false;
       let nativeActive = false;
       let nativeUpstream: WebSocket | undefined;
       let nativeSendTurn: ((body: Record<string, unknown>, modelId: string) => void) | undefined;
@@ -1314,10 +1315,11 @@ export async function startCodexProxy(
             ? Buffer.concat(fragmentedText ?? []).toString('utf8')
             : frame.payload.toString('utf8');
           fragmentedText = undefined;
-          if (externalActive) {
-            // The external SDK stream cannot safely multiplex turns. Closing with
-            // policy violation makes the client fail closed instead of starting a
-            // second provider request that could be retried or double-billed.
+          if (externalActive || poolActive) {
+            // Neither the external SDK stream nor the pool can safely multiplex
+            // turns. Closing with policy violation makes the client fail closed
+            // instead of starting a second provider request that could be
+            // retried or double-billed.
             closeSocket(1008);
             return;
           }
@@ -1357,7 +1359,32 @@ export async function startCodexProxy(
 
           const modelId = String(body.model ?? '');
           if (modelId === FREE_POOL_MODEL_ID) {
-            writeResponsesErrorStream(modelId, 'Free pool WebSocket dispatch is not enabled', sendWsEvent, 400);
+            // Pool access is granted only by an explicitly configured runtime.
+            // With requireAuth false the proxy already applies the same loopback
+            // origin trust boundary to every POST, so this does not widen it.
+            if (!opts.pool) {
+              writeResponsesErrorStream(modelId, 'Free pool is not configured for this proxy', sendWsEvent, 400);
+              return;
+            }
+            poolActive = true;
+            currentRequestModel = modelId;
+            const poolAbort = new AbortController();
+            const abortPool = () => poolAbort.abort();
+            socket.once('close', abortPool);
+            try {
+              const response = await opts.pool.respond(req.headers, body, poolAbort.signal, sendWsEvent);
+              if (body.stream !== true && !socketClosing && !socket.destroyed) {
+                sendWsEvent('event: response.completed\ndata: ' + JSON.stringify({ type: 'response.completed', response }) + '\n\n');
+              }
+            } catch (err) {
+              if (debug) log('WS pool error: ' + (err instanceof Error ? err.message : String(err)));
+              if (!socketClosing && !socket.destroyed) {
+                writeResponsesErrorStream(modelId, 'Free pool request failed', sendWsEvent, 503);
+              }
+            } finally {
+              poolActive = false;
+              socket.off('close', abortPool);
+            }
             return;
           }
 

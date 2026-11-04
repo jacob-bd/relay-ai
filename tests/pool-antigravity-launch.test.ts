@@ -27,7 +27,7 @@ describe('Antigravity pool launch rows', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       catalogId: 'relay-free-pool-high', providerId: 'relay-free-pool', reasoningEffort: 'high',
-      displayName: 'Free Pool High', contextWindow: 200000,
+      displayName: 'Relay Free Pool High', contextWindow: 200000,
     });
     expect(rows[0].poolMembers).toHaveLength(2);
     expect(rows[0].catalogId).not.toMatch(/[_.]/);

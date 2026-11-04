@@ -11,6 +11,7 @@ import { PoolSessionRoutes } from './session.js';
 import { writeCodexPoolResponse } from './codex-response.js';
 
 export const FREE_POOL_MODEL_ID = 'relay-free-pool';
+export const FREE_POOL_PROVIDER_ID = 'relay-free-pool';
 export const DEFAULT_POOL_LIMITS: PoolLimits = {
   attempts: 3, firstContentMs: 20_000, idleMs: 20_000,
   totalMs: 60_000, bufferBytes: 65_536, cleanupMs: 1000,
@@ -33,7 +34,7 @@ export class CodexPoolRuntime {
     write: (chunk: string) => void,
   ): Promise<Record<string, unknown>> {
     if (request.model !== FREE_POOL_MODEL_ID) throw new Error('Pool runtime requires an explicit pool model');
-    const identity = codexPoolIdentity(headers);
+    const identity = codexPoolIdentity(headers, request);
     if (!identity) throw new Error('Pool requires verified Codex conversation and turn metadata');
     const { body, source } = this.history.resolve(identity.conversation, request);
     const lease = this.retries.acquire(identity.turn, requestFingerprint(body));

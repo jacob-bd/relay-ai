@@ -5,6 +5,11 @@ describe('shared free pool membership', () => {
   it('starts empty without importing favorites', () => {
     expect(parseFreePool(undefined)).toEqual({ members: [], effort: 'auto', receipts: [] });
   });
+  it('persists explicit enablement independently of membership and rejects invalid values', () => {
+    const pool = { members: [], effort: 'auto', receipts: [], enabled: true };
+    expect(parseFreePool(pool).enabled).toBe(true);
+    expect(() => parseFreePool({ ...pool, enabled: 'true' })).toThrow('enabled');
+  });
   it('preserves account identity, priority and more than 50 members', () => {
     const members = Array.from({ length: 75 }, (_, i) => ({ providerId: 'groq-' + i, modelId: 'same-model' }));
     expect(parseFreePool({ members, effort: 'high', receipts: [] }).members).toEqual(members);

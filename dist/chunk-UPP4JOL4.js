@@ -8,35 +8,39 @@ import {
   streamAnthropicResponse,
   translateRequest,
   writeAnthropicStream
-} from "./chunk-UJTFOIOM.js";
+} from "./chunk-U3YG5C5I.js";
+import {
+  extractConversationId,
+  openCodeGoHeaders
+} from "./chunk-2RC456ES.js";
+import {
+  anthropicErrorType,
+  formatUpstreamError,
+  normalizeToolSchemaForNpm,
+  upstreamHttpStatus
+} from "./chunk-FKGBGJZK.js";
+import {
+  extractApiKey,
+  fetchProviderCatalog,
+  localProvidersToServerModels,
+  readBody,
+  sendJson
+} from "./chunk-UNCELUH4.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
   ensureOpencodeCloudProviders,
-  extractConversationId,
   fetchClinePassModels,
   fetchCommandCodeModels,
   fetchTemplateModels,
   filterModelsByAvailability,
-  openCodeGoHeaders,
-  refreshProviderModels,
-  validateClinePassApiKey
-} from "./chunk-INBTEX36.js";
-import {
-  anthropicErrorType,
-  formatUpstreamError,
-  upstreamHttpStatus
-} from "./chunk-XWM4ELUX.js";
-import {
-  fetchProviderCatalog,
-  localProvidersToServerModels
-} from "./chunk-4FWLRJ2U.js";
-import {
   oauthAuthRef,
   providerRefreshToken,
+  refreshProviderModels,
   stripGoogleModelPrefix,
-  toOAuthRegistryId
-} from "./chunk-RNHGBUKM.js";
+  toOAuthRegistryId,
+  validateClinePassApiKey
+} from "./chunk-4NL6K57P.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -55,14 +59,17 @@ import {
   claudeCodeClientModelId,
   claudeCodeContextWindow,
   createLanguageModel,
+  deepMergeProviderOptions,
   deleteProviderCredential,
   describeOAuthAccount,
+  effortProviderOptions,
   encodeToolUseId,
   enrichModelsForProviderPricing,
   enrichPricingAsync,
   fetchWithOAuthRetry,
   formatOAuthAccount,
   generateCliUserID,
+  generateTextStreamingIfRequired,
   getEnvServerPassword,
   getProxyDebugLogPath,
   getReasoningCapabilities,
@@ -73,6 +80,7 @@ import {
   getServerFreeModelsOnly,
   getServerListenMode,
   getServerMaskGatewayIds,
+  grabRoundTripSignature,
   injectClaudeCodeBillingSystemLine,
   injectClaudeIdentity,
   isAuthorized,
@@ -88,6 +96,7 @@ import {
   maxToolsForNpm,
   nextInstanceId,
   oauthCredentialToKeychainJson,
+  parseDsmlToolCalls,
   parseToolArguments,
   printTraceLog,
   providerKind,
@@ -113,6 +122,7 @@ import {
   saveProviderCredential,
   saveRegistry,
   selectBetaFlags,
+  serializeToolResultContent,
   setSavedServerPassword,
   setServerExposedProviders,
   setServerFavoritesOnly,
@@ -122,15 +132,18 @@ import {
   shouldHideModel,
   silenceSdkWarnings,
   splitToolUseId,
+  sseChunk,
+  streamActivity,
   stripOneMContextSuffix,
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth,
+  thinkingProviderOptions,
   tokensToStoredCredential,
   uniqueProviderName,
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-IBAUEWWV.js";
+} from "./chunk-W7B52E2T.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -1063,8 +1076,8 @@ async function* _iterSSEMessages(response, controller) {
   const sseDecoder = new SSEDecoder();
   const lineDecoder = new LineDecoder();
   const iter = ReadableStreamToAsyncIterable(response.body);
-  for await (const sseChunk of iterSSEChunks(iter)) {
-    for (const line of lineDecoder.decode(sseChunk)) {
+  for await (const sseChunk2 of iterSSEChunks(iter)) {
+    for (const line of lineDecoder.decode(sseChunk2)) {
       const sse = sseDecoder.decode(line);
       if (sse)
         yield sse;
@@ -2286,64 +2299,6 @@ var ClaudePoolRuntime = class {
 import { createServer } from "http";
 import { appendFileSync, openSync, writeSync, closeSync } from "fs";
 
-// src/http-utils.ts
-import * as zlib from "zlib";
-function decodeRequestBody(raw, encoding) {
-  const enc = (Array.isArray(encoding) ? encoding.join(",") : encoding ?? "").toLowerCase().trim();
-  if (!enc || enc === "identity") return raw.toString();
-  switch (enc) {
-    case "gzip":
-    case "x-gzip":
-      return zlib.gunzipSync(raw).toString();
-    case "deflate":
-      return zlib.inflateSync(raw).toString();
-    case "br":
-      return zlib.brotliDecompressSync(raw).toString();
-    case "zstd":
-      if (typeof zlib.zstdDecompressSync !== "function") {
-        throw new Error("zstd request encoding requires Node >= 22.15");
-      }
-      return zlib.zstdDecompressSync(raw).toString();
-    default:
-      return raw.toString();
-  }
-}
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let totalSize = 0;
-    req.on("data", (c) => {
-      totalSize += c.length;
-      if (totalSize > 50 * 1024 * 1024) {
-        reject(new Error("Request body too large"));
-        req.destroy();
-        return;
-      }
-      chunks.push(c);
-    });
-    req.on("end", () => {
-      try {
-        resolve(decodeRequestBody(Buffer.concat(chunks), req.headers["content-encoding"]));
-      } catch (err) {
-        reject(err);
-      }
-    });
-    req.on("error", reject);
-  });
-}
-function extractApiKey(req) {
-  const xApiKey = req.headers["x-api-key"];
-  if (typeof xApiKey === "string") return xApiKey;
-  const auth = req.headers["authorization"];
-  if (typeof auth === "string") return auth.replace(/^Bearer\s+/i, "").trim();
-  return null;
-}
-function sendJson(res, status, body) {
-  const json = JSON.stringify(body);
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(json);
-}
-
 // src/server/vendor-mask.ts
 function reverseSegment(value) {
   return [...value].reverse().join("");
@@ -3231,9 +3186,9 @@ function startProxyCatalog(routes, defaultAliasId, debug = false, options = {}) 
       const modelPathMatch = req.url.match(/^\/v1\/models\/([^?]+)/);
       if (modelPathMatch) {
         const id = decodeURIComponent(modelPathMatch[1]);
-        if (options.pool && id === CLAUDE_POOL_MODEL_ID) {
+        if (options.pool && routeLookupIds(id).includes(CLAUDE_POOL_MODEL_ID)) {
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(formatAnthropicModelEntry(id, options.pool.displayName, options.pool.contextWindow)));
+          res.end(JSON.stringify(formatAnthropicModelEntry(CLAUDE_POOL_MODEL_ID, options.pool.displayName, options.pool.contextWindow)));
           return;
         }
         const route = lookupRoute(byAlias, id);
@@ -3563,6 +3518,1527 @@ function startProxy(completionsUrl, modelId, debug = false, contextWindow, sdk, 
     useResponsesLite: sdk?.useResponsesLite,
     preferWebSockets: sdk?.preferWebSockets
   }], clientModelId, debug);
+}
+
+// src/pool/codex-retry.ts
+import { createHash } from "crypto";
+var DEFAULT_LIMITS = {
+  ttlMs: 6e4,
+  maxEntries: 128,
+  maxResponseBytes: 2 * 1024 * 1024
+};
+function canonical(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+  const record = value;
+  return "{" + Object.keys(record).sort().map((key) => JSON.stringify(key) + ":" + canonical(record[key])).join(",") + "}";
+}
+function requestFingerprint(request) {
+  return createHash("sha256").update(canonical(request)).digest("hex");
+}
+function checkLimit(name, value) {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error("Invalid retry limit: " + name);
+}
+var CodexRetryGuard = class {
+  constructor(limits = {}, now = Date.now) {
+    this.now = now;
+    this.limits = { ...DEFAULT_LIMITS, ...limits };
+    for (const [name, value] of Object.entries(this.limits)) checkLimit(name, value);
+  }
+  now;
+  entries = /* @__PURE__ */ new Map();
+  limits;
+  /**
+   * Claims one request operation. turnId must be the observed client turn;
+   * fingerprint must hash the full translated request.
+   */
+  acquire(turnId, fingerprint) {
+    if (!turnId || !fingerprint) throw new Error("turn-id-and-fingerprint-required");
+    this.prune();
+    const key = JSON.stringify([turnId, fingerprint]);
+    const existing = this.entries.get(key);
+    if (existing) {
+      if (existing.status === "active") return { kind: "busy" };
+      if (existing.status === "failed") return { kind: "blocked", reason: existing.reason ?? "previous-attempt-failed" };
+      return { kind: "replay", response: existing.response };
+    }
+    if (this.entries.size >= this.limits.maxEntries) {
+      return { kind: "blocked", reason: "retry-guard-capacity" };
+    }
+    const entry = { status: "active", token: /* @__PURE__ */ Symbol(), expires: this.now() + this.limits.ttlMs };
+    this.entries.set(key, entry);
+    const settle = (token) => this.entries.get(key)?.token === token;
+    return {
+      kind: "owner",
+      complete: (response) => {
+        if (!settle(entry.token)) return;
+        if (typeof response !== "string" || Buffer.byteLength(response, "utf8") > this.limits.maxResponseBytes) {
+          this.entries.set(key, { status: "failed", token: entry.token, expires: this.now() + this.limits.ttlMs, reason: "response-too-large" });
+          return;
+        }
+        this.entries.set(key, { status: "succeeded", token: entry.token, expires: this.now() + this.limits.ttlMs, response });
+      },
+      fail: (reason, postcommit = false) => {
+        if (!settle(entry.token)) return;
+        this.entries.set(key, {
+          status: "failed",
+          token: entry.token,
+          expires: this.now() + this.limits.ttlMs,
+          reason: reason || "previous-attempt-failed",
+          postcommit
+        });
+      },
+      release: () => {
+        if (settle(entry.token)) this.entries.delete(key);
+      }
+    };
+  }
+  prune() {
+    const now = this.now();
+    for (const [key, entry] of this.entries) {
+      if (entry.status !== "active" && entry.expires <= now) this.entries.delete(key);
+    }
+  }
+};
+
+// src/pool/codex-identity.ts
+var MAX_METADATA_BYTES = 8192;
+function objectMetadata(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return void 0;
+  return value;
+}
+function parseMetadata(value) {
+  if (typeof value !== "string" || Buffer.byteLength(value) > MAX_METADATA_BYTES) return void 0;
+  try {
+    return objectMetadata(JSON.parse(value));
+  } catch {
+    return void 0;
+  }
+}
+function identityFrom(metadata) {
+  if (!metadata) return void 0;
+  const valid = (value) => typeof value === "string" && value.length > 0 && value.length <= 256;
+  if (!valid(metadata.session_id) || !valid(metadata.thread_id) || !valid(metadata.turn_id)) return void 0;
+  const agent = metadata.agent_name;
+  if (agent !== void 0 && !valid(agent)) return void 0;
+  const conversation = JSON.stringify([metadata.session_id, metadata.thread_id, agent ?? ""]);
+  return { conversation, turn: JSON.stringify([conversation, metadata.turn_id]) };
+}
+function codexPoolIdentity(headers, body) {
+  const header = parseMetadata(headers["x-codex-turn-metadata"]);
+  const client = objectMetadata(body?.client_metadata);
+  const embedded = parseMetadata(client?.["x-codex-turn-metadata"]);
+  for (const candidate of [embedded, client, header]) {
+    const identity = identityFrom(candidate);
+    if (identity) return identity;
+  }
+  return void 0;
+}
+
+// src/codex-responses-adapter.ts
+import { createHash as createHash2 } from "crypto";
+import { streamText, tool, jsonSchema } from "ai";
+function createCodexToolContext() {
+  return { namespaceByFlatName: /* @__PURE__ */ new Map(), customToolNames: /* @__PURE__ */ new Set() };
+}
+var TOOL_SEARCH_NAME = "tool_search";
+var MAX_MODEL_TOOL_NAME_LENGTH = 64;
+var TOOL_NAME_DIGEST_LENGTH = 10;
+function flatNamespaceName(namespace, name) {
+  const flat = `${namespace}__${name}`;
+  if (flat.length <= MAX_MODEL_TOOL_NAME_LENGTH) return flat;
+  const digest = createHash2("sha256").update(flat).digest("hex").slice(0, TOOL_NAME_DIGEST_LENGTH);
+  const prefixLength = MAX_MODEL_TOOL_NAME_LENGTH - digest.length - 2;
+  return `${flat.slice(0, prefixLength)}__${digest}`;
+}
+function ingestToolDefs(tools, ctx) {
+  for (const t of tools ?? []) {
+    if (!t || typeof t !== "object") continue;
+    if (t.type === "namespace") {
+      for (const sub of t.tools ?? []) {
+        if (sub?.type === "custom" && sub.name) {
+          ctx.customToolNames.add(sub.name);
+        } else if (sub?.type === "function" && sub.name) {
+          ctx.namespaceByFlatName.set(flatNamespaceName(t.name, sub.name), {
+            namespace: t.name,
+            name: sub.name,
+            parameters: sub.parameters
+          });
+        }
+      }
+    } else if (t.type === "custom" && t.name) {
+      ctx.customToolNames.add(t.name);
+    }
+  }
+}
+function flattenNamespaceTools(ns) {
+  return (ns.tools ?? []).filter((sub) => (sub?.type === "function" || sub?.type === "custom") && !!sub.name).map((sub) => sub.type === "custom" ? sub : { ...sub, name: flatNamespaceName(ns.name, sub.name) });
+}
+function liftAdditionalToolsInput(input, tools) {
+  let lifted = [];
+  const keptInput = [];
+  let changed = false;
+  for (const item of input) {
+    if (item && item.type === "additional_tools") {
+      changed = true;
+      if (Array.isArray(item.tools)) lifted = lifted.concat(item.tools);
+      if (item.content !== void 0) {
+        keptInput.push({ role: item.role ?? "developer", content: item.content });
+      }
+      continue;
+    }
+    keptInput.push(item);
+  }
+  if (!changed) return { input, tools };
+  return { input: keptInput, tools: lifted.length ? [...tools, ...lifted] : tools };
+}
+function messageText(content) {
+  if (typeof content === "string") return content;
+  return (content ?? []).map((p8) => p8.type === "output_text" || p8.type === "input_text" || p8.type === "text" ? p8.text ?? "" : "").join("");
+}
+function messageContent(content) {
+  if (typeof content === "string") return content;
+  const parts = (content ?? []).flatMap((part) => {
+    if (part.type === "output_text" || part.type === "input_text" || part.type === "text") {
+      return typeof part.text === "string" ? [{ type: "text", text: part.text }] : [];
+    }
+    if (part.type === "input_image" && typeof part.image_url === "string" && part.image_url.trim()) {
+      return [{ type: "image", image: part.image_url }];
+    }
+    return [];
+  });
+  return parts.length > 0 ? parts : [{ type: "text", text: "" }];
+}
+function splitToolOutputImages(output) {
+  if (!Array.isArray(output)) return { content: serializeToolResultContent(output), images: [] };
+  const images = [];
+  const rest = [];
+  for (const part of output) {
+    const record = part && typeof part === "object" ? part : void 0;
+    const imageUrl = record?.["type"] === "input_image" ? record["image_url"] : void 0;
+    if (typeof imageUrl === "string" && imageUrl.trim()) images.push(imageUrl);
+    else rest.push(part);
+  }
+  if (images.length === 0) return { content: serializeToolResultContent(output), images };
+  return {
+    content: rest.length > 0 ? serializeToolResultContent(rest) : "[image attached in the following message]",
+    images
+  };
+}
+function extractDeveloperAndInstructions(items2, instructions) {
+  const developerParts = [];
+  const remaining = [];
+  for (const item of items2) {
+    if ("role" in item && item.role === "developer") {
+      const text4 = messageText(item.content);
+      if (text4.trim()) developerParts.push(text4.trim());
+    } else {
+      remaining.push(item);
+    }
+  }
+  const parts = [...developerParts];
+  if (instructions?.trim()) parts.push(instructions.trim());
+  const system = parts.length ? parts.join("\n") : void 0;
+  return { system, remaining };
+}
+function annotateToolNamesFromCalls(items2) {
+  const nameByCallId = /* @__PURE__ */ new Map();
+  for (const item of items2) {
+    if (item.type === "function_call") {
+      const { rawId } = splitToolUseId(item.call_id);
+      nameByCallId.set(rawId, item.namespace ? flatNamespaceName(item.namespace, item.name) : item.name);
+    } else if (item.type === "tool_search_call") {
+      const { rawId } = splitToolUseId(item.call_id);
+      nameByCallId.set(rawId, TOOL_SEARCH_NAME);
+    } else if (item.type === "custom_tool_call") {
+      const { rawId } = splitToolUseId(item.call_id);
+      nameByCallId.set(rawId, item.name);
+    }
+  }
+  return nameByCallId;
+}
+function customToolInputFromArgs(name, args) {
+  if (typeof args === "string") {
+    const trimmed = args.trim();
+    if (name === "apply_patch" && trimmed.startsWith("*** Begin Patch")) return args;
+    try {
+      return customToolInputFromArgs(name, JSON.parse(trimmed));
+    } catch {
+      return args;
+    }
+  }
+  if (args && typeof args === "object") {
+    const obj = args;
+    if (Array.isArray(obj.command) && obj.command[0] === "apply_patch" && typeof obj.command[1] === "string") {
+      return obj.command[1];
+    }
+    if (typeof obj.input === "string") return obj.input;
+    for (const v of Object.values(obj)) {
+      if (typeof v === "string") return v;
+    }
+  }
+  return serializeToolResultContent(args);
+}
+function mergeConsecutiveMessages(messages) {
+  if (messages.length <= 1) return messages;
+  const out = [];
+  for (const msg of messages) {
+    const prev = out[out.length - 1];
+    if (prev && prev.role === msg.role) {
+      const prevContent = Array.isArray(prev.content) ? prev.content : [{ type: "text", text: String(prev.content ?? "") }];
+      const msgContent = Array.isArray(msg.content) ? msg.content : [{ type: "text", text: String(msg.content ?? "") }];
+      prev.content = [...prevContent, ...msgContent];
+    } else {
+      out.push(msg);
+    }
+  }
+  return out;
+}
+function ensureUserFirst(messages) {
+  if (messages.length === 0) return [{ role: "user", content: [{ type: "text", text: "(empty input)" }] }];
+  if (messages[0].role === "assistant") {
+    return [{ role: "user", content: [{ type: "text", text: "(conversation continued)" }] }, ...messages];
+  }
+  return messages;
+}
+function reasoningSummaryText(item) {
+  return (item.summary ?? []).map((part) => part.type === "summary_text" ? part.text ?? "" : "").join("");
+}
+function makeReasoningOutputItem(id, text4) {
+  return {
+    id,
+    type: "reasoning",
+    summary: text4.trim() ? [{ type: "summary_text", text: text4 }] : []
+  };
+}
+function translateResponsesInput(input, instructions, npm, toolContext = createCodexToolContext()) {
+  if (typeof input === "string") {
+    return {
+      instructions: instructions?.trim() || void 0,
+      messages: [{ role: "user", content: [{ type: "text", text: input }] }],
+      deferredTools: []
+    };
+  }
+  const { system, remaining } = extractDeveloperAndInstructions(input, instructions);
+  const toolNames = annotateToolNamesFromCalls(remaining);
+  const messages = [];
+  const deferredTools = [];
+  let pendingReasoning = "";
+  for (const item of remaining) {
+    if (item.type === "reasoning") {
+      pendingReasoning += reasoningSummaryText(item);
+      continue;
+    }
+    if (item.type === "function_call") {
+      const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
+      const parts = [];
+      if (pendingReasoning.trim()) {
+        parts.push({ type: "reasoning", text: pendingReasoning });
+        pendingReasoning = "";
+      }
+      const toolPart = {
+        type: "tool-call",
+        toolCallId: rawId,
+        toolName: item.namespace ? flatNamespaceName(item.namespace, item.name) : item.name,
+        input: parseToolArguments(item.arguments)
+      };
+      if (thoughtSignature && npm === "@ai-sdk/google") {
+        toolPart.providerOptions = { google: { thoughtSignature } };
+      }
+      parts.push(toolPart);
+      messages.push({ role: "assistant", content: parts });
+    } else if (item.type === "function_call_output") {
+      const { rawId } = splitToolUseId(item.call_id);
+      const toolName = toolNames.get(rawId) ?? "unknown";
+      const { content, images } = splitToolOutputImages(item.output);
+      messages.push({
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: rawId,
+          toolName,
+          output: { type: "text", value: content }
+        }]
+      });
+      if (images.length > 0) {
+        messages.push({
+          role: "user",
+          content: [
+            { type: "text", text: `Image${images.length > 1 ? "s" : ""} returned by ${toolName} (${rawId}):` },
+            ...images.map((image) => ({ type: "image", image }))
+          ]
+        });
+      }
+    } else if (item.type === "tool_search_call") {
+      const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
+      const parts = [];
+      if (pendingReasoning.trim()) {
+        parts.push({ type: "reasoning", text: pendingReasoning });
+        pendingReasoning = "";
+      }
+      parts.push({
+        type: "tool-call",
+        toolCallId: rawId,
+        toolName: TOOL_SEARCH_NAME,
+        input: parseToolArguments(item.arguments),
+        ...thoughtSignature && npm === "@ai-sdk/google" ? { providerOptions: { google: { thoughtSignature } } } : {}
+      });
+      messages.push({ role: "assistant", content: parts });
+    } else if (item.type === "tool_search_output") {
+      const { rawId } = splitToolUseId(item.call_id);
+      const surfacedTools = item.tools ?? [];
+      ingestToolDefs(surfacedTools, toolContext);
+      for (const t of surfacedTools) {
+        if (t.type === "namespace") deferredTools.push(...flattenNamespaceTools(t));
+        else if (t.type === "function" || t.type === "custom") deferredTools.push(t);
+      }
+      messages.push({
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: rawId,
+          toolName: TOOL_SEARCH_NAME,
+          output: { type: "text", value: serializeToolResultContent(surfacedTools) }
+        }]
+      });
+    } else if (item.type === "custom_tool_call") {
+      const { rawId, thoughtSignature } = splitToolUseId(item.call_id);
+      const parts = [];
+      if (pendingReasoning.trim()) {
+        parts.push({ type: "reasoning", text: pendingReasoning });
+        pendingReasoning = "";
+      }
+      parts.push({
+        type: "tool-call",
+        toolCallId: rawId,
+        toolName: item.name,
+        input: { input: typeof item.input === "string" ? item.input : serializeToolResultContent(item.input) },
+        ...thoughtSignature && npm === "@ai-sdk/google" ? { providerOptions: { google: { thoughtSignature } } } : {}
+      });
+      messages.push({ role: "assistant", content: parts });
+    } else if (item.type === "custom_tool_call_output") {
+      const { rawId } = splitToolUseId(item.call_id);
+      messages.push({
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: rawId,
+          toolName: toolNames.get(rawId) ?? "unknown",
+          output: { type: "text", value: serializeToolResultContent(item.output) }
+        }]
+      });
+    } else if (item.type === "agent_message") {
+      const text4 = messageText(item.content);
+      if (text4.trim()) {
+        messages.push({ role: "user", content: [{ type: "text", text: text4 }] });
+      }
+    } else if (item.type === "compaction" || item.type === "context_compaction") {
+      const summary = decodeCompactionContent(item.encrypted_content) ?? "";
+      if (summary.trim()) {
+        messages.push({ role: "user", content: [{ type: "text", text: `[Summary of earlier conversation]
+${summary}` }] });
+      }
+    } else if ("role" in item) {
+      const role = item.role === "assistant" ? "assistant" : "user";
+      const content = messageContent(item.content);
+      messages.push({ role, content });
+    }
+  }
+  return {
+    instructions: system,
+    messages: ensureUserFirst(mergeConsecutiveMessages(messages)),
+    deferredTools
+  };
+}
+var TOOL_SEARCH_DESCRIPTION = "Search the available deferred Codex tools, plugin tools, MCP namespaces, and connectors by query. Use this when a needed tool is not already present in the current tool list. Returns matching tool definitions for a follow-up call.";
+var TOOL_SEARCH_PARAMETERS = {
+  type: "object",
+  properties: {
+    query: { type: "string", description: "Search query describing the tool or capability needed." },
+    limit: { type: "number", description: "Maximum number of matching tools to return. Defaults to 8." }
+  },
+  required: ["query"],
+  additionalProperties: false
+};
+var CUSTOM_TOOL_INPUT_SCHEMA = {
+  type: "object",
+  properties: { input: { type: "string", description: "Freeform input for this custom tool (e.g. a patch body)." } },
+  required: ["input"],
+  additionalProperties: false
+};
+function translateResponsesTools(tools, options = {}) {
+  if (!tools?.length) return void 0;
+  const out = {};
+  let toolCount = 0;
+  const addTool = (name, description, parameters) => {
+    if (options.maxTools !== void 0 && toolCount >= options.maxTools) return;
+    out[name] = tool({
+      description: description ?? "",
+      inputSchema: jsonSchema(normalizeToolSchemaForNpm(parameters ?? { type: "object", properties: {} }, options.npm))
+    });
+    toolCount++;
+  };
+  for (const t of tools) {
+    if (!t || typeof t !== "object") continue;
+    if (t.type === "namespace") {
+      for (const nested of t.tools ?? []) {
+        if (!nested.name) continue;
+        if (nested.type === "custom") {
+          addTool(nested.name, nested.description, CUSTOM_TOOL_INPUT_SCHEMA);
+        } else if (nested.type === "function") {
+          addTool(flatNamespaceName(t.name, nested.name), nested.description, nested.parameters);
+        }
+      }
+      continue;
+    }
+    if (t.type === "custom") {
+      if (!t.name) continue;
+      addTool(t.name, t.description, CUSTOM_TOOL_INPUT_SCHEMA);
+      continue;
+    }
+    if (t.type === "tool_search") {
+      addTool(TOOL_SEARCH_NAME, TOOL_SEARCH_DESCRIPTION, TOOL_SEARCH_PARAMETERS);
+      continue;
+    }
+    if (t.type !== "function" || !t.name) continue;
+    addTool(t.name, t.description, t.parameters);
+  }
+  return Object.keys(out).length ? out : void 0;
+}
+function omitsMaxOutputTokens(metadata) {
+  return metadata?.providerId !== void 0 && isProviderKind(metadata.providerId, "openrouter") || (metadata?.apiBaseUrl?.includes("openrouter.ai") ?? false);
+}
+function translateResponsesRequest(body, npm, metadata, options = {}) {
+  const toolContext = createCodexToolContext();
+  let effectiveTools = body.tools ?? [];
+  let effectiveInput = body.input;
+  if (Array.isArray(effectiveInput)) {
+    const lifted = liftAdditionalToolsInput(effectiveInput, effectiveTools);
+    effectiveInput = lifted.input;
+    effectiveTools = lifted.tools;
+  }
+  ingestToolDefs(effectiveTools, toolContext);
+  const { instructions: system, messages, deferredTools } = translateResponsesInput(effectiveInput, body.instructions, npm, toolContext);
+  const effort = body.reasoning?.effort;
+  const providerOptions = deepMergeProviderOptions(
+    thinkingProviderOptions(npm),
+    effortProviderOptions(npm, effort, metadata?.upstreamModelId ?? body.model, metadata)
+  );
+  const tools = translateResponsesTools([...effectiveTools, ...deferredTools], { ...options, npm });
+  const bridgedGemini = npm === "@ai-sdk/anthropic" && metadata?.providerId !== void 0 && isProviderKind(metadata.providerId, "antigravity") && /(?:^|__)gemini-/.test(metadata.upstreamModelId ?? body.model);
+  return {
+    instructions: system,
+    messages,
+    tools,
+    toolContext,
+    maxOutputTokens: omitsMaxOutputTokens(metadata) ? void 0 : body.max_output_tokens ?? (bridgedGemini ? 65536 : void 0),
+    temperature: body.temperature,
+    providerOptions,
+    headers: options.requestHeaders
+  };
+}
+function newResponseId() {
+  return `resp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+function newItemId(prefix) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+function functionCallItemId(upstreamId) {
+  return upstreamId.startsWith("fc_") ? upstreamId : newItemId("fc");
+}
+function usageFromPart(part) {
+  const input = part.totalUsage?.inputTokens ?? 0;
+  const output = part.totalUsage?.outputTokens ?? 0;
+  const cached = part.totalUsage?.inputTokenDetails?.cacheReadTokens ?? 0;
+  return {
+    input_tokens: input,
+    output_tokens: output,
+    total_tokens: input + output,
+    ...cached > 0 ? { input_tokens_details: { cached_tokens: cached } } : {}
+  };
+}
+var CODEX_SUBAGENT_TOOL_NAMES = /* @__PURE__ */ new Set(["spawn_agent", "multi_agent_v1__spawn_agent"]);
+function isCodexSubagentToolName(toolName) {
+  return CODEX_SUBAGENT_TOOL_NAMES.has(toolName) || toolName.endsWith("__spawn_agent");
+}
+function normalizeCodexSubagentArguments(toolName, argsStr) {
+  if (!isCodexSubagentToolName(toolName)) return argsStr;
+  const args = parseToolArguments(argsStr);
+  for (const key of ["model", "reasoning_effort", "service_tier"]) {
+    if (args[key] === "") delete args[key];
+  }
+  const items2 = args.items;
+  const message = args.message;
+  if (Array.isArray(items2) && items2.length > 0) {
+    delete args.message;
+  } else if (typeof message === "string" && message.trim()) {
+    delete args.items;
+  } else if (Array.isArray(items2) && items2.length === 0) {
+    delete args.items;
+  }
+  return JSON.stringify(args);
+}
+function resolveOutputKind(flatName, ctx) {
+  if (!ctx) return { kind: "plain" };
+  if (flatName === TOOL_SEARCH_NAME) return { kind: "tool_search" };
+  if (ctx.customToolNames.has(flatName)) return { kind: "custom" };
+  const ns = ctx.namespaceByFlatName.get(flatName);
+  if (ns) return { kind: "namespace", namespace: ns.namespace, name: ns.name };
+  return { kind: "plain" };
+}
+function toolItemId(kind, upstreamId) {
+  switch (kind.kind) {
+    case "tool_search":
+      return upstreamId.startsWith("tsc_") ? upstreamId : newItemId("tsc");
+    case "custom":
+      return upstreamId.startsWith("ctc_") ? upstreamId : newItemId("ctc");
+    default:
+      return functionCallItemId(upstreamId);
+  }
+}
+function buildFinalToolItem(kind, flatName, callId, itemId, argsStr) {
+  argsStr = normalizeCodexSubagentArguments(flatName, argsStr);
+  switch (kind.kind) {
+    case "namespace":
+      return { type: "function_call", id: itemId, call_id: callId, namespace: kind.namespace, name: kind.name, arguments: argsStr, status: "completed" };
+    case "tool_search": {
+      const args = parseToolArguments(argsStr);
+      if (typeof args.limit === "string" && /^-?\d+$/.test(args.limit)) args.limit = Number(args.limit);
+      return { type: "tool_search_call", id: itemId, call_id: callId, execution: "client", arguments: args, status: "completed" };
+    }
+    case "custom":
+      return { type: "custom_tool_call", id: itemId, call_id: callId, name: flatName, input: customToolInputFromArgs(flatName, parseToolArguments(argsStr)), status: "completed" };
+    default:
+      return { type: "function_call", id: itemId, call_id: callId, name: flatName, arguments: argsStr, status: "completed" };
+  }
+}
+function incompleteReasonForFinish(finishReason) {
+  if (finishReason === "length") return "max_output_tokens";
+  if (finishReason === "content-filter") return "content_filter";
+  return void 0;
+}
+var PROGRESS_INTERVAL_MS = 3e3;
+var REPEAT_TAIL_CHARS = 200;
+var REPEAT_STREAK_LIMIT = 3;
+var LOOP_NOTICE = "\n\n[relay-ai: generation stopped after detecting a repetition loop]";
+var INITIAL_REPEAT_TRACKER = { tail: "", len: 0, streak: 0 };
+function trackRepetition(current, prev) {
+  const tail = current.length >= REPEAT_TAIL_CHARS ? current.slice(-REPEAT_TAIL_CHARS) : current;
+  const grew = current.length - prev.len >= REPEAT_TAIL_CHARS;
+  const stale = tail.length === REPEAT_TAIL_CHARS && tail === prev.tail && grew;
+  return { tail, len: current.length, streak: stale ? prev.streak + 1 : 0 };
+}
+async function writeResponsesStream(fullStream, modelId, write, onDone, onProgress, options) {
+  const emit = (type, data) => write(sseChunk(type, data));
+  const responseId = newResponseId();
+  const createdAt = Math.floor(Date.now() / 1e3);
+  let usage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+  emit("response.created", {
+    type: "response.created",
+    response: {
+      id: responseId,
+      object: "response",
+      model: modelId,
+      created_at: createdAt,
+      status: "in_progress",
+      output: []
+    }
+  });
+  let outputIndex = 0;
+  let textItemId = null;
+  let textOutputIndex = 0;
+  let textFull = "";
+  const toolStates = [];
+  const toolStatesById = /* @__PURE__ */ new Map();
+  let currentToolState = null;
+  const streamStartedAt = Date.now();
+  let lastProgressAt = streamStartedAt;
+  const recentPartCounts = /* @__PURE__ */ new Map();
+  let reasoningItemId = null;
+  let reasoningText = "";
+  let reasoningOutputIndex = 0;
+  const outputItems = [];
+  let reasoningRepeat = INITIAL_REPEAT_TRACKER;
+  let textRepeat = INITIAL_REPEAT_TRACKER;
+  let loopDetected;
+  let finishReason;
+  const ensureTextItem = () => {
+    if (!textItemId) {
+      textItemId = newItemId("msg");
+      textOutputIndex = outputIndex;
+      outputIndex++;
+      emit("response.output_item.added", {
+        type: "response.output_item.added",
+        output_index: textOutputIndex,
+        item: { id: textItemId, type: "message", role: "assistant", status: "in_progress", content: [] }
+      });
+      emit("response.content_part.added", {
+        type: "response.content_part.added",
+        item_id: textItemId,
+        output_index: textOutputIndex,
+        content_index: 0,
+        part: { type: "output_text", text: "" }
+      });
+    }
+    return textItemId;
+  };
+  const rememberToolState = (state) => {
+    toolStates.push(state);
+    toolStatesById.set(state.itemId, state);
+    toolStatesById.set(state.callId, state);
+    currentToolState = state;
+    return state;
+  };
+  const createToolState = (rawId, name, signature) => {
+    const kind = resolveOutputKind(name ?? "", options?.toolContext);
+    const upstreamId = rawId ?? newItemId("call");
+    const itemId = toolItemId(kind, upstreamId);
+    const state = rememberToolState({
+      itemId,
+      callId: encodeToolUseId(upstreamId, signature, false),
+      name: name ?? "unknown",
+      outputIndex: outputIndex++,
+      args: "",
+      kind
+    });
+    emit("response.output_item.added", {
+      type: "response.output_item.added",
+      output_index: state.outputIndex,
+      item: {
+        type: "function_call",
+        id: state.itemId,
+        call_id: state.callId,
+        name: state.name,
+        arguments: "",
+        status: "in_progress"
+      }
+    });
+    return state;
+  };
+  const findToolState = (part) => {
+    const key = part.id ?? part.toolCallId;
+    if (key) return toolStatesById.get(key) ?? currentToolState;
+    return currentToolState;
+  };
+  const appendToolArgs = (state, delta) => {
+    if (!delta) return;
+    state.args += delta;
+    emit("response.function_call_arguments.delta", {
+      type: "response.function_call_arguments.delta",
+      item_id: state.itemId,
+      output_index: state.outputIndex,
+      delta
+    });
+  };
+  for await (const part of fullStream) {
+    recentPartCounts.set(part.type, (recentPartCounts.get(part.type) ?? 0) + 1);
+    switch (part.type) {
+      case "reasoning-start":
+        reasoningText = "";
+        reasoningItemId = newItemId("rs");
+        reasoningOutputIndex = outputIndex++;
+        emit("response.output_item.added", {
+          type: "response.output_item.added",
+          output_index: reasoningOutputIndex,
+          item: { id: reasoningItemId, type: "reasoning", summary: [] }
+        });
+        break;
+      case "reasoning-delta":
+        if (!reasoningItemId) {
+          reasoningItemId = newItemId("rs");
+          reasoningOutputIndex = outputIndex++;
+          emit("response.output_item.added", {
+            type: "response.output_item.added",
+            output_index: reasoningOutputIndex,
+            item: { id: reasoningItemId, type: "reasoning", summary: [] }
+          });
+        }
+        reasoningText += part.text ?? "";
+        break;
+      case "reasoning-end":
+        break;
+      case "text-start":
+        textFull = "";
+        ensureTextItem();
+        break;
+      case "text-delta":
+        ensureTextItem();
+        textFull += part.text ?? "";
+        emit("response.output_text.delta", {
+          type: "response.output_text.delta",
+          item_id: textItemId,
+          output_index: textOutputIndex,
+          content_index: 0,
+          delta: part.text ?? ""
+        });
+        break;
+      case "tool-input-start": {
+        const sig = grabRoundTripSignature(part);
+        createToolState(part.id ?? part.toolCallId, part.toolName, sig);
+        break;
+      }
+      case "tool-input-delta": {
+        const state = findToolState(part);
+        if (state) appendToolArgs(state, part.delta ?? part.text ?? "");
+        break;
+      }
+      case "tool-call": {
+        const sig = grabRoundTripSignature(part);
+        const key = part.toolCallId ?? part.id;
+        const state = (key ? toolStatesById.get(key) : void 0) ?? createToolState(key, part.toolName, sig);
+        if (!state.args) {
+          appendToolArgs(state, JSON.stringify(part.input ?? {}));
+        }
+        break;
+      }
+      case "finish-step":
+        if (part.finishReason) finishReason = part.finishReason;
+        break;
+      case "finish":
+        if (part.finishReason) finishReason = part.finishReason;
+        if (part.totalUsage) usage = usageFromPart(part);
+        break;
+      case "abort": {
+        const msg = `stream aborted: ${part.reason ?? "no data received from provider"}`;
+        process.stderr.write(`[relay-ai] ${localTimestamp()} ${options?.logLabel ?? modelId}: ${msg}
+`);
+        onDone?.({
+          reasoningChars: reasoningText.length,
+          reasoningPreview: reasoningText.slice(0, 200),
+          textChars: textFull.length,
+          toolCallCount: toolStates.length,
+          toolNames: toolStates.map((t) => t.name),
+          loopDetected,
+          aborted: true
+        });
+        emit("response.failed", {
+          type: "response.failed",
+          response: {
+            id: responseId,
+            object: "response",
+            model: modelId,
+            created_at: createdAt,
+            status: "failed",
+            output: [],
+            error: { message: msg, type: "api_error" }
+          }
+        });
+        return;
+      }
+      case "error": {
+        const msg = formatUpstreamError(part.error);
+        const is429 = msg.includes("429") || part.error && typeof part.error === "object" && (part.error.statusCode === 429 || part.error.lastError?.statusCode === 429);
+        process.stderr.write(`[relay-ai] ${localTimestamp()} ${options?.logLabel ?? modelId}: ${msg}
+`);
+        onDone?.({
+          reasoningChars: reasoningText.length,
+          reasoningPreview: reasoningText.slice(0, 200),
+          textChars: textFull.length,
+          toolCallCount: toolStates.length,
+          toolNames: toolStates.map((t) => t.name),
+          loopDetected,
+          errorMessage: msg,
+          errorStatus: part.error?.statusCode
+        });
+        emit("response.failed", {
+          type: "response.failed",
+          response: {
+            id: responseId,
+            object: "response",
+            model: modelId,
+            created_at: createdAt,
+            status: "failed",
+            output: [],
+            error: { message: msg, type: is429 ? "rate_limit_error" : "api_error", ...is429 ? { code: "429" } : {} }
+          }
+        });
+        return;
+      }
+      default:
+        break;
+    }
+    const now = Date.now();
+    if (now - lastProgressAt >= PROGRESS_INTERVAL_MS) {
+      lastProgressAt = now;
+      reasoningRepeat = trackRepetition(reasoningText, reasoningRepeat);
+      textRepeat = trackRepetition(textFull, textRepeat);
+      if (reasoningRepeat.streak >= REPEAT_STREAK_LIMIT) loopDetected = "reasoning";
+      else if (textRepeat.streak >= REPEAT_STREAK_LIMIT) loopDetected = "text";
+      if (onProgress) {
+        onProgress({
+          reasoningChars: reasoningText.length,
+          reasoningTail: reasoningText.slice(-200),
+          textChars: textFull.length,
+          toolCallCount: toolStates.length,
+          elapsedMs: now - streamStartedAt,
+          recentPartTypes: [...recentPartCounts].map(([type, n]) => `${type}:${n}`).join(",")
+        });
+      }
+      recentPartCounts.clear();
+      if (loopDetected) {
+        options?.onForceStop?.(`repetition loop detected (${loopDetected})`);
+        break;
+      }
+    }
+  }
+  const incompleteReason = incompleteReasonForFinish(finishReason);
+  if (loopDetected) {
+    ensureTextItem();
+    textFull += LOOP_NOTICE;
+    emit("response.output_text.delta", {
+      type: "response.output_text.delta",
+      item_id: textItemId,
+      output_index: textOutputIndex,
+      content_index: 0,
+      delta: LOOP_NOTICE
+    });
+  }
+  const dsml = loopDetected || incompleteReason ? null : parseDsmlToolCalls(textFull);
+  if (dsml) {
+    if (dsml.leadingText && textItemId) {
+      emit("response.output_text.done", {
+        type: "response.output_text.done",
+        item_id: textItemId,
+        output_index: textOutputIndex,
+        content_index: 0,
+        text: dsml.leadingText
+      });
+      emit("response.content_part.done", {
+        type: "response.content_part.done",
+        item_id: textItemId,
+        output_index: textOutputIndex,
+        content_index: 0,
+        part: { type: "output_text", text: dsml.leadingText }
+      });
+      const textItem = {
+        id: textItemId,
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text: dsml.leadingText }]
+      };
+      emit("response.output_item.done", {
+        type: "response.output_item.done",
+        output_index: textOutputIndex,
+        item: textItem
+      });
+      outputItems.push(textItem);
+    }
+    for (const call of dsml.calls) {
+      const itemId = newItemId("fc");
+      const callId = encodeToolUseId(itemId, void 0, false);
+      const idx = outputIndex++;
+      const args = JSON.stringify(call.args);
+      emit("response.output_item.added", {
+        type: "response.output_item.added",
+        output_index: idx,
+        item: { type: "function_call", id: itemId, call_id: callId, name: call.name, arguments: "", status: "in_progress" }
+      });
+      emit("response.function_call_arguments.done", {
+        type: "response.function_call_arguments.done",
+        item_id: itemId,
+        output_index: idx,
+        arguments: args
+      });
+      const fcItem = { type: "function_call", id: itemId, call_id: callId, name: call.name, arguments: args, status: "completed" };
+      emit("response.output_item.done", { type: "response.output_item.done", output_index: idx, item: fcItem });
+      outputItems.push(fcItem);
+    }
+  } else if (textItemId) {
+    emit("response.output_text.done", {
+      type: "response.output_text.done",
+      item_id: textItemId,
+      output_index: textOutputIndex,
+      content_index: 0,
+      text: textFull
+    });
+    emit("response.content_part.done", {
+      type: "response.content_part.done",
+      item_id: textItemId,
+      output_index: textOutputIndex,
+      content_index: 0,
+      part: { type: "output_text", text: textFull }
+    });
+    const textItem = {
+      id: textItemId,
+      type: "message",
+      role: "assistant",
+      status: incompleteReason ? "incomplete" : "completed",
+      content: [{ type: "output_text", text: textFull }]
+    };
+    emit("response.output_item.done", {
+      type: "response.output_item.done",
+      output_index: textOutputIndex,
+      item: textItem
+    });
+    outputItems.push(textItem);
+  }
+  if (reasoningItemId) {
+    const reasoningItem = makeReasoningOutputItem(reasoningItemId, reasoningText);
+    emit("response.output_item.done", {
+      type: "response.output_item.done",
+      output_index: reasoningOutputIndex,
+      item: reasoningItem
+    });
+    outputItems.unshift(reasoningItem);
+  }
+  for (const tool3 of incompleteReason ? [] : toolStates) {
+    const normalizedArgs = normalizeCodexSubagentArguments(tool3.name, tool3.args);
+    emit("response.function_call_arguments.done", {
+      type: "response.function_call_arguments.done",
+      item_id: tool3.itemId,
+      output_index: tool3.outputIndex,
+      arguments: normalizedArgs
+    });
+    const fcItem = buildFinalToolItem(tool3.kind, tool3.name, tool3.callId, tool3.itemId, normalizedArgs);
+    emit("response.output_item.done", {
+      type: "response.output_item.done",
+      output_index: tool3.outputIndex,
+      item: fcItem
+    });
+    outputItems.push(fcItem);
+  }
+  if (outputItems.length === 0 && !incompleteReason) {
+    outputItems.push({ id: newItemId("msg"), type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "(conversation context was too large to summarize)" }] });
+  }
+  onDone?.({
+    reasoningChars: reasoningText.length,
+    reasoningPreview: reasoningText.slice(0, 200),
+    textChars: textFull.length,
+    toolCallCount: toolStates.length,
+    toolNames: toolStates.map((t) => t.name),
+    loopDetected,
+    dsmlToolCallsRecovered: dsml?.calls.length,
+    finishReason,
+    incompleteReason
+  });
+  const terminalEvent = incompleteReason ? "response.incomplete" : "response.completed";
+  emit(terminalEvent, {
+    type: terminalEvent,
+    response: {
+      id: responseId,
+      object: "response",
+      model: modelId,
+      created_at: createdAt,
+      status: incompleteReason ? "incomplete" : "completed",
+      ...incompleteReason ? { incomplete_details: { reason: incompleteReason } } : {},
+      output: outputItems,
+      usage
+    }
+  });
+}
+var STREAM_IDLE_TIMEOUT_MS = 12e4;
+async function streamResponsesResponse(model, params, modelId, write, onDone, onProgress, options) {
+  const configuredTimeout = (name, fallback) => {
+    const value = Number(process.env[name]);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  };
+  const idleTimeoutMs = options?.idleTimeoutMs ?? configuredTimeout("RELAY_AI_STREAM_IDLE_TIMEOUT_MS", STREAM_IDLE_TIMEOUT_MS);
+  const progressTimeoutMs = options?.progressTimeoutMs ?? configuredTimeout("RELAY_AI_STREAM_PROGRESS_TIMEOUT_MS", 6e5);
+  const abort = new AbortController();
+  let idleTimer = setTimeout(
+    () => abort.abort(new Error(`no data received from provider for ${Math.round(idleTimeoutMs / 1e3)}s`)),
+    idleTimeoutMs
+  );
+  let active = true;
+  const resetLiveness = () => {
+    if (!active) return;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => abort.abort(new Error("no data received from provider for " + idleTimeoutMs / 1e3 + "s")), idleTimeoutMs);
+  };
+  const resetProgress = () => {
+    clearTimeout(progressTimer);
+    progressTimer = setTimeout(() => abort.abort(new Error("no content progress from provider for " + progressTimeoutMs / 1e3 + "s")), progressTimeoutMs);
+  };
+  let progressTimer;
+  resetProgress();
+  return streamActivity.run(resetLiveness, async () => {
+    try {
+      const { toolContext, ...sdkParams } = params;
+      const result = streamText({ model, ...sdkParams, maxRetries: 0, abortSignal: abort.signal, onError: () => {
+      } });
+      Promise.resolve(result.text).catch(() => {
+      });
+      Promise.resolve(result.toolCalls).catch(() => {
+      });
+      Promise.resolve(result.toolResults).catch(() => {
+      });
+      Promise.resolve(result.finishReason).catch(() => {
+      });
+      Promise.resolve(result.usage).catch(() => {
+      });
+      Promise.resolve(result.response).catch(() => {
+      });
+      const watchedStream = (async function* () {
+        try {
+          for await (const part of result.stream) {
+            resetLiveness();
+            if (["text-delta", "reasoning-delta"].includes(part.type) && Boolean(part.text) || part.type === "tool-input-delta" && Boolean(part.delta) || ["tool-call", "finish", "finish-step"].includes(part.type)) resetProgress();
+            yield part;
+          }
+        } catch (error) {
+          if (!abort.signal.aborted) throw error;
+          yield { type: "abort", reason: String(abort.signal.reason) };
+        } finally {
+          clearTimeout(idleTimer);
+          clearTimeout(progressTimer);
+        }
+      })();
+      await writeResponsesStream(watchedStream, modelId, write, onDone, onProgress, {
+        onForceStop: (reason) => abort.abort(new Error(reason)),
+        toolContext,
+        logLabel: options?.logLabel
+      });
+    } finally {
+      active = false;
+      clearTimeout(idleTimer);
+      clearTimeout(progressTimer);
+    }
+  });
+}
+async function generateResponsesResponse(model, params, modelId) {
+  const { toolContext, ...sdkParams } = params;
+  const r = await generateTextStreamingIfRequired({ model, ...sdkParams, maxRetries: 0 });
+  const incompleteReason = incompleteReasonForFinish(r.finishReason);
+  const createdAt = Math.floor(Date.now() / 1e3);
+  const responseId = newResponseId();
+  const output = [];
+  if (r.reasoningText?.trim()) {
+    output.push(makeReasoningOutputItem(newItemId("rs"), r.reasoningText));
+  }
+  if (r.text !== null && r.text !== void 0) {
+    output.push({
+      id: newItemId("msg"),
+      type: "message",
+      role: "assistant",
+      status: incompleteReason ? "incomplete" : "completed",
+      content: [{ type: "output_text", text: r.text }]
+    });
+  }
+  for (const tc of incompleteReason ? [] : r.toolCalls) {
+    const encodedId = encodeToolUseId(tc.toolCallId, grabRoundTripSignature(tc), false);
+    const argsStr = JSON.stringify(tc.input ?? {});
+    const kind = resolveOutputKind(tc.toolName, toolContext);
+    output.push(buildFinalToolItem(
+      kind,
+      tc.toolName,
+      encodedId,
+      toolItemId(kind, tc.toolCallId),
+      argsStr
+    ));
+  }
+  if (output.length === 0 && !incompleteReason) {
+    output.push({ id: newItemId("msg"), type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "(conversation context was too large to summarize)" }] });
+  }
+  const inputTokens = r.usage?.inputTokens ?? 0;
+  const outputTokens = r.usage?.outputTokens ?? 0;
+  return {
+    id: responseId,
+    object: "response",
+    model: modelId,
+    created_at: createdAt,
+    status: incompleteReason ? "incomplete" : "completed",
+    ...incompleteReason ? { incomplete_details: { reason: incompleteReason } } : {},
+    output,
+    usage: {
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      total_tokens: inputTokens + outputTokens
+    }
+  };
+}
+var COMPACTION_SUMMARY_INSTRUCTION = "You are performing a CONTEXT CHECKPOINT COMPACTION. Summarize the conversation so far into a concise but complete summary that preserves the user's goals, key decisions and facts, the current state of the work, and any pending or in-progress tasks. Output only the summary text.";
+function encodeCompactionContent(summary) {
+  return Buffer.from(JSON.stringify({ v: 1, summary }), "utf8").toString("base64");
+}
+function decodeCompactionContent(encrypted) {
+  if (!encrypted) return null;
+  try {
+    const obj = JSON.parse(Buffer.from(encrypted, "base64").toString("utf8"));
+    return obj?.v === 1 && typeof obj.summary === "string" ? obj.summary : null;
+  } catch {
+    return null;
+  }
+}
+function makeCompactionItem(summary) {
+  return { type: "compaction", id: newItemId("cmp"), encrypted_content: encodeCompactionContent(summary) };
+}
+function appendCompactionInstruction(params) {
+  return {
+    ...params,
+    tools: void 0,
+    messages: [
+      ...params.messages,
+      { role: "user", content: [{ type: "text", text: COMPACTION_SUMMARY_INSTRUCTION }] }
+    ]
+  };
+}
+async function collectCompactionSummary(model, params) {
+  const { toolContext: _toolContext, ...sdkParams } = params;
+  void _toolContext;
+  let firstStreamError;
+  const result = streamText({
+    model,
+    ...sdkParams,
+    maxRetries: 0,
+    onError: (event) => {
+      firstStreamError ??= event;
+    }
+  });
+  Promise.resolve(result.toolResults).catch(() => {
+  });
+  let text4;
+  try {
+    text4 = await result.text ?? "";
+  } catch (error) {
+    throw firstStreamError ? firstStreamError.error : error;
+  }
+  if (firstStreamError) throw firstStreamError.error;
+  return text4;
+}
+function buildCompactionResponseBody(summary, modelId) {
+  return {
+    id: newResponseId(),
+    object: "response",
+    model: modelId,
+    created_at: Math.floor(Date.now() / 1e3),
+    status: "completed",
+    output: [makeCompactionItem(summary)]
+  };
+}
+function writeCompactionSse(summary, modelId, write) {
+  const emit = (type, data) => write(sseChunk(type, data));
+  const responseId = newResponseId();
+  const createdAt = Math.floor(Date.now() / 1e3);
+  const item = makeCompactionItem(summary);
+  emit("response.created", {
+    type: "response.created",
+    response: { id: responseId, object: "response", model: modelId, created_at: createdAt, status: "in_progress", output: [] }
+  });
+  emit("response.output_item.added", { type: "response.output_item.added", output_index: 0, item });
+  emit("response.output_item.done", { type: "response.output_item.done", output_index: 0, item });
+  emit("response.completed", {
+    type: "response.completed",
+    response: { id: responseId, object: "response", model: modelId, created_at: createdAt, status: "completed", output: [item] }
+  });
+}
+async function generateCompactionResponse(model, params, modelId) {
+  const text4 = await collectCompactionSummary(model, params);
+  return buildCompactionResponseBody(text4.trim() || "(no summary produced)", modelId);
+}
+async function streamCompactionResponse(model, params, modelId, write) {
+  const text4 = await collectCompactionSummary(model, params);
+  writeCompactionSse(text4.trim() || "(no summary produced)", modelId, write);
+}
+function responsesErrorBody(modelId, message, statusCode = 401) {
+  return {
+    id: newResponseId(),
+    object: "response",
+    model: modelId,
+    created_at: Math.floor(Date.now() / 1e3),
+    status: "failed",
+    output: [],
+    error: { message, type: statusCode === 429 ? "rate_limit_error" : "api_error", code: String(statusCode) }
+  };
+}
+function writeResponsesErrorStream(modelId, message, write, statusCode = 401) {
+  write(sseChunk("response.failed", {
+    type: "response.failed",
+    response: responsesErrorBody(modelId, message, statusCode)
+  }));
+}
+
+// src/pool/continuation.ts
+function poolRouteKey(route) {
+  return JSON.stringify([route.account, route.endpointRevision, route.model]);
+}
+var DEFAULT_LIMITS2 = {
+  ttlMs: 6e4,
+  maxEntries: 32,
+  maxBytes: 4 * 1024 * 1024,
+  maxItems: 2e3
+};
+function items(input) {
+  if (typeof input === "string") return [{ type: "message", role: "user", content: input }];
+  if (!Array.isArray(input)) throw new Error("unsupported-input");
+  return structuredClone(input);
+}
+function checkLimit2(name, value) {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error("Invalid continuation limit: " + name);
+}
+var PoolContinuationStore = class {
+  constructor(limits = {}, now = Date.now) {
+    this.now = now;
+    this.limits = { ...DEFAULT_LIMITS2, ...limits };
+    for (const [name, value] of Object.entries(this.limits)) checkLimit2(name, value);
+  }
+  now;
+  states = /* @__PURE__ */ new Map();
+  limits;
+  remember(responseId, scope, request, output, source) {
+    if (!responseId) throw new Error("response-id-required");
+    if (!scope) throw new Error("real-session-and-branch-required");
+    const storedInput = items(request.input);
+    const storedOutput = structuredClone(output);
+    if (storedInput.length + storedOutput.length > this.limits.maxItems) {
+      throw new Error("continuation-history-too-large");
+    }
+    const state = {
+      scope,
+      input: storedInput,
+      output: storedOutput,
+      ...typeof request.instructions === "string" ? { instructions: request.instructions } : {},
+      source: poolRouteKey(source),
+      expires: this.now() + this.limits.ttlMs,
+      bytes: 0
+    };
+    state.bytes = Buffer.byteLength(JSON.stringify(state), "utf8");
+    if (state.bytes > this.limits.maxBytes) throw new Error("continuation-history-too-large");
+    this.prune();
+    this.states.set(JSON.stringify([scope, responseId]), state);
+    while (this.states.size > this.limits.maxEntries) {
+      this.states.delete(this.states.keys().next().value);
+    }
+  }
+  resolve(scope, request) {
+    const body = structuredClone(request);
+    const previous = body.previous_response_id;
+    if (previous === void 0 || previous === null) return { body };
+    if (typeof previous !== "string" || !previous) throw new Error("unsupported-continuation: invalid response id");
+    const state = this.states.get(JSON.stringify([scope, previous]));
+    if (!scope || !state || state.expires <= this.now()) {
+      throw new Error("unsupported-continuation: missing Relay-owned history");
+    }
+    body.input = [...structuredClone(state.input), ...structuredClone(state.output), ...items(body.input)];
+    body.instructions ??= state.instructions;
+    delete body.previous_response_id;
+    return { body, source: state.source };
+  }
+  prune() {
+    const now = this.now();
+    for (const [key, state] of this.states) {
+      if (state.expires <= now) this.states.delete(key);
+    }
+  }
+};
+function stripRouteParts(part) {
+  if (part.type !== "tool-call" && part.type !== "tool-result") return part;
+  const { providerOptions: _options, toolCallId, ...rest } = part;
+  return {
+    ...rest,
+    ...typeof toolCallId === "string" ? { toolCallId: splitToolUseId(toolCallId).rawId } : {}
+  };
+}
+function preparePoolHistory(body, source, target, npm, metadata) {
+  const fresh = structuredClone(body);
+  const input = items(fresh.input);
+  if (input.some(
+    (item) => (item.type === "compaction" || item.type === "context_compaction") && decodeCompactionContent(item.encrypted_content) === null || item.type === "reasoning" && typeof item.encrypted_content === "string"
+  )) throw new Error("unsupported-continuation: opaque provider state requires original route");
+  fresh.input = input;
+  const params = translateResponsesRequest(fresh, npm, metadata);
+  if (source !== poolRouteKey(target)) {
+    params.messages = params.messages.map((message) => ({
+      ...message,
+      content: Array.isArray(message.content) ? message.content.filter((part) => part.type !== "reasoning").map((part) => stripRouteParts(part)) : message.content
+    }));
+  }
+  return params;
+}
+
+// src/pool/session.ts
+var PoolSessionRoutes = class {
+  constructor(ttlMs = 36e5, capacity = 256, now = Date.now) {
+    this.ttlMs = ttlMs;
+    this.capacity = capacity;
+    this.now = now;
+  }
+  ttlMs;
+  capacity;
+  now;
+  states = /* @__PURE__ */ new Map();
+  begin(scope, eligible) {
+    const routes = [...eligible];
+    if (!scope) return { routes, succeed: (_id) => {
+    } };
+    const previous = this.states.get(scope);
+    const pinned = previous && previous.expires > this.now() ? previous.pinned : void 0;
+    const state = { token: /* @__PURE__ */ Symbol(), pinned, expires: this.now() + this.ttlMs };
+    this.states.delete(scope);
+    this.states.set(scope, state);
+    while (this.states.size > this.capacity) this.states.delete(this.states.keys().next().value);
+    const index = routes.findIndex((route) => route.id === pinned);
+    if (index > 0) routes.unshift(...routes.splice(index, 1));
+    return {
+      routes,
+      succeed: (id) => {
+        if (this.states.get(scope)?.token !== state.token || !routes.some((route) => route.id === id)) return;
+        this.states.set(scope, { ...state, pinned: id, expires: this.now() + this.ttlMs });
+      }
+    };
+  }
+};
+
+// src/pool/codex-response.ts
+async function writeCodexPoolResponse(stream, modelId, write, options = {}) {
+  let completed;
+  let bytes = 0;
+  const context = options.toolContext ?? { namespaceByFlatName: /* @__PURE__ */ new Map(), customToolNames: /* @__PURE__ */ new Set() };
+  const contextualStream = (async function* () {
+    for await (const part of stream) {
+      const selected = options.getToolContext?.();
+      if (selected) {
+        context.namespaceByFlatName = selected.namespaceByFlatName;
+        context.customToolNames = selected.customToolNames;
+      }
+      yield part;
+    }
+  })();
+  await writeResponsesStream(contextualStream, modelId, (chunk) => {
+    if (options.nonstream) {
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > (options.maxResponseBytes ?? 4 * 1024 * 1024)) throw new Error("Pool response buffer exceeded");
+    } else write(chunk);
+    for (const line of chunk.split(String.fromCharCode(10))) {
+      if (!line.startsWith("data:")) continue;
+      const event = JSON.parse(line.slice(5));
+      if (event.type === "response.completed" || event.type === "response.incomplete") completed = event.response;
+      if (event.type === "response.failed") throw new Error("Pool response failed");
+    }
+  }, void 0, void 0, { toolContext: context });
+  if (!completed) throw new Error("Pool response missing terminal result");
+  return completed;
+}
+
+// src/pool/codex-runtime.ts
+var FREE_POOL_MODEL_ID = "relay-free-pool";
+var FREE_POOL_PROVIDER_ID = "relay-free-pool";
+var DEFAULT_POOL_LIMITS = {
+  attempts: 3,
+  firstContentMs: 2e4,
+  idleMs: 2e4,
+  totalMs: 6e4,
+  bufferBytes: 65536,
+  cleanupMs: 1e3
+};
+var CodexPoolRuntime = class {
+  constructor(pool, prepare, limits = DEFAULT_POOL_LIMITS) {
+    this.pool = pool;
+    this.prepare = prepare;
+    this.limits = limits;
+  }
+  pool;
+  prepare;
+  limits;
+  history = new PoolContinuationStore({ ttlMs: 36e5 });
+  sessions = new PoolSessionRoutes();
+  retries = new CodexRetryGuard();
+  async respond(headers, request, signal, write) {
+    if (request.model !== FREE_POOL_MODEL_ID) throw new Error("Pool runtime requires an explicit pool model");
+    const identity = codexPoolIdentity(headers, request);
+    if (!identity) throw new Error("Pool requires verified Codex conversation and turn metadata");
+    const { body, source } = this.history.resolve(identity.conversation, request);
+    const lease = this.retries.acquire(identity.turn, requestFingerprint(body));
+    if (lease.kind === "replay") {
+      const cached = JSON.parse(lease.response);
+      if (body.stream === true) for (const chunk of cached.chunks) write(chunk);
+      return cached.response;
+    }
+    if (lease.kind !== "owner") throw new Error("Pool retry " + lease.kind);
+    const chunks = [];
+    let committed = false;
+    try {
+      const routes = await this.prepare(body, source, signal, identity.conversation);
+      let served;
+      const stream = dispatchFreePool(this.pool, routes, {
+        target: "codex",
+        effort: body.reasoning?.effort,
+        tools: Array.isArray(body.tools) && body.tools.length > 0,
+        signal,
+        conversationScope: identity.conversation
+      }, {
+        limits: this.limits,
+        sessions: this.sessions,
+        retryable: retryPoolFailure,
+        onAttempt: (id) => {
+          served = routes.find((route) => JSON.stringify([route.member.providerId, route.revision, route.member.modelId]) === id);
+        }
+      });
+      const response = await writeCodexPoolResponse(stream, FREE_POOL_MODEL_ID, (chunk) => {
+        committed = true;
+        chunks.push(chunk);
+        write(chunk);
+      }, { nonstream: body.stream !== true, getToolContext: () => served?.toolContext });
+      if (!served || typeof response.id !== "string" || !Array.isArray(response.output)) throw new Error("Pool response missing route or history");
+      this.history.remember(response.id, identity.conversation, body, response.output, served.identity);
+      lease.complete(JSON.stringify({ response, chunks }));
+      return response;
+    } catch (error) {
+      if (signal.aborted) lease.release();
+      else lease.fail("Pool request failed", committed);
+      throw error;
+    }
+  }
+};
+
+// src/pool/catalog.ts
+var ALIASES = {
+  codex: FREE_POOL_MODEL_ID,
+  claude: "claude-pool",
+  antigravity: "free-pool"
+};
+function servable(receipt, target, now) {
+  return Boolean(receipt && Number.isFinite(receipt.verifiedAt) && receipt.verifiedAt <= now && Number.isFinite(receipt.expiresAt) && receipt.expiresAt > now && receipt.targets.includes(target) && receipt.billingSafe && Number.isSafeInteger(receipt.contextWindow) && receipt.contextWindow > 0);
+}
+function poolCatalogEntry(pool, receipts, target, now = Date.now()) {
+  const verified = pool.members.map((member) => receipts.find((receipt) => receipt.member.providerId === member.providerId && receipt.member.modelId === member.modelId)).filter((receipt) => servable(receipt, target, now));
+  if (!verified.length) return void 0;
+  const window = Math.min(...verified.map((receipt) => receipt.contextWindow));
+  const reserve = Math.max(4096, Math.ceil(window * 0.1));
+  const levels = verified[0].effortLevels.filter((level) => verified.every((receipt) => receipt.effortLevels.includes(level)));
+  return {
+    id: ALIASES[target],
+    display_name: "Relay Free Pool",
+    context_window: Math.max(1024, window - reserve),
+    supported_reasoning_levels: levels.map((level) => ({ effort: level, description: level }))
+  };
+}
+function codexPoolCatalogEntry(pool, receipts, now = Date.now()) {
+  return poolCatalogEntry(pool, receipts, "codex", now);
+}
+function codexPoolCatalogModel(pool, receipts, options = {}) {
+  const entry = poolCatalogEntry(pool, receipts, "codex", options.now);
+  if (!entry) return void 0;
+  const model = {
+    id: FREE_POOL_MODEL_ID,
+    name: entry.display_name,
+    family: "",
+    brand: "",
+    modelFormat: "openai",
+    npm: "@ai-sdk/openai-compatible",
+    upstreamModelId: FREE_POOL_MODEL_ID,
+    contextWindow: entry.context_window
+  };
+  const base = catalogEntryFromModel(
+    model,
+    entry.display_name,
+    options.priority ?? 1,
+    options.appCatalog === true,
+    FREE_POOL_MODEL_ID
+  );
+  const levels = entry.supported_reasoning_levels.length > 0 ? entry.supported_reasoning_levels : [{ effort: "none", description: "none" }];
+  return {
+    ...base,
+    supported_reasoning_levels: levels,
+    default_reasoning_level: levels[0].effort,
+    default_reasoning_summary: "none",
+    supports_reasoning_summaries: false,
+    support_verbosity: false,
+    default_verbosity: null,
+    context_window: entry.context_window,
+    max_context_window: entry.context_window,
+    truncation_policy: options.appCatalog === true ? base.truncation_policy : { mode: "tokens", limit: entry.context_window }
+  };
 }
 
 // src/catalog.ts
@@ -4674,7 +6150,7 @@ async function askSaveServerPassword() {
 import { createServer as createServer2 } from "http";
 
 // src/openai-adapter.ts
-import { tool, jsonSchema, streamText, generateText } from "ai";
+import { tool as tool2, jsonSchema as jsonSchema2, streamText as streamText2 } from "ai";
 function translateOpenAiRequest(body, requestHeaders) {
   const toolNameById = /* @__PURE__ */ new Map();
   for (const msg of body.messages) {
@@ -4740,10 +6216,10 @@ function translateOpenAiRequest(body, requestHeaders) {
     tools = {};
     for (const t of body.tools) {
       if (t.type === "function" && t.function.name) {
-        const schema = t.function.parameters ? jsonSchema(t.function.parameters) : void 0;
-        tools[t.function.name] = tool({
+        const schema = t.function.parameters ? jsonSchema2(t.function.parameters) : void 0;
+        tools[t.function.name] = tool2({
           description: t.function.description ?? "",
-          inputSchema: schema ?? jsonSchema({ type: "object", properties: {} })
+          inputSchema: schema ?? jsonSchema2({ type: "object", properties: {} })
         });
       }
     }
@@ -4783,7 +6259,7 @@ function toOpenAiFinishReason(reason) {
   }
 }
 async function generateOpenAiResponse(model, params, responseModelId) {
-  const result = await generateText({ model, ...params });
+  const result = await generateTextStreamingIfRequired({ model, ...params });
   const message = { role: "assistant", content: result.text || null };
   if (result.reasoningText || result.reasoning) {
     message.reasoning_content = result.reasoningText ?? result.reasoning;
@@ -4805,7 +6281,7 @@ async function generateOpenAiResponse(model, params, responseModelId) {
   };
 }
 async function streamOpenAiResponse(model, params, responseModelId, onChunk, log7) {
-  const { stream } = streamText({ model, ...params });
+  const { stream } = streamText2({ model, ...params });
   const baseData = {
     id: `chatcmpl-${Date.now()}`,
     object: "chat.completion.chunk",
@@ -4942,7 +6418,16 @@ async function routeRequest(req, res, options, modelCache, plog, subagentRouteRe
       return;
     }
     if (req.method === "GET" && pathname === "/anthropic/v1/models") {
-      sendJson(res, 200, formatGatewayAnthropicModels(options.catalog.list(), options.gateway));
+      const models = options.catalog.list();
+      const payload = formatGatewayAnthropicModels(models, options.gateway);
+      const poolModel = options.pool ? models.find((model) => model.id === CLAUDE_POOL_MODEL_ID) : void 0;
+      if (poolModel && options.pool) {
+        const publicId = exposedGatewayAliasId(poolModel, options.gateway);
+        for (const entry of payload.data) {
+          if (entry.id === publicId) entry.display_name = options.pool.displayName;
+        }
+      }
+      sendJson(res, 200, payload);
       return;
     }
     if (req.method === "GET" && pathname === "/openai/v1/models") {
@@ -4974,6 +6459,11 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog, suba
   const model = lookupModel(res, options.catalog, requestedModelId);
   if (!model) {
     plog(`model not found: ${body.model}`);
+    return;
+  }
+  if (options.pool && model.id === CLAUDE_POOL_MODEL_ID) {
+    plog(`anthropic-messages pool=${model.id} stream=${body.stream === true}`);
+    await serveAnthropicPool(req, res, options, body, plog);
     return;
   }
   plog(() => `anthropic-messages model=${body.model} format=${model.modelFormat} npm=${model.npm ?? "none"} stream=${body.stream}`);
@@ -5120,6 +6610,50 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog, suba
     return;
   }
   sendJson(res, 400, { error: { message: `Unsupported model format: ${model.modelFormat}` } });
+}
+async function serveAnthropicPool(req, res, options, body, plog) {
+  const pool = options.pool;
+  if (!pool) return;
+  const abort = new AbortController();
+  res.once("close", () => {
+    if (!res.writableFinished) abort.abort();
+  });
+  try {
+    const sessionId = extractConversationId(req.headers, body);
+    const result = await pool.runtime.serve(body, (chunk) => {
+      if (res.destroyed) throw new Error("Client disconnected");
+      if (!res.headersSent) {
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive"
+        });
+      }
+      res.write(chunk);
+    }, abort.signal, sessionId);
+    if (result.ok) {
+      if (result.message) sendJson(res, 200, result.message);
+      else res.end();
+      return;
+    }
+    plog(`pool error status=${result.status} committed=${result.committed}: ${result.error.message}`);
+    if (result.committed || res.headersSent) {
+      if (!res.writableEnded) res.end();
+      return;
+    }
+    if (!res.destroyed) {
+      sendJson(res, result.status, { type: "error", error: result.error });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    plog(`pool failure: ${message}`);
+    if (res.destroyed || res.writableEnded) return;
+    if (!res.headersSent) {
+      sendJson(res, 502, { type: "error", error: { type: anthropicErrorType(502), message } });
+    } else {
+      res.end();
+    }
+  }
 }
 async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) {
   const body = await readJson(req);
@@ -7566,13 +9100,8 @@ export {
   printCloudProviderPanel,
   findBinaryOnPath,
   poolFailure,
-  retryPoolFailure,
-  dispatchFreePool,
   CLAUDE_POOL_MODEL_ID,
   ClaudePoolRuntime,
-  readBody,
-  extractApiKey,
-  sendJson,
   formatAnthropicModelEntry,
   formatAnthropicModelList,
   gatewayProviderLabel,
@@ -7586,6 +9115,22 @@ export {
   aliasModelId,
   startProxyCatalog,
   startProxy,
+  translateResponsesRequest,
+  streamResponsesResponse,
+  generateResponsesResponse,
+  decodeCompactionContent,
+  appendCompactionInstruction,
+  generateCompactionResponse,
+  streamCompactionResponse,
+  writeResponsesErrorStream,
+  preparePoolHistory,
+  FREE_POOL_MODEL_ID,
+  FREE_POOL_PROVIDER_ID,
+  CodexPoolRuntime,
+  poolCatalogEntry,
+  codexPoolCatalogEntry,
+  codexPoolCatalogModel,
+  localModelToRoute,
   makeRouteResolver,
   buildCatalogRoutes,
   hostFromHeader,
@@ -7647,4 +9192,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-TBHYMMQO.js.map
+//# sourceMappingURL=chunk-UPP4JOL4.js.map

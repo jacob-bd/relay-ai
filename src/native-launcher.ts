@@ -329,6 +329,9 @@ export function getRelayLaunchCommand(appId: string, options: RelayLaunchOptions
   const app = getSupportedApp(appId);
   if (!app) throw new Error(`Unsupported app: ${appId}`);
 
+  if (options.providerId === 'relay-free-pool' && options.modelId === 'relay-free-pool') {
+    options = { ...options, pool: true, providerId: undefined, modelId: undefined };
+  }
   const args = [app.relayCommand];
   if (options.pool) {
     if (!['claude', 'codex'].includes(app.id) || options.httpProxy || options.withNative || options.providerId || options.modelId) throw new Error('Free pool launches require Claude Code CLI or Codex CLI without another model selection.');

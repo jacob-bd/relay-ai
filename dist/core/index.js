@@ -53,7 +53,8 @@ function parsePoolReceipt(value) {
 function parseFreePool(value) {
   if (value === void 0) return { members: [], effort: "auto", receipts: [] };
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid free pool configuration");
-  const { members, effort, receipts } = value;
+  const { members, effort, receipts, enabled } = value;
+  if (enabled !== void 0 && typeof enabled !== "boolean") throw new Error("Invalid free pool enabled setting");
   if (!Array.isArray(members) || !["auto", "low", "medium", "high"].includes(String(effort))) {
     throw new Error("Invalid free pool members or effort");
   }
@@ -83,7 +84,7 @@ function parseFreePool(value) {
       parsedReceipts.push(receipt);
     }
   }
-  return { members: result, effort, receipts: parsedReceipts };
+  return { ...enabled === void 0 ? {} : { enabled }, members: result, effort, receipts: parsedReceipts };
 }
 
 // src/config.ts
@@ -3029,6 +3030,14 @@ function rememberProtocolFailure(key, now = Date.now()) {
   savePersistent();
 }
 
+// src/stream-only-model.ts
+import { generateText, streamText } from "ai";
+var streamOnlyModels = /* @__PURE__ */ new WeakSet();
+function markStreamOnlyModel(model) {
+  if (typeof model === "object" && model !== null) streamOnlyModels.add(model);
+  return model;
+}
+
 // src/provider-factory.ts
 var RESPONSES_ONLY_PREFIXES = [
   "gpt-5-codex",
@@ -3548,6 +3557,7 @@ function withProviderRequestDefaults(model, spec) {
 async function createLanguageModel(spec) {
   const npm = resolveProviderNpm(spec.npm);
   const primary = withProviderRequestDefaults(await createLanguageModelSingle(spec), spec);
+  if (npm === "@ai-sdk/openai" && spec.authType === "oauth") markStreamOnlyModel(primary);
   if (spec.authType === "oauth" || !spec.baseURL) return primary;
   const primaryProtocol = protocolForNpm(npm);
   const alternative = resolveProtocolAlternative({

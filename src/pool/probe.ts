@@ -5,7 +5,7 @@ export interface PoolProbeResult {
   tools: 'passed' | 'failed';
   failure?: 'timeout' | 'truncated' | 'invalid-output' | 'provider';
 }
-/** Explicit enrollment probe only. Two bounded calls, no tool execution or retry loop. */
+/** Explicit enrollment probe only. One bounded call, no tool execution or retry loop. */
 export async function probePoolModel(
   model: LanguageModel,
   signal: AbortSignal,
@@ -13,36 +13,32 @@ export async function probePoolModel(
   onError?: (error: unknown) => void,
 ): Promise<PoolProbeResult> {
   const result: PoolProbeResult = { text: 'failed', tools: 'failed' };
-  const call = async (withTool: boolean) => {
+  const call = async () => {
     const timeout = AbortSignal.timeout(timeoutMs);
     const abortSignal = AbortSignal.any([signal, timeout]);
     const response = streamText({ model, abortSignal, maxRetries: 0, maxOutputTokens: 256,
-      prompt: withTool ? 'Call relay_pool_probe with value "ok". Do not perform any other action.' : 'Reply with exactly OK.',
-      ...(withTool ? { toolChoice: { type: 'tool' as const, toolName: 'relay_pool_probe' }, tools: {
+      prompt: 'Call relay_pool_probe with value "ok". Do not perform any other action.',
+      toolChoice: { type: 'tool' as const, toolName: 'relay_pool_probe' }, tools: {
         relay_pool_probe: tool({ description: 'Harmless enrollment capability probe; it is never executed.',
           inputSchema: jsonSchema<{ value: string }>({ type: 'object', properties: { value: { type: 'string', enum: ['ok'] } }, required: ['value'], additionalProperties: false }),
         }),
-      } } : {}), onError: () => {},
+      }, onError: () => {},
     });
     for (const promise of [response.text, response.toolCalls, response.finishReason, response.usage, response.response]) Promise.resolve(promise).catch(() => {});
-    let text = '';
     let validTool = false;
     let finish = '';
     for await (const part of response.stream) {
       if (part.type === 'error') throw part.error;
-      if (part.type === 'text-delta') text += part.text;
       if (part.type === 'tool-call') validTool = part.toolName === 'relay_pool_probe' && (part.input as { value?: string })?.value === 'ok';
       if (part.type === 'finish') finish = part.finishReason;
     }
     if (finish === 'length') return 'truncated' as const;
-    return withTool ? validTool && finish === 'tool-calls' : text.trim() === 'OK' && finish === 'stop';
+    return validTool && finish === 'tool-calls';
   };
   try {
-    const text = await call(false);
-    if (text !== true) return { ...result, failure: text === 'truncated' ? 'truncated' : 'invalid-output' };
+    const outcome = await call();
+    if (outcome !== true) return { ...result, failure: outcome === 'truncated' ? 'truncated' : 'invalid-output' };
     result.text = 'passed';
-    const tools = await call(true);
-    if (tools !== true) return { ...result, failure: tools === 'truncated' ? 'truncated' : 'invalid-output' };
     result.tools = 'passed';
     return result;
   } catch (error) {

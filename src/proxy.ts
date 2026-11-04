@@ -224,9 +224,9 @@ export function startProxyCatalog(
       const modelPathMatch = req.url.match(/^\/v1\/models\/([^?]+)/);
       if (modelPathMatch) {
         const id = decodeURIComponent(modelPathMatch[1]);
-        if (options.pool && id === CLAUDE_POOL_MODEL_ID) {
+        if (options.pool && routeLookupIds(id).includes(CLAUDE_POOL_MODEL_ID)) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(formatAnthropicModelEntry(id, options.pool.displayName, options.pool.contextWindow)));
+          res.end(JSON.stringify(formatAnthropicModelEntry(CLAUDE_POOL_MODEL_ID, options.pool.displayName, options.pool.contextWindow)));
           return;
         }
         const route = lookupRoute(byAlias, id);

@@ -16,9 +16,14 @@ const CODEX_SUBAGENT_MAX = 1;
 const UPDATE_COMMAND = 'npm install -g @jacobbd/relay-ai@latest';
 
 const state = {
-  pool: null,
-  poolBusy: false,
+  freePoolMembers: [],
+  freePoolEnabled: false,
+  pool: null,          // { data, error } from GET /api/pool
   poolSearch: '',
+  poolMinCtx: 0,
+  poolPage: 1,
+  poolBusy: false,
+
   providers: [],
   templates: [],   // unconfigured available templates
   allModels: [],
@@ -196,6 +201,8 @@ async function api(method, path, body) {
 async function loadConfig() {
   const data = await api('GET', '/api/config');
   state.generalFavorites = data.favoriteModels ?? [];
+  state.freePoolMembers = data.freePoolMembers ?? [];
+  state.freePoolEnabled = data.freePoolEnabled === true;
   state.codexSubagentModels = (data.codexSubagentModels ?? []).slice(0, CODEX_SUBAGENT_MAX);
 }
 
@@ -536,6 +543,8 @@ function toggleModelFavoriteMenu(button, providerId, modelId) {
   }
   closeModelFavPopover();
 
+  const model = state.providers.find(item => item.id === providerId)?.models?.find(item => item.id === modelId);
+  const pool = model ? poolRowState(providerId, model) : { state: 'hidden' };
   const isGenFav = isGeneralFavorite(providerId, modelId);
   const isSubagent = state.codexSubagentModels.some(f => f.providerId === providerId && f.modelId === modelId);
   const genAtCapacity = state.generalFavorites.length >= GENERAL_MAX;
@@ -555,6 +564,14 @@ function toggleModelFavoriteMenu(button, providerId, modelId) {
   if (isSubagent) subagentLabel = '✓ In Codex SubAgent';
   else if (subagentAtCapacity) subagentLabel = `✦ Codex SubAgent full (${CODEX_SUBAGENT_MAX}/${CODEX_SUBAGENT_MAX})`;
 
+  // The pool is a third destination, not a second plus button on the row.
+  const showPool = pool.state !== 'hidden';
+  const poolDisabled = pool.state === 'member' || pool.state === 'blocked';
+  let poolLabel = '⇄ Add to Relay Free Pool';
+  if (pool.state === 'member') poolLabel = '✓ In Relay Free Pool';
+  else if (pool.state === 'blocked') poolLabel = 'Relay Free Pool unavailable';
+  const poolTitle = pool.state === 'blocked' ? pool.reason : '';
+
   popover.innerHTML = `
     <button class="model-fav-popover-item ${genDisabled ? 'disabled' : ''}" type="button" data-type="general" ${genDisabled ? 'disabled' : ''}>
       <span>${genLabel}</span>
@@ -564,12 +581,21 @@ function toggleModelFavoriteMenu(button, providerId, modelId) {
       <span>${subagentLabel}</span>
       <span class="popover-slot-count">${state.codexSubagentModels.length}/${CODEX_SUBAGENT_MAX}</span>
     </button>
+    ${showPool ? `<button class="model-fav-popover-item ${poolDisabled ? 'disabled' : ''}" type="button" data-type="free-pool" title="${escapeHtml(poolTitle)}" ${poolDisabled ? 'disabled' : ''}>
+      <span>${poolLabel}</span>
+      <span class="popover-slot-count">${pool.state === 'member' ? '✓' : 'free'}</span>
+    </button>` : ''}
   `;
 
   popover.querySelectorAll('.model-fav-popover-item').forEach(item => {
     item.addEventListener('click', event => {
       event.stopPropagation();
       const listType = item.dataset.type;
+      if (listType === 'free-pool') {
+        closeModelFavPopover();
+        void toggleFreePoolModel(providerId, modelId);
+        return;
+      }
       addToFavorites({ providerId, modelId }, listType);
       closeModelFavPopover();
       showToast(
@@ -671,10 +697,11 @@ function renderProviderModelBrowser() {
               <td class="ctx-cell" data-model-id="${escapeHtml(model.id)}">${contextCellHtml(provider.id, model, showActions)}</td>
               <td>${formatModelPrice(model.cost, isFreeModel(model), freeBadgeLabel(model), model.referencePrice)}</td>
                 <td class="td-actions">
-                  <button class="btn btn-ghost btn-model-test" type="button" data-model-id="${escapeHtml(model.id)}" title="Send a short query to check this model responds. Uses a small amount of provider quota.">Test</button>
+                  <button class="btn btn-ghost btn-model-test" type="button" data-model-id="${escapeHtml(model.id)}" title="One small request, up to 256 output tokens. Checks response and tool calling. No retries.">Test</button>
                   <button class="btn-model-hide${model.hidden ? ' is-hidden' : ''}" type="button" data-model-id="${escapeHtml(model.id)}" aria-pressed="${model.hidden ? 'true' : 'false'}" title="${model.hidden ? 'Unhide' : 'Hide'}" aria-label="${model.hidden ? 'Unhide' : 'Hide'} ${escapeHtml(model.name || model.id)}">${model.hidden ? EYE_OFF_ICON : EYE_ICON}</button>
                   ${showActions ? `
                   <button class="btn-model-add" type="button" data-model-id="${escapeHtml(model.id)}" title="Add to favorites">+</button>
+                  ${poolRowButton(provider.id, model)}
                   ` : ''}
                 </td>
             </tr>
@@ -723,6 +750,10 @@ function renderProviderModelBrowser() {
       });
     });
   }
+  container.querySelectorAll('.btn-model-pool').forEach(button => {
+    const action = button.classList.contains('is-pooled') ? 'remove' : 'add';
+    button.addEventListener('click', () => toggleFreePoolModel(provider.id, button.dataset.modelId, button, action));
+  });
   container.querySelectorAll('.btn-model-test').forEach(button => {
     button.addEventListener('click', () => testModelResponse(button, provider.id, button.dataset.modelId));
   });
@@ -808,8 +839,8 @@ function contextCellHtml(providerId, model, showActions) {
   const pencil = showActions ? `<button class="btn-ctx-edit" type="button" title="Edit context size" aria-label="Edit context size">${PENCIL_ICON}</button>` : '';
   const [label, tip] = model.contextWindowOverride === 'user' ? ['manual', 'Set by you. Tests won\'t change it.']
     : model.contextWindowOverride === 'measured' ? ['measured', 'Measured from the server by a model test.']
-    : model.contextWindowEstimate === 'models.dev' ? ['estimate', 'From models.dev (the model\'s usual size); this server may run a smaller limit. Click Test or the pencil to confirm.']
-    : model.contextWindowEstimate ? ['estimate', 'Relay\'s guess from the model name. Click Test or the pencil to confirm.']
+    : model.contextWindowEstimate === 'models.dev' ? ['estimate', 'From models.dev (the model\'s usual size); this server may run a smaller limit. Use Measure context sizes or the pencil to confirm.']
+    : model.contextWindowEstimate ? ['estimate', 'Relay\'s guess from the model name. Use Measure context sizes or the pencil to confirm.']
     : [null, null];
   const labelHtml = label ? `<span class="ctx-label ctx-label-${label}" title="${tip}">${label}</span>` : '';
   return `${fmtCtx(model.contextWindow) || '—'}${pencil}${labelHtml}`;
@@ -1126,7 +1157,7 @@ function contextTestNote(context) {
   return ` · context ${fmtCtx(context.measured)} confirmed`;
 }
 
-async function testModelResponse(button, providerId, modelId) {
+async function testModelResponse(button, providerId, modelId, options = {}) {
   button.disabled = true;
   button.textContent = 'Testing…';
   button.setAttribute('aria-busy', 'true');
@@ -1140,7 +1171,15 @@ async function testModelResponse(button, providerId, modelId) {
     button.title = result.ok ? `Responded in ${(result.latencyMs / 1000).toFixed(1)}s` : result.error;
     if (result.ok) applyTestContextResult(providerId, modelId, result.context);
     applyTestKindResult(providerId, modelId, result.notChat ?? result.context?.notChat);
-    showToast(result.ok ? `${modelId} responded in ${(result.latencyMs / 1000).toFixed(1)}s${contextTestNote(result.context)}` : `${modelId}: ${result.error || 'Test failed'}`);
+    const pool = result.pool;
+    const capabilityNote = result.ok ? (result.toolsPassed ? ' · tool calling passed' : ' · tool calling not confirmed') : '';
+    const poolNote = pool?.status === 'verified' ? ' · verified for the Relay Free Pool'
+      : pool?.reason ? ` · pool: ${pool.reason}` : '';
+    const message = result.ok
+      ? `${modelId} responded in ${(result.latencyMs / 1000).toFixed(1)}s${capabilityNote}${contextTestNote(result.context)}${poolNote}`
+      : `${modelId}: ${result.error || 'Test failed'}`;
+    showToast(message, undefined, poolNote ? 5000 : 2200);
+    if (pool || options.pool || poolMember(providerId, modelId)) await loadFreePool();
   } catch {
     button.textContent = 'Retry test';
     showToast('Could not complete the model test. Check the connection and try again.');
@@ -2719,6 +2758,393 @@ function buildModelResults(filter, listType) {
   }
 }
 
+// ─── Relay Free Pool ─────────────────────────────────────────────────────────
+//
+// The pool is one virtual model ("Relay Free Pool") in each tool's switcher.
+// Membership lives here and never touches Favorites. Eligibility comes from the
+// server so this page and the provider table always agree; unknown context is
+// allowed to join, and Test reports any routing problem.
+
+const POOL_TARGET_LABELS = { claude: 'Claude Code', codex: 'Codex CLI', antigravity: 'Antigravity' };
+const POOL_EFFORT_LEVELS = ['auto', 'low', 'medium', 'high'];
+
+function poolData() {
+  return state.pool?.data ?? null;
+}
+
+function poolMember(providerId, modelId) {
+  const members = poolData()?.members ?? state.freePoolMembers;
+  return members.some(item => item.providerId === providerId && item.modelId === modelId);
+}
+
+function poolCandidateFor(providerId, modelId) {
+  return poolData()?.candidates?.find(item => item.providerId === providerId && item.modelId === modelId);
+}
+
+function poolRowState(providerId, model) {
+  const candidate = poolCandidateFor(providerId, model.id);
+  if (candidate) {
+    if (candidate.alreadyAdded) return { state: 'member' };
+    if (candidate.canAdd) return { state: 'add' };
+    return { state: 'blocked', reason: candidate.addReason || 'This model cannot join the free pool' };
+  }
+  if (model.hidden) return { state: 'hidden' };
+  if (model.freeStatus === 'verified_free' || (model.cost && model.cost.input === 0 && model.cost.output === 0)) return { state: 'add' };
+  if (model.freeStatus === 'free_provider') return { state: 'blocked', reason: 'Requires verified zero pricing' };
+  return { state: 'hidden' };
+}
+
+// Provider table shortcut. Favorites keep the "+"; the pool uses its own glyph
+// so the two destinations stay visually distinct.
+function poolRowButton(providerId, model) {
+  const info = poolRowState(providerId, model);
+  if (info.state === 'hidden') return '';
+  const label = escapeHtml(model.name || model.id);
+  if (info.state === 'member') {
+    return `<button class="btn-model-add btn-model-pool is-pooled" type="button" data-model-id="${escapeHtml(model.id)}" title="In Relay Free Pool · click to remove" aria-label="Remove ${label} from the Relay Free Pool">✓</button>`;
+  }
+  if (info.state === 'blocked') {
+    return `<button class="btn-model-add btn-model-pool" type="button" disabled data-model-id="${escapeHtml(model.id)}" title="${escapeHtml(info.reason)}" aria-label="${escapeHtml(info.reason)}">⇄</button>`;
+  }
+  return `<button class="btn-model-add btn-model-pool" type="button" data-model-id="${escapeHtml(model.id)}" title="Add to Relay Free Pool" aria-label="Add ${label} to the Relay Free Pool">⇄</button>`;
+}
+
+async function toggleFreePoolModel(providerId, modelId, button, action) {
+  if (state.poolBusy) return;
+  const adding = action ? action === 'add' : !poolMember(providerId, modelId);
+  state.poolBusy = true;
+  if (button) button.disabled = true;
+  try {
+    const result = await api('POST', '/api/pool', { action: adding ? 'add' : 'remove', providerId, modelId });
+    if (result.error || result.ok === false) {
+      showToast(result.error ?? 'Could not update the Relay Free Pool', undefined, 5000);
+      await loadFreePool();
+      return;
+    }
+    await loadConfig();
+    await loadFreePool();
+    if (providerIdFromHash()) renderProviderModelBrowser();
+    showToast(adding ? 'Added to Relay Free Pool' : 'Removed from Relay Free Pool');
+  } finally {
+    state.poolBusy = false;
+    if (button) button.disabled = false;
+  }
+}
+
+let poolLoadSequence = 0;
+async function loadFreePool() {
+  const panel = document.getElementById('free-pool-panel');
+  if (!panel) return;
+  const sequence = ++poolLoadSequence;
+  if (!state.pool) panel.innerHTML = '<div class="provider-browser-empty">Loading free models…</div>';
+  let next;
+  try {
+    const data = await api('GET', '/api/pool');
+    if (data?.error) throw new Error(data.error);
+    next = { data, error: null };
+  } catch (error) {
+    next = { data: state.pool?.data ?? null, error: error?.message || 'Could not load the free pool' };
+  }
+  // A slower earlier request must never overwrite a newer catalog.
+  if (sequence !== poolLoadSequence) return;
+  state.pool = next;
+  renderFreePool();
+}
+
+
+function renderFreePoolStats(pool) {
+  const el = document.getElementById('free-pool-stats');
+  if (!el) return;
+  const total = (pool.candidates ?? []).length;
+  el.innerHTML = `
+    <div class="provider-stat">
+      <div class="provider-stat-value"><span>${total}</span></div>
+      <div class="provider-stat-label">free models</div>
+    </div>
+  `;
+}
+
+function poolKindHtml(candidate) {
+  const info = KIND_INFO[candidate.kind];
+  if (!info) return '<span class="kind-unknown">❔ Unknown</span>';
+  const tip = candidate.kindSource === 'manual' ? 'Set by you.'
+    : candidate.kindSource === 'test' ? 'Confirmed by a Test.'
+    : candidate.kindSource === 'models.dev' ? 'Type listed on models.dev for this model.'
+    : 'Detected from the model catalog.';
+  return `<span title="${escapeHtml(tip)}"><span class="kind-icon" aria-hidden="true">${info[0]}</span>${info[1]}</span>`;
+}
+
+function poolAddCellHtml(candidate, manageable) {
+  if (!manageable) return '';
+  const label = escapeHtml(candidate.name || candidate.modelId);
+  if (candidate.alreadyAdded) {
+    return `<button class="btn-model-add btn-model-pool is-pooled" type="button" disabled title="In Relay Free Pool" aria-label="${label} is in the Relay Free Pool">✓</button>`;
+  }
+  if (!candidate.canAdd) {
+    const reason = escapeHtml(candidate.addReason || 'This model cannot join the free pool');
+    return `<button class="btn-model-add btn-model-pool" type="button" disabled title="${reason}" aria-label="${reason}">+</button>`;
+  }
+  return `<button class="btn-model-add btn-model-pool pool-add" type="button" data-provider-id="${escapeHtml(candidate.providerId)}" data-model-id="${escapeHtml(candidate.modelId)}" title="Add to pool" aria-label="Add ${label} to the Relay Free Pool">+</button>`;
+}
+
+function poolMemberRowHtml(member, index, manageable) {
+  const status = member.status === 'Ready' ? ['is-ready', 'Ready']
+    : member.status === 'Unavailable' ? ['is-unavailable', 'Unavailable']
+    : ['is-pending', 'Needs test'];
+  const facts = [];
+  if (member.targets?.length) facts.push(member.targets.map(target => POOL_TARGET_LABELS[target] ?? target).join(' · '));
+  if (member.expiresAt) facts.push(`valid until ${new Date(member.expiresAt).toLocaleString()}`);
+  const reason = member.reason ? `<div class="pool-member-reason">${escapeHtml(member.reason)}</div>` : '';
+  const actions = manageable ? `
+    <div class="pool-member-actions">
+      <button class="btn btn-ghost pool-test" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" title="One small request, up to 256 output tokens. No retries or context/reasoning probes.">Test</button>
+      <button class="btn btn-ghost pool-move" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" data-direction="-1" ${index === 0 ? 'disabled' : ''} title="Move earlier in routing priority" aria-label="Move ${escapeHtml(member.name)} up">↑</button>
+      <button class="btn btn-ghost pool-move" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" data-direction="1" ${index === poolData().members.length - 1 ? 'disabled' : ''} title="Move later in routing priority" aria-label="Move ${escapeHtml(member.name)} down">↓</button>
+      <details class="pool-advanced-menu">
+        <summary class="btn btn-ghost">Advanced…</summary>
+        <div class="pool-advanced-options">
+          <button class="btn btn-ghost pool-context" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}">Measure context · 1 request</button>
+          <button class="btn btn-ghost pool-set-context" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}">Set context · no requests</button>
+          ${member.reasoningTestRequests > 1 ? '<button class="btn btn-ghost pool-reasoning" type="button" data-provider-id="' + escapeHtml(member.providerId) + '" data-model-id="' + escapeHtml(member.modelId) + '" data-requests="' + member.reasoningTestRequests + '">Check reasoning · up to ' + member.reasoningTestRequests + ' requests</button>' : ''}
+        </div>
+      </details>
+      <button class="btn btn-ghost pool-remove" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" title="Remove from the Relay Free Pool">Remove</button>
+    </div>` : '';
+  return `<li class="pool-member-row">
+    <span class="pool-rank" aria-hidden="true">${index + 1}</span>
+    <div class="pool-member-main">
+      <div class="pool-member-title">
+        <strong>${escapeHtml(member.name)}</strong>
+        <span class="provider-pill">${escapeHtml(member.providerName)}</span>
+        <span class="pool-status ${status[0]}">${status[1]}</span>
+      </div>
+      <div class="pool-member-meta">${escapeHtml(member.modelId)}${facts.length ? ' · ' + escapeHtml(facts.join(' · ')) : ''}</div>
+      ${reason}
+    </div>
+    ${actions}
+  </li>`;
+}
+
+function poolCandidateRowHtml(candidate, manageable) {
+  const name = candidate.name || candidate.modelId;
+  const estimate = candidate.contextWindowEstimated ? '<span class="ctx-label">estimate</span>' : '';
+  const eye = manageable
+    ? `<button class="btn-model-hide pool-hide" type="button" data-provider-id="${escapeHtml(candidate.providerId)}" data-model-id="${escapeHtml(candidate.modelId)}" title="Hide this model" aria-label="Hide ${escapeHtml(name)}">${EYE_ICON}</button>`
+    : '';
+  const test = manageable
+    ? `<button class="btn btn-ghost pool-test" type="button" data-provider-id="${escapeHtml(candidate.providerId)}" data-model-id="${escapeHtml(candidate.modelId)}" title="One small request, up to 256 output tokens. Checks response and tool calling. No retries.">Test</button>`
+    : '';
+  return `<tr>
+    <td><strong>${escapeHtml(name)}</strong><span class="provider-pill">${escapeHtml(candidate.providerName)}</span><code title="${escapeHtml(candidate.modelId)}">${escapeHtml(candidate.modelId)}</code></td>
+    <td>${poolKindHtml(candidate)}</td>
+    <td>${fmtCtx(candidate.contextWindow) || '—'}${estimate}</td>
+    <td>${formatModelPrice(candidate.cost, true, 'FREE')}</td>
+    <td class="td-actions">${test}${eye}${poolAddCellHtml(candidate, manageable)}</td>
+  </tr>`;
+}
+
+
+function renderFreePool() {
+  const panel = document.getElementById('free-pool-panel');
+  if (!panel) return;
+  const pool = poolData();
+  if (!pool) {
+    const message = escapeHtml(state.pool?.error || 'Loading free models…');
+    const retry = state.pool?.error ? ' <button class="btn btn-ghost" type="button" id="free-pool-retry">Retry</button>' : '';
+    panel.innerHTML = `<div class="provider-browser-empty">${message}${retry}</div>`;
+    document.getElementById('free-pool-retry')?.addEventListener('click', () => { state.pool = null; void loadFreePool(); });
+    return;
+  }
+
+  renderFreePoolStats(pool);
+  const manageable = !isServerAdminUi();
+  const tasks = pool.candidates ?? [];
+  const filtered = tasks.filter(candidate =>
+    matchesModelSearch(`${candidate.name} ${candidate.modelId} ${candidate.providerName}`, state.poolSearch)
+    && (!state.poolMinCtx || (candidate.contextWindow ?? 0) >= state.poolMinCtx));
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PROVIDER_MODEL_PAGE_SIZE));
+  state.poolPage = Math.min(Math.max(1, state.poolPage), totalPages);
+  const start = (state.poolPage - 1) * PROVIDER_MODEL_PAGE_SIZE;
+  const items = filtered.slice(start, start + PROVIDER_MODEL_PAGE_SIZE);
+
+  const members = pool.members ?? [];
+  const memberHtml = members.length
+    ? `<ol class="pool-member-list">${members.map((member, index) => poolMemberRowHtml(member, index, manageable)).join('')}</ol>`
+    : '<p class="pool-empty">No models yet. Add one from the free model list below.</p>';
+
+  const enabled = pool.enabled === true;
+  const effortOptions = POOL_EFFORT_LEVELS
+    .map(level => `<option value="${level}" ${pool.effort === level ? 'selected' : ''}>${level === 'auto' ? 'Auto (provider default)' : level}</option>`)
+    .join('');
+  const notice = state.pool?.error
+    ? `<div class="pool-notice">Could not refresh the list. ${escapeHtml(state.pool.error)} <button class="btn btn-ghost" type="button" id="free-pool-retry">Retry</button></div>`
+    : '';
+  const controls = manageable ? `
+    <div class="pool-controls">
+      <label class="pool-toggle">
+        <input type="checkbox" id="free-pool-enabled" ${enabled ? 'checked' : ''}>
+        <span>Enabled</span>
+      </label>
+      <label class="pool-effort">
+        <span>Reasoning effort</span>
+        <select class="filter-select" id="free-pool-effort" ${enabled ? '' : 'disabled'}>${effortOptions}</select>
+      </label>
+      <p class="pool-hint">${enabled ? 'Relay Free Pool is one model in your switcher; requests fall back only inside this pool.' : 'Turn this on to add Relay Free Pool to your tool’s model switcher.'}</p>
+    </div>` : `
+    <p class="pool-hint">${enabled ? 'Enabled. Relay Free Pool is one model in the switcher.' : 'Disabled.'}</p>`;
+
+  const countLabel = filtered.length === tasks.length ? String(tasks.length) : filtered.length + ' of ' + tasks.length;
+  const rangeLabel = filtered.length === tasks.length ? String(tasks.length) : filtered.length + ' of ' + tasks.length;
+  const pagination = filtered.length > PROVIDER_MODEL_PAGE_SIZE ? `
+    <div class="provider-model-pagination">
+      <span>${start + 1}–${Math.min(start + PROVIDER_MODEL_PAGE_SIZE, filtered.length)} of ${filtered.length}</span>
+      <div>
+        <button class="btn btn-ghost" id="free-pool-prev" type="button" ${state.poolPage <= 1 ? 'disabled' : ''}>Previous</button>
+        <span>Page ${state.poolPage} of ${totalPages}</span>
+        <button class="btn btn-primary" id="free-pool-next" type="button" ${state.poolPage >= totalPages ? 'disabled' : ''}>Next</button>
+      </div>
+    </div>` : (filtered.length ? `<p class="pool-range">${rangeLabel} shown</p>` : '');
+
+  panel.innerHTML = `
+    ${notice}
+    <div class="pool-section-head">
+      <h2 class="pool-heading">In the pool <span class="pool-count">${members.length}</span></h2>
+    </div>
+    ${memberHtml}
+    ${controls}
+    <div class="pool-section-head">
+      <h2 class="pool-heading">Free models <span class="pool-count">${countLabel}</span></h2>
+      <p class="section-sub">Every free model Relay can see, across ${new Set(tasks.map(item => item.providerId)).size} provider accounts. Models without verified zero pricing stay listed so this total matches your free catalog.</p>
+    </div>
+    <p class="pool-hint">Test uses 1 request with up to 256 output tokens and no retries. Context and reasoning checks are optional under Advanced after adding a model. Adding models and launching tools never run tests.</p>
+    <div class="provider-browser-tools pool-tools">
+      <div class="search-field">
+        <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input class="search-input" id="free-pool-search" type="search" value="${escapeHtml(state.poolSearch)}" placeholder="Search free models or provider accounts…" aria-label="Search free models">
+      </div>
+      <div class="provider-model-filters">
+        <select class="filter-select" id="free-pool-ctx" aria-label="Filter by context window size">
+          <option value="0" ${state.poolMinCtx === 0 ? 'selected' : ''}>All context sizes</option>
+          <option value="128000" ${state.poolMinCtx === 128000 ? 'selected' : ''}>≥ 128k</option>
+          <option value="200000" ${state.poolMinCtx === 200000 ? 'selected' : ''}>≥ 200k</option>
+          <option value="500000" ${state.poolMinCtx === 500000 ? 'selected' : ''}>≥ 500k</option>
+          <option value="1000000" ${state.poolMinCtx === 1000000 ? 'selected' : ''}>≥ 1M</option>
+        </select>
+      </div>
+      <button class="btn btn-ghost" id="free-pool-refresh" type="button" title="Reload the free model list">Refresh</button>
+    </div>
+    <div class="provider-model-table-wrap">
+      <table class="provider-model-table">
+        <thead><tr><th>Model</th><th>Type</th><th>Context</th><th>Price in / out <span tabindex="0" class="price-help" aria-label="About price estimates">ⓘ<span role="tooltip">Prices are estimates per 1M tokens and may not reflect the provider’s actual pricing or promotions. Check the provider’s pricing page.</span></span></th><th class="th-actions">Actions</th></tr></thead>
+        <tbody>
+          ${items.map(candidate => poolCandidateRowHtml(candidate, manageable)).join('')
+            || '<tr><td colspan="5" class="provider-model-empty">No free models match your search and filters.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+    ${pagination}
+  `;
+
+  const rerender = () => renderFreePool();
+  document.getElementById('free-pool-retry')?.addEventListener('click', () => { void loadFreePool(); });
+  document.getElementById('free-pool-search')?.addEventListener('input', event => {
+    state.poolSearch = event.target.value;
+    state.poolPage = 1;
+    rerender();
+    const next = document.getElementById('free-pool-search');
+    next?.focus();
+    next?.setSelectionRange(next.value.length, next.value.length);
+  });
+  document.getElementById('free-pool-ctx')?.addEventListener('change', event => {
+    state.poolMinCtx = parseInt(event.target.value, 10) || 0;
+    state.poolPage = 1;
+    rerender();
+  });
+  document.getElementById('free-pool-refresh')?.addEventListener('click', async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = 'Refreshing…';
+    await loadFreePool();
+  });
+  document.getElementById('free-pool-prev')?.addEventListener('click', () => {
+    state.poolPage -= 1;
+    rerender();
+  });
+  document.getElementById('free-pool-next')?.addEventListener('click', () => {
+    state.poolPage += 1;
+    rerender();
+  });
+  document.getElementById('free-pool-enabled')?.addEventListener('change', async event => {
+    const input = event.currentTarget;
+    const next = input.checked;
+    input.disabled = true;
+    const result = await api('POST', '/api/pool', { action: 'enabled', enabled: next });
+    if (result.error || result.ok === false) {
+      input.checked = !next;
+      input.disabled = false;
+      showToast(result.error ?? 'Could not change the pool', undefined, 5000);
+      return;
+    }
+    showToast(next ? 'Relay Free Pool is on. Pick it as a model in your tool.' : 'Relay Free Pool is off');
+    await loadFreePool();
+  });
+  document.getElementById('free-pool-effort')?.addEventListener('change', async event => {
+    const select = event.currentTarget;
+    select.disabled = true;
+    const result = await api('POST', '/api/pool', { action: 'effort', effort: select.value });
+    if (result.error || result.ok === false) {
+      showToast(result.error ?? 'Could not save the effort level', undefined, 5000);
+    }
+    await loadFreePool();
+  });
+  panel.querySelectorAll('.pool-test').forEach(button => {
+    button.addEventListener('click', () => testModelResponse(button, button.dataset.providerId, button.dataset.modelId, { pool: true }));
+  });
+  panel.querySelectorAll('.pool-context, .pool-reasoning, .pool-set-context, .pool-move').forEach(button => {
+    button.addEventListener('click', async () => {
+      const { providerId, modelId } = button.dataset;
+      button.disabled = true;
+      try {
+        if (button.classList.contains('pool-context')) {
+          if (!window.confirm('Measure context: 1 extra request. This may consume quota even if rejected. Continue?')) return;
+          const result = await api('POST', '/api/providers/models/measure-context', { providerId, modelId });
+          if (result.ok) applyTestContextResult(providerId, modelId, result.context);
+          showToast(result.ok ? (contextTestNote(result.context) || 'Provider did not report a context limit.') : (result.error || 'Context check failed'));
+        } else if (button.classList.contains('pool-set-context')) {
+          const entered = window.prompt('Context size in tokens (e.g. 128000). Enter reset to use provider metadata. No test requests.');
+          if (entered === null) return;
+          const contextWindow = entered.trim() === 'reset' ? null : Number(entered);
+          if (contextWindow !== null && (!Number.isSafeInteger(contextWindow) || contextWindow <= 0)) { showToast('Enter a positive token count or reset.'); return; }
+          const result = await api('POST', '/api/providers/models/context', { providerId, modelId, contextWindow });
+          showToast(result.ok ? 'Context size saved. Run Test to update pool readiness.' : (result.error || 'Could not save context.'));
+        } else if (button.classList.contains('pool-move')) {
+          const result = await api('POST', '/api/pool', { action: 'move', providerId, modelId, direction: Number(button.dataset.direction) });
+          if (!result.ok) showToast(result.error || 'Could not change priority.');
+        } else {
+          if (!window.confirm('Check reasoning: up to ' + button.dataset.requests + ' extra requests, with no retries. These consume message and token quota. Continue?')) return;
+          const result = await api('POST', '/api/pool', { action: 'verify', providerId, modelId, reasoning: true });
+          showToast(result.ok ? 'Reasoning checks complete.' : (result.error || 'Reasoning checks failed'));
+        }
+        await loadFreePool();
+      } catch { showToast('Could not complete this action. Try again.'); }
+      finally { button.disabled = false; }
+    });
+  });
+  panel.querySelectorAll('.pool-add').forEach(button => {
+    button.addEventListener('click', () => toggleFreePoolModel(button.dataset.providerId, button.dataset.modelId, button, 'add'));
+  });
+  panel.querySelectorAll('.pool-remove').forEach(button => {
+    button.addEventListener('click', () => toggleFreePoolModel(button.dataset.providerId, button.dataset.modelId, button, 'remove'));
+  });
+  panel.querySelectorAll('.pool-hide').forEach(button => {
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      await toggleModelHidden(button.dataset.providerId, button.dataset.modelId);
+      await loadFreePool();
+    });
+  });
+}
+
 // ─── Favorites CRUD ───────────────────────────────────────────────────────────
 
 function addToFavorites(fav, listType) {
@@ -3079,6 +3505,9 @@ async function init() {
   void initUpdateIndicator();
 
   document.getElementById('theme-toggle')?.addEventListener('click', toggleTheme);
+  window.addEventListener('hashchange', () => {
+    if (window.location.hash === '#free-pool') void loadFreePool();
+  });
 
   await loadConfig();
   void loadFreePool();
@@ -4244,103 +4673,3 @@ window.stopServerGateway = stopServerGateway;
 window.copyServerValue = copyServerValue;
 window.copyPlainText = copyPlainText;
 window.toggleServerApiKeyVisibility = toggleServerApiKeyVisibility;
-
-// Shared free-model pool. Membership edits never modify Favorites.
-async function loadFreePool() {
-  const panel = document.getElementById('free-pool-panel');
-  try {
-    const data = await api('GET', '/api/pool');
-    if (data.error) throw new Error(data.error);
-    state.pool = data;
-    renderFreePool();
-  } catch (error) {
-    panel.textContent = 'Could not load the free pool. ' + error.message;
-    const retry = document.createElement('button');
-    retry.className = 'btn btn-ghost'; retry.textContent = 'Retry'; retry.onclick = loadFreePool;
-    panel.appendChild(retry);
-  }
-}
-function renderFreePool() {
-  const panel = document.getElementById('free-pool-panel');
-  const pool = state.pool;
-  if (!pool) return;
-  panel.replaceChildren();
-  const button = (label, action, disabled = false) => {
-    const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'btn btn-ghost';
-    btn.textContent = label; btn.disabled = state.poolBusy || disabled; btn.onclick = action; return btn;
-  };
-  const note = document.createElement('p'); note.className = 'section-sub';
-  note.textContent = 'Add a model, then Verify it. Verification sends small text and tool requests using your provider account. It consumes quota and stays valid for 24 hours. Tools are never executed.';
-  panel.appendChild(note);
-  const controls = document.createElement('div'); controls.className = 'pool-controls';
-  const label = document.createElement('label'); label.textContent = 'Reasoning effort ';
-  const effort = document.createElement('select'); effort.className = 'search-input'; effort.disabled = state.poolBusy;
-  for (const value of ['auto', 'low', 'medium', 'high']) effort.add(new Option(value === 'auto' ? 'Auto (provider default)' : value, value));
-  effort.value = pool.effort; effort.onchange = () => updateFreePool({ action: 'effort', effort: effort.value });
-  label.appendChild(effort); controls.appendChild(label);
-  if (!isServerAdminUi()) for (const [appId, name] of [['claude', 'Claude Code'], ['codex', 'Codex CLI']]) {
-    const ready = pool.members.some(member => member.status === 'Verified' && member.targets.includes(appId)
-      && (pool.effort === 'auto' || member.effortLevels.includes(pool.effort)));
-    controls.appendChild(button('Launch ' + name, () => launchFreePool(appId), !ready));
-  }
-  controls.appendChild(button('Refresh models', loadFreePool));
-  panel.appendChild(controls);
-  const list = document.createElement('ol'); list.className = 'pool-members';
-  pool.members.forEach((member, index) => {
-    const row = document.createElement('li'); row.className = 'pool-member';
-    const info = document.createElement('div'); info.className = 'pool-member-info';
-    const name = document.createElement('strong'); name.textContent = (index + 1) + '. ' + member.name;
-    const detail = document.createElement('div'); detail.className = 'section-sub';
-    detail.textContent = member.providerName + ' · ' + member.status
-      + (member.reason ? ': ' + member.reason : '')
-      + (member.status === 'Verified' ? ' · ' + member.targets.join(', ') + ' · expires ' + new Date(member.expiresAt).toLocaleString() : '');
-    info.append(name, detail); row.appendChild(info);
-    const action = type => updateFreePool({ action: type, providerId: member.providerId, modelId: member.modelId });
-    const up = button('↑', () => updateFreePool({ action: 'move', providerId: member.providerId, modelId: member.modelId, direction: -1 }), index === 0);
-    const down = button('↓', () => updateFreePool({ action: 'move', providerId: member.providerId, modelId: member.modelId, direction: 1 }), index === pool.members.length - 1);
-    up.setAttribute('aria-label', 'Move ' + member.name + ' up'); down.setAttribute('aria-label', 'Move ' + member.name + ' down');
-    row.append(up, down, button(state.poolBusy ? 'Working…' : 'Verify', () => action('verify'), member.status === 'Unavailable'), button('Remove', () => action('remove')));
-    list.appendChild(row);
-  });
-  if (!pool.members.length) {
-    const empty = document.createElement('p'); empty.className = 'fav-empty'; empty.textContent = 'Your pool is empty. Add a free model below to get started.'; panel.appendChild(empty);
-  } else panel.appendChild(list);
-  const heading = document.createElement('h2'); heading.textContent = 'Add free models'; panel.appendChild(heading);
-  const input = document.createElement('input'); input.type = 'search'; input.className = 'search-input';
-  input.placeholder = 'Search free models or provider accounts'; input.setAttribute('aria-label', 'Search models to add to the free pool'); input.value = state.poolSearch;
-  panel.appendChild(input);
-  const results = document.createElement('div'); results.className = 'pool-candidates'; panel.appendChild(results);
-  const renderCandidates = () => {
-    results.replaceChildren();
-    const query = state.poolSearch.toLowerCase();
-    const candidates = pool.candidates.filter(model => (model.name + ' ' + model.modelId + ' ' + model.providerName).toLowerCase().includes(query));
-    for (const model of candidates.slice(0, 50)) {
-      const row = document.createElement('div'); row.className = 'pool-member';
-      const name = document.createElement('span'); name.className = 'pool-member-info'; name.textContent = model.name + ' · ' + model.providerName;
-      const added = pool.members.some(member => member.providerId === model.providerId && member.modelId === model.modelId);
-      row.append(name, button(added ? 'Added' : 'Add to pool', () => updateFreePool({ action: 'add', providerId: model.providerId, modelId: model.modelId }), added)); results.appendChild(row);
-    }
-    if (!candidates.length) results.textContent = 'No eligible free models found. Add a provider, or set or measure a missing context size in Providers. Models with unknown pricing and Zen free models are excluded.';
-    else if (candidates.length > 50) { const hint = document.createElement('p'); hint.textContent = 'Showing 50 results. Search to narrow the list.'; results.appendChild(hint); }
-  };
-  input.oninput = () => { state.poolSearch = input.value; renderCandidates(); }; renderCandidates();
-  const limits = document.createElement('p'); limits.className = 'section-sub';
-  limits.textContent = 'Antigravity includes verified effort variants on its next launch. Codex Desktop and Gemini CLI do not support the pool.'; panel.appendChild(limits);
-}
-async function updateFreePool(body) {
-  if (state.poolBusy) return;
-  state.poolBusy = true; renderFreePool();
-  try {
-    const result = await api('POST', '/api/pool', body);
-    if (result.error || result.ok === false) throw new Error(result.error || result.reason || 'Verification failed');
-    showToast(body.action === 'verify' ? 'Model verified for the free pool' : 'Free pool saved');
-  } catch (error) { showToast(error.message, undefined, 6000); }
-  finally { state.poolBusy = false; await loadFreePool(); }
-}
-async function launchFreePool(appId) {
-  try {
-    const result = await api('POST', '/api/apps/launch', { appId, pool: true });
-    if (result.error) throw new Error(result.error);
-    showToast('Opening ' + (appId === 'claude' ? 'Claude Code' : 'Codex CLI') + ' with the free pool');
-  } catch (error) { showToast(error.message, undefined, 6000); }
-}

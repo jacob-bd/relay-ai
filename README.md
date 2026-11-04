@@ -734,3 +734,7 @@ If something makes you cringe, open an issue or PR. Human expertise is irreplace
 ## License
 
 MIT
+
+### Relay Free Pool
+
+Manage free models with Test and **+ Add to Pool** in the UI, or run `relay-ai pool --help`. Test uses one small request; context and reasoning checks are optional. See the [Free Pool guide](docs/FREE_POOL.md) for UI/CLI equivalents, request costs, readiness and expiry.

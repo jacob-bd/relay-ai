@@ -2373,13 +2373,55 @@ input { font-family: inherit; }
 .price-help { position: relative; cursor: help; display: inline-block; text-transform: none; }
 .price-help [role="tooltip"] { display: none; position: absolute; right: 0; top: 100%; width: 260px; padding: 12px; background: var(--surface-2, var(--surface)); color: var(--text-1); border: 1px solid var(--border); border-radius: 8px; font-size: 12px; font-weight: 400; letter-spacing: normal; line-height: 1.5; z-index: 10; }
 .price-help:hover [role="tooltip"], .price-help:focus [role="tooltip"] { display: block; }
-.provider-model-table th.th-actions { width: 175px; }
+.provider-model-table th.th-actions { width: 205px; }
+.provider-model-table td.td-actions { white-space: nowrap; }
 
-/* Free pool follows the existing compact model-list vocabulary. */
-.pool-controls { display:flex; flex-wrap:wrap; align-items:end; gap:12px; margin:24px 0; }
-.pool-controls label { display:grid; gap:8px; }
-.pool-members { padding-left:0; margin:24px 0; list-style:none; }
-.pool-member { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:12px 0; border-bottom:1px solid var(--border); }
-.pool-member-info { flex:1; min-width:200px; overflow-wrap:anywhere; }
-.pool-member .section-sub { margin:4px 0 0; }
-.pool-candidates { max-height:420px; overflow:auto; margin:12px 0 24px; }
+/* ─── Relay Free Pool ─────────────────────────────────────────────────────── */
+.pool-section-head { margin:26px 0 10px; }
+.pool-heading { display:flex; align-items:center; gap:8px; color:var(--text-1); font-size:16px; font-weight:700; }
+.pool-section-head .section-sub { margin:4px 0 0; }
+.pool-count { display:inline-flex; align-items:center; justify-content:center; min-width:22px; height:20px; padding:0 7px; border:1px solid var(--border); border-radius:999px; background:var(--surface-2); color:var(--text-2); font-size:11px; font-weight:600; }
+.pool-member-list { display:flex; flex-direction:column; gap:8px; margin:0 0 6px; padding:0; list-style:none; }
+.pool-member-row { display:flex; align-items:center; gap:12px; padding:12px 14px; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); }
+.pool-rank { flex-shrink:0; display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:6px; background:var(--surface-2); color:var(--text-3); font-size:12px; font-weight:700; }
+.pool-member-main { flex:1; min-width:0; }
+.pool-member-title { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.pool-member-title strong { color:var(--text-1); font-size:14px; }
+.pool-member-meta { margin-top:4px; color:var(--text-3); font-size:12px; overflow-wrap:anywhere; }
+.pool-member-reason { margin-top:6px; color:var(--text-2); font-size:12px; }
+.pool-member-actions { flex-shrink:0; display:flex; gap:8px; }
+.pool-status { display:inline-flex; align-items:center; padding:2px 8px; border:1px solid var(--border); border-radius:999px; background:var(--surface-2); color:var(--text-2); font-size:11px; font-weight:600; }
+.pool-status.is-ready { border-color:oklch(74% 0.2 155 / 0.35); background:var(--success-bg); color:var(--success); }
+.pool-status.is-pending { border-color:var(--accent-glow); background:var(--accent-muted); color:var(--accent); }
+.pool-status.is-unavailable { border-color:oklch(68% 0.22 25 / 0.35); background:var(--error-bg); color:var(--error); }
+.pool-empty { margin:0; padding:16px; border:1px dashed var(--border); border-radius:var(--radius); color:var(--text-3); font-size:13px; }
+.pool-controls { display:flex; flex-wrap:wrap; align-items:center; gap:12px 18px; margin:16px 0 4px; padding:12px 14px; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); }
+.pool-toggle { display:inline-flex; align-items:center; gap:8px; color:var(--text-1); font-size:13px; font-weight:600; cursor:pointer; }
+.pool-toggle input { width:16px; height:16px; accent-color:var(--accent); cursor:pointer; }
+.pool-effort { display:inline-flex; align-items:center; gap:8px; color:var(--text-2); font-size:12px; }
+.pool-hint { flex:1 1 260px; min-width:200px; margin:0; color:var(--text-3); font-size:12px; line-height:1.5; }
+.pool-notice { margin:0 0 14px; padding:10px 12px; border:1px solid var(--error); border-radius:var(--radius-sm); background:var(--error-bg); color:var(--text-1); font-size:13px; }
+.pool-tools { margin-top:0; }
+.pool-range { margin:10px 0 0; color:var(--text-3); font-size:12px; }
+.provider-pill { display:inline-flex; align-items:center; max-width:100%; margin:3px 0 0; padding:1px 8px; border:1px solid var(--border); border-radius:999px; background:var(--surface-2); color:var(--text-2); font-size:11px; font-weight:600; vertical-align:middle; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pool-member-title .provider-pill { margin:0; }
+.btn-model-pool.is-pooled { border-color:oklch(74% 0.2 155 / 0.4); background:var(--success-bg); color:var(--success); }
+.btn-model-pool:disabled { opacity:0.45; cursor:not-allowed; }
+.btn-model-pool:disabled:hover { border-color:var(--border); background:var(--surface-2); color:var(--text-1); }
+#free-pool { max-width:960px; }
+#free-pool .provider-model-table th:nth-child(2) { width:130px; }
+#free-pool .provider-model-table th:nth-child(3) { width:100px; }
+#free-pool .provider-model-table th:nth-child(4) { width:150px; }
+#free-pool .provider-model-table th:nth-child(5) { width:176px; }
+#free-pool .provider-model-table td strong { display:inline; margin-right:0; }
+#free-pool .provider-model-table td code { margin-top:2px; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#free-pool .provider-model-table td.td-actions { white-space:nowrap; }
+#free-pool .provider-model-table td.td-actions .btn { margin-left:2px; }
+
+.pool-advanced-menu { position: relative; }
+.pool-advanced-menu summary { cursor: pointer; list-style: none; }
+.pool-advanced-menu summary::-webkit-details-marker { display: none; }
+.pool-advanced-options { position: absolute; right: 0; top: 100%; z-index: 5; display: grid; gap: 6px; padding: 10px; min-width: 240px; background: var(--bg-card, #111827); border: 1px solid var(--border, #283244); border-radius: 8px; box-shadow: 0 8px 24px #0004; }
+.pool-advanced-options .btn { text-align: left; white-space: normal; }
+
+.pool-member-actions { flex-wrap: wrap; justify-content: flex-end; }
