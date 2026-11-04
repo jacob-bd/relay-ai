@@ -6619,14 +6619,21 @@ import * as p9 from "@clack/prompts";
 async function pickCodexLaunchMode(nativeName = "Codex") {
   return pickLaunchMode(nativeName);
 }
-async function pickCodexProvider(providers, prefs, hasFavorites = false, initialProviderId) {
-  if (providers.length === 0 && !hasFavorites) return null;
+async function pickCodexProvider(providers, prefs, hasFavorites = false, initialProviderId, hasPool = false) {
+  if (providers.length === 0 && !hasFavorites && !hasPool) return null;
   const options = providers.map((lp) => providerSelectOption(lp));
   if (hasFavorites) {
     options.unshift({
       value: "__favorites__",
       label: "\u2B50 Favorites Catalog",
       hint: `${prefs.favoriteModels?.length ?? 0} saved favorites`
+    });
+  }
+  if (hasPool) {
+    options.splice(hasFavorites ? 1 : 0, 0, {
+      value: "__pool__",
+      label: "\u{1F3CA} Relay Free Pool",
+      hint: "experimental \xB7 falls back across your free models"
     });
   }
   const initial = initialProviderId && options.some((o) => o.value === initialProviderId) ? initialProviderId : prefs.lastCodexProvider && options.some((o) => o.value === prefs.lastCodexProvider) ? prefs.lastCodexProvider : options[0].value;
@@ -6640,6 +6647,7 @@ async function pickCodexProvider(providers, prefs, hasFavorites = false, initial
     return null;
   }
   if (chosen === "__favorites__") return "__favorites__";
+  if (chosen === "__pool__") return "__pool__";
   return providers.find((lp) => lp.id === chosen) ?? null;
 }
 async function pickCodexModel(provider, prefs, refresh) {
@@ -7655,8 +7663,14 @@ Error: ${launchPlan.error}
   } else if (!configOnly) {
     let currentInitialProvider = prefs.lastCodexProvider && compatible.some((o) => o.id === prefs.lastCodexProvider) ? prefs.lastCodexProvider : compatible[0].id;
     while (true) {
-      const pickedProvider = await pickCodexProvider(compatible, prefs, favoritesPickable, currentInitialProvider);
+      const pickedProvider = await pickCodexProvider(compatible, prefs, favoritesPickable, currentInitialProvider, Boolean(additive));
       if (!pickedProvider) return 0;
+      if (pickedProvider === "__pool__") {
+        if (mixedMode && !agentStdout) {
+          p10.log.info("Starting on Relay Free Pool uses Relay models only for now (your normal Codex models are not added).");
+        }
+        return runCodexCommand2(codexArgs, trace, { ...launch, pool: true });
+      }
       if (pickedProvider === "__favorites__") {
         const favoriteStart = await pickFavoriteStartModel(
           compatible,
@@ -14226,6 +14240,7 @@ async function runCodexAppCommand(args, opts = {}) {
     while (true) {
       const pickedProvider = await pickCodexProvider(compatible, prefs, favoritesPickable, currentInitialProvider);
       if (!pickedProvider) return 0;
+      if (pickedProvider === "__pool__") continue;
       if (pickedProvider === "__favorites__") {
         const favoriteStart = await pickFavoriteStartModel(
           compatible,
@@ -15151,6 +15166,7 @@ async function runClaudeAppCommand(args, boot) {
     providerPick: while (true) {
       const pickedProvider = await pickCodexProvider(compatible, prefs, hasFavorites);
       if (!pickedProvider) return 0;
+      if (pickedProvider === "__pool__") continue;
       if (pickedProvider === "__favorites__") {
         const favoriteStart = await pickFavoriteStartModel(
           compatible,

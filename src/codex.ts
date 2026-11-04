@@ -646,8 +646,15 @@ export async function runCodexCommand(
       ? prefs.lastCodexProvider
       : compatible[0]!.id;
     while (true) {
-      const pickedProvider = await pickCodexProvider(compatible, prefs, favoritesPickable, currentInitialProvider);
+      const pickedProvider = await pickCodexProvider(compatible, prefs, favoritesPickable, currentInitialProvider, Boolean(additive));
       if (!pickedProvider) return 0;
+
+      if (pickedProvider === '__pool__') {
+        if (mixedMode && !agentStdout) {
+          p.log.info('Starting on Relay Free Pool uses Relay models only for now (your normal Codex models are not added).');
+        }
+        return runCodexCommand(codexArgs, trace, { ...launch, pool: true });
+      }
       
       if (pickedProvider === '__favorites__') {
         const favoriteStart = await pickFavoriteStartModel(

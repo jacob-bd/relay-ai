@@ -175,6 +175,7 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
     providerPick: while (true) {
       const pickedProvider = await pickCodexProvider(compatible, prefs, hasFavorites);
       if (!pickedProvider) return 0;
+      if (pickedProvider === '__pool__') continue; // never offered here (hasPool not set)
 
       if (pickedProvider === '__favorites__') {
         const favoriteStart = await pickFavoriteStartModel(

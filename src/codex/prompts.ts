@@ -20,8 +20,9 @@ export async function pickCodexProvider(
   prefs: UserPreferences,
   hasFavorites = false,
   initialProviderId?: string,
-): Promise<LocalProvider | '__favorites__' | null> {
-  if (providers.length === 0 && !hasFavorites) return null;
+  hasPool = false,
+): Promise<LocalProvider | '__favorites__' | '__pool__' | null> {
+  if (providers.length === 0 && !hasFavorites && !hasPool) return null;
 
   const options: { value: string; label: string; hint?: string }[] = providers.map(lp => providerSelectOption(lp));
   
@@ -30,6 +31,15 @@ export async function pickCodexProvider(
       value: '__favorites__',
       label: '⭐ Favorites Catalog',
       hint: `${prefs.favoriteModels?.length ?? 0} saved favorites`,
+    });
+  }
+
+  // Relay Free Pool as the whole session: right under Favorites Catalog.
+  if (hasPool) {
+    options.splice(hasFavorites ? 1 : 0, 0, {
+      value: '__pool__',
+      label: '🏊 Relay Free Pool',
+      hint: 'experimental · falls back across your free models',
     });
   }
 
@@ -51,6 +61,7 @@ export async function pickCodexProvider(
   }
 
   if (chosen === '__favorites__') return '__favorites__';
+  if (chosen === '__pool__') return '__pool__';
 
   return providers.find(lp => lp.id === chosen) ?? null;
 }
