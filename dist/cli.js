@@ -18437,7 +18437,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-YSB6PF2Q.js");
+    const { runUiCommand } = await import("./ui-command-OCMRLTSJ.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {

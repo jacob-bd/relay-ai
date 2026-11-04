@@ -67,7 +67,7 @@ import { writeSecureLogLine } from '../trace-log.js';
 import { providerOptionsFromCatalog } from '../server/index.js';
 import { getServerStatus, startGatewayServer, stopGatewayServer, type ServerStartRequest } from './server-control.js';
 import { hostFromHeader } from '../server/advertise-addrs.js';
-import { freeStatusLabel } from '../free-models.js';
+import { classifyFreeStatus, freeStatusLabel, isFreeStatus } from '../free-models.js';
 import { checkForUpdates } from '../update-check.js';
 import { supportsClaudeTransparentMode } from '../http-proxy/routes.js';
 import { copilotPlanTier } from '../registry/copilot-models.js';
@@ -610,8 +610,15 @@ async function handleMeasureContextWindow(req: IncomingMessage, res: ServerRespo
     sendJson(res, 400, { ok: false, error: 'providerId and modelId required' }); return;
   }
   const provider = loadRegistry().providers.find(p => p.id === body.providerId);
-  if (!provider?.enabled || !getProviderModels(provider).some(model => model.id === body.modelId)) {
+  const cachedModel = provider?.enabled ? getProviderModels(provider).find(model => model.id === body.modelId) : undefined;
+  if (!provider || !cachedModel) {
     sendJson(res, 400, { ok: false, error: 'Model is unavailable.' }); return;
+  }
+  // The probe asks for a huge output size, so it only runs where that cannot cost money: custom
+  // endpoints (the user's own server) and free models (the Free Pool needs a measured size).
+  if (!customEndpointKind(provider)
+    && !isFreeStatus(classifyFreeStatus({ model: cachedModel, providerId: provider.id, templateId: provider.templateId }))) {
+    sendJson(res, 400, { ok: false, error: 'Measuring context sizes is only available for custom endpoints and free models.' }); return;
   }
   const controller = new AbortController();
   res.on('close', () => { if (!res.writableEnded) controller.abort(); });

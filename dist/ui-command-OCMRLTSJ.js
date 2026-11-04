@@ -75,6 +75,7 @@ import {
   VERSION,
   buildAntigravityAuthUrl,
   buildClaudeCodeAuthUrl,
+  classifyFreeStatus,
   completeAntigravityExchange,
   completeClaudeCodeExchange,
   describeOAuthAccount,
@@ -95,6 +96,7 @@ import {
   getUiDebugLogPath,
   guessModelKindFromName,
   guiCallbackRedirectUri,
+  isFreeStatus,
   isProviderKind,
   loadPreferences,
   loadRegistry,
@@ -1094,8 +1096,13 @@ async function handleMeasureContextWindow(req, res) {
     return;
   }
   const provider = loadRegistry().providers.find((p2) => p2.id === body.providerId);
-  if (!provider?.enabled || !getProviderModels(provider).some((model) => model.id === body.modelId)) {
+  const cachedModel = provider?.enabled ? getProviderModels(provider).find((model) => model.id === body.modelId) : void 0;
+  if (!provider || !cachedModel) {
     sendJson(res, 400, { ok: false, error: "Model is unavailable." });
+    return;
+  }
+  if (!customEndpointKind(provider) && !isFreeStatus(classifyFreeStatus({ model: cachedModel, providerId: provider.id, templateId: provider.templateId }))) {
+    sendJson(res, 400, { ok: false, error: "Measuring context sizes is only available for custom endpoints and free models." });
     return;
   }
   const controller = new AbortController();
@@ -2322,4 +2329,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-YSB6PF2Q.js.map
+//# sourceMappingURL=ui-command-OCMRLTSJ.js.map
