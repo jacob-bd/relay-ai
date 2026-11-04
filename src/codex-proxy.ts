@@ -39,6 +39,7 @@ import {
 } from './codex/collaboration-payload.js';
 import { appendCodexRouteAudit } from './codex/route-audit.js';
 import { extractConversationId, openCodeGoHeaders } from './opencode-session.js';
+import { poolErrorDetail } from './pool/diagnostic.js';
 
 /**
  * Pull the full `response` object out of a single SSE event chunk if it's the
@@ -796,7 +797,8 @@ export async function startCodexProxy(
             });
             if (body.stream) res.end();
             else sendJson(res, 200, response);
-          } catch {
+          } catch (poolError) {
+            if (debug) log(`pool request failed: ${poolErrorDetail(poolError) ?? (poolError instanceof Error ? poolError.message : 'unknown')}`);
             if (!res.headersSent) sendJson(res, 503, { error: { message: 'Free pool could not complete this request safely', type: 'api_error' } });
             else if (!res.writableEnded) { writeResponsesErrorStream(modelId, 'Free pool request failed', chunk => res.write(chunk), 503); res.end(); }
           }

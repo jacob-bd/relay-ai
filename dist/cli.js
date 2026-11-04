@@ -103,7 +103,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   writeResponsesErrorStream
-} from "./chunk-KG356BWU.js";
+} from "./chunk-YVSFXOS4.js";
 import {
   translateRequest
 } from "./chunk-E7FSS5M2.js";
@@ -123,6 +123,7 @@ import {
   injectRelayModels,
   launchModelsForProvider,
   meetsContextFloor,
+  poolErrorDetail,
   poolProviderHeaders,
   poolRoutingProblem,
   providersForCodexSubagents,
@@ -1699,6 +1700,12 @@ function poolRequestFitsWindow(value, contextWindow, outputReserve) {
   return { fits: required <= contextWindow, required };
 }
 
+// src/pool/effort.ts
+function poolMemberEffort(requested, receipt) {
+  if (!requested || requested === "auto") return null;
+  return receipt.effortLevels.includes(requested) ? requested : null;
+}
+
 // src/pool/output-limit.ts
 var POOL_DEFAULT_OUTPUT_TOKENS = 32768;
 var MAX_OUTPUT_WINDOW_SHARE = 4;
@@ -1747,9 +1754,13 @@ async function prepareCodexPoolRoutes(options) {
   const routes = [];
   for (const member of options.pool.members) {
     options.signal.throwIfAborted();
+    const skip = (reason) => options.onSkip?.(member, reason);
     const provider = options.providers.find((item) => item.id === member.providerId);
     const model = provider?.models.find((item) => item.id === member.modelId);
-    if (!provider || !model || !model.npm || model.modelFormat === "cloud-code") continue;
+    if (!provider || !model || !model.npm || model.modelFormat === "cloud-code") {
+      skip("not available in the registry");
+      continue;
+    }
     const revision = poolEndpointRevision({
       providerId: provider.id,
       authRef: provider.authRef,
@@ -1759,34 +1770,59 @@ async function prepareCodexPoolRoutes(options) {
       headers: provider.headers
     });
     const receipt = currentPoolReceipt(options.receipts, member, revision, Date.now());
-    if (!receipt) continue;
+    if (!receipt) {
+      skip("no fresh verification (run Test)");
+      continue;
+    }
     const freeStatus = poolFreeStatus({ model, providerId: provider.id });
-    if (freeStatus !== "verified_free") continue;
-    if (!receipt.billingSafe || !receipt.targets.includes("codex")) continue;
+    if (freeStatus !== "verified_free") {
+      skip("not verified free");
+      continue;
+    }
+    if (!receipt.billingSafe || !receipt.targets.includes("codex")) {
+      skip("not verified for Codex");
+      continue;
+    }
     const identity = { account: provider.id, endpointRevision: revision, model: model.id };
     const requested = options.body.reasoning?.effort ?? options.pool.effort;
     const auto = requested === "auto";
-    if (!auto && !receipt.effortLevels.includes(requested)) continue;
-    const body = omitPoolEffort(options.body, auto ? null : requested);
+    const memberEffort = poolMemberEffort(auto ? "auto" : requested, receipt);
+    const memberAuto = memberEffort === null;
+    const body = omitPoolEffort(options.body, memberEffort);
     const translate = options.translate ?? preparePoolHistory;
     const params = translate(body, options.source, identity, model.npm, {
       ...model,
       providerId: provider.id,
       apiBaseUrl: model.apiBaseUrl
     });
-    if (auto && translatedEffortClaim(params.providerOptions)) continue;
+    if (memberAuto && translatedEffortClaim(params.providerOptions)) {
+      skip("translation would set an effort");
+      continue;
+    }
     const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
     const askedOutput = typeof body.max_output_tokens === "number" ? body.max_output_tokens : outputCap;
-    if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) continue;
+    if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) {
+      skip("invalid output limit");
+      continue;
+    }
     params.maxOutputTokens = Math.min(askedOutput, outputCap);
     const context = await (options.checkContext ?? defaultContextCheck)(params, receipt);
-    if (!context.verified || !context.fits) continue;
+    if (!context.verified || !context.fits) {
+      skip(context.verified ? "request too large for its context window" : "context window not verified");
+      continue;
+    }
     const scopes = [poolEndpointScope(provider.id, revision, model.id)];
     const accountScopes = [poolAccountScope(provider.id)];
     const unavailableUntil = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
-    if (unavailableUntil !== void 0 && unavailableUntil > Date.now()) continue;
+    if (unavailableUntil !== void 0 && unavailableUntil > Date.now()) {
+      skip("cooling down after a failure");
+      continue;
+    }
     const apiKey = await resolveLocalProviderApiKey(provider);
-    if (apiKey === null || apiKey === void 0) continue;
+    if (apiKey === null || apiKey === void 0) {
+      skip("no credential");
+      continue;
+    }
     const languageModel = await createLanguageModel({
       npm: model.npm,
       modelId: model.upstreamModelId,
@@ -1866,8 +1902,9 @@ async function prepareClaudePoolRoutes(options) {
     if (!receipt || !receipt.billingSafe || !receipt.targets.includes("claude")) continue;
     const freeStatus = poolFreeStatus({ model, providerId: provider.id });
     if (freeStatus !== "verified_free") continue;
-    const memberAuto = auto || !receipt.effortLevels.includes(requested);
-    const body = omitClaudeEffort(options.body, memberAuto ? null : requested);
+    const memberEffort = poolMemberEffort(auto ? "auto" : requested, receipt);
+    const memberAuto = memberEffort === null;
+    const body = omitClaudeEffort(options.body, memberEffort);
     const params = translateRequest(body, model.npm, {
       reasoningMetadata: {
         ...model,
@@ -5295,7 +5332,8 @@ async function startCodexProxy(routes, options = {}) {
             });
             if (body.stream) res.end();
             else sendJson(res, 200, response);
-          } catch {
+          } catch (poolError) {
+            if (debug) log15(`pool request failed: ${poolErrorDetail(poolError) ?? (poolError instanceof Error ? poolError.message : "unknown")}`);
             if (!res.headersSent) sendJson(res, 503, { error: { message: "Free pool could not complete this request safely", type: "api_error" } });
             else if (!res.writableEnded) {
               writeResponsesErrorStream(modelId, "Free pool request failed", (chunk) => res.write(chunk), 503);
@@ -6244,7 +6282,8 @@ function createAdditivePoolRuntime(pool, providers, options = {}) {
   });
   if (!catalog) return void 0;
   const health = new PoolHealthStore();
-  const runtime = new CodexPoolRuntime(pool, (body, source, signal, sessionId) => prepareCodexPoolRoutes({
+  const runtime = new CodexPoolRuntime(pool, (body, source, signal, sessionId, onSkip) => prepareCodexPoolRoutes({
+    onSkip,
     pool,
     providers,
     receipts: pool.receipts,
@@ -7483,7 +7522,7 @@ async function runCodexCommand2(codexArgs, trace = false, launch = {}) {
     try {
       const providers = await fetchProviderCatalog();
       const health = new PoolHealthStore();
-      const runtime = new CodexPoolRuntime(pool, (body, source, signal, sessionId) => prepareCodexPoolRoutes({
+      const runtime = new CodexPoolRuntime(pool, (body, source, signal, sessionId, onSkip) => prepareCodexPoolRoutes({
         pool,
         providers,
         receipts: pool.receipts,
@@ -7491,7 +7530,8 @@ async function runCodexCommand2(codexArgs, trace = false, launch = {}) {
         source,
         signal,
         sessionId,
-        health
+        health,
+        onSkip
       }));
       poolProxy = await startCodexProxy([], { requireAuth: true, debug: trace, pool: runtime });
       const entry = codexPoolCatalogEntry(pool, pool.receipts);
@@ -18505,7 +18545,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-6CTT6LVJ.js");
+    const { runUiCommand } = await import("./ui-command-MUAK65LH.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {

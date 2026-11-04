@@ -80,15 +80,19 @@ describe('Auto is a verified omission contract', () => {
     expect(seen[0].reasoning).toEqual({ effort: 'high' });
   });
 
-  it('refuses an explicit level the receipt never verified', async () => {
+  it('keeps the member and sends no effort when the receipt never verified the requested level', async () => {
     const { seen, translate } = translatedBody();
+    const skipped: string[] = [];
     const routes = await prepareCodexPoolRoutes({
       ...base(),
       body: { input: 'hello', model: 'relay-free-pool', reasoning: { effort: 'low' } },
       translate,
+      onSkip: (_member, reason) => skipped.push(reason),
     });
-    expect(routes).toEqual([]);
-    expect(seen).toHaveLength(0);
+    // Codex always sends a level; dropping unverified members emptied the whole pool.
+    expect(routes).toHaveLength(1);
+    expect(skipped).toEqual([]);
+    expect(seen[0].reasoning).toBeUndefined();
   });
 
   it('refuses the route when translation invents a level for Auto', async () => {
@@ -118,4 +122,17 @@ describe('omission helpers', () => {
     expect(translatedEffortClaim({ openai: { store: false, include: ['reasoning.encrypted_content'] } })).toBeUndefined();
     expect(translatedEffortClaim(undefined)).toBeUndefined();
   });
+});
+
+describe('Whatever effort the tool sends, the member is kept', () => {
+  it.each(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'auto', 'something-new'])(
+    'level %s never empties the pool',
+    async level => {
+      const routes = await prepareCodexPoolRoutes({
+        ...base(),
+        body: { input: 'hello', model: 'relay-free-pool', reasoning: { effort: level } },
+      });
+      expect(routes).toHaveLength(1);
+    },
+  );
 });

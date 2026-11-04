@@ -11,6 +11,7 @@ import type { PoolHealthStore } from './health.js';
 import { poolAccountScope, poolEndpointScope } from './health.js';
 import { poolRequestFitsWindow } from './context.js';
 import { translatedEffortClaim } from './codex-prepare.js';
+import { poolMemberEffort } from './effort.js';
 import { poolOutputCap } from './output-limit.js';
 import { poolProviderHeaders } from './session-id.js';
 
@@ -63,8 +64,9 @@ export async function prepareClaudePoolRoutes(options: ClaudeRouteOptions): Prom
     // An effort level this member has not verified is not sent (never claimed); the member runs on the
     // provider's default instead of being dropped. Claude Code always sends an effort (e.g. medium), and
     // dropping unverified members emptied the whole pool.
-    const memberAuto = auto || !receipt.effortLevels.includes(requested);
-    const body = omitClaudeEffort(options.body, memberAuto ? null : requested);
+    const memberEffort = poolMemberEffort(auto ? 'auto' : requested, receipt);
+    const memberAuto = memberEffort === null;
+    const body = omitClaudeEffort(options.body, memberEffort);
     const params: SdkCallParams = translateRequest(body as unknown as AnthropicRequest, model.npm, {
       reasoningMetadata: {
         ...model, providerId: provider.id, apiBaseUrl: model.apiBaseUrl,

@@ -8,6 +8,7 @@ import type { CodexSdkCallParams } from '../codex-responses-adapter.js';
 import { preparePoolHistory } from './continuation.js';
 import { currentPoolReceipt, poolEndpointRevision, type PoolCapabilityReceipt } from './capabilities.js';
 import { sdkPoolRoute } from './sdk-route.js';
+import { poolMemberEffort } from './effort.js';
 import { poolOutputCap } from './output-limit.js';
 import { poolProviderHeaders } from './session-id.js';
 import type { CodexPoolRoute } from './codex-runtime.js';
@@ -74,6 +75,8 @@ export async function prepareCodexPoolRoutes(options: {
   signal: AbortSignal;
   sessionId?: string;
   health: PoolHealthStore;
+  /** Called once per member that is left out, with a short fixed reason (no prompts, no keys). */
+  onSkip?: (member: { providerId: string; modelId: string }, reason: string) => void;
   checkContext?: (params: CodexSdkCallParams, receipt: PoolCapabilityReceipt) => Promise<PoolContextCheck>;
   /** Test seam; production always uses the shared continuation translator. */
   translate?: typeof preparePoolHistory;
@@ -81,41 +84,45 @@ export async function prepareCodexPoolRoutes(options: {
   const routes: CodexPoolRoute[] = [];
   for (const member of options.pool.members) {
     options.signal.throwIfAborted();
+    const skip = (reason: string) => options.onSkip?.(member, reason);
     const provider = options.providers.find(item => item.id === member.providerId);
     const model = provider?.models.find(item => item.id === member.modelId);
-    if (!provider || !model || !model.npm || model.modelFormat === 'cloud-code') continue;
+    if (!provider || !model || !model.npm || model.modelFormat === 'cloud-code') { skip('not available in the registry'); continue; }
     const revision = poolEndpointRevision({ providerId: provider.id, authRef: provider.authRef,
       npm: model.npm, baseURL: model.apiBaseUrl, upstreamModelId: model.upstreamModelId, headers: provider.headers });
     const receipt = currentPoolReceipt(options.receipts, member, revision, Date.now());
-    if (!receipt) continue;
+    if (!receipt) { skip('no fresh verification (run Test)'); continue; }
     const freeStatus = poolFreeStatus({ model, providerId: provider.id });
-    if (freeStatus !== 'verified_free') continue;
-    if (!receipt.billingSafe || !receipt.targets.includes('codex')) continue;
+    if (freeStatus !== 'verified_free') { skip('not verified free'); continue; }
+    if (!receipt.billingSafe || !receipt.targets.includes('codex')) { skip('not verified for Codex'); continue; }
     const identity = { account: provider.id, endpointRevision: revision, model: model.id };
     const requested = (options.body.reasoning as { effort?: string } | undefined)?.effort ?? options.pool.effort;
     const auto = requested === 'auto';
-    // An explicit level is used only when the receipt verified that exact rung.
-    if (!auto && !receipt.effortLevels.includes(requested)) continue;
-    const body = omitPoolEffort(options.body, auto ? null : requested);
+    // An effort level this member has not verified is not sent (never claimed); the member runs on the
+    // provider's default instead of being dropped. Codex always sends one (its footer shows e.g. "high"),
+    // and dropping unverified members emptied the whole pool.
+    const memberEffort = poolMemberEffort(auto ? 'auto' : requested, receipt);
+    const memberAuto = memberEffort === null;
+    const body = omitPoolEffort(options.body, memberEffort);
     const translate = options.translate ?? preparePoolHistory;
     const params = translate(body, options.source, identity, model.npm, {
       ...model, providerId: provider.id, apiBaseUrl: model.apiBaseUrl,
     });
     // Omission is only verified when translation claimed no level of its own.
-    if (auto && translatedEffortClaim(params.providerOptions)) continue;
+    if (memberAuto && translatedEffortClaim(params.providerOptions)) { skip('translation would set an effort'); continue; }
     const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
     const askedOutput = typeof body.max_output_tokens === 'number' ? body.max_output_tokens : outputCap;
-    if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) continue;
+    if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) { skip('invalid output limit'); continue; }
     // Clamp to the model's own limit rather than dropping the member or using the receipt's chat-sized value.
     params.maxOutputTokens = Math.min(askedOutput, outputCap);
     const context = await (options.checkContext ?? defaultContextCheck)(params, receipt);
-    if (!context.verified || !context.fits) continue;
+    if (!context.verified || !context.fits) { skip(context.verified ? 'request too large for its context window' : 'context window not verified'); continue; }
     const scopes = [poolEndpointScope(provider.id, revision, model.id)];
     const accountScopes = [poolAccountScope(provider.id)];
     const unavailableUntil = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
-    if (unavailableUntil !== undefined && unavailableUntil > Date.now()) continue;
+    if (unavailableUntil !== undefined && unavailableUntil > Date.now()) { skip('cooling down after a failure'); continue; }
     const apiKey = await resolveLocalProviderApiKey(provider);
-    if (apiKey === null || apiKey === undefined) continue;
+    if (apiKey === null || apiKey === undefined) { skip('no credential'); continue; }
     const languageModel = await createLanguageModel({
       npm: model.npm, modelId: model.upstreamModelId, apiKey,
       baseURL: model.apiBaseUrl, providerId: provider.id, authType: provider.authType,

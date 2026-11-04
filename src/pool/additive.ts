@@ -34,8 +34,9 @@ export function createAdditivePoolRuntime(
   });
   if (!catalog) return undefined;
   const health = new PoolHealthStore();
-  const runtime = new CodexPoolRuntime(pool, (body, source, signal, sessionId) =>
+  const runtime = new CodexPoolRuntime(pool, (body, source, signal, sessionId, onSkip) =>
     prepareCodexPoolRoutes({
+      onSkip,
       pool,
       providers,
       receipts: pool.receipts,

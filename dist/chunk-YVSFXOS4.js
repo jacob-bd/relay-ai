@@ -4958,6 +4958,7 @@ async function writeCodexPoolResponse(stream, modelId, write, options = {}) {
 }
 
 // src/pool/codex-runtime.ts
+import { randomUUID as randomUUID5 } from "crypto";
 var FREE_POOL_MODEL_ID = "relay-free-pool";
 var FREE_POOL_PROVIDER_ID = "relay-free-pool";
 var DEFAULT_POOL_LIMITS = {
@@ -4994,12 +4995,26 @@ var CodexPoolRuntime = class {
     if (lease.kind !== "owner") throw new Error("Pool retry " + lease.kind);
     const chunks = [];
     let committed = false;
+    const requestId = randomUUID5().slice(0, 8);
+    const started = Date.now();
+    let attemptStarted = started;
+    let attemptedId;
+    let logged = false;
+    const skipped = [];
     try {
-      const routes = await this.prepare(body, source, signal, identity.conversation);
+      const routes = await this.prepare(
+        body,
+        source,
+        signal,
+        identity.conversation,
+        (member, reason) => skipped.push({ ...member, reason })
+      );
       let served;
       const stream = dispatchFreePool(this.pool, routes, {
+        // Members that have not verified the requested level run on the provider default (see prepareCodexPoolRoutes),
+        // so admission must not re-reject them for an effort that was deliberately not sent.
         target: "codex",
-        effort: body.reasoning?.effort,
+        effort: "auto",
         tools: Array.isArray(body.tools) && body.tools.length > 0,
         signal,
         conversationScope: identity.conversation
@@ -5008,7 +5023,16 @@ var CodexPoolRuntime = class {
         sessions: this.sessions,
         retryable: retryPoolFailure,
         onAttempt: (id) => {
+          attemptedId = id;
+          attemptStarted = Date.now();
           served = routes.find((route) => JSON.stringify([route.member.providerId, route.revision, route.member.modelId]) === id);
+        },
+        onFailure: (id, error) => {
+          const member = poolRouteMember(id);
+          if (!member) return;
+          const reason = describePoolFailure(error);
+          const detail = reason.startsWith("simulated") ? void 0 : poolErrorDetail(error);
+          recordPoolActivity({ target: "codex", event: "failed", ...member, requestId, reason, ...detail ? { detail } : {}, ms: Date.now() - attemptStarted });
         }
       });
       const response = await writeCodexPoolResponse(stream, FREE_POOL_MODEL_ID, (chunk) => {
@@ -5016,11 +5040,22 @@ var CodexPoolRuntime = class {
         chunks.push(chunk);
         write(chunk);
       }, { nonstream: body.stream !== true, getToolContext: () => served?.toolContext });
+      const answered = attemptedId ? poolRouteMember(attemptedId) : void 0;
+      if (answered) {
+        logged = true;
+        recordPoolActivity({ target: "codex", event: "served", ...answered, requestId, ms: Date.now() - attemptStarted });
+      }
       if (!served || typeof response.id !== "string" || !Array.isArray(response.output)) throw new Error("Pool response missing route or history");
       this.history.remember(response.id, identity.conversation, body, response.output, served.identity);
       lease.complete(JSON.stringify({ response, chunks }));
       return response;
     } catch (error) {
+      if (!logged && !signal.aborted) {
+        for (const item of skipped) {
+          recordPoolActivity({ target: "codex", event: "failed", providerId: item.providerId, modelId: item.modelId, requestId, reason: "skipped: " + item.reason });
+        }
+        recordPoolActivity({ target: "codex", event: "gave-up", providerId: "pool", modelId: "none", requestId, ms: Date.now() - started });
+      }
       if (signal.aborted) lease.release();
       else lease.fail("Pool request failed", committed);
       throw error;
@@ -8356,4 +8391,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-KG356BWU.js.map
+//# sourceMappingURL=chunk-YVSFXOS4.js.map

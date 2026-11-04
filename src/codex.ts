@@ -484,8 +484,8 @@ export async function runCodexCommand(
     try {
       const providers = await fetchProviderCatalog();
       const health = new PoolHealthStore();
-      const runtime = new CodexPoolRuntime(pool, (body, source, signal, sessionId) => prepareCodexPoolRoutes({
-        pool, providers, receipts: pool.receipts, body, source, signal, sessionId, health,
+      const runtime = new CodexPoolRuntime(pool, (body, source, signal, sessionId, onSkip) => prepareCodexPoolRoutes({
+        pool, providers, receipts: pool.receipts, body, source, signal, sessionId, health, onSkip,
       }));
       poolProxy = await startCodexProxy([], { requireAuth: true, debug: trace, pool: runtime });
       const entry = codexPoolCatalogEntry(pool, pool.receipts);
