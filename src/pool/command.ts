@@ -18,6 +18,7 @@ import { followPoolActivity, formatPoolActivityLine, readPoolActivity } from './
 export const poolHelpText = [
   'Usage: relay-ai pool <command>   (experimental: tested with Claude Code first)',
   '  list                         Saved membership and receipts (no tests)',
+  '  fail [--minutes N]           Test failover: fail whichever model answered last (repeat to fail the next one too)',
   '  force-fail <provider/model>... [--minutes N] | off   Test failover: make members fail (default 10 min), no request is sent to them',
   '  log [count] [-f|--follow]    Which pool model answered recent requests, and which failed first; -f keeps printing new ones (Ctrl+C to stop)',
   '  candidates [--search text] [--min-context tokens]  Free models, providers and total (no tests)',
@@ -126,6 +127,28 @@ export async function runPoolCommand(args: string[]): Promise<number> {
       }) : undefined;
       console.log(JSON.stringify({ ...result, ...(readiness ? { pool: readiness } : {}) }));
       return result.ok ? 0 : 1;
+    }
+    if (action === 'fail') {
+      // Generic form: no names. Fail the member that answered most recently, adding to anything already forced.
+      const rest = args.slice(1);
+      let minutes = DEFAULT_FORCE_FAIL_MINUTES;
+      for (let i = 0; i < rest.length; i++) {
+        if (rest[i] === '--minutes') minutes = Number(rest[++i]);
+        else throw new Error(poolHelpText);
+      }
+      const last = readPoolActivity(200).find(entry => entry.event === 'served');
+      if (!last) throw new Error('No pool request has been answered yet. Send a message through Relay Free Pool first.');
+      const target = `${last.providerId}/${last.modelId}`;
+      const already = readForceFailState()?.members ?? [];
+      if (already.includes(target)) {
+        console.log(`${target} is already being forced to fail. Send a message so the next member answers, then run this again.`);
+        return 0;
+      }
+      const state = setForceFail([...already, target], minutes);
+      console.log(`Failing ${target}${already.length ? ` (already failing: ${already.join(', ')})` : ''}.`);
+      console.log(`Active until ${new Date(state.expiresAt).toLocaleTimeString()}. Send a message in your session and watch: relay-ai pool log -f`);
+      console.log('Run again to fail whichever member answers next; clear with: relay-ai pool force-fail off');
+      return 0;
     }
     if (action === 'force-fail') {
       const rest = args.slice(1);

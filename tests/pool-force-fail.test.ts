@@ -25,3 +25,27 @@ describe('force-fail switch', () => {
     expect([...forcedFailures({ RELAY_POOL_FORCE_FAIL: 'c/d, e/f' }, 1)].sort()).toEqual(['a/b', 'c/d', 'e/f']);
   });
 });
+
+describe('relay-ai pool fail (generic)', () => {
+  it('fails the member that answered last, then walks down the pool on repeat', async () => {
+    process.env['RELAY_AI_HOME'] = mkdtempSync(join(tmpdir(), 'relay-pool-fail-'));
+    const { recordPoolActivity } = await import('../src/pool/activity.js');
+    const { runPoolCommand } = await import('../src/pool/command.js');
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => { lines.push(args.join(' ')); };
+    try {
+      expect(await runPoolCommand(['fail'])).toBe(1); // nothing answered yet
+      recordPoolActivity({ target: 'claude', event: 'served', providerId: 'kilo', modelId: 'a' });
+      expect(await runPoolCommand(['fail'])).toBe(0);
+      expect(readForceFailState()?.members).toEqual(['kilo/a']);
+      expect(await runPoolCommand(['fail'])).toBe(0); // same member still last: nothing new added
+      expect(readForceFailState()?.members).toEqual(['kilo/a']);
+      recordPoolActivity({ target: 'claude', event: 'served', providerId: 'nvidia', modelId: 'b' });
+      expect(await runPoolCommand(['fail'])).toBe(0);
+      expect(readForceFailState()?.members).toEqual(['kilo/a', 'nvidia/b']);
+      expect(await runPoolCommand(['force-fail', 'off'])).toBe(0);
+      expect(readForceFailState()).toBeUndefined();
+    } finally { console.log = original; }
+  });
+});

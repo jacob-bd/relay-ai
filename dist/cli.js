@@ -18465,7 +18465,7 @@ Options:
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-ZDA6GZNM.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-ECRMMECD.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

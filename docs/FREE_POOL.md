@@ -76,7 +76,10 @@ models you trust:
   activity**, and `relay claude --trace` adds the same lines to the proxy debug log.
 - The pool only moves to the next member when one fails, and a conversation stays with the member
   that last answered it. Seeing the same model reply across a long session is therefore normal.
-- To prove failover works with your real members, force one to fail while a session is running:
+- Quickest check: with a session running, run `relay-ai pool fail`. It forces whichever member answered
+  last to fail (no names needed); send a message and the next member answers. Run it again to fail that
+  one too and walk down the pool. `relay-ai pool force-fail off` clears everything.
+- To prove failover works with your real members, or name the members yourself while a session is running:
   `relay-ai pool force-fail kilo/reflection/beam-free` (several ids allowed; `--minutes N` up to 60).
   It expires after 10 minutes by default, `relay-ai pool force-fail` shows what is active and
   `relay-ai pool force-fail off` clears it. Send a message and watch `relay-ai pool log -f`: the forced
