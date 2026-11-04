@@ -135,3 +135,21 @@ describe('anthropicErrorType', () => {
     expect(anthropicErrorType(502)).toBe('api_error');
   });
 });
+
+describe('formatUpstreamError with the ChatGPT backend error shape', () => {
+  it('surfaces the {"detail": "..."} reason instead of the bare status text', () => {
+    // chatgpt.com/backend-api answers {"detail": "..."}; Relay used to log just "Bad Request (HTTP 400)".
+    expect(formatUpstreamError({
+      message: 'Bad Request',
+      statusCode: 400,
+      responseBody: '{"detail":"Stream must be set to true"}',
+    })).toBe('Stream must be set to true (HTTP 400)');
+  });
+
+  it('still prefers the standard error.message shape', () => {
+    expect(formatUpstreamError({
+      statusCode: 400,
+      responseBody: '{"error":{"message":"bad tool id"},"detail":"ignored"}',
+    })).toBe('bad tool id (HTTP 400)');
+  });
+});

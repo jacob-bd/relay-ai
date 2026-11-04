@@ -1601,6 +1601,38 @@ export function appendCompactionInstruction(params: CodexSdkCallParams): CodexSd
   };
 }
 
+/**
+ * Run the summary request and return its text. Always asks the SDK for a real
+ * stream: ChatGPT-login (chatgpt.com/backend-api/codex) rejects non-streaming
+ * requests with `{"detail":"Stream must be set to true"}`, so a generateText call
+ * made every compaction on an OAuth route fail with HTTP 400 and the thread could
+ * never shrink. Streaming is accepted by every other provider.
+ */
+async function collectCompactionSummary(model: LanguageModel, params: CodexSdkCallParams): Promise<string> {
+  const { toolContext: _toolContext, ...sdkParams } = params;
+  void _toolContext;
+  let firstStreamError: { error: unknown } | undefined;
+  const result = streamText({
+    model,
+    ...sdkParams,
+    maxRetries: 0,
+    onError: event => { firstStreamError ??= event; },
+  } as Parameters<typeof streamText>[0]);
+  Promise.resolve(result.toolResults).catch(() => {});
+  let text: string;
+  try {
+    text = (await result.text) ?? '';
+  } catch (error) {
+    // The SDK can replace the upstream failure with NoOutputGeneratedError;
+    // keep the original so the HTTP status and message survive.
+    throw firstStreamError ? firstStreamError.error : error;
+  }
+  // A failed stream can still resolve `text` to ''. Never turn that into a
+  // placeholder summary: it would replace the thread's history with nothing.
+  if (firstStreamError) throw firstStreamError.error;
+  return text;
+}
+
 /** The full non-streaming Responses body for a v2 compaction turn: exactly one compaction item. */
 export function buildCompactionResponseBody(summary: string, modelId: string): Record<string, unknown> {
   return {
@@ -1637,10 +1669,8 @@ export async function generateCompactionResponse(
   params: CodexSdkCallParams,
   modelId: string,
 ): Promise<Record<string, unknown>> {
-  const { toolContext: _toolContext, ...sdkParams } = params;
-  void _toolContext;
-  const r = await generateText({ model, ...sdkParams, maxRetries: 0 } as Parameters<typeof generateText>[0]);
-  return buildCompactionResponseBody((r.text ?? '').trim() || '(no summary produced)', modelId);
+  const text = await collectCompactionSummary(model, params);
+  return buildCompactionResponseBody(text.trim() || '(no summary produced)', modelId);
 }
 
 /** Streaming variant: summarize internally (compaction is non-interactive), then emit the SSE. */
@@ -1650,10 +1680,8 @@ export async function streamCompactionResponse(
   modelId: string,
   write: WriteFn,
 ): Promise<void> {
-  const { toolContext: _toolContext, ...sdkParams } = params;
-  void _toolContext;
-  const r = await generateText({ model, ...sdkParams, maxRetries: 0 } as Parameters<typeof generateText>[0]);
-  writeCompactionSse((r.text ?? '').trim() || '(no summary produced)', modelId, write);
+  const text = await collectCompactionSummary(model, params);
+  writeCompactionSse(text.trim() || '(no summary produced)', modelId, write);
 }
 
 export function responsesErrorBody(

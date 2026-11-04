@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { simulateReadableStream } from 'ai';
+import { MockLanguageModelV4 } from 'ai/test';
+import type { LanguageModelV4StreamPart } from '@ai-sdk/provider';
 import {
   translateResponsesInput,
   translateResponsesRequest,
@@ -741,6 +744,63 @@ describe('Codex remote compaction v2 synthesis (relay-ai/relay-ai#21 follow-up)'
     expect(decodeCompactionContent(
       Buffer.from(JSON.stringify({ summary: 'foreign summary without Relay version marker' })).toString('base64'),
     )).toBeNull();
+  });
+});
+
+describe('Codex remote compaction v2 against a stream-only upstream (ChatGPT login)', () => {
+  // chatgpt.com/backend-api/codex answers non-streaming requests with
+  // {"detail":"Stream must be set to true"} (HTTP 400). Compaction used generateText,
+  // so every compaction on an OAuth route failed and the thread could never shrink.
+  const compactionParams = { messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'history' }] }] } as never;
+
+  function streamOnlyModel(text: string) {
+    return new MockLanguageModelV4({
+      doGenerate: async () => {
+        throw Object.assign(new Error('Bad Request'), { statusCode: 400, responseBody: '{"detail":"Stream must be set to true"}' });
+      },
+      doStream: {
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'stream-start', warnings: [] },
+            { type: 'text-start', id: 't1' },
+            { type: 'text-delta', id: 't1', delta: text },
+            { type: 'text-end', id: 't1' },
+            { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } } },
+          ] as LanguageModelV4StreamPart[],
+          initialDelayInMs: null,
+          chunkDelayInMs: null,
+        }),
+      },
+    });
+  }
+
+  it('streamCompactionResponse summarizes through a real stream, not a non-streaming call', async () => {
+    const { streamCompactionResponse, decodeCompactionContent } = await import('../src/codex-responses-adapter.js');
+    const chunks: string[] = [];
+    await streamCompactionResponse(streamOnlyModel('the summary'), compactionParams, 'm', c => chunks.push(c));
+    const events = parseSseEvents(chunks.join(''));
+    const completed = events.find(e => e.event === 'response.completed')!.data.response;
+    expect(completed.output).toHaveLength(1);
+    expect(completed.output[0].type).toBe('compaction');
+    expect(decodeCompactionContent(completed.output[0].encrypted_content)).toBe('the summary');
+  });
+
+  it('generateCompactionResponse also streams', async () => {
+    const { generateCompactionResponse, decodeCompactionContent } = await import('../src/codex-responses-adapter.js');
+    const body = await generateCompactionResponse(streamOnlyModel('summary two'), compactionParams, 'm');
+    const output = body.output as Array<Record<string, unknown>>;
+    expect(output).toHaveLength(1);
+    expect(decodeCompactionContent(output[0]!.encrypted_content as string)).toBe('summary two');
+  });
+
+  it('keeps the original upstream error (status and message) when the stream fails', async () => {
+    const { streamCompactionResponse } = await import('../src/codex-responses-adapter.js');
+    const upstream = Object.assign(new Error('rate limited'), { statusCode: 429 });
+    const model = new MockLanguageModelV4({
+      doStream: { stream: simulateReadableStream({ chunks: [{ type: 'stream-start', warnings: [] }, { type: 'error', error: upstream }] as LanguageModelV4StreamPart[], initialDelayInMs: null, chunkDelayInMs: null }) },
+    });
+    await expect(streamCompactionResponse(model, compactionParams, 'm', () => {})).rejects.toBe(upstream);
+    await new Promise<void>(resolve => setImmediate(resolve));
   });
 });
 

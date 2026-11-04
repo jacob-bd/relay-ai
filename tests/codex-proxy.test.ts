@@ -829,18 +829,12 @@ describe('startCodexProxy', () => {
       req.once('end', () => {
         requestBodies.push(JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>);
         const turn = requestBodies.length;
-        if (turn === 6) {
-          res.writeHead(200, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({
-            id: 'chatcmpl-6', object: 'chat.completion',
-            choices: [{ index: 0, message: { role: 'assistant', content: 'summary-6' }, finish_reason: 'stop' }],
-          }));
-          return;
-        }
+        // Turn 6 is the remote-compaction summary. It is streamed like every other
+        // turn: ChatGPT-login rejects non-streaming requests, so compaction streams too.
         res.writeHead(200, { 'content-type': 'text/event-stream' });
         res.write(`data: ${JSON.stringify({
           id: `chatcmpl-${turn}`, object: 'chat.completion.chunk',
-          choices: [{ index: 0, delta: { role: 'assistant', content: `reply-${turn}` }, finish_reason: null }],
+          choices: [{ index: 0, delta: { role: 'assistant', content: turn === 6 ? 'summary-6' : `reply-${turn}` }, finish_reason: null }],
         })}\n\n`);
         res.write(`data: ${JSON.stringify({
           id: `chatcmpl-${turn}`, object: 'chat.completion.chunk',
