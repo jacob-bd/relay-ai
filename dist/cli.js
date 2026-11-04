@@ -103,7 +103,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   writeResponsesErrorStream
-} from "./chunk-MQX4LD54.js";
+} from "./chunk-NIZNC4S7.js";
 import {
   translateRequest
 } from "./chunk-E7FSS5M2.js";
@@ -1170,6 +1170,9 @@ function sdkPoolRoute(evidence, model, request2, health) {
   }
   return {
     ...evidence,
+    recordFailure: health ? async (failure) => {
+      await health.store.record(health.scopes, failure);
+    } : void 0,
     async open(abortSignal) {
       const decision = health ? await health.store.acquire({ id: evidence.revision, scopes: health.scopes }) : void 0;
       if (decision && !decision.ok) throw new Error("Pool route entered cooldown");
@@ -1193,9 +1196,9 @@ function sdkPoolRoute(evidence, model, request2, health) {
           for await (const part of source) {
             if (part.type === "error" && !abortSignal.aborted) {
               const failure = poolFailure(part.error);
-              if (health && failure.kind === "rate-limit") {
-                await health.store.record(health.scopes, failure);
-                recorded = true;
+              if (health && failure.kind !== "canceled") {
+                const result2 = await health.store.record(health.scopes, failure);
+                recorded = recorded || result2.recorded;
               }
             }
             if (part.type === "finish") success = true;
@@ -1204,9 +1207,9 @@ function sdkPoolRoute(evidence, model, request2, health) {
         } catch (error) {
           if (health && decision && decision.ok && !abortSignal.aborted) {
             const failure = poolFailure(error);
-            if (failure.kind === "rate-limit") {
-              await health.store.record(health.scopes, failure);
-              recorded = true;
+            if (failure.kind !== "canceled") {
+              const result = await health.store.record(health.scopes, failure);
+              recorded = recorded || result.recorded;
             }
           }
           throw error;
@@ -1250,6 +1253,8 @@ var PoolHealthForceUnlockRefusedError = class extends Error {
     this.ownerPid = ownerPid;
   }
 };
+var FAILURE_COOLDOWN_BASE_MS = { transient: 6e4, access: 3e5, unknown: 3e4 };
+var FAILURE_COOLDOWN_MAX_MS = 6e5;
 var UNKNOWN_RATE_LIMIT_LADDER_MS = [12e4, 6e5, 36e5, 216e5, 864e5];
 var MAX_ENTRIES = 512;
 var MAX_LABEL_CHARS = 200;
@@ -1297,7 +1302,7 @@ function normalizeEntry(raw) {
   if (typeof label !== "string" || !label || label.length > MAX_LABEL_CHARS + 1) throw new Error("invalid label");
   if (typeof failures !== "number" || !Number.isSafeInteger(failures) || failures < 1 || failures > 100) throw new Error("invalid failures");
   if (typeof until !== "number" || !Number.isFinite(until)) throw new Error("invalid until");
-  if (reason !== "rate-limit") throw new Error("unsupported reason");
+  if (reason !== "rate-limit" && !(typeof reason === "string" && reason in FAILURE_COOLDOWN_BASE_MS)) throw new Error("unsupported reason");
   if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) throw new Error("invalid updatedAt");
   let recovery;
   const rawClaim = value["recovery"];
@@ -1466,12 +1471,13 @@ var PoolHealthStore = class {
     return claim.pid === process.pid || processAlive(claim.pid);
   }
   /**
-   * Persist a provider failure. Cancellation, access, context, invalid and transient
-   * failures have no certified persistent policy yet and are never written.
+   * Persist a provider failure. Rate limits use the long ladder; transient, access and unknown failures get a
+   * short escalating cooldown (FAILURE_COOLDOWN_BASE_MS); cancellation, context and invalid failures are never written.
    * Throws PoolHealthLockTimeoutError when a live process holds the lock.
    */
   async record(scopes, failure) {
-    if (failure.kind !== "rate-limit") return { recorded: false, reason: failure.kind };
+    const shortBase = failure.kind in FAILURE_COOLDOWN_BASE_MS ? FAILURE_COOLDOWN_BASE_MS[failure.kind] : void 0;
+    if (failure.kind !== "rate-limit" && shortBase === void 0) return { recorded: false, reason: failure.kind };
     const unique = [...new Set(scopes.filter((scope) => typeof scope === "string" && scope.trim().length > 0))];
     if (!unique.length) return { recorded: false, reason: "no-scopes" };
     const now = this.now();
@@ -1481,7 +1487,7 @@ var PoolHealthStore = class {
         const key = hashScope(scope);
         const previous = state.entries[key];
         const failures = Math.min((previous?.failures ?? 0) + 1, 100);
-        const step = this.ladder[Math.min(failures - 1, this.ladder.length - 1)];
+        const step = shortBase !== void 0 ? Math.min(shortBase * 2 ** Math.min(failures - 1, 10), FAILURE_COOLDOWN_MAX_MS) : this.ladder[Math.min(failures - 1, this.ladder.length - 1)];
         const entryUntil = failure.retryAt !== void 0 ? Math.max(failure.retryAt, now) : now + step;
         state.entries[key] = {
           // A rate-limit can arrive while this process's recovery is in flight.
@@ -18461,7 +18467,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-R6C2RZJS.js");
+    const { runUiCommand } = await import("./ui-command-YJSFP4DE.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {

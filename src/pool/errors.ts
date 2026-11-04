@@ -20,6 +20,12 @@ export function poolFailure(error: unknown, now = Date.now()): PoolFailure {
   if ((status !== undefined && status >= 500) || /ECONNRESET|ETIMEDOUT|ENOTFOUND|first-content-timeout|missing-valid-finish|invalid-finish|stream-error|Pool route entered cooldown/.test(value?.message ?? '')) return { kind: 'transient', status };
   return { kind: 'unknown', status };
 }
+/**
+ * Whether to try the next member after this failure. This only applies before any output was delivered
+ * (after that the attempt loop never replays). Every kind of failure of one member says nothing about the
+ * next one - a provider-specific 400, a missing header, an unknown error - so everything falls through
+ * except a cancellation, which is the caller leaving. The attempt cap and total time limit still bound it.
+ */
 export function retryPoolFailure(error: unknown): boolean {
-  return ['rate-limit', 'access', 'context', 'transient'].includes(poolFailure(error).kind);
+  return poolFailure(error).kind !== 'canceled';
 }

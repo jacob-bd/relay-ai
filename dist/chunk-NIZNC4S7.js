@@ -2115,7 +2115,7 @@ function poolFailure(error, now = Date.now()) {
   return { kind: "unknown", status };
 }
 function retryPoolFailure(error) {
-  return ["rate-limit", "access", "context", "transient"].includes(poolFailure(error).kind);
+  return poolFailure(error).kind !== "canceled";
 }
 
 // src/pool/eligibility.ts
@@ -2145,6 +2145,7 @@ function evaluatePoolMembers(pool, evidence, request) {
 }
 
 // src/pool/dispatch.ts
+var SIMULATED_COOLDOWN_MS = 6e4;
 var SIMULATED_FAILURE_MESSAGE = "Simulated failure (RELAY_POOL_FORCE_FAIL)";
 async function* dispatchFreePool(pool, routes, request, policy) {
   const candidates = evaluatePoolMembers(pool, routes, { ...request, now: Date.now() });
@@ -2157,6 +2158,7 @@ async function* dispatchFreePool(pool, routes, request, policy) {
     if (!route) throw new Error("Pool route changed during admission");
     const forced = forcedFailures().has(route.member.providerId + "/" + route.member.modelId);
     const open2 = forced ? async () => {
+      await route.recordFailure?.({ kind: "transient", retryAt: Date.now() + SIMULATED_COOLDOWN_MS });
       throw Object.assign(new Error(SIMULATED_FAILURE_MESSAGE), { statusCode: 429 });
     } : route.open;
     return { id: poolRouteIdentity(route), open: open2 };
@@ -8340,4 +8342,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-MQX4LD54.js.map
+//# sourceMappingURL=chunk-NIZNC4S7.js.map

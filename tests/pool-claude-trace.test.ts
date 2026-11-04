@@ -94,3 +94,26 @@ describe('a member that is cooling down is skipped, not fatal', () => {
     expect(failed).toMatchObject({ event: 'failed', providerId: 'nvidia', reason: 'skipped: cooling down after a recent failure' });
   });
 });
+
+describe('every member is tried before the request gives up', () => {
+  const failWith = (providerId: string, modelId: string, error: unknown): DispatchRoute => ({
+    ...base, member: { providerId, modelId }, async open() { throw error; },
+  });
+
+  it('keeps going past a 400, an unknown error and a rate limit until a later member answers', async () => {
+    const members = [
+      failWith('kilo', 'a', Object.assign(new Error('bad request'), { statusCode: 400 })),
+      failWith('nvidia', 'b', new Error('something unrecognised')),
+      failWith('go', 'c', Object.assign(new Error('slow down'), { statusCode: 429 })),
+      { ...working, member: { providerId: 'github-copilot', modelId: 'd' } },
+    ];
+    const runtime = new ClaudePoolRuntime({ members: members.map(m => m.member), effort: 'auto', receipts: [] }, async () => members);
+    const out: string[] = [];
+    const result = await runtime.serve({ model: CLAUDE_POOL_MODEL_ID, max_tokens: 64, stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      chunk => { out.push(chunk); }, new AbortController().signal);
+    expect(result.ok).toBe(true);
+    expect(out.join('')).toContain('OK');
+    const events = readPoolActivity(4).reverse().map(e => `${e.event}:${e.providerId}`);
+    expect(events).toEqual(['failed:kilo', 'failed:nvidia', 'failed:go', 'served:github-copilot']);
+  });
+});

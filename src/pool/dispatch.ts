@@ -1,13 +1,17 @@
 import { PoolSessionRoutes } from './session.js';
 import { forcedFailures } from './force-fail.js';
+import type { PoolFailure } from './errors.js';
 import type { FreePoolPreferences } from '../types.js';
 import { evaluatePoolMembers, poolRouteIdentity, type PoolRouteEvidence, type PoolTarget } from './eligibility.js';
 import { runPoolAttempts, type PoolEvent, type PoolLimits, type PoolRoute } from './attempt.js';
 
+const SIMULATED_COOLDOWN_MS = 60_000;
 export const SIMULATED_FAILURE_MESSAGE = 'Simulated failure (RELAY_POOL_FORCE_FAIL)';
 
 export interface DispatchRoute extends PoolRouteEvidence {
   open: PoolRoute['open'];
+  /** Persist a failure for this member (cooldown). Absent on routes without a health store. */
+  recordFailure?: (failure: PoolFailure) => Promise<void>;
 }
 export interface PoolDispatchRequest {
   target: PoolTarget;
@@ -40,7 +44,11 @@ export async function* dispatchFreePool(
     if (!route) throw new Error('Pool route changed during admission');
     const forced = forcedFailures().has(route.member.providerId + '/' + route.member.modelId);
     const open: PoolRoute['open'] = forced
-      ? async () => { throw Object.assign(new Error(SIMULATED_FAILURE_MESSAGE), { statusCode: 429 }); }
+      ? async () => {
+        // Behave like a real failure, including the cooldown, but only for a minute so a test cannot linger.
+        await route.recordFailure?.({ kind: 'transient', retryAt: Date.now() + SIMULATED_COOLDOWN_MS });
+        throw Object.assign(new Error(SIMULATED_FAILURE_MESSAGE), { statusCode: 429 });
+      }
       : route.open;
     return { id: poolRouteIdentity(route), open };
   });

@@ -30,6 +30,7 @@ export function sdkPoolRoute(
   }
   return {
     ...evidence,
+    recordFailure: health ? async failure => { await health.store.record(health.scopes, failure); } : undefined,
     async open(abortSignal) {
       const decision = health ? await health.store.acquire({ id: evidence.revision, scopes: health.scopes }) : undefined;
       if (decision && !decision.ok) throw new Error('Pool route entered cooldown');
@@ -51,9 +52,9 @@ export function sdkPoolRoute(
           for await (const part of source) {
             if (part.type === 'error' && !abortSignal.aborted) {
               const failure = poolFailure(part.error);
-              if (health && failure.kind === 'rate-limit') {
-                await health.store.record(health.scopes, failure);
-                recorded = true;
+              if (health && failure.kind !== 'canceled') {
+                const result = await health.store.record(health.scopes, failure);
+                recorded = recorded || result.recorded;
               }
             }
             if (part.type === 'finish') success = true;
@@ -62,9 +63,9 @@ export function sdkPoolRoute(
         } catch (error) {
           if (health && decision && decision.ok && !abortSignal.aborted) {
             const failure = poolFailure(error);
-            if (failure.kind === 'rate-limit') {
-              await health.store.record(health.scopes, failure);
-              recorded = true;
+            if (failure.kind !== 'canceled') {
+              const result = await health.store.record(health.scopes, failure);
+              recorded = recorded || result.recorded;
             }
           }
           throw error;

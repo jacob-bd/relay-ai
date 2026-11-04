@@ -93,14 +93,36 @@ describe('pool health cooldown policy', () => {
     expect(await store().size()).toBe(0);
   });
 
-  it('does not persist access, context, invalid or transient failures yet', async () => {
+  it('never cools a member down for a rejected request, an oversized one or a cancellation', async () => {
     const scopes = [poolModelScope('acct', 'm')];
-    for (const [status, expected] of [[401, 'access'], [400, 'invalid'], [500, 'transient']] as const) {
-      const failure = poolFailure(Object.assign(new Error('e'), { statusCode: status }), clock);
-      expect(failure.kind).toBe(expected);
-      expect((await store().record(scopes, failure)).recorded).toBe(false);
-    }
+    for (const failure of [
+      poolFailure(Object.assign(new Error('e'), { statusCode: 400 }), clock),
+      poolFailure(Object.assign(new Error('context length exceeded'), { statusCode: 400 }), clock),
+      poolFailure({ name: 'AbortError' }, clock),
+    ]) expect((await store().record(scopes, failure)).recorded).toBe(false);
     expect(await store().size()).toBe(0);
+  });
+
+  it('demotes a member briefly after a server error or access failure, escalating up to a cap', async () => {
+    const scopes = [poolModelScope('acct', 'm')];
+    const server = poolFailure(Object.assign(new Error('e'), { statusCode: 500 }), clock);
+    expect(server.kind).toBe('transient');
+    const first = await store().record(scopes, server);
+    expect(first).toMatchObject({ recorded: true, until: clock + 60_000 });
+    const second = await store().record(scopes, server);
+    expect(second.until).toBe(clock + 120_000);
+    for (let i = 0; i < 12; i++) await store().record(scopes, server);
+    expect((await store().record(scopes, server)).until).toBe(clock + 600_000);
+
+    const other = [poolModelScope('acct', 'denied')];
+    const access = poolFailure(Object.assign(new Error('e'), { statusCode: 401 }), clock);
+    expect(access.kind).toBe('access');
+    expect(await store().record(other, access)).toMatchObject({ recorded: true, until: clock + 300_000 });
+  });
+
+  it('keeps the longer rate-limit ladder for a rate limit', async () => {
+    const scopes = [poolModelScope('acct', 'limited')];
+    expect(await store().record(scopes, RATE_LIMIT)).toMatchObject({ recorded: true, until: clock + 2 * MINUTE });
   });
 });
 
@@ -350,5 +372,14 @@ describe('state safety', () => {
       else process.env.RELAY_AI_HOME = previous;
       rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 });
     }
+  });
+});
+
+describe('persisted demotions', () => {
+  it('survive a reload from disk (a transient cooldown must not make the state unreadable)', async () => {
+    const scopes = [poolModelScope('acct', 'reload')];
+    await store().record(scopes, poolFailure(Object.assign(new Error('e'), { statusCode: 503 }), clock));
+    expect(await store().size()).toBe(1);
+    expect((await store().cooldownFor({ id: 'rev', scopes }))).toBe(clock + 60_000);
   });
 });

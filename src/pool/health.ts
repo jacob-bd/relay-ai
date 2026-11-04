@@ -76,6 +76,14 @@ export class PoolHealthForceUnlockRefusedError extends Error {
   }
 }
 
+/**
+ * Short cooldowns so a member that just failed is not first in line for the next request. Rate limits keep
+ * their own (longer) ladder above; a rejected request (400/422) or an oversized one says nothing about the
+ * member, and a cancellation is the caller leaving, so those never cool anything down.
+ */
+export const FAILURE_COOLDOWN_BASE_MS = { transient: 60_000, access: 300_000, unknown: 30_000 } as const;
+export const FAILURE_COOLDOWN_MAX_MS = 600_000;
+
 /** Agreed ladder for a rate limit with no authoritative reset. */
 export const UNKNOWN_RATE_LIMIT_LADDER_MS = [120_000, 600_000, 3_600_000, 21_600_000, 86_400_000] as const;
 
@@ -161,7 +169,7 @@ function normalizeEntry(raw: unknown): StoredEntry {
   if (typeof label !== 'string' || !label || label.length > MAX_LABEL_CHARS + 1) throw new Error('invalid label');
   if (typeof failures !== 'number' || !Number.isSafeInteger(failures) || failures < 1 || failures > 100) throw new Error('invalid failures');
   if (typeof until !== 'number' || !Number.isFinite(until)) throw new Error('invalid until');
-  if (reason !== 'rate-limit') throw new Error('unsupported reason');
+  if (reason !== 'rate-limit' && !(typeof reason === 'string' && reason in FAILURE_COOLDOWN_BASE_MS)) throw new Error('unsupported reason');
   if (typeof updatedAt !== 'number' || !Number.isFinite(updatedAt)) throw new Error('invalid updatedAt');
   let recovery: StoredClaim | undefined;
   const rawClaim = value['recovery'];
@@ -177,7 +185,7 @@ function normalizeEntry(raw: unknown): StoredEntry {
     label,
     failures,
     until,
-    reason,
+    reason: reason as PoolFailureKind,
     updatedAt,
     ...(recovery ? { recovery } : {}),
   };
@@ -363,15 +371,17 @@ export class PoolHealthStore {
   }
 
   /**
-   * Persist a provider failure. Cancellation, access, context, invalid and transient
-   * failures have no certified persistent policy yet and are never written.
+   * Persist a provider failure. Rate limits use the long ladder; transient, access and unknown failures get a
+   * short escalating cooldown (FAILURE_COOLDOWN_BASE_MS); cancellation, context and invalid failures are never written.
    * Throws PoolHealthLockTimeoutError when a live process holds the lock.
    */
   async record(
     scopes: readonly string[],
     failure: PoolFailure,
   ): Promise<{ recorded: boolean; reason?: string; until?: number }> {
-    if (failure.kind !== 'rate-limit') return { recorded: false, reason: failure.kind };
+    const shortBase = failure.kind in FAILURE_COOLDOWN_BASE_MS
+      ? FAILURE_COOLDOWN_BASE_MS[failure.kind as keyof typeof FAILURE_COOLDOWN_BASE_MS] : undefined;
+    if (failure.kind !== 'rate-limit' && shortBase === undefined) return { recorded: false, reason: failure.kind };
     const unique = [...new Set(scopes.filter(scope => typeof scope === 'string' && scope.trim().length > 0))];
     if (!unique.length) return { recorded: false, reason: 'no-scopes' };
     const now = this.now();
@@ -381,7 +391,9 @@ export class PoolHealthStore {
         const key = hashScope(scope);
         const previous = state.entries[key];
         const failures = Math.min((previous?.failures ?? 0) + 1, 100);
-        const step = this.ladder[Math.min(failures - 1, this.ladder.length - 1)]!;
+        const step = shortBase !== undefined
+          ? Math.min(shortBase * 2 ** Math.min(failures - 1, 10), FAILURE_COOLDOWN_MAX_MS)
+          : this.ladder[Math.min(failures - 1, this.ladder.length - 1)]!;
         // An authoritative reset always wins and is never capped.
         const entryUntil = failure.retryAt !== undefined ? Math.max(failure.retryAt, now) : now + step;
         state.entries[key] = {

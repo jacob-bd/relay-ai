@@ -8,9 +8,10 @@ describe('pool failure classification', () => {
     expect(poolFailure({ statusCode: 429, responseHeaders: { 'Retry-After': '604800' } }, 1000).retryAt).toBe(604801000);
     expect(poolFailure({ statusCode: 429 }, 1000).retryAt).toBeUndefined();
   });
-  it('does not retry invalid requests, cancellation or unknown failures', () => {
-    for (const error of [{ statusCode: 400 }, { name: 'AbortError' }, new Error('unknown')]) expect(retryPoolFailure(error)).toBe(false);
-    for (const error of [{ statusCode: 429 }, { statusCode: 503 }, new Error('first-content-timeout'), new Error('Pool route entered cooldown')]) expect(retryPoolFailure(error)).toBe(true);
+  it('falls through to the next member for every failure except cancellation', () => {
+    expect(retryPoolFailure({ name: 'AbortError' })).toBe(false);
+    for (const error of [{ statusCode: 400 }, { statusCode: 422 }, new Error('unknown'), { statusCode: 429 }, { statusCode: 503 },
+      { statusCode: 401 }, new Error('first-content-timeout'), new Error('Pool route entered cooldown')]) expect(retryPoolFailure(error)).toBe(true);
   });
 });
 
