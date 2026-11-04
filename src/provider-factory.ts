@@ -35,6 +35,7 @@ import {
   type GatewayProtocol,
 } from './gateway-protocol.js';
 import { isProviderKind, providerKind } from './registry/provider-kind.js';
+import { markStreamOnlyModel } from './stream-only-model.js';
 
 /** Models that must use /v1/responses instead of /v1/chat/completions. */
 const RESPONSES_ONLY_PREFIXES = [
@@ -778,6 +779,8 @@ export function withProviderRequestDefaults(model: LanguageModel, spec: Provider
 export async function createLanguageModel(spec: ProviderModelSpec): Promise<LanguageModel> {
   const npm = resolveProviderNpm(spec.npm);
   const primary = withProviderRequestDefaults(await createLanguageModelSingle(spec), spec);
+  // ChatGPT login (chatgpt.com/backend-api/codex) rejects non-streaming requests.
+  if (npm === '@ai-sdk/openai' && spec.authType === 'oauth') markStreamOnlyModel(primary);
 
   // OAuth backends often expose a gateway URL but require provider-specific
   // request signing. Retrying those through a second SDK would be unsafe.

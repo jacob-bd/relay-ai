@@ -1,8 +1,9 @@
-import { tool, jsonSchema, streamText, generateText } from 'ai';
+import { tool, jsonSchema, streamText } from 'ai';
 import type { LanguageModel, ModelMessage } from 'ai';
 import { parseToolArguments } from './proxy-shared.js';
 import type { SdkCallParams } from './sdk-adapter.js';
 import { formatUpstreamError } from './codex/upstream-error.js';
+import { generateTextStreamingIfRequired } from './stream-only-model.js';
 
 // ── OpenAI request shapes ───────────────────────────────────────────────────
 
@@ -185,7 +186,7 @@ export async function generateOpenAiResponse(
   params: SdkCallParams,
   responseModelId: string,
 ) {
-  const result: any = await generateText({ model, ...(params as any) });
+  const result: any = await generateTextStreamingIfRequired({ model, ...(params as any) });
   const message: Record<string, any> = { role: 'assistant', content: result.text || null };
   // Reasoning models can spend their entire turn on reasoning with little/no final text
   // (e.g. a very long system prompt leaves no budget for a visible answer). Surface it via

@@ -24,6 +24,7 @@ import {
 } from './provider-factory.js';
 import { formatUpstreamError } from './codex/upstream-error.js';
 import { normalizeToolSchemaForNpm } from './tool-schema.js';
+import { generateTextStreamingIfRequired } from './stream-only-model.js';
 
 export { silenceSdkWarnings };
 
@@ -1496,7 +1497,7 @@ export async function generateResponsesResponse(
   modelId: string,
 ): Promise<Record<string, unknown>> {
   const { toolContext, ...sdkParams } = params;
-  const r = await generateText({ model, ...sdkParams, maxRetries: 0 } as Parameters<typeof generateText>[0]);
+  const r = await generateTextStreamingIfRequired({ model, ...sdkParams, maxRetries: 0 } as Parameters<typeof generateText>[0]);
   const incompleteReason = incompleteReasonForFinish(r.finishReason);
   const createdAt = Math.floor(Date.now() / 1000);
   const responseId = newResponseId();

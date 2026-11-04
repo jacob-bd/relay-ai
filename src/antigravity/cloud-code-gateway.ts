@@ -1,7 +1,7 @@
 import { createJsonCapture, createStreamCapture } from './pool-failover.js';
 import { isProviderKind } from '../registry/provider-kind.js';
 import http from 'node:http';
-import { streamText, generateText } from 'ai';
+import { streamText } from 'ai';
 import {
   createLanguageModel,
   deepMergeProviderOptions,
@@ -34,6 +34,7 @@ import { extractConversationId, openCodeGoHeaders } from '../opencode-session.js
 import { detectAuthTierInBody, type DetectedAuthTier } from './account-guardrail.js';
 import loadCodeAssistFixture from './fixtures/loadCodeAssist.json' with { type: 'json' };
 import catalogFixtureRaw from './fixtures/fetchAvailableModels.json' with { type: 'json' };
+import { generateTextStreamingIfRequired } from '../stream-only-model.js';
 
 export interface CloudCodeGatewayHandle {
   port: number;
@@ -1075,7 +1076,7 @@ async function handleUnaryRequest(
   const langModel = await createRouteLanguageModel(route, options.sessionId);
   const responseId = `relay-${Date.now()}`;
 
-  const result = await generateText({
+  const result = await generateTextStreamingIfRequired({
     model: langModel,
     instructions: sdkParams.instructions,
     messages: sdkParams.messages,

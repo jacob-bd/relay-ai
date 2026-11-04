@@ -2,7 +2,7 @@
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { streamText, generateText, tool, jsonSchema } from 'ai';
+import { streamText, tool, jsonSchema } from 'ai';
 import type { LanguageModel } from 'ai';
 import { readBody, sendJson } from './http-utils.js';
 import {
@@ -20,6 +20,7 @@ import type { ProxyRoute, ProxyHandle } from './proxy.js';
 import { routeLookupIds } from './context-model-id.js';
 import { formatUpstreamError } from './codex/upstream-error.js';
 import { extractConversationId, openCodeGoHeaders } from './opencode-session.js';
+import { generateTextStreamingIfRequired } from './stream-only-model.js';
 
 function mapFinishReason(reason: string): string {
   if (reason === 'stop' || reason === 'tool-calls') return 'STOP';
@@ -487,7 +488,7 @@ export async function startGeminiProxy(
         } else {
           // Non-streaming generateContent
           plog('Starting generateText...');
-          const result = await generateText({
+          const result = await generateTextStreamingIfRequired({
             model: languageModel,
             ...params,
           });
