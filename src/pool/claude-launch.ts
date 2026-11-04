@@ -67,8 +67,8 @@ export function prepareClaudeAutoPool(
   if (!pool.members.some(member => servableClaudeMember(pool, providers, member, now))) return undefined;
 
   const health = new PoolHealthStore();
-  const runtime = new ClaudePoolRuntime(pool, (body, signal, sessionId) => prepareClaudePoolRoutes({
-    pool, providers, receipts: pool.receipts, body, signal, sessionId, health,
+  const runtime = new ClaudePoolRuntime(pool, (body, signal, sessionId, onSkip) => prepareClaudePoolRoutes({
+    pool, providers, receipts: pool.receipts, body, signal, sessionId, health, onSkip,
   }));
   return { pool, displayName: entry.display_name, contextWindow: entry.context_window, runtime };
 }

@@ -1298,8 +1298,8 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
         return 1;
       }
       const health = new PoolHealthStore();
-      const runtime = new ClaudePoolRuntime(pool, (body, signal, sessionId) => prepareClaudePoolRoutes({
-        pool, providers, receipts: pool.receipts, body, signal, sessionId, health,
+      const runtime = new ClaudePoolRuntime(pool, (body, signal, sessionId, onSkip) => prepareClaudePoolRoutes({
+        pool, providers, receipts: pool.receipts, body, signal, sessionId, health, onSkip,
       }));
       let handle: ProxyHandle;
       try {

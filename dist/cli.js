@@ -103,7 +103,7 @@ import {
   upstreamModelId,
   waitForCodexAppQuit,
   writeResponsesErrorStream
-} from "./chunk-Q4JOACTQ.js";
+} from "./chunk-JYNKHQX2.js";
 import {
   translateRequest
 } from "./chunk-E7FSS5M2.js";
@@ -1888,9 +1888,13 @@ async function prepareClaudePoolRoutes(options) {
   const auto = requested === "auto";
   for (const member of options.pool.members) {
     options.signal.throwIfAborted();
+    const skip = (reason) => options.onSkip?.(member, reason);
     const provider = options.providers.find((item) => item.id === member.providerId);
     const model = provider?.models.find((item) => item.id === member.modelId);
-    if (!provider || !model || !model.npm || model.modelFormat === "cloud-code") continue;
+    if (!provider || !model || !model.npm || model.modelFormat === "cloud-code") {
+      skip("not available in the registry");
+      continue;
+    }
     const revision = poolEndpointRevision({
       providerId: provider.id,
       authRef: provider.authRef,
@@ -1900,9 +1904,15 @@ async function prepareClaudePoolRoutes(options) {
       headers: provider.headers
     });
     const receipt = currentPoolReceipt(options.receipts, member, revision, Date.now());
-    if (!receipt || !receipt.billingSafe || !receipt.targets.includes("claude")) continue;
+    if (!receipt || !receipt.billingSafe || !receipt.targets.includes("claude")) {
+      skip("no fresh verification for Claude (run Test)");
+      continue;
+    }
     const freeStatus = poolFreeStatus({ model, providerId: provider.id });
-    if (freeStatus !== "verified_free") continue;
+    if (freeStatus !== "verified_free") {
+      skip("not verified free");
+      continue;
+    }
     const memberEffort = poolMemberEffort(auto ? "auto" : requested, receipt);
     const memberAuto = memberEffort === null;
     const body = omitClaudeEffort(options.body, memberEffort);
@@ -1913,10 +1923,16 @@ async function prepareClaudePoolRoutes(options) {
         apiBaseUrl: model.apiBaseUrl
       }
     });
-    if (memberAuto && translatedEffortClaim(params.providerOptions)) continue;
+    if (memberAuto && translatedEffortClaim(params.providerOptions)) {
+      skip("translation would set an effort");
+      continue;
+    }
     const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
     const askedOutput = typeof body.max_tokens === "number" ? body.max_tokens : outputCap;
-    if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) continue;
+    if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) {
+      skip("invalid output limit");
+      continue;
+    }
     const requestedOutput = Math.min(askedOutput, outputCap);
     params.maxOutputTokens = requestedOutput;
     const fits = poolRequestFitsWindow({
@@ -1924,13 +1940,22 @@ async function prepareClaudePoolRoutes(options) {
       instructions: params.instructions,
       tools: params.tools
     }, receipt.contextWindow, requestedOutput).fits;
-    if (!fits) continue;
+    if (!fits) {
+      skip("request too large for its context window");
+      continue;
+    }
     const scopes = [poolEndpointScope(provider.id, revision, model.id)];
     const accountScopes = [poolAccountScope(provider.id)];
     const until = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
-    if (until !== void 0 && until > Date.now()) continue;
+    if (until !== void 0 && until > Date.now()) {
+      skip("cooling down after a failure");
+      continue;
+    }
     const apiKey = await resolveLocalProviderApiKey(provider);
-    if (!apiKey) continue;
+    if (!apiKey) {
+      skip("no credential");
+      continue;
+    }
     const languageModel = await createLanguageModel({
       npm: model.npm,
       modelId: model.upstreamModelId,
@@ -2001,14 +2026,15 @@ function prepareClaudeAutoPool(prefs, providers, now = Date.now()) {
   if (!entry) return void 0;
   if (!pool.members.some((member) => servableClaudeMember(pool, providers, member, now))) return void 0;
   const health = new PoolHealthStore();
-  const runtime = new ClaudePoolRuntime(pool, (body, signal, sessionId) => prepareClaudePoolRoutes({
+  const runtime = new ClaudePoolRuntime(pool, (body, signal, sessionId, onSkip) => prepareClaudePoolRoutes({
     pool,
     providers,
     receipts: pool.receipts,
     body,
     signal,
     sessionId,
-    health
+    health,
+    onSkip
   }));
   return { pool, displayName: entry.display_name, contextWindow: entry.context_window, runtime };
 }
@@ -17930,14 +17956,15 @@ async function runClaudeCommand(parsed) {
         return 1;
       }
       const health = new PoolHealthStore();
-      const runtime = new ClaudePoolRuntime(pool, (body, signal, sessionId) => prepareClaudePoolRoutes({
+      const runtime = new ClaudePoolRuntime(pool, (body, signal, sessionId, onSkip) => prepareClaudePoolRoutes({
         pool,
         providers,
         receipts: pool.receipts,
         body,
         signal,
         sessionId,
-        health
+        health,
+        onSkip
       }));
       let handle;
       try {
@@ -18546,7 +18573,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-VX6CEEJU.js");
+    const { runUiCommand } = await import("./ui-command-ZOGNEASU.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {

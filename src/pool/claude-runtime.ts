@@ -74,6 +74,8 @@ export interface ClaudePoolOptions {
   scope?: { value: string; historyFingerprint: string };
   /** Optional trace sink (the proxy's --trace log): one short line per attempt, failure and answer. */
   trace?: (line: string) => void;
+  /** Members left out before dispatch that are worth showing in the log if a later member answered. */
+  skipped?: ReadonlyArray<{ providerId: string; modelId: string; reason: string }>;
 }
 
 function defaultRetryable(error: unknown): boolean {
@@ -121,6 +123,9 @@ export async function serveClaudePool(options: ClaudePoolOptions): Promise<Claud
   const result = await serveClaudePoolRequest(options, state);
   if (!result.ok && !state.served) {
     // Closes the request in the log so a request where every member failed still reads as one line.
+    for (const item of options.skipped ?? []) {
+      recordPoolActivity({ target: 'claude', event: 'failed', providerId: item.providerId, modelId: item.modelId, requestId: state.requestId, reason: 'skipped: ' + item.reason });
+    }
     recordPoolActivity({ target: 'claude', event: 'gave-up', providerId: 'pool', modelId: 'none', requestId: state.requestId, ms: Date.now() - state.started });
   }
   return result;
@@ -147,6 +152,15 @@ async function serveClaudePoolRequest(
     const member = attemptedId ? poolRouteMember(attemptedId) : undefined;
     if (!member) return;
     state.served = true;
+    // Members ahead of the answering one that were passed over (e.g. too large for their window), so the
+    // log says why a preferred member did not answer.
+    const order = pool.members.findIndex(item => item.providerId === member.providerId && item.modelId === member.modelId);
+    for (const item of options.skipped ?? []) {
+      const at = pool.members.findIndex(m => m.providerId === item.providerId && m.modelId === item.modelId);
+      if (order >= 0 && at >= 0 && at < order) {
+        recordPoolActivity({ target: 'claude', event: 'failed', providerId: item.providerId, modelId: item.modelId, requestId: state.requestId, reason: 'skipped: ' + item.reason });
+      }
+    }
     recordPoolActivity({ target: 'claude', event: 'served', ...member, requestId: state.requestId, ms: Date.now() - attemptStarted });
     options.trace?.(`pool answered: ${member.providerId}/${member.modelId} in ${((Date.now() - attemptStarted) / 1000).toFixed(1)}s`);
   };
@@ -220,6 +234,7 @@ export class ClaudePoolRuntime {
       body: Record<string, unknown>,
       signal: AbortSignal,
       sessionId?: string,
+      onSkip?: (member: { providerId: string; modelId: string }, reason: string) => void,
     ) => Promise<DispatchRoute[]>,
     private readonly limits: PoolLimits = {
       attempts: MAX_POOL_ATTEMPTS, firstContentMs: 20_000, idleMs: 20_000,
@@ -234,7 +249,9 @@ export class ClaudePoolRuntime {
     sessionId?: string,
     trace?: (line: string) => void,
   ): Promise<ClaudeServeResult> {
-    const routes = await this.prepare(body, signal, sessionId);
+    const skips: Array<{ providerId: string; modelId: string; reason: string }> = [];
+    const routes = await this.prepare(body, signal, sessionId, (member, reason) => skips.push({ ...member, reason }));
+    const skipped = this.newSkips(skips);
     // Effort was resolved per member while preparing routes (verified level sent, otherwise omitted),
     // so admission must not re-reject members for an effort that was deliberately not sent.
     const effort = 'auto';
@@ -250,7 +267,26 @@ export class ClaudePoolRuntime {
       limits: this.limits,
       write,
       trace,
+      skipped,
       retryable: retryPoolFailure,
     });
+  }
+
+  /** Last skip reason shown per member: a skip is logged when it starts or changes, not on every request. */
+  private readonly lastSkip = new Map<string, string>();
+
+  private newSkips(skips: ReadonlyArray<{ providerId: string; modelId: string; reason: string }>) {
+    const now = new Set<string>();
+    const fresh: Array<{ providerId: string; modelId: string; reason: string }> = [];
+    for (const item of skips) {
+      const key = item.providerId + '/' + item.modelId;
+      now.add(key);
+      // A cooldown already has its own failure entry from when the member failed.
+      if (item.reason.startsWith('cooling down')) continue;
+      if (this.lastSkip.get(key) !== item.reason) fresh.push(item);
+      this.lastSkip.set(key, item.reason);
+    }
+    for (const key of [...this.lastSkip.keys()]) if (!now.has(key)) this.lastSkip.delete(key);
+    return fresh;
   }
 }

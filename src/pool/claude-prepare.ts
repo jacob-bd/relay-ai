@@ -35,6 +35,8 @@ export interface ClaudeRouteOptions {
   signal: AbortSignal;
   sessionId?: string;
   health: PoolHealthStore;
+  /** Called once per member left out, with a short fixed reason (no prompts, no keys). */
+  onSkip?: (member: { providerId: string; modelId: string }, reason: string) => void;
 }
 
 /** Per-member Anthropic request translation. Never shares a model by catalog alias. */
@@ -50,17 +52,18 @@ export async function prepareClaudePoolRoutes(options: ClaudeRouteOptions): Prom
   const auto = requested === 'auto';
   for (const member of options.pool.members) {
     options.signal.throwIfAborted();
+    const skip = (reason: string) => options.onSkip?.(member, reason);
     const provider = options.providers.find(item => item.id === member.providerId);
     const model = provider?.models.find(item => item.id === member.modelId);
-    if (!provider || !model || !model.npm || model.modelFormat === 'cloud-code') continue;
+    if (!provider || !model || !model.npm || model.modelFormat === 'cloud-code') { skip('not available in the registry'); continue; }
     const revision = poolEndpointRevision({
       providerId: provider.id, authRef: provider.authRef, npm: model.npm,
       baseURL: model.apiBaseUrl, upstreamModelId: model.upstreamModelId, headers: provider.headers,
     });
     const receipt = currentPoolReceipt(options.receipts, member, revision, Date.now());
-    if (!receipt || !receipt.billingSafe || !receipt.targets.includes('claude')) continue;
+    if (!receipt || !receipt.billingSafe || !receipt.targets.includes('claude')) { skip('no fresh verification for Claude (run Test)'); continue; }
     const freeStatus = poolFreeStatus({ model, providerId: provider.id });
-    if (freeStatus !== 'verified_free') continue;
+    if (freeStatus !== 'verified_free') { skip('not verified free'); continue; }
     // An effort level this member has not verified is not sent (never claimed); the member runs on the
     // provider's default instead of being dropped. Claude Code always sends an effort (e.g. medium), and
     // dropping unverified members emptied the whole pool.
@@ -72,25 +75,25 @@ export async function prepareClaudePoolRoutes(options: ClaudeRouteOptions): Prom
         ...model, providerId: provider.id, apiBaseUrl: model.apiBaseUrl,
       },
     });
-    if (memberAuto && translatedEffortClaim(params.providerOptions)) continue;
+    if (memberAuto && translatedEffortClaim(params.providerOptions)) { skip('translation would set an effort'); continue; }
     // Coding turns need long outputs. Clamp to the model's own limit (never drop the member, never
     // use the receipt's chat-sized reservation).
     const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
     const askedOutput = typeof body.max_tokens === 'number' ? body.max_tokens : outputCap;
-    if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) continue;
+    if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) { skip('invalid output limit'); continue; }
     const requestedOutput = Math.min(askedOutput, outputCap);
     params.maxOutputTokens = requestedOutput;
     const fits = poolRequestFitsWindow({
       messages: params.messages, instructions: params.instructions, tools: params.tools,
     }, receipt.contextWindow, requestedOutput).fits;
-    if (!fits) continue;
+    if (!fits) { skip('request too large for its context window'); continue; }
     const scopes = [poolEndpointScope(provider.id, revision, model.id)];
     // A rate limit cools the whole provider account (free-tier limits are per account), so sibling models wait too.
     const accountScopes = [poolAccountScope(provider.id)];
     const until = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
-    if (until !== undefined && until > Date.now()) continue;
+    if (until !== undefined && until > Date.now()) { skip('cooling down after a failure'); continue; }
     const apiKey = await resolveLocalProviderApiKey(provider);
-    if (!apiKey) continue;
+    if (!apiKey) { skip('no credential'); continue; }
     const languageModel = await createLanguageModel({
       npm: model.npm, modelId: model.upstreamModelId, apiKey,
       baseURL: model.apiBaseUrl, providerId: provider.id, authType: provider.authType,

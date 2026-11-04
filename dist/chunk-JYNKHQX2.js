@@ -2216,6 +2216,9 @@ async function serveClaudePool(options) {
   const state = { requestId: randomUUID().slice(0, 8), served: false, started: Date.now() };
   const result = await serveClaudePoolRequest(options, state);
   if (!result.ok && !state.served) {
+    for (const item of options.skipped ?? []) {
+      recordPoolActivity({ target: "claude", event: "failed", providerId: item.providerId, modelId: item.modelId, requestId: state.requestId, reason: "skipped: " + item.reason });
+    }
     recordPoolActivity({ target: "claude", event: "gave-up", providerId: "pool", modelId: "none", requestId: state.requestId, ms: Date.now() - state.started });
   }
   return result;
@@ -2241,6 +2244,13 @@ async function serveClaudePoolRequest(options, state) {
     const member = attemptedId ? poolRouteMember(attemptedId) : void 0;
     if (!member) return;
     state.served = true;
+    const order = pool.members.findIndex((item) => item.providerId === member.providerId && item.modelId === member.modelId);
+    for (const item of options.skipped ?? []) {
+      const at = pool.members.findIndex((m) => m.providerId === item.providerId && m.modelId === item.modelId);
+      if (order >= 0 && at >= 0 && at < order) {
+        recordPoolActivity({ target: "claude", event: "failed", providerId: item.providerId, modelId: item.modelId, requestId: state.requestId, reason: "skipped: " + item.reason });
+      }
+    }
     recordPoolActivity({ target: "claude", event: "served", ...member, requestId: state.requestId, ms: Date.now() - attemptStarted });
     options.trace?.(`pool answered: ${member.providerId}/${member.modelId} in ${((Date.now() - attemptStarted) / 1e3).toFixed(1)}s`);
   };
@@ -2323,7 +2333,9 @@ var ClaudePoolRuntime = class {
   prepare;
   limits;
   async serve(body, write, signal, sessionId, trace) {
-    const routes = await this.prepare(body, signal, sessionId);
+    const skips = [];
+    const routes = await this.prepare(body, signal, sessionId, (member, reason) => skips.push({ ...member, reason }));
+    const skipped = this.newSkips(skips);
     const effort = "auto";
     return serveClaudePool({
       pool: this.pool,
@@ -2337,8 +2349,24 @@ var ClaudePoolRuntime = class {
       limits: this.limits,
       write,
       trace,
+      skipped,
       retryable: retryPoolFailure
     });
+  }
+  /** Last skip reason shown per member: a skip is logged when it starts or changes, not on every request. */
+  lastSkip = /* @__PURE__ */ new Map();
+  newSkips(skips) {
+    const now = /* @__PURE__ */ new Set();
+    const fresh = [];
+    for (const item of skips) {
+      const key = item.providerId + "/" + item.modelId;
+      now.add(key);
+      if (item.reason.startsWith("cooling down")) continue;
+      if (this.lastSkip.get(key) !== item.reason) fresh.push(item);
+      this.lastSkip.set(key, item.reason);
+    }
+    for (const key of [...this.lastSkip.keys()]) if (!now.has(key)) this.lastSkip.delete(key);
+    return fresh;
   }
 };
 
@@ -8391,4 +8419,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-Q4JOACTQ.js.map
+//# sourceMappingURL=chunk-JYNKHQX2.js.map
