@@ -18032,6 +18032,13 @@ Error: ${launchPlan.error}
       hint: `${favorites.length} saved favorites`
     });
   }
+  if (autoPool) {
+    providerOptions.splice(favorites.length > 0 ? 1 : 0, 0, {
+      value: "__pool__",
+      label: "\u{1F3CA} Relay Free Pool",
+      hint: "experimental \xB7 starts on the pool, falls back across your free models"
+    });
+  }
   const initialProvider = prefs.lastProvider && providerOptions.some((o) => o.value === prefs.lastProvider) ? prefs.lastProvider : providerOptions[0].value;
   let activeProvider;
   let selectedModel;
@@ -18062,6 +18069,32 @@ Error: ${launchPlan.error}
         return 0;
       }
       const providerChoice = chosen;
+      if (providerChoice === "__pool__" && autoPool) {
+        if (launchMode === "mixed" && !httpProxy) {
+          p16.log.info("Starting on Relay Free Pool uses Relay models only for now (your normal Claude models are not added).");
+        }
+        const resolvePoolFavorite = makeRouteResolver(catalog.length > 0 ? catalog : null);
+        const favoriteRoutes = favorites.map((fav) => resolvePoolFavorite(fav.providerId, fav.modelId)).filter((route) => route !== void 0).slice(0, MAX_MODEL_CATALOG - 1);
+        if (dryRun) {
+          console.log("");
+          console.log(pc11.bold(pc11.cyan("  DRY RUN \u2014 would execute (Relay Free Pool start):")));
+          console.log("");
+          console.log(`  ${pc11.bold("Starting model:")} ${autoPool.displayName}`);
+          console.log(`  ${pc11.bold("/model catalog:")} ${favoriteRoutes.length + 1} model(s)`);
+          console.log("");
+          console.log(pc11.dim("  (dry run complete \u2014 Claude Code was NOT launched)"));
+          console.log("");
+          return 0;
+        }
+        return launchClaudeViaCatalog(
+          favoriteRoutes,
+          { aliasId: CLAUDE_POOL_MODEL_ID },
+          autoPool.contextWindow,
+          trace,
+          claudeArgs,
+          autoPool
+        );
+      }
       if (providerChoice === "__favorites__") {
         const favStart = await pickFavoriteStartModel(
           allProviders,

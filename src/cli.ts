@@ -868,7 +868,7 @@ function printHelp(text: string): void {
 
 async function launchClaudeViaCatalog(
   catalogRoutes: ProxyRoute[],
-  startingRoute: ProxyRoute,
+  startingRoute: Pick<ProxyRoute, 'aliasId'>,
   contextWindow: number | undefined,
   trace: boolean,
   claudeArgs: string[],
@@ -1496,6 +1496,16 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
     });
   }
 
+  // Relay Free Pool as the session's starting model: right under Favorites Catalog, only when the pool
+  // is enabled and at least one member has fresh Claude evidence (autoPool is undefined otherwise).
+  if (autoPool) {
+    providerOptions.splice(favorites.length > 0 ? 1 : 0, 0, {
+      value: '__pool__',
+      label: '🏊 Relay Free Pool',
+      hint: 'experimental · starts on the pool, falls back across your free models',
+    });
+  }
+
   const initialProvider =
     prefs.lastProvider && providerOptions.some(o => o.value === prefs.lastProvider)
       ? prefs.lastProvider
@@ -1533,6 +1543,36 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       }
 
       const providerChoice = chosen as string;
+
+      if (providerChoice === '__pool__' && autoPool) {
+        if (launchMode === 'mixed' && !httpProxy) {
+          p.log.info('Starting on Relay Free Pool uses Relay models only for now (your normal Claude models are not added).');
+        }
+        const resolvePoolFavorite = makeRouteResolver(catalog.length > 0 ? catalog : null);
+        const favoriteRoutes = favorites
+          .map(fav => resolvePoolFavorite(fav.providerId, fav.modelId))
+          .filter((route): route is ProxyRoute => route !== undefined)
+          .slice(0, MAX_MODEL_CATALOG - 1);
+        if (dryRun) {
+          console.log('');
+          console.log(pc.bold(pc.cyan('  DRY RUN — would execute (Relay Free Pool start):')));
+          console.log('');
+          console.log(`  ${pc.bold('Starting model:')} ${autoPool.displayName}`);
+          console.log(`  ${pc.bold('/model catalog:')} ${favoriteRoutes.length + 1} model(s)`);
+          console.log('');
+          console.log(pc.dim('  (dry run complete — Claude Code was NOT launched)'));
+          console.log('');
+          return 0;
+        }
+        return launchClaudeViaCatalog(
+          favoriteRoutes,
+          { aliasId: CLAUDE_POOL_MODEL_ID },
+          autoPool.contextWindow,
+          trace,
+          claudeArgs,
+          autoPool,
+        );
+      }
 
       if (providerChoice === '__favorites__') {
         const favStart = await pickFavoriteStartModel(
