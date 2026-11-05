@@ -906,6 +906,8 @@ async function handlePoolRequest(
   const started = { at: Date.now() };
   let answering: AntigravityRoute | undefined;
   const toolNames = new Set<string>();
+  const requestHasTools = ((parsed?.request?.tools ?? []) as Array<{ functionDeclarations?: unknown[] }>)
+    .some(group => (group.functionDeclarations?.length ?? 0) > 0);
   const failed = new Set<string>();
   const skips: Array<{ member: AntigravityRoute; reason: string }> = [];
   const requestStart = Date.now();
@@ -917,13 +919,14 @@ async function handlePoolRequest(
       const eligible = members.filter(member => !failed.has(memberKey(member)));
       if (round > 0 && eligible.length === 0) throw new PoolAttemptError('attempt-budget-exhausted', false);
       try {
-        const { routes, prepared } = await prepareAntigravityPoolRoutes({
+        const { routes } = await prepareAntigravityPoolRoutes({
           members: eligible,
           health: deps.health(),
           onSkip: (member, reason) => {
             log('[gateway] pool member skipped: ' + member.providerId + '/' + member.modelId + ': ' + reason);
             if (round === 0) skips.push({ member, reason });
           },
+          onBuilt: (_member, built) => { for (const name of Object.keys(built.tools ?? {})) toolNames.add(name); },
           build: async member => {
             const sdkParams = applyClaudeCodeOAuthIdentity(member, translateRequest(parsed, {
               ...(options.optionsFor?.(member) ?? options.requestOptions),
@@ -946,10 +949,9 @@ async function handlePoolRequest(
             };
           },
         });
-        for (const built of prepared.values()) for (const name of Object.keys(built.tools ?? {})) toolNames.add(name);
         const remaining = Math.max(1, deps.limits.totalMs - (Date.now() - requestStart));
         const events = dispatchFreePool(antigravityPoolPreferences(eligible, row.reasoningEffort), routes, {
-          target: 'antigravity', tools: toolNames.size > 0, effort: row.reasoningEffort, signal: abort.signal,
+          target: 'antigravity', tools: requestHasTools, effort: row.reasoningEffort, signal: abort.signal,
         }, {
           limits: { ...deps.limits, totalMs: remaining },
           retryable: retryPoolFailure,

@@ -12,6 +12,12 @@ export interface PoolRoute {
   id: string;
   open(signal: AbortSignal): Promise<AsyncIterable<PoolEvent>>;
   recordAttemptFailure?(error: unknown): Promise<void>;
+  /**
+   * Lazy preparation: runs right before this route would be attempted, never for routes the request does not
+   * reach. Returns a reason to pass the route over (no attempt is used, nothing is recorded as a failure), or
+   * undefined to go ahead. Routes without it are always admitted.
+   */
+  admit?(signal: AbortSignal): Promise<string | undefined>;
 }
 /** Members tried per request, in priority order. Failures are usually fast; the total time limit still bounds slow ones. */
 export const MAX_POOL_ATTEMPTS = 8;
@@ -65,6 +71,7 @@ export async function* runPoolAttempts(
   retryable: (error: unknown) => boolean,
   onAttempt: (id: string) => void = () => {},
   onFailure: (id: string, error: unknown, committed: boolean) => void = () => {},
+  onSkip: (id: string, reason: string) => void = () => {},
 ): AsyncGenerator<PoolEvent> {
   for (const [name, value] of Object.entries(limits)) {
     if (!Number.isSafeInteger(value) || value <= 0) throw new Error('Invalid pool limit: ' + name);
@@ -72,9 +79,23 @@ export async function* runPoolAttempts(
   const deadline = Date.now() + limits.totalMs;
   let committed = false;
   let lastError: unknown;
-  for (const route of routes.slice(0, limits.attempts)) {
+  // Only routes that are really opened use up an attempt: a route passed over at admission costs none.
+  let opened = 0;
+  for (const route of routes) {
+    if (opened >= limits.attempts) break;
     signal.throwIfAborted();
     if (Date.now() >= deadline) throw new PoolAttemptError('total-deadline', committed);
+    if (route.admit) {
+      let reason: string | undefined;
+      try {
+        reason = await route.admit(signal);
+      } catch (error) {
+        if (signal.aborted) throw signal.reason ?? error;
+        reason = 'could not be prepared: ' + (error instanceof Error ? error.message : String(error));
+      }
+      if (reason) { onSkip(route.id, reason); continue; }
+    }
+    opened += 1;
     const controller = new AbortController();
     const attemptSignal = AbortSignal.any([signal, controller.signal]);
     const attemptStart = Date.now();
@@ -182,5 +203,6 @@ export async function* runPoolAttempts(
       }
     }
   }
+  if (opened === 0) throw new PoolAttemptError('no-admitted-route', false, lastError);
   throw new PoolAttemptError('attempt-budget-exhausted', committed, lastError);
 }

@@ -9,6 +9,7 @@ import { poolRequestFitsWindow } from './context.js';
 import type { DispatchRoute } from './dispatch.js';
 import { poolAccountScope, poolEndpointScope, type PoolHealthStore } from './health.js';
 import { poolOutputCap } from './output-limit.js';
+import { lazyPoolRoute } from './lazy-route.js';
 import { sdkPoolRoute, type PoolSdkRequest } from './sdk-route.js';
 
 /** What the gateway built for one member: the translated request and its language model. */
@@ -43,10 +44,11 @@ export async function prepareAntigravityPoolRoutes(options: {
   health: PoolHealthStore;
   build(member: AntigravityRoute): Promise<PreparedAntigravityMember>;
   onSkip?(member: AntigravityRoute, reason: string): void;
+  /** Called when a member was built at admission, so the gateway learns its tool names. */
+  onBuilt?(member: AntigravityRoute, built: PreparedAntigravityMember): void;
   now?: number;
-}): Promise<{ routes: DispatchRoute[]; prepared: Map<AntigravityRoute, PreparedAntigravityMember> }> {
+}): Promise<{ routes: DispatchRoute[] }> {
   const routes: DispatchRoute[] = [];
-  const prepared = new Map<AntigravityRoute, PreparedAntigravityMember>();
   const now = options.now ?? Date.now();
   for (const member of options.members) {
     const skip = (reason: string) => options.onSkip?.(member, reason);
@@ -57,34 +59,42 @@ export async function prepareAntigravityPoolRoutes(options: {
     if (!receipt || !receipt.billingSafe || !receipt.targets.includes('antigravity')) { skip('no verification for Antigravity (run Test)'); continue; }
     const scopes = [poolEndpointScope(member.providerId, evidence.revision, member.modelId)];
     const accountScopes = [poolAccountScope(member.providerId)];
-    const off = await options.health.disabledFor(scopes);
-    if (off) { skip('DISABLED: ' + off.note + ' (run Test to re-enable)'); continue; }
-    const until = await options.health.cooldownFor({ id: evidence.revision, scopes: [...scopes, ...accountScopes] });
-    if (until !== undefined && until > now) { skip('cooling down after a failure'); continue; }
-    let built: PreparedAntigravityMember;
-    try { built = await options.build(member); } catch (error) {
-      skip('could not be prepared: ' + (error instanceof Error ? error.message : String(error)));
-      continue;
-    }
-    const outputCap = poolOutputCap(member.providerId, member.modelId, receipt.contextWindow);
-    const asked = built.maxOutputTokens ?? outputCap;
-    if (!Number.isSafeInteger(asked) || asked <= 0) { skip('invalid output limit'); continue; }
-    const requestedOutput = Math.min(asked, outputCap);
-    if (!poolRequestFitsWindow({ messages: built.messages, instructions: built.system, tools: built.tools },
-      receipt.contextWindow, requestedOutput).fits) { skip('request too large for its context window'); continue; }
-    prepared.set(member, built);
-    routes.push(sdkPoolRoute({
+    // Everything below runs only when the coordinator is about to attempt this member.
+    routes.push(lazyPoolRoute({
       member: identity, revision: evidence.revision,
       // The launch only builds pool rows from members it verified free.
       freeStatus: 'verified_free',
       catalogVerified: true, accessVerified: true, billingSafe: true, targets: receipt.targets,
       toolsVerified: receipt.tools, defaultEffortVerified: true, effortLevels: receipt.effortLevels,
       contextFits: true, contextVerified: true,
-    }, built.model, {
-      messages: built.messages, tools: built.tools, system: built.system, toolChoice: built.toolChoice,
-      maxOutputTokens: requestedOutput, temperature: built.temperature,
-      providerOptions: built.providerOptions, headers: built.headers,
-    }, { store: options.health, scopes, accountScopes }));
+    }, async () => {
+      const gone = (reason: string) => { skip(reason); return { skip: reason }; };
+      const off = await options.health.disabledFor(scopes);
+      if (off) return gone('DISABLED: ' + off.note + ' (run Test to re-enable)');
+      const until = await options.health.cooldownFor({ id: evidence.revision, scopes: [...scopes, ...accountScopes] });
+      if (until !== undefined && until > now) return gone('cooling down after a failure');
+      let built: PreparedAntigravityMember;
+      try { built = await options.build(member); } catch (error) {
+        return gone('could not be prepared: ' + (error instanceof Error ? error.message : String(error)));
+      }
+      const outputCap = poolOutputCap(member.providerId, member.modelId, receipt.contextWindow);
+      const asked = built.maxOutputTokens ?? outputCap;
+      if (!Number.isSafeInteger(asked) || asked <= 0) return gone('invalid output limit');
+      const requestedOutput = Math.min(asked, outputCap);
+      if (!poolRequestFitsWindow({ messages: built.messages, instructions: built.system, tools: built.tools },
+        receipt.contextWindow, requestedOutput).fits) return gone('request too large for its context window');
+      options.onBuilt?.(member, built);
+      return { route: sdkPoolRoute({
+        member: identity, revision: evidence.revision, freeStatus: 'verified_free',
+        catalogVerified: true, accessVerified: true, billingSafe: true, targets: receipt.targets,
+        toolsVerified: receipt.tools, defaultEffortVerified: true, effortLevels: receipt.effortLevels,
+        contextFits: true, contextVerified: true,
+      }, built.model, {
+        messages: built.messages, tools: built.tools, system: built.system, toolChoice: built.toolChoice,
+        maxOutputTokens: requestedOutput, temperature: built.temperature,
+        providerOptions: built.providerOptions, headers: built.headers,
+      }, { store: options.health, scopes, accountScopes }) };
+    }));
   }
-  return { routes, prepared };
+  return { routes };
 }

@@ -86,7 +86,14 @@ export interface ClaudePoolOptions {
   /** Optional trace sink (the proxy's --trace log): one short line per attempt, failure and answer. */
   trace?: (line: string) => void;
   /** Members left out before dispatch that are worth showing in the log if a later member answered. */
-  skipped?: ReadonlyArray<{ providerId: string; modelId: string; reason: string }>;
+  skipped?: ClaudeSkips | (() => ClaudeSkips);
+}
+
+type ClaudeSkips = ReadonlyArray<{ providerId: string; modelId: string; reason: string }>;
+
+/** Skips can arrive while members are admitted during dispatch, so they are read when logging. */
+function readSkips(skipped: ClaudePoolOptions['skipped']): ClaudeSkips {
+  return typeof skipped === 'function' ? skipped() : skipped ?? [];
 }
 
 function defaultRetryable(error: unknown): boolean {
@@ -141,7 +148,7 @@ export async function serveClaudePool(options: ClaudePoolOptions): Promise<Claud
   const result = await serveClaudePoolRequest(options, state);
   if (!result.ok && !state.served) {
     // Closes the request in the log so a request where every member failed still reads as one line.
-    for (const item of options.skipped ?? []) {
+    for (const item of readSkips(options.skipped)) {
       recordPoolActivity({ target: 'claude', event: 'failed', providerId: item.providerId, modelId: item.modelId, requestId: state.requestId, reason: 'skipped: ' + item.reason });
     }
     recordPoolActivity({ target: 'claude', event: 'gave-up', providerId: 'pool', modelId: 'none', requestId: state.requestId, ms: Date.now() - state.started });
@@ -179,7 +186,7 @@ async function serveClaudePoolRequest(
     // Members ahead of the answering one that were passed over (e.g. too large for their window), so the
     // log says why a preferred member did not answer.
     const order = pool.members.findIndex(item => item.providerId === member.providerId && item.modelId === member.modelId);
-    for (const item of options.skipped ?? []) {
+    for (const item of readSkips(options.skipped)) {
       const at = pool.members.findIndex(m => m.providerId === item.providerId && m.modelId === item.modelId);
       if (order >= 0 && at >= 0 && at < order) {
         recordPoolActivity({ target: 'claude', event: 'failed', providerId: item.providerId, modelId: item.modelId, requestId: state.requestId, reason: 'skipped: ' + item.reason });
@@ -316,7 +323,8 @@ export class ClaudePoolRuntime {
       claim.release();
       throw signal.reason ?? new Error('request aborted');
     }
-    const skipped = this.newSkips(skips);
+    let fresh: ClaudeSkips | undefined;
+    const skipped = () => (fresh ??= this.newSkips(skips));
     // Effort was resolved per member while preparing routes (verified level sent, otherwise omitted),
     // so admission must not re-reject members for an effort that was deliberately not sent.
     const effort = 'auto';

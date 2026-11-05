@@ -109,7 +109,7 @@ import {
   validPoolFinish,
   waitForCodexAppQuit,
   writeResponsesErrorStream
-} from "./chunk-PSH2WEPG.js";
+} from "./chunk-KN3BNO6G.js";
 import {
   translateRequest
 } from "./chunk-W7F4YWWL.js";
@@ -1177,6 +1177,34 @@ async function runFirstRunWizard(trace = false) {
   return "continue";
 }
 
+// src/pool/lazy-route.ts
+function lazyPoolRoute(evidence, prepare, extra) {
+  let built;
+  const route = {
+    ...evidence,
+    ...extra ?? {},
+    async admit(signal) {
+      if (built) return void 0;
+      const prepared = await prepare(signal);
+      if ("skip" in prepared) return prepared.skip;
+      built = prepared.route;
+      if (prepared.attach) Object.assign(route, prepared.attach);
+      return void 0;
+    },
+    async open(signal) {
+      if (!built) throw new Error("Pool route used before it was admitted");
+      return built.open(signal);
+    },
+    async recordAttemptFailure(error) {
+      await built?.recordAttemptFailure?.(error);
+    },
+    async recordFailure(failure) {
+      await built?.recordFailure?.(failure);
+    }
+  };
+  return route;
+}
+
 // src/pool/sdk-route.ts
 import { streamText } from "ai";
 function sdkPoolRoute(evidence, model, request2, health) {
@@ -1380,66 +1408,9 @@ async function prepareCodexPoolRoutes(options) {
       skip("not verified for Codex");
       continue;
     }
+    const npm = model.npm;
     const identity = { account: provider.id, endpointRevision: revision, model: model.id };
-    const requested = options.body.reasoning?.effort ?? options.pool.effort;
-    const auto = requested === "auto";
-    const memberEffort = poolMemberEffort(auto ? "auto" : requested, receipt);
-    const memberAuto = memberEffort === null;
-    const body = omitPoolEffort(options.body, memberEffort);
-    const translate = options.translate ?? preparePoolHistory;
-    const params = translate(body, options.source, identity, model.npm, {
-      ...model,
-      providerId: provider.id,
-      apiBaseUrl: model.apiBaseUrl
-    }, { maxTools: POOL_MAX_TOOLS, npm: model.npm, forwardToolChoice: true }, poolHistoryOrigins(options.body));
-    if (memberAuto && translatedEffortClaim(params.providerOptions)) {
-      skip("translation would set an effort");
-      continue;
-    }
-    const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
-    const askedOutput = typeof body.max_output_tokens === "number" ? body.max_output_tokens : outputCap;
-    if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) {
-      skip("invalid output limit");
-      continue;
-    }
-    params.maxOutputTokens = Math.min(askedOutput, outputCap);
-    const context = await (options.checkContext ?? defaultContextCheck)(params, receipt);
-    if (!context.verified || !context.fits) {
-      skip(context.verified ? "request too large for its context window" : "context window not verified");
-      continue;
-    }
-    const scopes = [poolEndpointScope(provider.id, revision, model.id)];
-    const accountScopes = [poolAccountScope(provider.id)];
-    const off = await options.health.disabledFor(scopes);
-    if (off) {
-      skip("DISABLED: " + off.note + " (run Test to re-enable)");
-      continue;
-    }
-    const unavailableUntil = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
-    if (unavailableUntil !== void 0 && unavailableUntil > Date.now()) {
-      skip("cooling down after a failure");
-      continue;
-    }
-    const apiKey = await resolveLocalProviderApiKey(provider);
-    if (apiKey === null || apiKey === void 0) {
-      skip("no credential");
-      continue;
-    }
-    const languageModel = await createLanguageModel({
-      npm: model.npm,
-      modelId: model.upstreamModelId,
-      apiKey,
-      baseURL: model.apiBaseUrl,
-      providerId: provider.id,
-      authType: provider.authType,
-      oauthAccountId: provider.oauthAccountId,
-      providerData: provider.providerData,
-      headers: poolProviderHeaders(provider, model, options.sessionId),
-      sessionId: options.sessionId,
-      refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
-    });
-    const { toolContext: _toolContext, instructions, ...sdkParams } = params;
-    const dispatch = sdkPoolRoute({
+    routes.push(lazyPoolRoute({
       member,
       revision,
       freeStatus,
@@ -1448,14 +1419,85 @@ async function prepareCodexPoolRoutes(options) {
       billingSafe: receipt.billingSafe,
       targets: receipt.targets,
       toolsVerified: receipt.tools,
-      // Auto is constructively verified: Relay omits the field and any translator
-      // claim is refused above, so no named default rung is required.
       defaultEffortVerified: true,
       effortLevels: receipt.effortLevels,
-      contextFits: context.fits,
-      contextVerified: context.verified
-    }, languageModel, { ...sdkParams, system: instructions, maxOutputTokens: params.maxOutputTokens }, { store: options.health, scopes, accountScopes });
-    routes.push({ ...dispatch, identity, toolContext: params.toolContext });
+      contextFits: true,
+      contextVerified: true
+    }, async () => {
+      const gone = (reason) => {
+        skip(reason);
+        return { skip: reason };
+      };
+      const requested = options.body.reasoning?.effort ?? options.pool.effort;
+      const auto = requested === "auto";
+      const memberEffort = poolMemberEffort(auto ? "auto" : requested, receipt);
+      const memberAuto = memberEffort === null;
+      const body = omitPoolEffort(options.body, memberEffort);
+      const translate = options.translate ?? preparePoolHistory;
+      const params = translate(body, options.source, identity, npm, {
+        ...model,
+        providerId: provider.id,
+        apiBaseUrl: model.apiBaseUrl
+      }, { maxTools: POOL_MAX_TOOLS, npm, forwardToolChoice: true }, poolHistoryOrigins(options.body));
+      if (memberAuto && translatedEffortClaim(params.providerOptions)) {
+        return gone("translation would set an effort");
+      }
+      const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
+      const askedOutput = typeof body.max_output_tokens === "number" ? body.max_output_tokens : outputCap;
+      if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) {
+        return gone("invalid output limit");
+      }
+      params.maxOutputTokens = Math.min(askedOutput, outputCap);
+      const context = await (options.checkContext ?? defaultContextCheck)(params, receipt);
+      if (!context.verified || !context.fits) {
+        return gone(context.verified ? "request too large for its context window" : "context window not verified");
+      }
+      const scopes = [poolEndpointScope(provider.id, revision, model.id)];
+      const accountScopes = [poolAccountScope(provider.id)];
+      const off = await options.health.disabledFor(scopes);
+      if (off) {
+        return gone("DISABLED: " + off.note + " (run Test to re-enable)");
+      }
+      const unavailableUntil = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
+      if (unavailableUntil !== void 0 && unavailableUntil > Date.now()) {
+        return gone("cooling down after a failure");
+      }
+      const apiKey = await resolveLocalProviderApiKey(provider);
+      if (apiKey === null || apiKey === void 0) {
+        return gone("no credential");
+      }
+      const languageModel = await createLanguageModel({
+        npm,
+        modelId: model.upstreamModelId,
+        apiKey,
+        baseURL: model.apiBaseUrl,
+        providerId: provider.id,
+        authType: provider.authType,
+        oauthAccountId: provider.oauthAccountId,
+        providerData: provider.providerData,
+        headers: poolProviderHeaders(provider, model, options.sessionId),
+        sessionId: options.sessionId,
+        refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
+      });
+      const { toolContext: _toolContext, instructions, ...sdkParams } = params;
+      const dispatch = sdkPoolRoute({
+        member,
+        revision,
+        freeStatus,
+        catalogVerified: true,
+        accessVerified: true,
+        billingSafe: receipt.billingSafe,
+        targets: receipt.targets,
+        toolsVerified: receipt.tools,
+        // Auto is constructively verified: Relay omits the field and any translator
+        // claim is refused above, so no named default rung is required.
+        defaultEffortVerified: true,
+        effortLevels: receipt.effortLevels,
+        contextFits: true,
+        contextVerified: true
+      }, languageModel, { ...sdkParams, system: instructions, maxOutputTokens: params.maxOutputTokens }, { store: options.health, scopes, accountScopes });
+      return { route: dispatch, attach: { toolContext: params.toolContext } };
+    }, { identity }));
   }
   return routes;
 }
@@ -1514,89 +1556,8 @@ async function prepareClaudePoolRoutes(options) {
       skip("not verified free");
       continue;
     }
-    const memberEffort = poolMemberEffort(auto ? "auto" : requested, receipt);
-    const memberAuto = memberEffort === null;
-    const body = omitClaudeEffort(options.body, memberEffort);
-    const params = translateRequest(body, model.npm, {
-      maxTools: POOL_MAX_TOOLS,
-      reasoningMetadata: {
-        ...model,
-        providerId: provider.id,
-        apiBaseUrl: model.apiBaseUrl
-      }
-    });
-    const routeKey = poolRouteKey({ account: provider.id, endpointRevision: revision, model: model.id });
-    const thinking = (Array.isArray(body.messages) ? body.messages : []).flatMap((message) => {
-      const content = message.content;
-      return Array.isArray(content) ? content : [];
-    });
-    params.messages = params.messages.map((message) => ({
-      ...message,
-      content: Array.isArray(message.content) ? message.content.map((part) => {
-        if (part.type !== "reasoning" && part.type !== "tool-call") return part;
-        const { providerOptions: _routeState, ...clean } = part;
-        if (part.type === "tool-call") {
-          const signature = claudePoolSignatures.signature(splitToolUseId(part.toolCallId).rawId, routeKey);
-          return signature && model.npm === "@ai-sdk/google" ? { ...clean, providerOptions: { google: { thoughtSignature: signature } } } : clean;
-        }
-        const native = thinking.find((block) => block.thinking === part.text && typeof block.signature === "string" && claudePoolSignatures.ownsThinking(block.signature, routeKey));
-        if (!native?.signature) return clean;
-        if (model.npm === "@ai-sdk/anthropic") return { ...clean, providerOptions: { anthropic: { signature: native.signature } } };
-        return part;
-      }) : message.content
-    }));
-    if (memberAuto && translatedEffortClaim(params.providerOptions)) {
-      skip("translation would set an effort");
-      continue;
-    }
-    const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
-    const askedOutput = typeof body.max_tokens === "number" ? body.max_tokens : outputCap;
-    if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) {
-      skip("invalid output limit");
-      continue;
-    }
-    const requestedOutput = Math.min(askedOutput, outputCap);
-    params.maxOutputTokens = requestedOutput;
-    const fits = poolRequestFitsWindow({
-      messages: params.messages,
-      instructions: params.instructions,
-      tools: params.tools
-    }, receipt.contextWindow, requestedOutput).fits;
-    if (!fits) {
-      skip("request too large for its context window");
-      continue;
-    }
-    const scopes = [poolEndpointScope(provider.id, revision, model.id)];
-    const accountScopes = [poolAccountScope(provider.id)];
-    const off = await options.health.disabledFor(scopes);
-    if (off) {
-      skip("DISABLED: " + off.note + " (run Test to re-enable)");
-      continue;
-    }
-    const until = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
-    if (until !== void 0 && until > Date.now()) {
-      skip("cooling down after a failure");
-      continue;
-    }
-    const apiKey = await resolveLocalProviderApiKey(provider);
-    if (!apiKey) {
-      skip("no credential");
-      continue;
-    }
-    const languageModel = await createLanguageModel({
-      npm: model.npm,
-      modelId: model.upstreamModelId,
-      apiKey,
-      baseURL: model.apiBaseUrl,
-      providerId: provider.id,
-      authType: provider.authType,
-      oauthAccountId: provider.oauthAccountId,
-      providerData: provider.providerData,
-      headers: poolProviderHeaders(provider, model, options.sessionId),
-      sessionId: options.sessionId,
-      refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
-    });
-    routes.push(sdkPoolRoute({
+    const npm = model.npm;
+    routes.push(lazyPoolRoute({
       member,
       revision,
       freeStatus,
@@ -1609,16 +1570,111 @@ async function prepareClaudePoolRoutes(options) {
       effortLevels: receipt.effortLevels,
       contextFits: true,
       contextVerified: true
-    }, languageModel, {
-      messages: params.messages,
-      tools: params.tools,
-      system: params.instructions,
-      maxOutputTokens: requestedOutput,
-      temperature: params.temperature,
-      toolChoice: params.toolChoice,
-      providerOptions: params.providerOptions,
-      headers: params.headers
-    }, { store: options.health, scopes, accountScopes }));
+    }, async () => {
+      const gone = (reason) => {
+        skip(reason);
+        return { skip: reason };
+      };
+      const memberEffort = poolMemberEffort(auto ? "auto" : requested, receipt);
+      const memberAuto = memberEffort === null;
+      const body = omitClaudeEffort(options.body, memberEffort);
+      const params = translateRequest(body, npm, {
+        maxTools: POOL_MAX_TOOLS,
+        reasoningMetadata: {
+          ...model,
+          providerId: provider.id,
+          apiBaseUrl: model.apiBaseUrl
+        }
+      });
+      const routeKey = poolRouteKey({ account: provider.id, endpointRevision: revision, model: model.id });
+      const thinking = (Array.isArray(body.messages) ? body.messages : []).flatMap((message) => {
+        const content = message.content;
+        return Array.isArray(content) ? content : [];
+      });
+      params.messages = params.messages.map((message) => ({
+        ...message,
+        content: Array.isArray(message.content) ? message.content.map((part) => {
+          if (part.type !== "reasoning" && part.type !== "tool-call") return part;
+          const { providerOptions: _routeState, ...clean } = part;
+          if (part.type === "tool-call") {
+            const signature = claudePoolSignatures.signature(splitToolUseId(part.toolCallId).rawId, routeKey);
+            return signature && npm === "@ai-sdk/google" ? { ...clean, providerOptions: { google: { thoughtSignature: signature } } } : clean;
+          }
+          const native = thinking.find((block) => block.thinking === part.text && typeof block.signature === "string" && claudePoolSignatures.ownsThinking(block.signature, routeKey));
+          if (!native?.signature) return clean;
+          if (npm === "@ai-sdk/anthropic") return { ...clean, providerOptions: { anthropic: { signature: native.signature } } };
+          return part;
+        }) : message.content
+      }));
+      if (memberAuto && translatedEffortClaim(params.providerOptions)) {
+        return gone("translation would set an effort");
+      }
+      const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
+      const askedOutput = typeof body.max_tokens === "number" ? body.max_tokens : outputCap;
+      if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) {
+        return gone("invalid output limit");
+      }
+      const requestedOutput = Math.min(askedOutput, outputCap);
+      params.maxOutputTokens = requestedOutput;
+      const fits = poolRequestFitsWindow({
+        messages: params.messages,
+        instructions: params.instructions,
+        tools: params.tools
+      }, receipt.contextWindow, requestedOutput).fits;
+      if (!fits) {
+        return gone("request too large for its context window");
+      }
+      const scopes = [poolEndpointScope(provider.id, revision, model.id)];
+      const accountScopes = [poolAccountScope(provider.id)];
+      const off = await options.health.disabledFor(scopes);
+      if (off) {
+        return gone("DISABLED: " + off.note + " (run Test to re-enable)");
+      }
+      const until = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
+      if (until !== void 0 && until > Date.now()) {
+        return gone("cooling down after a failure");
+      }
+      const apiKey = await resolveLocalProviderApiKey(provider);
+      if (!apiKey) {
+        return gone("no credential");
+      }
+      const languageModel = await createLanguageModel({
+        npm,
+        modelId: model.upstreamModelId,
+        apiKey,
+        baseURL: model.apiBaseUrl,
+        providerId: provider.id,
+        authType: provider.authType,
+        oauthAccountId: provider.oauthAccountId,
+        providerData: provider.providerData,
+        headers: poolProviderHeaders(provider, model, options.sessionId),
+        sessionId: options.sessionId,
+        refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
+      });
+      return { route: sdkPoolRoute({
+        member,
+        revision,
+        freeStatus,
+        catalogVerified: true,
+        accessVerified: true,
+        billingSafe: true,
+        targets: receipt.targets,
+        toolsVerified: receipt.tools,
+        defaultEffortVerified: true,
+        effortLevels: receipt.effortLevels,
+        contextFits: true,
+        contextVerified: true
+      }, languageModel, {
+        messages: params.messages,
+        tools: params.tools,
+        system: params.instructions,
+        maxOutputTokens: requestedOutput,
+        temperature: params.temperature,
+        toolChoice: params.toolChoice,
+        providerOptions: params.providerOptions,
+        headers: params.headers
+      }, { store: options.health, scopes, accountScopes }) };
+    }));
   }
   return routes;
 }
@@ -8832,7 +8888,6 @@ function antigravityPoolPreferences(members, effort) {
 }
 async function prepareAntigravityPoolRoutes(options) {
   const routes = [];
-  const prepared = /* @__PURE__ */ new Map();
   const now = options.now ?? Date.now();
   for (const member of options.members) {
     const skip = (reason) => options.onSkip?.(member, reason);
@@ -8849,40 +8904,7 @@ async function prepareAntigravityPoolRoutes(options) {
     }
     const scopes = [poolEndpointScope(member.providerId, evidence.revision, member.modelId)];
     const accountScopes = [poolAccountScope(member.providerId)];
-    const off = await options.health.disabledFor(scopes);
-    if (off) {
-      skip("DISABLED: " + off.note + " (run Test to re-enable)");
-      continue;
-    }
-    const until = await options.health.cooldownFor({ id: evidence.revision, scopes: [...scopes, ...accountScopes] });
-    if (until !== void 0 && until > now) {
-      skip("cooling down after a failure");
-      continue;
-    }
-    let built;
-    try {
-      built = await options.build(member);
-    } catch (error) {
-      skip("could not be prepared: " + (error instanceof Error ? error.message : String(error)));
-      continue;
-    }
-    const outputCap = poolOutputCap(member.providerId, member.modelId, receipt.contextWindow);
-    const asked = built.maxOutputTokens ?? outputCap;
-    if (!Number.isSafeInteger(asked) || asked <= 0) {
-      skip("invalid output limit");
-      continue;
-    }
-    const requestedOutput = Math.min(asked, outputCap);
-    if (!poolRequestFitsWindow(
-      { messages: built.messages, instructions: built.system, tools: built.tools },
-      receipt.contextWindow,
-      requestedOutput
-    ).fits) {
-      skip("request too large for its context window");
-      continue;
-    }
-    prepared.set(member, built);
-    routes.push(sdkPoolRoute({
+    routes.push(lazyPoolRoute({
       member: identity,
       revision: evidence.revision,
       // The launch only builds pool rows from members it verified free.
@@ -8896,18 +8918,57 @@ async function prepareAntigravityPoolRoutes(options) {
       effortLevels: receipt.effortLevels,
       contextFits: true,
       contextVerified: true
-    }, built.model, {
-      messages: built.messages,
-      tools: built.tools,
-      system: built.system,
-      toolChoice: built.toolChoice,
-      maxOutputTokens: requestedOutput,
-      temperature: built.temperature,
-      providerOptions: built.providerOptions,
-      headers: built.headers
-    }, { store: options.health, scopes, accountScopes }));
+    }, async () => {
+      const gone = (reason) => {
+        skip(reason);
+        return { skip: reason };
+      };
+      const off = await options.health.disabledFor(scopes);
+      if (off) return gone("DISABLED: " + off.note + " (run Test to re-enable)");
+      const until = await options.health.cooldownFor({ id: evidence.revision, scopes: [...scopes, ...accountScopes] });
+      if (until !== void 0 && until > now) return gone("cooling down after a failure");
+      let built;
+      try {
+        built = await options.build(member);
+      } catch (error) {
+        return gone("could not be prepared: " + (error instanceof Error ? error.message : String(error)));
+      }
+      const outputCap = poolOutputCap(member.providerId, member.modelId, receipt.contextWindow);
+      const asked = built.maxOutputTokens ?? outputCap;
+      if (!Number.isSafeInteger(asked) || asked <= 0) return gone("invalid output limit");
+      const requestedOutput = Math.min(asked, outputCap);
+      if (!poolRequestFitsWindow(
+        { messages: built.messages, instructions: built.system, tools: built.tools },
+        receipt.contextWindow,
+        requestedOutput
+      ).fits) return gone("request too large for its context window");
+      options.onBuilt?.(member, built);
+      return { route: sdkPoolRoute({
+        member: identity,
+        revision: evidence.revision,
+        freeStatus: "verified_free",
+        catalogVerified: true,
+        accessVerified: true,
+        billingSafe: true,
+        targets: receipt.targets,
+        toolsVerified: receipt.tools,
+        defaultEffortVerified: true,
+        effortLevels: receipt.effortLevels,
+        contextFits: true,
+        contextVerified: true
+      }, built.model, {
+        messages: built.messages,
+        tools: built.tools,
+        system: built.system,
+        toolChoice: built.toolChoice,
+        maxOutputTokens: requestedOutput,
+        temperature: built.temperature,
+        providerOptions: built.providerOptions,
+        headers: built.headers
+      }, { store: options.health, scopes, accountScopes }) };
+    }));
   }
-  return { routes, prepared };
+  return { routes };
 }
 
 // src/antigravity/cloud-code-gateway.ts
@@ -10928,6 +10989,7 @@ async function handlePoolRequest(res, row, parsed, log15, options, stream) {
   const started = { at: Date.now() };
   let answering;
   const toolNames = /* @__PURE__ */ new Set();
+  const requestHasTools = (parsed?.request?.tools ?? []).some((group) => (group.functionDeclarations?.length ?? 0) > 0);
   const failed = /* @__PURE__ */ new Set();
   const skips = [];
   const requestStart = Date.now();
@@ -10937,12 +10999,15 @@ async function handlePoolRequest(res, row, parsed, log15, options, stream) {
       const eligible = members.filter((member) => !failed.has(memberKey(member)));
       if (round > 0 && eligible.length === 0) throw new PoolAttemptError("attempt-budget-exhausted", false);
       try {
-        const { routes, prepared } = await prepareAntigravityPoolRoutes({
+        const { routes } = await prepareAntigravityPoolRoutes({
           members: eligible,
           health: deps.health(),
           onSkip: (member, reason) => {
             log15("[gateway] pool member skipped: " + member.providerId + "/" + member.modelId + ": " + reason);
             if (round === 0) skips.push({ member, reason });
+          },
+          onBuilt: (_member, built) => {
+            for (const name of Object.keys(built.tools ?? {})) toolNames.add(name);
           },
           build: async (member) => {
             const sdkParams = applyClaudeCodeOAuthIdentity(member, translateRequest2(parsed, {
@@ -10967,11 +11032,10 @@ async function handlePoolRequest(res, row, parsed, log15, options, stream) {
             };
           }
         });
-        for (const built of prepared.values()) for (const name of Object.keys(built.tools ?? {})) toolNames.add(name);
         const remaining = Math.max(1, deps.limits.totalMs - (Date.now() - requestStart));
         const events = dispatchFreePool(antigravityPoolPreferences(eligible, row.reasoningEffort), routes, {
           target: "antigravity",
-          tools: toolNames.size > 0,
+          tools: requestHasTools,
           effort: row.reasoningEffort,
           signal: abort.signal
         }, {
@@ -18429,7 +18493,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-COTBCNRX.js");
+    const { runUiCommand } = await import("./ui-command-PCBRDSPC.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {

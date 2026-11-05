@@ -111,6 +111,7 @@ describe('Claude pool tool cap', () => {
         signal: new AbortController().signal, health,
       });
       expect(routes).toHaveLength(1);
+      expect(await routes[0]!.admit?.(new AbortController().signal)).toBeUndefined();
       const stream = await routes[0]!.open(new AbortController().signal);
       for await (const _part of stream) { /* drain */ }
       expect(captured).toEqual([128]);

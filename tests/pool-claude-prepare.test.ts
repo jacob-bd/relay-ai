@@ -45,6 +45,7 @@ describe('Claude pool route preparation', () => {
     });
 
     expect(routes).toHaveLength(1);
+    expect(await routes[0]!.admit?.(new AbortController().signal)).toBeUndefined();
     expect(createLanguageModel).toHaveBeenCalledWith(expect.objectContaining({
       providerId: 'account-2',
       sessionId: 'claude-conversation-1',
@@ -63,5 +64,6 @@ describe('Claude pool route preparation', () => {
       health: { cooldownFor: async () => undefined, disabledFor: async () => undefined } as unknown as PoolHealthStore,
     });
     expect(routes).toHaveLength(1);
+    expect(await routes[0]!.admit?.(new AbortController().signal)).toBeUndefined();
   });
 });

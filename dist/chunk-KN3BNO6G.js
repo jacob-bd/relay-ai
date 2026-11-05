@@ -2015,6 +2015,7 @@ async function bounded(work, ms, signal, code, budget = false) {
 }
 async function* runPoolAttempts(routes, signal, limits, retryable, onAttempt = () => {
 }, onFailure = () => {
+}, onSkip = () => {
 }) {
   for (const [name, value] of Object.entries(limits)) {
     if (!Number.isSafeInteger(value) || value <= 0) throw new Error("Invalid pool limit: " + name);
@@ -2022,9 +2023,25 @@ async function* runPoolAttempts(routes, signal, limits, retryable, onAttempt = (
   const deadline = Date.now() + limits.totalMs;
   let committed = false;
   let lastError;
-  for (const route of routes.slice(0, limits.attempts)) {
+  let opened = 0;
+  for (const route of routes) {
+    if (opened >= limits.attempts) break;
     signal.throwIfAborted();
     if (Date.now() >= deadline) throw new PoolAttemptError("total-deadline", committed);
+    if (route.admit) {
+      let reason;
+      try {
+        reason = await route.admit(signal);
+      } catch (error) {
+        if (signal.aborted) throw signal.reason ?? error;
+        reason = "could not be prepared: " + (error instanceof Error ? error.message : String(error));
+      }
+      if (reason) {
+        onSkip(route.id, reason);
+        continue;
+      }
+    }
+    opened += 1;
     const controller = new AbortController();
     const attemptSignal = AbortSignal.any([signal, controller.signal]);
     const attemptStart = Date.now();
@@ -2114,6 +2131,7 @@ async function* runPoolAttempts(routes, signal, limits, retryable, onAttempt = (
       }
     }
   }
+  if (opened === 0) throw new PoolAttemptError("no-admitted-route", false, lastError);
   throw new PoolAttemptError("attempt-budget-exhausted", committed, lastError);
 }
 
@@ -2319,14 +2337,29 @@ async function* dispatchFreePool(pool, routes, request, policy) {
       await route.recordFailure?.({ kind: "transient", retryAt: Date.now() + SIMULATED_COOLDOWN_MS });
       throw Object.assign(new Error(SIMULATED_FAILURE_MESSAGE), { statusCode: 429 });
     } : route.open;
-    return { id: poolRouteIdentity(route), open: open2, recordAttemptFailure: route.recordAttemptFailure };
+    return { id: poolRouteIdentity(route), open: open2, recordAttemptFailure: route.recordAttemptFailure, admit: route.admit };
   });
   const session = policy.sessions?.begin(request.conversationScope, attempts);
   let activeRoute;
-  yield* runPoolAttempts(session?.routes ?? attempts, request.signal, policy.limits, policy.retryable, (id) => {
-    activeRoute = id;
-    policy.onAttempt?.(id);
-  }, policy.onFailure);
+  const passedOver = [];
+  try {
+    yield* runPoolAttempts(session?.routes ?? attempts, request.signal, policy.limits, policy.retryable, (id) => {
+      activeRoute = id;
+      policy.onAttempt?.(id);
+    }, policy.onFailure, (id, reason) => {
+      const member = routes.find((item) => poolRouteIdentity(item) === id)?.member;
+      if (member) passedOver.push(member.providerId + "/" + member.modelId + ": " + reason);
+      policy.onSkip?.(id, reason);
+    });
+  } catch (error) {
+    if (error instanceof PoolAttemptError && error.code === "no-admitted-route") {
+      throw new Error("No eligible free pool members: " + [
+        ...candidates.filter((candidate) => candidate.reason).map((candidate) => candidate.member.providerId + "/" + candidate.member.modelId + ": " + candidate.reason),
+        ...passedOver
+      ].join("; "));
+    }
+    throw error;
+  }
   if (activeRoute) session?.succeed(activeRoute);
 }
 
@@ -2370,6 +2403,9 @@ var ClaudeHistoryEmbargo = class {
     };
   }
 };
+function readSkips(skipped) {
+  return typeof skipped === "function" ? skipped() : skipped ?? [];
+}
 function defaultRetryable(error) {
   const raw = error instanceof Error ? error.message : "";
   const message = formatUpstreamError(error) + " " + raw;
@@ -2416,7 +2452,7 @@ async function serveClaudePool(options) {
   const state = { requestId: randomUUID2().slice(0, 8), served: false, started: Date.now() };
   const result = await serveClaudePoolRequest(options, state);
   if (!result.ok && !state.served) {
-    for (const item of options.skipped ?? []) {
+    for (const item of readSkips(options.skipped)) {
       recordPoolActivity({ target: "claude", event: "failed", providerId: item.providerId, modelId: item.modelId, requestId: state.requestId, reason: "skipped: " + item.reason });
     }
     recordPoolActivity({ target: "claude", event: "gave-up", providerId: "pool", modelId: "none", requestId: state.requestId, ms: Date.now() - state.started });
@@ -2447,7 +2483,7 @@ async function serveClaudePoolRequest(options, state) {
     if (!member) return;
     state.served = true;
     const order = pool.members.findIndex((item) => item.providerId === member.providerId && item.modelId === member.modelId);
-    for (const item of options.skipped ?? []) {
+    for (const item of readSkips(options.skipped)) {
       const at = pool.members.findIndex((m) => m.providerId === item.providerId && m.modelId === item.modelId);
       if (order >= 0 && at >= 0 && at < order) {
         recordPoolActivity({ target: "claude", event: "failed", providerId: item.providerId, modelId: item.modelId, requestId: state.requestId, reason: "skipped: " + item.reason });
@@ -2565,7 +2601,8 @@ var ClaudePoolRuntime = class {
       claim.release();
       throw signal.reason ?? new Error("request aborted");
     }
-    const skipped = this.newSkips(skips);
+    let fresh;
+    const skipped = () => fresh ??= this.newSkips(skips);
     const effort = "auto";
     return serveClaudePool({
       pool: this.pool,
@@ -8661,4 +8698,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-PSH2WEPG.js.map
+//# sourceMappingURL=chunk-KN3BNO6G.js.map

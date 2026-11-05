@@ -155,3 +155,18 @@ Counts for this exact checkout and npm test command:
 - Typecheck, build, built CLI version 0.20.0 and git diff --check pass.
 
 Real Gemini/Anthropic acceptance, live OpenAI reasoning-state acceptance, and actual desktop-client replay were NOT tested. Local tests prove emitted provenance, real preparation behavior, stable paired IDs and route isolation. This supersedes the earlier blanket-suppression limitation in the Third review section.
+
+## Lazy preparation
+
+Each pool member is now prepared only when the coordinator is about to try it (`src/pool/lazy-route.ts`,
+`admit` in `src/pool/attempt.ts`). Cheap checks (registry lookup, saved Test result, free status) still run up
+front. Translating the history, the disabled/cooldown reads, key lookup, model build and the context-fit check
+run at admission. A member skipped at admission (too large, cooling down, disabled, no credential) uses no
+attempt, so with `MAX_POOL_ATTEMPTS = 8` a ninth member can still be tried. If every member is skipped the
+error still starts with "No eligible free pool members".
+
+Measured (7 members, ~450 KB history, 40 tools, real config): preparation before dispatch went from about
+5 ms to under 1 ms for Claude and Codex; the first member's own preparation now happens during dispatch, and
+later members cost nothing unless an earlier one fails. Tests: `tests/pool-lazy-prepare.test.ts` (the two
+count tests fail on the previous commit; the attempt-budget tests fail if a skipped member consumes an attempt).
+Full suite 3,157 passed, 4 skipped, 0 failed.

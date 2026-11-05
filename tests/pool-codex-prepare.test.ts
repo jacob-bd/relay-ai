@@ -19,9 +19,17 @@ const base = () => ({ pool: { members: [member], effort: 'auto' as const, receip
   signal: new AbortController().signal, sessionId: 'verified-session', health: { cooldownFor: async () => undefined, disabledFor: async () => undefined } as unknown as PoolHealthStore,
   checkContext: async () => ({ verified: true, fits: true }),
 });
+/** Lazy preparation: only members that pass admission are usable routes. */
+async function prepareAdmitted(options: Parameters<typeof prepareCodexPoolRoutes>[0]) {
+  const routes = await prepareCodexPoolRoutes(options);
+  const admitted: typeof routes = [];
+  for (const route of routes) if (!await route.admit?.(options.signal)) admitted.push(route);
+  return admitted;
+}
+
 describe('Codex pool route preparation', () => {
   it('resolves exact account credentials and creates per-route session model', async () => {
-    const routes = await prepareCodexPoolRoutes(base());
+    const routes = await prepareAdmitted(base());
     expect(routes).toHaveLength(1);
     expect(resolveLocalProviderApiKey).toHaveBeenCalledWith(provider);
     expect(createLanguageModel).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'account-2', sessionId: 'verified-session', apiKey: 'fake' }));
@@ -30,7 +38,7 @@ describe('Codex pool route preparation', () => {
   it('does not create models for missing evidence, paid access or insufficient context', async () => {
     for (const patch of [{ receipts: [] }, { checkContext: async () => ({ verified: false, fits: true }) }, { providers: [{ ...provider, models: [{ ...provider.models[0], cost: { input: 1, output: 1 } }] }] }]) {
       vi.mocked(createLanguageModel).mockClear();
-      expect(await prepareCodexPoolRoutes({ ...base(), ...patch })).toEqual([]);
+      expect(await prepareAdmitted({ ...base(), ...patch })).toEqual([]);
       expect(createLanguageModel).not.toHaveBeenCalled();
     }
   });
@@ -51,7 +59,7 @@ describe('Auto is a verified omission contract', () => {
     const noDefault: PoolCapabilityReceipt = { ...receipt, effortLevels: [] };
     delete noDefault.defaultEffort;
     const { seen, translate } = translatedBody();
-    const routes = await prepareCodexPoolRoutes({
+    const routes = await prepareAdmitted({
       ...base(),
       pool: { members, effort: 'auto', receipts: [] },
       receipts: [noDefault],
@@ -64,13 +72,13 @@ describe('Auto is a verified omission contract', () => {
 
   it('omits effort instead of forwarding a level when the client sends none', async () => {
     const { seen, translate } = translatedBody();
-    await prepareCodexPoolRoutes({ ...base(), pool: { members: [member], effort: 'auto', receipts: [] }, translate });
+    await prepareAdmitted({ ...base(), pool: { members: [member], effort: 'auto', receipts: [] }, translate });
     expect(seen[0]).not.toHaveProperty('reasoning.effort');
   });
 
   it('uses an explicit client level when the receipt verified it', async () => {
     const { seen, translate } = translatedBody();
-    const routes = await prepareCodexPoolRoutes({
+    const routes = await prepareAdmitted({
       ...base(),
       pool: { members: [member], effort: 'auto', receipts: [] },
       body: { input: 'hello', model: 'relay-free-pool', reasoning: { effort: 'high' } },
@@ -83,7 +91,7 @@ describe('Auto is a verified omission contract', () => {
   it('keeps the member and sends no effort when the receipt never verified the requested level', async () => {
     const { seen, translate } = translatedBody();
     const skipped: string[] = [];
-    const routes = await prepareCodexPoolRoutes({
+    const routes = await prepareAdmitted({
       ...base(),
       body: { input: 'hello', model: 'relay-free-pool', reasoning: { effort: 'low' } },
       translate,
@@ -96,7 +104,7 @@ describe('Auto is a verified omission contract', () => {
   });
 
   it('refuses the route when translation invents a level for Auto', async () => {
-    const routes = await prepareCodexPoolRoutes({
+    const routes = await prepareAdmitted({
       ...base(),
       pool: { members: [member], effort: 'auto', receipts: [] },
       translate: (() => ({ messages: [], providerOptions: { anthropic: { effort: 'high' } } })) as never,
@@ -128,7 +136,7 @@ describe('Whatever effort the tool sends, the member is kept', () => {
   it.each(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'auto', 'something-new'])(
     'level %s never empties the pool',
     async level => {
-      const routes = await prepareCodexPoolRoutes({
+      const routes = await prepareAdmitted({
         ...base(),
         body: { input: 'hello', model: 'relay-free-pool', reasoning: { effort: level } },
       });
@@ -144,7 +152,7 @@ describe('Tool limit', () => {
       calls.push(options);
       return { messages: [], providerOptions: undefined } as never;
     }) as never;
-    await prepareCodexPoolRoutes({ ...base(), translate });
+    await prepareAdmitted({ ...base(), translate });
     expect(calls).toEqual([expect.objectContaining({ maxTools: 128 })]);
   });
 

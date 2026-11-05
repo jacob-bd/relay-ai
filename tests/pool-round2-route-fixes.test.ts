@@ -65,6 +65,7 @@ async function fixture() {
   };
 }
 async function drain(route: Awaited<ReturnType<typeof prepareClaudePoolRoutes>>[number]) {
+  expect(await route.admit?.(new AbortController().signal)).toBeUndefined();
   const stream = await route.open(new AbortController().signal);
   for await (const _part of stream) { /* drain */ }
 }
@@ -182,7 +183,7 @@ describe('round-two route regressions', () => {
         health: noHealth(),
         translate: ((body, source, target, _npm, metadata, options, origins) =>
           preparePoolHistory(body, source, target, '@ai-sdk/google', metadata, options, origins)),
-      });
+      }).then(async routes => { for (const route of routes) await route.admit?.(new AbortController().signal); });
       const sent = JSON.stringify(captured.mock.calls[0]![2].messages);
       expect(sent).not.toContain('FOREIGN_SIGNATURE');
       expect(sent).toContain('OWN_SIGNATURE');

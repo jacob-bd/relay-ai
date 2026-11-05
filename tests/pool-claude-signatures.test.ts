@@ -39,13 +39,14 @@ async function emit(p: LocalProvider, sig: string, thinking = false, stream = tr
 async function prepare(p: LocalProvider, blocks: Array<Record<string, unknown>>) {
   const spy = vi.spyOn(sdk, 'sdkPoolRoute');
   try {
-    await prepareClaudePoolRoutes({ pool: { members: [member(p)], effort: 'auto', receipts: [] }, providers: [p],
+    const routes = await prepareClaudePoolRoutes({ pool: { members: [member(p)], effort: 'auto', receipts: [] }, providers: [p],
       receipts: [{ member: member(p), endpointRevision: revision(p), verifiedAt: Date.now()-1000, expiresAt: Date.now()+60000,
         targets: ['claude'], tools: true, billingSafe: true, effortLevels: [], maxOutputTokens: 8192,
         contextWindow: 128000, contextSource: 'provider', reasoningAccounting: 'inside-output' }],
       body: { model: 'claude-pool', max_tokens: 128, messages: [{ role: 'user', content: 'read' }, { role: 'assistant', content: blocks },
         { role: 'user', content: blocks.filter(b => b.type === 'tool_use').map(b => ({ type: 'tool_result', tool_use_id: b.id, content: 'ok' })) }] },
       signal: new AbortController().signal, health: { cooldownFor: async () => undefined, disabledFor: async () => undefined } as unknown as PoolHealthStore });
+    await routes[0]!.admit?.(new AbortController().signal);
     return JSON.stringify(spy.mock.calls.at(-1)![2].messages);
   } finally { spy.mockRestore(); }
 }
