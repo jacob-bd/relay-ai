@@ -1,4 +1,5 @@
 import type { ReasoningMetadata } from '../provider-factory.js';
+import type { PoolCapabilityReceipt } from '../types.js';
 /** A resolved Relay AI route for an Antigravity catalog entry. */
 export interface AntigravityRoute {
   /** Opaque catalog ID — `relay-ai__<providerId>__<encoded-modelId>`. */
@@ -29,6 +30,8 @@ export interface AntigravityRoute {
   reasoningMetadata?: ReasoningMetadata;
   /** Concrete same-effort routes for this pool row; the gateway fails over between them. */
   poolMembers?: AntigravityRoute[];
+  /** Set on a pool member: the endpoint revision and capability receipt the launch verified. Rechecked for freshness on every request. */
+  poolEvidence?: { revision: string; receipt: PoolCapabilityReceipt };
 }
 
 /** A minimal model entry from the Cloud Code fetchAvailableModels response. */

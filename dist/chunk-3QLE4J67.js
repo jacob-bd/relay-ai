@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import {
+  clearDisabledPoolMember,
+  disabledMessage,
+  disabledPoolMembers,
   fetchProviderCatalog,
   groupPoolActivity,
   meetsContextFloor,
@@ -11,7 +14,7 @@ import {
   sendJson,
   summarizePoolEvents,
   verifyConfiguredPoolMember
-} from "./chunk-HTKR6NNR.js";
+} from "./chunk-YUWP5APP.js";
 import {
   addFreePoolMember,
   classifyFreeStatus,
@@ -25,7 +28,7 @@ import {
   poolEndpointRevision,
   removeFreePoolMember,
   savePreferences
-} from "./chunk-MNN6GZ3I.js";
+} from "./chunk-DDFLIKBI.js";
 
 // src/ui/pool-api.ts
 var verifying = /* @__PURE__ */ new Set();
@@ -57,6 +60,12 @@ function candidateKind(providerId, modelId) {
 function isFreeListEntry(model) {
   return Boolean(model.isFree || model.freeStatus === "verified_free" || model.freeStatus === "free_provider" || model.cost && model.cost.input === 0 && model.cost.output === 0);
 }
+function contextSourceFor(providerId, model) {
+  const override = loadRegistry().providers.find((item) => item.id === providerId)?.contextWindowOverrides?.[model.id];
+  if (override?.source === "user") return "set";
+  if (override?.source === "measured") return "measured";
+  return model.contextWindowEstimated === true ? "estimate" : void 0;
+}
 function modelMetadata(provider, model) {
   const freeStatus = classifyFreeStatus({ model, providerId: provider.id });
   return {
@@ -69,6 +78,7 @@ function modelMetadata(provider, model) {
     reasoningTestRequests: model.reasoning ? 1 + Math.min(4, new Set((model.reasoningEffortLevels ?? []).filter((level) => ["low", "medium", "high", "xhigh", "max"].includes(level))).size || 1) : 1,
     contextWindow: model.contextWindow,
     contextWindowEstimated: model.contextWindowEstimated === true,
+    contextSource: contextSourceFor(provider.id, model),
     cost: model.cost,
     freeStatus,
     ...candidateKind(provider.id, model.id)
@@ -138,6 +148,7 @@ async function verifyUiPoolMember(providerId, modelId, signal, options = {}) {
       } catch (error) {
         return { ok: false, status: "skipped", reason: "receipt-save-failed", diagnostic: poolDiagnostic(error) };
       }
+      await clearDisabledPoolMember(member, result.receipt.endpointRevision);
       return { ok: true, status: "verified", receipt: result.receipt };
     } finally {
       verifying.delete(key);
@@ -188,7 +199,7 @@ async function handlePoolApi(req, res) {
       sendJson(res, 200, { ok: true });
       return;
     }
-    sendJson(res, 200, { ...poolView(providers, pool), activity: poolActivityView() });
+    sendJson(res, 200, { ...poolView(providers, pool, await disabledPoolMembers(providers, pool)), activity: poolActivityView() });
   } catch (error) {
     sendJson(res, 400, { error: error instanceof Error ? error.message : "Unable to update the free pool" });
   }
@@ -204,7 +215,7 @@ function poolActivityView() {
     recent: requests.slice(-30).reverse()
   };
 }
-function poolView(providers, pool) {
+function poolView(providers, pool, disabled = /* @__PURE__ */ new Map()) {
   const members = pool.members.map((raw) => {
     const provider = providers.find((item) => item.id === raw.providerId);
     const model = provider?.models.find((item) => item.id === raw.modelId);
@@ -220,11 +231,14 @@ function poolView(providers, pool) {
     const membershipProblem = poolMembershipProblem(provider, model);
     const routingProblem = poolRoutingProblem(provider, model);
     const receipt = membershipProblem ? void 0 : currentPoolReceipt(pool.receipts, raw, revision(provider, model), Date.now());
+    const off = membershipProblem ? void 0 : disabled.get(raw.providerId + "/" + raw.modelId);
     return {
       ...modelMetadata(provider, model),
       ...raw,
-      status: membershipProblem ? "Unavailable" : routingProblem ? "Needs test" : receipt ? "Ready" : "Needs test",
-      reason: membershipProblem ?? routingProblem,
+      status: membershipProblem ? "Unavailable" : off ? "Disabled" : routingProblem ? "Needs test" : receipt ? "Ready" : "Needs test",
+      reason: membershipProblem ?? (off ? disabledMessage(off.note) : routingProblem),
+      // The window routing actually uses is the one saved by the last Test; it can lag a size set or measured since.
+      routingContextWindow: receipt?.contextWindow,
       targets: receipt?.targets ?? [],
       expiresAt: receipt?.expiresAt,
       effortLevels: receipt?.effortLevels ?? []
@@ -243,7 +257,14 @@ function poolView(providers, pool) {
       canRouteUntilTested: poolRoutingProblem(provider, model) === void 0
     };
   }));
-  return { enabled: pool.enabled === true, members, candidates, effort: pool.effort };
+  return {
+    enabled: pool.enabled === true,
+    members,
+    candidates,
+    effort: pool.effort,
+    // Shown as a banner so a disabled member is never easy to miss, wherever it sits in the priority list.
+    disabled: members.filter((member) => member.status === "Disabled").map((member) => ({ providerId: member.providerId, modelId: member.modelId, reason: member.reason }))
+  };
 }
 
 export {
@@ -252,4 +273,4 @@ export {
   handlePoolApi,
   poolView
 };
-//# sourceMappingURL=chunk-6BJ6BD7C.js.map
+//# sourceMappingURL=chunk-3QLE4J67.js.map

@@ -109,9 +109,9 @@ describe('Relay Free Pool as a catalog selection', () => {
     expect(entry!.context_window).toBeLessThan(200_000);
   });
 
-  it('returns no catalog row without a fresh verified receipt', () => {
+  it('keeps the catalog row for a verified member regardless of the receipt age', () => {
     const stale = { ...receipt, expiresAt: Date.now() - 1 };
-    expect(codexPoolCatalogModel({ members: [member], effort: 'auto', receipts: [stale] }, [stale])).toBeUndefined();
+    expect(codexPoolCatalogModel({ members: [member], effort: 'auto', receipts: [stale] }, [stale])).toBeDefined();
   });
 
   it('app catalog keeps app truncation and shell defaults', () => {

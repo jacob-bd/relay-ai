@@ -52,7 +52,8 @@ export async function verifyPoolMember(
   if (probe.text !== 'passed' || probe.tools !== 'passed') {
     return { member, status: 'skipped', reason: 'probe-' + (probe.failure ?? 'failed') };
   }
-  const targets: ('codex' | 'claude' | 'antigravity')[] = ['codex', 'claude'];
+  // Antigravity always has the Auto row (no effort sent); verified effort rungs only add rows on top of it.
+  const targets: ('codex' | 'claude' | 'antigravity')[] = ['codex', 'claude', 'antigravity'];
   const effortLevels: string[] = [];
   if (deps.probeEffort && model.reasoning) {
     const declared = (model.reasoningEffortLevels ?? []).filter(level =>
@@ -61,7 +62,6 @@ export async function verifyPoolMember(
     for (const level of candidates) {
       if (await deps.probeEffort(languageModel, level, signal)) effortLevels.push(level);
     }
-    if (effortLevels.length > 0) targets.push('antigravity');
   }
   const revision = poolEndpointRevision({
     providerId: provider.id, authRef: provider.authRef, npm: model.npm,

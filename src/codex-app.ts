@@ -7,6 +7,7 @@ import { loadPreferences, savePreferences } from './config.js';
 import { resolveApiKey, readFromCredentialStore } from './env.js';
 import { resolveOrCollectApiKey } from './key-setup.js';
 import { startCodexProxy } from './codex-proxy.js';
+import { warnDisabledPoolMembers } from './pool/disabled.js';
 import { additivePoolPreferences, createAdditivePoolRuntime } from './pool/additive.js';
 import { FREE_POOL_MODEL_ID, FREE_POOL_PROVIDER_ID } from './pool/codex-runtime.js';
 import type { CodexProxyHandle, CodexProxyRoute } from './codex-proxy.js';
@@ -510,6 +511,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
   const appAdditive = additivePool
     ? createAdditivePoolRuntime(additivePool, providersForPicker(catalog), { appCatalog: true })
     : undefined;
+  if (appAdditive && additivePool) await warnDisabledPoolMembers(providersForPicker(catalog), additivePool);
   const additivePoolRuntime = appAdditive?.runtime;
   const additivePoolModel = appAdditive?.catalog;
   if (additivePool && !appAdditive && !configOnly) {

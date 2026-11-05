@@ -115,6 +115,8 @@ export async function prepareClaudePoolRoutes(options: ClaudeRouteOptions): Prom
     const scopes = [poolEndpointScope(provider.id, revision, model.id)];
     // A rate limit cools the whole provider account (free-tier limits are per account), so sibling models wait too.
     const accountScopes = [poolAccountScope(provider.id)];
+    const off = await options.health.disabledFor(scopes);
+    if (off) { skip('DISABLED: ' + off.note + ' (run Test to re-enable)'); continue; }
     const until = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
     if (until !== undefined && until > Date.now()) { skip('cooling down after a failure'); continue; }
     const apiKey = await resolveLocalProviderApiKey(provider);

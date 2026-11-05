@@ -1,8 +1,8 @@
 # Relay Free Pool
 
-> **Experimental.** The pool is being tested with Claude Code first. Codex CLI, the ChatGPT/Codex app, the Claude desktop app and Antigravity are not yet verified, and behavior, limits and settings may change between releases. Expect rough edges; please report problems.
+> **Experimental.** The pool has been exercised most with Claude Code and the Antigravity CLI. Codex CLI, the ChatGPT/Codex app, the Claude desktop app and the Antigravity app and IDE are not yet verified end to end, and behavior, limits and settings may change between releases. Expect rough edges; please report problems.
 
-Relay Free Pool combines selected free models into one model in the normal tool switcher. Enable it once and Relay includes it in supported Claude, Codex and Antigravity launches. Favorites remain independent. Pool requests fall back only to eligible members. There are no separate pool launch buttons.
+Relay Free Pool combines selected free models into one model in the normal tool switcher. Enable it once and Relay adds it to supported Claude, Codex and Antigravity launches. Each launcher also offers **Relay Free Pool** as the model to start on (right under Favorites Catalog): Claude Code, Codex CLI, the ChatGPT/Codex app, the Claude desktop app, and the Antigravity CLI, app and IDE. Favorites remain independent. Pool requests fall back only to eligible members.
 
 ## UI and CLI equivalents
 
@@ -38,10 +38,14 @@ The same response supplies pool evidence without another verification request. R
 **Advanced checks are optional** and display costs before running:
 
 - Measure context: one extra request. An oversized output limit asks the server to report its context limit in a rejection. Some servers do not report it. Rejections may consume quota. Relay stops reading if text output begins.
-- Check reasoning: one capability request plus up to four small reasoning checks, at most five total. Reasoning checks cap output at 32 tokens each with no retries. Only passing levels are recorded. Antigravity pool admission currently requires a passing reasoning-level check.
+- Check reasoning: one capability request plus up to four small reasoning checks, at most five total. Reasoning checks cap output at 32 tokens each with no retries. Only passing levels are recorded. Antigravity cannot set effort itself, so when every member has verified the same effort levels the pool shows one row per level; otherwise it shows a single **Relay Free Pool** row that sends no effort (each member uses its own default). A passing reasoning check is therefore optional for Antigravity.
 - Set/reset context: no inference. Manual values survive measurement.
 
-Adding/removing models, changing priority or effort, enabling, refreshing the list, and launching never run tests. Results are cached for 24 hours and reused when a tested model is added later. Expiry stops routing that member until an explicit Test; there is no background retest. Failed explicit tests clear old readiness evidence.
+Adding/removing models, changing priority or effort, enabling, refreshing the list, and launching never run tests. A passing Test is saved and reused when a tested model is added later. It does not expire with time: it stays in force until the model's endpoint changes (account, base URL, model or headers) or you remove the model. There is no background retest. Failed explicit tests clear old readiness evidence.
+
+## Disabled members
+
+A member that the provider says is gone is **disabled** until you test it again. It stays in the pool list marked Disabled with the reason, a red banner shows on the Free Pool page, a red line prints at launch and at the top of `relay-ai pool log`, and it is skipped by every launcher. A passing Test (UI, `relay-ai pool test`, or `relay-ai pool verify`) re-enables it. Disabling happens only for explicit verdicts: the model does not exist, was deprecated, decommissioned or retired, its free access or promotion ended, or it is not in your plan. A bare 404 or 410 with no explanation disables it only after a second one from the recovery probe. Rate limits, server errors, timeouts, rejected requests and credit exhaustion never disable a member; they use cooldowns that recover on their own.
 
 `relay-ai pool verify` explicitly checks saved members and skips ready receipts. It prints the upper request count. `relay-ai pool verify --reasoning` explicitly adds reasoning checks. Prefer single-model Test when allowances are tight.
 

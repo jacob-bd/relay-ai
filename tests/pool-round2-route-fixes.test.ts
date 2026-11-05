@@ -70,6 +70,7 @@ async function drain(route: Awaited<ReturnType<typeof prepareClaudePoolRoutes>>[
 }
 const noHealth = () => ({
   cooldownFor: async () => undefined,
+  disabledFor: async () => undefined,
   acquire: async () => ({ ok: true, mode: 'normal', settle: async () => {}, release: async () => {} }),
 }) as unknown as PoolHealthStore;
 
@@ -202,7 +203,8 @@ describe('round-two route regressions', () => {
     expect(poolFailure(failure, clock).kind).toBe('quota');
     expect(poolFailure({ statusCode: 401 }, clock).kind).toBe('access');
     expect(poolFailure({ statusCode: 403 }, clock).kind).toBe('access');
-    expect(poolFailure({ statusCode: 404 }, clock).kind).toBe('access');
+    // A bare 404 is cooled like an access failure and confirmed once more before it disables the model.
+    expect(poolFailure({ statusCode: 404 }, clock).kind).toBe('missing');
 
     const route = sdkPoolRoute({
       member: { providerId: 'account', modelId: 'm' }, revision: 'rev',
@@ -221,5 +223,15 @@ describe('round-two route regressions', () => {
     expect(await store.cooldownFor({ id: 'rev', scopes: accountScopes })).toBeGreaterThanOrEqual(clock + 120_000);
     expect(await store.cooldownFor({ id: 'sibling', scopes: [poolModelScope('account', 'sibling'), ...accountScopes] }))
       .toBeGreaterThanOrEqual(clock + 120_000);
+  });
+});
+
+describe('regular Codex routes keep their request shape', () => {
+  it('does not add tool_choice to the SDK params unless the pool asks for it', async () => {
+    const { translateResponsesRequest } = await import('../src/codex-responses-adapter.js');
+    const body = { model: 'm', input: 'hi', tool_choice: 'required' as const,
+      tools: [{ type: 'function' as const, name: 'read', description: 'r', parameters: { type: 'object', properties: {} } }] };
+    expect('toolChoice' in translateResponsesRequest(body as never, '@ai-sdk/openai-compatible')).toBe(false);
+    expect(translateResponsesRequest(body as never, '@ai-sdk/openai-compatible', undefined, { forwardToolChoice: true }).toolChoice).toBe('required');
   });
 });

@@ -41,7 +41,7 @@ describe('Claude pool route preparation', () => {
       body: { model: 'claude-pool', max_tokens: 64, messages: [{ role: 'user', content: 'hello' }] },
       signal: new AbortController().signal,
       sessionId: 'claude-conversation-1',
-      health: { cooldownFor: async () => undefined } as unknown as PoolHealthStore,
+      health: { cooldownFor: async () => undefined, disabledFor: async () => undefined } as unknown as PoolHealthStore,
     });
 
     expect(routes).toHaveLength(1);
@@ -60,7 +60,7 @@ describe('Claude pool route preparation', () => {
       receipts: [receipt],
       body: { model: 'claude-pool', max_tokens: 32000, messages: [{ role: 'user', content: 'hello' }] },
       signal: new AbortController().signal,
-      health: { cooldownFor: async () => undefined } as unknown as PoolHealthStore,
+      health: { cooldownFor: async () => undefined, disabledFor: async () => undefined } as unknown as PoolHealthStore,
     });
     expect(routes).toHaveLength(1);
   });

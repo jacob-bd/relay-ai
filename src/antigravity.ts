@@ -10,7 +10,7 @@ import { detectConflicts, buildAntigravityChildEnv } from './env.js';
 import { buildAntigravityRoutes, type AntigravityEffortMode } from './antigravity/catalog.js';
 import { startCloudCodeGateway, type CloudCodeGatewayHandle } from './antigravity/cloud-code-gateway.js';
 import { evaluateAgySwitchCompatibility } from './antigravity/slot-registry.js';
-import { resolveAntigravityLaunchRoutes } from './antigravity/launch-routes.js';
+import { buildAntigravityLaunchPoolRows, resolveAntigravityLaunchRoutes } from './antigravity/launch-routes.js';
 import { launchAntigravityCli, readAntigravityCliVersion } from './antigravity/launch-cli.js';
 import { clearAppLastSelectedModel } from './antigravity/ide-profile.js';
 import { stopExistingIde, watchExistingIdeShutdown, waitForExistingIdeShutdownWithConfirm } from './antigravity/ide-existing-lifecycle.js';
@@ -55,6 +55,13 @@ import type { CatalogFixture } from './antigravity/types.js';
 
 const AGY_FAVORITES_PROVIDER_ID = '__relay_agy_favorites__';
 const AGY_FAVORITES_PROVIDER_LABEL = '⭐ Favorites Catalog';
+const AGY_POOL_PROVIDER_ID = '__relay_agy_pool__';
+const POOL_LAUNCH_LABEL = 'Relay Free Pool';
+
+/** What the launcher picked: a model, or the free pool as the whole session. */
+type AntigravityLaunchSelection =
+  | { provider: LocalProvider; model: LocalProviderModel; allProviders: LocalProvider[]; startOnPool?: false }
+  | { startOnPool: true; allProviders: LocalProvider[]; provider?: undefined; model?: undefined };
 
 /** True when child args already select a model (--model or --model=). */
 export function agyArgsIncludeModelFlag(args: string[]): boolean {
@@ -64,6 +71,11 @@ export function agyArgsIncludeModelFlag(args: string[]): boolean {
 /** Label agy opens on: the launch model at medium when it has effort entries, else the first entry. */
 export function agyLaunchModelLabel(routes: ReturnType<typeof buildAntigravityRoutes>): string {
   const first = routes[0]!;
+  // The pool lists one row per effort level, each its own model id: open on medium when it is offered.
+  if (first.providerId === 'relay-free-pool') {
+    const pool = routes.filter(route => route.providerId === 'relay-free-pool');
+    return (pool.find(route => route.reasoningEffort === 'medium') ?? first).displayName;
+  }
   const medium = routes.find(route =>
     route.providerId === first.providerId && route.modelId === first.modelId && route.reasoningEffort === 'medium');
   return (medium ?? first).displayName;
@@ -132,7 +144,7 @@ export function resolveAntigravityBootModel(
 async function resolveAntigravityLaunch(
   prefs: UserPreferences,
   boot: { launchProvider?: string; launchModel?: string } | undefined,
-): Promise<{ provider: LocalProvider; model: LocalProviderModel; allProviders: LocalProvider[] } | null> {
+): Promise<AntigravityLaunchSelection | null> {
   // Load the provider catalog
   let catalog;
   const catalogSpinner = p.spinner();
@@ -177,6 +189,15 @@ async function resolveAntigravityLaunch(
     },
     ...allProviders.map(lp => providerSelectOption(lp)),
   ];
+  // Relay Free Pool as the whole session: right under Favorites Catalog, only when the pool is enabled and at
+  // least one member has evidence for Antigravity.
+  if ((await buildAntigravityLaunchPoolRows(allProviders, 1, 'rows')).length > 0) {
+    providerOptions.splice(1, 0, {
+      value: AGY_POOL_PROVIDER_ID,
+      label: pc.cyan('🏊 ' + POOL_LAUNCH_LABEL),
+      hint: 'experimental · starts on the pool, falls back across your free models',
+    });
+  }
 
   const initialProvider =
     prefs.lastAntigravityProvider && providerOptions.some(o => o.value === prefs.lastAntigravityProvider)
@@ -197,6 +218,8 @@ async function resolveAntigravityLaunch(
       p.cancel('Cancelled.');
       return null;
     }
+
+    if (chosen === AGY_POOL_PROVIDER_ID) return { startOnPool: true, allProviders };
 
     if (chosen === AGY_FAVORITES_PROVIDER_ID) {
       const favoriteSelection = await pickFavoriteStartModel(
@@ -239,8 +262,8 @@ async function resolveAntigravityLaunch(
 }
 
 async function resolveAndBuildRoutes(
-  provider: LocalProvider,
-  model: LocalProviderModel,
+  provider: LocalProvider | undefined,
+  model: LocalProviderModel | undefined,
   allProviders: LocalProvider[],
   prefs: UserPreferences,
   opts: {
@@ -248,20 +271,23 @@ async function resolveAndBuildRoutes(
     pauseForCapacityWarning: boolean;
     childArgs: string[];
     effortMode: AntigravityEffortMode;
+    startOnPool?: boolean;
   },
 ): Promise<{ routes: ReturnType<typeof buildAntigravityRoutes>; apiKey: string } | null> {
   const result = await resolveAntigravityLaunchRoutes({
     provider,
     model,
     allProviders,
-    favorites: provider.launchAllModels
+    startOnPool: opts.startOnPool,
+    favorites: provider?.launchAllModels
       ? provider.models.map(model => ({ providerId: provider.id, modelId: model.id }))
       : prefs.favoriteModels ?? [],
     maxRoutes: opts.maxRoutes,
     effortMode: opts.effortMode,
   });
   if (!result) {
-    p.log.error(`No credential for ${provider.name}. Run: relay-ai providers auth ${provider.id} or add an API key.`);
+    if (opts.startOnPool) p.log.error('No servable Relay Free Pool member for Antigravity. Run: relay-ai pool verify');
+    else p.log.error(`No credential for ${provider!.name}. Run: relay-ai providers auth ${provider!.id} or add an API key.`);
     return null;
   }
 
@@ -272,7 +298,7 @@ async function resolveAndBuildRoutes(
         : opts.effortMode === 'submenu'
           ? `each model's low/medium/high share one row with an effort submenu.`
           : `effort levels are listed separately.`;
-    if (provider.launchAllModels) {
+    if (provider?.launchAllModels) {
       const modelCount = new Set(result.routes.map(route => `${route.providerId}:${route.modelId}`)).size;
       p.log.info(
         `All provider models mode active — ${modelCount} models, ${result.routes.length} entries; favorites will not be used. ${effortNote}`,
@@ -447,9 +473,12 @@ async function runAntigravityCommand(
   if (!selection) return 1;
 
   const { provider, model, allProviders } = selection;
+  const startOnPool = selection.startOnPool === true;
+  const launchName = startOnPool ? POOL_LAUNCH_LABEL : formatModelLabel(model!);
+  const launchVia = startOnPool ? 'your free models' : provider!.name;
 
   const accountRisk = assessEnterpriseAccountRisk(tracePrefix, prefs);
-  if (accountRisk && !(await confirmEnterpriseAccountUse(accountRisk, provider.name))) {
+  if (accountRisk && !(await confirmEnterpriseAccountUse(accountRisk, launchVia))) {
     return 1;
   }
 
@@ -471,13 +500,13 @@ async function runAntigravityCommand(
     pauseForCapacityWarning: opts.pauseForCapacityWarning ?? false,
     childArgs: opts.childArgs ?? [],
     effortMode,
+    startOnPool,
   });
   if (!routeResult) return 1;
 
-  savePreferences({
-    lastAntigravityProvider: provider.id,
-    lastAntigravityModel: model.id,
-  });
+  savePreferences(startOnPool
+    ? { lastAntigravityProvider: AGY_POOL_PROVIDER_ID }
+    : { lastAntigravityProvider: provider!.id, lastAntigravityModel: model!.id });
 
   const traceLogPath = trace ? getAntigravityDebugLogPath(tracePrefix) : undefined;
   const logFn = traceLogPath ? makeTraceLogger(traceLogPath) : undefined;
@@ -497,10 +526,10 @@ async function runAntigravityCommand(
   }
 
   p.log.info(`Cloud Code gateway on ${pc.cyan(`127.0.0.1:${gatewayHandle.port}`)}`);
-  p.log.success(`Active model: ${formatModelLabel(model)} ${pc.dim('via')} ${provider.name}`);
+  p.log.success(`Active model: ${launchName} ${pc.dim('via')} ${launchVia}`);
   if (traceLogPath) p.log.info(`Gateway trace → ${pc.dim(traceLogPath)}`);
 
-  relayOutro('Launching', `${formatModelLabel(model)} (${provider.name})`);
+  relayOutro('Launching', `${launchName} (${launchVia})`);
 
   try {
     const cleanEnv = buildAntigravityChildEnv(gatewayHandle.url);

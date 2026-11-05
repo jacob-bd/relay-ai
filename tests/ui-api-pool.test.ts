@@ -111,7 +111,8 @@ describe('free pool UI API', () => {
 
     await call({ action: 'add', ...member });
     const result = await call();
-    expect(result.body.members[0]).toMatchObject({ status: 'Ready', targets: ['claude', 'codex'] });
+    expect(result.body.members[0]).toMatchObject({ status: 'Ready' });
+    expect(result.body.members[0].targets).toEqual(expect.arrayContaining(['claude', 'codex', 'antigravity']));
     expect(loadPreferences().freePool?.receipts).toHaveLength(1);
   });
 

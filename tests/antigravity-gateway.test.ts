@@ -339,99 +339,19 @@ describe('cloud-code-gateway', () => {
     expect(createLanguageModel).not.toHaveBeenCalled();
   });
 
-  it('fails over a pool row before committing content', async () => {
-    const failing: AntigravityRoute = {
-      ...testRoutes[0]!, catalogId: 'member-fail', modelId: 'member-fail',
-      upstreamModelId: 'member-fail', displayName: 'Member Fail',
-    };
-    const healthy: AntigravityRoute = {
-      ...testRoutes[1]!, catalogId: 'member-ok', modelId: 'member-ok',
-      upstreamModelId: 'member-ok', displayName: 'Member OK',
-    };
-    const poolRow: AntigravityRoute = {
-      ...testRoutes[0]!, catalogId: 'relay-free-pool-high', providerId: 'relay-free-pool',
-      modelId: 'free-pool-high', displayName: 'Free Pool High', poolMembers: [failing, healthy],
-    };
-    vi.mocked(createLanguageModel).mockImplementation(async (spec: any) => {
-      if (spec.modelId === 'member-fail') throw new Error('member down');
-      return {} as never;
-    });
-    try {
-      const handle = await start([poolRow]);
-      const res = await postJson(handle, '/v1internal:streamGenerateContent?alt=sse', {
-        model: 'relay-free-pool-high',
-        request: { contents: [{ role: 'user', parts: [{ text: 'hello' }] }] },
-      });
-      const text = await res.text();
-      expect(res.status).toBe(200);
-      expect(text).toContain('"text":"Mocked "');
-      expect(text).toContain('"text":"response"');
-    } finally {
-      vi.mocked(createLanguageModel).mockResolvedValue({} as never);
-    }
-  });
-
-  it('disables SDK retries inside pool members while leaving concrete routes unchanged', async () => {
-    const poolRow: AntigravityRoute = {
-      ...testRoutes[0]!, catalogId: 'relay-free-pool-high', providerId: 'relay-free-pool',
-      modelId: 'free-pool-high', displayName: 'Free Pool High', poolMembers: [testRoutes[0]!],
-    };
-    const request = { request: { contents: [{ role: 'user', parts: [{ text: 'bounded retries' }] }] } };
-
+  it('does not disable SDK retries on concrete routes', async () => {
+    const request = { request: { contents: [{ role: 'user', parts: [{ text: 'unbounded retries' }] }] } };
     vi.mocked(streamText).mockClear();
     const concrete = await start([testRoutes[0]!]);
     await (await postJson(concrete, '/v1internal:streamGenerateContent?alt=sse', {
       ...request, model: testRoutes[0]!.catalogId,
     })).text();
     expect((vi.mocked(streamText).mock.calls.at(-1)![0] as any).maxRetries).toBeUndefined();
-
-    vi.mocked(streamText).mockClear();
-    const pooled = await start([poolRow]);
-    await (await postJson(pooled, '/v1internal:streamGenerateContent?alt=sse', {
-      ...request, model: poolRow.catalogId,
-    })).text();
-    expect((vi.mocked(streamText).mock.calls.at(-1)![0] as any).maxRetries).toBe(0);
-
     vi.mocked(generateText).mockClear();
-    await (await postJson(pooled, '/v1internal:generateContent', {
-      ...request, model: poolRow.catalogId,
-    })).json();
-    expect((vi.mocked(generateText).mock.calls.at(-1)![0] as any).maxRetries).toBe(0);
     await (await postJson(concrete, '/v1internal:generateContent', {
       ...request, model: testRoutes[0]!.catalogId,
     })).json();
     expect((vi.mocked(generateText).mock.calls.at(-1)![0] as any).maxRetries).toBeUndefined();
-  });
-
-  it('does not replay a pool member after content was committed', async () => {
-    const first: AntigravityRoute = {
-      ...testRoutes[0]!, catalogId: 'member-first', modelId: 'member-first',
-      upstreamModelId: 'member-first', displayName: 'Member First',
-    };
-    const second: AntigravityRoute = {
-      ...testRoutes[1]!, catalogId: 'member-second', modelId: 'member-second',
-      upstreamModelId: 'member-second', displayName: 'Member Second',
-    };
-    const poolRow: AntigravityRoute = {
-      ...testRoutes[0]!, catalogId: 'relay-free-pool-high', providerId: 'relay-free-pool',
-      modelId: 'free-pool-high', displayName: 'Free Pool High', poolMembers: [first, second],
-    };
-    vi.mocked(createLanguageModel).mockClear();
-    vi.mocked(streamText).mockImplementationOnce(() => ({
-      stream: (async function* () {
-        yield { type: 'text-delta', textDelta: 'partial' };
-        throw new Error('stream broke');
-      })(),
-    } as never));
-    const handle = await start([poolRow]);
-    const res = await postJson(handle, '/v1internal:streamGenerateContent?alt=sse', {
-      model: 'relay-free-pool-high',
-      request: { contents: [{ role: 'user', parts: [{ text: 'hello' }] }] },
-    });
-    const text = await res.text();
-    expect(text).toContain('partial');
-    expect(text).not.toContain('Mocked response');
-    expect(vi.mocked(createLanguageModel)).toHaveBeenCalledTimes(1);
   });
 
   it('completes a streaming audio turn locally without calling a provider', async () => {

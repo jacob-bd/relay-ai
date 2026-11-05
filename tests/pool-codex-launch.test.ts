@@ -55,12 +55,12 @@ describe('relay-ai codex --pool launch gate', () => {
     expect(await runCodexCommand(['--pool', '--config'], false, { pool: true })).toBe(0);
     expect(console.log).toHaveBeenCalledWith(expect.stringContaining('Free pool mode: 1 member(s), 1 verified receipt(s).'));
   });
-  it('refuses an empty pool and a pool with no fresh receipts', async () => {
+  it('refuses an empty pool, and does not retire a verified member by age', async () => {
     writeFileSync(join(process.env.RELAY_AI_HOME!, 'config.json'), JSON.stringify({
       freePool: { members: [], effort: 'auto', receipts: [] },
     }));
     expect(await runCodexCommand(['--pool', '--config'], false, { pool: true })).toBe(1);
     writeConfig([{ ...receipt, expiresAt: Date.now() - 1 }]);
-    expect(await runCodexCommand(['--pool', '--config'], false, { pool: true })).toBe(1);
+    expect(await runCodexCommand(['--pool', '--config'], false, { pool: true })).toBe(0);
   });
 });

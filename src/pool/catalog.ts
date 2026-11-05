@@ -2,6 +2,7 @@
 import type { FreePoolPreferences, LocalProviderModel, PoolCapabilityReceipt } from '../types.js';
 import type { PoolTarget } from './eligibility.js';
 import { FREE_POOL_MODEL_ID } from './codex-runtime.js';
+import { receiptInForce } from './capabilities.js';
 import { catalogEntryFromModel, type CodexCatalogModel } from '../codex/catalog.js';
 
 const ALIASES: Record<PoolTarget, string> = {
@@ -13,8 +14,7 @@ const ALIASES: Record<PoolTarget, string> = {
 /** Same servability predicate the runtime uses, minus provider-specific checks. */
 function servable(receipt: PoolCapabilityReceipt | undefined, target: PoolTarget, now: number): receipt is PoolCapabilityReceipt {
   return Boolean(receipt
-    && Number.isFinite(receipt.verifiedAt) && receipt.verifiedAt <= now
-    && Number.isFinite(receipt.expiresAt) && receipt.expiresAt > now
+    && receiptInForce(receipt, now)
     && receipt.targets.includes(target)
     && receipt.billingSafe
     && Number.isSafeInteger(receipt.contextWindow) && receipt.contextWindow > 0);

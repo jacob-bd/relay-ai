@@ -114,7 +114,7 @@ export async function prepareCodexPoolRoutes(options: {
     const translate = options.translate ?? preparePoolHistory;
     const params = translate(body, options.source, identity, model.npm, {
       ...model, providerId: provider.id, apiBaseUrl: model.apiBaseUrl,
-    }, { maxTools: POOL_MAX_TOOLS, npm: model.npm }, poolHistoryOrigins(options.body));
+    }, { maxTools: POOL_MAX_TOOLS, npm: model.npm, forwardToolChoice: true }, poolHistoryOrigins(options.body));
     // Omission is only verified when translation claimed no level of its own.
     if (memberAuto && translatedEffortClaim(params.providerOptions)) { skip('translation would set an effort'); continue; }
     const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
@@ -126,6 +126,8 @@ export async function prepareCodexPoolRoutes(options: {
     if (!context.verified || !context.fits) { skip(context.verified ? 'request too large for its context window' : 'context window not verified'); continue; }
     const scopes = [poolEndpointScope(provider.id, revision, model.id)];
     const accountScopes = [poolAccountScope(provider.id)];
+    const off = await options.health.disabledFor(scopes);
+    if (off) { skip('DISABLED: ' + off.note + ' (run Test to re-enable)'); continue; }
     const unavailableUntil = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
     if (unavailableUntil !== undefined && unavailableUntil > Date.now()) { skip('cooling down after a failure'); continue; }
     const apiKey = await resolveLocalProviderApiKey(provider);

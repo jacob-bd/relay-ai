@@ -133,8 +133,15 @@ interface StoredEntry {
   until: number;
   reason: PoolFailureKind;
   updatedAt: number;
+  /** Short fixed label: why a member is disabled, or the marker of an unconfirmed 404/410. Never upstream text. */
+  note?: string;
   recovery?: StoredClaim;
 }
+
+/** A disabled member stays out until a Test clears it; this is the (far) end its entry carries. */
+const DISABLED_FOR_MS = 100 * 365 * 86_400_000;
+const MISSING_NOTE = 'missing';
+const MAX_NOTE_CHARS = 120;
 interface StoreFile { version: 1; entries: Record<string, StoredEntry> }
 
 interface OwnerRecord { token: string; pid: number; createdAt: number }
@@ -169,7 +176,9 @@ function normalizeEntry(raw: unknown): StoredEntry {
   if (typeof label !== 'string' || !label || label.length > MAX_LABEL_CHARS + 1) throw new Error('invalid label');
   if (typeof failures !== 'number' || !Number.isSafeInteger(failures) || failures < 1 || failures > 100) throw new Error('invalid failures');
   if (typeof until !== 'number' || !Number.isFinite(until)) throw new Error('invalid until');
-  if (reason !== 'rate-limit' && reason !== 'quota' && !(typeof reason === 'string' && reason in FAILURE_COOLDOWN_BASE_MS)) throw new Error('unsupported reason');
+  if (reason !== 'rate-limit' && reason !== 'quota' && reason !== 'disabled' && !(typeof reason === 'string' && reason in FAILURE_COOLDOWN_BASE_MS)) throw new Error('unsupported reason');
+  const note = value['note'];
+  if (note !== undefined && (typeof note !== 'string' || note.length > MAX_NOTE_CHARS)) throw new Error('invalid note');
   if (typeof updatedAt !== 'number' || !Number.isFinite(updatedAt)) throw new Error('invalid updatedAt');
   let recovery: StoredClaim | undefined;
   const rawClaim = value['recovery'];
@@ -188,6 +197,7 @@ function normalizeEntry(raw: unknown): StoredEntry {
     until,
     reason: reason as PoolFailureKind,
     updatedAt,
+    ...(typeof note === 'string' ? { note } : {}),
     ...(recovery ? { recovery } : {}),
   };
 }
@@ -379,18 +389,44 @@ export class PoolHealthStore {
   async record(
     scopes: readonly string[],
     failure: PoolFailure,
-  ): Promise<{ recorded: boolean; reason?: string; until?: number }> {
-    const shortBase = failure.kind in FAILURE_COOLDOWN_BASE_MS
-      ? FAILURE_COOLDOWN_BASE_MS[failure.kind as keyof typeof FAILURE_COOLDOWN_BASE_MS] : undefined;
-    if (failure.kind !== 'rate-limit' && failure.kind !== 'quota' && shortBase === undefined) return { recorded: false, reason: failure.kind };
+  ): Promise<{ recorded: boolean; reason?: string; until?: number; disabled?: boolean; note?: string }> {
+    // A bare 404/410 is cooled like an access failure and confirmed once more before it disables the member.
+    const cooled = failure.kind === 'missing' ? 'access' : failure.kind;
+    const shortBase = cooled in FAILURE_COOLDOWN_BASE_MS
+      ? FAILURE_COOLDOWN_BASE_MS[cooled as keyof typeof FAILURE_COOLDOWN_BASE_MS] : undefined;
+    if (failure.kind !== 'rate-limit' && failure.kind !== 'quota' && failure.kind !== 'disabled' && shortBase === undefined) return { recorded: false, reason: failure.kind };
     const unique = [...new Set(scopes.filter(scope => typeof scope === 'string' && scope.trim().length > 0))];
     if (!unique.length) return { recorded: false, reason: 'no-scopes' };
     const now = this.now();
     return this.mutate((state, touch) => {
       let until = 0;
+      let disabledNote: string | undefined;
       for (const scope of unique) {
         const key = hashScope(scope);
         const previous = state.entries[key];
+        // Disabled is final until a Test clears it: nothing recorded afterwards may soften it.
+        if (previous?.reason === 'disabled') {
+          until = Math.max(until, previous.until);
+          disabledNote = previous.note;
+          continue;
+        }
+        // Confirmation must come from the recovery probe, after the first 404's cooldown ended. A parallel request
+        // that was already in flight when the first one failed is the same outage, not a second opinion.
+        const confirmedMissing = failure.kind === 'missing' && previous?.note === MISSING_NOTE && previous.until <= now;
+        if (failure.kind === 'disabled' || confirmedMissing) {
+          const note = failure.kind === 'disabled' ? failure.note ?? 'disabled after an error' : 'model not found (404)';
+          state.entries[key] = {
+            label: sanitizePoolScopeLabel(scope),
+            failures: Math.min((previous?.failures ?? 0) + 1, 100),
+            until: now + DISABLED_FOR_MS,
+            reason: 'disabled',
+            updatedAt: now,
+            note: note.slice(0, MAX_NOTE_CHARS),
+          };
+          until = Math.max(until, now + DISABLED_FOR_MS);
+          disabledNote = state.entries[key]!.note;
+          continue;
+        }
         const failures = Math.min((previous?.failures ?? 0) + 1, 100);
         const step = shortBase !== undefined
           ? Math.min(shortBase * 2 ** Math.min(failures - 1, 10), FAILURE_COOLDOWN_MAX_MS)
@@ -408,14 +444,15 @@ export class PoolHealthStore {
           label: sanitizePoolScopeLabel(scope),
           failures,
           until: entryUntil,
-          reason: failure.kind,
+          reason: cooled,
           updatedAt: now,
+          ...(failure.kind === 'missing' ? { note: MISSING_NOTE } : {}),
         };
         until = Math.max(until, entryUntil);
       }
       prune(state, now);
       touch();
-      return { recorded: true, until };
+      return { recorded: true, until, ...(disabledNote ? { disabled: true, note: disabledNote } : {}) };
     });
   }
 
@@ -426,7 +463,7 @@ export class PoolHealthStore {
     await this.mutate((state, touch) => {
       for (const scope of unique) {
         const key = hashScope(scope);
-        if (state.entries[key]) {
+        if (state.entries[key] && state.entries[key]!.reason !== 'disabled') {
           delete state.entries[key];
           touch();
         }
@@ -474,6 +511,16 @@ export class PoolHealthStore {
       }
       return removed;
     });
+  }
+
+  /** Why a member is disabled, if it is. Cleared only by a passing Test. */
+  async disabledFor(scopes: readonly string[]): Promise<{ note: string; since: number } | undefined> {
+    const state = await this.readState();
+    for (const scope of scopes) {
+      const entry = state.entries[hashScope(scope)];
+      if (entry?.reason === 'disabled') return { note: entry.note ?? 'disabled after an error', since: entry.updatedAt };
+    }
+    return undefined;
   }
 
   /** Highest active cooldown for a route, if any (does not claim recovery). */

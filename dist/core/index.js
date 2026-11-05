@@ -37,7 +37,9 @@ function parsePoolReceipt(value) {
     endpointRevision: revision,
     verifiedAt: r.verifiedAt,
     expiresAt: r.expiresAt,
-    targets,
+    // A member that passed the text and tool Test can serve every target (Antigravity's Auto row needs
+    // nothing more), so saved receipts from before that target existed stay usable without a re-test.
+    targets: targets.includes("antigravity") ? targets : [...targets, "antigravity"],
     tools: r.tools,
     maxOutputTokens: r.maxOutputTokens,
     contextWindow: r.contextWindow,

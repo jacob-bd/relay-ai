@@ -1,4 +1,6 @@
 // codex.ts — relay-ai codex: launch OpenAI Codex CLI with registry providers
+import { receiptInForce } from './pool/capabilities.js';
+import { warnDisabledPoolMembers } from './pool/disabled.js';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { join } from 'node:path';
@@ -460,7 +462,7 @@ export async function runCodexCommand(
       console.error(pc.red('No free pool members. Add one with: relay-ai pool add <provider-account> <model>'));
       return 1;
     }
-    const fresh = pool.receipts.filter(receipt => receipt.verifiedAt <= Date.now() && receipt.expiresAt > Date.now());
+    const fresh = pool.receipts.filter(receipt => receiptInForce(receipt, Date.now()));
     if (fresh.length === 0) {
       console.error(pc.red('No verified free pool members. Run: relay-ai pool verify'));
       return 1;
@@ -484,6 +486,7 @@ export async function runCodexCommand(
     try {
       const providers = await fetchProviderCatalog();
       const health = new PoolHealthStore();
+      await warnDisabledPoolMembers(providers, pool, health);
       const runtime = new CodexPoolRuntime(pool, (body, source, signal, sessionId, onSkip) => prepareCodexPoolRoutes({
         pool, providers, receipts: pool.receipts, body, source, signal, sessionId, health, onSkip,
       }));
@@ -608,6 +611,7 @@ export async function runCodexCommand(
   const additive = additivePool
     ? createAdditivePoolRuntime(additivePool, providersForPicker(catalog))
     : undefined;
+  if (additive && additivePool) await warnDisabledPoolMembers(providersForPicker(catalog), additivePool);
   const additivePoolRuntime = additive?.runtime;
   const additivePoolModel = additive?.catalog;
   if (additivePool && !additive && !agentStdout) {

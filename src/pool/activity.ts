@@ -1,5 +1,6 @@
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { poolFailure } from './errors.js';
 import { upstreamHttpStatus } from '../codex/upstream-error.js';
 import { getLogsPath } from '../paths.js';
 import pc from 'picocolors';
@@ -7,7 +8,7 @@ import pc from 'picocolors';
 /** One line per pool attempt outcome. Local only; holds model names and fixed reasons, never prompts or keys. */
 export interface PoolActivity {
   at: string;
-  target: 'claude' | 'codex';
+  target: 'claude' | 'codex' | 'antigravity';
   /** `gave-up` closes a request that no member answered. */
   event: 'served' | 'failed' | 'gave-up';
   /** Ties the attempts of one request together (Claude Code sends several at once). */
@@ -42,6 +43,8 @@ export function poolRouteMember(routeId: string): { providerId: string; modelId:
 /** A short, safe label for why an attempt failed. */
 export function describePoolFailure(error: unknown): string {
   const raw = error instanceof Error ? error.message : '';
+  const verdict = poolFailure(error);
+  if (verdict.kind === 'disabled') return 'DISABLED: ' + (verdict.note ?? 'disabled after an error') + ' (run Test to re-enable)';
   if (raw.includes('Simulated failure (RELAY_POOL_FORCE_FAIL)')) return 'simulated failure (test switch)';
   if (raw.includes('Pool route entered cooldown')) return 'skipped: recovering from an earlier failure';
   // upstreamHttpStatus defaults to 500 for anything unrecognised; only trust a status the error carries.
@@ -98,7 +101,7 @@ export function formatPoolActivityLine(e: PoolActivity): string {
     : `${when.toLocaleDateString()} ${when.toLocaleTimeString([], { hour12: false })}`;
   const secs = typeof e.ms === 'number' ? ` ${(e.ms / 1000).toFixed(1)}s` : '';
   const detail = e.detail ? `\n    ↳ ${e.detail}` : '';
-  return `${time}  ${e.event === 'served' ? 'answered' : 'FAILED  '}  ${e.providerId}/${e.modelId}${e.reason ? '  ' + e.reason : ''}${secs}${detail}`;
+  return `${time}  ${e.event === 'served' ? 'answered' : /^(skipped: )?DISABLED/.test(e.reason ?? '') ? 'DISABLED' : 'FAILED  '}  ${e.providerId}/${e.modelId}${e.reason ? '  ' + e.reason : ''}${secs}${detail}`;
 }
 
 function parseActivityLine(line: string): PoolActivity | undefined {
@@ -206,7 +209,8 @@ function attemptLines(tried: PoolRequestSummary['tried']): string[] {
   for (const t of tried) {
     const name = `${t.providerId}/${t.modelId}`;
     const reason = t.reason ?? 'failed';
-    if (reason.startsWith('skipped')) lines.push(pc.yellow(`      – ${name} skipped: ${reason.replace(/^skipped:\s*/, '')}`));
+    if (/^(skipped: )?DISABLED/.test(reason)) lines.push(pc.bold(pc.red(`      ⛔ ${name} ${reason.replace(/^skipped:\s*/, '')}`)));
+    else if (reason.startsWith('skipped')) lines.push(pc.yellow(`      – ${name} skipped: ${reason.replace(/^skipped:\s*/, '')}`));
     else lines.push(pc.red(`      ✗ ${name} failed: ${reason}`));
     if (t.detail) lines.push(pc.dim(`          ${t.detail}`));
   }

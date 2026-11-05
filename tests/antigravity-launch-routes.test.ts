@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { poolEndpointRevision } from '../src/pool/capabilities.js';
 import { resolveAntigravityLaunchRoutes } from '../src/antigravity/launch-routes.js';
 import type { FavoriteModel, LocalProvider } from '../src/types.js';
 
@@ -374,5 +378,78 @@ describe('antigravity launch routes', () => {
       oauthAccountId: 'user@example.com',
       providerData: { projectId: 'cloud-project-123' },
     });
+  });
+});
+
+describe('free pool row reservation', () => {
+  let home: string | undefined;
+  const previousHome = process.env.RELAY_AI_HOME;
+  afterEach(() => {
+    if (previousHome === undefined) delete process.env.RELAY_AI_HOME; else process.env.RELAY_AI_HOME = previousHome;
+    if (home) rmSync(home, { recursive: true, force: true });
+    home = undefined;
+  });
+
+  it('keeps a row for the pool even when favorites and their effort variants would fill the catalog', async () => {
+    const effortModel = {
+      id: 'think', name: 'Think', family: 'x', brand: 'X', modelFormat: 'openai' as const, upstreamModelId: 'think',
+      npm: '@ai-sdk/openai-compatible', apiBaseUrl: 'http://127.0.0.1:1/v1', contextWindow: 200000,
+      reasoning: true, reasoningEffortLevels: ['low', 'medium', 'high', 'xhigh'],
+    };
+    const poolModel = {
+      id: 'pm', name: 'pm', family: '', brand: '', modelFormat: 'openai' as const, upstreamModelId: 'pm',
+      npm: '@ai-sdk/openai-compatible', apiBaseUrl: 'http://127.0.0.1:2/v1', contextWindow: 200000, cost: { input: 0, output: 0 },
+    };
+    const launch: LocalProvider = { id: 'launcher', name: 'Launcher', apiKey: 'k', models: [effortModel] };
+    const member: LocalProvider = { id: 'poolprov', name: 'Pool', apiKey: 'k2', models: [poolModel] };
+    home = mkdtempSync(join(tmpdir(), 'relay-agy-launch-'));
+    process.env.RELAY_AI_HOME = home;
+    const revision = poolEndpointRevision({ providerId: 'poolprov', npm: poolModel.npm, baseURL: poolModel.apiBaseUrl, upstreamModelId: 'pm' });
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ freePool: {
+      enabled: true, effort: 'auto', members: [{ providerId: 'poolprov', modelId: 'pm' }],
+      receipts: [{ member: { providerId: 'poolprov', modelId: 'pm' }, endpointRevision: revision, verifiedAt: 1, expiresAt: 2,
+        targets: ['codex', 'claude'], tools: true, maxOutputTokens: 4096, contextWindow: 200000, contextSource: 'provider',
+        reasoningAccounting: 'inside-output', effortLevels: [], billingSafe: true }],
+    } }));
+    // agy's slider lists every level of the launch model: with a cap of 4 they alone fill the catalog.
+    const result = await resolveAntigravityLaunchRoutes({
+      provider: launch, model: effortModel, allProviders: [launch, member], maxRoutes: 4, effortMode: 'slider',
+    });
+    expect(result!.routes).toHaveLength(4);
+    expect(result!.routes.filter(route => route.providerId === 'relay-free-pool').map(route => route.catalogId)).toEqual(['relay-free-pool-auto']);
+    expect(result!.routes.filter(route => route.providerId === 'launcher').length).toBe(3);
+  });
+
+  it('starts on the pool: its rows come first, favorites follow, and no other model is the launch model', async () => {
+    const favModel = {
+      id: 'fav', name: 'Fav', family: 'x', brand: 'X', modelFormat: 'openai' as const, upstreamModelId: 'fav',
+      npm: '@ai-sdk/openai-compatible', apiBaseUrl: 'http://127.0.0.1:1/v1', contextWindow: 200000,
+    };
+    const poolModel = {
+      id: 'pm', name: 'pm', family: '', brand: '', modelFormat: 'openai' as const, upstreamModelId: 'pm',
+      npm: '@ai-sdk/openai-compatible', apiBaseUrl: 'http://127.0.0.1:2/v1', contextWindow: 200000, cost: { input: 0, output: 0 },
+    };
+    const favProvider: LocalProvider = { id: 'favprov', name: 'Fav', apiKey: 'k', models: [favModel] };
+    const member: LocalProvider = { id: 'poolprov', name: 'Pool', apiKey: 'k2', models: [poolModel] };
+    home = mkdtempSync(join(tmpdir(), 'relay-agy-start-pool-'));
+    process.env.RELAY_AI_HOME = home;
+    const revision = poolEndpointRevision({ providerId: 'poolprov', npm: poolModel.npm, baseURL: poolModel.apiBaseUrl, upstreamModelId: 'pm' });
+    const config = (enabled: boolean) => JSON.stringify({ freePool: {
+      enabled, effort: 'auto', members: [{ providerId: 'poolprov', modelId: 'pm' }],
+      receipts: [{ member: { providerId: 'poolprov', modelId: 'pm' }, endpointRevision: revision, verifiedAt: 1, expiresAt: 2,
+        targets: ['codex', 'claude'], tools: true, maxOutputTokens: 4096, contextWindow: 200000, contextSource: 'provider',
+        reasoningAccounting: 'inside-output', effortLevels: [], billingSafe: true }],
+    } });
+    writeFileSync(join(home, 'config.json'), config(true));
+    const result = await resolveAntigravityLaunchRoutes({
+      startOnPool: true, allProviders: [favProvider, member], favorites: [{ providerId: 'favprov', modelId: 'fav' }],
+      maxRoutes: 10, effortMode: 'rows',
+    });
+    expect(result!.routes.map(route => route.providerId)).toEqual(['relay-free-pool', 'favprov']);
+    expect(result!.routes[0]!.catalogId).toBe('relay-free-pool-auto');
+
+    // Pool switched off: nothing to start on.
+    writeFileSync(join(home, 'config.json'), config(false));
+    expect(await resolveAntigravityLaunchRoutes({ startOnPool: true, allProviders: [favProvider, member], maxRoutes: 10 })).toBeNull();
   });
 });

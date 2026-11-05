@@ -19,7 +19,8 @@ describe('shared pool catalog entry', () => {
   it('keeps advertising while one member is verified and refuses when none are', () => {
     expect(codexPoolCatalogEntry(pool, receipts.slice(0, 1), 10)).toMatchObject({ context_window: 230400 });
     expect(codexPoolCatalogEntry({ members: [], effort: 'auto', receipts: [] }, [], 10)).toBeUndefined();
-    expect(codexPoolCatalogEntry(pool, receipts, 100)).toBeUndefined();
+    // Time alone never retires a verified member.
+    expect(codexPoolCatalogEntry(pool, receipts, 100)).toMatchObject({ context_window: 115200 });
   });
   it('refuses receipts with a future verification time', () => {
     expect(codexPoolCatalogEntry(pool, receipts.map(item => ({ ...item, verifiedAt: 11 })), 10)).toBeUndefined();

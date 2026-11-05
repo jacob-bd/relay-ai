@@ -11,7 +11,7 @@ import {
   reconcileCachedModelProtocol,
   setContextWindowOverride,
   setModelNotChat
-} from "./chunk-4QAQ4MVE.js";
+} from "./chunk-CKWEYKVD.js";
 import {
   ANTIGRAVITY_API_VERSION,
   ANTIGRAVITY_BASE_URLS,
@@ -32,7 +32,7 @@ import {
   resolveProviderOAuthProviderData,
   upstreamHttpStatus,
   withProviderRequestDefaults
-} from "./chunk-MNN6GZ3I.js";
+} from "./chunk-DDFLIKBI.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -911,4 +911,4 @@ export {
   probeModel,
   testModel
 };
-//# sourceMappingURL=test-model-UDWTWFZZ.js.map
+//# sourceMappingURL=test-model-PEI4ZNKS.js.map

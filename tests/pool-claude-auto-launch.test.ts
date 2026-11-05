@@ -39,9 +39,9 @@ describe('Claude auto pool gate', () => {
     expect(prepareClaudeAutoPool(prefs(false), [provider])).toBeUndefined();
     expect(prepareClaudeAutoPool({}, [provider])).toBeUndefined();
   });
-  it('ignores stale, non-Claude, unverified-tool and expired receipts', () => {
+  it('ignores non-Claude and unverified-tool receipts, and does not retire a member by age', () => {
     const stale = { ...receipt, expiresAt: Date.now() - 1 };
-    expect(prepareClaudeAutoPool(prefs(true, [stale]), [provider])).toBeUndefined();
+    expect(prepareClaudeAutoPool(prefs(true, [stale]), [provider])).toBeDefined();
     const codexOnly = { ...receipt, targets: ['codex'] as PoolCapabilityReceipt['targets'] };
     expect(prepareClaudeAutoPool(prefs(true, [codexOnly]), [provider])).toBeUndefined();
     const noTools = { ...receipt, tools: false };

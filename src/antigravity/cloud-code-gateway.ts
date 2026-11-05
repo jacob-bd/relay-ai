@@ -1,4 +1,13 @@
-import { createJsonCapture, createStreamCapture } from './pool-failover.js';
+import { PoolHealthStore } from '../pool/health.js';
+import { dispatchFreePool } from '../pool/dispatch.js';
+import { PoolAttemptError, type PoolLimits } from '../pool/attempt.js';
+import { retryPoolFailure } from '../pool/errors.js';
+import { DEFAULT_POOL_LIMITS } from '../pool/codex-runtime.js';
+import { POOL_MAX_TOOLS } from '../pool/codex-prepare.js';
+import { describePoolFailure, poolRouteMember, recordPoolActivity } from '../pool/activity.js';
+import { poolErrorDetail } from '../pool/diagnostic.js';
+import { antigravityPoolPreferences, prepareAntigravityPoolRoutes } from '../pool/antigravity-runtime.js';
+import { randomUUID } from 'node:crypto';
 import { isProviderKind } from '../registry/provider-kind.js';
 import http from 'node:http';
 import { streamText } from 'ai';
@@ -56,6 +65,10 @@ export interface GatewayOptions {
    * (`entitlement.userTier`), so launch surfaces can warn about work accounts.
    */
   onAuthTierDetected?: (info: DetectedAuthTier) => void;
+  /** Shared pool health (cooldowns). Defaults to the same store the Codex and Claude pools use. */
+  poolHealth?: PoolHealthStore;
+  /** Pool attempt limits. Defaults to the Codex and Claude pool limits. */
+  poolLimits?: PoolLimits;
 }
 
 type HelperRoutePolicy = 'launch' | 'launch-or-active';
@@ -121,6 +134,8 @@ export async function startCloudCodeGateway(
   const trace = opts.trace ?? false;
   const trackActiveRoute = opts.trackActiveRoute ?? false;
   const log = opts.logFn ?? (() => {});
+  let sharedPoolHealth = opts.poolHealth;
+  const poolDeps = { health: () => (sharedPoolHealth ??= new PoolHealthStore()), limits: opts.poolLimits ?? DEFAULT_POOL_LIMITS, lastSkip: new Map<string, string>() };
 
   const catalogFixture = catalogFixtureRaw as unknown as CatalogFixture;
   const slotOptions = { nativeSlots: opts.nativeSlots ?? true };
@@ -311,24 +326,29 @@ export async function startCloudCodeGateway(
           const isStream = lowerUrl.includes('stream');
           const conversationKey = conversationKeyFromRequest(parsed);
           const conversationSessionId = antigravityConversationId(parsed, req.headers);
-          const requestHeaders = openCodeGoHeaders(
-            route.providerId,
-            route.baseURL,
-            conversationSessionId,
-            route.headers,
-          );
-          const requestOptions = {
-            ...reasoningEchoOptionsForRoute(route, parsed, reasoningEchoesByConversation),
-            ...(requestHeaders ? { requestHeaders } : {}),
+          const optionsFor = (target: AntigravityRoute): TranslateRequestOptions => {
+            const requestHeaders = openCodeGoHeaders(
+              target.providerId,
+              target.baseURL,
+              conversationSessionId,
+              target.headers,
+            );
+            return {
+              ...reasoningEchoOptionsForRoute(target, parsed, reasoningEchoesByConversation),
+              ...(requestHeaders ? { requestHeaders } : {}),
+            };
           };
-          const rememberReasoning = (reasoning: string) => {
-            if (!shouldEchoReasoningForRoute(route)) return;
+          const requestOptions = optionsFor(route);
+          const rememberReasoning = (reasoning: string, answeredBy?: AntigravityRoute) => {
+            if (!shouldEchoReasoningForRoute(answeredBy ?? route)) return;
             rememberReasoningEcho(reasoningEchoesByConversation, conversationKey, reasoning);
           };
 
           if (isStream) {
             handleStreamingRequest(res, route, baseProviderOptions, parsed as any, log, {
               requestOptions,
+              optionsFor,
+              pool: poolDeps,
               sessionId: conversationSessionId,
               onReasoningWithToolCall: rememberReasoning,
               trace,
@@ -344,6 +364,8 @@ export async function startCloudCodeGateway(
           } else {
             handleUnaryRequest(res, route, baseProviderOptions, parsed as any, log, {
               requestOptions,
+              optionsFor,
+              pool: poolDeps,
               sessionId: conversationSessionId,
               onReasoningWithToolCall: rememberReasoning,
               trace,
@@ -639,10 +661,12 @@ async function handleCloudCodeForwardRequest(
 interface RequestHandlerOptions {
   requestOptions?: TranslateRequestOptions;
   sessionId?: string;
-  onReasoningWithToolCall?: (reasoning: string) => void;
+  onReasoningWithToolCall?: (reasoning: string, answeredBy?: AntigravityRoute) => void;
+  /** Request options for one concrete route (pool members each get their own). */
+  optionsFor?: (route: AntigravityRoute) => TranslateRequestOptions;
+  /** Free pool dependencies. */
+  pool?: { health(): PoolHealthStore; limits: PoolLimits; lastSkip: Map<string, string> };
   trace?: boolean;
-  /** Pool attempts are already bounded by Relay; the SDK must not spend extra calls. */
-  disableSdkRetries?: boolean;
 }
 
 function emitThinkingDelta(
@@ -824,29 +848,7 @@ async function handleStreamingRequest(
   options: RequestHandlerOptions = {},
 ): Promise<void> {
   if (route.poolMembers?.length) {
-    for (const member of route.poolMembers) {
-      const capture = createStreamCapture(res);
-      try {
-        await handleStreamingRequest(capture.response, member, providerOptionsForRoute(member), parsed, log, {
-          ...options,
-          disableSdkRetries: true,
-        });
-      } catch (error) {
-        if (capture.committed) {
-          if (!res.writableEnded) res.end();
-          return;
-        }
-        log('[gateway] pool member failed: ' + member.providerId + '/' + member.modelId + ': ' + formatUpstreamError(error));
-        continue;
-      }
-      if (capture.committed) {
-        if (!res.writableEnded) res.end();
-        return;
-      }
-    }
-    if (!res.headersSent) {
-      respondJson(res, 502, { error: { code: 502, message: 'All free pool members failed' } });
-    }
+    await handlePoolRequest(res, route, parsed, log, options, true);
     return;
   }
   const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
@@ -862,7 +864,6 @@ async function handleStreamingRequest(
     sdkParams.providerOptions,
   );
   const langModel = await createRouteLanguageModel(route, options.sessionId);
-  const responseId = `relay-${Date.now()}`;
 
   const { stream } = streamText({
     model: langModel,
@@ -872,9 +873,214 @@ async function handleStreamingRequest(
     toolChoice: sdkParams.toolChoice,
     providerOptions: effectiveProviderOptions as any,
     headers: sdkParams.headers,
-    ...(options.disableSdkRetries ? { maxRetries: 0 } : {}),
   });
 
+  await writeCloudCodeStream(stream, res, route, { log, options, toolNames: new Set(Object.keys(sdkParams.tools ?? {})) });
+}
+
+function clientMaxOutputTokens(parsed: any): number | undefined {
+  const value = parsed?.request?.generationConfig?.maxOutputTokens;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+/** Free pool row: one request through the shared coordinator (bounded attempts, timeouts, cooldowns, cancellation). */
+async function handlePoolRequest(
+  res: http.ServerResponse,
+  row: AntigravityRoute,
+  parsed: any,
+  log: (msg: string) => void,
+  options: RequestHandlerOptions,
+  stream: boolean,
+): Promise<void> {
+  const deps = options.pool;
+  const members = row.poolMembers ?? [];
+  const requestId = randomUUID().slice(0, 8);
+  if (!deps) {
+    respondJson(res, 502, { error: { code: 502, message: 'Free pool is not available in this gateway' } });
+    return;
+  }
+  // A client that goes away must cancel the attempt and release any recovery claim.
+  const abort = new AbortController();
+  const onClose = () => { if (!res.writableFinished) abort.abort(new Error('client disconnected')); };
+  res.on('close', onClose);
+  const started = { at: Date.now() };
+  let answering: AntigravityRoute | undefined;
+  const toolNames = new Set<string>();
+  const failed = new Set<string>();
+  const skips: Array<{ member: AntigravityRoute; reason: string }> = [];
+  const requestStart = Date.now();
+  const memberKey = (member: { providerId: string; modelId: string }) => member.providerId + '/' + member.modelId;
+  // A non-streaming reply is collected before anything is sent, so a member that dies mid-answer can still
+  // be replaced by the next one. A streaming reply cannot: once bytes reached the client, the request ends.
+  try {
+    for (let round = 0; ; round += 1) {
+      const eligible = members.filter(member => !failed.has(memberKey(member)));
+      if (round > 0 && eligible.length === 0) throw new PoolAttemptError('attempt-budget-exhausted', false);
+      try {
+        const { routes, prepared } = await prepareAntigravityPoolRoutes({
+          members: eligible,
+          health: deps.health(),
+          onSkip: (member, reason) => {
+            log('[gateway] pool member skipped: ' + member.providerId + '/' + member.modelId + ': ' + reason);
+            if (round === 0) skips.push({ member, reason });
+          },
+          build: async member => {
+            const sdkParams = applyClaudeCodeOAuthIdentity(member, translateRequest(parsed, {
+              ...(options.optionsFor?.(member) ?? options.requestOptions),
+              npm: member.npm,
+              maxTools: Math.min(maxToolsForNpm(member.npm) ?? POOL_MAX_TOOLS, POOL_MAX_TOOLS),
+            }));
+            const model = await createRouteLanguageModel(member, options.sessionId);
+            return {
+              model,
+              messages: sdkParams.messages,
+              tools: sdkParams.tools,
+              system: sdkParams.instructions,
+              toolChoice: sdkParams.toolChoice,
+              providerOptions: deepMergeProviderOptions(
+                // An effort level is sent only when the pool row names one the member verified; Auto sends none.
+                member.reasoningEffort ? providerOptionsForRoute(member) : thinkingProviderOptions(member.npm),
+                sdkParams.providerOptions) as never,
+              headers: sdkParams.headers,
+              maxOutputTokens: clientMaxOutputTokens(parsed),
+            };
+          },
+        });
+        for (const built of prepared.values()) for (const name of Object.keys(built.tools ?? {})) toolNames.add(name);
+        const remaining = Math.max(1, deps.limits.totalMs - (Date.now() - requestStart));
+        const events = dispatchFreePool(antigravityPoolPreferences(eligible, row.reasoningEffort), routes, {
+          target: 'antigravity', tools: toolNames.size > 0, effort: row.reasoningEffort, signal: abort.signal,
+        }, {
+          limits: { ...deps.limits, totalMs: remaining },
+          retryable: retryPoolFailure,
+          onAttempt: id => {
+            const member = poolRouteMember(id);
+            answering = members.find(item => item.providerId === member?.providerId && item.modelId === member?.modelId);
+            started.at = Date.now();
+            if (member) log('[gateway] pool attempt: ' + member.providerId + '/' + member.modelId);
+          },
+          onFailure: (id, error) => {
+            const member = poolRouteMember(id);
+            if (!member) return;
+            failed.add(memberKey(member));
+            const reason = describePoolFailure(error);
+            const detail = reason.startsWith('simulated') ? undefined : poolErrorDetail(error);
+            recordPoolActivity({ target: 'antigravity', event: 'failed', ...member, requestId, reason, ...(detail ? { detail } : {}), ms: Date.now() - started.at });
+            log('[gateway] pool member failed: ' + member.providerId + '/' + member.modelId + ' (' + reason + ')' + (detail ? ': ' + detail : ''));
+          },
+        });
+        const noteServed = () => {
+          const member = answering;
+          if (!member) return;
+          // Why a preferred member was passed over: shown when it starts or changes (not on every request, and
+          // not for a cooldown, which already has its own failure entry), and only for members ahead of the answerer.
+          const order = members.indexOf(member);
+          const seen = new Set<string>();
+          for (const item of skips) {
+            const key = memberKey(item.member);
+            seen.add(key);
+            if (item.reason.startsWith('cooling down')) continue;
+            const fresh = deps.lastSkip.get(key) !== item.reason;
+            deps.lastSkip.set(key, item.reason);
+            if (fresh && members.indexOf(item.member) < order) {
+              recordPoolActivity({ target: 'antigravity', event: 'failed', providerId: item.member.providerId, modelId: item.member.modelId, requestId, reason: 'skipped: ' + item.reason });
+            }
+          }
+          for (const key of [...deps.lastSkip.keys()]) if (!seen.has(key)) deps.lastSkip.delete(key);
+          recordPoolActivity({ target: 'antigravity', event: 'served', providerId: member.providerId, modelId: member.modelId, requestId, ms: Date.now() - started.at });
+        };
+        const poolOptions: RequestHandlerOptions = {
+          ...options,
+          onReasoningWithToolCall: reasoning => options.onReasoningWithToolCall?.(reasoning, answering),
+        };
+        if (stream) {
+          const completed = await writeCloudCodeStream(events, res, row, { log, options: poolOptions, toolNames, pool: true, cancelled: () => abort.signal.aborted });
+          if (completed) noteServed();
+          else if (!abort.signal.aborted) recordPoolActivity({ target: 'antigravity', event: 'gave-up', providerId: 'relay-free-pool', modelId: row.modelId, requestId });
+        } else {
+          const response = await collectCloudCodeResponse(events, row, poolOptions);
+          noteServed();
+          respondJson(res, 200, { response, traceId: 'relay-trace', metadata: {} });
+        }
+        return;
+      } catch (error) {
+        const replaceable = !stream && !abort.signal.aborted && error instanceof PoolAttemptError
+          && error.committed && members.some(member => !failed.has(memberKey(member)))
+        && Date.now() - requestStart < deps.limits.totalMs;
+        if (!replaceable) throw error;
+      }
+    }
+  } catch (error) {
+    if (abort.signal.aborted) {
+      if (!res.writableEnded) res.end();
+      return;
+    }
+    const gaveUp = error instanceof PoolAttemptError || (error instanceof Error && error.message.startsWith('No eligible free pool members'));
+    log('[gateway] pool request failed: ' + formatUpstreamError((error as { cause?: unknown }).cause ?? error));
+    if (gaveUp) recordPoolActivity({ target: 'antigravity', event: 'gave-up', providerId: 'relay-free-pool', modelId: row.modelId, requestId });
+    if (!res.headersSent) {
+      const message = error instanceof Error && error.message.startsWith('No eligible free pool members')
+        ? error.message : 'All free pool members failed';
+      respondJson(res, 502, { error: { code: 502, message } });
+    } else if (!res.writableEnded) {
+      res.end();
+    }
+  } finally {
+    res.off('close', onClose);
+  }
+}
+
+/** Collects a validated pool stream into one Cloud Code unary response. */
+async function collectCloudCodeResponse(
+  events: AsyncIterable<unknown>,
+  route: AntigravityRoute,
+  options: RequestHandlerOptions,
+): Promise<Record<string, unknown>> {
+  let text = '';
+  let reasoning = '';
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const toolBuffers = new Map<string, { name: string; json: string }>();
+  let finish = '';
+  let usage: { inputTokens?: number; outputTokens?: number } | undefined;
+  for await (const part of events) {
+    const p = part as any;
+    if (p.type === 'reasoning-delta' || p.type === 'reasoning') reasoning += reasoningDeltaText(p);
+    else if (p.type === 'text-delta') text += reasoningDeltaText(p);
+    else if (p.type === 'tool-input-start') toolBuffers.set(p.id ?? p.toolCallId, { name: p.toolName, json: '' });
+    else if (p.type === 'tool-input-delta') { const buf = toolBuffers.get(p.id ?? p.toolCallId); if (buf) buf.json += p.delta; }
+    else if (p.type === 'tool-call') {
+      const buf = toolBuffers.get(p.toolCallId ?? p.id);
+      calls.push({ name: p.toolName ?? buf?.name, args: normalizeFunctionCallArgs((p.input ?? {}) as Record<string, unknown>) });
+    } else if (p.type === 'finish') { finish = p.finishReason ?? ''; usage = p.totalUsage; }
+  }
+  const parts: any[] = [];
+  if (reasoning) parts.push({ text: reasoning, thought: true });
+  if (text) parts.push({ text });
+  for (const call of calls) parts.push({ functionCall: { name: call.name, args: call.args } });
+  if (reasoning && calls.length) options.onReasoningWithToolCall?.(reasoning);
+  if (parts.length === 0) parts.push({ text: '' });
+  return {
+    candidates: [{ content: { role: 'model', parts }, finishReason: mapFinishReason(finish) }],
+    usageMetadata: {
+      promptTokenCount: usage?.inputTokens || 0,
+      candidatesTokenCount: usage?.outputTokens || 0,
+      totalTokenCount: (usage?.inputTokens || 0) + (usage?.outputTokens || 0),
+    },
+    modelVersion: route.catalogId,
+    responseId: `relay-${Date.now()}`,
+  };
+}
+
+/** Formats an SDK part stream as Cloud Code SSE. Shared by concrete routes and the free pool. */
+async function writeCloudCodeStream(
+  stream: AsyncIterable<unknown>,
+  res: http.ServerResponse,
+  route: AntigravityRoute,
+  ctx: { log: (msg: string) => void; options: RequestHandlerOptions; toolNames: ReadonlySet<string>; pool?: boolean; cancelled?: () => boolean },
+): Promise<boolean> {
+  const { log, options } = ctx;
+  let streamFailed = false;
+  const responseId = `relay-${Date.now()}`;
   const startSse = () => {
     if (res.headersSent) return;
     res.writeHead(200, {
@@ -887,7 +1093,7 @@ async function handleStreamingRequest(
   const thinkFilter = createThinkFilter();
 
   const toolCallBuffers = new Map<string, { name: string; json: string }>();
-  const knownToolNames = new Set(Object.keys(sdkParams.tools ?? {}));
+  const knownToolNames = ctx.toolNames;
   let responseReasoning = '';
   let sawToolCall = false;
   let textBuffer = '';
@@ -919,115 +1125,130 @@ async function handleStreamingRequest(
     bufferingJsonText = false;
   };
 
-  for await (const part of stream) {
-    const p = part as any;
+  try {
+    for await (const part of stream) {
+      const p = part as any;
 
-    if (p.type === 'reasoning-delta' || p.type === 'reasoning') {
-      const reasoning = reasoningDeltaText(p);
-      responseReasoning += reasoning;
-      emitThinkingDelta(res, route, responseId, reasoning, startSse);
-      continue;
-    }
-
-    if (p.type === 'text-delta') {
-      const { thought, text } = thinkFilter(reasoningDeltaText(p));
-      if (thought) {
-        responseReasoning += thought;
-        emitThinkingDelta(res, route, responseId, thought, startSse);
+      if (p.type === 'reasoning-delta' || p.type === 'reasoning') {
+        const reasoning = reasoningDeltaText(p);
+        responseReasoning += reasoning;
+        emitThinkingDelta(res, route, responseId, reasoning, startSse);
+        continue;
       }
-      if (text) {
-        log(`[gateway] text-delta: ${JSON.stringify(text.slice(0, 500))}`);
-        if (!bufferingJsonText && (textBuffer + text).trimStart().startsWith('{')) {
-          bufferingJsonText = true;
+
+      if (p.type === 'text-delta') {
+        const { thought, text } = thinkFilter(reasoningDeltaText(p));
+        if (thought) {
+          responseReasoning += thought;
+          emitThinkingDelta(res, route, responseId, thought, startSse);
         }
-        if (bufferingJsonText) {
-          textBuffer += text;
-          // Only attempt a parse once the buffer could close an object — otherwise every
-          // delta re-parses the whole growing buffer.
-          const pseudoTool = textBuffer.trimEnd().endsWith('}')
-            ? parsePseudoToolCall(textBuffer, knownToolNames)
-            : null;
-          if (pseudoTool) {
-            log(`[gateway] parsed pseudo tool-call from text: ${pseudoTool.name}`);
-            emitPseudoToolCall(pseudoTool);
+        if (text) {
+          log(`[gateway] text-delta: ${JSON.stringify(text.slice(0, 500))}`);
+          if (!bufferingJsonText && (textBuffer + text).trimStart().startsWith('{')) {
+            bufferingJsonText = true;
           }
-        } else {
-          startSse();
-          const chunk = formatCloudCodeChunk({
-            text,
-            modelVersion: route.catalogId,
-            responseId,
-          });
-          res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+          if (bufferingJsonText) {
+            textBuffer += text;
+            // Only attempt a parse once the buffer could close an object — otherwise every
+            // delta re-parses the whole growing buffer.
+            const pseudoTool = textBuffer.trimEnd().endsWith('}')
+              ? parsePseudoToolCall(textBuffer, knownToolNames)
+              : null;
+            if (pseudoTool) {
+              log(`[gateway] parsed pseudo tool-call from text: ${pseudoTool.name}`);
+              emitPseudoToolCall(pseudoTool);
+            }
+          } else {
+            startSse();
+            const chunk = formatCloudCodeChunk({
+              text,
+              modelVersion: route.catalogId,
+              responseId,
+            });
+            res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+          }
         }
-      }
-    } else if (p.type === 'tool-input-start') {
-      const id = p.id ?? p.toolCallId;
-      toolCallBuffers.set(id, { name: p.toolName, json: '' });
-    } else if (p.type === 'tool-input-delta') {
-      const id = p.id ?? p.toolCallId;
-      const buf = toolCallBuffers.get(id);
-      if (buf) buf.json += p.delta;
-    } else if (p.type === 'tool-call') {
-      sawToolCall = true;
-      const id = p.toolCallId ?? p.id;
-      const buf = toolCallBuffers.get(id);
-      let args: Record<string, unknown> = {};
-      try { args = buf ? JSON.parse(buf.json || '{}') : (p.input || {}); } catch { args = p.input || {}; }
-      const name = buf ? buf.name : p.toolName;
-      log(`[gateway] tool-call: ${name}`);
-      startSse();
-      const chunk = formatCloudCodeChunk({
-        functionCall: { name, args: normalizeFunctionCallArgs(args) },
-        modelVersion: route.catalogId,
-        responseId,
-      });
-      res.write(`data: ${JSON.stringify(chunk)}\n\n`);
-    } else if (p.type === 'finish') {
-      log(`[gateway] finish: ${p.finishReason ?? 'unknown'}`);
-      if (textBuffer) {
-        const pseudoTool = parsePseudoToolCall(textBuffer, knownToolNames);
-        if (pseudoTool) {
-          log(`[gateway] parsed pseudo tool-call on finish: ${pseudoTool.name}`);
-          emitPseudoToolCall(pseudoTool);
-        } else {
-          flushBufferedText();
+      } else if (p.type === 'tool-input-start') {
+        const id = p.id ?? p.toolCallId;
+        toolCallBuffers.set(id, { name: p.toolName, json: '' });
+      } else if (p.type === 'tool-input-delta') {
+        const id = p.id ?? p.toolCallId;
+        const buf = toolCallBuffers.get(id);
+        if (buf) buf.json += p.delta;
+      } else if (p.type === 'tool-call') {
+        sawToolCall = true;
+        const id = p.toolCallId ?? p.id;
+        const buf = toolCallBuffers.get(id);
+        let args: Record<string, unknown> = {};
+        try { args = buf ? JSON.parse(buf.json || '{}') : (p.input || {}); } catch { args = p.input || {}; }
+        const name = buf ? buf.name : p.toolName;
+        log(`[gateway] tool-call: ${name}`);
+        startSse();
+        const chunk = formatCloudCodeChunk({
+          functionCall: { name, args: normalizeFunctionCallArgs(args) },
+          modelVersion: route.catalogId,
+          responseId,
+        });
+        res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      } else if (p.type === 'finish') {
+        log(`[gateway] finish: ${p.finishReason ?? 'unknown'}`);
+        if (textBuffer) {
+          const pseudoTool = parsePseudoToolCall(textBuffer, knownToolNames);
+          if (pseudoTool) {
+            log(`[gateway] parsed pseudo tool-call on finish: ${pseudoTool.name}`);
+            emitPseudoToolCall(pseudoTool);
+          } else {
+            flushBufferedText();
+          }
         }
+        startSse();
+        const reason = mapFinishReason(p.finishReason ?? '');
+        const chunk = formatCloudCodeChunk({
+          modelVersion: route.catalogId,
+          responseId,
+          finishReason: reason,
+          usage: {
+            promptTokens: p.totalUsage?.inputTokens || 0,
+            completionTokens: p.totalUsage?.outputTokens || 0,
+          },
+        });
+        res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      } else if (p.type === 'error') {
+        const message = formatUpstreamError(p.error);
+        log(`[gateway] stream provider error: ${message}`);
+        if (options.trace) {
+          log(`[gateway] stream provider error detail: ${formatUpstreamErrorTrace(p.error)}`);
+        }
+        // Buffered JSON-shaped text is real output — don't lose it to the error.
+        flushBufferedText();
+        emitStreamError(res, route, responseId, message, startSse);
+        break;
+      } else if (p.type === 'reasoning-start' || p.type === 'reasoning-end') {
+        log(`[gateway] ${p.type}`);
       }
-      startSse();
-      const reason = mapFinishReason(p.finishReason ?? '');
-      const chunk = formatCloudCodeChunk({
-        modelVersion: route.catalogId,
-        responseId,
-        finishReason: reason,
-        usage: {
-          promptTokens: p.totalUsage?.inputTokens || 0,
-          completionTokens: p.totalUsage?.outputTokens || 0,
-        },
-      });
-      res.write(`data: ${JSON.stringify(chunk)}\n\n`);
-    } else if (p.type === 'error') {
-      const message = formatUpstreamError(p.error);
-      log(`[gateway] stream provider error: ${message}`);
-      if (options.trace) {
-        log(`[gateway] stream provider error detail: ${formatUpstreamErrorTrace(p.error)}`);
-      }
-      // Buffered JSON-shaped text is real output — don't lose it to the error.
-      flushBufferedText();
-      emitStreamError(res, route, responseId, message, startSse);
-      break;
-    } else if (p.type === 'reasoning-start' || p.type === 'reasoning-end') {
-      log(`[gateway] ${p.type}`);
     }
+  } catch (error) {
+    // Pool attempts end by throwing (timeout, bad finish, provider error). Nothing sent yet: the caller
+    // answers with a status. Content already sent: close the stream with the visible error line.
+    if (!ctx.pool || !res.headersSent) throw error;
+    // The client leaving is not a failure to report, and there is nobody to write to.
+    if (!ctx.cancelled?.()) {
+      flushBufferedText();
+      emitStreamError(res, route, responseId, formatUpstreamError((error as { cause?: unknown }).cause ?? error), startSse);
+    }
+    streamFailed = true;
   }
   if (!res.headersSent) {
     throw new Error('Provider returned an empty stream');
   }
-  if (sawToolCall && responseReasoning.trim()) {
+  // Reasoning from an answer that failed midway is not worth echoing back.
+  if (!streamFailed && sawToolCall && responseReasoning.trim()) {
     options.onReasoningWithToolCall?.(responseReasoning);
   }
   res.end();
+  return !streamFailed;
 }
+
 
 /**
  * Handle a non-streaming (unary) GenerateContent request.
@@ -1041,24 +1262,7 @@ async function handleUnaryRequest(
   options: RequestHandlerOptions = {},
 ): Promise<void> {
   if (route.poolMembers?.length) {
-    for (const member of route.poolMembers) {
-      const capture = createJsonCapture();
-      try {
-        await handleUnaryRequest(capture.response, member, providerOptionsForRoute(member), parsed, log, {
-          ...options,
-          disableSdkRetries: true,
-        });
-      } catch (error) {
-        log('[gateway] pool member failed: ' + member.providerId + '/' + member.modelId + ': ' + formatUpstreamError(error));
-        continue;
-      }
-      if (capture.status < 400 && capture.body) {
-        res.writeHead(capture.status, capture.headers);
-        res.end(capture.body);
-        return;
-      }
-    }
-    respondJson(res, 502, { error: { code: 502, message: 'All free pool members failed' } });
+    await handlePoolRequest(res, route, parsed, log, options, false);
     return;
   }
   const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
@@ -1084,7 +1288,6 @@ async function handleUnaryRequest(
     toolChoice: sdkParams.toolChoice,
     providerOptions: effectiveProviderOptions as any,
     headers: sdkParams.headers,
-    ...(options.disableSdkRetries ? { maxRetries: 0 } : {}),
   });
 
   const parts: any[] = [];

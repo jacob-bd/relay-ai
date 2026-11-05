@@ -18,6 +18,8 @@ import { CLAUDE_POOL_MODEL_ID, ClaudePoolRuntime } from './pool/claude-runtime.j
 import { prepareClaudePoolRoutes } from './pool/claude-prepare.js';
 import { PoolHealthStore } from './pool/health.js';
 import { poolCatalogEntry } from './pool/catalog.js';
+import { receiptInForce } from './pool/capabilities.js';
+import { warnDisabledPoolMembers } from './pool/disabled.js';
 import { prepareClaudeAutoPool, type ClaudeAutoPool } from './pool/claude-launch.js';
 import { acquireClaudePoolSessionLock, getClaudePoolSessionLockPath } from './pool/claude-session.js';
 
@@ -1259,7 +1261,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
       console.error(pc.red('No free pool members. Add one with: relay-ai pool add <provider-account> <model>'));
       return 1;
     }
-    const fresh = pool.receipts.filter(receipt => receipt.verifiedAt <= Date.now() && receipt.expiresAt > Date.now());
+    const fresh = pool.receipts.filter(receipt => receiptInForce(receipt, Date.now()));
     if (fresh.length === 0) {
       console.error(pc.red('No verified free pool members. Run: relay-ai pool verify'));
       return 1;
@@ -1298,6 +1300,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
         return 1;
       }
       const health = new PoolHealthStore();
+      await warnDisabledPoolMembers(providers, pool, health);
       const runtime = new ClaudePoolRuntime(pool, (body, signal, sessionId, onSkip) => prepareClaudePoolRoutes({
         pool, providers, receipts: pool.receipts, body, signal, sessionId, health, onSkip,
       }));
@@ -1414,6 +1417,7 @@ export async function runClaudeCommand(parsed: ParsedArgs): Promise<number> {
   const autoPool = dryRun || parsed.claudePool
     ? undefined
     : prepareClaudeAutoPool(prefs, catalog);
+  if (autoPool) await warnDisabledPoolMembers(catalog, autoPool.pool);
   if (autoPool) switchMenuActive = true;
 
   const runTransparentProxy = async (selected?: FavoriteModel): Promise<number> => {

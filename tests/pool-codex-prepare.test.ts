@@ -16,7 +16,7 @@ const receipt: PoolCapabilityReceipt = {
   maxOutputTokens: 8192, contextWindow: 128000, contextSource: 'provider', reasoningAccounting: 'inside-output', defaultEffort: 'high', effortLevels: ['high'], billingSafe: true,
 };
 const base = () => ({ pool: { members: [member], effort: 'auto' as const, receipts: [] }, providers: [provider], receipts: [receipt], body: { input: 'hello', model: 'relay-free-pool' },
-  signal: new AbortController().signal, sessionId: 'verified-session', health: { cooldownFor: async () => undefined } as unknown as PoolHealthStore,
+  signal: new AbortController().signal, sessionId: 'verified-session', health: { cooldownFor: async () => undefined, disabledFor: async () => undefined } as unknown as PoolHealthStore,
   checkContext: async () => ({ verified: true, fits: true }),
 });
 describe('Codex pool route preparation', () => {

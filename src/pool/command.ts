@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { clearDisabledPoolMember, disabledPoolMembers, warnDisabledPoolMembers } from './disabled.js';
 import { poolView, verifyUiPoolMember, invalidateUiPoolMember } from '../ui/pool-api.js';
 import { setModelHidden, setContextWindowOverride } from '../registry/crud.js';
 import pc from 'picocolors';
@@ -76,7 +77,8 @@ export async function runPoolCommand(args: string[]): Promise<number> {
     const [action = 'list', first, second] = args;
     if (action === '--help' || action === '-h') { console.log(poolHelpText); return 0; }
     if (action === 'candidates' || (action === 'status' && args.length === 1)) {
-      const view = poolView(await fetchProviderCatalog(), pool);
+      const catalogForView = await fetchProviderCatalog();
+      const view = poolView(catalogForView, pool, await disabledPoolMembers(catalogForView, pool));
       let search = ''; let minContext = 0;
       for (let i = 1; i < args.length; i += 2) {
         if (!args[i + 1]) throw new Error(poolHelpText);
@@ -185,6 +187,8 @@ export async function runPoolCommand(args: string[]): Promise<number> {
       const countArg = rest.find(arg => !arg.startsWith('-'));
       if (rest.some(arg => arg.startsWith('-') && !['-f', '--follow', '-v', '--verbose'].includes(arg))) throw new Error(poolHelpText);
       const count = countArg === undefined ? 20 : Math.min(200, Math.max(1, Number(countArg) || 20));
+      // A disabled member would otherwise only show up as a skip, and only when it outranks the answering one.
+      try { await warnDisabledPoolMembers(await fetchProviderCatalog(), pool); } catch { /* the log must still print */ }
       // Finished requests, oldest first (several can run at once, so lines are grouped by request).
       const all = groupPoolActivity([...readPoolActivity(Math.max(count * 40, 400))].reverse());
       if (!follow) {
@@ -228,10 +232,12 @@ export async function runPoolCommand(args: string[]): Promise<number> {
       const providers = await fetchProviderCatalog();
       const signal = new AbortController().signal;
       const receipts: PoolCapabilityReceipt[] = [...pool.receipts];
+      // A disabled member looks Ready from its receipt alone; it must be tested again to come back.
+      const disabledNow = await disabledPoolMembers(providers, pool);
       let failed = 0;
       console.log('Explicit bulk test: up to ' + pool.members.length * (first === '--reasoning' ? 5 : 1) + ' requests; fresh receipts are skipped.');
       for (const member of pool.members) {
-        if (poolView(providers, pool).members.some(item => item.providerId === member.providerId && item.modelId === member.modelId && item.status === 'Ready') && first !== '--reasoning') continue;
+        if (poolView(providers, pool, disabledNow).members.some(item => item.providerId === member.providerId && item.modelId === member.modelId && item.status === 'Ready') && first !== '--reasoning') continue;
         const foundProvider = providers.find(item => item.id === member.providerId);
         const foundModel = foundProvider?.models.find(item => item.id === member.modelId);
         const result = await verifyPoolMember(member, providers, signal, {
@@ -268,6 +274,7 @@ export async function runPoolCommand(args: string[]): Promise<number> {
             receipt.member.providerId === member.providerId && receipt.member.modelId === member.modelId);
           if (index === -1) receipts.push(result.receipt);
           else receipts[index] = result.receipt;
+          await clearDisabledPoolMember(member, result.receipt.endpointRevision);
           console.log(pc.green('verified') + '  ' + member.providerId + ' / ' + member.modelId);
         } else {
           failed++;

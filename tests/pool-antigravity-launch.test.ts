@@ -32,14 +32,33 @@ describe('Antigravity pool launch rows', () => {
     expect(rows[0].poolMembers).toHaveLength(2);
     expect(rows[0].catalogId).not.toMatch(/[_.]/);
   });
-  it('returns nothing when receipts are stale or effort evidence is missing', () => {
+  it('does not retire a verified member by age', () => {
     expect(buildAntigravityPoolRoutes({
       pool: { members, effort: 'auto', receipts }, providers, receipts, apiKeys,
       effortMode: 'rows', maxRows: 3, now: 100,
-    })).toEqual([]);
+    })).toHaveLength(1);
+  });
+  it('offers one Auto row, with no effort sent, when no rung is shared or members have no effort control', () => {
     const noEffort = receipts.map(receipt => ({ ...receipt, effortLevels: [] }));
-    expect(buildAntigravityPoolRoutes({
+    const rows = buildAntigravityPoolRoutes({
       pool: { members, effort: 'auto', receipts: noEffort }, providers, receipts: noEffort, apiKeys,
+      effortMode: 'rows', maxRows: 3, now: 10,
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ catalogId: 'relay-free-pool-auto', displayName: 'Relay Free Pool', modelId: 'free-pool-auto' });
+    expect(rows[0]!.reasoningEffort).toBeUndefined();
+    expect(rows[0]!.catalogId).not.toMatch(/[_.]/);
+    expect(rows[0]!.poolEvidence).toBeUndefined();
+    expect(rows[0]!.poolMembers).toHaveLength(2);
+    for (const member of rows[0]!.poolMembers!) {
+      expect(member.reasoningEffort).toBeUndefined();
+      expect(member.poolEvidence).toBeDefined();
+    }
+  });
+  it('shows no pool when no member has a fresh Antigravity receipt', () => {
+    const wrongTarget = receipts.map(receipt => ({ ...receipt, targets: ['codex', 'claude'] as PoolCapabilityReceipt['targets'] }));
+    expect(buildAntigravityPoolRoutes({
+      pool: { members, effort: 'auto', receipts: wrongTarget }, providers, receipts: wrongTarget, apiKeys,
       effortMode: 'rows', maxRows: 3, now: 10,
     })).toEqual([]);
   });

@@ -1,3 +1,4 @@
+import { warnDisabledPoolMembers } from './pool/disabled.js';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { fetchProviderCatalog, providersForPicker } from './provider-catalog.js';
@@ -168,7 +169,9 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
   let autoPool: ClaudeAutoPool | undefined;
   if (prefs.freePool?.enabled === true) {
     try {
-      autoPool = prepareClaudeAutoPool(prefs, await fetchProviderCatalog());
+      const poolProviders = await fetchProviderCatalog();
+      autoPool = prepareClaudeAutoPool(prefs, poolProviders);
+      if (autoPool) await warnDisabledPoolMembers(poolProviders, autoPool.pool);
     } catch (err) {
       p.log.warn(`Relay Free Pool is enabled but could not be prepared: ${err instanceof Error ? err.message : String(err)}`);
     }

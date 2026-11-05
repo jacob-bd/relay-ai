@@ -237,6 +237,11 @@ export interface TranslateToolOptions {
   requestHeaders?: Record<string, string>;
   /** Route's SDK package — selects provider-specific tool schema fixups. */
   npm?: string;
+  /**
+   * Carry the client's tool_choice into the SDK params. Only the free pool asks for it; regular Codex routes
+   * spread these params into the SDK call and must keep sending exactly what they always did.
+   */
+  forwardToolChoice?: boolean;
 }
 
 export const TOOL_SEARCH_NAME = 'tool_search';
@@ -730,7 +735,7 @@ export function translateResponsesRequest(
     instructions: system,
     messages,
     tools,
-    toolChoice: translateResponsesToolChoice(body.tool_choice),
+    ...(options.forwardToolChoice ? { toolChoice: translateResponsesToolChoice(body.tool_choice) } : {}),
     toolContext,
     maxOutputTokens: omitsMaxOutputTokens(metadata) ? undefined : body.max_output_tokens ?? (bridgedGemini ? 65536 : undefined),
     temperature: body.temperature,

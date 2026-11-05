@@ -3,12 +3,14 @@ import {
   invalidateUiPoolMember,
   poolView,
   verifyUiPoolMember
-} from "./chunk-6BJ6BD7C.js";
+} from "./chunk-3QLE4J67.js";
 import {
   DEFAULT_FORCE_FAIL_MINUTES,
   PoolEventFilter,
   PoolRequestGrouper,
+  clearDisabledPoolMember,
   clearForceFail,
+  disabledPoolMembers,
   fetchProviderCatalog,
   followPoolActivity,
   formatPoolCurrentLine,
@@ -21,15 +23,16 @@ import {
   resolveLocalProviderApiKey,
   setForceFail,
   summarizePoolEvents,
-  verifyPoolMember
-} from "./chunk-HTKR6NNR.js";
+  verifyPoolMember,
+  warnDisabledPoolMembers
+} from "./chunk-YUWP5APP.js";
 import {
   probePoolEffort,
   probePoolModel,
   providerRefreshToken,
   setContextWindowOverride,
   setModelHidden
-} from "./chunk-4QAQ4MVE.js";
+} from "./chunk-CKWEYKVD.js";
 import {
   addFreePoolMember,
   createLanguageModel,
@@ -39,7 +42,7 @@ import {
   parsePoolReceipt,
   removeFreePoolMember,
   savePreferences
-} from "./chunk-MNN6GZ3I.js";
+} from "./chunk-DDFLIKBI.js";
 import "./chunk-RKRPDZVV.js";
 import "./chunk-KNCSTHR4.js";
 import "./chunk-JIDIH7DS.js";
@@ -107,7 +110,8 @@ async function runPoolCommand(args) {
       return 0;
     }
     if (action === "candidates" || action === "status" && args.length === 1) {
-      const view = poolView(await fetchProviderCatalog(), pool);
+      const catalogForView = await fetchProviderCatalog();
+      const view = poolView(catalogForView, pool, await disabledPoolMembers(catalogForView, pool));
       let search = "";
       let minContext = 0;
       for (let i = 1; i < args.length; i += 2) {
@@ -130,7 +134,7 @@ async function runPoolCommand(args) {
         console.log(JSON.stringify(result2));
         return 0;
       }
-      const { testModel, checkContextWindow } = await import("./test-model-UDWTWFZZ.js");
+      const { testModel, checkContextWindow } = await import("./test-model-PEI4ZNKS.js");
       if (action === "context") {
         if (args.length === 4) {
           const value = args[3] === "reset" ? null : Number(args[3]);
@@ -217,6 +221,10 @@ async function runPoolCommand(args) {
       const countArg = rest.find((arg) => !arg.startsWith("-"));
       if (rest.some((arg) => arg.startsWith("-") && !["-f", "--follow", "-v", "--verbose"].includes(arg))) throw new Error(poolHelpText);
       const count = countArg === void 0 ? 20 : Math.min(200, Math.max(1, Number(countArg) || 20));
+      try {
+        await warnDisabledPoolMembers(await fetchProviderCatalog(), pool);
+      } catch {
+      }
       const all = groupPoolActivity([...readPoolActivity(Math.max(count * 40, 400))].reverse());
       if (!follow) {
         if (all.length === 0) {
@@ -262,10 +270,11 @@ async function runPoolCommand(args) {
       const providers = await fetchProviderCatalog();
       const signal = new AbortController().signal;
       const receipts = [...pool.receipts];
+      const disabledNow = await disabledPoolMembers(providers, pool);
       let failed = 0;
       console.log("Explicit bulk test: up to " + pool.members.length * (first === "--reasoning" ? 5 : 1) + " requests; fresh receipts are skipped.");
       for (const member of pool.members) {
-        if (poolView(providers, pool).members.some((item) => item.providerId === member.providerId && item.modelId === member.modelId && item.status === "Ready") && first !== "--reasoning") continue;
+        if (poolView(providers, pool, disabledNow).members.some((item) => item.providerId === member.providerId && item.modelId === member.modelId && item.status === "Ready") && first !== "--reasoning") continue;
         const foundProvider = providers.find((item) => item.id === member.providerId);
         const foundModel = foundProvider?.models.find((item) => item.id === member.modelId);
         const result = await verifyPoolMember(member, providers, signal, {
@@ -305,6 +314,7 @@ async function runPoolCommand(args) {
           const index = receipts.findIndex((receipt) => receipt.member.providerId === member.providerId && receipt.member.modelId === member.modelId);
           if (index === -1) receipts.push(result.receipt);
           else receipts[index] = result.receipt;
+          await clearDisabledPoolMember(member, result.receipt.endpointRevision);
           console.log(pc.green("verified") + "  " + member.providerId + " / " + member.modelId);
         } else {
           failed++;
@@ -350,4 +360,4 @@ export {
   runPoolCommand,
   validPoolReceipts
 };
-//# sourceMappingURL=command-MMSKFSSA.js.map
+//# sourceMappingURL=command-RAASAFIS.js.map

@@ -2830,7 +2830,6 @@ function buildModelResults(filter, listType) {
 // server so this page and the provider table always agree; unknown context is
 // allowed to join, and Test reports any routing problem.
 
-const POOL_TARGET_LABELS = { claude: 'Claude Code', codex: 'Codex CLI', antigravity: 'Antigravity' };
 const POOL_EFFORT_LEVELS = ['auto', 'low', 'medium', 'high'];
 
 function poolData() {
@@ -2989,11 +2988,19 @@ function poolAddCellHtml(candidate, manageable) {
 
 function poolMemberRowHtml(member, index, manageable) {
   const status = member.status === 'Ready' ? ['is-ready', 'Ready']
+    : member.status === 'Disabled' ? ['is-unavailable', 'Disabled']
     : member.status === 'Unavailable' ? ['is-unavailable', 'Unavailable']
     : ['is-pending', 'Needs test'];
   const facts = [];
-  if (member.targets?.length) facts.push(member.targets.map(target => POOL_TARGET_LABELS[target] ?? target).join(' · '));
-  if (member.expiresAt) facts.push(`valid until ${new Date(member.expiresAt).toLocaleString()}`);
+  const sourceNote = { set: 'set by you', measured: 'measured', estimate: 'estimate' }[member.contextSource];
+  if (member.contextWindow) {
+    facts.push(`${fmtCtx(member.contextWindow)} context${sourceNote ? ` (${sourceNote})` : ''}`);
+    if (member.routingContextWindow && member.routingContextWindow !== member.contextWindow) {
+      facts.push(`routing still uses ${fmtCtx(member.routingContextWindow)} until you Test`);
+    }
+  } else {
+    facts.push('context unknown');
+  }
   const reason = member.reason ? `<div class="pool-member-reason">${escapeHtml(member.reason)}</div>` : '';
   const actions = manageable ? `
     <div class="pool-member-actions">
@@ -3004,7 +3011,7 @@ function poolMemberRowHtml(member, index, manageable) {
         <summary class="btn btn-ghost">Advanced…</summary>
         <div class="pool-advanced-options">
           <button class="btn btn-ghost pool-context" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}">Measure context · 1 request</button>
-          <button class="btn btn-ghost pool-set-context" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}">Set context · no requests</button>
+          <button class="btn btn-ghost pool-set-context" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" data-current="${member.contextWindow ?? ''}">Set context${member.contextWindow ? ` (now ${fmtCtx(member.contextWindow)})` : ''} · no requests</button>
           ${member.reasoningTestRequests > 1 ? '<button class="btn btn-ghost pool-reasoning" type="button" data-provider-id="' + escapeHtml(member.providerId) + '" data-model-id="' + escapeHtml(member.modelId) + '" data-requests="' + member.reasoningTestRequests + '">Check reasoning · up to ' + member.reasoningTestRequests + ' requests</button>' : ''}
         </div>
       </details>
@@ -3096,6 +3103,9 @@ function renderFreePool() {
   const notice = state.pool?.error
     ? `<div class="pool-notice">Could not refresh the list. ${escapeHtml(state.pool.error)} <button class="btn btn-ghost" type="button" id="free-pool-retry">Retry</button></div>`
     : '';
+  const disabledBanner = (pool.disabled ?? []).length
+    ? `<div class="pool-notice pool-disabled-banner"><strong>⛔ ${pool.disabled.length} pool member${pool.disabled.length === 1 ? ' is' : 's are'} disabled.</strong> ${pool.disabled.map(item => `<code>${escapeHtml(item.providerId)}/${escapeHtml(item.modelId)}</code>`).join(', ')} Use Test on ${pool.disabled.length === 1 ? 'it' : 'each'} to re-enable.</div>`
+    : '';
   const readyCount = members.filter(member => member.status === 'Ready').length;
   const enabledStatus = !enabled
     ? 'Off. Relay Free Pool is not added to any launch.'
@@ -3136,6 +3146,7 @@ function renderFreePool() {
 
   panel.innerHTML = `
     ${notice}
+    ${disabledBanner}
     <div class="pool-section-head">
       <h2 class="pool-heading">In the pool <span class="pool-count">${members.length}</span></h2>
     </div>
@@ -3268,7 +3279,7 @@ function renderFreePool() {
           if (result.ok) applyTestContextResult(providerId, modelId, result.context);
           showToast(result.ok ? (contextTestNote(result.context) || 'Provider did not report a context limit.') : (result.error || 'Context check failed'));
         } else if (button.classList.contains('pool-set-context')) {
-          const entered = window.prompt('Context size in tokens (e.g. 128000). Enter reset to use provider metadata. No test requests.');
+          const entered = window.prompt('Context size in tokens (e.g. 128000). Enter reset to use provider metadata. No test requests.' + (button.dataset.current ? `\nCurrent: ${button.dataset.current}` : ''), button.dataset.current || '');
           if (entered === null) return;
           const contextWindow = entered.trim() === 'reset' ? null : Number(entered);
           if (contextWindow !== null && (!Number.isSafeInteger(contextWindow) || contextWindow <= 0)) { showToast('Enter a positive token count or reset.'); return; }

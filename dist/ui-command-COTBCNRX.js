@@ -29,21 +29,21 @@ import {
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode
-} from "./chunk-U4D2AVJ7.js";
-import "./chunk-E7FSS5M2.js";
+} from "./chunk-PSH2WEPG.js";
+import "./chunk-W7F4YWWL.js";
 import "./chunk-UR4QFFSQ.js";
 import {
   handlePoolApi,
   invalidateUiPoolMember,
   verifyUiPoolMember
-} from "./chunk-6BJ6BD7C.js";
+} from "./chunk-3QLE4J67.js";
 import {
   fetchProviderCatalog,
   providersForCodexSubagents,
   providersForTarget,
   readBody,
   sendJson
-} from "./chunk-HTKR6NNR.js";
+} from "./chunk-YUWP5APP.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   addCustomEndpointProvider,
@@ -65,7 +65,7 @@ import {
   setModelMarkedFree,
   setModelsHidden,
   updateCustomEndpointProvider
-} from "./chunk-4QAQ4MVE.js";
+} from "./chunk-CKWEYKVD.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -134,7 +134,7 @@ import {
   supportsManualModels,
   validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-MNN6GZ3I.js";
+} from "./chunk-DDFLIKBI.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -1109,7 +1109,7 @@ async function handleMeasureContextWindow(req, res) {
     if (!res.writableEnded) controller.abort();
   });
   try {
-    const { checkContextWindow } = await import("./test-model-UDWTWFZZ.js");
+    const { checkContextWindow } = await import("./test-model-PEI4ZNKS.js");
     const context = await checkContextWindow(provider.id, body.modelId, controller.signal);
     if (!res.destroyed) sendJson(res, 200, { ok: true, context });
   } catch {
@@ -1136,7 +1136,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-SIFPBKB4.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-ZBQVNXN5.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1433,7 +1433,7 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-UDWTWFZZ.js");
+    const { testModel } = await import("./test-model-PEI4ZNKS.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
     if (!controller.signal.aborted) {
       try {
@@ -2328,4 +2328,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-P3LEQGD6.js.map
+//# sourceMappingURL=ui-command-COTBCNRX.js.map

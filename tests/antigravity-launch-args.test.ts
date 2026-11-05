@@ -22,6 +22,17 @@ describe('agy launch args', () => {
       .toEqual(['--model', 'deepseek-v4-flash (Relay)', '-p', 'hi']);
   });
 
+  it('opens agy on the pool at medium when the pool offers effort rows, else on its first row', () => {
+    const row = (displayName: string, modelId: string, reasoningEffort?: string) =>
+      ({ displayName, providerId: 'relay-free-pool', modelId, reasoningEffort }) as any;
+    expect(agyLaunchModelLabel([
+      row('Relay Free Pool Low', 'free-pool-low', 'low'),
+      row('Relay Free Pool Medium', 'free-pool-medium', 'medium'),
+      row('Relay Free Pool High', 'free-pool-high', 'high'),
+    ])).toBe('Relay Free Pool Medium');
+    expect(agyLaunchModelLabel([row('Relay Free Pool', 'free-pool-auto')])).toBe('Relay Free Pool');
+  });
+
   it('opens agy on the launch model at medium when it has effort entries', () => {
     const route = (displayName: string, modelId: string, reasoningEffort?: string) =>
       ({ displayName, providerId: 'openai', modelId, reasoningEffort }) as any;

@@ -12,13 +12,20 @@ export function poolEndpointRevision(config: {
     config.providerId, config.authRef, config.npm, config.baseURL, config.upstreamModelId, headers,
   ])).digest('hex');
 }
+/**
+ * A receipt is the record of the Test a member passed when it was added. It stays in force until the member's
+ * endpoint changes (the revision is part of the match) or the member is removed; it never lapses with time.
+ * `expiresAt` is kept in saved data for compatibility and is not enforced.
+ */
+export function receiptInForce(receipt: Pick<PoolCapabilityReceipt, 'verifiedAt'>, now: number): boolean {
+  return Number.isFinite(receipt.verifiedAt) && receipt.verifiedAt <= now;
+}
 export function currentPoolReceipt(
   receipts: readonly PoolCapabilityReceipt[], member: FavoriteModel, revision: string, now: number,
 ): PoolCapabilityReceipt | undefined {
   const matching = receipts.filter(receipt => receipt.member.providerId === member.providerId
     && receipt.member.modelId === member.modelId && receipt.endpointRevision === revision
-    && Number.isFinite(receipt.verifiedAt) && receipt.verifiedAt <= now
-    && Number.isFinite(receipt.expiresAt) && receipt.expiresAt > now);
+    && receiptInForce(receipt, now));
   if (matching.length !== 1) return undefined;
   const receipt = matching[0];
   if (!Number.isSafeInteger(receipt.maxOutputTokens) || receipt.maxOutputTokens <= 0
@@ -64,7 +71,9 @@ export function parsePoolReceipt(value: unknown): PoolCapabilityReceipt | undefi
     endpointRevision: revision,
     verifiedAt: r.verifiedAt,
     expiresAt: r.expiresAt,
-    targets,
+    // A member that passed the text and tool Test can serve every target (Antigravity's Auto row needs
+    // nothing more), so saved receipts from before that target existed stay usable without a re-test.
+    targets: targets.includes('antigravity') ? targets : [...targets, 'antigravity'],
     tools: r.tools,
     maxOutputTokens: r.maxOutputTokens,
     contextWindow: r.contextWindow,

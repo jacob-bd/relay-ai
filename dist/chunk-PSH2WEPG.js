@@ -8,7 +8,7 @@ import {
   streamAnthropicResponse,
   translateRequest,
   writeAnthropicStream
-} from "./chunk-E7FSS5M2.js";
+} from "./chunk-W7F4YWWL.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
@@ -23,8 +23,9 @@ import {
   providersForTarget,
   readBody,
   recordPoolActivity,
+  retryPoolFailure,
   sendJson
-} from "./chunk-HTKR6NNR.js";
+} from "./chunk-YUWP5APP.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -41,7 +42,7 @@ import {
   stripGoogleModelPrefix,
   toOAuthRegistryId,
   validateClinePassApiKey
-} from "./chunk-4QAQ4MVE.js";
+} from "./chunk-CKWEYKVD.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -104,6 +105,7 @@ import {
   readFromCredentialStore,
   readStoredOAuthCredential,
   readStoredProviderCredential,
+  receiptInForce,
   redactTraceLine,
   relayAnthropicMessages,
   resetTraceLog,
@@ -144,7 +146,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-MNN6GZ3I.js";
+} from "./chunk-DDFLIKBI.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -2113,35 +2115,6 @@ async function* runPoolAttempts(routes, signal, limits, retryable, onAttempt = (
     }
   }
   throw new PoolAttemptError("attempt-budget-exhausted", committed, lastError);
-}
-
-// src/pool/errors.ts
-function poolFailure(error, now = Date.now()) {
-  const value = error;
-  if (value?.name === "AbortError" || value?.code === "ABORT_ERR") return { kind: "canceled" };
-  const status = value?.statusCode;
-  if (status === 429) {
-    const raw = Object.entries(value?.responseHeaders ?? {}).find(([key]) => key.toLowerCase() === "retry-after")?.[1];
-    let retryAt;
-    if (raw?.trim()) {
-      const seconds = Number(raw);
-      if (Number.isFinite(seconds) && seconds >= 0) retryAt = now + Math.ceil(seconds * 1e3);
-      else {
-        const parsed = Date.parse(raw);
-        if (Number.isFinite(parsed)) retryAt = Math.max(now, parsed);
-      }
-    }
-    return { kind: "rate-limit", status, retryAt };
-  }
-  if (status === 402) return { kind: "quota", status };
-  if ([401, 403, 404].includes(status ?? 0)) return { kind: "access", status };
-  if (status === 400 && /context.{0,20}(length|window|exceed)|prompt.{0,20}too long/i.test(value?.message ?? "")) return { kind: "context", status };
-  if (status === 400 || status === 422) return { kind: "invalid", status };
-  if (status !== void 0 && status >= 500 || /ECONNRESET|ETIMEDOUT|ENOTFOUND|first-content-timeout|idle-or-total-timeout|provisional-buffer-limit|missing-valid-finish|invalid-finish|stream-error|Pool route entered cooldown/.test(value?.message ?? "")) return { kind: "transient", status };
-  return { kind: "unknown", status };
-}
-function retryPoolFailure(error) {
-  return poolFailure(error).kind !== "canceled";
 }
 
 // src/pool/claude-signatures.ts
@@ -4282,7 +4255,7 @@ function translateResponsesRequest(body, npm, metadata, options = {}) {
     instructions: system,
     messages,
     tools,
-    toolChoice: translateResponsesToolChoice(body.tool_choice),
+    ...options.forwardToolChoice ? { toolChoice: translateResponsesToolChoice(body.tool_choice) } : {},
     toolContext,
     maxOutputTokens: omitsMaxOutputTokens(metadata) ? void 0 : body.max_output_tokens ?? (bridgedGemini ? 65536 : void 0),
     temperature: body.temperature,
@@ -5361,7 +5334,7 @@ var ALIASES = {
   antigravity: "free-pool"
 };
 function servable(receipt, target, now) {
-  return Boolean(receipt && Number.isFinite(receipt.verifiedAt) && receipt.verifiedAt <= now && Number.isFinite(receipt.expiresAt) && receipt.expiresAt > now && receipt.targets.includes(target) && receipt.billingSafe && Number.isSafeInteger(receipt.contextWindow) && receipt.contextWindow > 0);
+  return Boolean(receipt && receiptInForce(receipt, now) && receipt.targets.includes(target) && receipt.billingSafe && Number.isSafeInteger(receipt.contextWindow) && receipt.contextWindow > 0);
 }
 function poolCatalogEntry(pool, receipts, target, now = Date.now()) {
   const verified = pool.members.map((member) => receipts.find((receipt) => receipt.member.providerId === member.providerId && receipt.member.modelId === member.modelId)).filter((receipt) => servable(receipt, target, now));
@@ -8601,9 +8574,10 @@ export {
   printProviderDetailPanel,
   printCloudProviderPanel,
   findBinaryOnPath,
+  PoolAttemptError,
   validPoolFinish,
-  poolFailure,
   claudePoolSignatures,
+  dispatchFreePool,
   CLAUDE_POOL_MODEL_ID,
   ClaudePoolRuntime,
   formatAnthropicModelEntry,
@@ -8632,6 +8606,7 @@ export {
   preparePoolHistory,
   FREE_POOL_MODEL_ID,
   FREE_POOL_PROVIDER_ID,
+  DEFAULT_POOL_LIMITS,
   CodexPoolRuntime,
   poolCatalogEntry,
   codexPoolCatalogEntry,
@@ -8686,4 +8661,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-U4D2AVJ7.js.map
+//# sourceMappingURL=chunk-PSH2WEPG.js.map

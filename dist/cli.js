@@ -2,16 +2,18 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-HGZALZYJ.js";
+} from "./chunk-PAD35JW5.js";
 import {
   CLAUDE_POOL_MODEL_ID,
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
   ClaudePoolRuntime,
   CodexPoolRuntime,
+  DEFAULT_POOL_LIMITS,
   FREE_POOL_MODEL_ID,
   FREE_POOL_PROVIDER_ID,
   PREVIEW_PROXY_PORT,
+  PoolAttemptError,
   addFavorite,
   addProviderFromTemplate,
   aliasModelId,
@@ -37,6 +39,7 @@ import {
   codexPoolCatalogModel,
   createGatewayModelCatalog,
   decodeCompactionContent,
+  dispatchFreePool,
   estimateAnthropicInputTokens,
   favoriteProviderDisplayName,
   filterVertexModelsByAccess,
@@ -72,7 +75,6 @@ import {
   navOption,
   parseCodexAppModelSlug,
   poolCatalogEntry,
-  poolFailure,
   poolHistoryOrigins,
   poolRouteKey,
   preparePoolHistory,
@@ -107,17 +109,19 @@ import {
   validPoolFinish,
   waitForCodexAppQuit,
   writeResponsesErrorStream
-} from "./chunk-U4D2AVJ7.js";
+} from "./chunk-PSH2WEPG.js";
 import {
   translateRequest
-} from "./chunk-E7FSS5M2.js";
+} from "./chunk-W7F4YWWL.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
 import {
+  PoolHealthStore,
   buildAntigravityRoutes,
   buildListExperimentsResponse,
   buildListModelConfigsResponse,
+  describePoolFailure,
   effortLabel,
   evaluateAgySwitchCompatibility,
   extractApiKey,
@@ -127,19 +131,26 @@ import {
   injectRelayModels,
   launchModelsForProvider,
   meetsContextFloor,
+  poolAccountScope,
+  poolEndpointScope,
   poolErrorDetail,
+  poolFailure,
   poolProviderHeaders,
+  poolRouteMember,
   poolRoutingProblem,
   providersForCodexSubagents,
   providersForPicker,
   providersForTarget,
   readBody,
+  recordPoolActivity,
   resolveLocalProviderApiKey,
   resolveProvidersForDisplay,
   resolveRelayCatalogSlots,
+  retryPoolFailure,
   routableModelsForTarget,
-  sendJson
-} from "./chunk-HTKR6NNR.js";
+  sendJson,
+  warnDisabledPoolMembers
+} from "./chunk-YUWP5APP.js";
 import {
   OPENCODE_SESSION_HEADER,
   TRUST_SYSTEM_CERTS_NOTICE,
@@ -178,7 +189,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-4QAQ4MVE.js";
+} from "./chunk-CKWEYKVD.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -252,6 +263,7 @@ import {
   readOpencodeAuthFile,
   readStoredOAuthCredential,
   readStoredProviderCredential,
+  receiptInForce,
   recordLaunchSelection,
   refreshModelsDevCacheAsync,
   removeVertexModelEntries,
@@ -283,7 +295,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-MNN6GZ3I.js";
+} from "./chunk-DDFLIKBI.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -1247,471 +1259,6 @@ function sdkPoolRoute(evidence, model, request2, health) {
   };
 }
 
-// src/pool/health.ts
-import { createHash, randomUUID } from "crypto";
-import { mkdir, open, readFile, rename, unlink, writeFile } from "fs/promises";
-import { join as join4 } from "path";
-var PoolHealthLockTimeoutError = class extends Error {
-  ownerPid;
-  ownerSince;
-  constructor(lockPath, owner) {
-    const holder = owner?.pid ? "pid " + owner.pid + (owner.createdAt ? " since " + new Date(owner.createdAt).toISOString() : "") : "an unreadable owner file";
-    super("Pool health lock is held by " + holder + " (" + lockPath + "); it is not taken over automatically. If that process is gone, a human can clear it with PoolHealthStore.clear(scopes, { forceUnlock: true }).");
-    this.name = "PoolHealthLockTimeoutError";
-    this.ownerPid = owner?.pid;
-    this.ownerSince = owner?.createdAt;
-  }
-};
-var PoolHealthStateCorruptError = class extends Error {
-  constructor(path3) {
-    super("Pool health state is unreadable (" + path3 + "); refusing to route without cooldown knowledge");
-    this.name = "PoolHealthStateCorruptError";
-  }
-};
-var PoolHealthForceUnlockRefusedError = class extends Error {
-  ownerPid;
-  constructor(lockPath, reason, ownerPid) {
-    super("Refusing to force-unlock the pool health lock (" + lockPath + "): " + reason);
-    this.name = "PoolHealthForceUnlockRefusedError";
-    this.ownerPid = ownerPid;
-  }
-};
-var FAILURE_COOLDOWN_BASE_MS = { transient: 6e4, access: 3e5, unknown: 3e4 };
-var FAILURE_COOLDOWN_MAX_MS = 6e5;
-var UNKNOWN_RATE_LIMIT_LADDER_MS = [12e4, 6e5, 36e5, 216e5, 864e5];
-var MAX_ENTRIES = 512;
-var MAX_LABEL_CHARS = 200;
-var RETENTION_MS = 864e5;
-var LOCK_POLL_MS = 10;
-var DEFAULT_LOCK_TIMEOUT_MS = 5e3;
-function poolAccountScope(providerId) {
-  return "account:" + providerId;
-}
-function poolEndpointScope(providerId, endpointRevision, modelId) {
-  return "endpoint:" + providerId + "/" + endpointRevision + "/" + modelId;
-}
-function hashScope(scope) {
-  return createHash("sha256").update(scope).digest("hex");
-}
-var SECRET_PART = /^(?:sk|gsk|xai|nvapi|AIza|hf|ghp)[-_A-Za-z0-9]*$/;
-function sanitizePoolScopeLabel(scope) {
-  const label = scope.split(/([:/])/).map((part) => {
-    if (part === ":" || part === "/") return part;
-    if (SECRET_PART.test(part) || part.length >= 32) return "<redacted:" + hashScope(part).slice(0, 10) + ">";
-    return part.replace(/[^A-Za-z0-9._-]/g, "_");
-  }).join("");
-  return label.length > MAX_LABEL_CHARS ? label.slice(0, MAX_LABEL_CHARS) + "~" : label;
-}
-function emptyStore() {
-  return { version: 1, entries: {} };
-}
-function processAlive(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === "EPERM";
-  }
-}
-function delay(ms) {
-  return new Promise((resolve2) => setTimeout(resolve2, ms));
-}
-function normalizeEntry(raw) {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("invalid entry");
-  const value = raw;
-  const label = value["label"];
-  const failures = value["failures"];
-  const until = value["until"];
-  const reason = value["reason"];
-  const updatedAt = value["updatedAt"];
-  if (typeof label !== "string" || !label || label.length > MAX_LABEL_CHARS + 1) throw new Error("invalid label");
-  if (typeof failures !== "number" || !Number.isSafeInteger(failures) || failures < 1 || failures > 100) throw new Error("invalid failures");
-  if (typeof until !== "number" || !Number.isFinite(until)) throw new Error("invalid until");
-  if (reason !== "rate-limit" && reason !== "quota" && !(typeof reason === "string" && reason in FAILURE_COOLDOWN_BASE_MS)) throw new Error("unsupported reason");
-  if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) throw new Error("invalid updatedAt");
-  let recovery;
-  const rawClaim = value["recovery"];
-  if (rawClaim !== void 0) {
-    if (!rawClaim || typeof rawClaim !== "object" || Array.isArray(rawClaim)) throw new Error("invalid claim");
-    const claim = rawClaim;
-    if (typeof claim["token"] !== "string" || claim["token"].length < 16) throw new Error("invalid claim token");
-    if (typeof claim["pid"] !== "number" || !Number.isSafeInteger(claim["pid"])) throw new Error("invalid claim pid");
-    if (typeof claim["startedAt"] !== "number" || !Number.isFinite(claim["startedAt"])) throw new Error("invalid claim start");
-    if (claim["superseded"] !== void 0 && typeof claim["superseded"] !== "boolean") throw new Error("invalid claim superseded");
-    recovery = { token: claim["token"], pid: claim["pid"], startedAt: claim["startedAt"], ...claim["superseded"] === true ? { superseded: true } : {} };
-  }
-  return {
-    label,
-    failures,
-    until,
-    reason,
-    updatedAt,
-    ...recovery ? { recovery } : {}
-  };
-}
-function normalizeStore(raw) {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("invalid root");
-  const value = raw;
-  if (value["version"] !== 1) throw new Error("unsupported version");
-  const entries = value["entries"];
-  if (!entries || typeof entries !== "object" || Array.isArray(entries)) throw new Error("invalid entries");
-  const state = emptyStore();
-  for (const [key, entry] of Object.entries(entries)) {
-    if (!/^[0-9a-f]{64}$/.test(key)) throw new Error("invalid scope key");
-    state.entries[key] = normalizeEntry(entry);
-  }
-  return state;
-}
-function parseOwner(raw) {
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return void 0;
-    const value = parsed;
-    const token = value["token"];
-    const pid = value["pid"];
-    const createdAt = value["createdAt"];
-    if (typeof token !== "string" || !token) return void 0;
-    if (typeof pid !== "number" || !Number.isSafeInteger(pid)) return void 0;
-    return { token, pid, createdAt: typeof createdAt === "number" ? createdAt : 0 };
-  } catch {
-    return void 0;
-  }
-}
-async function readOwner(lockPath) {
-  try {
-    return parseOwner(await readFile(lockPath, "utf8"));
-  } catch {
-    return void 0;
-  }
-}
-async function removeOwnerIfContentMatches(lockPath, expected) {
-  let handle;
-  try {
-    handle = await open(lockPath, "r");
-    const content = await handle.readFile("utf8");
-    if (content !== expected) return false;
-    await unlink(lockPath);
-    return true;
-  } catch {
-    return true;
-  } finally {
-    await handle?.close().catch(() => {
-    });
-  }
-}
-async function acquireLock(lockPath, timeoutMs) {
-  const token = randomUUID();
-  const payload = JSON.stringify({ token, pid: process.pid, createdAt: Date.now() });
-  await mkdir(join4(lockPath, ".."), { recursive: true, mode: 448 });
-  const deadline = Date.now() + Math.max(1, timeoutMs);
-  for (; ; ) {
-    try {
-      await writeFile(lockPath, payload, { flag: "wx", mode: 384 });
-      return { token, payload };
-    } catch (error) {
-      const code = error.code;
-      if (code !== "EEXIST") throw error;
-    }
-    if (Date.now() >= deadline) throw await lockTimeout(lockPath);
-    await delay(LOCK_POLL_MS + Math.floor(Math.random() * LOCK_POLL_MS));
-  }
-}
-async function releaseLock(lockPath, payload) {
-  await removeOwnerIfContentMatches(lockPath, payload);
-}
-async function lockTimeout(lockPath) {
-  const owner = await readOwner(lockPath).catch(() => void 0);
-  return new PoolHealthLockTimeoutError(lockPath, owner);
-}
-function prune(state, now) {
-  for (const [key, entry] of Object.entries(state.entries)) {
-    if (!entry.recovery && entry.until <= now - RETENTION_MS) delete state.entries[key];
-  }
-  const keys = Object.keys(state.entries);
-  if (keys.length <= MAX_ENTRIES) return;
-  keys.sort((a, b) => (state.entries[a]?.until ?? 0) - (state.entries[b]?.until ?? 0));
-  for (const key of keys) {
-    if (Object.keys(state.entries).length <= MAX_ENTRIES) break;
-    if (!state.entries[key]?.recovery) delete state.entries[key];
-  }
-}
-var PoolHealthStore = class {
-  root;
-  now;
-  ladder;
-  lockTimeoutMs;
-  constructor(options = {}) {
-    this.root = options.root ?? join4(getAppHome(), "pool");
-    this.now = options.now ?? Date.now;
-    this.ladder = options.ladderMs ?? UNKNOWN_RATE_LIMIT_LADDER_MS;
-    this.lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
-    if (!this.ladder.length || this.ladder.some((step) => !Number.isSafeInteger(step) || step <= 0)) {
-      throw new Error("Invalid rate-limit ladder");
-    }
-  }
-  get statePath() {
-    return join4(this.root, "health.json");
-  }
-  get lockPath() {
-    return join4(this.root, "health.lock");
-  }
-  /** Throws PoolHealthStateCorruptError; the file is left exactly as found. */
-  async readState() {
-    let raw;
-    try {
-      raw = await readFile(this.statePath, "utf8");
-    } catch (error) {
-      if (error.code === "ENOENT") return emptyStore();
-      throw new PoolHealthStateCorruptError(this.statePath);
-    }
-    try {
-      return normalizeStore(JSON.parse(raw));
-    } catch {
-      throw new PoolHealthStateCorruptError(this.statePath);
-    }
-  }
-  async writeState(state) {
-    await mkdir(this.root, { recursive: true, mode: 448 });
-    const temp = this.statePath + ".tmp-" + randomUUID();
-    await writeFile(temp, JSON.stringify(state), { mode: 384 });
-    await rename(temp, this.statePath);
-  }
-  async mutate(work) {
-    await mkdir(this.root, { recursive: true, mode: 448 });
-    const { payload } = await acquireLock(this.lockPath, this.lockTimeoutMs);
-    try {
-      const state = await this.readState();
-      let dirty = false;
-      const result = await work(state, () => {
-        dirty = true;
-      });
-      if (dirty) await this.writeState(state);
-      return result;
-    } finally {
-      await releaseLock(this.lockPath, payload);
-    }
-  }
-  /** A claim is live while its owner pid exists. Age alone never releases it. */
-  claimLive(claim) {
-    if (!claim) return false;
-    return claim.pid === process.pid || processAlive(claim.pid);
-  }
-  /**
-   * Persist a provider failure. Rate limits use the long ladder; transient, access and unknown failures get a
-   * short escalating cooldown (FAILURE_COOLDOWN_BASE_MS); cancellation, context and invalid failures are never written.
-   * Throws PoolHealthLockTimeoutError when a live process holds the lock.
-   */
-  async record(scopes, failure) {
-    const shortBase = failure.kind in FAILURE_COOLDOWN_BASE_MS ? FAILURE_COOLDOWN_BASE_MS[failure.kind] : void 0;
-    if (failure.kind !== "rate-limit" && failure.kind !== "quota" && shortBase === void 0) return { recorded: false, reason: failure.kind };
-    const unique = [...new Set(scopes.filter((scope) => typeof scope === "string" && scope.trim().length > 0))];
-    if (!unique.length) return { recorded: false, reason: "no-scopes" };
-    const now = this.now();
-    return this.mutate((state, touch) => {
-      let until = 0;
-      for (const scope of unique) {
-        const key = hashScope(scope);
-        const previous = state.entries[key];
-        const failures = Math.min((previous?.failures ?? 0) + 1, 100);
-        const step = shortBase !== void 0 ? Math.min(shortBase * 2 ** Math.min(failures - 1, 10), FAILURE_COOLDOWN_MAX_MS) : this.ladder[Math.min(failures - 1, this.ladder.length - 1)];
-        const proposedUntil = failure.retryAt !== void 0 ? Math.max(failure.retryAt, now) : now + step;
-        const entryUntil = previous && previous.until > now ? Math.max(previous.until, proposedUntil) : proposedUntil;
-        state.entries[key] = {
-          // A rate-limit can arrive while this process's recovery is in flight.
-          // Keep the claim so another process cannot start a second provider call.
-          ...previous?.recovery ? { recovery: { ...previous.recovery, superseded: true } } : {},
-          label: sanitizePoolScopeLabel(scope),
-          failures,
-          until: entryUntil,
-          reason: failure.kind,
-          updatedAt: now
-        };
-        until = Math.max(until, entryUntil);
-      }
-      prune(state, now);
-      touch();
-      return { recorded: true, until };
-    });
-  }
-  /** Forget a route's failure history after a genuine success (resets the ladder). */
-  async markHealthy(scopes) {
-    const unique = [...new Set(scopes.filter((scope) => typeof scope === "string" && scope.trim().length > 0))];
-    if (!unique.length) return;
-    await this.mutate((state, touch) => {
-      for (const scope of unique) {
-        const key = hashScope(scope);
-        if (state.entries[key]) {
-          delete state.entries[key];
-          touch();
-        }
-      }
-    });
-  }
-  /**
-   * Explicit human escape hatch. forceUnlock removes the lock only when its owner pid
-   * is provably dead. A live or unreadable owner is refused so a live process's lock
-   * is never taken over. Nothing in this module reaps locks on its own.
-   */
-  async clear(scopes, options = {}) {
-    const unique = [...new Set(scopes.filter((scope) => typeof scope === "string" && scope.trim().length > 0))];
-    if (options.forceUnlock) {
-      let raw;
-      try {
-        raw = await readFile(this.lockPath, "utf8");
-      } catch (error) {
-        if (error.code !== "ENOENT") {
-          throw new PoolHealthForceUnlockRefusedError(this.lockPath, "the owner file is unreadable");
-        }
-      }
-      if (raw !== void 0) {
-        const owner = parseOwner(raw);
-        if (!owner) throw new PoolHealthForceUnlockRefusedError(this.lockPath, "the owner file is unreadable");
-        if (processAlive(owner.pid)) {
-          throw new PoolHealthForceUnlockRefusedError(this.lockPath, "owner pid " + owner.pid + " is still alive", owner.pid);
-        }
-        if (!await removeOwnerIfContentMatches(this.lockPath, raw)) {
-          throw new PoolHealthForceUnlockRefusedError(this.lockPath, "the lock changed while it was being cleared", owner.pid);
-        }
-      }
-    }
-    if (!unique.length) return 0;
-    return this.mutate((state, touch) => {
-      let removed = 0;
-      for (const scope of unique) {
-        const key = hashScope(scope);
-        if (state.entries[key]) {
-          delete state.entries[key];
-          removed += 1;
-          touch();
-        }
-      }
-      return removed;
-    });
-  }
-  /** Highest active cooldown for a route, if any (does not claim recovery). */
-  async cooldownFor(route) {
-    const now = this.now();
-    const state = await this.readState();
-    const active = route.scopes.map((scope) => state.entries[hashScope(scope)]).filter((entry) => Boolean(entry) && entry.until > now);
-    return active.length ? Math.max(...active.map((entry) => entry.until)) : void 0;
-  }
-  /**
-   * Decide whether this route may be attempted. A cooled-down or already-recovering
-   * route is blocked; an expired cooldown grants exactly one cross-process recovery.
-   */
-  async acquire(route) {
-    const now = this.now();
-    const scopes = [...new Set(route.scopes.filter((scope) => typeof scope === "string" && scope.trim().length > 0))];
-    const outcome = await this.mutate((state, touch) => {
-      const relevant = scopes.map((scope) => [scope, state.entries[hashScope(scope)]]).filter((entry) => Boolean(entry[1]));
-      const active = relevant.filter(([, entry]) => entry.until > now);
-      if (active.length) {
-        return {
-          blocked: {
-            ok: false,
-            reason: "cooldown",
-            retryAt: Math.max(...active.map(([, entry]) => entry.until)),
-            details: active.map(([, entry]) => entry.label + ": " + entry.reason)
-          }
-        };
-      }
-      const inFlight = relevant.filter(([, entry]) => this.claimLive(entry.recovery));
-      if (inFlight.length) {
-        return {
-          blocked: {
-            ok: false,
-            reason: "recovery-in-flight",
-            details: inFlight.map(([, entry]) => entry.label + ": recovery-in-flight (pid " + entry.recovery.pid + ")")
-          }
-        };
-      }
-      const stale = relevant.filter(([, entry]) => entry.recovery);
-      const expiredCooldown = relevant.filter(([, entry]) => entry.until <= now);
-      if (!stale.length && !expiredCooldown.length) return {};
-      const token2 = randomUUID();
-      for (const [scope] of relevant) {
-        const entry = state.entries[hashScope(scope)];
-        if (!entry) continue;
-        entry.recovery = { token: token2, pid: process.pid, startedAt: now };
-        touch();
-      }
-      return { token: token2 };
-    });
-    if (outcome.blocked) return outcome.blocked;
-    if (!outcome.token) {
-      return { ok: true, mode: "normal", settle: async () => {
-      }, release: async () => {
-      } };
-    }
-    const token = outcome.token;
-    let settled = false;
-    const settleClaim = async (success) => {
-      const at = this.now();
-      await this.mutate((state, touch) => {
-        for (const scope of scopes) {
-          const key = hashScope(scope);
-          const entry = state.entries[key];
-          if (!entry?.recovery || entry.recovery.token !== token) continue;
-          if (success && entry.recovery.superseded) {
-            delete entry.recovery;
-          } else if (success) {
-            delete state.entries[key];
-          } else {
-            const failures = Math.min(entry.failures + 1, 100);
-            const step = this.ladder[Math.min(failures - 1, this.ladder.length - 1)];
-            const { recovery: _consumed, ...rest } = entry;
-            state.entries[key] = { ...rest, failures, until: Math.max(entry.until, at + step), updatedAt: at };
-          }
-          touch();
-        }
-      });
-    };
-    return {
-      ok: true,
-      mode: "recovery",
-      settle: async (success) => {
-        if (settled) return;
-        settled = true;
-        await settleClaim(success);
-      },
-      release: async () => {
-        if (settled) return;
-        settled = true;
-        await this.mutate((state, touch) => {
-          for (const scope of scopes) {
-            const key = hashScope(scope);
-            const entry = state.entries[key];
-            if (!entry?.recovery || entry.recovery.token !== token) continue;
-            delete entry.recovery;
-            touch();
-          }
-        });
-      }
-    };
-  }
-  /** Sanitized view for diagnostics and the UI; contains no prompts or credentials. */
-  async inspect(route) {
-    const state = await this.readState();
-    return route.scopes.flatMap((scope) => {
-      const entry = state.entries[hashScope(scope)];
-      if (!entry) return [];
-      return [{
-        scope: entry.label,
-        reason: entry.reason,
-        until: entry.until,
-        failures: entry.failures,
-        recovering: this.claimLive(entry.recovery),
-        ...entry.recovery ? { claimPid: entry.recovery.pid } : {}
-      }];
-    });
-  }
-  /** Retained entry count; bounded by MAX_ENTRIES. */
-  async size() {
-    return Object.keys((await this.readState()).entries).length;
-  }
-};
-
 // src/pool/context.ts
 var IMAGE_INPUT_TOKENS = 4096;
 var IMAGE_PART_TYPES = /* @__PURE__ */ new Set(["image", "image-data", "image-url"]);
@@ -1844,7 +1391,7 @@ async function prepareCodexPoolRoutes(options) {
       ...model,
       providerId: provider.id,
       apiBaseUrl: model.apiBaseUrl
-    }, { maxTools: POOL_MAX_TOOLS, npm: model.npm }, poolHistoryOrigins(options.body));
+    }, { maxTools: POOL_MAX_TOOLS, npm: model.npm, forwardToolChoice: true }, poolHistoryOrigins(options.body));
     if (memberAuto && translatedEffortClaim(params.providerOptions)) {
       skip("translation would set an effort");
       continue;
@@ -1863,6 +1410,11 @@ async function prepareCodexPoolRoutes(options) {
     }
     const scopes = [poolEndpointScope(provider.id, revision, model.id)];
     const accountScopes = [poolAccountScope(provider.id)];
+    const off = await options.health.disabledFor(scopes);
+    if (off) {
+      skip("DISABLED: " + off.note + " (run Test to re-enable)");
+      continue;
+    }
     const unavailableUntil = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
     if (unavailableUntil !== void 0 && unavailableUntil > Date.now()) {
       skip("cooling down after a failure");
@@ -2016,6 +1568,11 @@ async function prepareClaudePoolRoutes(options) {
     }
     const scopes = [poolEndpointScope(provider.id, revision, model.id)];
     const accountScopes = [poolAccountScope(provider.id)];
+    const off = await options.health.disabledFor(scopes);
+    if (off) {
+      skip("DISABLED: " + off.note + " (run Test to re-enable)");
+      continue;
+    }
     const until = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
     if (until !== void 0 && until > Date.now()) {
       skip("cooling down after a failure");
@@ -2111,7 +1668,7 @@ function prepareClaudeAutoPool(prefs, providers, now = Date.now()) {
 }
 
 // src/pool/claude-session.ts
-import { randomUUID as randomUUID2 } from "crypto";
+import { randomUUID } from "crypto";
 import {
   closeSync,
   linkSync,
@@ -2122,11 +1679,11 @@ import {
   unlinkSync,
   writeFileSync as writeFileSync2
 } from "fs";
-import { dirname, join as join5 } from "path";
+import { dirname, join as join4 } from "path";
 function getClaudePoolSessionLockPath(env = process.env) {
-  return join5(getAppHome(env), "claude", "pool-session.json");
+  return join4(getAppHome(env), "claude", "pool-session.json");
 }
-function processAlive2(pid) {
+function processAlive(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
@@ -2155,7 +1712,7 @@ function acquireClaudePoolSessionLock(env = process.env) {
   const path3 = getClaudePoolSessionLockPath(env);
   const lock = {
     pid: process.pid,
-    token: randomUUID2(),
+    token: randomUUID(),
     startedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   const tempPath = `${path3}.${process.pid}.${lock.token}.tmp`;
@@ -2178,7 +1735,7 @@ function acquireClaudePoolSessionLock(env = process.env) {
       const existing = readLock(path3);
       if (existing.status === "missing") continue;
       if (existing.status === "unreadable") return { ok: false, reason: "unreadable" };
-      if (processAlive2(existing.lock.pid)) {
+      if (processAlive(existing.lock.pid)) {
         return { ok: false, reason: "concurrent", pid: existing.lock.pid };
       }
       const guardPath = `${path3}.reclaim`;
@@ -2188,7 +1745,7 @@ function acquireClaudePoolSessionLock(env = process.env) {
       } catch (guardError) {
         const current = readLock(path3);
         if (current.status === "unreadable") return { ok: false, reason: "unreadable" };
-        if (current.status === "valid" && processAlive2(current.lock.pid)) {
+        if (current.status === "valid" && processAlive(current.lock.pid)) {
           return { ok: false, reason: "concurrent", pid: current.lock.pid };
         }
         throw new Error("Another Claude pool launch is reclaiming a stale lock.", { cause: guardError });
@@ -2196,7 +1753,7 @@ function acquireClaudePoolSessionLock(env = process.env) {
       try {
         const current = readLock(path3);
         if (current.status === "unreadable") return { ok: false, reason: "unreadable" };
-        if (current.status === "valid" && processAlive2(current.lock.pid)) {
+        if (current.status === "valid" && processAlive(current.lock.pid)) {
           return { ok: false, reason: "concurrent", pid: current.lock.pid };
         }
         rmSync(path3, { force: true });
@@ -4326,7 +3883,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-UDWTWFZZ.js");
+      const { testModel } = await import("./test-model-PEI4ZNKS.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -4524,10 +4081,10 @@ async function runProvidersCommand(args) {
 // src/codex.ts
 import pc6 from "picocolors";
 import * as p10 from "@clack/prompts";
-import { join as join10 } from "path";
+import { join as join9 } from "path";
 
 // src/codex-proxy.ts
-import { createHash as createHash3 } from "crypto";
+import { createHash as createHash2 } from "crypto";
 import { createServer } from "http";
 import { WebSocket } from "ws";
 
@@ -4641,7 +4198,7 @@ function nativeResponsesWebSocketOptions(options) {
 }
 
 // src/codex/collaboration-payload.ts
-import { createHash as createHash2 } from "crypto";
+import { createHash } from "crypto";
 var NATIVE_ENCRYPTED_TOKEN = /^gAAAAA[A-Za-z0-9_-]+={0,2}$/;
 var COLLABORATION_HEADER = /Message Type:\s*(?:NEW_TASK|MESSAGE|FOLLOWUP_TASK|FINAL_ANSWER)\b[\s\S]*\nPayload:\s*/i;
 var PAYLOAD_BOUNDARY = /^Payload:\s*$/m;
@@ -4845,7 +4402,7 @@ function createNativePayloadRelay(options) {
       if (ciphertext.kind !== "native-encrypted") throw new Error("Expected a native encrypted collaboration item");
       const accountId = context.headers["chatgpt-account-id"] ?? context.headers["ChatGPT-Account-Id"];
       if (!accountId) throw new Error("Native collaboration relay requires ChatGPT-Account-Id");
-      const key = `${accountId}\0${createHash2("sha256").update(ciphertext.ciphertext).digest("hex")}`;
+      const key = `${accountId}\0${createHash("sha256").update(ciphertext.ciphertext).digest("hex")}`;
       pruneCache();
       const cached = cache.get(key);
       if (cached && cached.expiresAt > Date.now()) return cached.value;
@@ -4893,7 +4450,7 @@ async function resolveRoutedCollaborationInput(input, context) {
 
 // src/codex/route-audit.ts
 import { chmodSync, mkdirSync as mkdirSync2, writeFileSync as writeFileSync3 } from "fs";
-import { join as join6 } from "path";
+import { join as join5 } from "path";
 var DIR_MODE = 448;
 var FILE_MODE = 384;
 var CODEX_ROUTE_AUDIT_LOG = "codex-route-audit.jsonl";
@@ -4922,7 +4479,7 @@ function getCodexRouteAuditLogPath() {
     chmodSync(dir, DIR_MODE);
   } catch {
   }
-  return join6(dir, CODEX_ROUTE_AUDIT_LOG);
+  return join5(dir, CODEX_ROUTE_AUDIT_LOG);
 }
 function prepareCodexRouteAuditLog(path3 = getCodexRouteAuditLogPath()) {
   writeFileSync3(path3, "", { mode: FILE_MODE });
@@ -5721,7 +5278,7 @@ async function startCodexProxy(routes, options = {}) {
       sendJson(res, 404, { error: { message: "Not found", type: "invalid_request_error" } });
     });
     function wsAcceptKey(clientKey) {
-      return createHash3("sha1").update(clientKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+      return createHash2("sha1").update(clientKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
     }
     function wsDecodeFrame(buf) {
       if (buf.length < 2) return null;
@@ -6395,7 +5952,7 @@ function createAdditivePoolRuntime(pool, providers, options = {}) {
 }
 
 // src/codex/profile.ts
-import { join as join8 } from "path";
+import { join as join7 } from "path";
 
 // src/codex/session.ts
 import {
@@ -6412,27 +5969,27 @@ import {
   writeFileSync as writeFileSync4
 } from "fs";
 import { homedir as homedir5 } from "os";
-import { basename, dirname as dirname2, join as join7 } from "path";
+import { basename, dirname as dirname2, join as join6 } from "path";
 var CODEX_PROFILE_NAME = "relay-ai-launch";
 var STALE_SESSION_MS = 5 * 60 * 1e3;
 var MAX_BACKUPS = 5;
 function getCodexHome(env = process.env) {
-  return env["CODEX_HOME"] || join7(homedir5(), ".codex");
+  return env["CODEX_HOME"] || join6(homedir5(), ".codex");
 }
 function getCodexProfilePath() {
-  return join7(getCodexHome(), `${CODEX_PROFILE_NAME}.config.toml`);
+  return join6(getCodexHome(), `${CODEX_PROFILE_NAME}.config.toml`);
 }
 function getRelayAiCodexDir(env = process.env) {
-  return join7(getAppHome(env), "codex");
+  return join6(getAppHome(env), "codex");
 }
 function getSessionLockPath(env = process.env) {
-  return join7(getRelayAiCodexDir(env), "session.json");
+  return join6(getRelayAiCodexDir(env), "session.json");
 }
 function getBackupsDir(env = process.env) {
-  return join7(getRelayAiCodexDir(env), "backups");
+  return join6(getRelayAiCodexDir(env), "backups");
 }
 function getCatalogPath(providerId, env = process.env) {
-  return join7(getRelayAiCodexDir(env), `models-${providerId}.json`);
+  return join6(getRelayAiCodexDir(env), `models-${providerId}.json`);
 }
 function ownedOverlayPaths(env = process.env) {
   const paths = [getCodexProfilePath()];
@@ -6440,15 +5997,15 @@ function ownedOverlayPaths(env = process.env) {
   if (existsSync5(codexDir)) {
     for (const name of readdirSync(codexDir)) {
       if (name.startsWith("models-") && name.endsWith(".json")) {
-        paths.push(join7(codexDir, name));
+        paths.push(join6(codexDir, name));
       }
     }
   }
-  const agentsDir = join7(getCodexHome(env), "agents");
+  const agentsDir = join6(getCodexHome(env), "agents");
   if (existsSync5(agentsDir)) {
     for (const name of readdirSync(agentsDir)) {
       if (/^relay-model-[a-z0-9-]+\.toml$/i.test(name)) {
-        paths.push(join7(agentsDir, name));
+        paths.push(join6(agentsDir, name));
       }
     }
   }
@@ -6471,12 +6028,12 @@ function rotateBackups(filePath, env = process.env) {
   mkdirSync3(backupsDir, { recursive: true });
   const base = basename(filePath);
   const stamp = Date.now();
-  const backupPath = join7(backupsDir, `${base}.${stamp}.bak`);
+  const backupPath = join6(backupsDir, `${base}.${stamp}.bak`);
   copyFileSync(filePath, backupPath);
-  const backups = readdirSync(backupsDir).filter((n) => n.startsWith(`${base}.`) && n.endsWith(".bak")).map((n) => ({ name: n, mtime: statSync(join7(backupsDir, n)).mtimeMs })).sort((a, b) => b.mtime - a.mtime);
+  const backups = readdirSync(backupsDir).filter((n) => n.startsWith(`${base}.`) && n.endsWith(".bak")).map((n) => ({ name: n, mtime: statSync(join6(backupsDir, n)).mtimeMs })).sort((a, b) => b.mtime - a.mtime);
   for (const old of backups.slice(MAX_BACKUPS)) {
     try {
-      unlinkSync2(join7(backupsDir, old.name));
+      unlinkSync2(join6(backupsDir, old.name));
     } catch {
     }
   }
@@ -6622,10 +6179,10 @@ function getCatalogOutputPath(providerId) {
   return getCatalogPath(providerId);
 }
 function getFavoritesCatalogPath() {
-  return join8(getRelayAiCodexDir(), "models-favorites.json");
+  return join7(getRelayAiCodexDir(), "models-favorites.json");
 }
 function getFavoritesAppCatalogPath() {
-  return join8(getRelayAiCodexDir(), "app-models-favorites.json");
+  return join7(getRelayAiCodexDir(), "app-models-favorites.json");
 }
 function profileName() {
   return CODEX_PROFILE_NAME;
@@ -6636,7 +6193,7 @@ import { execSync as execSync3 } from "child_process";
 import spawn3 from "cross-spawn";
 import { existsSync as existsSync6 } from "fs";
 import { homedir as homedir6 } from "os";
-import { join as join9 } from "path";
+import { join as join8 } from "path";
 var isWindows3 = process.platform === "win32";
 var CODEX_CI_ENV_VARS = [
   "CI",
@@ -6657,11 +6214,11 @@ function stripCodexInheritedEnv(env) {
   return out;
 }
 var CODEX_FALLBACK_PATHS = isWindows3 ? [
-  join9(process.env["APPDATA"] ?? homedir6(), "npm", "codex.cmd"),
-  join9(process.env["APPDATA"] ?? homedir6(), "npm", "codex")
+  join8(process.env["APPDATA"] ?? homedir6(), "npm", "codex.cmd"),
+  join8(process.env["APPDATA"] ?? homedir6(), "npm", "codex")
 ] : [
-  join9(homedir6(), ".local", "bin", "codex"),
-  join9(homedir6(), ".npm", "bin", "codex"),
+  join8(homedir6(), ".local", "bin", "codex"),
+  join8(homedir6(), ".npm", "bin", "codex"),
   "/usr/local/bin/codex",
   "/opt/homebrew/bin/codex"
 ];
@@ -7390,7 +6947,7 @@ async function writeFavoritesLaunchArtifacts(resolved, starting, proxyPort, extr
   return { profilePath, catalogPath };
 }
 async function writeMixedLaunchArtifacts(plan, proxyPort, extraCatalogModels = []) {
-  const catalogPath = join10(getRelayAiCodexDir(), "models-mixed.json");
+  const catalogPath = join9(getRelayAiCodexDir(), "models-mixed.json");
   const catalog = extraCatalogModels.length > 0 ? { models: [...plan.catalog.models, ...extraCatalogModels] } : plan.catalog;
   writeOverlayFile(catalogPath, serializeCatalog(catalog));
   const profilePath = getProfileOutputPath();
@@ -7596,7 +7153,7 @@ async function runCodexCommand2(codexArgs, trace = false, launch = {}) {
       console.error(pc6.red("No free pool members. Add one with: relay-ai pool add <provider-account> <model>"));
       return 1;
     }
-    const fresh = pool.receipts.filter((receipt) => receipt.verifiedAt <= Date.now() && receipt.expiresAt > Date.now());
+    const fresh = pool.receipts.filter((receipt) => receiptInForce(receipt, Date.now()));
     if (fresh.length === 0) {
       console.error(pc6.red("No verified free pool members. Run: relay-ai pool verify"));
       return 1;
@@ -7620,6 +7177,7 @@ async function runCodexCommand2(codexArgs, trace = false, launch = {}) {
     try {
       const providers = await fetchProviderCatalog();
       const health = new PoolHealthStore();
+      await warnDisabledPoolMembers(providers, pool, health);
       const runtime = new CodexPoolRuntime(pool, (body, source, signal, sessionId, onSkip) => prepareCodexPoolRoutes({
         pool,
         providers,
@@ -7759,6 +7317,7 @@ Error: ${launchPlan.error}
   }
   const additivePool = additivePoolPreferences(prefs);
   const additive = additivePool ? createAdditivePoolRuntime(additivePool, providersForPicker(catalog)) : void 0;
+  if (additive && additivePool) await warnDisabledPoolMembers(providersForPicker(catalog), additivePool);
   const additivePoolRuntime = additive?.runtime;
   const additivePoolModel = additive?.catalog;
   if (additivePool && !additive && !agentStdout) {
@@ -8172,15 +7731,15 @@ import * as p12 from "@clack/prompts";
 import { spawn as spawn4 } from "child_process";
 import { existsSync as existsSync7, mkdirSync as mkdirSync4, mkdtempSync, rmSync as rmSync3, writeFileSync as writeFileSync5 } from "fs";
 import { homedir as homedir7, tmpdir } from "os";
-import { join as join11 } from "path";
+import { join as join10 } from "path";
 var isWindows4 = process.platform === "win32";
 var GEMINI_API_KEY_AUTH_TYPE = "gemini-api-key";
 var GEMINI_FALLBACK_PATHS = isWindows4 ? [
-  join11(process.env["APPDATA"] ?? homedir7(), "npm", "gemini.cmd"),
-  join11(process.env["APPDATA"] ?? homedir7(), "npm", "gemini")
+  join10(process.env["APPDATA"] ?? homedir7(), "npm", "gemini.cmd"),
+  join10(process.env["APPDATA"] ?? homedir7(), "npm", "gemini")
 ] : [
-  join11(homedir7(), ".local", "bin", "gemini"),
-  join11(homedir7(), ".npm", "bin", "gemini"),
+  join10(homedir7(), ".local", "bin", "gemini"),
+  join10(homedir7(), ".npm", "bin", "gemini"),
   "/usr/local/bin/gemini",
   "/opt/homebrew/bin/gemini"
 ];
@@ -8201,7 +7760,7 @@ function buildGeminiChildEnv(proxyPort, proxyToken) {
   return env;
 }
 function createGeminiCliHomeOverlay() {
-  const cliHome = mkdtempSync(join11(tmpdir(), "relay-ai-gemini-"));
+  const cliHome = mkdtempSync(join10(tmpdir(), "relay-ai-gemini-"));
   const settings = {
     security: {
       auth: {
@@ -8209,9 +7768,9 @@ function createGeminiCliHomeOverlay() {
       }
     }
   };
-  const geminiDir = join11(cliHome, ".gemini");
+  const geminiDir = join10(cliHome, ".gemini");
   mkdirSync4(geminiDir);
-  writeFileSync5(join11(geminiDir, "settings.json"), `${JSON.stringify(settings, null, 2)}
+  writeFileSync5(join10(geminiDir, "settings.json"), `${JSON.stringify(settings, null, 2)}
 `, {
     encoding: "utf8",
     mode: 384
@@ -8300,7 +7859,7 @@ function rejectGeminiManagedFlags(geminiArgs) {
 
 // src/gemini-proxy.ts
 import { createServer as createServer2 } from "http";
-import { randomUUID as randomUUID3 } from "crypto";
+import { randomUUID as randomUUID2 } from "crypto";
 import { streamText as streamText2, tool, jsonSchema } from "ai";
 function mapFinishReason(reason) {
   if (reason === "stop" || reason === "tool-calls") return "STOP";
@@ -8382,7 +7941,7 @@ function translateGeminiRequest(body, options = {}) {
           mediaType: p17.inlineData.mimeType
         });
       } else if (p17.functionCall) {
-        const id = "call_" + randomUUID3().replace(/-/g, "");
+        const id = "call_" + randomUUID2().replace(/-/g, "");
         const name = p17.functionCall.name;
         if (!nameToIdList.has(name)) nameToIdList.set(name, []);
         nameToIdList.get(name).push(id);
@@ -8395,7 +7954,7 @@ function translateGeminiRequest(body, options = {}) {
       } else if (p17.functionResponse) {
         const name = p17.functionResponse.name;
         const idList = nameToIdList.get(name) || [];
-        const id = idList.shift() || "call_" + randomUUID3().replace(/-/g, "");
+        const id = idList.shift() || "call_" + randomUUID2().replace(/-/g, "");
         toolResults.push({
           type: "tool-result",
           toolCallId: id,
@@ -8464,7 +8023,7 @@ function translateGeminiRequest(body, options = {}) {
   };
 }
 async function startGeminiProxy(routes, debug = false) {
-  const proxyToken = randomUUID3();
+  const proxyToken = randomUUID2();
   silenceSdkWarnings();
   if (routes.length === 0) {
     return Promise.reject(new Error("Gemini proxy requires at least one route"));
@@ -9262,149 +8821,102 @@ Error: ${launchPlan.error}
 import pc8 from "picocolors";
 import * as p13 from "@clack/prompts";
 
-// src/antigravity/pool-failover.ts
-function isMeaningfulCloudCodeChunk(chunk) {
-  const newline = String.fromCharCode(10);
-  const line = chunk.split(newline).find((part) => part.startsWith("data:"));
-  if (!line) return false;
-  let parsed;
-  try {
-    parsed = JSON.parse(line.slice(5).trim());
-  } catch {
-    return false;
-  }
-  const value = parsed;
-  const candidates = value.candidates ?? value.response?.candidates;
-  const parts = candidates?.[0]?.content?.parts;
-  if (!Array.isArray(parts)) return false;
-  return parts.some((part) => {
-    if (!part || typeof part !== "object") return false;
-    const value2 = part;
-    if (value2.functionCall && typeof value2.functionCall === "object") return true;
-    return typeof value2.text === "string" && value2.text.length > 0;
-  });
-}
-var POOL_CAPTURE_MAX_BYTES = 1048576;
-function createStreamCapture(real, maxBytes = POOL_CAPTURE_MAX_BYTES) {
-  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) throw new Error("Invalid pool capture byte limit");
-  let committed = false;
-  let headers;
-  const held = [];
-  let heldBytes = 0;
-  const commit = () => {
-    committed = true;
-    if (!real.headersSent) real.writeHead(headers?.status ?? 200, headers?.values);
-    for (const chunk of held.splice(0)) real.write(chunk);
-  };
-  const sink = {
-    response: {
-      get headersSent() {
-        return committed;
-      },
-      get destroyed() {
-        return real.destroyed;
-      },
-      get writableEnded() {
-        return real.writableEnded;
-      },
-      writeHead(status, values) {
-        headers = { status, values: values ?? {} };
-        return sink.response;
-      },
-      write(chunk) {
-        const text7 = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
-        if (!committed) {
-          heldBytes += Buffer.byteLength(text7);
-          if (heldBytes > maxBytes) throw new Error("Pool capture byte limit exceeded");
-          held.push(text7);
-          if (isMeaningfulCloudCodeChunk(text7)) commit();
-        } else {
-          real.write(text7);
-        }
-        return true;
-      },
-      end() {
-        if (committed) real.end();
-        return sink.response;
-      },
-      once() {
-        return sink.response;
-      },
-      on() {
-        return sink.response;
-      },
-      setHeader() {
-      },
-      getHeader() {
-        return void 0;
-      },
-      removeHeader() {
-      }
-    },
-    get committed() {
-      return committed;
-    }
-  };
-  return sink;
-}
-function createJsonCapture() {
-  const capture = { status: 200, body: "", headers: {} };
-  const sink = {
-    get headersSent() {
-      return true;
-    },
-    get destroyed() {
-      return false;
-    },
-    get writableEnded() {
-      return false;
-    },
-    writeHead(status, values) {
-      capture.status = status;
-      capture.headers = values ?? {};
-      return sink;
-    },
-    write(chunk) {
-      capture.body += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
-      return true;
-    },
-    end() {
-      return sink;
-    },
-    once() {
-      return sink;
-    },
-    on() {
-      return sink;
-    },
-    setHeader() {
-    },
-    getHeader() {
-      return void 0;
-    },
-    removeHeader() {
-    }
-  };
+// src/pool/antigravity-runtime.ts
+function antigravityPoolPreferences(members, effort) {
   return {
-    response: sink,
-    get status() {
-      return capture.status;
-    },
-    get body() {
-      return capture.body;
-    },
-    get headers() {
-      return capture.headers;
-    }
+    enabled: true,
+    members: members.map((member) => ({ providerId: member.providerId, modelId: member.modelId })),
+    effort: effort === "low" || effort === "medium" || effort === "high" ? effort : "auto",
+    receipts: []
   };
+}
+async function prepareAntigravityPoolRoutes(options) {
+  const routes = [];
+  const prepared = /* @__PURE__ */ new Map();
+  const now = options.now ?? Date.now();
+  for (const member of options.members) {
+    const skip = (reason) => options.onSkip?.(member, reason);
+    const evidence = member.poolEvidence;
+    if (!evidence) {
+      skip("no verification attached");
+      continue;
+    }
+    const identity = { providerId: member.providerId, modelId: member.modelId };
+    const receipt = currentPoolReceipt([evidence.receipt], identity, evidence.revision, now);
+    if (!receipt || !receipt.billingSafe || !receipt.targets.includes("antigravity")) {
+      skip("no verification for Antigravity (run Test)");
+      continue;
+    }
+    const scopes = [poolEndpointScope(member.providerId, evidence.revision, member.modelId)];
+    const accountScopes = [poolAccountScope(member.providerId)];
+    const off = await options.health.disabledFor(scopes);
+    if (off) {
+      skip("DISABLED: " + off.note + " (run Test to re-enable)");
+      continue;
+    }
+    const until = await options.health.cooldownFor({ id: evidence.revision, scopes: [...scopes, ...accountScopes] });
+    if (until !== void 0 && until > now) {
+      skip("cooling down after a failure");
+      continue;
+    }
+    let built;
+    try {
+      built = await options.build(member);
+    } catch (error) {
+      skip("could not be prepared: " + (error instanceof Error ? error.message : String(error)));
+      continue;
+    }
+    const outputCap = poolOutputCap(member.providerId, member.modelId, receipt.contextWindow);
+    const asked = built.maxOutputTokens ?? outputCap;
+    if (!Number.isSafeInteger(asked) || asked <= 0) {
+      skip("invalid output limit");
+      continue;
+    }
+    const requestedOutput = Math.min(asked, outputCap);
+    if (!poolRequestFitsWindow(
+      { messages: built.messages, instructions: built.system, tools: built.tools },
+      receipt.contextWindow,
+      requestedOutput
+    ).fits) {
+      skip("request too large for its context window");
+      continue;
+    }
+    prepared.set(member, built);
+    routes.push(sdkPoolRoute({
+      member: identity,
+      revision: evidence.revision,
+      // The launch only builds pool rows from members it verified free.
+      freeStatus: "verified_free",
+      catalogVerified: true,
+      accessVerified: true,
+      billingSafe: true,
+      targets: receipt.targets,
+      toolsVerified: receipt.tools,
+      defaultEffortVerified: true,
+      effortLevels: receipt.effortLevels,
+      contextFits: true,
+      contextVerified: true
+    }, built.model, {
+      messages: built.messages,
+      tools: built.tools,
+      system: built.system,
+      toolChoice: built.toolChoice,
+      maxOutputTokens: requestedOutput,
+      temperature: built.temperature,
+      providerOptions: built.providerOptions,
+      headers: built.headers
+    }, { store: options.health, scopes, accountScopes }));
+  }
+  return { routes, prepared };
 }
 
 // src/antigravity/cloud-code-gateway.ts
+import { randomUUID as randomUUID4 } from "crypto";
 import http from "http";
 import { streamText as streamText3 } from "ai";
 
 // src/antigravity/request-adapter.ts
-import { randomUUID as randomUUID4 } from "crypto";
+import { randomUUID as randomUUID3 } from "crypto";
 import { tool as tool2, jsonSchema as jsonSchema2 } from "ai";
 var UNSUPPORTED_VOICE_MESSAGE = "Voice transcription isn\u2019t supported by Relay AI yet. Please type your message. Your coding session remains active.";
 var OMITTED_VOICE_TEXT = "[Voice recording omitted because transcription is not supported by Relay AI.]";
@@ -9632,7 +9144,7 @@ function translateRequest2(ccReq, options = {}) {
           contentParts.push({ type: "text", text: OMITTED_VOICE_TEXT });
         }
       } else if (part.functionCall) {
-        const id = "call_" + randomUUID4().replace(/-/g, "");
+        const id = "call_" + randomUUID3().replace(/-/g, "");
         const name = part.functionCall.name;
         if (!nameToIdList.has(name)) nameToIdList.set(name, []);
         nameToIdList.get(name).push(id);
@@ -9645,7 +9157,7 @@ function translateRequest2(ccReq, options = {}) {
       } else if (part.functionResponse) {
         const name = part.functionResponse.name;
         const idList = nameToIdList.get(name) || [];
-        const id = idList.shift() || "call_" + randomUUID4().replace(/-/g, "");
+        const id = idList.shift() || "call_" + randomUUID3().replace(/-/g, "");
         toolResults.push({
           type: "tool-result",
           toolCallId: id,
@@ -9755,7 +9267,7 @@ function formatCloudCodeChunk(opts) {
 // src/antigravity/account-guardrail.ts
 import { readFileSync as readFileSync5 } from "fs";
 import { homedir as homedir8 } from "os";
-import { join as join12 } from "path";
+import { join as join11 } from "path";
 var ENTERPRISE_TIER_PATTERN = /gcp-ge|enterprise/i;
 function isEnterpriseAuthTier(tier) {
   return typeof tier === "string" && ENTERPRISE_TIER_PATTERN.test(tier);
@@ -9769,9 +9281,9 @@ function detectAuthTierInBody(parsed) {
   const project = typeof body["project"] === "string" && body["project"].length > 0 ? body["project"] : void 0;
   return project ? { userTier, project } : { userTier };
 }
-function readAgyOnboardingAuthMethod(cliDir = join12(homedir8(), ".gemini", "antigravity-cli")) {
+function readAgyOnboardingAuthMethod(cliDir = join11(homedir8(), ".gemini", "antigravity-cli")) {
   try {
-    const raw = readFileSync5(join12(cliDir, "cache", "onboarding.json"), "utf8");
+    const raw = readFileSync5(join11(cliDir, "cache", "onboarding.json"), "utf8");
     const parsed = JSON.parse(raw);
     const method = parsed["previousAuthMethod"];
     if (method === "gcp") return "gcp";
@@ -10781,6 +10293,8 @@ async function startCloudCodeGateway(routes, opts = {}) {
   const trackActiveRoute = opts.trackActiveRoute ?? false;
   const log15 = opts.logFn ?? (() => {
   });
+  let sharedPoolHealth = opts.poolHealth;
+  const poolDeps = { health: () => sharedPoolHealth ??= new PoolHealthStore(), limits: opts.poolLimits ?? DEFAULT_POOL_LIMITS, lastSkip: /* @__PURE__ */ new Map() };
   const catalogFixture = fetchAvailableModels_default;
   const slotOptions = { nativeSlots: opts.nativeSlots ?? true };
   const injectedCatalog = injectRelayModels(catalogFixture, routes, templateKey, slotOptions);
@@ -10931,23 +10445,28 @@ async function startCloudCodeGateway(routes, opts = {}) {
           const isStream = lowerUrl.includes("stream");
           const conversationKey = conversationKeyFromRequest(parsed);
           const conversationSessionId = antigravityConversationId(parsed, req.headers);
-          const requestHeaders = openCodeGoHeaders(
-            route.providerId,
-            route.baseURL,
-            conversationSessionId,
-            route.headers
-          );
-          const requestOptions = {
-            ...reasoningEchoOptionsForRoute(route, parsed, reasoningEchoesByConversation),
-            ...requestHeaders ? { requestHeaders } : {}
+          const optionsFor = (target) => {
+            const requestHeaders = openCodeGoHeaders(
+              target.providerId,
+              target.baseURL,
+              conversationSessionId,
+              target.headers
+            );
+            return {
+              ...reasoningEchoOptionsForRoute(target, parsed, reasoningEchoesByConversation),
+              ...requestHeaders ? { requestHeaders } : {}
+            };
           };
-          const rememberReasoning = (reasoning) => {
-            if (!shouldEchoReasoningForRoute(route)) return;
+          const requestOptions = optionsFor(route);
+          const rememberReasoning = (reasoning, answeredBy) => {
+            if (!shouldEchoReasoningForRoute(answeredBy ?? route)) return;
             rememberReasoningEcho(reasoningEchoesByConversation, conversationKey, reasoning);
           };
           if (isStream) {
             handleStreamingRequest(res, route, baseProviderOptions, parsed, log15, {
               requestOptions,
+              optionsFor,
+              pool: poolDeps,
               sessionId: conversationSessionId,
               onReasoningWithToolCall: rememberReasoning,
               trace
@@ -10963,6 +10482,8 @@ async function startCloudCodeGateway(routes, opts = {}) {
           } else {
             handleUnaryRequest(res, route, baseProviderOptions, parsed, log15, {
               requestOptions,
+              optionsFor,
+              pool: poolDeps,
               sessionId: conversationSessionId,
               onReasoningWithToolCall: rememberReasoning,
               trace
@@ -11360,29 +10881,7 @@ function providerOptionsForRoute(route) {
 }
 async function handleStreamingRequest(res, route, providerOptions, parsed, log15, options = {}) {
   if (route.poolMembers?.length) {
-    for (const member of route.poolMembers) {
-      const capture = createStreamCapture(res);
-      try {
-        await handleStreamingRequest(capture.response, member, providerOptionsForRoute(member), parsed, log15, {
-          ...options,
-          disableSdkRetries: true
-        });
-      } catch (error) {
-        if (capture.committed) {
-          if (!res.writableEnded) res.end();
-          return;
-        }
-        log15("[gateway] pool member failed: " + member.providerId + "/" + member.modelId + ": " + formatUpstreamError(error));
-        continue;
-      }
-      if (capture.committed) {
-        if (!res.writableEnded) res.end();
-        return;
-      }
-    }
-    if (!res.headersSent) {
-      respondJson(res, 502, { error: { code: 502, message: "All free pool members failed" } });
-    }
+    await handlePoolRequest(res, route, parsed, log15, options, true);
     return;
   }
   const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest2(parsed, {
@@ -11398,7 +10897,6 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log15
     sdkParams.providerOptions
   );
   const langModel = await createRouteLanguageModel(route, options.sessionId);
-  const responseId = `relay-${Date.now()}`;
   const { stream } = streamText3({
     model: langModel,
     instructions: sdkParams.instructions,
@@ -11406,9 +10904,194 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log15
     tools: sdkParams.tools,
     toolChoice: sdkParams.toolChoice,
     providerOptions: effectiveProviderOptions,
-    headers: sdkParams.headers,
-    ...options.disableSdkRetries ? { maxRetries: 0 } : {}
+    headers: sdkParams.headers
   });
+  await writeCloudCodeStream(stream, res, route, { log: log15, options, toolNames: new Set(Object.keys(sdkParams.tools ?? {})) });
+}
+function clientMaxOutputTokens(parsed) {
+  const value = parsed?.request?.generationConfig?.maxOutputTokens;
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : void 0;
+}
+async function handlePoolRequest(res, row, parsed, log15, options, stream) {
+  const deps = options.pool;
+  const members = row.poolMembers ?? [];
+  const requestId = randomUUID4().slice(0, 8);
+  if (!deps) {
+    respondJson(res, 502, { error: { code: 502, message: "Free pool is not available in this gateway" } });
+    return;
+  }
+  const abort = new AbortController();
+  const onClose = () => {
+    if (!res.writableFinished) abort.abort(new Error("client disconnected"));
+  };
+  res.on("close", onClose);
+  const started = { at: Date.now() };
+  let answering;
+  const toolNames = /* @__PURE__ */ new Set();
+  const failed = /* @__PURE__ */ new Set();
+  const skips = [];
+  const requestStart = Date.now();
+  const memberKey = (member) => member.providerId + "/" + member.modelId;
+  try {
+    for (let round = 0; ; round += 1) {
+      const eligible = members.filter((member) => !failed.has(memberKey(member)));
+      if (round > 0 && eligible.length === 0) throw new PoolAttemptError("attempt-budget-exhausted", false);
+      try {
+        const { routes, prepared } = await prepareAntigravityPoolRoutes({
+          members: eligible,
+          health: deps.health(),
+          onSkip: (member, reason) => {
+            log15("[gateway] pool member skipped: " + member.providerId + "/" + member.modelId + ": " + reason);
+            if (round === 0) skips.push({ member, reason });
+          },
+          build: async (member) => {
+            const sdkParams = applyClaudeCodeOAuthIdentity(member, translateRequest2(parsed, {
+              ...options.optionsFor?.(member) ?? options.requestOptions,
+              npm: member.npm,
+              maxTools: Math.min(maxToolsForNpm(member.npm) ?? POOL_MAX_TOOLS, POOL_MAX_TOOLS)
+            }));
+            const model = await createRouteLanguageModel(member, options.sessionId);
+            return {
+              model,
+              messages: sdkParams.messages,
+              tools: sdkParams.tools,
+              system: sdkParams.instructions,
+              toolChoice: sdkParams.toolChoice,
+              providerOptions: deepMergeProviderOptions(
+                // An effort level is sent only when the pool row names one the member verified; Auto sends none.
+                member.reasoningEffort ? providerOptionsForRoute(member) : thinkingProviderOptions(member.npm),
+                sdkParams.providerOptions
+              ),
+              headers: sdkParams.headers,
+              maxOutputTokens: clientMaxOutputTokens(parsed)
+            };
+          }
+        });
+        for (const built of prepared.values()) for (const name of Object.keys(built.tools ?? {})) toolNames.add(name);
+        const remaining = Math.max(1, deps.limits.totalMs - (Date.now() - requestStart));
+        const events = dispatchFreePool(antigravityPoolPreferences(eligible, row.reasoningEffort), routes, {
+          target: "antigravity",
+          tools: toolNames.size > 0,
+          effort: row.reasoningEffort,
+          signal: abort.signal
+        }, {
+          limits: { ...deps.limits, totalMs: remaining },
+          retryable: retryPoolFailure,
+          onAttempt: (id) => {
+            const member = poolRouteMember(id);
+            answering = members.find((item) => item.providerId === member?.providerId && item.modelId === member?.modelId);
+            started.at = Date.now();
+            if (member) log15("[gateway] pool attempt: " + member.providerId + "/" + member.modelId);
+          },
+          onFailure: (id, error) => {
+            const member = poolRouteMember(id);
+            if (!member) return;
+            failed.add(memberKey(member));
+            const reason = describePoolFailure(error);
+            const detail = reason.startsWith("simulated") ? void 0 : poolErrorDetail(error);
+            recordPoolActivity({ target: "antigravity", event: "failed", ...member, requestId, reason, ...detail ? { detail } : {}, ms: Date.now() - started.at });
+            log15("[gateway] pool member failed: " + member.providerId + "/" + member.modelId + " (" + reason + ")" + (detail ? ": " + detail : ""));
+          }
+        });
+        const noteServed = () => {
+          const member = answering;
+          if (!member) return;
+          const order = members.indexOf(member);
+          const seen = /* @__PURE__ */ new Set();
+          for (const item of skips) {
+            const key = memberKey(item.member);
+            seen.add(key);
+            if (item.reason.startsWith("cooling down")) continue;
+            const fresh = deps.lastSkip.get(key) !== item.reason;
+            deps.lastSkip.set(key, item.reason);
+            if (fresh && members.indexOf(item.member) < order) {
+              recordPoolActivity({ target: "antigravity", event: "failed", providerId: item.member.providerId, modelId: item.member.modelId, requestId, reason: "skipped: " + item.reason });
+            }
+          }
+          for (const key of [...deps.lastSkip.keys()]) if (!seen.has(key)) deps.lastSkip.delete(key);
+          recordPoolActivity({ target: "antigravity", event: "served", providerId: member.providerId, modelId: member.modelId, requestId, ms: Date.now() - started.at });
+        };
+        const poolOptions = {
+          ...options,
+          onReasoningWithToolCall: (reasoning) => options.onReasoningWithToolCall?.(reasoning, answering)
+        };
+        if (stream) {
+          const completed = await writeCloudCodeStream(events, res, row, { log: log15, options: poolOptions, toolNames, pool: true, cancelled: () => abort.signal.aborted });
+          if (completed) noteServed();
+          else if (!abort.signal.aborted) recordPoolActivity({ target: "antigravity", event: "gave-up", providerId: "relay-free-pool", modelId: row.modelId, requestId });
+        } else {
+          const response = await collectCloudCodeResponse(events, row, poolOptions);
+          noteServed();
+          respondJson(res, 200, { response, traceId: "relay-trace", metadata: {} });
+        }
+        return;
+      } catch (error) {
+        const replaceable = !stream && !abort.signal.aborted && error instanceof PoolAttemptError && error.committed && members.some((member) => !failed.has(memberKey(member))) && Date.now() - requestStart < deps.limits.totalMs;
+        if (!replaceable) throw error;
+      }
+    }
+  } catch (error) {
+    if (abort.signal.aborted) {
+      if (!res.writableEnded) res.end();
+      return;
+    }
+    const gaveUp = error instanceof PoolAttemptError || error instanceof Error && error.message.startsWith("No eligible free pool members");
+    log15("[gateway] pool request failed: " + formatUpstreamError(error.cause ?? error));
+    if (gaveUp) recordPoolActivity({ target: "antigravity", event: "gave-up", providerId: "relay-free-pool", modelId: row.modelId, requestId });
+    if (!res.headersSent) {
+      const message = error instanceof Error && error.message.startsWith("No eligible free pool members") ? error.message : "All free pool members failed";
+      respondJson(res, 502, { error: { code: 502, message } });
+    } else if (!res.writableEnded) {
+      res.end();
+    }
+  } finally {
+    res.off("close", onClose);
+  }
+}
+async function collectCloudCodeResponse(events, route, options) {
+  let text7 = "";
+  let reasoning = "";
+  const calls = [];
+  const toolBuffers = /* @__PURE__ */ new Map();
+  let finish = "";
+  let usage;
+  for await (const part of events) {
+    const p17 = part;
+    if (p17.type === "reasoning-delta" || p17.type === "reasoning") reasoning += reasoningDeltaText(p17);
+    else if (p17.type === "text-delta") text7 += reasoningDeltaText(p17);
+    else if (p17.type === "tool-input-start") toolBuffers.set(p17.id ?? p17.toolCallId, { name: p17.toolName, json: "" });
+    else if (p17.type === "tool-input-delta") {
+      const buf = toolBuffers.get(p17.id ?? p17.toolCallId);
+      if (buf) buf.json += p17.delta;
+    } else if (p17.type === "tool-call") {
+      const buf = toolBuffers.get(p17.toolCallId ?? p17.id);
+      calls.push({ name: p17.toolName ?? buf?.name, args: normalizeFunctionCallArgs(p17.input ?? {}) });
+    } else if (p17.type === "finish") {
+      finish = p17.finishReason ?? "";
+      usage = p17.totalUsage;
+    }
+  }
+  const parts = [];
+  if (reasoning) parts.push({ text: reasoning, thought: true });
+  if (text7) parts.push({ text: text7 });
+  for (const call of calls) parts.push({ functionCall: { name: call.name, args: call.args } });
+  if (reasoning && calls.length) options.onReasoningWithToolCall?.(reasoning);
+  if (parts.length === 0) parts.push({ text: "" });
+  return {
+    candidates: [{ content: { role: "model", parts }, finishReason: mapFinishReason2(finish) }],
+    usageMetadata: {
+      promptTokenCount: usage?.inputTokens || 0,
+      candidatesTokenCount: usage?.outputTokens || 0,
+      totalTokenCount: (usage?.inputTokens || 0) + (usage?.outputTokens || 0)
+    },
+    modelVersion: route.catalogId,
+    responseId: `relay-${Date.now()}`
+  };
+}
+async function writeCloudCodeStream(stream, res, route, ctx) {
+  const { log: log15, options } = ctx;
+  let streamFailed = false;
+  const responseId = `relay-${Date.now()}`;
   const startSse = () => {
     if (res.headersSent) return;
     res.writeHead(200, {
@@ -11419,7 +11102,7 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log15
   };
   const thinkFilter = createThinkFilter();
   const toolCallBuffers = /* @__PURE__ */ new Map();
-  const knownToolNames = new Set(Object.keys(sdkParams.tools ?? {}));
+  const knownToolNames = ctx.toolNames;
   let responseReasoning = "";
   let sawToolCall = false;
   let textBuffer = "";
@@ -11452,138 +11135,131 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log15
     textBuffer = "";
     bufferingJsonText = false;
   };
-  for await (const part of stream) {
-    const p17 = part;
-    if (p17.type === "reasoning-delta" || p17.type === "reasoning") {
-      const reasoning = reasoningDeltaText(p17);
-      responseReasoning += reasoning;
-      emitThinkingDelta(res, route, responseId, reasoning, startSse);
-      continue;
-    }
-    if (p17.type === "text-delta") {
-      const { thought, text: text7 } = thinkFilter(reasoningDeltaText(p17));
-      if (thought) {
-        responseReasoning += thought;
-        emitThinkingDelta(res, route, responseId, thought, startSse);
+  try {
+    for await (const part of stream) {
+      const p17 = part;
+      if (p17.type === "reasoning-delta" || p17.type === "reasoning") {
+        const reasoning = reasoningDeltaText(p17);
+        responseReasoning += reasoning;
+        emitThinkingDelta(res, route, responseId, reasoning, startSse);
+        continue;
       }
-      if (text7) {
-        log15(`[gateway] text-delta: ${JSON.stringify(text7.slice(0, 500))}`);
-        if (!bufferingJsonText && (textBuffer + text7).trimStart().startsWith("{")) {
-          bufferingJsonText = true;
+      if (p17.type === "text-delta") {
+        const { thought, text: text7 } = thinkFilter(reasoningDeltaText(p17));
+        if (thought) {
+          responseReasoning += thought;
+          emitThinkingDelta(res, route, responseId, thought, startSse);
         }
-        if (bufferingJsonText) {
-          textBuffer += text7;
-          const pseudoTool = textBuffer.trimEnd().endsWith("}") ? parsePseudoToolCall(textBuffer, knownToolNames) : null;
-          if (pseudoTool) {
-            log15(`[gateway] parsed pseudo tool-call from text: ${pseudoTool.name}`);
-            emitPseudoToolCall(pseudoTool);
+        if (text7) {
+          log15(`[gateway] text-delta: ${JSON.stringify(text7.slice(0, 500))}`);
+          if (!bufferingJsonText && (textBuffer + text7).trimStart().startsWith("{")) {
+            bufferingJsonText = true;
           }
-        } else {
-          startSse();
-          const chunk = formatCloudCodeChunk({
-            text: text7,
-            modelVersion: route.catalogId,
-            responseId
-          });
-          res.write(`data: ${JSON.stringify(chunk)}
+          if (bufferingJsonText) {
+            textBuffer += text7;
+            const pseudoTool = textBuffer.trimEnd().endsWith("}") ? parsePseudoToolCall(textBuffer, knownToolNames) : null;
+            if (pseudoTool) {
+              log15(`[gateway] parsed pseudo tool-call from text: ${pseudoTool.name}`);
+              emitPseudoToolCall(pseudoTool);
+            }
+          } else {
+            startSse();
+            const chunk = formatCloudCodeChunk({
+              text: text7,
+              modelVersion: route.catalogId,
+              responseId
+            });
+            res.write(`data: ${JSON.stringify(chunk)}
 
 `);
+          }
         }
-      }
-    } else if (p17.type === "tool-input-start") {
-      const id = p17.id ?? p17.toolCallId;
-      toolCallBuffers.set(id, { name: p17.toolName, json: "" });
-    } else if (p17.type === "tool-input-delta") {
-      const id = p17.id ?? p17.toolCallId;
-      const buf = toolCallBuffers.get(id);
-      if (buf) buf.json += p17.delta;
-    } else if (p17.type === "tool-call") {
-      sawToolCall = true;
-      const id = p17.toolCallId ?? p17.id;
-      const buf = toolCallBuffers.get(id);
-      let args = {};
-      try {
-        args = buf ? JSON.parse(buf.json || "{}") : p17.input || {};
-      } catch {
-        args = p17.input || {};
-      }
-      const name = buf ? buf.name : p17.toolName;
-      log15(`[gateway] tool-call: ${name}`);
-      startSse();
-      const chunk = formatCloudCodeChunk({
-        functionCall: { name, args: normalizeFunctionCallArgs(args) },
-        modelVersion: route.catalogId,
-        responseId
-      });
-      res.write(`data: ${JSON.stringify(chunk)}
+      } else if (p17.type === "tool-input-start") {
+        const id = p17.id ?? p17.toolCallId;
+        toolCallBuffers.set(id, { name: p17.toolName, json: "" });
+      } else if (p17.type === "tool-input-delta") {
+        const id = p17.id ?? p17.toolCallId;
+        const buf = toolCallBuffers.get(id);
+        if (buf) buf.json += p17.delta;
+      } else if (p17.type === "tool-call") {
+        sawToolCall = true;
+        const id = p17.toolCallId ?? p17.id;
+        const buf = toolCallBuffers.get(id);
+        let args = {};
+        try {
+          args = buf ? JSON.parse(buf.json || "{}") : p17.input || {};
+        } catch {
+          args = p17.input || {};
+        }
+        const name = buf ? buf.name : p17.toolName;
+        log15(`[gateway] tool-call: ${name}`);
+        startSse();
+        const chunk = formatCloudCodeChunk({
+          functionCall: { name, args: normalizeFunctionCallArgs(args) },
+          modelVersion: route.catalogId,
+          responseId
+        });
+        res.write(`data: ${JSON.stringify(chunk)}
 
 `);
-    } else if (p17.type === "finish") {
-      log15(`[gateway] finish: ${p17.finishReason ?? "unknown"}`);
-      if (textBuffer) {
-        const pseudoTool = parsePseudoToolCall(textBuffer, knownToolNames);
-        if (pseudoTool) {
-          log15(`[gateway] parsed pseudo tool-call on finish: ${pseudoTool.name}`);
-          emitPseudoToolCall(pseudoTool);
-        } else {
-          flushBufferedText();
+      } else if (p17.type === "finish") {
+        log15(`[gateway] finish: ${p17.finishReason ?? "unknown"}`);
+        if (textBuffer) {
+          const pseudoTool = parsePseudoToolCall(textBuffer, knownToolNames);
+          if (pseudoTool) {
+            log15(`[gateway] parsed pseudo tool-call on finish: ${pseudoTool.name}`);
+            emitPseudoToolCall(pseudoTool);
+          } else {
+            flushBufferedText();
+          }
         }
-      }
-      startSse();
-      const reason = mapFinishReason2(p17.finishReason ?? "");
-      const chunk = formatCloudCodeChunk({
-        modelVersion: route.catalogId,
-        responseId,
-        finishReason: reason,
-        usage: {
-          promptTokens: p17.totalUsage?.inputTokens || 0,
-          completionTokens: p17.totalUsage?.outputTokens || 0
-        }
-      });
-      res.write(`data: ${JSON.stringify(chunk)}
+        startSse();
+        const reason = mapFinishReason2(p17.finishReason ?? "");
+        const chunk = formatCloudCodeChunk({
+          modelVersion: route.catalogId,
+          responseId,
+          finishReason: reason,
+          usage: {
+            promptTokens: p17.totalUsage?.inputTokens || 0,
+            completionTokens: p17.totalUsage?.outputTokens || 0
+          }
+        });
+        res.write(`data: ${JSON.stringify(chunk)}
 
 `);
-    } else if (p17.type === "error") {
-      const message = formatUpstreamError(p17.error);
-      log15(`[gateway] stream provider error: ${message}`);
-      if (options.trace) {
-        log15(`[gateway] stream provider error detail: ${formatUpstreamErrorTrace(p17.error)}`);
+      } else if (p17.type === "error") {
+        const message = formatUpstreamError(p17.error);
+        log15(`[gateway] stream provider error: ${message}`);
+        if (options.trace) {
+          log15(`[gateway] stream provider error detail: ${formatUpstreamErrorTrace(p17.error)}`);
+        }
+        flushBufferedText();
+        emitStreamError(res, route, responseId, message, startSse);
+        break;
+      } else if (p17.type === "reasoning-start" || p17.type === "reasoning-end") {
+        log15(`[gateway] ${p17.type}`);
       }
-      flushBufferedText();
-      emitStreamError(res, route, responseId, message, startSse);
-      break;
-    } else if (p17.type === "reasoning-start" || p17.type === "reasoning-end") {
-      log15(`[gateway] ${p17.type}`);
     }
+  } catch (error) {
+    if (!ctx.pool || !res.headersSent) throw error;
+    if (!ctx.cancelled?.()) {
+      flushBufferedText();
+      emitStreamError(res, route, responseId, formatUpstreamError(error.cause ?? error), startSse);
+    }
+    streamFailed = true;
   }
   if (!res.headersSent) {
     throw new Error("Provider returned an empty stream");
   }
-  if (sawToolCall && responseReasoning.trim()) {
+  if (!streamFailed && sawToolCall && responseReasoning.trim()) {
     options.onReasoningWithToolCall?.(responseReasoning);
   }
   res.end();
+  return !streamFailed;
 }
 async function handleUnaryRequest(res, route, providerOptions, parsed, log15, options = {}) {
   if (route.poolMembers?.length) {
-    for (const member of route.poolMembers) {
-      const capture = createJsonCapture();
-      try {
-        await handleUnaryRequest(capture.response, member, providerOptionsForRoute(member), parsed, log15, {
-          ...options,
-          disableSdkRetries: true
-        });
-      } catch (error) {
-        log15("[gateway] pool member failed: " + member.providerId + "/" + member.modelId + ": " + formatUpstreamError(error));
-        continue;
-      }
-      if (capture.status < 400 && capture.body) {
-        res.writeHead(capture.status, capture.headers);
-        res.end(capture.body);
-        return;
-      }
-    }
-    respondJson(res, 502, { error: { code: 502, message: "All free pool members failed" } });
+    await handlePoolRequest(res, route, parsed, log15, options, false);
     return;
   }
   const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest2(parsed, {
@@ -11607,8 +11283,7 @@ async function handleUnaryRequest(res, route, providerOptions, parsed, log15, op
     tools: sdkParams.tools,
     toolChoice: sdkParams.toolChoice,
     providerOptions: effectiveProviderOptions,
-    headers: sdkParams.headers,
-    ...options.disableSdkRetries ? { maxRetries: 0 } : {}
+    headers: sdkParams.headers
   });
   const parts = [];
   const reasoning = reasoningOutputText(result.reasoning);
@@ -11648,10 +11323,13 @@ async function handleUnaryRequest(res, route, providerOptions, parsed, log15, op
 }
 
 // src/pool/antigravity.ts
+var POOL_VARIANT_ROWS = 3;
 var POOL_EFFORT_ANCHOR = "medium";
+var POOL_ROW_BUDGET = POOL_VARIANT_ROWS;
 function buildAntigravityPoolRoutes(opts) {
   const now = opts.now ?? Date.now();
   const routesByMember = /* @__PURE__ */ new Map();
+  const autoRoutes = [];
   for (const member of opts.pool.members) {
     const provider = opts.providers.find((item) => item.id === member.providerId);
     const model = provider?.models.find((item) => item.id === member.modelId);
@@ -11681,19 +11359,50 @@ function buildAntigravityPoolRoutes(opts) {
       providerData: provider.providerData,
       headers: provider.headers
     }], 10, { effortMode: opts.effortMode });
+    const base = concrete[0];
+    if (base) {
+      autoRoutes.push({
+        ...base,
+        reasoningEffort: void 0,
+        reasoningMetadata: void 0,
+        contextWindow: model.contextWindow,
+        poolEvidence: { revision, receipt }
+      });
+    }
     const byLevel = /* @__PURE__ */ new Map();
     for (const route of concrete) {
       if (!route.reasoningEffort || !receipt.effortLevels.includes(route.reasoningEffort)) continue;
       if (!byLevel.has(route.reasoningEffort)) {
-        byLevel.set(route.reasoningEffort, { ...route, contextWindow: model.contextWindow });
+        byLevel.set(route.reasoningEffort, { ...route, contextWindow: model.contextWindow, poolEvidence: { revision, receipt } });
       }
     }
     if (byLevel.size > 0) routesByMember.set(provider.id + ":" + model.id, byLevel);
   }
-  if (routesByMember.size === 0) return [];
+  const autoRow = () => {
+    if (autoRoutes.length === 0 || opts.maxRows < 1) return [];
+    const representative = autoRoutes[0];
+    return [{
+      ...representative,
+      catalogId: "relay-free-pool-auto",
+      providerId: "relay-free-pool",
+      providerName: "Relay Free Pool",
+      modelId: "free-pool-auto",
+      displayName: "Relay Free Pool",
+      apiKey: "",
+      reasoningEffort: void 0,
+      reasoningMetadata: void 0,
+      contextWindow: Math.min(...autoRoutes.map((member) => member.contextWindow).filter(
+        (window) => Number.isSafeInteger(window) && window > 0
+      )),
+      poolMembers: autoRoutes,
+      // The row is not a member: it must never pass for one.
+      poolEvidence: void 0
+    }];
+  };
+  if (routesByMember.size === 0) return autoRow();
   const common = [...routesByMember.values()][0].keys();
   const levels = [...common].filter((level) => [...routesByMember.values()].every((map) => map.has(level))).sort((a, b) => EFFORT_RANK.indexOf(a) - EFFORT_RANK.indexOf(b));
-  if (levels.length === 0) return [];
+  if (levels.length === 0) return autoRow();
   const offered = favoriteEffortLevels(levels, POOL_EFFORT_ANCHOR).slice(0, Math.max(0, opts.maxRows));
   return offered.map((level) => {
     const members = [...routesByMember.values()].map((map) => map.get(level));
@@ -11710,7 +11419,9 @@ function buildAntigravityPoolRoutes(opts) {
       contextWindow: Math.min(...members.map((member) => member.contextWindow).filter(
         (window) => Number.isSafeInteger(window) && window > 0
       )),
-      poolMembers: members
+      poolMembers: members,
+      // The row is not a member: it must never pass for one.
+      poolEvidence: void 0
     };
   });
 }
@@ -11718,18 +11429,21 @@ function buildAntigravityPoolRoutes(opts) {
 // src/antigravity/launch-routes.ts
 async function resolveAntigravityLaunchRoutes(opts) {
   const maxRoutes = opts.maxRoutes ?? MAX_MODEL_CATALOG;
-  const apiKey = await resolveLocalProviderApiKey(opts.provider);
-  if (!apiKey) return null;
-  const starting = {
-    providerId: opts.provider.id,
-    providerName: opts.provider.name,
-    model: opts.model,
+  const launchProvider = opts.provider;
+  const launchModel = opts.model;
+  if (!opts.startOnPool && (!launchProvider || !launchModel)) return null;
+  const apiKey = opts.startOnPool || !launchProvider ? "" : await resolveLocalProviderApiKey(launchProvider);
+  if (!opts.startOnPool && !apiKey) return null;
+  const starting = opts.startOnPool || !launchProvider || !launchModel ? void 0 : {
+    providerId: launchProvider.id,
+    providerName: launchProvider.name,
+    model: launchModel,
     apiKey,
-    authType: opts.provider.authType,
-    oauthAccountId: opts.provider.oauthAccountId,
-    providerData: opts.provider.providerData,
-    headers: opts.provider.headers,
-    refreshToken: providerRefreshToken(opts.provider.id, opts.provider.authType, opts.provider.authRef)
+    authType: launchProvider.authType,
+    oauthAccountId: launchProvider.oauthAccountId,
+    providerData: launchProvider.providerData,
+    headers: launchProvider.headers,
+    refreshToken: providerRefreshToken(launchProvider.id, launchProvider.authType, launchProvider.authRef)
   };
   const ctx = {
     agent: "antigravity",
@@ -11747,35 +11461,20 @@ async function resolveAntigravityLaunchRoutes(opts) {
     maxRoutes,
     { dropEmptyApiKey: true, trackCapacitySkipped: true }
   );
-  const tooSmall = resolved.slice(1).filter(
+  const tooSmall = resolved.slice(opts.startOnPool ? 0 : 1).filter(
     (entry) => !meetsContextFloor("antigravity", entry.model.contextWindow)
   );
   const launchable = resolved.filter((entry) => !tooSmall.includes(entry));
-  const routes = buildAntigravityRoutes(launchable, maxRoutes, { effortMode: opts.effortMode });
-  const freePool = parseFreePool(loadPreferences().freePool);
-  const hasPoolEvidence = freePool.receipts.some((receipt) => receipt.targets.includes("antigravity") && receipt.billingSafe && receipt.verifiedAt <= Date.now() && receipt.expiresAt > Date.now());
-  if (freePool.enabled && hasPoolEvidence && routes.length < maxRoutes) {
-    const apiKeys = /* @__PURE__ */ new Map();
-    for (const member of freePool.members) {
-      const provider = opts.allProviders.find((candidate) => candidate.id === member.providerId);
-      if (!provider) continue;
-      const key = await resolveLocalProviderApiKey(provider);
-      if (key) apiKeys.set(provider.id, key);
-    }
-    routes.push(...buildAntigravityPoolRoutes({
-      pool: freePool,
-      providers: opts.allProviders,
-      receipts: freePool.receipts,
-      apiKeys,
-      effortMode: opts.effortMode ?? "rows",
-      maxRows: maxRoutes - routes.length
-    }));
-  }
+  const poolRoutes = await buildAntigravityLaunchPoolRows(opts.allProviders, Math.min(POOL_ROW_BUDGET, maxRoutes), opts.effortMode ?? "rows", { warn: true });
+  const routes = buildAntigravityRoutes(launchable, maxRoutes - poolRoutes.length, { effortMode: opts.effortMode });
+  if (opts.startOnPool) routes.unshift(...poolRoutes);
+  else routes.push(...poolRoutes);
+  if (opts.startOnPool && poolRoutes.length === 0) return null;
   const routed = new Set(routes.map((route) => `${route.providerId}:${route.modelId}`));
   const cutByVariants = launchable.filter((entry) => !routed.has(`${entry.providerId}:${entry.model.id}`)).map((entry) => ({ providerId: entry.providerId, modelId: entry.model.id }));
   return {
     routes,
-    apiKey,
+    apiKey: apiKey ?? "",
     droppedFavorites: [
       ...droppedFavorites,
       ...tooSmall.map((entry) => ({ providerId: entry.providerId, modelId: entry.model.id }))
@@ -11783,21 +11482,42 @@ async function resolveAntigravityLaunchRoutes(opts) {
     capacitySkippedFavorites: [...cutByVariants, ...capacitySkippedFavorites]
   };
 }
+async function buildAntigravityLaunchPoolRows(allProviders, maxRows, effortMode, options = {}) {
+  const freePool = parseFreePool(loadPreferences().freePool);
+  const hasPoolEvidence = freePool.receipts.some((receipt) => receipt.targets.includes("antigravity") && receipt.billingSafe && receiptInForce(receipt, Date.now()));
+  if (!freePool.enabled || !hasPoolEvidence || maxRows < 1) return [];
+  if (options.warn) await warnDisabledPoolMembers(allProviders, freePool);
+  const apiKeys = /* @__PURE__ */ new Map();
+  for (const member of freePool.members) {
+    const provider = allProviders.find((candidate) => candidate.id === member.providerId);
+    if (!provider) continue;
+    const key = await resolveLocalProviderApiKey(provider);
+    if (key) apiKeys.set(provider.id, key);
+  }
+  return buildAntigravityPoolRoutes({
+    pool: freePool,
+    providers: allProviders,
+    receipts: freePool.receipts,
+    apiKeys,
+    effortMode,
+    maxRows
+  });
+}
 
 // src/antigravity/launch-cli.ts
 import { execFileSync, execSync as execSync4 } from "child_process";
 import spawn5 from "cross-spawn";
 import { existsSync as existsSync8 } from "fs";
 import { homedir as homedir9 } from "os";
-import { join as join13 } from "path";
+import { join as join12 } from "path";
 var isWindows5 = process.platform === "win32";
 var FALLBACK_PATHS2 = isWindows5 ? [
-  join13(process.env["APPDATA"] ?? homedir9(), "npm", "agy.cmd"),
-  join13(process.env["APPDATA"] ?? homedir9(), "npm", "agy"),
-  join13(homedir9(), "AppData", "Roaming", "npm", "agy.cmd")
+  join12(process.env["APPDATA"] ?? homedir9(), "npm", "agy.cmd"),
+  join12(process.env["APPDATA"] ?? homedir9(), "npm", "agy"),
+  join12(homedir9(), "AppData", "Roaming", "npm", "agy.cmd")
 ] : [
-  join13(homedir9(), ".local", "bin", "agy"),
-  join13(homedir9(), ".npm", "bin", "agy"),
+  join12(homedir9(), ".local", "bin", "agy"),
+  join12(homedir9(), ".npm", "bin", "agy"),
   "/usr/local/bin/agy",
   "/opt/homebrew/bin/agy"
 ];
@@ -12046,23 +11766,23 @@ import {
   writeFileSync as writeFileSync6
 } from "fs";
 import { createRequire as createRequire2 } from "module";
-import { dirname as dirname3, join as join14 } from "path";
-import { createHash as createHash4, randomUUID as randomUUID5 } from "crypto";
+import { dirname as dirname3, join as join13 } from "path";
+import { createHash as createHash3, randomUUID as randomUUID5 } from "crypto";
 import { parse, modify, applyEdits } from "jsonc-parser";
 var require3 = createRequire2(import.meta.url);
 var MODEL_PREFERENCES_KEY2 = "antigravityUnifiedStateSync.modelPreferences";
 var JETSKI_CLOUD_CODE_URL_KEY = "jetski.cloudCodeUrl";
 function getAntigravityHome(env = process.env) {
-  return join14(getAppHome(env), "antigravity");
+  return join13(getAppHome(env), "antigravity");
 }
 function getExistingIdeLockPath(env = process.env) {
-  return join14(getAntigravityHome(env), "existing-ide-session.json");
+  return join13(getAntigravityHome(env), "existing-ide-session.json");
 }
 function getExistingIdeRecoveryRecordPath(env = process.env) {
-  return join14(getAntigravityHome(env), "existing-ide-recovery.json");
+  return join13(getAntigravityHome(env), "existing-ide-recovery.json");
 }
 function fileSha256(filePath) {
-  return createHash4("sha256").update(readFileSync6(filePath)).digest("hex");
+  return createHash3("sha256").update(readFileSync6(filePath)).digest("hex");
 }
 function readExistingIdeLock(env = process.env) {
   const lockPath = getExistingIdeLockPath(env);
@@ -12277,9 +11997,9 @@ function beginExistingIdeSession(profileDir, gatewayUrl, env = process.env) {
   if (readExistingIdeRecoveryRecord(env)) throw new Error("An IDE session needs restoration before another overlay can be applied.");
   checkNodeSqliteAvailable();
   acquireExistingIdeSession(profileDir, env);
-  const userDir = join14(profileDir, "User");
+  const userDir = join13(profileDir, "User");
   mkdirSync5(userDir, { recursive: true });
-  const settingsPath = join14(userDir, "settings.json");
+  const settingsPath = join13(userDir, "settings.json");
   let originalSettingsSha256;
   let backupSettingsPath;
   let originalContent = "";
@@ -12299,12 +12019,12 @@ function beginExistingIdeSession(profileDir, gatewayUrl, env = process.env) {
       originalGatewayUrl = parsedObj[JETSKI_CLOUD_CODE_URL_KEY] ?? null;
     }
     originalSettingsSha256 = fileSha256(settingsPath);
-    const backupsDir = join14(getAntigravityHome(env), "backups");
+    const backupsDir = join13(getAntigravityHome(env), "backups");
     mkdirSync5(backupsDir, { recursive: true });
-    backupSettingsPath = join14(backupsDir, `settings.${Date.now()}.bak`);
+    backupSettingsPath = join13(backupsDir, `settings.${Date.now()}.bak`);
     atomicWriteFile(backupSettingsPath, originalContent);
   }
-  const dbPath = join14(userDir, "globalStorage", "state.vscdb");
+  const dbPath = join13(userDir, "globalStorage", "state.vscdb");
   let savedModelPref;
   if (existsSync9(dbPath)) {
     savedModelPref = readSqliteModelPreferences(dbPath);
@@ -12438,9 +12158,9 @@ function restoreExistingIdeSession(env = process.env, options = {}) {
 import { execFileSync as execFileSync2, execSync as execSync5, spawn as spawn6 } from "child_process";
 import { existsSync as existsSync10, readFileSync as readFileSync7 } from "fs";
 import { homedir as homedir10 } from "os";
-import { dirname as dirname4, join as join15, normalize } from "path";
-var LINUX_APP_PROFILE_DIR = join15(homedir10(), ".relay-ai", "antigravity", "app-profile");
-var LINUX_IDE_PROFILE_DIR = join15(homedir10(), ".relay-ai", "antigravity", "profile");
+import { dirname as dirname4, join as join14, normalize } from "path";
+var LINUX_APP_PROFILE_DIR = join14(homedir10(), ".relay-ai", "antigravity", "app-profile");
+var LINUX_IDE_PROFILE_DIR = join14(homedir10(), ".relay-ai", "antigravity", "profile");
 function sleep(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
@@ -12448,7 +12168,7 @@ function linuxAntigravityBinary() {
   const candidates = [
     "/usr/share/antigravity/antigravity",
     "/opt/antigravity/antigravity",
-    join15(homedir10(), ".local", "share", "antigravity", "antigravity")
+    join14(homedir10(), ".local", "share", "antigravity", "antigravity")
   ];
   for (const candidate of candidates) {
     if (existsSync10(candidate)) return candidate;
@@ -12613,15 +12333,15 @@ function quitAntigravityAppGracefully() {
 function getDefaultAntigravityIdeProfileDir() {
   const binary = findAntigravityIdeBinary();
   if (!binary) throw new Error("Antigravity IDE not found.");
-  const appDir = process.platform === "darwin" ? join15(binary.slice(0, binary.indexOf(".app/") + 4), "Contents", "Resources", "app") : join15(dirname4(binary), "resources", "app");
-  const product = JSON.parse(readFileSync7(join15(appDir, "product.json"), "utf8"));
+  const appDir = process.platform === "darwin" ? join14(binary.slice(0, binary.indexOf(".app/") + 4), "Contents", "Resources", "app") : join14(dirname4(binary), "resources", "app");
+  const product = JSON.parse(readFileSync7(join14(appDir, "product.json"), "utf8"));
   const name = product.nameShort;
   if (!name || /[\\/]/.test(name) || name === "." || name === "..") {
     throw new Error("Cannot identify the installed Antigravity IDE profile.");
   }
-  const base = process.platform === "darwin" ? join15(homedir10(), "Library", "Application Support") : process.platform === "win32" ? process.env["APPDATA"] ?? join15(homedir10(), "AppData", "Roaming") : process.env["XDG_CONFIG_HOME"] ?? join15(homedir10(), ".config");
-  const profile = join15(base, name);
-  if (!existsSync10(join15(profile, "User"))) {
+  const base = process.platform === "darwin" ? join14(homedir10(), "Library", "Application Support") : process.platform === "win32" ? process.env["APPDATA"] ?? join14(homedir10(), "AppData", "Roaming") : process.env["XDG_CONFIG_HOME"] ?? join14(homedir10(), ".config");
+  const profile = join14(base, name);
+  if (!existsSync10(join14(profile, "User"))) {
     throw new Error("The normal Antigravity IDE profile was not found. Open the IDE normally first.");
   }
   return profile;
@@ -12729,15 +12449,15 @@ function findAntigravityAppBinary() {
   const override = getAppPathOverride("antigravity");
   if (override) return existsSync10(override) ? override : null;
   if (process.platform === "win32") {
-    const localAppData = process.env["LOCALAPPDATA"] ?? join15(homedir10(), "AppData", "Local");
-    const winPath = join15(localAppData, "Programs", "Antigravity", "Antigravity.exe");
+    const localAppData = process.env["LOCALAPPDATA"] ?? join14(homedir10(), "AppData", "Local");
+    const winPath = join14(localAppData, "Programs", "Antigravity", "Antigravity.exe");
     return existsSync10(winPath) ? winPath : null;
   }
   if (process.platform === "linux") return linuxAntigravityBinary();
   if (process.platform !== "darwin") return null;
   const defaultPath = "/Applications/Antigravity.app/Contents/MacOS/Antigravity";
   if (existsSync10(defaultPath)) return defaultPath;
-  const homePath = join15(homedir10(), "Applications", "Antigravity.app", "Contents", "MacOS", "Antigravity");
+  const homePath = join14(homedir10(), "Applications", "Antigravity.app", "Contents", "MacOS", "Antigravity");
   if (existsSync10(homePath)) return homePath;
   return null;
 }
@@ -12745,15 +12465,15 @@ function findAntigravityIdeBinary() {
   const override = getAppPathOverride("antigravity-ide");
   if (override) return existsSync10(override) ? override : null;
   if (process.platform === "win32") {
-    const localAppData = process.env["LOCALAPPDATA"] ?? join15(homedir10(), "AppData", "Local");
-    const winPath = join15(localAppData, "Programs", "Antigravity IDE", "Antigravity IDE.exe");
+    const localAppData = process.env["LOCALAPPDATA"] ?? join14(homedir10(), "AppData", "Local");
+    const winPath = join14(localAppData, "Programs", "Antigravity IDE", "Antigravity IDE.exe");
     return existsSync10(winPath) ? winPath : null;
   }
   if (process.platform === "linux") return linuxAntigravityBinary();
   if (process.platform !== "darwin") return null;
   const defaultPath = "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide";
   if (existsSync10(defaultPath)) return defaultPath;
-  const homePath = join15(homedir10(), "Applications", "Antigravity IDE.app", "Contents", "Resources", "app", "bin", "antigravity-ide");
+  const homePath = join14(homedir10(), "Applications", "Antigravity IDE.app", "Contents", "Resources", "app", "bin", "antigravity-ide");
   if (existsSync10(homePath)) return homePath;
   return null;
 }
@@ -12820,7 +12540,7 @@ function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs, options = 
     }
     const args = [];
     if (!options.existingProfile) {
-      const relayExtensionsDir = join15(homedir10(), ".relay-ai", "antigravity", "extensions");
+      const relayExtensionsDir = join14(homedir10(), ".relay-ai", "antigravity", "extensions");
       args.push(`--user-data-dir=${profileDir}`, `--extensions-dir=${relayExtensionsDir}`);
     } else {
       args.push(`--user-data-dir=${profileDir}`);
@@ -12868,15 +12588,21 @@ function launchAntigravityIde(env, profileDir, gatewayUrl, extraArgs, options = 
 
 // src/antigravity.ts
 import { homedir as homedir11 } from "os";
-import { join as join16 } from "path";
+import { join as join15 } from "path";
 var SHUTDOWN_DRAIN_MS = 500;
 var AGY_FAVORITES_PROVIDER_ID = "__relay_agy_favorites__";
 var AGY_FAVORITES_PROVIDER_LABEL = "\u2B50 Favorites Catalog";
+var AGY_POOL_PROVIDER_ID = "__relay_agy_pool__";
+var POOL_LAUNCH_LABEL = "Relay Free Pool";
 function agyArgsIncludeModelFlag(args) {
   return args.some((arg) => arg === "--model" || arg.startsWith("--model="));
 }
 function agyLaunchModelLabel(routes) {
   const first = routes[0];
+  if (first.providerId === "relay-free-pool") {
+    const pool = routes.filter((route) => route.providerId === "relay-free-pool");
+    return (pool.find((route) => route.reasoningEffort === "medium") ?? first).displayName;
+  }
   const medium = routes.find((route) => route.providerId === first.providerId && route.modelId === first.modelId && route.reasoningEffort === "medium");
   return (medium ?? first).displayName;
 }
@@ -12954,6 +12680,13 @@ async function resolveAntigravityLaunch(prefs, boot) {
     },
     ...allProviders.map((lp) => providerSelectOption(lp))
   ];
+  if ((await buildAntigravityLaunchPoolRows(allProviders, 1, "rows")).length > 0) {
+    providerOptions.splice(1, 0, {
+      value: AGY_POOL_PROVIDER_ID,
+      label: pc8.cyan("\u{1F3CA} " + POOL_LAUNCH_LABEL),
+      hint: "experimental \xB7 starts on the pool, falls back across your free models"
+    });
+  }
   const initialProvider = prefs.lastAntigravityProvider && providerOptions.some((o) => o.value === prefs.lastAntigravityProvider) ? prefs.lastAntigravityProvider : providerOptions[0].value;
   const conflicts = detectConflicts();
   let currentInitialProvider = initialProvider;
@@ -12967,6 +12700,7 @@ async function resolveAntigravityLaunch(prefs, boot) {
       p13.cancel("Cancelled.");
       return null;
     }
+    if (chosen === AGY_POOL_PROVIDER_ID) return { startOnPool: true, allProviders };
     if (chosen === AGY_FAVORITES_PROVIDER_ID) {
       const favoriteSelection = await pickFavoriteStartModel(
         allProviders,
@@ -13008,17 +12742,19 @@ async function resolveAndBuildRoutes(provider, model, allProviders, prefs, opts)
     provider,
     model,
     allProviders,
-    favorites: provider.launchAllModels ? provider.models.map((model2) => ({ providerId: provider.id, modelId: model2.id })) : prefs.favoriteModels ?? [],
+    startOnPool: opts.startOnPool,
+    favorites: provider?.launchAllModels ? provider.models.map((model2) => ({ providerId: provider.id, modelId: model2.id })) : prefs.favoriteModels ?? [],
     maxRoutes: opts.maxRoutes,
     effortMode: opts.effortMode
   });
   if (!result) {
-    p13.log.error(`No credential for ${provider.name}. Run: relay-ai providers auth ${provider.id} or add an API key.`);
+    if (opts.startOnPool) p13.log.error("No servable Relay Free Pool member for Antigravity. Run: relay-ai pool verify");
+    else p13.log.error(`No credential for ${provider.name}. Run: relay-ai providers auth ${provider.id} or add an API key.`);
     return null;
   }
   if (result.routes.length > 1) {
     const effortNote = opts.effortMode === "slider" ? `each model's low/medium/high/max share one row with an effort slider.` : opts.effortMode === "submenu" ? `each model's low/medium/high share one row with an effort submenu.` : `effort levels are listed separately.`;
-    if (provider.launchAllModels) {
+    if (provider?.launchAllModels) {
       const modelCount = new Set(result.routes.map((route) => `${route.providerId}:${route.modelId}`)).size;
       p13.log.info(
         `All provider models mode active \u2014 ${modelCount} models, ${result.routes.length} entries; favorites will not be used. ${effortNote}`
@@ -13146,8 +12882,11 @@ async function runAntigravityCommand(intro, tracePrefix, trace, boot, launch, op
   const selection = await resolveAntigravityLaunch(prefs, boot);
   if (!selection) return 1;
   const { provider, model, allProviders } = selection;
+  const startOnPool = selection.startOnPool === true;
+  const launchName = startOnPool ? POOL_LAUNCH_LABEL : formatCodexModelLabel(model);
+  const launchVia = startOnPool ? "your free models" : provider.name;
   const accountRisk = assessEnterpriseAccountRisk(tracePrefix, prefs);
-  if (accountRisk && !await confirmEnterpriseAccountUse(accountRisk, provider.name)) {
+  if (accountRisk && !await confirmEnterpriseAccountUse(accountRisk, launchVia)) {
     return 1;
   }
   const versionResult = opts.versionGuard ? readAntigravityCliVersion() : { version: "1.0.10" };
@@ -13164,13 +12903,11 @@ async function runAntigravityCommand(intro, tracePrefix, trace, boot, launch, op
     maxRoutes: routeLimit,
     pauseForCapacityWarning: opts.pauseForCapacityWarning ?? false,
     childArgs: opts.childArgs ?? [],
-    effortMode
+    effortMode,
+    startOnPool
   });
   if (!routeResult) return 1;
-  savePreferences({
-    lastAntigravityProvider: provider.id,
-    lastAntigravityModel: model.id
-  });
+  savePreferences(startOnPool ? { lastAntigravityProvider: AGY_POOL_PROVIDER_ID } : { lastAntigravityProvider: provider.id, lastAntigravityModel: model.id });
   const traceLogPath = trace ? getAntigravityDebugLogPath(tracePrefix) : void 0;
   const logFn = traceLogPath ? makeTraceLogger(traceLogPath) : void 0;
   let gatewayHandle;
@@ -13186,9 +12923,9 @@ async function runAntigravityCommand(intro, tracePrefix, trace, boot, launch, op
     return 1;
   }
   p13.log.info(`Cloud Code gateway on ${pc8.cyan(`127.0.0.1:${gatewayHandle.port}`)}`);
-  p13.log.success(`Active model: ${formatCodexModelLabel(model)} ${pc8.dim("via")} ${provider.name}`);
+  p13.log.success(`Active model: ${launchName} ${pc8.dim("via")} ${launchVia}`);
   if (traceLogPath) p13.log.info(`Gateway trace \u2192 ${pc8.dim(traceLogPath)}`);
-  relayOutro("Launching", `${formatCodexModelLabel(model)} (${provider.name})`);
+  relayOutro("Launching", `${launchName} (${launchVia})`);
   try {
     const cleanEnv = buildAntigravityChildEnv(gatewayHandle.url);
     return await launch(cleanEnv, routeResult.routes, gatewayHandle);
@@ -13213,7 +12950,7 @@ async function runAntigravityAppCommand(childArgs, trace = false, boot) {
     trace,
     boot,
     async (env, _routes, gatewayHandle) => {
-      const profileDir = join16(homedir11(), ".relay-ai", "antigravity", "app-profile");
+      const profileDir = join15(homedir11(), ".relay-ai", "antigravity", "app-profile");
       if (isAntigravityAppRunning(profileDir)) {
         const restart = await p13.confirm({
           message: "Restart Antigravity to apply this Relay gateway?",
@@ -13229,7 +12966,7 @@ async function runAntigravityAppCommand(childArgs, trace = false, boot) {
           await waitForAntigravityAppQuit(profileDir);
         }
       }
-      clearAppLastSelectedModel(join16(homedir11(), ".gemini", "antigravity", "antigravity_state.pbtxt"));
+      clearAppLastSelectedModel(join15(homedir11(), ".gemini", "antigravity", "antigravity_state.pbtxt"));
       const launchCode = await launchAntigravityApp(env, profileDir, gatewayHandle.url, childArgs);
       if (launchCode !== 0) return launchCode;
       p13.log.info("Antigravity is using the Relay Cloud Code gateway.");
@@ -13349,7 +13086,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
             }
           }
         }
-        const profileDir = join16(homedir11(), ".relay-ai", "antigravity", "profile");
+        const profileDir = join15(homedir11(), ".relay-ai", "antigravity", "profile");
         if (isAntigravityIdeRunning(profileDir)) {
           const restart = await p13.confirm({
             message: "Restart Antigravity IDE to apply this Relay gateway?",
@@ -13397,7 +13134,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
 // src/codex-app.ts
 import pc9 from "picocolors";
 import * as p14 from "@clack/prompts";
-import { join as join19 } from "path";
+import { join as join18 } from "path";
 
 // src/codex/app-provider-routes.ts
 function codexRouteToProxyRoute(provider, model, apiKey) {
@@ -13491,13 +13228,13 @@ async function buildCodexAppProviderCatalogRoutes(provider, apiKey, selectedMode
 
 // src/codex/app-config.ts
 import { existsSync as existsSync11, readFileSync as readFileSync8, rmSync as rmSync5, writeFileSync as writeFileSync7, mkdirSync as mkdirSync6 } from "fs";
-import { dirname as dirname5, join as join17 } from "path";
+import { dirname as dirname5, join as join16 } from "path";
 import { parse as parse2, stringify } from "smol-toml";
 function getCodexConfigPath() {
-  return join17(getCodexHome(), "config.toml");
+  return join16(getCodexHome(), "config.toml");
 }
 function getCodexAppSidecarProfilePath() {
-  return join17(getCodexHome(), `${CODEX_APP_PROVIDER_ID}.config.toml`);
+  return join16(getCodexHome(), `${CODEX_APP_PROVIDER_ID}.config.toml`);
 }
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -13792,19 +13529,19 @@ import {
   rmSync as rmSync6,
   statSync as statSync2
 } from "fs";
-import { basename as basename2, join as join18 } from "path";
-import { createHash as createHash5 } from "crypto";
+import { basename as basename2, join as join17 } from "path";
+import { createHash as createHash4 } from "crypto";
 function getAppSessionLockPath(env = process.env) {
-  return join18(getRelayAiCodexDir(env), "session-app.json");
+  return join17(getRelayAiCodexDir(env), "session-app.json");
 }
 function getAppRestoreStatePath(env = process.env) {
-  return join18(getRelayAiCodexDir(env), "app-restore-state.json");
+  return join17(getRelayAiCodexDir(env), "app-restore-state.json");
 }
 function getAppCatalogPath(providerId, env = process.env) {
-  return join18(getRelayAiCodexDir(env), `app-models-${providerId}.json`);
+  return join17(getRelayAiCodexDir(env), `app-models-${providerId}.json`);
 }
 function fileSha2562(path3) {
-  return createHash5("sha256").update(readFileSync10(path3)).digest("hex");
+  return createHash4("sha256").update(readFileSync10(path3)).digest("hex");
 }
 function readAppSessionLock(env = process.env) {
   const path3 = getAppSessionLockPath(env);
@@ -13849,7 +13586,7 @@ function backupConfigToml(env = process.env) {
   const backupsDir = getBackupsDir(env);
   mkdirSync7(backupsDir, { recursive: true });
   const base = basename2(configPath);
-  const backupPath = join18(backupsDir, `${base}.${Date.now()}.bak`);
+  const backupPath = join17(backupsDir, `${base}.${Date.now()}.bak`);
   copyFileSync3(configPath, backupPath);
   return backupPath;
 }
@@ -13866,7 +13603,7 @@ function saveAppRestoreStateBeforePatch(env = process.env) {
 function ownedAppCatalogPaths(env = process.env) {
   const codexDir = getRelayAiCodexDir(env);
   if (!existsSync12(codexDir)) return [];
-  return readdirSync2(codexDir).filter((n) => n.startsWith("app-models-") && n.endsWith(".json")).map((n) => join18(codexDir, n));
+  return readdirSync2(codexDir).filter((n) => n.startsWith("app-models-") && n.endsWith(".json")).map((n) => join17(codexDir, n));
 }
 function removeAppCatalogs(env = process.env) {
   const removed = [];
@@ -13884,7 +13621,7 @@ function newestConfigBackup(env = process.env) {
   if (!existsSync12(backupDir)) return null;
   const configBase = basename2(getCodexConfigPath());
   const candidates = readdirSync2(backupDir).filter((name) => name.startsWith(`${configBase}.`) && name.endsWith(".bak")).map((name) => {
-    const path3 = join18(backupDir, name);
+    const path3 = join17(backupDir, name);
     try {
       return { path: path3, mtimeMs: statSync2(path3).mtimeMs };
     } catch {
@@ -14345,6 +14082,7 @@ async function runCodexAppCommand(args, opts = {}) {
   const prefs = loadPreferences();
   const additivePool = additivePoolPreferences(prefs);
   const appAdditive = additivePool ? createAdditivePoolRuntime(additivePool, providersForPicker(catalog), { appCatalog: true }) : void 0;
+  if (appAdditive && additivePool) await warnDisabledPoolMembers(providersForPicker(catalog), additivePool);
   const additivePoolRuntime = appAdditive?.runtime;
   const additivePoolModel = appAdditive?.catalog;
   if (additivePool && !appAdditive && !configOnly) {
@@ -14568,7 +14306,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
     }
   };
   try {
-    const catalogPath = mixedPlan ? join19(getRelayAiCodexDir(), "app-models-mixed.json") : favoritesActive && resolvedFavorites.length > 0 ? getFavoritesAppCatalogPath() : getAppCatalogPath(route.providerId);
+    const catalogPath = mixedPlan ? join18(getRelayAiCodexDir(), "app-models-mixed.json") : favoritesActive && resolvedFavorites.length > 0 ? getFavoritesAppCatalogPath() : getAppCatalogPath(route.providerId);
     const activeRoute = mixedPlan ? {
       tier: "proxy",
       modelId: mixedPlan.selectedSlug,
@@ -14788,25 +14526,25 @@ import * as p15 from "@clack/prompts";
 // src/claude-desktop/app-config.ts
 import { existsSync as existsSync13, readFileSync as readFileSync11, writeFileSync as writeFileSync8, mkdirSync as mkdirSync8 } from "fs";
 import { homedir as homedir12 } from "os";
-import { join as join20, dirname as dirname6 } from "path";
+import { join as join19, dirname as dirname6 } from "path";
 import { randomUUID as randomUUID6 } from "crypto";
 function getClaudeDesktopHome() {
   if (process.platform === "win32") {
-    return join20(process.env.LOCALAPPDATA || join20(homedir12(), "AppData", "Local"), "Claude-3p");
+    return join19(process.env.LOCALAPPDATA || join19(homedir12(), "AppData", "Local"), "Claude-3p");
   }
   if (process.platform === "linux") {
-    return join20(process.env.XDG_CONFIG_HOME || join20(homedir12(), ".config"), "Claude-3p");
+    return join19(process.env.XDG_CONFIG_HOME || join19(homedir12(), ".config"), "Claude-3p");
   }
-  return join20(homedir12(), "Library", "Application Support", "Claude-3p");
+  return join19(homedir12(), "Library", "Application Support", "Claude-3p");
 }
 function getConfigLibraryPath() {
-  return join20(getClaudeDesktopHome(), "configLibrary");
+  return join19(getClaudeDesktopHome(), "configLibrary");
 }
 function getMetaJsonPath() {
-  return join20(getConfigLibraryPath(), "_meta.json");
+  return join19(getConfigLibraryPath(), "_meta.json");
 }
 function getClaudeDesktopConfigJsonPath() {
-  return join20(getClaudeDesktopHome(), "claude_desktop_config.json");
+  return join19(getClaudeDesktopHome(), "claude_desktop_config.json");
 }
 function readDesktopConfigJson() {
   const path3 = getClaudeDesktopConfigJsonPath();
@@ -14868,7 +14606,7 @@ function buildRelayAiConfig(proxyPort) {
 }
 function writeRelayAiConfig(proxyPort) {
   const uuid = randomUUID6();
-  const configPath = join20(getConfigLibraryPath(), `${uuid}.json`);
+  const configPath = join19(getConfigLibraryPath(), `${uuid}.json`);
   const config = buildRelayAiConfig(proxyPort);
   mkdirSync8(dirname6(configPath), { recursive: true });
   writeFileSync8(configPath, `${JSON.stringify(config, null, 2)}
@@ -15061,9 +14799,9 @@ import {
   unlinkSync as unlinkSync4,
   writeFileSync as writeFileSync9
 } from "fs";
-import { dirname as dirname7, join as join21 } from "path";
+import { dirname as dirname7, join as join20 } from "path";
 function getSessionLockPath2() {
-  return join21(getClaudeDesktopHome(), ".relay-ai.lock");
+  return join20(getClaudeDesktopHome(), ".relay-ai.lock");
 }
 function inspectSessionLock() {
   const path3 = getSessionLockPath2();
@@ -15128,7 +14866,7 @@ function safeCleanupStep(label, fn) {
   }
 }
 function removeRelayAiConfig(uuid) {
-  const configPath = join21(getConfigLibraryPath(), `${uuid}.json`);
+  const configPath = join20(getConfigLibraryPath(), `${uuid}.json`);
   if (existsSync14(configPath)) {
     try {
       rmSync7(configPath, { force: true });
@@ -15336,7 +15074,9 @@ async function runClaudeAppCommand(args, boot) {
   let autoPool;
   if (prefs.freePool?.enabled === true) {
     try {
-      autoPool = prepareClaudeAutoPool(prefs, await fetchProviderCatalog());
+      const poolProviders = await fetchProviderCatalog();
+      autoPool = prepareClaudeAutoPool(prefs, poolProviders);
+      if (autoPool) await warnDisabledPoolMembers(poolProviders, autoPool.pool);
     } catch (err) {
       p15.log.warn(`Relay Free Pool is enabled but could not be prepared: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -15525,15 +15265,15 @@ ${pc10.bold("Claude Desktop 3P Mode Active")}`);
 // src/ai-doc.ts
 import { existsSync as existsSync15, mkdirSync as mkdirSync10, readFileSync as readFileSync13, writeFileSync as writeFileSync10 } from "fs";
 import { homedir as homedir13 } from "os";
-import { join as join22 } from "path";
+import { join as join21 } from "path";
 var SKILL_DIR_NAME = "relay-ai-cli";
 var SKILL_INSTALL_DIRS = [
-  join22(getAppHome(), "skills"),
-  join22(homedir13(), ".claude", "skills"),
-  join22(homedir13(), ".agents", "skills"),
-  join22(homedir13(), ".codex", "skills"),
-  join22(homedir13(), ".cursor", "skills"),
-  join22(homedir13(), ".cursor", "skills-cursor")
+  join21(getAppHome(), "skills"),
+  join21(homedir13(), ".claude", "skills"),
+  join21(homedir13(), ".agents", "skills"),
+  join21(homedir13(), ".codex", "skills"),
+  join21(homedir13(), ".cursor", "skills"),
+  join21(homedir13(), ".cursor", "skills-cursor")
 ];
 function parseSkillVersion(content) {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -15547,7 +15287,7 @@ function parseSkillVersion(content) {
   return null;
 }
 function readInstalledSkillVersion(skillDir) {
-  const skillPath = join22(skillDir, "SKILL.md");
+  const skillPath = join21(skillDir, "SKILL.md");
   if (!existsSync15(skillPath)) return null;
   try {
     const head = readFileSync13(skillPath, "utf-8").slice(0, 1024);
@@ -15560,8 +15300,8 @@ function readInstalledSkillVersion(skillDir) {
 }
 function skillInstallTargets() {
   return SKILL_INSTALL_DIRS.map((dir) => {
-    const skillDir = join22(dir, SKILL_DIR_NAME);
-    return { skillDir, skillPath: join22(skillDir, "SKILL.md") };
+    const skillDir = join21(dir, SKILL_DIR_NAME);
+    return { skillDir, skillPath: join21(skillDir, "SKILL.md") };
   });
 }
 function formatProviderModels(provider) {
@@ -16239,7 +15979,7 @@ import {
   statSync as statSync3,
   writeFileSync as writeFileSync12
 } from "fs";
-import { dirname as dirname9, join as join24, resolve } from "path";
+import { dirname as dirname9, join as join23, resolve } from "path";
 import forge from "node-forge";
 var SESSION_ROOT = "http-proxy-sessions";
 var OWNER_FILE = "owner.pid";
@@ -16259,15 +15999,15 @@ function processIsRunning(pid) {
   }
 }
 function cleanupStaleHttpProxySessions(appHome = getAppHome()) {
-  const root = join24(appHome, SESSION_ROOT);
+  const root = join23(appHome, SESSION_ROOT);
   if (!existsSync16(root)) return;
   const now = Date.now();
   for (const name of readdirSync3(root)) {
-    const sessionDir = join24(root, name);
+    const sessionDir = join23(root, name);
     try {
       const stat = statSync3(sessionDir);
       if (!stat.isDirectory()) continue;
-      const ownerPath = join24(sessionDir, OWNER_FILE);
+      const ownerPath = join23(sessionDir, OWNER_FILE);
       if (!existsSync16(ownerPath)) {
         if (now - stat.mtimeMs > MID_CREATION_GRACE_MS) {
           rmSync8(sessionDir, { recursive: true, force: true });
@@ -16290,13 +16030,13 @@ function cleanupStaleHttpProxySessions(appHome = getAppHome()) {
 }
 function createHttpProxyCertificates(appHome = getAppHome()) {
   cleanupStaleHttpProxySessions(appHome);
-  const root = join24(appHome, SESSION_ROOT);
+  const root = join23(appHome, SESSION_ROOT);
   mkdirSync12(root, { recursive: true, mode: 448 });
   chmodSync3(root, 448);
-  const sessionDir = join24(root, randomUUID7());
+  const sessionDir = join23(root, randomUUID7());
   mkdirSync12(sessionDir, { mode: 448 });
   chmodSync3(sessionDir, 448);
-  writeFileSync12(join24(sessionDir, OWNER_FILE), `${process.pid}
+  writeFileSync12(join23(sessionDir, OWNER_FILE), `${process.pid}
 `, { mode: 384 });
   try {
     const caKeys = forge.pki.rsa.generateKeyPair(2048);
@@ -16331,7 +16071,7 @@ function createHttpProxyCertificates(appHome = getAppHome()) {
     ]);
     server.sign(caKeys.privateKey, forge.md.sha256.create());
     const caCert = forge.pki.certificateToPem(ca);
-    const caCertPath = join24(sessionDir, "relay-ai-ca.pem");
+    const caCertPath = join23(sessionDir, "relay-ai-ca.pem");
     writeFileSync12(caCertPath, caCert, { encoding: "utf8", mode: 384 });
     chmodSync3(caCertPath, 384);
     let cleaned = false;
@@ -16377,7 +16117,7 @@ function createHttpProxyCaBundle(relayCaCertPath, additionalCaCertPath) {
   const relayCa = readFileSync14(relayCaCertPath, "utf8").trimEnd();
   const additionalCa = readFileSync14(additionalCaCertPath, "utf8").trim();
   if (!additionalCa) return relayCaCertPath;
-  const combinedPath = join24(dirname9(relayCaCertPath), "combined-ca.pem");
+  const combinedPath = join23(dirname9(relayCaCertPath), "combined-ca.pem");
   writeFileSync12(
     combinedPath,
     `${relayCa}
@@ -18031,7 +17771,7 @@ async function runClaudeCommand(parsed) {
       console.error(pc11.red("No free pool members. Add one with: relay-ai pool add <provider-account> <model>"));
       return 1;
     }
-    const fresh = pool.receipts.filter((receipt) => receipt.verifiedAt <= Date.now() && receipt.expiresAt > Date.now());
+    const fresh = pool.receipts.filter((receipt) => receiptInForce(receipt, Date.now()));
     if (fresh.length === 0) {
       console.error(pc11.red("No verified free pool members. Run: relay-ai pool verify"));
       return 1;
@@ -18070,6 +17810,7 @@ async function runClaudeCommand(parsed) {
         return 1;
       }
       const health = new PoolHealthStore();
+      await warnDisabledPoolMembers(providers, pool, health);
       const runtime = new ClaudePoolRuntime(pool, (body, signal, sessionId, onSkip) => prepareClaudePoolRoutes({
         pool,
         providers,
@@ -18179,6 +17920,7 @@ Error: ${launchPlan.error}
     return 0;
   }
   const autoPool = dryRun || parsed.claudePool ? void 0 : prepareClaudeAutoPool(prefs, catalog);
+  if (autoPool) await warnDisabledPoolMembers(catalog, autoPool.pool);
   if (autoPool) switchMenuActive = true;
   const runTransparentProxy = async (selected) => {
     if (dryRun) {
@@ -18687,11 +18429,11 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-P3LEQGD6.js");
+    const { runUiCommand } = await import("./ui-command-COTBCNRX.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-MMSKFSSA.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-RAASAFIS.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

@@ -47,6 +47,49 @@ An independent re-check of the fixes above, with probes run against both the ori
 
 A failed request used to block an identical retry for 60 s even when nothing reached the client. Codex and Claude now release the guard when nothing was sent and no member produced an answer, so a client's automatic retry runs again (cooldowns recorded by the first try make it fail fast on the same members). Failures after content was sent, or after an answer was produced but could not be stored, still block an identical retry. Whether Codex's automatic retry resends an identical turn id and body is likely but not confirmed against a real Codex run.
 
+## Antigravity pool on the shared coordinator
+
+The Antigravity pool used to be its own loop in the Cloud Code gateway: members in order, a capture sink holding output until the first meaningful chunk, and no timeouts, cooldowns, finish validation, attempt cap, context check or cancellation. None of the Codex/Claude fixes reached it. It now runs on the same coordinator, health store and SDK route as the other two pools.
+
+| Behaviour | Before | Now |
+| --- | --- | --- |
+| Hung member | Stalled the request until the socket gave up | 20 s first-content / 20 s idle / 60 s total limits, then failover |
+| Cooldowns | None; a dead or rate-limited member was retried first on every request | Shared health store (same file as Codex/Claude): failures cool the member, 429 and 402 cool the account, a cooling member is skipped before it is even prepared |
+| Finish | A stream with no finish, or a content-filter finish, counted as an answer | Missing or unusable finish is a member failure |
+| Fresh evidence | Receipts were checked once at launch | Receipt freshness, billing safety and target are rechecked on every request |
+| Context | An oversized request went to a small member and failed there | Same window check as the other pools (output reserve + margin) |
+| Cancellation | A closed client left the provider call and any recovery claim running | The client closing the response aborts the attempt and releases the claim |
+| Tool cap, tool choice | Not applied to pool members | At most 128 tools; forced tool choice reaches the member |
+| After content was sent | Error line, no failover | Same, via the coordinator |
+| Non-streaming | Member loop | Same coordinator; collected before anything is sent, so a member that fails mid-answer is replaced by the next one |
+
+The Cloud Code formatter was extracted from the streaming handler into `writeCloudCodeStream` and is shared by concrete routes and the pool; concrete-route output is unchanged (all 63 existing gateway tests pass). Member evidence (`poolEvidence`: revision + receipt) is attached to each member route at launch. `src/antigravity/pool-failover.ts` and its test were removed.
+
+Proof: `tests/antigravity-pool-runtime.test.ts` (16 cases). Twelve fail against the previous gateway: timeout plus cooldown (and the cooling member not being prepared), no failover after content, missing/unusable finish, the non-streaming path with the 429 account cooldown, client disconnect, expired receipt, context window, a row built by the real launch builder (with scopes shared with the other pools), a half-open recovery claim released on disconnect, a broken stream logged as given up rather than served, passed-over members logged once and only ahead of the answerer, and exhaustion reported correctly. The other four describe behaviour that was already correct and is preserved. A stream that breaks after content is closed with a visible error line, is logged as failed/gave-up (not served), and its reasoning is not remembered for echo. A cancelled request writes nothing to the closed socket.
+
+Not applicable to Antigravity: Relay-owned history, signature provenance and the duplicate-request/retry guards (Cloud Code resends the whole history each turn and the formatter emits no route-bound signatures). Not live-tested: a real Antigravity session against real free providers.
+
+## Saved tests no longer expire, and disabled members
+
+**No time expiry.** A pool member's saved Test result used to lapse after 24 hours, which hid the whole pool until every member was re-tested. It now stays in force until the member's endpoint changes (account, base URL, model or headers are part of the match) or the member is removed. The `expiresAt` field is kept in saved data but ignored. Saved results from before Antigravity support are treated as usable there (a member that passed the text and tool Test can serve the Auto row).
+
+**Disabled state.** A member the provider says is gone is switched off until the user tests it again. It is not removed: it stays in the pool list, shows as **Disabled** with the reason and "Test it again to re-enable", is skipped by Codex, Claude and Antigravity, and is reported in red when a launch starts and in the pool log. A passing Test (UI or CLI) clears it.
+
+| Response | Result |
+| --- | --- |
+| 400/402/403/404/410 whose text says the model does not exist, was deprecated, decommissioned or retired, the free promotion/access ended, or it is not in the plan | **Disabled** |
+| A bare 404 or 410 with no explanation | Cooled like an access failure; the **second** consecutive one disables (a success in between starts over) |
+| 429, 5xx, timeouts, network errors, empty or truncated streams, bad finish | Cooldown with automatic recovery (unchanged) |
+| 402 credits exhausted | Whole-account cooldown (unchanged) |
+| 401/403 without a verdict in the text | Access cooldown (unchanged) |
+| 400/422 request rejected, context too large, "does not support tools/temperature", "parameter deprecated" | Nothing: the request, not the model, was the problem |
+
+Disabled is final until a Test clears it: later failures and healthy marks cannot soften it, it survives restarts, and it applies to that model on that endpoint only (sibling models and the account are untouched; changing the endpoint makes it a different member). Disabling applies only to explicit verdicts, never to repeated generic failures.
+
+**Antigravity row reservation.** agy's slider lists every effort level of every favorite, which filled all 50 catalog slots and left the pool no row. The pool's rows are now built first and reserved.
+
+Proof: `tests/pool-disabled.test.ts` (error classification including look-alike messages that must not disable, store behavior, view, launch warning, log rendering), the disabled case in `tests/antigravity-pool-runtime.test.ts` (disable, skip, loud log, re-enable by clearing), and the reservation case in `tests/antigravity-launch-routes.test.ts` (fails without the reservation).
+
 ## Reproduction commands
 
     npx vitest run tests/pool-review-regressions.test.ts tests/pool-context.test.ts tests/pool-continuation.test.ts tests/pool-codex-runtime.test.ts tests/pool-codex-response.test.ts tests/pool-health.test.ts

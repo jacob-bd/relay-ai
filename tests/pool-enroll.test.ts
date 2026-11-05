@@ -19,7 +19,7 @@ describe('pool enrollment receipts', () => {
     if (result.status !== 'verified') return;
     expect(result.receipt).toMatchObject({
       member, verifiedAt: 1000, expiresAt: 1000 + 86400000, tools: true,
-      contextWindow: 128000, contextSource: 'provider', targets: ['codex', 'claude'],
+      contextWindow: 128000, contextSource: 'provider', targets: ['codex', 'claude', 'antigravity'],
       effortLevels: [], billingSafe: true,
     });
     expect(result.receipt.endpointRevision).toBe(poolEndpointRevision({

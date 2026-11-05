@@ -7,11 +7,14 @@ const receipt: PoolCapabilityReceipt = {
   defaultEffort: 'high', effortLevels: ['high'], billingSafe: true,
 };
 describe('pool capability receipts', () => {
-  it('does not reuse evidence after expiry, account or endpoint changes', () => {
+  it('does not reuse evidence after an account or endpoint change, and never lets it lapse with time', () => {
     expect(currentPoolReceipt([receipt], member, 'rev', 20)).toEqual(receipt);
     expect(currentPoolReceipt([receipt], member, 'changed', 20)).toBeUndefined();
     expect(currentPoolReceipt([receipt], { ...member, providerId: 'account' }, 'rev', 20)).toBeUndefined();
-    expect(currentPoolReceipt([receipt], member, 'rev', 100)).toBeUndefined();
+    // A passed Test stays in force: time alone never invalidates it.
+    expect(currentPoolReceipt([receipt], member, 'rev', 100)).toEqual(receipt);
+    expect(currentPoolReceipt([receipt], member, 'rev', 10 ** 15)).toEqual(receipt);
+    expect(currentPoolReceipt([receipt], member, 'rev', 5)).toBeUndefined();
     expect(currentPoolReceipt([receipt, receipt], member, 'rev', 20)).toBeUndefined();
   });
   it('treats a named default as optional diagnostic evidence, never an Auto prerequisite', () => {

@@ -8,7 +8,7 @@ import {
   probePoolEffort,
   probePoolModel,
   providerRefreshToken
-} from "./chunk-4QAQ4MVE.js";
+} from "./chunk-CKWEYKVD.js";
 import {
   EFFORT_RANK,
   MAX_MODEL_CATALOG,
@@ -28,7 +28,7 @@ import {
   resolveProviderOAuthProviderData,
   shouldHideModel,
   upstreamHttpStatus
-} from "./chunk-MNN6GZ3I.js";
+} from "./chunk-DDFLIKBI.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -41,6 +41,68 @@ import {
 // src/pool/activity.ts
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
+
+// src/pool/errors.ts
+var GONE_PATTERN = new RegExp([
+  String.raw`model[_ -]?not[_ -]?found`,
+  String.raw`model\b[^.\n]{0,60}\b(?:does not exist|doesn't exist|no longer (?:available|supported|exists?)|has been (?:deprecated|retired|removed|discontinued|decommissioned|shut down)|is (?:deprecated|decommissioned|discontinued|retired))`,
+  String.raw`\b(?:deprecated|decommissioned|discontinued|retired|sunset)\b[^.\n]{0,20}\bmodel\b`,
+  String.raw`\bthis model (?:was|has been|is) (?:deprecated|decommissioned|discontinued|retired|removed|shut down)`,
+  String.raw`\bunknown model\b`
+].join("|"), "i");
+var PROMO_PATTERN = new RegExp([
+  // The model's own free access ended. "free trial expired" is account-wide and is a quota matter, not a verdict on one model.
+  String.raw`\bmodel\b[^.\n]{0,60}\b(?:free|promo(?:tion(?:al)?)?)\b[^.\n]{0,40}\b(?:ended|expired|is over|no longer)`,
+  String.raw`\b(?:free|promo(?:tion(?:al)?)?)\b[^.\n]{0,40}\b(?:access|period|offer|pricing)\b[^.\n]{0,40}\b(?:ended|expired|is over)`,
+  String.raw`\bpromo(?:tion(?:al)?)?\b[^.\n]{0,50}\b(?:ended|expired|is over|no longer)`,
+  String.raw`\bno longer (?:free|available for free)`,
+  String.raw`\bnot (?:included )?in (?:your|the) (?:current )?(?:plan|tier|subscription)`,
+  String.raw`MODEL_NOT_IN_PLAN`
+].join("|"), "i");
+var VERDICT_STATUSES = /* @__PURE__ */ new Set([400, 402, 403, 404, 410]);
+var DISABLED_GONE_NOTE = "model no longer available";
+var DISABLED_PROMO_NOTE = "free access ended or not included in the plan";
+function disablingNote(status, text) {
+  if (status === void 0 || !VERDICT_STATUSES.has(status) || !text) return void 0;
+  if (PROMO_PATTERN.test(text)) return DISABLED_PROMO_NOTE;
+  if (GONE_PATTERN.test(text)) return DISABLED_GONE_NOTE;
+  return void 0;
+}
+function poolFailure(error, now = Date.now()) {
+  const value = error;
+  if (value?.name === "AbortError" || value?.code === "ABORT_ERR") return { kind: "canceled" };
+  const status = value?.statusCode;
+  const text = ((value?.message ?? "") + " " + (typeof value?.responseBody === "string" ? value.responseBody.slice(0, 2e3) : "")).trim();
+  if (status !== 429) {
+    const note = disablingNote(status, text);
+    if (note) return { kind: "disabled", status, note };
+  }
+  if (status === 429) {
+    const raw = Object.entries(value?.responseHeaders ?? {}).find(([key]) => key.toLowerCase() === "retry-after")?.[1];
+    let retryAt;
+    if (raw?.trim()) {
+      const seconds = Number(raw);
+      if (Number.isFinite(seconds) && seconds >= 0) retryAt = now + Math.ceil(seconds * 1e3);
+      else {
+        const parsed = Date.parse(raw);
+        if (Number.isFinite(parsed)) retryAt = Math.max(now, parsed);
+      }
+    }
+    return { kind: "rate-limit", status, retryAt };
+  }
+  if (status === 402) return { kind: "quota", status };
+  if (status === 404 || status === 410) return { kind: "missing", status };
+  if ([401, 403, 404].includes(status ?? 0)) return { kind: "access", status };
+  if (status === 400 && /context.{0,20}(length|window|exceed)|prompt.{0,20}too long/i.test(value?.message ?? "")) return { kind: "context", status };
+  if (status === 400 || status === 422) return { kind: "invalid", status };
+  if (status !== void 0 && status >= 500 || /ECONNRESET|ETIMEDOUT|ENOTFOUND|first-content-timeout|idle-or-total-timeout|provisional-buffer-limit|missing-valid-finish|invalid-finish|stream-error|Pool route entered cooldown/.test(value?.message ?? "")) return { kind: "transient", status };
+  return { kind: "unknown", status };
+}
+function retryPoolFailure(error) {
+  return poolFailure(error).kind !== "canceled";
+}
+
+// src/pool/activity.ts
 import pc from "picocolors";
 var MAX_BYTES = 256 * 1024;
 var KEEP_LINES = 500;
@@ -59,6 +121,8 @@ function poolRouteMember(routeId) {
 }
 function describePoolFailure(error) {
   const raw = error instanceof Error ? error.message : "";
+  const verdict = poolFailure(error);
+  if (verdict.kind === "disabled") return "DISABLED: " + (verdict.note ?? "disabled after an error") + " (run Test to re-enable)";
   if (raw.includes("Simulated failure (RELAY_POOL_FORCE_FAIL)")) return "simulated failure (test switch)";
   if (raw.includes("Pool route entered cooldown")) return "skipped: recovering from an earlier failure";
   const carried = error;
@@ -201,7 +265,8 @@ function attemptLines(tried) {
   for (const t of tried) {
     const name = `${t.providerId}/${t.modelId}`;
     const reason = t.reason ?? "failed";
-    if (reason.startsWith("skipped")) lines.push(pc.yellow(`      \u2013 ${name} skipped: ${reason.replace(/^skipped:\s*/, "")}`));
+    if (/^(skipped: )?DISABLED/.test(reason)) lines.push(pc.bold(pc.red(`      \u26D4 ${name} ${reason.replace(/^skipped:\s*/, "")}`)));
+    else if (reason.startsWith("skipped")) lines.push(pc.yellow(`      \u2013 ${name} skipped: ${reason.replace(/^skipped:\s*/, "")}`));
     else lines.push(pc.red(`      \u2717 ${name} failed: ${reason}`));
     if (t.detail) lines.push(pc.dim(`          ${t.detail}`));
   }
@@ -459,9 +524,557 @@ function localProvidersToServerModels(localProviders) {
   );
 }
 
+// src/pool/health.ts
+import { createHash, randomUUID } from "crypto";
+import { mkdir, open, readFile, rename, unlink, writeFile } from "fs/promises";
+import { join as join3 } from "path";
+var PoolHealthLockTimeoutError = class extends Error {
+  ownerPid;
+  ownerSince;
+  constructor(lockPath, owner) {
+    const holder = owner?.pid ? "pid " + owner.pid + (owner.createdAt ? " since " + new Date(owner.createdAt).toISOString() : "") : "an unreadable owner file";
+    super("Pool health lock is held by " + holder + " (" + lockPath + "); it is not taken over automatically. If that process is gone, a human can clear it with PoolHealthStore.clear(scopes, { forceUnlock: true }).");
+    this.name = "PoolHealthLockTimeoutError";
+    this.ownerPid = owner?.pid;
+    this.ownerSince = owner?.createdAt;
+  }
+};
+var PoolHealthStateCorruptError = class extends Error {
+  constructor(path) {
+    super("Pool health state is unreadable (" + path + "); refusing to route without cooldown knowledge");
+    this.name = "PoolHealthStateCorruptError";
+  }
+};
+var PoolHealthForceUnlockRefusedError = class extends Error {
+  ownerPid;
+  constructor(lockPath, reason, ownerPid) {
+    super("Refusing to force-unlock the pool health lock (" + lockPath + "): " + reason);
+    this.name = "PoolHealthForceUnlockRefusedError";
+    this.ownerPid = ownerPid;
+  }
+};
+var FAILURE_COOLDOWN_BASE_MS = { transient: 6e4, access: 3e5, unknown: 3e4 };
+var FAILURE_COOLDOWN_MAX_MS = 6e5;
+var UNKNOWN_RATE_LIMIT_LADDER_MS = [12e4, 6e5, 36e5, 216e5, 864e5];
+var MAX_ENTRIES = 512;
+var MAX_LABEL_CHARS = 200;
+var RETENTION_MS = 864e5;
+var LOCK_POLL_MS = 10;
+var DEFAULT_LOCK_TIMEOUT_MS = 5e3;
+function poolAccountScope(providerId) {
+  return "account:" + providerId;
+}
+function poolEndpointScope(providerId, endpointRevision, modelId) {
+  return "endpoint:" + providerId + "/" + endpointRevision + "/" + modelId;
+}
+function hashScope(scope) {
+  return createHash("sha256").update(scope).digest("hex");
+}
+var SECRET_PART = /^(?:sk|gsk|xai|nvapi|AIza|hf|ghp)[-_A-Za-z0-9]*$/;
+function sanitizePoolScopeLabel(scope) {
+  const label = scope.split(/([:/])/).map((part) => {
+    if (part === ":" || part === "/") return part;
+    if (SECRET_PART.test(part) || part.length >= 32) return "<redacted:" + hashScope(part).slice(0, 10) + ">";
+    return part.replace(/[^A-Za-z0-9._-]/g, "_");
+  }).join("");
+  return label.length > MAX_LABEL_CHARS ? label.slice(0, MAX_LABEL_CHARS) + "~" : label;
+}
+var DISABLED_FOR_MS = 100 * 365 * 864e5;
+var MISSING_NOTE = "missing";
+var MAX_NOTE_CHARS = 120;
+function emptyStore() {
+  return { version: 1, entries: {} };
+}
+function processAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function normalizeEntry(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("invalid entry");
+  const value = raw;
+  const label = value["label"];
+  const failures = value["failures"];
+  const until = value["until"];
+  const reason = value["reason"];
+  const updatedAt = value["updatedAt"];
+  if (typeof label !== "string" || !label || label.length > MAX_LABEL_CHARS + 1) throw new Error("invalid label");
+  if (typeof failures !== "number" || !Number.isSafeInteger(failures) || failures < 1 || failures > 100) throw new Error("invalid failures");
+  if (typeof until !== "number" || !Number.isFinite(until)) throw new Error("invalid until");
+  if (reason !== "rate-limit" && reason !== "quota" && reason !== "disabled" && !(typeof reason === "string" && reason in FAILURE_COOLDOWN_BASE_MS)) throw new Error("unsupported reason");
+  const note = value["note"];
+  if (note !== void 0 && (typeof note !== "string" || note.length > MAX_NOTE_CHARS)) throw new Error("invalid note");
+  if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) throw new Error("invalid updatedAt");
+  let recovery;
+  const rawClaim = value["recovery"];
+  if (rawClaim !== void 0) {
+    if (!rawClaim || typeof rawClaim !== "object" || Array.isArray(rawClaim)) throw new Error("invalid claim");
+    const claim = rawClaim;
+    if (typeof claim["token"] !== "string" || claim["token"].length < 16) throw new Error("invalid claim token");
+    if (typeof claim["pid"] !== "number" || !Number.isSafeInteger(claim["pid"])) throw new Error("invalid claim pid");
+    if (typeof claim["startedAt"] !== "number" || !Number.isFinite(claim["startedAt"])) throw new Error("invalid claim start");
+    if (claim["superseded"] !== void 0 && typeof claim["superseded"] !== "boolean") throw new Error("invalid claim superseded");
+    recovery = { token: claim["token"], pid: claim["pid"], startedAt: claim["startedAt"], ...claim["superseded"] === true ? { superseded: true } : {} };
+  }
+  return {
+    label,
+    failures,
+    until,
+    reason,
+    updatedAt,
+    ...typeof note === "string" ? { note } : {},
+    ...recovery ? { recovery } : {}
+  };
+}
+function normalizeStore(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("invalid root");
+  const value = raw;
+  if (value["version"] !== 1) throw new Error("unsupported version");
+  const entries = value["entries"];
+  if (!entries || typeof entries !== "object" || Array.isArray(entries)) throw new Error("invalid entries");
+  const state = emptyStore();
+  for (const [key, entry] of Object.entries(entries)) {
+    if (!/^[0-9a-f]{64}$/.test(key)) throw new Error("invalid scope key");
+    state.entries[key] = normalizeEntry(entry);
+  }
+  return state;
+}
+function parseOwner(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return void 0;
+    const value = parsed;
+    const token = value["token"];
+    const pid = value["pid"];
+    const createdAt = value["createdAt"];
+    if (typeof token !== "string" || !token) return void 0;
+    if (typeof pid !== "number" || !Number.isSafeInteger(pid)) return void 0;
+    return { token, pid, createdAt: typeof createdAt === "number" ? createdAt : 0 };
+  } catch {
+    return void 0;
+  }
+}
+async function readOwner(lockPath) {
+  try {
+    return parseOwner(await readFile(lockPath, "utf8"));
+  } catch {
+    return void 0;
+  }
+}
+async function removeOwnerIfContentMatches(lockPath, expected) {
+  let handle;
+  try {
+    handle = await open(lockPath, "r");
+    const content = await handle.readFile("utf8");
+    if (content !== expected) return false;
+    await unlink(lockPath);
+    return true;
+  } catch {
+    return true;
+  } finally {
+    await handle?.close().catch(() => {
+    });
+  }
+}
+async function acquireLock(lockPath, timeoutMs) {
+  const token = randomUUID();
+  const payload = JSON.stringify({ token, pid: process.pid, createdAt: Date.now() });
+  await mkdir(join3(lockPath, ".."), { recursive: true, mode: 448 });
+  const deadline = Date.now() + Math.max(1, timeoutMs);
+  for (; ; ) {
+    try {
+      await writeFile(lockPath, payload, { flag: "wx", mode: 384 });
+      return { token, payload };
+    } catch (error) {
+      const code = error.code;
+      if (code !== "EEXIST") throw error;
+    }
+    if (Date.now() >= deadline) throw await lockTimeout(lockPath);
+    await delay(LOCK_POLL_MS + Math.floor(Math.random() * LOCK_POLL_MS));
+  }
+}
+async function releaseLock(lockPath, payload) {
+  await removeOwnerIfContentMatches(lockPath, payload);
+}
+async function lockTimeout(lockPath) {
+  const owner = await readOwner(lockPath).catch(() => void 0);
+  return new PoolHealthLockTimeoutError(lockPath, owner);
+}
+function prune(state, now) {
+  for (const [key, entry] of Object.entries(state.entries)) {
+    if (!entry.recovery && entry.until <= now - RETENTION_MS) delete state.entries[key];
+  }
+  const keys = Object.keys(state.entries);
+  if (keys.length <= MAX_ENTRIES) return;
+  keys.sort((a, b) => (state.entries[a]?.until ?? 0) - (state.entries[b]?.until ?? 0));
+  for (const key of keys) {
+    if (Object.keys(state.entries).length <= MAX_ENTRIES) break;
+    if (!state.entries[key]?.recovery) delete state.entries[key];
+  }
+}
+var PoolHealthStore = class {
+  root;
+  now;
+  ladder;
+  lockTimeoutMs;
+  constructor(options = {}) {
+    this.root = options.root ?? join3(getAppHome(), "pool");
+    this.now = options.now ?? Date.now;
+    this.ladder = options.ladderMs ?? UNKNOWN_RATE_LIMIT_LADDER_MS;
+    this.lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
+    if (!this.ladder.length || this.ladder.some((step) => !Number.isSafeInteger(step) || step <= 0)) {
+      throw new Error("Invalid rate-limit ladder");
+    }
+  }
+  get statePath() {
+    return join3(this.root, "health.json");
+  }
+  get lockPath() {
+    return join3(this.root, "health.lock");
+  }
+  /** Throws PoolHealthStateCorruptError; the file is left exactly as found. */
+  async readState() {
+    let raw;
+    try {
+      raw = await readFile(this.statePath, "utf8");
+    } catch (error) {
+      if (error.code === "ENOENT") return emptyStore();
+      throw new PoolHealthStateCorruptError(this.statePath);
+    }
+    try {
+      return normalizeStore(JSON.parse(raw));
+    } catch {
+      throw new PoolHealthStateCorruptError(this.statePath);
+    }
+  }
+  async writeState(state) {
+    await mkdir(this.root, { recursive: true, mode: 448 });
+    const temp = this.statePath + ".tmp-" + randomUUID();
+    await writeFile(temp, JSON.stringify(state), { mode: 384 });
+    await rename(temp, this.statePath);
+  }
+  async mutate(work) {
+    await mkdir(this.root, { recursive: true, mode: 448 });
+    const { payload } = await acquireLock(this.lockPath, this.lockTimeoutMs);
+    try {
+      const state = await this.readState();
+      let dirty = false;
+      const result = await work(state, () => {
+        dirty = true;
+      });
+      if (dirty) await this.writeState(state);
+      return result;
+    } finally {
+      await releaseLock(this.lockPath, payload);
+    }
+  }
+  /** A claim is live while its owner pid exists. Age alone never releases it. */
+  claimLive(claim) {
+    if (!claim) return false;
+    return claim.pid === process.pid || processAlive(claim.pid);
+  }
+  /**
+   * Persist a provider failure. Rate limits use the long ladder; transient, access and unknown failures get a
+   * short escalating cooldown (FAILURE_COOLDOWN_BASE_MS); cancellation, context and invalid failures are never written.
+   * Throws PoolHealthLockTimeoutError when a live process holds the lock.
+   */
+  async record(scopes, failure) {
+    const cooled = failure.kind === "missing" ? "access" : failure.kind;
+    const shortBase = cooled in FAILURE_COOLDOWN_BASE_MS ? FAILURE_COOLDOWN_BASE_MS[cooled] : void 0;
+    if (failure.kind !== "rate-limit" && failure.kind !== "quota" && failure.kind !== "disabled" && shortBase === void 0) return { recorded: false, reason: failure.kind };
+    const unique = [...new Set(scopes.filter((scope) => typeof scope === "string" && scope.trim().length > 0))];
+    if (!unique.length) return { recorded: false, reason: "no-scopes" };
+    const now = this.now();
+    return this.mutate((state, touch) => {
+      let until = 0;
+      let disabledNote;
+      for (const scope of unique) {
+        const key = hashScope(scope);
+        const previous = state.entries[key];
+        if (previous?.reason === "disabled") {
+          until = Math.max(until, previous.until);
+          disabledNote = previous.note;
+          continue;
+        }
+        const confirmedMissing = failure.kind === "missing" && previous?.note === MISSING_NOTE && previous.until <= now;
+        if (failure.kind === "disabled" || confirmedMissing) {
+          const note = failure.kind === "disabled" ? failure.note ?? "disabled after an error" : "model not found (404)";
+          state.entries[key] = {
+            label: sanitizePoolScopeLabel(scope),
+            failures: Math.min((previous?.failures ?? 0) + 1, 100),
+            until: now + DISABLED_FOR_MS,
+            reason: "disabled",
+            updatedAt: now,
+            note: note.slice(0, MAX_NOTE_CHARS)
+          };
+          until = Math.max(until, now + DISABLED_FOR_MS);
+          disabledNote = state.entries[key].note;
+          continue;
+        }
+        const failures = Math.min((previous?.failures ?? 0) + 1, 100);
+        const step = shortBase !== void 0 ? Math.min(shortBase * 2 ** Math.min(failures - 1, 10), FAILURE_COOLDOWN_MAX_MS) : this.ladder[Math.min(failures - 1, this.ladder.length - 1)];
+        const proposedUntil = failure.retryAt !== void 0 ? Math.max(failure.retryAt, now) : now + step;
+        const entryUntil = previous && previous.until > now ? Math.max(previous.until, proposedUntil) : proposedUntil;
+        state.entries[key] = {
+          // A rate-limit can arrive while this process's recovery is in flight.
+          // Keep the claim so another process cannot start a second provider call.
+          ...previous?.recovery ? { recovery: { ...previous.recovery, superseded: true } } : {},
+          label: sanitizePoolScopeLabel(scope),
+          failures,
+          until: entryUntil,
+          reason: cooled,
+          updatedAt: now,
+          ...failure.kind === "missing" ? { note: MISSING_NOTE } : {}
+        };
+        until = Math.max(until, entryUntil);
+      }
+      prune(state, now);
+      touch();
+      return { recorded: true, until, ...disabledNote ? { disabled: true, note: disabledNote } : {} };
+    });
+  }
+  /** Forget a route's failure history after a genuine success (resets the ladder). */
+  async markHealthy(scopes) {
+    const unique = [...new Set(scopes.filter((scope) => typeof scope === "string" && scope.trim().length > 0))];
+    if (!unique.length) return;
+    await this.mutate((state, touch) => {
+      for (const scope of unique) {
+        const key = hashScope(scope);
+        if (state.entries[key] && state.entries[key].reason !== "disabled") {
+          delete state.entries[key];
+          touch();
+        }
+      }
+    });
+  }
+  /**
+   * Explicit human escape hatch. forceUnlock removes the lock only when its owner pid
+   * is provably dead. A live or unreadable owner is refused so a live process's lock
+   * is never taken over. Nothing in this module reaps locks on its own.
+   */
+  async clear(scopes, options = {}) {
+    const unique = [...new Set(scopes.filter((scope) => typeof scope === "string" && scope.trim().length > 0))];
+    if (options.forceUnlock) {
+      let raw;
+      try {
+        raw = await readFile(this.lockPath, "utf8");
+      } catch (error) {
+        if (error.code !== "ENOENT") {
+          throw new PoolHealthForceUnlockRefusedError(this.lockPath, "the owner file is unreadable");
+        }
+      }
+      if (raw !== void 0) {
+        const owner = parseOwner(raw);
+        if (!owner) throw new PoolHealthForceUnlockRefusedError(this.lockPath, "the owner file is unreadable");
+        if (processAlive(owner.pid)) {
+          throw new PoolHealthForceUnlockRefusedError(this.lockPath, "owner pid " + owner.pid + " is still alive", owner.pid);
+        }
+        if (!await removeOwnerIfContentMatches(this.lockPath, raw)) {
+          throw new PoolHealthForceUnlockRefusedError(this.lockPath, "the lock changed while it was being cleared", owner.pid);
+        }
+      }
+    }
+    if (!unique.length) return 0;
+    return this.mutate((state, touch) => {
+      let removed = 0;
+      for (const scope of unique) {
+        const key = hashScope(scope);
+        if (state.entries[key]) {
+          delete state.entries[key];
+          removed += 1;
+          touch();
+        }
+      }
+      return removed;
+    });
+  }
+  /** Why a member is disabled, if it is. Cleared only by a passing Test. */
+  async disabledFor(scopes) {
+    const state = await this.readState();
+    for (const scope of scopes) {
+      const entry = state.entries[hashScope(scope)];
+      if (entry?.reason === "disabled") return { note: entry.note ?? "disabled after an error", since: entry.updatedAt };
+    }
+    return void 0;
+  }
+  /** Highest active cooldown for a route, if any (does not claim recovery). */
+  async cooldownFor(route) {
+    const now = this.now();
+    const state = await this.readState();
+    const active = route.scopes.map((scope) => state.entries[hashScope(scope)]).filter((entry) => Boolean(entry) && entry.until > now);
+    return active.length ? Math.max(...active.map((entry) => entry.until)) : void 0;
+  }
+  /**
+   * Decide whether this route may be attempted. A cooled-down or already-recovering
+   * route is blocked; an expired cooldown grants exactly one cross-process recovery.
+   */
+  async acquire(route) {
+    const now = this.now();
+    const scopes = [...new Set(route.scopes.filter((scope) => typeof scope === "string" && scope.trim().length > 0))];
+    const outcome = await this.mutate((state, touch) => {
+      const relevant = scopes.map((scope) => [scope, state.entries[hashScope(scope)]]).filter((entry) => Boolean(entry[1]));
+      const active = relevant.filter(([, entry]) => entry.until > now);
+      if (active.length) {
+        return {
+          blocked: {
+            ok: false,
+            reason: "cooldown",
+            retryAt: Math.max(...active.map(([, entry]) => entry.until)),
+            details: active.map(([, entry]) => entry.label + ": " + entry.reason)
+          }
+        };
+      }
+      const inFlight = relevant.filter(([, entry]) => this.claimLive(entry.recovery));
+      if (inFlight.length) {
+        return {
+          blocked: {
+            ok: false,
+            reason: "recovery-in-flight",
+            details: inFlight.map(([, entry]) => entry.label + ": recovery-in-flight (pid " + entry.recovery.pid + ")")
+          }
+        };
+      }
+      const stale = relevant.filter(([, entry]) => entry.recovery);
+      const expiredCooldown = relevant.filter(([, entry]) => entry.until <= now);
+      if (!stale.length && !expiredCooldown.length) return {};
+      const token2 = randomUUID();
+      for (const [scope] of relevant) {
+        const entry = state.entries[hashScope(scope)];
+        if (!entry) continue;
+        entry.recovery = { token: token2, pid: process.pid, startedAt: now };
+        touch();
+      }
+      return { token: token2 };
+    });
+    if (outcome.blocked) return outcome.blocked;
+    if (!outcome.token) {
+      return { ok: true, mode: "normal", settle: async () => {
+      }, release: async () => {
+      } };
+    }
+    const token = outcome.token;
+    let settled = false;
+    const settleClaim = async (success) => {
+      const at = this.now();
+      await this.mutate((state, touch) => {
+        for (const scope of scopes) {
+          const key = hashScope(scope);
+          const entry = state.entries[key];
+          if (!entry?.recovery || entry.recovery.token !== token) continue;
+          if (success && entry.recovery.superseded) {
+            delete entry.recovery;
+          } else if (success) {
+            delete state.entries[key];
+          } else {
+            const failures = Math.min(entry.failures + 1, 100);
+            const step = this.ladder[Math.min(failures - 1, this.ladder.length - 1)];
+            const { recovery: _consumed, ...rest } = entry;
+            state.entries[key] = { ...rest, failures, until: Math.max(entry.until, at + step), updatedAt: at };
+          }
+          touch();
+        }
+      });
+    };
+    return {
+      ok: true,
+      mode: "recovery",
+      settle: async (success) => {
+        if (settled) return;
+        settled = true;
+        await settleClaim(success);
+      },
+      release: async () => {
+        if (settled) return;
+        settled = true;
+        await this.mutate((state, touch) => {
+          for (const scope of scopes) {
+            const key = hashScope(scope);
+            const entry = state.entries[key];
+            if (!entry?.recovery || entry.recovery.token !== token) continue;
+            delete entry.recovery;
+            touch();
+          }
+        });
+      }
+    };
+  }
+  /** Sanitized view for diagnostics and the UI; contains no prompts or credentials. */
+  async inspect(route) {
+    const state = await this.readState();
+    return route.scopes.flatMap((scope) => {
+      const entry = state.entries[hashScope(scope)];
+      if (!entry) return [];
+      return [{
+        scope: entry.label,
+        reason: entry.reason,
+        until: entry.until,
+        failures: entry.failures,
+        recovering: this.claimLive(entry.recovery),
+        ...entry.recovery ? { claimPid: entry.recovery.pid } : {}
+      }];
+    });
+  }
+  /** Retained entry count; bounded by MAX_ENTRIES. */
+  async size() {
+    return Object.keys((await this.readState()).entries).length;
+  }
+};
+
 // src/pool/session-id.ts
 function poolProviderHeaders(provider, model, sessionId) {
   return openCodeGoHeaders(provider.id, model.apiBaseUrl, sessionId, provider.headers) ?? provider.headers;
+}
+
+// src/pool/disabled.ts
+import pc2 from "picocolors";
+function disabledMessage(note) {
+  return "Disabled after an error: " + note + ". Test it again to re-enable.";
+}
+function revisionFor(provider, modelId) {
+  const model = provider.models.find((item) => item.id === modelId);
+  if (!model?.npm) return void 0;
+  return poolEndpointRevision({
+    providerId: provider.id,
+    authRef: provider.authRef,
+    npm: model.npm,
+    baseURL: model.apiBaseUrl,
+    upstreamModelId: model.upstreamModelId,
+    headers: provider.headers
+  });
+}
+async function disabledPoolMembers(providers, pool, store = new PoolHealthStore()) {
+  const disabled = /* @__PURE__ */ new Map();
+  for (const member of pool.members) {
+    const provider = providers.find((item) => item.id === member.providerId);
+    const revision = provider ? revisionFor(provider, member.modelId) : void 0;
+    if (!revision) continue;
+    try {
+      const found = await store.disabledFor([poolEndpointScope(member.providerId, revision, member.modelId)]);
+      if (found) disabled.set(member.providerId + "/" + member.modelId, found);
+    } catch {
+    }
+  }
+  return disabled;
+}
+async function clearDisabledPoolMember(member, endpointRevision, store = new PoolHealthStore()) {
+  try {
+    await store.clear([poolEndpointScope(member.providerId, endpointRevision, member.modelId)]);
+  } catch {
+  }
+}
+async function warnDisabledPoolMembers(providers, pool, store, write = (line) => console.error(line)) {
+  const disabled = await disabledPoolMembers(providers, pool, store);
+  for (const [name, info] of disabled) {
+    write(pc2.bold(pc2.red("\u26D4 Free pool member disabled: " + name)) + pc2.red(" - " + info.note + ". Test it again (relay-ai ui > Free Pool) to re-enable."));
+  }
+  return disabled.size;
 }
 
 // src/antigravity/slot-registry.ts
@@ -1360,7 +1973,7 @@ async function verifyPoolMember(member, providers, signal, deps, now = Date.now(
   if (probe.text !== "passed" || probe.tools !== "passed") {
     return { member, status: "skipped", reason: "probe-" + (probe.failure ?? "failed") };
   }
-  const targets = ["codex", "claude"];
+  const targets = ["codex", "claude", "antigravity"];
   const effortLevels = [];
   if (deps.probeEffort && model.reasoning) {
     const declared = (model.reasoningEffortLevels ?? []).filter((level) => ["low", "medium", "high", "xhigh", "max"].includes(level));
@@ -1368,7 +1981,6 @@ async function verifyPoolMember(member, providers, signal, deps, now = Date.now(
     for (const level of candidates) {
       if (await deps.probeEffort(languageModel, level, signal)) effortLevels.push(level);
     }
-    if (effortLevels.length > 0) targets.push("antigravity");
   }
   const revision = poolEndpointRevision({
     providerId: provider.id,
@@ -1476,7 +2088,7 @@ function sendJson(res, status, body) {
 }
 
 // src/pool/verify.ts
-import { randomUUID } from "crypto";
+import { randomUUID as randomUUID2 } from "crypto";
 function poolMembershipProblem(provider, model) {
   if (poolFreeStatus({ model, providerId: provider.id }) !== "verified_free") return "Requires verified zero pricing";
   if (!model.npm || model.modelFormat === "cloud-code") return "Unsupported pool transport";
@@ -1520,8 +2132,8 @@ async function verifyConfiguredPoolMember(member, providers, signal, options = {
         oauthAccountId: provider2.oauthAccountId,
         providerData: provider2.providerData,
         // Some gateways (OpenCode Go) reject requests that carry no session id header.
-        sessionId: `relay-pool-verify-${randomUUID()}`,
-        headers: poolProviderHeaders(provider2, model2, `relay-pool-verify-${randomUUID()}`),
+        sessionId: `relay-pool-verify-${randomUUID2()}`,
+        headers: poolProviderHeaders(provider2, model2, `relay-pool-verify-${randomUUID2()}`),
         refreshToken: providerRefreshToken(provider2.id, provider2.authType, provider2.authRef)
       }),
       probe: options.evidence ? async () => options.evidence : probePoolModel,
@@ -1541,6 +2153,8 @@ async function verifyConfiguredPoolMember(member, providers, signal, options = {
 }
 
 export {
+  poolFailure,
+  retryPoolFailure,
   poolRouteMember,
   describePoolFailure,
   recordPoolActivity,
@@ -1569,7 +2183,14 @@ export {
   formatRegistryAuthLabel,
   resolveProvidersForDisplay,
   localProvidersToServerModels,
+  poolAccountScope,
+  poolEndpointScope,
+  PoolHealthStore,
   poolProviderHeaders,
+  disabledMessage,
+  disabledPoolMembers,
+  clearDisabledPoolMember,
+  warnDisabledPoolMembers,
   evaluateAgySwitchCompatibility,
   resolveRelayCatalogSlots,
   injectRelayModels,
@@ -1588,4 +2209,4 @@ export {
   poolDiagnostic,
   verifyConfiguredPoolMember
 };
-//# sourceMappingURL=chunk-HTKR6NNR.js.map
+//# sourceMappingURL=chunk-YUWP5APP.js.map

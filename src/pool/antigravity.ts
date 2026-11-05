@@ -224,6 +224,7 @@ export interface AntigravityPoolLaunchOptions {
 export function buildAntigravityPoolRoutes(opts: AntigravityPoolLaunchOptions): AntigravityRoute[] {
   const now = opts.now ?? Date.now();
   const routesByMember = new Map<string, Map<string, AntigravityRoute>>();
+  const autoRoutes: AntigravityRoute[] = [];
   for (const member of opts.pool.members) {
     const provider = opts.providers.find(item => item.id === member.providerId);
     const model = provider?.models.find(item => item.id === member.modelId);
@@ -251,20 +252,50 @@ export function buildAntigravityPoolRoutes(opts: AntigravityPoolLaunchOptions): 
       providerData: provider.providerData,
       headers: provider.headers,
     }], 10, { effortMode: opts.effortMode });
+    // Auto: the member's own default, no effort sent. Works for every verified member, including models whose
+    // effort cannot be controlled, so the pool is never hidden just because no rung is common.
+    const base = concrete[0];
+    if (base) {
+      autoRoutes.push({
+        ...base, reasoningEffort: undefined, reasoningMetadata: undefined,
+        contextWindow: model.contextWindow, poolEvidence: { revision, receipt },
+      });
+    }
     const byLevel = new Map<string, AntigravityRoute>();
     for (const route of concrete) {
       if (!route.reasoningEffort || !receipt.effortLevels.includes(route.reasoningEffort)) continue;
       if (!byLevel.has(route.reasoningEffort)) {
-        byLevel.set(route.reasoningEffort, { ...route, contextWindow: model.contextWindow });
+        byLevel.set(route.reasoningEffort, { ...route, contextWindow: model.contextWindow, poolEvidence: { revision, receipt } });
       }
     }
     if (byLevel.size > 0) routesByMember.set(provider.id + ':' + model.id, byLevel);
   }
-  if (routesByMember.size === 0) return [];
+  const autoRow = (): AntigravityRoute[] => {
+    if (autoRoutes.length === 0 || opts.maxRows < 1) return [];
+    const representative = autoRoutes[0]!;
+    return [{
+      ...representative,
+      catalogId: 'relay-free-pool-auto',
+      providerId: 'relay-free-pool',
+      providerName: 'Relay Free Pool',
+      modelId: 'free-pool-auto',
+      displayName: 'Relay Free Pool',
+      apiKey: '',
+      reasoningEffort: undefined,
+      reasoningMetadata: undefined,
+      contextWindow: Math.min(...autoRoutes.map(member => member.contextWindow!).filter(
+        window => Number.isSafeInteger(window) && window > 0)),
+      poolMembers: autoRoutes,
+      // The row is not a member: it must never pass for one.
+      poolEvidence: undefined,
+    }];
+  };
+  if (routesByMember.size === 0) return autoRow();
   const common = [...routesByMember.values()][0]!.keys();
   const levels = [...common].filter(level => [...routesByMember.values()].every(map => map.has(level)))
     .sort((a, b) => EFFORT_RANK.indexOf(a) - EFFORT_RANK.indexOf(b));
-  if (levels.length === 0) return [];
+  // Without a rung every member verified, the pool is one Auto row instead of nothing.
+  if (levels.length === 0) return autoRow();
   const offered = favoriteEffortLevels(levels, POOL_EFFORT_ANCHOR).slice(0, Math.max(0, opts.maxRows));
   return offered.map(level => {
     const members = [...routesByMember.values()].map(map => map.get(level)!);
@@ -281,6 +312,8 @@ export function buildAntigravityPoolRoutes(opts: AntigravityPoolLaunchOptions): 
       contextWindow: Math.min(...members.map(member => member.contextWindow!).filter(
         window => Number.isSafeInteger(window) && window > 0)),
       poolMembers: members,
+      // The row is not a member: it must never pass for one.
+      poolEvidence: undefined,
     };
   });
 }

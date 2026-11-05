@@ -11,6 +11,7 @@ import { modelsDevModelKind } from '../registry/models-dev.js';
 import { groupPoolActivity, readPoolActivity, summarizePoolEvents } from '../pool/activity.js';
 import { addFreePoolMember, parseFreePool, removeFreePoolMember } from '../pool/membership.js';
 import { currentPoolReceipt, poolEndpointRevision } from '../pool/capabilities.js';
+import { clearDisabledPoolMember, disabledMessage, disabledPoolMembers } from '../pool/disabled.js';
 import { poolDiagnostic, poolMembershipProblem, poolRoutingProblem, verifyConfiguredPoolMember } from '../pool/verify.js';
 import type { FavoriteModel, FreePoolPreferences, LocalProvider, LocalProviderModel } from '../types.js';
 
@@ -43,6 +44,14 @@ function isFreeListEntry(model: LocalProviderModel): boolean {
     || (model.cost && model.cost.input === 0 && model.cost.output === 0));
 }
 
+/** Where the shown window came from: typed by the user, measured from the server, a guess, or reported by the provider. */
+function contextSourceFor(providerId: string, model: LocalProviderModel): 'set' | 'measured' | 'estimate' | undefined {
+  const override = loadRegistry().providers.find(item => item.id === providerId)?.contextWindowOverrides?.[model.id];
+  if (override?.source === 'user') return 'set';
+  if (override?.source === 'measured') return 'measured';
+  return model.contextWindowEstimated === true ? 'estimate' : undefined;
+}
+
 function modelMetadata(provider: LocalProvider, model: LocalProviderModel) {
   const freeStatus = classifyFreeStatus({ model, providerId: provider.id });
   return {
@@ -51,6 +60,7 @@ function modelMetadata(provider: LocalProvider, model: LocalProviderModel) {
     family: model.family, brand: model.brand,
     reasoningTestRequests: model.reasoning ? 1 + Math.min(4, new Set((model.reasoningEffortLevels ?? []).filter(level => ['low', 'medium', 'high', 'xhigh', 'max'].includes(level))).size || 1) : 1,
     contextWindow: model.contextWindow, contextWindowEstimated: model.contextWindowEstimated === true,
+    contextSource: contextSourceFor(provider.id, model),
     cost: model.cost, freeStatus, ...candidateKind(provider.id, model.id),
   };
 }
@@ -149,6 +159,8 @@ export async function verifyUiPoolMember(
       } catch (error) {
         return { ok: false, status: 'skipped', reason: 'receipt-save-failed', diagnostic: poolDiagnostic(error) };
       }
+      // Passing the Test is what re-enables a member that was disabled by an error.
+      await clearDisabledPoolMember(member, result.receipt.endpointRevision);
       return { ok: true, status: 'verified', receipt: result.receipt };
     } finally {
       verifying.delete(key);
@@ -203,7 +215,7 @@ export async function handlePoolApi(req: IncomingMessage, res: ServerResponse): 
       sendJson(res, 200, { ok: true });
       return;
     }
-    sendJson(res, 200, { ...poolView(providers, pool), activity: poolActivityView() });
+    sendJson(res, 200, { ...poolView(providers, pool, await disabledPoolMembers(providers, pool)), activity: poolActivityView() });
   } catch (error) {
     sendJson(res, 400, { error: error instanceof Error ? error.message : 'Unable to update the free pool' });
   }
@@ -220,7 +232,7 @@ function poolActivityView() {
   };
 }
 
-export function poolView(providers: LocalProvider[], pool: FreePoolPreferences) {
+export function poolView(providers: LocalProvider[], pool: FreePoolPreferences, disabled: ReadonlyMap<string, { note: string; since: number }> = new Map()) {
   const members = pool.members.map(raw => {
     const provider = providers.find(item => item.id === raw.providerId);
     const model = provider?.models.find(item => item.id === raw.modelId);
@@ -229,9 +241,12 @@ export function poolView(providers: LocalProvider[], pool: FreePoolPreferences) 
     const membershipProblem = poolMembershipProblem(provider, model);
     const routingProblem = poolRoutingProblem(provider, model);
     const receipt = membershipProblem ? undefined : currentPoolReceipt(pool.receipts, raw, revision(provider, model), Date.now());
+    const off = membershipProblem ? undefined : disabled.get(raw.providerId + '/' + raw.modelId);
     return { ...modelMetadata(provider, model), ...raw,
-      status: membershipProblem ? 'Unavailable' : routingProblem ? 'Needs test' : receipt ? 'Ready' : 'Needs test',
-      reason: membershipProblem ?? routingProblem,
+      status: membershipProblem ? 'Unavailable' : off ? 'Disabled' : routingProblem ? 'Needs test' : receipt ? 'Ready' : 'Needs test',
+      reason: membershipProblem ?? (off ? disabledMessage(off.note) : routingProblem),
+      // The window routing actually uses is the one saved by the last Test; it can lag a size set or measured since.
+      routingContextWindow: receipt?.contextWindow,
       targets: receipt?.targets ?? [], expiresAt: receipt?.expiresAt, effortLevels: receipt?.effortLevels ?? [] };
   });
   // This is the same free-only universe shown by the Providers table. Models
@@ -250,5 +265,7 @@ export function poolView(providers: LocalProvider[], pool: FreePoolPreferences) 
         canAdd: !membershipProblem, addReason: membershipProblem,
         canRouteUntilTested: poolRoutingProblem(provider, model) === undefined };
     }));
-  return { enabled: pool.enabled === true, members, candidates, effort: pool.effort };
+  return { enabled: pool.enabled === true, members, candidates, effort: pool.effort,
+    // Shown as a banner so a disabled member is never easy to miss, wherever it sits in the priority list.
+    disabled: members.filter(member => member.status === 'Disabled').map(member => ({ providerId: member.providerId, modelId: member.modelId, reason: member.reason })) };
 }

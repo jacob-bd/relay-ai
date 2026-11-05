@@ -2194,8 +2194,11 @@ function poolEndpointRevision(config) {
     headers
   ])).digest("hex");
 }
+function receiptInForce(receipt, now) {
+  return Number.isFinite(receipt.verifiedAt) && receipt.verifiedAt <= now;
+}
 function currentPoolReceipt(receipts, member, revision, now) {
-  const matching = receipts.filter((receipt2) => receipt2.member.providerId === member.providerId && receipt2.member.modelId === member.modelId && receipt2.endpointRevision === revision && Number.isFinite(receipt2.verifiedAt) && receipt2.verifiedAt <= now && Number.isFinite(receipt2.expiresAt) && receipt2.expiresAt > now);
+  const matching = receipts.filter((receipt2) => receipt2.member.providerId === member.providerId && receipt2.member.modelId === member.modelId && receipt2.endpointRevision === revision && receiptInForce(receipt2, now));
   if (matching.length !== 1) return void 0;
   const receipt = matching[0];
   if (!Number.isSafeInteger(receipt.maxOutputTokens) || receipt.maxOutputTokens <= 0 || !Number.isSafeInteger(receipt.contextWindow) || receipt.contextWindow <= 0 || !Array.isArray(receipt.effortLevels) || receipt.contextSource !== "attested" && receipt.contextSource !== "observed" && receipt.contextSource !== "provider") return void 0;
@@ -2230,7 +2233,9 @@ function parsePoolReceipt(value) {
     endpointRevision: revision,
     verifiedAt: r.verifiedAt,
     expiresAt: r.expiresAt,
-    targets,
+    // A member that passed the text and tool Test can serve every target (Antigravity's Auto row needs
+    // nothing more), so saved receipts from before that target existed stay usable without a re-test.
+    targets: targets.includes("antigravity") ? targets : [...targets, "antigravity"],
     tools: r.tools,
     maxOutputTokens: r.maxOutputTokens,
     contextWindow: r.contextWindow,
@@ -7783,6 +7788,7 @@ export {
   EFFORT_RANK,
   resolveModelReasoningMetadata,
   poolEndpointRevision,
+  receiptInForce,
   currentPoolReceipt,
   parsePoolReceipt,
   parseFreePool,
@@ -7918,4 +7924,4 @@ export {
   upstreamHttpStatus,
   anthropicErrorType
 };
-//# sourceMappingURL=chunk-MNN6GZ3I.js.map
+//# sourceMappingURL=chunk-DDFLIKBI.js.map
