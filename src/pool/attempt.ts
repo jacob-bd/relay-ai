@@ -11,6 +11,7 @@ export interface PoolRoute {
   // Includes account and endpoint/config revision, never just modelId.
   id: string;
   open(signal: AbortSignal): Promise<AsyncIterable<PoolEvent>>;
+  recordAttemptFailure?(error: unknown): Promise<void>;
 }
 /** Members tried per request, in priority order. Failures are usually fast; the total time limit still bounds slow ones. */
 export const MAX_POOL_ATTEMPTS = 8;
@@ -28,20 +29,30 @@ export class PoolAttemptError extends Error {
     super(code);
   }
 }
+export function validPoolFinish(part: PoolEvent): boolean {
+  return part.type === 'finish' && ['stop', 'tool-calls', 'length'].includes(part.finishReason ?? '');
+}
+class PoolCoordinatorError extends Error {
+  /**
+   * True when the shared request budget ended the wait, not this member's own first-content or idle limit.
+   * The member never got its full allowance, so the timeout says nothing about its health.
+   */
+  constructor(message: string, readonly budget = false) { super(message); }
+}
 function meaningful(part: PoolEvent): boolean {
   return (['text-delta', 'reasoning-delta'].includes(part.type) && Boolean(part.text))
     || (part.type === 'tool-input-delta' && Boolean(part.delta))
     || part.type === 'tool-input-start' || part.type === 'tool-call';
 }
-async function bounded<T>(work: PromiseLike<T>, ms: number, signal: AbortSignal, code: string): Promise<T> {
+async function bounded<T>(work: PromiseLike<T>, ms: number, signal: AbortSignal, code: string, budget = false): Promise<T> {
   signal.throwIfAborted();
-  if (ms <= 0) throw new Error(code);
+  if (ms <= 0) throw new PoolCoordinatorError(code, budget);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onAbort: () => void = () => {};
   const interrupted = new Promise<never>((_, reject) => {
     onAbort = () => reject(signal.reason);
     signal.addEventListener('abort', onAbort, { once: true });
-    timer = setTimeout(() => reject(new Error(code)), Math.max(0, ms));
+    timer = setTimeout(() => reject(new PoolCoordinatorError(code, budget)), Math.max(0, ms));
   });
   try { return await Promise.race([work, interrupted]); }
   finally {
@@ -66,7 +77,10 @@ export async function* runPoolAttempts(
     if (Date.now() >= deadline) throw new PoolAttemptError('total-deadline', committed);
     const controller = new AbortController();
     const attemptSignal = AbortSignal.any([signal, controller.signal]);
-    const firstDeadline = Math.min(deadline, Date.now() + limits.firstContentMs);
+    const attemptStart = Date.now();
+    const firstDeadline = Math.min(deadline, attemptStart + limits.firstContentMs);
+    // The request budget, not this member's own allowance, is what will end the wait.
+    const firstBudget = deadline < attemptStart + limits.firstContentMs;
     let iterator: AsyncIterator<PoolEvent> | undefined;
     const buffered: PoolEvent[] = [];
     let bytes = 0;
@@ -84,20 +98,22 @@ export async function* runPoolAttempts(
     let terminalThrown = false;
     onAttempt(route.id);
     try {
-      const stream = await bounded(route.open(attemptSignal), firstDeadline - Date.now(), attemptSignal, 'first-content-timeout');
+      const stream = await bounded(route.open(attemptSignal), firstDeadline - Date.now(), attemptSignal, 'first-content-timeout', firstBudget);
       iterator = stream[Symbol.asyncIterator]();
       while (true) {
-        const remaining = (committed ? Math.min(deadline, Date.now() + limits.idleMs) : firstDeadline) - Date.now();
-        const next = await bounded(iterator.next(), remaining, attemptSignal, committed ? 'idle-or-total-timeout' : 'first-content-timeout');
+        const now = Date.now();
+        const remaining = (committed ? Math.min(deadline, now + limits.idleMs) : firstDeadline) - now;
+        const budget = committed ? deadline < now + limits.idleMs : firstBudget;
+        const next = await bounded(iterator.next(), remaining, attemptSignal, committed ? 'idle-or-total-timeout' : 'first-content-timeout', budget);
         signal.throwIfAborted();
-        if (next.done) throw new Error('missing-valid-finish');
+        if (next.done) throw new PoolCoordinatorError('missing-valid-finish');
         const part = next.value;
         if (part.type === 'error') throw part.error ?? new Error('stream-error');
         const terminal = part.type === 'finish';
-        if (terminal && !['stop', 'tool-calls', 'length'].includes(part.finishReason ?? '')) throw new Error('invalid-finish');
+        if (terminal && !validPoolFinish(part)) throw new PoolCoordinatorError('invalid-finish');
         if (!committed) {
           bytes += Buffer.byteLength(JSON.stringify(part));
-          if (bytes > limits.bufferBytes) throw new Error('provisional-buffer-limit');
+          if (bytes > limits.bufferBytes) throw new PoolCoordinatorError('provisional-buffer-limit');
           buffered.push(part);
           if (!meaningful(part) && !terminal) continue;
           // Set before exposing even a provisional event. Formatter/socket errors
@@ -136,7 +152,11 @@ export async function* runPoolAttempts(
         throw consumerError;
       }
       lastError = error;
-      if (!signal.aborted) await onFailure(route.id, error, committed);
+      if (!signal.aborted) {
+        // A wait cut short by the shared budget is not a verdict on the member: it is not cooled.
+        if (error instanceof PoolCoordinatorError && !error.budget) await route.recordAttemptFailure?.(error);
+        await onFailure(route.id, error, committed);
+      }
       if (signal.aborted) {
         terminalThrown = true;
         throw signal.reason;

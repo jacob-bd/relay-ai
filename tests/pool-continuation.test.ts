@@ -104,3 +104,62 @@ describe('account identity', () => {
     expect(poolRouteKey(a)).not.toBe(poolRouteKey({ ...a, model: 'other-model' }));
   });
 });
+
+it('retains a live conversation across more than 32 other responses within the budget', () => {
+  const store = new PoolContinuationStore();
+  store.remember('response1', 'live', original, output, a);
+  for (let index = 0; index < 40; index++) {
+    store.remember('response-' + index, 'other', { input: 'small' }, [], b);
+  }
+  expect(store.resolve('live', delta).body.input).toHaveLength(3);
+});
+
+it('refreshes recently read branches when the entry count is reached', () => {
+  const store = new PoolContinuationStore({ maxEntries: 3 });
+  store.remember('response1', 'live', original, output, a);
+  store.remember('old', 'other', original, output, b);
+  store.remember('new', 'other', original, output, b);
+  store.resolve('live', delta);
+  store.remember('newest', 'other', original, output, b);
+  expect(() => store.resolve('live', delta)).not.toThrow();
+  expect(() => store.resolve('other', { ...delta, previous_response_id: 'old' })).toThrow('missing Relay-owned history');
+});
+
+it('bounds total memory, least recently used first, and never evicts the snapshot just stored', () => {
+  const store = new PoolContinuationStore({ maxTotalBytes: 1000 });
+  const request = { input: 'x'.repeat(400) };
+  store.remember('old', 'scope', request, [], a);
+  store.remember('new', 'scope', request, [], a);
+  store.remember('newest', 'scope', request, [], a);
+  expect(() => store.resolve('scope', { input: [], previous_response_id: 'old' })).toThrow('missing Relay-owned history');
+  expect(() => store.resolve('scope', { input: [], previous_response_id: 'newest' })).not.toThrow();
+  const tiny = new PoolContinuationStore({ maxTotalBytes: 10 });
+  tiny.remember('only', 'scope', request, [], a);
+  expect(() => tiny.resolve('scope', { input: [], previous_response_id: 'only' })).not.toThrow();
+});
+
+describe('sessions that run side by side', () => {
+  const src = { account: 'a', endpointRevision: 'r', model: 'm' };
+  const turns = (count: number, tag: string, filler = '') => Array.from({ length: count },
+    (_, index) => ({ type: 'message', role: 'user', content: tag + index + filler }));
+  const resumes = (store: PoolContinuationStore, scope: string, id: string): boolean => {
+    try { store.resolve(scope, { previous_response_id: id, input: [] }); return true; } catch { return false; }
+  };
+
+  it('keeps an idle session resumable while another works, with histories of about 1 MB', () => {
+    const store = new PoolContinuationStore({ ttlMs: 3_600_000 });
+    store.remember('A1', 'sessionA', { input: turns(600, 'a', 'x'.repeat(1500)) }, [], src);
+    for (let index = 1; index <= 6; index++) {
+      store.remember('B' + index, 'sessionB', { input: turns(600, 'b' + index, 'x'.repeat(1500)) }, [], src);
+    }
+    expect(resumes(store, 'sessionA', 'A1')).toBe(true);
+  });
+
+  it('keeps two long sessions of 1,200 items each resumable together', () => {
+    const store = new PoolContinuationStore({ ttlMs: 3_600_000 });
+    store.remember('A1', 'sessionA', { input: turns(1200, 'a') }, [], src);
+    store.remember('B1', 'sessionB', { input: turns(1200, 'b') }, [], src);
+    expect(resumes(store, 'sessionA', 'A1')).toBe(true);
+    expect(resumes(store, 'sessionB', 'B1')).toBe(true);
+  });
+});

@@ -383,3 +383,17 @@ describe('persisted demotions', () => {
     expect((await store().cooldownFor({ id: 'rev', scopes }))).toBe(clock + 60_000);
   });
 });
+
+
+it.each([true, false])('preserves a newer authoritative cooldown when an older recovery settles %s', async success => {
+  const target = route();
+  await store().record(target.scopes, RATE_LIMIT);
+  clock += 2 * MINUTE;
+  const recovery = await store().acquire(target);
+  if (!recovery.ok) throw new Error('expected recovery');
+  const retryAt = clock + 7 * 24 * 60 * MINUTE;
+  await store().record(target.scopes, { kind: 'rate-limit', retryAt });
+  await recovery.settle(success);
+  expect(await store().cooldownFor(target)).toBe(retryAt);
+  expect((await store().inspect(target))[0]?.recovering).toBe(false);
+});

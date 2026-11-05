@@ -10,6 +10,7 @@ export const SIMULATED_FAILURE_MESSAGE = 'Simulated failure (RELAY_POOL_FORCE_FA
 
 export interface DispatchRoute extends PoolRouteEvidence {
   open: PoolRoute['open'];
+  recordAttemptFailure?: PoolRoute['recordAttemptFailure'];
   /** Persist a failure for this member (cooldown). Absent on routes without a health store. */
   recordFailure?: (failure: PoolFailure) => Promise<void>;
 }
@@ -50,7 +51,7 @@ export async function* dispatchFreePool(
         throw Object.assign(new Error(SIMULATED_FAILURE_MESSAGE), { statusCode: 429 });
       }
       : route.open;
-    return { id: poolRouteIdentity(route), open };
+    return { id: poolRouteIdentity(route), open, recordAttemptFailure: route.recordAttemptFailure };
   });
   const session = policy.sessions?.begin(request.conversationScope, attempts);
   let activeRoute: string | undefined;

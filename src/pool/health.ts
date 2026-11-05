@@ -126,7 +126,7 @@ export function sanitizePoolScopeLabel(scope: string): string {
   return label.length > MAX_LABEL_CHARS ? label.slice(0, MAX_LABEL_CHARS) + '~' : label;
 }
 
-interface StoredClaim { token: string; pid: number; startedAt: number }
+interface StoredClaim { token: string; pid: number; startedAt: number; superseded?: boolean }
 interface StoredEntry {
   label: string;
   failures: number;
@@ -179,7 +179,8 @@ function normalizeEntry(raw: unknown): StoredEntry {
     if (typeof claim['token'] !== 'string' || claim['token'].length < 16) throw new Error('invalid claim token');
     if (typeof claim['pid'] !== 'number' || !Number.isSafeInteger(claim['pid'])) throw new Error('invalid claim pid');
     if (typeof claim['startedAt'] !== 'number' || !Number.isFinite(claim['startedAt'])) throw new Error('invalid claim start');
-    recovery = { token: claim['token'] as string, pid: claim['pid'] as number, startedAt: claim['startedAt'] as number };
+    if (claim['superseded'] !== undefined && typeof claim['superseded'] !== 'boolean') throw new Error('invalid claim superseded');
+    recovery = { token: claim['token'] as string, pid: claim['pid'] as number, startedAt: claim['startedAt'] as number, ...(claim['superseded'] === true ? { superseded: true } : {}) };
   }
   return {
     label,
@@ -399,7 +400,7 @@ export class PoolHealthStore {
         state.entries[key] = {
           // A rate-limit can arrive while this process's recovery is in flight.
           // Keep the claim so another process cannot start a second provider call.
-          ...(previous?.recovery ? { recovery: previous.recovery } : {}),
+          ...(previous?.recovery ? { recovery: { ...previous.recovery, superseded: true } } : {}),
           label: sanitizePoolScopeLabel(scope),
           failures,
           until: entryUntil,
@@ -538,14 +539,18 @@ export class PoolHealthStore {
           const key = hashScope(scope);
           const entry = state.entries[key];
           if (!entry?.recovery || entry.recovery.token !== token) continue;
-          if (success) {
+          if (success && entry.recovery.superseded) {
+            // A later request recorded a failure while this probe was running.
+            // A success only releases the old claim; the newer cooldown survives.
+            delete entry.recovery;
+          } else if (success) {
             delete state.entries[key];
           } else {
             const failures = Math.min(entry.failures + 1, 100);
             const step = this.ladder[Math.min(failures - 1, this.ladder.length - 1)]!;
             // The claim ends with the attempt; only the cooldown survives.
             const { recovery: _consumed, ...rest } = entry;
-            state.entries[key] = { ...rest, failures, until: at + step, updatedAt: at };
+            state.entries[key] = { ...rest, failures, until: Math.max(entry.until, at + step), updatedAt: at };
           }
           touch();
         }

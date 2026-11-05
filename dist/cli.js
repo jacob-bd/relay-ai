@@ -101,9 +101,10 @@ import {
   supportsMultiAgentV2,
   translateResponsesRequest,
   upstreamModelId,
+  validPoolFinish,
   waitForCodexAppQuit,
   writeResponsesErrorStream
-} from "./chunk-HYMU4BQX.js";
+} from "./chunk-TJIAGPW7.js";
 import {
   translateRequest
 } from "./chunk-E7FSS5M2.js";
@@ -1175,6 +1176,10 @@ function sdkPoolRoute(evidence, model, request2, health) {
     recordFailure: health ? async (failure) => {
       await health.store.record(scopesFor(failure), failure);
     } : void 0,
+    recordAttemptFailure: health ? async (error) => {
+      const failure = poolFailure(error);
+      await health.store.record(scopesFor(failure), failure);
+    } : void 0,
     async open(abortSignal) {
       const decision = health ? await health.store.acquire({ id: evidence.revision, scopes: [...health.scopes, ...health.accountScopes ?? []] }) : void 0;
       if (decision && !decision.ok) throw new Error("Pool route entered cooldown");
@@ -1203,7 +1208,7 @@ function sdkPoolRoute(evidence, model, request2, health) {
                 recorded = recorded || result2.recorded;
               }
             }
-            if (part.type === "finish") success = true;
+            if (validPoolFinish(part)) success = true;
             yield part;
           }
         } catch (error) {
@@ -1317,7 +1322,8 @@ function normalizeEntry(raw) {
     if (typeof claim["token"] !== "string" || claim["token"].length < 16) throw new Error("invalid claim token");
     if (typeof claim["pid"] !== "number" || !Number.isSafeInteger(claim["pid"])) throw new Error("invalid claim pid");
     if (typeof claim["startedAt"] !== "number" || !Number.isFinite(claim["startedAt"])) throw new Error("invalid claim start");
-    recovery = { token: claim["token"], pid: claim["pid"], startedAt: claim["startedAt"] };
+    if (claim["superseded"] !== void 0 && typeof claim["superseded"] !== "boolean") throw new Error("invalid claim superseded");
+    recovery = { token: claim["token"], pid: claim["pid"], startedAt: claim["startedAt"], ...claim["superseded"] === true ? { superseded: true } : {} };
   }
   return {
     label,
@@ -1497,7 +1503,7 @@ var PoolHealthStore = class {
         state.entries[key] = {
           // A rate-limit can arrive while this process's recovery is in flight.
           // Keep the claim so another process cannot start a second provider call.
-          ...previous?.recovery ? { recovery: previous.recovery } : {},
+          ...previous?.recovery ? { recovery: { ...previous.recovery, superseded: true } } : {},
           label: sanitizePoolScopeLabel(scope),
           failures,
           until: entryUntil,
@@ -1630,13 +1636,15 @@ var PoolHealthStore = class {
           const key = hashScope(scope);
           const entry = state.entries[key];
           if (!entry?.recovery || entry.recovery.token !== token) continue;
-          if (success) {
+          if (success && entry.recovery.superseded) {
+            delete entry.recovery;
+          } else if (success) {
             delete state.entries[key];
           } else {
             const failures = Math.min(entry.failures + 1, 100);
             const step = this.ladder[Math.min(failures - 1, this.ladder.length - 1)];
             const { recovery: _consumed, ...rest } = entry;
-            state.entries[key] = { ...rest, failures, until: at + step, updatedAt: at };
+            state.entries[key] = { ...rest, failures, until: Math.max(entry.until, at + step), updatedAt: at };
           }
           touch();
         }
@@ -1688,9 +1696,33 @@ var PoolHealthStore = class {
 };
 
 // src/pool/context.ts
+var IMAGE_INPUT_TOKENS = 4096;
+var IMAGE_PART_TYPES = /* @__PURE__ */ new Set(["image", "image-data", "image-url"]);
+var MEDIA_PART_TYPES = /* @__PURE__ */ new Set(["file", "media", "file-data"]);
+function isImagePart(part) {
+  if (typeof part.type !== "string") return false;
+  if (IMAGE_PART_TYPES.has(part.type)) return true;
+  return MEDIA_PART_TYPES.has(part.type) && typeof part.mediaType === "string" && part.mediaType.startsWith("image");
+}
+function withoutBinary(value, found) {
+  if (value instanceof Uint8Array) {
+    found.bytes += value.byteLength;
+    return null;
+  }
+  if (Array.isArray(value)) return value.map((item) => withoutBinary(item, found));
+  if (value === null || typeof value !== "object") return value;
+  const record = value;
+  if (typeof record.toJSON === "function") return withoutBinary(record.toJSON(), found);
+  if (isImagePart(record)) {
+    found.images += 1;
+    return { type: "image" };
+  }
+  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, withoutBinary(item, found)]));
+}
 function estimatePoolRequestTokens(value) {
-  const json = JSON.stringify(value) ?? "";
-  return Math.ceil(Buffer.byteLength(json, "utf8") / 2);
+  const found = { images: 0, bytes: 0 };
+  const json = JSON.stringify(withoutBinary(value, found)) ?? "";
+  return Math.ceil(Buffer.byteLength(json, "utf8") / 2) + found.images * IMAGE_INPUT_TOKENS + Math.ceil(found.bytes / 2);
 }
 function poolRequestFitsWindow(value, contextWindow, outputReserve) {
   if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) return { fits: false, required: Infinity };
@@ -1917,6 +1949,7 @@ async function prepareClaudePoolRoutes(options) {
     const memberAuto = memberEffort === null;
     const body = omitClaudeEffort(options.body, memberEffort);
     const params = translateRequest(body, model.npm, {
+      maxTools: POOL_MAX_TOOLS,
       reasoningMetadata: {
         ...model,
         providerId: provider.id,
@@ -18616,7 +18649,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-YRJGPQ3A.js");
+    const { runUiCommand } = await import("./ui-command-NY77RUZI.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {

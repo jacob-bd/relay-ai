@@ -1976,19 +1976,33 @@ var PoolAttemptError = class extends Error {
   committed;
   cause;
 };
+function validPoolFinish(part) {
+  return part.type === "finish" && ["stop", "tool-calls", "length"].includes(part.finishReason ?? "");
+}
+var PoolCoordinatorError = class extends Error {
+  /**
+   * True when the shared request budget ended the wait, not this member's own first-content or idle limit.
+   * The member never got its full allowance, so the timeout says nothing about its health.
+   */
+  constructor(message, budget = false) {
+    super(message);
+    this.budget = budget;
+  }
+  budget;
+};
 function meaningful(part) {
   return ["text-delta", "reasoning-delta"].includes(part.type) && Boolean(part.text) || part.type === "tool-input-delta" && Boolean(part.delta) || part.type === "tool-input-start" || part.type === "tool-call";
 }
-async function bounded(work, ms, signal, code) {
+async function bounded(work, ms, signal, code, budget = false) {
   signal.throwIfAborted();
-  if (ms <= 0) throw new Error(code);
+  if (ms <= 0) throw new PoolCoordinatorError(code, budget);
   let timer;
   let onAbort = () => {
   };
   const interrupted = new Promise((_, reject) => {
     onAbort = () => reject(signal.reason);
     signal.addEventListener("abort", onAbort, { once: true });
-    timer = setTimeout(() => reject(new Error(code)), Math.max(0, ms));
+    timer = setTimeout(() => reject(new PoolCoordinatorError(code, budget)), Math.max(0, ms));
   });
   try {
     return await Promise.race([work, interrupted]);
@@ -2011,7 +2025,9 @@ async function* runPoolAttempts(routes, signal, limits, retryable, onAttempt = (
     if (Date.now() >= deadline) throw new PoolAttemptError("total-deadline", committed);
     const controller = new AbortController();
     const attemptSignal = AbortSignal.any([signal, controller.signal]);
-    const firstDeadline = Math.min(deadline, Date.now() + limits.firstContentMs);
+    const attemptStart = Date.now();
+    const firstDeadline = Math.min(deadline, attemptStart + limits.firstContentMs);
+    const firstBudget = deadline < attemptStart + limits.firstContentMs;
     let iterator;
     const buffered = [];
     let bytes = 0;
@@ -2021,20 +2037,22 @@ async function* runPoolAttempts(routes, signal, limits, retryable, onAttempt = (
     let terminalThrown = false;
     onAttempt(route.id);
     try {
-      const stream = await bounded(route.open(attemptSignal), firstDeadline - Date.now(), attemptSignal, "first-content-timeout");
+      const stream = await bounded(route.open(attemptSignal), firstDeadline - Date.now(), attemptSignal, "first-content-timeout", firstBudget);
       iterator = stream[Symbol.asyncIterator]();
       while (true) {
-        const remaining = (committed ? Math.min(deadline, Date.now() + limits.idleMs) : firstDeadline) - Date.now();
-        const next = await bounded(iterator.next(), remaining, attemptSignal, committed ? "idle-or-total-timeout" : "first-content-timeout");
+        const now = Date.now();
+        const remaining = (committed ? Math.min(deadline, now + limits.idleMs) : firstDeadline) - now;
+        const budget = committed ? deadline < now + limits.idleMs : firstBudget;
+        const next = await bounded(iterator.next(), remaining, attemptSignal, committed ? "idle-or-total-timeout" : "first-content-timeout", budget);
         signal.throwIfAborted();
-        if (next.done) throw new Error("missing-valid-finish");
+        if (next.done) throw new PoolCoordinatorError("missing-valid-finish");
         const part = next.value;
         if (part.type === "error") throw part.error ?? new Error("stream-error");
         const terminal = part.type === "finish";
-        if (terminal && !["stop", "tool-calls", "length"].includes(part.finishReason ?? "")) throw new Error("invalid-finish");
+        if (terminal && !validPoolFinish(part)) throw new PoolCoordinatorError("invalid-finish");
         if (!committed) {
           bytes += Buffer.byteLength(JSON.stringify(part));
-          if (bytes > limits.bufferBytes) throw new Error("provisional-buffer-limit");
+          if (bytes > limits.bufferBytes) throw new PoolCoordinatorError("provisional-buffer-limit");
           buffered.push(part);
           if (!meaningful(part) && !terminal) continue;
           committed = true;
@@ -2069,7 +2087,10 @@ async function* runPoolAttempts(routes, signal, limits, retryable, onAttempt = (
         throw consumerError;
       }
       lastError = error;
-      if (!signal.aborted) await onFailure(route.id, error, committed);
+      if (!signal.aborted) {
+        if (error instanceof PoolCoordinatorError && !error.budget) await route.recordAttemptFailure?.(error);
+        await onFailure(route.id, error, committed);
+      }
       if (signal.aborted) {
         terminalThrown = true;
         throw signal.reason;
@@ -2115,7 +2136,7 @@ function poolFailure(error, now = Date.now()) {
   if ([401, 403, 404].includes(status ?? 0)) return { kind: "access", status };
   if (status === 400 && /context.{0,20}(length|window|exceed)|prompt.{0,20}too long/i.test(value?.message ?? "")) return { kind: "context", status };
   if (status === 400 || status === 422) return { kind: "invalid", status };
-  if (status !== void 0 && status >= 500 || /ECONNRESET|ETIMEDOUT|ENOTFOUND|first-content-timeout|missing-valid-finish|invalid-finish|stream-error|Pool route entered cooldown/.test(value?.message ?? "")) return { kind: "transient", status };
+  if (status !== void 0 && status >= 500 || /ECONNRESET|ETIMEDOUT|ENOTFOUND|first-content-timeout|idle-or-total-timeout|provisional-buffer-limit|missing-valid-finish|invalid-finish|stream-error|Pool route entered cooldown/.test(value?.message ?? "")) return { kind: "transient", status };
   return { kind: "unknown", status };
 }
 function retryPoolFailure(error) {
@@ -2165,7 +2186,7 @@ async function* dispatchFreePool(pool, routes, request, policy) {
       await route.recordFailure?.({ kind: "transient", retryAt: Date.now() + SIMULATED_COOLDOWN_MS });
       throw Object.assign(new Error(SIMULATED_FAILURE_MESSAGE), { statusCode: 429 });
     } : route.open;
-    return { id: poolRouteIdentity(route), open: open2 };
+    return { id: poolRouteIdentity(route), open: open2, recordAttemptFailure: route.recordAttemptFailure };
   });
   const session = policy.sessions?.begin(request.conversationScope, attempts);
   let activeRoute;
@@ -2297,7 +2318,7 @@ async function serveClaudePoolRequest(options, state) {
     } catch (error) {
       const mapped = protocolStatus(error);
       if (!committed) {
-        owner?.kind === "owner" && owner.fail();
+        owner?.kind === "owner" && owner.release();
         return { ok: false, ...mapped, committed: false };
       }
       if (!sawError) write(sseError(mapped.error));
@@ -2312,7 +2333,7 @@ async function serveClaudePoolRequest(options, state) {
     owner?.kind === "owner" && owner.release();
     return { ok: true };
   } catch (error) {
-    owner?.kind === "owner" && owner.fail();
+    owner?.kind === "owner" && owner.release();
     return { ok: false, ...protocolStatus(error), committed: false };
   }
 }
@@ -4828,10 +4849,11 @@ function poolRouteKey(route) {
   return JSON.stringify([route.account, route.endpointRevision, route.model]);
 }
 var DEFAULT_LIMITS2 = {
-  ttlMs: 6e4,
-  maxEntries: 32,
+  ttlMs: 36e5,
+  maxEntries: 2e3,
   maxBytes: 4 * 1024 * 1024,
-  maxItems: 2e3
+  maxItems: 2e3,
+  maxTotalBytes: 128 * 1024 * 1024
 };
 function items(input) {
   if (typeof input === "string") return [{ type: "message", role: "user", content: input }];
@@ -4870,9 +4892,15 @@ var PoolContinuationStore = class {
     state.bytes = Buffer.byteLength(JSON.stringify(state), "utf8");
     if (state.bytes > this.limits.maxBytes) throw new Error("continuation-history-too-large");
     this.prune();
-    this.states.set(JSON.stringify([scope, responseId]), state);
-    while (this.states.size > this.limits.maxEntries) {
-      this.states.delete(this.states.keys().next().value);
+    const key = JSON.stringify([scope, responseId]);
+    this.states.delete(key);
+    this.states.set(key, state);
+    let total = 0;
+    for (const entry of this.states.values()) total += entry.bytes;
+    while (this.states.size > 1 && (this.states.size > this.limits.maxEntries || total > this.limits.maxTotalBytes)) {
+      const oldest = this.states.keys().next().value;
+      total -= this.states.get(oldest).bytes;
+      this.states.delete(oldest);
     }
   }
   resolve(scope, request) {
@@ -4884,6 +4912,9 @@ var PoolContinuationStore = class {
     if (!scope || !state || state.expires <= this.now()) {
       throw new Error("unsupported-continuation: missing Relay-owned history");
     }
+    const key = JSON.stringify([scope, previous]);
+    this.states.delete(key);
+    this.states.set(key, state);
     body.input = [...structuredClone(state.input), ...structuredClone(state.output), ...items(body.input)];
     body.instructions ??= state.instructions;
     delete body.previous_response_id;
@@ -4959,29 +4990,50 @@ async function writeCodexPoolResponse(stream, modelId, write, options = {}) {
   let completed;
   let bytes = 0;
   const context = options.toolContext ?? { namespaceByFlatName: /* @__PURE__ */ new Map(), customToolNames: /* @__PURE__ */ new Set() };
+  let ready = false;
+  let finalizing = false;
+  const terminalChunks = [];
+  let terminalBytes = 0;
+  const preamble = [];
   const contextualStream = (async function* () {
     for await (const part of stream) {
+      if (!ready) {
+        ready = true;
+        if (!options.nonstream) for (const chunk of preamble) write(chunk);
+        preamble.length = 0;
+      }
       const selected = options.getToolContext?.();
       if (selected) {
         context.namespaceByFlatName = selected.namespaceByFlatName;
         context.customToolNames = selected.customToolNames;
       }
+      if (part.type === "finish") finalizing = true;
       yield part;
     }
   })();
   await writeResponsesStream(contextualStream, modelId, (chunk) => {
-    if (options.nonstream) {
-      bytes += Buffer.byteLength(chunk);
-      if (bytes > (options.maxResponseBytes ?? 4 * 1024 * 1024)) throw new Error("Pool response buffer exceeded");
-    } else write(chunk);
     for (const line of chunk.split(String.fromCharCode(10))) {
       if (!line.startsWith("data:")) continue;
       const event = JSON.parse(line.slice(5));
-      if (event.type === "response.completed" || event.type === "response.incomplete") completed = event.response;
+      if (event.type === "response.completed" || event.type === "response.incomplete") {
+        if (!event.response) throw new Error("Pool response missing terminal result");
+        options.beforeComplete?.(event.response);
+        completed = event.response;
+      }
       if (event.type === "response.failed") throw new Error("Pool response failed");
     }
+    if (options.nonstream) {
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > (options.maxResponseBytes ?? 4 * 1024 * 1024)) throw new Error("Pool response buffer exceeded");
+    } else if (finalizing) {
+      terminalBytes += Buffer.byteLength(chunk);
+      if (terminalBytes > (options.maxResponseBytes ?? 4 * 1024 * 1024)) throw new Error("Pool response buffer exceeded");
+      terminalChunks.push(chunk);
+    } else if (ready) write(chunk);
+    else preamble.push(chunk);
   }, void 0, void 0, { toolContext: context });
   if (!completed) throw new Error("Pool response missing terminal result");
+  for (const chunk of terminalChunks) write(chunk);
   return completed;
 }
 
@@ -5023,6 +5075,7 @@ var CodexPoolRuntime = class {
     if (lease.kind !== "owner") throw new Error("Pool retry " + lease.kind);
     const chunks = [];
     let committed = false;
+    let produced = false;
     const requestId = randomUUID5().slice(0, 8);
     const started = Date.now();
     let attemptStarted = started;
@@ -5067,14 +5120,20 @@ var CodexPoolRuntime = class {
         committed = true;
         chunks.push(chunk);
         write(chunk);
-      }, { nonstream: body.stream !== true, getToolContext: () => served?.toolContext });
+      }, {
+        nonstream: body.stream !== true,
+        getToolContext: () => served?.toolContext,
+        beforeComplete: (response2) => {
+          produced = true;
+          if (!served || typeof response2.id !== "string" || !Array.isArray(response2.output)) throw new Error("Pool response missing route or history");
+          this.history.remember(response2.id, identity.conversation, body, response2.output, served.identity);
+        }
+      });
       const answered = attemptedId ? poolRouteMember(attemptedId) : void 0;
       if (answered) {
         logged = true;
         recordPoolActivity({ target: "codex", event: "served", ...answered, requestId, ms: Date.now() - attemptStarted });
       }
-      if (!served || typeof response.id !== "string" || !Array.isArray(response.output)) throw new Error("Pool response missing route or history");
-      this.history.remember(response.id, identity.conversation, body, response.output, served.identity);
       lease.complete(JSON.stringify({ response, chunks }));
       return response;
     } catch (error) {
@@ -5084,7 +5143,7 @@ var CodexPoolRuntime = class {
         }
         recordPoolActivity({ target: "codex", event: "gave-up", providerId: "pool", modelId: "none", requestId, ms: Date.now() - started });
       }
-      if (signal.aborted) lease.release();
+      if (signal.aborted || !committed && !produced) lease.release();
       else lease.fail("Pool request failed", committed);
       throw error;
     }
@@ -8338,6 +8397,7 @@ export {
   printProviderDetailPanel,
   printCloudProviderPanel,
   findBinaryOnPath,
+  validPoolFinish,
   poolFailure,
   CLAUDE_POOL_MODEL_ID,
   ClaudePoolRuntime,
@@ -8419,4 +8479,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-HYMU4BQX.js.map
+//# sourceMappingURL=chunk-TJIAGPW7.js.map

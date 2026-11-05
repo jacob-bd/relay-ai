@@ -10,7 +10,7 @@ import type { DispatchRoute } from './dispatch.js';
 import type { PoolHealthStore } from './health.js';
 import { poolAccountScope, poolEndpointScope } from './health.js';
 import { poolRequestFitsWindow } from './context.js';
-import { translatedEffortClaim } from './codex-prepare.js';
+import { POOL_MAX_TOOLS, translatedEffortClaim } from './codex-prepare.js';
 import { poolMemberEffort } from './effort.js';
 import { poolOutputCap } from './output-limit.js';
 import { poolProviderHeaders } from './session-id.js';
@@ -71,6 +71,7 @@ export async function prepareClaudePoolRoutes(options: ClaudeRouteOptions): Prom
     const memberAuto = memberEffort === null;
     const body = omitClaudeEffort(options.body, memberEffort);
     const params: SdkCallParams = translateRequest(body as unknown as AnthropicRequest, model.npm, {
+      maxTools: POOL_MAX_TOOLS,
       reasoningMetadata: {
         ...model, providerId: provider.id, apiBaseUrl: model.apiBaseUrl,
       },

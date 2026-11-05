@@ -1,7 +1,7 @@
 import type { PoolHealthStore } from './health.js';
 import { poolFailure, type PoolFailure } from './errors.js';
 import { streamText, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
-import type { PoolEvent } from './attempt.js';
+import { validPoolFinish, type PoolEvent } from './attempt.js';
 import type { DispatchRoute } from './dispatch.js';
 import type { PoolRouteEvidence } from './eligibility.js';
 
@@ -37,6 +37,10 @@ export function sdkPoolRoute(
   return {
     ...evidence,
     recordFailure: health ? async failure => { await health.store.record(scopesFor(failure), failure); } : undefined,
+    recordAttemptFailure: health ? async error => {
+      const failure = poolFailure(error);
+      await health.store.record(scopesFor(failure), failure);
+    } : undefined,
     async open(abortSignal) {
       const decision = health ? await health.store.acquire({ id: evidence.revision, scopes: [...health.scopes, ...(health.accountScopes ?? [])] }) : undefined;
       if (decision && !decision.ok) throw new Error('Pool route entered cooldown');
@@ -63,7 +67,7 @@ export function sdkPoolRoute(
                 recorded = recorded || result.recorded;
               }
             }
-            if (part.type === 'finish') success = true;
+            if (validPoolFinish(part)) success = true;
             yield part;
           }
         } catch (error) {

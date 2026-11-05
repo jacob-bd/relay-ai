@@ -402,3 +402,40 @@ describe('real SDK and loopback transport integration', () => {
     expect(aborted).toBe(true);
   });
 });
+
+describe('a timeout caused by the shared budget is not blamed on the member', () => {
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  const roomy: PoolLimits = { attempts: 3, firstContentMs: 5000, idleMs: 5000, totalMs: 300, bufferBytes: 4096, cleanupMs: 50 };
+  const route = (id: string, blamed: string[], behave: () => AsyncGenerator<PoolEvent>): PoolRoute => ({
+    id, recordAttemptFailure: async () => { blamed.push(id); },
+    async open() { return behave(); },
+  });
+  const drain = async (routes: PoolRoute[], use: PoolLimits) => {
+    try { for await (const _part of runPoolAttempts(routes, signal(), use, () => true)) { /* drain */ } } catch { /* expected */ }
+  };
+
+  it('does not cool a healthy member that the budget cut off before its first content', async () => {
+    const blamed: string[] = [];
+    const broken = route('broken-first', blamed, async function* () { await sleep(250); throw Object.assign(new Error('boom'), { statusCode: 500 }); });
+    const healthy = route('healthy-second', blamed, async function* () { await sleep(100); yield { type: 'text-delta', id: 't', text: 'hi' }; yield finish; });
+    await drain([broken, healthy], roomy);
+    expect(blamed).toEqual([]);
+  });
+
+  it('does not cool a member that was still answering when the budget ended', async () => {
+    const blamed: string[] = [];
+    const talking = route('talking', blamed, async function* () { yield { type: 'text-delta', id: 't', text: 'hi' }; await sleep(10_000); });
+    await drain([talking], roomy);
+    expect(blamed).toEqual([]);
+  });
+
+  it('still cools a member that exceeded its own first-content and idle limits', async () => {
+    const blamed: string[] = [];
+    const own: PoolLimits = { ...roomy, firstContentMs: 40, idleMs: 40, totalMs: 5000 };
+    const silent = route('silent', blamed, async function* () { await sleep(10_000); });
+    const stalls = route('stalls', blamed, async function* () { yield { type: 'text-delta', id: 't', text: 'hi' }; await sleep(10_000); });
+    await drain([silent], own);
+    await drain([stalls], own);
+    expect(blamed).toEqual(['silent', 'stalls']);
+  });
+});

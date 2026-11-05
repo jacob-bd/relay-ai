@@ -50,6 +50,8 @@ export class CodexPoolRuntime {
     if (lease.kind !== 'owner') throw new Error('Pool retry ' + lease.kind);
     const chunks: string[] = [];
     let committed = false;
+    // Set once a member has produced a complete answer: a later failure (history storage) must not re-spend a call on retry.
+    let produced = false;
     // Which member answers is otherwise invisible: log it like the Claude runtime does.
     const requestId = randomUUID().slice(0, 8);
     const started = Date.now();
@@ -86,14 +88,19 @@ export class CodexPoolRuntime {
         committed = true;
         chunks.push(chunk);
         write(chunk);
-      }, { nonstream: body.stream !== true, getToolContext: () => served?.toolContext });
+      }, {
+        nonstream: body.stream !== true, getToolContext: () => served?.toolContext,
+        beforeComplete: response => {
+          produced = true;
+          if (!served || typeof response.id !== 'string' || !Array.isArray(response.output)) throw new Error('Pool response missing route or history');
+          this.history.remember(response.id, identity.conversation, body, response.output as Record<string, unknown>[], served.identity);
+        },
+      });
       const answered = attemptedId ? poolRouteMember(attemptedId) : undefined;
       if (answered) {
         logged = true;
         recordPoolActivity({ target: 'codex', event: 'served', ...answered, requestId, ms: Date.now() - attemptStarted });
       }
-      if (!served || typeof response.id !== 'string' || !Array.isArray(response.output)) throw new Error('Pool response missing route or history');
-      this.history.remember(response.id, identity.conversation, body, response.output as Record<string, unknown>[], served.identity);
       lease.complete(JSON.stringify({ response, chunks }));
       return response;
     } catch (error) {
@@ -104,7 +111,9 @@ export class CodexPoolRuntime {
         }
         recordPoolActivity({ target: 'codex', event: 'gave-up', providerId: 'pool', modelId: 'none', requestId, ms: Date.now() - started });
       }
-      if (signal.aborted) lease.release();
+      // Nothing reached the client and no member answered: an identical retry is safe, and the cooldowns recorded
+      // by this attempt make it fail fast on the same members. Anything else keeps blocking an identical retry.
+      if (signal.aborted || (!committed && !produced)) lease.release();
       else lease.fail('Pool request failed', committed);
       throw error;
     }

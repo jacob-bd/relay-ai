@@ -203,7 +203,8 @@ async function serveClaudePoolRequest(
     } catch (error) {
       const mapped = protocolStatus(error);
       if (!committed) {
-        owner?.kind === 'owner' && owner.fail();
+        // Nothing reached the client: an identical retry is safe (cooldowns make it fail fast on the same members).
+        owner?.kind === 'owner' && owner.release();
         return { ok: false, ...mapped, committed: false };
       }
       if (!sawError) write(sseError(mapped.error));
@@ -218,7 +219,7 @@ async function serveClaudePoolRequest(
     owner?.kind === 'owner' && owner.release();
     return { ok: true };
   } catch (error) {
-    owner?.kind === 'owner' && owner.fail();
+    owner?.kind === 'owner' && owner.release();
     return { ok: false, ...protocolStatus(error), committed: false };
   }
 }

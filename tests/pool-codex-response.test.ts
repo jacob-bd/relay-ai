@@ -21,3 +21,11 @@ describe('Codex pool response formatting', () => {
     expect(closed).toBe(true);
   });
 });
+
+
+it('writes no preamble when every pool attempt fails before commitment', async () => {
+  const chunks: string[] = [];
+  const source = (async function* () { throw new Error('all members failed'); yield { type: 'finish' }; })();
+  await expect(writeCodexPoolResponse(source, 'pool', chunk => chunks.push(chunk))).rejects.toThrow('all members failed');
+  expect(chunks).toEqual([]);
+});

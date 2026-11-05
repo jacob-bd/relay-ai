@@ -21,8 +21,15 @@ export function poolRouteKey(route: PoolRouteIdentity): string {
 export interface ContinuationLimits {
   ttlMs: number;
   maxEntries: number;
+  /** Largest single snapshot. */
   maxBytes: number;
+  /** Most items in a single snapshot. */
   maxItems: number;
+  /**
+   * Memory bound across every retained snapshot, least recently used first. Each snapshot holds its whole
+   * history, so this must be far above one snapshot: sessions that run side by side have to coexist.
+   */
+  maxTotalBytes: number;
 }
 
 type Item = Record<string, unknown>;
@@ -38,10 +45,11 @@ interface State {
 }
 
 const DEFAULT_LIMITS: ContinuationLimits = {
-  ttlMs: 60_000,
-  maxEntries: 32,
+  ttlMs: 3_600_000,
+  maxEntries: 2_000,
   maxBytes: 4 * 1024 * 1024,
   maxItems: 2_000,
+  maxTotalBytes: 128 * 1024 * 1024,
 };
 
 function items(input: unknown): Item[] {
@@ -94,9 +102,16 @@ export class PoolContinuationStore {
     state.bytes = Buffer.byteLength(JSON.stringify(state), 'utf8');
     if (state.bytes > this.limits.maxBytes) throw new Error('continuation-history-too-large');
     this.prune();
-    this.states.set(JSON.stringify([scope, responseId]), state);
-    while (this.states.size > this.limits.maxEntries) {
-      this.states.delete(this.states.keys().next().value!);
+    const key = JSON.stringify([scope, responseId]);
+    this.states.delete(key);
+    this.states.set(key, state);
+    let total = 0;
+    for (const entry of this.states.values()) total += entry.bytes;
+    // The snapshot just stored is never the one evicted.
+    while (this.states.size > 1 && (this.states.size > this.limits.maxEntries || total > this.limits.maxTotalBytes)) {
+      const oldest = this.states.keys().next().value!;
+      total -= this.states.get(oldest)!.bytes;
+      this.states.delete(oldest);
     }
   }
 
@@ -109,6 +124,10 @@ export class PoolContinuationStore {
     if (!scope || !state || state.expires <= this.now()) {
       throw new Error('unsupported-continuation: missing Relay-owned history');
     }
+    // Retain recently used branches ahead of idle snapshots when capacity is reached.
+    const key = JSON.stringify([scope, previous]);
+    this.states.delete(key);
+    this.states.set(key, state);
     body.input = [...structuredClone(state.input), ...structuredClone(state.output), ...items(body.input)];
     body.instructions ??= state.instructions;
     delete body.previous_response_id;

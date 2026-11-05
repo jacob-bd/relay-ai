@@ -138,3 +138,30 @@ describe('explicitly approximate history embargo', () => {
     expect(() => embargo.claim('', 'h')).toThrow('scope-and-history-required');
   });
 });
+
+describe('retry after a failed request', () => {
+  const scope = { value: 'session/branch', historyFingerprint: 'history-a' };
+  const serve = (embargo: ClaudeHistoryEmbargo, routes: DispatchRoute[]) => serveClaudePool({
+    pool, routes, request: request(), limits, write: () => {}, embargo, scope,
+  });
+
+  it('allows an identical retry when nothing reached the client', async () => {
+    const embargo = new ClaudeHistoryEmbargo(60_000, 10);
+    const opened: string[] = [];
+    const failing = () => route([{ type: 'error', error: new Error('HTTP 429') }], opened);
+    expect((await serve(embargo, [failing()])).ok).toBe(false);
+    const again = await serve(embargo, [failing()]);
+    expect(again.ok).toBe(false);
+    expect(opened).toEqual(['account-a', 'account-a']);
+  });
+
+  it('keeps blocking an identical retry once content reached the client', async () => {
+    const embargo = new ClaudeHistoryEmbargo(60_000, 10);
+    const opened: string[] = [];
+    const partial = () => route([{ type: 'text-start' }, { type: 'text-delta', text: 'half' }, { type: 'error', error: new Error('HTTP 500') }], opened);
+    expect((await serve(embargo, [partial()])).ok).toBe(false);
+    const again = await serve(embargo, [partial()]);
+    expect(again.ok).toBe(false);
+    expect(opened).toEqual(['account-a']);
+  });
+});
