@@ -4,6 +4,8 @@ import { writeAnthropicStream } from '../sdk-adapter.js';
 import type { FreePoolPreferences } from '../types.js';
 import { MAX_POOL_ATTEMPTS, type PoolLimits } from './attempt.js';
 import { retryPoolFailure } from './errors.js';
+import { trackClaudePoolSignatures } from './claude-signatures.js';
+import { requestFingerprint } from './codex-retry.js';
 import { describePoolFailure, poolRouteMember, recordPoolActivity } from './activity.js';
 import { poolErrorDetail } from './diagnostic.js';
 import { dispatchFreePool, type DispatchRoute } from './dispatch.js';
@@ -33,18 +35,25 @@ export type ClaudeServeResult =
  * Claude session headers are client-supplied and are never used to infer a turn
  * or pin a branch. Failure embargos are local and process-scoped.
  */
+export type ClaudeHistoryEmbargoClaim =
+  | { kind: 'owner'; release(): void; fail(): void }
+  | { kind: 'busy' }
+  | { kind: 'blocked' };
+
 export class ClaudeHistoryEmbargo {
   private readonly entries = new Map<string, { status: 'active' | 'failed'; expires: number }>();
   constructor(private readonly ttlMs = 60_000, private readonly maxEntries = 100, private readonly now = Date.now) {
     if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) throw new Error('Invalid embargo TTL');
     if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0) throw new Error('Invalid embargo capacity');
   }
-  claim(scope: string, historyFingerprint: string): { kind: 'owner'; release(): void; fail(): void } | { kind: 'busy' } | { kind: 'blocked' } {
+  claim(scope: string, historyFingerprint: string): ClaudeHistoryEmbargoClaim {
     if (!scope || !historyFingerprint) throw new Error('scope-and-history-required');
     const key = JSON.stringify([scope, historyFingerprint]);
     const now = this.now();
+    // Only terminal failures expire. An active owner must survive a long provider call; it is
+    // always settled by release() or fail() on every request path.
     for (const [stored, entry] of this.entries) {
-      if (entry.expires <= now) this.entries.delete(stored);
+      if (entry.status === 'failed' && entry.expires <= now) this.entries.delete(stored);
     }
     const current = this.entries.get(key);
     if (current) return current.status === 'active' ? { kind: 'busy' } : { kind: 'blocked' };
@@ -72,6 +81,8 @@ export interface ClaudePoolOptions {
   retryable?: (error: unknown) => boolean;
   embargo?: ClaudeHistoryEmbargo;
   scope?: { value: string; historyFingerprint: string };
+  /** A claim already taken by the runtime, before it awaited preparation. */
+  owner?: Extract<ClaudeHistoryEmbargoClaim, { kind: 'owner' }>;
   /** Optional trace sink (the proxy's --trace log): one short line per attempt, failure and answer. */
   trace?: (line: string) => void;
   /** Members left out before dispatch that are worth showing in the log if a later member answered. */
@@ -93,6 +104,13 @@ function protocolStatus(error: unknown): { status: number; error: ClaudeProtocol
 
 function sseError(error: ClaudeProtocolError): string {
   return 'event: error\ndata: ' + JSON.stringify({ type: 'error', error }) + '\n\n';
+}
+
+function claimRejection(kind: 'busy' | 'blocked'): ClaudeServeResult {
+  return { ok: false, status: 429, committed: false,
+    error: { type: 'rate_limit_error', message: kind === 'busy'
+      ? 'A matching request is already in flight'
+      : 'A matching request recently failed' } };
 }
 
 async function collectMessage(parts: AsyncIterable<{ type: string; [key: string]: unknown }>, model: string, maxBytes: number): Promise<Record<string, unknown>> {
@@ -136,15 +154,21 @@ async function serveClaudePoolRequest(
   state: { requestId: string; served: boolean; started: number },
 ): Promise<ClaudeServeResult> {
   const { pool, routes, request, limits, write, embargo, scope } = options;
-  let owner: ReturnType<ClaudeHistoryEmbargo['claim']> | undefined;
-  if (embargo && scope) {
+  let owner = options.owner;
+  let ownerFailed = false;
+  if (!owner && embargo && scope) {
     const claim = embargo.claim(scope.value, scope.historyFingerprint);
-    if (claim.kind !== 'owner') {
-      return { ok: false, status: 429, committed: false,
-        error: { type: 'rate_limit_error', message: claim.kind === 'busy' ? 'A matching request is already in flight' : 'A matching request recently failed' } };
-    }
+    if (claim.kind !== 'owner') return claimRejection(claim.kind);
     owner = claim;
   }
+  const failOwner = () => {
+    if (owner?.kind !== 'owner') return;
+    ownerFailed = true;
+    owner.fail();
+  };
+  const releaseOwner = () => {
+    if (owner?.kind === 'owner') owner.release();
+  };
   // Which member answers is otherwise invisible: log each failed attempt and the member that served.
   let attemptedId: string | undefined;
   let attemptStarted = Date.now();
@@ -165,7 +189,7 @@ async function serveClaudePoolRequest(
     options.trace?.(`pool answered: ${member.providerId}/${member.modelId} in ${((Date.now() - attemptStarted) / 1000).toFixed(1)}s`);
   };
   options.trace?.(`pool request: ${routes.length} eligible member(s): ${routes.map(route => `${route.member.providerId}/${route.member.modelId}`).join(', ') || 'none'}`);
-  const parts = dispatchFreePool(pool, routes, {
+  const dispatched = dispatchFreePool(pool, routes, {
     target: 'claude', tools: true, effort: request.effort, signal: request.signal,
   }, {
     limits, retryable: options.retryable ?? defaultRetryable,
@@ -184,15 +208,16 @@ async function serveClaudePoolRequest(
       options.trace?.(`pool failed: ${member.providerId}/${member.modelId} (${reason}) after ${((Date.now() - attemptStarted) / 1000).toFixed(1)}s${detail ? ': ' + detail : ''}`);
     },
   });
+  const parts = trackClaudePoolSignatures(dispatched, () => attemptedId);
+  let committed = false;
   try {
     if (!request.stream) {
       const message = await collectMessage(parts, request.modelId, request.maxOutputBytes ?? 65536);
       logServed();
-      owner?.kind === 'owner' && owner.release();
+      releaseOwner();
       return { ok: true, message };
     }
     if (!write) throw new Error('stream-write-sink-required');
-    let committed = false;
     let sawError = false;
     try {
       await writeAnthropicStream(parts as Parameters<typeof writeAnthropicStream>[0], request.modelId, chunk => {
@@ -202,25 +227,32 @@ async function serveClaudePoolRequest(
       }, undefined, request.estimatedInputTokens ?? 0);
     } catch (error) {
       const mapped = protocolStatus(error);
-      if (!committed) {
-        // Nothing reached the client: an identical retry is safe (cooldowns make it fail fast on the same members).
-        owner?.kind === 'owner' && owner.release();
-        return { ok: false, ...mapped, committed: false };
+      if (!committed || request.signal.aborted) {
+        // Nothing reached the client, or the caller left: an identical retry is safe (cooldowns make it
+        // fail fast on the same members). A deliberate retry must not inherit a post-commit failure entry.
+        releaseOwner();
+        return { ok: false, ...mapped, committed };
       }
+      // Record the post-commit failure before the error write: a socket that throws again must not
+      // leave the identical retry unblocked.
+      failOwner();
       if (!sawError) write(sseError(mapped.error));
-      owner?.kind === 'owner' && owner.fail();
       return { ok: false, ...mapped, committed: true };
     }
     if (sawError) {
-      owner?.kind === 'owner' && owner.fail();
-      return { ok: false, status: 502, committed, error: { type: 'api_error', message: 'Provider failed after response commitment' } };
+      // A cancellation is the caller leaving, not a provider verdict: let a deliberate retry run.
+      if (request.signal.aborted || !committed) releaseOwner();
+      else failOwner();
+      return { ok: false, status: 502, committed, error: { type: 'api_error', message:
+        committed ? 'Provider failed after response commitment' : 'Provider failed before response commitment' } };
     }
     logServed();
-    owner?.kind === 'owner' && owner.release();
+    releaseOwner();
     return { ok: true };
   } catch (error) {
-    owner?.kind === 'owner' && owner.release();
-    return { ok: false, ...protocolStatus(error), committed: false };
+    // A failed post-commit write already recorded the embargo; releasing here would erase it.
+    if (!ownerFailed) releaseOwner();
+    return { ok: false, ...protocolStatus(error), committed };
   }
 }
 
@@ -229,6 +261,9 @@ async function serveClaudePoolRequest(
  * Claude Code owns the tool loop, and no tool ever executes inside Relay.
  */
 export class ClaudePoolRuntime {
+  /** Duplicate-request ownership for this process; production wiring lives here, not in tests. */
+  private readonly embargo = new ClaudeHistoryEmbargo();
+
   constructor(
     private readonly pool: FreePoolPreferences,
     private readonly prepare: (
@@ -250,8 +285,37 @@ export class ClaudePoolRuntime {
     sessionId?: string,
     trace?: (line: string) => void,
   ): Promise<ClaudeServeResult> {
+    // A coarse duplicate suppressor keyed by the client session and the full request body. It is not
+    // turn identity: an identical request already in flight must not prepare or open a second call.
+    // Without a client session id the fallback is this runtime instance, so only identical histories
+    // in this process coalesce.
+    const scope = {
+      value: sessionId ? 'claude-session:' + sessionId : 'claude-pool:no-session',
+      historyFingerprint: requestFingerprint(body),
+    };
+    const claim = this.embargo.claim(scope.value, scope.historyFingerprint);
+    if (claim.kind !== 'owner') return claimRejection(claim.kind);
+    if (signal.aborted) {
+      claim.release();
+      throw signal.reason ?? new Error('request aborted');
+    }
+    const onAbort = () => claim.release();
+    signal.addEventListener('abort', onAbort, { once: true });
     const skips: Array<{ providerId: string; modelId: string; reason: string }> = [];
-    const routes = await this.prepare(body, signal, sessionId, (member, reason) => skips.push({ ...member, reason }));
+    let routes: DispatchRoute[];
+    try {
+      routes = await this.prepare(body, signal, sessionId, (member, reason) => skips.push({ ...member, reason }));
+    } catch (error) {
+      // Preparation never reaches a provider, so an abandoned attempt must not embargo the request.
+      claim.release();
+      throw error;
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+    }
+    if (signal.aborted) {
+      claim.release();
+      throw signal.reason ?? new Error('request aborted');
+    }
     const skipped = this.newSkips(skips);
     // Effort was resolved per member while preparing routes (verified level sent, otherwise omitted),
     // so admission must not re-reject members for an effort that was deliberately not sent.
@@ -259,6 +323,7 @@ export class ClaudePoolRuntime {
     return serveClaudePool({
       pool: this.pool,
       routes,
+      owner: claim,
       request: {
         modelId: String(body.model ?? CLAUDE_POOL_MODEL_ID),
         stream: body.stream === true,

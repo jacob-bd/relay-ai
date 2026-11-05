@@ -585,7 +585,7 @@ function printFavoritesOnlyPanel() {
 }
 
 // src/pool/claude-runtime.ts
-import { randomUUID } from "crypto";
+import { randomUUID as randomUUID2 } from "crypto";
 
 // node_modules/@anthropic-ai/sdk/internal/tslib.mjs
 function __classPrivateFieldSet(receiver, state, value, kind, f) {
@@ -2133,6 +2133,7 @@ function poolFailure(error, now = Date.now()) {
     }
     return { kind: "rate-limit", status, retryAt };
   }
+  if (status === 402) return { kind: "quota", status };
   if ([401, 403, 404].includes(status ?? 0)) return { kind: "access", status };
   if (status === 400 && /context.{0,20}(length|window|exceed)|prompt.{0,20}too long/i.test(value?.message ?? "")) return { kind: "context", status };
   if (status === 400 || status === 422) return { kind: "invalid", status };
@@ -2142,6 +2143,165 @@ function poolFailure(error, now = Date.now()) {
 function retryPoolFailure(error) {
   return poolFailure(error).kind !== "canceled";
 }
+
+// src/pool/claude-signatures.ts
+import { createHash, randomUUID } from "crypto";
+var ClaudePoolSignatures = class {
+  constructor(now = Date.now, capacity = 1e3, ttl = 36e5) {
+    this.now = now;
+    this.capacity = capacity;
+    this.ttl = ttl;
+  }
+  now;
+  capacity;
+  ttl;
+  entries = /* @__PURE__ */ new Map();
+  bytes = 0;
+  key(signature) {
+    return "thinking:" + createHash("sha256").update(signature).digest("hex");
+  }
+  put(key, route, signature) {
+    this.prune();
+    const old = this.entries.get(key);
+    if (old) {
+      this.bytes -= old.bytes;
+      this.entries.delete(key);
+    }
+    const bytes = Buffer.byteLength(key + route + signature);
+    if (bytes > 4 * 1024 * 1024) return;
+    this.entries.set(key, { route, signature, expires: this.now() + this.ttl, bytes });
+    this.bytes += bytes;
+    while (this.entries.size > this.capacity || this.bytes > 4 * 1024 * 1024) this.remove(this.entries.keys().next().value);
+  }
+  remove(key) {
+    this.bytes -= this.entries.get(key).bytes;
+    this.entries.delete(key);
+  }
+  prune() {
+    for (const [key, value] of this.entries) if (value.expires <= this.now()) this.remove(key);
+  }
+  tool(route, signature) {
+    const id = "call_" + randomUUID().replaceAll("-", "");
+    if (signature) this.put(id, route, signature);
+    return id;
+  }
+  thinking(route, signature) {
+    const key = this.key(signature);
+    this.prune();
+    const old = this.entries.get(key);
+    this.put(key, old && old.route !== route ? "" : route, signature);
+  }
+  signature(id, route) {
+    this.prune();
+    const entry = this.entries.get(id);
+    return entry?.route === route ? entry.signature : void 0;
+  }
+  ownsThinking(signature, route) {
+    return this.signature(this.key(signature), route) === signature;
+  }
+};
+var claudePoolSignatures = new ClaudePoolSignatures();
+async function* trackClaudePoolSignatures(parts, route) {
+  const starts = /* @__PURE__ */ new Map();
+  for await (const event of parts) {
+    const part = event;
+    const owner = route();
+    const anthropic = part.providerMetadata?.anthropic?.signature;
+    const signature = anthropic ?? grabRoundTripSignature(part);
+    if (part.type === "tool-input-start") {
+      if (signature && part.id) starts.set(part.id, signature);
+      yield { ...event, providerMetadata: void 0 };
+    } else if (part.type === "tool-call" && owner) {
+      const sig = signature ?? starts.get(part.toolCallId ?? "");
+      starts.delete(part.toolCallId ?? "");
+      yield { ...event, toolCallId: sig ? claudePoolSignatures.tool(owner, sig) : part.toolCallId, providerMetadata: void 0 };
+    } else if (part.type === "reasoning-end" && owner && signature) {
+      claudePoolSignatures.thinking(owner, signature);
+      yield { ...event, providerMetadata: { openai: { reasoningEncryptedContent: signature } } };
+    } else yield event;
+  }
+}
+
+// src/pool/codex-retry.ts
+import { createHash as createHash2 } from "crypto";
+var DEFAULT_LIMITS = {
+  ttlMs: 6e4,
+  maxEntries: 128,
+  maxResponseBytes: 2 * 1024 * 1024
+};
+function canonical(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+  const record = value;
+  return "{" + Object.keys(record).sort().map((key) => JSON.stringify(key) + ":" + canonical(record[key])).join(",") + "}";
+}
+function requestFingerprint(request) {
+  return createHash2("sha256").update(canonical(request)).digest("hex");
+}
+function checkLimit(name, value) {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error("Invalid retry limit: " + name);
+}
+var CodexRetryGuard = class {
+  constructor(limits = {}, now = Date.now) {
+    this.now = now;
+    this.limits = { ...DEFAULT_LIMITS, ...limits };
+    for (const [name, value] of Object.entries(this.limits)) checkLimit(name, value);
+  }
+  now;
+  entries = /* @__PURE__ */ new Map();
+  limits;
+  /**
+   * Claims one request operation. turnId must be the observed client turn;
+   * fingerprint must hash the full translated request.
+   */
+  acquire(turnId, fingerprint) {
+    if (!turnId || !fingerprint) throw new Error("turn-id-and-fingerprint-required");
+    this.prune();
+    const key = JSON.stringify([turnId, fingerprint]);
+    const existing = this.entries.get(key);
+    if (existing) {
+      if (existing.status === "active") return { kind: "busy" };
+      if (existing.status === "failed") return { kind: "blocked", reason: existing.reason ?? "previous-attempt-failed" };
+      return { kind: "replay", response: existing.response };
+    }
+    if (this.entries.size >= this.limits.maxEntries) {
+      return { kind: "blocked", reason: "retry-guard-capacity" };
+    }
+    const entry = { status: "active", token: /* @__PURE__ */ Symbol(), expires: this.now() + this.limits.ttlMs };
+    this.entries.set(key, entry);
+    const settle = (token) => this.entries.get(key)?.token === token;
+    return {
+      kind: "owner",
+      complete: (response) => {
+        if (!settle(entry.token)) return;
+        if (typeof response !== "string" || Buffer.byteLength(response, "utf8") > this.limits.maxResponseBytes) {
+          this.entries.set(key, { status: "failed", token: entry.token, expires: this.now() + this.limits.ttlMs, reason: "response-too-large" });
+          return;
+        }
+        this.entries.set(key, { status: "succeeded", token: entry.token, expires: this.now() + this.limits.ttlMs, response });
+      },
+      fail: (reason, postcommit = false) => {
+        if (!settle(entry.token)) return;
+        this.entries.set(key, {
+          status: "failed",
+          token: entry.token,
+          expires: this.now() + this.limits.ttlMs,
+          reason: reason || "previous-attempt-failed",
+          postcommit
+        });
+      },
+      release: () => {
+        if (settle(entry.token)) this.entries.delete(key);
+      }
+    };
+  }
+  prune() {
+    const now = this.now();
+    for (const [key, entry] of this.entries) {
+      if (entry.status !== "active" && entry.expires <= now) this.entries.delete(key);
+    }
+  }
+};
 
 // src/pool/eligibility.ts
 function poolRouteIdentity(route) {
@@ -2199,6 +2359,44 @@ async function* dispatchFreePool(pool, routes, request, policy) {
 
 // src/pool/claude-runtime.ts
 var CLAUDE_POOL_MODEL_ID = "claude-pool";
+var ClaudeHistoryEmbargo = class {
+  constructor(ttlMs = 6e4, maxEntries = 100, now = Date.now) {
+    this.ttlMs = ttlMs;
+    this.maxEntries = maxEntries;
+    this.now = now;
+    if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) throw new Error("Invalid embargo TTL");
+    if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0) throw new Error("Invalid embargo capacity");
+  }
+  ttlMs;
+  maxEntries;
+  now;
+  entries = /* @__PURE__ */ new Map();
+  claim(scope, historyFingerprint) {
+    if (!scope || !historyFingerprint) throw new Error("scope-and-history-required");
+    const key = JSON.stringify([scope, historyFingerprint]);
+    const now = this.now();
+    for (const [stored, entry2] of this.entries) {
+      if (entry2.status === "failed" && entry2.expires <= now) this.entries.delete(stored);
+    }
+    const current = this.entries.get(key);
+    if (current) return current.status === "active" ? { kind: "busy" } : { kind: "blocked" };
+    if (this.entries.size >= this.maxEntries) {
+      return { kind: "blocked" };
+    }
+    const entry = { status: "active", expires: this.now() + this.ttlMs };
+    this.entries.set(key, entry);
+    const settle = () => this.entries.get(key) === entry;
+    return {
+      kind: "owner",
+      release: () => {
+        if (settle()) this.entries.delete(key);
+      },
+      fail: () => {
+        if (settle()) this.entries.set(key, { status: "failed", expires: this.now() + this.ttlMs });
+      }
+    };
+  }
+};
 function defaultRetryable(error) {
   const raw = error instanceof Error ? error.message : "";
   const message = formatUpstreamError(error) + " " + raw;
@@ -2212,6 +2410,14 @@ function protocolStatus(error) {
 }
 function sseError(error) {
   return "event: error\ndata: " + JSON.stringify({ type: "error", error }) + "\n\n";
+}
+function claimRejection(kind) {
+  return {
+    ok: false,
+    status: 429,
+    committed: false,
+    error: { type: "rate_limit_error", message: kind === "busy" ? "A matching request is already in flight" : "A matching request recently failed" }
+  };
 }
 async function collectMessage(parts, model, maxBytes) {
   const lines = [];
@@ -2234,7 +2440,7 @@ async function collectMessage(parts, model, maxBytes) {
   return await stream.finalMessage();
 }
 async function serveClaudePool(options) {
-  const state = { requestId: randomUUID().slice(0, 8), served: false, started: Date.now() };
+  const state = { requestId: randomUUID2().slice(0, 8), served: false, started: Date.now() };
   const result = await serveClaudePoolRequest(options, state);
   if (!result.ok && !state.served) {
     for (const item of options.skipped ?? []) {
@@ -2246,19 +2452,21 @@ async function serveClaudePool(options) {
 }
 async function serveClaudePoolRequest(options, state) {
   const { pool, routes, request, limits, write, embargo, scope } = options;
-  let owner;
-  if (embargo && scope) {
+  let owner = options.owner;
+  let ownerFailed = false;
+  if (!owner && embargo && scope) {
     const claim = embargo.claim(scope.value, scope.historyFingerprint);
-    if (claim.kind !== "owner") {
-      return {
-        ok: false,
-        status: 429,
-        committed: false,
-        error: { type: "rate_limit_error", message: claim.kind === "busy" ? "A matching request is already in flight" : "A matching request recently failed" }
-      };
-    }
+    if (claim.kind !== "owner") return claimRejection(claim.kind);
     owner = claim;
   }
+  const failOwner = () => {
+    if (owner?.kind !== "owner") return;
+    ownerFailed = true;
+    owner.fail();
+  };
+  const releaseOwner = () => {
+    if (owner?.kind === "owner") owner.release();
+  };
   let attemptedId;
   let attemptStarted = Date.now();
   const logServed = () => {
@@ -2276,7 +2484,7 @@ async function serveClaudePoolRequest(options, state) {
     options.trace?.(`pool answered: ${member.providerId}/${member.modelId} in ${((Date.now() - attemptStarted) / 1e3).toFixed(1)}s`);
   };
   options.trace?.(`pool request: ${routes.length} eligible member(s): ${routes.map((route) => `${route.member.providerId}/${route.member.modelId}`).join(", ") || "none"}`);
-  const parts = dispatchFreePool(pool, routes, {
+  const dispatched = dispatchFreePool(pool, routes, {
     target: "claude",
     tools: true,
     effort: request.effort,
@@ -2299,15 +2507,16 @@ async function serveClaudePoolRequest(options, state) {
       options.trace?.(`pool failed: ${member.providerId}/${member.modelId} (${reason}) after ${((Date.now() - attemptStarted) / 1e3).toFixed(1)}s${detail ? ": " + detail : ""}`);
     }
   });
+  const parts = trackClaudePoolSignatures(dispatched, () => attemptedId);
+  let committed = false;
   try {
     if (!request.stream) {
       const message = await collectMessage(parts, request.modelId, request.maxOutputBytes ?? 65536);
       logServed();
-      owner?.kind === "owner" && owner.release();
+      releaseOwner();
       return { ok: true, message };
     }
     if (!write) throw new Error("stream-write-sink-required");
-    let committed = false;
     let sawError = false;
     try {
       await writeAnthropicStream(parts, request.modelId, (chunk) => {
@@ -2317,24 +2526,25 @@ async function serveClaudePoolRequest(options, state) {
       }, void 0, request.estimatedInputTokens ?? 0);
     } catch (error) {
       const mapped = protocolStatus(error);
-      if (!committed) {
-        owner?.kind === "owner" && owner.release();
-        return { ok: false, ...mapped, committed: false };
+      if (!committed || request.signal.aborted) {
+        releaseOwner();
+        return { ok: false, ...mapped, committed };
       }
+      failOwner();
       if (!sawError) write(sseError(mapped.error));
-      owner?.kind === "owner" && owner.fail();
       return { ok: false, ...mapped, committed: true };
     }
     if (sawError) {
-      owner?.kind === "owner" && owner.fail();
-      return { ok: false, status: 502, committed, error: { type: "api_error", message: "Provider failed after response commitment" } };
+      if (request.signal.aborted || !committed) releaseOwner();
+      else failOwner();
+      return { ok: false, status: 502, committed, error: { type: "api_error", message: committed ? "Provider failed after response commitment" : "Provider failed before response commitment" } };
     }
     logServed();
-    owner?.kind === "owner" && owner.release();
+    releaseOwner();
     return { ok: true };
   } catch (error) {
-    owner?.kind === "owner" && owner.release();
-    return { ok: false, ...protocolStatus(error), committed: false };
+    if (!ownerFailed) releaseOwner();
+    return { ok: false, ...protocolStatus(error), committed };
   }
 }
 var ClaudePoolRuntime = class {
@@ -2353,14 +2563,41 @@ var ClaudePoolRuntime = class {
   pool;
   prepare;
   limits;
+  /** Duplicate-request ownership for this process; production wiring lives here, not in tests. */
+  embargo = new ClaudeHistoryEmbargo();
   async serve(body, write, signal, sessionId, trace) {
+    const scope = {
+      value: sessionId ? "claude-session:" + sessionId : "claude-pool:no-session",
+      historyFingerprint: requestFingerprint(body)
+    };
+    const claim = this.embargo.claim(scope.value, scope.historyFingerprint);
+    if (claim.kind !== "owner") return claimRejection(claim.kind);
+    if (signal.aborted) {
+      claim.release();
+      throw signal.reason ?? new Error("request aborted");
+    }
+    const onAbort = () => claim.release();
+    signal.addEventListener("abort", onAbort, { once: true });
     const skips = [];
-    const routes = await this.prepare(body, signal, sessionId, (member, reason) => skips.push({ ...member, reason }));
+    let routes;
+    try {
+      routes = await this.prepare(body, signal, sessionId, (member, reason) => skips.push({ ...member, reason }));
+    } catch (error) {
+      claim.release();
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
+    if (signal.aborted) {
+      claim.release();
+      throw signal.reason ?? new Error("request aborted");
+    }
     const skipped = this.newSkips(skips);
     const effort = "auto";
     return serveClaudePool({
       pool: this.pool,
       routes,
+      owner: claim,
       request: {
         modelId: String(body.model ?? CLAUDE_POOL_MODEL_ID),
         stream: body.stream === true,
@@ -2620,7 +2857,7 @@ function estimateAnthropicInputTokens(body) {
 }
 
 // src/antigravity/anthropic-to-cloudcode.ts
-import { randomUUID as randomUUID2 } from "crypto";
+import { randomUUID as randomUUID3 } from "crypto";
 var DEFAULT_SAFETY_SETTINGS = [
   { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "OFF" },
   { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "OFF" },
@@ -2881,7 +3118,7 @@ function anthropicToCloudCode(body, realModelId, projectId) {
   }
   return {
     project: projectId,
-    requestId: randomUUID2(),
+    requestId: randomUUID3(),
     model: realModelId,
     userAgent: ANTIGRAVITY_USER_AGENT,
     requestType: "agent",
@@ -2891,7 +3128,7 @@ function anthropicToCloudCode(body, realModelId, projectId) {
 }
 
 // src/antigravity/cloudcode-to-anthropic.ts
-import { randomUUID as randomUUID3 } from "crypto";
+import { randomUUID as randomUUID4 } from "crypto";
 function writeEvent(res, event, data) {
   res.write(`event: ${event}
 data: ${JSON.stringify(data)}
@@ -2981,7 +3218,7 @@ function closeBlock(res, state) {
 }
 async function streamCloudCodeToAnthropic(res, upstreamRes, model, log7) {
   const state = {
-    messageId: `msg_${randomUUID3().replace(/-/g, "").slice(0, 24)}`,
+    messageId: `msg_${randomUUID4().replace(/-/g, "").slice(0, 24)}`,
     model,
     blockIdx: 0,
     textBlockOpen: false,
@@ -3070,7 +3307,7 @@ async function streamCloudCodeToAnthropic(res, upstreamRes, model, log7) {
             closeBlock(res, state);
           }
           for (const tc of state.toolCalls) {
-            const rawToolId = `toolu_${randomUUID3().replace(/-/g, "").slice(0, 16)}`;
+            const rawToolId = `toolu_${randomUUID4().replace(/-/g, "").slice(0, 16)}`;
             const toolId = encodeToolUseId(rawToolId, tc.signature);
             writeEvent(res, "content_block_start", {
               type: "content_block_start",
@@ -3121,7 +3358,7 @@ async function streamCloudCodeToAnthropic(res, upstreamRes, model, log7) {
 }
 async function collectCloudCodeToAnthropic(upstreamRes, model, log7) {
   const text4 = await upstreamRes.text();
-  const messageId = `msg_${randomUUID3().replace(/-/g, "").slice(0, 24)}`;
+  const messageId = `msg_${randomUUID4().replace(/-/g, "").slice(0, 24)}`;
   const content = [];
   let stopReason = "end_turn";
   let inputTokens = 0;
@@ -3150,7 +3387,7 @@ async function collectCloudCodeToAnthropic(upstreamRes, model, log7) {
         else content.push({ type: "text", text: part.text });
       } else if (part.functionCall && typeof part.functionCall === "object") {
         const fc = part.functionCall;
-        const rawToolId = `toolu_${randomUUID3().replace(/-/g, "").slice(0, 16)}`;
+        const rawToolId = `toolu_${randomUUID4().replace(/-/g, "").slice(0, 16)}`;
         content.push({
           type: "tool_use",
           id: encodeToolUseId(rawToolId, signature ?? pendingThoughtSignature),
@@ -3183,7 +3420,7 @@ async function collectCloudCodeToAnthropic(upstreamRes, model, log7) {
 }
 
 // src/proxy.ts
-import { randomUUID as randomUUID4 } from "crypto";
+import { randomUUID as randomUUID5 } from "crypto";
 function appendSecureLog(logPath, line) {
   const redacted = redactTraceLine(line);
   try {
@@ -3247,7 +3484,7 @@ function lookupRoute(byAlias, id) {
   return void 0;
 }
 function startProxyCatalog(routes, defaultAliasId, debug = false, options = {}) {
-  const proxyToken = randomUUID4();
+  const proxyToken = randomUUID5();
   silenceSdkWarnings();
   if (routes.length === 0 && !options.pool) {
     return Promise.reject(new Error("Proxy catalog requires at least one route"));
@@ -3616,87 +3853,6 @@ function startProxy(completionsUrl, modelId, debug = false, contextWindow, sdk, 
   }], clientModelId, debug);
 }
 
-// src/pool/codex-retry.ts
-import { createHash } from "crypto";
-var DEFAULT_LIMITS = {
-  ttlMs: 6e4,
-  maxEntries: 128,
-  maxResponseBytes: 2 * 1024 * 1024
-};
-function canonical(value) {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
-  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
-  const record = value;
-  return "{" + Object.keys(record).sort().map((key) => JSON.stringify(key) + ":" + canonical(record[key])).join(",") + "}";
-}
-function requestFingerprint(request) {
-  return createHash("sha256").update(canonical(request)).digest("hex");
-}
-function checkLimit(name, value) {
-  if (!Number.isSafeInteger(value) || value <= 0) throw new Error("Invalid retry limit: " + name);
-}
-var CodexRetryGuard = class {
-  constructor(limits = {}, now = Date.now) {
-    this.now = now;
-    this.limits = { ...DEFAULT_LIMITS, ...limits };
-    for (const [name, value] of Object.entries(this.limits)) checkLimit(name, value);
-  }
-  now;
-  entries = /* @__PURE__ */ new Map();
-  limits;
-  /**
-   * Claims one request operation. turnId must be the observed client turn;
-   * fingerprint must hash the full translated request.
-   */
-  acquire(turnId, fingerprint) {
-    if (!turnId || !fingerprint) throw new Error("turn-id-and-fingerprint-required");
-    this.prune();
-    const key = JSON.stringify([turnId, fingerprint]);
-    const existing = this.entries.get(key);
-    if (existing) {
-      if (existing.status === "active") return { kind: "busy" };
-      if (existing.status === "failed") return { kind: "blocked", reason: existing.reason ?? "previous-attempt-failed" };
-      return { kind: "replay", response: existing.response };
-    }
-    if (this.entries.size >= this.limits.maxEntries) {
-      return { kind: "blocked", reason: "retry-guard-capacity" };
-    }
-    const entry = { status: "active", token: /* @__PURE__ */ Symbol(), expires: this.now() + this.limits.ttlMs };
-    this.entries.set(key, entry);
-    const settle = (token) => this.entries.get(key)?.token === token;
-    return {
-      kind: "owner",
-      complete: (response) => {
-        if (!settle(entry.token)) return;
-        if (typeof response !== "string" || Buffer.byteLength(response, "utf8") > this.limits.maxResponseBytes) {
-          this.entries.set(key, { status: "failed", token: entry.token, expires: this.now() + this.limits.ttlMs, reason: "response-too-large" });
-          return;
-        }
-        this.entries.set(key, { status: "succeeded", token: entry.token, expires: this.now() + this.limits.ttlMs, response });
-      },
-      fail: (reason, postcommit = false) => {
-        if (!settle(entry.token)) return;
-        this.entries.set(key, {
-          status: "failed",
-          token: entry.token,
-          expires: this.now() + this.limits.ttlMs,
-          reason: reason || "previous-attempt-failed",
-          postcommit
-        });
-      },
-      release: () => {
-        if (settle(entry.token)) this.entries.delete(key);
-      }
-    };
-  }
-  prune() {
-    const now = this.now();
-    for (const [key, entry] of this.entries) {
-      if (entry.status !== "active" && entry.expires <= now) this.entries.delete(key);
-    }
-  }
-};
-
 // src/pool/codex-identity.ts
 var MAX_METADATA_BYTES = 8192;
 function objectMetadata(value) {
@@ -3732,7 +3888,7 @@ function codexPoolIdentity(headers, body) {
 }
 
 // src/codex-responses-adapter.ts
-import { createHash as createHash2 } from "crypto";
+import { createHash as createHash3 } from "crypto";
 import { streamText, tool, jsonSchema } from "ai";
 function createCodexToolContext() {
   return { namespaceByFlatName: /* @__PURE__ */ new Map(), customToolNames: /* @__PURE__ */ new Set() };
@@ -3743,7 +3899,7 @@ var TOOL_NAME_DIGEST_LENGTH = 10;
 function flatNamespaceName(namespace, name) {
   const flat = `${namespace}__${name}`;
   if (flat.length <= MAX_MODEL_TOOL_NAME_LENGTH) return flat;
-  const digest = createHash2("sha256").update(flat).digest("hex").slice(0, TOOL_NAME_DIGEST_LENGTH);
+  const digest = createHash3("sha256").update(flat).digest("hex").slice(0, TOOL_NAME_DIGEST_LENGTH);
   const prefixLength = MAX_MODEL_TOOL_NAME_LENGTH - digest.length - 2;
   return `${flat.slice(0, prefixLength)}__${digest}`;
 }
@@ -4126,12 +4282,22 @@ function translateResponsesRequest(body, npm, metadata, options = {}) {
     instructions: system,
     messages,
     tools,
+    toolChoice: translateResponsesToolChoice(body.tool_choice),
     toolContext,
     maxOutputTokens: omitsMaxOutputTokens(metadata) ? void 0 : body.max_output_tokens ?? (bridgedGemini ? 65536 : void 0),
     temperature: body.temperature,
     providerOptions,
     headers: options.requestHeaders
   };
+}
+function translateResponsesToolChoice(choice) {
+  if (choice === "auto" || choice === "none" || choice === "required") return choice;
+  if (!choice || typeof choice !== "object") return void 0;
+  if (choice.type === "function" || choice.type === "custom") {
+    return typeof choice.name === "string" && choice.name ? { type: "tool", toolName: choice.name } : void 0;
+  }
+  if (choice.type === "tool_search") return { type: "tool", toolName: TOOL_SEARCH_NAME };
+  return void 0;
 }
 function newResponseId() {
   return `resp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -4848,6 +5014,18 @@ function writeResponsesErrorStream(modelId, message, write, statusCode = 401) {
 function poolRouteKey(route) {
   return JSON.stringify([route.account, route.endpointRevision, route.model]);
 }
+var CALL_ID_TYPES = /* @__PURE__ */ new Set([
+  "function_call",
+  "function_call_output",
+  "custom_tool_call",
+  "custom_tool_call_output",
+  "tool_search_call",
+  "tool_search_output"
+]);
+function poolHistoryOrigins(body) {
+  return bodyOrigins.get(body);
+}
+var bodyOrigins = /* @__PURE__ */ new WeakMap();
 var DEFAULT_LIMITS2 = {
   ttlMs: 36e5,
   maxEntries: 2e3,
@@ -4872,11 +5050,13 @@ var PoolContinuationStore = class {
   now;
   states = /* @__PURE__ */ new Map();
   limits;
-  remember(responseId, scope, request, output, source) {
+  remember(responseId, scope, request, output, source, origins) {
     if (!responseId) throw new Error("response-id-required");
     if (!scope) throw new Error("real-session-and-branch-required");
     const storedInput = items(request.input);
     const storedOutput = structuredClone(output);
+    const inherited = origins ?? bodyOrigins.get(request);
+    const owners = withOutputOrigins(inherited ? { ...inherited } : withInputOrigins({}, storedInput, source), storedOutput, source);
     if (storedInput.length + storedOutput.length > this.limits.maxItems) {
       throw new Error("continuation-history-too-large");
     }
@@ -4886,6 +5066,7 @@ var PoolContinuationStore = class {
       output: storedOutput,
       ...typeof request.instructions === "string" ? { instructions: request.instructions } : {},
       source: poolRouteKey(source),
+      origins: owners,
       expires: this.now() + this.limits.ttlMs,
       bytes: 0
     };
@@ -4918,7 +5099,9 @@ var PoolContinuationStore = class {
     body.input = [...structuredClone(state.input), ...structuredClone(state.output), ...items(body.input)];
     body.instructions ??= state.instructions;
     delete body.previous_response_id;
-    return { body, source: state.source };
+    const origins = { ...state.origins };
+    bodyOrigins.set(body, origins);
+    return { body, source: state.source, origins };
   }
   prune() {
     const now = this.now();
@@ -4927,15 +5110,35 @@ var PoolContinuationStore = class {
     }
   }
 };
-function stripRouteParts(part) {
-  if (part.type !== "tool-call" && part.type !== "tool-result") return part;
-  const { providerOptions: _options, toolCallId, ...rest } = part;
-  return {
-    ...rest,
-    ...typeof toolCallId === "string" ? { toolCallId: splitToolUseId(toolCallId).rawId } : {}
-  };
+function withInputOrigins(origins, input, source) {
+  const next = { ...origins };
+  for (const item of input) {
+    if (CALL_ID_TYPES.has(String(item.type)) && typeof item.call_id === "string") {
+      const rawId = splitToolUseId(item.call_id).rawId;
+      if (!next[rawId]) next[rawId] = poolRouteKey(source);
+    }
+  }
+  return next;
 }
-function preparePoolHistory(body, source, target, npm, metadata, options) {
+function withOutputOrigins(origins, output, source) {
+  const next = { ...origins };
+  for (const item of output) {
+    if (CALL_ID_TYPES.has(String(item.type)) && typeof item.call_id === "string") {
+      next[splitToolUseId(item.call_id).rawId] = poolRouteKey(source);
+    }
+  }
+  return next;
+}
+function stripRouteParts(part, target, source, origins) {
+  if (part.type !== "tool-call" && part.type !== "tool-result") return part;
+  const rawId = typeof part.toolCallId === "string" ? splitToolUseId(part.toolCallId).rawId : void 0;
+  const owner = rawId ? origins[rawId] : void 0;
+  const foreign = owner !== void 0 ? owner !== target : source !== target;
+  if (!foreign) return { ...part, ...rawId ? { toolCallId: rawId } : {} };
+  const { providerOptions: _options, toolCallId: _id, ...rest } = part;
+  return { ...rest, ...rawId ? { toolCallId: rawId } : {} };
+}
+function preparePoolHistory(body, source, target, npm, metadata, options, origins) {
   const fresh = structuredClone(body);
   const input = items(fresh.input);
   if (input.some(
@@ -4943,12 +5146,12 @@ function preparePoolHistory(body, source, target, npm, metadata, options) {
   )) throw new Error("unsupported-continuation: opaque provider state requires original route");
   fresh.input = input;
   const params = translateResponsesRequest(fresh, npm, metadata, options);
-  if (source !== poolRouteKey(target)) {
-    params.messages = params.messages.map((message) => ({
-      ...message,
-      content: Array.isArray(message.content) ? message.content.filter((part) => part.type !== "reasoning").map((part) => stripRouteParts(part)) : message.content
-    }));
-  }
+  const targetKey = poolRouteKey(target);
+  const owners = origins ?? bodyOrigins.get(body) ?? {};
+  params.messages = params.messages.map((message) => ({
+    ...message,
+    content: Array.isArray(message.content) ? message.content.filter((part) => !(source !== targetKey && part.type === "reasoning")).map((part) => stripRouteParts(part, targetKey, source, owners)) : message.content
+  }));
   return params;
 }
 
@@ -5015,6 +5218,7 @@ async function writeCodexPoolResponse(stream, modelId, write, options = {}) {
     for (const line of chunk.split(String.fromCharCode(10))) {
       if (!line.startsWith("data:")) continue;
       const event = JSON.parse(line.slice(5));
+      if (event.type === "response.output_text.done" || event.type === "response.content_part.done" || event.type === "response.output_item.done" || event.type === "response.function_call_arguments.done" || event.type === "response.custom_tool_call_input.done" || event.type === "response.completed" || event.type === "response.incomplete") finalizing = true;
       if (event.type === "response.completed" || event.type === "response.incomplete") {
         if (!event.response) throw new Error("Pool response missing terminal result");
         options.beforeComplete?.(event.response);
@@ -5038,7 +5242,7 @@ async function writeCodexPoolResponse(stream, modelId, write, options = {}) {
 }
 
 // src/pool/codex-runtime.ts
-import { randomUUID as randomUUID5 } from "crypto";
+import { randomUUID as randomUUID6 } from "crypto";
 var FREE_POOL_MODEL_ID = "relay-free-pool";
 var FREE_POOL_PROVIDER_ID = "relay-free-pool";
 var DEFAULT_POOL_LIMITS = {
@@ -5076,7 +5280,7 @@ var CodexPoolRuntime = class {
     const chunks = [];
     let committed = false;
     let produced = false;
-    const requestId = randomUUID5().slice(0, 8);
+    const requestId = randomUUID6().slice(0, 8);
     const started = Date.now();
     let attemptStarted = started;
     let attemptedId;
@@ -8399,6 +8603,7 @@ export {
   findBinaryOnPath,
   validPoolFinish,
   poolFailure,
+  claudePoolSignatures,
   CLAUDE_POOL_MODEL_ID,
   ClaudePoolRuntime,
   formatAnthropicModelEntry,
@@ -8422,6 +8627,8 @@ export {
   generateCompactionResponse,
   streamCompactionResponse,
   writeResponsesErrorStream,
+  poolRouteKey,
+  poolHistoryOrigins,
   preparePoolHistory,
   FREE_POOL_MODEL_ID,
   FREE_POOL_PROVIDER_ID,
@@ -8479,4 +8686,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-TJIAGPW7.js.map
+//# sourceMappingURL=chunk-U4D2AVJ7.js.map

@@ -1,4 +1,4 @@
-export type PoolFailureKind = 'rate-limit' | 'access' | 'context' | 'invalid' | 'transient' | 'canceled' | 'unknown';
+export type PoolFailureKind = 'rate-limit' | 'quota' | 'access' | 'context' | 'invalid' | 'transient' | 'canceled' | 'unknown';
 export interface PoolFailure { kind: PoolFailureKind; status?: number; retryAt?: number; }
 export function poolFailure(error: unknown, now = Date.now()): PoolFailure {
   const value = error as { name?: string; code?: string; statusCode?: number; responseHeaders?: Record<string, string>; message?: string } | null;
@@ -14,6 +14,8 @@ export function poolFailure(error: unknown, now = Date.now()): PoolFailure {
     }
     return { kind: 'rate-limit', status, retryAt };
   }
+  // 402 means the account's credit is exhausted: retrying another model on the same account cannot help.
+  if (status === 402) return { kind: 'quota', status };
   if ([401, 403, 404].includes(status ?? 0)) return { kind: 'access', status };
   if (status === 400 && /context.{0,20}(length|window|exceed)|prompt.{0,20}too long/i.test(value?.message ?? '')) return { kind: 'context', status };
   if (status === 400 || status === 422) return { kind: 'invalid', status };

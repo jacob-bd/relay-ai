@@ -397,3 +397,23 @@ it.each([true, false])('preserves a newer authoritative cooldown when an older r
   expect(await store().cooldownFor(target)).toBe(retryAt);
   expect((await store().inspect(target))[0]?.recovering).toBe(false);
 });
+
+it('never shortens an unexpired deadline when a later failure has no reset', async () => {
+  const account = [poolAccountScope('acct')];
+  const authoritative = clock + 7 * DAY;
+  await store().record(account, { kind: 'rate-limit', retryAt: authoritative });
+  const second = await store().record(account, { kind: 'rate-limit' });
+  expect(second.until).toBe(authoritative);
+  expect(await store().cooldownFor({ id: 'rev', scopes: account })).toBe(authoritative);
+  expect((await store().inspect({ id: 'rev', scopes: account }))[0]?.failures).toBe(2);
+
+  // An expired deadline is replaced, and a taller later reset still wins.
+  const model = [poolModelScope('acct', 'expired')];
+  await store().record(model, { kind: 'rate-limit', retryAt: clock + MINUTE });
+  clock += 2 * MINUTE;
+  const next = await store().record(model, { kind: 'rate-limit' });
+  expect(next.until).toBe(clock + UNKNOWN_RATE_LIMIT_LADDER_MS[1]);
+  const longer = clock + 6 * DAY;
+  await store().record(model, { kind: 'rate-limit', retryAt: longer });
+  expect(await store().cooldownFor({ id: 'rev', scopes: model })).toBe(longer);
+});

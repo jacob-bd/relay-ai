@@ -13,6 +13,9 @@ import { poolRequestFitsWindow } from './context.js';
 import { POOL_MAX_TOOLS, translatedEffortClaim } from './codex-prepare.js';
 import { poolMemberEffort } from './effort.js';
 import { poolOutputCap } from './output-limit.js';
+import { claudePoolSignatures } from './claude-signatures.js';
+import { poolRouteKey } from './continuation.js';
+import { splitToolUseId } from '../proxy-shared.js';
 import { poolProviderHeaders } from './session-id.js';
 
 export function omitClaudeEffort(
@@ -76,6 +79,27 @@ export async function prepareClaudePoolRoutes(options: ClaudeRouteOptions): Prom
         ...model, providerId: provider.id, apiBaseUrl: model.apiBaseUrl,
       },
     });
+    const routeKey = poolRouteKey({ account: provider.id, endpointRevision: revision, model: model.id });
+    const thinking = (Array.isArray(body.messages) ? body.messages : []).flatMap(message => {
+      const content = (message as { content?: unknown }).content;
+      return Array.isArray(content) ? content as Array<{ thinking?: string; signature?: string }> : [];
+    });
+    params.messages = params.messages.map(message => ({ ...message,
+      content: Array.isArray(message.content) ? message.content.map(part => {
+        if (part.type !== 'reasoning' && part.type !== 'tool-call') return part;
+        const { providerOptions: _routeState, ...clean } = part;
+        if (part.type === 'tool-call') {
+          const signature = claudePoolSignatures.signature(splitToolUseId(part.toolCallId).rawId, routeKey);
+          return signature && model.npm === '@ai-sdk/google'
+            ? { ...clean, providerOptions: { google: { thoughtSignature: signature } } } : clean;
+        }
+        const native = thinking.find(block => block.thinking === part.text
+          && typeof block.signature === 'string' && claudePoolSignatures.ownsThinking(block.signature, routeKey));
+        if (!native?.signature) return clean;
+        if (model.npm === '@ai-sdk/anthropic') return { ...clean, providerOptions: { anthropic: { signature: native.signature } } };
+        return part;
+      }) : message.content,
+    })) as typeof params.messages;
     if (memberAuto && translatedEffortClaim(params.providerOptions)) { skip('translation would set an effort'); continue; }
     // Coding turns need long outputs. Clamp to the model's own limit (never drop the member, never
     // use the receipt's chat-sized reservation).
@@ -110,6 +134,7 @@ export async function prepareClaudePoolRoutes(options: ClaudeRouteOptions): Prom
     }, languageModel, {
       messages: params.messages, tools: params.tools, system: params.instructions,
       maxOutputTokens: requestedOutput, temperature: params.temperature,
+      toolChoice: params.toolChoice,
       providerOptions: params.providerOptions, headers: params.headers,
     }, { store: options.health, scopes, accountScopes }));
   }

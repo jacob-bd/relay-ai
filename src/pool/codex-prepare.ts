@@ -5,7 +5,7 @@ import { providerRefreshToken } from '../provider-runtime.js';
 import { poolFreeStatus } from '../free-models.js';
 import type { FreePoolPreferences, LocalProvider } from '../types.js';
 import type { CodexSdkCallParams } from '../codex-responses-adapter.js';
-import { preparePoolHistory } from './continuation.js';
+import { preparePoolHistory, poolHistoryOrigins } from './continuation.js';
 import { currentPoolReceipt, poolEndpointRevision, type PoolCapabilityReceipt } from './capabilities.js';
 import { sdkPoolRoute } from './sdk-route.js';
 import { poolMemberEffort } from './effort.js';
@@ -114,7 +114,7 @@ export async function prepareCodexPoolRoutes(options: {
     const translate = options.translate ?? preparePoolHistory;
     const params = translate(body, options.source, identity, model.npm, {
       ...model, providerId: provider.id, apiBaseUrl: model.apiBaseUrl,
-    }, { maxTools: POOL_MAX_TOOLS, npm: model.npm });
+    }, { maxTools: POOL_MAX_TOOLS, npm: model.npm }, poolHistoryOrigins(options.body));
     // Omission is only verified when translation claimed no level of its own.
     if (memberAuto && translatedEffortClaim(params.providerOptions)) { skip('translation would set an effort'); continue; }
     const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);

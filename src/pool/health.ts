@@ -169,7 +169,7 @@ function normalizeEntry(raw: unknown): StoredEntry {
   if (typeof label !== 'string' || !label || label.length > MAX_LABEL_CHARS + 1) throw new Error('invalid label');
   if (typeof failures !== 'number' || !Number.isSafeInteger(failures) || failures < 1 || failures > 100) throw new Error('invalid failures');
   if (typeof until !== 'number' || !Number.isFinite(until)) throw new Error('invalid until');
-  if (reason !== 'rate-limit' && !(typeof reason === 'string' && reason in FAILURE_COOLDOWN_BASE_MS)) throw new Error('unsupported reason');
+  if (reason !== 'rate-limit' && reason !== 'quota' && !(typeof reason === 'string' && reason in FAILURE_COOLDOWN_BASE_MS)) throw new Error('unsupported reason');
   if (typeof updatedAt !== 'number' || !Number.isFinite(updatedAt)) throw new Error('invalid updatedAt');
   let recovery: StoredClaim | undefined;
   const rawClaim = value['recovery'];
@@ -382,7 +382,7 @@ export class PoolHealthStore {
   ): Promise<{ recorded: boolean; reason?: string; until?: number }> {
     const shortBase = failure.kind in FAILURE_COOLDOWN_BASE_MS
       ? FAILURE_COOLDOWN_BASE_MS[failure.kind as keyof typeof FAILURE_COOLDOWN_BASE_MS] : undefined;
-    if (failure.kind !== 'rate-limit' && shortBase === undefined) return { recorded: false, reason: failure.kind };
+    if (failure.kind !== 'rate-limit' && failure.kind !== 'quota' && shortBase === undefined) return { recorded: false, reason: failure.kind };
     const unique = [...new Set(scopes.filter(scope => typeof scope === 'string' && scope.trim().length > 0))];
     if (!unique.length) return { recorded: false, reason: 'no-scopes' };
     const now = this.now();
@@ -395,8 +395,12 @@ export class PoolHealthStore {
         const step = shortBase !== undefined
           ? Math.min(shortBase * 2 ** Math.min(failures - 1, 10), FAILURE_COOLDOWN_MAX_MS)
           : this.ladder[Math.min(failures - 1, this.ladder.length - 1)]!;
-        // An authoritative reset always wins and is never capped.
-        const entryUntil = failure.retryAt !== undefined ? Math.max(failure.retryAt, now) : now + step;
+        // An authoritative reset always wins and is never capped. A concurrent failure must never
+        // shorten a deadline that is still in force: only a later, longer reset may replace it.
+        const proposedUntil = failure.retryAt !== undefined ? Math.max(failure.retryAt, now) : now + step;
+        const entryUntil = previous && previous.until > now
+          ? Math.max(previous.until, proposedUntil)
+          : proposedUntil;
         state.entries[key] = {
           // A rate-limit can arrive while this process's recovery is in flight.
           // Keep the claim so another process cannot start a second provider call.

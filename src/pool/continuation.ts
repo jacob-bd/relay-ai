@@ -34,12 +34,28 @@ export interface ContinuationLimits {
 
 type Item = Record<string, unknown>;
 
+const CALL_ID_TYPES = new Set([
+  'function_call', 'function_call_output', 'custom_tool_call', 'custom_tool_call_output',
+  'tool_search_call', 'tool_search_output',
+]);
+
+/** Raw call id -> route key that produced it. */
+export type CallOrigins = Record<string, string>;
+
+export function poolHistoryOrigins(body: object): CallOrigins | undefined {
+  return bodyOrigins.get(body);
+}
+
+/** Resolved bodies carry provenance to prepare/remember without changing their wire shape. */
+const bodyOrigins = new WeakMap<object, CallOrigins>();
+
 interface State {
   scope: string;
   input: Item[];
   output: Item[];
   instructions?: string;
   source: string;
+  origins: CallOrigins;
   expires: number;
   bytes: number;
 }
@@ -82,11 +98,14 @@ export class PoolContinuationStore {
     request: Record<string, unknown>,
     output: Item[],
     source: PoolRouteIdentity,
+    origins?: CallOrigins,
   ): void {
     if (!responseId) throw new Error('response-id-required');
     if (!scope) throw new Error('real-session-and-branch-required');
     const storedInput = items(request.input);
     const storedOutput = structuredClone(output);
+    const inherited = origins ?? bodyOrigins.get(request);
+    const owners = withOutputOrigins(inherited ? { ...inherited } : withInputOrigins({}, storedInput, source), storedOutput, source);
     if (storedInput.length + storedOutput.length > this.limits.maxItems) {
       throw new Error('continuation-history-too-large');
     }
@@ -96,6 +115,7 @@ export class PoolContinuationStore {
       output: storedOutput,
       ...(typeof request.instructions === 'string' ? { instructions: request.instructions } : {}),
       source: poolRouteKey(source),
+      origins: owners,
       expires: this.now() + this.limits.ttlMs,
       bytes: 0,
     };
@@ -115,7 +135,7 @@ export class PoolContinuationStore {
     }
   }
 
-  resolve(scope: string, request: Record<string, unknown>): { body: Record<string, unknown>; source?: string } {
+  resolve(scope: string, request: Record<string, unknown>): { body: Record<string, unknown>; source?: string; origins?: CallOrigins } {
     const body = structuredClone(request);
     const previous = body.previous_response_id;
     if (previous === undefined || previous === null) return { body };
@@ -131,7 +151,9 @@ export class PoolContinuationStore {
     body.input = [...structuredClone(state.input), ...structuredClone(state.output), ...items(body.input)];
     body.instructions ??= state.instructions;
     delete body.previous_response_id;
-    return { body, source: state.source };
+    const origins = { ...state.origins };
+    bodyOrigins.set(body, origins);
+    return { body, source: state.source, origins };
   }
 
   private prune(): void {
@@ -142,13 +164,42 @@ export class PoolContinuationStore {
   }
 }
 
-function stripRouteParts(part: Record<string, unknown>): Record<string, unknown> {
+/** Seed provenance for history supplied before Relay owned a response id. */
+function withInputOrigins(origins: CallOrigins, input: Item[], source: PoolRouteIdentity): CallOrigins {
+  const next = { ...origins };
+  for (const item of input) {
+    if (CALL_ID_TYPES.has(String(item.type)) && typeof item.call_id === 'string') {
+      const rawId = splitToolUseId(item.call_id).rawId;
+      if (!next[rawId]) next[rawId] = poolRouteKey(source);
+    }
+  }
+  return next;
+}
+
+function withOutputOrigins(origins: CallOrigins, output: Item[], source: PoolRouteIdentity): CallOrigins {
+  const next = { ...origins };
+  for (const item of output) {
+    if (CALL_ID_TYPES.has(String(item.type)) && typeof item.call_id === 'string') {
+      next[splitToolUseId(item.call_id).rawId] = poolRouteKey(source);
+    }
+  }
+  return next;
+}
+
+function stripRouteParts(
+  part: Record<string, unknown>,
+  target: string,
+  source: string | undefined,
+  origins: CallOrigins,
+): Record<string, unknown> {
   if (part.type !== 'tool-call' && part.type !== 'tool-result') return part;
-  const { providerOptions: _options, toolCallId, ...rest } = part;
-  return {
-    ...rest,
-    ...(typeof toolCallId === 'string' ? { toolCallId: splitToolUseId(toolCallId).rawId } : {}),
-  };
+  const rawId = typeof part.toolCallId === 'string' ? splitToolUseId(part.toolCallId).rawId : undefined;
+  const owner = rawId ? origins[rawId] : undefined;
+  // Unknown provenance keeps the old turn-level fallback.
+  const foreign = owner !== undefined ? owner !== target : source !== target;
+  if (!foreign) return { ...part, ...(rawId ? { toolCallId: rawId } : {}) };
+  const { providerOptions: _options, toolCallId: _id, ...rest } = part;
+  return { ...rest, ...(rawId ? { toolCallId: rawId } : {}) };
 }
 
 /**
@@ -162,6 +213,7 @@ export function preparePoolHistory(
   npm: string,
   metadata?: ReasoningMetadata,
   options?: TranslateToolOptions,
+  origins?: CallOrigins,
 ): CodexSdkCallParams {
   const fresh = structuredClone(body);
   const input = items(fresh.input);
@@ -172,14 +224,14 @@ export function preparePoolHistory(
   )) throw new Error('unsupported-continuation: opaque provider state requires original route');
   fresh.input = input;
   const params = translateResponsesRequest(fresh as unknown as ResponsesRequest, npm, metadata, options);
-  if (source !== poolRouteKey(target)) {
-    params.messages = params.messages.map(message => ({ ...message,
-      content: Array.isArray(message.content)
-        ? message.content
-          .filter(part => part.type !== 'reasoning')
-          .map(part => stripRouteParts(part as unknown as Record<string, unknown>) as typeof part)
-        : message.content,
-    })) as typeof params.messages;
-  }
+  const targetKey = poolRouteKey(target);
+  const owners = origins ?? bodyOrigins.get(body) ?? {};
+  params.messages = params.messages.map(message => ({ ...message,
+    content: Array.isArray(message.content)
+      ? message.content
+        .filter(part => !(source !== targetKey && part.type === 'reasoning'))
+        .map(part => stripRouteParts(part as unknown as Record<string, unknown>, targetKey, source, owners) as typeof part)
+      : message.content,
+  })) as typeof params.messages;
   return params;
 }

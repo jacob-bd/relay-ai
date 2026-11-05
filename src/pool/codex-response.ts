@@ -37,6 +37,13 @@ export async function writeCodexPoolResponse(
     for (const line of chunk.split(String.fromCharCode(10))) {
       if (!line.startsWith('data:')) continue;
       const event = JSON.parse(line.slice(5)) as { type?: string; response?: Record<string, unknown> };
+      // A provider finish is not the only completion path: the repetition guard can
+      // synthesize one. Start holding at the first terminal output event either way,
+      // so no executable tool completion precedes stored history.
+      if (event.type === 'response.output_text.done' || event.type === 'response.content_part.done'
+        || event.type === 'response.output_item.done' || event.type === 'response.function_call_arguments.done'
+        || event.type === 'response.custom_tool_call_input.done'
+        || event.type === 'response.completed' || event.type === 'response.incomplete') finalizing = true;
       if (event.type === 'response.completed' || event.type === 'response.incomplete') {
         if (!event.response) throw new Error('Pool response missing terminal result');
         options.beforeComplete?.(event.response);

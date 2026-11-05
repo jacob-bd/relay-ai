@@ -11,6 +11,7 @@ export interface PoolSdkRequest {
   system?: string;
   maxOutputTokens: number;
   temperature?: number;
+  toolChoice?: 'auto' | 'none' | 'required' | { type: 'tool'; toolName: string };
   providerOptions?: Record<string, Record<string, unknown>>;
   headers?: Record<string, string>;
 }
@@ -20,7 +21,7 @@ export function sdkPoolRoute(
   evidence: PoolRouteEvidence,
   model: LanguageModel,
   request: PoolSdkRequest,
-  /** `scopes` = this model; `accountScopes` = the whole provider account, cooled only by a rate limit. */
+  /** `scopes` = this model; `accountScopes` = the whole provider account, cooled by a rate limit or exhausted credit. */
   health?: { store: PoolHealthStore; scopes: readonly string[]; accountScopes?: readonly string[] },
 ): DispatchRoute {
   if (!Number.isSafeInteger(request.maxOutputTokens) || request.maxOutputTokens <= 0) {
@@ -32,7 +33,7 @@ export function sdkPoolRoute(
   // Free-tier rate limits apply to the provider account, so every model on it must wait; any other
   // failure (a bad model, a server error) says nothing about its siblings.
   const scopesFor = (failure: PoolFailure): readonly string[] => health
-    ? (failure.kind === 'rate-limit' ? [...health.scopes, ...(health.accountScopes ?? [])] : health.scopes)
+    ? (failure.kind === 'rate-limit' || failure.kind === 'quota' ? [...health.scopes, ...(health.accountScopes ?? [])] : health.scopes)
     : [];
   return {
     ...evidence,
@@ -44,7 +45,21 @@ export function sdkPoolRoute(
     async open(abortSignal) {
       const decision = health ? await health.store.acquire({ id: evidence.revision, scopes: [...health.scopes, ...(health.accountScopes ?? [])] }) : undefined;
       if (decision && !decision.ok) throw new Error('Pool route entered cooldown');
+      // Cancellation can win while acquire waits on the health lock. The generator
+      // never starts in that case, so release the late-granted claim here and on
+      // an abort between this check and the caller starting the generator.
+      const releaseLateClaim = () => {
+        if (decision?.ok) void decision.release().catch(() => {});
+      };
+      if (decision?.ok) {
+        if (abortSignal.aborted) {
+          await decision.release();
+          throw abortSignal.reason ?? new Error('Pool attempt aborted');
+        }
+        abortSignal.addEventListener('abort', releaseLateClaim, { once: true });
+      }
       return (async function* () {
+        abortSignal.removeEventListener('abort', releaseLateClaim);
         let success = false;
         let recorded = false;
         try {

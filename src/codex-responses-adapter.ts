@@ -187,6 +187,7 @@ export interface ResponsesRequest {
   input: string | ResponsesInputItem[];
   stream?: boolean;
   tools?: ResponsesTool[];
+  tool_choice?: 'auto' | 'none' | 'required' | { type?: string; name?: string };
   instructions?: string;
   max_output_tokens?: number;
   temperature?: number;
@@ -220,6 +221,7 @@ export interface CodexSdkCallParams {
   instructions?: string;
   messages: ModelMessage[];
   tools?: ToolSet;
+  toolChoice?: 'auto' | 'none' | 'required' | { type: 'tool'; toolName: string };
   maxOutputTokens?: number;
   temperature?: number;
   providerOptions?: Record<string, Record<string, unknown>>;
@@ -728,12 +730,25 @@ export function translateResponsesRequest(
     instructions: system,
     messages,
     tools,
+    toolChoice: translateResponsesToolChoice(body.tool_choice),
     toolContext,
     maxOutputTokens: omitsMaxOutputTokens(metadata) ? undefined : body.max_output_tokens ?? (bridgedGemini ? 65536 : undefined),
     temperature: body.temperature,
     providerOptions,
     headers: options.requestHeaders,
   };
+}
+
+function translateResponsesToolChoice(
+  choice: ResponsesRequest['tool_choice'],
+): CodexSdkCallParams['toolChoice'] {
+  if (choice === 'auto' || choice === 'none' || choice === 'required') return choice;
+  if (!choice || typeof choice !== 'object') return undefined;
+  if (choice.type === 'function' || choice.type === 'custom') {
+    return typeof choice.name === 'string' && choice.name ? { type: 'tool', toolName: choice.name } : undefined;
+  }
+  if (choice.type === 'tool_search') return { type: 'tool', toolName: TOOL_SEARCH_NAME };
+  return undefined;
 }
 
 function newResponseId(): string {

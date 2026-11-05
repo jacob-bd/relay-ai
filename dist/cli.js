@@ -29,6 +29,7 @@ import {
   checkForUpdates,
   checkVertexModelAccess,
   claudeAppSupported,
+  claudePoolSignatures,
   codexAppInstallHint,
   codexAppModelSlug,
   codexAppSupported,
@@ -72,6 +73,8 @@ import {
   parseCodexAppModelSlug,
   poolCatalogEntry,
   poolFailure,
+  poolHistoryOrigins,
+  poolRouteKey,
   preparePoolHistory,
   printApiKeyPanel,
   printCloudProviderPanel,
@@ -104,7 +107,7 @@ import {
   validPoolFinish,
   waitForCodexAppQuit,
   writeResponsesErrorStream
-} from "./chunk-TJIAGPW7.js";
+} from "./chunk-U4D2AVJ7.js";
 import {
   translateRequest
 } from "./chunk-E7FSS5M2.js";
@@ -267,6 +270,7 @@ import {
   setTrustSystemCertificates,
   shouldHideModel,
   silenceSdkWarnings,
+  splitToolUseId,
   stripToolUseIdSuffix,
   supportsAdditionalOAuthAccounts,
   supportsManualModels,
@@ -1170,7 +1174,7 @@ function sdkPoolRoute(evidence, model, request2, health) {
   for (const definition of Object.values(request2.tools ?? {})) {
     if (definition.execute) throw new Error("Pool tools must not execute inside Relay");
   }
-  const scopesFor = (failure) => health ? failure.kind === "rate-limit" ? [...health.scopes, ...health.accountScopes ?? []] : health.scopes : [];
+  const scopesFor = (failure) => health ? failure.kind === "rate-limit" || failure.kind === "quota" ? [...health.scopes, ...health.accountScopes ?? []] : health.scopes : [];
   return {
     ...evidence,
     recordFailure: health ? async (failure) => {
@@ -1183,7 +1187,19 @@ function sdkPoolRoute(evidence, model, request2, health) {
     async open(abortSignal) {
       const decision = health ? await health.store.acquire({ id: evidence.revision, scopes: [...health.scopes, ...health.accountScopes ?? []] }) : void 0;
       if (decision && !decision.ok) throw new Error("Pool route entered cooldown");
+      const releaseLateClaim = () => {
+        if (decision?.ok) void decision.release().catch(() => {
+        });
+      };
+      if (decision?.ok) {
+        if (abortSignal.aborted) {
+          await decision.release();
+          throw abortSignal.reason ?? new Error("Pool attempt aborted");
+        }
+        abortSignal.addEventListener("abort", releaseLateClaim, { once: true });
+      }
       return (async function* () {
+        abortSignal.removeEventListener("abort", releaseLateClaim);
         let success = false;
         let recorded = false;
         try {
@@ -1312,7 +1328,7 @@ function normalizeEntry(raw) {
   if (typeof label !== "string" || !label || label.length > MAX_LABEL_CHARS + 1) throw new Error("invalid label");
   if (typeof failures !== "number" || !Number.isSafeInteger(failures) || failures < 1 || failures > 100) throw new Error("invalid failures");
   if (typeof until !== "number" || !Number.isFinite(until)) throw new Error("invalid until");
-  if (reason !== "rate-limit" && !(typeof reason === "string" && reason in FAILURE_COOLDOWN_BASE_MS)) throw new Error("unsupported reason");
+  if (reason !== "rate-limit" && reason !== "quota" && !(typeof reason === "string" && reason in FAILURE_COOLDOWN_BASE_MS)) throw new Error("unsupported reason");
   if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) throw new Error("invalid updatedAt");
   let recovery;
   const rawClaim = value["recovery"];
@@ -1488,7 +1504,7 @@ var PoolHealthStore = class {
    */
   async record(scopes, failure) {
     const shortBase = failure.kind in FAILURE_COOLDOWN_BASE_MS ? FAILURE_COOLDOWN_BASE_MS[failure.kind] : void 0;
-    if (failure.kind !== "rate-limit" && shortBase === void 0) return { recorded: false, reason: failure.kind };
+    if (failure.kind !== "rate-limit" && failure.kind !== "quota" && shortBase === void 0) return { recorded: false, reason: failure.kind };
     const unique = [...new Set(scopes.filter((scope) => typeof scope === "string" && scope.trim().length > 0))];
     if (!unique.length) return { recorded: false, reason: "no-scopes" };
     const now = this.now();
@@ -1499,7 +1515,8 @@ var PoolHealthStore = class {
         const previous = state.entries[key];
         const failures = Math.min((previous?.failures ?? 0) + 1, 100);
         const step = shortBase !== void 0 ? Math.min(shortBase * 2 ** Math.min(failures - 1, 10), FAILURE_COOLDOWN_MAX_MS) : this.ladder[Math.min(failures - 1, this.ladder.length - 1)];
-        const entryUntil = failure.retryAt !== void 0 ? Math.max(failure.retryAt, now) : now + step;
+        const proposedUntil = failure.retryAt !== void 0 ? Math.max(failure.retryAt, now) : now + step;
+        const entryUntil = previous && previous.until > now ? Math.max(previous.until, proposedUntil) : proposedUntil;
         state.entries[key] = {
           // A rate-limit can arrive while this process's recovery is in flight.
           // Keep the claim so another process cannot start a second provider call.
@@ -1827,7 +1844,7 @@ async function prepareCodexPoolRoutes(options) {
       ...model,
       providerId: provider.id,
       apiBaseUrl: model.apiBaseUrl
-    }, { maxTools: POOL_MAX_TOOLS, npm: model.npm });
+    }, { maxTools: POOL_MAX_TOOLS, npm: model.npm }, poolHistoryOrigins(options.body));
     if (memberAuto && translatedEffortClaim(params.providerOptions)) {
       skip("translation would set an effort");
       continue;
@@ -1956,6 +1973,26 @@ async function prepareClaudePoolRoutes(options) {
         apiBaseUrl: model.apiBaseUrl
       }
     });
+    const routeKey = poolRouteKey({ account: provider.id, endpointRevision: revision, model: model.id });
+    const thinking = (Array.isArray(body.messages) ? body.messages : []).flatMap((message) => {
+      const content = message.content;
+      return Array.isArray(content) ? content : [];
+    });
+    params.messages = params.messages.map((message) => ({
+      ...message,
+      content: Array.isArray(message.content) ? message.content.map((part) => {
+        if (part.type !== "reasoning" && part.type !== "tool-call") return part;
+        const { providerOptions: _routeState, ...clean } = part;
+        if (part.type === "tool-call") {
+          const signature = claudePoolSignatures.signature(splitToolUseId(part.toolCallId).rawId, routeKey);
+          return signature && model.npm === "@ai-sdk/google" ? { ...clean, providerOptions: { google: { thoughtSignature: signature } } } : clean;
+        }
+        const native = thinking.find((block) => block.thinking === part.text && typeof block.signature === "string" && claudePoolSignatures.ownsThinking(block.signature, routeKey));
+        if (!native?.signature) return clean;
+        if (model.npm === "@ai-sdk/anthropic") return { ...clean, providerOptions: { anthropic: { signature: native.signature } } };
+        return part;
+      }) : message.content
+    }));
     if (memberAuto && translatedEffortClaim(params.providerOptions)) {
       skip("translation would set an effort");
       continue;
@@ -2021,6 +2058,7 @@ async function prepareClaudePoolRoutes(options) {
       system: params.instructions,
       maxOutputTokens: requestedOutput,
       temperature: params.temperature,
+      toolChoice: params.toolChoice,
       providerOptions: params.providerOptions,
       headers: params.headers
     }, { store: options.health, scopes, accountScopes }));
@@ -18649,7 +18687,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-NY77RUZI.js");
+    const { runUiCommand } = await import("./ui-command-P3LEQGD6.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {

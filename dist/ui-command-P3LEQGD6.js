@@ -29,7 +29,7 @@ import {
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode
-} from "./chunk-TJIAGPW7.js";
+} from "./chunk-U4D2AVJ7.js";
 import "./chunk-E7FSS5M2.js";
 import "./chunk-UR4QFFSQ.js";
 import {
@@ -2328,4 +2328,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-NY77RUZI.js.map
+//# sourceMappingURL=ui-command-P3LEQGD6.js.map

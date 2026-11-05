@@ -55,3 +55,60 @@ A failed request used to block an identical retry for 60 s even when nothing rea
     npm run build
     node dist/cli.js --version
     git diff --check
+
+## Third review
+
+Verified 2026-11-05 against baseline commit 2392de0. Four parallel implementation agents handled independent groups; repetition/history/tool preparation shared one owner to avoid overlapping edits. The parent reviewed every source/test diff and resolved integration issues. No credentials or live provider sessions were used.
+
+| Defect | Correction | Proof that fails on unfixed source |
+| --- | --- | --- |
+| 1. Repetition-generated completion bypasses history buffering | Start terminal buffering on formatter completion events as well as provider finish. Preserve event order and release executable tool completions only after history storage succeeds. | pool-round2-gaps: “buffers a formatter-synthesized completion so history failure cannot execute a tool batch”. |
+| 2. Cancellation during health acquisition strands a recovery claim | Release a decision acquired after cancellation; an abort listener also releases a decision abandoned before iteration starts. Stream-owned settlement remains in the generator finally. | pool-round2-gaps: “releases a recovery claim that resolves after the client cancels”. |
+| 3. Older foreign signatures return after another continuation | Store call-origin route keys with each history snapshot. Carry provenance through effort omission, and strip foreign SDK provider options after translation without mutating the shared signature registry. Claude pool preparation strips route-bound options from reasoning/tool calls generally while preserving text and paired call IDs. | pool-round2-gaps: “keeps an old route signature out of a later same-route turn after a failover”; pool-round2-route-fixes: “keeps call provenance through real Codex preparation after effort omission” and “strips foreign thinking and tool signatures from Claude pool history”. |
+| 4. Claude production guard is never enabled | Claim a runtime-owned embargo using session id and canonical full-request fingerprint before preparation. Busy/blocked return 429 rate_limit_error. Pre-commit failures and cancellation release ownership; post-commit failures retain the embargo even when the error write throws. Only terminal failures expire. | pool-round2-gaps: “rejects an identical concurrent Claude request while the first is still in flight”; pool-claude-guard: all four regression cases. |
+| 5. A later failure shortens an authoritative reset | Preserve the maximum of the existing unexpired deadline and the new deadline while continuing to increment failures. | pool-round2-gaps: “never lets a shorter concurrent failure replace an authoritative rate limit”; pool-health: “never shortens an unexpired deadline when a later failure has no reset”. Both exercise account scope with successive 429s. |
+| 6. Forced tool choice becomes auto | Forward translated Claude toolChoice; translate Codex Responses tool_choice and pass it through the existing SDK parameter spread. | pool-round2-route-fixes: “passes a forced Claude tool choice through real preparation instead of auto” and “passes a forced Codex tool choice through real preparation”. Both capture loopback HTTP requests using the installed SDK. |
+| 7. Exhausted-credit 402 receives a short model-only cooldown | Classify 402 as quota. Persist model and account cooldowns using the existing long rate-limit ladder (2 minutes, 10 minutes, 1 hour, 6 hours, 24 hours). Keep 401/403/404 classification and model scope unchanged. | pool-round2-route-fixes: “cools the whole account for exhausted credit and leaves access failures model-scoped”. |
+
+### Exact results
+
+- Initial isolated baseline, with the original five proof cases: pool suite **48 files, 297 passed, 5 failed**; full suite **288 files, 3071 passed, 5 failed, 2 skipped**.
+- Identical final proof files against untouched 2392de0 source: **15 failed, 26 passed**. The 26 passing cases are existing pool-health tests. Every added regression case fails on baseline, including the final real-preparation Codex tool-choice case. This is equivalent to reverting all seven fixes in an isolated copy; the working tree was never reset.
+- Final fixed pool suite: **50 files, 312 passed, 0 failed**.
+- Final fixed full suite: **290 files, 3086 passed, 0 failed, 2 skipped**.
+- Typecheck passed. CLI/core build passed. Built CLI version: **0.20.0**. Git diff whitespace check passed.
+- Changes are uncommitted. No push or publish was performed. Generated distribution bundles were rebuilt as required by the repository.
+
+### Preserved behavior and verification limits
+
+Effort remains exact-receipt-only; the 128-tool cap, eight-attempt cap, 20-second first-content/idle limits, 60-second total deadline, 64KB provisional buffer, one-hour history TTL, per-snapshot 2000-item/4MB limits and 128MB total history limit are unchanged. Provenance metadata counts toward stored snapshot memory.
+
+Signature suppression and request shapes are verified locally. Rejection of a foreign Anthropic signature by a destination Google/OpenAI provider was NOT live-tested, and this document makes no claim that it was. Claude signatures are suppressed generally because Claude request history lacks trustworthy per-block route provenance. Provider-specific acceptance after that suppression and all four desktop/CLI clients together remain unverified live.
+
+401/403/404 still use the existing access classification and model-only cooldown. A 401 or account-level 403 can also affect sibling models, but changing that policy was explicitly outside this fix request; 403 and 404 are not reliably account-wide failures. Admission denials consuming attempt slots, tool-cap prioritization, context-estimate changes, missing-SDK preparation failures, and cooling-pool HTTP status changes were not expanded into this patch.
+
+### Third review correction: preserve Claude same-member signatures
+
+The earlier unconditional Claude signature suppression was a regression: it removed a proven producer's own signatures too. This follow-up replaces only that suppression and adds pool-output provenance tracking. Other third-review fixes remain unchanged.
+
+Design alternatives evaluated:
+
+- Encoding the full route in the tool id would survive restart, but adds account/endpoint/model bytes to IDs that already carry inline signature suffixes. Existing encodeToolUseId supports both __ts__ and legacy ::ts:: decoding, and can inline up to 256 signature bytes; adding more would worsen cross-provider ID constraints.
+- Chosen: a pool-only, process-local map with a one-hour TTL, at most 1000 entries and at most 4MB of signature metadata. Signed pool calls get unique call_ plus 32 hexadecimal-character IDs (37 characters, alphanumeric/underscore only). No route or signature is placed in those IDs. Unsigned calls retain their existing IDs. The mapping is populated from the selected route's response stream before the formatter writes it, including nonstream aggregation. Non-pool proxy/server paths and shared encode/split helpers are unchanged.
+
+ID constraints were checked against the installed SDK types and current Anthropic/OpenAI references: https://platform.claude.com/docs/en/api/http/messages and https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create . These references do not expose a uniform tool-call-id limit for every provider/API variant; no universal 64-character claim is made here. Generated signed-call IDs use a conservative 37-character bound, without adding route/signature suffix bytes, and do not grow with signature size. Actual upstream acceptance is not live-tested.
+
+Preparation restores a signature only when its stored route key exactly matches account, endpoint revision and model. A destination sharing the same SDK package is insufficient. Thinking signatures use a SHA-256 lookup of the exact signature observed in pool output; ambiguous signatures observed from different routes are denied. Native Anthropic reasoning metadata is restored for proven native destinations. Google and OpenAI/openai-compatible reasoning retain their existing translated options only when the same exact producer is proven.
+
+Unknown, expired, evicted and pre-pool signature provenance is stripped, including legacy inline suffixes. This can reject a current tool turn that requires an expired signature. We prefer that failure over forwarding opaque private state to an unproven member. Newly produced, retained current calls preserve their own signatures; no assumption about the last answering member assigns ownership to older calls. A restart loses local provenance deliberately.
+
+Regression proof: tests/pool-claude-signatures.test.ts has five tests: same Gemini producer over consecutive tool turns (streaming and nonstream output); A versus B and changed endpoint; native Anthropic thinking versus foreign members/packages; unknown/expired provenance alongside a retained current call; and A -> B -> A. All pass. Restoring just the pre-follow-up claude-prepare.ts and claude-runtime.ts from the uncommitted round-three tree makes all five fail (0 passed); both files were restored to the corrected version immediately afterward. The original foreign-history test remains passing.
+
+Counts for this exact checkout and npm test command:
+
+- Before follow-up: 3086 passed, 2 skipped, 0 failed, reproducing the earlier report. The two skips are Windows .cmd shim tests in codex-process.test.ts.
+- After follow-up: 3091 passed, 2 skipped, 0 failed. Pool suite: 317 passed, 0 failed (previously 312).
+- The user's 3092 passed / 4 skipped measurement could not be reproduced. It represents eight additional collected cases relative to this baseline; its source or invocation is unavailable, so it is not attributed to an implementation change or silently treated as the baseline.
+- Typecheck, build, built CLI version 0.20.0 and git diff --check pass.
+
+Real Gemini/Anthropic acceptance, live OpenAI reasoning-state acceptance, and actual desktop-client replay were NOT tested. Local tests prove emitted provenance, real preparation behavior, stable paired IDs and route isolation. This supersedes the earlier blanket-suppression limitation in the Third review section.
