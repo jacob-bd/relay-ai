@@ -1,8 +1,9 @@
 import { CodexRetryGuard, requestFingerprint } from './codex-retry.js';
-import type { CodexToolContext } from '../codex-responses-adapter.js';
+import { buildCompactionResponseBody, writeCompactionSse, type CodexToolContext } from '../codex-responses-adapter.js';
+import { isPoolCompactionRequest } from './codex-prepare.js';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { FreePoolPreferences } from '../types.js';
-import { MAX_POOL_ATTEMPTS, type PoolLimits } from './attempt.js';
+import { MAX_POOL_ATTEMPTS, type PoolEvent, type PoolLimits } from './attempt.js';
 import { codexPoolIdentity } from './codex-identity.js';
 import { PoolContinuationStore, type PoolRouteIdentity } from './continuation.js';
 import { dispatchFreePool, type DispatchRoute } from './dispatch.js';
@@ -31,6 +32,32 @@ export class CodexPoolRuntime {
       onSkip?: (member: { providerId: string; modelId: string }, reason: string) => void) => Promise<CodexPoolRoute[]>,
     private readonly limits = DEFAULT_POOL_LIMITS,
   ) {}
+  /**
+   * Remote compaction: the member's text is held until it finishes, then sent as the single `compaction` item Codex
+   * requires. The stored history is the summary alone, so later turns continue from it instead of the old transcript.
+   */
+  private async writeCompaction(
+    stream: AsyncIterable<PoolEvent>,
+    body: Record<string, unknown>,
+    conversation: string,
+    served: () => CodexPoolRoute | undefined,
+    write: (chunk: string) => void,
+    markProduced: () => void,
+  ): Promise<Record<string, unknown>> {
+    let text = '';
+    for await (const part of stream) if (part.type === 'text-delta') text += part.text;
+    // An empty summary would replace the thread's history with nothing.
+    if (!text.trim()) throw new Error('Pool compaction produced no summary');
+    markProduced();
+    const route = served();
+    if (!route) throw new Error('Pool response missing route or history');
+    const response = body.stream === true
+      ? writeCompactionSse(text.trim(), FREE_POOL_MODEL_ID, write)
+      : buildCompactionResponseBody(text.trim(), FREE_POOL_MODEL_ID);
+    this.history.remember(String(response.id), conversation, { ...body, input: [] }, response.output as Record<string, unknown>[], route.identity);
+    return response;
+  }
+
   async respond(
     headers: IncomingHttpHeaders,
     request: Record<string, unknown>,
@@ -63,11 +90,12 @@ export class CodexPoolRuntime {
       const routes = await this.prepare(body, source, signal, identity.conversation,
         (member, reason) => skipped.push({ ...member, reason }));
       let served: CodexPoolRoute | undefined;
+      const compaction = isPoolCompactionRequest(body);
       const stream = dispatchFreePool(this.pool, routes, {
         // Members that have not verified the requested level run on the provider default (see prepareCodexPoolRoutes),
         // so admission must not re-reject them for an effort that was deliberately not sent.
         target: 'codex', effort: 'auto',
-        tools: Array.isArray(body.tools) && body.tools.length > 0,
+        tools: !compaction && Array.isArray(body.tools) && body.tools.length > 0,
         signal, conversationScope: identity.conversation,
       }, {
         limits: this.limits, sessions: this.sessions, retryable: retryPoolFailure,
@@ -84,7 +112,11 @@ export class CodexPoolRuntime {
           recordPoolActivity({ target: 'codex', event: 'failed', ...member, requestId, reason, ...(detail ? { detail } : {}), ms: Date.now() - attemptStarted });
         },
       });
-      const response = await writeCodexPoolResponse(stream, FREE_POOL_MODEL_ID, chunk => {
+      const response = compaction ? await this.writeCompaction(stream, body, identity.conversation, () => served, chunk => {
+        committed = true;
+        chunks.push(chunk);
+        write(chunk);
+      }, () => { produced = true; }) : await writeCodexPoolResponse(stream, FREE_POOL_MODEL_ID, chunk => {
         committed = true;
         chunks.push(chunk);
         write(chunk);

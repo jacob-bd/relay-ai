@@ -12,6 +12,7 @@ import {
   DEFAULT_POOL_LIMITS,
   FREE_POOL_MODEL_ID,
   FREE_POOL_PROVIDER_ID,
+  POOL_MAX_TOOLS,
   PREVIEW_PROXY_PORT,
   PoolAttemptError,
   addFavorite,
@@ -66,6 +67,7 @@ import {
   isFavorite,
   launchOrRestartClaudeApp,
   launchOrRestartCodexApp,
+  lazyPoolRoute,
   localModelToRoute,
   logActiveModel,
   logConnected,
@@ -75,9 +77,11 @@ import {
   navOption,
   parseCodexAppModelSlug,
   poolCatalogEntry,
-  poolHistoryOrigins,
+  poolMemberEffort,
+  poolOutputCap,
+  poolRequestFitsWindow,
   poolRouteKey,
-  preparePoolHistory,
+  prepareCodexPoolRoutes,
   printApiKeyPanel,
   printCloudProviderPanel,
   printDryRunPanel,
@@ -96,6 +100,7 @@ import {
   removeFavorite,
   renderMultiAgentV2Feature,
   runServerCommand,
+  sdkPoolRoute,
   serializeCatalog,
   startProxy,
   startProxyCatalog,
@@ -105,11 +110,11 @@ import {
   supportsClaudeTransparentMode,
   supportsMultiAgentV2,
   translateResponsesRequest,
+  translatedEffortClaim,
   upstreamModelId,
-  validPoolFinish,
   waitForCodexAppQuit,
   writeResponsesErrorStream
-} from "./chunk-KN3BNO6G.js";
+} from "./chunk-LG62HAEE.js";
 import {
   translateRequest
 } from "./chunk-W7F4YWWL.js";
@@ -134,7 +139,6 @@ import {
   poolAccountScope,
   poolEndpointScope,
   poolErrorDetail,
-  poolFailure,
   poolProviderHeaders,
   poolRouteMember,
   poolRoutingProblem,
@@ -218,7 +222,6 @@ import {
   deepMergeProviderOptions,
   detectConflicts,
   effortProviderOptions,
-  findModelsDevModel,
   formatUpstreamError,
   formatUpstreamErrorTrace,
   generateTextStreamingIfRequired,
@@ -248,7 +251,6 @@ import {
   migrateGlobalOpencodeCredential,
   migrateLegacyCloudProviders,
   modelIdError,
-  modelsDevCrossVendorOutputLimit,
   oauthCredentialToKeychainJson,
   parseFreePool,
   poolEndpointRevision,
@@ -1175,339 +1177,6 @@ async function runFirstRunWizard(trace = false) {
     return "continue";
   }
   return "continue";
-}
-
-// src/pool/lazy-route.ts
-function lazyPoolRoute(evidence, prepare, extra) {
-  let built;
-  const route = {
-    ...evidence,
-    ...extra ?? {},
-    async admit(signal) {
-      if (built) return void 0;
-      const prepared = await prepare(signal);
-      if ("skip" in prepared) return prepared.skip;
-      built = prepared.route;
-      if (prepared.attach) Object.assign(route, prepared.attach);
-      return void 0;
-    },
-    async open(signal) {
-      if (!built) throw new Error("Pool route used before it was admitted");
-      return built.open(signal);
-    },
-    async recordAttemptFailure(error) {
-      await built?.recordAttemptFailure?.(error);
-    },
-    async recordFailure(failure) {
-      await built?.recordFailure?.(failure);
-    }
-  };
-  return route;
-}
-
-// src/pool/sdk-route.ts
-import { streamText } from "ai";
-function sdkPoolRoute(evidence, model, request2, health) {
-  if (!Number.isSafeInteger(request2.maxOutputTokens) || request2.maxOutputTokens <= 0) {
-    throw new Error("Pool requests require a bounded output reservation");
-  }
-  for (const definition of Object.values(request2.tools ?? {})) {
-    if (definition.execute) throw new Error("Pool tools must not execute inside Relay");
-  }
-  const scopesFor = (failure) => health ? failure.kind === "rate-limit" || failure.kind === "quota" ? [...health.scopes, ...health.accountScopes ?? []] : health.scopes : [];
-  return {
-    ...evidence,
-    recordFailure: health ? async (failure) => {
-      await health.store.record(scopesFor(failure), failure);
-    } : void 0,
-    recordAttemptFailure: health ? async (error) => {
-      const failure = poolFailure(error);
-      await health.store.record(scopesFor(failure), failure);
-    } : void 0,
-    async open(abortSignal) {
-      const decision = health ? await health.store.acquire({ id: evidence.revision, scopes: [...health.scopes, ...health.accountScopes ?? []] }) : void 0;
-      if (decision && !decision.ok) throw new Error("Pool route entered cooldown");
-      const releaseLateClaim = () => {
-        if (decision?.ok) void decision.release().catch(() => {
-        });
-      };
-      if (decision?.ok) {
-        if (abortSignal.aborted) {
-          await decision.release();
-          throw abortSignal.reason ?? new Error("Pool attempt aborted");
-        }
-        abortSignal.addEventListener("abort", releaseLateClaim, { once: true });
-      }
-      return (async function* () {
-        abortSignal.removeEventListener("abort", releaseLateClaim);
-        let success = false;
-        let recorded = false;
-        try {
-          const result = streamText({
-            model,
-            ...request2,
-            maxRetries: 0,
-            abortSignal,
-            onError: () => {
-            }
-          });
-          for (const promise of [result.text, result.toolCalls, result.toolResults, result.finishReason, result.usage, result.response]) {
-            Promise.resolve(promise).catch(() => {
-            });
-          }
-          const source = result.stream;
-          for await (const part of source) {
-            if (part.type === "error" && !abortSignal.aborted) {
-              const failure = poolFailure(part.error);
-              if (health && failure.kind !== "canceled") {
-                const result2 = await health.store.record(scopesFor(failure), failure);
-                recorded = recorded || result2.recorded;
-              }
-            }
-            if (validPoolFinish(part)) success = true;
-            yield part;
-          }
-        } catch (error) {
-          if (health && decision && decision.ok && !abortSignal.aborted) {
-            const failure = poolFailure(error);
-            if (failure.kind !== "canceled") {
-              const result = await health.store.record(scopesFor(failure), failure);
-              recorded = recorded || result.recorded;
-            }
-          }
-          throw error;
-        } finally {
-          if (health && decision && decision.ok) {
-            if (success && !recorded) await decision.settle(true);
-            else await decision.release();
-          }
-        }
-      })();
-    }
-  };
-}
-
-// src/pool/context.ts
-var IMAGE_INPUT_TOKENS = 4096;
-var IMAGE_PART_TYPES = /* @__PURE__ */ new Set(["image", "image-data", "image-url"]);
-var MEDIA_PART_TYPES = /* @__PURE__ */ new Set(["file", "media", "file-data"]);
-function isImagePart(part) {
-  if (typeof part.type !== "string") return false;
-  if (IMAGE_PART_TYPES.has(part.type)) return true;
-  return MEDIA_PART_TYPES.has(part.type) && typeof part.mediaType === "string" && part.mediaType.startsWith("image");
-}
-function withoutBinary(value, found) {
-  if (value instanceof Uint8Array) {
-    found.bytes += value.byteLength;
-    return null;
-  }
-  if (Array.isArray(value)) return value.map((item) => withoutBinary(item, found));
-  if (value === null || typeof value !== "object") return value;
-  const record = value;
-  if (typeof record.toJSON === "function") return withoutBinary(record.toJSON(), found);
-  if (isImagePart(record)) {
-    found.images += 1;
-    return { type: "image" };
-  }
-  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, withoutBinary(item, found)]));
-}
-function estimatePoolRequestTokens(value) {
-  const found = { images: 0, bytes: 0 };
-  const json = JSON.stringify(withoutBinary(value, found)) ?? "";
-  return Math.ceil(Buffer.byteLength(json, "utf8") / 2) + found.images * IMAGE_INPUT_TOKENS + Math.ceil(found.bytes / 2);
-}
-function poolRequestFitsWindow(value, contextWindow, outputReserve) {
-  if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) return { fits: false, required: Infinity };
-  if (!Number.isSafeInteger(outputReserve) || outputReserve <= 0) return { fits: false, required: Infinity };
-  const margin = Math.max(4096, Math.ceil(contextWindow * 0.1));
-  const required = estimatePoolRequestTokens(value) + outputReserve + margin;
-  return { fits: required <= contextWindow, required };
-}
-
-// src/pool/effort.ts
-function poolMemberEffort(requested, receipt) {
-  if (!requested || requested === "auto") return null;
-  return receipt.effortLevels.includes(requested) ? requested : null;
-}
-
-// src/pool/output-limit.ts
-var POOL_DEFAULT_OUTPUT_TOKENS = 32768;
-var MAX_OUTPUT_WINDOW_SHARE = 4;
-var MIN_OUTPUT_TOKENS = 1024;
-function poolOutputCap(providerId, modelId, contextWindow) {
-  const published = findModelsDevModel(providerId, modelId)?.limit?.output ?? modelsDevCrossVendorOutputLimit(modelId);
-  const base = typeof published === "number" && Number.isSafeInteger(published) && published > 0 ? published : POOL_DEFAULT_OUTPUT_TOKENS;
-  const windowCap = Math.floor(contextWindow / MAX_OUTPUT_WINDOW_SHARE);
-  return Math.max(MIN_OUTPUT_TOKENS, Math.min(base, windowCap));
-}
-
-// src/pool/codex-prepare.ts
-var POOL_MAX_TOOLS = 128;
-var EFFORT_CLAIM_KEYS = /* @__PURE__ */ new Set([
-  "effort",
-  "reasoningEffort",
-  "reasoning_effort",
-  "thinkingLevel",
-  "thinkingBudget",
-  "thinking_budget",
-  "effortLevel",
-  "budget_tokens"
-]);
-function omitPoolEffort(body, level) {
-  const reasoning = { ...body.reasoning };
-  delete reasoning.effort;
-  if (level !== null) reasoning.effort = level;
-  const next = { ...body };
-  if (Object.keys(reasoning).length > 0) next.reasoning = reasoning;
-  else delete next.reasoning;
-  return next;
-}
-function translatedEffortClaim(providerOptions) {
-  for (const [provider, value] of Object.entries(providerOptions ?? {})) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-    for (const [key, nested] of Object.entries(value)) {
-      if (EFFORT_CLAIM_KEYS.has(key)) return provider + "." + key;
-      if (!nested || typeof nested !== "object" || Array.isArray(nested)) continue;
-      for (const inner of Object.keys(nested)) {
-        if (EFFORT_CLAIM_KEYS.has(inner)) return provider + "." + key + "." + inner;
-      }
-    }
-  }
-  return void 0;
-}
-async function prepareCodexPoolRoutes(options) {
-  const routes = [];
-  for (const member of options.pool.members) {
-    options.signal.throwIfAborted();
-    const skip = (reason) => options.onSkip?.(member, reason);
-    const provider = options.providers.find((item) => item.id === member.providerId);
-    const model = provider?.models.find((item) => item.id === member.modelId);
-    if (!provider || !model || !model.npm || model.modelFormat === "cloud-code") {
-      skip("not available in the registry");
-      continue;
-    }
-    const revision = poolEndpointRevision({
-      providerId: provider.id,
-      authRef: provider.authRef,
-      npm: model.npm,
-      baseURL: model.apiBaseUrl,
-      upstreamModelId: model.upstreamModelId,
-      headers: provider.headers
-    });
-    const receipt = currentPoolReceipt(options.receipts, member, revision, Date.now());
-    if (!receipt) {
-      skip("no fresh verification (run Test)");
-      continue;
-    }
-    const freeStatus = poolFreeStatus({ model, providerId: provider.id });
-    if (freeStatus !== "verified_free") {
-      skip("not verified free");
-      continue;
-    }
-    if (!receipt.billingSafe || !receipt.targets.includes("codex")) {
-      skip("not verified for Codex");
-      continue;
-    }
-    const npm = model.npm;
-    const identity = { account: provider.id, endpointRevision: revision, model: model.id };
-    routes.push(lazyPoolRoute({
-      member,
-      revision,
-      freeStatus,
-      catalogVerified: true,
-      accessVerified: true,
-      billingSafe: receipt.billingSafe,
-      targets: receipt.targets,
-      toolsVerified: receipt.tools,
-      defaultEffortVerified: true,
-      effortLevels: receipt.effortLevels,
-      contextFits: true,
-      contextVerified: true
-    }, async () => {
-      const gone = (reason) => {
-        skip(reason);
-        return { skip: reason };
-      };
-      const requested = options.body.reasoning?.effort ?? options.pool.effort;
-      const auto = requested === "auto";
-      const memberEffort = poolMemberEffort(auto ? "auto" : requested, receipt);
-      const memberAuto = memberEffort === null;
-      const body = omitPoolEffort(options.body, memberEffort);
-      const translate = options.translate ?? preparePoolHistory;
-      const params = translate(body, options.source, identity, npm, {
-        ...model,
-        providerId: provider.id,
-        apiBaseUrl: model.apiBaseUrl
-      }, { maxTools: POOL_MAX_TOOLS, npm, forwardToolChoice: true }, poolHistoryOrigins(options.body));
-      if (memberAuto && translatedEffortClaim(params.providerOptions)) {
-        return gone("translation would set an effort");
-      }
-      const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
-      const askedOutput = typeof body.max_output_tokens === "number" ? body.max_output_tokens : outputCap;
-      if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) {
-        return gone("invalid output limit");
-      }
-      params.maxOutputTokens = Math.min(askedOutput, outputCap);
-      const context = await (options.checkContext ?? defaultContextCheck)(params, receipt);
-      if (!context.verified || !context.fits) {
-        return gone(context.verified ? "request too large for its context window" : "context window not verified");
-      }
-      const scopes = [poolEndpointScope(provider.id, revision, model.id)];
-      const accountScopes = [poolAccountScope(provider.id)];
-      const off = await options.health.disabledFor(scopes);
-      if (off) {
-        return gone("DISABLED: " + off.note + " (run Test to re-enable)");
-      }
-      const unavailableUntil = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
-      if (unavailableUntil !== void 0 && unavailableUntil > Date.now()) {
-        return gone("cooling down after a failure");
-      }
-      const apiKey = await resolveLocalProviderApiKey(provider);
-      if (apiKey === null || apiKey === void 0) {
-        return gone("no credential");
-      }
-      const languageModel = await createLanguageModel({
-        npm,
-        modelId: model.upstreamModelId,
-        apiKey,
-        baseURL: model.apiBaseUrl,
-        providerId: provider.id,
-        authType: provider.authType,
-        oauthAccountId: provider.oauthAccountId,
-        providerData: provider.providerData,
-        headers: poolProviderHeaders(provider, model, options.sessionId),
-        sessionId: options.sessionId,
-        refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
-      });
-      const { toolContext: _toolContext, instructions, ...sdkParams } = params;
-      const dispatch = sdkPoolRoute({
-        member,
-        revision,
-        freeStatus,
-        catalogVerified: true,
-        accessVerified: true,
-        billingSafe: receipt.billingSafe,
-        targets: receipt.targets,
-        toolsVerified: receipt.tools,
-        // Auto is constructively verified: Relay omits the field and any translator
-        // claim is refused above, so no named default rung is required.
-        defaultEffortVerified: true,
-        effortLevels: receipt.effortLevels,
-        contextFits: true,
-        contextVerified: true
-      }, languageModel, { ...sdkParams, system: instructions, maxOutputTokens: params.maxOutputTokens }, { store: options.health, scopes, accountScopes });
-      return { route: dispatch, attach: { toolContext: params.toolContext } };
-    }, { identity }));
-  }
-  return routes;
-}
-async function defaultContextCheck(params, receipt) {
-  const { fits } = poolRequestFitsWindow({
-    messages: params.messages,
-    instructions: params.instructions,
-    tools: params.tools
-  }, receipt.contextWindow, params.maxOutputTokens ?? receipt.maxOutputTokens);
-  return { verified: receipt.contextSource === "provider" || receipt.contextSource === "observed" || receipt.contextSource === "attested", fits };
 }
 
 // src/pool/claude-prepare.ts
@@ -7916,7 +7585,7 @@ function rejectGeminiManagedFlags(geminiArgs) {
 // src/gemini-proxy.ts
 import { createServer as createServer2 } from "http";
 import { randomUUID as randomUUID2 } from "crypto";
-import { streamText as streamText2, tool, jsonSchema } from "ai";
+import { streamText, tool, jsonSchema } from "ai";
 function mapFinishReason(reason) {
   if (reason === "stop" || reason === "tool-calls") return "STOP";
   if (reason === "length") return "MAX_TOKENS";
@@ -8235,7 +7904,7 @@ ${JSON.stringify(params, null, 2)}`);
             "Connection": "keep-alive"
           });
           plog("Starting streamText...");
-          const { stream } = streamText2({
+          const { stream } = streamText({
             model: languageModel,
             ...params
           });
@@ -8974,7 +8643,7 @@ async function prepareAntigravityPoolRoutes(options) {
 // src/antigravity/cloud-code-gateway.ts
 import { randomUUID as randomUUID4 } from "crypto";
 import http from "http";
-import { streamText as streamText3 } from "ai";
+import { streamText as streamText2 } from "ai";
 
 // src/antigravity/request-adapter.ts
 import { randomUUID as randomUUID3 } from "crypto";
@@ -10958,7 +10627,7 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log15
     sdkParams.providerOptions
   );
   const langModel = await createRouteLanguageModel(route, options.sessionId);
-  const { stream } = streamText3({
+  const { stream } = streamText2({
     model: langModel,
     instructions: sdkParams.instructions,
     messages: sdkParams.messages,
@@ -18493,7 +18162,7 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-PCBRDSPC.js");
+    const { runUiCommand } = await import("./ui-command-DHMQDVAZ.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {

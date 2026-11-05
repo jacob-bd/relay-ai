@@ -1667,7 +1667,7 @@ export function buildCompactionResponseBody(summary: string, modelId: string): R
 }
 
 /** Emit the SSE form of a v2 compaction turn (created → output_item added/done → completed). */
-export function writeCompactionSse(summary: string, modelId: string, write: WriteFn): void {
+export function writeCompactionSse(summary: string, modelId: string, write: WriteFn): Record<string, unknown> {
   const emit = (type: string, data: unknown) => write(sseChunk(type, data));
   const responseId = newResponseId();
   const createdAt = Math.floor(Date.now() / 1000);
@@ -1678,10 +1678,9 @@ export function writeCompactionSse(summary: string, modelId: string, write: Writ
   });
   emit('response.output_item.added', { type: 'response.output_item.added', output_index: 0, item });
   emit('response.output_item.done', { type: 'response.output_item.done', output_index: 0, item });
-  emit('response.completed', {
-    type: 'response.completed',
-    response: { id: responseId, object: 'response', model: modelId, created_at: createdAt, status: 'completed', output: [item] },
-  });
+  const completed = { id: responseId, object: 'response', model: modelId, created_at: createdAt, status: 'completed', output: [item] };
+  emit('response.completed', { type: 'response.completed', response: completed });
+  return completed;
 }
 
 /** Run the model to produce a summary, return it as the single-compaction-item Responses body. */

@@ -1,3 +1,4 @@
+import { appendCompactionInstruction } from '../codex-responses-adapter.js';
 import { createLanguageModel } from '../provider-factory.js';
 import { poolRequestFitsWindow } from './context.js';
 import { resolveLocalProviderApiKey } from '../provider-catalog.js';
@@ -21,6 +22,15 @@ import { PoolHealthStore, poolAccountScope, poolEndpointScope } from './health.j
  * own tools first, so keeping the first 128 keeps the core tools and drops MCP tools last.
  */
 export const POOL_MAX_TOOLS = 128;
+
+/** A compaction summary is a short paragraph; the cap also bounds a model that free-runs instead of stopping. */
+export const POOL_COMPACTION_MAX_OUTPUT_TOKENS = 4_000;
+
+/** Remote compaction v2 appends a bare `compaction_trigger` input item. */
+export function isPoolCompactionRequest(body: Record<string, unknown>): boolean {
+  return Array.isArray(body.input) && body.input.some(item =>
+    item && typeof item === 'object' && (item as { type?: unknown }).type === 'compaction_trigger');
+}
 
 export interface PoolContextCheck {
   verified: boolean;
@@ -90,6 +100,7 @@ export async function prepareCodexPoolRoutes(options: {
   translate?: typeof preparePoolHistory;
 }): Promise<CodexPoolRoute[]> {
   const routes: CodexPoolRoute[] = [];
+  const compaction = isPoolCompactionRequest(options.body);
   for (const member of options.pool.members) {
     options.signal.throwIfAborted();
     const skip = (reason: string) => options.onSkip?.(member, reason);
@@ -126,11 +137,13 @@ export async function prepareCodexPoolRoutes(options: {
       }, { maxTools: POOL_MAX_TOOLS, npm: npm, forwardToolChoice: true }, poolHistoryOrigins(options.body));
       // Omission is only verified when translation claimed no level of its own.
       if (memberAuto && translatedEffortClaim(params.providerOptions)) { return gone('translation would set an effort'); }
+      // Remote compaction: Codex needs one summary item back, so the member gets no tools and a summary instruction.
+      if (compaction) Object.assign(params, appendCompactionInstruction(params), { toolChoice: undefined });
       const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
       const askedOutput = typeof body.max_output_tokens === 'number' ? body.max_output_tokens : outputCap;
       if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) { return gone('invalid output limit'); }
       // Clamp to the model's own limit rather than dropping the member or using the receipt's chat-sized value.
-      params.maxOutputTokens = Math.min(askedOutput, outputCap);
+      params.maxOutputTokens = Math.min(askedOutput, outputCap, compaction ? POOL_COMPACTION_MAX_OUTPUT_TOKENS : Infinity);
       const context = await (options.checkContext ?? defaultContextCheck)(params, receipt);
       if (!context.verified || !context.fits) { return gone(context.verified ? 'request too large for its context window' : 'context window not verified'); }
       const scopes = [poolEndpointScope(provider.id, revision, model.id)];
