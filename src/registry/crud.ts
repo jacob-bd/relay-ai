@@ -8,6 +8,7 @@ import {
   saveProviderCredential,
   saveToCredentialStore,
 } from '../env.js';
+import { loadPreferences, savePreferences } from '../config.js';
 import { goRegistryStub, zenRegistryStub } from './builtins.js';
 import { loadRegistry, saveRegistry } from './io.js';
 import { findProviderNameConflict, normalizeProviderName, uniqueProviderName, validateProviderName } from './provider-name.js';
@@ -42,6 +43,12 @@ export async function removeProviderFromRegistry(
 
   const [removedProvider] = registry.providers.splice(index, 1);
   saveRegistry(registry);
+
+  const favorites = loadPreferences().favoriteModels ?? [];
+  const remainingFavorites = favorites.filter(favorite => favorite.providerId !== id);
+  if (remainingFavorites.length !== favorites.length) {
+    savePreferences({ favoriteModels: remainingFavorites });
+  }
 
   let credentialDeleted = false;
   if (opts?.deleteCredential !== false) {

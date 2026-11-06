@@ -7,7 +7,7 @@ import "./chunk-UR4QFFSQ.js";
 import {
   setContextWindowOverride,
   setModelNotChat
-} from "./chunk-NPNQPAPQ.js";
+} from "./chunk-ZSY2SKDZ.js";
 import "./chunk-5HGLQHX6.js";
 import {
   TEST_MAX_OUTPUT_TOKENS,
@@ -182,4 +182,4 @@ export {
   probeModel,
   testModel
 };
-//# sourceMappingURL=test-model-KVRJYPHV.js.map
+//# sourceMappingURL=test-model-AFMA2HYE.js.map

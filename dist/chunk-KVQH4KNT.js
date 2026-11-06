@@ -30,7 +30,7 @@ import {
   filterModelsByAvailability,
   refreshProviderModels,
   validateClinePassApiKey
-} from "./chunk-NPNQPAPQ.js";
+} from "./chunk-ZSY2SKDZ.js";
 import {
   describePoolFailure,
   extractConversationId,
@@ -6621,4 +6621,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-WMJC2INH.js.map
+//# sourceMappingURL=chunk-KVQH4KNT.js.map

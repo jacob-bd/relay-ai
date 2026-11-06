@@ -28,7 +28,7 @@ import {
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode
-} from "./chunk-WMJC2INH.js";
+} from "./chunk-KVQH4KNT.js";
 import "./chunk-JZGMNMXU.js";
 import {
   poolCatalogEntry
@@ -63,7 +63,7 @@ import {
   setModelMarkedFree,
   setModelsHidden,
   updateCustomEndpointProvider
-} from "./chunk-NPNQPAPQ.js";
+} from "./chunk-ZSY2SKDZ.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -1115,7 +1115,7 @@ async function handleMeasureContextWindow(req, res) {
     if (!res.writableEnded) controller.abort();
   });
   try {
-    const { checkContextWindow } = await import("./test-model-KVRJYPHV.js");
+    const { checkContextWindow } = await import("./test-model-AFMA2HYE.js");
     const context = await checkContextWindow(provider.id, body.modelId, controller.signal);
     if (!res.destroyed) sendJson(res, 200, { ok: true, context });
   } catch {
@@ -1439,7 +1439,7 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-KVRJYPHV.js");
+    const { testModel } = await import("./test-model-AFMA2HYE.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
     if (!controller.signal.aborted) {
       try {
@@ -2334,4 +2334,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-CGL23JYU.js.map
+//# sourceMappingURL=ui-command-CC22O7AX.js.map

@@ -75,7 +75,7 @@ import {
   supportsClaudeTransparentMode,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-WMJC2INH.js";
+} from "./chunk-KVQH4KNT.js";
 import {
   translateRequest
 } from "./chunk-JZGMNMXU.js";
@@ -152,7 +152,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-NPNQPAPQ.js";
+} from "./chunk-ZSY2SKDZ.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -3614,7 +3614,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-KVRJYPHV.js");
+      const { testModel } = await import("./test-model-AFMA2HYE.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -18199,11 +18199,11 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-CGL23JYU.js");
+    const { runUiCommand } = await import("./ui-command-CC22O7AX.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-NJG35MVX.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-QVL6QNGV.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

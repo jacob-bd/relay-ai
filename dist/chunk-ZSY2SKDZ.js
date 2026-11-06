@@ -47,6 +47,7 @@ import {
   isFreeStatus,
   isValidContextWindow,
   isValidProviderId,
+  loadPreferences,
   loadPricingCache,
   loadRegistry,
   localIsoTimestamp,
@@ -62,6 +63,7 @@ import {
   resolveContextWindow,
   resolveProviderCredential,
   resolveProviderOAuthProviderData,
+  savePreferences,
   saveProviderCredential,
   saveRegistry,
   saveToCredentialStore,
@@ -1896,6 +1898,11 @@ async function removeProviderFromRegistry(id, opts) {
   }
   const [removedProvider] = registry.providers.splice(index, 1);
   saveRegistry(registry);
+  const favorites = loadPreferences().favoriteModels ?? [];
+  const remainingFavorites = favorites.filter((favorite) => favorite.providerId !== id);
+  if (remainingFavorites.length !== favorites.length) {
+    savePreferences({ favoriteModels: remainingFavorites });
+  }
   let credentialDeleted = false;
   if (opts?.deleteCredential !== false) {
     const parsed = parseAuthRef(removedProvider.authRef);
@@ -2213,4 +2220,4 @@ export {
   addOpencodeCloudFromApiKey,
   toggleProviderEnabled
 };
-//# sourceMappingURL=chunk-NPNQPAPQ.js.map
+//# sourceMappingURL=chunk-ZSY2SKDZ.js.map

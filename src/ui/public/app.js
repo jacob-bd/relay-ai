@@ -2535,9 +2535,12 @@ function buildRenameProviderRow(provider) {
     saveBtn.disabled = false;
     if (result.ok) {
       showToast(`Renamed to ${result.name}`);
+      state.providerNameMap[provider.id] = result.name;
       state.modelsLoaded = false;
       await loadTemplates();
       await initModels();
+      renderFavList();
+      renderCodexSubagentList();
       renderProviders();
     } else {
       feedback.textContent = result.error ?? 'Rename failed';
@@ -2601,6 +2604,7 @@ function buildDeleteProviderRow(provider) {
     const result = await api('POST', '/api/providers/delete', { providerId: provider.id });
     if (result.ok) {
       showToast(`${result.name ?? provider.id} removed`);
+      state.generalFavorites = state.generalFavorites.filter(favorite => favorite.providerId !== provider.id);
       state.modelsLoaded = false;
       await loadTemplates();
       await initModels();
@@ -4010,7 +4014,7 @@ function renderApps() {
             </label>
             ` : ''}
             ${app.id === 'codex' || app.id === 'codex-app' ? `
-            <label class="claude-proxy-option">
+            <label class="claude-proxy-option codex-native-option">
               <input type="checkbox" ${state.appWithNative[app.id] ? 'checked' : ''} onchange="setCodexNativeMode('${app.id}', this.checked)">
               <span class="claude-proxy-label">
                 Native + Relay models
@@ -4302,6 +4306,9 @@ window.clearAppPath = clearAppPath;
 // Close the launch model picker when clicking outside
 document.addEventListener('click', (e) => {
   if (!state.appModelOpen) return;
+  // Let the label activate its checkbox before replacing the launch cards.
+  // Re-rendering during the label click can remove the input before activation.
+  if (e.target.closest('.codex-native-option')) return;
   const wrap = e.target.closest('.launch-model-input-wrap');
   if (!wrap) {
     state.appModelOpen = null;

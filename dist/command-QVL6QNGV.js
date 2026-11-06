@@ -12,7 +12,7 @@ import {
 import {
   setContextWindowOverride,
   setModelHidden
-} from "./chunk-NPNQPAPQ.js";
+} from "./chunk-ZSY2SKDZ.js";
 import "./chunk-5HGLQHX6.js";
 import {
   DEFAULT_FORCE_FAIL_MINUTES,
@@ -137,7 +137,7 @@ async function runPoolCommand(args) {
         console.log(JSON.stringify(result2));
         return 0;
       }
-      const { testModel, checkContextWindow } = await import("./test-model-KVRJYPHV.js");
+      const { testModel, checkContextWindow } = await import("./test-model-AFMA2HYE.js");
       if (action === "context") {
         if (args.length === 4) {
           const value = args[3] === "reset" ? null : Number(args[3]);
@@ -363,4 +363,4 @@ export {
   runPoolCommand,
   validPoolReceipts
 };
-//# sourceMappingURL=command-NJG35MVX.js.map
+//# sourceMappingURL=command-QVL6QNGV.js.map
