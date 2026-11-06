@@ -16,7 +16,7 @@ import {
   resolveRefreshCredential,
   skipWithCachedModels,
   syntheticTemplate
-} from "./chunk-HWTQNVHE.js";
+} from "./chunk-7TNNCDPU.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -73,7 +73,7 @@ import {
   validateProviderName,
   vertexAnthropicCachedModels,
   writeSecureLogLine
-} from "./chunk-S7BTLKDZ.js";
+} from "./chunk-PRSSAHTH.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -2220,4 +2220,4 @@ export {
   addOpencodeCloudFromApiKey,
   toggleProviderEnabled
 };
-//# sourceMappingURL=chunk-ZSY2SKDZ.js.map
+//# sourceMappingURL=chunk-5ETHP66U.js.map

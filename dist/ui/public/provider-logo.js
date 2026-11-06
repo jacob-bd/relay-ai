@@ -45,7 +45,8 @@ function getProviderLogoContent(providerId) {
   if (/^a2agent(?:-\d+)?$/.test(providerId)) {
     return { type: 'img', content: PROVIDER_LOGO_URLS.a2agent };
   }
-  const base = providerId.replace(/-oauth$/, '').replace(/-api$/, '');
+  const normalized = providerId.replace(/-\d+$/, '');
+  const base = normalized.replace(/-oauth$/, '').replace(/-api$/, '');
   const svg = PROVIDER_INLINE_SVGS[providerId] ?? PROVIDER_INLINE_SVGS[base];
   if (svg) return { type: 'svg', content: svg };
   const url = PROVIDER_LOGO_URLS[providerId] ?? PROVIDER_LOGO_URLS[base];

@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-11-06
+
+### Fixed
+
+- **Native + Relay checkbox in the web UI now works (Codex) and the Server autostart checkbox works.** `app.js` is an ES module, so inline `onchange` handlers need `window.*` exports; `setCodexNativeMode` and `setServerAutostart` were missing, so the choice never reached the server (it threw a `ReferenceError` in the console). The launch-card outside-click handler now also lets the label activate its checkbox before re-rendering the cards. A new test verifies every inline handler is exported.
+- **Secondary (numbered) provider accounts now show the same logo as the main provider.** For example `openai-oauth-2` fell back to a plain initial because the `-2` suffix was not stripped before the `-oauth`/`-api` lookup, so it missed the OpenAI mark. The logo lookup and the background palette hash now normalize the `-N` suffix first, so every second account (not only OpenAI) shares its provider's logo and colours.
+- **Deleting or renaming a provider in the web UI now keeps favorites in sync.** Deleting a provider removes its favorites immediately in the UI and from saved preferences (stale entries previously lingered), and renaming updates the name map and re-renders the favorites and Codex subagent lists.
+
+### Upgrade notes
+
+- No migration needed. Restart Relay (`relay-ai ui`, server or CLI) to pick up the fixes.
+
 ## [0.20.0] - 2026-11-05
 
 ### Added

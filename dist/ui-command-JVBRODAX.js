@@ -28,21 +28,21 @@ import {
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode
-} from "./chunk-KVQH4KNT.js";
-import "./chunk-JZGMNMXU.js";
+} from "./chunk-626SSSFL.js";
+import "./chunk-53LPDY3S.js";
 import {
   poolCatalogEntry
-} from "./chunk-KLJ7RELH.js";
+} from "./chunk-7BKIHQYO.js";
 import "./chunk-UR4QFFSQ.js";
 import {
   handlePoolApi,
   invalidateUiPoolMember,
   verifyUiPoolMember
-} from "./chunk-SDFOPQEG.js";
+} from "./chunk-BVN7BVVU.js";
 import {
   readBody,
   sendJson
-} from "./chunk-YLNZXQGZ.js";
+} from "./chunk-FZFPVM3L.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   addCustomEndpointProvider,
@@ -63,7 +63,7 @@ import {
   setModelMarkedFree,
   setModelsHidden,
   updateCustomEndpointProvider
-} from "./chunk-ZSY2SKDZ.js";
+} from "./chunk-5ETHP66U.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -72,7 +72,7 @@ import {
   fetchProviderCatalog,
   providersForCodexSubagents,
   providersForTarget
-} from "./chunk-HWTQNVHE.js";
+} from "./chunk-7TNNCDPU.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -140,7 +140,7 @@ import {
   supportsAdditionalOAuthAccounts,
   supportsManualModels,
   writeSecureLogLine
-} from "./chunk-S7BTLKDZ.js";
+} from "./chunk-PRSSAHTH.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -1115,7 +1115,7 @@ async function handleMeasureContextWindow(req, res) {
     if (!res.writableEnded) controller.abort();
   });
   try {
-    const { checkContextWindow } = await import("./test-model-AFMA2HYE.js");
+    const { checkContextWindow } = await import("./test-model-AICVC5PA.js");
     const context = await checkContextWindow(provider.id, body.modelId, controller.signal);
     if (!res.destroyed) sendJson(res, 200, { ok: true, context });
   } catch {
@@ -1142,7 +1142,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-2SU3YITC.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-DBY7G2Z4.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1439,7 +1439,7 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-AFMA2HYE.js");
+    const { testModel } = await import("./test-model-AICVC5PA.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
     if (!controller.signal.aborted) {
       try {
@@ -2334,4 +2334,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-CC22O7AX.js.map
+//# sourceMappingURL=ui-command-JVBRODAX.js.map

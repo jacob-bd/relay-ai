@@ -8,18 +8,18 @@ import {
   streamAnthropicResponse,
   translateRequest,
   writeAnthropicStream
-} from "./chunk-JZGMNMXU.js";
+} from "./chunk-53LPDY3S.js";
 import {
   MAX_POOL_ATTEMPTS,
   dispatchFreePool,
   formatCodexModelLabel,
   requestFingerprint
-} from "./chunk-KLJ7RELH.js";
+} from "./chunk-7BKIHQYO.js";
 import {
   extractApiKey,
   readBody,
   sendJson
-} from "./chunk-YLNZXQGZ.js";
+} from "./chunk-FZFPVM3L.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -30,7 +30,7 @@ import {
   filterModelsByAvailability,
   refreshProviderModels,
   validateClinePassApiKey
-} from "./chunk-ZSY2SKDZ.js";
+} from "./chunk-5ETHP66U.js";
 import {
   describePoolFailure,
   extractConversationId,
@@ -45,7 +45,7 @@ import {
   recordPoolActivity,
   retryPoolFailure,
   toOAuthRegistryId
-} from "./chunk-HWTQNVHE.js";
+} from "./chunk-7TNNCDPU.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -139,7 +139,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-S7BTLKDZ.js";
+} from "./chunk-PRSSAHTH.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -6621,4 +6621,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-KVQH4KNT.js.map
+//# sourceMappingURL=chunk-626SSSFL.js.map

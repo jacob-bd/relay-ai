@@ -2,7 +2,7 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-KP3M2VZ6.js";
+} from "./chunk-YN6ZCD5P.js";
 import {
   CLAUDE_POOL_MODEL_ID,
   ClaudePoolRuntime,
@@ -75,10 +75,10 @@ import {
   supportsClaudeTransparentMode,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-KVQH4KNT.js";
+} from "./chunk-626SSSFL.js";
 import {
   translateRequest
-} from "./chunk-JZGMNMXU.js";
+} from "./chunk-53LPDY3S.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -119,7 +119,7 @@ import {
   translateResponsesRequest,
   translatedEffortClaim,
   writeResponsesErrorStream
-} from "./chunk-KLJ7RELH.js";
+} from "./chunk-7BKIHQYO.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
@@ -128,7 +128,7 @@ import {
   readBody,
   sendJson,
   warnDisabledPoolMembers
-} from "./chunk-YLNZXQGZ.js";
+} from "./chunk-FZFPVM3L.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   UNTRUSTED_CERTIFICATE_CODE,
@@ -152,7 +152,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-ZSY2SKDZ.js";
+} from "./chunk-5ETHP66U.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -200,7 +200,7 @@ import {
   routableModelsForTarget,
   syntheticTemplate,
   toOAuthRegistryId
-} from "./chunk-HWTQNVHE.js";
+} from "./chunk-7TNNCDPU.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -303,7 +303,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-S7BTLKDZ.js";
+} from "./chunk-PRSSAHTH.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -3614,7 +3614,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-AFMA2HYE.js");
+      const { testModel } = await import("./test-model-AICVC5PA.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -18199,11 +18199,11 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-CC22O7AX.js");
+    const { runUiCommand } = await import("./ui-command-JVBRODAX.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-QVL6QNGV.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-HBRBSHFN.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

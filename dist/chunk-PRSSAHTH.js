@@ -49,7 +49,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.20.0",
+  version: "0.20.1",
   publishConfig: {
     access: "public"
   },
@@ -7812,4 +7812,4 @@ export {
   upstreamHttpStatus,
   anthropicErrorType
 };
-//# sourceMappingURL=chunk-S7BTLKDZ.js.map
+//# sourceMappingURL=chunk-PRSSAHTH.js.map
