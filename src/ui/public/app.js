@@ -186,8 +186,9 @@ const PALETTES = [
 ];
 
 function providerPalette(id) {
+  const normalized = id.replace(/-\d+$/, '');
   let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  for (let i = 0; i < normalized.length; i++) hash = (hash * 31 + normalized.charCodeAt(i)) | 0;
   return PALETTES[Math.abs(hash) % PALETTES.length];
 }
 
