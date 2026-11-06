@@ -737,4 +737,4 @@ MIT
 
 ### Relay Free Pool (experimental)
 
-Experimental: tested with Claude Code first; other tools are not yet verified. Manage free models with Test and **+ Add to Pool** in the UI, or run `relay-ai pool --help`. Test uses one small request; context and reasoning checks are optional. See the [Free Pool guide](docs/FREE_POOL.md) for UI/CLI equivalents, request costs, readiness and expiry.
+Experimental. One virtual model, **Relay Free Pool**, backed by the free models you add. Relay tries them strictly in your priority order and moves to the next only when one fails before any output reaches you. It is available in Claude Code, Codex CLI, the ChatGPT/Codex app, Claude Desktop, Antigravity, and embedded apps through [Relay Core](docs/CORE.md). Manage it with Test and **+ Add to Pool** in the UI, or run `relay-ai pool --help`. A Test uses one small request, and its saved result stays valid until the endpoint changes. See the [Free Pool guide](docs/FREE_POOL.md) for routing, failover, request costs and the CLI equivalents.

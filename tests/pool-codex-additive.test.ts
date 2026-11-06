@@ -106,7 +106,8 @@ describe('Relay Free Pool as a catalog selection', () => {
       [receipt, second],
     );
     expect(entry!.supported_reasoning_levels.map(level => (level as { effort: string }).effort)).toEqual(['medium', 'high']);
-    expect(entry!.context_window).toBeLessThan(200_000);
+    // The largest member sets the window (300K minus the 10% reserve), not the 200K one.
+    expect(entry!.context_window).toBe(270_000);
   });
 
   it('keeps the catalog row for a verified member regardless of the receipt age', () => {

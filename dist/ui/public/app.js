@@ -722,7 +722,7 @@ function renderProviderModelBrowser() {
     </div>
     <div class="model-bulk-bar" id="model-bulk-bar">${bulkBarHtml(provider)}</div>
     <div class="provider-model-table-wrap">
-      <table class="provider-model-table">
+      <table class="provider-model-table provider-model-table--catalog">
         <thead><tr><th class="th-select"><input type="checkbox" id="provider-model-select-page" aria-label="Select all models on this page" ${result.items.length > 0 && result.items.every(model => selectionFor(provider.id).has(model.id)) ? 'checked' : ''}></th><th>Model</th><th>Type</th><th>Context</th><th>Price in / out <span tabindex="0" class="price-help" aria-label="About price estimates">ⓘ<span role="tooltip">Prices are estimates per 1M tokens and may not reflect the provider’s actual pricing or promotions. Check the provider’s pricing page. Reference estimates use another provider’s published rates.</span></span></th><th class="th-actions">Actions</th></tr></thead>
         <tbody>
           ${result.items.map(model => `
@@ -731,17 +731,20 @@ function renderProviderModelBrowser() {
               <td><strong>${escapeHtml(model.name || model.id)}</strong>${model.source === 'manual' ? ' <span class="manual-model-badge">Manual</span>' : ''}<code>${escapeHtml(model.id)}</code></td>
               <td class="kind-cell" data-model-id="${escapeHtml(model.id)}">${kindCellHtml(provider.id, model, showActions)}</td>
               <td class="ctx-cell" data-model-id="${escapeHtml(model.id)}">${contextCellHtml(provider.id, model, showActions)}</td>
-              <td>${formatModelPrice(model.cost, isFreeModel(model), freeBadgeLabel(model), model.referencePrice)}</td>
-                <td class="td-actions">
-                  <span class="test-badge-slot" data-model-id="${escapeHtml(model.id)}">${testBadgeHtml(model.testResult)}</span>
-                  <button class="btn btn-ghost btn-model-test" type="button" data-model-id="${escapeHtml(model.id)}" title="One small request, up to 1024 output tokens. Checks response and tool calling. No retries.">Test</button>
-                  <button class="btn-model-hide${model.hidden ? ' is-hidden' : ''}" type="button" data-model-id="${escapeHtml(model.id)}" aria-pressed="${model.hidden ? 'true' : 'false'}" title="${model.hidden ? 'Unhide' : 'Hide'}" aria-label="${model.hidden ? 'Unhide' : 'Hide'} ${escapeHtml(model.name || model.id)}">${model.hidden ? EYE_OFF_ICON : EYE_ICON}</button>
+              <td class="price-cell"><div class="price-stack">${formatModelPrice(model.cost, isFreeModel(model), freeBadgeLabel(model), model.referencePrice)}
                   <button class="btn btn-ghost btn-model-mark-free${model.userMarkedFree ? ' is-marked' : ''}" type="button" data-model-id="${escapeHtml(model.id)}" aria-pressed="${model.userMarkedFree ? 'true' : 'false'}" title="${model.userMarkedFree ? 'Remove your free mark' : 'Treat this model as free, even if its listed price says otherwise. Relay cannot check this: if the provider bills you, that is on your account.'}">${model.userMarkedFree ? 'Unmark free' : 'Mark free'}</button>
+                </div></td>
+                <td class="td-actions"><div class="model-actions">
+                  <div class="test-stack">
+                    <button class="btn btn-ghost btn-model-test" type="button" data-model-id="${escapeHtml(model.id)}" title="One small request, up to 1024 output tokens. Checks response and tool calling. No retries.">Test</button>
+                    <span class="test-badge-slot" data-model-id="${escapeHtml(model.id)}">${testBadgeHtml(model.testResult)}</span>
+                  </div>
+                  <button class="btn-model-hide${model.hidden ? ' is-hidden' : ''}" type="button" data-model-id="${escapeHtml(model.id)}" aria-pressed="${model.hidden ? 'true' : 'false'}" title="${model.hidden ? 'Unhide' : 'Hide'}" aria-label="${model.hidden ? 'Unhide' : 'Hide'} ${escapeHtml(model.name || model.id)}">${model.hidden ? EYE_OFF_ICON : EYE_ICON}</button>
                   ${showActions ? `
                   <button class="btn-model-add" type="button" data-model-id="${escapeHtml(model.id)}" title="Add to favorites">+</button>
                   ${poolRowButton(provider.id, model)}
                   ` : ''}
-                </td>
+                </div></td>
             </tr>
           `).join('') || `<tr><td colspan="6" class="provider-model-empty">No models match your search and filters.</td></tr>`}
         </tbody>
@@ -3121,7 +3124,7 @@ function renderFreePool() {
         <span>Add Relay Free Pool to my launches</span>
       </label>
       <p class="pool-feature-status ${enabled && readyCount > 0 ? 'is-on' : ''}">${escapeHtml(enabledStatus)}</p>
-      <p class="pool-feature-help">When on, every Claude, Codex, ChatGPT app and Antigravity launch also lists <strong>Relay Free Pool</strong> as one extra model in the model switcher, next to the model you picked and your favorites. It is never chosen for you: pick it to use it. When you do, Relay sends each request to the first ready model in the list above and moves to the next if one fails or runs out. It never uses a model outside this pool. A model is only used while its Test result is valid (24 hours). Turning this off just removes the extra entry.</p>
+      <p class="pool-feature-help">When on, every Claude, Codex, ChatGPT app and Antigravity launch also lists <strong>Relay Free Pool</strong> as one extra model in the model switcher, next to the model you picked and your favorites. It is never chosen for you: pick it to use it. When you do, Relay sends each request to the first ready model in the list above and moves to the next if one fails or runs out. It never uses a model outside this pool. A model is only used while its saved Test result is valid, which is until its endpoint changes or you remove it. Turning this off just removes the extra entry.</p>
     </div>
     <div class="pool-controls pool-effort-card">
       <label class="pool-effort">

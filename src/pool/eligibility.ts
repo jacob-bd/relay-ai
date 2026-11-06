@@ -1,7 +1,7 @@
 import type { FavoriteModel, FreePoolPreferences } from '../types.js';
 import type { FreeStatus } from '../free-models.js';
 
-export type PoolTarget = 'codex' | 'claude' | 'antigravity';
+export type PoolTarget = 'codex' | 'claude' | 'antigravity' | 'core';
 export interface PoolRouteEvidence {
   member: FavoriteModel;
   /** Changes whenever the endpoint configuration changes. Never contains credentials. */

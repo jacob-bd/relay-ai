@@ -2512,3 +2512,26 @@ input { font-family: inherit; }
 .pool-advanced-options .btn { text-align: left; white-space: normal; }
 
 .pool-member-actions { flex-wrap: wrap; justify-content: flex-end; }
+
+/* Provider models page: a readable model column and evenly spaced row actions. */
+.provider-model-table--catalog { table-layout: auto; }
+.provider-model-table--catalog th:nth-child(2) { min-width: 260px; }
+.provider-model-table--catalog th:nth-child(3) { width: 150px; }
+.provider-model-table--catalog th:nth-child(4) { width: 110px; }
+.provider-model-table--catalog th:nth-child(5) { width: 150px; }
+.provider-model-table--catalog th.th-actions { width: 1%; white-space: nowrap; text-align: right; }
+.provider-model-table--catalog td.td-actions { text-align: right; white-space: nowrap; }
+.provider-model-table--catalog td:nth-child(2) strong { overflow-wrap: anywhere; }
+.provider-model-table--catalog td:nth-child(2) code { overflow-wrap: anywhere; }
+.provider-model-table--catalog .model-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.provider-model-table--catalog .model-actions > * { margin: 0; }
+
+/* Price column holds the price and the "Mark free" override; Test sits above its result. */
+.provider-model-table--catalog th:nth-child(5) { width: 230px; min-width: 210px; }
+.provider-model-table--catalog td.price-cell { white-space: normal; }
+.provider-model-table--catalog .price-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.provider-model-table--catalog .price-stack .price-reference { margin-top: 0; }
+.provider-model-table--catalog .price-stack .btn-model-mark-free { align-self: flex-start; }
+.provider-model-table--catalog .test-stack { display: inline-flex; flex-direction: column; align-items: center; gap: 6px; }
+.provider-model-table--catalog .test-stack .test-badge-slot { display: inline-flex; justify-content: center; }
+.provider-model-table--catalog th { white-space: nowrap; }

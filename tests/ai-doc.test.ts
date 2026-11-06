@@ -23,6 +23,14 @@ describe('ai-doc', () => {
     expect(doc).toContain(`version: "${VERSION}"`);
   });
 
+  it('documents the Free Pool and its Relay Core route', () => {
+    const doc = generateAiDoc();
+    expect(doc).toContain('RELAY FREE POOL (EXPERIMENTAL)');
+    expect(doc).toContain('relay-free-pool::relay-free-pool');
+    expect(doc).toContain('relay-ai pool force-fail');
+    expect(doc).toContain('docs/FREE_POOL.md');
+  });
+
   it('uses the published scoped npm package name', () => {
     const doc = generateAiDoc();
     expect(doc).toContain('npm install -g @jacobbd/relay-ai');

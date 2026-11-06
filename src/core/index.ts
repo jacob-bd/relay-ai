@@ -5,6 +5,7 @@
 
 export { listRelayModels } from './catalog.js';
 export { createRelayModel } from './model.js';
+export { RELAY_POOL_ROUTE_ID } from './pool-model.js';
 export { parseRelayRouteId, toRelayRouteId } from './route-id.js';
 export { RelayCoreError, isRelayCoreError } from './errors.js';
 export type {

@@ -2,18 +2,38 @@
 
 ## [Unreleased]
 
-## [0.20.0] - 2026-11-03
+## [0.20.0] - 2026-11-05
 
 ### Added
 
-- **Free Pool in the settings UI.** The sidebar now includes a separate Free Pool page to search eligible zero-price models, add or remove members, change priority and reasoning effort, verify text and tool capabilities, see readiness and receipt expiry, and launch Claude Code or Codex CLI. Verification uses the account credential and consumes quota only when explicitly requested.
+- **Relay Free Pool (experimental).** One virtual model, **Relay Free Pool**, backed by the free models you add. Relay tries them strictly in your priority order and moves to the next only when one fails before any output has been committed.
+  - Available in Claude Code, Codex CLI, the ChatGPT/Codex app, Claude Desktop and Antigravity (CLI, app and IDE), and in embedded apps through Relay Core, where `listRelayModels()` lists **Relay Free Pool** and `createRelayModel('relay-free-pool::relay-free-pool')` returns a model that fails over across your members (see `docs/CORE.md`). Turn it on once and it is offered in every supported launch; pick it to use it.
+  - The pool advertises the largest member's context window minus a 10% reserve, so one small member never caps a pool of large models. Each request is still checked against every member's own window, and a member too small for it is passed over for that request.
+  - Manage it on the **Free Pool** page in `relay-ai ui`, or with `relay-ai pool add`, `pool move`, `pool test`, `pool verify`, `pool enable`, `pool disable`, `pool status` and `pool candidates`.
+  - Members are free models: zero-price catalog entries, your own local or LAN endpoints, and provider free access with no billing path. **Mark free** on the Providers page declares a model free yourself, and it still needs a Test before it routes.
+  - A Test sends one small request (up to 1024 output tokens); for the pool it must also produce a harmless tool call, so text alone is not enough. The saved result does not expire with time; it stays in force until the endpoint changes or the member is removed.
+  - A member the provider says is gone (model retired, free promotion ended, not in your plan) is shown **Disabled** with the reason and skipped by every launcher until a passing Test. Rate limits, server errors, timeouts and rejected requests only cool it down temporarily.
+  - Failover is bounded: at most 8 attempts, 20 seconds to first content, 20 seconds idle, 60 seconds total and a 64 KB buffer before output is committed. A rate limit or exhausted credit cools the whole provider account.
+  - `relay-ai pool log` shows the current model and each failover, `-f` follows and `-v` prints every request. `relay-ai pool fail` and `relay-ai pool force-fail` simulate failures before any request is sent.
+  - Limits: the order is strict, with no balancing; failover is impossible after the first byte reaches the client; free models differ in quality; and the feature is experimental.
 
-- **Experimental shared free-model pool.** Use `relay-ai pool add <provider-account> <model>`, then `relay-ai pool verify` to enroll zero-price models with bounded text and inert tool probes. Fresh capability receipts last 24 hours. `relay-ai claude --pool` and `relay-ai codex --pool` opt into bounded failover before output is committed; verified Antigravity members add pool effort rows. Membership and priority are independent of favorites. Paid, unknown-price, provider-granted free access without billing safeguards, expired, incompatible and undersized routes are refused. OpenCode Zen free models are excluded.
-- **Pool routing safeguards.** Persistent cooldowns preserve recovery ownership across processes. Claude carries conversation cache identity and cleans up its saved pool model after exit. Codex pool launches use HTTP Responses; desktop pool launches and WebSocket pool requests are rejected. Unknown model ids in a pool-only proxy return 404; existing default-route fallback remains available for concrete catalogs. Context admission uses a conservative estimate with an output reserve and margin, not a verified tokenizer. Live Antigravity validation remains outstanding.
+- **Free Pool page.** A separate page in `relay-ai ui` lists free models with their account, context size, price and Test result, and shows members in priority order. From there you can Test a model, add or remove members, reorder them, choose the pool effort, measure a context size, read Disabled reasons and see recent activity. The page also has the toggle that adds Relay Free Pool to launches.
+
+### Changed
+
+- **The provider models page is easier to read.** The Model column no longer gets squeezed, the price column is wider and now holds the **Mark free** override, and **Test** sits above its result in one column with evenly spaced row actions.
+- **A model Test checks responsiveness only.** Test now sends one small request and reports whether the model answered and whether it produced a valid tool call. It no longer measures the context window as a side effect. Use **Measure context sizes** (Providers page, Free Pool page, or `relay-ai pool context`), which is now also available for free models because the pool needs a trusted size. Built-in paid models still refuse it, since the probe asks for an oversized output.
 
 ### Fixed
 
 - **Codex usage limits terminate the request.** Relay now returns a failed Responses event or HTTP 429 when an upstream reports a usage limit, rather than rendering the error as a successful assistant message. Codex SDK calls, including compaction, make one upstream attempt per client request; automatic SDK retries are disabled. A client can still issue a separate retry.
+- **Remote compaction works on ChatGPT-login and OpenAI routes.** Codex asks for its compaction summary in a request that those backends reject unless it is streamed. Relay now streams that request over both HTTP and WebSocket, so a long thread gets its compaction item instead of growing until it can no longer continue. A stream error now fails the compaction instead of saving a placeholder summary over the thread's history.
+- **Non-streaming calls work on ChatGPT-login models.** Those backends reject a non-streaming request outright, so the server OpenAI-compatible endpoint, Codex `stream: false` requests, Gemini CLI non-streaming `generateContent` and Antigravity non-streaming gateway requests could fail with HTTP 400. Relay now streams internally for those models and collects the same response fields. Other models are unchanged.
+
+### Upgrade notes
+
+- No migration needed. Existing providers, credentials and favorites keep working.
+- Older Relay processes should be restarted before using the pool: the shared pool health file now records quota and disabled entries, and a build that predates them treats the file as corrupt (the pool fails closed rather than ignoring a cooldown).
 
 ## [0.19.0] - 2026-11-03
 

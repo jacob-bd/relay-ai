@@ -34,6 +34,7 @@ describe.skipIf(!built)('dist/core package surface', () => {
     const lines = stdout.trim().split('\n');
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0]!)).toEqual([
+      'RELAY_POOL_ROUTE_ID',
       'RelayCoreError',
       'createRelayModel',
       'isRelayCoreError',

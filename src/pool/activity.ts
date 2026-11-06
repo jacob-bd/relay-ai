@@ -8,7 +8,7 @@ import pc from 'picocolors';
 /** One line per pool attempt outcome. Local only; holds model names and fixed reasons, never prompts or keys. */
 export interface PoolActivity {
   at: string;
-  target: 'claude' | 'codex' | 'antigravity';
+  target: 'claude' | 'codex' | 'antigravity' | 'core';
   /** `gave-up` closes a request that no member answered. */
   event: 'served' | 'failed' | 'gave-up';
   /** Ties the attempts of one request together (Claude Code sends several at once). */

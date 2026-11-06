@@ -53,7 +53,7 @@ export async function verifyPoolMember(
     return { member, status: 'skipped', reason: 'probe-' + (probe.failure ?? 'failed') };
   }
   // Antigravity always has the Auto row (no effort sent); verified effort rungs only add rows on top of it.
-  const targets: ('codex' | 'claude' | 'antigravity')[] = ['codex', 'claude', 'antigravity'];
+  const targets: ('codex' | 'claude' | 'antigravity' | 'core')[] = ['codex', 'claude', 'antigravity', 'core'];
   const effortLevels: string[] = [];
   if (deps.probeEffort && model.reasoning) {
     const declared = (model.reasoningEffortLevels ?? []).filter(level =>

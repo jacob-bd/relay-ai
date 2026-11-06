@@ -374,6 +374,35 @@ API GATEWAY (for tools that speak Anthropic/OpenAI HTTP)
   relay-ai server                 foreground gateway on port 17645
   relay-ai server --vertex        Vertex AI gateway (gcloud ADC)
 
+RELAY FREE POOL (EXPERIMENTAL)
+  One virtual model, "Relay Free Pool", backed by several zero-price models you add. Relay tries
+  them strictly in your priority order and moves to the next only when one fails BEFORE any output
+  reached the client (rate limit, timeout, error). No load balancing; free models differ in quality.
+  Where: Claude Code (relay-ai claude --pool), Codex CLI (relay-ai codex --pool), the ChatGPT/Codex
+  app, Claude Desktop, Antigravity (agy, app, IDE), and embedded apps through Relay Core.
+  Setup (nothing here sends a request unless it says so):
+    relay-ai pool candidates [--search text]   free models available to add
+    relay-ai pool add <provider> <model>       save a member (no test)
+    relay-ai pool test <provider> <model>      1 small request + a tool call; saves the result
+    relay-ai pool move <provider> <model> <up|down>   change priority
+    relay-ai pool enable | disable             add/remove the pool in launched catalogs
+    relay-ai pool status | list                readiness, context sizes, saved Test results
+  A model is used only with a saved Test result ("receipt"). It does not expire with time; it stays
+  valid until the endpoint changes or the member is removed.
+  Watching and testing failover:
+    relay-ai pool log [-f] [-v]                current model and every failover
+    relay-ai pool force-fail <provider/model>... [--minutes N] | off   simulate failure, no request sent
+  Disabled: a member the provider says is gone (retired, promotion ended, not in plan) is shown
+  Disabled and skipped until a passing Test. Rate limits, 5xx and timeouts only cool it down.
+  Context: the pool advertises its LARGEST member's window minus a 10% reserve; a request too big for
+  a member skips that member for that request. If none fits: "No eligible free pool members".
+  Limits: 20 s to first content, 20 s idle, 60 s total, at most 8 attempts, 128 tools per member.
+  Relay Core (embedding apps such as alef): listRelayModels() lists "Relay Free Pool" with route id
+  relay-free-pool::relay-free-pool; createRelayModel(routeId, { sessionId }) returns a LanguageModel
+  that fails over across members. Pass sessionId to pin a conversation to the member that last
+  answered. Cooldowns and the activity log are shared with the CLI launchers (docs/CORE.md).
+  Full guide: docs/FREE_POOL.md.
+
 DESKTOP APPS
   relay-ai codex-app              ChatGPT desktop, Codex mode (macOS/Windows/Linux); alias: chatgpt
   relay-ai claude-app             Claude desktop (macOS/Windows/Linux)
@@ -528,6 +557,8 @@ TOOL CALLING EXAMPLE (Claude + MCP)
 RELATED DOCS
   docs/AI-AGENTS.md     human-readable agent guide (this repo)
   docs/CODEX.md         Codex CLI, sandbox, restore, routing
+  docs/FREE_POOL.md     Relay Free Pool: routing, failover, Test results, Core
+  docs/CORE.md          embedding relay-ai in your own app (listRelayModels / createRelayModel)
   relay-ai --ai         full reference + live provider state
 `.trimEnd();
 

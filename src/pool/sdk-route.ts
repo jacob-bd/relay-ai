@@ -30,6 +30,27 @@ export function sdkPoolRoute(
   for (const definition of Object.values(request.tools ?? {})) {
     if (definition.execute) throw new Error('Pool tools must not execute inside Relay');
   }
+  return poolRouteFromStream(evidence, abortSignal => {
+    const result = streamText({
+      model, ...request, maxRetries: 0, abortSignal, onError: () => {},
+    } as Parameters<typeof streamText>[0]);
+    // SDK promises can reject independently after stream cancellation.
+    for (const promise of [result.text, result.toolCalls, result.toolResults, result.finishReason, result.usage, result.response]) {
+      Promise.resolve(promise).catch(() => {});
+    }
+    return result.stream as AsyncIterable<PoolEvent>;
+  }, health);
+}
+
+/**
+ * The health handling every pool member shares: recovery claim, cooldown scopes, failure classification and
+ * cleanup. `start` begins one provider call and returns its stream; it may throw synchronously.
+ */
+export function poolRouteFromStream(
+  evidence: PoolRouteEvidence,
+  start: (abortSignal: AbortSignal) => AsyncIterable<PoolEvent>,
+  health?: { store: PoolHealthStore; scopes: readonly string[]; accountScopes?: readonly string[] },
+): DispatchRoute {
   // Free-tier rate limits apply to the provider account, so every model on it must wait; any other
   // failure (a bad model, a server error) says nothing about its siblings.
   const scopesFor = (failure: PoolFailure): readonly string[] => health
@@ -66,14 +87,7 @@ export function sdkPoolRoute(
           // streamText can throw synchronously. Constructing it inside the generator
           // keeps that failure on the attempt coordinator's stream path so it is
           // classified, reported and the recovery claim is settled.
-          const result = streamText({
-            model, ...request, maxRetries: 0, abortSignal, onError: () => {},
-          } as Parameters<typeof streamText>[0]);
-          // SDK promises can reject independently after stream cancellation.
-          for (const promise of [result.text, result.toolCalls, result.toolResults, result.finishReason, result.usage, result.response]) {
-            Promise.resolve(promise).catch(() => {});
-          }
-          const source = result.stream as AsyncIterable<PoolEvent>;
+          const source = start(abortSignal);
           for await (const part of source) {
             if (part.type === 'error' && !abortSignal.aborted) {
               const failure = poolFailure(part.error);

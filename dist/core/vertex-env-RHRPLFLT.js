@@ -8,7 +8,7 @@ import {
   resolveVertexLocation,
   resolveVertexProject,
   saveVertexModelEntries
-} from "./chunk-Y5TX3XDL.js";
+} from "./chunk-EH4R3WCO.js";
 export {
   DEFAULT_VERTEX_MODELS,
   defaultAdcCredentialsPath,
@@ -20,4 +20,4 @@ export {
   resolveVertexProject,
   saveVertexModelEntries
 };
-//# sourceMappingURL=vertex-env-SHN3NOXM.js.map
+//# sourceMappingURL=vertex-env-RHRPLFLT.js.map

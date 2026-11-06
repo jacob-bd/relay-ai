@@ -9,6 +9,7 @@ import { resolveProviderTemplate } from '../registry/resolve-template.js';
 import { REGISTRY_SCHEMA_VERSION, type CachedModel, type ProviderRegistry, type RegistryProvider } from '../registry/types.js';
 import { RelayCoreError } from './errors.js';
 import { isRelayReasoningLevel, reasoningNpmForRoute } from './reasoning.js';
+import { relayPoolDescriptor } from './pool-model.js';
 import { toRelayRouteId } from './route-id.js';
 import type { RelayModelDescriptor } from './types.js';
 
@@ -128,7 +129,17 @@ export function listRelayModels(registryPath?: string): RelayModelDescriptor[] {
     }
   }
 
-  return descriptors.sort((a, b) =>
+  const sorted = descriptors.sort((a, b) =>
+    Number(b.favorite) - Number(a.favorite)
+    || a.providerName.localeCompare(b.providerName)
+    || a.displayName.localeCompare(b.displayName),
+  );
+  // The Free Pool is an ordinary entry (found by name or provider). A failure reading its settings must
+  // never take the rest of the catalog down with it.
+  let pool: RelayModelDescriptor | undefined;
+  try { pool = relayPoolDescriptor(Date.now(), registryPath); } catch { /* the pool entry is optional */ }
+  if (!pool) return sorted;
+  return [...sorted, pool].sort((a, b) =>
     Number(b.favorite) - Number(a.favorite)
     || a.providerName.localeCompare(b.providerName)
     || a.displayName.localeCompare(b.displayName),

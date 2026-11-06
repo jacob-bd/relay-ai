@@ -12,7 +12,7 @@ Core is a **read/compose layer** over relay-ai's existing provider registry, cre
 - Relay AI keeps **sole ownership** of provider registration, credentials, the OS keyring, and OAuth login/refresh.
 - Your application **never receives or stores** credential material — `createRelayModel()` resolves a credential internally and hands back only the finished SDK model.
 - Re-authentication always happens through relay-ai (`relay-ai ui` or `relay-ai providers auth`), never through the consumer.
-- Core never starts a server, opens a browser, prints CLI output, or writes registry/preferences files. OAuth refresh can update Relay's credential store, including after a provider rejects an expired token during inference.
+- Core never starts a server, opens a browser, prints CLI output, or writes registry/preferences files. The one exception is the optional Free Pool, which shares its cooldown state and activity log with the CLI launchers (see below). OAuth refresh can update Relay's credential store, including after a provider rejects an expired token during inference.
 - **"OAuth" is not one thing.** Each OAuth provider has its own transport — OpenAI ChatGPT (including the Responses-Lite WebSocket path), Cloud Code Assist, xAI, GitHub, ClinePass and the rest are independent code paths with independent failure modes. A fix to one says nothing about the others; treat them as separate integrations when you test.
 
 ## Prerequisites
@@ -169,6 +169,27 @@ To check your own routes, run the opt-in harness against your real registry and 
 ```bash
 CACHE_LIVE_ROUTES=<provider>::<model>[,…] npm run test:live:cache
 ```
+
+### Relay Free Pool (experimental)
+
+When the Free Pool is enabled and at least one member can serve Core, `listRelayModels()` lists one extra entry, **Relay Free Pool**, with the route id `relay-free-pool::relay-free-pool`. It comes first in the list, costs nothing (`pricing` is 0/0) and has no credential of its own: its members use their own. Pass the route id to `createRelayModel()` like any other:
+
+```ts
+const model = await createRelayModel('relay-free-pool::relay-free-pool', { sessionId: conversationId });
+const result = await generateText({ model, prompt: 'Hello' });
+```
+
+The model tries the pool's members in the order set in `relay-ai ui` or `relay-ai pool`, with the same rules as the CLI launchers:
+
+- **Failover only before output.** A rate limit, timeout or error before the first content moves the call to the next member. Once output has started the call ends with the error (it is never replayed on another member). Limits: 20 s to first content, 20 s idle, 60 s total, at most 8 attempts.
+- **Saved Test results.** A member is used only with a saved Test result (`relay-ai pool test`). Results saved before Core existed work as they are, with no re-test.
+- **Shared cooldowns.** Rate-limit and Disabled state live in `~/.relay-ai/pool/health.json`, shared with Claude Code, Codex and Antigravity. A 429 seen by your app also cools that member for the CLI sessions, and the other way round. Core also appends to `~/.relay-ai/logs/pool-activity.jsonl` (target `core`, visible in `relay-ai pool log`). These two files are the only things the pool writes; the registry and preferences are never written.
+- **Pass `sessionId`.** A conversation stays on the member that last answered it until that member fails. Without a `sessionId` every call starts again at the top of the list. Members on OpenCode Go or Zen need a session header, so when you pass none Relay uses a fresh id for each call.
+- **Reasoning.** `reasoning` is accepted only for a level every member verified (see `capabilities.reasoningLevels` on the entry); anything else throws `UNSUPPORTED_REASONING_LEVEL`. With no `reasoning` option each member runs on its own default. Reasoning keys in per-call `providerOptions` are removed, because a member never runs a level it was not tested on.
+- **Tools.** At most 128 tools are sent to a member; Relay never executes them.
+- **Provider state.** Signatures and item ids from one member are never sent to another. Parts that carry provider state are tagged with the member that produced them (a `relay-pool` entry in `providerMetadata`), so keep `providerMetadata` as returned when you store history.
+- **Context window.** The entry's `contextWindow` is the smallest member window minus a 10% reserve. A member too small for the request is passed over for that call without counting as a failure.
+- **Errors.** When no member can serve a call the error message starts with `No eligible free pool members` (`UNSUPPORTED_MODEL`, retryable). `createRelayModel` throws `UNSUPPORTED_MODEL` if the pool is not enabled or no member has a usable saved Test result.
 
 ### Registry and credentials are never cached across calls
 

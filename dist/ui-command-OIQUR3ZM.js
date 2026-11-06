@@ -18,7 +18,6 @@ import {
   loadServerModels,
   normalizeFavoriteModels,
   openAiIdCollisions,
-  poolCatalogEntry,
   providerOptionsFromCatalog,
   readOAuthAccountLabel,
   resolveAdvertiseAddresses,
@@ -29,26 +28,25 @@ import {
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode
-} from "./chunk-LG62HAEE.js";
-import "./chunk-W7F4YWWL.js";
+} from "./chunk-B6B54KDT.js";
+import "./chunk-5XAETRTT.js";
+import {
+  poolCatalogEntry
+} from "./chunk-YLPHHXBT.js";
 import "./chunk-UR4QFFSQ.js";
 import {
   handlePoolApi,
   invalidateUiPoolMember,
   verifyUiPoolMember
-} from "./chunk-3QLE4J67.js";
+} from "./chunk-473HMCGS.js";
 import {
-  fetchProviderCatalog,
-  providersForCodexSubagents,
-  providersForTarget,
   readBody,
   sendJson
-} from "./chunk-YUWP5APP.js";
+} from "./chunk-4CGNDYTT.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   addCustomEndpointProvider,
   applySystemCaTrust,
-  copilotPlanTier,
   customEndpointKind,
   ensureOpencodeCloudProviders,
   isSystemCaActive,
@@ -65,7 +63,16 @@ import {
   setModelMarkedFree,
   setModelsHidden,
   updateCustomEndpointProvider
-} from "./chunk-CKWEYKVD.js";
+} from "./chunk-YEADZF4Z.js";
+import {
+  validateCustomEndpointUrl
+} from "./chunk-5HGLQHX6.js";
+import {
+  copilotPlanTier,
+  fetchProviderCatalog,
+  providersForCodexSubagents,
+  providersForTarget
+} from "./chunk-MZWORR4O.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -132,9 +139,8 @@ import {
   setTrustSystemCertificates,
   supportsAdditionalOAuthAccounts,
   supportsManualModels,
-  validateCustomEndpointUrl,
   writeSecureLogLine
-} from "./chunk-DDFLIKBI.js";
+} from "./chunk-5DM6VAEL.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -1109,7 +1115,7 @@ async function handleMeasureContextWindow(req, res) {
     if (!res.writableEnded) controller.abort();
   });
   try {
-    const { checkContextWindow } = await import("./test-model-PEI4ZNKS.js");
+    const { checkContextWindow } = await import("./test-model-XRUXCO53.js");
     const context = await checkContextWindow(provider.id, body.modelId, controller.signal);
     if (!res.destroyed) sendJson(res, 200, { ok: true, context });
   } catch {
@@ -1136,7 +1142,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-ZBQVNXN5.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-SAPCX5FQ.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1433,7 +1439,7 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-PEI4ZNKS.js");
+    const { testModel } = await import("./test-model-XRUXCO53.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
     if (!controller.signal.aborted) {
       try {
@@ -2328,4 +2334,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-DHMQDVAZ.js.map
+//# sourceMappingURL=ui-command-OIQUR3ZM.js.map

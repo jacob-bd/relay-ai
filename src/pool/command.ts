@@ -36,7 +36,7 @@ export const poolHelpText = [
   '  effort <auto|low|medium|high>  Choose pool effort',
   '  verify [--reasoning]          Explicit bulk check of saved members; skips fresh receipts',
   'Adding, enabling, refreshing the UI list, and launching never run tests.',
-  'Receipts last 24h; expiry requires an explicit Test and never triggers automatic retesting.',
+  'A saved Test result stays valid until the endpoint changes or the member is removed; it does not expire with time.',
   'Context requests may consume quota even when rejected. Reasoning adds up to 4 checks.',
   'See docs/FREE_POOL.md for UI/CLI equivalents and quota costs.',
 ].join(String.fromCharCode(10));
@@ -289,7 +289,7 @@ export async function runPoolCommand(args: string[]): Promise<number> {
         console.log(pc.yellow('Discarded ' + checked.discarded + ' invalid or duplicate receipt(s).'));
       }
       savePreferences({ freePool: parseFreePool({ ...pool, receipts: checked.receipts }) });
-      console.log(pc.dim('Receipts are valid for 24h. Membership was not changed.'));
+      console.log(pc.dim('Saved Test results stay valid until the endpoint changes. Membership was not changed.'));
       return failed === pool.members.length ? 1 : 0;
     }
     let next;

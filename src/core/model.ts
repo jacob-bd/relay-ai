@@ -22,6 +22,7 @@ import { normalizeToolSchemaForNpm } from '../tool-schema.js';
 import { parseRelayRouteId } from './route-id.js';
 import type { CreateRelayModelOptions, RelayRouteId } from './types.js';
 import { openCodeGoHeaders } from '../opencode-session.js';
+import { RELAY_POOL_ROUTE_ID, createRelayPoolModel } from './pool-model.js';
 
 /**
  * Rewrite tool schemas on every Core call. CLI proxies do this in their
@@ -113,6 +114,8 @@ async function resolveCredential(provider: RegistryProvider, routeId: RelayRoute
  */
 export async function createRelayModel(routeId: RelayRouteId, options?: CreateRelayModelOptions): Promise<LanguageModel> {
   const { providerId, modelId } = parseRelayRouteId(routeId);
+  // The Free Pool is a virtual model: it has no registry entry of its own, its members do.
+  if (routeId === RELAY_POOL_ROUTE_ID) return createRelayPoolModel(options);
   const registry = loadCoreRegistry();
   const found = findRoute(registry, providerId, modelId, routeId);
   const provider = found.provider;

@@ -1,48 +1,67 @@
 #!/usr/bin/env node
 import {
+  DEFAULT_POOL_LIMITS,
+  MAX_POOL_ATTEMPTS,
+  POOL_MAX_TOOLS,
+  PoolAttemptError,
+  PoolSessionRoutes,
+  dispatchFreePool,
+  lazyPoolRoute,
+  poolOutputCap,
+  poolRequestFitsWindow,
+  poolRouteFromStream,
+  poolRouteKey
+} from "./chunk-YLPHHXBT.js";
+import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
 import {
-  TEST_MAX_OUTPUT_TOKENS,
-  cachedModelToLocal,
+  PoolHealthStore,
+  copilotPlanTier,
+  describePoolFailure,
+  filterCachedCopilotModels,
+  materializeRegistry,
   mergeHeaders,
   openCodeGoHeaders,
+  poolAccountScope,
+  poolEndpointScope,
+  poolErrorDetail,
+  poolRouteMember,
+  poolRoutingProblem,
   providerRefreshToken,
   reconcileCachedModelProtocol,
-  setContextWindowOverride,
-  setModelNotChat
-} from "./chunk-CKWEYKVD.js";
+  recordPoolActivity,
+  retryPoolFailure
+} from "./chunk-MZWORR4O.js";
 import {
   ANTIGRAVITY_API_VERSION,
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
   REGISTRY_SCHEMA_VERSION,
   createLanguageModel,
+  currentPoolReceipt,
   deepMergeProviderOptions,
   effortProviderOptions,
   getProviderModels,
   getReasoningCapabilities,
   isProviderKind,
   isValidProviderId,
+  loadPreferences,
   loadRegistry,
+  parseFreePool,
+  poolEndpointRevision,
+  poolFreeStatus,
   providerKind,
   resolveModelReasoningMetadata,
   resolveProviderCredential,
   resolveProviderOAuthAccountId,
   resolveProviderOAuthProviderData,
-  upstreamHttpStatus,
   withProviderRequestDefaults
-} from "./chunk-DDFLIKBI.js";
+} from "./chunk-5DM6VAEL.js";
 import {
   getTemplateById,
   init_provider_templates
 } from "./chunk-RKRPDZVV.js";
-import "./chunk-KNCSTHR4.js";
-import "./chunk-JIDIH7DS.js";
-
-// src/test-model.ts
-import { randomUUID as randomUUID2 } from "crypto";
-import { streamText, tool, jsonSchema } from "ai";
 
 // src/core/model.ts
 init_provider_templates();
@@ -81,8 +100,8 @@ function requestFingerprint(value) {
     sections,
     contents,
     contentsCount: contents.length,
-    toolCount: tools.reduce((count, tool2) => {
-      const declarations = record(tool2).functionDeclarations;
+    toolCount: tools.reduce((count, tool) => {
+      const declarations = record(tool).functionDeclarations;
       return count + (Array.isArray(declarations) ? declarations.length : 0);
     }, 0)
   };
@@ -568,6 +587,446 @@ async function withRequestHeaders(model, headers) {
   });
 }
 
+// src/core/pool-model.ts
+import { randomUUID as randomUUID2 } from "crypto";
+var RELAY_POOL_PROVIDER_ID = "relay-free-pool";
+var RELAY_POOL_MODEL_ID = "relay-free-pool";
+var RELAY_POOL_ROUTE_ID = `${RELAY_POOL_PROVIDER_ID}::${RELAY_POOL_MODEL_ID}`;
+var ORIGIN_NAMESPACE = "relay-pool";
+var RAW = /* @__PURE__ */ Symbol("relay-pool-raw-part");
+var NO_CREDENTIAL_NEEDED = () => "relay-core-pool";
+function loadPoolState(registryPath, copilotData) {
+  let pool;
+  try {
+    pool = parseFreePool(loadPreferences().freePool);
+  } catch {
+    return void 0;
+  }
+  if (pool.enabled !== true || pool.members.length === 0) return void 0;
+  const ids = new Set(pool.members.map((member) => member.providerId));
+  const registry = loadCoreRegistry(registryPath);
+  const trimmed = {
+    ...registry,
+    providers: registry.providers.filter((provider) => ids.has(provider.id)).map((provider) => {
+      if (!copilotData?.has(provider.id) || !provider.modelsCache) return provider;
+      return { ...provider, modelsCache: {
+        ...provider.modelsCache,
+        models: filterCachedCopilotModels(provider.modelsCache.models, copilotPlanTier(copilotData.get(provider.id)))
+      } };
+    })
+  };
+  return { pool, providers: materializeRegistry(trimmed, NO_CREDENTIAL_NEEDED, { agent: "codex" }) };
+}
+async function loadPoolStateForCall() {
+  const first = loadPoolState();
+  if (!first) return void 0;
+  const copilot = first.pool.members.filter((member) => isProviderKind(member.providerId, "github-copilot"));
+  if (copilot.length === 0) return first;
+  const registry = loadCoreRegistry();
+  const data = /* @__PURE__ */ new Map();
+  for (const member of copilot) {
+    const provider = registry.providers.find((item) => item.id === member.providerId);
+    if (!provider || data.has(provider.id)) continue;
+    try {
+      data.set(provider.id, await resolveProviderOAuthProviderData(provider.authRef));
+    } catch {
+      data.set(provider.id, void 0);
+    }
+  }
+  return loadPoolState(void 0, data);
+}
+function servableMembers(state, now, planKnown = true) {
+  const found = [];
+  for (const member of state.pool.members) {
+    const provider = state.providers.find((item) => item.id === member.providerId);
+    const model = provider?.models.find((item) => item.id === member.modelId);
+    if (!provider || !model || !model.npm || model.modelFormat === "cloud-code") continue;
+    const planPending = !planKnown && isProviderKind(provider.id, "github-copilot");
+    if (!planPending && poolFreeStatus({ model, providerId: provider.id }) !== "verified_free") continue;
+    if (!planPending && poolRoutingProblem(provider, model)) continue;
+    const revision = poolEndpointRevision({
+      providerId: provider.id,
+      authRef: provider.authRef,
+      npm: model.npm,
+      baseURL: model.apiBaseUrl,
+      upstreamModelId: model.upstreamModelId,
+      headers: provider.headers
+    });
+    const receipt = currentPoolReceipt(state.pool.receipts, member, revision, now);
+    if (!receipt || !receipt.billingSafe || !receipt.targets.includes("core")) continue;
+    found.push({ member, provider, model, revision, receipt, routeId: `${provider.id}::${model.id}` });
+  }
+  return found;
+}
+function commonEffortLevels(members) {
+  if (!members.length) return [];
+  return members[0].receipt.effortLevels.filter((level) => members.every((item) => item.receipt.effortLevels.includes(level))).filter(isRelayReasoningLevel);
+}
+function tagPart(part, key) {
+  if (!part.providerMetadata || Object.keys(part.providerMetadata).length === 0) return part;
+  return { ...part, providerMetadata: { ...part.providerMetadata, [ORIGIN_NAMESPACE]: { route: key } } };
+}
+function isolateHistory(prompt, key) {
+  return prompt.map((message) => {
+    if (message.role !== "assistant" || !Array.isArray(message.content)) return message;
+    return {
+      ...message,
+      content: message.content.map((part) => {
+        const options = part.providerOptions;
+        if (!options) return part;
+        const { providerOptions: _drop, ...clean } = part;
+        const origin = options[ORIGIN_NAMESPACE]?.route;
+        if (origin !== key) return clean;
+        const { [ORIGIN_NAMESPACE]: _tag, ...own } = options;
+        return Object.keys(own).length ? { ...clean, providerOptions: own } : clean;
+      })
+    };
+  });
+}
+var EFFORT_CLAIM_KEYS = /* @__PURE__ */ new Set([
+  "effort",
+  "reasoningEffort",
+  "reasoning_effort",
+  "thinkingLevel",
+  "thinkingBudget",
+  "thinking_budget",
+  "effortLevel",
+  "budget_tokens"
+]);
+function withoutEffortClaims(options) {
+  if (!options) return options;
+  const strip = (value, depth) => {
+    if (!value || typeof value !== "object" || Array.isArray(value) || depth > 3) return value;
+    return Object.fromEntries(Object.entries(value).filter(([key]) => !EFFORT_CLAIM_KEYS.has(key)).map(([key, nested]) => [key, strip(nested, depth + 1)]));
+  };
+  return strip(options, 0);
+}
+function finishReasonOf(part) {
+  if (part.type !== "finish") return void 0;
+  const reason = part.finishReason;
+  return typeof reason === "string" ? reason : reason?.unified;
+}
+function toPoolEvent(part, key) {
+  const tagged = tagPart(part, key);
+  const event = { ...tagged };
+  if (part.type === "text-delta" || part.type === "reasoning-delta") event.text = part.delta;
+  if (part.type === "finish") event.finishReason = finishReasonOf(part);
+  event[RAW] = tagged;
+  return event;
+}
+function rawPart(event) {
+  return event[RAW];
+}
+function wrapPoolError(error) {
+  if (isRelayCoreError(error)) return error;
+  if (error instanceof PoolAttemptError) {
+    if (error.committed) return error.cause ?? error;
+    return new RelayCoreError(
+      "PROVIDER_LOAD_FAILED",
+      "All free pool members failed" + (error.cause ? ": " + describePoolFailure(error.cause) : ""),
+      { routeId: RELAY_POOL_ROUTE_ID, retryable: true, cause: error.cause ?? error }
+    );
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.startsWith("No eligible free pool members")) {
+    return new RelayCoreError("UNSUPPORTED_MODEL", message, { routeId: RELAY_POOL_ROUTE_ID, retryable: true, cause: error });
+  }
+  return error;
+}
+var sessions = new PoolSessionRoutes();
+async function memberModel(routeId, context) {
+  const { createRelayModel: createRelayModel2 } = await import("./model-HNQ7Y4YN.js");
+  return createRelayModel2(routeId, {
+    sessionId: context.sessionId,
+    ...context.options?.onDebug ? { onDebug: context.options.onDebug } : {},
+    ...context.options?.fetchImpl ? { fetchImpl: context.options.fetchImpl } : {},
+    ...context.options?.reasoning !== void 0 ? { reasoning: context.options.reasoning } : {}
+  });
+}
+function buildRoutes(members, context, skips) {
+  return members.map((item) => {
+    const key = poolRouteKey({ account: item.provider.id, endpointRevision: item.revision, model: item.model.id });
+    const scopes = [poolEndpointScope(item.provider.id, item.revision, item.model.id)];
+    const accountScopes = [poolAccountScope(item.provider.id)];
+    const label = item.provider.id + "/" + item.model.id;
+    return lazyPoolRoute({
+      member: item.member,
+      revision: item.revision,
+      freeStatus: "verified_free",
+      catalogVerified: true,
+      accessVerified: true,
+      billingSafe: true,
+      targets: item.receipt.targets,
+      toolsVerified: item.receipt.tools,
+      defaultEffortVerified: true,
+      effortLevels: item.receipt.effortLevels,
+      contextFits: true,
+      contextVerified: true
+    }, async () => {
+      const gone = (reason) => {
+        skips.push(label + ": " + reason);
+        return { skip: reason };
+      };
+      const off = await context.health.disabledFor(scopes);
+      if (off) return gone("DISABLED: " + off.note + " (run Test to re-enable)");
+      const until = await context.health.cooldownFor({ id: item.revision, scopes: [...scopes, ...accountScopes] });
+      if (until !== void 0 && until > context.now) return gone("cooling down after a failure");
+      const outputCap = poolOutputCap(item.provider.id, item.model.id, item.receipt.contextWindow);
+      const asked = context.call.maxOutputTokens ?? outputCap;
+      if (!Number.isSafeInteger(asked) || asked <= 0) return gone("invalid output limit");
+      const requestedOutput = Math.min(asked, outputCap);
+      const tools = context.call.tools && context.call.tools.length > POOL_MAX_TOOLS ? context.call.tools.slice(0, POOL_MAX_TOOLS) : context.call.tools;
+      const prompt = isolateHistory(context.call.prompt, key);
+      if (!poolRequestFitsWindow({ prompt, tools }, item.receipt.contextWindow, requestedOutput).fits) {
+        return gone("request too large for its context window");
+      }
+      let model;
+      try {
+        model = await memberModel(item.routeId, context);
+      } catch (error) {
+        if (isRelayCoreError(error) && (error.code === "CREDENTIAL_UNAVAILABLE" || error.code === "OAUTH_REFRESH_FAILED")) {
+          return gone("no credential");
+        }
+        return gone("could not be prepared: " + (error instanceof Error ? error.message : String(error)));
+      }
+      if (typeof model === "string" || typeof model.doStream !== "function") {
+        return gone("could not be prepared: unsupported model object");
+      }
+      context.onBuilt?.();
+      const member = model;
+      return {
+        route: poolRouteFromStream({
+          member: item.member,
+          revision: item.revision,
+          freeStatus: "verified_free",
+          catalogVerified: true,
+          accessVerified: true,
+          billingSafe: true,
+          targets: item.receipt.targets,
+          toolsVerified: item.receipt.tools,
+          defaultEffortVerified: true,
+          effortLevels: item.receipt.effortLevels,
+          contextFits: true,
+          contextVerified: true
+        }, (abortSignal) => {
+          const source = (async () => (await member.doStream({
+            ...context.call,
+            prompt,
+            tools,
+            maxOutputTokens: requestedOutput,
+            providerOptions: withoutEffortClaims(context.call.providerOptions),
+            abortSignal
+          })).stream)();
+          return (async function* () {
+            const reader = (await source).getReader();
+            try {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) return;
+                yield toPoolEvent(value, key);
+              }
+            } finally {
+              await reader.cancel().catch(() => {
+              });
+            }
+          })();
+        }, { store: context.health, scopes, accountScopes })
+      };
+    });
+  });
+}
+async function* runPool(options, call) {
+  const now = Date.now();
+  const state = await loadPoolStateForCall();
+  if (!state) {
+    throw new RelayCoreError("UNSUPPORTED_MODEL", "Relay Free Pool is not enabled or has no members \u2014 set it up with `relay-ai pool` or relay-ai ui.", { routeId: RELAY_POOL_ROUTE_ID });
+  }
+  const members = servableMembers(state, now);
+  const skips = [];
+  const requestId = randomUUID2().slice(0, 8);
+  const signal = call.abortSignal ?? new AbortController().signal;
+  const started = { at: Date.now() };
+  let answering;
+  const routes = buildRoutes(members, {
+    options,
+    call,
+    requestId,
+    now,
+    health: new PoolHealthStore(),
+    // A host-supplied conversation id is kept; otherwise Go/Zen members still get a header for this call.
+    sessionId: options?.sessionId ?? randomUUID2()
+  }, skips);
+  const hasTools = Boolean(call.tools?.length);
+  const events = dispatchFreePool(state.pool, routes, {
+    target: "core",
+    tools: hasTools,
+    effort: "auto",
+    signal,
+    ...options?.sessionId ? { conversationScope: options.sessionId } : {}
+  }, {
+    limits: { ...DEFAULT_POOL_LIMITS, attempts: MAX_POOL_ATTEMPTS },
+    sessions,
+    retryable: retryPoolFailure,
+    onAttempt: (id) => {
+      answering = id;
+      started.at = Date.now();
+    },
+    onFailure: (id, error) => {
+      const member = poolRouteMember(id);
+      if (!member) return;
+      const reason = describePoolFailure(error);
+      const detail = reason.startsWith("simulated") ? void 0 : poolErrorDetail(error);
+      recordPoolActivity({ target: "core", event: "failed", ...member, requestId, reason, ...detail ? { detail } : {}, ms: Date.now() - started.at });
+    }
+  });
+  let served = false;
+  try {
+    for await (const event of events) {
+      if (event.type === "finish") served = true;
+      yield rawPart(event);
+    }
+  } catch (error) {
+    if (!signal.aborted) {
+      for (const line of skips) {
+        const [member, ...reason] = line.split(": ");
+        const [providerId, ...model] = (member ?? "").split("/");
+        recordPoolActivity({ target: "core", event: "failed", providerId: providerId ?? "pool", modelId: model.join("/") || "none", requestId, reason: "skipped: " + reason.join(": ") });
+      }
+      recordPoolActivity({ target: "core", event: "gave-up", providerId: "pool", modelId: "none", requestId, ms: Date.now() - started.at });
+    }
+    throw wrapPoolError(error);
+  }
+  const answered = answering ? poolRouteMember(answering) : void 0;
+  if (served && answered) recordPoolActivity({ target: "core", event: "served", ...answered, requestId, ms: Date.now() - started.at });
+}
+async function generateFromStream(parts) {
+  const text = /* @__PURE__ */ new Map();
+  const reasoning = /* @__PURE__ */ new Map();
+  const content = [];
+  const order = [];
+  let warnings = [];
+  let finishReason = void 0;
+  let usage = void 0;
+  let providerMetadata;
+  const open = (map, kind, id, meta) => {
+    if (!map.has(id)) {
+      map.set(id, { text: "", ...meta ? { meta } : {} });
+      order.push({ kind, id });
+    }
+  };
+  for await (const part of parts) {
+    const p = part;
+    switch (p.type) {
+      case "stream-start":
+        warnings = p.warnings;
+        break;
+      case "text-start":
+        open(text, "text", p.id, p.providerMetadata);
+        break;
+      case "text-delta":
+        open(text, "text", p.id);
+        text.get(p.id).text += p.delta ?? "";
+        break;
+      case "text-end":
+        if (p.providerMetadata) {
+          open(text, "text", p.id);
+          text.get(p.id).meta = p.providerMetadata;
+        }
+        break;
+      case "reasoning-start":
+        open(reasoning, "reasoning", p.id, p.providerMetadata);
+        break;
+      case "reasoning-delta":
+        open(reasoning, "reasoning", p.id);
+        reasoning.get(p.id).text += p.delta ?? "";
+        break;
+      case "reasoning-end":
+        if (p.providerMetadata) {
+          open(reasoning, "reasoning", p.id);
+          reasoning.get(p.id).meta = p.providerMetadata;
+        }
+        break;
+      case "tool-call":
+      case "file":
+      case "source":
+        order.push({ kind: "text", id: "" });
+        content.push(p);
+        break;
+      case "finish":
+        finishReason = p.finishReason;
+        usage = p.usage;
+        providerMetadata = p.providerMetadata;
+        break;
+      default:
+        break;
+    }
+  }
+  const leading = [];
+  for (const entry of order) {
+    if (entry.id === "") continue;
+    const source = (entry.kind === "text" ? text : reasoning).get(entry.id);
+    leading.push({ type: entry.kind, text: source.text, ...source.meta ? { providerMetadata: source.meta } : {} });
+  }
+  return {
+    content: [...leading, ...content],
+    finishReason,
+    usage,
+    warnings,
+    ...providerMetadata ? { providerMetadata } : {}
+  };
+}
+function createRelayPoolModel(options) {
+  const state = loadPoolState();
+  const members = state ? servableMembers(state, Date.now(), false) : [];
+  if (!state || members.length === 0) {
+    throw new RelayCoreError("UNSUPPORTED_MODEL", "Relay Free Pool is not enabled or has no usable members \u2014 set it up with `relay-ai pool` or relay-ai ui.", { routeId: RELAY_POOL_ROUTE_ID });
+  }
+  if (options?.reasoning !== void 0) {
+    const levels = commonEffortLevels(members);
+    if (!levels.includes(options.reasoning)) {
+      throw new RelayCoreError(
+        "UNSUPPORTED_REASONING_LEVEL",
+        `Relay Free Pool cannot apply reasoning level "${options.reasoning}": every member must have verified it (verified by all: ${levels.join(", ") || "none"}).`,
+        { routeId: RELAY_POOL_ROUTE_ID }
+      );
+    }
+  }
+  const model = {
+    specificationVersion: "v4",
+    provider: "relay",
+    modelId: RELAY_POOL_MODEL_ID,
+    supportedUrls: {},
+    async doStream(call) {
+      const iterator = runPool(options, call)[Symbol.asyncIterator]();
+      const first = await iterator.next();
+      const stream = new ReadableStream({
+        async start(controller) {
+          if (!first.done) controller.enqueue(first.value);
+          else controller.close();
+        },
+        async pull(controller) {
+          try {
+            const next = await iterator.next();
+            if (next.done) controller.close();
+            else controller.enqueue(next.value);
+          } catch (error) {
+            controller.error(error);
+          }
+        },
+        async cancel() {
+          await iterator.return?.(void 0);
+        }
+      });
+      return { stream };
+    },
+    async doGenerate(call) {
+      const result = await generateFromStream({ [Symbol.asyncIterator]: () => runPool(options, call) });
+      return result;
+    }
+  };
+  return model;
+}
+
 // src/core/route-id.ts
 var SEPARATOR = "::";
 function parseRelayRouteId(routeId) {
@@ -665,6 +1124,7 @@ async function resolveCredential(provider, routeId) {
 }
 async function createRelayModel(routeId, options) {
   const { providerId, modelId } = parseRelayRouteId(routeId);
+  if (routeId === RELAY_POOL_ROUTE_ID) return createRelayPoolModel(options);
   const registry = loadCoreRegistry();
   const found = findRoute(registry, providerId, modelId, routeId);
   const provider = found.provider;
@@ -753,162 +1213,8 @@ async function createRelayModel(routeId, options) {
   }
 }
 
-// src/test-model.ts
-var CONTEXT_PROBE_MAX_TOKENS = 1e8;
-var CONTEXT_LIMIT_PATTERNS = [
-  /max_model_len\s*=\s*(?:max_total_tokens\s*=\s*)?(\d[\d,_]*)/i,
-  /maximum context (?:length|window|size)[^0-9]{0,40}?(\d[\d,_]*)/i,
-  /context (?:length|window|size) (?:limit )?(?:is|of)[^0-9]{0,10}(\d[\d,_]*)\s*tokens/i
-];
-function parseContextLimit(text) {
-  for (const pattern of CONTEXT_LIMIT_PATTERNS) {
-    const match = pattern.exec(text);
-    if (!match?.[1]) continue;
-    const value = Number(match[1].replace(/[,_]/g, ""));
-    if (Number.isSafeInteger(value) && value >= 1e3 && value < CONTEXT_PROBE_MAX_TOKENS) return value;
-  }
-  return void 0;
-}
-function errorText(error) {
-  if (!error || typeof error !== "object") return String(error ?? "");
-  const e = error;
-  return [e.message, e.responseBody, e.cause && typeof e.cause === "object" ? e.cause.message : void 0].filter((part) => typeof part === "string").join(" ");
-}
-var NOT_CHAT_PATTERN = /not a chat model|does not support chat|chat(?: completions?)? (?:is |are )?not supported|only supports? (?:embeddings?|rerank)|is an embedding model/i;
-function isNotChatRefusal(error) {
-  const text = errorText(error);
-  if (NOT_CHAT_PATTERN.test(text)) return true;
-  const status = error && typeof error === "object" ? error.statusCode : void 0;
-  const letters = text.toLowerCase().replace(/[^a-z]/g, "");
-  return status === 404 && /^(?:detail|notfound)+$/.test(letters);
-}
-async function probeModel(providerId, modelId, signal) {
-  const inspect = (error) => {
-    const limit = parseContextLimit(errorText(error));
-    if (limit !== void 0) return { limit, chat: true };
-    return isNotChatRefusal(error) ? { chat: false } : {};
-  };
-  const controller = new AbortController();
-  try {
-    const model = await createRelayModel(`${providerId}::${modelId}`, { sessionId: `relay-test-${randomUUID2()}` });
-    const result = streamText({
-      model,
-      prompt: "Reply with OK.",
-      maxOutputTokens: CONTEXT_PROBE_MAX_TOKENS,
-      maxRetries: 0,
-      abortSignal: AbortSignal.any([signal, controller.signal]),
-      onError: () => {
-      }
-    });
-    for await (const part of result.stream) {
-      if (part.type === "error") return inspect(part.error);
-      if (part.type === "text-delta") {
-        controller.abort();
-        return { chat: true };
-      }
-      if (part.type === "finish") return { chat: true };
-    }
-    return {};
-  } catch (error) {
-    return inspect(error);
-  }
-}
-async function measureContextWindow(providerId, modelId, signal) {
-  return (await probeModel(providerId, modelId, signal)).limit;
-}
-function rememberChatResult(providerId, modelId, chat) {
-  if (chat === void 0) return;
-  try {
-    setModelNotChat(providerId, modelId, !chat);
-  } catch {
-  }
-}
-async function checkContextWindow(providerId, modelId, signal) {
-  const timeout = AbortSignal.timeout(2e4);
-  const probe = await probeModel(providerId, modelId, signal ? AbortSignal.any([signal, timeout]) : timeout);
-  const measured = probe.limit;
-  rememberChatResult(providerId, modelId, probe.chat);
-  const notChat = probe.chat === void 0 ? {} : { notChat: !probe.chat };
-  const provider = loadRegistry().providers.find((p) => p.id === providerId);
-  const cached = provider ? getProviderModels(provider).find((m) => m.id === modelId) : void 0;
-  const previous = provider && cached ? cachedModelToLocal(cached, provider)?.contextWindow : void 0;
-  const keptManual = provider?.contextWindowOverrides?.[modelId]?.source === "user";
-  const confirmsGuess = measured !== void 0 && measured === previous && (cached?.contextWindowSource === void 0 || cached.contextWindowSource === "models.dev");
-  if (measured === void 0 || keptManual || measured === previous && !confirmsGuess) {
-    return { measured, previous, updated: false, keptManual: keptManual && measured !== void 0 && measured !== previous, ...notChat };
-  }
-  let saved = false;
-  try {
-    saved = setContextWindowOverride(providerId, modelId, measured, "measured").ok;
-  } catch {
-  }
-  return { measured, previous, updated: saved && measured !== previous, saved, keptManual: false, ...notChat };
-}
-async function testModel(providerId, modelId, signal) {
-  const provider = loadRegistry().providers.find((p) => p.id === providerId);
-  if (!provider?.enabled || !getProviderModels(provider).some((m) => m.id === modelId)) {
-    return { ok: false, error: "Model is no longer available. Refresh this provider." };
-  }
-  const started = Date.now();
-  const timeout = AbortSignal.timeout(3e4);
-  const abortSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
-  try {
-    const model = await createRelayModel(`${providerId}::${modelId}`, { sessionId: `relay-test-${randomUUID2()}` });
-    abortSignal.throwIfAborted();
-    const result = streamText({
-      model,
-      prompt: 'Say OK, then call relay_pool_probe with value "ok".',
-      maxOutputTokens: TEST_MAX_OUTPUT_TOKENS,
-      tools: { relay_pool_probe: tool({
-        description: "Harmless capability check; never executed.",
-        inputSchema: jsonSchema({ type: "object", properties: { value: { type: "string", enum: ["ok"] } }, required: ["value"], additionalProperties: false })
-      }) },
-      maxRetries: 0,
-      abortSignal,
-      onError: () => {
-      }
-    });
-    let text = "";
-    let finished = false;
-    let hitLimit = false;
-    let toolsPassed = false;
-    for await (const part of result.stream) {
-      if (part.type === "error") throw part.error;
-      if (part.type === "text-delta") text += part.text;
-      if (part.type === "tool-call") toolsPassed = part.toolName === "relay_pool_probe" && part.input?.value === "ok";
-      if (part.type === "finish") {
-        finished = part.finishReason !== "length";
-        hitLimit = part.finishReason === "length";
-      }
-    }
-    abortSignal.throwIfAborted();
-    if (!finished || !text.trim() && !toolsPassed) {
-      if (hitLimit && !text.trim()) {
-        return { ok: false, error: "The model used its whole 1024-token test budget before answering (likely hidden reasoning). It may still work in a real session; try the test again." };
-      }
-      return { ok: false, error: "The model returned no complete text response. Try again or choose another model." };
-    }
-    const latencyMs = Date.now() - started;
-    rememberChatResult(providerId, modelId, true);
-    return { ok: true, latencyMs, notChat: false, toolsPassed };
-  } catch (error) {
-    if (!abortSignal.aborted && isNotChatRefusal(error)) {
-      rememberChatResult(providerId, modelId, false);
-      return { ok: false, notChat: true, error: "This is not a chat model (the server refused the chat request), so Relay cannot use it. You can hide it." };
-    }
-    const status = upstreamHttpStatus(error, "");
-    const text = errorText(error);
-    const message = abortSignal.aborted ? "No response within 30 seconds, or the test was cancelled." : status === 404 && /unsupported_path|not an? (?:\w+ )?surface/i.test(text) ? "This provider's endpoint doesn't serve this model. Try the same model on your other provider for this gateway (e.g. the OpenAI-style one)." : status === 403 && /subscription .* does not include model/i.test(text) ? "Your plan doesn't include this model." : status === 401 || status === 403 ? "Access denied. Check the provider key or sign in again." : status === 429 ? "Provider rate limit reached. Try again later." : status === 402 ? "Provider quota or credits exhausted." : "The model could not respond. Check the provider credentials and connection, then try again.";
-    const transient = abortSignal.aborted || status === 429 || status === 402 || status === void 0 || typeof status === "number" && status >= 500;
-    return { ok: false, error: message, ...transient ? { transient: true } : {} };
-  }
-}
 export {
-  checkContextWindow,
-  isNotChatRefusal,
-  measureContextWindow,
-  parseContextLimit,
-  probeModel,
-  testModel
+  withPortableToolSchemas,
+  createRelayModel
 };
-//# sourceMappingURL=test-model-PEI4ZNKS.js.map
+//# sourceMappingURL=chunk-EEOAB6YB.js.map

@@ -53,8 +53,8 @@ export function parsePoolReceipt(value: unknown): PoolCapabilityReceipt | undefi
   const int = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v);
   if (!int(r.verifiedAt) || !int(r.expiresAt) || r.expiresAt <= r.verifiedAt) return undefined;
   if (!Array.isArray(r.targets) || r.targets.length === 0) return undefined;
-  const targets = r.targets.filter((t): t is 'codex' | 'claude' | 'antigravity' =>
-    t === 'codex' || t === 'claude' || t === 'antigravity');
+  const targets = r.targets.filter((t): t is 'codex' | 'claude' | 'antigravity' | 'core' =>
+    t === 'codex' || t === 'claude' || t === 'antigravity' || t === 'core');
   if (targets.length !== r.targets.length || new Set(targets).size !== targets.length) return undefined;
   if (typeof r.tools !== 'boolean') return undefined;
   if (!int(r.maxOutputTokens) || r.maxOutputTokens <= 0) return undefined;
@@ -73,7 +73,8 @@ export function parsePoolReceipt(value: unknown): PoolCapabilityReceipt | undefi
     expiresAt: r.expiresAt,
     // A member that passed the text and tool Test can serve every target (Antigravity's Auto row needs
     // nothing more), so saved receipts from before that target existed stay usable without a re-test.
-    targets: targets.includes('antigravity') ? targets : [...targets, 'antigravity'],
+    // Surfaces added after a Test was saved need no re-test: the request path they use is the same SDK one.
+    targets: (['antigravity', 'core'] as const).reduce<typeof targets>((all, extra) => all.includes(extra) ? all : [...all, extra], targets),
     tools: r.tools,
     maxOutputTokens: r.maxOutputTokens,
     contextWindow: r.contextWindow,

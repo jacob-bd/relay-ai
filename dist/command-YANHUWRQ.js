@@ -3,14 +3,22 @@ import {
   invalidateUiPoolMember,
   poolView,
   verifyUiPoolMember
-} from "./chunk-3QLE4J67.js";
+} from "./chunk-473HMCGS.js";
+import {
+  clearDisabledPoolMember,
+  disabledPoolMembers,
+  warnDisabledPoolMembers
+} from "./chunk-4CGNDYTT.js";
+import {
+  setContextWindowOverride,
+  setModelHidden
+} from "./chunk-YEADZF4Z.js";
+import "./chunk-5HGLQHX6.js";
 import {
   DEFAULT_FORCE_FAIL_MINUTES,
   PoolEventFilter,
   PoolRequestGrouper,
-  clearDisabledPoolMember,
   clearForceFail,
-  disabledPoolMembers,
   fetchProviderCatalog,
   followPoolActivity,
   formatPoolCurrentLine,
@@ -18,21 +26,16 @@ import {
   formatPoolRequestLines,
   groupPoolActivity,
   poolProviderHeaders,
+  probePoolEffort,
+  probePoolModel,
+  providerRefreshToken,
   readForceFailState,
   readPoolActivity,
   resolveLocalProviderApiKey,
   setForceFail,
   summarizePoolEvents,
-  verifyPoolMember,
-  warnDisabledPoolMembers
-} from "./chunk-YUWP5APP.js";
-import {
-  probePoolEffort,
-  probePoolModel,
-  providerRefreshToken,
-  setContextWindowOverride,
-  setModelHidden
-} from "./chunk-CKWEYKVD.js";
+  verifyPoolMember
+} from "./chunk-MZWORR4O.js";
 import {
   addFreePoolMember,
   createLanguageModel,
@@ -42,7 +45,7 @@ import {
   parsePoolReceipt,
   removeFreePoolMember,
   savePreferences
-} from "./chunk-DDFLIKBI.js";
+} from "./chunk-5DM6VAEL.js";
 import "./chunk-RKRPDZVV.js";
 import "./chunk-KNCSTHR4.js";
 import "./chunk-JIDIH7DS.js";
@@ -70,7 +73,7 @@ var poolHelpText = [
   "  effort <auto|low|medium|high>  Choose pool effort",
   "  verify [--reasoning]          Explicit bulk check of saved members; skips fresh receipts",
   "Adding, enabling, refreshing the UI list, and launching never run tests.",
-  "Receipts last 24h; expiry requires an explicit Test and never triggers automatic retesting.",
+  "A saved Test result stays valid until the endpoint changes or the member is removed; it does not expire with time.",
   "Context requests may consume quota even when rejected. Reasoning adds up to 4 checks.",
   "See docs/FREE_POOL.md for UI/CLI equivalents and quota costs."
 ].join(String.fromCharCode(10));
@@ -134,7 +137,7 @@ async function runPoolCommand(args) {
         console.log(JSON.stringify(result2));
         return 0;
       }
-      const { testModel, checkContextWindow } = await import("./test-model-PEI4ZNKS.js");
+      const { testModel, checkContextWindow } = await import("./test-model-XRUXCO53.js");
       if (action === "context") {
         if (args.length === 4) {
           const value = args[3] === "reset" ? null : Number(args[3]);
@@ -329,7 +332,7 @@ async function runPoolCommand(args) {
         console.log(pc.yellow("Discarded " + checked.discarded + " invalid or duplicate receipt(s)."));
       }
       savePreferences({ freePool: parseFreePool({ ...pool, receipts: checked.receipts }) });
-      console.log(pc.dim("Receipts are valid for 24h. Membership was not changed."));
+      console.log(pc.dim("Saved Test results stay valid until the endpoint changes. Membership was not changed."));
       return failed === pool.members.length ? 1 : 0;
     }
     let next;
@@ -360,4 +363,4 @@ export {
   runPoolCommand,
   validPoolReceipts
 };
-//# sourceMappingURL=command-RAASAFIS.js.map
+//# sourceMappingURL=command-YANHUWRQ.js.map

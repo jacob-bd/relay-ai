@@ -2,45 +2,26 @@
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-PAD35JW5.js";
+} from "./chunk-NZIVVNHY.js";
 import {
   CLAUDE_POOL_MODEL_ID,
-  CODEX_APP_AUTO_COMPACT_RATIO,
-  CODEX_APP_PROVIDER_ID,
   ClaudePoolRuntime,
-  CodexPoolRuntime,
-  DEFAULT_POOL_LIMITS,
-  FREE_POOL_MODEL_ID,
-  FREE_POOL_PROVIDER_ID,
-  POOL_MAX_TOOLS,
-  PREVIEW_PROXY_PORT,
-  PoolAttemptError,
   addFavorite,
   addProviderFromTemplate,
   aliasModelId,
   anthropicMessagesEndpoint,
   anthropicModelsEndpoint,
-  appendCompactionInstruction,
   authenticateProvider,
-  buildAppCatalogFile,
-  buildCatalogFile,
   buildCatalogRoutes,
-  buildCodexAppRootConfig,
   buildHttpProxyRoutes,
   buildVertexRuntimeConfig,
-  catalogEntryFromModel,
   checkForUpdates,
   checkVertexModelAccess,
   claudeAppSupported,
   claudePoolSignatures,
   codexAppInstallHint,
-  codexAppModelSlug,
   codexAppSupported,
-  codexPoolCatalogEntry,
-  codexPoolCatalogModel,
   createGatewayModelCatalog,
-  decodeCompactionContent,
-  dispatchFreePool,
   estimateAnthropicInputTokens,
   favoriteProviderDisplayName,
   filterVertexModelsByAccess,
@@ -57,17 +38,13 @@ import {
   forceQuitCodexApp,
   formatAnthropicModelEntry,
   formatAnthropicModelList,
-  formatCodexModelLabel,
   formatUpdateNotification,
-  generateCompactionResponse,
-  generateResponsesResponse,
   httpProxyModelId,
   isClaudeAppRunning,
   isCodexAppRunning,
   isFavorite,
   launchOrRestartClaudeApp,
   launchOrRestartCodexApp,
-  lazyPoolRoute,
   localModelToRoute,
   logActiveModel,
   logConnected,
@@ -75,13 +52,6 @@ import {
   makeRouteResolver,
   modelSelectOption,
   navOption,
-  parseCodexAppModelSlug,
-  poolCatalogEntry,
-  poolMemberEffort,
-  poolOutputCap,
-  poolRequestFitsWindow,
-  poolRouteKey,
-  prepareCodexPoolRoutes,
   printApiKeyPanel,
   printCloudProviderPanel,
   printDryRunPanel,
@@ -98,102 +68,139 @@ import {
   relayIntro,
   relayOutro,
   removeFavorite,
-  renderMultiAgentV2Feature,
   runServerCommand,
-  sdkPoolRoute,
-  serializeCatalog,
   startProxy,
   startProxyCatalog,
   startServer,
+  supportsClaudeTransparentMode,
+  upstreamModelId,
+  waitForCodexAppQuit
+} from "./chunk-B6B54KDT.js";
+import {
+  translateRequest
+} from "./chunk-5XAETRTT.js";
+import {
+  CODEX_APP_AUTO_COMPACT_RATIO,
+  CODEX_APP_PROVIDER_ID,
+  CodexPoolRuntime,
+  DEFAULT_POOL_LIMITS,
+  FREE_POOL_MODEL_ID,
+  FREE_POOL_PROVIDER_ID,
+  POOL_MAX_TOOLS,
+  PREVIEW_PROXY_PORT,
+  PoolAttemptError,
+  appendCompactionInstruction,
+  buildAppCatalogFile,
+  buildCatalogFile,
+  buildCodexAppRootConfig,
+  catalogEntryFromModel,
+  codexAppModelSlug,
+  codexPoolCatalogEntry,
+  codexPoolCatalogModel,
+  decodeCompactionContent,
+  dispatchFreePool,
+  formatCodexModelLabel,
+  generateCompactionResponse,
+  generateResponsesResponse,
+  lazyPoolRoute,
+  parseCodexAppModelSlug,
+  poolCatalogEntry,
+  poolMemberEffort,
+  poolOutputCap,
+  poolRequestFitsWindow,
+  poolRouteKey,
+  prepareCodexPoolRoutes,
+  renderMultiAgentV2Feature,
+  sdkPoolRoute,
+  serializeCatalog,
   streamCompactionResponse,
   streamResponsesResponse,
-  supportsClaudeTransparentMode,
   supportsMultiAgentV2,
   translateResponsesRequest,
   translatedEffortClaim,
-  upstreamModelId,
-  waitForCodexAppQuit,
   writeResponsesErrorStream
-} from "./chunk-LG62HAEE.js";
-import {
-  translateRequest
-} from "./chunk-W7F4YWWL.js";
+} from "./chunk-YLPHHXBT.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
 import {
-  PoolHealthStore,
-  buildAntigravityRoutes,
-  buildListExperimentsResponse,
-  buildListModelConfigsResponse,
-  describePoolFailure,
-  effortLabel,
-  evaluateAgySwitchCompatibility,
   extractApiKey,
-  favoriteEffortLevels,
-  fetchProviderCatalog,
-  formatRegistryAuthLabel,
-  injectRelayModels,
-  launchModelsForProvider,
-  meetsContextFloor,
-  poolAccountScope,
-  poolEndpointScope,
-  poolErrorDetail,
-  poolProviderHeaders,
-  poolRouteMember,
-  poolRoutingProblem,
-  providersForCodexSubagents,
-  providersForPicker,
-  providersForTarget,
   readBody,
-  recordPoolActivity,
-  resolveLocalProviderApiKey,
-  resolveProvidersForDisplay,
-  resolveRelayCatalogSlots,
-  retryPoolFailure,
-  routableModelsForTarget,
   sendJson,
   warnDisabledPoolMembers
-} from "./chunk-YUWP5APP.js";
+} from "./chunk-4CGNDYTT.js";
 import {
-  OPENCODE_SESSION_HEADER,
   TRUST_SYSTEM_CERTS_NOTICE,
   UNTRUSTED_CERTIFICATE_CODE,
   addCustomEndpointProvider,
   addOpencodeCloudFromApiKey,
   applySystemCaTrust,
-  buildImportProviderList,
-  cachedModelToLocal,
   customEndpointKind,
-  effectiveProviderBaseUrl,
   endpointModelTimeoutMs,
-  extractConversationId,
   fetchAnthropicModels,
   fetchTemplateModels,
-  isLikelyPlaceholderKey,
-  isOAuthImportProvider,
   isSystemCaActive,
   isSystemCaSupported,
-  listCredentialSkippedProviders,
-  oauthAuthRef,
-  openCodeGoHeaders,
-  providerRefreshToken,
   refreshAllProviderModels,
   refreshProviderModels,
   refreshProviderModelsBatch,
   removeProviderFromRegistry,
   renameProvider,
   resolveModelSource,
-  resolveProviderTemplate,
-  resolveRefreshCredential,
   revertSystemCaTrust,
   setContextWindowOverride,
-  syntheticTemplate,
-  toOAuthRegistryId,
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-CKWEYKVD.js";
+} from "./chunk-YEADZF4Z.js";
+import {
+  validateCustomEndpointUrl
+} from "./chunk-5HGLQHX6.js";
+import {
+  OPENCODE_SESSION_HEADER,
+  PoolHealthStore,
+  buildAntigravityRoutes,
+  buildImportProviderList,
+  buildListExperimentsResponse,
+  buildListModelConfigsResponse,
+  cachedModelToLocal,
+  describePoolFailure,
+  effectiveProviderBaseUrl,
+  effortLabel,
+  evaluateAgySwitchCompatibility,
+  extractConversationId,
+  favoriteEffortLevels,
+  fetchProviderCatalog,
+  formatRegistryAuthLabel,
+  injectRelayModels,
+  isLikelyPlaceholderKey,
+  isOAuthImportProvider,
+  launchModelsForProvider,
+  listCredentialSkippedProviders,
+  meetsContextFloor,
+  oauthAuthRef,
+  openCodeGoHeaders,
+  poolAccountScope,
+  poolEndpointScope,
+  poolErrorDetail,
+  poolProviderHeaders,
+  poolRouteMember,
+  poolRoutingProblem,
+  providerRefreshToken,
+  providersForCodexSubagents,
+  providersForPicker,
+  providersForTarget,
+  recordPoolActivity,
+  resolveLocalProviderApiKey,
+  resolveProviderTemplate,
+  resolveProvidersForDisplay,
+  resolveRefreshCredential,
+  resolveRelayCatalogSlots,
+  retryPoolFailure,
+  routableModelsForTarget,
+  syntheticTemplate,
+  toOAuthRegistryId
+} from "./chunk-MZWORR4O.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -292,12 +299,11 @@ import {
   thinkingProviderOptions,
   uniqueProviderName,
   upstreamHttpStatus,
-  validateCustomEndpointUrl,
   validateProviderName,
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-DDFLIKBI.js";
+} from "./chunk-5DM6VAEL.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -3608,7 +3614,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-PEI4ZNKS.js");
+      const { testModel } = await import("./test-model-XRUXCO53.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -15346,6 +15352,35 @@ API GATEWAY (for tools that speak Anthropic/OpenAI HTTP)
   relay-ai server                 foreground gateway on port 17645
   relay-ai server --vertex        Vertex AI gateway (gcloud ADC)
 
+RELAY FREE POOL (EXPERIMENTAL)
+  One virtual model, "Relay Free Pool", backed by several zero-price models you add. Relay tries
+  them strictly in your priority order and moves to the next only when one fails BEFORE any output
+  reached the client (rate limit, timeout, error). No load balancing; free models differ in quality.
+  Where: Claude Code (relay-ai claude --pool), Codex CLI (relay-ai codex --pool), the ChatGPT/Codex
+  app, Claude Desktop, Antigravity (agy, app, IDE), and embedded apps through Relay Core.
+  Setup (nothing here sends a request unless it says so):
+    relay-ai pool candidates [--search text]   free models available to add
+    relay-ai pool add <provider> <model>       save a member (no test)
+    relay-ai pool test <provider> <model>      1 small request + a tool call; saves the result
+    relay-ai pool move <provider> <model> <up|down>   change priority
+    relay-ai pool enable | disable             add/remove the pool in launched catalogs
+    relay-ai pool status | list                readiness, context sizes, saved Test results
+  A model is used only with a saved Test result ("receipt"). It does not expire with time; it stays
+  valid until the endpoint changes or the member is removed.
+  Watching and testing failover:
+    relay-ai pool log [-f] [-v]                current model and every failover
+    relay-ai pool force-fail <provider/model>... [--minutes N] | off   simulate failure, no request sent
+  Disabled: a member the provider says is gone (retired, promotion ended, not in plan) is shown
+  Disabled and skipped until a passing Test. Rate limits, 5xx and timeouts only cool it down.
+  Context: the pool advertises its LARGEST member's window minus a 10% reserve; a request too big for
+  a member skips that member for that request. If none fits: "No eligible free pool members".
+  Limits: 20 s to first content, 20 s idle, 60 s total, at most 8 attempts, 128 tools per member.
+  Relay Core (embedding apps such as alef): listRelayModels() lists "Relay Free Pool" with route id
+  relay-free-pool::relay-free-pool; createRelayModel(routeId, { sessionId }) returns a LanguageModel
+  that fails over across members. Pass sessionId to pin a conversation to the member that last
+  answered. Cooldowns and the activity log are shared with the CLI launchers (docs/CORE.md).
+  Full guide: docs/FREE_POOL.md.
+
 DESKTOP APPS
   relay-ai codex-app              ChatGPT desktop, Codex mode (macOS/Windows/Linux); alias: chatgpt
   relay-ai claude-app             Claude desktop (macOS/Windows/Linux)
@@ -15500,6 +15535,8 @@ TOOL CALLING EXAMPLE (Claude + MCP)
 RELATED DOCS
   docs/AI-AGENTS.md     human-readable agent guide (this repo)
   docs/CODEX.md         Codex CLI, sandbox, restore, routing
+  docs/FREE_POOL.md     Relay Free Pool: routing, failover, Test results, Core
+  docs/CORE.md          embedding relay-ai in your own app (listRelayModels / createRelayModel)
   relay-ai --ai         full reference + live provider state
 `.trimEnd();
   cachedStaticAiDocBody = { version: VERSION, body };
@@ -18162,11 +18199,11 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-DHMQDVAZ.js");
+    const { runUiCommand } = await import("./ui-command-OIQUR3ZM.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-RAASAFIS.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-YANHUWRQ.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

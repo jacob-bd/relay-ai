@@ -19,7 +19,7 @@ describe('pool enrollment receipts', () => {
     if (result.status !== 'verified') return;
     expect(result.receipt).toMatchObject({
       member, verifiedAt: 1000, expiresAt: 1000 + 86400000, tools: true,
-      contextWindow: 128000, contextSource: 'provider', targets: ['codex', 'claude', 'antigravity'],
+      contextWindow: 128000, contextSource: 'provider', targets: ['codex', 'claude', 'antigravity', 'core'],
       effortLevels: [], billingSafe: true,
     });
     expect(result.receipt.endpointRevision).toBe(poolEndpointRevision({
@@ -47,7 +47,7 @@ describe('pool enrollment receipts', () => {
     expect(result.status).toBe('verified');
     if (result.status !== 'verified') return;
     expect(result.receipt.effortLevels).toEqual(['high']);
-    expect(result.receipt.targets).toEqual(['codex', 'claude', 'antigravity']);
+    expect(result.receipt.targets).toEqual(['codex', 'claude', 'antigravity', 'core']);
   });
 
   it('refuses to guess a missing context window or an unsupported transport', async () => {

@@ -9,6 +9,7 @@ const ALIASES: Record<PoolTarget, string> = {
   codex: FREE_POOL_MODEL_ID,
   claude: 'claude-pool',
   antigravity: 'free-pool',
+  core: 'relay-free-pool',
 };
 
 /** Same servability predicate the runtime uses, minus provider-specific checks. */
@@ -23,7 +24,10 @@ function servable(receipt: PoolCapabilityReceipt | undefined, target: PoolTarget
 /**
  * One catalog entry for the pool on a given target. Health never changes the
  * advertised window. A stale member does not hide the pool while another verified
- * member remains; the minimum verified window (minus the admission margin) is shown.
+ * member remains. The window shown is the LARGEST verified member's (minus the admission
+ * margin), so one small member never caps a pool of large models. Each request is still
+ * checked against every member's own window, and a member too small for it is passed over
+ * for that request without counting as a failure.
  */
 export function poolCatalogEntry(
   pool: FreePoolPreferences,
@@ -36,7 +40,7 @@ export function poolCatalogEntry(
       && receipt.member.modelId === member.modelId))
     .filter(receipt => servable(receipt, target, now)) as PoolCapabilityReceipt[];
   if (!verified.length) return undefined;
-  const window = Math.min(...verified.map(receipt => receipt.contextWindow));
+  const window = Math.max(...verified.map(receipt => receipt.contextWindow));
   const reserve = Math.max(4096, Math.ceil(window * 0.1));
   const levels = verified[0]!.effortLevels.filter(level =>
     verified.every(receipt => receipt.effortLevels.includes(level)));

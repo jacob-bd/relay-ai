@@ -102,6 +102,8 @@ declare function listRelayModels(registryPath?: string): RelayModelDescriptor[];
  */
 declare function createRelayModel(routeId: RelayRouteId, options?: CreateRelayModelOptions): Promise<LanguageModel>;
 
+declare const RELAY_POOL_ROUTE_ID: RelayRouteId;
+
 /**
  * Build a route id from a provider id and a model id. The provider id must pass
  * the registry's `PROVIDER_ID_PATTERN`; the model id may contain `/` and `:`.
@@ -138,4 +140,4 @@ declare class RelayCoreError extends Error {
 }
 declare function isRelayCoreError(err: unknown): err is RelayCoreError;
 
-export { type CreateRelayModelOptions, RelayCoreError, type RelayCoreErrorCode, type RelayModelDescriptor, type RelayReasoningLevel, type RelayRouteId, createRelayModel, isRelayCoreError, listRelayModels, parseRelayRouteId, toRelayRouteId };
+export { type CreateRelayModelOptions, RELAY_POOL_ROUTE_ID, RelayCoreError, type RelayCoreErrorCode, type RelayModelDescriptor, type RelayReasoningLevel, type RelayRouteId, createRelayModel, isRelayCoreError, listRelayModels, parseRelayRouteId, toRelayRouteId };

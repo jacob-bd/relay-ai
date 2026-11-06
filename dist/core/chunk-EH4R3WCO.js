@@ -32,6 +32,9 @@ function getProvidersPath(env = process.env) {
 function getSecretsPath(env = process.env) {
   return join(getAppHome(env), "secrets.json");
 }
+function getLogsPath(env = process.env) {
+  return join(getAppHome(env), "logs");
+}
 function getVertexModelsPath(env = process.env) {
   return join(getAppHome(env), "vertex-models.json");
 }
@@ -110,6 +113,7 @@ export {
   getConfigPath,
   getProvidersPath,
   getSecretsPath,
+  getLogsPath,
   getLegacyConfPath,
   DEFAULT_VERTEX_MODELS,
   resolveVertexProject,
@@ -121,4 +125,4 @@ export {
   saveVertexModelEntries,
   resetVertexModelEntries
 };
-//# sourceMappingURL=chunk-Y5TX3XDL.js.map
+//# sourceMappingURL=chunk-EH4R3WCO.js.map

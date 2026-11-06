@@ -320,6 +320,10 @@ The full Alef section is also embedded at the bottom of `relay-ai --ai` output.
 
 ---
 
+## Relay Free Pool (experimental)
+
+`relay-ai claude --pool` and `relay-ai codex --pool` start a session on **Relay Free Pool**, one virtual model backed by the free models in `relay-ai pool list`, tried in your priority order with failover before any output is sent. Use `relay-ai pool log -f` to watch it and `relay-ai pool force-fail <provider/model>` to rehearse a failover. Embedded apps get the same pool from Relay Core: `listRelayModels()` lists it as `relay-free-pool::relay-free-pool` and `createRelayModel()` returns a model that fails over (pass `sessionId`). See [FREE_POOL.md](FREE_POOL.md) and [CORE.md](CORE.md).
+
 ## Docker gateway (always-on Server + Admin UI)
 
 When the user wants a **containerized API gateway** (home lab / NAS / always-on), or says “put Relay AI in Docker,” do **not** try to launch Claude Desktop / Codex / Antigravity from the container. Deploy **Server + Admin UI** instead.

@@ -114,7 +114,7 @@ export interface PoolCapabilityReceipt {
   endpointRevision: string;
   verifiedAt: number;
   expiresAt: number;
-  targets: ('codex' | 'claude' | 'antigravity')[];
+  targets: ('codex' | 'claude' | 'antigravity' | 'core')[];
   tools: boolean;
   maxOutputTokens: number;
   contextWindow: number;
