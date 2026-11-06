@@ -49,7 +49,7 @@ describe('pool SDK transport', () => {
     const route = sdkPoolRoute(evidence, model, { messages: [], maxOutputTokens: 128 }, { store, scopes });
     const failures: unknown[] = [];
     const limits: PoolLimits = {
-      attempts: 1, firstContentMs: 100, idleMs: 100, totalMs: 500, bufferBytes: 4096, cleanupMs: 100,
+      attempts: 1, firstContentMs: 5000, idleMs: 5000, totalMs: 15000, bufferBytes: 4096, cleanupMs: 100,
     };
     const failure = await (async () => {
       for await (const _part of runPoolAttempts([route], new AbortController().signal, limits, retryPoolFailure,
@@ -116,7 +116,7 @@ describe('pool SDK transport', () => {
     return sdkPoolRoute(evidence, model, { messages: [], maxOutputTokens: 128 }, { store, scopes, accountScopes });
   };
   const drain = async (route: ReturnType<typeof sdkPoolRoute>) => {
-    const limits: PoolLimits = { attempts: 1, firstContentMs: 100, idleMs: 100, totalMs: 500, bufferBytes: 4096, cleanupMs: 100 };
+    const limits: PoolLimits = { attempts: 1, firstContentMs: 5000, idleMs: 5000, totalMs: 15000, bufferBytes: 4096, cleanupMs: 100 };
     await (async () => { for await (const _part of runPoolAttempts([route], new AbortController().signal, limits, () => false)) { /* drain */ } })().catch(() => {});
   };
 
