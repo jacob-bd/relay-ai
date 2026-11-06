@@ -1,23 +1,23 @@
 #!/usr/bin/env node
 import {
   createRelayModel
-} from "./chunk-EEOAB6YB.js";
-import "./chunk-YLPHHXBT.js";
+} from "./chunk-AD2URMFR.js";
+import "./chunk-KLJ7RELH.js";
 import "./chunk-UR4QFFSQ.js";
 import {
   setContextWindowOverride,
   setModelNotChat
-} from "./chunk-YEADZF4Z.js";
+} from "./chunk-NPNQPAPQ.js";
 import "./chunk-5HGLQHX6.js";
 import {
   TEST_MAX_OUTPUT_TOKENS,
   cachedModelToLocal
-} from "./chunk-MZWORR4O.js";
+} from "./chunk-HWTQNVHE.js";
 import {
   getProviderModels,
   loadRegistry,
   upstreamHttpStatus
-} from "./chunk-5DM6VAEL.js";
+} from "./chunk-S7BTLKDZ.js";
 import "./chunk-RKRPDZVV.js";
 import "./chunk-KNCSTHR4.js";
 import "./chunk-JIDIH7DS.js";
@@ -182,4 +182,4 @@ export {
   probeModel,
   testModel
 };
-//# sourceMappingURL=test-model-XRUXCO53.js.map
+//# sourceMappingURL=test-model-KVRJYPHV.js.map

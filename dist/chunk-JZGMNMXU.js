@@ -14,7 +14,7 @@ import {
   sseChunk,
   thinkingProviderOptions,
   upstreamHttpStatus
-} from "./chunk-5DM6VAEL.js";
+} from "./chunk-S7BTLKDZ.js";
 
 // src/subagent-route-registry.ts
 import { randomUUID } from "crypto";
@@ -772,4 +772,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-5XAETRTT.js.map
+//# sourceMappingURL=chunk-JZGMNMXU.js.map
