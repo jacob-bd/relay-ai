@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+// These tests exercise the pool gate, not the launch: CI has no Codex installed.
+vi.mock('../src/codex/launch.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/codex/launch.js')>(),
+  findCodexBinary: () => '/usr/local/bin/codex',
+}));
 import { runCodexCommand } from '../src/codex.js';
 import { poolEndpointRevision } from '../src/pool/capabilities.js';
 import { codexPoolCatalogModel } from '../src/pool/catalog.js';

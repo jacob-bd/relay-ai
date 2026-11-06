@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+// This test exercises the pool gate, not the launch: CI has no Claude Code installed.
+vi.mock('../src/launch.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/launch.js')>(),
+  findClaudeBinary: () => '/usr/local/bin/claude',
+}));
 import { parseArgs, runClaudeCommand } from '../src/cli.js';
 import { poolEndpointRevision } from '../src/pool/capabilities.js';
 let home: string;

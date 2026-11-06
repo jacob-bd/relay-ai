@@ -111,7 +111,8 @@ describe('event-only view (default)', () => {
     expect(formatPoolEventLines(state.events[1]!)).toContain('switched from kilo/m');
     expect(formatPoolEventLines(state.events[1]!)).toContain('3 earlier requests answered normally');
     expect(state.current).toEqual({ providerId: 'nvidia', modelId: 'm' });
-    expect(formatPoolCurrentLine(state)).toContain('Current model: nvidia/m');
+    // CI terminals report colour support, so compare without the escape codes.
+    expect(formatPoolCurrentLine(state).replace(/\u001b\[[0-9;]*m/g, '')).toContain('Current model: nvidia/m');
   });
 
   it('reports a plain switch of the answering model without any failure', async () => {
