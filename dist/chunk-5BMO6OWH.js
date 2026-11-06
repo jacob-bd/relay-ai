@@ -11,15 +11,10 @@ import {
   poolRequestFitsWindow,
   poolRouteFromStream,
   poolRouteKey
-} from "./chunk-7BKIHQYO.js";
-import {
-  normalizeToolSchemaForNpm
-} from "./chunk-UR4QFFSQ.js";
+} from "./chunk-ZUZVJSJL.js";
 import {
   PoolHealthStore,
-  copilotPlanTier,
   describePoolFailure,
-  filterCachedCopilotModels,
   materializeRegistry,
   mergeHeaders,
   openCodeGoHeaders,
@@ -32,11 +27,15 @@ import {
   reconcileCachedModelProtocol,
   recordPoolActivity,
   retryPoolFailure
-} from "./chunk-7TNNCDPU.js";
+} from "./chunk-EE53ZNAJ.js";
 import {
-  ANTIGRAVITY_API_VERSION,
-  ANTIGRAVITY_BASE_URLS,
-  ANTIGRAVITY_USER_AGENT,
+  copilotPlanTier,
+  filterCachedCopilotModels
+} from "./chunk-E6UL27MK.js";
+import {
+  normalizeToolSchemaForNpm
+} from "./chunk-UR4QFFSQ.js";
+import {
   REGISTRY_SCHEMA_VERSION,
   createLanguageModel,
   currentPoolReceipt,
@@ -44,24 +43,29 @@ import {
   effortProviderOptions,
   getProviderModels,
   getReasoningCapabilities,
-  isProviderKind,
   isValidProviderId,
   loadPreferences,
   loadRegistry,
   parseFreePool,
   poolEndpointRevision,
   poolFreeStatus,
-  providerKind,
   resolveModelReasoningMetadata,
+  withProviderRequestDefaults
+} from "./chunk-S3QYWK2P.js";
+import {
+  ANTIGRAVITY_API_VERSION,
+  ANTIGRAVITY_BASE_URLS,
+  ANTIGRAVITY_USER_AGENT,
+  isProviderKind,
+  providerKind,
   resolveProviderCredential,
   resolveProviderOAuthAccountId,
-  resolveProviderOAuthProviderData,
-  withProviderRequestDefaults
-} from "./chunk-PRSSAHTH.js";
+  resolveProviderOAuthProviderData
+} from "./chunk-QYL2HTTP.js";
 import {
   getTemplateById,
   init_provider_templates
-} from "./chunk-RKRPDZVV.js";
+} from "./chunk-6DCEGHZH.js";
 
 // src/core/model.ts
 init_provider_templates();
@@ -735,7 +739,7 @@ function wrapPoolError(error) {
 }
 var sessions = new PoolSessionRoutes();
 async function memberModel(routeId, context) {
-  const { createRelayModel: createRelayModel2 } = await import("./model-S2PLLPPZ.js");
+  const { createRelayModel: createRelayModel2 } = await import("./model-OVRXB3NC.js");
   return createRelayModel2(routeId, {
     sessionId: context.sessionId,
     ...context.options?.onDebug ? { onDebug: context.options.onDebug } : {},
@@ -1217,4 +1221,4 @@ export {
   withPortableToolSchemas,
   createRelayModel
 };
-//# sourceMappingURL=chunk-JECZBX7O.js.map
+//# sourceMappingURL=chunk-5BMO6OWH.js.map

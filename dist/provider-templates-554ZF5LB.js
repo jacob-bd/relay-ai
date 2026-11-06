@@ -9,7 +9,7 @@ import {
   listSupportedTemplates,
   listVisibleOAuthTemplates,
   supportsAdditionalApiAccounts
-} from "./chunk-RKRPDZVV.js";
+} from "./chunk-6DCEGHZH.js";
 import "./chunk-JIDIH7DS.js";
 init_provider_templates();
 export {
@@ -22,4 +22,4 @@ export {
   listVisibleOAuthTemplates,
   supportsAdditionalApiAccounts
 };
-//# sourceMappingURL=provider-templates-Y7HWIRRP.js.map
+//# sourceMappingURL=provider-templates-554ZF5LB.js.map

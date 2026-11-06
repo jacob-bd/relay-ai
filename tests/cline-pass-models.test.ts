@@ -10,6 +10,7 @@ import {
   CLINE_PASS_VALIDATION_URL,
 } from '../src/cline-pass.js';
 import {
+  applyClineCatalogContextWindows,
   classifyClineProbeResponse,
   fetchClinePassModels,
   parseClinePassModels,
@@ -229,6 +230,31 @@ describe('ClinePass model catalog', () => {
 
     await fetchClinePassModels();
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The model list plus the (public) full catalog read for context sizes; no probe request.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.some(call => String(call[0]).includes('chat/completions'))).toBe(false);
+  });
+});
+
+describe('ClinePass context sizes from the full Cline catalog', () => {
+  const model = (id: string, contextWindow?: number) => ({ id, name: id, upstreamModelId: id, modelFormat: 'openai' as const, contextWindow });
+  const payload = { data: [
+    { id: 'xiaomi/mimo-v2.6-pro', context_length: 1_050_000 },
+    { id: 'xiaomi/mimo-v2.6-pro-ultraspeed', context_length: 64_000 },
+    { id: 'nvidia/nemotron-3.5-lightning', context_length: 262_144 },
+    { id: 'nvidia/nemotron-3.5-lightning:free', context_length: 1_000_000 },
+  ] };
+
+  it('matches by exact model name, never by prefix, and keeps free variants apart', () => {
+    const out = applyClineCatalogContextWindows([
+      model('cline-pass/mimo-v2.6-pro'), model('nvidia/nemotron-3.5-lightning-free'), model('cline-pass/glm-5.3'),
+    ], payload);
+    expect(out.map(m => m.contextWindow)).toEqual([1_050_000, 1_000_000, undefined]);
+    expect(out[0]!.contextWindowSource).toBeUndefined();
+  });
+
+  it('keeps a size the provider already reported and ignores a bad payload', () => {
+    expect(applyClineCatalogContextWindows([model('cline-pass/mimo-v2.6-pro', 8)], payload)[0]!.contextWindow).toBe(8);
+    expect(applyClineCatalogContextWindows([model('a')], null)[0]!.contextWindow).toBeUndefined();
   });
 });

@@ -89,6 +89,12 @@
           Relay Free Pool
           <span class="nav-badge experimental-badge">Experimental</span>
         </a>
+        <a href="#pool-activity" class="nav-item" data-section="pool-activity">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          </span>
+          Pool Activity
+        </a>
         <a href="#section-codex-subagents" class="nav-item" data-section="section-codex-subagents" id="nav-codex-subagents">
           <span class="nav-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg>
@@ -107,6 +113,12 @@
           </span>
           Server
           <span class="nav-badge nav-badge-status" id="nav-server-badge" hidden>Live</span>
+        </a>
+        <a href="#intelligence" class="nav-item" data-section="intelligence">
+          <span class="nav-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>
+          </span>
+          Intelligence
         </a>
       </nav>
 
@@ -189,6 +201,15 @@
         <div id="free-pool-panel" aria-live="polite"></div>
       </section>
 
+      <section id="pool-activity" class="section">
+        <div class="section-hero">
+          <div class="section-eyebrow">Model Routing</div>
+          <h1 class="section-heading">Pool <span class="heading-accent">Activity</span></h1>
+          <p class="section-sub">Which free model is answering for the Relay Free Pool, and what happened when a model failed or the pool switched. Kept on this computer only.</p>
+        </div>
+        <div id="pool-activity-panel" aria-live="polite"></div>
+      </section>
+
       <!-- Codex SubAgent section -->
       <section id="section-codex-subagents" class="section">
         <div class="section-hero">
@@ -258,6 +279,15 @@
           <p class="section-sub">Runs the same Anthropic/OpenAI-compatible gateway as <code>relay-ai server</code> in the terminal — configure it here and see the URLs and models the moment it starts.</p>
         </div>
         <div id="server-panel"></div>
+      </section>
+
+      <section id="intelligence" class="section">
+        <div class="section-hero">
+          <div class="section-eyebrow">Optional</div>
+          <h1 class="section-heading">Model <span class="heading-accent">Intelligence</span></h1>
+          <p class="section-sub">Show an intelligence score next to each model, from Artificial Analysis. You use your own free key; Relay only downloads the scores to your computer.</p>
+        </div>
+        <div id="intelligence-panel"></div>
       </section>
 
       <section id="provider-model-browser" class="section provider-model-browser" aria-live="polite"></section>

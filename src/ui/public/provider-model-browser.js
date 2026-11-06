@@ -44,8 +44,22 @@ export function filterProviderModels(models, query, opts = {}) {
   });
 }
 
+/** Order by intelligence score; models without a score always stay last. `dir` is 'desc' (smartest first) or 'asc'. */
+export function sortByIntelligence(items, dir, scoreOf = item => item?.intelligence?.score) {
+  if (dir !== 'desc' && dir !== 'asc') return items;
+  const sign = dir === 'desc' ? -1 : 1;
+  return items
+    .map((item, index) => ({ item, index, score: Number(scoreOf(item)) }))
+    .sort((a, b) => {
+      const aHas = Number.isFinite(a.score), bHas = Number.isFinite(b.score);
+      if (aHas !== bHas) return aHas ? -1 : 1;
+      return (aHas && a.score !== b.score ? sign * (a.score - b.score) : 0) || a.index - b.index;
+    })
+    .map(entry => entry.item);
+}
+
 export function getProviderModelPage(models, query, requestedPage, opts = {}) {
-  const filtered = filterProviderModels(models, query, opts);
+  const filtered = sortByIntelligence(filterProviderModels(models, query, opts), opts.intelligenceSort);
   const totalPages = Math.max(1, Math.ceil(filtered.length / PROVIDER_MODEL_PAGE_SIZE));
   const page = Math.min(Math.max(1, requestedPage), totalPages);
   const start = (page - 1) * PROVIDER_MODEL_PAGE_SIZE;

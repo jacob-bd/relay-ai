@@ -161,7 +161,7 @@ refuses members below its 136K context floor (128K of input plus an 8K output bu
 `relay-ai pool log` shows the model that answered last and then a line only when something happens: a
 failover, a switch of the answering model, or a request nobody answered. Normal requests are counted but
 not printed. `relay-ai pool log -f` keeps watching, `-v` prints one line per request, and a number sets
-how many events to show (default 20). The Free Pool page shows the same under **Recent activity**; tick
+how many events to show (default 20). The **Pool Activity** page in `relay-ai ui` shows the same; tick
 **Show every request** for all of it. `relay claude --trace` also writes attempt lines to the proxy debug
 log.
 

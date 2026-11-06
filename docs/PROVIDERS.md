@@ -232,6 +232,13 @@ Counts come from Command Code's own plan pages and match what Relay discovers. C
 
 ---
 
+## Add another account, edit a server address
+
+- **Another account:** a provider that is already set up stays in the Providers page's available list as **Add another account**. Relay refuses a duplicate with the same credentials.
+- **Server address:** Ollama, LM Studio and other providers that ask for an address when added have **Edit server address** on their card. Relay checks the new address, reads its models and keeps the old address if that fails.
+- **Context sizes:** a size the provider did not report is labelled *estimate*. A passing **Test** reads Ollama's real size; for other providers a size is measured only on free models and custom endpoints.
+- **Intelligence scores:** optional, see [Model Intelligence](INTELLIGENCE.md).
+
 ## Subscription Providers (OAuth)
 
 Relay AI can connect supported subscriptions with a one-time device code instead of an API key:
@@ -240,8 +247,10 @@ Relay AI can connect supported subscriptions with a one-time device code instead
 - **OpenAI ChatGPT**: `relay-ai providers auth openai-oauth`
 - **xAI SuperGrok**: `relay-ai providers auth xai-oauth`
 - **ClinePass**: `relay-ai providers auth cline-pass`
-- **Claude Code subscription**: `relay-ai providers auth claude-code` (browser sign-in; paste Anthropic's code back)
-- **Antigravity (Google)**: `relay-ai providers auth antigravity` (browser sign-in; use a throwaway Google account — see [Antigravity](ANTIGRAVITY.md))
+- **Claude Code subscription**: `relay-ai providers auth claude-code` (browser sign-in; paste Anthropic's code back). ⚠️ Anthropic enforces against this use; your Claude account can be suspended or banned.
+- **Antigravity (Google)**: `relay-ai providers auth antigravity` (browser sign-in). ⚠️ Google may ban the account and every service tied to it; use a throwaway Google account — see [Antigravity](ANTIGRAVITY.md)
+
+Both appear in **Providers & Keys** in `relay-ai ui` and in the `relay-ai providers` menu, and both require you to confirm the account-ban risk first. Details: [Subscription OAuth](SUBSCRIPTION-OAUTH.md#claude-code-and-antigravity-sign-in).
 
 Every one of them can hold **several accounts** (`--new`), and any provider can be renamed — see [Accounts and Provider Names](ACCOUNTS.md).
 

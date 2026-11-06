@@ -16,14 +16,8 @@ import {
   resolveRefreshCredential,
   skipWithCachedModels,
   syntheticTemplate
-} from "./chunk-7TNNCDPU.js";
+} from "./chunk-E6UL27MK.js";
 import {
-  ANTIGRAVITY_BASE_URLS,
-  ANTIGRAVITY_USER_AGENT,
-  BACKENDS,
-  CLINE_PASS_CATALOG_URL,
-  CLINE_PASS_SDK_BASE_URL,
-  CLINE_PASS_VALIDATION_URL,
   MAX_CONTEXT_WINDOW_OVERRIDE,
   MIN_CONTEXT_WINDOW_OVERRIDE,
   MODEL_KINDS,
@@ -31,15 +25,11 @@ import {
   buildPricingIndex,
   classifyFreeStatus,
   customProviderId,
-  deleteProviderCredential,
-  enrichGithubCopilotOAuthProviderData,
   enrichModelsForProviderPricing,
   enrichPricingAsync,
-  fetchClaudeCodeModels,
   fetchModelsDevCache,
   findModelsDevModel,
   findProviderNameConflict,
-  formatClineRuntimeCredential,
   getAgentProviderModels,
   getProviderDebugLogPath,
   getProviderModels,
@@ -55,29 +45,69 @@ import {
   makeTraceLogger,
   modelPrefersResponsesApi,
   normalizeProviderName,
-  parseAuthRef,
-  providerKind,
-  readGlobalOpencodeCredential,
-  readStoredProviderCredential,
   resolveCodexClientVersion,
-  resolveContextWindow,
-  resolveProviderCredential,
-  resolveProviderOAuthProviderData,
   savePreferences,
-  saveProviderCredential,
   saveRegistry,
-  saveToCredentialStore,
   shouldHideModel,
   slugifyProviderId,
   uniqueProviderName,
   validateProviderName,
   vertexAnthropicCachedModels,
   writeSecureLogLine
-} from "./chunk-PRSSAHTH.js";
+} from "./chunk-S3QYWK2P.js";
+import {
+  ANTIGRAVITY_BASE_URLS,
+  ANTIGRAVITY_USER_AGENT,
+  BACKENDS,
+  CLINE_PASS_CATALOG_URL,
+  CLINE_PASS_HOST,
+  CLINE_PASS_SDK_BASE_URL,
+  CLINE_PASS_VALIDATION_URL,
+  deleteProviderCredential,
+  enrichGithubCopilotOAuthProviderData,
+  fetchClaudeCodeModels,
+  formatClineRuntimeCredential,
+  parseAuthRef,
+  providerKind,
+  readGlobalOpencodeCredential,
+  readStoredProviderCredential,
+  resolveContextWindow,
+  resolveProviderCredential,
+  resolveProviderOAuthProviderData,
+  saveProviderCredential,
+  saveToCredentialStore
+} from "./chunk-QYL2HTTP.js";
 import {
   getTemplateById,
   init_provider_templates
-} from "./chunk-RKRPDZVV.js";
+} from "./chunk-6DCEGHZH.js";
+
+// src/registry/builtins.ts
+function zenRegistryStub(subscriptionFilter, account) {
+  return {
+    id: account?.id ?? "zen",
+    templateId: "zen",
+    name: account?.name ?? "OpenCode Zen",
+    ...account?.nameCustomized ? { nameCustomized: true } : {},
+    enabled: true,
+    authRef: account?.authRef ?? "keyring:global:opencode",
+    api: {},
+    ...subscriptionFilter ? { subscriptionFilter } : {},
+    addedAt: localIsoTimestamp()
+  };
+}
+function goRegistryStub(account) {
+  return {
+    id: account?.id ?? "go",
+    templateId: "go",
+    name: account?.name ?? "OpenCode Go",
+    ...account?.nameCustomized ? { nameCustomized: true } : {},
+    enabled: true,
+    authRef: account?.authRef ?? "keyring:global:opencode",
+    api: {},
+    addedAt: localIsoTimestamp()
+  };
+}
 
 // src/tls-trust.ts
 import tls from "tls";
@@ -147,33 +177,6 @@ function untrustedCertificateMessage() {
   };
 }
 var TRUST_SYSTEM_CERTS_NOTICE = "Relay will trust every certificate authority your computer trusts (the same list your browser uses), including company ones added by your employer or IT tools. Only turn this on if you trust this computer's setup.";
-
-// src/registry/builtins.ts
-function zenRegistryStub(subscriptionFilter, account) {
-  return {
-    id: account?.id ?? "zen",
-    templateId: "zen",
-    name: account?.name ?? "OpenCode Zen",
-    ...account?.nameCustomized ? { nameCustomized: true } : {},
-    enabled: true,
-    authRef: account?.authRef ?? "keyring:global:opencode",
-    api: {},
-    ...subscriptionFilter ? { subscriptionFilter } : {},
-    addedAt: localIsoTimestamp()
-  };
-}
-function goRegistryStub(account) {
-  return {
-    id: account?.id ?? "go",
-    templateId: "go",
-    name: account?.name ?? "OpenCode Go",
-    ...account?.nameCustomized ? { nameCustomized: true } : {},
-    enabled: true,
-    authRef: account?.authRef ?? "keyring:global:opencode",
-    api: {},
-    addedAt: localIsoTimestamp()
-  };
-}
 
 // src/registry/endpoint-timeout.ts
 import ipaddr from "ipaddr.js";
@@ -1053,6 +1056,38 @@ function buildClineFreeProbe(options) {
     }
   };
 }
+var CLINE_FULL_CATALOG_URL = `${CLINE_PASS_HOST}/api/v1/ai/cline/models`;
+function clineModelKey(id) {
+  const lower = id.toLowerCase();
+  return lower.replace(/^.*\//, "").replace(/(:free|-free)$/, "") + (/(:free|-free)$/.test(lower) ? ":free" : "");
+}
+function applyClineCatalogContextWindows(models, payload) {
+  const rows = payload && typeof payload === "object" ? payload.data : void 0;
+  if (!Array.isArray(rows)) return models;
+  const sizes = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    if (!row || typeof row.id !== "string") continue;
+    const size = positiveNumber(row.context_length);
+    if (size === void 0) continue;
+    const key = clineModelKey(row.id);
+    const previous = sizes.get(key);
+    if (previous === void 0 || size < previous) sizes.set(key, size);
+  }
+  return models.map((model) => {
+    if (model.contextWindow !== void 0) return model;
+    const size = sizes.get(clineModelKey(model.id));
+    return size === void 0 ? model : { ...model, contextWindow: size };
+  });
+}
+async function withClineCatalogContext(models) {
+  try {
+    const response = await fetchJson(CLINE_FULL_CATALOG_URL);
+    if (!response.ok) return models;
+    return applyClineCatalogContextWindows(models, await response.json().catch(() => null));
+  } catch {
+    return models;
+  }
+}
 async function fetchClinePassModels(probe) {
   const response = await fetchJson(CLINE_PASS_CATALOG_URL);
   if (!response.ok) {
@@ -1061,7 +1096,7 @@ async function fetchClinePassModels(probe) {
     throw new Error(`ClinePass catalog returned HTTP ${response.status}.`);
   }
   const payload = await response.json().catch(() => null);
-  const models = parseClinePassModels(payload);
+  const models = await withClineCatalogContext(parseClinePassModels(payload));
   trace(`ClinePass catalog parsed models=${models.length}`);
   if (models.length === 0) throw new Error("ClinePass catalog returned no usable models.");
   if (!probe?.credential.trim()) {
@@ -2175,6 +2210,13 @@ async function addOpencodeCloudAccount(key) {
     } : {}
   };
 }
+function setRegistrySubscriptionFilter(providerId, filter) {
+  const registry = loadRegistry();
+  const provider = registry.providers.find((p) => p.id === providerId);
+  if (!provider) return;
+  provider.subscriptionFilter = filter;
+  saveRegistry(registry);
+}
 function toggleProviderEnabled(id) {
   const registry = loadRegistry();
   const provider = registry.providers.find((p) => p.id === id);
@@ -2182,6 +2224,16 @@ function toggleProviderEnabled(id) {
   provider.enabled = !provider.enabled;
   saveRegistry(registry);
   return { toggled: true, enabled: provider.enabled };
+}
+function setProviderServerUrl(id, baseUrl) {
+  const registry = loadRegistry();
+  const provider = registry.providers.find((p) => p.id === id);
+  if (!provider) throw new Error(`Provider not found: ${id}`);
+  provider.api = { ...provider.api, url: baseUrl };
+  if (provider.modelsCache) {
+    provider.modelsCache = { ...provider.modelsCache, models: provider.modelsCache.models.map((m) => ({ ...m, apiUrl: baseUrl })) };
+  }
+  saveRegistry(registry);
 }
 
 export {
@@ -2216,8 +2268,12 @@ export {
   setModelNotChat,
   setModelKindOverride,
   setContextWindowOverride,
+  addZenRegistryStub,
+  addGoRegistryStub,
   ensureOpencodeCloudProviders,
   addOpencodeCloudFromApiKey,
-  toggleProviderEnabled
+  setRegistrySubscriptionFilter,
+  toggleProviderEnabled,
+  setProviderServerUrl
 };
-//# sourceMappingURL=chunk-5ETHP66U.js.map
+//# sourceMappingURL=chunk-YD4PZYLN.js.map

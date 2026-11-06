@@ -422,7 +422,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     signupUrl: 'https://claude.ai',
     modelSource: 'api-list',
     supported: true,
-    hidden: true,
     subscriptionRisk: true,
   },
   {
@@ -436,7 +435,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     signupUrl: 'https://antigravity.google',
     modelSource: 'api-list',
     supported: true,
-    hidden: true,
     subscriptionRisk: true,
   },
   // OAuth-gated subscription providers — device code or broker sign-in

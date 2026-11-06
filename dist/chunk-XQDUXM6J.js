@@ -3,8 +3,10 @@ import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
 import {
-  MAX_MODEL_CATALOG,
   anthropicErrorType,
+  upstreamHttpStatus
+} from "./chunk-IRMXZJ3D.js";
+import {
   deepMergeProviderOptions,
   effortProviderOptions,
   encodeToolUseId,
@@ -12,9 +14,11 @@ import {
   serializeToolResultContent,
   splitToolUseId,
   sseChunk,
-  thinkingProviderOptions,
-  upstreamHttpStatus
-} from "./chunk-PRSSAHTH.js";
+  thinkingProviderOptions
+} from "./chunk-S3QYWK2P.js";
+import {
+  MAX_MODEL_CATALOG
+} from "./chunk-QYL2HTTP.js";
 
 // src/subagent-route-registry.ts
 import { randomUUID } from "crypto";
@@ -772,4 +776,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-53LPDY3S.js.map
+//# sourceMappingURL=chunk-XQDUXM6J.js.map

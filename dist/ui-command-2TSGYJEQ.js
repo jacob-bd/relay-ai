@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 import {
+  handlePoolApi,
+  invalidateUiPoolMember,
+  verifyUiPoolMember
+} from "./chunk-Q5OBKBQ6.js";
+import {
   addProviderFromTemplate,
   buildDedupedModelRows,
   checkForUpdates,
@@ -28,21 +33,12 @@ import {
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode
-} from "./chunk-626SSSFL.js";
-import "./chunk-53LPDY3S.js";
-import {
-  poolCatalogEntry
-} from "./chunk-7BKIHQYO.js";
-import "./chunk-UR4QFFSQ.js";
-import {
-  handlePoolApi,
-  invalidateUiPoolMember,
-  verifyUiPoolMember
-} from "./chunk-BVN7BVVU.js";
+} from "./chunk-HIQSB6JR.js";
 import {
   readBody,
   sendJson
-} from "./chunk-FZFPVM3L.js";
+} from "./chunk-XODZLRZH.js";
+import "./chunk-XQDUXM6J.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   addCustomEndpointProvider,
@@ -63,29 +59,26 @@ import {
   setModelMarkedFree,
   setModelsHidden,
   updateCustomEndpointProvider
-} from "./chunk-5ETHP66U.js";
+} from "./chunk-YD4PZYLN.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
 import {
-  copilotPlanTier,
+  poolCatalogEntry
+} from "./chunk-ZUZVJSJL.js";
+import {
   fetchProviderCatalog,
   providersForCodexSubagents,
   providersForTarget
-} from "./chunk-7TNNCDPU.js";
+} from "./chunk-EE53ZNAJ.js";
 import {
-  BACKENDS,
-  CODEX_SUBAGENT_MODEL_CAP,
-  MAX_MODEL_CATALOG,
+  copilotPlanTier
+} from "./chunk-E6UL27MK.js";
+import "./chunk-UR4QFFSQ.js";
+import "./chunk-IRMXZJ3D.js";
+import {
   MODEL_KINDS,
-  VERSION,
-  buildAntigravityAuthUrl,
-  buildClaudeCodeAuthUrl,
   classifyFreeStatus,
-  completeAntigravityExchange,
-  completeClaudeCodeExchange,
-  describeOAuthAccount,
-  formatOAuthAccount,
   freeStatusLabel,
   getAgentProviderModels,
   getAppPathOverride,
@@ -101,33 +94,17 @@ import {
   getTrustSystemCertificates,
   getUiDebugLogPath,
   guessModelKindFromName,
-  guiCallbackRedirectUri,
   isFreeStatus,
-  isProviderKind,
   loadPreferences,
   loadRegistry,
   localTimestamp,
   makeTraceLogger,
   modelsDevModelKind,
   nameKindOutranksChatTest,
-  openAiDeviceCodeUrl,
   parseFreePool,
-  pollClinePassDeviceCode,
-  pollGithubDeviceCodeToken,
-  pollOpenAiDeviceCodeToken,
-  pollXaiDeviceCodeToken,
-  preferredRelayCredentialAuthRef,
-  providerKind,
-  readStoredProviderCredential,
   recordLaunchFolder,
-  requestClinePassDeviceCode,
-  requestGithubDeviceCode,
-  requestOpenAiDeviceCode,
-  requestXaiDeviceCode,
-  resolveProviderCredential,
   resolveServerAutostart,
   savePreferences,
-  saveProviderCredential,
   setAppPathOverride,
   setSavedServerPassword,
   setServerAutostart,
@@ -137,21 +114,61 @@ import {
   setServerListenMode,
   setServerMaskGatewayIds,
   setTrustSystemCertificates,
-  supportsAdditionalOAuthAccounts,
   supportsManualModels,
   writeSecureLogLine
-} from "./chunk-PRSSAHTH.js";
+} from "./chunk-S3QYWK2P.js";
+import "./chunk-W32XKRNU.js";
+import {
+  AA_SITE_URL,
+  IntelligenceError,
+  buildIntelligenceLookup,
+  hasIntelligenceKey,
+  isIntelligenceStale,
+  loadIntelligenceCache,
+  refreshIntelligence,
+  removeIntelligence
+} from "./chunk-Y6GWVWA4.js";
+import {
+  BACKENDS,
+  CODEX_SUBAGENT_MODEL_CAP,
+  MAX_MODEL_CATALOG,
+  VERSION,
+  buildAntigravityAuthUrl,
+  buildClaudeCodeAuthUrl,
+  completeAntigravityExchange,
+  completeClaudeCodeExchange,
+  describeOAuthAccount,
+  formatOAuthAccount,
+  guiCallbackRedirectUri,
+  isProviderKind,
+  openAiDeviceCodeUrl,
+  pollClinePassDeviceCode,
+  pollGithubDeviceCodeToken,
+  pollOpenAiDeviceCodeToken,
+  pollXaiDeviceCodeToken,
+  preferredRelayCredentialAuthRef,
+  providerKind,
+  readStoredProviderCredential,
+  requestClinePassDeviceCode,
+  requestGithubDeviceCode,
+  requestOpenAiDeviceCode,
+  requestXaiDeviceCode,
+  resolveProviderCredential,
+  saveProviderCredential,
+  supportsAdditionalOAuthAccounts
+} from "./chunk-QYL2HTTP.js";
 import {
   getTemplateById,
   init_provider_templates,
+  listAccountTemplates,
   listAddableTemplates,
   listVisibleOAuthTemplates,
   provider_templates_exports,
   supportsAdditionalApiAccounts
-} from "./chunk-RKRPDZVV.js";
+} from "./chunk-6DCEGHZH.js";
 import {
   getAppHome
-} from "./chunk-KNCSTHR4.js";
+} from "./chunk-XEH2JMTL.js";
 import {
   __toCommonJS
 } from "./chunk-JIDIH7DS.js";
@@ -744,6 +761,16 @@ function handleUiApiRequest(req, res, opts = {}) {
     handleAddCustomProvider(req, res);
   } else if (url === "/api/providers/edit-custom" && req.method === "POST") {
     handleEditCustomProvider(req, res);
+  } else if (url === "/api/intelligence/status" && req.method === "GET") {
+    handleIntelligenceStatus(res);
+  } else if (url === "/api/intelligence/key" && req.method === "POST") {
+    handleIntelligenceKey(req, res);
+  } else if (url === "/api/intelligence/refresh" && req.method === "POST") {
+    handleIntelligenceRefresh(res);
+  } else if (url === "/api/intelligence/remove" && req.method === "POST") {
+    handleIntelligenceRemove(res);
+  } else if (url === "/api/providers/edit-url" && req.method === "POST") {
+    handleEditServerUrl(req, res);
   } else if (url === "/api/providers/rename" && req.method === "POST") {
     handleRenameProvider(req, res);
   } else if (url === "/api/providers/delete" && req.method === "POST") {
@@ -876,11 +903,13 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
       p2.id,
       new Set(getProviderModels(p2).filter((m) => m.source === "manual").map((m) => m.id))
     ]));
-    const estimatedIdsByProvider = new Map(registry.providers.filter((rp) => customEndpointKind(rp)).map((rp) => [rp.id, new Map(getProviderModels(rp).filter((m) => m.contextWindowSource === void 0 || m.contextWindowSource === "models.dev").map((m) => [m.id, m.contextWindowSource === "models.dev" ? "models.dev" : "name"]))]));
+    const intelligenceFor = buildIntelligenceLookup(loadIntelligenceCache());
+    const estimatedIdsByProvider = new Map(registry.providers.map((rp) => [rp.id, new Map(getProviderModels(rp).filter((m) => m.contextWindowSource === void 0 || m.contextWindowSource === "models.dev").map((m) => [m.id, m.contextWindowSource === "models.dev" ? "models.dev" : "name"]))]));
     const manualMetadata = (id) => {
       const provider = registryById.get(id);
       return {
         supportsManualModels: provider ? provider.enabled && supportsManualModels(provider) : false,
+        ...provider && canEditServerUrl(provider) ? { canEditServerUrl: true, serverUrl: provider.api.url ?? "" } : {},
         manualModels: (provider?.manualModels ?? []).map(publicManualModel)
       };
     };
@@ -918,6 +947,7 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
         freeLabel: m.userMarkedFree ? "Free (marked by you)" : m.localEndpoint ? "Free (local)" : freeStatusLabel(m.freeStatus),
         ...m.userMarkedFree ? { userMarkedFree: true } : {},
         contextWindow: m.contextWindow,
+        ...intelligenceFor(m.id) ? { intelligence: { score: intelligenceFor(m.id).score, name: intelligenceFor(m.id).name } } : {},
         cost: m.cost,
         referencePrice: m.referencePrice,
         claudeTransparentCompatible: supportsClaudeTransparentMode(m),
@@ -1115,7 +1145,7 @@ async function handleMeasureContextWindow(req, res) {
     if (!res.writableEnded) controller.abort();
   });
   try {
-    const { checkContextWindow } = await import("./test-model-AICVC5PA.js");
+    const { checkContextWindow } = await import("./test-model-6YVKO34H.js");
     const context = await checkContextWindow(provider.id, body.modelId, controller.signal);
     if (!res.destroyed) sendJson(res, 200, { ok: true, context });
   } catch {
@@ -1142,7 +1172,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-DBY7G2Z4.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-EZUE6AYR.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1252,6 +1282,40 @@ function handleGetTemplates(res) {
       templates.set(template.id, template);
     }
   }
+  const configuredKinds = new Set(registry.providers.map((p2) => providerKind(p2.id)));
+  for (const t of listAccountTemplates()) {
+    if (t.addable === false || ["zen", "go"].includes(t.id) || !configuredKinds.has(t.id)) continue;
+    templates.set(t.id, {
+      id: t.id,
+      name: t.name,
+      signupUrl: t.signupUrl ?? null,
+      authType: t.authType,
+      anonymousFreeModels: t.anonymousFreeModels ?? false,
+      urlPrompt: t.urlPrompt ?? null,
+      accountIdPrompt: t.accountIdPrompt ?? null,
+      defaultBaseUrl: t.defaultBaseUrl ?? null,
+      apiKeyOptional: t.apiKeyOptional ?? false,
+      noApiKey: t.noApiKey ?? false,
+      setupNote: t.setupNote ?? null,
+      authMethods: t.authMethods ?? [t.authType],
+      custom: false,
+      addAnother: true
+    });
+  }
+  for (const t of [...listVisibleOAuthTemplates(), ...getTemplateById("cline-pass") ? [getTemplateById("cline-pass")] : []]) {
+    if (templates.has(t.id) || !configuredKinds.has(t.id) || !supportsAdditionalOAuthAccounts(t.id)) continue;
+    templates.set(t.id, {
+      id: t.id,
+      name: t.name,
+      signupUrl: t.signupUrl ?? null,
+      authType: t.authType,
+      authMethods: t.authMethods ?? [t.authType],
+      subscriptionRisk: t.subscriptionRisk ?? false,
+      custom: false,
+      addAnother: true,
+      oauthOnlyAdd: true
+    });
+  }
   const sorted = [...templates.values()].sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base", numeric: true }));
   sendJson(res, 200, { templates: [...sorted, ...CUSTOM_TEMPLATES] });
 }
@@ -1345,9 +1409,9 @@ async function handleAddProvider(req, res) {
       sendJson(res, 400, { error: "templateId required" });
       return;
     }
-    const { listSupportedTemplates, listAccountTemplates } = await import("./provider-templates-Y7HWIRRP.js");
+    const { listSupportedTemplates, listAccountTemplates: listAccountTemplates2 } = await import("./provider-templates-554ZF5LB.js");
     const addAccount = body.addAccount === true;
-    const template = (addAccount ? listAccountTemplates() : listSupportedTemplates()).find((t) => t.id === templateId) ?? (addAccount ? listSupportedTemplates().find((t) => t.id === templateId) : void 0);
+    const template = (addAccount ? listAccountTemplates2() : listSupportedTemplates()).find((t) => t.id === templateId) ?? (addAccount ? listSupportedTemplates().find((t) => t.id === templateId) : void 0);
     if (!template) {
       sendJson(res, 404, { error: `Template '${templateId}' not found` });
       return;
@@ -1439,7 +1503,7 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-AICVC5PA.js");
+    const { testModel } = await import("./test-model-6YVKO34H.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
     if (!controller.signal.aborted) {
       try {
@@ -1448,8 +1512,23 @@ async function handleTestModel(req, res) {
       }
     }
     if (!result.ok) invalidateUiPoolMember(body.providerId.trim(), body.modelId.trim());
+    let context;
+    if (result.ok && !controller.signal.aborted) {
+      try {
+        const provider = loadRegistry().providers.find((p2) => p2.id === body.providerId.trim());
+        const cachedModel = provider ? getProviderModels(provider).find((m) => m.id === body.modelId.trim()) : void 0;
+        if (provider && cachedModel) {
+          const probeAllowed = customEndpointKind(provider) || isFreeStatus(classifyFreeStatus({ model: cachedModel, providerId: provider.id, templateId: provider.templateId }));
+          if (probeAllowed || providerKind(provider.id) === "ollama") {
+            const { checkContextWindow } = await import("./test-model-6YVKO34H.js");
+            context = await checkContextWindow(provider.id, cachedModel.id, controller.signal, { lookupOnly: !probeAllowed });
+          }
+        }
+      } catch {
+      }
+    }
     const poolResult = result.ok ? await verifyUiPoolMember(body.providerId.trim(), body.modelId.trim(), controller.signal, { evidence: { text: "passed", tools: result.toolsPassed ? "passed" : "failed" } }) : void 0;
-    if (!res.destroyed) sendJson(res, 200, { ...result, ...poolResult ? { pool: poolResult } : {} });
+    if (!res.destroyed) sendJson(res, 200, { ...result, ...context ? { context } : {}, ...poolResult ? { pool: poolResult } : {} });
   } catch {
     if (!res.destroyed) sendJson(res, 500, { ok: false, error: "Model test failed. Try again." });
   } finally {
@@ -1480,6 +1559,110 @@ async function handleProviderRefresh(req, res) {
     }
   } catch (err) {
     sendJson(res, 200, { ok: false, error: String(err) });
+  }
+}
+var intelligenceRefreshing = false;
+async function intelligenceStatusBody() {
+  const cache = loadIntelligenceCache();
+  return {
+    hasKey: await hasIntelligenceKey(),
+    fetchedAt: cache?.fetchedAt && cache.models.length > 0 ? cache.fetchedAt : null,
+    modelCount: cache?.models.length ?? 0,
+    indexVersion: cache?.indexVersion ?? null,
+    refreshing: intelligenceRefreshing,
+    sourceUrl: AA_SITE_URL
+  };
+}
+function handleIntelligenceStatus(res) {
+  void (async () => {
+    const body = await intelligenceStatusBody();
+    if (body.hasKey && !intelligenceRefreshing && isIntelligenceStale(loadIntelligenceCache())) {
+      intelligenceRefreshing = true;
+      void refreshIntelligence().catch(() => {
+      }).finally(() => {
+        intelligenceRefreshing = false;
+      });
+    }
+    sendJson(res, 200, { ...body, refreshing: intelligenceRefreshing });
+  })();
+}
+async function handleIntelligenceKey(req, res) {
+  try {
+    const body = JSON.parse(await readBody(req));
+    const key = typeof body.key === "string" ? body.key.trim() : "";
+    if (!key) {
+      sendJson(res, 400, { ok: false, error: "Paste your Artificial Analysis API key." });
+      return;
+    }
+    const { fetchIntelligenceScores, saveIntelligenceKey: save } = await import("./artificial-analysis-AULJK4FJ.js");
+    const cache = await fetchIntelligenceScores(key);
+    if (!await save(key)) {
+      sendJson(res, 200, { ok: false, error: "Could not store the key in the system credential store." });
+      return;
+    }
+    const { writeIntelligenceCache } = await import("./artificial-analysis-AULJK4FJ.js");
+    writeIntelligenceCache(cache);
+    sendJson(res, 200, { ok: true, ...await intelligenceStatusBody() });
+  } catch (err) {
+    sendJson(res, 200, { ok: false, error: err instanceof IntelligenceError ? err.message : "Could not check the key." });
+  }
+}
+async function handleIntelligenceRefresh(res) {
+  try {
+    intelligenceRefreshing = true;
+    await refreshIntelligence();
+    sendJson(res, 200, { ok: true, ...await intelligenceStatusBody() });
+  } catch (err) {
+    sendJson(res, 200, { ok: false, error: err instanceof IntelligenceError ? err.message : "Refresh failed." });
+  } finally {
+    intelligenceRefreshing = false;
+  }
+}
+async function handleIntelligenceRemove(res) {
+  await removeIntelligence();
+  sendJson(res, 200, { ok: true, ...await intelligenceStatusBody() });
+}
+function canEditServerUrl(provider) {
+  if (customEndpointKind(provider)) return false;
+  const template = getTemplateById(provider.templateId ?? providerKind(provider.id));
+  return Boolean(template?.urlPrompt && !template.accountIdPrompt);
+}
+async function handleEditServerUrl(req, res) {
+  try {
+    const body = JSON.parse(await readBody(req));
+    if (typeof body.providerId !== "string" || typeof body.baseUrl !== "string" || !body.baseUrl.trim()) {
+      sendJson(res, 400, { ok: false, error: "providerId and baseUrl required" });
+      return;
+    }
+    const registry = loadRegistry();
+    const provider = registry.providers.find((p2) => p2.id === body.providerId);
+    if (!provider || !canEditServerUrl(provider)) {
+      sendJson(res, 400, { ok: false, error: "This provider has no server address to edit." });
+      return;
+    }
+    const newUrl = body.baseUrl.trim().replace(/\/+$/, "");
+    const valid = await validateCustomEndpointUrl(newUrl, { allowInsecureLocal: /^http:\/\//i.test(newUrl) });
+    if (!valid.ok) {
+      sendJson(res, 400, { ok: false, error: valid.error ?? "Invalid URL", hint: valid.hint });
+      return;
+    }
+    const { setProviderServerUrl } = await import("./crud-QZ6X2N3Y.js");
+    const previous = provider.api.url ?? "";
+    if (previous.replace(/\/+$/, "") === newUrl) {
+      sendJson(res, 200, { ok: true, unchanged: true });
+      return;
+    }
+    setProviderServerUrl(provider.id, newUrl);
+    const apiKey = await resolveProviderCredential(provider.id, provider.authRef);
+    const refreshed = await refreshProviderModels(provider.id, apiKey, loadRegistry());
+    if (!refreshed.ok) {
+      setProviderServerUrl(provider.id, previous);
+      sendJson(res, 200, { ok: false, error: refreshed.reason ?? "Could not read models from that address." });
+      return;
+    }
+    sendJson(res, 200, { ok: true, count: refreshed.modelCount ?? 0 });
+  } catch (err) {
+    sendJson(res, 200, { ok: false, error: err instanceof Error ? err.message : "Could not change the address." });
   }
 }
 async function handleRenameProvider(req, res) {
@@ -2334,4 +2517,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-JVBRODAX.js.map
+//# sourceMappingURL=ui-command-2TSGYJEQ.js.map

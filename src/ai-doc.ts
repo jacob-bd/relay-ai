@@ -363,7 +363,11 @@ PROVIDERS REGISTRY
   relay-ai providers remove <id>
   relay-ai providers rename <id> <new name>   change the display name only (ids/keys unchanged)
   relay-ai providers refresh-models [id]
-  relay-ai providers auth <id>    OAuth (OpenAI ChatGPT, xAI, …)
+  relay-ai providers auth <id>    OAuth (OpenAI ChatGPT, xAI, Claude Code, Antigravity, …); add --new for a second account
+  ⚠ Claude Code (Anthropic) and Antigravity (Google) sign-ins use a paid subscription outside the vendor's app:
+    the account can be suspended or banned. Relay asks the user to confirm first; never run these without that consent.
+  In relay-ai ui: Ollama / LM Studio cards have "Edit server address"; configured providers stay in the
+  available list as "Add another account"; the Intelligence page adds an optional Artificial Analysis score column.
 
 MODELS / FAVORITES
   relay-ai models                 manage favoriteModels in config (alias: favorites)
@@ -558,6 +562,7 @@ RELATED DOCS
   docs/AI-AGENTS.md     human-readable agent guide (this repo)
   docs/CODEX.md         Codex CLI, sandbox, restore, routing
   docs/FREE_POOL.md     Relay Free Pool: routing, failover, Test results, Core
+  docs/INTELLIGENCE.md  optional Artificial Analysis intelligence score (own key)
   docs/CORE.md          embedding relay-ai in your own app (listRelayModels / createRelayModel)
   relay-ai --ai         full reference + live provider state
 `.trimEnd();

@@ -2,6 +2,7 @@ import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import { deriveBrand } from '../models.js';
 import {
   CLINE_PASS_CATALOG_URL,
+  CLINE_PASS_HOST,
   CLINE_PASS_SDK_BASE_URL,
   CLINE_PASS_VALIDATION_URL,
   formatClineRuntimeCredential,
@@ -220,6 +221,51 @@ function buildClineFreeProbe(options: ClinePassProbeOptions): ModelAvailabilityP
   };
 }
 
+const CLINE_FULL_CATALOG_URL = `${CLINE_PASS_HOST}/api/v1/ai/cline/models`;
+
+/** `cline-pass/glm-5.3`, `vendor/glm-5.3:free`, `x/glm-5.3-free` all reduce to `glm-5.3`. */
+function clineModelKey(id: string): string {
+  const lower = id.toLowerCase();
+  // The free variant of a model can have a different size from the paid one, so keep them apart.
+  return lower.replace(/^.*\//, '').replace(/(:free|-free)$/, '') + (/(:free|-free)$/.test(lower) ? ':free' : '');
+}
+
+/**
+ * ClinePass's own list reports no sizes, but Cline's full catalog lists the same models
+ * under their vendor ids with real `context_length`. Match by exact model name only (never
+ * a prefix: `mimo-v2.6-pro` must not pick up `mimo-v2.6-pro-ultraspeed`). A size found this
+ * way is a name match, so it is left without a source and the UI shows it as an estimate.
+ */
+export function applyClineCatalogContextWindows(models: CachedModel[], payload: unknown): CachedModel[] {
+  const rows = payload && typeof payload === 'object' ? (payload as { data?: unknown }).data : undefined;
+  if (!Array.isArray(rows)) return models;
+  const sizes = new Map<string, number>();
+  for (const row of rows as ClineModelEntry[]) {
+    if (!row || typeof row.id !== 'string') continue;
+    const size = positiveNumber((row as { context_length?: unknown }).context_length);
+    if (size === undefined) continue;
+    const key = clineModelKey(row.id);
+    // Smaller wins on a clash: an oversized window makes sessions overflow.
+    const previous = sizes.get(key);
+    if (previous === undefined || size < previous) sizes.set(key, size);
+  }
+  return models.map(model => {
+    if (model.contextWindow !== undefined) return model;
+    const size = sizes.get(clineModelKey(model.id));
+    return size === undefined ? model : { ...model, contextWindow: size };
+  });
+}
+
+async function withClineCatalogContext(models: CachedModel[]): Promise<CachedModel[]> {
+  try {
+    const response = await fetchJson(CLINE_FULL_CATALOG_URL);
+    if (!response.ok) return models;
+    return applyClineCatalogContextWindows(models, await response.json().catch(() => null));
+  } catch {
+    return models; // sizes are optional; the models.dev estimate still applies
+  }
+}
+
 export async function fetchClinePassModels(probe?: ClinePassProbeOptions): Promise<CachedModel[]> {
   const response = await fetchJson(CLINE_PASS_CATALOG_URL);
   if (!response.ok) {
@@ -228,7 +274,7 @@ export async function fetchClinePassModels(probe?: ClinePassProbeOptions): Promi
     throw new Error(`ClinePass catalog returned HTTP ${response.status}.`);
   }
   const payload = await response.json().catch(() => null);
-  const models = parseClinePassModels(payload);
+  const models = await withClineCatalogContext(parseClinePassModels(payload));
   trace(`ClinePass catalog parsed models=${models.length}`);
   if (models.length === 0) throw new Error('ClinePass catalog returned no usable models.');
 

@@ -434,3 +434,15 @@ export function toggleProviderEnabled(id: string): { toggled: boolean; enabled?:
   saveRegistry(registry);
   return { toggled: true, enabled: provider.enabled };
 }
+
+/** Point a provider (and its cached models) at a different server address. Id, credential and favorites are untouched. */
+export function setProviderServerUrl(id: string, baseUrl: string): void {
+  const registry = loadRegistry();
+  const provider = registry.providers.find(p => p.id === id);
+  if (!provider) throw new Error(`Provider not found: ${id}`);
+  provider.api = { ...provider.api, url: baseUrl };
+  if (provider.modelsCache) {
+    provider.modelsCache = { ...provider.modelsCache, models: provider.modelsCache.models.map(m => ({ ...m, apiUrl: baseUrl })) };
+  }
+  saveRegistry(registry);
+}

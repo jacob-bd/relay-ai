@@ -41,6 +41,8 @@ The first account is never changed by adding a second.
 
 ### Sign-in providers (OAuth)
 
+> ⚠️ Claude Code and Antigravity sign-ins carry an **account ban risk** (Anthropic and Google may suspend or ban accounts used this way). Add a second account of these only if you can afford to lose it. See [Subscription OAuth](SUBSCRIPTION-OAUTH.md#claude-code-and-antigravity-sign-in).
+
 ChatGPT, xAI SuperGrok, GitHub Copilot, ClinePass, Claude Code and Antigravity can each hold several accounts.
 
 ```bash

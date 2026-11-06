@@ -47,7 +47,14 @@ Follow the device-code instructions printed in the terminal. Credentials are sto
 
 ## Claude Code and Antigravity sign-in
 
-These two use a browser sign-in rather than a device code, and both carry an account-risk warning (Anthropic and Google may not intend this use; see [Antigravity](ANTIGRAVITY.md) and the confirmation text Relay shows).
+> ⚠️ **Account ban risk — read before you sign in.** These two sign-ins use a paid subscription outside the vendor's own app, which is probably not what Anthropic or Google intend and may violate their terms of service.
+>
+> - **Claude Code (Anthropic):** Anthropic actively enforces this. It checks request shape and has taken legal action against other projects. Consequences can include **token revocation and account suspension or a permanent ban** of your Claude Pro/Max account. To look like Claude Code, Relay may reproduce Claude Code-style request metadata.
+> - **Antigravity (Google):** community reports say Google has issued account bans for this usage. A ban can mean **loss of every service tied to that Google account** (Gmail, Drive, YouTube, Workspace). **Do not use your primary Google account.** Use a throwaway account.
+>
+> Relay is not affiliated with Anthropic or Google and cannot protect you. Both providers are listed on the Providers & Keys page and in `relay-ai providers`, and Relay asks you to confirm this risk before sign-in in the terminal and in the web UI (the web UI confirmation is enforced by the server). Only continue with an account you can afford to lose.
+
+These two use a browser sign-in rather than a device code (see [Antigravity](ANTIGRAVITY.md) for the full Google notes).
 
 - **Claude Code:** the sign-in page (`claude.com/cai/oauth/authorize`) shows a code. Paste it into the terminal prompt, or in the web UI click **Open sign-in page** and paste the code into the card. The pasted code must carry the `state` of the sign-in Relay started, or it is rejected. Relay exchanges and refreshes tokens at `platform.claude.com/v1/oauth/token`, the endpoint the current Claude Code (2.1.312) uses.
 - **Antigravity:** a Google browser sign-in that returns to Relay on your own machine; Relay checks the response's `state` before accepting it.

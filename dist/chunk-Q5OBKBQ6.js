@@ -5,7 +5,7 @@ import {
   disabledPoolMembers,
   readBody,
   sendJson
-} from "./chunk-FZFPVM3L.js";
+} from "./chunk-XODZLRZH.js";
 import {
   fetchProviderCatalog,
   groupPoolActivity,
@@ -16,7 +16,7 @@ import {
   readPoolActivity,
   summarizePoolEvents,
   verifyConfiguredPoolMember
-} from "./chunk-7TNNCDPU.js";
+} from "./chunk-EE53ZNAJ.js";
 import {
   addFreePoolMember,
   classifyFreeStatus,
@@ -30,7 +30,11 @@ import {
   poolEndpointRevision,
   removeFreePoolMember,
   savePreferences
-} from "./chunk-PRSSAHTH.js";
+} from "./chunk-S3QYWK2P.js";
+import {
+  buildIntelligenceLookup,
+  loadIntelligenceCache
+} from "./chunk-Y6GWVWA4.js";
 
 // src/ui/pool-api.ts
 var verifying = /* @__PURE__ */ new Set();
@@ -68,7 +72,8 @@ function contextSourceFor(providerId, model) {
   if (override?.source === "measured") return "measured";
   return model.contextWindowEstimated === true ? "estimate" : void 0;
 }
-function modelMetadata(provider, model) {
+function modelMetadata(provider, model, intelligenceFor) {
+  const intelligence = intelligenceFor?.(model.id);
   const freeStatus = classifyFreeStatus({ model, providerId: provider.id });
   return {
     providerId: provider.id,
@@ -83,7 +88,8 @@ function modelMetadata(provider, model) {
     contextSource: contextSourceFor(provider.id, model),
     cost: model.cost,
     freeStatus,
-    ...candidateKind(provider.id, model.id)
+    ...candidateKind(provider.id, model.id),
+    ...intelligence ? { intelligence: { score: intelligence.score, name: intelligence.name } } : {}
   };
 }
 function failedTestProblem(providerId, modelId) {
@@ -218,6 +224,7 @@ function poolActivityView() {
   };
 }
 function poolView(providers, pool, disabled = /* @__PURE__ */ new Map()) {
+  const intelligenceFor = buildIntelligenceLookup(loadIntelligenceCache());
   const members = pool.members.map((raw) => {
     const provider = providers.find((item) => item.id === raw.providerId);
     const model = provider?.models.find((item) => item.id === raw.modelId);
@@ -235,7 +242,7 @@ function poolView(providers, pool, disabled = /* @__PURE__ */ new Map()) {
     const receipt = membershipProblem ? void 0 : currentPoolReceipt(pool.receipts, raw, revision(provider, model), Date.now());
     const off = membershipProblem ? void 0 : disabled.get(raw.providerId + "/" + raw.modelId);
     return {
-      ...modelMetadata(provider, model),
+      ...modelMetadata(provider, model, intelligenceFor),
       ...raw,
       status: membershipProblem ? "Unavailable" : off ? "Disabled" : routingProblem ? "Needs test" : receipt ? "Ready" : "Needs test",
       reason: membershipProblem ?? (off ? disabledMessage(off.note) : routingProblem),
@@ -251,7 +258,7 @@ function poolView(providers, pool, disabled = /* @__PURE__ */ new Map()) {
     const membershipProblem = poolMembershipProblem(provider, model) ?? (alreadyAdded ? void 0 : failedTestProblem(provider.id, model.id));
     const testResult = testResultFor(provider.id, model.id);
     return {
-      ...modelMetadata(provider, model),
+      ...modelMetadata(provider, model, intelligenceFor),
       alreadyAdded,
       ...testResult ? { testResult } : {},
       canAdd: !membershipProblem,
@@ -275,4 +282,4 @@ export {
   handlePoolApi,
   poolView
 };
-//# sourceMappingURL=chunk-BVN7BVVU.js.map
+//# sourceMappingURL=chunk-Q5OBKBQ6.js.map

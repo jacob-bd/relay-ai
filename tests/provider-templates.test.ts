@@ -120,7 +120,6 @@ describe('provider templates', () => {
     const hiddenIds = PROVIDER_TEMPLATES.filter(t => t.hidden).map(t => t.id);
     const visibleIds = listVisibleOAuthTemplates().map(t => t.id);
 
-    expect(hiddenIds.length).toBeGreaterThan(0);
     for (const id of hiddenIds) {
       expect(visibleIds).not.toContain(id);
     }
@@ -128,6 +127,8 @@ describe('provider templates', () => {
 
   it('lists only visible OAuth templates for discovery surfaces', () => {
     expect(listVisibleOAuthTemplates().map(t => t.id).sort()).toEqual([
+      'antigravity',
+      'claude-code',
       'github-copilot',
       'openai-oauth',
       'xai-oauth',

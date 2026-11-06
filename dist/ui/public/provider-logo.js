@@ -17,6 +17,8 @@ const PROVIDER_LOGO_URLS = {
   zen: 'https://opencode.ai/favicon.ico',
   go: 'https://opencode.ai/favicon.ico',
   anthropic: 'https://cdn.simpleicons.org/anthropic/ffffff',
+  'claude-code': 'https://cdn.simpleicons.org/claude/ffffff',
+  antigravity: 'icon-antigravity.png', // Antigravity app icon, already shipped with the UI
   google: 'https://cdn.simpleicons.org/google/ffffff',
   nvidia: 'https://cdn.simpleicons.org/nvidia/ffffff',
   deepseek: 'https://cdn.simpleicons.org/deepseek/ffffff',

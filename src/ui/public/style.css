@@ -1200,7 +1200,7 @@ input { font-family: inherit; }
 }
 
 /* Provider model browser */
-.provider-model-browser { display: none; max-width: 960px; }
+.provider-model-browser { display: none; max-width: 1400px; }
 .content.provider-browser-open > .section { display: none; }
 .content.provider-browser-open > .provider-model-browser { display: block; margin: 0; border: 0; }
 
@@ -2495,7 +2495,7 @@ input { font-family: inherit; }
 .btn-model-pool.is-pooled { border-color:oklch(74% 0.2 155 / 0.4); background:var(--success-bg); color:var(--success); }
 .btn-model-pool:disabled { opacity:0.45; cursor:not-allowed; }
 .btn-model-pool:disabled:hover { border-color:var(--border); background:var(--surface-2); color:var(--text-1); }
-#free-pool { max-width:960px; }
+#free-pool { max-width:1400px; }
 #free-pool .provider-model-table th:nth-child(2) { width:130px; }
 #free-pool .provider-model-table th:nth-child(3) { width:100px; }
 #free-pool .provider-model-table th:nth-child(4) { width:150px; }
@@ -2535,3 +2535,92 @@ input { font-family: inherit; }
 .provider-model-table--catalog .test-stack { display: inline-flex; flex-direction: column; align-items: center; gap: 6px; }
 .provider-model-table--catalog .test-stack .test-badge-slot { display: inline-flex; justify-content: center; }
 .provider-model-table--catalog th { white-space: nowrap; }
+
+/* Provider model catalog: share the width instead of letting the Model column swallow it. */
+.provider-model-table--catalog { table-layout: fixed; width: 100%; }
+.provider-model-table--catalog th.th-select { width: 40px; }
+.provider-model-table--catalog th:nth-child(2) { width: 27%; min-width: 0; }
+.provider-model-table--catalog th:nth-child(3) { width: 12%; min-width: 110px; }
+.provider-model-table--catalog th:nth-child(4) { width: 12%; min-width: 110px; }
+.provider-model-table--catalog th:nth-child(5) { width: 26%; min-width: 0; }
+.provider-model-table--catalog th.th-actions { width: auto; min-width: 190px; white-space: nowrap; text-align: right; }
+.provider-model-table--catalog .price-stack { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.provider-model-table--catalog .price-stack .btn-model-mark-free { align-self: center; }
+@media (max-width: 900px) {
+  .provider-model-table--catalog { table-layout: auto; }
+}
+
+/* Intelligence score */
+.intel-badge { display:inline-block; margin-left:6px; padding:1px 7px; border-radius:999px; border:1px solid var(--border); background:var(--surface-2); color:var(--text-2); font-size:11px; font-weight:700; vertical-align:middle; cursor:help; }
+.intel-card { max-width:760px; margin:0 0 16px; padding:18px 20px; border:1px solid var(--border); border-radius:14px; background:var(--surface); }
+.intel-card h3 { margin:0 0 8px; font-size:15px; }
+.intel-card p, .intel-steps { color:var(--text-2); font-size:13px; line-height:1.6; }
+.intel-steps { margin:0 0 12px; padding-left:20px; }
+.intel-card .key-row { margin-top:10px; }
+.intel-source { margin-bottom:0; }
+
+/* Intelligence column */
+.th-sort { all: unset; cursor: pointer; font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit; }
+.th-sort:hover, .th-sort:focus-visible { color: var(--text-1); }
+.sort-arrow { display:inline-block; margin-left:2px; font-size:10px; opacity:.8; }
+.intel-attrib { display:block; margin-top:2px; font-size:10px; font-weight:500; letter-spacing:0; text-transform:none; color: var(--text-3); text-decoration: underline; }
+.intel-cell { white-space: nowrap; }
+.intel-score { font-weight: 700; font-size: 14px; color: var(--text-1); cursor: help; }
+.intel-none { color: var(--text-3); }
+.provider-model-table--catalog th.th-intel { width: 13%; min-width: 120px; }
+.provider-model-table--catalog th:nth-child(5):not(.th-intel) { width: 26%; }
+.provider-model-table--catalog th.th-intel + th { width: 22%; min-width: 0; }
+
+.intel-card a { color: var(--accent, #3b9dff); text-decoration: underline; }
+.intel-tip { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); }
+/* Header tooltips inherit the headers' no-wrap rule; let them wrap inside their box. */
+.price-help [role="tooltip"] { white-space: normal; text-align: left; overflow-wrap: break-word; max-width: min(300px, 80vw); }
+.th-intel .price-help [role="tooltip"] { right: auto; left: 0; width: 280px; }
+
+/* With the Intelligence column there are seven columns: give Actions room so its buttons are never clipped. */
+.provider-model-table--intel th:nth-child(2) { width: 21%; }
+.provider-model-table--intel th:nth-child(3), .provider-model-table--intel th:nth-child(4) { width: 10%; min-width: 96px; }
+.provider-model-table--intel th.th-intel { width: 11%; min-width: 110px; }
+.provider-model-table--intel th.th-intel + th { width: 20%; }
+.provider-model-table--intel th.th-actions { width: auto; min-width: 210px; }
+.provider-model-table--intel .price-stack { flex-direction: column; align-items: flex-start; }
+
+/* No sideways scrolling on normal desktop widths: every column is a share of the table, and the
+   cells use tighter padding. Narrow windows still scroll rather than crush the buttons. */
+@media (min-width: 1200px) {
+  .provider-model-table-wrap:has(.provider-model-table--catalog) { overflow-x: hidden; }
+  .provider-model-table--catalog th, .provider-model-table--catalog td { padding-left: 10px; padding-right: 10px; }
+  .provider-model-table--catalog th.th-select, .provider-model-table--catalog td.td-select { width: 36px; padding-left: 12px; padding-right: 0; }
+  .provider-model-table--catalog th:nth-child(n) { min-width: 0; }
+  .provider-model-table--catalog th:nth-child(2) { width: 26%; }
+  .provider-model-table--catalog th:nth-child(3), .provider-model-table--catalog th:nth-child(4) { width: 11%; }
+  .provider-model-table--catalog th:nth-child(5) { width: 24%; }
+  .provider-model-table--catalog th.th-actions { width: 22%; min-width: 0; }
+  .provider-model-table--intel th:nth-child(2) { width: 20%; }
+  .provider-model-table--intel th:nth-child(3), .provider-model-table--intel th:nth-child(4) { width: 10%; }
+  .provider-model-table--intel th.th-intel { width: 10%; }
+  .provider-model-table--intel th.th-intel + th { width: 21%; }
+  .provider-model-table--intel th.th-actions { width: 25%; min-width: 0; }
+  .provider-model-table--catalog td.td-actions { white-space: normal; }
+  .provider-model-table--catalog .model-actions, .provider-model-table--catalog td.td-actions { flex-wrap: wrap; }
+}
+
+/* Centre every column except the model name, so values line up under their headers. */
+.provider-model-table--catalog th:nth-child(n+3), .provider-model-table--catalog td:nth-child(n+3),
+.provider-model-table--catalog th.th-actions, .provider-model-table--catalog td.td-actions,
+#free-pool .provider-model-table th:nth-child(n+2), #free-pool .provider-model-table td:nth-child(n+2) { text-align: center; }
+.provider-model-table--catalog .price-stack,
+.provider-model-table--intel .price-stack { align-items: center; text-align: center; }
+.provider-model-table--catalog .price-stack .btn-model-mark-free { align-self: center; }
+.provider-model-table--catalog .model-actions { justify-content: center; }
+.provider-model-table--catalog td.td-actions { display: table-cell; }
+.provider-model-table--catalog td.td-actions > * { vertical-align: middle; }
+.provider-model-table--catalog .test-stack { align-items: center; }
+.th-intel .price-help [role="tooltip"] { text-align: left; }
+.provider-model-table--catalog .intel-attrib { text-align: center; }
+/* Price and Actions share the leftover width evenly so the gap between them stays small. */
+@media (min-width: 1200px) {
+  .provider-model-table--intel th.th-intel + th { width: 19%; }
+  .provider-model-table--intel th.th-actions { width: 24%; }
+  .provider-model-table--catalog th:nth-child(5):not(.th-intel) { width: 20%; }
+}

@@ -212,7 +212,7 @@ describe('registry io', () => {
 });
 
 describe('materializeRegistry', () => {
-  it('does not invent a context window for ClinePass models without metadata', () => {
+  it('estimates a context window for ClinePass models without metadata', () => {
     const provider = {
       id: 'cline-pass',
       templateId: 'cline-pass',
@@ -230,7 +230,8 @@ describe('materializeRegistry', () => {
       npm: '@ai-sdk/openai-compatible',
     }, provider);
 
-    expect(local?.contextWindow).toBeUndefined();
+    expect(local?.contextWindow).toBe(1_048_576);
+    expect(local?.contextWindowEstimated).toBe(true);
   });
 
   it('flags only guessed custom-endpoint sizes as estimates', () => {
@@ -252,7 +253,7 @@ describe('materializeRegistry', () => {
     expect(cachedModelToLocal(model(), builtIn)?.contextWindowEstimated).toBeUndefined();
   });
 
-  it('ignores the legacy synthetic ClinePass context value in existing caches', () => {
+  it('replaces the legacy synthetic ClinePass context value with an estimate', () => {
     const provider = {
       id: 'cline-pass',
       templateId: 'cline-pass',
@@ -271,7 +272,8 @@ describe('materializeRegistry', () => {
       contextWindow: 131072,
     }, provider);
 
-    expect(local?.contextWindow).toBeUndefined();
+    expect(local?.contextWindow).toBe(1_048_576);
+    expect(local?.contextWindowEstimated).toBe(true);
   });
 
   it("trusts models.dev over a saved name-guess for ChatGPT-login models", () => {

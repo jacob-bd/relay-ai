@@ -9,7 +9,8 @@ import {
   resolveVertexLocation,
   resolveVertexProject,
   saveVertexModelEntries
-} from "./chunk-KNCSTHR4.js";
+} from "./chunk-W32XKRNU.js";
+import "./chunk-XEH2JMTL.js";
 import "./chunk-JIDIH7DS.js";
 export {
   DEFAULT_VERTEX_MODELS,
@@ -22,4 +23,4 @@ export {
   resolveVertexProject,
   saveVertexModelEntries
 };
-//# sourceMappingURL=vertex-env-UG3JGT32.js.map
+//# sourceMappingURL=vertex-env-PEFD3YSA.js.map

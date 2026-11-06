@@ -440,7 +440,6 @@ var init_provider_templates = __esm({
         signupUrl: "https://claude.ai",
         modelSource: "api-list",
         supported: true,
-        hidden: true,
         subscriptionRisk: true
       },
       {
@@ -454,7 +453,6 @@ var init_provider_templates = __esm({
         signupUrl: "https://antigravity.google",
         modelSource: "api-list",
         supported: true,
-        hidden: true,
         subscriptionRisk: true
       },
       // OAuth-gated subscription providers — device code or broker sign-in
@@ -506,4 +504,4 @@ export {
   provider_templates_exports,
   init_provider_templates
 };
-//# sourceMappingURL=chunk-RKRPDZVV.js.map
+//# sourceMappingURL=chunk-6DCEGHZH.js.map

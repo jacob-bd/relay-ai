@@ -131,6 +131,9 @@ To fully remove the tool and all its configuration data, you can delete the conf
 - **Test a model before you launch:** A **Test** button sends one short request through Relay and reports the response time, so an access problem shows up before your agent session does. The same Test reads the model's real context size from the server when it states one
 - **Custom endpoint tools:** Measure every model's real context size in one click, set sizes by hand, see each model's type (chat, embedding, reranking, safety…), and hide the models you don't use, one at a time or in bulk. See **[docs/PROVIDERS.md](docs/PROVIDERS.md#custom-endpoints)**
 - **Company servers with internal certificates:** Opt in to trusting the certificates installed on your computer (`relay-ai providers trust-certs on`)
+- **Intelligence score (optional):** Paste your own free Artificial Analysis key on the **Intelligence** page to add a sortable score column to every model list. See **[docs/INTELLIGENCE.md](docs/INTELLIGENCE.md)**
+- **Add another account, edit server address:** Configured providers stay in the add list as **Add another account**, and Ollama / LM Studio cards have **Edit server address**
+- **Context sizes always shown:** A size the provider did not report is shown as an **estimate**; **Test** confirms real sizes for Ollama, free models and custom endpoints
 - **Honest prices:** Prices come from the provider when it publishes them, otherwise from models.dev or the pricing feed; a cross-provider estimate is labelled as one
 - **Codex SubAgent:** Build a separate, initially empty one-model catalog for Codex delegation; it never imports or synchronizes with General Favorites
 - **Smart model pickers:** Recent models per provider, search for large lists (>25), paginated browse (15 per page)
@@ -213,6 +216,7 @@ Opens a browser-based dashboard on a random local port. From the UI you can:
 - **Manage General Favorites** — the sidebar shows your saved favorite models with a slot indicator (Slots used X/50). Favorites launch through all supported agents, including Antigravity.
 - **Manage models** — open a provider to Test models, see each model's type and context size (with where each came from: manual, tested/measured, models.dev, estimate or name guess), set sizes or types by hand, and hide models from every picker. Custom endpoints also get **Measure context sizes**. See [Custom endpoints](docs/PROVIDERS.md#custom-endpoints).
 - **Manage providers** — add providers from templates, delete providers, and refresh model lists inline, all without leaving the browser. For GitHub Copilot, ChatGPT, xAI, and ClinePass OAuth, the UI displays a one-time device code with **Copy code** and **Open sign-in page** buttons so you can complete sign-in without using the terminal. ClinePass can also be configured with an API key from the same provider card.
+- **Compare models by intelligence** — add your own free Artificial Analysis key on the **Intelligence** page and every model list gets a sortable score column ([guide](docs/INTELLIGENCE.md)).
 - **Run the Server tab** — configure and start the same gateway as `relay-ai server` (favorites-only or specific providers, discovery id masking, local/network listen mode) and see the resulting URLs, API key, and model catalog right in the browser. Runs in the same process as the UI, so it stops when you close the dashboard. See [Registry gateway (`relay-ai server`)](#registry-gateway-relay-ai-server) below for what each option does.
 
 Press `Ctrl+C` in the terminal where `relay-ai ui` is running to shut down the dashboard server (this also stops the gateway if you started it from the Server tab).
@@ -475,6 +479,9 @@ relay-ai antigravity-ide --use-existing-profile # use existing profile, chats & 
 > This kind of use is probably not what Google intended, may violate Google's terms of service, and could lead to account restrictions or bans. Use a throwaway Google account, a secondary account, or another account you can afford to lose. A free Google account should be enough for authentication. Seriously, don't risk your real Gmail, Workspace, YouTube, Drive, or business account for this.
 
 Read the full setup and risk notes in **[docs/ANTIGRAVITY.md](docs/ANTIGRAVITY.md)** before launching any Antigravity surface.
+
+> ⚠️ **Claude Code and Antigravity sign-ins can get your account banned.**
+> Signing in to Claude Code (Anthropic Claude Pro/Max) or Antigravity (Google) through Relay uses a paid subscription outside the vendor's own app. Anthropic actively enforces against this and has taken legal action against other projects; Google has reportedly banned accounts. Possible results are token revocation and account suspension or a permanent ban, and for Google the loss of every service tied to that account. Use an account you can afford to lose (a throwaway account for Google). Relay asks you to confirm this risk before each of these sign-ins. See **[docs/SUBSCRIPTION-OAUTH.md](docs/SUBSCRIPTION-OAUTH.md#claude-code-and-antigravity-sign-in)**.
 
 ## OAuth Providers
 

@@ -1,4 +1,5 @@
 import type { PoolProbeResult } from '../pool/probe.js';
+import { buildIntelligenceLookup, loadIntelligenceCache } from '../intelligence/artificial-analysis.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { loadPreferences, savePreferences } from '../config.js';
 import { fetchProviderCatalog } from '../provider-catalog.js';
@@ -52,7 +53,8 @@ function contextSourceFor(providerId: string, model: LocalProviderModel): 'set' 
   return model.contextWindowEstimated === true ? 'estimate' : undefined;
 }
 
-function modelMetadata(provider: LocalProvider, model: LocalProviderModel) {
+function modelMetadata(provider: LocalProvider, model: LocalProviderModel, intelligenceFor?: ReturnType<typeof buildIntelligenceLookup>) {
+  const intelligence = intelligenceFor?.(model.id);
   const freeStatus = classifyFreeStatus({ model, providerId: provider.id });
   return {
     providerId: provider.id, providerName: provider.name,
@@ -62,6 +64,7 @@ function modelMetadata(provider: LocalProvider, model: LocalProviderModel) {
     contextWindow: model.contextWindow, contextWindowEstimated: model.contextWindowEstimated === true,
     contextSource: contextSourceFor(provider.id, model),
     cost: model.cost, freeStatus, ...candidateKind(provider.id, model.id),
+    ...(intelligence ? { intelligence: { score: intelligence.score, name: intelligence.name } } : {}),
   };
 }
 
@@ -233,6 +236,7 @@ function poolActivityView() {
 }
 
 export function poolView(providers: LocalProvider[], pool: FreePoolPreferences, disabled: ReadonlyMap<string, { note: string; since: number }> = new Map()) {
+  const intelligenceFor = buildIntelligenceLookup(loadIntelligenceCache());
   const members = pool.members.map(raw => {
     const provider = providers.find(item => item.id === raw.providerId);
     const model = provider?.models.find(item => item.id === raw.modelId);
@@ -242,7 +246,7 @@ export function poolView(providers: LocalProvider[], pool: FreePoolPreferences, 
     const routingProblem = poolRoutingProblem(provider, model);
     const receipt = membershipProblem ? undefined : currentPoolReceipt(pool.receipts, raw, revision(provider, model), Date.now());
     const off = membershipProblem ? undefined : disabled.get(raw.providerId + '/' + raw.modelId);
-    return { ...modelMetadata(provider, model), ...raw,
+    return { ...modelMetadata(provider, model, intelligenceFor), ...raw,
       status: membershipProblem ? 'Unavailable' : off ? 'Disabled' : routingProblem ? 'Needs test' : receipt ? 'Ready' : 'Needs test',
       reason: membershipProblem ?? (off ? disabledMessage(off.note) : routingProblem),
       // The window routing actually uses is the one saved by the last Test; it can lag a size set or measured since.
@@ -259,7 +263,7 @@ export function poolView(providers: LocalProvider[], pool: FreePoolPreferences, 
       const membershipProblem = poolMembershipProblem(provider, model)
         ?? (alreadyAdded ? undefined : failedTestProblem(provider.id, model.id));
       const testResult = testResultFor(provider.id, model.id);
-      return { ...modelMetadata(provider, model),
+      return { ...modelMetadata(provider, model, intelligenceFor),
         alreadyAdded,
         ...(testResult ? { testResult } : {}),
         canAdd: !membershipProblem, addReason: membershipProblem,

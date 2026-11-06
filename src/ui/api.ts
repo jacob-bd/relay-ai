@@ -31,8 +31,12 @@ import { readBody, sendJson } from '../http-utils.js';
 import { loadRegistry } from '../registry/io.js';
 import { getAgentProviderModels, getProviderModels, supportsManualModels } from '../registry/provider-models.js';
 import type { ManualModel } from '../registry/types.js';
+import {
+  AA_SITE_URL, IntelligenceError, buildIntelligenceLookup, hasIntelligenceKey, isIntelligenceStale,
+  loadIntelligenceCache, refreshIntelligence, removeIntelligence,
+} from '../intelligence/artificial-analysis.js';
 import { refreshProviderModels, refreshAllProviderModels } from '../registry/refresh-models.js';
-import { getTemplateById, listAddableTemplates, listVisibleOAuthTemplates, PROVIDER_TEMPLATES, supportsAdditionalApiAccounts } from '../provider-templates.js';
+import { getTemplateById, listAccountTemplates, listAddableTemplates, listVisibleOAuthTemplates, PROVIDER_TEMPLATES, supportsAdditionalApiAccounts } from '../provider-templates.js';
 import { addProviderFromTemplate, type AddTemplateResult } from '../registry/add-template.js';
 import {
   addCustomEndpointProvider,
@@ -190,6 +194,16 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
     handleAddCustomProvider(req, res);
   } else if (url === '/api/providers/edit-custom' && req.method === 'POST') {
     handleEditCustomProvider(req, res);
+  } else if (url === '/api/intelligence/status' && req.method === 'GET') {
+    handleIntelligenceStatus(res);
+  } else if (url === '/api/intelligence/key' && req.method === 'POST') {
+    handleIntelligenceKey(req, res);
+  } else if (url === '/api/intelligence/refresh' && req.method === 'POST') {
+    handleIntelligenceRefresh(res);
+  } else if (url === '/api/intelligence/remove' && req.method === 'POST') {
+    handleIntelligenceRemove(res);
+  } else if (url === '/api/providers/edit-url' && req.method === 'POST') {
+    handleEditServerUrl(req, res);
   } else if (url === '/api/providers/rename' && req.method === 'POST') {
     handleRenameProvider(req, res);
   } else if (url === '/api/providers/delete' && req.method === 'POST') {
@@ -355,9 +369,9 @@ async function handleGetModels(
     const manualIdsByProvider = new Map(registry.providers.map(p => [p.id,
       new Set(getProviderModels(p).filter(m => m.source === 'manual').map(m => m.id)),
     ]));
-    // Custom endpoints only: sizes that are estimates (a name guess or a models.dev figure), not reported, typed or measured.
+    // Every provider: sizes that are estimates (a name guess or a models.dev figure), not reported, typed or measured.
+    const intelligenceFor = buildIntelligenceLookup(loadIntelligenceCache());
     const estimatedIdsByProvider = new Map(registry.providers
-      .filter(rp => customEndpointKind(rp))
       .map(rp => [rp.id, new Map(getProviderModels(rp)
         .filter(m => m.contextWindowSource === undefined || m.contextWindowSource === 'models.dev')
         .map(m => [m.id, m.contextWindowSource === 'models.dev' ? 'models.dev' : 'name'] as const))]));
@@ -365,6 +379,7 @@ async function handleGetModels(
       const provider = registryById.get(id);
       return {
         supportsManualModels: provider ? provider.enabled && supportsManualModels(provider) : false,
+        ...(provider && canEditServerUrl(provider) ? { canEditServerUrl: true, serverUrl: provider.api.url ?? '' } : {}),
         manualModels: (provider?.manualModels ?? []).map(publicManualModel),
       };
     };
@@ -404,6 +419,7 @@ async function handleGetModels(
         freeLabel: m.userMarkedFree ? 'Free (marked by you)' : m.localEndpoint ? 'Free (local)' : freeStatusLabel(m.freeStatus),
         ...(m.userMarkedFree ? { userMarkedFree: true } : {}),
         contextWindow: m.contextWindow,
+        ...(intelligenceFor(m.id) ? { intelligence: { score: intelligenceFor(m.id)!.score, name: intelligenceFor(m.id)!.name } } : {}),
         cost: m.cost,
         referencePrice: m.referencePrice,
         claudeTransparentCompatible: supportsClaudeTransparentMode(m),
@@ -777,6 +793,28 @@ function handleGetTemplates(res: ServerResponse): void {
     }
   }
 
+  // A provider that is already set up stays in the list so another account can be added from it.
+  // Same-credential duplicates are refused by the add paths themselves.
+  const configuredKinds = new Set(registry.providers.map(p => providerKind(p.id)));
+  for (const t of listAccountTemplates()) {
+    if (t.addable === false || ['zen', 'go'].includes(t.id) || !configuredKinds.has(t.id)) continue;
+    templates.set(t.id, {
+      id: t.id, name: t.name, signupUrl: t.signupUrl ?? null, authType: t.authType,
+      anonymousFreeModels: t.anonymousFreeModels ?? false, urlPrompt: t.urlPrompt ?? null,
+      accountIdPrompt: t.accountIdPrompt ?? null, defaultBaseUrl: t.defaultBaseUrl ?? null,
+      apiKeyOptional: t.apiKeyOptional ?? false, noApiKey: t.noApiKey ?? false,
+      setupNote: t.setupNote ?? null, authMethods: t.authMethods ?? [t.authType], custom: false, addAnother: true,
+    });
+  }
+  for (const t of [...listVisibleOAuthTemplates(), ...(getTemplateById('cline-pass') ? [getTemplateById('cline-pass')!] : [])]) {
+    if (templates.has(t.id) || !configuredKinds.has(t.id) || !supportsAdditionalOAuthAccounts(t.id)) continue;
+    templates.set(t.id, {
+      id: t.id, name: t.name, signupUrl: t.signupUrl ?? null, authType: t.authType,
+      authMethods: t.authMethods ?? [t.authType], subscriptionRisk: t.subscriptionRisk ?? false,
+      custom: false, addAnother: true, oauthOnlyAdd: true,
+    });
+  }
+
   const sorted = [...templates.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }));
   sendJson(res, 200, { templates: [...sorted, ...CUSTOM_TEMPLATES] });
 }
@@ -984,10 +1022,28 @@ async function handleTestModel(req: IncomingMessage, res: ServerResponse): Promi
       } catch { /* a logging failure must never fail the Test */ }
     }
     if (!result.ok) invalidateUiPoolMember(body.providerId.trim(), body.modelId.trim());
+    // A passing Test also confirms the context size, but only where the probe (which asks for a huge
+    // output size) cannot cost money: custom endpoints and free models. Best effort; never fails the Test.
+    let context: unknown;
+    if (result.ok && !controller.signal.aborted) {
+      try {
+        const provider = loadRegistry().providers.find(p => p.id === body.providerId.trim());
+        const cachedModel = provider ? getProviderModels(provider).find(m => m.id === body.modelId.trim()) : undefined;
+        if (provider && cachedModel) {
+          const probeAllowed = customEndpointKind(provider)
+            || isFreeStatus(classifyFreeStatus({ model: cachedModel, providerId: provider.id, templateId: provider.templateId }));
+          // Ollama states its sizes on a read-only lookup, so that is safe even for cloud models.
+          if (probeAllowed || providerKind(provider.id) === 'ollama') {
+            const { checkContextWindow } = await import('../test-model.js');
+            context = await checkContextWindow(provider.id, cachedModel.id, controller.signal, { lookupOnly: !probeAllowed });
+          }
+        }
+      } catch { /* the context check is optional */ }
+    }
     const poolResult = result.ok
       ? await verifyUiPoolMember(body.providerId.trim(), body.modelId.trim(), controller.signal, { evidence: { text: 'passed', tools: result.toolsPassed ? 'passed' : 'failed' } })
       : undefined;
-    if (!res.destroyed) sendJson(res, 200, { ...result, ...(poolResult ? { pool: poolResult } : {}) });
+    if (!res.destroyed) sendJson(res, 200, { ...result, ...(context ? { context } : {}), ...(poolResult ? { pool: poolResult } : {}) });
   } catch {
     if (!res.destroyed) sendJson(res, 500, { ok: false, error: 'Model test failed. Try again.' });
   } finally { res.removeListener('close', cancel); }
@@ -1018,6 +1074,102 @@ async function handleProviderRefresh(req: IncomingMessage, res: ServerResponse):
     }
   } catch (err) {
     sendJson(res, 200, { ok: false, error: String(err) });
+  }
+}
+
+let intelligenceRefreshing = false;
+
+async function intelligenceStatusBody() {
+  const cache = loadIntelligenceCache();
+  return {
+    hasKey: await hasIntelligenceKey(),
+    fetchedAt: cache?.fetchedAt && cache.models.length > 0 ? cache.fetchedAt : null,
+    modelCount: cache?.models.length ?? 0,
+    indexVersion: cache?.indexVersion ?? null,
+    refreshing: intelligenceRefreshing,
+    sourceUrl: AA_SITE_URL,
+  };
+}
+
+function handleIntelligenceStatus(res: ServerResponse): void {
+  void (async () => {
+    const body = await intelligenceStatusBody();
+    // Daily refresh: when the saved scores are a day old, update them in the background.
+    if (body.hasKey && !intelligenceRefreshing && isIntelligenceStale(loadIntelligenceCache())) {
+      intelligenceRefreshing = true;
+      void refreshIntelligence().catch(() => {}).finally(() => { intelligenceRefreshing = false; });
+    }
+    sendJson(res, 200, { ...body, refreshing: intelligenceRefreshing });
+  })();
+}
+
+async function handleIntelligenceKey(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const body = JSON.parse(await readBody(req)) as { key?: unknown };
+    const key = typeof body.key === 'string' ? body.key.trim() : '';
+    if (!key) { sendJson(res, 400, { ok: false, error: 'Paste your Artificial Analysis API key.' }); return; }
+    // Prove the key works before storing it.
+    const { fetchIntelligenceScores, saveIntelligenceKey: save } = await import('../intelligence/artificial-analysis.js');
+    const cache = await fetchIntelligenceScores(key);
+    if (!(await save(key))) { sendJson(res, 200, { ok: false, error: 'Could not store the key in the system credential store.' }); return; }
+    const { writeIntelligenceCache } = await import('../intelligence/artificial-analysis.js');
+    writeIntelligenceCache(cache);
+    sendJson(res, 200, { ok: true, ...(await intelligenceStatusBody()) });
+  } catch (err) {
+    sendJson(res, 200, { ok: false, error: err instanceof IntelligenceError ? err.message : 'Could not check the key.' });
+  }
+}
+
+async function handleIntelligenceRefresh(res: ServerResponse): Promise<void> {
+  try {
+    intelligenceRefreshing = true;
+    await refreshIntelligence();
+    sendJson(res, 200, { ok: true, ...(await intelligenceStatusBody()) });
+  } catch (err) {
+    sendJson(res, 200, { ok: false, error: err instanceof IntelligenceError ? err.message : 'Refresh failed.' });
+  } finally { intelligenceRefreshing = false; }
+}
+
+async function handleIntelligenceRemove(res: ServerResponse): Promise<void> {
+  await removeIntelligence();
+  sendJson(res, 200, { ok: true, ...(await intelligenceStatusBody()) });
+}
+
+/** Built-in providers that ask for a server address when added (Ollama, LM Studio, …) can have it changed later. */
+function canEditServerUrl(provider: RegistryProvider): boolean {
+  if (customEndpointKind(provider)) return false;
+  const template = getTemplateById(provider.templateId ?? providerKind(provider.id));
+  return Boolean(template?.urlPrompt && !template.accountIdPrompt);
+}
+
+async function handleEditServerUrl(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const body = JSON.parse(await readBody(req)) as { providerId?: unknown; baseUrl?: unknown };
+    if (typeof body.providerId !== 'string' || typeof body.baseUrl !== 'string' || !body.baseUrl.trim()) {
+      sendJson(res, 400, { ok: false, error: 'providerId and baseUrl required' }); return;
+    }
+    const registry = loadRegistry();
+    const provider = registry.providers.find(p => p.id === body.providerId);
+    if (!provider || !canEditServerUrl(provider)) {
+      sendJson(res, 400, { ok: false, error: 'This provider has no server address to edit.' }); return;
+    }
+    const newUrl = body.baseUrl.trim().replace(/\/+$/, '');
+    const valid = await validateCustomEndpointUrl(newUrl, { allowInsecureLocal: /^http:\/\//i.test(newUrl) });
+    if (!valid.ok) { sendJson(res, 400, { ok: false, error: valid.error ?? 'Invalid URL', hint: valid.hint }); return; }
+    const { setProviderServerUrl } = await import('../registry/crud.js');
+    const previous = provider.api.url ?? '';
+    if (previous.replace(/\/+$/, '') === newUrl) { sendJson(res, 200, { ok: true, unchanged: true }); return; }
+    setProviderServerUrl(provider.id, newUrl);
+    // Read the model list from the new server; if it cannot be reached, go back to the old address.
+    const apiKey = await resolveProviderCredential(provider.id, provider.authRef);
+    const refreshed = await refreshProviderModels(provider.id, apiKey, loadRegistry());
+    if (!refreshed.ok) {
+      setProviderServerUrl(provider.id, previous);
+      sendJson(res, 200, { ok: false, error: refreshed.reason ?? 'Could not read models from that address.' }); return;
+    }
+    sendJson(res, 200, { ok: true, count: refreshed.modelCount ?? 0 });
+  } catch (err) {
+    sendJson(res, 200, { ok: false, error: err instanceof Error ? err.message : 'Could not change the address.' });
   }
 }
 

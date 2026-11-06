@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 import {
+  extractApiKey,
+  readBody,
+  sendJson
+} from "./chunk-XODZLRZH.js";
+import {
   SubagentRouteRegistry,
   anthropicEffortFromRequest,
   claudeModelFamily,
@@ -8,18 +13,7 @@ import {
   streamAnthropicResponse,
   translateRequest,
   writeAnthropicStream
-} from "./chunk-53LPDY3S.js";
-import {
-  MAX_POOL_ATTEMPTS,
-  dispatchFreePool,
-  formatCodexModelLabel,
-  requestFingerprint
-} from "./chunk-7BKIHQYO.js";
-import {
-  extractApiKey,
-  readBody,
-  sendJson
-} from "./chunk-FZFPVM3L.js";
+} from "./chunk-XQDUXM6J.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -30,7 +24,13 @@ import {
   filterModelsByAvailability,
   refreshProviderModels,
   validateClinePassApiKey
-} from "./chunk-5ETHP66U.js";
+} from "./chunk-YD4PZYLN.js";
+import {
+  MAX_POOL_ATTEMPTS,
+  dispatchFreePool,
+  formatCodexModelLabel,
+  requestFingerprint
+} from "./chunk-ZUZVJSJL.js";
 import {
   describePoolFailure,
   extractConversationId,
@@ -45,32 +45,22 @@ import {
   recordPoolActivity,
   retryPoolFailure,
   toOAuthRegistryId
-} from "./chunk-7TNNCDPU.js";
+} from "./chunk-EE53ZNAJ.js";
 import {
-  ANTIGRAVITY_BASE_URLS,
-  ANTIGRAVITY_USER_AGENT,
-  BACKENDS,
-  CLAUDE_CODE_CLI_VERSION,
-  MAX_MODEL_CATALOG,
-  UpstreamUnreachableError,
-  VERSION,
-  VERTEX_ANTHROPIC_NPM,
-  VERTEX_ANTHROPIC_PROVIDER_ID,
   anthropicErrorType,
+  formatUpstreamError,
+  upstreamHttpStatus
+} from "./chunk-IRMXZJ3D.js";
+import {
+  UpstreamUnreachableError,
+  VERTEX_ANTHROPIC_PROVIDER_ID,
   buildPricingIndex,
   classifyFreeStatus,
-  claudeCodeClientModelId,
-  claudeCodeContextWindow,
   createLanguageModel,
-  deleteProviderCredential,
-  describeOAuthAccount,
   encodeToolUseId,
   enrichModelsForProviderPricing,
   enrichPricingAsync,
   fetchWithOAuthRetry,
-  formatOAuthAccount,
-  formatUpstreamError,
-  generateCliUserID,
   generateTextStreamingIfRequired,
   getEnvServerPassword,
   getProxyDebugLogPath,
@@ -83,12 +73,8 @@ import {
   getServerListenMode,
   getServerMaskGatewayIds,
   grabRoundTripSignature,
-  injectClaudeCodeBillingSystemLine,
-  injectClaudeIdentity,
   isAuthorized,
-  isBrowserRedirectOAuth,
   isFreeStatus,
-  isProviderKind,
   isSdkMigratedNpm,
   loadPreferences,
   loadPricingCache,
@@ -96,17 +82,57 @@ import {
   localIsoTimestamp,
   localTimestamp,
   maxToolsForNpm,
-  nextInstanceId,
-  oauthCredentialToKeychainJson,
   parseToolArguments,
   printTraceLog,
+  redactTraceLine,
+  relayAnthropicMessages,
+  resetTraceLog,
+  sanitizeCredential,
+  saveRegistry,
+  setSavedServerPassword,
+  setServerExposedProviders,
+  setServerFavoritesOnly,
+  setServerFreeModelsOnly,
+  setServerListenMode,
+  setServerMaskGatewayIds,
+  silenceSdkWarnings,
+  splitToolUseId,
+  uniqueProviderName,
+  vertexAnthropicCachedModels,
+  vertexAnthropicSetupError,
+  writeSecureLogLine
+} from "./chunk-S3QYWK2P.js";
+import {
+  hasApplicationDefaultCredentials,
+  loadVertexModelEntries,
+  resolveVertexLocation,
+  resolveVertexProject,
+  saveVertexModelEntries
+} from "./chunk-W32XKRNU.js";
+import {
+  ANTIGRAVITY_BASE_URLS,
+  ANTIGRAVITY_USER_AGENT,
+  BACKENDS,
+  CLAUDE_CODE_CLI_VERSION,
+  MAX_MODEL_CATALOG,
+  VERSION,
+  VERTEX_ANTHROPIC_NPM,
+  claudeCodeClientModelId,
+  claudeCodeContextWindow,
+  deleteProviderCredential,
+  describeOAuthAccount,
+  formatOAuthAccount,
+  generateCliUserID,
+  injectClaudeCodeBillingSystemLine,
+  injectClaudeIdentity,
+  isBrowserRedirectOAuth,
+  isProviderKind,
+  nextInstanceId,
+  oauthCredentialToKeychainJson,
   providerKind,
   readFromCredentialStore,
   readStoredOAuthCredential,
   readStoredProviderCredential,
-  redactTraceLine,
-  relayAnthropicMessages,
-  resetTraceLog,
   resolveApiKey,
   resolveContextWindow,
   resolveProviderCredential,
@@ -118,41 +144,21 @@ import {
   runOpenAiDeviceCodeFlow,
   runXaiDeviceCodeFlow,
   sameOAuthAccount,
-  sanitizeCredential,
   saveProviderCredential,
-  saveRegistry,
   selectBetaFlags,
-  setSavedServerPassword,
-  setServerExposedProviders,
-  setServerFavoritesOnly,
-  setServerFreeModelsOnly,
-  setServerListenMode,
-  setServerMaskGatewayIds,
-  silenceSdkWarnings,
-  splitToolUseId,
   stripOneMContextSuffix,
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth,
-  tokensToStoredCredential,
-  uniqueProviderName,
-  upstreamHttpStatus,
-  vertexAnthropicCachedModels,
-  vertexAnthropicSetupError,
-  writeSecureLogLine
-} from "./chunk-PRSSAHTH.js";
+  tokensToStoredCredential
+} from "./chunk-QYL2HTTP.js";
 import {
   getTemplateById,
   init_provider_templates,
   supportsAdditionalApiAccounts
-} from "./chunk-RKRPDZVV.js";
+} from "./chunk-6DCEGHZH.js";
 import {
-  getAppHome,
-  hasApplicationDefaultCredentials,
-  loadVertexModelEntries,
-  resolveVertexLocation,
-  resolveVertexProject,
-  saveVertexModelEntries
-} from "./chunk-KNCSTHR4.js";
+  getAppHome
+} from "./chunk-XEH2JMTL.js";
 
 // src/oauth/risk-notice.ts
 function subscriptionOAuthRisk(providerId) {
@@ -6621,4 +6627,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-626SSSFL.js.map
+//# sourceMappingURL=chunk-HIQSB6JR.js.map

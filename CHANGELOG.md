@@ -2,17 +2,34 @@
 
 ## [Unreleased]
 
-## [0.20.1] - 2026-11-06
+## [0.21.0] - 2026-11-06
+
+### Added
+
+- **Add another account from the provider itself.** A provider that is already set up now stays in the Providers page's "available" list as **Add another account** (API-key providers and OAuth sign-ins). The same-credential and same-person checks still refuse duplicates.
+- **Edit server address.** Ollama, LM Studio and other providers that ask for a server address when added can now change it from their card. Relay checks the new address, reads its models, and keeps the old address if that fails. Provider id, key and favorites are untouched.
+- **Claude Code and Antigravity sign-ins are listed again** in the web UI and the terminal menu, with their logos and the existing account-ban confirmation. Docs now lead with the ban risk.
+- **Context sizes are always shown, and labelled "estimate" unless the provider reported them.** ClinePass sizes are filled from Cline's public model catalog by exact name, falling back to models.dev. A passing **Test** also checks the context size for free models and custom endpoints.
+- **Optional intelligence score (Artificial Analysis).** A new **Intelligence** page in `relay-ai ui` lets you paste your own free Artificial Analysis key (stored in your system credential store). Relay downloads the scores to your computer once a day or on **Refresh now**, and shows an `IQ` badge beside each model whose name matches exactly, with a tooltip explaining the score and crediting artificialanalysis.ai. Free plan: about 4 of the 100 daily requests per refresh.
+- **Test now also checks tool support gracefully.** A model that chats but cannot call tools (for example `gemma3:4b` on Ollama) now passes as chat-only instead of failing. Ollama models also get their real context size from the local server on Test.
+
+### Changed
+
+- **Pool Activity has its own page.** The Relay Free Pool's "Recent activity" log moved from the Free Pool screen (where it pushed the free-model list down) to a separate **Pool Activity** page in the sidebar.
 
 ### Fixed
 
 - **Native + Relay checkbox in the web UI now works (Codex) and the Server autostart checkbox works.** `app.js` is an ES module, so inline `onchange` handlers need `window.*` exports; `setCodexNativeMode` and `setServerAutostart` were missing, so the choice never reached the server (it threw a `ReferenceError` in the console). The launch-card outside-click handler now also lets the label activate its checkbox before re-rendering the cards. A new test verifies every inline handler is exported.
 - **Secondary (numbered) provider accounts now show the same logo as the main provider.** For example `openai-oauth-2` fell back to a plain initial because the `-2` suffix was not stripped before the `-oauth`/`-api` lookup, so it missed the OpenAI mark. The logo lookup and the background palette hash now normalize the `-N` suffix first, so every second account (not only OpenAI) shares its provider's logo and colours.
 - **Deleting or renaming a provider in the web UI now keeps favorites in sync.** Deleting a provider removes its favorites immediately in the UI and from saved preferences (stale entries previously lingered), and renaming updates the name map and re-renders the favorites and Codex subagent lists.
+- The model table was capped at 960px and the Model column swallowed the width; columns now share the space and the price column no longer stacks.
+- **Mark free** is hidden on models that are already free (still shown to un-mark your own).
 
 ### Upgrade notes
 
-- No migration needed. Restart Relay (`relay-ai ui`, server or CLI) to pick up the fixes.
+- No migration needed. Restart Relay (`relay-ai ui`, server or CLI) to pick up the changes.
+- Claude Code and Antigravity sign-ins carry an **account ban risk** (Anthropic and Google may suspend or ban accounts used this way). Relay asks you to confirm before each sign-in; see `docs/SUBSCRIPTION-OAUTH.md`.
+- The Intelligence page is optional and needs your own free Artificial Analysis key. Nothing is downloaded until you add one.
 
 ## [0.20.0] - 2026-11-05
 

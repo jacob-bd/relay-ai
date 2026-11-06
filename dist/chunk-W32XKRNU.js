@@ -1,58 +1,12 @@
 #!/usr/bin/env node
+import {
+  getVertexModelsPath
+} from "./chunk-XEH2JMTL.js";
 
 // src/vertex-env.ts
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { homedir as homedir2 } from "os";
-import { dirname, join as join2 } from "path";
-
-// src/paths.ts
 import { homedir } from "os";
-import { join } from "path";
-var APP_DIR_NAME = "relay-ai";
-var LEGACY_APP_DIR_NAME = "opencode-starter";
-function userHome(env = process.env) {
-  return env.HOME ?? env.USERPROFILE ?? homedir();
-}
-function resolveAppHomeOverride(env = process.env) {
-  const override = env.RELAY_AI_HOME ?? env.OPENCODE_STARTER_HOME;
-  return override?.trim() || void 0;
-}
-function getAppHome(env = process.env) {
-  const override = resolveAppHomeOverride(env);
-  if (override) return override;
-  return join(userHome(env), `.${APP_DIR_NAME}`);
-}
-function getLegacyAppHome(env = process.env) {
-  return join(userHome(env), `.${LEGACY_APP_DIR_NAME}`);
-}
-function getConfigPath(env = process.env) {
-  return join(getAppHome(env), "config.json");
-}
-function getProvidersPath(env = process.env) {
-  return join(getAppHome(env), "providers.json");
-}
-function getSecretsPath(env = process.env) {
-  return join(getAppHome(env), "secrets.json");
-}
-function getLogsPath(env = process.env) {
-  return join(getAppHome(env), "logs");
-}
-function getVertexModelsPath(env = process.env) {
-  return join(getAppHome(env), "vertex-models.json");
-}
-function getLegacyConfPath(env = process.env, platform = process.platform) {
-  const home = userHome(env);
-  const appName = `${LEGACY_APP_DIR_NAME}-nodejs`;
-  if (platform === "darwin") {
-    return join(home, "Library", "Preferences", appName, "config.json");
-  }
-  if (platform === "win32") {
-    return join(env.APPDATA ?? join(home, "AppData", "Roaming"), appName, "Config", "config.json");
-  }
-  return join(env.XDG_CONFIG_HOME ?? join(home, ".config"), appName, "config.json");
-}
-
-// src/vertex-env.ts
+import { dirname, join } from "path";
 var DEFAULT_VERTEX_MODELS = [
   { id: "claude-opus-5-5", display_name: "Claude Opus 5.5" },
   { id: "claude-sonnet-5-5", display_name: "Claude Sonnet 5.5" },
@@ -70,10 +24,10 @@ function resolveVertexLocation(env = process.env) {
   const location = env["GOOGLE_CLOUD_LOCATION"] ?? env["CLOUD_ML_REGION"] ?? env["GOOGLE_VERTEX_LOCATION"] ?? "global";
   return location.trim() || "global";
 }
-function defaultAdcCredentialsPath(home = homedir2()) {
-  return join2(home, ".config", "gcloud", "application_default_credentials.json");
+function defaultAdcCredentialsPath(home = homedir()) {
+  return join(home, ".config", "gcloud", "application_default_credentials.json");
 }
-function hasApplicationDefaultCredentials(home = homedir2(), adcPath = defaultAdcCredentialsPath(home), env = process.env) {
+function hasApplicationDefaultCredentials(home = homedir(), adcPath = defaultAdcCredentialsPath(home), env = process.env) {
   const explicitPath = env["GOOGLE_APPLICATION_CREDENTIALS"]?.trim();
   if (explicitPath && existsSync(explicitPath)) return true;
   return existsSync(adcPath);
@@ -110,13 +64,6 @@ function resetVertexModelEntries(env = process.env) {
 }
 
 export {
-  getAppHome,
-  getLegacyAppHome,
-  getConfigPath,
-  getProvidersPath,
-  getSecretsPath,
-  getLogsPath,
-  getLegacyConfPath,
   DEFAULT_VERTEX_MODELS,
   resolveVertexProject,
   resolveVertexLocation,
@@ -127,4 +74,4 @@ export {
   saveVertexModelEntries,
   resetVertexModelEntries
 };
-//# sourceMappingURL=chunk-KNCSTHR4.js.map
+//# sourceMappingURL=chunk-W32XKRNU.js.map

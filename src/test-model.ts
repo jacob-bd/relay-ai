@@ -3,6 +3,8 @@ import { TEST_MAX_OUTPUT_TOKENS } from './pool/probe.js';
 import { streamText, tool, jsonSchema } from 'ai';
 import { createRelayModel } from './core/model.js';
 import { loadRegistry } from './registry/io.js';
+import { providerKind } from './registry/provider-kind.js';
+import { resolveProviderCredential } from './env.js';
 import { getProviderModels } from './registry/provider-models.js';
 import { upstreamHttpStatus } from './codex/upstream-error.js';
 import { cachedModelToLocal } from './registry/materialize.js';
@@ -106,10 +108,39 @@ function rememberChatResult(providerId: string, modelId: string, chat: boolean |
   }
 }
 
-export async function checkContextWindow(providerId: string, modelId: string, signal?: AbortSignal): Promise<ContextCheckResult> {
+/**
+ * Ollama states a model's context size on `/api/show` (`<arch>.context_length`) but never in a refusal,
+ * so the huge-output probe finds nothing there. A read-only lookup, free for local and cloud models alike.
+ */
+export async function ollamaContextLimit(providerId: string, modelId: string, signal: AbortSignal): Promise<number | undefined> {
+  try {
+    const provider = loadRegistry().providers.find(p => p.id === providerId);
+    if (!provider || providerKind(provider.id) !== 'ollama' || !provider.api.url) return undefined;
+    const root = provider.api.url.replace(/\/+$/, '').replace(/\/v1$/, '');
+    const key = await resolveProviderCredential(provider.id, provider.authRef).catch(() => '');
+    const upstream = getProviderModels(provider).find(m => m.id === modelId)?.upstreamModelId ?? modelId;
+    const response = await fetch(`${root}/api/show`, {
+      method: 'POST', signal,
+      headers: { 'Content-Type': 'application/json', ...(key && key !== 'ollama' ? { Authorization: `Bearer ${key}` } : {}) },
+      body: JSON.stringify({ model: upstream }),
+    });
+    if (!response.ok) return undefined;
+    const info = ((await response.json()) as { model_info?: Record<string, unknown> }).model_info ?? {};
+    for (const [name, value] of Object.entries(info)) {
+      if (name.endsWith('.context_length') && typeof value === 'number' && Number.isSafeInteger(value) && value > 0) return value;
+    }
+  } catch { /* no answer: leave the estimate */ }
+  return undefined;
+}
+
+export async function checkContextWindow(
+  providerId: string, modelId: string, signal?: AbortSignal, opts?: { lookupOnly?: boolean },
+): Promise<ContextCheckResult> {
   const timeout = AbortSignal.timeout(20_000);
-  const probe = await probeModel(providerId, modelId, signal ? AbortSignal.any([signal, timeout]) : timeout);
-  const measured = probe.limit;
+  const bounded = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  // lookupOnly skips the huge-output probe (which must never reach a paid model) and only reads what the server states.
+  const probe = opts?.lookupOnly ? {} as { limit?: number; chat?: boolean } : await probeModel(providerId, modelId, bounded);
+  const measured = probe.limit ?? await ollamaContextLimit(providerId, modelId, bounded);
   rememberChatResult(providerId, modelId, probe.chat);
   const notChat = probe.chat === undefined ? {} : { notChat: !probe.chat };
   const provider = loadRegistry().providers.find(p => p.id === providerId);
@@ -132,7 +163,7 @@ export async function checkContextWindow(providerId: string, modelId: string, si
 }
 
 /** One bounded inference request, not a model-list/credential-storage check. */
-export async function testModel(providerId: string, modelId: string, signal?: AbortSignal) {
+export async function testModel(providerId: string, modelId: string, signal?: AbortSignal, opts?: { withoutTools?: boolean }): Promise<any> {
   const provider = loadRegistry().providers.find(p => p.id === providerId);
   if (!provider?.enabled || !getProviderModels(provider).some(m => m.id === modelId)) {
     return { ok: false, error: 'Model is no longer available. Refresh this provider.' };
@@ -143,10 +174,10 @@ export async function testModel(providerId: string, modelId: string, signal?: Ab
   try {
     const model = await createRelayModel(`${providerId}::${modelId}`, { sessionId: `relay-test-${randomUUID()}` });
     abortSignal.throwIfAborted();
-    const result = streamText({ model, prompt: 'Say OK, then call relay_pool_probe with value "ok".', maxOutputTokens: TEST_MAX_OUTPUT_TOKENS,
-      tools: { relay_pool_probe: tool({ description: 'Harmless capability check; never executed.',
+    const result = streamText({ model, prompt: opts?.withoutTools ? 'Say OK.' : 'Say OK, then call relay_pool_probe with value "ok".', maxOutputTokens: TEST_MAX_OUTPUT_TOKENS,
+      ...(opts?.withoutTools ? {} : { tools: { relay_pool_probe: tool({ description: 'Harmless capability check; never executed.',
         inputSchema: jsonSchema<{ value: string }>({ type: 'object', properties: { value: { type: 'string', enum: ['ok'] } }, required: ['value'], additionalProperties: false }),
-      }) },
+      }) } }),
       maxRetries: 0, abortSignal, onError: () => {} });
     let text = '';
     let finished = false;
@@ -169,6 +200,11 @@ export async function testModel(providerId: string, modelId: string, signal?: Ab
     rememberChatResult(providerId, modelId, true);
     return { ok: true, latencyMs, notChat: false, toolsPassed };
   } catch (error) {
+    // Some servers (Ollama) refuse the tool part for models that chat fine but cannot call tools.
+    // That is a capability, not a failure: retry as a plain chat and report tools as not supported.
+    if (!opts?.withoutTools && !abortSignal.aborted && /does not support tools|tools? (?:are|is) not supported/i.test(errorText(error))) {
+      return testModel(providerId, modelId, signal, { withoutTools: true });
+    }
     if (!abortSignal.aborted && isNotChatRefusal(error)) {
       rememberChatResult(providerId, modelId, false);
       return { ok: false, notChat: true, error: 'This is not a chat model (the server refused the chat request), so Relay cannot use it. You can hide it.' };

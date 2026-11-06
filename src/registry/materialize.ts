@@ -2,6 +2,7 @@
 
 import { providerKind } from './provider-kind.js';
 import { shouldHideModel, type CompatibilityAgent } from '../model-compatibility.js';
+import { modelsDevCrossVendorContextWindow } from './models-dev.js';
 import { CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW } from '../cline-pass.js';
 import { deriveBrand } from '../models.js';
 import { BACKENDS, classifyModelFormat } from '../constants.js';
@@ -102,19 +103,21 @@ export function cachedModelToLocal(
     freeStatus,
     ...(cached.userMarkedFree ? { userMarkedFree: true } : {}),
     ...(cached.localEndpoint ? { localEndpoint: true } : {}),
-    // ClinePass's public catalog does not currently report per-model context
-    // limits. Preserve that unknown state for the picker instead of displaying
-    // a heuristic as if it were provider metadata. Launch-time callers still
-    // resolve their required safety fallback when they build the child env or
-    // proxy catalog.
+    // ClinePass's catalog reports no per-model context limits, so a missing size is
+    // estimated from what models.dev lists for the same model on other vendors
+    // (flagged `contextWindowEstimated` below). The old made-up default is dropped.
     contextWindow: cached.source === 'manual' ? cached.contextWindow : kind === 'cline-pass' &&
       cached.contextWindow === CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW &&
       cached.contextWindowSource === undefined
-      ? undefined
-      : cached.contextWindow ?? (kind === 'cline-pass' ? undefined : resolveContextWindow(id)),
+      ? clinePassEstimatedWindow(cached.id)
+      : cached.contextWindow ?? (kind === 'cline-pass' ? clinePassEstimatedWindow(cached.id) : resolveContextWindow(id)),
     // Custom endpoints: a size that was not reported, typed or measured is a guess (the UI's "estimate").
     ...((provider.templateId === 'custom-openai' || provider.templateId === 'custom-anthropic')
       && (cached.contextWindowSource === undefined || cached.contextWindowSource === 'models.dev')
+      ? { contextWindowEstimated: true } : {}),
+    ...(kind === 'cline-pass' && cached.source !== 'manual' && cached.contextWindowSource !== 'provider'
+      && clinePassEstimatedWindow(cached.id) !== undefined && (cached.contextWindow === undefined
+        || cached.contextWindow === CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW)
       ? { contextWindowEstimated: true } : {}),
     supportedParameters: cached.supportedParameters,
     ...resolveModelReasoningMetadata(
@@ -201,4 +204,9 @@ export function materializeRegistry(
     if (local) result.push(local);
   }
   return result;
+}
+
+/** models.dev's cross-vendor context size for a ClinePass model id (`cline-pass/` prefix dropped). */
+function clinePassEstimatedWindow(modelId: string): number | undefined {
+  return modelsDevCrossVendorContextWindow(modelId.replace(/^cline-pass\//, ''));
 }

@@ -5,6 +5,7 @@ import {
   isFreeModel,
   matchesModelSearch,
   PROVIDER_MODEL_PAGE_SIZE,
+  sortByIntelligence,
 } from './provider-model-browser.js';
 import { copyDeviceCode, copyTextToClipboard, oauthConnectionLabel } from './oauth-device.js';
 import { providerInitial, providerLogoHtml } from './provider-logo.js';
@@ -26,6 +27,8 @@ const state = {
   poolBusy: false,
 
   providers: [],
+  intelligenceActive: false, // scores downloaded: show the Intelligence column
+  intelligenceSort: null,    // null | 'desc' | 'asc'
   templates: [],   // unconfigured available templates
   allModels: [],
   appModelsByTarget: {}, // launch target → flattened, compatibility-filtered model list
@@ -682,6 +685,7 @@ function renderProviderModelBrowser() {
   const result = getProviderModelPage(provider.models ?? [], state.providerModelFilter, state.providerModelPage, {
     minContextWindow: state.providerModelMinCtx,
     freeOnly: state.providerModelFreeOnly,
+    intelligenceSort: state.intelligenceActive ? state.intelligenceSort : null,
   });
   state.providerModelPage = result.page;
   const first = result.total === 0 ? 0 : (result.page - 1) * PROVIDER_MODEL_PAGE_SIZE + 1;
@@ -723,8 +727,8 @@ function renderProviderModelBrowser() {
     </div>
     <div class="model-bulk-bar" id="model-bulk-bar">${bulkBarHtml(provider)}</div>
     <div class="provider-model-table-wrap">
-      <table class="provider-model-table provider-model-table--catalog">
-        <thead><tr><th class="th-select"><input type="checkbox" id="provider-model-select-page" aria-label="Select all models on this page" ${result.items.length > 0 && result.items.every(model => selectionFor(provider.id).has(model.id)) ? 'checked' : ''}></th><th>Model</th><th>Type</th><th>Context</th><th>Price in / out <span tabindex="0" class="price-help" aria-label="About price estimates">ⓘ<span role="tooltip">Prices are estimates per 1M tokens and may not reflect the provider’s actual pricing or promotions. Check the provider’s pricing page. Reference estimates use another provider’s published rates.</span></span></th><th class="th-actions">Actions</th></tr></thead>
+      <table class="provider-model-table provider-model-table--catalog${state.intelligenceActive ? ' provider-model-table--intel' : ''}">
+        <thead><tr><th class="th-select"><input type="checkbox" id="provider-model-select-page" aria-label="Select all models on this page" ${result.items.length > 0 && result.items.every(model => selectionFor(provider.id).has(model.id)) ? 'checked' : ''}></th><th>Model</th><th>Type</th><th>Context</th>${intelHeaderHtml()}<th>Price in / out <span tabindex="0" class="price-help" aria-label="About price estimates">ⓘ<span role="tooltip">Prices are estimates per 1M tokens and may not reflect the provider’s actual pricing or promotions. Check the provider’s pricing page. Reference estimates use another provider’s published rates.</span></span></th><th class="th-actions">Actions</th></tr></thead>
         <tbody>
           ${result.items.map(model => `
             <tr class="${model.hidden ? 'model-hidden' : ''}">
@@ -732,8 +736,9 @@ function renderProviderModelBrowser() {
               <td><strong>${escapeHtml(model.name || model.id)}</strong>${model.source === 'manual' ? ' <span class="manual-model-badge">Manual</span>' : ''}<code>${escapeHtml(model.id)}</code></td>
               <td class="kind-cell" data-model-id="${escapeHtml(model.id)}">${kindCellHtml(provider.id, model, showActions)}</td>
               <td class="ctx-cell" data-model-id="${escapeHtml(model.id)}">${contextCellHtml(provider.id, model, showActions)}</td>
+              ${intelCellHtml(model)}
               <td class="price-cell"><div class="price-stack">${formatModelPrice(model.cost, isFreeModel(model), freeBadgeLabel(model), model.referencePrice)}
-                  <button class="btn btn-ghost btn-model-mark-free${model.userMarkedFree ? ' is-marked' : ''}" type="button" data-model-id="${escapeHtml(model.id)}" aria-pressed="${model.userMarkedFree ? 'true' : 'false'}" title="${model.userMarkedFree ? 'Remove your free mark' : 'Treat this model as free, even if its listed price says otherwise. Relay cannot check this: if the provider bills you, that is on your account.'}">${model.userMarkedFree ? 'Unmark free' : 'Mark free'}</button>
+                  ${(model.userMarkedFree || !isFreeModel(model)) ? `<button class="btn btn-ghost btn-model-mark-free${model.userMarkedFree ? ' is-marked' : ''}" type="button" data-model-id="${escapeHtml(model.id)}" aria-pressed="${model.userMarkedFree ? 'true' : 'false'}" title="${model.userMarkedFree ? 'Remove your free mark' : 'Treat this model as free, even if its listed price says otherwise. Relay cannot check this: if the provider bills you, that is on your account.'}">${model.userMarkedFree ? 'Unmark free' : 'Mark free'}</button>` : ''}
                 </div></td>
                 <td class="td-actions"><div class="model-actions">
                   <div class="test-stack">
@@ -765,6 +770,7 @@ function renderProviderModelBrowser() {
     document.getElementById('manual-model-panel').appendChild(buildManualModelPanel(provider));
   }
 
+  bindIntelSort(container, () => { state.providerModelPage = 1; renderProviderModelBrowser(); });
   document.getElementById('provider-model-search').addEventListener('input', event => {
     state.providerModelFilter = event.target.value;
     state.providerModelPage = 1;
@@ -1414,10 +1420,10 @@ function buildTemplateCard(template) {
     <div class="provider-icon" style="background:linear-gradient(135deg,${c1},${c2})">${providerLogoHtml(template.id, template.name)}</div>
     <div class="provider-info">
       <div class="provider-name">${template.name}</div>
-      <div class="provider-models-count">Not configured ${signupLink}</div>
+      <div class="provider-models-count">${template.addAnother ? 'Already set up · add another account' : 'Not configured'} ${signupLink}</div>
     </div>
     <div class="provider-status">
-      <span class="status-chip no-key">Add provider</span>
+      <span class="status-chip no-key">${template.addAnother ? 'Add another' : 'Add provider'}</span>
       <svg class="provider-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
     </div>
   `;
@@ -1885,7 +1891,9 @@ function buildOAuthTemplateBodyContent(template) {
 
   const note = document.createElement('div');
   note.className = 'oauth-device-note';
-  note.textContent = 'Sign in with a one-time device code — no API key required.';
+  note.textContent = template.subscriptionRisk
+    ? 'Sign in with your subscription account — no API key required. This uses a paid subscription outside its official app, which may put that account at risk. You will be asked to confirm before sign-in starts.'
+    : 'Sign in with a one-time device code — no API key required.';
 
   const actionRow = document.createElement('div');
   actionRow.className = 'key-row';
@@ -1902,6 +1910,7 @@ function buildOAuthTemplateBodyContent(template) {
 
   signInBtn.addEventListener('click', () => beginDeviceOAuthFlow({
     providerId: template.id,
+    ...(template.addAnother ? { addAccount: true } : {}),
     signInButton: signInBtn,
     feedback,
     onDone: async () => {
@@ -2019,6 +2028,7 @@ function buildClinePassBodyContent(template, card, provider) {
 function buildTemplateBodyContent(template, card) {
   const isCustom = template.id === '__custom_openai__' || template.id === '__custom_anthropic__';
   if (isCustom) return buildCustomEndpointBodyContent(template, card);
+  if (template.oauthOnlyAdd) return buildOAuthTemplateBodyContent(template, card);
   if (template.id === 'cline-pass'
     || (template.authMethods?.includes('api') && template.authMethods?.includes('oauth'))) {
     return buildClinePassBodyContent(template, card);
@@ -2109,7 +2119,7 @@ function buildTemplateBodyContent(template, card) {
     feedback.textContent = template.noApiKey ? 'Checking setup and model access…' : key ? 'Validating key and fetching models…' : 'Fetching models…';
     feedback.className = 'key-feedback muted';
 
-    const result = await api('POST', '/api/providers/add', { templateId: template.id, key, baseUrl, accountId });
+    const result = await api('POST', '/api/providers/add', { templateId: template.id, key, baseUrl, accountId, ...(template.addAnother ? { addAccount: true } : {}) });
 
     addBtn.disabled = false;
     if (result.ok) {
@@ -2217,6 +2227,7 @@ function buildProviderBodyContent(provider) {
     content.appendChild(manualButton);
   }
   if (provider.customEndpoint) content.appendChild(buildEditCustomEndpointRow(provider));
+  if (provider.canEditServerUrl) content.appendChild(buildServerUrlRow(provider));
   if (provider.canAddKeyAccount) content.appendChild(buildAddKeyAccountRow(provider));
   content.appendChild(buildRenameProviderRow(provider));
   content.appendChild(buildDeleteProviderRow(provider));
@@ -2475,6 +2486,54 @@ function buildAddKeyAccountRow(provider) {
     if (e.key === 'Escape') cancelBtn.click();
   });
 
+  return wrapper;
+}
+
+function buildServerUrlRow(provider) {
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'margin-top:12px;padding-top:12px;border-top:1px solid oklch(22% 0.015 265)';
+  const editBtn = document.createElement('button');
+  editBtn.className = 'btn btn-ghost';
+  editBtn.textContent = 'Edit server address';
+  const form = document.createElement('div');
+  form.style.cssText = 'display:none;align-items:center;gap:8px;flex-wrap:wrap';
+  const urlInput = document.createElement('input');
+  urlInput.type = 'url';
+  urlInput.className = 'key-input';
+  urlInput.value = provider.serverUrl ?? '';
+  urlInput.placeholder = 'http://192.168.1.20:11434/v1';
+  urlInput.autocomplete = 'off';
+  urlInput.style.cssText = 'flex:1;min-width:220px';
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn btn-primary';
+  saveBtn.textContent = 'Save & refresh';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-ghost';
+  cancelBtn.textContent = 'Cancel';
+  const feedback = document.createElement('div');
+  feedback.className = 'key-feedback';
+  form.append(urlInput, saveBtn, cancelBtn);
+  wrapper.append(editBtn, form, feedback);
+  editBtn.addEventListener('click', () => { editBtn.style.display = 'none'; form.style.display = 'flex'; urlInput.focus(); });
+  cancelBtn.addEventListener('click', () => { form.style.display = 'none'; editBtn.style.display = ''; feedback.textContent = ''; });
+  saveBtn.addEventListener('click', async () => {
+    const baseUrl = urlInput.value.trim();
+    if (!baseUrl) { feedback.textContent = 'Enter a server address.'; feedback.className = 'key-feedback error'; return; }
+    saveBtn.disabled = true;
+    feedback.textContent = 'Checking the new address and reading its models…';
+    feedback.className = 'key-feedback muted';
+    const result = await api('POST', '/api/providers/edit-url', { providerId: provider.id, baseUrl });
+    saveBtn.disabled = false;
+    if (!result.ok) {
+      feedback.textContent = (result.error ?? 'Could not change the address.') + (result.hint ? ` — ${result.hint}` : '') + ' The old address was kept.';
+      feedback.className = 'key-feedback error';
+      return;
+    }
+    showToast(result.unchanged ? 'Address unchanged' : `${provider.name} now points to the new address · ${result.count} models`);
+    state.modelsLoaded = false;
+    await initModels();
+    renderProviders();
+  });
   return wrapper;
 }
 
@@ -2823,6 +2882,13 @@ function buildModelResults(filter, listType) {
       }
 
       row.appendChild(idEl);
+      if (state.intelligenceActive && m.intelligence) {
+        const iq = document.createElement('span');
+        iq.className = 'intel-badge';
+        iq.textContent = `IQ ${Number(m.intelligence.score).toFixed(1)}`;
+        iq.title = intelTooltipText(m.intelligence);
+        row.appendChild(iq);
+      }
       if (isFreeModel(m)) row.appendChild(badgeEl);
       row.appendChild(ctxEl);
       row.appendChild(addBtn);
@@ -2959,6 +3025,17 @@ function poolActivityHtml(activity) {
     <ul class="pool-activity">${rows.join('') || `<li class="pool-activity-empty">${escapeHtml(empty)}</li>`}</ul>`;
 }
 
+// Activity has its own sidebar page so it never sits between the pool and the models you add.
+function renderPoolActivity(pool) {
+  const panel = document.getElementById('pool-activity-panel');
+  if (!panel) return;
+  panel.innerHTML = poolActivityHtml(pool.activity);
+  document.getElementById('pool-activity-verbose')?.addEventListener('change', event => {
+    state.poolActivityVerbose = event.currentTarget.checked;
+    renderPoolActivity(pool);
+  });
+}
+
 function renderFreePoolStats(pool) {
   const el = document.getElementById('free-pool-stats');
   if (!el) return;
@@ -3029,7 +3106,7 @@ function poolMemberRowHtml(member, index, manageable) {
     <span class="pool-rank" aria-hidden="true">${index + 1}</span>
     <div class="pool-member-main">
       <div class="pool-member-title">
-        <strong>${escapeHtml(member.name)}</strong>
+        <strong>${escapeHtml(member.name)}</strong>${intelBadgeInline(member)}
         <span class="provider-pill" style="${providerPillStyle(member.providerId)}">${escapeHtml(member.providerName)}</span>
         <span class="pool-status ${status[0]}">${status[1]}</span>
       </div>
@@ -3053,6 +3130,7 @@ function poolCandidateRowHtml(candidate, manageable) {
     <td><strong>${escapeHtml(name)}</strong><span class="provider-pill" style="${providerPillStyle(candidate.providerId)}">${escapeHtml(candidate.providerName)}</span><code title="${escapeHtml(candidate.modelId)}">${escapeHtml(candidate.modelId)}</code></td>
     <td>${poolKindHtml(candidate)}</td>
     <td>${fmtCtx(candidate.contextWindow) || '—'}${estimate}</td>
+    ${intelCellHtml(candidate)}
     <td>${formatModelPrice(candidate.cost, true, 'FREE')}</td>
     <td class="td-actions"><span class="test-badge-slot" data-model-id="${escapeHtml(candidate.modelId)}">${testBadgeHtml(candidate.testResult)}</span>${test}${eye}${poolAddCellHtml(candidate, manageable)}</td>
   </tr>`;
@@ -3072,6 +3150,7 @@ function renderFreePool() {
   }
 
   renderFreePoolStats(pool);
+  renderPoolActivity(pool);
   const manageable = !isServerAdminUi();
   const tasks = pool.candidates ?? [];
   assignPoolProviderColors([...tasks, ...(pool.members ?? [])].map(item => item.providerId));
@@ -3097,7 +3176,7 @@ function renderFreePool() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / PROVIDER_MODEL_PAGE_SIZE));
   state.poolPage = Math.min(Math.max(1, state.poolPage), totalPages);
   const start = (state.poolPage - 1) * PROVIDER_MODEL_PAGE_SIZE;
-  const items = filtered.slice(start, start + PROVIDER_MODEL_PAGE_SIZE);
+  const items = (state.intelligenceActive ? sortByIntelligence(filtered, state.intelligenceSort) : filtered).slice(start, start + PROVIDER_MODEL_PAGE_SIZE);
 
   const members = pool.members ?? [];
   const memberHtml = members.length
@@ -3160,7 +3239,6 @@ function renderFreePool() {
     </div>
     ${memberHtml}
     ${controls}
-    ${poolActivityHtml(pool.activity)}
     <div class="pool-section-head">
       <h2 class="pool-heading">Free models <span class="pool-count">${countLabel}</span></h2>
       <p class="section-sub">Every free model Relay can see, across ${new Set(tasks.map(item => item.providerId)).size} provider accounts. Models without verified zero pricing stay listed so this total matches your free catalog.</p>
@@ -3191,10 +3269,10 @@ function renderFreePool() {
     </div>
     <div class="provider-model-table-wrap">
       <table class="provider-model-table">
-        <thead><tr><th>Model</th><th>Type</th><th>Context</th><th>Price in / out <span tabindex="0" class="price-help" aria-label="About price estimates">ⓘ<span role="tooltip">Prices are estimates per 1M tokens and may not reflect the provider’s actual pricing or promotions. Check the provider’s pricing page.</span></span></th><th class="th-actions">Actions</th></tr></thead>
+        <thead><tr><th>Model</th><th>Type</th><th>Context</th>${intelHeaderHtml()}<th>Price in / out <span tabindex="0" class="price-help" aria-label="About price estimates">ⓘ<span role="tooltip">Prices are estimates per 1M tokens and may not reflect the provider’s actual pricing or promotions. Check the provider’s pricing page.</span></span></th><th class="th-actions">Actions</th></tr></thead>
         <tbody>
           ${items.map(candidate => poolCandidateRowHtml(candidate, manageable)).join('')
-            || '<tr><td colspan="5" class="provider-model-empty">No free models match your search and filters.</td></tr>'}
+            || '<tr><td colspan="${state.intelligenceActive ? 6 : 5}" class="provider-model-empty">No free models match your search and filters.</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -3202,6 +3280,7 @@ function renderFreePool() {
   `;
 
   const rerender = () => renderFreePool();
+  bindIntelSort(panel, () => { state.poolPage = 1; rerender(); });
   document.getElementById('free-pool-retry')?.addEventListener('click', () => { void loadFreePool(); });
   document.getElementById('free-pool-search')?.addEventListener('input', event => {
     state.poolSearch = event.target.value;
@@ -3245,10 +3324,6 @@ function renderFreePool() {
   document.getElementById('free-pool-next')?.addEventListener('click', () => {
     state.poolPage += 1;
     rerender();
-  });
-  document.getElementById('pool-activity-verbose')?.addEventListener('change', event => {
-    state.poolActivityVerbose = event.currentTarget.checked;
-    renderFreePool();
   });
   document.getElementById('free-pool-enabled')?.addEventListener('change', async event => {
     const input = event.currentTarget;
@@ -3420,6 +3495,10 @@ function buildFavItem(fav, index, listType) {
   idEl.textContent = fav.modelId;
   idEl.title = fav.modelId;
 
+  const favIntel = intelligenceOfModel(fav.providerId, fav.modelId);
+  const intelEl = favIntel ? document.createElement('span') : null;
+  if (intelEl) { intelEl.className = 'intel-badge'; intelEl.textContent = `IQ ${favIntel.score.toFixed(1)}`; intelEl.title = intelTooltipText(favIntel); }
+
   const provBadge = document.createElement('span');
   provBadge.className = 'fav-provider-badge';
   provBadge.textContent = getProviderName(fav.providerId);
@@ -3438,6 +3517,7 @@ function buildFavItem(fav, index, listType) {
   item.appendChild(handle);
   item.appendChild(rank);
   item.appendChild(idEl);
+  if (intelEl) item.appendChild(intelEl);
   item.appendChild(provBadge);
   const testBtn = document.createElement('button');
   testBtn.className = 'btn btn-ghost';
@@ -3654,6 +3734,7 @@ function updateThemeIcon(isDark) {
 
 async function initModels() {
   state.modelsError = null;
+  await refreshIntelligenceActive();
   try {
     await loadModels();
     state.modelsLoaded = true;
@@ -3682,7 +3763,7 @@ async function init() {
 
   document.getElementById('theme-toggle')?.addEventListener('click', toggleTheme);
   window.addEventListener('hashchange', () => {
-    if (window.location.hash === '#free-pool') void loadFreePool();
+    if (window.location.hash === '#free-pool' || window.location.hash === '#pool-activity') void loadFreePool();
   });
 
   await loadConfig();
@@ -4854,3 +4935,118 @@ window.stopServerGateway = stopServerGateway;
 window.copyServerValue = copyServerValue;
 window.copyPlainText = copyPlainText;
 window.toggleServerApiKeyVisibility = toggleServerApiKeyVisibility;
+
+
+// ─── Intelligence score (Artificial Analysis, optional, user's own key) ───────
+
+const INTEL_EXPLAIN = 'A single score from Artificial Analysis that combines many tests of reasoning, knowledge and coding. Higher means smarter overall. Use it to compare models, not as a promise for your task. Shown only when the model name matches exactly.';
+
+function intelTooltipText(intel) {
+  return `Intelligence score ${Number(intel.score).toFixed(1)} (matched to "${intel.name}"). ${INTEL_EXPLAIN} Source: artificialanalysis.ai`;
+}
+
+function intelligenceOfModel(providerId, modelId) {
+  if (!state.intelligenceActive) return null;
+  const provider = state.providers.find(p => p.id === providerId);
+  return provider?.models?.find(m => m.id === modelId)?.intelligence ?? null;
+}
+
+function intelBadgeInline(item) {
+  if (!state.intelligenceActive || !item.intelligence) return '';
+  return ` <span class="intel-badge" title="${escapeHtml(intelTooltipText(item.intelligence))}">IQ ${Number(item.intelligence.score).toFixed(1)}</span>`;
+}
+
+/** Table header: sortable, with the explanation and the attribution Artificial Analysis requires. */
+function intelHeaderHtml() {
+  if (!state.intelligenceActive) return '';
+  const arrow = state.intelligenceSort === 'desc' ? '▼' : state.intelligenceSort === 'asc' ? '▲' : '↕';
+  const label = state.intelligenceSort === 'desc' ? 'smartest first' : state.intelligenceSort === 'asc' ? 'lowest first' : 'click to sort';
+  return `<th class="th-intel"><button type="button" class="th-sort" data-intel-sort aria-label="Sort by intelligence score (${label})">Intelligence <span class="sort-arrow" aria-hidden="true">${arrow}</span></button>`
+    + ` <span tabindex="0" class="price-help" aria-label="About the intelligence score">ⓘ<span role="tooltip">${escapeHtml(INTEL_EXPLAIN)}</span></span>`
+    + `<a class="intel-attrib" href="https://artificialanalysis.ai/" target="_blank" rel="noopener">via artificialanalysis.ai</a></th>`;
+}
+
+function intelCellHtml(item) {
+  if (!state.intelligenceActive) return '';
+  if (!item.intelligence) return '<td class="intel-cell"><span class="intel-none" title="No exact match on artificialanalysis.ai">—</span></td>';
+  return `<td class="intel-cell"><span class="intel-score" title="${escapeHtml(intelTooltipText(item.intelligence))}">${Number(item.intelligence.score).toFixed(1)}</span></td>`;
+}
+
+/** Wire the header click: smartest first → lowest first → original order. */
+function bindIntelSort(root, rerender) {
+  root?.querySelectorAll('[data-intel-sort]').forEach(button => button.addEventListener('click', () => {
+    state.intelligenceSort = state.intelligenceSort === null ? 'desc' : state.intelligenceSort === 'desc' ? 'asc' : null;
+    rerender();
+  }));
+}
+
+async function refreshIntelligenceActive() {
+  try {
+    const status = await api('GET', '/api/intelligence/status');
+    state.intelligenceActive = Boolean(status?.hasKey) && Number(status?.modelCount) > 0;
+  } catch { state.intelligenceActive = false; }
+  if (!state.intelligenceActive) state.intelligenceSort = null;
+}
+
+async function loadIntelligencePanel() {
+  const panel = document.getElementById('intelligence-panel');
+  if (!panel) return;
+  let status;
+  try { status = await api('GET', '/api/intelligence/status'); } catch { status = null; }
+  if (!status) { panel.innerHTML = '<div class="fav-empty">Could not load. Try again.</div>'; return; }
+  const when = status.fetchedAt ? new Date(status.fetchedAt).toLocaleString() : null;
+  panel.innerHTML = `
+    <div class="intel-card">
+      <h3>What the score means</h3>
+      <p>Artificial Analysis tests models on many hard tasks (reasoning, knowledge, coding) and combines the results into one <strong>Intelligence Index</strong>. Higher is smarter. It is a comparison aid, not a guarantee for your own work, and it only shows for models whose name matches exactly.</p>
+      <p class="intel-source">Data: <a href="${escapeHtml(status.sourceUrl)}" target="_blank" rel="noopener">artificialanalysis.ai</a></p>
+    </div>
+    <div class="intel-card">
+      <h3>How to get a free key</h3>
+      <ol class="intel-steps">
+        <li>Create a free account at <a href="https://artificialanalysis.ai/login" target="_blank" rel="noopener">artificialanalysis.ai/login</a>.</li>
+        <li>Open <a href="https://artificialanalysis.ai/api-key-management-redirect" target="_blank" rel="noopener">API key management</a> and create a key.</li>
+        <li>Paste it below. The free plan allows 100 requests a day; a refresh uses about 4.</li>
+      </ol>
+      <p class="intel-tip"><strong>Google sign-in blocked?</strong> If you see "Access blocked" or any problem signing in with Google, create the account with your <strong>email address</strong> instead on that same page, then create the key.</p>
+    </div>
+    <div class="intel-card">
+      <h3>${status.hasKey ? 'Connected' : 'Connect your key'}</h3>
+      ${status.hasKey ? `<p>${status.modelCount} scored models${status.indexVersion ? ` · Index v${escapeHtml(String(status.indexVersion))}` : ''}${when ? ` · updated ${escapeHtml(when)}` : ''}. Refreshes automatically once a day.</p>` : ''}
+      <div class="key-row">
+        <input id="intel-key" class="key-input" type="password" autocomplete="off" placeholder="${status.hasKey ? 'Paste a new key to replace the current one' : 'Paste Artificial Analysis API key'}">
+        <button id="intel-save" class="btn btn-primary" type="button">${status.hasKey ? 'Replace key' : 'Save & download'}</button>
+      </div>
+      <div class="key-row">
+        ${status.hasKey ? '<button id="intel-refresh" class="btn btn-ghost" type="button">Refresh now</button><button id="intel-remove" class="btn btn-ghost" type="button">Remove key &amp; scores</button>' : ''}
+      </div>
+      <div id="intel-feedback" class="key-feedback"></div>
+    </div>`;
+  const feedback = document.getElementById('intel-feedback');
+  const say = (text, tone) => { feedback.textContent = text; feedback.className = `key-feedback ${tone}`; };
+  const reload = async () => { await loadIntelligencePanel(); state.modelsLoaded = false; await initModels(); renderProviders(); };
+  document.getElementById('intel-save').addEventListener('click', async () => {
+    const key = document.getElementById('intel-key').value.trim();
+    if (!key) { say('Paste your API key first.', 'error'); return; }
+    say('Checking the key and downloading scores…', 'muted');
+    const result = await api('POST', '/api/intelligence/key', { key });
+    if (!result.ok) { say(result.error ?? 'Could not use that key.', 'error'); return; }
+    showToast(`Intelligence scores downloaded (${result.modelCount} models)`);
+    await reload();
+  });
+  document.getElementById('intel-refresh')?.addEventListener('click', async () => {
+    say('Downloading scores…', 'muted');
+    const result = await api('POST', '/api/intelligence/refresh');
+    if (!result.ok) { say(result.error ?? 'Refresh failed.', 'error'); return; }
+    showToast(`Scores updated (${result.modelCount} models)`);
+    await reload();
+  });
+  document.getElementById('intel-remove')?.addEventListener('click', async () => {
+    if (!window.confirm('Remove your Artificial Analysis key and the downloaded scores?')) return;
+    await api('POST', '/api/intelligence/remove');
+    await reload();
+  });
+}
+
+window.addEventListener('hashchange', () => { if (window.location.hash === '#intelligence') void loadIntelligencePanel(); });
+if (window.location.hash === '#intelligence') void loadIntelligencePanel();

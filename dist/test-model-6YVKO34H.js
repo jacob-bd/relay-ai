@@ -1,25 +1,33 @@
 #!/usr/bin/env node
 import {
-  createRelayModel
-} from "./chunk-JECZBX7O.js";
-import "./chunk-7BKIHQYO.js";
-import "./chunk-UR4QFFSQ.js";
-import {
   setContextWindowOverride,
   setModelNotChat
-} from "./chunk-5ETHP66U.js";
+} from "./chunk-YD4PZYLN.js";
 import "./chunk-5HGLQHX6.js";
+import {
+  createRelayModel
+} from "./chunk-5BMO6OWH.js";
+import "./chunk-ZUZVJSJL.js";
 import {
   TEST_MAX_OUTPUT_TOKENS,
   cachedModelToLocal
-} from "./chunk-7TNNCDPU.js";
+} from "./chunk-EE53ZNAJ.js";
+import "./chunk-E6UL27MK.js";
+import "./chunk-UR4QFFSQ.js";
+import {
+  upstreamHttpStatus
+} from "./chunk-IRMXZJ3D.js";
 import {
   getProviderModels,
-  loadRegistry,
-  upstreamHttpStatus
-} from "./chunk-PRSSAHTH.js";
-import "./chunk-RKRPDZVV.js";
-import "./chunk-KNCSTHR4.js";
+  loadRegistry
+} from "./chunk-S3QYWK2P.js";
+import "./chunk-W32XKRNU.js";
+import {
+  providerKind,
+  resolveProviderCredential
+} from "./chunk-QYL2HTTP.js";
+import "./chunk-6DCEGHZH.js";
+import "./chunk-XEH2JMTL.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/test-model.ts
@@ -94,10 +102,33 @@ function rememberChatResult(providerId, modelId, chat) {
   } catch {
   }
 }
-async function checkContextWindow(providerId, modelId, signal) {
+async function ollamaContextLimit(providerId, modelId, signal) {
+  try {
+    const provider = loadRegistry().providers.find((p) => p.id === providerId);
+    if (!provider || providerKind(provider.id) !== "ollama" || !provider.api.url) return void 0;
+    const root = provider.api.url.replace(/\/+$/, "").replace(/\/v1$/, "");
+    const key = await resolveProviderCredential(provider.id, provider.authRef).catch(() => "");
+    const upstream = getProviderModels(provider).find((m) => m.id === modelId)?.upstreamModelId ?? modelId;
+    const response = await fetch(`${root}/api/show`, {
+      method: "POST",
+      signal,
+      headers: { "Content-Type": "application/json", ...key && key !== "ollama" ? { Authorization: `Bearer ${key}` } : {} },
+      body: JSON.stringify({ model: upstream })
+    });
+    if (!response.ok) return void 0;
+    const info = (await response.json()).model_info ?? {};
+    for (const [name, value] of Object.entries(info)) {
+      if (name.endsWith(".context_length") && typeof value === "number" && Number.isSafeInteger(value) && value > 0) return value;
+    }
+  } catch {
+  }
+  return void 0;
+}
+async function checkContextWindow(providerId, modelId, signal, opts) {
   const timeout = AbortSignal.timeout(2e4);
-  const probe = await probeModel(providerId, modelId, signal ? AbortSignal.any([signal, timeout]) : timeout);
-  const measured = probe.limit;
+  const bounded = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  const probe = opts?.lookupOnly ? {} : await probeModel(providerId, modelId, bounded);
+  const measured = probe.limit ?? await ollamaContextLimit(providerId, modelId, bounded);
   rememberChatResult(providerId, modelId, probe.chat);
   const notChat = probe.chat === void 0 ? {} : { notChat: !probe.chat };
   const provider = loadRegistry().providers.find((p) => p.id === providerId);
@@ -115,7 +146,7 @@ async function checkContextWindow(providerId, modelId, signal) {
   }
   return { measured, previous, updated: saved && measured !== previous, saved, keptManual: false, ...notChat };
 }
-async function testModel(providerId, modelId, signal) {
+async function testModel(providerId, modelId, signal, opts) {
   const provider = loadRegistry().providers.find((p) => p.id === providerId);
   if (!provider?.enabled || !getProviderModels(provider).some((m) => m.id === modelId)) {
     return { ok: false, error: "Model is no longer available. Refresh this provider." };
@@ -128,12 +159,12 @@ async function testModel(providerId, modelId, signal) {
     abortSignal.throwIfAborted();
     const result = streamText({
       model,
-      prompt: 'Say OK, then call relay_pool_probe with value "ok".',
+      prompt: opts?.withoutTools ? "Say OK." : 'Say OK, then call relay_pool_probe with value "ok".',
       maxOutputTokens: TEST_MAX_OUTPUT_TOKENS,
-      tools: { relay_pool_probe: tool({
+      ...opts?.withoutTools ? {} : { tools: { relay_pool_probe: tool({
         description: "Harmless capability check; never executed.",
         inputSchema: jsonSchema({ type: "object", properties: { value: { type: "string", enum: ["ok"] } }, required: ["value"], additionalProperties: false })
-      }) },
+      }) } },
       maxRetries: 0,
       abortSignal,
       onError: () => {
@@ -163,6 +194,9 @@ async function testModel(providerId, modelId, signal) {
     rememberChatResult(providerId, modelId, true);
     return { ok: true, latencyMs, notChat: false, toolsPassed };
   } catch (error) {
+    if (!opts?.withoutTools && !abortSignal.aborted && /does not support tools|tools? (?:are|is) not supported/i.test(errorText(error))) {
+      return testModel(providerId, modelId, signal, { withoutTools: true });
+    }
     if (!abortSignal.aborted && isNotChatRefusal(error)) {
       rememberChatResult(providerId, modelId, false);
       return { ok: false, notChat: true, error: "This is not a chat model (the server refused the chat request), so Relay cannot use it. You can hide it." };
@@ -178,8 +212,9 @@ export {
   checkContextWindow,
   isNotChatRefusal,
   measureContextWindow,
+  ollamaContextLimit,
   parseContextLimit,
   probeModel,
   testModel
 };
-//# sourceMappingURL=test-model-AICVC5PA.js.map
+//# sourceMappingURL=test-model-6YVKO34H.js.map

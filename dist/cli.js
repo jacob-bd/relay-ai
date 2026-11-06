@@ -1,9 +1,5 @@
 #!/usr/bin/env node
 import {
-  addManualModel,
-  removeManualModel
-} from "./chunk-YN6ZCD5P.js";
-import {
   CLAUDE_POOL_MODEL_ID,
   ClaudePoolRuntime,
   addFavorite,
@@ -75,10 +71,47 @@ import {
   supportsClaudeTransparentMode,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-626SSSFL.js";
+} from "./chunk-HIQSB6JR.js";
+import {
+  extractApiKey,
+  readBody,
+  sendJson,
+  warnDisabledPoolMembers
+} from "./chunk-XODZLRZH.js";
+import {
+  addManualModel,
+  removeManualModel
+} from "./chunk-XMBTRYTY.js";
 import {
   translateRequest
-} from "./chunk-53LPDY3S.js";
+} from "./chunk-XQDUXM6J.js";
+import {
+  TRUST_SYSTEM_CERTS_NOTICE,
+  UNTRUSTED_CERTIFICATE_CODE,
+  addCustomEndpointProvider,
+  addOpencodeCloudFromApiKey,
+  applySystemCaTrust,
+  customEndpointKind,
+  endpointModelTimeoutMs,
+  fetchAnthropicModels,
+  fetchTemplateModels,
+  isSystemCaActive,
+  isSystemCaSupported,
+  refreshAllProviderModels,
+  refreshProviderModels,
+  refreshProviderModelsBatch,
+  removeProviderFromRegistry,
+  renameProvider,
+  resolveModelSource,
+  revertSystemCaTrust,
+  setContextWindowOverride,
+  toggleProviderEnabled,
+  updateCustomEndpointProvider,
+  zenRegistryStub
+} from "./chunk-YD4PZYLN.js";
+import {
+  validateCustomEndpointUrl
+} from "./chunk-5HGLQHX6.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -119,43 +152,7 @@ import {
   translateResponsesRequest,
   translatedEffortClaim,
   writeResponsesErrorStream
-} from "./chunk-7BKIHQYO.js";
-import {
-  normalizeToolSchemaForNpm
-} from "./chunk-UR4QFFSQ.js";
-import {
-  extractApiKey,
-  readBody,
-  sendJson,
-  warnDisabledPoolMembers
-} from "./chunk-FZFPVM3L.js";
-import {
-  TRUST_SYSTEM_CERTS_NOTICE,
-  UNTRUSTED_CERTIFICATE_CODE,
-  addCustomEndpointProvider,
-  addOpencodeCloudFromApiKey,
-  applySystemCaTrust,
-  customEndpointKind,
-  endpointModelTimeoutMs,
-  fetchAnthropicModels,
-  fetchTemplateModels,
-  isSystemCaActive,
-  isSystemCaSupported,
-  refreshAllProviderModels,
-  refreshProviderModels,
-  refreshProviderModelsBatch,
-  removeProviderFromRegistry,
-  renameProvider,
-  resolveModelSource,
-  revertSystemCaTrust,
-  setContextWindowOverride,
-  toggleProviderEnabled,
-  updateCustomEndpointProvider,
-  zenRegistryStub
-} from "./chunk-5ETHP66U.js";
-import {
-  validateCustomEndpointUrl
-} from "./chunk-5HGLQHX6.js";
+} from "./chunk-ZUZVJSJL.js";
 import {
   OPENCODE_SESSION_HEADER,
   PoolHealthStore,
@@ -165,7 +162,6 @@ import {
   buildListModelConfigsResponse,
   cachedModelToLocal,
   describePoolFailure,
-  effectiveProviderBaseUrl,
   effortLabel,
   evaluateAgySwitchCompatibility,
   extractConversationId,
@@ -173,7 +169,6 @@ import {
   fetchProviderCatalog,
   formatRegistryAuthLabel,
   injectRelayModels,
-  isLikelyPlaceholderKey,
   isOAuthImportProvider,
   launchModelsForProvider,
   listCredentialSkippedProviders,
@@ -192,45 +187,38 @@ import {
   providersForTarget,
   recordPoolActivity,
   resolveLocalProviderApiKey,
-  resolveProviderTemplate,
   resolveProvidersForDisplay,
-  resolveRefreshCredential,
   resolveRelayCatalogSlots,
   retryPoolFailure,
   routableModelsForTarget,
-  syntheticTemplate,
   toOAuthRegistryId
-} from "./chunk-7TNNCDPU.js";
+} from "./chunk-EE53ZNAJ.js";
 import {
-  ANTIGRAVITY_BASE_URLS,
-  ANTIGRAVITY_USER_AGENT,
-  BACKENDS,
-  CODEX_RESPONSES_LITE_VERSION,
-  CODEX_RESPONSES_LITE_WS_URL,
-  CODEX_RESPONSES_WEBSOCKETS_BETA,
-  CODEX_SUBAGENT_MODEL_CAP,
-  CONFLICTING_ENV_VARS,
+  effectiveProviderBaseUrl,
+  isLikelyPlaceholderKey,
+  resolveProviderTemplate,
+  resolveRefreshCredential,
+  syntheticTemplate
+} from "./chunk-E6UL27MK.js";
+import {
+  normalizeToolSchemaForNpm
+} from "./chunk-UR4QFFSQ.js";
+import {
+  formatUpstreamError,
+  formatUpstreamErrorTrace,
+  upstreamHttpStatus
+} from "./chunk-IRMXZJ3D.js";
+import {
   EFFORT_RANK,
-  GLOBAL_OPENCODE_KEYRING_ACCOUNT,
-  MAX_MODEL_CATALOG,
-  VERSION,
-  VERTEX_ANTHROPIC_NPM,
   VERTEX_ANTHROPIC_PROVIDER_ID,
   addVertexModelEntry,
   appendCodexBodyDump,
   applyClaudeCodeOAuthIdentity,
-  buildAntigravityChildEnv,
-  buildChildEnv,
-  claudeCodeClientModelId,
-  claudeCodeContextWindow,
   contextWindowError,
   createLanguageModel,
   currentPoolReceipt,
   deepMergeProviderOptions,
-  detectConflicts,
   effortProviderOptions,
-  formatUpstreamError,
-  formatUpstreamErrorTrace,
   generateTextStreamingIfRequired,
   getAgentProviderModels,
   getAntigravityDebugLogPath,
@@ -244,8 +232,6 @@ import {
   getTrustSystemCertificates,
   isFreeStatus,
   isModelsDevCacheStale,
-  isProviderKind,
-  isSecretServiceAvailable,
   isValidProviderId,
   isVertexAnthropicProvider,
   isVertexAnthropicRegistered,
@@ -255,55 +241,84 @@ import {
   localIsoTimestamp,
   makeTraceLogger,
   maxToolsForNpm,
-  migrateGlobalOpencodeCredential,
   migrateLegacyCloudProviders,
   modelIdError,
-  oauthCredentialToKeychainJson,
   parseFreePool,
   poolEndpointRevision,
   poolFreeStatus,
-  preferredRelayCredentialAuthRef,
   prepareClaudeTraceLog,
   prepareProviderTraceLog,
   printTraceLog,
-  providerKind,
-  readFromCredentialStore,
-  readGlobalOpencodeCredential,
-  readOpencodeAuthFile,
-  readStoredOAuthCredential,
-  readStoredProviderCredential,
   receiptInForce,
   recordLaunchSelection,
   refreshModelsDevCacheAsync,
   removeVertexModelEntries,
   resetCodexBodyDumpLog,
-  resolveApiKey,
-  resolveContextWindow,
-  resolveProviderCredential,
-  routeLookupIds,
   runCodexCommand,
   runCodexCommandSync,
   savePreferences,
-  saveProviderCredential,
   saveRegistry,
-  saveToCredentialStore,
   serializeToolResultContent,
   setTrustSystemCertificates,
   shouldHideModel,
   silenceSdkWarnings,
   splitToolUseId,
   stripToolUseIdSuffix,
-  supportsAdditionalOAuthAccounts,
   supportsManualModels,
-  supportsNativeOAuth,
   thinkingProviderOptions,
   uniqueProviderName,
-  upstreamHttpStatus,
   validateProviderName,
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-PRSSAHTH.js";
+} from "./chunk-S3QYWK2P.js";
+import {
+  DEFAULT_VERTEX_MODELS,
+  hasApplicationDefaultCredentials,
+  hasCustomVertexModels,
+  loadVertexModelEntries,
+  resetVertexModelEntries,
+  resolveVertexProject,
+  saveVertexModelEntries
+} from "./chunk-W32XKRNU.js";
+import {
+  ANTIGRAVITY_BASE_URLS,
+  ANTIGRAVITY_USER_AGENT,
+  BACKENDS,
+  CODEX_RESPONSES_LITE_VERSION,
+  CODEX_RESPONSES_LITE_WS_URL,
+  CODEX_RESPONSES_WEBSOCKETS_BETA,
+  CODEX_SUBAGENT_MODEL_CAP,
+  CONFLICTING_ENV_VARS,
+  GLOBAL_OPENCODE_KEYRING_ACCOUNT,
+  MAX_MODEL_CATALOG,
+  VERSION,
+  VERTEX_ANTHROPIC_NPM,
+  buildAntigravityChildEnv,
+  buildChildEnv,
+  claudeCodeClientModelId,
+  claudeCodeContextWindow,
+  detectConflicts,
+  isProviderKind,
+  isSecretServiceAvailable,
+  migrateGlobalOpencodeCredential,
+  oauthCredentialToKeychainJson,
+  preferredRelayCredentialAuthRef,
+  providerKind,
+  readFromCredentialStore,
+  readGlobalOpencodeCredential,
+  readOpencodeAuthFile,
+  readStoredOAuthCredential,
+  readStoredProviderCredential,
+  resolveApiKey,
+  resolveContextWindow,
+  resolveProviderCredential,
+  routeLookupIds,
+  saveProviderCredential,
+  saveToCredentialStore,
+  supportsAdditionalOAuthAccounts,
+  supportsNativeOAuth
+} from "./chunk-QYL2HTTP.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -313,20 +328,13 @@ import {
   listSupportedTemplates,
   listVisibleOAuthTemplates,
   supportsAdditionalApiAccounts
-} from "./chunk-RKRPDZVV.js";
+} from "./chunk-6DCEGHZH.js";
 import {
-  DEFAULT_VERTEX_MODELS,
   getAppHome,
   getConfigPath,
   getLogsPath,
-  getProvidersPath,
-  hasApplicationDefaultCredentials,
-  hasCustomVertexModels,
-  loadVertexModelEntries,
-  resetVertexModelEntries,
-  resolveVertexProject,
-  saveVertexModelEntries
-} from "./chunk-KNCSTHR4.js";
+  getProvidersPath
+} from "./chunk-XEH2JMTL.js";
 import "./chunk-JIDIH7DS.js";
 
 // src/cli.ts
@@ -3614,7 +3622,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-AICVC5PA.js");
+      const { testModel } = await import("./test-model-6YVKO34H.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -15341,7 +15349,11 @@ PROVIDERS REGISTRY
   relay-ai providers remove <id>
   relay-ai providers rename <id> <new name>   change the display name only (ids/keys unchanged)
   relay-ai providers refresh-models [id]
-  relay-ai providers auth <id>    OAuth (OpenAI ChatGPT, xAI, \u2026)
+  relay-ai providers auth <id>    OAuth (OpenAI ChatGPT, xAI, Claude Code, Antigravity, \u2026); add --new for a second account
+  \u26A0 Claude Code (Anthropic) and Antigravity (Google) sign-ins use a paid subscription outside the vendor's app:
+    the account can be suspended or banned. Relay asks the user to confirm first; never run these without that consent.
+  In relay-ai ui: Ollama / LM Studio cards have "Edit server address"; configured providers stay in the
+  available list as "Add another account"; the Intelligence page adds an optional Artificial Analysis score column.
 
 MODELS / FAVORITES
   relay-ai models                 manage favoriteModels in config (alias: favorites)
@@ -15536,6 +15548,7 @@ RELATED DOCS
   docs/AI-AGENTS.md     human-readable agent guide (this repo)
   docs/CODEX.md         Codex CLI, sandbox, restore, routing
   docs/FREE_POOL.md     Relay Free Pool: routing, failover, Test results, Core
+  docs/INTELLIGENCE.md  optional Artificial Analysis intelligence score (own key)
   docs/CORE.md          embedding relay-ai in your own app (listRelayModels / createRelayModel)
   relay-ai --ai         full reference + live provider state
 `.trimEnd();
@@ -18199,11 +18212,11 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-JVBRODAX.js");
+    const { runUiCommand } = await import("./ui-command-2TSGYJEQ.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-HBRBSHFN.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-WHSIVJW5.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

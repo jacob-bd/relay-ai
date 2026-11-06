@@ -28,7 +28,7 @@ const entry = (id: string, templateId: string) => ({
   modelsCache: { fetchedAt: '2026-11-03T00:00:00Z', models },
 });
 
-describe('"estimate" label for custom endpoints', () => {
+describe('"estimate" label for context sizes', () => {
   let tempHome: string;
   let previousRelayHome: string | undefined;
   beforeEach(() => {
@@ -54,8 +54,8 @@ describe('"estimate" label for custom endpoints', () => {
     expect(await estimates('custom-gw')).toEqual({ guessed: true, reported: false });
   });
 
-  it('never flags built-in providers', async () => {
-    expect(await estimates('deepseek')).toEqual({ guessed: false, reported: false });
+  it('flags guessed sizes on built-in providers too, never provider-reported ones', async () => {
+    expect(await estimates('deepseek')).toEqual({ guessed: true, reported: false });
   });
 
   it('drops the flag once a size is typed or measured', async () => {
