@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-11-07
+
+### Fixed
+
+- **`relay-ai ui` no longer crashes after a model Test.** Measuring context size aborts the probe after the first text token; the AI SDK's sibling promises still rejected with `AbortError`, and that unhandled rejection killed the UI process. Those rejections are swallowed (same pattern as the pool SDK route), and a self-initiated abort still counts as chat.
+- **Test-result toasts are readable in light mode.** The toast used a hardcoded dark background while light mode uses dark text, so it looked like a solid black bar. Toasts (and the Free Pool advanced menu) now use theme surface/text tokens.
+- **Intelligence scores match dated Artificial Analysis checkpoints.** Providers often keep the marketing id (e.g. NVIDIA `deepseek-ai/deepseek-v4.1-flash`) while Artificial Analysis scores a dated default (`deepseek-v4-1-flash-1017`). Relay now bridges that gap and strips `:batch` / leading `~`, without guessing effort variants (`-high`, `-non-reasoning`). Artificial Analysis's free list still only covers on the order of ~100 scored entries.
+
+### Upgrade notes
+
+- No migration needed. Restart `relay-ai ui` (or reinstall/link) to pick up the fix. Existing Artificial Analysis scores do not need a re-download.
+
 ## [0.21.0] - 2026-11-06
 
 ### Added

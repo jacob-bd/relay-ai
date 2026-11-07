@@ -41,6 +41,8 @@ describe('Artificial Analysis intelligence scores', () => {
     expect(intelligenceKey('cline-pass/glm-5.3')).toBe('glm-5-3');
     expect(intelligenceKey('nvidia/nemotron-3.5-lightning-free')).toBe('nemotron-3-5-lightning');
     expect(intelligenceKey('glm-5.1:cloud')).toBe('glm-5-1');
+    expect(intelligenceKey('deepseek/deepseek-v4.1-flash:batch')).toBe('deepseek-v4-1-flash');
+    expect(intelligenceKey('~deepseek/deepseek-flash-latest')).toBe('deepseek-flash-latest');
   });
 
   it('matches exact names only, never a similar one', () => {
@@ -49,6 +51,27 @@ describe('Artificial Analysis intelligence scores', () => {
     ] });
     expect(lookup('xiaomi/mimo-v2.6-pro')?.score).toBe(29.9);
     expect(lookup('mimo-v2.6')).toBeUndefined();
+  });
+
+  it('bridges provider marketing ids to Artificial Analysis checkpoint dates (default effort only)', () => {
+    const lookup = buildIntelligenceLookup({ fetchedAt: new Date().toISOString(), models: [
+      { slug: 'deepseek-v4-1-flash-1017', name: 'Flash 1017 (Max)', score: 32.6 },
+      { slug: 'deepseek-v4-1-flash-1017-high', name: 'Flash 1017 (High)', score: 28.6 },
+      { slug: 'deepseek-v4-1-flash-1017-non-reasoning', name: 'Flash 1017 (NR)', score: 18.5 },
+      { slug: 'deepseek-v4-pro', name: 'Pro (Max)', score: 23.1 },
+      { slug: 'ling-3-1-flash-1019', name: 'Ling', score: 29.6 },
+    ] });
+    // NVIDIA / OpenRouter / Zen ship the marketing id; AA scores the dated checkpoint.
+    expect(lookup('deepseek-ai/deepseek-v4.1-flash')).toMatchObject({ slug: 'deepseek-v4-1-flash-1017', score: 32.6 });
+    expect(lookup('deepseek/deepseek-v4.1-flash:batch')).toMatchObject({ score: 32.6 });
+    expect(lookup('ling-3.1-flash')?.score).toBe(29.6);
+    // Provider kept the date; AA listed the bare default.
+    expect(lookup('deepseek/deepseek-v4-pro-0813')?.score).toBe(23.1);
+    // Never invent an effort: bare id must not pick -high / -non-reasoning.
+    expect(lookup('deepseek-v4.1-flash')?.slug).toBe('deepseek-v4-1-flash-1017');
+    expect(lookup('deepseek-v4.1-flash-high')).toBeUndefined();
+    // Size / SKU suffixes stay unmatched (wrong score is worse than none).
+    expect(lookup('nemotron-3-5-lightning-30b-a3b')).toBeUndefined();
   });
 
   it('is stale when missing, empty or older than a day', () => {

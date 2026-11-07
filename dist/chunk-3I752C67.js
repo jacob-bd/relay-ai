@@ -16,7 +16,7 @@ import {
   resolveRefreshCredential,
   skipWithCachedModels,
   syntheticTemplate
-} from "./chunk-E6UL27MK.js";
+} from "./chunk-PY7II6GE.js";
 import {
   MAX_CONTEXT_WINDOW_OVERRIDE,
   MIN_CONTEXT_WINDOW_OVERRIDE,
@@ -54,7 +54,7 @@ import {
   validateProviderName,
   vertexAnthropicCachedModels,
   writeSecureLogLine
-} from "./chunk-S3QYWK2P.js";
+} from "./chunk-WXL3TOHJ.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -76,7 +76,7 @@ import {
   resolveProviderOAuthProviderData,
   saveProviderCredential,
   saveToCredentialStore
-} from "./chunk-QYL2HTTP.js";
+} from "./chunk-IQVDUGYT.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -2276,4 +2276,4 @@ export {
   toggleProviderEnabled,
   setProviderServerUrl
 };
-//# sourceMappingURL=chunk-YD4PZYLN.js.map
+//# sourceMappingURL=chunk-3I752C67.js.map

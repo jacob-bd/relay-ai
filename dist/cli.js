@@ -71,20 +71,20 @@ import {
   supportsClaudeTransparentMode,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-HIQSB6JR.js";
+} from "./chunk-YLG4B2H6.js";
 import {
   extractApiKey,
   readBody,
   sendJson,
   warnDisabledPoolMembers
-} from "./chunk-XODZLRZH.js";
+} from "./chunk-ALBDSZLW.js";
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-XMBTRYTY.js";
+} from "./chunk-FBWSC2MZ.js";
 import {
   translateRequest
-} from "./chunk-XQDUXM6J.js";
+} from "./chunk-LELXWNS7.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   UNTRUSTED_CERTIFICATE_CODE,
@@ -108,7 +108,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-YD4PZYLN.js";
+} from "./chunk-3I752C67.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -152,7 +152,7 @@ import {
   translateResponsesRequest,
   translatedEffortClaim,
   writeResponsesErrorStream
-} from "./chunk-ZUZVJSJL.js";
+} from "./chunk-S6ZXPMFI.js";
 import {
   OPENCODE_SESSION_HEADER,
   PoolHealthStore,
@@ -192,14 +192,14 @@ import {
   retryPoolFailure,
   routableModelsForTarget,
   toOAuthRegistryId
-} from "./chunk-EE53ZNAJ.js";
+} from "./chunk-URPO3PB6.js";
 import {
   effectiveProviderBaseUrl,
   isLikelyPlaceholderKey,
   resolveProviderTemplate,
   resolveRefreshCredential,
   syntheticTemplate
-} from "./chunk-E6UL27MK.js";
+} from "./chunk-PY7II6GE.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
@@ -271,7 +271,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-S3QYWK2P.js";
+} from "./chunk-WXL3TOHJ.js";
 import {
   DEFAULT_VERTEX_MODELS,
   hasApplicationDefaultCredentials,
@@ -318,7 +318,7 @@ import {
   saveToCredentialStore,
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth
-} from "./chunk-QYL2HTTP.js";
+} from "./chunk-IQVDUGYT.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -3622,7 +3622,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-6YVKO34H.js");
+      const { testModel } = await import("./test-model-4JYTDU4W.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -18212,11 +18212,11 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-2TSGYJEQ.js");
+    const { runUiCommand } = await import("./ui-command-ZUW5WQWQ.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-WHSIVJW5.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-F36VBWXY.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

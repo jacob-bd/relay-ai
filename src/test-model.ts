@@ -69,6 +69,11 @@ export async function probeModel(providerId: string, modelId: string, signal: Ab
     const model = await createRelayModel(`${providerId}::${modelId}`, { sessionId: `relay-test-${randomUUID()}` });
     const result = streamText({ model, prompt: 'Reply with OK.', maxOutputTokens: CONTEXT_PROBE_MAX_TOKENS,
       maxRetries: 0, abortSignal: AbortSignal.any([signal, controller.signal]), onError: () => {} });
+    // Aborting after the first text token stops a huge generation; the SDK's sibling
+    // promises still reject independently — swallow them so Node does not crash the UI.
+    for (const promise of [result.text, result.toolCalls, result.toolResults, result.finishReason, result.usage, result.response]) {
+      Promise.resolve(promise).catch(() => {});
+    }
     for await (const part of result.stream) {
       if (part.type === 'error') return inspect(part.error);
       if (part.type === 'text-delta') { controller.abort(); return { chat: true }; }
@@ -76,6 +81,7 @@ export async function probeModel(providerId: string, modelId: string, signal: Ab
     }
     return {};
   } catch (error) {
+    if (controller.signal.aborted) return { chat: true };
     return inspect(error);
   }
 }
@@ -179,6 +185,10 @@ export async function testModel(providerId: string, modelId: string, signal?: Ab
         inputSchema: jsonSchema<{ value: string }>({ type: 'object', properties: { value: { type: 'string', enum: ['ok'] } }, required: ['value'], additionalProperties: false }),
       }) } }),
       maxRetries: 0, abortSignal, onError: () => {} });
+    // Same as probeModel / pool sdk-route: cancel can reject these without anyone awaiting them.
+    for (const promise of [result.text, result.toolCalls, result.toolResults, result.finishReason, result.usage, result.response]) {
+      Promise.resolve(promise).catch(() => {});
+    }
     let text = '';
     let finished = false;
     let hitLimit = false;

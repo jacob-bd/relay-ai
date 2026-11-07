@@ -40,7 +40,7 @@ import { join } from "path";
 // package.json
 var package_default = {
   name: "@jacobbd/relay-ai",
-  version: "0.21.0",
+  version: "0.21.1",
   publishConfig: {
     access: "public"
   },
@@ -2449,4 +2449,4 @@ export {
   saveToCredentialStore,
   isSecretServiceAvailable
 };
-//# sourceMappingURL=chunk-QYL2HTTP.js.map
+//# sourceMappingURL=chunk-IQVDUGYT.js.map

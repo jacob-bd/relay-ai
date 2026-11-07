@@ -4,7 +4,7 @@ Relay can show an **Intelligence** score next to each model, so you can pick the
 
 ## What the score means
 
-The Intelligence Index combines results from many hard tests of reasoning, knowledge and coding into one number. Higher means smarter overall. Use it to compare models with each other, not as a promise for your own task. Relay shows a score only when the model's name matches Artificial Analysis's name exactly; models without a match show a dash.
+The Intelligence Index combines results from many hard tests of reasoning, knowledge and coding into one number. Higher means smarter overall. Use it to compare models with each other, not as a promise for your own task. Relay shows a score when the model id matches an Artificial Analysis slug (after normalizing dots/slashes), including dated checkpoints (e.g. provider `deepseek-v4.1-flash` → AA `deepseek-v4-1-flash-1017`). Effort variants (`-high`, `-non-reasoning`, …) are only used when the model id itself names that effort — a wrong score is worse than none. Artificial Analysis's free list currently covers on the order of ~100 scored entries (~60 unique bases); models they have not scored show a dash.
 
 ## Set it up
 

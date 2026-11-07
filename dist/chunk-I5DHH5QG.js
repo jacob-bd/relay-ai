@@ -3,7 +3,7 @@ import {
   deleteProviderCredential,
   readStoredProviderCredential,
   saveProviderCredential
-} from "./chunk-QYL2HTTP.js";
+} from "./chunk-IQVDUGYT.js";
 import {
   getAppHome
 } from "./chunk-XEH2JMTL.js";
@@ -104,12 +104,32 @@ async function refreshIntelligence(fetchImpl = fetch) {
   writeIntelligenceCache(cache);
   return cache;
 }
+var CHECKPOINT_DATE = /-\d{4}$/;
 function intelligenceKey(modelId) {
-  return modelId.toLowerCase().replace(/^.*\//, "").replace(/[:_.\s]+/g, "-").replace(/-+/g, "-").replace(/-(free|cloud)$/, "");
+  return modelId.toLowerCase().replace(/^~/, "").replace(/^.*\//, "").replace(/[:_.\s]+/g, "-").replace(/-+/g, "-").replace(/-(free|cloud|batch)$/, "");
+}
+function datedDefaultScore(bySlug, base) {
+  let best;
+  const prefix = `${base}-`;
+  for (const [slug, entry] of bySlug) {
+    if (!slug.startsWith(prefix)) continue;
+    if (!/^\d{4}$/.test(slug.slice(prefix.length))) continue;
+    if (!best || slug > best.slug) best = entry;
+  }
+  return best;
 }
 function buildIntelligenceLookup(cache) {
   const bySlug = new Map((cache?.models ?? []).map((entry) => [entry.slug, entry]));
-  return (modelId) => bySlug.get(intelligenceKey(modelId));
+  return (modelId) => {
+    const key = intelligenceKey(modelId);
+    const exact = bySlug.get(key);
+    if (exact) return exact;
+    if (CHECKPOINT_DATE.test(key)) {
+      const withoutDate = bySlug.get(key.replace(CHECKPOINT_DATE, ""));
+      if (withoutDate) return withoutDate;
+    }
+    return datedDefaultScore(bySlug, key);
+  };
 }
 
 export {
@@ -129,4 +149,4 @@ export {
   intelligenceKey,
   buildIntelligenceLookup
 };
-//# sourceMappingURL=chunk-Y6GWVWA4.js.map
+//# sourceMappingURL=chunk-I5DHH5QG.js.map

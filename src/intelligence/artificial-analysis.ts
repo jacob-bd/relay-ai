@@ -98,13 +98,50 @@ export async function refreshIntelligence(fetchImpl: typeof fetch = fetch): Prom
   return cache;
 }
 
+/** Trailing MMDD (or similar) checkpoint dates Artificial Analysis appends, e.g. `…-flash-1017`. */
+const CHECKPOINT_DATE = /-\d{4}$/;
+
 /** `cline-pass/glm-5.3`, `vendor/glm-5.3:free`, `glm-5.3-cloud`  →  `glm-5-3`, the way Artificial Analysis writes slugs. */
 export function intelligenceKey(modelId: string): string {
-  return modelId.toLowerCase().replace(/^.*\//, '').replace(/[:_.\s]+/g, '-').replace(/-+/g, '-').replace(/-(free|cloud)$/, '');
+  return modelId.toLowerCase()
+    .replace(/^~/, '')
+    .replace(/^.*\//, '')
+    .replace(/[:_.\s]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/-(free|cloud|batch)$/, '');
 }
 
-/** Exact name match only: a wrong score is worse than none. Variants (low/high/non-reasoning) are not guessed. */
+/**
+ * Artificial Analysis often versions a model as `name-MMDD` (and then adds effort suffixes).
+ * Providers usually ship the marketing id without the date. Prefer the newest dated *default*
+ * score (no `-high` / `-non-reasoning`); never invent an effort level.
+ */
+function datedDefaultScore(bySlug: Map<string, IntelligenceEntry>, base: string): IntelligenceEntry | undefined {
+  let best: IntelligenceEntry | undefined;
+  const prefix = `${base}-`;
+  for (const [slug, entry] of bySlug) {
+    if (!slug.startsWith(prefix)) continue;
+    if (!/^\d{4}$/.test(slug.slice(prefix.length))) continue;
+    if (!best || slug > best.slug) best = entry;
+  }
+  return best;
+}
+
+/**
+ * Match by normalized slug. Also bridges provider marketing ids ↔ AA checkpoint dates
+ * (`deepseek-v4.1-flash` ↔ `deepseek-v4-1-flash-1017`). Effort variants (low/high/…) are
+ * only used when the model id itself names that effort — a wrong score is worse than none.
+ */
 export function buildIntelligenceLookup(cache: IntelligenceCache | null): (modelId: string) => IntelligenceEntry | undefined {
   const bySlug = new Map((cache?.models ?? []).map(entry => [entry.slug, entry]));
-  return modelId => bySlug.get(intelligenceKey(modelId));
+  return modelId => {
+    const key = intelligenceKey(modelId);
+    const exact = bySlug.get(key);
+    if (exact) return exact;
+    if (CHECKPOINT_DATE.test(key)) {
+      const withoutDate = bySlug.get(key.replace(CHECKPOINT_DATE, ''));
+      if (withoutDate) return withoutDate;
+    }
+    return datedDefaultScore(bySlug, key);
+  };
 }

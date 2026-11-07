@@ -3,9 +3,29 @@ const mocks = vi.hoisted(() => ({ create: vi.fn(), stream: vi.fn() }));
 vi.mock('../src/core/model.js', () => ({ createRelayModel: mocks.create }));
 vi.mock('ai', async original => ({ ...await original<typeof import('ai')>(), streamText: mocks.stream }));
 vi.mock('../src/registry/io.js', () => ({ loadRegistry: () => ({ providers: [{ id: 'groq-2', enabled: true, api: {}, modelsCache: { models: [{ id: 'test' }] } }] }) }));
-import { testModel } from '../src/test-model.js';
+import { probeModel, testModel } from '../src/test-model.js';
 const parts = (...events: any[]) => ({ stream: (async function* () { yield* events; })() });
 beforeEach(() => { vi.clearAllMocks(); mocks.create.mockResolvedValue({}); });
+describe('context probe early stop', () => {
+ it('does not crash the process when aborting after the first text token', async () => {
+  const aborted = new DOMException('This operation was aborted', 'AbortError');
+  const reject = () => Promise.reject(aborted);
+  mocks.stream.mockReturnValue({
+   stream: (async function* () { yield { type: 'text-delta', text: 'OK' }; })(),
+   text: reject(), toolCalls: reject(), toolResults: reject(), finishReason: reject(), usage: reject(), response: reject(),
+  });
+  const seen: unknown[] = [];
+  const onUnhandled = (reason: unknown) => { seen.push(reason); };
+  process.on('unhandledRejection', onUnhandled);
+  try {
+   expect(await probeModel('groq-2', 'test', AbortSignal.timeout(5_000))).toEqual({ chat: true });
+   await new Promise<void>(resolve => setImmediate(resolve));
+   expect(seen).toEqual([]);
+  } finally {
+   process.off('unhandledRejection', onUnhandled);
+  }
+ });
+});
 describe('model reachability test', () => {
  it('uses the exact account/model through the runtime and requires text and completion', async () => {
   mocks.stream.mockReturnValue(parts({ type: 'text-delta', text: 'OK' }, { type: 'finish' }));

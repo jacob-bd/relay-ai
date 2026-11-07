@@ -2081,13 +2081,18 @@ input { font-family: inherit; }
   gap: 10px;
   padding: 11px 18px;
   border-radius: var(--radius);
-  background: oklch(20% 0.028 265);
+  background: var(--surface);
+  color: var(--text-1);
   border: 1px solid var(--border-bright);
   box-shadow: 0 8px 24px oklch(0% 0 0 / 0.5), 0 0 0 1px oklch(68% 0.26 255 / 0.08);
   font-size: 15px;
   font-weight: 500;
   pointer-events: all;
   animation: toast-in var(--dur-md) var(--ease);
+}
+
+html[data-theme="light"] .toast {
+  box-shadow: 0 8px 24px oklch(0% 0 0 / 0.12), 0 0 0 1px var(--border);
 }
 
 .toast.out { animation: toast-out 150ms var(--ease) forwards; }
@@ -2508,7 +2513,7 @@ input { font-family: inherit; }
 .pool-advanced-menu { position: relative; }
 .pool-advanced-menu summary { cursor: pointer; list-style: none; }
 .pool-advanced-menu summary::-webkit-details-marker { display: none; }
-.pool-advanced-options { position: absolute; right: 0; top: 100%; z-index: 5; display: grid; gap: 6px; padding: 10px; min-width: 240px; background: var(--bg-card, #111827); border: 1px solid var(--border, #283244); border-radius: 8px; box-shadow: 0 8px 24px #0004; }
+.pool-advanced-options { position: absolute; right: 0; top: 100%; z-index: 5; display: grid; gap: 6px; padding: 10px; min-width: 240px; background: var(--surface); color: var(--text-1); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px oklch(0% 0 0 / 0.25); }
 .pool-advanced-options .btn { text-align: left; white-space: normal; }
 
 .pool-member-actions { flex-wrap: wrap; justify-content: flex-end; }

@@ -4939,7 +4939,7 @@ window.toggleServerApiKeyVisibility = toggleServerApiKeyVisibility;
 
 // ─── Intelligence score (Artificial Analysis, optional, user's own key) ───────
 
-const INTEL_EXPLAIN = 'A single score from Artificial Analysis that combines many tests of reasoning, knowledge and coding. Higher means smarter overall. Use it to compare models, not as a promise for your task. Shown only when the model name matches exactly.';
+const INTEL_EXPLAIN = 'A single score from Artificial Analysis that combines many tests of reasoning, knowledge and coding. Higher means smarter overall. Use it to compare models, not as a promise for your task. Shown when the model id matches an Artificial Analysis entry (including dated checkpoints like Flash → Flash 1017). Effort variants are not guessed.';
 
 function intelTooltipText(intel) {
   return `Intelligence score ${Number(intel.score).toFixed(1)} (matched to "${intel.name}"). ${INTEL_EXPLAIN} Source: artificialanalysis.ai`;
@@ -4968,7 +4968,7 @@ function intelHeaderHtml() {
 
 function intelCellHtml(item) {
   if (!state.intelligenceActive) return '';
-  if (!item.intelligence) return '<td class="intel-cell"><span class="intel-none" title="No exact match on artificialanalysis.ai">—</span></td>';
+  if (!item.intelligence) return '<td class="intel-cell"><span class="intel-none" title="No matching score on artificialanalysis.ai (only models they publish an Intelligence Index for)">—</span></td>';
   return `<td class="intel-cell"><span class="intel-score" title="${escapeHtml(intelTooltipText(item.intelligence))}">${Number(item.intelligence.score).toFixed(1)}</span></td>`;
 }
 

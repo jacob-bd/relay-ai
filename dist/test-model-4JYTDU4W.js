@@ -2,17 +2,17 @@
 import {
   setContextWindowOverride,
   setModelNotChat
-} from "./chunk-YD4PZYLN.js";
+} from "./chunk-3I752C67.js";
 import "./chunk-5HGLQHX6.js";
 import {
   createRelayModel
-} from "./chunk-5BMO6OWH.js";
-import "./chunk-ZUZVJSJL.js";
+} from "./chunk-SWJQFXHI.js";
+import "./chunk-S6ZXPMFI.js";
 import {
   TEST_MAX_OUTPUT_TOKENS,
   cachedModelToLocal
-} from "./chunk-EE53ZNAJ.js";
-import "./chunk-E6UL27MK.js";
+} from "./chunk-URPO3PB6.js";
+import "./chunk-PY7II6GE.js";
 import "./chunk-UR4QFFSQ.js";
 import {
   upstreamHttpStatus
@@ -20,12 +20,12 @@ import {
 import {
   getProviderModels,
   loadRegistry
-} from "./chunk-S3QYWK2P.js";
+} from "./chunk-WXL3TOHJ.js";
 import "./chunk-W32XKRNU.js";
 import {
   providerKind,
   resolveProviderCredential
-} from "./chunk-QYL2HTTP.js";
+} from "./chunk-IQVDUGYT.js";
 import "./chunk-6DCEGHZH.js";
 import "./chunk-XEH2JMTL.js";
 import "./chunk-JIDIH7DS.js";
@@ -79,6 +79,10 @@ async function probeModel(providerId, modelId, signal) {
       onError: () => {
       }
     });
+    for (const promise of [result.text, result.toolCalls, result.toolResults, result.finishReason, result.usage, result.response]) {
+      Promise.resolve(promise).catch(() => {
+      });
+    }
     for await (const part of result.stream) {
       if (part.type === "error") return inspect(part.error);
       if (part.type === "text-delta") {
@@ -89,6 +93,7 @@ async function probeModel(providerId, modelId, signal) {
     }
     return {};
   } catch (error) {
+    if (controller.signal.aborted) return { chat: true };
     return inspect(error);
   }
 }
@@ -170,6 +175,10 @@ async function testModel(providerId, modelId, signal, opts) {
       onError: () => {
       }
     });
+    for (const promise of [result.text, result.toolCalls, result.toolResults, result.finishReason, result.usage, result.response]) {
+      Promise.resolve(promise).catch(() => {
+      });
+    }
     let text = "";
     let finished = false;
     let hitLimit = false;
@@ -217,4 +226,4 @@ export {
   probeModel,
   testModel
 };
-//# sourceMappingURL=test-model-6YVKO34H.js.map
+//# sourceMappingURL=test-model-4JYTDU4W.js.map
