@@ -176,4 +176,20 @@ describe('free pool UI API', () => {
     expect((await call({ action: 'verify', ...member })).code).toBe(200);
     expect((await call()).body.members[0].status).toBe('Ready');
   });
+
+  it('reorders by direction and by absolute index', async () => {
+    await call({ action: 'add', ...member });
+    await call({ action: 'add', providerId: member.providerId, modelId: 'guess' });
+    await call({ action: 'add', providerId: 'second-account', modelId: 'second-free' });
+    expect((await call()).body.members.map((m: any) => m.modelId)).toEqual(['free', 'guess', 'second-free']);
+
+    expect((await call({ action: 'move', ...member, direction: 1 })).code).toBe(200);
+    expect((await call()).body.members.map((m: any) => m.modelId)).toEqual(['guess', 'free', 'second-free']);
+
+    expect((await call({ action: 'move', ...member, toIndex: 2 })).code).toBe(200);
+    expect((await call()).body.members.map((m: any) => m.modelId)).toEqual(['guess', 'second-free', 'free']);
+
+    expect((await call({ action: 'move', ...member, toIndex: 9 })).code).toBe(400);
+    expect((await call({ action: 'move', ...member })).code).toBe(400);
+  });
 });

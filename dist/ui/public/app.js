@@ -3089,20 +3089,27 @@ function poolMemberRowHtml(member, index, manageable) {
   const reason = member.reason ? `<div class="pool-member-reason">${escapeHtml(member.reason)}</div>` : '';
   const actions = manageable ? `
     <div class="pool-member-actions">
-      <button class="btn btn-ghost pool-test" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" title="One small request, up to 1024 output tokens. No retries or context/reasoning probes.">Test</button>
-      <button class="btn btn-ghost pool-move" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" data-direction="-1" ${index === 0 ? 'disabled' : ''} title="Move earlier in routing priority" aria-label="Move ${escapeHtml(member.name)} up">↑</button>
-      <button class="btn btn-ghost pool-move" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" data-direction="1" ${index === poolData().members.length - 1 ? 'disabled' : ''} title="Move later in routing priority" aria-label="Move ${escapeHtml(member.name)} down">↓</button>
+      <button class="btn btn-ghost pool-test" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" title="One small request, up to 1024 output tokens. No retries or context/reasoning probes.">Test</button>
+      <button class="btn btn-ghost pool-move" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" data-direction="-1" ${index === 0 ? 'disabled' : ''} title="Move earlier in routing priority" aria-label="Move ${escapeHtml(member.name)} up">↑</button>
+      <button class="btn btn-ghost pool-move" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" data-direction="1" ${index === poolData().members.length - 1 ? 'disabled' : ''} title="Move later in routing priority" aria-label="Move ${escapeHtml(member.name)} down">↓</button>
       <details class="pool-advanced-menu">
-        <summary class="btn btn-ghost">Advanced…</summary>
+        <summary class="btn btn-ghost" draggable="false">Advanced…</summary>
         <div class="pool-advanced-options">
-          <button class="btn btn-ghost pool-context" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}">Measure context · 1 request</button>
-          <button class="btn btn-ghost pool-set-context" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" data-current="${member.contextWindow ?? ''}">Set context${member.contextWindow ? ` (now ${fmtCtx(member.contextWindow)})` : ''} · no requests</button>
-          ${member.reasoningTestRequests > 1 ? '<button class="btn btn-ghost pool-reasoning" type="button" data-provider-id="' + escapeHtml(member.providerId) + '" data-model-id="' + escapeHtml(member.modelId) + '" data-requests="' + member.reasoningTestRequests + '">Check reasoning · up to ' + member.reasoningTestRequests + ' requests</button>' : ''}
+          <button class="btn btn-ghost pool-context" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}">Measure context · 1 request</button>
+          <button class="btn btn-ghost pool-set-context" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" data-current="${member.contextWindow ?? ''}">Set context${member.contextWindow ? ` (now ${fmtCtx(member.contextWindow)})` : ''} · no requests</button>
+          ${member.reasoningTestRequests > 1 ? '<button class="btn btn-ghost pool-reasoning" type="button" draggable="false" data-provider-id="' + escapeHtml(member.providerId) + '" data-model-id="' + escapeHtml(member.modelId) + '" data-requests="' + member.reasoningTestRequests + '">Check reasoning · up to ' + member.reasoningTestRequests + ' requests</button>' : ''}
         </div>
       </details>
-      <button class="btn btn-ghost pool-remove" type="button" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" title="Remove from the Relay Free Pool">Remove</button>
+      <button class="btn btn-ghost pool-remove" type="button" draggable="false" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" title="Remove from the Relay Free Pool">Remove</button>
     </div>` : '';
-  return `<li class="pool-member-row">
+  const handle = manageable
+    ? `<span class="drag-handle" aria-hidden="true" title="Drag to change routing priority"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="8" y="4" width="3" height="3" rx="1"/><rect x="13" y="4" width="3" height="3" rx="1"/><rect x="8" y="10" width="3" height="3" rx="1"/><rect x="13" y="10" width="3" height="3" rx="1"/><rect x="8" y="16" width="3" height="3" rx="1"/><rect x="13" y="16" width="3" height="3" rx="1"/></svg></span>`
+    : '';
+  const dragAttrs = manageable
+    ? ` draggable="true" tabindex="0" data-index="${index}" data-provider-id="${escapeHtml(member.providerId)}" data-model-id="${escapeHtml(member.modelId)}" aria-grabbed="false" aria-label="${escapeHtml(member.name)}, priority ${index + 1}. Drag or Alt+Arrow to reorder."`
+    : '';
+  return `<li class="pool-member-row"${dragAttrs}>
+    ${handle}
     <span class="pool-rank" aria-hidden="true">${index + 1}</span>
     <div class="pool-member-main">
       <div class="pool-member-title">
@@ -3351,6 +3358,7 @@ function renderFreePool() {
   panel.querySelectorAll('.pool-test').forEach(button => {
     button.addEventListener('click', () => testModelResponse(button, button.dataset.providerId, button.dataset.modelId, { pool: true }));
   });
+  bindPoolMemberDrag(panel);
   panel.querySelectorAll('.pool-context, .pool-reasoning, .pool-set-context, .pool-move').forEach(button => {
     button.addEventListener('click', async () => {
       const { providerId, modelId } = button.dataset;
@@ -3392,6 +3400,67 @@ function renderFreePool() {
       button.disabled = true;
       await toggleModelHidden(button.dataset.providerId, button.dataset.modelId);
       await loadFreePool();
+    });
+  });
+}
+
+async function reorderPoolMember(fromIndex, toIndex) {
+  const members = poolData()?.members ?? [];
+  const member = members[fromIndex];
+  if (!member || fromIndex === toIndex || toIndex < 0 || toIndex >= members.length) return;
+  const result = await api('POST', '/api/pool', {
+    action: 'move', providerId: member.providerId, modelId: member.modelId, toIndex,
+  });
+  if (result.error || result.ok === false) {
+    showToast(result.error ?? 'Could not change priority.', undefined, 5000);
+    return;
+  }
+  showToast('Order saved');
+  await loadFreePool();
+}
+
+function bindPoolMemberDrag(panel) {
+  panel.querySelectorAll('.pool-member-row[draggable="true"]').forEach(row => {
+    row.addEventListener('dragstart', event => {
+      if (event.target.closest('button, summary, details, a, input, select')) {
+        event.preventDefault();
+        return;
+      }
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', row.dataset.index ?? '');
+      row.setAttribute('aria-grabbed', 'true');
+      requestAnimationFrame(() => row.classList.add('dragging'));
+    });
+    row.addEventListener('dragend', () => {
+      row.classList.remove('dragging');
+      row.setAttribute('aria-grabbed', 'false');
+      panel.querySelectorAll('.pool-member-row').forEach(el => el.classList.remove('drag-over'));
+    });
+    row.addEventListener('dragover', event => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      panel.querySelectorAll('.pool-member-row').forEach(el => el.classList.remove('drag-over'));
+      row.classList.add('drag-over');
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
+    row.addEventListener('drop', async event => {
+      event.preventDefault();
+      row.classList.remove('drag-over');
+      const from = Number.parseInt(event.dataTransfer.getData('text/plain'), 10);
+      const to = Number.parseInt(row.dataset.index ?? '', 10);
+      if (Number.isInteger(from) && Number.isInteger(to) && from !== to) await reorderPoolMember(from, to);
+    });
+    row.addEventListener('keydown', async event => {
+      const from = Number.parseInt(row.dataset.index ?? '', 10);
+      const total = poolData()?.members?.length ?? 0;
+      if (!Number.isInteger(from)) return;
+      if (event.altKey && event.key === 'ArrowUp' && from > 0) {
+        event.preventDefault();
+        await reorderPoolMember(from, from - 1);
+      } else if (event.altKey && event.key === 'ArrowDown' && from < total - 1) {
+        event.preventDefault();
+        await reorderPoolMember(from, from + 1);
+      }
     });
   });
 }

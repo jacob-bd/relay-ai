@@ -5,7 +5,7 @@ import {
   disabledPoolMembers,
   readBody,
   sendJson
-} from "./chunk-ALBDSZLW.js";
+} from "./chunk-XPA3TW64.js";
 import {
   fetchProviderCatalog,
   groupPoolActivity,
@@ -16,7 +16,7 @@ import {
   readPoolActivity,
   summarizePoolEvents,
   verifyConfiguredPoolMember
-} from "./chunk-URPO3PB6.js";
+} from "./chunk-MPQE6MYL.js";
 import {
   addFreePoolMember,
   classifyFreeStatus,
@@ -25,16 +25,17 @@ import {
   loadPreferences,
   loadRegistry,
   modelsDevModelKind,
+  moveFreePoolMemberTo,
   nameKindOutranksChatTest,
   parseFreePool,
   poolEndpointRevision,
   removeFreePoolMember,
   savePreferences
-} from "./chunk-WXL3TOHJ.js";
+} from "./chunk-RC2VFJSS.js";
 import {
   buildIntelligenceLookup,
   loadIntelligenceCache
-} from "./chunk-I5DHH5QG.js";
+} from "./chunk-6Y3KFWH6.js";
 
 // src/ui/pool-api.ts
 var verifying = /* @__PURE__ */ new Set();
@@ -189,9 +190,13 @@ async function handlePoolApi(req, res) {
           pool = addFreePoolMember(pool, member);
         } else if (body.action === "remove") pool = removeFreePoolMember(pool, member);
         else if (body.action === "move") {
-          if (index < 0 || ![-1, 1].includes(body.direction)) throw new Error("Invalid priority change");
-          const next = index + body.direction;
-          if (next >= 0 && next < pool.members.length) [pool.members[index], pool.members[next]] = [pool.members[next], pool.members[index]];
+          if (index < 0) throw new Error("Invalid priority change");
+          if (Number.isInteger(body.toIndex)) {
+            pool = moveFreePoolMemberTo(pool, member, body.toIndex);
+          } else if ([-1, 1].includes(body.direction)) {
+            const next = index + body.direction;
+            if (next >= 0 && next < pool.members.length) pool = moveFreePoolMemberTo(pool, member, next);
+          } else throw new Error("Invalid priority change");
         } else if (body.action === "verify") {
           if (index < 0) throw new Error("Add the model to the pool first");
           const provider = providers.find((item) => item.id === member.providerId);
@@ -282,4 +287,4 @@ export {
   handlePoolApi,
   poolView
 };
-//# sourceMappingURL=chunk-KWZ2AI4W.js.map
+//# sourceMappingURL=chunk-JOZSQOWJ.js.map

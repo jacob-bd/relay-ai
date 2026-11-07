@@ -50,3 +50,15 @@ export function removeFreePoolMember(pool: FreePoolPreferences, member: Favorite
     receipts: pool.receipts.filter(item => item.member.providerId !== member.providerId || item.member.modelId !== member.modelId),
   });
 }
+
+/** Move a member to an absolute index (0-based). No-op when already there. */
+export function moveFreePoolMemberTo(pool: FreePoolPreferences, member: FavoriteModel, toIndex: number): FreePoolPreferences {
+  const from = pool.members.findIndex(item => item.providerId === member.providerId && item.modelId === member.modelId);
+  if (from < 0) throw new Error('Model is not in the pool');
+  if (!Number.isInteger(toIndex) || toIndex < 0 || toIndex >= pool.members.length) throw new Error('Invalid priority change');
+  if (from === toIndex) return pool;
+  const members = [...pool.members];
+  const [item] = members.splice(from, 1);
+  members.splice(toIndex, 0, item!);
+  return parseFreePool({ ...pool, members });
+}

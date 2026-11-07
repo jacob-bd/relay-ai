@@ -71,20 +71,20 @@ import {
   supportsClaudeTransparentMode,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-YLG4B2H6.js";
+} from "./chunk-HIL2HFIC.js";
 import {
   extractApiKey,
   readBody,
   sendJson,
   warnDisabledPoolMembers
-} from "./chunk-ALBDSZLW.js";
+} from "./chunk-XPA3TW64.js";
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-FBWSC2MZ.js";
+} from "./chunk-6VFDMXR4.js";
 import {
   translateRequest
-} from "./chunk-LELXWNS7.js";
+} from "./chunk-QON3ED3L.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   UNTRUSTED_CERTIFICATE_CODE,
@@ -108,7 +108,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-3I752C67.js";
+} from "./chunk-YDJRF3WE.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -152,7 +152,7 @@ import {
   translateResponsesRequest,
   translatedEffortClaim,
   writeResponsesErrorStream
-} from "./chunk-S6ZXPMFI.js";
+} from "./chunk-YDABOFDG.js";
 import {
   OPENCODE_SESSION_HEADER,
   PoolHealthStore,
@@ -192,14 +192,14 @@ import {
   retryPoolFailure,
   routableModelsForTarget,
   toOAuthRegistryId
-} from "./chunk-URPO3PB6.js";
+} from "./chunk-MPQE6MYL.js";
 import {
   effectiveProviderBaseUrl,
   isLikelyPlaceholderKey,
   resolveProviderTemplate,
   resolveRefreshCredential,
   syntheticTemplate
-} from "./chunk-PY7II6GE.js";
+} from "./chunk-QXLS4PK5.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
@@ -271,7 +271,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-WXL3TOHJ.js";
+} from "./chunk-RC2VFJSS.js";
 import {
   DEFAULT_VERTEX_MODELS,
   hasApplicationDefaultCredentials,
@@ -318,7 +318,7 @@ import {
   saveToCredentialStore,
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth
-} from "./chunk-IQVDUGYT.js";
+} from "./chunk-5OEQISEV.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -3622,7 +3622,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-4JYTDU4W.js");
+      const { testModel } = await import("./test-model-3F3NEXJM.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -16701,6 +16701,7 @@ function parseArgs(args) {
     for (const arg of rest) {
       if (arg === "--trace") parsed2.trace = true;
       else if (arg === "--server") parsed2.uiServerMode = true;
+      else if (arg === "--background") parsed2.uiBackground = true;
       else if (arg === "--help" || arg === "-h") parsed2.showHelp = true;
       else if (arg === "--version" || arg === "-v") parsed2.showVersion = true;
       else if (!parsed2.error) parsed2.error = `Unknown ui option: ${arg}`;
@@ -18204,7 +18205,10 @@ Error: ${parsed.error}
     if (parsed.showHelp) {
       console.log(`Usage: relay-ai ui [--trace] [--server]
 
-Open the settings UI in your browser.
+Open the settings UI in your browser. If a Relay UI is already running (for example the
+one started next to a tool launch), this opens your browser on it instead of starting
+another. Tool launches keep a Relay UI running in the background without opening a
+browser; set RELAY_AI_NO_UI=1 to skip that.
 
 Options:
   --server   Admin UI for Docker / always-on gateway (hides Apps & Launch and Antigravity;
@@ -18212,11 +18216,11 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-ZUW5WQWQ.js");
-    return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
+    const { runUiCommand } = await import("./ui-command-EKT7TQYB.js");
+    return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode, background: parsed.uiBackground });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-F36VBWXY.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-RTQIGTYT.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;
@@ -18256,6 +18260,10 @@ Options:
       }
     }
     return runProvidersCommand(parsed.claudeArgs);
+  }
+  if (isToolLaunch(parsed)) {
+    const { announceBackgroundUi, shouldEnsureBackgroundUi } = await import("./ui-background-Z3WLEI6L.js");
+    if (shouldEnsureBackgroundUi({ dryRun: parsed.dryRun })) await announceBackgroundUi();
   }
   if (parsed.command === "codex-app") {
     if (parsed.showVersion) {
@@ -18364,6 +18372,19 @@ Options:
   }
   return runClaudeCommand(parsed);
 }
+var TOOL_LAUNCH_COMMANDS = /* @__PURE__ */ new Set([
+  "claude",
+  "claude-app",
+  "codex",
+  "codex-app",
+  "gemini",
+  "agy",
+  "antigravity",
+  "antigravity-ide"
+]);
+function isToolLaunch(parsed) {
+  return TOOL_LAUNCH_COMMANDS.has(parsed.command) && !parsed.showHelp && !parsed.showVersion && !parsed.claudeArgs.includes("--restore") && !parsed.restore;
+}
 function shouldRefreshModelsDev(parsed) {
   return !parsed.showVersion && !parsed.showAi && !parsed.showHelp && !parsed.claudeArgs.includes("--restore");
 }
@@ -18396,6 +18417,7 @@ export {
   antigravityCliHelpText,
   antigravityIdeHelpText,
   claudeHelpText,
+  isToolLaunch,
   main,
   modelsHelpText,
   parseArgs,

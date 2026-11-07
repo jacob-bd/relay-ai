@@ -3,7 +3,15 @@ import {
   handlePoolApi,
   invalidateUiPoolMember,
   verifyUiPoolMember
-} from "./chunk-KWZ2AI4W.js";
+} from "./chunk-JOZSQOWJ.js";
+import {
+  DEFAULT_SERVER_UI_PORT,
+  checkExistingServer,
+  formatUiAvailableLine,
+  probeServerHealth,
+  removeOwnUiLock,
+  writeUiLock
+} from "./chunk-M25MTWJ2.js";
 import {
   addProviderFromTemplate,
   buildDedupedModelRows,
@@ -33,12 +41,12 @@ import {
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode
-} from "./chunk-YLG4B2H6.js";
+} from "./chunk-HIL2HFIC.js";
 import {
   readBody,
   sendJson
-} from "./chunk-ALBDSZLW.js";
-import "./chunk-LELXWNS7.js";
+} from "./chunk-XPA3TW64.js";
+import "./chunk-QON3ED3L.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   addCustomEndpointProvider,
@@ -59,21 +67,21 @@ import {
   setModelMarkedFree,
   setModelsHidden,
   updateCustomEndpointProvider
-} from "./chunk-3I752C67.js";
+} from "./chunk-YDJRF3WE.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
 import {
   poolCatalogEntry
-} from "./chunk-S6ZXPMFI.js";
+} from "./chunk-YDABOFDG.js";
 import {
   fetchProviderCatalog,
   providersForCodexSubagents,
   providersForTarget
-} from "./chunk-URPO3PB6.js";
+} from "./chunk-MPQE6MYL.js";
 import {
   copilotPlanTier
-} from "./chunk-PY7II6GE.js";
+} from "./chunk-QXLS4PK5.js";
 import "./chunk-UR4QFFSQ.js";
 import "./chunk-IRMXZJ3D.js";
 import {
@@ -116,7 +124,7 @@ import {
   setTrustSystemCertificates,
   supportsManualModels,
   writeSecureLogLine
-} from "./chunk-WXL3TOHJ.js";
+} from "./chunk-RC2VFJSS.js";
 import "./chunk-W32XKRNU.js";
 import {
   AA_SITE_URL,
@@ -127,7 +135,7 @@ import {
   loadIntelligenceCache,
   refreshIntelligence,
   removeIntelligence
-} from "./chunk-I5DHH5QG.js";
+} from "./chunk-6Y3KFWH6.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -156,7 +164,7 @@ import {
   resolveProviderCredential,
   saveProviderCredential,
   supportsAdditionalOAuthAccounts
-} from "./chunk-IQVDUGYT.js";
+} from "./chunk-5OEQISEV.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -166,16 +174,14 @@ import {
   provider_templates_exports,
   supportsAdditionalApiAccounts
 } from "./chunk-6DCEGHZH.js";
-import {
-  getAppHome
-} from "./chunk-XEH2JMTL.js";
+import "./chunk-XEH2JMTL.js";
 import {
   __toCommonJS
 } from "./chunk-JIDIH7DS.js";
 
 // src/ui-command.ts
 import { createServer } from "http";
-import { readFileSync, readdirSync, writeFileSync as writeFileSync2, unlinkSync, existsSync as existsSync3, mkdirSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { join as join2 } from "path";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
@@ -1145,7 +1151,7 @@ async function handleMeasureContextWindow(req, res) {
     if (!res.writableEnded) controller.abort();
   });
   try {
-    const { checkContextWindow } = await import("./test-model-4JYTDU4W.js");
+    const { checkContextWindow } = await import("./test-model-3F3NEXJM.js");
     const context = await checkContextWindow(provider.id, body.modelId, controller.signal);
     if (!res.destroyed) sendJson(res, 200, { ok: true, context });
   } catch {
@@ -1172,7 +1178,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-NZZXNN4W.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-IOSYCWKV.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1503,7 +1509,7 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-4JYTDU4W.js");
+    const { testModel } = await import("./test-model-3F3NEXJM.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
     if (!controller.signal.aborted) {
       try {
@@ -1520,7 +1526,7 @@ async function handleTestModel(req, res) {
         if (provider && cachedModel) {
           const probeAllowed = customEndpointKind(provider) || isFreeStatus(classifyFreeStatus({ model: cachedModel, providerId: provider.id, templateId: provider.templateId }));
           if (probeAllowed || providerKind(provider.id) === "ollama") {
-            const { checkContextWindow } = await import("./test-model-4JYTDU4W.js");
+            const { checkContextWindow } = await import("./test-model-3F3NEXJM.js");
             context = await checkContextWindow(provider.id, cachedModel.id, controller.signal, { lookupOnly: !probeAllowed });
           }
         }
@@ -1594,13 +1600,13 @@ async function handleIntelligenceKey(req, res) {
       sendJson(res, 400, { ok: false, error: "Paste your Artificial Analysis API key." });
       return;
     }
-    const { fetchIntelligenceScores, saveIntelligenceKey: save } = await import("./artificial-analysis-INNI54XR.js");
+    const { fetchIntelligenceScores, saveIntelligenceKey: save } = await import("./artificial-analysis-PCNACHZJ.js");
     const cache = await fetchIntelligenceScores(key);
     if (!await save(key)) {
       sendJson(res, 200, { ok: false, error: "Could not store the key in the system credential store." });
       return;
     }
-    const { writeIntelligenceCache } = await import("./artificial-analysis-INNI54XR.js");
+    const { writeIntelligenceCache } = await import("./artificial-analysis-PCNACHZJ.js");
     writeIntelligenceCache(cache);
     sendJson(res, 200, { ok: true, ...await intelligenceStatusBody() });
   } catch (err) {
@@ -1646,7 +1652,7 @@ async function handleEditServerUrl(req, res) {
       sendJson(res, 400, { ok: false, error: valid.error ?? "Invalid URL", hint: valid.hint });
       return;
     }
-    const { setProviderServerUrl } = await import("./crud-S2M5CYEL.js");
+    const { setProviderServerUrl } = await import("./crud-Q4RPRLGH.js");
     const previous = provider.api.url ?? "";
     if (previous.replace(/\/+$/, "") === newUrl) {
       sendJson(res, 200, { ok: true, unchanged: true });
@@ -2270,8 +2276,6 @@ async function handleBrowseFolder(res) {
 // src/ui-command.ts
 var __dirname = dirname(fileURLToPath(import.meta.url));
 var PUBLIC_DIR = join2(__dirname, "ui", "public");
-var LOCK_FILE = join2(getAppHome(), "ui.lock");
-var DEFAULT_SERVER_UI_PORT = 8787;
 var MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
@@ -2308,8 +2312,8 @@ function resolveUiRuntimeConfig(opts = {}, env = process.env) {
     mode,
     host: "127.0.0.1",
     port: opts.port ?? 0,
-    openBrowser: true,
-    confirmShutdownOnSigint: true
+    openBrowser: !opts.background,
+    confirmShutdownOnSigint: !opts.background
   };
 }
 function buildStaticCache(mode) {
@@ -2331,45 +2335,13 @@ function buildStaticCache(mode) {
   }
   return cache;
 }
-function removeLock() {
+async function openUiInBrowser(url) {
   try {
-    unlinkSync(LOCK_FILE);
-  } catch {
-  }
-}
-async function probeServerHealth(port) {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 500);
-    const res = await fetch(`http://127.0.0.1:${port}/api/config`, { signal: controller.signal });
-    clearTimeout(timer);
-    if (res.status === 200) {
-      const data = await res.json().catch(() => null);
-      if (data && typeof data === "object") return true;
-    }
-    return false;
+    const { default: open } = await import("open");
+    await open(url);
+    return true;
   } catch {
     return false;
-  }
-}
-async function checkExistingServer() {
-  if (!existsSync3(LOCK_FILE)) return null;
-  try {
-    const { pid, port } = JSON.parse(readFileSync(LOCK_FILE, "utf8"));
-    if (pid === process.pid) {
-      removeLock();
-      return null;
-    }
-    process.kill(pid, 0);
-    const isAlive = await probeServerHealth(port ?? DEFAULT_SERVER_UI_PORT);
-    if (!isAlive) {
-      removeLock();
-      return null;
-    }
-    return `http://127.0.0.1:${port}`;
-  } catch {
-    removeLock();
-    return null;
   }
 }
 function isUiApiRoute(url) {
@@ -2396,8 +2368,11 @@ async function runUiCommand(opts = {}) {
   await ensureOpencodeCloudProviders();
   const existing = await checkExistingServer();
   if (existing) {
+    if (opts.background) return 0;
+    if (runtime.openBrowser) await openUiInBrowser(existing);
     console.log(`
-  ${pc.bold("relay-ai UI")} already running at ${pc.cyan(existing)}
+  ${pc.dim("Relay UI is already running \u2014 connected to it.")}`);
+    console.log(`${formatUiAvailableLine(existing)}
 `);
     return 0;
   }
@@ -2447,15 +2422,14 @@ async function runUiCommand(opts = {}) {
   const port = addr.port;
   const displayHost = runtime.host === "0.0.0.0" ? "127.0.0.1" : runtime.host;
   const url = `http://${displayHost}:${port}`;
-  mkdirSync(getAppHome(), { recursive: true });
-  writeFileSync2(LOCK_FILE, JSON.stringify({ pid: process.pid, port, mode: runtime.mode }));
+  writeUiLock(port, runtime.mode);
   if (resolveServerAutostart()) {
     startGatewayServerFromSavedConfig().catch((err) => {
       trace?.(`gateway autostart error: ${err instanceof Error ? err.message : String(err)}`);
     });
   }
   const cleanup = () => {
-    removeLock();
+    removeOwnUiLock();
     server.close();
     process.exit(0);
   };
@@ -2480,29 +2454,22 @@ async function runUiCommand(opts = {}) {
   process.on("SIGTERM", () => {
     void handleSignal("SIGTERM");
   });
-  const modeLabel = runtime.mode === "server" ? " (server admin)" : "";
+  if (runtime.openBrowser) {
+    const opened = await openUiInBrowser(url);
+    trace?.(`browser open ${opened ? "" : "failed "}${url}`);
+  }
+  const modeLabel = runtime.mode === "server" ? "Server admin UI \xB7 " : "";
   console.log(`
-  ${pc.bold("relay-ai UI")}${modeLabel}  ${pc.cyan(url)}
-  ${pc.dim("Press Ctrl+C to stop")}
-`);
+  ${pc.dim(`${modeLabel}Press Ctrl+C to stop`)}`);
   if (runtime.mode === "server") {
-    console.log(`  ${pc.dim("Gateway API (when started from Server tab): http://127.0.0.1:17645")}
-`);
+    console.log(`  ${pc.dim("Gateway API (when started from Server tab): http://127.0.0.1:17645")}`);
   }
   if (traceLogPath) {
-    console.log(`  ${pc.dim(`Trace log: ${traceLogPath}`)}
-`);
+    console.log(`  ${pc.dim(`Trace log: ${traceLogPath}`)}`);
     trace?.(`ui server listening ${url}`);
   }
-  if (runtime.openBrowser) {
-    try {
-      const { default: open } = await import("open");
-      await open(url);
-      trace?.(`browser open ${url}`);
-    } catch {
-      trace?.(`browser open failed ${url}`);
-    }
-  }
+  console.log(`${formatUiAvailableLine(url)}
+`);
   await new Promise(() => {
   });
   return 0;
@@ -2511,10 +2478,11 @@ export {
   checkExistingServer,
   formatUiServerLifecycleMessage,
   isUiApiRoute,
+  openUiInBrowser,
   probeServerHealth,
   resolveUiMode,
   resolveUiRuntimeConfig,
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-ZUW5WQWQ.js.map
+//# sourceMappingURL=ui-command-EKT7TQYB.js.map

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addFreePoolMember, parseFreePool, removeFreePoolMember } from '../src/pool/membership.js';
+import { addFreePoolMember, moveFreePoolMemberTo, parseFreePool, removeFreePoolMember } from '../src/pool/membership.js';
 
 describe('shared free pool membership', () => {
   it('starts empty without importing favorites', () => {
@@ -28,5 +28,17 @@ describe('shared free pool membership', () => {
     const added = addFreePoolMember(original, second);
     expect(original.members).toEqual([first]);
     expect(removeFreePoolMember(added, first)).toEqual({ members: [second], effort: 'medium', receipts: [] });
+  });
+  it('moves a member to an absolute index without mutating the input', () => {
+    const a = { providerId: 'a', modelId: 'm' };
+    const b = { providerId: 'b', modelId: 'm' };
+    const c = { providerId: 'c', modelId: 'm' };
+    const pool = { members: [a, b, c], effort: 'auto' as const, receipts: [] };
+    expect(moveFreePoolMemberTo(pool, a, 2).members).toEqual([b, c, a]);
+    expect(moveFreePoolMemberTo(pool, c, 0).members).toEqual([c, a, b]);
+    expect(moveFreePoolMemberTo(pool, b, 1)).toBe(pool);
+    expect(pool.members).toEqual([a, b, c]);
+    expect(() => moveFreePoolMemberTo(pool, a, 3)).toThrow('Invalid priority');
+    expect(() => moveFreePoolMemberTo(pool, { providerId: 'x', modelId: 'm' }, 0)).toThrow('not in the pool');
   });
 });

@@ -232,6 +232,15 @@ describe('listRelayModels', () => {
     expect(model!.providerShortName).toBe('Antigravity');
   });
 
+  it('uses a renamed provider name instead of the template label, keeping accounts distinct', () => {
+    writeRegistry([
+      provider({ id: 'antigravity', templateId: 'antigravity', name: 'agy-elt', nameCustomized: true, authRef: 'keychain:antigravity' }),
+      provider({ id: 'antigravity-2', templateId: 'antigravity', name: 'agy-jai3', nameCustomized: true, authRef: 'keychain:antigravity-2' }),
+    ]);
+    const shortNames = listRelayModels().map(m => `${m.providerId}=${m.providerShortName}`).sort();
+    expect(shortNames).toEqual(['antigravity-2=agy-jai3', 'antigravity=agy-elt']);
+  });
+
   it('falls back to the provider name when no compact template label exists', () => {
     writeRegistry([provider({})]);
     const [model] = listRelayModels();

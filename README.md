@@ -95,7 +95,7 @@ To fully remove the tool and all its configuration data, you can delete the conf
 | Command | Description |
 |---------|-------------|
 | `relay-ai` | Print help (does not launch Claude Code) |
-| `relay-ai ui` | **Open the visual launcher** — manage providers and launch any tool from a browser UI |
+| `relay-ai ui` | **Open the visual launcher** — manage providers and launch any tool from a browser UI. Connects to an already-running Relay UI (tool launches keep one running in the background; `RELAY_AI_NO_UI=1` skips it) |
 | `relay-ai ui --server` | **Server + Admin UI** (Docker-friendly) — providers / favorites / gateway only; binds `0.0.0.0` |
 | `relay-ai claude` | Pick a provider → launch Claude Code |
 | `relay-ai providers` | Add, import, list, remove, and refresh your AI providers |

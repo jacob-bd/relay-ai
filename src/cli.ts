@@ -276,6 +276,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     for (const arg of rest) {
       if (arg === '--trace') parsed.trace = true;
       else if (arg === '--server') parsed.uiServerMode = true;
+      else if (arg === '--background') parsed.uiBackground = true;
       else if (arg === '--help' || arg === '-h') parsed.showHelp = true;
       else if (arg === '--version' || arg === '-v') parsed.showVersion = true;
       else if (!parsed.error) parsed.error = `Unknown ui option: ${arg}`;
@@ -1986,7 +1987,10 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
     if (parsed.showHelp) {
       console.log(`Usage: relay-ai ui [--trace] [--server]
 
-Open the settings UI in your browser.
+Open the settings UI in your browser. If a Relay UI is already running (for example the
+one started next to a tool launch), this opens your browser on it instead of starting
+another. Tool launches keep a Relay UI running in the background without opening a
+browser; set RELAY_AI_NO_UI=1 to skip that.
 
 Options:
   --server   Admin UI for Docker / always-on gateway (hides Apps & Launch and Antigravity;
@@ -1995,7 +1999,7 @@ Options:
       return 0;
     }
     const { runUiCommand } = await import('./ui-command.js');
-    return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode });
+    return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode, background: parsed.uiBackground });
   }
 
   if (parsed.command === 'pool') {
@@ -2038,6 +2042,11 @@ Options:
       }
     }
     return runProvidersCommand(parsed.claudeArgs);
+  }
+
+  if (isToolLaunch(parsed)) {
+    const { announceBackgroundUi, shouldEnsureBackgroundUi } = await import('./ui-background.js');
+    if (shouldEnsureBackgroundUi({ dryRun: parsed.dryRun })) await announceBackgroundUi();
   }
 
   if (parsed.command === 'codex-app') {
@@ -2154,6 +2163,19 @@ Options:
   }
 
   return runClaudeCommand(parsed);
+}
+
+const TOOL_LAUNCH_COMMANDS = new Set<ParsedArgs['command']>([
+  'claude', 'claude-app', 'codex', 'codex-app', 'gemini', 'agy', 'antigravity', 'antigravity-ide',
+]);
+
+/** A real tool launch (not help, version or `--restore`) gets the Relay UI running beside it. */
+export function isToolLaunch(parsed: ParsedArgs): boolean {
+  return TOOL_LAUNCH_COMMANDS.has(parsed.command)
+    && !parsed.showHelp
+    && !parsed.showVersion
+    && !parsed.claudeArgs.includes('--restore')
+    && !parsed.restore;
 }
 
 /** Background catalog refresh is useful for real launches, but recovery/help

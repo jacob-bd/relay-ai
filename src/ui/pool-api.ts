@@ -10,7 +10,7 @@ import { loadRegistry } from '../registry/io.js';
 import { guessModelKindFromName, nameKindOutranksChatTest, type ModelKind } from '../registry/model-kind.js';
 import { modelsDevModelKind } from '../registry/models-dev.js';
 import { groupPoolActivity, readPoolActivity, summarizePoolEvents } from '../pool/activity.js';
-import { addFreePoolMember, parseFreePool, removeFreePoolMember } from '../pool/membership.js';
+import { addFreePoolMember, moveFreePoolMemberTo, parseFreePool, removeFreePoolMember } from '../pool/membership.js';
 import { currentPoolReceipt, poolEndpointRevision } from '../pool/capabilities.js';
 import { clearDisabledPoolMember, disabledMessage, disabledPoolMembers } from '../pool/disabled.js';
 import { poolDiagnostic, poolMembershipProblem, poolRoutingProblem, verifyConfiguredPoolMember } from '../pool/verify.js';
@@ -198,9 +198,13 @@ export async function handlePoolApi(req: IncomingMessage, res: ServerResponse): 
           pool = addFreePoolMember(pool, member);
         } else if (body.action === 'remove') pool = removeFreePoolMember(pool, member);
         else if (body.action === 'move') {
-          if (index < 0 || ![-1, 1].includes(body.direction)) throw new Error('Invalid priority change');
-          const next = index + body.direction;
-          if (next >= 0 && next < pool.members.length) [pool.members[index], pool.members[next]] = [pool.members[next]!, pool.members[index]!];
+          if (index < 0) throw new Error('Invalid priority change');
+          if (Number.isInteger(body.toIndex)) {
+            pool = moveFreePoolMemberTo(pool, member, body.toIndex);
+          } else if ([-1, 1].includes(body.direction)) {
+            const next = index + body.direction;
+            if (next >= 0 && next < pool.members.length) pool = moveFreePoolMemberTo(pool, member, next);
+          } else throw new Error('Invalid priority change');
         } else if (body.action === 'verify') {
           // Backward-compatible explicit endpoint; the normal UI reuses Test instead.
           if (index < 0) throw new Error('Add the model to the pool first');

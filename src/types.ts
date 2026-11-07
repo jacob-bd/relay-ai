@@ -232,6 +232,8 @@ export interface ParsedArgs {
   /** One-run network password for `relay-ai server`. */
   serverPassword?: string;
   uiServerMode?: boolean;
+  /** Internal: detached UI started by a tool launch (no browser, no prompts). */
+  uiBackground?: boolean;
   error?: string;
 }
 

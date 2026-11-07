@@ -1,11 +1,13 @@
 import { createServer } from 'node:http';
-import { readFileSync, readdirSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
-import { getAppHome } from './paths.js';
+import {
+  DEFAULT_SERVER_UI_PORT, checkExistingServer, formatUiAvailableLine, removeOwnUiLock, writeUiLock,
+} from './ui-lock.js';
 import { handleUiApiRequest, type UiServerLifecycleEvent } from './ui/api.js';
 import { getUiDebugLogPath, makeTraceLogger } from './trace-log.js';
 import { VERSION } from './constants.js';
@@ -15,8 +17,8 @@ import { startGatewayServerFromSavedConfig } from './ui/server-control.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, 'ui', 'public');
-const LOCK_FILE = join(getAppHome(), 'ui.lock');
-const DEFAULT_SERVER_UI_PORT = 8787;
+
+export { checkExistingServer, probeServerHealth } from './ui-lock.js';
 
 export type UiMode = 'full' | 'server';
 
@@ -26,6 +28,8 @@ export interface UiCommandOptions {
   serverMode?: boolean;
   /** Override listen port (server mode defaults to 8787). */
   port?: number;
+  /** Detached UI started next to a tool launch: no browser, no terminal prompts. */
+  background?: boolean;
 }
 
 export interface UiRuntimeConfig {
@@ -80,8 +84,8 @@ export function resolveUiRuntimeConfig(
     mode,
     host: '127.0.0.1',
     port: opts.port ?? 0,
-    openBrowser: true,
-    confirmShutdownOnSigint: true,
+    openBrowser: !opts.background,
+    confirmShutdownOnSigint: !opts.background,
   };
 }
 
@@ -106,46 +110,13 @@ function buildStaticCache(mode: UiMode): Map<string, { content: Buffer; mime: st
   return cache;
 }
 
-function removeLock(): void {
-  try { unlinkSync(LOCK_FILE); } catch {}
-}
-
-export async function probeServerHealth(port: number): Promise<boolean> {
+export async function openUiInBrowser(url: string): Promise<boolean> {
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 500);
-    const res = await fetch(`http://127.0.0.1:${port}/api/config`, { signal: controller.signal });
-    clearTimeout(timer);
-    if (res.status === 200) {
-      const data = await res.json().catch(() => null);
-      if (data && typeof data === 'object') return true;
-    }
-    return false;
+    const { default: open } = await import('open');
+    await open(url);
+    return true;
   } catch {
     return false;
-  }
-}
-
-export async function checkExistingServer(): Promise<string | null> {
-  if (!existsSync(LOCK_FILE)) return null;
-  try {
-    const { pid, port } = JSON.parse(readFileSync(LOCK_FILE, 'utf8'));
-    if (pid === process.pid) {
-      removeLock();
-      return null;
-    }
-    process.kill(pid, 0);
-
-    const isAlive = await probeServerHealth(port ?? DEFAULT_SERVER_UI_PORT);
-    if (!isAlive) {
-      removeLock();
-      return null;
-    }
-
-    return `http://127.0.0.1:${port}`;
-  } catch {
-    removeLock();
-    return null;
   }
 }
 
@@ -183,7 +154,10 @@ export async function runUiCommand(opts: UiCommandOptions = {}): Promise<number>
 
   const existing = await checkExistingServer();
   if (existing) {
-    console.log(`\n  ${pc.bold('relay-ai UI')} already running at ${pc.cyan(existing)}\n`);
+    if (opts.background) return 0;
+    if (runtime.openBrowser) await openUiInBrowser(existing);
+    console.log(`\n  ${pc.dim('Relay UI is already running — connected to it.')}`);
+    console.log(`${formatUiAvailableLine(existing)}\n`);
     return 0;
   }
 
@@ -241,8 +215,7 @@ export async function runUiCommand(opts: UiCommandOptions = {}): Promise<number>
   const displayHost = runtime.host === '0.0.0.0' ? '127.0.0.1' : runtime.host;
   const url = `http://${displayHost}:${port}`;
 
-  mkdirSync(getAppHome(), { recursive: true });
-  writeFileSync(LOCK_FILE, JSON.stringify({ pid: process.pid, port, mode: runtime.mode }));
+  writeUiLock(port, runtime.mode);
 
   if (resolveServerAutostart()) {
     startGatewayServerFromSavedConfig().catch(err => {
@@ -251,7 +224,7 @@ export async function runUiCommand(opts: UiCommandOptions = {}): Promise<number>
   }
 
   const cleanup = () => {
-    removeLock();
+    removeOwnUiLock();
     server.close();
     process.exit(0);
   };
@@ -273,25 +246,21 @@ export async function runUiCommand(opts: UiCommandOptions = {}): Promise<number>
   process.on('SIGINT', () => { void handleSignal('SIGINT'); });
   process.on('SIGTERM', () => { void handleSignal('SIGTERM'); });
 
-  const modeLabel = runtime.mode === 'server' ? ' (server admin)' : '';
-  console.log(`\n  ${pc.bold('relay-ai UI')}${modeLabel}  ${pc.cyan(url)}\n  ${pc.dim('Press Ctrl+C to stop')}\n`);
-  if (runtime.mode === 'server') {
-    console.log(`  ${pc.dim('Gateway API (when started from Server tab): http://127.0.0.1:17645')}\n`);
-  }
-  if (traceLogPath) {
-    console.log(`  ${pc.dim(`Trace log: ${traceLogPath}`)}\n`);
-    trace?.(`ui server listening ${url}`);
+  if (runtime.openBrowser) {
+    const opened = await openUiInBrowser(url);
+    trace?.(`browser open ${opened ? '' : 'failed '}${url}`);
   }
 
-  if (runtime.openBrowser) {
-    try {
-      const { default: open } = await import('open');
-      await open(url);
-      trace?.(`browser open ${url}`);
-    } catch {
-      trace?.(`browser open failed ${url}`);
-    }
+  const modeLabel = runtime.mode === 'server' ? 'Server admin UI · ' : '';
+  console.log(`\n  ${pc.dim(`${modeLabel}Press Ctrl+C to stop`)}`);
+  if (runtime.mode === 'server') {
+    console.log(`  ${pc.dim('Gateway API (when started from Server tab): http://127.0.0.1:17645')}`);
   }
+  if (traceLogPath) {
+    console.log(`  ${pc.dim(`Trace log: ${traceLogPath}`)}`);
+    trace?.(`ui server listening ${url}`);
+  }
+  console.log(`${formatUiAvailableLine(url)}\n`);
 
   await new Promise<void>(() => {}); // keep alive until signal
   return 0;

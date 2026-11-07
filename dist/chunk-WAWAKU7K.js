@@ -11,7 +11,7 @@ import {
   poolRequestFitsWindow,
   poolRouteFromStream,
   poolRouteKey
-} from "./chunk-S6ZXPMFI.js";
+} from "./chunk-YDABOFDG.js";
 import {
   PoolHealthStore,
   describePoolFailure,
@@ -27,11 +27,11 @@ import {
   reconcileCachedModelProtocol,
   recordPoolActivity,
   retryPoolFailure
-} from "./chunk-URPO3PB6.js";
+} from "./chunk-MPQE6MYL.js";
 import {
   copilotPlanTier,
   filterCachedCopilotModels
-} from "./chunk-PY7II6GE.js";
+} from "./chunk-QXLS4PK5.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
@@ -51,7 +51,7 @@ import {
   poolFreeStatus,
   resolveModelReasoningMetadata,
   withProviderRequestDefaults
-} from "./chunk-WXL3TOHJ.js";
+} from "./chunk-RC2VFJSS.js";
 import {
   ANTIGRAVITY_API_VERSION,
   ANTIGRAVITY_BASE_URLS,
@@ -61,7 +61,7 @@ import {
   resolveProviderCredential,
   resolveProviderOAuthAccountId,
   resolveProviderOAuthProviderData
-} from "./chunk-IQVDUGYT.js";
+} from "./chunk-5OEQISEV.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -739,7 +739,7 @@ function wrapPoolError(error) {
 }
 var sessions = new PoolSessionRoutes();
 async function memberModel(routeId, context) {
-  const { createRelayModel: createRelayModel2 } = await import("./model-RUGIPMHJ.js");
+  const { createRelayModel: createRelayModel2 } = await import("./model-TF5F3ZR6.js");
   return createRelayModel2(routeId, {
     sessionId: context.sessionId,
     ...context.options?.onDebug ? { onDebug: context.options.onDebug } : {},
@@ -1221,4 +1221,4 @@ export {
   withPortableToolSchemas,
   createRelayModel
 };
-//# sourceMappingURL=chunk-SWJQFXHI.js.map
+//# sourceMappingURL=chunk-WAWAKU7K.js.map

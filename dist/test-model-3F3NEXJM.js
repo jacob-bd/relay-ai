@@ -2,17 +2,17 @@
 import {
   setContextWindowOverride,
   setModelNotChat
-} from "./chunk-3I752C67.js";
+} from "./chunk-YDJRF3WE.js";
 import "./chunk-5HGLQHX6.js";
 import {
   createRelayModel
-} from "./chunk-SWJQFXHI.js";
-import "./chunk-S6ZXPMFI.js";
+} from "./chunk-WAWAKU7K.js";
+import "./chunk-YDABOFDG.js";
 import {
   TEST_MAX_OUTPUT_TOKENS,
   cachedModelToLocal
-} from "./chunk-URPO3PB6.js";
-import "./chunk-PY7II6GE.js";
+} from "./chunk-MPQE6MYL.js";
+import "./chunk-QXLS4PK5.js";
 import "./chunk-UR4QFFSQ.js";
 import {
   upstreamHttpStatus
@@ -20,12 +20,12 @@ import {
 import {
   getProviderModels,
   loadRegistry
-} from "./chunk-WXL3TOHJ.js";
+} from "./chunk-RC2VFJSS.js";
 import "./chunk-W32XKRNU.js";
 import {
   providerKind,
   resolveProviderCredential
-} from "./chunk-IQVDUGYT.js";
+} from "./chunk-5OEQISEV.js";
 import "./chunk-6DCEGHZH.js";
 import "./chunk-XEH2JMTL.js";
 import "./chunk-JIDIH7DS.js";
@@ -226,4 +226,4 @@ export {
   probeModel,
   testModel
 };
-//# sourceMappingURL=test-model-4JYTDU4W.js.map
+//# sourceMappingURL=test-model-3F3NEXJM.js.map

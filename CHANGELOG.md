@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.21.2] - 2026-11-07
+
+### Added
+
+- **Relay UI stays available while you use a tool.** Launching Claude Code, Codex, the ChatGPT or Claude apps, Gemini or Antigravity now makes sure a Relay UI server is running, so you can change providers, favorites or the pool live. It starts quietly in the background (no browser window), keeps running after the tool exits, and is reused by later launches. The terminal shows its address before the tool starts. Set `RELAY_AI_NO_UI=1` to skip it; non-interactive runs and `--dry-run` never start it.
+- **`relay-ai ui` connects to a running UI.** If one is already running, the command opens your browser on it and leaves it running instead of starting a second one. Otherwise it starts a new one as before. Either way, the last line of output is `Server available at http://127.0.0.1:<port>`.
+- **Drag to reorder Free Pool members.** In `relay-ai ui`, hold a pool row by its grip and drop it where you want it. Alt+Up / Alt+Down moves the focused row. The pool API's `move` action now also accepts an absolute `toIndex`.
+
+### Fixed
+
+- **Relay Core reports renamed providers by the name you chose.** `listRelayModels()` used the provider template's short label for `providerShortName`, so two accounts of one provider (e.g. two Antigravity sign-ins) looked identical in embedded consumers such as Alef, and renames never showed. A renamed provider, or a numbered extra account, now reports its own name. Providers you never renamed keep the compact template label.
+
+### Upgrade notes
+
+- No migration needed. Embedded consumers pick up renamed provider names the next time they read the catalog.
+
 ## [0.21.1] - 2026-11-07
 
 ### Fixed

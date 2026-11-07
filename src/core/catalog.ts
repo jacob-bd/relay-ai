@@ -82,7 +82,9 @@ function favoriteKey(providerId: string, modelId: string): string {
 
 function toDescriptor(provider: RegistryProvider, model: CachedModel, favorites: Set<string>): RelayModelDescriptor {
   const upstreamModelId = model.upstreamModelId ?? model.id;
-  const providerShortName = resolveProviderTemplate(provider)?.shortName ?? provider.name;
+  const providerShortName = provider.nameCustomized
+    ? provider.name
+    : resolveProviderTemplate(provider)?.shortName ?? provider.name;
   return {
     routeId: toRelayRouteId(provider.id, model.id),
     providerId: provider.id,

@@ -3,7 +3,7 @@ import {
   extractApiKey,
   readBody,
   sendJson
-} from "./chunk-ALBDSZLW.js";
+} from "./chunk-XPA3TW64.js";
 import {
   SubagentRouteRegistry,
   anthropicEffortFromRequest,
@@ -13,7 +13,7 @@ import {
   streamAnthropicResponse,
   translateRequest,
   writeAnthropicStream
-} from "./chunk-LELXWNS7.js";
+} from "./chunk-QON3ED3L.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -24,13 +24,13 @@ import {
   filterModelsByAvailability,
   refreshProviderModels,
   validateClinePassApiKey
-} from "./chunk-3I752C67.js";
+} from "./chunk-YDJRF3WE.js";
 import {
   MAX_POOL_ATTEMPTS,
   dispatchFreePool,
   formatCodexModelLabel,
   requestFingerprint
-} from "./chunk-S6ZXPMFI.js";
+} from "./chunk-YDABOFDG.js";
 import {
   describePoolFailure,
   extractConversationId,
@@ -45,7 +45,7 @@ import {
   recordPoolActivity,
   retryPoolFailure,
   toOAuthRegistryId
-} from "./chunk-URPO3PB6.js";
+} from "./chunk-MPQE6MYL.js";
 import {
   anthropicErrorType,
   formatUpstreamError,
@@ -101,7 +101,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-WXL3TOHJ.js";
+} from "./chunk-RC2VFJSS.js";
 import {
   hasApplicationDefaultCredentials,
   loadVertexModelEntries,
@@ -150,7 +150,7 @@ import {
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth,
   tokensToStoredCredential
-} from "./chunk-IQVDUGYT.js";
+} from "./chunk-5OEQISEV.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -6627,4 +6627,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-YLG4B2H6.js.map
+//# sourceMappingURL=chunk-HIL2HFIC.js.map
