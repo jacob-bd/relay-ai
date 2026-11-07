@@ -125,7 +125,10 @@ vi.mock('../src/server/router.js', () => ({
   }),
 }));
 
-describe('runServerCommand', () => {
+// These start a mocked server and wait for SIGTERM cleanup; under a loaded CI runner the
+// default 5s vitest budget can expire before startServerOptions is set (same class of flake
+// that stopped the v0.21.0 publish on pool-sdk-route).
+describe('runServerCommand', { timeout: 20_000 }, () => {
   beforeEach(() => {
     Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
     Object.defineProperty(process.stdin, 'setRawMode', { value: vi.fn(), configurable: true });
