@@ -1145,6 +1145,18 @@ input { font-family: inherit; }
   color: var(--text-3);
   margin-top: 1px;
 }
+.provider-server-url {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.server-url-current { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.server-url-current span { color: var(--text-2); font-size: 13px; }
+.server-url-current code { font-size: 13px; color: var(--text-1); word-break: break-all; }
 
 .template-signup-link {
   color: var(--accent-dim);
@@ -1187,6 +1199,52 @@ input { font-family: inherit; }
   background: var(--surface-2);
   border-color: var(--border);
 }
+
+/* Plan usage strip on signed-in provider cards */
+.provider-usage {
+  padding: 4px 18px 12px 76px;
+  display: grid;
+  gap: 6px;
+}
+.provider-usage[hidden] { display: none; }
+.usage-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.usage-title { font-weight: 600; }
+.usage-limit { color: var(--error); }
+.usage-checked { color: var(--text-3); margin-right: auto; }
+.usage-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(80px, 1fr) 44px minmax(110px, auto);
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.usage-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.usage-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--success);
+}
+.usage-bar.is-mid > span { background: oklch(78% 0.16 75); }
+.usage-bar.is-high > span { background: var(--error); }
+.usage-pct { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-1); }
+.usage-reset { color: var(--text-3); }
+.usage-balance { grid-template-columns: minmax(120px, 180px) 1fr; }
+.usage-amount { color: var(--text-1); font-variant-numeric: tabular-nums; }
+.usage-note { font-size: 13px; color: var(--text-3); }
+.usage-note.is-error { color: var(--error); }
 
 .provider-chevron {
   color: var(--text-3);
@@ -2455,11 +2513,28 @@ html[data-theme="light"] .toast {
   position: relative;
   opacity: 0.95;
 }
-.pool-member-row.drag-over {
+/* Drop onto a row: the dragged model takes this row's position. */
+.pool-member-row.drop-onto {
   border-color: var(--accent);
+  border-style: dashed;
   background: var(--accent-muted);
   box-shadow: 0 0 0 2px var(--accent-glow);
 }
+/* Drop between rows: a line in the gap (the list has an 8px gap, so -5px centres it). */
+.pool-member-row.drop-before, .pool-member-row.drop-after { position: relative; }
+.pool-member-row.drop-before::before, .pool-member-row.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+  pointer-events: none;
+}
+.pool-member-row.drop-before::before { top: -6px; }
+.pool-member-row.drop-after::after { bottom: -6px; }
 .pool-member-row .drag-handle { margin-right: -4px; }
 .pool-rank { flex-shrink:0; display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:6px; background:var(--surface-2); color:var(--text-3); font-size:12px; font-weight:700; }
 .pool-member-main { flex:1; min-width:0; }

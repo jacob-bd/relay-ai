@@ -49,6 +49,7 @@ import {
   applySystemCaTrust, revertSystemCaTrust, isSystemCaSupported, isSystemCaActive, TRUST_SYSTEM_CERTS_NOTICE,
 } from '../tls-trust.js';
 import { saveNativeOAuthCredential } from '../registry/provider-auth.js';
+import { getRelayAccountUsage, readRelayAccountUsage } from '../core/usage.js';
 import { removeProviderFromRegistry, renameProvider, setContextWindowOverride, setModelHidden, setModelKindOverride, recordModelTestResult, setModelMarkedFree, setModelsHidden } from '../registry/crud.js';
 import { guessModelKindFromName, MODEL_KINDS, nameKindOutranksChatTest, type ModelKind } from '../registry/model-kind.js';
 import type { RegistryProvider } from '../registry/types.js';
@@ -194,6 +195,10 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
     handleAddCustomProvider(req, res);
   } else if (url === '/api/providers/edit-custom' && req.method === 'POST') {
     handleEditCustomProvider(req, res);
+  } else if (url === '/api/usage' && req.method === 'GET') {
+    void handleGetUsage(res);
+  } else if (url === '/api/usage/refresh' && req.method === 'POST') {
+    void handleUsageRefresh(req, res);
   } else if (url === '/api/intelligence/status' && req.method === 'GET') {
     handleIntelligenceStatus(res);
   } else if (url === '/api/intelligence/key' && req.method === 'POST') {
@@ -1128,6 +1133,30 @@ async function handleIntelligenceRefresh(res: ServerResponse): Promise<void> {
   } catch (err) {
     sendJson(res, 200, { ok: false, error: err instanceof IntelligenceError ? err.message : 'Refresh failed.' });
   } finally { intelligenceRefreshing = false; }
+}
+
+/** Saved usage; accounts never checked are checked once here (first view after sign-in or install). */
+async function handleGetUsage(res: ServerResponse): Promise<void> {
+  try {
+    sendJson(res, 200, { ok: true, accounts: await readRelayAccountUsage({ fetchMissing: true }) });
+  } catch {
+    sendJson(res, 500, { ok: false, error: 'Could not read usage.' });
+  }
+}
+
+/** Manual usage check: one account (`providerId`) or every signed-in account. */
+async function handleUsageRefresh(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const raw = await readBody(req);
+    const body = (raw.trim() ? JSON.parse(raw) : {}) as { providerId?: unknown };
+    if (body.providerId !== undefined && typeof body.providerId !== 'string') {
+      sendJson(res, 400, { ok: false, error: 'providerId must be a string' }); return;
+    }
+    const providerIds = typeof body.providerId === 'string' ? [body.providerId] : undefined;
+    sendJson(res, 200, { ok: true, accounts: await getRelayAccountUsage({ providerIds }) });
+  } catch {
+    sendJson(res, 400, { ok: false, error: 'Could not check usage.' });
+  }
 }
 
 async function handleIntelligenceRemove(res: ServerResponse): Promise<void> {

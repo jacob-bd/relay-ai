@@ -8,7 +8,15 @@ export { createRelayModel } from './model.js';
 export { RELAY_POOL_ROUTE_ID } from './pool-model.js';
 export { parseRelayRouteId, toRelayRouteId } from './route-id.js';
 export { RelayCoreError, isRelayCoreError } from './errors.js';
+export { getRelayAccountUsage, readRelayAccountUsage, supportsAccountUsage } from './usage.js';
 export type {
+  GetRelayAccountUsageOptions,
+  ReadRelayAccountUsageOptions,
+  RelayAccountUsage,
+  RelayUsageBalance,
+  RelayUsageErrorCode,
+  RelayUsageScope,
+  RelayUsageWindow,
   RelayCoreErrorCode,
   RelayModelDescriptor,
   RelayReasoningLevel,

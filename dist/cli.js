@@ -35,6 +35,7 @@ import {
   formatAnthropicModelEntry,
   formatAnthropicModelList,
   formatUpdateNotification,
+  getRelayAccountUsage,
   httpProxyModelId,
   isClaudeAppRunning,
   isCodexAppRunning,
@@ -61,6 +62,7 @@ import {
   quitClaudeAppGracefully,
   quitCodexAppGracefully,
   readOAuthAccountLabel,
+  readRelayAccountUsage,
   relayIntro,
   relayOutro,
   removeFavorite,
@@ -71,20 +73,20 @@ import {
   supportsClaudeTransparentMode,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-HIL2HFIC.js";
+} from "./chunk-ZIGNTRFI.js";
 import {
   extractApiKey,
   readBody,
   sendJson,
   warnDisabledPoolMembers
-} from "./chunk-XPA3TW64.js";
+} from "./chunk-VTP3A7UJ.js";
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-6VFDMXR4.js";
+} from "./chunk-UFOUOAJV.js";
 import {
   translateRequest
-} from "./chunk-QON3ED3L.js";
+} from "./chunk-GP42LVHQ.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   UNTRUSTED_CERTIFICATE_CODE,
@@ -108,7 +110,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-YDJRF3WE.js";
+} from "./chunk-L5UIRBFD.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -152,7 +154,7 @@ import {
   translateResponsesRequest,
   translatedEffortClaim,
   writeResponsesErrorStream
-} from "./chunk-YDABOFDG.js";
+} from "./chunk-A3Q3C2FS.js";
 import {
   OPENCODE_SESSION_HEADER,
   PoolHealthStore,
@@ -192,14 +194,14 @@ import {
   retryPoolFailure,
   routableModelsForTarget,
   toOAuthRegistryId
-} from "./chunk-MPQE6MYL.js";
+} from "./chunk-SZETLIMN.js";
 import {
   effectiveProviderBaseUrl,
   isLikelyPlaceholderKey,
   resolveProviderTemplate,
   resolveRefreshCredential,
   syntheticTemplate
-} from "./chunk-QXLS4PK5.js";
+} from "./chunk-OIJVKOTS.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
@@ -271,7 +273,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-RC2VFJSS.js";
+} from "./chunk-EP5Y4GRS.js";
 import {
   DEFAULT_VERTEX_MODELS,
   hasApplicationDefaultCredentials,
@@ -318,7 +320,7 @@ import {
   saveToCredentialStore,
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth
-} from "./chunk-5OEQISEV.js";
+} from "./chunk-4RLHM2U6.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -2529,6 +2531,45 @@ async function runVertexModelAccessFlow() {
   return 0;
 }
 
+// src/usage/format.ts
+function resetText(resetsAt, now) {
+  if (!resetsAt) return "";
+  const ms = Date.parse(resetsAt) - now;
+  if (!Number.isFinite(ms)) return "";
+  if (ms <= 0) return "reset";
+  const minutes = Math.round(ms / 6e4);
+  if (minutes < 60) return `resets in ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `resets in ${hours}h ${minutes % 60}m`;
+  return `resets in ${Math.round(hours / 24)}d`;
+}
+function formatUsd(amount) {
+  return `US$${amount.toFixed(2)}`;
+}
+function effectiveUsedPercent(window, now = Date.now()) {
+  if (window.resetsAt && Date.parse(window.resetsAt) <= now) return 0;
+  return window.usedPercent;
+}
+function formatUsageWindow(window, now = Date.now()) {
+  const used = effectiveUsedPercent(window, now);
+  const pct = used === null ? "unknown" : `${Math.round(used)}% used`;
+  const counts = window.limit !== void 0 && window.remaining !== void 0 ? ` (${window.remaining}/${window.limit} left)` : "";
+  const reset = resetText(window.resetsAt, now);
+  return `${window.label}: ${pct}${counts}${reset ? ` \xB7 ${reset}` : ""}`;
+}
+function formatAccountUsage(account, now = Date.now()) {
+  const head = `${account.providerName} (${account.providerId})`;
+  if (account.status === "unsupported") return [`${head}: usage not available for this provider`];
+  if (account.status === "unchecked") return [`${head}: not checked yet`];
+  const lines = [head];
+  if (account.error) lines.push(`  ! ${account.error.message}${account.windows.length ? " Showing the last reading." : ""}`);
+  if (account.limitReached) lines.push("  ! Limit reached");
+  for (const window of account.windows) lines.push(`  ${formatUsageWindow(window, now)}`);
+  for (const balance of account.balances ?? []) lines.push(`  ${balance.label}: ${formatUsd(balance.amount)}`);
+  if (account.status === "ok" && !account.windows.length && !account.balances?.length) lines.push("  No usage limits reported");
+  return lines;
+}
+
 // src/providers-command.ts
 function parseProvidersArgs(args) {
   if (args.length === 0) return { subcommand: "hub", showHelp: false };
@@ -2588,6 +2629,15 @@ function parseProvidersArgs(args) {
     }
     return { subcommand: "trust-certs", showHelp: false, trustMode: mode };
   }
+  if (first === "usage") {
+    const usageJson = rest.includes("--json");
+    const usageSaved = rest.includes("--saved");
+    const operands = rest.filter((arg) => arg !== "--json" && arg !== "--saved");
+    const unknownOption = operands.find((arg) => arg.startsWith("-"));
+    if (unknownOption) return { subcommand: "usage", showHelp: false, error: `Unknown usage option: ${unknownOption}` };
+    if (operands.length > 1) return { subcommand: "usage", showHelp: false, error: "Usage: relay-ai providers usage [id] [--json] [--saved]" };
+    return { subcommand: "usage", showHelp: false, removeId: operands[0], usageJson, usageSaved };
+  }
   if (first === "refresh-models") {
     if (rest.length === 0) return { subcommand: "refresh-models", showHelp: false };
     if (rest.length > 1) return { subcommand: "refresh-models", showHelp: false, error: `Unknown refresh-models option: ${rest[1]}` };
@@ -2606,6 +2656,7 @@ ${pc4.bold("Usage:")}
   relay-ai providers remove <id>
   relay-ai providers rename <id> <new name>
   relay-ai providers refresh-models [id]
+  relay-ai providers usage [id] [--json] [--saved]
   relay-ai providers auth <id> [--new]
   relay-ai providers trust-certs [on|off|status]
 
@@ -2618,6 +2669,7 @@ ${pc4.bold("Subcommands:")}
   remove      Remove a provider by id ${pc4.dim("[Phase 1.1]")}
   rename      Change a provider's display name (id and keys stay the same)
   refresh-models  Update cached model lists ${pc4.dim("[Phase 1.2]")}
+  usage       Check plan usage for signed-in accounts now (--saved: last reading, no network)
   trust-certs Trust this computer's certificates, for company servers behind a VPN (off by default)`;
 }
 function providerLabel(name, modelCount, enabled) {
@@ -3622,7 +3674,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-3F3NEXJM.js");
+      const { testModel } = await import("./test-model-2GXVA25S.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -3787,6 +3839,19 @@ async function runProvidersHub() {
     }
   }
 }
+async function runProvidersUsage(providerId, opts = {}) {
+  const providerIds = providerId ? [providerId] : void 0;
+  const accounts = opts.saved ? await readRelayAccountUsage({ providerIds }) : await getRelayAccountUsage({ providerIds });
+  if (opts.json) {
+    console.log(JSON.stringify(accounts, null, 2));
+  } else if (!accounts.length) {
+    p8.log.warn(providerId ? `No enabled sign-in account with id "${providerId}".` : "No signed-in (OAuth) accounts.");
+  } else {
+    console.log(accounts.map((account) => formatAccountUsage(account).join("\n")).join("\n\n"));
+  }
+  if (providerId && !accounts.length) return 1;
+  return accounts.some((account) => account.status === "error") ? 1 : 0;
+}
 async function runProvidersCommand(args) {
   const parsed = parseProvidersArgs(args);
   if (parsed.error) {
@@ -3805,6 +3870,7 @@ async function runProvidersCommand(args) {
     return runProvidersRename(parsed.removeId, parsed.renameName);
   }
   if (parsed.subcommand === "refresh-models") return runProvidersRefreshModels(parsed.removeId);
+  if (parsed.subcommand === "usage") return runProvidersUsage(parsed.removeId, { json: parsed.usageJson, saved: parsed.usageSaved });
   if (parsed.subcommand === "trust-certs") return runProvidersTrustCerts(parsed.trustMode ?? "status");
   if (parsed.subcommand === "auth") {
     if (parsed.showHelp || !parsed.removeId) {
@@ -18216,11 +18282,11 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-EKT7TQYB.js");
+    const { runUiCommand } = await import("./ui-command-REMPOBSK.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode, background: parsed.uiBackground });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-RTQIGTYT.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-ZA45IILO.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

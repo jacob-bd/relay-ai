@@ -9,6 +9,7 @@ import {
 } from './provider-model-browser.js';
 import { copyDeviceCode, copyTextToClipboard, oauthConnectionLabel } from './oauth-device.js';
 import { providerInitial, providerLogoHtml } from './provider-logo.js';
+import { dropTarget, moveItem } from './drag-order.js';
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,8 @@ const state = {
   poolBusy: false,
 
   providers: [],
+  usage: {},                  // providerId → saved plan usage (GET /api/usage; checked on demand only)
+  usageRefreshing: new Set(), // providerIds with a manual check in flight
   intelligenceActive: false, // scores downloaded: show the Intelligence column
   intelligenceSort: null,    // null | 'desc' | 'asc'
   templates: [],   // unconfigured available templates
@@ -494,6 +497,7 @@ function buildProviderCard(provider) {
     <div class="provider-info">
       <div class="provider-name">${escapeHtml(displayName)}</div>
       <div class="provider-models-count">${provider.modelCount ?? provider.models?.length ?? 0} models</div>
+      ${provider.canEditServerUrl && provider.serverUrl ? `<div class="provider-server-url" title="Server address">${escapeHtml(provider.serverUrl)}</div>` : ''}
     </div>
     <div class="provider-status">
       <span class="status-chip ${provider.hasKey ? 'has-key' : provider.freeAccess ? 'free-access' : 'no-key'}">
@@ -530,9 +534,100 @@ function buildProviderCard(provider) {
     }
   });
 
+  const usage = document.createElement('div');
+  usage.className = 'provider-usage';
+  usage.dataset.usageFor = provider.id;
+  renderUsageStrip(usage, provider.id);
+
   card.appendChild(header);
+  card.appendChild(usage);
   card.appendChild(body);
   return card;
+}
+
+// ─── Plan usage (per signed-in account; checked on demand, never on a timer) ──
+
+async function loadUsage() {
+  try {
+    const data = await api('GET', '/api/usage');
+    if (data.ok) applyUsage(data.accounts);
+  } catch { /* usage is optional */ }
+}
+
+function applyUsage(accounts) {
+  for (const account of accounts ?? []) state.usage[account.providerId] = account;
+  document.querySelectorAll('.provider-usage').forEach(el => renderUsageStrip(el, el.dataset.usageFor));
+}
+
+async function refreshUsage(providerId) {
+  if (state.usageRefreshing.has(providerId)) return;
+  state.usageRefreshing.add(providerId);
+  applyUsage([]);
+  try {
+    const data = await api('POST', '/api/usage/refresh', { providerId });
+    if (!data.ok) showToast(data.error || 'Could not check usage');
+    const account = data.accounts?.[0];
+    if (account?.error) showToast(account.error.message);
+    state.usageRefreshing.delete(providerId);
+    applyUsage(data.accounts);
+  } catch {
+    state.usageRefreshing.delete(providerId);
+    applyUsage([]);
+    showToast('Could not check usage');
+  }
+}
+
+function usageRelative(iso, future) {
+  const ms = Date.parse(iso) - Date.now();
+  if (!Number.isFinite(ms)) return '';
+  const mins = Math.round(Math.abs(ms) / 60000);
+  const text = mins < 1 ? 'now' : mins < 60 ? `${mins}m` : mins < 48 * 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${Math.round(mins / 1440)}d`;
+  if (future) return ms <= 0 ? 'reset' : `resets in ${text}`;
+  return mins < 1 ? 'just now' : `${text} ago`;
+}
+
+function usageWindowHtml(w) {
+  const expired = w.resetsAt && Date.parse(w.resetsAt) <= Date.now();
+  const used = expired ? 0 : w.usedPercent;
+  const pct = used == null ? null : Math.max(0, Math.min(100, used));
+  const level = pct == null ? '' : pct >= 90 ? 'is-high' : pct >= 70 ? 'is-mid' : '';
+  const counts = w.limit != null && w.remaining != null ? ` · ${w.remaining}/${w.limit} left` : '';
+  const models = w.scope?.type === 'model-group' && w.scope.modelIds?.length ? w.scope.modelIds.join(', ') : '';
+  return `
+    <div class="usage-row" ${models ? `title="${escapeHtml(models)}"` : ''}>
+      <span class="usage-label">${escapeHtml(w.label)}</span>
+      <span class="usage-bar ${level}"><span style="width:${pct ?? 0}%"></span></span>
+      <span class="usage-pct">${pct == null ? '—' : `${Math.round(pct)}%`}</span>
+      <span class="usage-reset">${escapeHtml((w.resetsAt ? usageRelative(w.resetsAt, true) : '') + counts)}</span>
+    </div>`;
+}
+
+function renderUsageStrip(el, providerId) {
+  const account = state.usage[providerId];
+  if (!account || account.status === 'unsupported') { el.hidden = true; el.innerHTML = ''; return; }
+  el.hidden = false;
+  const busy = state.usageRefreshing.has(providerId);
+  const checked = account.fetchedAt ? `checked ${usageRelative(account.fetchedAt, false)}` : 'not checked yet';
+  const balances = account.balances ?? [];
+  const rows = account.windows.map(usageWindowHtml).join('') + balances.map(b => `
+    <div class="usage-row usage-balance">
+      <span class="usage-label">${escapeHtml(b.label)}</span>
+      <span class="usage-amount">US$${Number(b.amount).toFixed(2)}</span>
+    </div>`).join('');
+  const note = account.error
+    ? `<div class="usage-note is-error">${escapeHtml(account.error.message)}${account.windows.length ? ' Showing the last reading.' : ''}</div>`
+    : account.status === 'ok' && !account.windows.length && !balances.length ? '<div class="usage-note">No usage limits reported.</div>' : '';
+  el.innerHTML = `
+    <div class="usage-head">
+      <span class="usage-title">Plan usage${account.limitReached ? ' · <span class="usage-limit">limit reached</span>' : ''}</span>
+      <span class="usage-checked">${escapeHtml(checked)}</span>
+      <button class="btn btn-ghost btn-sm usage-refresh" type="button" ${busy ? 'disabled' : ''}>${busy ? 'Checking…' : 'Refresh'}</button>
+    </div>
+    ${rows}${note}`;
+  el.querySelector('.usage-refresh').addEventListener('click', event => {
+    event.stopPropagation();
+    refreshUsage(providerId);
+  });
 }
 
 function providerIdFromHash() {
@@ -2492,9 +2587,17 @@ function buildAddKeyAccountRow(provider) {
 function buildServerUrlRow(provider) {
   const wrapper = document.createElement('div');
   wrapper.style.cssText = 'margin-top:12px;padding-top:12px;border-top:1px solid oklch(22% 0.015 265)';
+  const current = document.createElement('div');
+  current.className = 'server-url-current';
+  const label = document.createElement('span');
+  label.textContent = 'Server address';
+  const address = document.createElement('code');
+  address.textContent = provider.serverUrl || 'not set';
   const editBtn = document.createElement('button');
   editBtn.className = 'btn btn-ghost';
-  editBtn.textContent = 'Edit server address';
+  editBtn.textContent = 'Edit';
+  editBtn.setAttribute('aria-label', 'Edit server address');
+  current.append(label, address, editBtn);
   const form = document.createElement('div');
   form.style.cssText = 'display:none;align-items:center;gap:8px;flex-wrap:wrap';
   const urlInput = document.createElement('input');
@@ -2513,9 +2616,9 @@ function buildServerUrlRow(provider) {
   const feedback = document.createElement('div');
   feedback.className = 'key-feedback';
   form.append(urlInput, saveBtn, cancelBtn);
-  wrapper.append(editBtn, form, feedback);
-  editBtn.addEventListener('click', () => { editBtn.style.display = 'none'; form.style.display = 'flex'; urlInput.focus(); });
-  cancelBtn.addEventListener('click', () => { form.style.display = 'none'; editBtn.style.display = ''; feedback.textContent = ''; });
+  wrapper.append(current, form, feedback);
+  editBtn.addEventListener('click', () => { current.style.display = 'none'; form.style.display = 'flex'; urlInput.focus(); });
+  cancelBtn.addEventListener('click', () => { form.style.display = 'none'; current.style.display = ''; feedback.textContent = ''; });
   saveBtn.addEventListener('click', async () => {
     const baseUrl = urlInput.value.trim();
     if (!baseUrl) { feedback.textContent = 'Enter a server address.'; feedback.className = 'key-feedback error'; return; }
@@ -3355,11 +3458,52 @@ function renderFreePool() {
     }
     await loadFreePool();
   });
-  panel.querySelectorAll('.pool-test').forEach(button => {
+  const outsideMembers = el => !el.closest('.pool-member-list');
+  [...panel.querySelectorAll('.pool-test')].filter(outsideMembers).forEach(button => {
     button.addEventListener('click', () => testModelResponse(button, button.dataset.providerId, button.dataset.modelId, { pool: true }));
   });
-  bindPoolMemberDrag(panel);
-  panel.querySelectorAll('.pool-context, .pool-reasoning, .pool-set-context, .pool-move').forEach(button => {
+  const memberList = panel.querySelector('.pool-member-list');
+  if (memberList) bindPoolMemberRows(memberList);
+  [...panel.querySelectorAll('.pool-add')].forEach(button => {
+    button.addEventListener('click', () => toggleFreePoolModel(button.dataset.providerId, button.dataset.modelId, button, 'add'));
+  });
+  [...panel.querySelectorAll('.pool-remove')].filter(outsideMembers).forEach(button => {
+    button.addEventListener('click', () => toggleFreePoolModel(button.dataset.providerId, button.dataset.modelId, button, 'remove'));
+  });
+  panel.querySelectorAll('.pool-hide').forEach(button => {
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      await toggleModelHidden(button.dataset.providerId, button.dataset.modelId);
+      await loadFreePool();
+    });
+  });
+}
+
+/** Redraw only the "In the pool" list from local state (no request, no full panel render). */
+function renderPoolMemberList() {
+  const list = document.querySelector('#free-pool-panel .pool-member-list');
+  const members = poolData()?.members ?? [];
+  if (!list) return;
+  const manageable = !isServerAdminUi();
+  list.innerHTML = members.map((member, index) => poolMemberRowHtml(member, index, manageable)).join('');
+  bindPoolMemberRows(list);
+}
+
+function bindPoolMemberRows(list) {
+  list.querySelectorAll('.pool-test').forEach(button => {
+    button.addEventListener('click', () => testModelResponse(button, button.dataset.providerId, button.dataset.modelId, { pool: true }));
+  });
+  list.querySelectorAll('.pool-remove').forEach(button => {
+    button.addEventListener('click', () => toggleFreePoolModel(button.dataset.providerId, button.dataset.modelId, button, 'remove'));
+  });
+  list.querySelectorAll('.pool-move').forEach(button => {
+    button.addEventListener('click', () => {
+      const from = Number.parseInt(button.closest('.pool-member-row')?.dataset.index ?? '', 10);
+      if (Number.isInteger(from)) void reorderPoolMember(from, from + Number(button.dataset.direction), { focus: true });
+    });
+  });
+  bindPoolMemberDrag(list);
+  list.querySelectorAll('.pool-context, .pool-reasoning, .pool-set-context').forEach(button => {
     button.addEventListener('click', async () => {
       const { providerId, modelId } = button.dataset;
       button.disabled = true;
@@ -3376,9 +3520,6 @@ function renderFreePool() {
           if (contextWindow !== null && (!Number.isSafeInteger(contextWindow) || contextWindow <= 0)) { showToast('Enter a positive token count or reset.'); return; }
           const result = await api('POST', '/api/providers/models/context', { providerId, modelId, contextWindow });
           showToast(result.ok ? 'Context size saved. Run Test to update pool readiness.' : (result.error || 'Could not save context.'));
-        } else if (button.classList.contains('pool-move')) {
-          const result = await api('POST', '/api/pool', { action: 'move', providerId, modelId, direction: Number(button.dataset.direction) });
-          if (!result.ok) showToast(result.error || 'Could not change priority.');
         } else {
           if (!window.confirm('Check reasoning: up to ' + button.dataset.requests + ' extra requests, with no retries. These consume message and token quota. Continue?')) return;
           const result = await api('POST', '/api/pool', { action: 'verify', providerId, modelId, reasoning: true });
@@ -3389,77 +3530,100 @@ function renderFreePool() {
       finally { button.disabled = false; }
     });
   });
-  panel.querySelectorAll('.pool-add').forEach(button => {
-    button.addEventListener('click', () => toggleFreePoolModel(button.dataset.providerId, button.dataset.modelId, button, 'add'));
-  });
-  panel.querySelectorAll('.pool-remove').forEach(button => {
-    button.addEventListener('click', () => toggleFreePoolModel(button.dataset.providerId, button.dataset.modelId, button, 'remove'));
-  });
-  panel.querySelectorAll('.pool-hide').forEach(button => {
-    button.addEventListener('click', async () => {
-      button.disabled = true;
-      await toggleModelHidden(button.dataset.providerId, button.dataset.modelId);
-      await loadFreePool();
-    });
-  });
 }
 
-async function reorderPoolMember(fromIndex, toIndex) {
-  const members = poolData()?.members ?? [];
+/**
+ * Reorder locally first so the list updates on the drop, then save. The order is the only thing a move
+ * changes, so no pool reload follows; a failed save puts the old order back.
+ */
+async function reorderPoolMember(fromIndex, toIndex, { focus = false } = {}) {
+  const pool = poolData();
+  const members = pool?.members ?? [];
   const member = members[fromIndex];
   if (!member || fromIndex === toIndex || toIndex < 0 || toIndex >= members.length) return;
-  const result = await api('POST', '/api/pool', {
-    action: 'move', providerId: member.providerId, modelId: member.modelId, toIndex,
-  });
-  if (result.error || result.ok === false) {
-    showToast(result.error ?? 'Could not change priority.', undefined, 5000);
-    return;
+  const previous = members;
+  pool.members = moveItem(members, fromIndex, toIndex);
+  renderPoolMemberList();
+  if (focus) document.querySelector(`#free-pool-panel .pool-member-row[data-index="${toIndex}"]`)?.focus();
+  try {
+    const result = await api('POST', '/api/pool', {
+      action: 'move', providerId: member.providerId, modelId: member.modelId, toIndex,
+    });
+    if (result.error || result.ok === false) throw new Error(result.error ?? 'Could not change priority.');
+  } catch (error) {
+    if (poolData() === pool) {
+      pool.members = previous;
+      renderPoolMemberList();
+    }
+    showToast(error?.message || 'Could not change priority.', undefined, 5000);
   }
-  showToast('Order saved');
-  await loadFreePool();
 }
 
-function bindPoolMemberDrag(panel) {
-  panel.querySelectorAll('.pool-member-row[draggable="true"]').forEach(row => {
+/** Where a drag over the member list would land: between two rows, or onto a row (taking its place). */
+function poolDropTarget(list, pointerY, from) {
+  return dropTarget([...list.querySelectorAll('.pool-member-row')].map(row => row.getBoundingClientRect()), pointerY, from);
+}
+
+function clearPoolDropIndicators(list) {
+  list.querySelectorAll('.pool-member-row').forEach(el => el.classList.remove('drop-before', 'drop-after', 'drop-onto'));
+}
+
+function showPoolDropIndicator(list, target) {
+  clearPoolDropIndicators(list);
+  if (!target) return;
+  const rows = list.querySelectorAll('.pool-member-row');
+  if (target.kind === 'onto') rows[target.index]?.classList.add('drop-onto');
+  else if (target.slot < rows.length) rows[target.slot]?.classList.add('drop-before');
+  else rows[rows.length - 1]?.classList.add('drop-after');
+}
+
+function bindPoolMemberDrag(list) {
+  let dragFrom = null;
+  list.addEventListener('dragover', event => {
+    if (dragFrom === null) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    showPoolDropIndicator(list, poolDropTarget(list, event.clientY, dragFrom));
+  });
+  list.addEventListener('dragleave', event => {
+    if (!list.contains(event.relatedTarget)) clearPoolDropIndicators(list);
+  });
+  list.addEventListener('drop', event => {
+    if (dragFrom === null) return;
+    event.preventDefault();
+    const target = poolDropTarget(list, event.clientY, dragFrom);
+    const from = dragFrom;
+    clearPoolDropIndicators(list);
+    if (target) void reorderPoolMember(from, target.to);
+  });
+  list.querySelectorAll('.pool-member-row[draggable="true"]').forEach(row => {
     row.addEventListener('dragstart', event => {
       if (event.target.closest('button, summary, details, a, input, select')) {
         event.preventDefault();
         return;
       }
+      dragFrom = Number.parseInt(row.dataset.index ?? '', 10);
       event.dataTransfer.effectAllowed = 'move';
       event.dataTransfer.setData('text/plain', row.dataset.index ?? '');
       row.setAttribute('aria-grabbed', 'true');
       requestAnimationFrame(() => row.classList.add('dragging'));
     });
     row.addEventListener('dragend', () => {
+      dragFrom = null;
       row.classList.remove('dragging');
       row.setAttribute('aria-grabbed', 'false');
-      panel.querySelectorAll('.pool-member-row').forEach(el => el.classList.remove('drag-over'));
+      clearPoolDropIndicators(list);
     });
-    row.addEventListener('dragover', event => {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'move';
-      panel.querySelectorAll('.pool-member-row').forEach(el => el.classList.remove('drag-over'));
-      row.classList.add('drag-over');
-    });
-    row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
-    row.addEventListener('drop', async event => {
-      event.preventDefault();
-      row.classList.remove('drag-over');
-      const from = Number.parseInt(event.dataTransfer.getData('text/plain'), 10);
-      const to = Number.parseInt(row.dataset.index ?? '', 10);
-      if (Number.isInteger(from) && Number.isInteger(to) && from !== to) await reorderPoolMember(from, to);
-    });
-    row.addEventListener('keydown', async event => {
+    row.addEventListener('keydown', event => {
       const from = Number.parseInt(row.dataset.index ?? '', 10);
       const total = poolData()?.members?.length ?? 0;
       if (!Number.isInteger(from)) return;
       if (event.altKey && event.key === 'ArrowUp' && from > 0) {
         event.preventDefault();
-        await reorderPoolMember(from, from - 1);
+        void reorderPoolMember(from, from - 1, { focus: true });
       } else if (event.altKey && event.key === 'ArrowDown' && from < total - 1) {
         event.preventDefault();
-        await reorderPoolMember(from, from + 1);
+        void reorderPoolMember(from, from + 1, { focus: true });
       }
     });
   });
@@ -3813,6 +3977,8 @@ async function initModels() {
   }
   // Keep the Providers header counts in sync after add / delete / OAuth / refresh.
   renderProviderStats();
+  // Saved readings; accounts never checked (new install or sign-in) are checked once by the server.
+  void loadUsage();
   // Server tab caches its provider checklist — invalidate so new providers appear without a full reload.
   invalidateServerProviderCache();
 }

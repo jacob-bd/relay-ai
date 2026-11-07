@@ -53,6 +53,8 @@ import { runVertexModelAccessFlow, runVertexModelAddFlow, runVertexModelRemoveFl
 import { isVertexAnthropicProvider } from './registry/vertex-anthropic.js';
 import { hasCustomVertexModels } from './vertex-env.js';
 import { refreshAllProviderModels, refreshProviderModels, refreshProviderModelsBatch } from './registry/refresh-models.js';
+import { getRelayAccountUsage, readRelayAccountUsage } from './core/usage.js';
+import { formatAccountUsage } from './usage/format.js';
 import { resolveRefreshCredential } from './registry/refresh-credentials.js';
 import { resolveOrCollectApiKey } from './key-setup.js';
 import { authenticateProvider, providerAuthHelpText, type ProviderAuthMethod } from './registry/provider-auth.js';
@@ -80,7 +82,7 @@ import {
   relayIntro,
 } from './ui.js';
 
-export type ProvidersSubcommand = 'hub' | 'add' | 'import' | 'list' | 'remove' | 'rename' | 'refresh-models' | 'auth' | 'trust-certs' | 'help';
+export type ProvidersSubcommand = 'hub' | 'add' | 'import' | 'list' | 'remove' | 'rename' | 'refresh-models' | 'usage' | 'auth' | 'trust-certs' | 'help';
 
 export function parseProvidersArgs(args: string[]): {
   subcommand: ProvidersSubcommand;
@@ -95,6 +97,9 @@ export function parseProvidersArgs(args: string[]): {
   trustMode?: 'on' | 'off' | 'status';
   /** `providers auth <kind> --new` signs in an additional account. */
   addAccount?: boolean;
+  /** `providers usage --json` / `--saved` (last reading, no network). */
+  usageJson?: boolean;
+  usageSaved?: boolean;
   error?: string;
 } {
   if (args.length === 0) return { subcommand: 'hub', showHelp: false };
@@ -154,6 +159,15 @@ export function parseProvidersArgs(args: string[]): {
     }
     return { subcommand: 'trust-certs', showHelp: false, trustMode: mode };
   }
+  if (first === 'usage') {
+    const usageJson = rest.includes('--json');
+    const usageSaved = rest.includes('--saved');
+    const operands = rest.filter(arg => arg !== '--json' && arg !== '--saved');
+    const unknownOption = operands.find(arg => arg.startsWith('-'));
+    if (unknownOption) return { subcommand: 'usage', showHelp: false, error: `Unknown usage option: ${unknownOption}` };
+    if (operands.length > 1) return { subcommand: 'usage', showHelp: false, error: 'Usage: relay-ai providers usage [id] [--json] [--saved]' };
+    return { subcommand: 'usage', showHelp: false, removeId: operands[0], usageJson, usageSaved };
+  }
   if (first === 'refresh-models') {
     if (rest.length === 0) return { subcommand: 'refresh-models', showHelp: false };
     if (rest.length > 1) return { subcommand: 'refresh-models', showHelp: false, error: `Unknown refresh-models option: ${rest[1]}` };
@@ -173,6 +187,7 @@ ${pc.bold('Usage:')}
   relay-ai providers remove <id>
   relay-ai providers rename <id> <new name>
   relay-ai providers refresh-models [id]
+  relay-ai providers usage [id] [--json] [--saved]
   relay-ai providers auth <id> [--new]
   relay-ai providers trust-certs [on|off|status]
 
@@ -185,6 +200,7 @@ ${pc.bold('Subcommands:')}
   remove      Remove a provider by id ${pc.dim('[Phase 1.1]')}
   rename      Change a provider's display name (id and keys stay the same)
   refresh-models  Update cached model lists ${pc.dim('[Phase 1.2]')}
+  usage       Check plan usage for signed-in accounts now (--saved: last reading, no network)
   trust-certs Trust this computer's certificates, for company servers behind a VPN (off by default)`;
 }
 
@@ -1530,6 +1546,25 @@ export async function runProvidersHub(): Promise<number> {
   }
 }
 
+export async function runProvidersUsage(
+  providerId: string | undefined,
+  opts: { json?: boolean; saved?: boolean } = {},
+): Promise<number> {
+  const providerIds = providerId ? [providerId] : undefined;
+  const accounts = opts.saved
+    ? await readRelayAccountUsage({ providerIds })
+    : await getRelayAccountUsage({ providerIds });
+  if (opts.json) {
+    console.log(JSON.stringify(accounts, null, 2));
+  } else if (!accounts.length) {
+    p.log.warn(providerId ? `No enabled sign-in account with id "${providerId}".` : 'No signed-in (OAuth) accounts.');
+  } else {
+    console.log(accounts.map(account => formatAccountUsage(account).join('\n')).join('\n\n'));
+  }
+  if (providerId && !accounts.length) return 1;
+  return accounts.some(account => account.status === 'error') ? 1 : 0;
+}
+
 export async function runProvidersCommand(args: string[]): Promise<number> {
   const parsed = parseProvidersArgs(args);
   if (parsed.error) {
@@ -1549,6 +1584,7 @@ export async function runProvidersCommand(args: string[]): Promise<number> {
     return runProvidersRename(parsed.removeId, parsed.renameName);
   }
   if (parsed.subcommand === 'refresh-models') return runProvidersRefreshModels(parsed.removeId);
+  if (parsed.subcommand === 'usage') return runProvidersUsage(parsed.removeId, { json: parsed.usageJson, saved: parsed.usageSaved });
   if (parsed.subcommand === 'trust-certs') return runProvidersTrustCerts(parsed.trustMode ?? 'status');
   if (parsed.subcommand === 'auth') {
     if (parsed.showHelp || !parsed.removeId) {

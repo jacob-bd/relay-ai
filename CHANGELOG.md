@@ -1,6 +1,28 @@
 # Changelog
 
-## [Unreleased]
+## [0.22.0] - 2026-11-07
+
+### Added
+
+- **Plan usage for signed-in accounts.** Relay can now show how much of each subscription allowance you have used and when it resets: Claude Code (5-hour and weekly), ChatGPT (5-hour, weekly, 30-day), Antigravity (per model group, with Gemini 4 as its own allowance on plans that have one), GitHub Copilot (monthly premium requests) and xAI SuperGrok (weekly limit plus extra usage credits). Usage is checked only when you ask, and once when an account is signed in or first shown; Relay never polls in the background. The last reading is saved in `usage.json` in the Relay folder (no tokens). A failed check keeps the last good reading and says why (sign in again, access denied, rate limited).
+  - `relay-ai ui`: each signed-in provider card shows a usage bar per allowance, with percent used, reset time and a **Refresh** button.
+  - `relay-ai providers usage [id] [--json] [--saved]` checks now (`--saved` shows the last reading without a network request).
+  - Relay Core: `getRelayAccountUsage({ providerIds })` checks on demand; `readRelayAccountUsage({ providerIds, fetchMissing })` returns saved readings with no network request, checking once only for accounts never checked; `supportsAccountUsage(providerId)` says whether an account has usage. Overlapping checks of one account share a single request. See `docs/CORE.md` → Account usage. Alef is the first consumer ([alef-agent#320](https://github.com/jacob-bd/alef-agent/issues/320)).
+
+### Changed
+
+- **Free Pool reordering is instant.** Dropping a row (or using ↑/↓ or Alt+Arrow) updates the list immediately and saves in the background; only the pool list is redrawn, and a failed save restores the previous order. Saving a new order, removing a member, or changing effort or on/off no longer loads the whole provider catalog, which was the cause of the 3–5 second delay.
+- **Clearer drop targets in the Free Pool.** While dragging, a line shows where the row will be inserted between two models; dropping onto the middle of another row shows a dashed highlight, meaning the dragged model takes that row's position.
+
+### Fixed
+
+- **xAI usage matches Grok's own usage page.** xAI leaves out fields whose value is zero, so a missing percentage now reads as 0% used instead of unknown. The allowance is labelled **Weekly limit**, and the prepaid balance appears as **Extra usage credits** in US dollars. The bar stays percentage-only because xAI does not report a credit total.
+- **GitHub Copilot free plans** no longer show premium requests as 100% used when the plan includes none.
+- **The configured server address is visible.** Ollama, LM Studio and other providers whose address can be edited now show the current address on their provider card and next to **Edit** in the card's settings, instead of only inside the edit form.
+
+### Upgrade notes
+
+- No migration needed. `usage.json` is created on the first usage check. Embedded Core consumers should feature-detect `readRelayAccountUsage` when they may load an older Relay.
 
 ## [0.21.2] - 2026-11-07
 

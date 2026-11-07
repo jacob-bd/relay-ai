@@ -37,9 +37,12 @@ describe.skipIf(!built)('dist/core package surface', () => {
       'RELAY_POOL_ROUTE_ID',
       'RelayCoreError',
       'createRelayModel',
+      'getRelayAccountUsage',
       'isRelayCoreError',
       'listRelayModels',
       'parseRelayRouteId',
+      'readRelayAccountUsage',
+      'supportsAccountUsage',
       'toRelayRouteId',
     ]);
     // No files created or modified in the consumer's RELAY_AI_HOME.

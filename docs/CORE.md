@@ -299,6 +299,44 @@ are undocumented, and a matching fingerprint does not guarantee a cache hit.
 `sessionId` remains an OpenCode Go option. Relay makes no Antigravity session-ID or
 request-ID behavior change based on this investigation.
 
+### Account usage
+
+```ts
+import { getRelayAccountUsage, readRelayAccountUsage } from '@jacobbd/relay-ai/core';
+
+const live = await getRelayAccountUsage({ providerIds: ['claude-code'] }); // checks now
+const saved = await readRelayAccountUsage();                                // no network
+```
+
+`getRelayAccountUsage(opts?)` checks plan usage for enabled OAuth accounts right now (all of
+them, or `providerIds`) and saves the result to `<RELAY_AI_HOME>/usage.json`. It may refresh
+an OAuth token and makes one request per account (Antigravity: one per Cloud Code endpoint).
+Relay never calls it on a timer, so call it when your user asks — these endpoints are
+rate-limited, and xAI's and Copilot's are undocumented. A failure for one account never throws:
+that account returns `status: 'error'` with `error.code` (`credential_unavailable`,
+`reauth_required`, `access_denied`, `rate_limited`, `unavailable`, `unsupported_payload`) and
+keeps its last good `windows` and `fetchedAt`. Overlapping checks of one account share a request.
+
+`readRelayAccountUsage(opts?)` returns the saved readings without network access. Accounts never
+checked return `status: 'unchecked'`; pass `fetchMissing: true` to check just those once.
+Providers without a usage source (e.g. ClinePass) return `status: 'unsupported'`.
+
+Each account has `windows: RelayUsageWindow[]`: `id`, `label`, `usedPercent` (0–100, or null when
+the provider reports a period without a reading), `resetsAt` (ISO or null), optional
+`windowSeconds`, `limit`/`remaining` (counts), and `scope` — `{ type: 'account' }` or
+`{ type: 'model-group', family, modelIds }` (Antigravity pools; Gemini 4 is its own group).
+Treat a window whose `resetsAt` has passed as unused until the next check. Some accounts also
+return `balances` (`{ id, label, amount, currency: 'USD' }`), money held outside the allowance —
+xAI's extra usage credits. xAI reports no allowance total, so its window is percentage-only.
+
+| Provider kind | Source | Windows |
+|---|---|---|
+| `claude-code` | `api.anthropic.com/api/oauth/usage` | `5h`, `7d`, optional `7d:opus` / `7d:sonnet` |
+| `openai-oauth` | `chatgpt.com/backend-api/wham/usage` | `5h`, `7d`, `30d` (as reported) |
+| `antigravity` | Cloud Code `fetchAvailableModels` `quotaInfo` | one per model group |
+| `github-copilot` | `api.github.com/copilot_internal/user` | `monthly:<quota>` (allowances the plan includes) |
+| `xai-oauth` | `cli-chat-proxy.grok.com/v1/billing?format=credits` | `credits` ("Weekly limit"; a period without a percentage is 0% used), `product:<name>`; `balances`: extra usage credits in USD |
+
 ## `RelayModelDescriptor` fields
 
 | Field | Type | Notes |

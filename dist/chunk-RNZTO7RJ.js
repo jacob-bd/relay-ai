@@ -5,7 +5,7 @@ import {
   disabledPoolMembers,
   readBody,
   sendJson
-} from "./chunk-XPA3TW64.js";
+} from "./chunk-VTP3A7UJ.js";
 import {
   fetchProviderCatalog,
   groupPoolActivity,
@@ -16,7 +16,7 @@ import {
   readPoolActivity,
   summarizePoolEvents,
   verifyConfiguredPoolMember
-} from "./chunk-MPQE6MYL.js";
+} from "./chunk-SZETLIMN.js";
 import {
   addFreePoolMember,
   classifyFreeStatus,
@@ -31,11 +31,11 @@ import {
   poolEndpointRevision,
   removeFreePoolMember,
   savePreferences
-} from "./chunk-RC2VFJSS.js";
+} from "./chunk-EP5Y4GRS.js";
 import {
   buildIntelligenceLookup,
   loadIntelligenceCache
-} from "./chunk-6Y3KFWH6.js";
+} from "./chunk-ANMME5BO.js";
 
 // src/ui/pool-api.ts
 var verifying = /* @__PURE__ */ new Set();
@@ -168,7 +168,8 @@ async function verifyUiPoolMember(providerId, modelId, signal, options = {}) {
 }
 async function handlePoolApi(req, res) {
   try {
-    const providers = await fetchProviderCatalog();
+    let catalog;
+    const loadCatalog = async () => catalog ??= await fetchProviderCatalog();
     let pool = parseFreePool(loadPreferences().freePool);
     if (req.method === "POST") {
       const body = JSON.parse(await readBody(req));
@@ -182,7 +183,7 @@ async function handlePoolApi(req, res) {
         if (typeof member.providerId !== "string" || typeof member.modelId !== "string") throw new Error("Choose a provider account and model");
         const index = pool.members.findIndex((item) => item.providerId === member.providerId && item.modelId === member.modelId);
         if (body.action === "add") {
-          const provider = providers.find((item) => item.id === member.providerId);
+          const provider = (await loadCatalog()).find((item) => item.id === member.providerId);
           const model = provider?.models.find((item) => item.id === member.modelId);
           if (!provider || !model) throw new Error("Model is unavailable or hidden");
           const reason = poolMembershipProblem(provider, model) ?? failedTestProblem(member.providerId, member.modelId);
@@ -199,7 +200,7 @@ async function handlePoolApi(req, res) {
           } else throw new Error("Invalid priority change");
         } else if (body.action === "verify") {
           if (index < 0) throw new Error("Add the model to the pool first");
-          const provider = providers.find((item) => item.id === member.providerId);
+          const provider = (await loadCatalog()).find((item) => item.id === member.providerId);
           const model = provider?.models.find((item) => item.id === member.modelId);
           if (!provider || !model) throw new Error("Model is unavailable or hidden");
           const result = await verifyUiPoolMember(member.providerId, member.modelId, AbortSignal.timeout(body.reasoning === true ? 1e5 : 2e4), { reasoning: body.reasoning === true });
@@ -212,6 +213,7 @@ async function handlePoolApi(req, res) {
       sendJson(res, 200, { ok: true });
       return;
     }
+    const providers = await loadCatalog();
     sendJson(res, 200, { ...poolView(providers, pool, await disabledPoolMembers(providers, pool)), activity: poolActivityView() });
   } catch (error) {
     sendJson(res, 400, { error: error instanceof Error ? error.message : "Unable to update the free pool" });
@@ -287,4 +289,4 @@ export {
   handlePoolApi,
   poolView
 };
-//# sourceMappingURL=chunk-JOZSQOWJ.js.map
+//# sourceMappingURL=chunk-RNZTO7RJ.js.map

@@ -68,6 +68,78 @@ export interface CreateRelayModelOptions {
   reasoning?: RelayReasoningLevel;
 }
 
+/** What a usage window counts against: the whole account, or a group of models with their own allowance. */
+export type RelayUsageScope =
+  | { type: 'account' }
+  | { type: 'model'; modelId: string }
+  /** `modelIds` may be empty when the provider names the group (e.g. Claude's weekly Opus limit) but not its models. */
+  | { type: 'model-group'; family: string; modelIds: string[] };
+
+export interface RelayUsageWindow {
+  /** Stable within a provider kind: `5h`, `7d`, `30d`, `credits`, `monthly:premium_interactions`, `models:gemini-4:<reset>` … */
+  id: string;
+  label: string;
+  /** 0–100, or null when the provider reports the window without a reading. */
+  usedPercent: number | null;
+  /** ISO timestamp, or null when the provider does not say. */
+  resetsAt: string | null;
+  windowSeconds?: number;
+  /** Absolute allowance and what is left of it, when the provider reports counts. */
+  limit?: number;
+  remaining?: number;
+  scope: RelayUsageScope;
+}
+
+/** Money left on the account outside the plan allowance (e.g. xAI extra usage credits). */
+export interface RelayUsageBalance {
+  id: string;
+  label: string;
+  amount: number;
+  currency: 'USD';
+}
+
+export type RelayUsageErrorCode =
+  | 'credential_unavailable' | 'reauth_required' | 'access_denied' | 'rate_limited'
+  | 'unavailable' | 'unsupported_payload';
+
+export interface RelayAccountUsage {
+  providerId: string;
+  providerKind: string;
+  providerName: string;
+  /**
+   * `unsupported`: Relay has no usage source for this provider kind.
+   * `unchecked`: supported, but never checked yet (`readRelayAccountUsage` without `fetchMissing`).
+   * `error`: the last check failed; `windows`/`fetchedAt` still hold the last good reading, if any.
+   */
+  status: 'ok' | 'unsupported' | 'unchecked' | 'error';
+  windows: RelayUsageWindow[];
+  /** Balances reported beside the windows (no percentage; shown as amounts). */
+  balances?: RelayUsageBalance[];
+  /** True when the provider says the account is currently blocked by a limit. */
+  limitReached?: boolean;
+  /** When `windows` were read from the provider; null when never read. */
+  fetchedAt: string | null;
+  error?: { code: RelayUsageErrorCode; message: string };
+}
+
+export interface GetRelayAccountUsageOptions {
+  /** Only these provider ids. Default: every enabled OAuth account. */
+  providerIds?: string[];
+  registryPath?: string;
+  /** Saved-usage file. Default `<RELAY_AI_HOME>/usage.json`. */
+  usageStorePath?: string;
+  /** Save results for later reads. Default true. */
+  persist?: boolean;
+  fetchImpl?: typeof globalThis.fetch;
+  /** Per-request timeout. Default 10s. */
+  timeoutMs?: number;
+}
+
+export interface ReadRelayAccountUsageOptions extends GetRelayAccountUsageOptions {
+  /** Check accounts that have never been checked (once each). Default false: no network. */
+  fetchMissing?: boolean;
+}
+
 export interface RelayModelDescriptor {
   routeId: RelayRouteId;
   providerId: string;

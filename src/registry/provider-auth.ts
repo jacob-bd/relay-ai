@@ -29,6 +29,7 @@ import { oauthCredentialToKeychainJson, type OpencodeOAuthCredential } from './o
 import { refreshProviderModels } from './refresh-models.js';
 import { uniqueProviderName } from './provider-name.js';
 import type { RegistryProvider } from './types.js';
+import { checkUsageAfterSignIn } from '../core/usage.js';
 
 export type { OpencodeOAuthCredential } from './opencode-auth.js';
 
@@ -258,6 +259,8 @@ export async function saveNativeOAuthCredential(
   );
   if (!saved) throw new Error(`Could not save OAuth tokens to credential store${diagMsg ? ` — ${diagMsg}` : ' — grant Keychain access or check RELAY_AI_HOME is writable'}`);
   await upsertOAuthProvider(plan, cred);
+  // Not awaited: the sign-in response should not wait on a usage endpoint.
+  void checkUsageAfterSignIn(plan.registryId);
   return plan.registryId;
 }
 
@@ -369,6 +372,7 @@ export async function authenticateProvider(
   } catch {
     refreshSpinner.stop('Could not refresh models — run relay-ai providers refresh-models later');
   }
+  await checkUsageAfterSignIn(registryId);
 
   return { providerId: registryId, credential: cred, registryProvider };
 }
