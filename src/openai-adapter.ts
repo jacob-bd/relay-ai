@@ -192,9 +192,13 @@ export async function generateOpenAiResponse(
   // (e.g. a very long system prompt leaves no budget for a visible answer). Surface it via
   // the widely-adopted reasoning_content field so the client sees something rather than an
   // effectively empty message — this reproduced live as Cursor's "Empty provider response".
-  if (result.reasoningText || result.reasoning) {
-    message.reasoning_content = result.reasoningText ?? result.reasoning;
-  }
+  const reasoning = result.reasoningText ?? result.reasoning;
+  // An empty array is truthy. Only add the field when there is reasoning to show,
+  // or clients receive `reasoning_content: []` on every plain answer.
+  const hasReasoning = typeof reasoning === 'string'
+    ? reasoning.length > 0
+    : Array.isArray(reasoning) ? reasoning.length > 0 : Boolean(reasoning);
+  if (hasReasoning) message.reasoning_content = reasoning;
 
   if (result.toolCalls?.length) {
     // Vercel AI SDK v5 puts tool-call arguments on `.input`; `.args` was the v4 field name.

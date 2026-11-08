@@ -1,8 +1,5 @@
 #!/usr/bin/env node
 import {
-  validateCustomEndpointUrl
-} from "./chunk-5HGLQHX6.js";
-import {
   cachedModelCount,
   copilotPlanTier,
   deriveBrand,
@@ -16,7 +13,10 @@ import {
   resolveRefreshCredential,
   skipWithCachedModels,
   syntheticTemplate
-} from "./chunk-OIJVKOTS.js";
+} from "./chunk-STGE7U52.js";
+import {
+  validateCustomEndpointUrl
+} from "./chunk-5HGLQHX6.js";
 import {
   MAX_CONTEXT_WINDOW_OVERRIDE,
   MIN_CONTEXT_WINDOW_OVERRIDE,
@@ -54,7 +54,7 @@ import {
   validateProviderName,
   vertexAnthropicCachedModels,
   writeSecureLogLine
-} from "./chunk-EP5Y4GRS.js";
+} from "./chunk-Z773U45B.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -76,7 +76,7 @@ import {
   resolveProviderOAuthProviderData,
   saveProviderCredential,
   saveToCredentialStore
-} from "./chunk-4RLHM2U6.js";
+} from "./chunk-ZUJHJEU4.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -2276,4 +2276,4 @@ export {
   toggleProviderEnabled,
   setProviderServerUrl
 };
-//# sourceMappingURL=chunk-L5UIRBFD.js.map
+//# sourceMappingURL=chunk-B43GJR42.js.map

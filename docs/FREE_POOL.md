@@ -151,6 +151,7 @@ selected for you.
 | ChatGPT/Codex app | An extra model in the catalog, or the model the session opens on. |
 | Claude Desktop | An extra model after your chosen model and favorites, or the model the session opens on. |
 | Antigravity CLI, app and IDE | **🏊 Relay Free Pool** in the launcher, its effort rows reserved first in the catalog. |
+| Relay API gateway (`relay-ai server`, Docker Admin UI) | While the gateway is running, **Relay Free Pool** (`relay-free-pool`) appears in `GET /anthropic/v1/models` and `GET /openai/v1/models` and answers on both `/anthropic/v1/messages` and `/openai/v1/chat/completions`. Anthropic traffic uses the Claude pool runtime; OpenAI Chat Completions uses the Core pool model. The gateway reads the pool settings when it starts, so restart it after enabling the pool or changing its members. |
 | Embedded apps (Relay Core) | **Relay Free Pool** is listed by `listRelayModels()` as `relay-free-pool::relay-free-pool`, and `createRelayModel()` returns a model that fails over across your members. Pool settings are read on every call; cooldown state and the activity log (target `core`) are shared with the CLI launchers. Pass a `sessionId` to keep a conversation on the member that last answered it. See "Relay Free Pool (experimental)" in [CORE.md](CORE.md). |
 
 A pool launch needs at least one member with a passing receipt for that tool. Antigravity additionally

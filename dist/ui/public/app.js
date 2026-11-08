@@ -3261,7 +3261,9 @@ function renderFreePool() {
 
   renderFreePoolStats(pool);
   renderPoolActivity(pool);
-  const manageable = !isServerAdminUi();
+  // Pool settings live on the same volume as the gateway catalog in server admin
+  // mode, so Enable, Test, Add and reorder are real actions there too.
+  const manageable = true;
   const tasks = pool.candidates ?? [];
   assignPoolProviderColors([...tasks, ...(pool.members ?? [])].map(item => item.providerId));
   // Provider accounts present in the list, in first-seen order.
@@ -3305,20 +3307,21 @@ function renderFreePool() {
     : '';
   const readyCount = members.filter(member => member.status === 'Ready').length;
   const enabledStatus = !enabled
-    ? 'Off. Relay Free Pool is not added to any launch.'
+    ? 'Off. Relay Free Pool is not added to any launch or the gateway.'
     : members.length === 0
       ? 'On, but the pool is empty, so nothing is added yet. Add a model below.'
       : readyCount === 0
         ? 'On, but no pool model is tested and ready yet, so nothing is added yet. Test a model below.'
-        : `On. Relay Free Pool is added to your launches (${readyCount} of ${members.length} model${members.length === 1 ? '' : 's'} ready).`;
+        : `On. Relay Free Pool is added to your launches and the gateway (${readyCount} of ${members.length} model${members.length === 1 ? '' : 's'} ready).`;
   const controls = manageable ? `
     <div class="pool-controls pool-feature">
       <label class="pool-toggle">
         <input type="checkbox" id="free-pool-enabled" ${enabled ? 'checked' : ''}>
-        <span>Add Relay Free Pool to my launches</span>
+        <span>Enable Relay Free Pool</span>
       </label>
       <p class="pool-feature-status ${enabled && readyCount > 0 ? 'is-on' : ''}">${escapeHtml(enabledStatus)}</p>
-      <p class="pool-feature-help">When on, every Claude, Codex, ChatGPT app and Antigravity launch also lists <strong>Relay Free Pool</strong> as one extra model in the model switcher, next to the model you picked and your favorites. It is never chosen for you: pick it to use it. When you do, Relay sends each request to the first ready model in the list above and moves to the next if one fails or runs out. It never uses a model outside this pool. A model is only used while its saved Test result is valid, which is until its endpoint changes or you remove it. Turning this off just removes the extra entry.</p>
+      <p class="pool-feature-help">When on, every Claude, Codex, ChatGPT app and Antigravity launch also lists <strong>Relay Free Pool</strong> as one extra model in the model switcher, next to the model you picked and your favorites. The Relay API gateway also serves it as one model on both its Anthropic and OpenAI endpoints while the gateway is running. It is never chosen for you: pick it to use it. When you do, Relay sends each request to the first ready model in the list above and moves to the next if one fails or runs out. It never uses a model outside this pool. A model is only used while its saved Test result is valid, which is until its endpoint changes or you remove it. Turning this off just removes the extra entry.</p>
+      ${state.server?.status?.running ? '<p class="pool-hint">The gateway keeps the model list from when it started. Restart it on the Server tab after changing the pool.</p>' : ''}
     </div>
     <div class="pool-controls pool-effort-card">
       <label class="pool-effort">
@@ -3446,7 +3449,10 @@ function renderFreePool() {
       showToast(result.error ?? 'Could not change the pool', undefined, 5000);
       return;
     }
-    showToast(next ? 'Relay Free Pool is on. Pick it as a model in your tool.' : 'Relay Free Pool is off');
+    const gatewayNote = state.server?.status?.running
+      ? ' Restart the gateway on the Server tab to add or remove the model.' : '';
+    showToast((next ? 'Relay Free Pool is on. Pick it as a model in your tool.' : 'Relay Free Pool is off') + gatewayNote,
+      undefined, gatewayNote ? 6000 : 2200);
     await loadFreePool();
   });
   document.getElementById('free-pool-effort')?.addEventListener('change', async event => {
@@ -3484,7 +3490,7 @@ function renderPoolMemberList() {
   const list = document.querySelector('#free-pool-panel .pool-member-list');
   const members = poolData()?.members ?? [];
   if (!list) return;
-  const manageable = !isServerAdminUi();
+  const manageable = true;
   list.innerHTML = members.map((member, index) => poolMemberRowHtml(member, index, manageable)).join('');
   bindPoolMemberRows(list);
 }

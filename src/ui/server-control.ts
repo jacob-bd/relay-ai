@@ -41,7 +41,8 @@ import {
   summarizeServerProviders,
 } from '../server/catalog-filter.js';
 import { resolveAdvertiseAddresses, resolveAdvertiseGatewayPort, formatGatewayUrls } from '../server/advertise-addrs.js';
-import { loadServerModels, resolveServerUpstreamApiKey } from '../server/index.js';
+import { loadServerCatalog, resolveServerUpstreamApiKey } from '../server/index.js';
+import { prepareServerPool } from '../server/pool.js';
 
 export type ServerListenMode = 'local' | 'network';
 
@@ -258,8 +259,12 @@ async function doStartGatewayServer(
   }
 
   let models: ServerModelInfo[];
+  let poolSetup: ReturnType<typeof prepareServerPool>;
   try {
-    models = await loadServerModels();
+    const loaded = await loadServerCatalog();
+    models = loaded.models;
+    // Off by default: undefined unless the pool is enabled and tested.
+    poolSetup = prepareServerPool(loaded.providers);
   } catch (err) {
     return { ok: false, error: `Failed to load models: ${err instanceof Error ? err.message : String(err)}` };
   }
@@ -279,10 +284,13 @@ async function doStartGatewayServer(
 
   if (req.freeModelsOnly) {
     models = filterServerModelsByFreeStatus(models);
-    if (models.length === 0) {
+    if (models.length === 0 && !poolSetup) {
       return { ok: false, error: 'No free models matched the current server filters.' };
     }
   }
+
+  // The pool is a separate virtual model; provider and favorites filters do not hide it.
+  if (poolSetup) models = [...models, poolSetup.model];
 
   if (models.length === 0) {
     return { ok: false, error: 'No models to expose. Add providers or adjust the exposed-provider filter.' };
@@ -315,6 +323,7 @@ async function doStartGatewayServer(
       catalog: createGatewayModelCatalog(models, gateway),
       backends: BACKENDS,
       gateway,
+      ...(poolSetup ? { pool: poolSetup.options } : {}),
       debugLogPath: getServerDebugLogPath(),
     });
   } catch (err) {

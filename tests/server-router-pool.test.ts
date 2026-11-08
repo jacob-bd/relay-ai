@@ -85,9 +85,10 @@ async function startPaidUpstream(): Promise<{
 async function startTestServer(
   upstreamBaseUrl: string,
   poolRuntime: ClaudePoolRuntime | undefined,
+  poolModelId = CLAUDE_POOL_MODEL_ID,
 ): Promise<ServerHandle> {
   const catalog = createGatewayModelCatalog([
-    poolModel,
+    { ...poolModel, id: poolModelId },
     {
       id: 'paid-model',
       name: 'Paid Model',
@@ -109,7 +110,7 @@ async function startTestServer(
     catalog,
     backends: { zen: { baseUrl: upstreamBaseUrl }, go: { baseUrl: upstreamBaseUrl } },
     gateway: { maskGatewayIds: true, longContextDisplay: 'single-1m' },
-    pool: poolRuntime ? { runtime: poolRuntime, displayName: 'Relay Free Pool' } : undefined,
+    pool: poolRuntime ? { runtime: poolRuntime, displayName: 'Relay Free Pool', modelId: poolModelId } : undefined,
   };
   const handle = await startServer(options);
   handles.push(handle);
@@ -151,6 +152,22 @@ describe('Claude Desktop pool routing through the generic server', () => {
     expect(body.model).toBe(CLAUDE_POOL_MODEL_ID);
     expect(body.content.some(part => part.type === 'text' && part.text === 'POOL_OK')).toBe(true);
     expect(upstream.requests).toHaveLength(0);
+  });
+
+  it('serves the gateway catalog id used by `relay-ai server`', async () => {
+    const upstream = await startPaidUpstream();
+    handles.push(upstream);
+    const handle = await startTestServer(upstream.baseUrl, runtime([poolRoute()]), 'relay-free-pool');
+
+    const response = await messages(handle, {
+      model: 'relay-free-pool',
+      max_tokens: 64,
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { model: string; content: Array<{ type: string; text?: string }> };
+    expect(body.model).toBe('relay-free-pool');
+    expect(body.content.some(part => part.type === 'text' && part.text === 'POOL_OK')).toBe(true);
   });
 
   it('streams a protocol-valid pool response', async () => {

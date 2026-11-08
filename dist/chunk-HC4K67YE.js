@@ -16,12 +16,12 @@ import {
   recordPoolActivity,
   resolveLocalProviderApiKey,
   retryPoolFailure
-} from "./chunk-SZETLIMN.js";
+} from "./chunk-L63CWTTQ.js";
 import {
   copilotPlanTier,
   filterCachedCopilotModels,
   stripGoogleModelPrefix
-} from "./chunk-OIJVKOTS.js";
+} from "./chunk-STGE7U52.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
@@ -58,165 +58,183 @@ import {
   sseChunk,
   streamActivity,
   thinkingProviderOptions
-} from "./chunk-EP5Y4GRS.js";
+} from "./chunk-Z773U45B.js";
 import {
   isProviderKind,
   resolveProviderOAuthProviderData
-} from "./chunk-4RLHM2U6.js";
+} from "./chunk-ZUJHJEU4.js";
 
-// src/codex/multi-agent.ts
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
-var CODEX_MULTI_AGENT_V2 = Object.freeze({
-  enabled: true,
-  max_concurrent_threads_per_session: 6,
-  expose_spawn_agent_model_overrides: true
-});
-function renderMultiAgentV2Feature() {
-  return "[features]\nmulti_agent_v2 = { enabled = true, max_concurrent_threads_per_session = 6, expose_spawn_agent_model_overrides = true }\n";
-}
-function probeText(value) {
-  if (!value || typeof value !== "object") return String(value ?? "");
-  const result = value;
-  return `${result.stdout ?? ""}
-${result.stderr ?? ""}`;
-}
-function supportsMultiAgentV2(binaryPath, run = (path, args, env) => runCodexCommandSync(path, args, { timeout: 1e4, env })) {
-  const probeHome = mkdtempSync(join(tmpdir(), "relay-codex-v2-probe-"));
-  try {
-    writeFileSync(join(probeHome, "config.toml"), renderMultiAgentV2Feature(), { encoding: "utf8", mode: 384 });
-    const env = { ...process.env, CODEX_HOME: probeHome };
-    let output = "";
-    try {
-      output = probeText(run(binaryPath, ["login", "status"], env));
-    } catch (error) {
-      output = probeText(error);
-    }
-    if (/ENOENT|not found|cannot find the file/i.test(output)) return false;
-    return !/error loading configuration|invalid configuration|unknown field/i.test(output);
-  } finally {
-    rmSync(probeHome, { recursive: true, force: true });
+// src/core/pool-model.ts
+import { randomUUID as randomUUID2 } from "crypto";
+
+// src/pool/attempt.ts
+var MAX_POOL_ATTEMPTS = 8;
+var PoolAttemptError = class extends Error {
+  constructor(code, committed, cause) {
+    super(code);
+    this.code = code;
+    this.committed = committed;
+    this.cause = cause;
   }
+  code;
+  committed;
+  cause;
+};
+function validPoolFinish(part) {
+  return part.type === "finish" && ["stop", "tool-calls", "length"].includes(part.finishReason ?? "");
 }
-
-// src/codex/app-profile.ts
-var CODEX_APP_PROVIDER_ID = "relay-ai-launch-codex-app";
-var PREVIEW_PROXY_PORT = 54321;
-var CODEX_APP_AUTO_COMPACT_RATIO = 0.9;
-var CODEX_APP_THREAD_UNLOAD_DELAY_SECS = 48 * 60 * 60;
-function codexAppModelSlug(rawModelId) {
-  return rawModelId.startsWith("models/") ? rawModelId.slice("models/".length) : rawModelId;
+var PoolCoordinatorError = class extends Error {
+  /**
+   * True when the shared request budget ended the wait, not this member's own first-content or idle limit.
+   * The member never got its full allowance, so the timeout says nothing about its health.
+   */
+  constructor(message, budget = false) {
+    super(message);
+    this.budget = budget;
+  }
+  budget;
+};
+function meaningful(part) {
+  return ["text-delta", "reasoning-delta"].includes(part.type) && Boolean(part.text) || part.type === "tool-input-delta" && Boolean(part.delta) || part.type === "tool-input-start" || part.type === "tool-call";
 }
-function parseCodexAppModelSlug(modelKey) {
-  const prefix = `${CODEX_APP_PROVIDER_ID}/`;
-  return modelKey.startsWith(prefix) ? modelKey.slice(prefix.length) : modelKey;
-}
-function buildCodexAppRootConfig(spec) {
-  return {
-    model: codexAppModelSlug(spec.route.modelId),
-    model_provider: "openai",
-    openai_base_url: spec.proxyBaseUrl ?? `http://127.0.0.1:${spec.proxyPort}/v1`,
-    model_catalog_json: spec.catalogPath,
-    thread_unload_delay_secs: CODEX_APP_THREAD_UNLOAD_DELAY_SECS,
-    ...spec.multiAgentV2Enabled ? {
-      features: { multi_agent_v2: CODEX_MULTI_AGENT_V2 }
-    } : {}
+async function bounded(work, ms, signal, code, budget = false) {
+  signal.throwIfAborted();
+  if (ms <= 0) throw new PoolCoordinatorError(code, budget);
+  let timer;
+  let onAbort = () => {
   };
-}
-
-// src/codex/catalog.ts
-var DEFAULT_CONTEXT = 128e3;
-var CODEX_NO_REASONING_EFFORT = "none";
-function codexCatalogReasoningFields(npm, wireId, metadata) {
-  const reasoning = getReasoningCapabilities(npm, wireId, metadata);
-  if (reasoning.levels.length > 0) {
-    return {
-      supported_reasoning_levels: buildCodexReasoningLevels(reasoning),
-      default_reasoning_level: reasoning.defaultLevel,
-      supports_reasoning_summaries: reasoning.supportsSummaries,
-      default_reasoning_summary: reasoning.supportsSummaries ? "auto" : "none"
-    };
-  }
-  return {
-    supported_reasoning_levels: buildCodexReasoningLevels({
-      levels: [CODEX_NO_REASONING_EFFORT]
-    }),
-    default_reasoning_level: CODEX_NO_REASONING_EFFORT,
-    supports_reasoning_summaries: false,
-    default_reasoning_summary: "none"
-  };
-}
-function formatCodexModelLabel(model) {
-  const trimmed = model.name.trim();
-  if (trimmed && trimmed !== model.id) return trimmed;
-  const id = stripGoogleModelPrefix(model.id);
-  const claude = id.match(/^claude-([\w-]+?)-(\d+)-(\d+)(?:-\d{8})?$/);
-  if (claude) {
-    const tier = claude[1].split("-").map(
-      (part) => part.charAt(0).toUpperCase() + part.slice(1)
-    ).join(" ");
-    return `Claude ${tier} ${claude[2]}.${claude[3]}`;
-  }
-  const gpt = id.match(/^gpt-(\d+(?:\.\d+)?)(?:-([\w-]+))?$/i);
-  if (gpt) {
-    const suffix = gpt[2] ? ` ${gpt[2].split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")}` : "";
-    return `GPT-${gpt[1]}${suffix}`;
-  }
-  return id;
-}
-function catalogEntryFromModel(model, providerName, priority, appCatalog = false, slugOverride) {
-  const slug = slugOverride ?? (appCatalog ? codexAppModelSlug(model.id) : stripGoogleModelPrefix(model.id));
-  const context = model.contextWindow ?? DEFAULT_CONTEXT;
-  const label = formatCodexModelLabel(model);
-  const wireId = model.upstreamModelId ?? model.id;
-  const reasoningFields = codexCatalogReasoningFields(model.npm ?? "", wireId, {
-    apiBaseUrl: model.apiBaseUrl,
-    supportedParameters: model.supportedParameters,
-    reasoning: model.reasoning,
-    interleavedReasoningField: model.interleavedReasoningField,
-    reasoningEffortLevels: model.reasoningEffortLevels,
-    reasoningEffortConflict: model.reasoningEffortConflict
+  const interrupted = new Promise((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    timer = setTimeout(() => reject(new PoolCoordinatorError(code, budget)), Math.max(0, ms));
   });
-  return {
-    slug,
-    display_name: label,
-    ...reasoningFields,
-    shell_type: appCatalog ? "default" : "shell_command",
-    visibility: "list",
-    supported_in_api: true,
-    priority,
-    availability_nux: null,
-    upgrade: null,
-    base_instructions: "",
-    support_verbosity: false,
-    default_verbosity: null,
-    apply_patch_tool_type: null,
-    truncation_policy: appCatalog ? { mode: "bytes", limit: 1e4 } : { mode: "tokens", limit: context },
-    supports_parallel_tool_calls: !appCatalog,
-    experimental_supported_tools: [],
-    context_window: context,
-    max_context_window: context,
-    input_modalities: model.modalities ?? ["text", "image"],
-    description: `${label} \xB7 ${providerName}`
-  };
+  try {
+    return await Promise.race([work, interrupted]);
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", onAbort);
+  }
 }
-function buildCatalogFile(models, providerName) {
-  return {
-    models: models.map((m, i) => catalogEntryFromModel(m, providerName, i))
-  };
-}
-function buildAppCatalogFile(models, providerName, selectedModelId) {
-  const selected = models.find((m) => m.id === selectedModelId);
-  const rest = models.filter((m) => m.id !== selectedModelId);
-  const ordered = selected ? [selected, ...rest] : models;
-  return {
-    models: ordered.map((m, i) => catalogEntryFromModel(m, providerName, i, true))
-  };
-}
-function serializeCatalog(catalog) {
-  return `${JSON.stringify(catalog, null, 2)}
-`;
+async function* runPoolAttempts(routes, signal, limits, retryable, onAttempt = () => {
+}, onFailure = () => {
+}, onSkip = () => {
+}) {
+  for (const [name, value] of Object.entries(limits)) {
+    if (!Number.isSafeInteger(value) || value <= 0) throw new Error("Invalid pool limit: " + name);
+  }
+  const deadline = Date.now() + limits.totalMs;
+  let committed = false;
+  let lastError;
+  let opened = 0;
+  for (const route of routes) {
+    if (opened >= limits.attempts) break;
+    signal.throwIfAborted();
+    if (Date.now() >= deadline) throw new PoolAttemptError("total-deadline", committed);
+    if (route.admit) {
+      let reason;
+      try {
+        reason = await route.admit(signal);
+      } catch (error) {
+        if (signal.aborted) throw signal.reason ?? error;
+        reason = "could not be prepared: " + (error instanceof Error ? error.message : String(error));
+      }
+      if (reason) {
+        onSkip(route.id, reason);
+        continue;
+      }
+    }
+    opened += 1;
+    const controller = new AbortController();
+    const attemptSignal = AbortSignal.any([signal, controller.signal]);
+    const attemptStart = Date.now();
+    const firstDeadline = Math.min(deadline, attemptStart + limits.firstContentMs);
+    const firstBudget = deadline < attemptStart + limits.firstContentMs;
+    let iterator;
+    const buffered = [];
+    let bytes = 0;
+    let completed = false;
+    let consumerThrew = false;
+    let consumerError;
+    let terminalThrown = false;
+    onAttempt(route.id);
+    try {
+      const stream = await bounded(route.open(attemptSignal), firstDeadline - Date.now(), attemptSignal, "first-content-timeout", firstBudget);
+      iterator = stream[Symbol.asyncIterator]();
+      while (true) {
+        const now = Date.now();
+        const remaining = (committed ? Math.min(deadline, now + limits.idleMs) : firstDeadline) - now;
+        const budget = committed ? deadline < now + limits.idleMs : firstBudget;
+        const next = await bounded(iterator.next(), remaining, attemptSignal, committed ? "idle-or-total-timeout" : "first-content-timeout", budget);
+        signal.throwIfAborted();
+        if (next.done) throw new PoolCoordinatorError("missing-valid-finish");
+        const part = next.value;
+        if (part.type === "error") throw part.error ?? new Error("stream-error");
+        const terminal = part.type === "finish";
+        if (terminal && !validPoolFinish(part)) throw new PoolCoordinatorError("invalid-finish");
+        if (!committed) {
+          bytes += Buffer.byteLength(JSON.stringify(part));
+          if (bytes > limits.bufferBytes) throw new PoolCoordinatorError("provisional-buffer-limit");
+          buffered.push(part);
+          if (!meaningful(part) && !terminal) continue;
+          committed = true;
+          for (const pending of buffered) {
+            signal.throwIfAborted();
+            try {
+              yield pending;
+            } catch (error) {
+              consumerThrew = true;
+              consumerError = error;
+              throw error;
+            }
+          }
+          buffered.length = 0;
+        } else {
+          try {
+            yield part;
+          } catch (error) {
+            consumerThrew = true;
+            consumerError = error;
+            throw error;
+          }
+        }
+        if (terminal) {
+          completed = true;
+          return;
+        }
+      }
+    } catch (error) {
+      if (consumerThrew) {
+        terminalThrown = true;
+        throw consumerError;
+      }
+      lastError = error;
+      if (!signal.aborted) {
+        if (error instanceof PoolCoordinatorError && !error.budget) await route.recordAttemptFailure?.(error);
+        await onFailure(route.id, error, committed);
+      }
+      if (signal.aborted) {
+        terminalThrown = true;
+        throw signal.reason;
+      }
+      if (committed || !retryable(error)) {
+        terminalThrown = true;
+        throw new PoolAttemptError("attempt-failed", committed, error);
+      }
+    } finally {
+      controller.abort();
+      if (iterator?.return) {
+        try {
+          await bounded(iterator.return(), limits.cleanupMs, new AbortController().signal, "cleanup-timeout");
+        } catch {
+          if (!completed && !consumerThrew && !terminalThrown && !signal.aborted) {
+            throw new PoolAttemptError("cleanup-failed", committed, lastError);
+          }
+        }
+      }
+    }
+  }
+  if (opened === 0) throw new PoolAttemptError("no-admitted-route", false, lastError);
+  throw new PoolAttemptError("attempt-budget-exhausted", committed, lastError);
 }
 
 // src/pool/codex-retry.ts
@@ -1634,178 +1652,6 @@ function lazyPoolRoute(evidence, prepare, extra) {
 
 // src/pool/sdk-route.ts
 import { streamText as streamText2 } from "ai";
-
-// src/pool/attempt.ts
-var MAX_POOL_ATTEMPTS = 8;
-var PoolAttemptError = class extends Error {
-  constructor(code, committed, cause) {
-    super(code);
-    this.code = code;
-    this.committed = committed;
-    this.cause = cause;
-  }
-  code;
-  committed;
-  cause;
-};
-function validPoolFinish(part) {
-  return part.type === "finish" && ["stop", "tool-calls", "length"].includes(part.finishReason ?? "");
-}
-var PoolCoordinatorError = class extends Error {
-  /**
-   * True when the shared request budget ended the wait, not this member's own first-content or idle limit.
-   * The member never got its full allowance, so the timeout says nothing about its health.
-   */
-  constructor(message, budget = false) {
-    super(message);
-    this.budget = budget;
-  }
-  budget;
-};
-function meaningful(part) {
-  return ["text-delta", "reasoning-delta"].includes(part.type) && Boolean(part.text) || part.type === "tool-input-delta" && Boolean(part.delta) || part.type === "tool-input-start" || part.type === "tool-call";
-}
-async function bounded(work, ms, signal, code, budget = false) {
-  signal.throwIfAborted();
-  if (ms <= 0) throw new PoolCoordinatorError(code, budget);
-  let timer;
-  let onAbort = () => {
-  };
-  const interrupted = new Promise((_, reject) => {
-    onAbort = () => reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
-    timer = setTimeout(() => reject(new PoolCoordinatorError(code, budget)), Math.max(0, ms));
-  });
-  try {
-    return await Promise.race([work, interrupted]);
-  } finally {
-    clearTimeout(timer);
-    signal.removeEventListener("abort", onAbort);
-  }
-}
-async function* runPoolAttempts(routes, signal, limits, retryable, onAttempt = () => {
-}, onFailure = () => {
-}, onSkip = () => {
-}) {
-  for (const [name, value] of Object.entries(limits)) {
-    if (!Number.isSafeInteger(value) || value <= 0) throw new Error("Invalid pool limit: " + name);
-  }
-  const deadline = Date.now() + limits.totalMs;
-  let committed = false;
-  let lastError;
-  let opened = 0;
-  for (const route of routes) {
-    if (opened >= limits.attempts) break;
-    signal.throwIfAborted();
-    if (Date.now() >= deadline) throw new PoolAttemptError("total-deadline", committed);
-    if (route.admit) {
-      let reason;
-      try {
-        reason = await route.admit(signal);
-      } catch (error) {
-        if (signal.aborted) throw signal.reason ?? error;
-        reason = "could not be prepared: " + (error instanceof Error ? error.message : String(error));
-      }
-      if (reason) {
-        onSkip(route.id, reason);
-        continue;
-      }
-    }
-    opened += 1;
-    const controller = new AbortController();
-    const attemptSignal = AbortSignal.any([signal, controller.signal]);
-    const attemptStart = Date.now();
-    const firstDeadline = Math.min(deadline, attemptStart + limits.firstContentMs);
-    const firstBudget = deadline < attemptStart + limits.firstContentMs;
-    let iterator;
-    const buffered = [];
-    let bytes = 0;
-    let completed = false;
-    let consumerThrew = false;
-    let consumerError;
-    let terminalThrown = false;
-    onAttempt(route.id);
-    try {
-      const stream = await bounded(route.open(attemptSignal), firstDeadline - Date.now(), attemptSignal, "first-content-timeout", firstBudget);
-      iterator = stream[Symbol.asyncIterator]();
-      while (true) {
-        const now = Date.now();
-        const remaining = (committed ? Math.min(deadline, now + limits.idleMs) : firstDeadline) - now;
-        const budget = committed ? deadline < now + limits.idleMs : firstBudget;
-        const next = await bounded(iterator.next(), remaining, attemptSignal, committed ? "idle-or-total-timeout" : "first-content-timeout", budget);
-        signal.throwIfAborted();
-        if (next.done) throw new PoolCoordinatorError("missing-valid-finish");
-        const part = next.value;
-        if (part.type === "error") throw part.error ?? new Error("stream-error");
-        const terminal = part.type === "finish";
-        if (terminal && !validPoolFinish(part)) throw new PoolCoordinatorError("invalid-finish");
-        if (!committed) {
-          bytes += Buffer.byteLength(JSON.stringify(part));
-          if (bytes > limits.bufferBytes) throw new PoolCoordinatorError("provisional-buffer-limit");
-          buffered.push(part);
-          if (!meaningful(part) && !terminal) continue;
-          committed = true;
-          for (const pending of buffered) {
-            signal.throwIfAborted();
-            try {
-              yield pending;
-            } catch (error) {
-              consumerThrew = true;
-              consumerError = error;
-              throw error;
-            }
-          }
-          buffered.length = 0;
-        } else {
-          try {
-            yield part;
-          } catch (error) {
-            consumerThrew = true;
-            consumerError = error;
-            throw error;
-          }
-        }
-        if (terminal) {
-          completed = true;
-          return;
-        }
-      }
-    } catch (error) {
-      if (consumerThrew) {
-        terminalThrown = true;
-        throw consumerError;
-      }
-      lastError = error;
-      if (!signal.aborted) {
-        if (error instanceof PoolCoordinatorError && !error.budget) await route.recordAttemptFailure?.(error);
-        await onFailure(route.id, error, committed);
-      }
-      if (signal.aborted) {
-        terminalThrown = true;
-        throw signal.reason;
-      }
-      if (committed || !retryable(error)) {
-        terminalThrown = true;
-        throw new PoolAttemptError("attempt-failed", committed, error);
-      }
-    } finally {
-      controller.abort();
-      if (iterator?.return) {
-        try {
-          await bounded(iterator.return(), limits.cleanupMs, new AbortController().signal, "cleanup-timeout");
-        } catch {
-          if (!completed && !consumerThrew && !terminalThrown && !signal.aborted) {
-            throw new PoolAttemptError("cleanup-failed", committed, lastError);
-          }
-        }
-      }
-    }
-  }
-  if (opened === 0) throw new PoolAttemptError("no-admitted-route", false, lastError);
-  throw new PoolAttemptError("attempt-budget-exhausted", committed, lastError);
-}
-
-// src/pool/sdk-route.ts
 function sdkPoolRoute(evidence, model, request, health) {
   if (!Number.isSafeInteger(request.maxOutputTokens) || request.maxOutputTokens <= 0) {
     throw new Error("Pool requests require a bounded output reservation");
@@ -2407,6 +2253,161 @@ var CodexPoolRuntime = class {
   }
 };
 
+// src/codex/multi-agent.ts
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+var CODEX_MULTI_AGENT_V2 = Object.freeze({
+  enabled: true,
+  max_concurrent_threads_per_session: 6,
+  expose_spawn_agent_model_overrides: true
+});
+function renderMultiAgentV2Feature() {
+  return "[features]\nmulti_agent_v2 = { enabled = true, max_concurrent_threads_per_session = 6, expose_spawn_agent_model_overrides = true }\n";
+}
+function probeText(value) {
+  if (!value || typeof value !== "object") return String(value ?? "");
+  const result = value;
+  return `${result.stdout ?? ""}
+${result.stderr ?? ""}`;
+}
+function supportsMultiAgentV2(binaryPath, run = (path, args, env) => runCodexCommandSync(path, args, { timeout: 1e4, env })) {
+  const probeHome = mkdtempSync(join(tmpdir(), "relay-codex-v2-probe-"));
+  try {
+    writeFileSync(join(probeHome, "config.toml"), renderMultiAgentV2Feature(), { encoding: "utf8", mode: 384 });
+    const env = { ...process.env, CODEX_HOME: probeHome };
+    let output = "";
+    try {
+      output = probeText(run(binaryPath, ["login", "status"], env));
+    } catch (error) {
+      output = probeText(error);
+    }
+    if (/ENOENT|not found|cannot find the file/i.test(output)) return false;
+    return !/error loading configuration|invalid configuration|unknown field/i.test(output);
+  } finally {
+    rmSync(probeHome, { recursive: true, force: true });
+  }
+}
+
+// src/codex/app-profile.ts
+var CODEX_APP_PROVIDER_ID = "relay-ai-launch-codex-app";
+var PREVIEW_PROXY_PORT = 54321;
+var CODEX_APP_AUTO_COMPACT_RATIO = 0.9;
+var CODEX_APP_THREAD_UNLOAD_DELAY_SECS = 48 * 60 * 60;
+function codexAppModelSlug(rawModelId) {
+  return rawModelId.startsWith("models/") ? rawModelId.slice("models/".length) : rawModelId;
+}
+function parseCodexAppModelSlug(modelKey) {
+  const prefix = `${CODEX_APP_PROVIDER_ID}/`;
+  return modelKey.startsWith(prefix) ? modelKey.slice(prefix.length) : modelKey;
+}
+function buildCodexAppRootConfig(spec) {
+  return {
+    model: codexAppModelSlug(spec.route.modelId),
+    model_provider: "openai",
+    openai_base_url: spec.proxyBaseUrl ?? `http://127.0.0.1:${spec.proxyPort}/v1`,
+    model_catalog_json: spec.catalogPath,
+    thread_unload_delay_secs: CODEX_APP_THREAD_UNLOAD_DELAY_SECS,
+    ...spec.multiAgentV2Enabled ? {
+      features: { multi_agent_v2: CODEX_MULTI_AGENT_V2 }
+    } : {}
+  };
+}
+
+// src/codex/catalog.ts
+var DEFAULT_CONTEXT = 128e3;
+var CODEX_NO_REASONING_EFFORT = "none";
+function codexCatalogReasoningFields(npm, wireId, metadata) {
+  const reasoning = getReasoningCapabilities(npm, wireId, metadata);
+  if (reasoning.levels.length > 0) {
+    return {
+      supported_reasoning_levels: buildCodexReasoningLevels(reasoning),
+      default_reasoning_level: reasoning.defaultLevel,
+      supports_reasoning_summaries: reasoning.supportsSummaries,
+      default_reasoning_summary: reasoning.supportsSummaries ? "auto" : "none"
+    };
+  }
+  return {
+    supported_reasoning_levels: buildCodexReasoningLevels({
+      levels: [CODEX_NO_REASONING_EFFORT]
+    }),
+    default_reasoning_level: CODEX_NO_REASONING_EFFORT,
+    supports_reasoning_summaries: false,
+    default_reasoning_summary: "none"
+  };
+}
+function formatCodexModelLabel(model) {
+  const trimmed = model.name.trim();
+  if (trimmed && trimmed !== model.id) return trimmed;
+  const id = stripGoogleModelPrefix(model.id);
+  const claude = id.match(/^claude-([\w-]+?)-(\d+)-(\d+)(?:-\d{8})?$/);
+  if (claude) {
+    const tier = claude[1].split("-").map(
+      (part) => part.charAt(0).toUpperCase() + part.slice(1)
+    ).join(" ");
+    return `Claude ${tier} ${claude[2]}.${claude[3]}`;
+  }
+  const gpt = id.match(/^gpt-(\d+(?:\.\d+)?)(?:-([\w-]+))?$/i);
+  if (gpt) {
+    const suffix = gpt[2] ? ` ${gpt[2].split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")}` : "";
+    return `GPT-${gpt[1]}${suffix}`;
+  }
+  return id;
+}
+function catalogEntryFromModel(model, providerName, priority, appCatalog = false, slugOverride) {
+  const slug = slugOverride ?? (appCatalog ? codexAppModelSlug(model.id) : stripGoogleModelPrefix(model.id));
+  const context = model.contextWindow ?? DEFAULT_CONTEXT;
+  const label = formatCodexModelLabel(model);
+  const wireId = model.upstreamModelId ?? model.id;
+  const reasoningFields = codexCatalogReasoningFields(model.npm ?? "", wireId, {
+    apiBaseUrl: model.apiBaseUrl,
+    supportedParameters: model.supportedParameters,
+    reasoning: model.reasoning,
+    interleavedReasoningField: model.interleavedReasoningField,
+    reasoningEffortLevels: model.reasoningEffortLevels,
+    reasoningEffortConflict: model.reasoningEffortConflict
+  });
+  return {
+    slug,
+    display_name: label,
+    ...reasoningFields,
+    shell_type: appCatalog ? "default" : "shell_command",
+    visibility: "list",
+    supported_in_api: true,
+    priority,
+    availability_nux: null,
+    upgrade: null,
+    base_instructions: "",
+    support_verbosity: false,
+    default_verbosity: null,
+    apply_patch_tool_type: null,
+    truncation_policy: appCatalog ? { mode: "bytes", limit: 1e4 } : { mode: "tokens", limit: context },
+    supports_parallel_tool_calls: !appCatalog,
+    experimental_supported_tools: [],
+    context_window: context,
+    max_context_window: context,
+    input_modalities: model.modalities ?? ["text", "image"],
+    description: `${label} \xB7 ${providerName}`
+  };
+}
+function buildCatalogFile(models, providerName) {
+  return {
+    models: models.map((m, i) => catalogEntryFromModel(m, providerName, i))
+  };
+}
+function buildAppCatalogFile(models, providerName, selectedModelId) {
+  const selected = models.find((m) => m.id === selectedModelId);
+  const rest = models.filter((m) => m.id !== selectedModelId);
+  const ordered = selected ? [selected, ...rest] : models;
+  return {
+    models: ordered.map((m, i) => catalogEntryFromModel(m, providerName, i, true))
+  };
+}
+function serializeCatalog(catalog) {
+  return `${JSON.stringify(catalog, null, 2)}
+`;
+}
+
 // src/pool/catalog.ts
 var ALIASES = {
   codex: FREE_POOL_MODEL_ID,
@@ -2617,9 +2618,6 @@ function parseRelayRouteId(routeId) {
   return { providerId, modelId };
 }
 
-// src/core/pool-model.ts
-import { randomUUID as randomUUID2 } from "crypto";
-
 // src/core/catalog.ts
 function loadCoreRegistry(path) {
   const registry = loadRegistry(path, { persist: false });
@@ -2706,6 +2704,33 @@ function commonEffortLevels(members) {
   if (!members.length) return [];
   return members[0].receipt.effortLevels.filter((level) => members.every((item) => item.receipt.effortLevels.includes(level))).filter(isRelayReasoningLevel);
 }
+function relayPoolDescriptor(now = Date.now(), registryPath) {
+  const state = loadPoolState(registryPath);
+  if (!state) return void 0;
+  const members = servableMembers(state, now, false);
+  const entry = members.length ? poolCatalogEntry(state.pool, state.pool.receipts, "core", now) : void 0;
+  if (!entry) return void 0;
+  const levels = commonEffortLevels(members);
+  return {
+    routeId: RELAY_POOL_ROUTE_ID,
+    providerId: RELAY_POOL_PROVIDER_ID,
+    providerName: "Relay Free Pool",
+    providerShortName: "Free Pool",
+    modelId: RELAY_POOL_MODEL_ID,
+    upstreamModelId: RELAY_POOL_MODEL_ID,
+    displayName: "Relay Free Pool",
+    authType: "none",
+    favorite: false,
+    contextWindow: entry.context_window,
+    pricing: { input: 0, output: 0 },
+    capabilities: {
+      tools: "unknown",
+      vision: "unknown",
+      reasoning: levels.length ? "adjustable" : "unknown",
+      ...levels.length ? { reasoningLevels: levels } : {}
+    }
+  };
+}
 function tagPart(part, key) {
   if (!part.providerMetadata || Object.keys(part.providerMetadata).length === 0) return part;
   return { ...part, providerMetadata: { ...part.providerMetadata, [ORIGIN_NAMESPACE]: { route: key } } };
@@ -2779,7 +2804,7 @@ function wrapPoolError(error) {
 }
 var sessions = new PoolSessionRoutes();
 async function memberModel(routeId, context) {
-  const { createRelayModel } = await import("./model-ZGNYKHA7.js");
+  const { createRelayModel } = await import("./model-Y2I7B5SK.js");
   return createRelayModel(routeId, {
     sessionId: context.sessionId,
     ...context.options?.onDebug ? { onDebug: context.options.onDebug } : {},
@@ -3119,9 +3144,17 @@ export {
   resolveReasoningProviderOptions,
   withReasoningProviderOptions,
   withRequestHeaders,
-  parseRelayRouteId,
+  RELAY_POOL_PROVIDER_ID,
+  RELAY_POOL_MODEL_ID,
   RELAY_POOL_ROUTE_ID,
+  loadPoolState,
+  loadPoolStateForCall,
+  servableMembers,
+  relayPoolDescriptor,
+  tagPart,
+  isolateHistory,
   createRelayPoolModel,
+  parseRelayRouteId,
   loadCoreRegistry
 };
-//# sourceMappingURL=chunk-A3Q3C2FS.js.map
+//# sourceMappingURL=chunk-HC4K67YE.js.map

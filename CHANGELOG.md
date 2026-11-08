@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.22.1] - 2026-11-08
+
+### Added
+
+- **Relay Free Pool is a gateway model.** While the pool is enabled and at least one member has a passing Test, `relay-ai server` and the Docker gateway advertise one `relay-free-pool` model on both `GET /anthropic/v1/models` and `GET /openai/v1/models`. It answers `/anthropic/v1/messages` through the Claude pool runtime and `/openai/v1/chat/completions` through the Core pool model, with the same priority order, saved Test receipts, cooldowns and failover as the pool in launched tools. Provider, favorites and free-only server filters do not hide the pool. The pool stays off by default; change its members, then restart the gateway from the Server tab.
+
+### Fixed
+
+- **The Docker and server admin UI can manage the Free Pool.** The Enable checkbox, Test, Add, Remove and reorder controls were hidden in server admin mode even though the pool settings live in the same data volume as the gateway catalog. They are now shown, so the pool can be enabled, tested and edited from the container UI.
+- **Plain Chat Completions answers no longer carry `reasoning_content: []`.** When a model produced no reasoning, the OpenAI adapter treated the empty array as reasoning and added the field to every response. It now omits the field unless there is reasoning to show.
+
+### Upgrade notes
+
+- No migration needed. Rebuild or reinstall, enable Relay Free Pool if wanted (it remains off by default), and restart a running gateway after changing pool members so its advertised model list reflects them.
+
 ## [0.22.0] - 2026-11-07
 
 ### Added

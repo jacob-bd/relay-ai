@@ -14,7 +14,6 @@ import {
   checkForUpdates,
   checkVertexModelAccess,
   claudeAppSupported,
-  claudePoolSignatures,
   codexAppInstallHint,
   codexAppSupported,
   createGatewayModelCatalog,
@@ -49,6 +48,8 @@ import {
   makeRouteResolver,
   modelSelectOption,
   navOption,
+  prepareClaudeAutoPool,
+  prepareClaudePoolRoutes,
   printApiKeyPanel,
   printCloudProviderPanel,
   printDryRunPanel,
@@ -73,20 +74,18 @@ import {
   supportsClaudeTransparentMode,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-ZIGNTRFI.js";
+} from "./chunk-6X7Y5EFI.js";
 import {
   extractApiKey,
   readBody,
   sendJson,
   warnDisabledPoolMembers
-} from "./chunk-VTP3A7UJ.js";
+} from "./chunk-JBWJDQG7.js";
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-UFOUOAJV.js";
-import {
-  translateRequest
-} from "./chunk-GP42LVHQ.js";
+} from "./chunk-PHJI6PDC.js";
+import "./chunk-5RSLXBKO.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   UNTRUSTED_CERTIFICATE_CODE,
@@ -110,10 +109,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-L5UIRBFD.js";
-import {
-  validateCustomEndpointUrl
-} from "./chunk-5HGLQHX6.js";
+} from "./chunk-B43GJR42.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -140,10 +136,8 @@ import {
   lazyPoolRoute,
   parseCodexAppModelSlug,
   poolCatalogEntry,
-  poolMemberEffort,
   poolOutputCap,
   poolRequestFitsWindow,
-  poolRouteKey,
   prepareCodexPoolRoutes,
   renderMultiAgentV2Feature,
   sdkPoolRoute,
@@ -152,9 +146,8 @@ import {
   streamResponsesResponse,
   supportsMultiAgentV2,
   translateResponsesRequest,
-  translatedEffortClaim,
   writeResponsesErrorStream
-} from "./chunk-A3Q3C2FS.js";
+} from "./chunk-HC4K67YE.js";
 import {
   OPENCODE_SESSION_HEADER,
   PoolHealthStore,
@@ -180,9 +173,7 @@ import {
   poolAccountScope,
   poolEndpointScope,
   poolErrorDetail,
-  poolProviderHeaders,
   poolRouteMember,
-  poolRoutingProblem,
   providerRefreshToken,
   providersForCodexSubagents,
   providersForPicker,
@@ -194,14 +185,17 @@ import {
   retryPoolFailure,
   routableModelsForTarget,
   toOAuthRegistryId
-} from "./chunk-SZETLIMN.js";
+} from "./chunk-L63CWTTQ.js";
 import {
   effectiveProviderBaseUrl,
   isLikelyPlaceholderKey,
   resolveProviderTemplate,
   resolveRefreshCredential,
   syntheticTemplate
-} from "./chunk-OIJVKOTS.js";
+} from "./chunk-STGE7U52.js";
+import {
+  validateCustomEndpointUrl
+} from "./chunk-5HGLQHX6.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
@@ -264,7 +258,6 @@ import {
   setTrustSystemCertificates,
   shouldHideModel,
   silenceSdkWarnings,
-  splitToolUseId,
   stripToolUseIdSuffix,
   supportsManualModels,
   thinkingProviderOptions,
@@ -273,16 +266,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-EP5Y4GRS.js";
-import {
-  DEFAULT_VERTEX_MODELS,
-  hasApplicationDefaultCredentials,
-  hasCustomVertexModels,
-  loadVertexModelEntries,
-  resetVertexModelEntries,
-  resolveVertexProject,
-  saveVertexModelEntries
-} from "./chunk-W32XKRNU.js";
+} from "./chunk-Z773U45B.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -320,7 +304,7 @@ import {
   saveToCredentialStore,
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth
-} from "./chunk-4RLHM2U6.js";
+} from "./chunk-ZUJHJEU4.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -331,6 +315,15 @@ import {
   listVisibleOAuthTemplates,
   supportsAdditionalApiAccounts
 } from "./chunk-6DCEGHZH.js";
+import {
+  DEFAULT_VERTEX_MODELS,
+  hasApplicationDefaultCredentials,
+  hasCustomVertexModels,
+  loadVertexModelEntries,
+  resetVertexModelEntries,
+  resolveVertexProject,
+  saveVertexModelEntries
+} from "./chunk-W32XKRNU.js";
 import {
   getAppHome,
   getConfigPath,
@@ -1193,219 +1186,6 @@ async function runFirstRunWizard(trace = false) {
     return "continue";
   }
   return "continue";
-}
-
-// src/pool/claude-prepare.ts
-function omitClaudeEffort(body, level) {
-  const output = { ...body.output_config };
-  delete output.effort;
-  if (level !== null) output.effort = level;
-  const next = { ...body };
-  if (Object.keys(output).length > 0) next.output_config = output;
-  else delete next.output_config;
-  return next;
-}
-async function prepareClaudePoolRoutes(options) {
-  const routes = [];
-  if (options.body.thinking && typeof options.body.thinking === "object") {
-    const budget = options.body.thinking.budget_tokens;
-    if (typeof budget === "number" && budget > 0) return routes;
-  }
-  const clientEffort = options.body.output_config?.effort;
-  const requested = clientEffort ?? options.pool.effort;
-  const auto = requested === "auto";
-  for (const member of options.pool.members) {
-    options.signal.throwIfAborted();
-    const skip = (reason) => options.onSkip?.(member, reason);
-    const provider = options.providers.find((item) => item.id === member.providerId);
-    const model = provider?.models.find((item) => item.id === member.modelId);
-    if (!provider || !model || !model.npm || model.modelFormat === "cloud-code") {
-      skip("not available in the registry");
-      continue;
-    }
-    const revision = poolEndpointRevision({
-      providerId: provider.id,
-      authRef: provider.authRef,
-      npm: model.npm,
-      baseURL: model.apiBaseUrl,
-      upstreamModelId: model.upstreamModelId,
-      headers: provider.headers
-    });
-    const receipt = currentPoolReceipt(options.receipts, member, revision, Date.now());
-    if (!receipt || !receipt.billingSafe || !receipt.targets.includes("claude")) {
-      skip("no fresh verification for Claude (run Test)");
-      continue;
-    }
-    const freeStatus = poolFreeStatus({ model, providerId: provider.id });
-    if (freeStatus !== "verified_free") {
-      skip("not verified free");
-      continue;
-    }
-    const npm = model.npm;
-    routes.push(lazyPoolRoute({
-      member,
-      revision,
-      freeStatus,
-      catalogVerified: true,
-      accessVerified: true,
-      billingSafe: true,
-      targets: receipt.targets,
-      toolsVerified: receipt.tools,
-      defaultEffortVerified: true,
-      effortLevels: receipt.effortLevels,
-      contextFits: true,
-      contextVerified: true
-    }, async () => {
-      const gone = (reason) => {
-        skip(reason);
-        return { skip: reason };
-      };
-      const memberEffort = poolMemberEffort(auto ? "auto" : requested, receipt);
-      const memberAuto = memberEffort === null;
-      const body = omitClaudeEffort(options.body, memberEffort);
-      const params = translateRequest(body, npm, {
-        maxTools: POOL_MAX_TOOLS,
-        reasoningMetadata: {
-          ...model,
-          providerId: provider.id,
-          apiBaseUrl: model.apiBaseUrl
-        }
-      });
-      const routeKey = poolRouteKey({ account: provider.id, endpointRevision: revision, model: model.id });
-      const thinking = (Array.isArray(body.messages) ? body.messages : []).flatMap((message) => {
-        const content = message.content;
-        return Array.isArray(content) ? content : [];
-      });
-      params.messages = params.messages.map((message) => ({
-        ...message,
-        content: Array.isArray(message.content) ? message.content.map((part) => {
-          if (part.type !== "reasoning" && part.type !== "tool-call") return part;
-          const { providerOptions: _routeState, ...clean } = part;
-          if (part.type === "tool-call") {
-            const signature = claudePoolSignatures.signature(splitToolUseId(part.toolCallId).rawId, routeKey);
-            return signature && npm === "@ai-sdk/google" ? { ...clean, providerOptions: { google: { thoughtSignature: signature } } } : clean;
-          }
-          const native = thinking.find((block) => block.thinking === part.text && typeof block.signature === "string" && claudePoolSignatures.ownsThinking(block.signature, routeKey));
-          if (!native?.signature) return clean;
-          if (npm === "@ai-sdk/anthropic") return { ...clean, providerOptions: { anthropic: { signature: native.signature } } };
-          return part;
-        }) : message.content
-      }));
-      if (memberAuto && translatedEffortClaim(params.providerOptions)) {
-        return gone("translation would set an effort");
-      }
-      const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
-      const askedOutput = typeof body.max_tokens === "number" ? body.max_tokens : outputCap;
-      if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) {
-        return gone("invalid output limit");
-      }
-      const requestedOutput = Math.min(askedOutput, outputCap);
-      params.maxOutputTokens = requestedOutput;
-      const fits = poolRequestFitsWindow({
-        messages: params.messages,
-        instructions: params.instructions,
-        tools: params.tools
-      }, receipt.contextWindow, requestedOutput).fits;
-      if (!fits) {
-        return gone("request too large for its context window");
-      }
-      const scopes = [poolEndpointScope(provider.id, revision, model.id)];
-      const accountScopes = [poolAccountScope(provider.id)];
-      const off = await options.health.disabledFor(scopes);
-      if (off) {
-        return gone("DISABLED: " + off.note + " (run Test to re-enable)");
-      }
-      const until = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
-      if (until !== void 0 && until > Date.now()) {
-        return gone("cooling down after a failure");
-      }
-      const apiKey = await resolveLocalProviderApiKey(provider);
-      if (!apiKey) {
-        return gone("no credential");
-      }
-      const languageModel = await createLanguageModel({
-        npm,
-        modelId: model.upstreamModelId,
-        apiKey,
-        baseURL: model.apiBaseUrl,
-        providerId: provider.id,
-        authType: provider.authType,
-        oauthAccountId: provider.oauthAccountId,
-        providerData: provider.providerData,
-        headers: poolProviderHeaders(provider, model, options.sessionId),
-        sessionId: options.sessionId,
-        refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
-      });
-      return { route: sdkPoolRoute({
-        member,
-        revision,
-        freeStatus,
-        catalogVerified: true,
-        accessVerified: true,
-        billingSafe: true,
-        targets: receipt.targets,
-        toolsVerified: receipt.tools,
-        defaultEffortVerified: true,
-        effortLevels: receipt.effortLevels,
-        contextFits: true,
-        contextVerified: true
-      }, languageModel, {
-        messages: params.messages,
-        tools: params.tools,
-        system: params.instructions,
-        maxOutputTokens: requestedOutput,
-        temperature: params.temperature,
-        toolChoice: params.toolChoice,
-        providerOptions: params.providerOptions,
-        headers: params.headers
-      }, { store: options.health, scopes, accountScopes }) };
-    }));
-  }
-  return routes;
-}
-
-// src/pool/claude-launch.ts
-function servableClaudeMember(pool, providers, member, now) {
-  const provider = providers.find((item) => item.id === member.providerId);
-  const model = provider?.models.find((item) => item.id === member.modelId);
-  if (!provider || !model || !model.npm || model.modelFormat === "cloud-code") return void 0;
-  if (poolFreeStatus({ model, providerId: provider.id }) !== "verified_free") return void 0;
-  if (poolRoutingProblem(provider, model)) return void 0;
-  const revision = poolEndpointRevision({
-    providerId: provider.id,
-    authRef: provider.authRef,
-    npm: model.npm,
-    baseURL: model.apiBaseUrl,
-    upstreamModelId: model.upstreamModelId,
-    headers: provider.headers
-  });
-  const receipt = currentPoolReceipt(pool.receipts, member, revision, now);
-  if (!receipt || !receipt.billingSafe || !receipt.tools || !receipt.targets.includes("claude")) return void 0;
-  return receipt;
-}
-function prepareClaudeAutoPool(prefs, providers, now = Date.now()) {
-  let pool;
-  try {
-    pool = parseFreePool(prefs?.freePool);
-  } catch {
-    return void 0;
-  }
-  if (pool.enabled !== true || pool.members.length === 0) return void 0;
-  const entry = poolCatalogEntry(pool, pool.receipts, "claude", now);
-  if (!entry) return void 0;
-  if (!pool.members.some((member) => servableClaudeMember(pool, providers, member, now))) return void 0;
-  const health = new PoolHealthStore();
-  const runtime = new ClaudePoolRuntime(pool, (body, signal, sessionId, onSkip) => prepareClaudePoolRoutes({
-    pool,
-    providers,
-    receipts: pool.receipts,
-    body,
-    signal,
-    sessionId,
-    health,
-    onSkip
-  }));
-  return { pool, displayName: entry.display_name, contextWindow: entry.context_window, runtime };
 }
 
 // src/pool/claude-session.ts
@@ -3674,7 +3454,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-2GXVA25S.js");
+      const { testModel } = await import("./test-model-ERBXRACX.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -8890,7 +8670,7 @@ function translateTools(ccTools, options = {}) {
   }
   return Object.keys(tools).length > 0 ? tools : void 0;
 }
-function translateRequest2(ccReq, options = {}) {
+function translateRequest(ccReq, options = {}) {
   const systemInstructions = [];
   const sdkMessages = [];
   const nameToIdList = /* @__PURE__ */ new Map();
@@ -10694,7 +10474,7 @@ async function handleStreamingRequest(res, route, providerOptions, parsed, log15
     await handlePoolRequest(res, route, parsed, log15, options, true);
     return;
   }
-  const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest2(parsed, {
+  const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
     ...options.requestOptions,
     npm: route.npm,
     maxTools: maxToolsForNpm(route.npm)
@@ -10759,7 +10539,7 @@ async function handlePoolRequest(res, row, parsed, log15, options, stream) {
             for (const name of Object.keys(built.tools ?? {})) toolNames.add(name);
           },
           build: async (member) => {
-            const sdkParams = applyClaudeCodeOAuthIdentity(member, translateRequest2(parsed, {
+            const sdkParams = applyClaudeCodeOAuthIdentity(member, translateRequest(parsed, {
               ...options.optionsFor?.(member) ?? options.requestOptions,
               npm: member.npm,
               maxTools: Math.min(maxToolsForNpm(member.npm) ?? POOL_MAX_TOOLS, POOL_MAX_TOOLS)
@@ -11075,7 +10855,7 @@ async function handleUnaryRequest(res, route, providerOptions, parsed, log15, op
     await handlePoolRequest(res, route, parsed, log15, options, false);
     return;
   }
-  const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest2(parsed, {
+  const sdkParams = applyClaudeCodeOAuthIdentity(route, translateRequest(parsed, {
     ...options.requestOptions,
     npm: route.npm,
     maxTools: maxToolsForNpm(route.npm)
@@ -18282,11 +18062,11 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-REMPOBSK.js");
+    const { runUiCommand } = await import("./ui-command-LC5FFXRE.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode, background: parsed.uiBackground });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-ZA45IILO.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-SHUO25XX.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

@@ -3,7 +3,7 @@ import {
   extractApiKey,
   readBody,
   sendJson
-} from "./chunk-VTP3A7UJ.js";
+} from "./chunk-JBWJDQG7.js";
 import {
   SubagentRouteRegistry,
   anthropicEffortFromRequest,
@@ -13,7 +13,7 @@ import {
   streamAnthropicResponse,
   translateRequest,
   writeAnthropicStream
-} from "./chunk-GP42LVHQ.js";
+} from "./chunk-5RSLXBKO.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -24,29 +24,44 @@ import {
   filterModelsByAvailability,
   refreshProviderModels,
   validateClinePassApiKey
-} from "./chunk-L5UIRBFD.js";
+} from "./chunk-B43GJR42.js";
 import {
   MAX_POOL_ATTEMPTS,
+  POOL_MAX_TOOLS,
   dispatchFreePool,
   formatCodexModelLabel,
+  lazyPoolRoute,
   loadCoreRegistry,
-  requestFingerprint
-} from "./chunk-A3Q3C2FS.js";
+  poolCatalogEntry,
+  poolMemberEffort,
+  poolOutputCap,
+  poolRequestFitsWindow,
+  poolRouteKey,
+  requestFingerprint,
+  sdkPoolRoute,
+  translatedEffortClaim
+} from "./chunk-HC4K67YE.js";
 import {
+  PoolHealthStore,
   describePoolFailure,
   extractConversationId,
   fetchProviderCatalog,
   localProvidersToServerModels,
   oauthAuthRef,
   openCodeGoHeaders,
+  poolAccountScope,
+  poolEndpointScope,
   poolErrorDetail,
+  poolProviderHeaders,
   poolRouteMember,
+  poolRoutingProblem,
   providerRefreshToken,
   providersForTarget,
   recordPoolActivity,
+  resolveLocalProviderApiKey,
   retryPoolFailure,
   toOAuthRegistryId
-} from "./chunk-SZETLIMN.js";
+} from "./chunk-L63CWTTQ.js";
 import {
   anthropicErrorType,
   formatUpstreamError,
@@ -58,6 +73,7 @@ import {
   buildPricingIndex,
   classifyFreeStatus,
   createLanguageModel,
+  currentPoolReceipt,
   encodeToolUseId,
   enrichModelsForProviderPricing,
   enrichPricingAsync,
@@ -84,7 +100,10 @@ import {
   localIsoTimestamp,
   localTimestamp,
   maxToolsForNpm,
+  parseFreePool,
   parseToolArguments,
+  poolEndpointRevision,
+  poolFreeStatus,
   printTraceLog,
   redactTraceLine,
   relayAnthropicMessages,
@@ -103,14 +122,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-EP5Y4GRS.js";
-import {
-  hasApplicationDefaultCredentials,
-  loadVertexModelEntries,
-  resolveVertexLocation,
-  resolveVertexProject,
-  saveVertexModelEntries
-} from "./chunk-W32XKRNU.js";
+} from "./chunk-Z773U45B.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -153,12 +165,19 @@ import {
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth,
   tokensToStoredCredential
-} from "./chunk-4RLHM2U6.js";
+} from "./chunk-ZUJHJEU4.js";
 import {
   getTemplateById,
   init_provider_templates,
   supportsAdditionalApiAccounts
 } from "./chunk-6DCEGHZH.js";
+import {
+  hasApplicationDefaultCredentials,
+  loadVertexModelEntries,
+  resolveVertexLocation,
+  resolveVertexProject,
+  saveVertexModelEntries
+} from "./chunk-W32XKRNU.js";
 import {
   getAppHome
 } from "./chunk-XEH2JMTL.js";
@@ -3390,6 +3409,219 @@ function startProxy(completionsUrl, modelId, debug = false, contextWindow, sdk, 
   }], clientModelId, debug);
 }
 
+// src/pool/claude-prepare.ts
+function omitClaudeEffort(body, level) {
+  const output = { ...body.output_config };
+  delete output.effort;
+  if (level !== null) output.effort = level;
+  const next = { ...body };
+  if (Object.keys(output).length > 0) next.output_config = output;
+  else delete next.output_config;
+  return next;
+}
+async function prepareClaudePoolRoutes(options) {
+  const routes = [];
+  if (options.body.thinking && typeof options.body.thinking === "object") {
+    const budget = options.body.thinking.budget_tokens;
+    if (typeof budget === "number" && budget > 0) return routes;
+  }
+  const clientEffort = options.body.output_config?.effort;
+  const requested = clientEffort ?? options.pool.effort;
+  const auto = requested === "auto";
+  for (const member of options.pool.members) {
+    options.signal.throwIfAborted();
+    const skip = (reason) => options.onSkip?.(member, reason);
+    const provider = options.providers.find((item) => item.id === member.providerId);
+    const model = provider?.models.find((item) => item.id === member.modelId);
+    if (!provider || !model || !model.npm || model.modelFormat === "cloud-code") {
+      skip("not available in the registry");
+      continue;
+    }
+    const revision = poolEndpointRevision({
+      providerId: provider.id,
+      authRef: provider.authRef,
+      npm: model.npm,
+      baseURL: model.apiBaseUrl,
+      upstreamModelId: model.upstreamModelId,
+      headers: provider.headers
+    });
+    const receipt = currentPoolReceipt(options.receipts, member, revision, Date.now());
+    if (!receipt || !receipt.billingSafe || !receipt.targets.includes("claude")) {
+      skip("no fresh verification for Claude (run Test)");
+      continue;
+    }
+    const freeStatus = poolFreeStatus({ model, providerId: provider.id });
+    if (freeStatus !== "verified_free") {
+      skip("not verified free");
+      continue;
+    }
+    const npm = model.npm;
+    routes.push(lazyPoolRoute({
+      member,
+      revision,
+      freeStatus,
+      catalogVerified: true,
+      accessVerified: true,
+      billingSafe: true,
+      targets: receipt.targets,
+      toolsVerified: receipt.tools,
+      defaultEffortVerified: true,
+      effortLevels: receipt.effortLevels,
+      contextFits: true,
+      contextVerified: true
+    }, async () => {
+      const gone = (reason) => {
+        skip(reason);
+        return { skip: reason };
+      };
+      const memberEffort = poolMemberEffort(auto ? "auto" : requested, receipt);
+      const memberAuto = memberEffort === null;
+      const body = omitClaudeEffort(options.body, memberEffort);
+      const params = translateRequest(body, npm, {
+        maxTools: POOL_MAX_TOOLS,
+        reasoningMetadata: {
+          ...model,
+          providerId: provider.id,
+          apiBaseUrl: model.apiBaseUrl
+        }
+      });
+      const routeKey = poolRouteKey({ account: provider.id, endpointRevision: revision, model: model.id });
+      const thinking = (Array.isArray(body.messages) ? body.messages : []).flatMap((message) => {
+        const content = message.content;
+        return Array.isArray(content) ? content : [];
+      });
+      params.messages = params.messages.map((message) => ({
+        ...message,
+        content: Array.isArray(message.content) ? message.content.map((part) => {
+          if (part.type !== "reasoning" && part.type !== "tool-call") return part;
+          const { providerOptions: _routeState, ...clean } = part;
+          if (part.type === "tool-call") {
+            const signature = claudePoolSignatures.signature(splitToolUseId(part.toolCallId).rawId, routeKey);
+            return signature && npm === "@ai-sdk/google" ? { ...clean, providerOptions: { google: { thoughtSignature: signature } } } : clean;
+          }
+          const native = thinking.find((block) => block.thinking === part.text && typeof block.signature === "string" && claudePoolSignatures.ownsThinking(block.signature, routeKey));
+          if (!native?.signature) return clean;
+          if (npm === "@ai-sdk/anthropic") return { ...clean, providerOptions: { anthropic: { signature: native.signature } } };
+          return part;
+        }) : message.content
+      }));
+      if (memberAuto && translatedEffortClaim(params.providerOptions)) {
+        return gone("translation would set an effort");
+      }
+      const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
+      const askedOutput = typeof body.max_tokens === "number" ? body.max_tokens : outputCap;
+      if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) {
+        return gone("invalid output limit");
+      }
+      const requestedOutput = Math.min(askedOutput, outputCap);
+      params.maxOutputTokens = requestedOutput;
+      const fits = poolRequestFitsWindow({
+        messages: params.messages,
+        instructions: params.instructions,
+        tools: params.tools
+      }, receipt.contextWindow, requestedOutput).fits;
+      if (!fits) {
+        return gone("request too large for its context window");
+      }
+      const scopes = [poolEndpointScope(provider.id, revision, model.id)];
+      const accountScopes = [poolAccountScope(provider.id)];
+      const off = await options.health.disabledFor(scopes);
+      if (off) {
+        return gone("DISABLED: " + off.note + " (run Test to re-enable)");
+      }
+      const until = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
+      if (until !== void 0 && until > Date.now()) {
+        return gone("cooling down after a failure");
+      }
+      const apiKey = await resolveLocalProviderApiKey(provider);
+      if (!apiKey) {
+        return gone("no credential");
+      }
+      const languageModel = await createLanguageModel({
+        npm,
+        modelId: model.upstreamModelId,
+        apiKey,
+        baseURL: model.apiBaseUrl,
+        providerId: provider.id,
+        authType: provider.authType,
+        oauthAccountId: provider.oauthAccountId,
+        providerData: provider.providerData,
+        headers: poolProviderHeaders(provider, model, options.sessionId),
+        sessionId: options.sessionId,
+        refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
+      });
+      return { route: sdkPoolRoute({
+        member,
+        revision,
+        freeStatus,
+        catalogVerified: true,
+        accessVerified: true,
+        billingSafe: true,
+        targets: receipt.targets,
+        toolsVerified: receipt.tools,
+        defaultEffortVerified: true,
+        effortLevels: receipt.effortLevels,
+        contextFits: true,
+        contextVerified: true
+      }, languageModel, {
+        messages: params.messages,
+        tools: params.tools,
+        system: params.instructions,
+        maxOutputTokens: requestedOutput,
+        temperature: params.temperature,
+        toolChoice: params.toolChoice,
+        providerOptions: params.providerOptions,
+        headers: params.headers
+      }, { store: options.health, scopes, accountScopes }) };
+    }));
+  }
+  return routes;
+}
+
+// src/pool/claude-launch.ts
+function servableClaudeMember(pool, providers, member, now) {
+  const provider = providers.find((item) => item.id === member.providerId);
+  const model = provider?.models.find((item) => item.id === member.modelId);
+  if (!provider || !model || !model.npm || model.modelFormat === "cloud-code") return void 0;
+  if (poolFreeStatus({ model, providerId: provider.id }) !== "verified_free") return void 0;
+  if (poolRoutingProblem(provider, model)) return void 0;
+  const revision = poolEndpointRevision({
+    providerId: provider.id,
+    authRef: provider.authRef,
+    npm: model.npm,
+    baseURL: model.apiBaseUrl,
+    upstreamModelId: model.upstreamModelId,
+    headers: provider.headers
+  });
+  const receipt = currentPoolReceipt(pool.receipts, member, revision, now);
+  if (!receipt || !receipt.billingSafe || !receipt.tools || !receipt.targets.includes("claude")) return void 0;
+  return receipt;
+}
+function prepareClaudeAutoPool(prefs, providers, now = Date.now()) {
+  let pool;
+  try {
+    pool = parseFreePool(prefs?.freePool);
+  } catch {
+    return void 0;
+  }
+  if (pool.enabled !== true || pool.members.length === 0) return void 0;
+  const entry = poolCatalogEntry(pool, pool.receipts, "claude", now);
+  if (!entry) return void 0;
+  if (!pool.members.some((member) => servableClaudeMember(pool, providers, member, now))) return void 0;
+  const health = new PoolHealthStore();
+  const runtime = new ClaudePoolRuntime(pool, (body, signal, sessionId, onSkip) => prepareClaudePoolRoutes({
+    pool,
+    providers,
+    receipts: pool.receipts,
+    body,
+    signal,
+    sessionId,
+    health,
+    onSkip
+  }));
+  return { pool, displayName: entry.display_name, contextWindow: entry.context_window, runtime };
+}
+
 // src/catalog.ts
 function localModelToRoute(lp, model) {
   if (model.modelFormat === "anthropic" && !model.baseUrl) return null;
@@ -3739,9 +3971,9 @@ function toOpenAiFinishReason(reason) {
 async function generateOpenAiResponse(model, params, responseModelId) {
   const result = await generateTextStreamingIfRequired({ model, ...params });
   const message = { role: "assistant", content: result.text || null };
-  if (result.reasoningText || result.reasoning) {
-    message.reasoning_content = result.reasoningText ?? result.reasoning;
-  }
+  const reasoning = result.reasoningText ?? result.reasoning;
+  const hasReasoning = typeof reasoning === "string" ? reasoning.length > 0 : Array.isArray(reasoning) ? reasoning.length > 0 : Boolean(reasoning);
+  if (hasReasoning) message.reasoning_content = reasoning;
   if (result.toolCalls?.length) {
     message.tool_calls = result.toolCalls.map((tc) => ({
       id: tc.toolCallId,
@@ -3850,6 +4082,9 @@ function makeServerLog(debugLogPath) {
   resetTraceLog(debugLogPath);
   return (msg) => writeSecureLogLine(debugLogPath, typeof msg === "function" ? msg() : msg);
 }
+function poolCatalogId(options) {
+  return options.pool?.modelId ?? CLAUDE_POOL_MODEL_ID;
+}
 async function startServer(options) {
   silenceSdkWarnings();
   const languageModelCache = /* @__PURE__ */ new Map();
@@ -3898,7 +4133,7 @@ async function routeRequest(req, res, options, modelCache, plog, subagentRouteRe
     if (req.method === "GET" && pathname === "/anthropic/v1/models") {
       const models = options.catalog.list();
       const payload = formatGatewayAnthropicModels(models, options.gateway);
-      const poolModel = options.pool ? models.find((model) => model.id === CLAUDE_POOL_MODEL_ID) : void 0;
+      const poolModel = options.pool ? models.find((model) => model.id === poolCatalogId(options)) : void 0;
       if (poolModel && options.pool) {
         const publicId = exposedGatewayAliasId(poolModel, options.gateway);
         for (const entry of payload.data) {
@@ -3939,7 +4174,7 @@ async function handleAnthropicMessages(req, res, options, modelCache, plog, suba
     plog(`model not found: ${body.model}`);
     return;
   }
-  if (options.pool && model.id === CLAUDE_POOL_MODEL_ID) {
+  if (options.pool && model.id === poolCatalogId(options)) {
     plog(`anthropic-messages pool=${model.id} stream=${body.stream === true}`);
     await serveAnthropicPool(req, res, options, body, plog);
     return;
@@ -4133,6 +4368,40 @@ async function serveAnthropicPool(req, res, options, body, plog) {
     }
   }
 }
+async function serveOpenAiPool(req, res, options, body, plog) {
+  const pool = options.pool;
+  if (!pool) return;
+  const sessionId = extractConversationId(req.headers, body);
+  const responseModelId = String(body.model ?? poolCatalogId(options));
+  plog(() => `openai-chat-completions pool stream=${body.stream === true}`);
+  try {
+    const [{ createRelayModel }, { RELAY_POOL_ROUTE_ID }] = await Promise.all([
+      import("./model-Y2I7B5SK.js"),
+      import("./pool-model-NO2LTV3I.js")
+    ]);
+    const languageModel = await createRelayModel(RELAY_POOL_ROUTE_ID, { sessionId, onDebug: plog });
+    const params = translateOpenAiRequest(body);
+    if (body.stream === true) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive"
+      });
+      await streamOpenAiResponse(languageModel, params, responseModelId, (chunk) => res.write(chunk), plog);
+      res.end();
+    } else {
+      const response = await generateOpenAiResponse(languageModel, params, responseModelId);
+      sendJson(res, 200, response);
+    }
+  } catch (err) {
+    const message = formatUpstreamError(err);
+    plog(`openai pool error: ${message}`);
+    if (!res.headersSent) {
+      const status = upstreamHttpStatus(err, message);
+      sendJson(res, status === 500 ? 502 : status, { error: { message } });
+    } else res.end();
+  }
+}
 async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) {
   const body = await readJson(req);
   if (!body) {
@@ -4160,6 +4429,10 @@ async function handleOpenAIChatCompletions(req, res, options, modelCache, plog) 
   });
   const model = lookupModel(res, options.catalog, body.model);
   if (!model) return;
+  if (options.pool && model.id === poolCatalogId(options)) {
+    await serveOpenAiPool(req, res, options, body, plog);
+    return;
+  }
   if (supportsDirectOpenAIChatCompletions(model)) {
     if (model.completionsUrl && !/^https?:\/\//i.test(model.completionsUrl)) {
       sendJson(res, 400, { error: { message: `Invalid provider completionsUrl: must be http:// or https://` } });
@@ -4316,6 +4589,33 @@ function toRequest(req) {
 }
 function sanitizeIncomingHeaderValue(value) {
   return value.replace(/\r?\n/g, " ").trim();
+}
+
+// src/server/pool.ts
+var SERVER_POOL_MODEL_ID = "relay-free-pool";
+function prepareServerPool(providers) {
+  const auto = prepareClaudeAutoPool(loadPreferences(), providers);
+  if (!auto) return void 0;
+  return {
+    model: {
+      id: SERVER_POOL_MODEL_ID,
+      name: auto.displayName,
+      isFree: true,
+      brand: "Relay",
+      providerId: "relay-free-pool",
+      providerLabel: "Relay",
+      sourceBackend: "relay",
+      // Deliberately not a provider format: the router handles this id first and
+      // never forwards it to an upstream endpoint.
+      modelFormat: "unsupported",
+      contextWindow: auto.contextWindow
+    },
+    options: {
+      runtime: auto.runtime,
+      displayName: auto.displayName,
+      modelId: SERVER_POOL_MODEL_ID
+    }
+  };
 }
 
 // src/server/catalog-filter.ts
@@ -4573,14 +4873,14 @@ function providerOptionsFromCatalog(catalog) {
   }
   return options.sort((a, b) => a.name.localeCompare(b.name, void 0, { sensitivity: "base", numeric: true }));
 }
-async function loadServerModels() {
+async function loadServerCatalog() {
   const catalog = await fetchProviderCatalog({ agent: "server" });
   const models = [];
   const serverProviders = providersForTarget(catalog, "server");
   if (serverProviders.length > 0) {
     models.push(...localProvidersToServerModels(serverProviders));
   }
-  return models.map(enrichServerModelReasoning);
+  return { models: models.map(enrichServerModelReasoning), providers: catalog };
 }
 function enrichServerModelReasoning(model) {
   if (!model.npm || model.modelFormat !== "openai") return model;
@@ -4851,8 +5151,11 @@ async function runServerCommand(options = {}) {
   const spinner3 = p4.spinner();
   spinner3.start("Fetching available models...");
   let models;
+  let poolSetup;
   try {
-    models = await loadServerModels();
+    const loaded = await loadServerCatalog();
+    models = loaded.models;
+    poolSetup = prepareServerPool(loaded.providers);
     if (runConfig.exposedProviders) {
       models = filterServerModelsByProviders(models, runConfig.exposedProviders);
     }
@@ -4872,12 +5175,13 @@ async function runServerCommand(options = {}) {
     }
     if (runConfig.freeModelsOnly) {
       models = filterServerModelsByFreeStatus(models);
-      if (models.length === 0) {
+      if (models.length === 0 && !poolSetup) {
         spinner3.stop(pc4.red("No free models matched the current server filters"));
         p4.log.error("Turn off free-models-only mode or add a provider with free models.");
         return 1;
       }
     }
+    if (poolSetup) models = [...models, poolSetup.model];
     if (runConfig.favoritesOnly) {
       p4.log.info(
         `Favorites-only mode active \u2014 GET /anthropic/v1/models returns ${models.length} favorites.`
@@ -4913,6 +5217,7 @@ async function runServerCommand(options = {}) {
     catalog: createGatewayModelCatalog(models, gateway),
     backends: BACKENDS,
     gateway,
+    ...poolSetup ? { pool: poolSetup.options } : {},
     debugLogPath
   });
   console.log("");
@@ -7026,7 +7331,6 @@ export {
   printProviderDetailPanel,
   printCloudProviderPanel,
   findBinaryOnPath,
-  claudePoolSignatures,
   CLAUDE_POOL_MODEL_ID,
   ClaudePoolRuntime,
   formatAnthropicModelEntry,
@@ -7042,6 +7346,8 @@ export {
   aliasModelId,
   startProxyCatalog,
   startProxy,
+  prepareClaudePoolRoutes,
+  prepareClaudeAutoPool,
   localModelToRoute,
   makeRouteResolver,
   buildCatalogRoutes,
@@ -7050,13 +7356,14 @@ export {
   resolveAdvertiseGatewayPort,
   formatGatewayUrls,
   startServer,
+  prepareServerPool,
   filterServerModelsByProviders,
   filterServerModelsByFavorites,
   filterServerModelsByFreeStatus,
   summarizeServerProviders,
   buildVertexRuntimeConfig,
   providerOptionsFromCatalog,
-  loadServerModels,
+  loadServerCatalog,
   resolveServerUpstreamApiKey,
   runServerCommand,
   checkForUpdates,
@@ -7094,4 +7401,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-ZIGNTRFI.js.map
+//# sourceMappingURL=chunk-6X7Y5EFI.js.map

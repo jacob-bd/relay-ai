@@ -37,6 +37,7 @@ vi.mock('../src/server/index.js', async () => {
   return {
     ...actual,
     loadServerModels: vi.fn(async () => state.models),
+    loadServerCatalog: vi.fn(async () => ({ models: state.models, providers: [] })),
     resolveServerUpstreamApiKey: vi.fn(async () => state.apiKey),
   };
 });

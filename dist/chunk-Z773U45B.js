@@ -1,11 +1,5 @@
 #!/usr/bin/env node
 import {
-  hasApplicationDefaultCredentials,
-  loadVertexModelEntries,
-  resolveVertexProject,
-  saveVertexModelEntries
-} from "./chunk-W32XKRNU.js";
-import {
   CLAUDE_CODE_BILLING_HEADER_PREFIX,
   CLAUDE_CODE_USER_AGENT,
   CODEX_RESPONSES_LITE_VERSION,
@@ -23,7 +17,13 @@ import {
   isProviderKind,
   providerKind,
   selectBetaFlags
-} from "./chunk-4RLHM2U6.js";
+} from "./chunk-ZUJHJEU4.js";
+import {
+  hasApplicationDefaultCredentials,
+  loadVertexModelEntries,
+  resolveVertexProject,
+  saveVertexModelEntries
+} from "./chunk-W32XKRNU.js";
 import {
   getAppHome,
   getConfigPath,
@@ -278,6 +278,66 @@ function uniqueProviderName(providers, name, exceptId) {
     const candidate = `${base} ${i}`;
     if (!findProviderNameConflict(providers, candidate, exceptId)) return candidate;
   }
+}
+
+// src/free-models.ts
+var FREE_PROVIDER_IDS = /* @__PURE__ */ new Set(["nvidia"]);
+function isZeroOrMissing(value) {
+  return value === void 0 || value === 0;
+}
+function isZeroCost(cost) {
+  if (!cost) return false;
+  return cost.input === 0 && cost.output === 0 && isZeroOrMissing(cost.cache_read) && isZeroOrMissing(cost.cache_write);
+}
+function isPaidCost(cost) {
+  if (!cost) return false;
+  return cost.input > 0 || cost.output > 0 || (cost.cache_read ?? 0) > 0 || (cost.cache_write ?? 0) > 0;
+}
+function isLocalEndpointUrl(url) {
+  if (!url) return false;
+  let host;
+  try {
+    host = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  } catch {
+    return false;
+  }
+  if (host === "localhost" || host.endsWith(".localhost") || host === "::1" || host === "0.0.0.0") return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
+  if (!m) return false;
+  const a = Number(m[1]), b = Number(m[2]);
+  return a === 127 || a === 10 || a === 192 && b === 168 || a === 172 && b >= 16 && b <= 31;
+}
+function isOllamaCloudModelId(modelId) {
+  return /(^|[:-])cloud$/i.test(modelId);
+}
+function isFreeProviderAccess(providerId, templateId) {
+  return FREE_PROVIDER_IDS.has((providerId ?? "").toLowerCase()) || FREE_PROVIDER_IDS.has((templateId ?? "").toLowerCase());
+}
+function classifyFreeStatus(opts) {
+  if (opts.model.userMarkedFree === true) return "verified_free";
+  if (opts.model.localEndpoint === true) return "verified_free";
+  if (opts.freeAccess === true) return "free_provider";
+  if (isFreeProviderAccess(opts.providerId, opts.templateId)) return "free_provider";
+  if (isZeroCost(opts.model.cost)) return "verified_free";
+  if (isPaidCost(opts.model.cost)) return "paid";
+  if (opts.model.freeStatus) return opts.model.freeStatus;
+  if (opts.model.isFree === true) return "verified_free";
+  return "unknown";
+}
+var NO_BILLING_FREE_PROVIDER_IDS = /* @__PURE__ */ new Set(["nvidia"]);
+function poolFreeStatus(opts) {
+  const status = classifyFreeStatus(opts);
+  if (status === "free_provider" && NO_BILLING_FREE_PROVIDER_IDS.has((opts.providerId ?? "").toLowerCase()) && !isPaidCost(opts.model.cost)) return "verified_free";
+  return status;
+}
+function isFreeStatus(status) {
+  return status === "verified_free" || status === "free_provider";
+}
+function freeStatusLabel(status) {
+  if (status === "verified_free") return "Free";
+  if (status === "free_provider") return "Free dev access";
+  if (status === "paid") return "Paid";
+  return "Unknown price";
 }
 
 // src/registry/io.ts
@@ -642,66 +702,6 @@ function removeVertexModelEntries(ids) {
   if (remaining.length === 0) return { ok: false, error: "Keep at least one model. To start over, reset to the latest default list instead." };
   saveVertexModelEntries(remaining);
   return { ok: true };
-}
-
-// src/free-models.ts
-var FREE_PROVIDER_IDS = /* @__PURE__ */ new Set(["nvidia"]);
-function isZeroOrMissing(value) {
-  return value === void 0 || value === 0;
-}
-function isZeroCost(cost) {
-  if (!cost) return false;
-  return cost.input === 0 && cost.output === 0 && isZeroOrMissing(cost.cache_read) && isZeroOrMissing(cost.cache_write);
-}
-function isPaidCost(cost) {
-  if (!cost) return false;
-  return cost.input > 0 || cost.output > 0 || (cost.cache_read ?? 0) > 0 || (cost.cache_write ?? 0) > 0;
-}
-function isLocalEndpointUrl(url) {
-  if (!url) return false;
-  let host;
-  try {
-    host = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  } catch {
-    return false;
-  }
-  if (host === "localhost" || host.endsWith(".localhost") || host === "::1" || host === "0.0.0.0") return true;
-  const m = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
-  if (!m) return false;
-  const a = Number(m[1]), b = Number(m[2]);
-  return a === 127 || a === 10 || a === 192 && b === 168 || a === 172 && b >= 16 && b <= 31;
-}
-function isOllamaCloudModelId(modelId) {
-  return /(^|[:-])cloud$/i.test(modelId);
-}
-function isFreeProviderAccess(providerId, templateId) {
-  return FREE_PROVIDER_IDS.has((providerId ?? "").toLowerCase()) || FREE_PROVIDER_IDS.has((templateId ?? "").toLowerCase());
-}
-function classifyFreeStatus(opts) {
-  if (opts.model.userMarkedFree === true) return "verified_free";
-  if (opts.model.localEndpoint === true) return "verified_free";
-  if (opts.freeAccess === true) return "free_provider";
-  if (isFreeProviderAccess(opts.providerId, opts.templateId)) return "free_provider";
-  if (isZeroCost(opts.model.cost)) return "verified_free";
-  if (isPaidCost(opts.model.cost)) return "paid";
-  if (opts.model.freeStatus) return opts.model.freeStatus;
-  if (opts.model.isFree === true) return "verified_free";
-  return "unknown";
-}
-var NO_BILLING_FREE_PROVIDER_IDS = /* @__PURE__ */ new Set(["nvidia"]);
-function poolFreeStatus(opts) {
-  const status = classifyFreeStatus(opts);
-  if (status === "free_provider" && NO_BILLING_FREE_PROVIDER_IDS.has((opts.providerId ?? "").toLowerCase()) && !isPaidCost(opts.model.cost)) return "verified_free";
-  return status;
-}
-function isFreeStatus(status) {
-  return status === "verified_free" || status === "free_provider";
-}
-function freeStatusLabel(status) {
-  if (status === "verified_free") return "Free";
-  if (status === "free_provider") return "Free dev access";
-  if (status === "paid") return "Paid";
-  return "Unknown price";
 }
 
 // src/data/model-incompatible.json
@@ -5273,4 +5273,4 @@ export {
   deepMergeProviderOptions,
   thinkingProviderOptions
 };
-//# sourceMappingURL=chunk-EP5Y4GRS.js.map
+//# sourceMappingURL=chunk-Z773U45B.js.map

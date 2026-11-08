@@ -60,6 +60,7 @@ import {
 } from './prompts.js';
 import { createGatewayModelCatalog } from './models.js';
 import { startServer } from './router.js';
+import { prepareServerPool } from './pool.js';
 import {
   filterServerModelsByFavorites,
   filterServerModelsByFreeStatus,
@@ -165,7 +166,13 @@ export function providerOptionsFromCatalog(catalog: import('../types.js').LocalP
   return options.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }));
 }
 
-export async function loadServerModels(): Promise<ServerModelInfo[]> {
+export interface ServerCatalog {
+  models: ServerModelInfo[];
+  /** Full provider catalog, used to resolve free-pool members and their receipts. */
+  providers: import('../types.js').LocalProvider[];
+}
+
+export async function loadServerCatalog(): Promise<ServerCatalog> {
   const catalog = await fetchProviderCatalog({ agent: 'server' });
   const models: ServerModelInfo[] = [];
 
@@ -174,7 +181,11 @@ export async function loadServerModels(): Promise<ServerModelInfo[]> {
     models.push(...localProvidersToServerModels(serverProviders));
   }
 
-  return models.map(enrichServerModelReasoning);
+  return { models: models.map(enrichServerModelReasoning), providers: catalog };
+}
+
+export async function loadServerModels(): Promise<ServerModelInfo[]> {
+  return (await loadServerCatalog()).models;
 }
 
 export function enrichServerModelReasoning(model: ServerModelInfo): ServerModelInfo {
@@ -517,8 +528,13 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
   spinner.start('Fetching available models...');
 
   let models: ServerModelInfo[];
+  let poolSetup: ReturnType<typeof prepareServerPool>;
   try {
-    models = await loadServerModels();
+    const loaded = await loadServerCatalog();
+    models = loaded.models;
+    // Off by default: this returns undefined unless the user enabled the pool
+    // and at least one member has a passing Test.
+    poolSetup = prepareServerPool(loaded.providers);
     if (runConfig.exposedProviders) {
       models = filterServerModelsByProviders(models, runConfig.exposedProviders);
     }
@@ -538,12 +554,14 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
     }
     if (runConfig.freeModelsOnly) {
       models = filterServerModelsByFreeStatus(models);
-      if (models.length === 0) {
+      if (models.length === 0 && !poolSetup) {
         spinner.stop(pc.red('No free models matched the current server filters'));
         p.log.error('Turn off free-models-only mode or add a provider with free models.');
         return 1;
       }
     }
+    // The pool is its own model and survives provider/favorites filters.
+    if (poolSetup) models = [...models, poolSetup.model];
     if (runConfig.favoritesOnly) {
       p.log.info(
         `Favorites-only mode active — GET /anthropic/v1/models returns ${models.length} favorites.`,
@@ -583,6 +601,7 @@ export async function runServerCommand(options: ServerCommandOptions = {}): Prom
     catalog: createGatewayModelCatalog(models, gateway),
     backends: BACKENDS,
     gateway,
+    ...(poolSetup ? { pool: poolSetup.options } : {}),
     debugLogPath,
   });
 

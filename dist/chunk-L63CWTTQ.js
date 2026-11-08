@@ -6,7 +6,7 @@ import {
   isLikelyPlaceholderKey,
   normalizeGoogleDisplayName,
   normalizeGoogleModelId
-} from "./chunk-OIJVKOTS.js";
+} from "./chunk-STGE7U52.js";
 import {
   formatUpstreamError,
   upstreamHttpStatus
@@ -32,7 +32,7 @@ import {
   poolFreeStatus,
   resolveModelReasoningMetadata,
   shouldHideModel
-} from "./chunk-EP5Y4GRS.js";
+} from "./chunk-Z773U45B.js";
 import {
   BACKENDS,
   CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW,
@@ -49,7 +49,7 @@ import {
   resolveProviderCredential,
   resolveProviderOAuthAccountId,
   resolveProviderOAuthProviderData
-} from "./chunk-4RLHM2U6.js";
+} from "./chunk-ZUJHJEU4.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -58,10 +58,6 @@ import {
   getAppHome,
   getLogsPath
 } from "./chunk-XEH2JMTL.js";
-
-// src/pool/activity.ts
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "fs";
-import { join } from "path";
 
 // src/pool/errors.ts
 var GONE_PATTERN = new RegExp([
@@ -124,6 +120,8 @@ function retryPoolFailure(error) {
 }
 
 // src/pool/activity.ts
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "fs";
+import { join } from "path";
 import pc from "picocolors";
 var MAX_BYTES = 256 * 1024;
 var KEEP_LINES = 500;
@@ -359,6 +357,25 @@ function formatPoolCurrentLine(state) {
   const since = when && !Number.isNaN(when.getTime()) ? ` since ${when.toLocaleTimeString([], { hour12: false })}` : "";
   const smooth = state.quiet > 0 ? `, ${state.quiet} request${state.quiet === 1 ? "" : "s"} answered normally since` : "";
   return `Current model: ${pc.green(`${state.current.providerId}/${state.current.modelId}`)}${pc.dim(since + smooth)}`;
+}
+
+// src/pool/diagnostic.ts
+function redactDiagnostic(text, max = 160) {
+  const redacted = text.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]").replace(/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{6,}/gi, "[redacted]").replace(
+    /\b(?:sk|pk|rk|api[-_]?key|token|secret|authorization)[-_A-Za-z0-9]*\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{6,}/gi,
+    "[redacted]"
+  ).replace(/\b[A-Za-z0-9_-]{32,}\b/g, "[redacted]").replace(/\s+/g, " ").trim();
+  return redacted ? redacted.slice(0, max) : void 0;
+}
+function poolErrorDetail(error) {
+  try {
+    const formatted = formatUpstreamError(error);
+    const raw = error instanceof Error ? error.message : "";
+    const text = formatted && formatted !== "Upstream model request failed." ? formatted : raw;
+    return redactDiagnostic(text, 200);
+  } catch {
+    return void 0;
+  }
 }
 
 // src/pool/force-fail.ts
@@ -2485,25 +2502,6 @@ async function probePoolEffort(model, providerOptions, signal, timeoutMs = 2e4, 
   }
 }
 
-// src/pool/diagnostic.ts
-function redactDiagnostic(text, max = 160) {
-  const redacted = text.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]").replace(/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{6,}/gi, "[redacted]").replace(
-    /\b(?:sk|pk|rk|api[-_]?key|token|secret|authorization)[-_A-Za-z0-9]*\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{6,}/gi,
-    "[redacted]"
-  ).replace(/\b[A-Za-z0-9_-]{32,}\b/g, "[redacted]").replace(/\s+/g, " ").trim();
-  return redacted ? redacted.slice(0, max) : void 0;
-}
-function poolErrorDetail(error) {
-  try {
-    const formatted = formatUpstreamError(error);
-    const raw = error instanceof Error ? error.message : "";
-    const text = formatted && formatted !== "Upstream model request failed." ? formatted : raw;
-    return redactDiagnostic(text, 200);
-  } catch {
-    return void 0;
-  }
-}
-
 // src/pool/verify.ts
 import { randomUUID as randomUUID3 } from "crypto";
 function poolMembershipProblem(provider, model) {
@@ -2635,4 +2633,4 @@ export {
   poolDiagnostic,
   verifyConfiguredPoolMember
 };
-//# sourceMappingURL=chunk-SZETLIMN.js.map
+//# sourceMappingURL=chunk-L63CWTTQ.js.map

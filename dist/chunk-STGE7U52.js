@@ -5,34 +5,16 @@ import {
   loadModelsDevCache,
   resolveModelsDevSlug,
   shouldHideModel
-} from "./chunk-EP5Y4GRS.js";
+} from "./chunk-Z773U45B.js";
 import {
   classifyModelFormat,
   contextWindowFromHeuristics,
   resolveContextWindow
-} from "./chunk-4RLHM2U6.js";
+} from "./chunk-ZUJHJEU4.js";
 import {
   getTemplateById,
   init_provider_templates
 } from "./chunk-6DCEGHZH.js";
-
-// src/registry/google-model-id.ts
-var GOOGLE_MODEL_PREFIX = "models/";
-function stripGoogleModelPrefix(id) {
-  return id.startsWith(GOOGLE_MODEL_PREFIX) ? id.slice(GOOGLE_MODEL_PREFIX.length) : id;
-}
-function normalizeGoogleModelId(rawId, npm) {
-  if (npm !== "@ai-sdk/google") {
-    return { id: rawId, upstreamModelId: rawId };
-  }
-  const bare = stripGoogleModelPrefix(rawId);
-  return { id: bare, upstreamModelId: bare };
-}
-function normalizeGoogleDisplayName(rawName, bareId) {
-  const trimmed = rawName?.trim();
-  if (!trimmed) return bareId;
-  return stripGoogleModelPrefix(trimmed);
-}
 
 // src/models.ts
 var BRAND_MAP = [
@@ -128,103 +110,6 @@ async function getModels(backend, fallbackModels) {
       "Cannot fetch models. Check your network and https://opencode.ai status."
     );
   }
-}
-
-// src/registry/refresh-credentials.ts
-var PLACEHOLDER_KEYS = /* @__PURE__ */ new Set([
-  "anything",
-  "local",
-  "ollama",
-  "none",
-  "n/a",
-  "na",
-  "placeholder",
-  "test",
-  "no-key"
-]);
-var ENV_FALLBACK_BY_PROVIDER = {
-  anthropic: ["ANTHROPIC_API_KEY"],
-  openai: ["OPENAI_API_KEY"]
-};
-function isPlaceholderProviderKey(key) {
-  if (!key?.trim()) return true;
-  return PLACEHOLDER_KEYS.has(key.trim().toLowerCase());
-}
-function isLikelyPlaceholderKey(key) {
-  if (isPlaceholderProviderKey(key)) return true;
-  const trimmed = key?.trim() ?? "";
-  if (trimmed.length <= 2) return true;
-  return false;
-}
-function cachedModelCount(provider) {
-  return getProviderModels(provider).length;
-}
-function skipWithCachedModels(provider, reason) {
-  const count = getAgentProviderModels(provider).length;
-  return {
-    id: provider.id,
-    name: provider.name,
-    ok: true,
-    skipped: true,
-    modelCount: count > 0 ? count : void 0,
-    reason
-  };
-}
-async function resolveRefreshCredential(provider, resolveKey) {
-  let key;
-  try {
-    key = await resolveKey(provider);
-  } catch {
-    key = null;
-  }
-  if (!isLikelyPlaceholderKey(key)) return key;
-  for (const envVar of ENV_FALLBACK_BY_PROVIDER[provider.id] ?? []) {
-    const fromEnv = process.env[envVar]?.trim();
-    if (fromEnv && !isLikelyPlaceholderKey(fromEnv)) return fromEnv;
-  }
-  return key;
-}
-
-// src/registry/resolve-template.ts
-init_provider_templates();
-var TEMPLATE_ID_ALIASES = {
-  "google-vertex": "vertex"
-};
-var NPM_DEFAULT_BASE_URL = {
-  "@ai-sdk/anthropic": "https://api.anthropic.com"
-};
-function resolveProviderTemplate(provider) {
-  const candidates = [
-    TEMPLATE_ID_ALIASES[provider.templateId],
-    provider.templateId,
-    TEMPLATE_ID_ALIASES[provider.id],
-    provider.id
-  ].filter(Boolean);
-  for (const id of candidates) {
-    const template = getTemplateById(id);
-    if (template) return template;
-  }
-  return void 0;
-}
-function effectiveProviderBaseUrl(provider, template) {
-  const fromRegistry = provider.api.url?.trim();
-  if (fromRegistry) return fromRegistry;
-  if (template?.defaultBaseUrl?.trim()) return template.defaultBaseUrl.trim();
-  const npm = provider.api.npm?.trim();
-  if (npm && NPM_DEFAULT_BASE_URL[npm]) return NPM_DEFAULT_BASE_URL[npm];
-  return void 0;
-}
-function syntheticTemplate(provider, baseUrl) {
-  const npm = provider.api.npm ?? "@ai-sdk/openai-compatible";
-  return {
-    id: provider.id,
-    name: provider.name,
-    authType: "api",
-    npm,
-    defaultBaseUrl: baseUrl,
-    modelSource: "api-list",
-    supported: true
-  };
 }
 
 // src/registry/copilot-models.ts
@@ -327,6 +212,121 @@ function numericValue(value) {
   return void 0;
 }
 
+// src/registry/google-model-id.ts
+var GOOGLE_MODEL_PREFIX = "models/";
+function stripGoogleModelPrefix(id) {
+  return id.startsWith(GOOGLE_MODEL_PREFIX) ? id.slice(GOOGLE_MODEL_PREFIX.length) : id;
+}
+function normalizeGoogleModelId(rawId, npm) {
+  if (npm !== "@ai-sdk/google") {
+    return { id: rawId, upstreamModelId: rawId };
+  }
+  const bare = stripGoogleModelPrefix(rawId);
+  return { id: bare, upstreamModelId: bare };
+}
+function normalizeGoogleDisplayName(rawName, bareId) {
+  const trimmed = rawName?.trim();
+  if (!trimmed) return bareId;
+  return stripGoogleModelPrefix(trimmed);
+}
+
+// src/registry/refresh-credentials.ts
+var PLACEHOLDER_KEYS = /* @__PURE__ */ new Set([
+  "anything",
+  "local",
+  "ollama",
+  "none",
+  "n/a",
+  "na",
+  "placeholder",
+  "test",
+  "no-key"
+]);
+var ENV_FALLBACK_BY_PROVIDER = {
+  anthropic: ["ANTHROPIC_API_KEY"],
+  openai: ["OPENAI_API_KEY"]
+};
+function isPlaceholderProviderKey(key) {
+  if (!key?.trim()) return true;
+  return PLACEHOLDER_KEYS.has(key.trim().toLowerCase());
+}
+function isLikelyPlaceholderKey(key) {
+  if (isPlaceholderProviderKey(key)) return true;
+  const trimmed = key?.trim() ?? "";
+  if (trimmed.length <= 2) return true;
+  return false;
+}
+function cachedModelCount(provider) {
+  return getProviderModels(provider).length;
+}
+function skipWithCachedModels(provider, reason) {
+  const count = getAgentProviderModels(provider).length;
+  return {
+    id: provider.id,
+    name: provider.name,
+    ok: true,
+    skipped: true,
+    modelCount: count > 0 ? count : void 0,
+    reason
+  };
+}
+async function resolveRefreshCredential(provider, resolveKey) {
+  let key;
+  try {
+    key = await resolveKey(provider);
+  } catch {
+    key = null;
+  }
+  if (!isLikelyPlaceholderKey(key)) return key;
+  for (const envVar of ENV_FALLBACK_BY_PROVIDER[provider.id] ?? []) {
+    const fromEnv = process.env[envVar]?.trim();
+    if (fromEnv && !isLikelyPlaceholderKey(fromEnv)) return fromEnv;
+  }
+  return key;
+}
+
+// src/registry/resolve-template.ts
+init_provider_templates();
+var TEMPLATE_ID_ALIASES = {
+  "google-vertex": "vertex"
+};
+var NPM_DEFAULT_BASE_URL = {
+  "@ai-sdk/anthropic": "https://api.anthropic.com"
+};
+function resolveProviderTemplate(provider) {
+  const candidates = [
+    TEMPLATE_ID_ALIASES[provider.templateId],
+    provider.templateId,
+    TEMPLATE_ID_ALIASES[provider.id],
+    provider.id
+  ].filter(Boolean);
+  for (const id of candidates) {
+    const template = getTemplateById(id);
+    if (template) return template;
+  }
+  return void 0;
+}
+function effectiveProviderBaseUrl(provider, template) {
+  const fromRegistry = provider.api.url?.trim();
+  if (fromRegistry) return fromRegistry;
+  if (template?.defaultBaseUrl?.trim()) return template.defaultBaseUrl.trim();
+  const npm = provider.api.npm?.trim();
+  if (npm && NPM_DEFAULT_BASE_URL[npm]) return NPM_DEFAULT_BASE_URL[npm];
+  return void 0;
+}
+function syntheticTemplate(provider, baseUrl) {
+  const npm = provider.api.npm ?? "@ai-sdk/openai-compatible";
+  return {
+    id: provider.id,
+    name: provider.name,
+    authType: "api",
+    npm,
+    defaultBaseUrl: baseUrl,
+    modelSource: "api-list",
+    supported: true
+  };
+}
+
 export {
   stripGoogleModelPrefix,
   normalizeGoogleModelId,
@@ -344,4 +344,4 @@ export {
   normalizeCopilotModels,
   filterCachedCopilotModels
 };
-//# sourceMappingURL=chunk-OIJVKOTS.js.map
+//# sourceMappingURL=chunk-STGE7U52.js.map

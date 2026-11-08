@@ -3,7 +3,17 @@ import {
   handlePoolApi,
   invalidateUiPoolMember,
   verifyUiPoolMember
-} from "./chunk-RNZTO7RJ.js";
+} from "./chunk-VYJHMXDN.js";
+import {
+  AA_SITE_URL,
+  IntelligenceError,
+  buildIntelligenceLookup,
+  hasIntelligenceKey,
+  isIntelligenceStale,
+  loadIntelligenceCache,
+  refreshIntelligence,
+  removeIntelligence
+} from "./chunk-AEMD6EDL.js";
 import {
   DEFAULT_SERVER_UI_PORT,
   checkExistingServer,
@@ -29,9 +39,10 @@ import {
   gatewayProviderLabel,
   getRelayAccountUsage,
   hostFromHeader,
-  loadServerModels,
+  loadServerCatalog,
   normalizeFavoriteModels,
   openAiIdCollisions,
+  prepareServerPool,
   providerOptionsFromCatalog,
   readOAuthAccountLabel,
   readRelayAccountUsage,
@@ -43,12 +54,12 @@ import {
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode
-} from "./chunk-ZIGNTRFI.js";
+} from "./chunk-6X7Y5EFI.js";
 import {
   readBody,
   sendJson
-} from "./chunk-VTP3A7UJ.js";
-import "./chunk-GP42LVHQ.js";
+} from "./chunk-JBWJDQG7.js";
+import "./chunk-5RSLXBKO.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   addCustomEndpointProvider,
@@ -69,21 +80,21 @@ import {
   setModelMarkedFree,
   setModelsHidden,
   updateCustomEndpointProvider
-} from "./chunk-L5UIRBFD.js";
-import {
-  validateCustomEndpointUrl
-} from "./chunk-5HGLQHX6.js";
+} from "./chunk-B43GJR42.js";
 import {
   poolCatalogEntry
-} from "./chunk-A3Q3C2FS.js";
+} from "./chunk-HC4K67YE.js";
 import {
   fetchProviderCatalog,
   providersForCodexSubagents,
   providersForTarget
-} from "./chunk-SZETLIMN.js";
+} from "./chunk-L63CWTTQ.js";
 import {
   copilotPlanTier
-} from "./chunk-OIJVKOTS.js";
+} from "./chunk-STGE7U52.js";
+import {
+  validateCustomEndpointUrl
+} from "./chunk-5HGLQHX6.js";
 import "./chunk-UR4QFFSQ.js";
 import "./chunk-IRMXZJ3D.js";
 import {
@@ -126,18 +137,7 @@ import {
   setTrustSystemCertificates,
   supportsManualModels,
   writeSecureLogLine
-} from "./chunk-EP5Y4GRS.js";
-import "./chunk-W32XKRNU.js";
-import {
-  AA_SITE_URL,
-  IntelligenceError,
-  buildIntelligenceLookup,
-  hasIntelligenceKey,
-  isIntelligenceStale,
-  loadIntelligenceCache,
-  refreshIntelligence,
-  removeIntelligence
-} from "./chunk-ANMME5BO.js";
+} from "./chunk-Z773U45B.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -166,7 +166,7 @@ import {
   resolveProviderCredential,
   saveProviderCredential,
   supportsAdditionalOAuthAccounts
-} from "./chunk-4RLHM2U6.js";
+} from "./chunk-ZUJHJEU4.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -176,6 +176,7 @@ import {
   provider_templates_exports,
   supportsAdditionalApiAccounts
 } from "./chunk-6DCEGHZH.js";
+import "./chunk-W32XKRNU.js";
 import "./chunk-XEH2JMTL.js";
 import {
   __toCommonJS
@@ -595,8 +596,11 @@ async function doStartGatewayServer(req, opts) {
     }
   }
   let models;
+  let poolSetup;
   try {
-    models = await loadServerModels();
+    const loaded = await loadServerCatalog();
+    models = loaded.models;
+    poolSetup = prepareServerPool(loaded.providers);
   } catch (err) {
     return { ok: false, error: `Failed to load models: ${err instanceof Error ? err.message : String(err)}` };
   }
@@ -613,10 +617,11 @@ async function doStartGatewayServer(req, opts) {
   }
   if (req.freeModelsOnly) {
     models = filterServerModelsByFreeStatus(models);
-    if (models.length === 0) {
+    if (models.length === 0 && !poolSetup) {
       return { ok: false, error: "No free models matched the current server filters." };
     }
   }
+  if (poolSetup) models = [...models, poolSetup.model];
   if (models.length === 0) {
     return { ok: false, error: "No models to expose. Add providers or adjust the exposed-provider filter." };
   }
@@ -642,6 +647,7 @@ async function doStartGatewayServer(req, opts) {
       catalog: createGatewayModelCatalog(models, gateway),
       backends: BACKENDS,
       gateway,
+      ...poolSetup ? { pool: poolSetup.options } : {},
       debugLogPath: getServerDebugLogPath()
     });
   } catch (err) {
@@ -1157,7 +1163,7 @@ async function handleMeasureContextWindow(req, res) {
     if (!res.writableEnded) controller.abort();
   });
   try {
-    const { checkContextWindow } = await import("./test-model-2GXVA25S.js");
+    const { checkContextWindow } = await import("./test-model-ERBXRACX.js");
     const context = await checkContextWindow(provider.id, body.modelId, controller.signal);
     if (!res.destroyed) sendJson(res, 200, { ok: true, context });
   } catch {
@@ -1184,7 +1190,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-S2EIAU4T.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-GV7NZNKD.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1515,7 +1521,7 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-2GXVA25S.js");
+    const { testModel } = await import("./test-model-ERBXRACX.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
     if (!controller.signal.aborted) {
       try {
@@ -1532,7 +1538,7 @@ async function handleTestModel(req, res) {
         if (provider && cachedModel) {
           const probeAllowed = customEndpointKind(provider) || isFreeStatus(classifyFreeStatus({ model: cachedModel, providerId: provider.id, templateId: provider.templateId }));
           if (probeAllowed || providerKind(provider.id) === "ollama") {
-            const { checkContextWindow } = await import("./test-model-2GXVA25S.js");
+            const { checkContextWindow } = await import("./test-model-ERBXRACX.js");
             context = await checkContextWindow(provider.id, cachedModel.id, controller.signal, { lookupOnly: !probeAllowed });
           }
         }
@@ -1606,13 +1612,13 @@ async function handleIntelligenceKey(req, res) {
       sendJson(res, 400, { ok: false, error: "Paste your Artificial Analysis API key." });
       return;
     }
-    const { fetchIntelligenceScores, saveIntelligenceKey: save } = await import("./artificial-analysis-U7CSFDI2.js");
+    const { fetchIntelligenceScores, saveIntelligenceKey: save } = await import("./artificial-analysis-DUHYQR76.js");
     const cache = await fetchIntelligenceScores(key);
     if (!await save(key)) {
       sendJson(res, 200, { ok: false, error: "Could not store the key in the system credential store." });
       return;
     }
-    const { writeIntelligenceCache } = await import("./artificial-analysis-U7CSFDI2.js");
+    const { writeIntelligenceCache } = await import("./artificial-analysis-DUHYQR76.js");
     writeIntelligenceCache(cache);
     sendJson(res, 200, { ok: true, ...await intelligenceStatusBody() });
   } catch (err) {
@@ -1679,7 +1685,7 @@ async function handleEditServerUrl(req, res) {
       sendJson(res, 400, { ok: false, error: valid.error ?? "Invalid URL", hint: valid.hint });
       return;
     }
-    const { setProviderServerUrl } = await import("./crud-D2QZYG3I.js");
+    const { setProviderServerUrl } = await import("./crud-PXLWDJ7V.js");
     const previous = provider.api.url ?? "";
     if (previous.replace(/\/+$/, "") === newUrl) {
       sendJson(res, 200, { ok: true, unchanged: true });
@@ -2512,4 +2518,4 @@ export {
   resolveUiShutdownDecision,
   runUiCommand
 };
-//# sourceMappingURL=ui-command-REMPOBSK.js.map
+//# sourceMappingURL=ui-command-LC5FFXRE.js.map

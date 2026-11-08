@@ -84,6 +84,8 @@ export interface ServerPoolOptions {
   runtime: ClaudePoolRuntime;
   /** Discovery label for the synthetic pool entry. */
   displayName: string;
+  /** Catalog id the gateway advertises. Defaults to Claude Desktop's id. */
+  modelId?: string;
 }
 
 export interface ServerHandle {
@@ -102,6 +104,11 @@ function makeServerLog(debugLogPath: string | undefined): PLog {
   if (!debugLogPath) return () => {};
   resetTraceLog(debugLogPath);
   return (msg) => writeSecureLogLine(debugLogPath, typeof msg === 'function' ? msg() : msg);
+}
+
+/** Catalog id for the synthetic pool model; Claude Desktop keeps its own id. */
+function poolCatalogId(options: ServerOptions): string {
+  return options.pool?.modelId ?? CLAUDE_POOL_MODEL_ID;
 }
 
 export async function startServer(options: ServerOptions): Promise<ServerHandle> {
@@ -171,7 +178,7 @@ async function routeRequest(
       // The masked-discovery display name appends the provider label; the pool is
       // a product name, so keep it exactly as configured.
       const poolModel = options.pool
-        ? models.find(model => model.id === CLAUDE_POOL_MODEL_ID)
+        ? models.find(model => model.id === poolCatalogId(options))
         : undefined;
       if (poolModel && options.pool) {
         const publicId = exposedGatewayAliasId(poolModel, options.gateway);
@@ -227,7 +234,7 @@ async function handleAnthropicMessages(
     return;
   }
 
-  if (options.pool && model.id === CLAUDE_POOL_MODEL_ID) {
+  if (options.pool && model.id === poolCatalogId(options)) {
     // Resolve through the catalog first: Claude Desktop may send the masked,
     // scoped, or bare id. Only the resolved synthetic entry reaches the pool,
     // and a pool failure never falls through to a provider route.
@@ -448,6 +455,49 @@ async function serveAnthropicPool(
   }
 }
 
+/** Serves the synthetic pool id on the Chat Completions wire through the Core pool model. */
+async function serveOpenAiPool(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: ServerOptions,
+  body: JsonBody,
+  plog: PLog,
+): Promise<void> {
+  const pool = options.pool;
+  if (!pool) return;
+  const sessionId = extractConversationId(req.headers, body);
+  const responseModelId = String(body.model ?? poolCatalogId(options));
+  plog(() => `openai-chat-completions pool stream=${body.stream === true}`);
+  try {
+    // Loaded lazily: the ordinary server catalog must not pull in Core transports.
+    const [{ createRelayModel }, { RELAY_POOL_ROUTE_ID }] = await Promise.all([
+      import('../core/model.js'),
+      import('../core/pool-model.js'),
+    ]);
+    const languageModel = await createRelayModel(RELAY_POOL_ROUTE_ID, { sessionId, onDebug: plog });
+    const params = translateOpenAiRequest(body as unknown as OpenAiRequest);
+    if (body.stream === true) {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      });
+      await streamOpenAiResponse(languageModel, params, responseModelId, chunk => res.write(chunk), plog);
+      res.end();
+    } else {
+      const response = await generateOpenAiResponse(languageModel, params, responseModelId);
+      sendJson(res, 200, response);
+    }
+  } catch (err) {
+    const message = formatUpstreamError(err);
+    plog(`openai pool error: ${message}`);
+    if (!res.headersSent) {
+      const status = upstreamHttpStatus(err, message);
+      sendJson(res, status === 500 ? 502 : status, { error: { message } });
+    } else res.end();
+  }
+}
+
 async function handleOpenAIChatCompletions(
   req: IncomingMessage,
   res: ServerResponse,
@@ -488,6 +538,13 @@ async function handleOpenAIChatCompletions(
 
   const model = lookupModel(res, options.catalog, body.model);
   if (!model) return;
+
+  if (options.pool && model.id === poolCatalogId(options)) {
+    // Relay Free Pool on the Chat Completions wire. The Core pool model already
+    // owns per-member failover, cooldowns, tools and conversation pinning.
+    await serveOpenAiPool(req, res, options, body, plog);
+    return;
+  }
 
   if (supportsDirectOpenAIChatCompletions(model)) {
     if (model.completionsUrl && !/^https?:\/\//i.test(model.completionsUrl)) {
