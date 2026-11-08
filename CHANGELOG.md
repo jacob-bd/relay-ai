@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.22.2] - 2026-11-08
+
+### Fixed
+
+- **Codex Free Pool handles existing threads with native OpenAI state and large images.** Switching an existing Codex conversation to `relay-free-pool` after earlier native OpenAI turns no longer fails with `503 Free pool could not complete this request safely` when the history contains opaque `reasoning.encrypted_content` or undecodable `compaction.encrypted_content` alongside readable messages, and `PoolContinuationStore` now excludes base64 `input_image` payloads from the 4 MB text snapshot cap so multi-image conversations can continue across turns.
+- **Free Pool admission errors appear in `relay-ai pool log`.** Route preparation failures thrown during lazy admission are now recorded per member instead of being silently omitted from the pool activity log.
+- **No vertical dead space in the Free Pool UI card when the gateway is running.** Scoped `.pool-hint`'s horizontal `flex-basis: 260px` to the effort row so the server-running notice inside the column-layout **Enable Relay Free Pool** card no longer inflates the card height by 260px.
+
 ## [0.22.1] - 2026-11-08
 
 ### Added

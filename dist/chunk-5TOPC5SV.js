@@ -6,7 +6,7 @@ import {
   isLikelyPlaceholderKey,
   normalizeGoogleDisplayName,
   normalizeGoogleModelId
-} from "./chunk-STGE7U52.js";
+} from "./chunk-7AT2OG2W.js";
 import {
   formatUpstreamError,
   upstreamHttpStatus
@@ -32,7 +32,7 @@ import {
   poolFreeStatus,
   resolveModelReasoningMetadata,
   shouldHideModel
-} from "./chunk-Z773U45B.js";
+} from "./chunk-6ATJUU3L.js";
 import {
   BACKENDS,
   CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW,
@@ -49,7 +49,7 @@ import {
   resolveProviderCredential,
   resolveProviderOAuthAccountId,
   resolveProviderOAuthProviderData
-} from "./chunk-ZUJHJEU4.js";
+} from "./chunk-P3FIONJC.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -2633,4 +2633,4 @@ export {
   poolDiagnostic,
   verifyConfiguredPoolMember
 };
-//# sourceMappingURL=chunk-L63CWTTQ.js.map
+//# sourceMappingURL=chunk-5TOPC5SV.js.map

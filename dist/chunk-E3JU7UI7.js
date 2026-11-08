@@ -13,7 +13,7 @@ import {
   resolveRefreshCredential,
   skipWithCachedModels,
   syntheticTemplate
-} from "./chunk-STGE7U52.js";
+} from "./chunk-7AT2OG2W.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -54,7 +54,7 @@ import {
   validateProviderName,
   vertexAnthropicCachedModels,
   writeSecureLogLine
-} from "./chunk-Z773U45B.js";
+} from "./chunk-6ATJUU3L.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -76,7 +76,7 @@ import {
   resolveProviderOAuthProviderData,
   saveProviderCredential,
   saveToCredentialStore
-} from "./chunk-ZUJHJEU4.js";
+} from "./chunk-P3FIONJC.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -2276,4 +2276,4 @@ export {
   toggleProviderEnabled,
   setProviderServerUrl
 };
-//# sourceMappingURL=chunk-B43GJR42.js.map
+//# sourceMappingURL=chunk-E3JU7UI7.js.map

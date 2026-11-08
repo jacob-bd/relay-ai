@@ -17,7 +17,7 @@ import {
   isProviderKind,
   providerKind,
   selectBetaFlags
-} from "./chunk-ZUJHJEU4.js";
+} from "./chunk-P3FIONJC.js";
 import {
   hasApplicationDefaultCredentials,
   loadVertexModelEntries,
@@ -5273,4 +5273,4 @@ export {
   deepMergeProviderOptions,
   thinkingProviderOptions
 };
-//# sourceMappingURL=chunk-Z773U45B.js.map
+//# sourceMappingURL=chunk-6ATJUU3L.js.map

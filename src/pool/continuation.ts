@@ -68,6 +68,16 @@ const DEFAULT_LIMITS: ContinuationLimits = {
   maxTotalBytes: 128 * 1024 * 1024,
 };
 
+function withoutImageData(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutImageData);
+  if (value === null || typeof value !== 'object') return value;
+  const record = value as Record<string, unknown>;
+  if (record.type === 'input_image' && typeof record.image_url === 'string') {
+    return { ...record, image_url: '[image]' };
+  }
+  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, withoutImageData(item)]));
+}
+
 function items(input: unknown): Item[] {
   if (typeof input === 'string') return [{ type: 'message', role: 'user', content: input }];
   if (!Array.isArray(input)) throw new Error('unsupported-input');
@@ -119,7 +129,7 @@ export class PoolContinuationStore {
       expires: this.now() + this.limits.ttlMs,
       bytes: 0,
     };
-    state.bytes = Buffer.byteLength(JSON.stringify(state), 'utf8');
+    state.bytes = Buffer.byteLength(JSON.stringify(withoutImageData(state)), 'utf8');
     if (state.bytes > this.limits.maxBytes) throw new Error('continuation-history-too-large');
     this.prune();
     const key = JSON.stringify([scope, responseId]);
@@ -202,6 +212,17 @@ function stripRouteParts(
   return { ...rest, ...(rawId ? { toolCallId: rawId } : {}) };
 }
 
+function isOpaqueCompaction(item: Item): boolean {
+  return (item.type === 'compaction' || item.type === 'context_compaction')
+    && decodeCompactionContent(item.encrypted_content as string | undefined) === null;
+}
+
+function hasReasoningSummary(item: Item): boolean {
+  return Array.isArray(item.summary) && item.summary.some(part =>
+    part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string'
+    && ((part as { text: string }).text).trim().length > 0);
+}
+
 /**
  * Translates reconstructed Responses history for one attempt. Switching routes
  * keeps human-visible history and removes route-bound signatures and reasoning.
@@ -216,12 +237,20 @@ export function preparePoolHistory(
   origins?: CallOrigins,
 ): CodexSdkCallParams {
   const fresh = structuredClone(body);
-  const input = items(fresh.input);
-  if (input.some(item =>
-    ((item.type === 'compaction' || item.type === 'context_compaction')
-      && decodeCompactionContent(item.encrypted_content as string | undefined) === null)
-    || (item.type === 'reasoning' && typeof item.encrypted_content === 'string'),
-  )) throw new Error('unsupported-continuation: opaque provider state requires original route');
+  const rawInput = items(fresh.input);
+  const hadOpaque = rawInput.some(item =>
+    isOpaqueCompaction(item) || (item.type === 'reasoning' && typeof item.encrypted_content === 'string'));
+  const input = rawInput
+    .filter(item => !isOpaqueCompaction(item))
+    .map(item => {
+      if (item.type !== 'reasoning' || typeof item.encrypted_content !== 'string') return item;
+      const { encrypted_content: _encrypted, ...rest } = item;
+      return rest;
+    });
+  const hasReadableHistory = input.some(item => item.type !== 'reasoning' || hasReasoningSummary(item));
+  if (hadOpaque && !hasReadableHistory) {
+    throw new Error('unsupported-continuation: opaque provider state requires original route');
+  }
   fresh.input = input;
   const params = translateResponsesRequest(fresh as unknown as ResponsesRequest, npm, metadata, options);
   const targetKey = poolRouteKey(target);

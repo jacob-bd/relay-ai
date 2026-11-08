@@ -2559,7 +2559,9 @@ html[data-theme="light"] .toast {
 .pool-feature-help strong { color:var(--text-2); }
 .pool-effort-card { margin-top:10px; }
 .pool-effort { display:inline-flex; align-items:center; gap:8px; color:var(--text-2); font-size:12px; }
-.pool-hint { flex:1 1 260px; min-width:200px; margin:0; color:var(--text-3); font-size:12px; line-height:1.5; }
+.pool-hint { margin:0; color:var(--text-3); font-size:12px; line-height:1.5; }
+.pool-effort-card .pool-hint { flex:1 1 260px; min-width:200px; }
+.pool-feature .pool-hint { margin:2px 0 0 24px; max-width:760px; }
 .pool-notice { margin:0 0 14px; padding:10px 12px; border:1px solid var(--error); border-radius:var(--radius-sm); background:var(--error-bg); color:var(--text-1); font-size:13px; }
 .pool-tools { margin-top:0; margin-bottom:10px; flex-wrap:nowrap; }
 .pool-filter-row { display:flex; align-items:flex-start; gap:10px 12px; margin-bottom:14px; }
@@ -2579,7 +2581,7 @@ html[data-theme="light"] .toast {
   .pool-member-row { flex-wrap:wrap; }
   .pool-member-main { flex-basis:calc(100% - 56px); }
   .pool-member-actions { flex-wrap:wrap; width:100%; padding-left:56px; }
-  .pool-controls .pool-hint { flex-basis:100%; }
+  .pool-effort-card .pool-hint { flex-basis:100%; }
 }
 @media (max-width: 480px) {
   .pool-tools { flex-wrap:wrap; }

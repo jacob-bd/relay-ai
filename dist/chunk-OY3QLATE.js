@@ -16,12 +16,12 @@ import {
   recordPoolActivity,
   resolveLocalProviderApiKey,
   retryPoolFailure
-} from "./chunk-L63CWTTQ.js";
+} from "./chunk-5TOPC5SV.js";
 import {
   copilotPlanTier,
   filterCachedCopilotModels,
   stripGoogleModelPrefix
-} from "./chunk-STGE7U52.js";
+} from "./chunk-7AT2OG2W.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
@@ -58,11 +58,11 @@ import {
   sseChunk,
   streamActivity,
   thinkingProviderOptions
-} from "./chunk-Z773U45B.js";
+} from "./chunk-6ATJUU3L.js";
 import {
   isProviderKind,
   resolveProviderOAuthProviderData
-} from "./chunk-ZUJHJEU4.js";
+} from "./chunk-P3FIONJC.js";
 
 // src/core/pool-model.ts
 import { randomUUID as randomUUID2 } from "crypto";
@@ -1500,6 +1500,15 @@ var DEFAULT_LIMITS2 = {
   maxItems: 2e3,
   maxTotalBytes: 128 * 1024 * 1024
 };
+function withoutImageData(value) {
+  if (Array.isArray(value)) return value.map(withoutImageData);
+  if (value === null || typeof value !== "object") return value;
+  const record = value;
+  if (record.type === "input_image" && typeof record.image_url === "string") {
+    return { ...record, image_url: "[image]" };
+  }
+  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, withoutImageData(item)]));
+}
 function items(input) {
   if (typeof input === "string") return [{ type: "message", role: "user", content: input }];
   if (!Array.isArray(input)) throw new Error("unsupported-input");
@@ -1537,7 +1546,7 @@ var PoolContinuationStore = class {
       expires: this.now() + this.limits.ttlMs,
       bytes: 0
     };
-    state.bytes = Buffer.byteLength(JSON.stringify(state), "utf8");
+    state.bytes = Buffer.byteLength(JSON.stringify(withoutImageData(state)), "utf8");
     if (state.bytes > this.limits.maxBytes) throw new Error("continuation-history-too-large");
     this.prune();
     const key = JSON.stringify([scope, responseId]);
@@ -1605,12 +1614,25 @@ function stripRouteParts(part, target, source, origins) {
   const { providerOptions: _options, toolCallId: _id, ...rest } = part;
   return { ...rest, ...rawId ? { toolCallId: rawId } : {} };
 }
+function isOpaqueCompaction(item) {
+  return (item.type === "compaction" || item.type === "context_compaction") && decodeCompactionContent(item.encrypted_content) === null;
+}
+function hasReasoningSummary(item) {
+  return Array.isArray(item.summary) && item.summary.some((part) => part && typeof part === "object" && typeof part.text === "string" && part.text.trim().length > 0);
+}
 function preparePoolHistory(body, source, target, npm, metadata, options, origins) {
   const fresh = structuredClone(body);
-  const input = items(fresh.input);
-  if (input.some(
-    (item) => (item.type === "compaction" || item.type === "context_compaction") && decodeCompactionContent(item.encrypted_content) === null || item.type === "reasoning" && typeof item.encrypted_content === "string"
-  )) throw new Error("unsupported-continuation: opaque provider state requires original route");
+  const rawInput = items(fresh.input);
+  const hadOpaque = rawInput.some((item) => isOpaqueCompaction(item) || item.type === "reasoning" && typeof item.encrypted_content === "string");
+  const input = rawInput.filter((item) => !isOpaqueCompaction(item)).map((item) => {
+    if (item.type !== "reasoning" || typeof item.encrypted_content !== "string") return item;
+    const { encrypted_content: _encrypted, ...rest } = item;
+    return rest;
+  });
+  const hasReadableHistory = input.some((item) => item.type !== "reasoning" || hasReasoningSummary(item));
+  if (hadOpaque && !hasReadableHistory) {
+    throw new Error("unsupported-continuation: opaque provider state requires original route");
+  }
   fresh.input = input;
   const params = translateResponsesRequest(fresh, npm, metadata, options);
   const targetKey = poolRouteKey(target);
@@ -1846,76 +1868,81 @@ async function prepareCodexPoolRoutes(options) {
         skip(reason);
         return { skip: reason };
       };
-      const requested = options.body.reasoning?.effort ?? options.pool.effort;
-      const auto = requested === "auto";
-      const memberEffort = poolMemberEffort(auto ? "auto" : requested, receipt);
-      const memberAuto = memberEffort === null;
-      const body = omitPoolEffort(options.body, memberEffort);
-      const translate = options.translate ?? preparePoolHistory;
-      const params = translate(body, options.source, identity, npm, {
-        ...model,
-        providerId: provider.id,
-        apiBaseUrl: model.apiBaseUrl
-      }, { maxTools: POOL_MAX_TOOLS, npm, forwardToolChoice: true }, poolHistoryOrigins(options.body));
-      if (memberAuto && translatedEffortClaim(params.providerOptions)) {
-        return gone("translation would set an effort");
+      try {
+        const requested = options.body.reasoning?.effort ?? options.pool.effort;
+        const auto = requested === "auto";
+        const memberEffort = poolMemberEffort(auto ? "auto" : requested, receipt);
+        const memberAuto = memberEffort === null;
+        const body = omitPoolEffort(options.body, memberEffort);
+        const translate = options.translate ?? preparePoolHistory;
+        const params = translate(body, options.source, identity, npm, {
+          ...model,
+          providerId: provider.id,
+          apiBaseUrl: model.apiBaseUrl
+        }, { maxTools: POOL_MAX_TOOLS, npm, forwardToolChoice: true }, poolHistoryOrigins(options.body));
+        if (memberAuto && translatedEffortClaim(params.providerOptions)) {
+          return gone("translation would set an effort");
+        }
+        if (compaction) Object.assign(params, appendCompactionInstruction(params), { toolChoice: void 0 });
+        const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
+        const askedOutput = typeof body.max_output_tokens === "number" ? body.max_output_tokens : outputCap;
+        if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) {
+          return gone("invalid output limit");
+        }
+        params.maxOutputTokens = Math.min(askedOutput, outputCap, compaction ? POOL_COMPACTION_MAX_OUTPUT_TOKENS : Infinity);
+        const context = await (options.checkContext ?? defaultContextCheck)(params, receipt);
+        if (!context.verified || !context.fits) {
+          return gone(context.verified ? "request too large for its context window" : "context window not verified");
+        }
+        const scopes = [poolEndpointScope(provider.id, revision, model.id)];
+        const accountScopes = [poolAccountScope(provider.id)];
+        const off = await options.health.disabledFor(scopes);
+        if (off) {
+          return gone("DISABLED: " + off.note + " (run Test to re-enable)");
+        }
+        const unavailableUntil = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
+        if (unavailableUntil !== void 0 && unavailableUntil > Date.now()) {
+          return gone("cooling down after a failure");
+        }
+        const apiKey = await resolveLocalProviderApiKey(provider);
+        if (apiKey === null || apiKey === void 0) {
+          return gone("no credential");
+        }
+        const languageModel = await createLanguageModel({
+          npm,
+          modelId: model.upstreamModelId,
+          apiKey,
+          baseURL: model.apiBaseUrl,
+          providerId: provider.id,
+          authType: provider.authType,
+          oauthAccountId: provider.oauthAccountId,
+          providerData: provider.providerData,
+          headers: poolProviderHeaders(provider, model, options.sessionId),
+          sessionId: options.sessionId,
+          refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
+        });
+        const { toolContext: _toolContext, instructions, ...sdkParams } = params;
+        const dispatch = sdkPoolRoute({
+          member,
+          revision,
+          freeStatus,
+          catalogVerified: true,
+          accessVerified: true,
+          billingSafe: receipt.billingSafe,
+          targets: receipt.targets,
+          toolsVerified: receipt.tools,
+          // Auto is constructively verified: Relay omits the field and any translator
+          // claim is refused above, so no named default rung is required.
+          defaultEffortVerified: true,
+          effortLevels: receipt.effortLevels,
+          contextFits: true,
+          contextVerified: true
+        }, languageModel, { ...sdkParams, system: instructions, maxOutputTokens: params.maxOutputTokens }, { store: options.health, scopes, accountScopes });
+        return { route: dispatch, attach: { toolContext: params.toolContext } };
+      } catch (error) {
+        if (options.signal.aborted) throw options.signal.reason ?? error;
+        return gone("could not be prepared: " + (error instanceof Error ? error.message : String(error)));
       }
-      if (compaction) Object.assign(params, appendCompactionInstruction(params), { toolChoice: void 0 });
-      const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
-      const askedOutput = typeof body.max_output_tokens === "number" ? body.max_output_tokens : outputCap;
-      if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) {
-        return gone("invalid output limit");
-      }
-      params.maxOutputTokens = Math.min(askedOutput, outputCap, compaction ? POOL_COMPACTION_MAX_OUTPUT_TOKENS : Infinity);
-      const context = await (options.checkContext ?? defaultContextCheck)(params, receipt);
-      if (!context.verified || !context.fits) {
-        return gone(context.verified ? "request too large for its context window" : "context window not verified");
-      }
-      const scopes = [poolEndpointScope(provider.id, revision, model.id)];
-      const accountScopes = [poolAccountScope(provider.id)];
-      const off = await options.health.disabledFor(scopes);
-      if (off) {
-        return gone("DISABLED: " + off.note + " (run Test to re-enable)");
-      }
-      const unavailableUntil = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
-      if (unavailableUntil !== void 0 && unavailableUntil > Date.now()) {
-        return gone("cooling down after a failure");
-      }
-      const apiKey = await resolveLocalProviderApiKey(provider);
-      if (apiKey === null || apiKey === void 0) {
-        return gone("no credential");
-      }
-      const languageModel = await createLanguageModel({
-        npm,
-        modelId: model.upstreamModelId,
-        apiKey,
-        baseURL: model.apiBaseUrl,
-        providerId: provider.id,
-        authType: provider.authType,
-        oauthAccountId: provider.oauthAccountId,
-        providerData: provider.providerData,
-        headers: poolProviderHeaders(provider, model, options.sessionId),
-        sessionId: options.sessionId,
-        refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
-      });
-      const { toolContext: _toolContext, instructions, ...sdkParams } = params;
-      const dispatch = sdkPoolRoute({
-        member,
-        revision,
-        freeStatus,
-        catalogVerified: true,
-        accessVerified: true,
-        billingSafe: receipt.billingSafe,
-        targets: receipt.targets,
-        toolsVerified: receipt.tools,
-        // Auto is constructively verified: Relay omits the field and any translator
-        // claim is refused above, so no named default rung is required.
-        defaultEffortVerified: true,
-        effortLevels: receipt.effortLevels,
-        contextFits: true,
-        contextVerified: true
-      }, languageModel, { ...sdkParams, system: instructions, maxOutputTokens: params.maxOutputTokens }, { store: options.health, scopes, accountScopes });
-      return { route: dispatch, attach: { toolContext: params.toolContext } };
     }, { identity }));
   }
   return routes;
@@ -2804,7 +2831,7 @@ function wrapPoolError(error) {
 }
 var sessions = new PoolSessionRoutes();
 async function memberModel(routeId, context) {
-  const { createRelayModel } = await import("./model-Y2I7B5SK.js");
+  const { createRelayModel } = await import("./model-KFJ5RIJG.js");
   return createRelayModel(routeId, {
     sessionId: context.sessionId,
     ...context.options?.onDebug ? { onDebug: context.options.onDebug } : {},
@@ -3157,4 +3184,4 @@ export {
   parseRelayRouteId,
   loadCoreRegistry
 };
-//# sourceMappingURL=chunk-HC4K67YE.js.map
+//# sourceMappingURL=chunk-OY3QLATE.js.map

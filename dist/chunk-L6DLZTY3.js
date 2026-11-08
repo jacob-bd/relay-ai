@@ -3,7 +3,7 @@ import {
   extractApiKey,
   readBody,
   sendJson
-} from "./chunk-JBWJDQG7.js";
+} from "./chunk-672Y5O5Q.js";
 import {
   SubagentRouteRegistry,
   anthropicEffortFromRequest,
@@ -13,7 +13,7 @@ import {
   streamAnthropicResponse,
   translateRequest,
   writeAnthropicStream
-} from "./chunk-5RSLXBKO.js";
+} from "./chunk-ZGAZIEXT.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -24,7 +24,7 @@ import {
   filterModelsByAvailability,
   refreshProviderModels,
   validateClinePassApiKey
-} from "./chunk-B43GJR42.js";
+} from "./chunk-E3JU7UI7.js";
 import {
   MAX_POOL_ATTEMPTS,
   POOL_MAX_TOOLS,
@@ -40,7 +40,7 @@ import {
   requestFingerprint,
   sdkPoolRoute,
   translatedEffortClaim
-} from "./chunk-HC4K67YE.js";
+} from "./chunk-OY3QLATE.js";
 import {
   PoolHealthStore,
   describePoolFailure,
@@ -61,7 +61,7 @@ import {
   resolveLocalProviderApiKey,
   retryPoolFailure,
   toOAuthRegistryId
-} from "./chunk-L63CWTTQ.js";
+} from "./chunk-5TOPC5SV.js";
 import {
   anthropicErrorType,
   formatUpstreamError,
@@ -122,7 +122,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-Z773U45B.js";
+} from "./chunk-6ATJUU3L.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -165,7 +165,7 @@ import {
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth,
   tokensToStoredCredential
-} from "./chunk-ZUJHJEU4.js";
+} from "./chunk-P3FIONJC.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -3474,105 +3474,110 @@ async function prepareClaudePoolRoutes(options) {
         skip(reason);
         return { skip: reason };
       };
-      const memberEffort = poolMemberEffort(auto ? "auto" : requested, receipt);
-      const memberAuto = memberEffort === null;
-      const body = omitClaudeEffort(options.body, memberEffort);
-      const params = translateRequest(body, npm, {
-        maxTools: POOL_MAX_TOOLS,
-        reasoningMetadata: {
-          ...model,
-          providerId: provider.id,
-          apiBaseUrl: model.apiBaseUrl
-        }
-      });
-      const routeKey = poolRouteKey({ account: provider.id, endpointRevision: revision, model: model.id });
-      const thinking = (Array.isArray(body.messages) ? body.messages : []).flatMap((message) => {
-        const content = message.content;
-        return Array.isArray(content) ? content : [];
-      });
-      params.messages = params.messages.map((message) => ({
-        ...message,
-        content: Array.isArray(message.content) ? message.content.map((part) => {
-          if (part.type !== "reasoning" && part.type !== "tool-call") return part;
-          const { providerOptions: _routeState, ...clean } = part;
-          if (part.type === "tool-call") {
-            const signature = claudePoolSignatures.signature(splitToolUseId(part.toolCallId).rawId, routeKey);
-            return signature && npm === "@ai-sdk/google" ? { ...clean, providerOptions: { google: { thoughtSignature: signature } } } : clean;
+      try {
+        const memberEffort = poolMemberEffort(auto ? "auto" : requested, receipt);
+        const memberAuto = memberEffort === null;
+        const body = omitClaudeEffort(options.body, memberEffort);
+        const params = translateRequest(body, npm, {
+          maxTools: POOL_MAX_TOOLS,
+          reasoningMetadata: {
+            ...model,
+            providerId: provider.id,
+            apiBaseUrl: model.apiBaseUrl
           }
-          const native = thinking.find((block) => block.thinking === part.text && typeof block.signature === "string" && claudePoolSignatures.ownsThinking(block.signature, routeKey));
-          if (!native?.signature) return clean;
-          if (npm === "@ai-sdk/anthropic") return { ...clean, providerOptions: { anthropic: { signature: native.signature } } };
-          return part;
-        }) : message.content
-      }));
-      if (memberAuto && translatedEffortClaim(params.providerOptions)) {
-        return gone("translation would set an effort");
+        });
+        const routeKey = poolRouteKey({ account: provider.id, endpointRevision: revision, model: model.id });
+        const thinking = (Array.isArray(body.messages) ? body.messages : []).flatMap((message) => {
+          const content = message.content;
+          return Array.isArray(content) ? content : [];
+        });
+        params.messages = params.messages.map((message) => ({
+          ...message,
+          content: Array.isArray(message.content) ? message.content.map((part) => {
+            if (part.type !== "reasoning" && part.type !== "tool-call") return part;
+            const { providerOptions: _routeState, ...clean } = part;
+            if (part.type === "tool-call") {
+              const signature = claudePoolSignatures.signature(splitToolUseId(part.toolCallId).rawId, routeKey);
+              return signature && npm === "@ai-sdk/google" ? { ...clean, providerOptions: { google: { thoughtSignature: signature } } } : clean;
+            }
+            const native = thinking.find((block) => block.thinking === part.text && typeof block.signature === "string" && claudePoolSignatures.ownsThinking(block.signature, routeKey));
+            if (!native?.signature) return clean;
+            if (npm === "@ai-sdk/anthropic") return { ...clean, providerOptions: { anthropic: { signature: native.signature } } };
+            return part;
+          }) : message.content
+        }));
+        if (memberAuto && translatedEffortClaim(params.providerOptions)) {
+          return gone("translation would set an effort");
+        }
+        const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
+        const askedOutput = typeof body.max_tokens === "number" ? body.max_tokens : outputCap;
+        if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) {
+          return gone("invalid output limit");
+        }
+        const requestedOutput = Math.min(askedOutput, outputCap);
+        params.maxOutputTokens = requestedOutput;
+        const fits = poolRequestFitsWindow({
+          messages: params.messages,
+          instructions: params.instructions,
+          tools: params.tools
+        }, receipt.contextWindow, requestedOutput).fits;
+        if (!fits) {
+          return gone("request too large for its context window");
+        }
+        const scopes = [poolEndpointScope(provider.id, revision, model.id)];
+        const accountScopes = [poolAccountScope(provider.id)];
+        const off = await options.health.disabledFor(scopes);
+        if (off) {
+          return gone("DISABLED: " + off.note + " (run Test to re-enable)");
+        }
+        const until = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
+        if (until !== void 0 && until > Date.now()) {
+          return gone("cooling down after a failure");
+        }
+        const apiKey = await resolveLocalProviderApiKey(provider);
+        if (!apiKey) {
+          return gone("no credential");
+        }
+        const languageModel = await createLanguageModel({
+          npm,
+          modelId: model.upstreamModelId,
+          apiKey,
+          baseURL: model.apiBaseUrl,
+          providerId: provider.id,
+          authType: provider.authType,
+          oauthAccountId: provider.oauthAccountId,
+          providerData: provider.providerData,
+          headers: poolProviderHeaders(provider, model, options.sessionId),
+          sessionId: options.sessionId,
+          refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
+        });
+        return { route: sdkPoolRoute({
+          member,
+          revision,
+          freeStatus,
+          catalogVerified: true,
+          accessVerified: true,
+          billingSafe: true,
+          targets: receipt.targets,
+          toolsVerified: receipt.tools,
+          defaultEffortVerified: true,
+          effortLevels: receipt.effortLevels,
+          contextFits: true,
+          contextVerified: true
+        }, languageModel, {
+          messages: params.messages,
+          tools: params.tools,
+          system: params.instructions,
+          maxOutputTokens: requestedOutput,
+          temperature: params.temperature,
+          toolChoice: params.toolChoice,
+          providerOptions: params.providerOptions,
+          headers: params.headers
+        }, { store: options.health, scopes, accountScopes }) };
+      } catch (error) {
+        if (options.signal.aborted) throw options.signal.reason ?? error;
+        return gone("could not be prepared: " + (error instanceof Error ? error.message : String(error)));
       }
-      const outputCap = poolOutputCap(provider.id, model.id, receipt.contextWindow);
-      const askedOutput = typeof body.max_tokens === "number" ? body.max_tokens : outputCap;
-      if (!Number.isSafeInteger(askedOutput) || askedOutput <= 0) {
-        return gone("invalid output limit");
-      }
-      const requestedOutput = Math.min(askedOutput, outputCap);
-      params.maxOutputTokens = requestedOutput;
-      const fits = poolRequestFitsWindow({
-        messages: params.messages,
-        instructions: params.instructions,
-        tools: params.tools
-      }, receipt.contextWindow, requestedOutput).fits;
-      if (!fits) {
-        return gone("request too large for its context window");
-      }
-      const scopes = [poolEndpointScope(provider.id, revision, model.id)];
-      const accountScopes = [poolAccountScope(provider.id)];
-      const off = await options.health.disabledFor(scopes);
-      if (off) {
-        return gone("DISABLED: " + off.note + " (run Test to re-enable)");
-      }
-      const until = await options.health.cooldownFor({ id: revision, scopes: [...scopes, ...accountScopes] });
-      if (until !== void 0 && until > Date.now()) {
-        return gone("cooling down after a failure");
-      }
-      const apiKey = await resolveLocalProviderApiKey(provider);
-      if (!apiKey) {
-        return gone("no credential");
-      }
-      const languageModel = await createLanguageModel({
-        npm,
-        modelId: model.upstreamModelId,
-        apiKey,
-        baseURL: model.apiBaseUrl,
-        providerId: provider.id,
-        authType: provider.authType,
-        oauthAccountId: provider.oauthAccountId,
-        providerData: provider.providerData,
-        headers: poolProviderHeaders(provider, model, options.sessionId),
-        sessionId: options.sessionId,
-        refreshToken: providerRefreshToken(provider.id, provider.authType, provider.authRef)
-      });
-      return { route: sdkPoolRoute({
-        member,
-        revision,
-        freeStatus,
-        catalogVerified: true,
-        accessVerified: true,
-        billingSafe: true,
-        targets: receipt.targets,
-        toolsVerified: receipt.tools,
-        defaultEffortVerified: true,
-        effortLevels: receipt.effortLevels,
-        contextFits: true,
-        contextVerified: true
-      }, languageModel, {
-        messages: params.messages,
-        tools: params.tools,
-        system: params.instructions,
-        maxOutputTokens: requestedOutput,
-        temperature: params.temperature,
-        toolChoice: params.toolChoice,
-        providerOptions: params.providerOptions,
-        headers: params.headers
-      }, { store: options.health, scopes, accountScopes }) };
     }));
   }
   return routes;
@@ -4376,8 +4381,8 @@ async function serveOpenAiPool(req, res, options, body, plog) {
   plog(() => `openai-chat-completions pool stream=${body.stream === true}`);
   try {
     const [{ createRelayModel }, { RELAY_POOL_ROUTE_ID }] = await Promise.all([
-      import("./model-Y2I7B5SK.js"),
-      import("./pool-model-NO2LTV3I.js")
+      import("./model-KFJ5RIJG.js"),
+      import("./pool-model-DFF6RNYP.js")
     ]);
     const languageModel = await createRelayModel(RELAY_POOL_ROUTE_ID, { sessionId, onDebug: plog });
     const params = translateOpenAiRequest(body);
@@ -7401,4 +7406,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-6X7Y5EFI.js.map
+//# sourceMappingURL=chunk-L6DLZTY3.js.map

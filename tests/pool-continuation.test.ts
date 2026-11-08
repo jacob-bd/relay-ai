@@ -89,6 +89,37 @@ describe('route-bound signatures and opaque state', () => {
     const params = preparePoolHistory({ model: 'pool', input: [{ type: 'compaction', encrypted_content }] }, poolRouteKey(a), b, '@ai-sdk/google');
     expect(JSON.stringify(params)).toContain('KEEP_SUMMARY');
   });
+
+  it('strips opaque reasoning and undecodable compaction when readable history and images are present', () => {
+    const imageUrl = 'data:image/png;base64,' + 'A'.repeat(5 * 1024 * 1024);
+    const body = {
+      model: 'pool',
+      input: [
+        { type: 'compaction', encrypted_content: 'native-opaque-compaction' },
+        { type: 'reasoning', summary: [{ type: 'summary_text', text: 'earlier thought' }], encrypted_content: 'native-opaque-reasoning' },
+        {
+          type: 'message',
+          role: 'user',
+          content: [
+            { type: 'input_text', text: 'check this screenshot' },
+            { type: 'input_image', image_url: imageUrl },
+          ],
+        },
+      ],
+    };
+    const params = preparePoolHistory(body, undefined, a, '@ai-sdk/openai-compatible');
+    const serialized = JSON.stringify(params);
+    expect(serialized).toContain('check this screenshot');
+    expect(serialized).not.toContain('native-opaque-compaction');
+    expect(serialized).not.toContain('native-opaque-reasoning');
+
+    const store = new PoolContinuationStore();
+    expect(() => store.remember('resp-img-1', 'session/branch', body, output, a)).not.toThrow();
+    const resolved = store.resolve('session/branch', { ...delta, previous_response_id: 'resp-img-1' });
+    const nextParams = preparePoolHistory(resolved.body, resolved.source, b, '@ai-sdk/openai-compatible');
+    expect(JSON.stringify(nextParams)).toContain('check this screenshot');
+    expect(JSON.stringify(nextParams)).toContain('RESULT');
+  });
 });
 
 describe('account identity', () => {
