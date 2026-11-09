@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { poolErrorDetail } from '../src/pool/diagnostic.js';
-import { formatPoolActivityLine, describePoolFailure, poolRouteMember, readPoolActivity, recordPoolActivity } from '../src/pool/activity.js';
+import { formatPoolActivityLine, describePoolFailure, poolRouteMember, readPoolActivity, recordPoolActivity, clearPoolActivity } from '../src/pool/activity.js';
 
 describe('pool activity log', () => {
   beforeEach(() => { process.env['RELAY_AI_HOME'] = mkdtempSync(join(tmpdir(), 'relay-activity-')); });
@@ -17,6 +17,13 @@ describe('pool activity log', () => {
     for (let i = 0; i < 4000; i++) recordPoolActivity({ target: 'claude', event: 'served', providerId: 'p', modelId: 'm' + i });
     expect(readPoolActivity(1000).length).toBeLessThanOrEqual(1000);
     expect(readPoolActivity(1)[0]!.modelId).toBe('m3999');
+  });
+
+  it('clears pool activity on demand', () => {
+    recordPoolActivity({ target: 'claude', event: 'served', providerId: 'kilo', modelId: 'a' });
+    expect(readPoolActivity(10).length).toBe(1);
+    clearPoolActivity();
+    expect(readPoolActivity(10)).toEqual([]);
   });
 
   it('parses route ids and never returns raw upstream text', () => {

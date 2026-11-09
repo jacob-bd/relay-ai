@@ -52,6 +52,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { FavoriteModel, UserPreferences, LocalProvider, LocalProviderModel } from './types.js';
 import type { CatalogFixture } from './antigravity/types.js';
+import { printUiUrlLast } from './ui-background.js';
 
 const AGY_FAVORITES_PROVIDER_ID = '__relay_agy_favorites__';
 const AGY_FAVORITES_PROVIDER_LABEL = '⭐ Favorites Catalog';
@@ -583,6 +584,7 @@ export async function runAntigravityAppCommand(
 
       p.log.info('Antigravity is using the Relay Cloud Code gateway.');
       p.log.info(pc.cyan('Press Ctrl+C to stop the gateway.'));
+      printUiUrlLast();
       await waitForShutdown();
       await new Promise(r => setTimeout(r, SHUTDOWN_DRAIN_MS));
       console.log('');
@@ -678,6 +680,7 @@ export async function runAntigravityIdeCommand(
           if (launchCode !== 0) return launchCode;
           shutdown.launched();
           p.log.info('Antigravity IDE is using Relay models. Close the IDE when you are done, or press Ctrl+C to restore your normal configuration.');
+          printUiUrlLast();
           await waitForExistingIdeShutdownWithConfirm(shutdown, async () => {
             const choice = await p.select({
               message: 'Close Antigravity IDE and restore your normal configuration?',
@@ -724,6 +727,7 @@ export async function runAntigravityIdeCommand(
 
       p.log.info('Antigravity IDE is using the Relay Cloud Code gateway.');
       p.log.info(pc.cyan('Press Ctrl+C to stop the gateway.'));
+      printUiUrlLast();
       await waitForShutdown();
       await new Promise(r => setTimeout(r, SHUTDOWN_DRAIN_MS));
       console.log('');

@@ -110,4 +110,22 @@ describe('Codex Sub-agents UI config contract', () => {
     expect(save).toHaveBeenCalledWith('keyring:provider:opencode-2', 'new-key');
     expect(readStored).not.toHaveBeenCalledWith('keyring:global:opencode');
   });
+
+  it('clears pool activity on POST /api/pool/activity/clear', async () => {
+    const response = createMockResponse();
+    handleUiApiRequest(createMockRequest('POST', '/api/pool/activity/clear'), response.res);
+    await vi.waitFor(() => expect(response.result.data).not.toBe(''));
+    expect(response.result.code).toBe(200);
+    expect(JSON.parse(response.result.data)).toEqual({ ok: true });
+  });
+
+  it('triggers onShutdown callback on POST /api/ui/shutdown', async () => {
+    const onShutdown = vi.fn();
+    const response = createMockResponse();
+    handleUiApiRequest(createMockRequest('POST', '/api/ui/shutdown'), response.res, { onShutdown });
+    await vi.waitFor(() => expect(response.result.data).not.toBe(''));
+    expect(response.result.code).toBe(200);
+    expect(JSON.parse(response.result.data)).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(onShutdown).toHaveBeenCalled());
+  });
 });

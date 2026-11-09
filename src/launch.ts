@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { getAppPathOverride } from './config.js';
 import { findBinaryOnPath } from './binary-lookup.js';
 import { restoreClaudeModel, snapshotClaudeModel } from './claude-settings-cleanup.js';
+import { printUiUrlLast } from './ui-background.js';
 
 const isWindows = process.platform === 'win32';
 
@@ -55,6 +56,7 @@ export function launchClaude(
   model: string | undefined,
   extraArgs: string[],
 ): Promise<number> {
+  printUiUrlLast();
   return new Promise((resolve) => {
     const claudePath = findClaudeBinary()!;
     const args = buildClaudeArgs(model, extraArgs);

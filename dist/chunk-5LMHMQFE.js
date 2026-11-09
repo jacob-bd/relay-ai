@@ -13,7 +13,7 @@ import {
   resolveRefreshCredential,
   skipWithCachedModels,
   syntheticTemplate
-} from "./chunk-7AT2OG2W.js";
+} from "./chunk-G5CBERRT.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -53,8 +53,9 @@ import {
   uniqueProviderName,
   validateProviderName,
   vertexAnthropicCachedModels,
+  wireApiKey,
   writeSecureLogLine
-} from "./chunk-6ATJUU3L.js";
+} from "./chunk-IIS6FGBQ.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -76,7 +77,7 @@ import {
   resolveProviderOAuthProviderData,
   saveProviderCredential,
   saveToCredentialStore
-} from "./chunk-P3FIONJC.js";
+} from "./chunk-OYXXDDPI.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -478,7 +479,7 @@ async function fetchTemplateModels(template, apiKey, baseUrlOverride, extraHeade
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), effectiveTimeoutMs);
   const headers = { Accept: "application/json" };
-  const trimmedApiKey = apiKey.trim();
+  const trimmedApiKey = wireApiKey(apiKey);
   if (template.npm === "@ai-sdk/anthropic") {
     if (trimmedApiKey) headers["x-api-key"] = trimmedApiKey;
     headers["anthropic-version"] = "2023-06-01";
@@ -2276,4 +2277,4 @@ export {
   toggleProviderEnabled,
   setProviderServerUrl
 };
-//# sourceMappingURL=chunk-E3JU7UI7.js.map
+//# sourceMappingURL=chunk-5LMHMQFE.js.map

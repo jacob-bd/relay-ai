@@ -91,6 +91,7 @@ import {
 } from './cloud-code-backend.js';
 import type { ProxyRoute } from './proxy.js';
 import { pickerRefresh } from './picker-refresh.js';
+import { printUiUrlLast } from './ui-background.js';
 
 function codexProxyRouteToCodexRoute(route: CodexProxyRoute, fallbackProviderId: string): CodexRoute {
   return {
@@ -389,6 +390,7 @@ async function runCodexAppVertexLaunch(configOnly: boolean, trace = false): Prom
     });
 
     codexAppOutro(selectedEntry.display_name);
+    printUiUrlLast();
     await waitForShutdownWithConfirm();
     console.log('');
 
@@ -984,6 +986,7 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
     });
 
     codexAppOutro(modelLabel);
+    printUiUrlLast();
     await waitForShutdownWithConfirm(opts.assumeYes);
     if (trace) printTraceLog(debugLogPath);
     console.log('');

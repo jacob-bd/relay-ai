@@ -76,6 +76,14 @@ export function recordPoolActivity(entry: Omit<PoolActivity, 'at'>): void {
   } catch { /* ignore */ }
 }
 
+/** Clears the pool activity log file. */
+export function clearPoolActivity(): void {
+  try {
+    const path = poolActivityPath();
+    if (existsSync(path)) writeFileSync(path, '');
+  } catch { /* ignore */ }
+}
+
 /** Newest first. */
 export function readPoolActivity(limit = 50): PoolActivity[] {
   try {

@@ -5,12 +5,12 @@ import {
   loadModelsDevCache,
   resolveModelsDevSlug,
   shouldHideModel
-} from "./chunk-6ATJUU3L.js";
+} from "./chunk-IIS6FGBQ.js";
 import {
   classifyModelFormat,
   contextWindowFromHeuristics,
   resolveContextWindow
-} from "./chunk-P3FIONJC.js";
+} from "./chunk-OYXXDDPI.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -344,4 +344,4 @@ export {
   normalizeCopilotModels,
   filterCachedCopilotModels
 };
-//# sourceMappingURL=chunk-7AT2OG2W.js.map
+//# sourceMappingURL=chunk-G5CBERRT.js.map

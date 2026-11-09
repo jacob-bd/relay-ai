@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.22.3] - 2026-11-08
+
+### Added
+
+- **`relay-ai ui stop` command and UI shutdown.** Shutting down a running Relay UI server is now supported directly via `relay-ai ui stop` (as well as `relay ui stop` and `relay ui close`) and via a **Shut down UI** button in the web interface sidebar. When `relay ui` connects to an already-running server (such as one launched by a CLI tool), it now displays instructions on how to shut it down.
+- **Clear logs button in Relay Free Pool Activity.** Added a **Clear logs** button to the Pool Activity view that clears `pool-activity.jsonl` on demand and refreshes the log list immediately with toast feedback.
+- **Pool activity log shows dates and includes a Refresh button.** Entries in the Pool Activity UI now display both date and time (e.g. `Nov 8, 05:45:50 PM`) with full localized timestamps on hover, and a new **Refresh** button with real-time feedback allows checking the latest log entries on demand alongside automatic 5-second polling while the tab is open.
+- **Stable Relay UI port.** `relay-ai ui` now defaults to `127.0.0.1:17646` instead of a random port, so bookmarks and saved browser logins survive restarts. If that port is taken by something else it falls back to a random free port. `RELAY_AI_UI_PORT` pins an exact port (a busy pinned port is an error). Tool launchers start or reuse the UI through the same path, so they use it too.
+- **Unhide all button in the model list.** A one-click **Unhide all (N)** button appears next to **Select non-chat** whenever a provider has hidden models, so a bulk hide can be reversed without ticking rows.
+
+### Fixed
+
+- **Keyless custom endpoints and Kilo Code no longer send a fake key.** A custom OpenAI-compatible endpoint added with a blank API key was stored with the placeholder `local` and sent as `Authorization: Bearer local` when listing models and chatting. Strict servers reject that (OVHcloud answers 403, shown as "API key was rejected"; Kilo answers 401). Relay's internal `local` and `anonymous` markers are now never sent as credentials (`src/no-key-sentinel.ts`).
+- **Server URL is the last thing a tool launch prints.** The `Server available at <url>` line used to print once before setup output and got buried. Claude Code, Claude Desktop, Codex CLI, Codex App, Gemini and Antigravity now print it at the end of their launch output, once.
+- **"Free Models Only" checkbox no longer persists across providers or sections.** Toggling "Free models only" under a provider's model catalog now properly scopes to that provider and clears automatically when switching to a different provider or navigating away to another section.
+
 ## [0.22.2] - 2026-11-08
 
 ### Fixed

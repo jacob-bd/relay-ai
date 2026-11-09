@@ -74,18 +74,17 @@ import {
   supportsClaudeTransparentMode,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-L6DLZTY3.js";
+} from "./chunk-GZYANEUS.js";
 import {
   extractApiKey,
   readBody,
   sendJson,
   warnDisabledPoolMembers
-} from "./chunk-672Y5O5Q.js";
+} from "./chunk-FDENMLC7.js";
 import {
-  addManualModel,
-  removeManualModel
-} from "./chunk-ZVCLP56I.js";
-import "./chunk-ZGAZIEXT.js";
+  printUiUrlLast
+} from "./chunk-2BYF2HJK.js";
+import "./chunk-3O4SXHER.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   UNTRUSTED_CERTIFICATE_CODE,
@@ -109,7 +108,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-E3JU7UI7.js";
+} from "./chunk-5LMHMQFE.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -147,7 +146,7 @@ import {
   supportsMultiAgentV2,
   translateResponsesRequest,
   writeResponsesErrorStream
-} from "./chunk-OY3QLATE.js";
+} from "./chunk-KU7GMFC6.js";
 import {
   OPENCODE_SESSION_HEADER,
   PoolHealthStore,
@@ -185,14 +184,19 @@ import {
   retryPoolFailure,
   routableModelsForTarget,
   toOAuthRegistryId
-} from "./chunk-5TOPC5SV.js";
+} from "./chunk-4YFQNHW6.js";
 import {
   effectiveProviderBaseUrl,
   isLikelyPlaceholderKey,
   resolveProviderTemplate,
   resolveRefreshCredential,
   syntheticTemplate
-} from "./chunk-7AT2OG2W.js";
+} from "./chunk-G5CBERRT.js";
+import {
+  addManualModel,
+  removeManualModel
+} from "./chunk-DQPK3H4N.js";
+import "./chunk-WW2Q5GYH.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -266,7 +270,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-6ATJUU3L.js";
+} from "./chunk-IIS6FGBQ.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -304,7 +308,7 @@ import {
   saveToCredentialStore,
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth
-} from "./chunk-P3FIONJC.js";
+} from "./chunk-OYXXDDPI.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -411,6 +415,7 @@ function buildClaudeArgs(model, extraArgs) {
   return model ? ["--model", model, ...extraArgs] : [...extraArgs];
 }
 function launchClaude(env, model, extraArgs) {
+  printUiUrlLast();
   return new Promise((resolve2) => {
     const claudePath = findClaudeBinary();
     const args = buildClaudeArgs(model, extraArgs);
@@ -3454,7 +3459,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-244U5PGO.js");
+      const { testModel } = await import("./test-model-RPUMQVI5.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -6820,6 +6825,7 @@ async function runCodexCommand2(codexArgs, trace = false, launch = {}) {
         logActiveModel(entry.display_name, FREE_POOL_MODEL_ID);
         printCodexCliCleanupPanel("relay-ai codex --restore");
         codexCliOutro(entry.display_name, entry.display_name, FREE_POOL_MODEL_ID);
+        printUiUrlLast();
       }
       const childEnv = buildCodexChildEnv(poolRoute, poolProxy.port, {});
       const exitCode = await launchCodex(FREE_POOL_MODEL_ID, childEnv, passthroughArgs);
@@ -7277,6 +7283,7 @@ Mixed Codex mode is unavailable: ${err instanceof Error ? err.message : err}`));
       logActiveModel(modelLabel, launchModelId);
       printCodexCliCleanupPanel("relay-ai codex --restore");
       codexCliOutro(launchProviderName, modelLabel, launchModelId);
+      printUiUrlLast();
     }
     const dummyRoute = {
       tier: "proxy",
@@ -7377,6 +7384,7 @@ function prepareGeminiChildEnv(proxyPort, proxyToken) {
   };
 }
 function launchGemini(geminiPath, modelId, env, extraArgs) {
+  printUiUrlLast();
   return new Promise((resolve2) => {
     const args = ["-m", modelId, ...extraArgs];
     const child = spawn4(geminiPath, args, {
@@ -11150,6 +11158,7 @@ function readAntigravityCliVersion(binaryPath = findAntigravityCliBinary() ?? vo
   }
 }
 function launchAntigravityCli(env, extraArgs) {
+  printUiUrlLast();
   return new Promise((resolve2) => {
     const binaryPath = findAntigravityCliBinary();
     if (!binaryPath) {
@@ -12564,6 +12573,7 @@ async function runAntigravityAppCommand(childArgs, trace = false, boot) {
       if (launchCode !== 0) return launchCode;
       p13.log.info("Antigravity is using the Relay Cloud Code gateway.");
       p13.log.info(pc8.cyan("Press Ctrl+C to stop the gateway."));
+      printUiUrlLast();
       await waitForShutdown();
       await new Promise((r) => setTimeout(r, SHUTDOWN_DRAIN_MS));
       console.log("");
@@ -12655,6 +12665,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
             if (launchCode2 !== 0) return launchCode2;
             shutdown.launched();
             p13.log.info("Antigravity IDE is using Relay models. Close the IDE when you are done, or press Ctrl+C to restore your normal configuration.");
+            printUiUrlLast();
             await waitForExistingIdeShutdownWithConfirm(shutdown, async () => {
               const choice = await p13.select({
                 message: "Close Antigravity IDE and restore your normal configuration?",
@@ -12699,6 +12710,7 @@ async function runAntigravityIdeCommand(childArgs, trace = false, boot) {
         if (launchCode !== 0) return launchCode;
         p13.log.info("Antigravity IDE is using the Relay Cloud Code gateway.");
         p13.log.info(pc8.cyan("Press Ctrl+C to stop the gateway."));
+        printUiUrlLast();
         await waitForShutdown();
         await new Promise((r) => setTimeout(r, SHUTDOWN_DRAIN_MS));
         console.log("");
@@ -13569,6 +13581,7 @@ async function runCodexAppVertexLaunch(configOnly, trace = false) {
       restoreCommand: "relay-ai codex-app --restore"
     });
     codexAppOutro(selectedEntry.display_name);
+    printUiUrlLast();
     await waitForShutdownWithConfirm();
     console.log("");
     try {
@@ -14084,6 +14097,7 @@ Mixed Codex App mode is unavailable: ${err instanceof Error ? err.message : err}
       restoreCommand: "relay-ai codex-app --restore"
     });
     codexAppOutro(modelLabel);
+    printUiUrlLast();
     await waitForShutdownWithConfirm(opts.assumeYes);
     if (trace) printTraceLog(debugLogPath);
     console.log("");
@@ -14832,6 +14846,7 @@ ${pc10.bold("Claude Desktop 3P Mode Active")}`);
       console.log(`${pc10.dim("Catalog:")}  ${serverModels.length} models (${parts.join(" + ")})`);
     }
     console.log(`${pc10.cyan("Press Ctrl+C to stop and restore config.")}`);
+    printUiUrlLast();
     await waitForShutdown3();
     console.log("");
     cleanupSession(uuid);
@@ -16545,7 +16560,8 @@ function parseArgs(args) {
   if (first === "ui") {
     const parsed2 = emptyParsed("ui");
     for (const arg of rest) {
-      if (arg === "--trace") parsed2.trace = true;
+      if (arg === "stop" || arg === "close" || arg === "--stop") parsed2.uiAction = "stop";
+      else if (arg === "--trace") parsed2.trace = true;
       else if (arg === "--server") parsed2.uiServerMode = true;
       else if (arg === "--background") parsed2.uiBackground = true;
       else if (arg === "--help" || arg === "-h") parsed2.showHelp = true;
@@ -18049,12 +18065,15 @@ Error: ${parsed.error}
       return 0;
     }
     if (parsed.showHelp) {
-      console.log(`Usage: relay-ai ui [--trace] [--server]
+      console.log(`Usage: relay-ai ui [stop] [--trace] [--server]
 
 Open the settings UI in your browser. If a Relay UI is already running (for example the
 one started next to a tool launch), this opens your browser on it instead of starting
 another. Tool launches keep a Relay UI running in the background without opening a
 browser; set RELAY_AI_NO_UI=1 to skip that.
+
+Commands:
+  relay-ai ui stop   Shut down any running Relay UI server
 
 Options:
   --server   Admin UI for Docker / always-on gateway (hides Apps & Launch and Antigravity;
@@ -18062,11 +18081,25 @@ Options:
   --trace    Write debug logs under ~/.relay-ai/logs/`);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-7CAX2G3T.js");
+    if (parsed.uiAction === "stop") {
+      const { stopUiServer } = await import("./ui-command-Y5IHQ5JM.js");
+      const result = await stopUiServer();
+      if (result.stopped) {
+        console.log(`
+  ${pc11.green("\u2713")} ${result.message}
+`);
+        return 0;
+      }
+      console.log(`
+  ${pc11.dim(result.message)}
+`);
+      return 0;
+    }
+    const { runUiCommand } = await import("./ui-command-Y5IHQ5JM.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode, background: parsed.uiBackground });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-JZBVLMY3.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-7ICTYGBJ.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;
@@ -18108,7 +18141,7 @@ Options:
     return runProvidersCommand(parsed.claudeArgs);
   }
   if (isToolLaunch(parsed)) {
-    const { announceBackgroundUi, shouldEnsureBackgroundUi } = await import("./ui-background-Z3WLEI6L.js");
+    const { announceBackgroundUi, shouldEnsureBackgroundUi } = await import("./ui-background-DSY5AMMB.js");
     if (shouldEnsureBackgroundUi({ dryRun: parsed.dryRun })) await announceBackgroundUi();
   }
   if (parsed.command === "codex-app") {

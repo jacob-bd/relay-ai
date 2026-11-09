@@ -17,6 +17,13 @@ function removeLock() {
   } catch {
   }
 }
+function readUiLock() {
+  try {
+    return JSON.parse(readFileSync(lockFile(), "utf8"));
+  } catch {
+    return null;
+  }
+}
 function writeUiLock(port, mode) {
   mkdirSync(getAppHome(), { recursive: true });
   writeFileSync(lockFile(), JSON.stringify({ pid: process.pid, port, mode }));
@@ -69,10 +76,12 @@ function formatUiAvailableLine(url) {
 
 export {
   DEFAULT_SERVER_UI_PORT,
+  removeLock,
+  readUiLock,
   writeUiLock,
   removeOwnUiLock,
   probeServerHealth,
   checkExistingServer,
   formatUiAvailableLine
 };
-//# sourceMappingURL=chunk-M25MTWJ2.js.map
+//# sourceMappingURL=chunk-3O4SXHER.js.map

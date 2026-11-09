@@ -397,6 +397,29 @@ input { font-family: inherit; }
   border-color: var(--border-bright);
 }
 
+.btn-shutdown-ui {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-3);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--dur-sm) var(--ease), color var(--dur-sm) var(--ease), border-color var(--dur-sm) var(--ease);
+  text-align: left;
+}
+
+.btn-shutdown-ui:hover {
+  background: color-mix(in oklab, var(--error, #f85149) 12%, transparent);
+  color: var(--error, #f85149);
+  border-color: color-mix(in oklab, var(--error, #f85149) 40%, transparent);
+}
+
 .theme-icon {
   display: flex;
   align-items: center;
@@ -1475,7 +1498,10 @@ input { font-family: inherit; }
 .pool-activity-event { font-weight: 600; white-space: nowrap; }
 .pool-activity-reason { color: var(--text-3); }
 .pool-activity-current { margin: 0 0 10px; font-size: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.pool-activity-toggle { margin: 0 0 10px; font-size: 13px; }
+.pool-activity-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; margin: 0 0 12px; }
+.pool-activity-actions { display: flex; align-items: center; gap: 10px; }
+.pool-activity-updated { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.pool-activity-toggle { margin: 0; font-size: 13px; }
 .pool-activity-row.is-failover .pool-activity-event { color: #d29922; }
 .pool-activity-tried { flex-basis: 100%; list-style: none; margin: 2px 0 0; padding: 0 0 0 4px; display: grid; gap: 2px; color: var(--text-3); font-size: 12px; }
 .pool-activity-failed { color: #f85149; font-weight: 600; }

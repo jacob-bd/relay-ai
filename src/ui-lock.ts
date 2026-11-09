@@ -7,12 +7,20 @@ import { getAppHome } from './paths.js';
 
 export const DEFAULT_SERVER_UI_PORT = 8787;
 
-function lockFile(): string {
+export function lockFile(): string {
   return join(getAppHome(), 'ui.lock');
 }
 
-function removeLock(): void {
+export function removeLock(): void {
   try { unlinkSync(lockFile()); } catch {}
+}
+
+export function readUiLock(): { pid: number; port: number; mode: string } | null {
+  try {
+    return JSON.parse(readFileSync(lockFile(), 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 export function writeUiLock(port: number, mode: string): void {

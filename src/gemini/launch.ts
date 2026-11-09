@@ -5,6 +5,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getAppPathOverride } from '../config.js';
 import { findBinaryOnPath } from '../binary-lookup.js';
+import { printUiUrlLast } from '../ui-background.js';
 
 const isWindows = process.platform === 'win32';
 const GEMINI_API_KEY_AUTH_TYPE = 'gemini-api-key';
@@ -95,6 +96,7 @@ export function launchGemini(
   env: NodeJS.ProcessEnv,
   extraArgs: string[],
 ): Promise<number> {
+  printUiUrlLast();
   return new Promise((resolve) => {
     // Instruct the Gemini CLI to use the chosen model via -m flag
     const args = ['-m', modelId, ...extraArgs];

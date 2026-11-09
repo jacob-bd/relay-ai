@@ -13,7 +13,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 
 const { checkExistingServer, removeOwnUiLock, writeUiLock, formatUiAvailableLine } = await import('../src/ui-lock.js');
-const { ensureBackgroundUi, shouldEnsureBackgroundUi } = await import('../src/ui-background.js');
+const { ensureBackgroundUi, shouldEnsureBackgroundUi, announceBackgroundUi, printUiUrlLast } = await import('../src/ui-background.js');
 const { runUiCommand, resolveUiRuntimeConfig } = await import('../src/ui-command.js');
 const { parseArgs, isToolLaunch } = await import('../src/cli.js');
 
@@ -149,7 +149,8 @@ describe('`relay-ai ui` with a UI already running', () => {
     expect(await runUiCommand()).toBe(0);
 
     expect(openMock).toHaveBeenCalledWith(url);
-    expect(stripAnsi(logs.at(-1)!).trim()).toBe(`Server available at ${url}`);
+    expect(stripAnsi(logs.at(-2)!).trim()).toBe(`Server available at ${url}`);
+    expect(stripAnsi(logs.at(-1)!).trim()).toBe('To shut it down, run: relay-ai ui stop');
     expect(JSON.parse(readFileSync(lockPath(), 'utf8')).port).toBe(fake.port);
   });
 
@@ -177,4 +178,18 @@ describe('`relay-ai ui` with no UI running', () => {
     const res = await fetch(`${url}/api/config`);
     expect(res.status).toBe(200);
   }, 20_000);
+});
+
+describe('server URL is printed last, once', () => {
+  it('announce prints nothing; printUiUrlLast prints the URL line a single time', async () => {
+    fake = await startFakeUi();
+    writeForeignLock(fake.port);
+    await announceBackgroundUi();
+    expect(logs).toEqual([]);
+    printUiUrlLast();
+    printUiUrlLast();
+    const out = stripAnsi(logs.join('\n'));
+    expect(out).toContain(`Server available at http://127.0.0.1:${fake.port}`);
+    expect(out.match(/Server available at/g)).toHaveLength(1);
+  });
 });

@@ -6,6 +6,7 @@ import type { ProviderTemplate } from '../provider-templates.js';
 import { normalizeGoogleDisplayName, normalizeGoogleModelId } from './google-model-id.js';
 import type { CachedModel } from './types.js';
 import { makeTraceLogger, getProviderDebugLogPath } from '../trace-log.js';
+import { wireApiKey } from '../no-key-sentinel.js';
 import { classifyFreeStatus, isFreeStatus } from '../free-models.js';
 import { clampModelTimeoutMs, endpointModelTimeoutMs } from './endpoint-timeout.js';
 import { isUntrustedCertificateError, untrustedCertificateMessage, UNTRUSTED_CERTIFICATE_CODE } from '../tls-trust.js';
@@ -256,7 +257,7 @@ export async function fetchTemplateModels(
   const timer = setTimeout(() => controller.abort(), effectiveTimeoutMs);
 
   const headers: Record<string, string> = { Accept: 'application/json' };
-  const trimmedApiKey = apiKey.trim();
+  const trimmedApiKey = wireApiKey(apiKey);
   if (template.npm === '@ai-sdk/anthropic') {
     if (trimmedApiKey) headers['x-api-key'] = trimmedApiKey;
     headers['anthropic-version'] = '2023-06-01';

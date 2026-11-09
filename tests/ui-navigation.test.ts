@@ -73,3 +73,78 @@ describe('sidebar section routing', () => {
     expect(setup('#section-codex-subagents',true).visible()).toEqual(['section-codex-subagents']);
   });
 });
+
+describe('provider model browser state reset', () => {
+  const browserCode = source.slice(
+    source.indexOf('function openProviderModelBrowser(providerId) {'),
+    source.indexOf('let activeModelFavPopover = null;'),
+  );
+
+  it('clears providerModelFreeOnly when switching providers or exiting to a section', () => {
+    const state: any = {
+      activeProviderId: 'provider-1',
+      providerModelFilter: 'gpt',
+      providerModelMinCtx: 128000,
+      providerModelFreeOnly: true,
+      providerModelPage: 3,
+    };
+    const content = { classList: { toggle: vi.fn() }, scrollTop: 0 };
+    const navItems = [{ classList: { toggle: vi.fn() }, dataset: { section: 'providers' } }];
+    const window = { location: { hash: '#provider/provider-1' } };
+    let hashProviderId: string | null = 'provider-1';
+    const renderProviderModelBrowser = vi.fn();
+
+    const ctx = {
+      state,
+      window,
+      document: {
+        getElementById: () => content,
+        querySelectorAll: () => navItems,
+      },
+      providerIdFromHash: () => hashProviderId,
+      renderProviderModelBrowser,
+      encodeURIComponent,
+    };
+
+    runInNewContext(browserCode, ctx);
+
+    // 1. Same provider: does not reset freeOnly while browsing
+    (ctx as any).syncProviderModelBrowserFromHash();
+    expect(state.providerModelFreeOnly).toBe(true);
+
+    // 2. Switch provider via openProviderModelBrowser: resets freeOnly
+    (ctx as any).openProviderModelBrowser('provider-2');
+    expect(state.providerModelFreeOnly).toBe(false);
+    expect(state.providerModelFilter).toBe('');
+    expect(state.providerModelMinCtx).toBe(0);
+    expect(state.providerModelPage).toBe(1);
+    expect(window.location.hash).toBe('provider/provider-2');
+
+    // 3. User checks freeOnly again in provider-2
+    state.providerModelFreeOnly = true;
+    hashProviderId = 'provider-2';
+    state.activeProviderId = 'provider-2';
+
+    // 4. Exiting to a section (hashProviderId becomes null): clears freeOnly
+    hashProviderId = null;
+    (ctx as any).syncProviderModelBrowserFromHash();
+    expect(state.providerModelFreeOnly).toBe(false);
+    expect(state.activeProviderId).toBeNull();
+  });
+});
+
+describe('pool activity timestamp formatting', () => {
+  const formatCode = source.slice(
+    source.indexOf('function formatPoolActivityTime(when) {'),
+    source.indexOf('// Which pool member is answering'),
+  );
+
+  it('formats activity timestamps with date and time', () => {
+    const ctx = {};
+    runInNewContext(formatCode, ctx);
+    const date = new Date(2026, 10, 8, 17, 45, 50); // Nov 8 2026 17:45:50
+    const formatted = (ctx as any).formatPoolActivityTime(date);
+    expect(formatted).toContain('Nov 8');
+    expect(formatted).toMatch(/\d{1,2}:\d{2}:\d{2}/);
+  });
+});

@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getAppPathOverride } from '../config.js';
+import { printUiUrlLast } from '../ui-background.js';
 
 const isWindows = process.platform === 'win32';
 
@@ -72,6 +73,7 @@ export function launchAntigravityCli(
   env: NodeJS.ProcessEnv,
   extraArgs: string[],
 ): Promise<number> {
+  printUiUrlLast();
   return new Promise((resolve) => {
     const binaryPath = findAntigravityCliBinary();
     if (!binaryPath) {

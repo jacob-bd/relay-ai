@@ -274,7 +274,8 @@ export function parseArgs(args: string[]): ParsedArgs {
   if (first === 'ui') {
     const parsed = emptyParsed('ui');
     for (const arg of rest) {
-      if (arg === '--trace') parsed.trace = true;
+      if (arg === 'stop' || arg === 'close' || arg === '--stop') parsed.uiAction = 'stop';
+      else if (arg === '--trace') parsed.trace = true;
       else if (arg === '--server') parsed.uiServerMode = true;
       else if (arg === '--background') parsed.uiBackground = true;
       else if (arg === '--help' || arg === '-h') parsed.showHelp = true;
@@ -1985,17 +1986,30 @@ export async function main(args: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
     if (parsed.showHelp) {
-      console.log(`Usage: relay-ai ui [--trace] [--server]
+      console.log(`Usage: relay-ai ui [stop] [--trace] [--server]
 
 Open the settings UI in your browser. If a Relay UI is already running (for example the
 one started next to a tool launch), this opens your browser on it instead of starting
 another. Tool launches keep a Relay UI running in the background without opening a
 browser; set RELAY_AI_NO_UI=1 to skip that.
 
+Commands:
+  relay-ai ui stop   Shut down any running Relay UI server
+
 Options:
   --server   Admin UI for Docker / always-on gateway (hides Apps & Launch and Antigravity;
              binds 0.0.0.0, port RELAY_AI_UI_PORT or 8787, no browser open)
   --trace    Write debug logs under ~/.relay-ai/logs/`);
+      return 0;
+    }
+    if (parsed.uiAction === 'stop') {
+      const { stopUiServer } = await import('./ui-command.js');
+      const result = await stopUiServer();
+      if (result.stopped) {
+        console.log(`\n  ${pc.green('✓')} ${result.message}\n`);
+        return 0;
+      }
+      console.log(`\n  ${pc.dim(result.message)}\n`);
       return 0;
     }
     const { runUiCommand } = await import('./ui-command.js');

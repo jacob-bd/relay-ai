@@ -1,4 +1,5 @@
 import { parseFreePool } from '../pool/membership.js';
+import { clearPoolActivity } from '../pool/activity.js';
 import { poolCatalogEntry } from '../pool/catalog.js';
 import { handlePoolApi, verifyUiPoolMember, invalidateUiPoolMember } from './pool-api.js';
 import { supportsAdditionalOAuthAccounts } from '../oauth/types.js';
@@ -89,6 +90,7 @@ export interface UiApiOptions {
   /** When `server`, app launch APIs are disabled (Docker admin UI). */
   uiMode?: 'full' | 'server';
   onServerLifecycle?: (event: UiServerLifecycleEvent) => void;
+  onShutdown?: () => void;
 }
 
 // ── OAuth device-code session store ──────────────────────────────────────────
@@ -168,7 +170,11 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
   const url = req.url ?? '';
   traceUi(opts, `${req.method ?? 'GET'} ${url}`);
 
-  if (url === '/api/pool' && (req.method === 'GET' || req.method === 'POST')) {
+  if (url === '/api/pool/activity/clear' && req.method === 'POST') {
+    handleClearPoolActivity(res);
+  } else if (url === '/api/ui/shutdown' && req.method === 'POST') {
+    handleUiShutdown(res, opts);
+  } else if (url === '/api/pool' && (req.method === 'GET' || req.method === 'POST')) {
     void handlePoolApi(req, res);
   } else if (url === '/api/config' && req.method === 'GET') {
     handleGetConfig(res);
@@ -260,6 +266,24 @@ export function handleUiApiRequest(req: IncomingMessage, res: ServerResponse, op
   } else {
     sendJson(res, 404, { error: 'Not found' });
   }
+}
+
+function handleClearPoolActivity(res: ServerResponse): void {
+  clearPoolActivity();
+  sendJson(res, 200, { ok: true });
+}
+
+function handleUiShutdown(res: ServerResponse, opts: UiApiOptions): void {
+  sendJson(res, 200, { ok: true, message: 'Shutting down Relay UI' });
+  setTimeout(() => {
+    try {
+      if (opts.onShutdown) {
+        opts.onShutdown();
+      } else {
+        process.exit(0);
+      }
+    } catch {}
+  }, 100);
 }
 
 async function handleGetUpdateStatus(res: ServerResponse): Promise<void> {

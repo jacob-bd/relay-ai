@@ -6,7 +6,7 @@ import { dirname } from 'node:path';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import {
-  DEFAULT_SERVER_UI_PORT, checkExistingServer, formatUiAvailableLine, removeOwnUiLock, writeUiLock,
+  DEFAULT_SERVER_UI_PORT, checkExistingServer, formatUiAvailableLine, readUiLock, removeLock, removeOwnUiLock, writeUiLock,
 } from './ui-lock.js';
 import { handleUiApiRequest, type UiServerLifecycleEvent } from './ui/api.js';
 import { getUiDebugLogPath, makeTraceLogger } from './trace-log.js';
@@ -36,9 +36,14 @@ export interface UiRuntimeConfig {
   mode: UiMode;
   host: string;
   port: number;
+  /** Use a random free port when `port` is taken. False when the user asked for that exact port. */
+  fallbackToRandomPort: boolean;
   openBrowser: boolean;
   confirmShutdownOnSigint: boolean;
 }
+
+/** Stable default for the full UI so the browser origin (bookmarks, saved logins) survives restarts. */
+export const DEFAULT_FULL_UI_PORT = 17646;
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -76,14 +81,18 @@ export function resolveUiRuntimeConfig(
       mode,
       host: '0.0.0.0',
       port: resolveServerUiPort(opts, env),
+      fallbackToRandomPort: false,
       openBrowser: false,
       confirmShutdownOnSigint: false,
     };
   }
+  const envPort = Number(env.RELAY_AI_UI_PORT);
+  const requested = opts.port ?? (Number.isInteger(envPort) && envPort > 0 && envPort < 65536 ? envPort : undefined);
   return {
     mode,
     host: '127.0.0.1',
-    port: opts.port ?? 0,
+    port: requested ?? DEFAULT_FULL_UI_PORT,
+    fallbackToRandomPort: requested === undefined,
     openBrowser: !opts.background,
     confirmShutdownOnSigint: !opts.background,
   };
@@ -146,6 +155,44 @@ export async function resolveUiShutdownDecision(
   return shouldClose ? 'close' : 'keep';
 }
 
+export async function stopUiServer(): Promise<{ stopped: boolean; message: string }> {
+  const lock = readUiLock();
+  let pidAlive = false;
+  if (typeof lock?.pid === 'number' && lock.pid !== process.pid) {
+    try {
+      process.kill(lock.pid, 0);
+      pidAlive = true;
+    } catch {}
+  }
+
+  const existing = await checkExistingServer();
+  if (!existing && !pidAlive) {
+    removeLock();
+    return { stopped: false, message: 'Relay UI is not running.' };
+  }
+
+  const port = lock?.port;
+  const pid = lock?.pid;
+
+  if (existing) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 800);
+      await fetch(`${existing}/api/ui/shutdown`, { method: 'POST', signal: controller.signal });
+      clearTimeout(timer);
+    } catch {}
+  }
+
+  if (pidAlive && typeof pid === 'number') {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {}
+  }
+
+  removeLock();
+  return { stopped: true, message: `Relay UI stopped${port ? ` (port ${port})` : ''}.` };
+}
+
 export async function runUiCommand(opts: UiCommandOptions = {}): Promise<number> {
   const runtime = resolveUiRuntimeConfig(opts);
 
@@ -157,7 +204,8 @@ export async function runUiCommand(opts: UiCommandOptions = {}): Promise<number>
     if (opts.background) return 0;
     if (runtime.openBrowser) await openUiInBrowser(existing);
     console.log(`\n  ${pc.dim('Relay UI is already running — connected to it.')}`);
-    console.log(`${formatUiAvailableLine(existing)}\n`);
+    console.log(`${formatUiAvailableLine(existing)}`);
+    console.log(`  ${pc.dim('To shut it down, run: relay-ai ui stop')}\n`);
     return 0;
   }
 
@@ -170,7 +218,14 @@ export async function runUiCommand(opts: UiCommandOptions = {}): Promise<number>
   const trace = traceLogPath ? makeTraceLogger(traceLogPath) : undefined;
   trace?.(`ui server starting mode=${runtime.mode}`);
 
-  const server = createServer((req, res) => {
+  let server: ReturnType<typeof createServer> | null = null;
+  const cleanup = () => {
+    removeOwnUiLock();
+    server?.close();
+    process.exit(0);
+  };
+
+  server = createServer((req, res) => {
     const url = req.url ?? '/';
 
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -183,6 +238,7 @@ export async function runUiCommand(opts: UiCommandOptions = {}): Promise<number>
         onServerLifecycle: event => {
           console.log(`\n  ${formatUiServerLifecycleMessage(event)}\n`);
         },
+        onShutdown: cleanup,
       });
       return;
     }
@@ -200,10 +256,18 @@ export async function runUiCommand(opts: UiCommandOptions = {}): Promise<number>
     res.end('Not found');
   });
 
-  await new Promise<void>((resolve, reject) => {
-    server.listen(runtime.port, runtime.host, () => resolve());
+  const listenOn = (port: number) => new Promise<void>((resolve, reject) => {
     server.once('error', reject);
+    server.listen(port, runtime.host, () => { server.off('error', reject); resolve(); });
   });
+  try {
+    await listenOn(runtime.port);
+  } catch (err) {
+    // Preferred port taken by something else: keep working on a random one rather than failing.
+    if (!runtime.fallbackToRandomPort || (err as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw err;
+    trace?.(`ui port ${runtime.port} in use, falling back to a random port`);
+    await listenOn(0);
+  }
 
   const addr = server.address();
   if (!addr || typeof addr === 'string') {
@@ -223,11 +287,6 @@ export async function runUiCommand(opts: UiCommandOptions = {}): Promise<number>
     });
   }
 
-  const cleanup = () => {
-    removeOwnUiLock();
-    server.close();
-    process.exit(0);
-  };
   let handlingSignal = false;
   const handleSignal = async (signal: NodeJS.Signals) => {
     if (handlingSignal) return;

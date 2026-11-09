@@ -87,6 +87,7 @@ import {
   wantsCleanAgentStdout,
 } from './launch-target.js';
 import { pickerRefresh } from './picker-refresh.js';
+import { printUiUrlLast } from './ui-background.js';
 
 export { findCodexBinary } from './codex/launch.js';
 export { codexCompatibleProviders } from './codex/routing.js';
@@ -521,6 +522,7 @@ export async function runCodexCommand(
         logCodexActiveModel(entry.display_name, FREE_POOL_MODEL_ID);
         printCodexCliCleanupPanel('relay-ai codex --restore');
         codexCliOutro(entry.display_name, entry.display_name, FREE_POOL_MODEL_ID);
+        printUiUrlLast();
       }
       const childEnv = buildCodexChildEnv(poolRoute, poolProxy.port, {});
       const exitCode = await launchCodex(FREE_POOL_MODEL_ID, childEnv, passthroughArgs);
@@ -1028,6 +1030,7 @@ export async function runCodexCommand(
       logCodexActiveModel(modelLabel, launchModelId);
       printCodexCliCleanupPanel('relay-ai codex --restore');
       codexCliOutro(launchProviderName, modelLabel, launchModelId);
+      printUiUrlLast();
     }
     const dummyRoute: CodexRoute = {
       tier: 'proxy',

@@ -26,6 +26,7 @@ const state = {
   poolProviders: [],   // selected provider ids for the free-model filter; empty = all
   poolPage: 1,
   poolBusy: false,
+  poolActivityLastUpdated: null,
 
   providers: [],
   usage: {},                  // providerId → saved plan usage (GET /api/usage; checked on demand only)
@@ -643,6 +644,8 @@ function providerIdFromHash() {
 function openProviderModelBrowser(providerId) {
   if (state.activeProviderId !== providerId) {
     state.providerModelFilter = '';
+    state.providerModelMinCtx = 0;
+    state.providerModelFreeOnly = false;
     state.providerModelPage = 1;
   }
   window.location.hash = `provider/${encodeURIComponent(providerId)}`;
@@ -651,9 +654,18 @@ function openProviderModelBrowser(providerId) {
 function syncProviderModelBrowserFromHash() {
   const providerId = providerIdFromHash();
   const content = document.getElementById('content');
+  if (state.activeProviderId !== providerId) {
+    state.providerModelFilter = '';
+    state.providerModelMinCtx = 0;
+    state.providerModelFreeOnly = false;
+    state.providerModelPage = 1;
+  }
   state.activeProviderId = providerId;
   content.classList.toggle('provider-browser-open', Boolean(providerId));
-  if (!providerId) return;
+  if (!providerId) {
+    state.providerModelFreeOnly = false;
+    return;
+  }
   document.querySelectorAll('.nav-item').forEach(item => {
     item.classList.toggle('active', item.dataset.section === 'providers');
   });
@@ -1192,8 +1204,12 @@ function bulkBarHtml(provider) {
   const selected = selectionFor(provider.id);
   const nonChat = (provider.models ?? []).filter(model => isKnownNonChat(model) && !model.hidden).length;
   const select = `<button class="btn btn-ghost" id="model-select-non-chat" type="button" ${nonChat ? '' : 'disabled'} title="Tick every visible model whose type is known and is not chat, so you can review before hiding">Select non-chat (${nonChat})</button>`;
-  if (selected.size === 0) return select;
-  return `${select}
+  const hiddenCount = (provider.models ?? []).filter(model => model.hidden).length;
+  const unhideAll = hiddenCount
+    ? `<button class="btn btn-ghost" id="model-unhide-all" type="button" title="Make every hidden model visible again">Unhide all (${hiddenCount})</button>`
+    : '';
+  if (selected.size === 0) return `${select}${unhideAll}`;
+  return `${select}${unhideAll}
     <span class="model-bulk-count">${selected.size} selected</span>
     <button class="btn btn-ghost" id="model-bulk-hide" type="button">Hide</button>
     <button class="btn btn-ghost" id="model-bulk-unhide" type="button">Unhide</button>
@@ -1221,12 +1237,12 @@ function bindModelSelection(container, provider, pageItems) {
     renderProviderModelBrowser();
   });
   document.getElementById('model-bulk-clear')?.addEventListener('click', () => { selected.clear(); renderProviderModelBrowser(); });
-  const bulk = async hidden => {
-    const modelIds = [...selected];
+  const bulk = async (hidden, ids) => {
+    const modelIds = ids ?? [...selected];
     const result = await api('POST', '/api/providers/models/hide-many', { providerId: provider.id, modelIds, hidden });
     if (!result.ok) { showToast(result.error ?? 'Could not change these models'); return; }
     for (const model of provider.models ?? []) {
-      if (!selected.has(model.id)) continue;
+      if (!modelIds.includes(model.id)) continue;
       if (hidden) model.hidden = true;
       else delete model.hidden;
     }
@@ -1240,6 +1256,10 @@ function bindModelSelection(container, provider, pageItems) {
   };
   document.getElementById('model-bulk-hide')?.addEventListener('click', () => bulk(true));
   document.getElementById('model-bulk-unhide')?.addEventListener('click', () => bulk(false));
+  document.getElementById('model-unhide-all')?.addEventListener('click', () => {
+    const ids = (provider.models ?? []).filter(model => model.hidden).map(model => model.id);
+    if (ids.length) bulk(false, ids);
+  });
 }
 
 const MEASURE_CONCURRENCY = 3;
@@ -3090,21 +3110,40 @@ async function loadFreePool() {
   // A slower earlier request must never overwrite a newer catalog.
   if (sequence !== poolLoadSequence) return;
   state.pool = next;
+  state.poolActivityLastUpdated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   renderFreePool();
 }
 
 
+function formatPoolActivityTime(when) {
+  if (Number.isNaN(when.getTime())) return '';
+  const now = new Date();
+  const sameYear = when.getFullYear() === now.getFullYear();
+  const dateStr = when.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  });
+  const timeStr = when.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  return `${dateStr}, ${timeStr}`;
+}
+
 // Which pool member is answering, and only the moments something happened (failure, failover, switch).
 function poolActivityRowHtml(request, label) {
   const when = new Date(request.at);
-  const time = Number.isNaN(when.getTime()) ? '' : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const time = formatPoolActivityTime(when);
+  const stamp = Number.isNaN(when.getTime()) ? '' : when.toLocaleString();
   const answered = request.outcome === 'answered' && request.answeredBy;
   const secs = typeof request.ms === 'number' ? `${(request.ms / 1000).toFixed(1)}s` : '';
   const head = answered
     ? `<span class="pool-activity-event">${escapeHtml(label)}</span><span class="provider-pill" style="${providerPillStyle(request.answeredBy.providerId)}">${escapeHtml(request.answeredBy.providerId)}</span><code>${escapeHtml(request.answeredBy.modelId)}</code><span class="pool-activity-reason">${escapeHtml(secs)}</span>`
     : '<span class="pool-activity-event">✗ no model answered</span>';
   const tried = (request.tried ?? []).map(t => `<li><span class="pool-activity-failed">✗ ${escapeHtml(t.providerId)}/${escapeHtml(t.modelId)}</span> ${escapeHtml(t.reason ?? 'failed')}${t.detail ? `<span class="pool-activity-detail">${escapeHtml(t.detail)}</span>` : ''}</li>`).join('');
-  return `<li class="pool-activity-row ${answered && !tried ? 'is-served' : (answered ? 'is-failover' : 'is-failed')}"><span class="pool-activity-time">${escapeHtml(time)}</span>${head}${tried ? `<ul class="pool-activity-tried">${tried}</ul>` : ''}</li>`;
+  return `<li class="pool-activity-row ${answered && !tried ? 'is-served' : (answered ? 'is-failover' : 'is-failed')}"><span class="pool-activity-time"${stamp ? ` title="${escapeHtml(stamp)}"` : ''}>${escapeHtml(time)}</span>${head}${tried ? `<ul class="pool-activity-tried">${tried}</ul>` : ''}</li>`;
 }
 
 const POOL_EVENT_LABELS = { 'now-answering': '● answering', switched: '● switched to', failover: '↪ failover, answered by', failed: '✗' };
@@ -3122,9 +3161,22 @@ function poolActivityHtml(activity) {
   const empty = verbose
     ? 'No pool requests yet. When you use Relay Free Pool in a tool, each request shows up here.'
     : 'Nothing to report. Failures, failovers and model switches show up here; turn on "Show every request" to see all of them.';
+  const lastUpdated = state.poolActivityLastUpdated
+    ? `<span class="pool-activity-updated">Updated ${escapeHtml(state.poolActivityLastUpdated)}</span>`
+    : '';
   return `<div class="pool-section-head"><h2 class="pool-heading">Recent activity</h2><p class="section-sub">${verbose ? 'Every request.' : 'Only when something happens.'} Stored on this computer only (model names and short reasons, never prompts).</p></div>
     ${currentLine}
-    <label class="pool-toggle pool-activity-toggle"><input type="checkbox" id="pool-activity-verbose" ${verbose ? 'checked' : ''}><span>Show every request</span></label>
+    <div class="pool-activity-toolbar">
+      <label class="pool-toggle pool-activity-toggle"><input type="checkbox" id="pool-activity-verbose" ${verbose ? 'checked' : ''}><span>Show every request</span></label>
+      <div class="pool-activity-actions">
+        ${lastUpdated}
+        <button class="btn btn-ghost" id="pool-activity-clear" type="button" title="Clear all recorded pool activity logs">Clear logs</button>
+        <button class="btn btn-ghost" id="pool-activity-refresh" type="button" title="Refresh latest pool activity logs">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          Refresh
+        </button>
+      </div>
+    </div>
     <ul class="pool-activity">${rows.join('') || `<li class="pool-activity-empty">${escapeHtml(empty)}</li>`}</ul>`;
 }
 
@@ -3132,10 +3184,44 @@ function poolActivityHtml(activity) {
 function renderPoolActivity(pool) {
   const panel = document.getElementById('pool-activity-panel');
   if (!panel) return;
-  panel.innerHTML = poolActivityHtml(pool.activity);
+  panel.innerHTML = poolActivityHtml(pool?.activity);
   document.getElementById('pool-activity-verbose')?.addEventListener('change', event => {
     state.poolActivityVerbose = event.currentTarget.checked;
     renderPoolActivity(pool);
+  });
+  document.getElementById('pool-activity-clear')?.addEventListener('click', async () => {
+    const btn = document.getElementById('pool-activity-clear');
+    if (btn) btn.disabled = true;
+    try {
+      const res = await api('POST', '/api/pool/activity/clear');
+      if (res?.ok) {
+        showToast('Pool activity logs cleared');
+        await loadFreePool();
+      } else {
+        showToast(res?.error || 'Could not clear logs');
+      }
+    } catch {
+      showToast('Could not clear logs');
+    } finally {
+      const activeBtn = document.getElementById('pool-activity-clear');
+      if (activeBtn) activeBtn.disabled = false;
+    }
+  });
+  document.getElementById('pool-activity-refresh')?.addEventListener('click', async () => {
+    const btn = document.getElementById('pool-activity-refresh');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Refreshing…';
+    }
+    try {
+      await loadFreePool();
+    } finally {
+      const activeBtn = document.getElementById('pool-activity-refresh');
+      if (activeBtn) {
+        activeBtn.disabled = false;
+        activeBtn.textContent = 'Refresh';
+      }
+    }
   });
 }
 
@@ -3969,6 +4055,28 @@ function updateThemeIcon(isDark) {
   if (labelEl) labelEl.textContent = isDark ? 'Light mode' : 'Dark mode';
 }
 
+function initUiShutdown() {
+  const btn = document.getElementById('ui-shutdown-btn');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    if (!window.confirm('Shut down the Relay UI server? This closes the local web interface.')) return;
+    btn.disabled = true;
+    btn.textContent = 'Shutting down…';
+    try {
+      await api('POST', '/api/ui/shutdown');
+    } catch {
+      // The server shuts down immediately so the connection may drop, which is expected.
+    }
+    document.body.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:inherit;color:var(--text-2, #8b949e);background:var(--bg, #0d1117);text-align:center;padding:24px;">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:16px;opacity:0.6;"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+        <h2 style="font-size:20px;font-weight:600;margin:0 0 8px;color:var(--text-1, #f0f6fc);">Relay UI has shut down</h2>
+        <p style="margin:0 0 16px;font-size:14px;max-width:400px;line-height:1.5;">The local server has stopped. You can safely close this browser tab, or run <code>relay ui</code> to restart it.</p>
+      </div>
+    `;
+  });
+}
+
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
 async function initModels() {
@@ -3999,6 +4107,7 @@ function invalidateServerProviderCache() {
 
 async function init() {
   initTheme();
+  initUiShutdown();
   initNav();
   void initUpdateIndicator();
 
@@ -4019,6 +4128,7 @@ async function init() {
   renderProviders(); // shows skeletons
 
   initServerPolling();
+  initPoolActivityPolling();
 
   // Load templates in parallel with models — re-render providers when done
   loadTemplates().then(() => renderProviders());
@@ -4709,6 +4819,19 @@ function initServerPolling() {
   }, 5000);
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) refreshServerStatus();
+  });
+}
+
+function initPoolActivityPolling() {
+  setInterval(() => {
+    if (!document.hidden && window.location.hash === '#pool-activity') {
+      void loadFreePool();
+    }
+  }, 5000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && window.location.hash === '#pool-activity') {
+      void loadFreePool();
+    }
   });
 }
 

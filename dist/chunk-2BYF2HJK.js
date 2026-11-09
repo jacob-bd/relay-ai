@@ -2,14 +2,11 @@
 import {
   checkExistingServer,
   formatUiAvailableLine
-} from "./chunk-M25MTWJ2.js";
-import "./chunk-XEH2JMTL.js";
-import "./chunk-JIDIH7DS.js";
+} from "./chunk-3O4SXHER.js";
 
 // src/ui-background.ts
 import { spawn } from "child_process";
 import { realpathSync } from "fs";
-import pc from "picocolors";
 var START_TIMEOUT_MS = 6e3;
 var POLL_MS = 150;
 function shouldEnsureBackgroundUi(opts = {}) {
@@ -56,16 +53,23 @@ async function ensureBackgroundUi() {
     return null;
   }
 }
+var announcedUiUrl = null;
 async function announceBackgroundUi() {
-  const url = await ensureBackgroundUi();
-  if (url) console.log(`
-  ${pc.dim("Relay UI is running for live changes.")}
+  announcedUiUrl = await ensureBackgroundUi();
+}
+function printUiUrlLast() {
+  if (!announcedUiUrl) return;
+  const url = announcedUiUrl;
+  announcedUiUrl = null;
+  console.log(`
 ${formatUiAvailableLine(url)}
 `);
 }
+
 export {
-  announceBackgroundUi,
+  shouldEnsureBackgroundUi,
   ensureBackgroundUi,
-  shouldEnsureBackgroundUi
+  announceBackgroundUi,
+  printUiUrlLast
 };
-//# sourceMappingURL=ui-background-Z3WLEI6L.js.map
+//# sourceMappingURL=chunk-2BYF2HJK.js.map

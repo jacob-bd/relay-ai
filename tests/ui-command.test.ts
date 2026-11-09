@@ -1,11 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   formatUiServerLifecycleMessage,
   isUiApiRoute,
   resolveUiMode,
   resolveUiRuntimeConfig,
   resolveUiShutdownDecision,
+  stopUiServer,
 } from '../src/ui-command.js';
+import { lockFile, readUiLock, writeUiLock } from '../src/ui-lock.js';
 
 describe('ui command routing', () => {
   it('routes API and OAuth callback requests to the API handler', () => {
@@ -76,6 +83,18 @@ describe('UI server admin mode', () => {
   });
 });
 
+describe('UI full-mode port', () => {
+  it('defaults to a stable port that may fall back to a random one', () => {
+    expect(resolveUiRuntimeConfig({}, {})).toMatchObject({ host: '127.0.0.1', port: 17646, fallbackToRandomPort: true });
+  });
+
+  it('treats --port and RELAY_AI_UI_PORT as exact requests', () => {
+    expect(resolveUiRuntimeConfig({ port: 9000 }, {})).toMatchObject({ port: 9000, fallbackToRandomPort: false });
+    expect(resolveUiRuntimeConfig({}, { RELAY_AI_UI_PORT: '9100' })).toMatchObject({ port: 9100, fallbackToRandomPort: false });
+    expect(resolveUiRuntimeConfig({}, { RELAY_AI_UI_PORT: 'junk' })).toMatchObject({ port: 17646, fallbackToRandomPort: true });
+  });
+});
+
 describe('UI Server Gateway lifecycle messages', () => {
   it('formats local and network start messages with exposed model counts', () => {
     expect(formatUiServerLifecycleMessage({ type: 'started', listenMode: 'local', modelCount: 1 }))
@@ -87,5 +106,60 @@ describe('UI Server Gateway lifecycle messages', () => {
   it('formats the stop message', () => {
     expect(formatUiServerLifecycleMessage({ type: 'stopped' }))
       .toBe('◇ Server Gateway stopped');
+  });
+});
+
+describe('stopUiServer', () => {
+  let tempHome: string;
+  let prevHome: string | undefined;
+
+  beforeEach(() => {
+    tempHome = mkdtempSync(join(tmpdir(), 'relay-stop-ui-'));
+    prevHome = process.env.RELAY_AI_HOME;
+    process.env.RELAY_AI_HOME = tempHome;
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.RELAY_AI_HOME;
+    else process.env.RELAY_AI_HOME = prevHome;
+    rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  it('returns false when no server or lock is found', async () => {
+    const res = await stopUiServer();
+    expect(res).toEqual({ stopped: false, message: 'Relay UI is not running.' });
+  });
+
+  it('stops server, terminates pid, and removes lock file when running', async () => {
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)']);
+    let shutdownCalled = false;
+    const server = createServer((req, res) => {
+      if (req.url === '/api/config') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } else if (req.url === '/api/ui/shutdown') {
+        shutdownCalled = true;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } else {
+        res.writeHead(404).end();
+      }
+    });
+
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()));
+    const port = (server.address() as any).port;
+
+    writeFileSync(lockFile(), JSON.stringify({ pid: child.pid, port, mode: 'full' }));
+    expect(readUiLock()).not.toBeNull();
+
+    try {
+      const res = await stopUiServer();
+      expect(res).toEqual({ stopped: true, message: `Relay UI stopped (port ${port}).` });
+      expect(shutdownCalled).toBe(true);
+      expect(readUiLock()).toBeNull();
+    } finally {
+      server.close();
+      try { child.kill('SIGKILL'); } catch {}
+    }
   });
 });

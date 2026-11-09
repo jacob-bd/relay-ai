@@ -36,6 +36,7 @@ import {
 } from './gateway-protocol.js';
 import { isProviderKind, providerKind } from './registry/provider-kind.js';
 import { markStreamOnlyModel } from './stream-only-model.js';
+import { wireApiKey } from './no-key-sentinel.js';
 
 /** Models that must use /v1/responses instead of /v1/chat/completions. */
 const RESPONSES_ONLY_PREFIXES = [
@@ -332,7 +333,7 @@ async function createLanguageModelSingle(spec: ProviderModelSpec): Promise<Langu
 
   if (npm === '@ai-sdk/openai-compatible') {
     const { createOpenAICompatible } = await import('@ai-sdk/openai-compatible');
-    const runtimeApiKey = formatClineRuntimeCredential(spec.providerId, spec.authType, apiKey);
+    const runtimeApiKey = formatClineRuntimeCredential(spec.providerId, spec.authType, wireApiKey(apiKey));
     const options = {
       name: spec.providerId ?? 'openai-compatible',
       baseURL: baseURL ?? '',

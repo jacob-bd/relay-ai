@@ -10,12 +10,12 @@ import {
   resolveReasoningProviderOptions,
   withReasoningProviderOptions,
   withRequestHeaders
-} from "./chunk-OY3QLATE.js";
+} from "./chunk-KU7GMFC6.js";
 import {
   openCodeGoHeaders,
   providerRefreshToken,
   reconcileCachedModelProtocol
-} from "./chunk-5TOPC5SV.js";
+} from "./chunk-4YFQNHW6.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
@@ -23,7 +23,7 @@ import {
   createLanguageModel,
   getProviderModels,
   withProviderRequestDefaults
-} from "./chunk-6ATJUU3L.js";
+} from "./chunk-IIS6FGBQ.js";
 import {
   ANTIGRAVITY_API_VERSION,
   ANTIGRAVITY_BASE_URLS,
@@ -33,7 +33,7 @@ import {
   resolveProviderCredential,
   resolveProviderOAuthAccountId,
   resolveProviderOAuthProviderData
-} from "./chunk-P3FIONJC.js";
+} from "./chunk-OYXXDDPI.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -592,4 +592,4 @@ export {
   withPortableToolSchemas,
   createRelayModel
 };
-//# sourceMappingURL=chunk-3IMHVMGF.js.map
+//# sourceMappingURL=chunk-HOLSU5TE.js.map

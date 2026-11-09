@@ -65,7 +65,20 @@ export async function ensureBackgroundUi(): Promise<string | null> {
   }
 }
 
+let announcedUiUrl: string | null = null;
+
+/** Make sure a UI is running and remember its URL; it is printed later by `printUiUrlLast`. */
 export async function announceBackgroundUi(): Promise<void> {
-  const url = await ensureBackgroundUi();
-  if (url) console.log(`\n  ${pc.dim('Relay UI is running for live changes.')}\n${formatUiAvailableLine(url)}\n`);
+  announcedUiUrl = await ensureBackgroundUi();
+}
+
+/**
+ * Print the UI address as the last thing the launcher shows (call right before the tool takes over
+ * or the launcher starts waiting), so it is not buried in setup output. Prints at most once per run.
+ */
+export function printUiUrlLast(): void {
+  if (!announcedUiUrl) return;
+  const url = announcedUiUrl;
+  announcedUiUrl = null;
+  console.log(`\n${formatUiAvailableLine(url)}\n`);
 }

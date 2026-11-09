@@ -6,7 +6,7 @@ import {
   isLikelyPlaceholderKey,
   normalizeGoogleDisplayName,
   normalizeGoogleModelId
-} from "./chunk-7AT2OG2W.js";
+} from "./chunk-G5CBERRT.js";
 import {
   formatUpstreamError,
   upstreamHttpStatus
@@ -32,7 +32,7 @@ import {
   poolFreeStatus,
   resolveModelReasoningMetadata,
   shouldHideModel
-} from "./chunk-6ATJUU3L.js";
+} from "./chunk-IIS6FGBQ.js";
 import {
   BACKENDS,
   CLINE_PASS_LEGACY_DEFAULT_CONTEXT_WINDOW,
@@ -49,7 +49,7 @@ import {
   resolveProviderCredential,
   resolveProviderOAuthAccountId,
   resolveProviderOAuthProviderData
-} from "./chunk-P3FIONJC.js";
+} from "./chunk-OYXXDDPI.js";
 import {
   getTemplateById,
   init_provider_templates
@@ -166,6 +166,13 @@ function recordPoolActivity(entry) {
       const lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
       writeFileSync(path, lines.slice(-KEEP_LINES).join("\n") + "\n");
     }
+  } catch {
+  }
+}
+function clearPoolActivity() {
+  try {
+    const path = poolActivityPath();
+    if (existsSync(path)) writeFileSync(path, "");
   } catch {
   }
 }
@@ -2578,6 +2585,7 @@ export {
   poolRouteMember,
   describePoolFailure,
   recordPoolActivity,
+  clearPoolActivity,
   readPoolActivity,
   followPoolActivity,
   PoolRequestGrouper,
@@ -2633,4 +2641,4 @@ export {
   poolDiagnostic,
   verifyConfiguredPoolMember
 };
-//# sourceMappingURL=chunk-5TOPC5SV.js.map
+//# sourceMappingURL=chunk-4YFQNHW6.js.map

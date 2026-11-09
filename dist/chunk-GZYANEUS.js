@@ -3,17 +3,7 @@ import {
   extractApiKey,
   readBody,
   sendJson
-} from "./chunk-672Y5O5Q.js";
-import {
-  SubagentRouteRegistry,
-  anthropicEffortFromRequest,
-  claudeModelFamily,
-  extractClaudeSessionId,
-  generateAnthropicResponse,
-  streamAnthropicResponse,
-  translateRequest,
-  writeAnthropicStream
-} from "./chunk-ZGAZIEXT.js";
+} from "./chunk-FDENMLC7.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -24,7 +14,7 @@ import {
   filterModelsByAvailability,
   refreshProviderModels,
   validateClinePassApiKey
-} from "./chunk-E3JU7UI7.js";
+} from "./chunk-5LMHMQFE.js";
 import {
   MAX_POOL_ATTEMPTS,
   POOL_MAX_TOOLS,
@@ -40,7 +30,7 @@ import {
   requestFingerprint,
   sdkPoolRoute,
   translatedEffortClaim
-} from "./chunk-OY3QLATE.js";
+} from "./chunk-KU7GMFC6.js";
 import {
   PoolHealthStore,
   describePoolFailure,
@@ -61,7 +51,17 @@ import {
   resolveLocalProviderApiKey,
   retryPoolFailure,
   toOAuthRegistryId
-} from "./chunk-5TOPC5SV.js";
+} from "./chunk-4YFQNHW6.js";
+import {
+  SubagentRouteRegistry,
+  anthropicEffortFromRequest,
+  claudeModelFamily,
+  extractClaudeSessionId,
+  generateAnthropicResponse,
+  streamAnthropicResponse,
+  translateRequest,
+  writeAnthropicStream
+} from "./chunk-WW2Q5GYH.js";
 import {
   anthropicErrorType,
   formatUpstreamError,
@@ -122,7 +122,7 @@ import {
   vertexAnthropicCachedModels,
   vertexAnthropicSetupError,
   writeSecureLogLine
-} from "./chunk-6ATJUU3L.js";
+} from "./chunk-IIS6FGBQ.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -165,7 +165,7 @@ import {
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth,
   tokensToStoredCredential
-} from "./chunk-P3FIONJC.js";
+} from "./chunk-OYXXDDPI.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -4381,8 +4381,8 @@ async function serveOpenAiPool(req, res, options, body, plog) {
   plog(() => `openai-chat-completions pool stream=${body.stream === true}`);
   try {
     const [{ createRelayModel }, { RELAY_POOL_ROUTE_ID }] = await Promise.all([
-      import("./model-KFJ5RIJG.js"),
-      import("./pool-model-DFF6RNYP.js")
+      import("./model-UUJ6S6GM.js"),
+      import("./pool-model-BGS6A6KO.js")
     ]);
     const languageModel = await createRelayModel(RELAY_POOL_ROUTE_ID, { sessionId, onDebug: plog });
     const params = translateOpenAiRequest(body);
@@ -7406,4 +7406,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-L6DLZTY3.js.map
+//# sourceMappingURL=chunk-GZYANEUS.js.map
