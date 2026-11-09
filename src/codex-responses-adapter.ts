@@ -42,7 +42,14 @@ export interface ResponsesFunctionCallItem {
 
 export interface ResponsesFunctionCallOutputItem {
   type: 'function_call_output';
-  call_id: string;
+  /**
+   * Absent on app-injected outputs (Codex desktop's `codex_apps_*` page context): they carry
+   * `id`/`name`/`namespace` and have no matching function_call.
+   */
+  call_id?: string;
+  id?: string;
+  name?: string;
+  namespace?: string;
   output: string | unknown;
 }
 
@@ -511,8 +518,16 @@ export function translateResponsesInput(
       }
       parts.push(toolPart);
       messages.push({ role: 'assistant', content: parts } as ModelMessage);
+    } else if (item.type === 'function_call_output' && !item.call_id) {
+      // App-injected output with no call to pair with: a tool-result without a tool-call is
+      // rejected by every provider, so surface it as plain context instead.
+      const { content } = splitToolOutputImages(item.output);
+      const label = item.name ? `${item.namespace ? `${item.namespace}.` : ''}${item.name}` : 'app context';
+      if (content.trim()) {
+        messages.push({ role: 'user', content: [{ type: 'text', text: `[${label}]\n${content}` }] } as ModelMessage);
+      }
     } else if (item.type === 'function_call_output') {
-      const { rawId } = splitToolUseId(item.call_id);
+      const { rawId } = splitToolUseId(item.call_id!);
       const toolName = toolNames.get(rawId) ?? 'unknown';
       const { content, images } = splitToolOutputImages(item.output);
       messages.push({

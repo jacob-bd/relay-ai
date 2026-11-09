@@ -147,6 +147,7 @@ export function extractSseDataPayload(line: string): string | null {
 }
 
 export function splitToolUseId(id: string): { rawId: string; thoughtSignature?: string } {
+  if (typeof id !== 'string') return { rawId: '' };
   let sep = id.lastIndexOf(TOOL_USE_SIG_SEP);
   if (sep !== -1) {
     return {

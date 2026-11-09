@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.22.5] - 2026-11-09
+
+### Fixed
+
+- **The ChatGPT/Codex desktop app no longer fails every request with "Reconnecting 5/5".** Current Codex app builds add app-generated `function_call_output` items (page context such as `codex_apps_open_page`) that have no `call_id` and no matching tool call. Relay assumed every tool output carried a `call_id`, threw `Cannot read properties of undefined (reading 'lastIndexOf')`, and answered each request with HTTP 500, for every model and provider. Such outputs are now passed to the model as plain context text, and `splitToolUseId` tolerates a missing id.
+- **GitHub Copilot models use the context window Copilot reports** instead of a guessed size.
+
+### Added
+
+- **`docs/OPENCLAW.md`: using Relay and the Relay Free Pool as an OpenClaw provider.** Covers gateway authentication, the OpenClaw config, how the pool's per-member context check works, and that reasoning effort is not forwarded on the OpenAI Chat Completions route (it always runs members at their provider default).
+
 ## [0.22.4] - 2026-11-08
 
 ### Added

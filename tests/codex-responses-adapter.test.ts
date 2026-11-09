@@ -1307,3 +1307,21 @@ function parseSseEvents(raw: string): Array<{ event: string; data: any }> {
     return { event, data: JSON.parse(data) };
   });
 }
+
+describe('translateResponsesRequest app-injected function_call_output', () => {
+  it('does not throw on outputs without call_id and keeps them as user context', () => {
+    // Shape sent by newer Codex desktop builds (codex_apps_open_page): id/name/namespace, no call_id.
+    const body = {
+      model: 'm',
+      input: [
+        { type: 'function_call_output', id: 'fco_1', name: 'codex_apps_open_page', namespace: 'agent', output: '{"page_id":null}' },
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+      ],
+    } as never;
+    const out = translateResponsesRequest(body, '@ai-sdk/anthropic');
+    const texts = JSON.stringify(out.messages);
+    expect(texts).toContain('agent.codex_apps_open_page');
+    expect(texts).toContain('hello');
+    expect(out.messages.some(m => m.role === 'tool')).toBe(false);
+  });
+});
