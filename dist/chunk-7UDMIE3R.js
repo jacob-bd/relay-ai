@@ -3,7 +3,7 @@ import {
   extractApiKey,
   readBody,
   sendJson
-} from "./chunk-JFGLWCMG.js";
+} from "./chunk-XLXST7LL.js";
 import {
   COMMANDCODE_BASE_URL,
   addOpencodeCloudFromApiKey,
@@ -14,7 +14,7 @@ import {
   filterModelsByAvailability,
   refreshProviderModels,
   validateClinePassApiKey
-} from "./chunk-NYQULE54.js";
+} from "./chunk-WJXX65QT.js";
 import {
   MAX_POOL_ATTEMPTS,
   POOL_MAX_TOOLS,
@@ -30,7 +30,7 @@ import {
   requestFingerprint,
   sdkPoolRoute,
   translatedEffortClaim
-} from "./chunk-WB67LIBU.js";
+} from "./chunk-YWKLQ6JP.js";
 import {
   PoolHealthStore,
   describePoolFailure,
@@ -51,7 +51,7 @@ import {
   resolveLocalProviderApiKey,
   retryPoolFailure,
   toOAuthRegistryId
-} from "./chunk-M77KUXEO.js";
+} from "./chunk-RQPFBRCN.js";
 import {
   SubagentRouteRegistry,
   anthropicEffortFromRequest,
@@ -4381,8 +4381,8 @@ async function serveOpenAiPool(req, res, options, body, plog) {
   plog(() => `openai-chat-completions pool stream=${body.stream === true}`);
   try {
     const [{ createRelayModel }, { RELAY_POOL_ROUTE_ID }] = await Promise.all([
-      import("./model-QBY2PRTS.js"),
-      import("./pool-model-LOTLKWMR.js")
+      import("./model-M25HLHRL.js"),
+      import("./pool-model-RFN7O75I.js")
     ]);
     const languageModel = await createRelayModel(RELAY_POOL_ROUTE_ID, { sessionId, onDebug: plog });
     const params = translateOpenAiRequest(body);
@@ -7406,4 +7406,4 @@ export {
   supportsClaudeTransparentMode,
   buildHttpProxyRoutes
 };
-//# sourceMappingURL=chunk-YFK6NPMS.js.map
+//# sourceMappingURL=chunk-7UDMIE3R.js.map

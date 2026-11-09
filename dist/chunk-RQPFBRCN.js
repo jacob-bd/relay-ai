@@ -6,7 +6,7 @@ import {
   isLikelyPlaceholderKey,
   normalizeGoogleDisplayName,
   normalizeGoogleModelId
-} from "./chunk-WU2BSNV7.js";
+} from "./chunk-KITIQ3NG.js";
 import {
   formatUpstreamError,
   upstreamHttpStatus
@@ -2641,4 +2641,4 @@ export {
   poolDiagnostic,
   verifyConfiguredPoolMember
 };
-//# sourceMappingURL=chunk-M77KUXEO.js.map
+//# sourceMappingURL=chunk-RQPFBRCN.js.map

@@ -231,11 +231,13 @@ function buildCopilotFreeFallback(): CachedModel[] {
       id: 'gpt-4.1',
       supported_endpoints: ['/chat/completions'],
       billing: { multiplier: 0 },
+      capabilities: { limits: { max_context_window_tokens: 128000 } },
     },
     {
       id: 'gpt-4o',
       supported_endpoints: ['/chat/completions'],
       billing: { multiplier: 0 },
+      capabilities: { limits: { max_context_window_tokens: 128000 } },
     },
   ], 'free');
 }

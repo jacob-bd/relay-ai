@@ -74,13 +74,13 @@ import {
   supportsClaudeTransparentMode,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-YFK6NPMS.js";
+} from "./chunk-7UDMIE3R.js";
 import {
   extractApiKey,
   readBody,
   sendJson,
   warnDisabledPoolMembers
-} from "./chunk-JFGLWCMG.js";
+} from "./chunk-XLXST7LL.js";
 import {
   printUiUrlLast
 } from "./chunk-4BVKM3FX.js";
@@ -108,7 +108,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-NYQULE54.js";
+} from "./chunk-WJXX65QT.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -146,7 +146,7 @@ import {
   supportsMultiAgentV2,
   translateResponsesRequest,
   writeResponsesErrorStream
-} from "./chunk-WB67LIBU.js";
+} from "./chunk-YWKLQ6JP.js";
 import {
   OPENCODE_SESSION_HEADER,
   PoolHealthStore,
@@ -184,14 +184,14 @@ import {
   retryPoolFailure,
   routableModelsForTarget,
   toOAuthRegistryId
-} from "./chunk-M77KUXEO.js";
+} from "./chunk-RQPFBRCN.js";
 import {
   effectiveProviderBaseUrl,
   isLikelyPlaceholderKey,
   resolveProviderTemplate,
   resolveRefreshCredential,
   syntheticTemplate
-} from "./chunk-WU2BSNV7.js";
+} from "./chunk-KITIQ3NG.js";
 import {
   addManualModel,
   removeManualModel
@@ -3459,7 +3459,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-PIP7PHIJ.js");
+      const { testModel } = await import("./test-model-DCZ4SCJK.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -18093,7 +18093,7 @@ Options:
       return 0;
     }
     if (parsed.uiAction === "stop") {
-      const { stopUiServer } = await import("./ui-command-K2NOR6VV.js");
+      const { stopUiServer } = await import("./ui-command-IOAH4BD2.js");
       const result = await stopUiServer();
       if (result.stopped) {
         console.log(`
@@ -18106,11 +18106,11 @@ Options:
 `);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-K2NOR6VV.js");
+    const { runUiCommand } = await import("./ui-command-IOAH4BD2.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode, background: parsed.uiBackground });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-CZX4NPSJ.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-O4A2MF2A.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;

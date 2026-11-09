@@ -36,7 +36,11 @@ export function normalizeCopilotModels(
     const lowerId = id.toLowerCase();
     const isFree = tier !== 'paid' || copilotModelIsIncluded(row);
     const family = lowerId.split(/[-/:]/)[0] ?? lowerId;
-    const contextWindow = numericValue(row['context_length'])
+    // Copilot reports each model's real limits under capabilities.limits. Its windows are smaller than the
+    // model vendor's own API (gpt-4.1 is 128K here, 1M on OpenAI), so the generic table must only be a last resort.
+    const providerWindow = copilotReportedWindow(row);
+    const contextWindow = providerWindow
+      ?? numericValue(row['context_length'])
       ?? numericValue(row['contextWindow'])
       ?? numericValue(row['context_window'])
       ?? resolveContextWindow(id);
@@ -47,6 +51,7 @@ export function normalizeCopilotModels(
       family,
       brand: deriveBrand(family),
       contextWindow,
+      ...(providerWindow !== undefined ? { contextWindowSource: 'provider' as const } : {}),
       isFree,
       freeStatus: isFree ? 'verified_free' : 'unknown',
       modelFormat: 'openai',
@@ -110,6 +115,15 @@ function copilotModelIsIncluded(row: Record<string, unknown>): boolean {
     if (multiplier !== undefined) return multiplier === 0;
   }
   return FREE_MODEL_IDS.has(id);
+}
+
+function copilotReportedWindow(row: Record<string, unknown>): number | undefined {
+  const capabilities = row['capabilities'];
+  if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities)) return undefined;
+  const limits = (capabilities as Record<string, unknown>)['limits'];
+  if (!limits || typeof limits !== 'object' || Array.isArray(limits)) return undefined;
+  const window = numericValue((limits as Record<string, unknown>)['max_context_window_tokens']);
+  return window !== undefined && window > 0 ? window : undefined;
 }
 
 function numericValue(value: unknown): number | undefined {

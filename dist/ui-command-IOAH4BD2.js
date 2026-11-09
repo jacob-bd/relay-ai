@@ -3,7 +3,7 @@ import {
   handlePoolApi,
   invalidateUiPoolMember,
   verifyUiPoolMember
-} from "./chunk-B4D2ET67.js";
+} from "./chunk-GKCH6B3D.js";
 import {
   AA_SITE_URL,
   IntelligenceError,
@@ -46,11 +46,11 @@ import {
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode
-} from "./chunk-YFK6NPMS.js";
+} from "./chunk-7UDMIE3R.js";
 import {
   readBody,
   sendJson
-} from "./chunk-JFGLWCMG.js";
+} from "./chunk-XLXST7LL.js";
 import {
   DEFAULT_SERVER_UI_PORT,
   checkExistingServer,
@@ -81,19 +81,19 @@ import {
   setModelMarkedFree,
   setModelsHidden,
   updateCustomEndpointProvider
-} from "./chunk-NYQULE54.js";
+} from "./chunk-WJXX65QT.js";
 import {
   poolCatalogEntry
-} from "./chunk-WB67LIBU.js";
+} from "./chunk-YWKLQ6JP.js";
 import {
   clearPoolActivity,
   fetchProviderCatalog,
   providersForCodexSubagents,
   providersForTarget
-} from "./chunk-M77KUXEO.js";
+} from "./chunk-RQPFBRCN.js";
 import {
   copilotPlanTier
-} from "./chunk-WU2BSNV7.js";
+} from "./chunk-KITIQ3NG.js";
 import "./chunk-2FDLSPLT.js";
 import {
   validateCustomEndpointUrl
@@ -1194,7 +1194,7 @@ async function handleMeasureContextWindow(req, res) {
     if (!res.writableEnded) controller.abort();
   });
   try {
-    const { checkContextWindow } = await import("./test-model-PIP7PHIJ.js");
+    const { checkContextWindow } = await import("./test-model-DCZ4SCJK.js");
     const context = await checkContextWindow(provider.id, body.modelId, controller.signal);
     if (!res.destroyed) sendJson(res, 200, { ok: true, context });
   } catch {
@@ -1552,7 +1552,7 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-PIP7PHIJ.js");
+    const { testModel } = await import("./test-model-DCZ4SCJK.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
     if (!controller.signal.aborted) {
       try {
@@ -1569,7 +1569,7 @@ async function handleTestModel(req, res) {
         if (provider && cachedModel) {
           const probeAllowed = customEndpointKind(provider) || isFreeStatus(classifyFreeStatus({ model: cachedModel, providerId: provider.id, templateId: provider.templateId }));
           if (probeAllowed || providerKind(provider.id) === "ollama") {
-            const { checkContextWindow } = await import("./test-model-PIP7PHIJ.js");
+            const { checkContextWindow } = await import("./test-model-DCZ4SCJK.js");
             context = await checkContextWindow(provider.id, cachedModel.id, controller.signal, { lookupOnly: !probeAllowed });
           }
         }
@@ -1716,7 +1716,7 @@ async function handleEditServerUrl(req, res) {
       sendJson(res, 400, { ok: false, error: valid.error ?? "Invalid URL", hint: valid.hint });
       return;
     }
-    const { setProviderServerUrl } = await import("./crud-W4JNC44B.js");
+    const { setProviderServerUrl } = await import("./crud-ATEBWHCR.js");
     const previous = provider.api.url ?? "";
     if (previous.replace(/\/+$/, "") === newUrl) {
       sendJson(res, 200, { ok: true, unchanged: true });
@@ -2611,4 +2611,4 @@ export {
   runUiCommand,
   stopUiServer
 };
-//# sourceMappingURL=ui-command-K2NOR6VV.js.map
+//# sourceMappingURL=ui-command-IOAH4BD2.js.map

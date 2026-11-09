@@ -92,3 +92,21 @@ function makeCachedModel(id: string): CachedModel {
     npm: '@ai-sdk/openai-compatible',
   };
 }
+
+describe('Copilot context windows', () => {
+  it('uses the window Copilot reports under capabilities.limits, not the vendor API size', () => {
+    const [model] = normalizeCopilotModels([
+      { id: 'gpt-4.1', supported_endpoints: ['/chat/completions'], billing: { multiplier: 0 },
+        capabilities: { limits: { max_context_window_tokens: 128000, max_prompt_tokens: 128000, max_output_tokens: 16384 } } },
+    ], 'free');
+    expect(model!.contextWindow).toBe(128000);
+    expect(model!.contextWindowSource).toBe('provider');
+  });
+
+  it('falls back to the generic table, unsourced, when Copilot reports no limits', () => {
+    const [model] = normalizeCopilotModels([
+      { id: 'gpt-4.1', supported_endpoints: ['/chat/completions'], billing: { multiplier: 0 } },
+    ], 'free');
+    expect(model!.contextWindowSource).toBeUndefined();
+  });
+});

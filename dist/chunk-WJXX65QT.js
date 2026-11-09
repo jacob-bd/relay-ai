@@ -13,7 +13,7 @@ import {
   resolveRefreshCredential,
   skipWithCachedModels,
   syntheticTemplate
-} from "./chunk-WU2BSNV7.js";
+} from "./chunk-KITIQ3NG.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -1458,12 +1458,14 @@ function buildCopilotFreeFallback() {
     {
       id: "gpt-4.1",
       supported_endpoints: ["/chat/completions"],
-      billing: { multiplier: 0 }
+      billing: { multiplier: 0 },
+      capabilities: { limits: { max_context_window_tokens: 128e3 } }
     },
     {
       id: "gpt-4o",
       supported_endpoints: ["/chat/completions"],
-      billing: { multiplier: 0 }
+      billing: { multiplier: 0 },
+      capabilities: { limits: { max_context_window_tokens: 128e3 } }
     }
   ], "free");
 }
@@ -2277,4 +2279,4 @@ export {
   toggleProviderEnabled,
   setProviderServerUrl
 };
-//# sourceMappingURL=chunk-NYQULE54.js.map
+//# sourceMappingURL=chunk-WJXX65QT.js.map

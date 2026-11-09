@@ -140,7 +140,8 @@ function normalizeCopilotModels(rows, tier) {
     const lowerId = id.toLowerCase();
     const isFree = tier !== "paid" || copilotModelIsIncluded(row);
     const family = lowerId.split(/[-/:]/)[0] ?? lowerId;
-    const contextWindow = numericValue(row["context_length"]) ?? numericValue(row["contextWindow"]) ?? numericValue(row["context_window"]) ?? resolveContextWindow(id);
+    const providerWindow = copilotReportedWindow(row);
+    const contextWindow = providerWindow ?? numericValue(row["context_length"]) ?? numericValue(row["contextWindow"]) ?? numericValue(row["context_window"]) ?? resolveContextWindow(id);
     models.push({
       id,
       name: `${id} [Copilot]`,
@@ -148,6 +149,7 @@ function normalizeCopilotModels(rows, tier) {
       family,
       brand: deriveBrand(family),
       contextWindow,
+      ...providerWindow !== void 0 ? { contextWindowSource: "provider" } : {},
       isFree,
       freeStatus: isFree ? "verified_free" : "unknown",
       modelFormat: "openai",
@@ -202,6 +204,14 @@ function copilotModelIsIncluded(row) {
     if (multiplier !== void 0) return multiplier === 0;
   }
   return FREE_MODEL_IDS.has(id);
+}
+function copilotReportedWindow(row) {
+  const capabilities = row["capabilities"];
+  if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) return void 0;
+  const limits = capabilities["limits"];
+  if (!limits || typeof limits !== "object" || Array.isArray(limits)) return void 0;
+  const window = numericValue(limits["max_context_window_tokens"]);
+  return window !== void 0 && window > 0 ? window : void 0;
 }
 function numericValue(value) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -344,4 +354,4 @@ export {
   normalizeCopilotModels,
   filterCachedCopilotModels
 };
-//# sourceMappingURL=chunk-WU2BSNV7.js.map
+//# sourceMappingURL=chunk-KITIQ3NG.js.map
