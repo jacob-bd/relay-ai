@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import {
   translateRequest
-} from "./chunk-2FDLSPLT.js";
+} from "./chunk-SV363ZRP.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -14,10 +14,10 @@ import {
   modelIdError,
   saveRegistry,
   supportsManualModels
-} from "./chunk-25YDTUQR.js";
+} from "./chunk-VKU4MKV7.js";
 import {
   resolveProviderCredential
-} from "./chunk-I6I4JU6A.js";
+} from "./chunk-5DUQQ7PO.js";
 
 // src/registry/validate-manual-model.ts
 import { randomUUID } from "crypto";
@@ -156,4 +156,4 @@ export {
   addManualModel,
   removeManualModel
 };
-//# sourceMappingURL=chunk-E25ZTNGC.js.map
+//# sourceMappingURL=chunk-OWZ76KDP.js.map

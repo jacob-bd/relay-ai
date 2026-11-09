@@ -16,12 +16,12 @@ import {
   recordPoolActivity,
   resolveLocalProviderApiKey,
   retryPoolFailure
-} from "./chunk-RQPFBRCN.js";
+} from "./chunk-TCXBMTXE.js";
 import {
   copilotPlanTier,
   filterCachedCopilotModels,
   stripGoogleModelPrefix
-} from "./chunk-KITIQ3NG.js";
+} from "./chunk-HWHLJ23P.js";
 import {
   normalizeToolSchemaForNpm
 } from "./chunk-UR4QFFSQ.js";
@@ -58,11 +58,11 @@ import {
   sseChunk,
   streamActivity,
   thinkingProviderOptions
-} from "./chunk-25YDTUQR.js";
+} from "./chunk-VKU4MKV7.js";
 import {
   isProviderKind,
   resolveProviderOAuthProviderData
-} from "./chunk-I6I4JU6A.js";
+} from "./chunk-5DUQQ7PO.js";
 
 // src/core/pool-model.ts
 import { randomUUID as randomUUID2 } from "crypto";
@@ -530,6 +530,13 @@ function translateResponsesInput(input, instructions, npm, toolContext = createC
       }
       parts.push(toolPart);
       messages.push({ role: "assistant", content: parts });
+    } else if (item.type === "function_call_output" && !item.call_id) {
+      const { content } = splitToolOutputImages(item.output);
+      const label = item.name ? `${item.namespace ? `${item.namespace}.` : ""}${item.name}` : "app context";
+      if (content.trim()) {
+        messages.push({ role: "user", content: [{ type: "text", text: `[${label}]
+${content}` }] });
+      }
     } else if (item.type === "function_call_output") {
       const { rawId } = splitToolUseId(item.call_id);
       const toolName = toolNames.get(rawId) ?? "unknown";
@@ -2831,7 +2838,7 @@ function wrapPoolError(error) {
 }
 var sessions = new PoolSessionRoutes();
 async function memberModel(routeId, context) {
-  const { createRelayModel } = await import("./model-M25HLHRL.js");
+  const { createRelayModel } = await import("./model-LDHK3KGD.js");
   return createRelayModel(routeId, {
     sessionId: context.sessionId,
     ...context.options?.onDebug ? { onDebug: context.options.onDebug } : {},
@@ -3184,4 +3191,4 @@ export {
   parseRelayRouteId,
   loadCoreRegistry
 };
-//# sourceMappingURL=chunk-YWKLQ6JP.js.map
+//# sourceMappingURL=chunk-EJFPIOEA.js.map

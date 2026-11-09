@@ -74,13 +74,13 @@ import {
   supportsClaudeTransparentMode,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-7UDMIE3R.js";
+} from "./chunk-FOQG6RFG.js";
 import {
   extractApiKey,
   readBody,
   sendJson,
   warnDisabledPoolMembers
-} from "./chunk-XLXST7LL.js";
+} from "./chunk-CQDWL7DY.js";
 import {
   printUiUrlLast
 } from "./chunk-4BVKM3FX.js";
@@ -108,7 +108,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-WJXX65QT.js";
+} from "./chunk-EZYEOCVZ.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -146,7 +146,7 @@ import {
   supportsMultiAgentV2,
   translateResponsesRequest,
   writeResponsesErrorStream
-} from "./chunk-YWKLQ6JP.js";
+} from "./chunk-EJFPIOEA.js";
 import {
   OPENCODE_SESSION_HEADER,
   PoolHealthStore,
@@ -184,19 +184,19 @@ import {
   retryPoolFailure,
   routableModelsForTarget,
   toOAuthRegistryId
-} from "./chunk-RQPFBRCN.js";
+} from "./chunk-TCXBMTXE.js";
 import {
   effectiveProviderBaseUrl,
   isLikelyPlaceholderKey,
   resolveProviderTemplate,
   resolveRefreshCredential,
   syntheticTemplate
-} from "./chunk-KITIQ3NG.js";
+} from "./chunk-HWHLJ23P.js";
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-E25ZTNGC.js";
-import "./chunk-2FDLSPLT.js";
+} from "./chunk-OWZ76KDP.js";
+import "./chunk-SV363ZRP.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -270,7 +270,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-25YDTUQR.js";
+} from "./chunk-VKU4MKV7.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -308,7 +308,7 @@ import {
   saveToCredentialStore,
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth
-} from "./chunk-I6I4JU6A.js";
+} from "./chunk-5DUQQ7PO.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -3459,7 +3459,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-DCZ4SCJK.js");
+      const { testModel } = await import("./test-model-UTURSYJY.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -18093,7 +18093,7 @@ Options:
       return 0;
     }
     if (parsed.uiAction === "stop") {
-      const { stopUiServer } = await import("./ui-command-IOAH4BD2.js");
+      const { stopUiServer } = await import("./ui-command-VS6KHQRL.js");
       const result = await stopUiServer();
       if (result.stopped) {
         console.log(`
@@ -18106,11 +18106,11 @@ Options:
 `);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-IOAH4BD2.js");
+    const { runUiCommand } = await import("./ui-command-VS6KHQRL.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode, background: parsed.uiBackground });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-O4A2MF2A.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-TWXGVBRU.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;
