@@ -3,15 +3,17 @@ import {
   announceBackgroundUi,
   ensureBackgroundUi,
   printUiUrlLast,
+  releaseBackgroundUi,
   shouldEnsureBackgroundUi
-} from "./chunk-2BYF2HJK.js";
-import "./chunk-3O4SXHER.js";
+} from "./chunk-4BVKM3FX.js";
+import "./chunk-K3VLZXMD.js";
 import "./chunk-XEH2JMTL.js";
 import "./chunk-JIDIH7DS.js";
 export {
   announceBackgroundUi,
   ensureBackgroundUi,
   printUiUrlLast,
+  releaseBackgroundUi,
   shouldEnsureBackgroundUi
 };
-//# sourceMappingURL=ui-background-DSY5AMMB.js.map
+//# sourceMappingURL=ui-background-QC2VFK67.js.map

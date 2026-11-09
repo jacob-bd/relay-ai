@@ -1,9 +1,11 @@
 // src/ui-background.ts — keep a Relay UI server running next to tool launches.
 
 import { spawn } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import pc from 'picocolors';
-import { checkExistingServer, formatUiAvailableLine } from './ui-lock.js';
+import { join } from 'node:path';
+import { getAppHome } from './paths.js';
+import { checkExistingServer, formatUiAvailableLine, readUiLock, removeLock } from './ui-lock.js';
 
 const START_TIMEOUT_MS = 6_000;
 const POLL_MS = 150;
@@ -67,9 +69,53 @@ export async function ensureBackgroundUi(): Promise<string | null> {
 
 let announcedUiUrl: string | null = null;
 
+function clientsDir(): string {
+  return join(getAppHome(), 'ui-clients');
+}
+
+function pidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+/** Record this tool launch as a user of the background UI. Never throws. */
+function registerUiClient(): void {
+  try {
+    mkdirSync(clientsDir(), { recursive: true });
+    writeFileSync(join(clientsDir(), String(process.pid)), '');
+  } catch {}
+}
+
+/**
+ * Called when a tool launch ends (CLI tool, desktop app or IDE launcher alike). Removes this launch from the
+ * UI's users and, if the UI was started by a tool launch and no other live launch still uses it, stops it.
+ * A UI started with `relay-ai ui` is never stopped here. Synchronous so it can run from `process.on('exit')`.
+ */
+export function releaseBackgroundUi(): void {
+  try {
+    try { unlinkSync(join(clientsDir(), String(process.pid))); } catch {}
+    const lock = readUiLock();
+    if (!lock?.background || typeof lock.pid !== 'number' || lock.pid === process.pid) return;
+    let othersUsingIt = false;
+    if (existsSync(clientsDir())) {
+      for (const name of readdirSync(clientsDir())) {
+        const pid = Number(name);
+        if (!Number.isInteger(pid) || pid === process.pid) continue;
+        if (pidAlive(pid)) othersUsingIt = true;
+        else { try { unlinkSync(join(clientsDir(), name)); } catch {} }
+      }
+    }
+    if (othersUsingIt) return;
+    try { process.kill(lock.pid, 'SIGTERM'); } catch {}
+    removeLock();
+  } catch {}
+}
+
 /** Make sure a UI is running and remember its URL; it is printed later by `printUiUrlLast`. */
 export async function announceBackgroundUi(): Promise<void> {
   announcedUiUrl = await ensureBackgroundUi();
+  if (!announcedUiUrl) return;
+  registerUiClient();
+  process.once('exit', releaseBackgroundUi);
 }
 
 /**

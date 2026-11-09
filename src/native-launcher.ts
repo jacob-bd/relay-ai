@@ -325,6 +325,12 @@ function relayCliPath(): string {
   return 'relay-ai';
 }
 
+/** The Claude Code and Codex CLIs take `--pool`; the apps and Antigravity take the pool as a `--provider`/`--model` pair. */
+const POOL_LAUNCH_ID = 'relay-free-pool';
+const POOL_FLAG_APPS = new Set(['claude', 'codex']);
+const POOL_BOOT_APPS = new Set(['claude-app', 'codex-app', 'antigravity', 'antigravity-ide', 'agy']);
+export const POOL_LAUNCH_APPS: ReadonlySet<string> = new Set([...POOL_FLAG_APPS, ...POOL_BOOT_APPS]);
+
 export function getRelayLaunchCommand(appId: string, options: RelayLaunchOptions = {}): string {
   const app = getSupportedApp(appId);
   if (!app) throw new Error(`Unsupported app: ${appId}`);
@@ -334,8 +340,10 @@ export function getRelayLaunchCommand(appId: string, options: RelayLaunchOptions
   }
   const args = [app.relayCommand];
   if (options.pool) {
-    if (!['claude', 'codex'].includes(app.id) || options.httpProxy || options.withNative || options.providerId || options.modelId) throw new Error('Free pool launches require Claude Code CLI or Codex CLI without another model selection.');
-    args.push('--pool');
+    if (options.httpProxy || options.withNative || options.providerId || options.modelId) throw new Error('Choose the free pool alone, without another model selection.');
+    if (POOL_FLAG_APPS.has(app.id)) args.push('--pool');
+    else if (POOL_BOOT_APPS.has(app.id)) args.push('--provider', POOL_LAUNCH_ID, '--model', POOL_LAUNCH_ID);
+    else throw new Error(`${app.name} cannot start on the free pool.`);
   }
   if (options.trace) {
     args.push('--trace');

@@ -166,6 +166,11 @@ async function resolveAntigravityLaunch(
     return null;
   }
 
+  // The Relay Free Pool as the whole session (the UI launches it as provider = model = relay-free-pool).
+  if (boot?.launchProvider === 'relay-free-pool' && boot.launchModel === 'relay-free-pool') {
+    return { startOnPool: true, allProviders };
+  }
+
   // Check for explicit --provider + --model
   if (boot?.launchProvider && boot?.launchModel) {
     const provider = allProviders.find(p => p.id === boot.launchProvider);

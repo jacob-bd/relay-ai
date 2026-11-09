@@ -1,10 +1,9 @@
 import type { LanguageModel } from 'ai';
 import { poolFreeStatus } from '../free-models.js';
 import type { FavoriteModel, LocalProvider, PoolCapabilityReceipt } from '../types.js';
-import { poolEndpointRevision } from './capabilities.js';
+import { NO_RECEIPT_EXPIRY, poolEndpointRevision } from './capabilities.js';
 import { type PoolProbeResult } from './probe.js';
 
-export const RECEIPT_TTL_MS = 24 * 60 * 60 * 1000;
 /** Conservative reservation; a provider that accepts less fails pre-commit and falls back. */
 export const ENROLL_MAX_OUTPUT_TOKENS = 4096;
 
@@ -74,7 +73,7 @@ export async function verifyPoolMember(
       member: { providerId: member.providerId, modelId: member.modelId },
       endpointRevision: revision,
       verifiedAt: now,
-      expiresAt: now + RECEIPT_TTL_MS,
+      expiresAt: NO_RECEIPT_EXPIRY,
       targets,
       tools: true,
       maxOutputTokens: ENROLL_MAX_OUTPUT_TOKENS,

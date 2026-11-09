@@ -24,9 +24,9 @@ function readUiLock() {
     return null;
   }
 }
-function writeUiLock(port, mode) {
+function writeUiLock(port, mode, background = false) {
   mkdirSync(getAppHome(), { recursive: true });
-  writeFileSync(lockFile(), JSON.stringify({ pid: process.pid, port, mode }));
+  writeFileSync(lockFile(), JSON.stringify({ pid: process.pid, port, mode, ...background ? { background: true } : {} }));
 }
 function removeOwnUiLock() {
   try {
@@ -84,4 +84,4 @@ export {
   checkExistingServer,
   formatUiAvailableLine
 };
-//# sourceMappingURL=chunk-3O4SXHER.js.map
+//# sourceMappingURL=chunk-K3VLZXMD.js.map

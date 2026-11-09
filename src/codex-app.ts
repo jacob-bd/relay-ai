@@ -542,7 +542,10 @@ export async function runCodexAppCommand(args: string[], opts: { vertex?: boolea
   // --config must preview the exact unattended launch selection. Ignoring
   // explicit flags here made a safe preview silently show the previously saved
   // model instead of the requested provider/model pair.
-  if (codexAppUsesExplicitSelection(configOnly, launchProvider, opts.launchModel)) {
+  if (launchProvider === 'relay-free-pool' && opts.launchModel === 'relay-free-pool') {
+    // The UI launches the free pool as provider = model = relay-free-pool; the pool is the whole session.
+    startOnPool = true;
+  } else if (codexAppUsesExplicitSelection(configOnly, launchProvider, opts.launchModel)) {
     const bootSelection = resolveBootSelection(
       compatible,
       launchProvider!,

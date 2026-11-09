@@ -15,7 +15,7 @@ export function removeLock(): void {
   try { unlinkSync(lockFile()); } catch {}
 }
 
-export function readUiLock(): { pid: number; port: number; mode: string } | null {
+export function readUiLock(): { pid: number; port: number; mode: string; background?: boolean } | null {
   try {
     return JSON.parse(readFileSync(lockFile(), 'utf8'));
   } catch {
@@ -23,9 +23,10 @@ export function readUiLock(): { pid: number; port: number; mode: string } | null
   }
 }
 
-export function writeUiLock(port: number, mode: string): void {
+/** `background` marks a UI a tool launch started, which closes with the last tool launch that uses it. */
+export function writeUiLock(port: number, mode: string, background = false): void {
   mkdirSync(getAppHome(), { recursive: true });
-  writeFileSync(lockFile(), JSON.stringify({ pid: process.pid, port, mode }));
+  writeFileSync(lockFile(), JSON.stringify({ pid: process.pid, port, mode, ...(background ? { background: true } : {}) }));
 }
 
 /** Remove the lock only while it still names this process, so a second UI never deletes the live one's lock. */

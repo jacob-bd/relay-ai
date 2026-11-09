@@ -7,7 +7,7 @@ import { subscriptionOAuthRiskLines } from '../oauth/risk-notice.js';
 import { readOAuthAccountLabel } from '../registry/oauth-account.js';
 import { describeOAuthAccount, formatOAuthAccount } from '../oauth/identity.js';
 import { isProviderKind, providerKind } from '../registry/provider-kind.js';
-import { getSupportedApps, getSupportedApp, getRelayLaunchCommand, detectApp } from '../native-launcher.js';
+import { getSupportedApps, getSupportedApp, getRelayLaunchCommand, detectApp, POOL_LAUNCH_APPS } from '../native-launcher.js';
 import { exec } from 'node:child_process';
 import { localTimestamp } from '../trace-log.js';
 import { promisify } from 'node:util';
@@ -527,9 +527,10 @@ async function handleGetModels(
     }
 
     // The virtual model is a launch choice, not a provider to configure.
-    if (target === 'claude' || target === 'codex') {
+    const poolTarget = target ? POOL_TARGET_FOR_LAUNCH[target] : undefined;
+    if (poolTarget) {
       const pool = parseFreePool(loadPreferences().freePool);
-      const entry = pool.enabled ? poolCatalogEntry(pool, pool.receipts, target) : undefined;
+      const entry = pool.enabled ? poolCatalogEntry(pool, pool.receipts, poolTarget) : undefined;
       if (entry) (providers as any[]).push({ id: 'relay-free-pool', name: 'Relay Free Pool',
         favoriteName: 'Relay Free Pool', hasKey: true, authType: 'none', modelCount: 1,
         models: [{ id: 'relay-free-pool', name: 'Relay Free Pool', contextWindow: entry.context_window,
@@ -1572,6 +1573,11 @@ function handleGetApps(res: ServerResponse): void {
 
 
 /** Maps a `relay-ai ui` app card id to the launch target `target-compatibility.ts` understands. */
+/** Launch targets that can start on the Relay Free Pool, and the pool target each one is served from. */
+const POOL_TARGET_FOR_LAUNCH: Partial<Record<RelayLaunchTarget, 'claude' | 'codex' | 'antigravity'>> = {
+  claude: 'claude', 'claude-app': 'claude', codex: 'codex', 'codex-app': 'codex', antigravity: 'antigravity',
+};
+
 const APP_ID_TO_LAUNCH_TARGET: Record<string, RelayLaunchTarget> = {
   claude: 'claude',
   'claude-app': 'claude-app',
@@ -1591,8 +1597,8 @@ async function handleLaunchApp(req: IncomingMessage, res: ServerResponse, opts: 
     const withNative = body.withNative === true;
     const pool = body.pool === true;
     if (body.pool !== undefined && typeof body.pool !== 'boolean') { sendJson(res, 400, { error: 'pool must be a boolean' }); return; }
-    if (pool && (!['claude', 'codex'].includes(body.appId) || body.favorites || body.providerId || body.modelId || body.httpProxy || body.withNative)) {
-      sendJson(res, 400, { error: 'Choose the free pool alone for Claude Code CLI or Codex CLI.' }); return;
+    if (pool && (!POOL_LAUNCH_APPS.has(body.appId) || body.favorites || body.providerId || body.modelId || body.httpProxy || body.withNative)) {
+      sendJson(res, 400, { error: 'Choose the free pool alone; Gemini CLI cannot start on it.' }); return;
     }
     let { providerId, modelId } = body as { providerId?: string; modelId?: string };
     if (!appId) {

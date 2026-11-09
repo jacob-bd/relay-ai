@@ -178,7 +178,13 @@ export async function runClaudeAppCommand(args: string[], boot?: { launchProvide
     }
   }
 
-  if (boot?.launchProvider && boot?.launchModel) {
+  if (boot?.launchProvider === 'relay-free-pool' && boot.launchModel === 'relay-free-pool') {
+    if (!autoPool) {
+      p.log.error('Relay Free Pool is not ready for Claude Desktop. Turn it on and add a tested member in relay-ai ui (Free Pool).');
+      return 1;
+    }
+    startOnPool = true;
+  } else if (boot?.launchProvider && boot?.launchModel) {
     const bootSelection = resolveBootSelection(
       compatible,
       boot.launchProvider,

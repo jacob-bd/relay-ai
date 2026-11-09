@@ -1,12 +1,18 @@
 #!/usr/bin/env node
 import {
   checkExistingServer,
-  formatUiAvailableLine
-} from "./chunk-3O4SXHER.js";
+  formatUiAvailableLine,
+  readUiLock,
+  removeLock
+} from "./chunk-K3VLZXMD.js";
+import {
+  getAppHome
+} from "./chunk-XEH2JMTL.js";
 
 // src/ui-background.ts
 import { spawn } from "child_process";
-import { realpathSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from "fs";
+import { join } from "path";
 var START_TIMEOUT_MS = 6e3;
 var POLL_MS = 150;
 function shouldEnsureBackgroundUi(opts = {}) {
@@ -54,8 +60,60 @@ async function ensureBackgroundUi() {
   }
 }
 var announcedUiUrl = null;
+function clientsDir() {
+  return join(getAppHome(), "ui-clients");
+}
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function registerUiClient() {
+  try {
+    mkdirSync(clientsDir(), { recursive: true });
+    writeFileSync(join(clientsDir(), String(process.pid)), "");
+  } catch {
+  }
+}
+function releaseBackgroundUi() {
+  try {
+    try {
+      unlinkSync(join(clientsDir(), String(process.pid)));
+    } catch {
+    }
+    const lock = readUiLock();
+    if (!lock?.background || typeof lock.pid !== "number" || lock.pid === process.pid) return;
+    let othersUsingIt = false;
+    if (existsSync(clientsDir())) {
+      for (const name of readdirSync(clientsDir())) {
+        const pid = Number(name);
+        if (!Number.isInteger(pid) || pid === process.pid) continue;
+        if (pidAlive(pid)) othersUsingIt = true;
+        else {
+          try {
+            unlinkSync(join(clientsDir(), name));
+          } catch {
+          }
+        }
+      }
+    }
+    if (othersUsingIt) return;
+    try {
+      process.kill(lock.pid, "SIGTERM");
+    } catch {
+    }
+    removeLock();
+  } catch {
+  }
+}
 async function announceBackgroundUi() {
   announcedUiUrl = await ensureBackgroundUi();
+  if (!announcedUiUrl) return;
+  registerUiClient();
+  process.once("exit", releaseBackgroundUi);
 }
 function printUiUrlLast() {
   if (!announcedUiUrl) return;
@@ -69,7 +127,8 @@ ${formatUiAvailableLine(url)}
 export {
   shouldEnsureBackgroundUi,
   ensureBackgroundUi,
+  releaseBackgroundUi,
   announceBackgroundUi,
   printUiUrlLast
 };
-//# sourceMappingURL=chunk-2BYF2HJK.js.map
+//# sourceMappingURL=chunk-4BVKM3FX.js.map

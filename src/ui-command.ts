@@ -279,7 +279,7 @@ export async function runUiCommand(opts: UiCommandOptions = {}): Promise<number>
   const displayHost = runtime.host === '0.0.0.0' ? '127.0.0.1' : runtime.host;
   const url = `http://${displayHost}:${port}`;
 
-  writeUiLock(port, runtime.mode);
+  writeUiLock(port, runtime.mode, opts.background === true);
 
   if (resolveServerAutostart()) {
     startGatewayServerFromSavedConfig().catch(err => {

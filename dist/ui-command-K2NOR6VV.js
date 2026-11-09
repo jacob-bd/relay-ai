@@ -3,7 +3,7 @@ import {
   handlePoolApi,
   invalidateUiPoolMember,
   verifyUiPoolMember
-} from "./chunk-TE2Y73TW.js";
+} from "./chunk-B4D2ET67.js";
 import {
   AA_SITE_URL,
   IntelligenceError,
@@ -13,7 +13,7 @@ import {
   loadIntelligenceCache,
   refreshIntelligence,
   removeIntelligence
-} from "./chunk-O2SS4I4W.js";
+} from "./chunk-4RCYRXSV.js";
 import {
   addProviderFromTemplate,
   buildDedupedModelRows,
@@ -46,11 +46,11 @@ import {
   subscriptionOAuthRiskLines,
   summarizeServerProviders,
   supportsClaudeTransparentMode
-} from "./chunk-GZYANEUS.js";
+} from "./chunk-YFK6NPMS.js";
 import {
   readBody,
   sendJson
-} from "./chunk-FDENMLC7.js";
+} from "./chunk-JFGLWCMG.js";
 import {
   DEFAULT_SERVER_UI_PORT,
   checkExistingServer,
@@ -60,7 +60,7 @@ import {
   removeLock,
   removeOwnUiLock,
   writeUiLock
-} from "./chunk-3O4SXHER.js";
+} from "./chunk-K3VLZXMD.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   addCustomEndpointProvider,
@@ -81,20 +81,20 @@ import {
   setModelMarkedFree,
   setModelsHidden,
   updateCustomEndpointProvider
-} from "./chunk-5LMHMQFE.js";
+} from "./chunk-NYQULE54.js";
 import {
   poolCatalogEntry
-} from "./chunk-KU7GMFC6.js";
+} from "./chunk-WB67LIBU.js";
 import {
   clearPoolActivity,
   fetchProviderCatalog,
   providersForCodexSubagents,
   providersForTarget
-} from "./chunk-4YFQNHW6.js";
+} from "./chunk-M77KUXEO.js";
 import {
   copilotPlanTier
-} from "./chunk-G5CBERRT.js";
-import "./chunk-WW2Q5GYH.js";
+} from "./chunk-WU2BSNV7.js";
+import "./chunk-2FDLSPLT.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -140,7 +140,7 @@ import {
   setTrustSystemCertificates,
   supportsManualModels,
   writeSecureLogLine
-} from "./chunk-IIS6FGBQ.js";
+} from "./chunk-25YDTUQR.js";
 import {
   BACKENDS,
   CODEX_SUBAGENT_MODEL_CAP,
@@ -169,7 +169,7 @@ import {
   resolveProviderCredential,
   saveProviderCredential,
   supportsAdditionalOAuthAccounts
-} from "./chunk-OYXXDDPI.js";
+} from "./chunk-I6I4JU6A.js";
 import {
   getTemplateById,
   init_provider_templates,
@@ -424,6 +424,10 @@ function quoteShellArg(value) {
 function relayCliPath() {
   return "relay-ai";
 }
+var POOL_LAUNCH_ID = "relay-free-pool";
+var POOL_FLAG_APPS = /* @__PURE__ */ new Set(["claude", "codex"]);
+var POOL_BOOT_APPS = /* @__PURE__ */ new Set(["claude-app", "codex-app", "antigravity", "antigravity-ide", "agy"]);
+var POOL_LAUNCH_APPS = /* @__PURE__ */ new Set([...POOL_FLAG_APPS, ...POOL_BOOT_APPS]);
 function getRelayLaunchCommand(appId, options = {}) {
   const app = getSupportedApp(appId);
   if (!app) throw new Error(`Unsupported app: ${appId}`);
@@ -432,8 +436,10 @@ function getRelayLaunchCommand(appId, options = {}) {
   }
   const args = [app.relayCommand];
   if (options.pool) {
-    if (!["claude", "codex"].includes(app.id) || options.httpProxy || options.withNative || options.providerId || options.modelId) throw new Error("Free pool launches require Claude Code CLI or Codex CLI without another model selection.");
-    args.push("--pool");
+    if (options.httpProxy || options.withNative || options.providerId || options.modelId) throw new Error("Choose the free pool alone, without another model selection.");
+    if (POOL_FLAG_APPS.has(app.id)) args.push("--pool");
+    else if (POOL_BOOT_APPS.has(app.id)) args.push("--provider", POOL_LAUNCH_ID, "--model", POOL_LAUNCH_ID);
+    else throw new Error(`${app.name} cannot start on the free pool.`);
   }
   if (options.trace) {
     args.push("--trace");
@@ -1048,9 +1054,10 @@ async function handleGetModels(res, target, codexSubagents = false, uiMode) {
         });
       }
     }
-    if (target === "claude" || target === "codex") {
+    const poolTarget = target ? POOL_TARGET_FOR_LAUNCH[target] : void 0;
+    if (poolTarget) {
       const pool = parseFreePool(loadPreferences().freePool);
-      const entry = pool.enabled ? poolCatalogEntry(pool, pool.receipts, target) : void 0;
+      const entry = pool.enabled ? poolCatalogEntry(pool, pool.receipts, poolTarget) : void 0;
       if (entry) providers.push({
         id: "relay-free-pool",
         name: "Relay Free Pool",
@@ -1187,7 +1194,7 @@ async function handleMeasureContextWindow(req, res) {
     if (!res.writableEnded) controller.abort();
   });
   try {
-    const { checkContextWindow } = await import("./test-model-RPUMQVI5.js");
+    const { checkContextWindow } = await import("./test-model-PIP7PHIJ.js");
     const context = await checkContextWindow(provider.id, body.modelId, controller.signal);
     if (!res.destroyed) sendJson(res, 200, { ok: true, context });
   } catch {
@@ -1214,7 +1221,7 @@ async function handleManualModel(req, res, action) {
     return;
   }
   try {
-    const { addManualModel, removeManualModel } = await import("./manual-models-PNWSUADI.js");
+    const { addManualModel, removeManualModel } = await import("./manual-models-AY3WMHVJ.js");
     const result = action === "add" ? await addManualModel({
       providerId: providerId.trim(),
       modelId: modelId.trim(),
@@ -1545,7 +1552,7 @@ async function handleTestModel(req, res) {
   };
   res.on("close", cancel);
   try {
-    const { testModel } = await import("./test-model-RPUMQVI5.js");
+    const { testModel } = await import("./test-model-PIP7PHIJ.js");
     const result = await testModel(body.providerId.trim(), body.modelId.trim(), controller.signal);
     if (!controller.signal.aborted) {
       try {
@@ -1562,7 +1569,7 @@ async function handleTestModel(req, res) {
         if (provider && cachedModel) {
           const probeAllowed = customEndpointKind(provider) || isFreeStatus(classifyFreeStatus({ model: cachedModel, providerId: provider.id, templateId: provider.templateId }));
           if (probeAllowed || providerKind(provider.id) === "ollama") {
-            const { checkContextWindow } = await import("./test-model-RPUMQVI5.js");
+            const { checkContextWindow } = await import("./test-model-PIP7PHIJ.js");
             context = await checkContextWindow(provider.id, cachedModel.id, controller.signal, { lookupOnly: !probeAllowed });
           }
         }
@@ -1636,13 +1643,13 @@ async function handleIntelligenceKey(req, res) {
       sendJson(res, 400, { ok: false, error: "Paste your Artificial Analysis API key." });
       return;
     }
-    const { fetchIntelligenceScores, saveIntelligenceKey: save } = await import("./artificial-analysis-MCPFZCFE.js");
+    const { fetchIntelligenceScores, saveIntelligenceKey: save } = await import("./artificial-analysis-SPZAIAH6.js");
     const cache = await fetchIntelligenceScores(key);
     if (!await save(key)) {
       sendJson(res, 200, { ok: false, error: "Could not store the key in the system credential store." });
       return;
     }
-    const { writeIntelligenceCache } = await import("./artificial-analysis-MCPFZCFE.js");
+    const { writeIntelligenceCache } = await import("./artificial-analysis-SPZAIAH6.js");
     writeIntelligenceCache(cache);
     sendJson(res, 200, { ok: true, ...await intelligenceStatusBody() });
   } catch (err) {
@@ -1709,7 +1716,7 @@ async function handleEditServerUrl(req, res) {
       sendJson(res, 400, { ok: false, error: valid.error ?? "Invalid URL", hint: valid.hint });
       return;
     }
-    const { setProviderServerUrl } = await import("./crud-43G4BFR3.js");
+    const { setProviderServerUrl } = await import("./crud-W4JNC44B.js");
     const previous = provider.api.url ?? "";
     if (previous.replace(/\/+$/, "") === newUrl) {
       sendJson(res, 200, { ok: true, unchanged: true });
@@ -2038,6 +2045,13 @@ function handleGetApps(res) {
     sendJson(res, 500, { error: String(err) });
   }
 }
+var POOL_TARGET_FOR_LAUNCH = {
+  claude: "claude",
+  "claude-app": "claude",
+  codex: "codex",
+  "codex-app": "codex",
+  antigravity: "antigravity"
+};
 var APP_ID_TO_LAUNCH_TARGET = {
   claude: "claude",
   "claude-app": "claude-app",
@@ -2059,8 +2073,8 @@ async function handleLaunchApp(req, res, opts) {
       sendJson(res, 400, { error: "pool must be a boolean" });
       return;
     }
-    if (pool && (!["claude", "codex"].includes(body.appId) || body.favorites || body.providerId || body.modelId || body.httpProxy || body.withNative)) {
-      sendJson(res, 400, { error: "Choose the free pool alone for Claude Code CLI or Codex CLI." });
+    if (pool && (!POOL_LAUNCH_APPS.has(body.appId) || body.favorites || body.providerId || body.modelId || body.httpProxy || body.withNative)) {
+      sendJson(res, 400, { error: "Choose the free pool alone; Gemini CLI cannot start on it." });
       return;
     }
     let { providerId, modelId } = body;
@@ -2537,7 +2551,7 @@ async function runUiCommand(opts = {}) {
   const port = addr.port;
   const displayHost = runtime.host === "0.0.0.0" ? "127.0.0.1" : runtime.host;
   const url = `http://${displayHost}:${port}`;
-  writeUiLock(port, runtime.mode);
+  writeUiLock(port, runtime.mode, opts.background === true);
   if (resolveServerAutostart()) {
     startGatewayServerFromSavedConfig().catch((err) => {
       trace?.(`gateway autostart error: ${err instanceof Error ? err.message : String(err)}`);
@@ -2597,4 +2611,4 @@ export {
   runUiCommand,
   stopUiServer
 };
-//# sourceMappingURL=ui-command-Y5IHQ5JM.js.map
+//# sourceMappingURL=ui-command-K2NOR6VV.js.map

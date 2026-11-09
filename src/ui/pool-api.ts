@@ -258,7 +258,7 @@ export function poolView(providers: LocalProvider[], pool: FreePoolPreferences, 
       reason: membershipProblem ?? (off ? disabledMessage(off.note) : routingProblem),
       // The window routing actually uses is the one saved by the last Test; it can lag a size set or measured since.
       routingContextWindow: receipt?.contextWindow,
-      targets: receipt?.targets ?? [], expiresAt: receipt?.expiresAt, effortLevels: receipt?.effortLevels ?? [] };
+      targets: receipt?.targets ?? [], effortLevels: receipt?.effortLevels ?? [] };
   });
   // This is the same free-only universe shown by the Providers table. Models
   // that the pool cannot transport stay visible with an explanation so the

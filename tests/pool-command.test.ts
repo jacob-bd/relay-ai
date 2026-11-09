@@ -37,7 +37,7 @@ describe('pool membership command', () => {
     } as const;
     expect(validPoolReceipts([receipt, receipt, { ...receipt, endpointRevision: 'bad' } as never])).toEqual({
       // A member that passed the text and tool Test can serve Antigravity's Auto row too.
-      receipts: [{ ...receipt, targets: ['codex', 'antigravity', 'core'] }], discarded: 2,
+      receipts: [{ ...receipt, expiresAt: Number.MAX_SAFE_INTEGER, targets: ['codex', 'antigravity', 'core'] }], discarded: 2,
     });
   });
 

@@ -214,3 +214,30 @@ describe('native-launcher', () => {
     expect(() => getTerminalLaunchCommand(bin, args)).toThrow('Unsafe launch argument');
   });
 });
+
+describe('free pool launch commands', () => {
+  it('uses --pool for the Claude Code and Codex CLIs', () => {
+    for (const app of ['claude', 'codex']) {
+      assertLaunchCommandContains(getRelayLaunchCommand(app, { pool: true }), `relay-ai ${app} --pool`);
+    }
+  });
+
+  it('starts the apps and Antigravity on the pool as a provider/model pair', () => {
+    for (const app of ['claude-app', 'codex-app', 'antigravity', 'antigravity-ide', 'agy']) {
+      assertLaunchCommandContains(
+        getRelayLaunchCommand(app, { pool: true }),
+        `${app} --provider relay-free-pool --model relay-free-pool`,
+      );
+      // The picker sends the virtual model as a provider/model selection; it must map to the same launch.
+      assertLaunchCommandContains(
+        getRelayLaunchCommand(app, { providerId: 'relay-free-pool', modelId: 'relay-free-pool' }),
+        `${app} --provider relay-free-pool --model relay-free-pool`,
+      );
+    }
+  });
+
+  it('refuses the pool for Gemini CLI and when combined with another model', () => {
+    expect(() => getRelayLaunchCommand('gemini', { pool: true })).toThrow(/cannot start on the free pool/);
+    expect(() => getRelayLaunchCommand('claude-app', { pool: true, providerId: 'x', modelId: 'y' })).toThrow(/alone/);
+  });
+});

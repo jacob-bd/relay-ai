@@ -74,17 +74,17 @@ import {
   supportsClaudeTransparentMode,
   upstreamModelId,
   waitForCodexAppQuit
-} from "./chunk-GZYANEUS.js";
+} from "./chunk-YFK6NPMS.js";
 import {
   extractApiKey,
   readBody,
   sendJson,
   warnDisabledPoolMembers
-} from "./chunk-FDENMLC7.js";
+} from "./chunk-JFGLWCMG.js";
 import {
   printUiUrlLast
-} from "./chunk-2BYF2HJK.js";
-import "./chunk-3O4SXHER.js";
+} from "./chunk-4BVKM3FX.js";
+import "./chunk-K3VLZXMD.js";
 import {
   TRUST_SYSTEM_CERTS_NOTICE,
   UNTRUSTED_CERTIFICATE_CODE,
@@ -108,7 +108,7 @@ import {
   toggleProviderEnabled,
   updateCustomEndpointProvider,
   zenRegistryStub
-} from "./chunk-5LMHMQFE.js";
+} from "./chunk-NYQULE54.js";
 import {
   CODEX_APP_AUTO_COMPACT_RATIO,
   CODEX_APP_PROVIDER_ID,
@@ -146,7 +146,7 @@ import {
   supportsMultiAgentV2,
   translateResponsesRequest,
   writeResponsesErrorStream
-} from "./chunk-KU7GMFC6.js";
+} from "./chunk-WB67LIBU.js";
 import {
   OPENCODE_SESSION_HEADER,
   PoolHealthStore,
@@ -184,19 +184,19 @@ import {
   retryPoolFailure,
   routableModelsForTarget,
   toOAuthRegistryId
-} from "./chunk-4YFQNHW6.js";
+} from "./chunk-M77KUXEO.js";
 import {
   effectiveProviderBaseUrl,
   isLikelyPlaceholderKey,
   resolveProviderTemplate,
   resolveRefreshCredential,
   syntheticTemplate
-} from "./chunk-G5CBERRT.js";
+} from "./chunk-WU2BSNV7.js";
 import {
   addManualModel,
   removeManualModel
-} from "./chunk-DQPK3H4N.js";
-import "./chunk-WW2Q5GYH.js";
+} from "./chunk-E25ZTNGC.js";
+import "./chunk-2FDLSPLT.js";
 import {
   validateCustomEndpointUrl
 } from "./chunk-5HGLQHX6.js";
@@ -270,7 +270,7 @@ import {
   vertexAnthropicCachedModels,
   vertexModelDisplayName,
   writeSecureLogLine
-} from "./chunk-IIS6FGBQ.js";
+} from "./chunk-25YDTUQR.js";
 import {
   ANTIGRAVITY_BASE_URLS,
   ANTIGRAVITY_USER_AGENT,
@@ -308,7 +308,7 @@ import {
   saveToCredentialStore,
   supportsAdditionalOAuthAccounts,
   supportsNativeOAuth
-} from "./chunk-OYXXDDPI.js";
+} from "./chunk-I6I4JU6A.js";
 import {
   filterTemplates,
   getTemplateById,
@@ -3459,7 +3459,7 @@ async function runModelContextMenu(providerId, model) {
     if (choice === "test") {
       const spinner11 = p8.spinner();
       spinner11.start(`Testing ${current.id}...`);
-      const { testModel } = await import("./test-model-RPUMQVI5.js");
+      const { testModel } = await import("./test-model-PIP7PHIJ.js");
       const result = await testModel(providerId, current.id);
       spinner11.stop("");
       if (!result.ok) {
@@ -12261,6 +12261,9 @@ async function resolveAntigravityLaunch(prefs, boot) {
     p13.log.info(pc8.dim("Run relay-ai providers add or import to get started."));
     return null;
   }
+  if (boot?.launchProvider === "relay-free-pool" && boot.launchModel === "relay-free-pool") {
+    return { startOnPool: true, allProviders };
+  }
   if (boot?.launchProvider && boot?.launchModel) {
     const provider = allProviders.find((p17) => p17.id === boot.launchProvider);
     if (!provider) {
@@ -13708,7 +13711,9 @@ async function runCodexAppCommand(args, opts = {}) {
     compatible.find((lp) => lp.id === prefs.lastCodexProvider) ?? compatible[0]
   );
   let selectedModel = activeProvider.models.find((m) => m.id === prefs.lastCodexModel) ?? activeProvider.models[0];
-  if (codexAppUsesExplicitSelection(configOnly, launchProvider, opts.launchModel)) {
+  if (launchProvider === "relay-free-pool" && opts.launchModel === "relay-free-pool") {
+    startOnPool = true;
+  } else if (codexAppUsesExplicitSelection(configOnly, launchProvider, opts.launchModel)) {
     const bootSelection = resolveBootSelection(
       compatible,
       launchProvider,
@@ -14688,7 +14693,13 @@ async function runClaudeAppCommand(args, boot) {
       p15.log.warn(`Relay Free Pool is enabled but could not be prepared: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  if (boot?.launchProvider && boot?.launchModel) {
+  if (boot?.launchProvider === "relay-free-pool" && boot.launchModel === "relay-free-pool") {
+    if (!autoPool) {
+      p15.log.error("Relay Free Pool is not ready for Claude Desktop. Turn it on and add a tested member in relay-ai ui (Free Pool).");
+      return 1;
+    }
+    startOnPool = true;
+  } else if (boot?.launchProvider && boot?.launchModel) {
     const bootSelection = resolveBootSelection(
       compatible,
       boot.launchProvider,
@@ -18082,7 +18093,7 @@ Options:
       return 0;
     }
     if (parsed.uiAction === "stop") {
-      const { stopUiServer } = await import("./ui-command-Y5IHQ5JM.js");
+      const { stopUiServer } = await import("./ui-command-K2NOR6VV.js");
       const result = await stopUiServer();
       if (result.stopped) {
         console.log(`
@@ -18095,11 +18106,11 @@ Options:
 `);
       return 0;
     }
-    const { runUiCommand } = await import("./ui-command-Y5IHQ5JM.js");
+    const { runUiCommand } = await import("./ui-command-K2NOR6VV.js");
     return runUiCommand({ trace: parsed.trace, serverMode: parsed.uiServerMode, background: parsed.uiBackground });
   }
   if (parsed.command === "pool") {
-    const { poolHelpText, runPoolCommand } = await import("./command-7ICTYGBJ.js");
+    const { poolHelpText, runPoolCommand } = await import("./command-CZX4NPSJ.js");
     if (parsed.showHelp) {
       printHelp(poolHelpText);
       return 0;
@@ -18141,7 +18152,7 @@ Options:
     return runProvidersCommand(parsed.claudeArgs);
   }
   if (isToolLaunch(parsed)) {
-    const { announceBackgroundUi, shouldEnsureBackgroundUi } = await import("./ui-background-DSY5AMMB.js");
+    const { announceBackgroundUi, shouldEnsureBackgroundUi } = await import("./ui-background-QC2VFK67.js");
     if (shouldEnsureBackgroundUi({ dryRun: parsed.dryRun })) await announceBackgroundUi();
   }
   if (parsed.command === "codex-app") {

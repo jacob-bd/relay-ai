@@ -15,10 +15,10 @@ import {
   splitToolUseId,
   sseChunk,
   thinkingProviderOptions
-} from "./chunk-IIS6FGBQ.js";
+} from "./chunk-25YDTUQR.js";
 import {
   MAX_MODEL_CATALOG
-} from "./chunk-OYXXDDPI.js";
+} from "./chunk-I6I4JU6A.js";
 
 // src/subagent-route-registry.ts
 import { randomUUID } from "crypto";
@@ -776,4 +776,4 @@ export {
   streamAnthropicResponse,
   generateAnthropicResponse
 };
-//# sourceMappingURL=chunk-WW2Q5GYH.js.map
+//# sourceMappingURL=chunk-2FDLSPLT.js.map

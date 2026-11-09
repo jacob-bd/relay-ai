@@ -3,6 +3,13 @@ import type { FavoriteModel, PoolCapabilityReceipt } from '../types.js';
 
 export type { PoolCapabilityReceipt };
 
+/**
+ * A receipt never lapses with time, so its saved `expiresAt` is this fixed "never" value instead of a date
+ * (the field is kept only because saved data and the receipt type require it). Older saved receipts carry a
+ * real-looking date from when one was written; it is ignored and replaced with this on load.
+ */
+export const NO_RECEIPT_EXPIRY = Number.MAX_SAFE_INTEGER;
+
 export function poolEndpointRevision(config: {
   providerId: string; authRef?: string; npm: string; baseURL?: string;
   upstreamModelId: string; headers?: Record<string, string>;
@@ -51,7 +58,7 @@ export function parsePoolReceipt(value: unknown): PoolCapabilityReceipt | undefi
   const revision = r.endpointRevision;
   if (typeof revision !== 'string' || !/^[0-9a-f]{64}$/.test(revision)) return undefined;
   const int = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v);
-  if (!int(r.verifiedAt) || !int(r.expiresAt) || r.expiresAt <= r.verifiedAt) return undefined;
+  if (!int(r.verifiedAt) || !int(r.expiresAt)) return undefined;
   if (!Array.isArray(r.targets) || r.targets.length === 0) return undefined;
   const targets = r.targets.filter((t): t is 'codex' | 'claude' | 'antigravity' | 'core' =>
     t === 'codex' || t === 'claude' || t === 'antigravity' || t === 'core');
@@ -70,7 +77,7 @@ export function parsePoolReceipt(value: unknown): PoolCapabilityReceipt | undefi
     member: { providerId: member.providerId, modelId: member.modelId },
     endpointRevision: revision,
     verifiedAt: r.verifiedAt,
-    expiresAt: r.expiresAt,
+    expiresAt: NO_RECEIPT_EXPIRY,
     // A member that passed the text and tool Test can serve every target (Antigravity's Auto row needs
     // nothing more), so saved receipts from before that target existed stay usable without a re-test.
     // Surfaces added after a Test was saved need no re-test: the request path they use is the same SDK one.

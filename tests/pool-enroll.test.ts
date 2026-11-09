@@ -13,12 +13,12 @@ const deps = (probePasses = true): EnrollDeps => ({
   probe: vi.fn(async () => probePasses ? { text: 'passed', tools: 'passed' } : { text: 'passed', tools: 'failed', failure: 'provider' }),
 });
 describe('pool enrollment receipts', () => {
-  it('mints a 24h receipt only after real text and tool probes pass', async () => {
+  it('mints a never-expiring receipt only after real text and tool probes pass', async () => {
     const result = await verifyPoolMember(member, [provider], new AbortController().signal, deps(), 1000);
     expect(result.status).toBe('verified');
     if (result.status !== 'verified') return;
     expect(result.receipt).toMatchObject({
-      member, verifiedAt: 1000, expiresAt: 1000 + 86400000, tools: true,
+      member, verifiedAt: 1000, expiresAt: Number.MAX_SAFE_INTEGER, tools: true,
       contextWindow: 128000, contextSource: 'provider', targets: ['codex', 'claude', 'antigravity', 'core'],
       effortLevels: [], billingSafe: true,
     });

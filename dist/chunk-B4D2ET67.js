@@ -2,14 +2,14 @@
 import {
   buildIntelligenceLookup,
   loadIntelligenceCache
-} from "./chunk-O2SS4I4W.js";
+} from "./chunk-4RCYRXSV.js";
 import {
   clearDisabledPoolMember,
   disabledMessage,
   disabledPoolMembers,
   readBody,
   sendJson
-} from "./chunk-FDENMLC7.js";
+} from "./chunk-JFGLWCMG.js";
 import {
   fetchProviderCatalog,
   groupPoolActivity,
@@ -20,7 +20,7 @@ import {
   readPoolActivity,
   summarizePoolEvents,
   verifyConfiguredPoolMember
-} from "./chunk-4YFQNHW6.js";
+} from "./chunk-M77KUXEO.js";
 import {
   addFreePoolMember,
   classifyFreeStatus,
@@ -35,7 +35,7 @@ import {
   poolEndpointRevision,
   removeFreePoolMember,
   savePreferences
-} from "./chunk-IIS6FGBQ.js";
+} from "./chunk-25YDTUQR.js";
 
 // src/ui/pool-api.ts
 var verifying = /* @__PURE__ */ new Set();
@@ -256,7 +256,6 @@ function poolView(providers, pool, disabled = /* @__PURE__ */ new Map()) {
       // The window routing actually uses is the one saved by the last Test; it can lag a size set or measured since.
       routingContextWindow: receipt?.contextWindow,
       targets: receipt?.targets ?? [],
-      expiresAt: receipt?.expiresAt,
       effortLevels: receipt?.effortLevels ?? []
     };
   });
@@ -289,4 +288,4 @@ export {
   handlePoolApi,
   poolView
 };
-//# sourceMappingURL=chunk-TE2Y73TW.js.map
+//# sourceMappingURL=chunk-B4D2ET67.js.map

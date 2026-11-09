@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.22.4] - 2026-11-08
+
+### Added
+
+- **Relay Free Pool is a launch choice for every launcher in the UI.** Claude Code CLI, Codex CLI, Claude Desktop, ChatGPT/Codex App and Antigravity (app, IDE and CLI) now list **Relay Free Pool** as a searchable model when the pool is on and at least one member has a valid Test result. The CLIs use `--pool`; the apps and Antigravity start on the pool when launched with `--provider relay-free-pool --model relay-free-pool`. Gemini CLI has no pool target and is refused with a clear message.
+
+### Changed
+
+- **The Relay UI that a tool launch starts now closes with it.** Each tool launch (CLI, desktop app or IDE launcher) registers as a user of the background UI; when a launch exits it deregisters, and if the UI was started by a tool launch and no other live launch still uses it, the UI shuts down. A UI started with `relay-ai ui` is never closed automatically, and a killed launcher (SIGKILL) leaves the UI until the next launch prunes its entry.
+
+### Fixed
+
+- **Pool Test results no longer carry a misleading expiry date.** Results never lapsed with time (the code ignored the saved `expiresAt`), but new results wrote "verified + 24h" and the pool API returned it, so the file and API looked as if members had expired. New and loaded results now store a fixed never-expires value and the pool API no longer returns the field.
+
 ## [0.22.3] - 2026-11-08
 
 ### Added
