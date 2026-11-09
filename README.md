@@ -17,7 +17,7 @@
 
 📺 **Watch the Demos**
 
-| **Claude Code / Cowork / Desktop** | **Codex CLI & Desktop App** | **Gemini CLI** | **v0.4.1: UI & Antigravity** | **Server Gateway** |
+| **Claude Code / Cowork / Desktop** | **Codex CLI & Desktop App** | **Gemini CLI** | **UI & Antigravity** | **Server Gateway** |
 |:---:|:---:|:---:|:---:|:---:|
 | [![Claude Demo](https://img.youtube.com/vi/IvsUPHLhX0o/mqdefault.jpg)](https://youtu.be/IvsUPHLhX0o) | [![Codex Demo](https://img.youtube.com/vi/42oiOB8IAu4/mqdefault.jpg)](https://youtu.be/42oiOB8IAu4) | [![Gemini Demo](https://img.youtube.com/vi/g7JKvqOHJl4/mqdefault.jpg)](https://www.youtube.com/watch?v=g7JKvqOHJl4) | [![UI & Antigravity Demo](https://img.youtube.com/vi/8vXJ0LfpdoY/mqdefault.jpg)](https://www.youtube.com/watch?v=8vXJ0LfpdoY) | [![Server Gateway Demo](https://img.youtube.com/vi/4CEw0MQUE9I/mqdefault.jpg)](https://www.youtube.com/watch?v=4CEw0MQUE9I) |
 
