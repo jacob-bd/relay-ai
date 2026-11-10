@@ -15,7 +15,11 @@
 >
 > <a href="https://buymeacoffee.com/jacobbd"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="42"></a>
 
-📺 **Watch the Demos**
+📺 **Demos / Use Cases**
+
+| **Free Model Pool** | **Multiple Accounts** | **Remote Codex + Any Model** | **Custom Model IDs** |
+|:---:|:---:|:---:|:---:|
+| [![Free Model Pool Demo](https://img.youtube.com/vi/bsbBMykAIfY/mqdefault.jpg)](https://youtu.be/bsbBMykAIfY) | [![Multiple Accounts Demo](https://img.youtube.com/vi/7qdC0aDQ1wc/mqdefault.jpg)](https://youtu.be/7qdC0aDQ1wc) | [![Remote Codex Demo](https://img.youtube.com/vi/KGafe-_rli0/mqdefault.jpg)](https://youtu.be/KGafe-_rli0) | [![Custom Model IDs Demo](https://img.youtube.com/vi/RjqnvFWGEM8/mqdefault.jpg)](https://youtu.be/RjqnvFWGEM8) |
 
 | **Claude Code / Cowork / Desktop** | **Codex CLI & Desktop App** | **Gemini CLI** | **UI & Antigravity** | **Server Gateway** |
 |:---:|:---:|:---:|:---:|:---:|
