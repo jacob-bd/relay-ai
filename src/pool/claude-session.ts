@@ -4,6 +4,7 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { getAppHome } from '../paths.js';
+import { processAlive } from './process-alive.js';
 
 interface ClaudePoolSessionLock {
   pid: number;
@@ -18,16 +19,6 @@ export type ClaudePoolSessionLockResult =
 
 export function getClaudePoolSessionLockPath(env: NodeJS.ProcessEnv = process.env): string {
   return join(getAppHome(env), 'claude', 'pool-session.json');
-}
-
-function processAlive(pid: number): boolean {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
 }
 
 type LockFileState =

@@ -19,6 +19,7 @@ import type { FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getAppHome } from '../paths.js';
 import type { PoolFailure, PoolFailureKind } from './errors.js';
+import { processAlive } from './process-alive.js';
 
 export interface PoolHealthRoute {
   id: string;
@@ -148,17 +149,6 @@ interface OwnerRecord { token: string; pid: number; createdAt: number }
 
 function emptyStore(): StoreFile {
   return { version: 1, entries: {} };
-}
-
-/** True only when the pid provably exists. EPERM means it exists but is not ours. */
-function processAlive(pid: number): boolean {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
 }
 
 function delay(ms: number): Promise<void> {
